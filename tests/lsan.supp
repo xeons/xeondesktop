@@ -1,0 +1,7 @@
+# Process-lifetime caches in the font stack, never freed by design.
+leak:libfontconfig.so
+leak:libpango-1.0.so
+leak:libpangoft2-1.0.so
+leak:libharfbuzz.so
+leak:libglib-2.0.so
+leak:libgobject-2.0.so

@@ -1,0 +1,235 @@
+/* SPDX-License-Identifier: MIT
+ * Unit tests for the core library and theme engine.
+ */
+#include <stdlib.h>
+
+#include "../src/core/ini.h"
+#include "../src/theme/theme.h"
+
+static int failures = 0;
+static int checks = 0;
+
+#define CHECK(cond)                                                            \
+    do {                                                                       \
+        checks++;                                                              \
+        if (!(cond)) {                                                         \
+            failures++;                                                        \
+            fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__,   \
+                    #cond);                                                    \
+        }                                                                      \
+    } while (0)
+
+static void test_str(void) {
+    CHECK(xd_str_eq(xd_str_trim(XD_STR("  hi \t\n")), XD_STR("hi")));
+    CHECK(xd_str_eq_nocase(XD_STR("ActiveTitle"), XD_STR("activetitle")));
+    CHECK(xd_str_eq(xd_str_sub(XD_STR("abc"), 1, 99), XD_STR("bc")));
+    CHECK(xd_str_eq(xd_str_sub(XD_STR("abc"), 99, 1), XD_STR("")));
+
+    int64_t v = 0;
+    CHECK(xd_str_parse_i64(XD_STR(" 255 "), 0, 255, &v) && v == 255);
+    CHECK(!xd_str_parse_i64(XD_STR("256"), 0, 255, &v));
+    CHECK(!xd_str_parse_i64(XD_STR("12x"), 0, 255, &v));
+    CHECK(!xd_str_parse_i64(XD_STR("-"), -10, 10, &v));
+    CHECK(xd_str_parse_i64(XD_STR("-9223372036854775808"), INT64_MIN, INT64_MAX, &v) &&
+          v == INT64_MIN);
+    CHECK(!xd_str_parse_i64(XD_STR("9223372036854775808"), INT64_MIN, INT64_MAX, &v));
+
+    double d = 0;
+    CHECK(xd_str_parse_double(XD_STR("1.25"), &d) && d > 1.249 && d < 1.251);
+    CHECK(!xd_str_parse_double(XD_STR("1.25x"), &d));
+
+    xd_strbuf sb = {0};
+    xd_strbuf_append(&sb, XD_STR("ab"));
+    xd_strbuf_appendf(&sb, "%d-%s", 42, "z");
+    CHECK(xd_str_eq(xd_strbuf_view(&sb), XD_STR("ab42-z")));
+    for (int i = 0; i < 1000; i++)
+        xd_strbuf_append_char(&sb, 'x');
+    CHECK(sb.len == 1006 && xd_strbuf_cstr(&sb)[1006] == '\0');
+    xd_strbuf_free(&sb);
+    CHECK(sb.data == nullptr && sb.len == 0);
+}
+
+static void test_arena(void) {
+    xd_arena a;
+    xd_arena_init(&a, 256);
+    int *ints = XD_ARENA_ARRAY(&a, int, 10);
+    for (int i = 0; i < 10; i++)
+        CHECK(ints[i] == 0);
+    double *dbl = XD_ARENA_NEW(&a, double);
+    CHECK(((uintptr_t)dbl % alignof(double)) == 0);
+    /* Larger than a block: must get its own block. */
+    char *big = xd_arena_alloc(&a, 10000, 1);
+    big[9999] = 'x';
+    char *s = xd_str_arena_cstr(&a, XD_STR("hello"));
+    CHECK(strcmp(s, "hello") == 0);
+    xd_arena_destroy(&a);
+    CHECK(a.head == nullptr);
+}
+
+typedef struct ini_capture {
+    int count;
+    bool saw_value;
+} ini_capture;
+
+static bool ini_cb(void *user, xd_str section, xd_str key, xd_str value) {
+    ini_capture *c = user;
+    c->count++;
+    if (xd_str_eq(section, XD_STR("A")) && xd_str_eq(key, XD_STR("k")) &&
+        xd_str_eq(value, XD_STR("v = w")))
+        c->saw_value = true;
+    return true;
+}
+
+static void test_ini(void) {
+    ini_capture c = {0};
+    xd_ini_error err;
+    CHECK(xd_ini_parse(XD_STR("\xEF\xBB\xBF; comment\n[A]\n k = v = w \r\n# x\nz=\n"), ini_cb,
+                       &c, &err));
+    CHECK(c.count == 2 && c.saw_value);
+
+    CHECK(!xd_ini_parse(XD_STR("[A\n"), ini_cb, &c, &err));
+    CHECK(err.line == 1);
+    CHECK(!xd_ini_parse(XD_STR("[A]\n\nnoequals\n"), ini_cb, &c, &err));
+    CHECK(err.line == 3);
+    CHECK(!xd_ini_parse(XD_STR("[]\n"), ini_cb, &c, &err));
+    CHECK(xd_ini_parse(XD_STR(""), ini_cb, &c, &err));
+}
+
+static void test_scheme(void) {
+    xd_scheme s;
+    xd_strbuf err = {0};
+
+    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nName=Test\n[Colors]\nActiveTitle=1 2 3\n"
+                                 "Background = 4,5,6\n[Metrics]\nCaptionHeight=25\n"
+                                 "[Fonts]\nCaptionFont=Arial, 10, bold, italic\n"),
+                          &s, &err));
+    CHECK(strcmp(s.name, "Test") == 0);
+    CHECK(s.colors[XD_COLOR_ACTIVE_TITLE].r == 1 && s.colors[XD_COLOR_ACTIVE_TITLE].b == 3);
+    CHECK(s.colors[XD_COLOR_BACKGROUND].g == 5);
+    CHECK(s.metrics[XD_METRIC_CAPTION_HEIGHT] == 25);
+    CHECK(strcmp(s.fonts[XD_FONT_CAPTION].family, "Arial") == 0);
+    CHECK(s.fonts[XD_FONT_CAPTION].bold && s.fonts[XD_FONT_CAPTION].italic);
+    /* Unlisted colours keep the Windows Standard defaults. */
+    CHECK(s.colors[XD_COLOR_BUTTON_FACE].r == 212);
+
+    static const char *const bad[] = {
+        "[Colors]\nActiveTitle=1 2\n",       "[Colors]\nActiveTitle=1 2 3 4\n",
+        "[Colors]\nActiveTitle=256 0 0\n",   "[Colors]\nNoSuchColor=1 2 3\n",
+        "[Metrics]\nCaptionHeight=-1\n",     "[Fonts]\nCaptionFont=Arial\n",
+        "[Fonts]\nCaptionFont=Arial, 10, x\n", "[Bogus]\nk=v\n",
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(bad); i++) {
+        xd_strbuf_clear(&err);
+        CHECK(!xd_scheme_parse(xd_str_from_cstr(bad[i]), &s, &err));
+        CHECK(err.len > 0);
+        /* A failed parse leaves the defaults in place. */
+        CHECK(strcmp(s.name, "Windows Standard") == 0);
+    }
+    xd_strbuf_free(&err);
+}
+
+static void test_shipped_schemes(void) {
+    static const char *const files[] = {
+        "windows-standard.ini", "windows-classic.ini", "high-contrast-black.ini",
+        "high-contrast-white.ini",
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(files); i++) {
+        xd_strbuf path = {0};
+        xd_strbuf_appendf(&path, "%s/data/schemes/%s", XD_SOURCE_ROOT, files[i]);
+        xd_strbuf err = {0};
+        xd_scheme s;
+        bool ok = xd_scheme_load(xd_strbuf_cstr(&path), &s, &err);
+        if (!ok)
+            fprintf(stderr, "%s: %s\n", files[i], xd_strbuf_cstr(&err));
+        CHECK(ok);
+        xd_strbuf_free(&err);
+        xd_strbuf_free(&path);
+    }
+}
+
+static uint32_t pixel(cairo_surface_t *s, int x, int y) {
+    cairo_surface_flush(s);
+    int stride = cairo_image_surface_get_stride(s);
+    const unsigned char *data = cairo_image_surface_get_data(s);
+    uint32_t px;
+    memcpy(&px, data + (size_t)y * (size_t)stride + (size_t)x * 4, sizeof(px));
+    return px & 0xFFFFFF;
+}
+
+static bool near(uint32_t got, uint32_t want, int tol) {
+    for (int shift = 0; shift <= 16; shift += 8) {
+        int a = (int)((got >> shift) & 0xFF);
+        int b = (int)((want >> shift) & 0xFF);
+        if (a - b > tol || b - a > tol)
+            return false;
+    }
+    return true;
+}
+
+static void test_render(void) {
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    static const double scales[] = {1.0, 1.25, 1.5, 2.0, 3.0};
+
+    for (size_t si = 0; si < XD_STYLE_COUNT; si++) {
+        for (size_t k = 0; k < XD_ARRAY_LEN(scales); k++) {
+            xd_theme t;
+            xd_theme_init(&t, (xd_visual_style)si, &scheme, scales[k]);
+            int w = xd_tpx(&t, 300);
+            int h = xd_tpx(&t, 200);
+            cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+            cairo_t *cr = cairo_create(surf);
+            xd_frame f = {.title = "Test", .active = true, .buttons = 0x0F};
+            xd_theme_draw_frame(&t, cr, (xd_rect){0, 0, w, h}, &f);
+            xd_theme_draw_button(&t, cr, (xd_rect){10, 100, 80, 24}, XD_STATE_FOCUSED, "OK");
+            xd_theme_draw_checkbox(&t, cr, (xd_rect){10, 130, 200, 20}, XD_STATE_CHECKED, "x");
+            xd_theme_draw_taskbar(&t, cr, (xd_rect){0, h - 30, w, 30});
+            CHECK(cairo_status(cr) == CAIRO_STATUS_SUCCESS);
+
+            /* Frame insets grow with the scale factor. */
+            xd_insets in = xd_theme_frame_insets(&t, &f);
+            CHECK(in.top >= (int)(18 * scales[k]));
+            cairo_destroy(cr);
+            cairo_surface_destroy(surf);
+        }
+    }
+
+    /* Classic at 1x: the outer frame pixel is ButtonLight, the next one
+     * in is ButtonHilight (white), matching Win2000's EDGE_RAISED. */
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 100, 100);
+    cairo_t *cr = cairo_create(surf);
+    xd_frame f = {.title = "", .active = true, .buttons = 0};
+    xd_theme_draw_frame(&t, cr, (xd_rect){0, 0, 100, 100}, &f);
+    CHECK(pixel(surf, 50, 0) == 0xD4D0C8);
+    CHECK(pixel(surf, 50, 1) == 0xFFFFFF);
+    CHECK(pixel(surf, 50, 99) == 0x404040);
+    CHECK(pixel(surf, 50, 98) == 0x808080);
+    /* Caption starts at 4px and is ActiveTitle on the left. */
+    CHECK(near(pixel(surf, 4, 10), 0x0A246A, 3));
+    cairo_destroy(cr);
+    cairo_surface_destroy(surf);
+}
+
+static void test_px(void) {
+    CHECK(xd_px(1.0, 1) == 1);
+    CHECK(xd_px(1.25, 1) == 1);
+    CHECK(xd_px(1.5, 1) == 2);
+    CHECK(xd_px(0.5, 1) == 1); /* never vanishes */
+    CHECK(xd_px(2.0, 18) == 36);
+    CHECK(xd_px(1.25, 18) == 23);
+    CHECK(xd_px(2.0, 0) == 0);
+}
+
+int main(void) {
+    test_str();
+    test_arena();
+    test_ini();
+    test_scheme();
+    test_shipped_schemes();
+    test_px();
+    test_render();
+    printf("%d checks, %d failures\n", checks, failures);
+    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}

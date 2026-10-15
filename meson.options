@@ -1,0 +1,2 @@
+option('analyzer', type: 'boolean', value: false,
+       description: 'Build with GCC -fanalyzer (slow; for CI and audits)')
