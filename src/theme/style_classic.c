@@ -91,18 +91,15 @@ static xd_insets classic_frame_insets(const xd_theme *t, const xd_frame *f) {
 }
 
 static void caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_glyph g,
-                           bool disabled) {
+                           bool pressed) {
     xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
-    xd_rect inner = edge_window(t, cr, r, false);
+    xd_rect inner = edge_window(t, cr, r, pressed);
     xd_rect glyph = xd_rect_inset4(inner, 0, 0, xd_tpx(t, 1), xd_tpx(t, 1));
-    if (disabled) {
+    if (pressed) {
         int p = xd_tpx(t, 1);
-        xd_draw_glyph(t, cr, (xd_rect){glyph.x + p, glyph.y + p, glyph.w, glyph.h}, g,
-                      xd_sys(t, XD_COLOR_BUTTON_HILIGHT), 1);
-        xd_draw_glyph(t, cr, glyph, g, xd_sys(t, XD_COLOR_BUTTON_SHADOW), 1);
-    } else {
-        xd_draw_glyph(t, cr, glyph, g, xd_sys(t, XD_COLOR_BUTTON_TEXT), 1);
+        glyph = (xd_rect){glyph.x + p, glyph.y + p, glyph.w, glyph.h};
     }
+    xd_draw_glyph(t, cr, glyph, g, xd_sys(t, XD_COLOR_BUTTON_TEXT), 1);
 }
 
 static void app_icon(const xd_theme *t, cairo_t *cr, xd_rect r) {
@@ -111,6 +108,42 @@ static void app_icon(const xd_theme *t, cairo_t *cr, xd_rect r) {
     xd_fill_rect(cr, r, xd_rgba_hex(0xFFFFFF));
     xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w, xd_tpx(t, 4)}, xd_rgba_hex(0x0A246A));
     xd_draw_bevel(cr, r, p, xd_rgba_hex(0x404040), xd_rgba_hex(0x404040));
+}
+
+static void classic_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                                 xd_frame_layout *l) {
+    int b = f->maximized ? 0 : frame_border(t);
+    xd_rect r = xd_rect_inset(outer, b, b);
+    int cap_h = xd_metric_px(t, XD_METRIC_CAPTION_HEIGHT);
+    l->caption = (xd_rect){r.x, r.y, r.w, cap_h};
+
+    /* Caption buttons: 2px from the edges, close separated by a 2px gap. */
+    int bw = xd_metric_px(t, XD_METRIC_CAPTION_BUTTON_WIDTH);
+    int bh = cap_h - xd_tpx(t, 4);
+    int by = r.y + xd_tpx(t, 2);
+    int bx = r.x + r.w - xd_tpx(t, 2);
+    if (f->buttons & XD_CAPBTN_CLOSE) {
+        bx -= bw;
+        xd_layout_add_button(l, (xd_rect){bx, by, bw, bh}, XD_PART_CLOSE);
+        bx -= xd_tpx(t, 2);
+    }
+    if (f->buttons & XD_CAPBTN_MAXIMIZE) {
+        bx -= bw;
+        xd_layout_add_button(l, (xd_rect){bx, by, bw, bh}, XD_PART_MAXIMIZE);
+    }
+    if (f->buttons & XD_CAPBTN_MINIMIZE) {
+        bx -= bw;
+        xd_layout_add_button(l, (xd_rect){bx, by, bw, bh}, XD_PART_MINIMIZE);
+    }
+    if (f->buttons & XD_CAPBTN_HELP) {
+        bx -= bw + xd_tpx(t, 2);
+        xd_layout_add_button(l, (xd_rect){bx, by, bw, bh}, XD_PART_HELP);
+    }
+
+    int icon = xd_tpx(t, 16);
+    l->icon = (xd_rect){r.x + xd_tpx(t, 2), r.y + (cap_h - icon) / 2, icon, icon};
+    int tx = l->icon.x + icon + xd_tpx(t, 3);
+    l->title = (xd_rect){tx, r.y, bx - tx - xd_tpx(t, 2), cap_h};
 }
 
 static void classic_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
@@ -124,58 +157,34 @@ static void classic_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
         r = xd_rect_inset(r, xd_metric_px(t, XD_METRIC_BORDER_WIDTH),
                           xd_metric_px(t, XD_METRIC_BORDER_WIDTH));
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
-        r = xd_rect_inset(r, xd_tpx(t, 1), xd_tpx(t, 1));
+    } else {
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
     }
 
-    int cap_h = xd_metric_px(t, XD_METRIC_CAPTION_HEIGHT);
-    xd_rect cap = {r.x, r.y, r.w, cap_h};
+    xd_frame_layout l;
+    xd_theme_frame_layout(t, outer, f, &l);
+
     xd_rgba c1 = xd_sys(t, f->active ? XD_COLOR_ACTIVE_TITLE : XD_COLOR_INACTIVE_TITLE);
     xd_rgba c2 = xd_sys(t, f->active ? XD_COLOR_GRADIENT_ACTIVE_TITLE
                                      : XD_COLOR_GRADIENT_INACTIVE_TITLE);
     if (t->scheme.gradient_captions)
-        xd_fill_gradient(cr, cap, c1, c2, true);
+        xd_fill_gradient(cr, l.caption, c1, c2, true);
     else
-        xd_fill_rect(cr, cap, c1);
-    /* 1px separator between caption and client area. */
-    xd_fill_rect(cr, (xd_rect){r.x, r.y + cap_h, r.w, xd_tpx(t, 1)},
-                 xd_sys(t, XD_COLOR_BUTTON_FACE));
+        xd_fill_rect(cr, l.caption, c1);
 
-    /* Caption buttons: 2px from the edges, close separated by a 2px gap. */
-    int bw = xd_metric_px(t, XD_METRIC_CAPTION_BUTTON_WIDTH);
-    int bh = cap_h - xd_tpx(t, 4);
-    int by = cap.y + xd_tpx(t, 2);
-    int bx = cap.x + cap.w - xd_tpx(t, 2);
-
-    if (f->buttons & XD_CAPBTN_CLOSE) {
-        bx -= bw;
-        caption_button(t, cr, (xd_rect){bx, by, bw, bh}, XD_GLYPH_CLOSE, false);
-        bx -= xd_tpx(t, 2);
-    }
-    if (f->buttons & XD_CAPBTN_MAXIMIZE) {
-        bx -= bw;
-        caption_button(t, cr, (xd_rect){bx, by, bw, bh},
-                       f->maximized ? XD_GLYPH_RESTORE : XD_GLYPH_MAXIMIZE, false);
-    }
-    if (f->buttons & XD_CAPBTN_MINIMIZE) {
-        bx -= bw;
-        caption_button(t, cr, (xd_rect){bx, by, bw, bh}, XD_GLYPH_MINIMIZE, false);
-    }
-    if (f->buttons & XD_CAPBTN_HELP) {
-        bx -= bw + xd_tpx(t, 2);
-        caption_button(t, cr, (xd_rect){bx, by, bw, bh}, XD_GLYPH_HELP, false);
+    for (size_t i = 0; i < l.button_count; i++) {
+        xd_frame_part part = l.button_parts[i];
+        bool pressed = f->pressed == part && f->hot == part;
+        caption_button(t, cr, l.button_rects[i], xd_glyph_for_part(part, f->maximized),
+                       pressed);
     }
 
-    int icon = xd_tpx(t, 16);
-    int ix = cap.x + xd_tpx(t, 2);
-    app_icon(t, cr, (xd_rect){ix, cap.y + (cap_h - icon) / 2, icon, icon});
-
-    int tx = ix + icon + xd_tpx(t, 3);
-    xd_rect text = {tx, cap.y, bx - tx - xd_tpx(t, 2), cap_h};
+    app_icon(t, cr, l.icon);
     xd_text_style st = xd_text(t, XD_FONT_CAPTION,
                                xd_sys(t, f->active ? XD_COLOR_TITLE_TEXT
                                                    : XD_COLOR_INACTIVE_TITLE_TEXT),
                                XD_ALIGN_START);
-    xd_draw_text(cr, text, f->title, &st);
+    xd_draw_text(cr, l.title, f->title, &st);
 }
 
 static xd_rgba classic_dialog_color(const xd_theme *t) {
@@ -326,6 +335,7 @@ static void classic_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const c
 const xd_style_ops xd_style_classic = {
     .name = "Classic",
     .frame_insets = classic_frame_insets,
+    .frame_layout = classic_frame_layout,
     .draw_frame = classic_draw_frame,
     .dialog_color = classic_dialog_color,
     .draw_button = classic_draw_button,

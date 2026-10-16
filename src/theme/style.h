@@ -9,6 +9,8 @@
 typedef struct xd_style_ops {
     const char *name;
     xd_insets (*frame_insets)(const xd_theme *t, const xd_frame *f);
+    void (*frame_layout)(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                         xd_frame_layout *out);
     void (*draw_frame)(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f);
     xd_rgba (*dialog_color)(const xd_theme *t);
     void (*draw_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
@@ -43,6 +45,9 @@ typedef enum xd_glyph {
 } xd_glyph;
 void xd_draw_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, xd_glyph g, xd_rgba color,
                    double weight);
+
+void xd_layout_add_button(xd_frame_layout *l, xd_rect r, xd_frame_part part);
+xd_glyph xd_glyph_for_part(xd_frame_part part, bool maximized);
 
 /* Win2000 "flag" logo used on the Classic/Whistler start buttons. */
 void xd_draw_start_flag(cairo_t *cr, xd_rect r);

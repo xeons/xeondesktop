@@ -54,19 +54,61 @@ typedef enum xd_widget_state : uint8_t {
     XD_STATE_CHECKED = 1u << 5,
 } xd_widget_state;
 
+/* Parts of a window frame, as returned by hit testing (WM_NCHITTEST). */
+typedef enum xd_frame_part : uint8_t {
+    XD_PART_NONE,
+    XD_PART_CLIENT,
+    XD_PART_CAPTION,
+    XD_PART_SYSMENU, /* the caption icon */
+    XD_PART_CLOSE,
+    XD_PART_MAXIMIZE,
+    XD_PART_MINIMIZE,
+    XD_PART_HELP,
+    XD_PART_TOP,
+    XD_PART_BOTTOM,
+    XD_PART_LEFT,
+    XD_PART_RIGHT,
+    XD_PART_TOP_LEFT,
+    XD_PART_TOP_RIGHT,
+    XD_PART_BOTTOM_LEFT,
+    XD_PART_BOTTOM_RIGHT,
+} xd_frame_part;
+
+bool xd_frame_part_is_button(xd_frame_part p);
+bool xd_frame_part_is_border(xd_frame_part p);
+
 typedef struct xd_frame {
     const char *title;
     bool active;
     bool maximized;
-    uint8_t buttons; /* xd_caption_buttons */
+    uint8_t buttons;      /* xd_caption_buttons */
+    xd_frame_part hot;     /* caption button under the pointer, or NONE */
+    xd_frame_part pressed; /* caption button held down, or NONE */
 } xd_frame;
 
 typedef struct xd_insets {
     int left, top, right, bottom;
 } xd_insets;
 
+#define XD_FRAME_MAX_BUTTONS 4
+
+/* Where each piece of the frame goes, in device px. */
+typedef struct xd_frame_layout {
+    xd_rect caption;
+    xd_rect icon;
+    xd_rect title;
+    size_t button_count;
+    xd_rect button_rects[XD_FRAME_MAX_BUTTONS];
+    xd_frame_part button_parts[XD_FRAME_MAX_BUTTONS];
+} xd_frame_layout;
+
 /* Space taken by the non-client frame (borders + caption), in device px. */
 xd_insets xd_theme_frame_insets(const xd_theme *t, const xd_frame *f);
+void xd_theme_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                           xd_frame_layout *out);
+/* Which part of a frame drawn at `outer` the device-px point (x, y) is on. */
+xd_frame_part xd_theme_frame_hit(const xd_theme *t, xd_rect outer, const xd_frame *f, int x,
+                                 int y);
 void xd_theme_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f);
 /* Background colour for dialog client areas. */
 xd_rgba xd_theme_dialog_color(const xd_theme *t);

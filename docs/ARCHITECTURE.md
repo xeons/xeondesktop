@@ -160,8 +160,11 @@ D-Bus services. Nothing runs setuid.
 1. Foundations + theme engine (done): core lib, scheme files, Classic /
    Luna / Whistler frames, buttons, check boxes, taskbar pieces, DPI scaling,
    tests, `xd-themeview`.
-2. Compositor: wlroots 0.20 scene graph, xdg-shell, server-side decorations
-   from libxdtheme, move/resize, focus, per-output scale.
+2. Compositor (in progress): wlroots 0.20 scene graph, xdg-shell, forced
+   server-side decorations drawn by libxdtheme at each output's scale,
+   move/resize, caption buttons, focus, Alt+Tab, cascade placement,
+   maximize/minimize, per-output DPI scale. Still to do: window menu,
+   fullscreen, keyboard layout settings, output hotplug rearrangement.
 3. Shell: taskbar, Start menu (2000 layout first), Quick Launch, clock.
 4. `libxdui` widget toolkit, then Display Properties.
 5. Start menu XP and 7 layouts, grouping, tray (SNI).

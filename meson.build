@@ -112,6 +112,23 @@ theme_dep = declare_dependency(
   dependencies: [core_dep, cairo_dep, pango_dep, m_dep],
 )
 
+wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
+wayland_server_dep = dependency('wayland-server', include_type: 'system')
+xkbcommon_dep = dependency('xkbcommon', include_type: 'system')
+libdrm_dep = dependency('libdrm', include_type: 'system').partial_dependency(compile_args: true)
+
+executable(
+  'xd-compositor',
+  'src/compositor/main.c',
+  'src/compositor/output.c',
+  'src/compositor/input.c',
+  'src/compositor/view.c',
+  'src/compositor/frame.c',
+  dependencies: [theme_dep, wlroots_dep, wayland_server_dep, xkbcommon_dep, libdrm_dep],
+  c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE'],
+  install: true,
+)
+
 executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep])
 
 test_exe = executable(

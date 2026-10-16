@@ -60,6 +60,8 @@ static void fill_path_stops(cairo_t *cr, xd_rect r, const stops *s) {
 }
 
 static const modern_palette *pal(const xd_theme *t);
+static void modern_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                                xd_frame_layout *l);
 
 static xd_insets modern_frame_insets(const xd_theme *t, const xd_frame *f) {
     const modern_palette *m = pal(t);
@@ -114,44 +116,34 @@ static void modern_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
     }
     cairo_restore(cr);
 
-    /* Caption buttons: square, rounded, white-bordered. */
-    int bs = xd_tpx(t, 21);
-    int by = cap.y + (cap.h - bs) / 2 + xd_tpx(t, 1);
-    int bx = cap.x + cap.w - in.right - xd_tpx(t, 2);
-    int gap = xd_tpx(t, 2);
+    xd_frame_layout l;
+    xd_theme_frame_layout(t, outer, f, &l);
     double alpha = f->active ? 1.0 : 0.6;
 
-    struct {
-        uint8_t flag;
-        xd_glyph glyph;
-        const stops *face;
-    } buttons[] = {
-        {XD_CAPBTN_CLOSE, XD_GLYPH_CLOSE, &m->capbtn_close},
-        {XD_CAPBTN_MAXIMIZE, f->maximized ? XD_GLYPH_RESTORE : XD_GLYPH_MAXIMIZE, &m->capbtn},
-        {XD_CAPBTN_MINIMIZE, XD_GLYPH_MINIMIZE, &m->capbtn},
-        {XD_CAPBTN_HELP, XD_GLYPH_HELP, &m->capbtn},
-    };
-    for (size_t i = 0; i < XD_ARRAY_LEN(buttons); i++) {
-        if (!(f->buttons & buttons[i].flag))
-            continue;
-        bx -= bs;
-        xd_rect b = {bx, by, bs, bs};
+    for (size_t i = 0; i < l.button_count; i++) {
+        xd_frame_part part = l.button_parts[i];
+        xd_rect b = l.button_rects[i];
+        bool hot = f->hot == part;
+        bool pressed = hot && f->pressed == part;
         cairo_push_group(cr);
-        rounded_button(t, cr, b, buttons[i].face, m->capbtn_border, false);
-        xd_draw_glyph(t, cr, xd_rect_inset(b, xd_tpx(t, 5), xd_tpx(t, 5)), buttons[i].glyph,
-                      xd_rgba_hex(m->capbtn_glyph), 1.4);
+        rounded_button(t, cr, b, part == XD_PART_CLOSE ? &m->capbtn_close : &m->capbtn,
+                       m->capbtn_border, pressed);
+        if (hot && !pressed) {
+            double rad = xd_tpx(t, 3);
+            xd_path_rounded(cr, b.x, b.y, b.w, b.h, rad, rad, rad, rad);
+            xd_set_color(cr, xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.25));
+            cairo_fill(cr);
+        }
+        xd_draw_glyph(t, cr, xd_rect_inset(b, xd_tpx(t, 5), xd_tpx(t, 5)),
+                      xd_glyph_for_part(part, f->maximized), xd_rgba_hex(m->capbtn_glyph), 1.4);
         cairo_pop_group_to_source(cr);
         cairo_paint_with_alpha(cr, alpha);
-        bx -= gap;
     }
 
-    int icon = xd_tpx(t, 16);
-    int ix = cap.x + in.left + xd_tpx(t, 3);
-    int iy = cap.y + (cap.h - icon) / 2 + xd_tpx(t, 1);
-    xd_fill_rect(cr, (xd_rect){ix, iy, icon, icon}, xd_rgba_hex(0xFFFFFF));
-    xd_fill_rect(cr, (xd_rect){ix, iy, icon, xd_tpx(t, 4)}, xd_rgba_hex(0x2D63D8));
+    xd_rect ic = l.icon;
+    xd_fill_rect(cr, ic, xd_rgba_hex(0xFFFFFF));
+    xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, xd_rgba_hex(0x2D63D8));
 
-    int tx = ix + icon + xd_tpx(t, 4);
     xd_text_style st = {
         .font = &m->title_font,
         .scale = t->scale,
@@ -161,7 +153,40 @@ static void modern_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
         .shadow = f->active && m->title_shadow != m->title_active,
         .shadow_color = xd_rgba_hex(m->title_shadow),
     };
-    xd_draw_text(cr, (xd_rect){tx, cap.y + xd_tpx(t, 1), bx - tx, cap.h}, f->title, &st);
+    xd_draw_text(cr, l.title, f->title, &st);
+}
+
+static void modern_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                                xd_frame_layout *l) {
+    xd_insets in = modern_frame_insets(t, f);
+    l->caption = (xd_rect){outer.x, outer.y, outer.w, in.top};
+
+    int bs = xd_tpx(t, 21);
+    int by = outer.y + (in.top - bs) / 2 + xd_tpx(t, 1);
+    int bx = outer.x + outer.w - in.right - xd_tpx(t, 2);
+    int gap = xd_tpx(t, 2);
+    static const struct {
+        uint8_t flag;
+        xd_frame_part part;
+    } order[] = {
+        {XD_CAPBTN_CLOSE, XD_PART_CLOSE},
+        {XD_CAPBTN_MAXIMIZE, XD_PART_MAXIMIZE},
+        {XD_CAPBTN_MINIMIZE, XD_PART_MINIMIZE},
+        {XD_CAPBTN_HELP, XD_PART_HELP},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(order); i++) {
+        if (!(f->buttons & order[i].flag))
+            continue;
+        bx -= bs;
+        xd_layout_add_button(l, (xd_rect){bx, by, bs, bs}, order[i].part);
+        bx -= gap;
+    }
+
+    int icon = xd_tpx(t, 16);
+    l->icon = (xd_rect){outer.x + in.left + xd_tpx(t, 3),
+                        outer.y + (in.top - icon) / 2 + xd_tpx(t, 1), icon, icon};
+    int tx = l->icon.x + icon + xd_tpx(t, 4);
+    l->title = (xd_rect){tx, outer.y + xd_tpx(t, 1), bx - tx, in.top};
 }
 
 static xd_rgba modern_dialog_color(const xd_theme *t) { return xd_rgba_hex(pal(t)->dialog); }
@@ -396,6 +421,7 @@ static const modern_palette *pal(const xd_theme *t) {
     const xd_style_ops sym = {                                                 \
         .name = label,                                                         \
         .frame_insets = modern_frame_insets,                                   \
+        .frame_layout = modern_frame_layout,                                   \
         .draw_frame = modern_draw_frame,                                       \
         .dialog_color = modern_dialog_color,                                   \
         .draw_button = modern_draw_button,                                     \

@@ -212,6 +212,50 @@ static void test_render(void) {
     cairo_surface_destroy(surf);
 }
 
+static void test_hit(void) {
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    static const double scales[] = {1.0, 1.25, 2.0};
+    for (size_t si = 0; si < XD_STYLE_COUNT; si++) {
+        for (size_t k = 0; k < XD_ARRAY_LEN(scales); k++) {
+            xd_theme t;
+            xd_theme_init(&t, (xd_visual_style)si, &scheme, scales[k]);
+            xd_rect outer = {10, 20, xd_tpx(&t, 300), xd_tpx(&t, 200)};
+            xd_frame f = {.title = "x", .active = true, .buttons = 0x07};
+            xd_insets in = xd_theme_frame_insets(&t, &f);
+
+            CHECK(xd_theme_frame_hit(&t, outer, &f, 0, 0) == XD_PART_NONE);
+            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w / 2,
+                                     outer.y + outer.h / 2) == XD_PART_CLIENT);
+            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x, outer.y) == XD_PART_TOP_LEFT);
+            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w - 1,
+                                     outer.y + outer.h - 1) == XD_PART_BOTTOM_RIGHT);
+            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w / 2,
+                                     outer.y + outer.h - 1) == XD_PART_BOTTOM);
+            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x, outer.y + outer.h / 2) ==
+                  XD_PART_LEFT);
+            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w / 2,
+                                     outer.y + in.top / 2 + xd_tpx(&t, 2)) == XD_PART_CAPTION);
+
+            /* Every laid-out button hit-tests to itself at its centre. */
+            xd_frame_layout l;
+            xd_theme_frame_layout(&t, outer, &f, &l);
+            CHECK(l.button_count == 3);
+            for (size_t i = 0; i < l.button_count; i++) {
+                xd_rect b = l.button_rects[i];
+                CHECK(xd_theme_frame_hit(&t, outer, &f, b.x + b.w / 2, b.y + b.h / 2) ==
+                      l.button_parts[i]);
+                /* Buttons sit inside the caption band. */
+                CHECK(b.y >= outer.y && b.y + b.h <= outer.y + in.top);
+            }
+
+            /* Maximized frames have no resize borders. */
+            f.maximized = true;
+            CHECK(!xd_frame_part_is_border(xd_theme_frame_hit(&t, outer, &f, outer.x, outer.y)));
+        }
+    }
+}
+
 static void test_px(void) {
     CHECK(xd_px(1.0, 1) == 1);
     CHECK(xd_px(1.25, 1) == 1);
@@ -230,6 +274,7 @@ int main(void) {
     test_shipped_schemes();
     test_px();
     test_render();
+    test_hit();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

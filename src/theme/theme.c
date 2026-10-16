@@ -40,8 +40,109 @@ void xd_theme_init(xd_theme *t, xd_visual_style style, const xd_scheme *scheme, 
 xd_insets xd_theme_frame_insets(const xd_theme *t, const xd_frame *f) {
     return ops(t)->frame_insets(t, f);
 }
+void xd_theme_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                           xd_frame_layout *out) {
+    *out = (xd_frame_layout){0};
+    ops(t)->frame_layout(t, outer, f, out);
+}
 void xd_theme_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f) {
     ops(t)->draw_frame(t, cr, outer, f);
+}
+
+bool xd_frame_part_is_button(xd_frame_part p) {
+    return p == XD_PART_CLOSE || p == XD_PART_MAXIMIZE || p == XD_PART_MINIMIZE ||
+           p == XD_PART_HELP;
+}
+
+bool xd_frame_part_is_border(xd_frame_part p) { return p >= XD_PART_TOP; }
+
+static bool rect_contains(xd_rect r, int x, int y) {
+    return x >= r.x && y >= r.y && x - r.x < r.w && y - r.y < r.h;
+}
+
+xd_frame_part xd_theme_frame_hit(const xd_theme *t, xd_rect outer, const xd_frame *f, int x,
+                                 int y) {
+    if (!rect_contains(outer, x, y))
+        return XD_PART_NONE;
+
+    xd_frame_layout l;
+    xd_theme_frame_layout(t, outer, f, &l);
+    for (size_t i = 0; i < l.button_count; i++) {
+        if (rect_contains(l.button_rects[i], x, y))
+            return l.button_parts[i];
+    }
+
+    xd_insets in = xd_theme_frame_insets(t, f);
+    if (!f->maximized) {
+        /* Edges are at least 4 logical px wide even with thin borders, and
+         * the corner zones extend along each edge like Windows' do. */
+        int edge = XD_MAX(in.left, xd_tpx(t, 4));
+        int corner = xd_tpx(t, 16);
+        bool left = x < outer.x + edge;
+        bool right = x >= outer.x + outer.w - edge;
+        bool top = y < outer.y + edge;
+        bool bottom = y >= outer.y + outer.h - edge;
+        bool near_left = x < outer.x + corner;
+        bool near_right = x >= outer.x + outer.w - corner;
+        bool near_top = y < outer.y + corner;
+        bool near_bottom = y >= outer.y + outer.h - corner;
+
+        if ((top && near_left) || (left && near_top))
+            return XD_PART_TOP_LEFT;
+        if ((top && near_right) || (right && near_top))
+            return XD_PART_TOP_RIGHT;
+        if ((bottom && near_left) || (left && near_bottom))
+            return XD_PART_BOTTOM_LEFT;
+        if ((bottom && near_right) || (right && near_bottom))
+            return XD_PART_BOTTOM_RIGHT;
+        if (top)
+            return XD_PART_TOP;
+        if (bottom)
+            return XD_PART_BOTTOM;
+        if (left)
+            return XD_PART_LEFT;
+        if (right)
+            return XD_PART_RIGHT;
+    }
+    if (rect_contains(l.icon, x, y))
+        return XD_PART_SYSMENU;
+    if (y < outer.y + in.top)
+        return XD_PART_CAPTION;
+    return XD_PART_CLIENT;
+}
+
+void xd_layout_add_button(xd_frame_layout *l, xd_rect r, xd_frame_part part) {
+    XD_ASSERT(l->button_count < XD_FRAME_MAX_BUTTONS);
+    l->button_rects[l->button_count] = r;
+    l->button_parts[l->button_count] = part;
+    l->button_count++;
+}
+
+xd_glyph xd_glyph_for_part(xd_frame_part part, bool maximized) {
+    switch (part) {
+    case XD_PART_CLOSE:
+        return XD_GLYPH_CLOSE;
+    case XD_PART_MAXIMIZE:
+        return maximized ? XD_GLYPH_RESTORE : XD_GLYPH_MAXIMIZE;
+    case XD_PART_MINIMIZE:
+        return XD_GLYPH_MINIMIZE;
+    case XD_PART_HELP:
+        return XD_GLYPH_HELP;
+    case XD_PART_NONE:
+    case XD_PART_CLIENT:
+    case XD_PART_CAPTION:
+    case XD_PART_SYSMENU:
+    case XD_PART_TOP:
+    case XD_PART_BOTTOM:
+    case XD_PART_LEFT:
+    case XD_PART_RIGHT:
+    case XD_PART_TOP_LEFT:
+    case XD_PART_TOP_RIGHT:
+    case XD_PART_BOTTOM_LEFT:
+    case XD_PART_BOTTOM_RIGHT:
+        break;
+    }
+    XD_PANIC("frame part has no glyph");
 }
 xd_rgba xd_theme_dialog_color(const xd_theme *t) { return ops(t)->dialog_color(t); }
 void xd_theme_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
