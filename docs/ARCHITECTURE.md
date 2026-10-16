@@ -294,6 +294,11 @@ Applets that make sense on Linux:
    to do: drag and drop onto Quick Launch, tooltips, GTK3 theme generation.
    Windows 7 Start menu (done, see below) and Taskbar and Start Menu
    Properties (`xd-taskbar`).
-6. `libxdfolder`, `xd-files` (GTK3), `xd-thumbnailer`, desktop icons.
+6. `libxdfolder`, `xd-files` (GTK3), `xd-thumbnailer`, desktop icons. In
+   progress: `xd-files` with the folder view (five views, thumbnail slider,
+   sorting, selection, keyboard navigation, live updates), Folders tree,
+   address bar and history. Still to do: `xd-thumbnailer`, file operations
+   and the clipboard, rename, context menus, Properties, search, desktop
+   icons, and the GTK3 theme generated from our schemes.
 7. Start menu XP and 7 layouts, grouping, tray (SNI).
 8. Remaining Control Panel applets (GTK3), roughly in table order.

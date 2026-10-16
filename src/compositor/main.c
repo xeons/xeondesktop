@@ -161,10 +161,32 @@ static void server_finish(xd_server *server) {
     server->terminating = true;
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
+    /* wlroots asserts that nothing still listens to an object it
+     * destroys, so detach every server-level listener first. */
+    struct wl_listener *listeners[] = {
+        &server->new_output,          &server->layout_change,
+        &server->new_toplevel,        &server->new_popup,
+        &server->new_decoration,      &server->new_layer_surface,
+        &server->cursor_motion,       &server->cursor_motion_absolute,
+        &server->cursor_button,       &server->cursor_axis,
+        &server->cursor_frame,        &server->request_cursor_shape,
+        &server->new_input,           &server->request_cursor,
+        &server->request_set_selection, &server->new_virtual_keyboard,
+        &server->new_virtual_pointer,
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(listeners); i++)
+        xd_unlisten(listeners[i]);
     if (server->sigchld != nullptr)
         wl_event_source_remove(server->sigchld);
-    if (server->scene != nullptr)
+    if (server->scene != nullptr) {
+        /* Destroying the scene frees every node in it, including each
+         * output's background; outputs are destroyed later with the
+         * backend and must not touch those nodes again. */
+        XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+            out->background = nullptr;
+        }
         wlr_scene_node_destroy(&server->scene->tree.node);
+    }
     if (server->xcursor != nullptr)
         wlr_xcursor_manager_destroy(server->xcursor);
     if (server->cursor != nullptr)

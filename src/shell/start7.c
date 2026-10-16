@@ -920,12 +920,12 @@ static void run_command(xd_start7 *m, const char *command) {
     xd_free(cmd);
 }
 
-static const char *folder_command(const char *xdg_name, const char *fallback) {
-    static char buf[256];
-    snprintf(buf, sizeof(buf),
-             "xdg-open \"$(xdg-user-dir %s 2>/dev/null || echo \"$HOME/%s\")\"", xdg_name,
-             fallback);
-    return buf;
+/* Opens a user folder (XDG user dir, else ~/fallback) in xd-files. */
+static const char *folder_command(xd_shell *shell, const char *xdg_name, const char *fallback) {
+    char arg[160];
+    snprintf(arg, sizeof(arg), "\"$(xdg-user-dir %s 2>/dev/null || echo \"$HOME/%s\")\"",
+             xdg_name, fallback);
+    return xd_shell_own_command(shell, "xd-files", arg);
 }
 
 /* Activates a left row or right target. May free `m`. */
@@ -948,19 +948,19 @@ static void activate_right(xd_start7 *m, int hit) {
     xd_shell *shell = m->shell;
     switch (hit) {
     case R_USER:
-        run_command(m, "xdg-open \"$HOME\"");
+        run_command(m, xd_shell_own_command(shell, "xd-files", "\"$HOME\""));
         return;
     case R_DOCUMENTS:
-        run_command(m, folder_command("DOCUMENTS", "Documents"));
+        run_command(m, folder_command(shell, "DOCUMENTS", "Documents"));
         return;
     case R_PICTURES:
-        run_command(m, folder_command("PICTURES", "Pictures"));
+        run_command(m, folder_command(shell, "PICTURES", "Pictures"));
         return;
     case R_MUSIC:
-        run_command(m, folder_command("MUSIC", "Music"));
+        run_command(m, folder_command(shell, "MUSIC", "Music"));
         return;
     case R_COMPUTER:
-        run_command(m, "xdg-open /");
+        run_command(m, xd_shell_own_command(shell, "xd-files", "/"));
         return;
     case R_RUN:
         run_command(m, xd_shell_own_command(shell, "xd-run", nullptr));

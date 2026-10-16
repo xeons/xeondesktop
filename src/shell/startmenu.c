@@ -109,10 +109,11 @@ void xd_start_menu_build(xd_shell *shell) {
     docs->submenu = xd_menu_model_new(tree);
     xd_menu_item *mydocs =
         xd_menu_add(tree, docs->submenu, XD_MENU_ACTION, "My Documents", "folder-documents");
-    mydocs->command = "xdg-open \"${XDG_DOCUMENTS_DIR:-$HOME/Documents}\"";
+    mydocs->command = xd_shell_own_command(
+        shell, "xd-files", "\"$(xdg-user-dir DOCUMENTS 2>/dev/null || echo \"$HOME/Documents\")\"");
     xd_menu_item *home = xd_menu_add(tree, docs->submenu, XD_MENU_ACTION, "Home Folder",
                                      "user-home");
-    home->command = "xdg-open \"$HOME\"";
+    home->command = xd_shell_own_command(shell, "xd-files", "\"$HOME\"");
 
     /* Not implemented yet: shown, but greyed out like unavailable items in
      * Windows. They light up as Control Panel and Help land. */

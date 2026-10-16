@@ -89,6 +89,17 @@ yet. Apply writes `~/.config/xeondesktop/desktop.ini`, which the compositor
 and shell watch, so changes show up immediately everywhere. Command-line
 `--style`/`--scheme` override the file until it next changes.
 
+### File manager
+
+`xd-files [--view=thumbnails|tiles|icons|list|details] [FOLDER]` is the
+Explorer window: menu bar, Back/Forward/Up, the Folders tree, an address bar,
+and the five Windows XP views with a thumbnail size slider. The folder view
+(`src/files/folderview.c`) is our own GTK3 widget that only lays out and draws
+what's visible. Folders update live; double-click or Enter opens files with
+their default application. Start menu folder items open it. Thumbnails shown
+are the ones already in the freedesktop cache; generating new ones, file
+operations (copy, move, delete, rename) and the matching GTK theme come next.
+
 ### Run and Shut Down
 
 - `xd-run`: opens programs, folders, documents and URLs; remembers the last

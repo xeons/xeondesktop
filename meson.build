@@ -270,6 +270,20 @@ executable(
   install: true,
 )
 
+# xd-files: the file manager (GTK3), with the folder view (libxdfolder).
+folder_lib = static_library(
+  'xdfolder',
+  'src/files/folderview.c',
+  dependencies: [core_dep, gtk_dep, m_dep],
+)
+executable(
+  'xd-files',
+  'src/files/main.c',
+  link_with: folder_lib,
+  dependencies: [core_dep, gtk_dep, m_dep],
+  install: true,
+)
+
 executable(
   'xd-shell',
   'src/shell/main.c',
