@@ -35,6 +35,12 @@ static void on_quick_launch(xd_widget *w, void *user) {
     changed(p);
 }
 
+static void on_lock(xd_widget *w, void *user) {
+    props *p = user;
+    p->pending.locked = xd_checkbox_checked(w);
+    changed(p);
+}
+
 static void on_style(xd_widget *w, void *user) {
     props *p = user;
     int i = xd_widget_selected(w);
@@ -95,9 +101,9 @@ int main(int argc, char **argv) {
     xd_widget *ql = xd_checkbox(p.win, (xd_rect){32, 62, 300, 20}, "Show Quick Launch",
                                 p.pending.quick_launch, on_quick_launch, &p);
     xd_widget_set_page(ql, 0);
-    disabled(xd_checkbox(p.win, (xd_rect){32, 86, 300, 20}, "Lock the taskbar", false, nullptr,
-                         nullptr),
-             0);
+    xd_widget *lock = xd_checkbox(p.win, (xd_rect){32, 86, 300, 20}, "Lock the taskbar",
+                                  p.pending.locked, on_lock, &p);
+    xd_widget_set_page(lock, 0);
     disabled(xd_checkbox(p.win, (xd_rect){32, 110, 300, 20}, "Auto-hide the taskbar", false,
                          nullptr, nullptr),
              0);

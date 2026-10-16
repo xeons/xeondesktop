@@ -66,9 +66,21 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 - [ ] Tray / notification area (StatusNotifierItem), volume, network,
       battery; only the clock exists. No clock tooltip or calendar.
-- [ ] Task buttons: no window icons, no right-click menu, no grouping, no
+- [ ] Task buttons: no window icons, no grouping, no
       tooltips; overflow is clipped instead of wrapping or scrolling.
-- [ ] Taskbar options: auto-hide, lock, always on top, primary-only taskbar.
+- [ ] Taskbar options: auto-hide, always on top, primary-only taskbar (Lock
+      the Taskbar works: it hides the toolbar grips).
+- [~] Right-click menus (XP): the taskbar's (Toolbars ▸ Quick Launch, Cascade,
+      Tile Horizontally/Vertically and Undo, Show the Desktop, Task Manager,
+      Lock the Taskbar, Properties) and a task button's window menu
+      (Restore, Minimize, Maximize, Close; the default in bold). Not yet:
+      Move and Size (keyboard move/size in the compositor), the Address,
+      Links, Desktop and New Toolbar toolbars, the Start button's own menu
+      (Open, Explore, Search), Quick Launch's menu and the clock's (Adjust
+      Date/Time). Tested: the taskbar menu, Tile Vertically, Undo Tile
+      showing up, Minimize and the minimized window's menu. Untested:
+      Cascade, Tile Horizontally, Undo itself, Lock toggling, Restore,
+      Maximize, Close from the menu, several monitors.
 - [ ] Quick Launch: tooltips, drag and drop to add and reorder.
 - [ ] Desktop icons.
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
@@ -185,8 +197,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       timeouts.
 - [ ] Options > Always On Top (no Wayland protocol yet) and Hide When
       Minimized (needs the tray, which would also show the CPU meter).
-- [ ] Windows menu: Tile Horizontally/Vertically and Cascade.
-- [ ] Taskbar right-click > Task Manager (the taskbar has no menu yet).
+- [ ] Windows menu: Tile Horizontally/Vertically and Cascade (the compositor
+      can do it now through xd-window-arranger-v1, but only for the shell).
 - [ ] Window icons only resolve for apps with an installed .desktop file
       matching their app ID; ours are installed by `meson install`.
 - [ ] Handles has no Linux equivalent; Open Files is shown instead, and is

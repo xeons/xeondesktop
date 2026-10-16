@@ -66,8 +66,14 @@ static void layout(xd_menu *menu) {
     cairo_t *cr = cairo_create(scratch);
     int text_w = 0;
     for (size_t i = 0; i < m->count; i++) {
-        if (m->items[i].kind != XD_MENU_SEPARATOR)
-            text_w = XD_MAX(text_w, xd_theme_menu_text_width(&t, cr, m->items[i].label));
+        const xd_menu_item *it = &m->items[i];
+        if (it->kind == XD_MENU_SEPARATOR)
+            continue;
+        int w = it->bold ? xd_theme_menu_bold_text_width(&t, cr, it->label)
+                         : xd_theme_menu_text_width(&t, cr, it->label);
+        if (it->accel != nullptr)
+            w += xd_theme_menu_text_width(&t, cr, it->accel) + 24;
+        text_w = XD_MAX(text_w, w);
     }
     cairo_destroy(cr);
     cairo_surface_destroy(scratch);
@@ -122,6 +128,11 @@ static xd_rect to_device(int x, int y, int w, int h, double s) {
 
 static void draw_icon(xd_shell *shell, cairo_t *cr, const xd_menu_item *it, xd_rect r,
                       bool disabled) {
+    /* Items without any icon (taskbar and window menus) leave the column
+     * empty, or to their check mark or glyph. */
+    if ((it->icon == nullptr && it->fallback_icon == nullptr && it->app == nullptr) ||
+        it->checked || it->glyph != XD_MENU_GLYPH_NONE)
+        return;
     const char *names[] = {it->icon, it->fallback_icon, "application-x-executable"};
     cairo_surface_t *icon = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), r.w);
     if (icon == nullptr)
@@ -172,8 +183,10 @@ static void render(xd_menu *menu) {
             state |= XD_STATE_HOT;
         if (it->disabled)
             state |= XD_STATE_DISABLED;
-        xd_theme_draw_menu_item(&t, cr, r, state, it->label, it->kind == XD_MENU_SUBMENU,
-                                m->large);
+        xd_menu_item_extras extras = {
+            .bold = it->bold, .checked = it->checked, .glyph = it->glyph, .accel = it->accel};
+        xd_theme_draw_menu_item_ex(&t, cr, r, state, it->label, it->kind == XD_MENU_SUBMENU,
+                                   m->large, &extras);
         int icon = m->large ? mm.large_icon : mm.icon;
         draw_icon(shell, cr, it, (xd_rect){r.x + mm.icon_x, r.y + (r.h - icon) / 2, icon, icon},
                   it->disabled);
@@ -492,7 +505,13 @@ static void activate(xd_menu *menu, int index) {
         xd_menu_open_child(menu, index);
         return;
     }
-    if (it->kind == XD_MENU_ACTION && it->app != nullptr) {
+    if (it->kind == XD_MENU_ACTION && it->action != nullptr) {
+        void (*fn)(xd_shell *, void *) = it->action;
+        void *data = it->action_data;
+        xd_shell *shell = menu->shell;
+        xd_menu_close_all(shell); /* frees `it` */
+        fn(shell, data);
+    } else if (it->kind == XD_MENU_ACTION && it->app != nullptr) {
         const xd_app *app = it->app; /* owned by shell->apps, outlives the menu */
         xd_menu_close_all(menu->shell);   /* frees `it` */
         if (xd_app_launch(app))

@@ -316,6 +316,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
                          xd_str_from_cstr(zwlr_foreign_toplevel_manager_v1_interface.name))) {
         shell->toplevel_manager =
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
+    } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
+        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 1);
     } else if (xd_str_eq(iface,
                          xd_str_from_cstr(wp_fractional_scale_manager_v1_interface.name))) {
         shell->fractional_manager =
@@ -376,6 +378,7 @@ void xd_shell_launch([[maybe_unused]] xd_shell *shell, const char *command) {
 void xd_shell_start_menu_closed(xd_shell *shell) {
     xd_taskbar *bar = shell->start_bar;
     shell->start_bar = nullptr;
+    shell->context_menu = false;
     if (bar == nullptr)
         return;
     zwlr_layer_surface_v1_set_keyboard_interactivity(
@@ -624,6 +627,8 @@ int main(int argc, char **argv) {
     xd_quicklaunch_init(&shell);
     xd_apps_load(&shell.apps);
     xd_menu_tree_init(&shell.menu_tree);
+    xd_menu_tree_init(&shell.context_tree);
+    shell.last_arrange = -1;
     xd_start_menu_build(&shell);
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
 
@@ -659,6 +664,7 @@ int main(int argc, char **argv) {
         xd_free(t);
     }
     xd_menu_tree_free(&shell.menu_tree);
+    xd_menu_tree_free(&shell.context_tree);
     xd_apps_free(&shell.apps);
     xd_quicklaunch_finish(&shell);
     xd_free(shell.desktop_hidden);

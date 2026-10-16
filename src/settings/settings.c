@@ -33,6 +33,7 @@ void xd_settings_defaults(xd_settings *s) {
         .menu_transitions = true,
         .full_window_drag = true,
         .quick_launch = true,
+        .locked = true,
         .screensaver_wait = 15,
     };
 }
@@ -107,6 +108,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     } else if (SEC("Taskbar")) {
         if (KEY("QuickLaunch"))
             parse_bool(v, &s->quick_launch);
+        else if (KEY("Locked"))
+            parse_bool(v, &s->locked);
     } else if (SEC("StartMenu")) {
         if (KEY("Style")) {
             int i = index_of(start_style_names, XD_ARRAY_LEN(start_style_names), v);
@@ -205,6 +208,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Effects", "LargeIcons", s->large_icons);
     g_key_file_set_boolean(kf, "Effects", "HideKeyboardCues", s->hide_keyboard_cues);
     g_key_file_set_boolean(kf, "Taskbar", "QuickLaunch", s->quick_launch);
+    g_key_file_set_boolean(kf, "Taskbar", "Locked", s->locked);
     g_key_file_set_string(kf, "StartMenu", "Style", start_style_names[s->start_style]);
     g_key_file_set_string(kf, "ScreenSaver", "Name", s->screensaver);
     g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);

@@ -76,6 +76,16 @@ Start > Settings > Taskbar & Start Menu picks the layout:
   offers Log off, Restart, Sleep and Hibernate. In Luna the right column is
   the dark panel (opaque until the compositor can blur behind it).
 
+### Taskbar menus
+
+Right-clicking the taskbar opens Windows XP's taskbar menu: Toolbars ▸ Quick
+Launch, Cascade Windows, Tile Windows Horizontally/Vertically (with Undo),
+Show the Desktop, Task Manager, Lock the Taskbar and Properties. Arranging
+windows goes through `xd-window-arranger-v1`, a private protocol the
+compositor offers only to the shell it started. Right-clicking a task
+button opens the window menu: Restore, Move, Size, Minimize, Maximize and
+Close (Move and Size aren't available yet).
+
 ### Quick Launch
 
 The icons next to Start are the shortcuts in

@@ -95,6 +95,7 @@ typedef struct xd_taskbar {
     xd_toplevel **task_views;
 
     int hot;     /* XD_HIT_* or a task index */
+    double pointer_x, pointer_y; /* last pointer position, logical */
     int pressed; /* same, while a button is held */
 } xd_taskbar;
 
@@ -136,6 +137,10 @@ struct xd_shell {
     xd_icons *icons;
     xd_app_list apps;
     xd_menu_tree menu_tree;
+    xd_menu_tree context_tree; /* the open right-click menu's models */
+    bool context_menu;         /* the open root menu is a right-click menu */
+    struct xd_window_arranger_v1 *arranger; /* Cascade/Tile (nullptr: not offered) */
+    int last_arrange;          /* mode of the last Cascade/Tile, -1 if undone */
     xd_menu_model *start_model;
     xd_menu *start_menu;    /* open root menu (2000 style), or nullptr */
     xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
@@ -174,6 +179,9 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
 void xd_taskbar_take_keyboard(xd_taskbar *bar);
 /* Opens the Start menu above this taskbar's Start button. */
 void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial);
+/* taskmenu.c: right-click menus (the taskbar's, or a task button's window
+ * menu when `hit` is a task index). x, y: logical, taskbar-local. */
+void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);
 /* Forget a window that's going away. */
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
 /* Drop hit-test layout after Quick Launch changed (indices shift). */

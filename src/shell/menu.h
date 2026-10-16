@@ -32,6 +32,13 @@ typedef struct xd_menu_item {
     xd_menu_model *submenu;    /* XD_MENU_SUBMENU */
     const char *command;       /* XD_MENU_ACTION: shell command line */
     const xd_app *app;         /* XD_MENU_ACTION: launch this app (instead of command) */
+    /* XD_MENU_ACTION: run in the shell instead (after the menus close). */
+    void (*action)(xd_shell *shell, void *data);
+    void *action_data;
+    bool checked;         /* check mark (toggles such as Lock the Taskbar) */
+    bool bold;            /* the default item */
+    xd_menu_glyph glyph;  /* window-menu glyph in the icon column */
+    const char *accel;    /* shortcut text, e.g. "Alt+F4" */
 } xd_menu_item;
 
 struct xd_menu_model {

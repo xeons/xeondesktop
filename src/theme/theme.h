@@ -160,6 +160,30 @@ void xd_theme_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r);
 void xd_theme_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                              const char *label, bool submenu, bool large);
 void xd_theme_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r);
+
+/* Window-menu glyphs, drawn in a menu item's icon column. */
+typedef enum xd_menu_glyph : uint8_t {
+    XD_MENU_GLYPH_NONE,
+    XD_MENU_GLYPH_RESTORE,
+    XD_MENU_GLYPH_MINIMIZE,
+    XD_MENU_GLYPH_MAXIMIZE,
+    XD_MENU_GLYPH_CLOSE,
+} xd_menu_glyph;
+
+typedef struct xd_menu_item_extras {
+    bool bold;          /* the default item */
+    bool checked;       /* check mark in the icon column */
+    xd_menu_glyph glyph;
+    const char *accel;  /* right-aligned shortcut, e.g. "Alt+F4"; may be nullptr */
+} xd_menu_item_extras;
+
+/* xd_theme_draw_menu_item with a bold default, check mark, glyph and
+ * shortcut text. */
+void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                const char *label, bool submenu, bool large,
+                                const xd_menu_item_extras *x);
+/* Width of a bold label (default items). */
+int xd_theme_menu_bold_text_width(const xd_theme *t, cairo_t *cr, const char *label);
 /* Vertical banner with text reading bottom to top, e.g. "XeonDesktop" in
  * bold followed by "Professional". */
 void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,

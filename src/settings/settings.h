@@ -52,6 +52,7 @@ typedef struct xd_settings {
 
     /* [Taskbar] */
     bool quick_launch;
+    bool locked; /* Lock the Taskbar: no toolbar grips */
 
     /* [StartMenu] */
     xd_start_style start_style;

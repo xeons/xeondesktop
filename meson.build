@@ -151,6 +151,7 @@ client_protocol_xml = {
   ),
   'wlr-virtual-pointer-unstable-v1': files('protocols/wlr-virtual-pointer-unstable-v1.xml'),
   'virtual-keyboard-unstable-v1': files('protocols/virtual-keyboard-unstable-v1.xml'),
+  'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
 }
 
 client_protocol_src = []
@@ -168,6 +169,23 @@ foreach name, xml : client_protocol_xml
     command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
   )
 endforeach
+
+# Our private protocol, server side (the compositor implements it).
+arranger_xml = files('protocols/xd-window-arranger-v1.xml')
+arranger_server_src = [
+  custom_target(
+    'xd-window-arranger-v1-server-header',
+    input: arranger_xml,
+    output: 'xd-window-arranger-v1-protocol.h',
+    command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+  ),
+  custom_target(
+    'xd-window-arranger-v1-server-code',
+    input: arranger_xml,
+    output: 'xd-window-arranger-v1-server-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  ),
+]
 
 # wlroots' layer-shell header includes the server header by this name.
 server_protocol_headers = [
@@ -200,7 +218,9 @@ executable(
   'src/compositor/input.c',
   'src/compositor/view.c',
   'src/compositor/frame.c',
+  'src/compositor/arrange.c',
   server_protocol_headers,
+  arranger_server_src,
   dependencies: [
     theme_dep,
     settings_dep,
@@ -324,6 +344,7 @@ executable(
   'src/shell/desktop.c',
   'src/shell/quicklaunch.c',
   'src/shell/start7.c',
+  'src/shell/taskmenu.c',
   'src/shell/recent.c',
   dependencies: [ui_dep, glib_dep, gio_unix_dep],
   c_args: ['-D_GNU_SOURCE'],

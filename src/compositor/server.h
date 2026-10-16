@@ -94,6 +94,9 @@ typedef struct xd_view {
     bool maximized;
     bool dialog; /* fixed size (min == max): dialog frame, no resizing */
     bool csd;    /* the client draws its own decorations: no frame from us */
+    /* Where the last Cascade/Tile found the window, for Undo. */
+    bool undo_valid, undo_maximized;
+    struct wlr_box undo_box;
     int x, y;               /* outer frame position, layout coordinates */
     struct wlr_box restore; /* outer box before maximizing */
 
@@ -233,6 +236,7 @@ struct xd_server {
 
     /* The shell is restarted if it crashes, like explorer.exe. */
     pid_t shell_pid;
+    struct wl_global *arranger; /* xd-window-arranger-v1, shell only */
     uint32_t shell_restarts;
     struct timespec shell_restart_window;
     bool terminating;
@@ -285,6 +289,9 @@ struct wlr_box xd_view_outer_box(const xd_view *view);
 xd_insets xd_view_insets(const xd_view *view);
 /* Re-reads whether the client asked to draw its own decorations. */
 void xd_view_update_decorations(xd_view *view);
+
+/* arrange.c: Cascade/Tile for the taskbar menu (shell-only protocol). */
+void xd_arrange_init(xd_server *server);
 /* Frame description for drawing and hit testing. */
 xd_frame xd_view_frame(const xd_view *view, bool active);
 /* Which part of the frame the layout point (lx, ly) is over. */

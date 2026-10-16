@@ -139,6 +139,7 @@ static bool server_init(xd_server *server) {
     xd_layers_init(server);
     xd_view_init(server);
     xd_input_init(server);
+    xd_arrange_init(server);
     if (server->config.virtual_input)
         xd_input_enable_virtual(server);
 

@@ -17,5 +17,6 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
+#include "xd-window-arranger-v1-client-protocol.h"
 
 #endif

@@ -96,7 +96,8 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     int sw = xd_theme_start_button_width(t, cr);
     bar->start_rect = (xd_rect){pad, inset_top, sw, button_h};
     uint8_t start_state = button_state(bar, XD_HIT_START);
-    if ((shell->start_menu != nullptr || shell->start7 != nullptr) && shell->start_bar == bar)
+    if ((shell->start_menu != nullptr || shell->start7 != nullptr) && shell->start_bar == bar &&
+        !shell->context_menu)
         start_state |= XD_STATE_PRESSED;
     xd_theme_draw_start_button(t, cr, bar->start_rect, start_state);
     int after_start = bar->start_rect.x + bar->start_rect.w + xd_tpx(t, 2);
@@ -110,10 +111,13 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
             bar->quick_rects = xd_realloc_array(bar->quick_rects, bar->quick_cap,
                                                 sizeof(*bar->quick_rects));
         }
-        int grip = xd_theme_toolbar_grip_width(t);
+        /* A locked taskbar has no grips, as in XP. */
+        bool locked = shell->settings.locked;
+        int grip = locked ? xd_tpx(t, 3) : xd_theme_toolbar_grip_width(t);
         int qy = classic ? inset_top : xd_tpx(t, 3);
         int qh = classic ? button_h : dh - xd_tpx(t, 6);
-        xd_theme_draw_toolbar_grip(t, cr, (xd_rect){after_start, qy, grip, qh});
+        if (!locked)
+            xd_theme_draw_toolbar_grip(t, cr, (xd_rect){after_start, qy, grip, qh});
         int qx = after_start + grip + xd_tpx(t, 1);
         int qw = xd_tpx(t, 23);
         int icon = xd_tpx(t, 16);
@@ -135,7 +139,8 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
             }
             qx += qw;
         }
-        xd_theme_draw_toolbar_grip(t, cr, (xd_rect){qx + xd_tpx(t, 2), qy, grip, qh});
+        if (!locked)
+            xd_theme_draw_toolbar_grip(t, cr, (xd_rect){qx + xd_tpx(t, 2), qy, grip, qh});
         after_start = qx + xd_tpx(t, 2) + grip;
     }
 
@@ -251,6 +256,8 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
 }
 
 void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
+    bar->pointer_x = x;
+    bar->pointer_y = y;
     int hot = hit_test(bar, x, y);
     if (hot != bar->hot) {
         bar->hot = hot;
@@ -292,8 +299,15 @@ void xd_taskbar_take_keyboard(xd_taskbar *bar) {
 
 void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                                uint32_t serial) {
+    if (button == BTN_RIGHT) {
+        /* Right-click: a task button's window menu, else the taskbar's
+         * menu (opened on release, like Windows). */
+        if (!pressed && bar->hot != XD_HIT_START)
+            xd_taskbar_context_menu(bar, bar->hot, bar->pointer_x, bar->pointer_y, serial);
+        return;
+    }
     if (button != BTN_LEFT)
-        return; /* right-click window menu comes with libxdui */
+        return;
     if (pressed) {
         bar->pressed = bar->hot;
         bar->dirty = true;

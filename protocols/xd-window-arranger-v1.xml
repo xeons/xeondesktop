@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="xd_window_arranger_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT
+  </copyright>
+  <description summary="XeonDesktop: arrange windows from the taskbar">
+    Private to XeonDesktop. The compositor only advertises this global to
+    the shell process it started, which uses it for the taskbar menu's
+    Cascade Windows, Tile Windows Horizontally/Vertically and their Undo.
+  </description>
+
+  <interface name="xd_window_arranger_v1" version="1">
+    <enum name="mode">
+      <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
+      <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
+      <entry name="tile_vertically" value="2" summary="side by side"/>
+    </enum>
+
+    <request name="arrange">
+      <description summary="arrange every visible window on each output">
+        Arranges the windows that aren't minimized within each output's
+        work area, remembering where they were for undo.
+      </description>
+      <arg name="mode" type="uint" enum="mode"/>
+    </request>
+
+    <request name="undo">
+      <description summary="put windows back where the last arrange found them"/>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+  </interface>
+</protocol>

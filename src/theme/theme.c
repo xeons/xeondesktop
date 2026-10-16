@@ -223,6 +223,12 @@ static void draw_submenu_arrow(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rgb
 
 void xd_theme_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                              const char *label, bool submenu, bool large) {
+    xd_theme_draw_menu_item_ex(t, cr, r, state, label, submenu, large, nullptr);
+}
+
+void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                const char *label, bool submenu, bool large,
+                                const xd_menu_item_extras *x) {
     xd_menu_palette p;
     ops(t)->menu_palette(t, &p);
     xd_menu_metrics m = xd_theme_menu_metrics(t);
@@ -246,10 +252,41 @@ void xd_theme_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t 
         xd_text_style emboss = xd_text(t, XD_FONT_MENU, p.disabled_emboss, XD_ALIGN_START);
         xd_draw_text(cr, (xd_rect){tr.x + px, tr.y + px, tr.w, tr.h}, label, &emboss);
     }
+    xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
+    bold.bold = true;
     xd_text_style st = xd_text(t, XD_FONT_MENU, text, XD_ALIGN_START);
+    if (x != nullptr && x->bold)
+        st.font = &bold;
+    if (x != nullptr && x->accel != nullptr) {
+        xd_text_style ac = xd_text(t, XD_FONT_MENU, text, XD_ALIGN_END);
+        xd_draw_text(cr, tr, x->accel, &ac);
+        tr.w -= xd_text_width(cr, x->accel, &ac) + xd_tpx(t, 12);
+    }
     xd_draw_text(cr, tr, label, &st);
     if (submenu)
         draw_submenu_arrow(t, cr, r, text);
+    if (x != nullptr && (x->checked || x->glyph != XD_MENU_GLYPH_NONE)) {
+        int box = xd_tpx(t, 16);
+        xd_rect ic = {r.x + m.icon_x, r.y + (r.h - box) / 2, box, box};
+        static const xd_glyph map[] = {
+            [XD_MENU_GLYPH_RESTORE] = XD_GLYPH_RESTORE,
+            [XD_MENU_GLYPH_MINIMIZE] = XD_GLYPH_MINIMIZE,
+            [XD_MENU_GLYPH_MAXIMIZE] = XD_GLYPH_MAXIMIZE,
+            [XD_MENU_GLYPH_CLOSE] = XD_GLYPH_CLOSE,
+        };
+        xd_glyph g = x->checked ? XD_GLYPH_CHECK : map[x->glyph];
+        /* Window glyphs are drawn small, as in a window menu. */
+        xd_rect gr = x->checked ? ic : xd_rect_inset(ic, xd_tpx(t, 3), xd_tpx(t, 3));
+        xd_draw_glyph(t, cr, gr, g, text, 1.0);
+    }
+}
+
+int xd_theme_menu_bold_text_width(const xd_theme *t, cairo_t *cr, const char *label) {
+    xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
+    bold.bold = true;
+    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_START);
+    st.font = &bold;
+    return xd_text_width(cr, label, &st);
 }
 
 void xd_theme_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r) {
