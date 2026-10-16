@@ -264,6 +264,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       by the compositor at start and on every appearance change. Our GTK
       apps reload it live. Covers buttons, entries, check/radio, menus,
       scroll bars, tabs, tree headers, panes, scales, tooltips, toolbars.
+- [x] XP push buttons (Luna, Watercolor): GTK uses the theme engine's own
+      button, saved as PNGs at 1x and 2x, as a nine-slice border image, so
+      GTK and libxdui buttons match. Compared with the XP screenshot: the
+      same 75x23 footprint (73x21 inside the glow), border, corners, face
+      gradient and text baseline; hover, pressed, default and disabled
+      states. Font sizes are rounded to whole pixels as GDI does (8pt =
+      11px). Left: FreeType draws Tahoma a pixel smaller in places than
+      Windows does (e.g. "OK" is 13x8 instead of 14x9).
 - [ ] Not yet styled: combo box pop-up lists, spin button arrows, info
       bars, switches, popovers (the Views menu), GtkFileChooser's sidebar
       and path bar, progress bar segments. Our GTK apps turn off dialog
@@ -326,12 +334,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       handling). Tested: every tab and dialog opens and shows the right
       data; adding a user environment variable. **Untested: renaming the
       computer, its description and changing the power profile** (they go
-      through polkit and need an authentication agent, which the session
-      doesn't start yet). Device Manager: no "by connection" view, no
+      through polkit; see the agent below). Device Manager: no "by connection" view, no
       disable/uninstall/update driver. User Profiles: Delete, Change Type
       and Copy To are greyed (administrator jobs).
-- [ ] A polkit authentication agent for the session (hostname changes,
-      power profiles, and later printers, network, users).
+- [~] **polkit authentication agent** (`xd-polkit`, started with the
+      session): an XP "Run As"-style password dialog (reason, which
+      administrator when several qualify, password, Details) checked by
+      polkit's own PAM helper; a wrong password can be retried. Tested
+      with `pkcheck` and `xd-polkit --process PID`: the dialog, a wrong
+      password, cancelling (reported as dismissed). **Untested: a correct
+      password, and registering for a real XeonDesktop login session**
+      (nested, the host desktop's agent owns the session, so ours exits).
+      Not restarted if it crashes.
 
 ## Testing
 

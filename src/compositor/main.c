@@ -280,10 +280,11 @@ int main(int argc, char **argv) {
     static xd_server server;
     server.config.style = XD_STYLE_CLASSIC;
     server.config.terminal = "alacritty";
-    static char shell_path[4096], taskmgr_path[4096], locker_path[4096];
+    static char shell_path[4096], taskmgr_path[4096], locker_path[4096], polkit_path[4096];
     server.config.shell = own_program("xd-shell", shell_path, sizeof(shell_path));
     server.config.taskmgr = own_program("xd-taskmgr", taskmgr_path, sizeof(taskmgr_path));
     server.config.locker = own_program("xd-lock", locker_path, sizeof(locker_path));
+    server.config.polkit = own_program("xd-polkit", polkit_path, sizeof(polkit_path));
     xd_scheme_init_default(&server.config.scheme);
 
     bool debug = false;
@@ -356,6 +357,10 @@ int main(int argc, char **argv) {
                                                      &server);
 
     xd_shell_start(&server);
+    /* Password prompts for administrator actions. In a nested session the
+     * host desktop's agent usually has the session already; ours then
+     * just exits. */
+    xd_spawn(&server, server.config.polkit);
     if (server.config.startup != nullptr)
         xd_spawn(&server, server.config.startup);
 

@@ -30,6 +30,43 @@ static bool write_file(const char *path, xd_str text, xd_strbuf *err) {
     return true;
 }
 
+/* Push buttons drawn by our own theme engine (the colours measured off
+ * Windows XP), saved for GTK's border-image so GTK buttons look exactly
+ * like ours. 75x23, Windows' dialog button, at 1x and 2x. */
+static const struct {
+    const char *name;
+    uint8_t state;
+} button_images[] = {
+    {"button", XD_STATE_NORMAL},           {"button-hot", XD_STATE_HOT},
+    {"button-pressed", XD_STATE_PRESSED},  {"button-default", XD_STATE_DEFAULT},
+    {"button-disabled", XD_STATE_DISABLED},
+};
+
+static bool write_button_png(xd_visual_style style, const xd_scheme *scheme, const char *dir,
+                             const char *name, uint8_t state, int scale, xd_strbuf *err) {
+    xd_theme t;
+    xd_theme_init(&t, style, scheme, scale);
+    int w = 75 * scale;
+    int h = 23 * scale;
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    cairo_t *cr = cairo_create(surf);
+    xd_theme_draw_button(&t, cr, (xd_rect){0, 0, w, h}, state, "");
+    cairo_destroy(cr);
+    char *file = scale == 1 ? g_strdup_printf("%s.png", name) : g_strdup_printf("%s@2.png", name);
+    char *path = g_build_filename(dir, file, nullptr);
+    char *tmp = g_strdup_printf("%s.tmp", path);
+    /* Written aside and renamed, like the CSS. */
+    bool ok = cairo_surface_write_to_png(surf, tmp) == CAIRO_STATUS_SUCCESS &&
+              g_rename(tmp, path) == 0;
+    if (!ok && err != nullptr)
+        xd_strbuf_appendf(err, "cannot write %s", path);
+    cairo_surface_destroy(surf);
+    g_free(tmp);
+    g_free(path);
+    g_free(file);
+    return ok;
+}
+
 bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, xd_strbuf *err) {
     char *dir = theme_dir();
     char *gtk3 = g_build_filename(dir, "gtk-3.0", nullptr);
@@ -54,6 +91,13 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, xd_str
             g_free(path);
             xd_strbuf_free(&svg);
         }
+        char *assets_dir = g_build_filename(gtk3, "assets", nullptr);
+        for (size_t i = 0; ok && i < G_N_ELEMENTS(button_images); i++) {
+            for (int scale = 1; ok && scale <= 2; scale++)
+                ok = write_button_png(style, scheme, assets_dir, button_images[i].name,
+                                      button_images[i].state, scale, err);
+        }
+        g_free(assets_dir);
         xd_strbuf css = {0};
         if (ok) {
             xd_theme_gtk_css(&t, &css);

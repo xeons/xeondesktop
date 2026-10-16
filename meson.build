@@ -386,6 +386,15 @@ executable(
 )
 
 executable(
+  'xd-polkit',
+  'src/polkit/agent.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, dependency('polkit-agent-1')],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+executable(
   'xd-choose-file',
   'src/gtkapp/choose.c',
   link_with: [gtkapp_lib],

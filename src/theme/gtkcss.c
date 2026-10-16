@@ -66,7 +66,9 @@ static void font_rules(const xd_theme *t, xd_strbuf *out) {
         }
         rest = more ? xd_str_sub(rest, comma + 1, rest.len) : XD_STR("");
     }
-    xd_strbuf_appendf(out, ";\n  font-size: %.1fpt;\n}\n\n", f->size_pt);
+    /* Whole pixels, as Windows rounds them: 8pt is 11px (GTK scales px
+     * itself on HiDPI). */
+    xd_strbuf_appendf(out, ";\n  font-size: %dpx;\n}\n\n", (int)lround(f->size_pt * 96.0 / 72.0));
 }
 
 static void defines(const xd_toolkit_colors *c, xd_strbuf *o) {
@@ -590,6 +592,49 @@ static void whistler(xd_strbuf *o) {
         "scale highlight { background: none; }\n"));
 }
 
+/* XP push buttons: the theme engine's own button (saved as PNGs by
+ * gtktheme.c) as a nine-slice border image, 75x23 like Windows' dialog
+ * buttons, so GTK's match ours pixel for pixel. Toolbars keep flat
+ * buttons. */
+#define XP_BUTTON "button.text-button:not(.flat):not(.combo)"
+static void xp_buttons(const xd_toolkit_colors *c, xd_strbuf *o) {
+    static const char *const states[][2] = {
+        {"", "button"},
+        {":focus, " XP_BUTTON ".default", "button-default"},
+        {":hover", "button-hot"},
+        {":active, " XP_BUTTON ":checked", "button-pressed"},
+        {":disabled", "button-disabled"},
+    };
+    /* Dialog button rows: GTK's own 85x27 minimum would win otherwise. */
+    xd_strbuf_append(o, XD_STR("buttonbox {\n  -GtkButtonBox-child-min-width: 75;\n"
+                               "  -GtkButtonBox-child-min-height: 23;\n"
+                               "  -GtkButtonBox-child-internal-pad-x: 0;\n"
+                               "  -GtkButtonBox-child-internal-pad-y: 0;\n}\n"));
+    xd_strbuf_append(o, XD_STR(XP_BUTTON " {\n"
+                               "  border-style: solid;\n  border-width: 4px 5px;\n"
+                               "  border-radius: 0;\n  background-image: none;\n"
+                               "  background-color: transparent;\n  box-shadow: none;\n"
+                               "  padding: 0 6px;\n  min-height: 15px;\n  min-width: 53px;\n}\n"));
+    /* The border image paints the edges; the same image stretched as the
+     * background fills the middle (border images don't). */
+    for (size_t i = 0; i < XD_ARRAY_LEN(states); i++)
+        xd_strbuf_appendf(o,
+                          XP_BUTTON "%s {\n  border-image: -gtk-scaled(url(\"assets/%s.png\"), "
+                          "url(\"assets/%s@2.png\")) 4 5 4 5 stretch;\n"
+                          "  background-image: -gtk-scaled(url(\"assets/%s.png\"), "
+                          "url(\"assets/%s@2.png\"));\n"
+                          "  background-size: 100%% 100%%;\n  background-origin: border-box;\n}\n",
+                          states[i][0], states[i][1], states[i][1], states[i][1], states[i][1]);
+    /* Pressed: the text moves one pixel down and right, as in Windows. */
+    xd_strbuf_appendf(o,
+                      XP_BUTTON ":active { padding: 1px 5px 0 7px; min-height: 14px; }\n"
+                      XP_BUTTON ":disabled label { color: %s; }\n"
+                      "toolbar " XP_BUTTON " {\n  border-image: none;\n  border-width: 1px;\n"
+                      "  padding: 2px 4px;\n  min-height: 0;\n  min-width: 0;\n}\n",
+                      H(c->disabled));
+}
+#undef XP_BUTTON
+
 void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     xd_toolkit_colors c;
     xd_theme_toolkit_colors(t, &c);
@@ -606,6 +651,8 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
         whistler(out);
     else
         modern(&c, out);
+    if (!c.classic)
+        xp_buttons(&c, out);
     /* Windows' pixel check mark and radio dot, drawn by xd_theme_gtk_asset. */
     xd_strbuf_appendf(
         out,
@@ -625,6 +672,12 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     /* GTK marks the whole notebook as a .frame; Windows draws no outline
      * around the tab control, only the page and tabs themselves. */
     xd_strbuf_append(out, XD_STR("notebook, notebook.frame { border: none; box-shadow: none; }\n"));
+    /* Disclosure triangles (expanders, "Details"). */
+    xd_strbuf_append(out, XD_STR("expander > title > arrow {\n  min-width: 12px;\n"
+                                 "  min-height: 12px;\n  margin-right: 4px;\n"
+                                 "  -gtk-icon-source: -gtk-icontheme(\"pan-end-symbolic\");\n}\n"
+                                 "expander > title > arrow:checked { -gtk-icon-source: "
+                                 "-gtk-icontheme(\"pan-down-symbolic\"); }\n"));
     /* Windows menus show only the mark of a check or radio item, never a box. */
     xd_strbuf_append(out, XD_STR("menu menuitem check, menu menuitem radio, menu menuitem check:hover,\n"
                                  "menu menuitem radio:hover {\n"

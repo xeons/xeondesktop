@@ -175,6 +175,7 @@ typedef struct xd_config {
     const char *shell;       /* shell executable; nullptr = don't start one */
     const char *taskmgr;     /* Task Manager executable (Ctrl+Alt+Delete) */
     const char *locker;      /* Lock Computer (Win+L; restarted if a locker dies) */
+    const char *polkit;      /* the session's polkit authentication agent */
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     bool always_frames;  /* [Windows] AlwaysDrawFrames */

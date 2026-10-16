@@ -169,8 +169,9 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
     xd_fonts_init();
     PangoLayout *layout = pango_cairo_create_layout(cr);
     PangoFontDescription *fd = pango_font_description_from_string(st->font->family);
-    /* Points at 96 DPI -> logical px, then logical -> device. */
-    double px = st->font->size_pt * 96.0 / 72.0 * st->scale;
+    /* Points -> whole device pixels at 96 DPI times the scale, rounded as
+     * GDI does (MulDiv(pt, dpi, 72)): 8pt Tahoma is 11px, not 10.67. */
+    double px = round(st->font->size_pt * 96.0 * st->scale / 72.0);
     pango_font_description_set_absolute_size(fd, px * PANGO_SCALE);
     pango_font_description_set_weight(fd, st->font->bold ? PANGO_WEIGHT_BOLD
                                                          : PANGO_WEIGHT_NORMAL);
