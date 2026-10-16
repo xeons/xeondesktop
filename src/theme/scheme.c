@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "scheme.h"
-#include "../core/ini.h"
+#include <glib.h>
 
 static const char *const color_names[XD_COLOR_COUNT] = {
 #define XD_X(id, name) [XD_COLOR_##id] = name,
@@ -240,20 +240,48 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
     return reject(ctx, section, key, "unknown section");
 }
 
+/* Feeds every key of a key file to `fn`, group by group, in file order. */
+static bool keyfile_foreach(GKeyFile *kf,
+                            bool (*fn)(void *user, xd_str group, xd_str key, xd_str value),
+                            void *user) {
+    gsize ngroups = 0;
+    gchar **groups = g_key_file_get_groups(kf, &ngroups);
+    bool ok = true;
+    for (gsize g = 0; ok && g < ngroups; g++) {
+        gsize nkeys = 0;
+        gchar **keys = g_key_file_get_keys(kf, groups[g], &nkeys, nullptr);
+        for (gsize k = 0; ok && k < nkeys; k++) {
+            /* Unescaped string; the raw value if it has a bad escape. */
+            gchar *v = g_key_file_get_string(kf, groups[g], keys[k], nullptr);
+            if (v == nullptr)
+                v = g_key_file_get_value(kf, groups[g], keys[k], nullptr);
+            ok = fn(user, xd_str_from_cstr(groups[g]), xd_str_from_cstr(keys[k]),
+                    xd_str_from_cstr(v));
+            g_free(v);
+        }
+        g_strfreev(keys);
+    }
+    g_strfreev(groups);
+    return ok;
+}
+
 bool xd_scheme_parse(xd_str text, xd_scheme *scheme, xd_strbuf *err) {
     xd_scheme_init_default(scheme);
     parse_ctx ctx = {.scheme = scheme, .err = err};
-    xd_ini_error ierr;
-    if (!xd_ini_parse(text, on_entry, &ctx, &ierr)) {
-        if (err != nullptr) {
-            if (err->len == 0)
-                xd_strbuf_appendf(err, "%s", ierr.message);
-            xd_strbuf_appendf(err, " (line %zu)", ierr.line);
-        }
-        xd_scheme_init_default(scheme);
-        return false;
+    GKeyFile *kf = g_key_file_new();
+    GError *gerr = nullptr;
+    bool ok = g_key_file_load_from_data(kf, text.ptr, text.len, G_KEY_FILE_NONE, &gerr);
+    if (!ok) {
+        if (err != nullptr)
+            xd_strbuf_appendf(err, "%s", gerr != nullptr ? gerr->message : "not a key file");
+        g_clear_error(&gerr);
+    } else {
+        ok = keyfile_foreach(kf, on_entry, &ctx);
     }
-    return true;
+    g_key_file_free(kf);
+    if (!ok)
+        xd_scheme_init_default(scheme);
+    return ok;
 }
 
 bool xd_scheme_load(const char *path, xd_scheme *scheme, xd_strbuf *err) {

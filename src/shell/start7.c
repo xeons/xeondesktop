@@ -423,15 +423,21 @@ static void build_all(xd_start7 *m) {
     }
 }
 
-static bool matches(const xd_app *app, xd_str query) {
-    xd_str name = xd_str_from_cstr(app->name);
-    if (query.len == 0 || query.len > name.len)
-        return query.len == 0;
-    for (size_t i = 0; i + query.len <= name.len; i++) {
-        if (xd_str_eq_nocase(xd_str_sub(name, i, query.len), query))
+static bool contains_nocase(const char *text, xd_str query) {
+    xd_str s = xd_str_from_cstr(text);
+    for (size_t i = 0; query.len <= s.len && i + query.len <= s.len; i++) {
+        if (xd_str_eq_nocase(xd_str_sub(s, i, query.len), query))
             return true;
     }
     return false;
+}
+
+/* Name or Keywords (e.g. "browser" finds Firefox), case-insensitively. */
+static bool matches(const xd_app *app, xd_str query) {
+    if (query.len == 0)
+        return true;
+    return contains_nocase(app->name, query) ||
+           (app->keywords != nullptr && contains_nocase(app->keywords, query));
 }
 
 static void build_search(xd_start7 *m) {
@@ -901,18 +907,9 @@ xd_menu *xd_start7_submenu(xd_shell *shell) {
 /* ---- actions ----------------------------------------------------------------------- */
 
 static void launch_app(xd_start7 *m, const xd_app *app) {
-    xd_shell *shell = m->shell;
-    char *id = xd_str_dup_cstr(xd_str_from_cstr(app->id));
-    xd_strbuf cmd = {0};
-    if (app->terminal)
-        xd_strbuf_appendf(&cmd, "%s -e %s", shell->terminal, app->exec);
-    else
-        xd_strbuf_append(&cmd, xd_str_from_cstr(app->exec));
-    xd_menu_close_all(shell); /* frees m */
-    xd_shell_launch(shell, xd_strbuf_cstr(&cmd));
-    xd_start7_count_launch(id);
-    xd_strbuf_free(&cmd);
-    xd_free(id);
+    xd_menu_close_all(m->shell); /* frees m; `app` belongs to shell->apps */
+    if (xd_app_launch(app))
+        xd_start7_count_launch(app->id);
 }
 
 static void run_command(xd_start7 *m, const char *command) {

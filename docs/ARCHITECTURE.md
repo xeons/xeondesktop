@@ -249,6 +249,12 @@ Applets that make sense on Linux:
 
 ## Memory-safety rules
 
+- Standard formats are parsed with maintained libraries, never by hand:
+  GLib's GKeyFile (settings, colour schemes), GIO's GDesktopAppInfo
+  (.desktop entries, including launching apps) and GBookmarkFile
+  (recently-used.xbel). GLib was already a dependency through pango and
+  gdk-pixbuf.
+
 - C23, `-Werror` with the warning set in `meson.build` (conversion, sign,
   shadow, cast-qual/align, format=2, VLA ban, etc.), clean on GCC and Clang.
 - Debug builds use ASan + UBSan. `meson test` runs with leak checking.

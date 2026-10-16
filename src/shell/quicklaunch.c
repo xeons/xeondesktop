@@ -97,8 +97,14 @@ static int compare_names(const void *a, const void *b) {
     return strcmp(*(char *const *)a, *(char *const *)b);
 }
 
+static void release_items(xd_quicklaunch *ql) {
+    for (size_t i = 0; i < ql->count; i++)
+        xd_app_release(&ql->items[i]);
+}
+
 void xd_quicklaunch_reload(xd_shell *shell) {
     xd_quicklaunch *ql = &shell->quicklaunch;
+    release_items(ql);
     xd_free(ql->items);
     xd_arena_destroy(&ql->arena);
     ql->items = nullptr;
@@ -133,19 +139,15 @@ void xd_quicklaunch_reload(xd_shell *shell) {
 
     ql->items = xd_alloc_array(XD_MAX(n, 1), sizeof(*ql->items));
     xd_strbuf path = {0};
-    xd_strbuf text = {0};
     for (size_t i = 0; i < n; i++) {
         xd_strbuf_clear(&path);
         xd_strbuf_appendf(&path, "%s/%s", xd_strbuf_cstr(&dir), names[i]);
         xd_app app;
-        if (xd_read_file(xd_strbuf_cstr(&path), 256 * 1024, &text) &&
-            xd_app_parse(xd_strbuf_view(&text), xd_str_from_cstr(names[i]), "XeonDesktop",
-                         &ql->arena, &app))
+        if (xd_app_from_file(xd_strbuf_cstr(&path), &ql->arena, &app))
             ql->items[ql->count++] = app;
         xd_free(names[i]);
     }
     xd_free(names);
-    xd_strbuf_free(&text);
     xd_strbuf_free(&path);
     xd_strbuf_free(&dir);
 }
@@ -183,6 +185,7 @@ void xd_quicklaunch_finish(xd_shell *shell) {
     xd_quicklaunch *ql = &shell->quicklaunch;
     if (ql->watch_fd >= 0)
         close(ql->watch_fd);
+    release_items(ql);
     xd_free(ql->items);
     xd_arena_destroy(&ql->arena);
     *ql = (xd_quicklaunch){.watch_fd = -1};
@@ -198,12 +201,5 @@ void xd_quicklaunch_activate(xd_shell *shell, size_t index) {
             xd_show_desktop_toggle(shell);
         return;
     }
-    if (app->terminal) {
-        xd_strbuf cmd = {0};
-        xd_strbuf_appendf(&cmd, "%s -e %s", shell->terminal, app->exec);
-        xd_shell_launch(shell, xd_strbuf_cstr(&cmd));
-        xd_strbuf_free(&cmd);
-    } else {
-        xd_shell_launch(shell, app->exec);
-    }
+    xd_app_launch(app);
 }

@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
-#include "../core/ini.h"
+#include <glib.h>
 #include "settings.h"
 
 static const char *const mode_names[XD_WALLPAPER_MODE_COUNT] = {
@@ -129,12 +129,40 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     return true; /* unknown keys are ignored */
 }
 
+/* Feeds every key of a key file to `fn`, group by group, in file order. */
+static bool keyfile_foreach(GKeyFile *kf,
+                            bool (*fn)(void *user, xd_str group, xd_str key, xd_str value),
+                            void *user) {
+    gsize ngroups = 0;
+    gchar **groups = g_key_file_get_groups(kf, &ngroups);
+    bool ok = true;
+    for (gsize g = 0; ok && g < ngroups; g++) {
+        gsize nkeys = 0;
+        gchar **keys = g_key_file_get_keys(kf, groups[g], &nkeys, nullptr);
+        for (gsize k = 0; ok && k < nkeys; k++) {
+            /* Unescaped string; the raw value if it has a bad escape. */
+            gchar *v = g_key_file_get_string(kf, groups[g], keys[k], nullptr);
+            if (v == nullptr)
+                v = g_key_file_get_value(kf, groups[g], keys[k], nullptr);
+            ok = fn(user, xd_str_from_cstr(groups[g]), xd_str_from_cstr(keys[k]),
+                    xd_str_from_cstr(v));
+            g_free(v);
+        }
+        g_strfreev(keys);
+    }
+    g_strfreev(groups);
+    return ok;
+}
+
 void xd_settings_parse(xd_str text, xd_settings *s) {
     xd_settings_defaults(s);
     xd_settings tmp = *s;
-    if (xd_ini_parse(text, on_entry, &tmp, nullptr))
-        *s = tmp;
+    GKeyFile *kf = g_key_file_new();
     /* A syntax error leaves the defaults rather than a half-read file. */
+    if (g_key_file_load_from_data(kf, text.ptr, text.len, G_KEY_FILE_NONE, nullptr) &&
+        keyfile_foreach(kf, on_entry, &tmp))
+        *s = tmp;
+    g_key_file_free(kf);
 }
 
 void xd_settings_path(xd_strbuf *out) {
@@ -160,24 +188,37 @@ void xd_settings_load(xd_settings *s) {
     xd_strbuf_free(&path);
 }
 
-static const char *b(bool v) { return v ? "true" : "false"; }
+static GKeyFile *to_keyfile(const xd_settings *s) {
+    GKeyFile *kf = g_key_file_new();
+    g_key_file_set_string(kf, "Appearance", "Style", xd_visual_style_name(s->style));
+    g_key_file_set_string(kf, "Appearance", "Scheme", s->scheme);
+    g_key_file_set_string(kf, "Appearance", "FontSize", font_size_names[s->font_size]);
+    g_key_file_set_string(kf, "Appearance", "FontSmoothing", smoothing_names[s->font_smoothing]);
+    g_key_file_set_comment(kf, "Appearance", nullptr,
+                           " XeonDesktop settings. Written by Display Properties; edits are\n"
+                           " picked up immediately.",
+                           nullptr);
+    g_key_file_set_string(kf, "Desktop", "Wallpaper", s->wallpaper);
+    g_key_file_set_string(kf, "Desktop", "WallpaperMode", mode_names[s->wallpaper_mode]);
+    g_key_file_set_boolean(kf, "Effects", "MenuTransitions", s->menu_transitions);
+    g_key_file_set_boolean(kf, "Effects", "FullWindowDrag", s->full_window_drag);
+    g_key_file_set_boolean(kf, "Effects", "LargeIcons", s->large_icons);
+    g_key_file_set_boolean(kf, "Effects", "HideKeyboardCues", s->hide_keyboard_cues);
+    g_key_file_set_boolean(kf, "Taskbar", "QuickLaunch", s->quick_launch);
+    g_key_file_set_string(kf, "StartMenu", "Style", start_style_names[s->start_style]);
+    g_key_file_set_string(kf, "ScreenSaver", "Name", s->screensaver);
+    g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);
+    g_key_file_set_boolean(kf, "ScreenSaver", "Password", s->screensaver_password);
+    return kf;
+}
 
 void xd_settings_serialize(const xd_settings *s, xd_strbuf *out) {
-    xd_strbuf_appendf(out,
-                      "; XeonDesktop settings. Written by Display Properties; edits are\n"
-                      "; picked up immediately.\n\n"
-                      "[Appearance]\nStyle=%s\nScheme=%s\nFontSize=%s\nFontSmoothing=%s\n\n"
-                      "[Desktop]\nWallpaper=%s\nWallpaperMode=%s\n\n"
-                      "[Effects]\nMenuTransitions=%s\nFullWindowDrag=%s\nLargeIcons=%s\n"
-                      "HideKeyboardCues=%s\n\n"
-                      "[Taskbar]\nQuickLaunch=%s\n\n"
-                      "[StartMenu]\nStyle=%s\n\n"
-                      "[ScreenSaver]\nName=%s\nWait=%d\nPassword=%s\n",
-                      xd_visual_style_name(s->style), s->scheme,
-                      font_size_names[s->font_size], smoothing_names[s->font_smoothing],
-                      s->wallpaper, mode_names[s->wallpaper_mode], b(s->menu_transitions),
-                      b(s->full_window_drag), b(s->large_icons), b(s->hide_keyboard_cues),
-                      b(s->quick_launch), start_style_names[s->start_style], s->screensaver, s->screensaver_wait, b(s->screensaver_password));
+    GKeyFile *kf = to_keyfile(s);
+    gsize len = 0;
+    gchar *data = g_key_file_to_data(kf, &len, nullptr);
+    xd_strbuf_append(out, (xd_str){data, len});
+    g_free(data);
+    g_key_file_free(kf);
 }
 
 bool xd_settings_equal(const xd_settings *a, const xd_settings *b) {
@@ -203,23 +244,19 @@ static void mkdirs_for(xd_strbuf *path) {
 
 bool xd_settings_save(const xd_settings *s) {
     xd_strbuf path = {0};
-    xd_strbuf tmp = {0};
-    xd_strbuf text = {0};
     xd_settings_path(&path);
     mkdirs_for(&path);
-    xd_strbuf_appendf(&tmp, "%s.tmp", xd_strbuf_cstr(&path));
-    xd_settings_serialize(s, &text);
-
-    /* Write then rename, so watchers never see a partial file. */
-    FILE *f = fopen(xd_strbuf_cstr(&tmp), "w");
-    bool ok = f != nullptr && fwrite(text.data, 1, text.len, f) == text.len;
-    if (f != nullptr)
-        ok = fclose(f) == 0 && ok;
-    ok = ok && rename(xd_strbuf_cstr(&tmp), xd_strbuf_cstr(&path)) == 0;
-    if (!ok)
-        unlink(xd_strbuf_cstr(&tmp));
-    xd_strbuf_free(&text);
-    xd_strbuf_free(&tmp);
+    /* g_key_file_save_to_file writes a temporary file and renames it, so
+     * watchers never see a partial file. */
+    GKeyFile *kf = to_keyfile(s);
+    GError *err = nullptr;
+    bool ok = g_key_file_save_to_file(kf, xd_strbuf_cstr(&path), &err);
+    if (!ok) {
+        fprintf(stderr, "xeondesktop: cannot save settings: %s\n",
+                err != nullptr ? err->message : "unknown error");
+        g_clear_error(&err);
+    }
+    g_key_file_free(kf);
     xd_strbuf_free(&path);
     return ok;
 }

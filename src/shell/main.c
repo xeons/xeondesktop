@@ -622,7 +622,7 @@ int main(int argc, char **argv) {
     apply_settings(&shell, true);
     shell.settings_fd = xd_settings_watch();
     xd_quicklaunch_init(&shell);
-    xd_apps_load(&shell.apps, "XeonDesktop");
+    xd_apps_load(&shell.apps);
     xd_menu_tree_init(&shell.menu_tree);
     xd_start_menu_build(&shell);
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);

@@ -2,8 +2,8 @@
  * Unit tests for the core library and theme engine.
  */
 #include <stdlib.h>
+#include <unistd.h>
 
-#include "../src/core/ini.h"
 #include "../src/apps/runcmd.h"
 #include "../src/settings/settings.h"
 #include "../src/shell/apps.h"
@@ -68,35 +68,6 @@ static void test_arena(void) {
     CHECK(strcmp(s, "hello") == 0);
     xd_arena_destroy(&a);
     CHECK(a.head == nullptr);
-}
-
-typedef struct ini_capture {
-    int count;
-    bool saw_value;
-} ini_capture;
-
-static bool ini_cb(void *user, xd_str section, xd_str key, xd_str value) {
-    ini_capture *c = user;
-    c->count++;
-    if (xd_str_eq(section, XD_STR("A")) && xd_str_eq(key, XD_STR("k")) &&
-        xd_str_eq(value, XD_STR("v = w")))
-        c->saw_value = true;
-    return true;
-}
-
-static void test_ini(void) {
-    ini_capture c = {0};
-    xd_ini_error err;
-    CHECK(xd_ini_parse(XD_STR("\xEF\xBB\xBF; comment\n[A]\n k = v = w \r\n# x\nz=\n"), ini_cb,
-                       &c, &err));
-    CHECK(c.count == 2 && c.saw_value);
-
-    CHECK(!xd_ini_parse(XD_STR("[A\n"), ini_cb, &c, &err));
-    CHECK(err.line == 1);
-    CHECK(!xd_ini_parse(XD_STR("[A]\n\nnoequals\n"), ini_cb, &c, &err));
-    CHECK(err.line == 3);
-    CHECK(!xd_ini_parse(XD_STR("[]\n"), ini_cb, &c, &err));
-    CHECK(xd_ini_parse(XD_STR(""), ini_cb, &c, &err));
 }
 
 static void test_scheme(void) {
@@ -260,62 +231,91 @@ static void test_hit(void) {
     }
 }
 
+/* Writes a .desktop file into a fresh temp dir and loads it via GIO. */
+static bool load_entry(const char *dir, const char *name, const char *text, xd_arena *arena,
+                       xd_app *out) {
+    xd_strbuf path = {0};
+    xd_strbuf_appendf(&path, "%s/%s", dir, name);
+    FILE *f = fopen(xd_strbuf_cstr(&path), "w");
+    bool ok = f != nullptr && fputs(text, f) >= 0;
+    if (f != nullptr)
+        fclose(f);
+    ok = ok && xd_app_from_file(xd_strbuf_cstr(&path), arena, out);
+    xd_strbuf_free(&path);
+    return ok;
+}
+
 static void test_apps(void) {
+    char tmpl[] = "/tmp/xd-test-apps-XXXXXX";
+    const char *dir = mkdtemp(tmpl);
+    CHECK(dir != nullptr);
+    if (dir == nullptr)
+        return;
     xd_arena arena;
     xd_arena_init(&arena, 4096);
-    setenv("LANG", "de_DE.UTF-8", 1);
-    unsetenv("LC_ALL");
-    unsetenv("LC_MESSAGES");
+    setenv("LANGUAGE", "de", 1);
+    setenv("XDG_CURRENT_DESKTOP", "XeonDesktop", 1);
     xd_app app;
 
-    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=Editor\n"
-                              "Name[de]=Bearbeiter\nName[fr]=Editeur\nIcon=ed\n"
-                              "Exec=ed --open %U\nCategories=Utility;TextEditor;\n"
-                              "[Desktop Action new]\nName=Should not win\nExec=nope\n"),
-                       XD_STR("ed.desktop"), "XeonDesktop", &arena, &app));
-    CHECK(strcmp(app.name, "Bearbeiter") == 0);
-    CHECK(strcmp(app.exec, "ed --open") == 0);
-    CHECK(strcmp(app.folder, "Accessories") == 0);
-    CHECK(strcmp(app.icon, "ed") == 0);
+    CHECK(load_entry(dir, "ed.desktop",
+                     "[Desktop Entry]\nType=Application\nName=Editor\nName[de]=Bearbeiter\n"
+                     "Icon=ed\nExec=true %U\nCategories=Utility;TextEditor;\n"
+                     "Keywords=text;notes;\n",
+                     &arena, &app));
+    CHECK(strcmp(app.name, "Bearbeiter") == 0); /* localized by GIO */
+    CHECK(strcmp(app.folder, "Accessories") == 0 && strcmp(app.icon, "ed") == 0);
+    CHECK(app.keywords != nullptr && strstr(app.keywords, "notes") != nullptr);
+    CHECK(app.visible && app.action == nullptr);
+    xd_app_release(&app);
 
-    /* Settings wins over System when both are listed. */
-    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=Mouse\nExec=m\n"
-                              "Categories=System;Settings;\n"),
-                       XD_STR("m.desktop"), "XeonDesktop", &arena, &app));
-    CHECK(strcmp(app.folder, "Settings") == 0);
+    CHECK(load_entry(dir, "m.desktop",
+                     "[Desktop Entry]\nType=Application\nName=Mouse\nExec=true\n"
+                     "Categories=System;Settings;\n",
+                     &arena, &app));
+    CHECK(strcmp(app.folder, "Settings") == 0); /* Settings wins over System */
+    xd_app_release(&app);
 
-    /* Entries that must not be shown. */
-    static const char *const hidden[] = {
-        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nNoDisplay=true\n",
-        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nHidden=true\n",
-        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nOnlyShowIn=KDE;LXQt;\n",
-        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nNotShowIn=XeonDesktop;\n",
-        "[Desktop Entry]\nType=Link\nName=A\nURL=http://x\n",
-        "[Desktop Entry]\nType=Application\nName=A\n",
-        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nTryExec=/nonexistent/xd\n",
-        "not an ini file at all",
-    };
-    for (size_t i = 0; i < XD_ARRAY_LEN(hidden); i++)
-        CHECK(!xd_app_parse(xd_str_from_cstr(hidden[i]), XD_STR("x.desktop"), "XeonDesktop",
-                            &arena, &app));
-    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=A\nExec=a\n"
-                              "OnlyShowIn=XeonDesktop;\n"),
-                       XD_STR("a.desktop"), "XeonDesktop", &arena, &app));
-    CHECK(strcmp(app.folder, "Other") == 0 && app.action == nullptr);
-    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=Show Desktop\nExec=true\n"
-                              "X-XeonDesktop-Action=show-desktop\n"),
-                       XD_STR("s.desktop"), "XeonDesktop", &arena, &app));
+    /* Visibility rules come from GIO. */
+    CHECK(load_entry(dir, "h.desktop",
+                     "[Desktop Entry]\nType=Application\nName=H\nExec=true\nNoDisplay=true\n",
+                     &arena, &app));
+    CHECK(!app.visible);
+    xd_app_release(&app);
+    CHECK(load_entry(dir, "o.desktop",
+                     "[Desktop Entry]\nType=Application\nName=O\nExec=true\nOnlyShowIn=KDE;\n",
+                     &arena, &app));
+    CHECK(!app.visible);
+    xd_app_release(&app);
+    CHECK(load_entry(dir, "x.desktop",
+                     "[Desktop Entry]\nType=Application\nName=X\nExec=true\n"
+                     "OnlyShowIn=XeonDesktop;\n",
+                     &arena, &app));
+    CHECK(app.visible && strcmp(app.folder, "Other") == 0);
+    xd_app_release(&app);
+    /* TryExec that doesn't exist: GIO refuses the entry. */
+    CHECK(!load_entry(dir, "t.desktop",
+                      "[Desktop Entry]\nType=Application\nName=T\nExec=true\n"
+                      "TryExec=/nonexistent/xd\n",
+                      &arena, &app));
+    CHECK(!load_entry(dir, "bad.desktop", "not a desktop file", &arena, &app));
+
+    CHECK(load_entry(dir, "s.desktop",
+                     "[Desktop Entry]\nType=Application\nName=Show Desktop\nExec=true\n"
+                     "X-XeonDesktop-Action=show-desktop\n",
+                     &arena, &app));
     CHECK(app.action != nullptr && strcmp(app.action, "show-desktop") == 0);
+    xd_app_release(&app);
 
-    /* Field codes. */
-    char *e = xd_app_expand_exec(&arena, XD_STR("app %f %F %u %U --pct=100%% %c %i"), "It's",
-                                 "ico");
-    CHECK(strcmp(e, "app     --pct=100% 'It'\\''s' --icon 'ico'") == 0);
-    e = xd_app_expand_exec(&arena, XD_STR("trailing %"), "n", nullptr);
-    CHECK(strcmp(e, "trailing %") == 0);
-    /* An icon name containing a quote is dropped rather than quoted. */
-    e = xd_app_expand_exec(&arena, XD_STR("a %i"), "n", "bad'icon");
-    CHECK(strcmp(e, "a") == 0);
+    static const char *const files[] = {"ed.desktop", "m.desktop", "h.desktop", "o.desktop",
+                                        "x.desktop",  "t.desktop", "bad.desktop", "s.desktop"};
+    xd_strbuf p = {0};
+    for (size_t i = 0; i < XD_ARRAY_LEN(files); i++) {
+        xd_strbuf_clear(&p);
+        xd_strbuf_appendf(&p, "%s/%s", dir, files[i]);
+        unlink(xd_strbuf_cstr(&p));
+    }
+    xd_strbuf_free(&p);
+    rmdir(dir);
     xd_arena_destroy(&arena);
 }
 
@@ -513,7 +513,6 @@ static void test_px(void) {
 int main(void) {
     test_str();
     test_arena();
-    test_ini();
     test_scheme();
     test_shipped_schemes();
     test_px();

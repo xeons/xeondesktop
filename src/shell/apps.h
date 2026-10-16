@@ -1,20 +1,26 @@
 /* SPDX-License-Identifier: MIT
- * Installed applications, from freedesktop .desktop entries.
+ * Installed applications, through GIO's GDesktopAppInfo (the reference
+ * implementation of the freedesktop desktop entry spec: localization,
+ * OnlyShowIn/NotShowIn via $XDG_CURRENT_DESKTOP, TryExec, Exec field codes
+ * and launching).
  */
 #ifndef XD_SHELL_APPS_H
 #define XD_SHELL_APPS_H
 
 #include "../core/str.h"
 
+typedef struct _GDesktopAppInfo GDesktopAppInfo;
+
 typedef struct xd_app {
     const char *id;     /* desktop file id, e.g. "firefox.desktop" */
     const char *name;   /* localized */
     const char *icon;   /* icon name or absolute path; may be nullptr */
-    const char *exec;   /* command line with field codes removed */
     const char *folder; /* Programs folder, e.g. "Accessories" */
     const char *folder_icon;
     const char *action; /* X-XeonDesktop-Action, e.g. "show-desktop"; may be nullptr */
-    bool terminal;
+    const char *keywords; /* localized Keywords joined with spaces, for search */
+    bool visible;         /* g_app_info_should_show */
+    GDesktopAppInfo *info; /* owned reference */
 } xd_app;
 
 typedef struct xd_app_list {
@@ -23,18 +29,18 @@ typedef struct xd_app_list {
     size_t count, cap;
 } xd_app_list;
 
-/* Scans $XDG_DATA_HOME and $XDG_DATA_DIRS. Entries are sorted by folder,
- * then by name. */
-void xd_apps_load(xd_app_list *list, const char *desktop_name);
+/* All installed applications that should be shown, sorted by folder then
+ * name. */
+void xd_apps_load(xd_app_list *list);
 void xd_apps_free(xd_app_list *list);
 
-/* Exposed for tests: parse one entry. Returns false if it should not be
- * shown. Strings are allocated from `arena`. */
-[[nodiscard]] bool xd_app_parse(xd_str text, xd_str id, const char *desktop_name,
-                                xd_arena *arena, xd_app *out);
+/* Loads one .desktop file (Quick Launch shortcuts). Strings go in `arena`;
+ * release with xd_app_release. */
+[[nodiscard]] bool xd_app_from_file(const char *path, xd_arena *arena, xd_app *out);
+void xd_app_release(xd_app *app);
 
-/* Strips/expands desktop entry field codes (%f %U %c %i ...). */
-[[nodiscard]] char *xd_app_expand_exec(xd_arena *arena, xd_str exec, const char *name,
-                                       const char *icon);
+/* Launches the application detached from the shell (own session, default
+ * signal handling). Returns false on failure. */
+bool xd_app_launch(const xd_app *app);
 
 #endif

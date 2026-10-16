@@ -492,15 +492,16 @@ static void activate(xd_menu *menu, int index) {
         xd_menu_open_child(menu, index);
         return;
     }
-    if (it->kind == XD_MENU_ACTION && it->command != nullptr) {
+    if (it->kind == XD_MENU_ACTION && it->app != nullptr) {
+        const xd_app *app = it->app; /* owned by shell->apps, outlives the menu */
+        xd_menu_close_all(menu->shell);   /* frees `it` */
+        if (xd_app_launch(app))
+            xd_start7_count_launch(app->id);
+    } else if (it->kind == XD_MENU_ACTION && it->command != nullptr) {
         xd_shell *shell = menu->shell;
         char *cmd = xd_str_dup_cstr(xd_str_from_cstr(it->command));
-        char *id = it->app_id != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(it->app_id)) : nullptr;
         xd_menu_close_all(shell); /* frees `it` */
         xd_shell_launch(shell, cmd);
-        if (id != nullptr)
-            xd_start7_count_launch(id);
-        xd_free(id);
         xd_free(cmd);
     }
 }

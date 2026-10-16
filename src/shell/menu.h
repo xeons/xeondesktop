@@ -11,6 +11,7 @@
 #include "../theme/theme.h"
 #include "../ui/shm.h"
 #include "../ui/protocols.h"
+#include "apps.h"
 
 typedef struct xd_shell xd_shell;
 
@@ -30,7 +31,7 @@ typedef struct xd_menu_item {
     const char *fallback_icon; /* tried if `icon` isn't found */
     xd_menu_model *submenu;    /* XD_MENU_SUBMENU */
     const char *command;       /* XD_MENU_ACTION: shell command line */
-    const char *app_id;        /* desktop file id, to count launches */
+    const xd_app *app;         /* XD_MENU_ACTION: launch this app (instead of command) */
 } xd_menu_item;
 
 struct xd_menu_model {

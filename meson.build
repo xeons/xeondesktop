@@ -89,12 +89,12 @@ m_dep = cc.find_library('m')
 # include_type 'system' keeps third-party headers out of our -Werror net.
 cairo_dep = dependency('cairo', include_type: 'system')
 pango_dep = dependency('pangocairo', include_type: 'system')
+glib_dep = dependency('glib-2.0', include_type: 'system')
 
 core_lib = static_library(
   'xdcore',
   'src/core/alloc.c',
   'src/core/str.c',
-  'src/core/ini.c',
 )
 core_dep = declare_dependency(link_with: core_lib)
 
@@ -105,21 +105,21 @@ theme_lib = static_library(
   'src/theme/theme.c',
   'src/theme/style_classic.c',
   'src/theme/style_modern.c',
-  dependencies: [cairo_dep, pango_dep, m_dep],
+  dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
 )
 theme_dep = declare_dependency(
   link_with: theme_lib,
-  dependencies: [core_dep, cairo_dep, pango_dep, m_dep],
+  dependencies: [core_dep, cairo_dep, pango_dep, glib_dep, m_dep],
 )
 
 settings_lib = static_library(
   'xdsettings',
   'src/settings/settings.c',
   'src/settings/state.c',
-  dependencies: [cairo_dep, pango_dep, m_dep],
+  dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
-settings_dep = declare_dependency(link_with: settings_lib, dependencies: [theme_dep])
+settings_dep = declare_dependency(link_with: settings_lib, dependencies: [theme_dep, glib_dep])
 
 wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
 wayland_server_dep = dependency('wayland-server', include_type: 'system')
@@ -212,6 +212,7 @@ executable(
 
 librsvg_dep = dependency('librsvg-2.0', include_type: 'system')
 gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
+gio_unix_dep = dependency('gio-unix-2.0', include_type: 'system')
 
 # libxdui: Wayland client plumbing and dialog widgets for shell programs.
 ui_lib = static_library(
@@ -281,7 +282,7 @@ executable(
   'src/shell/quicklaunch.c',
   'src/shell/start7.c',
   'src/shell/recent.c',
-  dependencies: [ui_dep],
+  dependencies: [ui_dep, glib_dep, gio_unix_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -302,7 +303,7 @@ test_exe = executable(
   'src/shell/apps.c',
   'src/ui/textedit.c',
   'src/apps/runcmd.c',
-  dependencies: [theme_dep, settings_dep],
+  dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(

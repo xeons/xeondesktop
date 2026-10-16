@@ -7,17 +7,6 @@
 #include "apps.h"
 #include "shell.h"
 
-/* Command line that runs an app, through a terminal if it asks for one. */
-static const char *app_command(xd_shell *shell, const xd_app *app) {
-    if (!app->terminal)
-        return app->exec;
-    xd_strbuf cmd = {0};
-    xd_strbuf_appendf(&cmd, "%s -e %s", shell->terminal, app->exec);
-    const char *s = xd_str_arena_cstr(&shell->menu_tree.arena, xd_strbuf_view(&cmd));
-    xd_strbuf_free(&cmd);
-    return s;
-}
-
 /* Appends s to a shell command line as one single-quoted word. */
 static void append_quoted(xd_strbuf *cmd, const char *s) {
     xd_strbuf_append_char(cmd, '\'');
@@ -87,8 +76,7 @@ static xd_menu_model *build_programs(xd_shell *shell) {
             const xd_app *app = &apps->items[i];
             xd_menu_item *it =
                 xd_menu_add(tree, f->submenu, XD_MENU_ACTION, app->name, app->icon);
-            it->command = app_command(shell, app);
-            it->app_id = app->id;
+            it->app = app;
         }
     }
     if (programs->count == 0)
