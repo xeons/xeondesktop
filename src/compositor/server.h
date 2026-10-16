@@ -70,6 +70,7 @@ typedef struct xd_layer_surface {
     struct wl_listener map;
     struct wl_listener unmap;
     struct wl_listener commit;
+    struct wl_listener new_popup;
     struct wl_listener destroy;
 } xd_layer_surface;
 
@@ -164,6 +165,9 @@ struct xd_server {
 
     struct wlr_layer_shell_v1 *layer_shell;
     struct wl_listener new_layer_surface;
+    /* Layer surface holding keyboard focus (exclusive interactivity, e.g.
+     * while the Start menu is open); windows get it back afterwards. */
+    xd_layer_surface *layer_focus;
 
     struct wlr_foreign_toplevel_manager_v1 *ftl_manager;
 
@@ -231,6 +235,11 @@ xd_output *xd_output_at(xd_server *server, double lx, double ly);
 
 /* layers.c */
 void xd_layers_init(xd_server *server);
+/* Gives keyboard focus to the focused layer surface or else the focused
+ * window. */
+void xd_keyboard_refocus(xd_server *server);
+/* The layer surface owning a scene node, if any. */
+xd_layer_surface *xd_layer_from_node(struct wlr_scene_node *node);
 double xd_output_scale_at(xd_server *server, double lx, double ly);
 /* Usable area of the output containing (lx, ly), in layout coordinates. */
 struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly);
@@ -265,6 +274,8 @@ void xd_view_set_hover(xd_view *view, xd_frame_part hot, xd_frame_part pressed);
 void xd_view_update_all_frames(xd_server *server);
 /* Re-fits maximized windows after a work area change. */
 void xd_view_refit_maximized(xd_server *server, xd_output *out);
+/* Shows a popup (menu) as a child of parent_tree. */
+void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree);
 /* Forget an output that is going away. */
 void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output);
 

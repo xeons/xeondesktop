@@ -171,6 +171,131 @@ void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *c
     ops(t)->draw_tray(t, cr, r, clock);
 }
 
+/* ---- menus ----------------------------------------------------------------- */
+
+xd_menu_metrics xd_theme_menu_metrics(const xd_theme *t) {
+    xd_menu_palette p;
+    ops(t)->menu_palette(t, &p);
+    return (xd_menu_metrics){
+        .border = xd_tpx(t, 3),
+        .item_h = xd_tpx(t, 22),
+        .large_item_h = xd_tpx(t, 36),
+        .icon = xd_tpx(t, 16),
+        .large_icon = xd_tpx(t, 32),
+        .icon_x = xd_tpx(t, p.flat ? 4 : 3),
+        .text_x = xd_tpx(t, 28),
+        .large_text_x = xd_tpx(t, 44),
+        .arrow_w = xd_tpx(t, 20),
+        .separator_h = xd_tpx(t, 9),
+        .banner_w = xd_tpx(t, 21),
+    };
+}
+
+void xd_theme_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    xd_menu_palette p;
+    ops(t)->menu_palette(t, &p);
+    xd_fill_rect(cr, r, p.background);
+    int px = xd_tpx(t, 1);
+    if (p.flat) {
+        xd_draw_bevel(cr, r, px, p.border, p.border);
+        return;
+    }
+    /* EDGE_RAISED, as Windows 2000 draws menus. */
+    r = xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_LIGHT),
+                      xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
+    xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+                  xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+}
+
+static void draw_submenu_arrow(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rgba color) {
+    /* Solid right-pointing triangle, 4 logical px wide, 7 tall. */
+    double w = xd_tpx(t, 4);
+    double h = xd_tpx(t, 7);
+    double x = r.x + r.w - xd_tpx(t, 12);
+    double y = r.y + (r.h - h) / 2;
+    xd_set_color(cr, color);
+    cairo_move_to(cr, x, y);
+    cairo_line_to(cr, x + w, y + h / 2);
+    cairo_line_to(cr, x, y + h);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+}
+
+void xd_theme_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                             const char *label, bool submenu, bool large) {
+    xd_menu_palette p;
+    ops(t)->menu_palette(t, &p);
+    xd_menu_metrics m = xd_theme_menu_metrics(t);
+    bool disabled = state & XD_STATE_DISABLED;
+    bool hot = state & XD_STATE_HOT;
+
+    xd_rgba text = p.text;
+    if (hot) {
+        xd_fill_rect(cr, r, p.hilight);
+        if (p.hilight_border.a > 0)
+            xd_draw_bevel(cr, r, xd_tpx(t, 1), p.hilight_border, p.hilight_border);
+        text = disabled ? p.disabled_text : p.hilight_text;
+    } else if (disabled) {
+        text = p.disabled_text;
+    }
+
+    int tx = r.x + (large ? m.large_text_x : m.text_x);
+    xd_rect tr = {tx, r.y, r.x + r.w - tx - m.arrow_w, r.h};
+    if (disabled && !hot && p.disabled_emboss.a > 0) {
+        int px = xd_tpx(t, 1);
+        xd_text_style emboss = xd_text(t, XD_FONT_MENU, p.disabled_emboss, XD_ALIGN_START);
+        xd_draw_text(cr, (xd_rect){tr.x + px, tr.y + px, tr.w, tr.h}, label, &emboss);
+    }
+    xd_text_style st = xd_text(t, XD_FONT_MENU, text, XD_ALIGN_START);
+    xd_draw_text(cr, tr, label, &st);
+    if (submenu)
+        draw_submenu_arrow(t, cr, r, text);
+}
+
+void xd_theme_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    xd_menu_palette p;
+    ops(t)->menu_palette(t, &p);
+    int px = xd_tpx(t, 1);
+    int inset = p.flat ? xd_tpx(t, 2) : xd_tpx(t, 1);
+    int y = r.y + (r.h - (p.separator_light.a > 0 ? 2 * px : px)) / 2;
+    xd_fill_rect(cr, (xd_rect){r.x + inset, y, r.w - 2 * inset, px}, p.separator_dark);
+    if (p.separator_light.a > 0)
+        xd_fill_rect(cr, (xd_rect){r.x + inset, y + px, r.w - 2 * inset, px},
+                     p.separator_light);
+}
+
+void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
+                                const char *edition) {
+    xd_menu_palette p;
+    ops(t)->menu_palette(t, &p);
+    xd_fill_gradient(cr, r, p.banner_top, p.banner_bottom, false);
+
+    /* Rotate so text runs bottom to top, starting a few px above the
+     * banner's foot. */
+    xd_font_spec bold = {.size_pt = 14, .bold = true};
+    snprintf(bold.family, sizeof(bold.family), "%s", "Tahoma, DejaVu Sans, sans-serif");
+    xd_font_spec light = bold;
+    light.bold = false;
+    xd_text_style st = {.font = &bold, .scale = t->scale, .color = p.banner_text};
+
+    cairo_save(cr);
+    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+    cairo_clip(cr);
+    cairo_translate(cr, r.x, r.y + r.h);
+    cairo_rotate(cr, -XD_PI / 2);
+    int x = xd_tpx(t, 6);
+    int w1 = xd_text_width(cr, product, &st);
+    xd_draw_text(cr, (xd_rect){x, 0, r.h - x, r.w}, product, &st);
+    st.font = &light;
+    xd_draw_text(cr, (xd_rect){x + w1 + xd_tpx(t, 4), 0, r.h - x - w1, r.w}, edition, &st);
+    cairo_restore(cr);
+}
+
+int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label) {
+    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_START);
+    return xd_text_width(cr, label, &st);
+}
+
 /* ---- shared helpers ---------------------------------------------------- */
 
 xd_rgba xd_sys(const xd_theme *t, xd_syscolor c) {

@@ -37,6 +37,19 @@ button minimizes it.
 Mouse: drag the caption to move, drag edges/corners to resize, double-click
 the caption to maximize, double-click the window icon to close.
 
+### Start menu
+
+The Windows 2000 Start menu is built from installed `.desktop` files, filed
+into Programs folders (Accessories, Games, Graphics, Internet, ...) by their
+categories. Items that need parts of the desktop not written yet (Control
+Panel, Run, Shut Down) are shown greyed out.
+
+| Variable              | Effect                                                   |
+|-----------------------|----------------------------------------------------------|
+| `XD_ICON_THEME`       | Icon theme to use (default `breeze`, falls back to Adwaita, hicolor) |
+| `TERMINAL`            | Terminal for `Terminal=true` apps (default `alacritty`)  |
+| `XD_SHELL_OPEN_MENU`  | Testing aid: open the Start menu along a path at startup, e.g. `Programs/Accessories` |
+
 ## Preview themes
 
     ./build/xd-themeview --style classic|luna|whistler [--scheme data/schemes/X.ini] [--scale 1.5] --out preview.png

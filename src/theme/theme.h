@@ -127,4 +127,34 @@ void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_
 /* Notification area well at the right end of the taskbar. */
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
 
+/* ---- menus (device px) ---- */
+
+typedef struct xd_menu_metrics {
+    int border;       /* frame thickness on every side */
+    int item_h;       /* item with a 16px icon */
+    int large_item_h; /* Start menu item with a 32px icon */
+    int icon;         /* 16 logical */
+    int large_icon;   /* 32 logical */
+    int icon_x;       /* icon offset from the item's left edge */
+    int text_x;       /* text offset, small items */
+    int large_text_x; /* text offset, large items */
+    int arrow_w;      /* space reserved for the submenu arrow */
+    int separator_h;
+    int banner_w;     /* Windows 2000 Start menu side banner */
+} xd_menu_metrics;
+
+xd_menu_metrics xd_theme_menu_metrics(const xd_theme *t);
+/* Background and border of a whole menu. */
+void xd_theme_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* One item; the caller draws the icon. state: XD_STATE_HOT, _DISABLED. */
+void xd_theme_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                             const char *label, bool submenu, bool large);
+void xd_theme_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* Vertical banner with text reading bottom to top, e.g. "XeonDesktop" in
+ * bold followed by "Professional". */
+void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
+                                const char *edition);
+/* Width of a menu item's label in device px. */
+int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label);
+
 #endif

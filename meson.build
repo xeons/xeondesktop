@@ -191,13 +191,19 @@ executable(
   install: true,
 )
 
+librsvg_dep = dependency('librsvg-2.0', include_type: 'system')
+
 executable(
   'xd-shell',
   'src/shell/main.c',
   'src/shell/taskbar.c',
   'src/shell/toplevels.c',
+  'src/shell/icons.c',
+  'src/shell/apps.c',
+  'src/shell/menu.c',
+  'src/shell/startmenu.c',
   'src/ui/shm.c',
-  dependencies: [theme_dep, client_protocol_dep],
+  dependencies: [theme_dep, client_protocol_dep, librsvg_dep, xkbcommon_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -207,8 +213,9 @@ executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep])
 test_exe = executable(
   'xd-tests',
   'tests/test_main.c',
+  'src/shell/apps.c',
   dependencies: [theme_dep],
-  c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"'],
+  c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(
   'unit',

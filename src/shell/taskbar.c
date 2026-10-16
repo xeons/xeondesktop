@@ -69,10 +69,13 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     int inset_top = classic ? xd_tpx(t, 4) : 0;
     int button_h = classic ? dh - xd_tpx(t, 6) : dh;
 
-    /* Start button. */
+    /* Start button: held down while its menu is open. */
     int sw = xd_theme_start_button_width(t, cr);
     bar->start_rect = (xd_rect){pad, inset_top, sw, button_h};
-    xd_theme_draw_start_button(t, cr, bar->start_rect, button_state(bar, XD_HIT_START));
+    uint8_t start_state = button_state(bar, XD_HIT_START);
+    if (shell->start_menu != nullptr && shell->start_bar == bar)
+        start_state |= XD_STATE_PRESSED;
+    xd_theme_draw_start_button(t, cr, bar->start_rect, start_state);
 
     /* Notification area, sized to the clock like Windows does. */
     xd_text_style clock_style = {
@@ -198,12 +201,37 @@ void xd_taskbar_pointer_leave(xd_taskbar *bar) {
     }
 }
 
-void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed) {
+void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial) {
+    xd_shell *shell = bar->shell;
+    if (shell->start_model == nullptr || !bar->configured)
+        return;
+    /* start_rect is in device px; the popup anchor is surface-local
+     * logical. */
+    xd_rect r = bar->start_rect;
+    xd_rect anchor = {(int)(r.x / bar->scale), (int)(r.y / bar->scale),
+                      (int)(r.w / bar->scale), (int)(r.h / bar->scale)};
+    xd_menu_open_root(shell, shell->start_model, bar->layer, anchor, serial);
+    shell->start_bar = bar;
+    /* Take the keyboard while the menu is open so arrows/Esc work. */
+    zwlr_layer_surface_v1_set_keyboard_interactivity(
+        bar->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE);
+    bar->dirty = true;
+}
+
+void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
+                               uint32_t serial) {
     if (button != BTN_LEFT)
         return; /* right-click window menu comes with libxdui */
     if (pressed) {
         bar->pressed = bar->hot;
         bar->dirty = true;
+        /* The Start menu opens on press, like Windows'. */
+        if (bar->hot == XD_HIT_START) {
+            if (bar->shell->start_menu != nullptr)
+                xd_menu_close_all(bar->shell);
+            else
+                xd_taskbar_open_start_menu(bar, serial);
+        }
         return;
     }
     int target = bar->pressed;
@@ -213,7 +241,6 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed) {
         return; /* released somewhere else: cancel, like a real button */
     if (target >= 0 && (size_t)target < bar->task_count)
         xd_toplevel_click(bar->task_views[target]);
-    /* The Start menu arrives in the next milestone. */
 }
 
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel) {
@@ -302,6 +329,8 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
 }
 
 void xd_taskbar_destroy(xd_taskbar *bar) {
+    if (bar->shell->start_bar == bar)
+        xd_menu_close_all(bar->shell); /* its popups hang off this surface */
     if (bar->shell->pointer_bar == bar)
         bar->shell->pointer_bar = nullptr;
     wl_list_remove(&bar->link);

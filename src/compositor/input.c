@@ -521,6 +521,12 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
 
     if (server->mode != XD_CURSOR_PASSTHROUGH)
         return;
+    /* An open popup (menu) owns the pointer: a click outside it must reach
+     * the grab so the menu closes, not start a window drag. */
+    if (wlr_seat_pointer_has_grab(server->seat)) {
+        wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
+        return;
+    }
     pick p = pick_at(server, server->cursor->x, server->cursor->y);
     if (p.surface != nullptr) {
         if (p.view != nullptr)

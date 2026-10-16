@@ -332,6 +332,27 @@ static void classic_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const c
     xd_draw_text(cr, xd_rect_inset(inner, xd_tpx(t, 6), 0), clock, &st);
 }
 
+static void classic_menu_palette(const xd_theme *t, xd_menu_palette *p) {
+    bool flat = t->scheme.flat_menus;
+    *p = (xd_menu_palette){
+        .flat = flat,
+        .background = xd_sys(t, XD_COLOR_MENU),
+        .border = xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+        .text = xd_sys(t, XD_COLOR_MENU_TEXT),
+        .hilight = xd_sys(t, flat ? XD_COLOR_MENU_HILIGHT : XD_COLOR_HILIGHT),
+        .hilight_text = xd_sys(t, XD_COLOR_HILIGHT_TEXT),
+        .disabled_text = xd_sys(t, XD_COLOR_GRAY_TEXT),
+        /* Windows 2000 etches disabled menu text with a white shadow. */
+        .disabled_emboss = t->scheme.high_contrast ? xd_rgba_alpha(xd_rgba_hex(0), 0)
+                                                   : xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+        .separator_dark = xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+        .separator_light = xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+        .banner_top = xd_rgba_hex(0x000000),
+        .banner_bottom = xd_sys(t, XD_COLOR_ACTIVE_TITLE),
+        .banner_text = xd_sys(t, XD_COLOR_TITLE_TEXT),
+    };
+}
+
 const xd_style_ops xd_style_classic = {
     .name = "Classic",
     .frame_insets = classic_frame_insets,
@@ -346,4 +367,5 @@ const xd_style_ops xd_style_classic = {
     .draw_start_button = classic_draw_start_button,
     .draw_task_button = classic_draw_task_button,
     .draw_tray = classic_draw_tray,
+    .menu_palette = classic_menu_palette,
 };

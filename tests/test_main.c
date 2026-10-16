@@ -4,6 +4,7 @@
 #include <stdlib.h>
 
 #include "../src/core/ini.h"
+#include "../src/shell/apps.h"
 #include "../src/theme/theme.h"
 
 static int failures = 0;
@@ -256,6 +257,84 @@ static void test_hit(void) {
     }
 }
 
+static void test_apps(void) {
+    xd_arena arena;
+    xd_arena_init(&arena, 4096);
+    setenv("LANG", "de_DE.UTF-8", 1);
+    unsetenv("LC_ALL");
+    unsetenv("LC_MESSAGES");
+    xd_app app;
+
+    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=Editor\n"
+                              "Name[de]=Bearbeiter\nName[fr]=Editeur\nIcon=ed\n"
+                              "Exec=ed --open %U\nCategories=Utility;TextEditor;\n"
+                              "[Desktop Action new]\nName=Should not win\nExec=nope\n"),
+                       XD_STR("ed.desktop"), "XeonDesktop", &arena, &app));
+    CHECK(strcmp(app.name, "Bearbeiter") == 0);
+    CHECK(strcmp(app.exec, "ed --open") == 0);
+    CHECK(strcmp(app.folder, "Accessories") == 0);
+    CHECK(strcmp(app.icon, "ed") == 0);
+
+    /* Settings wins over System when both are listed. */
+    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=Mouse\nExec=m\n"
+                              "Categories=System;Settings;\n"),
+                       XD_STR("m.desktop"), "XeonDesktop", &arena, &app));
+    CHECK(strcmp(app.folder, "Settings") == 0);
+
+    /* Entries that must not be shown. */
+    static const char *const hidden[] = {
+        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nNoDisplay=true\n",
+        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nHidden=true\n",
+        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nOnlyShowIn=KDE;LXQt;\n",
+        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nNotShowIn=XeonDesktop;\n",
+        "[Desktop Entry]\nType=Link\nName=A\nURL=http://x\n",
+        "[Desktop Entry]\nType=Application\nName=A\n",
+        "[Desktop Entry]\nType=Application\nName=A\nExec=a\nTryExec=/nonexistent/xd\n",
+        "not an ini file at all",
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(hidden); i++)
+        CHECK(!xd_app_parse(xd_str_from_cstr(hidden[i]), XD_STR("x.desktop"), "XeonDesktop",
+                            &arena, &app));
+    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=A\nExec=a\n"
+                              "OnlyShowIn=XeonDesktop;\n"),
+                       XD_STR("a.desktop"), "XeonDesktop", &arena, &app));
+    CHECK(strcmp(app.folder, "Other") == 0);
+
+    /* Field codes. */
+    char *e = xd_app_expand_exec(&arena, XD_STR("app %f %F %u %U --pct=100%% %c %i"), "It's",
+                                 "ico");
+    CHECK(strcmp(e, "app     --pct=100% 'It'\\''s' --icon 'ico'") == 0);
+    e = xd_app_expand_exec(&arena, XD_STR("trailing %"), "n", nullptr);
+    CHECK(strcmp(e, "trailing %") == 0);
+    /* An icon name containing a quote is dropped rather than quoted. */
+    e = xd_app_expand_exec(&arena, XD_STR("a %i"), "n", "bad'icon");
+    CHECK(strcmp(e, "a") == 0);
+    xd_arena_destroy(&arena);
+}
+
+static void test_menus(void) {
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    for (size_t si = 0; si < XD_STYLE_COUNT; si++) {
+        xd_theme t;
+        xd_theme_init(&t, (xd_visual_style)si, &scheme, 1.5);
+        xd_menu_metrics m = xd_theme_menu_metrics(&t);
+        CHECK(m.large_icon == 48 && m.icon == 24 && m.item_h > m.icon);
+        cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 300, 300);
+        cairo_t *cr = cairo_create(surf);
+        xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 300, 300});
+        xd_theme_draw_start_banner(&t, cr, (xd_rect){4, 4, m.banner_w, 290}, "Xeon", "Pro");
+        xd_theme_draw_menu_item(&t, cr, (xd_rect){30, 4, 260, m.item_h}, XD_STATE_HOT, "A",
+                                true, false);
+        xd_theme_draw_menu_item(&t, cr, (xd_rect){30, 40, 260, m.item_h}, XD_STATE_DISABLED,
+                                "B", false, true);
+        xd_theme_draw_menu_separator(&t, cr, (xd_rect){30, 90, 260, m.separator_h});
+        CHECK(cairo_status(cr) == CAIRO_STATUS_SUCCESS);
+        cairo_destroy(cr);
+        cairo_surface_destroy(surf);
+    }
+}
+
 static void test_px(void) {
     CHECK(xd_px(1.0, 1) == 1);
     CHECK(xd_px(1.25, 1) == 1);
@@ -275,6 +354,8 @@ int main(void) {
     test_px();
     test_render();
     test_hit();
+    test_apps();
+    test_menus();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

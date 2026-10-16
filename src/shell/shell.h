@@ -8,8 +8,13 @@
 
 #include "../core/wlist.h"
 
+#include <xkbcommon/xkbcommon.h>
+
 #include "../theme/theme.h"
 #include "../ui/shm.h"
+#include "apps.h"
+#include "icons.h"
+#include "menu.h"
 #include "protocols.h"
 
 typedef struct xd_shell xd_shell;
@@ -66,6 +71,7 @@ typedef struct xd_taskbar {
 struct xd_shell {
     xd_visual_style style;
     xd_scheme scheme;
+    const char *terminal;
 
     struct wl_display *display;
     struct wl_registry *registry;
@@ -73,6 +79,11 @@ struct xd_shell {
     struct wl_shm *shm;
     struct wl_seat *seat;
     struct wl_pointer *pointer;
+    struct wl_keyboard *keyboard;
+    struct xkb_context *xkb;
+    struct xkb_keymap *keymap;
+    struct xkb_state *xkb_state;
+    struct xdg_wm_base *wm_base;
     struct zwlr_layer_shell_v1 *layer_shell;
     struct zwlr_foreign_toplevel_manager_v1 *toplevel_manager;
     struct wp_fractional_scale_manager_v1 *fractional_manager;
@@ -84,7 +95,18 @@ struct xd_shell {
     struct wl_list toplevels;
 
     xd_taskbar *pointer_bar; /* taskbar under the pointer */
-    double pointer_x, pointer_y;
+    xd_menu *pointer_menu;   /* menu under the pointer */
+
+    /* Start menu. */
+    xd_icons *icons;
+    xd_app_list apps;
+    xd_menu_tree menu_tree;
+    xd_menu_model *start_model;
+    xd_menu *start_menu;    /* open root menu, or nullptr */
+    xd_taskbar *start_bar;  /* taskbar whose Start button opened it */
+    uint32_t menu_serial;   /* input serial the menu grab was made with */
+    int menu_timer_fd;      /* hover delay */
+    xd_menu *pending_menu;  /* menu waiting for the hover delay */
 
     char clock[32];
     bool running;
@@ -103,9 +125,20 @@ void xd_taskbars_mark_dirty(xd_shell *shell);
 void xd_taskbars_render_dirty(xd_shell *shell);
 void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y);
 void xd_taskbar_pointer_leave(xd_taskbar *bar);
-void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed);
+void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
+                               uint32_t serial);
+/* Opens the Start menu above this taskbar's Start button. */
+void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial);
 /* Forget a window that's going away. */
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
+
+/* main.c */
+void xd_shell_launch(xd_shell *shell, const char *command);
+/* Called after the Start menu closed for any reason. */
+void xd_shell_start_menu_closed(xd_shell *shell);
+
+/* startmenu.c */
+void xd_start_menu_build(xd_shell *shell);
 
 /* toplevels.c */
 void xd_toplevels_init(xd_shell *shell);

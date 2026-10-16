@@ -38,6 +38,9 @@ typedef struct modern_palette {
     xd_font_spec start_font;
     double start_radius; /* rounded right side; 0 for a pill-less button */
     const char *start_label;
+
+    uint32_t menu_bg, menu_border, menu_text, menu_hilight, menu_hilight_text,
+        menu_hilight_border, menu_disabled, menu_separator, banner_top, banner_bottom;
 } modern_palette;
 
 static void fill_stops(cairo_t *cr, xd_rect r, const stops *s) {
@@ -367,6 +370,15 @@ static const modern_palette luna = {
                    .italic = true},
     .start_radius = 12,
     .start_label = "start",
+    .menu_bg = 0xFFFFFF,
+    .menu_border = 0xACA899,
+    .menu_text = 0x000000,
+    .menu_hilight = 0x316AC5,
+    .menu_hilight_text = 0xFFFFFF,
+    .menu_disabled = 0xACA899,
+    .menu_separator = 0xACA899,
+    .banner_top = 0x0A246A,
+    .banner_bottom = 0x3A6EE8,
 };
 
 /* Whistler: the pale, silvery look of the pre-release builds. */
@@ -411,10 +423,41 @@ static const modern_palette whistler = {
     .start_font = {.family = "Tahoma, DejaVu Sans, sans-serif", .size_pt = 10, .bold = true},
     .start_radius = 6,
     .start_label = "Start",
+    .menu_bg = 0xFAFBFD,
+    .menu_border = 0x8D9DBF,
+    .menu_text = 0x10265A,
+    .menu_hilight = 0xD6E0F1,
+    .menu_hilight_text = 0x10265A,
+    .menu_hilight_border = 0x8FA6CF,
+    .menu_disabled = 0xA0A8B8,
+    .menu_separator = 0xC3CCDD,
+    .banner_top = 0x5F7598,
+    .banner_bottom = 0xA9BCDA,
 };
 
 static const modern_palette *pal(const xd_theme *t) {
     return t->style == XD_STYLE_WHISTLER ? &whistler : &luna;
+}
+
+static void modern_menu_palette(const xd_theme *t, xd_menu_palette *p) {
+    const modern_palette *m = pal(t);
+    xd_rgba none = xd_rgba_alpha(xd_rgba_hex(0), 0);
+    *p = (xd_menu_palette){
+        .flat = true,
+        .background = xd_rgba_hex(m->menu_bg),
+        .border = xd_rgba_hex(m->menu_border),
+        .text = xd_rgba_hex(m->menu_text),
+        .hilight = xd_rgba_hex(m->menu_hilight),
+        .hilight_text = xd_rgba_hex(m->menu_hilight_text),
+        .hilight_border = m->menu_hilight_border != 0 ? xd_rgba_hex(m->menu_hilight_border) : none,
+        .disabled_text = xd_rgba_hex(m->menu_disabled),
+        .disabled_emboss = none,
+        .separator_dark = xd_rgba_hex(m->menu_separator),
+        .separator_light = none,
+        .banner_top = xd_rgba_hex(m->banner_top),
+        .banner_bottom = xd_rgba_hex(m->banner_bottom),
+        .banner_text = xd_rgba_hex(0xFFFFFF),
+    };
 }
 
 #define MODERN_OPS(sym, label)                                                 \
@@ -432,6 +475,7 @@ static const modern_palette *pal(const xd_theme *t) {
         .draw_start_button = modern_draw_start_button,                         \
         .draw_task_button = modern_draw_task_button,                           \
         .draw_tray = modern_draw_tray,                                         \
+        .menu_palette = modern_menu_palette,                                   \
     }
 
 MODERN_OPS(xd_style_luna, "Luna");

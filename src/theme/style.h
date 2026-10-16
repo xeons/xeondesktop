@@ -6,6 +6,24 @@
 
 #include "theme.h"
 
+/* Colours and shape of menus, supplied by each style. */
+typedef struct xd_menu_palette {
+    bool flat;            /* XP flat menus: 1px border, no 3D edge */
+    xd_rgba background;
+    xd_rgba border;       /* flat menus only */
+    xd_rgba text;
+    xd_rgba hilight;
+    xd_rgba hilight_text;
+    xd_rgba hilight_border; /* drawn around flat highlights if alpha > 0 */
+    xd_rgba disabled_text;
+    xd_rgba disabled_emboss; /* classic etched disabled text if alpha > 0 */
+    xd_rgba separator_dark;
+    xd_rgba separator_light; /* alpha 0 for a single-line separator */
+    xd_rgba banner_top;
+    xd_rgba banner_bottom;
+    xd_rgba banner_text;
+} xd_menu_palette;
+
 typedef struct xd_style_ops {
     const char *name;
     xd_insets (*frame_insets)(const xd_theme *t, const xd_frame *f);
@@ -24,6 +42,7 @@ typedef struct xd_style_ops {
     void (*draw_task_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                              const char *label);
     void (*draw_tray)(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
+    void (*menu_palette)(const xd_theme *t, struct xd_menu_palette *out);
 } xd_style_ops;
 
 extern const xd_style_ops xd_style_classic;

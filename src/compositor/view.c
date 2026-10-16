@@ -5,6 +5,8 @@
 #include <math.h>
 #include <stdlib.h>
 
+#include <wlr/util/log.h>
+
 #include "../core/alloc.h"
 #include "server.h"
 
@@ -138,7 +140,6 @@ static void set_activated(xd_view *view, bool activated) {
 
 void xd_view_focus(xd_view *view) {
     xd_server *server = view->server;
-    struct wlr_surface *surface = view->toplevel->base->surface;
     xd_view *prev = xd_view_focused(server);
 
     if (view->minimized) {
@@ -156,10 +157,9 @@ void xd_view_focus(xd_view *view) {
         set_activated(prev, false);
     set_activated(view, true);
 
-    struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
-    if (kb != nullptr)
-        wlr_seat_keyboard_notify_enter(server->seat, surface, kb->keycodes, kb->num_keycodes,
-                                       &kb->modifiers);
+    /* An exclusive layer surface (open Start menu) keeps the keyboard;
+     * the window gets it when that ends. */
+    xd_keyboard_refocus(server);
 }
 
 /* Focuses the most recently used visible window, or clears focus. */
@@ -170,7 +170,7 @@ void xd_view_focus_next(xd_server *server) {
             return;
         }
     }
-    wlr_seat_keyboard_notify_clear_focus(server->seat);
+    xd_keyboard_refocus(server);
 }
 
 void xd_view_close(xd_view *view) { wlr_xdg_toplevel_send_close(view->toplevel); }
@@ -569,21 +569,39 @@ typedef struct xd_popup {
     struct wl_listener destroy;
 } xd_popup;
 
+/* Layout position of the surface a popup chain is rooted at: a window's
+ * content or a layer surface (the taskbar's Start menu). */
+static bool popup_root_origin(struct wlr_scene_node *node, xd_server **server, int *x,
+                              int *y) {
+    xd_view *view = xd_view_from_node(node);
+    if (view != nullptr) {
+        *server = view->server;
+        return wlr_scene_node_coords(&view->content->node, x, y);
+    }
+    xd_layer_surface *ls = xd_layer_from_node(node);
+    if (ls != nullptr) {
+        *server = ls->server;
+        return wlr_scene_node_coords(&ls->scene->tree->node, x, y);
+    }
+    return false;
+}
+
 static void handle_popup_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_popup *p = XD_CONTAINER_OF(listener, xd_popup, commit);
     if (!p->popup->base->initial_commit)
         return;
 
-    /* Keep the popup on the output its toplevel is on. */
+    /* Keep popups (menus, submenus) inside the work area of the output
+     * their root surface is on, flipping or sliding as the client allows. */
     struct wlr_scene_tree *tree = p->popup->base->data;
-    xd_view *view = tree != nullptr ? xd_view_from_node(&tree->node) : nullptr;
-    if (view != nullptr) {
-        int cx = 0;
-        int cy = 0;
-        wlr_scene_node_coords(&view->content->node, &cx, &cy);
-        struct wlr_box area = xd_output_work_area_at(view->server, view->x, view->y);
-        struct wlr_box box = {area.x - cx, area.y - cy, area.width, area.height};
+    xd_server *server = nullptr;
+    int rx = 0;
+    int ry = 0;
+    if (tree != nullptr && popup_root_origin(&tree->node, &server, &rx, &ry)) {
+        struct wlr_box area = xd_output_work_area_at(server, rx + 1, ry + 1);
+        struct wlr_box box = {area.x - rx, area.y - ry, area.width, area.height};
         wlr_xdg_popup_unconstrain_from_box(p->popup, &box);
+        wlr_log(WLR_DEBUG, "popup: root (%d,%d) box (%d,%d %dx%d) -> geometry (%d,%d %dx%d)", rx, ry, box.x, box.y, box.width, box.height, p->popup->scheduled.geometry.x, p->popup->scheduled.geometry.y, p->popup->scheduled.geometry.width, p->popup->scheduled.geometry.height);
     }
     wlr_xdg_surface_schedule_configure(p->popup->base);
 }
@@ -595,20 +613,24 @@ static void handle_popup_destroy(struct wl_listener *listener, [[maybe_unused]] 
     xd_free(p);
 }
 
-static void handle_new_popup([[maybe_unused]] struct wl_listener *listener, void *data) {
-    struct wlr_xdg_popup *popup = data;
-    struct wlr_xdg_surface *parent =
-        popup->parent != nullptr ? wlr_xdg_surface_try_from_wlr_surface(popup->parent) : nullptr;
-    if (parent == nullptr || parent->data == nullptr)
-        return; /* layer-shell parents come with the shell milestone */
-
-    struct wlr_scene_tree *parent_tree = parent->data;
+void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree) {
     popup->base->data = wlr_scene_xdg_surface_create(parent_tree, popup->base);
 
     xd_popup *p = XD_NEW(xd_popup);
     p->popup = popup;
     XD_LISTEN(&popup->base->surface->events.commit, p, commit, handle_popup_commit);
     XD_LISTEN(&popup->events.destroy, p, destroy, handle_popup_destroy);
+}
+
+static void handle_new_popup([[maybe_unused]] struct wl_listener *listener, void *data) {
+    struct wlr_xdg_popup *popup = data;
+    /* Layer-shell popups (the Start menu) are created without a parent and
+     * arrive again through the layer surface's new_popup; see layers.c. */
+    if (popup->parent == nullptr)
+        return;
+    struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(popup->parent);
+    if (xdg != nullptr && xdg->data != nullptr)
+        xd_popup_attach(popup, xdg->data);
 }
 
 void xd_view_init(xd_server *server) {

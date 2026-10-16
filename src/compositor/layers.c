@@ -13,15 +13,64 @@ static struct wlr_scene_tree *tree_for_layer(xd_server *server,
     return server->layers[layer];
 }
 
+xd_layer_surface *xd_layer_from_node(struct wlr_scene_node *node) {
+    for (; node != nullptr; node = node->parent != nullptr ? &node->parent->node : nullptr) {
+        xd_node_tag *tag = node->data;
+        if (tag != nullptr && tag->kind == XD_NODE_LAYER)
+            return XD_CONTAINER_OF(tag, xd_layer_surface, tag);
+    }
+    return nullptr;
+}
+
+void xd_keyboard_refocus(xd_server *server) {
+    struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
+    struct wlr_surface *target = nullptr;
+    if (server->layer_focus != nullptr) {
+        target = server->layer_focus->layer_surface->surface;
+    } else {
+        xd_view *view = xd_view_focused(server);
+        if (view != nullptr)
+            target = view->toplevel->base->surface;
+    }
+    if (target == nullptr) {
+        wlr_seat_keyboard_notify_clear_focus(server->seat);
+        return;
+    }
+    if (kb != nullptr)
+        wlr_seat_keyboard_notify_enter(server->seat, target, kb->keycodes, kb->num_keycodes,
+                                       &kb->modifiers);
+    else
+        wlr_seat_keyboard_notify_enter(server->seat, target, nullptr, 0, nullptr);
+}
+
+/* Exclusive keyboard interactivity takes focus while mapped. */
+static void update_keyboard_focus(xd_layer_surface *ls) {
+    xd_server *server = ls->server;
+    struct wlr_layer_surface_v1 *l = ls->layer_surface;
+    bool wants = l->surface->mapped &&
+                 l->current.keyboard_interactive ==
+                     ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE &&
+                 ls->layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+    if (wants && server->layer_focus != ls) {
+        server->layer_focus = ls;
+        xd_keyboard_refocus(server);
+    } else if (!wants && server->layer_focus == ls) {
+        server->layer_focus = nullptr;
+        xd_keyboard_refocus(server);
+    }
+}
+
 static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, map);
     xd_output_arrange(ls->output);
+    update_keyboard_focus(ls);
 }
 
 static void handle_unmap(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, unmap);
     /* Gives its exclusive zone back to the windows. */
     xd_output_arrange(ls->output);
+    update_keyboard_focus(ls);
 }
 
 static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -36,15 +85,27 @@ static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *d
     }
     /* The initial commit needs a configure; later ones only if the client
      * changed its size, anchors, margins or exclusive zone. */
-    if (l->initial_commit || l->current.committed != 0)
+    if (l->initial_commit || l->current.committed != 0) {
         xd_output_arrange(ls->output);
+        update_keyboard_focus(ls);
+    }
+}
+
+static void handle_new_popup(struct wl_listener *listener, void *data) {
+    xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, new_popup);
+    xd_popup_attach(data, ls->scene->tree);
 }
 
 static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, destroy);
+    if (ls->server->layer_focus == ls) {
+        ls->server->layer_focus = nullptr;
+        xd_keyboard_refocus(ls->server);
+    }
     xd_unlisten(&ls->map);
     xd_unlisten(&ls->unmap);
     xd_unlisten(&ls->commit);
+    xd_unlisten(&ls->new_popup);
     xd_unlisten(&ls->destroy);
     wl_list_remove(&ls->link);
     xd_output *out = ls->output;
@@ -82,6 +143,7 @@ static void handle_new_layer_surface(struct wl_listener *listener, void *data) {
     XD_LISTEN(&l->surface->events.map, ls, map, handle_map);
     XD_LISTEN(&l->surface->events.unmap, ls, unmap, handle_unmap);
     XD_LISTEN(&l->surface->events.commit, ls, commit, handle_commit);
+    XD_LISTEN(&l->events.new_popup, ls, new_popup, handle_new_popup);
     XD_LISTEN(&l->events.destroy, ls, destroy, handle_destroy);
 }
 
@@ -114,6 +176,9 @@ void xd_output_arrange(xd_output *out) {
     }
 
     bool changed = !wlr_box_equal(&usable, &out->usable);
+    wlr_log(WLR_DEBUG, "arrange %s: full (%d,%d %dx%d) usable (%d,%d %dx%d)",
+            out->wlr_output->name, full.x, full.y, full.width, full.height, usable.x, usable.y,
+            usable.width, usable.height);
     out->usable = usable;
     if (changed)
         xd_view_refit_maximized(server, out);
