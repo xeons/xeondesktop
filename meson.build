@@ -145,6 +145,8 @@ client_protocol_xml = {
   'wlr-foreign-toplevel-management-unstable-v1': files(
     'protocols/wlr-foreign-toplevel-management-unstable-v1.xml',
   ),
+  'wlr-virtual-pointer-unstable-v1': files('protocols/wlr-virtual-pointer-unstable-v1.xml'),
+  'virtual-keyboard-unstable-v1': files('protocols/virtual-keyboard-unstable-v1.xml'),
 }
 
 client_protocol_src = []
@@ -274,6 +276,14 @@ executable(
 )
 
 executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep])
+
+# Drives a session with --allow-virtual-input, for automated UI tests.
+executable(
+  'xd-inject',
+  'tools/xd-inject.c',
+  dependencies: [core_dep, client_protocol_dep, xkbcommon_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
 
 test_exe = executable(
   'xd-tests',

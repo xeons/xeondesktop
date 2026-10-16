@@ -13,6 +13,8 @@
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_virtual_keyboard_v1.h>
+#include <wlr/types/wlr_virtual_pointer_v1.h>
 #include <wlr/util/log.h>
 #include <xkbcommon/xkbcommon.h>
 
@@ -212,6 +214,9 @@ static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused
     xd_free(kb);
 }
 
+static void register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
+                              struct wlr_input_device *device);
+
 static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
     struct wlr_keyboard *wlr_kb = wlr_keyboard_from_input_device(device);
 
@@ -230,7 +235,11 @@ static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
     xkb_context_unref(ctx);
     /* Windows defaults: ~30 cps after a 500 ms delay. */
     wlr_keyboard_set_repeat_info(wlr_kb, 30, 500);
+    register_keyboard(server, wlr_kb, device);
+}
 
+static void register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
+                              struct wlr_input_device *device) {
     xd_keyboard *kb = XD_NEW(xd_keyboard);
     kb->server = server;
     kb->wlr_keyboard = wlr_kb;
@@ -239,6 +248,13 @@ static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
     XD_LISTEN(&device->events.destroy, kb, destroy, handle_keyboard_destroy);
     wlr_seat_set_keyboard(server->seat, wlr_kb);
     wl_list_insert(&server->keyboards, &kb->link);
+}
+
+static void update_seat_caps(xd_server *server) {
+    uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
+    if (!wl_list_empty(&server->keyboards))
+        caps |= WL_SEAT_CAPABILITY_KEYBOARD;
+    wlr_seat_set_capabilities(server->seat, caps);
 }
 
 static void handle_new_input(struct wl_listener *listener, void *data) {
@@ -257,10 +273,40 @@ static void handle_new_input(struct wl_listener *listener, void *data) {
     case WLR_INPUT_DEVICE_SWITCH:
         break;
     }
-    uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
-    if (!wl_list_empty(&server->keyboards))
-        caps |= WL_SEAT_CAPABILITY_KEYBOARD;
-    wlr_seat_set_capabilities(server->seat, caps);
+    update_seat_caps(server);
+}
+
+/* ---- virtual input (testing only) ------------------------------------------ */
+
+static void handle_new_virtual_keyboard(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_virtual_keyboard);
+    struct wlr_virtual_keyboard_v1 *vk = data;
+    /* The client supplies its own keymap. No repeat: injected keys are
+     * pressed and released explicitly. */
+    wlr_keyboard_set_repeat_info(&vk->keyboard, 0, 0);
+    register_keyboard(server, &vk->keyboard, &vk->keyboard.base);
+    update_seat_caps(server);
+    wlr_log(WLR_INFO, "virtual keyboard connected (testing)");
+}
+
+static void handle_new_virtual_pointer(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_virtual_pointer);
+    const struct wlr_virtual_pointer_v1_new_pointer_event *e = data;
+    wlr_cursor_attach_input_device(server->cursor, &e->new_pointer->pointer.base);
+    update_seat_caps(server);
+    wlr_log(WLR_INFO, "virtual pointer connected (testing)");
+}
+
+void xd_input_enable_virtual(xd_server *server) {
+    struct wlr_virtual_keyboard_manager_v1 *kbm =
+        wlr_virtual_keyboard_manager_v1_create(server->display);
+    struct wlr_virtual_pointer_manager_v1 *pm =
+        wlr_virtual_pointer_manager_v1_create(server->display);
+    XD_LISTEN(&kbm->events.new_virtual_keyboard, server, new_virtual_keyboard,
+              handle_new_virtual_keyboard);
+    XD_LISTEN(&pm->events.new_virtual_pointer, server, new_virtual_pointer,
+              handle_new_virtual_pointer);
+    wlr_log(WLR_INFO, "virtual input enabled: any client can inject input (testing only)");
 }
 
 /* ---- pointer -------------------------------------------------------------- */

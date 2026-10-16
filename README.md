@@ -93,6 +93,21 @@ and shell watch, so changes show up immediately everywhere. Command-line
 | `TERMINAL`            | Terminal for `Terminal=true` apps (default `alacritty`)  |
 | `XD_SHELL_OPEN_MENU`  | Testing aid: open the Start menu along a path at startup, e.g. `Programs/Accessories` |
 
+## Automated UI testing
+
+`xd-inject` moves the pointer, clicks and types inside a session started
+with `--allow-virtual-input`, using the virtual pointer and keyboard
+protocols. Only that nested session is affected; your real mouse and
+keyboard aren't touched. Never use `--allow-virtual-input` for a real
+session: it lets any program type and click as you.
+
+    ./build/xd-compositor --allow-virtual-input -s 'sleep 2; ./build/xd-inject \
+        move 25 727 click sleep 400 move 85 610 click sleep 800 \
+        type "alacritty" key Return'
+
+Steps: `move X Y`, `click [left|right|middle]`, `down`/`up`, `wheel N`,
+`type TEXT`, `key COMBO` (e.g. `ctrl+alt+t`, `alt+F4`), `sleep MS`.
+
 ## Preview themes
 
     ./build/xd-themeview --style classic|luna|whistler [--scheme data/schemes/X.ini] [--scale 1.5] --out preview.png

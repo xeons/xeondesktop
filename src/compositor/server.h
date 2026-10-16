@@ -142,6 +142,7 @@ typedef struct xd_config {
     bool cli_style;          /* --style given: passed on to the shell */
     const char *shell;       /* shell executable; nullptr = don't start one */
     double forced_scale; /* 0 = pick per output from its DPI */
+    bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     const char *terminal;
     const char *startup;
 } xd_config;
@@ -201,6 +202,8 @@ struct xd_server {
     struct wl_listener new_input;
     struct wl_listener request_cursor;
     struct wl_listener request_set_selection;
+    struct wl_listener new_virtual_keyboard;
+    struct wl_listener new_virtual_pointer;
 
     /* Pointer grab state. */
     xd_cursor_mode mode;
@@ -251,6 +254,8 @@ struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly);
 
 /* input.c */
 void xd_input_init(xd_server *server);
+/* Lets clients inject keyboard/pointer input. Testing only. */
+void xd_input_enable_virtual(xd_server *server);
 void xd_cursor_set(xd_server *server, const char *name);
 /* Runs argv[0] (searched in PATH) with argv. Returns the pid or -1. */
 pid_t xd_spawn_argv(char *const argv[]);

@@ -10,6 +10,8 @@
 
 #include "cursor-shape-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
+#include "virtual-keyboard-unstable-v1-client-protocol.h"
+#include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "wlr-foreign-toplevel-management-unstable-v1-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"

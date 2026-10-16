@@ -33,6 +33,7 @@ static void usage(FILE *f) {
                "  --terminal CMD                 command for Ctrl+Alt+T (default alacritty)\n"
                "  --shell PATH                   taskbar/shell program (default: xd-shell)\n"
                "  --no-shell                     don't start the shell\n"
+               "  --allow-virtual-input          let clients inject input (UI tests only)\n"
                "  -s, --startup CMD              run CMD once the compositor is up\n"
                "  -d, --debug                    verbose logging\n");
 }
@@ -46,6 +47,10 @@ static bool parse_args(int argc, char **argv, xd_config *cfg, bool *debug) {
         }
         if (xd_str_eq(arg, XD_STR("-d")) || xd_str_eq(arg, XD_STR("--debug"))) {
             *debug = true;
+            continue;
+        }
+        if (xd_str_eq(arg, XD_STR("--allow-virtual-input"))) {
+            cfg->virtual_input = true;
             continue;
         }
         if (xd_str_eq(arg, XD_STR("--no-shell"))) {
@@ -133,6 +138,8 @@ static bool server_init(xd_server *server) {
     xd_layers_init(server);
     xd_view_init(server);
     xd_input_init(server);
+    if (server->config.virtual_input)
+        xd_input_enable_virtual(server);
 
     /* GTK uses the KDE protocol to ask for server-side decorations. */
     struct wlr_server_decoration_manager *kde = wlr_server_decoration_manager_create(server->display);
