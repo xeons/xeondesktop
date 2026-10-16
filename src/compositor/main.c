@@ -142,9 +142,6 @@ static bool server_init(xd_server *server) {
     if (server->config.virtual_input)
         xd_input_enable_virtual(server);
 
-    /* GTK uses the KDE protocol to ask for server-side decorations. */
-    struct wlr_server_decoration_manager *kde = wlr_server_decoration_manager_create(server->display);
-    wlr_server_decoration_manager_set_default_mode(kde, WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
 
     wlr_viewporter_create(server->display);
     wlr_fractional_scale_manager_v1_create(server->display, 1);
@@ -167,7 +164,7 @@ static void server_finish(xd_server *server) {
     struct wl_listener *listeners[] = {
         &server->new_output,          &server->layout_change,
         &server->new_toplevel,        &server->new_popup,
-        &server->new_decoration,      &server->new_layer_surface,
+        &server->new_decoration,      &server->new_kde_decoration, &server->new_layer_surface,
         &server->cursor_motion,       &server->cursor_motion_absolute,
         &server->cursor_button,       &server->cursor_axis,
         &server->cursor_frame,        &server->request_cursor_shape,

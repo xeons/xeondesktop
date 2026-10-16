@@ -76,6 +76,10 @@ static int to_device(int logical, double scale) {
 void xd_frame_render(xd_view *view, bool force) {
     if (!view->mapped)
         return;
+    /* The client draws its own decorations. */
+    wlr_scene_node_set_enabled(&view->frame->node, !view->csd);
+    if (view->csd)
+        return;
 
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = xd_view_scale(view);

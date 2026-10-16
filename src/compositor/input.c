@@ -382,13 +382,54 @@ typedef struct pick {
     xd_frame_part part;
 } pick;
 
+/* Windows that draw their own decorations and have no resize margin of
+ * their own (Firefox, for one) get an invisible one from us, just outside
+ * their edges. */
+static constexpr double CSD_MARGIN = 6;
+static constexpr double CSD_CORNER = 16;
+
+static xd_frame_part csd_margin_part(const xd_view *v, double lx, double ly) {
+    struct wlr_box b = xd_view_outer_box(v);
+    double x0 = b.x, y0 = b.y, x1 = b.x + b.width, y1 = b.y + b.height;
+    if (lx < x0 - CSD_MARGIN || ly < y0 - CSD_MARGIN || lx >= x1 + CSD_MARGIN ||
+        ly >= y1 + CSD_MARGIN)
+        return XD_PART_NONE;
+    bool left = lx < x0, right = lx >= x1, top = ly < y0, bottom = ly >= y1;
+    if (!left && !right && !top && !bottom)
+        return XD_PART_NONE; /* inside the window */
+    /* Corners extend a little along each edge, as on a real frame. */
+    bool near_left = lx < x0 + CSD_CORNER, near_right = lx >= x1 - CSD_CORNER;
+    bool near_top = ly < y0 + CSD_CORNER, near_bottom = ly >= y1 - CSD_CORNER;
+    if ((top || left) && (top ? near_left : near_top))
+        return XD_PART_TOP_LEFT;
+    if ((top || right) && (top ? near_right : near_top))
+        return XD_PART_TOP_RIGHT;
+    if ((bottom || left) && (bottom ? near_left : near_bottom))
+        return XD_PART_BOTTOM_LEFT;
+    if ((bottom || right) && (bottom ? near_right : near_bottom))
+        return XD_PART_BOTTOM_RIGHT;
+    return top ? XD_PART_TOP : bottom ? XD_PART_BOTTOM : left ? XD_PART_LEFT : XD_PART_RIGHT;
+}
+
 static pick pick_at(xd_server *server, double lx, double ly) {
     pick p = {.part = XD_PART_NONE};
     struct wlr_scene_node *node =
         wlr_scene_node_at(&server->scene->tree.node, lx, ly, &p.sx, &p.sy);
+    xd_view *under = node != nullptr ? xd_view_from_node(node) : nullptr;
+    /* Resize margins of client-decorated windows stacked above what's under
+     * the cursor (views are kept front to back). */
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (v == under)
+            break;
+        if (!v->mapped || v->minimized || !v->csd || v->maximized)
+            continue;
+        xd_frame_part part = csd_margin_part(v, lx, ly);
+        if (part != XD_PART_NONE)
+            return (pick){.view = v, .part = part};
+    }
     if (node == nullptr)
         return p;
-    p.view = xd_view_from_node(node);
+    p.view = under;
     if (node->type == WLR_SCENE_NODE_BUFFER) {
         struct wlr_scene_surface *ss =
             wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));

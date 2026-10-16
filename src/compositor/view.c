@@ -25,6 +25,8 @@ xd_frame xd_view_frame(const xd_view *view, bool active) {
 }
 
 xd_insets xd_view_insets(const xd_view *view) {
+    if (view->csd)
+        return (xd_insets){0};
     xd_frame f = xd_view_frame(view, true);
     return xd_theme_frame_insets(&view->server->logical_theme, &f);
 }
@@ -118,6 +120,8 @@ static int floor_int(double v) {
 }
 
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly) {
+    if (view->csd)
+        return XD_PART_CLIENT;
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = view->drawn.scale > 0 ? view->drawn.scale : 1.0;
     xd_theme theme;
@@ -359,6 +363,7 @@ static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, map);
     view->mapped = true;
     view->dialog = is_fixed_size(view->toplevel);
+    xd_view_update_decorations(view);
     ftl_create(view);
     update_content_position(view);
     place_new_view(view);
@@ -398,11 +403,9 @@ static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *d
     struct wlr_xdg_surface *xdg = view->toplevel->base;
 
     if (xdg->initial_commit) {
-        /* Let the client pick its size, and tell it we draw the frame. */
+        /* Let the client pick its size, and settle who draws the frame. */
         wlr_xdg_toplevel_set_size(view->toplevel, 0, 0);
-        if (view->decoration != nullptr)
-            wlr_xdg_toplevel_decoration_v1_set_mode(
-                view->decoration, WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+        xd_view_update_decorations(view);
         return;
     }
     if (!view->mapped)
@@ -561,12 +564,44 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data) {
 
 /* ---- decorations --------------------------------------------------------- */
 
+/* Windows get our themed frame unless the client asks to draw its own
+ * (xdg-decoration client-side, or the KDE protocol's client mode, which
+ * GTK 3 apps such as Firefox use for title-bar tabs). Drawing ours around
+ * a client-decorated window doubles the title bar and puts two sets of
+ * buttons and resize edges on one window. Clients that don't negotiate at
+ * all get our frame. */
+static bool kde_wants_client_side(xd_server *server, struct wlr_surface *surface) {
+    if (server->kde_decoration == nullptr)
+        return false;
+    struct wlr_server_decoration *d;
+    wl_list_for_each(d, &server->kde_decoration->decorations, link) {
+        if (d->surface == surface)
+            return d->mode == WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT;
+    }
+    return false;
+}
+
+void xd_view_update_decorations(xd_view *view) {
+    bool csd = kde_wants_client_side(view->server, view->toplevel->base->surface);
+    if (view->decoration != nullptr) {
+        csd = view->decoration->requested_mode == WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+        if (view->toplevel->base->initialized)
+            wlr_xdg_toplevel_decoration_v1_set_mode(
+                view->decoration, csd ? WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+                                      : WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    }
+    if (csd == view->csd)
+        return;
+    view->csd = csd;
+    if (view->mapped) {
+        update_content_position(view);
+        xd_frame_render(view, true);
+    }
+}
+
 static void handle_decoration_mode(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, decoration_mode);
-    /* Every window gets a themed frame, whatever the client asks for. */
-    if (view->toplevel->base->initialized)
-        wlr_xdg_toplevel_decoration_v1_set_mode(view->decoration,
-                                                WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    xd_view_update_decorations(view);
 }
 
 static void handle_decoration_destroy(struct wl_listener *listener,
@@ -587,6 +622,43 @@ static void handle_new_decoration([[maybe_unused]] struct wl_listener *listener,
     XD_LISTEN(&deco->events.request_mode, view, decoration_mode, handle_decoration_mode);
     XD_LISTEN(&deco->events.destroy, view, decoration_destroy, handle_decoration_destroy);
     handle_decoration_mode(&view->decoration_mode, nullptr);
+}
+
+/* A KDE decoration object: re-check its window whenever the mode changes. */
+typedef struct kde_deco {
+    xd_server *server;
+    struct wlr_server_decoration *deco;
+    struct wl_listener mode;
+    struct wl_listener destroy;
+} kde_deco;
+
+static void kde_deco_refresh(kde_deco *k) {
+    struct wlr_xdg_toplevel *top = wlr_xdg_toplevel_try_from_wlr_surface(k->deco->surface);
+    struct wlr_scene_tree *content = top != nullptr ? top->base->data : nullptr;
+    xd_view *view = content != nullptr ? xd_view_from_node(&content->node) : nullptr;
+    if (view != nullptr)
+        xd_view_update_decorations(view);
+}
+
+static void handle_kde_mode(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    kde_deco_refresh(XD_CONTAINER_OF(listener, kde_deco, mode));
+}
+
+static void handle_kde_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    kde_deco *k = XD_CONTAINER_OF(listener, kde_deco, destroy);
+    xd_unlisten(&k->mode);
+    xd_unlisten(&k->destroy);
+    xd_free(k);
+}
+
+static void handle_new_kde_decoration(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_kde_decoration);
+    kde_deco *k = XD_NEW(kde_deco);
+    k->server = server;
+    k->deco = data;
+    XD_LISTEN(&k->deco->events.mode, k, mode, handle_kde_mode);
+    XD_LISTEN(&k->deco->events.destroy, k, destroy, handle_kde_destroy);
+    kde_deco_refresh(k);
 }
 
 /* ---- popups --------------------------------------------------------------- */
@@ -672,4 +744,12 @@ void xd_view_init(xd_server *server) {
     server->xdg_decoration = wlr_xdg_decoration_manager_v1_create(server->display);
     XD_LISTEN(&server->xdg_decoration->events.new_toplevel_decoration, server, new_decoration,
               handle_new_decoration);
+
+    /* GTK 3 asks for (or declines) server-side decorations with the KDE
+     * protocol. */
+    server->kde_decoration = wlr_server_decoration_manager_create(server->display);
+    wlr_server_decoration_manager_set_default_mode(server->kde_decoration,
+                                                   WLR_SERVER_DECORATION_MANAGER_MODE_SERVER);
+    XD_LISTEN(&server->kde_decoration->events.new_decoration, server, new_kde_decoration,
+              handle_new_kde_decoration);
 }

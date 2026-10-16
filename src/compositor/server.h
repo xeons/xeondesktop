@@ -17,6 +17,7 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
@@ -92,6 +93,7 @@ typedef struct xd_view {
     bool minimized;
     bool maximized;
     bool dialog; /* fixed size (min == max): dialog frame, no resizing */
+    bool csd;    /* the client draws its own decorations: no frame from us */
     int x, y;               /* outer frame position, layout coordinates */
     struct wlr_box restore; /* outer box before maximizing */
 
@@ -187,6 +189,8 @@ struct xd_server {
     int cascade;
 
     struct wlr_xdg_decoration_manager_v1 *xdg_decoration;
+    struct wlr_server_decoration_manager *kde_decoration; /* used by GTK 3 */
+    struct wl_listener new_kde_decoration;
     struct wl_listener new_decoration;
 
     struct wlr_cursor *cursor;
@@ -279,6 +283,8 @@ void xd_view_set_position(xd_view *view, int x, int y);
 void xd_view_set_outer_box(xd_view *view, struct wlr_box outer);
 struct wlr_box xd_view_outer_box(const xd_view *view);
 xd_insets xd_view_insets(const xd_view *view);
+/* Re-reads whether the client asked to draw its own decorations. */
+void xd_view_update_decorations(xd_view *view);
 /* Frame description for drawing and hit testing. */
 xd_frame xd_view_frame(const xd_view *view, bool active);
 /* Which part of the frame the layout point (lx, ly) is over. */

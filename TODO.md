@@ -30,6 +30,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 ## Compositor
 
 - [ ] Window menu (Alt+Space, click on the caption icon, right-click caption).
+- [~] Windows that ask to draw their own decorations (xdg-decoration
+      client-side, or the KDE protocol's client mode, e.g. Firefox with tabs
+      in the title bar) get no XP frame, plus an invisible 6px resize margin.
+      Tested with Firefox: its own close button and edge resizing work.
+      Firefox users can tick Customize Toolbar > Title Bar to get our frame.
+- [ ] Clients that never negotiate but draw their own title bar anyway
+      (GTK 4 / libadwaita apps) still get our frame too: a double title bar.
+      Needs a per-app rule or an option to drop our frame.
+- [ ] A setting to force our frame on every window (Firefox would then show
+      its own buttons under ours).
+- [ ] Client-decorated windows open at the top-left corner (no cascade
+      offset), and have no window menu or keyboard move/size.
 - [ ] Fullscreen requests are acknowledged but ignored.
 - [ ] Modal/transient dialogs: no parent-relative placement or stacking.
 - [ ] Win key and Ctrl+Esc don't open the Start menu (needs a
