@@ -16,8 +16,10 @@ rendition. Screenshots are from a nested development session.
 
 ## Build
 
-Dependencies: meson, ninja, wlroots 0.20, wayland, xkbcommon, cairo, pango,
-GLib/GIO, GTK 3, gdk-pixbuf, and procps-ng's libproc2 (Task Manager).
+Dependencies: meson, ninja, wlroots 0.20, wlr-protocols, wayland, xkbcommon,
+xcb and xcb-icccm, cairo, pango, GLib/GIO, GTK 3, gdk-pixbuf, and procps-ng's
+libproc2 (Task Manager). At run time, Xwayland (`xorg-xwayland`) runs X11
+applications; without it only Wayland ones work.
 Optional: Wine, for its free Tahoma clone (`/usr/share/wine/fonts`), which
 XeonDesktop's programs use so text matches Windows; without it DejaVu Sans
 stands in. Other fonts directories can be added with `XD_FONT_DIRS`.

@@ -10,6 +10,7 @@
  *   wheel N           scroll N notches (positive = down)
  *   type TEXT         type characters using the session's keymap
  *   key COMBO         e.g. Return, ctrl+alt+t, alt+F4, super
+ *   hold|release MOD  keep ctrl, alt, shift or super down across steps
  *   sleep MS          wait
  *
  * Example: xd-inject move 20 728 click sleep 500 type alacritty key Return
@@ -55,6 +56,7 @@ typedef struct inject {
     key_entry *keys;
     size_t key_count;
     uint32_t mod_shift, mod_ctrl, mod_alt, mod_super;
+    uint32_t held; /* modifiers kept down by "hold" */
 } inject;
 
 static uint32_t now_ms(void) {
@@ -232,6 +234,7 @@ static bool press_combo(inject *in, uint32_t mods, xkb_keysym_t sym) {
         return false;
     if (k->shift)
         mods |= in->mod_shift;
+    mods &= ~in->held; /* already down */
     struct {
         uint32_t mask;
         xkb_keysym_t sym;
@@ -241,7 +244,7 @@ static bool press_combo(inject *in, uint32_t mods, xkb_keysym_t sym) {
         {in->mod_shift, XKB_KEY_Shift_L},
         {in->mod_super, XKB_KEY_Super_L},
     };
-    uint32_t state = 0;
+    uint32_t state = in->held;
     for (size_t i = 0; i < XD_ARRAY_LEN(held); i++) {
         if (!(mods & held[i].mask))
             continue;
@@ -296,6 +299,38 @@ static bool type_text(inject *in, const char *text) {
         i += n;
     }
     return true;
+}
+
+/* "hold ctrl" / "release ctrl": keeps a modifier down across later steps
+ * (Ctrl+click, Alt+drag). */
+static bool hold_modifier(inject *in, const char *name, bool down) {
+    static const struct {
+        const char *name;
+        xkb_keysym_t sym;
+    } mods[] = {
+        {"ctrl", XKB_KEY_Control_L},
+        {"alt", XKB_KEY_Alt_L},
+        {"shift", XKB_KEY_Shift_L},
+        {"super", XKB_KEY_Super_L},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(mods); i++) {
+        if (!xd_str_eq_nocase(xd_str_from_cstr(name), xd_str_from_cstr(mods[i].name)))
+            continue;
+        uint32_t mask = i == 0 ? in->mod_ctrl : i == 1 ? in->mod_alt : i == 2 ? in->mod_shift
+                                                                      : in->mod_super;
+        const key_entry *k = find_key(in, mods[i].sym);
+        if (k == nullptr)
+            return false;
+        if (down == ((in->held & mask) != 0))
+            return true;
+        send_key(in, k->code, down);
+        in->held = down ? in->held | mask : in->held & ~mask;
+        send_mods(in, in->held);
+        settle(in);
+        return true;
+    }
+    fprintf(stderr, "xd-inject: unknown modifier %s\n", name);
+    return false;
 }
 
 /* "ctrl+alt+F4" -> modifiers and keysym. */
@@ -409,6 +444,10 @@ static int run_steps(inject *in, int argc, char **argv) {
             i++;
         } else if (strcmp(cmd, "key") == 0 && a1 != nullptr) {
             if (!key_combo(in, a1))
+                return EXIT_FAILURE;
+            i++;
+        } else if ((strcmp(cmd, "hold") == 0 || strcmp(cmd, "release") == 0) && a1 != nullptr) {
+            if (!hold_modifier(in, a1, strcmp(cmd, "hold") == 0))
                 return EXIT_FAILURE;
             i++;
         } else if (strcmp(cmd, "sleep") == 0 && parse_int(a1, 0, 600000, &v1)) {

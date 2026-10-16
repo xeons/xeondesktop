@@ -127,6 +127,8 @@ settings_lib = static_library(
 settings_dep = declare_dependency(link_with: settings_lib, dependencies: [theme_dep, glib_dep])
 
 wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
+xcb_dep = dependency('xcb', include_type: 'system')
+xcb_icccm_dep = dependency('xcb-icccm', include_type: 'system')
 wayland_server_dep = dependency('wayland-server', include_type: 'system')
 wayland_client_dep = dependency('wayland-client', include_type: 'system')
 xkbcommon_dep = dependency('xkbcommon', include_type: 'system')
@@ -171,6 +173,18 @@ foreach name, xml : client_protocol_xml
     command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
   )
 endforeach
+
+# wlroots' output power header includes this generated server header; the
+# XML comes from the wlr-protocols package.
+wlr_protocols_dir = dependency('wlr-protocols').get_variable('pkgdatadir')
+server_protocol_headers_extra = [
+  custom_target(
+    'wlr-output-power-management-server-header',
+    input: wlr_protocols_dir / 'unstable/wlr-output-power-management-unstable-v1.xml',
+    output: 'wlr-output-power-management-unstable-v1-protocol.h',
+    command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+  ),
+]
 
 # Our private protocol, server side (the compositor implements it).
 arranger_xml = files('protocols/xd-window-arranger-v1.xml')
@@ -221,12 +235,18 @@ executable(
   'src/compositor/view.c',
   'src/compositor/frame.c',
   'src/compositor/arrange.c',
+  'src/compositor/protocols.c',
+  'src/compositor/lock.c',
+  'src/compositor/xwayland.c',
   server_protocol_headers,
+  server_protocol_headers_extra,
   arranger_server_src,
   dependencies: [
     theme_dep,
     settings_dep,
     wlroots_dep,
+    xcb_dep,
+    xcb_icccm_dep,
     wayland_server_dep,
     xkbcommon_dep,
     libdrm_dep,

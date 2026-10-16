@@ -18,6 +18,7 @@
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_server_decoration.h>
+#include <wlr/xwayland/xwayland.h>
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
@@ -77,11 +78,15 @@ typedef struct xd_layer_surface {
     struct wl_listener destroy;
 } xd_layer_surface;
 
+typedef enum xd_view_kind : uint8_t { XD_VIEW_XDG, XD_VIEW_X11 } xd_view_kind;
+
 typedef struct xd_view {
     xd_node_tag tag; /* must be first */
     struct wl_list link; /* xd_server.views, most recently focused first */
     xd_server *server;
-    struct wlr_xdg_toplevel *toplevel;
+    xd_view_kind kind;
+    struct wlr_xdg_toplevel *toplevel;      /* XD_VIEW_XDG */
+    struct wlr_xwayland_surface *xsurface;  /* XD_VIEW_X11 */
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
     /* Taskbar entry; exists while mapped. */
     struct wlr_foreign_toplevel_handle_v1 *ftl;
@@ -131,6 +136,14 @@ typedef struct xd_view {
     struct wl_listener request_window_menu;
     struct wl_listener request_fullscreen;
     struct wl_listener set_parent;
+    /* X11 windows only. */
+    struct wl_listener associate;
+    struct wl_listener dissociate;
+    struct wl_listener request_configure;
+    struct wl_listener request_activate;
+    struct wl_listener request_close;
+    struct wl_listener set_decorations;
+    struct wl_listener content_destroy; /* wlroots frees it with the surface */
     struct wl_listener set_title;
     struct wl_listener set_app_id;
     struct wl_listener ftl_activate;
@@ -207,6 +220,31 @@ struct xd_server {
     struct wlr_server_decoration_manager *kde_decoration; /* used by GTK 3 */
     struct wl_listener new_kde_decoration;
     struct wl_listener new_decoration;
+
+    /* protocols.c */
+    struct wlr_output_manager_v1 *output_manager;
+    struct wl_listener output_apply;
+    struct wl_listener output_test;
+    struct wl_listener output_power;
+    struct wlr_idle_notifier_v1 *idle_notifier;
+    int idle_inhibitors;
+    struct wl_listener new_idle_inhibitor;
+    struct wl_listener request_activate;
+
+    /* xwayland.c */
+    struct wlr_compositor *compositor;
+    struct wlr_xwayland *xwayland;
+    struct wl_listener xwayland_ready;
+    struct wl_listener xwayland_new_surface;
+    struct wlr_scene_tree *layer_x11_popups; /* X11 menus and tooltips */
+
+    /* lock.c */
+    struct wlr_scene_tree *layer_lock; /* above everything */
+    bool locked;
+    struct xd_lock *lock;             /* the locker client, while it runs */
+    struct wlr_scene_rect *lock_cover;
+    struct wlr_surface *lock_focus;   /* locker surface with the keyboard */
+    struct wl_listener new_lock;
 
     struct wlr_cursor *cursor;
     struct wlr_xcursor_manager *xcursor;
@@ -308,11 +346,37 @@ void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t movin
 void xd_view_set_fullscreen(xd_view *view, bool fullscreen);
 struct wlr_box xd_view_outer_box(const xd_view *view);
 xd_insets xd_view_insets(const xd_view *view);
+/* Kind-independent access (xdg-shell or X11). */
+struct wlr_surface *xd_view_surface(const xd_view *view);
+const char *xd_view_title(const xd_view *view);
+const char *xd_view_app_id(const xd_view *view);
+void xd_view_set_resizing(xd_view *view, bool resizing);
+/* Shared lifecycle, called by both shells. */
+void xd_view_on_map(xd_view *view);
+void xd_view_on_unmap(xd_view *view);
+void xd_view_on_commit(xd_view *view);
+void xd_view_on_destroy(xd_view *view);
+/* Tells an X11 window where its client area is (it wants absolute
+ * coordinates). */
+void xd_view_x11_sync(xd_view *view);
 /* Re-reads whether the client asked to draw its own decorations. */
 void xd_view_update_decorations(xd_view *view);
 
 /* arrange.c: Cascade/Tile for the taskbar menu (shell-only protocol). */
 void xd_arrange_init(xd_server *server);
+
+/* protocols.c: output management/power, idle, activation. */
+void xd_protocols_init(xd_server *server);
+void xd_output_config_changed(xd_server *server);
+void xd_idle_activity(xd_server *server);
+
+/* lock.c: ext-session-lock. */
+void xd_lock_init(xd_server *server);
+void xd_lock_layout_changed(xd_server *server);
+
+/* xwayland.c: X11 applications. */
+void xd_xwayland_init(xd_server *server);
+void xd_xwayland_finish(xd_server *server);
 /* input.c: the window menu's Move and Size, driven by the keyboard (and the
  * mouse) until Enter, a click, or Esc to put the window back. */
 void xd_view_begin_keyboard_move(xd_view *view);
@@ -334,6 +398,9 @@ void xd_view_update_all_frames(xd_server *server);
 void xd_view_retheme(xd_view *view);
 /* Re-fits maximized windows after a work area change. */
 void xd_view_refit_maximized(xd_server *server, xd_output *out);
+/* Brings windows left outside every output (one was unplugged, turned off
+ * or moved) onto the nearest output. */
+void xd_view_rescue_offscreen(xd_server *server);
 /* Shows a popup (menu) as a child of parent_tree. */
 void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree);
 /* Forget an output that is going away. */

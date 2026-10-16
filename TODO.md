@@ -30,13 +30,30 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       several outputs at once, changing scale while running, cursor size.
 - [ ] **Session entry**: no `xeondesktop.desktop` for display managers, no
       session startup script, no `meson install` test.
-- [ ] **XWayland**: not supported; X11 apps don't run in the session.
+- [~] **XWayland**: X11 apps run (Xwayland starts when the first one
+      connects; DISPLAY is set for everything launched from the session).
+      Tested with xterm: our frame, title and taskbar button, typing,
+      maximize/restore, move, cascade placement, fullscreen, Alt+F4, its
+      Ctrl+click menu (drawn over the taskbar), clean exit. Untested: X11
+      dialogs/transients, Motif-undecorated windows, size-hint-fixed
+      windows, apps that place themselves, HiDPI (Xwayland draws at 1x and
+      is upscaled), clipboard and drag-and-drop between X11 and Wayland.
 - [ ] **Keyboard layout** comes from `XKB_DEFAULT_*` only; no Keyboard applet.
-- [ ] **Output management** (`wlr-output-management`): resolution, refresh,
-      scale and arrangement can't be changed (Display Properties' Settings
-      tab is read-only).
-- [ ] **Idle detection and screen lock** (`ext-idle-notify`, session lock):
-      needed for screen savers and "password protected".
+- [~] **Output management** (`wlr-output-management`) and output power:
+      tested with wlr-randr (scale, off/on, two outputs). Windows on an
+      output that's turned off move to the nearest one, maximized ones
+      refit. Display Properties' Settings tab still doesn't use it.
+      Untested: real monitors, mode/refresh changes, hotplug, power
+      management from swayidle (`wlr-output-power`).
+- [~] **Idle and screen lock** (`ext-idle-notify`, idle-inhibit,
+      `ext-session-lock`): tested with swayidle (idle after the timeout,
+      resume on input, held off while mpv plays) and swaylock (locks,
+      blocks shortcuts but Ctrl+Alt+Backspace, stays locked if the locker
+      dies, a new locker can take over, unlocks, keyboard returns). Still
+      needed: our own Lock Computer, screen savers, "password protected".
+- [~] **xdg-activation**: apps can bring their windows forward (tested:
+      starting Task Manager again raises the open one). No focus-stealing
+      prevention yet: any valid token raises the window.
 - [ ] Power actions (Shut down / Restart / Stand by / Hibernate) have only
       ever run **simulated** in nested sessions; never executed for real.
 
@@ -54,30 +71,29 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       in the title bar) get no XP frame, plus an invisible 6px resize margin.
       Tested with Firefox: its own close button and edge resizing work.
       Firefox users can tick Customize Toolbar > Title Bar to get our frame.
-- [ ] Clients that never negotiate but draw their own title bar anyway
-      (GTK 4 / libadwaita apps) still get our frame too: a double title bar.
-      Needs a per-app rule or an option to drop our frame.
-- [ ] A setting to force our frame on every window (Firefox would then show
-      its own buttons under ours).
-- [ ] Client-decorated windows open at the top-left corner (no cascade
-      offset), and have no window menu or keyboard move/size.
-- [ ] Fullscreen requests are acknowledged but ignored.
-- [ ] Modal/transient dialogs: no parent-relative placement or stacking.
-- [ ] Win key and Ctrl+Esc don't open the Start menu (needs a
-      compositor-to-shell channel).
+- [x] Clients that never negotiate but draw their own title bar (GTK 4 /
+      libadwaita) are detected from their shadow margins and get no frame
+      (tested with pavucontrol). `[Windows] AlwaysDrawFrames=true` forces
+      our frame on every window.
+- [x] Client-decorated windows cascade like the others. Their window menu
+      and keyboard move/size: untested.
+- [x] Fullscreen (tested with Firefox F11 and `xterm -fullscreen`): covers
+      the taskbar while in front; Alt+Tab away drops it under the window
+      switched to, with the taskbar back.
+- [x] Owned dialogs open centred over their owner, stay above it, minimize
+      and restore with it, and have no taskbar button.
+- [x] Win key alone and Ctrl+Esc open the Start menu.
 - [ ] Ctrl+Alt+Delete opens the Task Manager directly. Windows 2000 first
       shows the Windows Security dialog (Lock, Log Off, Shut Down, Change
       Password, Task Manager); that needs a lock screen first.
 - [ ] Blur behind the Windows 7 Start menu's glass (wlroots' scene graph has
       no blur pass); until then the panel is opaque.
-- [ ] Resizing from the top/left edges moves the window before the client
-      commits its new size, which can jitter.
-- [?] Alt+Tab, Alt+F4, Win+Up/Down, Ctrl+Alt+T, Ctrl+Alt+Backspace: untested.
-- [?] Resizing by dragging borders and corners: untested.
-- [?] Caption close and minimize buttons: untested (maximize and
-      double-click-to-unmaximize were tested).
-- [?] Double-clicking the caption icon to close: untested.
-- [?] Log off actually ending the session (SIGTERM path): untested.
+- [x] Resizing from the top/left edges keeps the opposite edge still.
+- [x] Tested: Alt+Tab, Alt+F4 (Wayland and X11), Win+Up/Down (maximize,
+      restore, minimize), Ctrl+Alt+T, Ctrl+Alt+Backspace, Ctrl+Esc,
+      dragging borders and corners, the caption's minimize, maximize and
+      close buttons, double-clicking the caption icon to close, and
+      SIGTERM (Log Off) ending the session cleanly.
 - Debug builds print LeakSanitizer reports from fontconfig/GTK caches at
   exit; only the unit tests use the suppression file.
 

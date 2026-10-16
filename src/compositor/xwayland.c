@@ -1,0 +1,324 @@
+/* SPDX-License-Identifier: MIT
+ * X11 applications through Xwayland.
+ *
+ * Xwayland starts on demand (when an X11 client first connects); main.c
+ * sets DISPLAY for everything we launch. Normal X11 windows become views
+ * like any other (our frame unless their Motif hints ask for none,
+ * maximize, minimize, fullscreen, move and resize). Override-redirect
+ * windows (menus, tooltips, drop-downs) are shown where the application
+ * puts them, above normal windows, without a frame or a taskbar button.
+ */
+#include <wlr/util/log.h>
+
+#include "../core/alloc.h"
+#include "server.h"
+
+/* ---- override-redirect windows ------------------------------------------------- */
+
+typedef struct xd_unmanaged {
+    xd_server *server;
+    struct wlr_xwayland_surface *xsurface;
+    struct wlr_scene_tree *tree;
+    struct wl_listener associate;
+    struct wl_listener dissociate;
+    struct wl_listener map;
+    struct wl_listener unmap;
+    struct wl_listener set_geometry;
+    struct wl_listener request_configure;
+    struct wl_listener destroy;
+} xd_unmanaged;
+
+static void unmanaged_place(xd_unmanaged *u) {
+    if (u->tree != nullptr)
+        wlr_scene_node_set_position(&u->tree->node, u->xsurface->x, u->xsurface->y);
+}
+
+static void handle_um_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, map);
+    u->tree = wlr_scene_subsurface_tree_create(u->server->layer_x11_popups,
+                                               u->xsurface->surface);
+    unmanaged_place(u);
+    /* Drop-down menus and the like may want the keyboard. */
+    if (wlr_xwayland_surface_override_redirect_wants_focus(u->xsurface)) {
+        struct wlr_keyboard *kb = wlr_seat_get_keyboard(u->server->seat);
+        if (kb != nullptr)
+            wlr_seat_keyboard_notify_enter(u->server->seat, u->xsurface->surface, kb->keycodes,
+                                           kb->num_keycodes, &kb->modifiers);
+    }
+}
+
+static void handle_um_unmap(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, unmap);
+    if (u->tree != nullptr) {
+        wlr_scene_node_destroy(&u->tree->node);
+        u->tree = nullptr;
+    }
+    xd_keyboard_refocus(u->server);
+}
+
+static void handle_um_associate(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, associate);
+    XD_LISTEN(&u->xsurface->surface->events.map, u, map, handle_um_map);
+    XD_LISTEN(&u->xsurface->surface->events.unmap, u, unmap, handle_um_unmap);
+}
+
+static void handle_um_dissociate(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, dissociate);
+    xd_unlisten(&u->map);
+    xd_unlisten(&u->unmap);
+}
+
+static void handle_um_geometry(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    unmanaged_place(XD_CONTAINER_OF(listener, xd_unmanaged, set_geometry));
+}
+
+static void handle_um_configure(struct wl_listener *listener, void *data) {
+    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, request_configure);
+    const struct wlr_xwayland_surface_configure_event *e = data;
+    wlr_xwayland_surface_configure(u->xsurface, e->x, e->y, e->width, e->height);
+    unmanaged_place(u);
+}
+
+static void handle_um_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, destroy);
+    if (u->tree != nullptr)
+        wlr_scene_node_destroy(&u->tree->node);
+    xd_unlisten(&u->associate);
+    xd_unlisten(&u->dissociate);
+    xd_unlisten(&u->map);
+    xd_unlisten(&u->unmap);
+    xd_unlisten(&u->set_geometry);
+    xd_unlisten(&u->request_configure);
+    xd_unlisten(&u->destroy);
+    xd_free(u);
+}
+
+static void new_unmanaged(xd_server *server, struct wlr_xwayland_surface *xs) {
+    xd_unmanaged *u = XD_NEW(xd_unmanaged);
+    u->server = server;
+    u->xsurface = xs;
+    XD_LISTEN(&xs->events.associate, u, associate, handle_um_associate);
+    XD_LISTEN(&xs->events.dissociate, u, dissociate, handle_um_dissociate);
+    XD_LISTEN(&xs->events.set_geometry, u, set_geometry, handle_um_geometry);
+    XD_LISTEN(&xs->events.request_configure, u, request_configure, handle_um_configure);
+    XD_LISTEN(&xs->events.destroy, u, destroy, handle_um_destroy);
+}
+
+/* ---- managed windows ------------------------------------------------------------ */
+
+static void handle_x_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view_on_map(XD_CONTAINER_OF(listener, xd_view, map));
+}
+
+static void handle_x_unmap(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view_on_unmap(XD_CONTAINER_OF(listener, xd_view, unmap));
+}
+
+static void handle_x_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view_on_commit(XD_CONTAINER_OF(listener, xd_view, commit));
+}
+
+/* The surface's scene tree goes away by itself when the surface is
+ * destroyed, which can happen before Xwayland dissociates the window. */
+static void handle_x_content_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, content_destroy);
+    xd_unlisten(&view->content_destroy);
+    view->content = nullptr;
+}
+
+static void handle_x_associate(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, associate);
+    struct wlr_surface *surface = view->xsurface->surface;
+    view->content = wlr_scene_subsurface_tree_create(view->tree, surface);
+    view->content->node.data = nullptr;
+    XD_LISTEN(&view->content->node.events.destroy, view, content_destroy, handle_x_content_destroy);
+    XD_LISTEN(&surface->events.map, view, map, handle_x_map);
+    XD_LISTEN(&surface->events.unmap, view, unmap, handle_x_unmap);
+    XD_LISTEN(&surface->events.commit, view, commit, handle_x_commit);
+}
+
+static void handle_x_dissociate(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, dissociate);
+    xd_unlisten(&view->map);
+    xd_unlisten(&view->unmap);
+    xd_unlisten(&view->commit);
+    if (view->content != nullptr)
+        wlr_scene_node_destroy(&view->content->node); /* clears view->content */
+}
+
+static void handle_x_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, destroy);
+    view->xsurface->data = nullptr;
+    xd_view_on_destroy(view);
+}
+
+/* Before mapping, X11 windows pick their own size and place; after, they
+ * may only resize (we place them). */
+static void handle_x_configure(struct wl_listener *listener, void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_configure);
+    const struct wlr_xwayland_surface_configure_event *e = data;
+    if (!view->mapped) {
+        wlr_xwayland_surface_configure(view->xsurface, e->x, e->y, e->width, e->height);
+        return;
+    }
+    if (view->maximized || view->fullscreen) {
+        xd_view_x11_sync(view);
+        return;
+    }
+    xd_insets in = xd_view_insets(view);
+    xd_view_set_outer_box(view, (struct wlr_box){view->x, view->y, e->width + in.left + in.right,
+                                                 e->height + in.top + in.bottom});
+}
+
+static void handle_x_move(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_move);
+    xd_server *server = view->server;
+    if (view->maximized || server->mode != XD_CURSOR_PASSTHROUGH)
+        return;
+    server->mode = XD_CURSOR_MOVE;
+    server->grab_view = view;
+    server->grab_x = server->cursor->x - view->x;
+    server->grab_y = server->cursor->y - view->y;
+}
+
+static xd_frame_part part_from_x11_edges(uint32_t edges) {
+    bool t = edges & WLR_EDGE_TOP, b = edges & WLR_EDGE_BOTTOM, l = edges & WLR_EDGE_LEFT,
+         r = edges & WLR_EDGE_RIGHT;
+    return t && l   ? XD_PART_TOP_LEFT
+           : t && r ? XD_PART_TOP_RIGHT
+           : b && l ? XD_PART_BOTTOM_LEFT
+           : b && r ? XD_PART_BOTTOM_RIGHT
+           : t      ? XD_PART_TOP
+           : b      ? XD_PART_BOTTOM
+           : l      ? XD_PART_LEFT
+           : r      ? XD_PART_RIGHT
+                    : XD_PART_NONE;
+}
+
+static void handle_x_resize(struct wl_listener *listener, void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_resize);
+    const struct wlr_xwayland_resize_event *e = data;
+    xd_server *server = view->server;
+    xd_frame_part part = part_from_x11_edges(e->edges);
+    if (view->maximized || part == XD_PART_NONE || server->mode != XD_CURSOR_PASSTHROUGH)
+        return;
+    server->mode = XD_CURSOR_RESIZE;
+    server->grab_view = view;
+    server->grab_part = part;
+    server->grab_x = server->cursor->x;
+    server->grab_y = server->cursor->y;
+    server->grab_box = xd_view_outer_box(view);
+}
+
+static void handle_x_maximize(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_maximize);
+    xd_view_set_maximized(view, view->xsurface->maximized_vert && view->xsurface->maximized_horz);
+}
+
+static void handle_x_minimize(struct wl_listener *listener, void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_minimize);
+    const struct wlr_xwayland_minimize_event *e = data;
+    if (e->minimize)
+        xd_view_minimize(view);
+    else
+        xd_view_focus(view);
+}
+
+static void handle_x_fullscreen(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_fullscreen);
+    if (view->mapped)
+        xd_view_set_fullscreen(view, view->xsurface->fullscreen);
+}
+
+static void handle_x_activate(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_activate);
+    if (view->mapped && !view->server->locked)
+        xd_view_focus(view);
+}
+
+static void handle_x_close(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view_close(XD_CONTAINER_OF(listener, xd_view, request_close));
+}
+
+static void handle_x_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_title);
+    if (view->ftl != nullptr && view->xsurface->title != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, view->xsurface->title);
+    view->drawn.title_dirty = true;
+    xd_frame_render(view, false);
+}
+
+static void handle_x_class(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_app_id);
+    if (view->ftl != nullptr && view->xsurface->class != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_app_id(view->ftl, view->xsurface->class);
+}
+
+static void handle_x_decorations(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view_update_decorations(XD_CONTAINER_OF(listener, xd_view, set_decorations));
+}
+
+static void new_managed(xd_server *server, struct wlr_xwayland_surface *xs) {
+    xd_view *view = XD_NEW(xd_view);
+    view->tag.kind = XD_NODE_VIEW;
+    view->kind = XD_VIEW_X11;
+    view->server = server;
+    view->xsurface = xs;
+    xs->data = view;
+    view->tree = wlr_scene_tree_create(server->layer_views);
+    view->tree->node.data = &view->tag;
+    view->frame = wlr_scene_buffer_create(view->tree, nullptr);
+    wl_list_insert(server->views.prev, &view->link);
+
+    XD_LISTEN(&xs->events.associate, view, associate, handle_x_associate);
+    XD_LISTEN(&xs->events.dissociate, view, dissociate, handle_x_dissociate);
+    XD_LISTEN(&xs->events.destroy, view, destroy, handle_x_destroy);
+    XD_LISTEN(&xs->events.request_configure, view, request_configure, handle_x_configure);
+    XD_LISTEN(&xs->events.request_move, view, request_move, handle_x_move);
+    XD_LISTEN(&xs->events.request_resize, view, request_resize, handle_x_resize);
+    XD_LISTEN(&xs->events.request_maximize, view, request_maximize, handle_x_maximize);
+    XD_LISTEN(&xs->events.request_minimize, view, request_minimize, handle_x_minimize);
+    XD_LISTEN(&xs->events.request_fullscreen, view, request_fullscreen, handle_x_fullscreen);
+    XD_LISTEN(&xs->events.request_activate, view, request_activate, handle_x_activate);
+    XD_LISTEN(&xs->events.request_close, view, request_close, handle_x_close);
+    XD_LISTEN(&xs->events.set_title, view, set_title, handle_x_title);
+    XD_LISTEN(&xs->events.set_class, view, set_app_id, handle_x_class);
+    XD_LISTEN(&xs->events.set_decorations, view, set_decorations, handle_x_decorations);
+}
+
+static void handle_new_surface(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, xwayland_new_surface);
+    struct wlr_xwayland_surface *xs = data;
+    if (xs->override_redirect)
+        new_unmanaged(server, xs);
+    else
+        new_managed(server, xs);
+}
+
+static void handle_ready(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, xwayland_ready);
+    wlr_xwayland_set_seat(server->xwayland, server->seat);
+    wlr_log(WLR_INFO, "Xwayland ready on DISPLAY=%s", server->xwayland->display_name);
+}
+
+void xd_xwayland_init(xd_server *server) {
+    /* Lazy: Xwayland only starts when an X11 client connects. */
+    server->xwayland = wlr_xwayland_create(server->display, server->compositor, true);
+    if (server->xwayland == nullptr) {
+        wlr_log(WLR_ERROR, "Xwayland is not available; X11 applications won't run");
+        return;
+    }
+    XD_LISTEN(&server->xwayland->events.ready, server, xwayland_ready, handle_ready);
+    XD_LISTEN(&server->xwayland->events.new_surface, server, xwayland_new_surface,
+              handle_new_surface);
+    wlr_log(WLR_INFO, "X11 applications use DISPLAY=%s", server->xwayland->display_name);
+}
+
+void xd_xwayland_finish(xd_server *server) {
+    if (server->xwayland == nullptr)
+        return;
+    xd_unlisten(&server->xwayland_ready);
+    xd_unlisten(&server->xwayland_new_surface);
+    wlr_xwayland_destroy(server->xwayland);
+    server->xwayland = nullptr;
+}

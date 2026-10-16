@@ -119,7 +119,7 @@ static bool server_init(xd_server *server) {
         return false;
     }
 
-    wlr_compositor_create(server->display, 6, server->renderer);
+    server->compositor = wlr_compositor_create(server->display, 6, server->renderer);
     wlr_subcompositor_create(server->display);
     wlr_data_device_manager_create(server->display);
 
@@ -135,12 +135,18 @@ static bool server_init(xd_server *server) {
     server->layer_views = wlr_scene_tree_create(root);
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(root);
     server->layer_fullscreen = wlr_scene_tree_create(root); /* above the taskbar */
+    /* X11 menus and tooltips: over the taskbar and fullscreen windows, as on Windows. */
+    server->layer_x11_popups = wlr_scene_tree_create(root);
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = wlr_scene_tree_create(root);
+    server->layer_lock = wlr_scene_tree_create(root); /* screen locker, topmost */
 
     xd_layers_init(server);
     xd_view_init(server);
     xd_input_init(server);
     xd_arrange_init(server);
+    xd_protocols_init(server);
+    xd_lock_init(server);
+    xd_xwayland_init(server);
     if (server->config.virtual_input)
         xd_input_enable_virtual(server);
 
@@ -159,6 +165,7 @@ static bool server_init(xd_server *server) {
 
 static void server_finish(xd_server *server) {
     server->terminating = true;
+    xd_xwayland_finish(server);
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
     /* wlroots asserts that nothing still listens to an object it
@@ -167,6 +174,8 @@ static void server_finish(xd_server *server) {
         &server->new_output,          &server->layout_change,
         &server->new_toplevel,        &server->new_popup,
         &server->new_decoration,      &server->new_kde_decoration, &server->new_layer_surface,
+        &server->output_apply,        &server->output_test,        &server->output_power,
+        &server->new_idle_inhibitor,  &server->request_activate,   &server->new_lock,
         &server->cursor_motion,       &server->cursor_motion_absolute,
         &server->cursor_button,       &server->cursor_axis,
         &server->cursor_frame,        &server->request_cursor_shape,
@@ -324,8 +333,12 @@ int main(int argc, char **argv) {
     setenv("XEONDESKTOP_PID", pid, true);
     setenv("XEONDESKTOP_NESTED", nested ? "1" : "0", true);
     setenv("WAYLAND_DISPLAY", socket, true);
-    /* Children are Wayland clients of this compositor, not of the host. */
-    unsetenv("DISPLAY");
+    /* Children are clients of this compositor, not of the host: X11 apps
+     * go to our Xwayland. */
+    if (server.xwayland != nullptr)
+        setenv("DISPLAY", server.xwayland->display_name, true);
+    else
+        unsetenv("DISPLAY");
     setenv("XDG_CURRENT_DESKTOP", "XeonDesktop", true);
     /* GTK3 apps use the theme generated from our appearance settings, with
      * Windows-style permanent scroll bars. */

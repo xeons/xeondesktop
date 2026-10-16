@@ -44,11 +44,14 @@ void xd_output_update_backgrounds(xd_server *server) {
 static void handle_layout_change(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, layout_change);
     xd_output_update_backgrounds(server);
+    xd_view_rescue_offscreen(server);
     XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
-        xd_output_arrange(out);
+        xd_output_arrange(out); /* also refits maximized windows */
     }
     /* Windows may now sit on an output with a different scale. */
     xd_view_update_all_frames(server);
+    xd_lock_layout_changed(server);
+    xd_output_config_changed(server);
 }
 
 static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -81,8 +84,10 @@ static void handle_output_destroy(struct wl_listener *listener, [[maybe_unused]]
     xd_unlisten(&out->destroy);
     if (out->background != nullptr)
         wlr_scene_node_destroy(&out->background->node);
+    xd_server *server = out->server;
     wl_list_remove(&out->link);
     xd_free(out);
+    xd_output_config_changed(server);
 }
 
 static void handle_new_output(struct wl_listener *listener, void *data) {

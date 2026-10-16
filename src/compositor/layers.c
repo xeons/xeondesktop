@@ -25,12 +25,15 @@ xd_layer_surface *xd_layer_from_node(struct wlr_scene_node *node) {
 void xd_keyboard_refocus(xd_server *server) {
     struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
     struct wlr_surface *target = nullptr;
-    if (server->layer_focus != nullptr) {
+    if (server->locked) {
+        /* Only the screen locker. */
+        target = server->lock_focus;
+    } else if (server->layer_focus != nullptr) {
         target = server->layer_focus->layer_surface->surface;
     } else {
         xd_view *view = xd_view_focused(server);
         if (view != nullptr)
-            target = view->toplevel->base->surface;
+            target = xd_view_surface(view);
     }
     if (target == nullptr) {
         wlr_seat_keyboard_notify_clear_focus(server->seat);

@@ -145,6 +145,8 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         wl_display_terminate(server->display);
         return true;
     }
+    if (server->locked)
+        return false; /* the screen locker gets every other key */
     if (alt && !ctrl && (sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab)) {
         cycle_step(server, shift || sym == XKB_KEY_ISO_Left_Tab);
         return true;
@@ -159,7 +161,7 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         (ctrl && shift && !alt && sym == XKB_KEY_Escape)) {
         xd_view *found = nullptr;
         XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-            const char *id = v->toplevel->app_id;
+            const char *id = xd_view_app_id(v);
             if (v->mapped && id != nullptr && strcmp(id, XD_TASKMGR_APP_ID) == 0) {
                 found = v;
                 break;
@@ -279,7 +281,7 @@ static void begin_keyboard(xd_view *view, xd_cursor_mode mode) {
     server->key_edges = 0;
     wlr_seat_pointer_clear_focus(server->seat);
     if (mode == XD_CURSOR_KEY_SIZE)
-        wlr_xdg_toplevel_set_resizing(view->toplevel, true);
+        xd_view_set_resizing(view, true);
     warp_to_handle(server);
 }
 
@@ -317,7 +319,7 @@ static void end_keyboard(xd_server *server, bool keep) {
     if (!keep && view != nullptr)
         apply_key_box(server); /* Esc: back where it was */
     if (view != nullptr && mode == XD_CURSOR_KEY_SIZE)
-        wlr_xdg_toplevel_set_resizing(view->toplevel, false);
+        xd_view_set_resizing(view, false);
     server->mode = XD_CURSOR_PASSTHROUGH;
     server->grab_view = nullptr;
     server->cursor_name = nullptr;
@@ -406,6 +408,7 @@ static void handle_key(struct wl_listener *listener, void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, key);
     xd_server *server = kb->server;
     const struct wlr_keyboard_key_event *event = data;
+    xd_idle_activity(server);
 
     /* libinput keycodes are offset by 8 from XKB keycodes. */
     uint32_t keycode = event->keycode + 8;
@@ -429,7 +432,7 @@ static void handle_key(struct wl_listener *listener, void *data) {
         super_key = super_key || syms[i] == XKB_KEY_Super_L || syms[i] == XKB_KEY_Super_R;
     if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
         server->super_alone = super_key;
-    else if (super_key && server->super_alone) {
+    else if (super_key && server->super_alone && !server->locked) {
         server->super_alone = false;
         xd_start_menu_toggle(server);
     }
@@ -630,6 +633,20 @@ static xd_frame_part csd_margin_part(const xd_view *v, double lx, double ly) {
 
 static pick pick_at(xd_server *server, double lx, double ly) {
     pick p = {.part = XD_PART_NONE};
+    if (server->locked) {
+        /* Only the screen locker's surfaces get the pointer. */
+        struct wlr_scene_node *n =
+            wlr_scene_node_at(&server->layer_lock->node, lx, ly, &p.sx, &p.sy);
+        if (n != nullptr && n->type == WLR_SCENE_NODE_BUFFER) {
+            struct wlr_scene_surface *ss =
+                wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(n));
+            if (ss != nullptr) {
+                p.surface = ss->surface;
+                p.part = XD_PART_CLIENT;
+            }
+        }
+        return p;
+    }
     struct wlr_scene_node *node =
         wlr_scene_node_at(&server->scene->tree.node, lx, ly, &p.sx, &p.sy);
     xd_view *under = node != nullptr ? xd_view_from_node(node) : nullptr;
@@ -746,6 +763,7 @@ static void handle_cursor_motion(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_motion);
     const struct wlr_pointer_motion_event *e = data;
     wlr_cursor_move(server->cursor, &e->pointer->base, e->delta_x, e->delta_y);
+    xd_idle_activity(server);
     process_motion(server, e->time_msec);
 }
 
@@ -753,6 +771,7 @@ static void handle_cursor_motion_absolute(struct wl_listener *listener, void *da
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_motion_absolute);
     const struct wlr_pointer_motion_absolute_event *e = data;
     wlr_cursor_warp_absolute(server->cursor, &e->pointer->base, e->x, e->y);
+    xd_idle_activity(server);
     process_motion(server, e->time_msec);
 }
 
@@ -819,7 +838,7 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
         server->grab_x = server->cursor->x;
         server->grab_y = server->cursor->y;
         server->grab_box = xd_view_outer_box(view);
-        wlr_xdg_toplevel_set_resizing(view->toplevel, true);
+        xd_view_set_resizing(view, true);
     }
 }
 
@@ -832,7 +851,7 @@ static void end_grab(xd_server *server) {
         return;
 
     if (mode == XD_CURSOR_RESIZE) {
-        wlr_xdg_toplevel_set_resizing(view->toplevel, false);
+        xd_view_set_resizing(view, false);
     } else if (mode == XD_CURSOR_BUTTON) {
         xd_frame_part part = server->grab_part;
         bool fire = view->hot == part;
@@ -870,6 +889,11 @@ static void end_grab(xd_server *server) {
 static void handle_cursor_button(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_button);
     const struct wlr_pointer_button_event *e = data;
+    xd_idle_activity(server);
+    if (server->locked) {
+        wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
+        return;
+    }
 
     /* A click ends keyboard move/size where the window is. */
     if (keyboard_grab(server)) {
@@ -921,6 +945,7 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
 static void handle_cursor_axis(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_axis);
     const struct wlr_pointer_axis_event *e = data;
+    xd_idle_activity(server);
     wlr_seat_pointer_notify_axis(server->seat, e->time_msec, e->orientation, e->delta,
                                  e->delta_discrete, e->source, e->relative_direction);
 }
