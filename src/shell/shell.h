@@ -37,6 +37,10 @@ typedef struct xd_toplevel {
     bool activated;
     bool minimized;
     bool maximized;
+    /* Asked for attention: the button flashes `flashes` more half-cycles
+     * (lit on even counts), then stays lit until the window is activated. */
+    bool attention;
+    int flashes;
 } xd_toplevel;
 
 /* Quick Launch shortcuts. */
@@ -131,6 +135,7 @@ struct xd_shell {
     struct zwlr_foreign_toplevel_manager_v1 *toplevel_manager;
     struct wp_fractional_scale_manager_v1 *fractional_manager;
     struct wp_viewporter *viewporter;
+    struct xdg_activation_v1 *activation;
     struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
     struct wp_cursor_shape_device_v1 *cursor_shape;
 
@@ -156,6 +161,7 @@ struct xd_shell {
     xd_taskbar *start_bar;  /* taskbar whose Start button opened it */
     uint32_t menu_serial;   /* input serial the menu grab was made with */
     int menu_timer_fd;      /* hover delay */
+    int flash_timer_fd;     /* task buttons flashing for attention */
     xd_menu *pending_menu;  /* menu waiting for the hover delay */
 
     char clock[32];
@@ -193,6 +199,10 @@ void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial);
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);
 /* Listens for the compositor's window menu requests. */
 void xd_taskmenu_bind(xd_shell *shell);
+/* toplevels.c: a window asked for attention (xd-window-arranger-v1). */
+void xd_toplevel_attention(xd_shell *shell, struct zwlr_foreign_toplevel_handle_v1 *handle);
+/* toplevels.c: the flash timer fired. */
+void xd_toplevels_flash_tick(xd_shell *shell);
 /* Forget a window that's going away. */
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
 /* Drop hit-test layout after Quick Launch changed (indices shift). */

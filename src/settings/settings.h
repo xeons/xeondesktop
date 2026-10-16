@@ -33,6 +33,17 @@ typedef enum xd_start_style : uint8_t {
     XD_START_STYLE_COUNT,
 } xd_start_style;
 
+/* [Keyboard]: XKB names ("" = XKB_DEFAULT_* or the system default) and
+ * key repeat, applied by the compositor to every keyboard. */
+typedef struct xd_keyboard_settings {
+    char layout[64];   /* e.g. "us,de" */
+    char variant[64];  /* e.g. "dvorak" */
+    char options[256]; /* e.g. "grp:alt_shift_toggle,caps:ctrl_modifier" */
+    char model[64];
+    int repeat_delay; /* ms before a held key repeats */
+    int repeat_rate;  /* repeats per second; 0 = no repeat */
+} xd_keyboard_settings;
+
 typedef struct xd_settings {
     /* [Appearance] */
     xd_visual_style style;
@@ -65,6 +76,7 @@ typedef struct xd_settings {
     int screensaver_wait; /* minutes */
     bool screensaver_password;
     int monitor_off; /* minutes of idle before monitors turn off; 0 = never */
+    xd_keyboard_settings keyboard;
 } xd_settings;
 
 void xd_settings_defaults(xd_settings *s);

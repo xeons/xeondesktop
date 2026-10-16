@@ -185,6 +185,8 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
         uint8_t state = button_state(bar, (int)i);
         if (tl->activated && !tl->minimized)
             state |= XD_STATE_CHECKED;
+        else if (tl->attention && tl->flashes % 2 == 0)
+            state |= XD_STATE_FLASH;
         const char *label = tl->title != nullptr && tl->title[0] != '\0' ? tl->title
                             : tl->app_id != nullptr                     ? tl->app_id
                                                                          : "";

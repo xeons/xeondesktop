@@ -141,7 +141,6 @@ wayland_scanner = find_program(
   native: true,
 )
 wp_dir = dependency('wayland-protocols').get_variable('pkgdatadir')
-wlr_protocols_dir = dependency('wlr-protocols').get_variable('pkgdatadir')
 
 layer_shell_xml = files('protocols/wlr-layer-shell-unstable-v1.xml')
 client_protocol_xml = {
@@ -151,6 +150,7 @@ client_protocol_xml = {
   'fractional-scale-v1': wp_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
   'xdg-output-unstable-v1': wp_dir / 'unstable/xdg-output/xdg-output-unstable-v1.xml',
   'cursor-shape-v1': wp_dir / 'staging/cursor-shape/cursor-shape-v1.xml',
+  'xdg-activation-v1': wp_dir / 'staging/xdg-activation/xdg-activation-v1.xml',
   'wlr-layer-shell-unstable-v1': layer_shell_xml,
   'wlr-foreign-toplevel-management-unstable-v1': files(
     'protocols/wlr-foreign-toplevel-management-unstable-v1.xml',
@@ -160,10 +160,10 @@ client_protocol_xml = {
   'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
   'ext-idle-notify-v1': wp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
   'ext-session-lock-v1': wp_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
-  'wlr-output-management-unstable-v1':
-    wlr_protocols_dir / 'unstable/wlr-output-management-unstable-v1.xml',
-  'wlr-output-power-management-unstable-v1':
-    wlr_protocols_dir / 'unstable/wlr-output-power-management-unstable-v1.xml',
+  'wlr-output-management-unstable-v1': files('protocols/wlr-output-management-unstable-v1.xml'),
+  'wlr-output-power-management-unstable-v1': files(
+    'protocols/wlr-output-power-management-unstable-v1.xml',
+  ),
 }
 
 client_protocol_src = []
@@ -182,12 +182,11 @@ foreach name, xml : client_protocol_xml
   )
 endforeach
 
-# wlroots' output power header includes this generated server header; the
-# XML comes from the wlr-protocols package.
+# wlroots' output power header includes this generated server header.
 server_protocol_headers_extra = [
   custom_target(
     'wlr-output-power-management-server-header',
-    input: wlr_protocols_dir / 'unstable/wlr-output-power-management-unstable-v1.xml',
+    input: 'protocols/wlr-output-power-management-unstable-v1.xml',
     output: 'wlr-output-power-management-unstable-v1-protocol.h',
     command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
   ),
@@ -206,6 +205,14 @@ arranger_server_src = [
     'xd-window-arranger-v1-server-code',
     input: arranger_xml,
     output: 'xd-window-arranger-v1-server-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  ),
+  # Its attention event names a foreign-toplevel handle, whose interface
+  # libwlroots doesn't export.
+  custom_target(
+    'wlr-foreign-toplevel-server-code',
+    input: 'protocols/wlr-foreign-toplevel-management-unstable-v1.xml',
+    output: 'wlr-foreign-toplevel-management-unstable-v1-server-protocol.c',
     command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
   ),
 ]
@@ -263,6 +270,8 @@ executable(
 )
 
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
+# forkpty: in libc since glibc 2.34, in libutil before.
+util_dep = cc.has_function('forkpty', prefix: '#include <pty.h>') ? declare_dependency() : cc.find_library('util')
 gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
 gio_unix_dep = dependency('gio-unix-2.0', include_type: 'system')
 
@@ -395,6 +404,16 @@ executable(
 )
 
 executable(
+  'xd-security',
+  'src/security/main.c',
+  'src/security/passwd.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, util_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+executable(
   'xd-choose-file',
   'src/gtkapp/choose.c',
   link_with: [gtkapp_lib],
@@ -453,7 +472,8 @@ test_exe = executable(
   'src/shell/apps.c',
   'src/ui/textedit.c',
   'src/apps/runcmd.c',
-  dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep],
+  'src/security/passwd.c',
+  dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(
@@ -467,3 +487,14 @@ test(
 )
 
 install_subdir('data/schemes', install_dir: get_option('datadir') / 'xeondesktop')
+
+# The session, for display managers.
+install_data('data/xeondesktop-session', install_dir: get_option('bindir'), install_mode: 'rwxr-xr-x')
+install_data(
+  'data/wayland-sessions/xeondesktop.desktop',
+  install_dir: get_option('datadir') / 'wayland-sessions',
+)
+install_data(
+  'data/xdg-desktop-portal/xeondesktop-portals.conf',
+  install_dir: get_option('datadir') / 'xdg-desktop-portal',
+)

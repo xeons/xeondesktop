@@ -157,14 +157,43 @@ void xd_idle_activity(xd_server *server) {
 
 /* ---- activation ---------------------------------------------------------------- */
 
+/* Marks tokens that may take the focus, as Windows' foreground lock does:
+ * ones asked for by the app that has the keyboard (a window opening
+ * another, or a second instance handed the token the user's click made),
+ * by the shell (Start menu, taskbar, Run), or while no window has focus.
+ * Others only flash the window's taskbar button. */
+static char token_allowed;
+
+static void handle_new_activation_token(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_activation_token);
+    struct wlr_xdg_activation_token_v1 *token = data;
+    struct wlr_surface *focused = server->seat->keyboard_state.focused_surface;
+    bool allowed = false;
+    if (focused == nullptr || xd_view_focused(server) == nullptr)
+        allowed = true;
+    else if (token->surface != nullptr)
+        allowed = wlr_layer_surface_v1_try_from_wlr_surface(token->surface) != nullptr ||
+                  wl_resource_get_client(token->surface->resource) ==
+                      wl_resource_get_client(focused->resource);
+    token->data = allowed ? &token_allowed : nullptr;
+    wlr_log(WLR_DEBUG, "activation token %s", allowed ? "may take the focus" : "may only flash");
+}
+
 static void handle_request_activate(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_activate);
     const struct wlr_xdg_activation_v1_request_activate_event *e = data;
     struct wlr_xdg_toplevel *top = wlr_xdg_toplevel_try_from_wlr_surface(e->surface);
     struct wlr_scene_tree *content = top != nullptr ? top->base->data : nullptr;
     xd_view *view = content != nullptr ? xd_view_from_node(&content->node) : nullptr;
-    if (view != nullptr && view->mapped && !server->locked)
+    if (view == nullptr || !view->mapped || server->locked)
+        return;
+    if (e->token->data == &token_allowed) {
+        if (view->minimized)
+            xd_view_restore(view);
         xd_view_focus(view);
+    } else if (view != xd_view_focused(server)) {
+        xd_view_attention(view);
+    }
 }
 
 void xd_protocols_init(xd_server *server) {
@@ -182,4 +211,6 @@ void xd_protocols_init(xd_server *server) {
     struct wlr_xdg_activation_v1 *activation = wlr_xdg_activation_v1_create(server->display);
     XD_LISTEN(&activation->events.request_activate, server, request_activate,
               handle_request_activate);
+    XD_LISTEN(&activation->events.new_token, server, new_activation_token,
+              handle_new_activation_token);
 }

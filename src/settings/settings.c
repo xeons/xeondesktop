@@ -35,6 +35,8 @@ void xd_settings_defaults(xd_settings *s) {
         .quick_launch = true,
         .locked = true,
         .screensaver_wait = 15,
+        /* Windows' defaults: about 30 repeats a second after half a second. */
+        .keyboard = {.repeat_delay = 500, .repeat_rate = 30},
     };
 }
 
@@ -133,6 +135,21 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             if (xd_str_parse_i64(v, 0, 1440, &m))
                 s->monitor_off = (int)m;
         }
+    } else if (SEC("Keyboard")) {
+        xd_keyboard_settings *k = &s->keyboard;
+        int64_t n;
+        if (KEY("Layout"))
+            copy_into(k->layout, sizeof(k->layout), v);
+        else if (KEY("Variant"))
+            copy_into(k->variant, sizeof(k->variant), v);
+        else if (KEY("Options"))
+            copy_into(k->options, sizeof(k->options), v);
+        else if (KEY("Model"))
+            copy_into(k->model, sizeof(k->model), v);
+        else if (KEY("RepeatDelay") && xd_str_parse_i64(v, 100, 2000, &n))
+            k->repeat_delay = (int)n;
+        else if (KEY("RepeatRate") && xd_str_parse_i64(v, 0, 100, &n))
+            k->repeat_rate = (int)n;
     }
 #undef SEC
 #undef KEY
@@ -222,6 +239,12 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);
     g_key_file_set_boolean(kf, "ScreenSaver", "Password", s->screensaver_password);
     g_key_file_set_integer(kf, "ScreenSaver", "MonitorOff", s->monitor_off);
+    g_key_file_set_string(kf, "Keyboard", "Layout", s->keyboard.layout);
+    g_key_file_set_string(kf, "Keyboard", "Variant", s->keyboard.variant);
+    g_key_file_set_string(kf, "Keyboard", "Options", s->keyboard.options);
+    g_key_file_set_string(kf, "Keyboard", "Model", s->keyboard.model);
+    g_key_file_set_integer(kf, "Keyboard", "RepeatDelay", s->keyboard.repeat_delay);
+    g_key_file_set_integer(kf, "Keyboard", "RepeatRate", s->keyboard.repeat_rate);
     return kf;
 }
 

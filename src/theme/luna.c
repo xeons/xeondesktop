@@ -437,7 +437,10 @@ void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t
                                 : luna_task_normal_right[y][x - (w - 5)];
                 else
                     c = pressed ? luna_task_pressed_mid[y] : luna_task_normal_mid[y];
-                if (!pressed && (state & XD_STATE_HOT))
+                /* Flashing buttons turn orange, keeping the shading. */
+                if (!pressed && (state & XD_STATE_FLASH))
+                    c = mix(c, 0xFFF59A2Cu, 0.88);
+                else if (!pressed && (state & XD_STATE_HOT))
                     c = mix(c, 0xFFFFFFFFu, 0.12);
                 put(&im, x, y, c);
             }

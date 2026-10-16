@@ -312,9 +312,13 @@ static void classic_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r,
 static void classic_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r,
                                      uint8_t state, const char *label) {
     bool active = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
+    /* Flashing: the selection colour, as FlashWindow paints it. */
+    bool flash = (state & XD_STATE_FLASH) && !active;
     xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
     xd_rect inner = edge_button(t, cr, r, active);
-    if (active && !t->scheme.high_contrast)
+    if (flash)
+        xd_fill_rect(cr, inner, xd_sys(t, XD_COLOR_HILIGHT));
+    else if (active && !t->scheme.high_contrast)
         fill_dither(t, cr, inner);
     int off = active ? xd_tpx(t, 1) : 0;
     int icon = xd_tpx(t, 16);
@@ -322,8 +326,9 @@ static void classic_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r,
                               inner.y + (inner.h - icon) / 2 + off, icon, icon});
     xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
     font.bold = active;
-    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_sys(t, XD_COLOR_BUTTON_TEXT),
-                               XD_ALIGN_START);
+    xd_text_style st = xd_text(
+        t, XD_FONT_MENU, xd_sys(t, flash ? XD_COLOR_HILIGHT_TEXT : XD_COLOR_BUTTON_TEXT),
+        XD_ALIGN_START);
     st.font = &font;
     int tx = inner.x + xd_tpx(t, 3 + 16 + 4) + off;
     xd_draw_text(cr, (xd_rect){tx, inner.y + off, inner.x + inner.w - tx - xd_tpx(t, 2),

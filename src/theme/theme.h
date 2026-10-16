@@ -54,6 +54,7 @@ typedef enum xd_widget_state : uint8_t {
     XD_STATE_FOCUSED = 1u << 3,
     XD_STATE_DEFAULT = 1u << 4,
     XD_STATE_CHECKED = 1u << 5,
+    XD_STATE_FLASH = 1u << 6, /* a task button asking for attention */
 } xd_widget_state;
 
 /* Parts of a window frame, as returned by hit testing (WM_NCHITTEST). */

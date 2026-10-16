@@ -22,6 +22,7 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
+#include "../settings/settings.h"
 #include "../theme/theme.h"
 #include "wl.h"
 
@@ -147,6 +148,7 @@ typedef struct xd_view {
     struct wl_listener request_activate;
     struct wl_listener request_close;
     struct wl_listener set_decorations;
+    struct wl_listener set_hints;
     struct wl_listener content_destroy; /* wlroots frees it with the surface */
     struct wl_listener set_title;
     struct wl_listener set_app_id;
@@ -165,6 +167,7 @@ typedef struct xd_keyboard {
     struct wl_listener modifiers;
     struct wl_listener key;
     struct wl_listener destroy;
+    bool physical; /* gets [Keyboard]'s keymap (virtual keyboards bring their own) */
 } xd_keyboard;
 
 typedef struct xd_config {
@@ -173,12 +176,14 @@ typedef struct xd_config {
     const char *scheme_path; /* --scheme given: passed on to the shell */
     bool cli_style;          /* --style given: passed on to the shell */
     const char *shell;       /* shell executable; nullptr = don't start one */
-    const char *taskmgr;     /* Task Manager executable (Ctrl+Alt+Delete) */
+    const char *taskmgr;     /* Task Manager executable (Ctrl+Shift+Esc) */
+    const char *security;    /* Windows Security (Ctrl+Alt+Delete, Classic style) */
     const char *locker;      /* Lock Computer (Win+L; restarted if a locker dies) */
     const char *polkit;      /* the session's polkit authentication agent */
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     bool always_frames;  /* [Windows] AlwaysDrawFrames */
+    xd_keyboard_settings keyboard; /* [Keyboard] */
     const char *terminal;
     const char *startup;
 } xd_config;
@@ -236,6 +241,7 @@ struct xd_server {
     int idle_inhibitors;
     struct wl_listener new_idle_inhibitor;
     struct wl_listener request_activate;
+    struct wl_listener new_activation_token;
 
     /* xwayland.c */
     struct wlr_compositor *compositor;
@@ -326,6 +332,8 @@ struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly);
 
 /* input.c */
 void xd_input_init(xd_server *server);
+/* Applies config.keyboard (layout, repeat) to every physical keyboard. */
+void xd_input_apply_keyboard(xd_server *server);
 /* Lets clients inject keyboard/pointer input. Testing only. */
 void xd_input_enable_virtual(xd_server *server);
 void xd_cursor_set(xd_server *server, const char *name);
@@ -398,6 +406,8 @@ void xd_view_begin_keyboard_size(xd_view *view);
 void xd_window_menu_show(xd_view *view, double lx, double ly);
 /* arrange.c: asks the shell to open (or close) the Start menu. */
 void xd_start_menu_toggle(xd_server *server);
+/* arrange.c: asks the shell to flash the window's taskbar button. */
+void xd_view_attention(xd_view *view);
 /* Where the window menu opens from the keyboard or the caption icon:
  * below the icon (layout coordinates). */
 void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly);

@@ -176,6 +176,7 @@ static void server_finish(xd_server *server) {
         &server->new_decoration,      &server->new_kde_decoration, &server->new_layer_surface,
         &server->output_apply,        &server->output_test,        &server->output_power,
         &server->new_idle_inhibitor,  &server->request_activate,   &server->new_lock,
+        &server->new_activation_token,
         &server->cursor_motion,       &server->cursor_motion_absolute,
         &server->cursor_button,       &server->cursor_axis,
         &server->cursor_frame,        &server->request_cursor_shape,
@@ -232,6 +233,13 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     server->config.scheme_path = nullptr;
     server->config.style = settings.style;
     server->config.always_frames = settings.always_frames;
+    const xd_keyboard_settings *a = &server->config.keyboard, *b = &settings.keyboard;
+    if (strcmp(a->layout, b->layout) != 0 || strcmp(a->variant, b->variant) != 0 ||
+        strcmp(a->options, b->options) != 0 || strcmp(a->model, b->model) != 0 ||
+        a->repeat_delay != b->repeat_delay || a->repeat_rate != b->repeat_rate) {
+        server->config.keyboard = settings.keyboard;
+        xd_input_apply_keyboard(server);
+    }
     xd_settings_scheme(&settings, &server->config.scheme);
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
 
@@ -280,10 +288,12 @@ int main(int argc, char **argv) {
     static xd_server server;
     server.config.style = XD_STYLE_CLASSIC;
     server.config.terminal = "alacritty";
-    static char shell_path[4096], taskmgr_path[4096], locker_path[4096], polkit_path[4096];
+    static char shell_path[4096], taskmgr_path[4096], locker_path[4096], polkit_path[4096],
+        security_path[4096];
     server.config.shell = own_program("xd-shell", shell_path, sizeof(shell_path));
     server.config.taskmgr = own_program("xd-taskmgr", taskmgr_path, sizeof(taskmgr_path));
     server.config.locker = own_program("xd-lock", locker_path, sizeof(locker_path));
+    server.config.security = own_program("xd-security", security_path, sizeof(security_path));
     server.config.polkit = own_program("xd-polkit", polkit_path, sizeof(polkit_path));
     xd_scheme_init_default(&server.config.scheme);
 
@@ -300,6 +310,7 @@ int main(int argc, char **argv) {
     if (!server.config.cli_style)
         server.config.style = settings.style;
     server.config.always_frames = settings.always_frames;
+    server.config.keyboard = settings.keyboard;
     if (server.config.scheme_path == nullptr)
         xd_settings_scheme(&settings, &server.config.scheme);
     xd_theme_init(&server.logical_theme, server.config.style, &server.config.scheme, 1.0);
@@ -347,6 +358,15 @@ int main(int argc, char **argv) {
     install_gtk_theme(&server);
     setenv("GTK_THEME", XD_GTK_THEME_NAME, true);
     setenv("GTK_OVERLAY_SCROLLING", "0", true);
+    /* Programs that D-Bus and systemd start for the session (portals,
+     * notification daemons, ...) need to find this display too. */
+    if (!nested) {
+        static char prog[] = "dbus-update-activation-environment", systemd[] = "--systemd",
+                    v1[] = "WAYLAND_DISPLAY", v2[] = "DISPLAY", v3[] = "XDG_CURRENT_DESKTOP",
+                    v4[] = "XDG_SESSION_TYPE", v5[] = "GTK_THEME";
+        char *update[] = {prog, systemd, v1, v2, v3, v4, v5, nullptr};
+        xd_spawn_argv(update);
+    }
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,
             xd_visual_style_name(server.config.style), server.config.scheme.name);
 

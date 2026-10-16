@@ -10,7 +10,7 @@
     and for the window menu's Move and Size.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="1">
+  <interface name="xd_window_arranger_v1" version="2">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -68,6 +68,16 @@
       <arg name="x" type="int"/>
       <arg name="y" type="int"/>
       <arg name="serial" type="uint"/>
+    </event>
+
+    <event name="attention" since="2">
+      <description summary="a window wants the user's attention">
+        Sent when a window asked to be activated without the user's
+        say-so (an xdg-activation token that didn't come from the focused
+        app or the shell). The window isn't focused; the shell flashes its
+        taskbar button until it's activated, as Windows does.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
     </event>
   </interface>
 </protocol>

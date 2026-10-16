@@ -9,6 +9,7 @@
  * puts them, above normal windows, without a frame or a taskbar button.
  */
 #include <wlr/util/log.h>
+#include <xcb/xcb_icccm.h>
 
 #include "../core/alloc.h"
 #include "server.h"
@@ -230,10 +231,27 @@ static void handle_x_fullscreen(struct wl_listener *listener, [[maybe_unused]] v
         xd_view_set_fullscreen(view, view->xsurface->fullscreen);
 }
 
+/* _NET_ACTIVE_WINDOW: an X11 app may move the focus between its own
+ * windows (or take it when nothing has it); otherwise it only flashes. */
 static void handle_x_activate(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_activate);
-    if (view->mapped && !view->server->locked)
+    if (!view->mapped || view->server->locked)
+        return;
+    xd_view *focused = xd_view_focused(view->server);
+    if (focused == nullptr ||
+        (focused->kind == XD_VIEW_X11 && focused->xsurface->pid == view->xsurface->pid))
         xd_view_focus(view);
+    else if (focused != view)
+        xd_view_attention(view);
+}
+
+/* The ICCCM urgency hint: flash the taskbar button. */
+static void handle_x_hints(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_hints);
+    const xcb_icccm_wm_hints_t *hints = view->xsurface->hints;
+    if (view->mapped && hints != nullptr && (hints->flags & XCB_ICCCM_WM_HINT_X_URGENCY) &&
+        view != xd_view_focused(view->server))
+        xd_view_attention(view);
 }
 
 static void handle_x_close(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -284,6 +302,7 @@ static void new_managed(xd_server *server, struct wlr_xwayland_surface *xs) {
     XD_LISTEN(&xs->events.set_title, view, set_title, handle_x_title);
     XD_LISTEN(&xs->events.set_class, view, set_app_id, handle_x_class);
     XD_LISTEN(&xs->events.set_decorations, view, set_decorations, handle_x_decorations);
+    XD_LISTEN(&xs->events.set_hints, view, set_hints, handle_x_hints);
 }
 
 static void handle_new_surface(struct wl_listener *listener, void *data) {

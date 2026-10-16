@@ -1,0 +1,30 @@
+#!/bin/sh
+# Plays passwd(1) with pam_unix and pwquality in the C locale, for the
+# Change Password tests. The correct current password is "old secret";
+# new passwords shorter than 8 characters are refused.
+echo "Changing password for tester."
+printf 'Current password: '
+IFS= read -r old
+if [ "$old" != "old secret" ]; then
+    sleep 0.1
+    echo "passwd: Authentication token manipulation error"
+    echo "passwd: password unchanged"
+    exit 10
+fi
+while :; do
+    printf 'New password: '
+    IFS= read -r new
+    if [ ${#new} -lt 8 ]; then
+        echo "BAD PASSWORD: The password is shorter than 8 characters"
+        continue
+    fi
+    printf 'Retype new password: '
+    IFS= read -r again
+    if [ "$new" != "$again" ]; then
+        echo "Sorry, passwords do not match."
+        echo "passwd: Authentication token manipulation error"
+        exit 10
+    fi
+    echo "passwd: password updated successfully"
+    exit 0
+done

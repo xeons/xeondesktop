@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * The window list, from wlr-foreign-toplevel-management.
  */
+#include <sys/timerfd.h>
+
 #include "../core/alloc.h"
 #include "shell.h"
 
@@ -55,6 +57,10 @@ static void handle_state(void *data, [[maybe_unused]] struct zwlr_foreign_toplev
         default:
             break;
         }
+    }
+    if (t->activated) {
+        t->attention = false;
+        t->flashes = 0;
     }
 }
 
@@ -125,6 +131,43 @@ void xd_toplevels_init(xd_shell *shell) {
     if (shell->toplevel_manager != nullptr)
         zwlr_foreign_toplevel_manager_v1_add_listener(shell->toplevel_manager, &manager_listener,
                                                       shell);
+}
+
+/* Like Windows' default (ForegroundFlashCount = 7): seven flashes about
+ * twice a second, then the button stays lit. */
+enum { FLASH_HALF_CYCLES = 14, FLASH_INTERVAL_NS = 530000000 };
+
+static void arm_flash_timer(xd_shell *shell, bool on) {
+    if (shell->flash_timer_fd < 0)
+        return;
+    struct itimerspec spec = {0};
+    if (on)
+        spec.it_value = spec.it_interval = (struct timespec){.tv_nsec = FLASH_INTERVAL_NS};
+    timerfd_settime(shell->flash_timer_fd, 0, &spec, nullptr);
+}
+
+void xd_toplevel_attention(xd_shell *shell, struct zwlr_foreign_toplevel_handle_v1 *handle) {
+    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
+        if (t->handle == handle && !t->activated) {
+            t->attention = true;
+            t->flashes = FLASH_HALF_CYCLES;
+            arm_flash_timer(shell, true);
+            xd_taskbars_mark_dirty(shell);
+        }
+    }
+}
+
+void xd_toplevels_flash_tick(xd_shell *shell) {
+    bool more = false;
+    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
+        if (t->attention && t->flashes > 0) {
+            t->flashes--;
+            more = more || t->flashes > 0;
+            xd_taskbars_mark_dirty(shell);
+        }
+    }
+    if (!more)
+        arm_flash_timer(shell, false);
 }
 
 void xd_show_desktop_toggle(xd_shell *shell) {

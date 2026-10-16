@@ -5,7 +5,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <poll.h>
+
 #include "../src/apps/runcmd.h"
+#include "../src/security/passwd.h"
 #include "../src/settings/settings.h"
 #include "../src/shell/apps.h"
 #include "../src/ui/textedit.h"
@@ -551,6 +554,39 @@ static void test_px(void) {
     CHECK(xd_px(2.0, 0) == 0);
 }
 
+/* Drives tests/passwd/fake-passwd to the end. */
+static xd_passwd_result run_passwd(const char *old_pw, const char *new_pw, char **message) {
+    xd_passwd *p = xd_passwd_start(XD_SOURCE_ROOT "/tests/passwd/fake-passwd", old_pw, new_pw,
+                                   nullptr);
+    if (p == nullptr)
+        return XD_PASSWD_FAILED;
+    xd_passwd_result r = XD_PASSWD_RUNNING;
+    for (int i = 0; i < 200 && r == XD_PASSWD_RUNNING; i++) {
+        struct pollfd pfd = {.fd = xd_passwd_fd(p), .events = POLLIN};
+        if (poll(&pfd, 1, 5000) <= 0)
+            break;
+        r = xd_passwd_step(p);
+    }
+    *message = g_strdup(xd_passwd_message(p));
+    xd_passwd_free(p);
+    return r;
+}
+
+static void test_passwd(void) {
+    char *m = nullptr;
+    CHECK(run_passwd("old secret", "new secret", &m) == XD_PASSWD_OK);
+    g_free(m);
+    CHECK(run_passwd("wrong", "new secret", &m) == XD_PASSWD_WRONG_OLD);
+    CHECK(m != nullptr && strstr(m, "password unchanged") != nullptr);
+    g_free(m);
+    CHECK(run_passwd("old secret", "short", &m) == XD_PASSWD_REJECTED);
+    CHECK(m != nullptr && strcmp(m, "BAD PASSWORD: The password is shorter than 8 characters") == 0);
+    g_free(m);
+    /* Nothing typed may come back as a message. */
+    CHECK(run_passwd("old secret", "short", &m) == XD_PASSWD_REJECTED && strstr(m, "short\n") == nullptr);
+    g_free(m);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -565,6 +601,7 @@ int main(void) {
     test_runcmd();
     test_settings();
     test_gtk_css();
+    test_passwd();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

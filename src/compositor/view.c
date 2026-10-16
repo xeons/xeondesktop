@@ -850,6 +850,7 @@ void xd_view_on_destroy(xd_view *view) {
     xd_unlisten(&view->request_activate);
     xd_unlisten(&view->request_close);
     xd_unlisten(&view->set_decorations);
+    xd_unlisten(&view->set_hints);
     xd_unlisten(&view->content_destroy);
     xd_unlisten(&view->set_title);
     xd_unlisten(&view->set_app_id);

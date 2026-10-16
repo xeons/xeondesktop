@@ -190,6 +190,22 @@ void xd_window_menu_show(xd_view *view, double lx, double ly) {
                                            wl_display_next_serial(server->display));
 }
 
+void xd_view_attention(xd_view *view) {
+    struct wl_resource *res = view->server->arranger_resource;
+    if (res == nullptr || view->ftl == nullptr ||
+        wl_resource_get_version(res) < XD_WINDOW_ARRANGER_V1_ATTENTION_SINCE_VERSION)
+        return;
+    /* The shell's handle for this window. */
+    struct wl_client *client = wl_resource_get_client(res);
+    struct wl_resource *r;
+    wl_resource_for_each(r, &view->ftl->resources) {
+        if (wl_resource_get_client(r) == client) {
+            xd_window_arranger_v1_send_attention(res, r);
+            return;
+        }
+    }
+}
+
 static const struct xd_window_arranger_v1_interface arranger_impl = {
     .arrange = handle_arrange,
     .undo = handle_undo,
@@ -221,7 +237,7 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 1,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 2,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

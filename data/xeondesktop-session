@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Starts a XeonDesktop session; display managers run it from
+# wayland-sessions/xeondesktop.desktop. Arguments go to xd-compositor.
+
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=XeonDesktop
+export XDG_SESSION_DESKTOP=xeondesktop
+
+# Toolkits that don't pick Wayland on their own.
+export MOZ_ENABLE_WAYLAND=1
+export QT_QPA_PLATFORM='wayland;xcb'
+export SDL_VIDEODRIVER='wayland,x11'
+export _JAVA_AWT_WM_NONREPARENTING=1
+
+# Variables from ~/.config/environment.d (System Properties > Advanced >
+# Environment Variables writes them there), as systemd merges them.
+generator=/usr/lib/systemd/user-environment-generators/30-systemd-environment-d-generator
+# Its output is shell-quoted assignments.
+if [ -x "$generator" ] && vars=$("$generator"); then
+    set -a
+    eval "$vars"
+    set +a
+fi
+
+exec xd-compositor "$@"

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=XeonDesktop
+Comment=A desktop in the style of Windows 2000 and XP
+Exec=xeondesktop-session
+TryExec=xd-compositor
+Type=Application
+DesktopNames=XeonDesktop

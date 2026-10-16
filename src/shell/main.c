@@ -3,6 +3,7 @@
  * keeps it in sync with the window list and the clock.
  */
 #include <errno.h>
+#include <glib.h>
 #include <locale.h>
 #include <poll.h>
 #include <signal.h>
@@ -317,7 +318,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         shell->toplevel_manager =
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
-        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 1);
+        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 2);
         xd_taskmenu_bind(shell);
     } else if (xd_str_eq(iface, xd_str_from_cstr(ext_idle_notifier_v1_interface.name))) {
         shell->idle_notifier = bind(reg, name, &ext_idle_notifier_v1_interface, version, 1);
@@ -332,6 +333,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     } else if (xd_str_eq(iface, xd_str_from_cstr(xdg_wm_base_interface.name))) {
         shell->wm_base = bind(reg, name, &xdg_wm_base_interface, version, 3);
         xdg_wm_base_add_listener(shell->wm_base, &wm_base_listener, shell);
+    } else if (xd_str_eq(iface, xd_str_from_cstr(xdg_activation_v1_interface.name))) {
+        shell->activation = bind(reg, name, &xdg_activation_v1_interface, version, 1);
     } else if (xd_str_eq(iface, xd_str_from_cstr(wp_viewporter_interface.name))) {
         shell->viewporter = bind(reg, name, &wp_viewporter_interface, version, 1);
     } else if (xd_str_eq(iface, xd_str_from_cstr(wp_cursor_shape_manager_v1_interface.name))) {
@@ -356,7 +359,38 @@ static const struct wl_registry_listener registry_listener = {
 
 /* ---- launching ----------------------------------------------------------------- */
 
-pid_t xd_shell_launch([[maybe_unused]] xd_shell *shell, const char *command) {
+static void token_done(void *data, [[maybe_unused]] struct xdg_activation_token_v1 *token,
+                       const char *name) {
+    *(char **)data = g_strdup(name);
+}
+
+static const struct xdg_activation_token_v1_listener token_listener = {.done = token_done};
+
+/* An xdg-activation token from the shell, so the program (or the running
+ * instance it hands over to) may bring its window forward. nullptr if
+ * there's none. g_free the result. */
+static char *activation_token(xd_shell *shell) {
+    if (shell->activation == nullptr || wl_list_empty(&shell->taskbars))
+        return nullptr;
+    xd_taskbar *bar = XD_CONTAINER_OF(shell->taskbars.next, xd_taskbar, link);
+    /* A private queue, so waiting for it dispatches nothing else. */
+    struct wl_event_queue *queue = wl_display_create_queue(shell->display);
+    struct xdg_activation_v1 *wrapper = wl_proxy_create_wrapper(shell->activation);
+    wl_proxy_set_queue((struct wl_proxy *)wrapper, queue);
+    struct xdg_activation_token_v1 *token = xdg_activation_v1_get_activation_token(wrapper);
+    char *name = nullptr;
+    xdg_activation_token_v1_add_listener(token, &token_listener, &name);
+    xdg_activation_token_v1_set_surface(token, bar->surface);
+    xdg_activation_token_v1_commit(token);
+    while (name == nullptr && wl_display_dispatch_queue(shell->display, queue) >= 0) {
+    }
+    xdg_activation_token_v1_destroy(token);
+    wl_proxy_wrapper_destroy(wrapper);
+    wl_event_queue_destroy(queue);
+    return name;
+}
+
+pid_t xd_shell_launch(xd_shell *shell, const char *command) {
     posix_spawnattr_t attr;
     if (posix_spawnattr_init(&attr) != 0)
         return 0;
@@ -374,8 +408,16 @@ pid_t xd_shell_launch([[maybe_unused]] xd_shell *shell, const char *command) {
     char flag[] = "-c";
     char *cmd = xd_str_dup_cstr(xd_str_from_cstr(command));
     char *argv[] = {sh, flag, cmd, nullptr};
+    char **env = g_get_environ();
+    char *token = activation_token(shell);
+    if (token != nullptr) {
+        env = g_environ_setenv(env, "XDG_ACTIVATION_TOKEN", token, true);
+        env = g_environ_setenv(env, "DESKTOP_STARTUP_ID", token, true);
+    }
     pid_t pid = 0;
-    int err = posix_spawn(&pid, sh, nullptr, &attr, argv, environ);
+    int err = posix_spawn(&pid, sh, nullptr, &attr, argv, env);
+    g_strfreev(env);
+    g_free(token);
     if (err != 0) {
         fprintf(stderr, "xd-shell: cannot run '%s': %s\n", command, strerror(err));
         pid = 0;
@@ -545,13 +587,14 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             return EXIT_FAILURE;
         }
 
-        struct pollfd fds[6] = {
+        struct pollfd fds[7] = {
             {.fd = wl_display_get_fd(d), .events = POLLIN},
             {.fd = timer_fd, .events = POLLIN},
             {.fd = signal_fd, .events = POLLIN},
             {.fd = shell->menu_timer_fd, .events = POLLIN},
             {.fd = shell->settings_fd, .events = POLLIN},
             {.fd = shell->quicklaunch.watch_fd, .events = POLLIN},
+            {.fd = shell->flash_timer_fd, .events = POLLIN},
         };
         if (poll(fds, XD_ARRAY_LEN(fds), -1) < 0) {
             wl_display_cancel_read(d);
@@ -592,6 +635,11 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             (void)!read(shell->menu_timer_fd, &expirations, sizeof(expirations));
             xd_menu_timer_fired(shell);
         }
+        if (shell->flash_timer_fd >= 0 && (fds[6].revents & POLLIN)) {
+            uint64_t expirations;
+            (void)!read(shell->flash_timer_fd, &expirations, sizeof(expirations));
+            xd_toplevels_flash_tick(shell);
+        }
     }
     return EXIT_SUCCESS;
 }
@@ -603,6 +651,7 @@ int main(int argc, char **argv) {
     const char *term = getenv("TERMINAL");
     shell.terminal = term != nullptr && term[0] != '\0' ? term : "alacritty";
     shell.menu_timer_fd = -1;
+    shell.flash_timer_fd = -1;
     shell.settings_fd = -1;
     shell.quicklaunch.watch_fd = -1;
     xd_scheme_init_default(&shell.scheme);
@@ -642,6 +691,7 @@ int main(int argc, char **argv) {
     shell.last_arrange = -1;
     xd_start_menu_build(&shell);
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    shell.flash_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
 
     update_clock(&shell);
     xd_toplevels_init(&shell);

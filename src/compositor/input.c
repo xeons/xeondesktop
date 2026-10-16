@@ -133,6 +133,22 @@ static void cycle_step(xd_server *server, bool backwards) {
 
 /* GTK sets the app ID from the GApplication ID. */
 #define XD_TASKMGR_APP_ID "org.xeondesktop.TaskManager"
+#define XD_SECURITY_APP_ID "org.xeondesktop.Security"
+
+/* Brings the program's window forward if it's open, else starts it. */
+static void raise_or_start(xd_server *server, const char *app_id, const char *program) {
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        const char *id = xd_view_app_id(v);
+        if (v->mapped && id != nullptr && strcmp(id, app_id) == 0) {
+            if (v->minimized)
+                xd_view_restore(v);
+            xd_view_focus(v);
+            return;
+        }
+    }
+    char *argv[] = {(char *)(uintptr_t)program, nullptr};
+    xd_spawn_argv(argv);
+}
 
 static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
     bool alt = mods & WLR_MODIFIER_ALT;
@@ -162,25 +178,18 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
             xd_view_close(focused);
         return true;
     }
-    /* Task Manager: bring it forward if it's open, else start it. */
-    if ((ctrl && alt && (sym == XKB_KEY_Delete || sym == XKB_KEY_KP_Delete)) ||
-        (ctrl && shift && !alt && sym == XKB_KEY_Escape)) {
-        xd_view *found = nullptr;
-        XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-            const char *id = xd_view_app_id(v);
-            if (v->mapped && id != nullptr && strcmp(id, XD_TASKMGR_APP_ID) == 0) {
-                found = v;
-                break;
-            }
-        }
-        if (found != nullptr) {
-            if (found->minimized)
-                xd_view_restore(found);
-            xd_view_focus(found);
-        } else {
-            char *argv[] = {(char *)(uintptr_t)server->config.taskmgr, nullptr};
-            xd_spawn_argv(argv);
-        }
+    /* Ctrl+Alt+Delete: Windows 2000's Windows Security dialog in the
+     * Classic style; Task Manager in the XP styles, as XP does with the
+     * Welcome screen. Ctrl+Shift+Esc: always Task Manager. */
+    if (ctrl && alt && (sym == XKB_KEY_Delete || sym == XKB_KEY_KP_Delete)) {
+        if (server->config.style == XD_STYLE_CLASSIC)
+            raise_or_start(server, XD_SECURITY_APP_ID, server->config.security);
+        else
+            raise_or_start(server, XD_TASKMGR_APP_ID, server->config.taskmgr);
+        return true;
+    }
+    if (ctrl && shift && !alt && sym == XKB_KEY_Escape) {
+        raise_or_start(server, XD_TASKMGR_APP_ID, server->config.taskmgr);
         return true;
     }
     if (ctrl && alt && (sym == XKB_KEY_t || sym == XKB_KEY_T)) {
@@ -464,32 +473,61 @@ static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused
     xd_free(kb);
 }
 
-static void register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
-                              struct wlr_input_device *device);
+static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
+                                      struct wlr_input_device *device);
+
+/* The keymap [Keyboard] asks for; empty names fall back to XKB_DEFAULT_*
+ * and then the system default. A bad layout falls back the same way. */
+static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *k) {
+    struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    if (ctx == nullptr)
+        return nullptr;
+    struct xkb_rule_names names = {
+        .layout = k->layout[0] != '\0' ? k->layout : nullptr,
+        .variant = k->variant[0] != '\0' ? k->variant : nullptr,
+        .options = k->options[0] != '\0' ? k->options : nullptr,
+        .model = k->model[0] != '\0' ? k->model : nullptr,
+    };
+    struct xkb_keymap *keymap = xkb_keymap_new_from_names(ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    if (keymap == nullptr) {
+        wlr_log(WLR_ERROR, "cannot compile keymap (layout '%s', variant '%s', options '%s'); "
+                "using the default", k->layout, k->variant, k->options);
+        keymap = xkb_keymap_new_from_names(ctx, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS);
+    }
+    xkb_context_unref(ctx);
+    return keymap;
+}
+
+static void configure_keyboard(struct wlr_keyboard *wlr_kb, struct xkb_keymap *keymap,
+                               const xd_keyboard_settings *k) {
+    if (keymap != nullptr)
+        wlr_keyboard_set_keymap(wlr_kb, keymap);
+    wlr_keyboard_set_repeat_info(wlr_kb, k->repeat_rate, k->repeat_delay);
+}
+
+void xd_input_apply_keyboard(xd_server *server) {
+    struct xkb_keymap *keymap = configured_keymap(&server->config.keyboard);
+    XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
+        if (kb->physical)
+            configure_keyboard(kb->wlr_keyboard, keymap, &server->config.keyboard);
+    }
+    xkb_keymap_unref(keymap);
+}
 
 static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
     struct wlr_keyboard *wlr_kb = wlr_keyboard_from_input_device(device);
-
-    /* Layout comes from XKB_DEFAULT_* until the Keyboard applet exists. */
-    struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-    struct xkb_keymap *keymap =
-        ctx != nullptr ? xkb_keymap_new_from_names(ctx, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS)
-                       : nullptr;
+    struct xkb_keymap *keymap = configured_keymap(&server->config.keyboard);
     if (keymap == nullptr) {
         wlr_log(WLR_ERROR, "cannot compile keymap for %s", device->name);
-        xkb_context_unref(ctx);
         return;
     }
-    wlr_keyboard_set_keymap(wlr_kb, keymap);
+    configure_keyboard(wlr_kb, keymap, &server->config.keyboard);
     xkb_keymap_unref(keymap);
-    xkb_context_unref(ctx);
-    /* Windows defaults: ~30 cps after a 500 ms delay. */
-    wlr_keyboard_set_repeat_info(wlr_kb, 30, 500);
-    register_keyboard(server, wlr_kb, device);
+    register_keyboard(server, wlr_kb, device)->physical = true;
 }
 
-static void register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
-                              struct wlr_input_device *device) {
+static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
+                                      struct wlr_input_device *device) {
     xd_keyboard *kb = XD_NEW(xd_keyboard);
     kb->server = server;
     kb->wlr_keyboard = wlr_kb;
@@ -498,6 +536,7 @@ static void register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
     XD_LISTEN(&device->events.destroy, kb, destroy, handle_keyboard_destroy);
     wlr_seat_set_keyboard(server->seat, wlr_kb);
     wl_list_insert(&server->keyboards, &kb->link);
+    return kb;
 }
 
 static void update_seat_caps(xd_server *server) {

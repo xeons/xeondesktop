@@ -292,6 +292,8 @@ static void whistler_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r,
     bool active = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
     if (active)
         xd_fill_rect(cr, r, hex(TASK_ACTIVE));
+    else if (state & XD_STATE_FLASH)
+        xd_fill_rect(cr, r, hex(0xE8801E));
     else if (state & XD_STATE_HOT)
         xd_fill_rect(cr, r, hex(TASK_HOT));
     if (active) {
