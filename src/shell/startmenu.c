@@ -127,6 +127,9 @@ void xd_start_menu_build(xd_shell *shell) {
                                         "preferences-desktop-display");
     display->fallback_icon = "video-display";
     display->command = xd_shell_own_command(shell, "xd-desk", nullptr);
+    xd_menu_item *system = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "System",
+                                       "computer");
+    system->command = xd_shell_own_command(shell, "xd-sysdm", nullptr);
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Network and Dial-up Connections",
                  "network-workgroup");
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Printers", "printer");

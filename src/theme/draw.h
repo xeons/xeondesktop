@@ -65,6 +65,8 @@ typedef struct xd_text_style {
  * process. Called before the first text is laid out; GTK apps call it
  * before GTK starts. */
 void xd_fonts_init(void);
+/* The Start button / banner logo: Tux, the Linux penguin. */
+void xd_draw_start_logo(cairo_t *cr, xd_rect r);
 void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style *style);
 /* Width in device pixels of one line of text. */
 int xd_text_width(cairo_t *cr, const char *utf8, const xd_text_style *style);

@@ -61,6 +61,9 @@ void xd_gtk_app_follow_theme(void) {
         icons = theme_installed("breeze") ? "breeze" : nullptr;
     if (icons != nullptr)
         g_object_set(s, "gtk-icon-theme-name", icons, nullptr);
+    /* Dialogs (file choosers, ...) get our title bar and their buttons at
+     * the bottom, as in Windows, instead of a GNOME header bar. */
+    g_object_set(s, "gtk-dialogs-use-header", FALSE, nullptr);
 
     /* Watch the directory: the theme is replaced by rename. The monitor
      * lives as long as the process. */

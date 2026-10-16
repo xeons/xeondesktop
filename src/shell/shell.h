@@ -4,6 +4,7 @@
 #ifndef XD_SHELL_SHELL_H
 #define XD_SHELL_SHELL_H
 
+#include <sys/types.h>
 #include <wayland-client.h>
 
 #include "../core/wlist.h"
@@ -114,6 +115,12 @@ struct xd_shell {
     struct wl_compositor *compositor;
     struct wl_shm *shm;
     struct wl_seat *seat;
+    struct ext_idle_notifier_v1 *idle_notifier;
+    struct ext_idle_notification_v1 *saver_note;
+    struct ext_idle_notification_v1 *monitor_note;
+    struct zwlr_output_power_manager_v1 *power_manager;
+    pid_t saver_pid;
+    bool monitors_off;
     struct wl_pointer *pointer;
     struct wl_keyboard *keyboard;
     struct xkb_context *xkb;
@@ -224,7 +231,12 @@ void xd_desktop_render(xd_desktop *d);
 void xd_taskbar_retheme(xd_taskbar *bar);
 
 /* main.c */
-void xd_shell_launch(xd_shell *shell, const char *command);
+/* Runs a shell command line detached; returns its pid (0 on failure). */
+pid_t xd_shell_launch(xd_shell *shell, const char *command);
+
+/* idle.c: screen saver and monitor power timers; call after settings
+ * change. */
+void xd_idle_update(xd_shell *shell);
 /* Called after the Start menu closed for any reason. */
 void xd_shell_start_menu_closed(xd_shell *shell);
 

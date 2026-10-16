@@ -26,6 +26,7 @@ typedef enum xd_widget_kind : uint8_t {
     XD_W_LISTBOX,
     XD_W_GROUPBOX,
     XD_W_CUSTOM,
+    XD_W_SLIDER,
 } xd_widget_kind;
 
 struct xd_widget {
@@ -55,6 +56,8 @@ struct xd_widget {
     int page;      /* tab page, or -1 = always shown */
     bool checked;  /* checkbox */
     xd_draw_cb draw;
+    xd_pointer_cb pointer; /* custom: mouse input */
+    int smin, smax, svalue; /* slider */
 };
 
 /* The drop-down list of a combo box. */
@@ -99,10 +102,39 @@ struct xd_window {
     xd_widget *hot;
     xd_widget *pressed;
     bool selecting; /* dragging a text selection in `pressed` */
-    bool thumb_drag; /* dragging a list box's scroll thumb */
+    bool thumb_drag; /* dragging a list box's scroll thumb, or a slider's */
     double thumb_offset;
     xd_widget *tabs; /* the window's tab control, if any */
     xd_listpopup *popup;
+};
+
+/* A timer or watched file descriptor. */
+struct xd_ui_source {
+    struct wl_list link; /* xd_ui.sources */
+    int fd;
+    bool timer;  /* fd is ours, a timerfd */
+    bool repeat;
+    bool dead;   /* removed; freed after the current dispatch */
+    xd_ui_source_cb cb;
+    void *user;
+};
+
+/* wlr-output-management state (display.c). */
+typedef struct xd_ui_head xd_ui_head;
+typedef struct xd_ui_mode {
+    struct wl_list link; /* xd_ui_head.modes */
+    xd_ui_head *head;
+    struct zwlr_output_mode_v1 *mode;
+    xd_display_mode info;
+} xd_ui_mode;
+
+struct xd_ui_head {
+    struct wl_list link; /* xd_ui.heads */
+    struct zwlr_output_head_v1 *head;
+    xd_display_head info;
+    struct wl_list modes;
+    struct zwlr_output_mode_v1 *current;
+    xd_display_mode *mode_infos; /* snapshot handed out with info */
 };
 
 typedef struct xd_ui_output {
@@ -135,6 +167,14 @@ struct xd_ui {
     xd_output_info *output_infos; /* snapshot handed out by xd_ui_outputs */
     size_t output_count, output_cap;
     struct wl_data_device *data_device;
+    struct wl_list sources;
+
+    struct zwlr_output_manager_v1 *output_manager;
+    uint32_t output_serial;
+    struct wl_list heads;
+    xd_display_head *head_infos;
+    xd_ui_source_cb display_changed;
+    void *display_changed_user;
 
     struct xkb_context *xkb;
     struct xkb_keymap *keymap;
@@ -169,6 +209,10 @@ void xd_ui_set_cursor_text(xd_ui *ui, bool text);
 void xd_ui_clipboard_copy(xd_ui *ui, xd_str text);
 /* Reads the clipboard as one line of text; caller frees. nullptr if none. */
 char *xd_ui_clipboard_paste(xd_ui *ui);
+
+/* display.c */
+void xd_display_bind(xd_ui *ui, struct wl_registry *reg, uint32_t name, uint32_t version);
+void xd_display_destroy(xd_ui *ui);
 
 /* widgets.c */
 void xd_window_render(xd_window *win);

@@ -128,6 +128,10 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
                 s->screensaver_wait = (int)m;
         } else if (KEY("Password")) {
             parse_bool(v, &s->screensaver_password);
+        } else if (KEY("MonitorOff")) {
+            int64_t m;
+            if (xd_str_parse_i64(v, 0, 1440, &m))
+                s->monitor_off = (int)m;
         }
     }
 #undef SEC
@@ -217,6 +221,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "ScreenSaver", "Name", s->screensaver);
     g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);
     g_key_file_set_boolean(kf, "ScreenSaver", "Password", s->screensaver_password);
+    g_key_file_set_integer(kf, "ScreenSaver", "MonitorOff", s->monitor_off);
     return kf;
 }
 

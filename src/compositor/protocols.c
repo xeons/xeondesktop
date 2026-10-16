@@ -73,6 +73,12 @@ static void apply_config(xd_server *server, struct wlr_output_configuration_v1 *
         }
         if (test_only)
             continue;
+        xd_output *out = xd_output_from_wlr(server, head->state.output);
+        if (out != nullptr) {
+            out->has_position = true;
+            out->want_x = head->state.x;
+            out->want_y = head->state.y;
+        }
         if (head->state.enabled)
             place_in_layout(server, head->state.output, head->state.x, head->state.y);
         else
@@ -83,8 +89,12 @@ static void apply_config(xd_server *server, struct wlr_output_configuration_v1 *
     else
         wlr_output_configuration_v1_send_failed(config);
     wlr_output_configuration_v1_destroy(config);
-    if (!test_only)
+    if (!test_only) {
+        xd_output_place_all(server);
+        if (ok)
+            xd_output_save_config(server);
         xd_output_config_changed(server);
+    }
 }
 
 static void handle_output_apply(struct wl_listener *listener, void *data) {

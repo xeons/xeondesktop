@@ -74,7 +74,141 @@ static bool is_visible(const xd_widget *w) {
 static bool is_focusable(const xd_widget *w) {
     return w->enabled && is_visible(w) &&
            (w->kind == XD_W_BUTTON || w->kind == XD_W_EDIT || w->kind == XD_W_COMBO ||
-            w->kind == XD_W_TABS || w->kind == XD_W_CHECKBOX || w->kind == XD_W_LISTBOX);
+            w->kind == XD_W_TABS || w->kind == XD_W_CHECKBOX || w->kind == XD_W_LISTBOX ||
+            w->kind == XD_W_SLIDER);
+}
+
+/* Takes clicks without taking keyboard focus. */
+static bool is_clickable(const xd_widget *w) {
+    return w->kind == XD_W_CUSTOM && w->pointer != nullptr && w->enabled && is_visible(w);
+}
+
+/* ---- slider geometry (logical units) -------------------------------------------- */
+
+enum { SLIDER_THUMB_W = 11, SLIDER_THUMB_H = 21, SLIDER_PAD = 2 };
+
+static int slider_x0(const xd_widget *w) { return w->r.x + SLIDER_PAD + SLIDER_THUMB_W / 2; }
+static int slider_x1(const xd_widget *w) {
+    return w->r.x + w->r.w - SLIDER_PAD - SLIDER_THUMB_W / 2 - 1;
+}
+
+static double slider_pos(const xd_widget *w, int value) {
+    int range = XD_MAX(w->smax - w->smin, 1);
+    return slider_x0(w) + (double)(value - w->smin) * (slider_x1(w) - slider_x0(w)) / range;
+}
+
+static int slider_value_at(const xd_widget *w, double x) {
+    int span = XD_MAX(slider_x1(w) - slider_x0(w), 1);
+    double f = XD_CLAMP((x - slider_x0(w)) / span, 0.0, 1.0);
+    return w->smin + (int)lround(f * (w->smax - w->smin));
+}
+
+static xd_rect slider_thumb(const xd_widget *w) {
+    int cx = (int)lround(slider_pos(w, w->svalue));
+    return (xd_rect){cx - SLIDER_THUMB_W / 2, w->r.y + SLIDER_PAD, SLIDER_THUMB_W, SLIDER_THUMB_H};
+}
+
+/* A down-pointing trackbar thumb in device pixels. */
+static void slider_thumb_path(cairo_t *cr, xd_rect r, double inset) {
+    double tip = r.w / 2.0;
+    double body = r.h - tip;
+    cairo_new_path(cr);
+    cairo_move_to(cr, r.x + inset, r.y + inset);
+    cairo_line_to(cr, r.x + r.w - inset, r.y + inset);
+    cairo_line_to(cr, r.x + r.w - inset, r.y + body);
+    cairo_line_to(cr, r.x + r.w / 2.0, r.y + r.h - inset);
+    cairo_line_to(cr, r.x + inset, r.y + body);
+    cairo_close_path(cr);
+}
+
+static void set_rgba(cairo_t *cr, xd_rgba c) { cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a); }
+
+static void draw_slider(const xd_theme *t, cairo_t *cr, const xd_widget *w, bool focused) {
+    double s = t->scale;
+    xd_toolkit_colors c;
+    xd_theme_toolkit_colors(t, &c);
+    int px = xd_tpx(t, 1);
+
+    /* Channel: a sunken groove the thumb rides along. */
+    xd_rect thumb_l = slider_thumb(w);
+    int cy = thumb_l.y + 8;
+    xd_rect channel = to_device((xd_rect){slider_x0(w) - 2, cy, slider_x1(w) - slider_x0(w) + 5, 4},
+                                s);
+    if (c.classic) {
+        xd_rect in = xd_draw_bevel(cr, channel, px, c.shadow, c.hilight);
+        xd_draw_bevel(cr, in, px, c.dkshadow, c.light);
+    } else {
+        xd_fill_rect(cr, channel, c.track);
+        xd_draw_bevel(cr, channel, px, c.field_border, c.field_border);
+    }
+
+    /* Ticks under the thumb, one per step when they fit. */
+    int steps = w->smax - w->smin;
+    if (steps > 0 && steps <= 40) {
+        xd_rgba tick = w->enabled ? c.fg : c.disabled;
+        for (int v = w->smin; v <= w->smax; v++) {
+            double x = slider_pos(w, v);
+            xd_rect tr = to_device((xd_rect){(int)lround(x), thumb_l.y + SLIDER_THUMB_H + 2, 1, 3},
+                                   s);
+            tr.w = px;
+            xd_fill_rect(cr, tr, tick);
+        }
+    }
+
+    xd_rect thumb = to_device(thumb_l, s);
+    slider_thumb_path(cr, thumb, 0);
+    if (c.classic) {
+        set_rgba(cr, c.face);
+        cairo_fill(cr);
+        /* Light top and left, dark right and point. */
+        double h = px / 2.0;
+        double body = thumb.h - thumb.w / 2.0;
+        cairo_set_line_width(cr, px);
+        set_rgba(cr, c.hilight);
+        cairo_move_to(cr, thumb.x + h, thumb.y + body);
+        cairo_line_to(cr, thumb.x + h, thumb.y + h);
+        cairo_line_to(cr, thumb.x + thumb.w - px, thumb.y + h);
+        cairo_stroke(cr);
+        set_rgba(cr, c.dkshadow);
+        cairo_move_to(cr, thumb.x + thumb.w - h, thumb.y);
+        cairo_line_to(cr, thumb.x + thumb.w - h, thumb.y + body);
+        cairo_line_to(cr, thumb.x + thumb.w / 2.0, thumb.y + thumb.h - h);
+        cairo_stroke(cr);
+        set_rgba(cr, c.shadow);
+        cairo_move_to(cr, thumb.x + thumb.w - px - h, thumb.y + px);
+        cairo_line_to(cr, thumb.x + thumb.w - px - h, thumb.y + body - px / 2.0);
+        cairo_line_to(cr, thumb.x + thumb.w / 2.0, thumb.y + thumb.h - px - h);
+        cairo_stroke(cr);
+        set_rgba(cr, c.hilight);
+        cairo_move_to(cr, thumb.x + h, thumb.y + body);
+        cairo_line_to(cr, thumb.x + thumb.w / 2.0, thumb.y + thumb.h - h);
+        cairo_stroke(cr);
+    } else {
+        cairo_pattern_t *g = cairo_pattern_create_linear(0, thumb.y, 0, thumb.y + thumb.h);
+        xd_rgba top = w->enabled ? c.thumb_top : c.face;
+        xd_rgba bottom = w->enabled ? c.thumb_bottom : c.face;
+        cairo_pattern_add_color_stop_rgba(g, 0, top.r, top.g, top.b, top.a);
+        cairo_pattern_add_color_stop_rgba(g, 1, bottom.r, bottom.g, bottom.b, bottom.a);
+        cairo_set_source(cr, g);
+        cairo_fill_preserve(cr);
+        cairo_pattern_destroy(g);
+        set_rgba(cr, w->enabled ? c.button_border : c.disabled);
+        cairo_set_line_width(cr, px);
+        slider_thumb_path(cr, thumb, px / 2.0);
+        cairo_stroke(cr);
+    }
+    if (focused)
+        xd_theme_draw_focus_rect(t, cr, to_device(w->r, s));
+}
+
+static void slider_changed(xd_widget *w, int value) {
+    value = XD_CLAMP(value, w->smin, w->smax);
+    if (value == w->svalue)
+        return;
+    w->svalue = value;
+    w->win->dirty = true;
+    if (w->cb != nullptr)
+        w->cb(w, w->user); /* may close the window */
 }
 
 /* ---- list box and tab geometry (logical units) ---------------------------------- */
@@ -311,6 +445,9 @@ static void draw_widget(xd_window *win, const xd_theme *t, cairo_t *cr, xd_widge
     }
     case XD_W_GROUPBOX:
         xd_theme_draw_groupbox(t, cr, r, w->text);
+        break;
+    case XD_W_SLIDER:
+        draw_slider(t, cr, w, focused);
         break;
     case XD_W_CUSTOM:
         if (w->draw != nullptr) {
@@ -829,6 +966,15 @@ static void xd_widget_add_item_any(xd_widget *w, const char *item) {
     w->win->dirty = true;
 }
 
+void xd_widget_clear_items(xd_widget *w) {
+    for (size_t i = 0; i < w->count; i++)
+        xd_free(w->items[i]);
+    w->count = 0;
+    w->selected = -1;
+    w->first = 0;
+    w->win->dirty = true;
+}
+
 int xd_combo_selected(const xd_widget *w) { return w->selected; }
 int xd_widget_selected(const xd_widget *w) { return w->selected; }
 size_t xd_widget_item_count(const xd_widget *w) { return w->count; }
@@ -925,6 +1071,26 @@ xd_widget *xd_custom(xd_window *win, xd_rect r, xd_draw_cb draw, void *user) {
 
 void xd_widget_redraw(xd_widget *w) { w->win->dirty = true; }
 
+void xd_custom_set_pointer(xd_widget *w, xd_pointer_cb cb) { w->pointer = cb; }
+
+xd_widget *xd_slider(xd_window *win, xd_rect r, int min, int max, int value,
+                     xd_widget_cb on_change, void *user) {
+    xd_widget *w = add(win, XD_W_SLIDER, r);
+    w->cb = on_change;
+    w->user = user;
+    xd_slider_set(w, min, max, value);
+    return w;
+}
+
+int xd_slider_value(const xd_widget *w) { return w->svalue; }
+
+void xd_slider_set(xd_widget *w, int min, int max, int value) {
+    w->smin = min;
+    w->smax = XD_MAX(max, min);
+    w->svalue = XD_CLAMP(value, w->smin, w->smax);
+    w->win->dirty = true;
+}
+
 const char *xd_widget_text(xd_widget *w) {
     switch (w->kind) {
     case XD_W_EDIT:
@@ -943,6 +1109,7 @@ const char *xd_widget_text(xd_widget *w) {
     case XD_W_CHECKBOX:
     case XD_W_GROUPBOX:
     case XD_W_CUSTOM:
+    case XD_W_SLIDER:
         break;
     }
     return w->text != nullptr ? w->text : "";
@@ -979,7 +1146,7 @@ static void click(xd_widget *w) {
 static xd_widget *widget_at(xd_window *win, double x, double y) {
     for (size_t i = win->count; i-- > 0;) {
         xd_widget *w = win->widgets[i];
-        if (is_focusable(w) && contains(w->r, x, y))
+        if ((is_focusable(w) || is_clickable(w)) && contains(w->r, x, y))
             return w;
     }
     return nullptr;
@@ -1038,8 +1205,17 @@ void xd_window_pointer_axis(xd_window *win, double value) {
 }
 
 void xd_window_pointer_motion(xd_window *win, double x, double y) {
-    if (win->thumb_drag && win->pressed != nullptr) {
-        list_drag_thumb(win->pressed, y);
+    xd_widget *pw = win->pressed;
+    if (pw != nullptr && pw->kind == XD_W_CUSTOM && pw->pointer != nullptr) {
+        pw->pointer(pw, XD_POINTER_MOTION, x - pw->r.x, y - pw->r.y, pw->user);
+        return;
+    }
+    if (win->thumb_drag && pw != nullptr && pw->kind == XD_W_SLIDER) {
+        slider_changed(pw, slider_value_at(pw, x - win->thumb_offset));
+        return;
+    }
+    if (win->thumb_drag && pw != nullptr) {
+        list_drag_thumb(pw, y);
         return;
     }
     if (win->selecting && win->pressed != nullptr) {
@@ -1071,6 +1247,12 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
         xd_widget *target = win->pressed;
         bool released_over = target != nullptr && win->hot == target;
         win->pressed = nullptr;
+        if (target != nullptr && target->kind == XD_W_CUSTOM && target->pointer != nullptr) {
+            win->dirty = true;
+            target->pointer(target, XD_POINTER_RELEASE, x - target->r.x, y - target->r.y,
+                            target->user); /* may close the window */
+            return;
+        }
         win->selecting = false;
         win->thumb_drag = false;
         win->dirty = true;
@@ -1086,11 +1268,29 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
     xd_widget *w = widget_at(win, x, y);
     if (w == nullptr)
         return;
+    if (is_clickable(w)) {
+        win->pressed = w;
+        w->pointer(w, XD_POINTER_PRESS, x - w->r.x, y - w->r.y, w->user);
+        return;
+    }
     if (win->focus != w) {
         win->focus = w;
         win->dirty = true;
     }
     win->pressed = w;
+    if (w->kind == XD_W_SLIDER) {
+        xd_rect thumb = slider_thumb(w);
+        if (contains(thumb, x, y)) {
+            win->thumb_drag = true;
+            win->thumb_offset = x - (thumb.x + SLIDER_THUMB_W / 2);
+        } else {
+            /* A click in the channel pages toward it. */
+            int page = XD_MAX((w->smax - w->smin) / 5, 1);
+            slider_changed(w, w->svalue + (x < thumb.x ? -page : page));
+        }
+        win->dirty = true;
+        return;
+    }
     if (w->kind == XD_W_TABS) {
         for (size_t i = 0; i < w->count; i++) {
             if (contains(tab_rect(w, i), x, y)) {
@@ -1353,6 +1553,34 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
         if (sym == XKB_KEY_space) {
             f->checked = !f->checked;
             select_changed(f);
+        }
+        return;
+    }
+    if (f->kind == XD_W_SLIDER) {
+        int page = XD_MAX((f->smax - f->smin) / 5, 1);
+        switch (sym) {
+        case XKB_KEY_Left:
+        case XKB_KEY_Up:
+            slider_changed(f, f->svalue - 1);
+            break;
+        case XKB_KEY_Right:
+        case XKB_KEY_Down:
+            slider_changed(f, f->svalue + 1);
+            break;
+        case XKB_KEY_Prior:
+            slider_changed(f, f->svalue - page);
+            break;
+        case XKB_KEY_Next:
+            slider_changed(f, f->svalue + page);
+            break;
+        case XKB_KEY_Home:
+            slider_changed(f, f->smin);
+            break;
+        case XKB_KEY_End:
+            slider_changed(f, f->smax);
+            break;
+        default:
+            break;
         }
         return;
     }

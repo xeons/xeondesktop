@@ -6,16 +6,32 @@
  * Apply/OK; the compositor and shell pick the file up immediately.
  */
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <math.h>
+#include <signal.h>
+#include <spawn.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../saver/savers.h"
 #include "../settings/settings.h"
 #include "../ui/image.h"
 #include "../ui/ui.h"
 
 enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS };
+
+/* One monitor in the Settings tab. */
+typedef struct disp_head {
+    xd_display_setting set;
+    char description[128];
+    xd_display_mode *modes;
+    size_t mode_count;
+} disp_head;
 
 typedef struct desk {
     xd_ui *ui;
@@ -23,6 +39,7 @@ typedef struct desk {
     xd_settings saved;
     xd_settings pending;
     xd_widget *apply;
+    int page;
 
     /* Background */
     char **wallpapers; /* paths; index 0 = (None) = nullptr */
@@ -33,6 +50,24 @@ typedef struct desk {
     cairo_surface_t *preview_image;
     int preview_full_w; /* the file's real width, for Center/Tile */
     char preview_path[1024];
+    xd_widget *browse;
+    int chooser_fd;
+    xd_ui_source *chooser_src;
+    xd_strbuf chooser_out;
+
+    /* Screen Saver */
+    xd_widget *saver_preview;
+    xd_widget *saver_combo;
+    xd_widget *saver_preview_btn;
+    xd_widget *saver_password;
+    xd_widget *saver_wait;
+    int wait_values[24];
+    size_t wait_count;
+    xd_saver *preview_saver;
+    char preview_saver_id[64];
+    int preview_saver_w, preview_saver_h;
+    struct timespec preview_last;
+    xd_ui_source *anim;
 
     /* Appearance */
     xd_scheme_list schemes;
@@ -46,20 +81,49 @@ typedef struct desk {
     xd_widget *smoothing_combo;
 
     /* Settings */
+    disp_head *heads;       /* as edited */
+    size_t head_count;
+    disp_head *saved_heads; /* as applied and kept */
+    size_t saved_count;
+    bool display_dirty;
+    int sel;
+    xd_rect monitors_rect;
+    xd_widget *monitors;
     xd_widget *display_combo;
-    xd_widget *resolution_label;
-    xd_widget *scale_label;
-    xd_widget *refresh_label;
+    xd_widget *res_slider;
+    xd_widget *res_label;
+    xd_widget *scale_combo;
+    xd_widget *refresh_combo;
+    int refresh_modes[64];
+    size_t refresh_count;
+    xd_widget *orient_combo;
+    xd_widget *extend_check;
+    xd_widget *display_note;
+    bool dragging;
+    double drag_x0, drag_y0, drag_dx, drag_dy;
+    /* Monitor Settings confirmation */
+    xd_window *confirm;
+    xd_widget *confirm_label;
+    xd_ui_source *confirm_timer;
+    int confirm_left;
+    bool close_after_apply;
 } desk;
 
 /* ---- helpers --------------------------------------------------------------------- */
 
 static void changed(desk *d) {
-    xd_widget_set_enabled(d->apply, !xd_settings_equal(&d->saved, &d->pending));
+    xd_widget_set_enabled(d->apply,
+                          d->display_dirty || !xd_settings_equal(&d->saved, &d->pending));
     xd_widget_redraw(d->apply);
 }
 
-static void on_page([[maybe_unused]] xd_widget *w, [[maybe_unused]] void *user) {}
+static void update_animation(desk *d);
+
+static void on_page(xd_widget *w, void *user) {
+    desk *d = user;
+    d->page = xd_widget_selected(w);
+    update_animation(d);
+}
 
 /* Pending appearance as a theme for previews. */
 static void pending_theme(const desk *d, double scale, xd_theme *t) {
@@ -246,6 +310,65 @@ static void on_wallpaper_mode(xd_widget *w, void *user) {
     changed(d);
 }
 
+static pid_t spawn_own(const char *program, const char *const *args, int *out_fd);
+
+/* Selects a picture by path, adding it to the list if it's new. */
+static void choose_wallpaper(desk *d, const char *path) {
+    size_t before = d->wallpaper_count;
+    add_wallpaper(d, path);
+    if (d->wallpaper_count > before)
+        xd_widget_add_item(d->wallpaper_list, base_name(path));
+    for (size_t i = 0; i < d->wallpaper_count; i++) {
+        if (strcmp(d->wallpapers[i], path) == 0)
+            xd_widget_select(d->wallpaper_list, (int)i);
+    }
+    snprintf(d->pending.wallpaper, sizeof(d->pending.wallpaper), "%s", path);
+    xd_widget_redraw(d->bg_preview);
+    changed(d);
+}
+
+static void chooser_output(void *user) {
+    desk *d = user;
+    char buf[1024];
+    ssize_t n = read(d->chooser_fd, buf, sizeof(buf));
+    if (n > 0) {
+        xd_strbuf_append(&d->chooser_out, (xd_str){buf, (size_t)n});
+        return;
+    }
+    if (n < 0 && errno == EINTR)
+        return;
+    /* The chooser closed: its answer is complete. */
+    xd_ui_remove_source(d->chooser_src);
+    d->chooser_src = nullptr;
+    close(d->chooser_fd);
+    d->chooser_fd = -1;
+    xd_str path = xd_str_trim(xd_strbuf_view(&d->chooser_out));
+    if (path.len > 0) {
+        char *p = xd_str_dup_cstr(path);
+        choose_wallpaper(d, p);
+        xd_free(p);
+    }
+    xd_strbuf_clear(&d->chooser_out);
+    xd_widget_set_enabled(d->browse, true);
+}
+
+static void on_browse([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    if (d->chooser_src != nullptr)
+        return;
+    char folder[1024] = "/usr/share/backgrounds";
+    const char *home = getenv("HOME");
+    if (home != nullptr)
+        snprintf(folder, sizeof(folder), "%s/Pictures", home);
+    const char *args[] = {"--images", "--title", "Browse", "--folder", folder, nullptr};
+    int fd = -1;
+    if (spawn_own("xd-choose-file", args, &fd) == 0)
+        return;
+    d->chooser_fd = fd;
+    d->chooser_src = xd_ui_add_fd(d->ui, fd, chooser_output, d);
+    xd_widget_set_enabled(d->browse, false);
+}
+
 static void build_background(desk *d) {
     xd_window *win = d->win;
     d->bg_preview = xd_custom(win, (xd_rect){105, 42, 194, 166}, draw_bg_preview, d);
@@ -264,9 +387,8 @@ static void build_background(desk *d) {
     }
     xd_widget_select(d->wallpaper_list, current);
 
-    xd_widget *browse = xd_button(win, (xd_rect){298, 236, 86, 23}, "Browse...", nullptr, nullptr);
-    xd_widget_set_enabled(browse, false); /* needs a file chooser (GTK3 apps) */
-    xd_widget_set_page(browse, PAGE_BACKGROUND);
+    d->browse = xd_button(win, (xd_rect){298, 236, 86, 23}, "Browse...", on_browse, d);
+    xd_widget_set_page(d->browse, PAGE_BACKGROUND);
     xd_widget_set_page(xd_label(win, (xd_rect){298, 330, 86, 16}, "Picture Display:", 0),
                        PAGE_BACKGROUND);
     d->wallpaper_mode = xd_combo(win, (xd_rect){298, 348, 86, 21}, false, on_wallpaper_mode, d);
@@ -277,58 +399,284 @@ static void build_background(desk *d) {
     xd_widget_select(d->wallpaper_mode, (int)d->pending.wallpaper_mode);
 }
 
+/* ---- running helpers ---------------------------------------------------------- */
+
+/* One of our programs: next to this one (a build tree), else from PATH.
+ * With out_fd, its stdout comes back through a pipe. */
+static pid_t spawn_own(const char *program, const char *const *args, int *out_fd) {
+    char self[4096];
+    xd_strbuf path = {0};
+    xd_strbuf_append(&path, xd_str_from_cstr(program));
+    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (n > 0) {
+        self[n] = '\0';
+        char *slash = strrchr(self, '/');
+        if (slash != nullptr) {
+            slash[1] = '\0';
+            xd_strbuf local = {0};
+            xd_strbuf_appendf(&local, "%s%s", self, program);
+            if (access(xd_strbuf_cstr(&local), X_OK) == 0) {
+                xd_strbuf_clear(&path);
+                xd_strbuf_append(&path, xd_strbuf_view(&local));
+            }
+            xd_strbuf_free(&local);
+        }
+    }
+    char *argv[16];
+    size_t argc = 0;
+    const char *exe = xd_strbuf_cstr(&path);
+    argv[argc++] = (char *)(uintptr_t)exe;
+    for (size_t i = 0; args != nullptr && args[i] != nullptr && argc + 1 < XD_ARRAY_LEN(argv); i++)
+        argv[argc++] = (char *)(uintptr_t)args[i];
+    argv[argc] = nullptr;
+
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    int fds[2] = {-1, -1};
+    if (out_fd != nullptr) {
+        if (pipe2(fds, O_CLOEXEC) < 0) {
+            posix_spawn_file_actions_destroy(&fa);
+            xd_strbuf_free(&path);
+            return 0;
+        }
+        posix_spawn_file_actions_adddup2(&fa, fds[1], STDOUT_FILENO);
+    }
+    pid_t pid = 0;
+    int err = posix_spawnp(&pid, argv[0], &fa, nullptr, argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    if (out_fd != nullptr) {
+        close(fds[1]);
+        if (err == 0)
+            *out_fd = fds[0];
+        else
+            close(fds[0]);
+    }
+    if (err != 0) {
+        fprintf(stderr, "xd-desk: cannot run %s: %s\n", argv[0], strerror(err));
+        pid = 0;
+    }
+    xd_strbuf_free(&path);
+    return pid;
+}
+
+static double seconds_since(struct timespec *last) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double dt = last->tv_sec == 0 ? 0.0
+                                  : (double)(now.tv_sec - last->tv_sec) +
+                                        (double)(now.tv_nsec - last->tv_nsec) / 1e9;
+    *last = now;
+    return dt;
+}
+
 /* ---- Screen Saver ------------------------------------------------------------------ */
+
+static const char *pending_saver(const desk *d) {
+    return xd_saver_find(d->pending.screensaver) != nullptr ? d->pending.screensaver : "";
+}
 
 static void draw_saver_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t,
                                void *user) {
     (void)w;
     desk *d = user;
     xd_rect screen = draw_monitor(cr, r, t, primary_aspect(d));
-    xd_fill_rect(cr, screen, xd_rgba_hex(0x000000));
+    const char *id = pending_saver(d);
+    if (id[0] == '\0') {
+        /* (None): the desktop as it is. */
+        xd_theme pt;
+        pending_theme(d, t->scale, &pt);
+        xd_fill_rect(cr, screen, xd_sys(&pt, XD_COLOR_BACKGROUND));
+        return;
+    }
+    if (d->preview_saver == nullptr || strcmp(d->preview_saver_id, id) != 0 ||
+        d->preview_saver_w != screen.w || d->preview_saver_h != screen.h) {
+        if (d->preview_saver != nullptr)
+            xd_saver_destroy(d->preview_saver);
+        /* A miniature: sized as if the real screen were shrunk to fit. */
+        double scale = fmax(0.2, t->scale * screen.w / 1024.0);
+        d->preview_saver = xd_saver_create(id, screen.w, screen.h, scale);
+        snprintf(d->preview_saver_id, sizeof(d->preview_saver_id), "%s", id);
+        d->preview_saver_w = screen.w;
+        d->preview_saver_h = screen.h;
+        d->preview_last = (struct timespec){0};
+    }
+    if (d->preview_saver == nullptr)
+        return;
+    cairo_save(cr);
+    cairo_rectangle(cr, screen.x, screen.y, screen.w, screen.h);
+    cairo_clip(cr);
+    cairo_translate(cr, screen.x, screen.y);
+    xd_saver_frame(d->preview_saver, cr, seconds_since(&d->preview_last));
+    cairo_restore(cr);
+}
+
+static void animate(void *user) {
+    desk *d = user;
+    xd_widget_redraw(d->saver_preview);
+}
+
+/* The preview runs only while its page shows. */
+static void update_animation(desk *d) {
+    bool want = d->page == PAGE_SCREENSAVER && pending_saver(d)[0] != '\0';
+    if (want && d->anim == nullptr)
+        d->anim = xd_ui_add_timer(d->ui, 50, true, animate, d);
+    else if (!want && d->anim != nullptr) {
+        xd_ui_remove_source(d->anim);
+        d->anim = nullptr;
+    }
+}
+
+static const int wait_minutes[] = {1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60, 90, 120, 180, 240};
+static const int monitor_minutes[] = {0, 1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60, 120, 180, 240, 300};
+
+static void saver_controls(desk *d) {
+    bool on = pending_saver(d)[0] != '\0';
+    xd_widget_set_enabled(d->saver_preview_btn, on);
+    xd_widget_set_enabled(d->saver_password, on);
+    xd_widget_set_enabled(d->saver_wait, on);
+}
+
+static void on_saver(xd_widget *w, void *user) {
+    desk *d = user;
+    int i = xd_widget_selected(w);
+    const xd_saver_info *savers = nullptr;
+    size_t n = xd_savers(&savers);
+    if (i <= 0 || (size_t)(i - 1) >= n)
+        d->pending.screensaver[0] = '\0';
+    else
+        snprintf(d->pending.screensaver, sizeof(d->pending.screensaver), "%s", savers[i - 1].id);
+    saver_controls(d);
+    update_animation(d);
+    xd_widget_redraw(d->saver_preview);
+    changed(d);
+}
+
+static void on_saver_password(xd_widget *w, void *user) {
+    desk *d = user;
+    d->pending.screensaver_password = xd_checkbox_checked(w);
+    changed(d);
+}
+
+static void on_saver_wait(xd_widget *w, void *user) {
+    desk *d = user;
+    int i = xd_widget_selected(w);
+    if (i >= 0 && (size_t)i < d->wait_count)
+        d->pending.screensaver_wait = d->wait_values[i];
+    changed(d);
+}
+
+static void on_monitor_off(xd_widget *w, void *user) {
+    desk *d = user;
+    int i = xd_widget_selected(w);
+    if (i >= 0 && (size_t)i < XD_ARRAY_LEN(monitor_minutes))
+        d->pending.monitor_off = monitor_minutes[i];
+    changed(d);
+}
+
+static void on_saver_preview_button([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    const char *id = pending_saver(d);
+    if (id[0] == '\0')
+        return;
+    /* Preview runs unprotected, like Windows' Preview button. */
+    const char *args[] = {"--saver", id, "--no-lock", nullptr};
+    spawn_own("xd-lock", args, nullptr);
+}
+
+static const char *minutes_label(int m, char *buf, size_t cap) {
+    if (m == 0)
+        snprintf(buf, cap, "Never");
+    else if (m < 60)
+        snprintf(buf, cap, "After %d min%s", m, m == 1 ? "" : "s");
+    else
+        snprintf(buf, cap, "After %d hour%s", m / 60, m == 60 ? "" : "s");
+    return buf;
+}
+
+static void build_screensaver(desk *d) {
+    xd_window *win = d->win;
+    const int P = PAGE_SCREENSAVER;
+    d->saver_preview = xd_custom(win, (xd_rect){105, 42, 194, 166}, draw_saver_preview, d);
+    xd_widget_set_page(d->saver_preview, P);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 216, 364, 92}, "Screen Saver"), P);
+    d->saver_combo = xd_combo(win, (xd_rect){32, 238, 170, 21}, false, on_saver, d);
+    xd_widget_set_page(d->saver_combo, P);
+    xd_widget_add_item(d->saver_combo, "(None)");
+    const xd_saver_info *savers = nullptr;
+    size_t n = xd_savers(&savers);
+    int current = 0;
+    for (size_t i = 0; i < n; i++) {
+        xd_widget_add_item(d->saver_combo, savers[i].name);
+        if (strcmp(savers[i].id, d->pending.screensaver) == 0)
+            current = (int)i + 1;
+    }
+    xd_widget_select(d->saver_combo, current);
+
+    /* The savers have no options of their own yet. */
+    xd_widget *settings = xd_button(win, (xd_rect){210, 237, 80, 23}, "Settings", nullptr, nullptr);
+    xd_widget_set_enabled(settings, false);
+    xd_widget_set_page(settings, P);
+    d->saver_preview_btn =
+        xd_button(win, (xd_rect){296, 237, 80, 23}, "Preview", on_saver_preview_button, d);
+    xd_widget_set_page(d->saver_preview_btn, P);
+    d->saver_password = xd_checkbox(win, (xd_rect){32, 272, 150, 20}, "Password protected",
+                                    d->pending.screensaver_password, on_saver_password, d);
+    xd_widget_set_page(d->saver_password, P);
+
+    xd_widget_set_page(xd_label(win, (xd_rect){202, 274, 32, 16}, "Wait:", 0), P);
+    d->saver_wait = xd_combo(win, (xd_rect){236, 271, 82, 21}, false, on_saver_wait, d);
+    xd_widget_set_page(d->saver_wait, P);
+    /* The usual choices, plus whatever desktop.ini has. */
+    d->wait_count = 0;
+    bool listed = false;
+    for (size_t i = 0; i < XD_ARRAY_LEN(wait_minutes); i++) {
+        if (!listed && wait_minutes[i] > d->pending.screensaver_wait) {
+            d->wait_values[d->wait_count++] = d->pending.screensaver_wait;
+            listed = true;
+        }
+        if (wait_minutes[i] == d->pending.screensaver_wait)
+            listed = true;
+        d->wait_values[d->wait_count++] = wait_minutes[i];
+    }
+    if (!listed)
+        d->wait_values[d->wait_count++] = d->pending.screensaver_wait;
+    int wait_sel = 0;
+    for (size_t i = 0; i < d->wait_count; i++) {
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d", d->wait_values[i]);
+        xd_widget_add_item(d->saver_wait, buf);
+        if (d->wait_values[i] == d->pending.screensaver_wait)
+            wait_sel = (int)i;
+    }
+    xd_widget_select(d->saver_wait, wait_sel);
+    xd_widget_set_page(xd_label(win, (xd_rect){324, 274, 56, 16}, "minutes", 0), P);
+
+    xd_widget_set_page(
+        xd_groupbox(win, (xd_rect){20, 316, 364, 64}, "Energy saving features of monitor"), P);
+    xd_widget_set_page(
+        xd_image(win, (xd_rect){32, 338, 32, 32}, "preferences-system-power-management"), P);
+    xd_widget_set_page(xd_label(win, (xd_rect){74, 342, 110, 16}, "Turn off monitor:", 0), P);
+    xd_widget *monitor = xd_combo(win, (xd_rect){186, 339, 150, 21}, false, on_monitor_off, d);
+    xd_widget_set_page(monitor, P);
+    int mon_sel = 0;
+    int best = INT32_MAX;
+    for (size_t i = 0; i < XD_ARRAY_LEN(monitor_minutes); i++) {
+        char buf[32];
+        xd_widget_add_item(monitor, minutes_label(monitor_minutes[i], buf, sizeof(buf)));
+        int diff = abs(monitor_minutes[i] - d->pending.monitor_off);
+        if (diff < best) {
+            best = diff;
+            mon_sel = (int)i;
+        }
+    }
+    xd_widget_select(monitor, mon_sel);
+    saver_controls(d);
 }
 
 static xd_widget *on_page_disabled(xd_widget *w, int page) {
     xd_widget_set_enabled(w, false);
     xd_widget_set_page(w, page);
     return w;
-}
-
-static void build_screensaver(desk *d) {
-    xd_window *win = d->win;
-    const int P = PAGE_SCREENSAVER;
-    xd_widget_set_page(xd_custom(win, (xd_rect){105, 42, 194, 166}, draw_saver_preview, d), P);
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 216, 364, 92}, "Screen Saver"), P);
-    xd_widget *saver = on_page_disabled(xd_combo(win, (xd_rect){32, 238, 170, 21}, false,
-                                                 nullptr, nullptr),
-                                        P);
-    xd_widget_add_item(saver, "(None)");
-    xd_widget_select(saver, 0);
-    on_page_disabled(xd_button(win, (xd_rect){210, 237, 80, 23}, "Settings", nullptr, nullptr), P);
-    on_page_disabled(xd_button(win, (xd_rect){296, 237, 80, 23}, "Preview", nullptr, nullptr), P);
-    on_page_disabled(xd_checkbox(win, (xd_rect){32, 272, 150, 20}, "Password protected",
-                                 d->pending.screensaver_password, nullptr, nullptr),
-                     P);
-    xd_widget_set_page(xd_label(win, (xd_rect){210, 274, 40, 16}, "Wait:", XD_LABEL_DIM), P);
-    xd_widget *wait = on_page_disabled(xd_combo(win, (xd_rect){246, 271, 70, 21}, false, nullptr,
-                                                nullptr),
-                                       P);
-    xd_strbuf minutes = {0};
-    xd_strbuf_appendf(&minutes, "%d", d->pending.screensaver_wait);
-    xd_widget_add_item(wait, xd_strbuf_cstr(&minutes));
-    xd_widget_select(wait, 0);
-    xd_strbuf_free(&minutes);
-    xd_widget_set_page(xd_label(win, (xd_rect){322, 274, 56, 16}, "minutes", XD_LABEL_DIM), P);
-
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 316, 364, 64}, "Energy saving features of monitor"), P);
-    xd_widget_set_page(xd_image(win, (xd_rect){32, 338, 32, 32}, "preferences-system-power-management"), P);
-    xd_widget_set_page(xd_label(win, (xd_rect){74, 336, 210, 32},
-                                "To adjust the power settings for your monitor, click Power.",
-                                XD_LABEL_WRAP),
-                       P);
-    on_page_disabled(xd_button(win, (xd_rect){296, 340, 80, 23}, "Power...", nullptr, nullptr), P);
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 388, 364, 16},
-                                "Screen savers aren't available yet.", XD_LABEL_DIM),
-                       P);
 }
 
 /* ---- Appearance ---------------------------------------------------------------- */
@@ -513,126 +861,764 @@ static void build_effects(desk *d) {
 
 /* ---- Settings ------------------------------------------------------------------ */
 
+static const double scales[] = {1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0};
+static const char *const orientations[] = {"Landscape", "Portrait", "Landscape (flipped)",
+                                           "Portrait (flipped)"};
+
+static void free_heads(disp_head *heads, size_t count) {
+    for (size_t i = 0; i < count; i++)
+        xd_free(heads[i].modes);
+    xd_free(heads);
+}
+
+static disp_head *copy_heads(const disp_head *src, size_t count) {
+    disp_head *out = xd_alloc_array(XD_MAX(count, 1), sizeof(*out));
+    for (size_t i = 0; i < count; i++) {
+        out[i] = src[i];
+        out[i].modes = xd_alloc_array(XD_MAX(src[i].mode_count, 1), sizeof(*out[i].modes));
+        memcpy(out[i].modes, src[i].modes, src[i].mode_count * sizeof(*src[i].modes));
+    }
+    return out;
+}
+
+/* Reads the compositor's current configuration into d->heads. */
+static void load_heads(desk *d) {
+    free_heads(d->heads, d->head_count);
+    d->heads = nullptr;
+    d->head_count = 0;
+    const xd_display_head *heads = nullptr;
+    size_t n = 0;
+    if (!xd_ui_display_heads(d->ui, &heads, &n))
+        return;
+    d->heads = xd_alloc_array(XD_MAX(n, 1), sizeof(*d->heads));
+    for (size_t i = 0; i < n; i++) {
+        const xd_display_head *h = &heads[i];
+        disp_head *dh = &d->heads[i];
+        *dh = (disp_head){0};
+        snprintf(dh->set.name, sizeof(dh->set.name), "%s", h->name);
+        snprintf(dh->description, sizeof(dh->description), "%s", h->description);
+        dh->set.enabled = h->enabled;
+        dh->set.x = h->x;
+        dh->set.y = h->y;
+        dh->set.scale = h->scale > 0 ? h->scale : 1.0;
+        dh->set.transform = h->transform;
+        dh->mode_count = h->mode_count;
+        dh->modes = xd_alloc_array(XD_MAX(h->mode_count, 1), sizeof(*dh->modes));
+        memcpy(dh->modes, h->modes, h->mode_count * sizeof(*h->modes));
+        dh->set.mode = h->mode;
+        if (dh->set.mode < 0) {
+            /* Off (or a custom mode): offer the preferred one. */
+            dh->set.mode = 0;
+            for (size_t m = 0; m < h->mode_count; m++) {
+                if (h->modes[m].preferred)
+                    dh->set.mode = (int)m;
+            }
+        }
+    }
+    d->head_count = n;
+}
+
+static disp_head *sel_head(desk *d) {
+    if (d->sel < 0 || (size_t)d->sel >= d->head_count)
+        return nullptr;
+    return &d->heads[d->sel];
+}
+
+static const xd_display_mode *head_mode(const disp_head *h) {
+    if (h->set.mode < 0 || (size_t)h->set.mode >= h->mode_count)
+        return nullptr;
+    return &h->modes[h->set.mode];
+}
+
+/* Size on the desktop, in logical units. */
+static void head_size(const disp_head *h, int *w, int *hh) {
+    const xd_display_mode *m = head_mode(h);
+    int pw = m != nullptr ? m->width : 1024;
+    int ph = m != nullptr ? m->height : 768;
+    if (h->set.transform == XD_TRANSFORM_90 || h->set.transform == XD_TRANSFORM_270) {
+        int tmp = pw;
+        pw = ph;
+        ph = tmp;
+    }
+    double s = h->set.scale > 0 ? h->set.scale : 1.0;
+    *w = (int)lround(pw / s);
+    *hh = (int)lround(ph / s);
+}
+
+static bool heads_equal(const disp_head *a, const disp_head *b, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        const xd_display_setting *x = &a[i].set;
+        const xd_display_setting *y = &b[i].set;
+        if (x->enabled != y->enabled || (x->enabled && (x->mode != y->mode || x->x != y->x ||
+                                                        x->y != y->y || x->scale != y->scale ||
+                                                        x->transform != y->transform)))
+            return false;
+    }
+    return true;
+}
+
+static void display_changed(desk *d) {
+    d->display_dirty = d->saved_count != d->head_count ||
+                       !heads_equal(d->heads, d->saved_heads, d->head_count);
+    xd_widget_redraw(d->monitors);
+    changed(d);
+}
+
+/* Moves the layout so it starts at (0, 0), as the compositor would. */
+static void normalize(desk *d) {
+    int minx = INT32_MAX;
+    int miny = INT32_MAX;
+    for (size_t i = 0; i < d->head_count; i++) {
+        if (!d->heads[i].set.enabled)
+            continue;
+        minx = XD_MIN(minx, d->heads[i].set.x);
+        miny = XD_MIN(miny, d->heads[i].set.y);
+    }
+    if (minx == INT32_MAX)
+        return;
+    for (size_t i = 0; i < d->head_count; i++) {
+        d->heads[i].set.x -= minx;
+        d->heads[i].set.y -= miny;
+    }
+}
+
+/* After a monitor changes size, monitors beyond its right or bottom edge
+ * follow it so the desktop stays joined up. */
+static void reflow(desk *d, size_t changed_i, int old_w, int old_h) {
+    disp_head *c = &d->heads[changed_i];
+    int w;
+    int h;
+    head_size(c, &w, &h);
+    int right = c->set.x + old_w;
+    int bottom = c->set.y + old_h;
+    for (size_t i = 0; i < d->head_count; i++) {
+        disp_head *o = &d->heads[i];
+        if (i == changed_i || !o->set.enabled)
+            continue;
+        if (o->set.x >= right)
+            o->set.x += w - old_w;
+        if (o->set.y >= bottom)
+            o->set.y += h - old_h;
+    }
+    normalize(d);
+}
+
+/* Distinct resolutions of a head, smallest first. */
+static size_t resolutions(const disp_head *h, int *ws, int *hs, size_t cap) {
+    size_t n = 0;
+    for (size_t m = 0; m < h->mode_count; m++) {
+        bool seen = false;
+        for (size_t j = 0; j < n; j++)
+            seen = seen || (ws[j] == h->modes[m].width && hs[j] == h->modes[m].height);
+        if (!seen && n < cap) {
+            ws[n] = h->modes[m].width;
+            hs[n] = h->modes[m].height;
+            n++;
+        }
+    }
+    for (size_t i = 1; i < n; i++) {
+        for (size_t j = i; j > 0 && (long)ws[j] * hs[j] < (long)ws[j - 1] * hs[j - 1]; j--) {
+            int tw = ws[j];
+            int th = hs[j];
+            ws[j] = ws[j - 1];
+            hs[j] = hs[j - 1];
+            ws[j - 1] = tw;
+            hs[j - 1] = th;
+        }
+    }
+    return n;
+}
+
+static void show_head(desk *d);
+
+static void set_mode_keeping_layout(desk *d, int mode) {
+    disp_head *h = sel_head(d);
+    if (h == nullptr || mode < 0 || (size_t)mode >= h->mode_count || mode == h->set.mode)
+        return;
+    int ow;
+    int oh;
+    head_size(h, &ow, &oh);
+    h->set.mode = mode;
+    reflow(d, (size_t)d->sel, ow, oh);
+}
+
+static void on_resolution(xd_widget *w, void *user) {
+    desk *d = user;
+    disp_head *h = sel_head(d);
+    if (h == nullptr)
+        return;
+    int ws[128];
+    int hs[128];
+    size_t n = resolutions(h, ws, hs, XD_ARRAY_LEN(ws));
+    int i = xd_slider_value(w);
+    if (i < 0 || (size_t)i >= n)
+        return;
+    /* That size at the refresh rate closest to the current one. */
+    const xd_display_mode *cur = head_mode(h);
+    int want = cur != nullptr ? cur->refresh_mhz : 60000;
+    int best = -1;
+    for (size_t m = 0; m < h->mode_count; m++) {
+        if (h->modes[m].width != ws[i] || h->modes[m].height != hs[i])
+            continue;
+        if (best < 0 ||
+            abs(h->modes[m].refresh_mhz - want) < abs(h->modes[best].refresh_mhz - want))
+            best = (int)m;
+    }
+    set_mode_keeping_layout(d, best);
+    show_head(d);
+    display_changed(d);
+}
+
+static void on_refresh(xd_widget *w, void *user) {
+    desk *d = user;
+    int i = xd_widget_selected(w);
+    if (i >= 0 && (size_t)i < d->refresh_count)
+        set_mode_keeping_layout(d, d->refresh_modes[i]);
+    display_changed(d);
+}
+
+static void on_scale(xd_widget *w, void *user) {
+    desk *d = user;
+    disp_head *h = sel_head(d);
+    int i = xd_widget_selected(w);
+    if (h == nullptr || i < 0 || (size_t)i >= XD_ARRAY_LEN(scales))
+        return;
+    int ow;
+    int oh;
+    head_size(h, &ow, &oh);
+    h->set.scale = scales[i];
+    reflow(d, (size_t)d->sel, ow, oh);
+    display_changed(d);
+}
+
+static void on_orientation(xd_widget *w, void *user) {
+    desk *d = user;
+    disp_head *h = sel_head(d);
+    int i = xd_widget_selected(w);
+    if (h == nullptr || i < 0 || i > 3)
+        return;
+    int ow;
+    int oh;
+    head_size(h, &ow, &oh);
+    h->set.transform = (xd_display_transform)i;
+    reflow(d, (size_t)d->sel, ow, oh);
+    display_changed(d);
+}
+
+static size_t enabled_count(const desk *d) {
+    size_t n = 0;
+    for (size_t i = 0; i < d->head_count; i++)
+        n += d->heads[i].set.enabled ? 1 : 0;
+    return n;
+}
+
+static void on_extend(xd_widget *w, void *user) {
+    desk *d = user;
+    disp_head *h = sel_head(d);
+    if (h == nullptr)
+        return;
+    bool on = xd_checkbox_checked(w);
+    if (!on && enabled_count(d) <= 1) {
+        xd_checkbox_set(w, true); /* the last monitor stays on */
+        return;
+    }
+    if (on && !h->set.enabled) {
+        /* Joins the desktop on the right. */
+        int right = 0;
+        for (size_t i = 0; i < d->head_count; i++) {
+            if (!d->heads[i].set.enabled)
+                continue;
+            int hw;
+            int hh;
+            head_size(&d->heads[i], &hw, &hh);
+            right = XD_MAX(right, d->heads[i].set.x + hw);
+        }
+        h->set.x = right;
+        h->set.y = 0;
+    }
+    h->set.enabled = on;
+    normalize(d);
+    show_head(d);
+    display_changed(d);
+}
+
+/* Fills the controls from the selected monitor. */
+static void show_head(desk *d) {
+    disp_head *h = sel_head(d);
+    bool have = h != nullptr;
+    xd_widget *controls[] = {d->res_slider, d->scale_combo, d->refresh_combo, d->orient_combo,
+                             d->extend_check};
+    for (size_t i = 0; i < XD_ARRAY_LEN(controls); i++)
+        xd_widget_set_enabled(controls[i], have && (h->set.enabled || controls[i] == d->extend_check));
+    if (!have) {
+        xd_widget_set_text(d->res_label, "");
+        return;
+    }
+    int ws[128];
+    int hs[128];
+    size_t n = resolutions(h, ws, hs, XD_ARRAY_LEN(ws));
+    const xd_display_mode *cur = head_mode(h);
+    int idx = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (cur != nullptr && ws[i] == cur->width && hs[i] == cur->height)
+            idx = (int)i;
+    }
+    xd_slider_set(d->res_slider, 0, XD_MAX((int)n - 1, 0), idx);
+    char buf[128];
+    if (cur != nullptr)
+        snprintf(buf, sizeof(buf), "%d by %d pixels", cur->width, cur->height);
+    else
+        snprintf(buf, sizeof(buf), "Unknown");
+    xd_widget_set_text(d->res_label, buf);
+
+    /* Refresh rates of this resolution, fastest first. */
+    xd_widget_clear_items(d->refresh_combo);
+    d->refresh_count = 0;
+    for (size_t m = 0; m < h->mode_count && d->refresh_count < XD_ARRAY_LEN(d->refresh_modes);
+         m++) {
+        if (cur == nullptr || h->modes[m].width != cur->width ||
+            h->modes[m].height != cur->height)
+            continue;
+        size_t at = d->refresh_count++;
+        while (at > 0 &&
+               h->modes[d->refresh_modes[at - 1]].refresh_mhz < h->modes[m].refresh_mhz) {
+            d->refresh_modes[at] = d->refresh_modes[at - 1];
+            at--;
+        }
+        d->refresh_modes[at] = (int)m;
+    }
+    int rsel = 0;
+    for (size_t i = 0; i < d->refresh_count; i++) {
+        int mhz = h->modes[d->refresh_modes[i]].refresh_mhz;
+        if (mhz > 0)
+            snprintf(buf, sizeof(buf), "%.3g Hertz", mhz / 1000.0);
+        else
+            snprintf(buf, sizeof(buf), "Default");
+        xd_widget_add_item(d->refresh_combo, buf);
+        if (d->refresh_modes[i] == h->set.mode)
+            rsel = (int)i;
+    }
+    if (d->refresh_count == 0)
+        xd_widget_add_item(d->refresh_combo, "Default");
+    xd_widget_select(d->refresh_combo, rsel);
+
+    int ssel = 0;
+    for (size_t i = 0; i < XD_ARRAY_LEN(scales); i++) {
+        if (fabs(scales[i] - h->set.scale) < fabs(scales[ssel] - h->set.scale))
+            ssel = (int)i;
+    }
+    xd_widget_select(d->scale_combo, ssel);
+    xd_widget_select(d->orient_combo, (int)h->set.transform);
+    xd_checkbox_set(d->extend_check, h->set.enabled);
+    xd_widget_set_enabled(d->extend_check, !h->set.enabled || enabled_count(d) > 1);
+}
+
+/* The monitor map: desktop layout fitted into the widget (logical units). */
+typedef struct map_geom {
+    double s, ox, oy;
+    int minx, miny;
+} map_geom;
+
+static xd_rect head_map_rect(const desk *d, size_t i, const map_geom *g, int *disabled_x) {
+    const disp_head *h = &d->heads[i];
+    int w;
+    int hh;
+    head_size(h, &w, &hh);
+    int x = h->set.x;
+    int y = h->set.y;
+    if (!h->set.enabled) {
+        /* Off monitors sit beside the desktop, greyed. */
+        x = *disabled_x;
+        y = 0;
+        *disabled_x += w + 200;
+    }
+    return (xd_rect){(int)lround(g->ox + (x - g->minx) * g->s),
+                     (int)lround(g->oy + (y - g->miny) * g->s), (int)lround(w * g->s),
+                     (int)lround(hh * g->s)};
+}
+
+static map_geom map_geometry(const desk *d, int width, int height, int *first_disabled_x) {
+    map_geom g = {.s = 1};
+    int minx = INT32_MAX;
+    int miny = INT32_MAX;
+    int maxx = INT32_MIN;
+    int maxy = INT32_MIN;
+    for (size_t i = 0; i < d->head_count; i++) {
+        const disp_head *h = &d->heads[i];
+        if (!h->set.enabled)
+            continue;
+        int w;
+        int hh;
+        head_size(h, &w, &hh);
+        minx = XD_MIN(minx, h->set.x);
+        miny = XD_MIN(miny, h->set.y);
+        maxx = XD_MAX(maxx, h->set.x + w);
+        maxy = XD_MAX(maxy, h->set.y + hh);
+    }
+    if (minx == INT32_MAX) {
+        minx = 0;
+        miny = 0;
+        maxx = 1024;
+        maxy = 768;
+    }
+    *first_disabled_x = maxx + 200;
+    int extra = maxx;
+    for (size_t i = 0; i < d->head_count; i++) {
+        if (d->heads[i].set.enabled)
+            continue;
+        int w;
+        int hh;
+        head_size(&d->heads[i], &w, &hh);
+        extra += 200 + w;
+        maxy = XD_MAX(maxy, miny + hh);
+    }
+    maxx = extra;
+    double span_w = XD_MAX(maxx - minx, 1);
+    double span_h = XD_MAX(maxy - miny, 1);
+    g.s = fmin((width - 20) / span_w, (height - 20) / span_h);
+    g.ox = (width - span_w * g.s) / 2;
+    g.oy = (height - span_h * g.s) / 2;
+    g.minx = minx;
+    g.miny = miny;
+    return g;
+}
+
 static void draw_monitors(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t, void *user) {
     (void)w;
     desk *d = user;
     xd_fill_rect(cr, r, xd_theme_tab_page_color(t));
-    const xd_output_info *outs = nullptr;
-    size_t n = xd_ui_outputs(d->ui, &outs);
-    if (n == 0)
+    if (d->head_count == 0)
         return;
-    /* Fit the whole desktop layout into r, keeping proportions. */
-    int minx = outs[0].x;
-    int miny = outs[0].y;
-    int maxx = outs[0].x + outs[0].logical_w;
-    int maxy = outs[0].y + outs[0].logical_h;
-    for (size_t i = 1; i < n; i++) {
-        minx = XD_MIN(minx, outs[i].x);
-        miny = XD_MIN(miny, outs[i].y);
-        maxx = XD_MAX(maxx, outs[i].x + outs[i].logical_w);
-        maxy = XD_MAX(maxy, outs[i].y + outs[i].logical_h);
-    }
-    double span_w = XD_MAX(maxx - minx, 1);
-    double span_h = XD_MAX(maxy - miny, 1);
-    double s = fmin((r.w - xd_tpx(t, 20)) / span_w, (r.h - xd_tpx(t, 20)) / span_h);
-    double ox = r.x + (r.w - span_w * s) / 2;
-    double oy = r.y + (r.h - span_h * s) / 2;
-    int sel = xd_widget_selected(d->display_combo);
-
+    int disabled_x = 0;
+    map_geom g = map_geometry(d, d->monitors_rect.w, d->monitors_rect.h, &disabled_x);
     xd_font_spec big = t->scheme.fonts[XD_FONT_CAPTION];
     big.size_pt *= 2.2;
-    for (size_t i = 0; i < n; i++) {
-        xd_rect m = {(int)(ox + (outs[i].x - minx) * s), (int)(oy + (outs[i].y - miny) * s),
-                     (int)(outs[i].logical_w * s), (int)(outs[i].logical_h * s)};
-        bool selected = (int)i == sel;
-        xd_fill_rect(cr, m, xd_rgba_hex(0x3A6EA5));
-        xd_draw_bevel(cr, m, xd_tpx(t, selected ? 2 : 1),
-                      selected ? xd_rgba_hex(0x000000) : xd_rgba_hex(0xFFFFFF),
-                      xd_rgba_hex(0x000000));
-        char num[24];
-        snprintf(num, sizeof(num), "%zu", i + 1);
-        xd_text_style st = xd_text(t, XD_FONT_CAPTION, xd_rgba_hex(0xFFFFFF), XD_ALIGN_CENTER);
-        st.font = &big;
-        xd_draw_text(cr, m, num, &st);
+    double s = t->scale;
+    for (size_t pass = 0; pass < 2; pass++) {
+        int dx = disabled_x;
+        for (size_t i = 0; i < d->head_count; i++) {
+            /* The selected monitor last, on top while dragged. */
+            bool selected = (int)i == d->sel;
+            xd_rect m = head_map_rect(d, i, &g, &dx);
+            if (selected != (pass == 1))
+                continue;
+            if (selected && d->dragging) {
+                m.x += (int)lround(d->drag_dx);
+                m.y += (int)lround(d->drag_dy);
+            }
+            xd_rect dm = {r.x + (int)lround(m.x * s), r.y + (int)lround(m.y * s),
+                          (int)lround(m.w * s), (int)lround(m.h * s)};
+            bool on = d->heads[i].set.enabled;
+            xd_fill_rect(cr, dm, on ? xd_rgba_hex(0x3A6EA5) : xd_rgba_hex(0xA0A0A0));
+            xd_draw_bevel(cr, dm, xd_tpx(t, selected ? 2 : 1),
+                          selected ? xd_rgba_hex(0x000000) : xd_rgba_hex(0xFFFFFF),
+                          xd_rgba_hex(0x000000));
+            char num[24];
+            snprintf(num, sizeof(num), "%zu", i + 1);
+            xd_text_style st = xd_text(t, XD_FONT_CAPTION,
+                                       on ? xd_rgba_hex(0xFFFFFF) : xd_rgba_hex(0x606060),
+                                       XD_ALIGN_CENTER);
+            st.font = &big;
+            xd_draw_text(cr, dm, num, &st);
+        }
     }
 }
 
-static void show_output(desk *d) {
-    const xd_output_info *outs = nullptr;
-    size_t n = xd_ui_outputs(d->ui, &outs);
-    int i = xd_widget_selected(d->display_combo);
-    if (i < 0 || (size_t)i >= n)
+/* Places a dragged monitor against the nearest edge of another, as
+ * Windows does: monitors always touch. */
+static void snap(desk *d, size_t moved, int x, int y) {
+    disp_head *m = &d->heads[moved];
+    int mw;
+    int mh;
+    head_size(m, &mw, &mh);
+    long best = LONG_MAX;
+    int bx = x;
+    int by = y;
+    for (size_t i = 0; i < d->head_count; i++) {
+        const disp_head *o = &d->heads[i];
+        if (i == moved || !o->set.enabled)
+            continue;
+        int ow;
+        int oh;
+        head_size(o, &ow, &oh);
+        int cy = XD_CLAMP(y, o->set.y - mh + 1, o->set.y + oh - 1);
+        int cx = XD_CLAMP(x, o->set.x - mw + 1, o->set.x + ow - 1);
+        /* Line edges up when they're close. */
+        if (abs(cy - o->set.y) < 64)
+            cy = o->set.y;
+        if (abs(cx - o->set.x) < 64)
+            cx = o->set.x;
+        int cand[4][2] = {{o->set.x + ow, cy}, {o->set.x - mw, cy}, {cx, o->set.y + oh},
+                          {cx, o->set.y - mh}};
+        for (size_t c = 0; c < 4; c++) {
+            long dx = cand[c][0] - x;
+            long dy = cand[c][1] - y;
+            long dist = dx * dx + dy * dy;
+            if (dist < best) {
+                best = dist;
+                bx = cand[c][0];
+                by = cand[c][1];
+            }
+        }
+    }
+    m->set.x = bx;
+    m->set.y = by;
+    normalize(d);
+}
+
+static void on_monitors_pointer([[maybe_unused]] xd_widget *w, xd_pointer_event ev, double x,
+                                double y, void *user) {
+    desk *d = user;
+    int disabled_x = 0;
+    map_geom g = map_geometry(d, d->monitors_rect.w, d->monitors_rect.h, &disabled_x);
+    if (ev == XD_POINTER_PRESS) {
+        int dx = disabled_x;
+        for (size_t i = 0; i < d->head_count; i++) {
+            xd_rect m = head_map_rect(d, i, &g, &dx);
+            if (x >= m.x && y >= m.y && x < m.x + m.w && y < m.y + m.h) {
+                d->sel = (int)i;
+                xd_widget_select(d->display_combo, d->sel);
+                show_head(d);
+                d->dragging = d->heads[i].set.enabled && enabled_count(d) > 1;
+                d->drag_x0 = x;
+                d->drag_y0 = y;
+                d->drag_dx = d->drag_dy = 0;
+            }
+        }
+        xd_widget_redraw(d->monitors);
         return;
-    const xd_output_info *o = &outs[i];
-    xd_strbuf s = {0};
-    xd_strbuf_appendf(&s, "%d by %d pixels", o->mode_w, o->mode_h);
-    xd_widget_set_text(d->resolution_label, xd_strbuf_cstr(&s));
-    xd_strbuf_clear(&s);
-    if (o->logical_w > 0)
-        xd_strbuf_appendf(&s, "%.0f%% (%d by %d logical)",
-                          100.0 * o->mode_w / o->logical_w, o->logical_w, o->logical_h);
-    xd_widget_set_text(d->scale_label, xd_strbuf_cstr(&s));
-    xd_strbuf_clear(&s);
-    if (o->refresh_mhz > 0)
-        xd_strbuf_appendf(&s, "%.0f Hertz", o->refresh_mhz / 1000.0);
-    else
-        xd_strbuf_append(&s, XD_STR("Not reported by this display"));
-    xd_widget_set_text(d->refresh_label, xd_strbuf_cstr(&s));
-    xd_strbuf_free(&s);
+    }
+    if (!d->dragging)
+        return;
+    d->drag_dx = x - d->drag_x0;
+    d->drag_dy = y - d->drag_y0;
+    if (ev == XD_POINTER_RELEASE) {
+        d->dragging = false;
+        disp_head *h = sel_head(d);
+        if (h != nullptr && (fabs(d->drag_dx) > 2 || fabs(d->drag_dy) > 2)) {
+            int nx = h->set.x + (int)lround(d->drag_dx / g.s);
+            int ny = h->set.y + (int)lround(d->drag_dy / g.s);
+            snap(d, (size_t)d->sel, nx, ny);
+            display_changed(d);
+        }
+    }
+    xd_widget_redraw(d->monitors);
 }
 
 static void on_display(xd_widget *w, void *user) {
     desk *d = user;
-    show_output(d);
-    xd_widget_redraw(w);
+    d->sel = xd_widget_selected(w);
+    show_head(d);
+    xd_widget_redraw(d->monitors);
+}
+
+static void fill_display_combo(desk *d) {
+    xd_widget_clear_items(d->display_combo);
+    for (size_t i = 0; i < d->head_count; i++) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "%zu. %s on %s", i + 1,
+                 d->heads[i].description[0] != '\0' ? d->heads[i].description : "Monitor",
+                 d->heads[i].set.name);
+        xd_widget_add_item(d->display_combo, buf);
+    }
+    if (d->sel < 0 || (size_t)d->sel >= d->head_count)
+        d->sel = d->head_count > 0 ? 0 : -1;
+    xd_widget_select(d->display_combo, d->sel);
+}
+
+/* The compositor reported a new configuration (ours applied, a monitor
+ * plugged in, or another program's change). */
+static void on_display_change(void *user) {
+    desk *d = user;
+    if (d->display_dirty || d->confirm != nullptr)
+        return; /* keep the user's unapplied changes */
+    load_heads(d);
+    if (d->saved_heads == nullptr || d->saved_count != d->head_count) {
+        free_heads(d->saved_heads, d->saved_count);
+        d->saved_heads = copy_heads(d->heads, d->head_count);
+        d->saved_count = d->head_count;
+    }
+    fill_display_combo(d);
+    show_head(d);
+    xd_widget_redraw(d->monitors);
 }
 
 static void build_settings(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_SETTINGS;
     xd_widget_set_page(xd_label(win, (xd_rect){20, 40, 364, 16},
-                                "Drag the monitor icons to match the physical arrangement.",
-                                XD_LABEL_DIM),
+                                "Drag the monitor icons to match the physical arrangement of your "
+                                "monitors.",
+                                XD_LABEL_WRAP),
                        P);
-    xd_widget_set_page(xd_custom(win, (xd_rect){20, 60, 364, 130}, draw_monitors, d), P);
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 202, 50, 16}, "Display:", 0), P);
-    d->display_combo = xd_combo(win, (xd_rect){72, 199, 312, 21}, false, on_display, d);
+    d->monitors_rect = (xd_rect){20, 70, 364, 112};
+    d->monitors = xd_custom(win, d->monitors_rect, draw_monitors, d);
+    xd_custom_set_pointer(d->monitors, on_monitors_pointer);
+    xd_widget_set_page(d->monitors, P);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 192, 50, 16}, "Display:", 0), P);
+    d->display_combo = xd_combo(win, (xd_rect){72, 189, 312, 21}, false, on_display, d);
     xd_widget_set_page(d->display_combo, P);
-    const xd_output_info *outs = nullptr;
-    size_t n = xd_ui_outputs(d->ui, &outs);
-    for (size_t i = 0; i < n; i++) {
-        xd_strbuf s = {0};
-        xd_strbuf_appendf(&s, "%zu. %s on %s", i + 1,
-                          outs[i].description[0] != '\0' ? outs[i].description : "Monitor",
-                          outs[i].name);
-        xd_widget_add_item(d->display_combo, xd_strbuf_cstr(&s));
-        xd_strbuf_free(&s);
-    }
-    xd_widget_select(d->display_combo, 0);
 
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 230, 176, 60}, "Screen area"), P);
-    d->resolution_label = xd_label(win, (xd_rect){32, 254, 156, 16}, "", 0);
-    xd_widget_set_page(d->resolution_label, P);
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){206, 230, 178, 60}, "Scale"), P);
-    d->scale_label = xd_label(win, (xd_rect){218, 254, 160, 16}, "", 0);
-    xd_widget_set_page(d->scale_label, P);
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 298, 364, 44}, "Refresh rate"), P);
-    d->refresh_label = xd_label(win, (xd_rect){32, 318, 340, 16}, "", 0);
-    xd_widget_set_page(d->refresh_label, P);
-    on_page_disabled(xd_checkbox(win, (xd_rect){20, 348, 300, 20},
-                                 "Extend my desktop onto this monitor", true, nullptr, nullptr),
-                     P);
-    on_page_disabled(xd_button(win, (xd_rect){298, 372, 86, 23}, "Advanced...", nullptr, nullptr),
-                     P);
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 376, 270, 16},
-                                "Changing display settings isn't available yet.", XD_LABEL_DIM),
-                       P);
-    show_output(d);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 218, 176, 82}, "Screen area"), P);
+    xd_widget_set_page(xd_label(win, (xd_rect){30, 240, 30, 16}, "Less", 0), P);
+    xd_widget_set_page(xd_label(win, (xd_rect){156, 240, 32, 16}, "More", 0), P);
+    d->res_slider = xd_slider(win, (xd_rect){58, 236, 98, 30}, 0, 0, 0, on_resolution, d);
+    xd_widget_set_page(d->res_slider, P);
+    d->res_label = xd_label(win, (xd_rect){30, 274, 158, 16}, "", 0);
+    xd_widget_set_page(d->res_label, P);
+
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){206, 218, 178, 82}, "Scale"), P);
+    d->scale_combo = xd_combo(win, (xd_rect){218, 240, 154, 21}, false, on_scale, d);
+    xd_widget_set_page(d->scale_combo, P);
+    for (size_t i = 0; i < XD_ARRAY_LEN(scales); i++) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%d%%%s", (int)lround(scales[i] * 100),
+                 i == 0 ? " (normal size)" : "");
+        xd_widget_add_item(d->scale_combo, buf);
+    }
+    xd_widget_set_page(
+        xd_label(win, (xd_rect){218, 266, 160, 30}, "Makes text and windows larger.",
+                 XD_LABEL_WRAP | XD_LABEL_DIM),
+        P);
+
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 312, 80, 16}, "Refresh rate:", 0), P);
+    d->refresh_combo = xd_combo(win, (xd_rect){104, 309, 92, 21}, false, on_refresh, d);
+    xd_widget_set_page(d->refresh_combo, P);
+    xd_widget_set_page(xd_label(win, (xd_rect){206, 312, 72, 16}, "Orientation:", 0), P);
+    d->orient_combo = xd_combo(win, (xd_rect){280, 309, 104, 21}, false, on_orientation, d);
+    xd_widget_set_page(d->orient_combo, P);
+    for (size_t i = 0; i < XD_ARRAY_LEN(orientations); i++)
+        xd_widget_add_item(d->orient_combo, orientations[i]);
+
+    d->extend_check = xd_checkbox(win, (xd_rect){20, 340, 300, 20},
+                                  "Extend my desktop onto this monitor.", true, on_extend, d);
+    xd_widget_set_page(d->extend_check, P);
+    d->display_note = xd_label(win, (xd_rect){20, 368, 364, 30}, "", XD_LABEL_WRAP | XD_LABEL_DIM);
+    xd_widget_set_page(d->display_note, P);
+
+    xd_ui_on_display_change(d->ui, on_display_change, d);
+    d->sel = 0;
+    on_display_change(d);
+    if (d->head_count == 0) {
+        xd_widget_set_text(d->display_note,
+                           "This compositor doesn't let programs change display settings.");
+        xd_widget_set_enabled(d->display_combo, false);
+    }
+}
+
+/* ---- Monitor Settings confirmation -------------------------------------------- */
+
+static void apply_display(desk *d, const disp_head *heads, size_t count, bool confirm);
+
+static void confirm_close(desk *d) {
+    if (d->confirm_timer != nullptr) {
+        xd_ui_remove_source(d->confirm_timer);
+        d->confirm_timer = nullptr;
+    }
+    if (d->confirm != nullptr) {
+        xd_window *c = d->confirm;
+        d->confirm = nullptr;
+        xd_window_close(c);
+    }
+}
+
+static void confirm_keep([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    free_heads(d->saved_heads, d->saved_count);
+    d->saved_heads = copy_heads(d->heads, d->head_count);
+    d->saved_count = d->head_count;
+    d->display_dirty = false;
+    confirm_close(d);
+    changed(d);
+    if (d->close_after_apply)
+        xd_window_close(d->win);
+}
+
+static void confirm_revert([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    confirm_close(d);
+    d->close_after_apply = false;
+    /* Back to how it was; the change event then reloads the controls. */
+    free_heads(d->heads, d->head_count);
+    d->heads = copy_heads(d->saved_heads, d->saved_count);
+    d->head_count = d->saved_count;
+    d->display_dirty = false;
+    apply_display(d, d->saved_heads, d->saved_count, false);
+    show_head(d);
+    changed(d);
+}
+
+static void confirm_tick(void *user) {
+    desk *d = user;
+    if (--d->confirm_left <= 0) {
+        confirm_revert(nullptr, d); /* also removes this timer */
+        return;
+    }
+    char buf[96];
+    snprintf(buf, sizeof(buf), "Reverting to the previous settings in %d second%s.",
+             d->confirm_left, d->confirm_left == 1 ? "" : "s");
+    xd_widget_set_text(d->confirm_label, buf);
+}
+
+static void confirm_open(desk *d) {
+    d->confirm = xd_window_create(d->ui, "Monitor Settings", "xd-desk", 330, 124);
+    xd_image(d->confirm, (xd_rect){14, 14, 32, 32}, "dialog-question");
+    xd_label(d->confirm, (xd_rect){58, 14, 260, 32},
+             "Your desktop has been reconfigured. Do you want to keep these settings?",
+             XD_LABEL_WRAP);
+    d->confirm_left = 15;
+    d->confirm_label = xd_label(d->confirm, (xd_rect){58, 52, 260, 16},
+                                "Reverting to the previous settings in 15 seconds.", XD_LABEL_DIM);
+    xd_widget *yes = xd_button(d->confirm, (xd_rect){84, 86, 75, 23}, "Yes", confirm_keep, d);
+    xd_widget *no = xd_button(d->confirm, (xd_rect){171, 86, 75, 23}, "No", confirm_revert, d);
+    xd_window_set_default(d->confirm, yes);
+    xd_window_set_cancel(d->confirm, no);
+    xd_window_set_focus(d->confirm, yes);
+    xd_window_show(d->confirm);
+    /* Removed by confirm_close (or the last tick). */
+    d->confirm_timer = xd_ui_add_timer(d->ui, 1000, true, confirm_tick, d);
+}
+
+typedef struct apply_ctx {
+    desk *d;
+    bool confirm;
+} apply_ctx;
+
+static void on_display_applied(bool ok, void *user) {
+    apply_ctx *ctx = user;
+    desk *d = ctx->d;
+    bool confirm = ctx->confirm;
+    xd_free(ctx);
+    if (!ok) {
+        xd_widget_set_text(d->display_note,
+                           "The display settings couldn't be applied. The monitor may not "
+                           "support them.");
+        d->close_after_apply = false;
+        return;
+    }
+    xd_widget_set_text(d->display_note, "");
+    if (confirm)
+        confirm_open(d);
+}
+
+static void apply_display(desk *d, const disp_head *heads, size_t count, bool confirm) {
+    xd_display_setting *sets = xd_alloc_array(XD_MAX(count, 1), sizeof(*sets));
+    for (size_t i = 0; i < count; i++)
+        sets[i] = heads[i].set;
+    apply_ctx *ctx = XD_NEW(apply_ctx);
+    ctx->d = d;
+    ctx->confirm = confirm;
+    xd_ui_display_apply(d->ui, sets, count, on_display_applied, ctx);
+    xd_free(sets);
 }
 
 /* ---- buttons ------------------------------------------------------------------- */
 
 static bool apply(desk *d) {
+    if (d->display_dirty && d->confirm == nullptr)
+        apply_display(d, d->heads, d->head_count, true);
+    if (xd_settings_equal(&d->saved, &d->pending))
+        return true;
     if (!xd_settings_save(&d->pending)) {
         fprintf(stderr, "xd-desk: cannot write settings\n");
         return false;
@@ -648,7 +1634,15 @@ static bool apply(desk *d) {
 
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
-    if (xd_settings_equal(&d->saved, &d->pending) || apply(d))
+    if (d->confirm != nullptr)
+        return; /* answer Monitor Settings first */
+    if (d->display_dirty) {
+        /* Closes once the new display settings are kept. */
+        d->close_after_apply = true;
+        apply(d);
+        return;
+    }
+    if (apply(d))
         xd_window_close(d->win);
 }
 
@@ -661,6 +1655,8 @@ static void on_apply([[maybe_unused]] xd_widget *w, void *user) { apply(user); }
 
 int main(int argc, char **argv) {
     static desk d;
+    signal(SIGCHLD, SIG_IGN); /* Preview and Browse children */
+    d.chooser_fd = -1;
     d.ui = xd_ui_connect(argc, argv);
     if (d.ui == nullptr)
         return EXIT_FAILURE;
@@ -689,6 +1685,8 @@ int main(int argc, char **argv) {
     build_effects(&d);
     build_settings(&d);
     xd_widget_select(tab, page);
+    d.page = page;
+    update_animation(&d);
 
     xd_widget *ok = xd_button(d.win, (xd_rect){160, 416, 75, 23}, "OK", on_ok, &d);
     xd_widget *cancel = xd_button(d.win, (xd_rect){241, 416, 75, 23}, "Cancel", on_cancel, &d);
@@ -703,6 +1701,13 @@ int main(int argc, char **argv) {
     xd_ui_destroy(d.ui);
     if (d.preview_image != nullptr)
         cairo_surface_destroy(d.preview_image);
+    if (d.preview_saver != nullptr)
+        xd_saver_destroy(d.preview_saver);
+    if (d.chooser_fd >= 0)
+        close(d.chooser_fd);
+    xd_strbuf_free(&d.chooser_out);
+    free_heads(d.heads, d.head_count);
+    free_heads(d.saved_heads, d.saved_count);
     for (size_t i = 0; i < d.wallpaper_count; i++)
         xd_free(d.wallpapers[i]);
     xd_free(d.wallpapers);

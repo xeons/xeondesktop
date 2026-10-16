@@ -57,6 +57,10 @@ typedef struct xd_output {
     struct wlr_scene_rect *background;
     struct wl_list layer_surfaces; /* xd_layer_surface.link */
     struct wlr_box usable;         /* work area: output minus exclusive zones */
+    /* Where monitors.ini or the last configuration put it, relative to the
+     * other monitors (the layout is shifted to start at 0,0). */
+    bool has_position;
+    int want_x, want_y;
     struct wl_listener frame;
     struct wl_listener request_state;
     struct wl_listener destroy;
@@ -170,6 +174,7 @@ typedef struct xd_config {
     bool cli_style;          /* --style given: passed on to the shell */
     const char *shell;       /* shell executable; nullptr = don't start one */
     const char *taskmgr;     /* Task Manager executable (Ctrl+Alt+Delete) */
+    const char *locker;      /* Lock Computer (Win+L; restarted if a locker dies) */
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     bool always_frames;  /* [Windows] AlwaysDrawFrames */
@@ -245,6 +250,8 @@ struct xd_server {
     struct wlr_scene_rect *lock_cover;
     struct wlr_surface *lock_focus;   /* locker surface with the keyboard */
     struct wl_listener new_lock;
+    int locker_restarts;              /* recent automatic restarts */
+    struct timespec locker_restart_window;
 
     struct wlr_cursor *cursor;
     struct wlr_xcursor_manager *xcursor;
@@ -368,6 +375,11 @@ void xd_arrange_init(xd_server *server);
 /* protocols.c: output management/power, idle, activation. */
 void xd_protocols_init(xd_server *server);
 void xd_output_config_changed(xd_server *server);
+/* Remembers every output's settings in monitors.ini. */
+void xd_output_save_config(xd_server *server);
+/* Places outputs with a wanted position, keeping the desktop at 0,0. */
+void xd_output_place_all(xd_server *server);
+void xd_output_key(const struct wlr_output *o, char *out, size_t cap);
 void xd_idle_activity(xd_server *server);
 
 /* lock.c: ext-session-lock. */

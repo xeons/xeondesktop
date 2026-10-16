@@ -17,8 +17,8 @@ rendition. Screenshots are from a nested development session.
 ## Build
 
 Dependencies: meson, ninja, wlroots 0.20, wlr-protocols, wayland, xkbcommon,
-xcb and xcb-icccm, cairo, pango, GLib/GIO, GTK 3, gdk-pixbuf, and procps-ng's
-libproc2 (Task Manager). At run time, Xwayland (`xorg-xwayland`) runs X11
+xcb and xcb-icccm, cairo, pango, GLib/GIO, GTK 3, gdk-pixbuf, procps-ng's
+libproc2 (Task Manager), PAM (Lock Computer) and libudev (Device Manager). At run time, Xwayland (`xorg-xwayland`) runs X11
 applications; without it only Wayland ones work.
 Optional: Wine, for its free Tahoma clone (`/usr/share/wine/fonts`), which
 XeonDesktop's programs use so text matches Windows; without it DejaVu Sans
@@ -104,12 +104,54 @@ under `[Taskbar]` in `desktop.ini`.
 ### Display Properties
 
 `xd-desk` (Start > Settings > Control Panel > Display) has Windows 2000's
-tabs. Appearance (style, colour scheme, font size, with a live preview) and
-Background (wallpaper and how it's placed) work; Effects has font
-smoothing; Screen Saver and Settings show what's there but can't change it
-yet. Apply writes `~/.config/xeondesktop/desktop.ini`, which the compositor
-and shell watch, so changes show up immediately everywhere. Command-line
+tabs:
+
+- Background: the wallpaper (from the usual folders or Browse...) and how
+  it's placed.
+- Screen Saver: six savers with a live preview, Wait, Password protected,
+  and when to turn the monitors off.
+- Appearance: style, colour scheme and font size, with a live preview.
+- Effects: font smoothing.
+- Settings: drag the monitors into place, and set each one's resolution,
+  refresh rate, scale and orientation, or turn it off. As in Windows, new
+  display settings revert after 15 seconds unless you keep them. They're
+  remembered per monitor in `~/.config/xeondesktop/monitors.ini`.
+
+Apply writes `~/.config/xeondesktop/desktop.ini`, which the compositor and
+shell watch, so changes show up immediately everywhere. Command-line
 `--style`/`--scheme` override the file until it next changes.
+
+### Lock Computer and screen savers
+
+Win+L (or `xd-lock`) locks the computer the Windows 2000 way: "Computer
+Locked", then Ctrl+Alt+Del for the Unlock Computer dialog, which checks
+your password with PAM. It uses the `xeondesktop` PAM service that
+`meson install` puts in `/etc/pam.d` (falling back to `login`). If the
+locker crashes the screen stays locked and the compositor starts it again.
+
+The shell starts the chosen screen saver (`xd-lock --saver`) after the Wait
+time; video players hold it off. With Password protected, it drops to the
+locked screen when you come back.
+
+### System Properties
+
+`xd-sysdm` (Control Panel > System) is Windows 2000's System Properties
+with Linux inside:
+
+- General: the distribution, kernel, owner, CPU, firmware and memory.
+- Network Identification: the computer's name and description, through
+  systemd-hostnamed.
+- Hardware:
+  - Device Manager, built from udev, with Driver and Details tabs per
+    device (also `xd-sysdm --devmgr`);
+  - the loaded kernel modules;
+  - Secure Boot and module signing;
+  - power profiles.
+- User Profiles: home folders and their sizes.
+- Advanced:
+  - swap and zram;
+  - your environment variables (`~/.config/environment.d`);
+  - the boot loader's entries and crash handling.
 
 ### File manager
 

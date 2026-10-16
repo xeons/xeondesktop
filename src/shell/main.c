@@ -319,6 +319,12 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
         shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 1);
         xd_taskmenu_bind(shell);
+    } else if (xd_str_eq(iface, xd_str_from_cstr(ext_idle_notifier_v1_interface.name))) {
+        shell->idle_notifier = bind(reg, name, &ext_idle_notifier_v1_interface, version, 1);
+    } else if (xd_str_eq(iface,
+                         xd_str_from_cstr(zwlr_output_power_manager_v1_interface.name))) {
+        shell->power_manager =
+            bind(reg, name, &zwlr_output_power_manager_v1_interface, version, 1);
     } else if (xd_str_eq(iface,
                          xd_str_from_cstr(wp_fractional_scale_manager_v1_interface.name))) {
         shell->fractional_manager =
@@ -350,10 +356,10 @@ static const struct wl_registry_listener registry_listener = {
 
 /* ---- launching ----------------------------------------------------------------- */
 
-void xd_shell_launch([[maybe_unused]] xd_shell *shell, const char *command) {
+pid_t xd_shell_launch([[maybe_unused]] xd_shell *shell, const char *command) {
     posix_spawnattr_t attr;
     if (posix_spawnattr_init(&attr) != 0)
-        return;
+        return 0;
     /* Children start with default signal handling and an empty mask, in
      * their own session so closing the shell doesn't take them down. */
     sigset_t none;
@@ -368,12 +374,15 @@ void xd_shell_launch([[maybe_unused]] xd_shell *shell, const char *command) {
     char flag[] = "-c";
     char *cmd = xd_str_dup_cstr(xd_str_from_cstr(command));
     char *argv[] = {sh, flag, cmd, nullptr};
-    pid_t pid;
+    pid_t pid = 0;
     int err = posix_spawn(&pid, sh, nullptr, &attr, argv, environ);
-    if (err != 0)
+    if (err != 0) {
         fprintf(stderr, "xd-shell: cannot run '%s': %s\n", command, strerror(err));
+        pid = 0;
+    }
     xd_free(cmd);
     posix_spawnattr_destroy(&attr);
+    return pid;
 }
 
 void xd_shell_start_menu_closed(xd_shell *shell) {
@@ -413,6 +422,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
         xd_settings_scheme(&shell->settings, &shell->scheme);
     if (startup || strcmp(old_wallpaper, shell->settings.wallpaper) != 0)
         load_wallpaper(shell);
+    xd_idle_update(shell);
     if (startup)
         return;
 

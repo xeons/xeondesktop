@@ -1,0 +1,3 @@
+#%PAM-1.0
+# Unlocking XeonDesktop (xd-lock) checks the password like a console login.
+auth include login

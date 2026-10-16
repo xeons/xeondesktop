@@ -42,18 +42,39 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] **Output management** (`wlr-output-management`) and output power:
       tested with wlr-randr (scale, off/on, two outputs). Windows on an
       output that's turned off move to the nearest one, maximized ones
-      refit. Display Properties' Settings tab still doesn't use it.
-      Untested: real monitors, mode/refresh changes, hotplug, power
-      management from swayidle (`wlr-output-power`).
+      refit. Settings are remembered per monitor (make, model and serial,
+      or the connector) in `monitors.ini` and restored when it appears; the
+      remembered arrangement is shifted to start at 0,0 when monitors are
+      missing. Untested: real monitors, mode/refresh changes (headless and
+      nested outputs have one mode), rotation, hotplug, a missing monitor
+      in the middle of an arrangement (leaves a gap).
 - [~] **Idle and screen lock** (`ext-idle-notify`, idle-inhibit,
       `ext-session-lock`): tested with swayidle (idle after the timeout,
       resume on input, held off while mpv plays) and swaylock (locks,
       blocks shortcuts but Ctrl+Alt+Backspace, stays locked if the locker
-      dies, a new locker can take over, unlocks, keyboard returns). Still
-      needed: our own Lock Computer, screen savers, "password protected".
+      dies, a new locker can take over, unlocks, keyboard returns).
 - [~] **xdg-activation**: apps can bring their windows forward (tested:
       starting Task Manager again raises the open one). No focus-stealing
       prevention yet: any valid token raises the window.
+- [~] **Lock Computer** (`xd-lock`, Win+L, the Windows 7 menu's Lock):
+      Windows 2000's "Computer Locked" screen; Ctrl+Alt+Del opens "Unlock
+      Computer", checked with PAM on a worker thread. If the locker dies
+      while locked, the compositor starts it again (5 times a minute at
+      most). Tested: locking, Ctrl+Alt+Del, a wrong password and its
+      message, Caps Lock warning, restart after a crash, a keyboard
+      unplugged and replugged. **Untested: unlocking with the right
+      password** (please try it). The PAM service file
+      (`/etc/pam.d/xeondesktop`, `auth include login`) is installed by
+      `meson install`; until then `login` is used. Not yet: several
+      monitors (the dialog shows on the first), Switch User, password
+      change, the Windows Security dialog on Ctrl+Alt+Delete.
+- [~] **Screen savers**: Blank Screen, Starfield Simulation, Mystify Your
+      Mind, Beziers, Marquee Display and Flying Penguins, started by the
+      shell after [ScreenSaver] Wait minutes idle (held off by video
+      players), password protected or not; monitors off after MonitorOff
+      minutes (wlr-output-power). Tested in a headless session (with
+      XD_IDLE_SECONDS=1). Not yet: per-saver Settings (Marquee text,
+      speeds), 3D Pipes / 3D Text, hardware tests of monitor power.
 - [ ] Power actions (Shut down / Restart / Stand by / Hibernate) have only
       ever run **simulated** in nested sessions; never executed for real.
 
@@ -83,9 +104,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Owned dialogs open centred over their owner, stay above it, minimize
       and restore with it, and have no taskbar button.
 - [x] Win key alone and Ctrl+Esc open the Start menu.
-- [ ] Ctrl+Alt+Delete opens the Task Manager directly. Windows 2000 first
-      shows the Windows Security dialog (Lock, Log Off, Shut Down, Change
-      Password, Task Manager); that needs a lock screen first.
+- [ ] Ctrl+Alt+Delete opens the Task Manager directly (as XP does with the
+      Welcome screen). Windows 2000's Windows Security dialog (Lock, Log
+      Off, Shut Down, Change Password, Task Manager) isn't done.
 - [ ] Blur behind the Windows 7 Start menu's glass (wlroots' scene graph has
       no blur pass); until then the panel is opaque.
 - [x] Resizing from the top/left edges keeps the opposite edge still.
@@ -139,7 +160,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Windows 2000 menu: Documents doesn't list recent files; a Programs
       folder taller than the screen is cut off instead of using columns.
 - [ ] Greyed-out items: Search, Help, Devices and Printers, Default
-      Programs, Switch user, Lock.
+      Programs, Switch user.
 - [?] Start menu keyboard navigation after the focus fix (typing into the
       Windows 7 search box was tested; arrows/Enter/Esc in both menus not).
 - [?] Windows 7 menu: Recent Items, the Shut Down ▸ submenu, Run, the
@@ -180,14 +201,26 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 ## Dialogs and libxdui
 
 - [ ] No input method (text-input-v3) support, no accessibility (AT-SPI),
-      no radio buttons, no tooltips, no drag and drop in libxdui.
-- [ ] Run: Browse... (needs a file chooser).
-- [ ] Display Properties:
-  - Screen Saver tab (needs idle detection, saver plugins);
-  - Settings tab (needs output management);
+      no radio buttons, no tooltips, no drag and drop in libxdui. libxdui
+      windows can't be owned by another (Monitor Settings gets its own
+      taskbar button). The slider (trackbar) is drawn Classic-style in
+      every theme.
+- [ ] Run: Browse... (`xd-choose-file`, the GTK chooser Display Properties
+      uses, is ready for it).
+- [~] Display Properties:
+  - Screen Saver tab: saver list with a live preview, Preview, Password
+    protected, Wait, and "Turn off monitor" (instead of Power Options).
+    Tested. The Settings button stays greyed (savers have no options yet).
+  - Settings tab: monitor arrangement by dragging (snaps edge to edge),
+    resolution slider, refresh rate, scale, orientation, extending onto a
+    monitor, and Windows' 15-second "keep these settings?" check that
+    reverts by itself. Tested with two headless outputs: scale change,
+    revert on timeout, dragging a monitor underneath and keeping it. Not
+    tested with real modes or rotation. No Identify, no Advanced.
+  - Background: Browse... (GTK file chooser). Tested.
   - Effects: menu transitions, large icons, outline dragging, hiding
-    keyboard cues;
-  - Appearance: Advanced per-item editor; Background: Browse...
+    keyboard cues are still greyed out;
+  - Appearance: Advanced per-item editor.
 - [?] Display Properties' Apply/OK buttons (Apply was tested in Taskbar and
       Start Menu Properties, which shares the code path).
 - [?] List box: mouse selection, scroll bar arrows/track/thumb, wheel.
@@ -271,8 +304,28 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Control Panel
 
-- [ ] The `control:` folder and every applet other than Display and
-      Taskbar and Start Menu (see docs/ARCHITECTURE.md for the list).
+- [ ] The `control:` folder and every applet other than Display, System
+      and Taskbar and Start Menu (see docs/ARCHITECTURE.md for the list).
+- [~] **System Properties** (`xd-sysdm`, Windows 2000's layout, Linux
+      inside): General (distribution, kernel, owner, machine ID, CPU,
+      firmware, RAM); Network Identification (host name and description
+      through systemd-hostnamed, domain or Samba workgroup, computer type);
+      Hardware (Kernel Modules, Driver Signing = Secure Boot / module
+      signature enforcement / lockdown / taint, Device Manager from udev
+      with General/Driver/Details per device, Power Profiles through
+      power-profiles-daemon); User Profiles (home folders with their size);
+      Advanced (Performance = scheduler and swap/zram, Environment
+      Variables in `~/.config/environment.d`, Startup and Recovery = the
+      boot loader's entries from EFI variables, panic and core dump
+      handling). Tested: every tab and dialog opens and shows the right
+      data; adding a user environment variable. **Untested: renaming the
+      computer, its description and changing the power profile** (they go
+      through polkit and need an authentication agent, which the session
+      doesn't start yet). Device Manager: no "by connection" view, no
+      disable/uninstall/update driver. User Profiles: Delete, Change Type
+      and Copy To are greyed (administrator jobs).
+- [ ] A polkit authentication agent for the session (hostname changes,
+      power profiles, and later printers, network, users).
 
 ## Testing
 

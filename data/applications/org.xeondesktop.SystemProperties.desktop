@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=System Properties
+Comment=See information about this computer, its hardware, and its startup settings
+Exec=xd-sysdm
+Icon=computer
+Terminal=false
+Categories=Settings;HardwareSettings;GTK;
+StartupWMClass=org.xeondesktop.SystemProperties
+Actions=DeviceManager;
+
+[Desktop Action DeviceManager]
+Name=Device Manager
+Exec=xd-sysdm --devmgr

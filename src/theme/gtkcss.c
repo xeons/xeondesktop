@@ -281,7 +281,7 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
          * moved in by padding the frame and pulling the border back out. */
         "frame { padding-left: 6px; }\n"
         "frame > border { margin-left: -6px; }\n"
-        "frame > label { margin: 0; padding: 0 2px; }\n"
+        "frame > border + label { margin: 0; padding: 0 2px; }\n"
         /* Status bar panes: a thin sunken edge. */
         "frame.xd-sunken { padding-left: 0; }\n"
         "frame.xd-sunken > border { margin-left: 0; border-color: %s %s %s %s; box-shadow: none; }\n"
@@ -412,7 +412,7 @@ static void modern(const xd_toolkit_colors *c, xd_strbuf *o) {
         "frame > border { border: 1px solid #d0d0bf; border-radius: 3px; box-shadow: none; }\n"
         "frame { padding-left: 6px; }\n"
         "frame > border { margin-left: -6px; }\n"
-        "frame > label { margin: 0; padding: 0 2px; color: %s; }\n"
+        "frame > border + label { margin: 0; padding: 0 2px; color: %s; }\n"
         "frame.xd-sunken { padding-left: 0; }\n"
         "frame.xd-sunken > border { margin-left: 0; border: 1px solid; border-radius: 0;\n"
         "  border-color: #aca899 #ffffff #ffffff #aca899; }\n"
@@ -567,7 +567,7 @@ static void whistler(xd_strbuf *o) {
         "  border-color: #ffffff #c1c1bb #c1c1bb #ffffff; border-top: none;\n}\n"
         "frame { padding-left: 6px; }\n"
         "frame > border { margin-left: -6px; border: 1px solid #c1c1bb; }\n"
-        "frame > label { margin: 0; padding: 0 2px; color: #000000; }\n"
+        "frame > border + label { margin: 0; padding: 0 2px; color: #000000; }\n"
         "frame.xd-sunken { padding-left: 0; }\n"
         "frame.xd-sunken > border { margin-left: 0; border-color: #c1c1bb #ffffff #ffffff #c1c1bb; }\n"
         "combobox button.combo {\n  background-image: none; background-color: #ffffff; color: #000000;\n"

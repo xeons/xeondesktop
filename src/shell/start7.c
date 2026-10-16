@@ -1457,6 +1457,8 @@ static void open_sub(xd_start7 *m, int owner) {
         mm = xd_menu_model_new(&m->tree);
         add_cmd(&m->tree, mm, "Display", "preferences-desktop-display",
                 xd_shell_own_command(shell, "xd-desk", nullptr));
+        add_cmd(&m->tree, mm, "System", "computer",
+                xd_shell_own_command(shell, "xd-sysdm", nullptr));
         add_cmd(&m->tree, mm, "Taskbar and Start Menu", "preferences-desktop",
                 xd_shell_own_command(shell, "xd-taskbar", nullptr));
         anchor = xp_or_right_item(m, R_CONTROL);
@@ -1465,7 +1467,8 @@ static void open_sub(xd_start7 *m, int owner) {
         add_cmd(&m->tree, mm, "Switch user", "system-switch-user", nullptr);
         add_cmd(&m->tree, mm, "Log off", "system-log-out",
                 xd_shell_own_command(shell, "xd-shutdown", "--action logoff"));
-        add_cmd(&m->tree, mm, "Lock", "system-lock-screen", nullptr);
+        add_cmd(&m->tree, mm, "Lock", "system-lock-screen",
+                xd_shell_own_command(shell, "xd-lock", nullptr));
         xd_menu_add(&m->tree, mm, XD_MENU_SEPARATOR, nullptr, nullptr);
         add_cmd(&m->tree, mm, "Restart", "system-reboot",
                 xd_shell_own_command(shell, "xd-shutdown", "--action restart"));

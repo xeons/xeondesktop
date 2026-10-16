@@ -5,6 +5,7 @@
  * the locker dies without unlocking, the screen stays locked until a new
  * locker takes over, as the protocol requires.
  */
+#include <time.h>
 #include <wlr/types/wlr_session_lock_v1.h>
 #include <wlr/util/log.h>
 
@@ -108,12 +109,33 @@ static void handle_unlock(struct wl_listener *listener, [[maybe_unused]] void *d
     xd_keyboard_refocus(server);
 }
 
+/* A locker that dies leaves the screen locked with nothing to unlock it
+ * from, so start ours again; a few times at most, in case it keeps
+ * crashing (Ctrl+Alt+Backspace still ends the session). */
+static void restart_locker(xd_server *server) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec - server->locker_restart_window.tv_sec > 60) {
+        server->locker_restart_window = now;
+        server->locker_restarts = 0;
+    }
+    if (server->locker_restarts >= 5) {
+        wlr_log(WLR_ERROR, "screen locker keeps failing; not restarting it");
+        return;
+    }
+    server->locker_restarts++;
+    xd_spawn(server, server->config.locker);
+}
+
 static void handle_lock_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_lock *lk = XD_CONTAINER_OF(listener, xd_lock, destroy);
-    /* Gone without unlocking: stay locked behind the cover. */
-    if (lk->server->locked)
-        wlr_log(WLR_ERROR, "screen locker exited without unlocking; staying locked");
+    xd_server *server = lk->server;
     end_lock_client(lk);
+    /* Gone without unlocking: stay locked behind the cover. */
+    if (server->locked && !server->terminating) {
+        wlr_log(WLR_ERROR, "screen locker exited without unlocking; staying locked");
+        restart_locker(server);
+    }
 }
 
 static void handle_new_lock(struct wl_listener *listener, void *data) {

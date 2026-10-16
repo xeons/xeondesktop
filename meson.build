@@ -120,6 +120,7 @@ settings_lib = static_library(
   'xdsettings',
   'src/settings/settings.c',
   'src/settings/state.c',
+  'src/settings/monitors.c',
   'src/settings/gtktheme.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
@@ -140,6 +141,7 @@ wayland_scanner = find_program(
   native: true,
 )
 wp_dir = dependency('wayland-protocols').get_variable('pkgdatadir')
+wlr_protocols_dir = dependency('wlr-protocols').get_variable('pkgdatadir')
 
 layer_shell_xml = files('protocols/wlr-layer-shell-unstable-v1.xml')
 client_protocol_xml = {
@@ -156,6 +158,12 @@ client_protocol_xml = {
   'wlr-virtual-pointer-unstable-v1': files('protocols/wlr-virtual-pointer-unstable-v1.xml'),
   'virtual-keyboard-unstable-v1': files('protocols/virtual-keyboard-unstable-v1.xml'),
   'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
+  'ext-idle-notify-v1': wp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
+  'ext-session-lock-v1': wp_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  'wlr-output-management-unstable-v1':
+    wlr_protocols_dir / 'unstable/wlr-output-management-unstable-v1.xml',
+  'wlr-output-power-management-unstable-v1':
+    wlr_protocols_dir / 'unstable/wlr-output-power-management-unstable-v1.xml',
 }
 
 client_protocol_src = []
@@ -176,7 +184,6 @@ endforeach
 
 # wlroots' output power header includes this generated server header; the
 # XML comes from the wlr-protocols package.
-wlr_protocols_dir = dependency('wlr-protocols').get_variable('pkgdatadir')
 server_protocol_headers_extra = [
   custom_target(
     'wlr-output-power-management-server-header',
@@ -268,6 +275,7 @@ ui_lib = static_library(
   'src/ui/image.c',
   'src/ui/ui.c',
   'src/ui/widgets.c',
+  'src/ui/display.c',
   dependencies: [theme_dep, settings_dep, client_protocol_dep, gtk_dep, gdk_pixbuf_dep,
                  xkbcommon_dep],
   c_args: ['-D_GNU_SOURCE'],
@@ -277,6 +285,16 @@ ui_dep = declare_dependency(
   dependencies: [theme_dep, settings_dep, client_protocol_dep, gtk_dep, gdk_pixbuf_dep,
                  xkbcommon_dep],
 )
+
+# Screen savers, shared by xd-lock and Display Properties' preview.
+saver_lib = static_library(
+  'xdsaver',
+  'src/saver/savers.c',
+  dependencies: [theme_dep, m_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
+saver_dep = declare_dependency(link_with: saver_lib, dependencies: [theme_dep])
+
 
 apps_common = files('src/apps/common.c')
 
@@ -302,7 +320,7 @@ executable(
 executable(
   'xd-desk',
   'src/apps/desk.c',
-  dependencies: [ui_dep],
+  dependencies: [ui_dep, saver_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -331,6 +349,7 @@ gtkapp_lib = static_library(
 install_data(
   'data/applications/org.xeondesktop.Files.desktop',
   'data/applications/org.xeondesktop.TaskManager.desktop',
+  'data/applications/org.xeondesktop.SystemProperties.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -356,8 +375,28 @@ executable(
 )
 
 executable(
+  'xd-sysdm',
+  'src/sysdm/main.c',
+  'src/sysdm/hardware.c',
+  'src/sysdm/advanced.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, dependency('libudev')],
+  c_args: ['-D_GNU_SOURCE', '-DXD_VERSION="' + meson.project_version() + '"'],
+  install: true,
+)
+
+executable(
+  'xd-choose-file',
+  'src/gtkapp/choose.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+
+executable(
   'xd-shell',
   'src/shell/main.c',
+  'src/shell/idle.c',
   'src/shell/taskbar.c',
   'src/shell/toplevels.c',
   'src/shell/apps.c',
@@ -368,10 +407,26 @@ executable(
   'src/shell/start7.c',
   'src/shell/taskmenu.c',
   'src/shell/recent.c',
-  dependencies: [ui_dep, glib_dep, gio_unix_dep],
+  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
+
+executable(
+  'xd-lock',
+  'src/saver/lock.c',
+  dependencies: [
+    ui_dep,
+    settings_dep,
+    saver_dep,
+    dependency('pam'),
+    xkbcommon_dep,
+    dependency('threads'),
+  ],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+install_data('data/pam.d/xeondesktop', install_dir: get_option('sysconfdir') / 'pam.d')
 
 executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep])
 

@@ -8,6 +8,7 @@
 #include <wlr/util/log.h>
 
 #include "../core/alloc.h"
+#include "../settings/monitors.h"
 #include "server.h"
 
 /* Picks a scale from the panel's physical DPI, rounded to the 25% steps
@@ -85,9 +86,73 @@ static void handle_output_destroy(struct wl_listener *listener, [[maybe_unused]]
     if (out->background != nullptr)
         wlr_scene_node_destroy(&out->background->node);
     xd_server *server = out->server;
+    wlr_output_layout_remove(server->output_layout, out->wlr_output);
     wl_list_remove(&out->link);
     xd_free(out);
+    /* The others close up from 0,0. */
+    xd_output_place_all(server);
     xd_output_config_changed(server);
+}
+
+void xd_output_key(const struct wlr_output *o, char *out, size_t cap) {
+    xd_monitor_key(out, cap, o->make, o->model, o->serial, o->name);
+}
+
+/* The mode of that size, the requested refresh rate if there's one, else
+ * the fastest. */
+static struct wlr_output_mode *find_mode(struct wlr_output *o, int w, int h, int refresh) {
+    struct wlr_output_mode *best = nullptr;
+    struct wlr_output_mode *m;
+    wl_list_for_each(m, &o->modes, link) {
+        if (m->width != w || m->height != h)
+            continue;
+        if (refresh > 0 && abs(m->refresh - refresh) < 500)
+            return m;
+        if (best == nullptr || m->refresh > best->refresh)
+            best = m;
+    }
+    return best;
+}
+
+static bool other_output_enabled(xd_server *server, const struct wlr_output *self) {
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        if (out->wlr_output != self && out->wlr_output->enabled)
+            return true;
+    }
+    return false;
+}
+
+/* Fills st from the remembered settings (or defaults); false if the output
+ * stays off. */
+static bool initial_state(xd_server *server, struct wlr_output *o, const xd_monitor_config *cfg,
+                          struct wlr_output_state *st) {
+    bool enable = cfg == nullptr || cfg->enabled || !other_output_enabled(server, o);
+    wlr_output_state_set_enabled(st, enable);
+    if (!enable)
+        return false;
+    struct wlr_output_mode *mode = nullptr;
+    int width = o->width;
+    if (cfg != nullptr && cfg->width > 0) {
+        mode = find_mode(o, cfg->width, cfg->height, cfg->refresh_mhz);
+        if (mode == nullptr && wl_list_empty(&o->modes)) {
+            /* Nested and headless outputs take any size. */
+            wlr_output_state_set_custom_mode(st, cfg->width, cfg->height, cfg->refresh_mhz);
+            width = cfg->width;
+        }
+    }
+    if (mode == nullptr && width == o->width)
+        mode = wlr_output_preferred_mode(o);
+    if (mode != nullptr) {
+        wlr_output_state_set_mode(st, mode);
+        width = mode->width;
+    }
+    double scale = server->config.forced_scale > 0 ? server->config.forced_scale
+                   : cfg != nullptr && cfg->scale > 0 ? cfg->scale
+                                                      : (double)auto_scale(o, width);
+    wlr_output_state_set_scale(st, (float)scale);
+    wlr_output_state_set_transform(
+        st, cfg != nullptr ? (enum wl_output_transform)cfg->transform : WL_OUTPUT_TRANSFORM_NORMAL);
+    return true;
 }
 
 static void handle_new_output(struct wl_listener *listener, void *data) {
@@ -99,26 +164,32 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
         return;
     }
 
+    char key[192];
+    xd_output_key(wlr_output, key, sizeof(key));
+    xd_monitor_config cfg;
+    bool remembered = xd_monitors_lookup(key, &cfg);
+
     struct wlr_output_state state;
     wlr_output_state_init(&state);
-    wlr_output_state_set_enabled(&state, true);
-    struct wlr_output_mode *mode = wlr_output_preferred_mode(wlr_output);
-    int width = wlr_output->width;
-    if (mode != nullptr) {
-        wlr_output_state_set_mode(&state, mode);
-        width = mode->width;
-    }
-    float scale = server->config.forced_scale > 0 ? (float)server->config.forced_scale
-                                                  : auto_scale(wlr_output, width);
-    wlr_output_state_set_scale(&state, scale);
+    bool enabled = initial_state(server, wlr_output, remembered ? &cfg : nullptr, &state);
     bool ok = wlr_output_commit_state(wlr_output, &state);
     wlr_output_state_finish(&state);
+    if (!ok && remembered) {
+        wlr_log(WLR_ERROR, "output %s: remembered settings failed, using defaults",
+                wlr_output->name);
+        remembered = false;
+        wlr_output_state_init(&state);
+        enabled = initial_state(server, wlr_output, nullptr, &state);
+        ok = wlr_output_commit_state(wlr_output, &state);
+        wlr_output_state_finish(&state);
+    }
     if (!ok) {
         wlr_log(WLR_ERROR, "cannot enable output %s", wlr_output->name);
         return;
     }
-    wlr_log(WLR_INFO, "output %s: %dx%d, scale %.2f", wlr_output->name, wlr_output->width,
-            wlr_output->height, (double)wlr_output->scale);
+    wlr_log(WLR_INFO, "output %s (%s): %dx%d, scale %.2f%s", wlr_output->name, key,
+            wlr_output->width, wlr_output->height, (double)wlr_output->scale,
+            !enabled ? ", off" : remembered ? ", remembered" : "");
 
     xd_output *out = XD_NEW(xd_output);
     out->server = server;
@@ -129,12 +200,70 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
     XD_LISTEN(&wlr_output->events.destroy, out, destroy, handle_output_destroy);
     wl_list_insert(server->outputs.prev, &out->link);
 
-    struct wlr_output_layout_output *lo =
-        wlr_output_layout_add_auto(server->output_layout, wlr_output);
     struct wlr_scene_output *so = wlr_scene_output_create(server->scene, wlr_output);
-    wlr_scene_output_layout_add_output(server->scene_layout, lo, so);
+    if (remembered) {
+        out->has_position = true;
+        out->want_x = cfg.x;
+        out->want_y = cfg.y;
+    }
+    if (enabled) {
+        struct wlr_output_layout_output *lo =
+            wlr_output_layout_add_auto(server->output_layout, wlr_output);
+        wlr_scene_output_layout_add_output(server->scene_layout, lo, so);
+        xd_output_place_all(server);
+    }
     xd_output_update_backgrounds(server);
     xd_output_arrange(out);
+}
+
+void xd_output_place_all(xd_server *server) {
+    /* The remembered arrangement, minus monitors that aren't here, moved
+     * so the desktop starts at 0,0: a missing left-hand monitor mustn't
+     * leave everything offset. */
+    int minx = INT32_MAX;
+    int miny = INT32_MAX;
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        if (!out->has_position || !wlr_output_layout_get(server->output_layout, out->wlr_output))
+            continue;
+        minx = XD_MIN(minx, out->want_x);
+        miny = XD_MIN(miny, out->want_y);
+    }
+    if (minx == INT32_MAX)
+        return;
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        if (out->has_position && wlr_output_layout_get(server->output_layout, out->wlr_output))
+            wlr_output_layout_add(server->output_layout, out->wlr_output, out->want_x - minx,
+                                  out->want_y - miny);
+    }
+}
+
+void xd_output_save_config(xd_server *server) {
+    size_t n = (size_t)wl_list_length(&server->outputs);
+    if (n == 0)
+        return;
+    xd_monitor_config *cfgs = xd_alloc_array(n, sizeof(*cfgs));
+    size_t i = 0;
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        struct wlr_output *o = out->wlr_output;
+        xd_monitor_config *c = &cfgs[i++];
+        *c = (xd_monitor_config){
+            .enabled = o->enabled,
+            .width = o->width,
+            .height = o->height,
+            .refresh_mhz = o->refresh,
+            .scale = (double)o->scale,
+            .transform = (int)o->transform,
+        };
+        xd_output_key(o, c->key, sizeof(c->key));
+        struct wlr_box box;
+        wlr_output_layout_get_box(server->output_layout, o, &box);
+        if (!wlr_box_empty(&box)) {
+            c->x = box.x;
+            c->y = box.y;
+        }
+    }
+    xd_monitors_store(cfgs, n);
+    xd_free(cfgs);
 }
 
 xd_output *xd_output_from_wlr(xd_server *server, struct wlr_output *wlr_output) {

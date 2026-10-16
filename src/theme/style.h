@@ -85,7 +85,5 @@ void xd_luna_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t stat
 void xd_luna_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                            const char *label);
 
-/* The Start button / banner logo: Tux, the Linux penguin. */
-void xd_draw_start_logo(cairo_t *cr, xd_rect r);
 
 #endif

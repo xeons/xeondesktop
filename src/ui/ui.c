@@ -563,6 +563,24 @@ static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
         ui->keyboard = wl_seat_get_keyboard(seat);
         wl_keyboard_add_listener(ui->keyboard, &keyboard_listener, ui);
     }
+    /* The last keyboard or mouse unplugged: these objects go dead; new
+     * ones are made when one comes back. */
+    if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && ui->keyboard != nullptr) {
+        stop_repeat(ui);
+        wl_keyboard_release(ui->keyboard);
+        ui->keyboard = nullptr;
+        ui->keyboard_window = nullptr;
+    }
+    if (!(caps & WL_SEAT_CAPABILITY_POINTER) && ui->pointer != nullptr) {
+        if (ui->cursor_shape != nullptr) {
+            wp_cursor_shape_device_v1_destroy(ui->cursor_shape);
+            ui->cursor_shape = nullptr;
+        }
+        wl_pointer_release(ui->pointer);
+        ui->pointer = nullptr;
+        ui->pointer_window = nullptr;
+        ui->pointer_popup = nullptr;
+    }
 }
 
 static void seat_name([[maybe_unused]] void *data, [[maybe_unused]] struct wl_seat *seat,
@@ -623,6 +641,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
             add_xdg_output(ui, &ui->outputs[i]);
     } else if (IS(wl_data_device_manager_interface)) {
         ui->data_device_manager = bind(reg, name, &wl_data_device_manager_interface, version, 3);
+    } else if (IS(zwlr_output_manager_v1_interface)) {
+        xd_display_bind(ui, reg, name, version);
     }
 #undef IS
 }
@@ -659,6 +679,8 @@ xd_ui *xd_ui_connect(int argc, char **argv) {
     ui->repeat_delay = 500;
     ui->repeat_fd = -1;
     wl_list_init(&ui->windows);
+    wl_list_init(&ui->sources);
+    wl_list_init(&ui->heads);
     signal(SIGPIPE, SIG_IGN);
 
     for (int i = 1; i + 1 < argc; i++) {
@@ -706,6 +728,57 @@ xd_ui *xd_ui_connect(int argc, char **argv) {
 
 xd_icons *xd_ui_icons(xd_ui *ui) { return ui->icons; }
 
+/* ---- timers and file descriptors -------------------------------------------- */
+
+static xd_ui_source *add_source(xd_ui *ui, int fd, xd_ui_source_cb cb, void *user) {
+    xd_ui_source *src = XD_NEW(xd_ui_source);
+    src->fd = fd;
+    src->cb = cb;
+    src->user = user;
+    wl_list_insert(ui->sources.prev, &src->link);
+    return src;
+}
+
+xd_ui_source *xd_ui_add_timer(xd_ui *ui, int interval_ms, bool repeat, xd_ui_source_cb cb,
+                              void *user) {
+    int fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    if (fd < 0)
+        return nullptr;
+    long ms = XD_MAX(interval_ms, 1);
+    struct timespec ts = {.tv_sec = ms / 1000, .tv_nsec = (ms % 1000) * 1000000L};
+    struct itimerspec spec = {.it_value = ts};
+    if (repeat)
+        spec.it_interval = ts;
+    timerfd_settime(fd, 0, &spec, nullptr);
+    xd_ui_source *src = add_source(ui, fd, cb, user);
+    src->timer = true;
+    src->repeat = repeat;
+    return src;
+}
+
+xd_ui_source *xd_ui_add_fd(xd_ui *ui, int fd, xd_ui_source_cb cb, void *user) {
+    return add_source(ui, fd, cb, user);
+}
+
+void xd_ui_remove_source(xd_ui_source *src) {
+    if (src != nullptr)
+        src->dead = true;
+}
+
+static void free_source(xd_ui_source *src) {
+    wl_list_remove(&src->link);
+    if (src->timer)
+        close(src->fd);
+    xd_free(src);
+}
+
+static void sweep_sources(xd_ui *ui) {
+    XD_LIST_FOR_EACH_SAFE(src, tmp, &ui->sources, xd_ui_source, link) {
+        if (src->dead)
+            free_source(src);
+    }
+}
+
 void xd_ui_quit(xd_ui *ui) { ui->running = false; }
 
 static bool flush(struct wl_display *d) {
@@ -739,32 +812,55 @@ void xd_ui_run(xd_ui *ui) {
             wl_display_cancel_read(d);
             break;
         }
-        struct pollfd fds[2] = {
-            {.fd = wl_display_get_fd(d), .events = POLLIN},
-            {.fd = ui->repeat_fd, .events = POLLIN},
-        };
-        if (poll(fds, XD_ARRAY_LEN(fds), -1) < 0) {
+        sweep_sources(ui);
+        size_t nsrc = (size_t)wl_list_length(&ui->sources);
+        struct pollfd *fds = xd_alloc_array(2 + nsrc, sizeof(*fds));
+        fds[0] = (struct pollfd){.fd = wl_display_get_fd(d), .events = POLLIN};
+        fds[1] = (struct pollfd){.fd = ui->repeat_fd, .events = POLLIN};
+        size_t k = 2;
+        XD_LIST_FOR_EACH(src, &ui->sources, xd_ui_source, link) {
+            fds[k++] = (struct pollfd){.fd = src->fd, .events = POLLIN};
+        }
+        if (poll(fds, 2 + nsrc, -1) < 0) {
+            xd_free(fds);
             wl_display_cancel_read(d);
             if (errno == EINTR)
                 continue;
             break;
         }
-        if (fds[0].revents & POLLIN) {
-            if (wl_display_read_events(d) < 0)
-                break;
-        } else {
+        bool wayland_ok = true;
+        if (fds[0].revents & POLLIN)
+            wayland_ok = wl_display_read_events(d) >= 0;
+        else
             wl_display_cancel_read(d);
+        if (!wayland_ok || (fds[0].revents & (POLLERR | POLLHUP)) ||
+            wl_display_dispatch_pending(d) < 0) {
+            xd_free(fds);
+            break;
         }
-        if (fds[0].revents & (POLLERR | POLLHUP))
-            break;
-        if (wl_display_dispatch_pending(d) < 0)
-            break;
         if (ui->repeat_fd >= 0 && (fds[1].revents & POLLIN)) {
             uint64_t n;
             (void)!read(ui->repeat_fd, &n, sizeof(n));
             if (ui->repeat_key != 0)
                 dispatch_key(ui, ui->repeat_key);
         }
+        /* Sources in poll order; ones added by callbacks wait a round. */
+        k = 2;
+        XD_LIST_FOR_EACH(src, &ui->sources, xd_ui_source, link) {
+            if (k >= 2 + nsrc)
+                break;
+            short rev = fds[k++].revents;
+            if (src->dead || rev == 0)
+                continue;
+            if (src->timer) {
+                uint64_t n;
+                (void)!read(src->fd, &n, sizeof(n));
+                if (!src->repeat)
+                    src->dead = true;
+            }
+            src->cb(src->user);
+        }
+        xd_free(fds);
         if (wl_list_empty(&ui->windows))
             ui->running = false;
     }
@@ -797,6 +893,12 @@ void xd_ui_destroy(xd_ui *ui) {
     xkb_context_unref(ui->xkb);
     if (ui->repeat_fd >= 0)
         close(ui->repeat_fd);
+    if (ui->sources.next != nullptr) {
+        XD_LIST_FOR_EACH_SAFE(src, tmp, &ui->sources, xd_ui_source, link) {
+            free_source(src);
+        }
+    }
+    xd_display_destroy(ui);
     xd_icons_destroy(ui->icons);
     for (size_t i = 0; i < ui->output_count; i++) {
         if (ui->outputs[i].xdg_output != nullptr)

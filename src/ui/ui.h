@@ -42,6 +42,68 @@ typedef struct xd_output_info {
 
 /* Valid until the next event dispatch. */
 size_t xd_ui_outputs(xd_ui *ui, const xd_output_info **out);
+
+/* ---- timers and file descriptors ------------------------------------------- */
+
+/* Run from xd_ui_run's loop. Removing a source from its own callback (or
+ * any other) is fine. */
+typedef struct xd_ui_source xd_ui_source;
+typedef void (*xd_ui_source_cb)(void *user);
+xd_ui_source *xd_ui_add_timer(xd_ui *ui, int interval_ms, bool repeat, xd_ui_source_cb cb,
+                              void *user);
+/* Calls cb when fd is readable or hung up. The caller keeps owning fd. */
+xd_ui_source *xd_ui_add_fd(xd_ui *ui, int fd, xd_ui_source_cb cb, void *user);
+void xd_ui_remove_source(xd_ui_source *src);
+
+/* ---- display configuration (wlr-output-management) ------------------------- */
+
+typedef struct xd_display_mode {
+    int width, height; /* pixels */
+    int refresh_mhz;
+    bool preferred;
+} xd_display_mode;
+
+typedef enum xd_display_transform : uint8_t {
+    XD_TRANSFORM_NORMAL,
+    XD_TRANSFORM_90,
+    XD_TRANSFORM_180,
+    XD_TRANSFORM_270,
+} xd_display_transform;
+
+/* One monitor as the compositor can configure it. */
+typedef struct xd_display_head {
+    char name[64];         /* connector, e.g. "DP-1" */
+    char description[128]; /* make and model */
+    int phys_w_mm, phys_h_mm;
+    bool enabled;
+    int mode;              /* index into modes, -1 if custom or off */
+    int x, y;              /* logical position */
+    double scale;
+    xd_display_transform transform;
+    const xd_display_mode *modes;
+    size_t mode_count;
+} xd_display_head;
+
+/* What to apply to one head (matched by name). */
+typedef struct xd_display_setting {
+    char name[64];
+    bool enabled;
+    int mode; /* index into the head's modes */
+    int x, y;
+    double scale;
+    xd_display_transform transform;
+} xd_display_setting;
+
+/* False if the compositor can't change display settings. The heads are
+ * valid until the next event dispatch. */
+bool xd_ui_display_heads(xd_ui *ui, const xd_display_head **heads, size_t *count);
+/* Runs when the compositor reports a new set of heads (after an apply,
+ * hotplug, or another program's change). */
+void xd_ui_on_display_change(xd_ui *ui, xd_ui_source_cb cb, void *user);
+/* Applies the settings; done(ok) runs once the compositor answers. */
+typedef void (*xd_display_done_cb)(bool ok, void *user);
+void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t count,
+                         xd_display_done_cb done, void *user);
 /* Re-themes every open window, e.g. after the user applied new settings. */
 void xd_ui_set_theme(xd_ui *ui, xd_visual_style style, const xd_scheme *scheme);
 
@@ -95,9 +157,26 @@ xd_widget *xd_groupbox(xd_window *win, xd_rect r, const char *label);
 typedef void (*xd_draw_cb)(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t, void *user);
 xd_widget *xd_custom(xd_window *win, xd_rect r, xd_draw_cb draw, void *user);
 void xd_widget_redraw(xd_widget *w);
+/* Mouse input for a custom area: a left-button press, then motion until
+ * the release. x and y are logical, relative to the area. */
+typedef enum xd_pointer_event : uint8_t {
+    XD_POINTER_PRESS,
+    XD_POINTER_MOTION,
+    XD_POINTER_RELEASE,
+} xd_pointer_event;
+typedef void (*xd_pointer_cb)(xd_widget *w, xd_pointer_event ev, double x, double y, void *user);
+void xd_custom_set_pointer(xd_widget *w, xd_pointer_cb cb);
+
+/* A trackbar (Windows' slider) from min to max with a tick per step.
+ * on_change runs as the thumb moves. */
+xd_widget *xd_slider(xd_window *win, xd_rect r, int min, int max, int value,
+                     xd_widget_cb on_change, void *user);
+int xd_slider_value(const xd_widget *w);
+void xd_slider_set(xd_widget *w, int min, int max, int value);
 
 /* Items of a combo or list box; selection of a combo, list box or tabs. */
 void xd_widget_add_item(xd_widget *w, const char *item);
+void xd_widget_clear_items(xd_widget *w);
 int xd_widget_selected(const xd_widget *w);
 void xd_widget_select(xd_widget *w, int index);
 size_t xd_widget_item_count(const xd_widget *w);

@@ -64,6 +64,7 @@ typedef struct xd_settings {
     char screensaver[64];
     int screensaver_wait; /* minutes */
     bool screensaver_password;
+    int monitor_off; /* minutes of idle before monitors turn off; 0 = never */
 } xd_settings;
 
 void xd_settings_defaults(xd_settings *s);

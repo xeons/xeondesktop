@@ -147,6 +147,12 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
     }
     if (server->locked)
         return false; /* the screen locker gets every other key */
+    /* Win+L: Lock Computer. */
+    if (logo && !ctrl && !alt && (sym == XKB_KEY_l || sym == XKB_KEY_L)) {
+        server->super_alone = false;
+        xd_spawn(server, server->config.locker);
+        return true;
+    }
     if (alt && !ctrl && (sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab)) {
         cycle_step(server, shift || sym == XKB_KEY_ISO_Left_Tab);
         return true;
