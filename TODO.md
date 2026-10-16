@@ -11,8 +11,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] **Real hardware**: the compositor has only run nested inside an X11
       session (wlroots X11 backend, software rendering). Never run on a TTY
       with DRM/KMS, libseat/logind, real GPUs or real input devices.
-- [ ] **Multiple monitors**: only ever one nested output. Hotplug, layout,
-      per-output taskbars, maximize/work areas across outputs: untested.
+- [~] **Multiple monitors**: tested with two headless outputs: a taskbar
+      and wallpaper on each, dragging a window across and maximizing it on
+      the second, turning one off (its windows move over), rearranging them
+      in Display Properties. Untested: real monitors, hotplug, different
+      scales side by side, the Start menu on the second monitor.
 - [?] **Automatic per-output scale** from EDID size: untested (only the
       `--scale` override has been used).
 - [~] Scaling smoke test (2026-10-15, nested 1024x768 with --scale 1.25,
@@ -221,8 +224,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
   - Effects: menu transitions, large icons, outline dragging, hiding
     keyboard cues are still greyed out;
   - Appearance: Advanced per-item editor.
-- [?] Display Properties' Apply/OK buttons (Apply was tested in Taskbar and
-      Start Menu Properties, which shares the code path).
+- [~] Display Properties' Apply (tested: screen saver settings, display
+      settings with the keep/revert check). Untested: OK with unapplied
+      display changes (it applies, asks, then closes on Yes).
 - [?] List box: mouse selection, scroll bar arrows/track/thumb, wheel.
 - [?] Clipboard copy/cut/paste in edit fields; key repeat.
 - [?] Run's history drop-down (keyboard history selection was tested).
@@ -261,8 +265,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       apps reload it live. Covers buttons, entries, check/radio, menus,
       scroll bars, tabs, tree headers, panes, scales, tooltips, toolbars.
 - [ ] Not yet styled: combo box pop-up lists, spin button arrows, info
-      bars, switches, popovers (the Views menu), GtkFileChooser,
-      headerbar-based (CSD) dialogs, progress bar segments.
+      bars, switches, popovers (the Views menu), GtkFileChooser's sidebar
+      and path bar, progress bar segments. Our GTK apps turn off dialog
+      header bars (buttons at the bottom, our title bar); other apps'
+      header-bar dialogs keep GTK's look.
 - [ ] Other apps' GtkMessageDialogs show GTK's own title strip inside the
       window and stretched buttons; our apps use `xd_message_box` instead.
 - [ ] The selected tab doesn't overlap its neighbours by 2px as in Windows
@@ -331,4 +337,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 - [ ] Turn the xd-inject scenarios used so far into a repeatable UI test
       suite (start menu, Run, window management, file manager, settings).
+      What works: a headless compositor (`WLR_BACKENDS=headless
+      WLR_RENDERER=pixman WLR_HEADLESS_OUTPUTS=N`, its own
+      `XDG_CONFIG_HOME`), xd-inject for input (`hold`/`release` for
+      modifiers), grim for screenshots. A nested session under X11 stops
+      drawing while its window is covered, so screenshots of it go stale.
 - [ ] CI: build with GCC and Clang, run unit tests, `-Danalyzer=true`.
