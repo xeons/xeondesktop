@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Task Manager
+Comment=See running programs and processes, and how busy the computer is
+Exec=xd-taskmgr
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;GTK;
+StartupWMClass=org.xeondesktop.TaskManager

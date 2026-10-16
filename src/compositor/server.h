@@ -141,6 +141,7 @@ typedef struct xd_config {
     const char *scheme_path; /* --scheme given: passed on to the shell */
     bool cli_style;          /* --style given: passed on to the shell */
     const char *shell;       /* shell executable; nullptr = don't start one */
+    const char *taskmgr;     /* Task Manager executable (Ctrl+Alt+Delete) */
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     const char *terminal;

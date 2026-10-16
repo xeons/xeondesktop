@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+GenericName=File Manager
+Comment=Browse files and folders
+Exec=xd-files %U
+Icon=system-file-manager
+Terminal=false
+Categories=System;FileManager;GTK;
+MimeType=inode/directory;
+StartupWMClass=org.xeondesktop.Files

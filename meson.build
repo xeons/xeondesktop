@@ -276,12 +276,33 @@ executable(
 folder_lib = static_library(
   'xdfolder',
   'src/files/folderview.c',
+  'src/files/properties.c',
+  c_args: ['-D_GNU_SOURCE'],
   dependencies: [core_dep, gtk_dep, m_dep],
 )
 gtkapp_lib = static_library(
   'xdgtkapp',
   'src/gtkapp/gtkapp.c',
   dependencies: [settings_dep, gtk_dep],
+)
+install_data(
+  'data/applications/org.xeondesktop.Files.desktop',
+  'data/applications/org.xeondesktop.TaskManager.desktop',
+  install_dir: get_option('datadir') / 'applications',
+)
+
+# xd-taskmgr: the Task Manager (GTK3), with process data from libproc2.
+proc2_dep = dependency('libproc2', include_type: 'system')
+executable(
+  'xd-taskmgr',
+  'src/taskmgr/main.c',
+  'src/taskmgr/sysinfo.c',
+  'src/taskmgr/graph.c',
+  'src/taskmgr/tasks.c',
+  c_args: ['-D_GNU_SOURCE'],
+  link_with: gtkapp_lib,
+  dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep, proc2_dep, client_protocol_dep, m_dep],
+  install: true,
 )
 executable(
   'xd-files',

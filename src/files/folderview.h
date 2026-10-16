@@ -61,12 +61,17 @@ guint xd_folder_view_get_item_count(XdFolderView *view);
 guint xd_folder_view_get_selected_count(XdFolderView *view);
 /* Total size of selected files, or of all files when nothing is selected. */
 guint64 xd_folder_view_get_size(XdFolderView *view, gboolean selected_only);
+/* The selected items (GFile*, in view order). Free with
+ * g_list_free_full(list, g_object_unref). */
+GList *xd_folder_view_get_selected_files(XdFolderView *view);
 
 /* Signals:
  *   "item-activated" (GFile *file, gboolean is_directory)
  *   "selection-changed" ()
  *   "contents-changed" () - loading finished or the folder changed
  *   "load-error" (const char *message)
+ *   "context-menu" (GdkEvent *event) - right-click (after updating the
+ *       selection) or the Menu key / Shift+F10, when event is NULL
  */
 
 G_END_DECLS

@@ -72,7 +72,7 @@ struct _XdFolderView {
 };
 
 enum { PROP_0, PROP_HADJ, PROP_VADJ, PROP_HPOLICY, PROP_VPOLICY };
-enum { SIG_ACTIVATED, SIG_SELECTION, SIG_CONTENTS, SIG_ERROR, SIG_COUNT };
+enum { SIG_ACTIVATED, SIG_SELECTION, SIG_CONTENTS, SIG_ERROR, SIG_CONTEXT, SIG_COUNT };
 static guint signals[SIG_COUNT];
 
 G_DEFINE_TYPE_WITH_CODE(XdFolderView, xd_folder_view, GTK_TYPE_DRAWING_AREA,
@@ -829,6 +829,8 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
     if (i >= 0)
         v->focus = i;
     selection_changed(v);
+    if (ev->button == GDK_BUTTON_SECONDARY)
+        g_signal_emit(v, signals[SIG_CONTEXT], 0, (GdkEvent *)ev);
     return TRUE;
 }
 
@@ -870,6 +872,10 @@ static gboolean folder_view_key_press(GtkWidget *widget, GdkEventKey *ev) {
     gboolean shift = ev->state & GDK_SHIFT_MASK;
     if (ev->keyval == GDK_KEY_Return || ev->keyval == GDK_KEY_KP_Enter) {
         activate(v, v->focus);
+        return TRUE;
+    }
+    if (ev->keyval == GDK_KEY_Menu || (shift && ev->keyval == GDK_KEY_F10)) {
+        g_signal_emit(v, signals[SIG_CONTEXT], 0, (GdkEvent *)nullptr);
         return TRUE;
     }
     if (ctrl && (ev->keyval == GDK_KEY_a || ev->keyval == GDK_KEY_A)) {
@@ -1031,6 +1037,9 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
     signals[SIG_ERROR] = g_signal_new("load-error", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
                                       0, nullptr, nullptr, nullptr, G_TYPE_NONE, 1,
                                       G_TYPE_STRING);
+    signals[SIG_CONTEXT] = g_signal_new("context-menu", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
+                                        0, nullptr, nullptr, nullptr, G_TYPE_NONE, 1,
+                                        GDK_TYPE_EVENT | G_SIGNAL_TYPE_STATIC_SCOPE);
 }
 
 static void xd_folder_view_init(XdFolderView *v) {
@@ -1132,6 +1141,16 @@ void xd_folder_view_invert_selection(XdFolderView *v) {
 }
 
 guint xd_folder_view_get_item_count(XdFolderView *v) { return v->shown->len; }
+
+GList *xd_folder_view_get_selected_files(XdFolderView *v) {
+    GList *out = nullptr;
+    for (guint i = v->shown->len; i > 0; i--) {
+        item *it = g_ptr_array_index(v->shown, i - 1);
+        if (it->selected)
+            out = g_list_prepend(out, g_object_ref(it->file));
+    }
+    return out;
+}
 
 guint xd_folder_view_get_selected_count(XdFolderView *v) {
     guint n = 0;

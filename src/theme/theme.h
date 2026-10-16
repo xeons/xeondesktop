@@ -226,6 +226,20 @@ void xd_theme_toolkit_colors(const xd_theme *t, xd_toolkit_colors *out);
  * scales itself). */
 void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out);
 
+/* Images the GTK CSS refers to, by path relative to gtk.css. */
+typedef enum xd_gtk_asset {
+    XD_GTK_CHECK,
+    XD_GTK_CHECK_DISABLED,
+    XD_GTK_CHECK_HOT,
+    XD_GTK_RADIO,
+    XD_GTK_RADIO_DISABLED,
+    XD_GTK_RADIO_HOT,
+    XD_GTK_ASSET_COUNT,
+} xd_gtk_asset;
+extern const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT];
+/* SVG contents of one of those images in this theme's colours. */
+void xd_theme_gtk_asset(const xd_theme *t, xd_gtk_asset which, xd_strbuf *out);
+
 /* Product banner across the top of a dialog (Shut Down). */
 void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
                                  const char *edition);

@@ -13,4 +13,18 @@ void xd_gtk_app_preinit(void);
 /* Call once GTK is initialized (e.g. in GApplication::startup). */
 void xd_gtk_app_follow_theme(void);
 
+/* Ctrl+Tab and Ctrl+Shift+Tab switch the notebook's pages anywhere in
+ * `window`, as in Windows property sheets. */
+void xd_gtk_notebook_ctrl_tab(GtkWidget *window, GtkNotebook *notebook);
+
+typedef enum { XD_MB_ERROR, XD_MB_WARNING, XD_MB_INFO, XD_MB_QUESTION } xd_mb_icon;
+typedef enum { XD_MB_OK, XD_MB_YES_NO } xd_mb_buttons;
+
+/* A Windows-style message box (icon, text, centred buttons; GTK's
+ * message dialog looks nothing like it). Returns GTK_RESPONSE_OK, or
+ * GTK_RESPONSE_YES / GTK_RESPONSE_NO (Escape and closing count as No).
+ * With default_no, No has the focus, for destructive questions. */
+int xd_message_box(GtkWindow *parent, const char *title, xd_mb_icon icon, xd_mb_buttons buttons,
+                   gboolean default_no, const char *text);
+
 #endif

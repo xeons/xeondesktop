@@ -6,6 +6,7 @@
  */
 #include <math.h>
 #include <stdarg.h>
+#include <string.h>
 
 #include "style.h"
 
@@ -181,8 +182,6 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n  border-radius: 0;\n"
         "  -gtk-icon-source: none;\n  margin: 0 4px 0 0;\n  padding: 0;\n}\n"
         "radio { border-radius: 50%%; }\n"
-        "check:checked { -gtk-icon-source: -gtk-icontheme(\"object-select-symbolic\"); }\n"
-        "radio:checked { -gtk-icon-source: -gtk-icontheme(\"media-record-symbolic\"); }\n"
         "check:disabled, radio:disabled { background-color: %s; color: %s; }\n",
         face, H(c->fg), hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, dk.s, hi.s, hi.s, dk.s, sh.s,
         li.s, H(dither), H(c->disabled), hi.s, H(c->frame), sh.s, li.s, hi.s, sh.s, sh.s, hi.s,
@@ -254,6 +253,54 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         sh.s, hi.s, H(dither), H(dither), face, li.s, dk.s, dk.s, li.s, hi.s, sh.s, H(c->fg),
         sh.s, face, face, hi.s, dk.s, dk.s, hi.s, li.s, sh.s, face, hi.s, dk.s, dk.s, hi.s, sh.s,
         li.s, face, sh.s, face, sh.s, hi.s, hi.s, sh.s, face, hi.s, dk.s, dk.s, hi.s, li.s, sh.s);
+
+    /* Tabs: raised, slightly rounded, with a two-tone right edge; the page's
+     * top edge belongs to the header so the selected tab can cover it and
+     * join the page. Group boxes: a thin etched line with the caption set
+     * in from the corner. Combo boxes: a sunken field with an arrow button. */
+    xd_strbuf_appendf(
+        o,
+        "notebook > header { background-color: %s; border: none; border-bottom: 1px solid %s;\n"
+        "  box-shadow: none; padding: 0 2px; }\n"
+        "notebook > header > tabs > tab {\n  background-color: %s; background-image: none;\n"
+        "  border-style: solid; border-width: 1px 1px 0 1px;\n"
+        "  border-color: %s %s %s %s;\n  border-radius: 2px 2px 0 0;\n"
+        "  box-shadow: inset -1px 0 %s%.0s;\n"
+        "  margin: 2px 0 0 0; padding: 1px 6px 1px 6px; min-height: 0; outline-offset: -3px;\n}\n"
+        /* The selected tab is taller, overlaps its neighbours and covers
+         * the page's top edge. */
+        "notebook > header > tabs > tab:checked { margin: 0 -2px -1px -2px;\n"
+        "  padding: 2px 8px 3px 8px; }\n"
+        "notebook > header > tabs > tab:first-child:checked { margin-left: 0; }\n"
+        "notebook > stack:not(:only-child) {\n  border-style: solid; border-width: 0 1px 1px 1px;\n"
+        "  border-color: %s %s %s %s;\n  box-shadow: inset -1px -1px %s, inset 1px 0 %s;\n}\n"
+        "frame > border {\n  border-style: solid; border-width: 1px;\n"
+        "  border-color: %s %s %s %s;\n  box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n"
+        "  border-radius: 0;\n}\n"
+        /* GTK cuts the caption's margin out of the border, so the caption is
+         * moved in by padding the frame and pulling the border back out. */
+        "frame { padding-left: 6px; }\n"
+        "frame > border { margin-left: -6px; }\n"
+        "frame > label { margin: 0; padding: 0 2px; }\n"
+        /* Status bar panes: a thin sunken edge. */
+        "frame.xd-sunken { padding-left: 0; }\n"
+        "frame.xd-sunken > border { margin-left: 0; border-color: %s %s %s %s; box-shadow: none; }\n"
+        "combobox button.combo {\n  background-color: %s; color: %s;\n"
+        "  border-style: solid; border-width: 1px; border-color: %s %s %s %s;\n"
+        "  box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n  padding: 0 0 0 3px;\n}\n"
+        "combobox button.combo:hover { background-color: %s; }\n"
+        "combobox button.combo:active, combobox button.combo:checked {\n"
+        "  border-color: %s %s %s %s; box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n"
+        "  padding: 0 0 0 3px; background-color: %s;\n}\n"
+        "combobox button.combo arrow {\n  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");\n"
+        "  min-width: 12px; min-height: 12px; margin: 2px; padding: 1px 1px;\n"
+        "  background-color: %s; color: %s;\n  border-style: solid; border-width: 1px;\n"
+        "  border-color: %s %s %s %s; box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n}\n"
+        "combobox button.combo:checked arrow { border-color: %s; box-shadow: none; }\n",
+        face, hi.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, hi.s, dk.s, dk.s, hi.s, sh.s, li.s,
+        sh.s, hi.s, hi.s, sh.s, hi.s, sh.s, sh.s, hi.s, hi.s, sh.s, H(c->base), H(c->text), sh.s, hi.s, hi.s, sh.s, dk.s,
+        li.s, H(c->base), sh.s, hi.s, hi.s, sh.s, dk.s, li.s, H(c->base), face, H(c->fg), li.s,
+        dk.s, dk.s, li.s, hi.s, sh.s, sh.s);
 }
 
 /* ---- Luna and Whistler (Windows XP) ----------------------------------------------- */
@@ -294,8 +341,6 @@ static void modern(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  color: %s;\n  -gtk-icon-source: none;\n  margin: 0 4px 0 0;\n  padding: 0;\n}\n"
         "radio { border-radius: 50%%; }\n"
         "check:hover, radio:hover { box-shadow: inset 0 0 0 2px %s; }\n"
-        "check:checked { -gtk-icon-source: -gtk-icontheme(\"object-select-symbolic\"); }\n"
-        "radio:checked { -gtk-icon-source: -gtk-icontheme(\"media-record-symbolic\"); }\n"
         "check:disabled, radio:disabled { border-color: #cac8bb; color: #cac8bb; }\n",
         H(c->button_top), H(c->button_bottom), H(c->button_bottom), H(c->fg),
         H(c->button_border), H(c->button_hot), H(c->button_bottom), H(c->button_top),
@@ -357,6 +402,94 @@ static void modern(const xd_toolkit_colors *c, xd_strbuf *o) {
         H(c->menu_border), H(c->track), H(c->track), H(c->thumb_top), H(c->thumb_bottom),
         H(c->track), H(c->bg), H(c->tab_border), H(c->tab_hot), H(c->tab_border), H(c->bg),
         H(c->button_border));
+
+    xd_strbuf_appendf(
+        o,
+        "notebook > header { border: none; border-bottom: 1px solid %s; padding: 0 2px; }\n"
+        "notebook > header > tabs > tab { margin: 2px 0 0 0; min-height: 0; }\n"
+        "notebook > header > tabs > tab:checked { margin: 0 0 -1px 0; }\n"
+        "notebook > stack:not(:only-child) { border: 1px solid %s; border-top: none; }\n"
+        "frame > border { border: 1px solid #d0d0bf; border-radius: 3px; box-shadow: none; }\n"
+        "frame { padding-left: 6px; }\n"
+        "frame > border { margin-left: -6px; }\n"
+        "frame > label { margin: 0; padding: 0 2px; color: %s; }\n"
+        "frame.xd-sunken { padding-left: 0; }\n"
+        "frame.xd-sunken > border { margin-left: 0; border: 1px solid; border-radius: 0;\n"
+        "  border-color: #aca899 #ffffff #ffffff #aca899; }\n"
+        "combobox button.combo {\n  background-image: none; background-color: %s; color: %s;\n"
+        "  border: 1px solid %s; border-radius: 0; box-shadow: none; padding: 0 0 0 3px;\n}\n"
+        "combobox button.combo arrow {\n  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");\n"
+        "  min-width: 13px; min-height: 13px; margin: 1px; padding: 1px 1px;\n"
+        "  background-image: linear-gradient(%s, %s); color: #4d6185;\n"
+        "  border: 1px solid #ffffff; border-radius: 2px;\n}\n",
+        H(c->tab_border), H(c->tab_border), H(c->selected_bg), H(c->base), H(c->text),
+        H(c->field_border), H(c->thumb_top), H(c->thumb_bottom));
+}
+
+const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT] = {
+    [XD_GTK_CHECK] = "assets/check.svg",
+    [XD_GTK_CHECK_DISABLED] = "assets/check-disabled.svg",
+    [XD_GTK_CHECK_HOT] = "assets/check-hot.svg",
+    [XD_GTK_RADIO] = "assets/radio.svg",
+    [XD_GTK_RADIO_DISABLED] = "assets/radio-disabled.svg",
+    [XD_GTK_RADIO_HOT] = "assets/radio-hot.svg",
+};
+
+/* Windows 2000's 7x7 check mark, placed in the 11x11 inside of a check box. */
+static const char *const check_rows[7] = {
+    "......#", ".....##", "#...###", "##.###.", "#####..", ".###...", "..#....",
+};
+/* The 4x4 radio dot. */
+static const char *const dot_rows[4] = {".##.", "####", "####", ".##."};
+
+static void pixel_svg(xd_strbuf *out, const char *const *rows, int n, int off, xd_rgba color) {
+    xd_strbuf_appendf(out,
+                      "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"11\" height=\"11\" "
+                      "viewBox=\"0 0 11 11\" shape-rendering=\"crispEdges\" fill=\"%s\">\n",
+                      H(color));
+    for (int y = 0; y < n; y++) {
+        int len = (int)strlen(rows[y]);
+        for (int x = 0; x < len;) {
+            if (rows[y][x] != '#') {
+                x++;
+                continue;
+            }
+            int start = x;
+            while (x < len && rows[y][x] == '#')
+                x++;
+            xd_strbuf_appendf(out, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"1\"/>\n",
+                              off + start, off + y, x - start);
+        }
+    }
+    xd_strbuf_append(out, XD_STR("</svg>\n"));
+}
+
+void xd_theme_gtk_asset(const xd_theme *t, xd_gtk_asset which, xd_strbuf *out) {
+    xd_toolkit_colors c;
+    xd_theme_toolkit_colors(t, &c);
+    xd_rgba mark = c.classic ? c.text : c.check_mark;
+    switch (which) {
+    case XD_GTK_CHECK:
+        pixel_svg(out, check_rows, 7, 2, mark);
+        break;
+    case XD_GTK_CHECK_DISABLED:
+        pixel_svg(out, check_rows, 7, 2, c.disabled);
+        break;
+    case XD_GTK_CHECK_HOT:
+        pixel_svg(out, check_rows, 7, 2, c.menu_hot_fg);
+        break;
+    case XD_GTK_RADIO:
+        pixel_svg(out, dot_rows, 4, 4, mark);
+        break;
+    case XD_GTK_RADIO_DISABLED:
+        pixel_svg(out, dot_rows, 4, 4, c.disabled);
+        break;
+    case XD_GTK_RADIO_HOT:
+        pixel_svg(out, dot_rows, 4, 4, c.menu_hot_fg);
+        break;
+    case XD_GTK_ASSET_COUNT:
+        break;
+    }
 }
 
 void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
@@ -373,6 +506,25 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
         classic(&c, out);
     else
         modern(&c, out);
+    /* Windows' pixel check mark and radio dot, drawn by xd_theme_gtk_asset. */
+    xd_strbuf_appendf(
+        out,
+        "check, radio { padding: 0; }\n"
+        "check:checked { -gtk-icon-source: url(\"%s\"); }\n"
+        "check:indeterminate { -gtk-icon-source: url(\"%s\"); background-color: %s; }\n"
+        "check:checked:disabled { -gtk-icon-source: url(\"%s\"); }\n"
+        "radio:checked { -gtk-icon-source: url(\"%s\"); }\n"
+        "radio:indeterminate { -gtk-icon-source: none; background-color: %s; }\n"
+        "radio:checked:disabled { -gtk-icon-source: url(\"%s\"); }\n"
+        "menu menuitem:hover check:checked { -gtk-icon-source: url(\"%s\"); }\n"
+        "menu menuitem:hover radio:checked { -gtk-icon-source: url(\"%s\"); }\n",
+        xd_gtk_assets[XD_GTK_CHECK], xd_gtk_assets[XD_GTK_CHECK_DISABLED], H(c.bg),
+        xd_gtk_assets[XD_GTK_CHECK_DISABLED], xd_gtk_assets[XD_GTK_RADIO], H(c.bg),
+        xd_gtk_assets[XD_GTK_RADIO_DISABLED], xd_gtk_assets[XD_GTK_CHECK_HOT],
+        xd_gtk_assets[XD_GTK_RADIO_HOT]);
+    /* GTK marks the whole notebook as a .frame; Windows draws no outline
+     * around the tab control, only the page and tabs themselves. */
+    xd_strbuf_append(out, XD_STR("notebook, notebook.frame { border: none; box-shadow: none; }\n"));
     /* Windows menus show only the mark of a check or radio item, never a box. */
     xd_strbuf_append(out, XD_STR("menu menuitem check, menu menuitem radio, menu menuitem check:hover,\n"
                                  "menu menuitem radio:hover {\n"

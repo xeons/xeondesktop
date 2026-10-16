@@ -16,8 +16,8 @@ rendition. Screenshots are from a nested development session.
 
 ## Build
 
-Dependencies: meson, ninja, cairo, pango; wlroots 0.20 (compositor, later
-milestone).
+Dependencies: meson, ninja, wlroots 0.20, wayland, xkbcommon, cairo, pango,
+GLib/GIO, GTK 3, gdk-pixbuf, and procps-ng's libproc2 (Task Manager).
 
     meson setup build          # debug build with ASan/UBSan
     ninja -C build
@@ -97,8 +97,28 @@ and the five Windows XP views with a thumbnail size slider. The folder view
 (`src/files/folderview.c`) is our own GTK3 widget that only lays out and draws
 what's visible. Folders update live; double-click or Enter opens files with
 their default application. Start menu folder items open it. Thumbnails shown
-are the ones already in the freedesktop cache; generating new ones, file
-operations (copy, move, delete, rename) and the matching GTK theme come next.
+are the ones already in the freedesktop cache; generating new ones and file
+operations (copy, move, delete, rename) come next.
+
+File > Properties (Alt+Enter, or right-click) opens the Windows 2000
+Properties dialog for the selection or the folder: name, type, default
+application, size and size on disk (folders are counted in the background),
+contents, created/modified/accessed times, Read-only and Hidden, Linux file
+attributes (`chattr` flags) under Advanced, and a Permissions tab for owner,
+group, read/write/execute and the special bits, optionally applied to
+everything inside a folder. `xd-files --properties FILE...` shows just the
+dialog.
+
+### Task Manager
+
+`xd-taskmgr` is the Windows 2000 Task Manager; Ctrl+Alt+Delete or
+Ctrl+Shift+Esc opens it (or brings it forward). Applications lists the open
+windows (End Task, Switch To, New Task). Processes lists every process with
+selectable columns, End Process, End Process Tree, Set Priority and Set
+Affinity. Performance has the LED meters and history graphs, with the totals
+in Linux terms (committed memory is `Committed_AS`, kernel memory is
+reclaimable and unreclaimable slab). Memory can be shown in KB, MB or GB.
+Process data comes from procps-ng's `libproc2`.
 
 ### GTK theme
 

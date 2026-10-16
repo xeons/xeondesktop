@@ -131,6 +131,9 @@ static void cycle_step(xd_server *server, bool backwards) {
     } while (link != start);
 }
 
+/* GTK sets the app ID from the GApplication ID. */
+#define XD_TASKMGR_APP_ID "org.xeondesktop.TaskManager"
+
 static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
     bool alt = mods & WLR_MODIFIER_ALT;
     bool ctrl = mods & WLR_MODIFIER_CTRL;
@@ -149,6 +152,27 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
     if (alt && !ctrl && sym == XKB_KEY_F4) {
         if (focused != nullptr)
             xd_view_close(focused);
+        return true;
+    }
+    /* Task Manager: bring it forward if it's open, else start it. */
+    if ((ctrl && alt && (sym == XKB_KEY_Delete || sym == XKB_KEY_KP_Delete)) ||
+        (ctrl && shift && !alt && sym == XKB_KEY_Escape)) {
+        xd_view *found = nullptr;
+        XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+            const char *id = v->toplevel->app_id;
+            if (v->mapped && id != nullptr && strcmp(id, XD_TASKMGR_APP_ID) == 0) {
+                found = v;
+                break;
+            }
+        }
+        if (found != nullptr) {
+            if (found->minimized)
+                xd_view_restore(found);
+            xd_view_focus(found);
+        } else {
+            char *argv[] = {(char *)(uintptr_t)server->config.taskmgr, nullptr};
+            xd_spawn_argv(argv);
+        }
         return true;
     }
     if (ctrl && alt && (sym == XKB_KEY_t || sym == XKB_KEY_T)) {

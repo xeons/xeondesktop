@@ -40,11 +40,27 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, xd_str
     if (ok) {
         xd_theme t;
         xd_theme_init(&t, style, scheme, 1.0);
+        /* Images first, so the new CSS never refers to missing files. */
+        char *assets = g_build_filename(gtk3, "assets", nullptr);
+        ok = g_mkdir_with_parents(assets, 0755) == 0;
+        if (!ok && err != nullptr)
+            xd_strbuf_appendf(err, "cannot create %s", assets);
+        g_free(assets);
+        for (int i = 0; ok && i < XD_GTK_ASSET_COUNT; i++) {
+            xd_strbuf svg = {0};
+            xd_theme_gtk_asset(&t, (xd_gtk_asset)i, &svg);
+            char *path = g_build_filename(gtk3, xd_gtk_assets[i], nullptr);
+            ok = write_file(path, xd_strbuf_view(&svg), err);
+            g_free(path);
+            xd_strbuf_free(&svg);
+        }
         xd_strbuf css = {0};
-        xd_theme_gtk_css(&t, &css);
-        char *path = g_build_filename(gtk3, "gtk.css", nullptr);
-        ok = write_file(path, xd_strbuf_view(&css), err);
-        g_free(path);
+        if (ok) {
+            xd_theme_gtk_css(&t, &css);
+            char *path = g_build_filename(gtk3, "gtk.css", nullptr);
+            ok = write_file(path, xd_strbuf_view(&css), err);
+            g_free(path);
+        }
         xd_strbuf_free(&css);
     }
     if (ok) {

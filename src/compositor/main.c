@@ -247,28 +247,30 @@ static int handle_terminate([[maybe_unused]] int sig, void *data) {
     return 0;
 }
 
-/* Prefers the xd-shell next to this binary (a build tree), else PATH. */
-static const char *default_shell(void) {
-    static char path[4096];
-    ssize_t n = readlink("/proc/self/exe", path, sizeof(path) - 1);
+/* Prefers our program next to this binary (a build tree), else PATH.
+ * `buf` must outlive the result. */
+static const char *own_program(const char *name, char *buf, size_t size) {
+    ssize_t n = readlink("/proc/self/exe", buf, size - 1);
     if (n > 0) {
-        path[n] = '\0';
-        char *slash = strrchr(path, '/');
-        static const char name[] = "xd-shell";
-        if (slash != nullptr && (size_t)(slash - path) + sizeof(name) + 1 < sizeof(path)) {
-            memcpy(slash + 1, name, sizeof(name));
-            if (access(path, X_OK) == 0)
-                return path;
+        buf[n] = '\0';
+        char *slash = strrchr(buf, '/');
+        size_t len = strlen(name);
+        if (slash != nullptr && (size_t)(slash - buf) + len + 2 < size) {
+            memcpy(slash + 1, name, len + 1);
+            if (access(buf, X_OK) == 0)
+                return buf;
         }
     }
-    return "xd-shell";
+    return name;
 }
 
 int main(int argc, char **argv) {
     static xd_server server;
     server.config.style = XD_STYLE_CLASSIC;
     server.config.terminal = "alacritty";
-    server.config.shell = default_shell();
+    static char shell_path[4096], taskmgr_path[4096];
+    server.config.shell = own_program("xd-shell", shell_path, sizeof(shell_path));
+    server.config.taskmgr = own_program("xd-taskmgr", taskmgr_path, sizeof(taskmgr_path));
     xd_scheme_init_default(&server.config.scheme);
 
     bool debug = false;

@@ -10,6 +10,7 @@
 
 #include "../gtkapp/gtkapp.h"
 #include "folderview.h"
+#include "properties.h"
 
 enum { COL_NAME, COL_ICON, COL_FILE, COL_LOADED, COL_COUNT };
 
@@ -35,6 +36,7 @@ typedef struct explorer {
 
 static void navigate(explorer *e, GFile *dir, gboolean record);
 static int initial_view = XD_VIEW_ICONS; /* from --view */
+static gboolean properties_only;          /* --properties: just the dialog */
 
 /* ---- status and chrome --------------------------------------------------------- */
 
@@ -257,11 +259,8 @@ static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gbool
     char *uri = g_file_get_uri(file);
     GError *err = nullptr;
     if (!g_app_info_launch_default_for_uri(uri, nullptr, &err)) {
-        GtkWidget *dlg = gtk_message_dialog_new(GTK_WINDOW(e->window), GTK_DIALOG_MODAL,
-                                                GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s",
-                                                err != nullptr ? err->message : "Cannot open file");
-        gtk_dialog_run(GTK_DIALOG(dlg));
-        gtk_widget_destroy(dlg);
+        xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       err != nullptr ? err->message : "Cannot open file");
         g_clear_error(&err);
     }
     g_free(uri);
@@ -278,12 +277,11 @@ static void on_address_activate(GtkEntry *entry, gpointer data) {
         on_activated(e->view, f, FALSE, e);
     } else {
         /* Windows' message for a bad address. */
-        GtkWidget *dlg = gtk_message_dialog_new(
-            GTK_WINDOW(e->window), GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK,
-            "Cannot find '%s'. Make sure the path is correct and try again.",
-            gtk_entry_get_text(entry));
-        gtk_dialog_run(GTK_DIALOG(dlg));
-        gtk_widget_destroy(dlg);
+        char *text = g_strdup_printf("Cannot find '%s'. Make sure the path is correct and try "
+                                     "again.",
+                                     gtk_entry_get_text(entry));
+        xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+        g_free(text);
     }
     g_object_unref(f);
 }
@@ -353,6 +351,35 @@ static void cb_select_all([[maybe_unused]] GtkWidget *w, gpointer d) {
 static void cb_invert([[maybe_unused]] GtkWidget *w, gpointer d) {
     xd_folder_view_invert_selection(((explorer *)d)->view);
 }
+/* Properties of the selection, or of the folder itself when nothing is
+ * selected. */
+static void show_properties(explorer *e) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    if (files == nullptr) {
+        GFile *dir = xd_folder_view_get_location(e->view);
+        if (dir == nullptr)
+            return;
+        files = g_list_append(nullptr, g_object_ref(dir));
+    }
+    xd_properties_show(GTK_WINDOW(e->window), files);
+    g_list_free_full(files, g_object_unref);
+}
+
+static void cb_properties([[maybe_unused]] GtkWidget *w, gpointer d) { show_properties(d); }
+
+static void cb_open_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    for (GList *l = files; l != nullptr; l = l->next) {
+        gboolean is_dir = g_file_query_file_type(l->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
+                          G_FILE_TYPE_DIRECTORY;
+        on_activated(e->view, l->data, is_dir, e);
+        if (is_dir)
+            break; /* navigating replaces the view */
+    }
+    g_list_free_full(files, g_object_unref);
+}
+
 static void cb_close([[maybe_unused]] GtkWidget *w, gpointer d) {
     gtk_widget_destroy(((explorer *)d)->window);
 }
@@ -391,6 +418,9 @@ static GtkWidget *submenu(GtkWidget *bar, const char *label) {
 static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = submenu(bar, "_File");
+    menu_item(file, "P_roperties", G_CALLBACK(cb_properties), e, accel, GDK_KEY_Return,
+              GDK_MOD1_MASK);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
     menu_item(file, "_Close", G_CALLBACK(cb_close), e, accel, GDK_KEY_w, GDK_CONTROL_MASK);
 
     GtkWidget *edit = submenu(bar, "_Edit");
@@ -455,6 +485,41 @@ static void popup_views(GtkWidget *button, gpointer data) {
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_widget(GTK_MENU(menu), button, GDK_GRAVITY_SOUTH_WEST,
                              GDK_GRAVITY_NORTH_WEST, nullptr);
+}
+
+/* Right-click menu: Open and Properties on items; view options and the
+ * folder's Properties on the background. */
+static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) {
+    explorer *e = data;
+    GtkWidget *menu = gtk_menu_new();
+    if (xd_folder_view_get_selected_count(view) > 0) {
+        GtkWidget *open = menu_item(menu, "_Open", G_CALLBACK(cb_open_selected), e, nullptr, 0,
+                                    NO_MODS);
+        gtk_label_set_markup_with_mnemonic(GTK_LABEL(gtk_bin_get_child(GTK_BIN(open))),
+                                           "<b>_Open</b>");
+    } else {
+        GtkWidget *viewm = gtk_menu_new();
+        GtkWidget *top = gtk_menu_item_new_with_mnemonic("_View");
+        gtk_menu_item_set_submenu(GTK_MENU_ITEM(top), viewm);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), top);
+        for (int i = 0; i < XD_VIEW_COUNT; i++) {
+            GtkWidget *item = gtk_menu_item_new_with_label(view_names[i]);
+            g_signal_connect_swapped(item, "activate",
+                                     G_CALLBACK(gtk_check_menu_item_set_active), e->view_items[i]);
+            gtk_menu_shell_append(GTK_MENU_SHELL(viewm), item);
+        }
+        menu_item(menu, "_Refresh", G_CALLBACK(cb_refresh), e, nullptr, 0, NO_MODS);
+    }
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+    menu_item(menu, "P_roperties", G_CALLBACK(cb_properties), e, nullptr, 0, NO_MODS);
+    gtk_menu_attach_to_widget(GTK_MENU(menu), GTK_WIDGET(view), nullptr);
+    g_signal_connect(menu, "deactivate", G_CALLBACK(gtk_widget_destroy), nullptr);
+    gtk_widget_show_all(menu);
+    if (event != nullptr)
+        gtk_menu_popup_at_pointer(GTK_MENU(menu), event);
+    else
+        gtk_menu_popup_at_widget(GTK_MENU(menu), GTK_WIDGET(view), GDK_GRAVITY_NORTH_WEST,
+                                 GDK_GRAVITY_NORTH_WEST, nullptr);
 }
 
 static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
@@ -574,6 +639,7 @@ static void open_window(GtkApplication *app, GFile *dir) {
 
     e->view = XD_FOLDER_VIEW(xd_folder_view_new());
     g_signal_connect(e->view, "item-activated", G_CALLBACK(on_activated), e);
+    g_signal_connect(e->view, "context-menu", G_CALLBACK(on_context_menu), e);
     g_signal_connect(e->view, "contents-changed", G_CALLBACK(on_contents), e);
     g_signal_connect(e->view, "selection-changed", G_CALLBACK(on_selection), e);
     g_signal_connect(e->view, "load-error", G_CALLBACK(on_load_error), e);
@@ -611,6 +677,8 @@ static void open_window(GtkApplication *app, GFile *dir) {
 }
 
 static void on_activate(GtkApplication *app, [[maybe_unused]] gpointer data) {
+    if (properties_only)
+        return; /* --properties without files: nothing to show */
     GFile *home = g_file_new_for_path(g_get_home_dir());
     open_window(app, home);
     g_object_unref(home);
@@ -618,6 +686,17 @@ static void on_activate(GtkApplication *app, [[maybe_unused]] gpointer data) {
 
 static void on_open(GtkApplication *app, GFile **files, gint n, [[maybe_unused]] const char *hint,
                     [[maybe_unused]] gpointer data) {
+    if (properties_only) {
+        /* One dialog for all of them, as for a multiple selection. */
+        GList *list = nullptr;
+        for (gint i = n; i > 0; i--)
+            list = g_list_prepend(list, files[i - 1]);
+        GtkWidget *dlg = xd_properties_show(nullptr, list);
+        g_list_free(list);
+        if (dlg != nullptr)
+            gtk_window_set_application(GTK_WINDOW(dlg), app);
+        return;
+    }
     for (gint i = 0; i < n; i++)
         open_window(app, files[i]);
 }
@@ -626,6 +705,8 @@ static void on_open(GtkApplication *app, GFile **files, gint n, [[maybe_unused]]
 static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
                        [[maybe_unused]] gpointer data) {
     const char *view = nullptr;
+    if (g_variant_dict_contains(opts, "properties"))
+        properties_only = TRUE;
     if (g_variant_dict_lookup(opts, "view", "&s", &view)) {
         for (int i = 0; i < XD_VIEW_COUNT; i++) {
             if (g_ascii_strcasecmp(view, view_names[i]) == 0) {
@@ -655,6 +736,9 @@ int main(int argc, char **argv) {
     g_application_add_main_option(G_APPLICATION(app), "view", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_STRING, "Thumbnails, Tiles, Icons, List or Details",
                                   "VIEW");
+    g_application_add_main_option(G_APPLICATION(app), "properties", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE, "Show the Properties of FILE... and exit",
+                                  nullptr);
     g_signal_connect(app, "handle-local-options", G_CALLBACK(on_options), nullptr);
     int rc = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);

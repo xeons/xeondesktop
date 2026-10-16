@@ -34,6 +34,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Modal/transient dialogs: no parent-relative placement or stacking.
 - [ ] Win key and Ctrl+Esc don't open the Start menu (needs a
       compositor-to-shell channel).
+- [ ] Ctrl+Alt+Delete opens the Task Manager directly. Windows 2000 first
+      shows the Windows Security dialog (Lock, Log Off, Shut Down, Change
+      Password, Task Manager); that needs a lock screen first.
 - [ ] Blur behind the Windows 7 Start menu's see-through panel (wlroots'
       scene graph has no blur pass).
 - [ ] Resizing from the top/left edges moves the window before the client
@@ -104,7 +107,17 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 - [ ] File operations: copy, move, delete (Recycle Bin), rename, new folder;
       clipboard; drag and drop.
-- [ ] Context menus, Properties dialog, Search, Favorites menu.
+- [~] Context menus: only Open / View / Refresh / Properties so far.
+- [ ] Search, Favorites menu, rename in place.
+- [~] Properties dialog. Tested: General for a file, Permissions (ticking
+      Group Write and Apply changed 644 to 664), Details, and the size and
+      contents count for a folder plus a file (matches find/du exactly).
+- [?] Properties, untested: renaming and Hidden (renames to/from a dot
+      name), Read-only, Advanced (chattr) apply, Change... (default app),
+      changing the group, "Apply changes to all files and folders inside",
+      tri-state check boxes with several mixed items, the error paths.
+- [ ] Properties: no Shortcut tab for .desktop files, no per-type tabs
+      (image size, audio tags), no ACLs or SELinux context.
 - [ ] `xd-thumbnailer` (sandboxed): only thumbnails already in the
       freedesktop cache are shown.
 - [ ] Details view: column resizing and reordering, more columns.
@@ -123,19 +136,47 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       by the compositor at start and on every appearance change. Our GTK
       apps reload it live. Covers buttons, entries, check/radio, menus,
       scroll bars, tabs, tree headers, panes, scales, tooltips, toolbars.
-- [ ] Not yet styled: combo boxes and their pop-ups, spin button arrows,
-      info bars, switches, popovers (the Views menu), GtkFileChooser,
+- [ ] Not yet styled: combo box pop-up lists, spin button arrows, info
+      bars, switches, popovers (the Views menu), GtkFileChooser,
       headerbar-based (CSD) dialogs, progress bar segments.
-- [ ] Check/radio marks use symbolic icons rather than Windows' tick and
-      dot glyphs; Luna's orange hover rim on check boxes is approximated.
+- [ ] Other apps' GtkMessageDialogs show GTK's own title strip inside the
+      window and stretched buttons; our apps use `xd_message_box` instead.
+- [ ] The selected tab doesn't overlap its neighbours by 2px as in Windows
+      (GTK ignores the negative margins).
+- [?] Luna/Whistler tabs, group boxes, combo boxes and check glyphs: only
+      Classic has been looked at since they were restyled.
 - [?] Luna/Whistler visuals beyond the file manager's window, and every
       scheme other than Windows Standard: only checked to parse (unit test),
       not looked at.
-- [ ] Clicking GTK's menu bar with injected input (xd-inject) doesn't open
-      the menu; Alt+letter does. Investigate (pointer enter serial?).
+
 - [ ] Third-party GTK3 apps pick up the theme at start (via `GTK_THEME`);
       they don't follow later changes until restarted.
 - [ ] GTK4/libadwaita apps aren't themed (libadwaita ignores themes).
+
+## Task Manager (xd-taskmgr)
+
+- [ ] Applications' Status is always "Running": Windows shows "Not
+      Responding" for hung windows; needs the compositor to report ping
+      timeouts.
+- [ ] Options > Always On Top (no Wayland protocol yet) and Hide When
+      Minimized (needs the tray, which would also show the CPU meter).
+- [ ] Windows menu: Tile Horizontally/Vertically and Cascade.
+- [ ] Taskbar right-click > Task Manager (the taskbar has no menu yet).
+- [ ] Window icons only resolve for apps with an installed .desktop file
+      matching their app ID; ours are installed by `meson install`.
+- [ ] Handles has no Linux equivalent; Open Files is shown instead, and is
+      0 for other users' processes (as is I/O).
+- [ ] Peak Mem Usage only covers the time Task Manager has been open.
+- [ ] Not Windows: no Users or Networking tab (those are XP).
+- Tested: Ctrl+Alt+Delete and Ctrl+Shift+Esc opening it, Applications
+  listing windows and End Task closing one, Processes (type-ahead select,
+  Delete, warning, Yes killed the process), Performance meters, graphs
+  and totals, KB/MB/GB units, Ctrl+Tab.
+- [?] Untested: pressing Ctrl+Alt+Delete while it's open (should focus
+      it), Switch To / Bring To Front / Minimize / Maximize, Large and Small
+      Icons, End Process Tree, Set Priority, Set Affinity, Select Columns
+      and the optional columns, One Graph Per CPU, Show Kernel Times,
+      Update Speed, New Task, Minimize On Use, saved settings.
 
 ## Control Panel
 
