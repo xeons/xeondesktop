@@ -588,8 +588,19 @@ static bool flush_display(struct wl_display *display) {
     return true;
 }
 
+/* Our own descriptors, then GLib's (D-Bus for the notification area),
+ * polled together: GLib's main context runs inside our loop. */
+enum { OWN_FDS = 9 };
+
 static int run(xd_shell *shell, int timer_fd, int signal_fd) {
     struct wl_display *d = shell->display;
+    GMainContext *ctx = g_main_context_default();
+    if (!g_main_context_acquire(ctx))
+        return EXIT_FAILURE;
+    GPollFD *gfds = nullptr;
+    struct pollfd *fds = nullptr;
+    gint gcap = 0;
+    int rc = EXIT_SUCCESS;
     while (shell->running) {
         debug_open_menu(shell);
         xd_taskbars_render_dirty(shell);
@@ -603,33 +614,52 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             return EXIT_FAILURE;
         }
 
-        struct pollfd fds[9] = {
-            {.fd = wl_display_get_fd(d), .events = POLLIN},
-            {.fd = timer_fd, .events = POLLIN},
-            {.fd = signal_fd, .events = POLLIN},
-            {.fd = shell->menu_timer_fd, .events = POLLIN},
-            {.fd = shell->settings_fd, .events = POLLIN},
-            {.fd = shell->quicklaunch.watch_fd, .events = POLLIN},
-            {.fd = shell->flash_timer_fd, .events = POLLIN},
-            {.fd = shell->tooltip_timer_fd, .events = POLLIN},
-            {.fd = shell->autohide_timer_fd, .events = POLLIN},
+        gint prio = 0, timeout = -1;
+        g_main_context_prepare(ctx, &prio);
+        gint ng;
+        while ((ng = g_main_context_query(ctx, prio, &timeout, gfds, gcap)) > gcap) {
+            gcap = ng;
+            gfds = xd_realloc_array(gfds, (size_t)gcap, sizeof(*gfds));
+            fds = xd_realloc_array(fds, (size_t)gcap + OWN_FDS, sizeof(*fds));
+        }
+        if (fds == nullptr)
+            fds = xd_realloc_array(fds, OWN_FDS, sizeof(*fds));
+        const int own[OWN_FDS] = {
+            wl_display_get_fd(d),          timer_fd,
+            signal_fd,                     shell->menu_timer_fd,
+            shell->settings_fd,            shell->quicklaunch.watch_fd,
+            shell->flash_timer_fd,         shell->tooltip_timer_fd,
+            shell->autohide_timer_fd,
         };
-        if (poll(fds, XD_ARRAY_LEN(fds), -1) < 0) {
+        for (int i = 0; i < OWN_FDS; i++)
+            fds[i] = (struct pollfd){.fd = own[i], .events = POLLIN};
+        for (gint i = 0; i < ng; i++)
+            fds[OWN_FDS + i] = (struct pollfd){.fd = gfds[i].fd, .events = (short)gfds[i].events};
+        int pr = poll(fds, (nfds_t)(OWN_FDS + ng), timeout);
+        for (gint i = 0; i < ng; i++)
+            gfds[i].revents = (gushort)(pr > 0 ? fds[OWN_FDS + i].revents : 0);
+        if (g_main_context_check(ctx, prio, gfds, ng))
+            g_main_context_dispatch(ctx);
+        if (pr < 0) {
             wl_display_cancel_read(d);
             if (errno == EINTR)
                 continue;
-            return EXIT_FAILURE;
+            rc = EXIT_FAILURE;
+            break;
         }
         if (fds[0].revents & POLLIN) {
-            if (wl_display_read_events(d) < 0)
-                return EXIT_FAILURE;
+            if (wl_display_read_events(d) < 0) {
+                rc = EXIT_FAILURE;
+                break;
+            }
         } else {
             wl_display_cancel_read(d);
         }
-        if (fds[0].revents & (POLLERR | POLLHUP))
-            return EXIT_FAILURE; /* compositor went away */
-        if (wl_display_dispatch_pending(d) < 0)
-            return EXIT_FAILURE;
+        /* POLLHUP: the compositor went away. */
+        if ((fds[0].revents & (POLLERR | POLLHUP)) || wl_display_dispatch_pending(d) < 0) {
+            rc = EXIT_FAILURE;
+            break;
+        }
 
         if (timer_fd >= 0 && (fds[1].revents & POLLIN)) {
             uint64_t expirations;
@@ -669,7 +699,10 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             xd_taskbars_tuck_timer(shell);
         }
     }
-    return EXIT_SUCCESS;
+    xd_free(gfds);
+    xd_free(fds);
+    g_main_context_release(ctx);
+    return rc;
 }
 
 int main(int argc, char **argv) {
@@ -728,6 +761,7 @@ int main(int argc, char **argv) {
 
     update_clock(&shell);
     xd_toplevels_init(&shell);
+    xd_tray_init(&shell);
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
     for (size_t i = 0; i < shell.early_count; i++)
@@ -757,6 +791,7 @@ int main(int argc, char **argv) {
         wl_list_remove(&t->link);
         xd_free(t);
     }
+    xd_tray_finish(&shell);
     xd_menu_tree_free(&shell.menu_tree);
     if (shell.own_commands != nullptr)
         g_hash_table_destroy(shell.own_commands);

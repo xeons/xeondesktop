@@ -434,6 +434,7 @@ executable(
   'src/shell/quicklaunch.c',
   'src/shell/start7.c',
   'src/shell/tooltip.c',
+  'src/shell/tray.c',
   'src/shell/taskmenu.c',
   'src/shell/recent.c',
   dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep],

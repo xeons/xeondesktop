@@ -176,14 +176,43 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     xd_text_style clock_style = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_END);
     int margin_l, margin_r;
     xd_theme_tray_margins(t, &margin_l, &margin_r);
-    if (shell->settings.show_clock) {
-        int tray_w = XD_MAX(xd_tpx(t, 60), margin_l +
-                                               xd_text_width(cr, shell->clock, &clock_style) +
-                                               xd_tpx(t, 1) + margin_r);
+    /* Icons 16px apart by 22px (XP's spacing), then the clock. */
+    size_t icons = xd_tray_count(shell);
+    if (icons > bar->tray_cap) {
+        bar->tray_cap = icons;
+        bar->tray_rects = xd_realloc_array(bar->tray_rects, icons, sizeof(*bar->tray_rects));
+    }
+    int pitch = xd_tpx(t, 22);
+    int icons_w = (int)icons * pitch;
+    int clock_w = shell->settings.show_clock
+                      ? xd_text_width(cr, shell->clock, &clock_style) + xd_tpx(t, 1)
+                      : 0;
+    if (icons > 0 && clock_w > 0)
+        clock_w += xd_tpx(t, 4);
+    bar->tray_count = 0;
+    if (icons_w + clock_w > 0) {
+        int tray_w = margin_l + icons_w + clock_w + margin_r;
+        if (shell->settings.show_clock && icons == 0)
+            tray_w = XD_MAX(xd_tpx(t, 60), tray_w);
         bar->tray_rect = (xd_rect){dw - tray_w - pad, inset_top, tray_w, button_h};
-        xd_theme_draw_tray(t, cr, bar->tray_rect, shell->clock);
+        xd_theme_draw_tray(t, cr, bar->tray_rect, shell->settings.show_clock ? shell->clock : "");
+        int icon_px = xd_tpx(t, 16);
+        int ix = bar->tray_rect.x + margin_l;
+        for (size_t i = 0; i < icons; i++) {
+            xd_rect slot = {ix + (int)i * pitch, bar->tray_rect.y, pitch, bar->tray_rect.h};
+            bar->tray_rects[i] = slot;
+            bar->tray_count++;
+            xd_tray_item *item = xd_tray_get(shell, i);
+            cairo_surface_t *img = item != nullptr ? xd_tray_item_icon(shell, item, icon_px)
+                                                   : nullptr;
+            if (img != nullptr) {
+                cairo_set_source_surface(cr, img, slot.x + (pitch - icon_px) / 2,
+                                         slot.y + (slot.h - icon_px) / 2);
+                cairo_paint(cr);
+            }
+        }
     } else {
-        /* No clock and (as yet) no icons: no notification area at all. */
+        /* No clock and no icons: no notification area at all. */
         bar->tray_rect = (xd_rect){dw - pad, inset_top, 0, button_h};
     }
 
@@ -408,6 +437,10 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
     start.x = 0;
     if (hits_column(start, x, ly, h))
         return XD_HIT_START;
+    for (size_t i = 0; i < bar->tray_count; i++) {
+        if (rect_contains(bar->tray_rects[i], x, y))
+            return XD_HIT_TRAY_ICON - (int)i;
+    }
     if (rect_contains(bar->tray_rect, x, y))
         return XD_HIT_TRAY;
     if (bar->pages > 1) {
@@ -460,7 +493,12 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
             return nullptr;
         return xd_str_dup_cstr(xd_str_from_cstr(buf));
     }
-    if (hit <= XD_HIT_QUICK) {
+    if (hit <= XD_HIT_TRAY_ICON) {
+        xd_tray_item *item = xd_tray_get(shell, (size_t)(XD_HIT_TRAY_ICON - hit));
+        const char *tip = item != nullptr ? xd_tray_item_tooltip(item) : nullptr;
+        return tip != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(tip)) : nullptr;
+    }
+    if (xd_hit_is_quick(hit)) {
         size_t i = (size_t)(XD_HIT_QUICK - hit);
         const xd_quicklaunch *ql = &shell->quicklaunch;
         return i < ql->count && ql->items[i].name != nullptr
@@ -504,7 +542,10 @@ void xd_taskbar_tooltip_timer(xd_shell *shell) {
         r = bar->start_rect;
     else if (bar->hot == XD_HIT_TRAY)
         r = bar->tray_rect;
-    else if (bar->hot <= XD_HIT_QUICK && (size_t)(XD_HIT_QUICK - bar->hot) < bar->quick_count)
+    else if (bar->hot <= XD_HIT_TRAY_ICON &&
+             (size_t)(XD_HIT_TRAY_ICON - bar->hot) < bar->tray_count)
+        r = bar->tray_rects[XD_HIT_TRAY_ICON - bar->hot];
+    else if (xd_hit_is_quick(bar->hot) && (size_t)(XD_HIT_QUICK - bar->hot) < bar->quick_count)
         r = bar->quick_rects[XD_HIT_QUICK - bar->hot];
     else if (bar->hot >= 0 && (size_t)bar->hot < bar->task_count)
         r = bar->task_rects[bar->hot];
@@ -593,6 +634,22 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     xd_tooltip_hide(bar->shell);
     xd_tooltip_disarm(bar->shell);
     bar->tooltip_off = true;
+    if (bar->hot <= XD_HIT_TRAY_ICON) {
+        /* Notification area icons act on release: left activates, middle
+         * is the secondary action, right is the icon's menu. */
+        size_t i = (size_t)(XD_HIT_TRAY_ICON - bar->hot);
+        xd_tray_item *item = xd_tray_get(bar->shell, i);
+        if (pressed || item == nullptr || i >= bar->tray_count)
+            return;
+        xd_rect r = bar->tray_rects[i];
+        xd_rect anchor = {(int)(r.x / bar->scale), (int)(r.y / bar->scale),
+                          (int)(r.w / bar->scale), (int)(r.h / bar->scale)};
+        uint32_t which = button == BTN_RIGHT    ? XD_TRAY_BUTTON_RIGHT
+                         : button == BTN_MIDDLE ? XD_TRAY_BUTTON_MIDDLE
+                                                : XD_TRAY_BUTTON_LEFT;
+        xd_tray_item_click(bar->shell, item, which, bar, anchor, serial);
+        return;
+    }
     if (button == BTN_RIGHT) {
         /* Right-click (opened on release, like Windows): the Start button's
          * menu, a task button's window menu, or the taskbar's menu. */
@@ -623,7 +680,7 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         xd_taskbar_group_menu(bar, target, serial);
     else if (target >= 0 && (size_t)target < bar->task_count)
         xd_toplevel_click(bar->task_views[target]);
-    else if (target <= XD_HIT_QUICK)
+    else if (xd_hit_is_quick(target))
         xd_quicklaunch_activate(bar->shell, (size_t)(XD_HIT_QUICK - target));
 }
 
@@ -826,6 +883,7 @@ void xd_taskbar_destroy(xd_taskbar *bar) {
     xd_free(bar->task_rects);
     xd_free(bar->task_views);
     xd_free(bar->task_counts);
+    xd_free(bar->tray_rects);
     xd_free(bar->entry_views);
     xd_free(bar->entry_counts);
     xd_free(bar->quick_rects);

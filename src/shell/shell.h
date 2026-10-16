@@ -21,6 +21,8 @@
 
 typedef struct xd_shell xd_shell;
 typedef struct xd_tooltip xd_tooltip;
+typedef struct xd_tray xd_tray;
+typedef struct xd_tray_item xd_tray_item;
 typedef struct xd_start7 xd_start7;
 
 typedef struct xd_early_output {
@@ -78,8 +80,12 @@ enum {
     XD_HIT_TRAY = -3,
     XD_HIT_PAGE_UP = -4, /* task button pages, when they don't all fit */
     XD_HIT_PAGE_DOWN = -5,
-    XD_HIT_QUICK = -100,
+    XD_HIT_QUICK = -100,     /* Quick Launch button i: XD_HIT_QUICK - i */
+    XD_HIT_TRAY_ICON = -1000, /* notification area icon i: XD_HIT_TRAY_ICON - i */
 };
+static inline bool xd_hit_is_quick(int hit) {
+    return hit <= XD_HIT_QUICK && hit > XD_HIT_TRAY_ICON;
+}
 
 typedef struct xd_taskbar {
     struct wl_list link; /* xd_shell.taskbars */
@@ -117,6 +123,9 @@ typedef struct xd_taskbar {
     uint64_t page_active_id; /* active window when last laid out */
     double wheel;            /* scrolling not yet turned into a page */
     xd_rect page_up_rect, page_down_rect;
+    /* Notification area icons, left of the clock. */
+    size_t tray_count, tray_cap;
+    xd_rect *tray_rects;
 
     int hot;     /* XD_HIT_* or a task index */
     double pointer_x, pointer_y; /* last pointer position, logical */
@@ -189,6 +198,7 @@ struct xd_shell {
     xd_tooltip *tooltip;
     int tooltip_timer_fd;
     int autohide_timer_fd; /* tucks Auto-hide taskbars away after the pointer leaves */
+    xd_tray *tray;         /* StatusNotifierItem host */
     int64_t tooltip_shown_ms, tooltip_hidden_ms;
     xd_menu *pending_menu;  /* menu waiting for the hover delay */
 
@@ -235,6 +245,19 @@ void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial);
 /* taskmenu.c: right-click menus (the taskbar's, or a task button's window
  * menu when `hit` is a task index). x, y: logical, taskbar-local. */
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);
+/* tray.c: the notification area's icons (StatusNotifierItem). */
+enum { XD_TRAY_BUTTON_LEFT, XD_TRAY_BUTTON_MIDDLE, XD_TRAY_BUTTON_RIGHT };
+void xd_tray_init(xd_shell *shell);
+void xd_tray_finish(xd_shell *shell);
+/* Icons to show, in order. */
+size_t xd_tray_count(const xd_shell *shell);
+xd_tray_item *xd_tray_get(const xd_shell *shell, size_t index);
+cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *item, int px);
+const char *xd_tray_item_tooltip(const xd_tray_item *item);
+/* A click: Activate / SecondaryActivate, or its menu by `anchor`
+ * (surface-local logical) on `bar`. */
+void xd_tray_item_click(xd_shell *shell, xd_tray_item *item, uint32_t button, xd_taskbar *bar,
+                        xd_rect anchor, uint32_t serial);
 /* taskmenu.c: a grouped button's menu of its windows. */
 void xd_taskbar_group_menu(xd_taskbar *bar, int hit, uint32_t serial);
 /* Listens for the compositor's window menu requests. */
