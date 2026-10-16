@@ -77,8 +77,9 @@ void xd_frame_render(xd_view *view, bool force) {
     if (!view->mapped)
         return;
     /* The client draws its own decorations. */
-    wlr_scene_node_set_enabled(&view->frame->node, !view->csd);
-    if (view->csd)
+    bool none = view->csd || view->fullscreen;
+    wlr_scene_node_set_enabled(&view->frame->node, !none);
+    if (none)
         return;
 
     struct wlr_box outer = xd_view_outer_box(view);

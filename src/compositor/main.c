@@ -134,6 +134,7 @@ static bool server_init(xd_server *server) {
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = wlr_scene_tree_create(root);
     server->layer_views = wlr_scene_tree_create(root);
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(root);
+    server->layer_fullscreen = wlr_scene_tree_create(root); /* above the taskbar */
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = wlr_scene_tree_create(root);
 
     xd_layers_init(server);
@@ -221,10 +222,14 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     server->config.cli_style = false;
     server->config.scheme_path = nullptr;
     server->config.style = settings.style;
+    server->config.always_frames = settings.always_frames;
     xd_settings_scheme(&settings, &server->config.scheme);
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
 
     install_gtk_theme(server);
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        xd_view_update_decorations(view);
+    }
     xd_output_update_backgrounds(server);
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
         xd_view_retheme(view);
@@ -283,6 +288,7 @@ int main(int argc, char **argv) {
     xd_settings_load(&settings);
     if (!server.config.cli_style)
         server.config.style = settings.style;
+    server.config.always_frames = settings.always_frames;
     if (server.config.scheme_path == nullptr)
         xd_settings_scheme(&settings, &server.config.scheme);
     xd_theme_init(&server.logical_theme, server.config.style, &server.config.scheme, 1.0);

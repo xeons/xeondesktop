@@ -96,6 +96,12 @@ typedef struct xd_view {
     bool maximized;
     bool dialog; /* fixed size (min == max): dialog frame, no resizing */
     bool csd;    /* the client draws its own decorations: no frame from us */
+    bool fullscreen;
+    struct wlr_box fullscreen_restore; /* outer box before fullscreen */
+    /* Top/left edge resizing: the edges that stay put, applied when the
+     * client commits its new size so the window doesn't jitter. */
+    uint32_t anchor_edges;
+    int anchor_right, anchor_bottom;
     /* Where the last Cascade/Tile found the window, for Undo. */
     bool undo_valid, undo_maximized;
     struct wlr_box undo_box;
@@ -124,6 +130,7 @@ typedef struct xd_view {
     struct wl_listener request_minimize;
     struct wl_listener request_window_menu;
     struct wl_listener request_fullscreen;
+    struct wl_listener set_parent;
     struct wl_listener set_title;
     struct wl_listener set_app_id;
     struct wl_listener ftl_activate;
@@ -152,6 +159,7 @@ typedef struct xd_config {
     const char *taskmgr;     /* Task Manager executable (Ctrl+Alt+Delete) */
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
+    bool always_frames;  /* [Windows] AlwaysDrawFrames */
     const char *terminal;
     const char *startup;
 } xd_config;
@@ -173,6 +181,7 @@ struct xd_server {
      * windows, layer-shell top and overlay. */
     struct wlr_scene_tree *layer_background;
     struct wlr_scene_tree *layer_views;
+    struct wlr_scene_tree *layer_fullscreen; /* the focused fullscreen window */
     struct wlr_scene_tree *layers[4]; /* indexed by zwlr_layer_shell_v1_layer */
 
     struct wlr_layer_shell_v1 *layer_shell;
@@ -225,6 +234,7 @@ struct xd_server {
     struct wlr_box key_box;  /* keyboard move/size: the box being set */
     uint32_t key_edges;      /* keyboard size: WLR_EDGE_* chosen so far */
     bool ignore_release;     /* the click that ended keyboard move/size */
+    bool super_alone;        /* the Windows key is down with nothing else yet */
     xd_view *hover_view; /* view whose frame shows a hover state */
     const char *cursor_name;
 
@@ -292,6 +302,10 @@ void xd_view_restore(xd_view *view);
 void xd_view_set_position(xd_view *view, int x, int y);
 /* Resizes so the outer frame becomes `outer` (layout coordinates). */
 void xd_view_set_outer_box(xd_view *view, struct wlr_box outer);
+/* Resizes keeping the edges opposite `moving` (WLR_EDGE_*) where they are
+ * once the client has drawn its new size. */
+void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t moving);
+void xd_view_set_fullscreen(xd_view *view, bool fullscreen);
 struct wlr_box xd_view_outer_box(const xd_view *view);
 xd_insets xd_view_insets(const xd_view *view);
 /* Re-reads whether the client asked to draw its own decorations. */
@@ -305,6 +319,8 @@ void xd_view_begin_keyboard_move(xd_view *view);
 void xd_view_begin_keyboard_size(xd_view *view);
 /* arrange.c: asks the shell to show the window menu at layout (lx, ly). */
 void xd_window_menu_show(xd_view *view, double lx, double ly);
+/* arrange.c: asks the shell to open (or close) the Start menu. */
+void xd_start_menu_toggle(xd_server *server);
 /* Where the window menu opens from the keyboard or the caption icon:
  * below the icon (layout coordinates). */
 void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly);

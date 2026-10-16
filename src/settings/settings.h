@@ -50,6 +50,9 @@ typedef struct xd_settings {
     bool large_icons;
     bool hide_keyboard_cues;
 
+    /* [Windows] */
+    bool always_frames; /* draw our frame even on client-decorated windows */
+
     /* [Taskbar] */
     bool quick_launch;
     bool locked; /* Lock the Taskbar: no toolbar grips */

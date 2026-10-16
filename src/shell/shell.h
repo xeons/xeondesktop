@@ -179,6 +179,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
 void xd_taskbar_take_keyboard(xd_taskbar *bar);
 /* Opens the Start menu above this taskbar's Start button. */
 void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial);
+/* Opens this taskbar's Start menu (in the chosen style), or closes it. */
+void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial);
 /* taskmenu.c: right-click menus (the taskbar's, or a task button's window
  * menu when `hit` is a task index). x, y: logical, taskbar-local. */
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);

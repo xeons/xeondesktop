@@ -284,6 +284,16 @@ void xd_taskbar_pointer_leave(xd_taskbar *bar) {
     }
 }
 
+void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial) {
+    xd_shell *shell = bar->shell;
+    if ((shell->start_menu != nullptr && !shell->context_menu) || shell->start7 != nullptr)
+        xd_menu_close_all(shell);
+    else if (shell->settings.start_style != XD_START_CLASSIC)
+        xd_start7_open(bar, serial, shell->settings.start_style == XD_START_XP);
+    else
+        xd_taskbar_open_start_menu(bar, serial);
+}
+
 void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial) {
     xd_shell *shell = bar->shell;
     if (shell->start_model == nullptr || !bar->configured)
@@ -323,14 +333,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         bar->pressed = bar->hot;
         bar->dirty = true;
         /* The Start menu opens on press, like Windows'. */
-        if (bar->hot == XD_HIT_START) {
-            if (bar->shell->start_menu != nullptr || bar->shell->start7 != nullptr)
-                xd_menu_close_all(bar->shell);
-            else if (bar->shell->settings.start_style != XD_START_CLASSIC)
-                xd_start7_open(bar, serial, bar->shell->settings.start_style == XD_START_XP);
-            else
-                xd_taskbar_open_start_menu(bar, serial);
-        }
+        if (bar->hot == XD_HIT_START)
+            xd_taskbar_toggle_start(bar, serial);
         return;
     }
     int target = bar->pressed;

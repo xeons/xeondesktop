@@ -47,6 +47,15 @@
 
     <request name="destroy" type="destructor"/>
 
+    <event name="start_menu">
+      <description summary="toggle the Start menu">
+        Sent for the Windows key (pressed and released alone) and Ctrl+Esc:
+        the shell opens the Start menu on this output, or closes it if open.
+      </description>
+      <arg name="output" type="object" interface="wl_output"/>
+      <arg name="serial" type="uint"/>
+    </event>
+
     <event name="window_menu">
       <description summary="show the focused window's window menu">
         Sent for Alt+Space, a click on the caption icon, a right-click on

@@ -142,6 +142,28 @@ static void resource_destroyed(struct wl_resource *res) {
         server->arranger_resource = nullptr;
 }
 
+/* The shell's wl_output for `out`, or nullptr. */
+static struct wl_resource *shell_output(struct wl_resource *res, xd_output *out) {
+    struct wl_client *client = wl_resource_get_client(res);
+    struct wl_resource *r;
+    wl_resource_for_each(r, &out->wlr_output->resources) {
+        if (wl_resource_get_client(r) == client)
+            return r;
+    }
+    return nullptr;
+}
+
+void xd_start_menu_toggle(xd_server *server) {
+    struct wl_resource *res = server->arranger_resource;
+    xd_output *out = xd_output_at(server, server->cursor->x, server->cursor->y);
+    if (res == nullptr || out == nullptr)
+        return;
+    struct wl_resource *output_res = shell_output(res, out);
+    if (output_res != nullptr)
+        xd_window_arranger_v1_send_start_menu(res, output_res,
+                                              wl_display_next_serial(server->display));
+}
+
 void xd_window_menu_show(xd_view *view, double lx, double ly) {
     xd_server *server = view->server;
     xd_view_focus(view);

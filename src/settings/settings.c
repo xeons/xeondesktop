@@ -105,6 +105,9 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &s->large_icons);
         else if (KEY("HideKeyboardCues"))
             parse_bool(v, &s->hide_keyboard_cues);
+    } else if (SEC("Windows")) {
+        if (KEY("AlwaysDrawFrames"))
+            parse_bool(v, &s->always_frames);
     } else if (SEC("Taskbar")) {
         if (KEY("QuickLaunch"))
             parse_bool(v, &s->quick_launch);
@@ -207,6 +210,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Effects", "FullWindowDrag", s->full_window_drag);
     g_key_file_set_boolean(kf, "Effects", "LargeIcons", s->large_icons);
     g_key_file_set_boolean(kf, "Effects", "HideKeyboardCues", s->hide_keyboard_cues);
+    g_key_file_set_boolean(kf, "Windows", "AlwaysDrawFrames", s->always_frames);
     g_key_file_set_boolean(kf, "Taskbar", "QuickLaunch", s->quick_launch);
     g_key_file_set_boolean(kf, "Taskbar", "Locked", s->locked);
     g_key_file_set_string(kf, "StartMenu", "Style", start_style_names[s->start_style]);

@@ -179,6 +179,11 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         xd_spawn(server, server->config.terminal);
         return true;
     }
+    /* Ctrl+Esc: the Start menu, as in Windows. */
+    if (ctrl && !alt && !shift && sym == XKB_KEY_Escape) {
+        xd_start_menu_toggle(server);
+        return true;
+    }
     /* Alt+Space: the window menu, below the caption icon. */
     if (alt && !ctrl && sym == XKB_KEY_space) {
         if (focused != nullptr) {
@@ -302,7 +307,7 @@ static void apply_key_box(xd_server *server) {
             b->y -= min_h - b->height;
         b->height = min_h;
     }
-    xd_view_set_outer_box(view, *b);
+    xd_view_resize_anchored(view, *b, server->key_edges);
 }
 
 static void end_keyboard(xd_server *server, bool keep) {
@@ -415,6 +420,18 @@ static void handle_key(struct wl_listener *listener, void *data) {
                 keyboard_grab_key(server, mods, syms[i]);
         }
         return;
+    }
+
+    /* The Windows key on its own (pressed and released with nothing in
+     * between) opens the Start menu; with another key it's a modifier. */
+    bool super_key = false;
+    for (int i = 0; i < nsyms; i++)
+        super_key = super_key || syms[i] == XKB_KEY_Super_L || syms[i] == XKB_KEY_Super_R;
+    if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
+        server->super_alone = super_key;
+    else if (super_key && server->super_alone) {
+        server->super_alone = false;
+        xd_start_menu_toggle(server);
     }
 
     bool handled = false;
@@ -621,7 +638,7 @@ static pick pick_at(xd_server *server, double lx, double ly) {
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         if (v == under)
             break;
-        if (!v->mapped || v->minimized || !v->csd || v->maximized)
+        if (!v->mapped || v->minimized || !v->csd || v->maximized || v->fullscreen)
             continue;
         xd_frame_part part = csd_margin_part(v, lx, ly);
         if (part != XD_PART_NONE)
@@ -676,7 +693,13 @@ static void process_resize(xd_server *server) {
     if (p == XD_PART_BOTTOM || p == XD_PART_BOTTOM_LEFT || p == XD_PART_BOTTOM_RIGHT)
         bottom = XD_MAX(bottom + dy, top + min_h);
 
-    xd_view_set_outer_box(view, (struct wlr_box){left, top, right - left, bottom - top});
+    uint32_t moving = 0;
+    if (p == XD_PART_LEFT || p == XD_PART_TOP_LEFT || p == XD_PART_BOTTOM_LEFT)
+        moving |= WLR_EDGE_LEFT;
+    if (p == XD_PART_TOP || p == XD_PART_TOP_LEFT || p == XD_PART_TOP_RIGHT)
+        moving |= WLR_EDGE_TOP;
+    xd_view_resize_anchored(view, (struct wlr_box){left, top, right - left, bottom - top},
+                            moving);
 }
 
 static void process_motion(xd_server *server, uint32_t time_msec) {

@@ -25,7 +25,7 @@ xd_frame xd_view_frame(const xd_view *view, bool active) {
 }
 
 xd_insets xd_view_insets(const xd_view *view) {
-    if (view->csd)
+    if (view->csd || view->fullscreen)
         return (xd_insets){0};
     xd_frame f = xd_view_frame(view, true);
     return xd_theme_frame_insets(&view->server->logical_theme, &f);
@@ -109,8 +109,33 @@ static void send_client_size(xd_view *view, int outer_w, int outer_h) {
 }
 
 void xd_view_set_outer_box(xd_view *view, struct wlr_box outer) {
+    view->anchor_edges = 0;
     xd_view_set_position(view, outer.x, outer.y);
     send_client_size(view, outer.width, outer.height);
+}
+
+void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t moving) {
+    /* Moving the left or top edge: the right or bottom edge stays; the
+     * position follows when the client commits its new size (see
+     * handle_commit), so the window never shows at the new place with the
+     * old size. */
+    view->anchor_edges = moving & (WLR_EDGE_LEFT | WLR_EDGE_TOP);
+    view->anchor_right = outer.x + outer.width;
+    view->anchor_bottom = outer.y + outer.height;
+    struct wlr_box cur = xd_view_outer_box(view);
+    xd_view_set_position(view, (moving & WLR_EDGE_LEFT) ? cur.x : outer.x,
+                         (moving & WLR_EDGE_TOP) ? cur.y : outer.y);
+    send_client_size(view, outer.width, outer.height);
+}
+
+static void apply_anchor(xd_view *view) {
+    if (view->anchor_edges == 0)
+        return;
+    struct wlr_box b = xd_view_outer_box(view);
+    int x = (view->anchor_edges & WLR_EDGE_LEFT) ? view->anchor_right - b.width : b.x;
+    int y = (view->anchor_edges & WLR_EDGE_TOP) ? view->anchor_bottom - b.height : b.y;
+    if (x != b.x || y != b.y)
+        xd_view_set_position(view, x, y);
 }
 
 static int floor_int(double v) {
@@ -134,7 +159,7 @@ void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly) {
 }
 
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly) {
-    if (view->csd)
+    if (view->csd || view->fullscreen)
         return XD_PART_CLIENT;
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = view->drawn.scale > 0 ? view->drawn.scale : 1.0;
@@ -162,10 +187,45 @@ void xd_view_update_all_frames(xd_server *server) {
 }
 
 static void set_activated(xd_view *view, bool activated) {
+    /* A fullscreen window covers the taskbar only while it's in front. */
+    if (view->fullscreen)
+        wlr_scene_node_reparent(&view->tree->node, activated ? view->server->layer_fullscreen
+                                                             : view->server->layer_views);
     wlr_xdg_toplevel_set_activated(view->toplevel, activated);
     if (view->ftl != nullptr)
         wlr_foreign_toplevel_handle_v1_set_activated(view->ftl, activated);
     xd_frame_render(view, false);
+}
+
+/* The view of a toplevel (its owner, for dialogs). */
+static xd_view *view_of(struct wlr_xdg_toplevel *t) {
+    struct wlr_scene_tree *content = t != nullptr ? t->base->data : nullptr;
+    return content != nullptr ? xd_view_from_node(&content->node) : nullptr;
+}
+
+static xd_view *parent_of(const xd_view *view) { return view_of(view->toplevel->parent); }
+
+/* Owned windows (dialogs) stay above their owner: raise the owner's whole
+ * family, the owner first. */
+static void raise_family(xd_view *view) {
+    xd_view *root = view;
+    for (int depth = 0; depth < 16 && parent_of(root) != nullptr; depth++)
+        root = parent_of(root);
+    wlr_scene_node_raise_to_top(&root->tree->node);
+    /* Then each owned window, recursively, in focus order (oldest last). */
+    xd_view *stack[64];
+    size_t n = 0;
+    stack[n++] = root;
+    for (size_t i = 0; i < n; i++) {
+        XD_LIST_FOR_EACH(v, &root->server->views, xd_view, link) {
+            if (v->mapped && parent_of(v) == stack[i] && n < XD_ARRAY_LEN(stack)) {
+                wlr_scene_node_raise_to_top(&v->tree->node);
+                stack[n++] = v;
+            }
+        }
+    }
+    /* The focused window itself ends up on top of its siblings. */
+    wlr_scene_node_raise_to_top(&view->tree->node);
 }
 
 void xd_view_focus(xd_view *view) {
@@ -179,7 +239,14 @@ void xd_view_focus(xd_view *view) {
             wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, false);
     }
 
-    wlr_scene_node_raise_to_top(&view->tree->node);
+    /* Restoring an owner restores the dialogs it owns. */
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (v->minimized && parent_of(v) == view) {
+            v->minimized = false;
+            wlr_scene_node_set_enabled(&v->tree->node, true);
+        }
+    }
+    raise_family(view);
     wl_list_remove(&view->link);
     wl_list_insert(&server->views, &view->link);
 
@@ -233,9 +300,59 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
     }
 }
 
+void xd_view_set_fullscreen(xd_view *view, bool fullscreen) {
+    if (!view->toplevel->base->initialized)
+        return;
+    if (view->fullscreen == fullscreen) {
+        wlr_xdg_surface_schedule_configure(view->toplevel->base);
+        return;
+    }
+    xd_server *server = view->server;
+    if (fullscreen) {
+        struct wlr_box outer = xd_view_outer_box(view);
+        view->fullscreen_restore = outer;
+        xd_output *out = xd_output_at(server, outer.x + outer.width / 2.0,
+                                      outer.y + outer.height / 2.0);
+        if (out == nullptr)
+            return;
+        struct wlr_box box;
+        wlr_output_layout_get_box(server->output_layout, out->wlr_output, &box);
+        view->fullscreen = true;
+        wlr_xdg_toplevel_set_fullscreen(view->toplevel, true);
+        if (view->ftl != nullptr)
+            wlr_foreign_toplevel_handle_v1_set_fullscreen(view->ftl, true);
+        update_content_position(view);
+        xd_frame_render(view, true);
+        xd_view_set_outer_box(view, box); /* the whole output, no frame */
+        if (xd_view_focused(server) == view)
+            wlr_scene_node_reparent(&view->tree->node, server->layer_fullscreen);
+    } else {
+        view->fullscreen = false;
+        wlr_xdg_toplevel_set_fullscreen(view->toplevel, false);
+        if (view->ftl != nullptr)
+            wlr_foreign_toplevel_handle_v1_set_fullscreen(view->ftl, false);
+        wlr_scene_node_reparent(&view->tree->node, server->layer_views);
+        update_content_position(view);
+        xd_frame_render(view, true);
+        xd_view_set_outer_box(view, view->fullscreen_restore);
+    }
+}
+
 void xd_view_minimize(xd_view *view) {
     if (view->minimized || !view->mapped)
         return;
+    /* A dialog's owner goes with it, and the owner takes its dialogs. */
+    xd_view *owner = parent_of(view);
+    if (owner != nullptr && !owner->minimized) {
+        xd_view_minimize(owner);
+        return;
+    }
+    XD_LIST_FOR_EACH(v, &view->server->views, xd_view, link) {
+        if (parent_of(v) == view && v->mapped && !v->minimized) {
+            v->minimized = true;
+            wlr_scene_node_set_enabled(&v->tree->node, false);
+        }
+    }
     bool was_focused = xd_view_focused(view->server) == view;
     view->minimized = true;
     wlr_scene_node_set_enabled(&view->tree->node, false);
@@ -265,7 +382,21 @@ static void place_new_view(xd_view *view) {
         xd_output_work_area_at(server, server->cursor->x, server->cursor->y);
     struct wlr_box outer = xd_view_outer_box(view);
     xd_insets in = xd_view_insets(view);
-    int step = in.top;
+    /* One caption lower each time; client-decorated windows have no frame
+     * of ours, so use a standard caption's height. */
+    int step = in.top > 0 ? in.top : xd_px(1.0, 26);
+
+    /* Owned windows (dialogs) open centred over their owner. */
+    xd_view *owner = parent_of(view);
+    if (owner != nullptr && owner->mapped) {
+        struct wlr_box o = xd_view_outer_box(owner);
+        int x = o.x + (o.width - outer.width) / 2;
+        int y = o.y + (o.height - outer.height) / 2;
+        x = XD_CLAMP(x, area.x, XD_MAX(area.x + area.width - outer.width, area.x));
+        y = XD_CLAMP(y, area.y, XD_MAX(area.y + area.height - outer.height, area.y));
+        xd_view_set_position(view, x, y);
+        return;
+    }
 
     /* Dialogs open centred, as Windows places them. */
     if (view->dialog && outer.width <= area.width && outer.height <= area.height) {
@@ -378,11 +509,15 @@ static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data
     view->mapped = true;
     view->dialog = is_fixed_size(view->toplevel);
     xd_view_update_decorations(view);
-    ftl_create(view);
+    /* Owned windows (dialogs) get no taskbar button, as in Windows. */
+    if (parent_of(view) == nullptr)
+        ftl_create(view);
     update_content_position(view);
     place_new_view(view);
     xd_view_focus(view);
     xd_frame_render(view, true);
+    if (view->toplevel->requested.fullscreen)
+        xd_view_set_fullscreen(view, true);
 }
 
 static void handle_unmap(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -424,6 +559,10 @@ static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *d
     }
     if (!view->mapped)
         return;
+    /* Clients that don't negotiate decorations may still draw their own
+     * (shadow margins around the window geometry give them away). */
+    xd_view_update_decorations(view);
+    apply_anchor(view);
     update_content_position(view);
     xd_frame_render(view, false);
 }
@@ -503,9 +642,24 @@ static void handle_request_minimize(struct wl_listener *listener, [[maybe_unused
 
 static void handle_request_fullscreen(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_fullscreen);
-    /* Not supported yet; the protocol still requires a configure reply. */
-    if (view->toplevel->base->initialized)
-        wlr_xdg_surface_schedule_configure(view->toplevel->base);
+    if (!view->mapped) {
+        /* Before mapping, just answer; it's applied once the window shows. */
+        if (view->toplevel->base->initialized)
+            wlr_xdg_surface_schedule_configure(view->toplevel->base);
+        return;
+    }
+    xd_view_set_fullscreen(view, view->toplevel->requested.fullscreen);
+}
+
+/* Gaining or losing an owner adds or removes the taskbar button. */
+static void handle_set_parent(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_parent);
+    if (!view->mapped)
+        return;
+    if (parent_of(view) != nullptr)
+        ftl_destroy(view);
+    else if (view->ftl == nullptr)
+        ftl_create(view);
 }
 
 static void handle_set_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -547,6 +701,7 @@ static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *
     xd_unlisten(&view->request_minimize);
     xd_unlisten(&view->request_window_menu);
     xd_unlisten(&view->request_fullscreen);
+    xd_unlisten(&view->set_parent);
     xd_unlisten(&view->set_title);
     xd_unlisten(&view->set_app_id);
     xd_unlisten(&view->decoration_mode);
@@ -587,6 +742,7 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data) {
               handle_request_window_menu);
     XD_LISTEN(&toplevel->events.request_fullscreen, view, request_fullscreen,
               handle_request_fullscreen);
+    XD_LISTEN(&toplevel->events.set_parent, view, set_parent, handle_set_parent);
     XD_LISTEN(&toplevel->events.set_title, view, set_title, handle_set_title);
     XD_LISTEN(&toplevel->events.set_app_id, view, set_app_id, handle_set_app_id);
 }
@@ -610,15 +766,39 @@ static bool kde_wants_client_side(xd_server *server, struct wlr_surface *surface
     return false;
 }
 
+static bool kde_negotiated(xd_server *server, struct wlr_surface *surface) {
+    if (server->kde_decoration == nullptr)
+        return false;
+    struct wlr_server_decoration *d;
+    wl_list_for_each(d, &server->kde_decoration->decorations, link) {
+        if (d->surface == surface)
+            return true;
+    }
+    return false;
+}
+
 void xd_view_update_decorations(xd_view *view) {
-    bool csd = kde_wants_client_side(view->server, view->toplevel->base->surface);
+    xd_server *server = view->server;
+    struct wlr_surface *surface = view->toplevel->base->surface;
+    bool csd;
     if (view->decoration != nullptr) {
         csd = view->decoration->requested_mode == WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
-        if (view->toplevel->base->initialized)
-            wlr_xdg_toplevel_decoration_v1_set_mode(
-                view->decoration, csd ? WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
-                                      : WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    } else if (kde_negotiated(server, surface)) {
+        csd = kde_wants_client_side(server, surface);
+    } else {
+        /* No negotiation (GTK 4, libadwaita): a window geometry inset from
+         * the surface means the client draws shadows, and so its own
+         * frame. */
+        struct wlr_box geo = view->toplevel->base->geometry;
+        csd = geo.x > 0 || geo.y > 0;
     }
+    /* [Windows] AlwaysDrawFrames: our frame on everything. */
+    if (server->config.always_frames)
+        csd = false;
+    if (view->decoration != nullptr && view->toplevel->base->initialized)
+        wlr_xdg_toplevel_decoration_v1_set_mode(
+            view->decoration, csd ? WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+                                  : WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
     if (csd == view->csd)
         return;
     view->csd = csd;

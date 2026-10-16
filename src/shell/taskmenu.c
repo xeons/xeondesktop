@@ -241,7 +241,21 @@ static void handle_window_menu(void *data, [[maybe_unused]] struct xd_window_arr
     bar->dirty = true;
 }
 
+/* The Windows key or Ctrl+Esc. */
+static void handle_start_menu(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *a,
+                              struct wl_output *output, uint32_t serial) {
+    xd_shell *shell = data;
+    xd_taskbar *b;
+    wl_list_for_each(b, &shell->taskbars, link) {
+        if (b->output == output && b->configured) {
+            xd_taskbar_toggle_start(b, serial);
+            return;
+        }
+    }
+}
+
 static const struct xd_window_arranger_v1_listener arranger_listener = {
+    .start_menu = handle_start_menu,
     .window_menu = handle_window_menu,
 };
 
