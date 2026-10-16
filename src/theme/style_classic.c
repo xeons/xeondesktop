@@ -300,7 +300,7 @@ static void classic_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r,
     xd_rect inner = edge_button(t, cr, r, pressed);
     int off = pressed ? xd_tpx(t, 1) : 0;
     int icon = xd_tpx(t, 16);
-    xd_draw_start_flag(cr, (xd_rect){inner.x + xd_tpx(t, 2) + off,
+    xd_draw_start_logo(cr, (xd_rect){inner.x + xd_tpx(t, 2) + off,
                                      inner.y + (inner.h - icon) / 2 + off, icon, icon});
     xd_font_spec bold;
     xd_text_style st = start_text(t, &bold);

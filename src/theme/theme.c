@@ -604,9 +604,9 @@ void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, cons
     ops(t)->menu_palette(t, &p);
     xd_fill_gradient(cr, r, p.banner_bottom, p.banner_top, true);
 
-    int flag = XD_MIN(xd_tpx(t, 40), r.h - xd_tpx(t, 12));
+    int flag = XD_MIN(xd_tpx(t, 48), r.h - xd_tpx(t, 10));
     int fx = r.x + xd_tpx(t, 16);
-    xd_draw_start_flag(cr, (xd_rect){fx, r.y + (r.h - flag) / 2, flag, flag});
+    xd_draw_start_logo(cr, (xd_rect){fx, r.y + (r.h - flag) / 2, flag, flag});
 
     xd_font_spec big = {.size_pt = 18, .bold = true};
     snprintf(big.family, sizeof(big.family), "%s", "Tahoma, DejaVu Sans, sans-serif");
@@ -738,29 +738,68 @@ void xd_draw_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, xd_glyph g, xd_rgb
     cairo_restore(cr);
 }
 
-void xd_draw_start_flag(cairo_t *cr, xd_rect r) {
-    /* A four-pane waving flag in the classic colours, drawn with skewed
-     * quads so it scales cleanly. */
-    static const uint32_t pane[4] = {0xE2431B, 0x5DB82D, 0x2D7AE0, 0xF5C21B};
-    double s = XD_MIN(r.w, r.h);
-    double x0 = r.x + (r.w - s) / 2;
-    double y0 = r.y + (r.h - s) / 2;
-    double half = s * 0.46;
-    double gap = s * 0.08;
-    double wave = s * 0.08;
+static void ellipse(cairo_t *cr, double cx, double cy, double rx, double ry) {
+    cairo_save(cr);
+    cairo_translate(cr, cx, cy);
+    cairo_scale(cr, rx, ry);
+    cairo_arc(cr, 0, 0, 1, 0, 2 * XD_PI);
+    cairo_restore(cr);
+}
 
-    for (int i = 0; i < 4; i++) {
-        double px = x0 + (i % 2) * (half + gap);
-        double py = y0 + (i / 2) * (half + gap);
-        double skew = (i % 2) ? -wave : 0;
-        xd_set_color(cr, xd_rgba_hex(pane[i]));
-        cairo_move_to(cr, px, py + skew + wave);
-        cairo_curve_to(cr, px + half * 0.33, py + skew, px + half * 0.66, py + skew,
-                       px + half, py + skew + wave * 0.2);
-        cairo_line_to(cr, px + half, py + skew + half);
-        cairo_curve_to(cr, px + half * 0.66, py + skew + half - wave * 0.8, px + half * 0.33,
-                       py + skew + half - wave * 0.8, px, py + skew + half + wave * 0.5);
-        cairo_close_path(cr);
-        cairo_fill(cr);
-    }
+void xd_draw_start_logo(cairo_t *cr, xd_rect r) {
+    /* Tux, drawn from simple shapes so it stays readable at 16px. Shapes
+     * are laid out on a unit square and scaled to fit r. */
+    double s = XD_MIN(r.w, r.h);
+    if (s <= 0)
+        return;
+    cairo_save(cr);
+    cairo_translate(cr, r.x + (r.w - s) / 2, r.y + (r.h - s) / 2);
+    cairo_scale(cr, s, s);
+
+    const xd_rgba black = xd_rgba_hex(0x1A1A1A);
+    const xd_rgba white = xd_rgba_hex(0xFFFFFF);
+    const xd_rgba orange = xd_rgba_hex(0xF2B01E);
+    const xd_rgba orange_dark = xd_rgba_hex(0xC88400);
+
+    /* Feet behind the body. */
+    xd_set_color(cr, orange);
+    ellipse(cr, 0.33, 0.92, 0.15, 0.065);
+    ellipse(cr, 0.67, 0.92, 0.15, 0.065);
+    cairo_fill(cr);
+
+    /* Body and head. */
+    xd_set_color(cr, black);
+    ellipse(cr, 0.5, 0.6, 0.32, 0.34);
+    cairo_fill(cr);
+    ellipse(cr, 0.5, 0.27, 0.2, 0.22);
+    cairo_fill(cr);
+    /* Flippers. */
+    ellipse(cr, 0.21, 0.62, 0.08, 0.2);
+    ellipse(cr, 0.79, 0.62, 0.08, 0.2);
+    cairo_fill(cr);
+
+    /* White belly and face. */
+    xd_set_color(cr, white);
+    ellipse(cr, 0.5, 0.65, 0.21, 0.26);
+    cairo_fill(cr);
+    ellipse(cr, 0.5, 0.31, 0.13, 0.11);
+    cairo_fill(cr);
+
+    /* Eyes. */
+    ellipse(cr, 0.43, 0.22, 0.055, 0.07);
+    ellipse(cr, 0.57, 0.22, 0.055, 0.07);
+    cairo_fill(cr);
+    xd_set_color(cr, black);
+    ellipse(cr, 0.445, 0.235, 0.028, 0.035);
+    ellipse(cr, 0.555, 0.235, 0.028, 0.035);
+    cairo_fill(cr);
+
+    /* Beak: two halves so it reads as a beak, not a blob. */
+    xd_set_color(cr, orange);
+    ellipse(cr, 0.5, 0.315, 0.11, 0.05);
+    cairo_fill(cr);
+    xd_set_color(cr, orange_dark);
+    ellipse(cr, 0.5, 0.345, 0.075, 0.03);
+    cairo_fill(cr);
+    cairo_restore(cr);
 }

@@ -67,7 +67,7 @@ void xd_draw_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, xd_glyph g, xd_rgb
 void xd_layout_add_button(xd_frame_layout *l, xd_rect r, xd_frame_part part);
 xd_glyph xd_glyph_for_part(xd_frame_part part, bool maximized);
 
-/* Win2000 "flag" logo used on the Classic/Whistler start buttons. */
-void xd_draw_start_flag(cairo_t *cr, xd_rect r);
+/* The Start button / banner logo: Tux, the Linux penguin. */
+void xd_draw_start_logo(cairo_t *cr, xd_rect r);
 
 #endif

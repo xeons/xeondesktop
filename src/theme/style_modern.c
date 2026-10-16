@@ -290,7 +290,7 @@ static void modern_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r,
 
     int icon = xd_tpx(t, 20);
     int ix = r.x + xd_tpx(t, 10);
-    xd_draw_start_flag(cr, (xd_rect){ix, r.y + (r.h - icon) / 2, icon, icon});
+    xd_draw_start_logo(cr, (xd_rect){ix, r.y + (r.h - icon) / 2, icon, icon});
     xd_text_style st = start_style(t);
     int tx = ix + icon + xd_tpx(t, 6);
     xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx, r.h}, m->start_label, &st);
