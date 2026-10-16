@@ -90,8 +90,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       while locked, the compositor starts it again (5 times a minute at
       most). Tested: locking, Ctrl+Alt+Del, a wrong password and its
       message, Caps Lock warning, restart after a crash, a keyboard
-      unplugged and replugged. **Untested: unlocking with the right
-      password** (please try it). The PAM service file
+      unplugged and replugged, and (in a real session, with the installed
+      `xeondesktop` PAM service) locking with Win+L and unlocking with the
+      right password. The PAM service file
       (`/etc/pam.d/xeondesktop`, `auth include login`) is installed by
       `meson install`; until then `login` is used. Not yet: several
       monitors (the dialog shows on the first), Switch User. (Change
