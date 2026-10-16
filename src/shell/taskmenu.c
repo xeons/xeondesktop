@@ -84,6 +84,23 @@ static void act_maximize(xd_shell *shell, void *d) {
     if (shell->seat != nullptr)
         zwlr_foreign_toplevel_handle_v1_activate(t->handle, shell->seat);
 }
+/* Move and Size: bring the window forward, then let the compositor run
+ * the keyboard move/size loop on it (requests are handled in order). */
+static void act_move(xd_shell *shell, void *d) {
+    xd_toplevel *t = find_toplevel(shell, d);
+    if (t == nullptr || shell->arranger == nullptr || shell->seat == nullptr)
+        return;
+    zwlr_foreign_toplevel_handle_v1_activate(t->handle, shell->seat);
+    xd_window_arranger_v1_begin_move(shell->arranger);
+}
+static void act_size(xd_shell *shell, void *d) {
+    xd_toplevel *t = find_toplevel(shell, d);
+    if (t == nullptr || shell->arranger == nullptr || shell->seat == nullptr)
+        return;
+    zwlr_foreign_toplevel_handle_v1_activate(t->handle, shell->seat);
+    xd_window_arranger_v1_begin_size(shell->arranger);
+}
+
 static void act_close(xd_shell *shell, void *d) {
     xd_toplevel *t = find_toplevel(shell, d);
     if (t != nullptr)
@@ -140,15 +157,16 @@ static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree) {
     return m;
 }
 
-static xd_menu_model *window_menu(xd_menu_tree *tree, xd_toplevel *t) {
+static xd_menu_model *window_menu(xd_shell *shell, xd_menu_tree *tree, xd_toplevel *t) {
     xd_menu_model *m = xd_menu_model_new(tree);
     bool restorable = t->minimized || t->maximized;
     xd_menu_item *it = add(tree, m, "Restore", restorable ? act_restore : nullptr, t);
     it->glyph = XD_MENU_GLYPH_RESTORE;
     it->bold = restorable;
-    /* Keyboard move and size need the compositor; not yet. */
-    add(tree, m, "Move", nullptr, nullptr);
-    add(tree, m, "Size", nullptr, nullptr);
+    /* Fixed-size windows ignore Size (the compositor knows which they are). */
+    bool movable = !restorable && shell->arranger != nullptr;
+    add(tree, m, "Move", movable ? act_move : nullptr, t);
+    add(tree, m, "Size", movable ? act_size : nullptr, t);
     it = add(tree, m, "Minimize", t->minimized ? nullptr : act_minimize, t);
     it->glyph = XD_MENU_GLYPH_MINIMIZE;
     it = add(tree, m, "Maximize", t->maximized ? nullptr : act_maximize, t);
@@ -198,7 +216,7 @@ void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint3
     xd_menu_tree_init(&shell->context_tree);
     xd_menu_model *model;
     if (hit >= 0 && (size_t)hit < bar->task_count)
-        model = window_menu(&shell->context_tree, bar->task_views[hit]);
+        model = window_menu(shell, &shell->context_tree, bar->task_views[hit]);
     else if (hit == XD_HIT_START)
         model = start_button_menu(shell, &shell->context_tree);
     else

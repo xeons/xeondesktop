@@ -206,6 +206,188 @@ static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void
     wlr_seat_keyboard_notify_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
 }
 
+/* ---- keyboard move and size (window menu) -------------------------------------- */
+
+static bool keyboard_grab(const xd_server *server) {
+    return server->mode == XD_CURSOR_KEY_MOVE || server->mode == XD_CURSOR_KEY_SIZE;
+}
+
+static const char *cursor_for_edges(uint32_t e) {
+    bool l = e & WLR_EDGE_LEFT, r = e & WLR_EDGE_RIGHT, t = e & WLR_EDGE_TOP,
+         b = e & WLR_EDGE_BOTTOM;
+    if (t && l)
+        return "nw-resize";
+    if (t && r)
+        return "ne-resize";
+    if (b && l)
+        return "sw-resize";
+    if (b && r)
+        return "se-resize";
+    return t ? "n-resize" : b ? "s-resize" : l ? "w-resize" : r ? "e-resize" : "move";
+}
+
+/* The pointer sits on the chosen edges (or the caption while moving), as
+ * in Windows. */
+static void warp_to_handle(xd_server *server) {
+    struct wlr_box b = server->key_box;
+    double x = b.x + b.width / 2.0, y = b.y + b.height / 2.0;
+    if (server->mode == XD_CURSOR_KEY_MOVE) {
+        y = b.y + xd_view_insets(server->grab_view).top / 2.0;
+    } else {
+        uint32_t e = server->key_edges;
+        if (e & WLR_EDGE_LEFT)
+            x = b.x;
+        if (e & WLR_EDGE_RIGHT)
+            x = b.x + b.width - 1;
+        if (e & WLR_EDGE_TOP)
+            y = b.y;
+        if (e & WLR_EDGE_BOTTOM)
+            y = b.y + b.height - 1;
+    }
+    wlr_cursor_warp(server->cursor, nullptr, x, y);
+    server->grab_x = server->cursor->x - b.x;
+    server->grab_y = server->cursor->y - b.y;
+    xd_cursor_set(server, server->mode == XD_CURSOR_KEY_MOVE ? "move"
+                                                             : cursor_for_edges(server->key_edges));
+}
+
+static void begin_keyboard(xd_view *view, xd_cursor_mode mode) {
+    xd_server *server = view->server;
+    if (!view->mapped || view->minimized || view->maximized || server->mode != XD_CURSOR_PASSTHROUGH)
+        return;
+    if (mode == XD_CURSOR_KEY_SIZE && view->dialog)
+        return; /* fixed size */
+    xd_view_focus(view);
+    server->mode = mode;
+    server->grab_view = view;
+    server->grab_box = xd_view_outer_box(view);
+    server->key_box = server->grab_box;
+    server->key_edges = 0;
+    wlr_seat_pointer_clear_focus(server->seat);
+    if (mode == XD_CURSOR_KEY_SIZE)
+        wlr_xdg_toplevel_set_resizing(view->toplevel, true);
+    warp_to_handle(server);
+}
+
+void xd_view_begin_keyboard_move(xd_view *view) { begin_keyboard(view, XD_CURSOR_KEY_MOVE); }
+void xd_view_begin_keyboard_size(xd_view *view) { begin_keyboard(view, XD_CURSOR_KEY_SIZE); }
+
+/* Applies key_box, keeping a minimum client size. */
+static void apply_key_box(xd_server *server) {
+    xd_view *view = server->grab_view;
+    struct wlr_box *b = &server->key_box;
+    if (server->mode == XD_CURSOR_KEY_MOVE) {
+        xd_view_set_position(view, b->x, b->y);
+        return;
+    }
+    xd_insets in = xd_view_insets(view);
+    int min_w = in.left + in.right + XD_MIN_CLIENT_W;
+    int min_h = in.top + in.bottom + XD_MIN_CLIENT_H;
+    if (b->width < min_w) {
+        if (server->key_edges & WLR_EDGE_LEFT)
+            b->x -= min_w - b->width;
+        b->width = min_w;
+    }
+    if (b->height < min_h) {
+        if (server->key_edges & WLR_EDGE_TOP)
+            b->y -= min_h - b->height;
+        b->height = min_h;
+    }
+    xd_view_set_outer_box(view, *b);
+}
+
+static void end_keyboard(xd_server *server, bool keep) {
+    xd_view *view = server->grab_view;
+    xd_cursor_mode mode = server->mode;
+    server->key_box = server->grab_box;
+    if (!keep && view != nullptr)
+        apply_key_box(server); /* Esc: back where it was */
+    if (view != nullptr && mode == XD_CURSOR_KEY_SIZE)
+        wlr_xdg_toplevel_set_resizing(view->toplevel, false);
+    server->mode = XD_CURSOR_PASSTHROUGH;
+    server->grab_view = nullptr;
+    server->cursor_name = nullptr;
+}
+
+/* Arrows move the window (or the chosen edges) 8px, 1px with Ctrl. */
+static void keyboard_grab_key(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
+    if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter) {
+        end_keyboard(server, true);
+        return;
+    }
+    if (sym == XKB_KEY_Escape) {
+        end_keyboard(server, false);
+        return;
+    }
+    int dx = 0, dy = 0;
+    if (sym == XKB_KEY_Left || sym == XKB_KEY_KP_Left)
+        dx = -1;
+    else if (sym == XKB_KEY_Right || sym == XKB_KEY_KP_Right)
+        dx = 1;
+    else if (sym == XKB_KEY_Up || sym == XKB_KEY_KP_Up)
+        dy = -1;
+    else if (sym == XKB_KEY_Down || sym == XKB_KEY_KP_Down)
+        dy = 1;
+    else
+        return;
+    int step = (mods & WLR_MODIFIER_CTRL) ? 1 : 8;
+    struct wlr_box *b = &server->key_box;
+    if (server->mode == XD_CURSOR_KEY_MOVE) {
+        b->x += dx * step;
+        b->y += dy * step;
+    } else {
+        uint32_t *e = &server->key_edges;
+        /* The first arrow on an axis picks that edge; later ones move it. */
+        if (dx != 0 && !(*e & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT))) {
+            *e |= dx < 0 ? WLR_EDGE_LEFT : WLR_EDGE_RIGHT;
+        } else if (dy != 0 && !(*e & (WLR_EDGE_TOP | WLR_EDGE_BOTTOM))) {
+            *e |= dy < 0 ? WLR_EDGE_TOP : WLR_EDGE_BOTTOM;
+        } else if (dx != 0) {
+            if (*e & WLR_EDGE_LEFT) {
+                b->x += dx * step;
+                b->width -= dx * step;
+            } else {
+                b->width += dx * step;
+            }
+        } else {
+            if (*e & WLR_EDGE_TOP) {
+                b->y += dy * step;
+                b->height -= dy * step;
+            } else {
+                b->height += dy * step;
+            }
+        }
+    }
+    apply_key_box(server);
+    warp_to_handle(server);
+}
+
+/* The mouse drags the window, or the chosen edges, until a click. */
+static void keyboard_grab_motion(xd_server *server) {
+    struct wlr_box *b = &server->key_box;
+    double cx = server->cursor->x, cy = server->cursor->y;
+    if (server->mode == XD_CURSOR_KEY_MOVE) {
+        b->x = (int)(cx - server->grab_x);
+        b->y = (int)(cy - server->grab_y);
+    } else {
+        uint32_t e = server->key_edges;
+        int right = b->x + b->width, bottom = b->y + b->height;
+        if (e & WLR_EDGE_LEFT) {
+            b->x = (int)cx;
+            b->width = right - b->x;
+        }
+        if (e & WLR_EDGE_RIGHT)
+            b->width = (int)cx - b->x + 1;
+        if (e & WLR_EDGE_TOP) {
+            b->y = (int)cy;
+            b->height = bottom - b->y;
+        }
+        if (e & WLR_EDGE_BOTTOM)
+            b->height = (int)cy - b->y + 1;
+    }
+    apply_key_box(server);
+}
+
 static void handle_key(struct wl_listener *listener, void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, key);
     xd_server *server = kb->server;
@@ -216,6 +398,15 @@ static void handle_key(struct wl_listener *listener, void *data) {
     const xkb_keysym_t *syms = nullptr;
     int nsyms = xkb_state_key_get_syms(kb->wlr_keyboard->xkb_state, keycode, &syms);
     uint32_t mods = wlr_keyboard_get_modifiers(kb->wlr_keyboard);
+
+    /* Keyboard move/size takes every key until it ends. */
+    if (keyboard_grab(server)) {
+        if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+            for (int i = 0; i < nsyms; i++)
+                keyboard_grab_key(server, mods, syms[i]);
+        }
+        return;
+    }
 
     bool handled = false;
     if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -497,6 +688,10 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
         xd_view_set_hover(v, part == server->grab_part ? part : XD_PART_NONE, server->grab_part);
         return;
     }
+    case XD_CURSOR_KEY_MOVE:
+    case XD_CURSOR_KEY_SIZE:
+        keyboard_grab_motion(server);
+        return;
     case XD_CURSOR_PASSTHROUGH:
         break;
     }
@@ -631,6 +826,19 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_button);
     const struct wlr_pointer_button_event *e = data;
 
+    /* A click ends keyboard move/size where the window is. */
+    if (keyboard_grab(server)) {
+        if (e->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+            end_keyboard(server, true);
+            server->ignore_release = true;
+        }
+        return;
+    }
+    if (e->state == WL_POINTER_BUTTON_STATE_RELEASED && server->ignore_release) {
+        server->ignore_release = false;
+        process_motion(server, e->time_msec);
+        return;
+    }
     if (e->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (server->mode != XD_CURSOR_PASSTHROUGH) {
             end_grab(server);

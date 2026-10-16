@@ -43,6 +43,8 @@ typedef enum xd_cursor_mode : uint8_t {
     XD_CURSOR_MOVE,
     XD_CURSOR_RESIZE,
     XD_CURSOR_BUTTON, /* holding a caption button */
+    XD_CURSOR_KEY_MOVE, /* window menu Move: arrows or the mouse, Enter/Esc */
+    XD_CURSOR_KEY_SIZE, /* window menu Size: an arrow picks the edge first */
 } xd_cursor_mode;
 
 typedef struct xd_server xd_server;
@@ -219,6 +221,9 @@ struct xd_server {
     xd_frame_part grab_part;
     double grab_x, grab_y;
     struct wlr_box grab_box;
+    struct wlr_box key_box;  /* keyboard move/size: the box being set */
+    uint32_t key_edges;      /* keyboard size: WLR_EDGE_* chosen so far */
+    bool ignore_release;     /* the click that ended keyboard move/size */
     xd_view *hover_view; /* view whose frame shows a hover state */
     const char *cursor_name;
 
@@ -292,6 +297,10 @@ void xd_view_update_decorations(xd_view *view);
 
 /* arrange.c: Cascade/Tile for the taskbar menu (shell-only protocol). */
 void xd_arrange_init(xd_server *server);
+/* input.c: the window menu's Move and Size, driven by the keyboard (and the
+ * mouse) until Enter, a click, or Esc to put the window back. */
+void xd_view_begin_keyboard_move(xd_view *view);
+void xd_view_begin_keyboard_size(xd_view *view);
 /* Frame description for drawing and hit testing. */
 xd_frame xd_view_frame(const xd_view *view, bool active);
 /* Which part of the frame the layout point (lx, ly) is over. */

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
- * Cascade and tile windows for the taskbar menu (xd-window-arranger-v1, a
- * private protocol only the shell we started can see).
+ * Cascade and tile windows for the taskbar menu, and the window menu's
+ * keyboard Move and Size (xd-window-arranger-v1, a private protocol only
+ * the shell we started can see).
  */
 #include <math.h>
 #include <sys/socket.h>
@@ -116,6 +117,20 @@ static void handle_undo(struct wl_client *client, struct wl_resource *res) {
     }
 }
 
+static void handle_begin_move(struct wl_client *client, struct wl_resource *res) {
+    (void)client;
+    xd_view *v = xd_view_focused(wl_resource_get_user_data(res));
+    if (v != nullptr)
+        xd_view_begin_keyboard_move(v);
+}
+
+static void handle_begin_size(struct wl_client *client, struct wl_resource *res) {
+    (void)client;
+    xd_view *v = xd_view_focused(wl_resource_get_user_data(res));
+    if (v != nullptr)
+        xd_view_begin_keyboard_size(v);
+}
+
 static void handle_destroy(struct wl_client *client, struct wl_resource *res) {
     (void)client;
     wl_resource_destroy(res);
@@ -124,6 +139,8 @@ static void handle_destroy(struct wl_client *client, struct wl_resource *res) {
 static const struct xd_window_arranger_v1_interface arranger_impl = {
     .arrange = handle_arrange,
     .undo = handle_undo,
+    .begin_move = handle_begin_move,
+    .begin_size = handle_begin_size,
     .destroy = handle_destroy,
 };
 

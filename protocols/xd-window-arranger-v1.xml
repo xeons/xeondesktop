@@ -6,7 +6,8 @@
   <description summary="XeonDesktop: arrange windows from the taskbar">
     Private to XeonDesktop. The compositor only advertises this global to
     the shell process it started, which uses it for the taskbar menu's
-    Cascade Windows, Tile Windows Horizontally/Vertically and their Undo.
+    Cascade Windows, Tile Windows Horizontally/Vertically and their Undo,
+    and for the window menu's Move and Size.
   </description>
 
   <interface name="xd_window_arranger_v1" version="1">
@@ -26,6 +27,22 @@
 
     <request name="undo">
       <description summary="put windows back where the last arrange found them"/>
+    </request>
+
+    <request name="begin_move">
+      <description summary="move the focused window with the keyboard">
+        Starts keyboard move of the focused window, as the window menu's
+        Move does: arrows (or the mouse) move it, Enter or a click keeps the
+        new place, Esc puts it back. The shell activates the window first.
+      </description>
+    </request>
+
+    <request name="begin_size">
+      <description summary="resize the focused window with the keyboard">
+        Starts keyboard sizing of the focused window, as the window menu's
+        Size does: the first arrow on each axis picks an edge, then arrows
+        (or the mouse) move it; Enter or a click keeps it, Esc undoes it.
+      </description>
     </request>
 
     <request name="destroy" type="destructor"/>

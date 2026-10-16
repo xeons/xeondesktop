@@ -29,7 +29,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Compositor
 
-- [ ] Window menu (Alt+Space, click on the caption icon, right-click caption).
+- [ ] Window menu from the window itself (Alt+Space, the caption icon,
+      right-click on the caption); the taskbar button's menu exists.
 - [~] Windows that ask to draw their own decorations (xdg-decoration
       client-side, or the KDE protocol's client mode, e.g. Firefox with tabs
       in the title bar) get no XP frame, plus an invisible 6px resize margin.
@@ -73,10 +74,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] Right-click menus (XP): the taskbar's (Toolbars ▸ Quick Launch, Cascade,
       Tile Horizontally/Vertically and Undo, Show the Desktop, Task Manager,
       Lock the Taskbar, Properties) and a task button's window menu
-      (Restore, Minimize, Maximize, Close; the default in bold), and the
+      (Restore, Move, Size, Minimize, Maximize, Close; the default in bold),
+      and the
       Start button's (Open, Explore, Properties, Open/Explore All Users).
-      Not yet:
-      Move and Size (keyboard move/size in the compositor), the Address,
+      Move and Size run the compositor's keyboard move/size (arrows 8px, Ctrl
+      1px, mouse too; Enter or a click keeps it, Esc undoes it). Tested:
+      Move by arrows, Size by arrows, Esc restoring. Untested: mouse during
+      keyboard move/size, Ctrl steps, corners (two edges). Not yet: the
+      Address,
       Links, Desktop and New Toolbar toolbars, Search... in the Start
       button's menu, Quick Launch's menu and the clock's (Adjust
       Date/Time). Start button menu: Open tested; Explore, Properties and
