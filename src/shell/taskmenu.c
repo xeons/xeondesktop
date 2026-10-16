@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * The taskbar's right-click menus, as in Windows XP: the taskbar menu
  * (Toolbars, Cascade/Tile, Show the Desktop, Task Manager, Lock the
- * Taskbar, Properties) and the window menu on a task button (Restore,
- * Move, Size, Minimize, Maximize, Close).
+ * Taskbar, Properties), the window menu on a task button (Restore, Move,
+ * Size, Minimize, Maximize, Close), and the Start button's (Open, Explore,
+ * Search, Properties, Open/Explore All Users).
  */
 #include "../core/alloc.h"
 #include "shell.h"
@@ -160,6 +161,36 @@ static xd_menu_model *window_menu(xd_menu_tree *tree, xd_toplevel *t) {
     return m;
 }
 
+/* The Start menu's own folders: the user's application shortcuts, and
+ * everyone's. Open and Explore both show them in xd-files, which always
+ * has its Folders pane available. */
+static xd_menu_model *start_button_menu(xd_shell *shell, xd_menu_tree *tree) {
+    xd_menu_model *m = xd_menu_model_new(tree);
+    static const char user_dir[] =
+        "\"${XDG_DATA_HOME:-$HOME/.local/share}/applications\"";
+    static const char all_dir[] = "/usr/share/applications";
+    xd_menu_item *it = add(tree, m, "Open", nullptr, nullptr);
+    it->command = xd_shell_own_command(shell, "xd-files", user_dir);
+    it->disabled = false;
+    it->bold = true;
+    it = add(tree, m, "Explore", nullptr, nullptr);
+    it->command = xd_shell_own_command(shell, "xd-files", user_dir);
+    it->disabled = false;
+    add(tree, m, "Search...", nullptr, nullptr);
+    separator(tree, m);
+    it = add(tree, m, "Properties", nullptr, nullptr);
+    it->command = xd_shell_own_command(shell, "xd-taskbar", "--page 1");
+    it->disabled = false;
+    separator(tree, m);
+    it = add(tree, m, "Open All Users", nullptr, nullptr);
+    it->command = xd_shell_own_command(shell, "xd-files", all_dir);
+    it->disabled = false;
+    it = add(tree, m, "Explore All Users", nullptr, nullptr);
+    it->command = xd_shell_own_command(shell, "xd-files", all_dir);
+    it->disabled = false;
+    return m;
+}
+
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial) {
     xd_shell *shell = bar->shell;
     xd_menu_close_all(shell);
@@ -168,6 +199,8 @@ void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint3
     xd_menu_model *model;
     if (hit >= 0 && (size_t)hit < bar->task_count)
         model = window_menu(&shell->context_tree, bar->task_views[hit]);
+    else if (hit == XD_HIT_START)
+        model = start_button_menu(shell, &shell->context_tree);
     else
         model = taskbar_menu(shell, &shell->context_tree);
     /* Anchored at the pointer; opens upwards. */

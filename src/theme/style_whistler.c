@@ -266,13 +266,21 @@ static int whistler_start_button_width(const xd_theme *t, [[maybe_unused]] cairo
 static void whistler_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r,
                                        uint8_t state) {
     int px = xd_tpx(t, 1);
-    uint32_t fill = (state & XD_STATE_PRESSED) ? 0x2459B8 : (state & XD_STATE_HOT) ? 0x4383E6 : START;
+    /* Flat on the bar at rest, lighter under the pointer, dark blue while
+     * pressed or while the Start menu is open. */
+    bool pressed = state & XD_STATE_PRESSED;
     xd_rect b = {r.x, r.y + 2 * px, r.w, r.h - 2 * px};
-    xd_fill_rect(cr, b, hex(fill));
+    if (pressed) {
+        xd_fill_rect(cr, b, hex(START));
+        xd_fill_rect(cr, (xd_rect){b.x, b.y, b.w, px}, hex(0x2459B8));
+        xd_fill_rect(cr, (xd_rect){b.x, b.y, px, b.h}, hex(0x2459B8));
+    } else if (state & XD_STATE_HOT) {
+        xd_fill_rect(cr, b, hex(TASK_HOT));
+    }
     xd_fill_rect(cr, (xd_rect){b.x + b.w - px, b.y, px, b.h}, hex(BAR_TOP));
     xd_fill_rect(cr, (xd_rect){b.x + b.w - 2 * px, b.y, px, b.h}, hex(BAR_EDGE));
     int icon = xd_tpx(t, 22);
-    int dy = (state & XD_STATE_PRESSED) ? px : 0;
+    int dy = pressed ? px : 0;
     xd_draw_start_logo(cr, (xd_rect){b.x + (b.w - icon) / 2, b.y + (b.h - icon) / 2 + dy, icon,
                                      icon});
 }

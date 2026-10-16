@@ -300,9 +300,9 @@ void xd_taskbar_take_keyboard(xd_taskbar *bar) {
 void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                                uint32_t serial) {
     if (button == BTN_RIGHT) {
-        /* Right-click: a task button's window menu, else the taskbar's
-         * menu (opened on release, like Windows). */
-        if (!pressed && bar->hot != XD_HIT_START)
+        /* Right-click (opened on release, like Windows): the Start button's
+         * menu, a task button's window menu, or the taskbar's menu. */
+        if (!pressed)
             xd_taskbar_context_menu(bar, bar->hot, bar->pointer_x, bar->pointer_y, serial);
         return;
     }

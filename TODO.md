@@ -73,11 +73,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] Right-click menus (XP): the taskbar's (Toolbars ▸ Quick Launch, Cascade,
       Tile Horizontally/Vertically and Undo, Show the Desktop, Task Manager,
       Lock the Taskbar, Properties) and a task button's window menu
-      (Restore, Minimize, Maximize, Close; the default in bold). Not yet:
+      (Restore, Minimize, Maximize, Close; the default in bold), and the
+      Start button's (Open, Explore, Properties, Open/Explore All Users).
+      Not yet:
       Move and Size (keyboard move/size in the compositor), the Address,
-      Links, Desktop and New Toolbar toolbars, the Start button's own menu
-      (Open, Explore, Search), Quick Launch's menu and the clock's (Adjust
-      Date/Time). Tested: the taskbar menu, Tile Vertically, Undo Tile
+      Links, Desktop and New Toolbar toolbars, Search... in the Start
+      button's menu, Quick Launch's menu and the clock's (Adjust
+      Date/Time). Start button menu: Open tested; Explore, Properties and
+      the All Users items untested. Tested: the taskbar menu, Tile Vertically, Undo Tile
       showing up, Minimize and the minimized window's menu. Untested:
       Cascade, Tile Horizontally, Undo itself, Lock toggling, Restore,
       Maximize, Close from the menu, several monitors.
