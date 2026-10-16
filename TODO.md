@@ -170,12 +170,34 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Shell (taskbar, Start menus, desktop)
 
-- [ ] Tray / notification area (StatusNotifierItem), volume, network,
-      battery; only the clock exists. No clock tooltip or calendar.
-- [ ] Task buttons: no window icons, no grouping, no
-      tooltips; overflow is clipped instead of wrapping or scrolling.
-- [ ] Taskbar options: auto-hide, always on top, primary-only taskbar (Lock
-      the Taskbar works: it hides the toolbar grips).
+- [~] Notification area: StatusNotifierItem icons (we're the watcher, or a
+      host of another desktop's), named or pixmap icons, attention icons,
+      Passive items hidden, tooltips, Activate / SecondaryActivate, and
+      dbusmenu menus (separators, checks, submenus). The clock is sized to
+      each style's margins and shows the date as a tooltip. Tested with a
+      test item on a private bus: both icon kinds, Activate, the menu and a
+      submenu item, falling back to the menu without Activate, an item
+      going away. Untested: real applets (nm-applet --indicator, Discord,
+      Steam, Telegram), another desktop's watcher, radio items, the
+      Status/NeedsAttention change live. Not yet: our own volume, network
+      and battery icons (applets can provide them), XP's "hide inactive
+      icons" chevron, the clock's calendar / Date and Time Properties.
+- [~] Task buttons: the application's icon (desktop file found from the
+      app id or WM_CLASS); tooltips with the whole title when it's cut
+      short; pages with up/down arrows (and the wheel) when buttons would
+      get narrower than 56px; Group similar taskbar buttons ("3 Firefox",
+      a menu of its windows, Minimize Group / Close Group) once they'd get
+      narrower than 100px. Tested in Luna with 30 and 14+2 windows. Not
+      yet: drag-and-drop reordering, Cascade/Tile in the group menu, the
+      window frame's caption icon (still generic).
+- [~] Taskbar options in Taskbar and Start Menu Properties: Auto-hide
+      (tucked to 2px, out on hover or a menu), Keep on top (off: the bottom
+      layer), Show the clock, Show the taskbar on all displays (off: only
+      the first monitor's); Lock the Taskbar hides the toolbar grips.
+      Tested headless, two outputs for all displays. Untested: Auto-hide
+      with the Windows key, real monitors. With all displays off, Alt+Space
+      can't open the window menu on monitors without a taskbar.
+- [ ] Taskbar on other edges, more than one row, resizing it.
 - [~] Right-click menus (XP): the taskbar's (Toolbars ▸ Quick Launch, Cascade,
       Tile Horizontally/Vertically and Undo, Show the Desktop, Task Manager,
       Lock the Taskbar, Properties) and a task button's window menu
@@ -194,7 +216,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       showing up, Minimize and the minimized window's menu. Untested:
       Cascade, Tile Horizontally, Undo itself, Lock toggling, Restore,
       Maximize, Close from the menu, several monitors.
-- [ ] Quick Launch: tooltips, drag and drop to add and reorder.
+- [~] Quick Launch: tooltips (the shortcut's name). Not yet: drag and drop
+      to add and reorder, its right-click menu.
 - [ ] Desktop icons.
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
