@@ -487,6 +487,17 @@ static void popup_views(GtkWidget *button, gpointer data) {
                              GDK_GRAVITY_NORTH_WEST, nullptr);
 }
 
+/* GTK deactivates a menu before running the chosen item, so destroying it
+ * on "deactivate" would drop the click; destroy it once that's done. */
+static gboolean destroy_menu_idle(gpointer menu) {
+    gtk_widget_destroy(menu);
+    return G_SOURCE_REMOVE;
+}
+
+static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer data) {
+    g_idle_add(destroy_menu_idle, menu);
+}
+
 /* Right-click menu: Open and Properties on items; view options and the
  * folder's Properties on the background. */
 static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) {
@@ -513,7 +524,7 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     menu_item(menu, "P_roperties", G_CALLBACK(cb_properties), e, nullptr, 0, NO_MODS);
     gtk_menu_attach_to_widget(GTK_MENU(menu), GTK_WIDGET(view), nullptr);
-    g_signal_connect(menu, "deactivate", G_CALLBACK(gtk_widget_destroy), nullptr);
+    g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
     if (event != nullptr)
         gtk_menu_popup_at_pointer(GTK_MENU(menu), event);

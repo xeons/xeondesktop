@@ -37,8 +37,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Ctrl+Alt+Delete opens the Task Manager directly. Windows 2000 first
       shows the Windows Security dialog (Lock, Log Off, Shut Down, Change
       Password, Task Manager); that needs a lock screen first.
-- [ ] Blur behind the Windows 7 Start menu's see-through panel (wlroots'
-      scene graph has no blur pass).
+- [ ] Blur behind the Windows 7 Start menu's glass (wlroots' scene graph has
+      no blur pass); until then the panel is opaque.
 - [ ] Resizing from the top/left edges moves the window before the client
       commits its new size, which can jitter.
 - [?] Alt+Tab, Alt+F4, Win+Up/Down, Ctrl+Alt+T, Ctrl+Alt+Backspace: untested.
@@ -82,8 +82,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Wheat, and Large/Extra Large variants).
 - [ ] Verify scheme colour values against a reference: all but Windows
       Standard were written from memory.
-- [ ] Luna colour variants (Olive Green, Silver). Luna and Whistler are
-      approximations; tune against references.
+- [ ] Luna colour variants (Olive Green, Silver). Luna is an
+      approximation; tune against references.
+- [~] Whistler is the "Watercolor" look, matched against screenshots
+      (frame, caption mosaic, caption buttons, buttons, fields, tabs, scroll
+      bars, taskbar). Not yet: the Windows 2000 and 7 Start menus still use
+      the older silvery Whistler colours; menus, group boxes, the window
+      icon and inactive colours are guesses; the XP-style Start menu (as in
+      Watercolor screenshots) doesn't exist yet.
 - [ ] Font fallback: Tahoma/Trebuchet aren't shipped; DejaVu/Noto stand in.
 
 ## Dialogs and libxdui
@@ -143,8 +149,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       window and stretched buttons; our apps use `xd_message_box` instead.
 - [ ] The selected tab doesn't overlap its neighbours by 2px as in Windows
       (GTK ignores the negative margins).
-- [?] Luna/Whistler tabs, group boxes, combo boxes and check glyphs: only
-      Classic has been looked at since they were restyled.
+- [?] Luna tabs, group boxes, combo boxes and check glyphs: only Classic
+      and Whistler have been looked at since they were restyled.
 - [?] Luna/Whistler visuals beyond the file manager's window, and every
       scheme other than Windows Standard: only checked to parse (unit test),
       not looked at.

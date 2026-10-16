@@ -164,7 +164,7 @@ static s7_palette palette(const xd_theme *t) {
             .left_hot = xd_rgba_hex(0xE4ECF8),
             .left_hot_text = xd_rgba_hex(0x10265A),
             .left_hot_border = xd_rgba_hex(0x9AB0D6),
-            .right_bg = xd_rgba_alpha(xd_rgba_hex(0xC9D6EA), 0.96),
+            .right_bg = xd_rgba_hex(0xC9D6EA),
             .right_text = xd_rgba_hex(0x10265A),
             .right_dim = xd_rgba_hex(0x7A8AA8),
             .right_hot = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.55),
@@ -176,7 +176,9 @@ static s7_palette palette(const xd_theme *t) {
     case XD_STYLE_COUNT:
         break;
     }
-    /* Luna: white list, dark navy see-through panel (the reference look). */
+    /* Luna: white list, dark navy panel (the reference look). The panels are
+     * opaque: Windows 7 blurs what's behind its glass, and without blur in
+     * the compositor a see-through panel just shows the wallpaper sharply. */
     return (s7_palette){
         .left_bg = xd_rgba_hex(0xFFFFFF),
         .left_text = xd_rgba_hex(0x000000),
@@ -184,7 +186,7 @@ static s7_palette palette(const xd_theme *t) {
         .left_hot = xd_rgba_hex(0xDCEBFC),
         .left_hot_text = xd_rgba_hex(0x000000),
         .left_hot_border = xd_rgba_hex(0x7DA2CE),
-        .right_bg = xd_rgba_alpha(xd_rgba_hex(0x1B3A5C), 0.94),
+        .right_bg = xd_rgba_hex(0x1B3A5C),
         .right_text = xd_rgba_hex(0xFFFFFF),
         .right_dim = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.45),
         .right_hot = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.18),
@@ -776,9 +778,9 @@ static void render(xd_start7 *m) {
         xd_rect inset = D((xd_rect){S7_PAD - 2, S7_TOP + S7_PAD - 2, S7_LEFT_W - 2 * S7_PAD + 4,
                                     S7_H - S7_TOP - 2 * S7_PAD + 4},
                           s);
-        xd_fill_rect(cr, D((xd_rect){0, S7_TOP, S7_PAD, S7_H - S7_TOP}, s), p.right_bg);
-        xd_fill_rect(cr, D((xd_rect){0, S7_TOP, S7_LEFT_W, S7_PAD}, s), p.right_bg);
-        xd_fill_rect(cr, D((xd_rect){0, S7_H - S7_PAD, S7_LEFT_W, S7_PAD}, s), p.right_bg);
+        /* The whole panel behind the list, including the gap between the
+         * list and the right column. */
+        xd_fill_rect(cr, left, p.right_bg);
         xd_fill_rect(cr, inset, p.left_bg);
         xd_draw_bevel(cr, inset, XD_MAX(xd_tpx(&t, 1), 1), p.frame, p.frame);
         xd_draw_bevel(cr, fr, XD_MAX(xd_tpx(&t, 1), 1), p.frame, p.frame);

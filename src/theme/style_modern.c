@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: MIT
- * Rounded, gradient-based visual styles: Luna (XP) and Whistler.
- *
- * Both share one renderer driven by a palette, so a new style in this
- * family is just another palette. All artwork is drawn procedurally; no
+ * Rounded, gradient-based visual style: Luna (XP). Driven by a palette,
+ * so another style in this family is just another palette. (Whistler has
+ * its own flat renderer in style_whistler.c.) All artwork is drawn procedurally; no
  * bitmaps from any other product are used.
  */
 #include "style.h"
@@ -326,7 +325,6 @@ static void modern_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const ch
 
 /* ---- palettes ----------------------------------------------------------- */
 
-#define STOPS2(a, b) {.at = {0, 1}, .rgb = {a, b}, .n = 2}
 #define STOPS3(a, oa, b, c) {.at = {0, oa, 1}, .rgb = {a, b, c}, .n = 3}
 #define STOPS4(a, oa, b, ob, c, d) {.at = {0, oa, ob, 1}, .rgb = {a, b, c, d}, .n = 4}
 
@@ -383,62 +381,9 @@ static const modern_palette luna = {
     .banner_bottom = 0x3A6EE8,
 };
 
-/* Whistler: the pale, silvery look of the pre-release builds. */
-static const modern_palette whistler = {
-    .name = "Whistler",
-    .caption_h = 28,
-    .border = 4,
-    .corner = 5,
-    .caption_active = STOPS4(0xF4F7FC, 0.12, 0xD9E3F2, 0.6, 0xC0CFE6, 0xA9BCDA),
-    .caption_inactive = STOPS3(0xF4F4F4, 0.6, 0xE2E2E2, 0xD4D4D4),
-    .frame_active = 0xB3C3DD,
-    .frame_inactive = 0xD6D6D6,
-    .frame_outline = 0x5F7598,
-    .title_active = 0x10265A,
-    .title_inactive = 0x8A8A8A,
-    .title_shadow = 0x10265A,
-    .title_font = {.family = "Tahoma, DejaVu Sans, sans-serif", .size_pt = 9, .bold = true},
-
-    .dialog = 0xEFF1F5,
-    .button_face = STOPS3(0xFFFFFF, 0.7, 0xEEF1F6, 0xD7DEEA),
-    .button_outline = 0x5F7598,
-    .button_hot = 0x8FB2E8,
-    .button_focus = 0xA9BCDA,
-
-    .capbtn = STOPS3(0xFFFFFF, 0.5, 0xE4EAF4, 0xC9D5E8),
-    .capbtn_close = STOPS3(0xFFFFFF, 0.5, 0xF1DCDC, 0xE3B9B9),
-    .capbtn_border = 0x7387A8,
-    .capbtn_glyph = 0x24365E,
-
-    .check_border = 0x5F7598,
-    .check_mark = 0x24365E,
-
-    .taskbar_h = 30,
-    .taskbar = STOPS4(0xFFFFFF, 0.08, 0xE9EEF6, 0.5, 0xD5DEEC, 0xBCC9DE),
-    .tray = STOPS2(0xE3E9F3, 0xC9D4E6),
-    .tray_edge = 0x9AAAC6,
-    .start = STOPS3(0xFFFFFF, 0.5, 0xE6ECF6, 0xBFCCE2),
-    .task = STOPS2(0xFAFBFD, 0xDCE3EF),
-    .task_active = STOPS2(0xC4D1E6, 0xDDE4F0),
-    .taskbar_text = 0x10265A,
-    .start_text = 0x10265A,
-    .start_font = {.family = "Tahoma, DejaVu Sans, sans-serif", .size_pt = 10, .bold = true},
-    .start_radius = 6,
-    .start_label = "Start",
-    .menu_bg = 0xFAFBFD,
-    .menu_border = 0x8D9DBF,
-    .menu_text = 0x10265A,
-    .menu_hilight = 0xD6E0F1,
-    .menu_hilight_text = 0x10265A,
-    .menu_hilight_border = 0x8FA6CF,
-    .menu_disabled = 0xA0A8B8,
-    .menu_separator = 0xC3CCDD,
-    .banner_top = 0x5F7598,
-    .banner_bottom = 0xA9BCDA,
-};
-
 static const modern_palette *pal(const xd_theme *t) {
-    return t->style == XD_STYLE_WHISTLER ? &whistler : &luna;
+    (void)t;
+    return &luna;
 }
 
 static void modern_menu_palette(const xd_theme *t, xd_menu_palette *p) {
@@ -464,16 +409,15 @@ static void modern_menu_palette(const xd_theme *t, xd_menu_palette *p) {
 
 static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
     const modern_palette *m = pal(t);
-    bool is_whistler = t->style == XD_STYLE_WHISTLER;
     xd_rgba white = xd_rgba_hex(0xFFFFFF);
     *c = (xd_toolkit_colors){
         .bg = xd_rgba_hex(m->dialog),
-        .fg = xd_rgba_hex(is_whistler ? 0x10265A : 0x000000),
+        .fg = xd_rgba_hex(0x000000),
         .base = white,
         .text = xd_rgba_hex(0x000000),
         .disabled = xd_rgba_hex(0xACA899),
-        .selected_bg = xd_rgba_hex(is_whistler ? 0xA9BCDA : 0x316AC5),
-        .selected_fg = is_whistler ? xd_rgba_hex(0x10265A) : white,
+        .selected_bg = xd_rgba_hex(0x316AC5),
+        .selected_fg = white,
         .tooltip_bg = xd_rgba_hex(0xFFFFE1),
         .tooltip_fg = xd_rgba_hex(0x000000),
         .menu_bg = xd_rgba_hex(m->menu_bg),
@@ -486,7 +430,7 @@ static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
         .title_bg2 = xd_rgba_hex(m->caption_active.rgb[m->caption_active.n - 1]),
         .title_fg = xd_rgba_hex(m->title_active),
         .face = xd_rgba_hex(m->dialog),
-        .field_border = xd_rgba_hex(is_whistler ? 0x8D9DBF : 0x7F9DB9),
+        .field_border = xd_rgba_hex(0x7F9DB9),
         .button_top = xd_rgba_hex(m->button_face.rgb[0]),
         .button_bottom = xd_rgba_hex(m->button_face.rgb[m->button_face.n - 1]),
         .button_border = xd_rgba_hex(m->button_outline),
@@ -494,11 +438,11 @@ static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
         .button_focus = xd_rgba_hex(m->button_focus),
         .check_border = xd_rgba_hex(m->check_border),
         .check_mark = xd_rgba_hex(m->check_mark),
-        .thumb_top = xd_rgba_hex(is_whistler ? 0xF4F7FC : 0xC8D6FB),
-        .thumb_bottom = xd_rgba_hex(is_whistler ? 0xC9D5E8 : 0xB0C8F8),
-        .track = xd_rgba_hex(is_whistler ? 0xF2F4F8 : 0xF3F1EC),
-        .tab_border = xd_rgba_hex(is_whistler ? 0x8D9DBF : 0x919B9C),
-        .tab_hot = xd_rgba_hex(is_whistler ? 0x8FB2E8 : 0xFFC83C),
+        .thumb_top = xd_rgba_hex(0xC8D6FB),
+        .thumb_bottom = xd_rgba_hex(0xB0C8F8),
+        .track = xd_rgba_hex(0xF3F1EC),
+        .tab_border = xd_rgba_hex(0x919B9C),
+        .tab_hot = xd_rgba_hex(0xFFC83C),
     };
 }
 
@@ -522,4 +466,3 @@ static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
     }
 
 MODERN_OPS(xd_style_luna, "Luna");
-MODERN_OPS(xd_style_whistler, "Whistler");

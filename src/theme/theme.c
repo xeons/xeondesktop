@@ -357,18 +357,23 @@ void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
 /* ---- dialog controls -------------------------------------------------------- */
 
 static bool classic(const xd_theme *t) { return t->style == XD_STYLE_CLASSIC; }
+static bool watercolor(const xd_theme *t) { return t->style == XD_STYLE_WHISTLER; }
 
 /* XP's flat control border colour per style. */
 static xd_rgba flat_border(const xd_theme *t) {
-    return xd_rgba_hex(t->style == XD_STYLE_WHISTLER ? 0x8D9DBF : 0x7F9DB9);
+    return xd_rgba_hex(watercolor(t) ? 0x646464 : 0x7F9DB9);
 }
+
+/* Whistler's flat face, tab and page colours. */
+static const uint32_t WC_FACE = 0xEBEBE4, WC_TAB = 0xDBDBCE, WC_PAGE = 0xF3F3EF,
+                      WC_THUMB_BORDER = 0xC1C1BB;
 
 xd_field_colors xd_theme_field_colors(const xd_theme *t) {
     return (xd_field_colors){
         .text = xd_sys(t, XD_COLOR_WINDOW_TEXT),
         .disabled_text = xd_sys(t, XD_COLOR_GRAY_TEXT),
-        .selection = xd_sys(t, XD_COLOR_HILIGHT),
-        .selection_text = xd_sys(t, XD_COLOR_HILIGHT_TEXT),
+        .selection = watercolor(t) ? xd_rgba_hex(0x316AC5) : xd_sys(t, XD_COLOR_HILIGHT),
+        .selection_text = watercolor(t) ? xd_rgba_hex(0xFFFFFF) : xd_sys(t, XD_COLOR_HILIGHT_TEXT),
     };
 }
 
@@ -376,7 +381,7 @@ xd_rect xd_theme_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disa
     int px = xd_tpx(t, 1);
     xd_rgba fill = disabled ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_sys(t, XD_COLOR_WINDOW);
     if (!classic(t)) {
-        xd_fill_rect(cr, r, disabled ? xd_rgba_hex(0xEBEBE4) : xd_sys(t, XD_COLOR_WINDOW));
+        xd_fill_rect(cr, r, disabled ? xd_rgba_hex(WC_FACE) : xd_sys(t, XD_COLOR_WINDOW));
         return xd_draw_bevel(cr, r, px, flat_border(t), flat_border(t));
     }
     /* EDGE_SUNKEN */
@@ -398,7 +403,11 @@ void xd_theme_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, ui
     int px = xd_tpx(t, 1);
     xd_rgba arrow = xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_BUTTON_TEXT);
 
-    if (classic(t)) {
+    if (watercolor(t)) {
+        /* Just a black arrow on the face, inside the field's border. */
+        xd_fill_rect(cr, r, xd_rgba_hex(pressed ? 0xD8DAD4 : WC_FACE));
+        arrow = xd_rgba_hex(disabled ? 0xA0A0A0 : 0x000000);
+    } else if (classic(t)) {
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
         if (pressed) {
             xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_SHADOW),
@@ -494,6 +503,20 @@ void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                      xd_sys(t, XD_COLOR_BUTTON_SHADOW));
         xd_fill_rect(cr, (xd_rect){tab.x + tab.w - px, tab.y + 2 * px, px, tab.h - 2 * px},
                      xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
+    } else if (watercolor(t)) {
+        /* Flat: darker unselected tabs split by short white lines; the
+         * selected one is lighter with a white edge, joining the page. */
+        xd_fill_rect(cr, tab, xd_rgba_hex(selected ? WC_PAGE : WC_TAB));
+        if (selected) {
+            xd_rgba white = xd_rgba_hex(0xFFFFFF);
+            xd_fill_rect(cr, (xd_rect){tab.x, tab.y, tab.w, px}, white);
+            xd_fill_rect(cr, (xd_rect){tab.x, tab.y, px, tab.h}, white);
+            xd_fill_rect(cr, (xd_rect){tab.x + tab.w - px, tab.y, px, tab.h}, white);
+        } else {
+            xd_fill_rect(cr, (xd_rect){tab.x + tab.w - px, tab.y + xd_tpx(t, 4), px,
+                                       tab.h - xd_tpx(t, 8)},
+                         xd_rgba_hex(0xFFFFFF));
+        }
     } else {
         /* XP: white-to-beige tab, orange top line when hot or selected. */
         xd_rgba border = xd_rgba_hex(0x919B9C);
@@ -521,6 +544,8 @@ void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
 }
 
 xd_rgba xd_theme_tab_page_color(const xd_theme *t) {
+    if (watercolor(t))
+        return xd_rgba_hex(WC_PAGE);
     return classic(t) ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_rgba_hex(0xFCFCFE);
 }
 
@@ -534,6 +559,11 @@ void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
                       xd_sys(t, XD_COLOR_BUTTON_SHADOW));
         return;
     }
+    if (watercolor(t)) {
+        xd_fill_rect(cr, r, xd_rgba_hex(WC_PAGE));
+        xd_draw_bevel(cr, r, px, xd_rgba_hex(0xFFFFFF), xd_rgba_hex(WC_THUMB_BORDER));
+        return;
+    }
     xd_rgba border = xd_rgba_hex(0x919B9C);
     xd_fill_gradient(cr, r, xd_rgba_hex(0xFCFCFE), xd_rgba_hex(0xF4F3EE), false);
     xd_draw_bevel(cr, r, px, border, border);
@@ -542,8 +572,8 @@ void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
 void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label) {
     int px = xd_tpx(t, 1);
     xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
-                               classic(t) ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
-                                          : xd_rgba_hex(0x0046D5),
+                               classic(t) || watercolor(t) ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
+                                                           : xd_rgba_hex(0x0046D5),
                                XD_ALIGN_START);
     int th = xd_tpx(t, 14);
     int top = r.y + th / 2;
@@ -554,6 +584,9 @@ void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const cha
         xd_rgba hi = xd_sys(t, XD_COLOR_BUTTON_HILIGHT);
         xd_draw_bevel(cr, (xd_rect){box.x + px, box.y + px, box.w - px, box.h - px}, px, hi, hi);
         xd_draw_bevel(cr, (xd_rect){box.x, box.y, box.w - px, box.h - px}, px, sh, sh);
+    } else if (watercolor(t)) {
+        xd_rgba border = xd_rgba_hex(WC_THUMB_BORDER);
+        xd_draw_bevel(cr, box, px, border, border);
     } else {
         xd_rgba border = xd_rgba_hex(0xD0D0BF);
         double rad = xd_tpx(t, 3);
@@ -592,8 +625,9 @@ static void scroll_arrow(const xd_theme *t, cairo_t *cr, xd_rect r, bool up, boo
     double h = xd_tpx(t, 4);
     double x = r.x + (r.w - w) / 2;
     double y = r.y + (r.h - h) / 2;
-    xd_set_color(cr, classic(t) ? xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_BUTTON_TEXT)
-                                : xd_rgba_hex(disabled ? 0xC9C7BA : 0x4D6185));
+    xd_set_color(cr, classic(t)      ? xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_BUTTON_TEXT)
+                     : watercolor(t) ? xd_rgba_hex(disabled ? 0xA0A0A0 : 0x000000)
+                                     : xd_rgba_hex(disabled ? 0xC9C7BA : 0x4D6185));
     if (up) {
         cairo_move_to(cr, x + w / 2, y);
         cairo_line_to(cr, x + w, y + h);
@@ -607,8 +641,18 @@ static void scroll_arrow(const xd_theme *t, cairo_t *cr, xd_rect r, bool up, boo
     cairo_fill(cr);
 }
 
-static void scroll_button(const xd_theme *t, cairo_t *cr, xd_rect r) {
+/* Watercolor's arrows have no button; only the thumb is drawn: white with
+ * a two-pixel grey border. */
+static void scroll_button(const xd_theme *t, cairo_t *cr, xd_rect r, bool thumb) {
     int px = xd_tpx(t, 1);
+    if (watercolor(t)) {
+        if (thumb) {
+            xd_fill_rect(cr, r, xd_rgba_hex(0xFFFFFF));
+            xd_draw_bevel(cr, xd_rect_inset4(r, px, 0, px, 0), 2 * px,
+                          xd_rgba_hex(WC_THUMB_BORDER), xd_rgba_hex(WC_THUMB_BORDER));
+        }
+        return;
+    }
     if (classic(t)) {
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
         xd_rect in = xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_LIGHT),
@@ -640,17 +684,17 @@ void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int fir
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_SCROLLBAR));
         xd_fill_rect(cr, r, xd_rgba_alpha(xd_sys(t, XD_COLOR_BUTTON_HILIGHT), 0.5));
     } else {
-        xd_fill_rect(cr, r, xd_rgba_hex(0xF3F1EC));
+        xd_fill_rect(cr, r, xd_rgba_hex(watercolor(t) ? WC_FACE : 0xF3F1EC));
     }
     xd_rect up = {r.x, r.y, r.w, arrow};
     xd_rect down = {r.x, r.y + r.h - arrow, r.w, arrow};
-    scroll_button(t, cr, up);
+    scroll_button(t, cr, up, false);
     scroll_arrow(t, cr, up, true, disabled);
-    scroll_button(t, cr, down);
+    scroll_button(t, cr, down, false);
     scroll_arrow(t, cr, down, false, disabled);
     xd_rect thumb = xd_theme_vscrollbar_thumb(t, r, first, page, total);
     if (thumb.h > 0)
-        scroll_button(t, cr, thumb);
+        scroll_button(t, cr, thumb, true);
 }
 
 void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,

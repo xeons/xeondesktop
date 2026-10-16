@@ -492,6 +492,104 @@ void xd_theme_gtk_asset(const xd_theme *t, xd_gtk_asset which, xd_strbuf *out) {
     }
 }
 
+
+/* ---- Whistler (Watercolor) ------------------------------------------------------------ */
+
+/* Flat, square controls: grey-bordered buttons with a white inner edge and
+ * a light blue ring when default, hovered or focused; #646464 field
+ * borders; flat tabs; button-less scroll arrows and a white thumb. */
+static void whistler(xd_strbuf *o) {
+    xd_strbuf_append(o, XD_STR(
+        "button {\n  background-image: none; background-color: #e5e7e1; color: #000000;\n"
+        "  border: 1px solid #808080; border-radius: 0;\n"
+        "  box-shadow: inset 1px 1px #ffffff, inset -1px -1px #bcbeb8;\n"
+        "  padding: 3px 10px; min-height: 0; text-shadow: none; -gtk-icon-shadow: none;\n}\n"
+        "button:hover, button:focus, button.default {\n  border-color: #6f89b0;\n"
+        "  box-shadow: inset 1px 1px #c7dcf6, inset -1px -1px #9bbce5, inset 0 0 0 3px #a8c8eb;\n}\n"
+        "button:active, button:checked {\n  background-color: #d8dad4; border-color: #808080;\n"
+        "  box-shadow: none; padding: 4px 9px 2px 11px;\n}\n"
+        "button:disabled { border-color: #c1c1bb; box-shadow: none; background-color: #ebebe4; }\n"
+        "button:disabled label { color: #a0a0a0; }\n"
+        "toolbar button, button.flat {\n  background-color: transparent; border-color: transparent;\n"
+        "  box-shadow: none; padding: 2px 4px;\n}\n"
+        "toolbar button:hover, button.flat:hover {\n  background-color: #e5e7e1; border-color: #808080;\n"
+        "  box-shadow: inset 1px 1px #ffffff;\n}\n"
+        "toolbar button:active, toolbar button:checked, button.flat:active, button.flat:checked {\n"
+        "  background-color: #d8dad4; border-color: #808080; box-shadow: none;\n}\n"
+        "toolbar { background-color: #ebebe4; padding: 2px; border-bottom: 1px solid #c1c1bb; }\n"
+        "entry, spinbutton {\n  background-color: #ffffff; color: #000000; border: 1px solid #646464;\n"
+        "  border-radius: 0; box-shadow: none; padding: 3px 4px; min-height: 0;\n}\n"
+        "entry:disabled, spinbutton:disabled { background-color: #ebebe4; }\n"
+        "scrolledwindow.frame, frame > border, .frame {\n  border: 1px solid #646464;\n"
+        "  border-radius: 0; box-shadow: none;\n}\n"
+        "check, radio {\n  min-width: 13px; min-height: 13px; background-image: none;\n"
+        "  background-color: #ffffff; border: 1px solid #646464; border-radius: 0;\n"
+        "  box-shadow: none; color: #000000; -gtk-icon-source: none; margin: 0 4px 0 0;\n}\n"
+        "radio { border-radius: 50%; }\n"
+        "check:hover, radio:hover { box-shadow: inset 0 0 0 1px #a8c8eb; }\n"
+        "check:disabled, radio:disabled { background-color: #ebebe4; border-color: #c1c1bb; }\n"
+        "menubar { background-color: #ebebe4; padding: 0; box-shadow: none; border: none; }\n"
+        "menubar > menuitem { padding: 2px 7px; }\n"
+        "menubar > menuitem:hover { background-color: #316ac5; color: #ffffff; }\n"
+        "menu, .menu, .context-menu {\n  background-color: #ffffff; color: #000000;\n"
+        "  border: 1px solid #808080; border-radius: 0; padding: 2px; box-shadow: none;\n}\n"
+        "menu menuitem { padding: 3px 20px 3px 4px; min-height: 16px; }\n"
+        "menu menuitem:hover { background-color: #316ac5; color: #ffffff; }\n"
+        "menu menuitem:disabled { color: #a0a0a0; }\n"
+        "menu separator { margin: 3px 2px; min-height: 1px; background-color: #c1c1bb; }\n"
+        "scrollbar {\n  -GtkScrollbar-has-backward-stepper: true;\n"
+        "  -GtkScrollbar-has-forward-stepper: true;\n  background-color: #ebebe4; border: none;\n}\n"
+        "scrollbar trough { background-color: #ebebe4; border: none; }\n"
+        "scrollbar slider {\n  min-width: 11px; min-height: 11px; background-color: #ffffff;\n"
+        "  border: 2px solid #c1c1bb; border-radius: 0; margin: 0 1px;\n}\n"
+        "scrollbar.horizontal slider { margin: 1px 0; }\n"
+        "scrollbar button {\n  min-width: 15px; min-height: 15px; background: none; border: none;\n"
+        "  box-shadow: none; color: #000000; padding: 0; margin: 0;\n}\n"
+        "scrollbar button:disabled { color: #a0a0a0; }\n"
+        "scrollbar.vertical button.up { -gtk-icon-source: -gtk-icontheme(\"pan-up-symbolic\"); }\n"
+        "scrollbar.vertical button.down { -gtk-icon-source: "
+        "-gtk-icontheme(\"pan-down-symbolic\"); }\n"
+        "scrollbar.horizontal button.up { -gtk-icon-source: "
+        "-gtk-icontheme(\"pan-start-symbolic\"); }\n"
+        "scrollbar.horizontal button.down { -gtk-icon-source: "
+        "-gtk-icontheme(\"pan-end-symbolic\"); }\n"));
+    /* Split in two: C limits the length of one string literal. */
+    xd_strbuf_append(o, XD_STR(
+        "notebook > header {\n  background-color: #ebebe4; border: none;\n"
+        "  border-bottom: 1px solid #ffffff; padding: 0 2px;\n}\n"
+        "notebook > header > tabs > tab {\n  background-color: #dbdbce; background-image: none;\n"
+        "  border: none; border-radius: 0; box-shadow: inset -1px 0 #ffffff;\n"
+        "  margin: 2px 0 0 0; padding: 2px 8px; min-height: 0; outline-offset: -3px;\n}\n"
+        "notebook > header > tabs > tab:checked {\n  background-color: #f3f3ef;\n"
+        "  border: 1px solid #ffffff; border-bottom: none; box-shadow: none;\n"
+        "  margin: 0 0 -1px 0; padding: 2px 8px 4px 8px;\n}\n"
+        "notebook > stack:not(:only-child) {\n  background-color: #f3f3ef; border: 1px solid;\n"
+        "  border-color: #ffffff #c1c1bb #c1c1bb #ffffff; border-top: none;\n}\n"
+        "frame { padding-left: 6px; }\n"
+        "frame > border { margin-left: -6px; border: 1px solid #c1c1bb; }\n"
+        "frame > label { margin: 0; padding: 0 2px; color: #000000; }\n"
+        "frame.xd-sunken { padding-left: 0; }\n"
+        "frame.xd-sunken > border { margin-left: 0; border-color: #c1c1bb #ffffff #ffffff #c1c1bb; }\n"
+        "combobox button.combo {\n  background-image: none; background-color: #ffffff; color: #000000;\n"
+        "  border: 1px solid #646464; border-radius: 0; box-shadow: none; padding: 0 0 0 3px;\n}\n"
+        "combobox button.combo arrow {\n  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");\n"
+        "  min-width: 13px; min-height: 13px; margin: 1px; padding: 1px;\n"
+        "  background-color: #ebebe4; color: #000000; border: none;\n}\n"
+        "treeview.view header button, columnview header button {\n"
+        "  background-color: #e5e7e1; border: none; border-right: 1px solid #a0a0a0;\n"
+        "  border-bottom: 1px solid #808080; border-radius: 0; box-shadow: inset 1px 1px #ffffff;\n"
+        "  padding: 1px 6px;\n}\n"
+        "paned > separator { background-color: #ebebe4; min-width: 4px; min-height: 4px;\n"
+        "  background-image: none; }\n"
+        "separator { background-color: #c1c1bb; min-width: 1px; min-height: 1px; }\n"
+        "scale trough { background-color: #ffffff; border: 1px solid #646464; border-radius: 0;\n"
+        "  min-height: 4px; min-width: 4px; }\n"
+        "scale slider { min-width: 11px; min-height: 21px; background-color: #e5e7e1;\n"
+        "  border: 1px solid #808080; border-radius: 0; box-shadow: inset 1px 1px #ffffff;\n"
+        "  margin: -9px 0; }\n"
+        "scale highlight { background: none; }\n"));
+}
+
 void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     xd_toolkit_colors c;
     xd_theme_toolkit_colors(t, &c);
@@ -504,6 +602,8 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     common(&c, out);
     if (c.classic)
         classic(&c, out);
+    else if (t->style == XD_STYLE_WHISTLER)
+        whistler(out);
     else
         modern(&c, out);
     /* Windows' pixel check mark and radio dot, drawn by xd_theme_gtk_asset. */
