@@ -31,6 +31,7 @@ void xd_settings_defaults(xd_settings *s) {
         .wallpaper_mode = XD_WALLPAPER_FILL,
         .menu_transitions = true,
         .full_window_drag = true,
+        .quick_launch = true,
         .screensaver_wait = 15,
     };
 }
@@ -102,6 +103,9 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &s->large_icons);
         else if (KEY("HideKeyboardCues"))
             parse_bool(v, &s->hide_keyboard_cues);
+    } else if (SEC("Taskbar")) {
+        if (KEY("QuickLaunch"))
+            parse_bool(v, &s->quick_launch);
     } else if (SEC("ScreenSaver")) {
         if (KEY("Name")) {
             copy_into(s->screensaver, sizeof(s->screensaver), v);
@@ -159,12 +163,13 @@ void xd_settings_serialize(const xd_settings *s, xd_strbuf *out) {
                       "[Desktop]\nWallpaper=%s\nWallpaperMode=%s\n\n"
                       "[Effects]\nMenuTransitions=%s\nFullWindowDrag=%s\nLargeIcons=%s\n"
                       "HideKeyboardCues=%s\n\n"
+                      "[Taskbar]\nQuickLaunch=%s\n\n"
                       "[ScreenSaver]\nName=%s\nWait=%d\nPassword=%s\n",
                       xd_visual_style_name(s->style), s->scheme,
                       font_size_names[s->font_size], smoothing_names[s->font_smoothing],
                       s->wallpaper, mode_names[s->wallpaper_mode], b(s->menu_transitions),
                       b(s->full_window_drag), b(s->large_icons), b(s->hide_keyboard_cues),
-                      s->screensaver, s->screensaver_wait, b(s->screensaver_password));
+                      b(s->quick_launch), s->screensaver, s->screensaver_wait, b(s->screensaver_password));
 }
 
 bool xd_settings_equal(const xd_settings *a, const xd_settings *b) {

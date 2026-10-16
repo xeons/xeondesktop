@@ -267,6 +267,7 @@ executable(
   'src/shell/menu.c',
   'src/shell/startmenu.c',
   'src/shell/desktop.c',
+  'src/shell/quicklaunch.c',
   dependencies: [ui_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,

@@ -43,6 +43,9 @@ typedef struct xd_settings {
     bool large_icons;
     bool hide_keyboard_cues;
 
+    /* [Taskbar] */
+    bool quick_launch;
+
     /* [ScreenSaver] */
     char screensaver[64];
     int screensaver_wait; /* minutes */

@@ -63,8 +63,18 @@ static void handle_done(void *data, [[maybe_unused]] struct zwlr_foreign_topleve
     xd_taskbars_mark_dirty(t->shell);
 }
 
+static void forget_hidden(xd_shell *shell, xd_toplevel *t) {
+    for (size_t i = 0; i < shell->desktop_hidden_n; i++) {
+        if (shell->desktop_hidden[i] == t) {
+            shell->desktop_hidden[i] = shell->desktop_hidden[--shell->desktop_hidden_n];
+            return;
+        }
+    }
+}
+
 static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *h) {
     xd_toplevel *t = data;
+    forget_hidden(t->shell, t);
     xd_taskbars_forget(t->shell, t);
     wl_list_remove(&t->link);
     zwlr_foreign_toplevel_handle_v1_destroy(h);
@@ -115,6 +125,32 @@ void xd_toplevels_init(xd_shell *shell) {
     if (shell->toplevel_manager != nullptr)
         zwlr_foreign_toplevel_manager_v1_add_listener(shell->toplevel_manager, &manager_listener,
                                                       shell);
+}
+
+void xd_show_desktop_toggle(xd_shell *shell) {
+    bool any_visible = false;
+    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
+        any_visible = any_visible || !t->minimized;
+    }
+    /* Second click with nothing shown since: bring back what we hid. */
+    if (!any_visible && shell->desktop_hidden_n > 0) {
+        for (size_t i = 0; i < shell->desktop_hidden_n; i++)
+            zwlr_foreign_toplevel_handle_v1_unset_minimized(shell->desktop_hidden[i]->handle);
+        shell->desktop_hidden_n = 0;
+        return;
+    }
+    shell->desktop_hidden_n = 0;
+    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
+        if (t->minimized)
+            continue;
+        if (shell->desktop_hidden_n == shell->desktop_hidden_cap) {
+            shell->desktop_hidden_cap = shell->desktop_hidden_cap == 0 ? 8 : shell->desktop_hidden_cap * 2;
+            shell->desktop_hidden = xd_realloc_array(shell->desktop_hidden, shell->desktop_hidden_cap,
+                                                     sizeof(*shell->desktop_hidden));
+        }
+        shell->desktop_hidden[shell->desktop_hidden_n++] = t;
+        zwlr_foreign_toplevel_handle_v1_set_minimized(t->handle);
+    }
 }
 
 /* Windows' rule: clicking the button of the active window minimizes it;

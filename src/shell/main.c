@@ -506,12 +506,13 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             return EXIT_FAILURE;
         }
 
-        struct pollfd fds[5] = {
+        struct pollfd fds[6] = {
             {.fd = wl_display_get_fd(d), .events = POLLIN},
             {.fd = timer_fd, .events = POLLIN},
             {.fd = signal_fd, .events = POLLIN},
             {.fd = shell->menu_timer_fd, .events = POLLIN},
             {.fd = shell->settings_fd, .events = POLLIN},
+            {.fd = shell->quicklaunch.watch_fd, .events = POLLIN},
         };
         if (poll(fds, XD_ARRAY_LEN(fds), -1) < 0) {
             wl_display_cancel_read(d);
@@ -539,6 +540,11 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         }
         if (signal_fd >= 0 && (fds[2].revents & POLLIN))
             shell->running = false;
+        if (shell->quicklaunch.watch_fd >= 0 && (fds[5].revents & POLLIN) &&
+            xd_quicklaunch_watch_changed(shell)) {
+            xd_quicklaunch_reload(shell);
+            xd_taskbars_forget_layout(shell);
+        }
         if (shell->settings_fd >= 0 && (fds[4].revents & POLLIN) &&
             xd_settings_watch_changed(shell->settings_fd))
             apply_settings(shell, false);
@@ -559,6 +565,7 @@ int main(int argc, char **argv) {
     shell.terminal = term != nullptr && term[0] != '\0' ? term : "alacritty";
     shell.menu_timer_fd = -1;
     shell.settings_fd = -1;
+    shell.quicklaunch.watch_fd = -1;
     xd_scheme_init_default(&shell.scheme);
     wl_list_init(&shell.taskbars);
     wl_list_init(&shell.toplevels);
@@ -589,6 +596,7 @@ int main(int argc, char **argv) {
     shell.icons = xd_icons_create(icon_theme != nullptr ? icon_theme : "breeze");
     apply_settings(&shell, true);
     shell.settings_fd = xd_settings_watch();
+    xd_quicklaunch_init(&shell);
     xd_apps_load(&shell.apps, "XeonDesktop");
     xd_menu_tree_init(&shell.menu_tree);
     xd_start_menu_build(&shell);
@@ -627,6 +635,8 @@ int main(int argc, char **argv) {
     }
     xd_menu_tree_free(&shell.menu_tree);
     xd_apps_free(&shell.apps);
+    xd_quicklaunch_finish(&shell);
+    xd_free(shell.desktop_hidden);
     xd_icons_destroy(shell.icons);
     if (shell.keyboard != nullptr)
         wl_keyboard_release(shell.keyboard);

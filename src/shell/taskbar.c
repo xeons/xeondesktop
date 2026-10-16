@@ -41,6 +41,16 @@ void xd_taskbars_render_dirty(xd_shell *shell) {
     }
 }
 
+void xd_taskbars_forget_layout(xd_shell *shell) {
+    XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
+        bar->quick_count = 0;
+        bar->task_count = 0;
+        bar->hot = XD_HIT_NONE;
+        bar->pressed = XD_HIT_NONE;
+        bar->dirty = true;
+    }
+}
+
 void xd_taskbar_retheme(xd_taskbar *bar) {
     /* The height follows the scheme (font size changes it). */
     int h = logical_height(bar->shell);
@@ -89,6 +99,45 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     if (shell->start_menu != nullptr && shell->start_bar == bar)
         start_state |= XD_STATE_PRESSED;
     xd_theme_draw_start_button(t, cr, bar->start_rect, start_state);
+    int after_start = bar->start_rect.x + bar->start_rect.w + xd_tpx(t, 2);
+
+    /* Quick Launch: grip, small flat icon buttons, grip. */
+    const xd_quicklaunch *ql = &shell->quicklaunch;
+    bar->quick_count = 0;
+    if (shell->settings.quick_launch && ql->count > 0) {
+        if (ql->count > bar->quick_cap) {
+            bar->quick_cap = ql->count;
+            bar->quick_rects = xd_realloc_array(bar->quick_rects, bar->quick_cap,
+                                                sizeof(*bar->quick_rects));
+        }
+        int grip = xd_theme_toolbar_grip_width(t);
+        int qy = classic ? inset_top : xd_tpx(t, 3);
+        int qh = classic ? button_h : dh - xd_tpx(t, 6);
+        xd_theme_draw_toolbar_grip(t, cr, (xd_rect){after_start, qy, grip, qh});
+        int qx = after_start + grip + xd_tpx(t, 1);
+        int qw = xd_tpx(t, 23);
+        int icon = xd_tpx(t, 16);
+        for (size_t i = 0; i < ql->count; i++) {
+            xd_rect b = {qx, qy, qw, qh};
+            bar->quick_rects[i] = b;
+            bar->quick_count++;
+            xd_theme_draw_toolbar_button(t, cr, b, button_state(bar, XD_HIT_QUICK - (int)i));
+            const char *names[] = {ql->items[i].icon, "application-x-executable"};
+            cairo_surface_t *img = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), icon);
+            if (img != nullptr) {
+                int pressed = (bar->pressed == XD_HIT_QUICK - (int)i &&
+                               bar->hot == XD_HIT_QUICK - (int)i)
+                                  ? xd_tpx(t, 1)
+                                  : 0;
+                cairo_set_source_surface(cr, img, b.x + (b.w - icon) / 2 + pressed,
+                                         b.y + (b.h - icon) / 2 + pressed);
+                cairo_paint(cr);
+            }
+            qx += qw;
+        }
+        xd_theme_draw_toolbar_grip(t, cr, (xd_rect){qx + xd_tpx(t, 2), qy, grip, qh});
+        after_start = qx + xd_tpx(t, 2) + grip;
+    }
 
     /* Notification area, sized to the clock like Windows does. */
     xd_text_style clock_style = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_END);
@@ -105,7 +154,7 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
         return;
 
     int gap = xd_tpx(t, XD_TASK_GAP);
-    int x0 = bar->start_rect.x + bar->start_rect.w + xd_tpx(t, 6);
+    int x0 = after_start + xd_tpx(t, 4);
     int x1 = bar->tray_rect.x - xd_tpx(t, 6);
     int avail = x1 - x0;
     int ni = (int)XD_MIN(n, (size_t)INT32_MAX / 2);
@@ -190,6 +239,10 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
         return XD_HIT_START;
     if (rect_contains(bar->tray_rect, x, y))
         return XD_HIT_TRAY;
+    for (size_t i = 0; i < bar->quick_count; i++) {
+        if (rect_contains(bar->quick_rects[i], x, y))
+            return XD_HIT_QUICK - (int)i;
+    }
     for (size_t i = 0; i < bar->task_count; i++) {
         if (rect_contains(bar->task_rects[i], x, y))
             return (int)i;
@@ -253,6 +306,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         return; /* released somewhere else: cancel, like a real button */
     if (target >= 0 && (size_t)target < bar->task_count)
         xd_toplevel_click(bar->task_views[target]);
+    else if (target <= XD_HIT_QUICK)
+        xd_quicklaunch_activate(bar->shell, (size_t)(XD_HIT_QUICK - target));
 }
 
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel) {
@@ -261,6 +316,7 @@ void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel) {
             if (bar->task_views[i] == toplevel) {
                 /* Indices shift; drop layout until the next render. */
                 bar->task_count = 0;
+                bar->quick_count = 0;
                 bar->hot = XD_HIT_NONE;
                 bar->pressed = XD_HIT_NONE;
                 bar->dirty = true;
@@ -360,5 +416,6 @@ void xd_taskbar_destroy(xd_taskbar *bar) {
         wl_output_release(bar->output);
     xd_free(bar->task_rects);
     xd_free(bar->task_views);
+    xd_free(bar->quick_rects);
     xd_free(bar);
 }

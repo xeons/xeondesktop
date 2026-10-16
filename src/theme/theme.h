@@ -127,6 +127,13 @@ int xd_theme_start_button_width(const xd_theme *t, cairo_t *cr);
 void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
 void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                const char *label);
+/* Taskbar toolbar grip (the ridge you drag a toolbar by), vertical. */
+int xd_theme_toolbar_grip_width(const xd_theme *t);
+void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* Flat toolbar button (Quick Launch): only its state is drawn; the caller
+ * paints the icon. state: XD_STATE_HOT, _PRESSED. */
+void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+
 /* Notification area well at the right end of the taskbar. */
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
 

@@ -301,7 +301,11 @@ static void test_apps(void) {
     CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=A\nExec=a\n"
                               "OnlyShowIn=XeonDesktop;\n"),
                        XD_STR("a.desktop"), "XeonDesktop", &arena, &app));
-    CHECK(strcmp(app.folder, "Other") == 0);
+    CHECK(strcmp(app.folder, "Other") == 0 && app.action == nullptr);
+    CHECK(xd_app_parse(XD_STR("[Desktop Entry]\nType=Application\nName=Show Desktop\nExec=true\n"
+                              "X-XeonDesktop-Action=show-desktop\n"),
+                       XD_STR("s.desktop"), "XeonDesktop", &arena, &app));
+    CHECK(app.action != nullptr && strcmp(app.action, "show-desktop") == 0);
 
     /* Field codes. */
     char *e = xd_app_expand_exec(&arena, XD_STR("app %f %F %u %U --pct=100%% %c %i"), "It's",

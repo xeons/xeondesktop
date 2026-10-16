@@ -299,6 +299,56 @@ int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label) 
     return xd_text_width(cr, label, &st);
 }
 
+/* ---- taskbar toolbars ---------------------------------------------------------- */
+
+int xd_theme_toolbar_grip_width(const xd_theme *t) {
+    return t->style == XD_STYLE_CLASSIC ? xd_tpx(t, 6) : xd_tpx(t, 8);
+}
+
+void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    int px = xd_tpx(t, 1);
+    if (t->style == XD_STYLE_CLASSIC) {
+        /* Windows 2000: a thin raised bar, inset from top and bottom. */
+        xd_rect bar = {r.x + xd_tpx(t, 2), r.y + xd_tpx(t, 2), xd_tpx(t, 3), r.h - xd_tpx(t, 4)};
+        xd_draw_bevel(cr, bar, px, xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+                      xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+        return;
+    }
+    /* XP: a column of dots with highlights. */
+    int dot = XD_MAX(px * 2, 2);
+    int x = r.x + (r.w - dot) / 2;
+    for (int y = r.y + xd_tpx(t, 5); y + dot <= r.y + r.h - xd_tpx(t, 4); y += dot * 2) {
+        xd_fill_rect(cr, (xd_rect){x + px, y + px, dot, dot}, xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.6));
+        xd_fill_rect(cr, (xd_rect){x, y, dot, dot}, xd_rgba_alpha(xd_rgba_hex(0x000000), 0.45));
+    }
+}
+
+void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    bool hot = state & XD_STATE_HOT;
+    bool pressed = state & XD_STATE_PRESSED;
+    if (!hot && !pressed)
+        return;
+    int px = xd_tpx(t, 1);
+    if (t->style == XD_STYLE_CLASSIC) {
+        /* Windows 2000 flat buttons: a 1px edge appears on hover. */
+        if (pressed)
+            xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+                          xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
+        else
+            xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+                          xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+        return;
+    }
+    double rad = xd_tpx(t, 2);
+    xd_path_rounded(cr, r.x, r.y, r.w, r.h, rad, rad, rad, rad);
+    xd_set_color(cr, pressed ? xd_rgba_alpha(xd_rgba_hex(0x000000), 0.25)
+                             : xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.3));
+    cairo_fill_preserve(cr);
+    xd_set_color(cr, xd_rgba_alpha(xd_rgba_hex(pressed ? 0x000000 : 0xFFFFFF), 0.5));
+    cairo_set_line_width(cr, px);
+    cairo_stroke(cr);
+}
+
 /* ---- dialog controls -------------------------------------------------------- */
 
 static bool classic(const xd_theme *t) { return t->style == XD_STYLE_CLASSIC; }

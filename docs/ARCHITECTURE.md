@@ -227,7 +227,17 @@ Applets that make sense on Linux:
   Clicking the active window's button minimizes it, as in Windows.
   Grouping is optional: always, never, or when the taskbar is full (XP's
   rule).
-- Quick Launch: a folder of `.desktop` files, drag and drop to reorder.
+- Quick Launch: a folder of `.desktop` files or symlinks
+  (`~/.local/share/xeondesktop/quicklaunch/`), ordered by name and watched
+  with inotify. Show Desktop is a `.desktop` file with
+  `X-XeonDesktop-Action=show-desktop`. Drag and drop to add and reorder
+  comes later.
+- Windows 7 Start menu layout (requested with Open-Shell's Windows 7 style
+  as the reference): white left column of pinned and frequent programs
+  with "All Programs" expanding in place and a search box; dark right column
+  with the user picture, user folders, Control Panel, Run and a Shut Down
+  split button. The see-through right panel starts semi-transparent; real
+  blur needs a compositor blur pass, which wlroots' scene graph lacks.
 - Notification area: StatusNotifierItem (KDE/Ayatana) host plus legacy XEmbed
   bridging is out of scope on Wayland. Clock, volume, network and battery
   are built in.
@@ -269,7 +279,8 @@ Applets that make sense on Linux:
    file with live re-theming, wallpaper, Display Properties (in progress:
    Appearance, Background and font smoothing work; Screen Saver needs idle
    detection, Settings needs output management, Advanced needs a per-item
-   editor). Still to do: Quick Launch, GTK3 theme generation.
+   editor), Quick Launch (done: folder of shortcuts, Show Desktop). Still
+   to do: drag and drop onto Quick Launch, tooltips, GTK3 theme generation.
 6. `libxdfolder`, `xd-files` (GTK3), `xd-thumbnailer`, desktop icons.
 7. Start menu XP and 7 layouts, grouping, tray (SNI).
 8. Remaining Control Panel applets (GTK3), roughly in table order.

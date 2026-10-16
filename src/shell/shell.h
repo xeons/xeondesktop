@@ -37,6 +37,14 @@ typedef struct xd_toplevel {
     bool maximized;
 } xd_toplevel;
 
+/* Quick Launch shortcuts. */
+typedef struct xd_quicklaunch {
+    xd_arena arena;
+    xd_app *items;
+    size_t count;
+    int watch_fd;
+} xd_quicklaunch;
+
 /* The desktop background of one output. */
 typedef struct xd_desktop {
     xd_shell *shell;
@@ -52,8 +60,9 @@ typedef struct xd_desktop {
     bool dirty;
 } xd_desktop;
 
-/* Hover/press targets on a taskbar. */
-enum { XD_HIT_NONE = -1, XD_HIT_START = -2, XD_HIT_TRAY = -3 };
+/* Hover/press targets on a taskbar: task buttons are >= 0; Quick Launch
+ * button i is XD_HIT_QUICK - i. */
+enum { XD_HIT_NONE = -1, XD_HIT_START = -2, XD_HIT_TRAY = -3, XD_HIT_QUICK = -100 };
 
 typedef struct xd_taskbar {
     struct wl_list link; /* xd_shell.taskbars */
@@ -76,6 +85,9 @@ typedef struct xd_taskbar {
      * window shown by task_rects[i]. */
     xd_rect start_rect;
     xd_rect tray_rect;
+    size_t quick_count;
+    size_t quick_cap;
+    xd_rect *quick_rects;
     size_t task_count;
     size_t task_cap;
     xd_rect *task_rects;
@@ -133,6 +145,11 @@ struct xd_shell {
     char clock[32];
     bool running;
 
+    xd_quicklaunch quicklaunch;
+    /* Windows minimized by Show Desktop, restored by the next click. */
+    xd_toplevel **desktop_hidden;
+    size_t desktop_hidden_n, desktop_hidden_cap;
+
     /* Outputs announced before startup finished binding globals. */
     bool started;
     xd_early_output early_outputs[32];
@@ -153,6 +170,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
 void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial);
 /* Forget a window that's going away. */
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
+/* Drop hit-test layout after Quick Launch changed (indices shift). */
+void xd_taskbars_forget_layout(xd_shell *shell);
 
 /* desktop.c */
 xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output);
@@ -173,5 +192,14 @@ void xd_start_menu_build(xd_shell *shell);
 /* toplevels.c */
 void xd_toplevels_init(xd_shell *shell);
 void xd_toplevel_click(xd_toplevel *t);
+/* Show Desktop: minimize everything, or restore what it minimized. */
+void xd_show_desktop_toggle(xd_shell *shell);
+
+/* quicklaunch.c */
+void xd_quicklaunch_init(xd_shell *shell);
+void xd_quicklaunch_reload(xd_shell *shell);
+bool xd_quicklaunch_watch_changed(xd_shell *shell);
+void xd_quicklaunch_finish(xd_shell *shell);
+void xd_quicklaunch_activate(xd_shell *shell, size_t index);
 
 #endif

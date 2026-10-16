@@ -30,7 +30,7 @@ static const struct {
 };
 
 typedef struct entry_fields {
-    xd_str type, exec, icon, try_exec, categories, only_show_in, not_show_in;
+    xd_str type, exec, icon, try_exec, categories, only_show_in, not_show_in, action;
     xd_str name;
     int name_rank; /* 0 none, 1 Name, 2 Name[lang], 3 Name[lang_COUNTRY] */
     bool no_display, hidden, terminal;
@@ -69,6 +69,8 @@ static bool on_key(void *user, xd_str section, xd_str key, xd_str value) {
         f->icon = value;
     else if (xd_str_eq(key, XD_STR("TryExec")))
         f->try_exec = value;
+    else if (xd_str_eq(key, XD_STR("X-XeonDesktop-Action")))
+        f->action = value;
     else if (xd_str_eq(key, XD_STR("Categories")))
         f->categories = value;
     else if (xd_str_eq(key, XD_STR("OnlyShowIn")))
@@ -219,6 +221,7 @@ bool xd_app_parse(xd_str text, xd_str id, const char *desktop_name, xd_arena *ar
         .exec = xd_app_expand_exec(arena, f.exec, name, icon),
         .folder = folder,
         .folder_icon = folder_icon,
+        .action = f.action.len > 0 ? xd_str_arena_cstr(arena, f.action) : nullptr,
         .terminal = f.terminal,
     };
     return out->exec[0] != '\0';

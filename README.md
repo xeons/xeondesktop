@@ -56,6 +56,16 @@ categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`; it
 need parts of the desktop not written yet (Control Panel, Search, Help) are
 shown greyed out.
 
+### Quick Launch
+
+The icons next to Start are the shortcuts in
+`~/.local/share/xeondesktop/quicklaunch/`: `.desktop` files or symlinks to
+installed ones, ordered by file name (number them to reorder). The first run
+creates Show Desktop, your browser and your terminal; after that the folder is
+yours, and changes appear immediately. Show Desktop minimizes every window,
+and clicking it again restores them. Hide the toolbar with `QuickLaunch=false`
+under `[Taskbar]` in `desktop.ini`.
+
 ### Display Properties
 
 `xd-desk` (Start > Settings > Control Panel > Display) has Windows 2000's

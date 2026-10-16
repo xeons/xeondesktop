@@ -13,6 +13,7 @@ typedef struct xd_app {
     const char *exec;   /* command line with field codes removed */
     const char *folder; /* Programs folder, e.g. "Accessories" */
     const char *folder_icon;
+    const char *action; /* X-XeonDesktop-Action, e.g. "show-desktop"; may be nullptr */
     bool terminal;
 } xd_app;
 
