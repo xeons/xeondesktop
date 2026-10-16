@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <wlr/render/pixman.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_data_control_v1.h>
 #include <wlr/types/wlr_data_device.h>
@@ -108,6 +109,12 @@ static bool server_init(xd_server *server) {
         return false;
     }
     server->renderer = wlr_renderer_autocreate(server->backend);
+    if (server->renderer == nullptr && getenv("WLR_RENDERER") == nullptr) {
+        /* No usable GPU (e.g. a virtual machine without 3D acceleration):
+         * draw in software. wlroots never picks pixman by itself. */
+        wlr_log(WLR_INFO, "no GPU renderer; falling back to software rendering (pixman)");
+        server->renderer = wlr_pixman_renderer_create();
+    }
     if (server->renderer == nullptr) {
         wlr_log(WLR_ERROR, "cannot create renderer");
         return false;
