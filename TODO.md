@@ -110,8 +110,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       every push and pull request, and attaches them to a release for v*
       tags. The Debian dependencies come from dpkg-shlibdeps; the Arch ones
       were checked with namcap. Built, tested and installed locally in
-      podman containers (debian:testing, archlinux, cachyos/cachyos).
-      **The workflow itself hasn't run on GitHub yet.** Not yet: Ubuntu
+      podman containers (debian:testing, archlinux, cachyos/cachyos). The
+      workflow passes on GitHub; the release job is untested until the
+      first v* tag. Not yet: Ubuntu
       (no wlroots 0.20 in a release), arm64 builds, man pages (lintian's
       only complaint), an apt/pacman repository to install from.
 
