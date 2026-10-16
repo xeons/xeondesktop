@@ -205,6 +205,27 @@ void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int fir
 /* Thumb rectangle of a vertical scroll bar, for hit testing. */
 xd_rect xd_theme_vscrollbar_thumb(const xd_theme *t, xd_rect r, int first, int page, int total);
 
+/* Colours a widget toolkit needs to match the active style (used to
+ * generate the GTK3 theme). Classic fills the 3D colours from the scheme;
+ * the flat styles fill the gradient/border colours. */
+typedef struct xd_toolkit_colors {
+    bool classic;
+    xd_rgba bg, fg, base, text, disabled, selected_bg, selected_fg;
+    xd_rgba tooltip_bg, tooltip_fg;
+    xd_rgba menu_bg, menu_fg, menu_border, menu_hot, menu_hot_fg, menubar_bg;
+    xd_rgba title_bg, title_bg2, title_fg;
+    /* Classic 3D edges. */
+    xd_rgba face, hilight, light, shadow, dkshadow, frame, scrollbar;
+    /* Flat styles (Luna, Whistler). */
+    xd_rgba field_border, button_top, button_bottom, button_border, button_hot, button_focus;
+    xd_rgba check_border, check_mark, thumb_top, thumb_bottom, track, tab_border, tab_hot;
+} xd_toolkit_colors;
+void xd_theme_toolkit_colors(const xd_theme *t, xd_toolkit_colors *out);
+
+/* GTK3 CSS for the whole toolkit in this theme (scale is ignored: GTK
+ * scales itself). */
+void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out);
+
 /* Product banner across the top of a dialog (Shut Down). */
 void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
                                  const char *edition);

@@ -362,6 +362,37 @@ static void classic_menu_palette(const xd_theme *t, xd_menu_palette *p) {
     };
 }
 
+static void classic_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
+    *c = (xd_toolkit_colors){
+        .classic = true,
+        .bg = xd_sys(t, XD_COLOR_BUTTON_FACE),
+        .fg = xd_sys(t, XD_COLOR_BUTTON_TEXT),
+        .base = xd_sys(t, XD_COLOR_WINDOW),
+        .text = xd_sys(t, XD_COLOR_WINDOW_TEXT),
+        .disabled = xd_sys(t, XD_COLOR_GRAY_TEXT),
+        .selected_bg = xd_sys(t, XD_COLOR_HILIGHT),
+        .selected_fg = xd_sys(t, XD_COLOR_HILIGHT_TEXT),
+        .tooltip_bg = xd_sys(t, XD_COLOR_INFO_WINDOW),
+        .tooltip_fg = xd_sys(t, XD_COLOR_INFO_TEXT),
+        .menu_bg = xd_sys(t, XD_COLOR_MENU),
+        .menu_fg = xd_sys(t, XD_COLOR_MENU_TEXT),
+        .menu_border = xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+        .menu_hot = xd_sys(t, t->scheme.flat_menus ? XD_COLOR_MENU_HILIGHT : XD_COLOR_HILIGHT),
+        .menu_hot_fg = xd_sys(t, XD_COLOR_HILIGHT_TEXT),
+        .menubar_bg = xd_sys(t, XD_COLOR_MENU_BAR),
+        .title_bg = xd_sys(t, XD_COLOR_ACTIVE_TITLE),
+        .title_bg2 = xd_sys(t, XD_COLOR_GRADIENT_ACTIVE_TITLE),
+        .title_fg = xd_sys(t, XD_COLOR_TITLE_TEXT),
+        .face = xd_sys(t, XD_COLOR_BUTTON_FACE),
+        .hilight = xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+        .light = xd_sys(t, XD_COLOR_BUTTON_LIGHT),
+        .shadow = xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+        .dkshadow = xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW),
+        .frame = xd_sys(t, XD_COLOR_WINDOW_FRAME),
+        .scrollbar = xd_sys(t, XD_COLOR_SCROLLBAR),
+    };
+}
+
 const xd_style_ops xd_style_classic = {
     .name = "Classic",
     .frame_insets = classic_frame_insets,
@@ -377,4 +408,5 @@ const xd_style_ops xd_style_classic = {
     .draw_task_button = classic_draw_task_button,
     .draw_tray = classic_draw_tray,
     .menu_palette = classic_menu_palette,
+    .toolkit_colors = classic_toolkit_colors,
 };

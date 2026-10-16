@@ -22,6 +22,7 @@
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/util/log.h>
 
+#include "../settings/gtktheme.h"
 #include "../settings/settings.h"
 #include "server.h"
 
@@ -201,6 +202,14 @@ static void server_finish(xd_server *server) {
         wl_display_destroy(server->display);
 }
 
+/* Regenerates the GTK3 theme to match the current style and scheme. */
+static void install_gtk_theme(xd_server *server) {
+    xd_strbuf err = {0};
+    if (!xd_gtk_theme_install(server->config.style, &server->config.scheme, &err))
+        wlr_log(WLR_ERROR, "cannot write the GTK theme: %s", xd_strbuf_cstr(&err));
+    xd_strbuf_free(&err);
+}
+
 /* Display Properties saved new settings: re-theme everything. */
 static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uint32_t mask,
                                    void *data) {
@@ -217,6 +226,7 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     xd_settings_scheme(&settings, &server->config.scheme);
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
 
+    install_gtk_theme(server);
     xd_output_update_backgrounds(server);
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
         xd_view_retheme(view);
@@ -311,6 +321,11 @@ int main(int argc, char **argv) {
     /* Children are Wayland clients of this compositor, not of the host. */
     unsetenv("DISPLAY");
     setenv("XDG_CURRENT_DESKTOP", "XeonDesktop", true);
+    /* GTK3 apps use the theme generated from our appearance settings, with
+     * Windows-style permanent scroll bars. */
+    install_gtk_theme(&server);
+    setenv("GTK_THEME", XD_GTK_THEME_NAME, true);
+    setenv("GTK_OVERLAY_SCROLLING", "0", true);
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,
             xd_visual_style_name(server.config.style), server.config.scheme.name);
 

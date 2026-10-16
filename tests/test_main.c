@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Unit tests for the core library and theme engine.
  */
+#include <gtk/gtk.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -500,6 +501,46 @@ static void test_settings(void) {
     CHECK(xl.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
 }
 
+static int css_errors;
+
+static void on_css_error([[maybe_unused]] GtkCssProvider *p, [[maybe_unused]] GtkCssSection *s,
+                         const GError *err, [[maybe_unused]] gpointer data) {
+    css_errors++;
+    fprintf(stderr, "gtk css: %s\n", err->message);
+}
+
+/* The generated GTK theme must parse cleanly for every style and scheme. */
+static void test_gtk_css(void) {
+    /* Style properties (-GtkScrollbar-*) need the widget classes. */
+    g_type_ensure(GTK_TYPE_SCROLLBAR);
+    static const char *const schemes[] = {"", "windows-classic", "high-contrast-black",
+                                          "high-contrast-white"};
+    for (int style = 0; style < XD_STYLE_COUNT; style++) {
+        for (size_t k = 0; k < XD_ARRAY_LEN(schemes); k++) {
+            xd_scheme scheme;
+            xd_scheme_init_default(&scheme);
+            if (schemes[k][0] != '\0') {
+                xd_strbuf path = {0};
+                xd_strbuf_appendf(&path, "%s/data/schemes/%s.ini", XD_SOURCE_ROOT, schemes[k]);
+                CHECK(xd_scheme_load(xd_strbuf_cstr(&path), &scheme, nullptr));
+                xd_strbuf_free(&path);
+            }
+            xd_theme t;
+            xd_theme_init(&t, (xd_visual_style)style, &scheme, 1.0);
+            xd_strbuf css = {0};
+            xd_theme_gtk_css(&t, &css);
+            CHECK(strstr(xd_strbuf_cstr(&css), "@define-color theme_selected_bg_color") != nullptr);
+            GtkCssProvider *p = gtk_css_provider_new();
+            g_signal_connect(p, "parsing-error", G_CALLBACK(on_css_error), nullptr);
+            css_errors = 0;
+            CHECK(gtk_css_provider_load_from_data(p, css.data, (gssize)css.len, nullptr));
+            CHECK(css_errors == 0);
+            g_object_unref(p);
+            xd_strbuf_free(&css);
+        }
+    }
+}
+
 static void test_px(void) {
     CHECK(xd_px(1.0, 1) == 1);
     CHECK(xd_px(1.25, 1) == 1);
@@ -523,6 +564,7 @@ int main(void) {
     test_textedit();
     test_runcmd();
     test_settings();
+    test_gtk_css();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -8,6 +8,7 @@
 #include <gtk/gtk.h>
 #include <stdlib.h>
 
+#include "../gtkapp/gtkapp.h"
 #include "folderview.h"
 
 enum { COL_NAME, COL_ICON, COL_FILE, COL_LOADED, COL_COUNT };
@@ -638,11 +639,17 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
     return -1; /* continue */
 }
 
+static void on_startup([[maybe_unused]] GApplication *app, [[maybe_unused]] gpointer data) {
+    xd_gtk_app_follow_theme();
+}
+
 int main(int argc, char **argv) {
+    xd_gtk_app_preinit();
     /* Each window is its own process, like Windows' "separate process"
      * option: a hang in one folder can't freeze the others. */
     GtkApplication *app = gtk_application_new("org.xeondesktop.Files",
                                               G_APPLICATION_HANDLES_OPEN | G_APPLICATION_NON_UNIQUE);
+    g_signal_connect(app, "startup", G_CALLBACK(on_startup), nullptr);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), nullptr);
     g_signal_connect(app, "open", G_CALLBACK(on_open), nullptr);
     g_application_add_main_option(G_APPLICATION(app), "view", 0, G_OPTION_FLAG_NONE,

@@ -462,6 +462,46 @@ static void modern_menu_palette(const xd_theme *t, xd_menu_palette *p) {
     };
 }
 
+static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
+    const modern_palette *m = pal(t);
+    bool is_whistler = t->style == XD_STYLE_WHISTLER;
+    xd_rgba white = xd_rgba_hex(0xFFFFFF);
+    *c = (xd_toolkit_colors){
+        .bg = xd_rgba_hex(m->dialog),
+        .fg = xd_rgba_hex(is_whistler ? 0x10265A : 0x000000),
+        .base = white,
+        .text = xd_rgba_hex(0x000000),
+        .disabled = xd_rgba_hex(0xACA899),
+        .selected_bg = xd_rgba_hex(is_whistler ? 0xA9BCDA : 0x316AC5),
+        .selected_fg = is_whistler ? xd_rgba_hex(0x10265A) : white,
+        .tooltip_bg = xd_rgba_hex(0xFFFFE1),
+        .tooltip_fg = xd_rgba_hex(0x000000),
+        .menu_bg = xd_rgba_hex(m->menu_bg),
+        .menu_fg = xd_rgba_hex(m->menu_text),
+        .menu_border = xd_rgba_hex(m->menu_border),
+        .menu_hot = xd_rgba_hex(m->menu_hilight),
+        .menu_hot_fg = xd_rgba_hex(m->menu_hilight_text),
+        .menubar_bg = xd_rgba_hex(m->dialog),
+        .title_bg = xd_rgba_hex(m->caption_active.rgb[1]),
+        .title_bg2 = xd_rgba_hex(m->caption_active.rgb[m->caption_active.n - 1]),
+        .title_fg = xd_rgba_hex(m->title_active),
+        .face = xd_rgba_hex(m->dialog),
+        .field_border = xd_rgba_hex(is_whistler ? 0x8D9DBF : 0x7F9DB9),
+        .button_top = xd_rgba_hex(m->button_face.rgb[0]),
+        .button_bottom = xd_rgba_hex(m->button_face.rgb[m->button_face.n - 1]),
+        .button_border = xd_rgba_hex(m->button_outline),
+        .button_hot = xd_rgba_hex(m->button_hot),
+        .button_focus = xd_rgba_hex(m->button_focus),
+        .check_border = xd_rgba_hex(m->check_border),
+        .check_mark = xd_rgba_hex(m->check_mark),
+        .thumb_top = xd_rgba_hex(is_whistler ? 0xF4F7FC : 0xC8D6FB),
+        .thumb_bottom = xd_rgba_hex(is_whistler ? 0xC9D5E8 : 0xB0C8F8),
+        .track = xd_rgba_hex(is_whistler ? 0xF2F4F8 : 0xF3F1EC),
+        .tab_border = xd_rgba_hex(is_whistler ? 0x8D9DBF : 0x919B9C),
+        .tab_hot = xd_rgba_hex(is_whistler ? 0x8FB2E8 : 0xFFC83C),
+    };
+}
+
 #define MODERN_OPS(sym, label)                                                 \
     const xd_style_ops sym = {                                                 \
         .name = label,                                                         \
@@ -478,6 +518,7 @@ static void modern_menu_palette(const xd_theme *t, xd_menu_palette *p) {
         .draw_task_button = modern_draw_task_button,                           \
         .draw_tray = modern_draw_tray,                                         \
         .menu_palette = modern_menu_palette,                                   \
+        .toolkit_colors = modern_toolkit_colors,                               \
     }
 
 MODERN_OPS(xd_style_luna, "Luna");

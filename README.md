@@ -100,6 +100,15 @@ their default application. Start menu folder items open it. Thumbnails shown
 are the ones already in the freedesktop cache; generating new ones, file
 operations (copy, move, delete, rename) and the matching GTK theme come next.
 
+### GTK theme
+
+GTK3 apps match the desktop. The compositor generates a GTK3 theme named
+`XeonDesktop` (`~/.local/share/themes/XeonDesktop`) from the current visual
+style and colour scheme (Windows 2000 bevels for Classic, XP's gradients for
+Luna and Whistler) and rewrites it whenever the appearance changes. Our own
+GTK apps reload it straight away; other GTK3 apps get it through `GTK_THEME`
+and pick up changes when restarted.
+
 ### Run and Shut Down
 
 - `xd-run`: opens programs, folders, documents and URLs; remembers the last

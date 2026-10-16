@@ -105,6 +105,7 @@ theme_lib = static_library(
   'src/theme/theme.c',
   'src/theme/style_classic.c',
   'src/theme/style_modern.c',
+  'src/theme/gtkcss.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
 )
 theme_dep = declare_dependency(
@@ -116,6 +117,7 @@ settings_lib = static_library(
   'xdsettings',
   'src/settings/settings.c',
   'src/settings/state.c',
+  'src/settings/gtktheme.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -276,11 +278,16 @@ folder_lib = static_library(
   'src/files/folderview.c',
   dependencies: [core_dep, gtk_dep, m_dep],
 )
+gtkapp_lib = static_library(
+  'xdgtkapp',
+  'src/gtkapp/gtkapp.c',
+  dependencies: [settings_dep, gtk_dep],
+)
 executable(
   'xd-files',
   'src/files/main.c',
-  link_with: folder_lib,
-  dependencies: [core_dep, gtk_dep, m_dep],
+  link_with: [folder_lib, gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, m_dep],
   install: true,
 )
 
@@ -317,7 +324,7 @@ test_exe = executable(
   'src/shell/apps.c',
   'src/ui/textedit.c',
   'src/apps/runcmd.c',
-  dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep],
+  dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(

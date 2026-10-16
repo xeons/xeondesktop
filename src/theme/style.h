@@ -43,6 +43,7 @@ typedef struct xd_style_ops {
                              const char *label);
     void (*draw_tray)(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
     void (*menu_palette)(const xd_theme *t, struct xd_menu_palette *out);
+    void (*toolkit_colors)(const xd_theme *t, xd_toolkit_colors *out);
 } xd_style_ops;
 
 extern const xd_style_ops xd_style_classic;

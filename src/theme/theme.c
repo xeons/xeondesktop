@@ -299,6 +299,11 @@ int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label) 
     return xd_text_width(cr, label, &st);
 }
 
+void xd_theme_toolkit_colors(const xd_theme *t, xd_toolkit_colors *out) {
+    *out = (xd_toolkit_colors){0};
+    ops(t)->toolkit_colors(t, out);
+}
+
 /* ---- taskbar toolbars ---------------------------------------------------------- */
 
 int xd_theme_toolbar_grip_width(const xd_theme *t) {
