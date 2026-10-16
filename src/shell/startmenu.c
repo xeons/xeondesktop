@@ -61,8 +61,7 @@ const char *xd_shell_own_command(xd_shell *shell, const char *program, const cha
 }
 
 /* Programs: one submenu per folder, apps sorted by name inside. */
-static xd_menu_model *build_programs(xd_shell *shell) {
-    xd_menu_tree *tree = &shell->menu_tree;
+xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree) {
     xd_menu_model *programs = xd_menu_model_new(tree);
     const xd_app_list *apps = &shell->apps;
 
@@ -101,7 +100,7 @@ void xd_start_menu_build(xd_shell *shell) {
     xd_menu_item *programs =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Programs", "applications-other");
     programs->fallback_icon = "folder";
-    programs->submenu = build_programs(shell);
+    programs->submenu = xd_start_programs_model(shell, tree);
 
     xd_menu_item *docs =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Documents", "folder-documents");

@@ -302,5 +302,5 @@ Applets that make sense on Linux:
    Details) and a basic context menu; the GTK3 theme. Still to do:
    `xd-thumbnailer`, file operations and the clipboard, rename in place,
    full context menus, search, desktop icons. See TODO.md.
-7. Start menu XP and 7 layouts, grouping, tray (SNI).
+7. Start menu XP and 7 layouts (done), grouping, tray (SNI).
 8. Remaining Control Panel applets (GTK3), roughly in table order.

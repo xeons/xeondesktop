@@ -18,7 +18,7 @@ static const char *const mode_names[XD_WALLPAPER_MODE_COUNT] = {
 };
 
 static const char *const font_size_names[] = {"normal", "large", "extralarge"};
-static const char *const start_style_names[] = {"classic", "win7"};
+static const char *const start_style_names[] = {"classic", "xp", "win7"};
 static const char *const smoothing_names[] = {"standard", "none", "cleartype"};
 
 const char *xd_wallpaper_mode_name(xd_wallpaper_mode m) {

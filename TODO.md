@@ -71,7 +71,15 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Taskbar options: auto-hide, lock, always on top, primary-only taskbar.
 - [ ] Quick Launch: tooltips, drag and drop to add and reorder.
 - [ ] Desktop icons.
-- [ ] Windows XP Start menu layout (2000 and 7 exist).
+- [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
+      two-line Internet/E-mail entries, most used programs, cascading All
+      Programs, Recent Documents and Control Panel submenus, Log Off and
+      Turn Off Computer. Not yet: Set Program Access and Defaults, Printers
+      and Faxes, Help and Support and Search (greyed out); pinning from the
+      menu; keyboard navigation of the right column and footer; the
+      highlight for newly installed programs; the large-icon/small-icon
+      option. Untested: keyboard use, Log Off / Turn Off from the footer,
+      Recent Documents and Control Panel submenus in the XP layout.
 - [ ] Windows 7 menu: pinning/unpinning from the menu (edit
       `~/.config/xeondesktop/start-pinned` by hand), jump lists.
 - [ ] Windows 2000 menu: Documents doesn't list recent files; a Programs
@@ -100,8 +108,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (frame, caption mosaic, caption buttons, buttons, fields, tabs, scroll
       bars, taskbar). Not yet: the Windows 2000 and 7 Start menus still use
       the older silvery Whistler colours; menus, group boxes, the window
-      icon and inactive colours are guesses; the XP-style Start menu (as in
-      Watercolor screenshots) doesn't exist yet.
+      icon and inactive colours are guesses.
 - [ ] Font fallback: Tahoma/Trebuchet aren't shipped; DejaVu/Noto stand in.
 
 ## Dialogs and libxdui

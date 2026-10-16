@@ -240,6 +240,11 @@ extern const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT];
 /* SVG contents of one of those images in this theme's colours. */
 void xd_theme_gtk_asset(const xd_theme *t, xd_gtk_asset which, xd_strbuf *out);
 
+/* Whistler's light-to-dark caption mosaic, stepping from the caption's light
+ * blue to its dark blue at x within band (also used by the XP Start menu
+ * header). */
+void xd_theme_draw_whistler_mosaic(const xd_theme *t, cairo_t *cr, xd_rect band, int x);
+
 /* Product banner across the top of a dialog (Shut Down). */
 void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
                                  const char *edition);

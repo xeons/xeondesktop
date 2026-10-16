@@ -188,6 +188,10 @@ static void whistler_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
     xd_draw_text(cr, l.title, f->title, &st);
 }
 
+void xd_theme_draw_whistler_mosaic(const xd_theme *t, cairo_t *cr, xd_rect band, int x) {
+    draw_checker_step(t, cr, band, x, true);
+}
+
 static xd_rgba whistler_dialog_color([[maybe_unused]] const xd_theme *t) { return hex(FACE); }
 
 /* Flat button: grey border, white top/left inside, a shaded bottom. The

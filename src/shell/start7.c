@@ -1,6 +1,14 @@
 /* SPDX-License-Identifier: MIT
- * The Windows 7 style Start menu.
+ * The two-column Start menus: Windows 7 and Windows XP.
  *
+ * Windows XP (m->xp): a header with the user's picture and name, pinned
+ * programs (Internet / E-mail as two-line entries) and the most used ones
+ * on the left over "All Programs", which cascades into the Programs menus;
+ * the user's folders, Control Panel and Run on the right; Log Off and Turn
+ * Off Computer along the bottom. Luna, Watercolor (Whistler) and Classic
+ * colours.
+ *
+ * Windows 7:
  * One popup with two columns. Left (white): pinned programs, frequently
  * used programs, "All Programs" (which swaps the list for a folder tree in
  * place) and a search box that takes any typing. Right (dark): the user's
@@ -13,6 +21,7 @@
 #include <stdlib.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
+#include <gio/gdesktopappinfo.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "../core/alloc.h"
@@ -51,6 +60,7 @@ typedef struct row {
     const char *icon;
     int folder;         /* ROW_FOLDER: index into folders */
     int indent;
+    bool pinned;        /* XP: pinned programs are bold, Internet/E-mail two-line */
 } row;
 
 typedef enum right_kind : uint8_t {
@@ -89,7 +99,56 @@ static const struct {
 };
 
 /* Hit targets on the right besides items. */
-enum { HIT_SHUTDOWN = 100, HIT_SHUTDOWN_ARROW = 101, HIT_ALL = 102, HIT_SEARCH = 103 };
+enum {
+    HIT_SHUTDOWN = 100,
+    HIT_SHUTDOWN_ARROW = 101,
+    HIT_ALL = 102,
+    HIT_SEARCH = 103,
+    HIT_LOGOFF = 104,     /* XP */
+    HIT_TURNOFF = 105,    /* XP */
+    HIT_XP_PRINTERS = 106, /* XP, not available yet */
+    HIT_XP_SEARCH = 107,   /* XP, not available yet */
+};
+
+/* Windows XP layout, logical px. */
+enum {
+    XP_W = 420,
+    XP_LEFT_W = 190,
+    XP_BODY_H = 372,
+    XP_PAD = 6,
+    XP_PIN_ROW = 42,
+    XP_ROW = 36,
+    XP_ALL_H = 30,
+    XP_SEP = 9,
+    XP_BOLD_ROW = 30,
+    XP_RIGHT_ROW = 26,
+    XP_TALL_ROW = 36,
+    XP_MFU = 6,
+    XP_PICTURE = 48,
+};
+
+typedef struct xp_item {
+    int hit; /* right_kind or HIT_* */
+    const char *label, *icon;
+    bool bold, submenu, disabled, tall;
+} xp_item;
+
+static const xp_item xp_items[] = {
+    {R_DOCUMENTS, "My Documents", "folder-documents", true, false, false, false},
+    {R_RECENT, "My Recent Documents", "document-open-recent", true, true, false, false},
+    {R_PICTURES, "My Pictures", "folder-pictures", true, false, false, false},
+    {R_MUSIC, "My Music", "folder-music", true, false, false, false},
+    {R_COMPUTER, "My Computer", "computer", true, false, false, false},
+    {R_SEP, nullptr, nullptr, false, false, true, false},
+    {R_CONTROL, "Control Panel", "preferences-system", false, true, false, false},
+    {R_DEFAULTS, "Set Program Access and Defaults", "preferences-desktop-default-applications",
+     false, false, true, true},
+    {HIT_XP_PRINTERS, "Printers and Faxes", "printer", false, false, true, false},
+    {R_SEP, nullptr, nullptr, false, false, true, false},
+    {R_HELP, "Help and Support", "help-browser", false, false, true, false},
+    {HIT_XP_SEARCH, "Search", "system-search", false, false, true, false},
+    {R_RUN, "Run...", "system-run", false, false, false, false},
+};
 
 struct xd_start7 {
     xd_shell *shell;
@@ -102,6 +161,9 @@ struct xd_start7 {
     xd_shm_ring ring;
     double scale;
     bool configured, shown, dirty;
+    bool xp;                /* Windows XP layout */
+    xd_visual_style look;   /* style when opened (XP header and footer sizes) */
+    int w, h;               /* logical size */
 
     left_mode mode;
     row *rows;
@@ -199,16 +261,53 @@ static s7_palette palette(const xd_theme *t) {
 /* ---- geometry (logical) ------------------------------------------------------------ */
 
 static xd_rect frame_rect(void) { return (xd_rect){0, S7_TOP, S7_W, S7_H - S7_TOP}; }
+
+/* ---- Windows XP geometry ---- */
+static bool watercolor(const xd_start7 *m) { return m->look == XD_STYLE_WHISTLER; }
+static int xp_head(const xd_start7 *m) { return watercolor(m) ? 24 : 56; }
+static int xp_foot(const xd_start7 *m) { return watercolor(m) ? 34 : 40; }
+/* The white program list; on Watercolor it's inset in the blue body. */
+static xd_rect xp_left_panel(const xd_start7 *m) {
+    int top = xp_head(m);
+    if (watercolor(m))
+        return (xd_rect){4, top + 3, XP_LEFT_W - 4, XP_BODY_H - 6};
+    return (xd_rect){0, top, XP_LEFT_W, XP_BODY_H};
+}
+static int xp_item_height(const xp_item *it) {
+    return it->hit == R_SEP ? XP_SEP : it->tall ? XP_TALL_ROW : it->bold ? XP_BOLD_ROW : XP_RIGHT_ROW;
+}
+static xd_rect xp_item_rect(const xd_start7 *m, size_t index) {
+    int y = xp_head(m) + XP_PAD;
+    for (size_t i = 0; i < index; i++)
+        y += xp_item_height(&xp_items[i]);
+    return (xd_rect){XP_LEFT_W + 4, y, m->w - XP_LEFT_W - 8, xp_item_height(&xp_items[index])};
+}
+static xd_rect xp_turnoff_rect(const xd_start7 *m) {
+    int f = xp_foot(m);
+    return (xd_rect){m->w - 8 - 140, m->h - f + (f - 28) / 2, 140, 28};
+}
+static xd_rect xp_logoff_rect(const xd_start7 *m) {
+    xd_rect t = xp_turnoff_rect(m);
+    return (xd_rect){t.x - 6 - 82, t.y, 82, t.h};
+}
 static xd_rect search_rect(void) {
     return (xd_rect){S7_PAD + 4, S7_H - S7_PAD - S7_SEARCH_H - 4, S7_LEFT_W - 2 * S7_PAD - 8,
                      S7_SEARCH_H};
 }
-static xd_rect all_rect(void) {
+static xd_rect all_rect(const xd_start7 *m) {
+    if (m->xp) {
+        xd_rect p = xp_left_panel(m);
+        return (xd_rect){p.x + 2, p.y + p.h - XP_PAD - XP_ALL_H, p.w - 4, XP_ALL_H};
+    }
     xd_rect s = search_rect();
     return (xd_rect){S7_PAD, s.y - 8 - 28, S7_LEFT_W - 2 * S7_PAD, 28};
 }
-static xd_rect list_rect(void) {
-    xd_rect a = all_rect();
+static xd_rect list_rect(const xd_start7 *m) {
+    xd_rect a = all_rect(m);
+    if (m->xp) {
+        xd_rect p = xp_left_panel(m);
+        return (xd_rect){p.x + 2, p.y + XP_PAD, p.w - 4, a.y - XP_SEP - (p.y + XP_PAD)};
+    }
     return (xd_rect){S7_PAD, S7_TOP + S7_PAD, S7_LEFT_W - 2 * S7_PAD, a.y - 6 - (S7_TOP + S7_PAD)};
 }
 static int right_x(void) { return S7_LEFT_W; }
@@ -233,6 +332,13 @@ static xd_rect shutdown_arrow_rect(void) {
 static xd_rect picture_rect(void) {
     int cx = right_x() + (S7_W - right_x()) / 2;
     return (xd_rect){cx - S7_PICTURE / 2, 2, S7_PICTURE, S7_PICTURE};
+}
+
+static int row_height(left_mode mode, const row *r);
+static int row_h(const xd_start7 *m, const row *r) {
+    if (m->xp)
+        return r->kind == ROW_SEP ? XP_SEP : r->pinned ? XP_PIN_ROW : XP_ROW;
+    return row_height(m->mode, r);
 }
 
 static int row_height(left_mode mode, const row *r) {
@@ -364,14 +470,15 @@ static void build_home(xd_start7 *m) {
     size_t np = 0;
     load_pinned(shell, pinned, &np, XD_ARRAY_LEN(pinned));
     for (size_t i = 0; i < np; i++)
-        push_row(m, (row){.kind = ROW_APP, .app = pinned[i]});
+        push_row(m, (row){.kind = ROW_APP, .app = pinned[i], .pinned = true});
 
     char **lines = nullptr;
     size_t n = 0;
     xd_state_read_lines("start-frequent", &lines, &n, 64);
     bool sep = false;
     size_t shown = 0;
-    for (size_t i = 0; i < n && shown < S7_FREQUENT; i++) {
+    size_t most = m->xp ? XP_MFU : S7_FREQUENT;
+    for (size_t i = 0; i < n && shown < most; i++) {
         xd_str line = xd_str_from_cstr(lines[i]);
         size_t tab;
         if (!xd_str_find_char(line, '\t', &tab))
@@ -481,11 +588,11 @@ static void rebuild(xd_start7 *m) {
 
 /* Rows that fit, from `scroll`. */
 static int visible_rows(const xd_start7 *m, int *heights_total) {
-    xd_rect lr = list_rect();
+    xd_rect lr = list_rect(m);
     int y = 0;
     int n = 0;
     for (size_t i = (size_t)m->scroll; i < m->row_count; i++) {
-        int h = row_height(m->mode, &m->rows[i]);
+        int h = row_h(m, &m->rows[i]);
         if (y + h > lr.h)
             break;
         y += h;
@@ -497,14 +604,14 @@ static int visible_rows(const xd_start7 *m, int *heights_total) {
 }
 
 static int row_at(const xd_start7 *m, double x, double y) {
-    xd_rect lr = list_rect();
+    xd_rect lr = list_rect(m);
     if (!contains(lr, x, y))
         return -1;
     double top = lr.y;
     int n = visible_rows(m, nullptr);
     for (int k = 0; k < n; k++) {
         size_t i = (size_t)(m->scroll + k);
-        int h = row_height(m->mode, &m->rows[i]);
+        int h = row_h(m, &m->rows[i]);
         if (y >= top && y < top + h)
             return (m->rows[i].kind == ROW_APP || m->rows[i].kind == ROW_FOLDER) ? (int)i : -1;
         top += h;
@@ -512,7 +619,18 @@ static int row_at(const xd_start7 *m, double x, double y) {
     return -1;
 }
 
-static int right_at(double x, double y) {
+static int right_at(const xd_start7 *m, double x, double y) {
+    if (m->xp) {
+        if (contains(xp_logoff_rect(m), x, y))
+            return HIT_LOGOFF;
+        if (contains(xp_turnoff_rect(m), x, y))
+            return HIT_TURNOFF;
+        for (size_t i = 0; i < XD_ARRAY_LEN(xp_items); i++) {
+            if (xp_items[i].hit != R_SEP && contains(xp_item_rect(m, i), x, y))
+                return xp_items[i].hit;
+        }
+        return -1;
+    }
     if (contains(shutdown_rect(), x, y))
         return HIT_SHUTDOWN;
     if (contains(shutdown_arrow_rect(), x, y))
@@ -584,13 +702,13 @@ static void draw_triangle(cairo_t *cr, const xd_theme *t, xd_rect r, xd_rgba c, 
 static void draw_left(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_palette *p) {
     double s = t->scale;
     xd_shell *shell = m->shell;
-    xd_rect lr = list_rect();
+    xd_rect lr = list_rect(m);
     int y = lr.y;
     int n = visible_rows(m, nullptr);
     for (int k = 0; k < n; k++) {
         size_t i = (size_t)(m->scroll + k);
         const row *r = &m->rows[i];
-        int h = row_height(m->mode, r);
+        int h = row_h(m, r);
         xd_rect rr = {lr.x, y, lr.w, h};
         y += h;
         if (r->kind == ROW_SEP) {
@@ -628,7 +746,7 @@ static void draw_left(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pal
     }
 
     /* Separator, then All Programs / Back. */
-    xd_rect ar = all_rect();
+    xd_rect ar = all_rect(m);
     xd_fill_rect(cr, D((xd_rect){ar.x + 8, ar.y - 4, ar.w - 16, 1}, s), p->separator);
     if (m->mode != MODE_SEARCH) {
         bool hot = m->hot_right == HIT_ALL;
@@ -744,22 +862,443 @@ static void draw_right(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pa
     }
 }
 
-static void render(xd_start7 *m) {
+/* ---- Windows XP drawing ------------------------------------------------------------- */
+
+typedef struct xp_palette {
+    xd_rgba head_a, head_b, foot_a, foot_b; /* gradients */
+    bool head_horizontal;                    /* Classic: title-bar style gradient */
+    xd_rgba body, frame_light, frame_dark;
+    xd_rgba left_bg, left_text, left_sub, left_sep, panel_border;
+    xd_rgba right_bg, right_text, right_dim, right_sep, column_edge;
+    xd_rgba hot, hot_text, right_hot, right_hot_text;
+    xd_rgba name, foot_text, foot_hot;
+    xd_rgba accent; /* line under the header; alpha 0 for none */
+    bool classic, whistler;
+} xp_palette;
+
+static xp_palette xp_colors(const xd_theme *t) {
+    xd_rgba none = xd_rgba_alpha(xd_rgba_hex(0), 0);
+    xd_rgba white = xd_rgba_hex(0xFFFFFF);
+    switch (t->style) {
+    case XD_STYLE_CLASSIC:
+        return (xp_palette){
+            .head_a = xd_sys(t, XD_COLOR_ACTIVE_TITLE),
+            .head_b = xd_sys(t, XD_COLOR_GRADIENT_ACTIVE_TITLE),
+            .foot_a = xd_sys(t, XD_COLOR_ACTIVE_TITLE),
+            .foot_b = xd_sys(t, XD_COLOR_GRADIENT_ACTIVE_TITLE),
+            .head_horizontal = true,
+            .left_bg = xd_sys(t, XD_COLOR_WINDOW),
+            .left_text = xd_sys(t, XD_COLOR_WINDOW_TEXT),
+            .left_sub = xd_sys(t, XD_COLOR_GRAY_TEXT),
+            .left_sep = xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+            .panel_border = none,
+            .right_bg = xd_sys(t, XD_COLOR_MENU),
+            .right_text = xd_sys(t, XD_COLOR_MENU_TEXT),
+            .right_dim = xd_sys(t, XD_COLOR_GRAY_TEXT),
+            .right_sep = xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+            .column_edge = xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+            .hot = xd_sys(t, XD_COLOR_HILIGHT),
+            .hot_text = xd_sys(t, XD_COLOR_HILIGHT_TEXT),
+            .right_hot = xd_sys(t, XD_COLOR_HILIGHT),
+            .right_hot_text = xd_sys(t, XD_COLOR_HILIGHT_TEXT),
+            .name = xd_sys(t, XD_COLOR_TITLE_TEXT),
+            .foot_text = xd_sys(t, XD_COLOR_TITLE_TEXT),
+            .foot_hot = xd_rgba_alpha(white, 0.2),
+            .accent = none,
+            .classic = true,
+        };
+    case XD_STYLE_WHISTLER: {
+        /* Watercolor: one flat blue body, the white list inset in it. */
+        xd_rgba blue = xd_rgba_hex(0x3573D6);
+        return (xp_palette){
+            .head_a = xd_rgba_hex(0x5297F9),
+            .head_b = xd_rgba_hex(0x5297F9),
+            .foot_a = blue,
+            .foot_b = blue,
+            .body = blue,
+            .frame_light = xd_rgba_hex(0x7DB0FA),
+            .frame_dark = xd_rgba_hex(0x2B5FB5),
+            .left_bg = white,
+            .left_text = xd_rgba_hex(0x000000),
+            .left_sub = xd_rgba_hex(0x7A7A7A),
+            .left_sep = xd_rgba_hex(0xD8D8D0),
+            .panel_border = xd_rgba_hex(0x2B5FB5),
+            .right_bg = none,
+            .right_text = white,
+            .right_dim = xd_rgba_hex(0xA9C7F2),
+            .right_sep = xd_rgba_hex(0x6FA2EA),
+            .column_edge = none,
+            .hot = xd_rgba_hex(0x316AC5),
+            .hot_text = white,
+            .right_hot = xd_rgba_hex(0x5297F9),
+            .right_hot_text = white,
+            .name = white,
+            .foot_text = white,
+            .foot_hot = xd_rgba_alpha(white, 0.18),
+            .accent = none,
+            .whistler = true,
+        };
+    }
+    case XD_STYLE_LUNA:
+    case XD_STYLE_COUNT:
+        break;
+    }
+    return (xp_palette){
+        .head_a = xd_rgba_hex(0x3D85EE),
+        .head_b = xd_rgba_hex(0x1B58CF),
+        .foot_a = xd_rgba_hex(0x3D82EC),
+        .foot_b = xd_rgba_hex(0x1A52C6),
+        .frame_light = xd_rgba_hex(0x0E3FAA),
+        .frame_dark = xd_rgba_hex(0x0E3FAA),
+        .left_bg = white,
+        .left_text = xd_rgba_hex(0x000000),
+        .left_sub = xd_rgba_hex(0x6D6D6D),
+        .left_sep = xd_rgba_hex(0xE0DED8),
+        .panel_border = none,
+        .right_bg = xd_rgba_hex(0xD3E5FA),
+        .right_text = xd_rgba_hex(0x0A246A),
+        .right_dim = xd_rgba_hex(0x7A8AA8),
+        .right_sep = xd_rgba_hex(0xA9C3EA),
+        .column_edge = xd_rgba_hex(0x95BDEE),
+        .hot = xd_rgba_hex(0x316AC5),
+        .hot_text = white,
+        .right_hot = xd_rgba_hex(0x316AC5),
+        .right_hot_text = white,
+        .name = white,
+        .foot_text = white,
+        .foot_hot = xd_rgba_alpha(white, 0.2),
+        .accent = xd_rgba_hex(0xF09A3C),
+    };
+}
+
+static void fill_gradient2(cairo_t *cr, xd_rect r, xd_rgba a, xd_rgba b, bool horizontal) {
+    xd_fill_gradient(cr, r, a, b, horizontal);
+}
+
+/* "Internet" for the web browser and "E-mail" for the mail client, as XP
+ * labels its two pinned programs; nullptr for anything else. */
+static const char *app_role(const xd_app *app) {
+    if (app->info == nullptr)
+        return nullptr;
+    const char *cats = g_desktop_app_info_get_categories(app->info);
+    if (cats == nullptr)
+        return nullptr;
+    if (strstr(cats, "WebBrowser") != nullptr)
+        return "Internet";
+    if (strstr(cats, "Email") != nullptr)
+        return "E-mail";
+    return nullptr;
+}
+
+static void draw_xp_arrow(cairo_t *cr, const xd_theme *t, xd_rect r, const xp_palette *p) {
+    /* XP's round green arrow; Watercolor uses a plain "»". */
+    if (p->whistler) {
+        xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
+        bold.bold = true;
+        xd_text_style st = xd_text(t, XD_FONT_MENU, p->left_text, XD_ALIGN_CENTER);
+        st.font = &bold;
+        xd_draw_text(cr, r, "»", &st);
+        return;
+    }
+    double d = XD_MIN(r.w, r.h);
+    double cx = r.x + r.w / 2.0, cy = r.y + r.h / 2.0;
+    cairo_new_path(cr);
+    cairo_arc(cr, cx, cy, d / 2, 0, 2 * XD_PI);
+    xd_set_color(cr, xd_rgba_hex(0x3C9D3C));
+    cairo_fill_preserve(cr);
+    xd_set_color(cr, xd_rgba_hex(0x24782A));
+    cairo_set_line_width(cr, XD_MAX(xd_tpx(t, 1), 1));
+    cairo_stroke(cr);
+    double a = d * 0.22;
+    cairo_move_to(cr, cx - a * 0.7, cy - a);
+    cairo_line_to(cr, cx + a, cy);
+    cairo_line_to(cr, cx - a * 0.7, cy + a);
+    cairo_close_path(cr);
+    xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
+    cairo_fill(cr);
+}
+
+static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_palette *p) {
+    double s = t->scale;
+    xd_rect lr = list_rect(m);
+    int y = lr.y;
+    for (size_t i = 0; i < m->row_count; i++) {
+        const row *r = &m->rows[i];
+        int h = row_h(m, r);
+        if (y + h > lr.y + lr.h)
+            break;
+        xd_rect rr = {lr.x, y, lr.w, h};
+        y += h;
+        if (r->kind == ROW_SEP) {
+            xd_fill_rect(cr, D((xd_rect){rr.x + 6, rr.y + h / 2, rr.w - 12, 1}, s), p->left_sep);
+            continue;
+        }
+        if (r->kind != ROW_APP)
+            continue;
+        bool hot = (int)i == m->hot_left;
+        if (hot)
+            xd_fill_rect(cr, D(rr, s), p->hot);
+        int icon = 32;
+        draw_icon(m->shell, cr, r->app->icon, nullptr,
+                  D((xd_rect){rr.x + 4, rr.y + (h - icon) / 2, icon, icon}, s));
+        int tx = rr.x + 4 + icon + 6;
+        xd_rect text = {tx, rr.y, rr.x + rr.w - tx - 4, h};
+        xd_rgba c = hot ? p->hot_text : p->left_text;
+        xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
+        bold.bold = true;
+        const char *role = r->pinned ? app_role(r->app) : nullptr;
+        if (role != nullptr) {
+            /* Two lines: the role in bold, the program's name below. */
+            xd_text_style st = xd_text(t, XD_FONT_MENU, c, XD_ALIGN_START);
+            st.font = &bold;
+            xd_draw_text(cr, D((xd_rect){text.x, text.y + 4, text.w, h / 2 - 3}, s), role, &st);
+            xd_text_style sub = xd_text(t, XD_FONT_MENU, hot ? p->hot_text : p->left_sub,
+                                        XD_ALIGN_START);
+            xd_draw_text(cr, D((xd_rect){text.x, text.y + h / 2 - 1, text.w, h / 2 - 3}, s),
+                         r->app->name, &sub);
+        } else {
+            xd_text_style st = xd_text(t, XD_FONT_MENU, c, XD_ALIGN_START);
+            if (r->pinned)
+                st.font = &bold;
+            xd_draw_text(cr, D(text, s), r->app->name, &st);
+        }
+    }
+
+    /* Separator, then All Programs (cascades). */
+    xd_rect ar = all_rect(m);
+    xd_fill_rect(cr, D((xd_rect){ar.x + 6, ar.y - XP_SEP / 2 - 1, ar.w - 12, 1}, s), p->left_sep);
+    bool hot = m->hot_right == HIT_ALL || m->sub_owner == HIT_ALL;
+    if (hot)
+        xd_fill_rect(cr, D(ar, s), p->hot);
+    xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
+    bold.bold = true;
+    xd_text_style st = xd_text(t, XD_FONT_MENU, hot ? p->hot_text : p->left_text, XD_ALIGN_END);
+    st.font = &bold;
+    int mid = ar.x + ar.w / 2 + 24;
+    xd_draw_text(cr, D((xd_rect){ar.x, ar.y, mid - ar.x, ar.h}, s), "All Programs", &st);
+    xd_rect arrow = {mid + 8, ar.y + (ar.h - 16) / 2, 16, 16};
+    xp_palette ap = *p;
+    if (hot)
+        ap.left_text = p->hot_text;
+    draw_xp_arrow(cr, t, D(arrow, s), &ap);
+}
+
+static void draw_right_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_palette *p) {
+    double s = t->scale;
+    for (size_t i = 0; i < XD_ARRAY_LEN(xp_items); i++) {
+        const xp_item *it = &xp_items[i];
+        xd_rect r = xp_item_rect(m, i);
+        if (it->hit == R_SEP) {
+            xd_fill_rect(cr, D((xd_rect){r.x + 4, r.y + r.h / 2, r.w - 8, 1}, s), p->right_sep);
+            continue;
+        }
+        bool hot = !it->disabled && (m->hot_right == it->hit || m->sub_owner == it->hit);
+        if (hot)
+            xd_fill_rect(cr, D(r, s), p->right_hot);
+        int icon = 24;
+        draw_icon(m->shell, cr, it->icon, "folder",
+                  D((xd_rect){r.x + 4, r.y + (r.h - icon) / 2, icon, icon}, s));
+        xd_rgba c = it->disabled ? p->right_dim : hot ? p->right_hot_text : p->right_text;
+        xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
+        font.bold = it->bold;
+        xd_text_style st = xd_text(t, XD_FONT_MENU, c, XD_ALIGN_START);
+        st.font = &font;
+        if (it->tall) {
+            st.wrap = true;
+            st.ellipsize = false;
+        }
+        xd_draw_text(cr, D(xd_rect_inset4(r, 4 + icon + 6, 0, it->submenu ? 16 : 4, 0), s),
+                     it->label, &st);
+        if (it->submenu)
+            draw_triangle(cr, t, D((xd_rect){r.x + r.w - 14, r.y, 12, r.h}, s), c, false);
+    }
+}
+
+/* XP's footer icons: an orange tile with a padlock (Log Off) and a red
+ * tile with the power symbol (Turn Off Computer). */
+static void draw_foot_icon(cairo_t *cr, const xd_theme *t, xd_rect r, bool power) {
+    double rad = xd_tpx(t, 3);
+    double lw = XD_MAX(xd_tpx(t, 1), 1);
+    cairo_new_path(cr);
+    xd_path_rounded(cr, r.x + lw / 2, r.y + lw / 2, r.w - lw, r.h - lw, rad, rad, rad, rad);
+    cairo_pattern_t *g = cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
+    xd_rgba top = xd_rgba_hex(power ? 0xF07B5E : 0xF9C15A);
+    xd_rgba bottom = xd_rgba_hex(power ? 0xC2310F : 0xD9780A);
+    cairo_pattern_add_color_stop_rgb(g, 0, top.r, top.g, top.b);
+    cairo_pattern_add_color_stop_rgb(g, 1, bottom.r, bottom.g, bottom.b);
+    cairo_set_source(cr, g);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(g);
+    xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
+    cairo_set_line_width(cr, lw);
+    cairo_stroke(cr);
+
+    double cx = r.x + r.w / 2.0, cy = r.y + r.h / 2.0, u = r.w / 22.0;
+    xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    if (power) {
+        cairo_set_line_width(cr, 2.2 * u);
+        cairo_new_path(cr);
+        cairo_arc(cr, cx, cy + u, 6 * u, -XD_PI / 2 + 0.75, -XD_PI / 2 - 0.75 + 2 * XD_PI);
+        cairo_stroke(cr);
+        cairo_move_to(cr, cx, cy - 6 * u);
+        cairo_line_to(cr, cx, cy + u);
+        cairo_stroke(cr);
+    } else {
+        /* Padlock: shackle and body. */
+        cairo_set_line_width(cr, 2 * u);
+        cairo_new_path(cr);
+        cairo_arc(cr, cx, cy - 2 * u, 4 * u, XD_PI, 2 * XD_PI);
+        cairo_stroke(cr);
+        cairo_rectangle(cr, cx - 6 * u, cy - u, 12 * u, 9 * u);
+        cairo_fill(cr);
+        xd_set_color(cr, bottom);
+        cairo_rectangle(cr, cx - u, cy + 2 * u, 2 * u, 3 * u);
+        cairo_fill(cr);
+    }
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_BUTT);
+}
+
+static void draw_foot_button(cairo_t *cr, const xd_theme *t, const xp_palette *p, xd_rect r,
+                             bool hot, bool power, const char *label) {
+    double s = t->scale;
+    if (hot) {
+        xd_rect d = D(r, s);
+        if (p->classic) {
+            xd_fill_rect(cr, d, p->foot_hot);
+        } else {
+            double rad = xd_tpx(t, 3);
+            xd_path_rounded(cr, d.x, d.y, d.w, d.h, rad, rad, rad, rad);
+            xd_set_color(cr, p->foot_hot);
+            cairo_fill(cr);
+        }
+    }
+    int is = 22;
+    draw_foot_icon(cr, t, D((xd_rect){r.x + 3, r.y + (r.h - is) / 2, is, is}, s), power);
+    xd_text_style st = xd_text(t, XD_FONT_MENU, p->foot_text, XD_ALIGN_START);
+    xd_draw_text(cr, D((xd_rect){r.x + 3 + is + 5, r.y, r.w - is - 10, r.h}, s), label, &st);
+}
+
+static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
+    double s = t->scale;
+    xp_palette p = xp_colors(t);
+    int head = xp_head(m), foot = xp_foot(m);
+    xd_rect whole = D((xd_rect){0, 0, m->w, m->h}, s);
+    xd_rect head_r = D((xd_rect){0, 0, m->w, head}, s);
+    xd_rect body_r = D((xd_rect){0, head, m->w, XP_BODY_H}, s);
+    xd_rect foot_r = D((xd_rect){0, head + XP_BODY_H, m->w, foot}, s);
+    double rad = p.classic || p.whistler ? 0 : xd_tpx(t, 7);
+
+    cairo_save(cr);
+    xd_path_rounded(cr, whole.x, whole.y, whole.w, whole.h, rad, rad, 0, 0);
+    cairo_clip(cr);
+
+    /* Header */
+    fill_gradient2(cr, head_r, p.head_a, p.head_b, p.head_horizontal);
+    if (p.whistler) {
+        int mx = dev(m->w * 0.58, s);
+        xd_fill_rect(cr, (xd_rect){mx, head_r.y, head_r.x + head_r.w - mx, head_r.h}, p.body);
+        xd_theme_draw_whistler_mosaic(t, cr, head_r, mx);
+        xd_fill_rect(cr, (xd_rect){head_r.x, head_r.y, head_r.w, XD_MAX(xd_tpx(t, 1), 1)},
+                     xd_rgba_hex(0x7DB1FB));
+    }
+
+    /* Body: left list and right column */
+    xd_rect left = D(xp_left_panel(m), s);
+    if (p.whistler) {
+        xd_fill_rect(cr, body_r, p.body);
+        xd_fill_rect(cr, left, p.left_bg);
+        xd_draw_bevel(cr, left, XD_MAX(xd_tpx(t, 1), 1), p.panel_border, p.panel_border);
+    } else {
+        xd_rect right = D((xd_rect){XP_LEFT_W, head, m->w - XP_LEFT_W, XP_BODY_H}, s);
+        xd_fill_rect(cr, left, p.left_bg);
+        xd_fill_rect(cr, right, p.right_bg);
+        xd_fill_rect(cr, (xd_rect){right.x, right.y, XD_MAX(xd_tpx(t, 1), 1), right.h},
+                     p.column_edge);
+    }
+
+    /* Footer */
+    fill_gradient2(cr, foot_r, p.foot_a, p.foot_b, p.head_horizontal);
+    cairo_restore(cr);
+
+    /* XP's orange line under the header, fading out at both ends. */
+    if (p.accent.a > 0) {
+        xd_rect line = D((xd_rect){0, head, m->w, 2}, s);
+        cairo_pattern_t *g = cairo_pattern_create_linear(line.x, 0, line.x + line.w, 0);
+        cairo_pattern_add_color_stop_rgba(g, 0, p.accent.r, p.accent.g, p.accent.b, 0);
+        cairo_pattern_add_color_stop_rgba(g, 0.5, p.accent.r, p.accent.g, p.accent.b, 1);
+        cairo_pattern_add_color_stop_rgba(g, 1, p.accent.r, p.accent.g, p.accent.b, 0);
+        cairo_rectangle(cr, line.x, line.y, line.w, line.h);
+        cairo_set_source(cr, g);
+        cairo_fill(cr);
+        cairo_pattern_destroy(g);
+    }
+
+    /* Frame */
+    if (p.classic) {
+        xd_draw_bevel(cr, whole, XD_MAX(xd_tpx(t, 1), 1), xd_sys(t, XD_COLOR_BUTTON_LIGHT),
+                      xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
+    } else if (p.whistler) {
+        xd_draw_bevel(cr, whole, XD_MAX(xd_tpx(t, 1), 1), p.frame_light, p.frame_dark);
+    } else {
+        double lw = XD_MAX(xd_tpx(t, 1), 1);
+        xd_path_rounded(cr, whole.x + lw / 2, whole.y + lw / 2, whole.w - lw, whole.h - lw, rad,
+                        rad, 0, 0);
+        xd_set_color(cr, p.frame_dark);
+        cairo_set_line_width(cr, lw);
+        cairo_stroke(cr);
+    }
+
+    /* User picture and name */
+    xd_font_spec name_font = {.family = "Trebuchet MS, DejaVu Sans, sans-serif",
+                              .size_pt = p.whistler ? 9 : 13,
+                              .bold = true};
+    xd_text_style ns = {
+        .font = &name_font,
+        .scale = s,
+        .color = p.name,
+        .align = XD_ALIGN_START,
+        .ellipsize = true,
+        .shadow = !p.classic && !p.whistler,
+        .shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.45),
+        .smoothing = t->scheme.font_smoothing,
+    };
+    if (p.whistler) {
+        xd_draw_text(cr, D((xd_rect){8, 0, m->w / 2, head}, s), m->user, &ns);
+    } else {
+        xd_rect pic = D((xd_rect){8, (head - XP_PICTURE) / 2, XP_PICTURE, XP_PICTURE}, s);
+        int bw = XD_MAX(xd_tpx(t, 2), 2);
+        xd_rect outer = xd_rect_inset(pic, -bw, -bw);
+        double prad = p.classic ? 0 : xd_tpx(t, 3);
+        xd_path_rounded(cr, outer.x, outer.y, outer.w, outer.h, prad, prad, prad, prad);
+        xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
+        cairo_fill(cr);
+        if (m->picture != nullptr) {
+            cairo_save(cr);
+            cairo_rectangle(cr, pic.x, pic.y, pic.w, pic.h);
+            cairo_clip(cr);
+            xd_image_paint_wallpaper(cr, m->picture, pic, 3 /* fill */, 1.0);
+            cairo_restore(cr);
+        } else {
+            draw_icon(m->shell, cr, "avatar-default", "user-identity", pic);
+        }
+        xd_draw_text(cr, D((xd_rect){8 + XP_PICTURE + 10, 0, m->w - XP_PICTURE - 30, head}, s),
+                     m->user, &ns);
+    }
+
+    draw_left_xp(m, cr, t, &p);
+    draw_right_xp(m, cr, t, &p);
+    draw_foot_button(cr, t, &p, xp_logoff_rect(m), m->hot_right == HIT_LOGOFF, false,
+                     "Log Off");
+    draw_foot_button(cr, t, &p, xp_turnoff_rect(m), m->hot_right == HIT_TURNOFF, true,
+                     "Turn Off Computer");
+}
+
+static void render_7(xd_start7 *m, cairo_t *cr, const xd_theme *tp) {
     xd_shell *shell = m->shell;
     double s = m->scale;
-    int dw = dev(S7_W, s);
-    int dh = dev(S7_H, s);
-    xd_shm_buffer *buf = xd_shm_ring_acquire(&m->ring, shell->shm, dw, dh);
-    if (buf == nullptr)
-        return;
-    xd_theme t;
-    xd_theme_init(&t, shell->style, &shell->scheme, s);
+    xd_theme t = *tp;
     s7_palette p = palette(&t);
-    cairo_t *cr = cairo_create(buf->surface);
-    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR); /* the band above is transparent */
-    cairo_paint(cr);
-    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-
     xd_rect fr = D(frame_rect(), s);
     xd_rect left = D((xd_rect){0, S7_TOP, S7_LEFT_W, S7_H - S7_TOP}, s);
     xd_rect right = D((xd_rect){S7_LEFT_W, S7_TOP, S7_W - S7_LEFT_W, S7_H - S7_TOP}, s);
@@ -802,13 +1341,34 @@ static void render(xd_start7 *m) {
     } else {
         draw_icon(shell, cr, "avatar-default", "user-identity", pic);
     }
+}
+
+static void render(xd_start7 *m) {
+    xd_shell *shell = m->shell;
+    double s = m->scale;
+    int dw = dev(m->w, s);
+    int dh = dev(m->h, s);
+    xd_shm_buffer *buf = xd_shm_ring_acquire(&m->ring, shell->shm, dw, dh);
+    if (buf == nullptr)
+        return;
+    xd_theme t;
+    xd_theme_init(&t, shell->style, &shell->scheme, s);
+    cairo_t *cr = cairo_create(buf->surface);
+    /* Transparent outside the shape (Windows 7's top band, XP's corners). */
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    if (m->xp)
+        render_xp(m, cr, &t);
+    else
+        render_7(m, cr, &t);
 
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
     wl_surface_attach(m->surface, buf->buffer, 0, 0);
     wl_surface_damage_buffer(m->surface, 0, 0, dw, dh);
     if (m->viewport != nullptr)
-        wp_viewport_set_destination(m->viewport, S7_W, S7_H);
+        wp_viewport_set_destination(m->viewport, m->w, m->h);
     wl_surface_commit(m->surface);
     buf->busy = true;
     m->dirty = false;
@@ -861,6 +1421,23 @@ static xd_menu_model *recent_model(xd_start7 *m) {
     return mm;
 }
 
+/* Where a right-column item is, in either layout. */
+static xd_rect xp_or_right_item(const xd_start7 *m, int hit) {
+    if (m->xp) {
+        for (size_t i = 0; i < XD_ARRAY_LEN(xp_items); i++) {
+            if (xp_items[i].hit == hit)
+                return xp_item_rect(m, i);
+        }
+    }
+    return right_item(hit);
+}
+
+/* Items that open a submenu (on hover, or on press). */
+static bool opens_sub(const xd_start7 *m, int hit) {
+    return hit == R_RECENT || hit == R_CONTROL || hit == HIT_SHUTDOWN_ARROW ||
+           (m->xp && hit == HIT_ALL);
+}
+
 static void open_sub(xd_start7 *m, int owner) {
     if (m->sub_owner == owner && m->sub != nullptr)
         return;
@@ -870,16 +1447,19 @@ static void open_sub(xd_start7 *m, int owner) {
     xd_shell *shell = m->shell;
     xd_menu_model *mm = nullptr;
     xd_rect anchor;
-    if (owner == R_RECENT) {
+    if (m->xp && owner == HIT_ALL) {
+        mm = xd_start_programs_model(shell, &m->tree);
+        anchor = all_rect(m);
+    } else if (owner == R_RECENT) {
         mm = recent_model(m);
-        anchor = right_item(R_RECENT);
+        anchor = xp_or_right_item(m, R_RECENT);
     } else if (owner == R_CONTROL) {
         mm = xd_menu_model_new(&m->tree);
         add_cmd(&m->tree, mm, "Display", "preferences-desktop-display",
                 xd_shell_own_command(shell, "xd-desk", nullptr));
         add_cmd(&m->tree, mm, "Taskbar and Start Menu", "preferences-desktop",
                 xd_shell_own_command(shell, "xd-taskbar", nullptr));
-        anchor = right_item(R_CONTROL);
+        anchor = xp_or_right_item(m, R_CONTROL);
     } else if (owner == HIT_SHUTDOWN_ARROW) {
         mm = xd_menu_model_new(&m->tree);
         add_cmd(&m->tree, mm, "Switch user", "system-switch-user", nullptr);
@@ -976,8 +1556,18 @@ static void activate_right(xd_start7 *m, int hit) {
         run_command(m, xd_shell_own_command(shell, "xd-shutdown", "--action shutdown"));
         return;
     case HIT_ALL:
+        if (m->xp) {
+            open_sub(m, HIT_ALL); /* All Programs cascades */
+            return;
+        }
         m->mode = m->mode == MODE_ALL ? MODE_HOME : MODE_ALL;
         rebuild(m);
+        return;
+    case HIT_LOGOFF:
+        run_command(m, xd_shell_own_command(shell, "xd-shutdown", "--logoff"));
+        return;
+    case HIT_TURNOFF:
+        run_command(m, xd_shell_own_command(shell, "xd-shutdown", nullptr));
         return;
     default:
         return;
@@ -1034,7 +1624,7 @@ static void load_user(xd_start7 *m) {
     xd_strbuf_free(&p);
 }
 
-void xd_start7_open(xd_taskbar *bar, uint32_t serial) {
+void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     xd_shell *shell = bar->shell;
     xd_menu_close_all(shell);
     xd_start7 *m = XD_NEW(xd_start7);
@@ -1047,6 +1637,10 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial) {
     m->sub_owner = -1;
     m->serial = serial;
     m->search.max_len = 256;
+    m->xp = xp;
+    m->look = shell->style;
+    m->w = xp ? XP_W : S7_W;
+    m->h = xp ? xp_head(m) + XP_BODY_H + xp_foot(m) : S7_H;
     xd_menu_tree_init(&m->tree);
     load_user(m);
     shell->start7 = m;
@@ -1065,7 +1659,7 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial) {
     xd_taskbar_take_keyboard(bar); /* before the grab, see there */
     xd_rect r = bar->start_rect;
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
-    xdg_positioner_set_size(pos, S7_W, S7_H);
+    xdg_positioner_set_size(pos, m->w, m->h);
     xdg_positioner_set_anchor_rect(pos, (int)(r.x / bar->scale), (int)(r.y / bar->scale),
                                    XD_MAX((int)(r.w / bar->scale), 1),
                                    XD_MAX((int)(r.h / bar->scale), 1));
@@ -1139,7 +1733,7 @@ void xd_start7_timer_fired(xd_shell *shell) {
     if (m == nullptr)
         return;
     int h = m->hot_right;
-    if (h == R_RECENT || h == R_CONTROL || h == HIT_SHUTDOWN_ARROW)
+    if (opens_sub(m, h))
         open_sub(m, h);
     else if (h >= 0 && m->sub != nullptr)
         close_sub(m);
@@ -1150,8 +1744,8 @@ void xd_start7_pointer_motion(xd_shell *shell, double x, double y) {
     if (m == nullptr)
         return;
     int left = row_at(m, x, y);
-    int right = right_at(x, y);
-    if (contains(all_rect(), x, y) && m->mode != MODE_SEARCH)
+    int right = right_at(m, x, y);
+    if (contains(all_rect(m), x, y) && m->mode != MODE_SEARCH)
         right = HIT_ALL;
     if (left != m->hot_left || right != m->hot_right) {
         m->hot_left = left;
@@ -1179,8 +1773,7 @@ void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
     if (pressed) {
         m->pressed = target;
         /* ▸ items open on press, like menus. */
-        if (m->hot_right == R_RECENT || m->hot_right == R_CONTROL ||
-            m->hot_right == HIT_SHUTDOWN_ARROW)
+        if (opens_sub(m, m->hot_right))
             activate_right(m, m->hot_right);
         return;
     }
@@ -1190,8 +1783,7 @@ void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
         return;
     if (target >= 1000) {
         int hit = target - 1000;
-        if (hit != R_RECENT && hit != R_CONTROL && hit != HIT_SHUTDOWN_ARROW &&
-            !(hit < R_COUNT && right_items[hit].disabled))
+        if (!opens_sub(m, hit) && !(hit < R_COUNT && right_items[hit].disabled))
             activate_right(m, hit); /* may free m */
     } else {
         activate_left(m, target); /* may free m */
@@ -1276,14 +1868,16 @@ bool xd_start7_key(xd_shell *shell, uint32_t sym, const char *utf8, bool ctrl_or
             activate_left(m, m->hot_left); /* may free m */
         return true;
     case XKB_KEY_BackSpace:
+        if (m->xp)
+            return true;
         xd_textedit_backspace(&m->search, ctrl_or_alt);
         search_changed(m);
         return true;
     default:
         break;
     }
-    /* Any other typing goes to the search box, as on Windows 7. */
-    if (!ctrl_or_alt && utf8 != nullptr && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7F) {
+    /* Any other typing goes to the search box, as on Windows 7 (XP has none). */
+    if (!m->xp && !ctrl_or_alt && utf8 != nullptr && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7F) {
         xd_textedit_move(&m->search, XD_MOTION_END, false);
         xd_textedit_insert(&m->search, xd_str_from_cstr(utf8));
         search_changed(m);

@@ -28,6 +28,7 @@ typedef enum xd_wallpaper_mode : uint8_t {
 
 typedef enum xd_start_style : uint8_t {
     XD_START_CLASSIC, /* Windows 2000: cascading menu with side banner */
+    XD_START_XP,      /* Windows XP: two columns, user header, All Programs cascades */
     XD_START_WIN7,    /* Windows 7: two columns, search, All Programs in place */
     XD_START_STYLE_COUNT,
 } xd_start_style;

@@ -61,13 +61,20 @@ shown greyed out.
 Start > Settings > Taskbar & Start Menu picks the layout:
 
 - **Classic (Windows 2000)**: cascading menus with the side banner.
+- **Windows XP**: your picture and name across the top; pinned programs
+  (the browser and mail client labelled Internet and E-mail, as in XP) and
+  your most used programs on the left over **All Programs**, which cascades
+  into the Programs menus; My Documents, My Recent Documents, My Pictures,
+  My Music, My Computer, Control Panel and Run on the right; Log Off and
+  Turn Off Computer along the bottom. Luna, Watercolor (Whistler) and
+  Classic colours.
 - **Windows 7**: pinned programs (`~/.config/xeondesktop/start-pinned`, one
   desktop file id per line; browser and terminal by default) and your most
   used programs on the left, **All Programs** opening in place, and a search
   box that takes any typing. On the right: your picture (`~/.face`), user
   folders, Recent Items, Control Panel, Run and a Shut Down button whose ▸
   offers Log off, Restart, Sleep and Hibernate. In Luna the right column is
-  the dark see-through panel; there's no blur behind it yet.
+  the dark panel (opaque until the compositor can blur behind it).
 
 ### Quick Launch
 

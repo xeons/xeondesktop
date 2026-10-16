@@ -179,8 +179,13 @@ void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
 /* Drop hit-test layout after Quick Launch changed (indices shift). */
 void xd_taskbars_forget_layout(xd_shell *shell);
 
-/* start7.c: the Windows 7 style Start menu */
-void xd_start7_open(xd_taskbar *bar, uint32_t serial);
+/* startmenu.c: Programs, one submenu per folder (also XP's All Programs). */
+xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree);
+
+/* start7.c: the Windows XP and Windows 7 style Start menus */
+/* xp: the Windows XP layout (user header, cascading All Programs, Log Off
+ * and Turn Off Computer) instead of Windows 7's. */
+void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp);
 void xd_start7_close(xd_shell *shell);
 bool xd_start7_owns(xd_shell *shell, struct wl_surface *surface);
 void xd_start7_render_dirty(xd_shell *shell);

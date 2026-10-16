@@ -301,8 +301,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         if (bar->hot == XD_HIT_START) {
             if (bar->shell->start_menu != nullptr || bar->shell->start7 != nullptr)
                 xd_menu_close_all(bar->shell);
-            else if (bar->shell->settings.start_style == XD_START_WIN7)
-                xd_start7_open(bar, serial);
+            else if (bar->shell->settings.start_style != XD_START_CLASSIC)
+                xd_start7_open(bar, serial, bar->shell->settings.start_style == XD_START_XP);
             else
                 xd_taskbar_open_start_menu(bar, serial);
         }

@@ -17,6 +17,9 @@ typedef struct props {
 static const char *const descriptions[XD_START_STYLE_COUNT] = {
     [XD_START_CLASSIC] = "Cascading menus with the side banner, as in Windows 2000. "
                          "Programs opens a submenu for each folder.",
+    [XD_START_XP] = "Two columns under your name and picture: pinned and most-used programs on "
+                    "the left, your folders and Control Panel on the right, Log Off and Turn "
+                    "Off Computer at the bottom. All Programs cascades.",
     [XD_START_WIN7] = "Two columns: your pinned and most-used programs with a search box on the "
                       "left, your folders, Control Panel and Shut Down on the right. All "
                       "Programs opens in place.",
@@ -116,6 +119,7 @@ int main(int argc, char **argv) {
     xd_widget *style = xd_combo(p.win, (xd_rect){20, 62, 220, 21}, false, on_style, &p);
     xd_widget_set_page(style, 1);
     xd_widget_add_item(style, "Classic (Windows 2000)");
+    xd_widget_add_item(style, "Windows XP");
     xd_widget_add_item(style, "Windows 7");
     p.description = xd_label(p.win, (xd_rect){20, 96, 340, 64},
                              descriptions[p.pending.start_style], XD_LABEL_WRAP);
