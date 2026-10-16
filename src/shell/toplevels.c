@@ -112,6 +112,7 @@ static void handle_toplevel(void *data,
     xd_toplevel *t = XD_NEW(xd_toplevel);
     t->shell = shell;
     t->handle = handle;
+    t->id = ++shell->next_toplevel_id;
     wl_list_insert(shell->toplevels.prev, &t->link);
     zwlr_foreign_toplevel_handle_v1_add_listener(handle, &handle_listener, t);
 }

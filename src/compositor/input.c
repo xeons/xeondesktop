@@ -931,6 +931,15 @@ static void end_grab(xd_server *server) {
     }
 }
 
+/* Whether the seat delivered a press of `button` that's still held. */
+static bool seat_has_button(const struct wlr_seat *seat, uint32_t button) {
+    for (size_t i = 0; i < seat->pointer_state.button_count; i++) {
+        if (seat->pointer_state.buttons[i].button == button)
+            return true;
+    }
+    return false;
+}
+
 static void handle_cursor_button(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_button);
     const struct wlr_pointer_button_event *e = data;
@@ -956,6 +965,12 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
     if (e->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (server->mode != XD_CURSOR_PASSTHROUGH) {
             end_grab(server);
+            /* A client that asked for the move or resize had the press:
+             * it must get the release too, or it keeps waiting for it and
+             * ignores later clicks (Firefox's tab strip and close button
+             * after dragging the window by it). */
+            if (seat_has_button(server->seat, e->button))
+                wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
             process_motion(server, e->time_msec);
             return;
         }

@@ -345,9 +345,13 @@ int main(int argc, char **argv) {
     struct wl_event_source *sigint =
         wl_event_loop_add_signal(server.loop, SIGINT, handle_terminate, &server);
 
-    /* Tell session programs how to reach us, and whether we're nested in
-     * another desktop (where Shut Down must not power off the machine). */
-    bool nested = getenv("WAYLAND_DISPLAY") != nullptr || getenv("DISPLAY") != nullptr;
+    /* Tell session programs how to reach us, and whether this is a test or
+     * nested session (where Shut Down must not power off the machine and
+     * the user's D-Bus environment must be left alone): only a session on
+     * a seat (DRM and libinput, through logind or seatd) is real. Headless
+     * test sessions are started without WAYLAND_DISPLAY or DISPLAY, so
+     * those can't tell. */
+    bool nested = server.session == nullptr;
     char pid[32];
     snprintf(pid, sizeof(pid), "%ld", (long)getpid());
     setenv("XEONDESKTOP_PID", pid, true);

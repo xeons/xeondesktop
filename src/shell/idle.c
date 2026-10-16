@@ -6,9 +6,10 @@
  *
  * XD_IDLE_SECONDS=1 counts the settings in seconds instead (testing).
  */
-#include <signal.h>
+#include <poll.h>
 #include <stdlib.h>
-#include <sys/wait.h>
+#include <sys/pidfd.h>
+#include <unistd.h>
 
 #include "../saver/savers.h"
 #include "shell.h"
@@ -21,23 +22,27 @@ static int timeout_ms(int minutes) {
 
 /* ---- screen saver ------------------------------------------------------------ */
 
+/* The saver is followed through a pidfd: the shell ignores SIGCHLD, so
+ * children are reaped at once and a bare pid could soon name some other
+ * process. */
 static bool saver_running(xd_shell *shell) {
-    if (shell->saver_pid <= 0)
+    if (shell->saver_pidfd < 0)
         return false;
-    /* Reap it if it's done (SIGCHLD isn't ignored for this child). */
-    if (waitpid(shell->saver_pid, nullptr, WNOHANG) == shell->saver_pid ||
-        kill(shell->saver_pid, 0) != 0) {
-        shell->saver_pid = 0;
-        return false;
-    }
-    return true;
+    struct pollfd p = {.fd = shell->saver_pidfd, .events = POLLIN};
+    if (poll(&p, 1, 0) == 0)
+        return true;
+    close(shell->saver_pidfd); /* readable: it exited */
+    shell->saver_pidfd = -1;
+    return false;
 }
 
 static void saver_idled(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
     xd_shell *shell = data;
     if (saver_running(shell))
         return;
-    shell->saver_pid = xd_shell_launch(shell, xd_shell_own_command(shell, "xd-lock", "--saver"));
+    pid_t pid = xd_shell_launch(shell, xd_shell_own_command(shell, "xd-lock", "--saver"));
+    /* Fails if it already exited (and was reaped): then it isn't running. */
+    shell->saver_pidfd = pid > 0 ? pidfd_open(pid, PIDFD_NONBLOCK) : -1;
 }
 
 static void saver_resumed([[maybe_unused]] void *data,

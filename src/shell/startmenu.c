@@ -5,6 +5,8 @@
 #include <unistd.h>
 
 #include "apps.h"
+#include <glib.h>
+
 #include "shell.h"
 
 /* Appends s to a shell command line as one single-quoted word. */
@@ -55,7 +57,15 @@ const char *xd_shell_own_command(xd_shell *shell, const char *program, const cha
         xd_strbuf_append_char(&cmd, ' ');
         xd_strbuf_append(&cmd, xd_str_from_cstr(extra));
     }
-    const char *s = xd_str_arena_cstr(&shell->menu_tree.arena, xd_strbuf_view(&cmd));
+    /* Menus ask for these every time they open: keep one copy of each. */
+    if (shell->own_commands == nullptr)
+        shell->own_commands = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    const char *text = xd_strbuf_cstr(&cmd);
+    char *s = g_hash_table_lookup(shell->own_commands, text);
+    if (s == nullptr) {
+        s = g_strdup(text);
+        g_hash_table_add(shell->own_commands, s);
+    }
     xd_strbuf_free(&cmd);
     return s;
 }

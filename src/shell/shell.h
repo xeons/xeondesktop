@@ -32,6 +32,7 @@ typedef struct xd_toplevel {
     struct wl_list link; /* xd_shell.toplevels, in creation order */
     xd_shell *shell;
     struct zwlr_foreign_toplevel_handle_v1 *handle;
+    uint64_t id; /* never reused, unlike the address */
     char *title;
     char *app_id;
     bool activated;
@@ -123,7 +124,7 @@ struct xd_shell {
     struct ext_idle_notification_v1 *saver_note;
     struct ext_idle_notification_v1 *monitor_note;
     struct zwlr_output_power_manager_v1 *power_manager;
-    pid_t saver_pid;
+    int saver_pidfd; /* the running screen saver, or -1 */
     bool monitors_off;
     struct wl_pointer *pointer;
     struct wl_keyboard *keyboard;
@@ -141,6 +142,8 @@ struct xd_shell {
 
     struct wl_list taskbars;
     struct wl_list toplevels;
+    uint64_t next_toplevel_id;
+    struct _GHashTable *own_commands; /* xd_shell_own_command's results */
 
     xd_taskbar *pointer_bar; /* taskbar under the pointer */
     xd_menu *pointer_menu;   /* menu under the pointer */

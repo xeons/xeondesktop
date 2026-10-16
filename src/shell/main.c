@@ -652,6 +652,7 @@ int main(int argc, char **argv) {
     shell.terminal = term != nullptr && term[0] != '\0' ? term : "alacritty";
     shell.menu_timer_fd = -1;
     shell.flash_timer_fd = -1;
+    shell.saver_pidfd = -1;
     shell.settings_fd = -1;
     shell.quicklaunch.watch_fd = -1;
     xd_scheme_init_default(&shell.scheme);
@@ -725,6 +726,8 @@ int main(int argc, char **argv) {
         xd_free(t);
     }
     xd_menu_tree_free(&shell.menu_tree);
+    if (shell.own_commands != nullptr)
+        g_hash_table_destroy(shell.own_commands);
     xd_menu_tree_free(&shell.context_tree);
     xd_apps_free(&shell.apps);
     xd_quicklaunch_finish(&shell);

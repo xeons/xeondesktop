@@ -196,6 +196,8 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     cairo_restore(cr);
 }
 
+static int hit_test(const xd_taskbar *bar, double lx, double ly);
+
 void xd_taskbar_render(xd_taskbar *bar) {
     xd_shell *shell = bar->shell;
     if (!bar->configured || bar->width <= 0 || bar->height <= 0)
@@ -215,6 +217,14 @@ void xd_taskbar_render(xd_taskbar *bar) {
     cairo_t *cr = cairo_create(buf->surface);
     layout_and_draw(bar, &t, cr, dw, dh);
     cairo_destroy(cr);
+    /* The layout may have moved buttons under a still pointer: hover the
+     * right one (drawn next time round). */
+    bool again = false;
+    if (shell->pointer_bar == bar && bar->pressed == XD_HIT_NONE) {
+        int hot = hit_test(bar, bar->pointer_x, bar->pointer_y);
+        again = hot != bar->hot;
+        bar->hot = hot;
+    }
     cairo_surface_flush(buf->surface);
 
     wl_surface_attach(bar->surface, buf->buffer, 0, 0);
@@ -223,7 +233,7 @@ void xd_taskbar_render(xd_taskbar *bar) {
         wp_viewport_set_destination(bar->viewport, bar->width, bar->height);
     wl_surface_commit(bar->surface);
     buf->busy = true;
-    bar->dirty = false;
+    bar->dirty = again;
 }
 
 /* ---- input ------------------------------------------------------------------ */
@@ -305,6 +315,9 @@ void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial) {
     xd_rect r = bar->start_rect;
     xd_rect anchor = {(int)(r.x / bar->scale), (int)(r.y / bar->scale),
                       (int)(r.w / bar->scale), (int)(r.h / bar->scale)};
+    /* Close a right-click menu first: closing gives the keyboard back,
+     * which must happen before we take it for the Start menu. */
+    xd_menu_close_all(shell);
     xd_taskbar_take_keyboard(bar);
     xd_menu_open_root(shell, shell->start_model, bar->layer, anchor, serial);
     shell->start_bar = bar;
@@ -322,6 +335,9 @@ void xd_taskbar_take_keyboard(xd_taskbar *bar) {
 
 void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                                uint32_t serial) {
+    /* What's under the pointer now: buttons move without the pointer
+     * moving when windows open or close. */
+    bar->hot = hit_test(bar, bar->pointer_x, bar->pointer_y);
     if (button == BTN_RIGHT) {
         /* Right-click (opened on release, like Windows): the Start button's
          * menu, a task button's window menu, or the taskbar's menu. */

@@ -49,11 +49,14 @@ static void act_quick_launch(xd_shell *shell, [[maybe_unused]] void *d) {
     toggle_setting(shell, &shell->settings.quick_launch);
 }
 
-/* Window menu: the toplevel is looked up again, in case it closed. */
+/* Window menu: the toplevel is looked up again by its id, in case it
+ * closed (a new window may have been given the same address). */
+static void *toplevel_ref(const xd_toplevel *t) { return (void *)(uintptr_t)t->id; }
+
 static xd_toplevel *find_toplevel(xd_shell *shell, void *d) {
     xd_toplevel *t;
     wl_list_for_each(t, &shell->toplevels, link) {
-        if (t == d)
+        if (t->id == (uint64_t)(uintptr_t)d)
             return t;
     }
     return nullptr;
@@ -160,19 +163,19 @@ static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree) {
 static xd_menu_model *window_menu(xd_shell *shell, xd_menu_tree *tree, xd_toplevel *t) {
     xd_menu_model *m = xd_menu_model_new(tree);
     bool restorable = t->minimized || t->maximized;
-    xd_menu_item *it = add(tree, m, "Restore", restorable ? act_restore : nullptr, t);
+    xd_menu_item *it = add(tree, m, "Restore", restorable ? act_restore : nullptr, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_RESTORE;
     it->bold = restorable;
     /* Fixed-size windows ignore Size (the compositor knows which they are). */
     bool movable = !restorable && shell->arranger != nullptr;
-    add(tree, m, "Move", movable ? act_move : nullptr, t);
-    add(tree, m, "Size", movable ? act_size : nullptr, t);
-    it = add(tree, m, "Minimize", t->minimized ? nullptr : act_minimize, t);
+    add(tree, m, "Move", movable ? act_move : nullptr, toplevel_ref(t));
+    add(tree, m, "Size", movable ? act_size : nullptr, toplevel_ref(t));
+    it = add(tree, m, "Minimize", t->minimized ? nullptr : act_minimize, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_MINIMIZE;
-    it = add(tree, m, "Maximize", t->maximized ? nullptr : act_maximize, t);
+    it = add(tree, m, "Maximize", t->maximized ? nullptr : act_maximize, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_MAXIMIZE;
     separator(tree, m);
-    it = add(tree, m, "Close", act_close, t);
+    it = add(tree, m, "Close", act_close, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_CLOSE;
     it->accel = "Alt+F4";
     it->bold = !restorable;
