@@ -218,16 +218,30 @@ static void build_logoff(dialog *d) {
 int main(int argc, char **argv) {
     bool logoff = false;
     bool dry_run = false;
+    const char *direct = nullptr; /* --action: act without a dialog */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--logoff") == 0)
             logoff = true;
         else if (strcmp(argv[i], "--dry-run") == 0)
             dry_run = true;
+        else if (strcmp(argv[i], "--action") == 0 && i + 1 < argc)
+            direct = argv[++i];
     }
 
     dialog d = {0};
     const char *nested = getenv("XEONDESKTOP_NESTED");
     d.simulate = dry_run || nested == nullptr || strcmp(nested, "0") != 0;
+
+    /* Windows 7's Shut Down button acts at once; the same safety rules
+     * (nested sessions only simulate) apply. */
+    if (direct != nullptr) {
+        for (size_t a = 0; a < XD_ARRAY_LEN(actions); a++) {
+            if (strcmp(actions[a].key, direct) == 0)
+                return perform((action)a, d.simulate) ? EXIT_SUCCESS : EXIT_FAILURE;
+        }
+        fprintf(stderr, "xd-shutdown: unknown action %s\n", direct);
+        return EXIT_FAILURE;
+    }
     d.ui = xd_ui_connect(argc, argv);
     if (d.ui == nullptr)
         return EXIT_FAILURE;

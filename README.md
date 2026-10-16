@@ -56,6 +56,19 @@ categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`; it
 need parts of the desktop not written yet (Control Panel, Search, Help) are
 shown greyed out.
 
+### Start menu styles
+
+Start > Settings > Taskbar & Start Menu picks the layout:
+
+- **Classic (Windows 2000)**: cascading menus with the side banner.
+- **Windows 7**: pinned programs (`~/.config/xeondesktop/start-pinned`, one
+  desktop file id per line; browser and terminal by default) and your most
+  used programs on the left, **All Programs** opening in place, and a search
+  box that takes any typing. On the right: your picture (`~/.face`), user
+  folders, Recent Items, Control Panel, Run and a Shut Down button whose ▸
+  offers Log off, Restart, Sleep and Hibernate. In Luna the right column is
+  the dark see-through panel; there's no blur behind it yet.
+
 ### Quick Launch
 
 The icons next to Start are the shortcuts in

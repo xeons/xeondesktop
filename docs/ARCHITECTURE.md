@@ -236,8 +236,11 @@ Applets that make sense on Linux:
   as the reference): white left column of pinned and frequent programs
   with "All Programs" expanding in place and a search box; dark right column
   with the user picture, user folders, Control Panel, Run and a Shut Down
-  split button. The see-through right panel starts semi-transparent; real
-  blur needs a compositor blur pass, which wlroots' scene graph lacks.
+  split button. Done, except pinning from the menu (edit
+  `~/.config/xeondesktop/start-pinned`) and blur: the see-through right
+  panel is semi-transparent; real blur needs a compositor blur pass, which
+  wlroots' scene graph lacks. Recent Items read `recently-used.xbel` with
+  GLib's GBookmarkFile.
 - Notification area: StatusNotifierItem (KDE/Ayatana) host plus legacy XEmbed
   bridging is out of scope on Wayland. Clock, volume, network and battery
   are built in.
@@ -281,6 +284,8 @@ Applets that make sense on Linux:
    detection, Settings needs output management, Advanced needs a per-item
    editor), Quick Launch (done: folder of shortcuts, Show Desktop). Still
    to do: drag and drop onto Quick Launch, tooltips, GTK3 theme generation.
+   Windows 7 Start menu (done, see below) and Taskbar and Start Menu
+   Properties (`xd-taskbar`).
 6. `libxdfolder`, `xd-files` (GTK3), `xd-thumbnailer`, desktop icons.
 7. Start menu XP and 7 layouts, grouping, tray (SNI).
 8. Remaining Control Panel applets (GTK3), roughly in table order.

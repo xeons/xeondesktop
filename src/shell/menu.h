@@ -30,6 +30,7 @@ typedef struct xd_menu_item {
     const char *fallback_icon; /* tried if `icon` isn't found */
     xd_menu_model *submenu;    /* XD_MENU_SUBMENU */
     const char *command;       /* XD_MENU_ACTION: shell command line */
+    const char *app_id;        /* desktop file id, to count launches */
 } xd_menu_item;
 
 struct xd_menu_model {
@@ -86,6 +87,14 @@ typedef struct xd_menu {
 xd_menu *xd_menu_open_root(xd_shell *shell, const xd_menu_model *model,
                            struct zwlr_layer_surface_v1 *layer, xd_rect anchor, uint32_t serial);
 void xd_menu_close_all(xd_shell *shell);
+/* Opens `model` as a submenu of any popup surface (the Windows 7 Start
+ * menu's ▸ items), to the right of `anchor` (parent-local, logical). The
+ * caller owns it and closes it with xd_menu_destroy. */
+xd_menu *xd_menu_open_attached(xd_shell *shell, const xd_menu_model *model,
+                               struct xdg_surface *parent, xd_rect anchor, uint32_t serial);
+void xd_menu_destroy(xd_menu *menu);
+/* Keyboard navigation in the chain starting at root. */
+bool xd_menu_key_chain(xd_menu *root, uint32_t keysym);
 /* Opens the submenu of item `index`, closing any other open child. */
 xd_menu *xd_menu_open_child(xd_menu *menu, int index);
 

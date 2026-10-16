@@ -19,6 +19,7 @@
 #include "../ui/protocols.h"
 
 typedef struct xd_shell xd_shell;
+typedef struct xd_start7 xd_start7;
 
 typedef struct xd_early_output {
     struct wl_output *output;
@@ -136,7 +137,10 @@ struct xd_shell {
     xd_app_list apps;
     xd_menu_tree menu_tree;
     xd_menu_model *start_model;
-    xd_menu *start_menu;    /* open root menu, or nullptr */
+    xd_menu *start_menu;    /* open root menu (2000 style), or nullptr */
+    xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
+    bool pointer_start7;    /* pointer is over start7 */
+    bool pending_start7;    /* start7 waits for the hover delay */
     xd_taskbar *start_bar;  /* taskbar whose Start button opened it */
     uint32_t menu_serial;   /* input serial the menu grab was made with */
     int menu_timer_fd;      /* hover delay */
@@ -166,12 +170,33 @@ void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y);
 void xd_taskbar_pointer_leave(xd_taskbar *bar);
 void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                                uint32_t serial);
+/* Gives the taskbar keyboard focus; call before opening a menu popup. */
+void xd_taskbar_take_keyboard(xd_taskbar *bar);
 /* Opens the Start menu above this taskbar's Start button. */
 void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial);
 /* Forget a window that's going away. */
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
 /* Drop hit-test layout after Quick Launch changed (indices shift). */
 void xd_taskbars_forget_layout(xd_shell *shell);
+
+/* start7.c: the Windows 7 style Start menu */
+void xd_start7_open(xd_taskbar *bar, uint32_t serial);
+void xd_start7_close(xd_shell *shell);
+bool xd_start7_owns(xd_shell *shell, struct wl_surface *surface);
+void xd_start7_render_dirty(xd_shell *shell);
+xd_menu *xd_start7_submenu(xd_shell *shell);
+void xd_start7_pointer_motion(xd_shell *shell, double x, double y);
+void xd_start7_pointer_leave(xd_shell *shell);
+void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed);
+void xd_start7_pointer_axis(xd_shell *shell, double value);
+bool xd_start7_key(xd_shell *shell, uint32_t keysym, const char *utf8, bool ctrl_or_alt);
+void xd_start7_timer_fired(xd_shell *shell);
+/* Records a launch for the "frequently used" list. */
+void xd_start7_count_launch(const char *app_id);
+
+/* startmenu.c */
+/* Command line for one of our programs (next to xd-shell in a build tree). */
+const char *xd_shell_own_command(xd_shell *shell, const char *program, const char *extra);
 
 /* desktop.c */
 xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output);

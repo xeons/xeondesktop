@@ -115,6 +115,7 @@ theme_dep = declare_dependency(
 settings_lib = static_library(
   'xdsettings',
   'src/settings/settings.c',
+  'src/settings/state.c',
   dependencies: [cairo_dep, pango_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -238,7 +239,7 @@ executable(
   'src/apps/run.c',
   'src/apps/runcmd.c',
   apps_common,
-  dependencies: [ui_dep],
+  dependencies: [ui_dep, settings_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -261,6 +262,14 @@ executable(
 )
 
 executable(
+  'xd-taskbar',
+  'src/apps/taskbar.c',
+  dependencies: [ui_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+executable(
   'xd-shell',
   'src/shell/main.c',
   'src/shell/taskbar.c',
@@ -270,6 +279,8 @@ executable(
   'src/shell/startmenu.c',
   'src/shell/desktop.c',
   'src/shell/quicklaunch.c',
+  'src/shell/start7.c',
+  'src/shell/recent.c',
   dependencies: [ui_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,

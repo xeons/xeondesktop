@@ -76,6 +76,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
     xd_shell *shell = data;
     shell->pointer_bar = bar_for_surface(shell, surface);
     shell->pointer_menu = xd_menu_for_surface(shell, surface);
+    shell->pointer_start7 = xd_start7_owns(shell, surface);
     if (shell->cursor_shape != nullptr)
         wp_cursor_shape_device_v1_set_shape(shell->cursor_shape, serial,
                                             WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
@@ -85,6 +86,8 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
         xd_taskbar_pointer_motion(shell->pointer_bar, lx, ly);
     if (shell->pointer_menu != nullptr)
         xd_menu_pointer_motion(shell->pointer_menu, lx, ly);
+    if (shell->pointer_start7)
+        xd_start7_pointer_motion(shell, lx, ly);
 }
 
 static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -95,8 +98,11 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_taskbar_pointer_leave(shell->pointer_bar);
     if (shell->pointer_menu != nullptr)
         xd_menu_pointer_leave(shell->pointer_menu);
+    if (shell->pointer_start7)
+        xd_start7_pointer_leave(shell);
     shell->pointer_bar = nullptr;
     shell->pointer_menu = nullptr;
+    shell->pointer_start7 = false;
 }
 
 static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -108,6 +114,8 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_taskbar_pointer_motion(shell->pointer_bar, lx, ly);
     if (shell->pointer_menu != nullptr)
         xd_menu_pointer_motion(shell->pointer_menu, lx, ly);
+    if (shell->pointer_start7)
+        xd_start7_pointer_motion(shell, lx, ly);
 }
 
 static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
@@ -116,13 +124,18 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
     bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
     if (shell->pointer_menu != nullptr)
         xd_menu_pointer_button(shell->pointer_menu, button, pressed);
+    else if (shell->pointer_start7)
+        xd_start7_pointer_button(shell, button, pressed);
     else if (shell->pointer_bar != nullptr)
         xd_taskbar_pointer_button(shell->pointer_bar, button, pressed, serial);
 }
 
-static void pointer_axis([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p,
-                         [[maybe_unused]] uint32_t time, [[maybe_unused]] uint32_t axis,
-                         [[maybe_unused]] wl_fixed_t value) {}
+static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
+                         [[maybe_unused]] uint32_t time, uint32_t axis, wl_fixed_t value) {
+    xd_shell *shell = data;
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_start7)
+        xd_start7_pointer_axis(shell, wl_fixed_to_double(value));
+}
 static void pointer_frame([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p) {}
 static void pointer_axis_source([[maybe_unused]] void *data,
                                 [[maybe_unused]] struct wl_pointer *p,
@@ -189,6 +202,17 @@ static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k,
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED || shell->xkb_state == nullptr)
         return;
     xkb_keysym_t sym = xkb_state_key_get_one_sym(shell->xkb_state, key + 8);
+    if (shell->start7 != nullptr) {
+        char utf8[16] = {0};
+        xkb_state_key_get_utf8(shell->xkb_state, key + 8, utf8, sizeof(utf8));
+        bool ctrl_alt =
+            xkb_state_mod_name_is_active(shell->xkb_state, XKB_MOD_NAME_CTRL,
+                                         XKB_STATE_MODS_EFFECTIVE) > 0 ||
+            xkb_state_mod_name_is_active(shell->xkb_state, XKB_MOD_NAME_ALT,
+                                         XKB_STATE_MODS_EFFECTIVE) > 0;
+        xd_start7_key(shell, sym, utf8, ctrl_alt);
+        return;
+    }
     xd_menu_key(shell, sym);
 }
 
@@ -499,6 +523,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         debug_open_menu(shell);
         xd_taskbars_render_dirty(shell);
         xd_menus_render_dirty(shell);
+        xd_start7_render_dirty(shell);
         while (wl_display_prepare_read(d) != 0)
             wl_display_dispatch_pending(d);
         if (!flush_display(d)) {

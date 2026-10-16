@@ -96,7 +96,7 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     int sw = xd_theme_start_button_width(t, cr);
     bar->start_rect = (xd_rect){pad, inset_top, sw, button_h};
     uint8_t start_state = button_state(bar, XD_HIT_START);
-    if (shell->start_menu != nullptr && shell->start_bar == bar)
+    if ((shell->start_menu != nullptr || shell->start7 != nullptr) && shell->start_bar == bar)
         start_state |= XD_STATE_PRESSED;
     xd_theme_draw_start_button(t, cr, bar->start_rect, start_state);
     int after_start = bar->start_rect.x + bar->start_rect.w + xd_tpx(t, 2);
@@ -275,12 +275,19 @@ void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial) {
     xd_rect r = bar->start_rect;
     xd_rect anchor = {(int)(r.x / bar->scale), (int)(r.y / bar->scale),
                       (int)(r.w / bar->scale), (int)(r.h / bar->scale)};
+    xd_taskbar_take_keyboard(bar);
     xd_menu_open_root(shell, shell->start_model, bar->layer, anchor, serial);
     shell->start_bar = bar;
-    /* Take the keyboard while the menu is open so arrows/Esc work. */
+    bar->dirty = true;
+}
+
+void xd_taskbar_take_keyboard(xd_taskbar *bar) {
+    /* Take the keyboard while a menu is open so arrows, Esc and typing
+     * reach us. This must be committed before the menu's popup grab
+     * starts: during a grab the compositor won't move keyboard focus. */
     zwlr_layer_surface_v1_set_keyboard_interactivity(
         bar->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE);
-    bar->dirty = true;
+    wl_surface_commit(bar->surface);
 }
 
 void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
@@ -292,8 +299,10 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         bar->dirty = true;
         /* The Start menu opens on press, like Windows'. */
         if (bar->hot == XD_HIT_START) {
-            if (bar->shell->start_menu != nullptr)
+            if (bar->shell->start_menu != nullptr || bar->shell->start7 != nullptr)
                 xd_menu_close_all(bar->shell);
+            else if (bar->shell->settings.start_style == XD_START_WIN7)
+                xd_start7_open(bar, serial);
             else
                 xd_taskbar_open_start_menu(bar, serial);
         }

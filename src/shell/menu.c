@@ -196,6 +196,10 @@ void xd_menus_render_dirty(xd_shell *shell) {
         if (m->dirty && m->configured)
             render(m);
     }
+    for (xd_menu *m = xd_start7_submenu(shell); m != nullptr; m = m->child) {
+        if (m->dirty && m->configured)
+            render(m);
+    }
 }
 
 /* ---- popup lifecycle ---------------------------------------------------------- */
@@ -350,6 +354,28 @@ xd_menu *xd_menu_open_child(xd_menu *menu, int index) {
     return child;
 }
 
+xd_menu *xd_menu_open_attached(xd_shell *shell, const xd_menu_model *model,
+                               struct xdg_surface *parent, xd_rect anchor, uint32_t serial) {
+    xd_menu *menu = menu_create(shell, model);
+    struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
+    xdg_positioner_set_size(pos, menu->width, menu->height);
+    xdg_positioner_set_anchor_rect(pos, anchor.x, anchor.y, XD_MAX(anchor.w, 1),
+                                   XD_MAX(anchor.h, 1));
+    xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_TOP_RIGHT);
+    xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+    xdg_positioner_set_constraint_adjustment(
+        pos, XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X |
+                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y |
+                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_RESIZE_Y);
+    menu->popup = xdg_surface_get_popup(menu->xdg_surface, parent, pos);
+    xdg_positioner_destroy(pos);
+    shell->menu_serial = serial;
+    menu_finish_popup(menu, serial);
+    return menu;
+}
+
+void xd_menu_destroy(xd_menu *menu) { menu_destroy(menu); }
+
 /* Destroys `menu` and everything opened from it, topmost first as the
  * protocol requires. */
 static void menu_destroy(xd_menu *menu) {
@@ -379,6 +405,10 @@ static void menu_destroy(xd_menu *menu) {
 }
 
 void xd_menu_close_all(xd_shell *shell) {
+    if (shell->start7 != nullptr) {
+        xd_start7_close(shell); /* calls xd_shell_start_menu_closed */
+        return;
+    }
     xd_menu *root = shell->start_menu;
     if (root == nullptr)
         return;
@@ -389,6 +419,10 @@ void xd_menu_close_all(xd_shell *shell) {
 
 xd_menu *xd_menu_for_surface(xd_shell *shell, struct wl_surface *surface) {
     for (xd_menu *m = shell->start_menu; m != nullptr; m = m->child) {
+        if (m->surface == surface)
+            return m;
+    }
+    for (xd_menu *m = xd_start7_submenu(shell); m != nullptr; m = m->child) {
         if (m->surface == surface)
             return m;
     }
@@ -406,6 +440,8 @@ static void arm_timer(xd_shell *shell, xd_menu *menu) {
 }
 
 void xd_menu_timer_fired(xd_shell *shell) {
+    if (shell->pending_start7)
+        xd_start7_timer_fired(shell);
     xd_menu *menu = shell->pending_menu;
     shell->pending_menu = nullptr;
     if (menu == nullptr)
@@ -459,8 +495,12 @@ static void activate(xd_menu *menu, int index) {
     if (it->kind == XD_MENU_ACTION && it->command != nullptr) {
         xd_shell *shell = menu->shell;
         char *cmd = xd_str_dup_cstr(xd_str_from_cstr(it->command));
+        char *id = it->app_id != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(it->app_id)) : nullptr;
         xd_menu_close_all(shell); /* frees `it` */
         xd_shell_launch(shell, cmd);
+        if (id != nullptr)
+            xd_start7_count_launch(id);
+        xd_free(id);
         xd_free(cmd);
     }
 }
@@ -492,9 +532,12 @@ static int step(const xd_menu *menu, int from, int dir) {
 }
 
 bool xd_menu_key(xd_shell *shell, uint32_t sym) {
-    xd_menu *menu = shell->start_menu;
-    if (menu == nullptr)
-        return false;
+    return shell->start_menu != nullptr && xd_menu_key_chain(shell->start_menu, sym);
+}
+
+bool xd_menu_key_chain(xd_menu *root, uint32_t sym) {
+    xd_shell *shell = root->shell;
+    xd_menu *menu = root;
     while (menu->child != nullptr)
         menu = menu->child;
 
@@ -527,10 +570,14 @@ bool xd_menu_key(xd_shell *shell, uint32_t sym) {
     case XKB_KEY_Left:
         if (menu->parent != nullptr)
             menu_destroy(menu);
+        else if (menu != shell->start_menu)
+            return false; /* an attached submenu: its owner closes it */
         return true;
     case XKB_KEY_Escape:
         if (menu->parent != nullptr)
             menu_destroy(menu);
+        else if (menu != shell->start_menu)
+            return false;
         else
             xd_menu_close_all(shell);
         return true;

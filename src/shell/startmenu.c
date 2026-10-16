@@ -32,7 +32,7 @@ static void append_quoted(xd_strbuf *cmd, const char *s) {
 
 /* Command line for one of our own programs: next to xd-shell if it's
  * there (a build tree), else from PATH. */
-static const char *own_command(xd_shell *shell, const char *program, const char *extra) {
+const char *xd_shell_own_command(xd_shell *shell, const char *program, const char *extra) {
     xd_strbuf cmd = {0};
     char self[4096];
     ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
@@ -88,6 +88,7 @@ static xd_menu_model *build_programs(xd_shell *shell) {
             xd_menu_item *it =
                 xd_menu_add(tree, f->submenu, XD_MENU_ACTION, app->name, app->icon);
             it->command = app_command(shell, app);
+            it->app_id = app->id;
         }
     }
     if (programs->count == 0)
@@ -137,12 +138,13 @@ void xd_start_menu_build(xd_shell *shell) {
     xd_menu_item *display = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "Display",
                                         "preferences-desktop-display");
     display->fallback_icon = "video-display";
-    display->command = own_command(shell, "xd-desk", nullptr);
+    display->command = xd_shell_own_command(shell, "xd-desk", nullptr);
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Network and Dial-up Connections",
                  "network-workgroup");
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Printers", "printer");
-    add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Taskbar & Start Menu...",
-                 "preferences-desktop");
+    xd_menu_item *taskbar = xd_menu_add(tree, settings->submenu, XD_MENU_ACTION,
+                                        "Taskbar & Start Menu...", "preferences-desktop");
+    taskbar->command = xd_shell_own_command(shell, "xd-taskbar", nullptr);
 
     xd_menu_item *search = xd_menu_add(tree, root, XD_MENU_SUBMENU, "Search", "system-search");
     search->submenu = xd_menu_model_new(tree);
@@ -151,7 +153,7 @@ void xd_start_menu_build(xd_shell *shell) {
 
     add_disabled(tree, root, XD_MENU_ACTION, "Help", "help-browser");
     xd_menu_item *run = xd_menu_add(tree, root, XD_MENU_ACTION, "Run...", "system-run");
-    run->command = own_command(shell, "xd-run", nullptr);
+    run->command = xd_shell_own_command(shell, "xd-run", nullptr);
     xd_menu_add(tree, root, XD_MENU_SEPARATOR, nullptr, nullptr);
 
     const char *user = getenv("USER");
@@ -159,11 +161,11 @@ void xd_start_menu_build(xd_shell *shell) {
     xd_strbuf_appendf(&logoff, "Log Off %s...", user != nullptr ? user : "");
     xd_menu_item *logoff_item =
         xd_menu_add(tree, root, XD_MENU_ACTION, xd_strbuf_cstr(&logoff), "system-log-out");
-    logoff_item->command = own_command(shell, "xd-shutdown", "--logoff");
+    logoff_item->command = xd_shell_own_command(shell, "xd-shutdown", "--logoff");
     xd_strbuf_free(&logoff);
     xd_menu_item *shutdown =
         xd_menu_add(tree, root, XD_MENU_ACTION, "Shut Down...", "system-shutdown");
-    shutdown->command = own_command(shell, "xd-shutdown", nullptr);
+    shutdown->command = xd_shell_own_command(shell, "xd-shutdown", nullptr);
 
     shell->start_model = root;
 }

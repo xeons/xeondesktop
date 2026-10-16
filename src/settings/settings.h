@@ -26,6 +26,12 @@ typedef enum xd_wallpaper_mode : uint8_t {
     XD_WALLPAPER_MODE_COUNT,
 } xd_wallpaper_mode;
 
+typedef enum xd_start_style : uint8_t {
+    XD_START_CLASSIC, /* Windows 2000: cascading menu with side banner */
+    XD_START_WIN7,    /* Windows 7: two columns, search, All Programs in place */
+    XD_START_STYLE_COUNT,
+} xd_start_style;
+
 typedef struct xd_settings {
     /* [Appearance] */
     xd_visual_style style;
@@ -45,6 +51,9 @@ typedef struct xd_settings {
 
     /* [Taskbar] */
     bool quick_launch;
+
+    /* [StartMenu] */
+    xd_start_style start_style;
 
     /* [ScreenSaver] */
     char screensaver[64];
