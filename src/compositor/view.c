@@ -10,17 +10,22 @@
 #include "../core/alloc.h"
 #include "server.h"
 
-static xd_frame view_frame_desc(const xd_view *view) {
+xd_frame xd_view_frame(const xd_view *view, bool active) {
+    const char *title = view->toplevel->title;
     return (xd_frame){
-        .title = "",
-        .active = true,
+        .title = title != nullptr ? title : "",
+        .active = active,
         .maximized = view->maximized,
-        .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE,
+        .dialog = view->dialog,
+        .buttons = view->dialog ? XD_CAPBTN_CLOSE
+                                : XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE,
+        .hot = view->hot,
+        .pressed = view->pressed,
     };
 }
 
 xd_insets xd_view_insets(const xd_view *view) {
-    xd_frame f = view_frame_desc(view);
+    xd_frame f = xd_view_frame(view, true);
     return xd_theme_frame_insets(&view->server->logical_theme, &f);
 }
 
@@ -110,7 +115,7 @@ xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly) {
     double scale = view->drawn.scale > 0 ? view->drawn.scale : 1.0;
     xd_theme theme;
     xd_theme_init(&theme, view->server->config.style, &view->server->config.scheme, scale);
-    xd_frame f = view_frame_desc(view);
+    xd_frame f = xd_view_frame(view, true);
     xd_rect dev = {0, 0, -floor_int(-outer.width * scale), -floor_int(-outer.height * scale)};
     int px = floor_int((lx - outer.x) * scale);
     int py = floor_int((ly - outer.y) * scale);
@@ -178,6 +183,8 @@ void xd_view_close(xd_view *view) { wlr_xdg_toplevel_send_close(view->toplevel);
 void xd_view_set_maximized(xd_view *view, bool maximized) {
     if (!view->toplevel->base->initialized)
         return;
+    if (view->dialog)
+        maximized = false; /* dialogs keep their size */
     if (view->maximized == maximized) {
         wlr_xdg_surface_schedule_configure(view->toplevel->base);
         return;
@@ -234,6 +241,13 @@ static void place_new_view(xd_view *view) {
     struct wlr_box outer = xd_view_outer_box(view);
     xd_insets in = xd_view_insets(view);
     int step = in.top;
+
+    /* Dialogs open centred, as Windows places them. */
+    if (view->dialog && outer.width <= area.width && outer.height <= area.height) {
+        xd_view_set_position(view, area.x + (area.width - outer.width) / 2,
+                             area.y + (area.height - outer.height) / 2);
+        return;
+    }
 
     for (int attempt = 0; attempt < 2; attempt++) {
         int x = area.x + step / 2 + server->cascade * step;
@@ -328,9 +342,16 @@ void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output) {
     }
 }
 
+static bool is_fixed_size(const struct wlr_xdg_toplevel *t) {
+    const struct wlr_xdg_toplevel_state *s = &t->current;
+    return s->min_width > 0 && s->min_height > 0 && s->min_width == s->max_width &&
+           s->min_height == s->max_height;
+}
+
 static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, map);
     view->mapped = true;
+    view->dialog = is_fixed_size(view->toplevel);
     ftl_create(view);
     update_content_position(view);
     place_new_view(view);

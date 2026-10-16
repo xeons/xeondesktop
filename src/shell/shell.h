@@ -13,9 +13,9 @@
 #include "../theme/theme.h"
 #include "../ui/shm.h"
 #include "apps.h"
-#include "icons.h"
+#include "../ui/icons.h"
 #include "menu.h"
-#include "protocols.h"
+#include "../ui/protocols.h"
 
 typedef struct xd_shell xd_shell;
 
@@ -71,6 +71,7 @@ typedef struct xd_taskbar {
 struct xd_shell {
     xd_visual_style style;
     xd_scheme scheme;
+    const char *scheme_path; /* passed on to dialogs; may be nullptr */
     const char *terminal;
 
     struct wl_display *display;

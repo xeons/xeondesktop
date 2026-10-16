@@ -84,6 +84,7 @@ void xd_frame_render(xd_view *view, bool force) {
     if (!force && !view->drawn.title_dirty && view->drawn.width == outer.width &&
         view->drawn.height == outer.height && view->drawn.scale == scale &&
         view->drawn.active == active && view->drawn.maximized == view->maximized &&
+        view->drawn.dialog == view->dialog &&
         view->drawn.hot == view->hot && view->drawn.pressed == view->pressed)
         return;
 
@@ -98,15 +99,7 @@ void xd_frame_render(xd_view *view, bool force) {
 
     xd_theme theme;
     xd_theme_init(&theme, view->server->config.style, &view->server->config.scheme, scale);
-    const char *title = view->toplevel->title;
-    xd_frame f = {
-        .title = title != nullptr ? title : "",
-        .active = active,
-        .maximized = view->maximized,
-        .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE,
-        .hot = view->hot,
-        .pressed = view->pressed,
-    };
+    xd_frame f = xd_view_frame(view, active);
     cairo_t *cr = cairo_create(buf->surface);
     xd_theme_draw_frame(&theme, cr, (xd_rect){0, 0, dw, dh}, &f);
     cairo_destroy(cr);
@@ -121,6 +114,7 @@ void xd_frame_render(xd_view *view, bool force) {
     view->drawn.scale = scale;
     view->drawn.active = active;
     view->drawn.maximized = view->maximized;
+    view->drawn.dialog = view->dialog;
     view->drawn.hot = view->hot;
     view->drawn.pressed = view->pressed;
     view->drawn.title_dirty = false;

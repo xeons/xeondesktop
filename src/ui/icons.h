@@ -5,8 +5,8 @@
  * probe instead of thousands of stat() calls. Loaded icons are cached per
  * pixel size. Icons come from installed system/user theme directories.
  */
-#ifndef XD_SHELL_ICONS_H
-#define XD_SHELL_ICONS_H
+#ifndef XD_UI_ICONS_H
+#define XD_UI_ICONS_H
 
 #include <cairo.h>
 

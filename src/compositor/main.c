@@ -4,6 +4,7 @@
  * Runs on a TTY (DRM/KMS via a seat manager) or nested in an existing X11 or
  * Wayland session for development.
  */
+#include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <wlr/types/wlr_compositor.h>
@@ -169,6 +170,13 @@ static void server_finish(xd_server *server) {
         wl_display_destroy(server->display);
 }
 
+static int handle_terminate([[maybe_unused]] int sig, void *data) {
+    xd_server *server = data;
+    server->terminating = true;
+    wl_display_terminate(server->display);
+    return 0;
+}
+
 /* Prefers the xd-shell next to this binary (a build tree), else PATH. */
 static const char *default_shell(void) {
     static char path[4096];
@@ -218,6 +226,19 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    /* Log Off (xd-shutdown) ends the session with SIGTERM. */
+    struct wl_event_source *sigterm =
+        wl_event_loop_add_signal(server.loop, SIGTERM, handle_terminate, &server);
+    struct wl_event_source *sigint =
+        wl_event_loop_add_signal(server.loop, SIGINT, handle_terminate, &server);
+
+    /* Tell session programs how to reach us, and whether we're nested in
+     * another desktop (where Shut Down must not power off the machine). */
+    bool nested = getenv("WAYLAND_DISPLAY") != nullptr || getenv("DISPLAY") != nullptr;
+    char pid[32];
+    snprintf(pid, sizeof(pid), "%ld", (long)getpid());
+    setenv("XEONDESKTOP_PID", pid, true);
+    setenv("XEONDESKTOP_NESTED", nested ? "1" : "0", true);
     setenv("WAYLAND_DISPLAY", socket, true);
     /* Children are Wayland clients of this compositor, not of the host. */
     unsetenv("DISPLAY");
@@ -230,6 +251,8 @@ int main(int argc, char **argv) {
         xd_spawn(&server, server.config.startup);
 
     wl_display_run(server.display);
+    wl_event_source_remove(sigterm);
+    wl_event_source_remove(sigint);
     server_finish(&server);
     return EXIT_SUCCESS;
 }

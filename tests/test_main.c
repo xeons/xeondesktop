@@ -4,7 +4,9 @@
 #include <stdlib.h>
 
 #include "../src/core/ini.h"
+#include "../src/apps/runcmd.h"
 #include "../src/shell/apps.h"
+#include "../src/ui/textedit.h"
 #include "../src/theme/theme.h"
 
 static int failures = 0;
@@ -335,6 +337,116 @@ static void test_menus(void) {
     }
 }
 
+static bool text_is(const xd_textedit *e, const char *want) {
+    return xd_str_eq(xd_textedit_view(e), xd_str_from_cstr(want));
+}
+
+static void test_textedit(void) {
+    /* UTF-8 validation */
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"a", 1) == 1);
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"\xC3\xA9", 2) == 2);   /* é */
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"\xE2\x82\xAC", 3) == 3); /* € */
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"\xF0\x9F\x98\x80", 4) == 4);
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"\xC0\xAF", 2) == 0);    /* overlong */
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"\xED\xA0\x80", 3) == 0); /* surrogate */
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"\xC3", 1) == 0);        /* truncated */
+    CHECK(xd_utf8_sequence_len((const unsigned char *)"\x80", 1) == 0);
+
+    xd_textedit e = {0};
+    xd_textedit_set(&e, XD_STR("hello"));
+    CHECK(text_is(&e, "hello") && xd_textedit_has_selection(&e));
+    xd_textedit_insert(&e, XD_STR("x")); /* typing replaces the selection */
+    CHECK(text_is(&e, "x") && e.cursor == 1);
+
+    /* Control characters and invalid bytes are dropped. */
+    xd_textedit_insert(&e, XD_STR("a\tb\n\x01\xFF\xC3\xA9"));
+    CHECK(text_is(&e, "xab\xC3\xA9"));
+    /* Backspace removes a whole character, not a byte. */
+    xd_textedit_backspace(&e, false);
+    CHECK(text_is(&e, "xab"));
+
+    /* Cursor never lands inside a character. */
+    xd_textedit_set(&e, XD_STR("\xE2\x82\xAC" "1"));
+    xd_textedit_set_cursor(&e, 2, false);
+    CHECK(e.cursor == 0);
+    xd_textedit_move(&e, XD_MOTION_RIGHT, false);
+    CHECK(e.cursor == 3);
+    xd_textedit_delete(&e, false);
+    CHECK(text_is(&e, "\xE2\x82\xAC"));
+
+    /* Selection, word motion, word delete. */
+    xd_textedit_set(&e, XD_STR("ls -la /tmp"));
+    xd_textedit_move(&e, XD_MOTION_END, false);
+    xd_textedit_move(&e, XD_MOTION_WORD_LEFT, true);
+    CHECK(xd_str_eq(xd_textedit_selected(&e), XD_STR("tmp")));
+    xd_textedit_move(&e, XD_MOTION_LEFT, false); /* collapses to the left edge */
+    CHECK(e.cursor == 8 && !xd_textedit_has_selection(&e));
+    xd_textedit_move(&e, XD_MOTION_HOME, false);
+    xd_textedit_move(&e, XD_MOTION_WORD_RIGHT, false);
+    CHECK(e.cursor == 4);
+    xd_textedit_move(&e, XD_MOTION_END, false);
+    xd_textedit_backspace(&e, true);
+    CHECK(text_is(&e, "ls -la /"));
+    xd_textedit_move(&e, XD_MOTION_HOME, false);
+    xd_textedit_delete(&e, true);
+    CHECK(text_is(&e, "la /"));
+
+    /* Insertion in the middle; max length cut on a character boundary. */
+    xd_textedit_set(&e, XD_STR("ac"));
+    xd_textedit_set_cursor(&e, 1, false);
+    xd_textedit_insert(&e, XD_STR("b"));
+    CHECK(text_is(&e, "abc") && e.cursor == 2);
+    e.max_len = 5;
+    xd_textedit_move(&e, XD_MOTION_END, false);
+    xd_textedit_insert(&e, XD_STR("\xC3\xA9\xC3\xA9")); /* 4 bytes, room for 2 */
+    CHECK(text_is(&e, "abc\xC3\xA9"));
+    xd_textedit_free(&e);
+}
+
+static void test_runcmd(void) {
+    const char *path = "/usr/bin:/bin";
+    xd_run_target t = xd_run_classify(XD_STR("   "), path, "/home/u");
+    CHECK(t.kind == XD_RUN_EMPTY);
+    xd_run_target_free(&t);
+
+    t = xd_run_classify(XD_STR("https://example.com/x"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_OPEN);
+    xd_run_target_free(&t);
+    t = xd_run_classify(XD_STR("www.example.com"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_OPEN);
+    xd_run_target_free(&t);
+    t = xd_run_classify(XD_STR("mailto:a@b.c"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_OPEN);
+    xd_run_target_free(&t);
+
+    t = xd_run_classify(XD_STR("/tmp"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_OPEN && strcmp(xd_strbuf_cstr(&t.target), "/tmp") == 0);
+    xd_run_target_free(&t);
+    t = xd_run_classify(XD_STR("~"), path, "/tmp");
+    CHECK(t.kind == XD_RUN_OPEN && strcmp(xd_strbuf_cstr(&t.target), "/tmp") == 0);
+    xd_run_target_free(&t);
+    t = xd_run_classify(XD_STR("/bin/sh"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_EXEC);
+    xd_run_target_free(&t);
+
+    t = xd_run_classify(XD_STR("sh -c 'echo hi'"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_SHELL &&
+          strcmp(xd_strbuf_cstr(&t.target), "sh -c 'echo hi'") == 0);
+    xd_run_target_free(&t);
+    t = xd_run_classify(XD_STR("/bin/sh -c true"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_SHELL);
+    xd_run_target_free(&t);
+
+    t = xd_run_classify(XD_STR("no-such-program-xd --x"), path, "/home/u");
+    CHECK(t.kind == XD_RUN_NOT_FOUND &&
+          strcmp(xd_strbuf_cstr(&t.target), "no-such-program-xd") == 0);
+    xd_run_target_free(&t);
+    /* "sh" isn't found in an empty PATH: nothing runs from the cwd. */
+    t = xd_run_classify(XD_STR("sh"), "", "/home/u");
+    CHECK(t.kind == XD_RUN_NOT_FOUND);
+    xd_run_target_free(&t);
+}
+
 static void test_px(void) {
     CHECK(xd_px(1.0, 1) == 1);
     CHECK(xd_px(1.25, 1) == 1);
@@ -356,6 +468,8 @@ int main(void) {
     test_hit();
     test_apps();
     test_menus();
+    test_textedit();
+    test_runcmd();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

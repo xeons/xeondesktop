@@ -426,6 +426,7 @@ static bool parse_args(int argc, char **argv, xd_shell *shell) {
         } else if (xd_str_eq(arg, XD_STR("--scheme"))) {
             xd_strbuf err = {0};
             bool ok = xd_scheme_load(val, &shell->scheme, &err);
+            shell->scheme_path = val;
             if (!ok)
                 fprintf(stderr, "xd-shell: %s: %s\n", val, xd_strbuf_cstr(&err));
             xd_strbuf_free(&err);

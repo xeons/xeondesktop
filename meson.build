@@ -193,17 +193,52 @@ executable(
 
 librsvg_dep = dependency('librsvg-2.0', include_type: 'system')
 
+# libxdui: Wayland client plumbing and dialog widgets for shell programs.
+ui_lib = static_library(
+  'xdui',
+  'src/ui/shm.c',
+  'src/ui/icons.c',
+  'src/ui/textedit.c',
+  'src/ui/ui.c',
+  'src/ui/widgets.c',
+  dependencies: [theme_dep, client_protocol_dep, librsvg_dep, xkbcommon_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
+ui_dep = declare_dependency(
+  link_with: ui_lib,
+  dependencies: [theme_dep, client_protocol_dep, librsvg_dep, xkbcommon_dep],
+)
+
+apps_common = files('src/apps/common.c')
+
+executable(
+  'xd-run',
+  'src/apps/run.c',
+  'src/apps/runcmd.c',
+  apps_common,
+  dependencies: [ui_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+executable(
+  'xd-shutdown',
+  'src/apps/shutdown.c',
+  apps_common,
+  dependencies: [ui_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
 executable(
   'xd-shell',
   'src/shell/main.c',
   'src/shell/taskbar.c',
   'src/shell/toplevels.c',
-  'src/shell/icons.c',
   'src/shell/apps.c',
   'src/shell/menu.c',
   'src/shell/startmenu.c',
-  'src/ui/shm.c',
-  dependencies: [theme_dep, client_protocol_dep, librsvg_dep, xkbcommon_dep],
+  dependencies: [ui_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -214,6 +249,8 @@ test_exe = executable(
   'xd-tests',
   'tests/test_main.c',
   'src/shell/apps.c',
+  'src/ui/textedit.c',
+  'src/apps/runcmd.c',
   dependencies: [theme_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )

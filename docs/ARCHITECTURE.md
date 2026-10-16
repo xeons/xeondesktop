@@ -252,10 +252,12 @@ Applets that make sense on Linux:
    fullscreen, keyboard layout settings, output hotplug rearrangement.
 3. Shell, part 1 (done): layer-shell work areas, taskbar with task
    buttons and clock, one per output, DPI-aware.
-4. Shell, part 2 (in progress): Start menu (2000 layout first) with the
+4. Shell, part 2 (done): Start menu (2000 layout first) with the
    Programs menu built from installed applications, icon theme lookup.
-5. `libxdui` basics, Run and Shut Down dialogs, Display Properties
-   (`xd-desk`), Quick Launch, `xd-settingsd` with GTK3 theme generation.
+5. `libxdui` basics and Run / Shut Down / Log Off dialogs (done; edit
+   fields, combo boxes, buttons, clipboard, key repeat). Still to do:
+   Display Properties (`xd-desk`), Quick Launch, `xd-settingsd` with GTK3
+   theme generation.
 6. `libxdfolder`, `xd-files` (GTK3), `xd-thumbnailer`, desktop icons.
 7. Start menu XP and 7 layouts, grouping, tray (SNI).
 8. Remaining Control Panel applets (GTK3), roughly in table order.

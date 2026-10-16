@@ -73,7 +73,7 @@ xd_frame_part xd_theme_frame_hit(const xd_theme *t, xd_rect outer, const xd_fram
     }
 
     xd_insets in = xd_theme_frame_insets(t, f);
-    if (!f->maximized) {
+    if (!f->maximized && !f->dialog) {
         /* Edges are at least 4 logical px wide even with thin borders, and
          * the corner zones extend along each edge like Windows' do. */
         int edge = XD_MAX(in.left, xd_tpx(t, 4));
@@ -294,6 +294,153 @@ void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const
 int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label) {
     xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_START);
     return xd_text_width(cr, label, &st);
+}
+
+/* ---- dialog controls -------------------------------------------------------- */
+
+static bool classic(const xd_theme *t) { return t->style == XD_STYLE_CLASSIC; }
+
+/* XP's flat control border colour per style. */
+static xd_rgba flat_border(const xd_theme *t) {
+    return xd_rgba_hex(t->style == XD_STYLE_WHISTLER ? 0x8D9DBF : 0x7F9DB9);
+}
+
+xd_field_colors xd_theme_field_colors(const xd_theme *t) {
+    return (xd_field_colors){
+        .text = xd_sys(t, XD_COLOR_WINDOW_TEXT),
+        .disabled_text = xd_sys(t, XD_COLOR_GRAY_TEXT),
+        .selection = xd_sys(t, XD_COLOR_HILIGHT),
+        .selection_text = xd_sys(t, XD_COLOR_HILIGHT_TEXT),
+    };
+}
+
+xd_rect xd_theme_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled) {
+    int px = xd_tpx(t, 1);
+    xd_rgba fill = disabled ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_sys(t, XD_COLOR_WINDOW);
+    if (!classic(t)) {
+        xd_fill_rect(cr, r, disabled ? xd_rgba_hex(0xEBEBE4) : xd_sys(t, XD_COLOR_WINDOW));
+        return xd_draw_bevel(cr, r, px, flat_border(t), flat_border(t));
+    }
+    /* EDGE_SUNKEN */
+    r = xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+                      xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
+    r = xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW),
+                      xd_sys(t, XD_COLOR_BUTTON_LIGHT));
+    xd_fill_rect(cr, r, fill);
+    return r;
+}
+
+int xd_theme_dropdown_button_width(const xd_theme *t) {
+    return classic(t) ? xd_tpx(t, 16) : xd_tpx(t, 17);
+}
+
+void xd_theme_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    bool pressed = state & XD_STATE_PRESSED;
+    bool disabled = state & XD_STATE_DISABLED;
+    int px = xd_tpx(t, 1);
+    xd_rgba arrow = xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_BUTTON_TEXT);
+
+    if (classic(t)) {
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
+        if (pressed) {
+            xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_SHADOW),
+                          xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+            r = (xd_rect){r.x + px, r.y + px, r.w, r.h};
+        } else {
+            xd_rect in = xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_LIGHT),
+                                       xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
+            xd_draw_bevel(cr, in, px, xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+                          xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+        }
+    } else {
+        /* XP's pale blue rounded arrow button. */
+        uint32_t top = pressed ? 0x6E8DED : (state & XD_STATE_HOT) ? 0xDDECFE : 0xC1D3FB;
+        uint32_t bottom = pressed ? 0x8FADF5 : (state & XD_STATE_HOT) ? 0xB6CDFB : 0xA6C0F4;
+        if (disabled) {
+            top = 0xF0F0F0;
+            bottom = 0xE0E0E0;
+        }
+        double rad = xd_tpx(t, 2);
+        xd_rect b = xd_rect_inset(r, px, px);
+        xd_path_rounded(cr, b.x, b.y, b.w, b.h, rad, rad, rad, rad);
+        cairo_save(cr);
+        cairo_clip(cr);
+        xd_fill_gradient(cr, b, xd_rgba_hex(top), xd_rgba_hex(bottom), false);
+        cairo_restore(cr);
+        arrow = xd_rgba_hex(disabled ? 0xC9C7BA : 0x4D6185);
+    }
+
+    /* Down-pointing triangle, 7 logical px wide. */
+    double w = xd_tpx(t, 7);
+    double h = xd_tpx(t, 4);
+    double x = r.x + (r.w - w) / 2;
+    double y = r.y + (r.h - h) / 2;
+    xd_set_color(cr, arrow);
+    cairo_move_to(cr, x, y);
+    cairo_line_to(cr, x + w, y);
+    cairo_line_to(cr, x + w / 2, y + h);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+}
+
+void xd_theme_draw_list_item(const xd_theme *t, cairo_t *cr, xd_rect r, bool selected,
+                             const char *label) {
+    xd_field_colors c = xd_theme_field_colors(t);
+    if (selected)
+        xd_fill_rect(cr, r, c.selection);
+    xd_text_style st = xd_text(t, XD_FONT_MESSAGE, selected ? c.selection_text : c.text,
+                               XD_ALIGN_START);
+    xd_draw_text(cr, xd_rect_inset4(r, xd_tpx(t, 2), 0, xd_tpx(t, 2), 0), label, &st);
+}
+
+void xd_theme_draw_focus_rect(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    double p = xd_tpx(t, 1);
+    double dash[] = {p, p};
+    cairo_save(cr);
+    xd_set_color(cr, xd_sys(t, XD_COLOR_BUTTON_TEXT));
+    cairo_set_line_width(cr, p);
+    cairo_set_dash(cr, dash, 2, 0);
+    cairo_rectangle(cr, r.x + p / 2, r.y + p / 2, r.w - p, r.h - p);
+    cairo_stroke(cr);
+    cairo_restore(cr);
+}
+
+void xd_theme_draw_label(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text, bool wrap,
+                         bool bold, bool disabled) {
+    xd_font_spec font = t->scheme.fonts[XD_FONT_MESSAGE];
+    font.bold = bold;
+    xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
+                               xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_WINDOW_TEXT),
+                               XD_ALIGN_START);
+    st.font = &font;
+    st.wrap = wrap;
+    st.ellipsize = !wrap;
+    xd_draw_text(cr, r, text, &st);
+}
+
+void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
+                                 const char *edition) {
+    xd_menu_palette p;
+    ops(t)->menu_palette(t, &p);
+    xd_fill_gradient(cr, r, p.banner_bottom, p.banner_top, true);
+
+    int flag = XD_MIN(xd_tpx(t, 40), r.h - xd_tpx(t, 12));
+    int fx = r.x + xd_tpx(t, 16);
+    xd_draw_start_flag(cr, (xd_rect){fx, r.y + (r.h - flag) / 2, flag, flag});
+
+    xd_font_spec big = {.size_pt = 18, .bold = true};
+    snprintf(big.family, sizeof(big.family), "%s", "Tahoma, DejaVu Sans, sans-serif");
+    xd_font_spec small = big;
+    small.size_pt = 10;
+    small.bold = false;
+    xd_text_style st = {.font = &big, .scale = t->scale, .color = p.banner_text};
+    int tx = fx + flag + xd_tpx(t, 12);
+    int line = xd_tpx(t, 28);
+    int top = r.y + (r.h - line - xd_tpx(t, 16)) / 2;
+    xd_draw_text(cr, (xd_rect){tx, top, r.x + r.w - tx, line}, product, &st);
+    st.font = &small;
+    xd_draw_text(cr, (xd_rect){tx + xd_tpx(t, 2), top + line, r.x + r.w - tx, xd_tpx(t, 16)},
+                 edition, &st);
 }
 
 /* ---- shared helpers ---------------------------------------------------- */

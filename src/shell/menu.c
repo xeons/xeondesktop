@@ -4,7 +4,7 @@
 #include <sys/timerfd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
-#include "icons.h"
+#include "../ui/icons.h"
 #include "menu.h"
 #include "shell.h"
 

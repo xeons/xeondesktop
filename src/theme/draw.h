@@ -56,11 +56,17 @@ typedef struct xd_text_style {
     bool ellipsize;
     bool shadow; /* 1px drop shadow (Luna caption text) */
     xd_rgba shadow_color;
+    bool wrap; /* wrap at word boundaries and align to the top of the rect */
 } xd_text_style;
 
 /* Draws one line of text vertically centred in r and clipped to it. */
 void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style *style);
 /* Width in device pixels of one line of text. */
 int xd_text_width(cairo_t *cr, const char *utf8, const xd_text_style *style);
+
+/* The Pango layout xd_draw_text would use, for callers that need caret
+ * positions or hit testing (edit controls). Free with g_object_unref. */
+typedef struct _PangoLayout PangoLayout;
+PangoLayout *xd_text_layout(cairo_t *cr, const char *utf8, const xd_text_style *style);
 
 #endif

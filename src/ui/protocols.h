@@ -3,8 +3,8 @@
  * ours to fix, so they're treated as system headers and kept out of the
  * project's -Werror warning set.
  */
-#ifndef XD_SHELL_PROTOCOLS_H
-#define XD_SHELL_PROTOCOLS_H
+#ifndef XD_UI_PROTOCOLS_H
+#define XD_UI_PROTOCOLS_H
 
 #pragma GCC system_header
 

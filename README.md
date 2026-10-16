@@ -41,8 +41,20 @@ the caption to maximize, double-click the window icon to close.
 
 The Windows 2000 Start menu is built from installed `.desktop` files, filed
 into Programs folders (Accessories, Games, Graphics, Internet, ...) by their
-categories. Items that need parts of the desktop not written yet (Control
-Panel, Run, Shut Down) are shown greyed out.
+categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`; items that
+need parts of the desktop not written yet (Control Panel, Search, Help) are
+shown greyed out.
+
+### Run and Shut Down
+
+- `xd-run`: opens programs, folders, documents and URLs; remembers the last
+  26 commands (`~/.local/state/xeondesktop/run-history`).
+- `xd-shutdown`: Log off, Shut down, Restart, Stand by and Hibernate (the
+  last two only if the kernel supports them), through `systemctl`.
+  `xd-shutdown --logoff` asks "Are you sure you want to log off?".
+- **In a nested session** (compositor started inside another desktop), and
+  with `--dry-run`, power actions are only printed, never run. Log off ends
+  the nested session.
 
 | Variable              | Effect                                                   |
 |-----------------------|----------------------------------------------------------|

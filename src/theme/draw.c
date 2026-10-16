@@ -124,6 +124,10 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
     return layout;
 }
 
+PangoLayout *xd_text_layout(cairo_t *cr, const char *utf8, const xd_text_style *style) {
+    return make_layout(cr, utf8, style);
+}
+
 int xd_text_width(cairo_t *cr, const char *utf8, const xd_text_style *style) {
     PangoLayout *layout = make_layout(cr, utf8, style);
     int w = 0;
@@ -139,8 +143,12 @@ void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style 
 
     PangoLayout *layout = make_layout(cr, utf8, st);
     pango_layout_set_width(layout, r.w * PANGO_SCALE);
-    if (st->ellipsize)
+    if (st->wrap) {
+        pango_layout_set_single_paragraph_mode(layout, false);
+        pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+    } else if (st->ellipsize) {
         pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+    }
     PangoAlignment align = st->align == XD_ALIGN_CENTER ? PANGO_ALIGN_CENTER
                            : st->align == XD_ALIGN_END  ? PANGO_ALIGN_RIGHT
                                                         : PANGO_ALIGN_LEFT;
@@ -149,7 +157,7 @@ void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style 
     int tw = 0;
     int th = 0;
     pango_layout_get_pixel_size(layout, &tw, &th);
-    int y = r.y + (r.h - th) / 2;
+    int y = st->wrap ? r.y : r.y + (r.h - th) / 2;
 
     cairo_save(cr);
     cairo_rectangle(cr, r.x, r.y, r.w, r.h);

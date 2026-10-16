@@ -2,6 +2,7 @@
  * The Windows 2000 Start menu layout.
  */
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "apps.h"
 #include "shell.h"
@@ -12,6 +13,56 @@ static const char *app_command(xd_shell *shell, const xd_app *app) {
         return app->exec;
     xd_strbuf cmd = {0};
     xd_strbuf_appendf(&cmd, "%s -e %s", shell->terminal, app->exec);
+    const char *s = xd_str_arena_cstr(&shell->menu_tree.arena, xd_strbuf_view(&cmd));
+    xd_strbuf_free(&cmd);
+    return s;
+}
+
+/* Appends s to a shell command line as one single-quoted word. */
+static void append_quoted(xd_strbuf *cmd, const char *s) {
+    xd_strbuf_append_char(cmd, '\'');
+    for (; *s != '\0'; s++) {
+        if (*s == '\'')
+            xd_strbuf_append(cmd, XD_STR("'\\''"));
+        else
+            xd_strbuf_append_char(cmd, *s);
+    }
+    xd_strbuf_append_char(cmd, '\'');
+}
+
+/* Command line for one of our own programs: next to xd-shell if it's
+ * there (a build tree), else from PATH; with the current style and scheme
+ * so dialogs match the desktop. */
+static const char *own_command(xd_shell *shell, const char *program, const char *extra) {
+    xd_strbuf cmd = {0};
+    char self[4096];
+    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    bool local = false;
+    if (n > 0) {
+        self[n] = '\0';
+        char *slash = strrchr(self, '/');
+        if (slash != nullptr) {
+            slash[1] = '\0';
+            xd_strbuf path = {0};
+            xd_strbuf_appendf(&path, "%s%s", self, program);
+            local = access(xd_strbuf_cstr(&path), X_OK) == 0;
+            if (local)
+                append_quoted(&cmd, xd_strbuf_cstr(&path));
+            xd_strbuf_free(&path);
+        }
+    }
+    if (!local)
+        xd_strbuf_append(&cmd, xd_str_from_cstr(program));
+    xd_strbuf_append(&cmd, XD_STR(" --style "));
+    xd_strbuf_append(&cmd, xd_str_from_cstr(xd_visual_style_name(shell->style)));
+    if (shell->scheme_path != nullptr) {
+        xd_strbuf_append(&cmd, XD_STR(" --scheme "));
+        append_quoted(&cmd, shell->scheme_path);
+    }
+    if (extra != nullptr) {
+        xd_strbuf_append_char(&cmd, ' ');
+        xd_strbuf_append(&cmd, xd_str_from_cstr(extra));
+    }
     const char *s = xd_str_arena_cstr(&shell->menu_tree.arena, xd_strbuf_view(&cmd));
     xd_strbuf_free(&cmd);
     return s;
@@ -72,7 +123,7 @@ void xd_start_menu_build(xd_shell *shell) {
     home->command = "xdg-open \"$HOME\"";
 
     /* Not implemented yet: shown, but greyed out like unavailable items in
-     * Windows. They light up as Control Panel and the dialogs land. */
+     * Windows. They light up as Control Panel and Help land. */
     xd_menu_item *settings =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Settings", "preferences-system");
     settings->submenu = xd_menu_model_new(tree);
@@ -90,15 +141,20 @@ void xd_start_menu_build(xd_shell *shell) {
                  "system-search");
 
     add_disabled(tree, root, XD_MENU_ACTION, "Help", "help-browser");
-    add_disabled(tree, root, XD_MENU_ACTION, "Run...", "system-run");
+    xd_menu_item *run = xd_menu_add(tree, root, XD_MENU_ACTION, "Run...", "system-run");
+    run->command = own_command(shell, "xd-run", nullptr);
     xd_menu_add(tree, root, XD_MENU_SEPARATOR, nullptr, nullptr);
 
     const char *user = getenv("USER");
     xd_strbuf logoff = {0};
     xd_strbuf_appendf(&logoff, "Log Off %s...", user != nullptr ? user : "");
-    add_disabled(tree, root, XD_MENU_ACTION, xd_strbuf_cstr(&logoff), "system-log-out");
+    xd_menu_item *logoff_item =
+        xd_menu_add(tree, root, XD_MENU_ACTION, xd_strbuf_cstr(&logoff), "system-log-out");
+    logoff_item->command = own_command(shell, "xd-shutdown", "--logoff");
     xd_strbuf_free(&logoff);
-    add_disabled(tree, root, XD_MENU_ACTION, "Shut Down...", "system-shutdown");
+    xd_menu_item *shutdown =
+        xd_menu_add(tree, root, XD_MENU_ACTION, "Shut Down...", "system-shutdown");
+    shutdown->command = own_command(shell, "xd-shutdown", nullptr);
 
     shell->start_model = root;
 }

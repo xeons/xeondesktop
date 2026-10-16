@@ -91,6 +91,7 @@ typedef struct xd_view {
     bool mapped;
     bool minimized;
     bool maximized;
+    bool dialog; /* fixed size (min == max): dialog frame, no resizing */
     int x, y;               /* outer frame position, layout coordinates */
     struct wlr_box restore; /* outer box before maximizing */
 
@@ -101,7 +102,7 @@ typedef struct xd_view {
     struct {
         int width, height;
         double scale;
-        bool active, maximized;
+        bool active, maximized, dialog;
         xd_frame_part hot, pressed;
         bool title_dirty;
     } drawn;
@@ -268,6 +269,8 @@ void xd_view_set_position(xd_view *view, int x, int y);
 void xd_view_set_outer_box(xd_view *view, struct wlr_box outer);
 struct wlr_box xd_view_outer_box(const xd_view *view);
 xd_insets xd_view_insets(const xd_view *view);
+/* Frame description for drawing and hit testing. */
+xd_frame xd_view_frame(const xd_view *view, bool active);
 /* Which part of the frame the layout point (lx, ly) is over. */
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly);
 void xd_view_set_hover(xd_view *view, xd_frame_part hot, xd_frame_part pressed);

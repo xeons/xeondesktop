@@ -10,7 +10,7 @@
 #include "../core/alloc.h"
 #include "../theme/theme.h"
 #include "../ui/shm.h"
-#include "protocols.h"
+#include "../ui/protocols.h"
 
 typedef struct xd_shell xd_shell;
 

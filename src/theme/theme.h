@@ -81,6 +81,7 @@ typedef struct xd_frame {
     const char *title;
     bool active;
     bool maximized;
+    bool dialog;          /* fixed size: thin frame, no resize edges */
     uint8_t buttons;      /* xd_caption_buttons */
     xd_frame_part hot;     /* caption button under the pointer, or NONE */
     xd_frame_part pressed; /* caption button held down, or NONE */
@@ -156,5 +157,29 @@ void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const
                                 const char *edition);
 /* Width of a menu item's label in device px. */
 int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label);
+
+/* ---- dialog controls (device px) ---- */
+
+/* Colours for text in fields and lists. */
+typedef struct xd_field_colors {
+    xd_rgba text, disabled_text, selection, selection_text;
+} xd_field_colors;
+xd_field_colors xd_theme_field_colors(const xd_theme *t);
+
+/* Sunken frame of a text field or list box. Returns the content rect. */
+xd_rect xd_theme_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled);
+int xd_theme_dropdown_button_width(const xd_theme *t);
+/* The arrow button of a combo box. state: XD_STATE_HOT, _PRESSED, _DISABLED. */
+void xd_theme_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_theme_draw_list_item(const xd_theme *t, cairo_t *cr, xd_rect r, bool selected,
+                             const char *label);
+/* Dotted keyboard-focus rectangle. */
+void xd_theme_draw_focus_rect(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* Static text in a dialog, optionally word-wrapped from the top. */
+void xd_theme_draw_label(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text, bool wrap,
+                         bool bold, bool disabled);
+/* Product banner across the top of a dialog (Shut Down). */
+void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
+                                 const char *edition);
 
 #endif

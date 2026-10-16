@@ -84,8 +84,16 @@ static int frame_border(const xd_theme *t) {
     return xd_tpx(t, 2) + xd_metric_px(t, XD_METRIC_BORDER_WIDTH) + xd_tpx(t, 1);
 }
 
+/* SM_CXDLGFRAME: dialogs have the 2px edge and 1px padding but no sizing
+ * border. */
+static int dialog_border(const xd_theme *t) { return xd_tpx(t, 2) + xd_tpx(t, 1); }
+
+static int border_for(const xd_theme *t, const xd_frame *f) {
+    return f->maximized ? 0 : f->dialog ? dialog_border(t) : frame_border(t);
+}
+
 static xd_insets classic_frame_insets(const xd_theme *t, const xd_frame *f) {
-    int b = f->maximized ? 0 : frame_border(t);
+    int b = border_for(t, f);
     int cap = xd_metric_px(t, XD_METRIC_CAPTION_HEIGHT) + xd_tpx(t, 1);
     return (xd_insets){b, b + cap, b, b};
 }
@@ -112,7 +120,7 @@ static void app_icon(const xd_theme *t, cairo_t *cr, xd_rect r) {
 
 static void classic_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
                                  xd_frame_layout *l) {
-    int b = f->maximized ? 0 : frame_border(t);
+    int b = border_for(t, f);
     xd_rect r = xd_rect_inset(outer, b, b);
     int cap_h = xd_metric_px(t, XD_METRIC_CAPTION_HEIGHT);
     l->caption = (xd_rect){r.x, r.y, r.w, cap_h};
@@ -154,8 +162,9 @@ static void classic_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
     if (!f->maximized) {
         xd_fill_rect(cr, r, xd_sys(t, border));
         r = edge_window(t, cr, r, false);
-        r = xd_rect_inset(r, xd_metric_px(t, XD_METRIC_BORDER_WIDTH),
-                          xd_metric_px(t, XD_METRIC_BORDER_WIDTH));
+        if (!f->dialog)
+            r = xd_rect_inset(r, xd_metric_px(t, XD_METRIC_BORDER_WIDTH),
+                              xd_metric_px(t, XD_METRIC_BORDER_WIDTH));
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
     } else {
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
