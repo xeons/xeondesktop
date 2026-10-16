@@ -210,7 +210,7 @@ executable(
   install: true,
 )
 
-librsvg_dep = dependency('librsvg-2.0', include_type: 'system')
+gtk_dep = dependency('gtk+-3.0', include_type: 'system')
 gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
 gio_unix_dep = dependency('gio-unix-2.0', include_type: 'system')
 
@@ -223,13 +223,13 @@ ui_lib = static_library(
   'src/ui/image.c',
   'src/ui/ui.c',
   'src/ui/widgets.c',
-  dependencies: [theme_dep, settings_dep, client_protocol_dep, librsvg_dep, gdk_pixbuf_dep,
+  dependencies: [theme_dep, settings_dep, client_protocol_dep, gtk_dep, gdk_pixbuf_dep,
                  xkbcommon_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
 ui_dep = declare_dependency(
   link_with: ui_lib,
-  dependencies: [theme_dep, settings_dep, client_protocol_dep, librsvg_dep, gdk_pixbuf_dep,
+  dependencies: [theme_dep, settings_dep, client_protocol_dep, gtk_dep, gdk_pixbuf_dep,
                  xkbcommon_dep],
 )
 

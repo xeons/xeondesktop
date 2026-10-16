@@ -1,9 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Freedesktop icon theme lookup.
- *
- * Theme directories are scanned once into an index, so a lookup is a hash
- * probe instead of thousands of stat() calls. Loaded icons are cached per
- * pixel size. Icons come from installed system/user theme directories.
+ * Freedesktop icon theme lookup, via GTK3's GtkIconTheme. Loaded icons
+ * are cached per pixel size.
  */
 #ifndef XD_UI_ICONS_H
 #define XD_UI_ICONS_H

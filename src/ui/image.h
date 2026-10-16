@@ -14,6 +14,10 @@
  * surface. Only for files the user picked: wallpapers. */
 [[nodiscard]] cairo_surface_t *xd_image_load(const char *path, int max_w, int max_h);
 
+/* Converts a GdkPixbuf (8-bit RGB/RGBA) to a cairo image surface. */
+typedef struct _GdkPixbuf GdkPixbuf;
+[[nodiscard]] cairo_surface_t *xd_image_from_pixbuf(GdkPixbuf *pb);
+
 /* Pixel size of an image file without decoding it. */
 [[nodiscard]] bool xd_image_size(const char *path, int *w, int *h);
 

@@ -5,6 +5,44 @@
 #include "../settings/settings.h"
 #include "image.h"
 
+cairo_surface_t *xd_image_from_pixbuf(GdkPixbuf *pb) {
+    int pw = gdk_pixbuf_get_width(pb);
+    int ph = gdk_pixbuf_get_height(pb);
+    int channels = gdk_pixbuf_get_n_channels(pb);
+    int src_stride = gdk_pixbuf_get_rowstride(pb);
+    bool alpha = gdk_pixbuf_get_has_alpha(pb);
+    if (gdk_pixbuf_get_colorspace(pb) != GDK_COLORSPACE_RGB ||
+        gdk_pixbuf_get_bits_per_sample(pb) != 8 || channels < 3 || channels > 4 ||
+        src_stride <= 0) {
+        return nullptr;
+    }
+
+    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pw, ph);
+    if (cairo_surface_status(s) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(s);
+        return nullptr;
+    }
+    const guchar *src = gdk_pixbuf_read_pixels(pb);
+    unsigned char *dst = cairo_image_surface_get_data(s);
+    int dst_stride = cairo_image_surface_get_stride(s);
+    for (int y = 0; y < ph; y++) {
+        const guchar *in = src + (size_t)y * (size_t)src_stride;
+        unsigned char *out_row = dst + (size_t)y * (size_t)dst_stride;
+        for (int x = 0; x < pw; x++) {
+            const guchar *p = in + (size_t)x * (size_t)channels;
+            uint32_t a = alpha ? p[3] : 255u;
+            /* cairo wants premultiplied native-endian ARGB */
+            uint32_t r = (p[0] * a + 127u) / 255u;
+            uint32_t g = (p[1] * a + 127u) / 255u;
+            uint32_t b = (p[2] * a + 127u) / 255u;
+            uint32_t px = (a << 24) | (r << 16) | (g << 8) | b;
+            memcpy(out_row + (size_t)x * 4, &px, sizeof(px));
+        }
+    }
+    cairo_surface_mark_dirty(s);
+    return s;
+}
+
 bool xd_image_size(const char *path, int *w, int *h) {
     *w = 0;
     *h = 0;
@@ -28,42 +66,7 @@ cairo_surface_t *xd_image_load(const char *path, int max_w, int max_h) {
     if (pb == nullptr)
         return nullptr;
 
-    int pw = gdk_pixbuf_get_width(pb);
-    int ph = gdk_pixbuf_get_height(pb);
-    int channels = gdk_pixbuf_get_n_channels(pb);
-    int src_stride = gdk_pixbuf_get_rowstride(pb);
-    bool alpha = gdk_pixbuf_get_has_alpha(pb);
-    if (gdk_pixbuf_get_colorspace(pb) != GDK_COLORSPACE_RGB ||
-        gdk_pixbuf_get_bits_per_sample(pb) != 8 || channels < 3 || channels > 4 ||
-        src_stride <= 0) {
-        g_object_unref(pb);
-        return nullptr;
-    }
-
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pw, ph);
-    if (cairo_surface_status(s) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(s);
-        g_object_unref(pb);
-        return nullptr;
-    }
-    const guchar *src = gdk_pixbuf_read_pixels(pb);
-    unsigned char *dst = cairo_image_surface_get_data(s);
-    int dst_stride = cairo_image_surface_get_stride(s);
-    for (int y = 0; y < ph; y++) {
-        const guchar *in = src + (size_t)y * (size_t)src_stride;
-        unsigned char *out_row = dst + (size_t)y * (size_t)dst_stride;
-        for (int x = 0; x < pw; x++) {
-            const guchar *p = in + (size_t)x * (size_t)channels;
-            uint32_t a = alpha ? p[3] : 255u;
-            /* cairo wants premultiplied native-endian ARGB */
-            uint32_t r = (p[0] * a + 127u) / 255u;
-            uint32_t g = (p[1] * a + 127u) / 255u;
-            uint32_t b = (p[2] * a + 127u) / 255u;
-            uint32_t px = (a << 24) | (r << 16) | (g << 8) | b;
-            memcpy(out_row + (size_t)x * 4, &px, sizeof(px));
-        }
-    }
-    cairo_surface_mark_dirty(s);
+    cairo_surface_t *s = xd_image_from_pixbuf(pb);
     g_object_unref(pb);
     return s;
 }

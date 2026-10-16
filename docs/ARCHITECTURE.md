@@ -252,8 +252,10 @@ Applets that make sense on Linux:
 - Standard formats are parsed with maintained libraries, never by hand:
   GLib's GKeyFile (settings, colour schemes), GIO's GDesktopAppInfo
   (.desktop entries, including launching apps) and GBookmarkFile
-  (recently-used.xbel). GLib was already a dependency through pango and
-  gdk-pixbuf.
+  (recently-used.xbel), and GTK3's GtkIconTheme for icon theme lookup
+  (theme inheritance, hicolor fallback; GTK isn't initialized, only the
+  icon theme is used). GLib was already a dependency through pango and
+  gdk-pixbuf, and GTK3 is the toolkit for the larger apps.
 
 - C23, `-Werror` with the warning set in `meson.build` (conversion, sign,
   shadow, cast-qual/align, format=2, VLA ban, etc.), clean on GCC and Clang.
