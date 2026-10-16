@@ -119,6 +119,20 @@ static int floor_int(double v) {
     return (int)f;
 }
 
+void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly) {
+    struct wlr_box outer = xd_view_outer_box(view);
+    *lx = outer.x;
+    *ly = outer.y;
+    if (view->csd)
+        return;
+    xd_frame f = xd_view_frame(view, true);
+    xd_frame_layout l;
+    xd_theme_frame_layout(&view->server->logical_theme,
+                          (xd_rect){0, 0, outer.width, outer.height}, &f, &l);
+    *lx = outer.x + l.icon.x;
+    *ly = outer.y + l.caption.y + l.caption.h;
+}
+
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly) {
     if (view->csd)
         return XD_PART_CLIENT;
@@ -470,6 +484,18 @@ static void handle_request_maximize(struct wl_listener *listener, [[maybe_unused
     xd_view_set_maximized(view, view->toplevel->requested.maximized);
 }
 
+/* A client-decorated window (e.g. a GTK header bar) asks for the window
+ * menu; x, y are relative to its window geometry. */
+static void handle_request_window_menu(struct wl_listener *listener, void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_window_menu);
+    const struct wlr_xdg_toplevel_show_window_menu_event *e = data;
+    if (!view->mapped)
+        return;
+    struct wlr_box outer = xd_view_outer_box(view);
+    xd_insets in = xd_view_insets(view);
+    xd_window_menu_show(view, outer.x + in.left + e->x, outer.y + in.top + e->y);
+}
+
 static void handle_request_minimize(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_minimize);
     xd_view_minimize(view);
@@ -519,6 +545,7 @@ static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *
     xd_unlisten(&view->request_resize);
     xd_unlisten(&view->request_maximize);
     xd_unlisten(&view->request_minimize);
+    xd_unlisten(&view->request_window_menu);
     xd_unlisten(&view->request_fullscreen);
     xd_unlisten(&view->set_title);
     xd_unlisten(&view->set_app_id);
@@ -556,6 +583,8 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data) {
               handle_request_maximize);
     XD_LISTEN(&toplevel->events.request_minimize, view, request_minimize,
               handle_request_minimize);
+    XD_LISTEN(&toplevel->events.request_show_window_menu, view, request_window_menu,
+              handle_request_window_menu);
     XD_LISTEN(&toplevel->events.request_fullscreen, view, request_fullscreen,
               handle_request_fullscreen);
     XD_LISTEN(&toplevel->events.set_title, view, set_title, handle_set_title);

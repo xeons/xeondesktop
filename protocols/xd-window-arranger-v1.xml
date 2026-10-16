@@ -46,5 +46,19 @@
     </request>
 
     <request name="destroy" type="destructor"/>
+
+    <event name="window_menu">
+      <description summary="show the focused window's window menu">
+        Sent for Alt+Space, a click on the caption icon, a right-click on
+        the title bar, or a client's xdg_toplevel.show_window_menu. The
+        window is already focused. x and y are output-local logical
+        coordinates of the menu's top-left corner; serial is for the
+        popup grab.
+      </description>
+      <arg name="output" type="object" interface="wl_output"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="serial" type="uint"/>
+    </event>
   </interface>
 </protocol>

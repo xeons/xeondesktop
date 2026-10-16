@@ -296,16 +296,24 @@ static void menu_finish_popup(xd_menu *menu, uint32_t serial) {
 xd_menu *xd_menu_open_root(xd_shell *shell, const xd_menu_model *model,
                            struct zwlr_layer_surface_v1 *layer, xd_rect anchor,
                            uint32_t serial) {
+    return xd_menu_open_root_dir(shell, model, layer, anchor, serial, false);
+}
+
+xd_menu *xd_menu_open_root_dir(xd_shell *shell, const xd_menu_model *model,
+                               struct zwlr_layer_surface_v1 *layer, xd_rect anchor,
+                               uint32_t serial, bool downwards) {
     xd_menu_close_all(shell);
     xd_menu *menu = menu_create(shell, model);
 
-    /* Grows upwards from the Start button's top-left corner. */
+    /* Grows upwards from the Start button's top-left corner (or down from
+     * the anchor, for the window menu). */
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
     xdg_positioner_set_size(pos, menu->width, menu->height);
     xdg_positioner_set_anchor_rect(pos, anchor.x, anchor.y, XD_MAX(anchor.w, 1),
                                    XD_MAX(anchor.h, 1));
     xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_TOP_LEFT);
-    xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_TOP_RIGHT);
+    xdg_positioner_set_gravity(pos, downwards ? XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT
+                                              : XDG_POSITIONER_GRAVITY_TOP_RIGHT);
     xdg_positioner_set_constraint_adjustment(
         pos, XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y |
                  XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |

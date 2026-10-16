@@ -42,8 +42,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Compositor
 
-- [ ] Window menu from the window itself (Alt+Space, the caption icon,
-      right-click on the caption); the taskbar button's menu exists.
+- [~] Window menu from the window itself: Alt+Space, a click on the caption
+      icon, a right-click on the title bar and xdg_toplevel.show_window_menu
+      all open the shell's window menu (via xd-window-arranger-v1). Tested:
+      Alt+Space, icon click, right-click, double-clicking the icon to close.
+      Untested: show_window_menu from a client, keyboard use of the menu
+      when opened by Alt+Space, taskbars not at the bottom (the menu is
+      positioned relative to a bottom taskbar).
 - [~] Windows that ask to draw their own decorations (xdg-decoration
       client-side, or the KDE protocol's client mode, e.g. Firefox with tabs
       in the title bar) get no XP frame, plus an invisible 6px resize margin.

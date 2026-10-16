@@ -136,6 +136,38 @@ static void handle_destroy(struct wl_client *client, struct wl_resource *res) {
     wl_resource_destroy(res);
 }
 
+static void resource_destroyed(struct wl_resource *res) {
+    xd_server *server = wl_resource_get_user_data(res);
+    if (server->arranger_resource == res)
+        server->arranger_resource = nullptr;
+}
+
+void xd_window_menu_show(xd_view *view, double lx, double ly) {
+    xd_server *server = view->server;
+    xd_view_focus(view);
+    struct wl_resource *res = server->arranger_resource;
+    xd_output *out = xd_output_at(server, lx, ly);
+    if (res == nullptr || out == nullptr)
+        return;
+    /* The shell's wl_output for this output. */
+    struct wl_client *client = wl_resource_get_client(res);
+    struct wl_resource *output_res = nullptr;
+    struct wl_resource *r;
+    wl_resource_for_each(r, &out->wlr_output->resources) {
+        if (wl_resource_get_client(r) == client) {
+            output_res = r;
+            break;
+        }
+    }
+    if (output_res == nullptr)
+        return;
+    struct wlr_box box;
+    wlr_output_layout_get_box(server->output_layout, out->wlr_output, &box);
+    xd_window_arranger_v1_send_window_menu(res, output_res, (int32_t)(lx - box.x),
+                                           (int32_t)(ly - box.y),
+                                           wl_display_next_serial(server->display));
+}
+
 static const struct xd_window_arranger_v1_interface arranger_impl = {
     .arrange = handle_arrange,
     .undo = handle_undo,
@@ -151,7 +183,8 @@ static void bind_arranger(struct wl_client *client, void *data, uint32_t version
         wl_client_post_no_memory(client);
         return;
     }
-    wl_resource_set_implementation(res, &arranger_impl, data, nullptr);
+    wl_resource_set_implementation(res, &arranger_impl, data, resource_destroyed);
+    ((xd_server *)data)->arranger_resource = res;
 }
 
 /* Only the shell we started sees the global. */

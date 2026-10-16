@@ -318,6 +318,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
         shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 1);
+        xd_taskmenu_bind(shell);
     } else if (xd_str_eq(iface,
                          xd_str_from_cstr(wp_fractional_scale_manager_v1_interface.name))) {
         shell->fractional_manager =

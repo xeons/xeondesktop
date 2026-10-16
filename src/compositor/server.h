@@ -122,6 +122,7 @@ typedef struct xd_view {
     struct wl_listener request_resize;
     struct wl_listener request_maximize;
     struct wl_listener request_minimize;
+    struct wl_listener request_window_menu;
     struct wl_listener request_fullscreen;
     struct wl_listener set_title;
     struct wl_listener set_app_id;
@@ -242,6 +243,7 @@ struct xd_server {
     /* The shell is restarted if it crashes, like explorer.exe. */
     pid_t shell_pid;
     struct wl_global *arranger; /* xd-window-arranger-v1, shell only */
+    struct wl_resource *arranger_resource; /* the shell's binding, for events */
     uint32_t shell_restarts;
     struct timespec shell_restart_window;
     bool terminating;
@@ -301,6 +303,11 @@ void xd_arrange_init(xd_server *server);
  * mouse) until Enter, a click, or Esc to put the window back. */
 void xd_view_begin_keyboard_move(xd_view *view);
 void xd_view_begin_keyboard_size(xd_view *view);
+/* arrange.c: asks the shell to show the window menu at layout (lx, ly). */
+void xd_window_menu_show(xd_view *view, double lx, double ly);
+/* Where the window menu opens from the keyboard or the caption icon:
+ * below the icon (layout coordinates). */
+void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly);
 /* Frame description for drawing and hit testing. */
 xd_frame xd_view_frame(const xd_view *view, bool active);
 /* Which part of the frame the layout point (lx, ly) is over. */

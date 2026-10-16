@@ -182,6 +182,8 @@ void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial);
 /* taskmenu.c: right-click menus (the taskbar's, or a task button's window
  * menu when `hit` is a task index). x, y: logical, taskbar-local. */
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);
+/* Listens for the compositor's window menu requests. */
+void xd_taskmenu_bind(xd_shell *shell);
 /* Forget a window that's going away. */
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
 /* Drop hit-test layout after Quick Launch changed (indices shift). */

@@ -209,6 +209,46 @@ static xd_menu_model *start_button_menu(xd_shell *shell, xd_menu_tree *tree) {
     return m;
 }
 
+/* The compositor asks for the focused window's menu (Alt+Space, the caption
+ * icon, a right-click on the title bar). x, y: output-local, logical. */
+static void handle_window_menu(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *a,
+                               struct wl_output *output, int32_t x, int32_t y, uint32_t serial) {
+    xd_shell *shell = data;
+    xd_taskbar *bar = nullptr, *b;
+    wl_list_for_each(b, &shell->taskbars, link) {
+        if (b->output == output && b->configured)
+            bar = b;
+    }
+    xd_toplevel *focused = nullptr, *t;
+    wl_list_for_each(t, &shell->toplevels, link) {
+        if (t->activated)
+            focused = t;
+    }
+    if (bar == nullptr || focused == nullptr || bar->desktop == nullptr)
+        return;
+    xd_menu_close_all(shell);
+    xd_menu_tree_free(&shell->context_tree);
+    xd_menu_tree_init(&shell->context_tree);
+    xd_menu_model *model = window_menu(shell, &shell->context_tree, focused);
+    /* Popups hang off the taskbar's surface, which sits at the bottom of
+     * the output: convert to its coordinates. */
+    int bar_top = bar->desktop->height - bar->height;
+    xd_rect anchor = {x, y - bar_top, 1, 1};
+    xd_taskbar_take_keyboard(bar);
+    shell->context_menu = true;
+    xd_menu_open_root_dir(shell, model, bar->layer, anchor, serial, true);
+    shell->start_bar = bar;
+    bar->dirty = true;
+}
+
+static const struct xd_window_arranger_v1_listener arranger_listener = {
+    .window_menu = handle_window_menu,
+};
+
+void xd_taskmenu_bind(xd_shell *shell) {
+    xd_window_arranger_v1_add_listener(shell->arranger, &arranger_listener, shell);
+}
+
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial) {
     xd_shell *shell = bar->shell;
     xd_menu_close_all(shell);

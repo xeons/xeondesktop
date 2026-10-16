@@ -94,6 +94,10 @@ typedef struct xd_menu {
  * for debugging only). */
 xd_menu *xd_menu_open_root(xd_shell *shell, const xd_menu_model *model,
                            struct zwlr_layer_surface_v1 *layer, xd_rect anchor, uint32_t serial);
+/* As xd_menu_open_root, growing downwards from the anchor if asked. */
+xd_menu *xd_menu_open_root_dir(xd_shell *shell, const xd_menu_model *model,
+                               struct zwlr_layer_surface_v1 *layer, xd_rect anchor,
+                               uint32_t serial, bool downwards);
 void xd_menu_close_all(xd_shell *shell);
 /* Opens `model` as a submenu of any popup surface (the Windows 7 Start
  * menu's ▸ items), to the right of `anchor` (parent-local, logical). The

@@ -179,6 +179,15 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         xd_spawn(server, server->config.terminal);
         return true;
     }
+    /* Alt+Space: the window menu, below the caption icon. */
+    if (alt && !ctrl && sym == XKB_KEY_space) {
+        if (focused != nullptr) {
+            double x, y;
+            xd_view_menu_anchor(focused, &x, &y);
+            xd_window_menu_show(focused, x, y);
+        }
+        return true;
+    }
     if (logo && sym == XKB_KEY_Up) {
         if (focused != nullptr)
             xd_view_set_maximized(focused, true);
@@ -738,8 +747,14 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
                                uint32_t time_msec) {
     xd_view *view = p->view;
     xd_view_focus(view);
+    if (button == BTN_RIGHT) {
+        /* Right-click on the frame: the window menu at the pointer. */
+        if (p->part == XD_PART_CAPTION || p->part == XD_PART_SYSMENU)
+            xd_window_menu_show(view, server->cursor->x, server->cursor->y);
+        return;
+    }
     if (button != BTN_LEFT)
-        return; /* right-click system menu comes with libxdui */
+        return;
 
     if (xd_frame_part_is_button(p->part)) {
         server->mode = XD_CURSOR_BUTTON;
@@ -749,9 +764,16 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
         return;
     }
     if (p->part == XD_PART_SYSMENU) {
-        /* Double-clicking the window icon closes the window. */
-        if (is_double_click(server, view, p->part, time_msec))
+        /* A click opens the window menu below the icon; the double-click
+         * that closes the window is caught while the menu has the grab
+         * (see handle_cursor_button). */
+        if (is_double_click(server, view, p->part, time_msec)) {
             xd_view_close(view);
+            return;
+        }
+        double x, y;
+        xd_view_menu_anchor(view, &x, &y);
+        xd_window_menu_show(view, x, y);
         return;
     }
     if (p->part == XD_PART_CAPTION) {
@@ -854,6 +876,12 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
     /* An open popup (menu) owns the pointer: a click outside it must reach
      * the grab so the menu closes, not start a window drag. */
     if (wlr_seat_pointer_has_grab(server->seat)) {
+        /* Double-clicking the caption icon closes the window even though
+         * its first click opened the window menu. */
+        pick p = pick_at(server, server->cursor->x, server->cursor->y);
+        if (p.view != nullptr && p.part == XD_PART_SYSMENU && e->button == BTN_LEFT &&
+            is_double_click(server, p.view, p.part, e->time_msec))
+            xd_view_close(p.view);
         wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
         return;
     }
