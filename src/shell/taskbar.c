@@ -8,6 +8,7 @@
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <stdlib.h>
+#include <sys/timerfd.h>
 #include <time.h>
 
 #include "../core/alloc.h"
@@ -15,7 +16,10 @@
 
 /* Windows caps task buttons at about 160 px and shrinks them as more
  * windows open. */
-enum { XD_TASK_MAX_W = 160, XD_TASK_MIN_W = 24, XD_TASK_GAP = 3 };
+/* Below the minimum (an icon and a few letters) buttons go onto pages. */
+enum { XD_TASK_MAX_W = 160, XD_TASK_MIN_W = 56, XD_TASK_GAP = 3 };
+/* Group similar buttons once they'd get narrower than this. */
+enum { XD_TASK_GROUP_W = 100 };
 
 static void bar_theme(const xd_taskbar *bar, xd_theme *out) {
     xd_theme_init(out, bar->shell->style, &bar->shell->scheme, bar->scale);
@@ -52,11 +56,12 @@ void xd_taskbars_forget_layout(xd_shell *shell) {
     }
 }
 
+static void apply_options(xd_taskbar *bar);
+
 void xd_taskbar_retheme(xd_taskbar *bar) {
     /* The height follows the scheme (font size changes it). */
-    int h = logical_height(bar->shell);
-    zwlr_layer_surface_v1_set_size(bar->layer, 0, (uint32_t)h);
-    zwlr_layer_surface_v1_set_exclusive_zone(bar->layer, h);
+    if (bar->surface != nullptr)
+        apply_options(bar);
     bar->task_count = 0;
     bar->dirty = true;
     if (bar->desktop != nullptr)
@@ -69,7 +74,29 @@ static void ensure_task_capacity(xd_taskbar *bar, size_t n) {
     size_t cap = XD_MAX(n, bar->task_cap * 2);
     bar->task_rects = xd_realloc_array(bar->task_rects, cap, sizeof(*bar->task_rects));
     bar->task_views = xd_realloc_array(bar->task_views, cap, sizeof(*bar->task_views));
+    bar->task_counts = xd_realloc_array(bar->task_counts, cap, sizeof(*bar->task_counts));
+    bar->entry_views = xd_realloc_array(bar->entry_views, cap, sizeof(*bar->entry_views));
+    bar->entry_counts = xd_realloc_array(bar->entry_counts, cap, sizeof(*bar->entry_counts));
     bar->task_cap = cap;
+}
+
+/* The small down arrow at the right end of a group's button. */
+static void draw_group_arrow(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    int a = xd_tpx(t, 3);
+    double cx = r.x + r.w - xd_tpx(t, 10);
+    double cy = r.y + r.h / 2.0 - a / 2.0;
+    if (state & (XD_STATE_CHECKED | XD_STATE_PRESSED) && t->style == XD_STYLE_CLASSIC) {
+        cx += xd_tpx(t, 1);
+        cy += xd_tpx(t, 1);
+    }
+    xd_rgba c = t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
+                                             : xd_rgba_hex(0xFFFFFF);
+    cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a);
+    cairo_move_to(cr, cx - a, cy);
+    cairo_line_to(cr, cx + a + 1, cy);
+    cairo_line_to(cr, cx + 0.5, cy + a + 1);
+    cairo_close_path(cr);
+    cairo_fill(cr);
 }
 
 static uint8_t button_state(const xd_taskbar *bar, int index) {
@@ -149,10 +176,16 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     xd_text_style clock_style = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_END);
     int margin_l, margin_r;
     xd_theme_tray_margins(t, &margin_l, &margin_r);
-    int tray_w = XD_MAX(xd_tpx(t, 60), margin_l + xd_text_width(cr, shell->clock, &clock_style) +
-                                           xd_tpx(t, 1) + margin_r);
-    bar->tray_rect = (xd_rect){dw - tray_w - pad, inset_top, tray_w, button_h};
-    xd_theme_draw_tray(t, cr, bar->tray_rect, shell->clock);
+    if (shell->settings.show_clock) {
+        int tray_w = XD_MAX(xd_tpx(t, 60), margin_l +
+                                               xd_text_width(cr, shell->clock, &clock_style) +
+                                               xd_tpx(t, 1) + margin_r);
+        bar->tray_rect = (xd_rect){dw - tray_w - pad, inset_top, tray_w, button_h};
+        xd_theme_draw_tray(t, cr, bar->tray_rect, shell->clock);
+    } else {
+        /* No clock and (as yet) no icons: no notification area at all. */
+        bar->tray_rect = (xd_rect){dw - pad, inset_top, 0, button_h};
+    }
 
     /* Task buttons fill the space between, shrinking as windows open. */
     size_t n = (size_t)wl_list_length(&shell->toplevels);
@@ -165,37 +198,142 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     int x0 = after_start + xd_tpx(t, 4);
     int x1 = bar->tray_rect.x - xd_tpx(t, 6);
     int avail = x1 - x0;
-    int ni = (int)XD_MIN(n, (size_t)INT32_MAX / 2);
-    int w = XD_MIN(xd_tpx(t, XD_TASK_MAX_W), (avail - (ni - 1) * gap) / ni);
-    if (w < xd_tpx(t, XD_TASK_MIN_W))
-        w = xd_tpx(t, XD_TASK_MIN_W); /* overflow is clipped until rows/scrolling exist */
+    int min_w = xd_tpx(t, XD_TASK_MIN_W);
     int ty = classic ? inset_top : xd_tpx(t, 3);
     int th = classic ? button_h : dh - xd_tpx(t, 5);
+
+    /* One entry per window; when crowded, XP's "Group similar taskbar
+     * buttons" folds each program's windows into one button where its
+     * first window was. */
+    xd_toplevel **entries = bar->entry_views;
+    size_t *counts = bar->entry_counts;
+    size_t ne = 0;
+    XD_LIST_FOR_EACH(tl, &shell->toplevels, xd_toplevel, link) {
+        entries[ne] = tl;
+        counts[ne++] = 1;
+    }
+    if (shell->settings.group && (avail - ((int)ne - 1) * gap) / (int)ne <
+                                     xd_tpx(t, XD_TASK_GROUP_W)) {
+        size_t out = 0;
+        for (size_t i = 0; i < ne; i++) {
+            xd_toplevel *tl = entries[i];
+            size_t j = 0;
+            while (j < out && !(tl->app_id != nullptr && entries[j]->app_id != nullptr &&
+                                strcmp(entries[j]->app_id, tl->app_id) == 0))
+                j++;
+            if (j < out) {
+                counts[j]++;
+                continue;
+            }
+            entries[out] = tl;
+            counts[out++] = 1;
+        }
+        ne = out;
+    }
+    int nei = (int)XD_MIN(ne, (size_t)INT32_MAX / 2);
+    int w = XD_MIN(xd_tpx(t, XD_TASK_MAX_W), (avail - (nei - 1) * gap) / nei);
+
+    /* Still too many to fit: pages of buttons with up/down arrows at the
+     * end, like XP's one-row taskbar. The active window's page is shown
+     * when it changes. */
+    size_t per_page = ne;
+    bar->pages = 1;
+    bar->page_up_rect = bar->page_down_rect = (xd_rect){0};
+    if (w < min_w) {
+        int arrows_w = xd_theme_dropdown_button_width(t);
+        int room = avail - arrows_w - gap;
+        per_page = (size_t)XD_MAX(1, (room + gap) / (min_w + gap));
+        int pi = (int)per_page;
+        w = (room - (pi - 1) * gap) / pi;
+        bar->pages = (ne + per_page - 1) / per_page;
+        uint64_t active_id = 0;
+        size_t active = SIZE_MAX;
+        for (size_t i = 0; i < ne; i++) {
+            XD_LIST_FOR_EACH(tl, &shell->toplevels, xd_toplevel, link) {
+                if (tl->activated && !tl->minimized &&
+                    (tl == entries[i] ||
+                     (counts[i] > 1 && tl->app_id != nullptr &&
+                      strcmp(tl->app_id, entries[i]->app_id) == 0))) {
+                    active = i;
+                    active_id = tl->id;
+                }
+            }
+        }
+        if (active != SIZE_MAX && active_id != bar->page_active_id)
+            bar->page = active / per_page;
+        bar->page_active_id = active_id;
+        if (bar->page >= bar->pages)
+            bar->page = bar->pages - 1;
+        int ax = x1 - arrows_w;
+        int half = th / 2;
+        bar->page_up_rect = (xd_rect){ax, ty, arrows_w, half};
+        bar->page_down_rect = (xd_rect){ax, ty + half, arrows_w, th - half};
+        uint8_t up_state = button_state(bar, XD_HIT_PAGE_UP);
+        uint8_t down_state = button_state(bar, XD_HIT_PAGE_DOWN);
+        if (bar->page == 0)
+            up_state = XD_STATE_DISABLED;
+        if (bar->page + 1 >= bar->pages)
+            down_state = XD_STATE_DISABLED;
+        /* The combo box's arrow button, flipped for "up". */
+        xd_rect u = bar->page_up_rect;
+        cairo_save(cr);
+        cairo_translate(cr, 0, 2 * u.y + u.h);
+        cairo_scale(cr, 1, -1);
+        xd_theme_draw_dropdown_button(t, cr, u, up_state);
+        cairo_restore(cr);
+        xd_theme_draw_dropdown_button(t, cr, bar->page_down_rect, down_state);
+        avail = room;
+    } else {
+        bar->page = 0;
+    }
 
     cairo_save(cr);
     cairo_rectangle(cr, x0, 0, XD_MAX(avail, 0), dh);
     cairo_clip(cr);
     int x = x0;
-    XD_LIST_FOR_EACH(tl, &shell->toplevels, xd_toplevel, link) {
-        size_t i = bar->task_count;
-        if (i >= n)
-            break;
+    for (size_t e = bar->page * per_page; e < ne && bar->task_count < per_page; e++) {
+        xd_toplevel *tl = entries[e];
+        size_t i = bar->task_count++;
         xd_rect r = {x, ty, w, th};
         bar->task_rects[i] = r;
         bar->task_views[i] = tl;
-        bar->task_count++;
+        bar->task_counts[i] = counts[e];
 
         uint8_t state = button_state(bar, (int)i);
-        if (tl->activated && !tl->minimized)
-            state |= XD_STATE_CHECKED;
-        else if (tl->attention && tl->flashes % 2 == 0)
-            state |= XD_STATE_FLASH;
+        char *group_label = nullptr;
         const char *label = tl->title != nullptr && tl->title[0] != '\0' ? tl->title
-                            : tl->app_id != nullptr                     ? tl->app_id
-                                                                         : "";
+                            : tl->app_id != nullptr                      ? tl->app_id
+                                                                          : "";
+        if (counts[e] > 1) {
+            /* "3 Firefox": pressed while one of them is active. */
+            bool any_active = false, any_flash = false;
+            XD_LIST_FOR_EACH(m, &shell->toplevels, xd_toplevel, link) {
+                if (m->app_id == nullptr || strcmp(m->app_id, tl->app_id) != 0)
+                    continue;
+                any_active = any_active || (m->activated && !m->minimized);
+                any_flash = any_flash || (m->attention && m->flashes % 2 == 0);
+            }
+            if (any_active)
+                state |= XD_STATE_CHECKED;
+            else if (any_flash)
+                state |= XD_STATE_FLASH;
+            xd_strbuf sb = {0};
+            xd_strbuf_appendf(&sb, "%zu %s", counts[e],
+                              tl->app_name != nullptr ? tl->app_name : tl->app_id);
+            group_label = xd_str_dup_cstr(xd_strbuf_view(&sb));
+            xd_strbuf_free(&sb);
+            label = group_label;
+        } else if (tl->activated && !tl->minimized) {
+            state |= XD_STATE_CHECKED;
+        } else if (tl->attention && tl->flashes % 2 == 0) {
+            state |= XD_STATE_FLASH;
+        }
         cairo_surface_t *icon =
             tl->icon != nullptr ? xd_icons_get(shell->icons, tl->icon, xd_tpx(t, 16)) : nullptr;
         xd_theme_draw_task_button(t, cr, r, state, label, icon);
+        if (counts[e] > 1)
+            draw_group_arrow(t, cr, r, state);
+        xd_free(group_label);
         x += w + gap;
     }
     cairo_restore(cr);
@@ -272,6 +410,12 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
         return XD_HIT_START;
     if (rect_contains(bar->tray_rect, x, y))
         return XD_HIT_TRAY;
+    if (bar->pages > 1) {
+        if (rect_contains(bar->page_up_rect, x, y))
+            return XD_HIT_PAGE_UP;
+        if (rect_contains(bar->page_down_rect, x, y))
+            return XD_HIT_PAGE_DOWN;
+    }
     for (size_t i = 0; i < bar->quick_count; i++) {
         if (rect_contains(bar->quick_rects[i], x, y))
             return XD_HIT_QUICK - (int)i;
@@ -325,6 +469,8 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
     }
     if (hit >= 0 && (size_t)hit < bar->task_count) {
         const xd_toplevel *tl = bar->task_views[hit];
+        if (bar->task_counts[hit] > 1)
+            return nullptr; /* a group: its menu lists the titles */
         const char *title = tl->title != nullptr && tl->title[0] != '\0' ? tl->title : tl->app_id;
         if (title == nullptr)
             return nullptr;
@@ -375,7 +521,22 @@ void xd_taskbar_tooltip_timer(xd_shell *shell) {
     xd_free(text);
 }
 
+void xd_taskbar_page(xd_taskbar *bar, int delta) {
+    if (bar->pages <= 1)
+        return;
+    if (delta < 0 && bar->page > 0)
+        bar->page--;
+    else if (delta > 0 && bar->page + 1 < bar->pages)
+        bar->page++;
+    else
+        return;
+    bar->task_count = 0; /* indices change; hit-testing waits for the redraw */
+    bar->hot = XD_HIT_NONE;
+    bar->dirty = true;
+}
+
 void xd_taskbar_pointer_leave(xd_taskbar *bar) {
+    xd_taskbars_schedule_tuck(bar->shell);
     xd_tooltip_hide(bar->shell);
     xd_tooltip_disarm(bar->shell);
     if (bar->hot != XD_HIT_NONE || bar->pressed != XD_HIT_NONE) {
@@ -414,6 +575,7 @@ void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial) {
 }
 
 void xd_taskbar_take_keyboard(xd_taskbar *bar) {
+    xd_taskbar_reveal(bar);
     /* Take the keyboard while a menu is open so arrows, Esc and typing
      * reach us. This must be committed before the menu's popup grab
      * starts: during a grab the compositor won't move keyboard focus. */
@@ -453,7 +615,13 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     bar->dirty = true;
     if (target != bar->hot)
         return; /* released somewhere else: cancel, like a real button */
-    if (target >= 0 && (size_t)target < bar->task_count)
+    if (target == XD_HIT_PAGE_UP || target == XD_HIT_PAGE_DOWN) {
+        xd_taskbar_page(bar, target == XD_HIT_PAGE_UP ? -1 : 1);
+        return;
+    }
+    if (target >= 0 && (size_t)target < bar->task_count && bar->task_counts[target] > 1)
+        xd_taskbar_group_menu(bar, target, serial);
+    else if (target >= 0 && (size_t)target < bar->task_count)
         xd_toplevel_click(bar->task_views[target]);
     else if (target <= XD_HIT_QUICK)
         xd_quicklaunch_activate(bar->shell, (size_t)(XD_HIT_QUICK - target));
@@ -512,17 +680,26 @@ static const struct wp_fractional_scale_v1_listener fractional_listener = {
     .preferred_scale = preferred_scale,
 };
 
-void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t global) {
-    xd_taskbar *bar = XD_NEW(xd_taskbar);
-    bar->shell = shell;
-    bar->output = output;
-    bar->output_global = global;
-    bar->scale = 1.0;
-    bar->hot = XD_HIT_NONE;
-    bar->pressed = XD_HIT_NONE;
-    wl_list_insert(shell->taskbars.prev, &bar->link);
-    bar->desktop = xd_desktop_create(shell, output);
+/* Layer, exclusive zone and position from [Taskbar]: on top of windows
+ * or under them, and with Auto-hide pushed down to a 2px strip with no
+ * reserved space. */
+static void apply_options(xd_taskbar *bar) {
+    const xd_settings *s = &bar->shell->settings;
+    int h = logical_height(bar->shell);
+    zwlr_layer_surface_v1_set_size(bar->layer, 0, (uint32_t)h);
+    if (zwlr_layer_surface_v1_get_version(bar->layer) >=
+        ZWLR_LAYER_SURFACE_V1_SET_LAYER_SINCE_VERSION)
+        zwlr_layer_surface_v1_set_layer(bar->layer, s->on_top || s->auto_hide
+                                                        ? ZWLR_LAYER_SHELL_V1_LAYER_TOP
+                                                        : ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM);
+    zwlr_layer_surface_v1_set_exclusive_zone(bar->layer, s->auto_hide ? 0 : h);
+    bool tucked = s->auto_hide && bar->tucked;
+    zwlr_layer_surface_v1_set_margin(bar->layer, 0, 0, tucked ? -(h - 2) : 0, 0);
+    wl_surface_commit(bar->surface);
+}
 
+static void surface_create(xd_taskbar *bar) {
+    xd_shell *shell = bar->shell;
     bar->surface = wl_compositor_create_surface(shell->compositor);
     if (shell->fractional_manager != nullptr && shell->viewporter != nullptr) {
         bar->fractional =
@@ -533,7 +710,7 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
     }
 
     bar->layer = zwlr_layer_shell_v1_get_layer_surface(
-        shell->layer_shell, bar->surface, output, ZWLR_LAYER_SHELL_V1_LAYER_TOP, "taskbar");
+        shell->layer_shell, bar->surface, bar->output, ZWLR_LAYER_SHELL_V1_LAYER_TOP, "taskbar");
     int h = logical_height(shell);
     zwlr_layer_surface_v1_set_anchor(bar->layer, ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
                                                      ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
@@ -543,15 +720,19 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
     zwlr_layer_surface_v1_set_keyboard_interactivity(
         bar->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
     zwlr_layer_surface_v1_add_listener(bar->layer, &layer_listener, bar);
-    wl_surface_commit(bar->surface);
+    bar->tucked = shell->settings.auto_hide;
+    apply_options(bar);
 }
 
-void xd_taskbar_destroy(xd_taskbar *bar) {
-    if (bar->shell->start_bar == bar)
-        xd_menu_close_all(bar->shell); /* its popups hang off this surface */
-    if (bar->shell->pointer_bar == bar)
-        bar->shell->pointer_bar = nullptr;
-    wl_list_remove(&bar->link);
+static void surface_destroy(xd_taskbar *bar) {
+    xd_shell *shell = bar->shell;
+    if (bar->surface == nullptr)
+        return;
+    if (shell->start_bar == bar)
+        xd_menu_close_all(shell); /* its popups hang off this surface */
+    if (shell->pointer_bar == bar)
+        shell->pointer_bar = nullptr;
+    xd_tooltip_hide(shell);
     if (bar->layer != nullptr)
         zwlr_layer_surface_v1_destroy(bar->layer);
     if (bar->viewport != nullptr)
@@ -560,11 +741,96 @@ void xd_taskbar_destroy(xd_taskbar *bar) {
         wp_fractional_scale_v1_destroy(bar->fractional);
     wl_surface_destroy(bar->surface);
     xd_shm_ring_finish(&bar->ring);
+    bar->layer = nullptr;
+    bar->viewport = nullptr;
+    bar->fractional = nullptr;
+    bar->surface = nullptr;
+    bar->configured = false;
+    bar->task_count = bar->quick_count = 0;
+    bar->hot = bar->pressed = XD_HIT_NONE;
+}
+
+/* ---- auto-hide ----------------------------------------------------------- */
+
+enum { TUCK_DELAY_MS = 700 };
+
+/* Something keeps the taskbar out: the pointer, or a menu opened from it. */
+static bool in_use(const xd_taskbar *bar) {
+    return bar->shell->pointer_bar == bar || bar->shell->start_bar == bar;
+}
+
+void xd_taskbar_reveal(xd_taskbar *bar) {
+    if (!bar->tucked)
+        return;
+    bar->tucked = false;
+    if (bar->surface != nullptr)
+        apply_options(bar);
+}
+
+void xd_taskbars_schedule_tuck(xd_shell *shell) {
+    if (!shell->settings.auto_hide || shell->autohide_timer_fd < 0)
+        return;
+    struct itimerspec spec = {.it_value = {.tv_nsec = TUCK_DELAY_MS * 1000000L}};
+    timerfd_settime(shell->autohide_timer_fd, 0, &spec, nullptr);
+}
+
+void xd_taskbars_tuck_timer(xd_shell *shell) {
+    if (!shell->settings.auto_hide)
+        return;
+    XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
+        if (bar->surface != nullptr && !bar->tucked && !in_use(bar)) {
+            bar->tucked = true;
+            xd_tooltip_hide(shell);
+            apply_options(bar);
+        }
+    }
+}
+
+/* The first monitor's taskbar always exists; the others only with
+ * "Show the taskbar on all displays". */
+void xd_taskbars_update(xd_shell *shell) {
+    bool first = true;
+    XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
+        bool want = first || shell->settings.all_displays;
+        first = false;
+        bar->tucked = shell->settings.auto_hide && !in_use(bar);
+        if (want && bar->surface == nullptr)
+            surface_create(bar);
+        else if (!want)
+            surface_destroy(bar);
+        else
+            apply_options(bar);
+    }
+}
+
+void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t global) {
+    xd_taskbar *bar = XD_NEW(xd_taskbar);
+    bar->shell = shell;
+    bar->output = output;
+    bar->output_global = global;
+    bar->scale = 1.0;
+    bar->hot = XD_HIT_NONE;
+    bar->pressed = XD_HIT_NONE;
+    wl_list_insert(shell->taskbars.prev, &bar->link);
+    bar->desktop = xd_desktop_create(shell, output);
+    xd_taskbars_update(shell);
+}
+
+void xd_taskbar_destroy(xd_taskbar *bar) {
+    xd_shell *shell = bar->shell;
+    surface_destroy(bar);
+    wl_list_remove(&bar->link);
     xd_desktop_destroy(bar->desktop);
     if (bar->output != nullptr)
         wl_output_release(bar->output);
     xd_free(bar->task_rects);
     xd_free(bar->task_views);
+    xd_free(bar->task_counts);
+    xd_free(bar->entry_views);
+    xd_free(bar->entry_counts);
     xd_free(bar->quick_rects);
     xd_free(bar);
+    /* If it was the first monitor's, the next one takes over. */
+    if (shell->running)
+        xd_taskbars_update(shell);
 }

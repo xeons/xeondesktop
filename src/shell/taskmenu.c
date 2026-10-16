@@ -125,6 +125,88 @@ static void separator(xd_menu_tree *tree, xd_menu_model *m) {
     xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
 }
 
+/* ---- grouped buttons ------------------------------------------------------- */
+
+static bool in_group(const xd_toplevel *t, const char *app_id) {
+    return t->app_id != nullptr && strcmp(t->app_id, app_id) == 0;
+}
+
+static void act_activate(xd_shell *shell, void *d) {
+    xd_toplevel *t = find_toplevel(shell, d);
+    if (t == nullptr || shell->seat == nullptr)
+        return;
+    if (t->minimized)
+        zwlr_foreign_toplevel_handle_v1_unset_minimized(t->handle);
+    zwlr_foreign_toplevel_handle_v1_activate(t->handle, shell->seat);
+}
+
+static void act_minimize_group(xd_shell *shell, void *d) {
+    xd_toplevel *t;
+    wl_list_for_each(t, &shell->toplevels, link) {
+        if (in_group(t, d))
+            zwlr_foreign_toplevel_handle_v1_set_minimized(t->handle);
+    }
+}
+
+static void act_close_group(xd_shell *shell, void *d) {
+    xd_toplevel *t;
+    wl_list_for_each(t, &shell->toplevels, link) {
+        if (in_group(t, d))
+            zwlr_foreign_toplevel_handle_v1_close(t->handle);
+    }
+}
+
+/* A group's button: its windows, the active one checked off in bold. */
+static xd_menu_model *group_menu(xd_shell *shell, xd_menu_tree *tree, const char *app_id) {
+    xd_menu_model *m = xd_menu_model_new(tree);
+    xd_toplevel *t;
+    wl_list_for_each(t, &shell->toplevels, link) {
+        if (!in_group(t, app_id))
+            continue;
+        const char *label = t->title != nullptr && t->title[0] != '\0' ? t->title : app_id;
+        xd_menu_item *it = add(tree, m, label, act_activate, toplevel_ref(t));
+        it->icon = t->icon != nullptr ? xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(t->icon))
+                                      : nullptr;
+        it->fallback_icon = "application-x-executable";
+        it->bold = t->activated && !t->minimized;
+    }
+    return m;
+}
+
+/* Right-click on a group, as XP's: the whole group at once. */
+static xd_menu_model *group_context_menu(xd_shell *shell, xd_menu_tree *tree,
+                                         const char *app_id) {
+    (void)shell;
+    xd_menu_model *m = xd_menu_model_new(tree);
+    char *key = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(app_id));
+    xd_menu_item *it = add(tree, m, "Minimize Group", act_minimize_group, key);
+    it->glyph = XD_MENU_GLYPH_MINIMIZE;
+    separator(tree, m);
+    it = add(tree, m, "Close Group", act_close_group, key);
+    it->glyph = XD_MENU_GLYPH_CLOSE;
+    it->bold = true;
+    return m;
+}
+
+void xd_taskbar_group_menu(xd_taskbar *bar, int hit, uint32_t serial) {
+    xd_shell *shell = bar->shell;
+    if (hit < 0 || (size_t)hit >= bar->task_count || bar->task_views[hit]->app_id == nullptr)
+        return;
+    xd_menu_close_all(shell);
+    xd_menu_tree_free(&shell->context_tree);
+    xd_menu_tree_init(&shell->context_tree);
+    xd_menu_model *model = group_menu(shell, &shell->context_tree, bar->task_views[hit]->app_id);
+    /* Above the button (device px -> surface-local logical). */
+    xd_rect r = bar->task_rects[hit];
+    xd_rect anchor = {(int)(r.x / bar->scale), (int)(r.y / bar->scale),
+                      (int)(r.w / bar->scale), (int)(r.h / bar->scale)};
+    xd_taskbar_take_keyboard(bar);
+    shell->context_menu = true;
+    xd_menu_open_root(shell, model, bar->layer, anchor, serial);
+    shell->start_bar = bar;
+    bar->dirty = true;
+}
+
 static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree) {
     xd_menu_model *m = xd_menu_model_new(tree);
     bool can_arrange = shell->arranger != nullptr;
@@ -248,13 +330,18 @@ static void handle_window_menu(void *data, [[maybe_unused]] struct xd_window_arr
 static void handle_start_menu(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *a,
                               struct wl_output *output, uint32_t serial) {
     xd_shell *shell = data;
-    xd_taskbar *b;
+    /* This monitor's taskbar, else (without one there) the first's. */
+    xd_taskbar *b, *fallback = nullptr;
     wl_list_for_each(b, &shell->taskbars, link) {
         if (b->output == output && b->configured) {
             xd_taskbar_toggle_start(b, serial);
             return;
         }
+        if (fallback == nullptr && b->configured)
+            fallback = b;
     }
+    if (fallback != nullptr)
+        xd_taskbar_toggle_start(fallback, serial);
 }
 
 static void handle_attention(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *arranger,
@@ -278,7 +365,9 @@ void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint3
     xd_menu_tree_free(&shell->context_tree);
     xd_menu_tree_init(&shell->context_tree);
     xd_menu_model *model;
-    if (hit >= 0 && (size_t)hit < bar->task_count)
+    if (hit >= 0 && (size_t)hit < bar->task_count && bar->task_counts[hit] > 1)
+        model = group_context_menu(shell, &shell->context_tree, bar->task_views[hit]->app_id);
+    else if (hit >= 0 && (size_t)hit < bar->task_count)
         model = window_menu(shell, &shell->context_tree, bar->task_views[hit]);
     else if (hit == XD_HIT_START)
         model = start_button_menu(shell, &shell->context_tree);

@@ -67,6 +67,11 @@ typedef struct xd_settings {
     /* [Taskbar] */
     bool quick_launch;
     bool locked; /* Lock the Taskbar: no toolbar grips */
+    bool auto_hide;
+    bool on_top;       /* Keep the taskbar on top of other windows */
+    bool group;        /* Group similar taskbar buttons (when crowded) */
+    bool show_clock;
+    bool all_displays; /* a taskbar on every monitor, not just the first */
 
     /* [StartMenu] */
     xd_start_style start_style;

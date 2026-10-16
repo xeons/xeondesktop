@@ -36,7 +36,8 @@ typedef struct xd_toplevel {
     uint64_t id; /* never reused, unlike the address */
     char *title;
     char *app_id;
-    char *icon; /* its application's Icon key, from app_id; may be nullptr */
+    char *icon;     /* its application's Icon key, from app_id; may be nullptr */
+    char *app_name; /* its application's name, for a group's button; may be nullptr */
     bool activated;
     bool minimized;
     bool maximized;
@@ -71,7 +72,14 @@ typedef struct xd_desktop {
 
 /* Hover/press targets on a taskbar: task buttons are >= 0; Quick Launch
  * button i is XD_HIT_QUICK - i. */
-enum { XD_HIT_NONE = -1, XD_HIT_START = -2, XD_HIT_TRAY = -3, XD_HIT_QUICK = -100 };
+enum {
+    XD_HIT_NONE = -1,
+    XD_HIT_START = -2,
+    XD_HIT_TRAY = -3,
+    XD_HIT_PAGE_UP = -4, /* task button pages, when they don't all fit */
+    XD_HIT_PAGE_DOWN = -5,
+    XD_HIT_QUICK = -100,
+};
 
 typedef struct xd_taskbar {
     struct wl_list link; /* xd_shell.taskbars */
@@ -100,12 +108,21 @@ typedef struct xd_taskbar {
     size_t task_count;
     size_t task_cap;
     xd_rect *task_rects;
-    xd_toplevel **task_views;
+    xd_toplevel **task_views;  /* a group's button shows its first window */
+    size_t *task_counts;       /* windows behind each button (>1: a group) */
+    xd_toplevel **entry_views; /* layout scratch, task_cap long */
+    size_t *entry_counts;
+    /* Pages of task buttons when they don't fit at their minimum width. */
+    size_t page, pages;
+    uint64_t page_active_id; /* active window when last laid out */
+    double wheel;            /* scrolling not yet turned into a page */
+    xd_rect page_up_rect, page_down_rect;
 
     int hot;     /* XD_HIT_* or a task index */
     double pointer_x, pointer_y; /* last pointer position, logical */
     int pressed; /* same, while a button is held */
     bool tooltip_off; /* clicked: no tooltip until the pointer moves on */
+    bool tucked;      /* Auto-hide: pushed down to a 2px strip */
 } xd_taskbar;
 
 struct xd_shell {
@@ -171,6 +188,7 @@ struct xd_shell {
     /* Taskbar tooltips: the one shown, and the hover delay before one. */
     xd_tooltip *tooltip;
     int tooltip_timer_fd;
+    int autohide_timer_fd; /* tucks Auto-hide taskbars away after the pointer leaves */
     int64_t tooltip_shown_ms, tooltip_hidden_ms;
     xd_menu *pending_menu;  /* menu waiting for the hover delay */
 
@@ -198,6 +216,16 @@ void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y);
 void xd_taskbar_pointer_leave(xd_taskbar *bar);
 void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                                uint32_t serial);
+/* Creates or removes taskbar surfaces ("all displays" or only the first
+ * monitor's) and applies [Taskbar]'s layer and Auto-hide. */
+void xd_taskbars_update(xd_shell *shell);
+/* Auto-hide: slide the taskbar out (pointer, Start menu), and back in a
+ * moment after nothing uses it. */
+void xd_taskbar_reveal(xd_taskbar *bar);
+void xd_taskbars_schedule_tuck(xd_shell *shell);
+void xd_taskbars_tuck_timer(xd_shell *shell);
+/* Shows the previous (delta < 0) or next page of task buttons. */
+void xd_taskbar_page(xd_taskbar *bar, int delta);
 /* Gives the taskbar keyboard focus; call before opening a menu popup. */
 void xd_taskbar_take_keyboard(xd_taskbar *bar);
 /* Opens the Start menu above this taskbar's Start button. */
@@ -207,6 +235,8 @@ void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial);
 /* taskmenu.c: right-click menus (the taskbar's, or a task button's window
  * menu when `hit` is a task index). x, y: logical, taskbar-local. */
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);
+/* taskmenu.c: a grouped button's menu of its windows. */
+void xd_taskbar_group_menu(xd_taskbar *bar, int hit, uint32_t serial);
 /* Listens for the compositor's window menu requests. */
 void xd_taskmenu_bind(xd_shell *shell);
 /* tooltip.c: a tooltip popup of `layer`, next to `anchor` (surface-local,

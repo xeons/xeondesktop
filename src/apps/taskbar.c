@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * xd-taskbar: Taskbar and Start Menu Properties.
  */
+#include <stddef.h>
 #include <stdlib.h>
 
 #include "../settings/settings.h"
@@ -40,6 +41,31 @@ static void on_lock(xd_widget *w, void *user) {
     p->pending.locked = xd_checkbox_checked(w);
     changed(p);
 }
+static void on_auto_hide(xd_widget *w, void *user) {
+    props *p = user;
+    p->pending.auto_hide = xd_checkbox_checked(w);
+    changed(p);
+}
+static void on_top(xd_widget *w, void *user) {
+    props *p = user;
+    p->pending.on_top = xd_checkbox_checked(w);
+    changed(p);
+}
+static void on_group(xd_widget *w, void *user) {
+    props *p = user;
+    p->pending.group = xd_checkbox_checked(w);
+    changed(p);
+}
+static void on_clock(xd_widget *w, void *user) {
+    props *p = user;
+    p->pending.show_clock = xd_checkbox_checked(w);
+    changed(p);
+}
+static void on_all_displays(xd_widget *w, void *user) {
+    props *p = user;
+    p->pending.all_displays = xd_checkbox_checked(w);
+    changed(p);
+}
 
 static void on_style(xd_widget *w, void *user) {
     props *p = user;
@@ -73,12 +99,6 @@ static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
 static void on_apply([[maybe_unused]] xd_widget *w, void *user) { apply(user); }
 static void on_page([[maybe_unused]] xd_widget *w, [[maybe_unused]] void *user) {}
 
-static xd_widget *disabled(xd_widget *w, int page) {
-    xd_widget_set_enabled(w, false);
-    xd_widget_set_page(w, page);
-    return w;
-}
-
 int main(int argc, char **argv) {
     static props p;
     p.ui = xd_ui_connect(argc, argv);
@@ -97,27 +117,30 @@ int main(int argc, char **argv) {
     xd_widget *tab = xd_tabs(p.win, (xd_rect){7, 7, 366, 294}, tabs, 2, on_page, &p);
 
     /* Taskbar */
-    xd_widget_set_page(xd_groupbox(p.win, (xd_rect){20, 40, 340, 170}, "Taskbar appearance"), 0);
-    xd_widget *ql = xd_checkbox(p.win, (xd_rect){32, 62, 300, 20}, "Show Quick Launch",
-                                p.pending.quick_launch, on_quick_launch, &p);
-    xd_widget_set_page(ql, 0);
-    xd_widget *lock = xd_checkbox(p.win, (xd_rect){32, 86, 300, 20}, "Lock the taskbar",
-                                  p.pending.locked, on_lock, &p);
-    xd_widget_set_page(lock, 0);
-    disabled(xd_checkbox(p.win, (xd_rect){32, 110, 300, 20}, "Auto-hide the taskbar", false,
-                         nullptr, nullptr),
-             0);
-    disabled(xd_checkbox(p.win, (xd_rect){32, 134, 300, 20},
-                         "Keep the taskbar on top of other windows", true, nullptr, nullptr),
-             0);
-    disabled(xd_checkbox(p.win, (xd_rect){32, 158, 300, 20}, "Group similar taskbar buttons",
-                         false, nullptr, nullptr),
-             0);
-    disabled(xd_checkbox(p.win, (xd_rect){32, 182, 300, 20}, "Show the clock", true, nullptr,
-                         nullptr),
-             0);
-    xd_widget_set_page(xd_label(p.win, (xd_rect){20, 220, 340, 16},
-                                "Greyed-out options aren't available yet.", XD_LABEL_DIM),
+    /* XP's Taskbar tab, plus Windows 7's "all displays". */
+    xd_widget_set_page(xd_groupbox(p.win, (xd_rect){20, 40, 340, 172}, "Taskbar appearance"), 0);
+    static const struct {
+        const char *label;
+        size_t offset;
+        xd_widget_cb cb;
+    } boxes[] = {
+        {"Lock the taskbar", offsetof(xd_settings, locked), on_lock},
+        {"Auto-hide the taskbar", offsetof(xd_settings, auto_hide), on_auto_hide},
+        {"Keep the taskbar on top of other windows", offsetof(xd_settings, on_top), on_top},
+        {"Group similar taskbar buttons", offsetof(xd_settings, group), on_group},
+        {"Show Quick Launch", offsetof(xd_settings, quick_launch), on_quick_launch},
+        {"Show the taskbar on all displays", offsetof(xd_settings, all_displays),
+         on_all_displays},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(boxes); i++) {
+        const bool *value = (const bool *)((const char *)&p.pending + boxes[i].offset);
+        xd_widget *box = xd_checkbox(p.win, (xd_rect){32, 60 + 24 * (int)i, 320, 20},
+                                     boxes[i].label, *value, boxes[i].cb, &p);
+        xd_widget_set_page(box, 0);
+    }
+    xd_widget_set_page(xd_groupbox(p.win, (xd_rect){20, 222, 340, 52}, "Notification area"), 0);
+    xd_widget_set_page(xd_checkbox(p.win, (xd_rect){32, 244, 300, 20}, "Show the clock",
+                                   p.pending.show_clock, on_clock, &p),
                        0);
 
     /* Start Menu */

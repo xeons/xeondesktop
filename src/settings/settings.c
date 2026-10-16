@@ -34,6 +34,10 @@ void xd_settings_defaults(xd_settings *s) {
         .full_window_drag = true,
         .quick_launch = true,
         .locked = true,
+        .on_top = true,
+        .group = true,
+        .show_clock = true,
+        .all_displays = true,
         .screensaver_wait = 15,
         /* Windows' defaults: about 30 repeats a second after half a second. */
         .keyboard = {.repeat_delay = 500, .repeat_rate = 30},
@@ -115,6 +119,16 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &s->quick_launch);
         else if (KEY("Locked"))
             parse_bool(v, &s->locked);
+        else if (KEY("AutoHide"))
+            parse_bool(v, &s->auto_hide);
+        else if (KEY("OnTop"))
+            parse_bool(v, &s->on_top);
+        else if (KEY("GroupButtons"))
+            parse_bool(v, &s->group);
+        else if (KEY("ShowClock"))
+            parse_bool(v, &s->show_clock);
+        else if (KEY("AllDisplays"))
+            parse_bool(v, &s->all_displays);
     } else if (SEC("StartMenu")) {
         if (KEY("Style")) {
             int i = index_of(start_style_names, XD_ARRAY_LEN(start_style_names), v);
@@ -234,6 +248,11 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Windows", "AlwaysDrawFrames", s->always_frames);
     g_key_file_set_boolean(kf, "Taskbar", "QuickLaunch", s->quick_launch);
     g_key_file_set_boolean(kf, "Taskbar", "Locked", s->locked);
+    g_key_file_set_boolean(kf, "Taskbar", "AutoHide", s->auto_hide);
+    g_key_file_set_boolean(kf, "Taskbar", "OnTop", s->on_top);
+    g_key_file_set_boolean(kf, "Taskbar", "GroupButtons", s->group);
+    g_key_file_set_boolean(kf, "Taskbar", "ShowClock", s->show_clock);
+    g_key_file_set_boolean(kf, "Taskbar", "AllDisplays", s->all_displays);
     g_key_file_set_string(kf, "StartMenu", "Style", start_style_names[s->start_style]);
     g_key_file_set_string(kf, "ScreenSaver", "Name", s->screensaver);
     g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);

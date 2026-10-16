@@ -83,8 +83,10 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
                                             WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
     double lx = wl_fixed_to_double(x);
     double ly = wl_fixed_to_double(y);
-    if (shell->pointer_bar != nullptr)
+    if (shell->pointer_bar != nullptr) {
+        xd_taskbar_reveal(shell->pointer_bar); /* Auto-hide */
         xd_taskbar_pointer_motion(shell->pointer_bar, lx, ly);
+    }
     if (shell->pointer_menu != nullptr)
         xd_menu_pointer_motion(shell->pointer_menu, lx, ly);
     if (shell->pointer_start7)
@@ -134,8 +136,18 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
 static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
                          [[maybe_unused]] uint32_t time, uint32_t axis, wl_fixed_t value) {
     xd_shell *shell = data;
-    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_start7)
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_start7) {
         xd_start7_pointer_axis(shell, wl_fixed_to_double(value));
+    } else if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_bar != nullptr) {
+        /* The wheel pages through task buttons; one notch (10) a page,
+         * touchpads' small steps added up. */
+        xd_taskbar *bar = shell->pointer_bar;
+        bar->wheel += wl_fixed_to_double(value);
+        if (bar->wheel <= -10 || bar->wheel >= 10) {
+            xd_taskbar_page(bar, bar->wheel < 0 ? -1 : 1);
+            bar->wheel = 0;
+        }
+    }
 }
 static void pointer_frame([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p) {}
 static void pointer_axis_source([[maybe_unused]] void *data,
@@ -433,9 +445,11 @@ void xd_shell_start_menu_closed(xd_shell *shell) {
     shell->context_menu = false;
     if (bar == nullptr)
         return;
-    zwlr_layer_surface_v1_set_keyboard_interactivity(
-        bar->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
+    if (bar->layer != nullptr)
+        zwlr_layer_surface_v1_set_keyboard_interactivity(
+            bar->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
     bar->dirty = true;
+    xd_taskbars_schedule_tuck(shell);
 }
 
 /* ---- settings ------------------------------------------------------------------- */
@@ -473,6 +487,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     xd_menu_tree_free(&shell->menu_tree);
     xd_menu_tree_init(&shell->menu_tree);
     xd_start_menu_build(shell);
+    xd_taskbars_update(shell);
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
         xd_taskbar_retheme(bar);
     }
@@ -588,7 +603,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             return EXIT_FAILURE;
         }
 
-        struct pollfd fds[8] = {
+        struct pollfd fds[9] = {
             {.fd = wl_display_get_fd(d), .events = POLLIN},
             {.fd = timer_fd, .events = POLLIN},
             {.fd = signal_fd, .events = POLLIN},
@@ -597,6 +612,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             {.fd = shell->quicklaunch.watch_fd, .events = POLLIN},
             {.fd = shell->flash_timer_fd, .events = POLLIN},
             {.fd = shell->tooltip_timer_fd, .events = POLLIN},
+            {.fd = shell->autohide_timer_fd, .events = POLLIN},
         };
         if (poll(fds, XD_ARRAY_LEN(fds), -1) < 0) {
             wl_display_cancel_read(d);
@@ -647,6 +663,11 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             (void)!read(shell->tooltip_timer_fd, &expirations, sizeof(expirations));
             xd_taskbar_tooltip_timer(shell);
         }
+        if (shell->autohide_timer_fd >= 0 && (fds[8].revents & POLLIN)) {
+            uint64_t expirations;
+            (void)!read(shell->autohide_timer_fd, &expirations, sizeof(expirations));
+            xd_taskbars_tuck_timer(shell);
+        }
     }
     return EXIT_SUCCESS;
 }
@@ -660,6 +681,7 @@ int main(int argc, char **argv) {
     shell.menu_timer_fd = -1;
     shell.flash_timer_fd = -1;
     shell.tooltip_timer_fd = -1;
+    shell.autohide_timer_fd = -1;
     shell.saver_pidfd = -1;
     shell.settings_fd = -1;
     shell.quicklaunch.watch_fd = -1;
@@ -702,6 +724,7 @@ int main(int argc, char **argv) {
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     shell.flash_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     shell.tooltip_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    shell.autohide_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
 
     update_clock(&shell);
     xd_toplevels_init(&shell);

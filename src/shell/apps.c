@@ -184,9 +184,10 @@ static GDesktopAppInfo *desktop_by_id(const char *stem) {
     return info;
 }
 
-char *xd_app_icon_for_window(const char *app_id) {
+bool xd_app_for_window(const char *app_id, char **icon, char **name) {
+    *icon = *name = nullptr;
     if (app_id == nullptr || app_id[0] == '\0')
-        return nullptr;
+        return false;
     GDesktopAppInfo *info = desktop_by_id(app_id);
     if (info == nullptr) {
         char *lower = g_ascii_strdown(app_id, -1);
@@ -225,8 +226,10 @@ char *xd_app_icon_for_window(const char *app_id) {
             g_free(last);
         }
     }
-    char *icon = desktop_icon(info);
-    if (info != nullptr)
-        g_object_unref(info);
-    return icon;
+    if (info == nullptr)
+        return false;
+    *icon = desktop_icon(info);
+    *name = g_strdup(g_app_info_get_name(G_APP_INFO(info)));
+    g_object_unref(info);
+    return true;
 }

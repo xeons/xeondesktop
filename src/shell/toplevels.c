@@ -28,7 +28,8 @@ static void handle_app_id(void *data,
         return;
     replace_string(&t->app_id, app_id);
     g_free(t->icon);
-    t->icon = xd_app_icon_for_window(app_id);
+    g_free(t->app_name);
+    xd_app_for_window(app_id, &t->icon, &t->app_name);
 }
 
 /* Like XP, every taskbar shows every window, so outputs are ignored for
@@ -94,6 +95,7 @@ static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *h)
     XD_FREE(&t->title);
     XD_FREE(&t->app_id);
     g_free(t->icon);
+    g_free(t->app_name);
     xd_taskbars_mark_dirty(t->shell);
     xd_free(t);
 }
