@@ -15,6 +15,19 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       per-output taskbars, maximize/work areas across outputs: untested.
 - [?] **Automatic per-output scale** from EDID size: untested (only the
       `--scale` override has been used).
+- [~] Scaling smoke test (2026-10-15, nested 1024x768 with --scale 1.25,
+      1.5 and 2): the taskbar, all three Start menus and the 2000 Programs
+      cascade, window frames and caption buttons (minimize, restore from
+      the task button, maximize at 1.5), Display Properties, Run, xd-files,
+      Properties and the Task Manager all render crisply and line up.
+      Found and fixed: the Classic Start button missed clicks at the very
+      bottom edge (now Start and task buttons reach the screen edges).
+      Open: the XP Start menu and Display Properties are taller than a
+      512px logical screen (1.5x on 768px) and get cut off; XP shrinks the
+      most-used list and Windows keeps dialogs' title bars on screen. GTK 3
+      draws at the next whole scale and is downscaled at fractional scales
+      (no fractional-scale support in GTK 3). Not covered: scales on
+      several outputs at once, changing scale while running, cursor size.
 - [ ] **Session entry**: no `xeondesktop.desktop` for display managers, no
       session startup script, no `meson install` test.
 - [ ] **XWayland**: not supported; X11 apps don't run in the session.

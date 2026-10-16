@@ -237,10 +237,21 @@ static int floor_int(double v) {
     return (int)f;
 }
 
+/* A button's hit area runs to the top and bottom of the bar, so the
+ * pointer flung against the screen edge still hits it (and Start reaches
+ * the corner), as in Windows. */
+static bool hits_column(xd_rect r, int x, double ly, int bar_h) {
+    return x >= r.x && x < r.x + r.w && ly >= 0 && ly < bar_h;
+}
+
 static int hit_test(const xd_taskbar *bar, double lx, double ly) {
     int x = floor_int(lx * bar->scale);
     int y = floor_int(ly * bar->scale);
-    if (rect_contains(bar->start_rect, x, y))
+    int h = bar->height; /* logical */
+    xd_rect start = bar->start_rect;
+    start.w += start.x; /* out to the left edge */
+    start.x = 0;
+    if (hits_column(start, x, ly, h))
         return XD_HIT_START;
     if (rect_contains(bar->tray_rect, x, y))
         return XD_HIT_TRAY;
@@ -249,7 +260,7 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
             return XD_HIT_QUICK - (int)i;
     }
     for (size_t i = 0; i < bar->task_count; i++) {
-        if (rect_contains(bar->task_rects[i], x, y))
+        if (hits_column(bar->task_rects[i], x, ly, h))
             return (int)i;
     }
     return XD_HIT_NONE;
