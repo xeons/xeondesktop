@@ -8,9 +8,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Platform and session
 
-- [ ] **Real hardware**: the compositor has only run nested inside an X11
-      session (wlroots X11 backend, software rendering). Never run on a TTY
-      with DRM/KMS, libseat/logind, real GPUs or real input devices.
+- [~] **Real hardware**: runs as a full session from SDDM on DRM/KMS with
+      logind, in a VMware VM (vmwgfx without 3D, so pixman software
+      rendering: wlroots won't pick it on DRM by itself, so the compositor
+      falls back to it when GLES2 and Vulkan fail). Untested: a real GPU
+      (GLES2/Vulkan on DRM), physical monitors and their modes, hotplug,
+      libinput devices beyond the VM's, VT switching, suspend/resume.
 - [~] **Multiple monitors**: tested with two headless outputs: a taskbar
       and wallpaper on each, dragging a window across and maximizing it on
       the second, turning one off (its windows move over), rearranging them
