@@ -16,10 +16,11 @@ rendition. Screenshots are from a nested development session.
 
 ## Build
 
-Dependencies: meson, ninja, wlroots 0.20, wlr-protocols, wayland, xkbcommon,
-xcb and xcb-icccm, cairo, pango, GLib/GIO, GTK 3, gdk-pixbuf, procps-ng's
-libproc2 (Task Manager), PAM (Lock Computer) and libudev (Device Manager). At run time, Xwayland (`xorg-xwayland`) runs X11
-applications; without it only Wayland ones work.
+Dependencies: meson, ninja, wlroots 0.20, wayland and wayland-protocols,
+xkbcommon, xcb and xcb-icccm, cairo, pango, GLib/GIO, GTK 3, gdk-pixbuf,
+procps-ng's libproc2 (Task Manager), PAM (Lock Computer), libudev (Device
+Manager) and polkit's agent library. At run time, Xwayland
+(`xorg-xwayland`) runs X11 applications; without it only Wayland ones work.
 Optional: Wine, for its free Tahoma clone (`/usr/share/wine/fonts`), which
 XeonDesktop's programs use so text matches Windows; without it DejaVu Sans
 stands in. Other fonts directories can be added with `XD_FONT_DIRS`.
@@ -30,6 +31,21 @@ stands in. Other fonts directories can be added with `XD_FONT_DIRS`.
 
 Release build: `meson setup build-release -Dbuildtype=release -Db_sanitize=none`.
 Static analysis: `meson setup build-analyze -Danalyzer=true`.
+
+## Packages
+
+GitHub Actions (`.github/workflows/packages.yml`) builds a `.deb` for Debian
+testing and unstable (wlroots 0.20 isn't in a stable release yet) and a
+package for Arch Linux and CachyOS on every push; they're under the run's
+Artifacts, and tagging `vX.Y.Z` attaches them to a release. To build them
+locally with podman (or docker):
+
+    podman run --rm -v "$PWD":/src -w /src debian:testing packaging/build-deb.sh
+    podman run --rm -v "$PWD":/src -w /src cachyos/cachyos packaging/build-arch.sh
+
+The packages land in `dist/`. Installing one adds **XeonDesktop** to the
+display manager's session list (`xeondesktop-session`, which reads
+`~/.config/environment.d` and starts the compositor).
 
 ## Run the compositor
 
@@ -48,6 +64,9 @@ button minimizes it.
 | Alt+F4              | Close window                                    |
 | Win+Up / Win+Down   | Maximize / restore or minimize                  |
 | Ctrl+Alt+T          | Open terminal (`--terminal CMD`)                |
+| Ctrl+Alt+Delete     | Windows Security (Classic style) or Task Manager (XP styles) |
+| Ctrl+Shift+Esc      | Task Manager                                    |
+| Win+L               | Lock Computer                                   |
 | Ctrl+Alt+Backspace  | Quit the compositor                             |
 
 Mouse: drag the caption to move, drag edges/corners to resize, double-click
@@ -175,8 +194,8 @@ dialog.
 
 ### Task Manager
 
-`xd-taskmgr` is the Windows 2000 Task Manager; Ctrl+Alt+Delete or
-Ctrl+Shift+Esc opens it (or brings it forward). Applications lists the open
+`xd-taskmgr` is the Windows 2000 Task Manager; Ctrl+Shift+Esc (or
+Ctrl+Alt+Delete in the XP styles) opens it or brings it forward. Applications lists the open
 windows (End Task, Switch To, New Task). Processes lists every process with
 selectable columns, End Process, End Process Tree, Set Priority and Set
 Affinity. Performance has the LED meters and history graphs, with the totals
@@ -192,6 +211,22 @@ style and colour scheme (Windows 2000 bevels for Classic, XP's gradients for
 Luna and Whistler) and rewrites it whenever the appearance changes. Our own
 GTK apps reload it straight away; other GTK3 apps get it through `GTK_THEME`
 and pick up changes when restarted.
+
+### Windows Security
+
+In the Classic style Ctrl+Alt+Delete opens Windows 2000's Windows Security
+dialog (`xd-security`): who's logged on and since when, and Lock Computer,
+Log Off, Shut Down, Change Password and Task Manager. Change Password runs
+`passwd` for you, answering its prompts, so the system's password rules
+apply (`xd-security --change-password` opens it alone).
+
+### Keyboard
+
+`[Keyboard]` in `desktop.ini` sets the layout and key repeat for every
+keyboard, applied immediately: `Layout` (e.g. `us,de`), `Variant`,
+`Options` (e.g. `grp:alt_shift_toggle`), `Model`, `RepeatDelay` (ms,
+default 500) and `RepeatRate` (per second, default 30). Empty names fall
+back to `XKB_DEFAULT_*`. There's no Keyboard applet yet.
 
 ### Run and Shut Down
 

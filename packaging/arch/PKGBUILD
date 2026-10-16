@@ -1,0 +1,60 @@
+# Maintainer: xeon <xeon.productions@gmail.com>
+#
+# Builds from a source tarball next to this file:
+#   git archive --prefix=xeondesktop-$pkgver/ -o packaging/arch/xeondesktop-$pkgver.tar.gz HEAD
+# packaging/build-arch.sh does that and runs makepkg (also used by CI).
+pkgname=xeondesktop
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Desktop environment in the style of Windows 2000 and XP (Wayland, wlroots)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/xeons/xeondesktop'
+license=('MIT')
+depends=(
+  'wlroots0.20'
+  'wayland'
+  'libxkbcommon'
+  'cairo'
+  'pango'
+  'fontconfig'
+  'glib2'
+  'gtk3'
+  'gdk-pixbuf2'
+  'procps-ng'
+  'systemd-libs'
+  'polkit'
+  'pam'
+  'shadow'  # passwd, for Change Password
+  'dbus'    # dbus-update-activation-environment
+  'sh'
+)
+# Header-only at build time: xcb-icccm's hint structures, libdrm's formats.
+makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm')
+checkdepends=('ttf-dejavu')
+optdepends=(
+  'xorg-xwayland: X11 applications'
+  'breeze-icons: icons for the Start menu and file manager'
+  'ttf-dejavu: fallback interface font'
+  'wine: Tahoma, so text matches Windows'
+  'xdg-desktop-portal-gtk: file chooser and settings portals'
+  'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
+  'alacritty: the default terminal (Ctrl+Alt+T)'
+)
+backup=('etc/pam.d/xeondesktop')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  # The project's defaults are a sanitizer debug build for development.
+  arch-meson "$pkgname-$pkgver" build -Db_sanitize=none -Dwerror=false
+  meson compile -C build
+}
+
+check() {
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 "$pkgname-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

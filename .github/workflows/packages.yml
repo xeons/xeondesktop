@@ -1,0 +1,125 @@
+# Builds the Debian and Arch Linux / CachyOS packages on every push and pull
+# request (as downloadable artifacts) and attaches them to a GitHub release
+# when a v* tag is pushed. The package builds also run the unit tests.
+name: Packages
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      deb: ${{ steps.v.outputs.deb }}
+      arch: ${{ steps.v.outputs.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        name: Work out the package versions
+        run: |
+          base=$(sed -n "s/^  version: '\(.*\)',$/\1/p" meson.build)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            deb=${GITHUB_REF_NAME#v}
+            arch=${deb//-/_}
+          else
+            date=$(git log -1 --format=%cd --date=format:%Y%m%d)
+            count=$(git rev-list --count HEAD)
+            sha=$(git rev-parse --short=7 HEAD)
+            deb="$base+git$date.$sha"
+            arch="$base.r$count.g$sha"
+          fi
+          echo "deb=$deb" >>"$GITHUB_OUTPUT"
+          echo "arch=$arch" >>"$GITHUB_OUTPUT"
+          echo "Debian $deb, Arch $arch"
+
+  debian:
+    needs: version
+    name: Debian (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # wlroots 0.20 is in Debian testing (forky) and unstable.
+        image: ['debian:testing', 'debian:unstable']
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        env:
+          XD_VERSION: ${{ needs.version.outputs.deb }}
+        run: packaging/build-deb.sh
+      - name: Install and check the package
+        run: |
+          apt-get install -y --no-install-recommends ./dist/*.deb
+          dpkg -L xeondesktop | grep -E 'bin/xd-compositor$|wayland-sessions/xeondesktop.desktop$'
+          xd-compositor --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xeondesktop-${{ matrix.image == 'debian:testing' && 'debian-testing' || 'debian-unstable' }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  arch:
+    needs: version
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Arch Linux
+            image: archlinux:latest
+            artifact: arch
+          - name: CachyOS
+            image: cachyos/cachyos:latest
+            artifact: cachyos
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        env:
+          XD_VERSION: ${{ needs.version.outputs.arch }}
+        run: packaging/build-arch.sh
+      - name: Install and check the package
+        run: |
+          pacman -U --noconfirm dist/*.pkg.tar.zst
+          pacman -Ql xeondesktop | grep -E 'bin/xd-compositor$|wayland-sessions/xeondesktop.desktop$'
+          xd-compositor --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xeondesktop-${{ matrix.artifact }}
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [debian, arch]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+      - name: Name the packages after their distribution
+        run: |
+          cd packages
+          for dir in */; do
+            dist=${dir%/}; dist=${dist#xeondesktop-}
+            for f in "$dir"*; do mv "$f" "${dist}_$(basename "$f")"; done
+            rmdir "$dir"
+          done
+          ls -l
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*
+          generate_release_notes: true

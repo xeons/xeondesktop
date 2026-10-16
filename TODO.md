@@ -31,8 +31,16 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       draws at the next whole scale and is downscaled at fractional scales
       (no fractional-scale support in GTK 3). Not covered: scales on
       several outputs at once, changing scale while running, cursor size.
-- [ ] **Session entry**: no `xeondesktop.desktop` for display managers, no
-      session startup script, no `meson install` test.
+- [~] **Session entry**: `wayland-sessions/xeondesktop.desktop` runs
+      `xeondesktop-session` (sets XDG_CURRENT_DESKTOP and friends, loads
+      `~/.config/environment.d` through systemd's generator, starts the
+      compositor); outside a nested session the compositor passes
+      WAYLAND_DISPLAY, DISPLAY and GTK_THEME on to D-Bus/systemd activated
+      services; `xeondesktop-portals.conf` picks the GTK and wlr portals.
+      Tested: the environment.d import, `meson install` through the Debian
+      and Arch packages (built, installed and started in containers).
+      **Untested: logging in from a display manager** (GDM, SDDM, greetd),
+      portals in such a session.
 - [~] **XWayland**: X11 apps run (Xwayland starts when the first one
       connects; DISPLAY is set for everything launched from the session).
       Tested with xterm: our frame, title and taskbar button, typing,
@@ -41,7 +49,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       dialogs/transients, Motif-undecorated windows, size-hint-fixed
       windows, apps that place themselves, HiDPI (Xwayland draws at 1x and
       is upscaled), clipboard and drag-and-drop between X11 and Wayland.
-- [ ] **Keyboard layout** comes from `XKB_DEFAULT_*` only; no Keyboard applet.
+- [~] **Keyboard**: `[Keyboard]` in desktop.ini (Layout, Variant, Options,
+      Model, RepeatDelay, RepeatRate) applies to every keyboard, live; empty
+      names fall back to `XKB_DEFAULT_*`, a bad layout to the default with a
+      log message. Tested in a nested session: the bad-layout fallback and a
+      live change to `de` (compiled and applied; typing in it not checked).
+      Not yet: the Keyboard applet (Speed and Input Locales tabs), a layout
+      indicator on the taskbar.
 - [~] **Output management** (`wlr-output-management`) and output power:
       tested with wlr-randr (scale, off/on, two outputs). Windows on an
       output that's turned off move to the nearest one, maximized ones
@@ -56,9 +70,17 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       resume on input, held off while mpv plays) and swaylock (locks,
       blocks shortcuts but Ctrl+Alt+Backspace, stays locked if the locker
       dies, a new locker can take over, unlocks, keyboard returns).
-- [~] **xdg-activation**: apps can bring their windows forward (tested:
-      starting Task Manager again raises the open one). No focus-stealing
-      prevention yet: any valid token raises the window.
+- [~] **xdg-activation** with Windows' foreground rules: a token may take
+      the focus if the focused app, the shell or nobody (no window focused)
+      asked for it; otherwise the window's taskbar button flashes (seven
+      times, then stays lit until it's activated), as with FlashWindow. The
+      shell gives every program it starts a token, so a second instance can
+      raise the first. X11 windows: `_NET_ACTIVE_WINDOW` focuses only within
+      the focused app, and the urgency hint flashes. Tested: a GTK window
+      calling present() while another app has focus (flashes, in all three
+      styles), Task Manager started twice from the taskbar menu (raised).
+      Untested: X11 activation and urgency. wlroots drops tokens whose
+      input serial the app never got, so those requests do nothing at all.
 - [~] **Lock Computer** (`xd-lock`, Win+L, the Windows 7 menu's Lock):
       Windows 2000's "Computer Locked" screen; Ctrl+Alt+Del opens "Unlock
       Computer", checked with PAM on a worker thread. If the locker dies
@@ -69,8 +91,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       password** (please try it). The PAM service file
       (`/etc/pam.d/xeondesktop`, `auth include login`) is installed by
       `meson install`; until then `login` is used. Not yet: several
-      monitors (the dialog shows on the first), Switch User, password
-      change, the Windows Security dialog on Ctrl+Alt+Delete.
+      monitors (the dialog shows on the first), Switch User. (Change
+      Password is in Windows Security, below.)
 - [~] **Screen savers**: Blank Screen, Starfield Simulation, Mystify Your
       Mind, Beziers, Marquee Display and Flying Penguins, started by the
       shell after [ScreenSaver] Wait minutes idle (held off by video
@@ -80,6 +102,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       speeds), 3D Pipes / 3D Text, hardware tests of monitor power.
 - [ ] Power actions (Shut down / Restart / Stand by / Hibernate) have only
       ever run **simulated** in nested sessions; never executed for real.
+
+## Packaging
+
+- [~] GitHub Actions builds a `.deb` (Debian testing and unstable, the only
+      releases with wlroots 0.20) and an Arch Linux / CachyOS package on
+      every push and pull request, and attaches them to a release for v*
+      tags. The Debian dependencies come from dpkg-shlibdeps; the Arch ones
+      were checked with namcap. Built, tested and installed locally in
+      podman containers (debian:testing, archlinux, cachyos/cachyos).
+      **The workflow itself hasn't run on GitHub yet.** Not yet: Ubuntu
+      (no wlroots 0.20 in a release), arm64 builds, man pages (lintian's
+      only complaint), an apt/pacman repository to install from.
 
 ## Compositor
 
@@ -107,9 +141,17 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Owned dialogs open centred over their owner, stay above it, minimize
       and restore with it, and have no taskbar button.
 - [x] Win key alone and Ctrl+Esc open the Start menu.
-- [ ] Ctrl+Alt+Delete opens the Task Manager directly (as XP does with the
-      Welcome screen). Windows 2000's Windows Security dialog (Lock, Log
-      Off, Shut Down, Change Password, Task Manager) isn't done.
+- [~] Ctrl+Alt+Delete: in the Classic style Windows 2000's Windows
+      Security dialog (`xd-security`: logon name and date, Lock Computer,
+      Log Off, Shut Down, Change Password, Task Manager); in the XP styles
+      Task Manager, as XP does with the Welcome screen. Ctrl+Shift+Esc is
+      always Task Manager. Change Password drives `passwd` on a pty in the
+      C locale. Tested: the dialogs, mismatched new passwords, a wrong old
+      password through the real passwd, and success / wrong old password /
+      a too-short new one against a fake passwd (unit test). **Untested:
+      really changing a password** (please try it), its buttons other than
+      Change Password, non-English passwd prompts (passwd runs in the C
+      locale, so these shouldn't occur).
 - [ ] Blur behind the Windows 7 Start menu's glass (wlroots' scene graph has
       no blur pass); until then the panel is opaque.
 - [x] Resizing from the top/left edges keeps the opposite edge still.
