@@ -50,7 +50,6 @@ extern const xd_style_ops xd_style_luna;
 extern const xd_style_ops xd_style_whistler;
 
 /* Helpers shared by the styles. */
-xd_text_style xd_text(const xd_theme *t, xd_font_role role, xd_rgba color, xd_halign align);
 
 /* Classic glyphs (Marlett equivalents) drawn as pixel shapes, so the
  * Luna/Whistler styles can reuse them on their own button art. */

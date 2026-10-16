@@ -22,6 +22,7 @@
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/util/log.h>
 
+#include "../settings/settings.h"
 #include "server.h"
 
 static void usage(FILE *f) {
@@ -61,6 +62,7 @@ static bool parse_args(int argc, char **argv, xd_config *cfg, bool *debug) {
                 fprintf(stderr, "unknown style: %s\n", val);
                 return false;
             }
+            cfg->cli_style = true;
         } else if (xd_str_eq(arg, XD_STR("--scheme"))) {
             xd_strbuf err = {0};
             bool ok = xd_scheme_load(val, &cfg->scheme, &err);
@@ -170,6 +172,35 @@ static void server_finish(xd_server *server) {
         wl_display_destroy(server->display);
 }
 
+/* Display Properties saved new settings: re-theme everything. */
+static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uint32_t mask,
+                                   void *data) {
+    xd_server *server = data;
+    if (!xd_settings_watch_changed(server->settings_fd))
+        return 0;
+    xd_settings settings;
+    xd_settings_load(&settings);
+    /* From now on the file wins over startup flags, for us and for a
+     * restarted shell. */
+    server->config.cli_style = false;
+    server->config.scheme_path = nullptr;
+    server->config.style = settings.style;
+    xd_settings_scheme(&settings, &server->config.scheme);
+    xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
+
+    xd_output_update_backgrounds(server);
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        xd_view_retheme(view);
+    }
+    /* Frame sizes may have changed. */
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        xd_view_refit_maximized(server, out);
+    }
+    wlr_log(WLR_INFO, "settings changed: %s style, %s", xd_visual_style_name(settings.style),
+            server->config.scheme.name);
+    return 0;
+}
+
 static int handle_terminate([[maybe_unused]] int sig, void *data) {
     xd_server *server = data;
     server->terminating = true;
@@ -207,6 +238,14 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     wlr_log_init(debug ? WLR_DEBUG : WLR_INFO, nullptr);
+
+    /* desktop.ini, unless overridden on the command line. */
+    xd_settings settings;
+    xd_settings_load(&settings);
+    if (!server.config.cli_style)
+        server.config.style = settings.style;
+    if (server.config.scheme_path == nullptr)
+        xd_settings_scheme(&settings, &server.config.scheme);
     xd_theme_init(&server.logical_theme, server.config.style, &server.config.scheme, 1.0);
 
     if (!server_init(&server)) {
@@ -246,6 +285,12 @@ int main(int argc, char **argv) {
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,
             xd_visual_style_name(server.config.style), server.config.scheme.name);
 
+    server.settings_fd = xd_settings_watch();
+    if (server.settings_fd >= 0)
+        server.settings_watch = wl_event_loop_add_fd(server.loop, server.settings_fd,
+                                                     WL_EVENT_READABLE, handle_settings_changed,
+                                                     &server);
+
     xd_shell_start(&server);
     if (server.config.startup != nullptr)
         xd_spawn(&server, server.config.startup);
@@ -253,6 +298,10 @@ int main(int argc, char **argv) {
     wl_display_run(server.display);
     wl_event_source_remove(sigterm);
     wl_event_source_remove(sigint);
+    if (server.settings_watch != nullptr)
+        wl_event_source_remove(server.settings_watch);
+    if (server.settings_fd >= 0)
+        close(server.settings_fd);
     server_finish(&server);
     return EXIT_SUCCESS;
 }

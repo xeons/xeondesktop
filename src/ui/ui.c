@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../settings/settings.h"
 #include "ui_internal.h"
 
 static const char *const text_mimes[] = {"text/plain;charset=utf-8", "text/plain",
@@ -75,8 +76,12 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
 static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
                          [[maybe_unused]] uint32_t time, uint32_t axis, wl_fixed_t value) {
     xd_ui *ui = data;
-    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && ui->pointer_popup != nullptr)
+    if (axis != WL_POINTER_AXIS_VERTICAL_SCROLL)
+        return;
+    if (ui->pointer_popup != nullptr)
         xd_popup_pointer_axis(ui->pointer_popup, wl_fixed_to_double(value));
+    else if (ui->pointer_window != nullptr)
+        xd_window_pointer_axis(ui->pointer_window, wl_fixed_to_double(value));
 }
 
 static void pointer_frame([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p) {}
@@ -424,6 +429,125 @@ char *xd_ui_clipboard_paste(xd_ui *ui) {
     return line;
 }
 
+/* ---- outputs ------------------------------------------------------------------ */
+
+static void copy_str_into(char *dst, size_t cap, const char *src) {
+    snprintf(dst, cap, "%s", src != nullptr ? src : "");
+}
+
+static xd_ui_output *find_output(xd_ui *ui, const void *proxy) {
+    for (size_t i = 0; i < ui->output_count; i++) {
+        if ((const void *)ui->outputs[i].output == proxy ||
+            (const void *)ui->outputs[i].xdg_output == proxy)
+            return &ui->outputs[i];
+    }
+    return nullptr;
+}
+
+static void out_geometry(void *data, struct wl_output *o, [[maybe_unused]] int32_t x,
+                         [[maybe_unused]] int32_t y, int32_t pw, int32_t ph,
+                         [[maybe_unused]] int32_t subpixel, const char *make, const char *model,
+                         [[maybe_unused]] int32_t transform) {
+    xd_ui_output *out = find_output(data, o);
+    if (out == nullptr)
+        return;
+    out->info.phys_w_mm = pw;
+    out->info.phys_h_mm = ph;
+    if (out->info.description[0] == '\0')
+        snprintf(out->info.description, sizeof(out->info.description), "%s %s",
+                 make != nullptr ? make : "", model != nullptr ? model : "");
+}
+
+static void out_mode(void *data, struct wl_output *o, uint32_t flags, int32_t w, int32_t h,
+                     int32_t refresh) {
+    xd_ui_output *out = find_output(data, o);
+    if (out == nullptr || !(flags & WL_OUTPUT_MODE_CURRENT))
+        return;
+    out->info.mode_w = w;
+    out->info.mode_h = h;
+    out->info.refresh_mhz = refresh;
+}
+
+static void out_done([[maybe_unused]] void *data, [[maybe_unused]] struct wl_output *o) {}
+static void out_scale([[maybe_unused]] void *data, [[maybe_unused]] struct wl_output *o,
+                      [[maybe_unused]] int32_t factor) {}
+
+static void out_name(void *data, struct wl_output *o, const char *name) {
+    xd_ui_output *out = find_output(data, o);
+    if (out != nullptr)
+        copy_str_into(out->info.name, sizeof(out->info.name), name);
+}
+
+static void out_description(void *data, struct wl_output *o, const char *desc) {
+    xd_ui_output *out = find_output(data, o);
+    if (out != nullptr)
+        copy_str_into(out->info.description, sizeof(out->info.description), desc);
+}
+
+static const struct wl_output_listener output_listener = {
+    .geometry = out_geometry,
+    .mode = out_mode,
+    .done = out_done,
+    .scale = out_scale,
+    .name = out_name,
+    .description = out_description,
+};
+
+static void xdg_out_position(void *data, struct zxdg_output_v1 *o, int32_t x, int32_t y) {
+    xd_ui_output *out = find_output(data, o);
+    if (out != nullptr) {
+        out->info.x = x;
+        out->info.y = y;
+    }
+}
+
+static void xdg_out_size(void *data, struct zxdg_output_v1 *o, int32_t w, int32_t h) {
+    xd_ui_output *out = find_output(data, o);
+    if (out != nullptr) {
+        out->info.logical_w = w;
+        out->info.logical_h = h;
+    }
+}
+
+static void xdg_out_done([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o) {}
+static void xdg_out_name([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o,
+                         [[maybe_unused]] const char *name) {}
+static void xdg_out_description([[maybe_unused]] void *data,
+                                [[maybe_unused]] struct zxdg_output_v1 *o,
+                                [[maybe_unused]] const char *d) {}
+
+static const struct zxdg_output_v1_listener xdg_output_listener = {
+    .logical_position = xdg_out_position,
+    .logical_size = xdg_out_size,
+    .done = xdg_out_done,
+    .name = xdg_out_name,
+    .description = xdg_out_description,
+};
+
+static void add_xdg_output(xd_ui *ui, xd_ui_output *out) {
+    if (ui->xdg_output_manager == nullptr || out->xdg_output != nullptr)
+        return;
+    out->xdg_output = zxdg_output_manager_v1_get_xdg_output(ui->xdg_output_manager, out->output);
+    zxdg_output_v1_add_listener(out->xdg_output, &xdg_output_listener, ui);
+}
+
+size_t xd_ui_outputs(xd_ui *ui, const xd_output_info **out) {
+    ui->output_infos = xd_realloc_array(ui->output_infos, XD_MAX(ui->output_count, 1),
+                                        sizeof(*ui->output_infos));
+    for (size_t i = 0; i < ui->output_count; i++)
+        ui->output_infos[i] = ui->outputs[i].info;
+    *out = ui->output_infos;
+    return ui->output_count;
+}
+
+void xd_ui_set_theme(xd_ui *ui, xd_visual_style style, const xd_scheme *scheme) {
+    ui->style = style;
+    ui->scheme = *scheme;
+    XD_LIST_FOR_EACH(win, &ui->windows, xd_window, link) {
+        win->dirty = true;
+    }
+}
+
 /* ---- seat and globals --------------------------------------------------------- */
 
 static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
@@ -483,15 +607,39 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     } else if (IS(wp_cursor_shape_manager_v1_interface)) {
         ui->cursor_shape_manager =
             bind(reg, name, &wp_cursor_shape_manager_v1_interface, version, 1);
+    } else if (IS(wl_output_interface)) {
+        if (ui->output_count == ui->output_cap) {
+            ui->output_cap = ui->output_cap == 0 ? 4 : ui->output_cap * 2;
+            ui->outputs = xd_realloc_array(ui->outputs, ui->output_cap, sizeof(*ui->outputs));
+        }
+        xd_ui_output *out = &ui->outputs[ui->output_count++];
+        *out = (xd_ui_output){.global = name};
+        out->output = bind(reg, name, &wl_output_interface, version, 4);
+        wl_output_add_listener(out->output, &output_listener, ui);
+        add_xdg_output(ui, out);
+    } else if (IS(zxdg_output_manager_v1_interface)) {
+        ui->xdg_output_manager = bind(reg, name, &zxdg_output_manager_v1_interface, version, 3);
+        for (size_t i = 0; i < ui->output_count; i++)
+            add_xdg_output(ui, &ui->outputs[i]);
     } else if (IS(wl_data_device_manager_interface)) {
         ui->data_device_manager = bind(reg, name, &wl_data_device_manager_interface, version, 3);
     }
 #undef IS
 }
 
-static void registry_global_remove([[maybe_unused]] void *data,
-                                   [[maybe_unused]] struct wl_registry *reg,
-                                   [[maybe_unused]] uint32_t name) {}
+static void registry_global_remove(void *data, [[maybe_unused]] struct wl_registry *reg,
+                                   uint32_t name) {
+    xd_ui *ui = data;
+    for (size_t i = 0; i < ui->output_count; i++) {
+        if (ui->outputs[i].global != name)
+            continue;
+        if (ui->outputs[i].xdg_output != nullptr)
+            zxdg_output_v1_destroy(ui->outputs[i].xdg_output);
+        wl_output_release(ui->outputs[i].output);
+        ui->outputs[i] = ui->outputs[--ui->output_count];
+        return;
+    }
+}
 
 static const struct wl_registry_listener registry_listener = {
     .global = registry_global,
@@ -502,8 +650,11 @@ static const struct wl_registry_listener registry_listener = {
 
 xd_ui *xd_ui_connect(int argc, char **argv) {
     xd_ui *ui = XD_NEW(xd_ui);
-    ui->style = XD_STYLE_CLASSIC;
-    xd_scheme_init_default(&ui->scheme);
+    /* desktop.ini first; --style/--scheme from the command line win. */
+    xd_settings settings;
+    xd_settings_load(&settings);
+    ui->style = settings.style;
+    xd_settings_scheme(&settings, &ui->scheme);
     ui->repeat_rate = 30;
     ui->repeat_delay = 500;
     ui->repeat_fd = -1;
@@ -647,6 +798,13 @@ void xd_ui_destroy(xd_ui *ui) {
     if (ui->repeat_fd >= 0)
         close(ui->repeat_fd);
     xd_icons_destroy(ui->icons);
+    for (size_t i = 0; i < ui->output_count; i++) {
+        if (ui->outputs[i].xdg_output != nullptr)
+            zxdg_output_v1_destroy(ui->outputs[i].xdg_output);
+        wl_output_release(ui->outputs[i].output);
+    }
+    xd_free(ui->outputs);
+    xd_free(ui->output_infos);
     if (ui->display != nullptr)
         wl_display_disconnect(ui->display);
     xd_free(ui);

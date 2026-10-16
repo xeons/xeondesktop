@@ -21,6 +21,11 @@ typedef enum xd_widget_kind : uint8_t {
     XD_W_BUTTON,
     XD_W_EDIT,
     XD_W_COMBO,
+    XD_W_TABS,
+    XD_W_CHECKBOX,
+    XD_W_LISTBOX,
+    XD_W_GROUPBOX,
+    XD_W_CUSTOM,
 } xd_widget_kind;
 
 struct xd_widget {
@@ -38,11 +43,18 @@ struct xd_widget {
     xd_textedit edit;
     double scroll; /* device px the text is scrolled left by */
 
-    /* combo */
+    /* combo, list box, tabs */
     bool editable;
     char **items;
     size_t count, cap;
     int selected;
+    int first;     /* list box: first visible row */
+    int *tab_x;    /* tabs: logical x of each tab, relative to r.x */
+    int *tab_w;
+
+    int page;      /* tab page, or -1 = always shown */
+    bool checked;  /* checkbox */
+    xd_draw_cb draw;
 };
 
 /* The drop-down list of a combo box. */
@@ -87,8 +99,18 @@ struct xd_window {
     xd_widget *hot;
     xd_widget *pressed;
     bool selecting; /* dragging a text selection in `pressed` */
+    bool thumb_drag; /* dragging a list box's scroll thumb */
+    double thumb_offset;
+    xd_widget *tabs; /* the window's tab control, if any */
     xd_listpopup *popup;
 };
+
+typedef struct xd_ui_output {
+    struct wl_output *output;
+    struct zxdg_output_v1 *xdg_output;
+    uint32_t global;
+    xd_output_info info;
+} xd_ui_output;
 
 struct xd_ui {
     xd_visual_style style;
@@ -108,6 +130,10 @@ struct xd_ui {
     struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
     struct wp_cursor_shape_device_v1 *cursor_shape;
     struct wl_data_device_manager *data_device_manager;
+    struct zxdg_output_manager_v1 *xdg_output_manager;
+    xd_ui_output *outputs;
+    xd_output_info *output_infos; /* snapshot handed out by xd_ui_outputs */
+    size_t output_count, output_cap;
     struct wl_data_device *data_device;
 
     struct xkb_context *xkb;
@@ -155,6 +181,7 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed);
 void xd_popup_pointer_motion(xd_listpopup *p, double x, double y);
 void xd_popup_pointer_button(xd_listpopup *p, uint32_t button, bool pressed);
 void xd_popup_pointer_axis(xd_listpopup *p, double value);
+void xd_window_pointer_axis(xd_window *win, double value);
 /* A key press (or repeat): keysym, its text, and XD_MOD_* bits. */
 void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t mods);
 

@@ -36,6 +36,8 @@ xd_rgba xd_sys(const xd_theme *t, xd_syscolor c);
 /* Logical (96-DPI) length -> device pixels at this theme's scale. */
 int xd_tpx(const xd_theme *t, double logical);
 int xd_metric_px(const xd_theme *t, xd_metric m);
+/* Text style for a scheme font role at this theme's scale. */
+xd_text_style xd_text(const xd_theme *t, xd_font_role role, xd_rgba color, xd_halign align);
 
 typedef enum xd_caption_buttons : uint8_t {
     XD_CAPBTN_CLOSE = 1u << 0,
@@ -178,6 +180,24 @@ void xd_theme_draw_focus_rect(const xd_theme *t, cairo_t *cr, xd_rect r);
 /* Static text in a dialog, optionally word-wrapped from the top. */
 void xd_theme_draw_label(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text, bool wrap,
                          bool bold, bool disabled);
+/* Property-sheet tab. The selected tab is drawn 2px taller and joins the
+ * panel below it. state: XD_STATE_CHECKED (selected), _HOT, _FOCUSED. */
+void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                       const char *label);
+/* The page area under the tabs. */
+void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* Colour pages are filled with (white-ish gradient on Luna, ButtonFace on
+ * Classic). */
+xd_rgba xd_theme_tab_page_color(const xd_theme *t);
+/* Etched group box with a caption breaking the top edge. */
+void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label);
+int xd_theme_scrollbar_width(const xd_theme *t);
+/* Vertical scroll bar: `first`/`page`/`total` in items. */
+void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int first, int page,
+                              int total);
+/* Thumb rectangle of a vertical scroll bar, for hit testing. */
+xd_rect xd_theme_vscrollbar_thumb(const xd_theme *t, xd_rect r, int first, int page, int total);
+
 /* Product banner across the top of a dialog (Shut Down). */
 void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
                                  const char *edition);

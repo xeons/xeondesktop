@@ -31,8 +31,7 @@ static void append_quoted(xd_strbuf *cmd, const char *s) {
 }
 
 /* Command line for one of our own programs: next to xd-shell if it's
- * there (a build tree), else from PATH; with the current style and scheme
- * so dialogs match the desktop. */
+ * there (a build tree), else from PATH. */
 static const char *own_command(xd_shell *shell, const char *program, const char *extra) {
     xd_strbuf cmd = {0};
     char self[4096];
@@ -53,8 +52,12 @@ static const char *own_command(xd_shell *shell, const char *program, const char 
     }
     if (!local)
         xd_strbuf_append(&cmd, xd_str_from_cstr(program));
-    xd_strbuf_append(&cmd, XD_STR(" --style "));
-    xd_strbuf_append(&cmd, xd_str_from_cstr(xd_visual_style_name(shell->style)));
+    /* Dialogs read desktop.ini themselves; only pass on our own
+     * command-line overrides. */
+    if (shell->cli_style) {
+        xd_strbuf_append(&cmd, XD_STR(" --style "));
+        xd_strbuf_append(&cmd, xd_str_from_cstr(xd_visual_style_name(shell->style)));
+    }
     if (shell->scheme_path != nullptr) {
         xd_strbuf_append(&cmd, XD_STR(" --scheme "));
         append_quoted(&cmd, shell->scheme_path);
@@ -127,8 +130,14 @@ void xd_start_menu_build(xd_shell *shell) {
     xd_menu_item *settings =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Settings", "preferences-system");
     settings->submenu = xd_menu_model_new(tree);
-    add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Control Panel",
-                 "preferences-system");
+    /* "Expand Control Panel" style: a cascading list of applets. */
+    xd_menu_item *control =
+        xd_menu_add(tree, settings->submenu, XD_MENU_SUBMENU, "Control Panel", "preferences-system");
+    control->submenu = xd_menu_model_new(tree);
+    xd_menu_item *display = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "Display",
+                                        "preferences-desktop-display");
+    display->fallback_icon = "video-display";
+    display->command = own_command(shell, "xd-desk", nullptr);
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Network and Dial-up Connections",
                  "network-workgroup");
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Printers", "printer");

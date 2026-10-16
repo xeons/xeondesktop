@@ -119,6 +119,23 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
                                                           : PANGO_STYLE_NORMAL);
     pango_layout_set_font_description(layout, fd);
     pango_font_description_free(fd);
+
+    cairo_font_options_t *fo = cairo_font_options_create();
+    switch (st->smoothing) {
+    case XD_SMOOTH_NONE:
+        cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_NONE);
+        break;
+    case XD_SMOOTH_CLEARTYPE:
+        cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_SUBPIXEL);
+        cairo_font_options_set_subpixel_order(fo, CAIRO_SUBPIXEL_ORDER_RGB);
+        break;
+    case XD_SMOOTH_STANDARD:
+        cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_GRAY);
+        break;
+    }
+    pango_cairo_context_set_font_options(pango_layout_get_context(layout), fo);
+    cairo_font_options_destroy(fo);
+    pango_layout_context_changed(layout);
     pango_layout_set_text(layout, utf8, -1);
     pango_layout_set_single_paragraph_mode(layout, true);
     return layout;

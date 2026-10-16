@@ -57,6 +57,7 @@ typedef struct xd_text_style {
     bool shadow; /* 1px drop shadow (Luna caption text) */
     xd_rgba shadow_color;
     bool wrap; /* wrap at word boundaries and align to the top of the rect */
+    xd_font_smoothing smoothing;
 } xd_text_style;
 
 /* Draws one line of text vertically centred in r and clipped to it. */

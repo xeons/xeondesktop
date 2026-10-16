@@ -71,6 +71,8 @@ void xd_shell_start(xd_server *server) {
         return;
     }
 
+    /* The shell reads desktop.ini itself; only command-line overrides are
+     * passed on. */
     char *shell = xd_str_dup_cstr(xd_str_from_cstr(server->config.shell));
     char opt_style[] = "--style";
     char *style = xd_str_dup_cstr(xd_str_from_cstr(xd_visual_style_name(server->config.style)));
@@ -78,8 +80,17 @@ void xd_shell_start(xd_server *server) {
     char *scheme = server->config.scheme_path != nullptr
                        ? xd_str_dup_cstr(xd_str_from_cstr(server->config.scheme_path))
                        : nullptr;
-    char *argv[] = {shell, opt_style, style, scheme != nullptr ? opt_scheme : nullptr, scheme,
-                    nullptr};
+    char *argv[6] = {shell};
+    size_t argc = 1;
+    if (server->config.cli_style) {
+        argv[argc++] = opt_style;
+        argv[argc++] = style;
+    }
+    if (scheme != nullptr) {
+        argv[argc++] = opt_scheme;
+        argv[argc++] = scheme;
+    }
+    argv[argc] = nullptr;
     server->shell_pid = xd_spawn_argv(argv);
     xd_free(scheme);
     xd_free(style);

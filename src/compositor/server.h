@@ -138,7 +138,8 @@ typedef struct xd_keyboard {
 typedef struct xd_config {
     xd_visual_style style;
     xd_scheme scheme;
-    const char *scheme_path; /* passed on to the shell */
+    const char *scheme_path; /* --scheme given: passed on to the shell */
+    bool cli_style;          /* --style given: passed on to the shell */
     const char *shell;       /* shell executable; nullptr = don't start one */
     double forced_scale; /* 0 = pick per output from its DPI */
     const char *terminal;
@@ -219,6 +220,8 @@ struct xd_server {
     xd_view *cycle_view;
 
     struct wl_event_source *sigchld;
+    struct wl_event_source *settings_watch;
+    int settings_fd;
 
     /* The shell is restarted if it crashes, like explorer.exe. */
     pid_t shell_pid;
@@ -229,6 +232,7 @@ struct xd_server {
 
 /* output.c */
 void xd_output_init(xd_server *server);
+void xd_output_update_backgrounds(xd_server *server);
 /* Lays out layer surfaces and recomputes the work area. */
 void xd_output_arrange(xd_output *out);
 xd_output *xd_output_from_wlr(xd_server *server, struct wlr_output *wlr_output);
@@ -275,6 +279,8 @@ xd_frame xd_view_frame(const xd_view *view, bool active);
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly);
 void xd_view_set_hover(xd_view *view, xd_frame_part hot, xd_frame_part pressed);
 void xd_view_update_all_frames(xd_server *server);
+/* Re-lays out and redraws a window's frame after a theme change. */
+void xd_view_retheme(xd_view *view);
 /* Re-fits maximized windows after a work area change. */
 void xd_view_refit_maximized(xd_server *server, xd_output *out);
 /* Shows a popup (menu) as a child of parent_tree. */

@@ -5,6 +5,7 @@
 
 #include "../src/core/ini.h"
 #include "../src/apps/runcmd.h"
+#include "../src/settings/settings.h"
 #include "../src/shell/apps.h"
 #include "../src/ui/textedit.h"
 #include "../src/theme/theme.h"
@@ -447,6 +448,54 @@ static void test_runcmd(void) {
     xd_run_target_free(&t);
 }
 
+static void test_settings(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    CHECK(a.style == XD_STYLE_CLASSIC && a.wallpaper_mode == XD_WALLPAPER_FILL);
+
+    xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nScheme=windows-classic\n"
+                             "FontSize=large\nFontSmoothing=cleartype\nFuture=ignored\n"
+                             "[Desktop]\nWallpaper=/w/p.jpg\nWallpaperMode=tile\n"
+                             "[Effects]\nLargeIcons=true\n[ScreenSaver]\nWait=7\n"
+                             "[SomethingNew]\nKey=v\n"),
+                      &a);
+    CHECK(a.style == XD_STYLE_LUNA && strcmp(a.scheme, "windows-classic") == 0);
+    CHECK(a.font_size == XD_FONT_LARGE && a.font_smoothing == XD_SMOOTH_CLEARTYPE);
+    CHECK(strcmp(a.wallpaper, "/w/p.jpg") == 0 && a.wallpaper_mode == XD_WALLPAPER_TILE);
+    CHECK(a.large_icons && a.screensaver_wait == 7);
+
+    /* Serialize -> parse round trip. */
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b));
+    b.large_icons = false;
+    CHECK(!xd_settings_equal(&a, &b));
+    xd_strbuf_free(&text);
+
+    /* Bad values keep defaults; a scheme can't be a path. */
+    xd_settings_parse(XD_STR("[Appearance]\nStyle=bogus\nScheme=../../etc/x\n"
+                             "[Desktop]\nWallpaper=relative.jpg\nWallpaperMode=x\n"
+                             "[ScreenSaver]\nWait=0\n"),
+                      &a);
+    CHECK(a.style == XD_STYLE_CLASSIC && a.scheme[0] == '\0' && a.wallpaper[0] == '\0');
+    CHECK(a.wallpaper_mode == XD_WALLPAPER_FILL && a.screensaver_wait == 15);
+    /* A syntax error leaves everything at defaults. */
+    xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nbroken line\n"), &a);
+    CHECK(a.style == XD_STYLE_CLASSIC);
+
+    /* Font size scales fonts and caption metrics. */
+    xd_settings_defaults(&a);
+    xd_scheme normal;
+    xd_settings_scheme(&a, &normal);
+    a.font_size = XD_FONT_EXTRA_LARGE;
+    xd_scheme xl;
+    xd_settings_scheme(&a, &xl);
+    CHECK(xl.fonts[XD_FONT_CAPTION].size_pt > normal.fonts[XD_FONT_CAPTION].size_pt * 1.4);
+    CHECK(xl.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
+}
+
 static void test_px(void) {
     CHECK(xd_px(1.0, 1) == 1);
     CHECK(xd_px(1.25, 1) == 1);
@@ -470,6 +519,7 @@ int main(void) {
     test_menus();
     test_textedit();
     test_runcmd();
+    test_settings();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

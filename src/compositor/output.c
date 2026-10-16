@@ -23,25 +23,27 @@ static float auto_scale(const struct wlr_output *output, int width_px) {
     return (float)scale;
 }
 
-static void update_backgrounds(xd_server *server) {
+void xd_output_update_backgrounds(xd_server *server) {
     xd_rgb bg = server->config.scheme.colors[XD_COLOR_BACKGROUND];
     const float color[4] = {(float)bg.r / 255.0f, (float)bg.g / 255.0f, (float)bg.b / 255.0f,
                             1.0f};
     XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
         struct wlr_box box;
         wlr_output_layout_get_box(server->output_layout, out->wlr_output, &box);
-        if (out->background == nullptr)
+        if (out->background == nullptr) {
             out->background =
                 wlr_scene_rect_create(server->layer_background, box.width, box.height, color);
-        else
+        } else {
             wlr_scene_rect_set_size(out->background, box.width, box.height);
+            wlr_scene_rect_set_color(out->background, color);
+        }
         wlr_scene_node_set_position(&out->background->node, box.x, box.y);
     }
 }
 
 static void handle_layout_change(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, layout_change);
-    update_backgrounds(server);
+    xd_output_update_backgrounds(server);
     XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
         xd_output_arrange(out);
     }
@@ -126,7 +128,7 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
         wlr_output_layout_add_auto(server->output_layout, wlr_output);
     struct wlr_scene_output *so = wlr_scene_output_create(server->scene, wlr_output);
     wlr_scene_output_layout_add_output(server->scene_layout, lo, so);
-    update_backgrounds(server);
+    xd_output_update_backgrounds(server);
     xd_output_arrange(out);
 }
 

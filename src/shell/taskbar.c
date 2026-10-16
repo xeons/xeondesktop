@@ -34,9 +34,22 @@ void xd_taskbars_mark_dirty(xd_shell *shell) {
 
 void xd_taskbars_render_dirty(xd_shell *shell) {
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
+        if (bar->desktop != nullptr && bar->desktop->dirty)
+            xd_desktop_render(bar->desktop);
         if (bar->dirty)
             xd_taskbar_render(bar);
     }
+}
+
+void xd_taskbar_retheme(xd_taskbar *bar) {
+    /* The height follows the scheme (font size changes it). */
+    int h = logical_height(bar->shell);
+    zwlr_layer_surface_v1_set_size(bar->layer, 0, (uint32_t)h);
+    zwlr_layer_surface_v1_set_exclusive_zone(bar->layer, h);
+    bar->task_count = 0;
+    bar->dirty = true;
+    if (bar->desktop != nullptr)
+        bar->desktop->dirty = true;
 }
 
 static void ensure_task_capacity(xd_taskbar *bar, size_t n) {
@@ -78,8 +91,7 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     xd_theme_draw_start_button(t, cr, bar->start_rect, start_state);
 
     /* Notification area, sized to the clock like Windows does. */
-    xd_text_style clock_style = {
-        .font = &t->scheme.fonts[XD_FONT_MENU], .scale = t->scale, .align = XD_ALIGN_END};
+    xd_text_style clock_style = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_END);
     int tray_w = XD_MAX(xd_tpx(t, 60), xd_text_width(cr, shell->clock, &clock_style) +
                                            xd_tpx(t, 22));
     bar->tray_rect = (xd_rect){dw - tray_w - pad, inset_top, tray_w, button_h};
@@ -304,6 +316,7 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
     bar->hot = XD_HIT_NONE;
     bar->pressed = XD_HIT_NONE;
     wl_list_insert(shell->taskbars.prev, &bar->link);
+    bar->desktop = xd_desktop_create(shell, output);
 
     bar->surface = wl_compositor_create_surface(shell->compositor);
     if (shell->fractional_manager != nullptr && shell->viewporter != nullptr) {
@@ -342,6 +355,7 @@ void xd_taskbar_destroy(xd_taskbar *bar) {
         wp_fractional_scale_v1_destroy(bar->fractional);
     wl_surface_destroy(bar->surface);
     xd_shm_ring_finish(&bar->ring);
+    xd_desktop_destroy(bar->desktop);
     if (bar->output != nullptr)
         wl_output_release(bar->output);
     xd_free(bar->task_rects);

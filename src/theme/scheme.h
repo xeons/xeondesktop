@@ -88,6 +88,14 @@ typedef enum xd_font_role {
     XD_FONT_COUNT
 } xd_font_role;
 
+/* "Smooth edges of screen fonts". Zero is the default so structs built
+ * without it get standard antialiasing. */
+typedef enum xd_font_smoothing : uint8_t {
+    XD_SMOOTH_STANDARD = 0,
+    XD_SMOOTH_NONE,
+    XD_SMOOTH_CLEARTYPE, /* subpixel, RGB order */
+} xd_font_smoothing;
+
 typedef struct xd_scheme {
     char name[64];
     xd_rgb colors[XD_COLOR_COUNT];
@@ -98,6 +106,7 @@ typedef struct xd_scheme {
     /* Accessibility mode: no dither patterns or decorative gradients that
      * would put text on mixed backgrounds. */
     bool high_contrast;
+    xd_font_smoothing font_smoothing;
 } xd_scheme;
 
 /* The built-in "Windows Standard" scheme, used as the base for every

@@ -10,6 +10,7 @@
 
 #include <xkbcommon/xkbcommon.h>
 
+#include "../settings/settings.h"
 #include "../theme/theme.h"
 #include "../ui/shm.h"
 #include "apps.h"
@@ -36,6 +37,21 @@ typedef struct xd_toplevel {
     bool maximized;
 } xd_toplevel;
 
+/* The desktop background of one output. */
+typedef struct xd_desktop {
+    xd_shell *shell;
+    struct wl_surface *surface;
+    struct zwlr_layer_surface_v1 *layer;
+    struct wp_fractional_scale_v1 *fractional;
+    struct wp_viewport *viewport;
+    xd_shm_ring ring;
+    int width, height; /* logical */
+    double scale;
+    bool configured;
+    bool closed;
+    bool dirty;
+} xd_desktop;
+
 /* Hover/press targets on a taskbar. */
 enum { XD_HIT_NONE = -1, XD_HIT_START = -2, XD_HIT_TRAY = -3 };
 
@@ -44,6 +60,7 @@ typedef struct xd_taskbar {
     xd_shell *shell;
     uint32_t output_global; /* registry name of the wl_output */
     struct wl_output *output;
+    xd_desktop *desktop; /* the same output's background */
     struct wl_surface *surface;
     struct zwlr_layer_surface_v1 *layer;
     struct wp_fractional_scale_v1 *fractional;
@@ -71,7 +88,11 @@ typedef struct xd_taskbar {
 struct xd_shell {
     xd_visual_style style;
     xd_scheme scheme;
-    const char *scheme_path; /* passed on to dialogs; may be nullptr */
+    const char *scheme_path; /* --scheme given; passed on to dialogs */
+    bool cli_style;          /* --style given; passed on to dialogs */
+    xd_settings settings;    /* desktop.ini */
+    int settings_fd;
+    cairo_surface_t *wallpaper; /* loaded settings.wallpaper, or nullptr */
     const char *terminal;
 
     struct wl_display *display;
@@ -132,6 +153,14 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
 void xd_taskbar_open_start_menu(xd_taskbar *bar, uint32_t serial);
 /* Forget a window that's going away. */
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
+
+/* desktop.c */
+xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output);
+void xd_desktop_destroy(xd_desktop *d);
+void xd_desktop_render(xd_desktop *d);
+
+/* taskbar.c, after a theme change */
+void xd_taskbar_retheme(xd_taskbar *bar);
 
 /* main.c */
 void xd_shell_launch(xd_shell *shell, const char *command);

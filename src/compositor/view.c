@@ -83,6 +83,13 @@ static void update_ftl_output(xd_view *view) {
     view->ftl_output = o;
 }
 
+void xd_view_retheme(xd_view *view) {
+    if (!view->mapped)
+        return;
+    update_content_position(view);
+    xd_frame_render(view, true);
+}
+
 void xd_view_set_position(xd_view *view, int x, int y) {
     view->x = x;
     view->y = y;

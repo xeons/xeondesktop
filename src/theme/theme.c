@@ -276,7 +276,10 @@ void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const
     snprintf(bold.family, sizeof(bold.family), "%s", "Tahoma, DejaVu Sans, sans-serif");
     xd_font_spec light = bold;
     light.bold = false;
-    xd_text_style st = {.font = &bold, .scale = t->scale, .color = p.banner_text};
+    xd_text_style st = {.font = &bold,
+                        .scale = t->scale,
+                        .color = p.banner_text,
+                        .smoothing = t->scheme.font_smoothing};
 
     cairo_save(cr);
     cairo_rectangle(cr, r.x, r.y, r.w, r.h);
@@ -418,6 +421,183 @@ void xd_theme_draw_label(const xd_theme *t, cairo_t *cr, xd_rect r, const char *
     xd_draw_text(cr, r, text, &st);
 }
 
+void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                       const char *label) {
+    int px = xd_tpx(t, 1);
+    bool selected = state & XD_STATE_CHECKED;
+    xd_rect tab = selected ? r : xd_rect_inset4(r, 0, xd_tpx(t, 2), 0, 0);
+    if (classic(t)) {
+        /* Raised edge on top/left/right, open at the bottom. */
+        xd_fill_rect(cr, tab, xd_sys(t, XD_COLOR_BUTTON_FACE));
+        xd_fill_rect(cr, (xd_rect){tab.x + 2 * px, tab.y, tab.w - 4 * px, px},
+                     xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
+        xd_fill_rect(cr, (xd_rect){tab.x + px, tab.y + px, px, px},
+                     xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
+        xd_fill_rect(cr, (xd_rect){tab.x, tab.y + 2 * px, px, tab.h - 2 * px},
+                     xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
+        xd_fill_rect(cr, (xd_rect){tab.x + tab.w - 2 * px, tab.y + px, px, tab.h - px},
+                     xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+        xd_fill_rect(cr, (xd_rect){tab.x + tab.w - px, tab.y + 2 * px, px, tab.h - 2 * px},
+                     xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
+    } else {
+        /* XP: white-to-beige tab, orange top line when hot or selected. */
+        xd_rgba border = xd_rgba_hex(0x919B9C);
+        xd_fill_gradient(cr, tab, xd_rgba_hex(0xFFFFFF),
+                         selected ? xd_rgba_hex(0xFCFCFE) : xd_rgba_hex(0xECEBE6), false);
+        xd_fill_rect(cr, (xd_rect){tab.x, tab.y, tab.w, px}, border);
+        xd_fill_rect(cr, (xd_rect){tab.x, tab.y, px, tab.h}, border);
+        xd_fill_rect(cr, (xd_rect){tab.x + tab.w - px, tab.y, px, tab.h}, border);
+        if (selected || (state & XD_STATE_HOT)) {
+            xd_fill_rect(cr, (xd_rect){tab.x, tab.y, tab.w, 2 * px}, xd_rgba_hex(0xFFC83C));
+            xd_fill_rect(cr, (xd_rect){tab.x, tab.y + 2 * px, tab.w, px},
+                         xd_rgba_hex(0xE6A000));
+        }
+    }
+    xd_text_style st = xd_text(t, XD_FONT_MESSAGE, xd_sys(t, XD_COLOR_BUTTON_TEXT),
+                               XD_ALIGN_CENTER);
+    xd_rect text = xd_rect_inset4(tab, xd_tpx(t, 4), xd_tpx(t, 1), xd_tpx(t, 4), 0);
+    xd_draw_text(cr, text, label, &st);
+    if (state & XD_STATE_FOCUSED) {
+        int w = XD_MIN(xd_text_width(cr, label, &st) + xd_tpx(t, 4), text.w);
+        xd_theme_draw_focus_rect(t, cr,
+                                 (xd_rect){text.x + (text.w - w) / 2, text.y + xd_tpx(t, 2), w,
+                                           text.h - xd_tpx(t, 4)});
+    }
+}
+
+xd_rgba xd_theme_tab_page_color(const xd_theme *t) {
+    return classic(t) ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_rgba_hex(0xFCFCFE);
+}
+
+void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    int px = xd_tpx(t, 1);
+    if (classic(t)) {
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
+        xd_rect in = xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+                                   xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
+        xd_draw_bevel(cr, in, px, xd_sys(t, XD_COLOR_BUTTON_FACE),
+                      xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+        return;
+    }
+    xd_rgba border = xd_rgba_hex(0x919B9C);
+    xd_fill_gradient(cr, r, xd_rgba_hex(0xFCFCFE), xd_rgba_hex(0xF4F3EE), false);
+    xd_draw_bevel(cr, r, px, border, border);
+}
+
+void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label) {
+    int px = xd_tpx(t, 1);
+    xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
+                               classic(t) ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
+                                          : xd_rgba_hex(0x0046D5),
+                               XD_ALIGN_START);
+    int th = xd_tpx(t, 14);
+    int top = r.y + th / 2;
+    xd_rect box = {r.x, top, r.w, r.h - (top - r.y)};
+    if (classic(t)) {
+        /* Etched: shadow line with a highlight line inside it. */
+        xd_rgba sh = xd_sys(t, XD_COLOR_BUTTON_SHADOW);
+        xd_rgba hi = xd_sys(t, XD_COLOR_BUTTON_HILIGHT);
+        xd_draw_bevel(cr, (xd_rect){box.x + px, box.y + px, box.w - px, box.h - px}, px, hi, hi);
+        xd_draw_bevel(cr, (xd_rect){box.x, box.y, box.w - px, box.h - px}, px, sh, sh);
+    } else {
+        xd_rgba border = xd_rgba_hex(0xD0D0BF);
+        double rad = xd_tpx(t, 3);
+        xd_path_rounded(cr, box.x + px / 2.0, box.y + px / 2.0, box.w - px, box.h - px, rad, rad,
+                        rad, rad);
+        xd_set_color(cr, border);
+        cairo_set_line_width(cr, px);
+        cairo_stroke(cr);
+    }
+    if (label != nullptr && label[0] != '\0') {
+        int tw = xd_text_width(cr, label, &st);
+        xd_rect gap = {r.x + xd_tpx(t, 7), r.y, tw + xd_tpx(t, 4), th};
+        xd_fill_rect(cr, gap, classic(t) ? xd_sys(t, XD_COLOR_BUTTON_FACE)
+                                         : xd_theme_tab_page_color(t));
+        xd_draw_text(cr, xd_rect_inset4(gap, xd_tpx(t, 2), 0, 0, 0), label, &st);
+    }
+}
+
+int xd_theme_scrollbar_width(const xd_theme *t) { return xd_metric_px(t, XD_METRIC_SCROLL_WIDTH); }
+
+xd_rect xd_theme_vscrollbar_thumb(const xd_theme *t, xd_rect r, int first, int page, int total) {
+    int arrow = XD_MIN(r.w, r.h / 2);
+    xd_rect track = {r.x, r.y + arrow, r.w, r.h - 2 * arrow};
+    if (total <= page || total <= 0 || track.h <= 0)
+        return (xd_rect){track.x, track.y, track.w, 0};
+    int min_thumb = xd_tpx(t, 8);
+    int th = XD_MAX((int)((long)track.h * page / total), min_thumb);
+    th = XD_MIN(th, track.h);
+    int range = total - page;
+    int y = track.y + (int)((long)(track.h - th) * XD_CLAMP(first, 0, range) / range);
+    return (xd_rect){track.x, y, track.w, th};
+}
+
+static void scroll_arrow(const xd_theme *t, cairo_t *cr, xd_rect r, bool up, bool disabled) {
+    double w = xd_tpx(t, 7);
+    double h = xd_tpx(t, 4);
+    double x = r.x + (r.w - w) / 2;
+    double y = r.y + (r.h - h) / 2;
+    xd_set_color(cr, classic(t) ? xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_BUTTON_TEXT)
+                                : xd_rgba_hex(disabled ? 0xC9C7BA : 0x4D6185));
+    if (up) {
+        cairo_move_to(cr, x + w / 2, y);
+        cairo_line_to(cr, x + w, y + h);
+        cairo_line_to(cr, x, y + h);
+    } else {
+        cairo_move_to(cr, x, y);
+        cairo_line_to(cr, x + w, y);
+        cairo_line_to(cr, x + w / 2, y + h);
+    }
+    cairo_close_path(cr);
+    cairo_fill(cr);
+}
+
+static void scroll_button(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    int px = xd_tpx(t, 1);
+    if (classic(t)) {
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
+        xd_rect in = xd_draw_bevel(cr, r, px, xd_sys(t, XD_COLOR_BUTTON_LIGHT),
+                                   xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
+        xd_draw_bevel(cr, in, px, xd_sys(t, XD_COLOR_BUTTON_HILIGHT),
+                      xd_sys(t, XD_COLOR_BUTTON_SHADOW));
+    } else {
+        double rad = xd_tpx(t, 2);
+        xd_rect b = xd_rect_inset(r, px, px);
+        xd_path_rounded(cr, b.x, b.y, b.w, b.h, rad, rad, rad, rad);
+        cairo_save(cr);
+        cairo_clip(cr);
+        xd_fill_gradient(cr, b, xd_rgba_hex(0xC8D6FB), xd_rgba_hex(0xB0C8F8), true);
+        cairo_restore(cr);
+        xd_path_rounded(cr, b.x + px / 2.0, b.y + px / 2.0, b.w - px, b.h - px, rad, rad, rad,
+                        rad);
+        xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
+        cairo_set_line_width(cr, px);
+        cairo_stroke(cr);
+    }
+}
+
+void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int first, int page,
+                              int total) {
+    int arrow = XD_MIN(r.w, r.h / 2);
+    bool disabled = total <= page;
+    /* Track: Classic dithers ButtonHilight over Scrollbar; XP is flat. */
+    if (classic(t)) {
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_SCROLLBAR));
+        xd_fill_rect(cr, r, xd_rgba_alpha(xd_sys(t, XD_COLOR_BUTTON_HILIGHT), 0.5));
+    } else {
+        xd_fill_rect(cr, r, xd_rgba_hex(0xF3F1EC));
+    }
+    xd_rect up = {r.x, r.y, r.w, arrow};
+    xd_rect down = {r.x, r.y + r.h - arrow, r.w, arrow};
+    scroll_button(t, cr, up);
+    scroll_arrow(t, cr, up, true, disabled);
+    scroll_button(t, cr, down);
+    scroll_arrow(t, cr, down, false, disabled);
+    xd_rect thumb = xd_theme_vscrollbar_thumb(t, r, first, page, total);
+    if (thumb.h > 0)
+        scroll_button(t, cr, thumb);
+}
+
 void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
                                  const char *edition) {
     xd_menu_palette p;
@@ -433,7 +613,10 @@ void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, cons
     xd_font_spec small = big;
     small.size_pt = 10;
     small.bold = false;
-    xd_text_style st = {.font = &big, .scale = t->scale, .color = p.banner_text};
+    xd_text_style st = {.font = &big,
+                        .scale = t->scale,
+                        .color = p.banner_text,
+                        .smoothing = t->scheme.font_smoothing};
     int tx = fx + flag + xd_tpx(t, 12);
     int line = xd_tpx(t, 28);
     int top = r.y + (r.h - line - xd_tpx(t, 16)) / 2;
@@ -465,6 +648,7 @@ xd_text_style xd_text(const xd_theme *t, xd_font_role role, xd_rgba color, xd_ha
         .color = color,
         .align = align,
         .ellipsize = true,
+        .smoothing = t->scheme.font_smoothing,
     };
 }
 

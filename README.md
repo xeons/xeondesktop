@@ -3,6 +3,15 @@
 A Windows 2000/XP-style desktop environment for Linux (Wayland), written in
 strict C23. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 
+| Classic (Windows 2000) | Luna (XP) |
+|---|---|
+| ![Classic style with the Start menu open](docs/screenshots/classic-start-menu.png) | ![Luna style with the Start menu open](docs/screenshots/luna-desktop.png) |
+| **Display Properties** | **Shut Down** |
+| ![Display Properties, Appearance tab](docs/screenshots/display-properties.png) | ![Shut Down dialog](docs/screenshots/shut-down.png) |
+
+All artwork is drawn by the theme engine; no Microsoft assets are used.
+Screenshots are from a nested development session.
+
 ## Build
 
 Dependencies: meson, ninja, cairo, pango; wlroots 0.20 (compositor, later
@@ -44,6 +53,16 @@ into Programs folders (Accessories, Games, Graphics, Internet, ...) by their
 categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`; items that
 need parts of the desktop not written yet (Control Panel, Search, Help) are
 shown greyed out.
+
+### Display Properties
+
+`xd-desk` (Start > Settings > Control Panel > Display) has Windows 2000's
+tabs. Appearance (style, colour scheme, font size, with a live preview) and
+Background (wallpaper and how it's placed) work; Effects has font
+smoothing; Screen Saver and Settings show what's there but can't change it
+yet. Apply writes `~/.config/xeondesktop/desktop.ini`, which the compositor
+and shell watch, so changes show up immediately everywhere. Command-line
+`--style`/`--scheme` override the file until it next changes.
 
 ### Run and Shut Down
 

@@ -9,7 +9,14 @@
 #include "../core/alloc.h"
 #include "ui_internal.h"
 
-enum { XD_LIST_ROW_H = 17, XD_LIST_MAX_ROWS = 8, XD_TEXT_PAD = 2 };
+enum {
+    XD_LIST_ROW_H = 17,
+    XD_LIST_MAX_ROWS = 8,
+    XD_TEXT_PAD = 2,
+    XD_TAB_H = 21,    /* tab strip; the panel starts 2px higher */
+    XD_LIST_BORDER = 2,
+    XD_SCROLL_W = 16,
+};
 
 /* ---- geometry ------------------------------------------------------------------ */
 
@@ -58,9 +65,56 @@ static bool is_text_widget(const xd_widget *w) {
     return w->kind == XD_W_EDIT || (w->kind == XD_W_COMBO && w->editable);
 }
 
+/* Hidden when it belongs to a tab page that isn't selected. */
+static bool is_visible(const xd_widget *w) {
+    const xd_widget *tabs = w->win->tabs;
+    return w->page < 0 || tabs == nullptr || tabs->selected == w->page;
+}
+
 static bool is_focusable(const xd_widget *w) {
-    return w->enabled &&
-           (w->kind == XD_W_BUTTON || w->kind == XD_W_EDIT || w->kind == XD_W_COMBO);
+    return w->enabled && is_visible(w) &&
+           (w->kind == XD_W_BUTTON || w->kind == XD_W_EDIT || w->kind == XD_W_COMBO ||
+            w->kind == XD_W_TABS || w->kind == XD_W_CHECKBOX || w->kind == XD_W_LISTBOX);
+}
+
+/* ---- list box and tab geometry (logical units) ---------------------------------- */
+
+static int list_rows(const xd_widget *w) {
+    return XD_MAX((w->r.h - 2 * XD_LIST_BORDER) / XD_LIST_ROW_H, 1);
+}
+
+static bool list_has_scrollbar(const xd_widget *w) { return (int)w->count > list_rows(w); }
+
+static xd_rect list_scrollbar(const xd_widget *w) {
+    return (xd_rect){w->r.x + w->r.w - XD_LIST_BORDER - XD_SCROLL_W, w->r.y + XD_LIST_BORDER,
+                     XD_SCROLL_W, w->r.h - 2 * XD_LIST_BORDER};
+}
+
+static xd_rect list_row(const xd_widget *w, int row) {
+    int sw = list_has_scrollbar(w) ? XD_SCROLL_W : 0;
+    return (xd_rect){w->r.x + XD_LIST_BORDER, w->r.y + XD_LIST_BORDER + row * XD_LIST_ROW_H,
+                     w->r.w - 2 * XD_LIST_BORDER - sw, XD_LIST_ROW_H};
+}
+
+static void list_clamp(xd_widget *w) {
+    int max_first = XD_MAX((int)w->count - list_rows(w), 0);
+    w->first = XD_CLAMP(w->first, 0, max_first);
+}
+
+static void list_scroll_to(xd_widget *w, int index) {
+    if (index < w->first)
+        w->first = index;
+    if (index >= w->first + list_rows(w))
+        w->first = index - list_rows(w) + 1;
+    list_clamp(w);
+}
+
+static xd_rect tab_rect(const xd_widget *w, size_t i) {
+    return (xd_rect){w->r.x + w->tab_x[i], w->r.y, w->tab_w[i], XD_TAB_H};
+}
+
+static xd_rect tab_panel(const xd_widget *w) {
+    return (xd_rect){w->r.x, w->r.y + XD_TAB_H - 2, w->r.w, w->r.h - XD_TAB_H + 2};
 }
 
 static xd_text_style field_text_style(const xd_theme *t, xd_rgba color) {
@@ -69,6 +123,7 @@ static xd_text_style field_text_style(const xd_theme *t, xd_rgba color) {
         .scale = t->scale,
         .color = color,
         .align = XD_ALIGN_START,
+        .smoothing = t->scheme.font_smoothing,
     };
     return st;
 }
@@ -206,6 +261,66 @@ static void draw_widget(xd_window *win, const xd_theme *t, cairo_t *cr, xd_widge
         draw_text_field(win, t, cr, w, text_area(t, w));
         break;
     }
+    case XD_W_TABS: {
+        xd_theme_draw_tab_panel(t, cr, to_device(tab_panel(w), t->scale));
+        /* Unselected tabs first; the selected one overlaps its neighbours
+         * and the panel's top edge. */
+        for (int pass = 0; pass < 2; pass++) {
+            for (size_t i = 0; i < w->count; i++) {
+                bool sel = (int)i == w->selected;
+                if (sel != (pass == 1))
+                    continue;
+                xd_rect tr = tab_rect(w, i);
+                if (sel)
+                    tr = (xd_rect){tr.x - 2, tr.y, tr.w + 4, tr.h};
+                uint8_t state = sel ? XD_STATE_CHECKED : 0;
+                if (sel && focused)
+                    state |= XD_STATE_FOCUSED;
+                xd_theme_draw_tab(t, cr, to_device(tr, t->scale), state, w->items[i]);
+            }
+        }
+        break;
+    }
+    case XD_W_CHECKBOX: {
+        uint8_t state = w->checked ? XD_STATE_CHECKED : 0;
+        if (focused)
+            state |= XD_STATE_FOCUSED;
+        if (win->hot == w)
+            state |= XD_STATE_HOT;
+        if (win->pressed == w && win->hot == w)
+            state |= XD_STATE_PRESSED;
+        if (!w->enabled)
+            state |= XD_STATE_DISABLED;
+        xd_theme_draw_checkbox(t, cr, r, state, w->text);
+        break;
+    }
+    case XD_W_LISTBOX: {
+        xd_theme_draw_field(t, cr, r, !w->enabled);
+        int rows = list_rows(w);
+        for (int i = 0; i < rows && w->first + i < (int)w->count; i++) {
+            int idx = w->first + i;
+            xd_rect row = to_device(list_row(w, i), t->scale);
+            xd_theme_draw_list_item(t, cr, row, idx == w->selected, w->items[idx]);
+            if (idx == w->selected && focused)
+                xd_theme_draw_focus_rect(t, cr, row);
+        }
+        if (list_has_scrollbar(w))
+            xd_theme_draw_vscrollbar(t, cr, to_device(list_scrollbar(w), t->scale), w->first,
+                                     rows, (int)w->count);
+        break;
+    }
+    case XD_W_GROUPBOX:
+        xd_theme_draw_groupbox(t, cr, r, w->text);
+        break;
+    case XD_W_CUSTOM:
+        if (w->draw != nullptr) {
+            cairo_save(cr);
+            cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+            cairo_clip(cr);
+            w->draw(w, cr, r, t, w->user);
+            cairo_restore(cr);
+        }
+        break;
     case XD_W_COMBO: {
         xd_rect inner = xd_theme_draw_field(t, cr, r, !w->enabled);
         xd_rect button = dropdown_rect(t, inner);
@@ -250,8 +365,10 @@ void xd_window_render(xd_window *win) {
     window_theme(win, &t);
     cairo_t *cr = cairo_create(buf->surface);
     xd_fill_rect(cr, (xd_rect){0, 0, dw, dh}, xd_theme_dialog_color(&t));
-    for (size_t i = 0; i < win->count; i++)
-        draw_widget(win, &t, cr, win->widgets[i]);
+    for (size_t i = 0; i < win->count; i++) {
+        if (is_visible(win->widgets[i]))
+            draw_widget(win, &t, cr, win->widgets[i]);
+    }
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
 
@@ -577,6 +694,8 @@ static void widget_free(xd_widget *w) {
     for (size_t i = 0; i < w->count; i++)
         xd_free(w->items[i]);
     xd_free(w->items);
+    xd_free(w->tab_x);
+    xd_free(w->tab_w);
     xd_free(w);
 }
 
@@ -634,6 +753,7 @@ static xd_widget *add(xd_window *win, xd_widget_kind kind, xd_rect r) {
     w->r = r;
     w->enabled = true;
     w->selected = -1;
+    w->page = -1;
     if (win->count == win->cap) {
         win->cap = win->cap == 0 ? 8 : win->cap * 2;
         win->widgets = xd_realloc_array(win->widgets, win->cap, sizeof(*win->widgets));
@@ -691,8 +811,16 @@ xd_widget *xd_combo(xd_window *win, xd_rect r, bool editable, xd_widget_cb on_ch
     return w;
 }
 
-void xd_combo_add(xd_widget *w, const char *item) {
-    XD_ASSERT(w->kind == XD_W_COMBO);
+void xd_combo_add(xd_widget *w, const char *item) { xd_widget_add_item(w, item); }
+
+static void xd_widget_add_item_any(xd_widget *w, const char *item);
+
+void xd_widget_add_item(xd_widget *w, const char *item) {
+    XD_ASSERT(w->kind == XD_W_COMBO || w->kind == XD_W_LISTBOX);
+    xd_widget_add_item_any(w, item);
+}
+
+static void xd_widget_add_item_any(xd_widget *w, const char *item) {
     if (w->count == w->cap) {
         w->cap = w->cap == 0 ? 8 : w->cap * 2;
         w->items = xd_realloc_array(w->items, w->cap, sizeof(*w->items));
@@ -702,16 +830,100 @@ void xd_combo_add(xd_widget *w, const char *item) {
 }
 
 int xd_combo_selected(const xd_widget *w) { return w->selected; }
+int xd_widget_selected(const xd_widget *w) { return w->selected; }
+size_t xd_widget_item_count(const xd_widget *w) { return w->count; }
 
 void xd_combo_select(xd_widget *w, int index) {
     XD_ASSERT(w->kind == XD_W_COMBO);
+    xd_widget_select(w, index);
+}
+
+void xd_widget_select(xd_widget *w, int index) {
+    XD_ASSERT(w->kind == XD_W_COMBO || w->kind == XD_W_LISTBOX || w->kind == XD_W_TABS);
     if (index < 0 || (size_t)index >= w->count)
         return;
     w->selected = index;
-    if (w->editable)
+    if (w->kind == XD_W_COMBO && w->editable)
         xd_textedit_set(&w->edit, xd_str_from_cstr(w->items[index]));
+    if (w->kind == XD_W_LISTBOX)
+        list_scroll_to(w, index);
+    if (w->kind == XD_W_TABS && w->win->focus != nullptr && !is_visible(w->win->focus))
+        w->win->focus = w; /* focus was on the page we left */
     w->win->dirty = true;
 }
+
+xd_widget *xd_tabs(xd_window *win, xd_rect r, const char *const *labels, size_t count,
+                   xd_widget_cb on_change, void *user) {
+    XD_ASSERT(win->tabs == nullptr); /* one per window */
+    xd_widget *w = add(win, XD_W_TABS, r);
+    w->cb = on_change;
+    w->user = user;
+    w->tab_x = xd_alloc_array(XD_MAX(count, 1), sizeof(int));
+    w->tab_w = xd_alloc_array(XD_MAX(count, 1), sizeof(int));
+
+    /* Tabs are as wide as their labels, measured at logical scale. */
+    xd_theme t;
+    xd_theme_init(&t, win->ui->style, &win->ui->scheme, 1.0);
+    cairo_surface_t *scratch = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    cairo_t *cr = cairo_create(scratch);
+    xd_text_style st = xd_text(&t, XD_FONT_MESSAGE, xd_rgba_hex(0), XD_ALIGN_START);
+    int x = 2;
+    for (size_t i = 0; i < count; i++) {
+        xd_widget_add_item_any(w, labels[i]);
+        w->tab_x[i] = x;
+        w->tab_w[i] = xd_text_width(cr, labels[i], &st) + 14;
+        x += w->tab_w[i];
+    }
+    cairo_destroy(cr);
+    cairo_surface_destroy(scratch);
+    w->selected = count > 0 ? 0 : -1;
+    win->tabs = w;
+    return w;
+}
+
+void xd_widget_set_page(xd_widget *w, int page) {
+    w->page = page;
+    w->win->dirty = true;
+}
+
+xd_widget *xd_checkbox(xd_window *win, xd_rect r, const char *label, bool checked,
+                       xd_widget_cb on_change, void *user) {
+    xd_widget *w = add(win, XD_W_CHECKBOX, r);
+    w->text = copy_str(label);
+    w->checked = checked;
+    w->cb = on_change;
+    w->user = user;
+    return w;
+}
+
+bool xd_checkbox_checked(const xd_widget *w) { return w->checked; }
+
+void xd_checkbox_set(xd_widget *w, bool checked) {
+    w->checked = checked;
+    w->win->dirty = true;
+}
+
+xd_widget *xd_listbox(xd_window *win, xd_rect r, xd_widget_cb on_change, void *user) {
+    xd_widget *w = add(win, XD_W_LISTBOX, r);
+    w->cb = on_change;
+    w->user = user;
+    return w;
+}
+
+xd_widget *xd_groupbox(xd_window *win, xd_rect r, const char *label) {
+    xd_widget *w = add(win, XD_W_GROUPBOX, r);
+    w->text = copy_str(label);
+    return w;
+}
+
+xd_widget *xd_custom(xd_window *win, xd_rect r, xd_draw_cb draw, void *user) {
+    xd_widget *w = add(win, XD_W_CUSTOM, r);
+    w->draw = draw;
+    w->user = user;
+    return w;
+}
+
+void xd_widget_redraw(xd_widget *w) { w->win->dirty = true; }
 
 const char *xd_widget_text(xd_widget *w) {
     switch (w->kind) {
@@ -721,10 +933,16 @@ const char *xd_widget_text(xd_widget *w) {
         if (w->editable)
             return edit_cstr(w);
         return w->selected >= 0 ? w->items[w->selected] : "";
+    case XD_W_LISTBOX:
+    case XD_W_TABS:
+        return w->selected >= 0 ? w->items[w->selected] : "";
     case XD_W_LABEL:
     case XD_W_IMAGE:
     case XD_W_BANNER:
     case XD_W_BUTTON:
+    case XD_W_CHECKBOX:
+    case XD_W_GROUPBOX:
+    case XD_W_CUSTOM:
         break;
     }
     return w->text != nullptr ? w->text : "";
@@ -776,7 +994,54 @@ static bool over_text(xd_window *win, xd_widget *w, double x, double y) {
     return contains(a, x * win->scale, y * win->scale);
 }
 
+/* Selection change from the user: notify. May close the window. */
+static void select_changed(xd_widget *w) {
+    w->win->dirty = true;
+    if (w->cb != nullptr)
+        w->cb(w, w->user);
+}
+
+static void select_index(xd_widget *w, int index) {
+    if (index < 0 || (size_t)index >= w->count || index == w->selected)
+        return;
+    xd_widget_select(w, index);
+    select_changed(w);
+}
+
+/* Scroll thumb dragging: map the pointer back to a first row. */
+static void list_drag_thumb(xd_widget *w, double y) {
+    xd_theme t;
+    xd_theme_init(&t, w->win->ui->style, &w->win->ui->scheme, 1.0);
+    xd_rect sb = list_scrollbar(w);
+    int rows = list_rows(w);
+    xd_rect thumb = xd_theme_vscrollbar_thumb(&t, sb, w->first, rows, (int)w->count);
+    int arrow = XD_MIN(sb.w, sb.h / 2);
+    double track_h = sb.h - 2 * arrow - thumb.h;
+    int range = (int)w->count - rows;
+    if (track_h <= 0 || range <= 0)
+        return;
+    double pos = (y - w->win->thumb_offset - (sb.y + arrow)) / track_h;
+    int first = (int)lround(XD_CLAMP(pos, 0.0, 1.0) * range);
+    if (first != w->first) {
+        w->first = first;
+        w->win->dirty = true;
+    }
+}
+
+void xd_window_pointer_axis(xd_window *win, double value) {
+    xd_widget *w = widget_at(win, win->ui->pointer_x, win->ui->pointer_y);
+    if (w == nullptr || w->kind != XD_W_LISTBOX)
+        return;
+    w->first += value > 0 ? 3 : -3; /* Windows scrolls three lines a notch */
+    list_clamp(w);
+    win->dirty = true;
+}
+
 void xd_window_pointer_motion(xd_window *win, double x, double y) {
+    if (win->thumb_drag && win->pressed != nullptr) {
+        list_drag_thumb(win->pressed, y);
+        return;
+    }
     if (win->selecting && win->pressed != nullptr) {
         xd_textedit_set_cursor(&win->pressed->edit, text_pos_at(win, win->pressed, x), true);
         win->dirty = true;
@@ -804,12 +1069,17 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
     double y = win->ui->pointer_y;
     if (!pressed) {
         xd_widget *target = win->pressed;
-        bool fire = target != nullptr && target->kind == XD_W_BUTTON && win->hot == target;
+        bool released_over = target != nullptr && win->hot == target;
         win->pressed = nullptr;
         win->selecting = false;
+        win->thumb_drag = false;
         win->dirty = true;
-        if (fire)
+        if (released_over && target->kind == XD_W_BUTTON) {
             click(target); /* may close the window */
+        } else if (released_over && target->kind == XD_W_CHECKBOX) {
+            target->checked = !target->checked;
+            select_changed(target); /* may close the window */
+        }
         return;
     }
 
@@ -821,6 +1091,45 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
         win->dirty = true;
     }
     win->pressed = w;
+    if (w->kind == XD_W_TABS) {
+        for (size_t i = 0; i < w->count; i++) {
+            if (contains(tab_rect(w, i), x, y)) {
+                select_index(w, (int)i); /* may close the window */
+                return;
+            }
+        }
+        return;
+    }
+    if (w->kind == XD_W_LISTBOX) {
+        if (list_has_scrollbar(w) && contains(list_scrollbar(w), x, y)) {
+            xd_theme t;
+            xd_theme_init(&t, win->ui->style, &win->ui->scheme, 1.0);
+            xd_rect sb = list_scrollbar(w);
+            int rows = list_rows(w);
+            xd_rect thumb = xd_theme_vscrollbar_thumb(&t, sb, w->first, rows, (int)w->count);
+            int arrow = XD_MIN(sb.w, sb.h / 2);
+            if (y < sb.y + arrow)
+                w->first -= 1;
+            else if (y >= sb.y + sb.h - arrow)
+                w->first += 1;
+            else if (y < thumb.y)
+                w->first -= rows;
+            else if (y >= thumb.y + thumb.h)
+                w->first += rows;
+            else {
+                win->thumb_drag = true;
+                win->thumb_offset = y - thumb.y;
+            }
+            list_clamp(w);
+            win->dirty = true;
+            return;
+        }
+        double top = w->r.y + (double)XD_LIST_BORDER;
+        int row = (int)((y - top) / (double)XD_LIST_ROW_H);
+        if (y >= top && row >= 0 && row < list_rows(w))
+            select_index(w, w->first + row); /* may close the window */
+        return;
+    }
     if (w->kind == XD_W_COMBO && (!w->editable || !over_text(win, w, x, y))) {
         if (win->popup != nullptr)
             popup_close(win);
@@ -998,6 +1307,17 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
         }
     }
 
+    /* Ctrl+Tab / Ctrl+PgDn switch property-sheet pages from anywhere. */
+    xd_widget *tabs = win->tabs;
+    if (tabs != nullptr && tabs->count > 0 && (mods & XD_MOD_CTRL) &&
+        (sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab || sym == XKB_KEY_Next ||
+         sym == XKB_KEY_Prior)) {
+        bool back = sym == XKB_KEY_Prior || sym == XKB_KEY_ISO_Left_Tab || (mods & XD_MOD_SHIFT);
+        int n = (int)tabs->count;
+        select_index(tabs, (tabs->selected + (back ? n - 1 : 1)) % n);
+        return;
+    }
+
     switch (sym) {
     case XKB_KEY_Tab:
         focus_step(win, (mods & XD_MOD_SHIFT) ? -1 : 1);
@@ -1027,6 +1347,47 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
     if (f->kind == XD_W_BUTTON) {
         if (sym == XKB_KEY_space)
             click(f);
+        return;
+    }
+    if (f->kind == XD_W_CHECKBOX) {
+        if (sym == XKB_KEY_space) {
+            f->checked = !f->checked;
+            select_changed(f);
+        }
+        return;
+    }
+    if (f->kind == XD_W_TABS) {
+        if (sym == XKB_KEY_Left || sym == XKB_KEY_Right)
+            select_index(f, XD_CLAMP(f->selected + (sym == XKB_KEY_Right ? 1 : -1), 0,
+                                     (int)f->count - 1));
+        return;
+    }
+    if (f->kind == XD_W_LISTBOX) {
+        int target = f->selected;
+        int rows = list_rows(f);
+        switch (sym) {
+        case XKB_KEY_Up:
+            target = XD_MAX(f->selected - 1, 0);
+            break;
+        case XKB_KEY_Down:
+            target = XD_MIN(f->selected + 1, (int)f->count - 1);
+            break;
+        case XKB_KEY_Prior:
+            target = XD_MAX(f->selected - rows, 0);
+            break;
+        case XKB_KEY_Next:
+            target = XD_MIN(f->selected + rows, (int)f->count - 1);
+            break;
+        case XKB_KEY_Home:
+            target = 0;
+            break;
+        case XKB_KEY_End:
+            target = (int)f->count - 1;
+            break;
+        default:
+            return;
+        }
+        select_index(f, target);
         return;
     }
     if (f->kind == XD_W_COMBO) {

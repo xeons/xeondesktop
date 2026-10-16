@@ -112,6 +112,14 @@ theme_dep = declare_dependency(
   dependencies: [core_dep, cairo_dep, pango_dep, m_dep],
 )
 
+settings_lib = static_library(
+  'xdsettings',
+  'src/settings/settings.c',
+  dependencies: [cairo_dep, pango_dep, m_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
+settings_dep = declare_dependency(link_with: settings_lib, dependencies: [theme_dep])
+
 wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
 wayland_server_dep = dependency('wayland-server', include_type: 'system')
 wayland_client_dep = dependency('wayland-client', include_type: 'system')
@@ -131,6 +139,7 @@ client_protocol_xml = {
   'viewporter': wp_dir / 'stable/viewporter/viewporter.xml',
   'tablet-v2': wp_dir / 'stable/tablet/tablet-v2.xml',
   'fractional-scale-v1': wp_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
+  'xdg-output-unstable-v1': wp_dir / 'unstable/xdg-output/xdg-output-unstable-v1.xml',
   'cursor-shape-v1': wp_dir / 'staging/cursor-shape/cursor-shape-v1.xml',
   'wlr-layer-shell-unstable-v1': layer_shell_xml,
   'wlr-foreign-toplevel-management-unstable-v1': files(
@@ -186,12 +195,20 @@ executable(
   'src/compositor/view.c',
   'src/compositor/frame.c',
   server_protocol_headers,
-  dependencies: [theme_dep, wlroots_dep, wayland_server_dep, xkbcommon_dep, libdrm_dep],
+  dependencies: [
+    theme_dep,
+    settings_dep,
+    wlroots_dep,
+    wayland_server_dep,
+    xkbcommon_dep,
+    libdrm_dep,
+  ],
   c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE'],
   install: true,
 )
 
 librsvg_dep = dependency('librsvg-2.0', include_type: 'system')
+gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
 
 # libxdui: Wayland client plumbing and dialog widgets for shell programs.
 ui_lib = static_library(
@@ -199,14 +216,17 @@ ui_lib = static_library(
   'src/ui/shm.c',
   'src/ui/icons.c',
   'src/ui/textedit.c',
+  'src/ui/image.c',
   'src/ui/ui.c',
   'src/ui/widgets.c',
-  dependencies: [theme_dep, client_protocol_dep, librsvg_dep, xkbcommon_dep],
+  dependencies: [theme_dep, settings_dep, client_protocol_dep, librsvg_dep, gdk_pixbuf_dep,
+                 xkbcommon_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
 ui_dep = declare_dependency(
   link_with: ui_lib,
-  dependencies: [theme_dep, client_protocol_dep, librsvg_dep, xkbcommon_dep],
+  dependencies: [theme_dep, settings_dep, client_protocol_dep, librsvg_dep, gdk_pixbuf_dep,
+                 xkbcommon_dep],
 )
 
 apps_common = files('src/apps/common.c')
@@ -231,6 +251,14 @@ executable(
 )
 
 executable(
+  'xd-desk',
+  'src/apps/desk.c',
+  dependencies: [ui_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+executable(
   'xd-shell',
   'src/shell/main.c',
   'src/shell/taskbar.c',
@@ -238,6 +266,7 @@ executable(
   'src/shell/apps.c',
   'src/shell/menu.c',
   'src/shell/startmenu.c',
+  'src/shell/desktop.c',
   dependencies: [ui_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
@@ -251,7 +280,7 @@ test_exe = executable(
   'src/shell/apps.c',
   'src/ui/textedit.c',
   'src/apps/runcmd.c',
-  dependencies: [theme_dep],
+  dependencies: [theme_dep, settings_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(

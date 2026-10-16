@@ -39,7 +39,7 @@ xd-desk, xd-mouse, xd-keyboard, xd-power, ...   Control Panel applets
 |---------------------|--------------------------------------------------------------|
 | `xd-compositor`     | Wayland compositor + window manager (wlroots 0.20). Draws window frames server-side with the theme engine, handles focus, Alt+Tab, per-output scale, layer-shell work areas. |
 | `xd-shell`          | Taskbar, Start menu, Quick Launch, tray, desktop icons. A layer-shell client; gets the window list from `wlr-foreign-toplevel-management`. |
-| `xd-settingsd`      | Owns the settings store, broadcasts changes over D-Bus so every component applies them live (a new colour scheme recolours everything at once). |
+| `xd-settingsd`      | (Planned) generates the GTK3 theme from the active style and scheme. Settings themselves don't need a daemon: see "Settings" below. |
 | `xd-files`          | File manager (see below). Also shows the `control:` folder.  |
 | `xd-thumbnailer`    | Generates thumbnails in a sandbox (see below).               |
 | `xd-control`        | Launcher that opens `control:` in `xd-files`.                |
@@ -110,6 +110,17 @@ need more theme work than Classic.
 - All artwork is drawn procedurally. No bitmaps from Microsoft products are
   shipped. Users can supply their own fonts (Tahoma, Trebuchet MS); the
   defaults fall back to DejaVu/Noto.
+
+## Settings
+
+`~/.config/xeondesktop/desktop.ini` is the single source of truth. Display
+Properties writes it atomically (write, then rename); the compositor, the
+shell and libxdui dialogs read it at startup and the long-running ones
+watch its directory with inotify, re-theming live when it changes. This
+replaced the original D-Bus broadcast plan: a watched file needs no daemon,
+keeps working if any one component crashes, and is easy to inspect or edit
+by hand. Unknown keys are ignored so older builds can read newer files;
+values are validated (a scheme is a file stem, never a path).
 
 ## Display Properties (`xd-desk`)
 
@@ -254,10 +265,11 @@ Applets that make sense on Linux:
    buttons and clock, one per output, DPI-aware.
 4. Shell, part 2 (done): Start menu (2000 layout first) with the
    Programs menu built from installed applications, icon theme lookup.
-5. `libxdui` basics and Run / Shut Down / Log Off dialogs (done; edit
-   fields, combo boxes, buttons, clipboard, key repeat). Still to do:
-   Display Properties (`xd-desk`), Quick Launch, `xd-settingsd` with GTK3
-   theme generation.
+5. `libxdui` basics and Run / Shut Down / Log Off dialogs (done); settings
+   file with live re-theming, wallpaper, Display Properties (in progress:
+   Appearance, Background and font smoothing work; Screen Saver needs idle
+   detection, Settings needs output management, Advanced needs a per-item
+   editor). Still to do: Quick Launch, GTK3 theme generation.
 6. `libxdfolder`, `xd-files` (GTK3), `xd-thumbnailer`, desktop icons.
 7. Start menu XP and 7 layouts, grouping, tray (SNI).
 8. Remaining Control Panel applets (GTK3), roughly in table order.

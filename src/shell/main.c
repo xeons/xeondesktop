@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../ui/image.h"
 #include "shell.h"
 
 /* ---- clock ------------------------------------------------------------------ */
@@ -358,6 +359,45 @@ void xd_shell_start_menu_closed(xd_shell *shell) {
     bar->dirty = true;
 }
 
+/* ---- settings ------------------------------------------------------------------- */
+
+static void load_wallpaper(xd_shell *shell) {
+    if (shell->wallpaper != nullptr)
+        cairo_surface_destroy(shell->wallpaper);
+    /* Big enough for a 4K output without keeping a 5K image in memory. */
+    shell->wallpaper = shell->settings.wallpaper[0] != '\0'
+                           ? xd_image_load(shell->settings.wallpaper, 4096, 4096)
+                           : nullptr;
+}
+
+/* Applies desktop.ini; command-line overrides only win at startup. */
+static void apply_settings(xd_shell *shell, bool startup) {
+    char old_wallpaper[sizeof(shell->settings.wallpaper)];
+    memcpy(old_wallpaper, shell->settings.wallpaper, sizeof(old_wallpaper));
+    xd_settings_load(&shell->settings);
+    if (!startup) {
+        shell->cli_style = false;
+        shell->scheme_path = nullptr;
+    }
+    if (!shell->cli_style)
+        shell->style = shell->settings.style;
+    if (shell->scheme_path == nullptr)
+        xd_settings_scheme(&shell->settings, &shell->scheme);
+    if (startup || strcmp(old_wallpaper, shell->settings.wallpaper) != 0)
+        load_wallpaper(shell);
+    if (startup)
+        return;
+
+    /* Re-theme: menus are rebuilt (their commands carry overrides). */
+    xd_menu_close_all(shell);
+    xd_menu_tree_free(&shell->menu_tree);
+    xd_menu_tree_init(&shell->menu_tree);
+    xd_start_menu_build(shell);
+    XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
+        xd_taskbar_retheme(bar);
+    }
+}
+
 /* XD_SHELL_OPEN_MENU="Programs/Accessories" opens the Start menu and that
  * submenu path at startup, one level per configured menu, without a grab.
  * For screenshots and testing without an input device. */
@@ -419,6 +459,7 @@ static bool parse_args(int argc, char **argv, xd_shell *shell) {
         }
         const char *val = argv[++i];
         if (xd_str_eq(arg, XD_STR("--style"))) {
+            shell->cli_style = true;
             if (!xd_visual_style_from_name(xd_str_from_cstr(val), &shell->style)) {
                 fprintf(stderr, "xd-shell: unknown style: %s\n", val);
                 return false;
@@ -465,11 +506,12 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             return EXIT_FAILURE;
         }
 
-        struct pollfd fds[4] = {
+        struct pollfd fds[5] = {
             {.fd = wl_display_get_fd(d), .events = POLLIN},
             {.fd = timer_fd, .events = POLLIN},
             {.fd = signal_fd, .events = POLLIN},
             {.fd = shell->menu_timer_fd, .events = POLLIN},
+            {.fd = shell->settings_fd, .events = POLLIN},
         };
         if (poll(fds, XD_ARRAY_LEN(fds), -1) < 0) {
             wl_display_cancel_read(d);
@@ -497,6 +539,9 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         }
         if (signal_fd >= 0 && (fds[2].revents & POLLIN))
             shell->running = false;
+        if (shell->settings_fd >= 0 && (fds[4].revents & POLLIN) &&
+            xd_settings_watch_changed(shell->settings_fd))
+            apply_settings(shell, false);
         if (shell->menu_timer_fd >= 0 && (fds[3].revents & POLLIN)) {
             uint64_t expirations;
             (void)!read(shell->menu_timer_fd, &expirations, sizeof(expirations));
@@ -513,6 +558,7 @@ int main(int argc, char **argv) {
     const char *term = getenv("TERMINAL");
     shell.terminal = term != nullptr && term[0] != '\0' ? term : "alacritty";
     shell.menu_timer_fd = -1;
+    shell.settings_fd = -1;
     xd_scheme_init_default(&shell.scheme);
     wl_list_init(&shell.taskbars);
     wl_list_init(&shell.toplevels);
@@ -541,6 +587,8 @@ int main(int argc, char **argv) {
     signal(SIGCHLD, SIG_IGN);
     const char *icon_theme = getenv("XD_ICON_THEME");
     shell.icons = xd_icons_create(icon_theme != nullptr ? icon_theme : "breeze");
+    apply_settings(&shell, true);
+    shell.settings_fd = xd_settings_watch();
     xd_apps_load(&shell.apps, "XeonDesktop");
     xd_menu_tree_init(&shell.menu_tree);
     xd_start_menu_build(&shell);
@@ -587,6 +635,10 @@ int main(int argc, char **argv) {
     xkb_context_unref(shell.xkb);
     if (shell.menu_timer_fd >= 0)
         close(shell.menu_timer_fd);
+    if (shell.settings_fd >= 0)
+        close(shell.settings_fd);
+    if (shell.wallpaper != nullptr)
+        cairo_surface_destroy(shell.wallpaper);
     if (timer_fd >= 0)
         close(timer_fd);
     if (signal_fd >= 0)

@@ -155,6 +155,7 @@ static void modern_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
         .ellipsize = true,
         .shadow = f->active && m->title_shadow != m->title_active,
         .shadow_color = xd_rgba_hex(m->title_shadow),
+        .smoothing = t->scheme.font_smoothing,
     };
     xd_draw_text(cr, l.title, f->title, &st);
 }
@@ -263,6 +264,7 @@ static xd_text_style start_style(const xd_theme *t) {
         .align = XD_ALIGN_START,
         .shadow = true,
         .shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.35),
+        .smoothing = t->scheme.font_smoothing,
     };
 }
 
