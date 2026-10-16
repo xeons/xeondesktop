@@ -281,8 +281,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       window and stretched buttons; our apps use `xd_message_box` instead.
 - [ ] The selected tab doesn't overlap its neighbours by 2px as in Windows
       (GTK ignores the negative margins).
-- [?] Luna tabs, group boxes, combo boxes and check glyphs: only Classic
-      and Whistler have been looked at since they were restyled.
+- [?] Luna tabs, group boxes, combo boxes and check glyphs: seen in the
+      System Properties and Run As screenshots and look right, but not
+      compared pixel for pixel with XP like the buttons were.
+- [?] Text everywhere grew from 10.67px to 11px (whole pixels, as GDI).
+      Display Properties, System Properties, Lock Computer and Run As were
+      looked at afterwards; the other libxdui dialogs (Run, Shut Down,
+      Taskbar and Start Menu Properties) and the Start menus weren't
+      re-checked for clipped or crowded labels.
 - [?] Luna/Whistler visuals beyond the file manager's window, and every
       scheme other than Windows Standard: only checked to parse (unit test),
       not looked at.
@@ -334,9 +340,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       handling). Tested: every tab and dialog opens and shows the right
       data; adding a user environment variable. **Untested: renaming the
       computer, its description and changing the power profile** (they go
-      through polkit; see the agent below). Device Manager: no "by connection" view, no
-      disable/uninstall/update driver. User Profiles: Delete, Change Type
-      and Copy To are greyed (administrator jobs).
+      through polkit; see the agent below). Device Manager: no "by
+      connection" view, no disable/uninstall/update driver. User
+      Profiles: Delete, Change Type and Copy To are greyed
+      (administrator jobs).
 - [~] **polkit authentication agent** (`xd-polkit`, started with the
       session): an XP "Run As"-style password dialog (reason, which
       administrator when several qualify, password, Details) checked by
@@ -345,7 +352,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       password, cancelling (reported as dismissed). **Untested: a correct
       password, and registering for a real XeonDesktop login session**
       (nested, the host desktop's agent owns the session, so ours exits).
-      Not restarted if it crashes.
+      Not restarted if it crashes. Its error line ("The password is
+      incorrect") isn't coloured.
 
 ## Testing
 
