@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: MIT */
+#include <fontconfig/fontconfig.h>
 #include <math.h>
 #include <pango/pangocairo.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "draw.h"
 
@@ -107,7 +111,62 @@ xd_rect xd_draw_bevel(cairo_t *cr, xd_rect r, int t, xd_rgba tl, xd_rgba br) {
     return xd_rect_inset(r, t, t);
 }
 
+/* Free metric-compatible stand-ins for the Windows fonts the schemes ask
+ * for, from where packages put them but fontconfig doesn't look: Wine's
+ * Tahoma clone. $XD_FONT_DIRS (colon-separated) is searched first. Only
+ * these files are added, and only to this process. */
+void xd_fonts_init(void) {
+    static bool done;
+    if (done)
+        return;
+    done = true;
+    static const char *const files[] = {"tahoma.ttf", "tahomabd.ttf"};
+    static const char *const dirs[] = {"/usr/share/wine/fonts", "/usr/lib/wine/fonts",
+                                       "/usr/local/share/wine/fonts", "/opt/wine/share/wine/fonts"};
+    FcConfig *config = FcConfigGetCurrent();
+    if (config == nullptr)
+        return;
+    char path[1024];
+    bool added[XD_ARRAY_LEN(files)] = {false};
+    const char *env = getenv("XD_FONT_DIRS");
+    char extra[1024] = "";
+    if (env != nullptr)
+        snprintf(extra, sizeof(extra), "%s", env);
+    /* $XD_FONT_DIRS entries, then the known locations. */
+    for (int pass = 0; pass < 2; pass++) {
+        size_t ndirs = pass == 0 ? 0 : XD_ARRAY_LEN(dirs);
+        char *save = nullptr;
+        char *tok = pass == 0 ? strtok_r(extra, ":", &save) : nullptr;
+        for (size_t d = 0; pass == 0 ? tok != nullptr : d < ndirs; d++) {
+            const char *dir = pass == 0 ? tok : dirs[d];
+            for (size_t f = 0; f < XD_ARRAY_LEN(files); f++) {
+                if (added[f])
+                    continue;
+                snprintf(path, sizeof(path), "%s/%s", dir, files[f]);
+                if (access(path, R_OK) == 0 &&
+                    FcConfigAppFontAddFile(config, (const FcChar8 *)path))
+                    added[f] = true;
+            }
+            if (pass == 0)
+                tok = strtok_r(nullptr, ":", &save);
+        }
+    }
+    /* Wine's Tahoma Bold has thin hand-made bitmaps at small sizes; draw it
+     * from its outlines (regular Tahoma keeps its crisp bitmaps, like XP). */
+    if (added[1]) {
+        static const char rule[] =
+            "<?xml version=\"1.0\"?><!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">"
+            "<fontconfig><match target=\"font\">"
+            "<test name=\"family\"><string>Tahoma</string></test>"
+            "<test name=\"weight\" compare=\"more_eq\"><const>bold</const></test>"
+            "<edit name=\"embeddedbitmap\" mode=\"assign\"><bool>false</bool></edit>"
+            "</match></fontconfig>";
+        FcConfigParseAndLoadFromMemory(config, (const FcChar8 *)rule, FcFalse);
+    }
+}
+
 static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_style *st) {
+    xd_fonts_init();
     PangoLayout *layout = pango_cairo_create_layout(cr);
     PangoFontDescription *fd = pango_font_description_from_string(st->font->family);
     /* Points at 96 DPI -> logical px, then logical -> device. */

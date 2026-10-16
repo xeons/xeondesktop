@@ -18,6 +18,9 @@ rendition. Screenshots are from a nested development session.
 
 Dependencies: meson, ninja, wlroots 0.20, wayland, xkbcommon, cairo, pango,
 GLib/GIO, GTK 3, gdk-pixbuf, and procps-ng's libproc2 (Task Manager).
+Optional: Wine, for its free Tahoma clone (`/usr/share/wine/fonts`), which
+XeonDesktop's programs use so text matches Windows; without it DejaVu Sans
+stands in. Other fonts directories can be added with `XD_FONT_DIRS`.
 
     meson setup build          # debug build with ASan/UBSan
     ninja -C build

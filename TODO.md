@@ -144,8 +144,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       src/theme/luna_data.h): the active and inactive frame (caption,
       borders, corner cut-outs), caption buttons (faces within ~3% RMS),
       taskbar, Start button, task buttons, tray, push buttons and check
-      boxes match at 100%. Not matched: text (Tahoma, Trebuchet MS and
-      Franklin Gothic aren't available; Wine's free Tahoma would help),
+      boxes match at 100%. Text uses Wine's Tahoma when installed (see
+      README); Trebuchet MS (captions) and Franklin Gothic (Start) have no
+      free clone, so Tahoma Bold stands in. Not matched:
       the hover, pressed and focus states and the Restore and Help glyphs
       (not in the reference, so designed), radio buttons, tabs, scroll
       bars, group boxes, menus and the GTK theme's Luna section, which
@@ -156,7 +157,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       bars, taskbar). Not yet: the Windows 2000 and 7 Start menus still use
       the older silvery Whistler colours; menus, group boxes, the window
       icon and inactive colours are guesses.
-- [ ] Font fallback: Tahoma/Trebuchet aren't shipped; DejaVu/Noto stand in.
+- [~] Fonts: Wine's Tahoma (tahoma.ttf, tahomabd.ttf) is used by our programs
+      when installed; otherwise DejaVu/Noto stand in. Third-party GTK apps
+      don't see it (it's registered per process, not system-wide).
 
 ## Dialogs and libxdui
 

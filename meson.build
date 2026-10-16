@@ -89,6 +89,7 @@ m_dep = cc.find_library('m')
 # include_type 'system' keeps third-party headers out of our -Werror net.
 cairo_dep = dependency('cairo', include_type: 'system')
 pango_dep = dependency('pangocairo', include_type: 'system')
+fontconfig_dep = dependency('fontconfig', include_type: 'system')
 glib_dep = dependency('glib-2.0', include_type: 'system')
 
 core_lib = static_library(
@@ -108,11 +109,11 @@ theme_lib = static_library(
   'src/theme/style_whistler.c',
   'src/theme/luna.c',
   'src/theme/gtkcss.c',
-  dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
+  dependencies: [cairo_dep, pango_dep, fontconfig_dep, glib_dep, m_dep],
 )
 theme_dep = declare_dependency(
   link_with: theme_lib,
-  dependencies: [core_dep, cairo_dep, pango_dep, glib_dep, m_dep],
+  dependencies: [core_dep, cairo_dep, pango_dep, fontconfig_dep, glib_dep, m_dep],
 )
 
 settings_lib = static_library(
