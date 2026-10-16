@@ -5,8 +5,14 @@
  *
  *   xd-themeview [--style classic|luna|whistler] [--scheme FILE]
  *                [--scale N] [--out FILE.png]
+ *                [--element active-frame|inactive-frame|taskbar]
+ *
+ * --element draws just one element, at the size it has in the Windows XP
+ * reference screenshot tools/luna-measure.py reads, over magenta, for
+ * pixel comparisons.
  */
 #include <stdlib.h>
+#include <string.h>
 
 #include "../src/theme/theme.h"
 
@@ -15,6 +21,7 @@ typedef struct options {
     const char *scheme_path;
     double scale;
     const char *out;
+    const char *element;
 } options;
 
 static void usage(FILE *f) {
@@ -46,6 +53,8 @@ static bool parse_args(int argc, char **argv, options *o) {
                 fprintf(stderr, "scale must be between 0.5 and 8\n");
                 return false;
             }
+        } else if (xd_str_eq(arg, XD_STR("--element"))) {
+            o->element = val.ptr;
         } else if (xd_str_eq(arg, XD_STR("--out"))) {
             o->out = val.ptr;
         } else {
@@ -113,6 +122,42 @@ static void draw_taskbar(const xd_theme *t, cairo_t *cr, int width, int height) 
                               XD_STATE_NORMAL, "My Documents");
 }
 
+/* One element at its reference geometry. Returns the surface, or nullptr
+ * for an unknown name. */
+static cairo_surface_t *draw_element(const xd_theme *t, const char *name) {
+    bool active = strcmp(name, "active-frame") == 0;
+    if (active || strcmp(name, "inactive-frame") == 0) {
+        int w = xd_tpx(t, active ? 553 : 800), h = xd_tpx(t, active ? 323 : 600);
+        cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+        cairo_t *cr = cairo_create(s);
+        xd_fill_rect(cr, (xd_rect){0, 0, w, h}, xd_rgba_hex(0xFF00FF));
+        xd_frame f = {.title = active ? "Untitled - Notepad" : "My Documents",
+                      .active = active,
+                      .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE};
+        xd_theme_draw_frame(t, cr, (xd_rect){0, 0, w, h}, &f);
+        cairo_destroy(cr);
+        return s;
+    }
+    if (strcmp(name, "taskbar") == 0) {
+        int w = xd_tpx(t, 1920), h = xd_theme_taskbar_height(t);
+        cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+        cairo_t *cr = cairo_create(s);
+        xd_theme_draw_taskbar(t, cr, (xd_rect){0, 0, w, h});
+        xd_theme_draw_start_button(t, cr, (xd_rect){0, 0, xd_theme_start_button_width(t, cr), h},
+                                   XD_STATE_NORMAL);
+        int ty = xd_tpx(t, 3), th = xd_tpx(t, 25), tw = xd_tpx(t, 160);
+        xd_theme_draw_task_button(t, cr, (xd_rect){xd_tpx(t, 106), ty, tw, th}, XD_STATE_NORMAL,
+                                  "My Documents");
+        xd_theme_draw_task_button(t, cr, (xd_rect){xd_tpx(t, 266), ty, tw, th},
+                                  XD_STATE_CHECKED, "Untitled - Notepad");
+        xd_theme_draw_tray(t, cr, (xd_rect){xd_tpx(t, 1755), 0, w - xd_tpx(t, 1755), h},
+                           "11:01 PM");
+        cairo_destroy(cr);
+        return s;
+    }
+    return nullptr;
+}
+
 int main(int argc, char **argv) {
     options o = {.style = XD_STYLE_CLASSIC, .scale = 1.0, .out = "themeview.png"};
     if (!parse_args(argc, argv, &o)) {
@@ -135,6 +180,17 @@ int main(int argc, char **argv) {
     xd_theme theme;
     xd_theme_init(&theme, o.style, &scheme, o.scale);
     const xd_theme *t = &theme;
+
+    if (o.element != nullptr) {
+        cairo_surface_t *s = draw_element(t, o.element);
+        if (s == nullptr) {
+            fprintf(stderr, "unknown element: %s\n", o.element);
+            return EXIT_FAILURE;
+        }
+        cairo_status_t st = cairo_surface_write_to_png(s, o.out);
+        cairo_surface_destroy(s);
+        return st == CAIRO_STATUS_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
 
     int width = xd_tpx(t, 640);
     int height = xd_tpx(t, 420);

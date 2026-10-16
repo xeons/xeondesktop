@@ -68,6 +68,23 @@ void xd_draw_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, xd_glyph g, xd_rgb
 void xd_layout_add_button(xd_frame_layout *l, xd_rect r, xd_frame_part part);
 xd_glyph xd_glyph_for_part(xd_frame_part part, bool maximized);
 
+/* luna.c: Luna's frame, caption buttons and taskbar, from measured colours. */
+xd_insets xd_luna_frame_insets(const xd_theme *t, const xd_frame *f);
+void xd_luna_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                          xd_frame_layout *l);
+void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f);
+int xd_luna_taskbar_height(const xd_theme *t);
+void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r);
+int xd_luna_start_button_width(const xd_theme *t, cairo_t *cr);
+void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                              const char *label);
+void xd_luna_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
+void xd_luna_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                         const char *label);
+void xd_luna_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                           const char *label);
+
 /* The Start button / banner logo: Tux, the Linux penguin. */
 void xd_draw_start_logo(cairo_t *cr, xd_rect r);
 

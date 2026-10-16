@@ -140,8 +140,17 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Wheat, and Large/Extra Large variants).
 - [ ] Verify scheme colour values against a reference: all but Windows
       Standard were written from memory.
-- [ ] Luna colour variants (Olive Green, Silver). Luna is an
-      approximation; tune against references.
+- [~] Luna matched to a Windows XP screenshot (tools/luna-measure.py makes
+      src/theme/luna_data.h): the active and inactive frame (caption,
+      borders, corner cut-outs), caption buttons (faces within ~3% RMS),
+      taskbar, Start button, task buttons, tray, push buttons and check
+      boxes match at 100%. Not matched: text (Tahoma, Trebuchet MS and
+      Franklin Gothic aren't available; Wine's free Tahoma would help),
+      the hover, pressed and focus states and the Restore and Help glyphs
+      (not in the reference, so designed), radio buttons, tabs, scroll
+      bars, group boxes, menus and the GTK theme's Luna section, which
+      still uses the older approximations.
+- [ ] Luna colour variants (Olive Green, Silver).
 - [~] Whistler is the "Watercolor" look, matched against screenshots
       (frame, caption mosaic, caption buttons, buttons, fields, tabs, scroll
       bars, taskbar). Not yet: the Windows 2000 and 7 Start menus still use
