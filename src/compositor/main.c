@@ -5,6 +5,7 @@
  * Wayland session for development.
  */
 #include <stdlib.h>
+#include <unistd.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_data_control_v1.h>
 #include <wlr/types/wlr_data_device.h>
@@ -28,6 +29,8 @@ static void usage(FILE *f) {
                "  --scheme FILE                  classic colour scheme (.ini)\n"
                "  --scale N                      force scale on every output (0.5-4)\n"
                "  --terminal CMD                 command for Ctrl+Alt+T (default alacritty)\n"
+               "  --shell PATH                   taskbar/shell program (default: xd-shell)\n"
+               "  --no-shell                     don't start the shell\n"
                "  -s, --startup CMD              run CMD once the compositor is up\n"
                "  -d, --debug                    verbose logging\n");
 }
@@ -41,6 +44,10 @@ static bool parse_args(int argc, char **argv, xd_config *cfg, bool *debug) {
         }
         if (xd_str_eq(arg, XD_STR("-d")) || xd_str_eq(arg, XD_STR("--debug"))) {
             *debug = true;
+            continue;
+        }
+        if (xd_str_eq(arg, XD_STR("--no-shell"))) {
+            cfg->shell = nullptr;
             continue;
         }
         if (i + 1 >= argc) {
@@ -61,12 +68,15 @@ static bool parse_args(int argc, char **argv, xd_config *cfg, bool *debug) {
             xd_strbuf_free(&err);
             if (!ok)
                 return false;
+            cfg->scheme_path = val;
         } else if (xd_str_eq(arg, XD_STR("--scale"))) {
             if (!xd_str_parse_double(xd_str_from_cstr(val), &cfg->forced_scale) ||
                 cfg->forced_scale < 0.5 || cfg->forced_scale > 4) {
                 fprintf(stderr, "scale must be between 0.5 and 4\n");
                 return false;
             }
+        } else if (xd_str_eq(arg, XD_STR("--shell"))) {
+            cfg->shell = val;
         } else if (xd_str_eq(arg, XD_STR("--terminal"))) {
             cfg->terminal = val;
         } else if (xd_str_eq(arg, XD_STR("-s")) || xd_str_eq(arg, XD_STR("--startup"))) {
@@ -108,9 +118,16 @@ static bool server_init(xd_server *server) {
 
     server->scene = wlr_scene_create();
     server->scene_layout = wlr_scene_attach_output_layout(server->scene, server->output_layout);
-    server->layer_background = wlr_scene_tree_create(&server->scene->tree);
-    server->layer_views = wlr_scene_tree_create(&server->scene->tree);
+    /* Creation order is stacking order, bottom first. */
+    struct wlr_scene_tree *root = &server->scene->tree;
+    server->layer_background = wlr_scene_tree_create(root);
+    server->layers[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = wlr_scene_tree_create(root);
+    server->layers[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = wlr_scene_tree_create(root);
+    server->layer_views = wlr_scene_tree_create(root);
+    server->layers[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(root);
+    server->layers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = wlr_scene_tree_create(root);
 
+    xd_layers_init(server);
     xd_view_init(server);
     xd_input_init(server);
 
@@ -131,6 +148,7 @@ static bool server_init(xd_server *server) {
 }
 
 static void server_finish(xd_server *server) {
+    server->terminating = true;
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
     if (server->sigchld != nullptr)
@@ -151,10 +169,28 @@ static void server_finish(xd_server *server) {
         wl_display_destroy(server->display);
 }
 
+/* Prefers the xd-shell next to this binary (a build tree), else PATH. */
+static const char *default_shell(void) {
+    static char path[4096];
+    ssize_t n = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (n > 0) {
+        path[n] = '\0';
+        char *slash = strrchr(path, '/');
+        static const char name[] = "xd-shell";
+        if (slash != nullptr && (size_t)(slash - path) + sizeof(name) + 1 < sizeof(path)) {
+            memcpy(slash + 1, name, sizeof(name));
+            if (access(path, X_OK) == 0)
+                return path;
+        }
+    }
+    return "xd-shell";
+}
+
 int main(int argc, char **argv) {
     static xd_server server;
     server.config.style = XD_STYLE_CLASSIC;
     server.config.terminal = "alacritty";
+    server.config.shell = default_shell();
     xd_scheme_init_default(&server.config.scheme);
 
     bool debug = false;
@@ -189,6 +225,7 @@ int main(int argc, char **argv) {
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,
             xd_visual_style_name(server.config.style), server.config.scheme.name);
 
+    xd_shell_start(&server);
     if (server.config.startup != nullptr)
         xd_spawn(&server, server.config.startup);
 

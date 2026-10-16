@@ -21,6 +21,11 @@ Nested in an existing X11 or Wayland session (opens a window), or from a TTY:
 
     ./build/xd-compositor --style classic|luna|whistler [--scheme FILE] [--scale 1.5] -s alacritty
 
+The compositor starts `xd-shell` (the taskbar) itself, passing on the style
+and scheme, and restarts it if it crashes. Use `--no-shell` to skip it.
+Clicking a task button activates that window; clicking the active window's
+button minimizes it.
+
 | Keys                | Action                                          |
 |---------------------|-------------------------------------------------|
 | Alt+Tab / Alt+Shift+Tab | Switch windows (release Alt to choose)      |

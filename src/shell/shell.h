@@ -1,0 +1,114 @@
+/* SPDX-License-Identifier: MIT
+ * xd-shell: taskbar (and later Start menu, tray, desktop).
+ */
+#ifndef XD_SHELL_SHELL_H
+#define XD_SHELL_SHELL_H
+
+#include <wayland-client.h>
+
+#include "../core/wlist.h"
+
+#include "../theme/theme.h"
+#include "../ui/shm.h"
+#include "protocols.h"
+
+typedef struct xd_shell xd_shell;
+
+typedef struct xd_early_output {
+    struct wl_output *output;
+    uint32_t name;
+} xd_early_output;
+
+/* A window as reported by the compositor. */
+typedef struct xd_toplevel {
+    struct wl_list link; /* xd_shell.toplevels, in creation order */
+    xd_shell *shell;
+    struct zwlr_foreign_toplevel_handle_v1 *handle;
+    char *title;
+    char *app_id;
+    bool activated;
+    bool minimized;
+    bool maximized;
+} xd_toplevel;
+
+/* Hover/press targets on a taskbar. */
+enum { XD_HIT_NONE = -1, XD_HIT_START = -2, XD_HIT_TRAY = -3 };
+
+typedef struct xd_taskbar {
+    struct wl_list link; /* xd_shell.taskbars */
+    xd_shell *shell;
+    uint32_t output_global; /* registry name of the wl_output */
+    struct wl_output *output;
+    struct wl_surface *surface;
+    struct zwlr_layer_surface_v1 *layer;
+    struct wp_fractional_scale_v1 *fractional;
+    struct wp_viewport *viewport;
+    xd_shm_ring ring;
+
+    int width, height; /* logical, from configure */
+    double scale;
+    bool configured;
+    bool dirty;
+
+    /* Layout from the last render, in device px. task_views[i] is the
+     * window shown by task_rects[i]. */
+    xd_rect start_rect;
+    xd_rect tray_rect;
+    size_t task_count;
+    size_t task_cap;
+    xd_rect *task_rects;
+    xd_toplevel **task_views;
+
+    int hot;     /* XD_HIT_* or a task index */
+    int pressed; /* same, while a button is held */
+} xd_taskbar;
+
+struct xd_shell {
+    xd_visual_style style;
+    xd_scheme scheme;
+
+    struct wl_display *display;
+    struct wl_registry *registry;
+    struct wl_compositor *compositor;
+    struct wl_shm *shm;
+    struct wl_seat *seat;
+    struct wl_pointer *pointer;
+    struct zwlr_layer_shell_v1 *layer_shell;
+    struct zwlr_foreign_toplevel_manager_v1 *toplevel_manager;
+    struct wp_fractional_scale_manager_v1 *fractional_manager;
+    struct wp_viewporter *viewporter;
+    struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
+    struct wp_cursor_shape_device_v1 *cursor_shape;
+
+    struct wl_list taskbars;
+    struct wl_list toplevels;
+
+    xd_taskbar *pointer_bar; /* taskbar under the pointer */
+    double pointer_x, pointer_y;
+
+    char clock[32];
+    bool running;
+
+    /* Outputs announced before startup finished binding globals. */
+    bool started;
+    xd_early_output early_outputs[32];
+    size_t early_count;
+};
+
+/* taskbar.c */
+void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t global);
+void xd_taskbar_destroy(xd_taskbar *bar);
+void xd_taskbar_render(xd_taskbar *bar);
+void xd_taskbars_mark_dirty(xd_shell *shell);
+void xd_taskbars_render_dirty(xd_shell *shell);
+void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y);
+void xd_taskbar_pointer_leave(xd_taskbar *bar);
+void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed);
+/* Forget a window that's going away. */
+void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
+
+/* toplevels.c */
+void xd_toplevels_init(xd_shell *shell);
+void xd_toplevel_click(xd_toplevel *t);
+
+#endif

@@ -114,18 +114,91 @@ theme_dep = declare_dependency(
 
 wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
 wayland_server_dep = dependency('wayland-server', include_type: 'system')
+wayland_client_dep = dependency('wayland-client', include_type: 'system')
 xkbcommon_dep = dependency('xkbcommon', include_type: 'system')
 libdrm_dep = dependency('libdrm', include_type: 'system').partial_dependency(compile_args: true)
+
+# ---- Wayland protocols --------------------------------------------------------
+wayland_scanner = find_program(
+  dependency('wayland-scanner', native: true).get_variable('wayland_scanner'),
+  native: true,
+)
+wp_dir = dependency('wayland-protocols').get_variable('pkgdatadir')
+
+layer_shell_xml = files('protocols/wlr-layer-shell-unstable-v1.xml')
+client_protocol_xml = {
+  'xdg-shell': wp_dir / 'stable/xdg-shell/xdg-shell.xml',
+  'viewporter': wp_dir / 'stable/viewporter/viewporter.xml',
+  'tablet-v2': wp_dir / 'stable/tablet/tablet-v2.xml',
+  'fractional-scale-v1': wp_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
+  'cursor-shape-v1': wp_dir / 'staging/cursor-shape/cursor-shape-v1.xml',
+  'wlr-layer-shell-unstable-v1': layer_shell_xml,
+  'wlr-foreign-toplevel-management-unstable-v1': files(
+    'protocols/wlr-foreign-toplevel-management-unstable-v1.xml',
+  ),
+}
+
+client_protocol_src = []
+foreach name, xml : client_protocol_xml
+  client_protocol_src += custom_target(
+    name + '-client-header',
+    input: xml,
+    output: name + '-client-protocol.h',
+    command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+  )
+  client_protocol_src += custom_target(
+    name + '-protocol-code',
+    input: xml,
+    output: name + '-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  )
+endforeach
+
+# wlroots' layer-shell header includes the server header by this name.
+server_protocol_headers = [
+  custom_target(
+    'wlr-layer-shell-server-header',
+    input: layer_shell_xml,
+    output: 'wlr-layer-shell-unstable-v1-protocol.h',
+    command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+  ),
+]
+
+# Generated code isn't ours to fix; build it without the project warnings.
+client_protocol_lib = static_library(
+  'xdprotocols',
+  client_protocol_src,
+  dependencies: [wayland_client_dep],
+  c_args: ['-w'],
+)
+client_protocol_dep = declare_dependency(
+  link_with: client_protocol_lib,
+  sources: client_protocol_src,
+  dependencies: [wayland_client_dep],
+)
 
 executable(
   'xd-compositor',
   'src/compositor/main.c',
   'src/compositor/output.c',
+  'src/compositor/layers.c',
   'src/compositor/input.c',
   'src/compositor/view.c',
   'src/compositor/frame.c',
+  server_protocol_headers,
   dependencies: [theme_dep, wlroots_dep, wayland_server_dep, xkbcommon_dep, libdrm_dep],
   c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE'],
+  install: true,
+)
+
+executable(
+  'xd-shell',
+  'src/shell/main.c',
+  'src/shell/taskbar.c',
+  'src/shell/toplevels.c',
+  'src/ui/shm.c',
+  dependencies: [theme_dep, client_protocol_dep],
+  c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
 

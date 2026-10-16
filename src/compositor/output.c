@@ -42,6 +42,9 @@ static void update_backgrounds(xd_server *server) {
 static void handle_layout_change(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, layout_change);
     update_backgrounds(server);
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        xd_output_arrange(out);
+    }
     /* Windows may now sit on an output with a different scale. */
     xd_view_update_all_frames(server);
 }
@@ -66,6 +69,11 @@ static void handle_request_state(struct wl_listener *listener, void *data) {
 
 static void handle_output_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_output *out = XD_CONTAINER_OF(listener, xd_output, destroy);
+    /* Layer surfaces belong to one output; their clients get `closed`. */
+    XD_LIST_FOR_EACH_SAFE(ls, tmp, &out->layer_surfaces, xd_layer_surface, link) {
+        wlr_layer_surface_v1_destroy(ls->layer_surface);
+    }
+    xd_view_output_gone(out->server, out->wlr_output);
     xd_unlisten(&out->frame);
     xd_unlisten(&out->request_state);
     xd_unlisten(&out->destroy);
@@ -108,6 +116,7 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
     xd_output *out = XD_NEW(xd_output);
     out->server = server;
     out->wlr_output = wlr_output;
+    wl_list_init(&out->layer_surfaces);
     XD_LISTEN(&wlr_output->events.frame, out, frame, handle_frame);
     XD_LISTEN(&wlr_output->events.request_state, out, request_state, handle_request_state);
     XD_LISTEN(&wlr_output->events.destroy, out, destroy, handle_output_destroy);
@@ -118,6 +127,15 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
     struct wlr_scene_output *so = wlr_scene_output_create(server->scene, wlr_output);
     wlr_scene_output_layout_add_output(server->scene_layout, lo, so);
     update_backgrounds(server);
+    xd_output_arrange(out);
+}
+
+xd_output *xd_output_from_wlr(xd_server *server, struct wlr_output *wlr_output) {
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        if (out->wlr_output == wlr_output)
+            return out;
+    }
+    return nullptr;
 }
 
 static struct wlr_output *output_at(xd_server *server, double lx, double ly) {
@@ -132,12 +150,19 @@ double xd_output_scale_at(xd_server *server, double lx, double ly) {
     return o != nullptr && o->scale > 0 ? (double)o->scale : 1.0;
 }
 
-struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly) {
+xd_output *xd_output_at(xd_server *server, double lx, double ly) {
     struct wlr_output *o = output_at(server, lx, ly);
-    struct wlr_box box = {0, 0, 800, 600};
-    if (o != nullptr)
-        wlr_output_layout_get_box(server->output_layout, o, &box);
-    /* Exclusive zones (the taskbar) are subtracted once layer-shell lands. */
+    return o != nullptr ? xd_output_from_wlr(server, o) : nullptr;
+}
+
+struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly) {
+    xd_output *out = xd_output_at(server, lx, ly);
+    if (out == nullptr)
+        return (struct wlr_box){0, 0, 800, 600};
+    if (!wlr_box_empty(&out->usable))
+        return out->usable;
+    struct wlr_box box;
+    wlr_output_layout_get_box(server->output_layout, out->wlr_output, &box);
     return box;
 }
 

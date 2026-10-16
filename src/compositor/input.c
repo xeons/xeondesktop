@@ -22,14 +22,10 @@
 /* Windows' default double-click time. */
 enum { XD_DOUBLE_CLICK_MS = 500 };
 
-void xd_spawn(xd_server *server, const char *command) {
-    (void)server;
-    if (command == nullptr || command[0] == '\0')
-        return;
-
+pid_t xd_spawn_argv(char *const argv[]) {
     posix_spawnattr_t attr;
     if (posix_spawnattr_init(&attr) != 0)
-        return;
+        return -1;
     /* The event loop blocks SIGCHLD etc. for its signalfd; children must
      * not inherit that mask. */
     sigset_t empty;
@@ -37,16 +33,57 @@ void xd_spawn(xd_server *server, const char *command) {
     posix_spawnattr_setsigmask(&attr, &empty);
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSID);
 
+    pid_t pid = -1;
+    int err = posix_spawnp(&pid, argv[0], nullptr, &attr, argv, environ);
+    posix_spawnattr_destroy(&attr);
+    if (err != 0) {
+        wlr_log(WLR_ERROR, "cannot run %s: %s", argv[0], strerror(err));
+        return -1;
+    }
+    return pid;
+}
+
+void xd_spawn(xd_server *server, const char *command) {
+    (void)server;
+    if (command == nullptr || command[0] == '\0')
+        return;
     char sh[] = "/bin/sh";
     char flag[] = "-c";
     char *cmd = xd_str_dup_cstr(xd_str_from_cstr(command));
     char *argv[] = {sh, flag, cmd, nullptr};
-    pid_t pid;
-    int err = posix_spawn(&pid, sh, nullptr, &attr, argv, environ);
-    if (err != 0)
-        wlr_log(WLR_ERROR, "cannot run '%s': %s", command, strerror(err));
+    xd_spawn_argv(argv);
     xd_free(cmd);
-    posix_spawnattr_destroy(&attr);
+}
+
+void xd_shell_start(xd_server *server) {
+    if (server->config.shell == nullptr || server->terminating)
+        return;
+    /* Restart at most 5 times in 30 seconds, so a shell that crashes on
+     * startup doesn't spin. */
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec - server->shell_restart_window.tv_sec > 30) {
+        server->shell_restart_window = now;
+        server->shell_restarts = 0;
+    }
+    if (++server->shell_restarts > 5) {
+        wlr_log(WLR_ERROR, "shell keeps exiting; not restarting it");
+        return;
+    }
+
+    char *shell = xd_str_dup_cstr(xd_str_from_cstr(server->config.shell));
+    char opt_style[] = "--style";
+    char *style = xd_str_dup_cstr(xd_str_from_cstr(xd_visual_style_name(server->config.style)));
+    char opt_scheme[] = "--scheme";
+    char *scheme = server->config.scheme_path != nullptr
+                       ? xd_str_dup_cstr(xd_str_from_cstr(server->config.scheme_path))
+                       : nullptr;
+    char *argv[] = {shell, opt_style, style, scheme != nullptr ? opt_scheme : nullptr, scheme,
+                    nullptr};
+    server->shell_pid = xd_spawn_argv(argv);
+    xd_free(scheme);
+    xd_free(style);
+    xd_free(shell);
 }
 
 /* ---- keyboard --------------------------------------------------------------- */
@@ -530,8 +567,21 @@ static void handle_request_set_selection(struct wl_listener *listener, void *dat
     wlr_seat_set_selection(server->seat, e->source, e->serial);
 }
 
-static int handle_sigchld([[maybe_unused]] int sig, [[maybe_unused]] void *data) {
-    while (waitpid(-1, nullptr, WNOHANG) > 0) {
+static int handle_sigchld([[maybe_unused]] int sig, void *data) {
+    xd_server *server = data;
+    int status = 0;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (pid != server->shell_pid)
+            continue;
+        server->shell_pid = 0;
+        if (WIFEXITED(status))
+            wlr_log(WLR_INFO, "shell exited with status %d", WEXITSTATUS(status));
+        else if (WIFSIGNALED(status))
+            wlr_log(WLR_ERROR, "shell killed by signal %d; restarting", WTERMSIG(status));
+        /* Only a crash or kill restarts it; a clean exit was deliberate. */
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            xd_shell_start(server);
     }
     return 0;
 }

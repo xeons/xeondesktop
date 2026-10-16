@@ -16,26 +16,50 @@ A Windows 2000/XP-style desktop environment for Linux, written in C23.
 
 ## Components
 
-Each component is a separate process, so a crash in the taskbar can't take
-the session down (the same reason explorer.exe restarts on its own).
+Every component is its own process. In Windows, explorer.exe is both the
+taskbar and the file manager, so a slow network folder or a bad thumbnail
+can freeze the taskbar. Here a crash or hang only takes down the program it
+happens in.
+
+```
+libxdcore    allocation, strings, INI                       (done)
+libxdtheme   styles, schemes, DPI drawing, frame hit tests   (done)
+libxdui      Win32-style widget toolkit + Wayland client plumbing
+libxdfolder  folder view, icons, file types, thumbnail cache client
+
+xd-compositor   window manager                      (milestone 2)
+xd-shell        taskbar, Start menu, tray, desktop  (uses libxdfolder)
+xd-settingsd    settings store + live apply
+xd-files        file manager, also hosts control:   (uses libxdfolder)
+xd-thumbnailer  sandboxed thumbnail generator
+xd-desk, xd-mouse, xd-keyboard, xd-power, ...   Control Panel applets
+```
 
 | Binary              | Role                                                         |
 |---------------------|--------------------------------------------------------------|
-| `xd-compositor`     | Wayland compositor + window manager (wlroots 0.20). Draws window frames server-side with the theme engine, handles focus, snapping, Alt+Tab, per-output scale. |
-| `xd-shell`          | Taskbar, Start menu, Quick Launch, tray, desktop icons. Uses layer-shell, plus a private `xd-shell-v1` protocol to talk to the compositor. |
-| `xd-settingsd`      | Owns the settings store, applies changes live, broadcasts them over D-Bus. |
-| `xd-control`        | Control Panel host. Each applet is a module.                 |
-| `xd-desk`           | Display Properties (also opened from the desktop's right-click menu). |
+| `xd-compositor`     | Wayland compositor + window manager (wlroots 0.20). Draws window frames server-side with the theme engine, handles focus, Alt+Tab, per-output scale, layer-shell work areas. |
+| `xd-shell`          | Taskbar, Start menu, Quick Launch, tray, desktop icons. A layer-shell client; gets the window list from `wlr-foreign-toplevel-management`. |
+| `xd-settingsd`      | Owns the settings store, broadcasts changes over D-Bus so every component applies them live (a new colour scheme recolours everything at once). |
+| `xd-files`          | File manager (see below). Also shows the `control:` folder.  |
+| `xd-thumbnailer`    | Generates thumbnails in a sandbox (see below).               |
+| `xd-control`        | Launcher that opens `control:` in `xd-files`.                |
+| `xd-desk`, ...      | One small executable per Control Panel applet.               |
 | `xd-themeview`      | Developer tool that renders theme previews to PNG.           |
 
 Shared libraries:
 
 - `libxdcore`: checked allocation, arenas, strings, INI, logging.
-- `libxdtheme`: colour schemes, metrics, visual styles, DPI-aware drawing.
-- `libxdui` (planned): a small Win32-style widget toolkit (buttons, check
-  boxes, tabs, list views, tree views, property sheets). It's drawn with
-  libxdtheme so every companion app matches the selected style exactly.
-  GTK/Qt can't reproduce Classic bevels or colour schemes faithfully.
+- `libxdtheme`: colour schemes, metrics, visual styles, DPI-aware drawing,
+  frame layout and hit testing.
+- `libxdui` (planned): a Win32-style widget toolkit (buttons, check boxes,
+  edit fields, tabs, property sheets, menus, toolbars, list views in all five
+  view modes, tree views, scroll bars, splitters, keyboard navigation) plus
+  the Wayland client plumbing every app needs (shm buffers, fractional
+  scaling per output, input). It's drawn with libxdtheme so every app
+  matches the selected style exactly; GTK/Qt can't reproduce Classic bevels
+  or colour schemes faithfully. Accessibility (AT-SPI) is a later goal.
+- `libxdfolder` (planned): the folder view used by both `xd-files` and the
+  desktop, so the two behave identically.
 
 ## Display and DPI model
 
@@ -93,10 +117,50 @@ Five tabs, as in Windows XP:
    `wlr-output-management` and roll back automatically after 15 s unless
    confirmed.
 
-## Control Panel (`xd-control`)
+## File manager (`xd-files`)
 
-Category view (XP) and classic icon view (2000). Applets that make sense on
-Linux:
+Modelled on Windows XP's Explorer windows:
+
+- **Views**: Thumbnails, Tiles, Icons, List, Details (sortable, resizable,
+  reorderable columns), with a **thumbnail size** slider.
+- **Left pane**: the Folders tree, or XP's blue task pane (File and Folder
+  Tasks, Other Places, Details), toggled from the toolbar.
+- Address bar, Back/Forward/Up, Search, per-folder view settings,
+  rename in place, drag and drop, cut/copy/paste, Properties dialogs.
+- Special folders: My Documents (`~/Documents`), My Computer (drives and
+  mounts), Recycle Bin (freedesktop trash), Network Places (gvfs),
+  Control Panel (`control:`).
+- **File operations use GIO**, which we already depend on through pango:
+  copy/move with progress and conflict dialogs, trash, mounting via
+  UDisks2, MIME detection (shared-mime-info), change monitoring, and
+  SMB/SFTP through gvfs. Rewriting that in C would add risk for no gain.
+- **Thumbnails** follow the freedesktop thumbnail spec
+  (`~/.cache/thumbnails`), so they're shared with other Linux apps. Missing
+  ones are made by `xd-thumbnailer`, a separate process confined with
+  seccomp and only given the file to decode. Decoding untrusted images,
+  PDFs and videos is the riskiest code in the desktop, so it never runs
+  inside the file manager or the shell.
+- The desktop is a `libxdfolder` view of `~/Desktop` drawn by `xd-shell`.
+
+## Control Panel
+
+As in Windows, where Control Panel was a special folder in Explorer and each
+applet was a separate `.cpl` you could run on its own (`control desk.cpl`):
+
+- **Each applet is its own executable** (`xd-desk`, `xd-mouse`,
+  `xd-power`, ...). A crash in one doesn't affect the others, and each can be
+  opened directly: right-click the desktop, Properties, runs `xd-desk`.
+- **The Control Panel is a virtual `control:` folder in `xd-files`**, with
+  XP's category view and the classic icon view. Applets register with a
+  `.desktop` file (`Categories=X-XeonDesktop-ControlPanel;`), so a new
+  one just appears.
+- **Applets never run as root.** System changes go through polkit-guarded
+  services (timedated, NetworkManager, AccountsService, ...). Desktop
+  settings go through `xd-settingsd`. Nothing is setuid.
+- Plugins (shared modules) are only used for things that must live inside
+  another process: screen savers and, later, shell extensions.
+
+Applets that make sense on Linux:
 
 | Applet                    | Backend                                              |
 |---------------------------|------------------------------------------------------|
@@ -122,15 +186,16 @@ Linux:
 | Scheduled Tasks           | systemd user timers                                  |
 | Game Controllers          | evdev joystick test/calibration                      |
 
-Each applet is a shared module with a fixed C ABI (`xd_applet_v1`). It runs
-inside `xd-control` and makes privileged changes through polkit-guarded
-D-Bus services. Nothing runs setuid.
-
 ## Taskbar and Start menu
 
-- Task list from the compositor (`xd-shell-v1`, a superset of
-  `wlr-foreign-toplevel-management`). Grouping is optional: always, never,
-  or when the taskbar is full (XP's rule).
+- The taskbar is a layer-shell surface with an exclusive zone, so the
+  compositor shrinks each output's work area and maximized windows stop
+  above it. One taskbar per output, or only on the primary one (setting).
+- Task list from `wlr-foreign-toplevel-management`. A private protocol is
+  added only where that falls short (window icons, Alt+Tab thumbnails).
+  Clicking the active window's button minimizes it, as in Windows.
+  Grouping is optional: always, never, or when the taskbar is full (XP's
+  rule).
 - Quick Launch: a folder of `.desktop` files, drag and drop to reorder.
 - Notification area: StatusNotifierItem (KDE/Ayatana) host plus legacy XEmbed
   bridging is out of scope on Wayland. Clock, volume, network and battery
@@ -165,7 +230,12 @@ D-Bus services. Nothing runs setuid.
    move/resize, caption buttons, focus, Alt+Tab, cascade placement,
    maximize/minimize, per-output DPI scale. Still to do: window menu,
    fullscreen, keyboard layout settings, output hotplug rearrangement.
-3. Shell: taskbar, Start menu (2000 layout first), Quick Launch, clock.
-4. `libxdui` widget toolkit, then Display Properties.
-5. Start menu XP and 7 layouts, grouping, tray (SNI).
-6. Control Panel host and applets, roughly in table order.
+3. Shell, part 1 (in progress): layer-shell work areas, taskbar with task
+   buttons and clock, one per output, DPI-aware.
+4. `libxdui` widget toolkit, then Display Properties (`xd-desk`) as its
+   first real user.
+5. Shell, part 2: Start menu (2000 layout first), Quick Launch, icon theme
+   lookup, `xd-settingsd`.
+6. `libxdfolder`, `xd-files`, `xd-thumbnailer`, desktop icons.
+7. Start menu XP and 7 layouts, grouping, tray (SNI).
+8. Remaining Control Panel applets, roughly in table order.

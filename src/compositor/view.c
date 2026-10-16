@@ -60,10 +60,27 @@ static void update_content_position(xd_view *view) {
     wlr_scene_node_set_position(&view->content->node, in.left - geo.x, in.top - geo.y);
 }
 
+/* Tells the taskbar which output the window is on (by its centre). */
+static void update_ftl_output(xd_view *view) {
+    if (view->ftl == nullptr)
+        return;
+    struct wlr_box b = xd_view_outer_box(view);
+    xd_output *out = xd_output_at(view->server, b.x + b.width / 2.0, b.y + b.height / 2.0);
+    struct wlr_output *o = out != nullptr ? out->wlr_output : nullptr;
+    if (o == view->ftl_output)
+        return;
+    if (view->ftl_output != nullptr)
+        wlr_foreign_toplevel_handle_v1_output_leave(view->ftl, view->ftl_output);
+    if (o != nullptr)
+        wlr_foreign_toplevel_handle_v1_output_enter(view->ftl, o);
+    view->ftl_output = o;
+}
+
 void xd_view_set_position(xd_view *view, int x, int y) {
     view->x = x;
     view->y = y;
     wlr_scene_node_set_position(&view->tree->node, x, y);
+    update_ftl_output(view);
     /* The frame's pixel scale follows the output it's on. */
     xd_frame_render(view, false);
 }
@@ -114,6 +131,8 @@ void xd_view_update_all_frames(xd_server *server) {
 
 static void set_activated(xd_view *view, bool activated) {
     wlr_xdg_toplevel_set_activated(view->toplevel, activated);
+    if (view->ftl != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_activated(view->ftl, activated);
     xd_frame_render(view, false);
 }
 
@@ -125,6 +144,8 @@ void xd_view_focus(xd_view *view) {
     if (view->minimized) {
         view->minimized = false;
         wlr_scene_node_set_enabled(&view->tree->node, true);
+        if (view->ftl != nullptr)
+            wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, false);
     }
 
     wlr_scene_node_raise_to_top(&view->tree->node);
@@ -168,10 +189,14 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
                                                      outer.y + outer.height / 2.0);
         view->maximized = true;
         wlr_xdg_toplevel_set_maximized(view->toplevel, true);
+        if (view->ftl != nullptr)
+            wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, true);
         xd_view_set_outer_box(view, area);
     } else {
         view->maximized = false;
         wlr_xdg_toplevel_set_maximized(view->toplevel, false);
+        if (view->ftl != nullptr)
+            wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, false);
         xd_view_set_outer_box(view, view->restore);
     }
 }
@@ -182,6 +207,8 @@ void xd_view_minimize(xd_view *view) {
     bool was_focused = xd_view_focused(view->server) == view;
     view->minimized = true;
     wlr_scene_node_set_enabled(&view->tree->node, false);
+    if (view->ftl != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, true);
     set_activated(view, false);
     if (was_focused) {
         /* Send it to the back of the focus order, like Windows does. */
@@ -231,9 +258,80 @@ static void place_new_view(xd_view *view) {
                          area.y + (area.height - outer.height) / 2);
 }
 
+/* ---- taskbar handle (wlr-foreign-toplevel-management) ---------------------- */
+
+static void handle_ftl_activate(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_activate);
+    xd_view_focus(view);
+}
+
+static void handle_ftl_minimize(struct wl_listener *listener, void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_minimize);
+    const struct wlr_foreign_toplevel_handle_v1_minimized_event *e = data;
+    if (e->minimized)
+        xd_view_minimize(view);
+    else
+        xd_view_focus(view);
+}
+
+static void handle_ftl_maximize(struct wl_listener *listener, void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_maximize);
+    const struct wlr_foreign_toplevel_handle_v1_maximized_event *e = data;
+    xd_view_set_maximized(view, e->maximized);
+}
+
+static void handle_ftl_close(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_close);
+    xd_view_close(view);
+}
+
+static void ftl_create(xd_view *view) {
+    view->ftl = wlr_foreign_toplevel_handle_v1_create(view->server->ftl_manager);
+    if (view->toplevel->title != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, view->toplevel->title);
+    if (view->toplevel->app_id != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_app_id(view->ftl, view->toplevel->app_id);
+    wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, view->maximized);
+    XD_LISTEN(&view->ftl->events.request_activate, view, ftl_activate, handle_ftl_activate);
+    XD_LISTEN(&view->ftl->events.request_minimize, view, ftl_minimize, handle_ftl_minimize);
+    XD_LISTEN(&view->ftl->events.request_maximize, view, ftl_maximize, handle_ftl_maximize);
+    XD_LISTEN(&view->ftl->events.request_close, view, ftl_close, handle_ftl_close);
+}
+
+static void ftl_destroy(xd_view *view) {
+    if (view->ftl == nullptr)
+        return;
+    xd_unlisten(&view->ftl_activate);
+    xd_unlisten(&view->ftl_minimize);
+    xd_unlisten(&view->ftl_maximize);
+    xd_unlisten(&view->ftl_close);
+    wlr_foreign_toplevel_handle_v1_destroy(view->ftl);
+    view->ftl = nullptr;
+    view->ftl_output = nullptr;
+}
+
+void xd_view_refit_maximized(xd_server *server, xd_output *out) {
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (!view->mapped || !view->maximized)
+            continue;
+        struct wlr_box b = xd_view_outer_box(view);
+        if (xd_output_at(server, b.x + b.width / 2.0, b.y + b.height / 2.0) == out)
+            xd_view_set_outer_box(view, out->usable);
+    }
+}
+
+void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output) {
+    /* wlroots drops the output from each handle itself. */
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (view->ftl_output == wlr_output)
+            view->ftl_output = nullptr;
+    }
+}
+
 static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, map);
     view->mapped = true;
+    ftl_create(view);
     update_content_position(view);
     place_new_view(view);
     xd_view_focus(view);
@@ -245,6 +343,9 @@ static void handle_unmap(struct wl_listener *listener, [[maybe_unused]] void *da
     xd_server *server = view->server;
     bool was_focused = xd_view_focused(server) == view;
     view->mapped = false;
+    view->minimized = false;
+    wlr_scene_node_set_enabled(&view->tree->node, true);
+    ftl_destroy(view);
 
     if (server->grab_view == view) {
         server->mode = XD_CURSOR_PASSTHROUGH;
@@ -352,12 +453,21 @@ static void handle_request_fullscreen(struct wl_listener *listener, [[maybe_unus
 
 static void handle_set_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_title);
+    if (view->ftl != nullptr && view->toplevel->title != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, view->toplevel->title);
     view->drawn.title_dirty = true;
     xd_frame_render(view, false);
 }
 
+static void handle_set_app_id(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_app_id);
+    if (view->ftl != nullptr && view->toplevel->app_id != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_app_id(view->ftl, view->toplevel->app_id);
+}
+
 static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, destroy);
+    ftl_destroy(view);
     xd_server *server = view->server;
     if (server->grab_view == view) {
         server->grab_view = nullptr;
@@ -380,6 +490,7 @@ static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *
     xd_unlisten(&view->request_minimize);
     xd_unlisten(&view->request_fullscreen);
     xd_unlisten(&view->set_title);
+    xd_unlisten(&view->set_app_id);
     xd_unlisten(&view->decoration_mode);
     xd_unlisten(&view->decoration_destroy);
     wl_list_remove(&view->link);
@@ -417,6 +528,7 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data) {
     XD_LISTEN(&toplevel->events.request_fullscreen, view, request_fullscreen,
               handle_request_fullscreen);
     XD_LISTEN(&toplevel->events.set_title, view, set_title, handle_set_title);
+    XD_LISTEN(&toplevel->events.set_app_id, view, set_app_id, handle_set_app_id);
 }
 
 /* ---- decorations --------------------------------------------------------- */
@@ -506,6 +618,7 @@ void xd_view_init(xd_server *server) {
               handle_new_toplevel);
     XD_LISTEN(&server->xdg_shell->events.new_popup, server, new_popup, handle_new_popup);
 
+    server->ftl_manager = wlr_foreign_toplevel_manager_v1_create(server->display);
     server->xdg_decoration = wlr_xdg_decoration_manager_v1_create(server->display);
     XD_LISTEN(&server->xdg_decoration->events.new_toplevel_decoration, server, new_decoration,
               handle_new_decoration);

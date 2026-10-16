@@ -4,10 +4,14 @@
 #ifndef XD_COMPOSITOR_SERVER_H
 #define XD_COMPOSITOR_SERVER_H
 
+#include <sys/types.h>
+#include <time.h>
 #include <wlr/backend.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
@@ -23,6 +27,7 @@
  * traced back to what owns it. */
 typedef enum xd_node_kind : uint8_t {
     XD_NODE_VIEW = 1,
+    XD_NODE_LAYER = 2,
 } xd_node_kind;
 
 typedef struct xd_node_tag {
@@ -46,10 +51,27 @@ typedef struct xd_output {
     xd_server *server;
     struct wlr_output *wlr_output;
     struct wlr_scene_rect *background;
+    struct wl_list layer_surfaces; /* xd_layer_surface.link */
+    struct wlr_box usable;         /* work area: output minus exclusive zones */
     struct wl_listener frame;
     struct wl_listener request_state;
     struct wl_listener destroy;
 } xd_output;
+
+/* A layer-shell surface (taskbar, desktop, notifications, ...). */
+typedef struct xd_layer_surface {
+    xd_node_tag tag; /* must be first */
+    struct wl_list link; /* xd_output.layer_surfaces */
+    xd_server *server;
+    xd_output *output;
+    struct wlr_layer_surface_v1 *layer_surface;
+    struct wlr_scene_layer_surface_v1 *scene;
+    enum zwlr_layer_shell_v1_layer layer;
+    struct wl_listener map;
+    struct wl_listener unmap;
+    struct wl_listener commit;
+    struct wl_listener destroy;
+} xd_layer_surface;
 
 typedef struct xd_view {
     xd_node_tag tag; /* must be first */
@@ -57,6 +79,9 @@ typedef struct xd_view {
     xd_server *server;
     struct wlr_xdg_toplevel *toplevel;
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
+    /* Taskbar entry; exists while mapped. */
+    struct wlr_foreign_toplevel_handle_v1 *ftl;
+    struct wlr_output *ftl_output;
 
     struct wlr_scene_tree *tree;    /* at the outer frame origin */
     struct wlr_scene_buffer *frame; /* server-side decoration */
@@ -90,6 +115,11 @@ typedef struct xd_view {
     struct wl_listener request_minimize;
     struct wl_listener request_fullscreen;
     struct wl_listener set_title;
+    struct wl_listener set_app_id;
+    struct wl_listener ftl_activate;
+    struct wl_listener ftl_minimize;
+    struct wl_listener ftl_maximize;
+    struct wl_listener ftl_close;
     struct wl_listener decoration_mode;
     struct wl_listener decoration_destroy;
 } xd_view;
@@ -106,6 +136,8 @@ typedef struct xd_keyboard {
 typedef struct xd_config {
     xd_visual_style style;
     xd_scheme scheme;
+    const char *scheme_path; /* passed on to the shell */
+    const char *shell;       /* shell executable; nullptr = don't start one */
     double forced_scale; /* 0 = pick per output from its DPI */
     const char *terminal;
     const char *startup;
@@ -124,8 +156,16 @@ struct xd_server {
 
     struct wlr_scene *scene;
     struct wlr_scene_output_layout *scene_layout;
+    /* Bottom to top: desktop colour, layer-shell background and bottom,
+     * windows, layer-shell top and overlay. */
     struct wlr_scene_tree *layer_background;
     struct wlr_scene_tree *layer_views;
+    struct wlr_scene_tree *layers[4]; /* indexed by zwlr_layer_shell_v1_layer */
+
+    struct wlr_layer_shell_v1 *layer_shell;
+    struct wl_listener new_layer_surface;
+
+    struct wlr_foreign_toplevel_manager_v1 *ftl_manager;
 
     struct wlr_output_layout *output_layout;
     struct wl_list outputs;
@@ -174,10 +214,23 @@ struct xd_server {
     xd_view *cycle_view;
 
     struct wl_event_source *sigchld;
+
+    /* The shell is restarted if it crashes, like explorer.exe. */
+    pid_t shell_pid;
+    uint32_t shell_restarts;
+    struct timespec shell_restart_window;
+    bool terminating;
 };
 
 /* output.c */
 void xd_output_init(xd_server *server);
+/* Lays out layer surfaces and recomputes the work area. */
+void xd_output_arrange(xd_output *out);
+xd_output *xd_output_from_wlr(xd_server *server, struct wlr_output *wlr_output);
+xd_output *xd_output_at(xd_server *server, double lx, double ly);
+
+/* layers.c */
+void xd_layers_init(xd_server *server);
 double xd_output_scale_at(xd_server *server, double lx, double ly);
 /* Usable area of the output containing (lx, ly), in layout coordinates. */
 struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly);
@@ -185,7 +238,11 @@ struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly);
 /* input.c */
 void xd_input_init(xd_server *server);
 void xd_cursor_set(xd_server *server, const char *name);
+/* Runs argv[0] (searched in PATH) with argv. Returns the pid or -1. */
+pid_t xd_spawn_argv(char *const argv[]);
+/* Runs a shell command line. */
 void xd_spawn(xd_server *server, const char *command);
+void xd_shell_start(xd_server *server);
 
 /* view.c */
 void xd_view_init(xd_server *server);
@@ -206,6 +263,10 @@ xd_insets xd_view_insets(const xd_view *view);
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly);
 void xd_view_set_hover(xd_view *view, xd_frame_part hot, xd_frame_part pressed);
 void xd_view_update_all_frames(xd_server *server);
+/* Re-fits maximized windows after a work area change. */
+void xd_view_refit_maximized(xd_server *server, xd_output *out);
+/* Forget an output that is going away. */
+void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output);
 
 /* frame.c */
 void xd_frame_render(xd_view *view, bool force);
