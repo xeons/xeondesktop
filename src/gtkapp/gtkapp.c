@@ -5,7 +5,8 @@
 #include "../theme/draw.h"
 #include "gtkapp.h"
 
-void xd_gtk_app_preinit(void) {
+void xd_gtk_app_preinit(const char *app_id) {
+    g_set_prgname(app_id);
     /* Before GTK loads fonts, so the theme's Tahoma resolves. */
     xd_fonts_init();
     /* GTK_THEME pins the theme for the life of the process; our own apps

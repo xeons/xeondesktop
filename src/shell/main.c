@@ -580,6 +580,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         xd_taskbars_render_dirty(shell);
         xd_menus_render_dirty(shell);
         xd_start7_render_dirty(shell);
+        xd_tooltip_render_dirty(shell);
         while (wl_display_prepare_read(d) != 0)
             wl_display_dispatch_pending(d);
         if (!flush_display(d)) {
@@ -587,7 +588,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             return EXIT_FAILURE;
         }
 
-        struct pollfd fds[7] = {
+        struct pollfd fds[8] = {
             {.fd = wl_display_get_fd(d), .events = POLLIN},
             {.fd = timer_fd, .events = POLLIN},
             {.fd = signal_fd, .events = POLLIN},
@@ -595,6 +596,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             {.fd = shell->settings_fd, .events = POLLIN},
             {.fd = shell->quicklaunch.watch_fd, .events = POLLIN},
             {.fd = shell->flash_timer_fd, .events = POLLIN},
+            {.fd = shell->tooltip_timer_fd, .events = POLLIN},
         };
         if (poll(fds, XD_ARRAY_LEN(fds), -1) < 0) {
             wl_display_cancel_read(d);
@@ -640,6 +642,11 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             (void)!read(shell->flash_timer_fd, &expirations, sizeof(expirations));
             xd_toplevels_flash_tick(shell);
         }
+        if (shell->tooltip_timer_fd >= 0 && (fds[7].revents & POLLIN)) {
+            uint64_t expirations;
+            (void)!read(shell->tooltip_timer_fd, &expirations, sizeof(expirations));
+            xd_taskbar_tooltip_timer(shell);
+        }
     }
     return EXIT_SUCCESS;
 }
@@ -652,6 +659,7 @@ int main(int argc, char **argv) {
     shell.terminal = term != nullptr && term[0] != '\0' ? term : "alacritty";
     shell.menu_timer_fd = -1;
     shell.flash_timer_fd = -1;
+    shell.tooltip_timer_fd = -1;
     shell.saver_pidfd = -1;
     shell.settings_fd = -1;
     shell.quicklaunch.watch_fd = -1;
@@ -693,6 +701,7 @@ int main(int argc, char **argv) {
     xd_start_menu_build(&shell);
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     shell.flash_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    shell.tooltip_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
 
     update_clock(&shell);
     xd_toplevels_init(&shell);

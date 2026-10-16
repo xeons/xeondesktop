@@ -887,7 +887,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--devmgr") == 0)
             devmgr_only = TRUE;
     }
-    xd_gtk_app_preinit();
+    xd_gtk_app_preinit("org.xeondesktop.SystemProperties");
     GtkApplication *app = gtk_application_new("org.xeondesktop.SystemProperties",
                                               G_APPLICATION_NON_UNIQUE);
     g_signal_connect(app, "startup", G_CALLBACK(on_startup), nullptr);

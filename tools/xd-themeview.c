@@ -117,9 +117,9 @@ static void draw_taskbar(const xd_theme *t, cairo_t *cr, int width, int height) 
     int ty = classic ? start.y : bar.y + xd_tpx(t, 3);
     int tht = classic ? start.h : bar.h - xd_tpx(t, 5);
     xd_theme_draw_task_button(t, cr, (xd_rect){x, ty, task_w, tht}, XD_STATE_CHECKED,
-                              "Display Properties");
+                              "Display Properties", nullptr);
     xd_theme_draw_task_button(t, cr, (xd_rect){x + task_w + xd_tpx(t, 3), ty, task_w, tht},
-                              XD_STATE_NORMAL, "My Documents");
+                              XD_STATE_NORMAL, "My Documents", nullptr);
 }
 
 /* One element at its reference geometry. Returns the surface, or nullptr
@@ -147,9 +147,9 @@ static cairo_surface_t *draw_element(const xd_theme *t, const char *name) {
                                    XD_STATE_NORMAL);
         int ty = xd_tpx(t, 3), th = xd_tpx(t, 25), tw = xd_tpx(t, 160);
         xd_theme_draw_task_button(t, cr, (xd_rect){xd_tpx(t, 106), ty, tw, th}, XD_STATE_NORMAL,
-                                  "My Documents");
+                                  "My Documents", nullptr);
         xd_theme_draw_task_button(t, cr, (xd_rect){xd_tpx(t, 266), ty, tw, th},
-                                  XD_STATE_CHECKED, "Untitled - Notepad");
+                                  XD_STATE_CHECKED, "Untitled - Notepad", nullptr);
         xd_theme_draw_tray(t, cr, (xd_rect){xd_tpx(t, 1755), 0, w - xd_tpx(t, 1755), h},
                            "11:01 PM");
         cairo_destroy(cr);

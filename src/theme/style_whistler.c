@@ -287,7 +287,7 @@ static void whistler_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r
 
 /* Flat task buttons separated by a dark and a light line. */
 static void whistler_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                                      const char *label) {
+                                      const char *label, cairo_surface_t *window_icon) {
     int px = xd_tpx(t, 1);
     bool active = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
     if (active)
@@ -306,8 +306,7 @@ static void whistler_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r,
     int icon = xd_tpx(t, 16);
     int ix = r.x + xd_tpx(t, 6);
     int iy = r.y + (r.h - icon) / 2;
-    xd_fill_rect(cr, (xd_rect){ix, iy, icon, icon}, hex(0xFFFFFF));
-    xd_fill_rect(cr, (xd_rect){ix, iy, icon, xd_tpx(t, 4)}, hex(BAR_EDGE));
+    xd_style_task_icon(t, cr, window_icon, ix, iy);
     xd_text_style st = xd_text(t, XD_FONT_MENU, hex(0xFFFFFF), XD_ALIGN_START);
     int tx = ix + icon + xd_tpx(t, 5);
     xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx - xd_tpx(t, 6), r.h}, label, &st);

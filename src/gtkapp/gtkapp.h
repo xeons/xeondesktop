@@ -8,8 +8,11 @@
 
 #include <gtk/gtk.h>
 
-/* Call before GTK starts (before g_application_run). */
-void xd_gtk_app_preinit(void);
+/* Call before GTK starts (before g_application_run). `app_id` (e.g.
+ * "org.xeondesktop.Files") becomes the program name, which GTK 3 sends
+ * as the Wayland app id: the taskbar finds the desktop file (and icon) by
+ * it, and the compositor finds the window. */
+void xd_gtk_app_preinit(const char *app_id);
 /* Call once GTK is initialized (e.g. in GApplication::startup). */
 void xd_gtk_app_follow_theme(void);
 

@@ -339,7 +339,7 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
     }
-    xd_gtk_app_preinit();
+    xd_gtk_app_preinit("org.xeondesktop.PolicyKitAgent");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
 

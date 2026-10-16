@@ -126,8 +126,9 @@ int xd_theme_taskbar_height(const xd_theme *t);
 void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r);
 int xd_theme_start_button_width(const xd_theme *t, cairo_t *cr);
 void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+/* icon: the window's 16px (logical) icon, or nullptr for a generic one. */
 void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                               const char *label);
+                               const char *label, cairo_surface_t *icon);
 /* Taskbar toolbar grip (the ridge you drag a toolbar by), vertical. */
 int xd_theme_toolbar_grip_width(const xd_theme *t);
 void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r);
@@ -135,8 +136,11 @@ void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r);
  * paints the icon. state: XD_STATE_HOT, _PRESSED. */
 void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
 
-/* Notification area well at the right end of the taskbar. */
+/* Notification area well at the right end of the taskbar: the clock is
+ * drawn right-aligned inside the margins; tray icons go to its left. */
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
+/* Space (device px) between the well's edges and its contents. */
+void xd_theme_tray_margins(const xd_theme *t, int *left, int *right);
 
 /* ---- menus (device px) ---- */
 

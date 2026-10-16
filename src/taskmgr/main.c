@@ -1634,7 +1634,7 @@ static void on_startup([[maybe_unused]] GApplication *app, [[maybe_unused]] gpoi
 }
 
 int main(int argc, char **argv) {
-    xd_gtk_app_preinit();
+    xd_gtk_app_preinit("org.xeondesktop.TaskManager");
     GtkApplication *app = gtk_application_new("org.xeondesktop.TaskManager",
                                               G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(app, "startup", G_CALLBACK(on_startup), nullptr);

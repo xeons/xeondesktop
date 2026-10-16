@@ -20,6 +20,7 @@
 #include "../ui/protocols.h"
 
 typedef struct xd_shell xd_shell;
+typedef struct xd_tooltip xd_tooltip;
 typedef struct xd_start7 xd_start7;
 
 typedef struct xd_early_output {
@@ -35,6 +36,7 @@ typedef struct xd_toplevel {
     uint64_t id; /* never reused, unlike the address */
     char *title;
     char *app_id;
+    char *icon; /* its application's Icon key, from app_id; may be nullptr */
     bool activated;
     bool minimized;
     bool maximized;
@@ -103,6 +105,7 @@ typedef struct xd_taskbar {
     int hot;     /* XD_HIT_* or a task index */
     double pointer_x, pointer_y; /* last pointer position, logical */
     int pressed; /* same, while a button is held */
+    bool tooltip_off; /* clicked: no tooltip until the pointer moves on */
 } xd_taskbar;
 
 struct xd_shell {
@@ -165,6 +168,10 @@ struct xd_shell {
     uint32_t menu_serial;   /* input serial the menu grab was made with */
     int menu_timer_fd;      /* hover delay */
     int flash_timer_fd;     /* task buttons flashing for attention */
+    /* Taskbar tooltips: the one shown, and the hover delay before one. */
+    xd_tooltip *tooltip;
+    int tooltip_timer_fd;
+    int64_t tooltip_shown_ms, tooltip_hidden_ms;
     xd_menu *pending_menu;  /* menu waiting for the hover delay */
 
     char clock[32];
@@ -202,6 +209,19 @@ void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial);
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);
 /* Listens for the compositor's window menu requests. */
 void xd_taskmenu_bind(xd_shell *shell);
+/* tooltip.c: a tooltip popup of `layer`, next to `anchor` (surface-local,
+ * logical), replacing any other. */
+void xd_tooltip_show(xd_shell *shell, struct zwlr_layer_surface_v1 *layer, xd_rect anchor,
+                     const char *text, double scale);
+void xd_tooltip_hide(xd_shell *shell);
+void xd_tooltip_render_dirty(xd_shell *shell);
+/* Starts (or restarts) the hover delay; xd_taskbar_tooltip_timer runs
+ * when it's over. */
+void xd_tooltip_arm(xd_shell *shell);
+void xd_tooltip_disarm(xd_shell *shell);
+int64_t xd_tooltip_now_ms(void);
+/* taskbar.c: the hover delay ended: show the hovered item's tooltip. */
+void xd_taskbar_tooltip_timer(xd_shell *shell);
 /* toplevels.c: a window asked for attention (xd-window-arranger-v1). */
 void xd_toplevel_attention(xd_shell *shell, struct zwlr_foreign_toplevel_handle_v1 *handle);
 /* toplevels.c: the flash timer fired. */

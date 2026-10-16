@@ -440,7 +440,7 @@ static void on_startup([[maybe_unused]] GApplication *app, [[maybe_unused]] gpoi
 
 int main(int argc, char **argv) {
     bool change_only = argc > 1 && strcmp(argv[1], "--change-password") == 0;
-    xd_gtk_app_preinit();
+    xd_gtk_app_preinit("org.xeondesktop.Security");
     if (change_only) {
         /* Change Password on its own (Windows 7's Ctrl+Alt+Delete screen,
          * or a Control Panel link). */

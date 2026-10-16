@@ -421,7 +421,7 @@ void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_
 }
 
 void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                              const char *label) {
+                              const char *label, cairo_surface_t *window_icon) {
     bool pressed = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
     image im;
     int w = logical(t, r.w);
@@ -450,8 +450,7 @@ void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t
     int icon = xd_tpx(t, 16);
     int ix = r.x + xd_tpx(t, 10);
     int iy = r.y + (r.h - icon) / 2;
-    xd_fill_rect(cr, (xd_rect){ix, iy, icon, icon}, xd_rgba_hex(0xFFFFFF));
-    xd_fill_rect(cr, (xd_rect){ix, iy, icon, xd_tpx(t, 4)}, xd_rgba_hex(0x2D63D8));
+    xd_style_task_icon(t, cr, window_icon, ix, iy);
     xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_START);
     int tx = ix + icon + xd_tpx(t, 4);
     xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx - xd_tpx(t, 6), r.h}, label, &st);

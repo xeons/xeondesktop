@@ -39,6 +39,13 @@ void xd_apps_free(xd_app_list *list);
 [[nodiscard]] bool xd_app_from_file(const char *path, xd_arena *arena, xd_app *out);
 void xd_app_release(xd_app *app);
 
+/* The Icon key (theme name or path) of the application a window belongs
+ * to, found from its app id (Wayland) or WM_CLASS (X11): the desktop file
+ * of that name, else one whose StartupWMClass or id matches regardless of
+ * case, else the reverse-DNS id's last part ("org.gnome.Nautilus" ->
+ * "nautilus"). nullptr if none; g_free the result. */
+char *xd_app_icon_for_window(const char *app_id);
+
 /* Launches the application detached from the shell (own session, default
  * signal handling). Returns false on failure. */
 bool xd_app_launch(const xd_app *app);

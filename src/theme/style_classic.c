@@ -310,7 +310,8 @@ static void classic_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r,
 }
 
 static void classic_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r,
-                                     uint8_t state, const char *label) {
+                                     uint8_t state, const char *label,
+                                     cairo_surface_t *icon_surface) {
     bool active = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
     /* Flashing: the selection colour, as FlashWindow paints it. */
     bool flash = (state & XD_STATE_FLASH) && !active;
@@ -322,8 +323,8 @@ static void classic_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r,
         fill_dither(t, cr, inner);
     int off = active ? xd_tpx(t, 1) : 0;
     int icon = xd_tpx(t, 16);
-    app_icon(t, cr, (xd_rect){inner.x + xd_tpx(t, 3) + off,
-                              inner.y + (inner.h - icon) / 2 + off, icon, icon});
+    xd_style_task_icon(t, cr, icon_surface, inner.x + xd_tpx(t, 3) + off,
+                       inner.y + (inner.h - icon) / 2 + off);
     xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
     font.bold = active;
     xd_text_style st = xd_text(

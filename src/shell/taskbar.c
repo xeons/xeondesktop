@@ -8,6 +8,7 @@
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "../core/alloc.h"
 #include "shell.h"
@@ -146,8 +147,10 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
 
     /* Notification area, sized to the clock like Windows does. */
     xd_text_style clock_style = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_END);
-    int tray_w = XD_MAX(xd_tpx(t, 60), xd_text_width(cr, shell->clock, &clock_style) +
-                                           xd_tpx(t, 22));
+    int margin_l, margin_r;
+    xd_theme_tray_margins(t, &margin_l, &margin_r);
+    int tray_w = XD_MAX(xd_tpx(t, 60), margin_l + xd_text_width(cr, shell->clock, &clock_style) +
+                                           xd_tpx(t, 1) + margin_r);
     bar->tray_rect = (xd_rect){dw - tray_w - pad, inset_top, tray_w, button_h};
     xd_theme_draw_tray(t, cr, bar->tray_rect, shell->clock);
 
@@ -190,7 +193,9 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
         const char *label = tl->title != nullptr && tl->title[0] != '\0' ? tl->title
                             : tl->app_id != nullptr                     ? tl->app_id
                                                                          : "";
-        xd_theme_draw_task_button(t, cr, r, state, label);
+        cairo_surface_t *icon =
+            tl->icon != nullptr ? xd_icons_get(shell->icons, tl->icon, xd_tpx(t, 16)) : nullptr;
+        xd_theme_draw_task_button(t, cr, r, state, label, icon);
         x += w + gap;
     }
     cairo_restore(cr);
@@ -285,10 +290,94 @@ void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
     if (hot != bar->hot) {
         bar->hot = hot;
         bar->dirty = true;
+        /* A new item: its tooltip after the hover delay. */
+        xd_tooltip_hide(bar->shell);
+        bar->tooltip_off = false;
+        if (hot != XD_HIT_NONE)
+            xd_tooltip_arm(bar->shell);
+        else
+            xd_tooltip_disarm(bar->shell);
     }
 }
 
+/* What the tooltip over `hit` says, or nullptr: a task button's whole
+ * title when it doesn't fit, a Quick Launch shortcut's name, the date over
+ * the clock, and "Click here to begin" over Start, as in XP. */
+static char *tooltip_text(xd_taskbar *bar, int hit) {
+    xd_shell *shell = bar->shell;
+    if (hit == XD_HIT_START)
+        return xd_str_dup_cstr(XD_STR("Click here to begin"));
+    if (hit == XD_HIT_TRAY) {
+        time_t now = time(nullptr);
+        struct tm tm;
+        char buf[128];
+        if (localtime_r(&now, &tm) == nullptr ||
+            strftime(buf, sizeof(buf), "%A, %B %d, %Y", &tm) == 0)
+            return nullptr;
+        return xd_str_dup_cstr(xd_str_from_cstr(buf));
+    }
+    if (hit <= XD_HIT_QUICK) {
+        size_t i = (size_t)(XD_HIT_QUICK - hit);
+        const xd_quicklaunch *ql = &shell->quicklaunch;
+        return i < ql->count && ql->items[i].name != nullptr
+                   ? xd_str_dup_cstr(xd_str_from_cstr(ql->items[i].name))
+                   : nullptr;
+    }
+    if (hit >= 0 && (size_t)hit < bar->task_count) {
+        const xd_toplevel *tl = bar->task_views[hit];
+        const char *title = tl->title != nullptr && tl->title[0] != '\0' ? tl->title : tl->app_id;
+        if (title == nullptr)
+            return nullptr;
+        /* Only when the button cuts it short: its text starts after the
+         * icon and ends a few px before the edge. */
+        xd_theme t;
+        bar_theme(bar, &t);
+        cairo_surface_t *probe = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+        cairo_t *cr = cairo_create(probe);
+        xd_font_spec bold = t.scheme.fonts[XD_FONT_MENU];
+        bold.bold = true; /* the active button's bold text is the widest */
+        xd_text_style st = xd_text(&t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_START);
+        st.font = &bold;
+        int text_w = xd_text_width(cr, title, &st);
+        cairo_destroy(cr);
+        cairo_surface_destroy(probe);
+        if (text_w <= bar->task_rects[hit].w - xd_tpx(&t, 3 + 16 + 4 + 8))
+            return nullptr;
+        return xd_str_dup_cstr(xd_str_from_cstr(title));
+    }
+    return nullptr;
+}
+
+void xd_taskbar_tooltip_timer(xd_shell *shell) {
+    xd_taskbar *bar = shell->pointer_bar;
+    if (bar == nullptr || bar->hot == XD_HIT_NONE || bar->tooltip_off ||
+        bar->pressed != XD_HIT_NONE || shell->start_menu != nullptr || shell->start7 != nullptr)
+        return;
+    xd_rect r = {0};
+    if (bar->hot == XD_HIT_START)
+        r = bar->start_rect;
+    else if (bar->hot == XD_HIT_TRAY)
+        r = bar->tray_rect;
+    else if (bar->hot <= XD_HIT_QUICK && (size_t)(XD_HIT_QUICK - bar->hot) < bar->quick_count)
+        r = bar->quick_rects[XD_HIT_QUICK - bar->hot];
+    else if (bar->hot >= 0 && (size_t)bar->hot < bar->task_count)
+        r = bar->task_rects[bar->hot];
+    else
+        return;
+    char *text = tooltip_text(bar, bar->hot);
+    if (text == nullptr)
+        return;
+    /* Rects are device px; the popup anchor is surface-local logical. At
+     * the pointer horizontally, like Windows' tooltips. */
+    xd_rect anchor = {(int)bar->pointer_x, (int)(r.y / bar->scale), 1,
+                      (int)(r.h / bar->scale)};
+    xd_tooltip_show(shell, bar->layer, anchor, text, bar->scale);
+    xd_free(text);
+}
+
 void xd_taskbar_pointer_leave(xd_taskbar *bar) {
+    xd_tooltip_hide(bar->shell);
+    xd_tooltip_disarm(bar->shell);
     if (bar->hot != XD_HIT_NONE || bar->pressed != XD_HIT_NONE) {
         bar->hot = XD_HIT_NONE;
         bar->pressed = XD_HIT_NONE;
@@ -338,6 +427,10 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     /* What's under the pointer now: buttons move without the pointer
      * moving when windows open or close. */
     bar->hot = hit_test(bar, bar->pointer_x, bar->pointer_y);
+    /* Clicking puts tooltips away until the pointer moves to another item. */
+    xd_tooltip_hide(bar->shell);
+    xd_tooltip_disarm(bar->shell);
+    bar->tooltip_off = true;
     if (button == BTN_RIGHT) {
         /* Right-click (opened on release, like Windows): the Start button's
          * menu, a task button's window menu, or the taskbar's menu. */

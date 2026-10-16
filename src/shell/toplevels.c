@@ -3,7 +3,10 @@
  */
 #include <sys/timerfd.h>
 
+#include <glib.h>
+
 #include "../core/alloc.h"
+#include "apps.h"
 #include "shell.h"
 
 static void replace_string(char **dst, const char *src) {
@@ -21,7 +24,11 @@ static void handle_app_id(void *data,
                           [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
                           const char *app_id) {
     xd_toplevel *t = data;
+    if (t->app_id != nullptr && strcmp(t->app_id, app_id) == 0)
+        return;
     replace_string(&t->app_id, app_id);
+    g_free(t->icon);
+    t->icon = xd_app_icon_for_window(app_id);
 }
 
 /* Like XP, every taskbar shows every window, so outputs are ignored for
@@ -86,6 +93,7 @@ static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *h)
     zwlr_foreign_toplevel_handle_v1_destroy(h);
     XD_FREE(&t->title);
     XD_FREE(&t->app_id);
+    g_free(t->icon);
     xd_taskbars_mark_dirty(t->shell);
     xd_free(t);
 }

@@ -164,11 +164,46 @@ void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
     ops(t)->draw_start_button(t, cr, r, state);
 }
 void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                               const char *label) {
-    ops(t)->draw_task_button(t, cr, r, state, label);
+                               const char *label, cairo_surface_t *icon) {
+    ops(t)->draw_task_button(t, cr, r, state, label, icon);
+}
+
+void xd_style_task_icon(const xd_theme *t, cairo_t *cr, cairo_surface_t *icon, int x, int y) {
+    int size = xd_tpx(t, 16);
+    if (icon != nullptr) {
+        cairo_save(cr);
+        cairo_rectangle(cr, x, y, size, size);
+        cairo_clip(cr);
+        cairo_set_source_surface(cr, icon, x, y);
+        cairo_paint(cr);
+        cairo_restore(cr);
+        return;
+    }
+    /* A generic window: white with a title bar. */
+    xd_fill_rect(cr, (xd_rect){x, y, size, size}, xd_rgba_hex(0xFFFFFF));
+    xd_fill_rect(cr, (xd_rect){x, y, size, xd_tpx(t, 4)}, xd_rgba_hex(0x0A246A));
+    int p = xd_tpx(t, 1);
+    xd_draw_bevel(cr, (xd_rect){x, y, size, size}, p, xd_rgba_hex(0x404040),
+                  xd_rgba_hex(0x404040));
 }
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock) {
     ops(t)->draw_tray(t, cr, r, clock);
+}
+void xd_theme_tray_margins(const xd_theme *t, int *left, int *right) {
+    /* What each style's draw_tray leaves around the clock. */
+    switch (t->style) {
+    case XD_STYLE_LUNA:
+        *left = xd_tpx(t, 10);
+        *right = xd_tpx(t, 13);
+        return;
+    case XD_STYLE_WHISTLER:
+        *left = *right = xd_tpx(t, 10);
+        return;
+    case XD_STYLE_CLASSIC:
+    case XD_STYLE_COUNT:
+        break;
+    }
+    *left = *right = xd_tpx(t, 1) + xd_tpx(t, 6);
 }
 
 /* ---- menus ----------------------------------------------------------------- */

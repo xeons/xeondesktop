@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
         else if (strcmp(argv[i], "--images") == 0)
             images = true;
     }
-    xd_gtk_app_preinit();
+    xd_gtk_app_preinit("org.xeondesktop.ChooseFile");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
 

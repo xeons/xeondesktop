@@ -736,7 +736,7 @@ static void on_startup([[maybe_unused]] GApplication *app, [[maybe_unused]] gpoi
 }
 
 int main(int argc, char **argv) {
-    xd_gtk_app_preinit();
+    xd_gtk_app_preinit("org.xeondesktop.Files");
     /* Each window is its own process, like Windows' "separate process"
      * option: a hang in one folder can't freeze the others. */
     GtkApplication *app = gtk_application_new("org.xeondesktop.Files",

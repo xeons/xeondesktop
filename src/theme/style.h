@@ -40,7 +40,7 @@ typedef struct xd_style_ops {
     int (*start_button_width)(const xd_theme *t, cairo_t *cr);
     void (*draw_start_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
     void (*draw_task_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                             const char *label);
+                             const char *label, cairo_surface_t *icon);
     void (*draw_tray)(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
     void (*menu_palette)(const xd_theme *t, struct xd_menu_palette *out);
     void (*toolkit_colors)(const xd_theme *t, xd_toolkit_colors *out);
@@ -78,7 +78,9 @@ void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r);
 int xd_luna_start_button_width(const xd_theme *t, cairo_t *cr);
 void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
 void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                              const char *label);
+                              const char *label, cairo_surface_t *icon);
+/* Paints a task button's window icon (or the generic one) at x, y. */
+void xd_style_task_icon(const xd_theme *t, cairo_t *cr, cairo_surface_t *icon, int x, int y);
 void xd_luna_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
 void xd_luna_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                          const char *label);
