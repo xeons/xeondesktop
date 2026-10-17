@@ -817,6 +817,17 @@ static GtkWidget *action_menu(eventvwr *v) {
     return m;
 }
 
+/* GTK deactivates a menu before running the chosen item, so destroying it
+ * on "deactivate" would drop the click; destroy it once that's done. */
+static gboolean destroy_menu_idle(gpointer menu) {
+    gtk_widget_destroy(menu);
+    return G_SOURCE_REMOVE;
+}
+
+static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer data) {
+    g_idle_add(destroy_menu_idle, menu);
+}
+
 static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data) {
     if (ev->type != GDK_BUTTON_PRESS || ev->button != GDK_BUTTON_SECONDARY)
         return FALSE;
@@ -827,6 +838,8 @@ static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data)
         gtk_tree_path_free(path);
     }
     GtkWidget *menu = action_menu(data);
+    gtk_menu_attach_to_widget(GTK_MENU(menu), w, nullptr);
+    g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)ev);
     return TRUE;
