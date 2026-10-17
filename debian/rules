@@ -1,5 +1,6 @@
 #!/usr/bin/make -f
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/architecture.mk
 
 %:
 	dh $@ --buildsystem=meson
@@ -8,3 +9,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 # development; packages are built with the distribution's flags.
 override_dh_auto_configure:
 	dh_auto_configure -- -Db_sanitize=none -Dwerror=false -Daero_blur=enabled
+
+# SceneFX is linked in statically; none of it is installed.
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/xeondesktop meson install -C obj-$(DEB_HOST_GNU_TYPE) --skip-subprojects

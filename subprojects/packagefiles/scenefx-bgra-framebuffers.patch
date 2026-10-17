@@ -1,0 +1,41 @@
+diff --git a/render/fx_renderer/fx_framebuffer.c b/render/fx_renderer/fx_framebuffer.c
+index d514b34..5a291fc 100644
+--- a/render/fx_renderer/fx_framebuffer.c
++++ b/render/fx_renderer/fx_framebuffer.c
+@@ -1,3 +1,4 @@
++#include <drm_fourcc.h>
+ #include <stdlib.h>
+ #include <wlr/interfaces/wlr_buffer.h>
+ #include <wlr/render/allocator.h>
+@@ -93,14 +94,27 @@ void fx_framebuffer_get_or_create_custom(struct fx_renderer *renderer,
+ 			&renderer->wlr_renderer, renderer->wlr_renderer.render_buffer_caps);
+ 	const struct fx_pixel_format *pix_format =
+ 		get_fx_format_from_gl(GL_RGBA, GL_UNSIGNED_BYTE, has_alpha);
+-	const struct wlr_drm_format *format = wlr_drm_format_set_get(texture_formats, pix_format->drm_format);
+-	if (format == NULL) {
++	// Some drivers (vmwgfx: VirtualBox and VMware with 3D) list RGBA but
++	// can only allocate BGRA; the framebuffer is sampled through EGL, which
++	// takes care of the channel order.
++	const uint32_t candidates[] = {
++		pix_format->drm_format,
++		has_alpha ? DRM_FORMAT_ARGB8888 : DRM_FORMAT_XRGB8888,
++	};
++	bool found = false;
++	struct wlr_buffer *wlr_buffer = NULL;
++	for (size_t i = 0; wlr_buffer == NULL && i < sizeof(candidates) / sizeof(candidates[0]); i++) {
++		const struct wlr_drm_format *format = wlr_drm_format_set_get(texture_formats, candidates[i]);
++		if (format != NULL) {
++			found = true;
++			wlr_buffer = wlr_allocator_create_buffer(allocator, width, height, format);
++		}
++	}
++	if (!found) {
+ 		wlr_log(WLR_ERROR, "Failed to get a supported texture format while allocating buffer");
+ 		*failed = true;
+ 		return;
+ 	}
+-
+-	struct wlr_buffer *wlr_buffer = wlr_allocator_create_buffer(allocator, width, height, format);
+ 	if (wlr_buffer == NULL) {
+ 		wlr_log(WLR_ERROR, "Failed to allocate wlr_buffer");
+ 		*failed = true;

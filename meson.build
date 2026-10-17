@@ -263,7 +263,7 @@ compositor_deps = [
   xcb_icccm_dep,
   wayland_server_dep,
   xkbcommon_dep,
-  libdrm_dep,
+  dependency('libdrm'),
 ]
 executable(
   'xd-compositor',
@@ -278,12 +278,15 @@ executable(
 # The same compositor on SceneFX's scene graph: Aero's blurred glass and
 # window shadows. GLES2 only, so xd-compositor hands over to it when it's
 # installed, and it hands back when there's no GPU renderer.
-scenefx_dep = dependency(
-  'scenefx-0.5',
+# Always our pinned, patched copy (subprojects/scenefx.wrap), linked in
+# statically; packages install with --skip-subprojects so none of it is
+# installed.
+scenefx_proj = subproject(
+  'scenefx',
   required: get_option('aero_blur'),
-  fallback: ['scenefx', 'scenefx'],
   default_options: ['default_library=static', 'examples=false', 'werror=false'],
 )
+scenefx_dep = scenefx_proj.found() ? scenefx_proj.get_variable('scenefx') : dependency('', required: false)
 if scenefx_dep.found()
   executable(
     'xd-compositor-fx',

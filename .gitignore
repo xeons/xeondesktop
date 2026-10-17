@@ -3,5 +3,6 @@
 !docs/screenshots/*.png
 /dist/
 subprojects/*/
+!subprojects/packagefiles/
 subprojects/packagecache/
 subprojects/.wraplock

@@ -69,8 +69,13 @@ static pid_t compositor_pid(void) {
     xd_strbuf path = {0};
     xd_strbuf comm = {0};
     xd_strbuf_appendf(&path, "/proc/%lld/comm", (long long)pid);
-    bool ok = xd_read_file(xd_strbuf_cstr(&path), 256, &comm) &&
-              xd_str_eq(xd_str_trim(xd_strbuf_view(&comm)), XD_STR("xd-compositor"));
+    bool ok = false;
+    if (xd_read_file(xd_strbuf_cstr(&path), 256, &comm)) {
+        /* xd-compositor, or xd-compositor-fx (the GPU build it hands over
+         * to), which the kernel cuts to 15 characters: "xd-compositor-f". */
+        xd_str name = xd_str_trim(xd_strbuf_view(&comm));
+        ok = xd_str_eq(name, XD_STR("xd-compositor")) || xd_str_eq(name, XD_STR("xd-compositor-f"));
+    }
     xd_strbuf_free(&comm);
     xd_strbuf_free(&path);
     return ok ? (pid_t)pid : 0;

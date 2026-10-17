@@ -12,3 +12,7 @@ rev=$(sed -n 's/^revision = //p' "$wrap")
 git init -q "$dir"
 git -C "$dir" fetch -q --depth 1 "$url" "$rev"
 git -C "$dir" checkout -q FETCH_HEAD
+# The wrap's patches (meson applies them only when it downloads itself).
+for patch in $(sed -n 's/^diff_files = //p' "$wrap" | tr ',' ' '); do
+    git -C "$dir" apply "$PWD/subprojects/packagefiles/$patch"
+done

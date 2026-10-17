@@ -324,6 +324,10 @@ struct xd_server {
     struct wlr_scene_tree *layer_drag;
     struct wl_list zooms; /* animate.c: minimize/maximize animations in flight */
     bool peeking;         /* Aero Peek */
+    /* A virtual machine's GPU drawing with 3D (vmwgfx and the like): its
+     * cursor plane takes our cursor and shows nothing, so the cursor is
+     * drawn in software. */
+    bool software_cursors;
     struct wlr_scene_tree *drag_icon;
     struct wl_listener new_virtual_keyboard;
     struct wl_listener new_virtual_pointer;

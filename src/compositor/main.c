@@ -22,6 +22,7 @@
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/util/log.h>
+#include <xf86drm.h>
 
 #include "../settings/gtktheme.h"
 #include "../settings/settings.h"
@@ -99,6 +100,29 @@ static bool parse_args(int argc, char **argv, xd_config *cfg, bool *debug) {
     return true;
 }
 
+/* Virtual machines' GPUs with 3D on accept a hardware cursor and show
+ * nothing (VirtualBox and VMware: vmwgfx), as sway users know. Software
+ * rendering's cursor works, so only with the GPU renderer.
+ * XD_HARDWARE_CURSORS=1 tries the hardware cursor anyway. */
+static bool needs_software_cursor(xd_server *server) {
+    if (wlr_renderer_is_pixman(server->renderer) || getenv("XD_HARDWARE_CURSORS") != nullptr)
+        return false;
+    int fd = wlr_backend_get_drm_fd(server->backend);
+    if (fd < 0)
+        return false;
+    drmVersion *v = drmGetVersion(fd);
+    if (v == nullptr)
+        return false;
+    static const char *const drivers[] = {"vmwgfx", "virtio_gpu", "qxl", "vboxvideo"};
+    bool virt = false;
+    for (size_t i = 0; i < XD_ARRAY_LEN(drivers); i++)
+        virt = virt || strcmp(v->name, drivers[i]) == 0;
+    if (virt)
+        wlr_log(WLR_INFO, "%s with 3D: drawing the cursor in software", v->name);
+    drmFreeVersion(v);
+    return virt;
+}
+
 static bool server_init(xd_server *server) {
     server->display = wl_display_create();
     server->loop = wl_display_get_event_loop(server->display);
@@ -130,6 +154,7 @@ static bool server_init(xd_server *server) {
         return false;
     }
     wlr_renderer_init_wl_display(server->renderer, server->display);
+    server->software_cursors = needs_software_cursor(server);
     server->allocator = wlr_allocator_autocreate(server->backend, server->renderer);
     if (server->allocator == nullptr) {
         wlr_log(WLR_ERROR, "cannot create allocator");

@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <time.h>
+#include <wlr/backend/drm.h>
 #include <wlr/util/log.h>
 
 #include "../core/alloc.h"
@@ -163,6 +164,8 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
         wlr_log(WLR_ERROR, "cannot init rendering on output %s", wlr_output->name);
         return;
     }
+    if (server->software_cursors && wlr_output_is_drm(wlr_output))
+        wlr_output_lock_software_cursors(wlr_output, true);
 
     char key[192];
     xd_output_key(wlr_output, key, sizeof(key));
