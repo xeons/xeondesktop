@@ -531,10 +531,8 @@ static GtkWindow *active_window(services *s) {
 
 static void job_free(job *j) {
     jobs = g_list_remove(jobs, j);
-    if (j->pulse != 0)
-        g_source_remove(j->pulse);
     if (j->dialog != nullptr)
-        gtk_widget_destroy(j->dialog);
+        gtk_widget_destroy(j->dialog); /* on_job_dialog_destroy stops the pulse */
     g_free(j->id);
     g_free(j->verb);
     g_free(j->path);
@@ -569,11 +567,22 @@ static gboolean pulse(gpointer data) {
     return G_SOURCE_CONTINUE;
 }
 
-static void on_job_dialog_response(GtkDialog *d, [[maybe_unused]] int response, gpointer data) {
-    job *j = data;
+static void on_job_dialog_response(GtkDialog *d, [[maybe_unused]] int response,
+                                   [[maybe_unused]] gpointer data) {
     /* Closing the box doesn't cancel the job; it runs on. */
-    j->dialog = nullptr;
     gtk_widget_destroy(GTK_WIDGET(d));
+}
+
+/* Closed, or gone with the Properties box it was over: the progress bar
+ * is gone too, so stop pulsing it. */
+static void on_job_dialog_destroy([[maybe_unused]] GtkWidget *d, gpointer data) {
+    job *j = data;
+    j->dialog = nullptr;
+    j->bar = nullptr;
+    if (j->pulse != 0) {
+        g_source_remove(j->pulse);
+        j->pulse = 0;
+    }
 }
 
 /* XP's progress box: "Windows is attempting to start the following
@@ -603,6 +612,7 @@ static void job_dialog(job *j, const char *ing) {
     gtk_box_pack_start(GTK_BOX(box), j->bar, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(j->dialog))), box);
     g_signal_connect(j->dialog, "response", G_CALLBACK(on_job_dialog_response), j);
+    g_signal_connect(j->dialog, "destroy", G_CALLBACK(on_job_dialog_destroy), j);
     j->pulse = g_timeout_add(100, pulse, j);
     gtk_widget_show_all(j->dialog);
 }
@@ -679,7 +689,17 @@ typedef struct props {
     char *file_state; /* as loaded */
     GtkWidget *dialog, *startup, *status, *start, *stop, *apply;
     bool updating;
+    /* Applying a startup type: its unit file calls, one after another. */
+    GQueue calls;
+    int choice;          /* what's being applied, or -1 */
+    bool close_after;    /* OK: close once it's applied */
+    GCancellable *cancel; /* cancelled when the box goes */
 } props;
+
+typedef struct unit_call {
+    char *method, *rtype;
+    GVariant *args;
+} unit_call;
 
 static GVariant *get_all(manager *m, const char *path, const char *iface) {
     GVariant *r = g_dbus_connection_call_sync(m->bus, SD_NAME, path,
@@ -743,29 +763,21 @@ static void on_startup_changed([[maybe_unused]] GtkComboBox *c, gpointer data) {
         gtk_widget_set_sensitive(p->apply, TRUE);
 }
 
-/* A synchronous unit file call: Apply waits for it (and polkit). */
-static bool unit_file_call(props *p, const char *method, GVariant *args, const char *rtype,
-                           GVariant **out) {
-    GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_sync(
-        p->m->bus, SD_NAME, SD_PATH, SD_MANAGER, method, args,
-        rtype != nullptr ? G_VARIANT_TYPE(rtype) : nullptr,
-        G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr, &error);
-    if (r == nullptr) {
-        g_dbus_error_strip_remote_error(error);
-        char *text = g_strdup_printf("The startup type of the %s service could not be "
-                                     "changed.\n\n%s",
-                                     p->id, error->message);
-        xd_message_box(GTK_WINDOW(p->dialog), "Services", XD_MB_ERROR, XD_MB_OK, FALSE, text);
-        g_free(text);
-        g_error_free(error);
-        return false;
-    }
-    if (out != nullptr)
-        *out = r;
-    else
-        g_variant_unref(r);
-    return true;
+static void unit_call_free(gpointer data) {
+    unit_call *c = data;
+    g_free(c->method);
+    g_free(c->rtype);
+    if (c->args != nullptr)
+        g_variant_unref(c->args);
+    g_free(c);
+}
+
+static void add_call(props *p, const char *method, GVariant *args, const char *rtype) {
+    unit_call *c = g_new0(unit_call, 1);
+    c->method = g_strdup(method);
+    c->rtype = g_strdup(rtype);
+    c->args = args != nullptr ? g_variant_ref_sink(args) : nullptr;
+    g_queue_push_tail(&p->calls, c);
 }
 
 static GVariant *one_unit(const char *id) {
@@ -773,66 +785,123 @@ static GVariant *one_unit(const char *id) {
     return g_variant_new_strv(ids, -1);
 }
 
+static void apply_next(props *p);
+
+/* Stops applying, after the last call or a failed one. */
+static void apply_end(props *p, bool ok) {
+    g_queue_clear_full(&p->calls, unit_call_free);
+    gtk_widget_set_sensitive(p->startup, TRUE);
+    if (ok) {
+        static const char *const states[] = {"enabled", "disabled", "masked"};
+        g_free(p->file_state);
+        p->file_state = g_strdup(states[p->choice]);
+        GtkTreeIter *it = row(p->m, p->id);
+        if (it != nullptr)
+            set_file_state(p->m, it, p->file_state);
+    }
+    gtk_widget_set_sensitive(p->apply, !ok);
+    p->choice = -1;
+    if (ok && p->close_after)
+        gtk_widget_destroy(p->dialog);
+}
+
+static void unit_call_done(GObject *src, GAsyncResult *res, gpointer data) {
+    GError *error = nullptr;
+    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (r == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+        g_error_free(error); /* the box is gone, and `data` with it */
+        return;
+    }
+    props *p = data;
+    if (r == nullptr) {
+        g_dbus_error_strip_remote_error(error);
+        char *text = g_strdup_printf("The startup type of the %s service could not be "
+                                     "changed.\n\n%s",
+                                     p->id, error->message);
+        g_error_free(error);
+        apply_end(p, false);
+        xd_message_box(GTK_WINDOW(p->dialog), "Services", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+        g_free(text);
+        return;
+    }
+    if (g_variant_is_of_type(r, G_VARIANT_TYPE("(ba(sss))"))) {
+        gboolean install_info = TRUE;
+        g_variant_get(r, "(ba(sss))", &install_info, nullptr);
+        if (!install_info)
+            xd_message_box(GTK_WINDOW(p->dialog), "Services", XD_MB_WARNING, XD_MB_OK, FALSE,
+                           "This service's unit file has no [Install] section, so it can't "
+                           "be started automatically. It runs when another service or "
+                           "program needs it.");
+    }
+    g_variant_unref(r);
+    apply_next(p);
+}
+
+static void apply_next(props *p) {
+    unit_call *c = g_queue_pop_head(&p->calls);
+    if (c == nullptr) {
+        apply_end(p, true);
+        return;
+    }
+    /* No timeout, and not waiting for it: polkit's password box may be up
+     * for a while, and the window must keep working meanwhile. */
+    g_dbus_connection_call(p->m->bus, SD_NAME, SD_PATH, SD_MANAGER, c->method, c->args,
+                           c->rtype != nullptr ? G_VARIANT_TYPE(c->rtype) : nullptr,
+                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, p->cancel,
+                           unit_call_done, p);
+    unit_call_free(c);
+}
+
+/* Starts applying the startup type chosen; false when there's nothing to
+ * apply. */
 static bool apply_startup(props *p) {
     int choice = gtk_combo_box_get_active(GTK_COMBO_BOX(p->startup));
     xd_unit_startup was = xd_unit_startup_of(p->file_state);
     if (choice < 0 || choice == (int)was || !gtk_widget_get_sensitive(p->startup))
-        return true;
-    bool ok = true;
+        return false;
     if (was == XD_STARTUP_MASKED)
-        ok = unit_file_call(p, "UnmaskUnitFiles", g_variant_new("(@asb)", one_unit(p->id), FALSE),
-                            "(a(sss))", nullptr);
-    if (ok && choice == XD_STARTUP_ENABLED) {
-        GVariant *r = nullptr;
-        ok = unit_file_call(p, "EnableUnitFiles",
-                            g_variant_new("(@asbb)", one_unit(p->id), FALSE, FALSE), "(ba(sss))",
-                            &r);
-        if (ok) {
-            gboolean install_info = TRUE;
-            g_variant_get(r, "(ba(sss))", &install_info, nullptr);
-            g_variant_unref(r);
-            if (!install_info)
-                xd_message_box(GTK_WINDOW(p->dialog), "Services", XD_MB_WARNING, XD_MB_OK, FALSE,
-                               "This service's unit file has no [Install] section, so it can't "
-                               "be started automatically. It runs when another service or "
-                               "program needs it.");
-        }
-    } else if (ok && choice == XD_STARTUP_DISABLED && was != XD_STARTUP_MASKED) {
-        ok = unit_file_call(p, "DisableUnitFiles", g_variant_new("(@asb)", one_unit(p->id), FALSE),
-                            "(a(sss))", nullptr);
-    } else if (ok && choice == XD_STARTUP_MASKED) {
-        ok = unit_file_call(p, "MaskUnitFiles",
-                            g_variant_new("(@asbb)", one_unit(p->id), FALSE, FALSE), "(a(sss))",
-                            nullptr);
-    }
+        add_call(p, "UnmaskUnitFiles", g_variant_new("(@asb)", one_unit(p->id), FALSE),
+                 "(a(sss))");
+    if (choice == XD_STARTUP_ENABLED)
+        add_call(p, "EnableUnitFiles", g_variant_new("(@asbb)", one_unit(p->id), FALSE, FALSE),
+                 "(ba(sss))");
+    else if (choice == XD_STARTUP_DISABLED && was != XD_STARTUP_MASKED)
+        add_call(p, "DisableUnitFiles", g_variant_new("(@asb)", one_unit(p->id), FALSE),
+                 "(a(sss))");
+    else if (choice == XD_STARTUP_MASKED)
+        add_call(p, "MaskUnitFiles", g_variant_new("(@asbb)", one_unit(p->id), FALSE, FALSE),
+                 "(a(sss))");
     /* systemd reads the changed links on its next reload. */
-    if (ok)
-        ok = unit_file_call(p, "Reload", nullptr, nullptr, nullptr);
-    if (ok) {
-        static const char *const states[] = {"enabled", "disabled", "masked"};
-        g_free(p->file_state);
-        p->file_state = g_strdup(states[choice]);
-        GtkTreeIter *it = row(p->m, p->id);
-        if (it != nullptr)
-            set_file_state(p->m, it, p->file_state);
-        gtk_widget_set_sensitive(p->apply, FALSE);
-    }
-    return ok;
+    add_call(p, "Reload", nullptr, nullptr);
+    p->choice = choice;
+    gtk_widget_set_sensitive(p->startup, FALSE);
+    gtk_widget_set_sensitive(p->apply, FALSE);
+    apply_next(p);
+    return true;
 }
 
 static void on_props_response(GtkDialog *d, int response, gpointer data) {
     props *p = data;
-    if (response == GTK_RESPONSE_APPLY) {
-        apply_startup(p);
+    bool apply = response == GTK_RESPONSE_APPLY || response == GTK_RESPONSE_OK;
+    if (apply && p->choice >= 0) {
+        /* Still applying: OK closes once it's done. */
+        p->close_after |= response == GTK_RESPONSE_OK;
         return;
     }
-    if (response == GTK_RESPONSE_OK && !apply_startup(p))
-        return;
+    if (apply) {
+        p->close_after = response == GTK_RESPONSE_OK;
+        if (apply_startup(p) || response == GTK_RESPONSE_APPLY)
+            return;
+    }
     gtk_widget_destroy(GTK_WIDGET(d));
 }
 
 static void on_props_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     props *p = data;
+    /* A unit file call still running can't reach `p` now. */
+    g_cancellable_cancel(p->cancel);
+    g_object_unref(p->cancel);
+    g_queue_clear_full(&p->calls, unit_call_free);
     p->m->dialogs = g_list_remove(p->m->dialogs, p);
     g_free(p->id);
     g_free(p->path);
@@ -1068,6 +1137,9 @@ static void properties(manager *m, const char *id) {
     props *p = g_new0(props, 1);
     p->m = m;
     p->id = g_strdup(id);
+    g_queue_init(&p->calls);
+    p->choice = -1;
+    p->cancel = g_cancellable_new();
     g_variant_get(r, "(o)", &p->path);
     g_variant_unref(r);
     GVariant *unit = get_all(m, p->path, SD_UNIT);
@@ -1170,14 +1242,26 @@ static GtkWidget *action_menu(services *s, bool keep) {
         char *id = nullptr, *active = nullptr;
         bool have = selected(s, nullptr, &id, &active);
         bool started = have && xd_unit_is_started(active);
-        gtk_widget_set_sensitive(start, have && !started);
-        gtk_widget_set_sensitive(stop, started);
-        gtk_widget_set_sensitive(restart, started);
+        bool idle = have && !busy(active);
+        gtk_widget_set_sensitive(start, idle && !started);
+        gtk_widget_set_sensitive(stop, idle && started);
+        gtk_widget_set_sensitive(restart, idle && started);
         gtk_widget_set_sensitive(prop, have);
         g_free(id);
         g_free(active);
     }
     return m;
+}
+
+/* GTK deactivates a menu before running the chosen item, so destroying it
+ * on "deactivate" would drop the click; destroy it once that's done. */
+static gboolean destroy_menu_idle(gpointer menu) {
+    gtk_widget_destroy(menu);
+    return G_SOURCE_REMOVE;
+}
+
+static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer data) {
+    g_idle_add(destroy_menu_idle, menu);
 }
 
 static gboolean on_button_press(GtkWidget *view, GdkEventButton *ev, gpointer data) {
@@ -1191,6 +1275,8 @@ static gboolean on_button_press(GtkWidget *view, GdkEventButton *ev, gpointer da
         gtk_tree_path_free(path);
     }
     GtkWidget *menu = action_menu(s, false);
+    gtk_menu_attach_to_widget(GTK_MENU(menu), view, nullptr);
+    g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)ev);
     return TRUE;
