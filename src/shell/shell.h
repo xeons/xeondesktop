@@ -88,6 +88,7 @@ enum {
     XD_HIT_PAGE_DOWN = -5,
     XD_HIT_QUICK_BAND = -6, /* Quick Launch, between or around its buttons */
     XD_HIT_TRAY_CHEVRON = -7, /* shows or folds inactive notification icons */
+    XD_HIT_PEEK = -8,         /* Aero: Show desktop, at the far end (hover peeks) */
     XD_HIT_QUICK = -100,     /* Quick Launch button i: XD_HIT_QUICK - i */
     XD_HIT_TRAY_ICON = -1000, /* notification area icon i: XD_HIT_TRAY_ICON - i */
 };
@@ -115,6 +116,9 @@ typedef struct xd_taskbar {
     /* Layout from the last render, in device px. task_views[i] is the
      * window shown by task_rects[i]. */
     xd_rect start_rect;
+    xd_rect peek_rect; /* Aero's Show desktop corner; empty in other styles */
+    unsigned int peek_timer; /* GLib source id */
+    bool peeking;
     xd_rect tray_rect;
     size_t quick_count;
     xd_rect quick_band; /* the whole Quick Launch toolbar, grips included */

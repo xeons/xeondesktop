@@ -723,6 +723,25 @@ void xd_view_set_on_top(xd_view *view, bool on_top) {
     wlr_scene_node_raise_to_top(&view->tree->node);
 }
 
+static void set_buffer_opacity(struct wlr_scene_buffer *buffer, [[maybe_unused]] int sx,
+                               [[maybe_unused]] int sy, void *data) {
+    wlr_scene_buffer_set_opacity(buffer, *(const float *)data);
+}
+
+void xd_view_peek(xd_server *server, bool on) {
+    if (server->peeking == on)
+        return;
+    server->peeking = on;
+    /* Contents vanish; the frame stays as a faint outline, as in Windows 7. */
+    float content = on ? 0.0f : 1.0f;
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (!v->mapped)
+            continue;
+        wlr_scene_node_for_each_buffer(&v->tree->node, set_buffer_opacity, &content);
+        wlr_scene_buffer_set_opacity(v->frame, on ? 0.25f : 1.0f);
+    }
+}
+
 void xd_view_on_map(xd_view *view) {
     view->mapped = true;
     /* A dialog of an Always On Top window is too. */

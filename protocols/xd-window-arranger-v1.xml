@@ -12,7 +12,7 @@
     and for the window menu's Move and Size.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="5">
+  <interface name="xd_window_arranger_v1" version="6">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -117,6 +117,14 @@
       </description>
       <arg name="surface" type="object" interface="wl_surface"/>
       <arg name="on_top" type="uint"/>
+    </request>
+
+    <request name="peek" since="6">
+      <description summary="Aero Peek: see through every window">
+        While on, every window but its outline is transparent, so the
+        desktop shows (the taskbar's Show desktop corner, hovered).
+      </description>
+      <arg name="on" type="uint"/>
     </request>
   </interface>
 </protocol>

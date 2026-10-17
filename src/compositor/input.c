@@ -216,6 +216,11 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
             xd_view_set_maximized(focused, true);
         return true;
     }
+    /* Win+Space: Aero Peek while the Windows key is held (Aero only). */
+    if (logo && sym == XKB_KEY_space && server->config.style == XD_STYLE_AERO) {
+        xd_view_peek(server, true);
+        return true;
+    }
     /* Aero Snap from the keyboard (Aero only). */
     if (logo && (sym == XKB_KEY_Left || sym == XKB_KEY_Right) &&
         server->config.style == XD_STYLE_AERO) {
@@ -249,6 +254,9 @@ static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void
         !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_ALT))
         finish_cycle(server);
     wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
+    /* Win+Space's peek ends with the Windows key. */
+    if (server->peeking && !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_LOGO))
+        xd_view_peek(server, false);
     wlr_seat_keyboard_notify_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
     /* wlroots' drag grab swallows modifiers, but the client being dragged
      * over picks copy, move or shortcut by Ctrl, Shift and Alt (Windows'

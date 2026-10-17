@@ -202,6 +202,11 @@ static void handle_set_always_on_top(struct wl_client *client, struct wl_resourc
     }
 }
 
+static void handle_peek(struct wl_client *client, struct wl_resource *res, uint32_t on) {
+    (void)client;
+    xd_view_peek(server_of(res), on != 0);
+}
+
 static void handle_arrange_marked(struct wl_client *client, struct wl_resource *res,
                                   uint32_t mode) {
     (void)client;
@@ -346,6 +351,7 @@ static const struct xd_window_arranger_v1_interface arranger_impl = {
     .mark = handle_mark,
     .arrange_marked = handle_arrange_marked,
     .set_always_on_top = handle_set_always_on_top,
+    .peek = handle_peek,
 };
 
 static void bind_arranger(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
@@ -408,7 +414,7 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 5,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 6,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

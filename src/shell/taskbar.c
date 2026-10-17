@@ -595,12 +595,47 @@ static void layout_tasks(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rec
 
 /* Lays out the start button, Quick Launch, task buttons and the
  * notification area for the taskbar's edge and size, then draws them. */
+/* Aero: Windows 7's Show desktop strip at the far end; hovering it peeks
+ * at the desktop. Takes it out of `c`. */
+static void layout_peek(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect *c,
+                        bool side) {
+    bar->peek_rect = (xd_rect){0};
+    if (t->style != XD_STYLE_AERO)
+        return;
+    int pw = xd_tpx(t, 15);
+    xd_rect r;
+    if (side) {
+        c->h -= pw;
+        r = (xd_rect){c->x, c->y + c->h, c->w, pw};
+    } else {
+        c->w -= pw;
+        r = (xd_rect){c->x + c->w, c->y, pw, c->h};
+    }
+    bar->peek_rect = r;
+    bool hot = bar->hot == XD_HIT_PEEK;
+    if (hot || bar->pressed == XD_HIT_PEEK)
+        xd_fill_rect(cr, r, xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), bar->pressed == XD_HIT_PEEK ? 0.15
+                                                                                         : 0.28));
+    /* Its edge: a dark line and a light one. */
+    int px = xd_tpx(t, 1);
+    if (side) {
+        xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w, px}, xd_rgba_alpha(xd_rgba_hex(0x000000), 0.5));
+        xd_fill_rect(cr, (xd_rect){r.x, r.y + px, r.w, px},
+                     xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.3));
+    } else {
+        xd_fill_rect(cr, (xd_rect){r.x, r.y, px, r.h}, xd_rgba_alpha(xd_rgba_hex(0x000000), 0.5));
+        xd_fill_rect(cr, (xd_rect){r.x + px, r.y, px, r.h},
+                     xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.3));
+    }
+}
+
 static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int dw, int dh) {
     xd_shell *shell = bar->shell;
     xd_edge edge = shell->settings.edge;
     bool side = side_bar(shell);
     xd_theme_draw_taskbar(t, cr, (xd_rect){0, 0, dw, dh}, edge);
     xd_rect c = content_box(t, edge, dw, dh);
+    layout_peek(bar, t, cr, &c, side);
     bool classic = t->style == XD_STYLE_CLASSIC;
     /* One row: the XP styles' full 30px, Classic's inside its border. */
     int rows = side ? 1 : XD_MAX(1, shell->settings.rows);
@@ -740,6 +775,8 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
     }
     if (rect_contains(start, x, y))
         return XD_HIT_START;
+    if (!xd_rect_empty(bar->peek_rect) && rect_contains(bar->peek_rect, x, y))
+        return XD_HIT_PEEK;
     for (size_t i = 0; i < bar->tray_count; i++) {
         if (rect_contains(bar->tray_rects[i], x, y))
             return XD_HIT_TRAY_ICON - (int)i;
@@ -871,6 +908,38 @@ static bool end_bar_grab(xd_taskbar *bar) {
     return true;
 }
 
+/* Aero Peek through the compositor (xd-window-arranger-v1 version 6). */
+static void set_peek(xd_taskbar *bar, bool on) {
+    xd_shell *shell = bar->shell;
+    if (bar->peek_timer != 0) {
+        g_source_remove(bar->peek_timer);
+        bar->peek_timer = 0;
+    }
+    if (bar->peeking == on)
+        return;
+    bar->peeking = on;
+    if (shell->arranger != nullptr &&
+        xd_window_arranger_v1_get_version(shell->arranger) >= XD_WINDOW_ARRANGER_V1_PEEK_SINCE_VERSION)
+        xd_window_arranger_v1_peek(shell->arranger, on ? 1 : 0);
+}
+
+static gboolean peek_now(gpointer data) {
+    xd_taskbar *bar = data;
+    bar->peek_timer = 0;
+    set_peek(bar, true);
+    return G_SOURCE_REMOVE;
+}
+
+/* Hovering Show desktop peeks after half a second, as in Windows 7. */
+static void track_peek(xd_taskbar *bar, int hot) {
+    if (hot == XD_HIT_PEEK) {
+        if (!bar->peeking && bar->peek_timer == 0)
+            bar->peek_timer = g_timeout_add(500, peek_now, bar);
+    } else {
+        set_peek(bar, false);
+    }
+}
+
 void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
     if (bar->grab != XD_BAR_IDLE) {
         drag_bar(bar, x, y);
@@ -898,6 +967,7 @@ void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
         return;
     }
     int hot = hit_test(bar, x, y);
+    track_peek(bar, hot);
     if (hot != bar->hot) {
         bar->hot = hot;
         bar->dirty = true;
@@ -918,6 +988,8 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
     xd_shell *shell = bar->shell;
     if (hit == XD_HIT_START)
         return xd_str_dup_cstr(XD_STR("Click here to begin"));
+    if (hit == XD_HIT_PEEK)
+        return xd_str_dup_cstr(XD_STR("Show desktop"));
     if (hit == XD_HIT_TRAY) {
         time_t now = time(nullptr);
         struct tm tm;
@@ -1015,6 +1087,7 @@ void xd_taskbar_page(xd_taskbar *bar, int delta) {
 }
 
 void xd_taskbar_pointer_leave(xd_taskbar *bar) {
+    set_peek(bar, false);
     xd_taskbars_schedule_tuck(bar->shell);
     xd_tooltip_hide(bar->shell);
     xd_tooltip_disarm(bar->shell);
@@ -1179,6 +1252,12 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     }
     if (target != bar->hot)
         return; /* released somewhere else: cancel, like a real button */
+    if (target == XD_HIT_PEEK) {
+        /* A click on Show desktop: the desktop, for real. */
+        set_peek(bar, false);
+        xd_show_desktop_toggle(bar->shell);
+        return;
+    }
     if (target == XD_HIT_TRAY_CHEVRON) {
         bar->tray_expanded = !bar->tray_expanded;
         if (bar->tray_fold_timer != 0)
@@ -1424,6 +1503,8 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
 
 void xd_taskbar_destroy(xd_taskbar *bar) {
     xd_shell *shell = bar->shell;
+    if (bar->peek_timer != 0)
+        g_source_remove(bar->peek_timer);
     surface_destroy(bar);
     wl_list_remove(&bar->link);
     xd_desktop_destroy(bar->desktop);

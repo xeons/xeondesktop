@@ -192,8 +192,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       windows restore when dragged by the caption, Aero Shake (minimizes
       the other windows; shaking again brings them back). Tested headless:
       snap left, preview right, drag back out, shake and shake again.
-- [ ] Aero Peek (the desktop through the taskbar's corner), snapping
-      across monitors with Win+Left/Right, Win+Shift+Up (maximize height).
+- [x] Aero Peek: the taskbar's Show desktop strip at the far end (Aero):
+      hovered half a second, every window fades to its outline
+      (xd-window-arranger-v1 version 6, peek); a click shows the desktop;
+      Win+Space peeks while the Windows key is held. Tested headless.
+- [ ] Snapping across monitors with Win+Left/Right, Win+Shift+Up
+      (maximize height), Windows 7's icon-only taskbar and jump lists.
 - [x] Resizing from the top/left edges keeps the opposite edge still.
 - [x] Tested: Alt+Tab, Alt+F4 (Wayland and X11), Win+Up/Down (maximize,
       restore, minimize), Ctrl+Alt+T, Ctrl+Alt+Backspace, Ctrl+Esc,

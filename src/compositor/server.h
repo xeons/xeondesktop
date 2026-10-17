@@ -323,6 +323,7 @@ struct xd_server {
     struct wl_listener drag_destroy;
     struct wlr_scene_tree *layer_drag;
     struct wl_list zooms; /* animate.c: minimize/maximize animations in flight */
+    bool peeking;         /* Aero Peek */
     struct wlr_scene_tree *drag_icon;
     struct wl_listener new_virtual_keyboard;
     struct wl_listener new_virtual_pointer;
@@ -463,6 +464,8 @@ void xd_snap_finish(xd_server *server);
 void xd_arrange_forget_view(xd_server *server, xd_view *view);
 /* Always On Top: the window (and its dialogs) above ordinary windows. */
 void xd_view_set_on_top(xd_view *view, bool on_top);
+/* Aero Peek: windows fade to their outline, and back. */
+void xd_view_peek(xd_server *server, bool on);
 /* Not Responding: a ping timed out (view.c pings; X11 windows that
  * support _NET_WM_PING too). The title the frame and taskbar show. */
 void xd_view_ping_timed_out(xd_view *view);
