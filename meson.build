@@ -434,6 +434,7 @@ install_data(
   'data/applications/org.xeondesktop.Taskbar.desktop',
   'data/applications/org.xeondesktop.Sound.desktop',
   'data/applications/org.xeondesktop.Power.desktop',
+  'data/applications/org.xeondesktop.RegionalOptions.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -495,6 +496,17 @@ executable(
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, m_dep,
                  dependency('json-glib-1.0', include_type: 'system')],
+  install: true,
+)
+
+xkbregistry_dep = dependency('xkbregistry', include_type: 'system')
+executable(
+  'xd-intl',
+  'src/intl/main.c',
+  'src/intl/intl.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, xkbregistry_dep],
+  c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
 
@@ -597,6 +609,7 @@ test_exe = executable(
   'src/ui/textedit.c',
   'src/apps/runcmd.c',
   'src/security/passwd.c',
+  'src/intl/intl.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )

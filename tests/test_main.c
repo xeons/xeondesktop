@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Unit tests for the core library and theme engine.
  */
+#include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -8,6 +9,7 @@
 #include <poll.h>
 
 #include "../src/apps/runcmd.h"
+#include "../src/intl/intl.h"
 #include "../src/security/passwd.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
@@ -672,6 +674,96 @@ static void test_passwd(void) {
     g_free(m);
 }
 
+static void test_intl(void) {
+    CHECK(strcmp(xd_intl_long_date_format("%m/%d/%Y"), "%A, %B %-d, %Y") == 0);
+    CHECK(strcmp(xd_intl_long_date_format("%d.%m.%Y"), "%A, %-d %B %Y") == 0);
+    CHECK(strcmp(xd_intl_long_date_format("%Y\u5e74%m\u6708%d\u65e5"), "%Y %B %-d, %A") == 0);
+    CHECK(strcmp(xd_intl_long_date_format("%F"), "%Y %B %-d, %A") == 0);
+    CHECK(strcmp(xd_intl_long_date_format("%%%-m/%e"), "%A, %B %-d, %Y") == 0);
+    CHECK(strcmp(xd_intl_long_date_format(nullptr), "%A, %-d %B %Y") == 0);
+
+    CHECK(xd_intl_valid_name("de_DE.UTF-8") && xd_intl_valid_name("sr_RS@latin"));
+    CHECK(!xd_intl_valid_name("") && !xd_intl_valid_name("de DE") && !xd_intl_valid_name("a\nb"));
+
+    const char *const l1[] = {"LC_TIME=de_DE.UTF-8", "LANG=en_US.UTF-8", nullptr};
+    CHECK(strcmp(xd_intl_lang(l1), "en_US.UTF-8") == 0);
+    char **set = xd_intl_replace_lang(l1, "fr_FR.UTF-8");
+    CHECK(g_strv_length(set) == 2 && strcmp(set[0], "LANG=fr_FR.UTF-8") == 0 &&
+          strcmp(set[1], "LC_TIME=de_DE.UTF-8") == 0);
+    g_strfreev(set);
+    set = xd_intl_replace_lang(nullptr, "C.UTF-8");
+    CHECK(g_strv_length(set) == 1 && xd_intl_lang((const char *const *)set) != nullptr);
+    g_strfreev(set);
+
+    char *s = xd_intl_first("us,de");
+    CHECK(strcmp(s, "us") == 0);
+    g_free(s);
+    s = xd_intl_first(nullptr);
+    CHECK(strcmp(s, "") == 0);
+    g_free(s);
+    s = xd_intl_replace_first("us,de", "fr");
+    CHECK(strcmp(s, "fr,de") == 0);
+    g_free(s);
+    s = xd_intl_replace_first(",nodeadkeys", "dvorak");
+    CHECK(strcmp(s, "dvorak,nodeadkeys") == 0);
+    g_free(s);
+    s = xd_intl_replace_first("", "fr");
+    CHECK(strcmp(s, "fr") == 0);
+    g_free(s);
+
+    /* The formats file round trip, and removing it. */
+    char *dir = g_dir_make_tmp("xd-intl-XXXXXX", nullptr);
+    char *path = g_build_filename(dir, "environment.d", "60-xeondesktop-locale.conf", nullptr);
+    CHECK(xd_intl_read_formats(path) == nullptr);
+    CHECK(xd_intl_write_formats(path, "C.UTF-8", nullptr));
+    s = xd_intl_read_formats(path);
+    CHECK(s != nullptr && strcmp(s, "C.UTF-8") == 0);
+    g_free(s);
+    char *text = nullptr;
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr) &&
+          strstr(text, "\nLC_NUMERIC=C.UTF-8\n") != nullptr &&
+          strstr(text, "LC_MESSAGES") == nullptr && strstr(text, "LANG") == nullptr);
+    g_free(text);
+    CHECK(!xd_intl_write_formats(path, "x; rm -rf /", nullptr));
+    CHECK(xd_intl_write_formats(path, nullptr, nullptr) && !g_file_test(path, G_FILE_TEST_EXISTS));
+    CHECK(xd_intl_write_formats(path, nullptr, nullptr)); /* already gone */
+
+    /* Only installed UTF-8 locales are offered: C.UTF-8 is built in. */
+    char *supported = g_build_filename(dir, "SUPPORTED", nullptr);
+    g_file_set_contents(supported,
+                        "C.UTF-8 UTF-8\nxx_XX.UTF-8 UTF-8\nde_DE ISO-8859-1\n# comment\n\n",
+                        -1, nullptr);
+    char **locales = xd_intl_installed_locales(supported);
+    CHECK(g_strv_length(locales) == 1 && strcmp(locales[0], "C.UTF-8") == 0);
+    g_strfreev(locales);
+    locales = xd_intl_installed_locales("/nonexistent");
+    CHECK(locales != nullptr && locales[0] == nullptr);
+    g_strfreev(locales);
+    g_remove(supported);
+    g_free(supported);
+
+    s = xd_intl_display_name("C.UTF-8");
+    CHECK(strcmp(s, "C.UTF-8") == 0);
+    g_free(s);
+    s = xd_intl_display_name("xx_XX.UTF-8");
+    CHECK(strcmp(s, "xx_XX.UTF-8") == 0);
+    g_free(s);
+
+    xd_intl_samples smp;
+    CHECK(xd_intl_samples_get("C.UTF-8", 0, &smp));
+    CHECK(strcmp(smp.number, "123456789.00") == 0 && smp.long_date[0] != '\0' &&
+          smp.short_date[0] != '\0' && smp.time[0] != '\0');
+    xd_intl_samples_free(&smp);
+    CHECK(!xd_intl_samples_get("xx_XX.UTF-8", 0, &smp));
+
+    char *envd = g_path_get_dirname(path);
+    g_rmdir(envd);
+    g_rmdir(dir);
+    g_free(envd);
+    g_free(path);
+    g_free(dir);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -690,6 +782,7 @@ int main(void) {
     test_sound_scheme();
     test_gtk_css();
     test_passwd();
+    test_intl();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Regional and Language Options
+Comment=Customize settings for the display of languages, numbers, times, and dates
+Exec=xd-intl
+Icon=preferences-desktop-locale
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=regional
+StartupWMClass=org.xeondesktop.RegionalOptions
