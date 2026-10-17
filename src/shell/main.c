@@ -287,6 +287,12 @@ static void handle_key(xd_shell *shell, uint32_t key, uint32_t serial) {
         xd_start7_key(shell, sym, utf8, ctrl_alt);
         return;
     }
+    /* An open menu first: its popup's keys arrive at the surface it hangs
+     * off, and the desktop's right-click menu hangs off the desktop. */
+    if (shell->start_menu != nullptr) {
+        xd_menu_key(shell, sym);
+        return;
+    }
     /* The desktop's icons, when it has the keyboard. */
     if (shell->kb_surface != nullptr && xd_desktop_for_surface(shell, shell->kb_surface) != nullptr) {
         char utf8[16] = {0};
