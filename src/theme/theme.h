@@ -122,8 +122,14 @@ void xd_theme_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t sta
 void xd_theme_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                             const char *label);
 
+/* The screen edge a taskbar sits on. */
+typedef enum xd_edge : uint8_t { XD_EDGE_BOTTOM, XD_EDGE_TOP, XD_EDGE_LEFT, XD_EDGE_RIGHT } xd_edge;
+
+/* One row's height (also a side taskbar's start button height). */
 int xd_theme_taskbar_height(const xd_theme *t);
-void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* The background of a taskbar on `edge`, of any size: its light rim
+ * faces the desktop. */
+void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
 int xd_theme_start_button_width(const xd_theme *t, cairo_t *cr);
 void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
 /* icon: the window's 16px (logical) icon, or nullptr for a generic one. */

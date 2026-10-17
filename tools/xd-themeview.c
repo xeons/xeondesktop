@@ -99,7 +99,7 @@ static void draw_window(const xd_theme *t, cairo_t *cr, xd_rect r, const xd_fram
 static void draw_taskbar(const xd_theme *t, cairo_t *cr, int width, int height) {
     int th = xd_theme_taskbar_height(t);
     xd_rect bar = {0, height - th, width, th};
-    xd_theme_draw_taskbar(t, cr, bar);
+    xd_theme_draw_taskbar(t, cr, bar, XD_EDGE_BOTTOM);
 
     bool classic = t->style == XD_STYLE_CLASSIC;
     int pad = classic ? xd_tpx(t, 2) : 0;
@@ -142,7 +142,7 @@ static cairo_surface_t *draw_element(const xd_theme *t, const char *name) {
         int w = xd_tpx(t, 1920), h = xd_theme_taskbar_height(t);
         cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
         cairo_t *cr = cairo_create(s);
-        xd_theme_draw_taskbar(t, cr, (xd_rect){0, 0, w, h});
+        xd_theme_draw_taskbar(t, cr, (xd_rect){0, 0, w, h}, XD_EDGE_BOTTOM);
         xd_theme_draw_start_button(t, cr, (xd_rect){0, 0, xd_theme_start_button_width(t, cr), h},
                                    XD_STATE_NORMAL);
         int ty = xd_tpx(t, 3), th = xd_tpx(t, 25), tw = xd_tpx(t, 160);

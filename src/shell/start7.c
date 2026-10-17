@@ -1665,14 +1665,10 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     xd_rect r = bar->start_rect;
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
     xdg_positioner_set_size(pos, m->w, m->h);
-    xdg_positioner_set_anchor_rect(pos, (int)(r.x / bar->scale), (int)(r.y / bar->scale),
-                                   XD_MAX((int)(r.w / bar->scale), 1),
-                                   XD_MAX((int)(r.h / bar->scale), 1));
-    xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_TOP_LEFT);
-    xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_TOP_RIGHT);
-    xdg_positioner_set_constraint_adjustment(pos,
-                                             XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |
-                                                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
+    xd_taskbar_popup_position(bar,
+                              (xd_rect){(int)(r.x / bar->scale), (int)(r.y / bar->scale),
+                                        (int)(r.w / bar->scale), (int)(r.h / bar->scale)},
+                              pos);
     m->popup = xdg_surface_get_popup(m->xdg_surface, nullptr, pos);
     xdg_positioner_destroy(pos);
     zwlr_layer_surface_v1_get_popup(bar->layer, m->popup);

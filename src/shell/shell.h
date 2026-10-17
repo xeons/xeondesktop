@@ -132,7 +132,10 @@ typedef struct xd_taskbar {
      * (-1: none), and the button being dragged along (-1: none). */
     int drop_insert;
     int quick_drag;
-    double press_x;
+    double press_x, press_y;
+    /* Unlocked: dragging the taskbar to another edge, or its inner edge
+     * to resize it. */
+    enum { XD_BAR_IDLE, XD_BAR_MOVING, XD_BAR_SIZING } grab;
     xd_rect page_up_rect, page_down_rect;
     /* Notification area icons, left of the clock. */
     size_t tray_count, tray_cap;
@@ -205,6 +208,8 @@ struct xd_shell {
     xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
     bool pointer_start7;    /* pointer is over start7 */
     bool pointer_flyout;    /* pointer is over the volume flyout */
+    uint32_t enter_serial;  /* for cursor shapes */
+    uint32_t cursor;        /* the shape set since, wp_cursor_shape_device_v1 */
     double flyout_x, flyout_y;
     bool pending_start7;    /* start7 waits for the hover delay */
     xd_taskbar *start_bar;  /* taskbar whose Start button opened it */
@@ -253,6 +258,17 @@ void xd_taskbars_update(xd_shell *shell);
 void xd_taskbar_reveal(xd_taskbar *bar);
 void xd_taskbars_schedule_tuck(xd_shell *shell);
 void xd_taskbars_tuck_timer(xd_shell *shell);
+/* Positions a popup opening from a taskbar button (anchor: surface-local
+ * logical): up from a bottom taskbar, down from a top one, beside a side
+ * one. */
+void xd_taskbar_popup_position(const xd_taskbar *bar, xd_rect anchor,
+                               struct xdg_positioner *pos);
+/* menu.c: opens from a taskbar button (anchor: surface-local logical) the
+ * way the taskbar's edge wants: up, down or beside it. */
+xd_menu *xd_menu_open_root_bar(xd_shell *shell, const xd_menu_model *model, xd_taskbar *bar,
+                               xd_rect anchor, uint32_t serial);
+/* The taskbar's thickness in logical px, from [Taskbar]. */
+int xd_taskbar_thickness(const xd_shell *shell);
 /* Where a drop at (lx, ly) (logical) goes in Quick Launch: before
  * button n; -1 if not over Quick Launch. */
 int xd_taskbar_quick_insert_at(const xd_taskbar *bar, double lx, double ly);

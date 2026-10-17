@@ -84,6 +84,8 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
     shell->pointer_menu = xd_menu_for_surface(shell, surface);
     shell->pointer_start7 = xd_start7_owns(shell, surface);
     shell->pointer_flyout = xd_volume_flyout_owns(shell, surface);
+    shell->enter_serial = serial;
+    shell->cursor = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
     if (shell->cursor_shape != nullptr)
         wp_cursor_shape_device_v1_set_shape(shell->cursor_shape, serial,
                                             WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);

@@ -154,8 +154,22 @@ void xd_theme_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t s
     ops(t)->draw_checkbox(t, cr, r, state, label);
 }
 int xd_theme_taskbar_height(const xd_theme *t) { return ops(t)->taskbar_height(t); }
-void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r) {
-    ops(t)->draw_taskbar(t, cr, r);
+void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
+    ops(t)->draw_taskbar(t, cr, r, edge);
+}
+
+xd_rect xd_style_rim_line(xd_rect r, xd_edge edge, int i, int px) {
+    switch (edge) {
+    case XD_EDGE_TOP:
+        return (xd_rect){r.x, r.y + r.h - i - px, r.w, px};
+    case XD_EDGE_LEFT:
+        return (xd_rect){r.x + r.w - i - px, r.y, px, r.h};
+    case XD_EDGE_RIGHT:
+        return (xd_rect){r.x + i, r.y, px, r.h};
+    case XD_EDGE_BOTTOM:
+        break;
+    }
+    return (xd_rect){r.x, r.y + i, r.w, px};
 }
 int xd_theme_start_button_width(const xd_theme *t, cairo_t *cr) {
     return ops(t)->start_button_width(t, cr);

@@ -767,6 +767,42 @@ static void process_resize(xd_server *server) {
 
 static void place_drag_icon(xd_server *server);
 
+/* Where a surface is in the layout, found in the scene (it may have moved
+ * since the button went down: a taskbar dragged to another edge). */
+typedef struct find_surface {
+    struct wlr_surface *surface;
+    int x, y;
+    bool found;
+} find_surface;
+
+static void find_surface_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
+    find_surface *f = data;
+    struct wlr_scene_surface *ss = wlr_scene_surface_try_from_buffer(buffer);
+    if (!f->found && ss != nullptr && ss->surface == f->surface) {
+        f->found = true;
+        f->x = sx;
+        f->y = sy;
+    }
+}
+
+/* The implicit grab: while buttons are held after a press in a client,
+ * motion goes to that surface even outside it (selecting text past a
+ * window's edge, dragging a slider, dragging the taskbar). */
+static bool implicit_grab_motion(xd_server *server, uint32_t time_msec) {
+    struct wlr_seat *seat = server->seat;
+    struct wlr_surface *focus = seat->pointer_state.focused_surface;
+    if (seat->pointer_state.button_count == 0 || focus == nullptr ||
+        wlr_seat_pointer_has_grab(seat))
+        return false; /* drags and popup grabs route themselves */
+    find_surface f = {.surface = focus};
+    wlr_scene_node_for_each_buffer(&server->scene->tree.node, find_surface_buffer, &f);
+    if (!f.found)
+        return false;
+    wlr_seat_pointer_notify_motion(seat, time_msec, server->cursor->x - f.x,
+                                   server->cursor->y - f.y);
+    return true;
+}
+
 static void process_motion(xd_server *server, uint32_t time_msec) {
     place_drag_icon(server);
     switch (server->mode) {
@@ -793,6 +829,8 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
     case XD_CURSOR_PASSTHROUGH:
         break;
     }
+    if (implicit_grab_motion(server, time_msec))
+        return;
 
     pick p = pick_at(server, server->cursor->x, server->cursor->y);
     set_hover(server, p.view, p.part);
@@ -979,6 +1017,9 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
             return;
         }
         wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
+        /* The implicit grab ends: focus what's under the pointer now. */
+        if (server->seat->pointer_state.button_count == 0)
+            process_motion(server, e->time_msec);
         return;
     }
 

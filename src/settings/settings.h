@@ -73,6 +73,9 @@ typedef struct xd_settings {
     bool show_clock;
     bool hide_inactive; /* fold tray icons that have been quiet behind a chevron */
     bool all_displays; /* a taskbar on every monitor, not just the first */
+    xd_edge edge;      /* where the taskbar is */
+    int rows;          /* a top or bottom taskbar's height, in rows */
+    int side_width;    /* a left or right taskbar's width, logical px */
 
     /* [StartMenu] */
     xd_start_style start_style;

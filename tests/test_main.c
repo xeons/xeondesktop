@@ -162,7 +162,7 @@ static void test_render(void) {
             xd_theme_draw_frame(&t, cr, (xd_rect){0, 0, w, h}, &f);
             xd_theme_draw_button(&t, cr, (xd_rect){10, 100, 80, 24}, XD_STATE_FOCUSED, "OK");
             xd_theme_draw_checkbox(&t, cr, (xd_rect){10, 130, 200, 20}, XD_STATE_CHECKED, "x");
-            xd_theme_draw_taskbar(&t, cr, (xd_rect){0, h - 30, w, 30});
+            xd_theme_draw_taskbar(&t, cr, (xd_rect){0, h - 30, w, 30}, XD_EDGE_BOTTOM);
             CHECK(cairo_status(cr) == CAIRO_STATUS_SUCCESS);
 
             /* Frame insets grow with the scale factor. */

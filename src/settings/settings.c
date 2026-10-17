@@ -20,6 +20,7 @@ static const char *const mode_names[XD_WALLPAPER_MODE_COUNT] = {
 static const char *const font_size_names[] = {"normal", "large", "extralarge"};
 static const char *const start_style_names[] = {"classic", "xp", "win7"};
 static const char *const smoothing_names[] = {"standard", "none", "cleartype"};
+static const char *const edge_names[] = {"bottom", "top", "left", "right"};
 
 const char *xd_wallpaper_mode_name(xd_wallpaper_mode m) {
     XD_ASSERT((unsigned)m < XD_WALLPAPER_MODE_COUNT);
@@ -39,6 +40,9 @@ void xd_settings_defaults(xd_settings *s) {
         .show_clock = true,
         .hide_inactive = true,
         .all_displays = true,
+        .edge = XD_EDGE_BOTTOM,
+        .rows = 1,
+        .side_width = 150,
         .screensaver_wait = 15,
         /* Windows' defaults: about 30 repeats a second after half a second. */
         .keyboard = {.repeat_delay = 500, .repeat_rate = 30},
@@ -132,6 +136,19 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &s->hide_inactive);
         else if (KEY("AllDisplays"))
             parse_bool(v, &s->all_displays);
+        else if (KEY("Edge")) {
+            int i = index_of(edge_names, XD_ARRAY_LEN(edge_names), v);
+            if (i >= 0)
+                s->edge = (xd_edge)i;
+        } else if (KEY("Rows")) {
+            int64_t n;
+            if (xd_str_parse_i64(v, 1, 8, &n))
+                s->rows = (int)n;
+        } else if (KEY("SideWidth")) {
+            int64_t n;
+            if (xd_str_parse_i64(v, 40, 800, &n))
+                s->side_width = (int)n;
+        }
     } else if (SEC("StartMenu")) {
         if (KEY("Style")) {
             int i = index_of(start_style_names, XD_ARRAY_LEN(start_style_names), v);
@@ -257,6 +274,9 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Taskbar", "ShowClock", s->show_clock);
     g_key_file_set_boolean(kf, "Taskbar", "HideInactiveIcons", s->hide_inactive);
     g_key_file_set_boolean(kf, "Taskbar", "AllDisplays", s->all_displays);
+    g_key_file_set_string(kf, "Taskbar", "Edge", edge_names[s->edge]);
+    g_key_file_set_integer(kf, "Taskbar", "Rows", s->rows);
+    g_key_file_set_integer(kf, "Taskbar", "SideWidth", s->side_width);
     g_key_file_set_string(kf, "StartMenu", "Style", start_style_names[s->start_style]);
     g_key_file_set_string(kf, "ScreenSaver", "Name", s->screensaver);
     g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);

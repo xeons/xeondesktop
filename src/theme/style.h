@@ -36,7 +36,7 @@ typedef struct xd_style_ops {
     void (*draw_checkbox)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                           const char *label);
     int (*taskbar_height)(const xd_theme *t);
-    void (*draw_taskbar)(const xd_theme *t, cairo_t *cr, xd_rect r);
+    void (*draw_taskbar)(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
     int (*start_button_width)(const xd_theme *t, cairo_t *cr);
     void (*draw_start_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
     void (*draw_task_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
@@ -74,7 +74,9 @@ void xd_luna_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
                           xd_frame_layout *l);
 void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f);
 int xd_luna_taskbar_height(const xd_theme *t);
-void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
+/* A line `i` px in from a taskbar's desktop-facing rim, `px` thick. */
+xd_rect xd_style_rim_line(xd_rect r, xd_edge edge, int i, int px);
 int xd_luna_start_button_width(const xd_theme *t, cairo_t *cr);
 void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
 void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,

@@ -270,11 +270,11 @@ static int classic_taskbar_height(const xd_theme *t) {
     return xd_metric_px(t, XD_METRIC_TASKBAR_HEIGHT);
 }
 
-static void classic_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r) {
+static void classic_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
     int p = xd_tpx(t, 1);
     xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
-    xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w, p}, xd_sys(t, XD_COLOR_BUTTON_LIGHT));
-    xd_fill_rect(cr, (xd_rect){r.x, r.y + p, r.w, p}, xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
+    xd_fill_rect(cr, xd_style_rim_line(r, edge, 0, p), xd_sys(t, XD_COLOR_BUTTON_LIGHT));
+    xd_fill_rect(cr, xd_style_rim_line(r, edge, p, p), xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
 }
 
 static xd_text_style start_text(const xd_theme *t, xd_font_spec *bold) {

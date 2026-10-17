@@ -283,13 +283,13 @@ void xd_taskbar_group_menu(xd_taskbar *bar, int hit, uint32_t serial) {
     xd_menu_tree_free(&shell->context_tree);
     xd_menu_tree_init(&shell->context_tree);
     xd_menu_model *model = group_menu(shell, &shell->context_tree, bar->task_views[hit]->app_id);
-    /* Above the button (device px -> surface-local logical). */
+    /* From the button (device px -> surface-local logical). */
     xd_rect r = bar->task_rects[hit];
     xd_rect anchor = {(int)(r.x / bar->scale), (int)(r.y / bar->scale),
                       (int)(r.w / bar->scale), (int)(r.h / bar->scale)};
     xd_taskbar_take_keyboard(bar);
     shell->context_menu = true;
-    xd_menu_open_root(shell, model, bar->layer, anchor, serial);
+    xd_menu_open_root_bar(shell, model, bar, anchor, serial);
     shell->start_bar = bar;
     bar->dirty = true;
 }
@@ -417,10 +417,14 @@ static void handle_window_menu(void *data, [[maybe_unused]] struct xd_window_arr
     xd_menu_tree_free(&shell->context_tree);
     xd_menu_tree_init(&shell->context_tree);
     xd_menu_model *model = window_menu(shell, &shell->context_tree, focused);
-    /* Popups hang off the taskbar's surface, which sits at the bottom of
-     * the output: convert to its coordinates. */
-    int bar_top = bar->desktop->height - bar->height;
-    xd_rect anchor = {x, y - bar_top, 1, 1};
+    /* Popups hang off the taskbar's surface: convert from the output's
+     * coordinates to its own, wherever it's docked. */
+    int ox = 0, oy = 0;
+    if (shell->settings.edge == XD_EDGE_BOTTOM)
+        oy = bar->desktop->height - bar->height;
+    else if (shell->settings.edge == XD_EDGE_RIGHT)
+        ox = bar->desktop->width - bar->width;
+    xd_rect anchor = {x - ox, y - oy, 1, 1};
     xd_taskbar_take_keyboard(bar);
     shell->context_menu = true;
     xd_menu_open_root_dir(shell, model, bar->layer, anchor, serial, true);

@@ -299,6 +299,22 @@ xd_menu *xd_menu_open_root(xd_shell *shell, const xd_menu_model *model,
     return xd_menu_open_root_dir(shell, model, layer, anchor, serial, false);
 }
 
+xd_menu *xd_menu_open_root_bar(xd_shell *shell, const xd_menu_model *model, xd_taskbar *bar,
+                               xd_rect anchor, uint32_t serial) {
+    xd_menu_close_all(shell);
+    xd_menu *menu = menu_create(shell, model);
+    struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
+    xdg_positioner_set_size(pos, menu->width, menu->height);
+    xd_taskbar_popup_position(bar, anchor, pos);
+    menu->popup = xdg_surface_get_popup(menu->xdg_surface, nullptr, pos);
+    xdg_positioner_destroy(pos);
+    zwlr_layer_surface_v1_get_popup(bar->layer, menu->popup);
+    menu_finish_popup(menu, serial);
+    shell->start_menu = menu;
+    shell->menu_serial = serial;
+    return menu;
+}
+
 xd_menu *xd_menu_open_root_dir(xd_shell *shell, const xd_menu_model *model,
                                struct zwlr_layer_surface_v1 *layer, xd_rect anchor,
                                uint32_t serial, bool downwards) {

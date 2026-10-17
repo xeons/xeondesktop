@@ -732,7 +732,7 @@ static void open_model(xd_shell *shell, xd_taskbar *bar, xd_rect anchor, uint32_
     xd_volume_flyout_dismiss(shell);
     xd_taskbar_take_keyboard(bar);
     shell->context_menu = true;
-    xd_menu_open_root(shell, model, bar->layer, anchor, serial);
+    xd_menu_open_root_bar(shell, model, bar, anchor, serial);
     shell->start_bar = bar;
     bar->dirty = true;
 }

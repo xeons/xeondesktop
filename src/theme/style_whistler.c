@@ -251,11 +251,11 @@ static const uint32_t BAR = 0x5297F9, BAR_TOP = 0x7DB1FB, BAR_EDGE = 0x3573D6,
 
 static int whistler_taskbar_height(const xd_theme *t) { return xd_tpx(t, TASKBAR_H); }
 
-static void whistler_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r) {
+static void whistler_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
     int px = xd_tpx(t, 1);
     xd_fill_rect(cr, r, hex(BAR));
-    xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w, px}, hex(BAR_EDGE));
-    xd_fill_rect(cr, (xd_rect){r.x, r.y + px, r.w, px}, hex(BAR_TOP));
+    xd_fill_rect(cr, xd_style_rim_line(r, edge, 0, px), hex(BAR_EDGE));
+    xd_fill_rect(cr, xd_style_rim_line(r, edge, px, px), hex(BAR_TOP));
 }
 
 /* Logo only, on a darker square, as in the pre-release builds. */

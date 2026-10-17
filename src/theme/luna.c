@@ -357,10 +357,17 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
 
 int xd_luna_taskbar_height(const xd_theme *t) { return xd_tpx(t, 30); }
 
-void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r) {
+void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
+    /* XP's 30 rows from the rim facing the desktop, stretched across a
+     * taller (or side) taskbar. */
+    bool side = edge == XD_EDGE_LEFT || edge == XD_EDGE_RIGHT;
+    int across = side ? r.w : r.h;
+    int natural = xd_tpx(t, 30);
     for (int i = 0; i < 30; i++) {
-        int a = xd_tpx(t, i), b = xd_tpx(t, i + 1);
-        fill(cr, (xd_rect){r.x, r.y + a, r.w, b - a}, luna_taskbar[i]);
+        int a = across == natural ? xd_tpx(t, i) : i * across / 30;
+        int b = across == natural ? xd_tpx(t, i + 1) : (i + 1) * across / 30;
+        if (b > a)
+            fill(cr, xd_style_rim_line(r, edge, a, b - a), luna_taskbar[i]);
     }
 }
 
