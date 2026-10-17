@@ -103,6 +103,11 @@ typedef struct xd_view {
 
     bool mapped;
     bool minimized;
+    /* Didn't answer a ping (xdg-shell): "(Not Responding)" after its
+     * title, as Windows shows, until it answers again. */
+    bool hung;
+    bool ping_out; /* a ping to its program hasn't timed out (yet) */
+    char *hung_title;
     bool maximized;
     bool dialog; /* fixed size (min == max): dialog frame, no resizing */
     bool csd;    /* the client draws its own decorations: no frame from us */
@@ -151,6 +156,7 @@ typedef struct xd_view {
     struct wl_listener set_hints;
     struct wl_listener content_destroy; /* wlroots frees it with the surface */
     struct wl_listener set_title;
+    struct wl_listener ping_timeout;
     struct wl_listener set_app_id;
     struct wl_listener ftl_activate;
     struct wl_listener ftl_minimize;
@@ -222,6 +228,7 @@ struct xd_server {
     struct wl_listener layout_change;
 
     struct wlr_xdg_shell *xdg_shell;
+    struct wl_event_source *ping_timer; /* asks windows if they're responding */
     struct wl_listener new_toplevel;
     struct wl_listener new_popup;
     struct wl_list views;

@@ -363,10 +363,11 @@ static void on_task_changed(xd_task *task, gpointer data) {
     const char *title = task->title != nullptr && *task->title != '\0' ? task->title
                         : task->app_id != nullptr                     ? task->app_id
                                                                       : "";
-    /* Windows marks hung applications "Not Responding"; the compositor
-     * doesn't report that yet. */
+    /* The compositor adds " (Not Responding)" to a hung window's title,
+     * as Windows does; its status says so. */
+    gboolean hung = g_str_has_suffix(title, " (Not Responding)");
     gtk_list_store_set(t->apps, iter, AP_TASK, task, AP_ICON16, small, AP_ICON32, large, AP_TITLE,
-                       title, AP_STATUS, "Running", -1);
+                       title, AP_STATUS, hung ? "Not Responding" : "Running", -1);
     g_clear_object(&small);
     g_clear_object(&large);
 }

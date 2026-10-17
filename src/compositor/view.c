@@ -20,6 +20,11 @@ const char *xd_view_title(const xd_view *view) {
     return view->kind == XD_VIEW_X11 ? view->xsurface->title : view->toplevel->title;
 }
 
+/* The title shown on the frame and the taskbar. */
+static const char *shown_title(const xd_view *view) {
+    return view->hung && view->hung_title != nullptr ? view->hung_title : xd_view_title(view);
+}
+
 const char *xd_view_app_id(const xd_view *view) {
     return view->kind == XD_VIEW_X11 ? view->xsurface->class : view->toplevel->app_id;
 }
@@ -71,7 +76,7 @@ static bool view_is_fixed_size(const xd_view *view) {
 }
 
 xd_frame xd_view_frame(const xd_view *view, bool active) {
-    const char *title = xd_view_title(view);
+    const char *title = shown_title(view);
     return (xd_frame){
         .title = title != nullptr ? title : "",
         .active = active,
@@ -550,8 +555,8 @@ static void handle_ftl_close(struct wl_listener *listener, [[maybe_unused]] void
 
 static void ftl_create(xd_view *view) {
     view->ftl = wlr_foreign_toplevel_handle_v1_create(view->server->ftl_manager);
-    if (xd_view_title(view) != nullptr)
-        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, xd_view_title(view));
+    if (shown_title(view) != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, shown_title(view));
     if (xd_view_app_id(view) != nullptr)
         wlr_foreign_toplevel_handle_v1_set_app_id(view->ftl, xd_view_app_id(view));
     wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, view->maximized);
@@ -801,12 +806,74 @@ static void handle_set_parent(struct wl_listener *listener, [[maybe_unused]] voi
         ftl_create(view);
 }
 
+static void set_hung(xd_view *view, bool hung);
+
 static void handle_set_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_title);
-    if (view->ftl != nullptr && xd_view_title(view) != nullptr)
-        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, xd_view_title(view));
+    if (view->hung)
+        set_hung(view, true); /* the suffix follows the new title */
+    if (view->ftl != nullptr && shown_title(view) != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, shown_title(view));
     view->drawn.title_dirty = true;
     xd_frame_render(view, false);
+}
+
+/* ---- Not Responding --------------------------------------------------------- */
+
+static constexpr uint32_t PING_TIMEOUT_MS = 5000; /* Windows' hung-window time */
+static constexpr int PING_EVERY_MS = 2000;
+
+static void set_hung(xd_view *view, bool hung) {
+    view->hung = hung;
+    xd_free(view->hung_title);
+    view->hung_title = nullptr;
+    if (hung) {
+        const char *t = xd_view_title(view);
+        xd_strbuf b = {0};
+        xd_strbuf_appendf(&b, "%s (Not Responding)", t != nullptr ? t : "");
+        view->hung_title = xd_str_dup_cstr(xd_strbuf_view(&b));
+        xd_strbuf_free(&b);
+    }
+    if (view->ftl != nullptr && shown_title(view) != nullptr)
+        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, shown_title(view));
+    view->drawn.title_dirty = true;
+    xd_frame_render(view, false);
+}
+
+static void handle_ping_timeout(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, ping_timeout);
+    view->ping_out = false;
+    if (!view->hung) {
+        const char *t = xd_view_title(view);
+        wlr_log(WLR_INFO, "%s isn't responding", t != nullptr ? t : "a window");
+        set_hung(view, true);
+    }
+}
+
+static bool pingable(const xd_view *v) {
+    return v->kind == XD_VIEW_XDG && v->mapped && v->toplevel->base->initialized;
+}
+
+/* Every few seconds each program is pinged (one ping per client). wlroots
+ * clears a client's ping serial when it answers and also when the ping
+ * times out, so `ping_out` (cleared by the timeout) tells them apart: a
+ * hung window whose ping is no longer pending and didn't time out is
+ * responding again. All windows are checked before the next pings go. */
+static int ping_tick(void *data) {
+    xd_server *server = data;
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (pingable(v) && v->hung && v->ping_out && v->toplevel->base->client->ping_serial == 0)
+            set_hung(v, false);
+    }
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (!pingable(v))
+            continue;
+        if (v->toplevel->base->client->ping_serial == 0)
+            wlr_xdg_surface_ping(v->toplevel->base);
+        v->ping_out = true;
+    }
+    wl_event_source_timer_update(server->ping_timer, PING_EVERY_MS);
+    return 0;
 }
 
 static void handle_set_app_id(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -853,6 +920,9 @@ void xd_view_on_destroy(xd_view *view) {
     xd_unlisten(&view->set_hints);
     xd_unlisten(&view->content_destroy);
     xd_unlisten(&view->set_title);
+    xd_unlisten(&view->ping_timeout);
+    xd_free(view->hung_title);
+    view->hung_title = nullptr;
     xd_unlisten(&view->set_app_id);
     xd_unlisten(&view->decoration_mode);
     xd_unlisten(&view->decoration_destroy);
@@ -896,6 +966,7 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data) {
     XD_LISTEN(&toplevel->events.set_parent, view, set_parent, handle_set_parent);
     XD_LISTEN(&toplevel->events.set_title, view, set_title, handle_set_title);
     XD_LISTEN(&toplevel->events.set_app_id, view, set_app_id, handle_set_app_id);
+    XD_LISTEN(&toplevel->base->events.ping_timeout, view, ping_timeout, handle_ping_timeout);
 }
 
 /* ---- decorations --------------------------------------------------------- */
@@ -1099,6 +1170,10 @@ static void handle_new_popup([[maybe_unused]] struct wl_listener *listener, void
 void xd_view_init(xd_server *server) {
     wl_list_init(&server->views);
     server->xdg_shell = wlr_xdg_shell_create(server->display, 6);
+    server->xdg_shell->ping_timeout = PING_TIMEOUT_MS;
+    server->ping_timer = wl_event_loop_add_timer(wl_display_get_event_loop(server->display),
+                                                 ping_tick, server);
+    wl_event_source_timer_update(server->ping_timer, PING_EVERY_MS);
     XD_LISTEN(&server->xdg_shell->events.new_toplevel, server, new_toplevel,
               handle_new_toplevel);
     XD_LISTEN(&server->xdg_shell->events.new_popup, server, new_popup, handle_new_popup);

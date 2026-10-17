@@ -502,9 +502,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Task Manager (xd-taskmgr)
 
-- [ ] Applications' Status is always "Running": Windows shows "Not
-      Responding" for hung windows; needs the compositor to report ping
-      timeouts.
+- [x] "Not Responding": the compositor pings every Wayland window every 2s
+      (5s timeout, Windows' hung-window time); a hung one gets
+      " (Not Responding)" after its title on the frame, the taskbar and the
+      foreign-toplevel title, and Task Manager's Status says so, until it
+      answers again. Tested with a program that froze its main loop for
+      25s. Not yet: X11 windows (_NET_WM_PING, only for programs that
+      support it), XP's ghost window and "End Now" from the close button.
 - [ ] Options > Always On Top (no Wayland protocol yet) and Hide When
       Minimized with the CPU meter in the notification area (the tray
       exists now: the Task Manager can show a StatusNotifierItem).
