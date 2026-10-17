@@ -8,6 +8,7 @@
 #define XD_SHELL_APPS_H
 
 #include "../core/str.h"
+#include "../ui/appid.h"
 
 typedef struct _GDesktopAppInfo GDesktopAppInfo;
 
@@ -41,14 +42,6 @@ void xd_apps_load_control_panel(xd_app_list *list);
  * release with xd_app_release. */
 [[nodiscard]] bool xd_app_from_file(const char *path, xd_arena *arena, xd_app *out);
 void xd_app_release(xd_app *app);
-
-/* The application a window belongs to, found from its app id (Wayland)
- * or WM_CLASS (X11): the desktop file of that name, else one whose
- * StartupWMClass, id or executable matches regardless of case, else the
- * reverse-DNS id's last part ("org.gnome.Nautilus" -> "nautilus"). Sets
- * its Icon key (theme name or path) and localized Name, or nullptr; g_free
- * both. Returns whether one was found. */
-bool xd_app_for_window(const char *app_id, char **icon, char **name);
 
 /* Launches the application detached from the shell (own session, default
  * signal handling). Returns false on failure. */

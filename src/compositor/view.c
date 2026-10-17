@@ -1023,6 +1023,7 @@ static void handle_set_app_id(struct wl_listener *listener, [[maybe_unused]] voi
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_app_id);
     if (view->ftl != nullptr && xd_view_app_id(view) != nullptr)
         wlr_foreign_toplevel_handle_v1_set_app_id(view->ftl, xd_view_app_id(view));
+    xd_frame_render(view, false); /* its icon */
 }
 
 static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {

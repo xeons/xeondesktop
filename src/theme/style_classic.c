@@ -111,7 +111,7 @@ static void caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_glyph g
 }
 
 static void app_icon(const xd_theme *t, cairo_t *cr, xd_rect r) {
-    /* Generic window icon until real application icons are wired up. */
+    /* A generic window, for one without an icon. */
     int p = xd_tpx(t, 1);
     xd_fill_rect(cr, r, xd_rgba_hex(0xFFFFFF));
     xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w, xd_tpx(t, 4)}, xd_rgba_hex(0x0A246A));
@@ -188,7 +188,10 @@ static void classic_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
                        pressed);
     }
 
-    app_icon(t, cr, l.icon);
+    if (f->icon != nullptr)
+        xd_style_task_icon(t, cr, f->icon, l.icon.x, l.icon.y);
+    else
+        app_icon(t, cr, l.icon);
     xd_text_style st = xd_text(t, XD_FONT_CAPTION,
                                xd_sys(t, f->active ? XD_COLOR_TITLE_TEXT
                                                    : XD_COLOR_INACTIVE_TITLE_TEXT),

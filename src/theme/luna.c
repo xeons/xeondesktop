@@ -334,10 +334,15 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
         image_paint(cr, &b, l.button_rects[i]);
     }
 
-    /* Window icon placeholder, then the title in white with XP's shadow. */
+    /* The window's icon (a generic window without one), then the title in
+     * white with XP's shadow. */
     xd_rect ic = l.icon;
-    xd_fill_rect(cr, ic, xd_rgba_hex(0xFFFFFF));
-    xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, xd_rgba_hex(0x2D63D8));
+    if (f->icon != nullptr) {
+        xd_style_task_icon(t, cr, f->icon, ic.x, ic.y);
+    } else {
+        xd_fill_rect(cr, ic, xd_rgba_hex(0xFFFFFF));
+        xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, xd_rgba_hex(0x2D63D8));
+    }
     static const xd_font_spec title_font = {
         .family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 10, .bold = true};
     xd_text_style st = {

@@ -455,8 +455,11 @@ static void draw_task(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t e,
     } else if (tl->attention && tl->flashes % 2 == 0) {
         state |= XD_STATE_FLASH;
     }
+    /* As the title bar: its application's icon, else one named after the
+     * app id (as many programs name theirs), else the generic program. */
+    const char *names[] = {tl->icon, tl->app_id, "application-x-executable"};
     cairo_surface_t *icon =
-        tl->icon != nullptr ? xd_icons_get(shell->icons, tl->icon, xd_tpx(t, 16)) : nullptr;
+        xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), xd_tpx(t, 16));
     xd_theme_draw_task_button(t, cr, r, state, label, icon);
     if (count > 1)
         draw_group_arrow(t, cr, r, state);

@@ -251,13 +251,34 @@ compositor_src = files(
   'src/compositor/frame.c',
   'src/compositor/animate.c',
   'src/compositor/snap.c',
+  'src/compositor/appicons.c',
   'src/compositor/arrange.c',
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
   'src/compositor/xwayland.c',
 )
+gtk_dep = dependency('gtk+-3.0', include_type: 'system')
+gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
+gio_unix_dep = dependency('gio-unix-2.0', include_type: 'system')
+
+# Application icons from the icon theme, and which application a window
+# belongs to: libxdui's, and the compositor's for title bars.
+appicons_lib = static_library(
+  'xdappicons',
+  'src/ui/icons.c',
+  'src/ui/image.c',
+  'src/ui/appid.c',
+  dependencies: [settings_dep, gtk_dep, gdk_pixbuf_dep, gio_unix_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
+appicons_dep = declare_dependency(
+  link_with: appicons_lib,
+  dependencies: [settings_dep, gtk_dep, gdk_pixbuf_dep, gio_unix_dep],
+)
+
 compositor_deps = [
   theme_dep,
+  appicons_dep,
   settings_dep,
   wlroots_dep,
   xcb_dep,
@@ -302,34 +323,29 @@ if scenefx_dep.found()
   )
 endif
 
-gtk_dep = dependency('gtk+-3.0', include_type: 'system')
 # The volume icon: PulseAudio's client library (PipeWire serves it too).
 pulse_dep = dependency('libpulse-mainloop-glib', include_type: 'system')
 # The sound scheme's sounds (xd-sound's Play, the shell's logon sound).
 canberra_dep = dependency('libcanberra', include_type: 'system')
 # forkpty: in libc since glibc 2.34, in libutil before.
 util_dep = cc.has_function('forkpty', prefix: '#include <pty.h>') ? declare_dependency() : cc.find_library('util')
-gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
-gio_unix_dep = dependency('gio-unix-2.0', include_type: 'system')
 
 # libxdui: Wayland client plumbing and dialog widgets for shell programs.
 ui_lib = static_library(
   'xdui',
   'src/ui/shm.c',
-  'src/ui/icons.c',
   'src/ui/textedit.c',
-  'src/ui/image.c',
   'src/ui/ui.c',
   'src/ui/widgets.c',
   'src/ui/display.c',
-  dependencies: [theme_dep, settings_dep, client_protocol_dep, gtk_dep, gdk_pixbuf_dep,
-                 xkbcommon_dep],
+  dependencies: [theme_dep, settings_dep, appicons_dep, client_protocol_dep, gtk_dep,
+                 gdk_pixbuf_dep, xkbcommon_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
 ui_dep = declare_dependency(
   link_with: ui_lib,
-  dependencies: [theme_dep, settings_dep, client_protocol_dep, gtk_dep, gdk_pixbuf_dep,
-                 xkbcommon_dep],
+  dependencies: [theme_dep, settings_dep, appicons_dep, client_protocol_dep, gtk_dep,
+                 gdk_pixbuf_dep, xkbcommon_dep],
 )
 
 # Screen savers, shared by xd-lock and Display Properties' preview.

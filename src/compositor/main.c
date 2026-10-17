@@ -27,6 +27,7 @@
 
 #include "../settings/gtktheme.h"
 #include "../settings/settings.h"
+#include "appicons.h"
 #include "server.h"
 
 static void usage(FILE *f) {
@@ -311,6 +312,7 @@ static void server_finish(xd_server *server) {
         wlr_renderer_destroy(server->renderer);
     if (server->backend != nullptr)
         wlr_backend_destroy(server->backend);
+    xd_appicons_destroy(server->appicons);
     if (server->display != nullptr)
         wl_display_destroy(server->display);
 }
@@ -544,6 +546,11 @@ int main(int argc, char **argv) {
     }
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,
             xd_visual_style_name(server.config.style), server.config.scheme.name);
+
+    /* The shell's icon theme, for title bars. */
+    const char *icon_theme = getenv("XD_ICON_THEME");
+    server.appicons = xd_appicons_create(server.loop, icon_theme != nullptr ? icon_theme : "breeze",
+                                         xd_frame_icon_ready, &server);
 
     server.settings_fd = xd_settings_watch();
     if (server.settings_fd >= 0)

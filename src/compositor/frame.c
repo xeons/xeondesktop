@@ -11,7 +11,10 @@
 #include <stdlib.h>
 #include <wlr/interfaces/wlr_buffer.h>
 
+#include <string.h>
+
 #include "../core/alloc.h"
+#include "appicons.h"
 #include "server.h"
 
 typedef struct xd_cairo_buffer {
@@ -128,8 +131,12 @@ void xd_frame_render(xd_view *view, bool force) {
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = xd_view_scale(view);
     bool active = xd_view_focused(view->server) == view;
+    /* nullptr until it has loaded: then xd_frame_icon_ready redraws. */
+    cairo_surface_t *icon =
+        xd_appicons_get(view->server->appicons, xd_view_app_id(view), xd_px(scale, 16));
 
-    if (!force && !view->drawn.title_dirty && view->drawn.width == outer.width &&
+    if (!force && !view->drawn.title_dirty && view->drawn.icon == icon &&
+        view->drawn.width == outer.width &&
         view->drawn.height == outer.height && view->drawn.scale == scale &&
         view->drawn.active == active && view->drawn.maximized == view->maximized &&
         view->drawn.dialog == view->dialog &&
@@ -148,6 +155,7 @@ void xd_frame_render(xd_view *view, bool force) {
     xd_theme theme;
     xd_theme_init(&theme, view->server->config.style, &view->server->config.scheme, scale);
     xd_frame f = xd_view_frame(view, active);
+    f.icon = icon;
     cairo_t *cr = cairo_create(buf->surface);
     xd_theme_draw_frame(&theme, cr, (xd_rect){0, 0, dw, dh}, &f);
     cairo_destroy(cr);
@@ -166,4 +174,14 @@ void xd_frame_render(xd_view *view, bool force) {
     view->drawn.hot = view->hot;
     view->drawn.pressed = view->pressed;
     view->drawn.title_dirty = false;
+    view->drawn.icon = icon;
+}
+
+void xd_frame_icon_ready(void *data, const char *app_id) {
+    xd_server *server = data;
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        const char *id = xd_view_app_id(view);
+        if (strcmp(id != nullptr ? id : "", app_id) == 0)
+            xd_frame_render(view, false);
+    }
 }

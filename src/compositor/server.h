@@ -160,6 +160,7 @@ typedef struct xd_view {
         bool active, maximized, dialog;
         xd_frame_part hot, pressed;
         bool title_dirty;
+        cairo_surface_t *icon; /* the cache's, so compared by address */
     } drawn;
 
     struct wl_listener map;
@@ -287,6 +288,7 @@ struct xd_server {
     struct wl_listener new_popup;
     struct wl_list views;
     int cascade;
+    struct xd_appicons *appicons; /* title bar icons */
 
     struct wlr_xdg_decoration_manager_v1 *xdg_decoration;
     struct wlr_server_decoration_manager *kde_decoration; /* used by GTK 3 */
@@ -572,6 +574,8 @@ void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output);
 
 /* frame.c */
 void xd_frame_render(xd_view *view, bool force);
+/* An application's icon has loaded: redraws its windows' frames. */
+void xd_frame_icon_ready(void *server, const char *app_id);
 double xd_view_scale(const xd_view *view);
 
 #endif

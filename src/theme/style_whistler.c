@@ -172,8 +172,12 @@ static void whistler_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
     }
 
     xd_rect ic = l.icon;
-    xd_fill_rect(cr, ic, hex(0xFFFFFF));
-    xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, dark);
+    if (f->icon != nullptr) {
+        xd_style_task_icon(t, cr, f->icon, ic.x, ic.y);
+    } else {
+        xd_fill_rect(cr, ic, hex(0xFFFFFF));
+        xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, dark);
+    }
 
     static const xd_font_spec title_font = {
         .family = XD_FONT_FAMILY_TAHOMA, .size_pt = 9, .bold = true};

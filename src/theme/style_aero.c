@@ -274,6 +274,8 @@ static void aero_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const
         caption_button(t, cr, l.button_rects[i], l.button_parts[i], f, i + 1 == l.button_count,
                        i == 0);
     }
+    if (f->icon != nullptr)
+        xd_style_task_icon(t, cr, f->icon, l.icon.x, l.icon.y);
     draw_title(t, cr, l.title, f->title, f->active);
 }
 

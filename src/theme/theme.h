@@ -93,6 +93,9 @@ typedef struct xd_frame {
     uint8_t buttons;      /* xd_caption_buttons */
     xd_frame_part hot;     /* caption button under the pointer, or NONE */
     xd_frame_part pressed; /* caption button held down, or NONE */
+    /* The window's icon, 16 logical px in device px; nullptr while there's
+     * none, for the style's generic one. */
+    cairo_surface_t *icon;
 } xd_frame;
 
 typedef struct xd_insets {
