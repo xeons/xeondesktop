@@ -431,11 +431,17 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (not in the reference, so designed), radio buttons, tabs, scroll
       bars, group boxes, menus and the GTK theme's Luna section, which
       still uses the older approximations.
-- [~] Luna colour variants Olive Green and Silver (LunaColor=HomeStead /
-      Metallic): Blue's measured artwork recoloured to XP's documented
-      colours, live, GTK theme included. Approximate shading (no reference
-      screenshots); push buttons, check boxes, edit borders and the
-      inactive Close stay Blue's.
+- [~] Luna colour variants Silver, Olive Green and Energy Blue (Royale),
+      each measured from a screenshot (tools/luna-measure.py --variant
+      silver|olive|energyblue; sources cited there): caption, frame,
+      caption buttons, taskbar, Start button, task buttons, tray; the XP
+      Start menu takes each variant's colours (Energy Blue's measured).
+      Derived, with no reference: hot/pressed caption buttons; Olive's and
+      Energy Blue's inactive windows; Silver's pressed task button; Silver's
+      and Olive's Start menus (Blue's recoloured). Olive's reference is a
+      pre-release build (2485); Silver's frames are fitted from a 3px
+      dialog frame; Energy Blue's Start menu reference is a 256-colour
+      image. Blue is unchanged (pixel-compared before and after).
 - [~] Aero (Windows 7), style_aero.c: translucent sky-blue glass frames
       with a sheen and faint streaks, rounded corners, the dark outline
       and light inner edge, the grouped caption strip with a red Close,

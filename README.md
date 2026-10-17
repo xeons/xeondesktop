@@ -163,7 +163,8 @@ tabs:
   Network Places and the web browser show on the desktop, and their icons.
 - Appearance: style, colour scheme and font size, with a live preview: all
   22 of XP's classic colour schemes, and for the XP style Default (blue),
-  Olive Green and Silver.
+  Olive Green, Silver and Energy Blue (Royale), each measured from a
+  screenshot of the real thing.
 - Effects: font smoothing and large icons.
 - Settings: drag the monitors into place, and set each one's resolution,
   refresh rate, scale and orientation, or turn it off. As in Windows, new
