@@ -26,6 +26,7 @@ typedef struct xd_tray_item xd_tray_item;
 typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
 typedef struct xd_sleep xd_sleep;
+typedef struct xd_account xd_account;
 
 typedef struct xd_early_output {
     struct wl_output *output;
@@ -188,6 +189,7 @@ struct xd_shell {
     struct ext_idle_notification_v1 *standby_note;   /* Power Options' System standby */
     struct ext_idle_notification_v1 *hibernate_note; /* and System hibernates */
     xd_sleep *sleep; /* logind (sleep.c), or nullptr */
+    xd_account *account; /* full name, Switch User (account.c) */
     struct zwlr_output_power_manager_v1 *power_manager;
     int saver_pidfd; /* the running screen saver, or -1 */
     bool monitors_off;
@@ -418,6 +420,8 @@ bool xd_start7_key(xd_shell *shell, uint32_t keysym, const char *utf8, bool ctrl
 void xd_start7_timer_fired(xd_shell *shell);
 /* Records a launch for the "frequently used" list. */
 void xd_start7_count_launch(const char *app_id);
+/* The account's full name changed (account.c). */
+void xd_start7_user_changed(xd_shell *shell);
 
 /* startmenu.c */
 /* Command line for one of our programs (next to xd-shell in a build tree). */
@@ -435,6 +439,17 @@ void xd_sleep_finish(xd_shell *shell);
 void xd_sleep_update(xd_shell *shell);
 /* Idle long enough: stand by (or hibernate). */
 void xd_sleep_now(xd_shell *shell, bool hibernate);
+/* account.c: the user's full name (XP Start menu) and Switch User. */
+void xd_account_init(xd_shell *shell);
+void xd_account_finish(xd_shell *shell);
+/* AccountsService's RealName, else GECOS, else the login name. */
+const char *xd_account_full_name(xd_shell *shell);
+/* Asks AccountsService again (a Start menu is opening). */
+void xd_account_refresh(xd_shell *shell);
+/* A display manager that can show its greeter is running. */
+bool xd_account_can_switch_user(xd_shell *shell);
+/* Locks the screen and goes to the display manager's greeter. */
+void xd_account_switch_user(xd_shell *shell);
 /* sys_*.c: our notification area applets. */
 void xd_sys_battery_init(xd_shell *shell);
 void xd_sys_network_init(xd_shell *shell);

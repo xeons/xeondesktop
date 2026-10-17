@@ -816,6 +816,7 @@ executable(
   'src/shell/taskmenu.c',
   'src/shell/recent.c',
   'src/shell/sleep.c',
+  'src/shell/account.c',
   'src/settings/soundplay.c',
   link_with: rename_lib,
   dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep],

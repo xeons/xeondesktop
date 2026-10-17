@@ -930,6 +930,7 @@ int main(int argc, char **argv) {
     xd_deskicons_init(&shell);
     xd_sys_battery_init(&shell);
     xd_sleep_init(&shell);
+    xd_account_init(&shell);
     logon_sound();
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
@@ -962,6 +963,7 @@ int main(int argc, char **argv) {
     }
     xd_tray_finish(&shell);
     xd_sleep_finish(&shell);
+    xd_account_finish(&shell);
     xd_sound_finish();
     xd_deskicons_finish(&shell);
     xd_dnd_finish(&shell);

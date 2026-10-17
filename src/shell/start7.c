@@ -188,7 +188,7 @@ struct xd_start7 {
     bool pending_hover;
 
     cairo_surface_t *picture;
-    char user[64];
+    char user[128];
     uint32_t serial;
 };
 
@@ -1571,6 +1571,10 @@ static bool opens_on_press(const xd_start7 *m, int hit) {
     return opens_sub(m, hit) && hit != R_CONTROL;
 }
 
+static void switch_user(xd_shell *shell, [[maybe_unused]] void *data) {
+    xd_account_switch_user(shell);
+}
+
 static void open_sub(xd_start7 *m, int owner) {
     /* A right-click on another program replaces its menu. */
     if (m->sub_owner == owner && m->sub != nullptr && owner != OWNER_CONTEXT)
@@ -1598,7 +1602,10 @@ static void open_sub(xd_start7 *m, int owner) {
         anchor = xp_or_right_item(m, R_CONTROL);
     } else if (owner == HIT_SHUTDOWN_ARROW) {
         mm = xd_menu_model_new(&m->tree);
-        add_cmd(&m->tree, mm, "Switch user", "system-switch-user", nullptr);
+        xd_menu_item *sw = xd_menu_add(&m->tree, mm, XD_MENU_ACTION, "Switch user",
+                                       "system-switch-user");
+        sw->action = switch_user;
+        sw->disabled = !xd_account_can_switch_user(shell);
         add_cmd(&m->tree, mm, "Log off", "system-log-out",
                 xd_shell_own_command(shell, "xd-shutdown", "--action logoff"));
         add_cmd(&m->tree, mm, "Lock", "system-lock-screen",
@@ -1746,9 +1753,25 @@ static void preferred_scale(void *data, [[maybe_unused]] struct wp_fractional_sc
 }
 static const struct wp_fractional_scale_v1_listener fractional_listener = {preferred_scale};
 
-static void load_user(xd_start7 *m) {
+/* XP's header shows the account's full name; Windows 7's top right item
+ * is the user's folder, labelled with the login name. */
+static void load_user_name(xd_start7 *m) {
     const char *user = getenv("USER");
-    snprintf(m->user, sizeof(m->user), "%s", user != nullptr ? user : "User");
+    const char *name = m->xp ? xd_account_full_name(m->shell) : user != nullptr ? user : "User";
+    g_strlcpy(m->user, name, sizeof(m->user));
+}
+
+void xd_start7_user_changed(xd_shell *shell) {
+    xd_start7 *m = shell->start7;
+    if (m == nullptr)
+        return;
+    load_user_name(m);
+    m->dirty = true;
+}
+
+static void load_user(xd_start7 *m) {
+    load_user_name(m);
+    xd_account_refresh(m->shell);
     const char *home = getenv("HOME");
     if (home == nullptr)
         return;
