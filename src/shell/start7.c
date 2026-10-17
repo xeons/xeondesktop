@@ -1572,7 +1572,8 @@ static bool opens_on_press(const xd_start7 *m, int hit) {
 }
 
 static void open_sub(xd_start7 *m, int owner) {
-    if (m->sub_owner == owner && m->sub != nullptr)
+    /* A right-click on another program replaces its menu. */
+    if (m->sub_owner == owner && m->sub != nullptr && owner != OWNER_CONTEXT)
         return;
     close_sub(m);
     if (!m->shown)
