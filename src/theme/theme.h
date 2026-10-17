@@ -284,6 +284,13 @@ typedef enum xd_gtk_asset {
     XD_GTK_RADIO,
     XD_GTK_RADIO_DISABLED,
     XD_GTK_RADIO_HOT,
+    XD_GTK_MENU_ARROW, /* a submenu's arrow */
+    XD_GTK_MENU_ARROW_HOT,
+    XD_GTK_MENU_ARROW_DISABLED,
+    XD_GTK_SPIN_UP, /* spin buttons' arrows */
+    XD_GTK_SPIN_UP_DISABLED,
+    XD_GTK_SPIN_DOWN,
+    XD_GTK_SPIN_DOWN_DISABLED,
     XD_GTK_ASSET_COUNT,
 } xd_gtk_asset;
 extern const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT];

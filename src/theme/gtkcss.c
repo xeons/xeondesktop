@@ -441,6 +441,13 @@ const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT] = {
     [XD_GTK_RADIO] = "assets/radio.svg",
     [XD_GTK_RADIO_DISABLED] = "assets/radio-disabled.svg",
     [XD_GTK_RADIO_HOT] = "assets/radio-hot.svg",
+    [XD_GTK_MENU_ARROW] = "assets/menu-arrow.svg",
+    [XD_GTK_MENU_ARROW_HOT] = "assets/menu-arrow-hot.svg",
+    [XD_GTK_MENU_ARROW_DISABLED] = "assets/menu-arrow-disabled.svg",
+    [XD_GTK_SPIN_UP] = "assets/spin-up.svg",
+    [XD_GTK_SPIN_UP_DISABLED] = "assets/spin-up-disabled.svg",
+    [XD_GTK_SPIN_DOWN] = "assets/spin-down.svg",
+    [XD_GTK_SPIN_DOWN_DISABLED] = "assets/spin-down-disabled.svg",
 };
 
 /* Windows 2000's 7x7 check mark, placed in the 11x11 inside of a check box. */
@@ -449,8 +456,21 @@ static const char *const check_rows[7] = {
 };
 /* The 4x4 radio dot. */
 static const char *const dot_rows[4] = {".##.", "####", "####", ".##."};
+/* A submenu's 4x7 arrow and the spin buttons' 5x3 ones. */
+static const char *const menu_arrow_rows[7] = {"#...", "##..", "###.", "####",
+                                               "###.", "##..", "#..."};
+static const char *const up_rows[3] = {"..#..", ".###.", "#####"};
+static const char *const down_rows[3] = {"#####", ".###.", "..#.."};
+
+static void pixel_svg_at(xd_strbuf *out, const char *const *rows, int n, int x0, int y0,
+                         xd_rgba color);
 
 static void pixel_svg(xd_strbuf *out, const char *const *rows, int n, int off, xd_rgba color) {
+    pixel_svg_at(out, rows, n, off, off, color);
+}
+
+static void pixel_svg_at(xd_strbuf *out, const char *const *rows, int n, int x0, int y0,
+                         xd_rgba color) {
     xd_strbuf_appendf(out,
                       "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"11\" height=\"11\" "
                       "viewBox=\"0 0 11 11\" shape-rendering=\"crispEdges\" fill=\"%s\">\n",
@@ -466,7 +486,7 @@ static void pixel_svg(xd_strbuf *out, const char *const *rows, int n, int off, x
             while (x < len && rows[y][x] == '#')
                 x++;
             xd_strbuf_appendf(out, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"1\"/>\n",
-                              off + start, off + y, x - start);
+                              x0 + start, y0 + y, x - start);
         }
     }
     xd_strbuf_append(out, XD_STR("</svg>\n"));
@@ -494,6 +514,27 @@ void xd_theme_gtk_asset(const xd_theme *t, xd_gtk_asset which, xd_strbuf *out) {
         break;
     case XD_GTK_RADIO_HOT:
         pixel_svg(out, dot_rows, 4, 4, c.menu_hot_fg);
+        break;
+    case XD_GTK_MENU_ARROW:
+        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, c.menu_fg);
+        break;
+    case XD_GTK_MENU_ARROW_HOT:
+        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, c.menu_hot_fg);
+        break;
+    case XD_GTK_MENU_ARROW_DISABLED:
+        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, c.disabled);
+        break;
+    case XD_GTK_SPIN_UP:
+        pixel_svg_at(out, up_rows, 3, 3, 4, c.fg);
+        break;
+    case XD_GTK_SPIN_UP_DISABLED:
+        pixel_svg_at(out, up_rows, 3, 3, 4, c.disabled);
+        break;
+    case XD_GTK_SPIN_DOWN:
+        pixel_svg_at(out, down_rows, 3, 3, 4, c.fg);
+        break;
+    case XD_GTK_SPIN_DOWN_DISABLED:
+        pixel_svg_at(out, down_rows, 3, 3, 4, c.disabled);
         break;
     case XD_GTK_ASSET_COUNT:
         break;
@@ -652,8 +693,16 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     defines(&c, out);
     font_rules(t, out);
     common(&c, out);
-    if (c.classic)
+    if (c.classic) {
         classic(&c, out);
+        /* Windows 2000's progress bar: blocks of the highlight colour. */
+        xd_strbuf_appendf(out,
+                          "progressbar trough { padding: 1px; }\n"
+                          "progressbar progress {\n  background-color: transparent;\n"
+                          "  background-image: repeating-linear-gradient(to right, %s 0px, %s 8px,\n"
+                          "    transparent 8px, transparent 10px);\n}\n",
+                          H(c.selected_bg), H(c.selected_bg));
+    }
     else if (t->style == XD_STYLE_WHISTLER)
         whistler(out);
     else
@@ -685,6 +734,44 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
                                  "  -gtk-icon-source: -gtk-icontheme(\"pan-end-symbolic\");\n}\n"
                                  "expander > title > arrow:checked { -gtk-icon-source: "
                                  "-gtk-icontheme(\"pan-down-symbolic\"); }\n"));
+    /* A submenu's arrow, and spin buttons' (narrow, with Windows' small
+     * arrows in place of GTK's + and -; GTK keeps them side by side). */
+    xd_strbuf_appendf(
+        out,
+        "menu menuitem arrow { min-width: 11px; min-height: 11px;\n"
+        "  -gtk-icon-source: url(\"%s\"); }\n"
+        "menu menuitem:hover arrow { -gtk-icon-source: url(\"%s\"); }\n"
+        "menu menuitem:disabled arrow { -gtk-icon-source: url(\"%s\"); }\n"
+        /* GTK names the + and - icons in code: they're hidden, and the
+         * arrows drawn as the buttons' background images. */
+        "spinbutton button { min-width: 11px; padding: 0 2px;\n"
+        "  -gtk-icon-transform: scale(0); background-repeat: no-repeat;\n"
+        "  background-position: center; }\n"
+        "spinbutton button.up { background-image: url(\"%s\"); }\n"
+        "spinbutton button.up:disabled { background-image: url(\"%s\"); }\n"
+        "spinbutton button.down { background-image: url(\"%s\"); }\n"
+        "spinbutton button.down:disabled { background-image: url(\"%s\"); }\n",
+        xd_gtk_assets[XD_GTK_MENU_ARROW], xd_gtk_assets[XD_GTK_MENU_ARROW_HOT],
+        xd_gtk_assets[XD_GTK_MENU_ARROW_DISABLED], xd_gtk_assets[XD_GTK_SPIN_UP],
+        xd_gtk_assets[XD_GTK_SPIN_UP_DISABLED], xd_gtk_assets[XD_GTK_SPIN_DOWN],
+        xd_gtk_assets[XD_GTK_SPIN_DOWN_DISABLED]);
+    /* Info bars: Windows' information bar is the tooltip colour with a
+     * thin border. Switches (Windows has none) as a sunken track with a
+     * button-like thumb; their I/O glyphs aren't Windows. */
+    xd_strbuf_appendf(out,
+                      "infobar { background-color: %s; color: %s;\n"
+                      "  border: 1px solid %s; padding: 2px; }\n"
+                      "infobar label { color: %s; }\n"
+                      "switch { background-color: %s; border: 1px solid %s; border-radius: 0;\n"
+                      "  min-width: 40px; min-height: 16px; padding: 1px; font-size: 0; }\n"
+                      "switch:checked { background-color: %s; }\n"
+                      "switch image { -gtk-icon-source: none; color: transparent; }\n"
+                      "switch slider { min-width: 18px; min-height: 14px; border-radius: 0;\n"
+                      "  background-color: %s; border: 1px solid %s; }\n",
+                      H(c.tooltip_bg), H(c.tooltip_fg), H(c.classic ? c.dkshadow : c.field_border),
+                      H(c.tooltip_fg), H(c.base), H(c.classic ? c.shadow : c.field_border),
+                      H(c.selected_bg), H(c.classic ? c.face : c.bg),
+                      H(c.classic ? c.dkshadow : c.field_border));
     /* Windows menus show only the mark of a check or radio item, never a box. */
     xd_strbuf_append(out, XD_STR("menu menuitem check, menu menuitem radio, menu menuitem check:hover,\n"
                                  "menu menuitem radio:hover {\n"

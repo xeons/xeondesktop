@@ -467,10 +467,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       states. Font sizes are rounded to whole pixels as GDI does (8pt =
       11px). Left: FreeType draws Tahoma a pixel smaller in places than
       Windows does (e.g. "OK" is 13x8 instead of 14x9).
-- [ ] Not yet styled: combo box pop-up lists, spin button arrows, info
-      bars, switches, popovers (the Views menu), GtkFileChooser's sidebar
-      and path bar, submenu arrows. Progress bars: sunken (Classic),
-      XP's white trough with green blocks (Luna). Our GTK apps turn off dialog
+- [x] Submenu arrows (Windows' 4x7 arrow, white when highlighted), spin
+      buttons (narrow, Windows' small arrows instead of + and -; GTK keeps
+      them side by side), info bars (the tooltip colour), switches (a
+      sunken track and a button-like thumb), progress bars (Windows 2000's
+      blocks in Classic; XP's green blocks in Luna). Checked with a GTK
+      test window in Classic and Luna.
+- [ ] Not yet styled: combo box pop-up lists, popovers (the Views menu),
+      GtkFileChooser's sidebar and path bar. Our GTK apps turn off dialog
       header bars (buttons at the bottom, our title bar); other apps'
       header-bar dialogs keep GTK's look.
 - [ ] Other apps' GtkMessageDialogs show GTK's own title strip inside the
