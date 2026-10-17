@@ -53,6 +53,8 @@ typedef struct job {
 
     /* Main thread: the progress dialog. */
     GtkWidget *dialog, *anim, *name_label, *from_label, *bar, *time_label, *cancel_button;
+    GdkPixbuf *anim_from, *anim_to, *anim_paper; /* loaded on the first frame */
+    GApplication *app; /* held while the job runs */
     guint show_timer, update_timer;
     gboolean asking; /* a question is up: the dialog waits for it */
     gint64 started;
@@ -661,9 +663,15 @@ static gboolean draw_anim(GtkWidget *w, cairo_t *cr, gpointer data) {
     job *j = data;
     int width = gtk_widget_get_allocated_width(w);
     int height = gtk_widget_get_allocated_height(w);
-    GdkPixbuf *from = load_icon(w, "folder", 32);
-    GdkPixbuf *to = load_icon(w, j->kind == XD_FILEOP_TRASH ? "user-trash-full" : "folder", 32);
-    GdkPixbuf *paper = load_icon(w, "text-x-generic", 24);
+    /* Drawn 20 times a second: the icons are loaded once. */
+    if (j->anim_paper == nullptr) {
+        j->anim_from = load_icon(w, "folder", 32);
+        j->anim_to = load_icon(w, j->kind == XD_FILEOP_TRASH ? "user-trash-full" : "folder", 32);
+        j->anim_paper = load_icon(w, "text-x-generic", 24);
+    }
+    GdkPixbuf *from = j->anim_from;
+    GdkPixbuf *to = j->anim_to;
+    GdkPixbuf *paper = j->anim_paper;
     double y0 = (height - 32) / 2.0;
     if (from != nullptr) {
         gdk_cairo_set_source_pixbuf(cr, from, 4, y0);
@@ -681,9 +689,6 @@ static gboolean draw_anim(GtkWidget *w, cairo_t *cr, gpointer data) {
         gdk_cairo_set_source_pixbuf(cr, paper, x, y);
         cairo_paint_with_alpha(cr, j->kind == XD_FILEOP_DELETE ? 1.0 - t : 1.0);
     }
-    g_clear_object(&from);
-    g_clear_object(&to);
-    g_clear_object(&paper);
     return TRUE;
 }
 
@@ -817,6 +822,13 @@ static void job_free(job *j) {
         g_source_remove(j->update_timer);
     if (j->dialog != nullptr)
         gtk_widget_destroy(j->dialog);
+    g_clear_object(&j->anim_from);
+    g_clear_object(&j->anim_to);
+    g_clear_object(&j->anim_paper);
+    if (j->app != nullptr) {
+        g_application_release(j->app);
+        g_object_unref(j->app);
+    }
     if (j->parent != nullptr)
         g_object_remove_weak_pointer(G_OBJECT(j->parent), (gpointer *)&j->parent);
     g_ptr_array_unref(j->sources);
@@ -913,6 +925,13 @@ gboolean xd_fileop_start_checked(GtkWindow *parent, XdFileOpKind kind, GList *so
     g_mutex_init(&j->lock);
     g_cond_init(&j->cond);
     j->started = g_get_monotonic_time();
+    /* Closing the window that started it mustn't end the process (and
+     * the copy) halfway: the progress dialog isn't one of its windows. */
+    j->app = g_application_get_default();
+    if (j->app != nullptr) {
+        g_object_ref(j->app);
+        g_application_hold(j->app);
+    }
     j->show_timer = g_timeout_add(SHOW_DELAY_MS, show_dialog, j);
     j->update_timer = g_timeout_add(UPDATE_MS, update_dialog, j);
 
