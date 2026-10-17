@@ -3,12 +3,16 @@
  * Documents, My Computer and the Recycle Bin, then the Desktop folder's
  * files, on XP's 75x75 grid in columns from the top left.
  *
- * Click selects, a drag on the background selects a rectangle, a drag on
- * an icon moves the selection to other grid cells (remembered in the
- * "desktop-icons" state file), a double-click opens. Right-click menus
- * follow XP's; file commands (Delete, Rename, Properties, Empty Recycle
- * Bin) run in xd-files, which has the dialogs. The folder is watched, so
- * the icons follow what other programs do to it.
+ * Click selects (Ctrl adds or removes, Shift selects a run), a drag on
+ * the background selects a rectangle, a drag on an icon moves the
+ * selection to other grid cells (remembered in the "desktop-icons" state
+ * file), a double-click opens. A click gives the desktop the keyboard:
+ * arrows, Enter, Delete, F2, Ctrl+A, Ctrl+X/C/V, F5, Alt+Enter, typing a
+ * name's first letters, and Alt+F4 for Shut Down. Rename edits the label
+ * in place. Right-click menus follow XP's; file commands (Delete,
+ * Properties, Paste, Empty Recycle Bin) run in xd-files, which has the
+ * dialogs. The folder is watched, so the icons follow what other programs
+ * do to it.
  */
 #include <gio/gdesktopappinfo.h>
 #include <gio/gio.h>
@@ -18,9 +22,12 @@
 #include <pango/pangocairo.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "../core/alloc.h"
+#include "../files/rename.h"
 #include "../settings/state.h"
+#include "../ui/textedit.h"
 #include "apps.h"
 #include "menu.h"
 #include "shell.h"
@@ -31,6 +38,7 @@ static constexpr int ICON = 32;
 static constexpr int MAX_ICONS = 4096;
 static constexpr int DOUBLE_CLICK_MS = 500;
 static constexpr double DRAG_THRESHOLD = 4.0;
+static constexpr int TYPEAHEAD_MS = 1000; /* typed letters add up within this */
 
 #define SPECIAL_DOCUMENTS "::documents"
 #define SPECIAL_COMPUTER "::computer"
@@ -76,6 +84,20 @@ struct xd_deskicons {
     bool banding;  /* selecting with a rectangle */
     uint32_t last_click_time;
     int last_click_index;
+    bool press_ctrl, press_shift;
+    bool was_sole; /* the pressed icon was the only one selected: slow click renames */
+    /* The keyboard. */
+    char *focus_id;  /* the icon with the focus (dotted outline) */
+    char *anchor_id; /* where Shift selections start */
+    bool cues;       /* a key was used: show the focus, as XP does */
+    char typed[64];  /* type-ahead */
+    uint32_t typed_time;
+    /* Rename in place. */
+    char *edit_id;
+    xd_textedit edit;
+    guint rename_timer;
+    /* Cut, until pasted or replaced on the clipboard (drawn faded). */
+    GHashTable *cut;
 };
 
 /* floor/ceil to int (an intermediate double, for -Wbad-function-cast). */
@@ -94,6 +116,24 @@ static bool rect_contains(xd_rect r, int x, int y) {
 
 static bool rects_overlap(xd_rect a, xd_rect b) {
     return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+static void redraw(xd_deskicons *di);
+
+static void mods(const xd_shell *shell, bool *ctrl, bool *shift, bool *alt) {
+    struct xkb_state *st = shell->xkb_state;
+    *ctrl = st != nullptr &&
+            xkb_state_mod_name_is_active(st, XKB_MOD_NAME_CTRL, XKB_STATE_MODS_EFFECTIVE) > 0;
+    *shift = st != nullptr &&
+             xkb_state_mod_name_is_active(st, XKB_MOD_NAME_SHIFT, XKB_STATE_MODS_EFFECTIVE) > 0;
+    *alt = st != nullptr &&
+           xkb_state_mod_name_is_active(st, XKB_MOD_NAME_ALT, XKB_STATE_MODS_EFFECTIVE) > 0;
+}
+
+static void set_id(char **slot, const char *id) {
+    char *copy = id != nullptr ? g_strdup(id) : nullptr;
+    g_free(*slot);
+    *slot = copy;
 }
 
 /* ---- the items ---------------------------------------------------------------------- */
@@ -283,6 +323,17 @@ static icon *at_cell(xd_deskicons *di, int col, int row) {
     return nullptr;
 }
 
+static int index_of(const xd_deskicons *di, const char *id) {
+    for (guint i = 0; id != nullptr && i < di->icons->len; i++) {
+        if (strcmp(((icon *)g_ptr_array_index(di->icons, i))->id, id) == 0)
+            return (int)i;
+    }
+    return -1;
+}
+
+/* Grid order: down each column, then the next column. */
+static int grid_order(const icon *ic) { return ic->col * 0x10000 + ic->row; }
+
 /* The first free cell in column order from (col, row). */
 static void next_free(xd_deskicons *di, int *col, int *row) {
     for (int c = *col; c < di->cols * 4; c++) {
@@ -428,9 +479,11 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
     double ix = round((cx + (CELL_W - ICON) / 2.0) * s);
     double iy = round((cy + 3) * s);
     xd_rgba hi = xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_HILIGHT]);
+    bool cut = g_hash_table_contains(di->cut, ic->id);
     if (img != nullptr) {
         cairo_set_source_surface(cr, img, ix, iy);
-        cairo_paint(cr);
+        /* Cut: faded until pasted, as in Windows. */
+        cairo_paint_with_alpha(cr, cut ? 0.5 : 1.0);
         if (ic->selected) {
             /* Windows tints a selected icon with the highlight colour. */
             cairo_set_source_rgba(cr, hi.r, hi.g, hi.b, 0.5);
@@ -440,15 +493,18 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
     if (ic->is_launcher || ic->is_link)
         xd_draw_shortcut_arrow(cr, ix, iy, px);
 
+    bool editing = di->edit_id != nullptr && strcmp(di->edit_id, ic->id) == 0;
     xd_text_style st = xd_text(t, XD_FONT_ICON, xd_rgba_hex(0xFFFFFF), XD_ALIGN_CENTER);
-    PangoLayout *l = xd_text_layout(cr, ic->label, &st);
+    xd_str edit_text = xd_textedit_view(&di->edit);
+    char *edit_cstr = editing ? xd_str_dup_cstr(edit_text) : nullptr;
+    PangoLayout *l = xd_text_layout(cr, editing ? edit_cstr : ic->label, &st);
     long text_w_l = lround((CELL_W - 1) * s);
     int text_w = (int)text_w_l;
     pango_layout_set_width(l, text_w * PANGO_SCALE);
     pango_layout_set_alignment(l, PANGO_ALIGN_CENTER);
     pango_layout_set_wrap(l, PANGO_WRAP_WORD_CHAR);
     /* Two lines unless selected, when the whole name shows. */
-    if (!ic->selected) {
+    if (!ic->selected && !editing) {
         pango_layout_set_height(l, -2);
         pango_layout_set_ellipsize(l, PANGO_ELLIPSIZE_END);
     }
@@ -458,6 +514,53 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
     double ty = round((cy + 3 + ICON + 3) * s);
     double bx = tx + logical.x - round(2 * s);
     double bw = logical.width + round(4 * s);
+    if (editing) {
+        /* Rename: an edit box over the label, black on white with the
+         * selection highlighted and a caret. */
+        size_t a = 0, b = 0;
+        xd_textedit_selection(&di->edit, &a, &b);
+        PangoAttrList *attrs = pango_attr_list_new();
+        if (b > a) {
+            PangoAttribute *bg = pango_attr_background_new((guint16)(hi.r * 65535),
+                                                           (guint16)(hi.g * 65535),
+                                                           (guint16)(hi.b * 65535));
+            xd_rgba ht = xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_HILIGHT_TEXT]);
+            PangoAttribute *fg = pango_attr_foreground_new((guint16)(ht.r * 65535),
+                                                           (guint16)(ht.g * 65535),
+                                                           (guint16)(ht.b * 65535));
+            bg->start_index = fg->start_index = (guint)a;
+            bg->end_index = fg->end_index = (guint)b;
+            pango_attr_list_insert(attrs, bg);
+            pango_attr_list_insert(attrs, fg);
+        }
+        pango_layout_set_attributes(l, attrs);
+        pango_attr_list_unref(attrs);
+        double pad = round(2 * s);
+        double ex = XD_MIN(bx, tx + logical.x - pad), ew = XD_MAX(bw, round(12 * s));
+        cairo_set_source_rgb(cr, 1, 1, 1);
+        cairo_rectangle(cr, ex, ty - pad, ew, logical.height + 2 * pad);
+        cairo_fill(cr);
+        cairo_set_source_rgb(cr, 0, 0, 0);
+        cairo_set_line_width(cr, 1);
+        cairo_rectangle(cr, floor(ex) + 0.5, floor(ty - pad) + 0.5, floor(ew) - 1,
+                        floor(logical.height + 2 * pad) - 1);
+        cairo_stroke(cr);
+        cairo_move_to(cr, tx, ty);
+        pango_cairo_show_layout(cr, l);
+        PangoRectangle caret;
+        pango_layout_get_cursor_pos(l, (int)di->edit.cursor, &caret, nullptr);
+        cairo_rectangle(cr, round(tx + caret.x / (double)PANGO_SCALE), ty + caret.y / (double)PANGO_SCALE,
+                        XD_MAX(round(s), 1), caret.height / (double)PANGO_SCALE);
+        cairo_fill(cr);
+        g_object_unref(l);
+        g_free(edit_cstr);
+        if (record) {
+            double top = iy / s, bottom = (ty + logical.height + pad) / s;
+            double left = XD_MIN(ex / s, ix / s), right = XD_MAX((ex + ew) / s, (ix + px) / s);
+            ic->hit = (xd_rect){ifloor(left), ifloor(top), iceil(right - left), iceil(bottom - top)};
+        }
+        return;
+    }
     if (ic->selected) {
         cairo_set_source_rgb(cr, hi.r, hi.g, hi.b);
         cairo_rectangle(cr, bx, ty, bw, logical.height);
@@ -474,6 +577,27 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
     cairo_move_to(cr, tx, ty);
     pango_cairo_show_layout(cr, l);
     g_object_unref(l);
+    g_free(edit_cstr);
+
+    /* The keyboard focus: a dotted outline round the label, once the
+     * keyboard has been used (XP hides it until then). */
+    xd_desktop *d = host(shell);
+    if (record && di->cues && d != nullptr && shell->kb_surface == d->surface &&
+        di->focus_id != nullptr && strcmp(di->focus_id, ic->id) == 0) {
+        static const double dash[] = {1.0, 1.0};
+        cairo_save(cr);
+        cairo_set_dash(cr, dash, 2, 0);
+        cairo_set_line_width(cr, 1);
+        if (ic->selected) {
+            xd_rgba ht = xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_HILIGHT_TEXT]);
+            cairo_set_source_rgb(cr, ht.r, ht.g, ht.b);
+        } else {
+            cairo_set_source_rgb(cr, 1, 1, 1);
+        }
+        cairo_rectangle(cr, floor(bx) + 0.5, floor(ty) + 0.5, floor(bw) - 1, floor(logical.height) - 1);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+    }
 
     if (record) {
         /* Hits: the icon and the label, as one box (logical). */
@@ -643,6 +767,181 @@ static void act_command(xd_shell *shell, void *data) {
     g_free(exe);
 }
 
+/* ---- rename in place ----------------------------------------------------------------- */
+
+static void stop_rename_timer(xd_deskicons *di) {
+    if (di->rename_timer != 0)
+        g_source_remove(di->rename_timer);
+    di->rename_timer = 0;
+}
+
+static void start_rename(xd_deskicons *di, icon *ic) {
+    stop_rename_timer(di);
+    if (ic->special || ic->path == nullptr)
+        return;
+    set_id(&di->edit_id, ic->id);
+    xd_textedit_set(&di->edit, xd_str_from_cstr(ic->label));
+    /* The name without its extension is selected, as in Windows. */
+    const char *dot = ic->is_dir || ic->is_launcher ? nullptr : strrchr(ic->label, '.');
+    if (dot != nullptr && dot != ic->label) {
+        xd_textedit_set_cursor(&di->edit, 0, false);
+        xd_textedit_set_cursor(&di->edit, (size_t)(dot - ic->label), true);
+    }
+    redraw(di);
+}
+
+static void end_rename(xd_deskicons *di, bool commit) {
+    if (di->edit_id == nullptr)
+        return;
+    int i = index_of(di, di->edit_id);
+    char *text = g_strstrip(xd_str_dup_cstr(xd_textedit_view(&di->edit)));
+    g_free(di->edit_id);
+    di->edit_id = nullptr;
+    icon *ic = i >= 0 ? g_ptr_array_index(di->icons, (guint)i) : nullptr;
+    if (commit && ic != nullptr && *text != '\0' && strcmp(text, ic->label) != 0) {
+        GFile *f = g_file_new_for_path(ic->path);
+        GError *err = nullptr;
+        GFile *renamed = xd_rename(f, text, &err);
+        if (renamed != nullptr) {
+            /* It keeps its place (and selection) under its new name. */
+            char *name = g_file_get_basename(renamed);
+            bool focused = g_strcmp0(di->focus_id, ic->id) == 0;
+            g_free(ic->id);
+            ic->id = name;
+            g_free(ic->label);
+            ic->label = g_strdup(text);
+            if (focused)
+                set_id(&di->focus_id, ic->id);
+            save_positions(di);
+            g_object_unref(renamed);
+        } else {
+            fprintf(stderr, "xd-shell: cannot rename %s: %s\n", ic->path, err->message);
+            g_error_free(err);
+        }
+        g_object_unref(f);
+    }
+    g_free(text);
+    redraw(di);
+}
+
+static gboolean rename_later(gpointer data) {
+    xd_deskicons *di = data;
+    di->rename_timer = 0;
+    int i = index_of(di, di->focus_id);
+    if (i >= 0)
+        start_rename(di, g_ptr_array_index(di->icons, (guint)i));
+    return G_SOURCE_REMOVE;
+}
+
+/* The desktop's keys edit the name while renaming. */
+static void rename_key(xd_deskicons *di, uint32_t sym, const char *utf8, bool ctrl, bool shift) {
+    xd_textedit *e = &di->edit;
+    switch (sym) {
+    case XKB_KEY_Return:
+    case XKB_KEY_KP_Enter:
+        end_rename(di, true);
+        return;
+    case XKB_KEY_Escape:
+        end_rename(di, false);
+        return;
+    case XKB_KEY_Left:
+        xd_textedit_move(e, ctrl ? XD_MOTION_WORD_LEFT : XD_MOTION_LEFT, shift);
+        break;
+    case XKB_KEY_Right:
+        xd_textedit_move(e, ctrl ? XD_MOTION_WORD_RIGHT : XD_MOTION_RIGHT, shift);
+        break;
+    case XKB_KEY_Home:
+        xd_textedit_move(e, XD_MOTION_HOME, shift);
+        break;
+    case XKB_KEY_End:
+        xd_textedit_move(e, XD_MOTION_END, shift);
+        break;
+    case XKB_KEY_BackSpace:
+        xd_textedit_backspace(e, ctrl);
+        break;
+    case XKB_KEY_Delete:
+        xd_textedit_delete(e, ctrl);
+        break;
+    default:
+        if (ctrl && (sym == XKB_KEY_a || sym == XKB_KEY_A))
+            xd_textedit_select_all(e);
+        else if (!ctrl && utf8 != nullptr && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7F)
+            xd_textedit_insert(e, xd_str_from_cstr(utf8));
+        break;
+    }
+    redraw(di);
+}
+
+/* ---- the clipboard -------------------------------------------------------------------- */
+
+static void copy_selection(xd_deskicons *di, bool cut, uint32_t serial) {
+    GPtrArray *uris = g_ptr_array_new_with_free_func(g_free);
+    g_hash_table_remove_all(di->cut);
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        if (!ic->selected || ic->path == nullptr)
+            continue;
+        g_ptr_array_add(uris, g_strdup(ic->uri));
+        if (cut)
+            g_hash_table_add(di->cut, g_strdup(ic->id));
+    }
+    g_ptr_array_add(uris, nullptr);
+    if (uris->len > 1)
+        xd_clipboard_set_files(di->shell, (char *const *)uris->pdata, cut, serial);
+    g_ptr_array_unref(uris);
+    redraw(di);
+}
+
+static void got_paste(xd_shell *shell, char **uris, bool cut, [[maybe_unused]] void *user) {
+    xd_deskicons *di = shell->deskicons;
+    if (di == nullptr || uris == nullptr)
+        return;
+    /* xd-files copies or moves, with its progress and questions. */
+    char *dir = g_file_get_path(di->dir);
+    char *q = g_shell_quote(dir);
+    char *option = g_strconcat(cut ? "--move-to=" : "--copy-to=", q, nullptr);
+    GPtrArray *args = g_ptr_array_new();
+    for (char **u = uris; *u != nullptr; u++)
+        g_ptr_array_add(args, *u);
+    run_files(shell, option, args);
+    g_ptr_array_unref(args);
+    g_free(option);
+    g_free(q);
+    g_free(dir);
+    /* What was cut is gone from the clipboard once pasted, as in Windows. */
+    if (cut)
+        xd_clipboard_clear_cut(shell);
+}
+
+static void act_cut(xd_shell *shell, [[maybe_unused]] void *data) {
+    copy_selection(shell->deskicons, true, shell->menu_serial);
+}
+static void act_copy(xd_shell *shell, [[maybe_unused]] void *data) {
+    copy_selection(shell->deskicons, false, shell->menu_serial);
+}
+static void act_paste(xd_shell *shell, [[maybe_unused]] void *data) {
+    xd_clipboard_get_files(shell, got_paste, nullptr);
+}
+static void act_rename(xd_shell *shell, [[maybe_unused]] void *data) {
+    xd_deskicons *di = shell->deskicons;
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        if (ic->selected) {
+            set_id(&di->focus_id, ic->id);
+            start_rename(di, ic);
+            return;
+        }
+    }
+}
+
+void xd_deskicons_clipboard_lost(xd_shell *shell) {
+    xd_deskicons *di = shell->deskicons;
+    if (di != nullptr && g_hash_table_size(di->cut) > 0) {
+        g_hash_table_remove_all(di->cut);
+        redraw(di);
+    }
+}
+
 typedef enum { ARRANGE_NAME, ARRANGE_SIZE, ARRANGE_TYPE, ARRANGE_MODIFIED } arrange_by;
 
 static int arrange_mode;
@@ -748,19 +1047,22 @@ static xd_menu_model *icon_menu(xd_deskicons *di, xd_menu_tree *tree, icon *ic) 
         add_action(tree, m, "Properties", act_documents_properties, nullptr);
     } else {
         separator(tree, m);
+        add_action(tree, m, "Cut", act_cut, nullptr);
+        add_action(tree, m, "Copy", act_copy, nullptr);
+        separator(tree, m);
         add_action(tree, m, "Delete", act_files, (void *)(uintptr_t)"--trash");
         /* Rename works on one item. */
         guint n = 0;
         for (guint i = 0; i < di->icons->len; i++)
             n += ((icon *)g_ptr_array_index(di->icons, i))->selected ? 1u : 0u;
-        add_action(tree, m, "Rename", act_files, (void *)(uintptr_t)"--rename")->disabled = n != 1;
+        add_action(tree, m, "Rename", act_rename, nullptr)->disabled = n != 1;
         separator(tree, m);
         add_action(tree, m, "Properties", act_files, (void *)(uintptr_t)"--properties");
     }
     return m;
 }
 
-static xd_menu_model *background_menu(xd_menu_tree *tree) {
+static xd_menu_model *background_menu(xd_shell *shell, xd_menu_tree *tree) {
     xd_menu_model *m = xd_menu_model_new(tree);
     xd_menu_model *arrange = xd_menu_model_new(tree);
     add_action(tree, arrange, "Name", act_arrange, GINT_TO_POINTER(ARRANGE_NAME));
@@ -769,6 +1071,8 @@ static xd_menu_model *background_menu(xd_menu_tree *tree) {
     add_action(tree, arrange, "Modified", act_arrange, GINT_TO_POINTER(ARRANGE_MODIFIED));
     xd_menu_add(tree, m, XD_MENU_SUBMENU, "Arrange Icons By", nullptr)->submenu = arrange;
     add_action(tree, m, "Refresh", act_refresh, nullptr);
+    separator(tree, m);
+    add_action(tree, m, "Paste", act_paste, nullptr)->disabled = !xd_clipboard_has_files(shell);
     separator(tree, m);
     xd_menu_model *new_menu = xd_menu_model_new(tree);
     add_action(tree, new_menu, "Folder", act_new, (void *)(uintptr_t)"folder");
@@ -781,7 +1085,8 @@ static xd_menu_model *background_menu(xd_menu_tree *tree) {
     return m;
 }
 
-static void context_menu(xd_deskicons *di, xd_desktop *d, int index, uint32_t serial) {
+static void context_menu(xd_deskicons *di, xd_desktop *d, int index, xd_rect anchor,
+                         uint32_t serial) {
     xd_shell *shell = di->shell;
     xd_menu_close_all(shell);
     xd_menu_tree_free(&shell->context_tree);
@@ -789,8 +1094,7 @@ static void context_menu(xd_deskicons *di, xd_desktop *d, int index, uint32_t se
     xd_menu_model *m = index >= 0
                            ? icon_menu(di, &shell->context_tree,
                                        g_ptr_array_index(di->icons, (guint)index))
-                           : background_menu(&shell->context_tree);
-    xd_rect anchor = {(int)di->x, (int)di->y, 1, 1};
+                           : background_menu(shell, &shell->context_tree);
     xd_menu_open_root_dir(shell, m, d->layer, anchor, serial, true);
 }
 
@@ -808,6 +1112,32 @@ static int icon_at(xd_deskicons *di, double x, double y) {
 static void select_only(xd_deskicons *di, int index) {
     for (guint i = 0; i < di->icons->len; i++)
         ((icon *)g_ptr_array_index(di->icons, i))->selected = (int)i == index;
+}
+
+/* Shift: everything in grid order from the anchor to `index`. */
+static void select_run(xd_deskicons *di, int index, bool add) {
+    int a = index_of(di, di->anchor_id);
+    if (a < 0)
+        a = index;
+    int lo = grid_order(g_ptr_array_index(di->icons, (guint)a));
+    int hi = grid_order(g_ptr_array_index(di->icons, (guint)index));
+    if (lo > hi) {
+        int t = lo;
+        lo = hi;
+        hi = t;
+    }
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        bool in = grid_order(ic) >= lo && grid_order(ic) <= hi;
+        ic->selected = in || (add && ic->selected);
+    }
+}
+
+static int selected_count(const xd_deskicons *di) {
+    int n = 0;
+    for (guint i = 0; i < di->icons->len; i++)
+        n += ((icon *)g_ptr_array_index(di->icons, i))->selected ? 1 : 0;
+    return n;
 }
 
 static void band_select(xd_deskicons *di) {
@@ -894,24 +1224,54 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
     if (di == nullptr || d != host(shell))
         return;
     int index = icon_at(di, di->x, di->y);
+    /* A click outside the name being edited ends the rename (keeping it). */
+    if (pressed && di->edit_id != nullptr) {
+        int editing = index_of(di, di->edit_id);
+        if (index == editing && index >= 0)
+            return;
+        end_rename(di, true);
+        index = icon_at(di, di->x, di->y);
+    }
+    stop_rename_timer(di);
     if (button == BTN_RIGHT) {
         if (!pressed)
             return;
         if (index < 0 || !((icon *)g_ptr_array_index(di->icons, (guint)index))->selected)
             select_only(di, index);
+        if (index >= 0)
+            set_id(&di->focus_id, ((icon *)g_ptr_array_index(di->icons, (guint)index))->id);
         redraw(di);
-        context_menu(di, d, index, serial);
+        context_menu(di, d, index, (xd_rect){(int)di->x, (int)di->y, 1, 1}, serial);
         return;
     }
     if (button != BTN_LEFT)
         return;
     if (pressed) {
+        bool ctrl, shift, alt;
+        mods(shell, &ctrl, &shift, &alt);
         di->pressed = true;
         di->press_index = index;
         di->press_x = di->x;
         di->press_y = di->y;
-        if (index < 0 || !((icon *)g_ptr_array_index(di->icons, (guint)index))->selected)
-            select_only(di, index);
+        di->press_ctrl = ctrl;
+        di->press_shift = shift;
+        icon *hit = index >= 0 ? g_ptr_array_index(di->icons, (guint)index) : nullptr;
+        di->was_sole = hit != nullptr && hit->selected && selected_count(di) == 1;
+        if (hit != nullptr && shift) {
+            select_run(di, index, ctrl);
+            set_id(&di->focus_id, hit->id);
+        } else if (hit != nullptr && ctrl) {
+            hit->selected = !hit->selected;
+            set_id(&di->focus_id, hit->id);
+            set_id(&di->anchor_id, hit->id);
+        } else {
+            if (index < 0 || !hit->selected)
+                select_only(di, index);
+            if (hit != nullptr) {
+                set_id(&di->focus_id, hit->id);
+                set_id(&di->anchor_id, hit->id);
+            }
+        }
         bool twice = index >= 0 && index == di->last_click_index &&
                      time - di->last_click_time < (uint32_t)DOUBLE_CLICK_MS;
         di->last_click_index = twice ? -1 : index;
@@ -923,14 +1283,237 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
         }
         return;
     }
-    if (di->dragging)
+    if (!di->pressed)
+        return; /* the press went to the name being edited */
+    bool plain = !di->press_ctrl && !di->press_shift;
+    if (di->dragging) {
         drop_moved(di);
-    else if (!di->banding && di->press_index >= 0)
+    } else if (!di->banding && di->press_index >= 0 && plain) {
         select_only(di, di->press_index); /* a click in a selection picks one */
+        /* A second, slow click on a lone selected icon's name renames it. */
+        icon *ic = g_ptr_array_index(di->icons, (guint)di->press_index);
+        if (di->was_sole && di->last_click_index == di->press_index &&
+            di->press_y >= ic->hit.y + ICON + 3)
+            di->rename_timer = g_timeout_add(DOUBLE_CLICK_MS, rename_later, di);
+    }
     di->pressed = false;
     di->dragging = false;
     di->banding = false;
     redraw(di);
+}
+
+/* ---- the keyboard ------------------------------------------------------------------------ */
+
+/* The icon an arrow key goes to from `from`: the nearest that way, in the
+ * same row or column if there's one. */
+static int step(const xd_deskicons *di, int from, int dc, int dr) {
+    const icon *f = g_ptr_array_index(di->icons, (guint)from);
+    int best = -1;
+    long best_score = LONG_MAX;
+    for (guint i = 0; i < di->icons->len; i++) {
+        const icon *ic = g_ptr_array_index(di->icons, i);
+        int along = dc != 0 ? (ic->col - f->col) * dc : (ic->row - f->row) * dr;
+        int across = dc != 0 ? abs(ic->row - f->row) : abs(ic->col - f->col);
+        if (along <= 0)
+            continue;
+        long score = (long)across * 10000 + along;
+        if (score < best_score) {
+            best_score = score;
+            best = (int)i;
+        }
+    }
+    return best;
+}
+
+static int first_or_last(const xd_deskicons *di, bool last) {
+    int best = -1;
+    for (guint i = 0; i < di->icons->len; i++) {
+        const icon *ic = g_ptr_array_index(di->icons, i);
+        if (best < 0 || (grid_order(ic) < grid_order(g_ptr_array_index(di->icons, (guint)best))) != last)
+            best = (int)i;
+    }
+    return best;
+}
+
+/* Typing a name's first letters goes to the next icon that starts so. */
+static void type_ahead(xd_deskicons *di, const char *utf8, uint32_t now) {
+    size_t len = strlen(di->typed);
+    if (now - di->typed_time > (uint32_t)TYPEAHEAD_MS)
+        len = 0;
+    di->typed_time = now;
+    if (len + strlen(utf8) >= sizeof(di->typed))
+        return;
+    memcpy(di->typed + len, utf8, strlen(utf8) + 1);
+    char *want = g_utf8_casefold(di->typed, -1);
+    /* A repeated letter cycles through the icons that start with it. */
+    bool cycle = g_utf8_strlen(di->typed, -1) == 1 || (len > 0 && strcmp(di->typed + len, utf8) == 0 &&
+                                                         strspn(di->typed, utf8) == strlen(di->typed));
+    int from = index_of(di, di->focus_id);
+    int from_order = from >= 0 ? grid_order(g_ptr_array_index(di->icons, (guint)from)) : -1;
+    int found = -1, first = -1;
+    char *one = g_utf8_casefold(utf8, -1);
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        char *label = g_utf8_casefold(ic->label, -1);
+        bool match = g_str_has_prefix(label, cycle ? one : want);
+        g_free(label);
+        if (!match)
+            continue;
+        int o = grid_order(ic);
+        if (first < 0 || o < grid_order(g_ptr_array_index(di->icons, (guint)first)))
+            first = (int)i;
+        bool after = cycle ? o > from_order : o >= from_order;
+        if (after && (found < 0 || o < grid_order(g_ptr_array_index(di->icons, (guint)found))))
+            found = (int)i;
+    }
+    g_free(one);
+    g_free(want);
+    if (found < 0)
+        found = first;
+    if (found >= 0) {
+        select_only(di, found);
+        icon *ic = g_ptr_array_index(di->icons, (guint)found);
+        set_id(&di->focus_id, ic->id);
+        set_id(&di->anchor_id, ic->id);
+    }
+}
+
+bool xd_deskicons_key(xd_shell *shell, uint32_t sym, const char *utf8, uint32_t serial) {
+    xd_deskicons *di = shell->deskicons;
+    xd_desktop *d = host(shell);
+    if (di == nullptr || d == nullptr)
+        return false;
+    bool ctrl, shift, alt;
+    mods(shell, &ctrl, &shift, &alt);
+    di->cues = true;
+    if (di->edit_id != nullptr) {
+        rename_key(di, sym, utf8, ctrl, shift);
+        return true;
+    }
+    int focus = index_of(di, di->focus_id);
+    int to = -1;
+    switch (sym) {
+    case XKB_KEY_Left:
+    case XKB_KEY_Right:
+    case XKB_KEY_Up:
+    case XKB_KEY_Down:
+        if (focus < 0) {
+            to = first_or_last(di, false);
+        } else {
+            int dc = sym == XKB_KEY_Left ? -1 : sym == XKB_KEY_Right ? 1 : 0;
+            int dr = sym == XKB_KEY_Up ? -1 : sym == XKB_KEY_Down ? 1 : 0;
+            to = step(di, focus, dc, dr);
+        }
+        break;
+    case XKB_KEY_Home:
+    case XKB_KEY_End:
+        to = first_or_last(di, sym == XKB_KEY_End);
+        break;
+    case XKB_KEY_space:
+        if (ctrl && focus >= 0) {
+            icon *ic = g_ptr_array_index(di->icons, (guint)focus);
+            ic->selected = !ic->selected;
+        } else if (focus >= 0) {
+            select_only(di, focus);
+        }
+        redraw(di);
+        return true;
+    case XKB_KEY_Return:
+    case XKB_KEY_KP_Enter:
+        if (alt) {
+            /* Properties of the selection. */
+            if (focus >= 0 && ((icon *)g_ptr_array_index(di->icons, (guint)focus))->special) {
+                icon *ic = g_ptr_array_index(di->icons, (guint)focus);
+                if (strcmp(ic->id, SPECIAL_COMPUTER) == 0)
+                    act_command(shell, (void *)(uintptr_t)"xd-sysdm");
+                else if (strcmp(ic->id, SPECIAL_DOCUMENTS) == 0)
+                    act_documents_properties(shell, nullptr);
+            } else {
+                act_files(shell, (void *)(uintptr_t)"--properties");
+            }
+        } else {
+            act_open(shell, nullptr);
+        }
+        return true;
+    case XKB_KEY_Delete:
+    case XKB_KEY_KP_Delete:
+        act_files(shell, (void *)(uintptr_t)(shift ? "--delete" : "--trash"));
+        return true;
+    case XKB_KEY_F2:
+        if (selected_count(di) == 1)
+            act_rename(shell, nullptr);
+        return true;
+    case XKB_KEY_F5:
+        reload(di);
+        return true;
+    case XKB_KEY_F4:
+        if (alt) {
+            /* Alt+F4 on the desktop: Shut Down, as in Windows. */
+            act_command(shell, (void *)(uintptr_t)"xd-shutdown");
+            return true;
+        }
+        return false;
+    case XKB_KEY_Menu:
+    case XKB_KEY_F10:
+        if (sym == XKB_KEY_F10 && !shift)
+            return false;
+        {
+            /* The context menu, under the focused icon. */
+            icon *ic = focus >= 0 ? g_ptr_array_index(di->icons, (guint)focus) : nullptr;
+            bool on_icon = ic != nullptr && ic->selected;
+            xd_rect at = on_icon ? (xd_rect){ic->hit.x + ic->hit.w / 2, ic->hit.y + ic->hit.h / 2, 1, 1}
+                                 : (xd_rect){di->work.x + 8, di->work.y + 8, 1, 1};
+            context_menu(di, d, on_icon ? focus : -1, at, serial);
+        }
+        return true;
+    default:
+        break;
+    }
+    if (ctrl && !alt) {
+        switch (sym) {
+        case XKB_KEY_a:
+        case XKB_KEY_A:
+            for (guint i = 0; i < di->icons->len; i++)
+                ((icon *)g_ptr_array_index(di->icons, i))->selected = true;
+            redraw(di);
+            return true;
+        case XKB_KEY_c:
+        case XKB_KEY_C:
+        case XKB_KEY_Insert:
+            copy_selection(di, false, serial);
+            return true;
+        case XKB_KEY_x:
+        case XKB_KEY_X:
+            copy_selection(di, true, serial);
+            return true;
+        case XKB_KEY_v:
+        case XKB_KEY_V:
+            xd_clipboard_get_files(shell, got_paste, nullptr);
+            return true;
+        default:
+            return false;
+        }
+    }
+    if (to >= 0) {
+        icon *ic = g_ptr_array_index(di->icons, (guint)to);
+        if (shift) {
+            select_run(di, to, ctrl);
+        } else if (!ctrl) {
+            select_only(di, to);
+            set_id(&di->anchor_id, ic->id);
+        }
+        set_id(&di->focus_id, ic->id);
+        redraw(di);
+        return true;
+    }
+    if (!alt && utf8 != nullptr && (unsigned char)utf8[0] > 0x20 && utf8[0] != 0x7F) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        type_ahead(di, utf8, (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000));
+        redraw(di);
+        return true;
+    }
+    return sym == XKB_KEY_Escape || sym == XKB_KEY_Tab;
 }
 
 /* ---- life ------------------------------------------------------------------------------- */
@@ -941,6 +1524,7 @@ void xd_deskicons_init(xd_shell *shell) {
     di->press_index = -1;
     di->last_click_index = -1;
     di->saved = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    di->cut = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     di->dir = desktop_dir();
     di->dir_monitor = g_file_monitor_directory(di->dir, G_FILE_MONITOR_WATCH_MOVES, nullptr,
                                                nullptr);
@@ -972,6 +1556,12 @@ void xd_deskicons_finish(xd_shell *shell) {
         return;
     if (di->reload_timer != 0)
         g_source_remove(di->reload_timer);
+    stop_rename_timer(di);
+    xd_textedit_free(&di->edit);
+    g_free(di->edit_id);
+    g_free(di->focus_id);
+    g_free(di->anchor_id);
+    g_hash_table_unref(di->cut);
     if (di->dir_monitor != nullptr) {
         g_signal_handlers_disconnect_by_data(di->dir_monitor, di);
         g_object_unref(di->dir_monitor);

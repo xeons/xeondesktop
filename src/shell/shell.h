@@ -186,6 +186,7 @@ struct xd_shell {
     struct xkb_context *xkb;
     struct xkb_keymap *keymap;
     struct xkb_state *xkb_state;
+    struct wl_surface *kb_surface; /* ours with the keyboard focus, if any */
     struct xdg_wm_base *wm_base;
     struct zwlr_layer_shell_v1 *layer_shell;
     struct zwlr_foreign_toplevel_manager_v1 *toplevel_manager;
@@ -288,6 +289,15 @@ xd_taskbar *xd_taskbar_for_surface(xd_shell *shell, struct wl_surface *surface);
 /* dnd.c */
 void xd_dnd_init(xd_shell *shell, struct wl_data_device_manager *manager);
 void xd_dnd_finish(xd_shell *shell);
+/* The clipboard's files (URIs), for the desktop's Cut, Copy and Paste. */
+void xd_clipboard_set_files(xd_shell *shell, char *const *uris, bool cut, uint32_t serial);
+bool xd_clipboard_has_files(xd_shell *shell);
+/* `uris` (nullptr-terminated, or nullptr when there are none) is only
+ * valid during the call. */
+typedef void (*xd_clipboard_got)(xd_shell *shell, char **uris, bool cut, void *user);
+void xd_clipboard_get_files(xd_shell *shell, xd_clipboard_got got, void *user);
+/* After pasting what was cut: the clipboard is emptied, as in Windows. */
+void xd_clipboard_clear_cut(xd_shell *shell);
 /* Shows the previous (delta < 0) or next page of task buttons. */
 void xd_taskbar_page(xd_taskbar *bar, int delta);
 /* Gives the taskbar keyboard focus; call before opening a menu popup. */
@@ -418,6 +428,10 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
                          uint32_t time, uint32_t serial);
 /* Redraws them (the taskbar moved, the theme changed). */
 void xd_deskicons_relayout(xd_shell *shell);
+/* Keys while the desktop has the keyboard; true when used. */
+bool xd_deskicons_key(xd_shell *shell, uint32_t sym, const char *utf8, uint32_t serial);
+/* Our Cut or Copy was replaced on the clipboard. */
+void xd_deskicons_clipboard_lost(xd_shell *shell);
 /* Opens a file or place as a double-click would: folders (and My
  * Computer, the Recycle Bin) in xd-files, launchers run, documents in the
  * program for their type. */

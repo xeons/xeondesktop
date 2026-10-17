@@ -240,18 +240,24 @@ static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *k, 
     shell->xkb_state = xkb_state_new(keymap);
 }
 
-static void keyboard_enter([[maybe_unused]] void *data, [[maybe_unused]] struct wl_keyboard *k,
-                           [[maybe_unused]] uint32_t serial,
-                           [[maybe_unused]] struct wl_surface *surface,
-                           [[maybe_unused]] struct wl_array *keys) {}
+static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k,
+                           [[maybe_unused]] uint32_t serial, struct wl_surface *surface,
+                           [[maybe_unused]] struct wl_array *keys) {
+    xd_shell *shell = data;
+    shell->kb_surface = surface;
+    xd_deskicons_relayout(shell); /* the focus rectangle */
+}
 
-static void keyboard_leave([[maybe_unused]] void *data, [[maybe_unused]] struct wl_keyboard *k,
-                           [[maybe_unused]] uint32_t serial,
-                           [[maybe_unused]] struct wl_surface *surface) {}
+static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *k,
+                           [[maybe_unused]] uint32_t serial, struct wl_surface *surface) {
+    xd_shell *shell = data;
+    if (shell->kb_surface == surface)
+        shell->kb_surface = nullptr;
+    xd_deskicons_relayout(shell);
+}
 
-static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k,
-                         [[maybe_unused]] uint32_t serial, [[maybe_unused]] uint32_t time,
-                         uint32_t key, uint32_t state) {
+static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
+                         [[maybe_unused]] uint32_t time, uint32_t key, uint32_t state) {
     xd_shell *shell = data;
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED || shell->xkb_state == nullptr)
         return;
@@ -266,6 +272,13 @@ static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k,
                                          XKB_STATE_MODS_EFFECTIVE) > 0;
         xd_start7_key(shell, sym, utf8, ctrl_alt);
         return;
+    }
+    /* The desktop's icons, when it has the keyboard. */
+    if (shell->kb_surface != nullptr && xd_desktop_for_surface(shell, shell->kb_surface) != nullptr) {
+        char utf8[16] = {0};
+        xkb_state_key_get_utf8(shell->xkb_state, key + 8, utf8, sizeof(utf8));
+        if (xd_deskicons_key(shell, sym, utf8, serial))
+            return;
     }
     xd_menu_key(shell, sym);
 }
@@ -691,8 +704,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         int pr = poll(fds, (nfds_t)(OWN_FDS + ng), timeout);
         for (gint i = 0; i < ng; i++)
             gfds[i].revents = (gushort)(pr > 0 ? fds[OWN_FDS + i].revents : 0);
-        if (g_main_context_check(ctx, prio, gfds, ng))
-            g_main_context_dispatch(ctx);
+        gboolean glib_ready = g_main_context_check(ctx, prio, gfds, ng);
         if (pr < 0) {
             wl_display_cancel_read(d);
             if (errno == EINTR)
@@ -713,6 +725,11 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             rc = EXIT_FAILURE;
             break;
         }
+        /* GLib's callbacks (D-Bus, pipes) run once the Wayland read is
+         * done: they may wait on the display themselves (an activation
+         * token for a launch), which would deadlock while it's prepared. */
+        if (glib_ready)
+            g_main_context_dispatch(ctx);
 
         if (timer_fd >= 0 && (fds[1].revents & POLLIN)) {
             uint64_t expirations;

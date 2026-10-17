@@ -323,11 +323,23 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Folder / Text Document and Properties (Display Properties). Delete,
       Rename and Empty Recycle Bin run xd-files (--trash, --rename,
       --empty-trash) for its dialogs. Tested headless.
-- [ ] Desktop icons: renaming in place (a dialog for now), keyboard (the
-      desktop has no keyboard focus), Ctrl+click, dragging icons to other
-      programs and files onto the desktop, Cut/Copy/Paste, My Network
-      Places, Display Properties' Customize Desktop (which icons show),
-      Auto Arrange, larger icons with scaling of the icon size.
+- [x] Desktop icons: a click gives the desktop the keyboard (an
+      on-demand layer surface; the compositor deactivates the front
+      window, as Windows does). Arrows, Home/End, Enter, Alt+Enter,
+      Delete/Shift+Delete, F2, F5, Ctrl+A, Ctrl+Space, Shift+F10/Menu,
+      type-ahead, Alt+F4 for Shut Down; the dotted focus once a key is
+      used. Ctrl+click and Shift+click. Rename in place (F2, the menu, or
+      a slow second click on the name), the extension left unselected.
+      Cut/Copy/Paste: the shell owns the clipboard in the file managers'
+      format (cut icons faded) and pastes through xd-files --copy-to /
+      --move-to (its progress and replace dialogs). Tested headless:
+      focus, Ctrl+click, arrows, rename, copy from xd-files and paste on
+      the desktop, cut on the desktop and paste in xd-files, Alt+F4,
+      type-ahead.
+- [ ] Desktop icons: dragging icons to other programs and files onto the
+      desktop, My Network Places, Display Properties' Customize Desktop
+      (which icons show), Auto Arrange, larger icons with scaling of the
+      icon size, key repeat (the shell doesn't repeat keys).
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
       Programs, Recent Documents and Control Panel submenus, Log Off and

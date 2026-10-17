@@ -64,8 +64,9 @@ xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output) {
                                                    ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
     /* -1: cover the whole output, under the taskbar too. */
     zwlr_layer_surface_v1_set_exclusive_zone(d->layer, -1);
+    /* A click gives it the keyboard (the icons' keys), as on Windows. */
     zwlr_layer_surface_v1_set_keyboard_interactivity(
-        d->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
+        d->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND);
     zwlr_layer_surface_v1_add_listener(d->layer, &desktop_layer_listener, d);
     wl_surface_commit(d->surface);
     return d;

@@ -57,10 +57,19 @@ static void navigate(explorer *e, GFile *dir, gboolean record);
 static int initial_view = XD_VIEW_ICONS; /* from --view */
 static gboolean view_forced;              /* --view given: it wins for the first folder */
 static gboolean properties_only;          /* --properties: just the dialog */
-/* --trash, --delete, --rename, --empty-trash: one job for the desktop's
- * menus (the shell isn't a GTK program), then exit. */
-typedef enum { JOB_NONE, JOB_TRASH, JOB_DELETE, JOB_RENAME, JOB_EMPTY_TRASH } cli_job;
+/* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to: one
+ * job for the desktop (the shell isn't a GTK program), then exit. */
+typedef enum {
+    JOB_NONE,
+    JOB_TRASH,
+    JOB_DELETE,
+    JOB_RENAME,
+    JOB_EMPTY_TRASH,
+    JOB_COPY,
+    JOB_MOVE
+} cli_job;
 static cli_job job;
+static char *job_dest; /* --copy-to / --move-to */
 
 /* ---- status and chrome --------------------------------------------------------- */
 
@@ -1526,6 +1535,11 @@ static void job_done([[maybe_unused]] GList *created, gpointer app) {
     g_application_release(G_APPLICATION(app));
 }
 
+static void job_moved(GList *created, gpointer app) {
+    xd_trash_tidy(); /* in case they came out of the Recycle Bin */
+    job_done(created, app);
+}
+
 /* Windows' Rename box isn't a dialog (it's in place), but the desktop's
  * icons are drawn by the shell: a small one stands in. */
 static void rename_dialog(GFile *file) {
@@ -1599,6 +1613,18 @@ static void run_job(GtkApplication *app, GFile **files, gint n) {
         g_application_hold(G_APPLICATION(app));
         xd_trash_empty(nullptr, job_done, app);
         break;
+    case JOB_COPY:
+    case JOB_MOVE: {
+        /* The desktop's Paste: the "Copying..." dialog and its questions. */
+        if (list == nullptr || job_dest == nullptr)
+            break;
+        GFile *dest = g_file_new_for_commandline_arg(job_dest);
+        g_application_hold(G_APPLICATION(app));
+        xd_fileop_start(nullptr, job == JOB_COPY ? XD_FILEOP_COPY : XD_FILEOP_MOVE, list, dest,
+                        job == JOB_MOVE ? job_moved : job_done, app);
+        g_object_unref(dest);
+        break;
+    }
     case JOB_NONE:
         break;
     }
@@ -1652,6 +1678,16 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
         job = JOB_RENAME;
     if (g_variant_dict_contains(opts, "empty-trash"))
         job = JOB_EMPTY_TRASH;
+    const char *dest = nullptr;
+    if (g_variant_dict_lookup(opts, "copy-to", "^&ay", &dest)) {
+        job = JOB_COPY;
+        job_dest = g_strdup(dest);
+    }
+    if (g_variant_dict_lookup(opts, "move-to", "^&ay", &dest)) {
+        job = JOB_MOVE;
+        g_free(job_dest);
+        job_dest = g_strdup(dest);
+    }
     if (g_variant_dict_lookup(opts, "view", "&s", &view)) {
         for (int i = 0; i < XD_VIEW_COUNT; i++) {
             if (g_ascii_strcasecmp(view, view_names[i]) == 0) {
@@ -1698,6 +1734,10 @@ int main(int argc, char **argv) {
     g_application_add_main_option(G_APPLICATION(app), "empty-trash", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE, "Empty the Recycle Bin (asking first)",
                                   nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "copy-to", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_FILENAME, "Copy FILE... into DIR and exit", "DIR");
+    g_application_add_main_option(G_APPLICATION(app), "move-to", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_FILENAME, "Move FILE... into DIR and exit", "DIR");
     g_signal_connect(app, "handle-local-options", G_CALLBACK(on_options), nullptr);
     int rc = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);

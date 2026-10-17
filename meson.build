@@ -383,6 +383,13 @@ executable(
   install: true,
 )
 
+# Renaming files and launchers (GIO only): xd-files and the desktop icons.
+rename_lib = static_library(
+  'xdrename',
+  'src/files/rename.c',
+  dependencies: [gio_unix_dep],
+)
+
 # xd-files: the file manager (GTK3), with the folder view (libxdfolder).
 folder_lib = static_library(
   'xdfolder',
@@ -423,7 +430,7 @@ executable(
 executable(
   'xd-files',
   'src/files/main.c',
-  link_with: [folder_lib, gtkapp_lib],
+  link_with: [folder_lib, gtkapp_lib, rename_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, m_dep],
   install: true,
 )
@@ -505,6 +512,7 @@ executable(
   'src/shell/sys_volume.c',
   'src/shell/taskmenu.c',
   'src/shell/recent.c',
+  link_with: rename_lib,
   dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,

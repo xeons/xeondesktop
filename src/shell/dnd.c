@@ -1,10 +1,14 @@
 /* SPDX-License-Identifier: MIT
- * The taskbar as a drop target (wl_data_device), as in XP:
+ * The shell's wl_data_device: the taskbar as a drop target, as in XP:
  *
  * - files or applications dropped on Quick Launch become shortcuts where
  *   they land;
  * - a drag held over a task button brings that window forward, so the
- *   drop can go into it.
+ *   drop can go into it;
+ *
+ * and the clipboard's files for the desktop icons' Cut, Copy and Paste,
+ * in the format file managers use (x-special/gnome-copied-files, with a
+ * URI list besides).
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +20,7 @@
 #include "shell.h"
 
 #define URI_LIST "text/uri-list"
+#define GNOME_FILES "x-special/gnome-copied-files"
 enum { HOVER_ACTIVATE_MS = 800 };
 
 struct xd_dnd {
@@ -25,8 +30,13 @@ struct xd_dnd {
     /* The newest offer and whether it has a URI list (its mime types come
      * before the enter or selection event that uses it). */
     struct wl_data_offer *pending;
-    bool pending_uris;
+    bool pending_uris, pending_gnome;
     struct wl_data_offer *selection;
+    bool selection_uris, selection_gnome;
+    /* Our own clipboard (the desktop's Cut or Copy). */
+    struct wl_data_source *source;
+    char **source_uris;
+    bool source_cut;
     /* The drag over us. */
     struct wl_data_offer *offer;
     bool uris;
@@ -43,6 +53,8 @@ static void offer_mime(void *data, struct wl_data_offer *offer, const char *mime
     xd_dnd *d = data;
     if (offer == d->pending && strcmp(mime, URI_LIST) == 0)
         d->pending_uris = true;
+    if (offer == d->pending && strcmp(mime, GNOME_FILES) == 0)
+        d->pending_gnome = true;
 }
 
 static void offer_source_actions([[maybe_unused]] void *data,
@@ -63,6 +75,7 @@ static void device_offer(void *data, [[maybe_unused]] struct wl_data_device *dev
     xd_dnd *d = data;
     d->pending = offer;
     d->pending_uris = false;
+    d->pending_gnome = false;
     wl_data_offer_add_listener(offer, &offer_listener, d);
 }
 
@@ -229,13 +242,194 @@ static void device_drop(void *data, [[maybe_unused]] struct wl_data_device *dev)
 
 static void device_selection(void *data, [[maybe_unused]] struct wl_data_device *dev,
                              struct wl_data_offer *offer) {
-    /* The clipboard: not ours to use, but its offer is ours to free. */
+    /* The clipboard: its offer is ours to free. */
     xd_dnd *d = data;
     if (d->selection != nullptr)
         wl_data_offer_destroy(d->selection);
     d->selection = offer;
+    d->selection_uris = offer != nullptr && offer == d->pending && d->pending_uris;
+    d->selection_gnome = offer != nullptr && offer == d->pending && d->pending_gnome;
     if (offer == d->pending)
         d->pending = nullptr;
+}
+
+/* ---- the clipboard ------------------------------------------------------------- */
+
+static char *clip_text(char *const *uris, bool cut, bool gnome) {
+    GString *t = g_string_new(gnome ? (cut ? "cut" : "copy") : nullptr);
+    for (char *const *u = uris; *u != nullptr; u++) {
+        if (gnome)
+            g_string_append_c(t, '\n');
+        g_string_append(t, *u);
+        if (!gnome)
+            g_string_append(t, "\r\n");
+    }
+    return g_string_free(t, FALSE);
+}
+
+static void source_target([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_source *s,
+                          [[maybe_unused]] const char *mime) {}
+
+static void source_send(void *data, [[maybe_unused]] struct wl_data_source *s, const char *mime,
+                        int32_t fd) {
+    xd_dnd *d = data;
+    if (d->source_uris != nullptr) {
+        char *text = clip_text(d->source_uris, d->source_cut, strcmp(mime, GNOME_FILES) == 0);
+        /* A short list: written at once (blocking), as other clients do. */
+        int flags = fcntl(fd, F_GETFL);
+        if (flags >= 0)
+            fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        size_t len = strlen(text), off = 0;
+        while (off < len) {
+            ssize_t n = write(fd, text + off, len - off);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0)
+                break;
+            off += (size_t)n;
+        }
+        g_free(text);
+    }
+    close(fd);
+}
+
+static void source_cancelled(void *data, struct wl_data_source *s) {
+    xd_dnd *d = data;
+    if (s == d->source) {
+        d->source = nullptr;
+        g_strfreev(d->source_uris);
+        d->source_uris = nullptr;
+        xd_deskicons_clipboard_lost(d->shell);
+    }
+    wl_data_source_destroy(s);
+}
+
+static void source_dnd_drop([[maybe_unused]] void *data,
+                            [[maybe_unused]] struct wl_data_source *s) {}
+static void source_dnd_finished([[maybe_unused]] void *data,
+                                [[maybe_unused]] struct wl_data_source *s) {}
+static void source_action([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_source *s,
+                          [[maybe_unused]] uint32_t action) {}
+
+static const struct wl_data_source_listener source_listener = {
+    .target = source_target,
+    .send = source_send,
+    .cancelled = source_cancelled,
+    .dnd_drop_performed = source_dnd_drop,
+    .dnd_finished = source_dnd_finished,
+    .action = source_action,
+};
+
+void xd_clipboard_set_files(xd_shell *shell, char *const *uris, bool cut, uint32_t serial) {
+    xd_dnd *d = shell->dnd;
+    if (d == nullptr || uris == nullptr || uris[0] == nullptr)
+        return;
+    struct wl_data_source *src = wl_data_device_manager_create_data_source(d->manager);
+    wl_data_source_add_listener(src, &source_listener, d);
+    wl_data_source_offer(src, GNOME_FILES);
+    wl_data_source_offer(src, URI_LIST);
+    /* The old one is cancelled by the compositor. */
+    d->source = src;
+    g_strfreev(d->source_uris);
+    d->source_uris = g_strdupv((char **)(uintptr_t)uris);
+    d->source_cut = cut;
+    wl_data_device_set_selection(d->device, src, serial);
+}
+
+bool xd_clipboard_has_files(xd_shell *shell) {
+    const xd_dnd *d = shell->dnd;
+    return d != nullptr && (d->source_uris != nullptr ||
+                            (d->selection != nullptr && (d->selection_gnome || d->selection_uris)));
+}
+
+typedef struct clip_read {
+    xd_shell *shell;
+    int fd;
+    GString *text;
+    bool gnome;
+    xd_clipboard_got got;
+    void *user;
+} clip_read;
+
+static void deliver(xd_shell *shell, const char *text, bool gnome, xd_clipboard_got got,
+                    void *user) {
+    bool cut = false;
+    char **uris = nullptr;
+    if (gnome) {
+        char **lines = g_strsplit(text, "\n", -1);
+        cut = lines[0] != nullptr && strcmp(g_strstrip(lines[0]), "cut") == 0;
+        GPtrArray *a = g_ptr_array_new();
+        for (size_t i = 1; lines[0] != nullptr && lines[i] != nullptr; i++) {
+            char *u = g_strstrip(lines[i]);
+            if (*u != '\0')
+                g_ptr_array_add(a, g_strdup(u));
+        }
+        g_ptr_array_add(a, nullptr);
+        uris = (char **)g_ptr_array_free(a, FALSE);
+        g_strfreev(lines);
+    } else {
+        uris = g_uri_list_extract_uris(text);
+    }
+    got(shell, uris != nullptr && uris[0] != nullptr ? uris : nullptr, cut, user);
+    g_strfreev(uris);
+}
+
+static gboolean read_clip(int fd, [[maybe_unused]] GIOCondition cond, gpointer data) {
+    clip_read *r = data;
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof(buf));
+    if (n > 0) {
+        g_string_append_len(r->text, buf, n);
+        return r->text->len < (1u << 20) ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+    }
+    if (n < 0 && (errno == EINTR || errno == EAGAIN))
+        return G_SOURCE_CONTINUE;
+    deliver(r->shell, r->text->str, r->gnome, r->got, r->user);
+    g_string_free(r->text, TRUE);
+    close(r->fd);
+    g_free(r);
+    return G_SOURCE_REMOVE;
+}
+
+void xd_clipboard_get_files(xd_shell *shell, xd_clipboard_got got, void *user) {
+    xd_dnd *d = shell->dnd;
+    if (d == nullptr) {
+        got(shell, nullptr, false, user);
+        return;
+    }
+    if (d->source_uris != nullptr) {
+        /* Ours: no need to ask ourselves through the compositor. */
+        got(shell, d->source_uris, d->source_cut, user);
+        return;
+    }
+    int fds[2];
+    if (d->selection == nullptr || !(d->selection_gnome || d->selection_uris) ||
+        pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0) {
+        got(shell, nullptr, false, user);
+        return;
+    }
+    clip_read *r = g_new0(clip_read, 1);
+    r->shell = shell;
+    r->fd = fds[0];
+    r->text = g_string_new(nullptr);
+    r->gnome = d->selection_gnome;
+    r->got = got;
+    r->user = user;
+    wl_data_offer_receive(d->selection, r->gnome ? GNOME_FILES : URI_LIST, fds[1]);
+    close(fds[1]);
+    g_unix_fd_add(fds[0], (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR), read_clip, r);
+    wl_display_flush(shell->display);
+}
+
+void xd_clipboard_clear_cut(xd_shell *shell) {
+    xd_dnd *d = shell->dnd;
+    if (d != nullptr && d->source != nullptr && d->source_cut) {
+        wl_data_source_destroy(d->source);
+        d->source = nullptr;
+        g_strfreev(d->source_uris);
+        d->source_uris = nullptr;
+        xd_deskicons_clipboard_lost(shell);
+    }
 }
 
 static const struct wl_data_device_listener device_listener = {
@@ -266,6 +460,9 @@ void xd_dnd_finish(xd_shell *shell) {
     forget_drag(d);
     if (d->selection != nullptr)
         wl_data_offer_destroy(d->selection);
+    if (d->source != nullptr)
+        wl_data_source_destroy(d->source);
+    g_strfreev(d->source_uris);
     if (wl_data_device_get_version(d->device) >= WL_DATA_DEVICE_RELEASE_SINCE_VERSION)
         wl_data_device_release(d->device);
     else
