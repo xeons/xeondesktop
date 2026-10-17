@@ -433,8 +433,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       the selection it started with; the view scrolls past the edges),
       View ▸ Arrange Icons by (and on the background's menu), and the
       status bar's "(Disk free space: ...)". Tested headless.
-- [ ] Remembering the view per folder; Arrange Icons by ▸ Show in Groups,
-      Auto Arrange.
+- [x] Each folder remembers its view and sort (the "folder-views" state
+      file, the 400 most recent, as XP keeps), saved on leaving it or
+      closing the window; folders left at the defaults aren't stored.
+      Tested: Details in one folder, Icons in its parent, Back restores it.
+- [ ] Arrange Icons by ▸ Show in Groups, Auto Arrange.
 - [x] My Computer (`computer:///`, places.c): the file system, the user's
       Documents and every mount from GIO's volume monitor (live), as Local
       Disk / Removable Disk / CD Drive / Network Drive with total and free

@@ -54,6 +54,7 @@ XdViewMode xd_folder_view_get_mode(XdFolderView *view);
 void xd_folder_view_set_thumbnail_size(XdFolderView *view, int px);
 void xd_folder_view_set_sort(XdFolderView *view, XdSortColumn column, gboolean descending);
 XdSortColumn xd_folder_view_get_sort(XdFolderView *view);
+gboolean xd_folder_view_get_sort_descending(XdFolderView *view);
 void xd_folder_view_set_show_hidden(XdFolderView *view, gboolean show);
 
 void xd_folder_view_select_all(XdFolderView *view);

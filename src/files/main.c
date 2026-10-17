@@ -9,6 +9,7 @@
 #include <stdlib.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "../settings/state.h"
 #include "fileops.h"
 #include "folderview.h"
 #include "places.h"
@@ -54,6 +55,7 @@ typedef struct explorer {
 
 static void navigate(explorer *e, GFile *dir, gboolean record);
 static int initial_view = XD_VIEW_ICONS; /* from --view */
+static gboolean view_forced;              /* --view given: it wins for the first folder */
 static gboolean properties_only;          /* --properties: just the dialog */
 /* --trash, --delete, --rename, --empty-trash: one job for the desktop's
  * menus (the shell isn't a GTK program), then exit. */
@@ -272,12 +274,105 @@ static void free_history(GList **list) {
     *list = nullptr;
 }
 
+/* ---- each folder's view, remembered (XP keeps 400) ---------------------------- */
+
+enum { FOLDER_VIEWS_MAX = 400 };
+#define FOLDER_VIEWS "folder-views" /* lines: uri, view, sort column, descending */
+
+static void set_mode(explorer *e, XdViewMode mode);
+
+typedef struct folder_view_setting {
+    int mode, sort;
+    gboolean desc;
+} folder_view_setting;
+
+static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines(FOLDER_VIEWS, &lines, &n, FOLDER_VIEWS_MAX);
+    gboolean found = FALSE;
+    for (size_t i = 0; i < n && !found; i++) {
+        char **f = g_strsplit(lines[i], "\t", 4);
+        if (g_strv_length(f) == 4 && strcmp(f[0], uri) == 0) {
+            long mode = strtol(f[1], nullptr, 10), sort = strtol(f[2], nullptr, 10);
+            if (mode >= 0 && mode < XD_VIEW_COUNT && sort >= 0 && sort < XD_SORT_COUNT) {
+                *out = (folder_view_setting){(int)mode, (int)sort, strcmp(f[3], "1") == 0};
+                found = TRUE;
+            }
+        }
+        g_strfreev(f);
+    }
+    xd_free_lines(lines, n);
+    return found;
+}
+
+/* Keeps the folder's view (most recent first), unless it's the default
+ * and the folder wasn't remembered before. */
+static void remember_folder_view(explorer *e) {
+    GFile *dir = xd_folder_view_get_location(e->view);
+    if (dir == nullptr)
+        return;
+    char *uri = g_file_get_uri(dir);
+    XdViewMode view_mode = xd_folder_view_get_mode(e->view);
+    int mode = (int)view_mode;
+    XdSortColumn sort_col = xd_folder_view_get_sort(e->view);
+    int sort = (int)sort_col;
+    gboolean desc = xd_folder_view_get_sort_descending(e->view);
+    folder_view_setting old;
+    gboolean known = find_folder_view(uri, &old);
+    gboolean is_default = mode == initial_view && sort == XD_SORT_NAME && !desc;
+    if ((!known && is_default) ||
+        (known && old.mode == mode && old.sort == sort && old.desc == desc)) {
+        g_free(uri);
+        return;
+    }
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines(FOLDER_VIEWS, &lines, &n, FOLDER_VIEWS_MAX);
+    char **out = g_new0(char *, n + 2);
+    size_t k = 0;
+    out[k++] = g_strdup_printf("%s\t%d\t%d\t%d", uri, mode, sort, desc ? 1 : 0);
+    char *prefix = g_strconcat(uri, "\t", nullptr);
+    for (size_t i = 0; i < n && k < FOLDER_VIEWS_MAX; i++)
+        if (!g_str_has_prefix(lines[i], prefix))
+            out[k++] = g_strdup(lines[i]);
+    if (!xd_state_write_lines(FOLDER_VIEWS, out, k))
+        g_printerr("xd-files: cannot save the folder's view\n");
+    g_free(prefix);
+    g_strfreev(out);
+    xd_free_lines(lines, n);
+    g_free(uri);
+}
+
+/* The folder's own view, if it has one. */
+static void apply_folder_view(explorer *e, GFile *dir) {
+    if (view_forced) {
+        view_forced = FALSE; /* --view, for the folder it opened */
+        return;
+    }
+    char *uri = g_file_get_uri(dir);
+    folder_view_setting fv;
+    if (find_folder_view(uri, &fv)) {
+        set_mode(e, (XdViewMode)fv.mode);
+        xd_folder_view_set_sort(e->view, (XdSortColumn)fv.sort, fv.desc);
+    } else if (xd_folder_view_get_mode(e->view) != (XdViewMode)initial_view ||
+               xd_folder_view_get_sort(e->view) != XD_SORT_NAME ||
+               xd_folder_view_get_sort_descending(e->view)) {
+        set_mode(e, (XdViewMode)initial_view);
+        xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
+    }
+    g_free(uri);
+}
+
 static void navigate(explorer *e, GFile *dir, gboolean record) {
     GFile *current = xd_folder_view_get_location(e->view);
     if (record && current != nullptr && !g_file_equal(current, dir)) {
         e->back = g_list_prepend(e->back, g_object_ref(current));
         free_history(&e->forward);
     }
+    if (current != nullptr)
+        remember_folder_view(e);
+    apply_folder_view(e, dir);
     xd_folder_view_set_location(e->view, dir);
     update_chrome(e);
     sync_tree(e);
@@ -1259,6 +1354,7 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
 
 static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     explorer *e = data;
+    remember_folder_view(e);
     free_history(&e->back);
     free_history(&e->forward);
     g_ptr_array_unref(e->need_selection);
@@ -1560,6 +1656,7 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
         for (int i = 0; i < XD_VIEW_COUNT; i++) {
             if (g_ascii_strcasecmp(view, view_names[i]) == 0) {
                 initial_view = i;
+                view_forced = TRUE;
                 return -1;
             }
         }

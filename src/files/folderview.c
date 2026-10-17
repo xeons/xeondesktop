@@ -1670,6 +1670,7 @@ void xd_folder_view_set_sort(XdFolderView *v, XdSortColumn column, gboolean desc
 }
 
 XdSortColumn xd_folder_view_get_sort(XdFolderView *v) { return v->sort; }
+gboolean xd_folder_view_get_sort_descending(XdFolderView *v) { return v->desc; }
 
 void xd_folder_view_set_show_hidden(XdFolderView *v, gboolean show) {
     v->show_hidden = show;
