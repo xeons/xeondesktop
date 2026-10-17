@@ -42,6 +42,7 @@ depends=(
   'libcups'    # Printers and Faxes
   'sane'       # Scanners and Cameras
   'libgphoto2' # Scanners and Cameras
+  'libarchive' # Files: Send To > Compressed (zipped) Folder
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
