@@ -33,6 +33,14 @@ typedef enum xd_start_style : uint8_t {
     XD_START_STYLE_COUNT,
 } xd_start_style;
 
+/* Windows 7's "Taskbar buttons" (Aero; the other styles group as XP did). */
+typedef enum xd_taskbar_buttons : uint8_t {
+    XD_BUTTONS_ALWAYS_COMBINE, /* "Always combine, hide labels": one icon per program */
+    XD_BUTTONS_WHEN_FULL,      /* "Combine when taskbar is full" */
+    XD_BUTTONS_NEVER_COMBINE,  /* "Never combine" */
+    XD_BUTTONS_COUNT,
+} xd_taskbar_buttons;
+
 /* [Notifications]: one notification area icon's behavior, by its id. */
 typedef enum xd_tray_rule : uint8_t {
     XD_TRAY_AUTO,        /* hide when inactive */
@@ -167,6 +175,7 @@ typedef struct xd_settings {
     bool auto_hide;
     bool on_top;       /* Keep the taskbar on top of other windows */
     bool group;        /* Group similar taskbar buttons (when crowded) */
+    xd_taskbar_buttons buttons; /* Aero: icons only, or labels */
     bool show_clock;
     bool hide_inactive; /* fold tray icons that have been quiet behind a chevron */
     bool all_displays; /* a taskbar on every monitor, not just the first */

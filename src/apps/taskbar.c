@@ -71,6 +71,13 @@ static void on_group(xd_widget *w, void *user) {
     p->pending.group = xd_checkbox_checked(w);
     changed(p);
 }
+static void on_buttons(xd_widget *w, void *user) {
+    props *p = user;
+    int i = xd_widget_selected(w);
+    if (i >= 0 && i < XD_BUTTONS_COUNT)
+        p->pending.buttons = (xd_taskbar_buttons)i;
+    changed(p);
+}
 static void on_clock(xd_widget *w, void *user) {
     props *p = user;
     p->pending.show_clock = xd_checkbox_checked(w);
@@ -283,10 +290,25 @@ int main(int argc, char **argv) {
         {"Show the taskbar on all displays", offsetof(xd_settings, all_displays),
          on_all_displays},
     };
+    /* Aero: Windows 7's "Taskbar buttons" choice where XP's grouping box was. */
+    bool aero = xd_ui_style(p.ui) == XD_STYLE_AERO;
     for (size_t i = 0; i < XD_ARRAY_LEN(boxes); i++) {
+        int y = 60 + 24 * (int)i;
+        if (aero && boxes[i].cb == on_group) {
+            xd_widget_set_page(xd_label(p.win, (xd_rect){32, y + 2, 90, 16}, "Taskbar buttons:", 0),
+                               0);
+            xd_widget *combo = xd_combo(p.win, (xd_rect){124, y - 1, 228, 21}, false, on_buttons,
+                                        &p);
+            xd_widget_set_page(combo, 0);
+            xd_widget_add_item(combo, "Always combine, hide labels");
+            xd_widget_add_item(combo, "Combine when taskbar is full");
+            xd_widget_add_item(combo, "Never combine");
+            xd_widget_select(combo, (int)p.pending.buttons);
+            continue;
+        }
         const bool *value = (const bool *)((const char *)&p.pending + boxes[i].offset);
-        xd_widget *box = xd_checkbox(p.win, (xd_rect){32, 60 + 24 * (int)i, 320, 20},
-                                     boxes[i].label, *value, boxes[i].cb, &p);
+        xd_widget *box = xd_checkbox(p.win, (xd_rect){32, y, 320, 20}, boxes[i].label, *value,
+                                     boxes[i].cb, &p);
         xd_widget_set_page(box, 0);
     }
     xd_widget_set_page(xd_groupbox(p.win, (xd_rect){20, 218, 340, 70}, "Notification area"), 0);

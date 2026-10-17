@@ -21,6 +21,7 @@ static const char *const font_size_names[] = {"normal", "large", "extralarge"};
 static const char *const start_style_names[] = {"classic", "xp", "win7"};
 static const char *const smoothing_names[] = {"standard", "none", "cleartype"};
 static const char *const edge_names[] = {"bottom", "top", "left", "right"};
+static const char *const buttons_names[] = {"always", "whenfull", "never"};
 static const char *const tray_rule_names[] = {"auto", "hide", "show"};
 static const char *const power_scheme_names[XD_POWER_SCHEME_COUNT] = {
     [XD_POWER_HOME] = "home",
@@ -308,6 +309,11 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &s->on_top);
         else if (KEY("GroupButtons"))
             parse_bool(v, &s->group);
+        else if (KEY("Buttons")) {
+            int i = index_of(buttons_names, XD_ARRAY_LEN(buttons_names), v);
+            if (i >= 0)
+                s->buttons = (xd_taskbar_buttons)i;
+        }
         else if (KEY("ShowClock"))
             parse_bool(v, &s->show_clock);
         else if (KEY("HideInactiveIcons"))
@@ -517,6 +523,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Taskbar", "AutoHide", s->auto_hide);
     g_key_file_set_boolean(kf, "Taskbar", "OnTop", s->on_top);
     g_key_file_set_boolean(kf, "Taskbar", "GroupButtons", s->group);
+    g_key_file_set_string(kf, "Taskbar", "Buttons", buttons_names[s->buttons]);
     g_key_file_set_boolean(kf, "Taskbar", "ShowClock", s->show_clock);
     g_key_file_set_boolean(kf, "Taskbar", "HideInactiveIcons", s->hide_inactive);
     g_key_file_set_boolean(kf, "Taskbar", "AllDisplays", s->all_displays);

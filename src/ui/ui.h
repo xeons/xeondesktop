@@ -28,6 +28,8 @@ void xd_ui_run(xd_ui *ui);
 void xd_ui_quit(xd_ui *ui);
 void xd_ui_destroy(xd_ui *ui);
 xd_icons *xd_ui_icons(xd_ui *ui);
+/* The visual style windows are drawn in (--style, else the settings'). */
+xd_visual_style xd_ui_style(const xd_ui *ui);
 
 /* Monitors, as the compositor reports them. */
 typedef struct xd_output_info {

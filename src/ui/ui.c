@@ -733,6 +733,8 @@ xd_ui *xd_ui_connect(int argc, char **argv) {
 
 xd_icons *xd_ui_icons(xd_ui *ui) { return ui->icons; }
 
+xd_visual_style xd_ui_style(const xd_ui *ui) { return ui->style; }
+
 /* ---- timers and file descriptors -------------------------------------------- */
 
 static xd_ui_source *add_source(xd_ui *ui, int fd, xd_ui_source_cb cb, void *user) {
