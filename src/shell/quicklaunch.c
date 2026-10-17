@@ -9,6 +9,8 @@
  */
 #include <dirent.h>
 #include <errno.h>
+#include <gio/gio.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
@@ -219,4 +221,140 @@ void xd_quicklaunch_activate(xd_shell *shell, size_t index) {
         return;
     }
     xd_app_launch(app);
+}
+
+/* ---- reordering and adding ------------------------------------------------------- */
+
+/* A file name without its order prefix: "20-firefox.desktop" ->
+ * "firefox.desktop". */
+static const char *stem(const char *file) {
+    const char *p = file;
+    while (*p >= '0' && *p <= '9')
+        p++;
+    return p != file && *p == '-' ? p + 1 : file;
+}
+
+/* Renames the folder's shortcuts to "10-", "20-", ... in `order` (file
+ * names; nullptr entries skipped). Two passes, so no name is clobbered. */
+static void renumber(const char *dir, const char *const *order, size_t n) {
+    char **temps = xd_alloc_array(XD_MAX(n, 1), sizeof(*temps));
+    for (size_t i = 0; i < n; i++) {
+        temps[i] = nullptr;
+        if (order[i] == nullptr)
+            continue;
+        char *from = g_build_filename(dir, order[i], nullptr);
+        char *tmp = g_strdup_printf("%s/.xd-reorder-%zu", dir, i);
+        if (rename(from, tmp) == 0)
+            temps[i] = tmp;
+        else
+            g_free(tmp);
+        g_free(from);
+    }
+    size_t k = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (temps[i] == nullptr)
+            continue;
+        char *to = g_strdup_printf("%s/%02zu-%s", dir, ++k * 10, stem(order[i]));
+        if (rename(temps[i], to) != 0)
+            fprintf(stderr, "xd-shell: quick launch: cannot rename to %s\n", to);
+        g_free(to);
+        g_free(temps[i]);
+    }
+    xd_free(temps);
+}
+
+void xd_quicklaunch_move(xd_shell *shell, size_t from, size_t to) {
+    xd_quicklaunch *ql = &shell->quicklaunch;
+    if (from >= ql->count || to > ql->count || to == from || to == from + 1)
+        return;
+    const char **order = xd_alloc_array(ql->count, sizeof(*order));
+    size_t n = 0;
+    for (size_t i = 0; i <= ql->count; i++) {
+        if (i == to)
+            order[n++] = ql->files[from];
+        if (i < ql->count && i != from)
+            order[n++] = ql->files[i];
+    }
+    xd_strbuf dir = {0};
+    quicklaunch_dir(&dir);
+    renumber(xd_strbuf_cstr(&dir), order, n);
+    xd_strbuf_free(&dir);
+    xd_free(order);
+}
+
+/* A launcher for something that isn't an application: opens it with its
+ * default program, with its type's icon. */
+static bool write_launcher(const char *path, const char *target) {
+    GFile *f = g_file_new_for_path(target);
+    GFileInfo *info = g_file_query_info(f, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
+                                           G_FILE_ATTRIBUTE_STANDARD_ICON,
+                                        G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
+    char *name = g_path_get_basename(target);
+    char *icon = nullptr;
+    if (info != nullptr) {
+        g_free(name);
+        name = g_strdup(g_file_info_get_display_name(info));
+        GIcon *gi = g_file_info_get_icon(info);
+        if (G_IS_THEMED_ICON(gi)) {
+            const char *const *names = g_themed_icon_get_names(G_THEMED_ICON(gi));
+            if (names != nullptr && names[0] != nullptr)
+                icon = g_strdup(names[0]);
+        }
+        g_object_unref(info);
+    }
+    g_object_unref(f);
+    GKeyFile *kf = g_key_file_new();
+    char *quoted = g_shell_quote(target);
+    char *exec = g_strdup_printf("xdg-open %s", quoted);
+    g_key_file_set_string(kf, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_TYPE,
+                          G_KEY_FILE_DESKTOP_TYPE_APPLICATION);
+    g_key_file_set_string(kf, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_NAME, name);
+    g_key_file_set_string(kf, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_EXEC, exec);
+    g_key_file_set_string(kf, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_ICON,
+                          icon != nullptr ? icon : "text-x-generic");
+    bool ok = g_key_file_save_to_file(kf, path, nullptr);
+    g_key_file_free(kf);
+    g_free(exec);
+    g_free(quoted);
+    g_free(icon);
+    g_free(name);
+    return ok;
+}
+
+bool xd_quicklaunch_add(xd_shell *shell, size_t at, const char *target) {
+    xd_quicklaunch *ql = &shell->quicklaunch;
+    xd_strbuf dir = {0};
+    quicklaunch_dir(&dir);
+    if (!mkdirs(&dir)) {
+        xd_strbuf_free(&dir);
+        return false;
+    }
+    /* Applications are linked; anything else gets a launcher. */
+    char *base = g_path_get_basename(target);
+    bool desktop = g_str_has_suffix(base, ".desktop");
+    char *file = desktop ? g_strdup_printf("99-%s", base)
+                         : g_strdup_printf("99-%s.desktop", base);
+    char *path = g_build_filename(xd_strbuf_cstr(&dir), file, nullptr);
+    bool ok = desktop ? symlink(target, path) == 0 : write_launcher(path, target);
+    if (ok) {
+        /* Put it where it was dropped. */
+        at = XD_MIN(at, ql->count);
+        const char **order = xd_alloc_array(ql->count + 1, sizeof(*order));
+        size_t n = 0;
+        for (size_t i = 0; i <= ql->count; i++) {
+            if (i == at)
+                order[n++] = file;
+            if (i < ql->count)
+                order[n++] = ql->files[i];
+        }
+        renumber(xd_strbuf_cstr(&dir), order, n);
+        xd_free(order);
+    } else {
+        fprintf(stderr, "xd-shell: quick launch: cannot add %s\n", target);
+    }
+    g_free(path);
+    g_free(file);
+    g_free(base);
+    xd_strbuf_free(&dir);
+    return ok;
 }

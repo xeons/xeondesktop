@@ -69,7 +69,7 @@ static int clock_timer_create(void) {
 
 /* ---- pointer --------------------------------------------------------------------- */
 
-static xd_taskbar *bar_for_surface(xd_shell *shell, struct wl_surface *surface) {
+xd_taskbar *xd_taskbar_for_surface(xd_shell *shell, struct wl_surface *surface) {
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
         if (bar->surface == surface)
             return bar;
@@ -80,7 +80,7 @@ static xd_taskbar *bar_for_surface(xd_shell *shell, struct wl_surface *surface) 
 static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
                           struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
     xd_shell *shell = data;
-    shell->pointer_bar = bar_for_surface(shell, surface);
+    shell->pointer_bar = xd_taskbar_for_surface(shell, surface);
     shell->pointer_menu = xd_menu_for_surface(shell, surface);
     shell->pointer_start7 = xd_start7_owns(shell, surface);
     shell->pointer_flyout = xd_volume_flyout_owns(shell, surface);
@@ -376,6 +376,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     } else if (xd_str_eq(iface, xd_str_from_cstr(xdg_wm_base_interface.name))) {
         shell->wm_base = bind(reg, name, &xdg_wm_base_interface, version, 3);
         xdg_wm_base_add_listener(shell->wm_base, &wm_base_listener, shell);
+    } else if (xd_str_eq(iface, xd_str_from_cstr(wl_data_device_manager_interface.name))) {
+        shell->data_device_manager = bind(reg, name, &wl_data_device_manager_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xdg_activation_v1_interface.name))) {
         shell->activation = bind(reg, name, &xdg_activation_v1_interface, version, 1);
     } else if (xd_str_eq(iface, xd_str_from_cstr(wp_viewporter_interface.name))) {
@@ -794,6 +796,7 @@ int main(int argc, char **argv) {
     update_clock(&shell);
     xd_toplevels_init(&shell);
     xd_tray_init(&shell);
+    xd_dnd_init(&shell, shell.data_device_manager);
     xd_sys_bluetooth_init(&shell);
     xd_sys_network_init(&shell);
     xd_sys_volume_init(&shell);
@@ -828,6 +831,7 @@ int main(int argc, char **argv) {
         xd_free(t);
     }
     xd_tray_finish(&shell);
+    xd_dnd_finish(&shell);
     xd_menu_tree_free(&shell.menu_tree);
     if (shell.own_commands != nullptr)
         g_hash_table_destroy(shell.own_commands);

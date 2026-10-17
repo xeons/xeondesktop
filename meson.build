@@ -455,6 +455,7 @@ executable(
   'src/shell/start7.c',
   'src/shell/tooltip.c',
   'src/shell/tray.c',
+  'src/shell/dnd.c',
   'src/shell/sys_battery.c',
   'src/shell/sys_bluetooth.c',
   'src/shell/sys_network.c',

@@ -194,6 +194,19 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
         if (!locked)
             xd_theme_draw_toolbar_grip(t, cr, (xd_rect){qx + xd_tpx(t, 2), qy, grip, qh});
         bar->quick_band = (xd_rect){after_start, qy, qx + xd_tpx(t, 2) + grip - after_start, qh};
+        if (bar->drop_insert >= 0) {
+            /* Where a drop or a dragged button goes: XP's black bar. */
+            size_t k = (size_t)bar->drop_insert;
+            int mx = k < bar->quick_count ? bar->quick_rects[k].x
+                     : bar->quick_count > 0
+                         ? bar->quick_rects[bar->quick_count - 1].x +
+                               bar->quick_rects[bar->quick_count - 1].w
+                         : after_start + grip;
+            xd_rgba ink = classic ? xd_sys(t, XD_COLOR_BUTTON_TEXT) : xd_rgba_hex(0xFFFFFF);
+            xd_fill_rect(cr, (xd_rect){mx - xd_tpx(t, 1), qy + xd_tpx(t, 1), xd_tpx(t, 2),
+                                       qh - xd_tpx(t, 2)},
+                         ink);
+        }
         after_start = qx + xd_tpx(t, 2) + grip;
     }
 
@@ -424,6 +437,18 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
 
 static int hit_test(const xd_taskbar *bar, double lx, double ly);
 
+int xd_taskbar_quick_insert_at(const xd_taskbar *bar, double lx, double ly) {
+    int x = (int)(lx * bar->scale), y = (int)(ly * bar->scale);
+    xd_rect band = bar->quick_band;
+    if (band.w <= 0 || x < band.x || x >= band.x + band.w || y < 0 ||
+        y >= (int)(bar->height * bar->scale))
+        return -1;
+    size_t i = 0;
+    while (i < bar->quick_count && bar->quick_rects[i].x + bar->quick_rects[i].w / 2 < x)
+        i++;
+    return (int)i;
+}
+
 void xd_taskbar_render(xd_taskbar *bar) {
     xd_shell *shell = bar->shell;
     if (!bar->configured || bar->width <= 0 || bar->height <= 0)
@@ -521,6 +546,17 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
 void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
     bar->pointer_x = x;
     bar->pointer_y = y;
+    /* A Quick Launch button pressed and pulled sideways: rearranging. */
+    if (xd_hit_is_quick(bar->pressed) && bar->quick_drag < 0 && fabs(x - bar->press_x) > 4)
+        bar->quick_drag = XD_HIT_QUICK - bar->pressed;
+    if (bar->quick_drag >= 0) {
+        int insert = xd_taskbar_quick_insert_at(bar, x, y);
+        if (insert != bar->drop_insert) {
+            bar->drop_insert = insert;
+            bar->dirty = true;
+        }
+        return;
+    }
     int hot = hit_test(bar, x, y);
     if (hot != bar->hot) {
         bar->hot = hot;
@@ -737,6 +773,7 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         return;
     if (pressed) {
         bar->pressed = bar->hot;
+        bar->press_x = bar->pointer_x;
         bar->dirty = true;
         /* The Start menu opens on press, like Windows'. */
         if (bar->hot == XD_HIT_START)
@@ -746,6 +783,14 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     int target = bar->pressed;
     bar->pressed = XD_HIT_NONE;
     bar->dirty = true;
+    if (bar->quick_drag >= 0) {
+        /* Dropped along Quick Launch: there it goes (elsewhere: nothing). */
+        if (bar->drop_insert >= 0)
+            xd_quicklaunch_move(bar->shell, (size_t)bar->quick_drag, (size_t)bar->drop_insert);
+        bar->quick_drag = -1;
+        bar->drop_insert = -1;
+        return;
+    }
     if (target != bar->hot)
         return; /* released somewhere else: cancel, like a real button */
     if (target == XD_HIT_TRAY_CHEVRON) {
@@ -963,6 +1008,8 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
     bar->scale = 1.0;
     bar->hot = XD_HIT_NONE;
     bar->pressed = XD_HIT_NONE;
+    bar->drop_insert = -1;
+    bar->quick_drag = -1;
     wl_list_insert(shell->taskbars.prev, &bar->link);
     bar->desktop = xd_desktop_create(shell, output);
     xd_taskbars_update(shell);

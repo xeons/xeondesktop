@@ -23,6 +23,7 @@ typedef struct xd_shell xd_shell;
 typedef struct xd_tooltip xd_tooltip;
 typedef struct xd_tray xd_tray;
 typedef struct xd_tray_item xd_tray_item;
+typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
 
 typedef struct xd_early_output {
@@ -127,6 +128,11 @@ typedef struct xd_taskbar {
     uint64_t page_active_id; /* active window when last laid out */
     double wheel;            /* scrolling not yet turned into a page */
     int64_t clock_click_ms;  /* for double-clicks on the clock */
+    /* Quick Launch drops and rearranging: where the insertion mark is
+     * (-1: none), and the button being dragged along (-1: none). */
+    int drop_insert;
+    int quick_drag;
+    double press_x;
     xd_rect page_up_rect, page_down_rect;
     /* Notification area icons, left of the clock. */
     size_t tray_count, tray_cap;
@@ -210,6 +216,8 @@ struct xd_shell {
     int tooltip_timer_fd;
     int autohide_timer_fd; /* tucks Auto-hide taskbars away after the pointer leaves */
     xd_tray *tray;         /* StatusNotifierItem host */
+    xd_dnd *dnd;           /* the taskbar as a drop target */
+    struct wl_data_device_manager *data_device_manager;
     int64_t tooltip_shown_ms, tooltip_hidden_ms;
     xd_menu *pending_menu;  /* menu waiting for the hover delay */
 
@@ -245,6 +253,13 @@ void xd_taskbars_update(xd_shell *shell);
 void xd_taskbar_reveal(xd_taskbar *bar);
 void xd_taskbars_schedule_tuck(xd_shell *shell);
 void xd_taskbars_tuck_timer(xd_shell *shell);
+/* Where a drop at (lx, ly) (logical) goes in Quick Launch: before
+ * button n; -1 if not over Quick Launch. */
+int xd_taskbar_quick_insert_at(const xd_taskbar *bar, double lx, double ly);
+xd_taskbar *xd_taskbar_for_surface(xd_shell *shell, struct wl_surface *surface);
+/* dnd.c */
+void xd_dnd_init(xd_shell *shell, struct wl_data_device_manager *manager);
+void xd_dnd_finish(xd_shell *shell);
 /* Shows the previous (delta < 0) or next page of task buttons. */
 void xd_taskbar_page(xd_taskbar *bar, int delta);
 /* Gives the taskbar keyboard focus; call before opening a menu popup. */
@@ -397,5 +412,11 @@ void xd_quicklaunch_activate(xd_shell *shell, size_t index);
 /* The Quick Launch folder, and a shortcut's index by file name (or -1). */
 void xd_quicklaunch_folder(xd_strbuf *out);
 ssize_t xd_quicklaunch_find(const xd_shell *shell, const char *file);
+/* Moves shortcut `from` to before position `to` (0..count), renumbering
+ * the folder's files; the folder watch reloads the toolbar. */
+void xd_quicklaunch_move(xd_shell *shell, size_t from, size_t to);
+/* Adds a shortcut to `target` (a .desktop file is linked, anything else
+ * gets a launcher that opens it) before position `at`. */
+bool xd_quicklaunch_add(xd_shell *shell, size_t at, const char *target);
 
 #endif
