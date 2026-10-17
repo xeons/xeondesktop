@@ -776,15 +776,21 @@ static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data
 void xd_view_on_unmap(xd_view *view) {
     xd_server *server = view->server;
     bool was_focused = xd_view_focused(server) == view;
-    view->mapped = false;
-    view->minimized = false;
-    wlr_scene_node_set_enabled(&view->tree->node, true);
-    ftl_destroy(view);
-
     if (server->grab_view == view) {
+        /* The grab ends where it is; an unmapped window isn't configured. */
+        if (server->mode == XD_CURSOR_MOVE)
+            xd_snap_cancel(server);
         server->mode = XD_CURSOR_PASSTHROUGH;
         server->grab_view = nullptr;
     }
+    view->mapped = false;
+    view->minimized = false;
+    /* Shown again (a dialog reused), it starts with no button lit. */
+    view->hot = XD_PART_NONE;
+    view->pressed = XD_PART_NONE;
+    wlr_scene_node_set_enabled(&view->tree->node, true);
+    ftl_destroy(view);
+
     if (server->hover_view == view)
         server->hover_view = nullptr;
     if (server->last_click_view == view)
@@ -1027,6 +1033,8 @@ void xd_view_on_destroy(xd_view *view) {
     ftl_destroy(view);
     xd_server *server = view->server;
     if (server->grab_view == view) {
+        if (server->mode == XD_CURSOR_MOVE)
+            xd_snap_cancel(server);
         server->grab_view = nullptr;
         server->mode = XD_CURSOR_PASSTHROUGH;
     }

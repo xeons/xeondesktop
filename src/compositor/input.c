@@ -1245,6 +1245,22 @@ static void end_grab(xd_server *server) {
     }
 }
 
+void xd_cursor_cancel_grab(xd_server *server) {
+    xd_view *view = server->grab_view;
+    xd_cursor_mode mode = server->mode;
+    server->mode = XD_CURSOR_PASSTHROUGH;
+    server->grab_view = nullptr;
+    server->cursor_name = nullptr;
+    if (mode == XD_CURSOR_MOVE)
+        xd_snap_cancel(server);
+    if (view == nullptr)
+        return;
+    if (mode == XD_CURSOR_RESIZE || mode == XD_CURSOR_KEY_SIZE)
+        xd_view_set_resizing(view, false);
+    else if (mode == XD_CURSOR_BUTTON)
+        xd_view_set_hover(view, XD_PART_NONE, XD_PART_NONE);
+}
+
 /* Whether the seat delivered a press of `button` that's still held. */
 static bool seat_has_button(const struct wlr_seat *seat, uint32_t button) {
     for (size_t i = 0; i < seat->pointer_state.button_count; i++) {

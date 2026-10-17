@@ -436,6 +436,9 @@ void xd_input_apply_access(xd_server *server);
 /* Lets clients inject keyboard/pointer input. Testing only. */
 void xd_input_enable_virtual(xd_server *server);
 void xd_cursor_set(xd_server *server, const char *name);
+/* Ends a move, size or caption-button grab where it is, without acting on
+ * it (the screen locks). */
+void xd_cursor_cancel_grab(xd_server *server);
 /* Runs argv[0] (searched in PATH) with argv. Returns the pid or -1. */
 pid_t xd_spawn_argv(char *const argv[]);
 /* Runs a shell command line. */
@@ -495,6 +498,9 @@ void xd_animate_finish(xd_server *server);
 bool xd_snap_begin(xd_server *server, xd_view *view);
 void xd_snap_motion(xd_server *server, xd_view *view);
 void xd_snap_end(xd_server *server, xd_view *view);
+/* The move ended without a drop (window gone, screen locked): the
+ * preview goes, nothing snaps. */
+void xd_snap_cancel(xd_server *server);
 void xd_snap_key(xd_view *view, xd_snap side);
 /* Win+Shift+Up: stretched to the work area's height, keeping its width. */
 void xd_snap_tall(xd_view *view);

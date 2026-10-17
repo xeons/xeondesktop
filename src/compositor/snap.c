@@ -264,6 +264,13 @@ void xd_snap_end(xd_server *server, xd_view *view) {
     snap_to(view, target, server->cursor->x, server->cursor->y);
 }
 
+void xd_snap_cancel(xd_server *server) {
+    server->snap_target = XD_SNAP_NONE;
+    server->snap_unmaximize = false;
+    if (server->snap_preview != nullptr)
+        wlr_scene_node_set_enabled(&server->snap_preview->node, false);
+}
+
 void xd_snap_key(xd_view *view, xd_snap side) {
     xd_server *server = view->server;
     if (!aero(server))

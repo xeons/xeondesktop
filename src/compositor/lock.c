@@ -159,8 +159,7 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
         /* Menus and drags end; nothing but the locker gets input. */
         wlr_seat_pointer_end_grab(server->seat);
         wlr_seat_keyboard_end_grab(server->seat);
-        server->mode = XD_CURSOR_PASSTHROUGH;
-        server->grab_view = nullptr;
+        xd_cursor_cancel_grab(server);
         wlr_seat_pointer_clear_focus(server->seat);
         wlr_log(WLR_INFO, "session locked");
     }
