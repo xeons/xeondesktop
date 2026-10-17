@@ -464,7 +464,8 @@ static int compare_str(gconstpointer a, gconstpointer b) {
 
 static void fill_zones(props *p, char **list) {
     guint n = list != nullptr ? g_strv_length(list) : 0;
-    qsort(list, n, sizeof(char *), compare_str);
+    if (n > 0)
+        qsort(list, n, sizeof(char *), compare_str);
     int active = -1;
     for (guint i = 0; i < n; i++) {
         gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->zones), list[i], list[i]);

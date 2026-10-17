@@ -326,8 +326,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       windows can't be owned by another (Monitor Settings gets its own
       taskbar button). The slider (trackbar) is drawn Classic-style in
       every theme.
-- [ ] Run: Browse... (`xd-choose-file`, the GTK chooser Display Properties
-      uses, is ready for it).
+- [x] Run: Browse... opens the GTK chooser (xd-choose-file) with XP's
+      Programs filter and puts the choice in the Open box.
 - [~] Display Properties:
   - Screen Saver tab: saver list with a live preview, Preview, Password
     protected, Wait, and "Turn off monitor" (instead of Power Options).
@@ -483,4 +483,5 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       `XDG_CONFIG_HOME`), xd-inject for input (`hold`/`release` for
       modifiers), grim for screenshots. A nested session under X11 stops
       drawing while its window is covered, so screenshots of it go stale.
-- [ ] CI: build with GCC and Clang, run unit tests, `-Danalyzer=true`.
+- [x] CI (.github/workflows/ci.yml): GCC and Clang debug builds (ASan,
+      UBSan, -Werror) with the unit tests, and a GCC -fanalyzer build.

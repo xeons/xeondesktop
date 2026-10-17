@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: MIT
  * xd-run: the Run dialog (Start > Run...).
  */
+#include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "../core/alloc.h"
 #include "../ui/ui.h"
@@ -15,6 +18,11 @@ typedef struct run_dialog {
     xd_window *win;
     xd_widget *combo;
     xd_widget *ok;
+    xd_widget *browse;
+    /* Browse...: xd-choose-file's answer, read from its stdout. */
+    int chooser_fd;
+    xd_ui_source *chooser_src;
+    xd_strbuf chooser_out;
     char **history;
     size_t history_n;
 } run_dialog;
@@ -115,6 +123,56 @@ static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     xd_window_close(d->win);
 }
 
+static void on_change(xd_widget *combo, void *user);
+
+/* The chosen file goes in the Open box, quoted if it has spaces, as
+ * Windows does. */
+static void chooser_output(void *user) {
+    run_dialog *d = user;
+    char buf[1024];
+    ssize_t n = read(d->chooser_fd, buf, sizeof(buf));
+    if (n > 0) {
+        xd_strbuf_append(&d->chooser_out, (xd_str){buf, (size_t)n});
+        return;
+    }
+    if (n < 0 && errno == EINTR)
+        return;
+    xd_ui_remove_source(d->chooser_src);
+    d->chooser_src = nullptr;
+    close(d->chooser_fd);
+    d->chooser_fd = -1;
+    xd_str path = xd_str_trim(xd_strbuf_view(&d->chooser_out));
+    if (path.len > 0) {
+        char *p = xd_str_dup_cstr(path);
+        xd_strbuf text = {0};
+        if (strchr(p, ' ') != nullptr)
+            xd_strbuf_appendf(&text, "\"%s\"", p);
+        else
+            xd_strbuf_append(&text, path);
+        xd_widget_set_text(d->combo, xd_strbuf_cstr(&text));
+        xd_strbuf_free(&text);
+        xd_free(p);
+        on_change(d->combo, d);
+    }
+    xd_strbuf_clear(&d->chooser_out);
+    xd_widget_set_enabled(d->browse, true);
+}
+
+static void on_browse([[maybe_unused]] xd_widget *w, void *user) {
+    run_dialog *d = user;
+    if (d->chooser_src != nullptr)
+        return;
+    const char *home = getenv("HOME");
+    const char *args[] = {"--programs", "--title", "Browse", "--folder",
+                          home != nullptr ? home : "/", nullptr};
+    int fd = -1;
+    if (xd_spawn_own("xd-choose-file", args, &fd) == 0)
+        return;
+    d->chooser_fd = fd;
+    d->chooser_src = xd_ui_add_fd(d->ui, fd, chooser_output, d);
+    xd_widget_set_enabled(d->browse, false);
+}
+
 /* OK is only available when there's something to run, as in Windows. */
 static void on_change(xd_widget *combo, void *user) {
     run_dialog *d = user;
@@ -142,8 +200,8 @@ int main(int argc, char **argv) {
 
     d.ok = xd_button(d.win, (xd_rect){98, 124, 75, 23}, "OK", on_ok, &d);
     xd_widget *cancel = xd_button(d.win, (xd_rect){179, 124, 75, 23}, "Cancel", on_cancel, &d);
-    xd_widget *browse = xd_button(d.win, (xd_rect){260, 124, 75, 23}, "Browse...", nullptr, nullptr);
-    xd_widget_set_enabled(browse, false); /* file chooser arrives with the GTK apps */
+    d.chooser_fd = -1;
+    d.browse = xd_button(d.win, (xd_rect){260, 124, 75, 23}, "Browse...", on_browse, &d);
 
     /* Windows pre-fills the last command, selected so typing replaces it. */
     if (d.history_n > 0)
@@ -157,5 +215,6 @@ int main(int argc, char **argv) {
     xd_ui_run(d.ui);
     xd_ui_destroy(d.ui);
     xd_free_lines(d.history, d.history_n);
+    xd_strbuf_free(&d.chooser_out);
     return EXIT_SUCCESS;
 }

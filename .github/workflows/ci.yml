@@ -1,0 +1,53 @@
+# Builds with GCC and Clang (the project's default debug build: -Werror, ASan
+# and UBSan) and runs the unit tests; a GCC -fanalyzer build checks for
+# deeper problems. Arch Linux has every dependency at the versions we need.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            cc: gcc
+            options: ''
+          - name: Clang
+            cc: clang
+            options: ''
+          - name: GCC analyzer
+            cc: gcc
+            options: -Danalyzer=true -Db_sanitize=none
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed base-devel clang meson ninja wayland-protocols \
+            wlroots0.20 wayland libxkbcommon libxcb xcb-util-wm libdrm cairo pango fontconfig \
+            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse json-glib \
+            ttf-dejavu
+      - uses: actions/checkout@v4
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+        run: meson setup build ${{ matrix.options }}
+      - name: Build
+        run: ninja -C build
+      - name: Unit tests
+        run: meson test -C build --print-errorlogs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: meson-logs-${{ matrix.cc }}
+          path: build/meson-logs/

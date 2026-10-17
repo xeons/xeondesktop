@@ -332,6 +332,7 @@ executable(
 executable(
   'xd-desk',
   'src/apps/desk.c',
+  apps_common,
   dependencies: [ui_dep, saver_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
