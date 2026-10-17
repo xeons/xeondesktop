@@ -31,6 +31,7 @@ depends=(
   'dbus'    # dbus-update-activation-environment
   'libpulse'
   'libcanberra'
+  'libxcrypt'  # User Accounts: password hashes
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
@@ -45,6 +46,7 @@ optdepends=(
   'breeze-icons: icons for the Start menu and file manager'
   'xdg-desktop-portal-gtk: file chooser and settings portals'
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
+  'accountsservice: User Accounts'
   'alacritty: the default terminal (Ctrl+Alt+T)'
   'networkmanager: the network icon'
   'nm-connection-editor: Open Network Connections'

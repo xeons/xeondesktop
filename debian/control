@@ -25,6 +25,8 @@ Build-Depends:
  libpam0g-dev,
  libpulse-dev,
  libcanberra-dev,
+ libxkbregistry-dev,
+ libcrypt-dev,
  libjson-glib-dev,
  libegl-dev,
  libgles-dev,
@@ -59,6 +61,7 @@ Recommends:
  upower,
  pavucontrol,
  sound-theme-freedesktop,
+ accountsservice,
  network-manager-gnome,
 Suggests:
  bluez,
