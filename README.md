@@ -1,20 +1,27 @@
 # XeonDesktop
 
-A Windows 2000/XP-style desktop environment for Linux (Wayland), written in
-strict C23. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
+A Windows 2000, XP and 7-style desktop environment for Linux (Wayland),
+written in strict C23. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+the design.
 
 | Classic (Windows 2000) | Luna (XP) |
 |---|---|
-| ![Classic style with the Start menu open](docs/screenshots/classic-start-menu.png) | ![Luna style with the Start menu open](docs/screenshots/luna-desktop.png) |
-| **Display Properties** | **Shut Down** |
-| ![Display Properties, Appearance tab](docs/screenshots/display-properties.png) | ![Shut Down dialog](docs/screenshots/shut-down.png) |
+| ![Classic style: the Windows 2000 Start menu with Programs and Accessories open over My Computer](docs/screenshots/classic-start-menu.png) | ![Luna style: the Windows XP Start menu over My Documents in Tiles view](docs/screenshots/luna-desktop.png) |
+| **Aero (Windows 7)** | **Aero Snap** |
+| ![Aero style: the Windows 7 Start menu and a window, with blurred glass](docs/screenshots/aero-desktop.png) | ![Two windows snapped side by side, with Task Manager's Performance tab and its CPU meter in the notification area](docs/screenshots/aero-snap.png) |
+| **Watercolor (Whistler)** | **Display Properties** |
+| ![Watercolor style: Taskbar and Start Menu Properties over My Computer](docs/screenshots/watercolor-desktop.png) | ![Display Properties, Appearance tab](docs/screenshots/display-properties.png) |
+| **Shut Down** | **Windows Security (Ctrl+Alt+Delete)** |
+| ![Shut Down dialog](docs/screenshots/shut-down.png) | ![The XeonDesktop Security dialog](docs/screenshots/windows-security.png) |
 
 All artwork is drawn by the theme engine; no Microsoft assets are used.
 The Time Zone map draws Natural Earth's land outlines (public domain,
 naturalearthdata.com).
 The Start button logo is Tux, the Linux mascot originally drawn by Larry
 Ewing (lewing@isc.tamu.edu) with The GIMP; ours is a simplified procedural
-rendition. Screenshots are from a nested development session.
+rendition. Screenshots are from headless test sessions at 1024x768; the
+Aero ones use the GPU build (blurred glass), and their wallpaper is a
+gradient made for them.
 
 ## Build
 
