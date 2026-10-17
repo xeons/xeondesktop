@@ -162,7 +162,8 @@ void xd_view_retheme(xd_view *view) {
     xd_frame_render(view, true);
 }
 
-void xd_view_set_position(xd_view *view, int x, int y) {
+/* Puts the window at x, y, keeping any resize anchor. */
+static void place(xd_view *view, int x, int y) {
     view->x = x;
     view->y = y;
     wlr_scene_node_set_position(&view->tree->node, x, y);
@@ -170,6 +171,13 @@ void xd_view_set_position(xd_view *view, int x, int y) {
     update_ftl_output(view);
     /* The frame's pixel scale follows the output it's on. */
     xd_frame_render(view, false);
+}
+
+void xd_view_set_position(xd_view *view, int x, int y) {
+    /* A window put somewhere stays there: a top/left resize's anchor, left
+     * in place, would pull it back at the client's next commit. */
+    view->anchor_edges = 0;
+    place(view, x, y);
 }
 
 void xd_view_x11_sync(xd_view *view) {
@@ -207,9 +215,10 @@ void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t movin
     view->anchor_edges = moving & (WLR_EDGE_LEFT | WLR_EDGE_TOP);
     view->anchor_right = outer.x + outer.width;
     view->anchor_bottom = outer.y + outer.height;
+    view->anchor_w = outer.width;
+    view->anchor_h = outer.height;
     struct wlr_box cur = xd_view_outer_box(view);
-    xd_view_set_position(view, (moving & WLR_EDGE_LEFT) ? cur.x : outer.x,
-                         (moving & WLR_EDGE_TOP) ? cur.y : outer.y);
+    place(view, (moving & WLR_EDGE_LEFT) ? cur.x : outer.x, (moving & WLR_EDGE_TOP) ? cur.y : outer.y);
     send_client_size(view, outer.width, outer.height);
 }
 
@@ -220,7 +229,11 @@ static void apply_anchor(xd_view *view) {
     int x = (view->anchor_edges & WLR_EDGE_LEFT) ? view->anchor_right - b.width : b.x;
     int y = (view->anchor_edges & WLR_EDGE_TOP) ? view->anchor_bottom - b.height : b.y;
     if (x != b.x || y != b.y)
-        xd_view_set_position(view, x, y);
+        place(view, x, y);
+    /* The client has caught up: done, or a later commit of its own (or a
+     * move) would put the window back. */
+    if (b.width == view->anchor_w && b.height == view->anchor_h)
+        view->anchor_edges = 0;
 }
 
 static int floor_int(double v) {

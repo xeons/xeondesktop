@@ -711,6 +711,32 @@ def file_manager(s):
 
 
 @scenario()
+def move_after_left_resize(s):
+    """A window resized from its left edge and then moved stays where it's
+    dropped when it next redraws (the resize's anchor used to pull it back
+    at every commit, and fought the drag)."""
+    empty = s.settle("desktop")
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(app_id="org.xeondesktop.Files", state="activated")
+    area = (0, 0, WIDTH, HEIGHT - 40)  # above the taskbar
+    x, y, w, h = s.settle("explorer").changed_box(empty, area)
+    mid = y + h // 2
+    s.inject("move", x + 1, mid, "down", "sleep", 100, "move", x + 40, mid, "sleep", 100,
+             "move", x + 80, mid, "sleep", 300, "up", "sleep", 500)
+    rx, ry, rw, rh = s.settle("resized").changed_box(empty, area)
+    s.check(abs(rx - (x + 80)) <= 4 and abs(rx + rw - (x + w)) <= 4,
+            f"the left edge followed, the right edge stayed ({rx},{ry} {rw}x{rh})")
+    cx, cy = rx + rw // 2, ry + 10  # on the caption
+    s.inject("move", cx, cy, "down", "sleep", 100, "move", cx + 50, cy + 30, "sleep", 100,
+             "move", cx + 100, cy + 60, "sleep", 300, "up", "sleep", 500)
+    # Make it redraw: each selection change is a commit.
+    s.inject("key", "Down", "sleep", 200, "key", "Up", "sleep", 200, "key", "Down")
+    mx, my, _, _ = s.settle("moved").changed_box(empty, area)
+    s.check(abs(mx - (rx + 100)) <= 4 and abs(my - (ry + 60)) <= 4,
+            f"the window stayed where it was dropped ({mx},{my}, expected {rx + 100},{ry + 60})")
+
+
+@scenario()
 def display_style(s):
     """Display Properties: picking another style and Apply writes it."""
     s.check(s.ini()["Appearance"]["Style"] == "classic", "the session starts in the classic style")

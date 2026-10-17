@@ -142,9 +142,12 @@ typedef struct xd_view {
     bool fullscreen;
     struct wlr_box fullscreen_restore; /* outer box before fullscreen */
     /* Top/left edge resizing: the edges that stay put, applied when the
-     * client commits its new size so the window doesn't jitter. */
+     * client commits its new size so the window doesn't jitter. It ends
+     * once the client has the size asked for (anchor_w x anchor_h), or
+     * when the window is moved. */
     uint32_t anchor_edges;
     int anchor_right, anchor_bottom;
+    int anchor_w, anchor_h;
     /* Where the last Cascade/Tile found the window, for Undo. */
     bool undo_valid, undo_maximized;
     struct wlr_box undo_box;
