@@ -125,7 +125,7 @@ xd_view *xd_view_from_node(struct wlr_scene_node *node) {
 }
 
 xd_view *xd_view_focused(xd_server *server) {
-    if (wl_list_empty(&server->views))
+    if (wl_list_empty(&server->views) || server->desktop_focus != nullptr)
         return nullptr;
     xd_view *front = XD_CONTAINER_OF(server->views.next, xd_view, link);
     return front->mapped && !front->minimized ? front : nullptr;
@@ -338,6 +338,7 @@ static void raise_family(xd_view *view) {
 void xd_view_focus(xd_view *view) {
     xd_server *server = view->server;
     xd_view *prev = xd_view_focused(server);
+    server->desktop_focus = nullptr;
 
     if (view->minimized) {
         view->minimized = false;
@@ -368,6 +369,14 @@ void xd_view_focus(xd_view *view) {
     /* An exclusive layer surface (open Start menu) keeps the keyboard;
      * the window gets it when that ends. */
     xd_keyboard_refocus(server);
+}
+
+void xd_view_deactivate_front(xd_server *server) {
+    if (wl_list_empty(&server->views))
+        return;
+    xd_view *front = XD_CONTAINER_OF(server->views.next, xd_view, link);
+    if (front->mapped)
+        set_activated(front, false);
 }
 
 /* Focuses the most recently used visible window, or clears focus. */

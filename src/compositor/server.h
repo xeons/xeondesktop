@@ -254,6 +254,10 @@ struct xd_server {
     /* Layer surface holding keyboard focus (exclusive interactivity, e.g.
      * while the Start menu is open); windows get it back afterwards. */
     xd_layer_surface *layer_focus;
+    /* A layer surface that takes the keyboard when clicked (on-demand:
+     * the desktop). While it has it, no window is active, as when
+     * Windows' desktop is clicked. */
+    xd_layer_surface *desktop_focus;
 
     struct wlr_foreign_toplevel_manager_v1 *ftl_manager;
 
@@ -394,6 +398,9 @@ void xd_layers_init(xd_server *server);
 void xd_keyboard_refocus(xd_server *server);
 /* The layer surface owning a scene node, if any. */
 xd_layer_surface *xd_layer_from_node(struct wlr_scene_node *node);
+/* A click on an on-demand layer surface: it gets the keyboard and the
+ * front window is deactivated. */
+void xd_layer_click_focus(xd_layer_surface *ls);
 double xd_output_scale_at(xd_server *server, double lx, double ly);
 /* Usable area of the output containing (lx, ly), in layout coordinates. */
 struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly);
@@ -416,6 +423,8 @@ void xd_view_init(xd_server *server);
 xd_view *xd_view_from_node(struct wlr_scene_node *node);
 xd_view *xd_view_focused(xd_server *server);
 void xd_view_focus(xd_view *view);
+/* The front window drawn and told inactive (the desktop has the focus). */
+void xd_view_deactivate_front(xd_server *server);
 void xd_view_focus_next(xd_server *server);
 void xd_view_close(xd_view *view);
 void xd_view_set_maximized(xd_view *view, bool maximized);

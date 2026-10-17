@@ -30,6 +30,8 @@ void xd_keyboard_refocus(xd_server *server) {
         target = server->lock_focus;
     } else if (server->layer_focus != nullptr) {
         target = server->layer_focus->layer_surface->surface;
+    } else if (server->desktop_focus != nullptr) {
+        target = server->desktop_focus->layer_surface->surface;
     } else {
         xd_view *view = xd_view_focused(server);
         if (view != nullptr)
@@ -44,6 +46,17 @@ void xd_keyboard_refocus(xd_server *server) {
                                        &kb->modifiers);
     else
         wlr_seat_keyboard_notify_enter(server->seat, target, nullptr, 0, nullptr);
+}
+
+void xd_layer_click_focus(xd_layer_surface *ls) {
+    xd_server *server = ls->server;
+    struct wlr_layer_surface_v1 *l = ls->layer_surface;
+    if (l->current.keyboard_interactive != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND ||
+        server->desktop_focus == ls)
+        return;
+    xd_view_deactivate_front(server);
+    server->desktop_focus = ls;
+    xd_keyboard_refocus(server);
 }
 
 /* Exclusive keyboard interactivity takes focus while mapped. */
@@ -71,6 +84,10 @@ static void handle_map(struct wl_listener *listener, [[maybe_unused]] void *data
 
 static void handle_unmap(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, unmap);
+    if (ls->server->desktop_focus == ls) {
+        ls->server->desktop_focus = nullptr;
+        xd_view_focus_next(ls->server);
+    }
     /* Gives its exclusive zone back to the windows. */
     xd_output_arrange(ls->output);
     update_keyboard_focus(ls);
@@ -142,6 +159,10 @@ static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *
     if (ls->server->layer_focus == ls) {
         ls->server->layer_focus = nullptr;
         xd_keyboard_refocus(ls->server);
+    }
+    if (ls->server->desktop_focus == ls) {
+        ls->server->desktop_focus = nullptr;
+        xd_view_focus_next(ls->server);
     }
     xd_unlisten(&ls->map);
     xd_unlisten(&ls->unmap);

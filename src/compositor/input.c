@@ -175,6 +175,9 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         return true;
     }
     if (alt && !ctrl && sym == XKB_KEY_F4) {
+        /* On the desktop it's the shell's: Shut Down, as in Windows. */
+        if (focused == nullptr && server->desktop_focus != nullptr)
+            return false;
         if (focused != nullptr)
             xd_view_close(focused);
         return true;
@@ -680,6 +683,7 @@ static const char *cursor_for_part(xd_frame_part part) {
 /* What's under the cursor: a client surface, a frame, or the desktop. */
 typedef struct pick {
     xd_view *view;
+    xd_layer_surface *layer; /* under the pointer instead of a window */
     struct wlr_surface *surface;
     double sx, sy;
     xd_frame_part part;
@@ -747,6 +751,8 @@ static pick pick_at(xd_server *server, double lx, double ly) {
     if (node == nullptr)
         return p;
     p.view = under;
+    if (under == nullptr)
+        p.layer = xd_layer_from_node(node);
     if (node->type == WLR_SCENE_NODE_BUFFER) {
         struct wlr_scene_surface *ss =
             wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
@@ -1087,6 +1093,8 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
     if (p.surface != nullptr) {
         if (p.view != nullptr)
             xd_view_focus(p.view);
+        else if (p.layer != nullptr)
+            xd_layer_click_focus(p.layer);
         wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
     } else if (p.view != nullptr) {
         begin_frame_action(server, &p, e->button, e->time_msec);
