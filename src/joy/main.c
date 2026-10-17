@@ -161,6 +161,9 @@ static gboolean draw_hat(GtkWidget *w, cairo_t *cr, gpointer data) {
 }
 
 static void show_values(joystick *j) {
+    /* Only while the Test tab is on screen; mapping it again catches up. */
+    if (j->dev == nullptr || !gtk_widget_get_mapped(j->xy))
+        return;
     for (size_t i = 0; i < j->n_bars; i++) {
         unsigned c = j->bars[i].code;
         gtk_level_bar_set_value(GTK_LEVEL_BAR(j->bars[i].bar),
@@ -205,6 +208,7 @@ static gboolean on_input([[maybe_unused]] int fd, GIOCondition cond, gpointer da
     } while (rc == LIBEVDEV_READ_STATUS_SUCCESS || rc == LIBEVDEV_READ_STATUS_SYNC);
     if (rc != -EAGAIN || (cond & (G_IO_HUP | G_IO_ERR))) {
         gtk_label_set_text(GTK_LABEL(j->status), "The game controller was disconnected.");
+        gtk_widget_show(j->status); /* hidden while it reads */
         j->watch = 0;
         close_device(j);
         return G_SOURCE_REMOVE;
@@ -212,6 +216,8 @@ static gboolean on_input([[maybe_unused]] int fd, GIOCondition cond, gpointer da
     show_values(j);
     return G_SOURCE_CONTINUE;
 }
+
+static void on_test_mapped([[maybe_unused]] GtkWidget *w, gpointer data) { show_values(data); }
 
 static GtkWidget *frame(const char *title, GtkWidget *child) {
     GtkWidget *f = gtk_frame_new(title);
@@ -282,6 +288,7 @@ static GtkWidget *test_page(joystick *j) {
         gtk_box_pack_start(GTK_BOX(row), frame("Point of View Hat", j->hat), FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(page), row, FALSE, FALSE, 0);
+    g_signal_connect(j->xy, "map", G_CALLBACK(on_test_mapped), j);
     return page;
 }
 
@@ -414,8 +421,6 @@ static void open_properties(app *a, const char *name, const char *node) {
         char *text = g_strdup_printf("The game controller can't be read (%s): %s.", node, problem);
         gtk_label_set_text(GTK_LABEL(j->status), text);
         g_free(text);
-    } else {
-        show_values(j);
     }
     g_signal_connect(j->window, "response", G_CALLBACK(on_response), j);
     g_signal_connect(j->window, "destroy", G_CALLBACK(on_props_destroy), j);
