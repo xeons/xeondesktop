@@ -200,3 +200,33 @@ void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style 
     cairo_restore(cr);
     g_object_unref(layout);
 }
+
+void xd_draw_shortcut_arrow(cairo_t *cr, double x, double y, double icon_px) {
+    /* 9 of a 32px icon's pixels, drawn on a 9x9 grid. */
+    double u = icon_px / 32.0;
+    double size = round(9 * u);
+    double bx = round(x), by = round(y + icon_px - size);
+    double g = size / 9.0;
+    cairo_save(cr);
+    cairo_rectangle(cr, bx, by, size, size);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_fill(cr);
+    /* The border on whole pixels, inside the box. */
+    double lw = XD_MAX(1.0, round(u));
+    cairo_rectangle(cr, bx + lw / 2, by + lw / 2, size - lw, size - lw);
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_set_line_width(cr, lw);
+    cairo_stroke(cr);
+    /* The arrow: up from the bottom left, curving right, head at top right. */
+    cairo_set_line_width(cr, XD_MAX(1.0, 1.5 * u));
+    cairo_move_to(cr, bx + 2.5 * g, by + 7.5 * g);
+    cairo_curve_to(cr, bx + 2.5 * g, by + 4.5 * g, bx + 4 * g, by + 3.5 * g, bx + 6 * g,
+                   by + 3.5 * g);
+    cairo_stroke(cr);
+    cairo_move_to(cr, bx + 7.5 * g, by + 3.5 * g);
+    cairo_line_to(cr, bx + 5 * g, by + 1.5 * g);
+    cairo_line_to(cr, bx + 5 * g, by + 5.5 * g);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+    cairo_restore(cr);
+}

@@ -353,7 +353,7 @@ folder_lib = static_library(
   'src/files/places.c',
   'src/files/properties.c',
   c_args: ['-D_GNU_SOURCE'],
-  dependencies: [core_dep, gtk_dep, m_dep],
+  dependencies: [core_dep, theme_dep, gtk_dep, m_dep],
 )
 gtkapp_lib = static_library(
   'xdgtkapp',

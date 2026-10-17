@@ -61,6 +61,9 @@ typedef struct xd_text_style {
 } xd_text_style;
 
 /* Draws one line of text vertically centred in r and clipped to it. */
+/* Windows' shortcut overlay: a white box with a curved black arrow, at
+ * the bottom left of an icon of `icon_px` whose top left is (x, y). */
+void xd_draw_shortcut_arrow(cairo_t *cr, double x, double y, double icon_px);
 /* The Start button / banner logo: Tux, the Linux penguin. */
 void xd_draw_start_logo(cairo_t *cr, xd_rect r);
 void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style *style);

@@ -46,6 +46,7 @@ typedef struct icon {
     int rank; /* specials' order: My Documents, My Computer, Recycle Bin */
     bool is_dir;
     bool is_launcher; /* a .desktop file */
+    bool is_link;     /* a symbolic link */
     char *sort_type;
     guint64 size;
     gint64 mtime;
@@ -153,6 +154,7 @@ static icon *file_icon(GFile *dir, GFileInfo *info) {
     ic->path = g_file_get_path(f);
     ic->uri = g_file_get_uri(f);
     ic->is_dir = g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
+    ic->is_link = g_file_info_get_is_symlink(info);
     ic->size = (guint64)MAX(g_file_info_get_size(info), 0);
     GDateTime *dt = g_file_info_get_modification_date_time(info);
     if (dt != nullptr) {
@@ -211,6 +213,7 @@ static GPtrArray *load_icons(GFile *dir) {
         "," G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_ICON
         "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN
         "," G_FILE_ATTRIBUTE_STANDARD_IS_BACKUP "," G_FILE_ATTRIBUTE_STANDARD_SIZE
+        "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK
         "," G_FILE_ATTRIBUTE_TIME_MODIFIED,
         G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
     GFileInfo *info;
@@ -434,6 +437,8 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
             cairo_mask_surface(cr, img, ix, iy);
         }
     }
+    if (ic->is_launcher || ic->is_link)
+        xd_draw_shortcut_arrow(cr, ix, iy, px);
 
     xd_text_style st = xd_text(t, XD_FONT_ICON, xd_rgba_hex(0xFFFFFF), XD_ALIGN_CENTER);
     PangoLayout *l = xd_text_layout(cr, ic->label, &st);

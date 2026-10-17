@@ -2,6 +2,7 @@
 #include <math.h>
 
 #include "../core/alloc.h"
+#include "../theme/draw.h"
 #include "folderview.h"
 #include "places.h"
 
@@ -10,6 +11,7 @@
     "," G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_SIZE      \
     "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE "," G_FILE_ATTRIBUTE_STANDARD_ICON \
     "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_BACKUP \
+    "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK \
     "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_THUMBNAIL_PATH
 
 /* Layout in px (GTK logical pixels). */
@@ -43,6 +45,7 @@ typedef struct item {
     int thumb_px;
     int name_w; /* List view: measured label width, 0 = not yet */
     gboolean selected;
+    gboolean shortcut; /* a symbolic link or a launcher: XP's arrow */
     int order;    /* My Computer: the drives' own order */
     char *extra;  /* Tiles' third line instead of the size (a drive's free space) */
 } item;
@@ -160,6 +163,9 @@ static item *item_new(GFile *dir, GFileInfo *info) {
     it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
     it->is_dir = g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
     it->hidden = g_file_info_get_is_hidden(info) || g_file_info_get_is_backup(info);
+    const char *kind = g_file_info_get_content_type(info);
+    it->shortcut = g_file_info_get_is_symlink(info) ||
+                   (kind != nullptr && g_content_type_is_a(kind, "application/x-desktop"));
     it->size = (guint64)g_file_info_get_size(info);
     GDateTime *dt = g_file_info_get_modification_date_time(info);
     if (dt != nullptr) {
@@ -588,6 +594,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         int px = 32;
         GdkPixbuf *pb = item_icon(v, it, px);
         paint_pixbuf(cr, pb, r.x + (r.width - px) / 2.0, r.y + 4, sel, faded, c);
+        if (it->shortcut)
+            xd_draw_shortcut_arrow(cr, r.x + (r.width - px) / 2.0, r.y + 4, px);
         draw_label_box(v, cr, it->name, r.x + 2, r.y + px + 8, r.width - 4, 2, PANGO_ALIGN_CENTER,
                        sel, c, foc);
         break;
@@ -596,6 +604,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         int px = 48;
         GdkPixbuf *pb = item_icon(v, it, px);
         paint_pixbuf(cr, pb, r.x + 6, r.y + (r.height - px) / 2.0, sel, faded, c);
+        if (it->shortcut)
+            xd_draw_shortcut_arrow(cr, r.x + 6, r.y + (r.height - px) / 2.0, px);
         int tx = r.x + px + 14;
         int tw = r.width - px - 22;
         draw_label_box(v, cr, it->name, tx, r.y + 8, tw, 1, PANGO_ALIGN_LEFT, sel, c, foc);
@@ -609,6 +619,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
     case XD_VIEW_LIST: {
         GdkPixbuf *pb = item_icon(v, it, LIST_ICON);
         paint_pixbuf(cr, pb, r.x + 1, r.y + 1, sel, faded, c);
+        if (it->shortcut)
+            xd_draw_shortcut_arrow(cr, r.x + 1, r.y + 1, LIST_ICON);
         draw_label_box(v, cr, it->name, r.x + LIST_ICON + 5, r.y + 1,
                        r.width - LIST_ICON - 6, 1, PANGO_ALIGN_LEFT, sel, c, foc);
         break;
@@ -616,6 +628,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
     case XD_VIEW_DETAILS: {
         GdkPixbuf *pb = item_icon(v, it, LIST_ICON);
         paint_pixbuf(cr, pb, r.x + 4, r.y + 1, sel, faded, c);
+        if (it->shortcut)
+            xd_draw_shortcut_arrow(cr, r.x + 4, r.y + 1, LIST_ICON);
         int x = r.x;
         draw_label_box(v, cr, it->name, x + LIST_ICON + 8, r.y + 1,
                        v->col_w[XD_SORT_NAME] - LIST_ICON - 12, 1, PANGO_ALIGN_LEFT, sel, c, foc);
