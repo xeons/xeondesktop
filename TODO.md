@@ -175,13 +175,24 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Passive items hidden, tooltips, Activate / SecondaryActivate, and
       dbusmenu menus (separators, checks, submenus). The clock is sized to
       each style's margins and shows the date as a tooltip. Tested with a
-      test item on a private bus: both icon kinds, Activate, the menu and a
-      submenu item, falling back to the menu without Activate, an item
-      going away. Untested: real applets (nm-applet --indicator, Discord,
-      Steam, Telegram), another desktop's watcher, radio items, the
-      Status/NeedsAttention change live. Not yet: our own volume, network
-      and battery icons (applets can provide them), XP's "hide inactive
-      icons" chevron, the clock's calendar / Date and Time Properties.
+      test item on a private bus. Untested: real applets (Discord, Steam,
+      Telegram), another desktop's watcher, radio items. Not yet: XP's
+      "hide inactive icons" chevron, the clock's calendar / Date and Time
+      Properties.
+- [~] Our own applets, drawn by the theme engine: volume (libpulse; XP's
+      flyout with slider and Mute, the wheel, Mute and pavucontrol in the
+      menu), network (NetworkManager: wired / Wi-Fi with signal, networks in
+      range, saved ones activated, new ones added with the key from
+      xd-wifi-key, Disconnect, Wi-Fi on/off, nm-connection-editor), battery
+      (UPower, XP's remaining-time tooltips) and Bluetooth (BlueZ: on/off,
+      connect/disconnect paired devices, Blueman). Tested against
+      python-dbusmock's NetworkManager, UPower and BlueZ on a private bus
+      and a private PipeWire with a null sink. **Untested on real
+      hardware**: actual Wi-Fi connects (WPA3/SAE, WEP, hidden networks),
+      a real battery, real Bluetooth devices. Not yet: a status dialog for
+      the connection, pairing new Bluetooth devices, enterprise (802.1X)
+      networks in our own UI (nm-connection-editor opens instead), the
+      volume flyout's keyboard use, XP's low-battery warnings.
 - [~] Task buttons: the application's icon (desktop file found from the
       app id or WM_CLASS); tooltips with the whole title when it's cut
       short; pages with up/down arrows (and the wheel) when buttons would
