@@ -10,6 +10,8 @@ strict C23. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.
 | ![Display Properties, Appearance tab](docs/screenshots/display-properties.png) | ![Shut Down dialog](docs/screenshots/shut-down.png) |
 
 All artwork is drawn by the theme engine; no Microsoft assets are used.
+The Time Zone map draws Natural Earth's land outlines (public domain,
+naturalearthdata.com).
 The Start button logo is Tux, the Linux mascot originally drawn by Larry
 Ewing (lewing@isc.tamu.edu) with The GIMP; ours is a simplified procedural
 rendition. Screenshots are from a nested development session.

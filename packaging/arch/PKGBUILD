@@ -27,6 +27,7 @@ depends=(
   'shadow'  # passwd, for Change Password
   'dbus'    # dbus-update-activation-environment
   'libpulse'
+  'json-glib'
   'sh'
 )
 # Header-only at build time: xcb-icccm's hint structures, libdrm's formats.

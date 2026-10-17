@@ -11,7 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <json-glib/json-glib.h>
+
 #include "../core/common.h"
+#include "../settings/settings.h"
 #include "../gtkapp/gtkapp.h"
 
 #define TIMEDATE "org.freedesktop.timedate1"
@@ -25,7 +28,7 @@ typedef struct props {
     bool time_edited, date_edited;
     bool updating; /* we're setting the widgets ourselves */
     /* Time Zone */
-    GtkWidget *zones;
+    GtkWidget *zones, *map;
     char *zone; /* as timedated has it */
     /* Internet Time */
     GtkWidget *ntp, *ntp_status;
@@ -260,6 +263,178 @@ static GtkWidget *date_time_page(props *p) {
 
 /* ---- Time Zone ------------------------------------------------------------- */
 
+/* XP's map, from Natural Earth's land polygons (public domain), in an
+ * equirectangular projection without Antarctica; the time zone's band
+ * (by its current UTC offset) is lit, its city marked. */
+static constexpr double MAP_NORTH = 84.0;
+static constexpr double MAP_SOUTH = -58.0;
+
+static JsonNode *land; /* the GeoJSON, loaded once */
+
+static void load_land(void) {
+    xd_strbuf dir = {0};
+    if (xd_data_dir(&dir)) {
+        char *path = g_build_filename(xd_strbuf_cstr(&dir), "maps", "ne_110m_land.geojson", nullptr);
+        JsonParser *parser = json_parser_new();
+        if (json_parser_load_from_file(parser, path, nullptr))
+            land = json_node_copy(json_parser_get_root(parser));
+        g_object_unref(parser);
+        g_free(path);
+    }
+    xd_strbuf_free(&dir);
+}
+
+static void map_point(double lon, double lat, double w, double h, double *x, double *y) {
+    *x = (lon + 180.0) / 360.0 * w;
+    *y = (MAP_NORTH - lat) / (MAP_NORTH - MAP_SOUTH) * h;
+}
+
+/* One ring of [lon, lat] pairs as a closed path. */
+static void ring_path(cairo_t *cr, JsonArray *ring, double w, double h) {
+    guint n = json_array_get_length(ring);
+    for (guint i = 0; i < n; i++) {
+        JsonArray *pt = json_array_get_array_element(ring, i);
+        if (pt == nullptr || json_array_get_length(pt) < 2)
+            continue;
+        double x, y;
+        map_point(json_array_get_double_element(pt, 0), json_array_get_double_element(pt, 1), w,
+                  h, &x, &y);
+        if (i == 0)
+            cairo_move_to(cr, x, y);
+        else
+            cairo_line_to(cr, x, y);
+    }
+    cairo_close_path(cr);
+}
+
+static void polygon_path(cairo_t *cr, JsonArray *rings, double w, double h) {
+    for (guint r = 0; r < json_array_get_length(rings); r++) {
+        JsonArray *ring = json_array_get_array_element(rings, r);
+        if (ring != nullptr)
+            ring_path(cr, ring, w, h);
+    }
+}
+
+static void land_path(cairo_t *cr, double w, double h) {
+    JsonObject *root = land != nullptr && JSON_NODE_HOLDS_OBJECT(land) ? json_node_get_object(land)
+                                                                       : nullptr;
+    JsonArray *features = root != nullptr && json_object_has_member(root, "features")
+                              ? json_object_get_array_member(root, "features")
+                              : nullptr;
+    for (guint i = 0; features != nullptr && i < json_array_get_length(features); i++) {
+        JsonObject *f = json_array_get_object_element(features, i);
+        JsonObject *g = f != nullptr && json_object_has_member(f, "geometry")
+                            ? json_object_get_object_member(f, "geometry")
+                            : nullptr;
+        if (g == nullptr || !json_object_has_member(g, "coordinates"))
+            continue;
+        const char *type = json_object_get_string_member_with_default(g, "type", "");
+        JsonArray *coords = json_object_get_array_member(g, "coordinates");
+        if (strcmp(type, "Polygon") == 0) {
+            polygon_path(cr, coords, w, h);
+        } else if (strcmp(type, "MultiPolygon") == 0) {
+            for (guint k = 0; k < json_array_get_length(coords); k++)
+                polygon_path(cr, json_array_get_array_element(coords, k), w, h);
+        }
+    }
+}
+
+/* ISO 6709 as zone1970.tab writes it: +DDMM-DDDMM or +DDMMSS-DDDMMSS. */
+static bool parse_coord(const char *s, size_t deg_digits, double *out, const char **end) {
+    if (*s != '+' && *s != '-')
+        return false;
+    int sign = *s == '-' ? -1 : 1;
+    s++;
+    size_t n = 0;
+    while (g_ascii_isdigit(s[n]))
+        n++;
+    if (n != deg_digits + 2 && n != deg_digits + 4)
+        return false;
+    char buf[8] = {0};
+    memcpy(buf, s, deg_digits);
+    double v = g_ascii_strtod(buf, nullptr);
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, s + deg_digits, 2);
+    v += g_ascii_strtod(buf, nullptr) / 60.0;
+    if (n == deg_digits + 4) {
+        memset(buf, 0, sizeof(buf));
+        memcpy(buf, s + deg_digits + 2, 2);
+        v += g_ascii_strtod(buf, nullptr) / 3600.0;
+    }
+    *out = sign * v;
+    *end = s + n;
+    return true;
+}
+
+/* The zone's city from zone1970.tab. */
+static bool zone_city(const char *zone, double *lat, double *lon) {
+    char *text = nullptr;
+    if (zone == nullptr || !g_file_get_contents("/usr/share/zoneinfo/zone1970.tab", &text,
+                                                nullptr, nullptr))
+        return false;
+    bool found = false;
+    char **lines = g_strsplit(text, "\n", -1);
+    for (char **l = lines; *l != nullptr && !found; l++) {
+        char **f = g_strsplit(*l, "\t", 4);
+        const char *end = nullptr;
+        if ((*l)[0] != '#' && g_strv_length(f) >= 3 && strcmp(f[2], zone) == 0 &&
+            parse_coord(f[1], 2, lat, &end) && parse_coord(end, 3, lon, &end))
+            found = true;
+        g_strfreev(f);
+    }
+    g_strfreev(lines);
+    g_free(text);
+    return found;
+}
+
+static gboolean draw_map(GtkWidget *w, cairo_t *cr, gpointer data) {
+    props *p = data;
+    double mw = gtk_widget_get_allocated_width(w), mh = gtk_widget_get_allocated_height(w);
+    cairo_rectangle(cr, 0, 0, mw, mh);
+    cairo_set_source_rgb(cr, 0.27, 0.45, 0.72); /* ocean */
+    cairo_fill(cr);
+    const char *zone = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->zones));
+    /* The band of the zone's current UTC offset (15 degrees an hour). */
+    if (zone != nullptr) {
+        GTimeZone *tz = g_time_zone_new_identifier(zone);
+        if (tz != nullptr) {
+            GDateTime *now = g_date_time_new_now(tz);
+            GTimeSpan offset = g_date_time_get_utc_offset(now);
+            double hours = (double)offset / (double)G_TIME_SPAN_HOUR;
+            double x0, x1, y;
+            map_point(hours * 15 - 7.5, 0, mw, mh, &x0, &y);
+            map_point(hours * 15 + 7.5, 0, mw, mh, &x1, &y);
+            cairo_rectangle(cr, x0, 0, x1 - x0, mh);
+            cairo_set_source_rgba(cr, 1, 1, 0.7, 0.35);
+            cairo_fill(cr);
+            g_date_time_unref(now);
+            g_time_zone_unref(tz);
+        }
+    }
+    land_path(cr, mw, mh);
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+    cairo_set_source_rgb(cr, 0.35, 0.62, 0.30); /* land */
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgb(cr, 0.20, 0.42, 0.18);
+    cairo_set_line_width(cr, 0.6);
+    cairo_stroke(cr);
+    double lat, lon;
+    if (zone_city(zone, &lat, &lon)) {
+        double x, y;
+        map_point(lon, lat, mw, mh, &x, &y);
+        cairo_arc(cr, x, y, 3.5, 0, 2 * XD_PI);
+        cairo_set_source_rgb(cr, 0.85, 0.1, 0.1);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgb(cr, 1, 1, 1);
+        cairo_set_line_width(cr, 1);
+        cairo_stroke(cr);
+    }
+    cairo_rectangle(cr, 0.5, 0.5, mw - 1, mh - 1);
+    cairo_set_source_rgb(cr, 0.3, 0.3, 0.3);
+    cairo_stroke(cr);
+    return FALSE;
+}
+
 /* The zones from the tz database's zone1970.tab (what timedated offers
  * too), when timedated can't list them. */
 static char **tab_zones(void) {
@@ -321,6 +496,7 @@ static void got_zones(GObject *src, GAsyncResult *res, gpointer data) {
 
 static void on_zone([[maybe_unused]] GtkComboBox *c, gpointer data) {
     props *p = data;
+    gtk_widget_queue_draw(p->map);
     if (!p->updating)
         changed(p);
 }
@@ -331,6 +507,13 @@ static GtkWidget *zone_page(props *p) {
     p->zones = gtk_combo_box_text_new();
     g_signal_connect(p->zones, "changed", G_CALLBACK(on_zone), p);
     gtk_box_pack_start(GTK_BOX(page), p->zones, FALSE, FALSE, 0);
+    load_land();
+    p->map = gtk_drawing_area_new();
+    /* 360 by 142 degrees of longitude and latitude, unstretched. */
+    gtk_widget_set_size_request(p->map, 400, 158);
+    gtk_widget_set_halign(p->map, GTK_ALIGN_CENTER);
+    g_signal_connect(p->map, "draw", G_CALLBACK(draw_map), p);
+    gtk_box_pack_start(GTK_BOX(page), p->map, FALSE, FALSE, 0);
     GtkWidget *note = gtk_label_new("Daylight saving time changes follow the time zone's rules.");
     gtk_label_set_xalign(GTK_LABEL(note), 0);
     gtk_label_set_line_wrap(GTK_LABEL(note), TRUE);

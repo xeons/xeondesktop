@@ -25,6 +25,7 @@ Build-Depends:
  libpolkit-agent-1-dev,
  libpam0g-dev,
  libpulse-dev,
+ libjson-glib-dev,
  fonts-dejavu-core <!nocheck>,
 Standards-Version: 4.7.2
 Homepage: https://github.com/xeons/xeondesktop

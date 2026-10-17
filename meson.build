@@ -421,7 +421,8 @@ executable(
   'xd-timedate',
   'src/timedate/main.c',
   link_with: [gtkapp_lib],
-  dependencies: [core_dep, settings_dep, gtk_dep, m_dep],
+  dependencies: [core_dep, settings_dep, gtk_dep, m_dep,
+                 dependency('json-glib-1.0', include_type: 'system')],
   install: true,
 )
 
@@ -514,6 +515,7 @@ test(
 )
 
 install_subdir('data/schemes', install_dir: get_option('datadir') / 'xeondesktop')
+install_subdir('data/maps', install_dir: get_option('datadir') / 'xeondesktop')
 
 # The session, for display managers.
 install_data('data/xeondesktop-session', install_dir: get_option('bindir'), install_mode: 'rwxr-xr-x')

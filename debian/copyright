@@ -16,6 +16,11 @@ Copyright: 2008-2011 Kristian Høgsberg
            2019 Josef Gajdusek
 License: MIT
 
+Files: data/maps/ne_110m_land.geojson
+Copyright: none (Natural Earth, naturalearthdata.com)
+License: public-domain
+ Natural Earth data is in the public domain.
+
 License: MIT
  Permission is hereby granted, free of charge, to any person obtaining a
  copy of this software and associated documentation files (the "Software"),
