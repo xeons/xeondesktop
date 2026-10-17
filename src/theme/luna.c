@@ -339,7 +339,7 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
     xd_fill_rect(cr, ic, xd_rgba_hex(0xFFFFFF));
     xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, xd_rgba_hex(0x2D63D8));
     static const xd_font_spec title_font = {
-        .family = "Trebuchet MS, Tahoma, DejaVu Sans, sans-serif", .size_pt = 10, .bold = true};
+        .family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 10, .bold = true};
     xd_text_style st = {
         .font = &title_font,
         .scale = t->scale,
@@ -372,7 +372,7 @@ void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edg
 }
 
 static xd_text_style start_text_style(const xd_theme *t) {
-    static const xd_font_spec font = {.family = "Trebuchet MS, DejaVu Sans, sans-serif",
+    static const xd_font_spec font = {.family = XD_FONT_FAMILY_TREBUCHET,
                                       .size_pt = 13,
                                       .bold = true,
                                       .italic = true};

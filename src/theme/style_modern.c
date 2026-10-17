@@ -68,7 +68,7 @@ static const modern_palette luna = {
     .title_active = 0xFFFFFF,
     .title_inactive = 0xD8E4F8,
     .title_shadow = 0x0A1883,
-    .title_font = {.family = "Trebuchet MS, DejaVu Sans, sans-serif", .size_pt = 10, .bold = true},
+    .title_font = {.family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 10, .bold = true},
 
     .dialog = 0xECE9D8,
     .button_face = STOPS3(0xFFFFFF, 0.85, 0xECEBE6, 0xD6D0C5),
@@ -93,7 +93,7 @@ static const modern_palette luna = {
     .task_active = STOPS3(0x1A49AF, 0.5, 0x1E52B7, 0x2459C4),
     .taskbar_text = 0xFFFFFF,
     .start_text = 0xFFFFFF,
-    .start_font = {.family = "Trebuchet MS, DejaVu Sans, sans-serif", .size_pt = 13, .bold = true,
+    .start_font = {.family = XD_FONT_FAMILY_FRANKLIN, .size_pt = 13, .bold = true,
                    .italic = true},
     .start_radius = 12,
     .start_label = "start",

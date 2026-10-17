@@ -88,7 +88,7 @@ void xd_scheme_init_default(xd_scheme *s) {
     memcpy(s->metrics, metric_defaults, sizeof(metric_defaults));
 
     /* Tahoma isn't shipped on Linux; fontconfig falls back through the list. */
-    const char *ui = "Tahoma, DejaVu Sans, Noto Sans, sans-serif";
+    const char *ui = XD_FONT_FAMILY_TAHOMA;
     set_font(&s->fonts[XD_FONT_CAPTION], ui, 8, true);
     set_font(&s->fonts[XD_FONT_MENU], ui, 8, false);
     set_font(&s->fonts[XD_FONT_MESSAGE], ui, 8, false);

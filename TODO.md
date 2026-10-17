@@ -302,9 +302,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       src/theme/luna_data.h): the active and inactive frame (caption,
       borders, corner cut-outs), caption buttons (faces within ~3% RMS),
       taskbar, Start button, task buttons, tray, push buttons and check
-      boxes match at 100%. Text uses Wine's Tahoma when installed (see
-      README); Trebuchet MS (captions) and Franklin Gothic (Start) have no
-      free clone, so Tahoma Bold stands in. Not matched:
+      boxes match at 100%. Text uses DejaVu Sans Condensed for Tahoma,
+      Source Sans 3 for Trebuchet MS (captions) and Roboto Condensed for
+      Franklin Gothic (Start), unless the real fonts are installed. Not matched:
       the hover, pressed and focus states and the Restore and Help glyphs
       (not in the reference, so designed), radio buttons, tabs, scroll
       bars, group boxes, menus and the GTK theme's Luna section, which
@@ -315,9 +315,16 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       bars, taskbar). Not yet: the Windows 2000 and 7 Start menus still use
       the older silvery Whistler colours; menus, group boxes, the window
       icon and inactive colours are guesses.
-- [~] Fonts: Wine's Tahoma (tahoma.ttf, tahomabd.ttf) is used by our programs
-      when installed; otherwise DejaVu/Noto stand in. Third-party GTK apps
-      don't see it (it's registered per process, not system-wide).
+- [x] Fonts without Wine: the closest packaged fonts stand in for Windows'
+      (src/theme/scheme.h). Measured against Wine's Tahoma at 8pt (11px)
+      from outlines, among 20 sans families packaged by both Arch and
+      Debian: DejaVu Sans Condensed matches its text width to 1% (regular
+      and bold) with the best glyph overlap (0.77 regular, 0.87 bold;
+      next 0.72 and 0.78). Trebuchet MS and Franklin Gothic were compared
+      by eye (Source Sans 3, Roboto Condensed). System fonts, so third-party
+      GTK apps get them too.
+- [ ] Tahoma at 8pt on XP is crisp bitmaps; DejaVu is drawn from hinted
+      outlines.
 
 ## Dialogs and libxdui
 

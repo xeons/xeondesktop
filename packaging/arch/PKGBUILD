@@ -16,7 +16,9 @@ depends=(
   'libxkbcommon'
   'cairo'
   'pango'
-  'fontconfig'
+  'ttf-dejavu'              # DejaVu Sans Condensed for Tahoma
+  'adobe-source-sans-fonts' # Source Sans 3 for Trebuchet MS
+  'ttf-roboto'              # Roboto Condensed for Franklin Gothic
   'glib2'
   'gtk3'
   'gdk-pixbuf2'
@@ -36,8 +38,6 @@ checkdepends=('ttf-dejavu')
 optdepends=(
   'xorg-xwayland: X11 applications'
   'breeze-icons: icons for the Start menu and file manager'
-  'ttf-dejavu: fallback interface font'
-  'wine: Tahoma, so text matches Windows'
   'xdg-desktop-portal-gtk: file chooser and settings portals'
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
   'alacritty: the default terminal (Ctrl+Alt+T)'

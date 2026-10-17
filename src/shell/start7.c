@@ -1250,7 +1250,7 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
     }
 
     /* User picture and name */
-    xd_font_spec name_font = {.family = "Trebuchet MS, DejaVu Sans, sans-serif",
+    xd_font_spec name_font = {.family = XD_FONT_FAMILY_TREBUCHET,
                               .size_pt = p.whistler ? 9 : 13,
                               .bold = true};
     xd_text_style ns = {

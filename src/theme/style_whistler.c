@@ -176,7 +176,7 @@ static void whistler_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer,
     xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, dark);
 
     static const xd_font_spec title_font = {
-        .family = "Tahoma, DejaVu Sans, sans-serif", .size_pt = 9, .bold = true};
+        .family = XD_FONT_FAMILY_TAHOMA, .size_pt = 9, .bold = true};
     xd_text_style st = {
         .font = &title_font,
         .scale = t->scale,

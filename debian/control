@@ -16,7 +16,6 @@ Build-Depends:
  libxcb-icccm4-dev,
  libcairo2-dev,
  libpango1.0-dev,
- libfontconfig-dev,
  libglib2.0-dev,
  libgtk-3-dev,
  libgdk-pixbuf-2.0-dev,
@@ -40,11 +39,14 @@ Depends:
  ${misc:Depends},
  dbus-bin,
  passwd,
+ fonts-dejavu-core,
+ fonts-dejavu-extra,
+ fonts-adobe-sourcesans3,
+ fonts-roboto-unhinted,
 Recommends:
  xwayland,
  polkitd,
  breeze-icon-theme,
- fonts-dejavu-core,
  xdg-desktop-portal-gtk,
  xdg-desktop-portal-wlr,
  alacritty | x-terminal-emulator,
@@ -53,7 +55,6 @@ Recommends:
  pavucontrol,
  network-manager-gnome,
 Suggests:
- wine,
  bluez,
  blueman,
 Description: desktop environment in the style of Windows 2000 and XP
@@ -63,5 +64,6 @@ Description: desktop environment in the style of Windows 2000 and XP
  Display Properties, Task Manager, System Properties, a file manager, Lock
  Computer with screen savers, and a polkit authentication agent.
  .
- Install Wine for its Tahoma clone so that text matches Windows; DejaVu
- Sans is used otherwise.
+ Windows' fonts are replaced by the closest free ones: DejaVu Sans
+ Condensed for Tahoma, Source Sans 3 for Trebuchet MS and Roboto Condensed
+ for Franklin Gothic; the real fonts are used if they're installed.

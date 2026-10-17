@@ -7,8 +7,6 @@
 
 void xd_gtk_app_preinit(const char *app_id) {
     g_set_prgname(app_id);
-    /* Before GTK loads fonts, so the theme's Tahoma resolves. */
-    xd_fonts_init();
     /* GTK_THEME pins the theme for the life of the process; our own apps
      * set it through GtkSettings instead so they can reload it. */
     g_unsetenv("GTK_THEME");

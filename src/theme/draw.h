@@ -61,10 +61,6 @@ typedef struct xd_text_style {
 } xd_text_style;
 
 /* Draws one line of text vertically centred in r and clipped to it. */
-/* Makes free stand-ins for Windows fonts (Wine's Tahoma) visible to this
- * process. Called before the first text is laid out; GTK apps call it
- * before GTK starts. */
-void xd_fonts_init(void);
 /* The Start button / banner logo: Tux, the Linux penguin. */
 void xd_draw_start_logo(cairo_t *cr, xd_rect r);
 void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style *style);

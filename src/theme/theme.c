@@ -359,7 +359,7 @@ void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const
     /* Rotate so text runs bottom to top, starting a few px above the
      * banner's foot. */
     xd_font_spec bold = {.size_pt = 14, .bold = true};
-    snprintf(bold.family, sizeof(bold.family), "%s", "Tahoma, DejaVu Sans, sans-serif");
+    snprintf(bold.family, sizeof(bold.family), "%s", XD_FONT_FAMILY_TAHOMA);
     xd_font_spec light = bold;
     light.bold = false;
     xd_text_style st = {.font = &bold,
@@ -794,7 +794,7 @@ void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, cons
     xd_draw_start_logo(cr, (xd_rect){fx, r.y + (r.h - flag) / 2, flag, flag});
 
     xd_font_spec big = {.size_pt = 18, .bold = true};
-    snprintf(big.family, sizeof(big.family), "%s", "Tahoma, DejaVu Sans, sans-serif");
+    snprintf(big.family, sizeof(big.family), "%s", XD_FONT_FAMILY_TAHOMA);
     xd_font_spec small = big;
     small.size_pt = 10;
     small.bold = false;

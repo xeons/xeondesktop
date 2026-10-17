@@ -72,8 +72,21 @@ typedef enum xd_metric {
     XD_METRIC_COUNT
 } xd_metric;
 
+/* Windows' fonts, each followed by the closest freely packaged font
+ * (measured against Tahoma at 8pt; compared by eye for the others), so
+ * the real font is used if it's installed and nothing else is needed:
+ *   Tahoma: DejaVu Sans Condensed, Tahoma's width and shapes (both come
+ *     from Verdana-like designs);
+ *   Trebuchet MS (Luna captions): Source Sans 3, a narrow humanist sans;
+ *   Franklin Gothic (XP's "start"): Roboto Condensed. */
+#define XD_FONT_FAMILY_TAHOMA "Tahoma, DejaVu Sans Condensed, DejaVu Sans, sans-serif"
+#define XD_FONT_FAMILY_TREBUCHET                                                               \
+    "Trebuchet MS, Source Sans 3, DejaVu Sans Condensed, DejaVu Sans, sans-serif"
+#define XD_FONT_FAMILY_FRANKLIN                                                                \
+    "Franklin Gothic Medium, Roboto Condensed, DejaVu Sans Condensed, DejaVu Sans, sans-serif"
+
 typedef struct xd_font_spec {
-    char family[64];
+    char family[128];
     double size_pt;
     bool bold;
     bool italic;

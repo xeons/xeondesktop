@@ -23,9 +23,12 @@ xkbcommon, xcb and xcb-icccm, cairo, pango, GLib/GIO, GTK 3, gdk-pixbuf,
 procps-ng's libproc2 (Task Manager), PAM (Lock Computer), libudev (Device
 Manager) and polkit's agent library. At run time, Xwayland
 (`xorg-xwayland`) runs X11 applications; without it only Wayland ones work.
-Optional: Wine, for its free Tahoma clone (`/usr/share/wine/fonts`), which
-XeonDesktop's programs use so text matches Windows; without it DejaVu Sans
-stands in. Other fonts directories can be added with `XD_FONT_DIRS`.
+Fonts: Windows' fonts are replaced by the closest freely packaged ones,
+DejaVu Sans Condensed for Tahoma (its width and shapes), Source Sans 3 for
+Trebuchet MS (Luna captions) and Roboto Condensed for Franklin Gothic (XP's
+Start button): `ttf-dejavu`, `adobe-source-sans-fonts` and `ttf-roboto` on
+Arch, `fonts-dejavu-extra`, `fonts-adobe-sourcesans3` and
+`fonts-roboto-unhinted` on Debian. The real fonts are used if installed.
 
     meson setup build          # debug build with ASan/UBSan
     ninja -C build
