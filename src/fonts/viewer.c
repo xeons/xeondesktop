@@ -22,6 +22,7 @@ typedef struct viewer {
     GtkWidget *window, *area;
     cairo_font_face_t *face;
     char *info[3]; /* typeface name, file size, version */
+    char *title;   /* "Arial (TrueType)" */
 } viewer;
 
 static void viewer_free(gpointer data) {
@@ -29,16 +30,18 @@ static void viewer_free(gpointer data) {
     cairo_font_face_destroy(v->face);
     for (size_t i = 0; i < G_N_ELEMENTS(v->info); i++)
         g_free(v->info[i]);
+    g_free(v->title);
     g_free(v);
 }
 
 /* Points at 96 DPI, in logical pixels. */
 static double pt_to_px(int pt) { return pt * 96.0 / 72.0; }
 
-/* One line in the dialog's own font; returns its height. */
-static double ui_text(GtkWidget *w, cairo_t *cr, const char *text, double x, double y,
-                      double *right) {
-    PangoLayout *l = gtk_widget_create_pango_layout(w, text);
+/* One line in the dialog's own font (`ui`); returns its height. */
+static double ui_text(PangoContext *ui, cairo_t *cr, const char *text, double x,
+                      double y, double *right) {
+    PangoLayout *l = pango_layout_new(ui);
+    pango_layout_set_text(l, text, -1);
     int lw = 0, lh = 0;
     pango_layout_get_pixel_size(l, &lw, &lh);
     cairo_move_to(cr, x, y);
@@ -72,14 +75,17 @@ static void rule(cairo_t *cr, double y, double width) {
     cairo_set_source_rgb(cr, 0, 0, 0);
 }
 
-/* Draws the page `width` wide; returns its height and widest line. */
-static double paint(viewer *v, GtkWidget *w, cairo_t *cr, double width, double *right) {
+/* Draws the page `width` wide (logical pixels), the details in `ui`;
+ * returns its height and widest line. The window and the printed page
+ * are the same. */
+static double paint(viewer *v, PangoContext *ui, cairo_t *cr, double width,
+                    double *right) {
     double y = MARGIN;
     *right = 0;
     cairo_set_source_rgb(cr, 0, 0, 0);
     for (size_t i = 0; i < G_N_ELEMENTS(v->info); i++)
         if (v->info[i][0] != '\0')
-            y += ui_text(w, cr, v->info[i], MARGIN, y, right) + 2;
+            y += ui_text(ui, cr, v->info[i], MARGIN, y, right) + 2;
     y += 8;
     rule(cr, y, width);
     y += 10;
@@ -96,14 +102,29 @@ static double paint(viewer *v, GtkWidget *w, cairo_t *cr, double width, double *
         cairo_set_font_size(cr, pt_to_px(sample_sizes[i]));
         cairo_font_extents_t fe;
         cairo_font_extents(cr, &fe);
-        PangoLayout *l = gtk_widget_create_pango_layout(w, label);
+        PangoLayout *l = pango_layout_new(ui);
+        pango_layout_set_text(l, label, -1);
         double base = pango_layout_get_baseline(l) / (double)PANGO_SCALE;
         g_object_unref(l);
-        double lh = ui_text(w, cr, label, MARGIN, y + fe.ascent - base, right);
+        double lh = ui_text(ui, cr, label, MARGIN, y + fe.ascent - base, right);
         double fh = font_text(v, cr, SAMPLE, sample_sizes[i], MARGIN + 36, y, right);
         y += MAX(lh, fh) + 6;
     }
     return y + MARGIN;
+}
+
+static const PangoFontDescription *widget_font(GtkWidget *w) {
+    return pango_context_get_font_description(gtk_widget_get_pango_context(w));
+}
+
+/* The page's size when drawn `width` wide: height, and the widest line. */
+static double measure(viewer *v, PangoContext *ui, double width, double *right) {
+    cairo_surface_t *rec = cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, nullptr);
+    cairo_t *cr = cairo_create(rec);
+    double height = paint(v, ui, cr, width, right);
+    cairo_destroy(cr);
+    cairo_surface_destroy(rec);
+    return height;
 }
 
 static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
@@ -111,19 +132,14 @@ static gboolean on_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
     cairo_set_source_rgb(cr, 1, 1, 1);
     cairo_paint(cr);
     double right;
-    paint(v, w, cr, gtk_widget_get_allocated_width(w), &right);
+    paint(v, gtk_widget_get_pango_context(w), cr, gtk_widget_get_allocated_width(w), &right);
     return FALSE;
 }
 
 /* Sizes the page to what it draws, once it can make layouts. */
 static void on_realize(GtkWidget *w, gpointer data) {
-    viewer *v = data;
-    cairo_surface_t *rec = cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, nullptr);
-    cairo_t *cr = cairo_create(rec);
     double right = 0;
-    double height = paint(v, w, cr, 600, &right);
-    cairo_destroy(cr);
-    cairo_surface_destroy(rec);
+    double height = measure(data, gtk_widget_get_pango_context(w), 600, &right);
     gtk_widget_set_size_request(w, (int)(right + MARGIN), (int)height);
 }
 
@@ -135,11 +151,9 @@ static char *file_size_text(const char *file) {
     return g_strdup_printf("File size: %" G_GUINT64_FORMAT " KB", kb);
 }
 
-static void on_done([[maybe_unused]] GtkButton *b, gpointer window) {
-    gtk_widget_destroy(window);
-}
-
-GtkWidget *xd_font_viewer_new(GtkWindow *parent, const char *file, int index) {
+/* Face `index` of `file`, with its details; nullptr (after telling the
+ * user) when it isn't a font fontconfig can read. */
+static viewer *viewer_load(GtkWindow *parent, const char *file, int index) {
     int count = 0;
     FcPattern *pat = FcFreeTypeQuery((const FcChar8 *)file, (unsigned)index, nullptr, &count);
     if (pat == nullptr) {
@@ -172,12 +186,98 @@ GtkWidget *xd_font_viewer_new(GtkWindow *parent, const char *file, int index) {
     char *format = FcPatternGetString(pat, FC_FONTFORMAT, 0, &s) == FcResultMatch
                        ? g_strdup((const char *)s)
                        : nullptr;
-    char *title = xd_font_display_name(full, family_copy, style,
-                                       xd_font_format_label(format, file));
+    v->title = xd_font_display_name(full, family_copy, style, xd_font_format_label(format, file));
     FcPatternDestroy(pat);
+    g_free(full);
+    g_free(style);
+    g_free(format);
+    g_free(family_copy);
+    return v;
+}
 
+/* ---- printing ----------------------------------------------------------------------- */
+
+typedef struct print_job {
+    viewer *v;
+    PangoFontDescription *ui;
+} print_job;
+
+/* The viewer's page on paper. */
+static void draw_page([[maybe_unused]] GtkPrintOperation *op, GtkPrintContext *ctx,
+                      [[maybe_unused]] int page, gpointer data) {
+    print_job *job = data;
+    cairo_t *cr = gtk_print_context_get_cairo_context(ctx);
+    /* Points on paper, logical pixels (1/96 inch) in the page. */
+    double scale = 72.0 / 96.0;
+    double width = gtk_print_context_get_width(ctx) / scale;
+    double height = gtk_print_context_get_height(ctx) / scale;
+    /* The details in the window's font at 96 DPI, as on the screen. */
+    PangoContext *pc = pango_cairo_create_context(cr);
+    pango_cairo_context_set_resolution(pc, 96);
+    pango_context_set_font_description(pc, job->ui);
+    /* Sizes stay true on paper: the long samples run off the page's edge,
+     * as in the window; only a page taller than the paper shrinks. */
+    double right = 0;
+    double need = measure(job->v, pc, width, &right);
+    double fit = MIN(1.0, height / need);
+    cairo_rectangle(cr, 0, 0, gtk_print_context_get_width(ctx), gtk_print_context_get_height(ctx));
+    cairo_clip(cr);
+    cairo_scale(cr, scale * fit, scale * fit);
+    paint(job->v, pc, cr, width / fit, &right);
+    g_object_unref(pc);
+}
+
+static void print(GtkWindow *parent, viewer *v, const PangoFontDescription *ui) {
+    print_job job = {v, pango_font_description_copy(ui)};
+    GtkPrintOperation *op = gtk_print_operation_new();
+    gtk_print_operation_set_n_pages(op, 1);
+    gtk_print_operation_set_unit(op, GTK_UNIT_POINTS);
+    gtk_print_operation_set_job_name(op, v->title);
+    g_signal_connect(op, "draw-page", G_CALLBACK(draw_page), &job);
+    GError *error = nullptr;
+    GtkPrintOperationResult r = gtk_print_operation_run(op, GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG,
+                                                        parent, &error);
+    if (r == GTK_PRINT_OPERATION_RESULT_ERROR) {
+        char *msg = g_strdup_printf("%s could not be printed.\n\n%s", v->title,
+                                    error != nullptr ? error->message : "");
+        xd_message_box(parent, "Font Viewer", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+        g_free(msg);
+    }
+    g_clear_error(&error);
+    g_object_unref(op);
+    pango_font_description_free(job.ui);
+}
+
+void xd_font_print(GtkWindow *parent, const char *file, int index) {
+    viewer *v = viewer_load(parent, file, index);
+    if (v == nullptr)
+        return;
+    /* The details in the window's font, as the viewer shows them. */
+    PangoFontDescription *ui = parent != nullptr
+                                   ? pango_font_description_copy(widget_font(GTK_WIDGET(parent)))
+                                   : pango_font_description_from_string("Sans 9");
+    print(parent, v, ui);
+    pango_font_description_free(ui);
+    viewer_free(v);
+}
+
+/* ---- the window --------------------------------------------------------------------- */
+
+static void on_done([[maybe_unused]] GtkButton *b, gpointer window) {
+    gtk_widget_destroy(window);
+}
+
+static void on_print([[maybe_unused]] GtkButton *b, gpointer data) {
+    viewer *v = data;
+    print(GTK_WINDOW(v->window), v, widget_font(v->area));
+}
+
+GtkWidget *xd_font_viewer_new(GtkWindow *parent, const char *file, int index) {
+    viewer *v = viewer_load(parent, file, index);
+    if (v == nullptr)
+        return nullptr;
     v->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(v->window), title);
+    gtk_window_set_title(GTK_WINDOW(v->window), v->title);
     gtk_window_set_icon_name(GTK_WINDOW(v->window), "preferences-desktop-font");
     gtk_window_set_default_size(GTK_WINDOW(v->window), 680, 560);
     if (parent != nullptr)
@@ -186,11 +286,15 @@ GtkWidget *xd_font_viewer_new(GtkWindow *parent, const char *file, int index) {
 
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(v->window), box);
+    /* XP's two buttons over the page. */
     GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(bar), 4);
     GtkWidget *done = gtk_button_new_with_mnemonic("_Done");
     g_signal_connect(done, "clicked", G_CALLBACK(on_done), v->window);
     gtk_box_pack_start(GTK_BOX(bar), done, FALSE, FALSE, 0);
+    GtkWidget *print_button = gtk_button_new_with_mnemonic("_Print...");
+    g_signal_connect(print_button, "clicked", G_CALLBACK(on_print), v);
+    gtk_box_pack_start(GTK_BOX(bar), print_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), bar, FALSE, FALSE, 0);
     v->area = gtk_drawing_area_new();
     g_signal_connect(v->area, "draw", G_CALLBACK(on_draw), v);
@@ -201,11 +305,5 @@ GtkWidget *xd_font_viewer_new(GtkWindow *parent, const char *file, int index) {
     gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
     gtk_widget_show_all(v->window);
     gtk_widget_grab_focus(done);
-
-    g_free(title);
-    g_free(full);
-    g_free(style);
-    g_free(format);
-    g_free(family_copy);
     return v->window;
 }

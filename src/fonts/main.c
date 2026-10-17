@@ -2,6 +2,7 @@
  * xd-fonts: Windows XP's Fonts folder, as a window of its own. Lists the
  * faces fontconfig knows (Large Icons, List, Details; Hide Variations
  * shows each family's regular face), opens XP's font viewer on one,
+ * prints its sample sheet (File > Print, the viewer's Print...),
  * installs fonts into the user's font folder ($XDG_DATA_HOME/fonts) and
  * deletes them from there. System fonts can't be deleted: that's the
  * package manager's job.
@@ -30,7 +31,7 @@ typedef struct fonts {
     GtkWidget *views[VIEW_COUNT]; /* two icon views and a tree view */
     GtkWidget *pages[VIEW_COUNT]; /* their scrolled windows, in the stack */
     GtkWidget *view_items[VIEW_COUNT];
-    GtkWidget *open_item, *delete_item;
+    GtkWidget *open_item, *print_item, *delete_item;
     GtkListStore *store;
     GtkTreeModel *filter;
     int view;
@@ -112,6 +113,7 @@ static void update_status(fonts *f) {
     g_list_free_full(sel, (GDestroyNotify)gtk_tree_path_free);
     gtk_widget_set_sensitive(f->delete_item, deletable);
     gtk_widget_set_sensitive(f->open_item, n > 0);
+    gtk_widget_set_sensitive(f->print_item, n > 0);
     char *text = n > 0 ? g_strdup_printf("%u object(s) selected", n)
                        : g_strdup_printf("%u font(s)", count_rows(f->filter));
     gtk_label_set_text(GTK_LABEL(f->status), text);
@@ -141,6 +143,23 @@ static void cb_open([[maybe_unused]] GtkWidget *w, gpointer data) {
     GList *sel = selected_paths(f);
     for (GList *l = sel; l != nullptr; l = l->next)
         open_path(f, l->data);
+    g_list_free_full(sel, (GDestroyNotify)gtk_tree_path_free);
+}
+
+/* Print: each selected font's sample sheet, as XP printed them. */
+static void cb_print([[maybe_unused]] GtkWidget *w, gpointer data) {
+    fonts *f = data;
+    GList *sel = selected_paths(f);
+    for (GList *l = sel; l != nullptr; l = l->next) {
+        GtkTreeIter iter;
+        if (!gtk_tree_model_get_iter(f->filter, &iter, l->data))
+            continue;
+        char *file = nullptr;
+        int index = 0;
+        gtk_tree_model_get(f->filter, &iter, F_FILE, &file, F_INDEX, &index, -1);
+        xd_font_print(GTK_WINDOW(f->window), file, index);
+        g_free(file);
+    }
     g_list_free_full(sel, (GDestroyNotify)gtk_tree_path_free);
 }
 
@@ -351,12 +370,15 @@ static void destroy_menu(GtkMenuShell *menu, [[maybe_unused]] gpointer data) {
     g_idle_add(destroy_menu_idle, menu);
 }
 
-/* Right-click: Open and Delete, on what's under the pointer. */
+/* Right-click: Open, Print and Delete, on what's under the pointer. */
 static void popup(fonts *f, GdkEventButton *ev) {
     GtkWidget *menu = gtk_menu_new();
     GtkWidget *open = gtk_menu_item_new_with_mnemonic("_Open");
     g_signal_connect(open, "activate", G_CALLBACK(cb_open), f);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), open);
+    GtkWidget *print = gtk_menu_item_new_with_mnemonic("_Print");
+    g_signal_connect(print, "activate", G_CALLBACK(cb_print), f);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), print);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     GtkWidget *del = gtk_menu_item_new_with_mnemonic("_Delete");
     g_signal_connect(del, "activate", G_CALLBACK(cb_delete), f);
@@ -480,6 +502,7 @@ static GtkWidget *build_menus(fonts *f, GtkAccelGroup *accel) {
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = submenu(bar, "_File");
     f->open_item = menu_item(file, "_Open", G_CALLBACK(cb_open), f, accel, 0, NO_MODS);
+    f->print_item = menu_item(file, "_Print", G_CALLBACK(cb_print), f, accel, 0, NO_MODS);
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
     menu_item(file, "_Install New Font...", G_CALLBACK(cb_install), f, accel, 0, NO_MODS);
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());

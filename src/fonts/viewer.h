@@ -11,4 +11,8 @@
  * telling the user) when it isn't a font fontconfig can read. */
 GtkWidget *xd_font_viewer_new(GtkWindow *parent, const char *file, int index);
 
+/* Prints the viewer's page for that face (the print dialog first), as
+ * the folder's File > Print does. */
+void xd_font_print(GtkWindow *parent, const char *file, int index);
+
 #endif
