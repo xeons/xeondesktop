@@ -516,7 +516,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       file, the 400 most recent, as XP keeps), saved on leaving it or
       closing the window; folders left at the defaults aren't stored.
       Tested: Details in one folder, Icons in its parent, Back restores it.
-- [ ] Arrange Icons by ▸ Show in Groups, Auto Arrange.
+- [ ] Arrange Icons by ▸ Auto Arrange (the icons are always arranged).
 - [x] My Computer (`computer:///`, places.c): the file system, the user's
       Documents and every mount from GIO's volume monitor (live), as Local
       Disk / Removable Disk / CD Drive / Network Drive with total and free
@@ -529,11 +529,21 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Restore (recreating the folder), Delete (permanently), Empty Recycle
       Bin, drops into it send files to it; items open their Properties.
       Tested: Restore, Empty Recycle Bin, .trashinfo files tidied.
-- [ ] My Computer: unmounted volumes (mount on open), XP's group headings
-      ("Hard Disk Drives", "Devices with Removable Storage"), Eject, the
-      drive Properties' pie chart. Recycle Bin: trashes on other drives
-      ($topdir/.Trash-uid), Restore asking to replace. Network Places and
-      Control Panel (`control:`).
+- [x] My Computer in XP's groups (Files Stored on This Computer, Hard
+      Disk Drives, Devices with Removable Storage, Network Drives), in the
+      icon views; Arrange Icons by > Show in Groups for any folder (by
+      initial, type, Tiny/Small/Medium/Large/Huge, or how long ago),
+      remembered per folder. Volumes not mounted yet are listed and mount
+      when opened (GTK's mount operation asks for passwords); Eject on
+      drives that can (or unmount). The Recycle Bin also lists other
+      drives' trashes (.Trash-UID, .Trash/UID; relative paths from the
+      drive's top), and Restore asks before replacing a file (Yes, Yes
+      to All, No, Cancel). Tested headless: the groups, Show in Groups by
+      type, Eject offered for the CD (not pressed), Restore replacing, a
+      second drive's trash (a bind mount) listed and restored. Untested:
+      mounting a volume and ejecting (no spare disk here).
+- [ ] My Computer: the drive Properties' pie chart; groups in the List
+      and Details views. Network Places and Control Panel (`control:`).
 - [x] The first arrow key in a fresh folder selected the second item.
 - [?] Folders tree clicks, address bar typing, the Views menu, the
       thumbnail slider, Details header sorting, Show Hidden Files, opening

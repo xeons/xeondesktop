@@ -286,13 +286,13 @@ static void free_history(GList **list) {
 /* ---- each folder's view, remembered (XP keeps 400) ---------------------------- */
 
 enum { FOLDER_VIEWS_MAX = 400 };
-#define FOLDER_VIEWS "folder-views" /* lines: uri, view, sort column, descending */
+#define FOLDER_VIEWS "folder-views" /* lines: uri, view, sort column, descending[, groups] */
 
 static void set_mode(explorer *e, XdViewMode mode);
 
 typedef struct folder_view_setting {
     int mode, sort;
-    gboolean desc;
+    gboolean desc, groups;
 } folder_view_setting;
 
 static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
@@ -301,11 +301,13 @@ static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
     xd_state_read_lines(FOLDER_VIEWS, &lines, &n, FOLDER_VIEWS_MAX);
     gboolean found = FALSE;
     for (size_t i = 0; i < n && !found; i++) {
-        char **f = g_strsplit(lines[i], "\t", 4);
-        if (g_strv_length(f) == 4 && strcmp(f[0], uri) == 0) {
+        char **f = g_strsplit(lines[i], "\t", 5);
+        guint nf = g_strv_length(f);
+        if (nf >= 4 && strcmp(f[0], uri) == 0) {
             long mode = strtol(f[1], nullptr, 10), sort = strtol(f[2], nullptr, 10);
             if (mode >= 0 && mode < XD_VIEW_COUNT && sort >= 0 && sort < XD_SORT_COUNT) {
-                *out = (folder_view_setting){(int)mode, (int)sort, strcmp(f[3], "1") == 0};
+                *out = (folder_view_setting){(int)mode, (int)sort, strcmp(f[3], "1") == 0,
+                                             nf == 5 && strcmp(f[4], "1") == 0};
                 found = TRUE;
             }
         }
@@ -327,11 +329,12 @@ static void remember_folder_view(explorer *e) {
     XdSortColumn sort_col = xd_folder_view_get_sort(e->view);
     int sort = (int)sort_col;
     gboolean desc = xd_folder_view_get_sort_descending(e->view);
+    gboolean groups = xd_folder_view_get_groups(e->view);
     folder_view_setting old;
     gboolean known = find_folder_view(uri, &old);
-    gboolean is_default = mode == initial_view && sort == XD_SORT_NAME && !desc;
-    if ((!known && is_default) ||
-        (known && old.mode == mode && old.sort == sort && old.desc == desc)) {
+    gboolean is_default = mode == initial_view && sort == XD_SORT_NAME && !desc && !groups;
+    if ((!known && is_default) || (known && old.mode == mode && old.sort == sort &&
+                                   old.desc == desc && old.groups == groups)) {
         g_free(uri);
         return;
     }
@@ -340,7 +343,8 @@ static void remember_folder_view(explorer *e) {
     xd_state_read_lines(FOLDER_VIEWS, &lines, &n, FOLDER_VIEWS_MAX);
     char **out = g_new0(char *, n + 2);
     size_t k = 0;
-    out[k++] = g_strdup_printf("%s\t%d\t%d\t%d", uri, mode, sort, desc ? 1 : 0);
+    out[k++] = g_strdup_printf("%s\t%d\t%d\t%d\t%d", uri, mode, sort, desc ? 1 : 0,
+                               groups ? 1 : 0);
     char *prefix = g_strconcat(uri, "\t", nullptr);
     for (size_t i = 0; i < n && k < FOLDER_VIEWS_MAX; i++)
         if (!g_str_has_prefix(lines[i], prefix))
@@ -364,16 +368,133 @@ static void apply_folder_view(explorer *e, GFile *dir) {
     if (find_folder_view(uri, &fv)) {
         set_mode(e, (XdViewMode)fv.mode);
         xd_folder_view_set_sort(e->view, (XdSortColumn)fv.sort, fv.desc);
+        if (xd_folder_view_get_groups(e->view) != fv.groups)
+            xd_folder_view_set_groups(e->view, fv.groups);
     } else if (xd_folder_view_get_mode(e->view) != (XdViewMode)initial_view ||
                xd_folder_view_get_sort(e->view) != XD_SORT_NAME ||
-               xd_folder_view_get_sort_descending(e->view)) {
+               xd_folder_view_get_sort_descending(e->view) ||
+               xd_folder_view_get_groups(e->view)) {
         set_mode(e, (XdViewMode)initial_view);
         xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
+        xd_folder_view_set_groups(e->view, FALSE);
     }
     g_free(uri);
 }
 
+/* ---- drives that aren't mounted yet --------------------------------------------- */
+
+/* A mount waiting to finish; the window may close meanwhile. */
+typedef struct mount_request {
+    GtkWidget *window; /* weak */
+    explorer *e;
+    gboolean record;
+    gboolean unmount; /* Eject on a disk that only unmounts */
+    char *name;
+} mount_request;
+
+static void mount_request_free(mount_request *r) {
+    if (r->window != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
+    g_free(r->name);
+    g_free(r);
+}
+
+static void volume_mounted(GObject *src, GAsyncResult *res, gpointer data) {
+    mount_request *r = data;
+    GVolume *vol = G_VOLUME(src);
+    GError *err = nullptr;
+    if (!g_volume_mount_finish(vol, res, &err)) {
+        /* "Handled": the user cancelled the password question. */
+        if (r->window != nullptr && !g_error_matches(err, G_IO_ERROR, G_IO_ERROR_FAILED_HANDLED)) {
+            char *msg = g_strdup_printf("%s is not accessible.\n\n%s", r->name, err->message);
+            xd_message_box(GTK_WINDOW(r->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+            g_free(msg);
+        }
+        g_error_free(err);
+    } else if (r->window != nullptr) {
+        GMount *m = g_volume_get_mount(vol);
+        if (m != nullptr) {
+            GFile *root = g_mount_get_root(m);
+            navigate(r->e, root, r->record);
+            g_object_unref(root);
+            g_object_unref(m);
+        }
+    }
+    mount_request_free(r);
+}
+
+/* Opening a drive that isn't mounted mounts it first, as XP's drives are
+ * simply there. */
+static gboolean mount_and_open(explorer *e, GFile *item, gboolean record) {
+    GVolume *vol = xd_computer_volume(item);
+    if (vol == nullptr)
+        return FALSE;
+    mount_request *r = g_new0(mount_request, 1);
+    r->window = e->window;
+    g_object_add_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
+    r->e = e;
+    r->record = record;
+    r->name = g_volume_get_name(vol);
+    GMountOperation *op = gtk_mount_operation_new(GTK_WINDOW(e->window));
+    g_volume_mount(vol, G_MOUNT_MOUNT_NONE, op, nullptr, volume_mounted, r);
+    g_object_unref(op);
+    g_object_unref(vol);
+    return TRUE;
+}
+
+/* Eject (or, for a disk that can't be ejected, unmount), as My Computer's
+ * Eject does. */
+static void ejected(GObject *src, GAsyncResult *res, gpointer data) {
+    mount_request *r = data;
+    GError *err = nullptr;
+    gboolean ok = G_IS_VOLUME(src)  ? g_volume_eject_with_operation_finish(G_VOLUME(src), res, &err)
+                  : r->unmount
+                      ? g_mount_unmount_with_operation_finish(G_MOUNT(src), res, &err)
+                      : g_mount_eject_with_operation_finish(G_MOUNT(src), res, &err);
+    if (!ok) {
+        if (r->window != nullptr && !g_error_matches(err, G_IO_ERROR, G_IO_ERROR_FAILED_HANDLED))
+            xd_message_box(GTK_WINDOW(r->window), "Eject", XD_MB_ERROR, XD_MB_OK, FALSE,
+                           err->message);
+        g_error_free(err);
+    }
+    mount_request_free(r);
+}
+
+static void eject_item(explorer *e, GFile *item) {
+    mount_request *r = g_new0(mount_request, 1);
+    r->window = e->window;
+    g_object_add_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
+    r->e = e;
+    GMountOperation *op = gtk_mount_operation_new(GTK_WINDOW(e->window));
+    GVolume *vol = xd_computer_volume(item);
+    GMount *m = vol == nullptr ? xd_computer_mount(item) : nullptr;
+    if (vol != nullptr && g_volume_can_eject(vol)) {
+        g_volume_eject_with_operation(vol, G_MOUNT_UNMOUNT_NONE, op, nullptr, ejected, r);
+    } else if (m != nullptr && g_mount_can_eject(m)) {
+        g_mount_eject_with_operation(m, G_MOUNT_UNMOUNT_NONE, op, nullptr, ejected, r);
+    } else if (m != nullptr && g_mount_can_unmount(m)) {
+        r->unmount = TRUE;
+        g_mount_unmount_with_operation(m, G_MOUNT_UNMOUNT_NONE, op, nullptr, ejected, r);
+    } else {
+        mount_request_free(r);
+    }
+    g_clear_object(&vol);
+    g_clear_object(&m);
+    g_object_unref(op);
+}
+
+static void cb_eject([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    for (GList *l = files; l != nullptr; l = l->next)
+        if (xd_computer_can_eject(l->data))
+            eject_item(e, l->data);
+    g_list_free_full(files, g_object_unref);
+}
+
 static void navigate(explorer *e, GFile *dir, gboolean record) {
+    if (mount_and_open(e, dir, record))
+        return;
     GFile *current = xd_folder_view_get_location(e->view);
     if (record && current != nullptr && !g_file_equal(current, dir)) {
         e->back = g_list_prepend(e->back, g_object_ref(current));
@@ -553,13 +674,28 @@ static void on_arrange(GtkWidget *item, gpointer data) {
     xd_folder_view_set_sort(e->view, (XdSortColumn)col, FALSE);
 }
 
-/* Checks radio `col` of an Arrange Icons by menu. */
+static void on_show_groups(GtkWidget *item, gpointer data) {
+    explorer *e = data;
+    if (e->syncing)
+        return;
+    xd_folder_view_set_groups(e->view, gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)));
+    remember_folder_view(e);
+}
+
+/* Checks radio `col` of an Arrange Icons by menu, and Show in Groups. */
 static void check_radio(GtkWidget *menu, int col, explorer *e) {
     GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
     e->syncing = TRUE;
-    for (GList *l = items; l != nullptr; l = l->next)
-        if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(l->data), "xd-sort")) == col)
+    for (GList *l = items; l != nullptr; l = l->next) {
+        if (!GTK_IS_CHECK_MENU_ITEM(l->data))
+            continue; /* the separator */
+        int which = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(l->data), "xd-sort"));
+        if (which == col)
             gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(l->data), TRUE);
+        else if (which == -1)
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(l->data),
+                                           xd_folder_view_get_groups(e->view));
+    }
     e->syncing = FALSE;
     g_list_free(items);
 }
@@ -586,6 +722,13 @@ static GtkWidget *arrange_menu(explorer *e, gboolean radios) {
         g_object_set_data(G_OBJECT(item), "xd-sort", GINT_TO_POINTER(i));
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+    GtkWidget *groups = gtk_check_menu_item_new_with_mnemonic("Show in _Groups");
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(groups),
+                                   e->view != nullptr && xd_folder_view_get_groups(e->view));
+    g_object_set_data(G_OBJECT(groups), "xd-sort", GINT_TO_POINTER(-1));
+    g_signal_connect(groups, "toggled", G_CALLBACK(on_show_groups), e);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), groups);
     e->syncing = FALSE;
     gtk_widget_show_all(menu);
     return menu;
@@ -636,8 +779,10 @@ static void cb_open_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
     GList *files = xd_folder_view_get_selected_files(e->view);
     for (GList *l = files; l != nullptr; l = l->next) {
-        gboolean is_dir = g_file_query_file_type(l->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
-                          G_FILE_TYPE_DIRECTORY;
+        /* My Computer's items are all drives (some not mounted yet). */
+        gboolean is_dir = xd_place_of(current_dir(e)) == XD_PLACE_COMPUTER ||
+                          g_file_query_file_type(l->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
+                              G_FILE_TYPE_DIRECTORY;
         on_activated(e->view, l->data, is_dir, e);
         if (is_dir)
             break; /* navigating replaces the view */
@@ -1289,6 +1434,15 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
         menu_item(menu, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
     } else if (selected && place == XD_PLACE_COMPUTER) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
+        GList *files = xd_folder_view_get_selected_files(view);
+        gboolean eject = FALSE;
+        for (GList *l = files; l != nullptr; l = l->next)
+            eject = eject || xd_computer_can_eject(l->data);
+        g_list_free_full(files, g_object_unref);
+        if (eject) {
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+            menu_item(menu, "E_ject", G_CALLBACK(cb_eject), e, nullptr, 0, NO_MODS);
+        }
     } else if (selected) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());

@@ -3,6 +3,8 @@
  */
 #include "places.h"
 
+#include <unistd.h>
+
 #include "../gtkapp/gtkapp.h"
 #include "fileops.h"
 
@@ -155,6 +157,23 @@ static const char *mount_kind(GMount *mount, GFile *root, GIcon *icon) {
     return removable || g_mount_can_eject(mount) ? "Removable Disk" : "Local Disk";
 }
 
+/* An unmounted volume's place in My Computer: computer:///volume/ and
+ * what identifies it (its UUID, else its device, else its name). */
+#define VOLUME_URI "computer:///volume/"
+
+static char *volume_uri(GVolume *vol) {
+    char *id = g_volume_get_uuid(vol);
+    if (id == nullptr)
+        id = g_volume_get_identifier(vol, G_VOLUME_IDENTIFIER_KIND_UNIX_DEVICE);
+    if (id == nullptr)
+        id = g_volume_get_name(vol);
+    char *escaped = g_uri_escape_string(id != nullptr ? id : "", nullptr, FALSE);
+    char *uri = g_strconcat(VOLUME_URI, escaped, nullptr);
+    g_free(escaped);
+    g_free(id);
+    return uri;
+}
+
 GPtrArray *xd_computer_drives(void) {
     GPtrArray *out = g_ptr_array_new_with_free_func(drive_free);
     GFile *slash = g_file_new_for_path("/");
@@ -194,7 +213,79 @@ GPtrArray *xd_computer_drives(void) {
     }
     g_list_free_full(mounts, g_object_unref);
     g_object_unref(slash);
+
+    /* Volumes not mounted yet: shown as drives, mounted when opened. */
+    GList *volumes = g_volume_monitor_get_volumes(xd_computer_monitor());
+    for (GList *l = volumes; l != nullptr; l = l->next) {
+        GVolume *vol = l->data;
+        GMount *m = g_volume_get_mount(vol);
+        if (m != nullptr) {
+            g_object_unref(m);
+            continue;
+        }
+        if (!g_volume_can_mount(vol))
+            continue;
+        char *uri = volume_uri(vol);
+        GFile *item = g_file_new_for_uri(uri);
+        GIcon *icon = g_volume_get_icon(vol);
+        char *name = g_volume_get_name(vol);
+        GDrive *drive = g_volume_get_drive(vol);
+        gboolean removable = drive != nullptr && g_drive_is_removable(drive);
+        g_clear_object(&drive);
+        const char *kind = icon_has(icon, "optical") ? "CD Drive"
+                           : removable              ? "Removable Disk"
+                                                    : "Local Disk";
+        g_ptr_array_add(out, drive_new(item, name, kind, icon));
+        g_free(name);
+        g_clear_object(&icon);
+        g_object_unref(item);
+        g_free(uri);
+    }
+    g_list_free_full(volumes, g_object_unref);
     return out;
+}
+
+GVolume *xd_computer_volume(GFile *item) {
+    char *want = g_file_get_uri(item);
+    GVolume *found = nullptr;
+    if (g_str_has_prefix(want, VOLUME_URI)) {
+        GList *volumes = g_volume_monitor_get_volumes(xd_computer_monitor());
+        for (GList *l = volumes; l != nullptr && found == nullptr; l = l->next) {
+            char *uri = volume_uri(l->data);
+            if (strcmp(uri, want) == 0)
+                found = g_object_ref(l->data);
+            g_free(uri);
+        }
+        g_list_free_full(volumes, g_object_unref);
+    }
+    g_free(want);
+    return found;
+}
+
+GMount *xd_computer_mount(GFile *root) {
+    GMount *found = nullptr;
+    GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
+    for (GList *l = mounts; l != nullptr && found == nullptr; l = l->next) {
+        GFile *r = g_mount_get_root(l->data);
+        if (g_file_equal(r, root))
+            found = g_object_ref(l->data);
+        g_object_unref(r);
+    }
+    g_list_free_full(mounts, g_object_unref);
+    return found;
+}
+
+gboolean xd_computer_can_eject(GFile *item) {
+    GVolume *vol = xd_computer_volume(item);
+    if (vol != nullptr) {
+        gboolean can = g_volume_can_eject(vol);
+        g_object_unref(vol);
+        return can;
+    }
+    GMount *m = xd_computer_mount(item);
+    gboolean can = m != nullptr && (g_mount_can_eject(m) || g_mount_can_unmount(m));
+    g_clear_object(&m);
+    return can;
 }
 
 /* ---- Recycle Bin ------------------------------------------------------------------- */
@@ -212,15 +303,74 @@ GFile *xd_trash_files_dir(void) {
     return f;
 }
 
+GPtrArray *xd_trash_dirs(void) {
+    GPtrArray *out = g_ptr_array_new_with_free_func(g_object_unref);
+    g_ptr_array_add(out, xd_trash_files_dir());
+    /* Other drives keep theirs at the top: .Trash-UID, or .Trash/UID. */
+    char uid[16];
+    g_snprintf(uid, sizeof(uid), "%u", (unsigned)getuid());
+    char *own = g_strconcat(".Trash-", uid, nullptr);
+    GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
+    for (GList *l = mounts; l != nullptr; l = l->next) {
+        GFile *top = g_mount_get_root(l->data);
+        char *top_path = g_file_get_path(top);
+        if (top_path != nullptr && strcmp(top_path, "/") != 0) {
+            char *a = g_build_filename(top_path, own, "files", nullptr);
+            char *b = g_build_filename(top_path, ".Trash", uid, "files", nullptr);
+            const char *found = g_file_test(a, G_FILE_TEST_IS_DIR)   ? a
+                                : g_file_test(b, G_FILE_TEST_IS_DIR) ? b
+                                                                     : nullptr;
+            if (found != nullptr)
+                g_ptr_array_add(out, g_file_new_for_path(found));
+            g_free(a);
+            g_free(b);
+        }
+        g_free(top_path);
+        g_object_unref(top);
+    }
+    g_list_free_full(mounts, g_object_unref);
+    g_free(own);
+    return out;
+}
+
+/* A trashed item's .trashinfo, beside its trash's files folder. */
 static GFile *info_file(GFile *trashed) {
     char *base = g_file_get_basename(trashed);
     char *name = g_strconcat(base, ".trashinfo", nullptr);
-    GFile *dir = trash_dir("info");
+    GFile *files = g_file_get_parent(trashed);
+    GFile *trash = files != nullptr ? g_file_get_parent(files) : nullptr;
+    GFile *dir = trash != nullptr ? g_file_get_child(trash, "info") : trash_dir("info");
     GFile *f = g_file_get_child(dir, name);
     g_object_unref(dir);
+    g_clear_object(&trash);
+    g_clear_object(&files);
     g_free(name);
     g_free(base);
     return f;
+}
+
+/* Where a trash's relative paths start: a drive's top (above .Trash-UID
+ * or .Trash/UID); the home trash's paths are absolute. */
+static char *trash_top(GFile *trashed) {
+    GFile *files = g_file_get_parent(trashed);
+    GFile *trash = files != nullptr ? g_file_get_parent(files) : nullptr;
+    GFile *up = trash != nullptr ? g_file_get_parent(trash) : nullptr;
+    char *name = trash != nullptr ? g_file_get_basename(trash) : nullptr;
+    char *up_name = up != nullptr ? g_file_get_basename(up) : nullptr;
+    char *top = nullptr;
+    if (name != nullptr && g_str_has_prefix(name, ".Trash-")) {
+        top = g_file_get_path(up);
+    } else if (up_name != nullptr && strcmp(up_name, ".Trash") == 0) {
+        GFile *upup = g_file_get_parent(up);
+        top = upup != nullptr ? g_file_get_path(upup) : nullptr;
+        g_clear_object(&upup);
+    }
+    g_free(name);
+    g_free(up_name);
+    g_clear_object(&up);
+    g_clear_object(&trash);
+    g_clear_object(&files);
+    return top != nullptr ? top : g_strdup("/");
 }
 
 gboolean xd_trash_item_info(GFile *trashed, char **original_path, GDateTime **deleted) {
@@ -240,7 +390,9 @@ gboolean xd_trash_item_info(GFile *trashed, char **original_path, GDateTime **de
         char *orig = escaped != nullptr ? g_uri_unescape_string(escaped, nullptr) : nullptr;
         g_free(escaped);
         if (orig != nullptr && orig[0] != '/') {
-            char *abs = g_build_filename("/", orig, nullptr);
+            char *top = trash_top(trashed);
+            char *abs = g_build_filename(top, orig, nullptr);
+            g_free(top);
             g_free(orig);
             orig = abs;
         }
@@ -259,12 +411,10 @@ gboolean xd_trash_item_info(GFile *trashed, char **original_path, GDateTime **de
     return ok;
 }
 
-gboolean xd_trash_is_empty(void) {
-    GFile *dir = trash_dir("files");
+static gboolean dir_is_empty(GFile *dir) {
     GFileEnumerator *en = g_file_enumerate_children(dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
                                                     G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr,
                                                     nullptr);
-    g_object_unref(dir);
     if (en == nullptr)
         return TRUE;
     GFileInfo *first = g_file_enumerator_next_file(en, nullptr, nullptr);
@@ -274,8 +424,44 @@ gboolean xd_trash_is_empty(void) {
     return empty;
 }
 
+gboolean xd_trash_is_empty(void) {
+    GPtrArray *dirs = xd_trash_dirs();
+    gboolean empty = TRUE;
+    for (guint i = 0; i < dirs->len && empty; i++)
+        empty = dir_is_empty(g_ptr_array_index(dirs, i));
+    g_ptr_array_unref(dirs);
+    return empty;
+}
+
+/* Restoring over an existing file: XP's Confirm File Replace. Returns
+ * whether to replace; Yes to All answers the rest, Cancel stops. */
+typedef enum { ASK_EACH, ASK_YES_ALL, ASK_CANCELLED } replace_mode;
+
+static gboolean confirm_replace(GtkWindow *parent, const char *shown, replace_mode *mode,
+                                gboolean more) {
+    if (*mode == ASK_YES_ALL)
+        return TRUE;
+    char *text = g_strdup_printf("This folder already contains a file named '%s'.\n\n"
+                                 "Would you like to replace the existing file with this one?",
+                                 shown);
+    static const char *const labels[] = {"_Yes", "Yes to _All", "_No", "Cancel"};
+    int n = more ? 4 : 3;
+    int pick = xd_message_box_choose(parent, "Confirm File Replace", XD_MB_QUESTION, text,
+                                     more ? labels : (const char *const[]){"_Yes", "_No", "Cancel"},
+                                     n, 0, n - 1);
+    g_free(text);
+    if (!more)
+        pick = pick == 0 ? 0 : pick == 1 ? 2 : 3;
+    if (pick == 1)
+        *mode = ASK_YES_ALL;
+    else if (pick == 3 || pick < 0)
+        *mode = ASK_CANCELLED;
+    return pick == 0 || pick == 1;
+}
+
 void xd_trash_restore(GtkWindow *parent, GList *files) {
-    for (GList *l = files; l != nullptr; l = l->next) {
+    replace_mode mode = ASK_EACH;
+    for (GList *l = files; l != nullptr && mode != ASK_CANCELLED; l = l->next) {
         GFile *trashed = l->data;
         char *orig = nullptr;
         char *name = g_file_get_basename(trashed);
@@ -290,18 +476,38 @@ void xd_trash_restore(GtkWindow *parent, GList *files) {
             g_clear_object(&parent_dir);
             GError *err = nullptr;
             char *shown = g_filename_display_name(orig);
+            GFileCopyFlags flags = G_FILE_COPY_NOFOLLOW_SYMLINKS;
+            gboolean go = TRUE;
             if (g_file_query_exists(target, nullptr)) {
-                problem = g_strdup_printf("Cannot restore %s: a file or folder with that name "
-                                          "already exists.",
-                                          shown);
-            } else if (g_file_move(trashed, target, G_FILE_COPY_NOFOLLOW_SYMLINKS, nullptr,
-                                   nullptr, nullptr, &err)) {
-                GFile *info = info_file(trashed);
-                g_file_delete(info, nullptr, nullptr);
-                g_object_unref(info);
-            } else {
-                problem = g_strdup_printf("Cannot restore %s: %s", shown, err->message);
-                g_error_free(err);
+                /* A file may replace a file; folders aren't merged. */
+                gboolean dirs = g_file_query_file_type(target, G_FILE_QUERY_INFO_NONE, nullptr) ==
+                                    G_FILE_TYPE_DIRECTORY ||
+                                g_file_query_file_type(trashed, G_FILE_QUERY_INFO_NONE,
+                                                       nullptr) == G_FILE_TYPE_DIRECTORY;
+                if (dirs) {
+                    problem = g_strdup_printf("Cannot restore %s: a folder with that name "
+                                              "already exists.",
+                                              shown);
+                    go = FALSE;
+                } else {
+                    char *base = g_file_get_basename(target);
+                    char *base_shown = g_filename_display_name(base);
+                    go = confirm_replace(parent, base_shown, &mode, l->next != nullptr);
+                    g_free(base_shown);
+                    g_free(base);
+                    flags |= G_FILE_COPY_OVERWRITE;
+                }
+            }
+            /* Not when answered No or Cancel, or a folder is in the way. */
+            if (go && problem == nullptr) {
+                if (g_file_move(trashed, target, flags, nullptr, nullptr, nullptr, &err)) {
+                    GFile *info = info_file(trashed);
+                    g_file_delete(info, nullptr, nullptr);
+                    g_object_unref(info);
+                } else {
+                    problem = g_strdup_printf("Cannot restore %s: %s", shown, err->message);
+                    g_error_free(err);
+                }
             }
             g_free(shown);
             g_object_unref(target);
@@ -316,9 +522,10 @@ void xd_trash_restore(GtkWindow *parent, GList *files) {
     }
 }
 
-void xd_trash_tidy(void) {
-    GFile *info_dir = trash_dir("info");
-    GFile *files_dir = trash_dir("files");
+static void tidy_one(GFile *files_dir) {
+    GFile *trash = g_file_get_parent(files_dir);
+    GFile *info_dir = g_file_get_child(trash, "info");
+    g_object_unref(trash);
     GFileEnumerator *en = g_file_enumerate_children(info_dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
                                                     G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr,
                                                     nullptr);
@@ -340,7 +547,13 @@ void xd_trash_tidy(void) {
     }
     g_clear_object(&en);
     g_object_unref(info_dir);
-    g_object_unref(files_dir);
+}
+
+void xd_trash_tidy(void) {
+    GPtrArray *dirs = xd_trash_dirs();
+    for (guint i = 0; i < dirs->len; i++)
+        tidy_one(g_ptr_array_index(dirs, i));
+    g_ptr_array_unref(dirs);
 }
 
 typedef struct empty_request {
@@ -358,18 +571,22 @@ static void emptied(GList *created, gpointer data) {
 
 void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer user),
                     gpointer user) {
-    GFile *dir = xd_trash_files_dir();
+    GPtrArray *dirs = xd_trash_dirs();
     GList *files = nullptr;
-    GFileEnumerator *en = g_file_enumerate_children(dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
-                                                    G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr,
-                                                    nullptr);
-    GFileInfo *fi;
-    while (en != nullptr && (fi = g_file_enumerator_next_file(en, nullptr, nullptr)) != nullptr) {
-        files = g_list_prepend(files, g_file_get_child(dir, g_file_info_get_name(fi)));
-        g_object_unref(fi);
+    for (guint i = 0; i < dirs->len; i++) {
+        GFile *dir = g_ptr_array_index(dirs, i);
+        GFileEnumerator *en = g_file_enumerate_children(dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
+                                                        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+                                                        nullptr, nullptr);
+        GFileInfo *fi;
+        while (en != nullptr &&
+               (fi = g_file_enumerator_next_file(en, nullptr, nullptr)) != nullptr) {
+            files = g_list_prepend(files, g_file_get_child(dir, g_file_info_get_name(fi)));
+            g_object_unref(fi);
+        }
+        g_clear_object(&en);
     }
-    g_clear_object(&en);
-    g_object_unref(dir);
+    g_ptr_array_unref(dirs);
     if (files == nullptr) {
         if (done != nullptr)
             done(nullptr, user);

@@ -42,9 +42,17 @@ typedef struct XdDrive {
     guint64 total, free; /* bytes; 0 when unknown */
 } XdDrive;
 
-/* The drives: the root file system, the user's documents, then mounts.
- * Free with g_ptr_array_unref. */
+/* The drives: the root file system, the user's documents, the mounts,
+ * then volumes not mounted yet (which mount when opened). Free with
+ * g_ptr_array_unref. */
 GPtrArray *xd_computer_drives(void);
+/* An unmounted volume's item in My Computer: its volume (a new
+ * reference), or nullptr for anything else. */
+GVolume *xd_computer_volume(GFile *item);
+/* The mount whose root `root` is (a new reference), or nullptr. */
+GMount *xd_computer_mount(GFile *root);
+/* Whether My Computer's Eject applies to the drive at `item`. */
+gboolean xd_computer_can_eject(GFile *item);
 /* "12.3 GB", as Windows shows drive sizes. Free with g_free. */
 char *xd_format_drive_size(guint64 bytes);
 /* The volume monitor, for live updates (owned by GIO). */
@@ -54,6 +62,10 @@ GVolumeMonitor *xd_computer_monitor(void);
 
 /* $XDG_DATA_HOME/Trash/files, created if missing. */
 GFile *xd_trash_files_dir(void);
+/* Every trash's files folder: the home one, then other drives' (their
+ * .Trash-UID or .Trash/UID, where GIO trashes their files). Free with
+ * g_ptr_array_unref. */
+GPtrArray *xd_trash_dirs(void);
 /* For a file in the trash: where it came from (full path) and when it
  * was deleted (local time, may be nullptr). FALSE without its .trashinfo. */
 gboolean xd_trash_item_info(GFile *trashed, char **original_path, GDateTime **deleted);

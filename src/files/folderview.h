@@ -56,6 +56,9 @@ void xd_folder_view_set_sort(XdFolderView *view, XdSortColumn column, gboolean d
 XdSortColumn xd_folder_view_get_sort(XdFolderView *view);
 gboolean xd_folder_view_get_sort_descending(XdFolderView *view);
 void xd_folder_view_set_show_hidden(XdFolderView *view, gboolean show);
+/* Arrange Icons by > Show in Groups (the icon views; My Computer always). */
+void xd_folder_view_set_groups(XdFolderView *view, gboolean groups);
+gboolean xd_folder_view_get_groups(XdFolderView *view);
 
 void xd_folder_view_select_all(XdFolderView *view);
 void xd_folder_view_invert_selection(XdFolderView *view);

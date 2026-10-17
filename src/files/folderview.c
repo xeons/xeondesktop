@@ -26,6 +26,8 @@ static constexpr int TILE_W = 250;
 static constexpr int TILE_H = 64;
 static constexpr int LIST_COL_MAX = 300;
 static constexpr int BATCH = 256;
+static constexpr int GROUP_H = 26;   /* a group's heading */
+static constexpr int GROUP_GAP = 8;  /* between a group and the next heading */
 
 typedef struct item {
     GFile *file;
@@ -49,7 +51,16 @@ typedef struct item {
     gboolean shortcut; /* a symbolic link or a launcher: XP's arrow */
     int order;    /* My Computer: the drives' own order */
     char *extra;  /* Tiles' third line instead of the size (a drive's free space) */
+    /* Show in Groups: the heading it's under, and the groups' order. */
+    char *group;
+    int group_rank;
 } item;
+
+/* A group's heading in the grouped icon views (content coordinates). */
+typedef struct heading {
+    int y;
+    char *text;
+} heading;
 
 struct _XdFolderView {
     GtkDrawingArea parent;
@@ -62,6 +73,7 @@ struct _XdFolderView {
      * the trash's files folder (`listed`) under their original names. */
     XdPlace place;
     GFile *listed;
+    GPtrArray *more_listed; /* the Recycle Bin: other drives' trashes still to list */
     gboolean watching_drives;
     GCancellable *cancel;
     GFileMonitor *monitor;
@@ -74,6 +86,10 @@ struct _XdFolderView {
     XdSortColumn sort;
     gboolean desc;
     gboolean show_hidden;
+    gboolean groups;  /* Show in Groups */
+    gboolean grouped; /* laid out in groups now (an icon view) */
+    GArray *rects;    /* GdkRectangle per shown item, when grouped */
+    GArray *headings; /* heading, when grouped */
     int focus;
     int anchor;
 
@@ -143,6 +159,7 @@ static void item_free(gpointer p) {
     g_free(it->date_text);
     g_free(it->thumb_path);
     g_free(it->extra);
+    g_free(it->group);
     xd_free(it);
 }
 
@@ -263,10 +280,141 @@ static GdkPixbuf *item_thumb(item *it, int px) {
 
 /* ---- sorting and filtering ------------------------------------------------------- */
 
+/* ---- groups -------------------------------------------------------------------------- */
+
+static gboolean is_icon_mode(XdViewMode m) {
+    return m == XD_VIEW_THUMBNAILS || m == XD_VIEW_ICONS || m == XD_VIEW_TILES;
+}
+
+/* My Computer always shows its groups, as XP does; other folders when
+ * Show in Groups is on. Only the icon views have them. */
+static gboolean wants_groups(const XdFolderView *v) {
+    return is_icon_mode(v->mode) && (v->place == XD_PLACE_COMPUTER || v->groups);
+}
+
+/* XP's headings: My Computer by kind of drive; folders by the sort
+ * column (initial letter, type, size class, or how long ago). */
+static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
+    g_free(it->group);
+    it->group = nullptr;
+    it->group_rank = 0;
+    if (v->place == XD_PLACE_COMPUTER) {
+        static const struct {
+            const char *kind, *group;
+        } kinds[] = {
+            {"File Folder", "Files Stored on This Computer"},
+            {"Local Disk", "Hard Disk Drives"},
+            {"Removable Disk", "Devices with Removable Storage"},
+            {"CD Drive", "Devices with Removable Storage"},
+            {"Network Drive", "Network Drives"},
+        };
+        it->group_rank = (int)G_N_ELEMENTS(kinds);
+        it->group = g_strdup("Other");
+        for (size_t k = 0; k < G_N_ELEMENTS(kinds); k++) {
+            if (g_strcmp0(it->type_desc, kinds[k].kind) == 0) {
+                g_free(it->group);
+                it->group = g_strdup(kinds[k].group);
+                it->group_rank = k >= 3 ? (int)k - 1 : (int)k; /* CDs with removables */
+                break;
+            }
+        }
+        return;
+    }
+    switch (v->sort) {
+    case XD_SORT_TYPE:
+        it->group = g_strdup(it->type_desc != nullptr ? it->type_desc : "");
+        return;
+    case XD_SORT_SIZE: {
+        static const struct {
+            guint64 below;
+            const char *name;
+        } sizes[] = {
+            {10 * 1024, "Tiny"},
+            {100 * 1024, "Small"},
+            {1024 * 1024, "Medium"},
+            {16 * 1024 * 1024, "Large"},
+            {G_MAXUINT64, "Huge"},
+        };
+        if (it->is_dir) {
+            it->group = g_strdup("Folders");
+            return;
+        }
+        for (size_t k = 0; k < G_N_ELEMENTS(sizes); k++) {
+            if (it->size < sizes[k].below) {
+                it->group = g_strdup(sizes[k].name);
+                it->group_rank = (int)k + 1;
+                return;
+            }
+        }
+        return;
+    }
+    case XD_SORT_MODIFIED: {
+        /* Newest groups last, as the dates sort; descending flips both. */
+        static const char *const ages[] = {"A Long Time Ago", "Earlier This Year", "Last Month",
+                                           "Earlier This Month", "Last Week", "Earlier This Week",
+                                           "Yesterday", "Today"};
+        GDateTime *t = g_date_time_new_from_unix_local(it->mtime);
+        int rank = 0;
+        if (t != nullptr && now != nullptr) {
+            int y = g_date_time_get_year(now), ty = g_date_time_get_year(t);
+            int doy = g_date_time_get_day_of_year(now), tdoy = g_date_time_get_day_of_year(t);
+            int days = (y - ty) * 365 + (doy - tdoy);
+            int dow = g_date_time_get_day_of_week(now) - 1; /* Monday 0 */
+            int m = g_date_time_get_month(now), tm = g_date_time_get_month(t);
+            if (days <= 0)
+                rank = 7;
+            else if (days == 1)
+                rank = 6;
+            else if (days <= dow)
+                rank = 5;
+            else if (days <= dow + 7)
+                rank = 4;
+            else if (y == ty && m == tm)
+                rank = 3;
+            else if ((y == ty && m - tm == 1) || (y - ty == 1 && m == 1 && tm == 12))
+                rank = 2;
+            else if (y == ty)
+                rank = 1;
+        }
+        if (t != nullptr)
+            g_date_time_unref(t);
+        it->group = g_strdup(ages[rank]);
+        it->group_rank = rank;
+        return;
+    }
+    case XD_SORT_NAME:
+    case XD_SORT_COUNT:
+        break;
+    }
+    /* By name: the initial letter. */
+    gunichar c = g_utf8_get_char_validated(it->name, -1);
+    if (c != (gunichar)-1 && c != (gunichar)-2 && g_unichar_isalpha(c)) {
+        char buf[8] = {0};
+        g_unichar_to_utf8(g_unichar_toupper(c), buf);
+        it->group = g_strdup(buf);
+    } else {
+        it->group = g_strdup("Other");
+        it->group_rank = -1;
+    }
+}
+
+static int compare_groups(const XdFolderView *v, const item *a, const item *b) {
+    int c = (a->group_rank > b->group_rank) - (a->group_rank < b->group_rank);
+    if (c == 0 && v->place != XD_PLACE_COMPUTER && v->sort != XD_SORT_SIZE &&
+        v->sort != XD_SORT_MODIFIED)
+        c = g_utf8_collate(a->group != nullptr ? a->group : "", b->group != nullptr ? b->group : "");
+    return v->place != XD_PLACE_COMPUTER && v->desc ? -c : c;
+}
+
 static int compare_items(gconstpointer pa, gconstpointer pb, gpointer data) {
     const item *a = *(const item *const *)pa;
     const item *b = *(const item *const *)pb;
     const XdFolderView *v = data;
+    if (v->grouped) {
+        int g = compare_groups(v, a, b);
+        if (g != 0)
+            return g;
+    }
     if (v->place == XD_PLACE_COMPUTER)
         return a->order - b->order;
     /* Folders first, always, as in Windows. */
@@ -296,13 +444,19 @@ static void layout_contents(XdFolderView *v);
 
 static void refilter(XdFolderView *v) {
     g_ptr_array_set_size(v->shown, 0);
+    v->grouped = wants_groups(v);
+    GDateTime *now = v->grouped ? g_date_time_new_now_local() : nullptr;
     for (guint i = 0; i < v->all->len; i++) {
         item *it = g_ptr_array_index(v->all, i);
+        if (v->grouped)
+            set_group(v, it, now);
         if (v->show_hidden || !it->hidden)
             g_ptr_array_add(v->shown, it);
         else
             it->selected = FALSE;
     }
+    if (now != nullptr)
+        g_date_time_unref(now);
     g_ptr_array_sort_with_data(v->shown, compare_items, v);
     if (v->focus >= (int)v->shown->len)
         v->focus = (int)v->shown->len - 1;
@@ -342,6 +496,41 @@ static void configure(GtkAdjustment *a, double page, double upper) {
     gtk_adjustment_configure(a, value, 0.0, upper, ROW_H * 2.0, page * 0.9, page);
 }
 
+static void clear_headings(XdFolderView *v) {
+    for (guint i = 0; i < v->headings->len; i++)
+        g_free(g_array_index(v->headings, heading, i).text);
+    g_array_set_size(v->headings, 0);
+}
+
+/* The icon views in groups: each under its heading, starting a new row. */
+static void layout_groups(XdFolderView *v) {
+    int n = (int)v->shown->len;
+    g_array_set_size(v->rects, (guint)n);
+    clear_headings(v);
+    int y = PAD, col = 0;
+    const char *current = nullptr;
+    for (int i = 0; i < n; i++) {
+        item *it = g_ptr_array_index(v->shown, (guint)i);
+        const char *g = it->group != nullptr ? it->group : "";
+        if (current == nullptr || strcmp(g, current) != 0) {
+            if (current != nullptr)
+                y += (col > 0 ? v->cell_h : 0) + GROUP_GAP;
+            heading hd = {y, g_strdup(g)};
+            g_array_append_val(v->headings, hd);
+            y += GROUP_H;
+            col = 0;
+            current = g;
+        }
+        g_array_index(v->rects, GdkRectangle, i) =
+            (GdkRectangle){PAD + col * v->cell_w, y, v->cell_w, v->cell_h};
+        if (++col == v->cols) {
+            col = 0;
+            y += v->cell_h;
+        }
+    }
+    v->content_h = y + (col > 0 ? v->cell_h : 0) + PAD;
+}
+
 static void layout_contents(XdFolderView *v) {
     int w = widget_w(v);
     int h = widget_h(v);
@@ -360,6 +549,8 @@ static void layout_contents(XdFolderView *v) {
         v->rows = (n + v->cols - 1) / v->cols;
         v->content_w = w;
         v->content_h = PAD * 2 + v->rows * v->cell_h;
+        if (v->grouped)
+            layout_groups(v);
         break;
     case XD_VIEW_LIST: {
         /* Windows' List view fills columns top to bottom and scrolls
@@ -415,6 +606,8 @@ static GdkRectangle item_rect(const XdFolderView *v, int i) {
     case XD_VIEW_COUNT:
         break;
     }
+    if (v->grouped && i >= 0 && (guint)i < v->rects->len)
+        return g_array_index(v->rects, GdkRectangle, i);
     return (GdkRectangle){PAD + (i % v->cols) * v->cell_w, PAD + (i / v->cols) * v->cell_h,
                           v->cell_w, v->cell_h};
 }
@@ -444,6 +637,14 @@ static int index_at(XdFolderView *v, double wx, double wy) {
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
     case XD_VIEW_TILES: {
+        if (v->grouped) {
+            for (guint k = 0; k < v->rects->len; k++) {
+                GdkRectangle r = g_array_index(v->rects, GdkRectangle, k);
+                if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+                    i = (int)k;
+            }
+            break;
+        }
         int col = ifloor((x - PAD) / v->cell_w);
         int row = ifloor((y - PAD) / v->cell_h);
         if (col >= 0 && col < v->cols && row >= 0)
@@ -689,6 +890,33 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
     }
 }
 
+/* XP's group heading: bold, in the selection colour, over a line that
+ * fades out to the right. */
+static void draw_heading(XdFolderView *v, cairo_t *cr, const heading *hd, int w, const colors *c) {
+    PangoLayout *l = gtk_widget_create_pango_layout(GTK_WIDGET(v), hd->text);
+    PangoFontDescription *fd = pango_font_description_copy(
+        pango_context_get_font_description(pango_layout_get_context(l)));
+    pango_font_description_set_weight(fd, PANGO_WEIGHT_BOLD);
+    pango_layout_set_font_description(l, fd);
+    pango_font_description_free(fd);
+    int tw = 0, th = 0;
+    pango_layout_get_pixel_size(l, &tw, &th);
+    set_color(cr, c->sel_bg);
+    cairo_move_to(cr, PAD + 4, hd->y + GROUP_H - 6 - th);
+    pango_cairo_show_layout(cr, l);
+    g_object_unref(l);
+    double ly = hd->y + GROUP_H - 3.5;
+    cairo_pattern_t *p = cairo_pattern_create_linear(PAD, 0, PAD + MIN(w - 2 * PAD, 500), 0);
+    cairo_pattern_add_color_stop_rgba(p, 0, c->sel_bg.red, c->sel_bg.green, c->sel_bg.blue, 1);
+    cairo_pattern_add_color_stop_rgba(p, 1, c->sel_bg.red, c->sel_bg.green, c->sel_bg.blue, 0);
+    cairo_set_source(cr, p);
+    cairo_set_line_width(cr, 1);
+    cairo_move_to(cr, PAD, ly);
+    cairo_line_to(cr, PAD + MIN(w - 2 * PAD, 500), ly);
+    cairo_stroke(cr);
+    cairo_pattern_destroy(p);
+}
+
 static void draw_header(XdFolderView *v, cairo_t *cr, const colors *c) {
     static const char *const folder_titles[XD_SORT_COUNT] = {"Name", "Size", "Type",
                                                              "Date Modified"};
@@ -757,6 +985,8 @@ static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cr) {
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
     case XD_VIEW_TILES:
+        if (v->grouped)
+            break; /* all, culled below */
         first = MAX(0, ifloor((oy - PAD) / v->cell_h)) * v->cols;
         last = MIN(n - 1, (ifloor((oy + h) / v->cell_h) + 1) * v->cols + v->cols - 1);
         break;
@@ -770,8 +1000,21 @@ static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cr) {
         cairo_clip(cr);
     }
     cairo_translate(cr, -ox, -oy);
-    for (int i = first; i <= last; i++)
+    if (v->grouped) {
+        for (guint k = 0; k < v->headings->len; k++) {
+            const heading *hd = &g_array_index(v->headings, heading, k);
+            if (hd->y + GROUP_H >= oy && hd->y <= oy + h)
+                draw_heading(v, cr, hd, w, &c);
+        }
+    }
+    for (int i = first; i <= last; i++) {
+        if (v->grouped) {
+            GdkRectangle r = item_rect(v, i);
+            if (r.y + r.height < oy || r.y > oy + h)
+                continue;
+        }
         draw_item(v, cr, i, &c, has_focus);
+    }
     cairo_restore(cr);
 
     if (v->banding) {
@@ -898,6 +1141,19 @@ static void load_drives(XdFolderView *v) {
 }
 
 static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data);
+static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data);
+
+/* The Recycle Bin lists each trash in turn: true if another one started. */
+static gboolean list_next_trash(XdFolderView *v) {
+    if (v->more_listed == nullptr || v->more_listed->len == 0)
+        return FALSE;
+    GFile *dir = g_object_ref(g_ptr_array_index(v->more_listed, 0));
+    g_ptr_array_remove_index(v->more_listed, 0);
+    g_file_enumerate_children_async(dir, ATTRIBUTES, G_FILE_QUERY_INFO_NONE, G_PRIORITY_DEFAULT,
+                                    v->cancel, enumerate_ready, v);
+    g_object_unref(dir);
+    return TRUE;
+}
 
 static void request_more(GFileEnumerator *e, XdFolderView *v) {
     g_file_enumerator_next_files_async(e, BATCH, G_PRIORITY_DEFAULT, v->cancel, next_files_ready,
@@ -922,7 +1178,8 @@ static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data) {
     XdFolderView *v = data;
     if (infos == nullptr) {
         g_object_unref(e);
-        loading_done(v);
+        if (!list_next_trash(v))
+            loading_done(v);
         return;
     }
     GFile *dir = g_file_enumerator_get_container(e);
@@ -939,6 +1196,13 @@ static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data) {
     if (e == nullptr) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
             XdFolderView *v = data;
+            /* Another drive's trash that went away: list the rest. */
+            if (v->place == XD_PLACE_TRASH && !g_file_equal(G_FILE(src), v->listed)) {
+                if (!list_next_trash(v))
+                    loading_done(v);
+                g_error_free(err);
+                return;
+            }
             g_signal_emit(v, signals[SIG_ERROR], 0, err->message);
             loading_done(v);
         }
@@ -961,6 +1225,11 @@ static void start_loading(XdFolderView *v) {
         load_drives(v);
         loading_done(v);
         return;
+    }
+    g_clear_pointer(&v->more_listed, g_ptr_array_unref);
+    if (v->place == XD_PLACE_TRASH) {
+        v->more_listed = xd_trash_dirs();
+        g_ptr_array_remove_index(v->more_listed, 0); /* the home one is `listed` */
     }
     g_file_enumerate_children_async(v->listed, ATTRIBUTES, G_FILE_QUERY_INFO_NONE,
                                     G_PRIORITY_DEFAULT, v->cancel, enumerate_ready, v);
@@ -1525,6 +1794,10 @@ static void folder_view_finalize(GObject *obj) {
     XdFolderView *v = XD_FOLDER_VIEW(obj);
     g_ptr_array_unref(v->shown);
     g_ptr_array_unref(v->all);
+    g_clear_pointer(&v->more_listed, g_ptr_array_unref);
+    clear_headings(v);
+    g_array_unref(v->headings);
+    g_array_unref(v->rects);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->finalize(obj);
 }
 
@@ -1576,6 +1849,8 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
 static void xd_folder_view_init(XdFolderView *v) {
     v->all = g_ptr_array_new_with_free_func(item_free);
     v->shown = g_ptr_array_new();
+    v->rects = g_array_new(FALSE, TRUE, sizeof(GdkRectangle));
+    v->headings = g_array_new(FALSE, TRUE, sizeof(heading));
     v->mode = XD_VIEW_ICONS;
     v->thumb = XD_THUMB_DEFAULT;
     v->focus = -1;
@@ -1658,7 +1933,10 @@ void xd_folder_view_set_mode(XdFolderView *v, XdViewMode mode) {
     v->mode = mode;
     if (v->hadj != nullptr)
         gtk_adjustment_set_value(v->hadj, 0);
-    layout_contents(v);
+    if (wants_groups(v) != v->grouped)
+        refilter(v); /* in groups or out of them: another order */
+    else
+        layout_contents(v);
     ensure_visible(v, v->focus);
     gtk_widget_queue_draw(GTK_WIDGET(v));
 }
@@ -1684,6 +1962,13 @@ void xd_folder_view_set_sort(XdFolderView *v, XdSortColumn column, gboolean desc
 
 XdSortColumn xd_folder_view_get_sort(XdFolderView *v) { return v->sort; }
 gboolean xd_folder_view_get_sort_descending(XdFolderView *v) { return v->desc; }
+
+void xd_folder_view_set_groups(XdFolderView *v, gboolean groups) {
+    v->groups = groups;
+    refilter(v);
+}
+
+gboolean xd_folder_view_get_groups(XdFolderView *v) { return v->groups; }
 
 void xd_folder_view_set_show_hidden(XdFolderView *v, gboolean show) {
     v->show_hidden = show;
