@@ -204,6 +204,20 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
         if (xd_str_eq_nocase(key, XD_STR("FlatMenus")))
             return parse_bool(value, &s->flat_menus) ||
                    reject(ctx, section, key, "expected a boolean");
+        if (xd_str_eq_nocase(key, XD_STR("LunaColor"))) {
+            static const char *const variants[] = {
+                [XD_LUNA_BLUE] = "NormalColor",
+                [XD_LUNA_OLIVE] = "HomeStead",
+                [XD_LUNA_SILVER] = "Metallic",
+            };
+            for (size_t i = XD_LUNA_BLUE; i < XD_ARRAY_LEN(variants); i++) {
+                if (xd_str_eq_nocase(value, xd_str_from_cstr(variants[i]))) {
+                    s->luna_color = (xd_luna_color)i;
+                    return true;
+                }
+            }
+            return reject(ctx, section, key, "expected NormalColor, HomeStead or Metallic");
+        }
         return reject(ctx, section, key, "unknown key");
     }
 

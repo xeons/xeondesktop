@@ -46,7 +46,21 @@ typedef struct modern_palette {
 
 static const modern_palette *pal(const xd_theme *t);
 
-static xd_rgba modern_dialog_color(const xd_theme *t) { return xd_rgba_hex(pal(t)->dialog); }
+/* Olive Green and Silver: the dialog, menu and selection colours are the
+ * variant's system colours, which its scheme file carries; Blue keeps the
+ * palette (the same values, as measured). */
+static bool variant(const xd_theme *t) {
+    return t->scheme.luna_color == XD_LUNA_OLIVE || t->scheme.luna_color == XD_LUNA_SILVER;
+}
+
+/* A palette colour (Blue's) in the theme's colour variant. */
+static xd_rgba vary(const xd_theme *t, uint32_t rgb) {
+    return xd_rgba_hex(xd_luna_variant_rgb(t, true, rgb));
+}
+
+static xd_rgba modern_dialog_color(const xd_theme *t) {
+    return variant(t) ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_rgba_hex(pal(t)->dialog);
+}
 
 
 
@@ -128,10 +142,19 @@ static void modern_menu_palette(const xd_theme *t, xd_menu_palette *p) {
         .disabled_emboss = none,
         .separator_dark = xd_rgba_hex(m->menu_separator),
         .separator_light = none,
-        .banner_top = xd_rgba_hex(m->banner_top),
-        .banner_bottom = xd_rgba_hex(m->banner_bottom),
+        .banner_top = vary(t, m->banner_top),
+        .banner_bottom = vary(t, m->banner_bottom),
         .banner_text = xd_rgba_hex(0xFFFFFF),
     };
+    if (variant(t)) {
+        p->background = xd_sys(t, XD_COLOR_MENU);
+        p->border = xd_sys(t, XD_COLOR_BUTTON_SHADOW);
+        p->text = xd_sys(t, XD_COLOR_MENU_TEXT);
+        p->hilight = xd_sys(t, XD_COLOR_MENU_HILIGHT);
+        p->hilight_text = xd_sys(t, XD_COLOR_HILIGHT_TEXT);
+        p->disabled_text = xd_sys(t, XD_COLOR_GRAY_TEXT);
+        p->separator_dark = xd_sys(t, XD_COLOR_BUTTON_SHADOW);
+    }
 }
 
 static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
@@ -153,8 +176,8 @@ static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
         .menu_hot = xd_rgba_hex(m->menu_hilight),
         .menu_hot_fg = xd_rgba_hex(m->menu_hilight_text),
         .menubar_bg = xd_rgba_hex(m->dialog),
-        .title_bg = xd_rgba_hex(m->caption_active.rgb[1]),
-        .title_bg2 = xd_rgba_hex(m->caption_active.rgb[m->caption_active.n - 1]),
+        .title_bg = vary(t, m->caption_active.rgb[1]),
+        .title_bg2 = vary(t, m->caption_active.rgb[m->caption_active.n - 1]),
         .title_fg = xd_rgba_hex(m->title_active),
         .face = xd_rgba_hex(m->dialog),
         .field_border = xd_rgba_hex(0x7F9DB9),
@@ -165,12 +188,25 @@ static void modern_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
         .button_focus = xd_rgba_hex(m->button_focus),
         .check_border = xd_rgba_hex(m->check_border),
         .check_mark = xd_rgba_hex(m->check_mark),
-        .thumb_top = xd_rgba_hex(0xC8D6FB),
-        .thumb_bottom = xd_rgba_hex(0xB0C8F8),
+        .thumb_top = vary(t, 0xC8D6FB),
+        .thumb_bottom = vary(t, 0xB0C8F8),
         .track = xd_rgba_hex(0xF3F1EC),
         .tab_border = xd_rgba_hex(0x919B9C),
         .tab_hot = xd_rgba_hex(0xFFC83C),
     };
+    if (variant(t)) {
+        c->bg = c->face = xd_sys(t, XD_COLOR_BUTTON_FACE);
+        c->disabled = xd_sys(t, XD_COLOR_GRAY_TEXT);
+        c->selected_bg = xd_sys(t, XD_COLOR_HILIGHT);
+        c->selected_fg = xd_sys(t, XD_COLOR_HILIGHT_TEXT);
+        c->menu_bg = xd_sys(t, XD_COLOR_MENU);
+        c->menu_fg = xd_sys(t, XD_COLOR_MENU_TEXT);
+        c->menu_border = xd_sys(t, XD_COLOR_BUTTON_SHADOW);
+        c->menu_hot = xd_sys(t, XD_COLOR_MENU_HILIGHT);
+        c->menu_hot_fg = xd_sys(t, XD_COLOR_HILIGHT_TEXT);
+        c->menubar_bg = xd_sys(t, XD_COLOR_MENU_BAR);
+        c->title_fg = xd_sys(t, XD_COLOR_TITLE_TEXT);
+    }
 }
 
 #define MODERN_OPS(sym, label)                                                 \

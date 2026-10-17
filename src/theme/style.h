@@ -69,6 +69,9 @@ void xd_draw_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, xd_glyph g, xd_rgb
 void xd_layout_add_button(xd_frame_layout *l, xd_rect r, xd_frame_part part);
 xd_glyph xd_glyph_for_part(xd_frame_part part, bool maximized);
 
+/* luna.c: one of Blue's colours (0xRRGGBB) in the theme's Luna colour
+ * variant, recoloured as the frame is (unchanged for Blue). */
+uint32_t xd_luna_variant_rgb(const xd_theme *t, bool active, uint32_t rgb);
 /* luna.c: Luna's frame, caption buttons and taskbar, from measured colours. */
 xd_insets xd_luna_frame_insets(const xd_theme *t, const xd_frame *f);
 void xd_luna_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,

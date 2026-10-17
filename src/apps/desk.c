@@ -683,11 +683,74 @@ static void draw_appearance_preview(xd_widget *w, cairo_t *cr, xd_rect r, const 
                          XD_STATE_DEFAULT, "OK");
 }
 
+/* Which Windows XP style colour variant installed scheme `i` is, if any. */
+static xd_luna_color scheme_luna_color(const desk *d, size_t i) {
+    xd_settings probe;
+    xd_settings_defaults(&probe);
+    snprintf(probe.scheme, sizeof(probe.scheme), "%s", d->schemes.stems[i]);
+    xd_scheme scheme;
+    xd_settings_scheme(&probe, &scheme);
+    return scheme.luna_color;
+}
+
+/* As in XP, the Color scheme list holds the colour variants of Windows XP
+ * style (Default (blue), Olive Green, Silver) or, for the other styles, the
+ * classic schemes after the built-in Windows Standard. */
+static bool scheme_listed(const desk *d, size_t i) {
+    return (scheme_luna_color(d, i) != XD_LUNA_NONE) == (d->pending.style == XD_STYLE_LUNA);
+}
+
+/* The installed scheme shown as combo item `item`, or -1 for the built-in
+ * Windows Standard. */
+static ptrdiff_t listed_scheme(const desk *d, int item) {
+    int n = d->pending.style == XD_STYLE_LUNA ? 0 : 1;
+    for (size_t i = 0; i < d->schemes.count; i++) {
+        if (scheme_listed(d, i) && n++ == item)
+            return (ptrdiff_t)i;
+    }
+    return -1;
+}
+
+static void fill_schemes(desk *d) {
+    xd_widget_clear_items(d->scheme_combo);
+    bool luna = d->pending.style == XD_STYLE_LUNA;
+    if (!luna)
+        xd_widget_add_item(d->scheme_combo, "Windows Standard (built in)");
+    int n = luna ? 0 : 1;
+    int current = 0;
+    for (size_t i = 0; i < d->schemes.count; i++) {
+        if (!scheme_listed(d, i))
+            continue;
+        xd_widget_add_item(d->scheme_combo, d->schemes.names[i]);
+        /* A classic scheme left under Windows XP style shows as Default
+         * (blue), which is what its frames look like. */
+        if (strcmp(d->schemes.stems[i], d->pending.scheme) == 0 ||
+            (luna && current == 0 && scheme_luna_color(d, i) == XD_LUNA_BLUE))
+            current = n;
+        n++;
+    }
+    xd_widget_select(d->scheme_combo, current);
+}
+
 static void on_style(xd_widget *w, void *user) {
     desk *d = user;
     int i = xd_widget_selected(w);
-    if (i >= 0 && i < XD_STYLE_COUNT)
-        d->pending.style = (xd_visual_style)i;
+    if (i < 0 || i >= XD_STYLE_COUNT || (xd_visual_style)i == d->pending.style)
+        return;
+    bool was_luna = d->pending.style == XD_STYLE_LUNA;
+    d->pending.style = (xd_visual_style)i;
+    /* Switching between Windows XP style and the others switches scheme
+     * lists, and the scheme to the new list's first: Default (blue), or
+     * Windows Standard. */
+    if (was_luna != (d->pending.style == XD_STYLE_LUNA)) {
+        d->pending.scheme[0] = '\0';
+        ptrdiff_t first = listed_scheme(d, 0);
+        if (d->pending.style == XD_STYLE_LUNA && first >= 0)
+            snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s",
+                     d->schemes.stems[first]);
+        fill_schemes(d);
+        xd_widget_redraw(d->scheme_combo);
+    }
     xd_widget_redraw(d->appearance_preview);
     changed(d);
 }
@@ -697,11 +760,11 @@ static void on_scheme(xd_widget *w, void *user) {
     int i = xd_widget_selected(w);
     if (i < 0)
         return;
-    /* Item 0 is the built-in Windows Standard. */
-    if (i == 0)
+    ptrdiff_t k = listed_scheme(d, i);
+    if (k < 0)
         d->pending.scheme[0] = '\0';
-    else if ((size_t)(i - 1) < d->schemes.count)
-        snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s", d->schemes.stems[i - 1]);
+    else
+        snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s", d->schemes.stems[k]);
     xd_widget_redraw(d->appearance_preview);
     changed(d);
 }
@@ -732,14 +795,7 @@ static void build_appearance(desk *d) {
     xd_widget_set_page(xd_label(win, (xd_rect){20, 286, 200, 16}, "Color scheme:", 0), P);
     d->scheme_combo = xd_combo(win, (xd_rect){20, 304, 220, 21}, false, on_scheme, d);
     xd_widget_set_page(d->scheme_combo, P);
-    xd_widget_add_item(d->scheme_combo, "Windows Standard (built in)");
-    int current = 0;
-    for (size_t i = 0; i < d->schemes.count; i++) {
-        xd_widget_add_item(d->scheme_combo, d->schemes.names[i]);
-        if (strcmp(d->schemes.stems[i], d->pending.scheme) == 0)
-            current = (int)i + 1;
-    }
-    xd_widget_select(d->scheme_combo, current);
+    fill_schemes(d);
 
     xd_widget_set_page(xd_label(win, (xd_rect){20, 334, 200, 16}, "Font size:", 0), P);
     d->font_combo = xd_combo(win, (xd_rect){20, 352, 220, 21}, false, on_font_size, d);

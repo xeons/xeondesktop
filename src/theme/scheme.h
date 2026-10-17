@@ -112,6 +112,17 @@ typedef enum xd_font_smoothing : uint8_t {
     XD_SMOOTH_CLEARTYPE, /* subpixel, RGB order */
 } xd_font_smoothing;
 
+/* Windows XP style's colour variants ([Scheme] LunaColor=, named as XP's
+ * msstyles names them). A scheme with one is listed under Windows XP
+ * style rather than Windows Classic; its colours are XP's system colours
+ * for that variant, and the Luna artwork is recoloured to match. */
+typedef enum xd_luna_color : uint8_t {
+    XD_LUNA_NONE = 0, /* a classic scheme */
+    XD_LUNA_BLUE,     /* "NormalColor": Default (blue) */
+    XD_LUNA_OLIVE,    /* "HomeStead": Olive Green */
+    XD_LUNA_SILVER,   /* "Metallic": Silver */
+} xd_luna_color;
+
 typedef struct xd_scheme {
     char name[64];
     xd_rgb colors[XD_COLOR_COUNT];
@@ -123,6 +134,7 @@ typedef struct xd_scheme {
      * would put text on mixed backgrounds. */
     bool high_contrast;
     xd_font_smoothing font_smoothing;
+    xd_luna_color luna_color;
 } xd_scheme;
 
 /* The built-in "Windows Standard" scheme, used as the base for every

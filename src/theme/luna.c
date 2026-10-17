@@ -93,6 +93,100 @@ static void fill(cairo_t *cr, xd_rect r, uint32_t argb) {
     xd_fill_rect(cr, r, xd_rgba_hex(argb & 0xFFFFFF));
 }
 
+/* ---- colour variants ------------------------------------------------------------ */
+
+/* Olive Green and Silver weren't measured from a screenshot: their artwork
+ * is Blue's, recoloured so that Blue's caption colours land on the
+ * variant's. Both sets are XP's documented system colours (the schemes'
+ * ActiveTitle and GradientActiveTitle, or the inactive pair), and Blue's
+ * appear in the measured caption itself. Each pixel moves in YCbCr: its
+ * brightness is scaled about the caption colour's, and its hue turned and
+ * saturation scaled as the caption colour's are, so greys stay grey.
+ * XP's red Close button and green Start button are the same in every
+ * variant and aren't recoloured. */
+typedef struct tint {
+    bool on;
+    double y_from, y_to, k; /* Y' = y_to + k (Y - y_from) */
+    double a, b;            /* (Cb, Cr) turned and scaled: (a Cb - b Cr, b Cb + a Cr) */
+} tint;
+
+static void to_ycc(uint32_t rgb, double out[3]) {
+    double r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+    out[0] = 0.299 * r + 0.587 * g + 0.114 * b;
+    out[1] = 0.564 * (b - out[0]);
+    out[2] = 0.713 * (r - out[0]);
+}
+
+static uint32_t channel(double v) {
+    v = round(v);
+    return (uint32_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+}
+
+static uint32_t from_ycc(double y, double cb, double cr) {
+    return channel(y + 1.403 * cr) << 16 | channel(y - 0.344 * cb - 0.714 * cr) << 8 |
+           channel(y + 1.773 * cb);
+}
+
+static uint32_t hex_of(xd_rgb c) { return (uint32_t)c.r << 16 | (uint32_t)c.g << 8 | c.b; }
+
+/* Blue's caption colours (ActiveTitle, GradientActiveTitle; the inactive
+ * pair), as measured in luna_data.h. */
+enum : uint32_t {
+    BLUE_ACTIVE = 0x0054E3,
+    BLUE_ACTIVE_LIGHT = 0x3D95FF,
+    BLUE_INACTIVE = 0x7A96DF,
+    BLUE_INACTIVE_LIGHT = 0x9DB9EB,
+};
+
+static tint tint_for(const xd_theme *t, bool active) {
+    xd_luna_color v = t->scheme.luna_color;
+    if (v != XD_LUNA_OLIVE && v != XD_LUNA_SILVER)
+        return (tint){0};
+    const xd_rgb *c = t->scheme.colors;
+    double from[3], from_light[3], to[3], to_light[3];
+    to_ycc(active ? BLUE_ACTIVE : BLUE_INACTIVE, from);
+    to_ycc(active ? BLUE_ACTIVE_LIGHT : BLUE_INACTIVE_LIGHT, from_light);
+    to_ycc(hex_of(c[active ? XD_COLOR_ACTIVE_TITLE : XD_COLOR_INACTIVE_TITLE]), to);
+    to_ycc(hex_of(c[active ? XD_COLOR_GRADIENT_ACTIVE_TITLE : XD_COLOR_GRADIENT_INACTIVE_TITLE]),
+           to_light);
+    /* The variants' documented pairs are flatter than their artwork (Olive
+     * Green's inactive pair is one colour), so at least half of Blue's
+     * relief is kept. */
+    double k = (to_light[0] - to[0]) / (from_light[0] - from[0]);
+    k = k < 0.5 ? 0.5 : k > 1.5 ? 1.5 : k;
+    /* The complex ratio of the two chroma vectors: the turn and scale. */
+    double n = from[1] * from[1] + from[2] * from[2];
+    return (tint){
+        .on = true,
+        .y_from = from[0],
+        .y_to = to[0],
+        .k = k,
+        .a = (to[1] * from[1] + to[2] * from[2]) / n,
+        .b = (to[2] * from[1] - to[1] * from[2]) / n,
+    };
+}
+
+static uint32_t tinted(const tint *tn, uint32_t argb) {
+    if (!tn->on)
+        return argb;
+    double v[3];
+    to_ycc(argb & 0xFFFFFF, v);
+    double y = tn->y_to + tn->k * (v[0] - tn->y_from);
+    return (argb & 0xFF000000u) |
+           from_ycc(y, tn->a * v[1] - tn->b * v[2], tn->b * v[1] + tn->a * v[2]);
+}
+
+uint32_t xd_luna_variant_rgb(const xd_theme *t, bool active, uint32_t rgb) {
+    tint tn = tint_for(t, active);
+    return tinted(&tn, rgb & 0xFFFFFF);
+}
+
+static double luma(uint32_t rgb) {
+    double v[3];
+    to_ycc(rgb & 0xFFFFFF, v);
+    return v[0];
+}
+
 /* ---- frame ---------------------------------------------------------------------- */
 
 typedef struct frame_set {
@@ -161,7 +255,8 @@ void xd_luna_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
 
 /* The caption band, `w` logical px wide; maximized windows show it without
  * the frame's edges (Windows pushes those off screen). */
-static void caption_image(image *im, const frame_set *s, int w, bool maximized) {
+static void caption_image(image *im, const frame_set *s, const tint *tn, int w,
+                          bool maximized) {
     int skip = maximized ? BORDER : 0;
     for (int y = 0; y < CAPTION_H; y++) {
         for (int x = 0; x < w; x++) {
@@ -178,7 +273,7 @@ static void caption_image(image *im, const frame_set *s, int w, bool maximized) 
                 c = s->mid[y];
             if (maximized)
                 c |= 0xFF000000u; /* no rounded corners */
-            put(im, x, y, c);
+            put(im, x, y, tinted(tn, c));
         }
     }
 }
@@ -251,9 +346,16 @@ static bool glyph_cell(xd_frame_part part, bool maximized, int x, int y, double 
     return false;
 }
 
-static void button_image(image *im, const frame_set *s, xd_frame_part part, bool maximized,
-                         bool hot, bool pressed) {
+/* `glyph`: the glyph's colour on the (recoloured) minimize, maximize and
+ * help buttons. Close keeps its red face and white glyph; its rim and
+ * corners, blended with the caption, are recoloured with it. */
+static void button_image(image *im, const frame_set *s, const tint *tn, uint32_t glyph,
+                         xd_frame_part part, bool maximized, bool hot, bool pressed) {
     int kind = part == XD_PART_CLOSE ? 2 : part == XD_PART_MAXIMIZE ? 1 : 0;
+    const tint none = {0};
+    const tint *face_tn = part == XD_PART_CLOSE ? &none : tn;
+    if (part == XD_PART_CLOSE)
+        glyph = 0xFFFFFFFFu;
     const float (*face)[15] = s->face[kind];
     const uint32_t (*corner)[3] = s->corner[kind];
     for (int y = 0; y < BUTTON; y++) {
@@ -263,18 +365,18 @@ static void button_image(image *im, const frame_set *s, xd_frame_part part, bool
             int cy = y < 3 ? y : y > BUTTON - 4 ? BUTTON - 1 - y : -1;
             uint32_t c;
             if (cx >= 0 && cy >= 0 && (cx + cy) <= 2) {
-                c = cx == 0 && cy == 0 ? 0 : corner[cy][cx];
+                c = cx == 0 && cy == 0 ? 0 : tinted(tn, corner[cy][cx]);
             } else if (x == 0 || y == 0 || x == BUTTON - 1 || y == BUTTON - 1) {
-                c = s->border;
+                c = tinted(tn, s->border);
             } else {
-                c = face_at(face, x - 1, y - 1);
+                c = tinted(face_tn, face_at(face, x - 1, y - 1));
                 if (hot)
                     c = mix(c, 0xFFFFFFFFu, 0.22);
                 else if (pressed)
                     c = mix(c, 0xFF000000u, 0.22);
                 double cover;
                 if (glyph_cell(part, maximized, x, y, &cover))
-                    c = mix(c, 0xFFFFFFFFu, cover);
+                    c = mix(c, glyph, cover);
             }
             put(im, x, y, c);
         }
@@ -284,12 +386,22 @@ static void button_image(image *im, const frame_set *s, xd_frame_part part, bool
 void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f) {
     const frame_set *s = f->active ? &active_set : &inactive_set;
     xd_insets in = xd_luna_frame_insets(t, f);
+    tint tn = tint_for(t, f->active);
+    /* Title and glyphs: white in Blue (the inactive title a pale blue);
+     * the variant's caption text colours otherwise (dark on Silver). */
+    uint32_t text = f->active ? 0xFFFFFF : 0xD8E4F8;
+    uint32_t glyph = 0xFFFFFF;
+    if (tn.on) {
+        text = hex_of(t->scheme.colors[f->active ? XD_COLOR_TITLE_TEXT
+                                                 : XD_COLOR_INACTIVE_TITLE_TEXT]);
+        glyph = text;
+    }
 
     /* Caption band. */
     image im;
     int lw = logical(t, outer.w);
     if (image_new(&im, lw, CAPTION_H)) {
-        caption_image(&im, s, lw, f->maximized);
+        caption_image(&im, s, &tn, lw, f->maximized);
         image_paint(cr, &im, (xd_rect){outer.x, outer.y, outer.w, in.top});
     }
 
@@ -300,13 +412,13 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
         for (int i = 0; i < BORDER; i++) {
             int a = xd_tpx(t, i), b = xd_tpx(t, i + 1);
             fill(cr, (xd_rect){outer.x + a, body_top, b - a, bottom_top - body_top},
-                 s->side_left[i]);
+                 tinted(&tn, s->side_left[i]));
             fill(cr, (xd_rect){outer.x + outer.w - in.right + a, body_top, b - a,
                                bottom_top - body_top},
-                 s->side_right[i]);
+                 tinted(&tn, s->side_right[i]));
             fill(cr, (xd_rect){outer.x + in.left, bottom_top + a, outer.w - in.left - in.right,
                                b - a},
-                 s->bottom[i]);
+                 tinted(&tn, s->bottom[i]));
         }
         for (int corner = 0; corner < 2; corner++) {
             image c;
@@ -314,7 +426,7 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
                 continue;
             for (int y = 0; y < BORDER; y++) {
                 for (int x = 0; x < BORDER; x++)
-                    put(&c, x, y, corner == 0 ? s->bl[y][x] : s->br[y][x]);
+                    put(&c, x, y, tinted(&tn, corner == 0 ? s->bl[y][x] : s->br[y][x]));
             }
             int cx = corner == 0 ? outer.x : outer.x + outer.w - in.right;
             image_paint(cr, &c, (xd_rect){cx, bottom_top, in.left, in.bottom});
@@ -330,29 +442,30 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
         image b;
         if (!image_new(&b, BUTTON, BUTTON))
             continue;
-        button_image(&b, s, part, f->maximized, hot, pressed);
+        button_image(&b, s, &tn, 0xFF000000u | glyph, part, f->maximized, hot, pressed);
         image_paint(cr, &b, l.button_rects[i]);
     }
 
-    /* The window's icon (a generic window without one), then the title in
-     * white with XP's shadow. */
+    /* The window's icon (a generic window without one), then the title,
+     * with XP's shadow behind light text. */
     xd_rect ic = l.icon;
     if (f->icon != nullptr) {
         xd_style_task_icon(t, cr, f->icon, ic.x, ic.y);
     } else {
         xd_fill_rect(cr, ic, xd_rgba_hex(0xFFFFFF));
-        xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)}, xd_rgba_hex(0x2D63D8));
+        xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)},
+                     xd_rgba_hex(tinted(&tn, 0x2D63D8)));
     }
     static const xd_font_spec title_font = {
         .family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 10, .bold = true};
     xd_text_style st = {
         .font = &title_font,
         .scale = t->scale,
-        .color = xd_rgba_hex(f->active ? 0xFFFFFF : 0xD8E4F8),
+        .color = xd_rgba_hex(text),
         .align = XD_ALIGN_START,
         .ellipsize = true,
-        .shadow = f->active,
-        .shadow_color = xd_rgba_hex(0x0A1883),
+        .shadow = f->active && luma(text) > 128,
+        .shadow_color = xd_rgba_hex(tinted(&tn, 0x0A1883)),
         .smoothing = t->scheme.font_smoothing,
     };
     xd_draw_text(cr, l.title, f->title, &st);
@@ -362,17 +475,24 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
 
 int xd_luna_taskbar_height(const xd_theme *t) { return xd_tpx(t, 30); }
 
+/* Task button and clock text: white, or black where a variant makes the
+ * taskbar light (Silver). */
+static xd_rgba bar_text(const tint *tn) {
+    return xd_rgba_hex(luma(tinted(tn, luna_task_normal_mid[12])) > 150 ? 0x000000 : 0xFFFFFF);
+}
+
 void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
     /* XP's 30 rows from the rim facing the desktop, stretched across a
      * taller (or side) taskbar. */
     bool side = edge == XD_EDGE_LEFT || edge == XD_EDGE_RIGHT;
     int across = side ? r.w : r.h;
     int natural = xd_tpx(t, 30);
+    tint tn = tint_for(t, true);
     for (int i = 0; i < 30; i++) {
         int a = across == natural ? xd_tpx(t, i) : i * across / 30;
         int b = across == natural ? xd_tpx(t, i + 1) : (i + 1) * across / 30;
         if (b > a)
-            fill(cr, xd_style_rim_line(r, edge, a, b - a), luna_taskbar[i]);
+            fill(cr, xd_style_rim_line(r, edge, a, b - a), tinted(&tn, luna_taskbar[i]));
     }
 }
 
@@ -399,6 +519,7 @@ int xd_luna_start_button_width(const xd_theme *t, [[maybe_unused]] cairo_t *cr) 
 
 void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
     enum { LEFT = 8, RIGHT = 23 };
+    tint tn = tint_for(t, true);
     image im;
     int w = logical(t, r.w);
     if (image_new(&im, w, 30)) {
@@ -418,6 +539,12 @@ void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_
                     c = mix(c, 0xFF000000u, 0.18);
                 else if (green && (state & XD_STATE_HOT))
                     c = mix(c, 0xFFFFFFFFu, 0.12);
+                /* The taskbar showing at its rounded right end takes the
+                 * variant's colour; the green button doesn't. */
+                uint32_t b8 = c & 0xFF;
+                bool blue = b8 > ((c >> 8) & 0xFF) + 8 && b8 > ((c >> 16) & 0xFF) + 8;
+                if (blue)
+                    c = tinted(&tn, c);
                 put(&im, x, y, c);
             }
         }
@@ -435,6 +562,7 @@ void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_
 void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                               const char *label, cairo_surface_t *window_icon) {
     bool pressed = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
+    tint tn = tint_for(t, true);
     image im;
     int w = logical(t, r.w);
     if (image_new(&im, w, TASK_H)) {
@@ -449,6 +577,7 @@ void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t
                                 : luna_task_normal_right[y][x - (w - 5)];
                 else
                     c = pressed ? luna_task_pressed_mid[y] : luna_task_normal_mid[y];
+                c = tinted(&tn, c);
                 /* Flashing buttons turn orange, keeping the shading. */
                 if (!pressed && (state & XD_STATE_FLASH))
                     c = mix(c, 0xFFF59A2Cu, 0.88);
@@ -463,13 +592,14 @@ void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t
     int ix = r.x + xd_tpx(t, 10);
     int iy = r.y + (r.h - icon) / 2;
     xd_style_task_icon(t, cr, window_icon, ix, iy);
-    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_START);
+    xd_text_style st = xd_text(t, XD_FONT_MENU, bar_text(&tn), XD_ALIGN_START);
     int tx = ix + icon + xd_tpx(t, 4);
     xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx - xd_tpx(t, 6), r.h}, label, &st);
 }
 
 void xd_luna_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock) {
     enum { LEFT = 5 };
+    tint tn = tint_for(t, true);
     image im;
     int w = logical(t, r.w);
     if (image_new(&im, w, 30)) {
@@ -478,12 +608,12 @@ void xd_luna_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *cl
                 uint32_t c = x < LEFT ? luna_tray_left[y][x]
                                       : mix(luna_tray_a[y], luna_tray_b[y],
                                             (x - LEFT) / (double)XD_MAX(w - LEFT - 1, 1));
-                put(&im, x, y, c);
+                put(&im, x, y, tinted(&tn, c));
             }
         }
         image_paint(cr, &im, r);
     }
-    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_END);
+    xd_text_style st = xd_text(t, XD_FONT_MENU, bar_text(&tn), XD_ALIGN_END);
     xd_draw_text(cr, xd_rect_inset4(r, xd_tpx(t, 10), 0, xd_tpx(t, 13), 0), clock, &st);
 }
 

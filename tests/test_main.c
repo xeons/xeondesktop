@@ -128,22 +128,97 @@ static void test_scheme(void) {
     xd_strbuf_free(&err);
 }
 
+static bool load_shipped_scheme(const char *stem, xd_scheme *s) {
+    xd_strbuf path = {0};
+    xd_strbuf_appendf(&path, "%s/data/schemes/%s.ini", XD_SOURCE_ROOT, stem);
+    xd_strbuf err = {0};
+    bool ok = xd_scheme_load(xd_strbuf_cstr(&path), s, &err);
+    if (!ok)
+        fprintf(stderr, "%s: %s\n", stem, xd_strbuf_cstr(&err));
+    xd_strbuf_free(&err);
+    xd_strbuf_free(&path);
+    return ok;
+}
+
+static bool rgb_is(xd_rgb c, uint8_t r, uint8_t g, uint8_t b) {
+    return c.r == r && c.g == g && c.b == b;
+}
+
 static void test_shipped_schemes(void) {
-    static const char *const files[] = {
-        "windows-standard.ini", "windows-classic.ini", "high-contrast-black.ini",
-        "high-contrast-white.ini",
-    };
-    for (size_t i = 0; i < XD_ARRAY_LEN(files); i++) {
-        xd_strbuf path = {0};
-        xd_strbuf_appendf(&path, "%s/data/schemes/%s", XD_SOURCE_ROOT, files[i]);
-        xd_strbuf err = {0};
+    /* Every shipped scheme parses and has its own name. */
+    xd_strbuf dir = {0};
+    xd_strbuf_appendf(&dir, "%s/data/schemes", XD_SOURCE_ROOT);
+    GDir *d = g_dir_open(xd_strbuf_cstr(&dir), 0, nullptr);
+    CHECK(d != nullptr);
+    GHashTable *names = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    size_t count = 0;
+    const char *file;
+    while (d != nullptr && (file = g_dir_read_name(d)) != nullptr) {
+        if (!g_str_has_suffix(file, ".ini"))
+            continue;
+        char *stem = g_strndup(file, strlen(file) - 4);
         xd_scheme s;
-        bool ok = xd_scheme_load(xd_strbuf_cstr(&path), &s, &err);
-        if (!ok)
-            fprintf(stderr, "%s: %s\n", files[i], xd_strbuf_cstr(&err));
-        CHECK(ok);
-        xd_strbuf_free(&err);
-        xd_strbuf_free(&path);
+        CHECK(load_shipped_scheme(stem, &s));
+        CHECK(g_hash_table_add(names, g_strdup(s.name)));
+        g_free(stem);
+        count++;
+    }
+    if (d != nullptr)
+        g_dir_close(d);
+    g_hash_table_destroy(names);
+    xd_strbuf_free(&dir);
+    /* XP's 22 classic schemes and Windows XP style's three colours. */
+    CHECK(count == 25);
+
+    /* Spot checks against the reference (Windows XP's registry values). */
+    static const struct {
+        const char *stem, *name;
+        xd_syscolor color;
+        uint8_t r, g, b;
+        xd_luna_color luna;
+        bool high_contrast;
+    } want[] = {
+        {.stem = "windows-standard", .name = "Windows Standard",
+         .color = XD_COLOR_ACTIVE_TITLE, .r = 10, .g = 36, .b = 106},
+        {.stem = "windows-classic", .name = "Windows Classic",
+         .color = XD_COLOR_GRADIENT_INACTIVE_TITLE, .r = 181, .g = 181, .b = 181},
+        {.stem = "brick", .name = "Brick", .color = XD_COLOR_BACKGROUND, .r = 66, .g = 0, .b = 0},
+        {.stem = "brick", .name = "Brick",
+         .color = XD_COLOR_MENU_HILIGHT, .r = 141, .g = 137, .b = 97},
+        {.stem = "desert", .name = "Desert",
+         .color = XD_COLOR_ACTIVE_TITLE, .r = 0, .g = 128, .b = 128},
+        {.stem = "eggplant", .name = "Eggplant",
+         .color = XD_COLOR_BUTTON_FACE, .r = 144, .g = 176, .b = 168},
+        {.stem = "marine", .name = "Marine (high color)",
+         .color = XD_COLOR_ACTIVE_TITLE, .r = 0, .g = 0, .b = 128},
+        {.stem = "pumpkin", .name = "Pumpkin (large)",
+         .color = XD_COLOR_ACTIVE_TITLE, .r = 215, .g = 165, .b = 47},
+        {.stem = "red-white-blue", .name = "Red, White, and Blue (VGA)",
+         .color = XD_COLOR_ACTIVE_TITLE, .r = 128, .g = 0, .b = 0},
+        {.stem = "spruce", .name = "Spruce",
+         .color = XD_COLOR_BUTTON_FACE, .r = 162, .g = 200, .b = 169},
+        {.stem = "teal", .name = "Teal (VGA)",
+         .color = XD_COLOR_BACKGROUND, .r = 0, .g = 64, .b = 64},
+        {.stem = "high-contrast-1", .name = "High Contrast #1",
+         .color = XD_COLOR_WINDOW_TEXT, .r = 255, .g = 255, .b = 0, .high_contrast = true},
+        {.stem = "high-contrast-2", .name = "High Contrast #2",
+         .color = XD_COLOR_WINDOW_TEXT, .r = 0, .g = 255, .b = 0, .high_contrast = true},
+        {.stem = "high-contrast-white", .name = "High Contrast White",
+         .color = XD_COLOR_GRAY_TEXT, .r = 0, .g = 255, .b = 0, .high_contrast = true},
+        {.stem = "luna-blue", .name = "Default (blue)",
+         .color = XD_COLOR_BUTTON_FACE, .r = 236, .g = 233, .b = 216, .luna = XD_LUNA_BLUE},
+        {.stem = "luna-olive", .name = "Olive Green",
+         .color = XD_COLOR_ACTIVE_TITLE, .r = 139, .g = 161, .b = 105, .luna = XD_LUNA_OLIVE},
+        {.stem = "luna-silver", .name = "Silver",
+         .color = XD_COLOR_BUTTON_FACE, .r = 224, .g = 223, .b = 227, .luna = XD_LUNA_SILVER},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(want); i++) {
+        xd_scheme s;
+        CHECK(load_shipped_scheme(want[i].stem, &s));
+        CHECK(strcmp(s.name, want[i].name) == 0);
+        CHECK(rgb_is(s.colors[want[i].color], want[i].r, want[i].g, want[i].b));
+        CHECK(s.luna_color == want[i].luna);
+        CHECK(s.high_contrast == want[i].high_contrast);
     }
 }
 
@@ -164,6 +239,65 @@ static bool near(uint32_t got, uint32_t want, int tol) {
             return false;
     }
     return true;
+}
+
+/* Olive Green and Silver recolour Luna's frame so its caption is the
+ * variant's ActiveTitle, keep XP's red Close button, and Blue is drawn
+ * exactly as measured. */
+static void test_luna_variants(void) {
+    static const struct {
+        const char *stem;
+        uint32_t caption; /* the caption's body colour */
+    } variants[] = {
+        {"luna-blue", 0x0054E3},
+        {"luna-olive", 0x8BA169},
+        {"luna-silver", 0xC0C0C0},
+    };
+    uint32_t close[3], minimize[3];
+    for (size_t i = 0; i < XD_ARRAY_LEN(variants); i++) {
+        xd_scheme scheme;
+        CHECK(load_shipped_scheme(variants[i].stem, &scheme));
+        xd_theme t;
+        xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
+        cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 300, 200);
+        cairo_t *cr = cairo_create(surf);
+        xd_frame f = {.title = "", .active = true, .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MINIMIZE};
+        xd_rect outer = {0, 0, 300, 200};
+        xd_theme_draw_frame(&t, cr, outer, &f);
+        /* Row 8 of the measured caption is ActiveTitle. */
+        CHECK(near(pixel(surf, 200, 8), variants[i].caption, i == 0 ? 0 : 2));
+        xd_frame_layout l;
+        xd_theme_frame_layout(&t, outer, &f, &l);
+        for (size_t b = 0; b < l.button_count; b++) {
+            uint32_t px = pixel(surf, l.button_rects[b].x + 3, l.button_rects[b].y + 10);
+            if (l.button_parts[b] == XD_PART_CLOSE)
+                close[i] = px;
+            else
+                minimize[i] = px;
+        }
+        cairo_destroy(cr);
+        cairo_surface_destroy(surf);
+    }
+    CHECK(close[1] == close[0] && close[2] == close[0]);
+    CHECK(minimize[1] != minimize[0] && minimize[2] != minimize[0]);
+
+    /* The GTK theme follows the variant's selection colour. */
+    xd_scheme olive;
+    CHECK(load_shipped_scheme("luna-olive", &olive));
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_LUNA, &olive, 1.0);
+    xd_strbuf css = {0};
+    xd_theme_gtk_css(&t, &css);
+    CHECK(strstr(xd_strbuf_cstr(&css), "@define-color theme_selected_bg_color #93a070;") !=
+          nullptr);
+    xd_strbuf_free(&css);
+
+    /* A bad LunaColor is refused. */
+    xd_scheme s;
+    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=homestead\n"), &s, nullptr));
+    CHECK(s.luna_color == XD_LUNA_OLIVE);
+    CHECK(!xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=Green\n"), &s, nullptr));
+    CHECK(s.luna_color == XD_LUNA_NONE);
 }
 
 static void test_render(void) {
@@ -636,8 +770,8 @@ static void on_css_error([[maybe_unused]] GtkCssProvider *p, [[maybe_unused]] Gt
 static void test_gtk_css(void) {
     /* Style properties (-GtkScrollbar-*) need the widget classes. */
     g_type_ensure(GTK_TYPE_SCROLLBAR);
-    static const char *const schemes[] = {"", "windows-classic", "high-contrast-black",
-                                          "high-contrast-white"};
+    static const char *const schemes[] = {"",           "windows-classic", "high-contrast-black",
+                                          "high-contrast-white", "luna-olive", "luna-silver"};
     for (int style = 0; style < XD_STYLE_COUNT; style++) {
         for (size_t k = 0; k < XD_ARRAY_LEN(schemes); k++) {
             xd_scheme scheme;
@@ -2149,6 +2283,7 @@ int main(void) {
     test_arena();
     test_scheme();
     test_shipped_schemes();
+    test_luna_variants();
     test_px();
     test_render();
     test_hit();
