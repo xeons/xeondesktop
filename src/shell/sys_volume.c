@@ -80,6 +80,10 @@ static void sink_info([[maybe_unused]] pa_context *c, const pa_sink_info *info, 
     }
     if (eol != 0 || info == nullptr)
         return;
+    /* Every change to any output lands here (streams starting and
+     * stopping): redraw only for a new volume or mute. */
+    if (v->ready && pa_cvolume_equal(&v->cv, &info->volume) && v->muted == (info->mute != 0))
+        return;
     v->cv = info->volume;
     v->muted = info->mute != 0;
     v->ready = true;

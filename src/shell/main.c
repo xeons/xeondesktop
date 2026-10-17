@@ -586,6 +586,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
         xd_settings_scheme(&shell->settings, &shell->scheme);
     if (startup || strcmp(old_wallpaper, shell->settings.wallpaper) != 0)
         load_wallpaper(shell);
+    shell->background_gen++; /* the colour or wallpaper mode may have changed */
     xd_idle_update(shell);
     xd_sleep_update(shell);
     /* Programs started from the shell get Mouse Properties' cursors (the

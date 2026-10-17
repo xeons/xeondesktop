@@ -77,6 +77,11 @@ typedef struct xd_desktop {
     bool configured;
     bool closed;
     bool dirty;
+    /* The colour and wallpaper at the buffer's size: scaling the wallpaper
+     * is the slow part, and icons redraw over it on every drag motion. */
+    cairo_surface_t *background;
+    double background_scale;
+    unsigned background_gen;
 } xd_desktop;
 
 /* Hover/press targets on a taskbar: task buttons are >= 0; Quick Launch
@@ -169,6 +174,7 @@ struct xd_shell {
     xd_settings settings;    /* desktop.ini */
     int settings_fd;
     cairo_surface_t *wallpaper; /* loaded settings.wallpaper, or nullptr */
+    unsigned background_gen;    /* bumped when settings change the desktop's background */
     const char *terminal;
 
     struct wl_display *display;

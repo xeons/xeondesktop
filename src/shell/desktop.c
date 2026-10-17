@@ -90,7 +90,53 @@ void xd_desktop_destroy(xd_desktop *d) {
         wp_fractional_scale_v1_destroy(d->fractional);
     wl_surface_destroy(d->surface);
     xd_shm_ring_finish(&d->ring);
+    if (d->background != nullptr)
+        cairo_surface_destroy(d->background);
     xd_free(d);
+}
+
+static void paint_background_now(xd_desktop *d, cairo_t *cr, int dw, int dh) {
+    xd_shell *shell = d->shell;
+    xd_rect all = {0, 0, dw, dh};
+    xd_fill_rect(cr, all, xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_BACKGROUND]));
+    xd_image_paint_wallpaper(cr, shell->wallpaper, all, shell->settings.wallpaper_mode,
+                             d->scale);
+}
+
+/* The desktop with the icons redraws on every motion of a drag over it:
+ * it keeps its background (the scaled wallpaper is the slow part). The
+ * others draw theirs only when something changed it. */
+static void paint_background(xd_desktop *d, cairo_t *cr, int dw, int dh) {
+    xd_shell *shell = d->shell;
+    xd_taskbar *first = wl_list_empty(&shell->taskbars)
+                            ? nullptr
+                            : XD_CONTAINER_OF(shell->taskbars.next, xd_taskbar, link);
+    if (first == nullptr || first->desktop != d) {
+        if (d->background != nullptr)
+            cairo_surface_destroy(d->background);
+        d->background = nullptr;
+        paint_background_now(d, cr, dw, dh);
+        return;
+    }
+    cairo_surface_t *bg = d->background;
+    if (bg == nullptr || cairo_image_surface_get_width(bg) != dw ||
+        cairo_image_surface_get_height(bg) != dh || d->background_scale != d->scale ||
+        d->background_gen != shell->background_gen) {
+        if (bg != nullptr)
+            cairo_surface_destroy(bg);
+        bg = cairo_image_surface_create(CAIRO_FORMAT_RGB24, dw, dh);
+        cairo_t *bcr = cairo_create(bg);
+        paint_background_now(d, bcr, dw, dh);
+        cairo_destroy(bcr);
+        d->background = bg;
+        d->background_scale = d->scale;
+        d->background_gen = shell->background_gen;
+    }
+    cairo_save(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_set_source_surface(cr, bg, 0, 0);
+    cairo_paint(cr);
+    cairo_restore(cr);
 }
 
 void xd_desktop_render(xd_desktop *d) {
@@ -107,10 +153,7 @@ void xd_desktop_render(xd_desktop *d) {
         return;
 
     cairo_t *cr = cairo_create(buf->surface);
-    xd_rect all = {0, 0, dw, dh};
-    xd_fill_rect(cr, all, xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_BACKGROUND]));
-    xd_image_paint_wallpaper(cr, shell->wallpaper, all, shell->settings.wallpaper_mode,
-                             d->scale);
+    paint_background(d, cr, dw, dh);
     xd_deskicons_draw(shell, d, cr);
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);

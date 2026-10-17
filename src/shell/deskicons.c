@@ -641,15 +641,27 @@ void xd_deskicons_draw(xd_shell *shell, xd_desktop *d, cairo_t *cr) {
         }
     }
     if (di->dragging) {
-        /* The selection follows the pointer, faded, until dropped. */
+        /* The selection follows the pointer, faded, until dropped. The
+         * group only as big as the selection (it's made on every motion). */
+        double dx = di->x - di->press_x, dy = di->y - di->press_y;
+        cairo_save(cr);
+        cairo_new_path(cr);
+        for (guint i = 0; i < di->icons->len; i++) {
+            const icon *ic = g_ptr_array_index(di->icons, i);
+            if (ic->selected)
+                cairo_rectangle(cr, (ic->hit.x + dx - 2) * s, (ic->hit.y + dy - 2) * s,
+                                (ic->hit.w + 4) * s, (ic->hit.h + 4) * s);
+        }
+        cairo_clip(cr);
         cairo_push_group(cr);
         for (guint i = 0; i < di->icons->len; i++) {
             icon *ic = g_ptr_array_index(di->icons, i);
             if (ic->selected)
-                draw_icon(di, &t, cr, ic, s, di->x - di->press_x, di->y - di->press_y, false);
+                draw_icon(di, &t, cr, ic, s, dx, dy, false);
         }
         cairo_pop_group_to_source(cr);
         cairo_paint_with_alpha(cr, 0.5);
+        cairo_restore(cr);
     }
     if (di->banding) {
         xd_rgba hi = xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_HILIGHT]);

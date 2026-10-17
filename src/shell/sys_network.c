@@ -160,6 +160,7 @@ static GDBusProxy *primary(network *n, char **type, GDBusProxy **ap) {
 }
 
 static void update(network *n) {
+    network was = *n;
     char *owner = n->objects != nullptr ? g_dbus_object_manager_client_get_name_owner(
                                               G_DBUS_OBJECT_MANAGER_CLIENT(n->objects))
                                         : nullptr;
@@ -186,7 +187,12 @@ static void update(network *n) {
         g_object_unref(ap);
     if (active != nullptr)
         g_object_unref(active);
-    xd_tray_changed(n->shell);
+    /* Any property of any of NetworkManager's objects lands here (access
+     * points' signals on every scan): redraw only when the icon changed. */
+    if (n->running != was.running || n->nm != was.nm || n->wifi != was.wifi ||
+        n->connected != was.connected || (n->strength + 19) / 20 != (was.strength + 19) / 20 ||
+        strcmp(n->icon, was.icon) != 0)
+        xd_tray_changed(n->shell);
 }
 
 /* ---- the icon ------------------------------------------------------------------ */

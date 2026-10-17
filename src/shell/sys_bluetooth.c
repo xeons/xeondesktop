@@ -18,6 +18,7 @@ typedef struct bluetooth {
     xd_shell *shell;
     GCancellable *cancel;
     GDBusObjectManager *objects;
+    int shown; /* what the icon last showed: -1 none, 0 off, 1 on */
 } bluetooth;
 
 typedef struct device_choice {
@@ -213,18 +214,29 @@ static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
     it->action = act_remove_icon;
 }
 
+/* Every property of every device lands here (their signal strength while
+ * discovering): redraw only when the adapter came, went or switched. */
+static void changed(bluetooth *bt) {
+    GDBusInterface *a = adapter(bt);
+    int shown = a == nullptr ? -1 : prop_b(a, "Powered");
+    if (a != nullptr)
+        g_object_unref(a);
+    if (shown == bt->shown)
+        return;
+    bt->shown = shown;
+    xd_tray_changed(bt->shell);
+}
+
 static void props_changed([[maybe_unused]] GDBusObjectManagerClient *m,
                           [[maybe_unused]] GDBusObjectProxy *o, [[maybe_unused]] GDBusProxy *i,
                           [[maybe_unused]] GVariant *c, [[maybe_unused]] const char *const *inv,
                           gpointer data) {
-    bluetooth *bt = data;
-    xd_tray_changed(bt->shell);
+    changed(data);
 }
 
 static void added_removed([[maybe_unused]] GDBusObjectManager *m, [[maybe_unused]] GDBusObject *o,
                           gpointer data) {
-    bluetooth *bt = data;
-    xd_tray_changed(bt->shell);
+    changed(data);
 }
 
 static void got_objects([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
@@ -236,7 +248,7 @@ static void got_objects([[maybe_unused]] GObject *src, GAsyncResult *res, gpoint
     g_signal_connect(m, "interface-proxy-properties-changed", G_CALLBACK(props_changed), bt);
     g_signal_connect(m, "object-added", G_CALLBACK(added_removed), bt);
     g_signal_connect(m, "object-removed", G_CALLBACK(added_removed), bt);
-    xd_tray_changed(bt->shell);
+    changed(bt);
 }
 
 static void destroy(void *data) {
@@ -271,6 +283,7 @@ void xd_sys_bluetooth_init(xd_shell *shell) {
     bluetooth *bt = g_new0(bluetooth, 1);
     bt->shell = shell;
     bt->cancel = g_cancellable_new();
+    bt->shown = -1;
     xd_tray_add_sysicon(shell, "bluetooth", &ops, bt);
     g_dbus_object_manager_client_new_for_bus(G_BUS_TYPE_SYSTEM,
                                              G_DBUS_OBJECT_MANAGER_CLIENT_FLAGS_NONE, BLUEZ, "/",
