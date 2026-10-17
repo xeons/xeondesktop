@@ -35,6 +35,8 @@ depends=(
   'libinput'   # Mouse Properties, applied by the compositor
   'libxcursor' # Mouse Properties: pointer previews
   'fontconfig' # Fonts
+  'libevdev'   # Game Controllers
+  'libnm'      # Network Connections
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
@@ -50,6 +52,8 @@ optdepends=(
   'xdg-desktop-portal-gtk: file chooser and settings portals'
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
   'accountsservice: User Accounts'
+  'bluez: Bluetooth Devices'
+  'nm-connection-editor: Network Connections > Configure and Advanced'
   'alacritty: the default terminal (Ctrl+Alt+T)'
   'networkmanager: the network icon'
   'nm-connection-editor: Open Network Connections'

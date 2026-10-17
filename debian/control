@@ -24,6 +24,8 @@ Build-Depends:
  libinput-dev,
  libxcursor-dev,
  libfontconfig-dev,
+ libevdev-dev,
+ libnm-dev,
  libpolkit-agent-1-dev,
  libpam0g-dev,
  libpulse-dev,
