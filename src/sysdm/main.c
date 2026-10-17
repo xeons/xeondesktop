@@ -29,7 +29,15 @@ GtkWidget *sysdm_label(const char *text) {
 
 GtkWidget *sysdm_group(const char *title, GtkWidget *child) {
     GtkWidget *frame = gtk_frame_new(title);
-    gtk_container_set_border_width(GTK_CONTAINER(child), 8);
+    /* A label (Device status) has margins rather than a border. */
+    if (GTK_IS_CONTAINER(child)) {
+        gtk_container_set_border_width(GTK_CONTAINER(child), 8);
+    } else {
+        gtk_widget_set_margin_start(child, 8);
+        gtk_widget_set_margin_end(child, 8);
+        gtk_widget_set_margin_top(child, 8);
+        gtk_widget_set_margin_bottom(child, 8);
+    }
     gtk_container_add(GTK_CONTAINER(frame), child);
     return frame;
 }
@@ -437,18 +445,25 @@ static void refresh_identity(sysdm *s) {
     g_free(domain);
 }
 
-/* Calls a hostname1 method; errors (no polkit agent, not allowed) are
- * shown. */
-static gboolean hostname_call(sysdm *s, const char *method, const char *value) {
-    if (s->hostname1 == nullptr) {
-        xd_message_box(GTK_WINDOW(s->window), "System Properties", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       "The host name service (systemd-hostnamed) isn't available.");
-        return FALSE;
-    }
+/* What to do once a hostname1 call is done; `ok` if it succeeded. */
+typedef void (*hostname_done)(sysdm *s, gboolean ok, gpointer data);
+
+typedef struct hostname_req {
+    sysdm *s;
+    hostname_done done;
+    gpointer data;
+} hostname_req;
+
+static void hostname_call_done(GObject *src, GAsyncResult *res, gpointer data) {
+    hostname_req *req = data;
     GError *err = nullptr;
-    GVariant *r = g_dbus_proxy_call_sync(s->hostname1, method, g_variant_new("(sb)", value, TRUE),
-                                         G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, 120000,
-                                         nullptr, &err);
+    GVariant *r = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &err);
+    if (r == nullptr && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+        g_error_free(err); /* the window is gone */
+        g_free(req);
+        return;
+    }
+    sysdm *s = req->s;
     if (r == nullptr) {
         char *msg = g_dbus_error_get_remote_error(err);
         g_dbus_error_strip_remote_error(err);
@@ -463,10 +478,31 @@ static gboolean hostname_call(sysdm *s, const char *method, const char *value) {
         g_free(text);
         g_free(msg);
         g_error_free(err);
-        return FALSE;
+    } else {
+        g_variant_unref(r);
     }
-    g_variant_unref(r);
-    return TRUE;
+    req->done(s, r != nullptr, req->data);
+    g_free(req);
+}
+
+/* Calls a hostname1 method without waiting for it: polkit's password
+ * prompt may be up for a while. Errors (no polkit agent, not allowed) are
+ * shown; then `done` runs. */
+static void hostname_call(sysdm *s, const char *method, const char *value, hostname_done done,
+                          gpointer data) {
+    if (s->hostname1 == nullptr) {
+        xd_message_box(GTK_WINDOW(s->window), "System Properties", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       "The host name service (systemd-hostnamed) isn't available.");
+        done(s, FALSE, data);
+        return;
+    }
+    hostname_req *req = g_new0(hostname_req, 1);
+    req->s = s;
+    req->done = done;
+    req->data = data;
+    g_dbus_proxy_call(s->hostname1, method, g_variant_new("(sb)", value, TRUE),
+                      G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, 120000, s->calls,
+                      hostname_call_done, req);
 }
 
 static gboolean valid_hostname(const char *name) {
@@ -482,8 +518,10 @@ static gboolean valid_hostname(const char *name) {
 
 typedef struct rename_dlg {
     sysdm *s;
+    GtkWidget *dialog;
     GtkWidget *entry;
     GtkWidget *full;
+    gboolean busy; /* renaming */
 } rename_dlg;
 
 static void on_rename_changed(GtkEditable *e, gpointer data) {
@@ -491,8 +529,21 @@ static void on_rename_changed(GtkEditable *e, gpointer data) {
     gtk_label_set_text(GTK_LABEL(r->full), gtk_entry_get_text(GTK_ENTRY(e)));
 }
 
+static void renamed(sysdm *s, gboolean ok, gpointer data) {
+    rename_dlg *r = data;
+    r->busy = FALSE;
+    gtk_widget_set_sensitive(r->dialog, TRUE);
+    if (!ok)
+        return;
+    refresh_identity(s);
+    gtk_widget_destroy(r->dialog);
+    g_free(r);
+}
+
 static void on_rename_response(GtkDialog *d, int response, gpointer data) {
     rename_dlg *r = data;
+    if (r->busy)
+        return; /* closes once the name is set */
     if (response == GTK_RESPONSE_OK) {
         const char *name = gtk_entry_get_text(GTK_ENTRY(r->entry));
         if (!valid_hostname(name)) {
@@ -503,9 +554,10 @@ static void on_rename_response(GtkDialog *d, int response, gpointer data) {
                            "hyphen.");
             return;
         }
-        if (!hostname_call(r->s, "SetStaticHostname", name))
-            return;
-        refresh_identity(r->s);
+        r->busy = TRUE;
+        gtk_widget_set_sensitive(r->dialog, FALSE);
+        hostname_call(r->s, "SetStaticHostname", name, renamed, r);
+        return;
     }
     gtk_widget_destroy(GTK_WIDGET(d));
     g_free(r);
@@ -522,6 +574,7 @@ static void on_rename(GtkButton *b, gpointer data) {
                        FALSE, FALSE, 0);
     rename_dlg *r = g_new0(rename_dlg, 1);
     r->s = s;
+    r->dialog = d;
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
@@ -779,26 +832,38 @@ static GtkWidget *build_profiles(sysdm *s) {
 
 /* ---- window --------------------------------------------------------------------- */
 
-static void apply(sysdm *s) {
-    if (s->description_dirty) {
-        if (hostname_call(s, "SetPrettyHostname",
-                          gtk_entry_get_text(GTK_ENTRY(s->description))))
-            s->description_dirty = FALSE;
-    }
+static void applied(sysdm *s, gboolean ok, gpointer data) {
+    gboolean close = GPOINTER_TO_INT(data);
+    s->applying = FALSE;
+    if (ok)
+        s->description_dirty = FALSE;
     gtk_widget_set_sensitive(s->apply, s->description_dirty);
+    if (ok && close)
+        gtk_widget_destroy(s->window);
+}
+
+/* Sets the description, if it changed; OK (`close`) closes the window
+ * once it's set. False when there's nothing to set. */
+static gboolean apply(sysdm *s, gboolean close) {
+    if (!s->description_dirty)
+        return FALSE;
+    s->applying = TRUE;
+    gtk_widget_set_sensitive(s->apply, FALSE);
+    hostname_call(s, "SetPrettyHostname", gtk_entry_get_text(GTK_ENTRY(s->description)), applied,
+                  GINT_TO_POINTER(close));
+    return TRUE;
 }
 
 static void on_response(GtkDialog *d, int response, gpointer data) {
     sysdm *s = data;
+    if (s->applying && (response == GTK_RESPONSE_APPLY || response == GTK_RESPONSE_OK))
+        return; /* still setting it */
     if (response == GTK_RESPONSE_APPLY) {
-        apply(s);
+        apply(s, FALSE);
         return;
     }
-    if (response == GTK_RESPONSE_OK) {
-        apply(s);
-        if (s->description_dirty)
-            return;
-    }
+    if (response == GTK_RESPONSE_OK && apply(s, TRUE))
+        return;
     gtk_widget_destroy(GTK_WIDGET(d));
 }
 
@@ -806,6 +871,8 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     sysdm *s = data;
     g_cancellable_cancel(s->sizing);
     g_clear_object(&s->sizing);
+    g_cancellable_cancel(s->calls);
+    g_clear_object(&s->calls);
     g_clear_object(&s->hostname1);
     g_free(s);
 }
@@ -823,6 +890,7 @@ static void open_window(GtkApplication *app) {
     }
     sysdm *s = g_new0(sysdm, 1);
     s->app = app;
+    s->calls = g_cancellable_new();
     s->hostname1 = g_dbus_proxy_new_for_bus_sync(
         G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, "org.freedesktop.hostname1",
         "/org/freedesktop/hostname1", "org.freedesktop.hostname1", nullptr, nullptr);

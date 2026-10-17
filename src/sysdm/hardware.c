@@ -64,7 +64,6 @@ static const struct {
 enum { DM_ICON, DM_NAME, DM_SYSPATH, DM_CAT, DM_NCOLS };
 
 typedef struct devmgr {
-    sysdm *s;
     GtkWidget *window;
     GtkTreeStore *store;
     GtkWidget *view;
@@ -451,12 +450,13 @@ static char *link_name(const char *syspath, const char *link) {
 }
 
 static void device_properties(devmgr *dm, const char *syspath, const char *name, int c) {
-    GtkWidget *d = nullptr;
+    /* Over Device Manager, which outlives the System Properties window
+     * that opened it. */
+    sysdm over = {.window = dm->window};
     char *title = g_strdup_printf("%s Properties", name);
-    GtkWidget *box = sysdm_dialog(dm->s, title, cats[c].icon, FALSE, nullptr);
+    GtkWidget *box = sysdm_dialog(&over, title, cats[c].icon, FALSE, nullptr);
     g_free(title);
-    d = gtk_widget_get_toplevel(box);
-    gtk_window_set_transient_for(GTK_WINDOW(d), GTK_WINDOW(dm->window));
+    GtkWidget *d = gtk_widget_get_toplevel(box);
     gtk_window_set_resizable(GTK_WINDOW(d), TRUE);
     gtk_window_set_default_size(GTK_WINDOW(d), 420, 440);
 
@@ -611,7 +611,6 @@ static GtkWidget *menu_item(GtkWidget *menu, const char *label, GCallback cb, gp
 
 void sysdm_device_manager(sysdm *s) {
     devmgr *dm = g_new0(devmgr, 1);
-    dm->s = s;
     dm->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_application(GTK_WINDOW(dm->window), s->app);
     gtk_window_set_title(GTK_WINDOW(dm->window), "Device Manager");
@@ -816,35 +815,52 @@ typedef struct power_dlg {
     GDBusProxy *proxy;
     GtkWidget *dialog;
     GSList *radios;
+    gboolean busy; /* setting the profile */
 } power_dlg;
 
-static void on_power_response(GtkDialog *d, int response, gpointer data) {
-    power_dlg *p = data;
-    if (response == GTK_RESPONSE_OK) {
-        for (GSList *l = p->radios; l != nullptr; l = l->next) {
-            if (!gtk_toggle_button_get_active(l->data))
-                continue;
-            const char *profile = g_object_get_data(l->data, "profile");
-            GError *err = nullptr;
-            GVariant *r = g_dbus_proxy_call_sync(
-                p->proxy, "org.freedesktop.DBus.Properties.Set",
-                g_variant_new("(ssv)", g_dbus_proxy_get_interface_name(p->proxy), "ActiveProfile",
-                              g_variant_new_string(profile)),
-                G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, 10000, nullptr, &err);
-            if (r == nullptr) {
-                g_dbus_error_strip_remote_error(err);
-                xd_message_box(GTK_WINDOW(d), "Power Profiles", XD_MB_ERROR, XD_MB_OK, FALSE,
-                               err->message);
-                g_error_free(err);
-                return;
-            }
-            g_variant_unref(r);
-        }
-    }
+static void power_close(power_dlg *p) {
+    gtk_widget_destroy(p->dialog);
     g_slist_free(p->radios);
     g_object_unref(p->proxy);
     g_free(p);
-    gtk_widget_destroy(GTK_WIDGET(d));
+}
+
+static void power_set(GObject *src, GAsyncResult *res, gpointer data) {
+    power_dlg *p = data;
+    GError *err = nullptr;
+    GVariant *r = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &err);
+    p->busy = FALSE;
+    gtk_widget_set_sensitive(p->dialog, TRUE);
+    if (r == nullptr) {
+        g_dbus_error_strip_remote_error(err);
+        xd_message_box(GTK_WINDOW(p->dialog), "Power Profiles", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       err->message);
+        g_error_free(err);
+        return;
+    }
+    g_variant_unref(r);
+    power_close(p);
+}
+
+static void on_power_response([[maybe_unused]] GtkDialog *d, int response, gpointer data) {
+    power_dlg *p = data;
+    if (p->busy)
+        return; /* closes once the profile is set */
+    for (GSList *l = p->radios; response == GTK_RESPONSE_OK && l != nullptr; l = l->next) {
+        if (!gtk_toggle_button_get_active(l->data))
+            continue;
+        const char *profile = g_object_get_data(l->data, "profile");
+        /* Not waiting for it: polkit may ask for a password. */
+        p->busy = TRUE;
+        gtk_widget_set_sensitive(p->dialog, FALSE);
+        g_dbus_proxy_call(p->proxy, "org.freedesktop.DBus.Properties.Set",
+                          g_variant_new("(ssv)", g_dbus_proxy_get_interface_name(p->proxy),
+                                        "ActiveProfile", g_variant_new_string(profile)),
+                          G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, 120000, nullptr,
+                          power_set, p);
+        return;
+    }
+    power_close(p);
 }
 
 static const char *profile_label(const char *id) {

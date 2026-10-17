@@ -15,6 +15,8 @@ typedef struct sysdm {
     GtkWidget *notebook;
     GtkWidget *apply;
     GDBusProxy *hostname1; /* org.freedesktop.hostname1, or nullptr */
+    GCancellable *calls;   /* hostname1 calls; cancelled when the window goes */
+    gboolean applying;     /* the description is being set */
 
     /* Network Identification */
     GtkWidget *full_name;
