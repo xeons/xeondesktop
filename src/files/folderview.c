@@ -3,6 +3,7 @@
 
 #include "../core/alloc.h"
 #include "folderview.h"
+#include "places.h"
 
 #define ATTRIBUTES                                                             \
     G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME  \
@@ -42,6 +43,8 @@ typedef struct item {
     int thumb_px;
     int name_w; /* List view: measured label width, 0 = not yet */
     gboolean selected;
+    int order;    /* My Computer: the drives' own order */
+    char *extra;  /* Tiles' third line instead of the size (a drive's free space) */
 } item;
 
 struct _XdFolderView {
@@ -51,6 +54,11 @@ struct _XdFolderView {
     GtkScrollablePolicy hpolicy, vpolicy;
 
     GFile *dir;
+    /* Special folders: My Computer lists drives; the Recycle Bin lists
+     * the trash's files folder (`listed`) under their original names. */
+    XdPlace place;
+    GFile *listed;
+    gboolean watching_drives;
     GCancellable *cancel;
     GFileMonitor *monitor;
     guint reload_source;
@@ -123,6 +131,7 @@ static void item_free(gpointer p) {
     g_free(it->size_text);
     g_free(it->date_text);
     g_free(it->thumb_path);
+    g_free(it->extra);
     xd_free(it);
 }
 
@@ -214,6 +223,8 @@ static int compare_items(gconstpointer pa, gconstpointer pb, gpointer data) {
     const item *a = *(const item *const *)pa;
     const item *b = *(const item *const *)pb;
     const XdFolderView *v = data;
+    if (v->place == XD_PLACE_COMPUTER)
+        return a->order - b->order;
     /* Folders first, always, as in Windows. */
     if (a->is_dir != b->is_dir)
         return a->is_dir ? -1 : 1;
@@ -589,7 +600,9 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         int tw = r.width - px - 22;
         draw_label_box(v, cr, it->name, tx, r.y + 8, tw, 1, PANGO_ALIGN_LEFT, sel, c, foc);
         draw_text(v, cr, it->type_desc, tx, r.y + 26, tw, 1, PANGO_ALIGN_LEFT, c->dim);
-        if (!it->is_dir)
+        if (it->extra != nullptr)
+            draw_text(v, cr, it->extra, tx, r.y + 42, tw, 1, PANGO_ALIGN_LEFT, c->dim);
+        else if (!it->is_dir)
             draw_text(v, cr, it->size_text, tx, r.y + 42, tw, 1, PANGO_ALIGN_LEFT, c->dim);
         break;
     }
@@ -623,7 +636,15 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
 }
 
 static void draw_header(XdFolderView *v, cairo_t *cr, const colors *c) {
-    static const char *const titles[XD_SORT_COUNT] = {"Name", "Size", "Type", "Date Modified"};
+    static const char *const folder_titles[XD_SORT_COUNT] = {"Name", "Size", "Type",
+                                                             "Date Modified"};
+    static const char *const computer_titles[XD_SORT_COUNT] = {"Name", "Total Size", "Type",
+                                                               "Free Space"};
+    static const char *const trash_titles[XD_SORT_COUNT] = {"Name", "Size", "Original Location",
+                                                            "Date Deleted"};
+    const char *const *titles = v->place == XD_PLACE_COMPUTER ? computer_titles
+                                : v->place == XD_PLACE_TRASH  ? trash_titles
+                                                              : folder_titles;
     int w = widget_w(v);
     set_color(cr, c->header_bg);
     cairo_rectangle(cr, 0, 0, w, HEADER_H);
@@ -750,6 +771,64 @@ static void loading_done(XdFolderView *v) {
     g_signal_emit(v, signals[SIG_SELECTION], 0);
 }
 
+/* A Recycle Bin item: its original name, the folder it came from (in the
+ * Type column) and when it was deleted (in the date column). */
+static item *trash_item(GFile *dir, GFileInfo *info) {
+    item *it = item_new(dir, info);
+    char *orig = nullptr;
+    GDateTime *deleted = nullptr;
+    if (xd_trash_item_info(it->file, &orig, &deleted)) {
+        char *base = g_path_get_basename(orig);
+        char *folder = g_path_get_dirname(orig);
+        g_free(it->name);
+        it->name = g_filename_display_name(base);
+        g_free(it->collate_key);
+        it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
+        g_free(it->type_desc);
+        it->type_desc = g_filename_display_name(folder);
+        g_free(base);
+        g_free(folder);
+    }
+    if (deleted != nullptr) {
+        it->mtime = g_date_time_to_unix(deleted);
+        g_free(it->date_text);
+        it->date_text = g_date_time_format(deleted, "%x %H:%M");
+        g_date_time_unref(deleted);
+    }
+    g_free(orig);
+    it->hidden = FALSE; /* everything in the bin is shown */
+    return it;
+}
+
+/* My Computer: the drives, with their sizes in the size and date columns. */
+static void load_drives(XdFolderView *v) {
+    GPtrArray *drives = xd_computer_drives();
+    for (guint i = 0; i < drives->len; i++) {
+        XdDrive *d = g_ptr_array_index(drives, i);
+        item *it = XD_NEW(item);
+        it->file = g_object_ref(d->root);
+        it->name = g_strdup(d->name);
+        it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
+        it->type_desc = g_strdup(d->kind);
+        it->is_dir = TRUE;
+        it->icon = d->icon != nullptr ? g_object_ref(d->icon) : nullptr;
+        it->order = (int)i;
+        it->size = d->total;
+        it->size_text = d->total > 0 ? xd_format_drive_size(d->total) : g_strdup("");
+        it->date_text = d->total > 0 ? xd_format_drive_size(d->free) : g_strdup("");
+        it->mtime = (gint64)d->free;
+        if (d->total > 0) {
+            char *free_text = xd_format_drive_size(d->free);
+            char *total_text = xd_format_drive_size(d->total);
+            it->extra = g_strdup_printf("%s free of %s", free_text, total_text);
+            g_free(free_text);
+            g_free(total_text);
+        }
+        g_ptr_array_add(v->all, it);
+    }
+    g_ptr_array_unref(drives);
+}
+
 static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data);
 
 static void request_more(GFileEnumerator *e, XdFolderView *v) {
@@ -780,7 +859,8 @@ static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data) {
     }
     GFile *dir = g_file_enumerator_get_container(e);
     for (GList *l = infos; l != nullptr; l = l->next)
-        g_ptr_array_add(v->all, item_new(dir, l->data));
+        g_ptr_array_add(v->all, v->place == XD_PLACE_TRASH ? trash_item(dir, l->data)
+                                                           : item_new(dir, l->data));
     g_list_free_full(infos, g_object_unref);
     request_more(e, v);
 }
@@ -809,8 +889,13 @@ static void start_loading(XdFolderView *v) {
     v->focus = -1;
     v->anchor = -1;
     v->cancel = g_cancellable_new();
-    g_file_enumerate_children_async(v->dir, ATTRIBUTES, G_FILE_QUERY_INFO_NONE, G_PRIORITY_DEFAULT,
-                                    v->cancel, enumerate_ready, v);
+    if (v->place == XD_PLACE_COMPUTER) {
+        load_drives(v);
+        loading_done(v);
+        return;
+    }
+    g_file_enumerate_children_async(v->listed, ATTRIBUTES, G_FILE_QUERY_INFO_NONE,
+                                    G_PRIORITY_DEFAULT, v->cancel, enumerate_ready, v);
     layout_contents(v);
     gtk_widget_queue_draw(GTK_WIDGET(v));
 }
@@ -820,6 +905,13 @@ static gboolean reload_timeout(gpointer data) {
     v->reload_source = 0;
     xd_folder_view_reload(v);
     return G_SOURCE_REMOVE;
+}
+
+static void drives_changed([[maybe_unused]] GVolumeMonitor *m, [[maybe_unused]] gpointer mount,
+                           gpointer data) {
+    XdFolderView *v = data;
+    if (v->place == XD_PLACE_COMPUTER && v->reload_source == 0)
+        v->reload_source = g_timeout_add(300, reload_timeout, v);
 }
 
 static void monitor_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GFile *file,
@@ -985,7 +1077,10 @@ static GFile *drop_folder(XdFolderView *v, GdkDragContext *ctx, int x, int y) {
     int i = index_at(v, x, y);
     item *it = item_at(v, i);
     gboolean own = gtk_drag_get_source_widget(ctx) == GTK_WIDGET(v);
-    int target = it != nullptr && it->is_dir && !(own && it->selected) ? i : -1;
+    int target = it != nullptr && it->is_dir && !(own && it->selected) &&
+                         v->place != XD_PLACE_TRASH
+                     ? i
+                     : -1;
     if (target != v->drop_index) {
         v->drop_index = target;
         gtk_widget_queue_draw(GTK_WIDGET(v));
@@ -1000,8 +1095,16 @@ static GFile *drop_folder(XdFolderView *v, GdkDragContext *ctx, int x, int y) {
 static constexpr GdkDragAction NO_ACTION = (GdkDragAction)0;
 
 static GdkDragAction drop_action(XdFolderView *v, GdkDragContext *ctx, char **uris, GFile *dest) {
-    if (dest == nullptr || uris == nullptr || uris[0] == nullptr)
+    if (dest == nullptr || uris == nullptr || uris[0] == nullptr ||
+        xd_place_of(dest) == XD_PLACE_COMPUTER)
         return NO_ACTION;
+    if (xd_place_of(dest) == XD_PLACE_TRASH) {
+        /* Into the Recycle Bin: a delete, carried as a move. */
+        if (gtk_drag_get_source_widget(ctx) == GTK_WIDGET(v) && v->place == XD_PLACE_TRASH)
+            return NO_ACTION;
+        return (gdk_drag_context_get_actions(ctx) & GDK_ACTION_MOVE) ? GDK_ACTION_MOVE
+                                                                      : GDK_ACTION_COPY;
+    }
     GdkModifierType mods = (GdkModifierType)0;
     GdkDevice *dev = gdk_drag_context_get_device(ctx);
     GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(v));
@@ -1126,6 +1229,12 @@ static int move_target(XdFolderView *v, guint key) {
                : v->mode == XD_VIEW_DETAILS
                    ? MAX((widget_h(v) - HEADER_H) / ROW_H - 1, 1)
                    : MAX(widget_h(v) / MAX(v->cell_h, 1), 1) * v->cols;
+    /* Nothing focused yet: any arrow starts at the first item, as in
+     * Windows (not one step past it). */
+    if (v->focus < 0 && (key == GDK_KEY_Up || key == GDK_KEY_Down || key == GDK_KEY_Left ||
+                         key == GDK_KEY_Right || key == GDK_KEY_Page_Up ||
+                         key == GDK_KEY_Page_Down))
+        return n > 0 ? 0 : -1;
     switch (key) {
     case GDK_KEY_Up:
         return v->focus < 0 ? 0 : f - step_down;
@@ -1283,6 +1392,11 @@ static void folder_view_dispose(GObject *obj) {
         g_clear_object(&v->vadj);
     }
     g_clear_object(&v->dir);
+    g_clear_object(&v->listed);
+    if (v->watching_drives) {
+        g_signal_handlers_disconnect_by_data(xd_computer_monitor(), v);
+        v->watching_drives = FALSE;
+    }
     forget_keep(v);
     forget_drag(v);
     g_clear_pointer(&v->cut, g_hash_table_unref);
@@ -1370,9 +1484,23 @@ void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
         g_file_monitor_cancel(v->monitor);
         g_clear_object(&v->monitor);
     }
-    v->monitor = g_file_monitor_directory(dir, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
-    if (v->monitor != nullptr)
-        g_signal_connect(v->monitor, "changed", G_CALLBACK(monitor_changed), v);
+    v->place = xd_place_of(dir);
+    g_clear_object(&v->listed);
+    v->listed = v->place == XD_PLACE_TRASH ? xd_trash_files_dir() : g_object_ref(dir);
+    if (v->place == XD_PLACE_COMPUTER) {
+        if (!v->watching_drives) {
+            GVolumeMonitor *vm = xd_computer_monitor();
+            g_signal_connect(vm, "mount-added", G_CALLBACK(drives_changed), v);
+            g_signal_connect(vm, "mount-removed", G_CALLBACK(drives_changed), v);
+            g_signal_connect(vm, "mount-changed", G_CALLBACK(drives_changed), v);
+            v->watching_drives = TRUE;
+        }
+    } else {
+        v->monitor = g_file_monitor_directory(v->listed, G_FILE_MONITOR_WATCH_MOVES, nullptr,
+                                              nullptr);
+        if (v->monitor != nullptr)
+            g_signal_connect(v->monitor, "changed", G_CALLBACK(monitor_changed), v);
+    }
     if (v->hadj != nullptr)
         gtk_adjustment_set_value(v->hadj, 0);
     if (v->vadj != nullptr)

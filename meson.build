@@ -350,6 +350,7 @@ folder_lib = static_library(
   'xdfolder',
   'src/files/fileops.c',
   'src/files/folderview.c',
+  'src/files/places.c',
   'src/files/properties.c',
   c_args: ['-D_GNU_SOURCE'],
   dependencies: [core_dep, gtk_dep, m_dep],

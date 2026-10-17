@@ -11,6 +11,7 @@
 #include "../gtkapp/gtkapp.h"
 #include "fileops.h"
 #include "folderview.h"
+#include "places.h"
 #include "properties.h"
 
 enum { COL_NAME, COL_ICON, COL_FILE, COL_LOADED, COL_COUNT };
@@ -33,6 +34,10 @@ typedef struct explorer {
     /* Menu items that need a selection, or files on the clipboard. */
     GPtrArray *need_selection;
     GPtrArray *need_clipboard;
+    /* Not for My Computer or the Recycle Bin (New, Paste, Rename...), and
+     * only for the Recycle Bin (Restore, Empty Recycle Bin). */
+    GPtrArray *folders_only;
+    GPtrArray *trash_only;
     /* Renaming in place: an entry over the item's name. `pending_rename`
      * waits for a new item to appear. */
     GtkWidget *overlay;
@@ -68,18 +73,22 @@ static void update_chrome(explorer *e) {
     GFile *dir = xd_folder_view_get_location(e->view);
     if (dir == nullptr)
         return; /* nothing loaded yet */
-    char *parse = g_file_get_parse_name(dir);
+    const char *special = xd_place_title(dir);
+    char *parse = special != nullptr ? g_strdup(special) : g_file_get_parse_name(dir);
     e->syncing = TRUE;
     gtk_entry_set_text(GTK_ENTRY(e->address), parse);
+    gtk_entry_set_icon_from_icon_name(GTK_ENTRY(e->address), GTK_ENTRY_ICON_PRIMARY,
+                                      xd_place_icon(dir));
     e->syncing = FALSE;
-    char *base = g_file_get_basename(dir);
+    char *base = special != nullptr ? nullptr : g_file_get_basename(dir);
     gtk_window_set_title(GTK_WINDOW(e->window),
                          g_file_has_parent(dir, nullptr) && base != nullptr ? base : parse);
     g_free(base);
     g_free(parse);
     gtk_widget_set_sensitive(e->back_button, e->back != nullptr);
     gtk_widget_set_sensitive(e->forward_button, e->forward != nullptr);
-    gtk_widget_set_sensitive(e->up_button, g_file_has_parent(dir, nullptr));
+    /* A drive's Up is My Computer, as in XP. */
+    gtk_widget_set_sensitive(e->up_button, special == nullptr);
     gtk_widget_set_visible(e->slider, xd_folder_view_get_mode(e->view) == XD_VIEW_THUMBNAILS);
 }
 
@@ -112,6 +121,25 @@ static void load_children(explorer *e, GtkTreeIter *iter) {
     GtkTreeIter child;
     while (gtk_tree_model_iter_children(GTK_TREE_MODEL(e->store), &child, iter))
         gtk_tree_store_remove(e->store, &child);
+    if (xd_place_of(dir) == XD_PLACE_COMPUTER) {
+        GPtrArray *drives = xd_computer_drives();
+        for (guint i = 0; i < drives->len; i++) {
+            XdDrive *d = g_ptr_array_index(drives, i);
+            const char *const *names =
+                d->icon != nullptr && G_IS_THEMED_ICON(d->icon)
+                    ? g_themed_icon_get_names(G_THEMED_ICON(d->icon))
+                    : nullptr;
+            add_folder(e, iter, &child, d->root, d->name,
+                       names != nullptr && names[0] != nullptr ? names[0] : "drive-harddisk");
+        }
+        g_ptr_array_unref(drives);
+        g_object_unref(dir);
+        return;
+    }
+    if (xd_place_of(dir) == XD_PLACE_TRASH) {
+        g_object_unref(dir);
+        return;
+    }
 
     GFileEnumerator *en = g_file_enumerate_children(
         dir, G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME
@@ -180,9 +208,14 @@ static void build_tree_roots(explorer *e) {
         add_folder(e, nullptr, &it, f, "Desktop", "user-desktop");
         g_object_unref(f);
     }
-    GFile *root = g_file_new_for_path("/");
-    add_folder(e, nullptr, &it, root, "File System", "drive-harddisk");
-    g_object_unref(root);
+    GFile *computer = xd_place_computer();
+    add_folder(e, nullptr, &it, computer, "My Computer", "computer");
+    g_object_unref(computer);
+    GFile *trash = xd_place_trash();
+    gtk_tree_store_append(e->store, &it, nullptr);
+    gtk_tree_store_set(e->store, &it, COL_NAME, "Recycle Bin", COL_ICON, xd_place_icon(trash),
+                       COL_FILE, trash, COL_LOADED, TRUE, -1);
+    g_object_unref(trash);
 }
 
 /* Selects the current folder in the tree if it's an already-loaded node. */
@@ -247,7 +280,10 @@ static void go_forward(explorer *e) {
 }
 
 static void go_up(explorer *e) {
-    GFile *parent = g_file_get_parent(xd_folder_view_get_location(e->view));
+    GFile *dir = xd_folder_view_get_location(e->view);
+    if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER)
+        return;
+    GFile *parent = xd_place_is_drive_root(dir) ? xd_place_computer() : g_file_get_parent(dir);
     if (parent != nullptr) {
         navigate(e, parent, TRUE);
         g_object_unref(parent);
@@ -260,9 +296,18 @@ static void go_home(explorer *e) {
     g_object_unref(home);
 }
 
+static GFile *current_dir(explorer *e);
+
 static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gboolean is_dir,
                          gpointer data) {
     explorer *e = data;
+    if (xd_place_of(current_dir(e)) == XD_PLACE_TRASH) {
+        /* Items in the Recycle Bin open their Properties, as in XP. */
+        GList *one = g_list_append(nullptr, file);
+        xd_properties_show(GTK_WINDOW(e->window), one);
+        g_list_free(one);
+        return;
+    }
     if (is_dir) {
         navigate(e, file, TRUE);
         return;
@@ -280,6 +325,13 @@ static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gbool
 
 static void on_address_activate(GtkEntry *entry, gpointer data) {
     explorer *e = data;
+    GFile *place = xd_place_parse(gtk_entry_get_text(entry));
+    if (place != nullptr) {
+        navigate(e, place, TRUE);
+        g_object_unref(place);
+        gtk_widget_grab_focus(GTK_WIDGET(e->view));
+        return;
+    }
     GFile *f = g_file_parse_name(gtk_entry_get_text(entry));
     GFileType type = g_file_query_file_type(f, G_FILE_QUERY_INFO_NONE, nullptr);
     if (type == G_FILE_TYPE_DIRECTORY) {
@@ -377,10 +429,13 @@ static void cb_invert([[maybe_unused]] GtkWidget *w, gpointer d) {
 /* Properties of the selection, or of the folder itself when nothing is
  * selected. */
 static void show_properties(explorer *e) {
+    /* A drive's Properties would count everything on it. */
+    if (xd_place_of(xd_folder_view_get_location(e->view)) == XD_PLACE_COMPUTER)
+        return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files == nullptr) {
         GFile *dir = xd_folder_view_get_location(e->view);
-        if (dir == nullptr)
+        if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER)
             return;
         files = g_list_append(nullptr, g_object_ref(dir));
     }
@@ -421,6 +476,36 @@ static void cb_about([[maybe_unused]] GtkWidget *w, gpointer d) {
 
 static GFile *current_dir(explorer *e) { return xd_folder_view_get_location(e->view); }
 
+static XdPlace current_place(explorer *e) { return xd_place_of(current_dir(e)); }
+
+static void after_trash_change([[maybe_unused]] GList *created, [[maybe_unused]] gpointer data) {
+    xd_trash_tidy();
+}
+
+static void restore_selected(explorer *e) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    xd_trash_restore(GTK_WINDOW(e->window), files);
+    g_list_free_full(files, g_object_unref);
+}
+
+static void empty_trash(explorer *e) {
+    GFile *dir = xd_trash_files_dir();
+    GList *files = nullptr;
+    GFileEnumerator *en = g_file_enumerate_children(dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
+                                                    G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr,
+                                                    nullptr);
+    GFileInfo *fi;
+    while (en != nullptr && (fi = g_file_enumerator_next_file(en, nullptr, nullptr)) != nullptr) {
+        files = g_list_prepend(files, g_file_get_child(dir, g_file_info_get_name(fi)));
+        g_object_unref(fi);
+    }
+    g_clear_object(&en);
+    g_object_unref(dir);
+    xd_fileop_start(GTK_WINDOW(e->window), XD_FILEOP_DELETE, files, nullptr, after_trash_change,
+                    e);
+    g_list_free_full(files, g_object_unref);
+}
+
 /* Selects what an operation made, when it's in this folder. */
 static void select_created(GList *created, gpointer data) {
     explorer *e = data;
@@ -439,6 +524,8 @@ static void select_created(GList *created, gpointer data) {
 }
 
 static void copy_or_cut(explorer *e, gboolean cut) {
+    if (current_place(e) == XD_PLACE_COMPUTER)
+        return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files == nullptr)
         return;
@@ -457,6 +544,7 @@ static void after_cut_paste(GList *created, gpointer data) {
     /* Cut files are gone once pasted: so is the clipboard's list. */
     xd_clipboard_clear_cut(e->window);
     xd_folder_view_set_cut_files(e->view, nullptr);
+    xd_trash_tidy(); /* in case they came out of the Recycle Bin */
     select_created(created, e);
 }
 
@@ -483,7 +571,7 @@ static void got_clipboard(GList *files, gboolean cut, gpointer data) {
 }
 
 static void paste_into(explorer *e, GFile *dest, gboolean shortcut) {
-    if (dest == nullptr)
+    if (dest == nullptr || xd_place_of(dest) != XD_PLACE_FOLDER)
         return;
     paste_request *r = g_new0(paste_request, 1);
     r->window = e->window;
@@ -507,9 +595,14 @@ static GFile *paste_target(explorer *e) {
 }
 
 static void delete_selected(explorer *e, gboolean permanently) {
+    XdPlace place = current_place(e);
+    if (place == XD_PLACE_COMPUTER)
+        return;
     GList *files = xd_folder_view_get_selected_files(e->view);
-    xd_fileop_start(GTK_WINDOW(e->window), permanently ? XD_FILEOP_DELETE : XD_FILEOP_TRASH,
-                    files, nullptr, nullptr, nullptr);
+    gboolean in_trash = place == XD_PLACE_TRASH;
+    xd_fileop_start(GTK_WINDOW(e->window),
+                    permanently || in_trash ? XD_FILEOP_DELETE : XD_FILEOP_TRASH, files, nullptr,
+                    in_trash ? after_trash_change : nullptr, e);
     g_list_free_full(files, g_object_unref);
 }
 
@@ -578,6 +671,8 @@ static void begin_rename(explorer *e, GFile *file) {
 }
 
 static void rename_selected(explorer *e) {
+    if (current_place(e) != XD_PLACE_FOLDER)
+        return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files != nullptr)
         begin_rename(e, files->data);
@@ -675,7 +770,7 @@ static void on_view_scrolled([[maybe_unused]] GtkAdjustment *a, gpointer data) {
 /* File > New > Folder / Text Document: made, then named in place. */
 static void new_item(explorer *e, gboolean folder) {
     GFile *dir = current_dir(e);
-    if (dir == nullptr)
+    if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER)
         return;
     char *name = folder ? xd_unique_name(dir, "New Folder", nullptr)
                         : xd_unique_name(dir, "New Text Document", ".txt");
@@ -704,6 +799,8 @@ static void new_item(explorer *e, gboolean folder) {
 }
 
 static void create_shortcut(explorer *e) {
+    if (current_place(e) != XD_PLACE_FOLDER)
+        return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     xd_fileop_start(GTK_WINDOW(e->window), XD_FILEOP_LINK, files, current_dir(e), select_created,
                     e);
@@ -717,14 +814,17 @@ static void on_files_dropped([[maybe_unused]] XdFolderView *view, char **uris, G
     for (char **u = uris; u != nullptr && *u != nullptr; u++)
         files = g_list_prepend(files, g_file_new_for_uri(*u));
     files = g_list_reverse(files);
-    XdFileOpKind kind = action == GDK_ACTION_MOVE   ? XD_FILEOP_MOVE
-                        : action == GDK_ACTION_LINK ? XD_FILEOP_LINK
-                                                    : XD_FILEOP_COPY;
+    XdFileOpKind kind = xd_place_of(folder) == XD_PLACE_TRASH ? XD_FILEOP_TRASH
+                        : action == GDK_ACTION_MOVE         ? XD_FILEOP_MOVE
+                        : action == GDK_ACTION_LINK         ? XD_FILEOP_LINK
+                                                            : XD_FILEOP_COPY;
     xd_fileop_start(GTK_WINDOW(e->window), kind, files, folder, select_created, e);
     g_list_free_full(files, g_object_unref);
 }
 
 static void cb_cut([[maybe_unused]] GtkWidget *w, gpointer d) { copy_or_cut(d, TRUE); }
+static void cb_restore([[maybe_unused]] GtkWidget *w, gpointer d) { restore_selected(d); }
+static void cb_empty_trash([[maybe_unused]] GtkWidget *w, gpointer d) { empty_trash(d); }
 static void cb_copy([[maybe_unused]] GtkWidget *w, gpointer d) { copy_or_cut(d, FALSE); }
 static void cb_paste([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
@@ -802,12 +902,20 @@ static void update_menu_items(GtkWidget *menu, gpointer data) {
     for (guint i = 0; i < e->need_clipboard->len; i++)
         gtk_widget_set_sensitive(g_ptr_array_index(e->need_clipboard, i),
                                  xd_clipboard_has_files());
+    XdPlace place = current_place(e);
+    for (guint i = 0; i < e->folders_only->len; i++)
+        gtk_widget_set_sensitive(g_ptr_array_index(e->folders_only, i),
+                                 place == XD_PLACE_FOLDER &&
+                                     gtk_widget_get_sensitive(
+                                         g_ptr_array_index(e->folders_only, i)));
+    for (guint i = 0; i < e->trash_only->len; i++)
+        gtk_widget_set_visible(g_ptr_array_index(e->trash_only, i), place == XD_PLACE_TRASH);
 }
 
 static GtkWidget *menu_item(GtkWidget *menu, const char *label, GCallback cb, explorer *e,
                             GtkAccelGroup *accel, guint key, GdkModifierType mods);
 
-static void add_new_menu(explorer *e, GtkWidget *menu) {
+static GtkWidget *add_new_menu(explorer *e, GtkWidget *menu) {
     GtkWidget *top = gtk_menu_item_new_with_mnemonic("Ne_w");
     GtkWidget *sub = gtk_menu_new();
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(top), sub);
@@ -815,6 +923,7 @@ static void add_new_menu(explorer *e, GtkWidget *menu) {
     menu_item(sub, "_Folder", G_CALLBACK(cb_new_folder), e, nullptr, 0, NO_MODS);
     gtk_menu_shell_append(GTK_MENU_SHELL(sub), gtk_separator_menu_item_new());
     menu_item(sub, "Text Document", G_CALLBACK(cb_new_text), e, nullptr, 0, NO_MODS);
+    return top;
 }
 
 static GtkWidget *menu_item(GtkWidget *menu, const char *label, GCallback cb, explorer *e,
@@ -841,17 +950,28 @@ static GtkWidget *submenu(GtkWidget *bar, const char *label) {
 static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = submenu(bar, "_File");
-    add_new_menu(e, file);
+    /* The Recycle Bin's own commands, shown only there. */
+    GtkWidget *item = menu_item(file, "Empty Recycle _Bin", G_CALLBACK(cb_empty_trash), e,
+                                nullptr, 0, NO_MODS);
+    g_ptr_array_add(e->trash_only, item);
+    item = menu_item(file, "R_estore", G_CALLBACK(cb_restore), e, nullptr, 0, NO_MODS);
+    g_ptr_array_add(e->trash_only, item);
+    g_ptr_array_add(e->need_selection, item);
+    item = gtk_separator_menu_item_new();
+    gtk_menu_shell_append(GTK_MENU_SHELL(file), item);
+    g_ptr_array_add(e->trash_only, item);
+    g_ptr_array_add(e->folders_only, add_new_menu(e, file));
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
-    g_ptr_array_add(e->need_selection,
-                    menu_item(file, "Create _Shortcut", G_CALLBACK(cb_shortcut), e, nullptr, 0,
-                              NO_MODS));
-    GtkWidget *item = menu_item(file, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
+    item = menu_item(file, "Create _Shortcut", G_CALLBACK(cb_shortcut), e, nullptr, 0, NO_MODS);
+    g_ptr_array_add(e->need_selection, item);
+    g_ptr_array_add(e->folders_only, item);
+    item = menu_item(file, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
     show_accel(item, GDK_KEY_Delete, NO_MODS);
     g_ptr_array_add(e->need_selection, item);
     item = menu_item(file, "Rena_me", G_CALLBACK(cb_rename), e, nullptr, 0, NO_MODS);
     show_accel(item, GDK_KEY_F2, NO_MODS);
     g_ptr_array_add(e->need_selection, item);
+    g_ptr_array_add(e->folders_only, item);
     menu_item(file, "P_roperties", G_CALLBACK(cb_properties), e, accel, GDK_KEY_Return,
               GDK_MOD1_MASK);
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
@@ -868,14 +988,16 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     item = menu_item(edit, "_Paste", G_CALLBACK(cb_paste), e, nullptr, 0, NO_MODS);
     show_accel(item, GDK_KEY_v, GDK_CONTROL_MASK);
     g_ptr_array_add(e->need_clipboard, item);
-    g_ptr_array_add(e->need_clipboard, menu_item(edit, "Paste _Shortcut",
-                                                 G_CALLBACK(cb_paste_shortcut), e, nullptr, 0,
-                                                 NO_MODS));
+    g_ptr_array_add(e->folders_only, item);
+    item = menu_item(edit, "Paste _Shortcut", G_CALLBACK(cb_paste_shortcut), e, nullptr, 0,
+                     NO_MODS);
+    g_ptr_array_add(e->need_clipboard, item);
+    g_ptr_array_add(e->folders_only, item);
     gtk_menu_shell_append(GTK_MENU_SHELL(edit), gtk_separator_menu_item_new());
-    g_ptr_array_add(e->need_selection, menu_item(edit, "Copy To _Folder...",
-                                                 G_CALLBACK(cb_copy_to), e, nullptr, 0, NO_MODS));
-    g_ptr_array_add(e->need_selection, menu_item(edit, "Mo_ve To Folder...",
-                                                 G_CALLBACK(cb_move_to), e, nullptr, 0, NO_MODS));
+    item = menu_item(edit, "Copy To _Folder...", G_CALLBACK(cb_copy_to), e, nullptr, 0, NO_MODS);
+    g_ptr_array_add(e->need_selection, item);
+    item = menu_item(edit, "Mo_ve To Folder...", G_CALLBACK(cb_move_to), e, nullptr, 0, NO_MODS);
+    g_ptr_array_add(e->need_selection, item);
     gtk_menu_shell_append(GTK_MENU_SHELL(edit), gtk_separator_menu_item_new());
     g_signal_connect(edit, "show", G_CALLBACK(update_menu_items), e);
     /* The folder view handles Ctrl+A itself; bound here, it would take
@@ -952,14 +1074,46 @@ static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer dat
 
 /* Right-click menu: Open and Properties on items; view options and the
  * folder's Properties on the background. */
+static void add_view_submenu(explorer *e, GtkWidget *menu) {
+    GtkWidget *viewm = gtk_menu_new();
+    GtkWidget *top = gtk_menu_item_new_with_mnemonic("_View");
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(top), viewm);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), top);
+    for (int i = 0; i < XD_VIEW_COUNT; i++) {
+        GtkWidget *item = gtk_menu_item_new_with_label(view_names[i]);
+        g_signal_connect_swapped(item, "activate", G_CALLBACK(gtk_check_menu_item_set_active),
+                                 e->view_items[i]);
+        gtk_menu_shell_append(GTK_MENU_SHELL(viewm), item);
+    }
+}
+
+static GtkWidget *bold_item(explorer *e, GtkWidget *menu, const char *label, GCallback cb) {
+    GtkWidget *item = menu_item(menu, label, cb, e, nullptr, 0, NO_MODS);
+    char *markup = g_strdup_printf("<b>%s</b>", label);
+    gtk_label_set_markup_with_mnemonic(GTK_LABEL(gtk_bin_get_child(GTK_BIN(item))), markup);
+    g_free(markup);
+    return item;
+}
+
+/* Right-click menus. In folders: Open, Cut, Copy, Paste into a folder,
+ * Create Shortcut, Delete, Rename; on the background View, Refresh,
+ * Paste and New. My Computer's drives only open; the Recycle Bin's items
+ * Restore, Cut and Delete, and its background empties it. */
 static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) {
     explorer *e = data;
+    XdPlace place = current_place(e);
     GtkWidget *menu = gtk_menu_new();
-    if (xd_folder_view_get_selected_count(view) > 0) {
-        GtkWidget *open = menu_item(menu, "_Open", G_CALLBACK(cb_open_selected), e, nullptr, 0,
-                                    NO_MODS);
-        gtk_label_set_markup_with_mnemonic(GTK_LABEL(gtk_bin_get_child(GTK_BIN(open))),
-                                           "<b>_Open</b>");
+    gboolean selected = xd_folder_view_get_selected_count(view) > 0;
+    if (selected && place == XD_PLACE_TRASH) {
+        bold_item(e, menu, "R_estore", G_CALLBACK(cb_restore));
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        menu_item(menu, "Cu_t", G_CALLBACK(cb_cut), e, nullptr, 0, NO_MODS);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        menu_item(menu, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
+    } else if (selected && place == XD_PLACE_COMPUTER) {
+        bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
+    } else if (selected) {
+        bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         menu_item(menu, "Cu_t", G_CALLBACK(cb_cut), e, nullptr, 0, NO_MODS);
         menu_item(menu, "_Copy", G_CALLBACK(cb_copy), e, nullptr, 0, NO_MODS);
@@ -975,30 +1129,33 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
         menu_item(menu, "Create _Shortcut", G_CALLBACK(cb_shortcut), e, nullptr, 0, NO_MODS);
         menu_item(menu, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
         menu_item(menu, "Rena_me", G_CALLBACK(cb_rename), e, nullptr, 0, NO_MODS);
-    } else {
-        GtkWidget *viewm = gtk_menu_new();
-        GtkWidget *top = gtk_menu_item_new_with_mnemonic("_View");
-        gtk_menu_item_set_submenu(GTK_MENU_ITEM(top), viewm);
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), top);
-        for (int i = 0; i < XD_VIEW_COUNT; i++) {
-            GtkWidget *item = gtk_menu_item_new_with_label(view_names[i]);
-            g_signal_connect_swapped(item, "activate",
-                                     G_CALLBACK(gtk_check_menu_item_set_active), e->view_items[i]);
-            gtk_menu_shell_append(GTK_MENU_SHELL(viewm), item);
-        }
+    } else if (place == XD_PLACE_TRASH) {
+        GtkWidget *empty = menu_item(menu, "Empty Recycle _Bin", G_CALLBACK(cb_empty_trash), e,
+                                     nullptr, 0, NO_MODS);
+        gtk_widget_set_sensitive(empty, xd_folder_view_get_item_count(view) > 0);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        add_view_submenu(e, menu);
         menu_item(menu, "R_efresh", G_CALLBACK(cb_refresh), e, nullptr, 0, NO_MODS);
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-        GtkWidget *paste = menu_item(menu, "_Paste", G_CALLBACK(cb_paste), e, nullptr, 0,
-                                     NO_MODS);
-        gtk_widget_set_sensitive(paste, xd_clipboard_has_files());
-        GtkWidget *paste_link = menu_item(menu, "Paste _Shortcut", G_CALLBACK(cb_paste_shortcut),
-                                          e, nullptr, 0, NO_MODS);
-        gtk_widget_set_sensitive(paste_link, xd_clipboard_has_files());
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-        add_new_menu(e, menu);
+    } else {
+        add_view_submenu(e, menu);
+        menu_item(menu, "R_efresh", G_CALLBACK(cb_refresh), e, nullptr, 0, NO_MODS);
+        if (place == XD_PLACE_FOLDER) {
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+            GtkWidget *paste = menu_item(menu, "_Paste", G_CALLBACK(cb_paste), e, nullptr, 0,
+                                         NO_MODS);
+            gtk_widget_set_sensitive(paste, xd_clipboard_has_files());
+            GtkWidget *paste_link = menu_item(menu, "Paste _Shortcut",
+                                              G_CALLBACK(cb_paste_shortcut), e, nullptr, 0,
+                                              NO_MODS);
+            gtk_widget_set_sensitive(paste_link, xd_clipboard_has_files());
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+            add_new_menu(e, menu);
+        }
     }
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-    menu_item(menu, "P_roperties", G_CALLBACK(cb_properties), e, nullptr, 0, NO_MODS);
+    if (place == XD_PLACE_FOLDER || selected) {
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        menu_item(menu, "P_roperties", G_CALLBACK(cb_properties), e, nullptr, 0, NO_MODS);
+    }
     gtk_menu_attach_to_widget(GTK_MENU(menu), GTK_WIDGET(view), nullptr);
     g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
@@ -1033,6 +1190,8 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     free_history(&e->forward);
     g_ptr_array_unref(e->need_selection);
     g_ptr_array_unref(e->need_clipboard);
+    g_ptr_array_unref(e->folders_only);
+    g_ptr_array_unref(e->trash_only);
     g_clear_object(&e->renaming);
     g_clear_object(&e->pending_rename);
     g_clear_handle_id(&e->commit_idle, g_source_remove);
@@ -1043,6 +1202,8 @@ static void open_window(GtkApplication *app, GFile *dir) {
     explorer *e = g_new0(explorer, 1);
     e->need_selection = g_ptr_array_new();
     e->need_clipboard = g_ptr_array_new();
+    e->folders_only = g_ptr_array_new();
+    e->trash_only = g_ptr_array_new();
     e->window = gtk_application_window_new(app);
     gtk_window_set_default_size(GTK_WINDOW(e->window), 820, 560);
     gtk_window_set_icon_name(GTK_WINDOW(e->window), "system-file-manager");

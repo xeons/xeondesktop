@@ -403,9 +403,24 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Details view: column resizing and reordering, more columns.
 - [ ] Rubber-band selection; remembering the view per folder; View >
       Arrange Icons By; free space in the status bar.
-- [ ] Special folders: My Computer (drives, mounts), Recycle Bin, Network
-      Places, Control Panel (`control:`).
-- [ ] The first arrow key in a fresh folder selects the second item.
+- [x] My Computer (`computer:///`, places.c): the file system, the user's
+      Documents and every mount from GIO's volume monitor (live), as Local
+      Disk / Removable Disk / CD Drive / Network Drive with total and free
+      space (Details: Total Size, Free Space; Tiles: "x free of y"). Up
+      from a drive goes to My Computer. Tested headless: the root disk and
+      the VirtualBox Guest Additions CD.
+- [x] Recycle Bin (`trash:///`): the freedesktop.org trash in
+      $XDG_DATA_HOME/Trash, read with GKeyFile (no gvfs needed), under the
+      original names with Original Location and Date Deleted columns;
+      Restore (recreating the folder), Delete (permanently), Empty Recycle
+      Bin, drops into it send files to it; items open their Properties.
+      Tested: Restore, Empty Recycle Bin, .trashinfo files tidied.
+- [ ] My Computer: unmounted volumes (mount on open), XP's group headings
+      ("Hard Disk Drives", "Devices with Removable Storage"), Eject, the
+      drive Properties' pie chart. Recycle Bin: trashes on other drives
+      ($topdir/.Trash-uid), Restore asking to replace. Network Places and
+      Control Panel (`control:`).
+- [x] The first arrow key in a fresh folder selected the second item.
 - [?] Folders tree clicks, address bar typing, the Views menu, the
       thumbnail slider, Details header sorting, Show Hidden Files, opening
       files with the default app, live updates, very large folders.
