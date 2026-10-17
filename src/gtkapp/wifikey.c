@@ -99,5 +99,7 @@ int main(int argc, char **argv) {
     if (response != GTK_RESPONSE_OK)
         return 1;
     printf("%s\n", gtk_entry_get_text(GTK_ENTRY(p.key)));
+    /* Now: a sanitizer's leak report at exit ends us without flushing. */
+    fflush(stdout);
     return 0;
 }

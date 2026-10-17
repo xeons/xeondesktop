@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Network Connections
+Comment=Connects your computer to the Internet, a network, or another computer
+Exec=xd-netconn
+Icon=preferences-system-network
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=network
+Keywords=network;internet;ethernet;wireless;wifi;vpn;tcp/ip;ip address;dns;
+StartupWMClass=org.xeondesktop.NetworkConnections

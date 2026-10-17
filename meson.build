@@ -445,6 +445,7 @@ install_data(
   'data/applications/org.xeondesktop.ScheduledTasks.desktop',
   'data/applications/org.xeondesktop.Bluetooth.desktop',
   'data/applications/org.xeondesktop.GameControllers.desktop',
+  'data/applications/org.xeondesktop.NetworkConnections.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -641,6 +642,21 @@ executable(
   install: true,
 )
 
+# Network Connections: NetworkManager through libnm.
+libnm_dep = dependency('libnm', include_type: 'system')
+executable(
+  'xd-netconn',
+  'src/netconn/main.c',
+  'src/netconn/netconn.c',
+  'src/netconn/status.c',
+  'src/netconn/props.c',
+  'src/netconn/wizard.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, libnm_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -731,6 +747,7 @@ test_exe = executable(
   'src/schedtasks/task.c',
   'src/bluetooth/btinfo.c',
   'src/joy/joyinfo.c',
+  'src/netconn/netconn.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],

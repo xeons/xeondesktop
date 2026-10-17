@@ -15,6 +15,7 @@
 #include "../src/apps/runcmd.h"
 #include "../src/bluetooth/btinfo.h"
 #include "../src/joy/joyinfo.h"
+#include "../src/netconn/netconn.h"
 #include "../src/intl/intl.h"
 #include "../src/keyboard/layouts.h"
 #include "../src/mouse/cursors.h"
@@ -1453,6 +1454,169 @@ static void test_bluetooth_settings(void) {
     xd_strbuf_free(&out);
 }
 
+/* Network Connections: XP's groups and status texts for NetworkManager's
+ * states, the Status dialog's numbers, the TCP/IP form. */
+static void test_netconn(void) {
+    CHECK(xd_nc_group_for_type("802-3-ethernet") == XD_NC_LAN &&
+          xd_nc_group_for_type("bridge") == XD_NC_LAN);
+    CHECK(xd_nc_group_for_type("802-11-wireless") == XD_NC_WIRELESS);
+    CHECK(xd_nc_group_for_type("vpn") == XD_NC_VPN && xd_nc_group_for_type("wireguard") == XD_NC_VPN);
+    CHECK(xd_nc_group_for_type("gsm") == XD_NC_BROADBAND &&
+          xd_nc_group_for_type("pppoe") == XD_NC_BROADBAND);
+    CHECK(xd_nc_group_for_type("bluetooth") == XD_NC_PAN);
+    CHECK(xd_nc_group_for_type("loopback") == XD_NC_OTHER && xd_nc_group_for_type(nullptr) == XD_NC_OTHER);
+    CHECK(strcmp(xd_nc_group_title(XD_NC_LAN), "LAN or High-Speed Internet") == 0);
+    CHECK(strcmp(xd_nc_group_title(XD_NC_VPN), "Virtual Private Network") == 0);
+
+    /* An adapter: connected, cable out, disabled (by hand, unmanaged, radio off). */
+    xd_nc_state s = {.has_device = true, .device_state = 100, .managed = true, .autoconnect = true,
+                     .carrier_known = true, .carrier = true, .connectivity = 4};
+    CHECK(strcmp(xd_nc_status_text(&s), "Connected") == 0 && xd_nc_state_connected(&s) &&
+          !xd_nc_state_disabled(&s));
+    s.connectivity = 3;
+    CHECK(strcmp(xd_nc_status_text(&s), "Limited or no connectivity") == 0);
+    s.connectivity = 0; /* not checked: connected */
+    CHECK(strcmp(xd_nc_status_text(&s), "Connected") == 0);
+    s.device_state = 20;
+    s.carrier = false;
+    CHECK(strcmp(xd_nc_status_text(&s), "Network cable unplugged") == 0 &&
+          !xd_nc_state_connected(&s));
+    s.carrier_known = false; /* Wi-Fi, say */
+    CHECK(strcmp(xd_nc_status_text(&s), "Not connected") == 0);
+    s.device_state = 30;
+    CHECK(strcmp(xd_nc_status_text(&s), "Not connected") == 0 && !xd_nc_state_disabled(&s));
+    s.autoconnect = false;
+    CHECK(strcmp(xd_nc_status_text(&s), "Disabled") == 0 && xd_nc_state_disabled(&s));
+    s.autoconnect = true;
+    s.radio_off = true;
+    CHECK(strcmp(xd_nc_status_text(&s), "Disabled") == 0);
+    s.radio_off = false;
+    s.managed = false;
+    s.device_state = 10;
+    CHECK(strcmp(xd_nc_status_text(&s), "Disabled") == 0);
+    s.managed = true;
+    s.device_state = 70;
+    CHECK(strcmp(xd_nc_status_text(&s), "Acquiring network address") == 0);
+    s.device_state = 60;
+    CHECK(strcmp(xd_nc_status_text(&s), "Authenticating") == 0);
+    /* A VPN goes by its active connection. */
+    xd_nc_state v = {.active_state = 0};
+    CHECK(strcmp(xd_nc_status_text(&v), "Disconnected") == 0 && !xd_nc_state_disabled(&v));
+    v.active_state = 2;
+    CHECK(strcmp(xd_nc_status_text(&v), "Connected") == 0 && xd_nc_state_connected(&v));
+
+    char *t = xd_nc_numbered_name("Local Area Connection", 1);
+    CHECK(strcmp(t, "Local Area Connection") == 0);
+    g_free(t);
+    t = xd_nc_numbered_name("Local Area Connection", 3);
+    CHECK(strcmp(t, "Local Area Connection 3") == 0);
+    g_free(t);
+
+    static const struct {
+        guint64 n;
+        const char *duration, *count;
+    } nums[] = {
+        {0, "00:00:00", "0"},
+        {59, "00:00:59", "59"},
+        {3725, "01:02:05", "3,725"},
+        {86400 + 7384, "1 day 02:03:04", "93,784"},
+        {3 * 86400, "3 days 00:00:00", "259,200"},
+        {1234567, "14 days 06:56:07", "1,234,567"},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(nums); i++) {
+        t = xd_nc_format_duration(nums[i].n);
+        CHECK(strcmp(t, nums[i].duration) == 0);
+        g_free(t);
+        t = xd_nc_format_count(nums[i].n);
+        CHECK(strcmp(t, nums[i].count) == 0);
+        g_free(t);
+    }
+    static const struct {
+        guint64 kbps;
+        const char *text;
+    } speeds[] = {{1000000, "1.0 Gbps"}, {2500000, "2.5 Gbps"}, {100000, "100.0 Mbps"},
+                  {54000, "54.0 Mbps"},  {866700, "866.7 Mbps"}, {56, "56.0 Kbps"}};
+    for (size_t i = 0; i < XD_ARRAY_LEN(speeds); i++) {
+        t = xd_nc_format_speed(speeds[i].kbps);
+        CHECK(strcmp(t, speeds[i].text) == 0);
+        g_free(t);
+    }
+
+    unsigned prefix = 99;
+    CHECK(xd_nc_netmask_to_prefix("255.255.255.0", &prefix) && prefix == 24);
+    CHECK(xd_nc_netmask_to_prefix("255.255.240.0", &prefix) && prefix == 20);
+    CHECK(xd_nc_netmask_to_prefix("0.0.0.0", &prefix) && prefix == 0);
+    CHECK(xd_nc_netmask_to_prefix("255.255.255.255", &prefix) && prefix == 32);
+    CHECK(!xd_nc_netmask_to_prefix("255.0.255.0", &prefix) && !xd_nc_netmask_to_prefix("", &prefix) &&
+          !xd_nc_netmask_to_prefix("255.255.255", &prefix) && !xd_nc_netmask_to_prefix("::", &prefix));
+    for (unsigned p = 0; p <= 32; p++) {
+        t = xd_nc_prefix_to_netmask(p);
+        unsigned back = 99;
+        CHECK(xd_nc_netmask_to_prefix(t, &back) && back == p);
+        g_free(t);
+    }
+    t = xd_nc_prefix_to_netmask(22);
+    CHECK(strcmp(t, "255.255.252.0") == 0);
+    g_free(t);
+    CHECK(xd_nc_valid_ipv4("10.0.0.1") && !xd_nc_valid_ipv4("10.0.0") && !xd_nc_valid_ipv4("fe80::1") &&
+          !xd_nc_valid_ipv4("300.1.1.1") && !xd_nc_valid_ipv4(nullptr));
+    CHECK(xd_nc_default_prefix("10.1.2.3") == 8 && xd_nc_default_prefix("172.16.0.5") == 16 &&
+          xd_nc_default_prefix("192.168.1.20") == 24 && xd_nc_default_prefix("224.0.0.1") == 0 &&
+          xd_nc_default_prefix("x") == 0);
+
+    xd_nc_ipv4_form f = {.manual_ip = true, .manual_dns = true, .address = "192.168.1.20",
+                         .netmask = "255.255.255.0", .gateway = "192.168.1.1", .dns1 = "1.1.1.1",
+                         .dns2 = ""};
+    CHECK(xd_nc_check_ipv4_form(&f) == nullptr);
+    f.gateway = "";
+    CHECK(xd_nc_check_ipv4_form(&f) == nullptr); /* no gateway is fine */
+    f.gateway = "192.168.2.1";
+    CHECK(xd_nc_check_ipv4_form(&f) != nullptr); /* another subnet */
+    f.gateway = "192.168.1.1";
+    f.address = "";
+    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
+    f.address = "192.168.1.0"; /* the network's own address */
+    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
+    f.address = "192.168.1.255";
+    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
+    f.address = "127.0.0.5";
+    f.netmask = "255.0.0.0";
+    f.gateway = "";
+    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
+    f.address = "192.168.1.20";
+    f.netmask = "255.0.255.0";
+    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
+    f.netmask = "255.255.255.0";
+    f.dns2 = "dns.example";
+    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
+    /* Automatic: the blanks don't matter. */
+    xd_nc_ipv4_form a = {.address = "", .netmask = "", .gateway = "", .dns1 = "", .dns2 = ""};
+    CHECK(xd_nc_check_ipv4_form(&a) == nullptr);
+    a.manual_dns = true;
+    a.dns1 = "8.8.8.8";
+    CHECK(xd_nc_check_ipv4_form(&a) == nullptr);
+    a.dns1 = "8.8.8";
+    CHECK(xd_nc_check_ipv4_form(&a) != nullptr);
+
+    CHECK(strcmp(xd_nc_vpn_host_key("org.freedesktop.NetworkManager.openvpn"), "remote") == 0);
+    CHECK(strcmp(xd_nc_vpn_host_key("org.freedesktop.NetworkManager.vpnc"), "IPSec gateway") == 0);
+    CHECK(xd_nc_vpn_host_key("org.example.unknown") == nullptr && xd_nc_vpn_host_key(nullptr) == nullptr);
+
+    CHECK(xd_nc_wifi_key_mgmt(0, 0, 0) == nullptr);
+    CHECK(strcmp(xd_nc_wifi_key_mgmt(0x1, 0, 0), "none") == 0);
+    CHECK(strcmp(xd_nc_wifi_key_mgmt(0x1, 0, 0x188), "wpa-psk") == 0);
+    CHECK(strcmp(xd_nc_wifi_key_mgmt(0x1, 0, 0x400), "sae") == 0);
+    CHECK(strcmp(xd_nc_wifi_key_mgmt(0x1, 0x200, 0x200), "wpa-eap") == 0);
+    CHECK(xd_nc_valid_wifi_key("wpa-psk", "12345678") && !xd_nc_valid_wifi_key("wpa-psk", "1234567"));
+    CHECK(xd_nc_valid_wifi_key("wpa-psk",
+                               "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
+    CHECK(!xd_nc_valid_wifi_key("wpa-psk",
+                                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"));
+    CHECK(xd_nc_valid_wifi_key("none", "abcde") && xd_nc_valid_wifi_key("none", "0123456789") &&
+          !xd_nc_valid_wifi_key("none", "abcdefghij"));
+    CHECK(strcmp(xd_nc_signal_words(90), "Excellent") == 0 && strcmp(xd_nc_signal_words(5), "Very low") == 0);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -1481,6 +1645,7 @@ int main(void) {
     test_bluetooth_info();
     test_joystick();
     test_bluetooth_settings();
+    test_netconn();
     test_schedtasks();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

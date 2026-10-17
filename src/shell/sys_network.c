@@ -7,7 +7,7 @@
  * being made, or none. Its menu lists the Wi-Fi networks in range:
  * picking one activates its saved connection, or adds one, asking for the
  * key (xd-wifi-key) if the network is secured; then Disconnect, Wi-Fi on
- * or off, and NetworkManager's connection editor.
+ * or off, the connection's Status and Network Connections (xd-netconn).
  */
 #include <errno.h>
 #include <gio/gio.h>
@@ -467,8 +467,12 @@ static void act_wifi_toggle(xd_shell *shell, void *d) {
             g_variant_new("(ssv)", NM, "WirelessEnabled", g_variant_new_boolean(!on)));
 }
 
-static void act_editor(xd_shell *shell, [[maybe_unused]] void *d) {
-    xd_shell_launch(shell, "nm-connection-editor");
+static void act_status(xd_shell *shell, [[maybe_unused]] void *d) {
+    xd_shell_launch(shell, xd_shell_own_command(shell, "xd-netconn", "--status"));
+}
+
+static void act_connections(xd_shell *shell, [[maybe_unused]] void *d) {
+    xd_shell_launch(shell, xd_shell_own_command(shell, "xd-netconn", nullptr));
 }
 
 /* ---- the menu ------------------------------------------------------------------- */
@@ -603,9 +607,11 @@ static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
         it->checked = prop_b(n->nm, "WirelessEnabled");
     }
     xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Status", nullptr);
+    it->action = act_status;
+    it->disabled = !n->connected;
     it = xd_menu_add(tree, m, XD_MENU_ACTION, "Open Network Connections", nullptr);
-    it->action = act_editor;
-    it->disabled = !xd_shell_have_program("nm-connection-editor");
+    it->action = act_connections;
 }
 
 /* ---- setup ------------------------------------------------------------------------ */
