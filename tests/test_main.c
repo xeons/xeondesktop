@@ -18,6 +18,7 @@
 #include "../src/files/names.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
+#include "../src/schedtasks/task.h"
 #include "../src/security/passwd.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
@@ -1092,6 +1093,255 @@ static void test_cursor_themes(void) {
     g_free(root);
 }
 
+/* What systemd itself makes of a calendar expression, when systemd-analyze
+ * is installed (it only parses: no manager is involved). */
+static void check_systemd_calendar(const char *spec) {
+    char *tool = g_find_program_in_path("systemd-analyze");
+    if (tool == nullptr)
+        return;
+    char *argv[] = {tool, g_strdup("calendar"), g_strdup(spec), nullptr};
+    char *out = nullptr;
+    int status = -1;
+    bool ran = g_spawn_sync(nullptr, argv, nullptr, G_SPAWN_STDERR_TO_DEV_NULL, nullptr, nullptr,
+                            &out, nullptr, &status, nullptr);
+    char *want = g_strdup_printf("Normalized form: %s\n", spec);
+    bool ok = ran && status == 0 && out != nullptr && strstr(out, want) != nullptr;
+    CHECK(ok);
+    if (!ok)
+        fprintf(stderr, "  systemd-analyze calendar '%s':\n%s", spec, out != nullptr ? out : "");
+    g_free(want);
+    g_free(out);
+    g_free(argv[2]);
+    g_free(argv[1]);
+    g_free(tool);
+}
+
+/* A schedule's OnCalendar=, what systemd makes of it, and back. */
+static void check_calendar(const xd_schedule *s, const char *want) {
+    char *cal = xd_schedule_calendar(s);
+    CHECK(cal != nullptr && strcmp(cal, want) == 0);
+    if (cal != nullptr && strcmp(cal, want) != 0)
+        fprintf(stderr, "  calendar: got '%s', want '%s'\n", cal, want);
+    check_systemd_calendar(want);
+    xd_schedule back;
+    CHECK(xd_schedule_from_calendar(want, &back));
+    char *again = xd_schedule_calendar(&back);
+    CHECK(again != nullptr && strcmp(again, want) == 0);
+    g_free(again);
+    g_free(cal);
+}
+
+static void check_describe(const xd_schedule *s, const char *want) {
+    char *text = xd_schedule_describe(s);
+    CHECK(strcmp(text, want) == 0);
+    if (strcmp(text, want) != 0)
+        fprintf(stderr, "  describe: got '%s', want '%s'\n", text, want);
+    g_free(text);
+}
+
+static void check_str(char *got, const char *want) {
+    CHECK(got != nullptr && strcmp(got, want) == 0);
+    if (got != nullptr && strcmp(got, want) != 0)
+        fprintf(stderr, "  got:\n%s\n  want:\n%s\n", got, want);
+    g_free(got);
+}
+
+/* Scheduled Tasks: schedules as OnCalendar=, and the unit files. */
+static void test_schedtasks(void) {
+    xd_schedule daily = {.kind = XD_SCHED_DAILY, .hour = 9, .minute = 0};
+    check_calendar(&daily, "*-*-* 09:00:00");
+    check_describe(&daily, "At 9:00 AM every day");
+    xd_schedule midnight = {.kind = XD_SCHED_DAILY, .hour = 0, .minute = 5};
+    check_calendar(&midnight, "*-*-* 00:05:00");
+    check_describe(&midnight, "At 12:05 AM every day");
+
+    /* systemd writes runs of three or more days as ranges, Monday first. */
+    xd_schedule weekly = {.kind = XD_SCHED_WEEKLY, .hour = 13, .minute = 30, .weekdays = 0x7};
+    check_calendar(&weekly, "Mon..Wed *-*-* 13:30:00");
+    check_describe(&weekly, "At 1:30 PM every Mon, Tue, Wed of every week");
+    weekly.weekdays = 0x5d; /* Mon, Wed, Thu, Fri, Sun */
+    check_calendar(&weekly, "Mon,Wed..Fri,Sun *-*-* 13:30:00");
+    weekly.weekdays = 0x41; /* Sunday and Monday aren't a run */
+    check_calendar(&weekly, "Mon,Sun *-*-* 13:30:00");
+    weekly.weekdays = 0x3;
+    check_calendar(&weekly, "Mon,Tue *-*-* 13:30:00");
+    weekly.weekdays = 0x70;
+    check_calendar(&weekly, "Fri..Sun *-*-* 13:30:00");
+    /* Every day of the week is every day, and reads back as daily. */
+    weekly.weekdays = XD_SCHED_ALL_DAYS;
+    char *cal = xd_schedule_calendar(&weekly);
+    CHECK(cal != nullptr && strcmp(cal, "*-*-* 13:30:00") == 0);
+    g_free(cal);
+    weekly.weekdays = 0;
+    CHECK(!xd_schedule_valid(&weekly) && xd_schedule_calendar(&weekly) == nullptr);
+
+    xd_schedule monthly = {.kind = XD_SCHED_MONTHLY, .hour = 23, .minute = 59, .day = 15,
+                           .months = XD_SCHED_ALL_MONTHS};
+    check_calendar(&monthly, "*-*-15 23:59:00");
+    check_describe(&monthly, "At 11:59 PM on day 15 of every month");
+    monthly.months = 0x9; /* January and April */
+    check_calendar(&monthly, "*-01,04-15 23:59:00");
+    check_describe(&monthly, "At 11:59 PM on day 15 of Jan, Apr");
+    monthly.months = 0x7; /* systemd lists months one by one */
+    check_calendar(&monthly, "*-01,02,03-15 23:59:00");
+    monthly.day = 0;
+    check_calendar(&monthly, "*-01,02,03~01 23:59:00");
+    monthly.months = XD_SCHED_ALL_MONTHS;
+    check_calendar(&monthly, "*-*~01 23:59:00");
+    check_describe(&monthly, "At 11:59 PM on the last day of every month");
+    monthly.months = 0;
+    CHECK(!xd_schedule_valid(&monthly));
+
+    xd_schedule once = {.kind = XD_SCHED_ONCE, .hour = 12, .minute = 0, .year = 2099,
+                        .month = 3, .mday = 7};
+    check_calendar(&once, "2099-03-07 12:00:00");
+    check_describe(&once, "At 12:00 PM on 3/7/2099");
+    once.month = 2;
+    once.mday = 30;
+    CHECK(!xd_schedule_valid(&once));
+    once = (xd_schedule){.kind = XD_SCHED_ONCE, .hour = 24, .year = 2099, .month = 1, .mday = 1};
+    CHECK(!xd_schedule_valid(&once));
+
+    xd_schedule startup = {.kind = XD_SCHED_STARTUP}, logon = {.kind = XD_SCHED_LOGON};
+    CHECK(xd_schedule_calendar(&startup) == nullptr && xd_schedule_calendar(&logon) == nullptr);
+    check_describe(&startup, "Run at system startup");
+    check_describe(&logon, "Run at user logon");
+
+    /* Anything we wouldn't have written is someone else's: CUSTOM. */
+    static const char *const foreign[] = {
+        "*-*-* 09:00:30",         "*-*-* 9:00:00",       "Mon..Sun *-*-* 09:00:00",
+        "Wed,Mon *-*-* 09:00:00", "*-*-1/2 09:00:00",    "2099-02-30 09:00:00",
+        "*-1-15 09:00:00",        "*-*-* 09:00:00 UTC",  "daily",
+        "",                       "Mon *-01-* 09:00:00", "*-13-01 09:00:00",
+        "*-*~02 09:00:00",        "*-*-32 09:00:00",     "Mon,Tue,Wed *-*-* 09:00:00",
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(foreign); i++) {
+        xd_schedule s;
+        bool ok = xd_schedule_from_calendar(foreign[i], &s);
+        CHECK(!ok && s.kind == XD_SCHED_CUSTOM);
+        if (ok)
+            fprintf(stderr, "  read '%s' as ours\n", foreign[i]);
+    }
+
+    CHECK(xd_task_name_valid("Back up my files"));
+    CHECK(xd_task_name_valid("Ünïcødé 100%"));
+    CHECK(!xd_task_name_valid(""));
+    CHECK(!xd_task_name_valid("   "));
+    CHECK(!xd_task_name_valid("a/b"));
+    CHECK(!xd_task_name_valid("a\\b"));
+    CHECK(!xd_task_name_valid("what?"));
+    CHECK(!xd_task_name_valid("two\nlines"));
+    CHECK(!xd_task_name_valid(nullptr));
+    CHECK(xd_task_workdir_valid("/home/u/My Files"));
+    CHECK(!xd_task_workdir_valid("relative"));
+    CHECK(!xd_task_workdir_valid("/ends/in/blank "));
+    CHECK(!xd_task_workdir_valid("/ends/in\\"));
+    CHECK(!xd_task_workdir_valid("/tab\there"));
+
+    check_str(xd_task_unit_base("Back up!  my files"), "xd-task-Back-up-my-files");
+    check_str(xd_task_unit_base("  --x__y--  "), "xd-task-x__y");
+    check_str(xd_task_unit_base("日本語"), "xd-task-task");
+
+    /* Every word reaches the program as it is. */
+    const char *argv[] = {"/opt/My App/run", "a \"quoted\" word", "back\\slash", "100%",
+                          "$HOME", "-x", "new\nline", "", "tab\tbell\a", nullptr};
+    check_str(xd_task_exec_line(argv),
+              "\"/opt/My App/run\" \"a \\\"quoted\\\" word\" \"back\\\\slash\" \"100%%\" "
+              "\"$$HOME\" \"-x\" \"new\\nline\" \"\" \"tab\\tbell\\x07\"");
+    const char *empty[] = {nullptr};
+    CHECK(xd_task_exec_line(empty) == nullptr);
+
+    const char *shown[] = {"/usr/bin/foo", "a b", "it's", "--size=10", nullptr};
+    char *line = xd_task_command_line(shown);
+    CHECK(strcmp(line, "/usr/bin/foo 'a b' 'it'\\''s' --size=10") == 0);
+    char **parsed = nullptr;
+    CHECK(g_shell_parse_argv(line, nullptr, &parsed, nullptr) &&
+          g_strv_equal((const char *const *)parsed, shown));
+    g_strfreev(parsed);
+    g_free(line);
+
+    char **ex = xd_task_argv_from_exec("firefox %u");
+    CHECK(ex != nullptr && g_strv_length(ex) == 1 && strcmp(ex[0], "firefox") == 0);
+    g_strfreev(ex);
+    ex = xd_task_argv_from_exec("\"/opt/My App/app\" --name=%c --level=50%% %F");
+    CHECK(ex != nullptr && g_strv_length(ex) == 3 && strcmp(ex[0], "/opt/My App/app") == 0 &&
+          strcmp(ex[1], "--name=") == 0 && strcmp(ex[2], "--level=50%") == 0);
+    g_strfreev(ex);
+    CHECK(xd_task_argv_from_exec("%U") == nullptr);
+    CHECK(xd_task_argv_from_exec("\"unterminated") == nullptr);
+    CHECK(xd_task_argv_from_exec(nullptr) == nullptr);
+
+    const char *run[] = {"/usr/bin/backup", "--to", "/mnt/My Disk", nullptr};
+    xd_task t = {.name = "Back up 100%", .argv = run, .workdir = "/home/u",
+                 .sched = daily, .max_run_sec = 72 * 3600};
+    check_str(xd_task_service_text(&t),
+              "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
+              "[Unit]\n"
+              "Description=Back up 100%%\n"
+              "\n"
+              "[Service]\n"
+              "Type=exec\n"
+              "ExecStart=\"/usr/bin/backup\" \"--to\" \"/mnt/My Disk\"\n"
+              "WorkingDirectory=/home/u\n"
+              "RuntimeMaxSec=259200\n");
+    check_str(xd_task_timer_text(&t),
+              "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
+              "[Unit]\n"
+              "Description=Back up 100%%\n"
+              "\n"
+              "[Timer]\n"
+              "OnCalendar=*-*-* 09:00:00\n"
+              "\n"
+              "[Install]\n"
+              "WantedBy=timers.target\n");
+    t = (xd_task){.name = " Hello ", .argv = run, .sched = startup};
+    check_str(xd_task_service_text(&t),
+              "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
+              "[Unit]\n"
+              "Description=Hello\n"
+              "\n"
+              "[Service]\n"
+              "Type=exec\n"
+              "ExecStart=\"/usr/bin/backup\" \"--to\" \"/mnt/My Disk\"\n");
+    check_str(xd_task_timer_text(&t),
+              "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
+              "[Unit]\n"
+              "Description=Hello\n"
+              "\n"
+              "[Timer]\n"
+              "OnStartupSec=0\n"
+              "\n"
+              "[Install]\n"
+              "WantedBy=timers.target\n");
+    t.sched = logon;
+    check_str(xd_task_timer_text(&t),
+              "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
+              "[Unit]\n"
+              "Description=Hello\n"
+              "PartOf=graphical-session.target\n"
+              "After=graphical-session.target\n"
+              "\n"
+              "[Timer]\n"
+              "OnActiveSec=0\n"
+              "\n"
+              "[Install]\n"
+              "WantedBy=graphical-session.target\n");
+    /* Nothing is written for what can't be. */
+    t.name = "a/b";
+    CHECK(xd_task_service_text(&t) == nullptr && xd_task_timer_text(&t) == nullptr);
+    t.name = "ok";
+    t.workdir = "relative";
+    CHECK(xd_task_service_text(&t) == nullptr);
+    t.workdir = nullptr;
+    t.sched = weekly; /* no days */
+    CHECK(xd_task_timer_text(&t) == nullptr);
+    t.sched.kind = XD_SCHED_CUSTOM;
+    CHECK(xd_task_timer_text(&t) == nullptr);
+    t.sched = daily;
+    t.argv = empty;
+    CHECK(xd_task_service_text(&t) == nullptr);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -1117,6 +1367,7 @@ int main(void) {
     test_kbd_layouts();
     test_cursor_themes();
     test_fonts();
+    test_schedtasks();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

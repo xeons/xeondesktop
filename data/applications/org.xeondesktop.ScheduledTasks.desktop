@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Scheduled Tasks
+Comment=Schedule computer tasks to run automatically
+Exec=xd-schedtasks
+Icon=x-office-calendar
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=performance
+Keywords=schedule;task;timer;systemd;cron;
+StartupWMClass=org.xeondesktop.ScheduledTasks

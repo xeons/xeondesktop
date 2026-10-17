@@ -442,6 +442,7 @@ install_data(
   'data/applications/org.xeondesktop.Mouse.desktop',
   'data/applications/org.xeondesktop.Keyboard.desktop',
   'data/applications/org.xeondesktop.Accessibility.desktop',
+  'data/applications/org.xeondesktop.ScheduledTasks.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -600,6 +601,20 @@ executable(
   install: true,
 )
 
+# Scheduled Tasks (Control Panel): systemd user timers, over D-Bus.
+executable(
+  'xd-schedtasks',
+  'src/schedtasks/main.c',
+  'src/schedtasks/editor.c',
+  'src/schedtasks/wizard.c',
+  'src/schedtasks/props.c',
+  'src/schedtasks/units.c',
+  'src/schedtasks/task.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -687,6 +702,7 @@ test_exe = executable(
   'src/fonts/fontlist.c',
   'src/keyboard/layouts.c',
   'src/mouse/cursors.c',
+  'src/schedtasks/task.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
