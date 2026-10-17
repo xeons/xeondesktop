@@ -10,7 +10,7 @@
     and for the window menu's Move and Size.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="2">
+  <interface name="xd_window_arranger_v1" version="3">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -79,5 +79,15 @@
       </description>
       <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
     </event>
+
+    <request name="arrange_app" since="3">
+      <description summary="arrange one program's windows">
+        As arrange, but only the windows whose app id is app_id (a group
+        button's Cascade and Tile); its minimized windows are restored
+        first, as XP does.
+      </description>
+      <arg name="mode" type="uint" enum="mode"/>
+      <arg name="app_id" type="string"/>
+    </request>
   </interface>
 </protocol>

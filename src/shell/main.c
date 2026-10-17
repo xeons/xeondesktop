@@ -356,7 +356,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         shell->toplevel_manager =
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
-        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 2);
+        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 3);
         xd_taskmenu_bind(shell);
     } else if (xd_str_eq(iface, xd_str_from_cstr(ext_idle_notifier_v1_interface.name))) {
         shell->idle_notifier = bind(reg, name, &ext_idle_notifier_v1_interface, version, 1);

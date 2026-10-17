@@ -238,12 +238,34 @@ static xd_menu_model *group_menu(xd_shell *shell, xd_menu_tree *tree, const char
     return m;
 }
 
+static void arrange_group(xd_shell *shell, const char *app_id, uint32_t mode) {
+    if (shell->arranger != nullptr &&
+        xd_window_arranger_v1_get_version(shell->arranger) >=
+            XD_WINDOW_ARRANGER_V1_ARRANGE_APP_SINCE_VERSION)
+        xd_window_arranger_v1_arrange_app(shell->arranger, mode, app_id);
+}
+static void act_cascade_group(xd_shell *shell, void *d) {
+    arrange_group(shell, d, XD_WINDOW_ARRANGER_V1_MODE_CASCADE);
+}
+static void act_tile_h_group(xd_shell *shell, void *d) {
+    arrange_group(shell, d, XD_WINDOW_ARRANGER_V1_MODE_TILE_HORIZONTALLY);
+}
+static void act_tile_v_group(xd_shell *shell, void *d) {
+    arrange_group(shell, d, XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY);
+}
+
 /* Right-click on a group, as XP's: the whole group at once. */
 static xd_menu_model *group_context_menu(xd_shell *shell, xd_menu_tree *tree,
                                          const char *app_id) {
-    (void)shell;
     xd_menu_model *m = xd_menu_model_new(tree);
     char *key = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(app_id));
+    bool can = shell->arranger != nullptr &&
+               xd_window_arranger_v1_get_version(shell->arranger) >=
+                   XD_WINDOW_ARRANGER_V1_ARRANGE_APP_SINCE_VERSION;
+    add(tree, m, "Cascade", can ? act_cascade_group : nullptr, key);
+    add(tree, m, "Tile Horizontally", can ? act_tile_h_group : nullptr, key);
+    add(tree, m, "Tile Vertically", can ? act_tile_v_group : nullptr, key);
+    separator(tree, m);
     xd_menu_item *it = add(tree, m, "Minimize Group", act_minimize_group, key);
     it->glyph = XD_MENU_GLYPH_MINIMIZE;
     separator(tree, m);

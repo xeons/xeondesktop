@@ -77,13 +77,19 @@ static void arrange_output(xd_server *server, struct wlr_box area, xd_view **vie
     }
 }
 
-static void handle_arrange(struct wl_client *client, struct wl_resource *res, uint32_t mode) {
-    (void)client;
-    xd_server *server = wl_resource_get_user_data(res);
+static bool of_app(const xd_view *v, const char *app_id) {
+    const char *id = xd_view_app_id(v);
+    return app_id == nullptr || (id != nullptr && strcmp(id, app_id) == 0);
+}
+
+/* Every window, or only app_id's. */
+static void arrange(xd_server *server, uint32_t mode, const char *app_id) {
     if (mode > XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY)
         return;
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         v->undo_valid = false;
+        if (app_id != nullptr && v->mapped && v->minimized && of_app(v, app_id))
+            xd_view_restore(v);
     }
     /* Group by output (by window centre), front to back. */
     XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
@@ -91,7 +97,7 @@ static void handle_arrange(struct wl_client *client, struct wl_resource *res, ui
         xd_view **views = xd_alloc_array(XD_MAX(cap, 1), sizeof(*views));
         size_t n = 0;
         XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-            if (!arrangeable(v))
+            if (!arrangeable(v) || !of_app(v, app_id))
                 continue;
             struct wlr_box b = xd_view_outer_box(v);
             if (xd_output_at(server, b.x + b.width / 2.0, b.y + b.height / 2.0) != out)
@@ -102,6 +108,17 @@ static void handle_arrange(struct wl_client *client, struct wl_resource *res, ui
         arrange_output(server, out->usable, views, n, mode);
         xd_free(views);
     }
+}
+
+static void handle_arrange(struct wl_client *client, struct wl_resource *res, uint32_t mode) {
+    (void)client;
+    arrange(wl_resource_get_user_data(res), mode, nullptr);
+}
+
+static void handle_arrange_app(struct wl_client *client, struct wl_resource *res, uint32_t mode,
+                               const char *app_id) {
+    (void)client;
+    arrange(wl_resource_get_user_data(res), mode, app_id);
 }
 
 static void handle_undo(struct wl_client *client, struct wl_resource *res) {
@@ -208,6 +225,7 @@ void xd_view_attention(xd_view *view) {
 
 static const struct xd_window_arranger_v1_interface arranger_impl = {
     .arrange = handle_arrange,
+    .arrange_app = handle_arrange_app,
     .undo = handle_undo,
     .begin_move = handle_begin_move,
     .begin_size = handle_begin_size,
@@ -237,7 +255,7 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 2,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 3,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }
