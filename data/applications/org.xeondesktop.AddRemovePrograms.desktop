@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Add or Remove Programs
+Comment=Install or remove programs and Windows components
+Exec=xd-appwiz
+Icon=system-software-install
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=programs
+StartupWMClass=org.xeondesktop.AddRemovePrograms

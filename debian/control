@@ -26,6 +26,8 @@ Build-Depends:
  libfontconfig-dev,
  libevdev-dev,
  libnm-dev,
+ libpackagekit-glib2-dev,
+ libflatpak-dev,
  libsystemd-dev,
  libpolkit-agent-1-dev,
  libpam0g-dev,

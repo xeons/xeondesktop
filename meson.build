@@ -450,6 +450,7 @@ install_data(
   'data/applications/org.xeondesktop.Services.desktop',
   'data/applications/org.xeondesktop.EventViewer.desktop',
   'data/applications/org.xeondesktop.DiskManagement.desktop',
+  'data/applications/org.xeondesktop.AddRemovePrograms.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -681,6 +682,20 @@ executable(
   install: true,
 )
 
+# Add or Remove Programs: PackageKit and Flatpak.
+packagekit_dep = dependency('packagekit-glib2', include_type: 'system')
+flatpak_dep = dependency('flatpak', include_type: 'system')
+executable(
+  'xd-appwiz',
+  'src/appwiz/main.c',
+  'src/appwiz/add.c',
+  'src/appwiz/ops.c',
+  'src/appwiz/programs.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, packagekit_dep, flatpak_dep],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -773,8 +788,9 @@ test_exe = executable(
   'src/joy/joyinfo.c',
   'src/netconn/netconn.c',
   'src/admin/admin.c',
+  'src/appwiz/programs.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
-                 fontconfig_dep],
+                 fontconfig_dep, packagekit_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(

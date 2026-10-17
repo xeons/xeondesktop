@@ -37,6 +37,8 @@ depends=(
   'fontconfig' # Fonts
   'libevdev'   # Game Controllers
   'libnm'      # Network Connections
+  'packagekit' # Add or Remove Programs
+  'flatpak'    # Add or Remove Programs
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'

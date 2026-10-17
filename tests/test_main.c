@@ -13,6 +13,7 @@
 #include <fontconfig/fontconfig.h>
 
 #include "../src/admin/admin.h"
+#include "../src/appwiz/programs.h"
 #include "../src/apps/runcmd.h"
 #include "../src/bluetooth/btinfo.h"
 #include "../src/joy/joyinfo.h"
@@ -1849,6 +1850,122 @@ static void test_admin_disks(void) {
     CHECK(w[0] == 50 && w[1] == 50 && w[2] == 50);
 }
 
+static void test_appwiz(void) {
+    /* Usage buckets: nothing without counts at all. */
+    CHECK(xd_appwiz_usage_for(50, false) == XD_USAGE_UNKNOWN);
+    CHECK(xd_appwiz_usage_name(XD_USAGE_UNKNOWN) == nullptr);
+    CHECK(xd_appwiz_usage_for(0, true) == XD_USAGE_RARELY);
+    CHECK(xd_appwiz_usage_for(2, true) == XD_USAGE_RARELY);
+    CHECK(xd_appwiz_usage_for(3, true) == XD_USAGE_OCCASIONALLY);
+    CHECK(xd_appwiz_usage_for(9, true) == XD_USAGE_OCCASIONALLY);
+    CHECK(xd_appwiz_usage_for(10, true) == XD_USAGE_FREQUENTLY);
+    CHECK(strcmp(xd_appwiz_usage_name(XD_USAGE_OCCASIONALLY), "occasionally") == 0);
+
+    /* The Start menu's launch counts, as xd-shell writes them. */
+    char *lines[] = {(char *)(uintptr_t)"12\tfirefox.desktop",
+                     (char *)(uintptr_t)"4\torg.gnome.TextEditor.desktop",
+                     (char *)(uintptr_t)"3\tfirefox.desktop", (char *)(uintptr_t)"x\tbad.desktop",
+                     (char *)(uintptr_t)"7", (char *)(uintptr_t)"5\t",
+                     (char *)(uintptr_t)"-1\tneg.desktop"};
+    GHashTable *counts = xd_appwiz_parse_launch_counts(lines, G_N_ELEMENTS(lines));
+    CHECK(g_hash_table_size(counts) == 2);
+    CHECK(xd_appwiz_launches(counts, "firefox.desktop") == 12);
+    CHECK(xd_appwiz_launches(counts, "org.gnome.TextEditor.desktop") == 4);
+    CHECK(xd_appwiz_launches(counts, "bad.desktop") == 0);
+    CHECK(xd_appwiz_launches(nullptr, "firefox.desktop") == 0);
+    g_hash_table_unref(counts);
+
+    /* Sizes as XP wrote them. */
+    char *s = xd_appwiz_format_size(23477862);
+    CHECK(strcmp(s, "22.39MB") == 0);
+    g_free(s);
+    s = xd_appwiz_format_size(100);
+    CHECK(strcmp(s, "0.01MB") == 0);
+    g_free(s);
+    s = xd_appwiz_format_size(1288490189);
+    CHECK(strcmp(s, "1.20GB") == 0);
+    g_free(s);
+    s = xd_appwiz_format_date(0);
+    CHECK(strcmp(s, "") == 0);
+    g_free(s);
+    s = xd_appwiz_format_date(1160000000);
+    CHECK(strstr(s, "06") != nullptr);
+    g_free(s);
+
+    /* Sort orders. */
+    xd_appwiz_key a = {"Alpha", 100, 1, 50}, b = {"beta", 300, 1, 0}, c = {"Gamma", 0, 9, 70},
+                  d = {"delta", 100, 0, 50};
+    CHECK(xd_appwiz_compare(&a, &b, XD_SORT_NAME) < 0);
+    CHECK(xd_appwiz_compare(&b, &c, XD_SORT_NAME) < 0); /* case doesn't matter */
+    CHECK(xd_appwiz_compare(&b, &a, XD_SORT_SIZE) < 0); /* largest first */
+    CHECK(xd_appwiz_compare(&a, &c, XD_SORT_SIZE) < 0); /* unknown last */
+    CHECK(xd_appwiz_compare(&a, &d, XD_SORT_SIZE) < 0); /* ties by name */
+    CHECK(xd_appwiz_compare(&c, &a, XD_SORT_FREQUENCY) < 0);
+    CHECK(xd_appwiz_compare(&a, &b, XD_SORT_FREQUENCY) < 0);
+    CHECK(xd_appwiz_compare(&c, &a, XD_SORT_DATE) < 0);  /* most recent first */
+    CHECK(xd_appwiz_compare(&d, &b, XD_SORT_DATE) < 0);  /* never used last */
+    CHECK(xd_appwiz_compare(&a, &a, XD_SORT_DATE) == 0);
+
+    /* PackageKit ids, split by PackageKit. */
+    char *name = nullptr, *version = nullptr, *repo = nullptr;
+    CHECK(xd_appwiz_split_package_id("gimp;3.0.4-1;x86_64;installed:extra", &name, &version,
+                                     &repo));
+    CHECK(strcmp(name, "gimp") == 0 && strcmp(version, "3.0.4-1") == 0 &&
+          strcmp(repo, "extra") == 0);
+    g_free(name);
+    g_free(version);
+    g_free(repo);
+    CHECK(xd_appwiz_split_package_id("alacritty;0.17.0-1.2;x86_64_v3;installed", nullptr,
+                                     nullptr, &repo));
+    CHECK(strcmp(repo, "") == 0);
+    g_free(repo);
+    CHECK(xd_appwiz_split_package_id("hello;2.12-1;amd64;debian-main", &name, nullptr, &repo));
+    CHECK(strcmp(name, "hello") == 0 && strcmp(repo, "debian-main") == 0);
+    g_free(name);
+    g_free(repo);
+    CHECK(!xd_appwiz_split_package_id("not a package id", &name, nullptr, nullptr));
+    CHECK(!xd_appwiz_split_package_id(nullptr, nullptr, nullptr, nullptr));
+    CHECK(xd_appwiz_package_installed("gimp;3.0.4-1;x86_64;installed:extra"));
+    CHECK(xd_appwiz_package_installed("alacritty;0.17.0-1.2;x86_64_v3;installed"));
+    CHECK(!xd_appwiz_package_installed("gimp;3.0.4-1;x86_64;extra"));
+    CHECK(!xd_appwiz_package_installed("gimp;3.0.4-1;x86_64;installedfoo"));
+
+    /* Last used, from the recent documents list. */
+    static const char xbel[] =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<xbel version=\"1.0\" "
+        "xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\" "
+        "xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\">\n"
+        "<bookmark href=\"file:///tmp/a.txt\" added=\"2026-01-01T00:00:00Z\" "
+        "modified=\"2026-01-01T00:00:00Z\" visited=\"2026-01-01T00:00:00Z\"><info>"
+        "<metadata owner=\"http://freedesktop.org\"><mime:mime-type type=\"text/plain\"/>"
+        "<bookmark:applications>"
+        "<bookmark:application name=\"org.gnome.TextEditor\" "
+        "exec=\"&apos;gnome-text-editor %u&apos;\" modified=\"2026-03-04T05:06:07Z\" "
+        "count=\"2\"/>"
+        "<bookmark:application name=\"Firefox\" exec=\"&apos;firefox %u&apos;\" "
+        "modified=\"2026-02-01T00:00:00Z\" count=\"1\"/>"
+        "</bookmark:applications></metadata></info></bookmark>\n"
+        "<bookmark href=\"file:///tmp/b.txt\" added=\"2026-01-01T00:00:00Z\" "
+        "modified=\"2026-01-01T00:00:00Z\" visited=\"2026-01-01T00:00:00Z\"><info>"
+        "<metadata owner=\"http://freedesktop.org\"><mime:mime-type type=\"text/plain\"/>"
+        "<bookmark:applications>"
+        "<bookmark:application name=\"org.gnome.TextEditor\" "
+        "exec=\"&apos;gnome-text-editor %u&apos;\" modified=\"2026-05-01T00:00:00Z\" "
+        "count=\"1\"/>"
+        "</bookmark:applications></metadata></info></bookmark>\n"
+        "</xbel>\n";
+    GBookmarkFile *recent = g_bookmark_file_new();
+    CHECK(g_bookmark_file_load_from_data(recent, xbel, sizeof xbel - 1, nullptr));
+    CHECK(xd_appwiz_last_used(recent, "org.gnome.TextEditor.desktop", "gnome-text-editor") ==
+          1777593600); /* 2026-05-01 */
+    CHECK(xd_appwiz_last_used(recent, "firefox.desktop", "/usr/lib/firefox/firefox") ==
+          1769904000); /* 2026-02-01, by the command */
+    CHECK(xd_appwiz_last_used(recent, "gimp.desktop", "gimp") == 0);
+    CHECK(xd_appwiz_last_used(nullptr, "gimp.desktop", "gimp") == 0);
+    g_bookmark_file_free(recent);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -1881,6 +1998,7 @@ int main(void) {
     test_admin_services();
     test_admin_events();
     test_admin_disks();
+    test_appwiz();
     test_schedtasks();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
