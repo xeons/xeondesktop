@@ -649,11 +649,9 @@ static void begin_rename(explorer *e, GFile *file) {
     xd_folder_view_select_files(e->view, one);
     g_list_free(one);
     g_set_object(&e->renaming, file);
-    char *base = g_file_get_basename(file);
-    char *name = g_filename_display_name(base);
+    char *name = xd_rename_text(file);
     gtk_entry_set_text(GTK_ENTRY(e->rename_entry), name);
     g_free(name);
-    g_free(base);
     place_rename_entry(e);
     gtk_widget_show(e->rename_entry);
     gtk_widget_grab_focus(e->rename_entry);
@@ -674,9 +672,7 @@ static gboolean commit_rename(explorer *e) {
     if (e->renaming == nullptr || e->committing)
         return TRUE;
     const char *text = gtk_entry_get_text(GTK_ENTRY(e->rename_entry));
-    char *base = g_file_get_basename(e->renaming);
-    char *old = g_filename_display_name(base);
-    g_free(base);
+    char *old = xd_rename_text(e->renaming);
     gboolean done = TRUE;
     e->committing = TRUE;
     if (*text != '\0' && strcmp(text, old) != 0) {
@@ -686,7 +682,7 @@ static gboolean commit_rename(explorer *e) {
             done = FALSE;
         } else {
             GError *err = nullptr;
-            GFile *renamed = g_file_set_display_name(e->renaming, text, nullptr, &err);
+            GFile *renamed = xd_rename(e->renaming, text, &err);
             if (renamed != nullptr) {
                 GList *one = g_list_append(nullptr, renamed);
                 xd_folder_view_select_files(e->view, one);
@@ -1350,9 +1346,7 @@ static void job_done([[maybe_unused]] GList *created, gpointer app) {
 /* Windows' Rename box isn't a dialog (it's in place), but the desktop's
  * icons are drawn by the shell: a small one stands in. */
 static void rename_dialog(GFile *file) {
-    char *base = g_file_get_basename(file);
-    char *old = g_filename_display_name(base);
-    g_free(base);
+    char *old = xd_rename_text(file);
     GtkWidget *dlg = gtk_dialog_new_with_buttons("Rename", nullptr, GTK_DIALOG_MODAL, "OK",
                                                  GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL,
                                                  nullptr);
@@ -1380,7 +1374,7 @@ static void rename_dialog(GFile *file) {
         GError *err = nullptr;
         GFile *renamed = strchr(text, '/') != nullptr
                              ? nullptr
-                             : g_file_set_display_name(file, text, nullptr, &err);
+                             : xd_rename(file, text, &err);
         if (renamed != nullptr) {
             g_object_unref(renamed);
             break;

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+#include <gio/gdesktopappinfo.h>
 #include <math.h>
 
 #include "../core/alloc.h"
@@ -164,8 +165,8 @@ static item *item_new(GFile *dir, GFileInfo *info) {
     it->is_dir = g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
     it->hidden = g_file_info_get_is_hidden(info) || g_file_info_get_is_backup(info);
     const char *kind = g_file_info_get_content_type(info);
-    it->shortcut = g_file_info_get_is_symlink(info) ||
-                   (kind != nullptr && g_content_type_is_a(kind, "application/x-desktop"));
+    bool launcher = kind != nullptr && g_content_type_is_a(kind, "application/x-desktop");
+    it->shortcut = g_file_info_get_is_symlink(info) || launcher;
     it->size = (guint64)g_file_info_get_size(info);
     GDateTime *dt = g_file_info_get_modification_date_time(info);
     if (dt != nullptr) {
@@ -182,6 +183,23 @@ static item *item_new(GFile *dir, GFileInfo *info) {
     it->size_text = it->is_dir ? g_strdup("") : xd_format_size(it->size);
     GIcon *icon = g_file_info_get_icon(info);
     it->icon = icon != nullptr ? g_object_ref(icon) : nullptr;
+    /* A launcher shows its program's name and icon, as Windows shows a
+     * shortcut's name without ".lnk". */
+    char *path = launcher ? g_file_get_path(it->file) : nullptr;
+    GDesktopAppInfo *app = path != nullptr ? g_desktop_app_info_new_from_filename(path) : nullptr;
+    if (app != nullptr) {
+        g_free(it->name);
+        it->name = g_strdup(g_app_info_get_name(G_APP_INFO(app)));
+        g_free(it->collate_key);
+        it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
+        g_free(it->type_desc);
+        it->type_desc = g_strdup("Shortcut");
+        GIcon *app_icon = g_app_info_get_icon(G_APP_INFO(app));
+        if (app_icon != nullptr)
+            g_set_object(&it->icon, app_icon);
+        g_object_unref(app);
+    }
+    g_free(path);
     const char *thumb = g_file_info_get_attribute_byte_string(info, G_FILE_ATTRIBUTE_THUMBNAIL_PATH);
     it->thumb_path = thumb != nullptr ? g_strdup(thumb) : nullptr;
     return it;

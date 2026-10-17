@@ -65,6 +65,16 @@ void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer use
  * items out of the trash). */
 void xd_trash_tidy(void);
 
+/* ---- renaming ---- */
+
+/* The name Rename starts from: a launcher's Name (what's shown), else the
+ * file's name. Free with g_free. */
+char *xd_rename_text(GFile *file);
+/* Renames as Windows renames a shortcut: a launcher keeps its file and
+ * gets a new Name; anything else is renamed. Returns the file's new
+ * location (a new reference), or nullptr with `err` set. */
+GFile *xd_rename(GFile *file, const char *text, GError **err);
+
 G_END_DECLS
 
 #endif

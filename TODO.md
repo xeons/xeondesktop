@@ -411,9 +411,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       between xd-files and other file managers, permission errors and Skip.
 - [x] XP's shortcut arrow on symbolic links and launchers, in xd-files
       and on the desktop (xd_draw_shortcut_arrow).
-- [ ] Undo, Send To; launchers show their file name (Windows hides .lnk
-      and shows the shortcut's name); a modifier pressed mid-drag shows
-      only when the pointer next moves.
+- [x] Launchers (.desktop files) show their program's name and icon, typed
+      "Shortcut", as Windows shows a .lnk; renaming one changes its Name
+      (every translation) and keeps the file. Tested from the desktop.
+- [ ] Undo, Send To; a modifier pressed mid-drag shows only when the
+      pointer next moves.
 - [ ] Search, Favorites menu.
 - [~] Properties dialog. Tested: General for a file, Permissions (ticking
       Group Write and Apply changed 644 to 664), Details, and the size and
