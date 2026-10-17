@@ -48,6 +48,10 @@ typedef struct xd_toplevel {
      * (lit on even counts), then stays lit until the window is activated. */
     bool attention;
     int flashes;
+    /* Its taskbar button, as last told to the compositor (logical,
+     * surface-local), for the minimize animation. */
+    struct wl_surface *button_surface;
+    int button_x, button_y, button_w, button_h;
 } xd_toplevel;
 
 /* Quick Launch shortcuts. */

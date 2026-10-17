@@ -297,6 +297,14 @@ static xd_view *parent_of(const xd_view *view) {
     return view_of(view->toplevel->parent);
 }
 
+/* Its title bar (layout coordinates), where the animations start or end. */
+static struct wlr_box caption_box(const xd_view *view) {
+    struct wlr_box b = xd_view_outer_box(view);
+    xd_insets in = xd_view_insets(view);
+    b.height = in.top > 0 ? in.top : xd_px(1.0, 26);
+    return b;
+}
+
 /* Owned windows (dialogs) stay above their owner: raise the owner's whole
  * family, the owner first. */
 static void raise_family(xd_view *view) {
@@ -329,6 +337,9 @@ void xd_view_focus(xd_view *view) {
         wlr_scene_node_set_enabled(&view->tree->node, true);
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, false);
+        /* Up from its button; the window shows when the bar arrives. */
+        if (view->has_button_box)
+            xd_animate_zoom(server, view->button_box, caption_box(view), view);
     }
 
     /* Restoring an owner restores the dialogs it owns. */
@@ -379,6 +390,7 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
         view_schedule_configure(view);
         return;
     }
+    struct wlr_box before = caption_box(view);
     if (maximized) {
         struct wlr_box outer = xd_view_outer_box(view);
         view->restore = outer;
@@ -389,12 +401,19 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, true);
         xd_view_set_outer_box(view, area);
+        xd_animate_zoom(view->server, before, (struct wlr_box){area.x, area.y, area.width,
+                                                               before.height},
+                        nullptr);
     } else {
         view->maximized = false;
         view_set_maximized_state(view, false);
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, false);
         xd_view_set_outer_box(view, view->restore);
+        xd_animate_zoom(view->server, before,
+                        (struct wlr_box){view->restore.x, view->restore.y, view->restore.width,
+                                         before.height},
+                        nullptr);
     }
 }
 
@@ -452,8 +471,11 @@ void xd_view_minimize(xd_view *view) {
         }
     }
     bool was_focused = xd_view_focused(view->server) == view;
+    xd_animate_forget_view(view->server, view);
     view->minimized = true;
     wlr_scene_node_set_enabled(&view->tree->node, false);
+    if (view->has_button_box)
+        xd_animate_zoom(view->server, caption_box(view), view->button_box, nullptr);
     if (view->ftl != nullptr)
         wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, true);
     set_activated(view, false);
@@ -553,6 +575,23 @@ static void handle_ftl_close(struct wl_listener *listener, [[maybe_unused]] void
     xd_view_close(view);
 }
 
+/* The shell says where the window's taskbar button is (surface-local on
+ * its layer surface). */
+static void handle_ftl_set_rectangle(struct wl_listener *listener, void *data) {
+    xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_set_rectangle);
+    const struct wlr_foreign_toplevel_handle_v1_set_rectangle_event *e = data;
+    struct wlr_layer_surface_v1 *layer =
+        e->surface != nullptr ? wlr_layer_surface_v1_try_from_wlr_surface(e->surface) : nullptr;
+    struct wlr_scene_tree *tree = layer != nullptr ? layer->data : nullptr;
+    int lx = 0, ly = 0;
+    if (tree == nullptr || e->width <= 0 || !wlr_scene_node_coords(&tree->node, &lx, &ly)) {
+        view->has_button_box = false;
+        return;
+    }
+    view->button_box = (struct wlr_box){lx + e->x, ly + e->y, e->width, e->height};
+    view->has_button_box = true;
+}
+
 static void ftl_create(xd_view *view) {
     view->ftl = wlr_foreign_toplevel_handle_v1_create(view->server->ftl_manager);
     if (shown_title(view) != nullptr)
@@ -564,6 +603,8 @@ static void ftl_create(xd_view *view) {
     XD_LISTEN(&view->ftl->events.request_minimize, view, ftl_minimize, handle_ftl_minimize);
     XD_LISTEN(&view->ftl->events.request_maximize, view, ftl_maximize, handle_ftl_maximize);
     XD_LISTEN(&view->ftl->events.request_close, view, ftl_close, handle_ftl_close);
+    XD_LISTEN(&view->ftl->events.set_rectangle, view, ftl_set_rectangle,
+              handle_ftl_set_rectangle);
 }
 
 static void ftl_destroy(xd_view *view) {
@@ -573,6 +614,8 @@ static void ftl_destroy(xd_view *view) {
     xd_unlisten(&view->ftl_minimize);
     xd_unlisten(&view->ftl_maximize);
     xd_unlisten(&view->ftl_close);
+    xd_unlisten(&view->ftl_set_rectangle);
+    view->has_button_box = false;
     wlr_foreign_toplevel_handle_v1_destroy(view->ftl);
     view->ftl = nullptr;
     view->ftl_output = nullptr;
@@ -927,6 +970,7 @@ void xd_view_on_destroy(xd_view *view) {
     xd_unlisten(&view->decoration_mode);
     xd_unlisten(&view->decoration_destroy);
     xd_arrange_forget_view(view->server, view);
+    xd_animate_forget_view(view->server, view);
     wl_list_remove(&view->link);
     /* Takes the frame buffer and the client's scene subtree with it. */
     wlr_scene_node_destroy(&view->tree->node);

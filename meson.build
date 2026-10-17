@@ -248,6 +248,7 @@ executable(
   'src/compositor/input.c',
   'src/compositor/view.c',
   'src/compositor/frame.c',
+  'src/compositor/animate.c',
   'src/compositor/arrange.c',
   'src/compositor/protocols.c',
   'src/compositor/lock.c',

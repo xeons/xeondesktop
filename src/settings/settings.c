@@ -59,6 +59,7 @@ void xd_settings_defaults(xd_settings *s) {
         .style = XD_STYLE_CLASSIC,
         .wallpaper_mode = XD_WALLPAPER_FILL,
         .menu_transitions = true,
+        .animate_windows = true,
         .full_window_drag = true,
         .quick_launch = true,
         .locked = true,
@@ -139,6 +140,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &s->menu_transitions);
         else if (KEY("FullWindowDrag"))
             parse_bool(v, &s->full_window_drag);
+        else if (KEY("AnimateWindows"))
+            parse_bool(v, &s->animate_windows);
         else if (KEY("LargeIcons"))
             parse_bool(v, &s->large_icons);
         else if (KEY("HideKeyboardCues"))
@@ -297,6 +300,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Desktop", "WallpaperMode", mode_names[s->wallpaper_mode]);
     g_key_file_set_boolean(kf, "Effects", "MenuTransitions", s->menu_transitions);
     g_key_file_set_boolean(kf, "Effects", "FullWindowDrag", s->full_window_drag);
+    g_key_file_set_boolean(kf, "Effects", "AnimateWindows", s->animate_windows);
     g_key_file_set_boolean(kf, "Effects", "LargeIcons", s->large_icons);
     g_key_file_set_boolean(kf, "Effects", "HideKeyboardCues", s->hide_keyboard_cues);
     g_key_file_set_boolean(kf, "Windows", "AlwaysDrawFrames", s->always_frames);

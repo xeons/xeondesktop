@@ -392,6 +392,22 @@ static size_t task_entries(xd_taskbar *bar, bool group) {
     return out;
 }
 
+/* Tells the compositor where a window's button is (zwlr's
+ * set_rectangle), where XP's minimize animation goes. */
+static void tell_button(xd_taskbar *bar, xd_toplevel *tl, xd_rect r) {
+    double s = bar->scale;
+    int x = (int)(r.x / s), y = (int)(r.y / s), w = (int)(r.w / s), h = (int)(r.h / s);
+    if (tl->button_surface == bar->surface && tl->button_x == x && tl->button_y == y &&
+        tl->button_w == w && tl->button_h == h)
+        return;
+    tl->button_surface = bar->surface;
+    tl->button_x = x;
+    tl->button_y = y;
+    tl->button_w = w;
+    tl->button_h = h;
+    zwlr_foreign_toplevel_handle_v1_set_rectangle(tl->handle, bar->surface, x, y, w, h);
+}
+
 static void draw_task(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t e, xd_rect r) {
     xd_shell *shell = bar->shell;
     xd_toplevel *tl = bar->entry_views[e];
@@ -400,6 +416,15 @@ static void draw_task(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t e,
     bar->task_rects[i] = r;
     bar->task_views[i] = tl;
     bar->task_counts[i] = count;
+    /* A group's button stands for each of its windows. */
+    if (count > 1 && tl->app_id != nullptr) {
+        XD_LIST_FOR_EACH(other, &shell->toplevels, xd_toplevel, link) {
+            if (other->app_id != nullptr && strcmp(other->app_id, tl->app_id) == 0)
+                tell_button(bar, other, r);
+        }
+    } else {
+        tell_button(bar, tl, r);
+    }
 
     uint8_t state = button_state(bar, (int)i);
     char *group_label = nullptr;

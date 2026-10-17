@@ -69,6 +69,7 @@ typedef struct xd_settings {
 
     /* [Effects] (stored; not all are implemented yet) */
     bool menu_transitions;
+    bool animate_windows; /* XP's "Animate windows when minimizing and maximizing" */
     bool full_window_drag;
     bool large_icons;
     bool hide_keyboard_cues;

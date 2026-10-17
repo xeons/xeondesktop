@@ -166,6 +166,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       locale, so these shouldn't occur).
 - [ ] Blur behind the Windows 7 Start menu's glass (wlroots' scene graph has
       no blur pass); until then the panel is opaque.
+- [x] XP's "Animate windows when minimizing and maximizing" ([Effects]
+      AnimateWindows, on by default): a bar in the active caption colour
+      flies from the title bar to the taskbar button and back (the shell
+      reports buttons with set_rectangle), and between the two title bars
+      on maximize/restore down; a restored window shows when it arrives.
+      Tested headless (minimize, captured mid-flight).
 - [x] Resizing from the top/left edges keeps the opposite edge still.
 - [x] Tested: Alt+Tab, Alt+F4 (Wayland and X11), Win+Up/Down (maximize,
       restore, minimize), Ctrl+Alt+T, Ctrl+Alt+Backspace, Ctrl+Esc,

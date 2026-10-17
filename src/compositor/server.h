@@ -162,6 +162,10 @@ typedef struct xd_view {
     struct wl_listener ftl_minimize;
     struct wl_listener ftl_maximize;
     struct wl_listener ftl_close;
+    struct wl_listener ftl_set_rectangle;
+    /* Its taskbar button (layout coordinates), from the shell. */
+    struct wlr_box button_box;
+    bool has_button_box;
     struct wl_listener decoration_mode;
     struct wl_listener decoration_destroy;
 } xd_view;
@@ -189,6 +193,7 @@ typedef struct xd_config {
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     bool always_frames;  /* [Windows] AlwaysDrawFrames */
+    bool animate_windows; /* [Effects] AnimateWindows */
     xd_keyboard_settings keyboard; /* [Keyboard] */
     const char *terminal;
     const char *startup;
@@ -287,6 +292,7 @@ struct xd_server {
     struct wl_listener start_drag;
     struct wl_listener drag_destroy;
     struct wlr_scene_tree *layer_drag;
+    struct wl_list zooms; /* animate.c: minimize/maximize animations in flight */
     struct wlr_scene_tree *drag_icon;
     struct wl_listener new_virtual_keyboard;
     struct wl_listener new_virtual_pointer;
@@ -396,6 +402,14 @@ void xd_view_update_decorations(xd_view *view);
 
 /* arrange.c: Cascade/Tile for the taskbar menu (shell-only protocol). */
 void xd_arrange_init(xd_server *server);
+
+/* animate.c: XP's minimize/maximize animation. A bar flies from `from` to
+ * `to` (layout coordinates); `reveal`, if given, is hidden until it
+ * arrives (a window being restored). */
+void xd_animate_zoom(xd_server *server, struct wlr_box from, struct wlr_box to,
+                     xd_view *reveal);
+void xd_animate_forget_view(xd_server *server, xd_view *view);
+void xd_animate_finish(xd_server *server);
 /* A window is going: Task Manager's marks for arrange_marked drop it. */
 void xd_arrange_forget_view(xd_server *server, xd_view *view);
 

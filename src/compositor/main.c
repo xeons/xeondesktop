@@ -149,6 +149,7 @@ static bool server_init(xd_server *server) {
     server->layer_drag = wlr_scene_tree_create(root); /* the dragged thing, over all */
 
     xd_layers_init(server);
+    wl_list_init(&server->zooms);
     xd_view_init(server);
     xd_input_init(server);
     xd_arrange_init(server);
@@ -198,6 +199,8 @@ static void server_finish(xd_server *server) {
         xd_unlisten(listeners[i]);
     if (server->sigchld != nullptr)
         wl_event_source_remove(server->sigchld);
+    if (server->zooms.next != nullptr)
+        xd_animate_finish(server);
     if (server->scene != nullptr) {
         /* Destroying the scene frees every node in it, including each
          * output's background; outputs are destroyed later with the
@@ -243,6 +246,7 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     server->config.scheme_path = nullptr;
     server->config.style = settings.style;
     server->config.always_frames = settings.always_frames;
+    server->config.animate_windows = settings.animate_windows;
     const xd_keyboard_settings *a = &server->config.keyboard, *b = &settings.keyboard;
     if (strcmp(a->layout, b->layout) != 0 || strcmp(a->variant, b->variant) != 0 ||
         strcmp(a->options, b->options) != 0 || strcmp(a->model, b->model) != 0 ||
@@ -320,6 +324,7 @@ int main(int argc, char **argv) {
     if (!server.config.cli_style)
         server.config.style = settings.style;
     server.config.always_frames = settings.always_frames;
+    server.config.animate_windows = settings.animate_windows;
     server.config.keyboard = settings.keyboard;
     if (server.config.scheme_path == nullptr)
         xd_settings_scheme(&settings, &server.config.scheme);
