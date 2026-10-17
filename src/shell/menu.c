@@ -118,9 +118,9 @@ static int item_at(const xd_menu *menu, double x, double y) {
     if (x < 0 || x >= menu->width)
         return -1;
     for (size_t i = 0; i < menu->model->count; i++) {
-        /* The first column reaches the left edge (the Windows 2000 banner
-         * beside the items counts too); the last, the right one. */
-        int left = menu->item_xs[i] == menu->item_x ? 0 : menu->item_xs[i];
+        /* The Windows 2000 banner beside the first column isn't part of
+         * any item (as in Windows); the last column reaches the right edge. */
+        int left = menu->item_xs[i];
         int right = menu->item_xs[i] + menu->item_w;
         if (right + menu->item_w > menu->width)
             right = menu->width;
