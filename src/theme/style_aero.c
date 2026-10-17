@@ -460,6 +460,94 @@ static void aero_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
     xd_draw_text(cr, (xd_rect){tx, b.y, b.x + b.w - tx - xd_tpx(t, 6), b.h}, label, &st);
 }
 
+/* A glass button outline at b: a dark edge outside a light one. */
+static void app_button_edges(const xd_theme *t, cairo_t *cr, xd_rect b, double inner_alpha) {
+    double rad = xd_tpx(t, 3);
+    xd_path_rounded(cr, b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, rad, rad, rad, rad);
+    cairo_set_line_width(cr, 1);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.45);
+    cairo_stroke(cr);
+    xd_path_rounded(cr, b.x + 1.5, b.y + 1.5, b.w - 3, b.h - 3, rad - 1, rad - 1, rad - 1,
+                    rad - 1);
+    cairo_set_source_rgba(cr, 1, 1, 1, inner_alpha);
+    cairo_stroke(cr);
+}
+
+/* Windows 7's button for a program. A running program's has a glass
+ * frame (lit while one of its windows is active), and more windows show
+ * as edges stacked behind it; a pinned program that isn't running is its
+ * icon alone. Hovering lights the glass with the icon's own colour,
+ * glowing up from the bottom where the pointer is. */
+static void aero_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                 const xd_app_button *ab) {
+    bool active = state & XD_STATE_CHECKED;
+    bool pressed = state & XD_STATE_PRESSED;
+    bool hot = state & XD_STATE_HOT;
+    bool flash = (state & XD_STATE_FLASH) && !active;
+    int stack = XD_CLAMP(ab->windows - 1, 0, 2); /* Windows 7 shows two at most */
+    int step = xd_tpx(t, 3);
+    xd_rect b = xd_rect_inset(r, xd_tpx(t, 1), xd_tpx(t, 1));
+    b.w -= stack * step;
+    double rad = xd_tpx(t, 3);
+    if (ab->windows > 0 || hot || pressed || flash) {
+        /* The farthest edge first, each showing only past the one in front. */
+        for (int k = stack; k >= 1; k--) {
+            xd_rect e = {b.x + k * step, b.y, b.w, b.h};
+            cairo_save(cr);
+            int from = b.x + b.w + (k - 1) * step - xd_tpx(t, 1);
+            cairo_rectangle(cr, from, e.y, e.x + e.w - from + 1, e.h);
+            cairo_clip(cr);
+            xd_path_rounded(cr, e.x + 0.5, e.y + 0.5, e.w - 1, e.h - 1, rad, rad, rad, rad);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.10);
+            cairo_fill(cr);
+            app_button_edges(t, cr, e, 0.25);
+            cairo_restore(cr);
+        }
+        double lit = pressed ? 0.6 : active ? 1.0 : hot ? 0.8 : 0.45;
+        xd_path_rounded(cr, b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, rad, rad, rad, rad);
+        if (flash)
+            gloss(cr, b, (xd_rgba){1, 0.80, 0.45, 0.85}, (xd_rgba){1, 0.62, 0.20, 0.80},
+                  (xd_rgba){0.95, 0.48, 0.08, 0.80}, (xd_rgba){1, 0.62, 0.20, 0.85});
+        else
+            gloss(cr, b, (xd_rgba){1, 1, 1, 0.36 * lit}, (xd_rgba){1, 1, 1, 0.18 * lit},
+                  (xd_rgba){1, 1, 1, 0.08 * lit}, (xd_rgba){1, 1, 1, 0.20 * lit});
+        cairo_new_path(cr);
+        if (hot && !flash && ab->glow_x >= 0) {
+            cairo_save(cr);
+            xd_path_rounded(cr, b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, rad, rad, rad, rad);
+            cairo_clip(cr);
+            double gx = XD_CLAMP(ab->glow_x, b.x, b.x + b.w);
+            double gy = b.y + b.h;
+            cairo_pattern_t *g = cairo_pattern_create_radial(gx, gy, 0, gx, gy, b.w * 0.85);
+            xd_rgba c = ab->tint;
+            cairo_pattern_add_color_stop_rgba(g, 0, c.r, c.g, c.b, pressed ? 0.55 : 0.8);
+            cairo_pattern_add_color_stop_rgba(g, 1, c.r, c.g, c.b, 0);
+            cairo_set_source(cr, g);
+            cairo_paint(cr);
+            cairo_pattern_destroy(g);
+            cairo_restore(cr);
+        }
+        app_button_edges(t, cr, b, active ? 0.55 : hot ? 0.45 : 0.28);
+    }
+    if (ab->icon != nullptr) {
+        double sx = 1, sy = 1;
+        cairo_surface_get_device_scale(ab->icon, &sx, &sy);
+        int iw = (int)(cairo_image_surface_get_width(ab->icon) / sx);
+        int ih = (int)(cairo_image_surface_get_height(ab->icon) / sy);
+        int ix = ab->label != nullptr ? b.x + xd_tpx(t, 6) : b.x + (b.w - iw) / 2;
+        cairo_set_source_surface(cr, ab->icon, ix, b.y + (b.h - ih) / 2);
+        cairo_paint(cr);
+        if (ab->label != nullptr) {
+            xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_START);
+            st.shadow = true;
+            st.shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.8);
+            int tx = ix + iw + xd_tpx(t, 6);
+            xd_draw_text(cr, (xd_rect){tx, b.y, b.x + b.w - tx - xd_tpx(t, 4), b.h}, ab->label,
+                         &st);
+        }
+    }
+}
+
 static void aero_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock) {
     /* No band of its own in Windows 7: the clock sits on the glass. */
     xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_END);
@@ -541,6 +629,7 @@ const xd_style_ops xd_style_aero = {
     .start_button_width = aero_start_button_width,
     .draw_start_button = aero_draw_start_button,
     .draw_task_button = aero_draw_task_button,
+    .draw_app_button = aero_draw_app_button,
     .draw_tray = aero_draw_tray,
     .menu_palette = aero_menu_palette,
     .toolkit_colors = aero_toolkit_colors,

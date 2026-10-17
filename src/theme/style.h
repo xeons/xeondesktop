@@ -41,6 +41,9 @@ typedef struct xd_style_ops {
     void (*draw_start_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
     void (*draw_task_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                              const char *label, cairo_surface_t *icon);
+    /* Optional: the others draw a task button. */
+    void (*draw_app_button)(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                            const xd_app_button *b);
     void (*draw_tray)(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
     void (*menu_palette)(const xd_theme *t, struct xd_menu_palette *out);
     void (*toolkit_colors)(const xd_theme *t, xd_toolkit_colors *out);

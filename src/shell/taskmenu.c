@@ -467,6 +467,11 @@ void xd_taskmenu_bind(xd_shell *shell) {
 
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial) {
     xd_shell *shell = bar->shell;
+    /* Aero: a program's button has its jump list instead. */
+    if (xd_superbar_is_button(bar, hit)) {
+        xd_superbar_jump_list(bar, hit, serial);
+        return;
+    }
     xd_menu_close_all(shell);
     xd_menu_tree_free(&shell->context_tree);
     xd_menu_tree_init(&shell->context_tree);

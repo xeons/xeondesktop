@@ -50,5 +50,8 @@ bool xd_app_launch(const xd_app *app);
  * detached the same way. */
 typedef struct _GList GList;
 bool xd_app_launch_info(GDesktopAppInfo *info, GList *uris);
+/* Runs one of the program's desktop actions (a jump list's Tasks), detached
+ * the same way. */
+bool xd_app_launch_action(GDesktopAppInfo *info, const char *action);
 
 #endif

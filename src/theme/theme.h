@@ -143,6 +143,17 @@ void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
 /* icon: the window's 16px (logical) icon, or nullptr for a generic one. */
 void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                const char *label, cairo_surface_t *icon);
+/* Windows 7's taskbar button for a program (Aero), pinned or running.
+ * Other styles draw an ordinary task button. */
+typedef struct xd_app_button {
+    cairo_surface_t *icon; /* at the size to show it; nullptr: none */
+    const char *label;     /* nullptr: the icon alone, centred */
+    int windows;           /* 0: pinned, not running; 2 and more: stacked edges */
+    double glow_x;         /* hovered: the pointer's x (device px); else < 0 */
+    xd_rgba tint;          /* the icon's main colour, for the hover glow */
+} xd_app_button;
+void xd_theme_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                              const xd_app_button *b);
 /* Taskbar toolbar grip (the ridge you drag a toolbar by), vertical. */
 int xd_theme_toolbar_grip_width(const xd_theme *t);
 void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r);

@@ -69,7 +69,7 @@ void xd_taskbar_retheme(xd_taskbar *bar) {
         bar->desktop->dirty = true;
 }
 
-static void ensure_task_capacity(xd_taskbar *bar, size_t n) {
+void xd_taskbar_reserve(xd_taskbar *bar, size_t n) {
     if (n <= bar->task_cap)
         return;
     size_t cap = XD_MAX(n, bar->task_cap * 2);
@@ -78,6 +78,7 @@ static void ensure_task_capacity(xd_taskbar *bar, size_t n) {
     bar->task_counts = xd_realloc_array(bar->task_counts, cap, sizeof(*bar->task_counts));
     bar->entry_views = xd_realloc_array(bar->entry_views, cap, sizeof(*bar->entry_views));
     bar->entry_counts = xd_realloc_array(bar->entry_counts, cap, sizeof(*bar->entry_counts));
+    bar->bar_buttons = xd_realloc_array(bar->bar_buttons, cap, sizeof(*bar->bar_buttons));
     bar->task_cap = cap;
 }
 
@@ -394,7 +395,7 @@ static size_t task_entries(xd_taskbar *bar, bool group) {
 
 /* Tells the compositor where a window's button is (zwlr's
  * set_rectangle), where XP's minimize animation goes. */
-static void tell_button(xd_taskbar *bar, xd_toplevel *tl, xd_rect r) {
+void xd_taskbar_tell_button(xd_taskbar *bar, xd_toplevel *tl, xd_rect r) {
     double s = bar->scale;
     int x = (int)(r.x / s), y = (int)(r.y / s), w = (int)(r.w / s), h = (int)(r.h / s);
     if (tl->button_surface == bar->surface && tl->button_x == x && tl->button_y == y &&
@@ -420,10 +421,10 @@ static void draw_task(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t e,
     if (count > 1 && tl->app_id != nullptr) {
         XD_LIST_FOR_EACH(other, &shell->toplevels, xd_toplevel, link) {
             if (other->app_id != nullptr && strcmp(other->app_id, tl->app_id) == 0)
-                tell_button(bar, other, r);
+                xd_taskbar_tell_button(bar, other, r);
         }
     } else {
-        tell_button(bar, tl, r);
+        xd_taskbar_tell_button(bar, tl, r);
     }
 
     uint8_t state = button_state(bar, (int)i);
@@ -491,7 +492,7 @@ static void follow_active_page(xd_taskbar *bar, size_t ne, size_t per_page) {
 
 /* XP's little up/down buttons for task button pages: stacked at the end
  * of a row band, side by side at the bottom of a side taskbar's. */
-static void draw_page_arrows(xd_taskbar *bar, const xd_theme *t, cairo_t *cr) {
+void xd_taskbar_draw_page_arrows(xd_taskbar *bar, const xd_theme *t, cairo_t *cr) {
     uint8_t up_state = button_state(bar, XD_HIT_PAGE_UP);
     uint8_t down_state = button_state(bar, XD_HIT_PAGE_DOWN);
     if (bar->page == 0)
@@ -513,8 +514,14 @@ static void draw_page_arrows(xd_taskbar *bar, const xd_theme *t, cairo_t *cr) {
 static void layout_tasks(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect band, int rows,
                          int row_h) {
     xd_shell *shell = bar->shell;
+    /* Aero: Windows 7's program buttons instead. */
+    bar->superbar = false;
+    if (t->style == XD_STYLE_AERO) {
+        xd_superbar_layout(bar, t, cr, band, rows, row_h);
+        return;
+    }
     size_t n = (size_t)wl_list_length(&shell->toplevels);
-    ensure_task_capacity(bar, n);
+    xd_taskbar_reserve(bar, n);
     bar->task_count = 0;
     bar->pages = 1;
     bar->page_up_rect = bar->page_down_rect = (xd_rect){0};
@@ -541,7 +548,7 @@ static void layout_tasks(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rec
             int ay = band.y + (int)per_page * (th + gap);
             bar->page_up_rect = (xd_rect){band.x, ay, band.w / 2, th};
             bar->page_down_rect = (xd_rect){band.x + band.w / 2, ay, band.w - band.w / 2, th};
-            draw_page_arrows(bar, t, cr);
+            xd_taskbar_draw_page_arrows(bar, t, cr);
         } else {
             bar->page = 0;
         }
@@ -579,7 +586,7 @@ static void layout_tasks(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rec
         int ay = band.y + toff;
         bar->page_up_rect = (xd_rect){ax, ay, arrows_w, ah / 2};
         bar->page_down_rect = (xd_rect){ax, ay + ah / 2, arrows_w, ah - ah / 2};
-        draw_page_arrows(bar, t, cr);
+        xd_taskbar_draw_page_arrows(bar, t, cr);
     } else {
         bar->page = 0;
     }
@@ -969,6 +976,9 @@ void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
         }
         return;
     }
+    /* Aero: a program's button pulled along: rearranging. */
+    if (xd_superbar_drag(bar, x, y))
+        return;
     int hot = hit_test(bar, x, y);
     track_peek(bar, hot);
     if (hot != bar->hot) {
@@ -1018,6 +1028,8 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
                    ? xd_str_dup_cstr(xd_str_from_cstr(ql->items[i].name))
                    : nullptr;
     }
+    if (xd_superbar_is_button(bar, hit))
+        return xd_superbar_tooltip(bar, hit);
     if (hit >= 0 && (size_t)hit < bar->task_count) {
         const xd_toplevel *tl = bar->task_views[hit];
         if (bar->task_counts[hit] > 1)
@@ -1091,6 +1103,7 @@ void xd_taskbar_page(xd_taskbar *bar, int delta) {
 
 void xd_taskbar_pointer_leave(xd_taskbar *bar) {
     set_peek(bar, false);
+    xd_superbar_drop(bar);
     xd_taskbars_schedule_tuck(bar->shell);
     xd_tooltip_hide(bar->shell);
     xd_tooltip_disarm(bar->shell);
@@ -1221,6 +1234,12 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
             xd_taskbar_context_menu(bar, bar->hot, bar->pointer_x, bar->pointer_y, serial);
         return;
     }
+    if (button == BTN_MIDDLE && xd_superbar_is_button(bar, bar->hot)) {
+        /* Aero: another window of the program, on release. */
+        if (!pressed)
+            xd_superbar_click(bar, bar->hot, button);
+        return;
+    }
     if (button != BTN_LEFT)
         return;
     if (!pressed && end_bar_grab(bar))
@@ -1245,6 +1264,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     int target = bar->pressed;
     bar->pressed = XD_HIT_NONE;
     bar->dirty = true;
+    if (xd_superbar_drop(bar))
+        return; /* a program's button dragged to its new place */
     if (bar->quick_drag >= 0) {
         /* Dropped along Quick Launch: there it goes (elsewhere: nothing). */
         if (bar->drop_insert >= 0)
@@ -1284,7 +1305,9 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         xd_taskbar_page(bar, target == XD_HIT_PAGE_UP ? -1 : 1);
         return;
     }
-    if (target >= 0 && (size_t)target < bar->task_count && bar->task_counts[target] > 1)
+    if (xd_superbar_is_button(bar, target))
+        xd_superbar_click(bar, target, button);
+    else if (target >= 0 && (size_t)target < bar->task_count && bar->task_counts[target] > 1)
         xd_taskbar_group_menu(bar, target, serial);
     else if (target >= 0 && (size_t)target < bar->task_count)
         xd_toplevel_click(bar->task_views[target]);
@@ -1295,7 +1318,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
 void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel) {
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
         for (size_t i = 0; i < bar->task_count; i++) {
-            if (bar->task_views[i] == toplevel) {
+            /* Aero's buttons stand for several windows each: any of them. */
+            if (bar->task_views[i] == toplevel || bar->superbar) {
                 /* Indices shift; drop layout until the next render. */
                 bar->task_count = 0;
                 bar->quick_count = 0;
@@ -1523,6 +1547,10 @@ void xd_taskbar_destroy(xd_taskbar *bar) {
         g_source_remove(bar->tray_fold_timer);
     xd_free(bar->entry_views);
     xd_free(bar->entry_counts);
+    xd_free(bar->bar_buttons);
+    if (bar->bar_keys != nullptr)
+        g_string_chunk_free(bar->bar_keys);
+    g_free(bar->drag_key);
     xd_free(bar->quick_rects);
     xd_free(bar);
     /* If it was the first monitor's, the next one takes over. */

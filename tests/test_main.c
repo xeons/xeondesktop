@@ -32,6 +32,7 @@
 #include "../src/settings/sounds.h"
 #include "../src/shell/apps.h"
 #include "../src/startmenu/searchlib.h"
+#include "../src/shell/jumplist.h"
 #include "../src/ui/textedit.h"
 #include "../src/users/users.h"
 #include "../src/theme/theme.h"
@@ -2159,6 +2160,90 @@ static void test_appwiz(void) {
     g_bookmark_file_free(recent);
 }
 
+/* Windows 7's taskbar: its buttons setting, jump lists' recent files for
+ * one program, and moving pinned programs. */
+static void test_superbar(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    CHECK(a.buttons == XD_BUTTONS_ALWAYS_COMBINE); /* Windows 7's default */
+    xd_settings_parse(XD_STR("[Taskbar]\nButtons=whenfull\n"), &a);
+    CHECK(a.buttons == XD_BUTTONS_WHEN_FULL);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(b.buttons == XD_BUTTONS_WHEN_FULL && xd_settings_equal(&a, &b));
+    xd_strbuf_free(&text);
+    xd_settings_parse(XD_STR("[Taskbar]\nButtons=sometimes\n"), &a);
+    CHECK(a.buttons == XD_BUTTONS_ALWAYS_COMBINE);
+
+    /* Recent files: the program's own, still there, the latest first. */
+    char *dir = g_dir_make_tmp("xd-jump-XXXXXX", nullptr);
+    CHECK(dir != nullptr);
+    char *a_txt = g_build_filename(dir, "a.txt", nullptr);
+    char *b_txt = g_build_filename(dir, "b.txt", nullptr);
+    char *gone = g_build_filename(dir, "gone.txt", nullptr);
+    char *c_png = g_build_filename(dir, "c.png", nullptr);
+    CHECK(g_file_set_contents(a_txt, "a", 1, nullptr) && g_file_set_contents(b_txt, "b", 1, nullptr) &&
+          g_file_set_contents(c_png, "c", 1, nullptr));
+    GBookmarkFile *recent = g_bookmark_file_new();
+    struct {
+        const char *path, *app, *exec;
+        int64_t when;
+    } uses[] = {
+        {a_txt, "org.gnome.TextEditor", "'gnome-text-editor %u'", 1000},
+        {b_txt, "gnome-text-editor", "'gnome-text-editor %u'", 3000},
+        {gone, "org.gnome.TextEditor", "'gnome-text-editor %u'", 4000},
+        {c_png, "gimp", "'gimp-2.10 %U'", 5000},
+        {a_txt, "gimp", "'gimp %U'", 6000},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(uses); i++) {
+        char *uri = g_filename_to_uri(uses[i].path, nullptr, nullptr);
+        GDateTime *when = g_date_time_new_from_unix_utc(uses[i].when);
+        CHECK(g_bookmark_file_set_application_info(recent, uri, uses[i].app, uses[i].exec, 1,
+                                                   when, nullptr));
+        g_date_time_unref(when);
+        g_free(uri);
+    }
+    char **got = xd_jumplist_recent(recent, "org.gnome.TextEditor.desktop",
+                                    "/usr/bin/gnome-text-editor", 10);
+    CHECK(g_strv_length(got) == 2);
+    CHECK(got[0] != nullptr && g_str_has_suffix(got[0], "/b.txt"));
+    CHECK(got[1] != nullptr && g_str_has_suffix(got[1], "/a.txt"));
+    g_strfreev(got);
+    got = xd_jumplist_recent(recent, "org.gnome.TextEditor.desktop", nullptr, 1);
+    CHECK(g_strv_length(got) == 1 && g_str_has_suffix(got[0], "/a.txt")); /* by id alone */
+    g_strfreev(got);
+    got = xd_jumplist_recent(recent, "gimp.desktop", "gimp", 10);
+    CHECK(g_strv_length(got) == 2 && g_str_has_suffix(got[0], "/a.txt"));
+    g_strfreev(got);
+    got = xd_jumplist_recent(recent, "firefox.desktop", "firefox", 10);
+    CHECK(got[0] == nullptr);
+    g_strfreev(got);
+    got = xd_jumplist_recent(nullptr, "firefox.desktop", "firefox", 10);
+    CHECK(got[0] == nullptr);
+    g_strfreev(got);
+    g_bookmark_file_free(recent);
+    g_remove(a_txt);
+    g_remove(b_txt);
+    g_remove(c_png);
+    g_rmdir(dir);
+    g_free(a_txt);
+    g_free(b_txt);
+    g_free(c_png);
+    g_free(gone);
+    g_free(dir);
+
+    /* Dragging a pinned program along. */
+    static char ids[4][2] = {"a", "b", "c", "d"};
+    void *items[] = {ids[0], ids[1], ids[2], ids[3]};
+    CHECK(xd_jumplist_move(items, 4, 3, 1));
+    CHECK(items[0] == ids[0] && items[1] == ids[3] && items[2] == ids[1] && items[3] == ids[2]);
+    CHECK(xd_jumplist_move(items, 4, 0, 3));
+    CHECK(items[0] == ids[3] && items[1] == ids[1] && items[2] == ids[2] && items[3] == ids[0]);
+    CHECK(!xd_jumplist_move(items, 4, 1, 1) && !xd_jumplist_move(items, 4, 4, 0));
+}
+
 /* Printers and Faxes: CUPS's states in XP's words, sizes, ports, names. */
 static void test_printers(void) {
     CHECK(strcmp(xd_printer_status_text(3, "none", true), "Ready") == 0);
@@ -2388,6 +2473,7 @@ int main(void) {
     test_admin_events();
     test_admin_disks();
     test_appwiz();
+    test_superbar();
     test_printers();
     test_scanners();
     test_schedtasks();

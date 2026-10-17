@@ -19,6 +19,7 @@ typedef enum xd_menu_kind : uint8_t {
     XD_MENU_ACTION,
     XD_MENU_SUBMENU,
     XD_MENU_SEPARATOR,
+    XD_MENU_HEADER, /* a section's title (a jump list's "Recent"); not an item */
 } xd_menu_kind;
 
 typedef struct xd_menu_model xd_menu_model;

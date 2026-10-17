@@ -62,6 +62,7 @@ typedef struct row {
     int folder;         /* ROW_FOLDER: index into folders */
     int indent;
     bool pinned;        /* XP: pinned programs are bold, Internet/E-mail two-line */
+    bool jump;          /* Windows 7: has a jump list (the ▸ at its right) */
 } row;
 
 typedef enum right_kind : uint8_t {
@@ -186,11 +187,18 @@ struct xd_start7 {
     int context_row;       /* the program row right-clicked (OWNER_CONTEXT) */
     double ptr_x, ptr_y;   /* the pointer, where the right-click menu opens */
     bool pending_hover;
+    bool hot_arrow;        /* the pointer is on hot_left's jump list ▸ */
+    int jump_row;          /* the row whose jump list is open (OWNER_JUMP) */
 
     cairo_surface_t *picture;
     char user[128];
     uint32_t serial;
 };
+
+/* sub_owner for a program's jump list. */
+static constexpr int OWNER_JUMP = 5001;
+/* Width of a program's jump list ▸ at the right of its row. */
+static constexpr int S7_JUMP_W = 24;
 
 /* ---- palettes ------------------------------------------------------------------------ */
 
@@ -554,7 +562,8 @@ static void build_home(xd_start7 *m) {
     size_t np = 0;
     load_pinned(shell, pinned, &np, XD_ARRAY_LEN(pinned));
     for (size_t i = 0; i < np; i++)
-        push_row(m, (row){.kind = ROW_APP, .app = pinned[i], .pinned = true});
+        push_row(m, (row){.kind = ROW_APP, .app = pinned[i], .pinned = true,
+                          .jump = !m->xp && xd_jumplist_has_items(shell, pinned[i]->id)});
 
     char **lines = nullptr;
     size_t n = 0;
@@ -579,7 +588,8 @@ static void build_home(xd_start7 *m) {
             push_row(m, (row){.kind = ROW_SEP});
             sep = true;
         }
-        push_row(m, (row){.kind = ROW_APP, .app = app});
+        push_row(m, (row){.kind = ROW_APP, .app = app,
+                          .jump = !m->xp && xd_jumplist_has_items(shell, app->id)});
         shown++;
     }
     xd_free_lines(lines, n);
@@ -716,6 +726,34 @@ static int row_at(const xd_start7 *m, double x, double y) {
     return -1;
 }
 
+/* Where visible row `index` is; false if it isn't shown. */
+static bool row_rect(const xd_start7 *m, int index, xd_rect *out) {
+    xd_rect lr = list_rect(m);
+    int top = lr.y;
+    int n = visible_rows(m, nullptr);
+    for (int k = 0; k < n; k++) {
+        int i = m->scroll + k;
+        int h = row_h(m, &m->rows[i]);
+        if (i == index) {
+            *out = (xd_rect){lr.x, top, lr.w, h};
+            return true;
+        }
+        top += h;
+    }
+    return false;
+}
+
+static xd_rect jump_arrow_rect(xd_rect rr) {
+    return (xd_rect){rr.x + rr.w - S7_JUMP_W, rr.y, S7_JUMP_W, rr.h};
+}
+
+/* On row `index`'s jump list ▸ (the Windows 7 menu's programs). */
+static bool on_jump_arrow(const xd_start7 *m, int index, double x, double y) {
+    xd_rect r;
+    return index >= 0 && m->mode == MODE_HOME && m->rows[index].jump && row_rect(m, index, &r) &&
+           contains(jump_arrow_rect(r), x, y);
+}
+
 static int right_at(const xd_start7 *m, double x, double y) {
     if (m->xp) {
         if (contains(xp_logoff_rect(m), x, y))
@@ -817,9 +855,22 @@ static void draw_left(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pal
             xd_draw_text(cr, D(xd_rect_inset4(rr, 8, 0, 4, 0), s), r->label, &st);
             continue;
         }
-        bool hot = (int)i == m->hot_left;
+        bool jump_open = m->sub_owner == OWNER_JUMP && m->jump_row == (int)i;
+        bool hot = (int)i == m->hot_left || jump_open;
         if (hot)
             draw_hot(cr, t, D(rr, s), p);
+        bool jump = r->jump && m->mode == MODE_HOME;
+        if (jump) {
+            /* Windows 7's split row: the ▸ opens the jump list. */
+            xd_rect ar = jump_arrow_rect(rr);
+            if (hot) {
+                xd_fill_rect(cr, D((xd_rect){ar.x, ar.y + 4, 1, ar.h - 8}, s),
+                             p->classic ? p->left_hot_text : p->left_hot_border);
+                if ((m->hot_arrow && (int)i == m->hot_left) || jump_open)
+                    draw_hot(cr, t, D(ar, s), p);
+            }
+            draw_triangle(cr, t, D(ar, s), hot ? p->left_hot_text : p->left_text, false);
+        }
         bool large = m->mode == MODE_HOME;
         int icon = large ? 32 : 16;
         int ix = rr.x + 4 + r->indent * 18;
@@ -832,7 +883,8 @@ static void draw_left(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pal
         xd_text_style st = xd_text(t, XD_FONT_MENU, hot ? p->left_hot_text : p->left_text,
                                    XD_ALIGN_START);
         int tx = ix + icon + 8;
-        xd_draw_text(cr, D((xd_rect){tx, rr.y, rr.x + rr.w - tx - 4, h}, s), label, &st);
+        int text_end = rr.x + rr.w - (jump ? S7_JUMP_W : 0);
+        xd_draw_text(cr, D((xd_rect){tx, rr.y, text_end - tx - 4, h}, s), label, &st);
     }
 
     /* Scroll bar when the list overflows (All Programs, search). */
@@ -1546,6 +1598,12 @@ static void ctx_pin(xd_shell *shell, void *data) {
 static void ctx_unpin(xd_shell *shell, void *data) {
     set_pinned(shell, ((const xd_app *)data)->id, false);
 }
+static void ctx_pin_bar(xd_shell *shell, void *data) {
+    xd_superbar_set_pinned(shell, ((const xd_app *)data)->id, true);
+}
+static void ctx_unpin_bar(xd_shell *shell, void *data) {
+    xd_superbar_set_pinned(shell, ((const xd_app *)data)->id, false);
+}
 static void ctx_forget([[maybe_unused]] xd_shell *shell, void *data) {
     forget_launches(((const xd_app *)data)->id);
 }
@@ -1566,6 +1624,14 @@ static xd_menu_model *context_model(xd_start7 *m, const row *r) {
     it->action = ctx_open;
     it->action_data = id;
     xd_menu_add(&m->tree, mm, XD_MENU_SEPARATOR, nullptr, nullptr);
+    if (!m->xp && m->shell->style == XD_STYLE_AERO) {
+        /* Windows 7's other place to pin to (Aero's taskbar shows it). */
+        bool on_bar = xd_superbar_pinned(m->shell, r->app->id);
+        it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION,
+                         on_bar ? "Unpin from Taskbar" : "Pin to Taskbar", nullptr);
+        it->action = on_bar ? ctx_unpin_bar : ctx_pin_bar;
+        it->action_data = id;
+    }
     it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION,
                      is_pinned ? "Unpin from Start menu" : "Pin to Start menu", nullptr);
     it->action = is_pinned ? ctx_unpin : ctx_pin;
@@ -1643,6 +1709,27 @@ static void open_sub(xd_start7 *m, int owner) {
     }
     m->sub = xd_menu_open_attached(shell, mm, m->xdg_surface, anchor, m->serial);
     m->sub_owner = owner;
+    m->dirty = true;
+}
+
+/* A program's jump list (Windows 7), beside its row. Its items act after
+ * the menu closes, so it's built in the shell's context tree, which
+ * outlives this menu. */
+static void open_jump(xd_start7 *m, int index) {
+    if (m->sub_owner == OWNER_JUMP && m->sub != nullptr && m->jump_row == index)
+        return;
+    close_sub(m);
+    xd_rect anchor;
+    if (!m->shown || index < 0 || (size_t)index >= m->row_count || !m->rows[index].jump ||
+        !row_rect(m, index, &anchor))
+        return;
+    xd_shell *shell = m->shell;
+    xd_menu_tree_free(&shell->context_tree);
+    xd_menu_tree_init(&shell->context_tree);
+    xd_menu_model *mm = xd_jumplist_model(shell, &shell->context_tree, m->rows[index].app->id);
+    m->sub = xd_menu_open_attached(shell, mm, m->xdg_surface, anchor, m->serial);
+    m->sub_owner = OWNER_JUMP;
+    m->jump_row = index;
     m->dirty = true;
 }
 
@@ -1923,6 +2010,15 @@ void xd_start7_timer_fired(xd_shell *shell) {
     shell->pending_start7 = false;
     if (m == nullptr)
         return;
+    /* A program's ▸ held: its jump list; another program: it closes. */
+    if (m->hot_arrow) {
+        open_jump(m, m->hot_left);
+        return;
+    }
+    if (m->sub_owner == OWNER_JUMP && m->hot_left >= 0 && m->hot_left != m->jump_row) {
+        close_sub(m);
+        return;
+    }
     int h = m->hot_right;
     if (opens_sub(m, h))
         open_sub(m, h);
@@ -1940,11 +2036,17 @@ void xd_start7_pointer_motion(xd_shell *shell, double x, double y) {
     int right = right_at(m, x, y);
     if (contains(all_rect(m), x, y) && m->mode != MODE_SEARCH)
         right = HIT_ALL;
-    if (left != m->hot_left || right != m->hot_right) {
+    bool arrow = on_jump_arrow(m, left, x, y);
+    if (left != m->hot_left || right != m->hot_right || arrow != m->hot_arrow) {
+        bool other_row = left != m->hot_left;
         m->hot_left = left;
         m->hot_right = right;
+        m->hot_arrow = arrow;
         m->dirty = true;
         if (right >= 0 && right != m->sub_owner)
+            arm_hover(m);
+        else if ((arrow && !(m->sub_owner == OWNER_JUMP && m->jump_row == left)) ||
+                 (other_row && left >= 0 && m->sub_owner == OWNER_JUMP))
             arm_hover(m);
     }
 }
@@ -1954,6 +2056,7 @@ void xd_start7_pointer_leave(xd_shell *shell) {
     if (m != nullptr && (m->hot_left >= 0 || m->hot_right >= 0)) {
         m->hot_left = -1;
         m->hot_right = -1;
+        m->hot_arrow = false;
         m->dirty = true;
     }
 }
@@ -1971,6 +2074,13 @@ void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
     }
     if (button != BTN_LEFT)
         return;
+    /* A program's ▸: its jump list at once (not the program). */
+    if (m->hot_arrow && m->hot_left >= 0) {
+        if (pressed)
+            open_jump(m, m->hot_left);
+        m->pressed = -1;
+        return;
+    }
     int target = m->hot_left >= 0 ? m->hot_left : (m->hot_right >= 0 ? 1000 + m->hot_right : -1);
     if (pressed) {
         m->pressed = target;

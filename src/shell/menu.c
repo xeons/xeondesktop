@@ -69,7 +69,8 @@ static void layout(xd_menu *menu) {
         const xd_menu_item *it = &m->items[i];
         if (it->kind == XD_MENU_SEPARATOR)
             continue;
-        int w = it->bold ? xd_theme_menu_bold_text_width(&t, cr, it->label)
+        int w = it->bold || it->kind == XD_MENU_HEADER
+                    ? xd_theme_menu_bold_text_width(&t, cr, it->label)
                          : xd_theme_menu_text_width(&t, cr, it->label);
         if (it->accel != nullptr)
             w += xd_theme_menu_text_width(&t, cr, it->accel) + 24;
@@ -127,7 +128,10 @@ static int item_at(const xd_menu *menu, double x, double y) {
         if (x < left || x >= right)
             continue;
         if (y >= menu->item_y[i] && y < menu->item_y[i] + menu->item_h[i])
-            return menu->model->items[i].kind == XD_MENU_SEPARATOR ? -1 : (int)i;
+            return menu->model->items[i].kind == XD_MENU_SEPARATOR ||
+                           menu->model->items[i].kind == XD_MENU_HEADER
+                       ? -1
+                       : (int)i;
     }
     return -1;
 }
@@ -207,10 +211,13 @@ static void render(xd_menu *menu) {
          * sets `hot` back to it. */
         if (menu->hot == (int)i)
             state |= XD_STATE_HOT;
-        if (it->disabled)
+        bool header = it->kind == XD_MENU_HEADER;
+        if (it->disabled || header)
             state |= XD_STATE_DISABLED;
-        xd_menu_item_extras extras = {
-            .bold = it->bold, .checked = it->checked, .glyph = it->glyph, .accel = it->accel};
+        xd_menu_item_extras extras = {.bold = it->bold || header,
+                                      .checked = it->checked,
+                                      .glyph = it->glyph,
+                                      .accel = it->accel};
         xd_theme_draw_menu_item_ex(&t, cr, r, state, it->label, it->kind == XD_MENU_SUBMENU,
                                    m->large, &extras);
         int icon = m->large ? mm.large_icon : mm.icon;
@@ -610,7 +617,8 @@ static int step(const xd_menu *menu, int from, int dir) {
     int i = from;
     for (int tries = 0; tries < n; tries++) {
         i = i < 0 ? (dir > 0 ? 0 : n - 1) : (i + dir + n) % n;
-        if (menu->model->items[i].kind != XD_MENU_SEPARATOR)
+        if (menu->model->items[i].kind != XD_MENU_SEPARATOR &&
+            menu->model->items[i].kind != XD_MENU_HEADER)
             return i;
     }
     return -1;

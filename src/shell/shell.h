@@ -27,6 +27,7 @@ typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
 typedef struct xd_sleep xd_sleep;
 typedef struct xd_account xd_account;
+typedef struct xd_superbar xd_superbar;
 
 typedef struct xd_early_output {
     struct wl_output *output;
@@ -43,6 +44,8 @@ typedef struct xd_toplevel {
     char *app_id;
     char *icon;     /* its application's Icon key, from app_id; may be nullptr */
     char *app_name; /* its application's name, for a group's button; may be nullptr */
+    char *desktop_id; /* its application's desktop file id; may be nullptr */
+    uint64_t active_seq; /* when it was last activated (xd_shell.active_seq) */
     bool activated;
     bool minimized;
     bool maximized;
@@ -103,6 +106,14 @@ static inline bool xd_hit_is_quick(int hit) {
     return hit <= XD_HIT_QUICK && hit > XD_HIT_TRAY_ICON;
 }
 
+/* Aero: one of Windows 7's taskbar buttons (superbar.c). */
+typedef struct xd_bar_button {
+    const char *key;     /* its program: a desktop id, else "app:" app id, else "win:" id */
+    xd_toplevel *window; /* a window's own (labelled) button; nullptr: the program's */
+    size_t windows;      /* windows it stands for; 0: pinned, not running */
+    bool pinned;
+} xd_bar_button;
+
 typedef struct xd_taskbar {
     struct wl_list link; /* xd_shell.taskbars */
     xd_shell *shell;
@@ -138,6 +149,12 @@ typedef struct xd_taskbar {
     size_t *task_counts;       /* windows behind each button (>1: a group) */
     xd_toplevel **entry_views; /* layout scratch, task_cap long */
     size_t *entry_counts;
+    /* Aero: Windows 7's buttons, one per program; task_views[i] is one of
+     * button i's windows (nullptr for a pinned program not running). */
+    bool superbar;
+    xd_bar_button *bar_buttons; /* task_cap long */
+    struct _GStringChunk *bar_keys; /* their keys */
+    char *drag_key;             /* the program being dragged along, or nullptr */
     /* Pages of task buttons when they don't fit at their minimum width. */
     size_t page, pages;
     uint64_t page_active_id; /* active window when last laid out */
@@ -211,6 +228,8 @@ struct xd_shell {
     struct wl_list taskbars;
     struct wl_list toplevels;
     uint64_t next_toplevel_id;
+    uint64_t active_seq; /* counts window activations */
+    xd_superbar *superbar; /* Windows 7's pinned programs */
     struct _GHashTable *own_commands; /* xd_shell_own_command's results */
 
     xd_taskbar *pointer_bar; /* taskbar under the pointer */
@@ -500,6 +519,34 @@ xd_desktop *xd_desktop_for_surface(xd_shell *shell, struct wl_surface *surface);
 xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output);
 void xd_desktop_destroy(xd_desktop *d);
 void xd_desktop_render(xd_desktop *d);
+
+/* taskbar.c, for superbar.c: room for n buttons; the minimize animation's
+ * target; the page arrows (in page_up_rect and page_down_rect). */
+void xd_taskbar_reserve(xd_taskbar *bar, size_t n);
+void xd_taskbar_tell_button(xd_taskbar *bar, xd_toplevel *tl, xd_rect r);
+void xd_taskbar_draw_page_arrows(xd_taskbar *bar, const xd_theme *t, cairo_t *cr);
+
+/* superbar.c: Windows 7's taskbar buttons (Aero) and jump lists. */
+void xd_superbar_init(xd_shell *shell);
+void xd_superbar_finish(xd_shell *shell);
+/* Lays out and draws the buttons in `band` (device px). */
+void xd_superbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect band, int rows,
+                        int row_h);
+bool xd_superbar_is_button(const xd_taskbar *bar, int hit);
+/* A left or middle click on button `hit`. */
+void xd_superbar_click(xd_taskbar *bar, int hit, uint32_t button);
+/* Motion with the button held on one: true while it's being dragged. */
+bool xd_superbar_drag(xd_taskbar *bar, double x, double y);
+/* The button came up: true if it was a drag (which ends). */
+bool xd_superbar_drop(xd_taskbar *bar);
+char *xd_superbar_tooltip(xd_taskbar *bar, int hit); /* xd_free */
+void xd_superbar_jump_list(xd_taskbar *bar, int hit, uint32_t serial);
+bool xd_superbar_pinned(xd_shell *shell, const char *desktop_id);
+void xd_superbar_set_pinned(xd_shell *shell, const char *desktop_id, bool pin);
+/* A program's Recent and Tasks (the Start menu's jump list), and whether
+ * it has any. */
+xd_menu_model *xd_jumplist_model(xd_shell *shell, xd_menu_tree *tree, const char *desktop_id);
+bool xd_jumplist_has_items(xd_shell *shell, const char *desktop_id);
 
 /* taskbar.c, after a theme change */
 void xd_taskbar_retheme(xd_taskbar *bar);

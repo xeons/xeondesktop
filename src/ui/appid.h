@@ -11,5 +11,7 @@
  * its Icon key (theme name or path) and localized Name, or nullptr; g_free
  * both. Returns whether one was found. */
 bool xd_app_for_window(const char *app_id, char **icon, char **name);
+/* The same, also giving its desktop file id ("firefox.desktop"; g_free). */
+bool xd_app_for_window_id(const char *app_id, char **desktop_id, char **icon, char **name);
 
 #endif

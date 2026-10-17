@@ -187,6 +187,14 @@ void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_
     ops(t)->draw_task_button(t, cr, r, state, label, icon);
 }
 
+void xd_theme_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                              const xd_app_button *b) {
+    if (ops(t)->draw_app_button != nullptr)
+        ops(t)->draw_app_button(t, cr, r, state, b);
+    else
+        ops(t)->draw_task_button(t, cr, r, state, b->label != nullptr ? b->label : "", b->icon);
+}
+
 void xd_style_task_icon(const xd_theme *t, cairo_t *cr, cairo_surface_t *icon, int x, int y) {
     int size = xd_tpx(t, 16);
     if (icon != nullptr) {

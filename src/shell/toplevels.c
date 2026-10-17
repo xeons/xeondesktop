@@ -29,7 +29,8 @@ static void handle_app_id(void *data,
     replace_string(&t->app_id, app_id);
     g_free(t->icon);
     g_free(t->app_name);
-    xd_app_for_window(app_id, &t->icon, &t->app_name);
+    g_free(t->desktop_id);
+    xd_app_for_window_id(app_id, &t->desktop_id, &t->icon, &t->app_name);
 }
 
 /* Like XP, every taskbar shows every window, so outputs are ignored for
@@ -69,6 +70,7 @@ static void handle_state(void *data, [[maybe_unused]] struct zwlr_foreign_toplev
     if (t->activated) {
         t->attention = false;
         t->flashes = 0;
+        t->active_seq = ++t->shell->active_seq;
     }
 }
 
@@ -96,6 +98,7 @@ static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *h)
     XD_FREE(&t->app_id);
     g_free(t->icon);
     g_free(t->app_name);
+    g_free(t->desktop_id);
     xd_taskbars_mark_dirty(t->shell);
     xd_free(t);
 }

@@ -196,3 +196,37 @@ bool xd_app_launch_info(GDesktopAppInfo *info, GList *uris) {
     return ok;
 }
 
+bool xd_app_launch_action(GDesktopAppInfo *info, const char *action) {
+    /* g_desktop_app_info_launch_action can't detach the program: run the
+     * action's Exec as a program of its own (GLib still expands it), from
+     * the desktop file's "Desktop Action" group. */
+    const char *path = g_desktop_app_info_get_filename(info);
+    GKeyFile *file = g_key_file_new();
+    char *group = g_strconcat("Desktop Action ", action, nullptr);
+    char *exec = nullptr;
+    if (path != nullptr && g_key_file_load_from_file(file, path, G_KEY_FILE_NONE, nullptr))
+        exec = g_key_file_get_string(file, group, G_KEY_FILE_DESKTOP_KEY_EXEC, nullptr);
+    bool ok = false;
+    if (exec != nullptr) {
+        GKeyFile *entry = g_key_file_new();
+        g_key_file_set_string(entry, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_TYPE,
+                              G_KEY_FILE_DESKTOP_TYPE_APPLICATION);
+        g_key_file_set_string(entry, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_NAME,
+                              g_app_info_get_name(G_APP_INFO(info)));
+        g_key_file_set_string(entry, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_EXEC, exec);
+        GDesktopAppInfo *one = g_desktop_app_info_new_from_keyfile(entry);
+        if (one != nullptr) {
+            ok = xd_app_launch_info(one, nullptr);
+            g_object_unref(one);
+        }
+        g_key_file_free(entry);
+    } else {
+        fprintf(stderr, "xd-shell: %s has no action %s\n", g_app_info_get_name(G_APP_INFO(info)),
+                action);
+    }
+    g_free(exec);
+    g_free(group);
+    g_key_file_free(file);
+    return ok;
+}
+

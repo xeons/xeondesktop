@@ -121,6 +121,8 @@ static gboolean hover_activate(gpointer data) {
     if (bar == nullptr || d->hover_task < 0 || (size_t)d->hover_task >= bar->task_count)
         return G_SOURCE_REMOVE;
     xd_toplevel *t = bar->task_views[d->hover_task];
+    if (t == nullptr)
+        return G_SOURCE_REMOVE; /* Aero: a pinned program that isn't running */
     if (t->minimized)
         zwlr_foreign_toplevel_handle_v1_unset_minimized(t->handle);
     if (d->shell->seat != nullptr)

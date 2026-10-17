@@ -907,6 +907,7 @@ int main(int argc, char **argv) {
     apply_settings(&shell, true);
     shell.settings_fd = xd_settings_watch();
     xd_quicklaunch_init(&shell);
+    xd_superbar_init(&shell);
     xd_apps_load(&shell.apps);
     xd_apps_load_control_panel(&shell.control_apps);
     xd_menu_tree_init(&shell.menu_tree);
@@ -958,6 +959,9 @@ int main(int argc, char **argv) {
         zwlr_foreign_toplevel_handle_v1_destroy(t->handle);
         XD_FREE(&t->title);
         XD_FREE(&t->app_id);
+        g_free(t->icon);
+        g_free(t->app_name);
+        g_free(t->desktop_id);
         wl_list_remove(&t->link);
         xd_free(t);
     }
@@ -975,6 +979,7 @@ int main(int argc, char **argv) {
     xd_apps_free(&shell.apps);
     xd_apps_free(&shell.control_apps);
     xd_quicklaunch_finish(&shell);
+    xd_superbar_finish(&shell);
     xd_free(shell.desktop_hidden);
     xd_icons_destroy(shell.icons);
     if (shell.keyboard != nullptr)
