@@ -4,7 +4,10 @@
  * - Aero Snap: moving a window to the top edge of the screen maximizes it,
  *   to the left or right edge fills that half; a glass outline previews
  *   where it goes. A snapped window gets its size back when it's dragged
- *   away. Win+Left/Right snap from the keyboard.
+ *   away. Win+Left/Right snap from the keyboard; pressed again they go on
+ *   to the next monitor's far half, and on round to the window's own size.
+ *   Win+Shift+Up makes it as tall as the screen, Win+Shift+Left/Right move
+ *   it to the next monitor.
  * - A maximized window dragged by its caption is restored under the
  *   pointer and keeps moving.
  * - Aero Shake: shaking a window by its caption minimizes every other
@@ -42,10 +45,64 @@ static struct wlr_box snap_box(xd_server *server, double x, double y, xd_snap si
         a.width -= a.width - a.width / 2;
         break;
     case XD_SNAP_MAXIMIZE:
+    case XD_SNAP_TALL:
     case XD_SNAP_NONE:
         break;
     }
     return a;
+}
+
+/* ---- monitors ------------------------------------------------------------------------ */
+
+static struct wlr_box layout_box(xd_server *server, xd_output *out) {
+    struct wlr_box b;
+    wlr_output_layout_get_box(server->output_layout, out->wlr_output, &b);
+    return b;
+}
+
+/* The monitor a window is on: under its middle, else under the pointer. */
+static xd_output *view_output(xd_view *view) {
+    struct wlr_box b = xd_view_outer_box(view);
+    xd_output *out = xd_output_at(view->server, b.x + b.width / 2.0, b.y + b.height / 2.0);
+    return out != nullptr ? out
+                          : xd_output_at(view->server, view->server->cursor->x,
+                                         view->server->cursor->y);
+}
+
+/* The next monitor left (dir < 0) or right, in order of their middles,
+ * round the end; `from` itself when it's the only one. */
+static xd_output *next_output(xd_server *server, xd_output *from, int dir) {
+    struct wlr_box f = layout_box(server, from);
+    double fx = f.x + f.width / 2.0;
+    xd_output *best = nullptr, *wrap = nullptr;
+    double best_d = 0, wrap_d = 0;
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        struct wlr_box b = layout_box(server, out);
+        if (out == from || wlr_box_empty(&b))
+            continue;
+        double d = (b.x + b.width / 2.0 - fx) * dir; /* > 0: that way */
+        if (d > 0 && (best == nullptr || d < best_d)) {
+            best = out;
+            best_d = d;
+        }
+        if (d <= 0 && (wrap == nullptr || d < wrap_d)) {
+            wrap = out; /* the farthest the other way */
+            wrap_d = d;
+        }
+    }
+    return best != nullptr ? best : wrap != nullptr ? wrap : from;
+}
+
+/* `b` moved from one monitor to the same place on another, inside it. */
+static struct wlr_box carry_box(struct wlr_box b, struct wlr_box from, struct wlr_box to) {
+    double rx = from.width > 0 ? (b.x + b.width / 2.0 - from.x) / from.width : 0.5;
+    double ry = from.height > 0 ? (b.y + b.height / 2.0 - from.y) / from.height : 0.5;
+    b.width = XD_MIN(b.width, to.width);
+    b.height = XD_MIN(b.height, to.height);
+    b.x = XD_CLAMP((int)(to.x + rx * to.width - b.width / 2.0), to.x, to.x + to.width - b.width);
+    b.y = XD_CLAMP((int)(to.y + ry * to.height - b.height / 2.0), to.y,
+                   to.y + to.height - b.height);
+    return b;
 }
 
 static void show_preview(xd_server *server, xd_view *view, xd_snap target) {
@@ -213,14 +270,74 @@ void xd_snap_key(xd_view *view, xd_snap side) {
         return;
     struct wlr_box b = xd_view_outer_box(view);
     double cx = b.x + b.width / 2.0, cy = b.y + b.height / 2.0;
+    xd_snap other = side == XD_SNAP_LEFT ? XD_SNAP_RIGHT : XD_SNAP_LEFT;
     /* Win+Left on a window snapped right (or the other way) puts it back. */
-    if (view->snapped != XD_SNAP_NONE && view->snapped != side) {
+    if (view->snapped == other) {
         struct wlr_box r = view->snap_restore;
         view->snapped = XD_SNAP_NONE;
         xd_view_set_outer_box(view, r);
         return;
     }
+    /* Again: the far half of the next monitor that way (with one monitor,
+     * this one's other half), as Windows 7 does. */
+    if (view->snapped == side) {
+        xd_output *out = view_output(view);
+        if (out == nullptr)
+            return;
+        struct wlr_box to = layout_box(server, next_output(server, out, side == XD_SNAP_LEFT ? -1 : 1));
+        snap_to(view, other, to.x + to.width / 2.0, to.y + to.height / 2.0);
+        return;
+    }
     snap_to(view, side, cx, cy);
+}
+
+void xd_snap_tall(xd_view *view) {
+    xd_server *server = view->server;
+    if (!aero(server) || view->maximized || view->dialog)
+        return;
+    struct wlr_box b = xd_view_outer_box(view);
+    struct wlr_box area = xd_output_work_area_at(server, b.x + b.width / 2.0, b.y + b.height / 2.0);
+    if (view->snapped == XD_SNAP_NONE)
+        view->snap_restore = b;
+    view->snapped = XD_SNAP_TALL;
+    xd_view_set_outer_box(view, (struct wlr_box){b.x, area.y, b.width, area.height});
+}
+
+void xd_snap_to_monitor(xd_view *view, int dir) {
+    xd_server *server = view->server;
+    if (!aero(server))
+        return;
+    xd_output *out = view_output(view);
+    xd_output *next = out != nullptr ? next_output(server, out, dir) : nullptr;
+    if (next == nullptr || next == out)
+        return;
+    struct wlr_box from = layout_box(server, out), to = layout_box(server, next);
+    struct wlr_box b = xd_view_outer_box(view);
+    double tx = to.x + to.width / 2.0, ty = to.y + to.height / 2.0;
+    if (view->maximized) {
+        /* Maximized there, and restores to the same place there. */
+        view->restore = carry_box(view->restore, from, to);
+        xd_view_set_outer_box(view, xd_output_work_area_at(server, tx, ty));
+        return;
+    }
+    switch (view->snapped) {
+    case XD_SNAP_LEFT:
+    case XD_SNAP_RIGHT:
+        view->snap_restore = carry_box(view->snap_restore, from, to);
+        xd_view_set_outer_box(view, snap_box(server, tx, ty, view->snapped));
+        return;
+    case XD_SNAP_TALL: {
+        view->snap_restore = carry_box(view->snap_restore, from, to);
+        struct wlr_box area = xd_output_work_area_at(server, tx, ty);
+        struct wlr_box c = carry_box(b, from, to);
+        xd_view_set_outer_box(view, (struct wlr_box){c.x, area.y, c.width, area.height});
+        return;
+    }
+    case XD_SNAP_MAXIMIZE:
+    case XD_SNAP_NONE:
+        break;
+    }
+    xd_view_set_outer_box(view, carry_box(b, from, to));
 }
 
 void xd_snap_forget_view(xd_server *server, xd_view *view) {

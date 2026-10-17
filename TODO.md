@@ -202,8 +202,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       hovered half a second, every window fades to its outline
       (xd-window-arranger-v1 version 6, peek); a click shows the desktop;
       Win+Space peeks while the Windows key is held. Tested headless.
-- [ ] Snapping across monitors with Win+Left/Right, Win+Shift+Up
-      (maximize height), Windows 7's icon-only taskbar and jump lists.
+- [x] Windows 7's keys across monitors (Aero): Win+Left/Right on a
+      window already snapped that way go on to the next monitor's far half
+      (round the end; with one monitor, left half, right half, restored);
+      Win+Shift+Left/Right move a window to the next monitor (maximized and
+      snapped windows stay so there, and restore there); Win+Shift+Up makes
+      it as tall as the work area, Win+Down puts it back. Tested headless
+      with two outputs.
+- [ ] Windows 7's icon-only taskbar and jump lists.
 - [x] Resizing from the top/left edges keeps the opposite edge still.
 - [x] Tested: Alt+Tab, Alt+F4 (Wayland and X11), Win+Up/Down (maximize,
       restore, minimize), Ctrl+Alt+T, Ctrl+Alt+Backspace, Ctrl+Esc,

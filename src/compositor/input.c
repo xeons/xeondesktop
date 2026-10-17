@@ -211,6 +211,16 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         }
         return true;
     }
+    /* Windows 7's Win+Shift+Up (as tall as the screen) and
+     * Win+Shift+Left/Right (to the next monitor), Aero only. */
+    if (logo && shift && server->config.style == XD_STYLE_AERO &&
+        (sym == XKB_KEY_Up || sym == XKB_KEY_Left || sym == XKB_KEY_Right)) {
+        if (focused != nullptr && sym == XKB_KEY_Up)
+            xd_snap_tall(focused);
+        else if (focused != nullptr)
+            xd_snap_to_monitor(focused, sym == XKB_KEY_Left ? -1 : 1);
+        return true;
+    }
     if (logo && sym == XKB_KEY_Up) {
         if (focused != nullptr)
             xd_view_set_maximized(focused, true);

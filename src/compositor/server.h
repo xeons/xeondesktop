@@ -81,6 +81,7 @@ typedef enum xd_snap : uint8_t {
     XD_SNAP_MAXIMIZE,
     XD_SNAP_LEFT,
     XD_SNAP_RIGHT,
+    XD_SNAP_TALL, /* Win+Shift+Up: the work area's full height */
 } xd_snap;
 
 typedef struct xd_layer_surface {
@@ -462,6 +463,10 @@ bool xd_snap_begin(xd_server *server, xd_view *view);
 void xd_snap_motion(xd_server *server, xd_view *view);
 void xd_snap_end(xd_server *server, xd_view *view);
 void xd_snap_key(xd_view *view, xd_snap side);
+/* Win+Shift+Up: stretched to the work area's height, keeping its width. */
+void xd_snap_tall(xd_view *view);
+/* Win+Shift+Left/Right: to the next monitor that way (round the end). */
+void xd_snap_to_monitor(xd_view *view, int dir);
 void xd_snap_forget_view(xd_server *server, xd_view *view);
 void xd_snap_finish(xd_server *server);
 /* A window is going: Task Manager's marks for arrange_marked drop it. */
