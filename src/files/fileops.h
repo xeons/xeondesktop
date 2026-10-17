@@ -41,6 +41,12 @@ void xd_fileop_start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile
 gboolean xd_fileop_start_checked(GtkWindow *parent, XdFileOpKind kind, GList *sources,
                                  GFile *dest, XdFileOpDone done, gpointer user);
 
+/* As xd_fileop_start_checked, and Edit > Undo can take back what it did
+ * once it's finished (undo.h): the user's copies, moves and deletions
+ * to the Recycle Bin, not the undoing itself. */
+gboolean xd_fileop_start_undoable(GtkWindow *parent, XdFileOpKind kind, GList *sources,
+                                  GFile *dest, XdFileOpDone done, gpointer user);
+
 /* The clipboard: Cut (move on paste) or Copy. */
 void xd_clipboard_set_files(GtkWidget *widget, GList *files, gboolean cut);
 /* Asks for the clipboard's files; `got` receives them (GFile*, or

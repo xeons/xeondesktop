@@ -418,6 +418,9 @@ rename_lib = static_library(
 )
 
 # xd-files: the file manager (GTK3), with the folder view (libxdfolder).
+# libarchive makes Send To's Compressed (zipped) Folder; without it the
+# item isn't offered.
+archive_dep = dependency('libarchive', required: false, include_type: 'system')
 folder_lib = static_library(
   'xdfolder',
   'src/files/control.c',
@@ -425,8 +428,10 @@ folder_lib = static_library(
   'src/files/folderview.c',
   'src/files/places.c',
   'src/files/properties.c',
-  c_args: ['-D_GNU_SOURCE'],
-  dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep],
+  'src/files/sendto.c',
+  'src/files/undo.c',
+  c_args: ['-D_GNU_SOURCE', '-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0')],
+  dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep, archive_dep],
 )
 
 # xd-control: opens Control Panel (control:/// in xd-files) or an applet.

@@ -23,6 +23,7 @@
 #include "../src/intl/intl.h"
 #include "../src/keyboard/layouts.h"
 #include "../src/mouse/cursors.h"
+#include "../src/files/columns.h"
 #include "../src/files/names.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
@@ -1069,6 +1070,26 @@ static void test_folder_options(void) {
     CHECK(xd_name_base_len(".bashrc") == 7);
     CHECK(xd_name_base_len("odd.") == 4);
     CHECK(xd_name_base_len("") == 0);
+
+    /* xd-files' Details columns, as each folder remembers them. */
+    int order[8] = {0}, width[8] = {0}, count = 0;
+    CHECK(xd_columns_parse("0:250,3:0,1:80,6:70", 8, order, &count, width));
+    CHECK(count == 4 && order[0] == 0 && order[1] == 3 && order[2] == 1 && order[3] == 6);
+    CHECK(width[0] == 250 && width[3] == 0 && width[1] == 80 && width[6] == 70 && width[2] == 0);
+    char *spec = xd_columns_format(order, count, width);
+    CHECK(strcmp(spec, "0:250,3:0,1:80,6:70") == 0);
+    g_free(spec);
+    CHECK(xd_columns_parse("2:100,0:0", 8, order, &count, width)); /* Name moved right */
+    CHECK(count == 2 && order[0] == 2 && order[1] == 0);
+    CHECK(xd_columns_parse("1:80", 8, order, &count, width)); /* Name always shown */
+    CHECK(count == 2 && order[0] == 0 && order[1] == 1);
+    CHECK(!xd_columns_parse("0:10,0:20", 8, order, &count, width));
+    CHECK(!xd_columns_parse("9:10", 8, order, &count, width));
+    CHECK(!xd_columns_parse("0:x", 8, order, &count, width));
+    CHECK(!xd_columns_parse("0", 8, order, &count, width));
+    CHECK(!xd_columns_parse("", 8, order, &count, width));
+    CHECK(!xd_columns_parse(nullptr, 8, order, &count, width));
+    CHECK(count == 2 && order[1] == 1); /* left alone when refused */
 
     static const char xml[] =
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"

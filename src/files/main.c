@@ -16,6 +16,8 @@
 #include "folderview.h"
 #include "places.h"
 #include "properties.h"
+#include "sendto.h"
+#include "undo.h"
 
 enum { COL_NAME, COL_ICON, COL_FILE, COL_LOADED, COL_COUNT };
 
@@ -39,6 +41,8 @@ typedef struct explorer {
      * above the view) and View menu item. */
     GtkWidget *control_bar, *control_link, *control_item, *control_sep;
     GtkWidget *hidden_item;  /* View > Show Hidden Files */
+    GtkWidget *undo_item;    /* Edit > Undo ... */
+    GtkWidget *send_to_item; /* File > Send To */
     /* Menu items that need a selection, or files on the clipboard. */
     GPtrArray *need_selection;
     GPtrArray *need_clipboard;
@@ -323,13 +327,21 @@ static void free_history(GList **list) {
 /* ---- each folder's view, remembered (XP keeps 400) ---------------------------- */
 
 enum { FOLDER_VIEWS_MAX = 400 };
-#define FOLDER_VIEWS "folder-views" /* lines: uri, view, sort column, descending[, groups] */
+/* Lines: uri, view, sort column, descending[, groups[, Details columns
+ * ("-": the defaults), Auto Arrange, Align to Grid]]. */
+#define FOLDER_VIEWS "folder-views"
+/* Where icons were put with Auto Arrange off: a key file, a group per
+ * folder (most recent last), with the view, the names (URI-escaped, so
+ * any file name is plain text) and their x, y pairs. */
+#define FOLDER_POSITIONS "folder-positions"
 
 static void set_mode(explorer *e, XdViewMode mode);
 
 typedef struct folder_view_setting {
     int mode, sort;
     gboolean desc, groups;
+    char *columns; /* nullptr: the defaults */
+    gboolean auto_arrange, align_grid;
 } folder_view_setting;
 
 static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
@@ -338,13 +350,20 @@ static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
     xd_state_read_lines(FOLDER_VIEWS, &lines, &n, FOLDER_VIEWS_MAX);
     gboolean found = FALSE;
     for (size_t i = 0; i < n && !found; i++) {
-        char **f = g_strsplit(lines[i], "\t", 5);
+        char **f = g_strsplit(lines[i], "\t", 8);
         guint nf = g_strv_length(f);
         if (nf >= 4 && strcmp(f[0], uri) == 0) {
             long mode = strtol(f[1], nullptr, 10), sort = strtol(f[2], nullptr, 10);
             if (mode >= 0 && mode < XD_VIEW_COUNT && sort >= 0 && sort < XD_SORT_COUNT) {
-                *out = (folder_view_setting){(int)mode, (int)sort, strcmp(f[3], "1") == 0,
-                                             nf == 5 && strcmp(f[4], "1") == 0};
+                *out = (folder_view_setting){
+                    .mode = (int)mode,
+                    .sort = (int)sort,
+                    .desc = strcmp(f[3], "1") == 0,
+                    .groups = nf >= 5 && strcmp(f[4], "1") == 0,
+                    .columns = nf >= 6 && strcmp(f[5], "-") != 0 ? g_strdup(f[5]) : nullptr,
+                    .auto_arrange = nf < 7 || strcmp(f[6], "1") == 0,
+                    .align_grid = nf < 8 || strcmp(f[7], "1") == 0,
+                };
                 found = TRUE;
             }
         }
@@ -352,6 +371,83 @@ static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
     }
     xd_free_lines(lines, n);
     return found;
+}
+
+static GKeyFile *load_positions(char **path_out) {
+    xd_strbuf path = {0};
+    xd_state_path(FOLDER_POSITIONS, &path);
+    GKeyFile *kf = g_key_file_new();
+    g_key_file_load_from_file(kf, xd_strbuf_cstr(&path), G_KEY_FILE_NONE, nullptr);
+    if (path_out != nullptr)
+        *path_out = g_strdup(xd_strbuf_cstr(&path));
+    xd_strbuf_free(&path);
+    return kf;
+}
+
+/* Keeps where the folder's icons are (Auto Arrange off), or forgets it. */
+static void remember_positions(explorer *e, const char *uri) {
+    char *path = nullptr;
+    GKeyFile *kf = load_positions(&path);
+    gboolean had = g_key_file_has_group(kf, uri);
+    XdViewMode mode = XD_VIEW_ICONS;
+    char **names = nullptr;
+    int *xy = nullptr;
+    gsize n = xd_folder_view_get_positions(e->view, &mode, &names, &xy);
+    if (n > 0 || had) {
+        g_key_file_remove_group(kf, uri, nullptr);
+        if (n > 0) {
+            char **escaped = g_new0(char *, n + 1);
+            for (gsize i = 0; i < n; i++)
+                escaped[i] = g_uri_escape_string(names[i], nullptr, FALSE);
+            g_key_file_set_integer(kf, uri, "View", (int)mode);
+            g_key_file_set_string_list(kf, uri, "Names", (const char *const *)escaped, n);
+            g_key_file_set_integer_list(kf, uri, "Positions", xy, 2 * n);
+            g_strfreev(escaped);
+        }
+        gsize groups = 0;
+        char **all = g_key_file_get_groups(kf, &groups);
+        for (gsize i = 0; i + FOLDER_VIEWS_MAX < groups; i++)
+            g_key_file_remove_group(kf, all[i], nullptr); /* the least recent */
+        g_strfreev(all);
+        GError *err = nullptr;
+        if (!g_key_file_save_to_file(kf, path, &err)) {
+            g_printerr("xd-files: cannot save where the icons are: %s\n", err->message);
+            g_error_free(err);
+        }
+    }
+    g_strfreev(names);
+    g_free(xy);
+    g_key_file_unref(kf);
+    g_free(path);
+}
+
+/* Puts the folder's icons back where they were (before it's listed). */
+static void restore_positions(explorer *e, const char *uri) {
+    GKeyFile *kf = load_positions(nullptr);
+    gsize n = 0, nxy = 0;
+    char **escaped = g_key_file_get_string_list(kf, uri, "Names", &n, nullptr);
+    int *xy = g_key_file_get_integer_list(kf, uri, "Positions", &nxy, nullptr);
+    int mode = g_key_file_get_integer(kf, uri, "View", nullptr);
+    if (escaped != nullptr && xy != nullptr && nxy == 2 * n && mode >= 0 && mode < XD_VIEW_COUNT) {
+        char **names = g_new0(char *, n + 1);
+        gsize k = 0;
+        int *kept = g_new0(int, 2 * n + 1);
+        for (gsize i = 0; i < n; i++) {
+            char *name = g_uri_unescape_string(escaped[i], nullptr);
+            if (name == nullptr)
+                continue;
+            names[k] = name;
+            kept[2 * k] = xy[2 * i];
+            kept[2 * k + 1] = xy[2 * i + 1];
+            k++;
+        }
+        xd_folder_view_set_positions(e->view, (XdViewMode)mode, names, kept, k);
+        g_strfreev(names);
+        g_free(kept);
+    }
+    g_strfreev(escaped);
+    g_free(xy);
+    g_key_file_unref(kf);
 }
 
 /* Keeps the folder's view (most recent first), unless it's the default
@@ -363,17 +459,26 @@ static void remember_folder_view(explorer *e) {
     if (dir == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL || !options.remember_views)
         return;
     char *uri = g_file_get_uri(dir);
+    remember_positions(e, uri);
     XdViewMode view_mode = xd_folder_view_get_mode(e->view);
     int mode = (int)view_mode;
     XdSortColumn sort_col = xd_folder_view_get_sort(e->view);
     int sort = (int)sort_col;
     gboolean desc = xd_folder_view_get_sort_descending(e->view);
     gboolean groups = xd_folder_view_get_groups(e->view);
-    folder_view_setting old;
+    char *columns = xd_folder_view_get_columns(e->view);
+    gboolean arrange = xd_folder_view_get_auto_arrange(e->view);
+    gboolean align = xd_folder_view_get_align_to_grid(e->view);
+    folder_view_setting old = {0};
     gboolean known = find_folder_view(uri, &old);
-    gboolean is_default = mode == initial_view && sort == XD_SORT_NAME && !desc && !groups;
-    if ((!known && is_default) || (known && old.mode == mode && old.sort == sort &&
-                                   old.desc == desc && old.groups == groups)) {
+    gboolean is_default = mode == initial_view && sort == XD_SORT_NAME && !desc && !groups &&
+                          columns == nullptr && arrange && align;
+    gboolean same = known && old.mode == mode && old.sort == sort && old.desc == desc &&
+                    old.groups == groups && g_strcmp0(old.columns, columns) == 0 &&
+                    old.auto_arrange == arrange && old.align_grid == align;
+    g_free(old.columns);
+    if ((!known && is_default) || same) {
+        g_free(columns);
         g_free(uri);
         return;
     }
@@ -382,8 +487,10 @@ static void remember_folder_view(explorer *e) {
     xd_state_read_lines(FOLDER_VIEWS, &lines, &n, FOLDER_VIEWS_MAX);
     char **out = g_new0(char *, n + 2);
     size_t k = 0;
-    out[k++] = g_strdup_printf("%s\t%d\t%d\t%d\t%d", uri, mode, sort, desc ? 1 : 0,
-                               groups ? 1 : 0);
+    out[k++] = g_strdup_printf("%s\t%d\t%d\t%d\t%d\t%s\t%d\t%d", uri, mode, sort, desc ? 1 : 0,
+                               groups ? 1 : 0, columns != nullptr ? columns : "-",
+                               arrange ? 1 : 0, align ? 1 : 0);
+    g_free(columns);
     char *prefix = g_strconcat(uri, "\t", nullptr);
     for (size_t i = 0; i < n && k < FOLDER_VIEWS_MAX; i++)
         if (!g_str_has_prefix(lines[i], prefix))
@@ -409,25 +516,41 @@ static void apply_folder_view(explorer *e, GFile *dir) {
         set_mode(e, categories ? XD_VIEW_TILES : XD_VIEW_ICONS);
         xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
         xd_folder_view_set_groups(e->view, FALSE);
+        xd_folder_view_set_columns(e->view, nullptr);
+        xd_folder_view_set_auto_arrange(e->view, TRUE);
         return;
     }
     /* Not remembering: every folder keeps the view last chosen, as in XP. */
     if (!options.remember_views)
         return;
     char *uri = g_file_get_uri(dir);
-    folder_view_setting fv;
+    folder_view_setting fv = {0};
     if (find_folder_view(uri, &fv)) {
         set_mode(e, (XdViewMode)fv.mode);
+        xd_folder_view_set_auto_arrange(e->view, fv.auto_arrange);
+        xd_folder_view_set_align_to_grid(e->view, fv.align_grid);
         xd_folder_view_set_sort(e->view, (XdSortColumn)fv.sort, fv.desc);
         if (xd_folder_view_get_groups(e->view) != fv.groups)
             xd_folder_view_set_groups(e->view, fv.groups);
-    } else if (xd_folder_view_get_mode(e->view) != (XdViewMode)initial_view ||
-               xd_folder_view_get_sort(e->view) != XD_SORT_NAME ||
-               xd_folder_view_get_sort_descending(e->view) ||
-               xd_folder_view_get_groups(e->view)) {
-        set_mode(e, (XdViewMode)initial_view);
-        xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
-        xd_folder_view_set_groups(e->view, FALSE);
+        xd_folder_view_set_columns(e->view, fv.columns);
+        if (!fv.auto_arrange)
+            restore_positions(e, uri);
+        g_free(fv.columns);
+    } else {
+        char *columns = xd_folder_view_get_columns(e->view);
+        if (xd_folder_view_get_mode(e->view) != (XdViewMode)initial_view ||
+            xd_folder_view_get_sort(e->view) != XD_SORT_NAME ||
+            xd_folder_view_get_sort_descending(e->view) || xd_folder_view_get_groups(e->view) ||
+            columns != nullptr || !xd_folder_view_get_auto_arrange(e->view) ||
+            !xd_folder_view_get_align_to_grid(e->view)) {
+            set_mode(e, (XdViewMode)initial_view);
+            xd_folder_view_set_auto_arrange(e->view, TRUE);
+            xd_folder_view_set_align_to_grid(e->view, TRUE);
+            xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
+            xd_folder_view_set_groups(e->view, FALSE);
+            xd_folder_view_set_columns(e->view, nullptr);
+        }
+        g_free(columns);
     }
     g_free(uri);
 }
@@ -780,6 +903,9 @@ static void on_arrange(GtkWidget *item, gpointer data) {
     xd_folder_view_set_sort(e->view, (XdSortColumn)col, FALSE);
 }
 
+/* Arrange Icons by's check items after the columns ("xd-sort"). */
+enum { ARRANGE_GROUPS = -1, ARRANGE_AUTO = -2, ARRANGE_ALIGN = -3 };
+
 static void on_show_groups(GtkWidget *item, gpointer data) {
     explorer *e = data;
     if (e->syncing)
@@ -788,33 +914,71 @@ static void on_show_groups(GtkWidget *item, gpointer data) {
     remember_folder_view(e);
 }
 
-/* Checks radio `col` of an Arrange Icons by menu, and Show in Groups. */
+static void on_auto_arrange(GtkWidget *item, gpointer data) {
+    explorer *e = data;
+    if (e->syncing)
+        return;
+    xd_folder_view_set_auto_arrange(e->view,
+                                    gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)));
+    remember_folder_view(e);
+}
+
+static void on_align_to_grid(GtkWidget *item, gpointer data) {
+    explorer *e = data;
+    if (e->syncing)
+        return;
+    xd_folder_view_set_align_to_grid(e->view,
+                                     gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)));
+    remember_folder_view(e);
+}
+
+/* Auto Arrange and Align to Grid are for the icon views, and not while
+ * they're shown in groups (always arranged); nor for My Computer or
+ * Control Panel. Align to Grid is for icons put anywhere. */
+static gboolean can_place_icons(explorer *e) {
+    XdViewMode mode = xd_folder_view_get_mode(e->view);
+    XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
+    return mode != XD_VIEW_LIST && mode != XD_VIEW_DETAILS && !xd_folder_view_get_groups(e->view) &&
+           (place == XD_PLACE_FOLDER || place == XD_PLACE_TRASH);
+}
+
+/* Checks radio `col` of an Arrange Icons by menu, and the check items. */
 static void check_radio(GtkWidget *menu, int col, explorer *e) {
     GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
     e->syncing = TRUE;
+    gboolean placeable = can_place_icons(e);
+    gboolean arranged = xd_folder_view_get_auto_arrange(e->view);
     for (GList *l = items; l != nullptr; l = l->next) {
         if (!GTK_IS_CHECK_MENU_ITEM(l->data))
             continue; /* the separator */
+        GtkCheckMenuItem *check = GTK_CHECK_MENU_ITEM(l->data);
         int which = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(l->data), "xd-sort"));
-        if (which == col)
-            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(l->data), TRUE);
-        else if (which == -1)
-            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(l->data),
-                                           xd_folder_view_get_groups(e->view));
+        if (which == col) {
+            gtk_check_menu_item_set_active(check, TRUE);
+        } else if (which == ARRANGE_GROUPS) {
+            gtk_check_menu_item_set_active(check, xd_folder_view_get_groups(e->view));
+        } else if (which == ARRANGE_AUTO) {
+            gtk_check_menu_item_set_active(check, arranged || !placeable);
+            gtk_widget_set_sensitive(l->data, placeable);
+        } else if (which == ARRANGE_ALIGN) {
+            gtk_check_menu_item_set_active(check, xd_folder_view_get_align_to_grid(e->view));
+            gtk_widget_set_sensitive(l->data, placeable && !arranged);
+        }
     }
     e->syncing = FALSE;
     g_list_free(items);
 }
 
 static GtkWidget *arrange_menu(explorer *e, gboolean radios) {
-    static const char *const names[XD_SORT_COUNT] = {"_Name", "_Size", "T_ype", "Modi_fied"};
+    static const char *const names[XD_SORT_ARRANGE_COUNT] = {"_Name", "_Size", "T_ype",
+                                                             "Modi_fied"};
     GtkWidget *menu = gtk_menu_new();
     GSList *group = nullptr;
     /* The menus are built before the view: it starts by name. */
     XdSortColumn sort = e->view != nullptr ? xd_folder_view_get_sort(e->view) : XD_SORT_NAME;
     int current = (int)sort;
     e->syncing = TRUE;
-    for (int i = 0; i < XD_SORT_COUNT; i++) {
+    for (int i = 0; i < XD_SORT_ARRANGE_COUNT; i++) {
         GtkWidget *item;
         if (radios) {
             item = gtk_radio_menu_item_new_with_mnemonic(group, names[i]);
@@ -832,10 +996,20 @@ static GtkWidget *arrange_menu(explorer *e, gboolean radios) {
     GtkWidget *groups = gtk_check_menu_item_new_with_mnemonic("Show in _Groups");
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(groups),
                                    e->view != nullptr && xd_folder_view_get_groups(e->view));
-    g_object_set_data(G_OBJECT(groups), "xd-sort", GINT_TO_POINTER(-1));
+    g_object_set_data(G_OBJECT(groups), "xd-sort", GINT_TO_POINTER(ARRANGE_GROUPS));
     g_signal_connect(groups, "toggled", G_CALLBACK(on_show_groups), e);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), groups);
+    GtkWidget *arrange = gtk_check_menu_item_new_with_mnemonic("_Auto Arrange");
+    g_object_set_data(G_OBJECT(arrange), "xd-sort", GINT_TO_POINTER(ARRANGE_AUTO));
+    g_signal_connect(arrange, "toggled", G_CALLBACK(on_auto_arrange), e);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), arrange);
+    GtkWidget *align = gtk_check_menu_item_new_with_mnemonic("A_lign to Grid");
+    g_object_set_data(G_OBJECT(align), "xd-sort", GINT_TO_POINTER(ARRANGE_ALIGN));
+    g_signal_connect(align, "toggled", G_CALLBACK(on_align_to_grid), e);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), align);
     e->syncing = FALSE;
+    if (e->view != nullptr)
+        check_radio(menu, current, e);
     gtk_widget_show_all(menu);
     return menu;
 }
@@ -1033,8 +1207,8 @@ static void got_clipboard(GList *files, gboolean cut, gpointer data) {
         g_object_remove_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
         if (files != nullptr) {
             XdFileOpKind kind = r->shortcut ? XD_FILEOP_LINK : cut ? XD_FILEOP_MOVE : XD_FILEOP_COPY;
-            xd_fileop_start(GTK_WINDOW(r->window), kind, files, r->dest,
-                            kind == XD_FILEOP_MOVE ? after_cut_paste : after_paste, r->e);
+            xd_fileop_start_undoable(GTK_WINDOW(r->window), kind, files, r->dest,
+                                     kind == XD_FILEOP_MOVE ? after_cut_paste : after_paste, r->e);
         }
     }
     g_object_unref(r->dest);
@@ -1071,9 +1245,10 @@ static void delete_selected(explorer *e, gboolean permanently) {
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     gboolean in_trash = place == XD_PLACE_TRASH;
-    xd_fileop_start(GTK_WINDOW(e->window),
-                    permanently || in_trash ? XD_FILEOP_DELETE : XD_FILEOP_TRASH, files, nullptr,
-                    in_trash ? after_trash_change : nullptr, e);
+    /* Sending to the Recycle Bin can be undone; deleting can't. */
+    xd_fileop_start_undoable(GTK_WINDOW(e->window),
+                             permanently || in_trash ? XD_FILEOP_DELETE : XD_FILEOP_TRASH, files,
+                             nullptr, in_trash ? after_trash_change : nullptr, e);
     g_list_free_full(files, g_object_unref);
 }
 
@@ -1092,8 +1267,8 @@ static void copy_to_folder(explorer *e, gboolean move) {
     if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
         GFile *dest = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
         if (dest != nullptr) {
-            xd_fileop_start(GTK_WINDOW(e->window), move ? XD_FILEOP_MOVE : XD_FILEOP_COPY, files,
-                            dest, select_created, e);
+            xd_fileop_start_undoable(GTK_WINDOW(e->window), move ? XD_FILEOP_MOVE : XD_FILEOP_COPY,
+                                     files, dest, select_created, e);
             g_object_unref(dest);
         }
     }
@@ -1167,6 +1342,7 @@ static gboolean commit_rename(explorer *e) {
             GError *err = nullptr;
             GFile *renamed = xd_rename(e->renaming, text, &err);
             if (renamed != nullptr) {
+                xd_undo_add_rename(renamed, old);
                 GList *one = g_list_append(nullptr, renamed);
                 xd_folder_view_select_files(e->view, one);
                 g_list_free(one);
@@ -1287,9 +1463,18 @@ static void on_files_dropped([[maybe_unused]] XdFolderView *view, char **uris, G
                         : action == GDK_ACTION_MOVE         ? XD_FILEOP_MOVE
                         : action == GDK_ACTION_LINK         ? XD_FILEOP_LINK
                                                             : XD_FILEOP_COPY;
-    xd_fileop_start(GTK_WINDOW(e->window), kind, files, folder, select_created, e);
+    xd_fileop_start_undoable(GTK_WINDOW(e->window), kind, files, folder, select_created, e);
     g_list_free_full(files, g_object_unref);
 }
+
+/* Edit > Undo (Ctrl+Z): the latest operation, taken back. */
+static void undo_last(explorer *e) {
+    if (xd_undo_label() == nullptr)
+        return;
+    xd_undo(GTK_WINDOW(e->window), select_created, e);
+}
+
+static void cb_undo([[maybe_unused]] GtkWidget *w, gpointer d) { undo_last(d); }
 
 static void cb_cut([[maybe_unused]] GtkWidget *w, gpointer d) { copy_or_cut(d, TRUE); }
 static void cb_restore([[maybe_unused]] GtkWidget *w, gpointer d) { restore_selected(d); }
@@ -1349,6 +1534,12 @@ static gboolean file_key(explorer *e, GdkEventKey *ev) {
             return FALSE;
         paste_into(e, current_dir(e), FALSE);
         return TRUE;
+    case GDK_KEY_z:
+    case GDK_KEY_Z:
+        if (!ctrl)
+            return FALSE;
+        undo_last(e);
+        return TRUE;
     default:
         return FALSE;
     }
@@ -1360,6 +1551,10 @@ static void show_accel(GtkWidget *item, guint key, GdkModifierType mods) {
     GtkWidget *label = gtk_bin_get_child(GTK_BIN(item));
     if (GTK_IS_ACCEL_LABEL(label))
         gtk_accel_label_set_accel(GTK_ACCEL_LABEL(label), key, mods);
+}
+
+static GtkWidget *send_to_menu(explorer *e, GList *files) {
+    return xd_send_to_menu(GTK_WINDOW(e->window), files, select_created, e);
 }
 
 static void update_menu_items(GtkWidget *menu, gpointer data) {
@@ -1383,6 +1578,16 @@ static void update_menu_items(GtkWidget *menu, gpointer data) {
     }
     for (guint i = 0; i < e->trash_only->len; i++)
         gtk_widget_set_visible(g_ptr_array_index(e->trash_only, i), place == XD_PLACE_TRASH);
+    /* "Undo Rename", "Undo Copy"..., or a greyed "Undo". */
+    const char *undo = xd_undo_label();
+    gtk_menu_item_set_label(GTK_MENU_ITEM(e->undo_item), undo != nullptr ? undo : "_Undo");
+    gtk_widget_set_sensitive(e->undo_item, undo != nullptr);
+    /* Send To, for what's selected now. */
+    GList *files = place == XD_PLACE_FOLDER ? xd_folder_view_get_selected_files(e->view) : nullptr;
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(e->send_to_item),
+                              files != nullptr ? send_to_menu(e, files) : nullptr);
+    gtk_widget_set_sensitive(e->send_to_item, files != nullptr);
+    g_list_free_full(files, g_object_unref);
 }
 
 static GtkWidget *menu_item(GtkWidget *menu, const char *label, GCallback cb, explorer *e,
@@ -1433,6 +1638,9 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     item = gtk_separator_menu_item_new();
     gtk_menu_shell_append(GTK_MENU_SHELL(file), item);
     g_ptr_array_add(e->trash_only, item);
+    e->send_to_item = gtk_menu_item_new_with_mnemonic("Se_nd To");
+    gtk_menu_shell_append(GTK_MENU_SHELL(file), e->send_to_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
     g_ptr_array_add(e->folders_only, add_new_menu(e, file));
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
     item = menu_item(file, "Create _Shortcut", G_CALLBACK(cb_shortcut), e, nullptr, 0, NO_MODS);
@@ -1452,6 +1660,9 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     g_signal_connect(file, "show", G_CALLBACK(update_menu_items), e);
 
     GtkWidget *edit = submenu(bar, "_Edit");
+    e->undo_item = menu_item(edit, "_Undo", G_CALLBACK(cb_undo), e, nullptr, 0, NO_MODS);
+    show_accel(e->undo_item, GDK_KEY_z, GDK_CONTROL_MASK);
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit), gtk_separator_menu_item_new());
     item = menu_item(edit, "Cu_t", G_CALLBACK(cb_cut), e, nullptr, 0, NO_MODS);
     show_accel(item, GDK_KEY_x, GDK_CONTROL_MASK);
     g_ptr_array_add(e->need_selection, item);
@@ -1630,6 +1841,12 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
     } else if (selected) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        GtkWidget *send = gtk_menu_item_new_with_mnemonic("Se_nd To");
+        GList *files = xd_folder_view_get_selected_files(view);
+        gtk_menu_item_set_submenu(GTK_MENU_ITEM(send), send_to_menu(e, files));
+        g_list_free_full(files, g_object_unref);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), send);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         menu_item(menu, "Cu_t", G_CALLBACK(cb_cut), e, nullptr, 0, NO_MODS);
         menu_item(menu, "_Copy", G_CALLBACK(cb_copy), e, nullptr, 0, NO_MODS);
         /* On one folder, Paste puts the files in it. */
@@ -1663,6 +1880,11 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
                                               G_CALLBACK(cb_paste_shortcut), e, nullptr, 0,
                                               NO_MODS);
             gtk_widget_set_sensitive(paste_link, xd_clipboard_has_files());
+            /* XP offers the last operation's undo here too. */
+            if (xd_undo_label() != nullptr)
+                show_accel(menu_item(menu, xd_undo_label(), G_CALLBACK(cb_undo), e, nullptr, 0,
+                                     NO_MODS),
+                           GDK_KEY_z, GDK_CONTROL_MASK);
             gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
             add_new_menu(e, menu);
         }

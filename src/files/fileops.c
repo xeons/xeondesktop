@@ -8,6 +8,7 @@
 
 #include "../gtkapp/gtkapp.h"
 #include "folderview.h"
+#include "undo.h"
 
 static constexpr int SHOW_DELAY_MS = 600; /* quick operations show no dialog */
 static constexpr int UPDATE_MS = 50;
@@ -30,6 +31,11 @@ typedef struct job {
     gpointer user;
     GCancellable *cancel;
     GList *created; /* GFile*, built by the worker */
+    /* For Edit > Undo: what each created file came from (same order), and
+     * what went to the Recycle Bin. */
+    bool undoable;
+    GList *origins;
+    GList *trashed;
 
     /* Shared with the worker, under `lock`. */
     GMutex lock;
@@ -291,6 +297,7 @@ static bool trash_one(job *j, GFile *f) {
     GError *err = nullptr;
     if (g_file_trash(f, j->cancel, &err)) {
         add_done(j, 0, 1);
+        j->trashed = g_list_prepend(j->trashed, g_object_ref(f));
         return true;
     }
     if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED))
@@ -542,7 +549,10 @@ static GFile *destination(job *j, GFile *src, bool *go_on) {
     return dst;
 }
 
-static void created(job *j, GFile *f) { j->created = g_list_prepend(j->created, g_object_ref(f)); }
+static void created(job *j, GFile *src, GFile *f) {
+    j->created = g_list_prepend(j->created, g_object_ref(f));
+    j->origins = g_list_prepend(j->origins, g_object_ref(src));
+}
 
 static void run_transfer(job *j) {
     GPtrArray *slow = g_ptr_array_new_with_free_func(g_object_unref);
@@ -559,7 +569,7 @@ static void run_transfer(job *j) {
             GError *err = nullptr;
             set_current(j, src, j->dest);
             if (g_file_make_symbolic_link(dst, path != nullptr ? path : uri, j->cancel, &err))
-                created(j, dst);
+                created(j, src, dst);
             else
                 go_on = report_error(j, src, err);
             g_free(path);
@@ -576,7 +586,7 @@ static void run_transfer(job *j) {
                                              G_FILE_COPY_ALL_METADATA |
                                              G_FILE_COPY_NO_FALLBACK_FOR_MOVE),
                             j->cancel, nullptr, nullptr, &err)) {
-                created(j, dst);
+                created(j, src, dst);
                 g_object_unref(dst);
                 continue;
             }
@@ -599,7 +609,7 @@ static void run_transfer(job *j) {
             j->wrote = false;
             go_on = transfer(j, g_ptr_array_index(slow, i), dst);
             if (j->wrote)
-                created(j, dst);
+                created(j, g_ptr_array_index(slow, i), dst);
         }
     }
     g_ptr_array_unref(slow);
@@ -632,6 +642,8 @@ static void worker(GTask *task, [[maybe_unused]] gpointer source, gpointer data,
         break;
     }
     j->created = g_list_reverse(j->created);
+    j->origins = g_list_reverse(j->origins);
+    j->trashed = g_list_reverse(j->trashed);
     g_task_return_boolean(task, TRUE);
 }
 
@@ -835,6 +847,8 @@ static void job_free(job *j) {
     g_clear_object(&j->dest);
     g_clear_object(&j->cancel);
     g_list_free_full(j->created, g_object_unref);
+    g_list_free_full(j->origins, g_object_unref);
+    g_list_free_full(j->trashed, g_object_unref);
     g_mutex_clear(&j->lock);
     g_cond_clear(&j->cond);
     g_free(j->current);
@@ -848,6 +862,9 @@ static void job_free(job *j) {
 static void finished([[maybe_unused]] GObject *source, GAsyncResult *res, gpointer data) {
     job *j = data;
     (void)g_task_propagate_boolean(G_TASK(res), nullptr);
+    if (j->undoable)
+        xd_undo_add_fileop(j->kind, j->kind == XD_FILEOP_TRASH ? j->trashed : j->origins,
+                           j->created);
     /* No one to tell when the window that started it has closed. */
     if (j->done != nullptr && (j->parent != nullptr || !j->had_parent))
         j->done(j->created, j->user);
@@ -892,13 +909,26 @@ static bool confirm_delete(GtkWindow *parent, XdFileOpKind kind, GList *sources)
     return r == GTK_RESPONSE_YES;
 }
 
+static gboolean start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile *dest,
+                      XdFileOpDone done, gpointer user, bool undoable);
+
 void xd_fileop_start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile *dest,
                      XdFileOpDone done, gpointer user) {
-    (void)xd_fileop_start_checked(parent, kind, sources, dest, done, user);
+    (void)start(parent, kind, sources, dest, done, user, false);
 }
 
 gboolean xd_fileop_start_checked(GtkWindow *parent, XdFileOpKind kind, GList *sources,
                                  GFile *dest, XdFileOpDone done, gpointer user) {
+    return start(parent, kind, sources, dest, done, user, false);
+}
+
+gboolean xd_fileop_start_undoable(GtkWindow *parent, XdFileOpKind kind, GList *sources,
+                                  GFile *dest, XdFileOpDone done, gpointer user) {
+    return start(parent, kind, sources, dest, done, user, true);
+}
+
+static gboolean start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile *dest,
+                      XdFileOpDone done, gpointer user, bool undoable) {
     if (sources == nullptr)
         return FALSE;
     if ((kind == XD_FILEOP_TRASH || kind == XD_FILEOP_DELETE) &&
@@ -906,6 +936,7 @@ gboolean xd_fileop_start_checked(GtkWindow *parent, XdFileOpKind kind, GList *so
         return FALSE;
     job *j = g_new0(job, 1);
     j->kind = kind;
+    j->undoable = undoable;
     j->sources = g_ptr_array_new_with_free_func(g_object_unref);
     for (GList *l = sources; l != nullptr; l = l->next)
         g_ptr_array_add(j->sources, g_object_ref(l->data));

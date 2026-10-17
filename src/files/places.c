@@ -748,3 +748,54 @@ void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer use
     g_list_free_full(files, g_object_unref);
 }
 
+
+GList *xd_trash_find(GList *originals) {
+    guint n = g_list_length(originals);
+    GHashTable *wanted = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    guint k = 0;
+    for (GList *l = originals; l != nullptr; l = l->next, k++) {
+        char *path = g_file_get_path(l->data);
+        if (path != nullptr)
+            g_hash_table_replace(wanted, path, GUINT_TO_POINTER(k + 1));
+    }
+    GFile **found = g_new0(GFile *, n + 1);
+    gint64 *when = g_new0(gint64, n + 1);
+    GPtrArray *dirs = xd_trash_dirs();
+    for (guint i = 0; i < dirs->len; i++) {
+        GFile *dir = g_ptr_array_index(dirs, i);
+        GFileEnumerator *en = g_file_enumerate_children(dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
+                                                        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+                                                        nullptr, nullptr);
+        GFileInfo *fi;
+        while (en != nullptr &&
+               (fi = g_file_enumerator_next_file(en, nullptr, nullptr)) != nullptr) {
+            GFile *child = g_file_get_child(dir, g_file_info_get_name(fi));
+            g_object_unref(fi);
+            char *orig = nullptr;
+            GDateTime *deleted = nullptr;
+            if (xd_trash_item_info(child, &orig, &deleted)) {
+                guint idx = GPOINTER_TO_UINT(g_hash_table_lookup(wanted, orig));
+                gint64 t = deleted != nullptr ? g_date_time_to_unix(deleted) : 0;
+                /* The same name deleted twice: the later one. */
+                if (idx > 0 && (found[idx - 1] == nullptr || t >= when[idx - 1])) {
+                    g_set_object(&found[idx - 1], child);
+                    when[idx - 1] = t;
+                }
+            }
+            g_free(orig);
+            if (deleted != nullptr)
+                g_date_time_unref(deleted);
+            g_object_unref(child);
+        }
+        g_clear_object(&en);
+    }
+    g_ptr_array_unref(dirs);
+    GList *out = nullptr;
+    for (guint i = n; i > 0; i--)
+        if (found[i - 1] != nullptr)
+            out = g_list_prepend(out, found[i - 1]);
+    g_free(found);
+    g_free(when);
+    g_hash_table_unref(wanted);
+    return out;
+}

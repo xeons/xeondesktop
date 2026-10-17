@@ -27,13 +27,22 @@ typedef enum {
     XD_VIEW_COUNT,
 } XdViewMode;
 
+/* The Details view's columns, which also sort the view. Arrange Icons by
+ * lists the first XD_SORT_ARRANGE_COUNT; the others are shown from the
+ * header's right-click menu, as in XP. */
 typedef enum {
     XD_SORT_NAME,
     XD_SORT_SIZE,
     XD_SORT_TYPE,
     XD_SORT_MODIFIED,
+    XD_SORT_CREATED,
+    XD_SORT_ACCESSED,
+    XD_SORT_ATTRIBUTES,
+    XD_SORT_OWNER,
     XD_SORT_COUNT,
 } XdSortColumn;
+
+enum { XD_SORT_ARRANGE_COUNT = XD_SORT_CREATED };
 
 enum { XD_THUMB_MIN = 48, XD_THUMB_MAX = 256, XD_THUMB_DEFAULT = 96 };
 
@@ -59,6 +68,26 @@ void xd_folder_view_set_show_hidden(XdFolderView *view, gboolean show);
 /* Arrange Icons by > Show in Groups (the icon views; My Computer always). */
 void xd_folder_view_set_groups(XdFolderView *view, gboolean groups);
 gboolean xd_folder_view_get_groups(XdFolderView *view);
+/* The Details columns (shown, order, widths) as columns.h writes them;
+ * nullptr: the defaults. get returns nullptr while they're the defaults
+ * (free with g_free). */
+void xd_folder_view_set_columns(XdFolderView *view, const char *spec);
+char *xd_folder_view_get_columns(XdFolderView *view);
+/* Arrange Icons by > Auto Arrange and Align to Grid (the icon views). With
+ * Auto Arrange off, icons stay where they're put: dragged within the
+ * folder, they move (onto the grid's cells with Align to Grid), and new
+ * ones take the first free cell. Show in Groups always arranges. */
+void xd_folder_view_set_auto_arrange(XdFolderView *view, gboolean on);
+gboolean xd_folder_view_get_auto_arrange(XdFolderView *view);
+void xd_folder_view_set_align_to_grid(XdFolderView *view, gboolean on);
+gboolean xd_folder_view_get_align_to_grid(XdFolderView *view);
+/* The icons' places with Auto Arrange off, by file name (`xy`: x, y
+ * pairs in content pixels), for the view mode they were put in; set them
+ * before the folder's location. get returns how many (only items still
+ * in the folder); free `names` with g_strfreev and `xy` with g_free. */
+void xd_folder_view_set_positions(XdFolderView *view, XdViewMode mode, char **names,
+                                  const int *xy, gsize count);
+gsize xd_folder_view_get_positions(XdFolderView *view, XdViewMode *mode, char ***names, int **xy);
 /* Folder Options: names without their known type's extension, and
  * single-click to open an item (pointing underlines it). */
 void xd_folder_view_set_hide_extensions(XdFolderView *view, gboolean hide);

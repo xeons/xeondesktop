@@ -106,6 +106,11 @@ void xd_trash_restore(GtkWindow *parent, GList *files);
 /* Empty Recycle Bin: asks, then deletes everything in it (fileops). */
 void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer user),
                     gpointer user);
+/* Where `originals` (GFile*) are in the Recycle Bin, for Undo Delete:
+ * each one's item (the latest, if it was deleted more than once), in
+ * order; those not there are left out. Free with
+ * g_list_free_full(list, g_object_unref). */
+GList *xd_trash_find(GList *originals);
 /* Deletes .trashinfo files whose item is gone (after deleting or moving
  * items out of the trash). */
 void xd_trash_tidy(void);
