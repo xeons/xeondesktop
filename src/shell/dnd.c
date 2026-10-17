@@ -236,13 +236,12 @@ static gboolean read_drop(int fd, [[maybe_unused]] GIOCondition cond, gpointer d
     drop *dr = data;
     char buf[4096];
     ssize_t n = read(fd, buf, sizeof(buf));
-    if (n > 0) {
+    if (n > 0)
         g_string_append_len(dr->text, buf, n);
+    if ((n > 0 && dr->text->len < (1u << 20)) || (n < 0 && (errno == EINTR || errno == EAGAIN)))
         return G_SOURCE_CONTINUE;
-    }
-    if (n < 0 && (errno == EINTR || errno == EAGAIN))
-        return G_SOURCE_CONTINUE;
-    char **uris = g_uri_list_extract_uris(dr->text->str);
+    /* The end, or a list too long to be one: dropped either way. */
+    char **uris = n > 0 ? nullptr : g_uri_list_extract_uris(dr->text->str);
     size_t at = dr->at;
     for (char **u = uris; u != nullptr && *u != nullptr; u++) {
         char *path = g_filename_from_uri(*u, nullptr, nullptr);
@@ -272,13 +271,12 @@ static gboolean read_desk_drop(int fd, [[maybe_unused]] GIOCondition cond, gpoin
     desk_drop *dd = data;
     char buf[4096];
     ssize_t n = read(fd, buf, sizeof(buf));
-    if (n > 0) {
+    if (n > 0)
         g_string_append_len(dd->text, buf, n);
-        return dd->text->len < (1u << 20) ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
-    }
-    if (n < 0 && (errno == EINTR || errno == EAGAIN))
+    if ((n > 0 && dd->text->len < (1u << 20)) || (n < 0 && (errno == EINTR || errno == EAGAIN)))
         return G_SOURCE_CONTINUE;
-    char **uris = g_uri_list_extract_uris(dd->text->str);
+    /* The end, or a list too long to be one: dropped either way. */
+    char **uris = n > 0 ? nullptr : g_uri_list_extract_uris(dd->text->str);
     if (uris != nullptr && uris[0] != nullptr)
         xd_deskicons_drop(dd->shell, dd->desk, uris, dd->x, dd->y, dd->move);
     g_strfreev(uris);
@@ -486,13 +484,15 @@ static gboolean read_clip(int fd, [[maybe_unused]] GIOCondition cond, gpointer d
     clip_read *r = data;
     char buf[4096];
     ssize_t n = read(fd, buf, sizeof(buf));
-    if (n > 0) {
+    if (n > 0)
         g_string_append_len(r->text, buf, n);
-        return r->text->len < (1u << 20) ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
-    }
-    if (n < 0 && (errno == EINTR || errno == EAGAIN))
+    if ((n > 0 && r->text->len < (1u << 20)) || (n < 0 && (errno == EINTR || errno == EAGAIN)))
         return G_SOURCE_CONTINUE;
-    deliver(r->shell, r->text->str, r->gnome, r->got, r->user);
+    /* The end, or a list too long to be one: nothing to paste then. */
+    if (n > 0)
+        r->got(r->shell, nullptr, false, r->user);
+    else
+        deliver(r->shell, r->text->str, r->gnome, r->got, r->user);
     g_string_free(r->text, TRUE);
     close(r->fd);
     g_free(r);
