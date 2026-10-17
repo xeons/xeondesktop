@@ -384,7 +384,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Responding" for hung windows; needs the compositor to report ping
       timeouts.
 - [ ] Options > Always On Top (no Wayland protocol yet) and Hide When
-      Minimized (needs the tray, which would also show the CPU meter).
+      Minimized with the CPU meter in the notification area (the tray
+      exists now: the Task Manager can show a StatusNotifierItem).
 - [ ] Windows menu: Tile Horizontally/Vertically and Cascade (the compositor
       can do it now through xd-window-arranger-v1, but only for the shell).
 - [ ] Window icons only resolve for apps with an installed .desktop file
