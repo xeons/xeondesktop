@@ -10,6 +10,7 @@
 #include <wlr/util/log.h>
 
 #include "../core/alloc.h"
+#include "../settings/soundplay.h"
 #include "server.h"
 
 /* ---- xdg-shell / X11 ------------------------------------------------------ */
@@ -342,6 +343,7 @@ void xd_view_focus(xd_view *view) {
 
     if (view->minimized) {
         view->minimized = false;
+        xd_sound_play_event(XD_SOUND_RESTORE_UP);
         wlr_scene_node_set_enabled(&view->tree->node, true);
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_minimized(view->ftl, false);
@@ -436,6 +438,7 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
         struct wlr_box area = xd_output_work_area_at(view->server, outer.x + outer.width / 2.0,
                                                      outer.y + outer.height / 2.0);
         view->maximized = true;
+        xd_sound_play_event(XD_SOUND_MAXIMIZE);
         view_set_maximized_state(view, true);
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, true);
@@ -445,6 +448,7 @@ void xd_view_set_maximized(xd_view *view, bool maximized) {
                         nullptr);
     } else {
         view->maximized = false;
+        xd_sound_play_event(XD_SOUND_RESTORE_DOWN);
         view_set_maximized_state(view, false);
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_maximized(view->ftl, false);
@@ -512,6 +516,7 @@ void xd_view_minimize(xd_view *view) {
     bool was_focused = xd_view_focused(view->server) == view;
     xd_animate_forget_view(view->server, view);
     view->minimized = true;
+    xd_sound_play_event(XD_SOUND_MINIMIZE);
     wlr_scene_node_set_enabled(&view->tree->node, false);
     if (view->has_button_box)
         xd_animate_zoom(view->server, caption_box(view), view->button_box, nullptr);
@@ -758,9 +763,12 @@ void xd_view_on_map(xd_view *view) {
         xd_view_set_on_top(view, true);
     view->dialog = view_is_fixed_size(view);
     xd_view_update_decorations(view);
-    /* Owned windows (dialogs) get no taskbar button, as in Windows. */
-    if (parent_of(view) == nullptr)
+    /* Owned windows (dialogs) get no taskbar button, as in Windows; nor
+     * the Open and Close program sounds. */
+    if (parent_of(view) == nullptr) {
         ftl_create(view);
+        xd_sound_play_event(XD_SOUND_OPEN_PROGRAM);
+    }
     update_content_position(view);
     place_new_view(view);
     xd_view_focus(view);
@@ -783,6 +791,8 @@ void xd_view_on_unmap(xd_view *view) {
         server->mode = XD_CURSOR_PASSTHROUGH;
         server->grab_view = nullptr;
     }
+    if (parent_of(view) == nullptr && !server->terminating)
+        xd_sound_play_event(XD_SOUND_CLOSE_PROGRAM);
     view->mapped = false;
     view->minimized = false;
     /* Shown again (a dialog reused), it starts with no button lit. */

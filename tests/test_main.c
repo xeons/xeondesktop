@@ -800,6 +800,24 @@ static void test_sound_scheme(void) {
     xd_sound_scheme_parse(XD_STR("[Sounds\nScheme=none\n"), &s);
     CHECK(s.base == XD_SOUNDS_DEFAULT && !xd_sound_scheme_modified(&s));
     xd_sound_scheme_free(&s);
+    /* The accessibility tones: 16-bit mono WAVs, the RIFF sizes right,
+     * quiet, and silent at both ends (no click). */
+    for (int tone = 0; tone < XD_TONE_COUNT; tone++) {
+        GBytes *wav = xd_sound_tone_wav((xd_sound_tone)tone);
+        gsize len = 0;
+        const uint8_t *d = g_bytes_get_data(wav, &len);
+        CHECK(len > 44 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "WAVEfmt ", 8) == 0);
+        uint32_t riff = d[4] | (uint32_t)d[5] << 8 | (uint32_t)d[6] << 16 | (uint32_t)d[7] << 24;
+        uint32_t data = d[40] | (uint32_t)d[41] << 8 | (uint32_t)d[42] << 16 | (uint32_t)d[43] << 24;
+        CHECK(riff == len - 8 && data == len - 44 && d[22] == 1 && d[34] == 16);
+        int peak = 0;
+        for (gsize i = 44; i + 1 < len; i += 2)
+            peak = MAX(peak, abs((int16_t)(d[i] | d[i + 1] << 8)));
+        CHECK(peak > 1000 && peak <= INT16_MAX / 3 + 1);
+        CHECK(d[44] == 0 && d[45] == 0);
+        CHECK(xd_sound_tone_name((xd_sound_tone)tone)[0] != '\0');
+        g_bytes_unref(wav);
+    }
 }
 
 static int css_errors;

@@ -4,6 +4,7 @@
 #include <sys/timerfd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
+#include "../settings/soundplay.h"
 #include "../ui/icons.h"
 #include "menu.h"
 #include "shell.h"
@@ -308,6 +309,7 @@ static xd_menu *menu_create(xd_shell *shell, const xd_menu_model *model) {
     menu->scale = 1.0;
     layout(menu);
 
+    xd_sound_play_event(XD_SOUND_MENU_POPUP);
     menu->surface = wl_compositor_create_surface(shell->compositor);
     if (shell->fractional_manager != nullptr && shell->viewporter != nullptr) {
         menu->fractional = wp_fractional_scale_manager_v1_get_fractional_scale(
@@ -564,6 +566,7 @@ static void activate(xd_menu *menu, int index) {
         xd_menu_open_child(menu, index);
         return;
     }
+    xd_sound_play_event(XD_SOUND_MENU_COMMAND);
     if (it->kind == XD_MENU_ACTION && it->action != nullptr) {
         void (*fn)(xd_shell *, void *) = it->action;
         void *data = it->action_data;

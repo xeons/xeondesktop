@@ -15,6 +15,8 @@
 #ifndef XD_SETTINGS_SOUNDS_H
 #define XD_SETTINGS_SOUNDS_H
 
+#include <glib.h>
+
 #include "../core/str.h"
 
 typedef enum xd_sound_event : uint8_t {
@@ -88,5 +90,20 @@ bool xd_sound_scheme_modified(const xd_sound_scheme *s);
 void xd_sound_scheme_path(xd_strbuf *out);
 void xd_sound_scheme_load(xd_sound_scheme *s);
 [[nodiscard]] bool xd_sound_scheme_save(const xd_sound_scheme *s);
+
+/* The accessibility features' tones (not part of the scheme, as in
+ * Windows), made here as short WAV files. */
+typedef enum xd_sound_tone : uint8_t {
+    XD_TONE_HIGH,  /* ToggleKeys: a lock turned on; StickyKeys: a modifier locked */
+    XD_TONE_LOW,   /* ToggleKeys: a lock turned off; StickyKeys: a modifier released */
+    XD_TONE_CLICK, /* StickyKeys and FilterKeys: a key pressed or accepted */
+    XD_TONE_RISE,  /* a feature turned on */
+    XD_TONE_FALL,  /* ...and off */
+    XD_TONE_COUNT,
+} xd_sound_tone;
+
+/* The tone's file stem ("access-on"), and the tone as a 16-bit mono WAV. */
+const char *xd_sound_tone_name(xd_sound_tone t);
+GBytes *xd_sound_tone_wav(xd_sound_tone t);
 
 #endif

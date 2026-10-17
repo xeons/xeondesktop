@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include <glib.h>
+#include <math.h>
 
 #include "settings.h"
 #include "sounds.h"
@@ -189,4 +190,62 @@ bool xd_sound_scheme_save(const xd_sound_scheme *s) {
     g_key_file_free(kf);
     xd_strbuf_free(&path);
     return ok;
+}
+
+/* ---- tones ---------------------------------------------------------------------- */
+
+/* Windows beeps these; we hold or sweep a sine wave, quietly, with a few
+ * milliseconds' fade at each end so it doesn't click. */
+static const struct {
+    const char *name;
+    double from_hz, to_hz; /* a sweep when they differ */
+    int ms;
+} tones[XD_TONE_COUNT] = {
+    [XD_TONE_HIGH] = {"access-high", 1200, 1200, 100},
+    [XD_TONE_LOW] = {"access-low", 500, 500, 100},
+    [XD_TONE_CLICK] = {"access-click", 2000, 2000, 15},
+    [XD_TONE_RISE] = {"access-on", 500, 1600, 300},
+    [XD_TONE_FALL] = {"access-off", 1600, 500, 300},
+};
+
+const char *xd_sound_tone_name(xd_sound_tone t) {
+    XD_ASSERT((unsigned)t < XD_TONE_COUNT);
+    return tones[t].name;
+}
+
+static void put_le(GByteArray *a, uint32_t v, int bytes) {
+    for (int i = 0; i < bytes; i++) {
+        uint8_t b = (uint8_t)(v >> (8 * i));
+        g_byte_array_append(a, &b, 1);
+    }
+}
+
+GBytes *xd_sound_tone_wav(xd_sound_tone t) {
+    XD_ASSERT((unsigned)t < XD_TONE_COUNT);
+    constexpr uint32_t RATE = 22050;
+    constexpr uint32_t FADE = RATE * 3 / 1000; /* samples */
+    uint32_t n = RATE * (uint32_t)tones[t].ms / 1000;
+    GByteArray *a = g_byte_array_sized_new(44 + n * 2);
+    /* RIFF/WAVE: one channel of 16-bit PCM. */
+    g_byte_array_append(a, (const guint8 *)"RIFF", 4);
+    put_le(a, 36 + n * 2, 4);
+    g_byte_array_append(a, (const guint8 *)"WAVEfmt ", 8);
+    put_le(a, 16, 4);
+    put_le(a, 1, 2); /* PCM */
+    put_le(a, 1, 2); /* channels */
+    put_le(a, RATE, 4);
+    put_le(a, RATE * 2, 4); /* bytes a second */
+    put_le(a, 2, 2);        /* bytes a sample */
+    put_le(a, 16, 2);
+    g_byte_array_append(a, (const guint8 *)"data", 4);
+    put_le(a, n * 2, 4);
+    double phase = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        double hz = tones[t].from_hz + (tones[t].to_hz - tones[t].from_hz) * i / n;
+        phase += 2 * G_PI * hz / RATE;
+        double env = i < FADE ? (double)i / FADE : n - i < FADE ? (double)(n - i) / FADE : 1.0;
+        int16_t v = (int16_t)(sin(phase) * env * 0.3 * INT16_MAX);
+        put_le(a, (uint16_t)v, 2);
+    }
+    return g_byte_array_free_to_bytes(a);
 }

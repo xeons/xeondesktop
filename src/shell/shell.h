@@ -454,6 +454,9 @@ bool xd_shell_have_program(const char *program);
  * before sleeping ([Power] PasswordOnResume). */
 void xd_sleep_init(xd_shell *shell);
 void xd_sleep_finish(xd_shell *shell);
+/* sounds.c: Device Connect and Disconnect, and the battery alarms. */
+void xd_shell_sounds_init(void);
+void xd_shell_battery_sound(double percent, bool discharging);
 /* Settings changed. */
 void xd_sleep_update(xd_shell *shell);
 /* Idle long enough: stand by (or hibernate). */

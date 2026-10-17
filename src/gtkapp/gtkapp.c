@@ -3,6 +3,7 @@
 
 #include "../settings/gtktheme.h"
 #include "../settings/settings.h"
+#include "../settings/soundplay.h"
 #include "../theme/draw.h"
 #include "gtkapp.h"
 
@@ -139,6 +140,14 @@ static GtkWidget *message_dialog(GtkWindow *parent, const char *title, xd_mb_ico
         [XD_MB_INFO] = "dialog-information",
         [XD_MB_QUESTION] = "dialog-question",
     };
+    /* Each icon has its sound in the scheme, as in Windows. */
+    static const xd_sound_event sounds[] = {
+        [XD_MB_ERROR] = XD_SOUND_CRITICAL_STOP,
+        [XD_MB_WARNING] = XD_SOUND_EXCLAMATION,
+        [XD_MB_INFO] = XD_SOUND_ASTERISK,
+        [XD_MB_QUESTION] = XD_SOUND_QUESTION,
+    };
+    xd_sound_play_event(sounds[icon]);
     GtkWidget *dlg = gtk_dialog_new();
     gtk_window_set_title(GTK_WINDOW(dlg), title);
     gtk_window_set_modal(GTK_WINDOW(dlg), TRUE);

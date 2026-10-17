@@ -27,6 +27,7 @@
 
 #include "../settings/gtktheme.h"
 #include "../settings/settings.h"
+#include "../settings/soundplay.h"
 #include "appicons.h"
 #include "server.h"
 
@@ -574,5 +575,6 @@ int main(int argc, char **argv) {
     if (server.settings_fd >= 0)
         close(server.settings_fd);
     server_finish(&server);
+    xd_sound_finish();
     return EXIT_SUCCESS;
 }

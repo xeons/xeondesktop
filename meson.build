@@ -256,6 +256,7 @@ compositor_src = files(
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
   'src/compositor/xwayland.c',
+  'src/settings/soundplay.c',
 )
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
 gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
@@ -276,7 +277,12 @@ appicons_dep = declare_dependency(
   dependencies: [settings_dep, gtk_dep, gdk_pixbuf_dep, gio_unix_dep],
 )
 
+# The sound scheme's sounds: the compositor's window events, the shell's,
+# and every program with message boxes (gtkapp, libxdui).
+canberra_dep = dependency('libcanberra', include_type: 'system')
+
 compositor_deps = [
+  canberra_dep,
   theme_dep,
   appicons_dep,
   settings_dep,
@@ -325,8 +331,6 @@ endif
 
 # The volume icon: PulseAudio's client library (PipeWire serves it too).
 pulse_dep = dependency('libpulse-mainloop-glib', include_type: 'system')
-# The sound scheme's sounds (xd-sound's Play, the shell's logon sound).
-canberra_dep = dependency('libcanberra', include_type: 'system')
 # forkpty: in libc since glibc 2.34, in libutil before.
 util_dep = cc.has_function('forkpty', prefix: '#include <pty.h>') ? declare_dependency() : cc.find_library('util')
 
@@ -370,7 +374,8 @@ executable(
 executable(
   'xd-message',
   'src/apps/message.c',
-  dependencies: [ui_dep],
+  'src/settings/soundplay.c',
+  dependencies: [ui_dep, canberra_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -387,8 +392,9 @@ executable(
 executable(
   'xd-shutdown',
   'src/apps/shutdown.c',
+  'src/settings/soundplay.c',
   apps_common,
-  dependencies: [ui_dep],
+  dependencies: [ui_dep, canberra_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -445,7 +451,8 @@ executable(
 gtkapp_lib = static_library(
   'xdgtkapp',
   'src/gtkapp/gtkapp.c',
-  dependencies: [settings_dep, gtk_dep],
+  'src/settings/soundplay.c',
+  dependencies: [settings_dep, gtk_dep, canberra_dep],
 )
 install_data(
   'data/applications/org.xeondesktop.Files.desktop',
@@ -824,9 +831,10 @@ executable(
   'src/shell/jumplist.c',
   'src/shell/sleep.c',
   'src/shell/account.c',
+  'src/shell/sounds.c',
   'src/settings/soundplay.c',
   link_with: rename_lib,
-  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep],
+  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep, udev_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )

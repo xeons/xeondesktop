@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../settings/soundplay.h"
 #include "../ui/ui.h"
 
 static constexpr int TEXT_W = 290;
@@ -43,12 +44,15 @@ static void on_ok([[maybe_unused]] xd_widget *w, void *user) { xd_window_close(u
 
 int main(int argc, char **argv) {
     const char *icon = "dialog-information";
+    xd_sound_event sound = XD_SOUND_ASTERISK; /* each icon's, as in Windows */
     int first = 1;
     if (argc > 1 && strcmp(argv[1], "--error") == 0) {
         icon = "dialog-error";
+        sound = XD_SOUND_CRITICAL_STOP;
         first = 2;
     } else if (argc > 1 && strcmp(argv[1], "--warning") == 0) {
         icon = "dialog-warning";
+        sound = XD_SOUND_EXCLAMATION;
         first = 2;
     } else if (argc > 1 && strcmp(argv[1], "--info") == 0) {
         first = 2;
@@ -76,6 +80,7 @@ int main(int argc, char **argv) {
     xd_window_set_cancel(win, ok);
     xd_window_set_focus(win, ok);
     xd_window_show(win);
+    xd_sound_play_event(sound);
     xd_ui_run(ui);
     xd_ui_destroy(ui);
     return EXIT_SUCCESS;

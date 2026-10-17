@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "../settings/soundplay.h"
 #include "../settings/state.h"
 #include "fileops.h"
 
@@ -708,6 +709,7 @@ typedef struct empty_request {
 static void emptied(GList *created, gpointer data) {
     empty_request *r = data;
     xd_trash_tidy();
+    xd_sound_play_event(XD_SOUND_EMPTY_RECYCLE_BIN);
     if (r->done != nullptr)
         r->done(created, r->user);
     g_free(r);

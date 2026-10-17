@@ -67,6 +67,7 @@ static void read_props(battery *b) {
     g_snprintf(b->icon, sizeof(b->icon), "battery-%s%s", level,
                b->state == FULLY_CHARGED ? "-charged" : plugged ? "-charging" : "");
     xd_tray_changed(b->shell);
+    xd_shell_battery_sound(b->percent, b->present && (b->state == DISCHARGING || b->state == EMPTY));
 }
 
 static void props_changed([[maybe_unused]] GDBusProxy *p, [[maybe_unused]] GVariant *changed,

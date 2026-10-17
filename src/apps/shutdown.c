@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../settings/soundplay.h"
 #include "../ui/ui.h"
 #include "common.h"
 
@@ -82,6 +83,9 @@ static pid_t compositor_pid(void) {
 }
 
 static bool perform(action a, bool simulate) {
+    /* Windows Logoff or Exit Windows, played out before the session ends. */
+    if (a == ACT_LOGOFF || a == ACT_SHUTDOWN || a == ACT_RESTART)
+        xd_sound_play_event_wait(a == ACT_LOGOFF ? XD_SOUND_LOGOFF : XD_SOUND_EXIT, 5000);
     if (a == ACT_LOGOFF) {
         pid_t pid = compositor_pid();
         if (pid == 0) {
