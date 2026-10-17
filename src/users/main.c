@@ -51,7 +51,8 @@ typedef struct nav {
 } nav;
 
 typedef struct ua {
-    GtkWidget *window, *back, *pane, *main;
+    GtkWidget *window, *body, *back, *pane, *main;
+    guint calls; /* AccountsService calls under way */
     GDBusProxy *manager;
     GPtrArray *accounts; /* GDBusProxy, by display name */
     GArray *history;     /* nav, for Back */
@@ -138,25 +139,48 @@ static void error_box(ua *u, const char *what, GError *error) {
     g_free(s);
 }
 
-/* Synchronous, as the other applets do: the window waits for
- * AccountsService and polkit's password prompt. Returns the reply. */
-static GVariant *call(ua *u, GDBusProxy *p, const char *method, GVariant *args, const char *what) {
+/* What to do with a call's reply once it succeeded. */
+typedef void (*reply_fn)(struct ua *u, GVariant *reply);
+
+typedef struct pending_call {
+    ua *u;
+    char *what; /* the error box's text if it fails */
+    reply_fn done;
+} pending_call;
+
+static void call_done(GObject *src, GAsyncResult *res, gpointer data) {
+    pending_call *c = data;
+    ua *u = c->u;
     GError *error = nullptr;
-    GVariant *r = g_dbus_proxy_call_sync(p, method, args,
-                                         G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION,
-                                         G_MAXINT, nullptr, &error);
+    GVariant *r = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &error);
+    if (--u->calls == 0)
+        gtk_widget_set_sensitive(u->body, TRUE);
     if (r == nullptr) {
-        error_box(u, what, error);
+        error_box(u, c->what, error);
         g_error_free(error);
+    } else {
+        if (c->done != nullptr)
+            c->done(u, r);
+        g_variant_unref(r);
     }
-    return r;
+    g_free(c->what);
+    g_free(c);
 }
 
-static bool call_ok(ua *u, GDBusProxy *p, const char *method, GVariant *args, const char *what) {
-    GVariant *r = call(u, p, method, args, what);
-    if (r != nullptr)
-        g_variant_unref(r);
-    return r != nullptr;
+/* Calls AccountsService without waiting: polkit's password prompt may be
+ * up for a while, and the window must keep drawing and answering
+ * meanwhile. It's greyed until the reply, so the page stays as it was;
+ * then `done` runs, or an error box says `what` failed. */
+static void call(ua *u, GDBusProxy *p, const char *method, GVariant *args, const char *what,
+                 reply_fn done) {
+    pending_call *c = g_new0(pending_call, 1);
+    c->u = u;
+    c->what = g_strdup(what);
+    c->done = done;
+    if (u->calls++ == 0)
+        gtk_widget_set_sensitive(u->body, FALSE);
+    g_dbus_proxy_call(p, method, args, G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION,
+                      G_MAXINT, nullptr, call_done, c);
 }
 
 static void build_page(ua *u);
@@ -496,12 +520,14 @@ static void run_change_password(ua *u) {
     g_free(self);
 }
 
+static void changed(ua *u, [[maybe_unused]] GVariant *reply) { done(u); }
+
 static void on_change_name(ua *u) {
     GDBusProxy *p = cur_account(u);
     char *name = g_strstrip(g_strdup(entry_text(u, 0)));
-    if (p != nullptr &&
-        call_ok(u, p, "SetRealName", g_variant_new("(s)", name), "The name could not be changed."))
-        done(u);
+    if (p != nullptr)
+        call(u, p, "SetRealName", g_variant_new("(s)", name), "The name could not be changed.",
+             changed);
     g_free(name);
 }
 
@@ -535,9 +561,9 @@ static void set_picture(ua *u, GDBusProxy *p, const char *source) {
         error_box(u, "This picture can't be used.", error);
         g_error_free(error);
         g_unlink(tmp);
-    } else if (call_ok(u, p, "SetIconFile", g_variant_new("(s)", path),
-                       "The picture could not be changed.")) {
-        done(u);
+    } else {
+        call(u, p, "SetIconFile", g_variant_new("(s)", path), "The picture could not be changed.",
+             changed);
     }
     g_free(tmp);
     g_free(path);
@@ -593,10 +619,8 @@ static void on_change_type(ua *u) {
                        "must be an administrator, so it can't be changed to a limited account.");
         return;
     }
-    if (call_ok(u, p, "SetAccountType",
-                g_variant_new("(i)", admin ? XD_ACCOUNT_ADMIN : XD_ACCOUNT_STANDARD),
-                "The account type could not be changed."))
-        done(u);
+    call(u, p, "SetAccountType", g_variant_new("(i)", admin ? XD_ACCOUNT_ADMIN : XD_ACCOUNT_STANDARD),
+         "The account type could not be changed.", changed);
 }
 
 static void on_set_password(ua *u) {
@@ -621,12 +645,10 @@ static void on_set_password(ua *u) {
                        "The password could not be encrypted.");
         return;
     }
-    bool ok = call_ok(u, p, "SetPassword", g_variant_new("(ss)", hash, entry_text(u, 2)),
-                      "The password could not be changed.");
+    call(u, p, "SetPassword", g_variant_new("(ss)", hash, entry_text(u, 2)),
+         "The password could not be changed.", changed);
     explicit_bzero(hash, strlen(hash));
     g_free(hash);
-    if (ok)
-        done(u);
 }
 
 static void on_delete_files(ua *u) {
@@ -639,16 +661,17 @@ static void on_keep_files(ua *u) {
     go(u, PAGE_DELETE_CONFIRM, u->cur.user);
 }
 
+static void deleted(ua *u, [[maybe_unused]] GVariant *reply) {
+    load_accounts(u);
+    go_home(u);
+}
+
 static void on_delete(ua *u) {
     GDBusProxy *p = cur_account(u);
     if (p == nullptr || u->manager == nullptr)
         return;
-    if (call_ok(u, u->manager, "DeleteUser",
-                g_variant_new("(xb)", (gint64)uid_prop(p), !u->keep_files),
-                "The account could not be deleted.")) {
-        load_accounts(u);
-        go_home(u);
-    }
+    call(u, u->manager, "DeleteUser", g_variant_new("(xb)", (gint64)uid_prop(p), !u->keep_files),
+         "The account could not be deleted.", deleted);
 }
 
 static void on_full_name_changed([[maybe_unused]] GtkEditable *e, gpointer data) {
@@ -685,14 +708,7 @@ static void on_create_next(ua *u) {
     go(u, PAGE_CREATE_TYPE, nullptr);
 }
 
-static void on_create(ua *u) {
-    bool admin = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(u->admin));
-    GVariant *r = call(u, u->manager, "CreateUser",
-                       g_variant_new("(ssi)", u->new_name, u->new_full,
-                                     admin ? XD_ACCOUNT_ADMIN : XD_ACCOUNT_STANDARD),
-                       "The account could not be created.");
-    if (r == nullptr)
-        return;
+static void created(ua *u, GVariant *r) {
     const char *path = nullptr;
     g_variant_get(r, "(&o)", &path);
     load_accounts(u);
@@ -704,7 +720,14 @@ static void on_create(ua *u) {
         go(u, PAGE_ACCOUNT, path);
     else
         build_page(u);
-    g_variant_unref(r);
+}
+
+static void on_create(ua *u) {
+    bool admin = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(u->admin));
+    call(u, u->manager, "CreateUser",
+         g_variant_new("(ssi)", u->new_name, u->new_full,
+                       admin ? XD_ACCOUNT_ADMIN : XD_ACCOUNT_STANDARD),
+         "The account could not be created.", created);
 }
 
 static void on_go_name(ua *u) { go(u, PAGE_NAME, u->cur.user); }
@@ -1165,6 +1188,8 @@ static GtkWidget *toolbar_button(const char *icon, const char *text, GCallback c
 
 static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
     ua *u = data;
+    if (u->calls > 0)
+        return FALSE; /* the page waits for a change */
     /* Alt+Left and Backspace (outside text boxes) go back, as in Explorer. */
     bool text = GTK_IS_ENTRY(gtk_window_get_focus(GTK_WINDOW(w)));
     if ((e->keyval == GDK_KEY_Left && (e->state & GDK_MOD1_MASK)) ||
@@ -1211,6 +1236,7 @@ int main(int argc, char **argv) {
     g_signal_connect(u.window, "key-press-event", G_CALLBACK(on_key), &u);
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(u.window), outer);
+    u.body = outer;
     GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
     gtk_container_set_border_width(GTK_CONTAINER(bar), 2);
     u.back = toolbar_button("go-previous", "_Back", G_CALLBACK(go_back), &u);
