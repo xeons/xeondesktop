@@ -93,9 +93,9 @@ static const struct {
     [R_COMPUTER] = {"Computer", false, false},
     [R_SEP] = {"", false, true},
     [R_CONTROL] = {"Control Panel", true, false},
-    [R_DEVICES] = {"Devices and Printers", false, true},
-    [R_DEFAULTS] = {"Default Programs", false, true},
-    [R_HELP] = {"Help and Support", false, true},
+    [R_DEVICES] = {"Devices and Printers", false, false},
+    [R_DEFAULTS] = {"Default Programs", false, false},
+    [R_HELP] = {"Help and Support", false, false},
     [R_RUN] = {"Run...", false, false},
 };
 
@@ -107,8 +107,8 @@ enum {
     HIT_SEARCH = 103,
     HIT_LOGOFF = 104,     /* XP */
     HIT_TURNOFF = 105,    /* XP */
-    HIT_XP_PRINTERS = 106, /* XP, not available yet */
-    HIT_XP_SEARCH = 107,   /* XP, not available yet */
+    HIT_XP_PRINTERS = 106, /* XP */
+    HIT_XP_SEARCH = 107,   /* XP */
 };
 
 /* Windows XP layout, logical px. */
@@ -143,11 +143,11 @@ static const xp_item xp_items[] = {
     {R_SEP, nullptr, nullptr, false, false, true, false},
     {R_CONTROL, "Control Panel", "preferences-system", false, true, false, false},
     {R_DEFAULTS, "Set Program Access and Defaults", "preferences-desktop-default-applications",
-     false, false, true, true},
-    {HIT_XP_PRINTERS, "Printers and Faxes", "printer", false, false, true, false},
+     false, false, false, true},
+    {HIT_XP_PRINTERS, "Printers and Faxes", "printer", false, false, false, false},
     {R_SEP, nullptr, nullptr, false, false, true, false},
-    {R_HELP, "Help and Support", "help-browser", false, false, true, false},
-    {HIT_XP_SEARCH, "Search", "system-search", false, false, true, false},
+    {R_HELP, "Help and Support", "help-browser", false, false, false, false},
+    {HIT_XP_SEARCH, "Search", "system-search", false, false, false, false},
     {R_RUN, "Run...", "system-run", false, false, false, false},
 };
 
@@ -389,12 +389,19 @@ static void push_row(xd_start7 *m, row r) {
     m->rows[m->row_count++] = r;
 }
 
-static const xd_app *find_app(const xd_shell *shell, const char *id) {
-    for (size_t i = 0; i < shell->apps.count; i++) {
-        if (strcmp(shell->apps.items[i].id, id) == 0)
-            return &shell->apps.items[i];
+static const xd_app *find_in(const xd_app_list *list, const char *id) {
+    for (size_t i = 0; i < list->count; i++) {
+        if (strcmp(list->items[i].id, id) == 0)
+            return &list->items[i];
     }
     return nullptr;
+}
+
+/* Programs, then Control Panel applets (found by the search, and so
+ * pinned or counted from there too). */
+static const xd_app *find_app(const xd_shell *shell, const char *id) {
+    const xd_app *app = find_in(&shell->apps, id);
+    return app != nullptr ? app : find_in(&shell->control_apps, id);
 }
 
 static void pinned_path(xd_strbuf *path) {
@@ -626,24 +633,37 @@ static bool matches(const xd_app *app, xd_str query) {
            (app->keywords != nullptr && contains_nocase(app->keywords, query));
 }
 
+/* One group of results under its heading, if anything matches: names
+ * starting with the query first, then other matches. */
+static void search_group(xd_start7 *m, const char *heading, const xd_app_list *list, xd_str q,
+                         const xd_app_list *skip) {
+    size_t header = m->row_count;
+    push_row(m, (row){.kind = ROW_HEADER, .label = heading});
+    for (int pass = 0; pass < 2; pass++) {
+        for (size_t i = 0; i < list->count; i++) {
+            const xd_app *a = &list->items[i];
+            bool prefix = xd_str_starts_with(xd_str_from_cstr(a->name), q) ||
+                          (q.len <= strlen(a->name) &&
+                           xd_str_eq_nocase(xd_str_sub(xd_str_from_cstr(a->name), 0, q.len), q));
+            if (matches(a, q) && prefix == (pass == 0) &&
+                (skip == nullptr || find_in(skip, a->id) == nullptr))
+                push_row(m, (row){.kind = ROW_APP, .app = a});
+        }
+    }
+    if (m->row_count == header + 1)
+        m->row_count = header;
+}
+
+/* Windows 7 groups the results: Programs, then Control Panel (the applets
+ * are hidden from All Programs, so this is where they're found). */
 static void build_search(xd_start7 *m) {
     xd_shell *shell = m->shell;
     m->row_count = 0;
     m->scroll = 0;
     xd_str q = xd_str_trim(xd_textedit_view(&m->search));
-    push_row(m, (row){.kind = ROW_HEADER, .label = "Programs"});
-    /* Names starting with the query first, then other matches. */
-    for (int pass = 0; pass < 2; pass++) {
-        for (size_t i = 0; i < shell->apps.count; i++) {
-            const xd_app *a = &shell->apps.items[i];
-            bool prefix = xd_str_starts_with(xd_str_from_cstr(a->name), q) ||
-                          (q.len <= strlen(a->name) &&
-                           xd_str_eq_nocase(xd_str_sub(xd_str_from_cstr(a->name), 0, q.len), q));
-            if (matches(a, q) && prefix == (pass == 0))
-                push_row(m, (row){.kind = ROW_APP, .app = a});
-        }
-    }
-    if (m->row_count == 1)
+    search_group(m, "Programs", &shell->apps, q, nullptr);
+    search_group(m, "Control Panel", &shell->control_apps, q, &shell->apps);
+    if (m->row_count == 0)
         push_row(m, (row){.kind = ROW_HEADER, .label = "No items match your search."});
 }
 
@@ -1686,7 +1706,20 @@ static void activate_right(xd_start7 *m, int hit) {
         run_command(m, folder_command(shell, "MUSIC", "Music"));
         return;
     case R_COMPUTER:
-        run_command(m, xd_shell_own_command(shell, "xd-files", "/"));
+        run_command(m, xd_shell_own_command(shell, "xd-files", "computer:///"));
+        return;
+    case R_DEVICES:
+    case HIT_XP_PRINTERS:
+        run_command(m, xd_shell_own_command(shell, "xd-printers", nullptr));
+        return;
+    case R_DEFAULTS:
+        run_command(m, xd_shell_own_command(shell, "xd-defaults", nullptr));
+        return;
+    case R_HELP:
+        run_command(m, xd_shell_own_command(shell, "xd-help", nullptr));
+        return;
+    case HIT_XP_SEARCH:
+        run_command(m, xd_shell_own_command(shell, "xd-search", nullptr));
         return;
     case R_RUN:
         run_command(m, xd_shell_own_command(shell, "xd-run", nullptr));
@@ -1995,6 +2028,236 @@ static void search_changed(xd_start7 *m) {
         m->hot_left = step_selectable(m, -1, 1);
 }
 
+/* ---- keyboard ---------------------------------------------------------------------- */
+
+/* The keyboard moves through columns: the program list with All Programs
+ * under it, the right column (Windows 7: with the Shut Down button), and
+ * XP's footer (Log Off, Turn Off Computer). Up and Down stay in a column
+ * and wrap, Left and Right go across, Tab goes round them all. */
+typedef enum kcol : uint8_t { KCOL_NONE, KCOL_LEFT, KCOL_RIGHT, KCOL_FOOT } kcol;
+
+/* A stop in the left column: a row index, or STOP_ALL for All Programs. */
+static constexpr int STOP_ALL = -2;
+
+static size_t left_stops(const xd_start7 *m, int *out, size_t max) {
+    size_t n = 0;
+    for (size_t i = 0; i < m->row_count && n < max; i++) {
+        if (m->rows[i].kind == ROW_APP || m->rows[i].kind == ROW_FOLDER)
+            out[n++] = (int)i;
+    }
+    if (m->mode != MODE_SEARCH && n < max)
+        out[n++] = STOP_ALL;
+    return n;
+}
+
+/* Hit codes of the right column or the footer, in order. */
+static size_t right_stops(const xd_start7 *m, kcol col, int *out) {
+    size_t n = 0;
+    if (m->xp) {
+        if (col == KCOL_FOOT) {
+            out[n++] = HIT_LOGOFF;
+            out[n++] = HIT_TURNOFF;
+            return n;
+        }
+        for (size_t i = 0; i < XD_ARRAY_LEN(xp_items); i++) {
+            if (xp_items[i].hit != R_SEP && !xp_items[i].disabled)
+                out[n++] = xp_items[i].hit;
+        }
+        return n;
+    }
+    if (col == KCOL_FOOT)
+        return 0;
+    for (int k = 0; k < R_COUNT; k++) {
+        if (k != R_SEP && !right_items[k].disabled)
+            out[n++] = k;
+    }
+    out[n++] = HIT_SHUTDOWN;
+    out[n++] = HIT_SHUTDOWN_ARROW;
+    return n;
+}
+
+static constexpr size_t MAX_RIGHT_STOPS = 32;
+
+static kcol key_column(const xd_start7 *m) {
+    if (m->hot_left >= 0 || m->hot_right == HIT_ALL)
+        return KCOL_LEFT;
+    if (m->hot_right < 0)
+        return KCOL_NONE;
+    if (m->xp && (m->hot_right == HIT_LOGOFF || m->hot_right == HIT_TURNOFF))
+        return KCOL_FOOT;
+    return KCOL_RIGHT;
+}
+
+static void set_hot(xd_start7 *m, int left, int right) {
+    m->hot_left = left;
+    m->hot_right = right;
+    if (left >= 0)
+        ensure_visible(m, left);
+    m->dirty = true;
+}
+
+static void set_stop(xd_start7 *m, int stop) {
+    if (stop == STOP_ALL)
+        set_hot(m, -1, HIT_ALL);
+    else
+        set_hot(m, stop, -1);
+}
+
+/* Moves into column `col` at its first (dir > 0) or last item. */
+static void enter_column(xd_start7 *m, kcol col, int dir) {
+    if (col == KCOL_LEFT) {
+        size_t cap = m->row_count + 1;
+        int *stops = xd_alloc_array(cap, sizeof(int));
+        size_t n = left_stops(m, stops, cap);
+        if (n > 0)
+            set_stop(m, stops[dir > 0 ? 0 : n - 1]);
+        xd_free(stops);
+        return;
+    }
+    int stops[MAX_RIGHT_STOPS];
+    size_t n = right_stops(m, col, stops);
+    if (n > 0)
+        set_hot(m, -1, stops[dir > 0 ? 0 : n - 1]);
+}
+
+/* Up and Down: the next item in the same column, wrapping round. */
+static void step_column(xd_start7 *m, int dir) {
+    kcol col = key_column(m);
+    if (col == KCOL_NONE) {
+        enter_column(m, KCOL_LEFT, dir);
+        return;
+    }
+    if (col == KCOL_LEFT) {
+        size_t cap = m->row_count + 1;
+        int *stops = xd_alloc_array(cap, sizeof(int));
+        size_t n = left_stops(m, stops, cap);
+        int now = m->hot_left >= 0 ? m->hot_left : STOP_ALL;
+        size_t at = 0;
+        while (at < n && stops[at] != now)
+            at++;
+        if (n > 0)
+            set_stop(m, stops[at == n ? 0 : (at + n + (size_t)(dir > 0 ? 1 : n - 1)) % n]);
+        xd_free(stops);
+        return;
+    }
+    int stops[MAX_RIGHT_STOPS];
+    size_t n = right_stops(m, col, stops);
+    size_t at = 0;
+    while (at < n && stops[at] != m->hot_right)
+        at++;
+    if (n > 0)
+        set_hot(m, -1, stops[at == n ? 0 : (at + (size_t)(dir > 0 ? 1 : n - 1)) % n]);
+}
+
+/* Opens a ▸ item's submenu from the keyboard, on its first item. */
+static void open_sub_keyboard(xd_start7 *m, int owner) {
+    open_sub(m, owner);
+    xd_menu *sub = m->sub;
+    if (sub == nullptr || m->sub_owner != owner)
+        return;
+    for (size_t i = 0; i < sub->model->count; i++) {
+        if (sub->model->items[i].kind != XD_MENU_SEPARATOR) {
+            sub->hot = (int)i;
+            sub->dirty = true;
+            break;
+        }
+    }
+}
+
+/* Windows 7's All Programs tree: Right opens a folder, Left closes it (or
+ * goes up from a program to its folder). Returns true if it did. */
+static bool tree_key(xd_start7 *m, bool right) {
+    if (m->xp || m->mode != MODE_ALL || m->hot_left < 0)
+        return false;
+    const row *r = &m->rows[m->hot_left];
+    if (r->kind == ROW_FOLDER && m->expanded[r->folder] != right) {
+        activate_left(m, m->hot_left);
+        return true;
+    }
+    if (!right && r->kind == ROW_APP && r->indent > 0) {
+        int i = m->hot_left;
+        while (i > 0 && m->rows[i].kind != ROW_FOLDER)
+            i--;
+        set_hot(m, i, -1);
+        return true;
+    }
+    return false;
+}
+
+static void key_right(xd_start7 *m) {
+    switch (key_column(m)) {
+    case KCOL_NONE:
+        enter_column(m, KCOL_RIGHT, 1);
+        return;
+    case KCOL_LEFT:
+        if (m->xp && m->hot_right == HIT_ALL)
+            open_sub_keyboard(m, HIT_ALL); /* All Programs cascades */
+        else if (!tree_key(m, true))
+            enter_column(m, KCOL_RIGHT, 1);
+        return;
+    case KCOL_RIGHT:
+        if (m->hot_right == HIT_SHUTDOWN)
+            set_hot(m, -1, HIT_SHUTDOWN_ARROW);
+        else if (opens_sub(m, m->hot_right))
+            open_sub_keyboard(m, m->hot_right);
+        return;
+    case KCOL_FOOT:
+        if (m->hot_right == HIT_LOGOFF)
+            set_hot(m, -1, HIT_TURNOFF);
+        return;
+    }
+}
+
+static void key_left(xd_start7 *m) {
+    switch (key_column(m)) {
+    case KCOL_NONE:
+        enter_column(m, KCOL_LEFT, 1);
+        return;
+    case KCOL_LEFT:
+        tree_key(m, false);
+        return;
+    case KCOL_RIGHT:
+        if (m->hot_right == HIT_SHUTDOWN_ARROW)
+            set_hot(m, -1, HIT_SHUTDOWN);
+        else
+            enter_column(m, KCOL_LEFT, 1);
+        return;
+    case KCOL_FOOT:
+        if (m->hot_right == HIT_TURNOFF)
+            set_hot(m, -1, HIT_LOGOFF);
+        return;
+    }
+}
+
+/* Tab and Shift+Tab: the next column round. */
+static void key_tab(xd_start7 *m, int dir) {
+    static const kcol xp_order[] = {KCOL_LEFT, KCOL_RIGHT, KCOL_FOOT};
+    static const kcol w7_order[] = {KCOL_LEFT, KCOL_RIGHT};
+    const kcol *order = m->xp ? xp_order : w7_order;
+    size_t n = m->xp ? XD_ARRAY_LEN(xp_order) : XD_ARRAY_LEN(w7_order);
+    kcol col = key_column(m);
+    size_t at = 0;
+    while (at < n && order[at] != col)
+        at++;
+    size_t next = at == n ? (dir > 0 ? 0 : n - 1) : (at + (dir > 0 ? 1 : n - 1)) % n;
+    enter_column(m, order[next], 1);
+}
+
+/* Enter. May free `m`. */
+static void key_activate(xd_start7 *m) {
+    if (m->hot_left >= 0) {
+        activate_left(m, m->hot_left);
+        return;
+    }
+    int hit = m->hot_right;
+    if (hit < 0 || (hit < R_COUNT && right_items[hit].disabled))
+        return;
+    if (hit == R_RECENT || hit == HIT_SHUTDOWN_ARROW || (m->xp && hit == HIT_ALL))
+        open_sub_keyboard(m, hit);
+    else
+        activate_right(m, hit);
+}
+
 bool xd_start7_key(xd_shell *shell, uint32_t sym, const char *utf8, bool ctrl_or_alt) {
     xd_start7 *m = shell->start7;
     if (m == nullptr)
@@ -2020,21 +2283,27 @@ bool xd_start7_key(xd_shell *shell, uint32_t sym, const char *utf8, bool ctrl_or
         }
         return true;
     case XKB_KEY_Up:
-    case XKB_KEY_Down: {
-        int dir = sym == XKB_KEY_Down ? 1 : -1;
-        int from = m->hot_left >= 0 ? m->hot_left : (dir > 0 ? -1 : (int)m->row_count);
-        m->hot_left = step_selectable(m, from, dir);
-        if (m->hot_left >= (int)m->row_count)
-            m->hot_left = -1;
-        if (m->hot_left >= 0)
-            ensure_visible(m, m->hot_left);
-        m->dirty = true;
+    case XKB_KEY_Down:
+        step_column(m, sym == XKB_KEY_Down ? 1 : -1);
         return true;
-    }
+    case XKB_KEY_Right:
+    case XKB_KEY_Left:
+        /* While searching they'd move the box's caret (ours stays at the
+         * end); Tab still reaches the right column. */
+        if (m->mode == MODE_SEARCH)
+            return true;
+        if (sym == XKB_KEY_Right)
+            key_right(m);
+        else
+            key_left(m);
+        return true;
+    case XKB_KEY_Tab:
+    case XKB_KEY_ISO_Left_Tab:
+        key_tab(m, sym == XKB_KEY_Tab ? 1 : -1);
+        return true;
     case XKB_KEY_Return:
     case XKB_KEY_KP_Enter:
-        if (m->hot_left >= 0)
-            activate_left(m, m->hot_left); /* may free m */
+        key_activate(m); /* may free m */
         return true;
     case XKB_KEY_BackSpace:
         if (m->xp)

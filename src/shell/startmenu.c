@@ -129,13 +129,6 @@ xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree) {
     return m;
 }
 
-static xd_menu_item *add_disabled(xd_menu_tree *tree, xd_menu_model *m, xd_menu_kind kind,
-                                  const char *label, const char *icon) {
-    xd_menu_item *it = xd_menu_add(tree, m, kind, label, icon);
-    it->disabled = true;
-    return it;
-}
-
 static void open_recent(xd_shell *shell, void *data) { xd_shell_open_uri(shell, data); }
 
 /* Documents: My Documents, the Home folder, then the recently used files
@@ -214,8 +207,6 @@ void xd_start_menu_build(xd_shell *shell) {
     docs->fallback_icon = "folder";
     docs->submenu = nullptr; /* filled each time the menu opens */
 
-    /* Items not implemented yet are shown, but greyed out like unavailable
-     * items in Windows. They light up as Printers, Search and Help land. */
     xd_menu_item *settings =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Settings", "preferences-system");
     settings->submenu = xd_menu_model_new(tree);
@@ -225,19 +216,24 @@ void xd_start_menu_build(xd_shell *shell) {
         xd_menu_add(tree, settings->submenu, XD_MENU_SUBMENU, "Control Panel", "preferences-system");
     control->submenu = xd_start_control_model(shell, tree);
     control->command = xd_shell_own_command(shell, "xd-control", nullptr);
-    add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Network and Dial-up Connections",
-                 "network-workgroup");
-    add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Printers", "printer");
+    xd_menu_item *network = xd_menu_add(tree, settings->submenu, XD_MENU_ACTION,
+                                        "Network and Dial-up Connections", "network-workgroup");
+    network->command = xd_shell_own_command(shell, "xd-netconn", nullptr);
+    xd_menu_item *printers =
+        xd_menu_add(tree, settings->submenu, XD_MENU_ACTION, "Printers", "printer");
+    printers->command = xd_shell_own_command(shell, "xd-printers", nullptr);
     xd_menu_item *taskbar = xd_menu_add(tree, settings->submenu, XD_MENU_ACTION,
                                         "Taskbar & Start Menu...", "preferences-desktop");
     taskbar->command = xd_shell_own_command(shell, "xd-taskbar", nullptr);
 
     xd_menu_item *search = xd_menu_add(tree, root, XD_MENU_SUBMENU, "Search", "system-search");
     search->submenu = xd_menu_model_new(tree);
-    add_disabled(tree, search->submenu, XD_MENU_ACTION, "For Files or Folders...",
-                 "system-search");
+    xd_menu_item *files = xd_menu_add(tree, search->submenu, XD_MENU_ACTION,
+                                      "For Files or Folders...", "system-search");
+    files->command = xd_shell_own_command(shell, "xd-search", nullptr);
 
-    add_disabled(tree, root, XD_MENU_ACTION, "Help", "help-browser");
+    xd_menu_item *help = xd_menu_add(tree, root, XD_MENU_ACTION, "Help", "help-browser");
+    help->command = xd_shell_own_command(shell, "xd-help", nullptr);
     xd_menu_item *run = xd_menu_add(tree, root, XD_MENU_ACTION, "Run...", "system-run");
     run->command = xd_shell_own_command(shell, "xd-run", nullptr);
     xd_menu_add(tree, root, XD_MENU_SEPARATOR, nullptr, nullptr);
