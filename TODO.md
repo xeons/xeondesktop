@@ -185,6 +185,15 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       reports buttons with set_rectangle), and between the two title bars
       on maximize/restore down; a restored window shows when it arrives.
       Tested headless (minimize, captured mid-flight).
+- [x] Windows 7's window handling in the Aero style (snap.c): Aero Snap
+      (the top edge maximizes, the left/right edges fill that half, with a
+      glass preview under the window; a snapped window gets its size back
+      when dragged away; Win+Left/Right, Win+Down restores), maximized
+      windows restore when dragged by the caption, Aero Shake (minimizes
+      the other windows; shaking again brings them back). Tested headless:
+      snap left, preview right, drag back out, shake and shake again.
+- [ ] Aero Peek (the desktop through the taskbar's corner), snapping
+      across monitors with Win+Left/Right, Win+Shift+Up (maximize height).
 - [x] Resizing from the top/left edges keeps the opposite edge still.
 - [x] Tested: Alt+Tab, Alt+F4 (Wayland and X11), Win+Up/Down (maximize,
       restore, minimize), Ctrl+Alt+T, Ctrl+Alt+Backspace, Ctrl+Esc,

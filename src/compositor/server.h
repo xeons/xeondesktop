@@ -75,6 +75,14 @@ typedef struct xd_output {
 } xd_output;
 
 /* A layer-shell surface (taskbar, desktop, notifications, ...). */
+/* Aero Snap: where a window is snapped (or would be). */
+typedef enum xd_snap : uint8_t {
+    XD_SNAP_NONE,
+    XD_SNAP_MAXIMIZE,
+    XD_SNAP_LEFT,
+    XD_SNAP_RIGHT,
+} xd_snap;
+
 typedef struct xd_layer_surface {
     xd_node_tag tag; /* must be first */
     struct wl_list link; /* xd_output.layer_surfaces */
@@ -121,6 +129,8 @@ typedef struct xd_view {
     /* Didn't answer a ping (xdg-shell): "(Not Responding)" after its
      * title, as Windows shows, until it answers again. */
     bool on_top; /* Always On Top: in layer_on_top */
+    xd_snap snapped;            /* Aero Snap: half the screen */
+    struct wlr_box snap_restore; /* its size before */
     bool hung;
     bool ping_out; /* a ping to its program hasn't timed out (yet) */
     char *hung_title;
@@ -323,6 +333,16 @@ struct xd_server {
     xd_frame_part grab_part;
     double grab_x, grab_y;
     struct wlr_box grab_box;
+    /* snap.c: Aero Snap and Shake during a move (Aero style). */
+    double grab_press_x, grab_press_y;
+    bool snap_unmaximize; /* a maximized window waits to be dragged */
+    xd_snap snap_target;
+    struct wlr_scene_rect *snap_preview;
+    double shake_anchor;
+    int shake_dir, shake_swings;
+    int64_t shake_start;
+    xd_view **shaken; /* minimized by a shake, to bring back */
+    size_t shaken_n;
     struct wlr_box key_box;  /* keyboard move/size: the box being set */
     uint32_t key_edges;      /* keyboard size: WLR_EDGE_* chosen so far */
     bool ignore_release;     /* the click that ended keyboard move/size */
@@ -430,6 +450,15 @@ void xd_animate_zoom(xd_server *server, struct wlr_box from, struct wlr_box to,
                      xd_view *reveal);
 void xd_animate_forget_view(xd_server *server, xd_view *view);
 void xd_animate_finish(xd_server *server);
+
+/* snap.c: Windows 7's Snap and Shake (Aero style only). begin returns
+ * whether the window may be moved (a maximized one, only in Aero). */
+bool xd_snap_begin(xd_server *server, xd_view *view);
+void xd_snap_motion(xd_server *server, xd_view *view);
+void xd_snap_end(xd_server *server, xd_view *view);
+void xd_snap_key(xd_view *view, xd_snap side);
+void xd_snap_forget_view(xd_server *server, xd_view *view);
+void xd_snap_finish(xd_server *server);
 /* A window is going: Task Manager's marks for arrange_marked drop it. */
 void xd_arrange_forget_view(xd_server *server, xd_view *view);
 /* Always On Top: the window (and its dialogs) above ordinary windows. */

@@ -177,12 +177,14 @@ static void handle_x_configure(struct wl_listener *listener, void *data) {
 static void handle_x_move(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_move);
     xd_server *server = view->server;
-    if (view->maximized || server->mode != XD_CURSOR_PASSTHROUGH)
+    if (server->mode != XD_CURSOR_PASSTHROUGH || !xd_snap_begin(server, view))
         return;
     server->mode = XD_CURSOR_MOVE;
     server->grab_view = view;
     server->grab_x = server->cursor->x - view->x;
     server->grab_y = server->cursor->y - view->y;
+    server->grab_press_x = server->cursor->x;
+    server->grab_press_y = server->cursor->y;
 }
 
 static xd_frame_part part_from_x11_edges(uint32_t edges) {

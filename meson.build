@@ -249,6 +249,7 @@ compositor_src = files(
   'src/compositor/view.c',
   'src/compositor/frame.c',
   'src/compositor/animate.c',
+  'src/compositor/snap.c',
   'src/compositor/arrange.c',
   'src/compositor/protocols.c',
   'src/compositor/lock.c',

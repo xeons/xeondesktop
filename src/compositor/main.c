@@ -218,6 +218,7 @@ static void server_finish(xd_server *server) {
         wl_event_source_remove(server->sigchld);
     if (server->zooms.next != nullptr)
         xd_animate_finish(server);
+    xd_snap_finish(server);
     if (server->scene != nullptr) {
         /* Destroying the scene frees every node in it, including each
          * output's background; outputs are destroyed later with the

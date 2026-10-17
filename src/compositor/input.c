@@ -216,7 +216,21 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
             xd_view_set_maximized(focused, true);
         return true;
     }
+    /* Aero Snap from the keyboard (Aero only). */
+    if (logo && (sym == XKB_KEY_Left || sym == XKB_KEY_Right) &&
+        server->config.style == XD_STYLE_AERO) {
+        if (focused != nullptr)
+            xd_snap_key(focused, sym == XKB_KEY_Left ? XD_SNAP_LEFT : XD_SNAP_RIGHT);
+        return true;
+    }
     if (logo && sym == XKB_KEY_Down) {
+        if (focused != nullptr && focused->snapped != XD_SNAP_NONE) {
+            /* A snapped window gets its size back first. */
+            struct wlr_box r = focused->snap_restore;
+            focused->snapped = XD_SNAP_NONE;
+            xd_view_set_outer_box(focused, r);
+            return true;
+        }
         if (focused != nullptr) {
             if (focused->maximized)
                 xd_view_set_maximized(focused, false);
@@ -813,8 +827,11 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
     switch (server->mode) {
     case XD_CURSOR_MOVE: {
         xd_view *v = server->grab_view;
-        xd_view_set_position(v, (int)(server->cursor->x - server->grab_x),
-                             (int)(server->cursor->y - server->grab_y));
+        xd_snap_motion(server, v);
+        /* A maximized window stays put until it's dragged far enough. */
+        if (!v->maximized)
+            xd_view_set_position(v, (int)(server->cursor->x - server->grab_x),
+                                 (int)(server->cursor->y - server->grab_y));
         return;
     }
     case XD_CURSOR_RESIZE:
@@ -915,12 +932,16 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
             xd_view_set_maximized(view, !view->maximized);
             return;
         }
-        if (view->maximized)
+        /* A maximized window moves only in Aero (it's restored as it's
+         * dragged). */
+        if (!xd_snap_begin(server, view))
             return;
         server->mode = XD_CURSOR_MOVE;
         server->grab_view = view;
         server->grab_x = server->cursor->x - view->x;
         server->grab_y = server->cursor->y - view->y;
+        server->grab_press_x = server->cursor->x;
+        server->grab_press_y = server->cursor->y;
         return;
     }
     if (xd_frame_part_is_border(p->part) && !view->maximized) {
@@ -942,7 +963,9 @@ static void end_grab(xd_server *server) {
     if (view == nullptr)
         return;
 
-    if (mode == XD_CURSOR_RESIZE) {
+    if (mode == XD_CURSOR_MOVE) {
+        xd_snap_end(server, view);
+    } else if (mode == XD_CURSOR_RESIZE) {
         xd_view_set_resizing(view, false);
     } else if (mode == XD_CURSOR_BUTTON) {
         xd_frame_part part = server->grab_part;

@@ -802,12 +802,14 @@ void xd_view_on_commit(xd_view *view) {
 static void handle_request_move(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_move);
     xd_server *server = view->server;
-    if (view->maximized || server->mode != XD_CURSOR_PASSTHROUGH)
+    if (server->mode != XD_CURSOR_PASSTHROUGH || !xd_snap_begin(server, view))
         return;
     server->mode = XD_CURSOR_MOVE;
     server->grab_view = view;
     server->grab_x = server->cursor->x - view->x;
     server->grab_y = server->cursor->y - view->y;
+    server->grab_press_x = server->cursor->x;
+    server->grab_press_y = server->cursor->y;
 }
 
 static xd_frame_part part_from_edges(uint32_t edges) {
@@ -1034,6 +1036,7 @@ void xd_view_on_destroy(xd_view *view) {
     xd_unlisten(&view->decoration_mode);
     xd_unlisten(&view->decoration_destroy);
     xd_arrange_forget_view(view->server, view);
+    xd_snap_forget_view(view->server, view);
     xd_animate_forget_view(view->server, view);
     wl_list_remove(&view->link);
     /* Takes the frame buffer and the client's scene subtree with it. */

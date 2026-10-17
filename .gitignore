@@ -4,3 +4,4 @@
 /dist/
 subprojects/*/
 subprojects/packagecache/
+subprojects/.wraplock
