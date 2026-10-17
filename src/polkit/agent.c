@@ -41,6 +41,9 @@ typedef struct request {
 
 static void request_free(request *r) {
     if (r->session != nullptr) {
+        /* Cancelling emits "completed": on_completed would then touch the
+         * dialog finish() has just destroyed. */
+        g_signal_handlers_disconnect_by_data(r->session, r);
         polkit_agent_session_cancel(r->session);
         g_clear_object(&r->session);
     }
