@@ -55,7 +55,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] **Drag and drop** between Wayland programs (the compositor had none),
       with the drag icon above everything, and the primary selection
       (middle-click paste, which had no handler). Tested with GTK test
-      programs. Untested: X11 <-> Wayland drags, real file managers.
+      programs. While a button is held after a press in a client, the
+      pointer stays with that surface (the implicit grab; before, focus
+      followed the pointer). Untested: X11 <-> Wayland drags, real file
+      managers.
 - [~] **Keyboard**: `[Keyboard]` in desktop.ini (Layout, Variant, Options,
       Model, RepeatDelay, RepeatRate) applies to every keyboard, live; empty
       names fall back to `XKB_DEFAULT_*`, a bad layout to the default with a
@@ -185,15 +188,17 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       clock: double-click or right-click > Adjust Date/Time opens Date and
       Time Properties (below); it used to show each new minute a minute
       late. Untested: real applets (Discord, Steam, Telegram), another
-      desktop's watcher, radio items. Not yet: per-icon "always show /
-      always hide" (XP's Customize Notifications).
+      desktop's watcher, radio items. Customize Notifications (Taskbar
+      Properties > Customize...): every icon seen, each Hide when inactive,
+      Always hide or Always show ([Notifications] by the item's Id).
 - [~] Date and Time Properties (xd-timedate, through timedated and polkit):
       Date & Time (calendar, an analog clock, the time), Time Zone and
       Internet Time (timesyncd on or off). Tested against dbusmock's
       timedated: SetTimezone, SetNTP and SetTime with the right values.
       **Untested against the real timedated** (it would change this
-      machine's clock). Not yet: XP's world map on Time Zone, 12-hour time
-      entry, styled spin buttons.
+      machine's clock). The Time Zone tab draws XP's world map from Natural
+      Earth's land outlines, with the zone's band lit and its city marked.
+      Not yet: 12-hour time entry, styled spin buttons.
 - [~] Our own applets, drawn by the theme engine: volume (libpulse; XP's
       flyout with slider and Mute, the wheel, Mute and pavucontrol in the
       menu), network (NetworkManager: wired / Wi-Fi with signal, networks in
@@ -225,7 +230,16 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Tested headless, two outputs for all displays. Untested: Auto-hide
       with the Windows key, real monitors. With all displays off, Alt+Space
       can't open the window menu on monitors without a taskbar.
-- [ ] Taskbar on other edges, more than one row, resizing it.
+- [~] Taskbar on any edge and in several rows ([Taskbar] Edge, Rows,
+      SideWidth): rows of task buttons and tray icons on top and bottom
+      taskbars, a stacked layout on side ones; menus, paging, grouping,
+      Auto-hide and drops follow the edge. Unlocked, it's dragged to
+      another edge and resized by its inner edge, as in XP. Tested
+      headless in Luna and Classic: all four edges, 1-3 rows, moving and
+      resizing by mouse, the Start menus. Untested: Watercolor, real
+      monitors, the window menu (Alt+Space) from a side or top taskbar,
+      several monitors. Not yet: XP's Show Quick Launch toolbar text, the
+      clock's date lines on a tall taskbar.
 - [~] Right-click menus (XP): the taskbar's (Toolbars ▸ Quick Launch, Cascade,
       Tile Horizontally/Vertically and Undo, Show the Desktop, Task Manager,
       Lock the Taskbar, Properties) and a task button's window menu
@@ -248,9 +262,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (Open, Delete, Properties) and the toolbar's (Open Folder, Close
       Toolbar); files and applications dropped on it become shortcuts
       where they land (a mark shows where), and its buttons can be dragged
-      along to rearrange them. Tested headless with a GTK drag source. Not
-      yet: dragging from our own Start menu or xd-files (they aren't drag
-      sources), large icons, Show Text / Show Title.
+      along to rearrange them. xd-files drags its selection out (to Quick
+      Launch or any program). Tested headless with a GTK drag source and
+      xd-files. Not yet: dragging from our own Start menu, large icons,
+      Show Text / Show Title.
 - [ ] Desktop icons.
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
