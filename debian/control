@@ -43,6 +43,7 @@ Depends:
  fonts-dejavu-extra,
  fonts-adobe-sourcesans3,
  fonts-roboto-unhinted,
+ fonts-open-sans,
 Recommends:
  xwayland,
  polkitd,

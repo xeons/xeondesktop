@@ -19,6 +19,7 @@ depends=(
   'ttf-dejavu'              # DejaVu Sans Condensed for Tahoma
   'adobe-source-sans-fonts' # Source Sans 3 for Trebuchet MS
   'ttf-roboto'              # Roboto Condensed for Franklin Gothic
+  'ttf-opensans'            # Open Sans for Segoe UI (Aero)
   'glib2'
   'gtk3'
   'gdk-pixbuf2'

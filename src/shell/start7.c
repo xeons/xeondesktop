@@ -235,6 +235,7 @@ static s7_palette palette(const xd_theme *t) {
             .separator = xd_rgba_hex(0xD5DCE8),
         };
     case XD_STYLE_LUNA:
+    case XD_STYLE_AERO: /* Windows 7's own colours */
     case XD_STYLE_COUNT:
         break;
     }
@@ -940,6 +941,7 @@ static xp_palette xp_colors(const xd_theme *t) {
         };
     }
     case XD_STYLE_LUNA:
+    case XD_STYLE_AERO: /* Windows 7's own colours */
     case XD_STYLE_COUNT:
         break;
     }

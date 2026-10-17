@@ -7,6 +7,7 @@ static const xd_style_ops *const styles[XD_STYLE_COUNT] = {
     [XD_STYLE_CLASSIC] = &xd_style_classic,
     [XD_STYLE_LUNA] = &xd_style_luna,
     [XD_STYLE_WHISTLER] = &xd_style_whistler,
+    [XD_STYLE_AERO] = &xd_style_aero,
 };
 
 static const xd_style_ops *ops(const xd_theme *t) {
@@ -212,6 +213,9 @@ void xd_theme_tray_margins(const xd_theme *t, int *left, int *right) {
         return;
     case XD_STYLE_WHISTLER:
         *left = *right = xd_tpx(t, 10);
+        return;
+    case XD_STYLE_AERO:
+        *left = *right = xd_tpx(t, 8);
         return;
     case XD_STYLE_CLASSIC:
     case XD_STYLE_COUNT:

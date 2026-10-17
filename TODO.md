@@ -339,6 +339,15 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       bars, group boxes, menus and the GTK theme's Luna section, which
       still uses the older approximations.
 - [ ] Luna colour variants (Olive Green, Silver).
+- [~] Aero (Windows 7), style_aero.c: translucent sky-blue glass frames
+      with a sheen and faint streaks, rounded corners, the dark outline
+      and light inner edge, the grouped caption strip with a red Close,
+      the title (Segoe UI, Open Sans standing in) on a soft white glow;
+      a glass taskbar with a glossy round Start orb and glass task
+      buttons; Windows 7's light buttons, check boxes, menus and dialog
+      colours. Not yet: blur behind the glass (needs the GPU, see the
+      compositor), Windows 7's taskbar (icon-only, pinned), Aero's GTK
+      theme beyond the shared rules, colourisation choices.
 - [~] Whistler is the "Watercolor" look, matched against screenshots
       (frame, caption mosaic, caption buttons, buttons, fields, tabs, scroll
       bars, taskbar). Not yet: the Windows 2000 and 7 Start menus still use

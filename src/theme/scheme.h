@@ -82,6 +82,9 @@ typedef enum xd_metric {
 #define XD_FONT_FAMILY_TAHOMA "Tahoma, DejaVu Sans Condensed, DejaVu Sans, sans-serif"
 #define XD_FONT_FAMILY_TREBUCHET                                                               \
     "Trebuchet MS, Source Sans 3, DejaVu Sans Condensed, DejaVu Sans, sans-serif"
+/* Segoe UI (Windows 7): Open Sans, by the same designer and closest in
+ * shape. */
+#define XD_FONT_FAMILY_SEGOE "Segoe UI, Open Sans, Noto Sans, DejaVu Sans, sans-serif"
 #define XD_FONT_FAMILY_FRANKLIN                                                                \
     "Franklin Gothic Medium, Roboto Condensed, DejaVu Sans Condensed, DejaVu Sans, sans-serif"
 

@@ -16,6 +16,7 @@ typedef enum xd_visual_style {
     XD_STYLE_CLASSIC,
     XD_STYLE_LUNA,
     XD_STYLE_WHISTLER,
+    XD_STYLE_AERO, /* Windows 7: glass frames */
     XD_STYLE_COUNT
 } xd_visual_style;
 

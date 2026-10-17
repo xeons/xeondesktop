@@ -105,6 +105,7 @@ theme_lib = static_library(
   'src/theme/theme.c',
   'src/theme/style_classic.c',
   'src/theme/style_modern.c',
+  'src/theme/style_aero.c',
   'src/theme/style_whistler.c',
   'src/theme/luna.c',
   'src/theme/gtkcss.c',
