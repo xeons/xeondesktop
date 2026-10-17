@@ -27,8 +27,11 @@ enum {
 
 static const xd_font_spec title_font = {.family = XD_FONT_FAMILY_SEGOE, .size_pt = 9};
 
-/* The default colourisation ("Sky"), active and inactive. */
-static xd_rgba glass(bool active) {
+/* The default colourisation ("Sky"), active and inactive; opaque without
+ * the compositor's blur (Windows 7 Basic). */
+static xd_rgba glass(const xd_theme *t, bool active) {
+    if (!t->glass)
+        return active ? (xd_rgba){0.73, 0.82, 0.92, 1} : (xd_rgba){0.84, 0.88, 0.94, 1};
     return active ? (xd_rgba){0.45, 0.67, 0.89, 0.55} : (xd_rgba){0.80, 0.84, 0.89, 0.42};
 }
 
@@ -84,7 +87,7 @@ static void aero_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *
 /* The glass: the colour, a sheen fading down from the top, and faint
  * diagonal streaks, as light catches Windows 7's frames. */
 static void paint_glass(const xd_theme *t, cairo_t *cr, xd_rect r, bool active, int sheen_h) {
-    xd_rgba g = glass(active);
+    xd_rgba g = glass(t, active);
     cairo_set_source_rgba(cr, g.r, g.g, g.b, g.a);
     cairo_rectangle(cr, r.x, r.y, r.w, r.h);
     cairo_fill(cr);
@@ -96,6 +99,8 @@ static void paint_glass(const xd_theme *t, cairo_t *cr, xd_rect r, bool active, 
     cairo_rectangle(cr, r.x, r.y, r.w, sheen_h);
     cairo_fill(cr);
     cairo_pattern_destroy(p);
+    if (!t->glass)
+        return; /* Basic: no reflections */
     /* Streaks every ~180px, leaning right. */
     double step = xd_tpx(t, 180), wide = xd_tpx(t, 36);
     for (double x = r.x - r.h; x < r.x + r.w; x += step) {
@@ -222,6 +227,14 @@ static void aero_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const
     /* Around the client area: a dark line, and a light one outside it. */
     xd_rect client = {outer.x + in.left, outer.y + in.top, outer.w - in.left - in.right,
                       outer.h - in.top - in.bottom};
+    /* Nothing under the client area: the compositor blurs only where the
+     * frame is drawn. */
+    if (client.w > 0 && client.h > 0) {
+        cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+        cairo_rectangle(cr, client.x, client.y, client.w, client.h);
+        cairo_fill(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    }
     if (!f->maximized && client.w > 0 && client.h > 0) {
         cairo_set_line_width(cr, 1);
         cairo_rectangle(cr, client.x - 1.5, client.y - 1.5, client.w + 3, client.h + 3);
@@ -328,7 +341,10 @@ static int aero_taskbar_height(const xd_theme *t) { return xd_tpx(t, TASKBAR_H);
 static void aero_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
     cairo_save(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-    cairo_set_source_rgba(cr, 0.08, 0.16, 0.26, 0.62);
+    if (t->glass)
+        cairo_set_source_rgba(cr, 0.08, 0.16, 0.26, 0.62);
+    else
+        cairo_set_source_rgb(cr, 0.16, 0.27, 0.42); /* Basic: opaque */
     cairo_rectangle(cr, r.x, r.y, r.w, r.h);
     cairo_fill(cr);
     cairo_restore(cr);

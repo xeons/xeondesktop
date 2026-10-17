@@ -1,0 +1,10 @@
+# SceneFX: wlroots' scene graph with blur and shadows (GLES2 only), for
+# Aero's glass in xd-compositor-fx. Pinned to a commit on main that
+# targets wlroots 0.20.
+[wrap-git]
+url = https://github.com/wlrfx/scenefx.git
+revision = b96cb6c923b8bf721ad11fa2136fe070d9adc2dd
+depth = 1
+
+[provide]
+dependency_names = scenefx-0.5

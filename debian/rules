@@ -7,4 +7,4 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 # The project defaults to a debug build with sanitizers and -Werror, for
 # development; packages are built with the distribution's flags.
 override_dh_auto_configure:
-	dh_auto_configure -- -Db_sanitize=none -Dwerror=false
+	dh_auto_configure -- -Db_sanitize=none -Dwerror=false -Daero_blur=enabled

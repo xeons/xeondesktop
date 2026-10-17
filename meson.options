@@ -1,2 +1,4 @@
 option('analyzer', type: 'boolean', value: false,
        description: 'Build with GCC -fanalyzer (slow; for CI and audits)')
+option('aero_blur', type: 'feature', value: 'auto',
+       description: 'Build xd-compositor-fx with SceneFX: blur behind Aero glass and window shadows (GPU only)')

@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "style.h"
 
@@ -36,6 +38,8 @@ void xd_theme_init(xd_theme *t, xd_visual_style style, const xd_scheme *scheme, 
     t->style = style;
     t->scheme = *scheme;
     t->scale = scale;
+    const char *glass = getenv("XD_GLASS");
+    t->glass = glass != nullptr && strcmp(glass, "1") == 0;
 }
 
 xd_insets xd_theme_frame_insets(const xd_theme *t, const xd_frame *f) {

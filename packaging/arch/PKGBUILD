@@ -31,10 +31,13 @@ depends=(
   'dbus'    # dbus-update-activation-environment
   'libpulse'
   'json-glib'
+  'libglvnd'  # EGL/GLESv2: xd-compositor-fx
+  'pixman'
   'sh'
 )
 # Header-only at build time: xcb-icccm's hint structures, libdrm's formats.
-makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm')
+# mesa: EGL/GLES headers for SceneFX (xd-compositor-fx, Aero's blur).
+makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm' 'mesa')
 checkdepends=('ttf-dejavu')
 optdepends=(
   'xorg-xwayland: X11 applications'
@@ -56,7 +59,7 @@ sha256sums=('SKIP')
 
 build() {
   # The project's defaults are a sanitizer debug build for development.
-  arch-meson "$pkgname-$pkgver" build -Db_sanitize=none -Dwerror=false
+  arch-meson "$pkgname-$pkgver" build -Db_sanitize=none -Dwerror=false -Daero_blur=enabled
   meson compile -C build
 }
 

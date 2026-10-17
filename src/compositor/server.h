@@ -14,7 +14,14 @@
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
+#ifdef XD_SCENEFX
+/* xd-compositor-fx: SceneFX's scene graph (blur, shadows) in place of
+ * wlroots'; the API is a superset. */
+#include <scenefx/render/fx_renderer/fx_renderer.h>
+#include <scenefx/types/wlr_scene.h>
+#else
 #include <wlr/types/wlr_scene.h>
+#endif
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_server_decoration.h>
@@ -76,6 +83,9 @@ typedef struct xd_layer_surface {
     struct wlr_layer_surface_v1 *layer_surface;
     struct wlr_scene_layer_surface_v1 *scene;
     enum zwlr_layer_shell_v1_layer layer;
+#ifdef XD_SCENEFX
+    struct wlr_scene_blur *blur; /* Aero: behind the shell's glass taskbar */
+#endif
     struct wl_listener map;
     struct wl_listener unmap;
     struct wl_listener commit;
@@ -99,6 +109,11 @@ typedef struct xd_view {
 
     struct wlr_scene_tree *tree;    /* at the outer frame origin */
     struct wlr_scene_buffer *frame; /* server-side decoration */
+#ifdef XD_SCENEFX
+    /* Aero: the blur behind its glass (masked by the frame) and its shadow. */
+    struct wlr_scene_blur *blur;
+    struct wlr_scene_shadow *shadow;
+#endif
     struct wlr_scene_tree *content; /* the client's surfaces */
 
     bool mapped;
@@ -468,7 +483,10 @@ void xd_view_refit_maximized(xd_server *server, xd_output *out);
  * or moved) onto the nearest output. */
 void xd_view_rescue_offscreen(xd_server *server);
 /* Shows a popup (menu) as a child of parent_tree. */
-void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree);
+/* glass_server: the shell's popups, blurred behind in the Aero style
+ * (xd-compositor-fx); nullptr for windows' popups. */
+void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree,
+                     xd_server *glass_server);
 /* Forget an output that is going away. */
 void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output);
 

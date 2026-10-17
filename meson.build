@@ -241,8 +241,7 @@ client_protocol_dep = declare_dependency(
   dependencies: [wayland_client_dep],
 )
 
-executable(
-  'xd-compositor',
+compositor_src = files(
   'src/compositor/main.c',
   'src/compositor/output.c',
   'src/compositor/layers.c',
@@ -254,22 +253,48 @@ executable(
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
   'src/compositor/xwayland.c',
+)
+compositor_deps = [
+  theme_dep,
+  settings_dep,
+  wlroots_dep,
+  xcb_dep,
+  xcb_icccm_dep,
+  wayland_server_dep,
+  xkbcommon_dep,
+  libdrm_dep,
+]
+executable(
+  'xd-compositor',
+  compositor_src,
   server_protocol_headers,
   server_protocol_headers_extra,
   arranger_server_src,
-  dependencies: [
-    theme_dep,
-    settings_dep,
-    wlroots_dep,
-    xcb_dep,
-    xcb_icccm_dep,
-    wayland_server_dep,
-    xkbcommon_dep,
-    libdrm_dep,
-  ],
+  dependencies: compositor_deps,
   c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE'],
   install: true,
 )
+# The same compositor on SceneFX's scene graph: Aero's blurred glass and
+# window shadows. GLES2 only, so xd-compositor hands over to it when it's
+# installed, and it hands back when there's no GPU renderer.
+scenefx_dep = dependency(
+  'scenefx-0.5',
+  required: get_option('aero_blur'),
+  fallback: ['scenefx', 'scenefx'],
+  default_options: ['default_library=static', 'examples=false', 'werror=false'],
+)
+if scenefx_dep.found()
+  executable(
+    'xd-compositor-fx',
+    compositor_src,
+    server_protocol_headers,
+    server_protocol_headers_extra,
+    arranger_server_src,
+    dependencies: compositor_deps + [scenefx_dep.as_system()],
+    c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE', '-DXD_SCENEFX'],
+    install: true,
+  )
+endif
 
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
 # The volume icon: PulseAudio's client library (PipeWire serves it too).

@@ -16,6 +16,14 @@ Copyright: 2008-2011 Kristian Høgsberg
            2019 Josef Gajdusek
 License: MIT
 
+Files: subprojects/scenefx/*
+Copyright: 2017-2018 Drew DeVault
+           2014 Jari Vetoniemi
+           SceneFX contributors (github.com/wlrfx/scenefx)
+License: MIT
+Comment: Built into xd-compositor-fx (static); fetched at the commit pinned
+ in subprojects/scenefx.wrap by packaging/fetch-subprojects.sh.
+
 Files: data/maps/ne_110m_land.geojson
 Copyright: none (Natural Earth, naturalearthdata.com)
 License: public-domain

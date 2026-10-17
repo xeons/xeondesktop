@@ -76,6 +76,40 @@ static void handle_unmap(struct wl_listener *listener, [[maybe_unused]] void *da
     update_keyboard_focus(ls);
 }
 
+#ifdef XD_SCENEFX
+static void first_buffer(struct wlr_scene_buffer *buffer, [[maybe_unused]] int sx,
+                         [[maybe_unused]] int sy, void *data) {
+    struct wlr_scene_buffer **out = data;
+    if (*out == nullptr)
+        *out = buffer;
+}
+
+/* Aero: the shell's taskbar is glass too; what's behind it is blurred
+ * where it draws. */
+static void update_glass(xd_layer_surface *ls) {
+    struct wlr_layer_surface_v1 *l = ls->layer_surface;
+    bool want = ls->server->config.style == XD_STYLE_AERO && l->namespace != nullptr &&
+                strcmp(l->namespace, "taskbar") == 0 && l->surface->mapped;
+    if (!want) {
+        if (ls->blur != nullptr)
+            wlr_scene_node_set_enabled(&ls->blur->node, false);
+        return;
+    }
+    if (ls->blur == nullptr) {
+        struct wlr_scene_buffer *surface = nullptr;
+        wlr_scene_node_for_each_buffer(&ls->scene->tree->node, first_buffer, &surface);
+        if (surface == nullptr)
+            return;
+        ls->blur = wlr_scene_blur_create(ls->scene->tree, 1, 1);
+        wlr_scene_blur_set_transparency_mask_source(ls->blur, surface);
+        wlr_scene_node_lower_to_bottom(&ls->blur->node);
+    }
+    wlr_scene_blur_set_size(ls->blur, (int)l->current.actual_width,
+                            (int)l->current.actual_height);
+    wlr_scene_node_set_enabled(&ls->blur->node, true);
+}
+#endif
+
 static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, commit);
     struct wlr_layer_surface_v1 *l = ls->layer_surface;
@@ -92,11 +126,15 @@ static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *d
         xd_output_arrange(ls->output);
         update_keyboard_focus(ls);
     }
+#ifdef XD_SCENEFX
+    update_glass(ls);
+#endif
 }
 
 static void handle_new_popup(struct wl_listener *listener, void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, new_popup);
-    xd_popup_attach(data, ls->scene->tree);
+    /* The shell's popups (the Start menus) may be glass. */
+    xd_popup_attach(data, ls->scene->tree, ls->server);
 }
 
 static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {

@@ -73,12 +73,55 @@ static int to_device(int logical, double scale) {
     return (int)v;
 }
 
+#ifdef XD_SCENEFX
+/* Aero's glass: SceneFX blurs what's behind the frame wherever the frame
+ * isn't transparent, and a soft shadow lies under the window. */
+static constexpr int SHADOW_SIGMA = 10;
+static constexpr int SHADOW_DROP = 3;
+
+static void update_glass(xd_view *view, struct wlr_box outer, bool shown) {
+    bool aero = shown && view->server->config.style == XD_STYLE_AERO;
+    if (!aero) {
+        if (view->blur != nullptr)
+            wlr_scene_node_set_enabled(&view->blur->node, false);
+        if (view->shadow != nullptr)
+            wlr_scene_node_set_enabled(&view->shadow->node, false);
+        return;
+    }
+    if (view->shadow == nullptr) {
+        static const float color[4] = {0, 0, 0, 0.45f};
+        view->shadow = wlr_scene_shadow_create(view->tree, 1, 1, 6, (float)SHADOW_SIGMA, color);
+    }
+    if (view->blur == nullptr) {
+        view->blur = wlr_scene_blur_create(view->tree, 1, 1);
+        wlr_scene_blur_set_transparency_mask_source(view->blur, view->frame);
+    }
+    int radius = view->maximized ? 0 : 6;
+    wlr_scene_blur_set_size(view->blur, outer.width, outer.height);
+    wlr_scene_blur_set_corner_radius(view->blur, radius);
+    wlr_scene_node_set_position(&view->blur->node, 0, 0);
+    wlr_scene_node_set_enabled(&view->blur->node, true);
+    /* No shadow when maximized, as in Windows. */
+    int s = SHADOW_SIGMA;
+    wlr_scene_shadow_set_size(view->shadow, outer.width + 2 * s, outer.height + 2 * s);
+    wlr_scene_shadow_set_corner_radius(view->shadow, radius + s);
+    wlr_scene_node_set_position(&view->shadow->node, -s, -s + SHADOW_DROP);
+    wlr_scene_node_set_enabled(&view->shadow->node, !view->maximized);
+    /* Shadow, then blur, then the frame and the window. */
+    wlr_scene_node_lower_to_bottom(&view->blur->node);
+    wlr_scene_node_lower_to_bottom(&view->shadow->node);
+}
+#endif
+
 void xd_frame_render(xd_view *view, bool force) {
     if (!view->mapped)
         return;
     /* The client draws its own decorations. */
     bool none = view->csd || view->fullscreen;
     wlr_scene_node_set_enabled(&view->frame->node, !none);
+#ifdef XD_SCENEFX
+    update_glass(view, xd_view_outer_box(view), !none);
+#endif
     if (none)
         return;
 

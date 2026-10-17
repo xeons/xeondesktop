@@ -35,7 +35,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed base-devel clang meson ninja wayland-protocols \
             wlroots0.20 wayland libxkbcommon libxcb xcb-util-wm libdrm cairo pango fontconfig \
-            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse json-glib \
+            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse json-glib mesa pixman git \
             ttf-dejavu
       - uses: actions/checkout@v4
       - name: Configure

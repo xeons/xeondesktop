@@ -164,8 +164,21 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       really changing a password** (please try it), its buttons other than
       Change Password, non-English passwd prompts (passwd runs in the C
       locale, so these shouldn't occur).
-- [ ] Blur behind the Windows 7 Start menu's glass (wlroots' scene graph has
-      no blur pass); until then the panel is opaque.
+- [~] Aero glass: xd-compositor-fx is the compositor built on SceneFX
+      (subprojects/scenefx.wrap, pinned; packages fetch it with
+      packaging/fetch-subprojects.sh), whose scene graph blurs what's behind
+      a node. In the Aero style each window gets a blur node masked by its
+      frame's alpha (the frame leaves the client area transparent) and a
+      soft shadow (none when maximized), and the shell's taskbar a blur
+      masked by its pixels. SceneFX renders with GLES2 only: xd-compositor
+      hands over to xd-compositor-fx when it's installed beside it (not
+      when WLR_RENDERER asks for software, nor with XD_NO_FX set), and
+      xd-compositor-fx hands back when there's no GPU renderer; it sets
+      XD_GLASS=1 for the session, without which Aero draws opaque, as
+      Windows 7 Basic. Tested: the hand-over and hand-back without a GPU,
+      Aero Basic. **Untested: the blur and shadows themselves** (no GPU
+      here: needs VirtualBox's 3D acceleration). Not yet: blur behind the
+      Windows 7 Start menu's glass (its panel is opaque), colourisation.
 - [x] XP's "Animate windows when minimizing and maximizing" ([Effects]
       AnimateWindows, on by default): a bar in the active caption colour
       flies from the title bar to the taskbar button and back (the shell

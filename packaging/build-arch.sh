@@ -11,6 +11,7 @@ set -eu
 pacman -Syu --noconfirm --needed base-devel git >/dev/null
 
 src=$PWD
+packaging/fetch-subprojects.sh
 work=$(mktemp -d)
 cp packaging/arch/PKGBUILD "$work/"
 version=${XD_VERSION:-$(sed -n 's/^pkgver=//p' "$work/PKGBUILD")}

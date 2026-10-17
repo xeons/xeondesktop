@@ -9,7 +9,8 @@ set -eu
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends build-essential devscripts equivs >/dev/null
+apt-get install -y -qq --no-install-recommends build-essential devscripts equivs git ca-certificates >/dev/null
+packaging/fetch-subprojects.sh
 
 # Build in a copy, so the tree (and its build directories) stay as they are.
 work=$(mktemp -d)

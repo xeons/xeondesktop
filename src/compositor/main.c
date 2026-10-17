@@ -108,7 +108,17 @@ static bool server_init(xd_server *server) {
         wlr_log(WLR_ERROR, "cannot create backend");
         return false;
     }
+#ifdef XD_SCENEFX
+    /* SceneFX draws with its own GLES2 renderer; without a GPU this build
+     * can't run, and main() hands over to the plain xd-compositor. */
+    server->renderer = fx_renderer_create(server->backend);
+    if (server->renderer == nullptr) {
+        wlr_log(WLR_ERROR, "no GPU renderer for SceneFX");
+        return false;
+    }
+#else
     server->renderer = wlr_renderer_autocreate(server->backend);
+#endif
     if (server->renderer == nullptr && getenv("WLR_RENDERER") == nullptr) {
         /* No usable GPU (e.g. a virtual machine without 3D acceleration):
          * draw in software. wlroots never picks pixman by itself. */
@@ -133,6 +143,12 @@ static bool server_init(xd_server *server) {
     xd_output_init(server);
 
     server->scene = wlr_scene_create();
+#ifdef XD_SCENEFX
+    /* Windows 7's blur: soft and a touch brighter than what's behind. */
+    wlr_scene_set_blur_data(server->scene, 3, 5.0f, 0.02f, 0.95f, 0.95f, 1.1f);
+    /* Glass is blurred: Aero draws translucent (us, the shell, our apps). */
+    setenv("XD_GLASS", "1", 1);
+#endif
     server->scene_layout = wlr_scene_attach_output_layout(server->scene, server->output_layout);
     /* Creation order is stacking order, bottom first. */
     struct wlr_scene_tree *root = &server->scene->tree;
@@ -299,7 +315,42 @@ static const char *own_program(const char *name, char *buf, size_t size) {
     return name;
 }
 
+/* The other build of the compositor next to this one, or false: the plain
+ * xd-compositor and xd-compositor-fx (SceneFX: Aero's blur) hand over to
+ * each other. */
+static bool sibling_compositor(const char *name, char *buf, size_t size) {
+    ssize_t n = readlink("/proc/self/exe", buf, size - 1);
+    if (n <= 0)
+        return false;
+    buf[n] = '\0';
+    char *slash = strrchr(buf, '/');
+    if (slash == nullptr)
+        return false;
+    size_t used = (size_t)(slash + 1 - buf);
+    int len = snprintf(slash + 1, size - used, "%s", name);
+    if (len < 0 || (size_t)len >= size - used)
+        return false;
+    return access(buf, X_OK) == 0;
+}
+
+static void hand_over(const char *name, char **argv) {
+    char path[4096];
+    if (!sibling_compositor(name, path, sizeof(path)))
+        return;
+    argv[0] = path;
+    execv(path, argv);
+    wlr_log_errno(WLR_ERROR, "cannot run %s", path);
+}
+
 int main(int argc, char **argv) {
+#ifndef XD_SCENEFX
+    /* With a GPU, the SceneFX build draws Aero's blurred glass; it hands
+     * back (XD_NO_FX set) when there's no GPU renderer. Not when software
+     * rendering was asked for. */
+    const char *want = getenv("WLR_RENDERER");
+    if (getenv("XD_NO_FX") == nullptr && (want == nullptr || strcmp(want, "gles2") == 0))
+        hand_over("xd-compositor-fx", argv);
+#endif
     static xd_server server;
     server.config.style = XD_STYLE_CLASSIC;
     server.config.terminal = "alacritty";
@@ -334,7 +385,18 @@ int main(int argc, char **argv) {
     xd_theme_init(&server.logical_theme, server.config.style, &server.config.scheme, 1.0);
 
     if (!server_init(&server)) {
+#ifdef XD_SCENEFX
+        bool no_gpu = server.renderer == nullptr;
+#endif
         server_finish(&server);
+#ifdef XD_SCENEFX
+        /* No GPU: the plain build draws with pixman (and without blur). */
+        if (no_gpu) {
+            setenv("XD_NO_FX", "1", 1);
+            unsetenv("XD_GLASS");
+            hand_over("xd-compositor", argv);
+        }
+#endif
         return EXIT_FAILURE;
     }
 

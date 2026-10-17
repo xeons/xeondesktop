@@ -27,6 +27,10 @@ typedef struct xd_theme {
     xd_visual_style style;
     xd_scheme scheme;
     double scale; /* device pixels per logical pixel, e.g. 1.0, 1.25, 2.0 */
+    /* The compositor blurs behind translucent glass (xd-compositor-fx on a
+     * GPU, which sets XD_GLASS=1 for the session). Without it Aero is drawn
+     * opaque, as Windows 7 Basic is without desktop composition. */
+    bool glass;
 } xd_theme;
 
 void xd_theme_init(xd_theme *theme, xd_visual_style style, const xd_scheme *scheme,

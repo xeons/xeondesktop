@@ -25,6 +25,9 @@ Build-Depends:
  libpam0g-dev,
  libpulse-dev,
  libjson-glib-dev,
+ libegl-dev,
+ libgles-dev,
+ libpixman-1-dev,
  fonts-dejavu-core <!nocheck>,
 Standards-Version: 4.7.2
 Homepage: https://github.com/xeons/xeondesktop

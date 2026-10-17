@@ -1207,9 +1207,57 @@ static void handle_new_kde_decoration(struct wl_listener *listener, void *data) 
 
 typedef struct xd_popup {
     struct wlr_xdg_popup *popup;
+    xd_server *glass_server; /* the shell's popups (Start menu): Aero glass */
+#ifdef XD_SCENEFX
+    struct wlr_scene_blur *blur;
+#endif
     struct wl_listener commit;
     struct wl_listener destroy;
 } xd_popup;
+
+#ifdef XD_SCENEFX
+static void popup_first_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
+    struct {
+        struct wlr_scene_buffer *buffer;
+        int x, y;
+    } *out = data;
+    if (out->buffer == nullptr) {
+        out->buffer = buffer;
+        out->x = sx;
+        out->y = sy;
+    }
+}
+
+/* Aero: the Windows 7 Start menu's glass is blurred where it draws. */
+static void update_popup_glass(xd_popup *p) {
+    struct wlr_scene_tree *tree = p->popup->base->data;
+    if (p->glass_server == nullptr || tree == nullptr)
+        return;
+    if (p->glass_server->config.style != XD_STYLE_AERO) {
+        if (p->blur != nullptr)
+            wlr_scene_node_set_enabled(&p->blur->node, false);
+        return;
+    }
+    struct {
+        struct wlr_scene_buffer *buffer;
+        int x, y;
+    } found = {0};
+    wlr_scene_node_for_each_buffer(&tree->node, popup_first_buffer, &found);
+    if (found.buffer == nullptr)
+        return;
+    if (p->blur == nullptr) {
+        p->blur = wlr_scene_blur_create(tree, 1, 1);
+        wlr_scene_blur_set_transparency_mask_source(p->blur, found.buffer);
+        wlr_scene_node_lower_to_bottom(&p->blur->node);
+    }
+    int lx = 0, ly = 0;
+    wlr_scene_node_coords(&tree->node, &lx, &ly);
+    struct wlr_surface *s = p->popup->base->surface;
+    wlr_scene_blur_set_size(p->blur, s->current.width, s->current.height);
+    wlr_scene_node_set_position(&p->blur->node, found.x - lx, found.y - ly);
+    wlr_scene_node_set_enabled(&p->blur->node, true);
+}
+#endif
 
 /* Layout position of the surface a popup chain is rooted at: a window's
  * content or a layer surface (the taskbar's Start menu). */
@@ -1230,6 +1278,9 @@ static bool popup_root_origin(struct wlr_scene_node *node, xd_server **server, i
 
 static void handle_popup_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_popup *p = XD_CONTAINER_OF(listener, xd_popup, commit);
+#ifdef XD_SCENEFX
+    update_popup_glass(p);
+#endif
     if (!p->popup->base->initial_commit)
         return;
 
@@ -1255,11 +1306,13 @@ static void handle_popup_destroy(struct wl_listener *listener, [[maybe_unused]] 
     xd_free(p);
 }
 
-void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree) {
+void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree,
+                     xd_server *glass_server) {
     popup->base->data = wlr_scene_xdg_surface_create(parent_tree, popup->base);
 
     xd_popup *p = XD_NEW(xd_popup);
     p->popup = popup;
+    p->glass_server = glass_server;
     XD_LISTEN(&popup->base->surface->events.commit, p, commit, handle_popup_commit);
     XD_LISTEN(&popup->events.destroy, p, destroy, handle_popup_destroy);
 }
@@ -1272,7 +1325,7 @@ static void handle_new_popup([[maybe_unused]] struct wl_listener *listener, void
         return;
     struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(popup->parent);
     if (xdg != nullptr && xdg->data != nullptr)
-        xd_popup_attach(popup, xdg->data);
+        xd_popup_attach(popup, xdg->data, nullptr);
 }
 
 void xd_view_init(xd_server *server) {
