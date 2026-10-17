@@ -207,9 +207,17 @@ void xd_taskbar_group_menu(xd_taskbar *bar, int hit, uint32_t serial) {
     bar->dirty = true;
 }
 
-static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree) {
+/* The taskbar's menu; over the clock, Adjust Date/Time comes first. */
+static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree, bool clock) {
     xd_menu_model *m = xd_menu_model_new(tree);
     bool can_arrange = shell->arranger != nullptr;
+    if (clock) {
+        xd_menu_item *it = add(tree, m, "Adjust Date/Time", nullptr, nullptr);
+        it->command = xd_shell_own_command(shell, "xd-timedate", nullptr);
+        it->disabled = false;
+        it->bold = true;
+        separator(tree, m);
+    }
 
     xd_menu_item *toolbars = xd_menu_add(tree, m, XD_MENU_SUBMENU, "Toolbars", nullptr);
     toolbars->submenu = xd_menu_model_new(tree);
@@ -372,7 +380,7 @@ void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint3
     else if (hit == XD_HIT_START)
         model = start_button_menu(shell, &shell->context_tree);
     else
-        model = taskbar_menu(shell, &shell->context_tree);
+        model = taskbar_menu(shell, &shell->context_tree, hit == XD_HIT_TRAY);
     /* Anchored at the pointer; opens upwards. */
     xd_rect anchor = {(int)x, (int)y, 1, 1};
     xd_taskbar_take_keyboard(bar);

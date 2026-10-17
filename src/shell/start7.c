@@ -1455,6 +1455,8 @@ static void open_sub(xd_start7 *m, int owner) {
         anchor = xp_or_right_item(m, R_RECENT);
     } else if (owner == R_CONTROL) {
         mm = xd_menu_model_new(&m->tree);
+        add_cmd(&m->tree, mm, "Date and Time", "preferences-system-time",
+                xd_shell_own_command(shell, "xd-timedate", nullptr));
         add_cmd(&m->tree, mm, "Display", "preferences-desktop-display",
                 xd_shell_own_command(shell, "xd-desk", nullptr));
         add_cmd(&m->tree, mm, "System", "computer",

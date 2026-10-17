@@ -152,6 +152,9 @@ void xd_start_menu_build(xd_shell *shell) {
     xd_menu_item *control =
         xd_menu_add(tree, settings->submenu, XD_MENU_SUBMENU, "Control Panel", "preferences-system");
     control->submenu = xd_menu_model_new(tree);
+    xd_menu_item *datetime = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "Date/Time",
+                                         "preferences-system-time");
+    datetime->command = xd_shell_own_command(shell, "xd-timedate", nullptr);
     xd_menu_item *display = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "Display",
                                         "preferences-desktop-display");
     display->fallback_icon = "video-display";

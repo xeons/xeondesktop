@@ -679,6 +679,17 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     bar->dirty = true;
     if (target != bar->hot)
         return; /* released somewhere else: cancel, like a real button */
+    if (target == XD_HIT_TRAY) {
+        /* Double-clicking the clock: Date and Time Properties. */
+        int64_t now = g_get_monotonic_time() / 1000;
+        if (now - bar->clock_click_ms <= 500) {
+            bar->clock_click_ms = 0;
+            xd_shell_launch(bar->shell, xd_shell_own_command(bar->shell, "xd-timedate", nullptr));
+        } else {
+            bar->clock_click_ms = now;
+        }
+        return;
+    }
     if (target == XD_HIT_PAGE_UP || target == XD_HIT_PAGE_DOWN) {
         xd_taskbar_page(bar, target == XD_HIT_PAGE_UP ? -1 : 1);
         return;

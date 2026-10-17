@@ -37,6 +37,7 @@ typedef struct network {
     char icon[64];
     /* For drawing: the kind of connection, its signal and whether up. */
     bool wifi, connected;
+    bool running; /* NetworkManager is on the bus */
     unsigned strength;
 } network;
 
@@ -159,6 +160,11 @@ static GDBusProxy *primary(network *n, char **type, GDBusProxy **ap) {
 }
 
 static void update(network *n) {
+    char *owner = n->objects != nullptr ? g_dbus_object_manager_client_get_name_owner(
+                                              G_DBUS_OBJECT_MANAGER_CLIENT(n->objects))
+                                        : nullptr;
+    n->running = owner != nullptr;
+    g_free(owner);
     unsigned state = prop_u(n->nm, "State");
     char *type = nullptr;
     GDBusProxy *ap = nullptr;
@@ -187,7 +193,7 @@ static void update(network *n) {
 
 static const char *icon(void *data) {
     network *n = data;
-    return n->nm != nullptr && n->objects != nullptr && n->icon[0] != '\0' ? n->icon : nullptr;
+    return n->running && n->nm != nullptr && n->icon[0] != '\0' ? n->icon : nullptr;
 }
 
 static char *tooltip(void *data) {
@@ -622,6 +628,11 @@ static void object_added_removed([[maybe_unused]] GDBusObjectManager *m,
     update(data);
 }
 
+static void owner_changed([[maybe_unused]] GObject *o, [[maybe_unused]] GParamSpec *ps,
+                          gpointer data) {
+    update(data);
+}
+
 static void got_manager([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
     GDBusProxy *p = g_dbus_proxy_new_for_bus_finish(res, nullptr);
     if (p == nullptr)
@@ -641,6 +652,8 @@ static void got_objects([[maybe_unused]] GObject *src, GAsyncResult *res, gpoint
     g_signal_connect(m, "interface-proxy-properties-changed", G_CALLBACK(object_props_changed), n);
     g_signal_connect(m, "object-added", G_CALLBACK(object_added_removed), n);
     g_signal_connect(m, "object-removed", G_CALLBACK(object_added_removed), n);
+    /* NetworkManager starting or stopping. */
+    g_signal_connect(m, "notify::name-owner", G_CALLBACK(owner_changed), n);
     g_dbus_proxy_new_for_bus(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, NM, NM_PATH, NM,
                              n->cancel, got_manager, n);
 }

@@ -362,6 +362,7 @@ install_data(
   'data/applications/org.xeondesktop.Files.desktop',
   'data/applications/org.xeondesktop.TaskManager.desktop',
   'data/applications/org.xeondesktop.SystemProperties.desktop',
+  'data/applications/org.xeondesktop.DateTime.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -413,6 +414,14 @@ executable(
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, util_dep],
   c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+executable(
+  'xd-timedate',
+  'src/timedate/main.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, m_dep],
   install: true,
 )
 

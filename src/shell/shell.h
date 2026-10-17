@@ -122,6 +122,7 @@ typedef struct xd_taskbar {
     size_t page, pages;
     uint64_t page_active_id; /* active window when last laid out */
     double wheel;            /* scrolling not yet turned into a page */
+    int64_t clock_click_ms;  /* for double-clicks on the clock */
     xd_rect page_up_rect, page_down_rect;
     /* Notification area icons, left of the clock. */
     size_t tray_count, tray_cap;
