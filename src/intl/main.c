@@ -32,6 +32,7 @@ typedef struct props {
     GtkWidget *window, *apply;
     GDBusProxy *l1;
     bool updating; /* we're setting the widgets ourselves */
+    bool busy;      /* Apply is waiting for the service */
     char **locales; /* installed */
     /* Regional Options */
     GtkWidget *formats, *number, *currency, *time, *short_date, *long_date, *note;
@@ -410,19 +411,46 @@ static void error_box(props *p, const char *what, const char *detail) {
     g_free(s);
 }
 
-/* Synchronous: Apply waits for localed (and its password prompt). */
+/* Apply waits for localed (and its password prompt, which has no time
+ * limit) in a main loop of its own, so the window keeps drawing and
+ * answering the compositor instead of turning "Not Responding". It takes
+ * no input meanwhile. */
+typedef struct pending_call {
+    GMainLoop *loop;
+    GVariant *result;
+    GError *error;
+} pending_call;
+
+static void call_done(GObject *src, GAsyncResult *res, gpointer data) {
+    pending_call *c = data;
+    c->result = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &c->error);
+    g_main_loop_quit(c->loop);
+}
+
 static bool call(props *p, const char *method, GVariant *args, const char *what) {
-    GError *error = nullptr;
-    GVariant *r = g_dbus_proxy_call_sync(p->l1, method, args, G_DBUS_CALL_FLAGS_NONE, -1,
-                                         nullptr, &error);
-    if (r == nullptr) {
-        g_dbus_error_strip_remote_error(error);
-        error_box(p, what, error->message);
-        g_error_free(error);
+    pending_call c = {.loop = g_main_loop_new(nullptr, FALSE)};
+    p->busy = true;
+    gtk_widget_set_sensitive(p->window, FALSE);
+    g_dbus_proxy_call(p->l1, method, args, G_DBUS_CALL_FLAGS_NONE, G_MAXINT, nullptr, call_done,
+                      &c);
+    g_main_loop_run(c.loop);
+    g_main_loop_unref(c.loop);
+    gtk_widget_set_sensitive(p->window, TRUE);
+    p->busy = false;
+    if (c.result == nullptr) {
+        g_dbus_error_strip_remote_error(c.error);
+        error_box(p, what, c.error->message);
+        g_error_free(c.error);
         return false;
     }
-    g_variant_unref(r);
+    g_variant_unref(c.result);
     return true;
+}
+
+/* Nor may the window be destroyed under Apply. */
+static gboolean on_delete([[maybe_unused]] GtkWidget *w, [[maybe_unused]] GdkEvent *e,
+                          gpointer data) {
+    return ((props *)data)->busy;
 }
 
 static bool apply_formats(props *p) {
@@ -495,6 +523,8 @@ static bool apply(props *p) {
 
 static void on_response(GtkDialog *d, int response, gpointer data) {
     props *p = data;
+    if (p->busy)
+        return; /* the window's close button, while Apply waits */
     if (response == GTK_RESPONSE_APPLY) {
         apply(p);
         return;
@@ -565,6 +595,7 @@ int main(int argc, char **argv) {
     if (p.l1 != nullptr)
         g_signal_connect(p.l1, "g-properties-changed", G_CALLBACK(l1_changed), &p);
     g_signal_connect(p.window, "response", G_CALLBACK(on_response), &p);
+    g_signal_connect(p.window, "delete-event", G_CALLBACK(on_delete), &p);
     g_signal_connect(p.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
     gtk_widget_show_all(p.window);
     gtk_main();
