@@ -218,15 +218,28 @@ static GdkPixbuf *item_icon(XdFolderView *v, item *it, int px) {
     g_clear_object(&it->icon_pb);
     it->icon_px = px;
     GtkIconTheme *theme = gtk_icon_theme_get_default();
+    /* Between 32 and 64 (Tiles, Thumbnails), ask for 64 and draw that at
+     * px: Breeze has its 16px icons at 3x but few 48px ones, and GTK3
+     * takes a 16px monochrome outline as an exact match for 48. */
+    int ask = px > 32 && px < 64 ? 64 : px;
     GtkIconInfo *info = it->icon != nullptr
-                            ? gtk_icon_theme_lookup_by_gicon(theme, it->icon, px,
+                            ? gtk_icon_theme_lookup_by_gicon(theme, it->icon, ask,
                                                              GTK_ICON_LOOKUP_FORCE_SIZE)
                             : nullptr;
     if (info == nullptr)
-        info = gtk_icon_theme_lookup_icon(theme, it->is_dir ? "folder" : "text-x-generic", px,
+        info = gtk_icon_theme_lookup_icon(theme, it->is_dir ? "folder" : "text-x-generic", ask,
                                           GTK_ICON_LOOKUP_FORCE_SIZE);
     if (info != nullptr) {
-        it->icon_pb = gtk_icon_info_load_icon(info, nullptr);
+        const char *file = gtk_icon_info_get_filename(info);
+        if (ask != px && file != nullptr && g_str_has_suffix(file, ".svg"))
+            it->icon_pb = gdk_pixbuf_new_from_file_at_size(file, px, px, nullptr);
+        if (it->icon_pb == nullptr) {
+            GdkPixbuf *pb = gtk_icon_info_load_icon(info, nullptr);
+            it->icon_pb = pb != nullptr && ask != px
+                              ? gdk_pixbuf_scale_simple(pb, px, px, GDK_INTERP_BILINEAR)
+                              : (pb != nullptr ? g_object_ref(pb) : nullptr);
+            g_clear_object(&pb);
+        }
         g_object_unref(info);
     }
     (void)v;
