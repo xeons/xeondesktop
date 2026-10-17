@@ -8,6 +8,15 @@
 # The package lands in ./dist.
 set -eu
 
+# CachyOS's pacman sandboxes hooks, which can't isolate the network in an
+# unprivileged container, so every hook fails (no MIME database, and
+# gdk-pixbuf's glycin loaders then load no images). Let the hooks run,
+# where pacman has the option (Arch's doesn't).
+if pacman-conf DisableSandboxNetwork >/dev/null 2>&1 &&
+    ! grep -q '^DisableSandboxNetwork' /etc/pacman.conf; then
+    sed -i '0,/^\[options\]/s//&\nDisableSandboxNetwork/' /etc/pacman.conf
+fi
+
 pacman -Syu --noconfirm --needed base-devel git >/dev/null
 
 src=$PWD
