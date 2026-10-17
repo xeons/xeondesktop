@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Administrative Tools
+Comment=Configure administrative settings for your computer
+Exec=xd-admintools
+Icon=preferences-system
+Terminal=false
+NoDisplay=true
+Categories=Settings;System;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=performance
+StartupWMClass=org.xeondesktop.AdministrativeTools

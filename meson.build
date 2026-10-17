@@ -446,6 +446,10 @@ install_data(
   'data/applications/org.xeondesktop.Bluetooth.desktop',
   'data/applications/org.xeondesktop.GameControllers.desktop',
   'data/applications/org.xeondesktop.NetworkConnections.desktop',
+  'data/applications/org.xeondesktop.AdministrativeTools.desktop',
+  'data/applications/org.xeondesktop.Services.desktop',
+  'data/applications/org.xeondesktop.EventViewer.desktop',
+  'data/applications/org.xeondesktop.DiskManagement.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -657,6 +661,26 @@ executable(
   install: true,
 )
 
+# Administrative Tools: Services (systemd), Event Viewer (journald), Disk
+# Management (UDisks2) and the folder that lists them.
+admin_lib = static_library('xdadmin', 'src/admin/admin.c', dependencies: [glib_dep])
+foreach tool : ['services', 'diskmgmt', 'admintools']
+  executable(
+    'xd-' + tool,
+    'src/admin/' + tool + '.c',
+    link_with: [gtkapp_lib, admin_lib],
+    dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep],
+    install: true,
+  )
+endforeach
+executable(
+  'xd-eventvwr',
+  'src/admin/eventvwr.c',
+  link_with: [gtkapp_lib, admin_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, dependency('libsystemd', include_type: 'system')],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -748,6 +772,7 @@ test_exe = executable(
   'src/bluetooth/btinfo.c',
   'src/joy/joyinfo.c',
   'src/netconn/netconn.c',
+  'src/admin/admin.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],

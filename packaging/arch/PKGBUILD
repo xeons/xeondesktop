@@ -53,6 +53,7 @@ optdepends=(
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
   'accountsservice: User Accounts'
   'bluez: Bluetooth Devices'
+  'udisks2: Disk Management'
   'nm-connection-editor: Network Connections > Configure and Advanced'
   'alacritty: the default terminal (Ctrl+Alt+T)'
   'networkmanager: the network icon'

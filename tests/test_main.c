@@ -12,6 +12,7 @@
 
 #include <fontconfig/fontconfig.h>
 
+#include "../src/admin/admin.h"
 #include "../src/apps/runcmd.h"
 #include "../src/bluetooth/btinfo.h"
 #include "../src/joy/joyinfo.h"
@@ -1617,6 +1618,237 @@ static void test_netconn(void) {
     CHECK(strcmp(xd_nc_signal_words(90), "Excellent") == 0 && strcmp(xd_nc_signal_words(5), "Very low") == 0);
 }
 
+static void test_admin_services(void) {
+    char *l = xd_unit_startup_label("enabled");
+    CHECK(strcmp(l, "Enabled") == 0);
+    g_free(l);
+    l = xd_unit_startup_label("masked-runtime");
+    CHECK(strcmp(l, "Masked (runtime)") == 0);
+    g_free(l);
+    l = xd_unit_startup_label(nullptr);
+    CHECK(strcmp(l, "") == 0);
+    g_free(l);
+    CHECK(xd_unit_startup_of("enabled") == XD_STARTUP_ENABLED);
+    CHECK(xd_unit_startup_of("disabled") == XD_STARTUP_DISABLED);
+    CHECK(xd_unit_startup_of("masked") == XD_STARTUP_MASKED);
+    CHECK(xd_unit_startup_of("static") == XD_STARTUP_OTHER);
+    CHECK(xd_unit_startup_of("enabled-runtime") == XD_STARTUP_OTHER);
+
+    CHECK(strcmp(xd_unit_status_label("active"), "Started") == 0);
+    CHECK(strcmp(xd_unit_status_label("inactive"), "") == 0);
+    CHECK(strcmp(xd_unit_status_label("failed"), "Failed") == 0);
+    CHECK(strcmp(xd_unit_status_label("deactivating"), "Stopping") == 0);
+    CHECK(xd_unit_is_started("active") && xd_unit_is_started("activating"));
+    CHECK(!xd_unit_is_started("inactive") && !xd_unit_is_started("failed"));
+
+    char *n = xd_unit_display_name("sshd.service");
+    CHECK(strcmp(n, "sshd") == 0);
+    g_free(n);
+    n = xd_unit_display_name("user@1000.service");
+    CHECK(strcmp(n, "user@1000") == 0);
+    g_free(n);
+    n = xd_unit_display_name("noext");
+    CHECK(strcmp(n, "noext") == 0);
+    g_free(n);
+
+    CHECK(strcmp(xd_unit_logon_label("http", false, "me"), "http") == 0);
+    CHECK(strcmp(xd_unit_logon_label("", false, "me"), "Local System") == 0);
+    CHECK(strcmp(xd_unit_logon_label(nullptr, true, "me"), "me") == 0);
+
+    const char *argv[] = {"/usr/bin/nginx", "-g", "pid /run/nginx.pid;", "", nullptr};
+    char *cmd = xd_unit_command_line(argv);
+    CHECK(strcmp(cmd, "/usr/bin/nginx -g 'pid /run/nginx.pid;' ''") == 0);
+    g_free(cmd);
+}
+
+static void test_admin_events(void) {
+    CHECK(xd_event_log_of(4, "whatever", "syslog", false, 0) == XD_LOG_SECURITY);
+    CHECK(xd_event_log_of(10, nullptr, "journal", false, 1000) == XD_LOG_SECURITY);
+    CHECK(xd_event_log_of(-1, "sudo", "journal", false, 1000) == XD_LOG_SECURITY);
+    CHECK(xd_event_log_of(-1, nullptr, "audit", false, -1) == XD_LOG_SECURITY);
+    CHECK(xd_event_log_of(-1, nullptr, "kernel", false, -1) == XD_LOG_SYSTEM);
+    CHECK(xd_event_log_of(3, "systemd", "journal", false, 0) == XD_LOG_SYSTEM);
+    CHECK(xd_event_log_of(-1, "firefox", "journal", false, 1000) == XD_LOG_APPLICATION);
+    CHECK(xd_event_log_of(-1, "systemd", "journal", true, 1000) == XD_LOG_APPLICATION);
+    CHECK(xd_event_log_of(-1, "daemon", "journal", false, 65534) == XD_LOG_SYSTEM);
+
+    CHECK(xd_event_type_of(0, XD_LOG_SYSTEM) == XD_EVENT_ERROR);
+    CHECK(xd_event_type_of(3, XD_LOG_APPLICATION) == XD_EVENT_ERROR);
+    CHECK(xd_event_type_of(4, XD_LOG_SYSTEM) == XD_EVENT_WARNING);
+    CHECK(xd_event_type_of(6, XD_LOG_SYSTEM) == XD_EVENT_INFORMATION);
+    CHECK(xd_event_type_of(-1, XD_LOG_SYSTEM) == XD_EVENT_INFORMATION);
+    CHECK(xd_event_type_of(99, XD_LOG_SYSTEM) == XD_EVENT_INFORMATION);
+    CHECK(xd_event_type_of(4, XD_LOG_SECURITY) == XD_EVENT_AUDIT_FAILURE);
+    CHECK(xd_event_type_of(5, XD_LOG_SECURITY) == XD_EVENT_AUDIT_SUCCESS);
+    CHECK(strcmp(xd_event_type_label(XD_EVENT_AUDIT_FAILURE), "Failure Audit") == 0);
+    CHECK(strcmp(xd_event_type_icon(XD_EVENT_ERROR), "dialog-error") == 0);
+}
+
+static void test_admin_disks(void) {
+    char *t = xd_disk_size_text(250059350016ULL);
+    CHECK(strcmp(t, "232.88 GB") == 0);
+    g_free(t);
+    t = xd_disk_size_text(512 * XD_MIB);
+    CHECK(strcmp(t, "512 MB") == 0);
+    g_free(t);
+    t = xd_disk_size_text(4096);
+    CHECK(strcmp(t, "4 KB") == 0);
+    g_free(t);
+    t = xd_disk_size_text(2ULL * 1024 * 1024 * XD_MIB);
+    CHECK(strcmp(t, "2.00 TB") == 0);
+    g_free(t);
+    t = xd_disk_fs_label("vfat", "FAT32");
+    CHECK(strcmp(t, "FAT32") == 0);
+    g_free(t);
+    t = xd_disk_fs_label("vfat", "FAT16");
+    CHECK(strcmp(t, "FAT") == 0);
+    g_free(t);
+    t = xd_disk_fs_label("iso9660", nullptr);
+    CHECK(strcmp(t, "CDFS") == 0);
+    g_free(t);
+    t = xd_disk_fs_label("ext4", "1.0");
+    CHECK(strcmp(t, "ext4") == 0);
+    g_free(t);
+    t = xd_disk_fs_label("", nullptr);
+    CHECK(strcmp(t, "") == 0);
+    g_free(t);
+    CHECK(xd_disk_percent_free(45, 100) == 45);
+    CHECK(xd_disk_percent_free(1, 3) == 33 && xd_disk_percent_free(2, 3) == 67);
+    CHECK(xd_disk_percent_free(5, 0) == 0 && xd_disk_percent_free(7, 5) == 100);
+
+    CHECK(xd_disk_align_up(0) == 0 && xd_disk_align_up(1) == XD_MIB);
+    CHECK(xd_disk_align_up(XD_MIB) == XD_MIB && xd_disk_align_down(XD_MIB + 5) == XD_MIB);
+
+    /* An 8 GiB MBR disk: a 2 GiB primary partition, a 4 GiB extended
+     * one holding a 1 GiB logical drive, and 2 GiB never used. */
+    const guint64 G = 1024 * XD_MIB;
+    const xd_disk_part parts[] = {
+        {.offset = 2 * G + XD_MIB, .size = 4 * G, .index = 1, .container = true},
+        {.offset = XD_MIB, .size = 2 * G, .index = 0},
+        {.offset = 2 * G + 2 * XD_MIB, .size = G, .index = 2},
+    };
+    GArray *segs = xd_disk_segments(8 * G, parts, G_N_ELEMENTS(parts));
+    CHECK(segs->len == 4);
+    if (segs->len == 4) {
+        const xd_disk_segment *s = &g_array_index(segs, xd_disk_segment, 0);
+        CHECK(s[0].kind == XD_SEGMENT_PARTITION && s[0].index == 0 && !s[0].logical);
+        CHECK(s[1].kind == XD_SEGMENT_PARTITION && s[1].index == 2 && s[1].logical);
+        CHECK(s[2].kind == XD_SEGMENT_FREE && s[2].logical && s[2].offset == 3 * G + 2 * XD_MIB &&
+              s[2].size == 3 * G - XD_MIB);
+        CHECK(s[3].kind == XD_SEGMENT_UNALLOCATED && s[3].offset == 6 * G + XD_MIB &&
+              s[3].size == 2 * G - XD_MIB);
+        /* The logical drive grows into the extended partition's free
+         * space; the primary one has a neighbour. */
+        CHECK(xd_disk_grow_max(segs, 1, 8 * G) == 4 * G - XD_MIB);
+        CHECK(xd_disk_grow_max(segs, 0, 8 * G) == 2 * G);
+        guint64 off = 0, max = 0;
+        CHECK(xd_disk_new_part_range(s[2].offset, s[2].size, 8 * G, true, &off, &max));
+        CHECK(off == 3 * G + 3 * XD_MIB && max == 3 * G - 2 * XD_MIB);
+        CHECK(xd_disk_new_part_range(s[3].offset, s[3].size, 8 * G, false, &off, &max));
+        CHECK(off == 6 * G + XD_MIB && max == 2 * G - 2 * XD_MIB);
+    }
+    g_array_unref(segs);
+    /* An empty disk is one unallocated block; overlaps are clipped. */
+    segs = xd_disk_segments(4 * G, nullptr, 0);
+    CHECK(segs->len == 1 &&
+          g_array_index(segs, xd_disk_segment, 0).kind == XD_SEGMENT_UNALLOCATED);
+    g_array_unref(segs);
+    const xd_disk_part overlap[] = {{.offset = XD_MIB, .size = 2 * G, .index = 0},
+                                    {.offset = G, .size = 4 * G, .index = 1}};
+    segs = xd_disk_segments(4 * G, overlap, 2);
+    CHECK(segs->len == 2 && g_array_index(segs, xd_disk_segment, 1).offset == 2 * G + XD_MIB &&
+          g_array_index(segs, xd_disk_segment, 1).size == 2 * G - XD_MIB);
+    g_array_unref(segs);
+    guint64 off = 0, max = 0;
+    CHECK(xd_disk_new_part_range(0, 4 * G, 4 * G, false, &off, &max) && off == XD_MIB &&
+          max == 4 * G - 2 * XD_MIB);
+    CHECK(!xd_disk_new_part_range(XD_MIB, XD_MIB / 2, 4 * G, false, &off, &max));
+
+    xd_new_part_kinds k = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 2, true);
+    CHECK(k.primary && !k.extended && !k.logical);
+    k = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 1, false);
+    CHECK(k.primary && k.extended && !k.logical);
+    k = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 4, false);
+    CHECK(!k.primary && !k.extended && !k.logical);
+    k = xd_disk_new_part_kinds("dos", XD_SEGMENT_FREE, 4, true);
+    CHECK(!k.primary && !k.extended && k.logical);
+    k = xd_disk_new_part_kinds("gpt", XD_SEGMENT_UNALLOCATED, 10, false);
+    CHECK(k.primary && !k.extended && !k.logical);
+    k = xd_disk_new_part_kinds("gpt", XD_SEGMENT_PARTITION, 1, false);
+    CHECK(!k.primary);
+
+    CHECK(xd_disk_shrink_min(0, 10 * G) == 32 * XD_MIB);
+    CHECK(xd_disk_shrink_min(G, 10 * G) == G + 103 * XD_MIB);
+    CHECK(xd_disk_shrink_min(10 * XD_MIB, 10 * G) == 74 * XD_MIB);
+    CHECK(xd_disk_shrink_min(10 * XD_MIB, 20 * XD_MIB) == 20 * XD_MIB);
+
+    const guint64 ext4 = XD_RESIZE_OFFLINE_SHRINK | XD_RESIZE_OFFLINE_GROW | XD_RESIZE_ONLINE_GROW;
+    CHECK(xd_disk_resize_how(ext4, true, true) == XD_RESIZE_NEED_UNMOUNT);
+    CHECK(xd_disk_resize_how(ext4, true, false) == XD_RESIZE_AS_IS);
+    CHECK(xd_disk_resize_how(ext4, false, true) == XD_RESIZE_AS_IS);
+    CHECK(xd_disk_resize_how(XD_RESIZE_ONLINE_SHRINK | XD_RESIZE_ONLINE_GROW, false, false) ==
+          XD_RESIZE_NEED_MOUNT);
+    CHECK(xd_disk_resize_how(XD_RESIZE_OFFLINE_GROW | XD_RESIZE_ONLINE_GROW, true, true) ==
+          XD_RESIZE_NO);
+
+    CHECK(xd_mount_is_system("/") && xd_mount_is_system("/boot/efi"));
+    CHECK(!xd_mount_is_system("/run/media/me/USB") && !xd_mount_is_system(nullptr));
+    bool unmount = false;
+    const char *root[] = {"/", nullptr}, *media[] = {"/run/media/me/Data", nullptr};
+    xd_volume_use u = {.mounts = root, .id_type = "ext4"};
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_SHRINK, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_EXTEND, &unmount) == nullptr && !unmount);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_LABEL, &unmount) == nullptr);
+    u.mounts = media;
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) == nullptr && unmount);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_SET_TYPE, &unmount) == nullptr && !unmount);
+    u = (xd_volume_use){.id_type = "swap", .swap_active = true};
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_LABEL, &unmount) != nullptr);
+    u.swap_active = false;
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) == nullptr && !unmount);
+    u = (xd_volume_use){.container = true, .has_logical = true};
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) != nullptr);
+    u.has_logical = false;
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) == nullptr);
+    u = (xd_volume_use){.id_type = "LVM2_member"};
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) != nullptr);
+    u = (xd_volume_use){.id_type = "crypto_LUKS", .unlocked = true};
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
+    u.unlocked = false;
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) == nullptr);
+    CHECK(xd_volume_lock_reason(&u, XD_ACTION_EXTEND, &unmount) != nullptr);
+
+    char *st = xd_volume_status(root, false, false, false);
+    CHECK(strcmp(st, "Healthy (System)") == 0);
+    g_free(st);
+    st = xd_volume_status(nullptr, true, false, true);
+    CHECK(strcmp(st, "Healthy (Page File, Active)") == 0);
+    g_free(st);
+    st = xd_volume_status(media, false, false, false);
+    CHECK(strcmp(st, "Healthy") == 0);
+    g_free(st);
+    st = xd_volume_status(nullptr, false, true, false);
+    CHECK(strcmp(st, "Healthy (EFI System Partition)") == 0);
+    g_free(st);
+
+    CHECK(g_strcmp0(xd_part_type_name("gpt", "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"),
+                    "EFI System Partition") == 0);
+    CHECK(g_strcmp0(xd_part_type_name("dos", "0x83"), "Linux") == 0);
+    CHECK(xd_part_type_name("dos", "0fc63daf-8483-4772-8e79-3d69d8477de4") == nullptr);
+    CHECK(xd_part_type_is_esp("0xef") && !xd_part_type_is_esp("0x83"));
+
+    const guint64 sizes[] = {1, 1, 2};
+    int w[3] = {0};
+    xd_disk_block_widths(sizes, 3, 400, 50, w);
+    CHECK(w[0] + w[1] + w[2] == 400 && w[0] >= 50 && w[2] > w[0] && w[0] == w[1]);
+    xd_disk_block_widths(sizes, 3, 100, 50, w);
+    CHECK(w[0] == 50 && w[1] == 50 && w[2] == 50);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -1646,6 +1878,9 @@ int main(void) {
     test_joystick();
     test_bluetooth_settings();
     test_netconn();
+    test_admin_services();
+    test_admin_events();
+    test_admin_disks();
     test_schedtasks();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

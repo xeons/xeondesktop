@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Event Viewer
+Comment=Displays monitoring and troubleshooting messages from the system journal
+Exec=xd-eventvwr
+Icon=utilities-log-viewer
+Terminal=false
+NoDisplay=true
+Categories=System;Monitor;GTK;
+X-XeonDesktop-AdminTool=true
+StartupWMClass=org.xeondesktop.EventViewer

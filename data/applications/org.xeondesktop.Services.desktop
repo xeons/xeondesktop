@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Services
+Comment=Starts, stops, and configures the system's and your own services (systemd)
+Exec=xd-services
+Icon=system-run
+Terminal=false
+NoDisplay=true
+Categories=System;GTK;
+X-XeonDesktop-AdminTool=true
+StartupWMClass=org.xeondesktop.Services

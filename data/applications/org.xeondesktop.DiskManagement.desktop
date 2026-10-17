@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Disk Management
+Comment=Manages disks and volumes: mount, format, create, delete and resize partitions
+Exec=xd-diskmgmt
+Icon=drive-harddisk
+Terminal=false
+NoDisplay=true
+Categories=System;GTK;
+X-XeonDesktop-AdminTool=true
+StartupWMClass=org.xeondesktop.DiskManagement

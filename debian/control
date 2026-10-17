@@ -26,6 +26,7 @@ Build-Depends:
  libfontconfig-dev,
  libevdev-dev,
  libnm-dev,
+ libsystemd-dev,
  libpolkit-agent-1-dev,
  libpam0g-dev,
  libpulse-dev,
@@ -67,6 +68,7 @@ Recommends:
  pavucontrol,
  sound-theme-freedesktop,
  accountsservice,
+ udisks2,
  network-manager-gnome,
 Suggests:
  bluez,
