@@ -1884,15 +1884,15 @@ static const char *volume_reason(dm *m, xd_disk_action a) {
 }
 
 /* The menu for what's selected: a volume, free space or a disk. */
-static GtkWidget *selection_menu(dm *m) {
-    GtkWidget *menu = gtk_menu_new();
+/* Fills `menu` with what can be done to the selection. */
+static void fill_selection_menu(dm *m, GtkWidget *menu) {
     const xd_disk_segment *s = sel_segment(m);
     volume *v = sel_volume(m);
     disk *d = m->sel.d;
     const char *busy = m->busy ? "Disk Management is busy with another operation." : nullptr;
     if (d == nullptr) {
         item(menu, "Select a disk or volume", nullptr, m, "Nothing is selected.");
-        return menu;
+        return;
     }
     if (s == nullptr) {
         item(menu, "_Initialize Disk...", initialize_disk, m,
@@ -1907,7 +1907,7 @@ static GtkWidget *selection_menu(dm *m) {
                             : nullptr);
         separator(menu);
         item(menu, "P_roperties", properties, m, nullptr);
-        return menu;
+        return;
     }
     if (v == nullptr) {
         item(menu, "_New Partition...", new_partition, m,
@@ -1924,7 +1924,7 @@ static GtkWidget *selection_menu(dm *m) {
                  busy ? busy : disk_uninitialized(d) ? nullptr : "There's no disk to initialize.");
         separator(menu);
         item(menu, "P_roperties", properties, m, nullptr);
-        return menu;
+        return;
     }
     if (!v->container) {
         item(menu, "_Open", do_explore, m, mounted(v) ? nullptr : "The volume isn't mounted.");
@@ -1955,6 +1955,11 @@ static GtkWidget *selection_menu(dm *m) {
     item(menu, "_Delete Partition...", delete_partition, m, volume_reason(m, XD_ACTION_DELETE));
     separator(menu);
     item(menu, "P_roperties", properties, m, nullptr);
+}
+
+static GtkWidget *selection_menu(dm *m) {
+    GtkWidget *menu = gtk_menu_new();
+    fill_selection_menu(m, menu);
     return menu;
 }
 
@@ -2378,13 +2383,20 @@ static void on_exit([[maybe_unused]] GtkWidget *w, gpointer data) {
 /* The Action menu is rebuilt for the selection each time it opens. */
 static void on_action_menu(GtkMenuItem *top, gpointer data) {
     dm *m = data;
-    GtkWidget *menu = selection_menu(m);
+    /* Refill the submenu that is opening: replacing it here would leave GTK
+     * grabbing input for the old one, which never shows, so the window
+     * stopped responding. */
+    GtkWidget *menu = gtk_menu_item_get_submenu(top);
+    GList *old = gtk_container_get_children(GTK_CONTAINER(menu));
+    for (GList *l = old; l != nullptr; l = l->next)
+        gtk_widget_destroy(l->data);
+    g_list_free(old);
+    fill_selection_menu(m, menu);
     separator(menu);
     GtkWidget *r = gtk_menu_item_new_with_mnemonic("Re_fresh");
     g_signal_connect(r, "activate", G_CALLBACK(on_refresh), m);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), r);
     gtk_widget_show_all(menu);
-    gtk_menu_item_set_submenu(top, menu);
 }
 
 static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
