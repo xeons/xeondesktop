@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../settings/state.h"
 #include "shell.h"
 
 #define WATCHER_NAME "org.kde.StatusNotifierWatcher"
@@ -27,6 +28,7 @@ struct xd_tray_item {
     const xd_sysicon_ops *ops;
     void *data;
     char *key;     /* as registered: "busname/path" */
+    char *id;      /* its Id property, for [Notifications] rules */
     char *bus;     /* unique or well-known name */
     char *path;    /* object path */
     char *title, *status, *icon_name, *attention_icon_name, *theme_path, *tooltip, *menu;
@@ -62,6 +64,7 @@ struct xd_tray {
     GDBusNodeInfo *watcher_info;
     GPtrArray *items; /* xd_tray_item *, in registration order */
     char *host_name;
+    GHashTable *seen; /* id -> title of every icon shown, for Customize */
     /* The item whose menu is open (or about to), and where to open it. */
     char *menu_key;
     xd_taskbar *menu_bar;
@@ -72,6 +75,8 @@ struct xd_tray {
 static void changed(xd_tray *tray) { xd_taskbars_mark_dirty(tray->shell); }
 
 /* ---- items -------------------------------------------------------------------- */
+
+static void remember(xd_tray *tray, const xd_tray_item *it);
 
 void xd_tray_add_sysicon(xd_shell *shell, const char *name, const xd_sysicon_ops *ops,
                          void *data) {
@@ -84,6 +89,7 @@ void xd_tray_add_sysicon(xd_shell *shell, const char *name, const xd_sysicon_ops
     it->ops = ops;
     it->data = data;
     g_ptr_array_add(tray->items, it);
+    remember(tray, it);
     changed(tray);
 }
 
@@ -104,6 +110,7 @@ static void item_free(xd_tray_item *it) {
     if (it->signals != 0)
         g_dbus_connection_signal_unsubscribe(it->tray->bus, it->signals);
     g_free(it->key);
+    g_free(it->id);
     g_free(it->bus);
     g_free(it->path);
     g_free(it->title);
@@ -201,6 +208,7 @@ static void got_properties(GObject *src, GAsyncResult *res, gpointer data) {
     GVariant *props = nullptr;
     g_variant_get(reply, "(@a{sv})", &props);
     set_string(&it->title, dup_string(props, "Title"));
+    set_string(&it->id, dup_string(props, "Id"));
     set_string(&it->status, dup_string(props, "Status"));
     set_string(&it->icon_name, dup_string(props, "IconName"));
     set_string(&it->attention_icon_name, dup_string(props, "AttentionIconName"));
@@ -242,6 +250,7 @@ static void got_properties(GObject *src, GAsyncResult *res, gpointer data) {
     }
     g_variant_unref(props);
     g_variant_unref(reply);
+    remember(it->tray, it);
     changed(it->tray);
 }
 
@@ -488,6 +497,17 @@ void xd_tray_init(xd_shell *shell) {
     tray->shell = shell;
     tray->items = g_ptr_array_new();
     tray->cancel = g_cancellable_new();
+    tray->seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines("tray-icons", &lines, &n, XD_TRAY_RULES_MAX * 2);
+    for (size_t i = 0; i < n; i++) {
+        char *tab = strchr(lines[i], '\t');
+        if (tab != nullptr && tab != lines[i])
+            g_hash_table_replace(tray->seen, g_strndup(lines[i], (gsize)(tab - lines[i])),
+                                 g_strdup(tab + 1));
+    }
+    xd_free_lines(lines, n);
     shell->tray = tray;
     g_bus_get(G_BUS_TYPE_SESSION, tray->cancel, got_bus, tray);
 }
@@ -518,6 +538,7 @@ void xd_tray_finish(xd_shell *shell) {
     if (tray->watcher_info != nullptr)
         g_dbus_node_info_unref(tray->watcher_info);
     g_free(tray->host_name);
+    g_hash_table_destroy(tray->seen);
     g_free(tray->menu_key);
     g_free(tray);
 }
@@ -555,6 +576,65 @@ xd_tray_item *xd_tray_get(const xd_shell *shell, size_t index) {
         }
     }
     return nullptr;
+}
+
+const char *xd_tray_item_id(const xd_tray_item *it) {
+    if (it->ops != nullptr)
+        return it->key + strlen("sysicon:");
+    return it->id != nullptr ? it->id : it->title;
+}
+
+/* The icons the user has had, for Customize Notifications: one
+ * "id<TAB>title" line each in the state directory. */
+static void remember(xd_tray *tray, const xd_tray_item *it) {
+    const char *id = xd_tray_item_id(it);
+    if (id == nullptr || strchr(id, '\t') != nullptr || strchr(id, '\n') != nullptr)
+        return;
+    /* Our applets by XP's names for them. */
+    static const char *const names[][2] = {
+        {"volume", "Volume"},
+        {"network", "Network Connections"},
+        {"battery", "Power Meter"},
+        {"bluetooth", "Bluetooth Devices"},
+    };
+    char *title = g_strdup(it->title);
+    const char *name = title;
+    for (size_t i = 0; it->ops != nullptr && i < XD_ARRAY_LEN(names); i++) {
+        if (strcmp(id, names[i][0]) == 0)
+            name = names[i][1];
+    }
+    if (name == nullptr || strchr(name, '\n') != nullptr)
+        name = id;
+    const char *old = g_hash_table_lookup(tray->seen, id);
+    bool changed = old == nullptr || strcmp(old, name) != 0;
+    if (changed) {
+        g_hash_table_replace(tray->seen, g_strdup(id), g_strdup(name));
+        GHashTableIter iter;
+        gpointer k, v;
+        size_t n = g_hash_table_size(tray->seen), i = 0;
+        char **lines = g_new0(char *, n + 1);
+        g_hash_table_iter_init(&iter, tray->seen);
+        while (g_hash_table_iter_next(&iter, &k, &v))
+            lines[i++] = g_strdup_printf("%s\t%s", (const char *)k, (const char *)v);
+        if (!xd_state_write_lines("tray-icons", lines, n))
+            fprintf(stderr, "xd-shell: cannot save the notification area's icons\n");
+        g_strfreev(lines);
+    }
+    g_free(title);
+}
+
+bool xd_tray_item_folded(const xd_shell *shell, const xd_tray_item *it) {
+    if (!shell->settings.hide_inactive)
+        return false;
+    switch (xd_settings_tray_rule(&shell->settings, xd_tray_item_id(it))) {
+    case XD_TRAY_ALWAYS_SHOW:
+        return false;
+    case XD_TRAY_ALWAYS_HIDE:
+        return true;
+    case XD_TRAY_AUTO:
+        break;
+    }
+    return xd_tray_item_inactive(it);
 }
 
 bool xd_tray_item_inactive(const xd_tray_item *it) {

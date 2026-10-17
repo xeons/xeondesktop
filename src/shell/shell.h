@@ -313,6 +313,10 @@ cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *item, int px);
 char *xd_tray_item_tooltip(const xd_tray_item *item); /* g_free */
 /* Hide inactive icons: a program's icon that's been quiet a while. */
 bool xd_tray_item_inactive(const xd_tray_item *item);
+/* Folded behind the chevron: [Notifications]' rule, else inactivity. */
+bool xd_tray_item_folded(const xd_shell *shell, const xd_tray_item *item);
+/* The id [Notifications] rules use: Id, or our applet's name. */
+const char *xd_tray_item_id(const xd_tray_item *item);
 /* Draws the item's icon if it draws its own (our applets); else false. */
 bool xd_tray_item_draw(xd_tray_item *item, const xd_theme *t, cairo_t *cr, xd_rect r);
 void xd_tray_item_scroll(xd_shell *shell, xd_tray_item *item, double delta);

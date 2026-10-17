@@ -4,8 +4,22 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include <string.h>
+
+#include "../core/alloc.h"
 #include "../settings/settings.h"
+#include "../settings/state.h"
 #include "../ui/ui.h"
+
+/* Customize Notifications: the icons the shell has seen and the rule
+ * being edited for each (applied to `pending` on OK). */
+typedef struct customize {
+    xd_window *win;
+    xd_widget *list, *behavior;
+    char **lines; /* "id<TAB>title" */
+    size_t count;
+    xd_tray_rule *rules;
+} customize;
 
 typedef struct props {
     xd_ui *ui;
@@ -13,6 +27,7 @@ typedef struct props {
     xd_settings saved, pending;
     xd_widget *apply;
     xd_widget *description;
+    customize *cust;
 } props;
 
 static const char *const descriptions[XD_START_STYLE_COUNT] = {
@@ -92,13 +107,139 @@ static bool apply(props *p) {
     return true;
 }
 
+/* ---- Customize Notifications ----------------------------------------------- */
+
+static const char *const rule_names[] = {
+    [XD_TRAY_AUTO] = "Hide when inactive",
+    [XD_TRAY_ALWAYS_HIDE] = "Always hide",
+    [XD_TRAY_ALWAYS_SHOW] = "Always show",
+};
+
+static const char *line_id(const char *line, char *buf, size_t size) {
+    const char *tab = strchr(line, '\t');
+    size_t n = tab != nullptr ? (size_t)(tab - line) : strlen(line);
+    n = XD_MIN(n, size - 1);
+    memcpy(buf, line, n);
+    buf[n] = '\0';
+    return buf;
+}
+
+static const char *line_title(const char *line) {
+    const char *tab = strchr(line, '\t');
+    return tab != nullptr && tab[1] != '\0' ? tab + 1 : line;
+}
+
+/* "Title    Behavior", as XP's two columns. */
+static void fill_list(customize *c) {
+    int sel = xd_widget_selected(c->list);
+    xd_widget_clear_items(c->list);
+    for (size_t i = 0; i < c->count; i++) {
+        char *row = xd_str_dup_cstr(xd_str_from_cstr(line_title(c->lines[i])));
+        xd_strbuf sb = {0};
+        xd_strbuf_appendf(&sb, "%s  —  %s", row, rule_names[c->rules[i]]);
+        xd_widget_add_item(c->list, xd_strbuf_cstr(&sb));
+        xd_strbuf_free(&sb);
+        xd_free(row);
+    }
+    if (sel >= 0)
+        xd_widget_select(c->list, sel);
+}
+
+static void on_cust_select(xd_widget *w, void *user) {
+    customize *c = ((props *)user)->cust;
+    int i = xd_widget_selected(w);
+    xd_widget_set_enabled(c->behavior, i >= 0);
+    if (i >= 0 && (size_t)i < c->count)
+        xd_combo_select(c->behavior, (int)c->rules[i]);
+}
+
+static void on_cust_behavior(xd_widget *w, void *user) {
+    customize *c = ((props *)user)->cust;
+    int i = xd_widget_selected(c->list);
+    int r = xd_combo_selected(w);
+    if (i < 0 || (size_t)i >= c->count || r < 0 || r > XD_TRAY_ALWAYS_SHOW ||
+        c->rules[i] == (xd_tray_rule)r)
+        return;
+    c->rules[i] = (xd_tray_rule)r;
+    fill_list(c);
+}
+
+static void close_customize(props *p) {
+    customize *c = p->cust;
+    if (c == nullptr)
+        return;
+    p->cust = nullptr;
+    xd_window_close(c->win);
+    xd_free_lines(c->lines, c->count);
+    xd_free(c->rules);
+    xd_free(c);
+}
+
+static void on_cust_ok([[maybe_unused]] xd_widget *w, void *user) {
+    props *p = user;
+    customize *c = p->cust;
+    for (size_t i = 0; i < c->count; i++) {
+        char id[64];
+        xd_settings_set_tray_rule(&p->pending, line_id(c->lines[i], id, sizeof(id)), c->rules[i]);
+    }
+    changed(p);
+    close_customize(p);
+}
+
+static void on_cust_cancel([[maybe_unused]] xd_widget *w, void *user) { close_customize(user); }
+
+static void on_cust_defaults([[maybe_unused]] xd_widget *w, void *user) {
+    customize *c = ((props *)user)->cust;
+    for (size_t i = 0; i < c->count; i++)
+        c->rules[i] = XD_TRAY_AUTO;
+    fill_list(c);
+    on_cust_select(c->list, user);
+}
+
+static void on_customize([[maybe_unused]] xd_widget *w, void *user) {
+    props *p = user;
+    if (p->cust != nullptr)
+        return;
+    customize *c = XD_NEW(customize);
+    p->cust = c;
+    xd_state_read_lines("tray-icons", &c->lines, &c->count, XD_TRAY_RULES_MAX * 2);
+    c->rules = xd_alloc_array(XD_MAX(c->count, 1), sizeof(*c->rules));
+    for (size_t i = 0; i < c->count; i++) {
+        char id[64];
+        c->rules[i] = xd_settings_tray_rule(&p->pending, line_id(c->lines[i], id, sizeof(id)));
+    }
+    c->win = xd_window_create(p->ui, "Customize Notifications", "xd-taskbar", 380, 316);
+    xd_label(c->win, (xd_rect){12, 12, 356, 44},
+             "XeonDesktop shows icons for active and urgent notifications, and hides "
+             "inactive ones. You can change this for items in the list below.",
+             XD_LABEL_WRAP);
+    xd_label(c->win, (xd_rect){12, 62, 356, 16},
+             "Select an item, then choose its notification behavior:", 0);
+    c->list = xd_listbox(c->win, (xd_rect){12, 82, 356, 150}, on_cust_select, p);
+    xd_label(c->win, (xd_rect){12, 245, 70, 16}, "Behavior:", 0);
+    c->behavior = xd_combo(c->win, (xd_rect){84, 242, 180, 21}, false, on_cust_behavior, p);
+    for (size_t r = 0; r < XD_ARRAY_LEN(rule_names); r++)
+        xd_combo_add(c->behavior, rule_names[r]);
+    xd_widget_set_enabled(c->behavior, false);
+    fill_list(c);
+    xd_button(c->win, (xd_rect){12, 280, 110, 23}, "Restore Defaults", on_cust_defaults, p);
+    xd_widget *ok = xd_button(c->win, (xd_rect){212, 280, 75, 23}, "OK", on_cust_ok, p);
+    xd_widget *cancel = xd_button(c->win, (xd_rect){293, 280, 75, 23}, "Cancel", on_cust_cancel, p);
+    xd_window_set_default(c->win, ok);
+    xd_window_set_cancel(c->win, cancel);
+    xd_window_set_focus(c->win, c->list);
+    xd_window_show(c->win);
+}
+
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     props *p = user;
+    close_customize(p);
     if (xd_settings_equal(&p->saved, &p->pending) || apply(p))
         xd_window_close(p->win);
 }
 static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     props *p = user;
+    close_customize(p);
     xd_window_close(p->win);
 }
 static void on_apply([[maybe_unused]] xd_widget *w, void *user) { apply(user); }
@@ -147,8 +288,11 @@ int main(int argc, char **argv) {
     xd_widget_set_page(xd_checkbox(p.win, (xd_rect){32, 238, 300, 20}, "Show the clock",
                                    p.pending.show_clock, on_clock, &p),
                        0);
-    xd_widget_set_page(xd_checkbox(p.win, (xd_rect){32, 262, 300, 20}, "Hide inactive icons",
+    xd_widget_set_page(xd_checkbox(p.win, (xd_rect){32, 262, 220, 20}, "Hide inactive icons",
                                    p.pending.hide_inactive, on_hide_inactive, &p),
+                       0);
+    xd_widget_set_page(xd_button(p.win, (xd_rect){268, 260, 84, 23}, "Customize...",
+                                 on_customize, &p),
                        0);
 
     /* Start Menu */

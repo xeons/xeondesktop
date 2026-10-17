@@ -21,6 +21,33 @@ static const char *const font_size_names[] = {"normal", "large", "extralarge"};
 static const char *const start_style_names[] = {"classic", "xp", "win7"};
 static const char *const smoothing_names[] = {"standard", "none", "cleartype"};
 static const char *const edge_names[] = {"bottom", "top", "left", "right"};
+static const char *const tray_rule_names[] = {"auto", "hide", "show"};
+
+xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id) {
+    for (size_t i = 0; id != nullptr && i < s->tray_rule_count; i++) {
+        if (strcmp(s->tray_rules[i].id, id) == 0)
+            return s->tray_rules[i].rule;
+    }
+    return XD_TRAY_AUTO;
+}
+
+void xd_settings_set_tray_rule(xd_settings *s, const char *id, xd_tray_rule rule) {
+    for (size_t i = 0; i < s->tray_rule_count; i++) {
+        if (strcmp(s->tray_rules[i].id, id) != 0)
+            continue;
+        if (rule == XD_TRAY_AUTO)
+            s->tray_rules[i] = s->tray_rules[--s->tray_rule_count];
+        else
+            s->tray_rules[i].rule = rule;
+        return;
+    }
+    if (rule == XD_TRAY_AUTO || s->tray_rule_count == XD_TRAY_RULES_MAX || id[0] == '\0' ||
+        strlen(id) >= sizeof(s->tray_rules[0].id))
+        return;
+    xd_tray_behavior *b = &s->tray_rules[s->tray_rule_count++];
+    *b = (xd_tray_behavior){.rule = rule};
+    memcpy(b->id, id, strlen(id) + 1);
+}
 
 const char *xd_wallpaper_mode_name(xd_wallpaper_mode m) {
     XD_ASSERT((unsigned)m < XD_WALLPAPER_MODE_COUNT);
@@ -169,6 +196,13 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             if (xd_str_parse_i64(v, 0, 1440, &m))
                 s->monitor_off = (int)m;
         }
+    } else if (SEC("Notifications")) {
+        int i = index_of(tray_rule_names, XD_ARRAY_LEN(tray_rule_names), v);
+        if (i > 0 && key.len > 0 && key.len < sizeof(s->tray_rules[0].id)) {
+            char id[sizeof(s->tray_rules[0].id)];
+            copy_into(id, sizeof(id), key);
+            xd_settings_set_tray_rule(s, id, (xd_tray_rule)i);
+        }
     } else if (SEC("Keyboard")) {
         xd_keyboard_settings *k = &s->keyboard;
         int64_t n;
@@ -288,6 +322,9 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Keyboard", "Model", s->keyboard.model);
     g_key_file_set_integer(kf, "Keyboard", "RepeatDelay", s->keyboard.repeat_delay);
     g_key_file_set_integer(kf, "Keyboard", "RepeatRate", s->keyboard.repeat_rate);
+    for (size_t i = 0; i < s->tray_rule_count; i++)
+        g_key_file_set_string(kf, "Notifications", s->tray_rules[i].id,
+                              tray_rule_names[s->tray_rules[i].rule]);
     return kf;
 }
 

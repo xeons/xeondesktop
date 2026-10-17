@@ -292,8 +292,7 @@ static void layout_tray(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
     bool any_inactive = false;
     for (size_t i = 0; i < total; i++) {
         xd_tray_item *item = xd_tray_get(shell, i);
-        bool quiet =
-            shell->settings.hide_inactive && item != nullptr && xd_tray_item_inactive(item);
+        bool quiet = item != nullptr && xd_tray_item_folded(shell, item);
         any_inactive = any_inactive || quiet;
         if (!quiet || bar->tray_expanded)
             bar->tray_index[icons++] = i;

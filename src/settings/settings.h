@@ -33,6 +33,18 @@ typedef enum xd_start_style : uint8_t {
     XD_START_STYLE_COUNT,
 } xd_start_style;
 
+/* [Notifications]: one notification area icon's behavior, by its id. */
+typedef enum xd_tray_rule : uint8_t {
+    XD_TRAY_AUTO,        /* hide when inactive */
+    XD_TRAY_ALWAYS_HIDE,
+    XD_TRAY_ALWAYS_SHOW,
+} xd_tray_rule;
+typedef struct xd_tray_behavior {
+    char id[64];
+    xd_tray_rule rule;
+} xd_tray_behavior;
+enum { XD_TRAY_RULES_MAX = 48 };
+
 /* [Keyboard]: XKB names ("" = XKB_DEFAULT_* or the system default) and
  * key repeat, applied by the compositor to every keyboard. */
 typedef struct xd_keyboard_settings {
@@ -86,7 +98,14 @@ typedef struct xd_settings {
     bool screensaver_password;
     int monitor_off; /* minutes of idle before monitors turn off; 0 = never */
     xd_keyboard_settings keyboard;
+    xd_tray_behavior tray_rules[XD_TRAY_RULES_MAX];
+    size_t tray_rule_count;
 } xd_settings;
+
+/* An icon's rule ([Notifications]), XD_TRAY_AUTO if it has none. */
+xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id);
+/* Sets one (XD_TRAY_AUTO removes it). */
+void xd_settings_set_tray_rule(xd_settings *s, const char *id, xd_tray_rule rule);
 
 void xd_settings_defaults(xd_settings *s);
 /* Parses settings text on top of the defaults. Never fails: bad values

@@ -456,6 +456,25 @@ static void test_runcmd(void) {
     xd_run_target_free(&t);
 }
 
+static void test_tray_rules(void) {
+    xd_settings a;
+    xd_settings_parse(XD_STR("[Notifications]\nnm-applet=hide\nsteam=show\nbad=whatever\n"
+                             "quiet=auto\n"),
+                      &a);
+    CHECK(xd_settings_tray_rule(&a, "nm-applet") == XD_TRAY_ALWAYS_HIDE);
+    CHECK(xd_settings_tray_rule(&a, "steam") == XD_TRAY_ALWAYS_SHOW);
+    CHECK(xd_settings_tray_rule(&a, "bad") == XD_TRAY_AUTO);
+    CHECK(xd_settings_tray_rule(&a, "quiet") == XD_TRAY_AUTO && a.tray_rule_count == 2);
+    xd_settings_set_tray_rule(&a, "steam", XD_TRAY_AUTO);
+    CHECK(xd_settings_tray_rule(&a, "steam") == XD_TRAY_AUTO && a.tray_rule_count == 1);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && xd_settings_tray_rule(&b, "nm-applet") == XD_TRAY_ALWAYS_HIDE);
+    xd_strbuf_free(&text);
+}
+
 static void test_settings(void) {
     xd_settings a;
     xd_settings_defaults(&a);
@@ -600,6 +619,7 @@ int main(void) {
     test_textedit();
     test_runcmd();
     test_settings();
+    test_tray_rules();
     test_gtk_css();
     test_passwd();
     printf("%d checks, %d failures\n", checks, failures);
