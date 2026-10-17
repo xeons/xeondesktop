@@ -249,16 +249,15 @@ static bool near(uint32_t got, uint32_t want, int tol) {
     return true;
 }
 
-/* Olive Green and Silver recolour Luna's frame so its caption is the
- * variant's ActiveTitle, keep XP's red Close button, and Blue is drawn
- * exactly as measured. */
+/* Each Luna variant draws its own measured caption (row 8 is its body
+ * colour), with a red Close button; Blue is drawn exactly as measured. */
 static void test_luna_variants(void) {
     static const struct {
         const char *stem;
         uint32_t caption; /* the caption's body colour */
     } variants[] = {
         {"luna-blue", 0x0054E3},
-        {"luna-olive", 0x8BA169},
+        {"luna-olive", 0xA7B580},
         {"luna-silver", 0xACABC4},
     };
     uint32_t close[3], minimize[3];
@@ -273,7 +272,7 @@ static void test_luna_variants(void) {
         xd_rect outer = {0, 0, 300, 200};
         xd_theme_draw_frame(&t, cr, outer, &f);
         /* Row 8 of the measured caption is ActiveTitle. */
-        CHECK(near(pixel(surf, 200, 8), variants[i].caption, i == 0 ? 0 : 2));
+        CHECK(near(pixel(surf, 200, 8), variants[i].caption, 0));
         xd_frame_layout l;
         xd_theme_frame_layout(&t, outer, &f, &l);
         for (size_t b = 0; b < l.button_count; b++) {
@@ -286,10 +285,9 @@ static void test_luna_variants(void) {
         cairo_destroy(cr);
         cairo_surface_destroy(surf);
     }
-    CHECK(close[1] == close[0]);
     CHECK(minimize[1] != minimize[0] && minimize[2] != minimize[0]);
-    /* Silver's own (measured) Close is red too, lighter than Blue's. */
-    CHECK(((close[2] >> 16) & 0xFF) > ((close[2] >> 8) & 0xFF) + 64);
+    for (size_t i = 0; i < 3; i++)
+        CHECK(((close[i] >> 16) & 0xFF) > ((close[i] >> 8) & 0xFF) + 64);
 
     /* Silver is drawn as measured off XP: a glossy caption from a light
      * top through lavender grey A4A3BE to white at its foot, a light
@@ -314,6 +312,21 @@ static void test_luna_variants(void) {
     xd_theme_draw_start_button(&st, scr, (xd_rect){0, 60, 99, 30}, 0);
     uint32_t green = pixel(ss, 4, 75);
     CHECK(((green >> 8) & 0xFF) > ((green >> 16) & 0xFF) + 40);
+    /* Olive Green, measured too; an inactive caption, which its reference
+     * doesn't show, is the active one faded: lighter and greyer. */
+    xd_scheme ol;
+    CHECK(load_shipped_scheme("luna-olive", &ol));
+    xd_theme_init(&st, XD_STYLE_LUNA, &ol, 1.0);
+    sf.active = true;
+    xd_theme_draw_frame(&st, scr, (xd_rect){0, 0, 300, 60}, &sf);
+    uint32_t on = pixel(ss, 150, 8);
+    sf.active = false;
+    xd_theme_draw_frame(&st, scr, (xd_rect){0, 0, 300, 60}, &sf);
+    uint32_t off = pixel(ss, 150, 8);
+    CHECK(on == 0xA7B580 && (off & 0xFF) > (on & 0xFF) + 30);
+    CHECK(((off >> 8) & 0xFF) - (off & 0xFF) < ((on >> 8) & 0xFF) - (on & 0xFF));
+    xd_theme_draw_task_button(&st, scr, (xd_rect){0, 60, 160, 25}, XD_STATE_PRESSED, "", nullptr);
+    CHECK(near(pixel(ss, 80, 70), 0x8D977E, 0));
     cairo_destroy(scr);
     cairo_surface_destroy(ss);
 

@@ -6,6 +6,7 @@ luna.c draws from:
 
     tools/luna-measure.py SCREENSHOT.png > src/theme/luna_data.h
     tools/luna-measure.py --variant silver SCREENSHOT.png > src/theme/luna_data_silver.h
+    tools/luna-measure.py --variant olive SCREENSHOT.png > src/theme/luna_data_olive.h
 
 Only colours are taken: per-row/per-column gradient profiles, edge lines,
 corner masks, and smooth polynomial surfaces fitted to the caption buttons.
@@ -14,7 +15,8 @@ Glyphs, text and icons are drawn by the theme engine itself.
 The coordinates below are where each element sits in the reference
 screenshot (an active Notepad window, an inactive Explorer window and the
 taskbar of a stock Windows XP SP3 desktop at 1920x972). Needs ImageMagick.
-Silver (--variant silver) has its own layout and tables; see SILVER below.
+Silver and Olive Green (--variant) have their own references, layouts and
+tables; see LAYOUTS below.
 """
 import re
 import subprocess
@@ -24,8 +26,8 @@ VARIANT = "blue"
 if len(sys.argv) == 4 and sys.argv[1] == "--variant":
     VARIANT = sys.argv[2]
 elif len(sys.argv) != 2:
-    sys.exit("usage: luna-measure.py [--variant blue|silver] SCREENSHOT.png")
-if VARIANT not in ("blue", "silver"):
+    sys.exit("usage: luna-measure.py [--variant blue|silver|olive] SCREENSHOT.png")
+if VARIANT not in ("blue", "silver", "olive"):
     sys.exit(f"unknown variant {VARIANT!r}")
 REF = sys.argv[-1]
 
@@ -219,19 +221,25 @@ def main_blue():
     print("\n#endif")
 
 
-# ---- Silver ---------------------------------------------------------------------
+# ---- Silver, Olive Green -----------------------------------------------------------
 #
-# XP's Silver ("Metallic") has its own artwork, lighter and glossier than a
-# recoloured Blue, so it is measured too. The reference is toastytech.com's
-# Windows XP Silver screenshot, http://toastytech.com/guis/wxpsilver.png
-# (800x600, 96 DPI; not redistributed here, pass its path): Display
-# Properties, active, open on the Appearance tab with Silver selected. Its
-# preview holds an inactive window and an active one; below are two task
-# buttons and the notification area.
+# The other variants have their own artwork (Silver's is lighter and
+# glossier than a recoloured Blue would be, Olive Green's shading differs
+# too), so they are measured from screenshots of their own, each with a
+# layout below. These tables are whole: the caption buttons are taken
+# pixel for pixel (their glyph separated from the face, so luna.c can light
+# the face when hot), and nothing is fitted.
 #
-# The windows there have XP's fixed (dialog) frame, 3px, where luna.c draws
-# the 4px sizing frame Blue was measured with. Each 3-line edge becomes 4
-# by doubling its light middle line, and the caption gains a row where its
+# Silver: toastytech.com's Windows XP Silver screenshot,
+# http://toastytech.com/guis/wxpsilver.png (800x600, 96 DPI; not
+# redistributed here, pass its path): Display Properties, active, open on
+# the Appearance tab with Silver selected. Its preview holds an inactive
+# window and an active one; below are two task buttons and the
+# notification area.
+#
+# Its windows have XP's fixed (dialog) frame, 3px, where luna.c draws the
+# 4px sizing frame Blue was measured with. Each 3-line edge becomes 4 by
+# doubling its light middle line, and the caption gains a row where its
 # glossy top meets the gradient (row 5, the first below the rounded
 # corner), which puts the caption buttons 6 rows down as on Blue.
 #
@@ -244,40 +252,79 @@ def main_blue():
 # inactive Minimize face, its glyph the active one's in the inactive
 # glyph colours), no Restore glyph, no pressed task button and no hot or
 # pressed states; luna.c derives those.
-SILVER = dict(
-    active=dict(
-        x0=161, y0=34, x1=564, y1=488,     # Display Properties
-        mid=[(400, 0, 29)],               # caption columns: (x, from row, to row)
-        right_rows=29,                    # caption rows visible at the right end
-        side_y=300, bottom_x=300,
-        side_right=True, corner_br=True,
-        # The preview's active window: Minimize, Maximize and Close; Display
-        # Properties: Help.
-        buttons=dict(minimize=(457, 140), maximize=(480, 140), close=(503, 140),
-                     help=(516, 39)),
-        button_rows=21,
+#
+# Olive Green: a screenshot hosted on DeviantArt,
+# https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/i/a844a3cf-6fdd-4ee5-85e5-f51c27600fd7/dzg2-bb82fa90-d395-4600-b555-aa0274bd3ad1.png
+# (800x600, lossless; not redistributed here). It is a pre-release build
+# ("For testing purposes only. Build 2485.main.010531-2130", May 2001), so
+# final XP's Olive Green may differ in detail. It shows an active Internet
+# Explorer window (a 4px sizing frame and 30-row caption, as Blue's) and
+# the taskbar with normal task buttons and a pressed one. It has no
+# inactive window and no Help button; luna.c derives those (and the hot
+# and pressed states) from the active artwork.
+LAYOUTS = dict(
+    silver=dict(
+        title="Silver",
+        desktop=(0x58, 0x57, 0x68),  # behind the cut corners
+        caption_rows=29,             # 3px frame + caption, as the reference shows it
+        extra_row=5,                 # doubled to make the 30 rows luna.c draws
+        edge3=True,                  # 3-line edges, doubled to 4
+        white_glyphs=False,          # dark, embossed glyphs
+        active=dict(
+            x0=161, y0=34, x1=564, y1=488,     # Display Properties
+            mid=[(400, 0, 29)],               # caption columns: (x, from row, to row)
+            right_rows=29,                    # caption rows visible at the right end
+            side_y=300, bottom_x=300,
+            side_right=True, corner_br=True,
+            # The preview's active window: Minimize, Maximize and Close;
+            # Display Properties: Help.
+            buttons=dict(minimize=(457, 140), maximize=(480, 140), close=(503, 140),
+                         help=(516, 39)),
+            button_rows=21,
+        ),
+        inactive=dict(
+            x0=198, y0=113, x1=511, y1=249,    # the preview's inactive window
+            mid=[(350, 0, 22), (206, 22, 29)],
+            right_rows=22,
+            side_y=180, bottom_x=202,
+            side_right=False, corner_br=False,  # hidden: mirrored from the left
+            buttons=dict(minimize=(440, 118), maximize=(463, 118), close=(486, 118)),
+            button_rows=17,
+        ),
+        bar=dict(y=570, x=650,                 # x: an empty stretch of taskbar
+                 start=dict(left=(0, 8), right=(76, 99)),
+                 task=dict(left=(105, 109), mid=200, right=(259, 264)),
+                 tray=dict(left=(707, 712), a=712, b=799)),
+        # Cancel (a normal push button) and Apply (disabled), 75x23 with the ring.
+        push=dict(left=(400, 405), mid=410, right=(470, 475), y=456,
+                  disabled_border=(482, 467), disabled_face=(490, 467)),
     ),
-    inactive=dict(
-        x0=198, y0=113, x1=511, y1=249,    # the preview's inactive window
-        mid=[(350, 0, 22), (206, 22, 29)],
-        right_rows=22,
-        side_y=180, bottom_x=202,
-        side_right=False, corner_br=False,  # hidden: mirrored from the left
-        buttons=dict(minimize=(440, 118), maximize=(463, 118), close=(486, 118)),
-        button_rows=17,
+    olive=dict(
+        title="Olive Green",
+        desktop=None,                # a wallpaper
+        caption_rows=30,
+        extra_row=None,
+        edge3=False,
+        white_glyphs=True,
+        active=dict(
+            x0=5, y0=184, x1=264, y1=563,      # Internet Explorer
+            mid=[(190, 0, 30)],               # between the title and the buttons
+            right_rows=30,
+            side_y=400, bottom_x=100,
+            side_right=True, corner_br=True,
+            buttons=dict(minimize=(192, 190), maximize=(215, 190), close=(238, 190)),
+            button_rows=21,
+        ),
+        inactive=None,
+        bar=dict(y=570, x=620,
+                 start=dict(left=(0, 8), right=(76, 99)),
+                 task=dict(left=(436, 440), mid=560, right=(591, 596)),  # "untitled - Paint"
+                 task_pressed=dict(left=(276, 281), mid=425, right=(431, 436)),
+                 tray=dict(left=(635, 640), a=650, b=799)),
+        push=None,
     ),
 )
-SILVER_CAPTION_ROWS = 29   # 3px frame + caption, as the reference shows it
-SILVER_EXTRA_ROW = 5       # doubled to make the 30 rows luna.c draws
-SILVER_DESKTOP = (0x58, 0x57, 0x68)
-SILVER_BAR_Y = 570
-SILVER_BAR_X = 650         # an empty stretch of taskbar
-SILVER_START = dict(left=(0, 8), right=(76, 99))
-SILVER_TASK = dict(left=(105, 109), mid=200, right=(259, 264))
-SILVER_TRAY = dict(left=(707, 712), a=712, b=799)
-# Cancel (a normal push button) and Apply (disabled), 75x23 with the ring.
-SILVER_PUSH = dict(left=(400, 405), mid=410, right=(470, 475), y=456)
-SILVER_PUSH_DISABLED = dict(border=(482, 467), face=(490, 467))
+L = LAYOUTS.get(VARIANT)
 # Caption button glyphs lie within these rows and columns of the 21x21 button.
 GLYPH_SPAN = (4, 16)
 
@@ -302,27 +349,31 @@ def luma(p):
     return 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2]
 
 
-def expand3(v):
-    """A 3-line edge (outer, middle, inner, in either order) as 4 lines."""
-    assert len(v) == 3
-    return [v[0], v[1], v[1], v[2]]
+def edge(v):
+    """An edge's lines (outer, middle..., inner, in either order), as 4."""
+    if L["edge3"]:
+        assert len(v) == 3
+        return [v[0], v[1], v[1], v[2]]
+    assert len(v) == 4
+    return v
 
 
-def silver_caption(f):
+def measured_caption(f):
     """The caption's middle column and its 8 left and 5 right columns, as
     the reference shows them: (r, g, b), or None where the corner is cut."""
     x0, y0, x1 = f["x0"], f["y0"], f["x1"]
-    mid = [None] * SILVER_CAPTION_ROWS
+    rows = L["caption_rows"]
+    mid = [None] * rows
     for (x, a, b) in f["mid"]:
         for r in range(a, b):
             mid[r] = pix(x, y0 + r)
     left, right = [], []
-    for r in range(SILVER_CAPTION_ROWS):
+    for r in range(rows):
         lrow = []
         for c in range(8):
             cut = c < len(CORNER_CUT) and r < CORNER_CUT[c]
             p = pix(x0 + c, y0 + r)
-            assert not cut or p == SILVER_DESKTOP, ("corner", r, c, p)
+            assert not cut or L["desktop"] is None or p == L["desktop"], ("corner", r, c, p)
             lrow.append(None if cut else p)
         rrow = []
         for c in range(5):          # c = 0 is 4 from the outer edge
@@ -336,7 +387,8 @@ def silver_caption(f):
 
 
 def with_extra_row(rows):
-    return rows[:SILVER_EXTRA_ROW] + [rows[SILVER_EXTRA_ROW]] + rows[SILVER_EXTRA_ROW:]
+    e = L["extra_row"]
+    return rows if e is None else rows[:e] + [rows[e]] + rows[e:]
 
 
 def hexo(p):
@@ -359,9 +411,10 @@ def measure_button(x, y, rows, close):
     """A caption button's face with its glyph painted out (rows from `rows`
     on are None: hidden) and the glyph, {(i, j): (r, g, b)}. Glyph pixels
     are those far from their row's face colour, column 17 (clear of every
-    glyph) on the flat grey buttons. Close's face shades across the row,
-    so there the glyph is its white X and the outline darker than the
-    row's median (the thin X never fills a row)."""
+    glyph) on the flat buttons. Close's face shades across the row, so
+    there the glyph is its white X and the outline darker than the row's
+    median (the thin X never fills a row). Where the glyphs are plain white
+    on a face shaded both ways (Olive Green), they are the white pixels."""
     face = [[pix(x + i, y + j) if j < rows else None for i in range(21)] for j in range(21)]
     glyph = {}
     lo, hi = GLYPH_SPAN
@@ -371,7 +424,9 @@ def measure_button(x, y, rows, close):
         for i in range(lo, hi + 1):
             p = face[j][i]
             far = max(abs(p[c] - med[c]) for c in range(3))
-            if close:
+            if L["white_glyphs"]:
+                on = min(p) >= 0xF0
+            elif close:
                 on = min(p) >= 0xF0 or (far > 40 and luma(p) < luma(med))
             else:
                 on = far > 20
@@ -429,31 +484,32 @@ def face_table(name, face):
     return table(f"{name}_face[21][21]", rows)
 
 
-def silver_frame_tables(tag, f, active_faces=None, active_glyphs=None):
-    mid, left, right = silver_caption(f)
+def frame_tables_measured(tag, f, active_faces=None, active_glyphs=None):
+    mid, left, right = measured_caption(f)
     assert all(p is not None for p in mid)
     mid, left, right = with_extra_row(mid), with_extra_row(left), with_extra_row(right)
     x0, x1, y1 = f["x0"], f["x1"], f["y1"]
-    side_l = expand3([pix(x0 + c, f["side_y"]) for c in range(3)])
-    side_r = expand3([pix(x1 - 2 + c, f["side_y"]) for c in range(3)]) if f["side_right"] \
+    n = 3 if L["edge3"] else 4
+    side_l = edge([pix(x0 + c, f["side_y"]) for c in range(n)])
+    side_r = edge([pix(x1 - n + 1 + c, f["side_y"]) for c in range(n)]) if f["side_right"] \
         else list(reversed(side_l))
-    bottom = expand3([pix(f["bottom_x"], y1 - 2 + r) for r in range(3)])
-    bl = expand3([expand3([pix(x0 + c, y1 - 2 + r) for c in range(3)]) for r in range(3)])
-    br = expand3([expand3([pix(x1 - 2 + c, y1 - 2 + r) for c in range(3)]) for r in range(3)]) \
-        if f["corner_br"] else [list(reversed(r)) for r in bl]
-    n = f"luna_silver_{tag}"
+    bottom = edge([pix(f["bottom_x"], y1 - n + 1 + r) for r in range(n)])
+    bl = edge([edge([pix(x0 + c, y1 - n + 1 + r) for c in range(n)]) for r in range(n)])
+    br = edge([edge([pix(x1 - n + 1 + c, y1 - n + 1 + r) for c in range(n)])
+               for r in range(n)]) if f["corner_br"] else [list(reversed(r)) for r in bl]
+    pre = f"luna_{VARIANT}_{tag}"
     out = [
         f"/* {tag} caption: middle column, top to bottom. */",
-        table(f"{n}_cap_mid[{CAPTION_H}]", [hexc(p) for p in mid]),
+        table(f"{pre}_cap_mid[{CAPTION_H}]", [hexc(p) for p in mid]),
         f"/* {tag} caption: the 8 left and 5 right columns (alpha 0 = cut corner). */",
-        table(f"{n}_cap_left[{CAPTION_H}][8]", [[hexo(p) for p in r] for r in left]),
-        table(f"{n}_cap_right[{CAPTION_H}][5]", [[hexo(p) for p in r] for r in right]),
+        table(f"{pre}_cap_left[{CAPTION_H}][8]", [[hexo(p) for p in r] for r in left]),
+        table(f"{pre}_cap_right[{CAPTION_H}][5]", [[hexo(p) for p in r] for r in right]),
         f"/* {tag} borders: left: outer first; right: inner first; bottom: top row first. */",
-        table(f"{n}_side_left[{BORDER}]", [hexc(p) for p in side_l]),
-        table(f"{n}_side_right[{BORDER}]", [hexc(p) for p in side_r]),
-        table(f"{n}_bottom[{BORDER}]", [hexc(p) for p in bottom]),
-        table(f"{n}_corner_bl[{BORDER}][{BORDER}]", [[hexc(p) for p in r] for r in bl]),
-        table(f"{n}_corner_br[{BORDER}][{BORDER}]", [[hexc(p) for p in r] for r in br]),
+        table(f"{pre}_side_left[{BORDER}]", [hexc(p) for p in side_l]),
+        table(f"{pre}_side_right[{BORDER}]", [hexc(p) for p in side_r]),
+        table(f"{pre}_bottom[{BORDER}]", [hexc(p) for p in bottom]),
+        table(f"{pre}_corner_bl[{BORDER}][{BORDER}]", [[hexc(p) for p in r] for r in bl]),
+        table(f"{pre}_corner_br[{BORDER}][{BORDER}]", [[hexc(p) for p in r] for r in br]),
     ]
     faces, glyphs = {}, {}
     for name in ("minimize", "maximize", "close", "help"):
@@ -462,10 +518,10 @@ def silver_frame_tables(tag, f, active_faces=None, active_glyphs=None):
             face, glyph = measure_button(bx, by, f["button_rows"], name == "close")
             if f["button_rows"] < 21:
                 fill_hidden_rows(face, f["button_rows"], active_faces[name])
-        else:
-            # Inactive Help: the Minimize face; the active glyph in the
-            # inactive glyph colours, matched pixel for pixel on Minimize
-            # and Maximize.
+        elif active_glyphs is not None and name in active_glyphs:
+            # Help on an inactive window: the Minimize face; the active
+            # glyph in the inactive glyph colours, matched pixel for pixel
+            # on Minimize and Maximize.
             face = [list(r) for r in faces["minimize"]]
             ink = {}
             for other in ("minimize", "maximize"):
@@ -473,85 +529,99 @@ def silver_frame_tables(tag, f, active_faces=None, active_glyphs=None):
                     if pos in glyphs[other]:
                         ink.setdefault(p, glyphs[other][pos])
             glyph = {pos: ink[p] for pos, p in active_glyphs[name].items()}
+        else:
+            continue  # not shown: luna.c draws it on the Minimize face
         faces[name], glyphs[name] = face, glyph
         out.append(f"/* {tag} {name} button: the face (its glyph painted out; alpha 0 = cut"
                    " corner), then the glyph ('.': none; letters index the ink). */")
-        out.append(face_table(f"{n}_{name}", face))
-        out += glyph_tables(f"{n}_{name}", glyph)
-    # For glyphs the reference doesn't show (Restore): Maximize's outline,
-    # title bar fill and light edge.
+        out.append(face_table(f"{pre}_{name}", face))
+        out += glyph_tables(f"{pre}_{name}", glyph)
+    # For glyphs the reference doesn't show (Restore, maybe Help):
+    # Maximize's outline, title bar fill and light edge (on a flat glyph,
+    # all its one colour).
     g = glyphs["maximize"]
+    outline = g[(5, 5)]
     out.append(f"/* {tag} glyph colours: outline, fill, light edge. */")
-    out.append(table(f"{n}_glyph_colors[3]", [hexc(g[(5, 5)]), hexc(g[(6, 6)]), hexc(g[(4, 6)])]))
+    out.append(table(f"{pre}_glyph_colors[3]",
+                     [hexc(outline), hexc(g.get((6, 6), outline)), hexc(g.get((4, 6), outline))]))
     return "\n".join(out), faces, glyphs
 
 
-def silver_bar_tables():
-    y0 = SILVER_BAR_Y
+def bar_tables_measured():
+    b = L["bar"]
+    y0 = b["y"]
+    pre = f"luna_{VARIANT}"
 
     def block(name, xs, rows, top):
-        a, b = xs
-        return table(f"{name}[{rows}][{b - a}]",
-                     [[hexc(pix(x, top + r)) for x in range(a, b)] for r in range(rows)])
+        lo, hi = xs
+        return table(f"{name}[{rows}][{hi - lo}]",
+                     [[hexc(pix(x, top + r)) for x in range(lo, hi)] for r in range(rows)])
 
     def col(name, x, rows, top):
         return table(f"{name}[{rows}]", [hexc(pix(x, top + r)) for r in range(rows)])
 
-    out = ["/* Taskbar, top to bottom. */", col("luna_silver_taskbar", SILVER_BAR_X, 30, y0)]
+    out = ["/* Taskbar, top to bottom. */", col(f"{pre}_taskbar", b["x"], 30, y0)]
     out.append("/* Start button: left columns, then right columns (the text and logo"
                " area between is interpolated). */")
-    out.append(block("luna_silver_start_left", SILVER_START["left"], 30, y0))
-    out.append(block("luna_silver_start_right", SILVER_START["right"], 30, y0))
+    out.append(block(f"{pre}_start_left", b["start"]["left"], 30, y0))
+    out.append(block(f"{pre}_start_right", b["start"]["right"], 30, y0))
     r0, r1 = TASK_ROWS
-    t = SILVER_TASK
-    out.append("/* Task button (normal): left, middle and right columns. */")
-    out.append(block("luna_silver_task_normal_left", t["left"], r1 - r0, y0 + r0))
-    out.append(col("luna_silver_task_normal_mid", t["mid"], r1 - r0, y0 + r0))
-    out.append(block("luna_silver_task_normal_right", t["right"], r1 - r0, y0 + r0))
-    tr = SILVER_TRAY
+    for state in ("normal", "pressed"):
+        t = b.get("task" if state == "normal" else "task_pressed")
+        if t is None:
+            continue
+        out.append(f"/* Task button ({state}): left, middle and right columns. */")
+        out.append(block(f"{pre}_task_{state}_left", t["left"], r1 - r0, y0 + r0))
+        out.append(col(f"{pre}_task_{state}_mid", t["mid"], r1 - r0, y0 + r0))
+        out.append(block(f"{pre}_task_{state}_right", t["right"], r1 - r0, y0 + r0))
+    tr = b["tray"]
     out.append("/* Notification area: left edge, then the body at its left and right"
                " ends (interpolated between). */")
-    out.append(block("luna_silver_tray_left", tr["left"], 30, y0))
-    out.append(col("luna_silver_tray_a", tr["a"], 30, y0))
-    out.append(col("luna_silver_tray_b", tr["b"], 30, y0))
-    p = SILVER_PUSH
-    out.append("/* Push button (Cancel), 75x23 with its ring: the five columns at each"
-               " end and the middle column, top to bottom. */")
-    for name, (a, b) in (("left", p["left"]), ("right", p["right"])):
-        out.append(table(f"luna_silver_button_{name}[5][23]",
-                         [[hexc(pix(x, p["y"] + r)) for r in range(23)] for x in range(a, b)]))
-    out.append(col("luna_silver_button_mid", p["mid"], 23, p["y"]))
-    d = SILVER_PUSH_DISABLED
-    out.append("/* A disabled push button (Apply): border and face. */")
-    out.append("static const uint32_t luna_silver_button_disabled_border = "
-               f"{hexc(pix(*d['border']))};")
-    out.append(f"static const uint32_t luna_silver_button_disabled_face = {hexc(pix(*d['face']))};")
+    out.append(block(f"{pre}_tray_left", tr["left"], 30, y0))
+    out.append(col(f"{pre}_tray_a", tr["a"], 30, y0))
+    out.append(col(f"{pre}_tray_b", tr["b"], 30, y0))
+    p = L["push"]
+    if p is not None:
+        out.append("/* Push button, 75x23 with its ring: the five columns at each end"
+                   " and the middle column, top to bottom. */")
+        for name, (lo, hi) in (("left", p["left"]), ("right", p["right"])):
+            out.append(table(f"{pre}_button_{name}[5][23]",
+                             [[hexc(pix(x, p["y"] + r)) for r in range(23)]
+                              for x in range(lo, hi)]))
+        out.append(col(f"{pre}_button_mid", p["mid"], 23, p["y"]))
+        out.append("/* A disabled push button: border and face. */")
+        out.append(f"static const uint32_t {pre}_button_disabled_border = "
+                   f"{hexc(pix(*p['disabled_border']))};")
+        out.append(f"static const uint32_t {pre}_button_disabled_face = "
+                   f"{hexc(pix(*p['disabled_face']))};")
     return "\n".join(out)
 
 
-def main_silver():
-    print("""/* SPDX-License-Identifier: MIT
- * Generated by tools/luna-measure.py --variant silver from a Windows XP
- * Silver screenshot: colour profiles of the Silver frame, caption buttons,
- * taskbar and push button, as luna_data.h has Blue's. Colours only
- * (0xAARRGGBB); shapes and text are drawn by luna.c. Do not edit by hand.
+def main_measured():
+    guard = f"XD_THEME_LUNA_DATA_{VARIANT.upper()}_H"
+    print(f"""/* SPDX-License-Identifier: MIT
+ * Generated by tools/luna-measure.py --variant {VARIANT} from a Windows XP
+ * {L["title"]} screenshot: colour profiles of its frame, caption buttons
+ * and taskbar, as luna_data.h has Blue's. Colours only (0xAARRGGBB);
+ * shapes and text are drawn by luna.c. Do not edit by hand.
  */
-#ifndef XD_THEME_LUNA_DATA_SILVER_H
-#define XD_THEME_LUNA_DATA_SILVER_H
+#ifndef {guard}
+#define {guard}
 
 #include <stdint.h>
 """)
-    text, faces, glyphs = silver_frame_tables("active", SILVER["active"])
+    text, faces, glyphs = frame_tables_measured("active", L["active"])
     print(text)
     print()
-    text, _, _ = silver_frame_tables("inactive", SILVER["inactive"], faces, glyphs)
-    print(text)
-    print()
-    print(silver_bar_tables())
+    if L["inactive"] is not None:
+        text, _, _ = frame_tables_measured("inactive", L["inactive"], faces, glyphs)
+        print(text)
+        print()
+    print(bar_tables_measured())
     print("\n#endif")
 
 
 if VARIANT == "blue":
     main_blue()
 else:
-    main_silver()
+    main_measured()
