@@ -16,6 +16,7 @@ struct xd_tasklist {
     GdkDisplay *display;
     struct wl_registry *registry;
     struct zwlr_foreign_toplevel_manager_v1 *manager;
+    struct xd_window_arranger_v1 *arranger; /* version 4+, or nullptr */
     GList *tasks; /* task_impl* */
     xd_task_cb changed, closed;
     gpointer data;
@@ -128,6 +129,10 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         list->manager = wl_registry_bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface,
                                          MIN(version, 3u));
         zwlr_foreign_toplevel_manager_v1_add_listener(list->manager, &manager_listener, list);
+    } else if (list->arranger == nullptr && version >= 4 &&
+               strcmp(interface, xd_window_arranger_v1_interface.name) == 0) {
+        /* Its events are for the shell; we only send requests. */
+        list->arranger = wl_registry_bind(reg, name, &xd_window_arranger_v1_interface, 4);
     }
 }
 
@@ -171,6 +176,8 @@ void xd_tasklist_free(xd_tasklist *list) {
     }
     if (list->manager != nullptr)
         zwlr_foreign_toplevel_manager_v1_stop(list->manager);
+    if (list->arranger != nullptr)
+        xd_window_arranger_v1_destroy(list->arranger);
     wl_registry_destroy(list->registry);
     g_free(list);
 }
@@ -196,4 +203,19 @@ void xd_task_set_maximized(xd_task *task, gboolean maximized) {
         zwlr_foreign_toplevel_handle_v1_set_maximized(impl(task)->handle);
     else
         zwlr_foreign_toplevel_handle_v1_unset_maximized(impl(task)->handle);
+}
+
+gboolean xd_tasklist_can_arrange(const xd_tasklist *list) {
+    return list != nullptr && list->arranger != nullptr;
+}
+
+void xd_tasklist_arrange(xd_tasklist *list, GList *tasks, xd_arrange_mode mode) {
+    if (!xd_tasklist_can_arrange(list) || tasks == nullptr)
+        return;
+    for (GList *l = tasks; l != nullptr; l = l->next)
+        xd_window_arranger_v1_mark(list->arranger, impl(l->data)->handle);
+    uint32_t m = mode == XD_ARRANGE_TILE_HORIZONTALLY ? XD_WINDOW_ARRANGER_V1_MODE_TILE_HORIZONTALLY
+                 : mode == XD_ARRANGE_TILE_VERTICALLY ? XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY
+                                                      : XD_WINDOW_ARRANGER_V1_MODE_CASCADE;
+    xd_window_arranger_v1_arrange_marked(list->arranger, m);
 }

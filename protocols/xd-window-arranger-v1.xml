@@ -5,12 +5,14 @@
   </copyright>
   <description summary="XeonDesktop: arrange windows from the taskbar">
     Private to XeonDesktop. The compositor only advertises this global to
-    the shell process it started, which uses it for the taskbar menu's
+    the shell process it started and to XeonDesktop's Task Manager (its
+    Windows menu's Tile and Cascade). The shell uses it for the taskbar
+    menu's
     Cascade Windows, Tile Windows Horizontally/Vertically and their Undo,
     and for the window menu's Move and Size.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="3">
+  <interface name="xd_window_arranger_v1" version="4">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -88,6 +90,23 @@
       </description>
       <arg name="mode" type="uint" enum="mode"/>
       <arg name="app_id" type="string"/>
+    </request>
+
+    <request name="mark" since="4">
+      <description summary="add a window to the next arrange_marked">
+        Task Manager's Windows menu arranges the windows selected on its
+        Applications tab: it marks each (by its own foreign-toplevel
+        handle), then asks for the arrangement.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+
+    <request name="arrange_marked" since="4">
+      <description summary="arrange the marked windows">
+        As arrange, but only the marked windows (minimized ones are
+        restored first); the marks are cleared.
+      </description>
+      <arg name="mode" type="uint" enum="mode"/>
     </request>
   </interface>
 </protocol>

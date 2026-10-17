@@ -3,7 +3,11 @@
  * keyboard Move and Size (xd-window-arranger-v1, a private protocol only
  * the shell we started can see).
  */
+#include <limits.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 
 #include "../core/alloc.h"
@@ -11,6 +15,18 @@
 #include "xd-window-arranger-v1-protocol.h"
 
 static constexpr int CASCADE_STEP = 26; /* logical px: about a caption */
+
+/* One client's binding: the shell's, or Task Manager's with the windows
+ * it marked for arrange_marked. */
+typedef struct arranger_client {
+    xd_server *server;
+    xd_view **marked;
+    size_t marked_n, marked_cap;
+} arranger_client;
+
+static xd_server *server_of(struct wl_resource *res) {
+    return ((arranger_client *)wl_resource_get_user_data(res))->server;
+}
 
 /* Windows that take part: mapped, not minimized. */
 static bool arrangeable(const xd_view *v) { return v->mapped && !v->minimized; }
@@ -82,13 +98,30 @@ static bool of_app(const xd_view *v, const char *app_id) {
     return app_id == nullptr || (id != nullptr && strcmp(id, app_id) == 0);
 }
 
-/* Every window, or only app_id's. */
-static void arrange(xd_server *server, uint32_t mode, const char *app_id) {
+/* Which windows take part: all, one program's, or Task Manager's marks. */
+typedef struct selection {
+    const char *app_id;
+    const arranger_client *marks; /* nullptr: not by marks */
+} selection;
+
+static bool selected(const xd_view *v, const selection *sel) {
+    if (sel->marks != nullptr) {
+        for (size_t i = 0; i < sel->marks->marked_n; i++)
+            if (sel->marks->marked[i] == v)
+                return true;
+        return false;
+    }
+    return of_app(v, sel->app_id);
+}
+
+/* Every window, or only the selection's. */
+static void arrange_selection(xd_server *server, uint32_t mode, const selection *sel) {
     if (mode > XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY)
         return;
+    bool chosen = sel->app_id != nullptr || sel->marks != nullptr;
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         v->undo_valid = false;
-        if (app_id != nullptr && v->mapped && v->minimized && of_app(v, app_id))
+        if (chosen && v->mapped && v->minimized && selected(v, sel))
             xd_view_restore(v);
     }
     /* Group by output (by window centre), front to back. */
@@ -97,7 +130,7 @@ static void arrange(xd_server *server, uint32_t mode, const char *app_id) {
         xd_view **views = xd_alloc_array(XD_MAX(cap, 1), sizeof(*views));
         size_t n = 0;
         XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-            if (!arrangeable(v) || !of_app(v, app_id))
+            if (!arrangeable(v) || !selected(v, sel))
                 continue;
             struct wlr_box b = xd_view_outer_box(v);
             if (xd_output_at(server, b.x + b.width / 2.0, b.y + b.height / 2.0) != out)
@@ -110,20 +143,76 @@ static void arrange(xd_server *server, uint32_t mode, const char *app_id) {
     }
 }
 
+static void arrange(xd_server *server, uint32_t mode, const char *app_id) {
+    selection sel = {.app_id = app_id};
+    arrange_selection(server, mode, &sel);
+}
+
 static void handle_arrange(struct wl_client *client, struct wl_resource *res, uint32_t mode) {
     (void)client;
-    arrange(wl_resource_get_user_data(res), mode, nullptr);
+    arrange(server_of(res), mode, nullptr);
 }
 
 static void handle_arrange_app(struct wl_client *client, struct wl_resource *res, uint32_t mode,
                                const char *app_id) {
     (void)client;
-    arrange(wl_resource_get_user_data(res), mode, app_id);
+    arrange(server_of(res), mode, app_id);
+}
+
+/* The window behind one of this client's foreign-toplevel handles. */
+static xd_view *view_for_handle(xd_server *server, struct wl_resource *handle) {
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (v->ftl == nullptr)
+            continue;
+        struct wl_resource *r;
+        wl_resource_for_each(r, &v->ftl->resources) {
+            if (r == handle)
+                return v;
+        }
+    }
+    return nullptr;
+}
+
+static void handle_mark(struct wl_client *client, struct wl_resource *res,
+                        struct wl_resource *toplevel) {
+    (void)client;
+    arranger_client *ac = wl_resource_get_user_data(res);
+    xd_view *v = view_for_handle(ac->server, toplevel);
+    if (v == nullptr)
+        return;
+    if (ac->marked_n == ac->marked_cap) {
+        ac->marked_cap = ac->marked_cap == 0 ? 8 : ac->marked_cap * 2;
+        ac->marked = xd_realloc_array(ac->marked, ac->marked_cap, sizeof(*ac->marked));
+    }
+    ac->marked[ac->marked_n++] = v;
+}
+
+static void handle_arrange_marked(struct wl_client *client, struct wl_resource *res,
+                                  uint32_t mode) {
+    (void)client;
+    arranger_client *ac = wl_resource_get_user_data(res);
+    selection sel = {.marks = ac};
+    if (ac->marked_n > 0)
+        arrange_selection(ac->server, mode, &sel);
+    ac->marked_n = 0;
+}
+
+/* A window going away leaves every client's marks. */
+void xd_arrange_forget_view(xd_server *server, xd_view *view) {
+    for (size_t c = 0; c < server->arranger_clients_n; c++) {
+        arranger_client *ac = server->arranger_clients[c];
+        for (size_t i = 0; i < ac->marked_n;) {
+            if (ac->marked[i] == view)
+                ac->marked[i] = ac->marked[--ac->marked_n];
+            else
+                i++;
+        }
+    }
 }
 
 static void handle_undo(struct wl_client *client, struct wl_resource *res) {
     (void)client;
-    xd_server *server = wl_resource_get_user_data(res);
+    xd_server *server = server_of(res);
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         if (!v->undo_valid)
             continue;
@@ -136,14 +225,14 @@ static void handle_undo(struct wl_client *client, struct wl_resource *res) {
 
 static void handle_begin_move(struct wl_client *client, struct wl_resource *res) {
     (void)client;
-    xd_view *v = xd_view_focused(wl_resource_get_user_data(res));
+    xd_view *v = xd_view_focused(server_of(res));
     if (v != nullptr)
         xd_view_begin_keyboard_move(v);
 }
 
 static void handle_begin_size(struct wl_client *client, struct wl_resource *res) {
     (void)client;
-    xd_view *v = xd_view_focused(wl_resource_get_user_data(res));
+    xd_view *v = xd_view_focused(server_of(res));
     if (v != nullptr)
         xd_view_begin_keyboard_size(v);
 }
@@ -154,9 +243,18 @@ static void handle_destroy(struct wl_client *client, struct wl_resource *res) {
 }
 
 static void resource_destroyed(struct wl_resource *res) {
-    xd_server *server = wl_resource_get_user_data(res);
+    arranger_client *ac = wl_resource_get_user_data(res);
+    xd_server *server = ac->server;
     if (server->arranger_resource == res)
         server->arranger_resource = nullptr;
+    for (size_t c = 0; c < server->arranger_clients_n; c++) {
+        if (server->arranger_clients[c] == ac) {
+            server->arranger_clients[c] = server->arranger_clients[--server->arranger_clients_n];
+            break;
+        }
+    }
+    xd_free(ac->marked);
+    xd_free(ac);
 }
 
 /* The shell's wl_output for `out`, or nullptr. */
@@ -230,6 +328,8 @@ static const struct xd_window_arranger_v1_interface arranger_impl = {
     .begin_move = handle_begin_move,
     .begin_size = handle_begin_size,
     .destroy = handle_destroy,
+    .mark = handle_mark,
+    .arrange_marked = handle_arrange_marked,
 };
 
 static void bind_arranger(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
@@ -239,11 +339,46 @@ static void bind_arranger(struct wl_client *client, void *data, uint32_t version
         wl_client_post_no_memory(client);
         return;
     }
-    wl_resource_set_implementation(res, &arranger_impl, data, resource_destroyed);
-    ((xd_server *)data)->arranger_resource = res;
+    xd_server *server = data;
+    arranger_client *ac = XD_NEW(arranger_client);
+    ac->server = server;
+    if (server->arranger_clients_n == server->arranger_clients_cap) {
+        server->arranger_clients_cap =
+            server->arranger_clients_cap == 0 ? 4 : server->arranger_clients_cap * 2;
+        server->arranger_clients = xd_realloc_array(
+            server->arranger_clients, server->arranger_clients_cap, sizeof(*server->arranger_clients));
+    }
+    server->arranger_clients[server->arranger_clients_n++] = ac;
+    wl_resource_set_implementation(res, &arranger_impl, ac, resource_destroyed);
+    /* Events (Start menu, window menu, attention) go to the shell. */
+    pid_t pid = 0;
+    wl_client_get_credentials(client, &pid, nullptr, nullptr);
+    if (server->shell_pid > 0 && pid == server->shell_pid)
+        server->arranger_resource = res;
 }
 
-/* Only the shell we started sees the global. */
+/* Whether `pid` runs our Task Manager: the xd-taskmgr installed beside
+ * this compositor. */
+static bool is_task_manager(pid_t pid) {
+    char link[64];
+    snprintf(link, sizeof(link), "/proc/%d/exe", (int)pid);
+    char *exe = realpath(link, nullptr);
+    char *self = realpath("/proc/self/exe", nullptr);
+    bool ok = false;
+    if (exe != nullptr && self != nullptr) {
+        char *slash = strrchr(self, '/');
+        if (slash != nullptr) {
+            slash[1] = '\0';
+            size_t n = strlen(self);
+            ok = strncmp(exe, self, n) == 0 && strcmp(exe + n, "xd-taskmgr") == 0;
+        }
+    }
+    free(exe);
+    free(self);
+    return ok;
+}
+
+/* Only the shell we started and our Task Manager see the global. */
 static bool global_filter(const struct wl_client *client, const struct wl_global *global,
                           void *data) {
     xd_server *server = data;
@@ -251,11 +386,13 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
         return true;
     pid_t pid = 0;
     wl_client_get_credentials((struct wl_client *)(uintptr_t)client, &pid, nullptr, nullptr);
-    return server->shell_pid > 0 && pid == server->shell_pid;
+    if (server->shell_pid > 0 && pid == server->shell_pid)
+        return true;
+    return pid > 0 && is_task_manager(pid);
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 3,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 4,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

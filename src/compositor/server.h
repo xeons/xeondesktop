@@ -313,6 +313,8 @@ struct xd_server {
     pid_t shell_pid;
     struct wl_global *arranger; /* xd-window-arranger-v1, shell only */
     struct wl_resource *arranger_resource; /* the shell's binding, for events */
+    struct arranger_client **arranger_clients; /* every binding (shell, Task Manager) */
+    size_t arranger_clients_n, arranger_clients_cap;
     uint32_t shell_restarts;
     struct timespec shell_restart_window;
     bool terminating;
@@ -387,6 +389,8 @@ void xd_view_update_decorations(xd_view *view);
 
 /* arrange.c: Cascade/Tile for the taskbar menu (shell-only protocol). */
 void xd_arrange_init(xd_server *server);
+/* A window is going: Task Manager's marks for arrange_marked drop it. */
+void xd_arrange_forget_view(xd_server *server, xd_view *view);
 
 /* protocols.c: output management/power, idle, activation. */
 void xd_protocols_init(xd_server *server);

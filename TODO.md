@@ -301,8 +301,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       columns. Tested at 2x (360px tall): System Tools in two columns,
       hover in both.
 - [x] Menus: one highlight at a time when moving quickly (the item whose
-      submenu waits to close no longer stays lit); the Windows 2000 banner
-      counts as part of the menu.
+      submenu waits to close no longer stays lit). The Windows 2000 banner
+      picks no item, as in Windows.
 - [ ] Greyed-out items: Search, Help, Devices and Printers, Default
       Programs, Switch user.
 - [?] Start menu keyboard navigation after the focus fix (typing into the
@@ -501,8 +501,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Options > Always On Top (no Wayland protocol yet) and Hide When
       Minimized with the CPU meter in the notification area (the tray
       exists now: the Task Manager can show a StatusNotifierItem).
-- [ ] Windows menu: Tile Horizontally/Vertically and Cascade (the compositor
-      can do it now through xd-window-arranger-v1, but only for the shell).
+- [x] Windows menu: Tile Horizontally/Vertically and Cascade arrange the
+      windows selected on the Applications tab (several with Ctrl/Shift;
+      End Task, Minimize and Maximize act on all of them). The compositor
+      offers xd-window-arranger-v1 (version 4: mark + arrange_marked) to
+      the shell and to the xd-taskmgr installed beside it. Tested: two
+      windows tiled vertically, the shell still gets its events.
 - [ ] Window icons only resolve for apps with an installed .desktop file
       matching their app ID; ours are installed by `meson install`.
 - [ ] Handles has no Linux equivalent; Open Files is shown instead, and is

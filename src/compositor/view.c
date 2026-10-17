@@ -856,6 +856,7 @@ void xd_view_on_destroy(xd_view *view) {
     xd_unlisten(&view->set_app_id);
     xd_unlisten(&view->decoration_mode);
     xd_unlisten(&view->decoration_destroy);
+    xd_arrange_forget_view(view->server, view);
     wl_list_remove(&view->link);
     /* Takes the frame buffer and the client's scene subtree with it. */
     wlr_scene_node_destroy(&view->tree->node);

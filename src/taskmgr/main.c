@@ -131,6 +131,7 @@ typedef struct taskmgr {
 
     /* Applications */
     xd_tasklist *tasks;
+    GtkWidget *tile_h_item, *tile_v_item, *cascade_item; /* Windows menu */
     GtkListStore *apps;
     GtkWidget *apps_stack, *apps_views[VIEW_COUNT];
     int apps_view;
@@ -380,30 +381,44 @@ static void on_task_closed(xd_task *task, gpointer data) {
     }
 }
 
-static xd_task *selected_task(taskmgr *t) {
-    GtkTreeIter iter;
-    gboolean found = FALSE;
+/* The windows selected on the Applications tab (xd_task*, in list
+ * order; several with Ctrl or Shift, as in Windows). g_list_free it. */
+static GList *selected_tasks(taskmgr *t) {
     GtkWidget *view = t->apps_views[t->apps_view];
-    if (t->apps_view == VIEW_DETAILS) {
-        found = gtk_tree_selection_get_selected(
-            gtk_tree_view_get_selection(GTK_TREE_VIEW(view)), nullptr, &iter);
-    } else {
-        GList *sel = gtk_icon_view_get_selected_items(GTK_ICON_VIEW(view));
-        if (sel != nullptr)
-            found = gtk_tree_model_get_iter(GTK_TREE_MODEL(t->apps), &iter, sel->data);
-        g_list_free_full(sel, (GDestroyNotify)gtk_tree_path_free);
+    GList *paths = t->apps_view == VIEW_DETAILS
+                       ? gtk_tree_selection_get_selected_rows(
+                             gtk_tree_view_get_selection(GTK_TREE_VIEW(view)), nullptr)
+                       : gtk_icon_view_get_selected_items(GTK_ICON_VIEW(view));
+    GList *tasks = nullptr;
+    for (GList *l = paths; l != nullptr; l = l->next) {
+        GtkTreeIter iter;
+        xd_task *task = nullptr;
+        if (gtk_tree_model_get_iter(GTK_TREE_MODEL(t->apps), &iter, l->data))
+            gtk_tree_model_get(GTK_TREE_MODEL(t->apps), &iter, AP_TASK, &task, -1);
+        if (task != nullptr)
+            tasks = g_list_prepend(tasks, task);
     }
-    if (!found)
-        return nullptr;
-    xd_task *task = nullptr;
-    gtk_tree_model_get(GTK_TREE_MODEL(t->apps), &iter, AP_TASK, &task, -1);
-    return task;
+    g_list_free_full(paths, (GDestroyNotify)gtk_tree_path_free);
+    return g_list_reverse(tasks);
+}
+
+static xd_task *selected_task(taskmgr *t) {
+    GList *tasks = selected_tasks(t);
+    xd_task *first = tasks != nullptr ? tasks->data : nullptr;
+    g_list_free(tasks);
+    return first;
 }
 
 static void update_app_buttons(taskmgr *t) {
     gboolean any = selected_task(t) != nullptr;
     gtk_widget_set_sensitive(t->end_task, any);
     gtk_widget_set_sensitive(t->switch_to, any);
+    /* Tile and Cascade need a selection and our compositor's arranger. */
+    gboolean arrange = any && xd_tasklist_can_arrange(t->tasks);
+    GtkWidget *items[] = {t->tile_h_item, t->tile_v_item, t->cascade_item};
+    for (size_t i = 0; i < G_N_ELEMENTS(items); i++)
+        if (items[i] != nullptr)
+            gtk_widget_set_sensitive(items[i], arrange);
 }
 
 static void switch_to(taskmgr *t, gboolean minimize_self) {
@@ -420,25 +435,47 @@ static void switch_to(taskmgr *t, gboolean minimize_self) {
 static void cb_switch_to([[maybe_unused]] GtkWidget *w, gpointer d) { switch_to(d, TRUE); }
 static void cb_bring_to_front([[maybe_unused]] GtkWidget *w, gpointer d) { switch_to(d, FALSE); }
 
+/* End Task, Minimize and Maximize act on every selected window. */
 static void cb_end_task([[maybe_unused]] GtkWidget *w, gpointer d) {
-    xd_task *task = selected_task(d);
-    if (task != nullptr)
-        xd_task_close(task);
+    GList *tasks = selected_tasks(d);
+    for (GList *l = tasks; l != nullptr; l = l->next)
+        xd_task_close(l->data);
+    g_list_free(tasks);
 }
 
 static void cb_minimize_task([[maybe_unused]] GtkWidget *w, gpointer d) {
-    xd_task *task = selected_task(d);
-    if (task != nullptr)
-        xd_task_set_minimized(task, TRUE);
+    GList *tasks = selected_tasks(d);
+    for (GList *l = tasks; l != nullptr; l = l->next)
+        xd_task_set_minimized(l->data, TRUE);
+    g_list_free(tasks);
 }
 
 static void cb_maximize_task([[maybe_unused]] GtkWidget *w, gpointer d) {
-    xd_task *task = selected_task(d);
-    if (task != nullptr) {
+    GList *tasks = selected_tasks(d);
+    for (GList *l = tasks; l != nullptr; l = l->next) {
+        xd_task *task = l->data;
         if (task->minimized)
             xd_task_set_minimized(task, FALSE);
         xd_task_set_maximized(task, TRUE);
     }
+    g_list_free(tasks);
+}
+
+/* Windows ▸ Tile and Cascade: the selected windows. */
+static void arrange_selected(taskmgr *t, xd_arrange_mode mode) {
+    GList *tasks = selected_tasks(t);
+    xd_tasklist_arrange(t->tasks, tasks, mode);
+    g_list_free(tasks);
+}
+
+static void cb_tile_h([[maybe_unused]] GtkWidget *w, gpointer d) {
+    arrange_selected(d, XD_ARRANGE_TILE_HORIZONTALLY);
+}
+static void cb_tile_v([[maybe_unused]] GtkWidget *w, gpointer d) {
+    arrange_selected(d, XD_ARRANGE_TILE_VERTICALLY);
+}
+static void cb_cascade([[maybe_unused]] GtkWidget *w, gpointer d) {
+    arrange_selected(d, XD_ARRANGE_CASCADE);
 }
 
 static void cb_new_task([[maybe_unused]] GtkWidget *w, gpointer d) {
@@ -598,6 +635,8 @@ static GtkWidget *build_apps(taskmgr *t) {
     gtk_tree_view_column_set_min_width(col, 90);
     gtk_tree_view_column_set_sort_column_id(col, AP_STATUS);
     gtk_tree_view_append_column(GTK_TREE_VIEW(tree), col);
+    gtk_tree_selection_set_mode(gtk_tree_view_get_selection(GTK_TREE_VIEW(tree)),
+                                GTK_SELECTION_MULTIPLE);
     g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(tree)), "changed",
                      G_CALLBACK(on_apps_selection), t);
     g_signal_connect(tree, "row-activated", G_CALLBACK(on_apps_row_activated), t);
@@ -608,7 +647,7 @@ static GtkWidget *build_apps(taskmgr *t) {
         GtkWidget *iv = gtk_icon_view_new_with_model(GTK_TREE_MODEL(t->apps));
         gtk_icon_view_set_pixbuf_column(GTK_ICON_VIEW(iv), v == VIEW_LARGE ? AP_ICON32 : AP_ICON16);
         gtk_icon_view_set_text_column(GTK_ICON_VIEW(iv), AP_TITLE);
-        gtk_icon_view_set_selection_mode(GTK_ICON_VIEW(iv), GTK_SELECTION_SINGLE);
+        gtk_icon_view_set_selection_mode(GTK_ICON_VIEW(iv), GTK_SELECTION_MULTIPLE);
         if (v == VIEW_SMALL) {
             gtk_icon_view_set_item_orientation(GTK_ICON_VIEW(iv), GTK_ORIENTATION_HORIZONTAL);
             gtk_icon_view_set_item_width(GTK_ICON_VIEW(iv), 160);
@@ -1491,11 +1530,18 @@ static GtkWidget *build_menus(taskmgr *t, GtkAccelGroup *accel) {
 
     GtkWidget *windows = submenu(bar, "_Windows");
     t->windows_menu = gtk_menu_get_attach_widget(GTK_MENU(windows));
-    menu_item(windows, "Tile _Horizontally", nullptr, t, nullptr, 0, NO_MODS);
-    menu_item(windows, "Tile _Vertically", nullptr, t, nullptr, 0, NO_MODS);
+    t->tile_h_item = menu_item(windows, "Tile _Horizontally", G_CALLBACK(cb_tile_h), t, nullptr,
+                               0, NO_MODS);
+    t->tile_v_item = menu_item(windows, "Tile _Vertically", G_CALLBACK(cb_tile_v), t, nullptr, 0,
+                               NO_MODS);
     menu_item(windows, "_Minimize", G_CALLBACK(cb_minimize_task), t, nullptr, 0, NO_MODS);
     menu_item(windows, "Ma_ximize", G_CALLBACK(cb_maximize_task), t, nullptr, 0, NO_MODS);
-    menu_item(windows, "_Cascade", nullptr, t, nullptr, 0, NO_MODS);
+    t->cascade_item = menu_item(windows, "_Cascade", G_CALLBACK(cb_cascade), t, nullptr, 0,
+                                NO_MODS);
+    /* Until something is selected (update_app_buttons). */
+    gtk_widget_set_sensitive(t->tile_h_item, FALSE);
+    gtk_widget_set_sensitive(t->tile_v_item, FALSE);
+    gtk_widget_set_sensitive(t->cascade_item, FALSE);
     menu_item(windows, "_Bring To Front", G_CALLBACK(cb_bring_to_front), t, nullptr, 0, NO_MODS);
 
     GtkWidget *help = submenu(bar, "_Help");
