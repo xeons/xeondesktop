@@ -54,6 +54,7 @@ WIDTH, HEIGHT = 1024, 768
 
 CLASSIC_INI = "[Appearance]\nStyle=classic\n\n[StartMenu]\nStyle=classic\n"
 AERO_INI = "[Appearance]\nStyle=aero\n\n[StartMenu]\nStyle=win7\n"
+LUNA_INI = "[Appearance]\nStyle=luna\n\n[StartMenu]\nStyle=xp\n"
 
 SCENARIOS = {}
 
@@ -775,6 +776,50 @@ def desktop_menu(s):
     s.inject("key", "Escape")
     after = s.settle("closed")
     s.check(after.differs(before, (600, 300, 120, 150)) < 0.02, "Esc closed it")
+
+
+def start_menu_closes_on_desktop(s, region):
+    """Ctrl+Esc opens the Start menu; a click on the desktop closes it (the
+    desktop is the shell's own surface, so the compositor's popup grab
+    doesn't end it)."""
+    before = s.settle("desktop")
+    s.inject("key", "ctrl+Escape")
+    menu = s.settle("start-menu")
+    s.check(menu.differs(before, region) > 0.2, "Ctrl+Esc opened the Start menu")
+    s.inject("move", 850, 120, "click")
+    after = s.settle("closed")
+    s.check(after.differs(before, region) < 0.02, "a click on the desktop closed it")
+
+
+@scenario()
+def classic_start_closes_on_desktop(s):
+    """The Windows 2000 Start menu closes on a click on the desktop."""
+    start_menu_closes_on_desktop(s, (0, 400, 160, 320))
+
+
+@scenario(LUNA_INI)
+def xp_start_closes_on_desktop(s):
+    """The Windows XP Start menu closes on a click on the desktop."""
+    start_menu_closes_on_desktop(s, (0, 300, 400, 420))
+
+
+@scenario(LUNA_INI)
+def combo_closes_on_tab(s):
+    """An open drop-down list closes when the dialog is clicked elsewhere
+    (here, another tab); it used to stay up over the other tab."""
+    empty = s.settle("desktop")
+    s.launch("xd-taskbar")
+    s.wait_window(title="Taskbar and Start Menu Properties", state="activated")
+    x, y, _, _ = s.settle("dialog").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.inject("move", x + 97, y + 48, "click", "sleep", 400)  # the Start Menu tab
+    tab = s.settle("start-menu-tab")
+    s.inject("move", x + 233, y + 101, "click", "sleep", 400)  # the style list's arrow
+    listed = s.settle("list-open")
+    below = (x + 24, y + 112, 200, 50)  # where the list drops down
+    s.check(listed.differs(tab, below) > 0.2, "the drop-down list opened")
+    s.inject("move", x + 38, y + 48, "click", "sleep", 400)  # the Taskbar tab
+    closed = s.settle("list-closed")
+    s.check(closed.differs(tab, below) < 0.02, "a click elsewhere in the dialog closed the list")
 
 
 @scenario(requires=("dbusmock",))

@@ -1245,6 +1245,14 @@ void xd_window_pointer_leave(xd_window *win) {
 }
 
 void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
+    /* The compositor ends the drop-down's grab only for clicks in other
+     * programs. A click in this window (another tab, a button) closes the
+     * list and does nothing else, as in Windows. */
+    if (pressed && win->popup != nullptr) {
+        popup_close(win);
+        win->dirty = true;
+        return;
+    }
     if (button != BTN_LEFT)
         return;
     double x = win->ui->pointer_x;
