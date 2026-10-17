@@ -36,6 +36,7 @@ struct bt_wizard {
     char *adapter;    /* the adapter we search with */
     bool discovering; /* we started discovery */
     GHashTable *seen; /* devices that turned up while searching */
+    guint refill;     /* the list redone shortly (fill_found) */
     /* Passkey */
     GtkWidget *pk_auto, *pk_doc, *pk_doc_entry, *pk_own, *pk_own_entry, *pk_none;
     /* Adding */
@@ -480,28 +481,39 @@ static void on_found_activated([[maybe_unused]] GtkTreeView *v, [[maybe_unused]]
 
 /* ---- live updates ------------------------------------------------------------------- */
 
+static gboolean refill_now(gpointer data) {
+    bt_wizard *w = data;
+    w->refill = 0;
+    if (w->page == PAGE_SEARCH)
+        fill_found(w);
+    return G_SOURCE_REMOVE;
+}
+
+/* While searching, every device in range reports its signal strength
+ * over and over: the list is redone at most a few times a second. */
+static void refill_soon(bt_wizard *w) {
+    if (w->page == PAGE_SEARCH && w->refill == 0)
+        w->refill = g_timeout_add(250, refill_now, w);
+}
+
 static void props_changed([[maybe_unused]] GDBusObjectManagerClient *m,
                           [[maybe_unused]] GDBusObjectProxy *o, [[maybe_unused]] GDBusProxy *i,
                           [[maybe_unused]] GVariant *c, [[maybe_unused]] const char *const *inv,
                           gpointer data) {
-    bt_wizard *w = data;
-    if (w->page == PAGE_SEARCH)
-        fill_found(w);
+    refill_soon(data);
 }
 
 static void added([[maybe_unused]] GDBusObjectManager *m, GDBusObject *o, gpointer data) {
     bt_wizard *w = data;
     if (w->page == PAGE_SEARCH) {
         g_hash_table_add(w->seen, g_strdup(g_dbus_object_get_object_path(o)));
-        fill_found(w);
+        refill_soon(w);
     }
 }
 
 static void removed([[maybe_unused]] GDBusObjectManager *m, [[maybe_unused]] GDBusObject *o,
                     gpointer data) {
-    bt_wizard *w = data;
-    if (w->page == PAGE_SEARCH)
-        fill_found(w);
+    refill_soon(data);
 }
 
 /* ---- building ---------------------------------------------------------------------- */
@@ -650,6 +662,8 @@ static void on_destroy([[maybe_unused]] GtkWidget *win, gpointer data) {
     }
     g_cancellable_cancel(w->cancel_op);
     g_object_unref(w->cancel_op);
+    if (w->refill != 0)
+        g_source_remove(w->refill);
     stop_discovery(w);
     if (a->objects != nullptr)
         g_signal_handlers_disconnect_by_data(a->objects, w);

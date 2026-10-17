@@ -23,24 +23,7 @@ typedef struct devprops {
 
 static const char *yes_no(bool b) { return b ? "Yes" : "No"; }
 
-static void show_state(devprops *d) {
-    xd_bt_type t = bt_device_type(d->dev);
-    gtk_image_set_from_icon_name(GTK_IMAGE(d->icon), t.icon, GTK_ICON_SIZE_DIALOG);
-    gtk_label_set_text(GTK_LABEL(d->type), t.name);
-    char *address = bt_prop_s(d->dev, "Address");
-    gtk_label_set_text(GTK_LABEL(d->address), address != nullptr ? address : "");
-    g_free(address);
-    gtk_label_set_text(GTK_LABEL(d->paired), yes_no(bt_prop_b(d->dev, "Paired")));
-    bool on = bt_prop_b(d->dev, "Connected");
-    gtk_label_set_text(GTK_LABEL(d->connected), yes_no(on));
-    gtk_button_set_label(GTK_BUTTON(d->connect), on ? "_Disconnect" : "_Connect");
-    gtk_widget_set_sensitive(d->connect, TRUE);
-    if (!gtk_widget_get_sensitive(d->apply)) {
-        d->updating = true;
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->trusted), bt_prop_b(d->dev, "Trusted"));
-        d->updating = false;
-    }
-
+static void show_services(devprops *d) {
     gtk_list_store_clear(d->services);
     GVariant *uuids = g_dbus_proxy_get_cached_property(G_DBUS_PROXY(d->dev), "UUIDs");
     if (uuids != nullptr && g_variant_is_of_type(uuids, G_VARIANT_TYPE_STRING_ARRAY)) {
@@ -58,9 +41,44 @@ static void show_state(devprops *d) {
         g_variant_unref(uuids);
 }
 
-static void on_dev_changed([[maybe_unused]] GDBusProxy *p, [[maybe_unused]] GVariant *c,
-                           [[maybe_unused]] const char *const *inv, gpointer data) {
-    show_state(data);
+static void show_state(devprops *d) {
+    xd_bt_type t = bt_device_type(d->dev);
+    gtk_image_set_from_icon_name(GTK_IMAGE(d->icon), t.icon, GTK_ICON_SIZE_DIALOG);
+    gtk_label_set_text(GTK_LABEL(d->type), t.name);
+    char *address = bt_prop_s(d->dev, "Address");
+    gtk_label_set_text(GTK_LABEL(d->address), address != nullptr ? address : "");
+    g_free(address);
+    gtk_label_set_text(GTK_LABEL(d->paired), yes_no(bt_prop_b(d->dev, "Paired")));
+    bool on = bt_prop_b(d->dev, "Connected");
+    gtk_label_set_text(GTK_LABEL(d->connected), yes_no(on));
+    gtk_button_set_label(GTK_BUTTON(d->connect), on ? "_Disconnect" : "_Connect");
+    if (!gtk_widget_get_sensitive(d->apply)) {
+        d->updating = true;
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->trusted), bt_prop_b(d->dev, "Trusted"));
+        d->updating = false;
+    }
+}
+
+static bool has_changed(GVariant *changed, const char *const *invalidated, const char *name) {
+    GVariant *v = g_variant_lookup_value(changed, name, nullptr);
+    if (v != nullptr) {
+        g_variant_unref(v);
+        return true;
+    }
+    return invalidated != nullptr && g_strv_contains(invalidated, name);
+}
+
+/* A connected device reports its signal strength often: the services
+ * list is redone only when they change, and Connect waits (greyed out)
+ * for the connection's state. */
+static void on_dev_changed([[maybe_unused]] GDBusProxy *p, GVariant *c, const char *const *inv,
+                           gpointer data) {
+    devprops *d = data;
+    show_state(d);
+    if (has_changed(c, inv, "Connected"))
+        gtk_widget_set_sensitive(d->connect, TRUE);
+    if (has_changed(c, inv, "UUIDs"))
+        show_services(d);
 }
 
 /* The device was removed (or BlueZ went away): nothing left to show. */
@@ -255,6 +273,7 @@ void bt_device_properties(bt_app *a, const char *path) {
                        TRUE, 0);
     xd_gtk_notebook_ctrl_tab(d->window, GTK_NOTEBOOK(tabs));
     show_state(d);
+    show_services(d);
     g_signal_connect(dev, "g-properties-changed", G_CALLBACK(on_dev_changed), d);
     g_signal_connect(a->objects, "object-removed", G_CALLBACK(on_removed), d);
     g_signal_connect(d->window, "response", G_CALLBACK(on_response), d);

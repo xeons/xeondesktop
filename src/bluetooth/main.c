@@ -679,18 +679,29 @@ static void refresh(bt_app *a) {
  * changed is redone. */
 static void props_changed([[maybe_unused]] GDBusObjectManagerClient *m,
                           [[maybe_unused]] GDBusObjectProxy *o, GDBusProxy *i, GVariant *c,
-                          [[maybe_unused]] const char *const *inv, gpointer data) {
+                          const char *const *inv, gpointer data) {
     bt_app *a = data;
     if (a->window == nullptr)
         return;
     const char *iface = g_dbus_proxy_get_interface_name(i);
     if (strcmp(iface, IFACE_DEVICE) == 0) {
-        /* The list has paired devices only. */
+        /* The list has paired devices only, and doesn't show their signal
+         * strength (RSSI) or advertising data, which change all the time. */
         GVariant *paired = g_variant_lookup_value(c, "Paired", nullptr);
         bool listed = paired != nullptr || bt_prop_b(G_DBUS_INTERFACE(i), "Paired");
         if (paired != nullptr)
             g_variant_unref(paired);
-        if (!listed)
+        static const char *const shown[] = {"Paired",     "Alias", "Name",      "Address",
+                                            "Class",      "Icon",  "Connected", "Blocked",
+                                            "Appearance", "LegacyPairing"};
+        bool relevant = inv != nullptr && inv[0] != nullptr;
+        for (size_t n = 0; n < XD_ARRAY_LEN(shown) && !relevant; n++) {
+            GVariant *v = g_variant_lookup_value(c, shown[n], nullptr);
+            relevant = v != nullptr;
+            if (v != nullptr)
+                g_variant_unref(v);
+        }
+        if (!listed || !relevant)
             return;
         fill_devices(a);
         device_buttons(a);
@@ -701,9 +712,18 @@ static void props_changed([[maybe_unused]] GDBusObjectManagerClient *m,
     }
 }
 
-static void added_removed([[maybe_unused]] GDBusObjectManager *m, [[maybe_unused]] GDBusObject *o,
+static void added_removed([[maybe_unused]] GDBusObjectManager *m, GDBusObject *o,
                           gpointer data) {
-    refresh(data);
+    bt_app *a = data;
+    /* A device (BlueZ's path for one is its adapter's plus "/dev_..."), as
+     * they come and go while searching: the radios (read from udev and the
+     * hardware database) stay as they are. */
+    if (a->window != nullptr && strstr(g_dbus_object_get_object_path(o), "/dev_") != nullptr) {
+        fill_devices(a);
+        device_buttons(a);
+        return;
+    }
+    refresh(a);
 }
 
 static void owner_changed([[maybe_unused]] GObject *m, [[maybe_unused]] GParamSpec *ps,

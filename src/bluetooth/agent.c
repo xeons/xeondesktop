@@ -107,6 +107,7 @@ static GtkWidget *agent_dialog(bt_app *a, const char *markup, GtkWidget *extra,
     gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
     gtk_label_set_max_width_chars(GTK_LABEL(label), 50);
     gtk_label_set_xalign(GTK_LABEL(label), 0);
+    g_object_set_data(G_OBJECT(dlg), "label", label);
     gtk_box_pack_start(GTK_BOX(col), label, FALSE, FALSE, 0);
     if (extra != nullptr)
         gtk_box_pack_start(GTK_BOX(col), extra, FALSE, FALSE, 0);
@@ -252,7 +253,6 @@ static void on_display_response(GtkDialog *d, [[maybe_unused]] int response, gpo
 /* `code`: what to type on the device; `typed`: how many digits it says
  * have been typed (DisplayPasskey's "entered"), or -1. */
 static void display(bt_app *a, const char *path, const char *code, int typed) {
-    close_display(a);
     char *name = device_name(a, path);
     char *progress = typed > 0 ? g_strdup_printf("\n\n%d of %zu digits typed.", typed, strlen(code))
                                : g_strdup("");
@@ -260,6 +260,17 @@ static void display(bt_app *a, const char *path, const char *code, int typed) {
         "To pair with <b>%s</b>, type this passkey on the device, then press Enter on it "
         "if it has an Enter key:\n\n<span size='xx-large' weight='bold'>%s</span>%s",
         name, code, progress);
+    /* A keyboard says so for each digit typed: the box shown already is
+     * updated rather than replaced (which would take the focus each time). */
+    if (a->display != nullptr &&
+        g_strcmp0(g_object_get_data(G_OBJECT(a->display), "device"), path) == 0) {
+        gtk_label_set_markup(GTK_LABEL(g_object_get_data(G_OBJECT(a->display), "label")), markup);
+        g_free(markup);
+        g_free(progress);
+        g_free(name);
+        return;
+    }
+    close_display(a);
     static const char *const cancel[] = {"Cancel"};
     a->display = agent_dialog(a, markup, nullptr, cancel, 1, nullptr);
     g_object_set_data_full(G_OBJECT(a->display), "device", g_strdup(path), g_free);
