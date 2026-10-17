@@ -247,6 +247,9 @@ static bool tcpip_run(props_dlg *p) {
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(t.dialog))), tabs, TRUE,
                        TRUE, 0);
     gtk_widget_show_all(t.dialog);
+    /* Closing Properties destroys this box too: keep it alive until we're
+     * done with it. */
+    g_object_ref(t.dialog);
     bool ok = false;
     while (gtk_dialog_run(GTK_DIALOG(t.dialog)) == GTK_RESPONSE_OK) {
         xd_nc_ipv4_form f = {
@@ -269,6 +272,7 @@ static bool tcpip_run(props_dlg *p) {
         break;
     }
     gtk_widget_destroy(t.dialog);
+    g_object_unref(t.dialog);
     g_free(mask);
     return ok;
 }
@@ -509,7 +513,9 @@ static char *selected_preferred(props_dlg *p) {
 static void removed(GObject *src, GAsyncResult *res, gpointer data) {
     GError *error = nullptr;
     if (!nm_remote_connection_delete_finish(NM_REMOTE_CONNECTION(src), res, &error)) {
-        nc_error(GTK_WINDOW(data), "The network could not be removed.", error);
+        /* Over Properties, unless it was closed meanwhile. */
+        nc_error(gtk_widget_get_mapped(data) ? GTK_WINDOW(data) : nullptr,
+                 "The network could not be removed.", error);
         g_error_free(error);
     }
     g_object_unref(data);
@@ -517,19 +523,27 @@ static void removed(GObject *src, GAsyncResult *res, gpointer data) {
 
 static void on_remove_preferred([[maybe_unused]] GtkButton *b, gpointer data) {
     props_dlg *p = data;
+    nc_app *app = p->app;
     char *uuid = selected_preferred(p);
     NMRemoteConnection *c =
-        uuid != nullptr ? nm_client_get_connection_by_uuid(p->app->client, uuid) : nullptr;
-    g_free(uuid);
-    if (c == nullptr)
+        uuid != nullptr ? nm_client_get_connection_by_uuid(app->client, uuid) : nullptr;
+    if (c == nullptr) {
+        g_free(uuid);
         return;
+    }
     char *q = g_strdup_printf("Remove '%s' from the preferred networks? Its key is forgotten.",
                               nm_connection_get_id(NM_CONNECTION(c)));
-    int r = xd_message_box(GTK_WINDOW(p->dialog), "Wireless Networks", XD_MB_QUESTION,
+    GtkWidget *dialog = g_object_ref(p->dialog);
+    int r = xd_message_box(GTK_WINDOW(dialog), "Wireless Networks", XD_MB_QUESTION,
                            XD_MB_YES_NO, TRUE, q);
     g_free(q);
-    if (r == GTK_RESPONSE_YES)
-        nm_remote_connection_delete_async(c, nullptr, removed, g_object_ref(p->dialog));
+    /* The box ran the main loop: the network may be gone by now (and
+     * Properties with `p`). */
+    c = r == GTK_RESPONSE_YES ? nm_client_get_connection_by_uuid(app->client, uuid) : nullptr;
+    g_free(uuid);
+    if (c != nullptr)
+        nm_remote_connection_delete_async(c, nullptr, removed, g_object_ref(dialog));
+    g_object_unref(dialog);
 }
 
 static void on_preferred_properties([[maybe_unused]] GtkButton *b, gpointer data) {

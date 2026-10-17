@@ -697,10 +697,13 @@ static void do_rename(nc_app *app, const char *key) {
     gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), box, TRUE, TRUE, 0);
     gtk_widget_show_all(d);
+    /* Closing the window destroys the box too: keep it until we're done. */
+    g_object_ref(d);
     char *name = gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK
                      ? g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(entry))))
                      : nullptr;
     gtk_widget_destroy(d);
+    g_object_unref(d);
     it = nc_find(app, key);
     if (it != nullptr && it->conn != nullptr && name != nullptr && name[0] != '\0' &&
         strcmp(name, it->name) != 0) {
@@ -1413,13 +1416,15 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
     nc_app *app = data;
     if (GTK_IS_ENTRY(gtk_window_get_focus(GTK_WINDOW(w))) || app->selected == nullptr)
         return FALSE;
-    /* Explorer's keys for the selected item. */
-    if (e->keyval == GDK_KEY_F2) {
-        do_rename(app, app->selected);
-        return TRUE;
-    }
-    if (e->keyval == GDK_KEY_Delete) {
-        do_delete(app, app->selected);
+    /* Explorer's keys for the selected item. Rename and Delete ask first,
+     * and the selection may change or go meanwhile: they get a copy. */
+    if (e->keyval == GDK_KEY_F2 || e->keyval == GDK_KEY_Delete) {
+        char *key = g_strdup(app->selected);
+        if (e->keyval == GDK_KEY_F2)
+            do_rename(app, key);
+        else
+            do_delete(app, key);
+        g_free(key);
         return TRUE;
     }
     if ((e->keyval == GDK_KEY_Return || e->keyval == GDK_KEY_KP_Enter) &&

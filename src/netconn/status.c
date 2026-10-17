@@ -329,8 +329,12 @@ static void on_details(status_dlg *d) {
     gtk_box_pack_start(GTK_BOX(box), sw, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box, TRUE, TRUE, 0);
     gtk_widget_show_all(dlg);
+    /* Status closes itself when the connection goes, and this box with it:
+     * keep it alive until we're done with it. */
+    g_object_ref(dlg);
     gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
+    g_object_unref(dlg);
 }
 
 static GtkWidget *button(const char *text, GCallback cb, status_dlg *d) {

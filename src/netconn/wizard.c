@@ -71,6 +71,19 @@ static void activated(GObject *src, GAsyncResult *res, gpointer data) {
     nc_release(app);
 }
 
+/* A saved network, chosen in View Available Wireless Networks. */
+static void saved_activated(GObject *src, GAsyncResult *res, gpointer data) {
+    nc_app *app = data;
+    GError *error = nullptr;
+    NMActiveConnection *a = nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
+    g_clear_object(&a);
+    if (error != nullptr) {
+        nc_error(nc_parent(app), "Could not connect to the wireless network.", error);
+        g_error_free(error);
+    }
+    nc_release(app);
+}
+
 static void added(GObject *src, GAsyncResult *res, gpointer data) {
     add_job *j = data;
     GError *error = nullptr;
@@ -843,7 +856,7 @@ static void on_connect([[maybe_unused]] GtkButton *b, gpointer data) {
     if (saved != nullptr) {
         nc_hold(c->app);
         nm_client_activate_connection_async(c->app->client, NM_CONNECTION(saved), c->device,
-                                            ap_path, nullptr, activated, c->app);
+                                            ap_path, nullptr, saved_activated, c->app);
         return;
     }
     const char *km = xd_nc_wifi_key_mgmt(nm_access_point_get_flags(ap),
