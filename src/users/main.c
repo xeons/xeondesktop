@@ -435,14 +435,15 @@ static GtkWidget *button(const char *text, GCallback cb, gpointer data) {
     return b;
 }
 
-static GtkWidget *button_row(GtkWidget *first, ...) {
+/* Two or three of them in a row (`third` may be nullptr). */
+static GtkWidget *button_row(GtkWidget *first, GtkWidget *second, GtkWidget *third) {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(row, GTK_ALIGN_END);
-    va_list ap;
-    va_start(ap, first);
-    for (GtkWidget *b = first; b != nullptr; b = va_arg(ap, GtkWidget *))
-        gtk_box_pack_start(GTK_BOX(row), b, FALSE, FALSE, 0);
-    va_end(ap);
+    GtkWidget *buttons[] = {first, second, third};
+    for (size_t i = 0; i < G_N_ELEMENTS(buttons); i++) {
+        if (buttons[i] != nullptr)
+            gtk_box_pack_start(GTK_BOX(row), buttons[i], FALSE, FALSE, 0);
+    }
     return row;
 }
 
@@ -1021,7 +1022,7 @@ static void page_delete(ua *u, GtkWidget *box, GDBusProxy *p) {
     u->ok = button("_Keep Files", G_CALLBACK(on_keep_files), u);
     gtk_box_pack_end(GTK_BOX(box),
                      button_row(u->ok, button("_Delete Files", G_CALLBACK(on_delete_files), u),
-                                button("Cancel", G_CALLBACK(go_back), u), nullptr),
+                                button("Cancel", G_CALLBACK(go_back), u)),
                      FALSE, FALSE, 0);
     g_free(text);
     g_free(home);
@@ -1073,7 +1074,7 @@ static void page_create_type(ua *u, GtkWidget *box) {
     u->ok = button("_Create Account", G_CALLBACK(on_create), u);
     gtk_box_pack_end(GTK_BOX(box),
                      button_row(button("< _Back", G_CALLBACK(go_back), u), u->ok,
-                                button("Cancel", G_CALLBACK(go_home), u), nullptr),
+                                button("Cancel", G_CALLBACK(go_home), u)),
                      FALSE, FALSE, 0);
 }
 

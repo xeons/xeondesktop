@@ -670,6 +670,8 @@ static void fill_networks(chooser *c) {
     for (guint i = 0; i < best->len; i++) {
         NMAccessPoint *ap = g_ptr_array_index(best, i);
         char *ssid = ap_ssid(ap);
+        if (ssid == nullptr)
+            continue; /* not kept above; the SSID can change in between */
         bool current = active_ssid != nullptr && strcmp(ssid, active_ssid) == 0;
         bool saved = saved_for(c, ap) != nullptr;
         unsigned strength = nm_access_point_get_strength(ap);
