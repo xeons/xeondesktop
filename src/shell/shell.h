@@ -25,6 +25,7 @@ typedef struct xd_tray xd_tray;
 typedef struct xd_tray_item xd_tray_item;
 typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
+typedef struct xd_sleep xd_sleep;
 
 typedef struct xd_early_output {
     struct wl_output *output;
@@ -178,6 +179,9 @@ struct xd_shell {
     struct ext_idle_notifier_v1 *idle_notifier;
     struct ext_idle_notification_v1 *saver_note;
     struct ext_idle_notification_v1 *monitor_note;
+    struct ext_idle_notification_v1 *standby_note;   /* Power Options' System standby */
+    struct ext_idle_notification_v1 *hibernate_note; /* and System hibernates */
+    xd_sleep *sleep; /* logind (sleep.c), or nullptr */
     struct zwlr_output_power_manager_v1 *power_manager;
     int saver_pidfd; /* the running screen saver, or -1 */
     bool monitors_off;
@@ -417,6 +421,14 @@ const char *xd_shell_own_command(xd_shell *shell, const char *program, const cha
 char *xd_shell_own_program(const char *program);
 /* Whether `program` is in PATH. */
 bool xd_shell_have_program(const char *program);
+/* sleep.c: standby and hibernate through logind, and locking the screen
+ * before sleeping ([Power] PasswordOnResume). */
+void xd_sleep_init(xd_shell *shell);
+void xd_sleep_finish(xd_shell *shell);
+/* Settings changed. */
+void xd_sleep_update(xd_shell *shell);
+/* Idle long enough: stand by (or hibernate). */
+void xd_sleep_now(xd_shell *shell, bool hibernate);
 /* sys_*.c: our notification area applets. */
 void xd_sys_battery_init(xd_shell *shell);
 void xd_sys_network_init(xd_shell *shell);

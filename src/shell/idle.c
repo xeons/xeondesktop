@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: MIT
- * Idle timers: the screen saver after [ScreenSaver] Wait minutes, and
- * monitors off after MonitorOff minutes, both through ext-idle-notify so
- * video players (idle-inhibit) hold them off. Monitors go off with
- * wlr-output-power-management and come back on at the first input.
+ * Idle timers: the screen saver after [ScreenSaver] Wait minutes,
+ * monitors off after MonitorOff minutes, and standby or hibernation after
+ * [Power] Standby / Hibernate minutes (sleep.c), all through
+ * ext-idle-notify so video players (idle-inhibit) hold them off. Monitors
+ * go off with wlr-output-power-management and come back on at the first
+ * input.
  *
  * XD_IDLE_SECONDS=1 counts the settings in seconds instead (testing).
  */
@@ -97,30 +99,62 @@ static const struct ext_idle_notification_v1_listener monitor_listener = {
     .resumed = monitor_resumed,
 };
 
+/* ---- standby and hibernation ----------------------------------------------------- */
+
+static void standby_idled(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+    xd_sleep_now(data, false);
+}
+
+static void hibernate_idled(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+    xd_sleep_now(data, true);
+}
+
+static void sleep_resumed([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct ext_idle_notification_v1 *n) {}
+
+static const struct ext_idle_notification_v1_listener standby_listener = {
+    .idled = standby_idled,
+    .resumed = sleep_resumed,
+};
+
+static const struct ext_idle_notification_v1_listener hibernate_listener = {
+    .idled = hibernate_idled,
+    .resumed = sleep_resumed,
+};
+
 /* ---- setup ------------------------------------------------------------------- */
 
+static void drop_note(struct ext_idle_notification_v1 **note) {
+    if (*note != nullptr) {
+        ext_idle_notification_v1_destroy(*note);
+        *note = nullptr;
+    }
+}
+
+static struct ext_idle_notification_v1 *
+add_note(xd_shell *shell, int minutes, const struct ext_idle_notification_v1_listener *listener) {
+    struct ext_idle_notification_v1 *note = ext_idle_notifier_v1_get_idle_notification(
+        shell->idle_notifier, (uint32_t)timeout_ms(minutes), shell->seat);
+    ext_idle_notification_v1_add_listener(note, listener, shell);
+    return note;
+}
+
 void xd_idle_update(xd_shell *shell) {
-    if (shell->saver_note != nullptr) {
-        ext_idle_notification_v1_destroy(shell->saver_note);
-        shell->saver_note = nullptr;
-    }
-    if (shell->monitor_note != nullptr) {
-        ext_idle_notification_v1_destroy(shell->monitor_note);
-        shell->monitor_note = nullptr;
-    }
+    drop_note(&shell->saver_note);
+    drop_note(&shell->monitor_note);
+    drop_note(&shell->standby_note);
+    drop_note(&shell->hibernate_note);
     if (shell->idle_notifier == nullptr || shell->seat == nullptr)
         return;
     const xd_settings *s = &shell->settings;
-    if (xd_saver_find(s->screensaver) != nullptr && s->screensaver_wait > 0) {
-        shell->saver_note = ext_idle_notifier_v1_get_idle_notification(
-            shell->idle_notifier, (uint32_t)timeout_ms(s->screensaver_wait), shell->seat);
-        ext_idle_notification_v1_add_listener(shell->saver_note, &saver_listener, shell);
-    }
-    if (s->monitor_off > 0) {
-        shell->monitor_note = ext_idle_notifier_v1_get_idle_notification(
-            shell->idle_notifier, (uint32_t)timeout_ms(s->monitor_off), shell->seat);
-        ext_idle_notification_v1_add_listener(shell->monitor_note, &monitor_listener, shell);
-    } else if (shell->monitors_off) {
+    if (xd_saver_find(s->screensaver) != nullptr && s->screensaver_wait > 0)
+        shell->saver_note = add_note(shell, s->screensaver_wait, &saver_listener);
+    if (s->monitor_off > 0)
+        shell->monitor_note = add_note(shell, s->monitor_off, &monitor_listener);
+    else if (shell->monitors_off)
         set_monitors(shell, true);
-    }
+    if (s->standby > 0)
+        shell->standby_note = add_note(shell, s->standby, &standby_listener);
+    if (s->hibernate > 0)
+        shell->hibernate_note = add_note(shell, s->hibernate, &hibernate_listener);
 }

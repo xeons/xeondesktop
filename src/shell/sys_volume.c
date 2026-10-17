@@ -408,8 +408,9 @@ void xd_volume_flyout_render_dirty([[maybe_unused]] xd_shell *shell) {
 
 static const char *icon(void *data) {
     volume *v = data;
-    if (!v->ready)
-        return nullptr; /* no sound server or output */
+    /* No sound server or output, or turned off in Sounds and Audio Devices. */
+    if (!v->ready || !v->shell->settings.volume_icon)
+        return nullptr;
     int p = percent(v);
     return v->muted || p == 0 ? "audio-volume-muted"
            : p < 34          ? "audio-volume-low"
@@ -443,6 +444,10 @@ static void act_mixer(xd_shell *shell, [[maybe_unused]] void *d) {
     xd_shell_launch(shell, "pavucontrol");
 }
 
+static void act_properties(xd_shell *shell, [[maybe_unused]] void *d) {
+    xd_shell_launch(shell, xd_shell_own_command(shell, "xd-sound", nullptr));
+}
+
 static void act_mute(xd_shell *shell, void *d) {
     (void)shell;
     volume *v = d;
@@ -455,6 +460,8 @@ static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
     it->action = act_mixer;
     it->bold = true;
     it->disabled = !xd_shell_have_program("pavucontrol");
+    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Adjust Audio Properties", nullptr);
+    it->action = act_properties;
     it = xd_menu_add(tree, m, XD_MENU_ACTION, "Mute", nullptr);
     it->action = act_mute;
     it->action_data = v;

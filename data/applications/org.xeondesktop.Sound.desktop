@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Sounds and Audio Devices
+Comment=Change the sound scheme for your computer, or configure the settings for your speakers and recording devices
+Exec=xd-sound
+Icon=preferences-desktop-sound
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=sound
+Keywords=sound;volume;audio;speakers;microphone;scheme;
+StartupWMClass=org.xeondesktop.Sound

@@ -30,6 +30,7 @@ depends=(
   'shadow'  # passwd, for Change Password
   'dbus'    # dbus-update-activation-environment
   'libpulse'
+  'libcanberra'
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
@@ -52,6 +53,7 @@ optdepends=(
   'blueman: Bluetooth Devices...'
   'pavucontrol: Open Volume Control'
   'pipewire-pulse: the volume icon (or PulseAudio)'
+  'sound-theme-freedesktop: the default sound scheme'
 )
 backup=('etc/pam.d/xeondesktop')
 source=("$pkgname-$pkgver.tar.gz")

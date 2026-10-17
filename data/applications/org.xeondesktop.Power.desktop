@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Power Options
+Comment=Configure energy-saving settings for your computer
+Exec=xd-power
+Icon=preferences-system-power-management
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=performance
+Keywords=power;standby;suspend;hibernate;monitor;battery;
+StartupWMClass=org.xeondesktop.Power

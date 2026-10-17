@@ -45,6 +45,18 @@ typedef struct xd_tray_behavior {
 } xd_tray_behavior;
 enum { XD_TRAY_RULES_MAX = 48 };
 
+/* [Power] Scheme: XP's power schemes. Choosing one in Power Options fills
+ * in its timeouts; the timeouts themselves are what the shell uses. */
+typedef enum xd_power_scheme : uint8_t {
+    XD_POWER_HOME,         /* Home/Office Desk */
+    XD_POWER_PORTABLE,     /* Portable/Laptop */
+    XD_POWER_PRESENTATION, /* Presentation */
+    XD_POWER_ALWAYS_ON,    /* Always On */
+    XD_POWER_MINIMAL,      /* Minimal Power Management */
+    XD_POWER_MAX_BATTERY,  /* Max Battery */
+    XD_POWER_SCHEME_COUNT,
+} xd_power_scheme;
+
 /* [Keyboard]: XKB names ("" = XKB_DEFAULT_* or the system default) and
  * key repeat, applied by the compositor to every keyboard. */
 typedef struct xd_keyboard_settings {
@@ -101,6 +113,17 @@ typedef struct xd_settings {
     xd_keyboard_settings keyboard;
     xd_tray_behavior tray_rules[XD_TRAY_RULES_MAX];
     size_t tray_rule_count;
+
+    /* [Sound] */
+    bool volume_icon; /* "Place volume icon in the taskbar" */
+
+    /* [Power] (monitor off is [ScreenSaver] MonitorOff, shared with
+     * Display Properties) */
+    xd_power_scheme power_scheme;
+    int standby;          /* minutes of idle before standby (suspend); 0 = never */
+    int hibernate;        /* minutes of idle before hibernating; 0 = never */
+    bool battery_icon;    /* "Always show icon on the taskbar"; else only on battery */
+    bool resume_password; /* lock the screen before sleeping */
 } xd_settings;
 
 /* An icon's rule ([Notifications]), XD_TRAY_AUTO if it has none. */
@@ -121,6 +144,8 @@ void xd_settings_path(xd_strbuf *out);
 void xd_settings_serialize(const xd_settings *s, xd_strbuf *out);
 
 const char *xd_wallpaper_mode_name(xd_wallpaper_mode m);
+/* "home", "portable", ...: [Power] Scheme's values. */
+const char *xd_power_scheme_name(xd_power_scheme scheme);
 
 /* Directory holding data/ (schemes, ...): $XD_DATA_DIR, the source tree
  * next to a build directory, or the install prefix. */

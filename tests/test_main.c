@@ -10,6 +10,7 @@
 #include "../src/apps/runcmd.h"
 #include "../src/security/passwd.h"
 #include "../src/settings/settings.h"
+#include "../src/settings/sounds.h"
 #include "../src/shell/apps.h"
 #include "../src/ui/textedit.h"
 #include "../src/theme/theme.h"
@@ -523,6 +524,71 @@ static void test_settings(void) {
     CHECK(xl.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
 }
 
+static void test_power_settings(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    /* XP's defaults: the volume and power icons shown, a password on resume. */
+    CHECK(a.volume_icon && a.battery_icon && a.resume_password);
+    CHECK(a.power_scheme == XD_POWER_HOME && a.standby == 0 && a.hibernate == 0);
+    xd_settings_parse(XD_STR("[Sound]\nVolumeIcon=false\n"
+                             "[Power]\nScheme=portable\nStandby=20\nHibernate=180\n"
+                             "AlwaysShowIcon=false\nPasswordOnResume=false\n"),
+                      &a);
+    CHECK(!a.volume_icon && a.power_scheme == XD_POWER_PORTABLE);
+    CHECK(a.standby == 20 && a.hibernate == 180 && !a.battery_icon && !a.resume_password);
+    CHECK(strcmp(xd_power_scheme_name(a.power_scheme), "portable") == 0);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && b.standby == 20 && !b.volume_icon);
+    xd_strbuf_free(&text);
+    /* Out of range or unknown: the defaults stay. */
+    xd_settings_parse(XD_STR("[Power]\nScheme=turbo\nStandby=-5\nHibernate=99999\n"), &a);
+    CHECK(a.power_scheme == XD_POWER_HOME && a.standby == 0 && a.hibernate == 0);
+}
+
+static void test_sound_scheme(void) {
+    xd_sound_scheme s;
+    xd_sound_scheme_init(&s, XD_SOUNDS_DEFAULT);
+    CHECK(!xd_sound_scheme_modified(&s));
+    CHECK(strcmp(s.sounds[XD_SOUND_CRITICAL_STOP], "dialog-error") == 0);
+    CHECK(xd_sound_kind_of(s.sounds[XD_SOUND_LOGON]) == XD_SOUND_THEMED);
+    CHECK(xd_sound_kind_of(s.sounds[XD_SOUND_MAXIMIZE]) == XD_SOUND_NONE);
+    CHECK(strcmp(xd_sound_event_get(XD_SOUND_DEFAULT_BEEP)->label, "Default Beep") == 0);
+    /* Paths must be absolute; theme names plain. */
+    CHECK(xd_sound_scheme_set(&s, XD_SOUND_LOGON, "/usr/share/sounds/x.wav"));
+    CHECK(xd_sound_kind_of(s.sounds[XD_SOUND_LOGON]) == XD_SOUND_FILE);
+    CHECK(!xd_sound_scheme_set(&s, XD_SOUND_LOGON, "../x.wav"));
+    CHECK(!xd_sound_scheme_set(&s, XD_SOUND_LOGON, "a b"));
+    CHECK(xd_sound_scheme_set(&s, XD_SOUND_MAXIMIZE, "window-maximized"));
+    CHECK(xd_sound_scheme_set(&s, XD_SOUND_ASTERISK, ""));
+    CHECK(xd_sound_scheme_modified(&s));
+
+    /* Round trip. */
+    xd_strbuf text = {0};
+    xd_sound_scheme_serialize(&s, &text);
+    xd_sound_scheme t;
+    xd_sound_scheme_parse(xd_strbuf_view(&text), &t);
+    for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++)
+        CHECK(strcmp(s.sounds[i], t.sounds[i]) == 0);
+    xd_sound_scheme_free(&t);
+    xd_strbuf_free(&text);
+    xd_sound_scheme_free(&s);
+
+    /* No Sounds, with one event set; bad values keep the scheme's. */
+    xd_sound_scheme_parse(XD_STR("[Sounds]\nScheme=none\n[Events]\nWindowsLogon=service-login\n"
+                                 "CriticalStop=relative/path.wav\nUnknown=bell\n"),
+                          &s);
+    CHECK(s.base == XD_SOUNDS_NONE && strcmp(s.sounds[XD_SOUND_LOGON], "service-login") == 0);
+    CHECK(s.sounds[XD_SOUND_CRITICAL_STOP][0] == '\0' && xd_sound_scheme_modified(&s));
+    xd_sound_scheme_free(&s);
+    /* A broken file: Windows Default. */
+    xd_sound_scheme_parse(XD_STR("[Sounds\nScheme=none\n"), &s);
+    CHECK(s.base == XD_SOUNDS_DEFAULT && !xd_sound_scheme_modified(&s));
+    xd_sound_scheme_free(&s);
+}
+
 static int css_errors;
 
 static void on_css_error([[maybe_unused]] GtkCssProvider *p, [[maybe_unused]] GtkCssSection *s,
@@ -620,6 +686,8 @@ int main(void) {
     test_runcmd();
     test_settings();
     test_tray_rules();
+    test_power_settings();
+    test_sound_scheme();
     test_gtk_css();
     test_passwd();
     printf("%d checks, %d failures\n", checks, failures);

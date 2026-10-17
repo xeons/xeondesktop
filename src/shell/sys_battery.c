@@ -86,7 +86,10 @@ static void got_proxy([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer
 
 static const char *icon(void *data) {
     battery *b = data;
-    return b->present ? b->icon : nullptr;
+    /* Power Options' "Always show icon on the taskbar"; without it, XP
+     * showed the meter only while running on batteries. */
+    bool on_battery = b->state == DISCHARGING || b->state == EMPTY;
+    return b->present && (b->shell->settings.battery_icon || on_battery) ? b->icon : nullptr;
 }
 
 /* "2 hr 13 min" */
@@ -129,7 +132,7 @@ static char *tooltip(void *data) {
 }
 
 static void power_options(xd_shell *shell, [[maybe_unused]] void *d) {
-    xd_shell_launch(shell, "xd-sysdm --page 2");
+    xd_shell_launch(shell, xd_shell_own_command(shell, "xd-power", nullptr));
 }
 
 static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {

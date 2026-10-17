@@ -3,6 +3,7 @@
  * keeps it in sync with the window list and the clock.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <glib.h>
 #include <locale.h>
 #include <poll.h>
@@ -16,6 +17,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../settings/soundplay.h"
 #include "../ui/image.h"
 #include "shell.h"
 
@@ -585,8 +587,10 @@ static void apply_settings(xd_shell *shell, bool startup) {
     if (startup || strcmp(old_wallpaper, shell->settings.wallpaper) != 0)
         load_wallpaper(shell);
     xd_idle_update(shell);
+    xd_sleep_update(shell);
     if (startup)
         return;
+    xd_tray_changed(shell); /* the volume and power icons may come or go */
 
     /* Re-theme: menus are rebuilt (their commands carry overrides). */
     xd_menu_close_all(shell);
@@ -597,6 +601,23 @@ static void apply_settings(xd_shell *shell, bool startup) {
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
         xd_taskbar_retheme(bar);
     }
+}
+
+/* The Windows Logon sound, once a session: the compositor restarts a
+ * shell that crashed, which mustn't greet the user again. */
+static void logon_sound(void) {
+    const char *session = getenv("XEONDESKTOP_PID");
+    if (session == nullptr)
+        return; /* not started by the compositor */
+    char *name = g_strdup_printf("xeondesktop-logon-%s", session);
+    char *path = g_build_filename(g_get_user_runtime_dir(), name, nullptr);
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd >= 0) {
+        close(fd);
+        xd_sound_play_event(XD_SOUND_LOGON);
+    }
+    g_free(path);
+    g_free(name);
 }
 
 /* XD_SHELL_OPEN_MENU="Programs/Accessories" opens the Start menu and that
@@ -890,6 +911,8 @@ int main(int argc, char **argv) {
     xd_sys_volume_init(&shell);
     xd_deskicons_init(&shell);
     xd_sys_battery_init(&shell);
+    xd_sleep_init(&shell);
+    logon_sound();
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
     for (size_t i = 0; i < shell.early_count; i++)
@@ -920,6 +943,8 @@ int main(int argc, char **argv) {
         xd_free(t);
     }
     xd_tray_finish(&shell);
+    xd_sleep_finish(&shell);
+    xd_sound_finish();
     xd_deskicons_finish(&shell);
     xd_dnd_finish(&shell);
     xd_menu_tree_free(&shell.menu_tree);

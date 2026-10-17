@@ -24,6 +24,7 @@ Build-Depends:
  libpolkit-agent-1-dev,
  libpam0g-dev,
  libpulse-dev,
+ libcanberra-dev,
  libjson-glib-dev,
  libegl-dev,
  libgles-dev,
@@ -57,6 +58,7 @@ Recommends:
  network-manager,
  upower,
  pavucontrol,
+ sound-theme-freedesktop,
  network-manager-gnome,
 Suggests:
  bluez,

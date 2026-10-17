@@ -123,6 +123,7 @@ settings_lib = static_library(
   'src/settings/state.c',
   'src/settings/monitors.c',
   'src/settings/gtktheme.c',
+  'src/settings/sounds.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -303,6 +304,8 @@ endif
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
 # The volume icon: PulseAudio's client library (PipeWire serves it too).
 pulse_dep = dependency('libpulse-mainloop-glib', include_type: 'system')
+# The sound scheme's sounds (xd-sound's Play, the shell's logon sound).
+canberra_dep = dependency('libcanberra', include_type: 'system')
 # forkpty: in libc since glibc 2.34, in libutil before.
 util_dep = cc.has_function('forkpty', prefix: '#include <pty.h>') ? declare_dependency() : cc.find_library('util')
 gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
@@ -429,6 +432,8 @@ install_data(
   'data/applications/org.xeondesktop.DateTime.desktop',
   'data/applications/org.xeondesktop.Display.desktop',
   'data/applications/org.xeondesktop.Taskbar.desktop',
+  'data/applications/org.xeondesktop.Sound.desktop',
+  'data/applications/org.xeondesktop.Power.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -494,6 +499,24 @@ executable(
 )
 
 executable(
+  'xd-sound',
+  'src/sound/main.c',
+  'src/sound/scheme.c',
+  'src/settings/soundplay.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, pulse_dep, canberra_dep, m_dep],
+  install: true,
+)
+
+executable(
+  'xd-power',
+  'src/power/main.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+
+executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
   link_with: [gtkapp_lib],
@@ -532,8 +555,10 @@ executable(
   'src/shell/sys_volume.c',
   'src/shell/taskmenu.c',
   'src/shell/recent.c',
+  'src/shell/sleep.c',
+  'src/settings/soundplay.c',
   link_with: rename_lib,
-  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep],
+  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )

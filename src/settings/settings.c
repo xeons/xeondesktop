@@ -22,6 +22,14 @@ static const char *const start_style_names[] = {"classic", "xp", "win7"};
 static const char *const smoothing_names[] = {"standard", "none", "cleartype"};
 static const char *const edge_names[] = {"bottom", "top", "left", "right"};
 static const char *const tray_rule_names[] = {"auto", "hide", "show"};
+static const char *const power_scheme_names[XD_POWER_SCHEME_COUNT] = {
+    [XD_POWER_HOME] = "home",
+    [XD_POWER_PORTABLE] = "portable",
+    [XD_POWER_PRESENTATION] = "presentation",
+    [XD_POWER_ALWAYS_ON] = "alwayson",
+    [XD_POWER_MINIMAL] = "minimal",
+    [XD_POWER_MAX_BATTERY] = "maxbattery",
+};
 
 xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id) {
     for (size_t i = 0; id != nullptr && i < s->tray_rule_count; i++) {
@@ -54,6 +62,11 @@ const char *xd_wallpaper_mode_name(xd_wallpaper_mode m) {
     return mode_names[m];
 }
 
+const char *xd_power_scheme_name(xd_power_scheme scheme) {
+    XD_ASSERT((unsigned)scheme < XD_POWER_SCHEME_COUNT);
+    return power_scheme_names[scheme];
+}
+
 void xd_settings_defaults(xd_settings *s) {
     *s = (xd_settings){
         .style = XD_STYLE_CLASSIC,
@@ -74,6 +87,9 @@ void xd_settings_defaults(xd_settings *s) {
         .screensaver_wait = 15,
         /* Windows' defaults: about 30 repeats a second after half a second. */
         .keyboard = {.repeat_delay = 500, .repeat_rate = 30},
+        .volume_icon = true,
+        .battery_icon = true,
+        .resume_password = true, /* as in XP */
     };
 }
 
@@ -221,6 +237,24 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             k->repeat_delay = (int)n;
         else if (KEY("RepeatRate") && xd_str_parse_i64(v, 0, 100, &n))
             k->repeat_rate = (int)n;
+    } else if (SEC("Sound")) {
+        if (KEY("VolumeIcon"))
+            parse_bool(v, &s->volume_icon);
+    } else if (SEC("Power")) {
+        int64_t m;
+        if (KEY("Scheme")) {
+            int i = index_of(power_scheme_names, XD_ARRAY_LEN(power_scheme_names), v);
+            if (i >= 0)
+                s->power_scheme = (xd_power_scheme)i;
+        } else if (KEY("Standby") && xd_str_parse_i64(v, 0, 1440, &m)) {
+            s->standby = (int)m;
+        } else if (KEY("Hibernate") && xd_str_parse_i64(v, 0, 1440, &m)) {
+            s->hibernate = (int)m;
+        } else if (KEY("AlwaysShowIcon")) {
+            parse_bool(v, &s->battery_icon);
+        } else if (KEY("PasswordOnResume")) {
+            parse_bool(v, &s->resume_password);
+        }
     }
 #undef SEC
 #undef KEY
@@ -326,6 +360,12 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Keyboard", "Model", s->keyboard.model);
     g_key_file_set_integer(kf, "Keyboard", "RepeatDelay", s->keyboard.repeat_delay);
     g_key_file_set_integer(kf, "Keyboard", "RepeatRate", s->keyboard.repeat_rate);
+    g_key_file_set_boolean(kf, "Sound", "VolumeIcon", s->volume_icon);
+    g_key_file_set_string(kf, "Power", "Scheme", power_scheme_names[s->power_scheme]);
+    g_key_file_set_integer(kf, "Power", "Standby", s->standby);
+    g_key_file_set_integer(kf, "Power", "Hibernate", s->hibernate);
+    g_key_file_set_boolean(kf, "Power", "AlwaysShowIcon", s->battery_icon);
+    g_key_file_set_boolean(kf, "Power", "PasswordOnResume", s->resume_password);
     for (size_t i = 0; i < s->tray_rule_count; i++)
         g_key_file_set_string(kf, "Notifications", s->tray_rules[i].id,
                               tray_rule_names[s->tray_rules[i].rule]);
