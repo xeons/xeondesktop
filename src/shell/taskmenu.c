@@ -5,6 +5,11 @@
  * Size, Minimize, Maximize, Close), and the Start button's (Open, Explore,
  * Search, Properties, Open/Explore All Users).
  */
+#include <errno.h>
+#include <glib.h>
+#include <string.h>
+#include <unistd.h>
+
 #include "../core/alloc.h"
 #include "shell.h"
 
@@ -125,6 +130,66 @@ static void separator(xd_menu_tree *tree, xd_menu_model *m) {
     xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
 }
 
+/* ---- Quick Launch ---------------------------------------------------------- */
+
+/* Items name their shortcut by file (indices shift when the folder
+ * changes); the names live in the context tree's arena. */
+static void quick_path(const char *file, xd_strbuf *out) {
+    xd_quicklaunch_folder(out);
+    xd_strbuf_appendf(out, "/%s", file);
+}
+
+static void act_quick_open(xd_shell *shell, void *d) {
+    ssize_t i = xd_quicklaunch_find(shell, d);
+    if (i >= 0)
+        xd_quicklaunch_activate(shell, (size_t)i);
+}
+
+static void act_quick_delete(xd_shell *shell, void *d) {
+    (void)shell;
+    xd_strbuf path = {0};
+    quick_path(d, &path);
+    /* Only the shortcut (or link) in the Quick Launch folder goes; the
+     * folder watch updates the toolbar. */
+    if (unlink(xd_strbuf_cstr(&path)) != 0)
+        fprintf(stderr, "xd-shell: cannot delete %s: %s\n", xd_strbuf_cstr(&path),
+                strerror(errno));
+    xd_strbuf_free(&path);
+}
+
+static void act_quick_properties(xd_shell *shell, void *d) {
+    xd_strbuf path = {0}, arg = {0};
+    quick_path(d, &path);
+    char *quoted = g_shell_quote(xd_strbuf_cstr(&path));
+    xd_strbuf_appendf(&arg, "--properties %s", quoted);
+    g_free(quoted);
+    xd_shell_launch(shell, xd_shell_own_command(shell, "xd-files", xd_strbuf_cstr(&arg)));
+    xd_strbuf_free(&arg);
+    xd_strbuf_free(&path);
+}
+
+static void act_quick_folder(xd_shell *shell, [[maybe_unused]] void *d) {
+    xd_strbuf dir = {0};
+    xd_quicklaunch_folder(&dir);
+    char *quoted = g_shell_quote(xd_strbuf_cstr(&dir));
+    xd_shell_launch(shell, xd_shell_own_command(shell, "xd-files", quoted));
+    g_free(quoted);
+    xd_strbuf_free(&dir);
+}
+
+/* A shortcut's menu: Open, Delete, Properties, as Explorer's. */
+static xd_menu_model *quick_item_menu(xd_shell *shell, xd_menu_tree *tree, size_t index) {
+    xd_menu_model *m = xd_menu_model_new(tree);
+    char *file = xd_str_arena_cstr(&tree->arena,
+                                   xd_str_from_cstr(shell->quicklaunch.files[index]));
+    add(tree, m, "Open", act_quick_open, file)->bold = true;
+    separator(tree, m);
+    add(tree, m, "Delete", act_quick_delete, file);
+    separator(tree, m);
+    add(tree, m, "Properties", act_quick_properties, file);
+    return m;
+}
+
 /* ---- grouped buttons ------------------------------------------------------- */
 
 static bool in_group(const xd_toplevel *t, const char *app_id) {
@@ -207,10 +272,17 @@ void xd_taskbar_group_menu(xd_taskbar *bar, int hit, uint32_t serial) {
     bar->dirty = true;
 }
 
-/* The taskbar's menu; over the clock, Adjust Date/Time comes first. */
-static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree, bool clock) {
+/* The taskbar's menu; over the clock, Adjust Date/Time comes first, and
+ * over Quick Launch the toolbar's own Open Folder and Close Toolbar. */
+static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree, bool clock,
+                                   bool quick) {
     xd_menu_model *m = xd_menu_model_new(tree);
     bool can_arrange = shell->arranger != nullptr;
+    if (quick) {
+        add(tree, m, "Open Folder", act_quick_folder, nullptr);
+        add(tree, m, "Close Toolbar", act_quick_launch, nullptr);
+        separator(tree, m);
+    }
     if (clock) {
         xd_menu_item *it = add(tree, m, "Adjust Date/Time", nullptr, nullptr);
         it->command = xd_shell_own_command(shell, "xd-timedate", nullptr);
@@ -379,8 +451,12 @@ void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint3
         model = window_menu(shell, &shell->context_tree, bar->task_views[hit]);
     else if (hit == XD_HIT_START)
         model = start_button_menu(shell, &shell->context_tree);
+    else if (xd_hit_is_quick(hit) &&
+             (size_t)(XD_HIT_QUICK - hit) < shell->quicklaunch.count)
+        model = quick_item_menu(shell, &shell->context_tree, (size_t)(XD_HIT_QUICK - hit));
     else
-        model = taskbar_menu(shell, &shell->context_tree, hit == XD_HIT_TRAY);
+        model = taskbar_menu(shell, &shell->context_tree, hit == XD_HIT_TRAY,
+                             hit == XD_HIT_QUICK_BAND);
     /* Anchored at the pointer; opens upwards. */
     xd_rect anchor = {(int)x, (int)y, 1, 1};
     xd_taskbar_take_keyboard(bar);

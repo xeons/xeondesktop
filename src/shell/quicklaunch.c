@@ -106,8 +106,10 @@ void xd_quicklaunch_reload(xd_shell *shell) {
     xd_quicklaunch *ql = &shell->quicklaunch;
     release_items(ql);
     xd_free(ql->items);
+    xd_free(ql->files);
     xd_arena_destroy(&ql->arena);
     ql->items = nullptr;
+    ql->files = nullptr;
     ql->count = 0;
     xd_arena_init(&ql->arena, 4096);
 
@@ -138,13 +140,16 @@ void xd_quicklaunch_reload(xd_shell *shell) {
         qsort(names, n, sizeof(*names), compare_names);
 
     ql->items = xd_alloc_array(XD_MAX(n, 1), sizeof(*ql->items));
+    ql->files = xd_alloc_array(XD_MAX(n, 1), sizeof(*ql->files));
     xd_strbuf path = {0};
     for (size_t i = 0; i < n; i++) {
         xd_strbuf_clear(&path);
         xd_strbuf_appendf(&path, "%s/%s", xd_strbuf_cstr(&dir), names[i]);
         xd_app app;
-        if (xd_app_from_file(xd_strbuf_cstr(&path), &ql->arena, &app))
+        if (xd_app_from_file(xd_strbuf_cstr(&path), &ql->arena, &app)) {
+            ql->files[ql->count] = xd_str_arena_cstr(&ql->arena, xd_str_from_cstr(names[i]));
             ql->items[ql->count++] = app;
+        }
         xd_free(names[i]);
     }
     xd_free(names);
@@ -187,8 +192,20 @@ void xd_quicklaunch_finish(xd_shell *shell) {
         close(ql->watch_fd);
     release_items(ql);
     xd_free(ql->items);
+    xd_free(ql->files);
     xd_arena_destroy(&ql->arena);
     *ql = (xd_quicklaunch){.watch_fd = -1};
+}
+
+void xd_quicklaunch_folder(xd_strbuf *out) { quicklaunch_dir(out); }
+
+ssize_t xd_quicklaunch_find(const xd_shell *shell, const char *file) {
+    const xd_quicklaunch *ql = &shell->quicklaunch;
+    for (size_t i = 0; i < ql->count; i++) {
+        if (strcmp(ql->files[i], file) == 0)
+            return (ssize_t)i;
+    }
+    return -1;
 }
 
 void xd_quicklaunch_activate(xd_shell *shell, size_t index) {

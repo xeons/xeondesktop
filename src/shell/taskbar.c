@@ -134,6 +134,7 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     /* Quick Launch: grip, small flat icon buttons, grip. */
     const xd_quicklaunch *ql = &shell->quicklaunch;
     bar->quick_count = 0;
+    bar->quick_band = (xd_rect){0};
     if (shell->settings.quick_launch && ql->count > 0) {
         if (ql->count > bar->quick_cap) {
             bar->quick_cap = ql->count;
@@ -170,6 +171,7 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
         }
         if (!locked)
             xd_theme_draw_toolbar_grip(t, cr, (xd_rect){qx + xd_tpx(t, 2), qy, grip, qh});
+        bar->quick_band = (xd_rect){after_start, qy, qx + xd_tpx(t, 2) + grip - after_start, qh};
         after_start = qx + xd_tpx(t, 2) + grip;
     }
 
@@ -458,6 +460,8 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
         if (rect_contains(bar->quick_rects[i], x, y))
             return XD_HIT_QUICK - (int)i;
     }
+    if (rect_contains(bar->quick_band, x, y))
+        return XD_HIT_QUICK_BAND;
     for (size_t i = 0; i < bar->task_count; i++) {
         if (hits_column(bar->task_rects[i], x, ly, h))
             return (int)i;

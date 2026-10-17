@@ -53,6 +53,7 @@ typedef struct xd_toplevel {
 typedef struct xd_quicklaunch {
     xd_arena arena;
     xd_app *items;
+    const char **files; /* items' file names in the folder (arena) */
     size_t count;
     int watch_fd;
 } xd_quicklaunch;
@@ -80,6 +81,7 @@ enum {
     XD_HIT_TRAY = -3,
     XD_HIT_PAGE_UP = -4, /* task button pages, when they don't all fit */
     XD_HIT_PAGE_DOWN = -5,
+    XD_HIT_QUICK_BAND = -6, /* Quick Launch, between or around its buttons */
     XD_HIT_QUICK = -100,     /* Quick Launch button i: XD_HIT_QUICK - i */
     XD_HIT_TRAY_ICON = -1000, /* notification area icon i: XD_HIT_TRAY_ICON - i */
 };
@@ -109,6 +111,7 @@ typedef struct xd_taskbar {
     xd_rect start_rect;
     xd_rect tray_rect;
     size_t quick_count;
+    xd_rect quick_band; /* the whole Quick Launch toolbar, grips included */
     size_t quick_cap;
     xd_rect *quick_rects;
     size_t task_count;
@@ -384,5 +387,8 @@ void xd_quicklaunch_reload(xd_shell *shell);
 bool xd_quicklaunch_watch_changed(xd_shell *shell);
 void xd_quicklaunch_finish(xd_shell *shell);
 void xd_quicklaunch_activate(xd_shell *shell, size_t index);
+/* The Quick Launch folder, and a shortcut's index by file name (or -1). */
+void xd_quicklaunch_folder(xd_strbuf *out);
+ssize_t xd_quicklaunch_find(const xd_shell *shell, const char *file);
 
 #endif
