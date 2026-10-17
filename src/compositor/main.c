@@ -11,6 +11,7 @@
 #include <wlr/render/pixman.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_data_control_v1.h>
+#include <wlr/types/wlr_ext_data_control_v1.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
@@ -260,7 +261,10 @@ static bool server_init(xd_server *server) {
     wlr_xdg_output_manager_v1_create(server->display, server->output_layout);
     wlr_screencopy_manager_v1_create(server->display);
     wlr_export_dmabuf_manager_v1_create(server->display);
+    /* Clipboard managers and VirtualBox's shared clipboard (VBoxClient
+     * prefers the ext protocol, and falls back to wlr's). */
     wlr_data_control_manager_v1_create(server->display);
+    wlr_ext_data_control_manager_v1_create(server->display, 1);
     wlr_primary_selection_v1_device_manager_create(server->display);
     return true;
 }

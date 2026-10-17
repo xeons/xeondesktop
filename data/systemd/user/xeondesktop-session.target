@@ -11,3 +11,7 @@ Documentation=man:systemd.special(7)
 BindsTo=graphical-session.target
 Wants=graphical-session-pre.target
 After=graphical-session-pre.target
+# XDG autostart entries (/etc/xdg/autostart, ~/.config/autostart) as
+# systemd's generator makes units of them, honouring OnlyShowIn/NotShowIn
+# against XDG_CURRENT_DESKTOP: VirtualBox's clipboard (VBoxClient), applets.
+Wants=xdg-desktop-autostart.target
