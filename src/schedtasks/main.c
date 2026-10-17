@@ -29,6 +29,7 @@ enum {
     C_RESULT,
     C_BASE, /* the unit base; "" for Add Scheduled Task */
     C_ADD,
+    C_KEY, /* what the row shows, to leave unchanged rows alone */
     C_COUNT
 };
 enum { VIEW_LARGE, VIEW_LIST, VIEW_DETAILS, VIEW_COUNT };
@@ -47,6 +48,8 @@ typedef struct folder {
     int view;
     bool others; /* list the user's other timers */
     bool syncing;
+    bool listing;        /* a refresh is reading the manager in a thread */
+    unsigned generation; /* bumped by every reload: a thread's older list is dropped */
 } folder;
 
 /* ---- the columns' text ---------------------------------------------------------------- */
@@ -139,9 +142,19 @@ static void set_row(folder *f, GtkTreeIter *iter, const xd_task_info *t) {
     char *last = t->last_usec != 0 ? time_text(t->last_usec) : g_strdup("Never");
     char *result = result_text(t);
     GIcon *icon = task_icon(f, t);
-    gtk_list_store_set(f->store, iter, C_ICON, icon, C_NAME, t->name, C_SCHEDULE, sched, C_NEXT,
-                       next, C_LAST, last, C_STATUS, status_text(t), C_RESULT, result, C_BASE,
-                       t->base, C_ADD, FALSE, -1);
+    char *icon_name = g_icon_to_string(icon);
+    char *key = g_strjoin("\n", t->name, sched, next, last, status_text(t), result, t->base,
+                          icon_name != nullptr ? icon_name : "", nullptr);
+    char *old = nullptr;
+    gtk_tree_model_get(GTK_TREE_MODEL(f->store), iter, C_KEY, &old, -1);
+    /* Unchanged rows aren't set again: every set redraws the row. */
+    if (g_strcmp0(old, key) != 0)
+        gtk_list_store_set(f->store, iter, C_ICON, icon, C_NAME, t->name, C_SCHEDULE, sched,
+                           C_NEXT, next, C_LAST, last, C_STATUS, status_text(t), C_RESULT, result,
+                           C_BASE, t->base, C_ADD, FALSE, C_KEY, key, -1);
+    g_free(old);
+    g_free(key);
+    g_free(icon_name);
     g_object_unref(icon);
     g_free(result);
     g_free(last);
@@ -151,30 +164,38 @@ static void set_row(folder *f, GtkTreeIter *iter, const xd_task_info *t) {
 
 static void update_status(folder *f);
 
-/* Updates the rows in place, so selection and scrolling stay. */
-static void reload(folder *f) {
+/* Shows `tasks` (taken), updating the rows in place so selection and
+ * scrolling stay. */
+static void show_tasks(folder *f, GPtrArray *tasks) {
     GPtrArray *old = f->tasks;
-    f->tasks = xd_tasks_list(f->app.bus, f->others);
+    f->tasks = tasks;
     GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
     GtkTreeModel *m = GTK_TREE_MODEL(f->store);
+    /* The rows first: the store is sorted by name, so a renamed row moves,
+     * and walking it while setting would skip rows. Its iterators stay
+     * valid as rows move. */
+    GArray *rows = g_array_new(FALSE, FALSE, sizeof(GtkTreeIter));
     GtkTreeIter iter;
-    bool valid = gtk_tree_model_get_iter_first(m, &iter);
-    while (valid) {
+    for (bool valid = gtk_tree_model_get_iter_first(m, &iter); valid;
+         valid = gtk_tree_model_iter_next(m, &iter))
+        g_array_append_val(rows, iter);
+    for (guint i = 0; i < rows->len; i++) {
+        GtkTreeIter *row = &g_array_index(rows, GtkTreeIter, i);
         char *base = nullptr;
         gboolean add = FALSE;
-        gtk_tree_model_get(m, &iter, C_BASE, &base, C_ADD, &add, -1);
+        gtk_tree_model_get(m, row, C_BASE, &base, C_ADD, &add, -1);
         const xd_task_info *t = add ? nullptr : find_task(f, base);
         g_free(base);
-        if (add) {
-            valid = gtk_tree_model_iter_next(m, &iter);
-        } else if (t == nullptr) {
-            valid = gtk_list_store_remove(f->store, &iter);
+        if (add)
+            continue;
+        if (t == nullptr) {
+            gtk_list_store_remove(f->store, row);
         } else {
-            set_row(f, &iter, t);
+            set_row(f, row, t);
             g_hash_table_add(seen, t->base);
-            valid = gtk_tree_model_iter_next(m, &iter);
         }
     }
+    g_array_unref(rows);
     for (guint i = 0; i < f->tasks->len; i++) {
         const xd_task_info *t = g_ptr_array_index(f->tasks, i);
         if (g_hash_table_contains(seen, t->base))
@@ -188,10 +209,59 @@ static void reload(folder *f) {
     update_status(f);
 }
 
+/* Reads the tasks now: after a change, which the caller looks up next. */
+static void reload(folder *f) {
+    f->generation++;
+    show_tasks(f, xd_tasks_list(f->app.bus, f->others));
+}
+
 static void refresh(sched_app *app) { reload((folder *)app); }
 
+/* The periodic refresh reads the manager in a thread: several calls per
+ * timer, which shouldn't hold up the window. */
+typedef struct listing {
+    GDBusConnection *bus;
+    bool others;
+    unsigned generation;
+} listing;
+
+static void listing_free(listing *l) {
+    if (l->bus != nullptr)
+        g_object_unref(l->bus);
+    g_free(l);
+}
+
+static void list_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
+                        [[maybe_unused]] GCancellable *c) {
+    const listing *l = data;
+    g_task_return_pointer(task, xd_tasks_list(l->bus, l->others),
+                          (GDestroyNotify)g_ptr_array_unref);
+}
+
+static void on_listed([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
+    folder *f = data;
+    const listing *l = g_task_get_task_data(G_TASK(res));
+    GPtrArray *tasks = g_task_propagate_pointer(G_TASK(res), nullptr);
+    f->listing = false;
+    /* A reload since has newer news. */
+    if (l->generation == f->generation)
+        show_tasks(f, tasks);
+    else
+        g_ptr_array_unref(tasks);
+}
+
 static gboolean tick(gpointer data) {
-    reload(data);
+    folder *f = data;
+    if (f->listing)
+        return G_SOURCE_CONTINUE;
+    f->listing = true;
+    listing *l = g_new0(listing, 1);
+    *l = (listing){f->app.bus != nullptr ? g_object_ref(f->app.bus) : nullptr, f->others,
+                   f->generation};
+    GTask *task = g_task_new(nullptr, nullptr, on_listed, f);
+    g_task_set_task_data(task, l, (GDestroyNotify)listing_free);
+    g_task_run_in_thread(task, list_thread);
+    g_object_unref(task);
     return G_SOURCE_CONTINUE;
 }
 
@@ -662,7 +732,7 @@ int main(int argc, char **argv) {
 
     f.store = gtk_list_store_new(C_COUNT, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING,
                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                 G_TYPE_STRING, G_TYPE_BOOLEAN);
+                                 G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_STRING);
     gtk_tree_sortable_set_default_sort_func(GTK_TREE_SORTABLE(f.store), compare_rows, nullptr,
                                             nullptr);
     gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(f.store),
