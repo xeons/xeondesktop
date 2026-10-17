@@ -30,6 +30,22 @@ static const char *const power_scheme_names[XD_POWER_SCHEME_COUNT] = {
     [XD_POWER_MINIMAL] = "minimal",
     [XD_POWER_MAX_BATTERY] = "maxbattery",
 };
+static const char *const desk_icon_size_names[] = {"small", "medium", "large"};
+/* [DesktopIcons]' Change Icon keys, by xd_desk_icon. */
+static const char *const desk_icon_keys[XD_DESK_ICON_COUNT] = {
+    [XD_DESK_ICON_COMPUTER] = "MyComputerIcon",
+    [XD_DESK_ICON_DOCUMENTS] = "MyDocumentsIcon",
+    [XD_DESK_ICON_NETWORK] = "MyNetworkPlacesIcon",
+    [XD_DESK_ICON_TRASH_FULL] = "RecycleBinFullIcon",
+    [XD_DESK_ICON_TRASH_EMPTY] = "RecycleBinEmptyIcon",
+};
+static const char *const desk_icon_defaults[XD_DESK_ICON_COUNT] = {
+    [XD_DESK_ICON_COMPUTER] = "computer",
+    [XD_DESK_ICON_DOCUMENTS] = "folder-documents",
+    [XD_DESK_ICON_NETWORK] = "network-workgroup",
+    [XD_DESK_ICON_TRASH_FULL] = "user-trash-full",
+    [XD_DESK_ICON_TRASH_EMPTY] = "user-trash",
+};
 static const char *const view_names[] = {"thumbnails", "tiles", "icons", "list", "details"};
 
 xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id) {
@@ -63,6 +79,23 @@ const char *xd_wallpaper_mode_name(xd_wallpaper_mode m) {
     return mode_names[m];
 }
 
+const char *xd_desk_icon_default(xd_desk_icon icon) {
+    XD_ASSERT((unsigned)icon < XD_DESK_ICON_COUNT);
+    return desk_icon_defaults[icon];
+}
+
+int xd_desk_icon_px(const xd_settings *s) {
+    switch (s->desktop_icons.size) {
+    case XD_DESK_ICONS_SMALL:
+        return 16;
+    case XD_DESK_ICONS_LARGE:
+        return 48;
+    case XD_DESK_ICONS_MEDIUM:
+        break;
+    }
+    return s->large_icons ? 48 : 32;
+}
+
 const char *xd_power_scheme_name(xd_power_scheme scheme) {
     XD_ASSERT((unsigned)scheme < XD_POWER_SCHEME_COUNT);
     return power_scheme_names[scheme];
@@ -72,6 +105,9 @@ void xd_settings_defaults(xd_settings *s) {
     *s = (xd_settings){
         .style = XD_STYLE_CLASSIC,
         .wallpaper_mode = XD_WALLPAPER_FILL,
+        /* Windows 2000's icons but Internet Explorer; Align to Grid on. */
+        .desktop_icons = {.documents = true, .computer = true, .network = true, .show = true,
+                          .align_to_grid = true, .size = XD_DESK_ICONS_MEDIUM},
         .menu_transitions = true,
         .animate_windows = true,
         .full_window_drag = true,
@@ -185,6 +221,37 @@ static void parse_access(xd_access_settings *a, xd_str key, xd_str v) {
 #undef KEY
 }
 
+static void parse_desktop_icons(xd_desktop_icon_settings *d, xd_str key, xd_str v) {
+#define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
+    if (KEY("MyDocuments")) {
+        parse_bool(v, &d->documents);
+    } else if (KEY("MyComputer")) {
+        parse_bool(v, &d->computer);
+    } else if (KEY("MyNetworkPlaces")) {
+        parse_bool(v, &d->network);
+    } else if (KEY("WebBrowser")) {
+        parse_bool(v, &d->browser);
+    } else if (KEY("Show")) {
+        parse_bool(v, &d->show);
+    } else if (KEY("AutoArrange")) {
+        parse_bool(v, &d->auto_arrange);
+    } else if (KEY("AlignToGrid")) {
+        parse_bool(v, &d->align_to_grid);
+    } else if (KEY("Size")) {
+        int i = index_of(desk_icon_size_names, XD_ARRAY_LEN(desk_icon_size_names), v);
+        if (i >= 0)
+            d->size = (xd_desk_icon_size)i;
+    } else {
+        /* Change Icon: an image file, by its absolute path. */
+        for (size_t i = 0; i < XD_DESK_ICON_COUNT; i++) {
+            if (xd_str_eq_nocase(key, xd_str_from_cstr(desk_icon_keys[i])) &&
+                (v.len == 0 || (v.ptr[0] == '/' && v.len < sizeof(d->icons[i]))))
+                copy_into(d->icons[i], sizeof(d->icons[i]), v);
+        }
+    }
+#undef KEY
+}
+
 static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     xd_settings *s = user;
 #define SEC(n) xd_str_eq_nocase(section, XD_STR(n))
@@ -214,6 +281,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             if (i >= 0)
                 s->wallpaper_mode = (xd_wallpaper_mode)i;
         }
+    } else if (SEC("DesktopIcons")) {
+        parse_desktop_icons(&s->desktop_icons, key, v);
     } else if (SEC("Effects")) {
         if (KEY("MenuTransitions"))
             parse_bool(v, &s->menu_transitions);
@@ -426,6 +495,17 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
                            nullptr);
     g_key_file_set_string(kf, "Desktop", "Wallpaper", s->wallpaper);
     g_key_file_set_string(kf, "Desktop", "WallpaperMode", mode_names[s->wallpaper_mode]);
+    const xd_desktop_icon_settings *di = &s->desktop_icons;
+    g_key_file_set_boolean(kf, "DesktopIcons", "MyDocuments", di->documents);
+    g_key_file_set_boolean(kf, "DesktopIcons", "MyComputer", di->computer);
+    g_key_file_set_boolean(kf, "DesktopIcons", "MyNetworkPlaces", di->network);
+    g_key_file_set_boolean(kf, "DesktopIcons", "WebBrowser", di->browser);
+    g_key_file_set_boolean(kf, "DesktopIcons", "Show", di->show);
+    g_key_file_set_boolean(kf, "DesktopIcons", "AutoArrange", di->auto_arrange);
+    g_key_file_set_boolean(kf, "DesktopIcons", "AlignToGrid", di->align_to_grid);
+    g_key_file_set_string(kf, "DesktopIcons", "Size", desk_icon_size_names[di->size]);
+    for (size_t i = 0; i < XD_DESK_ICON_COUNT; i++)
+        g_key_file_set_string(kf, "DesktopIcons", desk_icon_keys[i], di->icons[i]);
     g_key_file_set_boolean(kf, "Effects", "MenuTransitions", s->menu_transitions);
     g_key_file_set_boolean(kf, "Effects", "FullWindowDrag", s->full_window_drag);
     g_key_file_set_boolean(kf, "Effects", "AnimateWindows", s->animate_windows);

@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: MIT
  * Desktop icons, on the first monitor's desktop as in Windows: My
- * Documents, My Computer and the Recycle Bin, then the Desktop folder's
- * files, on XP's 75x75 grid in columns from the top left.
+ * Documents, My Computer, My Network Places, the Recycle Bin and the web
+ * browser (those Display Properties' Desktop Items shows), then the
+ * Desktop folder's files, on XP's 75x75 grid (for 32px icons) in columns
+ * from the top left.
  *
  * Click selects (Ctrl adds or removes, Shift selects a run), a drag on
  * the background selects a rectangle, a drag on an icon moves the
- * selection to other grid cells (remembered in the "desktop-icons" state
- * file), a double-click opens. A click gives the desktop the keyboard:
+ * selection to other grid cells, or anywhere with Align to Grid off, or
+ * along the order with Auto Arrange on (remembered in the "desktop-icons"
+ * state file); a double-click opens. A click gives the desktop the keyboard:
  * arrows, Enter, Delete, F2, Ctrl+A, Ctrl+X/C/V, F5, Alt+Enter, typing a
  * name's first letters, and Alt+F4 for Shut Down. Rename edits the label
  * in place. Right-click menus follow XP's; file commands (Delete,
@@ -33,9 +36,11 @@
 #include "menu.h"
 #include "shell.h"
 
-static constexpr int CELL_W = 75; /* XP's icon spacing */
-static constexpr int CELL_H = 75;
-static constexpr int ICON = 32;
+/* XP's icon spacing is 75 for 32px icons: the icon and 43px for the
+ * label's width and line. Bigger icons widen the grid by as much; smaller
+ * ones keep the label's width. */
+static constexpr int CELL_SPACING = 43;
+static constexpr int CELL_MIN_W = 75;
 static constexpr int MAX_ICONS = 4096;
 static constexpr double DRAG_THRESHOLD = 4.0;
 static constexpr int TYPEAHEAD_MS = 1000; /* typed letters add up within this */
@@ -43,6 +48,8 @@ static constexpr int TYPEAHEAD_MS = 1000; /* typed letters add up within this */
 #define SPECIAL_DOCUMENTS "::documents"
 #define SPECIAL_COMPUTER "::computer"
 #define SPECIAL_TRASH "::trash"
+#define SPECIAL_NETWORK "::network"
+#define SPECIAL_BROWSER "::browser"
 
 typedef struct icon {
     char *id; /* a special's "::name", else the file's name in the folder */
@@ -50,19 +57,29 @@ typedef struct icon {
     char *icon_names[4];
     char *uri; /* what opening it opens */
     char *path; /* the file, for files; nullptr for specials */
+    char *app_id; /* the web browser's desktop file id: opening starts it */
     bool special;
-    int rank; /* specials' order: My Documents, My Computer, Recycle Bin */
+    int rank; /* specials' order, as Windows 2000's desktop */
     bool is_dir;
     bool is_launcher; /* a .desktop file */
     bool is_link;     /* a symbolic link */
     char *sort_type;
     guint64 size;
     gint64 mtime;
-    int col, row;
+    int col, row; /* its cell; off the grid, the nearest one */
     bool placed;
+    bool off_grid; /* dropped with Align to Grid off: at (x, y) */
+    int x, y;      /* off the grid: its box's top left, from the work area's */
     bool selected;
     xd_rect hit; /* logical, from the last frame */
 } icon;
+
+/* Where an icon was put, by its id (saved across reloads and sessions). */
+typedef struct place {
+    int col, row;
+    bool off_grid;
+    int x, y;
+} place;
 
 struct xd_deskicons {
     xd_shell *shell;
@@ -71,7 +88,10 @@ struct xd_deskicons {
     GFileMonitor *dir_monitor;
     GFileMonitor *trash_monitor;
     guint reload_timer;
-    GHashTable *saved; /* id -> packed cell (col << 16 | row) */
+    GHashTable *saved; /* id -> place* */
+    xd_desktop_icon_settings applied; /* the [DesktopIcons] the icons follow */
+    int icon_px;       /* the icons' size, logical */
+    int cell_w, cell_h; /* the grid's spacing, logical */
     xd_rect work;      /* logical: the desktop less the taskbar */
     int cols, rows;
     bool have_work;    /* the desktop has been laid out once */
@@ -152,6 +172,7 @@ static void icon_free(gpointer p) {
         g_free(ic->icon_names[i]);
     g_free(ic->uri);
     g_free(ic->path);
+    g_free(ic->app_id);
     g_free(ic->sort_type);
     xd_free(ic);
 }
@@ -170,17 +191,52 @@ static void set_icon_names(icon *ic, GIcon *gicon, const char *fallback) {
         ic->icon_names[n] = g_strdup(fallback);
 }
 
-static icon *special(const char *id, const char *label, const char *icon_name, const char *uri) {
+/* My Documents and the others, in their Desktop Items icon (an image
+ * chosen with Change Icon, else the theme's). */
+static icon *special(const xd_desktop_icon_settings *s, const char *id, int rank,
+                     const char *label, xd_desk_icon which, const char *uri) {
     icon *ic = XD_NEW(icon);
     ic->id = g_strdup(id);
+    ic->rank = rank;
     ic->label = g_strdup(label);
-    ic->icon_names[0] = g_strdup(icon_name);
-    ic->icon_names[1] = g_strdup("folder");
+    size_t n = 0;
+    if (s->icons[which][0] != '\0')
+        ic->icon_names[n++] = g_strdup(s->icons[which]);
+    ic->icon_names[n++] = g_strdup(xd_desk_icon_default(which));
+    ic->icon_names[n] = g_strdup("folder");
     ic->uri = g_strdup(uri);
     ic->special = true;
     ic->is_dir = true;
     ic->sort_type = g_strdup("");
     return ic;
+}
+
+/* XP's Internet Explorer icon: here the default web browser, under its
+ * own name. Opening it starts the browser. */
+static icon *browser_icon(int rank) {
+    GAppInfo *app = g_app_info_get_default_for_uri_scheme("http");
+    const char *app_id = app != nullptr ? g_app_info_get_id(app) : nullptr;
+    if (app_id == nullptr) {
+        g_clear_object(&app);
+        return nullptr;
+    }
+    icon *ic = XD_NEW(icon);
+    ic->id = g_strdup(SPECIAL_BROWSER);
+    ic->rank = rank;
+    ic->label = g_strdup(g_app_info_get_name(app));
+    set_icon_names(ic, g_app_info_get_icon(app), "web-browser");
+    ic->app_id = g_strdup(app_id);
+    ic->special = true;
+    ic->sort_type = g_strdup("");
+    g_object_unref(app);
+    return ic;
+}
+
+/* My Network Places browses GIO's network:// (gvfs's network backend).
+ * Without it there's nothing to show, as Windows without networking. */
+static bool network_available(void) {
+    const gchar *const *schemes = g_vfs_get_supported_uri_schemes(g_vfs_get_default());
+    return schemes != nullptr && g_strv_contains(schemes, "network");
 }
 
 static bool trash_empty(void) {
@@ -241,17 +297,33 @@ static GFile *desktop_dir(void) {
 
 static int compare_icons(gconstpointer pa, gconstpointer pb);
 
-static GPtrArray *load_icons(GFile *dir) {
+static GPtrArray *load_icons(GFile *dir, const xd_desktop_icon_settings *s) {
     GPtrArray *out = g_ptr_array_new_with_free_func(icon_free);
-    const char *docs = g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS);
-    GFile *docs_file = g_file_new_for_path(docs != nullptr ? docs : g_get_home_dir());
-    char *docs_uri = g_file_get_uri(docs_file);
-    g_object_unref(docs_file);
-    g_ptr_array_add(out, special(SPECIAL_DOCUMENTS, "My Documents", "folder-documents", docs_uri));
-    g_free(docs_uri);
-    g_ptr_array_add(out, special(SPECIAL_COMPUTER, "My Computer", "computer", "computer:///"));
-    g_ptr_array_add(out, special(SPECIAL_TRASH, "Recycle Bin",
-                                 trash_empty() ? "user-trash" : "user-trash-full", "trash:///"));
+    /* Show Desktop Icons off: none at all. */
+    if (!s->show)
+        return out;
+    if (s->documents) {
+        const char *docs = g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS);
+        GFile *docs_file = g_file_new_for_path(docs != nullptr ? docs : g_get_home_dir());
+        char *docs_uri = g_file_get_uri(docs_file);
+        g_object_unref(docs_file);
+        g_ptr_array_add(out, special(s, SPECIAL_DOCUMENTS, 0, "My Documents",
+                                     XD_DESK_ICON_DOCUMENTS, docs_uri));
+        g_free(docs_uri);
+    }
+    if (s->computer)
+        g_ptr_array_add(out, special(s, SPECIAL_COMPUTER, 1, "My Computer",
+                                     XD_DESK_ICON_COMPUTER, "computer:///"));
+    if (s->network && network_available())
+        g_ptr_array_add(out, special(s, SPECIAL_NETWORK, 2, "My Network Places",
+                                     XD_DESK_ICON_NETWORK, "network:///"));
+    g_ptr_array_add(out, special(s, SPECIAL_TRASH, 3, "Recycle Bin",
+                                 trash_empty() ? XD_DESK_ICON_TRASH_EMPTY
+                                               : XD_DESK_ICON_TRASH_FULL,
+                                 "trash:///"));
+    icon *browser = s->browser ? browser_icon(4) : nullptr;
+    if (browser != nullptr)
+        g_ptr_array_add(out, browser);
 
     GFileEnumerator *en = g_file_enumerate_children(
         dir,
@@ -270,8 +342,6 @@ static GPtrArray *load_icons(GFile *dir) {
         g_object_unref(info);
     }
     g_clear_object(&en);
-    for (guint i = 0; i < 3 && i < out->len; i++)
-        ((icon *)g_ptr_array_index(out, i))->rank = (int)i;
     /* Icons without a place yet go in name order, folders first. */
     g_ptr_array_sort(out, compare_icons);
     return out;
@@ -290,6 +360,14 @@ static void redraw(xd_deskicons *di) {
     xd_desktop *d = host(di->shell);
     if (d != nullptr)
         d->dirty = true;
+}
+
+/* The icon size and grid spacing that [DesktopIcons] and [Effects] ask for. */
+static void update_sizes(xd_deskicons *di) {
+    int px = xd_desk_icon_px(&di->shell->settings);
+    di->icon_px = px;
+    di->cell_w = XD_MAX(px + CELL_SPACING, CELL_MIN_W);
+    di->cell_h = px + CELL_SPACING;
 }
 
 /* The work area: the desktop less a taskbar that's always there. */
@@ -315,9 +393,36 @@ static void update_work(xd_deskicons *di, const xd_desktop *d) {
             break;
         }
     }
+    update_sizes(di);
     di->work = w;
-    di->cols = XD_MAX(w.w / CELL_W, 1);
-    di->rows = XD_MAX((w.h - 2) / CELL_H, 1);
+    di->cols = XD_MAX(w.w / di->cell_w, 1);
+    di->rows = XD_MAX((w.h - 2) / di->cell_h, 1);
+}
+
+static xd_rect cell_rect(const xd_deskicons *di, int col, int row) {
+    return (xd_rect){di->work.x + col * di->cell_w, di->work.y + 2 + row * di->cell_h,
+                     di->cell_w, di->cell_h};
+}
+
+/* Where an icon is drawn: its cell, or where it was dropped off the grid. */
+static xd_rect icon_box(const xd_deskicons *di, const icon *ic) {
+    if (ic->off_grid)
+        return (xd_rect){di->work.x + ic->x, di->work.y + ic->y, di->cell_w, di->cell_h};
+    return cell_rect(di, ic->col, ic->row);
+}
+
+/* The cell nearest a box at (x, y) from the work area's top left. */
+static void nearest_cell(const xd_deskicons *di, int x, int y, int *col, int *row) {
+    long c = lround((double)x / di->cell_w);
+    long r = lround((double)(y - 2) / di->cell_h);
+    *col = CLAMP((int)c, 0, di->cols - 1);
+    *row = CLAMP((int)r, 0, di->rows - 1);
+}
+
+/* An off-grid box kept on the work area (it may have shrunk). */
+static void clamp_box(const xd_deskicons *di, int *x, int *y) {
+    *x = CLAMP(*x, 0, XD_MAX(di->work.w - di->cell_w, 0));
+    *y = CLAMP(*y, 0, XD_MAX(di->work.h - di->cell_h, 0));
 }
 
 static icon *at_cell(xd_deskicons *di, int col, int row) {
@@ -355,70 +460,177 @@ static void next_free(xd_deskicons *di, int *col, int *row) {
     *row = 0;
 }
 
-static guint pack_cell(int col, int row) { return (guint)col << 16 | (guint)row; }
+/* The free cell nearest (col, row); past the screen's if none is. */
+static void nearest_free(xd_deskicons *di, int *col, int *row) {
+    if (at_cell(di, *col, *row) == nullptr)
+        return;
+    int best = INT_MAX, best_col = *col, best_row = *row;
+    for (int c = 0; c < di->cols; c++) {
+        for (int r = 0; r < di->rows; r++) {
+            int dist = (c - *col) * (c - *col) + (r - *row) * (r - *row);
+            if (dist < best && at_cell(di, c, r) == nullptr) {
+                best = dist;
+                best_col = c;
+                best_row = r;
+            }
+        }
+    }
+    if (best == INT_MAX) {
+        next_free(di, col, row);
+    } else {
+        *col = best_col;
+        *row = best_row;
+    }
+}
 
-/* Saved cells first, then everything else in the free cells, in order;
- * those are remembered too, so icons stay put as files come and go. */
+static void put_in_cell(icon *ic, int col, int row) {
+    ic->col = col;
+    ic->row = row;
+    ic->off_grid = false;
+    ic->placed = true;
+}
+
+static void remember(xd_deskicons *di, const icon *ic) {
+    place *p = XD_NEW(place);
+    *p = (place){.col = ic->col, .row = ic->row, .off_grid = ic->off_grid, .x = ic->x, .y = ic->y};
+    g_hash_table_replace(di->saved, g_strdup(ic->id), p);
+}
+
+/* Auto Arrange keeps the icons' order: saved places in grid order, then
+ * the new ones (the sort is stable: they stay in name order). */
+static int compare_saved_order(gconstpointer pa, gconstpointer pb, gpointer data) {
+    xd_deskicons *di = data;
+    const icon *a = *(const icon *const *)pa;
+    const icon *b = *(const icon *const *)pb;
+    const place *x = g_hash_table_lookup(di->saved, a->id);
+    const place *y = g_hash_table_lookup(di->saved, b->id);
+    if ((x == nullptr) != (y == nullptr))
+        return x == nullptr ? 1 : -1;
+    if (x == nullptr)
+        return 0;
+    long ox = (long)x->col * 0x10000 + x->row, oy = (long)y->col * 0x10000 + y->row;
+    if (ox == oy && x->off_grid && y->off_grid) {
+        ox = (long)x->x * 0x10000 + x->y;
+        oy = (long)y->x * 0x10000 + y->y;
+    }
+    return (ox > oy) - (ox < oy);
+}
+
+/* Lays every icon out. Auto Arrange packs them in columns in their order;
+ * otherwise saved cells come first, then icons dropped off the grid
+ * (snapped to the nearest free cell if Align to Grid is on), then the
+ * rest in the free cells, in order. New places are remembered, so icons
+ * stay put as files come and go. */
 static void place_all(xd_deskicons *di) {
     if (!di->have_work)
         return;
     for (guint i = 0; i < di->icons->len; i++) {
         icon *ic = g_ptr_array_index(di->icons, i);
         ic->placed = false;
+        ic->off_grid = false;
+    }
+    int col = 0, row = 0;
+    if (di->applied.auto_arrange) {
+        g_ptr_array_sort_with_data(di->icons, compare_saved_order, di);
+        for (guint i = 0; i < di->icons->len; i++) {
+            icon *ic = g_ptr_array_index(di->icons, i);
+            next_free(di, &col, &row);
+            put_in_cell(ic, col, row);
+            remember(di, ic);
+        }
+        return;
     }
     for (guint i = 0; i < di->icons->len; i++) {
         icon *ic = g_ptr_array_index(di->icons, i);
-        gpointer v;
-        if (!g_hash_table_lookup_extended(di->saved, ic->id, nullptr, &v))
+        const place *p = g_hash_table_lookup(di->saved, ic->id);
+        if (p != nullptr && !p->off_grid && p->col < di->cols && p->row < di->rows &&
+            at_cell(di, p->col, p->row) == nullptr)
+            put_in_cell(ic, p->col, p->row);
+    }
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        const place *p = g_hash_table_lookup(di->saved, ic->id);
+        if (ic->placed || p == nullptr || !p->off_grid)
             continue;
-        guint packed = GPOINTER_TO_UINT(v);
-        int col = (int)(packed >> 16);
-        int row = (int)(packed & 0xffff);
-        if (col < di->cols && row < di->rows && at_cell(di, col, row) == nullptr) {
+        int x = p->x, y = p->y;
+        clamp_box(di, &x, &y);
+        nearest_cell(di, x, y, &col, &row);
+        if (di->applied.align_to_grid) {
+            nearest_free(di, &col, &row);
+            put_in_cell(ic, col, row);
+            remember(di, ic);
+        } else {
             ic->col = col;
             ic->row = row;
+            ic->x = x;
+            ic->y = y;
+            ic->off_grid = true;
             ic->placed = true;
         }
     }
-    int col = 0, row = 0;
+    col = row = 0;
     for (guint i = 0; i < di->icons->len; i++) {
         icon *ic = g_ptr_array_index(di->icons, i);
         if (ic->placed)
             continue;
         next_free(di, &col, &row);
-        ic->col = col;
-        ic->row = row;
-        ic->placed = true;
-        g_hash_table_replace(di->saved, g_strdup(ic->id), GUINT_TO_POINTER(pack_cell(col, row)));
+        put_in_cell(ic, col, row);
+        remember(di, ic);
     }
 }
 
 static void save_positions(xd_deskicons *di) {
-    g_hash_table_remove_all(di->saved);
-    char **lines = g_new0(char *, di->icons->len + 1);
-    for (guint i = 0; i < di->icons->len; i++) {
-        icon *ic = g_ptr_array_index(di->icons, i);
-        g_hash_table_replace(di->saved, g_strdup(ic->id),
-                             GUINT_TO_POINTER(pack_cell(ic->col, ic->row)));
-        lines[i] = g_strdup_printf("%s\t%d\t%d", ic->id, ic->col, ic->row);
+    /* Nothing shown (Show Desktop Icons off): what's saved stays. */
+    if (!di->applied.show)
+        return;
+    /* Files gone from the folder are forgotten; the special icons that
+     * Desktop Items hides keep their places for when they're back. */
+    GHashTableIter it;
+    gpointer key, value;
+    g_hash_table_iter_init(&it, di->saved);
+    while (g_hash_table_iter_next(&it, &key, nullptr)) {
+        if (!g_str_has_prefix(key, "::"))
+            g_hash_table_iter_remove(&it);
     }
-    if (!xd_state_write_lines("desktop-icons", lines, di->icons->len))
+    for (guint i = 0; i < di->icons->len; i++)
+        remember(di, g_ptr_array_index(di->icons, i));
+    guint n = g_hash_table_size(di->saved);
+    char **lines = g_new0(char *, n + 1);
+    guint k = 0;
+    g_hash_table_iter_init(&it, di->saved);
+    while (g_hash_table_iter_next(&it, &key, &value)) {
+        const place *p = value;
+        lines[k++] = p->off_grid ? g_strdup_printf("%s\t%d\t%d\t%d\t%d", (const char *)key,
+                                                   p->col, p->row, p->x, p->y)
+                                 : g_strdup_printf("%s\t%d\t%d", (const char *)key, p->col,
+                                                   p->row);
+    }
+    if (!xd_state_write_lines("desktop-icons", lines, k))
         fprintf(stderr, "xd-shell: cannot save the desktop icons' places\n");
     g_strfreev(lines);
 }
 
+/* Lines of "name, column, row", and for an icon off the grid its box's
+ * x and y from the work area's top left. */
 static void load_positions(xd_deskicons *di) {
     char **lines = nullptr;
     size_t n = 0;
     xd_state_read_lines("desktop-icons", &lines, &n, MAX_ICONS);
     for (size_t i = 0; i < n; i++) {
-        char **f = g_strsplit(lines[i], "\t", 3);
+        char **f = g_strsplit(lines[i], "\t", 5);
         if (f[0] != nullptr && f[1] != nullptr && f[2] != nullptr) {
             long col = strtol(f[1], nullptr, 10);
             long row = strtol(f[2], nullptr, 10);
-            if (col >= 0 && col < 0x7fff && row >= 0 && row < 0xffff)
-                g_hash_table_replace(di->saved, g_strdup(f[0]),
-                                     GUINT_TO_POINTER(pack_cell((int)col, (int)row)));
+            bool off = f[3] != nullptr && f[4] != nullptr;
+            long x = off ? strtol(f[3], nullptr, 10) : 0;
+            long y = off ? strtol(f[4], nullptr, 10) : 0;
+            if (col >= 0 && col < 0x7fff && row >= 0 && row < 0xffff && x >= 0 &&
+                x < 0x10000 && y >= 0 && y < 0x10000) {
+                place *p = XD_NEW(place);
+                *p = (place){.col = (int)col, .row = (int)row, .off_grid = off, .x = (int)x,
+                             .y = (int)y};
+                g_hash_table_replace(di->saved, g_strdup(f[0]), p);
+            }
         }
         g_strfreev(f);
     }
@@ -436,7 +648,7 @@ static void reload(xd_deskicons *di) {
         }
         g_ptr_array_unref(di->icons);
     }
-    di->icons = load_icons(di->dir);
+    di->icons = load_icons(di->dir, &di->applied);
     for (guint i = 0; i < di->icons->len; i++) {
         icon *ic = g_ptr_array_index(di->icons, i);
         ic->selected = g_hash_table_contains(selected, ic->id);
@@ -465,24 +677,22 @@ static void folder_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GF
 
 /* ---- drawing --------------------------------------------------------------------------- */
 
-static xd_rect cell_rect(const xd_deskicons *di, int col, int row) {
-    return (xd_rect){di->work.x + col * CELL_W, di->work.y + 2 + row * CELL_H, CELL_W, CELL_H};
-}
-
+/* An icon in its box: the image centred at the top, the label below it,
+ * as wide as the box. */
 static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic, double s,
                       double dx, double dy, bool record) {
     xd_shell *shell = di->shell;
-    xd_rect cell = cell_rect(di, ic->col, ic->row);
+    xd_rect cell = icon_box(di, ic);
     double cx = cell.x + dx;
     double cy = cell.y + dy;
-    long px_l = lround(ICON * s);
+    long px_l = lround(di->icon_px * s);
     int px = (int)px_l;
     const char *names[XD_ARRAY_LEN(ic->icon_names)];
     size_t n = 0;
     for (size_t i = 0; i < XD_ARRAY_LEN(ic->icon_names) && ic->icon_names[i] != nullptr; i++)
         names[n++] = ic->icon_names[i];
     cairo_surface_t *img = xd_icons_get_any(shell->icons, names, n, px);
-    double ix = round((cx + (CELL_W - ICON) / 2.0) * s);
+    double ix = round((cx + (di->cell_w - di->icon_px) / 2.0) * s);
     double iy = round((cy + 3) * s);
     xd_rgba hi = xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_HILIGHT]);
     bool cut = g_hash_table_contains(di->cut, ic->id);
@@ -507,7 +717,7 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
     xd_str edit_text = xd_textedit_view(&di->edit);
     char *edit_cstr = editing ? xd_str_dup_cstr(edit_text) : nullptr;
     PangoLayout *l = xd_text_layout(cr, editing ? edit_cstr : ic->label, &st);
-    long text_w_l = lround((CELL_W - 1) * s);
+    long text_w_l = lround((di->cell_w - 1) * s);
     int text_w = (int)text_w_l;
     pango_layout_set_width(l, text_w * PANGO_SCALE);
     pango_layout_set_alignment(l, PANGO_ALIGN_CENTER);
@@ -520,7 +730,7 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
     PangoRectangle ink, logical;
     pango_layout_get_pixel_extents(l, &ink, &logical);
     double tx = round((cx + 0.5) * s);
-    double ty = round((cy + 3 + ICON + 3) * s);
+    double ty = round((cy + 3 + di->icon_px + 3) * s);
     double bx = tx + logical.x - round(2 * s);
     double bw = logical.width + round(4 * s);
     if (editing) {
@@ -622,9 +832,10 @@ void xd_deskicons_draw(xd_shell *shell, xd_desktop *d, cairo_t *cr) {
     xd_deskicons *di = shell->deskicons;
     if (di == nullptr || d != host(shell))
         return;
-    int cols = di->cols, rows = di->rows;
+    int cols = di->cols, rows = di->rows, cell_w = di->cell_w, cell_h = di->cell_h;
     update_work(di, d);
-    if (!di->have_work || cols != di->cols || rows != di->rows) {
+    if (!di->have_work || cols != di->cols || rows != di->rows || cell_w != di->cell_w ||
+        cell_h != di->cell_h) {
         di->have_work = true;
         place_all(di);
     }
@@ -738,6 +949,14 @@ void xd_shell_open_uri(xd_shell *shell, const char *uri) {
 }
 
 static void open_icon(xd_deskicons *di, icon *ic) {
+    if (ic->app_id != nullptr) {
+        /* The web browser, at its home page. */
+        GDesktopAppInfo *app = g_desktop_app_info_new(ic->app_id);
+        if (app == nullptr || !xd_app_launch_info(app, nullptr))
+            fprintf(stderr, "xd-shell: cannot start %s\n", ic->app_id);
+        g_clear_object(&app);
+        return;
+    }
     xd_shell_open_uri(di->shell, ic->uri);
 }
 
@@ -1023,11 +1242,94 @@ static int compare_icons(gconstpointer pa, gconstpointer pb) {
 static void act_arrange(xd_shell *shell, void *data) {
     xd_deskicons *di = shell->deskicons;
     arrange_mode = GPOINTER_TO_INT(data);
+    if (!di->applied.show)
+        return; /* nothing to arrange; the saved places stay */
     g_ptr_array_sort(di->icons, compare_icons);
     g_hash_table_remove_all(di->saved);
     place_all(di);
     save_positions(di);
     redraw(di);
+}
+
+typedef enum {
+    VIEW_AUTO_ARRANGE,
+    VIEW_ALIGN_TO_GRID,
+    VIEW_SHOW_ICONS,
+    VIEW_SMALL,
+    VIEW_MEDIUM,
+    VIEW_LARGE,
+} view_change;
+
+/* Auto Arrange, Align to Grid, Show Desktop Icons and Windows 7's icon
+ * sizes are [DesktopIcons] settings: only the one key changes in
+ * desktop.ini (another program may have saved since), and the icons
+ * follow at once rather than when the file's change comes round. */
+static void act_view(xd_shell *shell, void *data) {
+    xd_settings *now = XD_NEW(xd_settings);
+    xd_settings_load(now);
+    xd_desktop_icon_settings *s = &now->desktop_icons;
+    switch ((view_change)GPOINTER_TO_INT(data)) {
+    case VIEW_AUTO_ARRANGE:
+        s->auto_arrange = !s->auto_arrange;
+        break;
+    case VIEW_ALIGN_TO_GRID:
+        s->align_to_grid = !s->align_to_grid;
+        break;
+    case VIEW_SHOW_ICONS:
+        s->show = !s->show;
+        break;
+    case VIEW_SMALL:
+        s->size = XD_DESK_ICONS_SMALL;
+        break;
+    case VIEW_MEDIUM:
+        s->size = XD_DESK_ICONS_MEDIUM;
+        break;
+    case VIEW_LARGE:
+        s->size = XD_DESK_ICONS_LARGE;
+        break;
+    }
+    if (!xd_settings_save(now))
+        fprintf(stderr, "xd-shell: cannot save the desktop's view\n");
+    shell->settings.desktop_icons = *s;
+    xd_free(now);
+    xd_deskicons_settings_changed(shell);
+}
+
+static bool same_icon_settings(const xd_desktop_icon_settings *a,
+                               const xd_desktop_icon_settings *b) {
+    if (a->documents != b->documents || a->computer != b->computer ||
+        a->network != b->network || a->browser != b->browser || a->show != b->show ||
+        a->auto_arrange != b->auto_arrange || a->align_to_grid != b->align_to_grid ||
+        a->size != b->size)
+        return false;
+    for (size_t i = 0; i < XD_DESK_ICON_COUNT; i++) {
+        if (strcmp(a->icons[i], b->icons[i]) != 0)
+            return false;
+    }
+    return true;
+}
+
+void xd_deskicons_settings_changed(xd_shell *shell) {
+    xd_deskicons *di = shell->deskicons;
+    if (di == nullptr)
+        return;
+    xd_desktop_icon_settings old = di->applied;
+    int old_px = di->icon_px;
+    di->applied = shell->settings.desktop_icons;
+    update_sizes(di);
+    if (same_icon_settings(&old, &di->applied) && old_px == di->icon_px)
+        return;
+    xd_desktop *d = host(shell);
+    if (d != nullptr && di->have_work)
+        update_work(di, d);
+    end_rename(di, true);
+    /* Which icons show and their pictures may have changed; reloading
+     * lays them out again too (in the new size's grid, packed if Auto
+     * Arrange came on, snapped if Align to Grid did). */
+    reload(di);
+    if ((di->applied.auto_arrange && !old.auto_arrange) ||
+        (di->applied.align_to_grid && !old.align_to_grid))
+        save_positions(di);
 }
 
 static void act_refresh(xd_shell *shell, [[maybe_unused]] void *data) { reload(shell->deskicons); }
@@ -1091,6 +1393,12 @@ static xd_menu_model *icon_menu(xd_deskicons *di, xd_menu_tree *tree, icon *ic) 
     } else if (strcmp(ic->id, SPECIAL_DOCUMENTS) == 0) {
         separator(tree, m);
         add_action(tree, m, "Properties", act_documents_properties, nullptr);
+    } else if (strcmp(ic->id, SPECIAL_NETWORK) == 0) {
+        separator(tree, m);
+        /* XP: My Network Places' Properties are Network Connections. */
+        add_action(tree, m, "Properties", act_command, (void *)(uintptr_t)"xd-netconn");
+    } else if (ic->special) {
+        /* The web browser: there's no Internet Options to offer. */
     } else {
         separator(tree, m);
         add_action(tree, m, "Cut", act_cut, nullptr);
@@ -1108,14 +1416,52 @@ static xd_menu_model *icon_menu(xd_deskicons *di, xd_menu_tree *tree, icon *ic) 
     return m;
 }
 
+static void add_view_toggles(xd_shell *shell, xd_menu_tree *tree, xd_menu_model *m,
+                             bool win7) {
+    const xd_desktop_icon_settings *s = &shell->deskicons->applied;
+    add_action(tree, m, win7 ? "Auto arrange icons" : "Auto Arrange", act_view,
+               GINT_TO_POINTER(VIEW_AUTO_ARRANGE))
+        ->checked = s->auto_arrange;
+    add_action(tree, m, win7 ? "Align icons to grid" : "Align to Grid", act_view,
+               GINT_TO_POINTER(VIEW_ALIGN_TO_GRID))
+        ->checked = s->align_to_grid;
+    separator(tree, m);
+    add_action(tree, m, win7 ? "Show desktop icons" : "Show Desktop Icons", act_view,
+               GINT_TO_POINTER(VIEW_SHOW_ICONS))
+        ->checked = s->show;
+}
+
 static xd_menu_model *background_menu(xd_shell *shell, xd_menu_tree *tree) {
     xd_menu_model *m = xd_menu_model_new(tree);
     xd_menu_model *arrange = xd_menu_model_new(tree);
-    add_action(tree, arrange, "Name", act_arrange, GINT_TO_POINTER(ARRANGE_NAME));
-    add_action(tree, arrange, "Size", act_arrange, GINT_TO_POINTER(ARRANGE_SIZE));
-    add_action(tree, arrange, "Type", act_arrange, GINT_TO_POINTER(ARRANGE_TYPE));
-    add_action(tree, arrange, "Modified", act_arrange, GINT_TO_POINTER(ARRANGE_MODIFIED));
-    xd_menu_add(tree, m, XD_MENU_SUBMENU, "Arrange Icons By", nullptr)->submenu = arrange;
+    if (shell->style == XD_STYLE_AERO) {
+        /* Windows 7: View (the icon sizes and the toggles) and Sort by. */
+        xd_desk_icon_size size = shell->deskicons->applied.size;
+        xd_menu_model *view = xd_menu_model_new(tree);
+        add_action(tree, view, "Large icons", act_view, GINT_TO_POINTER(VIEW_LARGE))->checked =
+            size == XD_DESK_ICONS_LARGE;
+        add_action(tree, view, "Medium icons", act_view, GINT_TO_POINTER(VIEW_MEDIUM))
+            ->checked = size == XD_DESK_ICONS_MEDIUM;
+        add_action(tree, view, "Small icons", act_view, GINT_TO_POINTER(VIEW_SMALL))->checked =
+            size == XD_DESK_ICONS_SMALL;
+        separator(tree, view);
+        add_view_toggles(shell, tree, view, true);
+        xd_menu_add(tree, m, XD_MENU_SUBMENU, "View", nullptr)->submenu = view;
+        add_action(tree, arrange, "Name", act_arrange, GINT_TO_POINTER(ARRANGE_NAME));
+        add_action(tree, arrange, "Size", act_arrange, GINT_TO_POINTER(ARRANGE_SIZE));
+        add_action(tree, arrange, "Item type", act_arrange, GINT_TO_POINTER(ARRANGE_TYPE));
+        add_action(tree, arrange, "Date modified", act_arrange,
+                   GINT_TO_POINTER(ARRANGE_MODIFIED));
+        xd_menu_add(tree, m, XD_MENU_SUBMENU, "Sort by", nullptr)->submenu = arrange;
+    } else {
+        add_action(tree, arrange, "Name", act_arrange, GINT_TO_POINTER(ARRANGE_NAME));
+        add_action(tree, arrange, "Size", act_arrange, GINT_TO_POINTER(ARRANGE_SIZE));
+        add_action(tree, arrange, "Type", act_arrange, GINT_TO_POINTER(ARRANGE_TYPE));
+        add_action(tree, arrange, "Modified", act_arrange, GINT_TO_POINTER(ARRANGE_MODIFIED));
+        separator(tree, arrange);
+        add_view_toggles(shell, tree, arrange, false);
+        xd_menu_add(tree, m, XD_MENU_SUBMENU, "Arrange Icons By", nullptr)->submenu = arrange;
+    }
     add_action(tree, m, "Refresh", act_refresh, nullptr);
     separator(tree, m);
     add_action(tree, m, "Paste", act_paste, nullptr)->disabled = !xd_clipboard_has_files(shell);
@@ -1195,14 +1541,65 @@ static void band_select(xd_deskicons *di) {
     }
 }
 
-/* Drops the moved selection on the cells under it; a taken or off-screen
- * cell sends an icon to the nearest free one. */
+/* Auto Arrange: the moved selection goes into the order where it's
+ * dropped (after the icon in that cell when moved forward, before it when
+ * moved back), and everything is packed again. */
+static void drop_arranged(xd_deskicons *di, int dc, int dr) {
+    GPtrArray *moving = g_ptr_array_new();
+    GPtrArray *rest = g_ptr_array_new();
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        g_ptr_array_add(ic->selected ? moving : rest, ic);
+    }
+    const icon *first = g_ptr_array_index(moving, 0);
+    int from = grid_order(first);
+    int to = CLAMP(first->col + dc, 0, di->cols - 1) * 0x10000 +
+             CLAMP(first->row + dr, 0, di->rows - 1);
+    guint at = 0;
+    while (at < rest->len) {
+        int o = grid_order(g_ptr_array_index(rest, at));
+        if (to > from ? o > to : o >= to)
+            break;
+        at++;
+    }
+    /* The array is the icons' order: the rest, with the selection at `at`
+     * (taken out without freeing, then put back). */
+    g_free(g_ptr_array_steal(di->icons, nullptr));
+    for (guint i = 0; i <= rest->len; i++) {
+        if (i == at)
+            g_ptr_array_extend(di->icons, moving, nullptr, nullptr);
+        if (i < rest->len)
+            g_ptr_array_add(di->icons, g_ptr_array_index(rest, i));
+    }
+    g_ptr_array_unref(moving);
+    g_ptr_array_unref(rest);
+    int col = 0, row = 0;
+    for (guint i = 0; i < di->icons->len; i++)
+        ((icon *)g_ptr_array_index(di->icons, i))->placed = false;
+    for (guint i = 0; i < di->icons->len; i++) {
+        next_free(di, &col, &row);
+        put_in_cell(g_ptr_array_index(di->icons, i), col, row);
+    }
+}
+
+/* Drops the moved selection where the pointer let go. On the grid it
+ * goes to the cells under it; a taken or off-screen cell sends an icon to
+ * the nearest free one. With Align to Grid off it stays where it was
+ * dropped; with Auto Arrange it moves along the order. */
 static void drop_moved(xd_deskicons *di) {
-    long dc_l = lround((di->x - di->press_x) / CELL_W);
-    long dr_l = lround((di->y - di->press_y) / CELL_H);
+    double dx = di->x - di->press_x, dy = di->y - di->press_y;
+    long dc_l = lround(dx / di->cell_w);
+    long dr_l = lround(dy / di->cell_h);
     int dc = (int)dc_l, dr = (int)dr_l;
-    if (dc == 0 && dr == 0)
+    bool free_move = !di->applied.auto_arrange && !di->applied.align_to_grid;
+    if ((free_move ? fabs(dx) < 1 && fabs(dy) < 1 : dc == 0 && dr == 0) ||
+        selected_count(di) == 0)
         return;
+    if (di->applied.auto_arrange) {
+        drop_arranged(di, dc, dr);
+        save_positions(di);
+        return;
+    }
     GPtrArray *moving = g_ptr_array_new();
     for (guint i = 0; i < di->icons->len; i++) {
         icon *ic = g_ptr_array_index(di->icons, i);
@@ -1213,31 +1610,21 @@ static void drop_moved(xd_deskicons *di) {
     }
     for (guint i = 0; i < moving->len; i++) {
         icon *ic = g_ptr_array_index(moving, i);
+        if (free_move) {
+            xd_rect box = icon_box(di, ic);
+            long x = lround(box.x - di->work.x + dx), y = lround(box.y - di->work.y + dy);
+            ic->x = (int)x;
+            ic->y = (int)y;
+            clamp_box(di, &ic->x, &ic->y);
+            nearest_cell(di, ic->x, ic->y, &ic->col, &ic->row);
+            ic->off_grid = true;
+            ic->placed = true;
+            continue;
+        }
         int col = CLAMP(ic->col + dc, 0, di->cols - 1);
         int row = CLAMP(ic->row + dr, 0, di->rows - 1);
-        if (at_cell(di, col, row) != nullptr) {
-            /* The nearest free cell. */
-            int best = INT_MAX, best_col = col, best_row = row;
-            for (int c = 0; c < di->cols; c++) {
-                for (int r = 0; r < di->rows; r++) {
-                    int dist = (c - col) * (c - col) + (r - row) * (r - row);
-                    if (dist < best && at_cell(di, c, r) == nullptr) {
-                        best = dist;
-                        best_col = c;
-                        best_row = r;
-                    }
-                }
-            }
-            if (best == INT_MAX) {
-                next_free(di, &col, &row);
-            } else {
-                col = best_col;
-                row = best_row;
-            }
-        }
-        ic->col = col;
-        ic->row = row;
-        ic->placed = true;
+        nearest_free(di, &col, &row);
+        put_in_cell(ic, col, row);
     }
     g_ptr_array_unref(moving);
     save_positions(di);
@@ -1345,7 +1732,7 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
         /* A second, slow click on a lone selected icon's name renames it. */
         icon *ic = g_ptr_array_index(di->icons, (guint)di->press_index);
         if (di->was_sole && di->last_click_index == di->press_index &&
-            di->press_y >= ic->hit.y + ICON + 3)
+            di->press_y >= ic->hit.y + di->icon_px + 3)
             di->rename_timer = g_timeout_add(
                 (guint)di->shell->settings.mouse.double_click_ms, rename_later, di);
     }
@@ -1473,7 +1860,8 @@ static xd_drop_kind drop_target(xd_deskicons *di, double x, double y, bool own, 
     }
     if (strcmp(ic->id, SPECIAL_TRASH) == 0)
         return XD_DROP_TRASH;
-    if (strcmp(ic->id, SPECIAL_COMPUTER) == 0)
+    if (strcmp(ic->id, SPECIAL_COMPUTER) == 0 || strcmp(ic->id, SPECIAL_NETWORK) == 0 ||
+        strcmp(ic->id, SPECIAL_BROWSER) == 0)
         return XD_DROP_NONE;
     if (ic->is_dir)
         return XD_DROP_FOLDER;
@@ -1510,16 +1898,28 @@ static char *drop_dir(xd_deskicons *di, int index) {
     return path;
 }
 
-/* Dropped files land in free cells from the drop's, in order. */
+/* Dropped files land in free cells from the drop's, in order; with Align
+ * to Grid off, where they're dropped, one under another. (Auto Arrange
+ * then packs them in from there.) */
 static void place_dropped(xd_deskicons *di, char **uris, double x, double y) {
-    long col_l = lround((x - di->work.x - CELL_W / 2.0) / CELL_W);
-    long row_l = lround((y - di->work.y - 2 - CELL_H / 2.0) / CELL_H);
+    long col_l = lround((x - di->work.x - di->cell_w / 2.0) / di->cell_w);
+    long row_l = lround((y - di->work.y - 2 - di->cell_h / 2.0) / di->cell_h);
     int col = CLAMP((int)col_l, 0, di->cols - 1), row = CLAMP((int)row_l, 0, di->rows - 1);
+    bool free_drop = !di->applied.auto_arrange && !di->applied.align_to_grid;
+    long fx = lround(x - di->work.x - di->cell_w / 2.0);
+    long fy = lround(y - di->work.y - di->cell_h / 2.0);
     for (char **u = uris; *u != nullptr; u++) {
         GFile *f = g_file_new_for_uri(*u);
         char *name = g_file_get_basename(f);
         g_object_unref(f);
-        if (name != nullptr && index_of(di, name) < 0) {
+        if (name != nullptr && index_of(di, name) < 0 && free_drop) {
+            place *p = XD_NEW(place);
+            *p = (place){.off_grid = true, .x = (int)fx, .y = (int)fy};
+            clamp_box(di, &p->x, &p->y);
+            nearest_cell(di, p->x, p->y, &p->col, &p->row);
+            g_hash_table_replace(di->saved, g_strdup(name), p);
+            fy += di->cell_h;
+        } else if (name != nullptr && index_of(di, name) < 0) {
             /* Not taken by an icon, nor promised to an earlier one. */
             int c = col, r = row;
             for (;;) {
@@ -1528,8 +1928,10 @@ static void place_dropped(xd_deskicons *di, char **uris, double x, double y) {
                 GHashTableIter it;
                 gpointer v;
                 g_hash_table_iter_init(&it, di->saved);
-                while (!promised && g_hash_table_iter_next(&it, nullptr, &v))
-                    promised = GPOINTER_TO_UINT(v) == pack_cell(c, r);
+                while (!promised && g_hash_table_iter_next(&it, nullptr, &v)) {
+                    const place *p = v;
+                    promised = !p->off_grid && p->col == c && p->row == r;
+                }
                 if (!promised || c >= di->cols)
                     break;
                 if (++r >= di->rows) {
@@ -1537,7 +1939,9 @@ static void place_dropped(xd_deskicons *di, char **uris, double x, double y) {
                     c++;
                 }
             }
-            g_hash_table_replace(di->saved, g_strdup(name), GUINT_TO_POINTER(pack_cell(c, r)));
+            place *p = XD_NEW(place);
+            *p = (place){.col = c, .row = r};
+            g_hash_table_replace(di->saved, g_strdup(name), p);
         }
         g_free(name);
     }
@@ -1728,6 +2132,8 @@ bool xd_deskicons_key(xd_shell *shell, uint32_t sym, const char *utf8, uint32_t 
                     act_command(shell, (void *)(uintptr_t)"xd-sysdm");
                 else if (strcmp(ic->id, SPECIAL_DOCUMENTS) == 0)
                     act_documents_properties(shell, nullptr);
+                else if (strcmp(ic->id, SPECIAL_NETWORK) == 0)
+                    act_command(shell, (void *)(uintptr_t)"xd-netconn");
             } else {
                 act_files(shell, (void *)(uintptr_t)"--properties");
             }
@@ -1823,7 +2229,9 @@ void xd_deskicons_init(xd_shell *shell) {
     di->shell = shell;
     di->press_index = -1;
     di->last_click_index = -1;
-    di->saved = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    di->saved = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, xd_free);
+    di->applied = shell->settings.desktop_icons;
+    update_sizes(di);
     di->cut = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     di->drop_hot = -1;
     di->dir = desktop_dir();

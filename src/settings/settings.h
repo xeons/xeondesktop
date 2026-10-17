@@ -110,6 +110,35 @@ typedef struct xd_access_settings {
     char saved_scheme[64];
 } xd_access_settings;
 
+/* [DesktopIcons]: Display Properties' Desktop Items dialog (XP's
+ * Customize Desktop) and the desktop's own menu (Arrange Icons By, or
+ * Windows 7's View). Followed live by the shell. */
+typedef enum xd_desk_icon : uint8_t {
+    /* In the order of XP's Desktop Items list. */
+    XD_DESK_ICON_COMPUTER,
+    XD_DESK_ICON_DOCUMENTS,
+    XD_DESK_ICON_NETWORK,
+    XD_DESK_ICON_TRASH_FULL,
+    XD_DESK_ICON_TRASH_EMPTY,
+    XD_DESK_ICON_COUNT,
+} xd_desk_icon;
+typedef enum xd_desk_icon_size : uint8_t {
+    XD_DESK_ICONS_SMALL,  /* Windows 7's View > Small icons */
+    XD_DESK_ICONS_MEDIUM, /* the shell's icon size: XP's "Use large icons" makes it 48 */
+    XD_DESK_ICONS_LARGE,
+} xd_desk_icon_size;
+typedef struct xd_desktop_icon_settings {
+    /* Which of the special icons show (Desktop Items' checkboxes; the
+     * default web browser stands in for XP's Internet Explorer). */
+    bool documents, computer, network, browser;
+    bool show;          /* Show Desktop Icons */
+    bool auto_arrange;  /* kept packed in columns, in order */
+    bool align_to_grid; /* off: icons stay where they're dropped */
+    xd_desk_icon_size size;
+    /* Change Icon...: an image file replacing the theme's icon; "" = default. */
+    char icons[XD_DESK_ICON_COUNT][512];
+} xd_desktop_icon_settings;
+
 typedef struct xd_settings {
     /* [Appearance] */
     xd_visual_style style;
@@ -120,6 +149,7 @@ typedef struct xd_settings {
     /* [Desktop] */
     char wallpaper[1024]; /* absolute path, "" = none */
     xd_wallpaper_mode wallpaper_mode;
+    xd_desktop_icon_settings desktop_icons; /* [DesktopIcons] */
 
     /* [Effects] (stored; not all are implemented yet) */
     bool menu_transitions;
@@ -196,6 +226,11 @@ void xd_settings_path(xd_strbuf *out);
 void xd_settings_serialize(const xd_settings *s, xd_strbuf *out);
 
 const char *xd_wallpaper_mode_name(xd_wallpaper_mode m);
+/* A desktop icon's theme icon name, before any Change Icon. */
+const char *xd_desk_icon_default(xd_desk_icon icon);
+/* The desktop's icon size in logical px: Small 16, Large 48, Medium the
+ * shell's icon size, 32 (48 with "Use large icons", XP's Shell Icon Size). */
+int xd_desk_icon_px(const xd_settings *s);
 /* "home", "portable", ...: [Power] Scheme's values. */
 const char *xd_power_scheme_name(xd_power_scheme scheme);
 

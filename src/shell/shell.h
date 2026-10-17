@@ -458,6 +458,9 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
                          uint32_t time, uint32_t serial);
 /* Redraws them (the taskbar moved, the theme changed). */
 void xd_deskicons_relayout(xd_shell *shell);
+/* Follows shell->settings' [DesktopIcons] and icon size: which icons
+ * show, their pictures, size and arrangement. */
+void xd_deskicons_settings_changed(xd_shell *shell);
 /* Keys while the desktop has the keyboard; true when used. */
 bool xd_deskicons_key(xd_shell *shell, uint32_t sym, const char *utf8, uint32_t serial);
 /* Our Cut or Copy was replaced on the clipboard. */

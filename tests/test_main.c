@@ -693,6 +693,47 @@ static void test_settings(void) {
     CHECK(!now.show_clock && xd_settings_tray_rule(&now, "nm-applet") == XD_TRAY_AUTO);
 }
 
+static void test_desktop_icon_settings(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    const xd_desktop_icon_settings *di = &a.desktop_icons;
+    CHECK(di->documents && di->computer && di->network && !di->browser && di->show);
+    CHECK(!di->auto_arrange && di->align_to_grid && xd_desk_icon_px(&a) == 32);
+    /* XP's "Use large icons" makes the (medium) desktop icons 48. */
+    a.large_icons = true;
+    CHECK(xd_desk_icon_px(&a) == 48);
+    a.desktop_icons.size = XD_DESK_ICONS_SMALL;
+    CHECK(xd_desk_icon_px(&a) == 16);
+
+    xd_settings_parse(XD_STR("[DesktopIcons]\nMyComputer=false\nWebBrowser=true\n"
+                             "AutoArrange=true\nAlignToGrid=false\nSize=large\nShow=false\n"
+                             "MyComputerIcon=/i/pc.png\nRecycleBinFullIcon=relative.png\n"),
+                      &a);
+    CHECK(!di->computer && di->browser && di->auto_arrange && !di->align_to_grid && !di->show);
+    CHECK(di->size == XD_DESK_ICONS_LARGE && xd_desk_icon_px(&a) == 48);
+    CHECK(strcmp(di->icons[XD_DESK_ICON_COMPUTER], "/i/pc.png") == 0);
+    CHECK(di->icons[XD_DESK_ICON_TRASH_FULL][0] == '\0'); /* only absolute paths */
+    CHECK(strcmp(xd_desk_icon_default(XD_DESK_ICON_TRASH_EMPTY), "user-trash") == 0);
+
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && b.desktop_icons.auto_arrange &&
+          strcmp(b.desktop_icons.icons[XD_DESK_ICON_COMPUTER], "/i/pc.png") == 0);
+    xd_strbuf_free(&text);
+
+    /* Desktop Items' Apply keeps an Auto Arrange the shell saved since. */
+    xd_settings base;
+    xd_settings_defaults(&base);
+    xd_settings pending = base;
+    pending.desktop_icons.network = false;
+    xd_settings now = base;
+    now.desktop_icons.auto_arrange = true;
+    xd_settings_merge(&base, &pending, &now);
+    CHECK(now.desktop_icons.auto_arrange && !now.desktop_icons.network);
+}
+
 static void test_power_settings(void) {
     xd_settings a;
     xd_settings_defaults(&a);
@@ -2292,6 +2333,7 @@ int main(void) {
     test_textedit();
     test_runcmd();
     test_settings();
+    test_desktop_icon_settings();
     test_tray_rules();
     test_power_settings();
     test_sound_scheme();

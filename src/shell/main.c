@@ -608,6 +608,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     if (startup)
         return;
     xd_tray_changed(shell); /* the volume and power icons may come or go */
+    xd_deskicons_settings_changed(shell);
 
     /* Re-theme: menus are rebuilt (their commands carry overrides). */
     xd_menu_close_all(shell);
