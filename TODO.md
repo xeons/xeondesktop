@@ -52,6 +52,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       dialogs/transients, Motif-undecorated windows, size-hint-fixed
       windows, apps that place themselves, HiDPI (Xwayland draws at 1x and
       is upscaled), clipboard and drag-and-drop between X11 and Wayland.
+- [~] **Drag and drop** between Wayland programs (the compositor had none),
+      with the drag icon above everything, and the primary selection
+      (middle-click paste, which had no handler). Tested with GTK test
+      programs. Untested: X11 <-> Wayland drags, real file managers.
 - [~] **Keyboard**: `[Keyboard]` in desktop.ini (Layout, Variant, Options,
       Model, RepeatDelay, RepeatRate) applies to every keyboard, live; empty
       names fall back to `XKB_DEFAULT_*`, a bad layout to the default with a
@@ -175,10 +179,21 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Passive items hidden, tooltips, Activate / SecondaryActivate, and
       dbusmenu menus (separators, checks, submenus). The clock is sized to
       each style's margins and shows the date as a tooltip. Tested with a
-      test item on a private bus. Untested: real applets (Discord, Steam,
-      Telegram), another desktop's watcher, radio items. Not yet: XP's
-      "hide inactive icons" chevron, the clock's calendar / Date and Time
-      Properties.
+      test item on a private bus. Hide inactive icons (on by default):
+      programs' icons quiet for three minutes fold behind a chevron that
+      shows them for 15s (tested with XD_TRAY_INACTIVE_SECONDS=3). The
+      clock: double-click or right-click > Adjust Date/Time opens Date and
+      Time Properties (below); it used to show each new minute a minute
+      late. Untested: real applets (Discord, Steam, Telegram), another
+      desktop's watcher, radio items. Not yet: per-icon "always show /
+      always hide" (XP's Customize Notifications).
+- [~] Date and Time Properties (xd-timedate, through timedated and polkit):
+      Date & Time (calendar, an analog clock, the time), Time Zone and
+      Internet Time (timesyncd on or off). Tested against dbusmock's
+      timedated: SetTimezone, SetNTP and SetTime with the right values.
+      **Untested against the real timedated** (it would change this
+      machine's clock). Not yet: XP's world map on Time Zone, 12-hour time
+      entry, styled spin buttons.
 - [~] Our own applets, drawn by the theme engine: volume (libpulse; XP's
       flyout with slider and Mute, the wheel, Mute and pavucontrol in the
       menu), network (NetworkManager: wired / Wi-Fi with signal, networks in
@@ -198,9 +213,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       short; pages with up/down arrows (and the wheel) when buttons would
       get narrower than 56px; Group similar taskbar buttons ("3 Firefox",
       a menu of its windows, Minimize Group / Close Group) once they'd get
-      narrower than 100px. Tested in Luna with 30 and 14+2 windows. Not
-      yet: drag-and-drop reordering, Cascade/Tile in the group menu, the
-      window frame's caption icon (still generic).
+      narrower than 100px; the group's right-click has XP's Cascade, Tile
+      Horizontally/Vertically (xd-window-arranger-v1 v3's arrange_app),
+      Minimize Group and Close Group. A drag held over a task button
+      brings its window forward. Tested in Luna with 30 and 14+2 windows.
+      Not yet: the window frame's caption icon (still generic).
 - [~] Taskbar options in Taskbar and Start Menu Properties: Auto-hide
       (tucked to 2px, out on hover or a menu), Keep on top (off: the bottom
       layer), Show the clock, Show the taskbar on all displays (off: only
@@ -218,17 +235,22 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Move and Size run the compositor's keyboard move/size (arrows 8px, Ctrl
       1px, mouse too; Enter or a click keeps it, Esc undoes it). Tested:
       Move by arrows, Size by arrows, Esc restoring. Untested: mouse during
-      keyboard move/size, Ctrl steps, corners (two edges). Not yet: the
-      Address,
-      Links, Desktop and New Toolbar toolbars, Search... in the Start
-      button's menu, Quick Launch's menu and the clock's (Adjust
-      Date/Time). Start button menu: Open tested; Explore, Properties and
+      keyboard move/size, Ctrl steps, corners (two edges). The clock's menu
+      adds Adjust Date/Time; Quick Launch's has its own (below). Not yet:
+      the Address, Links, Desktop and New Toolbar toolbars, Search... in
+      the Start button's menu. Start button menu: Open tested; Explore,
+      Properties and
       the All Users items untested. Tested: the taskbar menu, Tile Vertically, Undo Tile
       showing up, Minimize and the minimized window's menu. Untested:
       Cascade, Tile Horizontally, Undo itself, Lock toggling, Restore,
       Maximize, Close from the menu, several monitors.
-- [~] Quick Launch: tooltips (the shortcut's name). Not yet: drag and drop
-      to add and reorder, its right-click menu.
+- [~] Quick Launch: tooltips (the shortcut's name); a shortcut's menu
+      (Open, Delete, Properties) and the toolbar's (Open Folder, Close
+      Toolbar); files and applications dropped on it become shortcuts
+      where they land (a mark shows where), and its buttons can be dragged
+      along to rearrange them. Tested headless with a GTK drag source. Not
+      yet: dragging from our own Start menu or xd-files (they aren't drag
+      sources), large icons, Show Text / Show Title.
 - [ ] Desktop icons.
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
