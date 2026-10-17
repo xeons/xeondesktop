@@ -177,14 +177,22 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 | Applet | Program | What it changes |
 |---|---|---|
 | Accessibility Options | `xd-access` | StickyKeys, BounceKeys and High Contrast, done by the compositor |
+| Add or Remove Programs | `xd-appwiz` | installed programs (size, use), remove and install through PackageKit and Flatpak |
+| Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, formatting, resizing), Device Manager |
+| Bluetooth Devices | `xd-bluetooth` | pairing (XP SP2's wizard and passkeys), device properties, the adapter's options, through BlueZ |
 | Date and Time | `xd-timedate` | the clock and time zone, through timedated |
 | Display | `xd-desk` | style, colours, wallpaper, screen saver, monitors |
 | Folder Options | `xd-folders` | the file manager's options, file types (`mimeapps.list`) |
 | Fonts | `xd-fonts` | lists, previews, installs and removes your fonts (fontconfig) |
+| Game Controllers | `xd-joy` | joysticks and gamepads from udev, with a live test page (read only) |
 | Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options |
 | Mouse | `xd-mouse` | buttons, double-click speed, pointer theme and size, speed, wheel |
+| Network Connections | `xd-netconn` | connections, status, TCP/IP settings, wireless networks, through NetworkManager |
 | Power Options | `xd-power` | monitor, standby and hibernate timers, the battery icon, locking on resume |
+| Printers and Faxes | `xd-printers` | CUPS printers, queues, preferences, test pages, the Add Printer wizard |
 | Regional and Language Options | `xd-intl` | your formats; the system locale and keyboard through localed |
+| Scanners and Cameras | `xd-scanners` | SANE scanners and gphoto2 cameras, the Scanner and Camera Wizard |
+| Scheduled Tasks | `xd-schedtasks` | XP's wizard over systemd user timers: run programs daily, weekly, at logon... |
 | Sounds and Audio Devices | `xd-sound` | volume, default devices, the sound scheme (libcanberra) |
 | System | `xd-sysdm` | see below |
 | Taskbar and Start Menu | `xd-taskbar` | the taskbar and Start menu options |

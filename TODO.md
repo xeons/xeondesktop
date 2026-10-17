@@ -684,9 +684,33 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       full name; limited users see administrator tasks in User Accounts;
       other GTK apps don't follow the double-click time or caret blink; the
       Windows 7 menu's search doesn't find applets; its My Computer opens /.
-- [ ] Applets still to write: Network Connections, Printers and Faxes,
-      Add or Remove Programs, Scanners and Cameras, Bluetooth Devices,
-      Administrative Tools, Scheduled Tasks, Game Controllers.
+- [x] Second round of applets (each tested headless; every write only
+      against mocks or private instances): Network Connections (libnm:
+      XP's groups and status texts, Status/TCP/IP/Wireless dialogs, XP SP2's
+      wireless chooser, New Connection wizard; the tray opens it), Bluetooth
+      Devices (BlueZ: XP SP2's Add wizard and passkeys, an Agent1 for PIN
+      dialogs, Options/Hardware; the tray menu opens it), Game Controllers
+      (udev + libevdev, read-only test page), Administrative Tools (Services
+      over systemd, Event Viewer over the journal, Disk Management over
+      UDisks2 as a full partition manager with the system's volumes
+      protected), Scheduled Tasks (XP's wizard over systemd user timers),
+      Printers and Faxes (CUPS: queues, preferences, Add Printer wizard,
+      password box), Scanners and Cameras (SANE wizard with preview,
+      gphoto2 photo copying), Add or Remove Programs (PackageKit and
+      Flatpak: remove with a dry run naming what else goes, search and
+      install, package files, groups).
+- [ ] Second-round applets untested for real: Disk Management's writes on a
+      real disk (try a spare virtual disk first: initialize, create,
+      format, resize, delete), real polkit prompts for services, packages
+      and printers, real pairing, a real controller's test page, real
+      printers/scanners/cameras, DNS-SD printer discovery, a real systemd
+      user manager running scheduled tasks.
+- [ ] Scheduled Tasks: "When I log on" needs graphical-session.target,
+      which the session doesn't start yet, and scheduled programs need the
+      session's WAYLAND_DISPLAY etc. in the user manager's environment
+      (data/xeondesktop-session should import them and start the target).
+- [ ] Add or Remove Programs: "Last Used On" only for programs that open
+      documents (the Start menu's launch counts have no dates).
 - [~] **System Properties** (`xd-sysdm`, Windows 2000's layout, Linux
       inside): General (distribution, kernel, owner, machine ID, CPU,
       firmware, RAM); Network Identification (host name and description
