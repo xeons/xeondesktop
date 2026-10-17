@@ -35,6 +35,9 @@ void xd_task_set_maximized(xd_task *task, gboolean maximized);
 typedef enum { XD_ARRANGE_CASCADE, XD_ARRANGE_TILE_HORIZONTALLY, XD_ARRANGE_TILE_VERTICALLY }
     xd_arrange_mode;
 gboolean xd_tasklist_can_arrange(const xd_tasklist *list);
+/* Options > Always On Top for our own window (a realized GtkWindow). */
+gboolean xd_tasklist_can_set_on_top(const xd_tasklist *list);
+void xd_tasklist_set_on_top(xd_tasklist *list, GtkWidget *window, gboolean on_top);
 void xd_tasklist_arrange(xd_tasklist *list, GList *tasks, xd_arrange_mode mode);
 
 #endif

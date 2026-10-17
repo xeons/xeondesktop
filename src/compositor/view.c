@@ -268,11 +268,16 @@ void xd_view_update_all_frames(xd_server *server) {
     }
 }
 
+/* Where a window lives when it isn't fullscreen in front. */
+static struct wlr_scene_tree *home_tree(const xd_view *view) {
+    return view->on_top ? view->server->layer_on_top : view->server->layer_views;
+}
+
 static void set_activated(xd_view *view, bool activated) {
     /* A fullscreen window covers the taskbar only while it's in front. */
     if (view->fullscreen)
-        wlr_scene_node_reparent(&view->tree->node, activated ? view->server->layer_fullscreen
-                                                             : view->server->layer_views);
+        wlr_scene_node_reparent(&view->tree->node,
+                                activated ? view->server->layer_fullscreen : home_tree(view));
     if (view->kind == XD_VIEW_X11) {
         wlr_xwayland_surface_activate(view->xsurface, activated);
         if (activated)
@@ -448,7 +453,7 @@ void xd_view_set_fullscreen(xd_view *view, bool fullscreen) {
         view_set_fullscreen_state(view, false);
         if (view->ftl != nullptr)
             wlr_foreign_toplevel_handle_v1_set_fullscreen(view->ftl, false);
-        wlr_scene_node_reparent(&view->tree->node, server->layer_views);
+        wlr_scene_node_reparent(&view->tree->node, home_tree(view));
         update_content_position(view);
         xd_frame_render(view, true);
         xd_view_set_outer_box(view, view->fullscreen_restore);
@@ -682,8 +687,22 @@ void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output) {
 }
 
 
+void xd_view_set_on_top(xd_view *view, bool on_top) {
+    view->on_top = on_top;
+    if (!view->fullscreen || xd_view_focused(view->server) != view)
+        wlr_scene_node_reparent(&view->tree->node, home_tree(view));
+    XD_LIST_FOR_EACH(v, &view->server->views, xd_view, link) {
+        if (v != view && parent_of(v) == view && v->on_top != on_top)
+            xd_view_set_on_top(v, on_top);
+    }
+    wlr_scene_node_raise_to_top(&view->tree->node);
+}
+
 void xd_view_on_map(xd_view *view) {
     view->mapped = true;
+    /* A dialog of an Always On Top window is too. */
+    if (parent_of(view) != nullptr && parent_of(view)->on_top)
+        xd_view_set_on_top(view, true);
     view->dialog = view_is_fixed_size(view);
     xd_view_update_decorations(view);
     /* Owned windows (dialogs) get no taskbar button, as in Windows. */

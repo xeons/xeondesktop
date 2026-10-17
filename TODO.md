@@ -522,9 +522,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       answers again. Tested with a program that froze its main loop for
       25s. Not yet: X11 windows (_NET_WM_PING, only for programs that
       support it), XP's ghost window and "End Now" from the close button.
-- [ ] Options > Always On Top (no Wayland protocol yet) and Hide When
-      Minimized with the CPU meter in the notification area (the tray
-      exists now: the Task Manager can show a StatusNotifierItem).
+- [x] Options > Always On Top (saved): xd-window-arranger-v1 version 5's
+      set_always_on_top puts the client's own window (and its dialogs) in
+      a layer above ordinary windows, below the taskbar. Tested: Task
+      Manager stays in front of a newly focused window.
+- [ ] Hide When Minimized with the CPU meter in the notification area (the
+      tray exists now: the Task Manager can show a StatusNotifierItem).
 - [x] Windows menu: Tile Horizontally/Vertically and Cascade arrange the
       windows selected on the Applications tab (several with Ctrl/Shift;
       End Task, Minimize and Maximize act on all of them). The compositor

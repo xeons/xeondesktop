@@ -132,7 +132,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     } else if (list->arranger == nullptr && version >= 4 &&
                strcmp(interface, xd_window_arranger_v1_interface.name) == 0) {
         /* Its events are for the shell; we only send requests. */
-        list->arranger = wl_registry_bind(reg, name, &xd_window_arranger_v1_interface, 4);
+        list->arranger = wl_registry_bind(reg, name, &xd_window_arranger_v1_interface,
+                                          MIN(version, 5u));
     }
 }
 
@@ -218,4 +219,19 @@ void xd_tasklist_arrange(xd_tasklist *list, GList *tasks, xd_arrange_mode mode) 
                  : mode == XD_ARRANGE_TILE_VERTICALLY ? XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY
                                                       : XD_WINDOW_ARRANGER_V1_MODE_CASCADE;
     xd_window_arranger_v1_arrange_marked(list->arranger, m);
+}
+
+gboolean xd_tasklist_can_set_on_top(const xd_tasklist *list) {
+    return list != nullptr && list->arranger != nullptr &&
+           xd_window_arranger_v1_get_version(list->arranger) >=
+               XD_WINDOW_ARRANGER_V1_SET_ALWAYS_ON_TOP_SINCE_VERSION;
+}
+
+void xd_tasklist_set_on_top(xd_tasklist *list, GtkWidget *window, gboolean on_top) {
+    GdkWindow *gw = gtk_widget_get_window(window);
+    if (!xd_tasklist_can_set_on_top(list) || gw == nullptr || !GDK_IS_WAYLAND_WINDOW(gw))
+        return;
+    struct wl_surface *surface = gdk_wayland_window_get_wl_surface(gw);
+    if (surface != nullptr)
+        xd_window_arranger_v1_set_always_on_top(list->arranger, surface, on_top ? 1 : 0);
 }

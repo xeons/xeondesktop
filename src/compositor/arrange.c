@@ -187,6 +187,21 @@ static void handle_mark(struct wl_client *client, struct wl_resource *res,
     ac->marked[ac->marked_n++] = v;
 }
 
+static void handle_set_always_on_top(struct wl_client *client, struct wl_resource *res,
+                                     struct wl_resource *surface, uint32_t on_top) {
+    xd_server *server = server_of(res);
+    struct wlr_surface *s = wlr_surface_from_resource(surface);
+    /* Only the client's own windows. */
+    if (wl_resource_get_client(surface) != client)
+        return;
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (xd_view_surface(v) == s) {
+            xd_view_set_on_top(v, on_top != 0);
+            return;
+        }
+    }
+}
+
 static void handle_arrange_marked(struct wl_client *client, struct wl_resource *res,
                                   uint32_t mode) {
     (void)client;
@@ -330,6 +345,7 @@ static const struct xd_window_arranger_v1_interface arranger_impl = {
     .destroy = handle_destroy,
     .mark = handle_mark,
     .arrange_marked = handle_arrange_marked,
+    .set_always_on_top = handle_set_always_on_top,
 };
 
 static void bind_arranger(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
@@ -392,7 +408,7 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 4,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 5,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

@@ -140,6 +140,7 @@ static bool server_init(xd_server *server) {
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] = wlr_scene_tree_create(root);
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] = wlr_scene_tree_create(root);
     server->layer_views = wlr_scene_tree_create(root);
+    server->layer_on_top = wlr_scene_tree_create(root);
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_TOP] = wlr_scene_tree_create(root);
     server->layer_fullscreen = wlr_scene_tree_create(root); /* above the taskbar */
     /* X11 menus and tooltips: over the taskbar and fullscreen windows, as on Windows. */

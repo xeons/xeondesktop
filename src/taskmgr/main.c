@@ -122,7 +122,7 @@ typedef struct taskmgr {
     xd_sysinfo *si;
     guint timer;
     int speed;
-    gboolean minimize_on_use, per_cpu, show_kernel;
+    gboolean minimize_on_use, per_cpu, show_kernel, on_top;
     gboolean syncing;
 
     /* menus whose visibility follows the tab */
@@ -132,6 +132,7 @@ typedef struct taskmgr {
     /* Applications */
     xd_tasklist *tasks;
     GtkWidget *tile_h_item, *tile_v_item, *cascade_item; /* Windows menu */
+    GtkWidget *on_top_item;                               /* Options > Always On Top */
     GtkListStore *apps;
     GtkWidget *apps_stack, *apps_views[VIEW_COUNT];
     int apps_view;
@@ -266,6 +267,7 @@ static void load_settings(taskmgr *t, int *tab) {
             mem_unit = v;
         g_clear_error(&err);
         t->minimize_on_use = g_key_file_get_boolean(kf, "TaskManager", "MinimizeOnUse", nullptr);
+        t->on_top = g_key_file_get_boolean(kf, "TaskManager", "AlwaysOnTop", nullptr);
         t->per_cpu = g_key_file_get_boolean(kf, "TaskManager", "OneGraphPerCPU", nullptr);
         t->show_kernel = g_key_file_get_boolean(kf, "TaskManager", "ShowKernelTimes", nullptr);
         gsize n = 0;
@@ -288,6 +290,7 @@ static void save_settings(taskmgr *t) {
     g_key_file_set_integer(kf, "TaskManager", "ApplicationsView", t->apps_view);
     g_key_file_set_integer(kf, "TaskManager", "MemoryUnits", mem_unit);
     g_key_file_set_boolean(kf, "TaskManager", "MinimizeOnUse", t->minimize_on_use);
+    g_key_file_set_boolean(kf, "TaskManager", "AlwaysOnTop", t->on_top);
     g_key_file_set_boolean(kf, "TaskManager", "OneGraphPerCPU", t->per_cpu);
     g_key_file_set_boolean(kf, "TaskManager", "ShowKernelTimes", t->show_kernel);
     const char *on[NCOLUMNS];
@@ -679,6 +682,8 @@ static GtkWidget *build_apps(taskmgr *t) {
     gtk_box_pack_start(GTK_BOX(box), button_row(buttons, 3), FALSE, FALSE, 0);
 
     t->tasks = xd_tasklist_new(gdk_display_get_default(), on_task_changed, on_task_closed, t);
+    if (t->on_top_item != nullptr)
+        gtk_widget_set_sensitive(t->on_top_item, xd_tasklist_can_set_on_top(t->tasks));
     if (!xd_tasklist_available(t->tasks)) {
         gtk_widget_set_tooltip_text(t->apps_stack,
                                     "The window list needs the XeonDesktop compositor.");
@@ -1427,6 +1432,21 @@ static void cb_kernel(GtkCheckMenuItem *item, gpointer d) {
     save_settings(t);
 }
 
+static void cb_on_top(GtkCheckMenuItem *item, gpointer d) {
+    taskmgr *t = d;
+    t->on_top = gtk_check_menu_item_get_active(item);
+    xd_tasklist_set_on_top(t->tasks, t->window, t->on_top);
+    save_settings(t);
+}
+
+/* Once the window is on screen, Always On Top as it was left. */
+static gboolean apply_on_top(GtkWidget *w, [[maybe_unused]] GdkEvent *ev, gpointer d) {
+    taskmgr *t = d;
+    if (t->on_top)
+        xd_tasklist_set_on_top(t->tasks, w, TRUE);
+    return FALSE;
+}
+
 static void cb_minimize_on_use(GtkCheckMenuItem *item, gpointer d) {
     taskmgr *t = d;
     t->minimize_on_use = gtk_check_menu_item_get_active(item);
@@ -1475,7 +1495,11 @@ static GtkWidget *build_menus(taskmgr *t, GtkAccelGroup *accel) {
 
     GtkWidget *options = submenu(bar, "_Options");
     GtkWidget *on_top = gtk_check_menu_item_new_with_mnemonic("_Always On Top");
-    gtk_widget_set_sensitive(on_top, FALSE); /* no Wayland protocol for it yet */
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(on_top), t->on_top);
+    /* Only our compositor offers it (known once the window list connects). */
+    gtk_widget_set_sensitive(on_top, FALSE);
+    t->on_top_item = on_top;
+    g_signal_connect(on_top, "toggled", G_CALLBACK(cb_on_top), t);
     gtk_menu_shell_append(GTK_MENU_SHELL(options), on_top);
     GtkWidget *mou = gtk_check_menu_item_new_with_mnemonic("_Minimize On Use");
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(mou), t->minimize_on_use);
@@ -1657,6 +1681,7 @@ static void open_window(GtkApplication *app) {
     gtk_box_pack_end(GTK_BOX(vbox), sbar, FALSE, FALSE, 0);
 
     apply_columns(t);
+    g_signal_connect(t->window, "map-event", G_CALLBACK(apply_on_top), t);
     gtk_widget_show_all(t->window);
     set_apps_view(t, t->apps_view);
     g_signal_connect(t->notebook, "switch-page", G_CALLBACK(on_tab), t);

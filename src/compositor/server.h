@@ -105,6 +105,7 @@ typedef struct xd_view {
     bool minimized;
     /* Didn't answer a ping (xdg-shell): "(Not Responding)" after its
      * title, as Windows shows, until it answers again. */
+    bool on_top; /* Always On Top: in layer_on_top */
     bool hung;
     bool ping_out; /* a ping to its program hasn't timed out (yet) */
     char *hung_title;
@@ -216,6 +217,7 @@ struct xd_server {
      * windows, layer-shell top and overlay. */
     struct wlr_scene_tree *layer_background;
     struct wlr_scene_tree *layer_views;
+    struct wlr_scene_tree *layer_on_top; /* Always On Top windows, below the taskbar */
     struct wlr_scene_tree *layer_fullscreen; /* the focused fullscreen window */
     struct wlr_scene_tree *layers[4]; /* indexed by zwlr_layer_shell_v1_layer */
 
@@ -412,6 +414,8 @@ void xd_animate_forget_view(xd_server *server, xd_view *view);
 void xd_animate_finish(xd_server *server);
 /* A window is going: Task Manager's marks for arrange_marked drop it. */
 void xd_arrange_forget_view(xd_server *server, xd_view *view);
+/* Always On Top: the window (and its dialogs) above ordinary windows. */
+void xd_view_set_on_top(xd_view *view, bool on_top);
 
 /* protocols.c: output management/power, idle, activation. */
 void xd_protocols_init(xd_server *server);
