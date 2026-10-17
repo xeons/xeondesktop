@@ -161,6 +161,8 @@ struct xd_ui {
     struct wp_viewporter *viewporter;
     struct wp_cursor_shape_manager_v1 *cursor_shape_manager;
     struct wp_cursor_shape_device_v1 *cursor_shape;
+    bool cursor_set;  /* shape sent since the last pointer enter */
+    bool cursor_text; /* ...and it was the text beam */
     struct wl_data_device_manager *data_device_manager;
     struct zxdg_output_manager_v1 *xdg_output_manager;
     xd_ui_output *outputs;

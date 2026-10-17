@@ -19,17 +19,22 @@ static const char *const text_mimes[] = {"text/plain;charset=utf-8", "text/plain
 
 /* ---- pointer ----------------------------------------------------------------- */
 
+/* Called on every motion: only a change of shape goes to the compositor. */
 void xd_ui_set_cursor_text(xd_ui *ui, bool text) {
-    if (ui->cursor_shape != nullptr)
-        wp_cursor_shape_device_v1_set_shape(ui->cursor_shape, ui->pointer_serial,
-                                            text ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT
-                                                 : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+    if (ui->cursor_shape == nullptr || (ui->cursor_set && ui->cursor_text == text))
+        return;
+    wp_cursor_shape_device_v1_set_shape(ui->cursor_shape, ui->pointer_serial,
+                                        text ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT
+                                             : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+    ui->cursor_set = true;
+    ui->cursor_text = text;
 }
 
 static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
                           struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
     xd_ui *ui = data;
     ui->pointer_serial = serial;
+    ui->cursor_set = false; /* each enter needs its shape set again */
     ui->pointer_window = xd_window_for_surface(ui, surface);
     ui->pointer_popup = xd_popup_for_surface(ui, surface);
     ui->pointer_x = wl_fixed_to_double(x);

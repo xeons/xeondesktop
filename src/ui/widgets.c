@@ -78,6 +78,12 @@ static bool is_focusable(const xd_widget *w) {
             w->kind == XD_W_SLIDER);
 }
 
+/* Drawn differently under the pointer, so hovering it needs a redraw. */
+static bool draws_hot(const xd_widget *w) {
+    return w != nullptr &&
+           (w->kind == XD_W_BUTTON || w->kind == XD_W_CHECKBOX || w->kind == XD_W_COMBO);
+}
+
 /* Takes clicks without taking keyboard focus. */
 static bool is_clickable(const xd_widget *w) {
     return w->kind == XD_W_CUSTOM && w->pointer != nullptr && w->enabled && is_visible(w);
@@ -1225,17 +1231,17 @@ void xd_window_pointer_motion(xd_window *win, double x, double y) {
     }
     xd_widget *hot = widget_at(win, x, y);
     if (hot != win->hot) {
+        if (draws_hot(hot) || draws_hot(win->hot))
+            win->dirty = true;
         win->hot = hot;
-        win->dirty = true;
     }
     xd_ui_set_cursor_text(win->ui, over_text(win, hot, x, y));
 }
 
 void xd_window_pointer_leave(xd_window *win) {
-    if (win->hot != nullptr) {
-        win->hot = nullptr;
+    if (draws_hot(win->hot))
         win->dirty = true;
-    }
+    win->hot = nullptr;
 }
 
 void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
@@ -1245,9 +1251,11 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
     double y = win->ui->pointer_y;
     if (!pressed) {
         xd_widget *target = win->pressed;
-        bool released_over = target != nullptr && win->hot == target;
+        if (target == nullptr)
+            return; /* pressed outside any widget: nothing changes */
+        bool released_over = win->hot == target;
         win->pressed = nullptr;
-        if (target != nullptr && target->kind == XD_W_CUSTOM && target->pointer != nullptr) {
+        if (target->kind == XD_W_CUSTOM && target->pointer != nullptr) {
             win->dirty = true;
             target->pointer(target, XD_POINTER_RELEASE, x - target->r.x, y - target->r.y,
                             target->user); /* may close the window */
