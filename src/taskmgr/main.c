@@ -104,7 +104,7 @@ static const char *priority_name(int nice) {
 
 /* ---- state ----------------------------------------------------------------------- */
 
-enum { AP_TASK, AP_ICON16, AP_ICON32, AP_TITLE, AP_STATUS, AP_COUNT };
+enum { AP_TASK, AP_ICON16, AP_ICON32, AP_TITLE, AP_STATUS, AP_APP_ID, AP_COUNT };
 enum { VIEW_LARGE, VIEW_SMALL, VIEW_DETAILS, VIEW_COUNT };
 enum { SPEED_HIGH, SPEED_NORMAL, SPEED_LOW, SPEED_PAUSED, SPEED_COUNT };
 static const guint speed_ms[SPEED_COUNT] = {500, 2000, 4000, 0};
@@ -131,6 +131,7 @@ typedef struct taskmgr {
     GtkWidget *hide_item;
     xd_task *own_task; /* our window in the window list */
     gboolean syncing;
+    gboolean procs_stale; /* process list skipped while off screen */
 
     /* menus whose visibility follows the tab */
     GtkWidget *windows_menu, *view_sep, *view_apps[VIEW_COUNT], *view_columns, *view_cpu_history,
@@ -171,6 +172,7 @@ typedef struct taskmgr {
 } taskmgr;
 
 static void sample(taskmgr *t);
+static void refresh_processes(taskmgr *t);
 
 /* ---- helpers ---------------------------------------------------------------------- */
 
@@ -381,25 +383,38 @@ static void on_task_changed(xd_task *task, gpointer data) {
         t->own_task = task;
         if (task->minimized && t->hide_when_minimized && xd_trayicon_shown(t->tray))
             g_idle_add(hide_idle, t);
+        refresh_processes(t);
     }
     GtkTreeIter *iter = task->user;
-    if (iter == nullptr) {
+    gboolean new_row = iter == nullptr;
+    if (new_row) {
         iter = g_new(GtkTreeIter, 1);
         gtk_list_store_append(t->apps, iter);
         task->user = iter;
     }
-    GdkPixbuf *small = nullptr, *large = nullptr;
-    task_icons(task->app_id, &small, &large);
     const char *title = task->title != nullptr && *task->title != '\0' ? task->title
                         : task->app_id != nullptr                     ? task->app_id
                                                                       : "";
     /* The compositor adds " (Not Responding)" to a hung window's title,
      * as Windows does; its status says so. */
     gboolean hung = g_str_has_suffix(title, " (Not Responding)");
-    gtk_list_store_set(t->apps, iter, AP_TASK, task, AP_ICON16, small, AP_ICON32, large, AP_TITLE,
-                       title, AP_STATUS, hung ? "Not Responding" : "Running", -1);
-    g_clear_object(&small);
-    g_clear_object(&large);
+    gtk_list_store_set(t->apps, iter, AP_TASK, task, AP_TITLE, title, AP_STATUS,
+                       hung ? "Not Responding" : "Running", -1);
+
+    /* Titles change often (terminals, browsers); the icons only with the
+     * app id, and finding them reads .desktop files and the icon theme. */
+    char *old_id = nullptr;
+    if (!new_row)
+        gtk_tree_model_get(GTK_TREE_MODEL(t->apps), iter, AP_APP_ID, &old_id, -1);
+    if (new_row || g_strcmp0(old_id, task->app_id) != 0) {
+        GdkPixbuf *small = nullptr, *large = nullptr;
+        task_icons(task->app_id, &small, &large);
+        gtk_list_store_set(t->apps, iter, AP_ICON16, small, AP_ICON32, large, AP_APP_ID,
+                           task->app_id, -1);
+        g_clear_object(&small);
+        g_clear_object(&large);
+    }
+    g_free(old_id);
 }
 
 static void on_task_closed(xd_task *task, gpointer data) {
@@ -644,7 +659,7 @@ static GtkWidget *button_row(GtkWidget **buttons, int n) {
 
 static GtkWidget *build_apps(taskmgr *t) {
     t->apps = gtk_list_store_new(AP_COUNT, G_TYPE_POINTER, GDK_TYPE_PIXBUF, GDK_TYPE_PIXBUF,
-                                 G_TYPE_STRING, G_TYPE_STRING);
+                                 G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(box), 8);
 
@@ -1371,7 +1386,10 @@ static void update_performance(taskmgr *t) {
     GtkWidget *frames[] = {t->phys_frame, t->commit_frame, t->kern_frame};
     for (int i = 0; i < 3; i++) {
         g_snprintf(title, sizeof(title), "%s (%s)", names[i], unit_names[mem_unit]);
-        gtk_frame_set_label(GTK_FRAME(frames[i]), title);
+        /* gtk_frame_set_label makes a new label widget and relayouts the
+         * window: only when the unit changes, not every tick. */
+        if (g_strcmp0(gtk_frame_get_label(GTK_FRAME(frames[i])), title) != 0)
+            gtk_frame_set_label(GTK_FRAME(frames[i]), title);
     }
 
     gtk_widget_queue_draw(t->cpu_meter);
@@ -1396,11 +1414,29 @@ static void update_performance(taskmgr *t) {
 
 /* ---- sampling and menus ----------------------------------------------------------- */
 
+/* Hidden in the notification area, or minimized. */
+static gboolean off_screen(const taskmgr *t) {
+    return t->hidden || (t->own_task != nullptr && t->own_task->minimized);
+}
+
 static void sample(taskmgr *t) {
     if (!xd_sysinfo_sample(t->si))
         return;
-    update_processes(t);
+    /* Updating every row of the process list is the costly part; while
+     * nobody can see it, it waits for the window (refresh_processes). The
+     * meters keep going for the history graphs and the tray icon. */
+    t->procs_stale = off_screen(t);
+    if (!t->procs_stale)
+        update_processes(t);
     update_performance(t);
+}
+
+/* Back on screen: bring the process list up to the last sample. */
+static void refresh_processes(taskmgr *t) {
+    if (t->procs_stale && !off_screen(t)) {
+        t->procs_stale = FALSE;
+        update_processes(t);
+    }
 }
 
 static gboolean on_timer(gpointer data) {
@@ -1502,6 +1538,7 @@ static void tray_restore(gpointer d) {
 static void on_show([[maybe_unused]] GtkWidget *w, gpointer d) {
     taskmgr *t = d;
     t->hidden = FALSE;
+    refresh_processes(t);
 }
 
 static void tray_set_on_top(gboolean on_top, gpointer d) {
