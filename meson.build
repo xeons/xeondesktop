@@ -414,6 +414,7 @@ executable(
   'src/taskmgr/sysinfo.c',
   'src/taskmgr/graph.c',
   'src/taskmgr/tasks.c',
+  'src/taskmgr/trayicon.c',
   c_args: ['-D_GNU_SOURCE'],
   link_with: gtkapp_lib,
   dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep, proc2_dep, client_protocol_dep, m_dep],

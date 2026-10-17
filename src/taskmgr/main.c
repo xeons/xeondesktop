@@ -18,6 +18,7 @@
 #include "../settings/state.h"
 #include "graph.h"
 #include "sysinfo.h"
+#include "trayicon.h"
 #include "tasks.h"
 
 static constexpr GdkModifierType NO_MODS = (GdkModifierType)0;
@@ -123,6 +124,12 @@ typedef struct taskmgr {
     guint timer;
     int speed;
     gboolean minimize_on_use, per_cpu, show_kernel, on_top;
+    /* The CPU meter in the notification area; Hide When Minimized takes
+     * the window off the taskbar while it's minimized, into the icon. */
+    xd_trayicon *tray;
+    gboolean hide_when_minimized, hidden;
+    GtkWidget *hide_item;
+    xd_task *own_task; /* our window in the window list */
     gboolean syncing;
 
     /* menus whose visibility follows the tab */
@@ -268,6 +275,9 @@ static void load_settings(taskmgr *t, int *tab) {
         g_clear_error(&err);
         t->minimize_on_use = g_key_file_get_boolean(kf, "TaskManager", "MinimizeOnUse", nullptr);
         t->on_top = g_key_file_get_boolean(kf, "TaskManager", "AlwaysOnTop", nullptr);
+        if (g_key_file_has_key(kf, "TaskManager", "HideWhenMinimized", nullptr))
+            t->hide_when_minimized =
+                g_key_file_get_boolean(kf, "TaskManager", "HideWhenMinimized", nullptr);
         t->per_cpu = g_key_file_get_boolean(kf, "TaskManager", "OneGraphPerCPU", nullptr);
         t->show_kernel = g_key_file_get_boolean(kf, "TaskManager", "ShowKernelTimes", nullptr);
         gsize n = 0;
@@ -291,6 +301,7 @@ static void save_settings(taskmgr *t) {
     g_key_file_set_integer(kf, "TaskManager", "MemoryUnits", mem_unit);
     g_key_file_set_boolean(kf, "TaskManager", "MinimizeOnUse", t->minimize_on_use);
     g_key_file_set_boolean(kf, "TaskManager", "AlwaysOnTop", t->on_top);
+    g_key_file_set_boolean(kf, "TaskManager", "HideWhenMinimized", t->hide_when_minimized);
     g_key_file_set_boolean(kf, "TaskManager", "OneGraphPerCPU", t->per_cpu);
     g_key_file_set_boolean(kf, "TaskManager", "ShowKernelTimes", t->show_kernel);
     const char *on[NCOLUMNS];
@@ -353,8 +364,24 @@ static void task_icons(const char *app_id, GdkPixbuf **small, GdkPixbuf **large)
     g_clear_object(&gicon);
 }
 
+static gboolean hide_idle(gpointer data) {
+    taskmgr *t = data;
+    if (!t->hidden && xd_trayicon_shown(t->tray)) {
+        t->hidden = TRUE;
+        gtk_widget_hide(t->window);
+    }
+    return G_SOURCE_REMOVE;
+}
+
 static void on_task_changed(xd_task *task, gpointer data) {
     taskmgr *t = data;
+    /* Our own window (GApplication keeps us to one): minimized with Hide
+     * When Minimized, it leaves the taskbar for the notification area. */
+    if (g_strcmp0(task->app_id, "org.xeondesktop.TaskManager") == 0) {
+        t->own_task = task;
+        if (task->minimized && t->hide_when_minimized && xd_trayicon_shown(t->tray))
+            g_idle_add(hide_idle, t);
+    }
     GtkTreeIter *iter = task->user;
     if (iter == nullptr) {
         iter = g_new(GtkTreeIter, 1);
@@ -377,6 +404,8 @@ static void on_task_changed(xd_task *task, gpointer data) {
 
 static void on_task_closed(xd_task *task, gpointer data) {
     taskmgr *t = data;
+    if (task == t->own_task)
+        t->own_task = nullptr;
     GtkTreeIter *iter = task->user;
     if (iter != nullptr) {
         gtk_list_store_remove(t->apps, iter);
@@ -1356,6 +1385,7 @@ static void update_performance(taskmgr *t) {
     gtk_label_set_text(GTK_LABEL(t->st_procs), buf);
     g_snprintf(buf, sizeof(buf), "CPU Usage: %d%%", (int)(st->cpu * 100 + 0.5));
     gtk_label_set_text(GTK_LABEL(t->st_cpu), buf);
+    xd_trayicon_set_cpu(t->tray, st->cpu);
     g_string_assign(ms, "Mem Usage: ");
     append_memory(ms, used, TRUE);
     g_string_append(ms, " / ");
@@ -1436,6 +1466,7 @@ static void cb_on_top(GtkCheckMenuItem *item, gpointer d) {
     taskmgr *t = d;
     t->on_top = gtk_check_menu_item_get_active(item);
     xd_tasklist_set_on_top(t->tasks, t->window, t->on_top);
+    xd_trayicon_set_on_top(t->tray, t->on_top);
     save_settings(t);
 }
 
@@ -1446,6 +1477,57 @@ static gboolean apply_on_top(GtkWidget *w, [[maybe_unused]] GdkEvent *ev, gpoint
         xd_tasklist_set_on_top(t->tasks, w, TRUE);
     return FALSE;
 }
+
+static void cb_hide_when_minimized(GtkCheckMenuItem *item, gpointer d) {
+    taskmgr *t = d;
+    t->hide_when_minimized = gtk_check_menu_item_get_active(item);
+    save_settings(t);
+}
+
+/* ---- the notification area icon ---- */
+
+/* A click on the icon, or Restore: back on screen (and on the taskbar). */
+static void tray_restore(gpointer d) {
+    taskmgr *t = d;
+    if (t->hidden) {
+        gtk_widget_show(t->window);
+    } else if (t->own_task != nullptr) {
+        xd_task_activate(t->own_task); /* also unminimizes */
+        return;
+    }
+    gtk_window_present(GTK_WINDOW(t->window));
+}
+
+/* Shown again, from the icon or by starting Task Manager again. */
+static void on_show([[maybe_unused]] GtkWidget *w, gpointer d) {
+    taskmgr *t = d;
+    t->hidden = FALSE;
+}
+
+static void tray_set_on_top(gboolean on_top, gpointer d) {
+    taskmgr *t = d;
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(t->on_top_item), on_top);
+}
+
+static void tray_close(gpointer d) {
+    taskmgr *t = d;
+    gtk_widget_destroy(t->window);
+}
+
+/* Without the notification area there's nowhere to hide to. */
+static void tray_shown(gboolean shown, gpointer d) {
+    taskmgr *t = d;
+    gtk_widget_set_sensitive(t->hide_item, shown);
+    if (!shown && t->hidden)
+        tray_restore(t);
+}
+
+static const xd_trayicon_ops tray_ops = {
+    .restore = tray_restore,
+    .set_on_top = tray_set_on_top,
+    .close = tray_close,
+    .shown = tray_shown,
+};
 
 static void cb_minimize_on_use(GtkCheckMenuItem *item, gpointer d) {
     taskmgr *t = d;
@@ -1506,8 +1588,11 @@ static GtkWidget *build_menus(taskmgr *t, GtkAccelGroup *accel) {
     g_signal_connect(mou, "toggled", G_CALLBACK(cb_minimize_on_use), t);
     gtk_menu_shell_append(GTK_MENU_SHELL(options), mou);
     GtkWidget *hide = gtk_check_menu_item_new_with_mnemonic("_Hide When Minimized");
-    gtk_widget_set_sensitive(hide, FALSE); /* needs the notification area */
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(hide), t->hide_when_minimized);
+    gtk_widget_set_sensitive(hide, FALSE); /* until the notification area shows our icon */
+    g_signal_connect(hide, "toggled", G_CALLBACK(cb_hide_when_minimized), t);
     gtk_menu_shell_append(GTK_MENU_SHELL(options), hide);
+    t->hide_item = hide;
 
     GtkWidget *view = submenu(bar, "_View");
     menu_item(view, "_Refresh Now", G_CALLBACK(cb_refresh), t, accel, GDK_KEY_F5, NO_MODS);
@@ -1623,6 +1708,7 @@ static GtkWidget *status_pane(GtkWidget **label, int width) {
 static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     taskmgr *t = data;
     save_settings(t);
+    xd_trayicon_free(t->tray);
     if (t->timer != 0)
         g_source_remove(t->timer);
     xd_tasklist_free(t->tasks);
@@ -1648,6 +1734,7 @@ static void open_window(GtkApplication *app) {
         return;
     }
     int tab = TAB_APPS;
+    t->hide_when_minimized = TRUE; /* as in Windows */
     load_settings(t, &tab);
 
     t->window = gtk_application_window_new(app);
@@ -1682,12 +1769,15 @@ static void open_window(GtkApplication *app) {
 
     apply_columns(t);
     g_signal_connect(t->window, "map-event", G_CALLBACK(apply_on_top), t);
+    g_signal_connect(t->window, "show", G_CALLBACK(on_show), t);
     gtk_widget_show_all(t->window);
     set_apps_view(t, t->apps_view);
     g_signal_connect(t->notebook, "switch-page", G_CALLBACK(on_tab), t);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(t->notebook), tab);
     on_tab(GTK_NOTEBOOK(t->notebook), nullptr, (guint)tab, t);
     show_cpu_graphs(t);
+    t->tray = xd_trayicon_new(&tray_ops, t);
+    xd_trayicon_set_on_top(t->tray, t->on_top);
     sample(t);
     set_speed(t, t->speed);
 }

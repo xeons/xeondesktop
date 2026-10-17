@@ -578,8 +578,15 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       set_always_on_top puts the client's own window (and its dialogs) in
       a layer above ordinary windows, below the taskbar. Tested: Task
       Manager stays in front of a newly focused window.
-- [ ] Hide When Minimized with the CPU meter in the notification area (the
-      tray exists now: the Task Manager can show a StatusNotifierItem).
+- [x] The CPU meter in the notification area while Task Manager runs
+      (trayicon.c: a StatusNotifierItem with green LED rows and "CPU Usage:
+      N%" as its tooltip; a click restores the window; its dbusmenu has
+      Restore, Always On Top and Close Task Manager). Options > Hide When
+      Minimized (on by default, as in Windows; [TaskManager]
+      HideWhenMinimized) takes the minimized window off the taskbar into
+      the icon; it's greyed out, and a hidden window comes back, when
+      there's no notification area. Tested headless: the icon, Win+Down
+      hiding the window, a click restoring it, the menu.
 - [x] Windows menu: Tile Horizontally/Vertically and Cascade arrange the
       windows selected on the Applications tab (several with Ctrl/Shift;
       End Task, Minimize and Maximize act on all of them). The compositor
