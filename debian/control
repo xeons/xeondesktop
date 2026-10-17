@@ -28,6 +28,9 @@ Build-Depends:
  libnm-dev,
  libpackagekit-glib2-dev,
  libflatpak-dev,
+ libcups2-dev,
+ libsane-dev,
+ libgphoto2-dev,
  libsystemd-dev,
  libpolkit-agent-1-dev,
  libpam0g-dev,
@@ -71,6 +74,8 @@ Recommends:
  sound-theme-freedesktop,
  accountsservice,
  udisks2,
+ cups,
+ sane-utils,
  network-manager-gnome,
 Suggests:
  bluez,

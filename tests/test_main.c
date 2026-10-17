@@ -15,6 +15,8 @@
 #include "../src/admin/admin.h"
 #include "../src/appwiz/programs.h"
 #include "../src/apps/runcmd.h"
+#include "../src/printers/printlib.h"
+#include "../src/scanners/scanlib.h"
 #include "../src/bluetooth/btinfo.h"
 #include "../src/joy/joyinfo.h"
 #include "../src/netconn/netconn.h"
@@ -1966,6 +1968,167 @@ static void test_appwiz(void) {
     g_bookmark_file_free(recent);
 }
 
+/* Printers and Faxes: CUPS's states in XP's words, sizes, ports, names. */
+static void test_printers(void) {
+    CHECK(strcmp(xd_printer_status_text(3, "none", true), "Ready") == 0);
+    CHECK(strcmp(xd_printer_status_text(3, nullptr, true), "Ready") == 0);
+    CHECK(strcmp(xd_printer_status_text(4, "none", true), "Printing") == 0);
+    CHECK(strcmp(xd_printer_status_text(5, "paused", true), "Paused") == 0);
+    CHECK(strcmp(xd_printer_status_text(5, "offline-report,paused", true), "Paused") == 0);
+    CHECK(strcmp(xd_printer_status_text(3, "offline-report", true), "Offline") == 0);
+    CHECK(strcmp(xd_printer_status_text(4, "media-empty-error", true), "Paper Out") == 0);
+    CHECK(strcmp(xd_printer_status_text(3, "toner-low-warning", true), "Toner/Ink Low") == 0);
+    CHECK(strcmp(xd_printer_status_text(3, "cups-missing-filter-error", true), "Error") == 0);
+    CHECK(strcmp(xd_printer_status_text(5, "none", true), "Error") == 0);
+    CHECK(strcmp(xd_printer_status_text(3, "none", false), "Not Accepting Documents") == 0);
+    /* A reason that only starts like a known one isn't it. */
+    CHECK(strcmp(xd_printer_status_text(3, "pausedx", true), "Ready") == 0);
+    CHECK(xd_printer_is_paused(5, "paused"));
+    CHECK(!xd_printer_is_paused(3, "paused"));
+
+    CHECK(strcmp(xd_print_job_status_text(3), "") == 0);
+    CHECK(strcmp(xd_print_job_status_text(4), "Paused") == 0);
+    CHECK(strcmp(xd_print_job_status_text(5), "Printing") == 0);
+    CHECK(strcmp(xd_print_job_status_text(8), "Error") == 0);
+
+    static const struct {
+        guint64 bytes;
+        const char *text;
+    } sizes[] = {
+        {0, "0 bytes"},           {999, "999 bytes"},    {1000, "0.97 KB"},
+        {1024, "1.00 KB"},        {43520, "42.5 KB"},    {435200, "425 KB"},
+        {1023 * 1024, "0.99 MB"}, {1440000, "1.37 MB"}, {5ULL << 40, "5.00 TB"},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(sizes); i++) {
+        char *s = xd_print_size_text(sizes[i].bytes);
+        CHECK(strcmp(s, sizes[i].text) == 0);
+        if (strcmp(s, sizes[i].text) != 0)
+            fprintf(stderr, "  size %" G_GUINT64_FORMAT ": %s\n", sizes[i].bytes, s);
+        g_free(s);
+    }
+    char *p = xd_print_pages_text(0, 0, false);
+    CHECK(strcmp(p, "N/A") == 0);
+    g_free(p);
+    p = xd_print_pages_text(2, 5, true);
+    CHECK(strcmp(p, "2/5") == 0);
+    g_free(p);
+    p = xd_print_pages_text(0, 5, false);
+    CHECK(strcmp(p, "5") == 0);
+    g_free(p);
+
+    static const char *const ports[][2] = {
+        {"socket://192.168.1.5:9100", "IP_192.168.1.5"},
+        {"ipp://printer.local/ipp/print", "IP_printer.local"},
+        {"dnssd://Office%20Laser._ipp._tcp.local/?uuid=1", "Office Laser"},
+        {"usb://HP/LaserJet?serial=1", "USB"},
+        {"parallel:/dev/lp0", "LPT1:"},
+        {"serial:/dev/ttyS1?baud=9600", "COM2:"},
+        {"smb://server/laser", "\\\\server\\laser"},
+        {"file:/dev/null", "/dev/null"},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(ports); i++) {
+        char *s = xd_printer_port_text(ports[i][0]);
+        CHECK(strcmp(s, ports[i][1]) == 0);
+        if (strcmp(s, ports[i][1]) != 0)
+            fprintf(stderr, "  port %s: %s\n", ports[i][0], s);
+        g_free(s);
+    }
+    CHECK(strcmp(xd_printer_port_description("socket://h"), "Standard TCP/IP Port") == 0);
+    CHECK(strcmp(xd_printer_port_description("usb://HP/x"), "USB Port") == 0);
+    CHECK(xd_printer_uri_is_network("ipps://h/ipp/print"));
+    CHECK(!xd_printer_uri_is_network("usb://HP/x"));
+    CHECK(!xd_printer_uri_is_network(nullptr));
+
+    CHECK(xd_printer_name_valid("Office_Laser"));
+    CHECK(!xd_printer_name_valid("Office Laser"));
+    CHECK(!xd_printer_name_valid("a/b"));
+    CHECK(!xd_printer_name_valid(""));
+    char *n = xd_printer_name_suggest("HP LaserJet 4 (Room #2)");
+    CHECK(strcmp(n, "HP_LaserJet_4_(Room_2)") == 0);
+    CHECK(xd_printer_name_valid(n));
+    g_free(n);
+    n = xd_printer_name_suggest("  ");
+    CHECK(strcmp(n, "Printer") == 0);
+    g_free(n);
+    char long_name[300];
+    memset(long_name, 'x', sizeof(long_name) - 1);
+    long_name[sizeof(long_name) - 1] = '\0';
+    n = xd_printer_name_suggest(long_name);
+    CHECK(strlen(n) == 127 && xd_printer_name_valid(n));
+    g_free(n);
+
+    CHECK(strcmp(xd_print_orientation_label(4), "Landscape") == 0);
+    CHECK(xd_print_orientation_label(7) == nullptr);
+    CHECK(strcmp(xd_print_sides_label("two-sided-long-edge"), "Flip on Long Edge") == 0);
+    CHECK(strcmp(xd_print_color_label("monochrome"), "Black & White") == 0);
+    CHECK(strcmp(xd_print_quality_label(5), "Best") == 0);
+    char *k = xd_print_keyword_label("stationery-heavyweight");
+    CHECK(strcmp(k, "Stationery heavyweight") == 0);
+    g_free(k);
+}
+
+/* Scanners and Cameras: SANE modes for XP's picture types, resolutions,
+ * file names, and SANE's sample formats. */
+static void test_scanners(void) {
+    const char *test_modes[] = {"Gray", "Color"};
+    bool one_bit = true;
+    CHECK(strcmp(xd_scan_mode_for(XD_PICTURE_COLOR, test_modes, 2, &one_bit), "Color") == 0 &&
+          !one_bit);
+    CHECK(strcmp(xd_scan_mode_for(XD_PICTURE_BW, test_modes, 2, &one_bit), "Gray") == 0 &&
+          one_bit);
+    const char *other[] = {"Lineart", "24bit Color", "Grayscale"};
+    CHECK(strcmp(xd_scan_mode_for(XD_PICTURE_BW, other, 3, &one_bit), "Lineart") == 0 &&
+          !one_bit);
+    CHECK(strcmp(xd_scan_mode_for(XD_PICTURE_COLOR, other, 3, &one_bit), "24bit Color") == 0);
+    CHECK(strcmp(xd_scan_mode_for(XD_PICTURE_GRAY, other, 3, &one_bit), "Grayscale") == 0);
+    const char *only_color[] = {"Color"};
+    CHECK(xd_scan_mode_for(XD_PICTURE_GRAY, only_color, 1, &one_bit) == nullptr);
+
+    GArray *r = g_array_new(FALSE, FALSE, sizeof(int));
+    xd_scan_resolutions_in_range(1, 1200, r);
+    CHECK(r->len == 7 && g_array_index(r, int, 0) == 75 && g_array_index(r, int, 6) == 1200);
+    g_array_set_size(r, 0);
+    xd_scan_resolutions_in_range(110, 140, r);
+    CHECK(r->len == 2 && g_array_index(r, int, 0) == 110 && g_array_index(r, int, 1) == 140);
+    g_array_unref(r);
+    CHECK(xd_scan_preview_dpi(1, 1200) == 50);
+    CHECK(xd_scan_preview_dpi(75, 600) == 75);
+
+    CHECK(xd_scan_name_valid("Picture"));
+    CHECK(!xd_scan_name_valid("a/b") && !xd_scan_name_valid("..") && !xd_scan_name_valid(""));
+    char *dir = g_dir_make_tmp("xd-scan-XXXXXX", nullptr);
+    char *f = xd_scan_next_file(dir, "Picture", "png");
+    char *want = g_build_filename(dir, "Picture 001.png", nullptr);
+    CHECK(strcmp(f, want) == 0);
+    CHECK(g_file_set_contents(f, "", 0, nullptr));
+    char *f2 = xd_scan_next_file(dir, "Picture", "png");
+    CHECK(g_str_has_suffix(f2, "Picture 002.png"));
+    CHECK(g_remove(f) == 0);
+    CHECK(g_rmdir(dir) == 0);
+    g_free(f2);
+    g_free(want);
+    g_free(f);
+    g_free(dir);
+
+    guint8 rgb[3 * 9];
+    const SANE_Byte bits[] = {0xA0, 0x80}; /* 1010 0000 1: black, white, black, ... */
+    CHECK(xd_scan_convert_line(SANE_FRAME_GRAY, 1, 9, bits, rgb));
+    CHECK(rgb[0] == 0 && rgb[3] == 255 && rgb[6] == 0 && rgb[9] == 255 && rgb[24] == 0);
+    const SANE_Byte gray8[] = {10, 200};
+    CHECK(xd_scan_convert_line(SANE_FRAME_GRAY, 8, 2, gray8, rgb));
+    CHECK(rgb[0] == 10 && rgb[2] == 10 && rgb[3] == 200);
+    const guint16 wide[3] = {0xFF00, 0x1234, 0x0001};
+    SANE_Byte wide_bytes[sizeof(wide)];
+    memcpy(wide_bytes, wide, sizeof(wide));
+    CHECK(xd_scan_convert_line(SANE_FRAME_RGB, 16, 1, wide_bytes, rgb));
+    CHECK(rgb[0] == 0xFF && rgb[1] == 0x12 && rgb[2] == 0x00);
+    memset(rgb, 7, sizeof(rgb));
+    const SANE_Byte green[] = {99};
+    CHECK(xd_scan_convert_line(SANE_FRAME_GREEN, 8, 1, green, rgb));
+    CHECK(rgb[0] == 7 && rgb[1] == 99 && rgb[2] == 7);
+    CHECK(!xd_scan_convert_line(SANE_FRAME_GRAY, 4, 1, green, rgb));
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -1999,6 +2162,8 @@ int main(void) {
     test_admin_events();
     test_admin_disks();
     test_appwiz();
+    test_printers();
+    test_scanners();
     test_schedtasks();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

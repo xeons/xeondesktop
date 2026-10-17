@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Printers and Faxes
+Comment=Shows installed printers and fax printers and helps you add new ones
+Exec=xd-printers
+Icon=printer
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=hardware
+Keywords=printer;printers;fax;print;queue;cups;
+StartupWMClass=org.xeondesktop.Printers

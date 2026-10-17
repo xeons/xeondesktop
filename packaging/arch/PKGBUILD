@@ -39,6 +39,9 @@ depends=(
   'libnm'      # Network Connections
   'packagekit' # Add or Remove Programs
   'flatpak'    # Add or Remove Programs
+  'libcups'    # Printers and Faxes
+  'sane'       # Scanners and Cameras
+  'libgphoto2' # Scanners and Cameras
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
@@ -56,6 +59,7 @@ optdepends=(
   'accountsservice: User Accounts'
   'bluez: Bluetooth Devices'
   'udisks2: Disk Management'
+  'cups: Printers and Faxes'
   'nm-connection-editor: Network Connections > Configure and Advanced'
   'alacritty: the default terminal (Ctrl+Alt+T)'
   'networkmanager: the network icon'

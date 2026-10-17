@@ -451,6 +451,8 @@ install_data(
   'data/applications/org.xeondesktop.EventViewer.desktop',
   'data/applications/org.xeondesktop.DiskManagement.desktop',
   'data/applications/org.xeondesktop.AddRemovePrograms.desktop',
+  'data/applications/org.xeondesktop.Printers.desktop',
+  'data/applications/org.xeondesktop.Scanners.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -696,6 +698,41 @@ executable(
   install: true,
 )
 
+# Printers and Faxes (CUPS) and Scanners and Cameras (SANE, libgphoto2).
+cups_dep = dependency('cups', include_type: 'system')
+sane_dep = dependency('sane-backends', include_type: 'system')
+gphoto2_dep = dependency('libgphoto2', include_type: 'system')
+executable(
+  'xd-printers',
+  'src/printers/main.c',
+  'src/printers/actions.c',
+  'src/printers/addwizard.c',
+  'src/printers/auth.c',
+  'src/printers/cupsops.c',
+  'src/printers/printlib.c',
+  'src/printers/props.c',
+  'src/printers/queue.c',
+  'src/cpl/wizard.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, cups_dep],
+  c_args: ['-D_GNU_SOURCE',
+           '-DXD_CUPS_DATADIR="' + cups_dep.get_variable(pkgconfig: 'cups_datadir',
+                                                          default_value: '/usr/share/cups') + '"'],
+  install: true,
+)
+executable(
+  'xd-scanners',
+  'src/scanners/main.c',
+  'src/scanners/devices.c',
+  'src/scanners/imgwizard.c',
+  'src/scanners/scanlib.c',
+  'src/cpl/wizard.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, sane_dep, gphoto2_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -789,8 +826,11 @@ test_exe = executable(
   'src/netconn/netconn.c',
   'src/admin/admin.c',
   'src/appwiz/programs.c',
+  'src/printers/printlib.c',
+  'src/scanners/scanlib.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
-                 fontconfig_dep, packagekit_dep],
+                 fontconfig_dep, packagekit_dep, cups_dep,
+                 sane_dep.partial_dependency(compile_args: true)],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(

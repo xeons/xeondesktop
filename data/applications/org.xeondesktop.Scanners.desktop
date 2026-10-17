@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Scanners and Cameras
+Comment=Add, remove, and configure scanners and cameras
+Exec=xd-scanners
+Icon=scanner
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=hardware
+Keywords=scanner;scan;camera;photos;pictures;sane;gphoto;
+StartupWMClass=org.xeondesktop.Scanners
