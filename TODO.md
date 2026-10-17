@@ -209,7 +209,20 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       snapped windows stay so there, and restore there); Win+Shift+Up makes
       it as tall as the work area, Win+Down puts it back. Tested headless
       with two outputs.
-- [ ] Windows 7's icon-only taskbar and jump lists.
+- [~] Windows 7's taskbar (Aero): pinned and running programs share a row
+      of icon buttons (taskbar-pinned; the browser, Files and a media
+      player by default), running ones framed with stacked edges for more
+      windows; click activates or cycles, middle-click starts another,
+      dragging reorders pins. Jump lists: Recent (recently-used.xbel, per
+      program), Tasks (desktop actions), pin/unpin, close. Taskbar
+      Properties' "Taskbar buttons" choice. Tested headless. Not yet:
+      thumbnails, pinning inside a jump list, pinning by dropping a file,
+      Windows 7's own jump list look; sizes are from memory; "Combine when
+      taskbar is full" combines every program at once.
+- [x] A window resized from its left or top edge snapped back to its old
+      place at its next commit after being moved (the resize's anchor was
+      never released), and windows that redraw constantly (Firefox) fought
+      the drag. UI test: move_after_left_resize.
 - [x] Resizing from the top/left edges keeps the opposite edge still.
 - [x] Tested: Alt+Tab, Alt+F4 (Wayland and X11), Win+Up/Down (maximize,
       restore, minimize), Ctrl+Alt+T, Ctrl+Alt+Backspace, Ctrl+Esc,
@@ -346,15 +359,22 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       repeats held keys; a failed rename says why (xd-message). Tested
       headless: moving on the grid, onto a folder, desktop -> xd-files,
       xd-files -> desktop, onto the Recycle Bin (asks), key repeat.
-- [ ] Desktop icons: My Network Places, Display Properties' Customize
-      Desktop (which icons show), Auto Arrange, larger icons with scaling
-      of the icon size.
+- [x] Desktop icons: My Network Places (with gvfs's network backend),
+      Display Properties' Customize Desktop (which icons show, Change
+      Icon..., Restore Default), Auto Arrange and Align to Grid (free
+      placement remembered), Show Desktop Icons, Windows 7's View/Sort by,
+      icon sizes and "Use large icons". Tested headless. Not yet: XP's
+      icon picker (Change Icon uses an image chooser), the Web tab, Desktop
+      Cleanup; the Desktop Items dialog gets its own taskbar button
+      (libxdui windows can't have an owner).
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
       Programs, Recent Documents and Control Panel submenus, Log Off and
-      Turn Off Computer. Not yet: Set Program Access and Defaults, Printers
-      and Faxes, Help and Support and Search (greyed out); pinning from the
-      menu; keyboard navigation of the right column and footer; the
+      Turn Off Computer, Search (xd-search), Help and Support (xd-help),
+      Set Program Access and Defaults (xd-defaults), Printers and Faxes,
+      the user's full name in the header, keyboard navigation of every
+      column and the footer. Not yet: pinning from the menu; letter
+      shortcuts; the
       highlight for newly installed programs; the large-icon/small-icon
       option. Untested: keyboard use, Log Off / Turn Off from the footer,
       Recent Documents and Control Panel submenus in the XP layout.
@@ -364,7 +384,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       The Start menu closes afterwards (Windows 7 keeps it open). Tested
       headless: unpinning a default, pinning a search result, removing a
       frequent program.
-- [ ] Windows 7 menu: jump lists.
+- [x] Windows 7 menu: jump lists (the ▸ beside a program; opens beside the
+      row rather than in the right column, and not by keyboard yet).
 - [x] Windows 2000 menu: Documents lists My Documents, the Home folder and
       the 15 most recent files (recently-used.xbel) in name order, rebuilt
       as the menu opens; a menu taller than the screen continues in more
@@ -373,10 +394,19 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Menus: one highlight at a time when moving quickly (the item whose
       submenu waits to close no longer stays lit). The Windows 2000 banner
       picks no item, as in Windows.
-- [ ] Greyed-out items: Search, Help, Devices and Printers, Default
-      Programs, Switch user.
-- [?] Start menu keyboard navigation after the focus fix (typing into the
-      Windows 7 search box was tested; arrows/Enter/Esc in both menus not).
+- [x] Greyed-out items: Search (xd-search: name, wildcards, text inside
+      files, where to look; no date/type/size options), Help (xd-help),
+      Devices and Printers, Default Programs (xd-defaults, GIO defaults
+      for six kinds), Switch User (the display manager's SwitchToGreeter or
+      GDM's CreateTransientDisplay; greyed without one). Windows 7 search
+      finds Control Panel applets; Computer opens computer:///. Tested
+      headless, Switch User against a mock.
+- [x] Start menu keyboard navigation (XP and Windows 7): arrows within and
+      across columns, Tab round them, Enter, Esc. Tested headless; Windows
+      7's exact Left/Right/Tab behaviour is a best guess.
+- [ ] Switch User locks first, and xd-lock doesn't answer logind's Unlock,
+      so returning asks for the password twice. XP's Log Off dialog has no
+      Switch User button yet.
 - [?] Windows 7 menu: Recent Items, the Shut Down ▸ submenu, Run, the
       frequently-used list showing launched apps.
 - [?] Quick Launch buttons launching apps; Show Desktop's second click
@@ -385,12 +415,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Theme engine
 
-- [ ] Classic colour schemes beyond Windows Standard, Windows Classic and
-      High Contrast Black/White (Brick, Desert, Eggplant, Lilac, Maple,
-      Marine, Plum, Pumpkin, Rainy Day, Rose, Slate, Spruce, Storm, Teal,
-      Wheat, and Large/Extra Large variants).
-- [ ] Verify scheme colour values against a reference: all but Windows
-      Standard were written from memory.
+- [x] All 22 of XP's classic colour schemes (data/schemes/*.ini, XP's
+      names), every colour from a published table of XP's system colours
+      and cross-checked against ReactOS's copy (cited in each file).
+- [ ] Large/Extra Large scheme metrics (and Pumpkin (large)'s sizes): no
+      reliable source found; the Font size setting scales instead.
 - [~] Luna matched to a Windows XP screenshot (tools/luna-measure.py makes
       src/theme/luna_data.h): the active and inactive frame (caption,
       borders, corner cut-outs), caption buttons (faces within ~3% RMS),
@@ -402,7 +431,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (not in the reference, so designed), radio buttons, tabs, scroll
       bars, group boxes, menus and the GTK theme's Luna section, which
       still uses the older approximations.
-- [ ] Luna colour variants (Olive Green, Silver).
+- [~] Luna colour variants Olive Green and Silver (LunaColor=HomeStead /
+      Metallic): Blue's measured artwork recoloured to XP's documented
+      colours, live, GTK theme included. Approximate shading (no reference
+      screenshots); push buttons, check boxes, edit borders and the
+      inactive Close stay Blue's.
 - [~] Aero (Windows 7), style_aero.c: translucent sky-blue glass frames
       with a sheen and faint streaks, rounded corners, the dark outline
       and light inner edge, the grouped caption strip with a red Close,
@@ -493,9 +526,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Launchers (.desktop files) show their program's name and icon, typed
       "Shortcut", as Windows shows a .lnk; renaming one changes its Name
       (every translation) and keeps the file. Tested from the desktop.
-- [ ] Undo, Send To; a modifier pressed mid-drag shows only when the
-      pointer next moves.
-- [ ] Search, Favorites menu.
+- [x] Edit > Undo (Ctrl+Z, the last 10 renames, copies, moves and deletes
+      to the Recycle Bin; per window, not kept), Send To (Compressed
+      (zipped) Folder with libarchive, Desktop, Mail Recipient for
+      Thunderbird/Evolution/KMail, My Documents, removable drives), a
+      modifier pressed mid-drag applies at once. Untested: Mail Recipient,
+      Send To a removable drive.
+- [ ] Favorites menu; the toolbar's Search button is still greyed (it
+      could open xd-search). My Network Places is titled network:///.
 - [~] Properties dialog. Tested: General for a file, Permissions (ticking
       Group Write and Apply changed 644 to 664), Details, and the size and
       contents count for a folder plus a file (matches find/du exactly).
@@ -507,7 +545,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (image size, audio tags), no ACLs or SELinux context.
 - [ ] `xd-thumbnailer` (sandboxed): only thumbnails already in the
       freedesktop cache are shown.
-- [ ] Details view: column resizing and reordering, more columns.
+- [x] Details view: column resizing (double-click a divider to fit),
+      reordering, and the header's column menu (Date Created/Accessed,
+      Attributes, Owner), remembered per folder. No Dimensions column (GIO
+      has no image size).
 - [x] Rubber-band selection (XP's translucent rectangle; Ctrl toggles from
       the selection it started with; the view scrolls past the edges),
       View ▸ Arrange Icons by (and on the background's menu), and the
@@ -516,7 +557,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       file, the 400 most recent, as XP keeps), saved on leaving it or
       closing the window; folders left at the defaults aren't stored.
       Tested: Details in one folder, Icons in its parent, Back restores it.
-- [ ] Arrange Icons by ▸ Auto Arrange (the icons are always arranged).
+- [x] Arrange Icons by ▸ Auto Arrange and Align to Grid; free placement
+      remembered per folder (folder-positions).
 - [x] My Computer (`computer:///`, places.c): the file system, the user's
       Documents and every mount from GIO's volume monitor (live), as Local
       Disk / Removable Disk / CD Drive / Network Drive with total and free
@@ -629,8 +671,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       offers xd-window-arranger-v1 (version 4: mark + arrange_marked) to
       the shell and to the xd-taskmgr installed beside it. Tested: two
       windows tiled vertically, the shell still gets its events.
-- [ ] Window icons only resolve for apps with an installed .desktop file
-      matching their app ID; ours are installed by `meson install`.
+- [x] Window icons: title bars and the taskbar use the desktop file's
+      icon, else one named after the app id, else the generic program icon
+      (the compositor loads them in a thread).
 - [ ] Handles has no Linux equivalent; Open Files is shown instead, and is
       0 for other users' processes (as is I/O).
 - [ ] Peak Mem Usage only covers the time Task Manager has been open.
@@ -677,13 +720,27 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       suspend/hibernate and lock on resume, real sound cards and default
       device switches, real localed/AccountsService/polkit prompts, a
       changed password at logon, a logon picking up the formats file.
-- [ ] Applets: not done: ClickLock, SlowKeys, ToggleKeys, MouseKeys; sound
-      events other than Windows Logon; separate on-battery power timers,
-      scheme Save As/Delete, UPS; Regional Customize; File Types New/Delete;
-      font Print; the XP Start menu header shows the login name, not the
-      full name; limited users see administrator tasks in User Accounts;
-      other GTK apps don't follow the double-click time or caret blink; the
-      Windows 7 menu's search doesn't find applets; its My Computer opens /.
+- [ ] Applets: not done: UPS; Power Options' Alarms and Power Meter tabs;
+      on-screen status indicators for the accessibility features, the
+      Sound tab (SoundSentry/ShowSounds); Customize Regional Options' fields
+      glibc can't express (list separator, two-digit years, long date...);
+      limited users see administrator tasks in User Accounts; other GTK
+      apps don't follow the double-click time or caret blink.
+- [x] Sound events: window open/close/minimize/maximize/restore (the
+      compositor), menu popup and command, device connect/disconnect, low
+      and critical battery (the shell), message box sounds, Empty Recycle
+      Bin, Windows Logoff/Exit, Default Beep (xdg-system-bell). Played off
+      the main loops; XD_SOUND_TRACE logs instead of playing.
+- [x] Accessibility: SlowKeys, ToggleKeys, MouseKeys, ClickLock, StickyKeys'
+      options, the four activation shortcuts with XP's confirmation box,
+      and the applets' Settings dialogs. Tested headless.
+- [x] Power Options' Plugged in / Running on batteries timers and scheme
+      Save As/Delete; Regional Options' Customize (a localedef-compiled
+      locale in LOCPATH, set through environment.d); File Types New and
+      Delete (the user's shared-mime-info database); Fonts' Print.
+- [ ] Untested for real: ToggleKeys' tone with the real lock state
+      (xd-inject sends none), battery alarms and timers on a laptop,
+      device sounds, a logon applying customised formats.
 - [x] Second round of applets (each tested headless; every write only
       against mocks or private instances): Network Connections (libnm:
       XP's groups and status texts, Status/TCP/IP/Wireless dialogs, XP SP2's
@@ -705,10 +762,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       and printers, real pairing, a real controller's test page, real
       printers/scanners/cameras, DNS-SD printer discovery, a real systemd
       user manager running scheduled tasks.
-- [ ] Scheduled Tasks: "When I log on" needs graphical-session.target,
-      which the session doesn't start yet, and scheduled programs need the
-      session's WAYLAND_DISPLAY etc. in the user manager's environment
-      (data/xeondesktop-session should import them and start the target).
+- [~] Session: a real login hands the user manager WAYLAND_DISPLAY,
+      DISPLAY, XDG_* and the session bus, and starts
+      xeondesktop-session.target (BindsTo graphical-session.target), which
+      xeondesktop-session stops when the compositor exits; so "When I log
+      on" tasks run and scheduled programs can open windows. Tested against
+      a mock user manager; untested with a real login.
 - [ ] Add or Remove Programs: "Last Used On" only for programs that open
       documents (the Start menu's launch counts have no dates).
 - [~] **System Properties** (`xd-sysdm`, Windows 2000's layout, Linux
@@ -742,12 +801,23 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Testing
 
-- [ ] Turn the xd-inject scenarios used so far into a repeatable UI test
-      suite (start menu, Run, window management, file manager, settings).
-      What works: a headless compositor (`WLR_BACKENDS=headless
-      WLR_RENDERER=pixman WLR_HEADLESS_OUTPUTS=N`, its own
-      `XDG_CONFIG_HOME`), xd-inject for input (`hold`/`release` for
-      modifiers), grim for screenshots. A nested session under X11 stops
-      drawing while its window is covered, so screenshots of it go stale.
+- [x] UI test suite (tests/ui/run.py, suite "ui": `meson test -C build
+      --setup ui --suite ui`): each scenario in its own headless session
+      (private mount namespace, scratch home, no system bus, sounds logged)
+      checked through tools/xd-windows, files, settings and screenshot
+      regions. Scenarios: Start menu and Run, Alt+Tab, maximize/minimize,
+      Alt+F4, Aero Snap, Explorer's new/rename/delete, Display Properties'
+      style, the desktop menu, Disk Management's Action menu (dbusmock),
+      moving after a left-edge resize. Its own CI job (privileged
+      container); not yet seen running on GitHub.
+- [ ] Alt+letter opens the first menu in our GTK apps (Alt+A in Disk
+      Management opens File); F10 then the letter works.
+- [ ] Bugs found in passing: a submenu of the desktop's context menu can
+      draw behind a window; libxdui's combo drop-down shows 8 items and no
+      scroll bar; the Add Printer wizard adds the printer on the main
+      thread (freezes for seconds; its Cancel stays live), and other
+      printer dialogs block on an unreachable CUPS server; closing Network
+      Connections' main window quits under open dialogs; libxdui draws
+      without frame callbacks (a slider drag can outrun the display).
 - [x] CI (.github/workflows/ci.yml): GCC and Clang debug builds (ASan,
       UBSan, -Werror) with the unit tests, and a GCC -fanalyzer build.

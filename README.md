@@ -40,6 +40,7 @@ Arch, `fonts-dejavu-extra`, `fonts-adobe-sourcesans3` and
     meson setup build          # debug build with ASan/UBSan
     ninja -C build
     meson test -C build
+    meson test -C build --setup ui --suite ui   # UI tests, headless (see below)
 
 Release build: `meson setup build-release -Dbuildtype=release -Db_sanitize=none`.
 Static analysis: `meson setup build-analyze -Danalyzer=true`.
@@ -88,29 +89,46 @@ the caption to maximize, double-click the window icon to close.
 
 The Windows 2000 Start menu is built from installed `.desktop` files, filed
 into Programs folders (Accessories, Games, Graphics, Internet, ...) by their
-categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`; items that
-need parts of the desktop not written yet (Control Panel, Search, Help) are
-shown greyed out.
+categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`;
+Search opens `xd-search` (find files by name, wildcard or text inside them),
+Help opens `xd-help`, and Settings holds Control Panel, Network Connections,
+Printers and Taskbar & Start Menu. The menus work from the keyboard: arrows
+within and across columns, Tab, Enter and Esc.
 
 ### Start menu styles
 
 Start > Settings > Taskbar & Start Menu picks the layout:
 
 - **Classic (Windows 2000)**: cascading menus with the side banner.
-- **Windows XP**: your picture and name across the top; pinned programs
+- **Windows XP**: your picture and full name across the top; pinned programs
   (the browser and mail client labelled Internet and E-mail, as in XP) and
   your most used programs on the left over **All Programs**, which cascades
   into the Programs menus; My Documents, My Recent Documents, My Pictures,
-  My Music, My Computer, Control Panel and Run on the right; Log Off and
-  Turn Off Computer along the bottom. Luna, Watercolor (Whistler) and
-  Classic colours.
+  My Music, My Computer, Control Panel, Printers and Faxes, Help and
+  Support, Search and Run on the right; Set Program Access and Defaults
+  (`xd-defaults`) under All Programs; Log Off and Turn Off Computer along
+  the bottom. Luna, Watercolor (Whistler) and Classic colours.
 - **Windows 7**: pinned programs (`~/.config/xeondesktop/start-pinned`, one
   desktop file id per line; browser and terminal by default) and your most
   used programs on the left, **All Programs** opening in place, and a search
-  box that takes any typing. On the right: your picture (`~/.face`), user
-  folders, Recent Items, Control Panel, Run and a Shut Down button whose ▸
-  offers Log off, Restart, Sleep and Hibernate. In Luna the right column is
+  box that finds programs and Control Panel applets. A ▸ beside a program
+  opens its jump list (recent files and its tasks). On the right: your
+  picture (`~/.face`), user folders, Recent Items, Computer, Control Panel,
+  Devices and Printers, Default Programs, Help and Support, Run and a Shut
+  Down button whose ▸ offers Switch user, Log off, Restart, Sleep and
+  Hibernate. In Luna the right column is
   the dark panel (opaque until the compositor can blur behind it).
+
+### Windows 7 taskbar
+
+In the Aero style the taskbar is Windows 7's: pinned and running programs
+share one row of icon buttons (`~/.config/xeondesktop/taskbar-pinned`, one
+desktop file id per line). A running program's button is framed, with
+stacked edges for more windows; click to start it, switch to it or cycle its
+windows, middle-click for another, drag to reorder. Right-click for its jump
+list: recent files, its tasks, pin or unpin, close. Taskbar Properties'
+"Taskbar buttons" also offers "Combine when taskbar is full" and "Never
+combine", with labels.
 
 ### Taskbar menus
 
@@ -141,8 +159,12 @@ tabs:
   it's placed.
 - Screen Saver: six savers with a live preview, Wait, Password protected,
   and when to turn the monitors off.
-- Appearance: style, colour scheme and font size, with a live preview.
-- Effects: font smoothing.
+- Desktop: Customize Desktop picks which of My Documents, My Computer, My
+  Network Places and the web browser show on the desktop, and their icons.
+- Appearance: style, colour scheme and font size, with a live preview: all
+  22 of XP's classic colour schemes, and for the XP style Default (blue),
+  Olive Green and Silver.
+- Effects: font smoothing and large icons.
 - Settings: drag the monitors into place, and set each one's resolution,
   refresh rate, scale and orientation, or turn it off. As in Windows, new
   display settings revert after 15 seconds unless you keep them. They're
@@ -176,24 +198,24 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 
 | Applet | Program | What it changes |
 |---|---|---|
-| Accessibility Options | `xd-access` | StickyKeys, BounceKeys and High Contrast, done by the compositor |
+| Accessibility Options | `xd-access` | StickyKeys, FilterKeys (SlowKeys, BounceKeys), ToggleKeys, MouseKeys and High Contrast, with XP's shortcuts, done by the compositor |
 | Add or Remove Programs | `xd-appwiz` | installed programs (size, use), remove and install through PackageKit and Flatpak |
 | Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, formatting, resizing), Device Manager |
 | Bluetooth Devices | `xd-bluetooth` | pairing (XP SP2's wizard and passkeys), device properties, the adapter's options, through BlueZ |
 | Date and Time | `xd-timedate` | the clock and time zone, through timedated |
 | Display | `xd-desk` | style, colours, wallpaper, screen saver, monitors |
-| Folder Options | `xd-folders` | the file manager's options, file types (`mimeapps.list`) |
-| Fonts | `xd-fonts` | lists, previews, installs and removes your fonts (fontconfig) |
+| Folder Options | `xd-folders` | the file manager's options, file types (`mimeapps.list`; new types in your shared-mime-info database) |
+| Fonts | `xd-fonts` | lists, previews, prints, installs and removes your fonts (fontconfig) |
 | Game Controllers | `xd-joy` | joysticks and gamepads from udev, with a live test page (read only) |
 | Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options |
-| Mouse | `xd-mouse` | buttons, double-click speed, pointer theme and size, speed, wheel |
+| Mouse | `xd-mouse` | buttons, ClickLock, double-click speed, pointer theme and size, speed, wheel |
 | Network Connections | `xd-netconn` | connections, status, TCP/IP settings, wireless networks, through NetworkManager |
-| Power Options | `xd-power` | monitor, standby and hibernate timers, the battery icon, locking on resume |
+| Power Options | `xd-power` | power schemes (plugged in and on batteries), monitor, standby and hibernate timers, the battery icon, locking on resume |
 | Printers and Faxes | `xd-printers` | CUPS printers, queues, preferences, test pages, the Add Printer wizard |
-| Regional and Language Options | `xd-intl` | your formats; the system locale and keyboard through localed |
+| Regional and Language Options | `xd-intl` | your formats, customised (numbers, currency, time, date); the system locale and keyboard through localed |
 | Scanners and Cameras | `xd-scanners` | SANE scanners and gphoto2 cameras, the Scanner and Camera Wizard |
 | Scheduled Tasks | `xd-schedtasks` | XP's wizard over systemd user timers: run programs daily, weekly, at logon... |
-| Sounds and Audio Devices | `xd-sound` | volume, default devices, the sound scheme (libcanberra) |
+| Sounds and Audio Devices | `xd-sound` | volume, default devices, the sound scheme: windows, menus, message boxes, devices, battery, Recycle Bin, logon and logoff (libcanberra) |
 | System | `xd-sysdm` | see below |
 | Taskbar and Start Menu | `xd-taskbar` | the taskbar and Start menu options |
 | User Accounts | `xd-users` | pictures, names, passwords and accounts, through AccountsService |
@@ -231,8 +253,10 @@ and the five Windows XP views with a thumbnail size slider. The folder view
 (`src/files/folderview.c`) is our own GTK3 widget that only lays out and draws
 what's visible. Folders update live; double-click or Enter opens files with
 their default application. Start menu folder items open it. Thumbnails shown
-are the ones already in the freedesktop cache; generating new ones and file
-operations (copy, move, delete, rename) come next.
+are the ones already in the freedesktop cache. Details columns resize,
+reorder and can be chosen from the header's menu; icons can be arranged
+freely (Auto Arrange off); Send To zips, copies or makes a desktop shortcut;
+Edit > Undo reverses the last renames, copies, moves and deletions.
 
 File > Properties (Alt+Enter, or right-click) opens the Windows 2000
 Properties dialog for the selection or the folder: name, type, default
@@ -310,6 +334,13 @@ session: it lets any program type and click as you.
 
 Steps: `move X Y`, `click [left|right|middle]`, `down`/`up`, `wheel N`,
 `type TEXT`, `key COMBO` (e.g. `ctrl+alt+t`, `alt+F4`), `sleep MS`.
+
+`tests/ui/run.py` runs scenarios built on it, each in its own headless
+session (a private mount namespace, a scratch home, no system bus, sounds
+logged rather than played) and checks windows (`tools/xd-windows`), files,
+settings and parts of screenshots: `meson test -C build --setup ui --suite
+ui`. Scenarios skip themselves where namespaces, grim or python-gobject
+aren't available.
 
 ## Preview themes
 
