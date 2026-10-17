@@ -252,6 +252,7 @@ struct xd_shell {
     xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
     bool pointer_start7;    /* pointer is over start7 */
     bool pointer_flyout;         /* pointer is over the volume flyout */
+    bool eat_release; /* the press closed a menu: its release goes nowhere */
     xd_desktop *pointer_desktop; /* a desktop under the pointer */
     struct xd_deskicons *deskicons;
     uint32_t enter_serial;  /* for cursor shapes */

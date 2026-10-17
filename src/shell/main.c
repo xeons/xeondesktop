@@ -155,6 +155,18 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
      * programs; the desktop and taskbar are ours. */
     if (pressed && !shell->pointer_flyout)
         xd_volume_flyout_dismiss(shell);
+    /* Nor menus for clicks on the desktop: a click there closes the Start
+     * menu or a context menu, and (as in Windows) does nothing else. */
+    if (pressed && shell->pointer_desktop != nullptr &&
+        (shell->start_menu != nullptr || shell->start7 != nullptr)) {
+        xd_menu_close_all(shell);
+        shell->eat_release = true;
+        return;
+    }
+    if (!pressed && shell->eat_release) {
+        shell->eat_release = false;
+        return;
+    }
     if (shell->pointer_flyout)
         xd_volume_flyout_button(shell, button, pressed, shell->flyout_x, shell->flyout_y);
     else if (shell->pointer_menu != nullptr)
