@@ -11,7 +11,19 @@
 
 static constexpr GdkModifierType NO_MODS = (GdkModifierType)0;
 
-enum { Q_ID, Q_NAME, Q_STATUS, Q_OWNER, Q_PAGES, Q_SIZE, Q_SUBMITTED, Q_PORT, Q_STATE, Q_COUNT };
+enum {
+    Q_ID,
+    Q_NAME,
+    Q_STATUS,
+    Q_OWNER,
+    Q_PAGES,
+    Q_SIZE,
+    Q_SUBMITTED,
+    Q_PORT,
+    Q_STATE,
+    Q_KEY, /* what the row shows, to leave unchanged rows alone */
+    Q_COUNT
+};
 
 typedef struct queue {
     char *name;
@@ -20,7 +32,8 @@ typedef struct queue {
     GtkListStore *store;
     GCancellable *cancel;
     guint poll;
-    bool loading, again, paused, syncing;
+    int busy; /* actions running, which may wait in a question or the password box */
+    bool loading, again, paused, syncing, gone;
 } queue;
 
 /* What a refresh brings back from its thread. */
@@ -45,9 +58,18 @@ static void set_row(queue *q, GtkTreeIter *iter, const xd_print_job *j, const ch
     char *when = dt != nullptr ? g_date_time_format(dt, "%X %x") : g_strdup("");
     if (dt != nullptr)
         g_date_time_unref(dt);
-    gtk_list_store_set(q->store, iter, Q_ID, j->id, Q_NAME, j->name, Q_STATUS,
-                       xd_print_job_status_text(j->state), Q_OWNER, j->owner, Q_PAGES, pages,
-                       Q_SIZE, size, Q_SUBMITTED, when, Q_PORT, port, Q_STATE, j->state, -1);
+    const char *status = xd_print_job_status_text(j->state);
+    char *key = g_strdup_printf("%d\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%d", j->id, j->name, status,
+                                j->owner, pages, size, when, port, j->state);
+    char *old = nullptr;
+    gtk_tree_model_get(GTK_TREE_MODEL(q->store), iter, Q_KEY, &old, -1);
+    /* Not set again at every poll when nothing changed: that redraws it. */
+    if (g_strcmp0(old, key) != 0)
+        gtk_list_store_set(q->store, iter, Q_ID, j->id, Q_NAME, j->name, Q_STATUS, status,
+                           Q_OWNER, j->owner, Q_PAGES, pages, Q_SIZE, size, Q_SUBMITTED, when,
+                           Q_PORT, port, Q_STATE, j->state, Q_KEY, key, -1);
+    g_free(old);
+    g_free(key);
     g_free(when);
     g_free(size);
     g_free(pages);
@@ -144,9 +166,14 @@ static void on_loaded([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer
         return; /* the scheduler went away; try again at the next poll */
     }
     if (s->printer == nullptr) {
-        /* Deleted, here or elsewhere: nothing left to show. */
+        /* Deleted, here or elsewhere: nothing left to show. Not under an
+         * action waiting in a question or the password box, though: it
+         * still uses the window; it closes it when it's done. */
         snapshot_free(s);
-        gtk_widget_destroy(q->window);
+        if (q->busy > 0)
+            q->gone = true;
+        else
+            gtk_widget_destroy(q->window);
         return;
     }
     show_printer(q, s->printer);
@@ -200,14 +227,27 @@ static void on_changed(gpointer data) { reload(data); }
 
 static GtkWindow *win(queue *q) { return GTK_WINDOW(q->window); }
 
+/* Around an action: the window stays while it runs (see on_loaded). After
+ * release, `q` may be gone. */
+static void hold(queue *q) { q->busy++; }
+
+static void release(queue *q) {
+    if (--q->busy == 0 && q->gone)
+        gtk_widget_destroy(q->window);
+}
+
 static void cb_default([[maybe_unused]] GtkWidget *w, gpointer data) {
     queue *q = data;
+    hold(q);
     xd_printer_do_set_default(win(q), q->name);
+    release(q);
 }
 
 static void cb_prefs([[maybe_unused]] GtkWidget *w, gpointer data) {
     queue *q = data;
+    hold(q);
     xd_printer_preferences_open(win(q), q->name);
+    release(q);
 }
 
 static void cb_pause(GtkCheckMenuItem *item, gpointer data) {
@@ -215,21 +255,27 @@ static void cb_pause(GtkCheckMenuItem *item, gpointer data) {
     if (q->syncing)
         return;
     bool want = gtk_check_menu_item_get_active(item);
+    hold(q);
     if (!xd_printer_do_pause(win(q), q->name, want)) {
         q->syncing = true;
         gtk_check_menu_item_set_active(item, q->paused);
         q->syncing = false;
     }
+    release(q);
 }
 
 static void cb_cancel_all([[maybe_unused]] GtkWidget *w, gpointer data) {
     queue *q = data;
+    hold(q);
     xd_printer_do_cancel_all(win(q), q->name);
+    release(q);
 }
 
 static void cb_props([[maybe_unused]] GtkWidget *w, gpointer data) {
     queue *q = data;
+    hold(q);
     xd_printer_properties_open(win(q), q->name);
+    release(q);
 }
 
 static void cb_close([[maybe_unused]] GtkWidget *w, gpointer data) {
@@ -244,6 +290,7 @@ static void job_op(queue *q, xd_job_op op) {
     GList *ids = selected_ids(q);
     if (ids == nullptr)
         return;
+    hold(q);
     if (op == XD_JOB_CANCEL &&
         xd_message_box(win(q), q->name, XD_MB_QUESTION, XD_MB_YES_NO, TRUE,
                        g_list_length(ids) == 1
@@ -251,6 +298,7 @@ static void job_op(queue *q, xd_job_op op) {
                            : "Are you sure you want to cancel the selected documents?") !=
             GTK_RESPONSE_YES) {
         g_list_free(ids);
+        release(q);
         return;
     }
     xd_cups_auth_reset();
@@ -264,6 +312,7 @@ static void job_op(queue *q, xd_job_op op) {
     }
     g_list_free(ids);
     xd_printers_changed();
+    release(q);
 }
 
 static void cb_doc_pause([[maybe_unused]] GtkWidget *w, gpointer data) {
@@ -424,7 +473,7 @@ void xd_print_queue_open(GtkWindow *parent, const char *name) {
 
     q->store = gtk_list_store_new(Q_COUNT, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING,
                                   G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_INT);
+                                  G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(q->window), box);
     gtk_box_pack_start(GTK_BOX(box), build_menus(q, accel), FALSE, FALSE, 0);

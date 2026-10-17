@@ -35,6 +35,7 @@ enum {
     C_LOCATION,
     C_MODEL,
     C_PAUSED,
+    C_KEY, /* what the row shows, to leave unchanged rows alone */
     C_COUNT
 };
 enum { VIEW_TILES, VIEW_ICONS, VIEW_DETAILS, VIEW_COUNT };
@@ -59,6 +60,24 @@ typedef struct folder {
 
 static void set_row(folder *f, GtkTreeIter *iter, const xd_printer *p) {
     int scale = gtk_widget_get_scale_factor(f->window);
+    /* Everything the row and its icons show (the icon theme too): the poll
+     * finds most rows as they were, and setting them again would redraw
+     * them, with new icons, every few seconds. */
+    char *theme = nullptr;
+    g_object_get(gtk_widget_get_settings(f->window), "gtk-icon-theme-name", &theme, nullptr);
+    char *key = g_strdup_printf("%s\n%d\n%d\n%s\n%d\n%s\n%s\n%s\n%s\n%d%d%d\n%s", p->name,
+                                p->jobs, p->state, p->reasons, p->accepting, p->info, p->location,
+                                p->model, p->device_uri, p->is_default, p->fax, scale,
+                                theme != nullptr ? theme : "");
+    g_free(theme);
+    char *old = nullptr;
+    gtk_tree_model_get(GTK_TREE_MODEL(f->store), iter, C_KEY, &old, -1);
+    bool same = g_strcmp0(old, key) == 0;
+    g_free(old);
+    if (same) {
+        g_free(key);
+        return;
+    }
     cairo_surface_t *big = xd_printer_icon(p, 48, scale);
     cairo_surface_t *small = xd_printer_icon(p, 16, scale);
     const char *status = xd_printer_status_text(p->state, p->reasons, p->accepting);
@@ -68,7 +87,8 @@ static void set_row(folder *f, GtkTreeIter *iter, const xd_printer *p) {
     gtk_list_store_set(f->store, iter, C_ICON, big, C_SMALL_ICON, small, C_NAME, p->name, C_TILE,
                        tile, C_DOCS, docs, C_STATUS, status, C_COMMENT, p->info, C_LOCATION,
                        p->location, C_MODEL, p->model, C_PAUSED,
-                       xd_printer_is_paused(p->state, p->reasons), -1);
+                       xd_printer_is_paused(p->state, p->reasons), C_KEY, key, -1);
+    g_free(key);
     g_free(tile);
     g_free(docs);
     cairo_surface_destroy(small);
@@ -535,7 +555,8 @@ static void open_folder(void) {
 
     f.store = gtk_list_store_new(C_COUNT, CAIRO_GOBJECT_TYPE_SURFACE, CAIRO_GOBJECT_TYPE_SURFACE,
                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                 G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN);
+                                 G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN,
+                                 G_TYPE_STRING);
     gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(f.store), C_NAME, GTK_SORT_ASCENDING);
     f.cancel = g_cancellable_new();
 
