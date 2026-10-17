@@ -65,6 +65,12 @@ struct _XdFolderView {
     int focus;
     int anchor;
 
+    /* A press on an item that may become a drag (the selection's files,
+     * as a URI list, to Quick Launch or another program). */
+    gboolean drag_pending;
+    double drag_x, drag_y;
+    guint drag_button;
+
     /* Layout (content coordinates). */
     int cell_w, cell_h, cols, rows;
     int content_w, content_h;
@@ -828,10 +834,61 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
     }
     if (i >= 0)
         v->focus = i;
+    v->drag_pending = it != nullptr && ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift;
+    v->drag_x = ev->x;
+    v->drag_y = ev->y;
+    v->drag_button = ev->button;
     selection_changed(v);
     if (ev->button == GDK_BUTTON_SECONDARY)
         g_signal_emit(v, signals[SIG_CONTEXT], 0, (GdkEvent *)ev);
     return TRUE;
+}
+
+/* ---- dragging files out ---------------------------------------------------------------- */
+
+static gboolean folder_view_button_release(GtkWidget *widget,
+                                           [[maybe_unused]] GdkEventButton *ev) {
+    XD_FOLDER_VIEW(widget)->drag_pending = FALSE;
+    return FALSE;
+}
+
+static gboolean folder_view_motion(GtkWidget *widget, GdkEventMotion *ev) {
+    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    if (!v->drag_pending || !(ev->state & GDK_BUTTON1_MASK))
+        return FALSE;
+    if (!gtk_drag_check_threshold(widget, (int)v->drag_x, (int)v->drag_y, (int)ev->x,
+                                  (int)ev->y))
+        return TRUE;
+    v->drag_pending = FALSE;
+    GtkTargetList *targets = gtk_target_list_new(nullptr, 0);
+    gtk_target_list_add_uri_targets(targets, 0);
+    gtk_drag_begin_with_coordinates(widget, targets,
+                                    (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE |
+                                                    GDK_ACTION_LINK),
+                                    (int)v->drag_button, (GdkEvent *)ev, (int)v->drag_x,
+                                    (int)v->drag_y);
+    gtk_target_list_unref(targets);
+    return TRUE;
+}
+
+static void folder_view_drag_begin(GtkWidget *widget, GdkDragContext *context) {
+    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    guint n = xd_folder_view_get_selected_count(v);
+    gtk_drag_set_icon_name(context, n > 1 ? "edit-copy" : "text-x-generic", 0, 0);
+}
+
+static void folder_view_drag_data_get(GtkWidget *widget, [[maybe_unused]] GdkDragContext *c,
+                                      GtkSelectionData *data, [[maybe_unused]] guint info,
+                                      [[maybe_unused]] guint time) {
+    GList *files = xd_folder_view_get_selected_files(XD_FOLDER_VIEW(widget));
+    guint n = g_list_length(files);
+    char **uris = g_new0(char *, n + 1);
+    guint k = 0;
+    for (GList *l = files; l != nullptr; l = l->next)
+        uris[k++] = g_file_get_uri(l->data);
+    gtk_selection_data_set_uris(data, uris);
+    g_strfreev(uris);
+    g_list_free_full(files, g_object_unref);
 }
 
 static int move_target(XdFolderView *v, guint key) {
@@ -1018,6 +1075,10 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
     oc->finalize = folder_view_finalize;
     wc->draw = folder_view_draw;
     wc->button_press_event = folder_view_button_press;
+    wc->button_release_event = folder_view_button_release;
+    wc->motion_notify_event = folder_view_motion;
+    wc->drag_begin = folder_view_drag_begin;
+    wc->drag_data_get = folder_view_drag_data_get;
     wc->key_press_event = folder_view_key_press;
     wc->size_allocate = folder_view_size_allocate;
     g_object_class_override_property(oc, PROP_HADJ, "hadjustment");
@@ -1050,7 +1111,8 @@ static void xd_folder_view_init(XdFolderView *v) {
     v->focus = -1;
     v->anchor = -1;
     gtk_widget_set_can_focus(GTK_WIDGET(v), TRUE);
-    gtk_widget_add_events(GTK_WIDGET(v), GDK_BUTTON_PRESS_MASK | GDK_KEY_PRESS_MASK);
+    gtk_widget_add_events(GTK_WIDGET(v), GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+                                             GDK_BUTTON1_MOTION_MASK | GDK_KEY_PRESS_MASK);
 }
 
 /* ---- public API ------------------------------------------------------------------ */
