@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * The desktop background: one layer-shell surface per output, below
  * everything, filled with the scheme's Background colour and the
- * wallpaper. (Desktop icons will live here too.)
+ * wallpaper, and on the first monitor the desktop icons (deskicons.c).
  */
 #include <math.h>
 
@@ -71,6 +71,14 @@ xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output) {
     return d;
 }
 
+xd_desktop *xd_desktop_for_surface(xd_shell *shell, struct wl_surface *surface) {
+    XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
+        if (bar->desktop != nullptr && bar->desktop->surface == surface)
+            return bar->desktop;
+    }
+    return nullptr;
+}
+
 void xd_desktop_destroy(xd_desktop *d) {
     if (d == nullptr)
         return;
@@ -102,6 +110,7 @@ void xd_desktop_render(xd_desktop *d) {
     xd_fill_rect(cr, all, xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_BACKGROUND]));
     xd_image_paint_wallpaper(cr, shell->wallpaper, all, shell->settings.wallpaper_mode,
                              d->scale);
+    xd_deskicons_draw(shell, d, cr);
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
 

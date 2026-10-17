@@ -453,6 +453,7 @@ executable(
   'src/shell/apps.c',
   'src/shell/menu.c',
   'src/shell/startmenu.c',
+  'src/shell/deskicons.c',
   'src/shell/desktop.c',
   'src/shell/quicklaunch.c',
   'src/shell/start7.c',

@@ -4,6 +4,7 @@
 #include "places.h"
 
 #include "../gtkapp/gtkapp.h"
+#include "fileops.h"
 
 #define TRASHINFO_GROUP "Trash Info"
 
@@ -340,4 +341,48 @@ void xd_trash_tidy(void) {
     g_clear_object(&en);
     g_object_unref(info_dir);
     g_object_unref(files_dir);
+}
+
+typedef struct empty_request {
+    void (*done)(GList *created, gpointer user);
+    gpointer user;
+} empty_request;
+
+static void emptied(GList *created, gpointer data) {
+    empty_request *r = data;
+    xd_trash_tidy();
+    if (r->done != nullptr)
+        r->done(created, r->user);
+    g_free(r);
+}
+
+void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer user),
+                    gpointer user) {
+    GFile *dir = xd_trash_files_dir();
+    GList *files = nullptr;
+    GFileEnumerator *en = g_file_enumerate_children(dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
+                                                    G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr,
+                                                    nullptr);
+    GFileInfo *fi;
+    while (en != nullptr && (fi = g_file_enumerator_next_file(en, nullptr, nullptr)) != nullptr) {
+        files = g_list_prepend(files, g_file_get_child(dir, g_file_info_get_name(fi)));
+        g_object_unref(fi);
+    }
+    g_clear_object(&en);
+    g_object_unref(dir);
+    if (files == nullptr) {
+        if (done != nullptr)
+            done(nullptr, user);
+        return;
+    }
+    empty_request *r = g_new0(empty_request, 1);
+    r->done = done;
+    r->user = user;
+    /* Asks first; nothing happens (and `emptied` isn't called) on No. */
+    if (!xd_fileop_start_checked(parent, XD_FILEOP_DELETE, files, nullptr, emptied, r)) {
+        if (done != nullptr)
+            done(nullptr, user);
+        g_free(r);
+    }
+    g_list_free_full(files, g_object_unref);
 }

@@ -58,6 +58,9 @@ gboolean xd_trash_item_info(GFile *trashed, char **original_path, GDateTime **de
 gboolean xd_trash_is_empty(void);
 /* Moves the files back where they came from; reports problems. */
 void xd_trash_restore(GtkWindow *parent, GList *files);
+/* Empty Recycle Bin: asks, then deletes everything in it (fileops). */
+void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer user),
+                    gpointer user);
 /* Deletes .trashinfo files whose item is gone (after deleting or moving
  * items out of the trash). */
 void xd_trash_tidy(void);

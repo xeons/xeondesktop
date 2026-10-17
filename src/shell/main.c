@@ -84,6 +84,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
     shell->pointer_menu = xd_menu_for_surface(shell, surface);
     shell->pointer_start7 = xd_start7_owns(shell, surface);
     shell->pointer_flyout = xd_volume_flyout_owns(shell, surface);
+    shell->pointer_desktop = xd_desktop_for_surface(shell, surface);
     shell->enter_serial = serial;
     shell->cursor = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
     if (shell->cursor_shape != nullptr)
@@ -103,6 +104,8 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
         shell->flyout_x = lx;
         shell->flyout_y = ly;
     }
+    if (shell->pointer_desktop != nullptr)
+        xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
 }
 
 static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -119,6 +122,7 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
     shell->pointer_menu = nullptr;
     shell->pointer_start7 = false;
     shell->pointer_flyout = false;
+    shell->pointer_desktop = nullptr;
 }
 
 static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -137,10 +141,12 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
         shell->flyout_y = ly;
         xd_volume_flyout_motion(shell, lx, ly);
     }
+    if (shell->pointer_desktop != nullptr)
+        xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
 }
 
 static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
-                           [[maybe_unused]] uint32_t time, uint32_t button, uint32_t state) {
+                           uint32_t time, uint32_t button, uint32_t state) {
     xd_shell *shell = data;
     bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
     /* The compositor only dismisses the flyout's grab for clicks in other
@@ -155,6 +161,8 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
         xd_start7_pointer_button(shell, button, pressed);
     else if (shell->pointer_bar != nullptr)
         xd_taskbar_pointer_button(shell->pointer_bar, button, pressed, serial);
+    else if (shell->pointer_desktop != nullptr)
+        xd_deskicons_button(shell, shell->pointer_desktop, button, pressed, time, serial);
 }
 
 static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -802,6 +810,7 @@ int main(int argc, char **argv) {
     xd_sys_bluetooth_init(&shell);
     xd_sys_network_init(&shell);
     xd_sys_volume_init(&shell);
+    xd_deskicons_init(&shell);
     xd_sys_battery_init(&shell);
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
@@ -833,6 +842,7 @@ int main(int argc, char **argv) {
         xd_free(t);
     }
     xd_tray_finish(&shell);
+    xd_deskicons_finish(&shell);
     xd_dnd_finish(&shell);
     xd_menu_tree_free(&shell.menu_tree);
     if (shell.own_commands != nullptr)

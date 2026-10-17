@@ -24,7 +24,9 @@ typedef enum {
 } XdFileOpKind;
 
 /* Called on the main thread when the operation ends: `created` lists the
- * new files at the destination (GFile*, owned by the operation). */
+ * new files at the destination (GFile*, owned by the operation). Not
+ * called if the parent window has closed meanwhile; always called when
+ * started without one. */
 typedef void (*XdFileOpDone)(GList *created, gpointer user);
 
 /* Starts an operation on `sources` (GFile*; the list is copied).
@@ -33,6 +35,11 @@ typedef void (*XdFileOpDone)(GList *created, gpointer user);
  * first, as Windows does. */
 void xd_fileop_start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile *dest,
                      XdFileOpDone done, gpointer user);
+
+/* As xd_fileop_start; returns FALSE (and calls nothing) when the user
+ * says No to deleting. */
+gboolean xd_fileop_start_checked(GtkWindow *parent, XdFileOpKind kind, GList *sources,
+                                 GFile *dest, XdFileOpDone done, gpointer user);
 
 /* The clipboard: Cut (move on paste) or Copy. */
 void xd_clipboard_set_files(GtkWidget *widget, GList *files, gboolean cut);

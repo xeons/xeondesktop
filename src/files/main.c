@@ -54,6 +54,10 @@ typedef struct explorer {
 static void navigate(explorer *e, GFile *dir, gboolean record);
 static int initial_view = XD_VIEW_ICONS; /* from --view */
 static gboolean properties_only;          /* --properties: just the dialog */
+/* --trash, --delete, --rename, --empty-trash: one job for the desktop's
+ * menus (the shell isn't a GTK program), then exit. */
+typedef enum { JOB_NONE, JOB_TRASH, JOB_DELETE, JOB_RENAME, JOB_EMPTY_TRASH } cli_job;
+static cli_job job;
 
 /* ---- status and chrome --------------------------------------------------------- */
 
@@ -489,21 +493,7 @@ static void restore_selected(explorer *e) {
 }
 
 static void empty_trash(explorer *e) {
-    GFile *dir = xd_trash_files_dir();
-    GList *files = nullptr;
-    GFileEnumerator *en = g_file_enumerate_children(dir, G_FILE_ATTRIBUTE_STANDARD_NAME,
-                                                    G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr,
-                                                    nullptr);
-    GFileInfo *fi;
-    while (en != nullptr && (fi = g_file_enumerator_next_file(en, nullptr, nullptr)) != nullptr) {
-        files = g_list_prepend(files, g_file_get_child(dir, g_file_info_get_name(fi)));
-        g_object_unref(fi);
-    }
-    g_clear_object(&en);
-    g_object_unref(dir);
-    xd_fileop_start(GTK_WINDOW(e->window), XD_FILEOP_DELETE, files, nullptr, after_trash_change,
-                    e);
-    g_list_free_full(files, g_object_unref);
+    xd_trash_empty(GTK_WINDOW(e->window), nullptr, nullptr);
 }
 
 /* Selects what an operation made, when it's in this folder. */
@@ -1351,7 +1341,98 @@ static void open_window(GtkApplication *app, GFile *dir) {
     gtk_widget_grab_focus(GTK_WIDGET(e->view));
 }
 
+/* ---- jobs for the desktop ---------------------------------------------------------- */
+
+static void job_done([[maybe_unused]] GList *created, gpointer app) {
+    g_application_release(G_APPLICATION(app));
+}
+
+/* Windows' Rename box isn't a dialog (it's in place), but the desktop's
+ * icons are drawn by the shell: a small one stands in. */
+static void rename_dialog(GFile *file) {
+    char *base = g_file_get_basename(file);
+    char *old = g_filename_display_name(base);
+    g_free(base);
+    GtkWidget *dlg = gtk_dialog_new_with_buttons("Rename", nullptr, GTK_DIALOG_MODAL, "OK",
+                                                 GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL,
+                                                 nullptr);
+    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+    gtk_window_set_icon_name(GTK_WINDOW(dlg), "system-file-manager");
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 12);
+    GtkWidget *label = gtk_label_new_with_mnemonic("_New name:");
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry), old);
+    gtk_entry_set_width_chars(GTK_ENTRY(entry), 40);
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), entry);
+    gtk_box_pack_start(GTK_BOX(box), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box);
+    gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_OK);
+    gtk_widget_show_all(dlg);
+    while (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
+        const char *text = gtk_entry_get_text(GTK_ENTRY(entry));
+        if (*text == '\0' || strcmp(text, old) == 0)
+            break;
+        char *msg = nullptr;
+        GError *err = nullptr;
+        GFile *renamed = strchr(text, '/') != nullptr
+                             ? nullptr
+                             : g_file_set_display_name(file, text, nullptr, &err);
+        if (renamed != nullptr) {
+            g_object_unref(renamed);
+            break;
+        }
+        if (err == nullptr)
+            msg = g_strdup("A file name cannot contain the following character:\n        /");
+        else if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_EXISTS))
+            msg = g_strdup_printf("Cannot rename %s: A file with the name you specified already "
+                                  "exists. Specify a different file name.",
+                                  old);
+        else
+            msg = g_strdup_printf("Cannot rename %s: %s", old, err->message);
+        g_clear_error(&err);
+        xd_message_box(GTK_WINDOW(dlg), "Error Renaming File or Folder", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, msg);
+        g_free(msg);
+    }
+    gtk_widget_destroy(dlg);
+    g_free(old);
+}
+
+static void run_job(GtkApplication *app, GFile **files, gint n) {
+    GList *list = nullptr;
+    for (gint i = n; i > 0; i--)
+        list = g_list_prepend(list, files[i - 1]);
+    switch (job) {
+    case JOB_TRASH:
+    case JOB_DELETE:
+        g_application_hold(G_APPLICATION(app));
+        if (!xd_fileop_start_checked(nullptr, job == JOB_TRASH ? XD_FILEOP_TRASH : XD_FILEOP_DELETE,
+                                     list, nullptr, job_done, app))
+            g_application_release(G_APPLICATION(app));
+        break;
+    case JOB_RENAME:
+        if (n > 0)
+            rename_dialog(files[0]);
+        break;
+    case JOB_EMPTY_TRASH:
+        g_application_hold(G_APPLICATION(app));
+        xd_trash_empty(nullptr, job_done, app);
+        break;
+    case JOB_NONE:
+        break;
+    }
+    g_list_free(list);
+}
+
 static void on_activate(GtkApplication *app, [[maybe_unused]] gpointer data) {
+    if (job != JOB_NONE) {
+        run_job(app, nullptr, 0);
+        return;
+    }
     if (properties_only)
         return; /* --properties without files: nothing to show */
     GFile *home = g_file_new_for_path(g_get_home_dir());
@@ -1372,6 +1453,10 @@ static void on_open(GtkApplication *app, GFile **files, gint n, [[maybe_unused]]
             gtk_window_set_application(GTK_WINDOW(dlg), app);
         return;
     }
+    if (job != JOB_NONE) {
+        run_job(app, files, n);
+        return;
+    }
     for (gint i = 0; i < n; i++)
         open_window(app, files[i]);
 }
@@ -1382,6 +1467,14 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
     const char *view = nullptr;
     if (g_variant_dict_contains(opts, "properties"))
         properties_only = TRUE;
+    if (g_variant_dict_contains(opts, "trash"))
+        job = JOB_TRASH;
+    if (g_variant_dict_contains(opts, "delete"))
+        job = JOB_DELETE;
+    if (g_variant_dict_contains(opts, "rename"))
+        job = JOB_RENAME;
+    if (g_variant_dict_contains(opts, "empty-trash"))
+        job = JOB_EMPTY_TRASH;
     if (g_variant_dict_lookup(opts, "view", "&s", &view)) {
         for (int i = 0; i < XD_VIEW_COUNT; i++) {
             if (g_ascii_strcasecmp(view, view_names[i]) == 0) {
@@ -1413,6 +1506,19 @@ int main(int argc, char **argv) {
                                   "VIEW");
     g_application_add_main_option(G_APPLICATION(app), "properties", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE, "Show the Properties of FILE... and exit",
+                                  nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "trash", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE,
+                                  "Send FILE... to the Recycle Bin (asking first) and exit",
+                                  nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "delete", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE, "Delete FILE... (asking first) and exit",
+                                  nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "rename", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE, "Ask for a new name for FILE and exit",
+                                  nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "empty-trash", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE, "Empty the Recycle Bin (asking first)",
                                   nullptr);
     g_signal_connect(app, "handle-local-options", G_CALLBACK(on_options), nullptr);
     int rc = g_application_run(G_APPLICATION(app), argc, argv);

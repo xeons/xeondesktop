@@ -25,6 +25,7 @@ typedef struct job {
     GPtrArray *sources; /* GFile* */
     GFile *dest;
     GtkWindow *parent; /* weak */
+    bool had_parent;
     XdFileOpDone done;
     gpointer user;
     GCancellable *cancel;
@@ -836,7 +837,7 @@ static void finished([[maybe_unused]] GObject *source, GAsyncResult *res, gpoint
     job *j = data;
     (void)g_task_propagate_boolean(G_TASK(res), nullptr);
     /* No one to tell when the window that started it has closed. */
-    if (j->done != nullptr && j->parent != nullptr)
+    if (j->done != nullptr && (j->parent != nullptr || !j->had_parent))
         j->done(j->created, j->user);
     job_free(j);
 }
@@ -881,11 +882,16 @@ static bool confirm_delete(GtkWindow *parent, XdFileOpKind kind, GList *sources)
 
 void xd_fileop_start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile *dest,
                      XdFileOpDone done, gpointer user) {
+    (void)xd_fileop_start_checked(parent, kind, sources, dest, done, user);
+}
+
+gboolean xd_fileop_start_checked(GtkWindow *parent, XdFileOpKind kind, GList *sources,
+                                 GFile *dest, XdFileOpDone done, gpointer user) {
     if (sources == nullptr)
-        return;
+        return FALSE;
     if ((kind == XD_FILEOP_TRASH || kind == XD_FILEOP_DELETE) &&
         !confirm_delete(parent, kind, sources))
-        return;
+        return FALSE;
     job *j = g_new0(job, 1);
     j->kind = kind;
     j->sources = g_ptr_array_new_with_free_func(g_object_unref);
@@ -894,9 +900,10 @@ void xd_fileop_start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile
     j->dest = dest != nullptr ? g_object_ref(dest) : nullptr;
     if (dest == nullptr && kind != XD_FILEOP_TRASH && kind != XD_FILEOP_DELETE) {
         job_free(j);
-        return;
+        return FALSE;
     }
     j->parent = parent;
+    j->had_parent = parent != nullptr;
     if (parent != nullptr)
         g_object_add_weak_pointer(G_OBJECT(parent), (gpointer *)&j->parent);
     j->done = done;
@@ -913,6 +920,7 @@ void xd_fileop_start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile
     g_task_set_task_data(task, j, nullptr);
     g_task_run_in_thread(task, worker);
     g_object_unref(task);
+    return TRUE;
 }
 
 /* ---- names ---------------------------------------------------------------------------- */

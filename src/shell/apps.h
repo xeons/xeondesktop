@@ -50,5 +50,9 @@ bool xd_app_for_window(const char *app_id, char **icon, char **name);
 /* Launches the application detached from the shell (own session, default
  * signal handling). Returns false on failure. */
 bool xd_app_launch(const xd_app *app);
+/* Launches a program with files (URIs, GList of char*; may be nullptr),
+ * detached the same way. */
+typedef struct _GList GList;
+bool xd_app_launch_info(GDesktopAppInfo *info, GList *uris);
 
 #endif

@@ -168,6 +168,19 @@ bool xd_app_launch(const xd_app *app) {
     return ok;
 }
 
+bool xd_app_launch_info(GDesktopAppInfo *info, GList *uris) {
+    GError *err = nullptr;
+    bool ok = g_desktop_app_info_launch_uris_as_manager(info, uris, nullptr, G_SPAWN_SEARCH_PATH,
+                                                        child_setup, nullptr, nullptr, nullptr,
+                                                        &err);
+    if (!ok) {
+        fprintf(stderr, "xd-shell: cannot launch %s: %s\n",
+                g_app_info_get_name(G_APP_INFO(info)), err != nullptr ? err->message : "?");
+        g_clear_error(&err);
+    }
+    return ok;
+}
+
 static char *desktop_icon(GDesktopAppInfo *info) {
     char *icon = info != nullptr ? g_desktop_app_info_get_string(info, "Icon") : nullptr;
     if (icon != nullptr && icon[0] == '\0') {

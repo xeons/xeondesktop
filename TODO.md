@@ -266,7 +266,24 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Launch or any program). Tested headless with a GTK drag source and
       xd-files. Not yet: dragging from our own Start menu, large icons,
       Show Text / Show Title.
-- [ ] Desktop icons.
+- [x] Desktop icons (deskicons.c), on the first monitor: My Documents, My
+      Computer, Recycle Bin (empty/full icon), then the Desktop folder
+      (launchers show their program's name and icon), watched live. XP's
+      75x75 grid in columns, white labels with drop shadows, two lines
+      unless selected; click, rubber-band selection, dragging icons to
+      other cells (kept in the "desktop-icons" state file), double-click
+      opens (folders and the special ones in xd-files, documents in their
+      program, launchers run). Menus: Open, Delete, Rename, Properties;
+      My Computer's Properties are System Properties, the Recycle Bin's
+      menu empties it; the background's Arrange Icons By, Refresh, New ▸
+      Folder / Text Document and Properties (Display Properties). Delete,
+      Rename and Empty Recycle Bin run xd-files (--trash, --rename,
+      --empty-trash) for its dialogs. Tested headless.
+- [ ] Desktop icons: renaming in place (a dialog for now), keyboard (the
+      desktop has no keyboard focus), Ctrl+click, dragging icons to other
+      programs and files onto the desktop, Cut/Copy/Paste, My Network
+      Places, Display Properties' Customize Desktop (which icons show),
+      Auto Arrange, larger icons with scaling of the icon size.
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
       Programs, Recent Documents and Control Panel submenus, Log Off and

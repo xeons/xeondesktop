@@ -207,7 +207,9 @@ struct xd_shell {
     xd_menu *start_menu;    /* open root menu (2000 style), or nullptr */
     xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
     bool pointer_start7;    /* pointer is over start7 */
-    bool pointer_flyout;    /* pointer is over the volume flyout */
+    bool pointer_flyout;         /* pointer is over the volume flyout */
+    xd_desktop *pointer_desktop; /* a desktop under the pointer */
+    struct xd_deskicons *deskicons;
     uint32_t enter_serial;  /* for cursor shapes */
     uint32_t cursor;        /* the shape set since, wp_cursor_shape_device_v1 */
     double flyout_x, flyout_y;
@@ -396,7 +398,19 @@ void xd_volume_flyout_render_dirty(xd_shell *shell);
 /* Closes the flyout (a click elsewhere in the shell, a menu opening). */
 void xd_volume_flyout_dismiss(xd_shell *shell);
 
+/* deskicons.c: the desktop's icons, on the first monitor's desktop. */
+typedef struct xd_deskicons xd_deskicons;
+void xd_deskicons_init(xd_shell *shell);
+void xd_deskicons_finish(xd_shell *shell);
+void xd_deskicons_draw(xd_shell *shell, xd_desktop *d, cairo_t *cr);
+void xd_deskicons_motion(xd_shell *shell, xd_desktop *d, double x, double y);
+void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool pressed,
+                         uint32_t time, uint32_t serial);
+/* Redraws them (the taskbar moved, the theme changed). */
+void xd_deskicons_relayout(xd_shell *shell);
+
 /* desktop.c */
+xd_desktop *xd_desktop_for_surface(xd_shell *shell, struct wl_surface *surface);
 xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output);
 void xd_desktop_destroy(xd_desktop *d);
 void xd_desktop_render(xd_desktop *d);
