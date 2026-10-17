@@ -719,8 +719,8 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
         "radio:checked { -gtk-icon-source: url(\"%s\"); }\n"
         "radio:indeterminate { -gtk-icon-source: none; background-color: %s; }\n"
         "radio:checked:disabled { -gtk-icon-source: url(\"%s\"); }\n"
-        "menu menuitem:hover check:checked { -gtk-icon-source: url(\"%s\"); }\n"
-        "menu menuitem:hover radio:checked { -gtk-icon-source: url(\"%s\"); }\n",
+        "menu menuitem:hover > check:checked { -gtk-icon-source: url(\"%s\"); }\n"
+        "menu menuitem:hover > radio:checked { -gtk-icon-source: url(\"%s\"); }\n",
         xd_gtk_assets[XD_GTK_CHECK], xd_gtk_assets[XD_GTK_CHECK_DISABLED], H(c.bg),
         xd_gtk_assets[XD_GTK_CHECK_DISABLED], xd_gtk_assets[XD_GTK_RADIO], H(c.bg),
         xd_gtk_assets[XD_GTK_RADIO_DISABLED], xd_gtk_assets[XD_GTK_CHECK_HOT],
@@ -738,10 +738,10 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
      * arrows in place of GTK's + and -; GTK keeps them side by side). */
     xd_strbuf_appendf(
         out,
-        "menu menuitem arrow { min-width: 11px; min-height: 11px;\n"
+        "menu menuitem > arrow { min-width: 11px; min-height: 11px;\n"
         "  -gtk-icon-source: url(\"%s\"); }\n"
-        "menu menuitem:hover arrow { -gtk-icon-source: url(\"%s\"); }\n"
-        "menu menuitem:disabled arrow { -gtk-icon-source: url(\"%s\"); }\n"
+        "menu menuitem:hover > arrow { -gtk-icon-source: url(\"%s\"); }\n"
+        "menu menuitem:disabled > arrow { -gtk-icon-source: url(\"%s\"); }\n"
         /* GTK names the + and - icons in code: they're hidden, and the
          * arrows drawn as the buttons' background images. */
         "spinbutton button { min-width: 11px; padding: 0 2px;\n"

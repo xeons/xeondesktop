@@ -429,8 +429,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] `xd-thumbnailer` (sandboxed): only thumbnails already in the
       freedesktop cache are shown.
 - [ ] Details view: column resizing and reordering, more columns.
-- [ ] Rubber-band selection; remembering the view per folder; View >
-      Arrange Icons By; free space in the status bar.
+- [x] Rubber-band selection (XP's translucent rectangle; Ctrl toggles from
+      the selection it started with; the view scrolls past the edges),
+      View ▸ Arrange Icons by (and on the background's menu), and the
+      status bar's "(Disk free space: ...)". Tested headless.
+- [ ] Remembering the view per folder; Arrange Icons by ▸ Show in Groups,
+      Auto Arrange.
 - [x] My Computer (`computer:///`, places.c): the file system, the user's
       Documents and every mount from GIO's volume monitor (live), as Local
       Disk / Removable Disk / CD Drive / Network Drive with total and free

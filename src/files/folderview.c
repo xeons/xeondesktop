@@ -83,6 +83,13 @@ struct _XdFolderView {
     double drag_x, drag_y;
     guint drag_button;
 
+    /* Rubber-band selection (content coordinates), and the selection it
+     * started from (Ctrl adds to it). */
+    gboolean banding;
+    double band_x0, band_y0, band_x1, band_y1;
+    GArray *band_base; /* gboolean per shown item */
+    gboolean band_toggle;
+
     /* Files to select once they're loaded (URIs), and the one with the
      * focus: the selection across a reload, or files a copy is about to
      * create (`keep_sticky`: until they appear). */
@@ -398,6 +405,8 @@ static GdkRectangle item_rect(const XdFolderView *v, int i) {
     return (GdkRectangle){PAD + (i % v->cols) * v->cell_w, PAD + (i / v->cols) * v->cell_h,
                           v->cell_w, v->cell_h};
 }
+
+static GdkRectangle band_rect(const XdFolderView *v);
 
 static double hval(const XdFolderView *v) { return v->hadj ? gtk_adjustment_get_value(v->hadj) : 0; }
 static double vval(const XdFolderView *v) { return v->vadj ? gtk_adjustment_get_value(v->vadj) : 0; }
@@ -752,6 +761,20 @@ static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cr) {
         draw_item(v, cr, i, &c, has_focus);
     cairo_restore(cr);
 
+    if (v->banding) {
+        /* XP's translucent selection rectangle. */
+        GdkRectangle b = band_rect(v);
+        GdkRGBA fill = c.sel_bg;
+        fill.alpha = 0.25;
+        gdk_cairo_set_source_rgba(cr, &fill);
+        cairo_rectangle(cr, b.x - ox, b.y - oy, b.width, b.height);
+        cairo_fill(cr);
+        set_color(cr, c.sel_bg);
+        cairo_set_line_width(cr, 1);
+        cairo_rectangle(cr, b.x - ox + 0.5, b.y - oy + 0.5, MAX(b.width - 1, 0),
+                        MAX(b.height - 1, 0));
+        cairo_stroke(cr);
+    }
     if (v->mode == XD_VIEW_DETAILS)
         draw_header(v, cr, &c);
     if (n == 0 && v->dir != nullptr && v->cancel == nullptr)
@@ -1011,7 +1034,21 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
     gboolean ctrl = ev->state & GDK_CONTROL_MASK;
     gboolean shift = ev->state & GDK_SHIFT_MASK;
     item *it = item_at(v, i);
-    if (it == nullptr) {
+    if (it == nullptr && ev->button == GDK_BUTTON_PRIMARY) {
+        /* A drag from empty space selects what it covers. */
+        if (!ctrl)
+            select_only(v, -1);
+        v->banding = TRUE;
+        v->band_x0 = v->band_x1 = ev->x + hval(v);
+        v->band_y0 = v->band_y1 = ev->y + vval(v);
+        v->band_toggle = ctrl;
+        if (v->band_base == nullptr)
+            v->band_base = g_array_new(FALSE, FALSE, sizeof(gboolean));
+        g_array_set_size(v->band_base, v->shown->len);
+        for (guint k = 0; k < v->shown->len; k++)
+            g_array_index(v->band_base, gboolean, k) =
+                ((item *)g_ptr_array_index(v->shown, k))->selected;
+    } else if (it == nullptr) {
         if (!ctrl)
             select_only(v, -1);
     } else if (ctrl && ev->button == GDK_BUTTON_PRIMARY) {
@@ -1037,14 +1074,49 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
 
 /* ---- dragging files out ---------------------------------------------------------------- */
 
+static GdkRectangle band_rect(const XdFolderView *v) {
+    double x = MIN(v->band_x0, v->band_x1), y = MIN(v->band_y0, v->band_y1);
+    return (GdkRectangle){ifloor(x), ifloor(y), ifloor(fabs(v->band_x1 - v->band_x0)),
+                          ifloor(fabs(v->band_y1 - v->band_y0))};
+}
+
+/* Items touching the band are selected (toggled, with Ctrl). */
+static void band_update(XdFolderView *v) {
+    GdkRectangle band = band_rect(v);
+    for (guint k = 0; k < v->shown->len; k++) {
+        item *it = g_ptr_array_index(v->shown, k);
+        GdkRectangle r = item_rect(v, (int)k);
+        gboolean hit = gdk_rectangle_intersect(&band, &r, nullptr);
+        gboolean base = k < v->band_base->len && g_array_index(v->band_base, gboolean, k);
+        it->selected = v->band_toggle ? base != hit : hit;
+    }
+    selection_changed(v);
+}
+
 static gboolean folder_view_button_release(GtkWidget *widget,
                                            [[maybe_unused]] GdkEventButton *ev) {
-    XD_FOLDER_VIEW(widget)->drag_pending = FALSE;
+    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    v->drag_pending = FALSE;
+    if (v->banding) {
+        v->banding = FALSE;
+        gtk_widget_queue_draw(widget);
+    }
     return FALSE;
 }
 
 static gboolean folder_view_motion(GtkWidget *widget, GdkEventMotion *ev) {
     XdFolderView *v = XD_FOLDER_VIEW(widget);
+    if (v->banding && (ev->state & GDK_BUTTON1_MASK)) {
+        /* Past an edge, the view scrolls along. */
+        if (v->vadj != nullptr && (ev->y < 0 || ev->y > widget_h(v)))
+            gtk_adjustment_set_value(v->vadj, vval(v) + (ev->y < 0 ? ev->y : ev->y - widget_h(v)));
+        if (v->hadj != nullptr && (ev->x < 0 || ev->x > widget_w(v)))
+            gtk_adjustment_set_value(v->hadj, hval(v) + (ev->x < 0 ? ev->x : ev->x - widget_w(v)));
+        v->band_x1 = ev->x + hval(v);
+        v->band_y1 = ev->y + vval(v);
+        band_update(v);
+        return TRUE;
+    }
     if (!v->drag_pending || !(ev->state & GDK_BUTTON1_MASK))
         return FALSE;
     if (!gtk_drag_check_threshold(widget, (int)v->drag_x, (int)v->drag_y, (int)ev->x,
@@ -1432,6 +1504,7 @@ static void folder_view_dispose(GObject *obj) {
     forget_keep(v);
     forget_drag(v);
     g_clear_pointer(&v->cut, g_hash_table_unref);
+    g_clear_pointer(&v->band_base, g_array_unref);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->dispose(obj);
 }
 
@@ -1595,6 +1668,8 @@ void xd_folder_view_set_sort(XdFolderView *v, XdSortColumn column, gboolean desc
     v->desc = descending;
     refilter(v);
 }
+
+XdSortColumn xd_folder_view_get_sort(XdFolderView *v) { return v->sort; }
 
 void xd_folder_view_set_show_hidden(XdFolderView *v, gboolean show) {
     v->show_hidden = show;

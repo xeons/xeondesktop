@@ -31,6 +31,7 @@ typedef struct explorer {
     GtkWidget *back_button, *forward_button, *up_button;
     GtkWidget *folders_toggle;
     GtkWidget *view_items[XD_VIEW_COUNT];
+    GtkWidget *arrange_item; /* View > Arrange Icons By */
     /* Menu items that need a selection, or files on the clipboard. */
     GPtrArray *need_selection;
     GPtrArray *need_clipboard;
@@ -61,11 +62,30 @@ static cli_job job;
 
 /* ---- status and chrome --------------------------------------------------------- */
 
+/* XP's "(Disk free space: 12.3 GB)" for the folder's drive. */
+static char *free_space_text(GFile *dir) {
+    if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER || !g_file_is_native(dir))
+        return nullptr;
+    GFileInfo *fs = g_file_query_filesystem_info(dir, G_FILE_ATTRIBUTE_FILESYSTEM_FREE, nullptr,
+                                                 nullptr);
+    if (fs == nullptr)
+        return nullptr;
+    char *size = xd_format_drive_size(
+        g_file_info_get_attribute_uint64(fs, G_FILE_ATTRIBUTE_FILESYSTEM_FREE));
+    g_object_unref(fs);
+    char *text = g_strdup_printf(" (Disk free space: %s)", size);
+    g_free(size);
+    return text;
+}
+
 static void update_status(explorer *e) {
     guint sel = xd_folder_view_get_selected_count(e->view);
     guint total = xd_folder_view_get_item_count(e->view);
+    char *space = sel > 0 ? nullptr : free_space_text(xd_folder_view_get_location(e->view));
     char *text = sel > 0 ? g_strdup_printf("%u object%s selected", sel, sel == 1 ? "" : "s")
-                         : g_strdup_printf("%u object%s", total, total == 1 ? "" : "s");
+                         : g_strdup_printf("%u object%s%s", total, total == 1 ? "" : "s",
+                                           space != nullptr ? space : "");
+    g_free(space);
     gtk_label_set_text(GTK_LABEL(e->status), text);
     g_free(text);
     char *size = xd_format_size(xd_folder_view_get_size(e->view, sel > 0));
@@ -415,6 +435,65 @@ static void on_folders_toggle(GtkToggleToolButton *b, gpointer data) {
 static void on_hidden(GtkCheckMenuItem *item, gpointer data) {
     explorer *e = data;
     xd_folder_view_set_show_hidden(e->view, gtk_check_menu_item_get_active(item));
+}
+
+/* View > Arrange Icons By: Name, Size, Type, Modified (in My Computer
+ * and the Recycle Bin the columns they show). */
+static void on_arrange(GtkWidget *item, gpointer data) {
+    explorer *e = data;
+    if (GTK_IS_CHECK_MENU_ITEM(item) && !gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)))
+        return;
+    if (e->syncing)
+        return;
+    int col = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "xd-sort"));
+    xd_folder_view_set_sort(e->view, (XdSortColumn)col, FALSE);
+}
+
+/* Checks radio `col` of an Arrange Icons by menu. */
+static void check_radio(GtkWidget *menu, int col, explorer *e) {
+    GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
+    e->syncing = TRUE;
+    for (GList *l = items; l != nullptr; l = l->next)
+        if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(l->data), "xd-sort")) == col)
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(l->data), TRUE);
+    e->syncing = FALSE;
+    g_list_free(items);
+}
+
+static GtkWidget *arrange_menu(explorer *e, gboolean radios) {
+    static const char *const names[XD_SORT_COUNT] = {"_Name", "_Size", "T_ype", "Modi_fied"};
+    GtkWidget *menu = gtk_menu_new();
+    GSList *group = nullptr;
+    /* The menus are built before the view: it starts by name. */
+    XdSortColumn sort = e->view != nullptr ? xd_folder_view_get_sort(e->view) : XD_SORT_NAME;
+    int current = (int)sort;
+    e->syncing = TRUE;
+    for (int i = 0; i < XD_SORT_COUNT; i++) {
+        GtkWidget *item;
+        if (radios) {
+            item = gtk_radio_menu_item_new_with_mnemonic(group, names[i]);
+            group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(item));
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), i == current);
+            g_signal_connect(item, "toggled", G_CALLBACK(on_arrange), e);
+        } else {
+            item = gtk_menu_item_new_with_mnemonic(names[i]);
+            g_signal_connect(item, "activate", G_CALLBACK(on_arrange), e);
+        }
+        g_object_set_data(G_OBJECT(item), "xd-sort", GINT_TO_POINTER(i));
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+    e->syncing = FALSE;
+    gtk_widget_show_all(menu);
+    return menu;
+}
+
+/* The radio follows the sort (a Details header click changes it). */
+static void on_view_menu_show(GtkWidget *menu, gpointer data) {
+    (void)menu;
+    explorer *e = data;
+    GtkWidget *sub = gtk_menu_item_get_submenu(GTK_MENU_ITEM(e->arrange_item));
+    XdSortColumn sort = xd_folder_view_get_sort(e->view);
+    check_radio(sub, (int)sort, e);
 }
 
 static void cb_back([[maybe_unused]] GtkWidget *w, gpointer d) { go_back(d); }
@@ -1003,6 +1082,11 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
         e->view_items[i] = radio;
     }
     gtk_menu_shell_append(GTK_MENU_SHELL(view), gtk_separator_menu_item_new());
+    e->arrange_item = gtk_menu_item_new_with_mnemonic("Arran_ge Icons by");
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(e->arrange_item), arrange_menu(e, TRUE));
+    gtk_menu_shell_append(GTK_MENU_SHELL(view), e->arrange_item);
+    g_signal_connect(view, "show", G_CALLBACK(on_view_menu_show), e);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view), gtk_separator_menu_item_new());
     GtkWidget *hidden = gtk_check_menu_item_new_with_mnemonic("Show _Hidden Files");
     g_signal_connect(hidden, "toggled", G_CALLBACK(on_hidden), e);
     gtk_widget_add_accelerator(hidden, "activate", accel, GDK_KEY_h, GDK_CONTROL_MASK,
@@ -1071,6 +1155,9 @@ static void add_view_submenu(explorer *e, GtkWidget *menu) {
                                  e->view_items[i]);
         gtk_menu_shell_append(GTK_MENU_SHELL(viewm), item);
     }
+    GtkWidget *arrange = gtk_menu_item_new_with_mnemonic("Arran_ge Icons by");
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(arrange), arrange_menu(e, FALSE));
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), arrange);
 }
 
 static GtkWidget *bold_item(explorer *e, GtkWidget *menu, const char *label, GCallback cb) {
