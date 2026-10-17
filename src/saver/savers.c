@@ -48,8 +48,8 @@ typedef struct vec2 {
 typedef struct mover {
     vec2 p[POLY_POINTS];
     vec2 v[POLY_POINTS];
-    vec2 trail[CURVE_TRAIL][POLY_POINTS];
-    int trail_len;
+    vec2 trail[CURVE_TRAIL][POLY_POINTS]; /* a ring; trail_head is the newest */
+    int trail_head, trail_len;
     double hue;
 } mover;
 
@@ -210,11 +210,16 @@ static void movers_step(xd_saver *s, double dt, int trail_max, double trail_ever
             }
         }
         if (snap) {
-            memmove(&mv->trail[1], &mv->trail[0], sizeof(mv->trail[0]) * (size_t)(trail_max - 1));
-            memcpy(mv->trail[0], mv->p, sizeof(mv->p));
+            mv->trail_head = (mv->trail_head + CURVE_TRAIL - 1) % CURVE_TRAIL;
+            memcpy(mv->trail[mv->trail_head], mv->p, sizeof(mv->p));
             mv->trail_len = mv->trail_len < trail_max ? mv->trail_len + 1 : trail_max;
         }
     }
+}
+
+/* The outline `t` snapshots ago (0 is the newest). */
+static const vec2 *trail_at(const mover *mv, int t) {
+    return mv->trail[(mv->trail_head + t) % CURVE_TRAIL];
 }
 
 static void mystify_frame(xd_saver *s, cairo_t *cr, double dt) {
@@ -225,9 +230,10 @@ static void mystify_frame(xd_saver *s, cairo_t *cr, double dt) {
         const mover *mv = &s->movers[m];
         for (int t = mv->trail_len - 1; t >= 0; t--) {
             set_hue(cr, mv->hue + m * 0.5, 1.0 - (double)t / (TRAIL + 1));
-            cairo_move_to(cr, mv->trail[t][0].x, mv->trail[t][0].y);
+            const vec2 *p = trail_at(mv, t);
+            cairo_move_to(cr, p[0].x, p[0].y);
             for (int i = 1; i < POLY_POINTS; i++)
-                cairo_line_to(cr, mv->trail[t][i].x, mv->trail[t][i].y);
+                cairo_line_to(cr, p[i].x, p[i].y);
             cairo_close_path(cr);
             cairo_stroke(cr);
         }
@@ -240,7 +246,7 @@ static void beziers_frame(xd_saver *s, cairo_t *cr, double dt) {
     cairo_set_line_width(cr, fmax(1.0, s->scale));
     const mover *mv = &s->movers[0];
     for (int t = mv->trail_len - 1; t >= 0; t--) {
-        const vec2 *p = mv->trail[t];
+        const vec2 *p = trail_at(mv, t);
         set_hue(cr, mv->hue + t * 0.01, 1.0 - (double)t / (CURVE_TRAIL + 1));
         /* A closed loop: out along p0..p3, back through the mirror. */
         cairo_move_to(cr, p[0].x, p[0].y);
