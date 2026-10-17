@@ -1414,7 +1414,8 @@ static void surface_destroy(xd_taskbar *bar) {
     if (shell->start_bar == bar)
         xd_menu_close_all(shell); /* its popups hang off this surface */
     if (shell->pointer_bar == bar)
-        shell->pointer_bar = nullptr;
+        shell->pointer_bar = nullptr; /* no leave will come */
+    set_peek(bar, false);              /* ...to end a peek either */
     xd_tooltip_hide(shell);
     if (bar->layer != nullptr)
         zwlr_layer_surface_v1_destroy(bar->layer);
@@ -1503,9 +1504,9 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
 
 void xd_taskbar_destroy(xd_taskbar *bar) {
     xd_shell *shell = bar->shell;
+    surface_destroy(bar);
     if (bar->peek_timer != 0)
         g_source_remove(bar->peek_timer);
-    surface_destroy(bar);
     wl_list_remove(&bar->link);
     xd_desktop_destroy(bar->desktop);
     if (bar->output != nullptr)
