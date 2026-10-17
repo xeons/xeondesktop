@@ -303,6 +303,10 @@ typedef void (*xd_clipboard_got)(xd_shell *shell, char **uris, bool cut, void *u
 void xd_clipboard_get_files(xd_shell *shell, xd_clipboard_got got, void *user);
 /* After pasting what was cut: the clipboard is emptied, as in Windows. */
 void xd_clipboard_clear_cut(xd_shell *shell);
+/* Starts dragging files (the desktop's icons) from `origin`, with `icon`
+ * as the drag image; false if it can't. */
+bool xd_dnd_start_drag(xd_shell *shell, char *const *uris, struct wl_surface *origin,
+                       struct wl_surface *icon, uint32_t serial);
 /* Shows the previous (delta < 0) or next page of task buttons. */
 void xd_taskbar_page(xd_taskbar *bar, int delta);
 /* Gives the taskbar keyboard focus; call before opening a menu popup. */
@@ -437,6 +441,16 @@ void xd_deskicons_relayout(xd_shell *shell);
 bool xd_deskicons_key(xd_shell *shell, uint32_t sym, const char *utf8, uint32_t serial);
 /* Our Cut or Copy was replaced on the clipboard. */
 void xd_deskicons_clipboard_lost(xd_shell *shell);
+/* A drag over the desktop: what a drop at (x, y) would do, highlighting
+ * the folder it would go into; x < 0 ends the highlight. `own`: the
+ * desktop's own icons. */
+typedef enum { XD_DROP_NONE, XD_DROP_HERE, XD_DROP_FOLDER, XD_DROP_TRASH } xd_drop_kind;
+xd_drop_kind xd_deskicons_drag_over(xd_shell *shell, xd_desktop *d, double x, double y, bool own);
+/* Files dropped at (x, y); `uris` nullptr for the desktop's own icons. */
+void xd_deskicons_drop(xd_shell *shell, xd_desktop *d, char **uris, double x, double y,
+                       bool move);
+/* Our drag ended (dropped anywhere, or cancelled). */
+void xd_deskicons_drag_ended(xd_shell *shell);
 /* Opens a file or place as a double-click would: folders (and My
  * Computer, the Recycle Bin) in xd-files, launchers run, documents in the
  * program for their type. */

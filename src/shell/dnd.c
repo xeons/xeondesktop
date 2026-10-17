@@ -6,6 +6,8 @@
  * - a drag held over a task button brings that window forward, so the
  *   drop can go into it;
  *
+ * the desktop as a drop target (into the Desktop folder, or onto a folder
+ * or the Recycle Bin under the pointer) and its icons as a drag source;
  * and the clipboard's files for the desktop icons' Cut, Copy and Paste,
  * in the format file managers use (x-special/gnome-copied-files, with a
  * URI list besides).
@@ -37,12 +39,17 @@ struct xd_dnd {
     struct wl_data_source *source;
     char **source_uris;
     bool source_cut;
+    /* Our drag (desktop icons). */
+    struct wl_data_source *drag_source;
+    char **drag_uris;
     /* The drag over us. */
     struct wl_data_offer *offer;
     bool uris;
     uint32_t serial;
     xd_taskbar *bar;
-    double x, y; /* logical, bar-local */
+    xd_desktop *desk;   /* or over a desktop */
+    uint32_t action;    /* the action the compositor chose */
+    double x, y; /* logical, surface-local */
     int hover_task;
     guint hover_timer;
 };
@@ -61,8 +68,11 @@ static void offer_source_actions([[maybe_unused]] void *data,
                                  [[maybe_unused]] struct wl_data_offer *o,
                                  [[maybe_unused]] uint32_t actions) {}
 
-static void offer_action([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_offer *o,
-                         [[maybe_unused]] uint32_t action) {}
+static void offer_action(void *data, struct wl_data_offer *o, uint32_t action) {
+    xd_dnd *d = data;
+    if (o == d->offer)
+        d->action = action;
+}
 
 static const struct wl_data_offer_listener offer_listener = {
     .offer = offer_mime,
@@ -90,6 +100,9 @@ static void stop_hover(xd_dnd *d) {
 
 static void forget_drag(xd_dnd *d) {
     stop_hover(d);
+    if (d->desk != nullptr)
+        xd_deskicons_drag_over(d->shell, d->desk, -1, -1, false);
+    d->desk = nullptr;
     if (d->bar != nullptr) {
         d->bar->drop_insert = -1;
         d->bar->dirty = true;
@@ -126,6 +139,23 @@ static int task_at(const xd_taskbar *bar, double lx) {
 }
 
 static void track(xd_dnd *d) {
+    if (d->desk != nullptr && d->offer != nullptr) {
+        xd_drop_kind k = d->uris ? xd_deskicons_drag_over(d->shell, d->desk, d->x, d->y,
+                                                          d->drag_source != nullptr)
+                                 : XD_DROP_NONE;
+        if (k == XD_DROP_NONE) {
+            wl_data_offer_accept(d->offer, d->serial, nullptr);
+            wl_data_offer_set_actions(d->offer, 0, 0);
+        } else {
+            wl_data_offer_accept(d->offer, d->serial, URI_LIST);
+            /* Files move within the drive, as Windows does on one disk; to
+             * the Recycle Bin they always move. */
+            uint32_t move = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+            uint32_t copy = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+            wl_data_offer_set_actions(d->offer, k == XD_DROP_TRASH ? move : copy | move, move);
+        }
+        return;
+    }
     xd_taskbar *bar = d->bar;
     if (bar == nullptr || d->offer == nullptr)
         return;
@@ -164,9 +194,11 @@ static void device_enter(void *data, [[maybe_unused]] struct wl_data_device *dev
         d->pending = nullptr;
     d->serial = serial;
     d->bar = xd_taskbar_for_surface(d->shell, surface);
+    d->desk = d->bar == nullptr ? xd_desktop_for_surface(d->shell, surface) : nullptr;
+    d->action = 0;
     d->x = wl_fixed_to_double(x);
     d->y = wl_fixed_to_double(y);
-    if (d->bar == nullptr && offer != nullptr)
+    if (d->bar == nullptr && d->desk == nullptr && offer != nullptr)
         wl_data_offer_accept(offer, serial, nullptr);
     track(d);
 }
@@ -184,8 +216,17 @@ static void device_motion(void *data, [[maybe_unused]] struct wl_data_device *de
 }
 
 /* The dropped URI list, read until the source closes the pipe. */
+/* A drop's offer is finished once its data has been read: a source may
+ * stop sending when it hears the drag is over. */
+static void finish_offer(struct wl_data_offer *offer) {
+    if (wl_data_offer_get_version(offer) >= WL_DATA_OFFER_FINISH_SINCE_VERSION)
+        wl_data_offer_finish(offer);
+    wl_data_offer_destroy(offer);
+}
+
 typedef struct drop {
     xd_shell *shell;
+    struct wl_data_offer *offer; /* ours until read */
     int fd;
     GString *text;
     size_t at;
@@ -210,14 +251,81 @@ static gboolean read_drop(int fd, [[maybe_unused]] GIOCondition cond, gpointer d
         g_free(path);
     }
     g_strfreev(uris);
+    finish_offer(dr->offer);
     g_string_free(dr->text, TRUE);
     close(dr->fd);
     g_free(dr);
     return G_SOURCE_REMOVE;
 }
 
+typedef struct desk_drop {
+    xd_shell *shell;
+    struct wl_data_offer *offer; /* ours until read */
+    xd_desktop *desk;
+    int fd;
+    GString *text;
+    double x, y;
+    bool move;
+} desk_drop;
+
+static gboolean read_desk_drop(int fd, [[maybe_unused]] GIOCondition cond, gpointer data) {
+    desk_drop *dd = data;
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof(buf));
+    if (n > 0) {
+        g_string_append_len(dd->text, buf, n);
+        return dd->text->len < (1u << 20) ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+    }
+    if (n < 0 && (errno == EINTR || errno == EAGAIN))
+        return G_SOURCE_CONTINUE;
+    char **uris = g_uri_list_extract_uris(dd->text->str);
+    if (uris != nullptr && uris[0] != nullptr)
+        xd_deskicons_drop(dd->shell, dd->desk, uris, dd->x, dd->y, dd->move);
+    g_strfreev(uris);
+    finish_offer(dd->offer);
+    g_string_free(dd->text, TRUE);
+    close(dd->fd);
+    g_free(dd);
+    return G_SOURCE_REMOVE;
+}
+
+static void drop_on_desktop(xd_dnd *d) {
+    bool move = d->action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+    if (d->drag_source != nullptr) {
+        /* Our own icons: the desktop knows what they are. */
+        xd_deskicons_drop(d->shell, d->desk, nullptr, d->x, d->y, move);
+    } else {
+        int fds[2];
+        if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0)
+            return;
+        wl_data_offer_receive(d->offer, URI_LIST, fds[1]);
+        close(fds[1]);
+        desk_drop *dd = g_new0(desk_drop, 1);
+        dd->shell = d->shell;
+        dd->offer = d->offer;
+        d->offer = nullptr; /* the read finishes it */
+        dd->desk = d->desk;
+        dd->fd = fds[0];
+        dd->text = g_string_new(nullptr);
+        dd->x = d->x;
+        dd->y = d->y;
+        dd->move = move;
+        g_unix_fd_add(fds[0], (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR), read_desk_drop, dd);
+        wl_display_flush(d->shell->display);
+        return;
+    }
+    if (wl_data_offer_get_version(d->offer) >= WL_DATA_OFFER_FINISH_SINCE_VERSION)
+        wl_data_offer_finish(d->offer);
+}
+
 static void device_drop(void *data, [[maybe_unused]] struct wl_data_device *dev) {
     xd_dnd *d = data;
+    if (d->desk != nullptr) {
+        if (d->offer != nullptr && d->uris && d->action != 0)
+            drop_on_desktop(d);
+        forget_drag(d);
+        return;
+    }
     xd_taskbar *bar = d->bar;
     int at = bar != nullptr ? bar->drop_insert : -1;
     if (d->offer != nullptr && d->uris && at >= 0) {
@@ -227,14 +335,14 @@ static void device_drop(void *data, [[maybe_unused]] struct wl_data_device *dev)
             close(fds[1]);
             drop *dr = g_new0(drop, 1);
             dr->shell = d->shell;
+            dr->offer = d->offer;
+            d->offer = nullptr; /* the read finishes it */
             dr->fd = fds[0];
             dr->text = g_string_new(nullptr);
             dr->at = (size_t)at;
             g_unix_fd_add(fds[0], (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR), read_drop, dr);
             /* The source writes once we've flushed the request. */
             wl_display_flush(d->shell->display);
-            if (wl_data_offer_get_version(d->offer) >= WL_DATA_OFFER_FINISH_SINCE_VERSION)
-                wl_data_offer_finish(d->offer);
         }
     }
     forget_drag(d);
@@ -421,6 +529,69 @@ void xd_clipboard_get_files(xd_shell *shell, xd_clipboard_got got, void *user) {
     wl_display_flush(shell->display);
 }
 
+/* ---- dragging the desktop's icons ------------------------------------------------ */
+
+static void drag_end(xd_dnd *d, struct wl_data_source *s) {
+    if (s == d->drag_source) {
+        d->drag_source = nullptr;
+        g_strfreev(d->drag_uris);
+        d->drag_uris = nullptr;
+        xd_deskicons_drag_ended(d->shell);
+    }
+    wl_data_source_destroy(s);
+}
+
+static void drag_send(void *data, [[maybe_unused]] struct wl_data_source *s, const char *mime,
+                      int32_t fd) {
+    xd_dnd *d = data;
+    if (d->drag_uris != nullptr && strcmp(mime, URI_LIST) == 0) {
+        char *text = clip_text(d->drag_uris, false, false);
+        int flags = fcntl(fd, F_GETFL);
+        if (flags >= 0)
+            fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+        size_t len = strlen(text), off = 0;
+        while (off < len) {
+            ssize_t n = write(fd, text + off, len - off);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0)
+                break;
+            off += (size_t)n;
+        }
+        g_free(text);
+    }
+    close(fd);
+}
+
+static void drag_cancelled(void *data, struct wl_data_source *s) { drag_end(data, s); }
+static void drag_finished(void *data, struct wl_data_source *s) { drag_end(data, s); }
+
+static const struct wl_data_source_listener drag_listener = {
+    .target = source_target,
+    .send = drag_send,
+    .cancelled = drag_cancelled,
+    .dnd_drop_performed = source_dnd_drop,
+    .dnd_finished = drag_finished,
+    .action = source_action,
+};
+
+bool xd_dnd_start_drag(xd_shell *shell, char *const *uris, struct wl_surface *origin,
+                       struct wl_surface *icon, uint32_t serial) {
+    xd_dnd *d = shell->dnd;
+    if (d == nullptr || d->drag_source != nullptr || uris == nullptr || uris[0] == nullptr ||
+        wl_data_device_manager_get_version(d->manager) < 3)
+        return false;
+    struct wl_data_source *src = wl_data_device_manager_create_data_source(d->manager);
+    wl_data_source_add_listener(src, &drag_listener, d);
+    wl_data_source_offer(src, URI_LIST);
+    wl_data_source_set_actions(src, WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY |
+                                        WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
+    d->drag_source = src;
+    d->drag_uris = g_strdupv((char **)(uintptr_t)uris);
+    wl_data_device_start_drag(d->device, src, origin, icon, serial);
+    return true;
+}
+
 void xd_clipboard_clear_cut(xd_shell *shell) {
     xd_dnd *d = shell->dnd;
     if (d != nullptr && d->source != nullptr && d->source_cut) {
@@ -463,6 +634,9 @@ void xd_dnd_finish(xd_shell *shell) {
     if (d->source != nullptr)
         wl_data_source_destroy(d->source);
     g_strfreev(d->source_uris);
+    if (d->drag_source != nullptr)
+        wl_data_source_destroy(d->drag_source);
+    g_strfreev(d->drag_uris);
     if (wl_data_device_get_version(d->device) >= WL_DATA_DEVICE_RELEASE_SINCE_VERSION)
         wl_data_device_release(d->device);
     else

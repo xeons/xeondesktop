@@ -336,10 +336,19 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       focus, Ctrl+click, arrows, rename, copy from xd-files and paste on
       the desktop, cut on the desktop and paste in xd-files, Alt+F4,
       type-ahead.
-- [ ] Desktop icons: dragging icons to other programs and files onto the
-      desktop, My Network Places, Display Properties' Customize Desktop
-      (which icons show), Auto Arrange, larger icons with scaling of the
-      icon size, key repeat (the shell doesn't repeat keys).
+- [x] Desktop icons and drag and drop: dragging files' icons is a real
+      drag (a faded drag image of the selection) that other programs can
+      take; dropped back on the desktop they move on the grid, onto a
+      folder icon they move into it (Ctrl copies), onto the Recycle Bin
+      they're trashed. Files dragged in from other programs move or copy
+      into the Desktop folder where they're dropped, or into the folder
+      or Recycle Bin under the pointer (lit while hovered). The shell
+      repeats held keys; a failed rename says why (xd-message). Tested
+      headless: moving on the grid, onto a folder, desktop -> xd-files,
+      xd-files -> desktop, onto the Recycle Bin (asks), key repeat.
+- [ ] Desktop icons: My Network Places, Display Properties' Customize
+      Desktop (which icons show), Auto Arrange, larger icons with scaling
+      of the icon size.
 - [~] Windows XP Start menu. Done: layout in Luna, Watercolor and Classic,
       two-line Internet/E-mail entries, most used programs, cascading All
       Programs, Recent Documents and Control Panel submenus, Log Off and

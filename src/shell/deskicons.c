@@ -27,6 +27,7 @@
 #include "../core/alloc.h"
 #include "../files/rename.h"
 #include "../settings/state.h"
+#include "../ui/shm.h"
 #include "../ui/textedit.h"
 #include "apps.h"
 #include "menu.h"
@@ -98,6 +99,12 @@ struct xd_deskicons {
     guint rename_timer;
     /* Cut, until pasted or replaced on the clipboard (drawn faded). */
     GHashTable *cut;
+    /* Drag and drop: our drag of the selection, and a drop's target. */
+    bool wl_drag;
+    uint32_t press_serial;
+    struct wl_surface *drag_icon;
+    xd_shm_ring drag_ring;
+    int drop_hot; /* the folder icon a drop would go into, or -1 */
 };
 
 /* floor/ceil to int (an intermediate double, for -Wbad-function-cast). */
@@ -480,11 +487,14 @@ static void draw_icon(xd_deskicons *di, const xd_theme *t, cairo_t *cr, icon *ic
     double iy = round((cy + 3) * s);
     xd_rgba hi = xd_rgba_from_rgb(shell->scheme.colors[XD_COLOR_HILIGHT]);
     bool cut = g_hash_table_contains(di->cut, ic->id);
+    /* The folder a drag is over shows selected, as in Windows. */
+    bool lit = ic->selected || (di->drop_hot >= 0 && (guint)di->drop_hot < di->icons->len &&
+                                g_ptr_array_index(di->icons, (guint)di->drop_hot) == ic);
     if (img != nullptr) {
         cairo_set_source_surface(cr, img, ix, iy);
         /* Cut: faded until pasted, as in Windows. */
         cairo_paint_with_alpha(cr, cut ? 0.5 : 1.0);
-        if (ic->selected) {
+        if (lit) {
             /* Windows tints a selected icon with the highlight colour. */
             cairo_set_source_rgba(cr, hi.r, hi.g, hi.b, 0.5);
             cairo_mask_surface(cr, img, ix, iy);
@@ -1222,6 +1232,8 @@ static void drop_moved(xd_deskicons *di) {
     save_positions(di);
 }
 
+static bool start_wl_drag(xd_deskicons *di, xd_desktop *d);
+
 void xd_deskicons_motion(xd_shell *shell, xd_desktop *d, double x, double y) {
     xd_deskicons *di = shell->deskicons;
     if (di == nullptr || d != host(shell))
@@ -1231,7 +1243,9 @@ void xd_deskicons_motion(xd_shell *shell, xd_desktop *d, double x, double y) {
     if (!di->pressed)
         return;
     double dist = hypot(x - di->press_x, y - di->press_y);
-    if (!di->dragging && !di->banding && dist >= DRAG_THRESHOLD) {
+    if (!di->dragging && !di->banding && !di->wl_drag && dist >= DRAG_THRESHOLD) {
+        if (di->press_index >= 0 && start_wl_drag(di, d))
+            return;
         if (di->press_index >= 0)
             di->dragging = true;
         else
@@ -1280,6 +1294,7 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
         di->press_y = di->y;
         di->press_ctrl = ctrl;
         di->press_shift = shift;
+        di->press_serial = serial;
         icon *hit = index >= 0 ? g_ptr_array_index(di->icons, (guint)index) : nullptr;
         di->was_sole = hit != nullptr && hit->selected && selected_count(di) == 1;
         if (hit != nullptr && shift) {
@@ -1324,6 +1339,253 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
     di->pressed = false;
     di->dragging = false;
     di->banding = false;
+    redraw(di);
+}
+
+/* ---- drag and drop ----------------------------------------------------------------------- */
+
+/* The drag image: the selection, faded, the pointer where it was pressed. */
+static struct wl_surface *drag_image(xd_deskicons *di, xd_desktop *d) {
+    xd_shell *shell = di->shell;
+    xd_rect box = {0};
+    bool any = false;
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        if (!ic->selected)
+            continue;
+        if (!any) {
+            box = ic->hit;
+            any = true;
+            continue;
+        }
+        int x2 = XD_MAX(box.x + box.w, ic->hit.x + ic->hit.w);
+        int y2 = XD_MAX(box.y + box.h, ic->hit.y + ic->hit.h);
+        box.x = XD_MIN(box.x, ic->hit.x);
+        box.y = XD_MIN(box.y, ic->hit.y);
+        box.w = x2 - box.x;
+        box.h = y2 - box.y;
+    }
+    if (!any || box.w <= 0 || box.h <= 0 || box.w > 4096 || box.h > 4096 ||
+        shell->compositor == nullptr || shell->shm == nullptr)
+        return nullptr;
+    double up = ceil(d->scale);
+    int bs = XD_CLAMP((int)up, 1, 4);
+    xd_shm_buffer *buf = xd_shm_ring_acquire(&di->drag_ring, shell->shm, box.w * bs, box.h * bs);
+    if (buf == nullptr)
+        return nullptr;
+    cairo_t *cr = cairo_create(buf->surface);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    cairo_translate(cr, -box.x * bs, -box.y * bs);
+    xd_theme t;
+    xd_theme_init(&t, shell->style, &shell->scheme, bs);
+    cairo_push_group(cr);
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        if (ic->selected)
+            draw_icon(di, &t, cr, ic, bs, 0, 0, false);
+    }
+    cairo_pop_group_to_source(cr);
+    cairo_paint_with_alpha(cr, 0.5);
+    cairo_destroy(cr);
+    cairo_surface_flush(buf->surface);
+    struct wl_surface *s = wl_compositor_create_surface(shell->compositor);
+    wl_surface_set_buffer_scale(s, bs);
+    /* Its top left, from the pointer (wl_compositor 4: attach's offset). */
+    long ox = lround(box.x - di->press_x), oy = lround(box.y - di->press_y);
+    wl_surface_attach(s, buf->buffer, (int32_t)ox, (int32_t)oy);
+    wl_surface_damage_buffer(s, 0, 0, INT32_MAX, INT32_MAX);
+    buf->busy = true;
+    wl_surface_commit(s);
+    return s;
+}
+
+/* Files only: My Computer and the others move about the grid as before. */
+static bool start_wl_drag(xd_deskicons *di, xd_desktop *d) {
+    GPtrArray *uris = g_ptr_array_new_with_free_func(g_free);
+    bool files_only = true;
+    for (guint i = 0; i < di->icons->len; i++) {
+        icon *ic = g_ptr_array_index(di->icons, i);
+        if (!ic->selected)
+            continue;
+        if (ic->path == nullptr)
+            files_only = false;
+        else
+            g_ptr_array_add(uris, g_strdup(ic->uri));
+    }
+    g_ptr_array_add(uris, nullptr);
+    bool ok = false;
+    if (files_only && uris->len > 1) {
+        di->drag_icon = drag_image(di, d);
+        ok = xd_dnd_start_drag(di->shell, (char *const *)uris->pdata, d->surface, di->drag_icon,
+                               di->press_serial);
+        if (ok) {
+            di->wl_drag = true;
+        } else if (di->drag_icon != nullptr) {
+            wl_surface_destroy(di->drag_icon);
+            di->drag_icon = nullptr;
+        }
+    }
+    g_ptr_array_unref(uris);
+    return ok;
+}
+
+void xd_deskicons_drag_ended(xd_shell *shell) {
+    xd_deskicons *di = shell->deskicons;
+    if (di == nullptr)
+        return;
+    /* The drag had the pointer: the press never ends here. */
+    di->wl_drag = false;
+    di->pressed = false;
+    di->dragging = false;
+    if (di->drag_icon != nullptr) {
+        wl_surface_destroy(di->drag_icon);
+        di->drag_icon = nullptr;
+    }
+    xd_shm_ring_finish(&di->drag_ring);
+    redraw(di);
+}
+
+/* What's under (x, y) for a drop: a folder, the Recycle Bin, or the
+ * desktop itself. Our own dragged icons aren't targets. */
+static xd_drop_kind drop_target(xd_deskicons *di, double x, double y, bool own, int *index) {
+    *index = icon_at(di, x, y);
+    if (*index < 0)
+        return XD_DROP_HERE;
+    icon *ic = g_ptr_array_index(di->icons, (guint)*index);
+    if (own && ic->selected) {
+        *index = -1;
+        return XD_DROP_HERE;
+    }
+    if (strcmp(ic->id, SPECIAL_TRASH) == 0)
+        return XD_DROP_TRASH;
+    if (strcmp(ic->id, SPECIAL_COMPUTER) == 0)
+        return XD_DROP_NONE;
+    if (ic->is_dir)
+        return XD_DROP_FOLDER;
+    *index = -1;
+    return XD_DROP_HERE; /* onto a file: beside it */
+}
+
+xd_drop_kind xd_deskicons_drag_over(xd_shell *shell, xd_desktop *d, double x, double y,
+                                    bool own) {
+    xd_deskicons *di = shell->deskicons;
+    if (di == nullptr || d != host(shell))
+        return XD_DROP_NONE;
+    int index = -1;
+    xd_drop_kind k = x < 0 ? XD_DROP_NONE : drop_target(di, x, y, own, &index);
+    if (x < 0)
+        index = -1;
+    if (index != di->drop_hot) {
+        di->drop_hot = index;
+        redraw(di);
+    }
+    return k;
+}
+
+/* The folder a drop goes into: a folder icon's, else the Desktop. */
+static char *drop_dir(xd_deskicons *di, int index) {
+    if (index < 0)
+        return g_file_get_path(di->dir);
+    icon *ic = g_ptr_array_index(di->icons, (guint)index);
+    if (ic->path != nullptr)
+        return g_strdup(ic->path);
+    GFile *f = g_file_new_for_uri(ic->uri);
+    char *path = g_file_get_path(f);
+    g_object_unref(f);
+    return path;
+}
+
+/* Dropped files land in free cells from the drop's, in order. */
+static void place_dropped(xd_deskicons *di, char **uris, double x, double y) {
+    long col_l = lround((x - di->work.x - CELL_W / 2.0) / CELL_W);
+    long row_l = lround((y - di->work.y - 2 - CELL_H / 2.0) / CELL_H);
+    int col = CLAMP((int)col_l, 0, di->cols - 1), row = CLAMP((int)row_l, 0, di->rows - 1);
+    for (char **u = uris; *u != nullptr; u++) {
+        GFile *f = g_file_new_for_uri(*u);
+        char *name = g_file_get_basename(f);
+        g_object_unref(f);
+        if (name != nullptr && index_of(di, name) < 0) {
+            /* Not taken by an icon, nor promised to an earlier one. */
+            int c = col, r = row;
+            for (;;) {
+                next_free(di, &c, &r);
+                bool promised = false;
+                GHashTableIter it;
+                gpointer v;
+                g_hash_table_iter_init(&it, di->saved);
+                while (!promised && g_hash_table_iter_next(&it, nullptr, &v))
+                    promised = GPOINTER_TO_UINT(v) == pack_cell(c, r);
+                if (!promised || c >= di->cols)
+                    break;
+                if (++r >= di->rows) {
+                    r = 0;
+                    c++;
+                }
+            }
+            g_hash_table_replace(di->saved, g_strdup(name), GUINT_TO_POINTER(pack_cell(c, r)));
+        }
+        g_free(name);
+    }
+}
+
+void xd_deskicons_drop(xd_shell *shell, xd_desktop *d, char **uris, double x, double y,
+                       bool move) {
+    xd_deskicons *di = shell->deskicons;
+    if (di == nullptr || d != host(shell))
+        return;
+    bool own = uris == nullptr;
+    int index = -1;
+    xd_drop_kind k = drop_target(di, x, y, own, &index);
+    di->drop_hot = -1;
+    if (k == XD_DROP_NONE)
+        return;
+    bool ctrl, shift, alt;
+    mods(shell, &ctrl, &shift, &alt);
+    if (own && k == XD_DROP_HERE && !ctrl) {
+        /* Our icons to another place on the desktop. */
+        di->x = x;
+        di->y = y;
+        drop_moved(di);
+        redraw(di);
+        return;
+    }
+    GPtrArray *list = g_ptr_array_new_with_free_func(g_free);
+    if (own) {
+        for (guint i = 0; i < di->icons->len; i++) {
+            icon *ic = g_ptr_array_index(di->icons, i);
+            if (ic->selected && ic->path != nullptr)
+                g_ptr_array_add(list, g_strdup(ic->uri));
+        }
+        move = !ctrl;
+    } else {
+        for (char **u = uris; *u != nullptr; u++)
+            g_ptr_array_add(list, g_strdup(*u));
+    }
+    g_ptr_array_add(list, nullptr);
+    if (list->len > 1) {
+        GPtrArray *args = g_ptr_array_new();
+        for (guint i = 0; i + 1 < list->len; i++)
+            g_ptr_array_add(args, g_ptr_array_index(list, i));
+        if (k == XD_DROP_TRASH) {
+            run_files(shell, "--trash", args);
+        } else {
+            char *dir = drop_dir(di, index);
+            if (dir != nullptr) {
+                if (index < 0)
+                    place_dropped(di, (char **)list->pdata, x, y);
+                char *q = g_shell_quote(dir);
+                char *option = g_strconcat(move ? "--move-to=" : "--copy-to=", q, nullptr);
+                run_files(shell, option, args);
+                g_free(option);
+                g_free(q);
+            }
+            g_free(dir);
+        }
+        g_ptr_array_unref(args);
+    }
+    g_ptr_array_unref(list);
     redraw(di);
 }
 
@@ -1550,6 +1812,7 @@ void xd_deskicons_init(xd_shell *shell) {
     di->last_click_index = -1;
     di->saved = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     di->cut = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    di->drop_hot = -1;
     di->dir = desktop_dir();
     di->dir_monitor = g_file_monitor_directory(di->dir, G_FILE_MONITOR_WATCH_MOVES, nullptr,
                                                nullptr);
@@ -1582,6 +1845,9 @@ void xd_deskicons_finish(xd_shell *shell) {
     if (di->reload_timer != 0)
         g_source_remove(di->reload_timer);
     stop_rename_timer(di);
+    if (di->drag_icon != nullptr)
+        wl_surface_destroy(di->drag_icon);
+    xd_shm_ring_finish(&di->drag_ring);
     xd_textedit_free(&di->edit);
     g_free(di->edit_id);
     g_free(di->focus_id);
