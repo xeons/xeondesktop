@@ -5,6 +5,7 @@
 #include "../core/alloc.h"
 #include "../theme/draw.h"
 #include "folderview.h"
+#include "names.h"
 #include "places.h"
 
 #define ATTRIBUTES                                                             \
@@ -32,6 +33,7 @@ static constexpr int GROUP_GAP = 8;  /* between a group and the next heading */
 typedef struct item {
     GFile *file;
     char *name;
+    char *short_name; /* without a known type's extension; nullptr: no extension to hide */
     char *collate_key;
     char *type_desc;
     char *size_text;
@@ -92,6 +94,13 @@ struct _XdFolderView {
     gboolean grouped; /* laid out in groups now (an icon view) */
     GArray *rects;    /* GdkRectangle per shown item, when grouped */
     GArray *headings; /* heading, when grouped */
+    gboolean hide_extensions;
+    /* Single-click to open: the item under the pointer is underlined,
+     * and the one pressed opens on release. */
+    gboolean single_click;
+    int hover;
+    int pressed;
+    gboolean underline_label; /* while drawing the hovered item */
     int focus;
     int anchor;
 
@@ -148,6 +157,11 @@ G_DEFINE_TYPE_WITH_CODE(XdFolderView, xd_folder_view, GTK_TYPE_DRAWING_AREA,
 
 /* ---- items --------------------------------------------------------------------- */
 
+/* The name as shown (Folder Options can hide known extensions). */
+static const char *item_label(const XdFolderView *v, const item *it) {
+    return v->hide_extensions && it->short_name != nullptr ? it->short_name : it->name;
+}
+
 static void item_free(gpointer p) {
     item *it = p;
     g_clear_object(&it->file);
@@ -155,6 +169,7 @@ static void item_free(gpointer p) {
     g_clear_object(&it->icon_pb);
     g_clear_object(&it->thumb_pb);
     g_free(it->name);
+    g_free(it->short_name);
     g_free(it->collate_key);
     g_free(it->type_desc);
     g_free(it->size_text);
@@ -207,6 +222,14 @@ static item *item_new(GFile *dir, GFileInfo *info) {
                     : ctype != nullptr ? g_content_type_get_description(ctype)
                                        : g_strdup("File");
     it->size_text = it->is_dir ? g_strdup("") : xd_format_size(it->size);
+    /* The extension is the known type's when the name alone says so. */
+    size_t base = xd_name_base_len(it->name);
+    if (!it->is_dir && !launcher && ctype != nullptr && it->name[base] != '\0') {
+        char *guess = g_content_type_guess(it->name, nullptr, 0, nullptr);
+        if (!g_content_type_is_unknown(guess) && g_content_type_is_a(ctype, guess))
+            it->short_name = g_strndup(it->name, base);
+        g_free(guess);
+    }
     GIcon *icon = g_file_info_get_icon(info);
     it->icon = icon != nullptr ? g_object_ref(icon) : nullptr;
     /* A launcher shows its program's name and icon, as Windows shows a
@@ -565,7 +588,7 @@ static void layout_contents(XdFolderView *v) {
         for (int i = 0; i < n; i++) {
             item *it = g_ptr_array_index(v->shown, (guint)i);
             if (it->name_w == 0)
-                it->name_w = text_width(v, it->name);
+                it->name_w = text_width(v, item_label(v, it));
             widest = MAX(widest, it->name_w);
         }
         v->cell_w = MIN(widest + LIST_ICON + 16, LIST_COL_MAX);
@@ -752,6 +775,13 @@ static void draw_label_box(XdFolderView *v, cairo_t *cr, const char *text, int x
     pango_layout_set_alignment(l, align);
     pango_layout_set_ellipsize(l, PANGO_ELLIPSIZE_END);
     no_hyphens(l);
+    if (v->underline_label) {
+        PangoAttrList *attrs = pango_layout_get_attributes(l);
+        attrs = attrs != nullptr ? pango_attr_list_copy(attrs) : pango_attr_list_new();
+        pango_attr_list_insert(attrs, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
+        pango_layout_set_attributes(l, attrs);
+        pango_attr_list_unref(attrs);
+    }
     if (lines > 1) {
         pango_layout_set_wrap(l, PANGO_WRAP_WORD_CHAR);
         pango_layout_set_height(l, -lines);
@@ -817,6 +847,7 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         g_free(uri);
     }
     gboolean foc = has_focus && i == v->focus;
+    v->underline_label = v->single_click && i == v->hover;
     switch (v->mode) {
     case XD_VIEW_THUMBNAILS: {
         int box = v->thumb;
@@ -836,8 +867,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         if (pb != nullptr)
             paint_pixbuf(cr, pb, bx + (box - gdk_pixbuf_get_width(pb)) / 2.0,
                          by + (box - gdk_pixbuf_get_height(pb)) / 2.0, FALSE, faded, c);
-        draw_label_box(v, cr, it->name, r.x + 2, by + box + 4, r.width - 4, 1, PANGO_ALIGN_CENTER,
-                       sel, c, foc);
+        draw_label_box(v, cr, item_label(v, it), r.x + 2, by + box + 4, r.width - 4, 1,
+                       PANGO_ALIGN_CENTER, sel, c, foc);
         break;
     }
     case XD_VIEW_ICONS: {
@@ -846,8 +877,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         paint_pixbuf(cr, pb, r.x + (r.width - px) / 2.0, r.y + 4, sel, faded, c);
         if (it->shortcut)
             xd_draw_shortcut_arrow(cr, r.x + (r.width - px) / 2.0, r.y + 4, px);
-        draw_label_box(v, cr, it->name, r.x + 2, r.y + px + 8, r.width - 4, 2, PANGO_ALIGN_CENTER,
-                       sel, c, foc);
+        draw_label_box(v, cr, item_label(v, it), r.x + 2, r.y + px + 8, r.width - 4, 2,
+                       PANGO_ALIGN_CENTER, sel, c, foc);
         break;
     }
     case XD_VIEW_TILES: {
@@ -858,7 +889,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
             xd_draw_shortcut_arrow(cr, r.x + 6, r.y + (r.height - px) / 2.0, px);
         int tx = r.x + px + 14;
         int tw = r.width - px - 22;
-        draw_label_box(v, cr, it->name, tx, r.y + 8, tw, 1, PANGO_ALIGN_LEFT, sel, c, foc);
+        draw_label_box(v, cr, item_label(v, it), tx, r.y + 8, tw, 1, PANGO_ALIGN_LEFT, sel, c,
+                       foc);
         draw_text(v, cr, it->type_desc, tx, r.y + 26, tw, 1, PANGO_ALIGN_LEFT, c->dim);
         if (it->extra != nullptr)
             draw_text(v, cr, it->extra, tx, r.y + 42, tw, 1, PANGO_ALIGN_LEFT, c->dim);
@@ -871,7 +903,7 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         paint_pixbuf(cr, pb, r.x + 1, r.y + 1, sel, faded, c);
         if (it->shortcut)
             xd_draw_shortcut_arrow(cr, r.x + 1, r.y + 1, LIST_ICON);
-        draw_label_box(v, cr, it->name, r.x + LIST_ICON + 5, r.y + 1,
+        draw_label_box(v, cr, item_label(v, it), r.x + LIST_ICON + 5, r.y + 1,
                        r.width - LIST_ICON - 6, 1, PANGO_ALIGN_LEFT, sel, c, foc);
         break;
     }
@@ -881,7 +913,7 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         if (it->shortcut)
             xd_draw_shortcut_arrow(cr, r.x + 4, r.y + 1, LIST_ICON);
         int x = r.x;
-        draw_label_box(v, cr, it->name, x + LIST_ICON + 8, r.y + 1,
+        draw_label_box(v, cr, item_label(v, it), x + LIST_ICON + 8, r.y + 1,
                        v->col_w[XD_SORT_NAME] - LIST_ICON - 12, 1, PANGO_ALIGN_LEFT, sel, c, foc);
         x += v->col_w[XD_SORT_NAME];
         draw_text(v, cr, it->size_text, x + 4, r.y + 1, v->col_w[XD_SORT_SIZE] - 10, 1,
@@ -1350,13 +1382,16 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
     }
     int i = index_at(v, ev->x, ev->y);
     if (ev->type == GDK_2BUTTON_PRESS && ev->button == GDK_BUTTON_PRIMARY) {
-        activate(v, i);
+        /* With single-click, the first click's release opened it. */
+        if (!v->single_click)
+            activate(v, i);
         return TRUE;
     }
     if (ev->type != GDK_BUTTON_PRESS)
         return FALSE;
     gboolean ctrl = ev->state & GDK_CONTROL_MASK;
     gboolean shift = ev->state & GDK_SHIFT_MASK;
+    v->pressed = ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift ? i : -1;
     item *it = item_at(v, i);
     if (it == nullptr && ev->button == GDK_BUTTON_PRIMARY) {
         /* A drag from empty space selects what it covers. */
@@ -1417,19 +1452,46 @@ static void band_update(XdFolderView *v) {
     selection_changed(v);
 }
 
-static gboolean folder_view_button_release(GtkWidget *widget,
-                                           [[maybe_unused]] GdkEventButton *ev) {
+static gboolean folder_view_button_release(GtkWidget *widget, GdkEventButton *ev) {
     XdFolderView *v = XD_FOLDER_VIEW(widget);
+    /* Single-click opens on release, unless the press became a drag. */
+    gboolean click = v->drag_pending && ev->button == GDK_BUTTON_PRIMARY;
     v->drag_pending = FALSE;
     if (v->banding) {
         v->banding = FALSE;
         gtk_widget_queue_draw(widget);
     }
+    int pressed = v->pressed;
+    v->pressed = -1;
+    if (v->single_click && click && pressed >= 0 && index_at(v, ev->x, ev->y) == pressed)
+        activate(v, pressed);
+    return FALSE;
+}
+
+/* Single-click: underline the item under the pointer, with a hand. */
+static void set_hover(XdFolderView *v, int i) {
+    if (i == v->hover)
+        return;
+    v->hover = i;
+    gtk_widget_queue_draw(GTK_WIDGET(v));
+    GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(v));
+    if (win == nullptr)
+        return;
+    GdkCursor *hand = i >= 0 ? gdk_cursor_new_from_name(gdk_window_get_display(win), "pointer")
+                             : nullptr;
+    gdk_window_set_cursor(win, hand);
+    g_clear_object(&hand);
+}
+
+static gboolean folder_view_leave(GtkWidget *widget, [[maybe_unused]] GdkEventCrossing *ev) {
+    set_hover(XD_FOLDER_VIEW(widget), -1);
     return FALSE;
 }
 
 static gboolean folder_view_motion(GtkWidget *widget, GdkEventMotion *ev) {
     XdFolderView *v = XD_FOLDER_VIEW(widget);
+    if (v->single_click)
+        set_hover(v, ev->state & GDK_BUTTON1_MASK ? -1 : index_at(v, ev->x, ev->y));
     if (v->banding && (ev->state & GDK_BUTTON1_MASK)) {
         /* Past an edge, the view scrolls along. */
         if (v->vadj != nullptr && (ev->y < 0 || ev->y > widget_h(v)))
@@ -1866,6 +1928,7 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
     wc->button_press_event = folder_view_button_press;
     wc->button_release_event = folder_view_button_release;
     wc->motion_notify_event = folder_view_motion;
+    wc->leave_notify_event = folder_view_leave;
     wc->drag_begin = folder_view_drag_begin;
     wc->drag_data_get = folder_view_drag_data_get;
     wc->drag_motion = folder_view_drag_motion;
@@ -1910,12 +1973,15 @@ static void xd_folder_view_init(XdFolderView *v) {
     v->focus = -1;
     v->anchor = -1;
     v->drop_index = -1;
+    v->hover = -1;
+    v->pressed = -1;
     gtk_widget_set_can_focus(GTK_WIDGET(v), TRUE);
     gtk_drag_dest_set(GTK_WIDGET(v), (GtkDestDefaults)0, nullptr, 0,
                       (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK));
     gtk_drag_dest_add_uri_targets(GTK_WIDGET(v));
     gtk_widget_add_events(GTK_WIDGET(v), GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
-                                             GDK_BUTTON1_MOTION_MASK | GDK_KEY_PRESS_MASK);
+                                             GDK_BUTTON1_MOTION_MASK | GDK_KEY_PRESS_MASK |
+                                             GDK_POINTER_MOTION_MASK | GDK_LEAVE_NOTIFY_MASK);
 }
 
 /* ---- public API ------------------------------------------------------------------ */
@@ -2034,6 +2100,22 @@ void xd_folder_view_set_show_hidden(XdFolderView *v, gboolean show) {
     v->show_hidden = show;
     refilter(v);
     g_signal_emit(v, signals[SIG_CONTENTS], 0);
+}
+
+void xd_folder_view_set_hide_extensions(XdFolderView *v, gboolean hide) {
+    if (v->hide_extensions == hide)
+        return;
+    v->hide_extensions = hide;
+    for (guint i = 0; i < v->all->len; i++)
+        ((item *)g_ptr_array_index(v->all, i))->name_w = 0; /* List view measures names */
+    layout_contents(v);
+    gtk_widget_queue_draw(GTK_WIDGET(v));
+}
+
+void xd_folder_view_set_single_click(XdFolderView *v, gboolean single) {
+    v->single_click = single;
+    if (!single)
+        set_hover(v, -1);
 }
 
 void xd_folder_view_select_all(XdFolderView *v) {

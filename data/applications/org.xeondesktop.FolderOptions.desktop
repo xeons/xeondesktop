@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Folder Options
+Comment=Customize the display of files and folders, and change file associations
+Exec=xd-folders
+Icon=folder
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=appearance
+StartupWMClass=org.xeondesktop.FolderOptions

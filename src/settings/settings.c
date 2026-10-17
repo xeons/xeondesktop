@@ -30,6 +30,7 @@ static const char *const power_scheme_names[XD_POWER_SCHEME_COUNT] = {
     [XD_POWER_MINIMAL] = "minimal",
     [XD_POWER_MAX_BATTERY] = "maxbattery",
 };
+static const char *const view_names[] = {"thumbnails", "tiles", "icons", "list", "details"};
 
 xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id) {
     for (size_t i = 0; id != nullptr && i < s->tray_rule_count; i++) {
@@ -90,6 +91,9 @@ void xd_settings_defaults(xd_settings *s) {
         .volume_icon = true,
         .battery_icon = true,
         .resume_password = true, /* as in XP */
+        /* XP's, except extensions, which stay visible: renaming edits the
+         * whole name. */
+        .folders = {.full_path_address = true, .remember_views = true},
     };
 }
 
@@ -255,6 +259,28 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
         } else if (KEY("PasswordOnResume")) {
             parse_bool(v, &s->resume_password);
         }
+    } else if (SEC("Folders")) {
+        xd_folder_settings *f = &s->folders;
+        if (KEY("NewWindow"))
+            parse_bool(v, &f->new_window);
+        else if (KEY("SingleClick"))
+            parse_bool(v, &f->single_click);
+        else if (KEY("ShowHidden"))
+            parse_bool(v, &f->show_hidden);
+        else if (KEY("HideExtensions"))
+            parse_bool(v, &f->hide_extensions);
+        else if (KEY("FullPathAddress"))
+            parse_bool(v, &f->full_path_address);
+        else if (KEY("FullPathTitle"))
+            parse_bool(v, &f->full_path_title);
+        else if (KEY("RememberViews"))
+            parse_bool(v, &f->remember_views);
+        else if (KEY("DefaultView")) {
+            int i = index_of(view_names, XD_ARRAY_LEN(view_names), v);
+            if (i >= 0 || v.len == 0)
+                copy_into(f->default_view, sizeof(f->default_view),
+                          i >= 0 ? xd_str_from_cstr(view_names[i]) : v);
+        }
     }
 #undef SEC
 #undef KEY
@@ -366,6 +392,15 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_integer(kf, "Power", "Hibernate", s->hibernate);
     g_key_file_set_boolean(kf, "Power", "AlwaysShowIcon", s->battery_icon);
     g_key_file_set_boolean(kf, "Power", "PasswordOnResume", s->resume_password);
+    const xd_folder_settings *f = &s->folders;
+    g_key_file_set_boolean(kf, "Folders", "NewWindow", f->new_window);
+    g_key_file_set_boolean(kf, "Folders", "SingleClick", f->single_click);
+    g_key_file_set_boolean(kf, "Folders", "ShowHidden", f->show_hidden);
+    g_key_file_set_boolean(kf, "Folders", "HideExtensions", f->hide_extensions);
+    g_key_file_set_boolean(kf, "Folders", "FullPathAddress", f->full_path_address);
+    g_key_file_set_boolean(kf, "Folders", "FullPathTitle", f->full_path_title);
+    g_key_file_set_boolean(kf, "Folders", "RememberViews", f->remember_views);
+    g_key_file_set_string(kf, "Folders", "DefaultView", f->default_view);
     for (size_t i = 0; i < s->tray_rule_count; i++)
         g_key_file_set_string(kf, "Notifications", s->tray_rules[i].id,
                               tray_rule_names[s->tray_rules[i].rule]);

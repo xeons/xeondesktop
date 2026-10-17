@@ -436,6 +436,8 @@ install_data(
   'data/applications/org.xeondesktop.Power.desktop',
   'data/applications/org.xeondesktop.RegionalOptions.desktop',
   'data/applications/org.xeondesktop.UserAccounts.desktop',
+  'data/applications/org.xeondesktop.FolderOptions.desktop',
+  'data/applications/org.xeondesktop.Fonts.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -543,6 +545,28 @@ executable(
   install: true,
 )
 
+# Folder Options and Fonts (Control Panel).
+executable(
+  'xd-folders',
+  'src/folders/main.c',
+  'src/folders/filetypes.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+fontconfig_dep = dependency('fontconfig', include_type: 'system')
+cairo_ft_dep = dependency('cairo-ft', include_type: 'system')
+executable(
+  'xd-fonts',
+  'src/fonts/main.c',
+  'src/fonts/viewer.c',
+  'src/fonts/fontlist.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, fontconfig_dep, cairo_ft_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -626,7 +650,10 @@ test_exe = executable(
   'src/security/passwd.c',
   'src/intl/intl.c',
   'src/users/users.c',
-  dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep],
+  'src/folders/filetypes.c',
+  'src/fonts/fontlist.c',
+  dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
+                 fontconfig_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
 )
 test(

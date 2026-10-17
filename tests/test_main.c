@@ -9,8 +9,13 @@
 #include <crypt.h>
 #include <poll.h>
 
+#include <fontconfig/fontconfig.h>
+
 #include "../src/apps/runcmd.h"
 #include "../src/intl/intl.h"
+#include "../src/files/names.h"
+#include "../src/folders/filetypes.h"
+#include "../src/fonts/fontlist.h"
 #include "../src/security/passwd.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
@@ -831,6 +836,113 @@ static void test_users(void) {
     g_free(dir);
 }
 
+/* Folder Options: [Folders] in desktop.ini, xd-files' hidden
+ * extensions, and the File Types tab's extensions. */
+static void test_folder_options(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    CHECK(!a.folders.new_window && !a.folders.single_click && !a.folders.show_hidden);
+    CHECK(a.folders.full_path_address && !a.folders.full_path_title && a.folders.remember_views);
+    xd_settings_parse(XD_STR("[Folders]\nNewWindow=true\nSingleClick=1\nShowHidden=true\n"
+                             "HideExtensions=true\nFullPathAddress=false\nFullPathTitle=true\n"
+                             "RememberViews=false\nDefaultView=Details\n"),
+                      &a);
+    CHECK(a.folders.new_window && a.folders.single_click && a.folders.show_hidden);
+    CHECK(a.folders.hide_extensions && !a.folders.full_path_address && a.folders.full_path_title);
+    CHECK(!a.folders.remember_views && strcmp(a.folders.default_view, "details") == 0);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && strcmp(b.folders.default_view, "details") == 0);
+    xd_strbuf_free(&text);
+    /* An unknown view keeps the default. */
+    xd_settings_parse(XD_STR("[Folders]\nDefaultView=../x\n"), &a);
+    CHECK(a.folders.default_view[0] == '\0');
+
+    CHECK(xd_name_base_len("photo.jpg") == 5);
+    CHECK(xd_name_base_len("archive.tar.gz") == 11);
+    CHECK(xd_name_base_len("README") == 6);
+    CHECK(xd_name_base_len(".bashrc") == 7);
+    CHECK(xd_name_base_len("odd.") == 4);
+    CHECK(xd_name_base_len("") == 0);
+
+    static const char xml[] =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+        "<mime-type xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\" "
+        "type=\"text/x-c\">\n"
+        "  <comment>C source code</comment>\n"
+        "  <glob pattern=\"*.c\" case-sensitive=\"true\"/>\n"
+        "  <glob pattern=\"*.H\"/>\n"
+        "  <glob pattern=\"*.h\" weight=\"60\"/>\n"
+        "  <glob pattern=\"*.[ch]\"/>\n"
+        "  <glob pattern=\"Makefile*\"/>\n"
+        "  <glob pattern=\"*.\"/>\n"
+        "  <sub-class-of type=\"text/plain\"><glob pattern=\"*.nested\"/></sub-class-of>\n"
+        "</mime-type>\n";
+    GPtrArray *exts = g_ptr_array_new_with_free_func(g_free);
+    xd_mime_xml_extensions(xml, -1, exts);
+    CHECK(exts->len == 2 && strcmp(g_ptr_array_index(exts, 0), "c") == 0 &&
+          strcmp(g_ptr_array_index(exts, 1), "h") == 0);
+    /* Malformed XML keeps what came before the error. */
+    g_ptr_array_set_size(exts, 0);
+    xd_mime_xml_extensions("<mime-type><glob pattern=\"*.png\"/><glob <<", -1, exts);
+    CHECK(exts->len == 1 && strcmp(g_ptr_array_index(exts, 0), "png") == 0);
+    g_ptr_array_unref(exts);
+    char **none = xd_content_type_extensions("../../etc/passwd");
+    CHECK(none != nullptr && none[0] == nullptr);
+    g_strfreev(none);
+}
+
+/* The Fonts folder's names, user fonts and Hide Variations. */
+static void test_fonts(void) {
+    CHECK(strcmp(xd_font_format_label("TrueType", "/f/a.ttf"), "TrueType") == 0);
+    CHECK(strcmp(xd_font_format_label("TrueType", "/f/a.otf"), "OpenType") == 0);
+    CHECK(strcmp(xd_font_format_label("CFF", "/f/a.otf"), "OpenType") == 0);
+    CHECK(strcmp(xd_font_format_label("Type 1", "/f/a.pfb"), "Type 1") == 0);
+    CHECK(strcmp(xd_font_format_label("PCF", "/f/a.pcf.gz"), "Bitmap") == 0);
+    CHECK(xd_font_format_label("Unknown", "/f/a") == nullptr);
+    CHECK(xd_font_format_label(nullptr, "/f/a") == nullptr);
+
+    char *n = xd_font_display_name("DejaVu Sans Bold", "DejaVu Sans", "Bold", "TrueType");
+    CHECK(strcmp(n, "DejaVu Sans Bold (TrueType)") == 0);
+    g_free(n);
+    n = xd_font_display_name(nullptr, "Foo", "Regular", "OpenType");
+    CHECK(strcmp(n, "Foo (OpenType)") == 0);
+    g_free(n);
+    n = xd_font_display_name("", "Foo", "Italic", nullptr);
+    CHECK(strcmp(n, "Foo Italic") == 0);
+    g_free(n);
+
+    CHECK(xd_path_in_dir("/home/u/.local/share/fonts/a.ttf", "/home/u/.local/share/fonts"));
+    CHECK(xd_path_in_dir("/home/u/.local/share/fonts/sub/a.ttf", "/home/u/.local/share/fonts/"));
+    CHECK(!xd_path_in_dir("/home/u/.local/share/fonts", "/home/u/.local/share/fonts"));
+    CHECK(!xd_path_in_dir("/home/u/.local/share/fonts/", "/home/u/.local/share/fonts"));
+    CHECK(!xd_path_in_dir("/home/u/.local/share/fontsx/a.ttf", "/home/u/.local/share/fonts"));
+    CHECK(!xd_path_in_dir("/usr/share/fonts/a.ttf", "/home/u/.local/share/fonts"));
+
+    char fa[] = "A", fb[] = "B";
+    xd_font bold = {.family = fa, .weight = FC_WEIGHT_BOLD, .width = FC_WIDTH_NORMAL};
+    xd_font italic = {.family = fa, .weight = FC_WEIGHT_REGULAR, .slant = FC_SLANT_ITALIC,
+                      .width = FC_WIDTH_NORMAL};
+    xd_font regular = {.family = fa, .weight = FC_WEIGHT_REGULAR, .width = FC_WIDTH_NORMAL};
+    xd_font only = {.family = fb, .weight = FC_WEIGHT_LIGHT, .slant = FC_SLANT_ITALIC,
+                    .width = FC_WIDTH_CONDENSED};
+    xd_font *const list[] = {&bold, &italic, &regular, &only};
+    xd_fonts_mark_primary(list, G_N_ELEMENTS(list));
+    CHECK(!bold.primary && !italic.primary && regular.primary && only.primary);
+
+    char *v = xd_font_version_text(0x00025eb8); /* 2.37 */
+    CHECK(strcmp(v, "Version 2.37") == 0);
+    g_free(v);
+    v = xd_font_version_text(0x0001ffff); /* rounds up to 2.00 */
+    CHECK(strcmp(v, "Version 2.00") == 0);
+    g_free(v);
+    v = xd_font_version_text(0);
+    CHECK(v[0] == '\0');
+    g_free(v);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -851,6 +963,8 @@ int main(void) {
     test_passwd();
     test_intl();
     test_users();
+    test_folder_options();
+    test_fonts();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

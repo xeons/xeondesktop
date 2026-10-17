@@ -5,10 +5,12 @@
  * address bar, the Folders tree on the left, XdFolderView on the right and
  * a status bar with the thumbnail size slider.
  */
+#include <glib-unix.h>
 #include <gtk/gtk.h>
 #include <stdlib.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "../settings/settings.h"
 #include "../settings/state.h"
 #include "fileops.h"
 #include "folderview.h"
@@ -36,6 +38,7 @@ typedef struct explorer {
     /* Control Panel: the Switch to Classic/Category View link (in a bar
      * above the view) and View menu item. */
     GtkWidget *control_bar, *control_link, *control_item, *control_sep;
+    GtkWidget *hidden_item;  /* View > Show Hidden Files */
     /* Menu items that need a selection, or files on the clipboard. */
     GPtrArray *need_selection;
     GPtrArray *need_clipboard;
@@ -59,6 +62,9 @@ typedef struct explorer {
 static void navigate(explorer *e, GFile *dir, gboolean record);
 static int initial_view = XD_VIEW_ICONS; /* from --view */
 static gboolean view_forced;              /* --view given: it wins for the first folder */
+static gboolean view_given;               /* --view given: Folder Options' default doesn't apply */
+/* Folder Options ([Folders] in desktop.ini), followed live. */
+static xd_folder_settings options;
 static gboolean properties_only;          /* --properties: just the dialog */
 /* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to: one
  * job for the desktop (the shell isn't a GTK program), then exit. */
@@ -129,14 +135,18 @@ static void update_chrome(explorer *e) {
         return; /* nothing loaded yet */
     const char *special = xd_place_title(dir);
     char *parse = special != nullptr ? g_strdup(special) : g_file_get_parse_name(dir);
+    char *base = special != nullptr ? nullptr : g_file_get_basename(dir);
+    /* Folder Options: the folder's name alone, unless the full path. */
+    const char *shown = options.full_path_address || base == nullptr ? parse : base;
+    g_object_set_data_full(G_OBJECT(e->address), "xd-shown", g_strdup(shown), g_free);
     e->syncing = TRUE;
-    gtk_entry_set_text(GTK_ENTRY(e->address), parse);
+    gtk_entry_set_text(GTK_ENTRY(e->address), shown);
     gtk_entry_set_icon_from_icon_name(GTK_ENTRY(e->address), GTK_ENTRY_ICON_PRIMARY,
                                       xd_place_icon(dir));
     e->syncing = FALSE;
-    char *base = special != nullptr ? nullptr : g_file_get_basename(dir);
-    gtk_window_set_title(GTK_WINDOW(e->window),
-                         g_file_has_parent(dir, nullptr) && base != nullptr ? base : parse);
+    gboolean short_title = !options.full_path_title && g_file_has_parent(dir, nullptr) &&
+                           base != nullptr;
+    gtk_window_set_title(GTK_WINDOW(e->window), short_title ? base : parse);
     g_free(base);
     g_free(parse);
     gtk_widget_set_sensitive(e->back_button, e->back != nullptr);
@@ -348,8 +358,9 @@ static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
  * and the folder wasn't remembered before. */
 static void remember_folder_view(explorer *e) {
     GFile *dir = xd_folder_view_get_location(e->view);
-    /* Control Panel always opens in its view's own look (below). */
-    if (dir == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL)
+    /* Control Panel always opens in its view's own look (below); with
+     * "Remember each folder's view settings" off nothing is kept. */
+    if (dir == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL || !options.remember_views)
         return;
     char *uri = g_file_get_uri(dir);
     XdViewMode view_mode = xd_folder_view_get_mode(e->view);
@@ -400,6 +411,9 @@ static void apply_folder_view(explorer *e, GFile *dir) {
         xd_folder_view_set_groups(e->view, FALSE);
         return;
     }
+    /* Not remembering: every folder keeps the view last chosen, as in XP. */
+    if (!options.remember_views)
+        return;
     char *uri = g_file_get_uri(dir);
     folder_view_setting fv;
     if (find_folder_view(uri, &fv)) {
@@ -592,6 +606,7 @@ static void go_home(explorer *e) {
 }
 
 static GFile *current_dir(explorer *e);
+static void open_window(GtkApplication *app, GFile *dir);
 
 /* Opens a Control Panel applet (its desktop file). FALSE if `file` isn't
  * one. */
@@ -624,6 +639,10 @@ static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gbool
         g_list_free(one);
         return;
     }
+    if (is_dir && options.new_window) {
+        open_window(gtk_window_get_application(GTK_WINDOW(e->window)), file);
+        return;
+    }
     if (is_dir) {
         navigate(e, file, TRUE);
         return;
@@ -643,6 +662,14 @@ static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gbool
 
 static void on_address_activate(GtkEntry *entry, gpointer data) {
     explorer *e = data;
+    /* The folder's name alone (Folder Options) stands for itself. */
+    const char *shown = g_object_get_data(G_OBJECT(entry), "xd-shown");
+    if (!options.full_path_address && shown != nullptr &&
+        strcmp(shown, gtk_entry_get_text(entry)) == 0 && current_dir(e) != nullptr) {
+        xd_folder_view_reload(e->view);
+        gtk_widget_grab_focus(GTK_WIDGET(e->view));
+        return;
+    }
     GFile *place = xd_place_parse(gtk_entry_get_text(entry));
     if (place != nullptr) {
         navigate(e, place, TRUE);
@@ -726,9 +753,19 @@ static void on_folders_toggle(GtkToggleToolButton *b, gpointer data) {
     gtk_widget_set_visible(e->tree_pane, gtk_toggle_tool_button_get_active(b));
 }
 
+/* Show Hidden Files is Folder Options' setting: every window follows. */
 static void on_hidden(GtkCheckMenuItem *item, gpointer data) {
     explorer *e = data;
-    xd_folder_view_set_show_hidden(e->view, gtk_check_menu_item_get_active(item));
+    gboolean show = gtk_check_menu_item_get_active(item);
+    xd_folder_view_set_show_hidden(e->view, show);
+    if (e->syncing || show == options.show_hidden)
+        return;
+    options.show_hidden = show;
+    xd_settings s;
+    xd_settings_load(&s);
+    s.folders.show_hidden = show;
+    if (!xd_settings_save(&s))
+        g_printerr("xd-files: cannot save Show Hidden Files\n");
 }
 
 /* View > Arrange Icons By: Name, Size, Type, Modified (in My Computer
@@ -882,7 +919,7 @@ static void cb_open_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
                           g_file_query_file_type(l->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
                               G_FILE_TYPE_DIRECTORY;
         on_activated(e->view, l->data, is_dir, e);
-        if (is_dir)
+        if (is_dir && !options.new_window)
             break; /* navigating replaces the view */
     }
     g_list_free_full(files, g_object_unref);
@@ -895,6 +932,24 @@ static void cb_go([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
     on_address_activate(GTK_ENTRY(e->address), e);
 }
+/* Tools > Folder Options: xd-folders, told this folder's view so that
+ * Apply to All Folders can use it. */
+static void cb_folder_options([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    char *view = g_strdup_printf("--view=%s", view_names[xd_folder_view_get_mode(e->view)]);
+    char *prog = g_strdup("xd-folders");
+    char *argv[] = {prog, view, nullptr};
+    GError *err = nullptr;
+    if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr,
+                       &err)) {
+        xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       err->message);
+        g_error_free(err);
+    }
+    g_free(prog);
+    g_free(view);
+}
+
 static void cb_about([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
     gtk_show_about_dialog(GTK_WINDOW(e->window), "program-name", "XeonDesktop Files",
@@ -1437,6 +1492,7 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     g_signal_connect(view, "show", G_CALLBACK(on_view_menu_show), e);
     gtk_menu_shell_append(GTK_MENU_SHELL(view), gtk_separator_menu_item_new());
     GtkWidget *hidden = gtk_check_menu_item_new_with_mnemonic("Show _Hidden Files");
+    e->hidden_item = hidden;
     g_signal_connect(hidden, "toggled", G_CALLBACK(on_hidden), e);
     gtk_widget_add_accelerator(hidden, "activate", accel, GDK_KEY_h, GDK_CONTROL_MASK,
                                GTK_ACCEL_VISIBLE);
@@ -1454,6 +1510,9 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     menu_item(go, "_Forward", G_CALLBACK(cb_forward), e, accel, GDK_KEY_Right, GDK_MOD1_MASK);
     menu_item(go, "_Up One Level", G_CALLBACK(cb_up), e, accel, GDK_KEY_Up, GDK_MOD1_MASK);
     menu_item(go, "_Home Folder", G_CALLBACK(cb_home), e, accel, GDK_KEY_Home, GDK_MOD1_MASK);
+
+    GtkWidget *tools = submenu(bar, "_Tools");
+    menu_item(tools, "Folder _Options...", G_CALLBACK(cb_folder_options), e, nullptr, 0, NO_MODS);
 
     GtkWidget *help = submenu(bar, "_Help");
     menu_item(help, "_About XeonDesktop Files", G_CALLBACK(cb_about), e, nullptr, 0, NO_MODS);
@@ -1646,6 +1705,43 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     g_free(e);
 }
 
+/* ---- Folder Options ---------------------------------------------------------------- */
+
+static void apply_options(explorer *e) {
+    xd_folder_view_set_show_hidden(e->view, options.show_hidden);
+    xd_folder_view_set_hide_extensions(e->view, options.hide_extensions);
+    xd_folder_view_set_single_click(e->view, options.single_click);
+    e->syncing = TRUE;
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(e->hidden_item), options.show_hidden);
+    e->syncing = FALSE;
+    update_chrome(e);
+}
+
+static void load_options(void) {
+    xd_settings s;
+    xd_settings_load(&s);
+    options = s.folders;
+    /* Apply to All Folders' view, for folders without their own. */
+    if (!view_given) {
+        initial_view = XD_VIEW_ICONS;
+        for (int i = 0; i < XD_VIEW_COUNT; i++)
+            if (g_ascii_strcasecmp(options.default_view, view_names[i]) == 0)
+                initial_view = i;
+    }
+}
+
+static gboolean on_settings_changed(int fd, [[maybe_unused]] GIOCondition cond, gpointer app) {
+    if (!xd_settings_watch_changed(fd))
+        return G_SOURCE_CONTINUE;
+    load_options();
+    for (GList *l = gtk_application_get_windows(app); l != nullptr; l = l->next) {
+        explorer *e = g_object_get_data(G_OBJECT(l->data), "xd-explorer");
+        if (e != nullptr)
+            apply_options(e);
+    }
+    return G_SOURCE_CONTINUE;
+}
+
 static void open_window(GtkApplication *app, GFile *dir) {
     explorer *e = g_new0(explorer, 1);
     e->need_selection = g_ptr_array_new();
@@ -1653,6 +1749,7 @@ static void open_window(GtkApplication *app, GFile *dir) {
     e->folders_only = g_ptr_array_new();
     e->trash_only = g_ptr_array_new();
     e->window = gtk_application_window_new(app);
+    g_object_set_data(G_OBJECT(e->window), "xd-explorer", e);
     gtk_window_set_default_size(GTK_WINDOW(e->window), 820, 560);
     gtk_window_set_icon_name(GTK_WINDOW(e->window), "system-file-manager");
     g_signal_connect(e->window, "destroy", G_CALLBACK(on_destroy), e);
@@ -1810,6 +1907,7 @@ static void open_window(GtkApplication *app, GFile *dir) {
                      FALSE, 0);
 
     gtk_widget_show_all(e->window);
+    apply_options(e);
     set_mode(e, (XdViewMode)initial_view);
     navigate(e, dir, FALSE);
     gtk_widget_grab_focus(GTK_WIDGET(e->view));
@@ -1979,6 +2077,7 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
             if (g_ascii_strcasecmp(view, view_names[i]) == 0) {
                 initial_view = i;
                 view_forced = TRUE;
+                view_given = TRUE;
                 return -1;
             }
         }
@@ -1988,8 +2087,12 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
     return -1; /* continue */
 }
 
-static void on_startup([[maybe_unused]] GApplication *app, [[maybe_unused]] gpointer data) {
+static void on_startup(GApplication *app, [[maybe_unused]] gpointer data) {
     xd_gtk_app_follow_theme();
+    load_options();
+    int fd = xd_settings_watch();
+    if (fd >= 0)
+        g_unix_fd_add(fd, G_IO_IN, on_settings_changed, app);
 }
 
 int main(int argc, char **argv) {

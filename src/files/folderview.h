@@ -59,6 +59,10 @@ void xd_folder_view_set_show_hidden(XdFolderView *view, gboolean show);
 /* Arrange Icons by > Show in Groups (the icon views; My Computer always). */
 void xd_folder_view_set_groups(XdFolderView *view, gboolean groups);
 gboolean xd_folder_view_get_groups(XdFolderView *view);
+/* Folder Options: names without their known type's extension, and
+ * single-click to open an item (pointing underlines it). */
+void xd_folder_view_set_hide_extensions(XdFolderView *view, gboolean hide);
+void xd_folder_view_set_single_click(XdFolderView *view, gboolean single);
 
 void xd_folder_view_select_all(XdFolderView *view);
 void xd_folder_view_invert_selection(XdFolderView *view);

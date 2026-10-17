@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Fonts
+Comment=Add, change, and manage fonts on your computer
+Exec=xd-fonts
+Icon=preferences-desktop-font
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=appearance
+StartupWMClass=org.xeondesktop.Fonts

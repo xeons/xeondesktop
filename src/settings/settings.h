@@ -68,6 +68,19 @@ typedef struct xd_keyboard_settings {
     int repeat_rate;  /* repeats per second; 0 = no repeat */
 } xd_keyboard_settings;
 
+/* [Folders]: Folder Options (xd-folders), obeyed by xd-files. */
+typedef struct xd_folder_settings {
+    bool new_window;      /* open each folder in its own window */
+    bool single_click;    /* single-click to open an item (point to select) */
+    bool show_hidden;     /* show hidden files and folders */
+    bool hide_extensions; /* hide extensions for known file types */
+    bool full_path_address; /* the full path in the address bar */
+    bool full_path_title;   /* the full path in the title bar */
+    bool remember_views;    /* remember each folder's view settings */
+    char default_view[16];  /* "Apply to All Folders": thumbnails, tiles, icons, list or
+                               details; "" = the file manager's own default */
+} xd_folder_settings;
+
 typedef struct xd_settings {
     /* [Appearance] */
     xd_visual_style style;
@@ -111,6 +124,7 @@ typedef struct xd_settings {
     bool screensaver_password;
     int monitor_off; /* minutes of idle before monitors turn off; 0 = never */
     xd_keyboard_settings keyboard;
+    xd_folder_settings folders;
     xd_tray_behavior tray_rules[XD_TRAY_RULES_MAX];
     size_t tray_rule_count;
 
