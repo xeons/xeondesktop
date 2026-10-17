@@ -24,6 +24,7 @@ Build-Depends:
  libudev-dev,
  libpolkit-agent-1-dev,
  libpam0g-dev,
+ libpulse-dev,
  fonts-dejavu-core <!nocheck>,
 Standards-Version: 4.7.2
 Homepage: https://github.com/xeons/xeondesktop
@@ -46,8 +47,14 @@ Recommends:
  xdg-desktop-portal-gtk,
  xdg-desktop-portal-wlr,
  alacritty | x-terminal-emulator,
+ network-manager,
+ upower,
+ pavucontrol,
+ network-manager-gnome,
 Suggests:
  wine,
+ bluez,
+ blueman,
 Description: desktop environment in the style of Windows 2000 and XP
  XeonDesktop is a Wayland desktop that looks and works like Windows 2000
  and Windows XP: a wlroots compositor with Classic, Luna and Watercolor

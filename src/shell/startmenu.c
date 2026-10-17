@@ -21,6 +21,25 @@ static void append_quoted(xd_strbuf *cmd, const char *s) {
     xd_strbuf_append_char(cmd, '\'');
 }
 
+char *xd_shell_own_program(const char *program) {
+    char *self = g_file_read_link("/proc/self/exe", nullptr);
+    char *dir = self != nullptr ? g_path_get_dirname(self) : nullptr;
+    char *local = dir != nullptr ? g_build_filename(dir, program, nullptr) : nullptr;
+    g_free(self);
+    g_free(dir);
+    if (local != nullptr && g_file_test(local, G_FILE_TEST_IS_EXECUTABLE))
+        return local;
+    g_free(local);
+    return g_strdup(program);
+}
+
+bool xd_shell_have_program(const char *program) {
+    char *path = g_find_program_in_path(program);
+    bool found = path != nullptr;
+    g_free(path);
+    return found;
+}
+
 /* Command line for one of our own programs: next to xd-shell if it's
  * there (a build tree), else from PATH. */
 const char *xd_shell_own_command(xd_shell *shell, const char *program, const char *extra) {

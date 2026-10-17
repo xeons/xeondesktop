@@ -78,6 +78,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
     shell->pointer_bar = bar_for_surface(shell, surface);
     shell->pointer_menu = xd_menu_for_surface(shell, surface);
     shell->pointer_start7 = xd_start7_owns(shell, surface);
+    shell->pointer_flyout = xd_volume_flyout_owns(shell, surface);
     if (shell->cursor_shape != nullptr)
         wp_cursor_shape_device_v1_set_shape(shell->cursor_shape, serial,
                                             WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
@@ -91,6 +92,10 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
         xd_menu_pointer_motion(shell->pointer_menu, lx, ly);
     if (shell->pointer_start7)
         xd_start7_pointer_motion(shell, lx, ly);
+    if (shell->pointer_flyout) {
+        shell->flyout_x = lx;
+        shell->flyout_y = ly;
+    }
 }
 
 static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -106,6 +111,7 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
     shell->pointer_bar = nullptr;
     shell->pointer_menu = nullptr;
     shell->pointer_start7 = false;
+    shell->pointer_flyout = false;
 }
 
 static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -119,13 +125,24 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_menu_pointer_motion(shell->pointer_menu, lx, ly);
     if (shell->pointer_start7)
         xd_start7_pointer_motion(shell, lx, ly);
+    if (shell->pointer_flyout) {
+        shell->flyout_x = lx;
+        shell->flyout_y = ly;
+        xd_volume_flyout_motion(shell, lx, ly);
+    }
 }
 
 static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
                            [[maybe_unused]] uint32_t time, uint32_t button, uint32_t state) {
     xd_shell *shell = data;
     bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
-    if (shell->pointer_menu != nullptr)
+    /* The compositor only dismisses the flyout's grab for clicks in other
+     * programs; the desktop and taskbar are ours. */
+    if (pressed && !shell->pointer_flyout)
+        xd_volume_flyout_dismiss(shell);
+    if (shell->pointer_flyout)
+        xd_volume_flyout_button(shell, button, pressed, shell->flyout_x, shell->flyout_y);
+    else if (shell->pointer_menu != nullptr)
         xd_menu_pointer_button(shell->pointer_menu, button, pressed);
     else if (shell->pointer_start7)
         xd_start7_pointer_button(shell, button, pressed);
@@ -144,8 +161,17 @@ static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_taskbar *bar = shell->pointer_bar;
         bar->wheel += wl_fixed_to_double(value);
         if (bar->wheel <= -10 || bar->wheel >= 10) {
-            xd_taskbar_page(bar, bar->wheel < 0 ? -1 : 1);
+            int step = bar->wheel < 0 ? -1 : 1;
             bar->wheel = 0;
+            /* Over a notification area icon: its own (the volume). */
+            xd_tray_item *item =
+                bar->hot <= XD_HIT_TRAY_ICON
+                    ? xd_tray_get(shell, (size_t)(XD_HIT_TRAY_ICON - bar->hot))
+                    : nullptr;
+            if (item != nullptr)
+                xd_tray_item_scroll(shell, item, step);
+            else
+                xd_taskbar_page(bar, step);
         }
     }
 }
@@ -607,6 +633,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         xd_menus_render_dirty(shell);
         xd_start7_render_dirty(shell);
         xd_tooltip_render_dirty(shell);
+        xd_volume_flyout_render_dirty(shell);
         while (wl_display_prepare_read(d) != 0)
             wl_display_dispatch_pending(d);
         if (!flush_display(d)) {
@@ -762,6 +789,10 @@ int main(int argc, char **argv) {
     update_clock(&shell);
     xd_toplevels_init(&shell);
     xd_tray_init(&shell);
+    xd_sys_bluetooth_init(&shell);
+    xd_sys_network_init(&shell);
+    xd_sys_volume_init(&shell);
+    xd_sys_battery_init(&shell);
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
     for (size_t i = 0; i < shell.early_count; i++)

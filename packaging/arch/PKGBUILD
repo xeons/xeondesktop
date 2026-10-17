@@ -26,6 +26,7 @@ depends=(
   'pam'
   'shadow'  # passwd, for Change Password
   'dbus'    # dbus-update-activation-environment
+  'libpulse'
   'sh'
 )
 # Header-only at build time: xcb-icccm's hint structures, libdrm's formats.
@@ -39,6 +40,13 @@ optdepends=(
   'xdg-desktop-portal-gtk: file chooser and settings portals'
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
   'alacritty: the default terminal (Ctrl+Alt+T)'
+  'networkmanager: the network icon'
+  'nm-connection-editor: Open Network Connections'
+  'upower: the battery icon'
+  'bluez: the Bluetooth icon'
+  'blueman: Bluetooth Devices...'
+  'pavucontrol: Open Volume Control'
+  'pipewire-pulse: the volume icon (or PulseAudio)'
 )
 backup=('etc/pam.d/xeondesktop')
 source=("$pkgname-$pkgver.tar.gz")

@@ -142,6 +142,21 @@ void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *c
 /* Space (device px) between the well's edges and its contents. */
 void xd_theme_tray_margins(const xd_theme *t, int *left, int *right);
 
+/* The notification area's own icons (trayicons.c), drawn into r. */
+typedef enum xd_tray_icon : uint8_t {
+    XD_TRAY_ICON_VOLUME,    /* level: 0-3 sound waves */
+    XD_TRAY_ICON_WIRED,
+    XD_TRAY_ICON_WIRELESS,  /* level: 0-5 signal bars */
+    XD_TRAY_ICON_BATTERY,   /* level: percent */
+    XD_TRAY_ICON_BLUETOOTH,
+} xd_tray_icon;
+enum {
+    XD_TRAY_ICON_OFF = 1u << 0,      /* muted, disconnected, Bluetooth off */
+    XD_TRAY_ICON_CHARGING = 1u << 1,
+};
+void xd_theme_draw_tray_icon(const xd_theme *t, cairo_t *cr, xd_rect r, xd_tray_icon icon,
+                             int level, uint8_t flags);
+
 /* ---- menus (device px) ---- */
 
 typedef struct xd_menu_metrics {

@@ -189,6 +189,8 @@ struct xd_shell {
     xd_menu *start_menu;    /* open root menu (2000 style), or nullptr */
     xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
     bool pointer_start7;    /* pointer is over start7 */
+    bool pointer_flyout;    /* pointer is over the volume flyout */
+    double flyout_x, flyout_y;
     bool pending_start7;    /* start7 waits for the hover delay */
     xd_taskbar *start_bar;  /* taskbar whose Start button opened it */
     uint32_t menu_serial;   /* input serial the menu grab was made with */
@@ -245,6 +247,21 @@ void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial);
 /* taskmenu.c: right-click menus (the taskbar's, or a task button's window
  * menu when `hit` is a task index). x, y: logical, taskbar-local. */
 void xd_taskbar_context_menu(xd_taskbar *bar, int hit, double x, double y, uint32_t serial);
+/* Our own notification area applets (volume, network, battery,
+ * Bluetooth). Every callback gets the applet's data. */
+typedef struct xd_sysicon_ops {
+    const char *(*icon)(void *data); /* icon theme name; nullptr hides the icon */
+    char *(*tooltip)(void *data);    /* g_free'd; may be nullptr */
+    /* Fills the icon's menu (strings and action data in `tree`). */
+    void (*menu)(void *data, xd_menu_tree *tree, xd_menu_model *menu);
+    /* Left click; nullptr: the menu. anchor: surface-local logical. */
+    void (*activate)(void *data, xd_taskbar *bar, xd_rect anchor, uint32_t serial);
+    void (*scroll)(void *data, double delta); /* wheel steps, + is down */
+    /* Draws the icon into r (device px); nullptr: the `icon` theme icon. */
+    void (*draw)(void *data, const xd_theme *t, cairo_t *cr, xd_rect r);
+    void (*destroy)(void *data);
+} xd_sysicon_ops;
+
 /* tray.c: the notification area's icons (StatusNotifierItem). */
 enum { XD_TRAY_BUTTON_LEFT, XD_TRAY_BUTTON_MIDDLE, XD_TRAY_BUTTON_RIGHT };
 void xd_tray_init(xd_shell *shell);
@@ -253,7 +270,15 @@ void xd_tray_finish(xd_shell *shell);
 size_t xd_tray_count(const xd_shell *shell);
 xd_tray_item *xd_tray_get(const xd_shell *shell, size_t index);
 cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *item, int px);
-const char *xd_tray_item_tooltip(const xd_tray_item *item);
+char *xd_tray_item_tooltip(const xd_tray_item *item); /* g_free */
+/* Draws the item's icon if it draws its own (our applets); else false. */
+bool xd_tray_item_draw(xd_tray_item *item, const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_tray_item_scroll(xd_shell *shell, xd_tray_item *item, double delta);
+/* Adds one of our applets (after xd_tray_init); `name` keys it. */
+void xd_tray_add_sysicon(xd_shell *shell, const char *name, const xd_sysicon_ops *ops,
+                         void *data);
+/* An applet's icon or state changed: redraw. */
+void xd_tray_changed(xd_shell *shell);
 /* A click: Activate / SecondaryActivate, or its menu by `anchor`
  * (surface-local logical) on `bar`. */
 void xd_tray_item_click(xd_shell *shell, xd_tray_item *item, uint32_t button, xd_taskbar *bar,
@@ -307,6 +332,23 @@ void xd_start7_count_launch(const char *app_id);
 /* startmenu.c */
 /* Command line for one of our programs (next to xd-shell in a build tree). */
 const char *xd_shell_own_command(xd_shell *shell, const char *program, const char *extra);
+/* Path of one of our programs (next to xd-shell, else the bare name for
+ * PATH). g_free it. */
+char *xd_shell_own_program(const char *program);
+/* Whether `program` is in PATH. */
+bool xd_shell_have_program(const char *program);
+/* sys_*.c: our notification area applets. */
+void xd_sys_battery_init(xd_shell *shell);
+void xd_sys_network_init(xd_shell *shell);
+void xd_sys_bluetooth_init(xd_shell *shell);
+void xd_sys_volume_init(xd_shell *shell);
+/* sys_volume.c: the volume flyout's input (surface-local logical). */
+bool xd_volume_flyout_owns(xd_shell *shell, struct wl_surface *surface);
+void xd_volume_flyout_motion(xd_shell *shell, double x, double y);
+void xd_volume_flyout_button(xd_shell *shell, uint32_t button, bool pressed, double x, double y);
+void xd_volume_flyout_render_dirty(xd_shell *shell);
+/* Closes the flyout (a click elsewhere in the shell, a menu opening). */
+void xd_volume_flyout_dismiss(xd_shell *shell);
 
 /* desktop.c */
 xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output);

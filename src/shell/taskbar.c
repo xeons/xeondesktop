@@ -5,6 +5,7 @@
  * Drawing happens in device pixels at the output's (fractional) scale; the
  * surface is shown at its logical size through wp_viewport.
  */
+#include <glib.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <stdlib.h>
@@ -203,6 +204,10 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
             bar->tray_rects[i] = slot;
             bar->tray_count++;
             xd_tray_item *item = xd_tray_get(shell, i);
+            xd_rect at = {slot.x + (pitch - icon_px) / 2, slot.y + (slot.h - icon_px) / 2, icon_px,
+                          icon_px};
+            if (item != nullptr && xd_tray_item_draw(item, t, cr, at))
+                continue;
             cairo_surface_t *img = item != nullptr ? xd_tray_item_icon(shell, item, icon_px)
                                                    : nullptr;
             if (img != nullptr) {
@@ -495,8 +500,10 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
     }
     if (hit <= XD_HIT_TRAY_ICON) {
         xd_tray_item *item = xd_tray_get(shell, (size_t)(XD_HIT_TRAY_ICON - hit));
-        const char *tip = item != nullptr ? xd_tray_item_tooltip(item) : nullptr;
-        return tip != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(tip)) : nullptr;
+        char *tip = item != nullptr ? xd_tray_item_tooltip(item) : nullptr;
+        char *copy = tip != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(tip)) : nullptr;
+        g_free(tip);
+        return copy;
     }
     if (xd_hit_is_quick(hit)) {
         size_t i = (size_t)(XD_HIT_QUICK - hit);

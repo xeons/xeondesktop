@@ -22,6 +22,9 @@
 
 struct xd_tray_item {
     xd_tray *tray;
+    /* Our own applets (volume, network, ...) instead of a D-Bus item. */
+    const xd_sysicon_ops *ops;
+    void *data;
     char *key;     /* as registered: "busname/path" */
     char *bus;     /* unique or well-known name */
     char *path;    /* object path */
@@ -58,6 +61,25 @@ static void changed(xd_tray *tray) { xd_taskbars_mark_dirty(tray->shell); }
 
 /* ---- items -------------------------------------------------------------------- */
 
+void xd_tray_add_sysicon(xd_shell *shell, const char *name, const xd_sysicon_ops *ops,
+                         void *data) {
+    xd_tray *tray = shell->tray;
+    if (tray == nullptr)
+        return;
+    xd_tray_item *it = g_new0(xd_tray_item, 1);
+    it->tray = tray;
+    it->key = g_strconcat("sysicon:", name, nullptr);
+    it->ops = ops;
+    it->data = data;
+    g_ptr_array_add(tray->items, it);
+    changed(tray);
+}
+
+void xd_tray_changed(xd_shell *shell) {
+    if (shell->tray != nullptr)
+        changed(shell->tray);
+}
+
 static void item_free(xd_tray_item *it) {
     if (it->cancel != nullptr) {
         g_cancellable_cancel(it->cancel);
@@ -65,6 +87,8 @@ static void item_free(xd_tray_item *it) {
     }
     if (it->name_watch != 0)
         g_bus_unwatch_name(it->name_watch);
+    if (it->ops != nullptr && it->ops->destroy != nullptr)
+        it->ops->destroy(it->data);
     if (it->signals != 0)
         g_dbus_connection_signal_unsubscribe(it->tray->bus, it->signals);
     g_free(it->key);
@@ -326,8 +350,11 @@ static GVariant *watcher_get([[maybe_unused]] GDBusConnection *c,
     if (strcmp(prop, "RegisteredStatusNotifierItems") == 0) {
         GVariantBuilder b;
         g_variant_builder_init(&b, G_VARIANT_TYPE("as"));
-        for (guint i = 0; i < tray->items->len; i++)
-            g_variant_builder_add(&b, "s", ((xd_tray_item *)g_ptr_array_index(tray->items, i))->key);
+        for (guint i = 0; i < tray->items->len; i++) {
+            const xd_tray_item *it = g_ptr_array_index(tray->items, i);
+            if (it->ops == nullptr)
+                g_variant_builder_add(&b, "s", it->key);
+        }
         return g_variant_builder_end(&b);
     }
     if (strcmp(prop, "IsStatusNotifierHostRegistered") == 0)
@@ -484,6 +511,8 @@ void xd_tray_finish(xd_shell *shell) {
 /* ---- what the taskbar shows ------------------------------------------------- */
 
 static bool visible(const xd_tray_item *it) {
+    if (it->ops != nullptr)
+        return it->ops->icon(it->data) != nullptr;
     /* Passive items are hidden, as XP hides inactive icons. Nothing to
      * draw yet (properties pending) counts as hidden too. */
     if (it->status != nullptr && strcmp(it->status, "Passive") == 0)
@@ -500,19 +529,37 @@ size_t xd_tray_count(const xd_shell *shell) {
     return n;
 }
 
+/* Programs' icons first, then ours next to the clock, as in Windows. */
 xd_tray_item *xd_tray_get(const xd_shell *shell, size_t index) {
     if (shell->tray == nullptr)
         return nullptr;
-    for (guint i = 0; i < shell->tray->items->len; i++) {
-        xd_tray_item *it = g_ptr_array_index(shell->tray->items, i);
-        if (visible(it) && index-- == 0)
-            return it;
+    for (int pass = 0; pass < 2; pass++) {
+        for (guint i = 0; i < shell->tray->items->len; i++) {
+            xd_tray_item *it = g_ptr_array_index(shell->tray->items, i);
+            if ((it->ops != nullptr) == (pass == 1) && visible(it) && index-- == 0)
+                return it;
+        }
     }
     return nullptr;
 }
 
-const char *xd_tray_item_tooltip(const xd_tray_item *it) {
-    return it->tooltip != nullptr ? it->tooltip : it->title;
+char *xd_tray_item_tooltip(const xd_tray_item *it) {
+    if (it->ops != nullptr)
+        return it->ops->tooltip != nullptr ? it->ops->tooltip(it->data) : nullptr;
+    return g_strdup(it->tooltip != nullptr ? it->tooltip : it->title);
+}
+
+bool xd_tray_item_draw(xd_tray_item *it, const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (it->ops == nullptr || it->ops->draw == nullptr)
+        return false;
+    it->ops->draw(it->data, t, cr, r);
+    return true;
+}
+
+void xd_tray_item_scroll(xd_shell *shell, xd_tray_item *it, double delta) {
+    (void)shell;
+    if (it->ops != nullptr && it->ops->scroll != nullptr)
+        it->ops->scroll(it->data, delta);
 }
 
 static cairo_surface_t *named_icon(xd_shell *shell, const xd_tray_item *it, const char *name,
@@ -534,6 +581,17 @@ static cairo_surface_t *named_icon(xd_shell *shell, const xd_tray_item *it, cons
 }
 
 cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *it, int px) {
+    if (it->ops != nullptr) {
+        const char *name = it->ops->icon(it->data);
+        cairo_surface_t *s = name != nullptr ? xd_icons_get(shell->icons, name, px) : nullptr;
+        /* Themes often have only the -symbolic variant. */
+        if (s == nullptr && name != nullptr) {
+            char *sym = g_strconcat(name, "-symbolic", nullptr);
+            s = xd_icons_get(shell->icons, sym, px);
+            g_free(sym);
+        }
+        return s;
+    }
     bool attention = it->status != nullptr && strcmp(it->status, "NeedsAttention") == 0;
     cairo_surface_t *s = attention ? named_icon(shell, it, it->attention_icon_name, px) : nullptr;
     if (s == nullptr)
@@ -645,6 +703,19 @@ static xd_menu_model *build_menu(xd_menu_tree *tree, GVariant *node, int depth) 
     return m;
 }
 
+/* Opens a built menu (in shell->context_tree) above a tray icon. */
+static void open_model(xd_shell *shell, xd_taskbar *bar, xd_rect anchor, uint32_t serial,
+                       xd_menu_model *model) {
+    if (model->count == 0)
+        return;
+    xd_volume_flyout_dismiss(shell);
+    xd_taskbar_take_keyboard(bar);
+    shell->context_menu = true;
+    xd_menu_open_root(shell, model, bar->layer, anchor, serial);
+    shell->start_bar = bar;
+    bar->dirty = true;
+}
+
 static bool bar_alive(xd_shell *shell, const xd_taskbar *bar) {
     XD_LIST_FOR_EACH(b, &shell->taskbars, xd_taskbar, link) {
         if (b == bar)
@@ -672,13 +743,7 @@ static void got_layout(GObject *src, GAsyncResult *res, gpointer data) {
         xd_menu_tree_init(&shell->context_tree);
         xd_menu_model *model = build_menu(&shell->context_tree, root, 0);
         g_variant_unref(root);
-        if (model->count > 0) {
-            xd_taskbar_take_keyboard(bar);
-            shell->context_menu = true;
-            xd_menu_open_root(shell, model, bar->layer, tray->menu_anchor, tray->menu_serial);
-            shell->start_bar = bar;
-            bar->dirty = true;
-        }
+        open_model(shell, bar, tray->menu_anchor, tray->menu_serial, model);
     }
     g_variant_unref(reply);
 }
@@ -733,7 +798,24 @@ static void activated(GObject *src, GAsyncResult *res, gpointer data) {
 void xd_tray_item_click(xd_shell *shell, xd_tray_item *it, uint32_t button, xd_taskbar *bar,
                         xd_rect anchor, uint32_t serial) {
     xd_tray *tray = shell->tray;
-    if (tray == nullptr || tray->bus == nullptr)
+    if (tray == nullptr)
+        return;
+    if (it->ops != nullptr) {
+        /* Our applets: left click does the applet's thing (the volume
+         * slider), else everything opens its menu. */
+        if (button == XD_TRAY_BUTTON_LEFT && it->ops->activate != nullptr) {
+            it->ops->activate(it->data, bar, anchor, serial);
+        } else if (it->ops->menu != nullptr) {
+            xd_menu_close_all(shell);
+            xd_menu_tree_free(&shell->context_tree);
+            xd_menu_tree_init(&shell->context_tree);
+            xd_menu_model *m = xd_menu_model_new(&shell->context_tree);
+            it->ops->menu(it->data, &shell->context_tree, m);
+            open_model(shell, bar, anchor, serial, m);
+        }
+        return;
+    }
+    if (tray->bus == nullptr)
         return;
     bool right = button == XD_TRAY_BUTTON_RIGHT;
     if ((right || it->item_is_menu) && it->menu != nullptr) {

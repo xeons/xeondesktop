@@ -109,6 +109,7 @@ theme_lib = static_library(
   'src/theme/style_whistler.c',
   'src/theme/luna.c',
   'src/theme/gtkcss.c',
+  'src/theme/trayicons.c',
   dependencies: [cairo_dep, pango_dep, fontconfig_dep, glib_dep, m_dep],
 )
 theme_dep = declare_dependency(
@@ -270,6 +271,8 @@ executable(
 )
 
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
+# The volume icon: PulseAudio's client library (PipeWire serves it too).
+pulse_dep = dependency('libpulse-mainloop-glib', include_type: 'system')
 # forkpty: in libc since glibc 2.34, in libutil before.
 util_dep = cc.has_function('forkpty', prefix: '#include <pty.h>') ? declare_dependency() : cc.find_library('util')
 gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
@@ -414,6 +417,14 @@ executable(
 )
 
 executable(
+  'xd-wifi-key',
+  'src/gtkapp/wifikey.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+
+executable(
   'xd-choose-file',
   'src/gtkapp/choose.c',
   link_with: [gtkapp_lib],
@@ -435,9 +446,13 @@ executable(
   'src/shell/start7.c',
   'src/shell/tooltip.c',
   'src/shell/tray.c',
+  'src/shell/sys_battery.c',
+  'src/shell/sys_bluetooth.c',
+  'src/shell/sys_network.c',
+  'src/shell/sys_volume.c',
   'src/shell/taskmenu.c',
   'src/shell/recent.c',
-  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep],
+  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
