@@ -32,6 +32,9 @@ depends=(
   'libpulse'
   'libcanberra'
   'libxcrypt'  # User Accounts: password hashes
+  'libinput'   # Mouse Properties, applied by the compositor
+  'libxcursor' # Mouse Properties: pointer previews
+  'fontconfig' # Fonts
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
