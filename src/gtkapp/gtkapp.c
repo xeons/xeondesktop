@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "../settings/gtktheme.h"
+#include "../settings/settings.h"
 #include "../theme/draw.h"
 #include "gtkapp.h"
 
@@ -27,6 +28,36 @@ static void on_css_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GF
     if (ev == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || ev == G_FILE_MONITOR_EVENT_CREATED ||
         ev == G_FILE_MONITOR_EVENT_RENAMED || ev == G_FILE_MONITOR_EVENT_MOVED_IN)
         reload_theme();
+}
+
+/* What GTK has of Mouse and Keyboard Properties: the double-click time,
+ * the cursor theme and size, the caret's blinking. Other GTK programs
+ * take these from their own settings (GSettings, settings.ini); only the
+ * cursor reaches them, through XCURSOR_THEME/XCURSOR_SIZE. */
+static void apply_input_settings(void) {
+    GtkSettings *s = gtk_settings_get_default();
+    if (s == nullptr)
+        return;
+    xd_settings cfg;
+    xd_settings_load(&cfg);
+    const xd_mouse_settings *m = &cfg.mouse;
+    int blink = cfg.keyboard.cursor_blink_ms;
+    /* "default" is the system's cursor theme (icons/default). */
+    g_object_set(s, "gtk-double-click-time", m->double_click_ms, "gtk-cursor-theme-name",
+                 m->cursor_theme[0] != '\0' ? m->cursor_theme : "default",
+                 "gtk-cursor-theme-size", m->cursor_size, "gtk-cursor-blink", blink > 0,
+                 nullptr);
+    /* GTK's time is a whole on-and-off cycle, Windows' each half. */
+    if (blink > 0)
+        g_object_set(s, "gtk-cursor-blink-time", blink * 2, nullptr);
+}
+
+static void on_settings_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GFile *f,
+                                [[maybe_unused]] GFile *other, GFileMonitorEvent ev,
+                                [[maybe_unused]] gpointer data) {
+    if (ev == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || ev == G_FILE_MONITOR_EVENT_CREATED ||
+        ev == G_FILE_MONITOR_EVENT_RENAMED || ev == G_FILE_MONITOR_EVENT_MOVED_IN)
+        apply_input_settings();
 }
 
 static gboolean theme_installed(const char *name) {
@@ -71,6 +102,14 @@ void xd_gtk_app_follow_theme(void) {
     if (mon != nullptr)
         g_signal_connect(mon, "changed", G_CALLBACK(on_css_changed), nullptr);
     g_object_unref(css);
+
+    apply_input_settings();
+    xd_settings_path(&path);
+    GFile *ini = g_file_new_for_path(xd_strbuf_cstr(&path));
+    mon = g_file_monitor_file(ini, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+    if (mon != nullptr)
+        g_signal_connect(mon, "changed", G_CALLBACK(on_settings_changed), nullptr);
+    g_object_unref(ini);
     xd_strbuf_free(&path);
 }
 

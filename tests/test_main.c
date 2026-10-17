@@ -13,6 +13,8 @@
 
 #include "../src/apps/runcmd.h"
 #include "../src/intl/intl.h"
+#include "../src/keyboard/layouts.h"
+#include "../src/mouse/cursors.h"
 #include "../src/files/names.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
@@ -943,6 +945,153 @@ static void test_fonts(void) {
     g_free(v);
 }
 
+/* [Mouse], [Accessibility] and the [Keyboard] keys the applets add. */
+static void test_input_settings(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    CHECK(!a.mouse.left_handed && a.mouse.acceleration && a.mouse.double_click_ms == 500);
+    CHECK(a.mouse.wheel_lines == 3 && a.mouse.cursor_size == 24 && a.mouse.cursor_theme[0] == 0);
+    CHECK(a.keyboard.cursor_blink_ms == 530 && !a.access.sticky_keys && a.access.sticky_lock);
+
+    xd_settings_parse(XD_STR("[Mouse]\nLeftHanded=true\nSpeed=-4\nAcceleration=false\n"
+                             "DoubleClickMs=350\nWheelLines=6\nCursorTheme=Breeze_Light\n"
+                             "CursorSize=48\n[Keyboard]\nCursorBlinkMs=0\n"
+                             "[Accessibility]\nStickyKeys=true\nStickyKeysLock=false\n"
+                             "BounceKeys=true\nBounceMs=700\n"),
+                      &a);
+    CHECK(a.mouse.left_handed && a.mouse.speed == -4 && !a.mouse.acceleration);
+    CHECK(a.mouse.double_click_ms == 350 && a.mouse.wheel_lines == 6 && a.mouse.cursor_size == 48);
+    CHECK(strcmp(a.mouse.cursor_theme, "Breeze_Light") == 0 && a.keyboard.cursor_blink_ms == 0);
+    CHECK(a.access.sticky_keys && !a.access.sticky_lock && a.access.bounce_keys &&
+          a.access.bounce_ms == 700);
+
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && memcmp(&a.mouse, &b.mouse, sizeof(a.mouse)) == 0);
+    CHECK(memcmp(&a.access, &b.access, sizeof(a.access)) == 0);
+    xd_strbuf_free(&text);
+
+    /* Out of range keeps the default; a theme can't be a path. */
+    xd_settings_parse(XD_STR("[Mouse]\nSpeed=11\nDoubleClickMs=50\nWheelLines=0\n"
+                             "CursorTheme=../x\nCursorSize=4\n[Accessibility]\nBounceMs=5\n"),
+                      &a);
+    CHECK(a.mouse.speed == 0 && a.mouse.double_click_ms == 500 && a.mouse.wheel_lines == 3);
+    CHECK(a.mouse.cursor_theme[0] == 0 && a.mouse.cursor_size == 24 && a.access.bounce_ms == 500);
+    xd_settings_parse(XD_STR("[Mouse]\nCursorTheme=.hidden\n"), &a);
+    CHECK(a.mouse.cursor_theme[0] == 0);
+
+    /* High Contrast switches to Classic and back to what was there. */
+    xd_settings_defaults(&a);
+    a.style = XD_STYLE_LUNA;
+    g_strlcpy(a.scheme, "windows-standard", sizeof(a.scheme));
+    xd_settings_set_high_contrast(&a, true, "high-contrast-black");
+    CHECK(a.access.high_contrast && a.style == XD_STYLE_CLASSIC);
+    CHECK(strcmp(a.scheme, "high-contrast-black") == 0);
+    /* Another high-contrast scheme keeps the look to go back to. */
+    xd_settings_set_high_contrast(&a, true, "high-contrast-white");
+    CHECK(strcmp(a.scheme, "high-contrast-white") == 0 && a.access.saved_style == XD_STYLE_LUNA);
+    xd_settings_serialize(&a, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    xd_strbuf_free(&text);
+    CHECK(b.access.high_contrast && strcmp(b.access.saved_scheme, "windows-standard") == 0);
+    xd_settings_set_high_contrast(&b, false, "");
+    CHECK(!b.access.high_contrast && b.style == XD_STYLE_LUNA);
+    CHECK(strcmp(b.scheme, "windows-standard") == 0);
+    /* Off when it's already off changes nothing. */
+    xd_settings_set_high_contrast(&b, false, "");
+    CHECK(b.style == XD_STYLE_LUNA && strcmp(b.scheme, "windows-standard") == 0);
+}
+
+static void test_kbd_layouts(void) {
+    xd_kbd_layout l[XD_KBD_LAYOUTS_MAX];
+    CHECK(xd_kbd_layouts_parse("", "", l) == 0);
+    CHECK(xd_kbd_layouts_parse("us,de", ",nodeadkeys", l) == 2);
+    CHECK(strcmp(l[0].name, "us") == 0 && l[0].variant[0] == 0);
+    CHECK(strcmp(l[1].name, "de") == 0 && strcmp(l[1].variant, "nodeadkeys") == 0);
+    /* Fewer variants than layouts; at most four layouts. */
+    CHECK(xd_kbd_layouts_parse("us, fr ,ru,de,gb", "dvorak", l) == 4);
+    CHECK(strcmp(l[0].variant, "dvorak") == 0 && strcmp(l[1].name, "fr") == 0 &&
+          l[1].variant[0] == 0 && strcmp(l[3].name, "de") == 0);
+
+    char layouts[64], variants[64];
+    CHECK(xd_kbd_layouts_format(l, 2, layouts, sizeof(layouts), variants, sizeof(variants)));
+    CHECK(strcmp(layouts, "us,fr") == 0 && strcmp(variants, "dvorak,") == 0);
+    xd_kbd_layouts_parse("us,de", "", l);
+    CHECK(xd_kbd_layouts_format(l, 2, layouts, sizeof(layouts), variants, sizeof(variants)));
+    CHECK(strcmp(layouts, "us,de") == 0 && variants[0] == 0);
+    CHECK(!xd_kbd_layouts_format(l, 2, layouts, 4, variants, sizeof(variants)) && layouts[0] == 0);
+
+    char *o = xd_kbd_option_in_group("caps:ctrl_modifier,grp:alt_shift_toggle", "grp");
+    CHECK(o != nullptr && strcmp(o, "grp:alt_shift_toggle") == 0);
+    g_free(o);
+    /* "grp_led:" is another group. */
+    CHECK(xd_kbd_option_in_group("grp_led:scroll", "grp") == nullptr);
+    o = xd_kbd_option_set("caps:ctrl_modifier", "compose:ralt", true);
+    CHECK(strcmp(o, "caps:ctrl_modifier,compose:ralt") == 0);
+    char *o2 = xd_kbd_option_set(o, "compose:ralt", true); /* never twice */
+    CHECK(strcmp(o2, "caps:ctrl_modifier,compose:ralt") == 0);
+    g_free(o);
+    o = xd_kbd_option_set(o2, "caps:ctrl_modifier", false);
+    CHECK(strcmp(o, "compose:ralt") == 0);
+    g_free(o2);
+    g_free(o);
+    o = xd_kbd_options_clear_group("grp:win_space_toggle,grp_led:scroll,,grp:alt_caps_toggle",
+                                   "grp");
+    CHECK(strcmp(o, "grp_led:scroll") == 0);
+    g_free(o);
+}
+
+static void test_cursor_themes(void) {
+    char *root = g_dir_make_tmp("xd-cursors-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    char *a = g_build_filename(root, "a", nullptr), *b = g_build_filename(root, "b", nullptr);
+    /* a: "Zed" (with cursors) and "plain" (an icon theme, no cursors);
+     * b: another "Zed" (hidden by a's), "Alpha", "default". */
+    static const char *const made[] = {"a/Zed/cursors", "a/plain/48x48", "b/Zed/cursors",
+                                       "b/Alpha/cursors", "b/default/cursors"};
+    for (size_t i = 0; i < G_N_ELEMENTS(made); i++) {
+        char *d = g_build_filename(root, made[i], nullptr);
+        g_mkdir_with_parents(d, 0700);
+        g_free(d);
+    }
+    char *index = g_build_filename(a, "Zed", "index.theme", nullptr);
+    CHECK(g_file_set_contents(index, "[Icon Theme]\nName=Zed Cursors\n", -1, nullptr));
+    const char *dirs[] = {a, b, "/nonexistent", nullptr};
+    GPtrArray *list = xd_cursor_themes_list(dirs);
+    CHECK(list->len == 2);
+    if (list->len == 2) {
+        const xd_cursor_theme *t0 = g_ptr_array_index(list, 0);
+        const xd_cursor_theme *t1 = g_ptr_array_index(list, 1);
+        CHECK(strcmp(t0->dir, "Alpha") == 0 && strcmp(t0->name, "Alpha") == 0);
+        CHECK(strcmp(t1->dir, "Zed") == 0 && strcmp(t1->name, "Zed Cursors") == 0);
+    }
+    g_ptr_array_unref(list);
+    char **search = xd_cursor_theme_dirs();
+    CHECK(g_strv_length(search) >= 3 && strcmp(search[g_strv_length(search) - 1],
+                                               "/usr/share/pixmaps") == 0);
+    g_strfreev(search);
+
+    /* Children before parents. */
+    static const char *const rm[] = {"a/Zed/index.theme", "a/Zed/cursors", "a/Zed",
+                                     "a/plain/48x48", "a/plain", "a", "b/Zed/cursors", "b/Zed",
+                                     "b/Alpha/cursors", "b/Alpha", "b/default/cursors",
+                                     "b/default", "b"};
+    for (size_t i = 0; i < G_N_ELEMENTS(rm); i++) {
+        char *path = g_build_filename(root, rm[i], nullptr);
+        CHECK(g_remove(path) == 0);
+        g_free(path);
+    }
+    CHECK(g_rmdir(root) == 0);
+    g_free(index);
+    g_free(a);
+    g_free(b);
+    g_free(root);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -964,6 +1113,9 @@ int main(void) {
     test_intl();
     test_users();
     test_folder_options();
+    test_input_settings();
+    test_kbd_layouts();
+    test_cursor_themes();
     test_fonts();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

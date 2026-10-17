@@ -206,7 +206,20 @@ typedef struct xd_keyboard {
     struct wl_listener key;
     struct wl_listener destroy;
     bool physical; /* gets [Keyboard]'s keymap (virtual keyboards bring their own) */
+    /* StickyKeys ([Accessibility]), as xkb modifier masks. */
+    uint32_t sticky_alone;   /* a modifier is down with no other key yet */
+    uint32_t sticky_latched; /* applies to the next key */
+    uint32_t sticky_locked;  /* pressed twice: stays on */
+    /* BounceKeys: the last key released, and a press being ignored. */
+    uint32_t bounce_keycode, bounce_msec, bounced_keycode;
 } xd_keyboard;
+
+/* A physical pointer (mouse, touchpad), configured from [Mouse]. */
+typedef struct xd_pointer {
+    struct wl_list link; /* xd_server.pointers */
+    struct wlr_input_device *device;
+    struct wl_listener destroy;
+} xd_pointer;
 
 typedef struct xd_config {
     xd_visual_style style;
@@ -224,6 +237,8 @@ typedef struct xd_config {
     bool always_frames;  /* [Windows] AlwaysDrawFrames */
     bool animate_windows; /* [Effects] AnimateWindows */
     xd_keyboard_settings keyboard; /* [Keyboard] */
+    xd_mouse_settings mouse;       /* [Mouse] */
+    xd_access_settings access;     /* [Accessibility] */
     const char *terminal;
     const char *startup;
 } xd_config;
@@ -318,6 +333,7 @@ struct xd_server {
 
     struct wlr_seat *seat;
     struct wl_list keyboards;
+    struct wl_list pointers; /* xd_pointer */
     struct wl_listener new_input;
     struct wl_listener request_cursor;
     struct wl_listener request_set_selection;
@@ -409,6 +425,14 @@ struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly);
 void xd_input_init(xd_server *server);
 /* Applies config.keyboard (layout, repeat) to every physical keyboard. */
 void xd_input_apply_keyboard(xd_server *server);
+/* Applies config.mouse's buttons, speed and acceleration to every
+ * libinput pointer. */
+void xd_input_apply_mouse(xd_server *server);
+/* Loads config.mouse's cursor theme and size, for our cursor and (by the
+ * environment) for programs started from now on. */
+void xd_input_apply_cursor_theme(xd_server *server);
+/* config.access changed: drops StickyKeys' latched and locked modifiers. */
+void xd_input_apply_access(xd_server *server);
 /* Lets clients inject keyboard/pointer input. Testing only. */
 void xd_input_enable_virtual(xd_server *server);
 void xd_cursor_set(xd_server *server, const char *name);

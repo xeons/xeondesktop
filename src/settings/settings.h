@@ -66,6 +66,7 @@ typedef struct xd_keyboard_settings {
     char model[64];
     int repeat_delay; /* ms before a held key repeats */
     int repeat_rate;  /* repeats per second; 0 = no repeat */
+    int cursor_blink_ms; /* text caret on (and off) time, as in Windows; 0 = steady */
 } xd_keyboard_settings;
 
 /* [Folders]: Folder Options (xd-folders), obeyed by xd-files. */
@@ -80,6 +81,34 @@ typedef struct xd_folder_settings {
     char default_view[16];  /* "Apply to All Folders": thumbnails, tiles, icons, list or
                                details; "" = the file manager's own default */
 } xd_folder_settings;
+
+/* [Mouse]: the compositor applies the buttons, speed and acceleration to
+ * every libinput pointer and the wheel to what it forwards; the cursor
+ * theme to its own cursor and, through XCURSOR_THEME/XCURSOR_SIZE, to
+ * programs started afterwards. Our GTK apps follow the double-click time
+ * and cursor live (gtkapp.c), the shell its double-click time. */
+typedef struct xd_mouse_settings {
+    bool left_handed;      /* Switch primary and secondary buttons */
+    int speed;             /* -10 (slow) .. 10 (fast): libinput's speed x 10 */
+    bool acceleration;     /* Enhance pointer precision: adaptive, else flat */
+    int double_click_ms;   /* 200 .. 900 */
+    int wheel_lines;       /* lines a wheel notch scrolls (clients' own step is 3) */
+    char cursor_theme[64]; /* XCursor theme directory name; "" = the default */
+    int cursor_size;       /* logical px */
+} xd_mouse_settings;
+
+/* [Accessibility]: StickyKeys and FilterKeys' BounceKeys, done by the
+ * compositor; High Contrast switches [Appearance] and remembers what to
+ * switch back to. */
+typedef struct xd_access_settings {
+    bool sticky_keys; /* a modifier pressed alone applies to the next key */
+    bool sticky_lock; /* ...and pressed twice stays on until pressed again */
+    bool bounce_keys; /* ignore a key pressed again within bounce_ms */
+    int bounce_ms;
+    bool high_contrast;
+    xd_visual_style saved_style; /* the look from before High Contrast */
+    char saved_scheme[64];
+} xd_access_settings;
 
 typedef struct xd_settings {
     /* [Appearance] */
@@ -125,6 +154,8 @@ typedef struct xd_settings {
     int monitor_off; /* minutes of idle before monitors turn off; 0 = never */
     xd_keyboard_settings keyboard;
     xd_folder_settings folders;
+    xd_mouse_settings mouse;
+    xd_access_settings access;
     xd_tray_behavior tray_rules[XD_TRAY_RULES_MAX];
     size_t tray_rule_count;
 
@@ -161,6 +192,16 @@ const char *xd_wallpaper_mode_name(xd_wallpaper_mode m);
 /* "home", "portable", ...: [Power] Scheme's values. */
 const char *xd_power_scheme_name(xd_power_scheme scheme);
 
+/* Limits of the [Mouse] values, for the applets' sliders. */
+enum {
+    XD_MOUSE_SPEED_MIN = -10,
+    XD_MOUSE_SPEED_MAX = 10,
+    XD_DOUBLE_CLICK_MIN = 200,
+    XD_DOUBLE_CLICK_MAX = 900,
+    XD_CURSOR_SIZE_MIN = 16,
+    XD_CURSOR_SIZE_MAX = 128,
+};
+
 /* Directory holding data/ (schemes, ...): $XD_DATA_DIR, the source tree
  * next to a build directory, or the install prefix. */
 bool xd_data_dir(xd_strbuf *out);
@@ -176,6 +217,11 @@ void xd_scheme_list_free(xd_scheme_list *list);
 
 /* The scheme the settings select, with font size applied. */
 void xd_settings_scheme(const xd_settings *s, xd_scheme *out);
+
+/* Accessibility Options' High Contrast: on, switches to the Classic style
+ * with `scheme` (a high-contrast scheme's stem), remembering the look it
+ * replaces; off, switches back to that. */
+void xd_settings_set_high_contrast(xd_settings *s, bool on, const char *scheme);
 
 /* Watches the settings file. Returns an fd to poll (or -1); call
  * xd_settings_watch_changed when it's readable. */

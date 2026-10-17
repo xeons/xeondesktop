@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Mouse
+Comment=Customize your mouse settings, such as the button configuration, double-click speed, mouse pointers, and motion speed
+Exec=xd-mouse
+Icon=input-mouse
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=hardware
+StartupWMClass=org.xeondesktop.Mouse

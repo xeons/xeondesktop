@@ -8,6 +8,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <linux/input-event-codes.h>
+#include <wlr/backend/libinput.h>
+#include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_cursor_shape_v1.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_input_device.h>
@@ -21,9 +23,6 @@
 
 #include "../core/alloc.h"
 #include "server.h"
-
-/* Windows' default double-click time. */
-enum { XD_DOUBLE_CLICK_MS = 500 };
 
 pid_t xd_spawn_argv(char *const argv[]) {
     posix_spawnattr_t attr;
@@ -460,17 +459,145 @@ static void keyboard_grab_motion(xd_server *server) {
     apply_key_box(server);
 }
 
+/* ---- StickyKeys and BounceKeys ([Accessibility]) ------------------------------ */
+
+/* The xkb modifier a modifier key sets, or 0. */
+static uint32_t modifier_of(struct xkb_keymap *keymap, xkb_keysym_t sym) {
+    const char *name = nullptr;
+    switch (sym) {
+    case XKB_KEY_Shift_L:
+    case XKB_KEY_Shift_R:
+        name = XKB_MOD_NAME_SHIFT;
+        break;
+    case XKB_KEY_Control_L:
+    case XKB_KEY_Control_R:
+        name = XKB_MOD_NAME_CTRL;
+        break;
+    case XKB_KEY_Alt_L:
+    case XKB_KEY_Alt_R:
+    case XKB_KEY_Meta_L:
+    case XKB_KEY_Meta_R:
+        name = XKB_MOD_NAME_ALT;
+        break;
+    case XKB_KEY_Super_L:
+    case XKB_KEY_Super_R:
+        name = XKB_MOD_NAME_LOGO;
+        break;
+    case XKB_KEY_ISO_Level3_Shift: /* AltGr */
+        name = "Mod5";
+        break;
+    default:
+        return 0;
+    }
+    xkb_mod_index_t i =
+        keymap != nullptr ? xkb_keymap_mod_get_index(keymap, name) : XKB_MOD_INVALID;
+    return i != XKB_MOD_INVALID && i < 32 ? 1u << i : 0;
+}
+
+/* Puts StickyKeys' modifiers into the keyboard's state, next to what xkb
+ * tracks itself (Caps Lock, held keys); clients get them as latched and
+ * locked modifiers. */
+static void sticky_update(xd_keyboard *kb, uint32_t latched, uint32_t locked) {
+    struct wlr_keyboard *k = kb->wlr_keyboard;
+    if (k->xkb_state == nullptr)
+        return;
+    uint32_t own_latched = k->modifiers.latched & ~kb->sticky_latched;
+    uint32_t own_locked = k->modifiers.locked & ~kb->sticky_locked;
+    kb->sticky_latched = latched;
+    kb->sticky_locked = locked;
+    wlr_keyboard_notify_modifiers(k, k->modifiers.depressed, own_latched | latched,
+                                  own_locked | locked, k->modifiers.group);
+}
+
+/* StickyKeys, as in Windows: a modifier pressed and released on its own
+ * applies to the next key; pressed twice it stays on (if StickyKeysLock)
+ * until pressed once more. Called for every key event. */
+static void sticky_key(xd_keyboard *kb, const xkb_keysym_t *syms, int nsyms, bool pressed) {
+    const xd_access_settings *a = &kb->server->config.access;
+    if (!a->sticky_keys)
+        return;
+    uint32_t mod = 0;
+    for (int i = 0; i < nsyms; i++)
+        mod |= modifier_of(kb->wlr_keyboard->keymap, syms[i]);
+    if (mod == 0) {
+        /* Another key: a modifier held with it is a normal chord. */
+        kb->sticky_alone = 0;
+        return;
+    }
+    if (pressed) {
+        kb->sticky_alone = mod;
+        return;
+    }
+    if (kb->sticky_alone != mod)
+        return;
+    kb->sticky_alone = 0;
+    uint32_t latched = kb->sticky_latched, locked = kb->sticky_locked;
+    if (locked & mod) {
+        locked &= ~mod;
+    } else if (latched & mod) {
+        latched &= ~mod;
+        if (a->sticky_lock)
+            locked |= mod;
+    } else {
+        latched |= mod;
+    }
+    sticky_update(kb, latched, locked);
+}
+
+/* BounceKeys: true if this event repeats a key released less than
+ * bounce_ms ago, and is to be ignored (its release too). */
+static bool bounced(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
+    const xd_access_settings *a = &kb->server->config.access;
+    if (e->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+        if (kb->bounced_keycode == e->keycode + 1) {
+            kb->bounced_keycode = 0;
+            return true;
+        }
+        kb->bounce_keycode = e->keycode + 1; /* 0 = none */
+        kb->bounce_msec = e->time_msec;
+        return false;
+    }
+    if (a->bounce_keys && kb->bounce_keycode == e->keycode + 1 &&
+        e->time_msec - kb->bounce_msec < (uint32_t)a->bounce_ms) {
+        kb->bounced_keycode = e->keycode + 1;
+        return true;
+    }
+    return false;
+}
+
+void xd_input_apply_access(xd_server *server) {
+    XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
+        kb->sticky_alone = 0;
+        kb->bounced_keycode = 0;
+        if (kb->sticky_latched != 0 || kb->sticky_locked != 0)
+            sticky_update(kb, 0, 0);
+    }
+    const xd_access_settings *a = &server->config.access;
+    wlr_log(WLR_INFO, "accessibility: StickyKeys %s%s, BounceKeys %s (%d ms)",
+            a->sticky_keys ? "on" : "off", a->sticky_keys && a->sticky_lock ? " (twice locks)" : "",
+            a->bounce_keys ? "on" : "off", a->bounce_ms);
+}
+
 static void handle_key(struct wl_listener *listener, void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, key);
     xd_server *server = kb->server;
     const struct wlr_keyboard_key_event *event = data;
     xd_idle_activity(server);
+    if (bounced(kb, event))
+        return;
 
     /* libinput keycodes are offset by 8 from XKB keycodes. */
     uint32_t keycode = event->keycode + 8;
     const xkb_keysym_t *syms = nullptr;
     int nsyms = xkb_state_key_get_syms(kb->wlr_keyboard->xkb_state, keycode, &syms);
     uint32_t mods = wlr_keyboard_get_modifiers(kb->wlr_keyboard);
+    bool pressed = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+    sticky_key(kb, syms, nsyms, pressed);
+    /* A latched modifier is used up by the next key, once it's been sent
+     * (with the modifier) below. */
+    bool unlatch = pressed && kb->sticky_latched != 0 && kb->sticky_alone == 0;
+    for (int i = 0; unlatch && i < nsyms; i++)
+        unlatch = modifier_of(kb->wlr_keyboard->keymap, syms[i]) == 0;
 
     /* Keyboard move/size takes every key until it ends. */
     if (keyboard_grab(server)) {
@@ -503,6 +630,8 @@ static void handle_key(struct wl_listener *listener, void *data) {
         wlr_seat_keyboard_notify_key(server->seat, event->time_msec, event->keycode,
                                      event->state);
     }
+    if (unlatch)
+        sticky_update(kb, 0, kb->sticky_locked);
 }
 
 static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -547,7 +676,11 @@ static void configure_keyboard(struct wlr_keyboard *wlr_kb, struct xkb_keymap *k
 }
 
 void xd_input_apply_keyboard(xd_server *server) {
-    struct xkb_keymap *keymap = configured_keymap(&server->config.keyboard);
+    const xd_keyboard_settings *k = &server->config.keyboard;
+    struct xkb_keymap *keymap = configured_keymap(k);
+    wlr_log(WLR_INFO, "keyboard settings: layout '%s', variant '%s', options '%s', model '%s', "
+            "repeat %d/s after %d ms",
+            k->layout, k->variant, k->options, k->model, k->repeat_rate, k->repeat_delay);
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
         if (kb->physical)
             configure_keyboard(kb->wlr_keyboard, keymap, &server->config.keyboard);
@@ -580,6 +713,58 @@ static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wl
     return kb;
 }
 
+/* ---- pointers ([Mouse]) ------------------------------------------------------ */
+
+/* Only libinput devices can be configured: not a nested session's
+ * pointer, nor virtual ones. */
+static void configure_pointer(struct wlr_input_device *device, const xd_mouse_settings *m) {
+    if (!wlr_input_device_is_libinput(device))
+        return;
+    struct libinput_device *li = wlr_libinput_get_device_handle(device);
+    if (libinput_device_config_left_handed_is_available(li))
+        libinput_device_config_left_handed_set(li, m->left_handed);
+    if (libinput_device_config_accel_is_available(li)) {
+        libinput_device_config_accel_set_speed(li, m->speed / 10.0);
+        /* Windows' "Enhance pointer precision" is its acceleration curve;
+         * without it the pointer moves in proportion to the mouse. */
+        enum libinput_config_accel_profile want = m->acceleration
+                                                      ? LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE
+                                                      : LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
+        if (libinput_device_config_accel_get_profiles(li) & (uint32_t)want)
+            libinput_device_config_accel_set_profile(li, want);
+    }
+    wlr_log(WLR_INFO, "pointer '%s': %s-handed, speed %d, %s", device->name,
+            m->left_handed ? "left" : "right", m->speed,
+            m->acceleration ? "acceleration" : "no acceleration");
+}
+
+void xd_input_apply_mouse(xd_server *server) {
+    const xd_mouse_settings *m = &server->config.mouse;
+    wlr_log(WLR_INFO, "mouse settings: %s-handed, speed %d, %s, double-click %d ms, wheel lines %d",
+            m->left_handed ? "left" : "right", m->speed,
+            m->acceleration ? "acceleration" : "no acceleration", m->double_click_ms,
+            m->wheel_lines);
+    XD_LIST_FOR_EACH(p, &server->pointers, xd_pointer, link) {
+        configure_pointer(p->device, m);
+    }
+}
+
+static void handle_pointer_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_pointer *p = XD_CONTAINER_OF(listener, xd_pointer, destroy);
+    xd_unlisten(&p->destroy);
+    wl_list_remove(&p->link);
+    xd_free(p);
+}
+
+static void add_pointer(xd_server *server, struct wlr_input_device *device) {
+    configure_pointer(device, &server->config.mouse);
+    xd_pointer *p = XD_NEW(xd_pointer);
+    p->device = device;
+    XD_LISTEN(&device->events.destroy, p, destroy, handle_pointer_destroy);
+    wl_list_insert(&server->pointers, &p->link);
+    wlr_cursor_attach_input_device(server->cursor, device);
+}
+
 static void update_seat_caps(xd_server *server) {
     uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
     if (!wl_list_empty(&server->keyboards))
@@ -595,7 +780,7 @@ static void handle_new_input(struct wl_listener *listener, void *data) {
         add_keyboard(server, device);
         break;
     case WLR_INPUT_DEVICE_POINTER:
-        wlr_cursor_attach_input_device(server->cursor, device);
+        add_pointer(server, device);
         break;
     case WLR_INPUT_DEVICE_TOUCH:
     case WLR_INPUT_DEVICE_TABLET:
@@ -641,6 +826,39 @@ void xd_input_enable_virtual(xd_server *server) {
 }
 
 /* ---- pointer -------------------------------------------------------------- */
+
+/* The theme and size [Mouse] asks for; nullptr is libxcursor's default
+ * (XCURSOR_THEME, then "default"). */
+static struct wlr_xcursor_manager *cursor_manager(const xd_mouse_settings *m) {
+    return wlr_xcursor_manager_create(m->cursor_theme[0] != '\0' ? m->cursor_theme : nullptr,
+                                      (uint32_t)m->cursor_size);
+}
+
+/* Programs started from now on (and those they start) use the same
+ * cursors: XCursor and libwayland-cursor read these, GTK and Qt too. */
+static void export_cursor_theme(const xd_mouse_settings *m) {
+    if (m->cursor_theme[0] != '\0')
+        setenv("XCURSOR_THEME", m->cursor_theme, true);
+    else
+        unsetenv("XCURSOR_THEME");
+    char size[16];
+    snprintf(size, sizeof(size), "%d", m->cursor_size);
+    setenv("XCURSOR_SIZE", size, true);
+}
+
+void xd_input_apply_cursor_theme(xd_server *server) {
+    const xd_mouse_settings *m = &server->config.mouse;
+    struct wlr_xcursor_manager *mgr = cursor_manager(m);
+    /* The cursor keeps a pointer to its manager (to reload on a scale
+     * change), so move it to the new one before freeing the old. */
+    if (server->cursor_name != nullptr)
+        wlr_cursor_set_xcursor(server->cursor, mgr, server->cursor_name);
+    wlr_xcursor_manager_destroy(server->xcursor);
+    server->xcursor = mgr;
+    export_cursor_theme(m);
+    wlr_log(WLR_INFO, "cursor theme '%s', size %d",
+            m->cursor_theme[0] != '\0' ? m->cursor_theme : "(default)", m->cursor_size);
+}
 
 void xd_cursor_set(xd_server *server, const char *name) {
     /* Avoid reloading the image on every motion event. */
@@ -912,7 +1130,8 @@ static void handle_cursor_motion_absolute(struct wl_listener *listener, void *da
 static bool is_double_click(xd_server *server, xd_view *view, xd_frame_part part,
                             uint32_t time_msec) {
     bool dbl = server->last_click_view == view && server->last_click_part == part &&
-               time_msec - server->last_click_msec <= XD_DOUBLE_CLICK_MS;
+               time_msec - server->last_click_msec <=
+                   (uint32_t)server->config.mouse.double_click_ms;
     server->last_click_view = dbl ? nullptr : view;
     server->last_click_part = part;
     server->last_click_msec = time_msec;
@@ -1106,8 +1325,18 @@ static void handle_cursor_axis(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_axis);
     const struct wlr_pointer_axis_event *e = data;
     xd_idle_activity(server);
-    wlr_seat_pointer_notify_axis(server->seat, e->time_msec, e->orientation, e->delta,
-                                 e->delta_discrete, e->source, e->relative_direction);
+    double delta = e->delta;
+    int32_t discrete = e->delta_discrete;
+    /* [Mouse] WheelLines: clients scroll about 3 lines a notch, so scale
+     * the wheel's steps (not touchpads') by lines / 3. Clients add up
+     * the 120ths, so a third of a step still counts. */
+    int lines = server->config.mouse.wheel_lines;
+    if (e->source == WL_POINTER_AXIS_SOURCE_WHEEL && lines != 3) {
+        delta = delta * lines / 3.0;
+        discrete = (int32_t)((int64_t)discrete * lines / 3);
+    }
+    wlr_seat_pointer_notify_axis(server->seat, e->time_msec, e->orientation, delta, discrete,
+                                 e->source, e->relative_direction);
 }
 
 static void handle_cursor_frame(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -1206,10 +1435,12 @@ static int handle_sigchld([[maybe_unused]] int sig, void *data) {
 
 void xd_input_init(xd_server *server) {
     wl_list_init(&server->keyboards);
+    wl_list_init(&server->pointers);
 
     server->cursor = wlr_cursor_create();
     wlr_cursor_attach_output_layout(server->cursor, server->output_layout);
-    server->xcursor = wlr_xcursor_manager_create(nullptr, 24);
+    server->xcursor = cursor_manager(&server->config.mouse);
+    export_cursor_theme(&server->config.mouse);
     XD_LISTEN(&server->cursor->events.motion, server, cursor_motion, handle_cursor_motion);
     XD_LISTEN(&server->cursor->events.motion_absolute, server, cursor_motion_absolute,
               handle_cursor_motion_absolute);

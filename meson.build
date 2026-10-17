@@ -265,6 +265,7 @@ compositor_deps = [
   wayland_server_dep,
   xkbcommon_dep,
   dependency('libdrm'),
+  dependency('libinput', include_type: 'system'),
 ]
 executable(
   'xd-compositor',
@@ -438,6 +439,9 @@ install_data(
   'data/applications/org.xeondesktop.UserAccounts.desktop',
   'data/applications/org.xeondesktop.FolderOptions.desktop',
   'data/applications/org.xeondesktop.Fonts.desktop',
+  'data/applications/org.xeondesktop.Mouse.desktop',
+  'data/applications/org.xeondesktop.Keyboard.desktop',
+  'data/applications/org.xeondesktop.Accessibility.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -567,6 +571,35 @@ executable(
   install: true,
 )
 
+# Mouse, Keyboard and Accessibility Options: [Mouse], [Keyboard] and
+# [Accessibility] in desktop.ini, which the compositor applies.
+udev_dep = dependency('libudev')
+executable(
+  'xd-mouse',
+  'src/mouse/main.c',
+  'src/mouse/cursors.c',
+  'src/cpl/inputdevs.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, udev_dep, dependency('xcursor')],
+  install: true,
+)
+executable(
+  'xd-keyboard',
+  'src/keyboard/main.c',
+  'src/keyboard/layouts.c',
+  'src/cpl/inputdevs.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, udev_dep, dependency('xkbregistry')],
+  install: true,
+)
+executable(
+  'xd-access',
+  'src/access/main.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -652,6 +685,8 @@ test_exe = executable(
   'src/users/users.c',
   'src/folders/filetypes.c',
   'src/fonts/fontlist.c',
+  'src/keyboard/layouts.c',
+  'src/mouse/cursors.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],

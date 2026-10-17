@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Accessibility Options
+Comment=Adjust your computer settings for vision, hearing, and mobility
+Exec=xd-access
+Icon=preferences-desktop-accessibility
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=accessibility
+StartupWMClass=org.xeondesktop.Accessibility

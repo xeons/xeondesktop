@@ -588,6 +588,16 @@ static void apply_settings(xd_shell *shell, bool startup) {
         load_wallpaper(shell);
     xd_idle_update(shell);
     xd_sleep_update(shell);
+    /* Programs started from the shell get Mouse Properties' cursors (the
+     * compositor sets these too, but only for what it starts). */
+    const xd_mouse_settings *m = &shell->settings.mouse;
+    if (m->cursor_theme[0] != '\0')
+        setenv("XCURSOR_THEME", m->cursor_theme, true);
+    else
+        unsetenv("XCURSOR_THEME");
+    char cursor_size[16];
+    snprintf(cursor_size, sizeof(cursor_size), "%d", m->cursor_size);
+    setenv("XCURSOR_SIZE", cursor_size, true);
     if (startup)
         return;
     xd_tray_changed(shell); /* the volume and power icons may come or go */

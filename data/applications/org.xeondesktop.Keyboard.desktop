@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Keyboard
+Comment=Customize your keyboard settings, such as the cursor blink rate, the character repeat rate and the keyboard layout
+Exec=xd-keyboard
+Icon=input-keyboard
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=hardware
+StartupWMClass=org.xeondesktop.Keyboard

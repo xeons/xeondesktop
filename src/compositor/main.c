@@ -345,6 +345,20 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
         server->config.keyboard = settings.keyboard;
         xd_input_apply_keyboard(server);
     }
+    server->config.keyboard.cursor_blink_ms = settings.keyboard.cursor_blink_ms;
+    const xd_mouse_settings *ma = &server->config.mouse, *mb = &settings.mouse;
+    bool cursor_changed = strcmp(ma->cursor_theme, mb->cursor_theme) != 0 ||
+                          ma->cursor_size != mb->cursor_size;
+    if (memcmp(ma, mb, sizeof(*ma)) != 0) {
+        server->config.mouse = settings.mouse;
+        xd_input_apply_mouse(server);
+        if (cursor_changed)
+            xd_input_apply_cursor_theme(server);
+    }
+    if (memcmp(&server->config.access, &settings.access, sizeof(settings.access)) != 0) {
+        server->config.access = settings.access;
+        xd_input_apply_access(server);
+    }
     xd_settings_scheme(&settings, &server->config.scheme);
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
 
@@ -455,6 +469,8 @@ int main(int argc, char **argv) {
     server.config.always_frames = settings.always_frames;
     server.config.animate_windows = settings.animate_windows;
     server.config.keyboard = settings.keyboard;
+    server.config.mouse = settings.mouse;
+    server.config.access = settings.access;
     if (server.config.scheme_path == nullptr)
         xd_settings_scheme(&settings, &server.config.scheme);
     xd_theme_init(&server.logical_theme, server.config.style, &server.config.scheme, 1.0);

@@ -37,7 +37,6 @@ static constexpr int CELL_W = 75; /* XP's icon spacing */
 static constexpr int CELL_H = 75;
 static constexpr int ICON = 32;
 static constexpr int MAX_ICONS = 4096;
-static constexpr int DOUBLE_CLICK_MS = 500;
 static constexpr double DRAG_THRESHOLD = 4.0;
 static constexpr int TYPEAHEAD_MS = 1000; /* typed letters add up within this */
 
@@ -1313,7 +1312,8 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
             }
         }
         bool twice = index >= 0 && index == di->last_click_index &&
-                     time - di->last_click_time < (uint32_t)DOUBLE_CLICK_MS;
+                     time - di->last_click_time <=
+                         (uint32_t)di->shell->settings.mouse.double_click_ms;
         di->last_click_index = twice ? -1 : index;
         di->last_click_time = time;
         redraw(di);
@@ -1334,7 +1334,8 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
         icon *ic = g_ptr_array_index(di->icons, (guint)di->press_index);
         if (di->was_sole && di->last_click_index == di->press_index &&
             di->press_y >= ic->hit.y + ICON + 3)
-            di->rename_timer = g_timeout_add(DOUBLE_CLICK_MS, rename_later, di);
+            di->rename_timer = g_timeout_add(
+                (guint)di->shell->settings.mouse.double_click_ms, rename_later, di);
     }
     di->pressed = false;
     di->dragging = false;

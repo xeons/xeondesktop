@@ -87,7 +87,10 @@ void xd_settings_defaults(xd_settings *s) {
         .side_width = 150,
         .screensaver_wait = 15,
         /* Windows' defaults: about 30 repeats a second after half a second. */
-        .keyboard = {.repeat_delay = 500, .repeat_rate = 30},
+        .keyboard = {.repeat_delay = 500, .repeat_rate = 30, .cursor_blink_ms = 530},
+        .mouse = {.acceleration = true, .double_click_ms = 500, .wheel_lines = 3,
+                  .cursor_size = 24},
+        .access = {.sticky_lock = true, .bounce_ms = 500},
         .volume_icon = true,
         .battery_icon = true,
         .resume_password = true, /* as in XP */
@@ -118,6 +121,69 @@ static void parse_bool(xd_str v, bool *out) {
         *out = false;
 }
 
+/* A scheme is a file stem, not a path: safe file-name characters only. */
+static void parse_stem(xd_str v, char *dst, size_t cap) {
+    bool ok = v.len < cap;
+    for (size_t i = 0; ok && i < v.len; i++) {
+        char c = v.ptr[i];
+        ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+             c == '-' || c == '_';
+    }
+    if (ok)
+        copy_into(dst, cap, v);
+}
+
+static void parse_int(xd_str v, int64_t lo, int64_t hi, int *out) {
+    int64_t n;
+    if (xd_str_parse_i64(v, lo, hi, &n))
+        *out = (int)n;
+}
+
+static void parse_mouse(xd_mouse_settings *m, xd_str key, xd_str v) {
+#define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
+    if (KEY("LeftHanded")) {
+        parse_bool(v, &m->left_handed);
+    } else if (KEY("Speed")) {
+        parse_int(v, XD_MOUSE_SPEED_MIN, XD_MOUSE_SPEED_MAX, &m->speed);
+    } else if (KEY("Acceleration")) {
+        parse_bool(v, &m->acceleration);
+    } else if (KEY("DoubleClickMs")) {
+        parse_int(v, XD_DOUBLE_CLICK_MIN, XD_DOUBLE_CLICK_MAX, &m->double_click_ms);
+    } else if (KEY("WheelLines")) {
+        parse_int(v, 1, 30, &m->wheel_lines);
+    } else if (KEY("CursorTheme")) {
+        /* A directory name under icons/: no paths, nothing hidden. */
+        if (v.len < sizeof(m->cursor_theme) && memchr(v.ptr, '/', v.len) == nullptr &&
+            (v.len == 0 || v.ptr[0] != '.'))
+            copy_into(m->cursor_theme, sizeof(m->cursor_theme), v);
+    } else if (KEY("CursorSize")) {
+        parse_int(v, XD_CURSOR_SIZE_MIN, XD_CURSOR_SIZE_MAX, &m->cursor_size);
+    }
+#undef KEY
+}
+
+static void parse_access(xd_access_settings *a, xd_str key, xd_str v) {
+#define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
+    if (KEY("StickyKeys")) {
+        parse_bool(v, &a->sticky_keys);
+    } else if (KEY("StickyKeysLock")) {
+        parse_bool(v, &a->sticky_lock);
+    } else if (KEY("BounceKeys")) {
+        parse_bool(v, &a->bounce_keys);
+    } else if (KEY("BounceMs")) {
+        parse_int(v, 100, 2000, &a->bounce_ms);
+    } else if (KEY("HighContrast")) {
+        parse_bool(v, &a->high_contrast);
+    } else if (KEY("SavedStyle")) {
+        xd_visual_style st;
+        if (xd_visual_style_from_name(v, &st))
+            a->saved_style = st;
+    } else if (KEY("SavedScheme")) {
+        parse_stem(v, a->saved_scheme, sizeof(a->saved_scheme));
+    }
+#undef KEY
+}
+
 static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     xd_settings *s = user;
 #define SEC(n) xd_str_eq_nocase(section, XD_STR(n))
@@ -128,15 +194,7 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             if (xd_visual_style_from_name(v, &st))
                 s->style = st;
         } else if (KEY("Scheme")) {
-            /* A stem, not a path: keep it to safe file-name characters. */
-            bool ok = v.len < sizeof(s->scheme);
-            for (size_t i = 0; ok && i < v.len; i++) {
-                char c = v.ptr[i];
-                ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                     c == '-' || c == '_';
-            }
-            if (ok)
-                copy_into(s->scheme, sizeof(s->scheme), v);
+            parse_stem(v, s->scheme, sizeof(s->scheme));
         } else if (KEY("FontSize")) {
             int i = index_of(font_size_names, XD_ARRAY_LEN(font_size_names), v);
             if (i >= 0)
@@ -241,6 +299,12 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             k->repeat_delay = (int)n;
         else if (KEY("RepeatRate") && xd_str_parse_i64(v, 0, 100, &n))
             k->repeat_rate = (int)n;
+        else if (KEY("CursorBlinkMs") && xd_str_parse_i64(v, 0, 2000, &n))
+            k->cursor_blink_ms = (int)n;
+    } else if (SEC("Mouse")) {
+        parse_mouse(&s->mouse, key, v);
+    } else if (SEC("Accessibility")) {
+        parse_access(&s->access, key, v);
     } else if (SEC("Sound")) {
         if (KEY("VolumeIcon"))
             parse_bool(v, &s->volume_icon);
@@ -401,6 +465,23 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Folders", "FullPathTitle", f->full_path_title);
     g_key_file_set_boolean(kf, "Folders", "RememberViews", f->remember_views);
     g_key_file_set_string(kf, "Folders", "DefaultView", f->default_view);
+    g_key_file_set_integer(kf, "Keyboard", "CursorBlinkMs", s->keyboard.cursor_blink_ms);
+    const xd_mouse_settings *m = &s->mouse;
+    g_key_file_set_boolean(kf, "Mouse", "LeftHanded", m->left_handed);
+    g_key_file_set_integer(kf, "Mouse", "Speed", m->speed);
+    g_key_file_set_boolean(kf, "Mouse", "Acceleration", m->acceleration);
+    g_key_file_set_integer(kf, "Mouse", "DoubleClickMs", m->double_click_ms);
+    g_key_file_set_integer(kf, "Mouse", "WheelLines", m->wheel_lines);
+    g_key_file_set_string(kf, "Mouse", "CursorTheme", m->cursor_theme);
+    g_key_file_set_integer(kf, "Mouse", "CursorSize", m->cursor_size);
+    const xd_access_settings *a = &s->access;
+    g_key_file_set_boolean(kf, "Accessibility", "StickyKeys", a->sticky_keys);
+    g_key_file_set_boolean(kf, "Accessibility", "StickyKeysLock", a->sticky_lock);
+    g_key_file_set_boolean(kf, "Accessibility", "BounceKeys", a->bounce_keys);
+    g_key_file_set_integer(kf, "Accessibility", "BounceMs", a->bounce_ms);
+    g_key_file_set_boolean(kf, "Accessibility", "HighContrast", a->high_contrast);
+    g_key_file_set_string(kf, "Accessibility", "SavedStyle", xd_visual_style_name(a->saved_style));
+    g_key_file_set_string(kf, "Accessibility", "SavedScheme", a->saved_scheme);
     for (size_t i = 0; i < s->tray_rule_count; i++)
         g_key_file_set_string(kf, "Notifications", s->tray_rules[i].id,
                               tray_rule_names[s->tray_rules[i].rule]);
@@ -602,6 +683,24 @@ void xd_settings_scheme(const xd_settings *s, xd_scheme *out) {
             out->metrics[scaled[i]] = (int)lround(out->metrics[scaled[i]] * f);
     }
     out->font_smoothing = s->font_smoothing;
+}
+
+void xd_settings_set_high_contrast(xd_settings *s, bool on, const char *scheme) {
+    xd_access_settings *a = &s->access;
+    if (on) {
+        if (!a->high_contrast) {
+            a->saved_style = s->style;
+            memcpy(a->saved_scheme, s->scheme, sizeof(a->saved_scheme));
+        }
+        s->style = XD_STYLE_CLASSIC;
+        parse_stem(xd_str_from_cstr(scheme), s->scheme, sizeof(s->scheme));
+    } else if (a->high_contrast) {
+        s->style = a->saved_style;
+        memcpy(s->scheme, a->saved_scheme, sizeof(s->scheme));
+        a->saved_style = XD_STYLE_CLASSIC;
+        a->saved_scheme[0] = '\0';
+    }
+    a->high_contrast = on;
 }
 
 /* ---- watching ------------------------------------------------------------------ */
