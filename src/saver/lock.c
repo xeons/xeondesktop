@@ -67,6 +67,7 @@ typedef struct output {
     bool configured;
     bool dirty;
     struct wl_callback *frame;
+    bool throttled; /* the frame came; waiting for frame_fd */
     struct timespec last_frame;
     xd_saver *saver;
     int saver_w, saver_h;
@@ -108,6 +109,7 @@ struct app {
     screen screen;
     int idle_seconds;   /* back to the saver after this long (0: never) */
     int idle_fd;
+    int frame_fd; /* holds savers to SAVER_FPS */
     uint32_t pointer_serial;
     bool pointer_seen;
     double pointer_x0, pointer_y0;
@@ -411,25 +413,50 @@ static void draw_lock_dialog(app *a, const xd_theme *t, cairo_t *cr, int dw, int
     }
 }
 
-static void frame_done(void *data, struct wl_callback *cb, uint32_t time);
-static const struct wl_callback_listener frame_listener = {.done = frame_done};
+/* A saver runs for hours: drawing it at a 144 Hz monitor's rate would
+ * only burn CPU, so frames come no faster than this. */
+static constexpr double SAVER_FPS = 30.0;
 
-static void frame_done(void *data, struct wl_callback *cb, [[maybe_unused]] uint32_t time) {
-    output *o = data;
-    wl_callback_destroy(cb);
-    o->frame = nullptr;
-    if (o->app->screen == SCREEN_SAVER)
-        o->dirty = true;
+static double elapsed(const struct timespec *last, const struct timespec *now) {
+    return last->tv_sec == 0 ? 0.0
+                             : (double)(now->tv_sec - last->tv_sec) +
+                                   (double)(now->tv_nsec - last->tv_nsec) / 1e9;
 }
 
 static double seconds_since(struct timespec *last) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    double dt = last->tv_sec == 0 ? 0.0
-                                  : (double)(now.tv_sec - last->tv_sec) +
-                                        (double)(now.tv_nsec - last->tv_nsec) / 1e9;
+    double dt = elapsed(last, &now);
     *last = now;
     return dt;
+}
+
+static void frame_done(void *data, struct wl_callback *cb, uint32_t time);
+static const struct wl_callback_listener frame_listener = {.done = frame_done};
+
+static void frame_done(void *data, struct wl_callback *cb, [[maybe_unused]] uint32_t time) {
+    output *o = data;
+    app *a = o->app;
+    wl_callback_destroy(cb);
+    o->frame = nullptr;
+    if (a->screen != SCREEN_SAVER)
+        return;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double wait = 1.0 / SAVER_FPS - elapsed(&o->last_frame, &now);
+    if (wait <= 0.002) {
+        o->dirty = true;
+        return;
+    }
+    o->throttled = true;
+    struct itimerspec cur;
+    timerfd_gettime(a->frame_fd, &cur);
+    long ns = (long)(wait * 1e9);
+    if ((cur.it_value.tv_sec == 0 && cur.it_value.tv_nsec == 0) ||
+        (cur.it_value.tv_sec == 0 && cur.it_value.tv_nsec > ns)) {
+        struct itimerspec spec = {.it_value = {.tv_nsec = ns}};
+        timerfd_settime(a->frame_fd, 0, &spec, nullptr);
+    }
 }
 
 static void render(output *o) {
@@ -469,7 +496,8 @@ static void render(output *o) {
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
 
-    if (a->screen == SCREEN_SAVER && o->frame == nullptr) {
+    /* A still saver (Blank Screen) is drawn once, not every frame. */
+    if (a->screen == SCREEN_SAVER && o->frame == nullptr && xd_saver_animated(a->saver_id)) {
         o->frame = wl_surface_frame(o->surface);
         wl_callback_add_listener(o->frame, &frame_listener, o);
     }
@@ -1051,12 +1079,13 @@ static void run(app *a) {
             wl_display_cancel_read(d);
             break;
         }
-        struct pollfd fds[3] = {
+        struct pollfd fds[4] = {
             {.fd = wl_display_get_fd(d), .events = POLLIN},
             {.fd = a->pam_pipe[0], .events = POLLIN},
             {.fd = a->idle_fd, .events = POLLIN},
+            {.fd = a->frame_fd, .events = POLLIN},
         };
-        if (poll(fds, 3, -1) < 0) {
+        if (poll(fds, 4, -1) < 0) {
             wl_display_cancel_read(d);
             if (errno == EINTR)
                 continue;
@@ -1079,6 +1108,15 @@ static void run(app *a) {
             (void)!read(a->idle_fd, &n, sizeof(n));
             if (a->screen != SCREEN_CHECKING && a->saver_id[0] != '\0')
                 go(a, SCREEN_SAVER);
+        }
+        if (fds[3].revents & POLLIN) {
+            uint64_t n;
+            (void)!read(a->frame_fd, &n, sizeof(n));
+            XD_LIST_FOR_EACH(o, &a->outputs, output, link) {
+                if (o->throttled && a->screen == SCREEN_SAVER)
+                    o->dirty = true;
+                o->throttled = false;
+            }
         }
     }
     flush(d);
@@ -1171,6 +1209,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     a.idle_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    a.frame_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     a.icons = xd_icons_create(getenv("XD_ICON_THEME") != nullptr ? getenv("XD_ICON_THEME")
                                                                  : "breeze");
 
@@ -1201,6 +1240,7 @@ int main(int argc, char **argv) {
     xkb_keymap_unref(a.keymap);
     xkb_context_unref(a.xkb);
     close(a.idle_fd);
+    close(a.frame_fd);
     close(a.pam_pipe[0]);
     close(a.pam_pipe[1]);
     wl_display_disconnect(a.display);

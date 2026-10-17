@@ -462,7 +462,7 @@ static void animate(void *user) {
 
 /* The preview runs only while its page shows. */
 static void update_animation(desk *d) {
-    bool want = d->page == PAGE_SCREENSAVER && pending_saver(d)[0] != '\0';
+    bool want = d->page == PAGE_SCREENSAVER && xd_saver_animated(pending_saver(d));
     if (want && d->anim == nullptr)
         d->anim = xd_ui_add_timer(d->ui, 50, true, animate, d);
     else if (!want && d->anim != nullptr) {

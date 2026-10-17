@@ -37,6 +37,10 @@ const xd_saver_info *xd_saver_find(const char *id) {
     return nullptr;
 }
 
+bool xd_saver_animated(const char *id) {
+    return xd_saver_find(id) != nullptr && strcmp(id, "blank") != 0;
+}
+
 /* ---- shared ------------------------------------------------------------------- */
 
 enum { MAX_STARS = 300, POLY_POINTS = 4, POLYS = 2, TRAIL = 8, CURVE_TRAIL = 24, FLYERS = 24 };

@@ -17,6 +17,9 @@ typedef struct xd_saver_info {
 size_t xd_savers(const xd_saver_info **out);
 /* nullptr if id isn't a saver. */
 const xd_saver_info *xd_saver_find(const char *id);
+/* False for a saver whose picture never changes (Blank Screen): paint it
+ * once instead of every frame. */
+bool xd_saver_animated(const char *id);
 
 typedef struct xd_saver xd_saver;
 
