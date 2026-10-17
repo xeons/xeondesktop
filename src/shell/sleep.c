@@ -123,9 +123,8 @@ static void unblock_signals([[maybe_unused]] gpointer data) {
     sigprocmask(SIG_SETMASK, &none, nullptr);
 }
 
-/* Not xd_shell_launch: this runs from a GLib callback, while the shell's
- * loop has a Wayland read prepared, so the activation token it asks the
- * compositor for could never arrive. A locker needs no token. */
+/* Spawned directly: a locker needs no activation token, and there's no
+ * need for a round trip to the compositor while it's going to sleep. */
 static void lock_screen(void) {
     char *argv[] = {xd_shell_own_program("xd-lock"), nullptr};
     GError *error = nullptr;

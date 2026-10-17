@@ -48,7 +48,10 @@ gboolean xd_control_is_applet(GDesktopAppInfo *info) {
 }
 
 static int by_name(gconstpointer a, gconstpointer b) {
-    return g_utf8_collate(g_app_info_get_name(G_APP_INFO(a)), g_app_info_get_name(G_APP_INFO(b)));
+    /* GLib's casts take non-const instances; the names are only read. */
+    GAppInfo *x = G_APP_INFO((gpointer)(uintptr_t)a);
+    GAppInfo *y = G_APP_INFO((gpointer)(uintptr_t)b);
+    return g_utf8_collate(g_app_info_get_name(x), g_app_info_get_name(y));
 }
 
 GList *xd_control_applets(void) {

@@ -525,7 +525,8 @@ static void set_picture(ua *u, GDBusProxy *p, const char *source) {
     GError *error = nullptr;
     bool made = xd_users_make_picture(source, tmp, PICTURE_SIZE, &error);
     if (made && g_rename(tmp, path) != 0) {
-        g_set_error(&error, G_FILE_ERROR, g_file_error_from_errno(errno), "%s: %s", path,
+        GFileError code = g_file_error_from_errno(errno);
+        g_set_error(&error, G_FILE_ERROR, (gint)code, "%s: %s", path,
                     g_strerror(errno));
         made = false;
     }
