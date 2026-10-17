@@ -192,6 +192,7 @@ typedef struct xd_config {
     const char *security;    /* Windows Security (Ctrl+Alt+Delete, Classic style) */
     const char *locker;      /* Lock Computer (Win+L; restarted if a locker dies) */
     const char *polkit;      /* the session's polkit authentication agent */
+    const char *endtask;     /* "End Program" for windows that don't respond */
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     bool always_frames;  /* [Windows] AlwaysDrawFrames */

@@ -311,6 +311,13 @@ saver_dep = declare_dependency(link_with: saver_lib, dependencies: [theme_dep])
 apps_common = files('src/apps/common.c')
 
 executable(
+  'xd-endtask',
+  'src/apps/endtask.c',
+  dependencies: [ui_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+executable(
   'xd-run',
   'src/apps/run.c',
   'src/apps/runcmd.c',

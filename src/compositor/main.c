@@ -310,6 +310,8 @@ int main(int argc, char **argv) {
     server.config.locker = own_program("xd-lock", locker_path, sizeof(locker_path));
     server.config.security = own_program("xd-security", security_path, sizeof(security_path));
     server.config.polkit = own_program("xd-polkit", polkit_path, sizeof(polkit_path));
+    static char endtask_path[4096];
+    server.config.endtask = own_program("xd-endtask", endtask_path, sizeof(endtask_path));
     xd_scheme_init_default(&server.config.scheme);
 
     bool debug = false;

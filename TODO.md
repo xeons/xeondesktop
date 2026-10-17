@@ -522,7 +522,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       answers again. Tested with a program that froze its main loop for
       25s. X11 windows too, when they list _NET_WM_PING (wlroots' X11
       ping timeout is its own 10s); tested with the same program under
-      GDK_BACKEND=x11. Not yet: XP's ghost window.
+      GDK_BACKEND=x11. Closing a window that isn't responding opens
+      Windows' End Program box (xd-endtask: End Now kills the program,
+      checking it's still the same process; Cancel). Tested: End Now on
+      a frozen program. Not yet: XP's ghost window, and the box for a
+      window that only stops responding after the close request.
 - [x] Options > Always On Top (saved): xd-window-arranger-v1 version 5's
       set_always_on_top puts the client's own window (and its dialogs) in
       a layer above ordinary windows, below the taskbar. Tested: Task

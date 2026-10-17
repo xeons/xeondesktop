@@ -3,7 +3,9 @@
  * minimize, server-side decorations, and popups.
  */
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <wlr/util/log.h>
 
@@ -379,7 +381,30 @@ void xd_view_focus_next(xd_server *server) {
     xd_keyboard_refocus(server);
 }
 
+/* The program behind a window, or 0. */
+static pid_t view_pid(const xd_view *view) {
+    if (view->kind == XD_VIEW_X11)
+        return view->xsurface->pid;
+    pid_t pid = 0;
+    wl_client_get_credentials(wl_resource_get_client(view->toplevel->resource), &pid, nullptr,
+                              nullptr);
+    return pid;
+}
+
 void xd_view_close(xd_view *view) {
+    /* Closing a window that isn't responding: Windows offers End Now. */
+    if (view->hung && view->server->config.endtask != nullptr) {
+        pid_t pid = view_pid(view);
+        const char *title = xd_view_title(view);
+        char pid_text[24];
+        snprintf(pid_text, sizeof(pid_text), "%d", (int)pid);
+        if (pid > 1 && pid != getpid()) {
+            char *argv[] = {(char *)(uintptr_t)view->server->config.endtask, pid_text,
+                            (char *)(uintptr_t)(title != nullptr ? title : "Program"), nullptr};
+            xd_spawn_argv(argv);
+            return;
+        }
+    }
     if (view->kind == XD_VIEW_X11)
         wlr_xwayland_surface_close(view->xsurface);
     else
