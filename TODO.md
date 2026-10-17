@@ -647,8 +647,46 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Control Panel
 
-- [ ] The `control:` folder and every applet other than Display, System
-      and Taskbar and Start Menu (see docs/ARCHITECTURE.md for the list).
+- [x] The `control:` folder in xd-files (Category View and Classic View,
+      remembered; applets found by their .desktop files' category keys;
+      deleting/renaming them refused), `xd-control [NAME]`, and the Start
+      menus' Control Panel listing the applets (2000: Settings > Control
+      Panel cascades and opens the folder when clicked). Tested headless:
+      both views, the categories, the three Start menus, the address bar.
+- [x] Applets added (each tested headless; writes to system services only
+      against python-dbusmock): Mouse (`[Mouse]`, applied to libinput
+      pointers by the compositor, cursor theme/size live), Keyboard (repeat,
+      cursor blink, up to 4 layouts, XKB options from libxkbregistry),
+      Accessibility Options (StickyKeys, BounceKeys, High Contrast), Sounds
+      and Audio Devices (libpulse: volume, default devices; XP's sound
+      scheme with libcanberra), Power Options (`[Power]`: monitor off,
+      standby and hibernate timers through logind, the battery icon, lock
+      on resume; lid/power buttons read-only from logind), Regional and
+      Language Options (your LC_* formats in environment.d with samples;
+      the system locale and keyboard through localed), User Accounts (XP's
+      task pages over AccountsService: picture to ~/.face, name, password
+      via xd-security, create/delete/type through polkit), Folder Options
+      (`[Folders]`, obeyed live by xd-files: own window, single click, hidden
+      files, extensions, full paths, remembered views; File Types with
+      Change...), Fonts (fontconfig list, XP's viewer, install to
+      ~/.local/share/fonts, delete user fonts to the Recycle Bin). Merged and
+      checked together: every applet in its category, saving from one keeps
+      the others' sections.
+- [ ] Applets: untested on real hardware: libinput settings (left-handed,
+      speed, acceleration), a real keyboard in a second layout, real
+      suspend/hibernate and lock on resume, real sound cards and default
+      device switches, real localed/AccountsService/polkit prompts, a
+      changed password at logon, a logon picking up the formats file.
+- [ ] Applets: not done: ClickLock, SlowKeys, ToggleKeys, MouseKeys; sound
+      events other than Windows Logon; separate on-battery power timers,
+      scheme Save As/Delete, UPS; Regional Customize; File Types New/Delete;
+      font Print; the XP Start menu header shows the login name, not the
+      full name; limited users see administrator tasks in User Accounts;
+      other GTK apps don't follow the double-click time or caret blink; the
+      Windows 7 menu's search doesn't find applets; its My Computer opens /.
+- [ ] Applets still to write: Network Connections, Printers and Faxes,
+      Add or Remove Programs, Scanners and Cameras, Bluetooth Devices,
+      Administrative Tools, Scheduled Tasks, Game Controllers.
 - [~] **System Properties** (`xd-sysdm`, Windows 2000's layout, Linux
       inside): General (distribution, kernel, owner, machine ID, CPU,
       firmware, RAM); Network Identification (host name and description

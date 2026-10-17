@@ -164,6 +164,37 @@ The shell starts the chosen screen saver (`xd-lock --saver`) after the Wait
 time; video players hold it off. With Password protected, it drops to the
 locked screen when you come back.
 
+### Control Panel
+
+Control Panel is a folder in the file manager (`control:`, or
+`xd-control`), with XP's Category View and Classic View. Each applet is
+its own program, found by its `.desktop` file
+(`Categories=...;X-XeonDesktop-ControlPanel;` and
+`X-XeonDesktop-ControlPanel-Category=appearance|network|programs|sound|performance|hardware|accounts|datetime|accessibility`),
+and `xd-control NAME` opens one (`xd-control desk`, as Windows'
+`control desk.cpl`). The applets:
+
+| Applet | Program | What it changes |
+|---|---|---|
+| Accessibility Options | `xd-access` | StickyKeys, BounceKeys and High Contrast, done by the compositor |
+| Date and Time | `xd-timedate` | the clock and time zone, through timedated |
+| Display | `xd-desk` | style, colours, wallpaper, screen saver, monitors |
+| Folder Options | `xd-folders` | the file manager's options, file types (`mimeapps.list`) |
+| Fonts | `xd-fonts` | lists, previews, installs and removes your fonts (fontconfig) |
+| Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options |
+| Mouse | `xd-mouse` | buttons, double-click speed, pointer theme and size, speed, wheel |
+| Power Options | `xd-power` | monitor, standby and hibernate timers, the battery icon, locking on resume |
+| Regional and Language Options | `xd-intl` | your formats; the system locale and keyboard through localed |
+| Sounds and Audio Devices | `xd-sound` | volume, default devices, the sound scheme (libcanberra) |
+| System | `xd-sysdm` | see below |
+| Taskbar and Start Menu | `xd-taskbar` | the taskbar and Start menu options |
+| User Accounts | `xd-users` | pictures, names, passwords and accounts, through AccountsService |
+
+Settings go to `desktop.ini` (`[Mouse]`, `[Accessibility]`, `[Power]`,
+`[Sound]`, `[Folders]`, ...), which the compositor, the shell and our GTK
+programs re-read when it changes; system settings go through the
+services' polkit checks, never as root.
+
 ### System Properties
 
 `xd-sysdm` (Control Panel > System) is Windows 2000's System Properties
@@ -238,7 +269,7 @@ apply (`xd-security --change-password` opens it alone).
 keyboard, applied immediately: `Layout` (e.g. `us,de`), `Variant`,
 `Options` (e.g. `grp:alt_shift_toggle`), `Model`, `RepeatDelay` (ms,
 default 500) and `RepeatRate` (per second, default 30). Empty names fall
-back to `XKB_DEFAULT_*`. There's no Keyboard applet yet.
+back to `XKB_DEFAULT_*`. Control Panel > Keyboard edits them.
 
 ### Run and Shut Down
 
