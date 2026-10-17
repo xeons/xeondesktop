@@ -443,6 +443,8 @@ install_data(
   'data/applications/org.xeondesktop.Keyboard.desktop',
   'data/applications/org.xeondesktop.Accessibility.desktop',
   'data/applications/org.xeondesktop.ScheduledTasks.desktop',
+  'data/applications/org.xeondesktop.Bluetooth.desktop',
+  'data/applications/org.xeondesktop.GameControllers.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -615,6 +617,30 @@ executable(
   install: true,
 )
 
+# Bluetooth Devices (BlueZ over D-Bus) and Game Controllers (udev and
+# evdev, read-only).
+executable(
+  'xd-bluetooth',
+  'src/bluetooth/main.c',
+  'src/bluetooth/agent.c',
+  'src/bluetooth/devprops.c',
+  'src/bluetooth/wizard.c',
+  'src/bluetooth/btinfo.c',
+  c_args: ['-D_GNU_SOURCE'],
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, udev_dep],
+  install: true,
+)
+executable(
+  'xd-joy',
+  'src/joy/main.c',
+  'src/joy/joyinfo.c',
+  c_args: ['-D_GNU_SOURCE'],
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep, udev_dep, dependency('libevdev')],
+  install: true,
+)
+
 executable(
   'xd-wifi-key',
   'src/gtkapp/wifikey.c',
@@ -703,6 +729,8 @@ test_exe = executable(
   'src/keyboard/layouts.c',
   'src/mouse/cursors.c',
   'src/schedtasks/task.c',
+  'src/bluetooth/btinfo.c',
+  'src/joy/joyinfo.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],

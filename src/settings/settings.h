@@ -169,6 +169,9 @@ typedef struct xd_settings {
     int hibernate;        /* minutes of idle before hibernating; 0 = never */
     bool battery_icon;    /* "Always show icon on the taskbar"; else only on battery */
     bool resume_password; /* lock the screen before sleeping */
+
+    /* [Bluetooth] */
+    bool bluetooth_icon; /* "Show the Bluetooth icon in the notification area" */
 } xd_settings;
 
 /* An icon's rule ([Notifications]), XD_TRAY_AUTO if it has none. */

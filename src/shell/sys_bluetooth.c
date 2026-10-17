@@ -1,9 +1,10 @@
 /* SPDX-License-Identifier: MIT
  * The Bluetooth icon in the notification area, from BlueZ over D-Bus
  * (its ObjectManager gives us adapters and devices with live properties).
- * Shown when the machine has an adapter. Its menu turns Bluetooth on or
- * off, connects or disconnects paired devices, and opens a Bluetooth
- * manager (Blueman) when one is installed.
+ * Shown when the machine has an adapter, unless Bluetooth Devices'
+ * Options turned it off ([Bluetooth] ShowIcon). Its menu turns Bluetooth
+ * on or off, connects or disconnects paired devices, and has XP's items
+ * for Bluetooth Devices (xd-bluetooth).
  */
 #include <gio/gio.h>
 
@@ -77,8 +78,8 @@ static int connected_count(bluetooth *bt) {
 static const char *icon(void *data) {
     bluetooth *bt = data;
     GDBusInterface *a = adapter(bt);
-    if (a == nullptr)
-        return nullptr; /* no adapter: no icon */
+    if (a == nullptr || !bt->shell->settings.bluetooth_icon)
+        return nullptr; /* no adapter, or turned off: no icon */
     bool on = prop_b(a, "Powered");
     g_object_unref(a);
     return on ? "bluetooth-active" : "bluetooth-disabled";
@@ -137,8 +138,25 @@ static void act_device(xd_shell *shell, void *d) {
                            G_DBUS_CALL_FLAGS_NONE, 60000, c->bt->cancel, call_done, c->bt);
 }
 
-static void act_manager(xd_shell *shell, [[maybe_unused]] void *d) {
-    xd_shell_launch(shell, "blueman-manager");
+/* XP's items for Bluetooth Devices. */
+static const struct {
+    const char *label, *command;
+} devices_items[] = {
+    {"Add a Bluetooth Device", "xd-bluetooth --add"},
+    {"Show Bluetooth Devices", "xd-bluetooth"},
+    {"Open Bluetooth Settings", "xd-bluetooth --options"},
+};
+
+static void act_devices(xd_shell *shell, void *d) {
+    xd_shell_launch(shell, devices_items[GPOINTER_TO_SIZE(d)].command);
+}
+
+/* XP's Remove Bluetooth Icon: what Options' check box turns back on. */
+static void act_remove_icon(xd_shell *shell, [[maybe_unused]] void *d) {
+    shell->settings.bluetooth_icon = false;
+    if (!xd_settings_save(&shell->settings))
+        fprintf(stderr, "xd-shell: cannot save settings\n");
+    xd_tray_changed(shell);
 }
 
 static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
@@ -183,9 +201,16 @@ static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
         g_list_free_full(objs, g_object_unref);
     }
     xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
-    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Bluetooth Devices...", nullptr);
-    it->action = act_manager;
-    it->disabled = !xd_shell_have_program("blueman-manager");
+    bool have = xd_shell_have_program("xd-bluetooth");
+    for (size_t i = 0; i < XD_ARRAY_LEN(devices_items); i++) {
+        it = xd_menu_add(tree, m, XD_MENU_ACTION, devices_items[i].label, nullptr);
+        it->action = act_devices;
+        it->action_data = GSIZE_TO_POINTER(i);
+        it->disabled = !have || (i == 0 && !on); /* adding needs the radio on */
+    }
+    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Remove Bluetooth Icon", nullptr);
+    it->action = act_remove_icon;
 }
 
 static void props_changed([[maybe_unused]] GDBusObjectManagerClient *m,

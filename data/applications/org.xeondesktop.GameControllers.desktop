@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Game Controllers
+Comment=Test game controller hardware such as joysticks and gamepads
+Exec=xd-joy
+Icon=input-gaming
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=hardware
+StartupWMClass=org.xeondesktop.GameControllers

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Bluetooth Devices
+Comment=Add, remove and configure Bluetooth devices, such as phones, headsets, keyboards and mice
+Exec=xd-bluetooth
+Icon=bluetooth
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=hardware
+StartupWMClass=org.xeondesktop.Bluetooth

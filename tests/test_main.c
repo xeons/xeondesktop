@@ -2,6 +2,7 @@
  * Unit tests for the core library and theme engine.
  */
 #include <glib/gstdio.h>
+#include <linux/input-event-codes.h>
 #include <gtk/gtk.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -12,6 +13,8 @@
 #include <fontconfig/fontconfig.h>
 
 #include "../src/apps/runcmd.h"
+#include "../src/bluetooth/btinfo.h"
+#include "../src/joy/joyinfo.h"
 #include "../src/intl/intl.h"
 #include "../src/keyboard/layouts.h"
 #include "../src/mouse/cursors.h"
@@ -1342,6 +1345,114 @@ static void test_schedtasks(void) {
     CHECK(xd_task_service_text(&t) == nullptr);
 }
 
+static bool type_is(xd_bt_type t, const char *icon, const char *name) {
+    return g_strcmp0(t.icon, icon) == 0 && g_strcmp0(t.name, name) == 0;
+}
+
+static void test_bluetooth_info(void) {
+    /* Class of Device: major class in bits 8-12, minor in 2-7. */
+    CHECK(type_is(xd_bt_class_type(0x5a020c), "phone", "Smartphone"));
+    CHECK(type_is(xd_bt_class_type(0x240404), "audio-headset", "Headset"));
+    CHECK(type_is(xd_bt_class_type(0x240418), "audio-headphones", "Headphones"));
+    CHECK(type_is(xd_bt_class_type(0x10c), "computer-laptop", "Laptop computer"));
+    CHECK(type_is(xd_bt_class_type(0x002540), "input-keyboard", "Keyboard"));
+    CHECK(type_is(xd_bt_class_type(0x002580), "input-mouse", "Mouse"));
+    CHECK(type_is(xd_bt_class_type(0x0025c0), "input-keyboard", "Keyboard and mouse"));
+    CHECK(type_is(xd_bt_class_type(0x000508), "input-gaming", "Game pad"));
+    CHECK(type_is(xd_bt_class_type(0x040680), "printer", "Printer"));
+    CHECK(type_is(xd_bt_class_type(0x020300), "network-wireless", "Network access point"));
+    CHECK(xd_bt_class_type(0).name == nullptr);
+    CHECK(xd_bt_class_type(0x1f00).name == nullptr); /* Uncategorized */
+    /* LE Appearance: category in bits 6-15. */
+    CHECK(type_is(xd_bt_appearance_type(0x03c1), "input-keyboard", "Keyboard"));
+    CHECK(type_is(xd_bt_appearance_type(0x03c2), "input-mouse", "Mouse"));
+    CHECK(type_is(xd_bt_appearance_type(0x03c4), "input-gaming", "Game pad"));
+    CHECK(type_is(xd_bt_appearance_type(0x0942), "audio-headset", "Headset"));
+    CHECK(type_is(xd_bt_appearance_type(0x0040), "phone", "Phone"));
+    CHECK(xd_bt_appearance_type(0).name == nullptr);
+    CHECK(type_is(xd_bt_icon_type("audio-headset"), "audio-headset", "Headset"));
+    CHECK(type_is(xd_bt_icon_type("nonsense"), "bluetooth", "Bluetooth device"));
+    CHECK(type_is(xd_bt_icon_type(nullptr), "bluetooth", "Bluetooth device"));
+
+    /* Service UUIDs: the SIG's 16-bit ones on the Base UUID, any case. */
+    CHECK(g_strcmp0(xd_bt_uuid_name("0000110b-0000-1000-8000-00805f9b34fb"), "Audio Sink") == 0);
+    CHECK(g_strcmp0(xd_bt_uuid_name("0000110B-0000-1000-8000-00805F9B34FB"), "Audio Sink") == 0);
+    CHECK(g_strcmp0(xd_bt_uuid_name("00001124-0000-1000-8000-00805f9b34fb"),
+                    "Human Interface Device") == 0);
+    CHECK(g_strcmp0(xd_bt_uuid_name("00001101-0000-1000-8000-00805f9b34fb"), "Serial Port") == 0);
+    CHECK(g_strcmp0(xd_bt_uuid_name("00001850-0000-1000-8000-00805f9b34fb"),
+                    "Published Audio Capabilities") == 0);
+    CHECK(xd_bt_uuid_name("0000ffff-0000-1000-8000-00805f9b34fb") == nullptr);
+    CHECK(xd_bt_uuid_name("1000110b-0000-1000-8000-00805f9b34fb") == nullptr);
+    CHECK(xd_bt_uuid_name("0000110b-0000-1000-8000-00805f9b34fc") == nullptr);
+    CHECK(xd_bt_uuid_name("0000110b") == nullptr);
+    CHECK(xd_bt_uuid_name(nullptr) == nullptr);
+
+    CHECK(g_strcmp0(xd_bt_version_name(4), "2.1 + EDR") == 0);
+    CHECK(g_strcmp0(xd_bt_version_name(9), "5.0") == 0);
+    CHECK(g_strcmp0(xd_bt_version_name(12), "5.3") == 0);
+    CHECK(xd_bt_version_name(-1) == nullptr);
+    CHECK(xd_bt_version_name(99) == nullptr);
+}
+
+static bool close_to(double a, double b) { return a - b < 1e-3 && b - a < 1e-3; }
+
+static void test_joystick(void) {
+    CHECK(close_to(xd_joy_axis_centered(-32768, -32768, 32767), -1));
+    CHECK(close_to(xd_joy_axis_centered(32767, -32768, 32767), 1));
+    CHECK(close_to(xd_joy_axis_centered(0, -32768, 32767), 0));
+    CHECK(close_to(xd_joy_axis_centered(128, 0, 255), 0.0039));
+    CHECK(close_to(xd_joy_axis_centered(40000, -32768, 32767), 1)); /* clamped */
+    CHECK(close_to(xd_joy_axis_centered(5, 3, 3), 0));              /* no range */
+    CHECK(close_to(xd_joy_axis_fraction(0, 0, 255), 0));
+    CHECK(close_to(xd_joy_axis_fraction(255, 0, 255), 1));
+    CHECK(close_to(xd_joy_axis_fraction(-10, 0, 255), 0));
+    CHECK(close_to(xd_joy_axis_fraction(512, 0, 1023), 0.5005));
+
+    CHECK(g_strcmp0(xd_joy_axis_name(ABS_X), "X Axis") == 0);
+    CHECK(g_strcmp0(xd_joy_axis_name(ABS_RZ), "Z Rotation") == 0);
+    CHECK(g_strcmp0(xd_joy_axis_name(ABS_THROTTLE), "Throttle") == 0);
+    CHECK(xd_joy_axis_name(ABS_HAT0X) == nullptr);
+    CHECK(xd_joy_axis_name(ABS_MT_POSITION_X) == nullptr);
+    CHECK(xd_joy_axis_is_hat(ABS_HAT0X) && xd_joy_axis_is_hat(ABS_HAT3Y));
+    CHECK(!xd_joy_axis_is_hat(ABS_X) && !xd_joy_axis_is_hat(ABS_MISC));
+
+    /* Hats: -1 centred, 0 up, then clockwise. */
+    CHECK(xd_joy_hat_direction(0, 0) == -1);
+    CHECK(xd_joy_hat_direction(0, -1) == 0);
+    CHECK(xd_joy_hat_direction(1, -1) == 1);
+    CHECK(xd_joy_hat_direction(1, 0) == 2);
+    CHECK(xd_joy_hat_direction(1, 1) == 3);
+    CHECK(xd_joy_hat_direction(0, 1) == 4);
+    CHECK(xd_joy_hat_direction(-1, 0) == 6);
+    CHECK(xd_joy_hat_direction(-1, -1) == 7);
+    CHECK(xd_joy_hat_direction(-127, 127) == 5);
+
+    /* joydev's order: gamepad and joystick buttons, then BTN_MISC's;
+     * keyboard keys left out. */
+    const unsigned codes[] = {BTN_TRIGGER_HAPPY1, BTN_0, KEY_A, BTN_EAST, BTN_SOUTH};
+    unsigned out[XD_ARRAY_LEN(codes)];
+    size_t n = xd_joy_button_order(codes, XD_ARRAY_LEN(codes), out);
+    CHECK(n == 4);
+    CHECK(out[0] == BTN_SOUTH && out[1] == BTN_EAST && out[2] == BTN_TRIGGER_HAPPY1 &&
+          out[3] == BTN_0);
+    CHECK(xd_joy_button_order(codes, 0, out) == 0);
+}
+
+static void test_bluetooth_settings(void) {
+    xd_settings s;
+    xd_settings_defaults(&s);
+    CHECK(s.bluetooth_icon);
+    xd_settings_parse(XD_STR("[Bluetooth]\nShowIcon=false\n"), &s);
+    CHECK(!s.bluetooth_icon);
+    xd_strbuf out = {0};
+    xd_settings_serialize(&s, &out);
+    xd_settings t;
+    xd_settings_parse(xd_strbuf_view(&out), &t);
+    CHECK(!t.bluetooth_icon);
+    xd_strbuf_free(&out);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -1367,6 +1478,9 @@ int main(void) {
     test_kbd_layouts();
     test_cursor_themes();
     test_fonts();
+    test_bluetooth_info();
+    test_joystick();
+    test_bluetooth_settings();
     test_schedtasks();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -94,6 +94,7 @@ void xd_settings_defaults(xd_settings *s) {
         .volume_icon = true,
         .battery_icon = true,
         .resume_password = true, /* as in XP */
+        .bluetooth_icon = true,
         /* XP's, except extensions, which stay visible: renaming edits the
          * whole name. */
         .folders = {.full_path_address = true, .remember_views = true},
@@ -308,6 +309,9 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     } else if (SEC("Sound")) {
         if (KEY("VolumeIcon"))
             parse_bool(v, &s->volume_icon);
+    } else if (SEC("Bluetooth")) {
+        if (KEY("ShowIcon"))
+            parse_bool(v, &s->bluetooth_icon);
     } else if (SEC("Power")) {
         int64_t m;
         if (KEY("Scheme")) {
@@ -456,6 +460,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_integer(kf, "Power", "Hibernate", s->hibernate);
     g_key_file_set_boolean(kf, "Power", "AlwaysShowIcon", s->battery_icon);
     g_key_file_set_boolean(kf, "Power", "PasswordOnResume", s->resume_password);
+    g_key_file_set_boolean(kf, "Bluetooth", "ShowIcon", s->bluetooth_icon);
     const xd_folder_settings *f = &s->folders;
     g_key_file_set_boolean(kf, "Folders", "NewWindow", f->new_window);
     g_key_file_set_boolean(kf, "Folders", "SingleClick", f->single_click);
