@@ -30,4 +30,11 @@ typedef enum { XD_MB_OK, XD_MB_YES_NO } xd_mb_buttons;
 int xd_message_box(GtkWindow *parent, const char *title, xd_mb_icon icon, xd_mb_buttons buttons,
                    gboolean default_no, const char *text);
 
+/* A message box with its own buttons (mnemonic labels, left to right).
+ * Returns the index of the button pressed; Escape and closing the box
+ * return cancel_index. */
+int xd_message_box_choose(GtkWindow *parent, const char *title, xd_mb_icon icon,
+                          const char *text, const char *const *labels, int n, int default_index,
+                          int cancel_index);
+
 #endif

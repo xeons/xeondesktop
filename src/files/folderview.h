@@ -65,6 +65,15 @@ guint64 xd_folder_view_get_size(XdFolderView *view, gboolean selected_only);
  * g_list_free_full(list, g_object_unref). */
 GList *xd_folder_view_get_selected_files(XdFolderView *view);
 
+/* Selects these files (GFile*), now or as soon as they appear (after a
+ * copy, say), until the user changes the selection. */
+void xd_folder_view_select_files(XdFolderView *view, GList *files);
+/* Where `file`'s name is drawn, in widget coordinates (scrolled into
+ * view first), for renaming in place. FALSE when it isn't shown. */
+gboolean xd_folder_view_get_name_area(XdFolderView *view, GFile *file, GdkRectangle *area);
+/* Files cut to the clipboard, drawn faded (nullptr: none). */
+void xd_folder_view_set_cut_files(XdFolderView *view, GList *files);
+
 /* Signals:
  *   "item-activated" (GFile *file, gboolean is_directory)
  *   "selection-changed" ()
@@ -72,6 +81,9 @@ GList *xd_folder_view_get_selected_files(XdFolderView *view);
  *   "load-error" (const char *message)
  *   "context-menu" (GdkEvent *event) - right-click (after updating the
  *       selection) or the Menu key / Shift+F10, when event is NULL
+ *   "files-dropped" (GStrv uris, GFile *folder, GdkDragAction action) -
+ *       files dropped into the folder (or a folder item), with the action
+ *       Windows would take (copy, move or shortcut)
  */
 
 G_END_DECLS

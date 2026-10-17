@@ -91,8 +91,11 @@ static GtkWidget *mb_button(GtkWidget *dialog, GtkWidget *row, const char *label
     return b;
 }
 
-int xd_message_box(GtkWindow *parent, const char *title, xd_mb_icon icon, xd_mb_buttons buttons,
-                   gboolean default_no, const char *text) {
+/* The dialog behind both message boxes: icon and text above a centred
+ * row of buttons, numbered from 0. */
+static GtkWidget *message_dialog(GtkWindow *parent, const char *title, xd_mb_icon icon,
+                                 const char *text, const char *const *labels, int n,
+                                 int focus_index) {
     static const char *const icons[] = {
         [XD_MB_ERROR] = "dialog-error",
         [XD_MB_WARNING] = "dialog-warning",
@@ -123,25 +126,43 @@ int xd_message_box(GtkWindow *parent, const char *title, xd_mb_icon icon, xd_mb_
 
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(row, GTK_ALIGN_CENTER);
-    GtkWidget *focus;
-    if (buttons == XD_MB_YES_NO) {
-        GtkWidget *yes = mb_button(dlg, row, "_Yes", GTK_RESPONSE_YES);
-        GtkWidget *no = mb_button(dlg, row, "_No", GTK_RESPONSE_NO);
-        focus = default_no ? no : yes;
-    } else {
-        focus = mb_button(dlg, row, "OK", GTK_RESPONSE_OK);
+    GtkWidget *focus = nullptr;
+    for (int i = 0; i < n; i++) {
+        GtkWidget *b = mb_button(dlg, row, labels[i], i);
+        if (i == focus_index || focus == nullptr)
+            focus = b;
     }
     gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box);
     gtk_widget_show_all(dlg);
-    gtk_widget_grab_default(focus);
-    gtk_widget_grab_focus(focus);
+    if (focus != nullptr) {
+        gtk_widget_grab_default(focus);
+        gtk_widget_grab_focus(focus);
+    }
+    return dlg;
+}
 
+int xd_message_box(GtkWindow *parent, const char *title, xd_mb_icon icon, xd_mb_buttons buttons,
+                   gboolean default_no, const char *text) {
+    static const char *const yes_no[] = {"_Yes", "_No"};
+    static const char *const ok[] = {"OK"};
+    bool question = buttons == XD_MB_YES_NO;
+    GtkWidget *dlg = message_dialog(parent, title, icon, text, question ? yes_no : ok,
+                                    question ? 2 : 1, question && default_no ? 1 : 0);
     int r = gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
-    if (buttons == XD_MB_YES_NO)
-        return r == GTK_RESPONSE_YES ? GTK_RESPONSE_YES : GTK_RESPONSE_NO;
+    if (question)
+        return r == 0 ? GTK_RESPONSE_YES : GTK_RESPONSE_NO;
     return GTK_RESPONSE_OK;
+}
+
+int xd_message_box_choose(GtkWindow *parent, const char *title, xd_mb_icon icon,
+                          const char *text, const char *const *labels, int n, int default_index,
+                          int cancel_index) {
+    GtkWidget *dlg = message_dialog(parent, title, icon, text, labels, n, default_index);
+    int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    gtk_widget_destroy(dlg);
+    return r >= 0 && r < n ? r : cancel_index;
 }
 
 static gboolean on_ctrl_tab([[maybe_unused]] GtkWidget *w, GdkEventKey *ev, gpointer notebook) {

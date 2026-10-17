@@ -236,6 +236,11 @@ static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void
         finish_cycle(server);
     wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
     wlr_seat_keyboard_notify_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
+    /* wlroots' drag grab swallows modifiers, but the client being dragged
+     * over picks copy, move or shortcut by Ctrl, Shift and Alt (Windows'
+     * rules): it still gets them. */
+    if (server->seat->drag != nullptr)
+        wlr_seat_keyboard_send_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
 }
 
 /* ---- keyboard move and size (window menu) -------------------------------------- */

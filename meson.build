@@ -349,6 +349,7 @@ executable(
 # xd-files: the file manager (GTK3), with the folder view (libxdfolder).
 folder_lib = static_library(
   'xdfolder',
+  'src/files/fileops.c',
   'src/files/folderview.c',
   'src/files/properties.c',
   c_args: ['-D_GNU_SOURCE'],

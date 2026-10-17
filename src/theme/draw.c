@@ -198,6 +198,12 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
     pango_layout_context_changed(layout);
     pango_layout_set_text(layout, utf8, -1);
     pango_layout_set_single_paragraph_mode(layout, true);
+    /* GDI never joins letters: no "fi" ligatures (Wine's Tahoma Bold has a
+     * broken one, drawn as a stray mark in "Confirm"). */
+    PangoAttrList *attrs = pango_attr_list_new();
+    pango_attr_list_insert(attrs, pango_attr_font_features_new("liga 0, clig 0"));
+    pango_layout_set_attributes(layout, attrs);
+    pango_attr_list_unref(attrs);
     return layout;
 }
 

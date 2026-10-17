@@ -71,6 +71,23 @@ struct _XdFolderView {
     double drag_x, drag_y;
     guint drag_button;
 
+    /* Files to select once they're loaded (URIs), and the one with the
+     * focus: the selection across a reload, or files a copy is about to
+     * create (`keep_sticky`: until they appear). */
+    GHashTable *keep;
+    char *keep_focus;
+    gboolean keep_sticky;
+    /* Cut to the clipboard: drawn faded until pasted (URIs). */
+    GHashTable *cut;
+
+    /* A drag over us: its URIs (asked for on entering), the folder under
+     * the pointer it would drop into (-1: this one), and whether the drop
+     * is waiting for the data. */
+    char **drag_uris;
+    gboolean drag_requested;
+    gboolean dropping;
+    int drop_index;
+
     /* Layout (content coordinates). */
     int cell_w, cell_h, cols, rows;
     int content_w, content_h;
@@ -78,7 +95,15 @@ struct _XdFolderView {
 };
 
 enum { PROP_0, PROP_HADJ, PROP_VADJ, PROP_HPOLICY, PROP_VPOLICY };
-enum { SIG_ACTIVATED, SIG_SELECTION, SIG_CONTENTS, SIG_ERROR, SIG_CONTEXT, SIG_COUNT };
+enum {
+    SIG_ACTIVATED,
+    SIG_SELECTION,
+    SIG_CONTENTS,
+    SIG_ERROR,
+    SIG_CONTEXT,
+    SIG_DROPPED,
+    SIG_COUNT
+};
 static guint signals[SIG_COUNT];
 
 G_DEFINE_TYPE_WITH_CODE(XdFolderView, xd_folder_view, GTK_TYPE_DRAWING_AREA,
@@ -490,11 +515,11 @@ static void draw_label_box(XdFolderView *v, cairo_t *cr, const char *text, int x
 }
 
 static void paint_pixbuf(cairo_t *cr, GdkPixbuf *pb, double x, double y, gboolean selected,
-                         const colors *c) {
+                         gboolean faded, const colors *c) {
     if (pb == nullptr)
         return;
     gdk_cairo_set_source_pixbuf(cr, pb, x, y);
-    cairo_paint(cr);
+    cairo_paint_with_alpha(cr, faded ? 0.5 : 1.0);
     if (selected) {
         /* Windows tints selected icons with the highlight colour. */
         GdkRGBA tint = c->sel_bg;
@@ -516,7 +541,14 @@ static void paint_pixbuf(cairo_t *cr, GdkPixbuf *pb, double x, double y, gboolea
 static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboolean has_focus) {
     item *it = g_ptr_array_index(v->shown, (guint)i);
     GdkRectangle r = item_rect(v, i);
-    gboolean sel = it->selected;
+    /* The folder a drag would drop into shows as selected. */
+    gboolean sel = it->selected || i == v->drop_index;
+    gboolean faded = FALSE;
+    if (v->cut != nullptr) {
+        char *uri = g_file_get_uri(it->file);
+        faded = g_hash_table_contains(v->cut, uri);
+        g_free(uri);
+    }
     gboolean foc = has_focus && i == v->focus;
     switch (v->mode) {
     case XD_VIEW_THUMBNAILS: {
@@ -536,7 +568,7 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
             pb = item_icon(v, it, MIN(box / 2, 64));
         if (pb != nullptr)
             paint_pixbuf(cr, pb, bx + (box - gdk_pixbuf_get_width(pb)) / 2.0,
-                         by + (box - gdk_pixbuf_get_height(pb)) / 2.0, FALSE, c);
+                         by + (box - gdk_pixbuf_get_height(pb)) / 2.0, FALSE, faded, c);
         draw_label_box(v, cr, it->name, r.x + 2, by + box + 4, r.width - 4, 1, PANGO_ALIGN_CENTER,
                        sel, c, foc);
         break;
@@ -544,7 +576,7 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
     case XD_VIEW_ICONS: {
         int px = 32;
         GdkPixbuf *pb = item_icon(v, it, px);
-        paint_pixbuf(cr, pb, r.x + (r.width - px) / 2.0, r.y + 4, sel, c);
+        paint_pixbuf(cr, pb, r.x + (r.width - px) / 2.0, r.y + 4, sel, faded, c);
         draw_label_box(v, cr, it->name, r.x + 2, r.y + px + 8, r.width - 4, 2, PANGO_ALIGN_CENTER,
                        sel, c, foc);
         break;
@@ -552,7 +584,7 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
     case XD_VIEW_TILES: {
         int px = 48;
         GdkPixbuf *pb = item_icon(v, it, px);
-        paint_pixbuf(cr, pb, r.x + 6, r.y + (r.height - px) / 2.0, sel, c);
+        paint_pixbuf(cr, pb, r.x + 6, r.y + (r.height - px) / 2.0, sel, faded, c);
         int tx = r.x + px + 14;
         int tw = r.width - px - 22;
         draw_label_box(v, cr, it->name, tx, r.y + 8, tw, 1, PANGO_ALIGN_LEFT, sel, c, foc);
@@ -563,14 +595,14 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
     }
     case XD_VIEW_LIST: {
         GdkPixbuf *pb = item_icon(v, it, LIST_ICON);
-        paint_pixbuf(cr, pb, r.x + 1, r.y + 1, sel, c);
+        paint_pixbuf(cr, pb, r.x + 1, r.y + 1, sel, faded, c);
         draw_label_box(v, cr, it->name, r.x + LIST_ICON + 5, r.y + 1,
                        r.width - LIST_ICON - 6, 1, PANGO_ALIGN_LEFT, sel, c, foc);
         break;
     }
     case XD_VIEW_DETAILS: {
         GdkPixbuf *pb = item_icon(v, it, LIST_ICON);
-        paint_pixbuf(cr, pb, r.x + 4, r.y + 1, sel, c);
+        paint_pixbuf(cr, pb, r.x + 4, r.y + 1, sel, faded, c);
         int x = r.x;
         draw_label_box(v, cr, it->name, x + LIST_ICON + 8, r.y + 1,
                        v->col_w[XD_SORT_NAME] - LIST_ICON - 12, 1, PANGO_ALIGN_LEFT, sel, c, foc);
@@ -677,9 +709,43 @@ static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cr) {
 
 /* ---- loading ------------------------------------------------------------------------ */
 
+/* Selects the kept files that are here; returns how many. */
+static guint apply_keep(XdFolderView *v) {
+    if (v->keep == nullptr)
+        return 0;
+    guint found = 0;
+    for (guint k = 0; k < v->shown->len; k++) {
+        item *it = g_ptr_array_index(v->shown, k);
+        char *uri = g_file_get_uri(it->file);
+        it->selected = g_hash_table_contains(v->keep, uri);
+        if (it->selected) {
+            found++;
+            if (v->keep_focus == nullptr || strcmp(uri, v->keep_focus) == 0 || found == 1) {
+                v->focus = (int)k;
+                v->anchor = (int)k;
+            }
+        }
+        g_free(uri);
+    }
+    return found;
+}
+
+static void forget_keep(XdFolderView *v) {
+    g_clear_pointer(&v->keep, g_hash_table_unref);
+    g_clear_pointer(&v->keep_focus, g_free);
+    v->keep_sticky = FALSE;
+}
+
 static void loading_done(XdFolderView *v) {
     g_clear_object(&v->cancel);
     refilter(v);
+    if (v->keep != nullptr) {
+        guint found = apply_keep(v);
+        if (!v->keep_sticky || found >= g_hash_table_size(v->keep))
+            forget_keep(v);
+        if (found > 0)
+            ensure_visible(v, v->focus);
+    }
     g_signal_emit(v, signals[SIG_CONTENTS], 0);
     g_signal_emit(v, signals[SIG_SELECTION], 0);
 }
@@ -797,6 +863,7 @@ static void activate(XdFolderView *v, int i) {
 static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) {
     XdFolderView *v = XD_FOLDER_VIEW(widget);
     gtk_widget_grab_focus(widget);
+    forget_keep(v);
     if (v->mode == XD_VIEW_DETAILS && ev->y < HEADER_H && ev->type == GDK_BUTTON_PRESS) {
         /* Header click sorts; clicking the sorted column reverses it. */
         double x = ev->x + hval(v);
@@ -891,6 +958,165 @@ static void folder_view_drag_data_get(GtkWidget *widget, [[maybe_unused]] GdkDra
     g_list_free_full(files, g_object_unref);
 }
 
+/* ---- dropping files in ------------------------------------------------------------------ */
+
+static void forget_drag(XdFolderView *v) {
+    g_clear_pointer(&v->drag_uris, g_strfreev);
+    v->drag_requested = FALSE;
+    if (v->drop_index != -1) {
+        v->drop_index = -1;
+        gtk_widget_queue_draw(GTK_WIDGET(v));
+    }
+}
+
+static char *filesystem_id(GFile *f) {
+    GFileInfo *info = g_file_query_info(f, G_FILE_ATTRIBUTE_ID_FILESYSTEM,
+                                        G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
+    char *id = info != nullptr
+                   ? g_strdup(g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM))
+                   : nullptr;
+    g_clear_object(&info);
+    return id;
+}
+
+/* The folder a drop at (x, y) goes into: a folder item under the pointer
+ * (not one being dragged), else this folder. Sets drop_index. */
+static GFile *drop_folder(XdFolderView *v, GdkDragContext *ctx, int x, int y) {
+    int i = index_at(v, x, y);
+    item *it = item_at(v, i);
+    gboolean own = gtk_drag_get_source_widget(ctx) == GTK_WIDGET(v);
+    int target = it != nullptr && it->is_dir && !(own && it->selected) ? i : -1;
+    if (target != v->drop_index) {
+        v->drop_index = target;
+        gtk_widget_queue_draw(GTK_WIDGET(v));
+    }
+    return target >= 0 ? it->file : v->dir;
+}
+
+/* Windows' rules: Ctrl copies, Shift moves, Ctrl+Shift or Alt makes
+ * shortcuts; otherwise files move within a drive and copy between drives.
+ * 0 when the drop would do nothing (onto itself, or into the folder the
+ * files are already in). */
+static constexpr GdkDragAction NO_ACTION = (GdkDragAction)0;
+
+static GdkDragAction drop_action(XdFolderView *v, GdkDragContext *ctx, char **uris, GFile *dest) {
+    if (dest == nullptr || uris == nullptr || uris[0] == nullptr)
+        return NO_ACTION;
+    GdkModifierType mods = (GdkModifierType)0;
+    GdkDevice *dev = gdk_drag_context_get_device(ctx);
+    GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(v));
+    if (dev != nullptr && win != nullptr)
+        gdk_window_get_device_position(win, dev, nullptr, nullptr, &mods);
+    gboolean ctrl = (mods & GDK_CONTROL_MASK) != 0;
+    gboolean shift = (mods & GDK_SHIFT_MASK) != 0;
+    gboolean alt = (mods & GDK_MOD1_MASK) != 0;
+    GdkDragAction action;
+    if ((ctrl && shift) || alt) {
+        action = GDK_ACTION_LINK;
+    } else if (ctrl) {
+        action = GDK_ACTION_COPY;
+    } else if (shift) {
+        action = GDK_ACTION_MOVE;
+    } else {
+        GFile *first = g_file_new_for_uri(uris[0]);
+        char *a = filesystem_id(first);
+        char *b = filesystem_id(dest);
+        action = a != nullptr && g_strcmp0(a, b) == 0 ? GDK_ACTION_MOVE : GDK_ACTION_COPY;
+        g_free(a);
+        g_free(b);
+        g_object_unref(first);
+    }
+    gboolean all_here = TRUE;
+    for (char **u = uris; *u != nullptr; u++) {
+        GFile *f = g_file_new_for_uri(*u);
+        GFile *parent = g_file_get_parent(f);
+        gboolean into_itself = g_file_equal(f, dest) || g_file_has_prefix(dest, f);
+        all_here = all_here && parent != nullptr && g_file_equal(parent, dest);
+        g_clear_object(&parent);
+        g_object_unref(f);
+        if (into_itself)
+            return NO_ACTION;
+    }
+    if (all_here && action == GDK_ACTION_MOVE)
+        return NO_ACTION;
+    GdkDragAction offered = gdk_drag_context_get_actions(ctx);
+    /* Wayland has no "link" action: a shortcut is made from a copy. */
+    GdkDragAction needed = action == GDK_ACTION_LINK ? GDK_ACTION_COPY : action;
+    if (!(offered & needed))
+        action = (offered & GDK_ACTION_COPY) ? GDK_ACTION_COPY : NO_ACTION;
+    return action;
+}
+
+/* What to tell the source: Wayland's actions are copy, move and ask. */
+static GdkDragAction protocol_action(GdkDragContext *ctx, GdkDragAction action) {
+    if (action == GDK_ACTION_LINK && !(gdk_drag_context_get_actions(ctx) & GDK_ACTION_LINK))
+        return GDK_ACTION_COPY;
+    return action;
+}
+
+static gboolean folder_view_drag_motion(GtkWidget *widget, GdkDragContext *ctx, gint x, gint y,
+                                        guint time) {
+    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    GdkAtom target = gtk_drag_dest_find_target(widget, ctx, nullptr);
+    if (target == GDK_NONE || v->dir == nullptr) {
+        gdk_drag_status(ctx, NO_ACTION, time);
+        return TRUE;
+    }
+    GFile *dest = drop_folder(v, ctx, x, y);
+    if (v->drag_uris == nullptr) {
+        /* The action depends on the files: ask for them first. */
+        if (!v->drag_requested) {
+            v->drag_requested = TRUE;
+            gtk_drag_get_data(widget, ctx, target, time);
+        }
+        gdk_drag_status(ctx, NO_ACTION, time);
+        return TRUE;
+    }
+    gdk_drag_status(ctx, protocol_action(ctx, drop_action(v, ctx, v->drag_uris, dest)), time);
+    return TRUE;
+}
+
+static void folder_view_drag_leave(GtkWidget *widget, [[maybe_unused]] GdkDragContext *ctx,
+                                   [[maybe_unused]] guint time) {
+    forget_drag(XD_FOLDER_VIEW(widget));
+}
+
+static gboolean folder_view_drag_drop(GtkWidget *widget, GdkDragContext *ctx,
+                                      [[maybe_unused]] gint x, [[maybe_unused]] gint y,
+                                      guint time) {
+    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    GdkAtom target = gtk_drag_dest_find_target(widget, ctx, nullptr);
+    if (target == GDK_NONE)
+        return FALSE;
+    v->dropping = TRUE;
+    gtk_drag_get_data(widget, ctx, target, time);
+    return TRUE;
+}
+
+static void folder_view_drag_data_received(GtkWidget *widget, GdkDragContext *ctx, gint x,
+                                           gint y, GtkSelectionData *sel,
+                                           [[maybe_unused]] guint info, guint time) {
+    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    char **uris = gtk_selection_data_get_uris(sel);
+    GFile *dest = drop_folder(v, ctx, x, y);
+    GdkDragAction action = drop_action(v, ctx, uris, dest);
+    if (!v->dropping) {
+        g_strfreev(v->drag_uris);
+        v->drag_uris = uris != nullptr ? uris : g_new0(char *, 1);
+        gdk_drag_status(ctx, protocol_action(ctx, action), time);
+        return;
+    }
+    v->dropping = FALSE;
+    GFile *target = g_object_ref(dest);
+    forget_drag(v);
+    /* We do the move ourselves: the source mustn't delete anything. */
+    gtk_drag_finish(ctx, action != NO_ACTION, FALSE, time);
+    if (action != NO_ACTION)
+        g_signal_emit(v, signals[SIG_DROPPED], 0, uris, target, action);
+    g_object_unref(target);
+    g_strfreev(uris);
+}
+
 static int move_target(XdFolderView *v, guint key) {
     int n = (int)v->shown->len;
     int f = MAX(v->focus, 0);
@@ -924,6 +1150,7 @@ static int move_target(XdFolderView *v, guint key) {
 
 static gboolean folder_view_key_press(GtkWidget *widget, GdkEventKey *ev) {
     XdFolderView *v = XD_FOLDER_VIEW(widget);
+    forget_keep(v);
     int n = (int)v->shown->len;
     gboolean ctrl = ev->state & GDK_CONTROL_MASK;
     gboolean shift = ev->state & GDK_SHIFT_MASK;
@@ -939,9 +1166,9 @@ static gboolean folder_view_key_press(GtkWidget *widget, GdkEventKey *ev) {
         xd_folder_view_select_all(v);
         return TRUE;
     }
-    if (ctrl && ev->keyval == GDK_KEY_space && item_at(v, v->focus) != nullptr) {
-        item *it = item_at(v, v->focus);
-        it->selected = !it->selected;
+    item *focused = item_at(v, v->focus);
+    if (ctrl && ev->keyval == GDK_KEY_space && focused != nullptr) {
+        focused->selected = !focused->selected;
         selection_changed(v);
         return TRUE;
     }
@@ -1056,6 +1283,9 @@ static void folder_view_dispose(GObject *obj) {
         g_clear_object(&v->vadj);
     }
     g_clear_object(&v->dir);
+    forget_keep(v);
+    forget_drag(v);
+    g_clear_pointer(&v->cut, g_hash_table_unref);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->dispose(obj);
 }
 
@@ -1079,6 +1309,10 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
     wc->motion_notify_event = folder_view_motion;
     wc->drag_begin = folder_view_drag_begin;
     wc->drag_data_get = folder_view_drag_data_get;
+    wc->drag_motion = folder_view_drag_motion;
+    wc->drag_leave = folder_view_drag_leave;
+    wc->drag_drop = folder_view_drag_drop;
+    wc->drag_data_received = folder_view_drag_data_received;
     wc->key_press_event = folder_view_key_press;
     wc->size_allocate = folder_view_size_allocate;
     g_object_class_override_property(oc, PROP_HADJ, "hadjustment");
@@ -1101,6 +1335,10 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
     signals[SIG_CONTEXT] = g_signal_new("context-menu", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
                                         0, nullptr, nullptr, nullptr, G_TYPE_NONE, 1,
                                         GDK_TYPE_EVENT | G_SIGNAL_TYPE_STATIC_SCOPE);
+    signals[SIG_DROPPED] = g_signal_new("files-dropped", G_TYPE_FROM_CLASS(klass),
+                                        G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr,
+                                        G_TYPE_NONE, 3, G_TYPE_STRV, G_TYPE_FILE,
+                                        GDK_TYPE_DRAG_ACTION);
 }
 
 static void xd_folder_view_init(XdFolderView *v) {
@@ -1110,7 +1348,11 @@ static void xd_folder_view_init(XdFolderView *v) {
     v->thumb = XD_THUMB_DEFAULT;
     v->focus = -1;
     v->anchor = -1;
+    v->drop_index = -1;
     gtk_widget_set_can_focus(GTK_WIDGET(v), TRUE);
+    gtk_drag_dest_set(GTK_WIDGET(v), (GtkDestDefaults)0, nullptr, 0,
+                      (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK));
+    gtk_drag_dest_add_uri_targets(GTK_WIDGET(v));
     gtk_widget_add_events(GTK_WIDGET(v), GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
                                              GDK_BUTTON1_MOTION_MASK | GDK_KEY_PRESS_MASK);
 }
@@ -1122,6 +1364,7 @@ GtkWidget *xd_folder_view_new(void) { return g_object_new(XD_TYPE_FOLDER_VIEW, n
 void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
     g_return_if_fail(G_IS_FILE(dir));
     g_set_object(&v->dir, dir);
+    forget_keep(v);
     if (v->monitor != nullptr) {
         g_signal_handlers_disconnect_by_data(v->monitor, v);
         g_file_monitor_cancel(v->monitor);
@@ -1142,6 +1385,17 @@ GFile *xd_folder_view_get_location(XdFolderView *v) { return v->dir; }
 void xd_folder_view_reload(XdFolderView *v) {
     if (v->dir == nullptr)
         return;
+    /* The selection survives (unless files are already waiting to be). */
+    if (v->keep == nullptr) {
+        v->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+        for (guint k = 0; k < v->shown->len; k++) {
+            item *it = g_ptr_array_index(v->shown, k);
+            if (it->selected)
+                g_hash_table_add(v->keep, g_file_get_uri(it->file));
+        }
+        item *f = item_at(v, v->focus);
+        v->keep_focus = f != nullptr ? g_file_get_uri(f->file) : nullptr;
+    }
     double h = hval(v);
     double y = vval(v);
     start_loading(v);
@@ -1229,4 +1483,72 @@ guint64 xd_folder_view_get_size(XdFolderView *v, gboolean selected_only) {
             total += it->size;
     }
     return total;
+}
+
+void xd_folder_view_select_files(XdFolderView *v, GList *files) {
+    forget_keep(v);
+    if (files == nullptr)
+        return;
+    v->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    for (GList *l = files; l != nullptr; l = l->next)
+        g_hash_table_add(v->keep, g_file_get_uri(l->data));
+    v->keep_focus = g_file_get_uri(files->data);
+    v->keep_sticky = TRUE;
+    guint found = apply_keep(v);
+    if (found > 0)
+        ensure_visible(v, v->focus);
+    /* What isn't here yet is selected when it appears. */
+    if (found >= g_hash_table_size(v->keep))
+        forget_keep(v);
+    selection_changed(v);
+}
+
+gboolean xd_folder_view_get_name_area(XdFolderView *v, GFile *file, GdkRectangle *area) {
+    int i = -1;
+    for (guint k = 0; k < v->shown->len; k++) {
+        if (g_file_equal(((item *)g_ptr_array_index(v->shown, k))->file, file)) {
+            i = (int)k;
+            break;
+        }
+    }
+    if (i < 0)
+        return FALSE;
+    ensure_visible(v, i);
+    GdkRectangle r = item_rect(v, i);
+    GdkRectangle a = {r.x + 2, r.y, r.width - 4, ROW_H + 4};
+    switch (v->mode) {
+    case XD_VIEW_THUMBNAILS:
+        a.y = r.y + v->thumb + 8;
+        break;
+    case XD_VIEW_ICONS:
+        a.y = r.y + 32 + 8;
+        break;
+    case XD_VIEW_TILES:
+        a = (GdkRectangle){r.x + 48 + 14, r.y + 6, r.width - 48 - 22, ROW_H + 4};
+        break;
+    case XD_VIEW_LIST:
+        a = (GdkRectangle){r.x + LIST_ICON + 3, r.y - 2, MAX(r.width - LIST_ICON - 4, 160),
+                           ROW_H + 4};
+        break;
+    case XD_VIEW_DETAILS:
+        a = (GdkRectangle){r.x + LIST_ICON + 6, r.y - 2, v->col_w[XD_SORT_NAME] - LIST_ICON - 10,
+                           ROW_H + 4};
+        break;
+    case XD_VIEW_COUNT:
+        break;
+    }
+    a.x -= ifloor(hval(v));
+    a.y -= ifloor(vval(v));
+    *area = a;
+    return TRUE;
+}
+
+void xd_folder_view_set_cut_files(XdFolderView *v, GList *files) {
+    g_clear_pointer(&v->cut, g_hash_table_unref);
+    if (files != nullptr) {
+        v->cut = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+        for (GList *l = files; l != nullptr; l = l->next)
+            g_hash_table_add(v->cut, g_file_get_uri(l->data));
+    }
+    gtk_widget_queue_draw(GTK_WIDGET(v));
 }

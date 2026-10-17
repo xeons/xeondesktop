@@ -9,6 +9,7 @@
 #include <stdlib.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "fileops.h"
 #include "folderview.h"
 #include "properties.h"
 
@@ -29,6 +30,17 @@ typedef struct explorer {
     GtkWidget *back_button, *forward_button, *up_button;
     GtkWidget *folders_toggle;
     GtkWidget *view_items[XD_VIEW_COUNT];
+    /* Menu items that need a selection, or files on the clipboard. */
+    GPtrArray *need_selection;
+    GPtrArray *need_clipboard;
+    /* Renaming in place: an entry over the item's name. `pending_rename`
+     * waits for a new item to appear. */
+    GtkWidget *overlay;
+    GtkWidget *rename_entry;
+    GFile *renaming;
+    GFile *pending_rename;
+    gboolean committing;
+    guint commit_idle;
     GList *back;    /* GFile*, most recent first */
     GList *forward;
     gboolean syncing; /* updating widgets programmatically */
@@ -292,8 +304,19 @@ static void on_load_error([[maybe_unused]] XdFolderView *view, const char *messa
     gtk_label_set_text(GTK_LABEL(e->status), message);
 }
 
+static void begin_rename(explorer *e, GFile *file);
+
 static void on_contents([[maybe_unused]] XdFolderView *view, gpointer data) {
-    update_status(data);
+    explorer *e = data;
+    update_status(e);
+    /* A new item to name, now that it's loaded. */
+    if (e->pending_rename != nullptr) {
+        GFile *f = g_object_ref(e->pending_rename);
+        GdkRectangle a;
+        if (xd_folder_view_get_name_area(e->view, f, &a))
+            begin_rename(e, f);
+        g_object_unref(f);
+    }
 }
 
 static void on_selection([[maybe_unused]] XdFolderView *view, gpointer data) {
@@ -394,6 +417,406 @@ static void cb_about([[maybe_unused]] GtkWidget *w, gpointer d) {
                           GTK_LICENSE_MIT_X11, "logo-icon-name", "system-file-manager", nullptr);
 }
 
+/* ---- file operations ------------------------------------------------------------- */
+
+static GFile *current_dir(explorer *e) { return xd_folder_view_get_location(e->view); }
+
+/* Selects what an operation made, when it's in this folder. */
+static void select_created(GList *created, gpointer data) {
+    explorer *e = data;
+    GFile *dir = current_dir(e);
+    GList *here = nullptr;
+    for (GList *l = created; l != nullptr; l = l->next) {
+        GFile *parent = g_file_get_parent(l->data);
+        if (parent != nullptr && dir != nullptr && g_file_equal(parent, dir))
+            here = g_list_prepend(here, l->data);
+        g_clear_object(&parent);
+    }
+    here = g_list_reverse(here);
+    if (here != nullptr)
+        xd_folder_view_select_files(e->view, here);
+    g_list_free(here);
+}
+
+static void copy_or_cut(explorer *e, gboolean cut) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    if (files == nullptr)
+        return;
+    xd_clipboard_set_files(e->window, files, cut);
+    xd_folder_view_set_cut_files(e->view, cut ? files : nullptr);
+    g_list_free_full(files, g_object_unref);
+}
+
+static void after_paste(GList *created, gpointer data) {
+    explorer *e = data;
+    select_created(created, e);
+}
+
+static void after_cut_paste(GList *created, gpointer data) {
+    explorer *e = data;
+    /* Cut files are gone once pasted: so is the clipboard's list. */
+    xd_clipboard_clear_cut(e->window);
+    xd_folder_view_set_cut_files(e->view, nullptr);
+    select_created(created, e);
+}
+
+/* A paste waiting for the clipboard, which may outlive the window. */
+typedef struct paste_request {
+    GtkWidget *window; /* weak */
+    explorer *e;
+    GFile *dest;
+    gboolean shortcut;
+} paste_request;
+
+static void got_clipboard(GList *files, gboolean cut, gpointer data) {
+    paste_request *r = data;
+    if (r->window != nullptr) {
+        g_object_remove_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
+        if (files != nullptr) {
+            XdFileOpKind kind = r->shortcut ? XD_FILEOP_LINK : cut ? XD_FILEOP_MOVE : XD_FILEOP_COPY;
+            xd_fileop_start(GTK_WINDOW(r->window), kind, files, r->dest,
+                            kind == XD_FILEOP_MOVE ? after_cut_paste : after_paste, r->e);
+        }
+    }
+    g_object_unref(r->dest);
+    g_free(r);
+}
+
+static void paste_into(explorer *e, GFile *dest, gboolean shortcut) {
+    if (dest == nullptr)
+        return;
+    paste_request *r = g_new0(paste_request, 1);
+    r->window = e->window;
+    g_object_add_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
+    r->e = e;
+    r->dest = g_object_ref(dest);
+    r->shortcut = shortcut;
+    xd_clipboard_get_files(e->window, got_clipboard, r);
+}
+
+/* Context menu Paste on a single folder pastes into it. */
+static GFile *paste_target(explorer *e) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    GFile *target = nullptr;
+    if (files != nullptr && files->next == nullptr &&
+        g_file_query_file_type(files->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
+            G_FILE_TYPE_DIRECTORY)
+        target = g_object_ref(files->data);
+    g_list_free_full(files, g_object_unref);
+    return target != nullptr ? target : g_object_ref(current_dir(e));
+}
+
+static void delete_selected(explorer *e, gboolean permanently) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    xd_fileop_start(GTK_WINDOW(e->window), permanently ? XD_FILEOP_DELETE : XD_FILEOP_TRASH,
+                    files, nullptr, nullptr, nullptr);
+    g_list_free_full(files, g_object_unref);
+}
+
+/* Edit > Copy To Folder... / Move To Folder... */
+static void copy_to_folder(explorer *e, gboolean move) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    if (files == nullptr)
+        return;
+    GtkWidget *dlg = gtk_file_chooser_dialog_new(
+        move ? "Move Items" : "Copy Items", GTK_WINDOW(e->window),
+        GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel", GTK_RESPONSE_CANCEL,
+        move ? "_Move" : "_Copy", GTK_RESPONSE_ACCEPT, nullptr);
+    gtk_file_chooser_set_current_folder_file(GTK_FILE_CHOOSER(dlg), current_dir(e), nullptr);
+    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT) {
+        GFile *dest = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dlg));
+        if (dest != nullptr) {
+            xd_fileop_start(GTK_WINDOW(e->window), move ? XD_FILEOP_MOVE : XD_FILEOP_COPY, files,
+                            dest, select_created, e);
+            g_object_unref(dest);
+        }
+    }
+    gtk_widget_destroy(dlg);
+    g_list_free_full(files, g_object_unref);
+}
+
+/* ---- renaming in place ------------------------------------------------------------- */
+
+static void place_rename_entry(explorer *e) {
+    GdkRectangle a;
+    if (e->renaming == nullptr || !xd_folder_view_get_name_area(e->view, e->renaming, &a))
+        return;
+    int x = 0, y = 0;
+    gtk_widget_translate_coordinates(GTK_WIDGET(e->view), e->overlay, a.x, a.y, &x, &y);
+    gtk_widget_set_margin_start(e->rename_entry, MAX(x, 0));
+    gtk_widget_set_margin_top(e->rename_entry, MAX(y, 0));
+    gtk_widget_set_size_request(e->rename_entry, MAX(a.width, 60), -1);
+}
+
+static void end_rename(explorer *e) {
+    g_clear_object(&e->renaming);
+    gtk_widget_hide(e->rename_entry);
+    gtk_widget_grab_focus(GTK_WIDGET(e->view));
+}
+
+static void begin_rename(explorer *e, GFile *file) {
+    g_clear_object(&e->pending_rename);
+    GdkRectangle a;
+    if (!xd_folder_view_get_name_area(e->view, file, &a)) {
+        /* Not loaded yet (a new folder): when it appears. */
+        e->pending_rename = g_object_ref(file);
+        return;
+    }
+    GList *one = g_list_append(nullptr, file);
+    xd_folder_view_select_files(e->view, one);
+    g_list_free(one);
+    g_set_object(&e->renaming, file);
+    char *base = g_file_get_basename(file);
+    char *name = g_filename_display_name(base);
+    gtk_entry_set_text(GTK_ENTRY(e->rename_entry), name);
+    g_free(name);
+    g_free(base);
+    place_rename_entry(e);
+    gtk_widget_show(e->rename_entry);
+    gtk_widget_grab_focus(e->rename_entry);
+    gtk_editable_select_region(GTK_EDITABLE(e->rename_entry), 0, -1);
+}
+
+static void rename_selected(explorer *e) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    if (files != nullptr)
+        begin_rename(e, files->data);
+    g_list_free_full(files, g_object_unref);
+}
+
+/* Returns FALSE to keep editing (the name was refused). */
+static gboolean commit_rename(explorer *e) {
+    if (e->renaming == nullptr || e->committing)
+        return TRUE;
+    const char *text = gtk_entry_get_text(GTK_ENTRY(e->rename_entry));
+    char *base = g_file_get_basename(e->renaming);
+    char *old = g_filename_display_name(base);
+    g_free(base);
+    gboolean done = TRUE;
+    e->committing = TRUE;
+    if (*text != '\0' && strcmp(text, old) != 0) {
+        if (strchr(text, '/') != nullptr) {
+            xd_message_box(GTK_WINDOW(e->window), "Rename", XD_MB_ERROR, XD_MB_OK, FALSE,
+                           "A file name cannot contain the following character:\n        /");
+            done = FALSE;
+        } else {
+            GError *err = nullptr;
+            GFile *renamed = g_file_set_display_name(e->renaming, text, nullptr, &err);
+            if (renamed != nullptr) {
+                GList *one = g_list_append(nullptr, renamed);
+                xd_folder_view_select_files(e->view, one);
+                g_list_free(one);
+                g_object_unref(renamed);
+            } else {
+                char *msg =
+                    g_error_matches(err, G_IO_ERROR, G_IO_ERROR_EXISTS)
+                        ? g_strdup_printf("Cannot rename %s: A file with the name you specified "
+                                          "already exists. Specify a different file name.",
+                                          old)
+                        : g_strdup_printf("Cannot rename %s: %s", old, err->message);
+                xd_message_box(GTK_WINDOW(e->window), "Error Renaming File or Folder",
+                               XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+                g_free(msg);
+                g_error_free(err);
+                done = FALSE;
+            }
+        }
+    }
+    e->committing = FALSE;
+    g_free(old);
+    if (done) {
+        end_rename(e);
+    } else {
+        gtk_widget_grab_focus(e->rename_entry);
+        gtk_editable_select_region(GTK_EDITABLE(e->rename_entry), 0, -1);
+    }
+    return done;
+}
+
+static void on_rename_activate([[maybe_unused]] GtkEntry *entry, gpointer data) {
+    commit_rename(data);
+}
+
+static gboolean on_rename_key([[maybe_unused]] GtkWidget *w, GdkEventKey *ev, gpointer data) {
+    explorer *e = data;
+    if (ev->keyval == GDK_KEY_Escape) {
+        end_rename(e);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/* After a focus change has settled: commit unless the entry has the focus
+ * again (a message box came and went). */
+static void commit_after_focus_change(gpointer data) {
+    explorer *e = data;
+    e->commit_idle = 0;
+    if (e->renaming != nullptr && !gtk_widget_has_focus(e->rename_entry) &&
+        gtk_window_is_active(GTK_WINDOW(e->window)))
+        commit_rename(e);
+}
+
+static gboolean on_rename_focus_out([[maybe_unused]] GtkWidget *w,
+                                    [[maybe_unused]] GdkEventFocus *ev, gpointer data) {
+    explorer *e = data;
+    /* Clicking elsewhere in the window keeps the new name, as in Windows;
+     * the window losing the focus leaves the name being edited. */
+    if (!e->committing && e->renaming != nullptr &&
+        gtk_window_is_active(GTK_WINDOW(e->window)))
+        if (e->commit_idle == 0)
+            e->commit_idle = g_idle_add_once(commit_after_focus_change, e);
+    return FALSE;
+}
+
+static void on_view_scrolled([[maybe_unused]] GtkAdjustment *a, gpointer data) {
+    place_rename_entry(data);
+}
+
+/* File > New > Folder / Text Document: made, then named in place. */
+static void new_item(explorer *e, gboolean folder) {
+    GFile *dir = current_dir(e);
+    if (dir == nullptr)
+        return;
+    char *name = folder ? xd_unique_name(dir, "New Folder", nullptr)
+                        : xd_unique_name(dir, "New Text Document", ".txt");
+    GFile *f = g_file_get_child(dir, name);
+    g_free(name);
+    GError *err = nullptr;
+    gboolean ok;
+    if (folder) {
+        ok = g_file_make_directory(f, nullptr, &err);
+    } else {
+        GFileOutputStream *out = g_file_create(f, G_FILE_CREATE_NONE, nullptr, &err);
+        ok = out != nullptr;
+        g_clear_object(&out);
+    }
+    if (ok) {
+        xd_folder_view_reload(e->view);
+        begin_rename(e, f);
+    } else {
+        char *msg = g_strdup_printf("Unable to create the %s: %s", folder ? "folder" : "file",
+                                    err->message);
+        xd_message_box(GTK_WINDOW(e->window), "Error", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+        g_free(msg);
+        g_error_free(err);
+    }
+    g_object_unref(f);
+}
+
+static void create_shortcut(explorer *e) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    xd_fileop_start(GTK_WINDOW(e->window), XD_FILEOP_LINK, files, current_dir(e), select_created,
+                    e);
+    g_list_free_full(files, g_object_unref);
+}
+
+static void on_files_dropped([[maybe_unused]] XdFolderView *view, char **uris, GFile *folder,
+                             GdkDragAction action, gpointer data) {
+    explorer *e = data;
+    GList *files = nullptr;
+    for (char **u = uris; u != nullptr && *u != nullptr; u++)
+        files = g_list_prepend(files, g_file_new_for_uri(*u));
+    files = g_list_reverse(files);
+    XdFileOpKind kind = action == GDK_ACTION_MOVE   ? XD_FILEOP_MOVE
+                        : action == GDK_ACTION_LINK ? XD_FILEOP_LINK
+                                                    : XD_FILEOP_COPY;
+    xd_fileop_start(GTK_WINDOW(e->window), kind, files, folder, select_created, e);
+    g_list_free_full(files, g_object_unref);
+}
+
+static void cb_cut([[maybe_unused]] GtkWidget *w, gpointer d) { copy_or_cut(d, TRUE); }
+static void cb_copy([[maybe_unused]] GtkWidget *w, gpointer d) { copy_or_cut(d, FALSE); }
+static void cb_paste([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    paste_into(e, current_dir(e), FALSE);
+}
+static void cb_paste_into([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    GFile *target = paste_target(e);
+    paste_into(e, target, FALSE);
+    g_object_unref(target);
+}
+static void cb_paste_shortcut([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    paste_into(e, current_dir(e), TRUE);
+}
+static void cb_copy_to([[maybe_unused]] GtkWidget *w, gpointer d) { copy_to_folder(d, FALSE); }
+static void cb_move_to([[maybe_unused]] GtkWidget *w, gpointer d) { copy_to_folder(d, TRUE); }
+static void cb_delete([[maybe_unused]] GtkWidget *w, gpointer d) { delete_selected(d, FALSE); }
+static void cb_rename([[maybe_unused]] GtkWidget *w, gpointer d) { rename_selected(d); }
+static void cb_new_folder([[maybe_unused]] GtkWidget *w, gpointer d) { new_item(d, TRUE); }
+static void cb_new_text([[maybe_unused]] GtkWidget *w, gpointer d) { new_item(d, FALSE); }
+static void cb_shortcut([[maybe_unused]] GtkWidget *w, gpointer d) { create_shortcut(d); }
+
+/* The view's keys for files: Delete (Shift: permanently), F2, Ctrl+X/C/V. */
+static gboolean file_key(explorer *e, GdkEventKey *ev) {
+    gboolean ctrl = (ev->state & GDK_CONTROL_MASK) != 0;
+    gboolean shift = (ev->state & GDK_SHIFT_MASK) != 0;
+    gboolean selected = xd_folder_view_get_selected_count(e->view) > 0;
+    switch (ev->keyval) {
+    case GDK_KEY_Delete:
+    case GDK_KEY_KP_Delete:
+        if (selected)
+            delete_selected(e, shift);
+        return TRUE;
+    case GDK_KEY_F2:
+        rename_selected(e);
+        return TRUE;
+    case GDK_KEY_x:
+    case GDK_KEY_X:
+        if (!ctrl)
+            return FALSE;
+        copy_or_cut(e, TRUE);
+        return TRUE;
+    case GDK_KEY_c:
+    case GDK_KEY_C:
+        if (!ctrl)
+            return FALSE;
+        copy_or_cut(e, FALSE);
+        return TRUE;
+    case GDK_KEY_v:
+    case GDK_KEY_V:
+        if (!ctrl)
+            return FALSE;
+        paste_into(e, current_dir(e), FALSE);
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+/* Shows an accelerator in a menu item without binding it: the keys work
+ * in the folder view only, not in the address bar. */
+static void show_accel(GtkWidget *item, guint key, GdkModifierType mods) {
+    GtkWidget *label = gtk_bin_get_child(GTK_BIN(item));
+    if (GTK_IS_ACCEL_LABEL(label))
+        gtk_accel_label_set_accel(GTK_ACCEL_LABEL(label), key, mods);
+}
+
+static void update_menu_items(GtkWidget *menu, gpointer data) {
+    (void)menu;
+    explorer *e = data;
+    gboolean selected = xd_folder_view_get_selected_count(e->view) > 0;
+    for (guint i = 0; i < e->need_selection->len; i++)
+        gtk_widget_set_sensitive(g_ptr_array_index(e->need_selection, i), selected);
+    for (guint i = 0; i < e->need_clipboard->len; i++)
+        gtk_widget_set_sensitive(g_ptr_array_index(e->need_clipboard, i),
+                                 xd_clipboard_has_files());
+}
+
+static GtkWidget *menu_item(GtkWidget *menu, const char *label, GCallback cb, explorer *e,
+                            GtkAccelGroup *accel, guint key, GdkModifierType mods);
+
+static void add_new_menu(explorer *e, GtkWidget *menu) {
+    GtkWidget *top = gtk_menu_item_new_with_mnemonic("Ne_w");
+    GtkWidget *sub = gtk_menu_new();
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(top), sub);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), top);
+    menu_item(sub, "_Folder", G_CALLBACK(cb_new_folder), e, nullptr, 0, NO_MODS);
+    gtk_menu_shell_append(GTK_MENU_SHELL(sub), gtk_separator_menu_item_new());
+    menu_item(sub, "Text Document", G_CALLBACK(cb_new_text), e, nullptr, 0, NO_MODS);
+}
+
 static GtkWidget *menu_item(GtkWidget *menu, const char *label, GCallback cb, explorer *e,
                             GtkAccelGroup *accel, guint key, GdkModifierType mods) {
     GtkWidget *item = gtk_menu_item_new_with_mnemonic(label);
@@ -418,29 +841,58 @@ static GtkWidget *submenu(GtkWidget *bar, const char *label) {
 static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = submenu(bar, "_File");
+    add_new_menu(e, file);
+    gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
+    g_ptr_array_add(e->need_selection,
+                    menu_item(file, "Create _Shortcut", G_CALLBACK(cb_shortcut), e, nullptr, 0,
+                              NO_MODS));
+    GtkWidget *item = menu_item(file, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
+    show_accel(item, GDK_KEY_Delete, NO_MODS);
+    g_ptr_array_add(e->need_selection, item);
+    item = menu_item(file, "Rena_me", G_CALLBACK(cb_rename), e, nullptr, 0, NO_MODS);
+    show_accel(item, GDK_KEY_F2, NO_MODS);
+    g_ptr_array_add(e->need_selection, item);
     menu_item(file, "P_roperties", G_CALLBACK(cb_properties), e, accel, GDK_KEY_Return,
               GDK_MOD1_MASK);
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
     menu_item(file, "_Close", G_CALLBACK(cb_close), e, accel, GDK_KEY_w, GDK_CONTROL_MASK);
+    g_signal_connect(file, "show", G_CALLBACK(update_menu_items), e);
 
     GtkWidget *edit = submenu(bar, "_Edit");
-    menu_item(edit, "Cu_t", nullptr, e, nullptr, 0, NO_MODS);
-    menu_item(edit, "_Copy", nullptr, e, nullptr, 0, NO_MODS);
-    menu_item(edit, "_Paste", nullptr, e, nullptr, 0, NO_MODS);
+    item = menu_item(edit, "Cu_t", G_CALLBACK(cb_cut), e, nullptr, 0, NO_MODS);
+    show_accel(item, GDK_KEY_x, GDK_CONTROL_MASK);
+    g_ptr_array_add(e->need_selection, item);
+    item = menu_item(edit, "_Copy", G_CALLBACK(cb_copy), e, nullptr, 0, NO_MODS);
+    show_accel(item, GDK_KEY_c, GDK_CONTROL_MASK);
+    g_ptr_array_add(e->need_selection, item);
+    item = menu_item(edit, "_Paste", G_CALLBACK(cb_paste), e, nullptr, 0, NO_MODS);
+    show_accel(item, GDK_KEY_v, GDK_CONTROL_MASK);
+    g_ptr_array_add(e->need_clipboard, item);
+    g_ptr_array_add(e->need_clipboard, menu_item(edit, "Paste _Shortcut",
+                                                 G_CALLBACK(cb_paste_shortcut), e, nullptr, 0,
+                                                 NO_MODS));
     gtk_menu_shell_append(GTK_MENU_SHELL(edit), gtk_separator_menu_item_new());
-    menu_item(edit, "Select _All", G_CALLBACK(cb_select_all), e, accel, GDK_KEY_a,
-              GDK_CONTROL_MASK);
+    g_ptr_array_add(e->need_selection, menu_item(edit, "Copy To _Folder...",
+                                                 G_CALLBACK(cb_copy_to), e, nullptr, 0, NO_MODS));
+    g_ptr_array_add(e->need_selection, menu_item(edit, "Mo_ve To Folder...",
+                                                 G_CALLBACK(cb_move_to), e, nullptr, 0, NO_MODS));
+    gtk_menu_shell_append(GTK_MENU_SHELL(edit), gtk_separator_menu_item_new());
+    g_signal_connect(edit, "show", G_CALLBACK(update_menu_items), e);
+    /* The folder view handles Ctrl+A itself; bound here, it would take
+     * the key from the address bar. */
+    show_accel(menu_item(edit, "Select _All", G_CALLBACK(cb_select_all), e, nullptr, 0, NO_MODS),
+               GDK_KEY_a, GDK_CONTROL_MASK);
     menu_item(edit, "_Invert Selection", G_CALLBACK(cb_invert), e, nullptr, 0, NO_MODS);
 
     GtkWidget *view = submenu(bar, "_View");
     GSList *group = nullptr;
     for (int i = 0; i < XD_VIEW_COUNT; i++) {
-        GtkWidget *item = gtk_radio_menu_item_new_with_mnemonic(group, view_names[i]);
-        group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(item));
-        g_object_set_data(G_OBJECT(item), "xd-mode", GINT_TO_POINTER(i));
-        g_signal_connect(item, "toggled", G_CALLBACK(on_view_item), e);
-        gtk_menu_shell_append(GTK_MENU_SHELL(view), item);
-        e->view_items[i] = item;
+        GtkWidget *radio = gtk_radio_menu_item_new_with_mnemonic(group, view_names[i]);
+        group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(radio));
+        g_object_set_data(G_OBJECT(radio), "xd-mode", GINT_TO_POINTER(i));
+        g_signal_connect(radio, "toggled", G_CALLBACK(on_view_item), e);
+        gtk_menu_shell_append(GTK_MENU_SHELL(view), radio);
+        e->view_items[i] = radio;
     }
     gtk_menu_shell_append(GTK_MENU_SHELL(view), gtk_separator_menu_item_new());
     GtkWidget *hidden = gtk_check_menu_item_new_with_mnemonic("Show _Hidden Files");
@@ -508,6 +960,21 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
                                     NO_MODS);
         gtk_label_set_markup_with_mnemonic(GTK_LABEL(gtk_bin_get_child(GTK_BIN(open))),
                                            "<b>_Open</b>");
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        menu_item(menu, "Cu_t", G_CALLBACK(cb_cut), e, nullptr, 0, NO_MODS);
+        menu_item(menu, "_Copy", G_CALLBACK(cb_copy), e, nullptr, 0, NO_MODS);
+        /* On one folder, Paste puts the files in it. */
+        GFile *target = paste_target(e);
+        if (!g_file_equal(target, current_dir(e))) {
+            GtkWidget *paste = menu_item(menu, "_Paste", G_CALLBACK(cb_paste_into), e, nullptr,
+                                         0, NO_MODS);
+            gtk_widget_set_sensitive(paste, xd_clipboard_has_files());
+        }
+        g_object_unref(target);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        menu_item(menu, "Create _Shortcut", G_CALLBACK(cb_shortcut), e, nullptr, 0, NO_MODS);
+        menu_item(menu, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
+        menu_item(menu, "Rena_me", G_CALLBACK(cb_rename), e, nullptr, 0, NO_MODS);
     } else {
         GtkWidget *viewm = gtk_menu_new();
         GtkWidget *top = gtk_menu_item_new_with_mnemonic("_View");
@@ -519,7 +986,16 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
                                      G_CALLBACK(gtk_check_menu_item_set_active), e->view_items[i]);
             gtk_menu_shell_append(GTK_MENU_SHELL(viewm), item);
         }
-        menu_item(menu, "_Refresh", G_CALLBACK(cb_refresh), e, nullptr, 0, NO_MODS);
+        menu_item(menu, "R_efresh", G_CALLBACK(cb_refresh), e, nullptr, 0, NO_MODS);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        GtkWidget *paste = menu_item(menu, "_Paste", G_CALLBACK(cb_paste), e, nullptr, 0,
+                                     NO_MODS);
+        gtk_widget_set_sensitive(paste, xd_clipboard_has_files());
+        GtkWidget *paste_link = menu_item(menu, "Paste _Shortcut", G_CALLBACK(cb_paste_shortcut),
+                                          e, nullptr, 0, NO_MODS);
+        gtk_widget_set_sensitive(paste_link, xd_clipboard_has_files());
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        add_new_menu(e, menu);
     }
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     menu_item(menu, "P_roperties", G_CALLBACK(cb_properties), e, nullptr, 0, NO_MODS);
@@ -536,7 +1012,8 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
 static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
     explorer *e = data;
     /* Backspace goes up, as in Windows, unless typing in the address bar. */
-    if (ev->keyval == GDK_KEY_BackSpace && !gtk_widget_has_focus(e->address)) {
+    GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(e->window));
+    if (ev->keyval == GDK_KEY_BackSpace && !GTK_IS_EDITABLE(focus)) {
         go_up(e);
         return TRUE;
     }
@@ -544,6 +1021,8 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
         gtk_widget_grab_focus(e->address);
         return TRUE;
     }
+    if (focus == GTK_WIDGET(e->view) && file_key(e, ev))
+        return TRUE;
     (void)w;
     return FALSE;
 }
@@ -552,11 +1031,18 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     explorer *e = data;
     free_history(&e->back);
     free_history(&e->forward);
+    g_ptr_array_unref(e->need_selection);
+    g_ptr_array_unref(e->need_clipboard);
+    g_clear_object(&e->renaming);
+    g_clear_object(&e->pending_rename);
+    g_clear_handle_id(&e->commit_idle, g_source_remove);
     g_free(e);
 }
 
 static void open_window(GtkApplication *app, GFile *dir) {
     explorer *e = g_new0(explorer, 1);
+    e->need_selection = g_ptr_array_new();
+    e->need_clipboard = g_ptr_array_new();
     e->window = gtk_application_window_new(app);
     gtk_window_set_default_size(GTK_WINDOW(e->window), 820, 560);
     gtk_window_set_icon_name(GTK_WINDOW(e->window), "system-file-manager");
@@ -654,10 +1140,27 @@ static void open_window(GtkApplication *app, GFile *dir) {
     g_signal_connect(e->view, "contents-changed", G_CALLBACK(on_contents), e);
     g_signal_connect(e->view, "selection-changed", G_CALLBACK(on_selection), e);
     g_signal_connect(e->view, "load-error", G_CALLBACK(on_load_error), e);
+    g_signal_connect(e->view, "files-dropped", G_CALLBACK(on_files_dropped), e);
     GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_container_add(GTK_CONTAINER(scroll), GTK_WIDGET(e->view));
-    gtk_paned_pack2(GTK_PANED(paned), scroll, TRUE, FALSE);
+    g_signal_connect(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(e->view)), "value-changed",
+                     G_CALLBACK(on_view_scrolled), e);
+    g_signal_connect(gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(e->view)), "value-changed",
+                     G_CALLBACK(on_view_scrolled), e);
+    /* Renaming in place: an entry floating over the view. */
+    e->overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(e->overlay), scroll);
+    e->rename_entry = gtk_entry_new();
+    gtk_widget_set_halign(e->rename_entry, GTK_ALIGN_START);
+    gtk_widget_set_valign(e->rename_entry, GTK_ALIGN_START);
+    gtk_entry_set_width_chars(GTK_ENTRY(e->rename_entry), 1);
+    gtk_widget_set_no_show_all(e->rename_entry, TRUE);
+    g_signal_connect(e->rename_entry, "activate", G_CALLBACK(on_rename_activate), e);
+    g_signal_connect(e->rename_entry, "key-press-event", G_CALLBACK(on_rename_key), e);
+    g_signal_connect(e->rename_entry, "focus-out-event", G_CALLBACK(on_rename_focus_out), e);
+    gtk_overlay_add_overlay(GTK_OVERLAY(e->overlay), e->rename_entry);
+    gtk_paned_pack2(GTK_PANED(paned), e->overlay, TRUE, FALSE);
     gtk_paned_set_position(GTK_PANED(paned), 210);
 
     /* Status bar: object count, size, thumbnail slider. */

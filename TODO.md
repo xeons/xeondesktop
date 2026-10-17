@@ -351,10 +351,37 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## File manager (xd-files)
 
-- [ ] File operations: copy, move, delete (Recycle Bin), rename, new folder;
-      clipboard; drag and drop.
-- [~] Context menus: only Open / View / Refresh / Properties so far.
-- [ ] Search, Favorites menu, rename in place.
+- [x] File operations (fileops.c, on a worker thread with GIO): copy, move
+      (a rename on the same file system), shortcuts (symbolic links,
+      "Shortcut to x"), Recycle Bin and Shift+Delete, with XP's "Copying..."
+      dialog (flying paper, From 'a' to 'b', green blocks, Seconds
+      Remaining), "Confirm File Replace" / "Confirm Folder Replace" (Yes,
+      Yes to All, No, Cancel; folders merge), "Copy of x" beside the
+      original, and Skip/Cancel on errors. Tested: replacing, Cancel,
+      "Copy of", copying all of /usr/share/doc (221 MB, 9,000 files:
+      identical, symlinks kept), cut and paste kept the inode, Delete with
+      "can't be recycled: delete permanently?" (GLib has no Recycle Bin on
+      /tmp).
+- [x] Clipboard: Cut (faded until pasted), Copy, Paste, Paste Shortcut,
+      as x-special/gnome-copied-files, text/uri-list and text, so other
+      file managers can paste them and the other way round. A cut is
+      cleared once pasted.
+- [x] Drag and drop into a folder or onto a folder item (highlighted):
+      move on the same file system, else copy; Ctrl copies, Shift moves,
+      Ctrl+Shift makes a shortcut (the compositor passes modifiers to the
+      client during drags, which wlroots doesn't). Wayland has no "link"
+      action, so a shortcut travels as a copy.
+- [x] File > New > Folder / Text Document, Rename (F2) in place, Create
+      Shortcut, Delete; Edit > Copy To Folder... / Move To Folder...;
+      context menus with Cut, Copy, Paste (into a selected folder), Create
+      Shortcut, Delete, Rename, New. Tested: New Folder named in place,
+      renaming onto an existing name (XP's message, keeps editing), Escape.
+- [?] Untested: the real Recycle Bin (sending files from the home folder),
+      moves between file systems, Copy To / Move To Folder, pasting
+      between xd-files and other file managers, permission errors and Skip.
+- [ ] Undo, Send To, the shortcut arrow on symbolic links' icons; a
+      modifier pressed mid-drag shows only when the pointer next moves.
+- [ ] Search, Favorites menu.
 - [~] Properties dialog. Tested: General for a file, Permissions (ticking
       Group Write and Apply changed 644 to 664), Details, and the size and
       contents count for a folder plus a file (matches find/du exactly).
@@ -392,7 +419,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Windows does (e.g. "OK" is 13x8 instead of 14x9).
 - [ ] Not yet styled: combo box pop-up lists, spin button arrows, info
       bars, switches, popovers (the Views menu), GtkFileChooser's sidebar
-      and path bar, progress bar segments. Our GTK apps turn off dialog
+      and path bar, submenu arrows. Progress bars: sunken (Classic),
+      XP's white trough with green blocks (Luna). Our GTK apps turn off dialog
       header bars (buttons at the bottom, our title bar); other apps'
       header-bar dialogs keep GTK's look.
 - [ ] Other apps' GtkMessageDialogs show GTK's own title strip inside the
