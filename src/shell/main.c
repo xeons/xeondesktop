@@ -240,6 +240,21 @@ static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *k, 
     shell->xkb_state = xkb_state_new(keymap);
 }
 
+static void repeat_arm(xd_shell *shell, int first_ms, int every_ms) {
+    if (shell->repeat_timer_fd < 0)
+        return;
+    struct itimerspec spec = {
+        .it_value = {first_ms / 1000, (long)(first_ms % 1000) * 1000000L},
+        .it_interval = {every_ms / 1000, (long)(every_ms % 1000) * 1000000L},
+    };
+    timerfd_settime(shell->repeat_timer_fd, 0, &spec, nullptr);
+}
+
+static void repeat_stop(xd_shell *shell) {
+    shell->repeat_key = 0;
+    repeat_arm(shell, 0, 0);
+}
+
 static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k,
                            [[maybe_unused]] uint32_t serial, struct wl_surface *surface,
                            [[maybe_unused]] struct wl_array *keys) {
@@ -251,16 +266,13 @@ static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k,
 static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *k,
                            [[maybe_unused]] uint32_t serial, struct wl_surface *surface) {
     xd_shell *shell = data;
+    repeat_stop(shell);
     if (shell->kb_surface == surface)
         shell->kb_surface = nullptr;
     xd_deskicons_relayout(shell);
 }
 
-static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
-                         [[maybe_unused]] uint32_t time, uint32_t key, uint32_t state) {
-    xd_shell *shell = data;
-    if (state != WL_KEYBOARD_KEY_STATE_PRESSED || shell->xkb_state == nullptr)
-        return;
+static void handle_key(xd_shell *shell, uint32_t key, uint32_t serial) {
     xkb_keysym_t sym = xkb_state_key_get_one_sym(shell->xkb_state, key + 8);
     if (shell->start7 != nullptr) {
         char utf8[16] = {0};
@@ -283,6 +295,33 @@ static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k, uin
     xd_menu_key(shell, sym);
 }
 
+static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
+                         [[maybe_unused]] uint32_t time, uint32_t key, uint32_t state) {
+    xd_shell *shell = data;
+    if (state != WL_KEYBOARD_KEY_STATE_PRESSED) {
+        if (key + 1 == shell->repeat_key)
+            repeat_stop(shell);
+        return;
+    }
+    if (shell->xkb_state == nullptr)
+        return;
+    handle_key(shell, key, serial);
+    /* Held keys repeat, as the keymap says (not modifiers). */
+    if (shell->repeat_rate > 0 && shell->keymap != nullptr &&
+        xkb_keymap_key_repeats(shell->keymap, key + 8)) {
+        shell->repeat_key = key + 1;
+        shell->repeat_serial = serial;
+        repeat_arm(shell, shell->repeat_delay, XD_MAX(1000 / shell->repeat_rate, 1));
+    } else {
+        repeat_stop(shell);
+    }
+}
+
+static void repeat_fired(xd_shell *shell) {
+    if (shell->repeat_key != 0 && shell->xkb_state != nullptr)
+        handle_key(shell, shell->repeat_key - 1, shell->repeat_serial);
+}
+
 static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *k,
                                [[maybe_unused]] uint32_t serial, uint32_t depressed,
                                uint32_t latched, uint32_t locked, uint32_t group) {
@@ -291,10 +330,12 @@ static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *
         xkb_state_update_mask(shell->xkb_state, depressed, latched, locked, 0, 0, group);
 }
 
-static void keyboard_repeat_info([[maybe_unused]] void *data,
-                                 [[maybe_unused]] struct wl_keyboard *k,
-                                 [[maybe_unused]] int32_t rate,
-                                 [[maybe_unused]] int32_t delay) {}
+static void keyboard_repeat_info(void *data, [[maybe_unused]] struct wl_keyboard *k, int32_t rate,
+                                 int32_t delay) {
+    xd_shell *shell = data;
+    shell->repeat_rate = XD_CLAMP(rate, 0, 1000);
+    shell->repeat_delay = XD_CLAMP(delay, 1, 10000);
+}
 
 static const struct wl_keyboard_listener keyboard_listener = {
     .keymap = keyboard_keymap,
@@ -655,7 +696,7 @@ static bool flush_display(struct wl_display *display) {
 
 /* Our own descriptors, then GLib's (D-Bus for the notification area),
  * polled together: GLib's main context runs inside our loop. */
-enum { OWN_FDS = 9 };
+enum { OWN_FDS = 10 };
 
 static int run(xd_shell *shell, int timer_fd, int signal_fd) {
     struct wl_display *d = shell->display;
@@ -695,7 +736,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             signal_fd,                     shell->menu_timer_fd,
             shell->settings_fd,            shell->quicklaunch.watch_fd,
             shell->flash_timer_fd,         shell->tooltip_timer_fd,
-            shell->autohide_timer_fd,
+            shell->autohide_timer_fd,      shell->repeat_timer_fd,
         };
         for (int i = 0; i < OWN_FDS; i++)
             fds[i] = (struct pollfd){.fd = own[i], .events = POLLIN};
@@ -763,6 +804,11 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             (void)!read(shell->tooltip_timer_fd, &expirations, sizeof(expirations));
             xd_taskbar_tooltip_timer(shell);
         }
+        if (shell->repeat_timer_fd >= 0 && (fds[9].revents & POLLIN)) {
+            uint64_t expirations;
+            (void)!read(shell->repeat_timer_fd, &expirations, sizeof(expirations));
+            repeat_fired(shell);
+        }
         if (shell->autohide_timer_fd >= 0 && (fds[8].revents & POLLIN)) {
             uint64_t expirations;
             (void)!read(shell->autohide_timer_fd, &expirations, sizeof(expirations));
@@ -785,6 +831,9 @@ int main(int argc, char **argv) {
     shell.flash_timer_fd = -1;
     shell.tooltip_timer_fd = -1;
     shell.autohide_timer_fd = -1;
+    shell.repeat_timer_fd = -1;
+    shell.repeat_rate = 25; /* until the compositor says */
+    shell.repeat_delay = 600;
     shell.saver_pidfd = -1;
     shell.settings_fd = -1;
     shell.quicklaunch.watch_fd = -1;
@@ -829,6 +878,7 @@ int main(int argc, char **argv) {
     shell.flash_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     shell.tooltip_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     shell.autohide_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    shell.repeat_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
 
     update_clock(&shell);
     xd_toplevels_init(&shell);

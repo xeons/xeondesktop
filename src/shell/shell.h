@@ -233,6 +233,11 @@ struct xd_shell {
     xd_tooltip *tooltip;
     int tooltip_timer_fd;
     int autohide_timer_fd; /* tucks Auto-hide taskbars away after the pointer leaves */
+    /* Key repeat (the compositor's rate and delay; clients repeat keys). */
+    int repeat_timer_fd;
+    int32_t repeat_rate, repeat_delay; /* per second; ms */
+    uint32_t repeat_key;               /* 0: none */
+    uint32_t repeat_serial;
     xd_tray *tray;         /* StatusNotifierItem host */
     xd_dnd *dnd;           /* the taskbar as a drop target */
     struct wl_data_device_manager *data_device_manager;

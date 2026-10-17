@@ -11,6 +11,7 @@
  *   type TEXT         type characters using the session's keymap
  *   key COMBO         e.g. Return, ctrl+alt+t, alt+F4, super
  *   hold|release MOD  keep ctrl, alt, shift or super down across steps
+ *   press|lift KEY    hold any key down (key repeat), e.g. press Down
  *   sleep MS          wait
  *
  * Example: xd-inject move 20 728 click sleep 500 type alacritty key Return
@@ -333,6 +334,19 @@ static bool hold_modifier(inject *in, const char *name, bool down) {
     return false;
 }
 
+/* "press Down" / "lift Down": one key held across later steps. */
+static bool press_key(inject *in, const char *name, bool down) {
+    xkb_keysym_t sym = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
+    const key_entry *k = sym != XKB_KEY_NoSymbol ? find_key(in, sym) : nullptr;
+    if (k == nullptr) {
+        fprintf(stderr, "xd-inject: unknown key %s\n", name);
+        return false;
+    }
+    send_key(in, k->code, down);
+    settle(in);
+    return true;
+}
+
 /* "ctrl+alt+F4" -> modifiers and keysym. */
 static bool key_combo(inject *in, const char *spec) {
     uint32_t mods = 0;
@@ -448,6 +462,10 @@ static int run_steps(inject *in, int argc, char **argv) {
             i++;
         } else if ((strcmp(cmd, "hold") == 0 || strcmp(cmd, "release") == 0) && a1 != nullptr) {
             if (!hold_modifier(in, a1, strcmp(cmd, "hold") == 0))
+                return EXIT_FAILURE;
+            i++;
+        } else if ((strcmp(cmd, "press") == 0 || strcmp(cmd, "lift") == 0) && a1 != nullptr) {
+            if (!press_key(in, a1, strcmp(cmd, "press") == 0))
                 return EXIT_FAILURE;
             i++;
         } else if (strcmp(cmd, "sleep") == 0 && parse_int(a1, 0, 600000, &v1)) {

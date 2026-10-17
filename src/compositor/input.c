@@ -611,9 +611,10 @@ static void handle_new_input(struct wl_listener *listener, void *data) {
 static void handle_new_virtual_keyboard(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_virtual_keyboard);
     struct wlr_virtual_keyboard_v1 *vk = data;
-    /* The client supplies its own keymap. No repeat: injected keys are
-     * pressed and released explicitly. */
-    wlr_keyboard_set_repeat_info(&vk->keyboard, 0, 0);
+    /* The client supplies its own keymap. The configured repeat, so a
+     * held key (xd-inject's press) repeats as a real one would. */
+    wlr_keyboard_set_repeat_info(&vk->keyboard, server->config.keyboard.repeat_rate,
+                                 server->config.keyboard.repeat_delay);
     register_keyboard(server, &vk->keyboard, &vk->keyboard.base);
     update_seat_caps(server);
     wlr_log(WLR_INFO, "virtual keyboard connected (testing)");
