@@ -61,6 +61,11 @@ static void on_clock(xd_widget *w, void *user) {
     p->pending.show_clock = xd_checkbox_checked(w);
     changed(p);
 }
+static void on_hide_inactive(xd_widget *w, void *user) {
+    props *p = user;
+    p->pending.hide_inactive = xd_checkbox_checked(w);
+    changed(p);
+}
 static void on_all_displays(xd_widget *w, void *user) {
     props *p = user;
     p->pending.all_displays = xd_checkbox_checked(w);
@@ -138,9 +143,12 @@ int main(int argc, char **argv) {
                                      boxes[i].label, *value, boxes[i].cb, &p);
         xd_widget_set_page(box, 0);
     }
-    xd_widget_set_page(xd_groupbox(p.win, (xd_rect){20, 222, 340, 52}, "Notification area"), 0);
-    xd_widget_set_page(xd_checkbox(p.win, (xd_rect){32, 244, 300, 20}, "Show the clock",
+    xd_widget_set_page(xd_groupbox(p.win, (xd_rect){20, 218, 340, 70}, "Notification area"), 0);
+    xd_widget_set_page(xd_checkbox(p.win, (xd_rect){32, 238, 300, 20}, "Show the clock",
                                    p.pending.show_clock, on_clock, &p),
+                       0);
+    xd_widget_set_page(xd_checkbox(p.win, (xd_rect){32, 262, 300, 20}, "Hide inactive icons",
+                                   p.pending.hide_inactive, on_hide_inactive, &p),
                        0);
 
     /* Start Menu */

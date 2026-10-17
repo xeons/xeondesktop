@@ -10,6 +10,7 @@
  * (com.canonical.dbusmenu) is shown with the shell's own menus.
  */
 #include <gio/gio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "../core/alloc.h"
@@ -37,7 +38,18 @@ struct xd_tray_item {
     guint name_watch;
     guint signals;
     GCancellable *cancel;
+    int64_t active_ms; /* last registered, changed or clicked (monotonic) */
 };
+
+/* Quiet this long, a program's icon folds behind the chevron;
+ * XD_TRAY_INACTIVE_SECONDS shortens it for testing. */
+static int64_t inactive_ms(void) {
+    const char *test = getenv("XD_TRAY_INACTIVE_SECONDS");
+    gint64 s = test != nullptr ? g_ascii_strtoll(test, nullptr, 10) : 0;
+    return s > 0 ? s * 1000 : 3 * 60 * 1000;
+}
+
+static int64_t now_ms(void) { return g_get_monotonic_time() / 1000; }
 
 struct xd_tray {
     xd_shell *shell;
@@ -185,6 +197,7 @@ static void got_properties(GObject *src, GAsyncResult *res, gpointer data) {
         return;
     }
     xd_tray_item *it = data;
+    it->active_ms = now_ms();
     GVariant *props = nullptr;
     g_variant_get(reply, "(@a{sv})", &props);
     set_string(&it->title, dup_string(props, "Title"));
@@ -292,6 +305,7 @@ static void add_item(xd_tray *tray, const char *service, const char *sender) {
     it->bus = bus;
     it->path = path;
     it->cancel = g_cancellable_new();
+    it->active_ms = now_ms();
     g_ptr_array_add(tray->items, it);
     it->signals = g_dbus_connection_signal_subscribe(tray->bus, bus, ITEM_IFACE, nullptr, path,
                                                      nullptr, G_DBUS_SIGNAL_FLAGS_NONE,
@@ -541,6 +555,13 @@ xd_tray_item *xd_tray_get(const xd_shell *shell, size_t index) {
         }
     }
     return nullptr;
+}
+
+bool xd_tray_item_inactive(const xd_tray_item *it) {
+    /* Our own icons and ones asking for attention always show. */
+    if (it->ops != nullptr || (it->status != nullptr && strcmp(it->status, "NeedsAttention") == 0))
+        return false;
+    return now_ms() - it->active_ms > inactive_ms();
 }
 
 char *xd_tray_item_tooltip(const xd_tray_item *it) {
@@ -800,6 +821,7 @@ void xd_tray_item_click(xd_shell *shell, xd_tray_item *it, uint32_t button, xd_t
     xd_tray *tray = shell->tray;
     if (tray == nullptr)
         return;
+    it->active_ms = now_ms();
     if (it->ops != nullptr) {
         /* Our applets: left click does the applet's thing (the volume
          * slider), else everything opens its menu. */

@@ -82,6 +82,7 @@ enum {
     XD_HIT_PAGE_UP = -4, /* task button pages, when they don't all fit */
     XD_HIT_PAGE_DOWN = -5,
     XD_HIT_QUICK_BAND = -6, /* Quick Launch, between or around its buttons */
+    XD_HIT_TRAY_CHEVRON = -7, /* shows or folds inactive notification icons */
     XD_HIT_QUICK = -100,     /* Quick Launch button i: XD_HIT_QUICK - i */
     XD_HIT_TRAY_ICON = -1000, /* notification area icon i: XD_HIT_TRAY_ICON - i */
 };
@@ -130,6 +131,10 @@ typedef struct xd_taskbar {
     /* Notification area icons, left of the clock. */
     size_t tray_count, tray_cap;
     xd_rect *tray_rects;
+    size_t *tray_index;      /* tray_rects[i] shows xd_tray_get(tray_index[i]) */
+    xd_rect tray_chevron;    /* empty if no icon is folded away */
+    bool tray_expanded;      /* the chevron was clicked: all icons show */
+    unsigned tray_fold_timer; /* folds them again after a while */
 
     int hot;     /* XD_HIT_* or a task index */
     double pointer_x, pointer_y; /* last pointer position, logical */
@@ -275,6 +280,8 @@ size_t xd_tray_count(const xd_shell *shell);
 xd_tray_item *xd_tray_get(const xd_shell *shell, size_t index);
 cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *item, int px);
 char *xd_tray_item_tooltip(const xd_tray_item *item); /* g_free */
+/* Hide inactive icons: a program's icon that's been quiet a while. */
+bool xd_tray_item_inactive(const xd_tray_item *item);
 /* Draws the item's icon if it draws its own (our applets); else false. */
 bool xd_tray_item_draw(xd_tray_item *item, const xd_theme *t, cairo_t *cr, xd_rect r);
 void xd_tray_item_scroll(xd_shell *shell, xd_tray_item *item, double delta);

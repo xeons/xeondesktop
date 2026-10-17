@@ -71,6 +71,7 @@ typedef struct xd_settings {
     bool on_top;       /* Keep the taskbar on top of other windows */
     bool group;        /* Group similar taskbar buttons (when crowded) */
     bool show_clock;
+    bool hide_inactive; /* fold tray icons that have been quiet behind a chevron */
     bool all_displays; /* a taskbar on every monitor, not just the first */
 
     /* [StartMenu] */

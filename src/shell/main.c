@@ -23,7 +23,12 @@
 
 /* Updates shell->clock; returns true if the text changed. */
 static bool update_clock(xd_shell *shell) {
-    time_t now = time(nullptr);
+    /* The precise clock: time() reads a coarse one that can still say :59
+     * when the minute timer fires, leaving the clock a minute behind. Half
+     * a second's margin for timer slack the other way. */
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    time_t now = ts.tv_sec + (ts.tv_nsec >= 500000000 ? 1 : 0);
     struct tm tm;
     if (localtime_r(&now, &tm) == nullptr)
         return false;
@@ -164,10 +169,10 @@ static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
             int step = bar->wheel < 0 ? -1 : 1;
             bar->wheel = 0;
             /* Over a notification area icon: its own (the volume). */
-            xd_tray_item *item =
-                bar->hot <= XD_HIT_TRAY_ICON
-                    ? xd_tray_get(shell, (size_t)(XD_HIT_TRAY_ICON - bar->hot))
-                    : nullptr;
+            size_t slot = (size_t)(XD_HIT_TRAY_ICON - bar->hot);
+            xd_tray_item *item = bar->hot <= XD_HIT_TRAY_ICON && slot < bar->tray_count
+                                     ? xd_tray_get(shell, bar->tray_index[slot])
+                                     : nullptr;
             if (item != nullptr)
                 xd_tray_item_scroll(shell, item, step);
             else

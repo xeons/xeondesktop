@@ -81,6 +81,28 @@ static void ensure_task_capacity(xd_taskbar *bar, size_t n) {
     bar->task_cap = cap;
 }
 
+/* The notification area's chevron: "<<" shows folded icons, ">>" folds
+ * them again. A flat toolbar button, as XP's. */
+static void draw_chevron(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                         bool expanded) {
+    if (state & (XD_STATE_HOT | XD_STATE_PRESSED))
+        xd_theme_draw_toolbar_button(t, cr, r, state);
+    xd_rgba c = t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
+                                             : xd_rgba_hex(0xFFFFFF);
+    cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a);
+    cairo_set_line_width(cr, xd_tpx(t, 1) * 1.5);
+    double s = xd_tpx(t, 1);
+    double cx = r.x + r.w / 2.0, cy = r.y + r.h / 2.0;
+    double dir = expanded ? 1 : -1; /* pointing right when it would fold */
+    for (int i = 0; i < 2; i++) {
+        double x = cx + (i * 4 - 2) * s;
+        cairo_move_to(cr, x - dir * 2 * s, cy - 3 * s);
+        cairo_line_to(cr, x + dir * 1 * s, cy);
+        cairo_line_to(cr, x - dir * 2 * s, cy + 3 * s);
+    }
+    cairo_stroke(cr);
+}
+
 /* The small down arrow at the right end of a group's button. */
 static void draw_group_arrow(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
     int a = xd_tpx(t, 3);
@@ -180,13 +202,29 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     int margin_l, margin_r;
     xd_theme_tray_margins(t, &margin_l, &margin_r);
     /* Icons 16px apart by 22px (XP's spacing), then the clock. */
-    size_t icons = xd_tray_count(shell);
-    if (icons > bar->tray_cap) {
-        bar->tray_cap = icons;
-        bar->tray_rects = xd_realloc_array(bar->tray_rects, icons, sizeof(*bar->tray_rects));
+    size_t total = xd_tray_count(shell);
+    if (total > bar->tray_cap) {
+        bar->tray_cap = total;
+        bar->tray_rects = xd_realloc_array(bar->tray_rects, total, sizeof(*bar->tray_rects));
+        bar->tray_index = xd_realloc_array(bar->tray_index, total, sizeof(*bar->tray_index));
     }
+    /* Hide inactive icons: quiet programs' icons fold behind a chevron
+     * until it's clicked, as in XP. */
+    size_t icons = 0;
+    bool any_inactive = false;
+    for (size_t i = 0; i < total; i++) {
+        xd_tray_item *item = xd_tray_get(shell, i);
+        bool quiet = shell->settings.hide_inactive && item != nullptr &&
+                     xd_tray_item_inactive(item);
+        any_inactive = any_inactive || quiet;
+        if (!quiet || bar->tray_expanded)
+            bar->tray_index[icons++] = i;
+    }
+    if (!any_inactive)
+        bar->tray_expanded = false;
     int pitch = xd_tpx(t, 22);
-    int icons_w = (int)icons * pitch;
+    int chevron_w = any_inactive ? xd_tpx(t, 15) : 0;
+    int icons_w = (int)icons * pitch + chevron_w;
     int clock_w = shell->settings.show_clock
                       ? xd_text_width(cr, shell->clock, &clock_style) + xd_tpx(t, 1)
                       : 0;
@@ -201,11 +239,20 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
         xd_theme_draw_tray(t, cr, bar->tray_rect, shell->settings.show_clock ? shell->clock : "");
         int icon_px = xd_tpx(t, 16);
         int ix = bar->tray_rect.x + margin_l;
+        bar->tray_chevron = (xd_rect){0};
+        if (chevron_w > 0) {
+            bar->tray_chevron =
+                (xd_rect){bar->tray_rect.x + xd_tpx(t, 2), bar->tray_rect.y + xd_tpx(t, 3),
+                          chevron_w, bar->tray_rect.h - xd_tpx(t, 6)};
+            draw_chevron(t, cr, bar->tray_chevron, button_state(bar, XD_HIT_TRAY_CHEVRON),
+                         bar->tray_expanded);
+            ix += chevron_w;
+        }
         for (size_t i = 0; i < icons; i++) {
             xd_rect slot = {ix + (int)i * pitch, bar->tray_rect.y, pitch, bar->tray_rect.h};
             bar->tray_rects[i] = slot;
             bar->tray_count++;
-            xd_tray_item *item = xd_tray_get(shell, i);
+            xd_tray_item *item = xd_tray_get(shell, bar->tray_index[i]);
             xd_rect at = {slot.x + (pitch - icon_px) / 2, slot.y + (slot.h - icon_px) / 2, icon_px,
                           icon_px};
             if (item != nullptr && xd_tray_item_draw(item, t, cr, at))
@@ -448,6 +495,8 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
         if (rect_contains(bar->tray_rects[i], x, y))
             return XD_HIT_TRAY_ICON - (int)i;
     }
+    if (rect_contains(bar->tray_chevron, x, y))
+        return XD_HIT_TRAY_CHEVRON;
     if (rect_contains(bar->tray_rect, x, y))
         return XD_HIT_TRAY;
     if (bar->pages > 1) {
@@ -503,7 +552,9 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
         return xd_str_dup_cstr(xd_str_from_cstr(buf));
     }
     if (hit <= XD_HIT_TRAY_ICON) {
-        xd_tray_item *item = xd_tray_get(shell, (size_t)(XD_HIT_TRAY_ICON - hit));
+        size_t slot = (size_t)(XD_HIT_TRAY_ICON - hit);
+        xd_tray_item *item =
+            slot < bar->tray_count ? xd_tray_get(shell, bar->tray_index[slot]) : nullptr;
         char *tip = item != nullptr ? xd_tray_item_tooltip(item) : nullptr;
         char *copy = tip != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(tip)) : nullptr;
         g_free(tip);
@@ -636,6 +687,19 @@ void xd_taskbar_take_keyboard(xd_taskbar *bar) {
     wl_surface_commit(bar->surface);
 }
 
+/* Shown icons fold away again a while after the chevron opened them. */
+static gboolean fold_tray(gpointer data) {
+    xd_taskbar *bar = data;
+    bar->tray_fold_timer = 0;
+    if (bar->shell->pointer_bar == bar && bar->hot <= XD_HIT_TRAY_ICON) {
+        bar->tray_fold_timer = g_timeout_add_seconds(5, fold_tray, bar); /* in use */
+        return G_SOURCE_REMOVE;
+    }
+    bar->tray_expanded = false;
+    bar->dirty = true;
+    return G_SOURCE_REMOVE;
+}
+
 void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                                uint32_t serial) {
     /* What's under the pointer now: buttons move without the pointer
@@ -649,7 +713,8 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
         /* Notification area icons act on release: left activates, middle
          * is the secondary action, right is the icon's menu. */
         size_t i = (size_t)(XD_HIT_TRAY_ICON - bar->hot);
-        xd_tray_item *item = xd_tray_get(bar->shell, i);
+        xd_tray_item *item =
+            i < bar->tray_count ? xd_tray_get(bar->shell, bar->tray_index[i]) : nullptr;
         if (pressed || item == nullptr || i >= bar->tray_count)
             return;
         xd_rect r = bar->tray_rects[i];
@@ -683,6 +748,14 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
     bar->dirty = true;
     if (target != bar->hot)
         return; /* released somewhere else: cancel, like a real button */
+    if (target == XD_HIT_TRAY_CHEVRON) {
+        bar->tray_expanded = !bar->tray_expanded;
+        if (bar->tray_fold_timer != 0)
+            g_source_remove(bar->tray_fold_timer);
+        bar->tray_fold_timer =
+            bar->tray_expanded ? g_timeout_add_seconds(15, fold_tray, bar) : 0;
+        return;
+    }
     if (target == XD_HIT_TRAY) {
         /* Double-clicking the clock: Date and Time Properties. */
         int64_t now = g_get_monotonic_time() / 1000;
@@ -906,6 +979,9 @@ void xd_taskbar_destroy(xd_taskbar *bar) {
     xd_free(bar->task_views);
     xd_free(bar->task_counts);
     xd_free(bar->tray_rects);
+    xd_free(bar->tray_index);
+    if (bar->tray_fold_timer != 0)
+        g_source_remove(bar->tray_fold_timer);
     xd_free(bar->entry_views);
     xd_free(bar->entry_counts);
     xd_free(bar->quick_rects);
