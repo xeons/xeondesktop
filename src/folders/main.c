@@ -8,7 +8,8 @@
  *   View        Apply to All Folders / Reset All Folders, and the
  *               advanced settings tree
  *   File Types  shared-mime-info's types by extension, and the program
- *               each opens with (Change... sets the default)
+ *               each opens with (Change... sets the default); New and
+ *               Delete change the user's MIME database (filetypes.h)
  *
  * --view=VIEW is the view of the folder it was opened from (xd-files'
  * Tools menu), for Apply to All Folders; without it, the button is
@@ -57,7 +58,7 @@ typedef struct props {
     GtkWidget *adv_view;
     /* File Types */
     GtkListStore *types;
-    GtkWidget *types_view, *details_frame, *opens_icon, *opens_name, *change, *details;
+    GtkWidget *types_view, *details_frame, *opens_icon, *opens_name, *change, *details, *delete;
     bool types_loaded;
 } props;
 
@@ -399,28 +400,30 @@ static GtkWidget *view_page(props *p) {
 
 /* ---- File Types ------------------------------------------------------------------------ */
 
-static void fill_types(props *p) {
-    GList *types = g_content_types_get_registered();
-    for (GList *l = types; l != nullptr; l = l->next) {
-        const char *type = l->data;
-        char **exts = xd_content_type_extensions(type);
-        if (exts[0] == nullptr) {
-            g_strfreev(exts);
-            continue;
-        }
+/* Rows for `type`'s extensions, one per extension as XP lists them; with
+ * `only` (upper case), just that one. */
+static void add_type_rows(props *p, const char *type, const char *only) {
+    char **exts = xd_content_type_extensions(type);
+    if (exts[0] != nullptr) {
         char *desc = g_content_type_get_description(type);
         GIcon *icon = g_content_type_get_icon(type);
-        /* One row per extension, as XP lists them. */
         for (char **e = exts; *e != nullptr; e++) {
             char *upper = g_utf8_strup(*e, -1);
-            gtk_list_store_insert_with_values(p->types, nullptr, -1, FT_ICON, icon, FT_EXT, upper,
-                                              FT_DESC, desc, FT_TYPE, type, -1);
+            if (only == nullptr || strcmp(upper, only) == 0)
+                gtk_list_store_insert_with_values(p->types, nullptr, -1, FT_ICON, icon, FT_EXT,
+                                                  upper, FT_DESC, desc, FT_TYPE, type, -1);
             g_free(upper);
         }
         g_object_unref(icon);
         g_free(desc);
-        g_strfreev(exts);
     }
+    g_strfreev(exts);
+}
+
+static void fill_types(props *p) {
+    GList *types = g_content_types_get_registered();
+    for (GList *l = types; l != nullptr; l = l->next)
+        add_type_rows(p, l->data, nullptr);
     g_list_free_full(types, g_free);
 }
 
@@ -442,6 +445,7 @@ static void show_type_details(props *p) {
         gtk_image_clear(GTK_IMAGE(p->opens_icon));
         gtk_label_set_text(GTK_LABEL(p->details), "");
         gtk_widget_set_sensitive(p->change, FALSE);
+        gtk_widget_set_sensitive(p->delete, FALSE);
         return;
     }
     char *title = g_strdup_printf("Details for '%s' extension", ext);
@@ -463,6 +467,7 @@ static void show_type_details(props *p) {
                                  type);
     gtk_label_set_text(GTK_LABEL(p->details), text);
     gtk_widget_set_sensitive(p->change, TRUE);
+    gtk_widget_set_sensitive(p->delete, TRUE);
     g_free(text);
     g_free(title);
     g_free(ext);
@@ -531,6 +536,307 @@ static void load_types(props *p) {
 
 static void on_types_mapped([[maybe_unused]] GtkWidget *w, gpointer data) { load_types(data); }
 
+/* Takes the rows of `ext` (upper case) as `type` out of the list. */
+static void remove_rows(props *p, const char *ext, const char *type) {
+    GtkTreeModel *m = GTK_TREE_MODEL(p->types);
+    GtkTreeIter iter;
+    bool ok = gtk_tree_model_get_iter_first(m, &iter);
+    while (ok) {
+        char *e = nullptr, *t = nullptr;
+        gtk_tree_model_get(m, &iter, FT_EXT, &e, FT_TYPE, &t, -1);
+        bool match = g_strcmp0(e, ext) == 0 && g_strcmp0(t, type) == 0;
+        g_free(e);
+        g_free(t);
+        ok = match ? gtk_list_store_remove(p->types, &iter) : gtk_tree_model_iter_next(m, &iter);
+    }
+}
+
+/* Selects `ext` (upper case) as `type`, if it's listed. */
+static void select_row(props *p, const char *ext, const char *type) {
+    GtkTreeModel *m = GTK_TREE_MODEL(p->types);
+    GtkTreeIter iter;
+    for (bool ok = gtk_tree_model_get_iter_first(m, &iter); ok;
+         ok = gtk_tree_model_iter_next(m, &iter)) {
+        char *e = nullptr, *t = nullptr;
+        gtk_tree_model_get(m, &iter, FT_EXT, &e, FT_TYPE, &t, -1);
+        bool match = g_strcmp0(e, ext) == 0 && g_strcmp0(t, type) == 0;
+        g_free(e);
+        g_free(t);
+        if (match) {
+            GtkTreePath *path = gtk_tree_model_get_path(m, &iter);
+            gtk_tree_view_set_cursor(GTK_TREE_VIEW(p->types_view), path, nullptr, FALSE);
+            gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(p->types_view), path, nullptr, TRUE, 0.5f,
+                                         0);
+            gtk_tree_path_free(path);
+            break;
+        }
+    }
+    show_type_details(p);
+}
+
+/* The type that registers `ext` (upper case) now, or nullptr; g_free. */
+static char *type_of_extension(props *p, const char *ext, char **desc) {
+    GtkTreeModel *m = GTK_TREE_MODEL(p->types);
+    GtkTreeIter iter;
+    for (bool ok = gtk_tree_model_get_iter_first(m, &iter); ok;
+         ok = gtk_tree_model_iter_next(m, &iter)) {
+        char *e = nullptr, *type = nullptr;
+        gtk_tree_model_get(m, &iter, FT_EXT, &e, FT_TYPE, &type, FT_DESC, desc, -1);
+        bool match = g_strcmp0(e, ext) == 0;
+        g_free(e);
+        if (match)
+            return type;
+        g_free(type);
+        g_free(*desc);
+        *desc = nullptr;
+    }
+    return nullptr;
+}
+
+static void error_box(props *p, const char *what, const GError *error) {
+    char *text = g_strdup_printf("%s\n\n%s", what, error != nullptr ? error->message : "");
+    xd_message_box(GTK_WINDOW(p->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, text);
+    g_free(text);
+}
+
+static bool update_database(props *p) {
+    GError *error = nullptr;
+    if (xd_mime_update_database(g_get_user_data_dir(), &error))
+        return true;
+    error_box(p, "The file types could not be updated (update-mime-database, from "
+                 "shared-mime-info).",
+              error);
+    g_error_free(error);
+    return false;
+}
+
+/* The New dialog's state. */
+typedef struct new_ext {
+    GtkWidget *entry, *advanced, *assoc_label, *assoc;
+} new_ext;
+
+static void on_advanced([[maybe_unused]] GtkButton *b, gpointer data) {
+    new_ext *n = data;
+    bool show = !gtk_widget_get_visible(n->assoc);
+    gtk_widget_set_visible(n->assoc_label, show);
+    gtk_widget_set_visible(n->assoc, show);
+    gtk_button_set_label(GTK_BUTTON(n->advanced), show ? "<< _Advanced" : "_Advanced >>");
+}
+
+/* A pair for the Associated File Type list. */
+typedef struct type_name {
+    char *desc, *type;
+} type_name;
+
+static int compare_names(gconstpointer a, gconstpointer b) {
+    const type_name *x = *(type_name *const *)a, *y = *(type_name *const *)b;
+    return g_utf8_collate(x->desc, y->desc);
+}
+
+static void type_name_free(gpointer data) {
+    type_name *t = data;
+    g_free(t->desc);
+    g_free(t->type);
+    g_free(t);
+}
+
+/* XP's Associated File Type list: <New>, then the types by name. */
+static GtkWidget *types_combo(props *p) {
+    GPtrArray *names = g_ptr_array_new_with_free_func(type_name_free);
+    GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
+    GtkTreeModel *m = GTK_TREE_MODEL(p->types);
+    GtkTreeIter iter;
+    for (bool ok = gtk_tree_model_get_iter_first(m, &iter); ok;
+         ok = gtk_tree_model_iter_next(m, &iter)) {
+        type_name *t = g_new0(type_name, 1);
+        gtk_tree_model_get(m, &iter, FT_TYPE, &t->type, FT_DESC, &t->desc, -1);
+        if (t->type == nullptr || g_hash_table_contains(seen, t->type)) {
+            type_name_free(t);
+            continue;
+        }
+        if (t->desc == nullptr)
+            t->desc = g_strdup(t->type);
+        g_hash_table_add(seen, t->type);
+        g_ptr_array_add(names, t);
+    }
+    g_hash_table_unref(seen);
+    g_ptr_array_sort(names, compare_names);
+    GtkWidget *c = gtk_combo_box_text_new();
+    /* Long names don't widen the dialog. */
+    GList *cells = gtk_cell_layout_get_cells(GTK_CELL_LAYOUT(c));
+    for (GList *l = cells; l != nullptr; l = l->next)
+        g_object_set(l->data, "ellipsize", PANGO_ELLIPSIZE_END, "max-width-chars", 36, nullptr);
+    g_list_free(cells);
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(c), "", "<New>");
+    for (guint i = 0; i < names->len; i++) {
+        const type_name *t = g_ptr_array_index(names, i);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(c), t->type, t->desc);
+    }
+    g_ptr_array_unref(names);
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(c), "");
+    return c;
+}
+
+/* Registers `ext` for the type chosen (or a new one), moving it from the
+ * type that has it now if the user agrees. */
+static bool create_extension(props *p, GtkWindow *parent, const char *ext, const char *chosen) {
+    char *upper = g_utf8_strup(ext, -1);
+    char *type = chosen[0] != '\0' ? g_strdup(chosen) : xd_mime_type_for_new_extension(ext);
+    char *comment = chosen[0] != '\0' ? nullptr : g_strdup_printf("%s File", upper);
+    char *owner_desc = nullptr;
+    char *owner = type_of_extension(p, upper, &owner_desc);
+    char **dirs = xd_mime_data_dirs();
+    GError *error = nullptr;
+    bool back = false;  /* the user said No: back to the dialog */
+    bool moved = false; /* the database files changed */
+    if (owner == nullptr || strcmp(owner, type) != 0) {
+        bool free_ext = owner == nullptr;
+        if (owner != nullptr) {
+            char *desc = comment != nullptr ? g_strdup(comment)
+                                            : g_content_type_get_description(type);
+            char *q = g_strdup_printf("The extension '%s' is already associated with the file "
+                                      "type '%s'. Do you want to associate it with '%s' "
+                                      "instead?",
+                                      upper, owner_desc, desc);
+            g_free(desc);
+            back = xd_message_box(parent, TITLE, XD_MB_QUESTION, XD_MB_YES_NO, TRUE, q) !=
+                   GTK_RESPONSE_YES;
+            g_free(q);
+            bool gone = false;
+            if (!back) {
+                free_ext = xd_mime_remove_extension((const char *const *)dirs, owner, ext, &gone,
+                                                    &error);
+                if (!free_ext)
+                    error_box(p, "The extension could not be removed from its file type.",
+                              error);
+                moved = free_ext;
+            }
+            if (gone)
+                g_app_info_reset_type_associations(owner);
+        }
+        g_clear_error(&error);
+        if (free_ext) {
+            if (xd_mime_add_extension((const char *const *)dirs, type, ext, comment, &error))
+                moved = true;
+            else
+                error_box(p, "The extension could not be registered.", error);
+            g_clear_error(&error);
+        }
+    }
+    if (moved && update_database(p)) {
+        if (owner != nullptr)
+            remove_rows(p, upper, owner);
+        remove_rows(p, upper, type);
+        add_type_rows(p, type, upper);
+    }
+    if (!back)
+        select_row(p, upper, type);
+    g_strfreev(dirs);
+    g_free(owner);
+    g_free(owner_desc);
+    g_free(comment);
+    g_free(type);
+    g_free(upper);
+    return !back;
+}
+
+/* New: XP's Create New Extension. */
+static void on_new([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    GtkWidget *d = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(d), "Create New Extension");
+    gtk_window_set_transient_for(GTK_WINDOW(d), GTK_WINDOW(p->window));
+    gtk_window_set_modal(GTK_WINDOW(d), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+    GtkWidget *grid = gtk_grid_new();
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    new_ext n = {0};
+    GtkWidget *l = gtk_label_new_with_mnemonic("File _Extension:");
+    gtk_label_set_xalign(GTK_LABEL(l), 0);
+    n.entry = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(n.entry), 33);
+    gtk_entry_set_activates_default(GTK_ENTRY(n.entry), TRUE);
+    gtk_widget_set_hexpand(n.entry, TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(l), n.entry);
+    gtk_grid_attach(GTK_GRID(grid), l, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), n.entry, 1, 0, 1, 1);
+    n.assoc_label = gtk_label_new_with_mnemonic("Associated File _Type:");
+    gtk_label_set_xalign(GTK_LABEL(n.assoc_label), 0);
+    n.assoc = types_combo(p);
+    gtk_widget_set_size_request(n.assoc, 260, -1);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(n.assoc_label), n.assoc);
+    gtk_grid_attach(GTK_GRID(grid), n.assoc_label, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), n.assoc, 1, 1, 1, 1);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), grid, TRUE, TRUE, 0);
+    /* Advanced >> on the left of the buttons, as XP has it. */
+    n.advanced = gtk_button_new_with_mnemonic("_Advanced >>");
+    g_signal_connect(n.advanced, "clicked", G_CALLBACK(on_advanced), &n);
+    enum { RESPONSE_ADVANCED = 1 };
+    gtk_dialog_add_action_widget(GTK_DIALOG(d), n.advanced, RESPONSE_ADVANCED);
+    gtk_button_box_set_child_secondary(GTK_BUTTON_BOX(gtk_widget_get_parent(n.advanced)),
+                                       n.advanced, TRUE);
+    gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+    gtk_widget_show_all(d);
+    gtk_widget_hide(n.assoc_label);
+    gtk_widget_hide(n.assoc);
+
+    for (int r; (r = gtk_dialog_run(GTK_DIALOG(d))) == GTK_RESPONSE_OK || r == RESPONSE_ADVANCED;) {
+        if (r == RESPONSE_ADVANCED)
+            continue; /* on_advanced did it */
+        char *ext = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(n.entry))));
+        const char *bare = ext[0] == '.' ? ext + 1 : ext;
+        bool valid = xd_mime_extension_valid(bare);
+        if (!valid)
+            xd_message_box(GTK_WINDOW(d), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE,
+                           "Type an extension of letters and digits, without spaces or dots, "
+                           "such as XYZ.");
+        const char *chosen = gtk_combo_box_get_active_id(GTK_COMBO_BOX(n.assoc));
+        bool finished = valid && create_extension(p, GTK_WINDOW(d), bare,
+                                                  chosen != nullptr ? chosen : "");
+        g_free(ext);
+        if (finished)
+            break;
+    }
+    gtk_widget_destroy(d);
+}
+
+/* Delete: the extension leaves its type; a type of the user's own that
+ * has no extension left goes, with its program. */
+static void on_delete([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    char *ext = nullptr, *desc = nullptr, *type = nullptr;
+    if (!selected_type(p, &ext, &desc, &type))
+        return;
+    int r = xd_message_box(GTK_WINDOW(p->window), "File Types", XD_MB_WARNING, XD_MB_YES_NO, TRUE,
+                           "If you remove a file name extension, you will not be able to open "
+                           "files with this extension by double-clicking their icons.\n\n"
+                           "Are you sure you want to remove this extension?");
+    if (r == GTK_RESPONSE_YES) {
+        char **dirs = xd_mime_data_dirs();
+        GError *error = nullptr;
+        bool gone = false;
+        if (!xd_mime_remove_extension((const char *const *)dirs, type, ext, &gone, &error)) {
+            error_box(p, "The extension could not be removed.", error);
+            g_error_free(error);
+        } else {
+            if (gone)
+                g_app_info_reset_type_associations(type);
+            if (update_database(p)) {
+                remove_rows(p, ext, type);
+                show_type_details(p);
+            }
+        }
+        g_strfreev(dirs);
+    }
+    g_free(ext);
+    g_free(desc);
+    g_free(type);
+}
+
 static GtkTreeViewColumn *types_column(props *p, const char *title, int text_col, bool icon) {
     GtkTreeViewColumn *col = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(col, title);
@@ -577,13 +883,15 @@ static GtkWidget *types_page(props *p) {
     gtk_container_add(GTK_CONTAINER(scroll), p->types_view);
     gtk_box_pack_start(GTK_BOX(page), scroll, TRUE, TRUE, 0);
 
-    /* Registering new types means editing the MIME database: not here. */
+    /* New and Delete change the user's MIME database (filetypes.h). */
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    GtkWidget *del = gtk_button_new_with_mnemonic("_Delete");
+    p->delete = gtk_button_new_with_mnemonic("_Delete");
     GtkWidget *add = gtk_button_new_with_mnemonic("N_ew");
-    gtk_widget_set_sensitive(del, FALSE);
-    gtk_widget_set_sensitive(add, FALSE);
-    gtk_box_pack_end(GTK_BOX(row), del, FALSE, FALSE, 0);
+    gtk_widget_set_size_request(p->delete, 75, -1);
+    gtk_widget_set_size_request(add, 75, -1);
+    g_signal_connect(add, "clicked", G_CALLBACK(on_new), p);
+    g_signal_connect(p->delete, "clicked", G_CALLBACK(on_delete), p);
+    gtk_box_pack_end(GTK_BOX(row), p->delete, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(row), add, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), row, FALSE, FALSE, 0);
 

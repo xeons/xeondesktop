@@ -1192,6 +1192,114 @@ static void test_folder_options(void) {
     char **none = xd_content_type_extensions("../../etc/passwd");
     CHECK(none != nullptr && none[0] == nullptr);
     g_strfreev(none);
+    /* A database that deletes the globs below it says so. */
+    exts = g_ptr_array_new_with_free_func(g_free);
+    CHECK(xd_mime_xml_extensions("<mime-type type=\"a/b\"><glob pattern=\"*.x\"/><glob-deleteall/>"
+                                 "<glob pattern=\"*.y\"/></mime-type>",
+                                 -1, exts));
+    CHECK(exts->len == 1 && strcmp(g_ptr_array_index(exts, 0), "y") == 0);
+    g_ptr_array_unref(exts);
+}
+
+static bool has_glob(GPtrArray *globs, const char *pattern) {
+    for (guint i = 0; i < globs->len; i++)
+        if (strcmp(((xd_mime_glob *)g_ptr_array_index(globs, i))->pattern, pattern) == 0)
+            return true;
+    return false;
+}
+
+/* File Types' New and Delete, on databases in a scratch directory. */
+static void test_file_types_edit(void) {
+    xd_mime_package pkg;
+    const char *xml = "<?xml version=\"1.0\"?><mime-info xmlns=\"x\">"
+                      "<mime-type type=\"text/other\"><glob pattern=\"*.no\"/></mime-type>"
+                      "<mime-type type=\"text/x-test\"><comment>Test &amp; file</comment>"
+                      "<comment xml:lang=\"de\">Testdatei</comment>"
+                      "<glob pattern=\"*.old\"/><glob-deleteall/>"
+                      "<glob pattern=\"*.TST\" weight=\"60\" case-sensitive=\"true\"/>"
+                      "<sub-class-of type=\"text/plain\"><glob pattern=\"*.deep\"/></sub-class-of>"
+                      "</mime-type></mime-info>";
+    CHECK(xd_mime_package_parse(xml, -1, "text/x-test", &pkg));
+    CHECK(strcmp(pkg.comment, "Test & file") == 0 && pkg.delete_all && pkg.globs->len == 1);
+    const xd_mime_glob *g = g_ptr_array_index(pkg.globs, 0);
+    CHECK(strcmp(g->pattern, "*.TST") == 0 && g->weight == 60 && g->case_sensitive);
+    char *out = xd_mime_package_to_xml(&pkg);
+    xd_mime_package_clear(&pkg);
+    CHECK(xd_mime_package_parse(out, -1, "text/x-test", &pkg));
+    CHECK(strcmp(pkg.comment, "Test & file") == 0 && pkg.delete_all && pkg.globs->len == 1);
+    xd_mime_package_clear(&pkg);
+    g_free(out);
+    CHECK(!xd_mime_package_parse(xml, -1, "text/absent", &pkg));
+    xd_mime_package_clear(&pkg);
+
+    CHECK(xd_mime_extension_valid("xyz") && xd_mime_extension_valid("c++") &&
+          !xd_mime_extension_valid("") && !xd_mime_extension_valid("a.b") &&
+          !xd_mime_extension_valid("*") && !xd_mime_extension_valid("a b") &&
+          !xd_mime_extension_valid("../x"));
+    char *type = xd_mime_type_for_new_extension("XYZ");
+    CHECK(strcmp(type, "application/x-extension-xyz") == 0);
+
+    char *update = g_find_program_in_path("update-mime-database");
+    if (update == nullptr) {
+        g_printerr("test_file_types_edit: no update-mime-database, skipped the databases\n");
+        g_free(type);
+        return;
+    }
+    g_free(update);
+    char *root = g_dir_make_tmp("xd-mime-XXXXXX", nullptr);
+    char *user = g_build_filename(root, "user", nullptr);
+    char *sys = g_build_filename(root, "sys", nullptr);
+    const char *dirs[] = {user, sys, nullptr};
+    char *pkgdir = g_build_filename(sys, "mime", "packages", nullptr);
+    g_mkdir_with_parents(pkgdir, 0700);
+    char *sysfile = g_build_filename(pkgdir, "sys.xml", nullptr);
+    g_file_set_contents(sysfile,
+                        "<?xml version=\"1.0\"?><mime-info xmlns=\"http://www.freedesktop.org/"
+                        "standards/shared-mime-info\"><mime-type type=\"text/x-test\">"
+                        "<comment>Test file</comment><glob pattern=\"*.tst\"/>"
+                        "<glob pattern=\"*.tes\"/><glob pattern=\"TEST*\"/></mime-type>"
+                        "</mime-info>",
+                        -1, nullptr);
+    CHECK(xd_mime_update_database(sys, nullptr));
+
+    /* New, to an existing type: added to what the system has. */
+    CHECK(xd_mime_add_extension(dirs, "text/x-test", "abc", nullptr, nullptr));
+    CHECK(xd_mime_update_database(user, nullptr));
+    GPtrArray *globs = xd_mime_type_globs(dirs, "text/x-test");
+    CHECK(globs->len == 4 && has_glob(globs, "*.abc") && has_glob(globs, "*.tst"));
+    g_ptr_array_unref(globs);
+    /* Delete, of the system's extension: hidden, the others kept. */
+    bool gone = true;
+    CHECK(xd_mime_remove_extension(dirs, "text/x-test", "TST", &gone, nullptr) && !gone);
+    CHECK(xd_mime_update_database(user, nullptr));
+    globs = xd_mime_type_globs(dirs, "text/x-test");
+    CHECK(globs->len == 3 && !has_glob(globs, "*.tst") && has_glob(globs, "*.abc") &&
+          has_glob(globs, "*.tes") && has_glob(globs, "TEST*"));
+    g_ptr_array_unref(globs);
+    /* New, to a type of its own; Delete takes the type too. */
+    CHECK(xd_mime_add_extension(dirs, type, "xyz", "XYZ File", nullptr));
+    CHECK(xd_mime_update_database(user, nullptr));
+    char *txml = g_build_filename(user, "mime", "application", "x-extension-xyz.xml", nullptr);
+    char *text = nullptr;
+    CHECK(g_file_get_contents(txml, &text, nullptr, nullptr) &&
+          strstr(text, "XYZ File") != nullptr);
+    g_free(text);
+    CHECK(xd_mime_remove_extension(dirs, type, "xyz", &gone, nullptr) && gone);
+    CHECK(xd_mime_update_database(user, nullptr));
+    CHECK(!g_file_test(txml, G_FILE_TEST_EXISTS));
+    g_free(txml);
+    CHECK(!xd_mime_add_extension(dirs, "../evil", "x", nullptr, nullptr));
+
+    /* Scratch databases away. */
+    const char *cmd[] = {"rm", "-rf", root, nullptr};
+    g_spawn_sync(nullptr, (char **)(uintptr_t)cmd, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
+                 nullptr, nullptr, nullptr, nullptr, nullptr);
+    g_free(sysfile);
+    g_free(pkgdir);
+    g_free(user);
+    g_free(sys);
+    g_free(root);
+    g_free(type);
 }
 
 /* The Fonts folder's names, user fonts and Hide Variations. */
@@ -2592,6 +2700,7 @@ int main(void) {
     test_input_settings();
     test_kbd_layouts();
     test_cursor_themes();
+    test_file_types_edit();
     test_fonts();
     test_bluetooth_info();
     test_joystick();
