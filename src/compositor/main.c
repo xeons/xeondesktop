@@ -541,12 +541,20 @@ int main(int argc, char **argv) {
     setenv("GTK_THEME", XD_GTK_THEME_NAME, true);
     setenv("GTK_OVERLAY_SCROLLING", "0", true);
     /* Programs that D-Bus and systemd start for the session (portals,
-     * notification daemons, ...) need to find this display too. */
+     * notification daemons, scheduled tasks, ...) need to find this
+     * display too. Once the user manager has the variables, starting
+     * xeondesktop-session.target starts graphical-session.target and what
+     * waits for it (Scheduled Tasks' "When I log on"), as other wlroots
+     * desktops do; xeondesktop-session stops it when we exit. */
     if (!nested) {
-        static char prog[] = "dbus-update-activation-environment", systemd[] = "--systemd",
-                    v1[] = "WAYLAND_DISPLAY", v2[] = "DISPLAY", v3[] = "XDG_CURRENT_DESKTOP",
-                    v4[] = "XDG_SESSION_TYPE", v5[] = "GTK_THEME";
-        char *update[] = {prog, systemd, v1, v2, v3, v4, v5, nullptr};
+        static char sh[] = "/bin/sh", flag[] = "-c",
+                    script[] = "dbus-update-activation-environment --systemd \"$@\" && "
+                               "exec systemctl --user start xeondesktop-session.target",
+                    arg0[] = "xd-session-start", v1[] = "WAYLAND_DISPLAY", v2[] = "DISPLAY",
+                    v3[] = "XDG_CURRENT_DESKTOP", v4[] = "XDG_SESSION_TYPE",
+                    v5[] = "XDG_SESSION_DESKTOP", v6[] = "DBUS_SESSION_BUS_ADDRESS",
+                    v7[] = "GTK_THEME", v8[] = "XEONDESKTOP_PID", v9[] = "XEONDESKTOP_NESTED";
+        char *update[] = {sh, flag, script, arg0, v1, v2, v3, v4, v5, v6, v7, v8, v9, nullptr};
         xd_spawn_argv(update);
     }
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,

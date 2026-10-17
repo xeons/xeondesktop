@@ -23,4 +23,19 @@ if [ -x "$generator" ] && vars=$("$generator"); then
     set +a
 fi
 
-exec xd-compositor "$@"
+# The compositor starts xeondesktop-session.target in the user manager
+# (graphical-session.target with it); when it exits, however it exits,
+# the session's services stop and the manager forgets this display. A
+# signal to us waits for the compositor, which gets it too (logind ends
+# the whole session).
+end_session() {
+    systemctl --user stop xeondesktop-session.target
+    systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP \
+        XDG_SESSION_TYPE XDG_SESSION_DESKTOP GTK_THEME XEONDESKTOP_PID XEONDESKTOP_NESTED
+}
+trap end_session EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
+
+xd-compositor "$@"

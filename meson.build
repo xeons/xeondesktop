@@ -940,6 +940,16 @@ install_subdir('data/maps', install_dir: get_option('datadir') / 'xeondesktop')
 
 # The session, for display managers.
 install_data('data/xeondesktop-session', install_dir: get_option('bindir'), install_mode: 'rwxr-xr-x')
+# Started by the compositor, stopped by xeondesktop-session: binds
+# graphical-session.target to the session.
+systemd_pc = dependency('systemd', required: false)
+install_data(
+  'data/systemd/user/xeondesktop-session.target',
+  install_dir: systemd_pc.found()
+    ? systemd_pc.get_variable(pkgconfig: 'systemd_user_unit_dir',
+                              pkgconfig_define: ['prefix', get_option('prefix')])
+    : get_option('prefix') / 'lib' / 'systemd' / 'user',
+)
 install_data(
   'data/wayland-sessions/xeondesktop.desktop',
   install_dir: get_option('datadir') / 'wayland-sessions',

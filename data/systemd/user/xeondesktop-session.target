@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# A XeonDesktop session is running. The compositor starts this once the
+# user manager has its WAYLAND_DISPLAY, DISPLAY, ...; xeondesktop-session
+# stops it when the compositor exits. graphical-session.target can't be
+# started by hand, so this is what starts it (and the units that want it,
+# such as Scheduled Tasks' "When I log on" tasks), and stops it with us.
+
+[Unit]
+Description=XeonDesktop session
+Documentation=man:systemd.special(7)
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target
