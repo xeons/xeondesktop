@@ -1372,11 +1372,15 @@ static void update_menu_items(GtkWidget *menu, gpointer data) {
         gtk_widget_set_sensitive(g_ptr_array_index(e->need_clipboard, i),
                                  xd_clipboard_has_files());
     XdPlace place = current_place(e);
-    for (guint i = 0; i < e->folders_only->len; i++)
-        gtk_widget_set_sensitive(g_ptr_array_index(e->folders_only, i),
-                                 place == XD_PLACE_FOLDER &&
-                                     gtk_widget_get_sensitive(
-                                         g_ptr_array_index(e->folders_only, i)));
+    /* Folders only, on top of the above (New has nothing else: it must
+     * come back after the Recycle Bin, not keep its last state). */
+    for (guint i = 0; i < e->folders_only->len; i++) {
+        GtkWidget *w = g_ptr_array_index(e->folders_only, i);
+        gboolean on = g_ptr_array_find(e->need_selection, w, nullptr)   ? selected
+                      : g_ptr_array_find(e->need_clipboard, w, nullptr) ? xd_clipboard_has_files()
+                                                                        : TRUE;
+        gtk_widget_set_sensitive(w, place == XD_PLACE_FOLDER && on);
+    }
     for (guint i = 0; i < e->trash_only->len; i++)
         gtk_widget_set_visible(g_ptr_array_index(e->trash_only, i), place == XD_PLACE_TRASH);
 }
@@ -1530,6 +1534,8 @@ static GtkWidget *tool_button(GtkWidget *toolbar, const char *icon, const char *
     return GTK_WIDGET(b);
 }
 
+static void destroy_menu_later(GtkMenuShell *menu, gpointer data);
+
 static void popup_views(GtkWidget *button, gpointer data) {
     explorer *e = data;
     GtkWidget *menu = gtk_menu_new();
@@ -1540,6 +1546,9 @@ static void popup_views(GtkWidget *button, gpointer data) {
                                  e->view_items[i]);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
     }
+    /* A new menu each time: gone once it's closed. */
+    gtk_menu_attach_to_widget(GTK_MENU(menu), button, nullptr);
+    g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_widget(GTK_MENU(menu), button, GDK_GRAVITY_SOUTH_WEST,
                              GDK_GRAVITY_NORTH_WEST, nullptr);
