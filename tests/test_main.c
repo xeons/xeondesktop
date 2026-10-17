@@ -8,7 +8,11 @@
 #include <unistd.h>
 
 #include <crypt.h>
+#include <langinfo.h>
+#include <locale.h>
+#include <monetary.h>
 #include <poll.h>
+#include <sys/wait.h>
 
 #include <fontconfig/fontconfig.h>
 
@@ -959,6 +963,190 @@ static void test_passwd(void) {
     /* Nothing typed may come back as a message. */
     CHECK(run_passwd("old secret", "short", &m) == XD_PASSWD_REJECTED && strstr(m, "short\n") == nullptr);
     g_free(m);
+}
+
+static void check_text(char *s, const char *want) {
+    if (strcmp(s, want) != 0)
+        g_printerr("  got \"%s\", want \"%s\"\n", s, want);
+    CHECK(strcmp(s, want) == 0);
+    g_free(s);
+}
+
+/* Regional and Language Options' Customize. */
+static void test_intl_custom(void) {
+    /* XP's pictures and strftime, both ways. */
+    check_text(xd_intl_picture_to_strftime("h:mm:ss tt"), "%-I:%M:%S %p");
+    check_text(xd_intl_picture_to_strftime("HH'h'mm"), "%Hh%M");
+    check_text(xd_intl_picture_to_strftime("dddd, MMMM dd, yyyy"), "%A, %B %d, %Y");
+    check_text(xd_intl_picture_to_strftime("d.M.yy '100%'"), "%-d.%-m.%y 100%%");
+    check_text(xd_intl_strftime_to_picture("%r", "%I:%M:%S %p"), "hh:mm:ss tt");
+    check_text(xd_intl_strftime_to_picture("%H:%M:%S", nullptr), "HH:mm:ss");
+    check_text(xd_intl_strftime_to_picture("%m/%d/%Y", nullptr), "MM/dd/yyyy");
+    check_text(xd_intl_strftime_to_picture("%-d. %B %Y", nullptr), "d. MMMM yyyy");
+    check_text(xd_intl_strftime_to_picture("%H時%M分", nullptr), "HH時mm分");
+    check_text(xd_intl_strftime_to_picture("%Hh%M %Z", nullptr), "HH'h'mm ");
+    check_text(xd_intl_strftime_to_picture("%F", nullptr), "yyyy-MM-dd");
+    check_text(xd_intl_picture_separator("h:mm:ss tt"), ":");
+    check_text(xd_intl_picture_separator("dd.MM.yyyy"), ".");
+    check_text(xd_intl_picture_separator("HH"), "");
+    check_text(xd_intl_picture_replace_separator("M/d/yyyy", "/", "-"), "M-d-yyyy");
+    check_text(xd_intl_picture_replace_separator("H:mm 'a:b'", ":", "h"), "H'h'mm 'a:b'");
+
+    /* Digit grouping as localedef writes it. */
+    check_text(xd_intl_group_digits("123456789", "3;3", ","), "123,456,789");
+    check_text(xd_intl_group_digits("123456789", "3;2", ","), "12,34,56,789");
+    check_text(xd_intl_group_digits("123456789", "-1", ","), "123456789");
+    check_text(xd_intl_group_digits("12", "3", " "), "12");
+    check_text(xd_intl_grouping_text("\3\3"), "3;3");
+    check_text(xd_intl_grouping_text(""), "-1");
+    check_text(xd_intl_grouping_text("\3\177"), "3;-1");
+
+    /* Samples from the effective settings. */
+    xd_intl_custom e;
+    xd_intl_custom_init(&e);
+    e.decimal = g_strdup(",");
+    e.thousands = g_strdup(".");
+    e.grouping = g_strdup("3;3");
+    e.currency = g_strdup("€");
+    e.mon_decimal = g_strdup(",");
+    e.mon_thousands = g_strdup(".");
+    e.mon_grouping = g_strdup("3");
+    e.frac_digits = 2;
+    e.positive_format = 3;
+    e.negative_format = 8;
+    check_text(xd_intl_number_sample(&e, false), "123.456.789,00");
+    check_text(xd_intl_number_sample(&e, true), "-123.456.789,00");
+    check_text(xd_intl_currency_sample(&e, false), "123.456.789,00 €");
+    check_text(xd_intl_currency_sample(&e, true), "-123.456.789,00 €");
+    e.negative_format = 0;
+    e.frac_digits = 0;
+    check_text(xd_intl_currency_sample(&e, true), "(€123.456.789)");
+    e.time_format = g_strdup("HH.mm");
+    e.am = g_strdup("vorm.");
+    e.pm = g_strdup("nachm.");
+    e.date_format = g_strdup("dd/MM/yyyy");
+    /* 2001-02-03 04:05:06 local time */
+    struct tm tm = {.tm_year = 101, .tm_mon = 1, .tm_mday = 3, .tm_hour = 4, .tm_min = 5,
+                    .tm_sec = 6, .tm_isdst = -1};
+    time_t when = mktime(&tm);
+    check_text(xd_intl_time_sample("C.UTF-8", &e, when), "04.05");
+    g_free(e.time_format);
+    e.time_format = g_strdup("h:mm tt");
+    check_text(xd_intl_time_sample("C.UTF-8", &e, when), "4:05 vorm.");
+    check_text(xd_intl_date_sample("C.UTF-8", &e, when, false), "03/02/2001");
+
+    /* formats.ini keeps only what was changed. */
+    char *dir = g_dir_make_tmp("xd-custom-XXXXXX", nullptr);
+    char *path = g_build_filename(dir, "formats.ini", nullptr);
+    xd_intl_custom c;
+    xd_intl_custom_init(&c);
+    CHECK(xd_intl_custom_empty(&c));
+    CHECK(xd_intl_custom_save(path, "C.UTF-8", &c, nullptr) &&
+          !g_file_test(path, G_FILE_TEST_EXISTS));
+    c.thousands = g_strdup(" ");
+    c.grouping = g_strdup("3;2");
+    c.negative_format = 12;
+    c.time_format = g_strdup("HH:mm");
+    CHECK(!xd_intl_custom_empty(&c));
+    CHECK(xd_intl_custom_save(path, "C.UTF-8", &c, nullptr));
+    xd_intl_custom back;
+    char *locale = nullptr;
+    xd_intl_custom_load(path, &locale, &back);
+    CHECK(locale != nullptr && strcmp(locale, "C.UTF-8") == 0);
+    CHECK(back.thousands != nullptr && strcmp(back.thousands, " ") == 0);
+    CHECK(back.grouping != nullptr && strcmp(back.grouping, "3;2") == 0);
+    CHECK(back.negative_format == 12 && back.positive_format == -1 && back.decimal == nullptr);
+    CHECK(back.time_format != nullptr && strcmp(back.time_format, "HH:mm") == 0);
+    g_free(locale);
+    xd_intl_custom_clear(&back);
+    g_file_set_contents(path, "[Customize]\nLocale=x;y\nDigitGrouping=3;a\nCurrencyDigits=42\n",
+                        -1, nullptr);
+    xd_intl_custom_load(path, &locale, &back);
+    CHECK(locale == nullptr && xd_intl_custom_empty(&back));
+
+    check_text(xd_intl_custom_name("de_DE.UTF-8"), "de_DE.UTF-8@xeondesktop");
+    check_text(xd_intl_custom_base("de_DE.UTF-8@xeondesktop"), "de_DE.UTF-8");
+    check_text(xd_intl_custom_base("de_DE.UTF-8"), "de_DE.UTF-8");
+    char *src = nullptr, *map = nullptr;
+    xd_intl_source_of("sr_RS.UTF-8@latin", &src, &map);
+    CHECK(strcmp(src, "sr_RS@latin") == 0 && strcmp(map, "UTF-8") == 0);
+    g_free(src);
+    g_free(map);
+    xd_intl_source_of("de_DE.utf8", &src, &map);
+    CHECK(strcmp(src, "de_DE") == 0 && strcmp(map, "UTF-8") == 0);
+    g_free(src);
+    g_free(map);
+
+    /* The formats file with LOCPATH. */
+    CHECK(xd_intl_write_formats_full(path, "C.UTF-8@xeondesktop", "/l/p", nullptr));
+    char *text = nullptr;
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr) &&
+          g_str_has_prefix(strchr(text, '\n') + 1, "LOCPATH=/l/p\n") &&
+          strstr(text, "\nLC_TIME=C.UTF-8@xeondesktop\n") != nullptr);
+    g_free(text);
+    char *read = xd_intl_read_formats(path);
+    CHECK(read != nullptr && strcmp(read, "C.UTF-8@xeondesktop") == 0);
+    g_free(read);
+    g_remove(path);
+
+    /* The locale compiled for real, where localedef and en_US's source
+     * are there: glibc then formats with the changes. */
+    locale_t en = newlocale(LC_ALL_MASK, "en_US.UTF-8", (locale_t)0);
+    char *localedef = g_find_program_in_path("localedef");
+    if (en == (locale_t)0 || localedef == nullptr ||
+        !g_file_test("/usr/share/i18n/locales/en_US", G_FILE_TEST_EXISTS)) {
+        g_printerr("test_intl_custom: no en_US.UTF-8 or localedef, skipped compiling\n");
+    } else {
+        xd_intl_custom from;
+        CHECK(xd_intl_custom_from_locale("en_US.UTF-8", &from));
+        CHECK(strcmp(from.decimal, ".") == 0 && strcmp(from.grouping, "3") == 0 &&
+              from.measurement == 2 && strcmp(from.time_format, "hh:mm:ss tt") == 0 &&
+              g_str_has_prefix(from.date_format, "MM/dd/yy") && from.negative_format == 1);
+        xd_intl_custom_clear(&from);
+        char *source = xd_intl_custom_source("en_US.UTF-8", &c);
+        CHECK(source != nullptr && strstr(source, "LC_NUMERIC\ndecimal_point") != nullptr &&
+              strstr(source, "grouping 3;2\n") != nullptr &&
+              strstr(source, "LC_PAPER\ncopy") != nullptr);
+        char *srcfile = g_build_filename(dir, "custom.src", nullptr);
+        g_file_set_contents(srcfile, source, -1, nullptr);
+        char *out = g_build_filename(dir, "en_US.UTF-8@xeondesktop", nullptr);
+        const char *argv[] = {localedef, "--no-archive", "-i", srcfile, "-f", "UTF-8", out,
+                              nullptr};
+        int status = -1;
+        CHECK(g_spawn_sync(nullptr, (char **)(uintptr_t)argv, nullptr,
+                           (GSpawnFlags)(G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL),
+                           nullptr, nullptr, nullptr, nullptr, &status, nullptr));
+        CHECK(WIFEXITED(status) && WEXITSTATUS(status) <= 1);
+        g_setenv("LOCPATH", dir, TRUE);
+        locale_t mine = newlocale(LC_NUMERIC_MASK | LC_MONETARY_MASK | LC_TIME_MASK,
+                                  "en_US.UTF-8@xeondesktop", (locale_t)0);
+        g_unsetenv("LOCPATH");
+        CHECK(mine != (locale_t)0);
+        if (mine != (locale_t)0) {
+            CHECK(strcmp(nl_langinfo_l(THOUSEP, mine), " ") == 0);
+            CHECK(strcmp(nl_langinfo_l(T_FMT, mine), "%H:%M") == 0);
+            CHECK(strcmp(nl_langinfo_l(MON_1, mine), "January") == 0);
+            char buf[64];
+            CHECK(strfmon_l(buf, sizeof(buf), mine, "%n", -1234.5) > 0 &&
+                  strcmp(buf, "$ -1,234.50") == 0);
+            freelocale(mine);
+        }
+        const char *rm[] = {"rm", "-rf", out, nullptr};
+        g_spawn_sync(nullptr, (char **)(uintptr_t)rm, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
+                     nullptr, nullptr, nullptr, nullptr, nullptr);
+        g_remove(srcfile);
+        g_free(srcfile);
+        g_free(out);
+        g_free(source);
+    }
+    if (en != (locale_t)0)
+        freelocale(en);
+    g_free(localedef);
+    xd_intl_custom_clear(&c);
+    xd_intl_custom_clear(&e);
+    g_rmdir(dir);
+    g_free(path);
+    g_free(dir);
 }
 
 static void test_intl(void) {
@@ -2695,6 +2883,7 @@ int main(void) {
     test_gtk_css();
     test_passwd();
     test_intl();
+    test_intl_custom();
     test_users();
     test_folder_options();
     test_input_settings();

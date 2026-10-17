@@ -553,6 +553,7 @@ xkbregistry_dep = dependency('xkbregistry', include_type: 'system')
 executable(
   'xd-intl',
   'src/intl/main.c',
+  'src/intl/customize.c',
   'src/intl/intl.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, xkbregistry_dep],

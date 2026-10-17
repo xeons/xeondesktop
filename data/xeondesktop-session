@@ -23,6 +23,21 @@ if [ -x "$generator" ] && vars=$("$generator"); then
     set +a
 fi
 
+# Customized formats (Regional and Language Options) are a locale compiled
+# into LOCPATH, which hides the system's own locales; if one this session
+# needs isn't there (the system language changed since), use the formats
+# without the customizations rather than no locale at all.
+if [ -n "${LOCPATH-}" ] && locale 2>&1 >/dev/null | grep -q 'Cannot set'; then
+    unset LOCPATH
+    for var in LC_NUMERIC LC_TIME LC_MONETARY LC_PAPER LC_MEASUREMENT LC_ADDRESS \
+        LC_TELEPHONE LC_NAME; do
+        eval "value=\${$var-}"
+        case $value in
+        *@xeondesktop) export "$var=${value%@xeondesktop}" ;;
+        esac
+    done
+fi
+
 # The compositor starts xeondesktop-session.target in the user manager
 # (graphical-session.target with it); when it exits, however it exits,
 # the session's services stop and the manager forgets this display. A

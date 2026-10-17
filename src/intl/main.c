@@ -2,7 +2,9 @@
  * xd-intl: Windows XP's Regional and Language Options.
  *
  *   Regional Options  the user's standards and formats (LC_NUMERIC,
- *                     LC_TIME, ...; see intl.h), with samples
+ *                     LC_TIME, ...; see intl.h), with samples;
+ *                     Customize... changes them (customize.c), compiled
+ *                     into a locale of the user's own with localedef
  *   Languages         Details... opens the Keyboard applet's input
  *                     languages (only if xd-keyboard is installed)
  *   Advanced          the system locale and the keyboard of the logon
@@ -14,14 +16,17 @@
  * list that newlocale() can load (what `localectl list-locales` shows).
  * Keyboard layouts come from xkeyboard-config through libxkbregistry.
  */
+#include <errno.h>
 #include <locale.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <glib/gstdio.h>
 #include <xkbcommon/xkbregistry.h>
 
 #include "../core/common.h"
 #include "../gtkapp/gtkapp.h"
+#include "customize.h"
 #include "intl.h"
 
 #define LOCALE1 "org.freedesktop.locale1"
@@ -36,7 +41,10 @@ typedef struct props {
     char **locales; /* installed */
     /* Regional Options */
     GtkWidget *formats, *number, *currency, *time, *short_date, *long_date, *note;
-    char *user_formats; /* as applied */
+    GtkWidget *customize;
+    char *user_formats;     /* as applied (the locale, without the customization) */
+    xd_intl_custom custom;  /* Customize's changes to the formats chosen */
+    bool custom_changed;    /* since applied */
     /* Advanced */
     GtkWidget *system_locale, *layout, *variant, *convert, *console;
     struct rxkb_context *xkb;
@@ -100,13 +108,32 @@ static void fill_locales(props *p, GtkWidget *combo, const char *current) {
 
 /* ---- Regional Options ---------------------------------------------------------- */
 
+static char *custom_path(void) {
+    return g_build_filename(g_get_user_config_dir(), "xeondesktop", "formats.ini", nullptr);
+}
+
 /* Samples are read-only text boxes, as in Windows. */
 static void entry_text(GtkWidget *w, const char *s) { gtk_entry_set_text(GTK_ENTRY(w), s); }
 
 static void show_samples(props *p) {
     const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->formats));
-    xd_intl_samples s;
-    bool ok = id != nullptr && xd_intl_samples_get(id, time(nullptr), &s);
+    xd_intl_samples s = {0};
+    time_t now = time(nullptr);
+    xd_intl_custom e;
+    bool ok;
+    if (id != nullptr && !xd_intl_custom_empty(&p->custom) &&
+        xd_intl_custom_effective(id, &p->custom, &e)) {
+        /* Customized: as Customize shows them. */
+        s.number = xd_intl_number_sample(&e, false);
+        s.currency = xd_intl_currency_sample(&e, false);
+        s.time = xd_intl_time_sample(id, &e, now);
+        s.short_date = xd_intl_date_sample(id, &e, now, false);
+        s.long_date = xd_intl_date_sample(id, &e, now, true);
+        xd_intl_custom_clear(&e);
+        ok = true;
+    } else {
+        ok = id != nullptr && xd_intl_samples_get(id, now, &s);
+    }
     entry_text(p->number, ok ? s.number : "");
     entry_text(p->currency, ok ? s.currency : "");
     entry_text(p->time, ok ? s.time : "");
@@ -118,8 +145,27 @@ static void show_samples(props *p) {
 
 static void on_formats([[maybe_unused]] GtkComboBox *c, gpointer data) {
     props *p = data;
+    /* Other formats start without the customization, as in XP. */
+    if (!xd_intl_custom_empty(&p->custom)) {
+        xd_intl_custom_clear(&p->custom);
+        p->custom_changed = true;
+    }
     show_samples(p);
     changed(p);
+}
+
+static void customized(void *data) {
+    props *p = data;
+    p->custom_changed = true;
+    show_samples(p);
+    changed(p);
+}
+
+static void on_customize([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->formats));
+    if (id != nullptr)
+        xd_intl_customize(GTK_WINDOW(p->window), id, &p->custom, customized, p);
 }
 
 static GtkWidget *sample_row(GtkGrid *grid, int row, const char *label) {
@@ -143,11 +189,16 @@ static GtkWidget *regional_page(props *p) {
                             "currencies, dates, and time."),
                        FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box),
-                       text("Select an item to match its preferences:"),
+                       text("Select an item to match its preferences, or click Customize to "
+                            "choose your own formats:"),
                        FALSE, FALSE, 0);
-    /* No Customize...: glibc formats come whole, as compiled locales. */
+    GtkWidget *choose = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     p->formats = gtk_combo_box_text_new();
-    gtk_box_pack_start(GTK_BOX(box), p->formats, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(choose), p->formats, TRUE, TRUE, 0);
+    p->customize = gtk_button_new_with_mnemonic("C_ustomize...");
+    g_signal_connect(p->customize, "clicked", G_CALLBACK(on_customize), p);
+    gtk_box_pack_start(GTK_BOX(choose), p->customize, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), choose, FALSE, FALSE, 0);
 
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 4);
@@ -167,10 +218,20 @@ static GtkWidget *regional_page(props *p) {
 
     /* The formats as set: ours, else what this session got. */
     char *path = formats_path();
-    p->user_formats = xd_intl_read_formats(path);
+    char *set = xd_intl_read_formats(path);
     g_free(path);
-    if (p->user_formats == nullptr)
-        p->user_formats = g_strdup(setlocale(LC_TIME, nullptr));
+    if (set == nullptr)
+        set = g_strdup(setlocale(LC_TIME, nullptr));
+    p->user_formats = xd_intl_custom_base(set);
+    g_free(set);
+    /* The customization, if it's of these formats. */
+    path = custom_path();
+    char *of = nullptr;
+    xd_intl_custom_load(path, &of, &p->custom);
+    g_free(path);
+    if (g_strcmp0(of, p->user_formats) != 0)
+        xd_intl_custom_clear(&p->custom);
+    g_free(of);
     fill_locales(p, p->formats, p->user_formats);
     g_signal_connect(p->formats, "changed", G_CALLBACK(on_formats), p);
     return page;
@@ -453,21 +514,219 @@ static gboolean on_delete([[maybe_unused]] GtkWidget *w, [[maybe_unused]] GdkEve
     return ((props *)data)->busy;
 }
 
+/* ---- compiling customized formats ----------------------------------------------------- */
+
+static char *locale_dir(void) {
+    return g_build_filename(g_get_user_data_dir(), "xeondesktop", "locale", nullptr);
+}
+
+/* Removes a compiled locale (files, and LC_MESSAGES's folder). Programs
+ * already using its files keep them: they're unlinked, not changed. */
+static void remove_tree(GFile *dir) {
+    GFileEnumerator *e = g_file_enumerate_children(
+        dir, G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE,
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr);
+    GFileInfo *info;
+    while (e != nullptr && (info = g_file_enumerator_next_file(e, nullptr, nullptr)) != nullptr) {
+        GFile *child = g_file_get_child(dir, g_file_info_get_name(info));
+        if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY)
+            remove_tree(child);
+        else
+            g_file_delete(child, nullptr, nullptr);
+        g_object_unref(child);
+        g_object_unref(info);
+    }
+    g_clear_object(&e);
+    g_file_delete(dir, nullptr, nullptr);
+}
+
+static void remove_path(const char *path) {
+    GFile *f = g_file_new_for_path(path);
+    if (g_file_query_exists(f, nullptr))
+        remove_tree(f);
+    g_object_unref(f);
+}
+
+/* localedef, waited for the way localed is (call()). */
+typedef struct pending_run {
+    GMainLoop *loop;
+    bool ok;
+    char *why;
+} pending_run;
+
+static void run_done(GObject *src, GAsyncResult *res, gpointer data) {
+    pending_run *r = data;
+    GSubprocess *sp = G_SUBPROCESS(src);
+    GError *error = nullptr;
+    char *err = nullptr;
+    if (g_subprocess_communicate_utf8_finish(sp, res, nullptr, &err, &error)) {
+        /* 1 is warnings only: the locale is written. */
+        r->ok = g_subprocess_get_if_exited(sp) && g_subprocess_get_exit_status(sp) <= 1;
+        r->why = err;
+    } else {
+        r->why = g_strdup(error->message);
+        g_error_free(error);
+    }
+    g_main_loop_quit(r->loop);
+}
+
+static bool localedef(const char *source, const char *charmap, const char *out, char **why) {
+    const char *argv[] = {"localedef", "--no-archive", "-i", source, "-f", charmap, out, nullptr};
+    GError *error = nullptr;
+    GSubprocess *sp = g_subprocess_newv(
+        argv, (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_PIPE),
+        &error);
+    if (sp == nullptr) {
+        *why = g_strdup(error->message);
+        g_error_free(error);
+        return false;
+    }
+    pending_run r = {.loop = g_main_loop_new(nullptr, FALSE)};
+    g_subprocess_communicate_utf8_async(sp, nullptr, nullptr, run_done, &r);
+    g_main_loop_run(r.loop);
+    g_main_loop_unref(r.loop);
+    g_object_unref(sp);
+    char *check = g_build_filename(out, "LC_NUMERIC", nullptr);
+    r.ok = r.ok && g_file_test(check, G_FILE_TEST_IS_REGULAR);
+    g_free(check);
+    if (r.ok)
+        g_free(r.why);
+    else
+        *why = r.why != nullptr && r.why[0] != '\0' ? r.why : g_strdup("localedef failed.");
+    return r.ok;
+}
+
+/* Built in, or not a name we'd find: nothing to compile. */
+static bool needs_compiling(const char *name) {
+    return name != nullptr && name[0] != '\0' && strcmp(name, "C") != 0 &&
+           strcmp(name, "POSIX") != 0 && g_ascii_strncasecmp(name, "C.", 2) != 0 &&
+           !g_str_has_suffix(name, "@xeondesktop") && xd_intl_valid_name(name);
+}
+
+/* The customized formats as a compiled locale in `dir`, and the
+ * session's language beside it (LOCPATH hides the system's). */
+static bool compile_custom(props *p, const char *id, const char *dir, char **why) {
+    if (g_mkdir_with_parents(dir, 0755) != 0) {
+        *why = g_strdup_printf("%s can't be created: %s", dir, g_strerror(errno));
+        return false;
+    }
+    char *found = g_find_program_in_path("localedef");
+    if (found == nullptr) {
+        *why = g_strdup("localedef, from the C library's locale tools, isn't installed.");
+        return false;
+    }
+    g_free(found);
+    bool ok = true;
+    static const char *const vars[] = {"LANG", "LC_CTYPE", "LC_COLLATE", "LC_MESSAGES"};
+    for (size_t i = 0; ok && i < G_N_ELEMENTS(vars); i++) {
+        const char *name = g_getenv(vars[i]);
+        if (!needs_compiling(name))
+            continue;
+        char *out = g_build_filename(dir, name, nullptr);
+        char *done = g_build_filename(out, "LC_CTYPE", nullptr);
+        if (!g_file_test(done, G_FILE_TEST_IS_REGULAR)) {
+            char *source = nullptr, *charmap = nullptr;
+            xd_intl_source_of(name, &source, &charmap);
+            ok = localedef(source, charmap, out, why);
+            g_free(source);
+            g_free(charmap);
+        }
+        g_free(done);
+        g_free(out);
+    }
+    char *text = ok ? xd_intl_custom_source(id, &p->custom) : nullptr;
+    if (ok && text == nullptr) {
+        *why = g_strdup_printf("%s isn't installed.", id);
+        ok = false;
+    }
+    if (ok) {
+        /* Built beside the one in use, then swapped in. */
+        char *name = xd_intl_custom_name(id);
+        char *src = g_build_filename(dir, "xeondesktop.src", nullptr);
+        char *out = g_build_filename(dir, name, nullptr);
+        char *fresh = g_strconcat(out, ".new", nullptr);
+        char *old = g_strconcat(out, ".old", nullptr);
+        GError *error = nullptr;
+        remove_path(fresh);
+        ok = g_file_set_contents(src, text, -1, &error);
+        if (!ok) {
+            *why = g_strdup(error->message);
+            g_error_free(error);
+        }
+        char *charmap = nullptr, *source = nullptr;
+        xd_intl_source_of(id, &source, &charmap);
+        ok = ok && localedef(src, charmap, fresh, why);
+        if (ok) {
+            remove_path(old);
+            if (g_file_test(out, G_FILE_TEST_EXISTS))
+                g_rename(out, old);
+            ok = g_rename(fresh, out) == 0;
+            if (!ok)
+                *why = g_strdup_printf("%s can't be replaced: %s", out, g_strerror(errno));
+            remove_path(old);
+        }
+        g_free(source);
+        g_free(charmap);
+        g_free(old);
+        g_free(fresh);
+        g_free(out);
+        g_free(src);
+        g_free(name);
+    }
+    g_free(text);
+    return ok;
+}
+
 static bool apply_formats(props *p) {
     const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->formats));
-    if (id == nullptr || g_strcmp0(id, p->user_formats) == 0)
+    if (id == nullptr || (g_strcmp0(id, p->user_formats) == 0 && !p->custom_changed))
         return true;
     char *path = formats_path();
+    char *cpath = custom_path();
     GError *error = nullptr;
-    bool ok = xd_intl_write_formats(path, id, &error);
+    char *why = nullptr;
+    bool ok;
+    if (xd_intl_custom_empty(&p->custom)) {
+        /* The compiled locales stay: programs of this session use them
+         * until you log off. */
+        ok = xd_intl_write_formats(path, id, &error) &&
+             xd_intl_custom_save(cpath, nullptr, &p->custom, &error);
+    } else {
+        char *dir = locale_dir();
+        p->busy = true;
+        gtk_widget_set_sensitive(p->window, FALSE);
+        GdkWindow *win = gtk_widget_get_window(p->window);
+        GdkCursor *wait = win != nullptr ? gdk_cursor_new_from_name(gdk_window_get_display(win),
+                                                                    "wait")
+                                         : nullptr;
+        if (win != nullptr)
+            gdk_window_set_cursor(win, wait);
+        ok = compile_custom(p, id, dir, &why);
+        if (win != nullptr)
+            gdk_window_set_cursor(win, nullptr);
+        g_clear_object(&wait);
+        gtk_widget_set_sensitive(p->window, TRUE);
+        p->busy = false;
+        if (ok) {
+            char *name = xd_intl_custom_name(id);
+            ok = xd_intl_write_formats_full(path, name, dir, &error) &&
+                 xd_intl_custom_save(cpath, id, &p->custom, &error);
+            g_free(name);
+        }
+        g_free(dir);
+    }
     g_free(path);
+    g_free(cpath);
     if (!ok) {
-        error_box(p, "Your formats could not be saved.", error->message);
-        g_error_free(error);
+        error_box(p, "Your formats could not be saved.",
+                  why != nullptr ? why : error != nullptr ? error->message : "");
+        g_clear_error(&error);
+        g_free(why);
         return false;
     }
     g_free(p->user_formats);
     p->user_formats = g_strdup(id);
+    p->custom_changed = false;
     gtk_label_set_text(GTK_LABEL(p->note),
                        "Programs use the new formats after you log off and log on again.");
     return true;
@@ -546,6 +805,10 @@ int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.RegionalOptions");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
+    /* GTK has set this program's locale, customized formats and all;
+     * from here on the system's compiled locales are the ones listed and
+     * sampled, which LOCPATH would hide. */
+    g_unsetenv("LOCPATH");
     static props p;
     GError *error = nullptr;
     p.l1 = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr,
@@ -603,6 +866,7 @@ int main(int argc, char **argv) {
         rxkb_context_unref(p.xkb);
     g_strfreev(p.locales);
     g_free(p.user_formats);
+    xd_intl_custom_clear(&p.custom);
     g_clear_object(&p.l1);
     return EXIT_SUCCESS;
 }
