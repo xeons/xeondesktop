@@ -77,11 +77,14 @@ static void aero_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *
         bx -= w;
         xd_layout_add_button(l, (xd_rect){bx, by, w, bh}, order[i].part);
     }
+    /* As in Windows 7, the icon and title sit in the middle of all the glass
+     * above the client area, top border included: the caption buttons hang
+     * from the top edge, and centred below the border they look low. */
     int icon = xd_tpx(t, 16);
-    int cy = outer.y + b + (xd_tpx(t, CAPTION) - icon) / 2;
+    int cy = outer.y + (in.top - icon) / 2;
     l->icon = (xd_rect){outer.x + b + xd_tpx(t, 2), cy, icon, icon};
     int tx = l->icon.x + icon + xd_tpx(t, 5);
-    l->title = (xd_rect){tx, outer.y + b, bx - xd_tpx(t, 8) - tx, xd_tpx(t, CAPTION)};
+    l->title = (xd_rect){tx, outer.y, bx - xd_tpx(t, 8) - tx, in.top};
 }
 
 /* The glass: the colour, a sheen fading down from the top, and faint
@@ -132,7 +135,14 @@ static void draw_title(const xd_theme *t, cairo_t *cr, xd_rect r, const char *ti
     pango_layout_set_ellipsize(l, PANGO_ELLIPSIZE_END);
     int tw = 0, th = 0;
     pango_layout_get_pixel_size(l, &tw, &th);
-    double x = r.x, y = r.y + (r.h - th) / 2.0;
+    /* Centre the capitals, as Windows does, not the line with its room for
+     * descenders (that sits the text high); an "H" gives their height
+     * whatever the title's letters. Whole pixels keep the text crisp. */
+    PangoLayout *h = xd_text_layout(cr, "H", &st);
+    PangoRectangle caps;
+    pango_layout_get_pixel_extents(h, &caps, nullptr);
+    g_object_unref(h);
+    double x = r.x, y = r.y + (r.h - caps.height) / 2 - caps.y;
     /* The glow: a soft white pill under the text. */
     double pad = xd_tpx(t, 10);
     for (int i = 0; i < 6; i++) {
