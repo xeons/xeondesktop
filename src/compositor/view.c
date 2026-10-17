@@ -1138,7 +1138,11 @@ static bool kde_negotiated(xd_server *server, struct wlr_surface *surface) {
     return false;
 }
 
-void xd_view_update_decorations(xd_view *view) {
+/* `reply`: the client asked for a mode and gets an answer even if nothing
+ * changed. Otherwise the mode is only sent when it changes: each one
+ * costs a configure, and this runs on every commit, so a client that
+ * redraws when configured (Alacritty, Qt) would never stop redrawing. */
+static void update_decorations(xd_view *view, bool reply) {
     xd_server *server = view->server;
     struct wlr_surface *surface = xd_view_surface(view);
     bool csd;
@@ -1159,10 +1163,12 @@ void xd_view_update_decorations(xd_view *view) {
     /* [Windows] AlwaysDrawFrames: our frame on everything. */
     if (server->config.always_frames)
         csd = false;
-    if (view->decoration != nullptr && view_initialized(view))
-        wlr_xdg_toplevel_decoration_v1_set_mode(
-            view->decoration, csd ? WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
-                                  : WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    enum wlr_xdg_toplevel_decoration_v1_mode mode =
+        csd ? WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE
+            : WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
+    if (view->decoration != nullptr && view_initialized(view) &&
+        (reply || view->decoration->scheduled_mode != mode))
+        wlr_xdg_toplevel_decoration_v1_set_mode(view->decoration, mode);
     if (csd == view->csd)
         return;
     view->csd = csd;
@@ -1172,9 +1178,11 @@ void xd_view_update_decorations(xd_view *view) {
     }
 }
 
+void xd_view_update_decorations(xd_view *view) { update_decorations(view, false); }
+
 static void handle_decoration_mode(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, decoration_mode);
-    xd_view_update_decorations(view);
+    update_decorations(view, true);
 }
 
 static void handle_decoration_destroy(struct wl_listener *listener,
