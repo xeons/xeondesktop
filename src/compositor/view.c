@@ -870,14 +870,17 @@ static void handle_set_parent(struct wl_listener *listener, [[maybe_unused]] voi
 
 static void set_hung(xd_view *view, bool hung);
 
-static void handle_set_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_title);
+void xd_view_title_changed(xd_view *view) {
     if (view->hung)
         set_hung(view, true); /* the suffix follows the new title */
     if (view->ftl != nullptr && shown_title(view) != nullptr)
         wlr_foreign_toplevel_handle_v1_set_title(view->ftl, shown_title(view));
     view->drawn.title_dirty = true;
     xd_frame_render(view, false);
+}
+
+static void handle_set_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view_title_changed(XD_CONTAINER_OF(listener, xd_view, set_title));
 }
 
 /* ---- Not Responding --------------------------------------------------------- */
@@ -903,7 +906,10 @@ static void set_hung(xd_view *view, bool hung) {
 }
 
 static void handle_ping_timeout(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_view *view = XD_CONTAINER_OF(listener, xd_view, ping_timeout);
+    xd_view_ping_timed_out(XD_CONTAINER_OF(listener, xd_view, ping_timeout));
+}
+
+void xd_view_ping_timed_out(xd_view *view) {
     view->ping_out = false;
     if (!view->hung) {
         const char *t = xd_view_title(view);
@@ -913,7 +919,17 @@ static void handle_ping_timeout(struct wl_listener *listener, [[maybe_unused]] v
 }
 
 static bool pingable(const xd_view *v) {
-    return v->kind == XD_VIEW_XDG && v->mapped && v->toplevel->base->initialized;
+    if (!v->mapped)
+        return false;
+    if (v->kind == XD_VIEW_X11)
+        return v->pings && v->xsurface->surface != nullptr;
+    return v->toplevel->base->initialized;
+}
+
+/* Whether the program has answered every ping sent. */
+static bool ping_answered(const xd_view *v) {
+    return v->kind == XD_VIEW_X11 ? !v->xsurface->pinging
+                                  : v->toplevel->base->client->ping_serial == 0;
 }
 
 /* Every few seconds each program is pinged (one ping per client). wlroots
@@ -924,14 +940,18 @@ static bool pingable(const xd_view *v) {
 static int ping_tick(void *data) {
     xd_server *server = data;
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (pingable(v) && v->hung && v->ping_out && v->toplevel->base->client->ping_serial == 0)
+        if (pingable(v) && v->hung && v->ping_out && ping_answered(v))
             set_hung(v, false);
     }
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         if (!pingable(v))
             continue;
-        if (v->toplevel->base->client->ping_serial == 0)
-            wlr_xdg_surface_ping(v->toplevel->base);
+        if (ping_answered(v)) {
+            if (v->kind == XD_VIEW_X11)
+                wlr_xwayland_surface_ping(v->xsurface);
+            else
+                wlr_xdg_surface_ping(v->toplevel->base);
+        }
         v->ping_out = true;
     }
     wl_event_source_timer_update(server->ping_timer, PING_EVERY_MS);

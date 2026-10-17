@@ -520,8 +520,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       " (Not Responding)" after its title on the frame, the taskbar and the
       foreign-toplevel title, and Task Manager's Status says so, until it
       answers again. Tested with a program that froze its main loop for
-      25s. Not yet: X11 windows (_NET_WM_PING, only for programs that
-      support it), XP's ghost window and "End Now" from the close button.
+      25s. X11 windows too, when they list _NET_WM_PING (wlroots' X11
+      ping timeout is its own 10s); tested with the same program under
+      GDK_BACKEND=x11. Not yet: XP's ghost window.
 - [x] Options > Always On Top (saved): xd-window-arranger-v1 version 5's
       set_always_on_top puts the client's own window (and its dialogs) in
       a layer above ordinary windows, below the taskbar. Tested: Task

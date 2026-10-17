@@ -107,7 +107,10 @@ static void new_unmanaged(xd_server *server, struct wlr_xwayland_surface *xs) {
 
 /* ---- managed windows ------------------------------------------------------------ */
 
+static void update_pings(xd_view *view);
+
 static void handle_x_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    update_pings(XD_CONTAINER_OF(listener, xd_view, map));
     xd_view_on_map(XD_CONTAINER_OF(listener, xd_view, map));
 }
 
@@ -259,11 +262,21 @@ static void handle_x_close(struct wl_listener *listener, [[maybe_unused]] void *
 }
 
 static void handle_x_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_title);
-    if (view->ftl != nullptr && view->xsurface->title != nullptr)
-        wlr_foreign_toplevel_handle_v1_set_title(view->ftl, view->xsurface->title);
-    view->drawn.title_dirty = true;
-    xd_frame_render(view, false);
+    xd_view_title_changed(XD_CONTAINER_OF(listener, xd_view, set_title));
+}
+
+/* Only programs that list _NET_WM_PING answer pings; others would look
+ * hung. */
+static void update_pings(xd_view *view) {
+    const struct wlr_xwayland_surface *xs = view->xsurface;
+    view->pings = false;
+    for (size_t i = 0; view->server->net_wm_ping != 0 && i < xs->protocols_len; i++)
+        if (xs->protocols[i] == view->server->net_wm_ping)
+            view->pings = true;
+}
+
+static void handle_x_ping_timeout(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_view_ping_timed_out(XD_CONTAINER_OF(listener, xd_view, ping_timeout));
 }
 
 static void handle_x_class(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -303,6 +316,7 @@ static void new_managed(xd_server *server, struct wlr_xwayland_surface *xs) {
     XD_LISTEN(&xs->events.set_class, view, set_app_id, handle_x_class);
     XD_LISTEN(&xs->events.set_decorations, view, set_decorations, handle_x_decorations);
     XD_LISTEN(&xs->events.set_hints, view, set_hints, handle_x_hints);
+    XD_LISTEN(&xs->events.ping_timeout, view, ping_timeout, handle_x_ping_timeout);
 }
 
 static void handle_new_surface(struct wl_listener *listener, void *data) {
@@ -317,6 +331,16 @@ static void handle_new_surface(struct wl_listener *listener, void *data) {
 static void handle_ready(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, xwayland_ready);
     wlr_xwayland_set_seat(server->xwayland, server->seat);
+    xcb_connection_t *conn = wlr_xwayland_get_xwm_connection(server->xwayland);
+    if (conn != nullptr) {
+        static const char name[] = "_NET_WM_PING";
+        xcb_intern_atom_reply_t *r = xcb_intern_atom_reply(
+            conn, xcb_intern_atom(conn, 0, sizeof(name) - 1, name), nullptr);
+        if (r != nullptr) {
+            server->net_wm_ping = r->atom;
+            free(r);
+        }
+    }
     wlr_log(WLR_INFO, "Xwayland ready on DISPLAY=%s", server->xwayland->display_name);
 }
 

@@ -158,6 +158,7 @@ typedef struct xd_view {
     struct wl_listener content_destroy; /* wlroots frees it with the surface */
     struct wl_listener set_title;
     struct wl_listener ping_timeout;
+    bool pings; /* X11: lists _NET_WM_PING in WM_PROTOCOLS */
     struct wl_listener set_app_id;
     struct wl_listener ftl_activate;
     struct wl_listener ftl_minimize;
@@ -260,6 +261,7 @@ struct xd_server {
     /* xwayland.c */
     struct wlr_compositor *compositor;
     struct wlr_xwayland *xwayland;
+    xcb_atom_t net_wm_ping; /* 0 until Xwayland is ready */
     struct wl_listener xwayland_ready;
     struct wl_listener xwayland_new_surface;
     struct wlr_scene_tree *layer_x11_popups; /* X11 menus and tooltips */
@@ -416,6 +418,10 @@ void xd_animate_finish(xd_server *server);
 void xd_arrange_forget_view(xd_server *server, xd_view *view);
 /* Always On Top: the window (and its dialogs) above ordinary windows. */
 void xd_view_set_on_top(xd_view *view, bool on_top);
+/* Not Responding: a ping timed out (view.c pings; X11 windows that
+ * support _NET_WM_PING too). The title the frame and taskbar show. */
+void xd_view_ping_timed_out(xd_view *view);
+void xd_view_title_changed(xd_view *view);
 
 /* protocols.c: output management/power, idle, activation. */
 void xd_protocols_init(xd_server *server);
