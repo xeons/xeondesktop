@@ -348,6 +348,13 @@ executable(
   install: true,
 )
 executable(
+  'xd-message',
+  'src/apps/message.c',
+  dependencies: [ui_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+executable(
   'xd-run',
   'src/apps/run.c',
   'src/apps/runcmd.c',

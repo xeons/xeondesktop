@@ -790,6 +790,31 @@ static void start_rename(xd_deskicons *di, icon *ic) {
     redraw(di);
 }
 
+/* Windows' "Error Renaming File or Folder" box (xd-message). */
+static void rename_failed(xd_shell *shell, const icon *ic, const char *text, const GError *err) {
+    char *msg;
+    if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_EXISTS))
+        msg = g_strdup_printf("Cannot rename %s: A file with the name you specified already "
+                              "exists. Specify a different file name.",
+                              ic->label);
+    else if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_INVALID_FILENAME) ||
+             strchr(text, '/') != nullptr)
+        msg = g_strdup("A file name cannot contain the following character:\n/");
+    else if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED))
+        msg = g_strdup_printf("Cannot rename %s: Access is denied.", ic->label);
+    else
+        msg = g_strdup_printf("Cannot rename %s: %s", ic->label, err->message);
+    char *exe = xd_shell_own_program("xd-message");
+    char *q_exe = g_shell_quote(exe), *q_msg = g_shell_quote(msg);
+    char *cmd = g_strdup_printf("%s --error 'Error Renaming File or Folder' %s", q_exe, q_msg);
+    xd_shell_launch(shell, cmd);
+    g_free(cmd);
+    g_free(q_msg);
+    g_free(q_exe);
+    g_free(exe);
+    g_free(msg);
+}
+
 static void end_rename(xd_deskicons *di, bool commit) {
     if (di->edit_id == nullptr)
         return;
@@ -815,7 +840,7 @@ static void end_rename(xd_deskicons *di, bool commit) {
             save_positions(di);
             g_object_unref(renamed);
         } else {
-            fprintf(stderr, "xd-shell: cannot rename %s: %s\n", ic->path, err->message);
+            rename_failed(di->shell, ic, text, err);
             g_error_free(err);
         }
         g_object_unref(f);
