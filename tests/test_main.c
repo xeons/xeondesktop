@@ -259,7 +259,7 @@ static void test_luna_variants(void) {
     } variants[] = {
         {"luna-blue", 0x0054E3},
         {"luna-olive", 0x8BA169},
-        {"luna-silver", 0xC0C0C0},
+        {"luna-silver", 0xACABC4},
     };
     uint32_t close[3], minimize[3];
     for (size_t i = 0; i < XD_ARRAY_LEN(variants); i++) {
@@ -286,8 +286,36 @@ static void test_luna_variants(void) {
         cairo_destroy(cr);
         cairo_surface_destroy(surf);
     }
-    CHECK(close[1] == close[0] && close[2] == close[0]);
+    CHECK(close[1] == close[0]);
     CHECK(minimize[1] != minimize[0] && minimize[2] != minimize[0]);
+    /* Silver's own (measured) Close is red too, lighter than Blue's. */
+    CHECK(((close[2] >> 16) & 0xFF) > ((close[2] >> 8) & 0xFF) + 64);
+
+    /* Silver is drawn as measured off XP: a glossy caption from a light
+     * top through lavender grey A4A3BE to white at its foot, a light
+     * silver taskbar and the green Start button. */
+    xd_scheme sv;
+    CHECK(load_shipped_scheme("luna-silver", &sv));
+    xd_theme st;
+    xd_theme_init(&st, XD_STYLE_LUNA, &sv, 1.0);
+    cairo_surface_t *ss = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 300, 100);
+    cairo_t *scr = cairo_create(ss);
+    xd_frame sf = {.title = "", .active = true, .buttons = XD_CAPBTN_CLOSE};
+    xd_theme_draw_frame(&st, scr, (xd_rect){0, 0, 300, 60}, &sf);
+    CHECK(near(pixel(ss, 150, 2), 0xFFFFFF, 0));  /* the gloss */
+    CHECK(near(pixel(ss, 150, 7), 0xA4A3BE, 0));  /* the darkest row */
+    CHECK(near(pixel(ss, 150, 26), 0xFFFFFF, 0)); /* the caption's foot */
+    CHECK(near(pixel(ss, 150, 29), 0x777792, 0)); /* the line above the client */
+    sf.active = false;
+    xd_theme_draw_frame(&st, scr, (xd_rect){0, 0, 300, 60}, &sf);
+    CHECK(near(pixel(ss, 150, 8), 0xD9D9E5, 0));
+    xd_theme_draw_taskbar(&st, scr, (xd_rect){0, 60, 300, 30}, XD_EDGE_BOTTOM);
+    CHECK(near(pixel(ss, 150, 62), 0xFFFFFF, 0) && near(pixel(ss, 150, 65), 0x9A99B1, 0));
+    xd_theme_draw_start_button(&st, scr, (xd_rect){0, 60, 99, 30}, 0);
+    uint32_t green = pixel(ss, 4, 75);
+    CHECK(((green >> 8) & 0xFF) > ((green >> 16) & 0xFF) + 40);
+    cairo_destroy(scr);
+    cairo_surface_destroy(ss);
 
     /* The GTK theme follows the variant's selection colour. */
     xd_scheme olive;
