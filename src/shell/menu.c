@@ -101,7 +101,9 @@ static void layout(xd_menu *menu) {
 }
 
 static int item_at(const xd_menu *menu, double x, double y) {
-    if (x < menu->item_x || x >= menu->item_x + menu->item_w)
+    /* Anywhere across the menu's width counts, the Windows 2000 banner
+     * beside the items too. */
+    if (x < 0 || x >= menu->width)
         return -1;
     for (size_t i = 0; i < menu->model->count; i++) {
         if (y >= menu->item_y[i] && y < menu->item_y[i] + menu->item_h[i])
@@ -179,7 +181,11 @@ static void render(xd_menu *menu) {
             continue;
         }
         uint8_t state = 0;
-        if (menu->hot == (int)i || menu->child_index == (int)i)
+        /* Only the item under the pointer: the one whose submenu is still
+         * open (it closes after the hover delay) loses its highlight at
+         * once, as in Windows. Moving into the submenu or off the menu
+         * sets `hot` back to it. */
+        if (menu->hot == (int)i)
             state |= XD_STATE_HOT;
         if (it->disabled)
             state |= XD_STATE_DISABLED;
