@@ -542,6 +542,21 @@ static void test_settings(void) {
     xd_settings_scheme(&a, &xl);
     CHECK(xl.fonts[XD_FONT_CAPTION].size_pt > normal.fonts[XD_FONT_CAPTION].size_pt * 1.4);
     CHECK(xl.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
+
+    /* A dialog's Apply keeps what others saved since it loaded the file. */
+    xd_settings base;
+    xd_settings_defaults(&base);
+    xd_settings_set_tray_rule(&base, "nm-applet", XD_TRAY_ALWAYS_SHOW);
+    xd_settings pending = base;
+    pending.show_clock = false;
+    xd_settings_set_tray_rule(&pending, "nm-applet", XD_TRAY_AUTO);
+    xd_settings now = base;
+    now.style = XD_STYLE_LUNA;
+    snprintf(now.wallpaper, sizeof(now.wallpaper), "%s", "/w/new.jpg");
+    now.show_clock = true;
+    xd_settings_merge(&base, &pending, &now);
+    CHECK(now.style == XD_STYLE_LUNA && strcmp(now.wallpaper, "/w/new.jpg") == 0);
+    CHECK(!now.show_clock && xd_settings_tray_rule(&now, "nm-applet") == XD_TRAY_AUTO);
 }
 
 static void test_power_settings(void) {

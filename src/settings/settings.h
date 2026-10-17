@@ -186,6 +186,10 @@ void xd_settings_parse(xd_str text, xd_settings *s);
 /* Loads the user's file, or defaults if there is none. */
 void xd_settings_load(xd_settings *s);
 [[nodiscard]] bool xd_settings_save(const xd_settings *s);
+/* Applies to `now` (the file as it is) the values `pending` changed from
+ * `base` (the file as a dialog loaded it), so that saving `now` keeps what
+ * other programs wrote in the meantime. */
+void xd_settings_merge(const xd_settings *base, const xd_settings *pending, xd_settings *now);
 /* Same settings (compares what would be written, not struct bytes). */
 bool xd_settings_equal(const xd_settings *a, const xd_settings *b);
 void xd_settings_path(xd_strbuf *out);

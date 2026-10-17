@@ -513,6 +513,45 @@ bool xd_settings_equal(const xd_settings *a, const xd_settings *b) {
     return eq;
 }
 
+void xd_settings_merge(const xd_settings *base, const xd_settings *pending, xd_settings *now) {
+    GKeyFile *b = to_keyfile(base);
+    GKeyFile *p = to_keyfile(pending);
+    GKeyFile *n = to_keyfile(now);
+    /* Keys `pending` set or changed... */
+    gchar **groups = g_key_file_get_groups(p, nullptr);
+    for (gchar **g = groups; *g != nullptr; g++) {
+        gchar **keys = g_key_file_get_keys(p, *g, nullptr, nullptr);
+        for (gchar **k = keys; keys != nullptr && *k != nullptr; k++) {
+            gchar *pv = g_key_file_get_value(p, *g, *k, nullptr);
+            gchar *bv = g_key_file_get_value(b, *g, *k, nullptr);
+            if (pv != nullptr && g_strcmp0(pv, bv) != 0)
+                g_key_file_set_value(n, *g, *k, pv);
+            g_free(pv);
+            g_free(bv);
+        }
+        g_strfreev(keys);
+    }
+    g_strfreev(groups);
+    /* ...and the ones it removed (notification rules back to the default). */
+    groups = g_key_file_get_groups(b, nullptr);
+    for (gchar **g = groups; *g != nullptr; g++) {
+        gchar **keys = g_key_file_get_keys(b, *g, nullptr, nullptr);
+        for (gchar **k = keys; keys != nullptr && *k != nullptr; k++) {
+            if (!g_key_file_has_key(p, *g, *k, nullptr))
+                g_key_file_remove_key(n, *g, *k, nullptr);
+        }
+        g_strfreev(keys);
+    }
+    g_strfreev(groups);
+    gsize len = 0;
+    gchar *data = g_key_file_to_data(n, &len, nullptr);
+    xd_settings_parse((xd_str){data, len}, now);
+    g_free(data);
+    g_key_file_free(n);
+    g_key_file_free(p);
+    g_key_file_free(b);
+}
+
 static void mkdirs_for(xd_strbuf *path) {
     for (size_t i = 1; i < path->len; i++) {
         if (path->data[i] != '/')

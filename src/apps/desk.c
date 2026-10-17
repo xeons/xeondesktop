@@ -1564,11 +1564,15 @@ static bool apply(desk *d) {
         apply_display(d, d->heads, d->head_count, true);
     if (xd_settings_equal(&d->saved, &d->pending))
         return true;
-    if (!xd_settings_save(&d->pending)) {
+    /* Only what changed here: another program may have saved since. */
+    xd_settings now;
+    xd_settings_load(&now);
+    xd_settings_merge(&d->saved, &d->pending, &now);
+    if (!xd_settings_save(&now)) {
         fprintf(stderr, "xd-desk: cannot write settings\n");
         return false;
     }
-    d->saved = d->pending;
+    d->saved = d->pending = now;
     /* Re-theme this dialog too, as Windows does after Apply. */
     xd_scheme scheme;
     xd_settings_scheme(&d->pending, &scheme);

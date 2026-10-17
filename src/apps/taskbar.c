@@ -98,11 +98,16 @@ static void on_style(xd_widget *w, void *user) {
 }
 
 static bool apply(props *p) {
-    if (!xd_settings_save(&p->pending)) {
+    /* Only what changed here: the taskbar's own menu, or another dialog,
+     * may have saved since. */
+    xd_settings now;
+    xd_settings_load(&now);
+    xd_settings_merge(&p->saved, &p->pending, &now);
+    if (!xd_settings_save(&now)) {
         fprintf(stderr, "xd-taskbar: cannot write settings\n");
         return false;
     }
-    p->saved = p->pending;
+    p->saved = p->pending = now;
     changed(p);
     return true;
 }
