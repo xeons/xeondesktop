@@ -337,8 +337,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       highlight for newly installed programs; the large-icon/small-icon
       option. Untested: keyboard use, Log Off / Turn Off from the footer,
       Recent Documents and Control Panel submenus in the XP layout.
-- [ ] Windows 7 menu: pinning/unpinning from the menu (edit
-      `~/.config/xeondesktop/start-pinned` by hand), jump lists.
+- [x] Windows 7 and XP menus: a program's right-click menu (Open, Pin to
+      Start menu / Unpin from Start menu, and Remove from this list for
+      the frequently used ones) writes `start-pinned` / `start-frequent`.
+      The Start menu closes afterwards (Windows 7 keeps it open). Tested
+      headless: unpinning a default, pinning a search result, removing a
+      frequent program.
+- [ ] Windows 7 menu: jump lists.
 - [x] Windows 2000 menu: Documents lists My Documents, the Home folder and
       the 15 most recent files (recently-used.xbel) in name order, rebuilt
       as the menu opens; a menu taller than the screen continues in more

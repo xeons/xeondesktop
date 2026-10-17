@@ -16,6 +16,7 @@
  * Panel, Run and a Shut Down split button. ▸ items open ordinary popup
  * menus attached to this surface.
  */
+#include <errno.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <stdlib.h>
@@ -181,7 +182,9 @@ struct xd_start7 {
 
     xd_menu_tree tree;     /* submenu models */
     xd_menu *sub;
-    int sub_owner;         /* right item / HIT_SHUTDOWN_ARROW that opened `sub` */
+    int sub_owner;         /* right item / HIT_SHUTDOWN_ARROW / OWNER_CONTEXT that opened `sub` */
+    int context_row;       /* the program row right-clicked (OWNER_CONTEXT) */
+    double ptr_x, ptr_y;   /* the pointer, where the right-click menu opens */
     bool pending_hover;
 
     cairo_surface_t *picture;
@@ -394,18 +397,22 @@ static const xd_app *find_app(const xd_shell *shell, const char *id) {
     return nullptr;
 }
 
+static void pinned_path(xd_strbuf *path) {
+    const char *cfg = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    if (cfg != nullptr && cfg[0] == '/')
+        xd_strbuf_appendf(path, "%s/xeondesktop/start-pinned", cfg);
+    else
+        xd_strbuf_appendf(path, "%s/.config/xeondesktop/start-pinned", home != nullptr ? home : "");
+}
+
 /* Pinned ids: ~/.config/xeondesktop/start-pinned, one desktop id per line.
  * Without the file: the browser and the terminal, like Quick Launch. */
 static void load_pinned(const xd_shell *shell, const xd_app **out, size_t *n, size_t max) {
     *n = 0;
     xd_strbuf path = {0};
     xd_strbuf text = {0};
-    const char *cfg = getenv("XDG_CONFIG_HOME");
-    const char *home = getenv("HOME");
-    if (cfg != nullptr && cfg[0] == '/')
-        xd_strbuf_appendf(&path, "%s/xeondesktop/start-pinned", cfg);
-    else
-        xd_strbuf_appendf(&path, "%s/.config/xeondesktop/start-pinned", home != nullptr ? home : "");
+    pinned_path(&path);
     if (xd_read_file(xd_strbuf_cstr(&path), 64 * 1024, &text)) {
         xd_str rest = xd_strbuf_view(&text);
         while (rest.len > 0 && *n < max) {
@@ -441,6 +448,58 @@ static void load_pinned(const xd_shell *shell, const xd_app **out, size_t *n, si
     }
     xd_strbuf_free(&text);
     xd_strbuf_free(&path);
+}
+
+static constexpr size_t MAX_PINNED = 16;
+
+/* Pin to / Unpin from Start menu: rewrites start-pinned (starting from the
+ * defaults when there's no file yet). */
+static void set_pinned(const xd_shell *shell, const char *id, bool pin) {
+    const xd_app *apps[MAX_PINNED];
+    size_t n = 0;
+    load_pinned(shell, apps, &n, MAX_PINNED);
+    GString *text = g_string_new(nullptr);
+    bool present = false;
+    for (size_t i = 0; i < n; i++) {
+        bool same = strcmp(apps[i]->id, id) == 0;
+        present = present || same;
+        if (!same || pin)
+            g_string_append_printf(text, "%s\n", apps[i]->id);
+    }
+    if (pin && !present && n < MAX_PINNED)
+        g_string_append_printf(text, "%s\n", id);
+    xd_strbuf path = {0};
+    pinned_path(&path);
+    char *dir = g_path_get_dirname(xd_strbuf_cstr(&path));
+    GError *error = nullptr;
+    if (g_mkdir_with_parents(dir, 0700) != 0 ||
+        !g_file_set_contents(xd_strbuf_cstr(&path), text->str, (gssize)text->len, &error)) {
+        fprintf(stderr, "xd-shell: cannot save %s: %s\n", xd_strbuf_cstr(&path),
+                error != nullptr ? error->message : g_strerror(errno));
+        g_clear_error(&error);
+    }
+    g_free(dir);
+    xd_strbuf_free(&path);
+    g_string_free(text, TRUE);
+}
+
+/* Remove from this list: forgets a program's launches. */
+static void forget_launches(const char *id) {
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines("start-frequent", &lines, &n, 200);
+    size_t m = 0;
+    for (size_t i = 0; i < n; i++) {
+        const char *tab = strchr(lines[i], '\t');
+        if (tab != nullptr && strcmp(tab + 1, id) == 0) {
+            xd_free(lines[i]);
+            continue;
+        }
+        lines[m++] = lines[i];
+    }
+    if (!xd_state_write_lines("start-frequent", lines, m))
+        fprintf(stderr, "xd-shell: cannot save launch counts\n");
+    xd_free_lines(lines, m);
 }
 
 void xd_start7_count_launch(const char *id) {
@@ -484,7 +543,7 @@ static void build_home(xd_start7 *m) {
     xd_shell *shell = m->shell;
     m->row_count = 0;
     m->scroll = 0;
-    const xd_app *pinned[16];
+    const xd_app *pinned[MAX_PINNED];
     size_t np = 0;
     load_pinned(shell, pinned, &np, XD_ARRAY_LEN(pinned));
     for (size_t i = 0; i < np; i++)
@@ -1451,6 +1510,55 @@ static xd_rect xp_or_right_item(const xd_start7 *m, int hit) {
     return right_item(hit);
 }
 
+/* sub_owner for a program's right-click menu. */
+static constexpr int OWNER_CONTEXT = 5000;
+
+/* The actions run after the menus (and their trees) are freed; `data` is
+ * the xd_app, which belongs to shell->apps. */
+static void ctx_open([[maybe_unused]] xd_shell *shell, void *data) {
+    const xd_app *app = data;
+    if (xd_app_launch(app))
+        xd_start7_count_launch(app->id);
+}
+static void ctx_pin(xd_shell *shell, void *data) {
+    set_pinned(shell, ((const xd_app *)data)->id, true);
+}
+static void ctx_unpin(xd_shell *shell, void *data) {
+    set_pinned(shell, ((const xd_app *)data)->id, false);
+}
+static void ctx_forget([[maybe_unused]] xd_shell *shell, void *data) {
+    forget_launches(((const xd_app *)data)->id);
+}
+
+/* Windows 7's menu for a program: Open, Pin to / Unpin from Start menu,
+ * and Remove from this list for the frequently used ones. */
+static xd_menu_model *context_model(xd_start7 *m, const row *r) {
+    xd_menu_model *mm = xd_menu_model_new(&m->tree);
+    void *id = (void *)(uintptr_t)r->app;
+    const xd_app *pinned[MAX_PINNED];
+    size_t np = 0;
+    load_pinned(m->shell, pinned, &np, MAX_PINNED);
+    bool is_pinned = false;
+    for (size_t i = 0; i < np; i++)
+        is_pinned = is_pinned || pinned[i] == r->app;
+    xd_menu_item *it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION, "Open", nullptr);
+    it->bold = true;
+    it->action = ctx_open;
+    it->action_data = id;
+    xd_menu_add(&m->tree, mm, XD_MENU_SEPARATOR, nullptr, nullptr);
+    it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION,
+                     is_pinned ? "Unpin from Start menu" : "Pin to Start menu", nullptr);
+    it->action = is_pinned ? ctx_unpin : ctx_pin;
+    it->action_data = id;
+    it->disabled = !is_pinned && np >= MAX_PINNED;
+    if (m->mode == MODE_HOME && !is_pinned) {
+        it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION, "Remove from this list", nullptr);
+        it->action = ctx_forget;
+        it->action_data = id;
+    }
+    return mm;
+}
+
 /* Items that open a submenu (on hover, or on press). */
 static bool opens_sub(const xd_start7 *m, int hit) {
     return hit == R_RECENT || hit == R_CONTROL || hit == HIT_SHUTDOWN_ARROW ||
@@ -1466,7 +1574,13 @@ static void open_sub(xd_start7 *m, int owner) {
     xd_shell *shell = m->shell;
     xd_menu_model *mm = nullptr;
     xd_rect anchor;
-    if (m->xp && owner == HIT_ALL) {
+    if (owner == OWNER_CONTEXT) {
+        if (m->context_row < 0 || (size_t)m->context_row >= m->row_count ||
+            m->rows[m->context_row].kind != ROW_APP)
+            return;
+        mm = context_model(m, &m->rows[m->context_row]);
+        anchor = (xd_rect){(int)m->ptr_x, (int)m->ptr_y, 1, 1};
+    } else if (m->xp && owner == HIT_ALL) {
         mm = xd_start_programs_model(shell, &m->tree);
         anchor = all_rect(m);
     } else if (owner == R_RECENT) {
@@ -1763,6 +1877,8 @@ void xd_start7_pointer_motion(xd_shell *shell, double x, double y) {
     xd_start7 *m = shell->start7;
     if (m == nullptr)
         return;
+    m->ptr_x = x;
+    m->ptr_y = y;
     int left = row_at(m, x, y);
     int right = right_at(m, x, y);
     if (contains(all_rect(m), x, y) && m->mode != MODE_SEARCH)
@@ -1787,7 +1903,16 @@ void xd_start7_pointer_leave(xd_shell *shell) {
 
 void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
     xd_start7 *m = shell->start7;
-    if (m == nullptr || button != BTN_LEFT)
+    if (m == nullptr)
+        return;
+    /* A program's right-click menu, on release as in Windows. */
+    if (button == BTN_RIGHT && !pressed && m->hot_left >= 0 &&
+        m->rows[m->hot_left].kind == ROW_APP) {
+        m->context_row = m->hot_left;
+        open_sub(m, OWNER_CONTEXT);
+        return;
+    }
+    if (button != BTN_LEFT)
         return;
     int target = m->hot_left >= 0 ? m->hot_left : (m->hot_right >= 0 ? 1000 + m->hot_right : -1);
     if (pressed) {
