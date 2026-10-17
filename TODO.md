@@ -175,10 +175,16 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       when WLR_RENDERER asks for software, nor with XD_NO_FX set), and
       xd-compositor-fx hands back when there's no GPU renderer; it sets
       XD_GLASS=1 for the session, without which Aero draws opaque, as
-      Windows 7 Basic. Tested: the hand-over and hand-back without a GPU,
-      Aero Basic. **Untested: the blur and shadows themselves** (no GPU
-      here: needs VirtualBox's 3D acceleration). Not yet: blur behind the
-      Windows 7 Start menu's glass (its panel is opaque), colourisation.
+      Windows 7 Basic. Virtual machines' GPUs (vmwgfx, virtio_gpu, qxl)
+      draw in software and stay opaque: VirtualBox's 3D measured 20-50 ms
+      a frame (with or without blur) against 1 ms in software, enough to
+      freeze the session with Firefox open. XD_VM_GPU=1 uses it anyway;
+      there the cursor is drawn in software (vmwgfx's hardware cursor
+      shows nothing), and a SceneFX patch allocates its effect buffers in
+      BGRA. Tested: the hand-over and hand-back, Aero Basic, the VM check,
+      the blur buffers on VirtualBox 3D (headless). **Untested: how the
+      blur looks on a real GPU.** Not yet: blur behind the Windows 7 Start
+      menu's glass (its panel is opaque), colourisation.
 - [x] XP's "Animate windows when minimizing and maximizing" ([Effects]
       AnimateWindows, on by default): a bar in the active caption colour
       flies from the title bar to the taskbar button and back (the shell

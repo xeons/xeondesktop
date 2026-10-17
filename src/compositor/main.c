@@ -4,6 +4,7 @@
  * Runs on a TTY (DRM/KMS via a seat manager) or nested in an existing X11 or
  * Wayland session for development.
  */
+#include <dirent.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -100,9 +101,54 @@ static bool parse_args(int argc, char **argv, xd_config *cfg, bool *debug) {
     return true;
 }
 
+/* Virtual machines' GPUs (VirtualBox and VMware: vmwgfx). */
+static bool is_virtual_driver(const char *name) {
+    static const char *const drivers[] = {"vmwgfx", "virtio_gpu", "qxl", "vboxvideo"};
+    for (size_t i = 0; i < XD_ARRAY_LEN(drivers); i++) {
+        if (strcmp(name, drivers[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
+#ifndef XD_SCENEFX
+/* Whether every GPU is a virtual machine's. Their 3D (VirtualBox's in
+ * particular) is far slower than drawing in software: 20-50 ms a frame
+ * against 1 ms, enough to make the pointer crawl. So there we draw in
+ * software, and Aero is opaque (Windows 7 Basic). XD_VM_GPU=1 uses the
+ * GPU anyway. */
+static bool only_virtual_gpus(void) {
+    if (getenv("XD_VM_GPU") != nullptr)
+        return false;
+    DIR *dir = opendir("/sys/class/drm");
+    if (dir == nullptr)
+        return false;
+    size_t cards = 0;
+    bool all_virtual = true;
+    struct dirent *e;
+    while ((e = readdir(dir)) != nullptr) {
+        /* card0, not card0-Virtual-1 (a connector). */
+        const char *n = e->d_name;
+        if (strncmp(n, "card", 4) != 0 || n[4] == '\0' || strspn(n + 4, "0123456789") != strlen(n + 4))
+            continue;
+        char link[512], target[512];
+        snprintf(link, sizeof(link), "/sys/class/drm/%s/device/driver", n);
+        ssize_t len = readlink(link, target, sizeof(target) - 1);
+        if (len < 0)
+            continue;
+        target[len] = '\0';
+        const char *slash = strrchr(target, '/');
+        cards++;
+        all_virtual = all_virtual && is_virtual_driver(slash != nullptr ? slash + 1 : target);
+    }
+    closedir(dir);
+    return cards > 0 && all_virtual;
+}
+#endif
+
 /* Virtual machines' GPUs with 3D on accept a hardware cursor and show
- * nothing (VirtualBox and VMware: vmwgfx), as sway users know. Software
- * rendering's cursor works, so only with the GPU renderer.
+ * nothing (vmwgfx), as sway users know. Software rendering's cursor
+ * works, so only with the GPU renderer (XD_VM_GPU=1).
  * XD_HARDWARE_CURSORS=1 tries the hardware cursor anyway. */
 static bool needs_software_cursor(xd_server *server) {
     if (wlr_renderer_is_pixman(server->renderer) || getenv("XD_HARDWARE_CURSORS") != nullptr)
@@ -113,10 +159,7 @@ static bool needs_software_cursor(xd_server *server) {
     drmVersion *v = drmGetVersion(fd);
     if (v == nullptr)
         return false;
-    static const char *const drivers[] = {"vmwgfx", "virtio_gpu", "qxl", "vboxvideo"};
-    bool virt = false;
-    for (size_t i = 0; i < XD_ARRAY_LEN(drivers); i++)
-        virt = virt || strcmp(v->name, drivers[i]) == 0;
+    bool virt = is_virtual_driver(v->name);
     if (virt)
         wlr_log(WLR_INFO, "%s with 3D: drawing the cursor in software", v->name);
     drmFreeVersion(v);
@@ -141,7 +184,12 @@ static bool server_init(xd_server *server) {
         return false;
     }
 #else
-    server->renderer = wlr_renderer_autocreate(server->backend);
+    if (getenv("WLR_RENDERER") == nullptr && only_virtual_gpus()) {
+        wlr_log(WLR_INFO, "virtual machine GPU: drawing in software (XD_VM_GPU=1 uses the GPU)");
+        server->renderer = wlr_pixman_renderer_create();
+    } else {
+        server->renderer = wlr_renderer_autocreate(server->backend);
+    }
 #endif
     if (server->renderer == nullptr && getenv("WLR_RENDERER") == nullptr) {
         /* No usable GPU (e.g. a virtual machine without 3D acceleration):
@@ -372,9 +420,10 @@ int main(int argc, char **argv) {
 #ifndef XD_SCENEFX
     /* With a GPU, the SceneFX build draws Aero's blurred glass; it hands
      * back (XD_NO_FX set) when there's no GPU renderer. Not when software
-     * rendering was asked for. */
+     * rendering was asked for, or on a virtual machine. */
     const char *want = getenv("WLR_RENDERER");
-    if (getenv("XD_NO_FX") == nullptr && (want == nullptr || strcmp(want, "gles2") == 0))
+    if (getenv("XD_NO_FX") == nullptr && (want == nullptr || strcmp(want, "gles2") == 0) &&
+        !only_virtual_gpus())
         hand_over("xd-compositor-fx", argv);
 #endif
     static xd_server server;
