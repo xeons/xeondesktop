@@ -1272,11 +1272,11 @@ static void update_popup_glass(xd_popup *p) {
         wlr_scene_blur_set_transparency_mask_source(p->blur, found.buffer);
         wlr_scene_node_lower_to_bottom(&p->blur->node);
     }
-    int lx = 0, ly = 0;
-    wlr_scene_node_coords(&tree->node, &lx, &ly);
+    /* The buffer's position counts the popup tree's own offset from its
+     * parent; the blur goes inside the tree. */
     struct wlr_surface *s = p->popup->base->surface;
     wlr_scene_blur_set_size(p->blur, s->current.width, s->current.height);
-    wlr_scene_node_set_position(&p->blur->node, found.x - lx, found.y - ly);
+    wlr_scene_node_set_position(&p->blur->node, found.x - tree->node.x, found.y - tree->node.y);
     wlr_scene_node_set_enabled(&p->blur->node, true);
 }
 #endif
