@@ -459,7 +459,7 @@ static void keyboard_grab_motion(xd_server *server) {
     apply_key_box(server);
 }
 
-/* ---- StickyKeys and BounceKeys ([Accessibility]) ------------------------------ */
+/* ---- StickyKeys and BounceKeys ([Accessibility]; the others are in access.c) ---- */
 
 /* The xkb modifier a modifier key sets, or 0. */
 static uint32_t modifier_of(struct xkb_keymap *keymap, xkb_keysym_t sym) {
@@ -544,8 +544,8 @@ static void sticky_key(xd_keyboard *kb, const xkb_keysym_t *syms, int nsyms, boo
     sticky_update(kb, latched, locked);
 }
 
-/* BounceKeys: true if this event repeats a key released less than
- * bounce_ms ago, and is to be ignored (its release too). */
+/* FilterKeys' BounceKeys: true if this event repeats a key released less
+ * than bounce_ms ago, and is to be ignored (its release too). */
 static bool bounced(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
     const xd_access_settings *a = &kb->server->config.access;
     if (e->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
@@ -557,7 +557,7 @@ static bool bounced(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
         kb->bounce_msec = e->time_msec;
         return false;
     }
-    if (a->bounce_keys && kb->bounce_keycode == e->keycode + 1 &&
+    if (a->filter_keys && !a->slow_keys && kb->bounce_keycode == e->keycode + 1 &&
         e->time_msec - kb->bounce_msec < (uint32_t)a->bounce_ms) {
         kb->bounced_keycode = e->keycode + 1;
         return true;
@@ -565,27 +565,38 @@ static bool bounced(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
     return false;
 }
 
+static void apply_repeat(xd_server *server, struct wlr_keyboard *k);
+
 void xd_input_apply_access(xd_server *server) {
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
         kb->sticky_alone = 0;
         kb->bounced_keycode = 0;
         if (kb->sticky_latched != 0 || kb->sticky_locked != 0)
             sticky_update(kb, 0, 0);
+        apply_repeat(server, kb->wlr_keyboard);
     }
+    xd_access_apply(server);
     const xd_access_settings *a = &server->config.access;
-    wlr_log(WLR_INFO, "accessibility: StickyKeys %s%s, BounceKeys %s (%d ms)",
+    wlr_log(WLR_INFO,
+            "accessibility: StickyKeys %s%s, FilterKeys %s (%s, %d ms), ToggleKeys %s, "
+            "MouseKeys %s (%d px/s)",
             a->sticky_keys ? "on" : "off", a->sticky_keys && a->sticky_lock ? " (twice locks)" : "",
-            a->bounce_keys ? "on" : "off", a->bounce_ms);
+            a->filter_keys ? "on" : "off", a->slow_keys ? "SlowKeys" : "BounceKeys",
+            a->slow_keys ? a->slow_ms : a->bounce_ms, a->toggle_keys ? "on" : "off",
+            a->mouse_keys ? "on" : "off", a->mouse_keys_speed);
 }
 
 static void handle_key(struct wl_listener *listener, void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, key);
-    xd_server *server = kb->server;
     const struct wlr_keyboard_key_event *event = data;
-    xd_idle_activity(server);
-    if (bounced(kb, event))
+    xd_idle_activity(kb->server);
+    if (bounced(kb, event) || xd_access_key(kb, event))
         return;
+    xd_input_key(kb, event);
+}
 
+void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
+    xd_server *server = kb->server;
     /* libinput keycodes are offset by 8 from XKB keycodes. */
     uint32_t keycode = event->keycode + 8;
     const xkb_keysym_t *syms = nullptr;
@@ -636,6 +647,7 @@ static void handle_key(struct wl_listener *listener, void *data) {
 
 static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, destroy);
+    xd_access_keyboard_gone(kb);
     xd_unlisten(&kb->modifiers);
     xd_unlisten(&kb->key);
     xd_unlisten(&kb->destroy);
@@ -668,11 +680,23 @@ static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *k) {
     return keymap;
 }
 
-static void configure_keyboard(struct wlr_keyboard *wlr_kb, struct xkb_keymap *keymap,
-                               const xd_keyboard_settings *k) {
+/* [Keyboard]'s repeat, or SlowKeys' own (none, or slower). Clients
+ * repeat keys themselves, at the rate we tell them. */
+static void apply_repeat(xd_server *server, struct wlr_keyboard *k) {
+    const xd_access_settings *a = &server->config.access;
+    int rate = server->config.keyboard.repeat_rate, delay = server->config.keyboard.repeat_delay;
+    if (a->filter_keys && a->slow_keys) {
+        rate = a->filter_no_repeat ? 0 : XD_MAX(1, 1000 / a->filter_repeat_ms);
+        delay = a->filter_repeat_delay;
+    }
+    wlr_keyboard_set_repeat_info(k, rate, delay);
+}
+
+static void configure_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
+                               struct xkb_keymap *keymap) {
     if (keymap != nullptr)
         wlr_keyboard_set_keymap(wlr_kb, keymap);
-    wlr_keyboard_set_repeat_info(wlr_kb, k->repeat_rate, k->repeat_delay);
+    apply_repeat(server, wlr_kb);
 }
 
 void xd_input_apply_keyboard(xd_server *server) {
@@ -683,7 +707,7 @@ void xd_input_apply_keyboard(xd_server *server) {
             k->layout, k->variant, k->options, k->model, k->repeat_rate, k->repeat_delay);
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
         if (kb->physical)
-            configure_keyboard(kb->wlr_keyboard, keymap, &server->config.keyboard);
+            configure_keyboard(server, kb->wlr_keyboard, keymap);
     }
     xkb_keymap_unref(keymap);
 }
@@ -695,7 +719,7 @@ static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
         wlr_log(WLR_ERROR, "cannot compile keymap for %s", device->name);
         return;
     }
-    configure_keyboard(wlr_kb, keymap, &server->config.keyboard);
+    configure_keyboard(server, wlr_kb, keymap);
     xkb_keymap_unref(keymap);
     register_keyboard(server, wlr_kb, device)->physical = true;
 }
@@ -747,6 +771,7 @@ void xd_input_apply_mouse(xd_server *server) {
     XD_LIST_FOR_EACH(p, &server->pointers, xd_pointer, link) {
         configure_pointer(p->device, m);
     }
+    xd_access_apply(server); /* ClickLock may have been turned off */
 }
 
 static void handle_pointer_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -798,8 +823,7 @@ static void handle_new_virtual_keyboard(struct wl_listener *listener, void *data
     struct wlr_virtual_keyboard_v1 *vk = data;
     /* The client supplies its own keymap. The configured repeat, so a
      * held key (xd-inject's press) repeats as a real one would. */
-    wlr_keyboard_set_repeat_info(&vk->keyboard, server->config.keyboard.repeat_rate,
-                                 server->config.keyboard.repeat_delay);
+    apply_repeat(server, &vk->keyboard);
     register_keyboard(server, &vk->keyboard, &vk->keyboard.base);
     update_seat_caps(server);
     wlr_log(WLR_INFO, "virtual keyboard connected (testing)");
@@ -1270,10 +1294,35 @@ static bool seat_has_button(const struct wlr_seat *seat, uint32_t button) {
     return false;
 }
 
+/* MouseKeys moves the pointer as a mouse would. */
+void xd_input_move_pointer(xd_server *server, double dx, double dy, uint32_t time_msec) {
+    wlr_cursor_move(server->cursor, nullptr, dx, dy);
+    xd_idle_activity(server);
+    process_motion(server, time_msec);
+    wlr_seat_pointer_notify_frame(server->seat);
+}
+
+static void process_button(xd_server *server, const struct wlr_pointer_button_event *e);
+
 static void handle_cursor_button(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_button);
     const struct wlr_pointer_button_event *e = data;
     xd_idle_activity(server);
+    if (xd_access_button(server, e->button, e->state == WL_POINTER_BUTTON_STATE_PRESSED,
+                         e->time_msec))
+        return;
+    process_button(server, e);
+}
+
+void xd_input_button(xd_server *server, uint32_t time_msec, uint32_t button,
+                     enum wl_pointer_button_state state) {
+    xd_idle_activity(server);
+    struct wlr_pointer_button_event e = {.time_msec = time_msec, .button = button, .state = state};
+    process_button(server, &e);
+    wlr_seat_pointer_notify_frame(server->seat);
+}
+
+static void process_button(xd_server *server, const struct wlr_pointer_button_event *e) {
     if (server->locked) {
         wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
         return;

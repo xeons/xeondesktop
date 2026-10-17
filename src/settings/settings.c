@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include <dirent.h>
 #include <errno.h>
+#include <stddef.h>
 #include <math.h>
 #include <stdlib.h>
 #include <sys/inotify.h>
@@ -126,8 +127,17 @@ void xd_settings_defaults(xd_settings *s) {
         /* Windows' defaults: about 30 repeats a second after half a second. */
         .keyboard = {.repeat_delay = 500, .repeat_rate = 30, .cursor_blink_ms = 530},
         .mouse = {.acceleration = true, .double_click_ms = 500, .wheel_lines = 3,
-                  .cursor_size = 24},
-        .access = {.sticky_lock = true, .bounce_ms = 500},
+                  .cursor_size = 24, .click_lock_ms = 1200},
+        /* XP's: every shortcut on, and the warnings and sounds with them;
+         * FilterKeys' shortcut turns on SlowKeys. */
+        .access = {.sticky_lock = true, .sticky_shortcut = true, .sticky_two_keys_off = true,
+                   .sticky_sound = true, .filter_shortcut = true, .slow_keys = true,
+                   .filter_beep = true, .bounce_ms = 500, .slow_ms = 1000,
+                   .filter_repeat_delay = 1000, .filter_repeat_ms = 500,
+                   .toggle_shortcut = true, .mouse_keys_shortcut = true,
+                   .mouse_keys_modifiers = true, .mouse_keys_numlock = true,
+                   .mouse_keys_speed = 80, .mouse_keys_accel_ms = 3000, .warn = true,
+                   .sound_on_off = true},
         .volume_icon = true,
         .battery_icon = true,
         .resume_password = true, /* as in XP */
@@ -196,20 +206,59 @@ static void parse_mouse(xd_mouse_settings *m, xd_str key, xd_str v) {
             copy_into(m->cursor_theme, sizeof(m->cursor_theme), v);
     } else if (KEY("CursorSize")) {
         parse_int(v, XD_CURSOR_SIZE_MIN, XD_CURSOR_SIZE_MAX, &m->cursor_size);
+    } else if (KEY("ClickLock")) {
+        parse_bool(v, &m->click_lock);
+    } else if (KEY("ClickLockMs")) {
+        parse_int(v, XD_CLICK_LOCK_MIN, XD_CLICK_LOCK_MAX, &m->click_lock_ms);
     }
 #undef KEY
 }
 
 static void parse_access(xd_access_settings *a, xd_str key, xd_str v) {
 #define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
-    if (KEY("StickyKeys")) {
-        parse_bool(v, &a->sticky_keys);
-    } else if (KEY("StickyKeysLock")) {
-        parse_bool(v, &a->sticky_lock);
-    } else if (KEY("BounceKeys")) {
-        parse_bool(v, &a->bounce_keys);
-    } else if (KEY("BounceMs")) {
+    static const struct {
+        const char *key;
+        size_t offset;
+    } flags[] = {
+        {"StickyKeys", offsetof(xd_access_settings, sticky_keys)},
+        {"StickyKeysLock", offsetof(xd_access_settings, sticky_lock)},
+        {"StickyKeysShortcut", offsetof(xd_access_settings, sticky_shortcut)},
+        {"StickyKeysTwoKeysOff", offsetof(xd_access_settings, sticky_two_keys_off)},
+        {"StickyKeysSound", offsetof(xd_access_settings, sticky_sound)},
+        {"FilterKeys", offsetof(xd_access_settings, filter_keys)},
+        /* FilterKeys' name from before SlowKeys was done. */
+        {"BounceKeys", offsetof(xd_access_settings, filter_keys)},
+        {"FilterKeysShortcut", offsetof(xd_access_settings, filter_shortcut)},
+        {"SlowKeys", offsetof(xd_access_settings, slow_keys)},
+        {"FilterKeysBeep", offsetof(xd_access_settings, filter_beep)},
+        {"FilterKeysNoRepeat", offsetof(xd_access_settings, filter_no_repeat)},
+        {"ToggleKeys", offsetof(xd_access_settings, toggle_keys)},
+        {"ToggleKeysShortcut", offsetof(xd_access_settings, toggle_shortcut)},
+        {"MouseKeys", offsetof(xd_access_settings, mouse_keys)},
+        {"MouseKeysShortcut", offsetof(xd_access_settings, mouse_keys_shortcut)},
+        {"MouseKeysModifiers", offsetof(xd_access_settings, mouse_keys_modifiers)},
+        {"MouseKeysNumLock", offsetof(xd_access_settings, mouse_keys_numlock)},
+        {"WarnOnShortcut", offsetof(xd_access_settings, warn)},
+        {"SoundOnOff", offsetof(xd_access_settings, sound_on_off)},
+    };
+    for (size_t i = 0; i < XD_ARRAY_LEN(flags); i++) {
+        if (xd_str_eq_nocase(key, xd_str_from_cstr(flags[i].key))) {
+            parse_bool(v, (bool *)((char *)a + flags[i].offset));
+            return;
+        }
+    }
+    if (KEY("BounceMs")) {
         parse_int(v, 100, 2000, &a->bounce_ms);
+    } else if (KEY("SlowKeysMs")) {
+        parse_int(v, 0, 20000, &a->slow_ms);
+    } else if (KEY("FilterKeysRepeatDelay")) {
+        parse_int(v, 300, 20000, &a->filter_repeat_delay);
+    } else if (KEY("FilterKeysRepeatMs")) {
+        parse_int(v, 300, 20000, &a->filter_repeat_ms);
+    } else if (KEY("MouseKeysSpeed")) {
+        parse_int(v, XD_MOUSE_KEYS_SPEED_MIN, XD_MOUSE_KEYS_SPEED_MAX, &a->mouse_keys_speed);
+    } else if (KEY("MouseKeysAccelMs")) {
+        parse_int(v, XD_MOUSE_KEYS_ACCEL_MIN, XD_MOUSE_KEYS_ACCEL_MAX, &a->mouse_keys_accel_ms);
     } else if (KEY("HighContrast")) {
         parse_bool(v, &a->high_contrast);
     } else if (KEY("SavedStyle")) {
@@ -566,11 +615,33 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_integer(kf, "Mouse", "WheelLines", m->wheel_lines);
     g_key_file_set_string(kf, "Mouse", "CursorTheme", m->cursor_theme);
     g_key_file_set_integer(kf, "Mouse", "CursorSize", m->cursor_size);
+    g_key_file_set_boolean(kf, "Mouse", "ClickLock", m->click_lock);
+    g_key_file_set_integer(kf, "Mouse", "ClickLockMs", m->click_lock_ms);
     const xd_access_settings *a = &s->access;
     g_key_file_set_boolean(kf, "Accessibility", "StickyKeys", a->sticky_keys);
     g_key_file_set_boolean(kf, "Accessibility", "StickyKeysLock", a->sticky_lock);
-    g_key_file_set_boolean(kf, "Accessibility", "BounceKeys", a->bounce_keys);
+    g_key_file_set_boolean(kf, "Accessibility", "StickyKeysShortcut", a->sticky_shortcut);
+    g_key_file_set_boolean(kf, "Accessibility", "StickyKeysTwoKeysOff", a->sticky_two_keys_off);
+    g_key_file_set_boolean(kf, "Accessibility", "StickyKeysSound", a->sticky_sound);
+    g_key_file_set_boolean(kf, "Accessibility", "FilterKeys", a->filter_keys);
+    g_key_file_set_boolean(kf, "Accessibility", "FilterKeysShortcut", a->filter_shortcut);
+    g_key_file_set_boolean(kf, "Accessibility", "SlowKeys", a->slow_keys);
+    g_key_file_set_boolean(kf, "Accessibility", "FilterKeysBeep", a->filter_beep);
+    g_key_file_set_boolean(kf, "Accessibility", "FilterKeysNoRepeat", a->filter_no_repeat);
     g_key_file_set_integer(kf, "Accessibility", "BounceMs", a->bounce_ms);
+    g_key_file_set_integer(kf, "Accessibility", "SlowKeysMs", a->slow_ms);
+    g_key_file_set_integer(kf, "Accessibility", "FilterKeysRepeatDelay", a->filter_repeat_delay);
+    g_key_file_set_integer(kf, "Accessibility", "FilterKeysRepeatMs", a->filter_repeat_ms);
+    g_key_file_set_boolean(kf, "Accessibility", "ToggleKeys", a->toggle_keys);
+    g_key_file_set_boolean(kf, "Accessibility", "ToggleKeysShortcut", a->toggle_shortcut);
+    g_key_file_set_boolean(kf, "Accessibility", "MouseKeys", a->mouse_keys);
+    g_key_file_set_boolean(kf, "Accessibility", "MouseKeysShortcut", a->mouse_keys_shortcut);
+    g_key_file_set_boolean(kf, "Accessibility", "MouseKeysModifiers", a->mouse_keys_modifiers);
+    g_key_file_set_boolean(kf, "Accessibility", "MouseKeysNumLock", a->mouse_keys_numlock);
+    g_key_file_set_integer(kf, "Accessibility", "MouseKeysSpeed", a->mouse_keys_speed);
+    g_key_file_set_integer(kf, "Accessibility", "MouseKeysAccelMs", a->mouse_keys_accel_ms);
+    g_key_file_set_boolean(kf, "Accessibility", "WarnOnShortcut", a->warn);
+    g_key_file_set_boolean(kf, "Accessibility", "SoundOnOff", a->sound_on_off);
     g_key_file_set_boolean(kf, "Accessibility", "HighContrast", a->high_contrast);
     g_key_file_set_string(kf, "Accessibility", "SavedStyle", xd_visual_style_name(a->saved_style));
     g_key_file_set_string(kf, "Accessibility", "SavedScheme", a->saved_scheme);

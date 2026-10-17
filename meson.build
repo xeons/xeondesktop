@@ -256,6 +256,7 @@ compositor_src = files(
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
   'src/compositor/xwayland.c',
+  'src/compositor/access.c',
   'src/settings/soundplay.c',
 )
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')

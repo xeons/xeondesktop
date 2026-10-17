@@ -3,15 +3,15 @@
  * the compositor applies it to every libinput pointer (see input.c).
  *
  *   Buttons          Switch primary and secondary buttons, double-click
- *                    speed with XP's test folder
+ *                    speed with XP's test folder, ClickLock (done by the
+ *                    compositor, access.c)
  *   Pointers         the XCursor theme (with a preview of its cursors)
  *                    and size
  *   Pointer Options  speed, Enhance pointer precision (acceleration)
  *   Wheel            lines a notch scrolls
  *   Hardware         the pointing devices udev knows
  *
- * Not here: ClickLock (greyed: the compositor doesn't do it yet), and
- * XP's Snap To, pointer trails, hiding the pointer while typing and
+ * Not here: XP's Snap To, pointer trails, hiding the pointer while typing and
  * showing it with Ctrl, which the compositor doesn't do either.
  */
 #include <math.h>
@@ -31,7 +31,7 @@ typedef struct props {
     xd_mouse_settings mouse; /* what the widgets show */
     bool updating;           /* we're setting the widgets ourselves */
     /* Buttons */
-    GtkWidget *switch_buttons, *picture, *folder, *double_click;
+    GtkWidget *switch_buttons, *picture, *folder, *double_click, *click_lock, *lock_settings;
     bool folder_open;
     guint32 last_press; /* the test folder's last click */
     /* Pointers */
@@ -167,6 +167,42 @@ static void on_double_click(GtkRange *r, gpointer data) {
     changed(p);
 }
 
+static void on_click_lock(GtkToggleButton *b, gpointer data) {
+    props *p = data;
+    p->mouse.click_lock = gtk_toggle_button_get_active(b);
+    gtk_widget_set_sensitive(p->lock_settings, p->mouse.click_lock);
+    changed(p);
+}
+
+/* XP's Settings for ClickLock: how long the press that locks is. */
+static void on_lock_settings([[maybe_unused]] GtkWidget *b, gpointer data) {
+    props *p = data;
+    GtkWidget *d = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(d), "Settings for ClickLock");
+    gtk_window_set_modal(GTK_WINDOW(d), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+    gtk_window_set_transient_for(GTK_WINDOW(d), GTK_WINDOW(p->window));
+    gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    GtkWidget *text = wrapped("Adjust how long you need to hold down a mouse or trackball "
+                              "button before your click is \"locked\"");
+    gtk_box_pack_start(GTK_BOX(box), text, FALSE, FALSE, 0);
+    GtkWidget *scale = ticked_scale(XD_CLICK_LOCK_MIN, XD_CLICK_LOCK_MAX, 200);
+    gtk_range_set_value(GTK_RANGE(scale), p->mouse.click_lock_ms);
+    gtk_box_pack_start(GTK_BOX(box), slider_row("Short", scale, "Long"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), box, TRUE, TRUE, 0);
+    gtk_widget_show_all(d);
+    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK &&
+        range_int(GTK_RANGE(scale)) != p->mouse.click_lock_ms) {
+        p->mouse.click_lock_ms = range_int(GTK_RANGE(scale));
+        changed(p);
+    }
+    gtk_widget_destroy(d);
+}
+
 static GtkWidget *buttons_page(props *p) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
@@ -216,16 +252,21 @@ static GtkWidget *buttons_page(props *p) {
     gtk_box_pack_start(GTK_BOX(dbl), events, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), frame("Double-click speed", dbl), FALSE, FALSE, 0);
 
-    /* ClickLock needs the compositor to hold a button down for the user;
-     * it doesn't yet, so the option is shown off and greyed. */
     GtkWidget *lock = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *lock_check = gtk_check_button_new_with_mnemonic("Turn on Click_Lock");
-    gtk_widget_set_sensitive(lock_check, FALSE);
-    gtk_box_pack_start(GTK_BOX(lock), lock_check, FALSE, FALSE, 0);
-    GtkWidget *lock_text = wrapped("Enables you to highlight or drag without holding down the "
-                                   "mouse button. Not available yet.");
-    gtk_widget_set_sensitive(lock_text, FALSE);
-    gtk_box_pack_start(GTK_BOX(lock), lock_text, FALSE, FALSE, 0);
+    GtkWidget *lock_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    p->click_lock = gtk_check_button_new_with_mnemonic("Turn on Click_Lock");
+    gtk_box_pack_start(GTK_BOX(lock_row), p->click_lock, TRUE, TRUE, 0);
+    p->lock_settings = gtk_button_new_with_mnemonic("S_ettings");
+    gtk_widget_set_size_request(p->lock_settings, 75, -1);
+    gtk_box_pack_end(GTK_BOX(lock_row), p->lock_settings, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(lock), lock_row, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(lock),
+                       wrapped("Enables you to highlight or drag without holding down the mouse "
+                               "button. To set, briefly press the mouse button. To release, "
+                               "click the mouse button again."),
+                       FALSE, FALSE, 0);
+    g_signal_connect(p->click_lock, "toggled", G_CALLBACK(on_click_lock), p);
+    g_signal_connect(p->lock_settings, "clicked", G_CALLBACK(on_lock_settings), p);
     gtk_box_pack_start(GTK_BOX(page), frame("ClickLock", lock), FALSE, FALSE, 0);
     return page;
 }
@@ -562,6 +603,8 @@ int main(int argc, char **argv) {
                              gtk_label_new_with_mnemonic("_Hardware"));
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p.switch_buttons), p.mouse.left_handed);
     gtk_range_set_value(GTK_RANGE(p.double_click), p.mouse.double_click_ms);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p.click_lock), p.mouse.click_lock);
+    gtk_widget_set_sensitive(p.lock_settings, p.mouse.click_lock);
     p.updating = false;
     gtk_widget_set_sensitive(p.apply, FALSE);
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(p.window))), tabs, TRUE,

@@ -57,6 +57,7 @@ typedef enum xd_cursor_mode : uint8_t {
 } xd_cursor_mode;
 
 typedef struct xd_server xd_server;
+typedef struct xd_access xd_access;
 
 typedef struct xd_output {
     struct wl_list link; /* xd_server.outputs */
@@ -233,6 +234,7 @@ typedef struct xd_config {
     const char *locker;      /* Lock Computer (Win+L; restarted if a locker dies) */
     const char *polkit;      /* the session's polkit authentication agent */
     const char *endtask;     /* "End Program" for windows that don't respond */
+    const char *accessibility; /* xd-access, asking to keep a feature a shortcut turned on */
     double forced_scale; /* 0 = pick per output from its DPI */
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     bool always_frames;  /* [Windows] AlwaysDrawFrames */
@@ -399,6 +401,7 @@ struct xd_server {
     uint32_t shell_restarts;
     struct timespec shell_restart_window;
     bool terminating;
+    xd_access *access; /* access.c's state */
 };
 
 /* output.c */
@@ -530,6 +533,25 @@ void xd_output_save_config(xd_server *server);
 void xd_output_place_all(xd_server *server);
 void xd_output_key(const struct wlr_output *o, char *out, size_t cap);
 void xd_idle_activity(xd_server *server);
+
+/* access.c: SlowKeys, ToggleKeys, MouseKeys, ClickLock, the
+ * accessibility shortcuts; the system bell. */
+struct wlr_keyboard_key_event;
+void xd_access_init(xd_server *server);
+void xd_access_finish(xd_server *server);
+/* Sees each key event first (after BounceKeys); true if it's used up. */
+bool xd_access_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);
+/* Sees each physical button event first; true if ClickLock keeps it. */
+bool xd_access_button(xd_server *server, uint32_t button, bool pressed, uint32_t time_msec);
+/* config.access or config.mouse changed. */
+void xd_access_apply(xd_server *server);
+void xd_access_keyboard_gone(xd_keyboard *kb);
+/* input.c, for access.c: a key event past the accessibility filters, a
+ * button event as if from a mouse, and a pointer move. */
+void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);
+void xd_input_button(xd_server *server, uint32_t time_msec, uint32_t button,
+                     enum wl_pointer_button_state state);
+void xd_input_move_pointer(xd_server *server, double dx, double dy, uint32_t time_msec);
 
 /* lock.c: ext-session-lock. */
 void xd_lock_init(xd_server *server);

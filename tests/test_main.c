@@ -800,6 +800,7 @@ static void test_sound_scheme(void) {
     xd_sound_scheme_parse(XD_STR("[Sounds\nScheme=none\n"), &s);
     CHECK(s.base == XD_SOUNDS_DEFAULT && !xd_sound_scheme_modified(&s));
     xd_sound_scheme_free(&s);
+
     /* The accessibility tones: 16-bit mono WAVs, the RIFF sizes right,
      * quiet, and silent at both ends (no click). */
     for (int tone = 0; tone < XD_TONE_COUNT; tone++) {
@@ -1202,7 +1203,7 @@ static void test_input_settings(void) {
     CHECK(a.mouse.left_handed && a.mouse.speed == -4 && !a.mouse.acceleration);
     CHECK(a.mouse.double_click_ms == 350 && a.mouse.wheel_lines == 6 && a.mouse.cursor_size == 48);
     CHECK(strcmp(a.mouse.cursor_theme, "Breeze_Light") == 0 && a.keyboard.cursor_blink_ms == 0);
-    CHECK(a.access.sticky_keys && !a.access.sticky_lock && a.access.bounce_keys &&
+    CHECK(a.access.sticky_keys && !a.access.sticky_lock && a.access.filter_keys &&
           a.access.bounce_ms == 700);
 
     xd_strbuf text = {0};
@@ -1221,6 +1222,36 @@ static void test_input_settings(void) {
     CHECK(a.mouse.cursor_theme[0] == 0 && a.mouse.cursor_size == 24 && a.access.bounce_ms == 500);
     xd_settings_parse(XD_STR("[Mouse]\nCursorTheme=.hidden\n"), &a);
     CHECK(a.mouse.cursor_theme[0] == 0);
+
+    /* XP's defaults: off, but every shortcut on, with its warning. */
+    xd_settings_defaults(&a);
+    CHECK(!a.access.filter_keys && !a.access.toggle_keys && !a.access.mouse_keys);
+    CHECK(a.access.sticky_shortcut && a.access.filter_shortcut && a.access.toggle_shortcut);
+    CHECK(a.access.mouse_keys_shortcut && a.access.warn && a.access.sound_on_off);
+    CHECK(a.access.slow_keys && a.access.slow_ms == 1000 && !a.mouse.click_lock);
+    CHECK(a.mouse.click_lock_ms == 1200 && a.access.mouse_keys_numlock);
+    xd_settings_parse(XD_STR("[Mouse]\nClickLock=true\nClickLockMs=800\n[Accessibility]\n"
+                             "FilterKeys=true\nSlowKeys=false\nSlowKeysMs=300\n"
+                             "FilterKeysNoRepeat=true\nToggleKeys=true\nToggleKeysShortcut=0\n"
+                             "MouseKeys=true\nMouseKeysSpeed=200\nMouseKeysAccelMs=1500\n"
+                             "MouseKeysNumLock=false\nWarnOnShortcut=false\n"
+                             "StickyKeysTwoKeysOff=false\n"),
+                      &a);
+    CHECK(a.mouse.click_lock && a.mouse.click_lock_ms == 800);
+    CHECK(a.access.filter_keys && !a.access.slow_keys && a.access.slow_ms == 300);
+    CHECK(a.access.filter_no_repeat && a.access.toggle_keys && !a.access.toggle_shortcut);
+    CHECK(a.access.mouse_keys && a.access.mouse_keys_speed == 200);
+    CHECK(a.access.mouse_keys_accel_ms == 1500 && !a.access.mouse_keys_numlock);
+    CHECK(!a.access.warn && !a.access.sticky_two_keys_off && a.access.sticky_sound);
+    xd_settings_serialize(&a, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    xd_strbuf_free(&text);
+    CHECK(memcmp(&a.access, &b.access, sizeof(a.access)) == 0);
+    CHECK(memcmp(&a.mouse, &b.mouse, sizeof(a.mouse)) == 0);
+    /* Out of range keeps the default. */
+    xd_settings_parse(XD_STR("[Mouse]\nClickLockMs=50\n[Accessibility]\nMouseKeysSpeed=9000\n"),
+                      &a);
+    CHECK(a.mouse.click_lock_ms == 1200 && a.access.mouse_keys_speed == 80);
 
     /* High Contrast switches to Classic and back to what was there. */
     xd_settings_defaults(&a);

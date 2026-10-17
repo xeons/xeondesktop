@@ -103,16 +103,39 @@ typedef struct xd_mouse_settings {
     int wheel_lines;       /* lines a wheel notch scrolls (clients' own step is 3) */
     char cursor_theme[64]; /* XCursor theme directory name; "" = the default */
     int cursor_size;       /* logical px */
+    bool click_lock;       /* ClickLock: a long press holds the button until the next click */
+    int click_lock_ms;     /* how long that press is */
 } xd_mouse_settings;
 
-/* [Accessibility]: StickyKeys and FilterKeys' BounceKeys, done by the
- * compositor; High Contrast switches [Appearance] and remembers what to
- * switch back to. */
+/* [Accessibility]: StickyKeys, FilterKeys, ToggleKeys and MouseKeys,
+ * done by the compositor (with the keyboard shortcuts that turn them on);
+ * High Contrast switches [Appearance] and remembers what to switch back
+ * to. */
 typedef struct xd_access_settings {
-    bool sticky_keys; /* a modifier pressed alone applies to the next key */
-    bool sticky_lock; /* ...and pressed twice stays on until pressed again */
-    bool bounce_keys; /* ignore a key pressed again within bounce_ms */
-    int bounce_ms;
+    bool sticky_keys;          /* a modifier pressed alone applies to the next key */
+    bool sticky_lock;          /* ...and pressed twice stays on until pressed again */
+    bool sticky_shortcut;      /* Shift pressed 5 times turns it on or off */
+    bool sticky_two_keys_off;  /* a modifier held with another key turns it off */
+    bool sticky_sound;         /* a tone when a modifier is pressed */
+    bool filter_keys;          /* FilterKeys: BounceKeys, or SlowKeys if slow_keys */
+    bool filter_shortcut;      /* right Shift held 8 seconds */
+    bool slow_keys;            /* ignore keys released within slow_ms (else BounceKeys) */
+    bool filter_beep;          /* a tone when a key is pressed or accepted */
+    bool filter_no_repeat;     /* SlowKeys: no key repeat at all, else the rates below */
+    int bounce_ms;             /* BounceKeys: ignore a key pressed again within this */
+    int slow_ms;               /* SlowKeys: how long a key must be held */
+    int filter_repeat_delay;   /* SlowKeys' repeat delay and interval, ms */
+    int filter_repeat_ms;
+    bool toggle_keys;          /* tones on Caps, Num and Scroll Lock */
+    bool toggle_shortcut;      /* Num Lock held 5 seconds */
+    bool mouse_keys;           /* the numeric keypad moves the pointer */
+    bool mouse_keys_shortcut;  /* Left Alt+Left Shift+Num Lock */
+    bool mouse_keys_modifiers; /* Ctrl speeds it up, Shift slows it down */
+    bool mouse_keys_numlock;   /* MouseKeys work while Num Lock is on (else off) */
+    int mouse_keys_speed;      /* top speed, px/s */
+    int mouse_keys_accel_ms;   /* time to reach it */
+    bool warn;                 /* a shortcut asks whether to keep a feature it turned on */
+    bool sound_on_off;         /* a rising or falling tone as a feature goes on or off */
     bool high_contrast;
     xd_visual_style saved_style; /* the look from before High Contrast */
     char saved_scheme[64];
@@ -251,6 +274,12 @@ enum {
     XD_DOUBLE_CLICK_MAX = 900,
     XD_CURSOR_SIZE_MIN = 16,
     XD_CURSOR_SIZE_MAX = 128,
+    XD_CLICK_LOCK_MIN = 200,
+    XD_CLICK_LOCK_MAX = 2200,
+    XD_MOUSE_KEYS_SPEED_MIN = 10,
+    XD_MOUSE_KEYS_SPEED_MAX = 360,
+    XD_MOUSE_KEYS_ACCEL_MIN = 1000,
+    XD_MOUSE_KEYS_ACCEL_MAX = 5000,
 };
 
 /* Directory holding data/ (schemes, ...): $XD_DATA_DIR, the source tree

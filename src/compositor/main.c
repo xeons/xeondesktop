@@ -244,6 +244,7 @@ static bool server_init(xd_server *server) {
     wl_list_init(&server->zooms);
     xd_view_init(server);
     xd_input_init(server);
+    xd_access_init(server);
     xd_arrange_init(server);
     xd_protocols_init(server);
     xd_lock_init(server);
@@ -266,6 +267,7 @@ static bool server_init(xd_server *server) {
 
 static void server_finish(xd_server *server) {
     server->terminating = true;
+    xd_access_finish(server);
     xd_xwayland_finish(server);
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
@@ -455,6 +457,8 @@ int main(int argc, char **argv) {
     server.config.polkit = own_program("xd-polkit", polkit_path, sizeof(polkit_path));
     static char endtask_path[4096];
     server.config.endtask = own_program("xd-endtask", endtask_path, sizeof(endtask_path));
+    static char access_path[4096];
+    server.config.accessibility = own_program("xd-access", access_path, sizeof(access_path));
     xd_scheme_init_default(&server.config.scheme);
 
     bool debug = false;
