@@ -238,6 +238,7 @@ def run_scenario(name, build, keep, keep_all=False):
             "XDG_VTNR",
             "SWAYSOCK",
             "HYPRLAND_INSTANCE_SIGNATURE",
+            "PULSE_SERVER",
         )
     }
     env.update(
@@ -251,6 +252,8 @@ def run_scenario(name, build, keep, keep_all=False):
             # Never the real system bus (polkit, UDisks, NetworkManager...):
             # a scenario that needs one starts a dbusmock bus of its own.
             "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=" + os.path.join(runtime, "no-system-bus"),
+            # Never the real speakers: sounds are logged, not played.
+            "XD_SOUND_TRACE": os.path.join(runtime, "sounds.log"),
             "WLR_BACKENDS": "headless",
             "WLR_RENDERER": "pixman",
             "WLR_HEADLESS_OUTPUTS": "1",
