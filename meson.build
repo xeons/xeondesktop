@@ -953,6 +953,19 @@ install_data(
                               pkgconfig_define: ['prefix', get_option('prefix')])
     : get_option('prefix') / 'lib' / 'systemd' / 'user',
 )
+# VirtualBox guests: its shared clipboard as a Wayland client.
+install_data('data/xd-vboxclient', install_dir: get_option('libexecdir'),
+             install_mode: 'rwxr-xr-x')
+configure_file(
+  input: 'data/systemd/user/app-vboxclient@autostart.service.d/xeondesktop.conf',
+  output: 'xeondesktop-vboxclient.conf',
+  configuration: {'LIBEXECDIR': get_option('prefix') / get_option('libexecdir')},
+  install_dir: (systemd_pc.found()
+    ? systemd_pc.get_variable(pkgconfig: 'systemd_user_unit_dir',
+                              pkgconfig_define: ['prefix', get_option('prefix')])
+    : get_option('prefix') / 'lib' / 'systemd' / 'user') / 'app-vboxclient@autostart.service.d',
+  install_tag: 'runtime',
+)
 install_data(
   'data/wayland-sessions/xeondesktop.desktop',
   install_dir: get_option('datadir') / 'wayland-sessions',

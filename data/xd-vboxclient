@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Starts VirtualBox's guest session services (VBoxClient-all, from its
+# autostart entry; see app-vboxclient@autostart.service.d/xeondesktop.conf).
+#
+# VBoxClient treats any Wayland desktop with an X display as X11 unless it
+# is GNOME or KDE, and its shared clipboard then reaches only Xwayland's
+# clipboard, so copying between the host and the guest doesn't work. In a
+# XeonDesktop session it's started without DISPLAY, which makes it a
+# Wayland client using the data-control protocols. Other desktops are
+# left as they are.
+if [ "${XDG_CURRENT_DESKTOP-}" = XeonDesktop ] && [ -n "${WAYLAND_DISPLAY-}" ]; then
+    unset DISPLAY
+fi
+exec /usr/bin/VBoxClient-all "$@"
