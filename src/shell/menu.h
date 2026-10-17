@@ -30,7 +30,10 @@ typedef struct xd_menu_item {
     const char *icon;          /* icon theme name or path; may be nullptr */
     const char *fallback_icon; /* tried if `icon` isn't found */
     xd_menu_model *submenu;    /* XD_MENU_SUBMENU */
-    const char *command;       /* XD_MENU_ACTION: shell command line */
+    /* XD_MENU_ACTION: shell command line. XD_MENU_SUBMENU: run when the
+     * item itself is clicked (Control Panel opens its folder; hovering
+     * still cascades). */
+    const char *command;
     const xd_app *app;         /* XD_MENU_ACTION: launch this app (instead of command) */
     /* XD_MENU_ACTION: run in the shell instead (after the menus close). */
     void (*action)(xd_shell *shell, void *data);
@@ -88,6 +91,7 @@ typedef struct xd_menu {
     bool shown; /* first frame committed: the compositor knows where it is */
     bool dirty;
     int hot; /* highlighted item or -1 */
+    int pressed; /* item the left button went down on, or -1 */
 } xd_menu;
 
 /* Opens `model` as a popup of the taskbar's layer surface, anchored to

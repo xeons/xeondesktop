@@ -207,6 +207,7 @@ struct xd_shell {
     /* Start menu. */
     xd_icons *icons;
     xd_app_list apps;
+    xd_app_list control_apps; /* Control Panel's applets */
     xd_menu_tree menu_tree;
     xd_menu_tree context_tree; /* the open right-click menu's models */
     bool context_menu;         /* the open root menu is a right-click menu */
@@ -388,6 +389,8 @@ void xd_taskbars_forget_layout(xd_shell *shell);
 
 /* startmenu.c: Programs, one submenu per folder (also XP's All Programs). */
 xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree);
+/* startmenu.c: Control Panel's applets, by name (all three Start menus). */
+xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree);
 
 /* start7.c: the Windows XP and Windows 7 style Start menus */
 /* xp: the Windows XP layout (user header, cascading All Programs, Log Off

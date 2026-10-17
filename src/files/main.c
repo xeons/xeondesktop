@@ -33,6 +33,9 @@ typedef struct explorer {
     GtkWidget *folders_toggle;
     GtkWidget *view_items[XD_VIEW_COUNT];
     GtkWidget *arrange_item; /* View > Arrange Icons By */
+    /* Control Panel: the Switch to Classic/Category View link (in a bar
+     * above the view) and View menu item. */
+    GtkWidget *control_bar, *control_link, *control_item, *control_sep;
     /* Menu items that need a selection, or files on the clipboard. */
     GPtrArray *need_selection;
     GPtrArray *need_clipboard;
@@ -99,9 +102,25 @@ static void update_status(explorer *e) {
     g_free(space);
     gtk_label_set_text(GTK_LABEL(e->status), text);
     g_free(text);
-    char *size = xd_format_size(xd_folder_view_get_size(e->view, sel > 0));
+    /* Control Panel's items have no size. */
+    char *size = xd_place_of(xd_folder_view_get_location(e->view)) == XD_PLACE_CONTROL
+                     ? g_strdup("")
+                     : xd_format_size(xd_folder_view_get_size(e->view, sel > 0));
     gtk_label_set_text(GTK_LABEL(e->status_size), size);
     g_free(size);
+}
+
+/* Control Panel's "Switch to Classic View" / "Switch to Category View":
+ * the link above the view and the View menu's item. */
+static void update_control_switch(explorer *e) {
+    gboolean control = xd_place_of(xd_folder_view_get_location(e->view)) == XD_PLACE_CONTROL;
+    const char *label = xd_control_classic_view() ? "Switch to Category View"
+                                                  : "Switch to Classic View";
+    gtk_widget_set_visible(e->control_bar, control);
+    gtk_button_set_label(GTK_BUTTON(e->control_link), label);
+    gtk_widget_set_visible(e->control_item, control);
+    gtk_widget_set_visible(e->control_sep, control);
+    gtk_menu_item_set_label(GTK_MENU_ITEM(e->control_item), label);
 }
 
 static void update_chrome(explorer *e) {
@@ -122,9 +141,12 @@ static void update_chrome(explorer *e) {
     g_free(parse);
     gtk_widget_set_sensitive(e->back_button, e->back != nullptr);
     gtk_widget_set_sensitive(e->forward_button, e->forward != nullptr);
-    /* A drive's Up is My Computer, as in XP. */
-    gtk_widget_set_sensitive(e->up_button, special == nullptr);
+    /* A drive's Up is My Computer, as in XP; so is Control Panel's, whose
+     * category pages go up to it. */
+    gtk_widget_set_sensitive(e->up_button,
+                             special == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL);
     gtk_widget_set_visible(e->slider, xd_folder_view_get_mode(e->view) == XD_VIEW_THUMBNAILS);
+    update_control_switch(e);
 }
 
 /* ---- Folders tree ---------------------------------------------------------------- */
@@ -246,6 +268,11 @@ static void build_tree_roots(explorer *e) {
     GFile *computer = xd_place_computer();
     add_folder(e, nullptr, &it, computer, "My Computer", "computer");
     g_object_unref(computer);
+    GFile *control = xd_place_control();
+    gtk_tree_store_append(e->store, &it, nullptr);
+    gtk_tree_store_set(e->store, &it, COL_NAME, "Control Panel", COL_ICON, xd_place_icon(control),
+                       COL_FILE, control, COL_LOADED, TRUE, -1);
+    g_object_unref(control);
     GFile *trash = xd_place_trash();
     gtk_tree_store_append(e->store, &it, nullptr);
     gtk_tree_store_set(e->store, &it, COL_NAME, "Recycle Bin", COL_ICON, xd_place_icon(trash),
@@ -321,7 +348,8 @@ static gboolean find_folder_view(const char *uri, folder_view_setting *out) {
  * and the folder wasn't remembered before. */
 static void remember_folder_view(explorer *e) {
     GFile *dir = xd_folder_view_get_location(e->view);
-    if (dir == nullptr)
+    /* Control Panel always opens in its view's own look (below). */
+    if (dir == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL)
         return;
     char *uri = g_file_get_uri(dir);
     XdViewMode view_mode = xd_folder_view_get_mode(e->view);
@@ -361,6 +389,15 @@ static void remember_folder_view(explorer *e) {
 static void apply_folder_view(explorer *e, GFile *dir) {
     if (view_forced) {
         view_forced = FALSE; /* --view, for the folder it opened */
+        return;
+    }
+    if (xd_place_of(dir) == XD_PLACE_CONTROL) {
+        /* Category View's categories as tiles (XP's big links); applets
+         * as icons, as Classic View and the category pages show them. */
+        gboolean categories = xd_control_page(dir) == nullptr && !xd_control_classic_view();
+        set_mode(e, categories ? XD_VIEW_TILES : XD_VIEW_ICONS);
+        xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
+        xd_folder_view_set_groups(e->view, FALSE);
         return;
     }
     char *uri = g_file_get_uri(dir);
@@ -530,7 +567,16 @@ static void go_forward(explorer *e) {
 
 static void go_up(explorer *e) {
     GFile *dir = xd_folder_view_get_location(e->view);
-    if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER)
+    if (dir == nullptr)
+        return;
+    if (xd_place_of(dir) == XD_PLACE_CONTROL) {
+        /* A category's page is in Control Panel, which is in My Computer. */
+        GFile *up = xd_control_page(dir) != nullptr ? xd_place_control() : xd_place_computer();
+        navigate(e, up, TRUE);
+        g_object_unref(up);
+        return;
+    }
+    if (xd_place_of(dir) != XD_PLACE_FOLDER)
         return;
     GFile *parent = xd_place_is_drive_root(dir) ? xd_place_computer() : g_file_get_parent(dir);
     if (parent != nullptr) {
@@ -547,6 +593,27 @@ static void go_home(explorer *e) {
 
 static GFile *current_dir(explorer *e);
 
+/* Opens a Control Panel applet (its desktop file). FALSE if `file` isn't
+ * one. */
+static gboolean launch_applet(explorer *e, GFile *file) {
+    GDesktopAppInfo *info = xd_control_item_applet(file);
+    if (info == nullptr)
+        return FALSE;
+    GdkAppLaunchContext *ctx =
+        gdk_display_get_app_launch_context(gtk_widget_get_display(e->window));
+    GError *err = nullptr;
+    if (!g_app_info_launch(G_APP_INFO(info), nullptr, G_APP_LAUNCH_CONTEXT(ctx), &err)) {
+        char *msg = g_strdup_printf("Cannot open %s: %s", g_app_info_get_name(G_APP_INFO(info)),
+                                    err->message);
+        xd_message_box(GTK_WINDOW(e->window), "Control Panel", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+        g_free(msg);
+        g_error_free(err);
+    }
+    g_object_unref(ctx);
+    g_object_unref(info);
+    return TRUE;
+}
+
 static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gboolean is_dir,
                          gpointer data) {
     explorer *e = data;
@@ -561,6 +628,8 @@ static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gbool
         navigate(e, file, TRUE);
         return;
     }
+    if (xd_place_of(current_dir(e)) == XD_PLACE_CONTROL && launch_applet(e, file))
+        return;
     /* Open with the file type's default application. */
     char *uri = g_file_get_uri(file);
     GError *err = nullptr;
@@ -759,8 +828,10 @@ static void cb_invert([[maybe_unused]] GtkWidget *w, gpointer d) {
 /* Properties of the selection, or of the folder itself when nothing is
  * selected. */
 static void show_properties(explorer *e) {
-    /* A drive's Properties would count everything on it. */
-    if (xd_place_of(xd_folder_view_get_location(e->view)) == XD_PLACE_COMPUTER)
+    /* A drive's Properties would count everything on it; Control Panel's
+     * items aren't files to show. */
+    XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
+    if (place == XD_PLACE_COMPUTER || place == XD_PLACE_CONTROL)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files == nullptr) {
@@ -775,12 +846,39 @@ static void show_properties(explorer *e) {
 
 static void cb_properties([[maybe_unused]] GtkWidget *w, gpointer d) { show_properties(d); }
 
+/* Switch to Classic View / Switch to Category View: remembered for every
+ * Control Panel window from now on. A category's page switches to
+ * Classic View's Control Panel. */
+static void cb_control_switch([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    GFile *dir = xd_folder_view_get_location(e->view);
+    if (xd_place_of(dir) != XD_PLACE_CONTROL)
+        return;
+    xd_control_set_classic_view(!xd_control_classic_view());
+    if (xd_control_page(dir) != nullptr) {
+        GFile *root = xd_place_control();
+        navigate(e, root, TRUE);
+        g_object_unref(root);
+        return;
+    }
+    apply_folder_view(e, dir);
+    xd_folder_view_reload(e->view);
+    update_chrome(e);
+}
+
+static gboolean on_control_link(GtkLinkButton *b, gpointer d) {
+    cb_control_switch(GTK_WIDGET(b), d);
+    return TRUE; /* not a link to open */
+}
+
 static void cb_open_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
     GList *files = xd_folder_view_get_selected_files(e->view);
     for (GList *l = files; l != nullptr; l = l->next) {
-        /* My Computer's items are all drives (some not mounted yet). */
+        /* My Computer's items are all drives (some not mounted yet), and
+         * Control Panel's categories are pages of it. */
         gboolean is_dir = xd_place_of(current_dir(e)) == XD_PLACE_COMPUTER ||
+                          xd_place_of(l->data) == XD_PLACE_CONTROL ||
                           g_file_query_file_type(l->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
                               G_FILE_TYPE_DIRECTORY;
         on_activated(e->view, l->data, is_dir, e);
@@ -842,7 +940,7 @@ static void select_created(GList *created, gpointer data) {
 }
 
 static void copy_or_cut(explorer *e, gboolean cut) {
-    if (current_place(e) == XD_PLACE_COMPUTER)
+    if (current_place(e) == XD_PLACE_COMPUTER || current_place(e) == XD_PLACE_CONTROL)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files == nullptr)
@@ -914,7 +1012,7 @@ static GFile *paste_target(explorer *e) {
 
 static void delete_selected(explorer *e, gboolean permanently) {
     XdPlace place = current_place(e);
-    if (place == XD_PLACE_COMPUTER)
+    if (place == XD_PLACE_COMPUTER || place == XD_PLACE_CONTROL)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     gboolean in_trash = place == XD_PLACE_TRASH;
@@ -926,6 +1024,8 @@ static void delete_selected(explorer *e, gboolean permanently) {
 
 /* Edit > Copy To Folder... / Move To Folder... */
 static void copy_to_folder(explorer *e, gboolean move) {
+    if (current_place(e) == XD_PLACE_CONTROL)
+        return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files == nullptr)
         return;
@@ -1342,6 +1442,12 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
                                GTK_ACCEL_VISIBLE);
     gtk_menu_shell_append(GTK_MENU_SHELL(view), hidden);
     menu_item(view, "_Refresh", G_CALLBACK(cb_refresh), e, accel, GDK_KEY_F5, NO_MODS);
+    e->control_sep = gtk_separator_menu_item_new();
+    gtk_widget_set_no_show_all(e->control_sep, TRUE);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view), e->control_sep);
+    e->control_item = menu_item(view, "Switch to Classic View", G_CALLBACK(cb_control_switch), e,
+                                nullptr, 0, NO_MODS);
+    gtk_widget_set_no_show_all(e->control_item, TRUE);
 
     GtkWidget *go = submenu(bar, "_Go");
     menu_item(go, "_Back", G_CALLBACK(cb_back), e, accel, GDK_KEY_Left, GDK_MOD1_MASK);
@@ -1420,7 +1526,8 @@ static GtkWidget *bold_item(explorer *e, GtkWidget *menu, const char *label, GCa
 /* Right-click menus. In folders: Open, Cut, Copy, Paste into a folder,
  * Create Shortcut, Delete, Rename; on the background View, Refresh,
  * Paste and New. My Computer's drives only open; the Recycle Bin's items
- * Restore, Cut and Delete, and its background empties it. */
+ * Restore, Cut and Delete, and its background empties it. Control
+ * Panel's items open; its background switches between its two views. */
 static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) {
     explorer *e = data;
     XdPlace place = current_place(e);
@@ -1432,6 +1539,15 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
         menu_item(menu, "Cu_t", G_CALLBACK(cb_cut), e, nullptr, 0, NO_MODS);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         menu_item(menu, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
+    } else if (selected && place == XD_PLACE_CONTROL) {
+        bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
+    } else if (place == XD_PLACE_CONTROL) {
+        add_view_submenu(e, menu);
+        menu_item(menu, "R_efresh", G_CALLBACK(cb_refresh), e, nullptr, 0, NO_MODS);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        menu_item(menu, xd_control_classic_view() ? "Switch to Category View"
+                                                  : "Switch to Classic View",
+                  G_CALLBACK(cb_control_switch), e, nullptr, 0, NO_MODS);
     } else if (selected && place == XD_PLACE_COMPUTER) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
         GList *files = xd_folder_view_get_selected_files(view);
@@ -1483,7 +1599,7 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
             add_new_menu(e, menu);
         }
     }
-    if (place == XD_PLACE_FOLDER || selected) {
+    if (place == XD_PLACE_FOLDER || (selected && place != XD_PLACE_CONTROL)) {
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         menu_item(menu, "P_roperties", G_CALLBACK(cb_properties), e, nullptr, 0, NO_MODS);
     }
@@ -1653,7 +1769,23 @@ static void open_window(GtkApplication *app, GFile *dir) {
     g_signal_connect(e->rename_entry, "key-press-event", G_CALLBACK(on_rename_key), e);
     g_signal_connect(e->rename_entry, "focus-out-event", G_CALLBACK(on_rename_focus_out), e);
     gtk_overlay_add_overlay(GTK_OVERLAY(e->overlay), e->rename_entry);
-    gtk_paned_pack2(GTK_PANED(paned), e->overlay, TRUE, FALSE);
+    /* Control Panel's link to its other view (XP has it in the task pane). */
+    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    e->control_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_no_show_all(e->control_bar, TRUE);
+    GtkWidget *control_icon = gtk_image_new_from_icon_name("preferences-system",
+                                                           GTK_ICON_SIZE_LARGE_TOOLBAR);
+    gtk_widget_set_margin_start(control_icon, 6);
+    gtk_box_pack_start(GTK_BOX(e->control_bar), control_icon, FALSE, FALSE, 0);
+    e->control_link = gtk_link_button_new_with_label(XD_CONTROL_URI, "Switch to Classic View");
+    gtk_widget_set_tooltip_text(e->control_link, nullptr);
+    g_signal_connect(e->control_link, "activate-link", G_CALLBACK(on_control_link), e);
+    gtk_box_pack_start(GTK_BOX(e->control_bar), e->control_link, FALSE, FALSE, 0);
+    gtk_widget_show(control_icon);
+    gtk_widget_show(e->control_link);
+    gtk_box_pack_start(GTK_BOX(right), e->control_bar, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(right), e->overlay, TRUE, TRUE, 0);
+    gtk_paned_pack2(GTK_PANED(paned), right, TRUE, FALSE);
     gtk_paned_set_position(GTK_PANED(paned), 210);
 
     /* Status bar: object count, size, thumbnail slider. */

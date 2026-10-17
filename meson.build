@@ -400,12 +400,22 @@ rename_lib = static_library(
 # xd-files: the file manager (GTK3), with the folder view (libxdfolder).
 folder_lib = static_library(
   'xdfolder',
+  'src/files/control.c',
   'src/files/fileops.c',
   'src/files/folderview.c',
   'src/files/places.c',
   'src/files/properties.c',
   c_args: ['-D_GNU_SOURCE'],
-  dependencies: [core_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep],
+  dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep],
+)
+
+# xd-control: opens Control Panel (control:/// in xd-files) or an applet.
+executable(
+  'xd-control',
+  'src/control/main.c',
+  'src/files/control.c',
+  dependencies: [gio_unix_dep],
+  install: true,
 )
 gtkapp_lib = static_library(
   'xdgtkapp',
@@ -417,6 +427,8 @@ install_data(
   'data/applications/org.xeondesktop.TaskManager.desktop',
   'data/applications/org.xeondesktop.SystemProperties.desktop',
   'data/applications/org.xeondesktop.DateTime.desktop',
+  'data/applications/org.xeondesktop.Display.desktop',
+  'data/applications/org.xeondesktop.Taskbar.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -504,6 +516,7 @@ executable(
   'src/shell/taskbar.c',
   'src/shell/toplevels.c',
   'src/shell/apps.c',
+  'src/files/control.c',
   'src/shell/menu.c',
   'src/shell/startmenu.c',
   'src/shell/deskicons.c',
@@ -555,6 +568,7 @@ test_exe = executable(
   'xd-tests',
   'tests/test_main.c',
   'src/shell/apps.c',
+  'src/files/control.c',
   'src/ui/textedit.c',
   'src/apps/runcmd.c',
   'src/security/passwd.c',

@@ -70,11 +70,13 @@ struct _XdFolderView {
 
     GFile *dir;
     /* Special folders: My Computer lists drives; the Recycle Bin lists
-     * the trash's files folder (`listed`) under their original names. */
+     * the trash's files folder (`listed`) under their original names;
+     * Control Panel lists categories or applets. */
     XdPlace place;
     GFile *listed;
     GPtrArray *more_listed; /* the Recycle Bin: other drives' trashes still to list */
     gboolean watching_drives;
+    GAppInfoMonitor *apps_monitor; /* Control Panel: applets installed or removed */
     GCancellable *cancel;
     GFileMonitor *monitor;
     guint reload_source;
@@ -415,7 +417,9 @@ static int compare_items(gconstpointer pa, gconstpointer pb, gpointer data) {
         if (g != 0)
             return g;
     }
-    if (v->place == XD_PLACE_COMPUTER)
+    /* My Computer's drives and Control Panel's categories keep their own
+     * order. */
+    if (v->place == XD_PLACE_COMPUTER || (v->place == XD_PLACE_CONTROL && a->is_dir && b->is_dir))
         return a->order - b->order;
     /* Folders first, always, as in Windows. */
     if (a->is_dir != b->is_dir)
@@ -575,6 +579,11 @@ static void layout_contents(XdFolderView *v) {
         v->col_w[XD_SORT_SIZE] = 80;
         v->col_w[XD_SORT_TYPE] = 150;
         v->col_w[XD_SORT_MODIFIED] = 130;
+        if (v->place == XD_PLACE_CONTROL) {
+            /* Name and Comments only, as XP's Control Panel. */
+            v->col_w[XD_SORT_SIZE] = v->col_w[XD_SORT_MODIFIED] = 0;
+            v->col_w[XD_SORT_TYPE] = MAX(260, w * 3 / 5);
+        }
         int others = v->col_w[XD_SORT_SIZE] + v->col_w[XD_SORT_TYPE] + v->col_w[XD_SORT_MODIFIED];
         v->col_w[XD_SORT_NAME] = MAX(220, w - others);
         v->cell_w = v->col_w[XD_SORT_NAME] + others;
@@ -924,9 +933,11 @@ static void draw_header(XdFolderView *v, cairo_t *cr, const colors *c) {
                                                                "Free Space"};
     static const char *const trash_titles[XD_SORT_COUNT] = {"Name", "Size", "Original Location",
                                                             "Date Deleted"};
-    const char *const *titles = v->place == XD_PLACE_COMPUTER ? computer_titles
-                                : v->place == XD_PLACE_TRASH  ? trash_titles
-                                                              : folder_titles;
+    static const char *const control_titles[XD_SORT_COUNT] = {"Name", "", "Comments", ""};
+    const char *const *titles = v->place == XD_PLACE_COMPUTER  ? computer_titles
+                                : v->place == XD_PLACE_TRASH   ? trash_titles
+                                : v->place == XD_PLACE_CONTROL ? control_titles
+                                                               : folder_titles;
     int w = widget_w(v);
     set_color(cr, c->header_bg);
     cairo_rectangle(cr, 0, 0, w, HEADER_H);
@@ -937,6 +948,8 @@ static void draw_header(XdFolderView *v, cairo_t *cr, const colors *c) {
     double x = -hval(v);
     for (int col = 0; col < XD_SORT_COUNT; col++) {
         int cw = v->col_w[col];
+        if (cw == 0)
+            continue; /* not shown here */
         draw_text(v, cr, titles[col], (int)x + 6, 3, cw - 24, 1,
                   col == XD_SORT_SIZE ? PANGO_ALIGN_RIGHT : PANGO_ALIGN_LEFT, c->text);
         set_color(cr, c->line);
@@ -1140,6 +1153,26 @@ static void load_drives(XdFolderView *v) {
     g_ptr_array_unref(drives);
 }
 
+/* Control Panel: categories (folders that open their page) or applets,
+ * with their comments in the Type column. */
+static void load_control(XdFolderView *v) {
+    GPtrArray *items = xd_control_items(v->dir);
+    for (guint i = 0; i < items->len; i++) {
+        XdControlItem *c = g_ptr_array_index(items, i);
+        item *it = XD_NEW(item);
+        it->file = g_object_ref(c->file);
+        it->name = g_strdup(c->name);
+        it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
+        it->type_desc = g_strdup(c->comment);
+        it->size_text = g_strdup("");
+        it->is_dir = c->category;
+        it->icon = g_object_ref(c->icon);
+        it->order = (int)i;
+        g_ptr_array_add(v->all, it);
+    }
+    g_ptr_array_unref(items);
+}
+
 static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data);
 static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data);
 
@@ -1221,8 +1254,11 @@ static void start_loading(XdFolderView *v) {
     v->focus = -1;
     v->anchor = -1;
     v->cancel = g_cancellable_new();
-    if (v->place == XD_PLACE_COMPUTER) {
-        load_drives(v);
+    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_CONTROL) {
+        if (v->place == XD_PLACE_COMPUTER)
+            load_drives(v);
+        else
+            load_control(v);
         loading_done(v);
         return;
     }
@@ -1248,6 +1284,12 @@ static void drives_changed([[maybe_unused]] GVolumeMonitor *m, [[maybe_unused]] 
                            gpointer data) {
     XdFolderView *v = data;
     if (v->place == XD_PLACE_COMPUTER && v->reload_source == 0)
+        v->reload_source = g_timeout_add(300, reload_timeout, v);
+}
+
+static void apps_changed([[maybe_unused]] GAppInfoMonitor *m, gpointer data) {
+    XdFolderView *v = data;
+    if (v->place == XD_PLACE_CONTROL && v->reload_source == 0)
         v->reload_source = g_timeout_add(300, reload_timeout, v);
 }
 
@@ -1405,13 +1447,21 @@ static gboolean folder_view_motion(GtkWidget *widget, GdkEventMotion *ev) {
                                   (int)ev->y))
         return TRUE;
     v->drag_pending = FALSE;
+    /* Control Panel's applets can be copied out (a shortcut to them), not
+     * moved; its categories aren't files at all. */
+    GdkDragAction actions = (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK);
+    if (v->place == XD_PLACE_CONTROL) {
+        actions = (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_LINK);
+        for (guint k = 0; k < v->shown->len; k++) {
+            item *sel = g_ptr_array_index(v->shown, k);
+            if (sel->selected && sel->is_dir)
+                return TRUE;
+        }
+    }
     GtkTargetList *targets = gtk_target_list_new(nullptr, 0);
     gtk_target_list_add_uri_targets(targets, 0);
-    gtk_drag_begin_with_coordinates(widget, targets,
-                                    (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE |
-                                                    GDK_ACTION_LINK),
-                                    (int)v->drag_button, (GdkEvent *)ev, (int)v->drag_x,
-                                    (int)v->drag_y);
+    gtk_drag_begin_with_coordinates(widget, targets, actions, (int)v->drag_button,
+                                    (GdkEvent *)ev, (int)v->drag_x, (int)v->drag_y);
     gtk_target_list_unref(targets);
     return TRUE;
 }
@@ -1482,7 +1532,7 @@ static constexpr GdkDragAction NO_ACTION = (GdkDragAction)0;
 
 static GdkDragAction drop_action(XdFolderView *v, GdkDragContext *ctx, char **uris, GFile *dest) {
     if (dest == nullptr || uris == nullptr || uris[0] == nullptr ||
-        xd_place_of(dest) == XD_PLACE_COMPUTER)
+        xd_place_of(dest) == XD_PLACE_COMPUTER || xd_place_of(dest) == XD_PLACE_CONTROL)
         return NO_ACTION;
     if (xd_place_of(dest) == XD_PLACE_TRASH) {
         /* Into the Recycle Bin: a delete, carried as a move. */
@@ -1783,6 +1833,10 @@ static void folder_view_dispose(GObject *obj) {
         g_signal_handlers_disconnect_by_data(xd_computer_monitor(), v);
         v->watching_drives = FALSE;
     }
+    if (v->apps_monitor != nullptr) {
+        g_signal_handlers_disconnect_by_data(v->apps_monitor, v);
+        g_clear_object(&v->apps_monitor);
+    }
     forget_keep(v);
     forget_drag(v);
     g_clear_pointer(&v->cut, g_hash_table_unref);
@@ -1887,6 +1941,12 @@ void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
             g_signal_connect(vm, "mount-removed", G_CALLBACK(drives_changed), v);
             g_signal_connect(vm, "mount-changed", G_CALLBACK(drives_changed), v);
             v->watching_drives = TRUE;
+        }
+    } else if (v->place == XD_PLACE_CONTROL) {
+        if (v->apps_monitor == nullptr) {
+            /* GIO notices applications being installed or removed. */
+            v->apps_monitor = g_app_info_monitor_get();
+            g_signal_connect(v->apps_monitor, "changed", G_CALLBACK(apps_changed), v);
         }
     } else {
         v->monitor = g_file_monitor_directory(v->listed, G_FILE_MONITOR_WATCH_MOVES, nullptr,

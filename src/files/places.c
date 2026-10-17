@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "../settings/state.h"
 #include "fileops.h"
 
 #define TRASHINFO_GROUP "Trash Info"
@@ -26,11 +27,14 @@ XdPlace xd_place_of(GFile *location) {
         return XD_PLACE_COMPUTER;
     if (has_uri(location, XD_TRASH_URI))
         return XD_PLACE_TRASH;
+    if (location != nullptr && g_file_has_uri_scheme(location, "control"))
+        return XD_PLACE_CONTROL;
     return XD_PLACE_FOLDER;
 }
 
 GFile *xd_place_computer(void) { return g_file_new_for_uri(XD_COMPUTER_URI); }
 GFile *xd_place_trash(void) { return g_file_new_for_uri(XD_TRASH_URI); }
+GFile *xd_place_control(void) { return g_file_new_for_uri(XD_CONTROL_URI); }
 
 const char *xd_place_title(GFile *location) {
     switch (xd_place_of(location)) {
@@ -38,6 +42,10 @@ const char *xd_place_title(GFile *location) {
         return "My Computer";
     case XD_PLACE_TRASH:
         return "Recycle Bin";
+    case XD_PLACE_CONTROL: {
+        const XdControlCategory *c = xd_control_page(location);
+        return c != nullptr ? c->title : "Control Panel";
+    }
     case XD_PLACE_FOLDER:
         break;
     }
@@ -50,21 +58,48 @@ const char *xd_place_icon(GFile *location) {
         return "computer";
     case XD_PLACE_TRASH:
         return xd_trash_is_empty() ? "user-trash" : "user-trash-full";
+    case XD_PLACE_CONTROL: {
+        const XdControlCategory *c = xd_control_page(location);
+        return c != nullptr ? c->icon : "preferences-system";
+    }
     case XD_PLACE_FOLDER:
         break;
     }
     return "folder";
 }
 
+static GFile *control_page_file(const XdControlCategory *c) {
+    char *uri = g_strconcat(XD_CONTROL_URI, c->key, nullptr);
+    GFile *f = g_file_new_for_uri(uri);
+    g_free(uri);
+    return f;
+}
+
 GFile *xd_place_parse(const char *text) {
     char *t = g_strstrip(g_strdup(text));
     GFile *f = nullptr;
     if (g_ascii_strcasecmp(t, "My Computer") == 0 || g_ascii_strcasecmp(t, "computer:") == 0 ||
-        g_ascii_strcasecmp(t, XD_COMPUTER_URI) == 0)
+        g_ascii_strcasecmp(t, XD_COMPUTER_URI) == 0) {
         f = xd_place_computer();
-    else if (g_ascii_strcasecmp(t, "Recycle Bin") == 0 || g_ascii_strcasecmp(t, "trash:") == 0 ||
-             g_ascii_strcasecmp(t, XD_TRASH_URI) == 0)
+    } else if (g_ascii_strcasecmp(t, "Recycle Bin") == 0 || g_ascii_strcasecmp(t, "trash:") == 0 ||
+               g_ascii_strcasecmp(t, XD_TRASH_URI) == 0) {
         f = xd_place_trash();
+    } else if (g_ascii_strcasecmp(t, "Control Panel") == 0 ||
+               g_ascii_strcasecmp(t, "control:") == 0 ||
+               g_ascii_strcasecmp(t, XD_CONTROL_URI) == 0) {
+        f = xd_place_control();
+    } else {
+        /* A category's page, by its address or its name. */
+        const char *key = g_ascii_strncasecmp(t, XD_CONTROL_URI, strlen(XD_CONTROL_URI)) == 0
+                              ? t + strlen(XD_CONTROL_URI)
+                              : nullptr;
+        for (size_t i = 0; f == nullptr && i < xd_control_category_count; i++) {
+            const XdControlCategory *c = &xd_control_categories[i];
+            if (key != nullptr ? g_ascii_strcasecmp(key, c->key) == 0
+                               : g_ascii_strcasecmp(t, c->title) == 0)
+                f = control_page_file(c);
+        }
+    }
     g_free(t);
     return f;
 }
@@ -286,6 +321,115 @@ gboolean xd_computer_can_eject(GFile *item) {
     gboolean can = m != nullptr && (g_mount_can_eject(m) || g_mount_can_unmount(m));
     g_clear_object(&m);
     return can;
+}
+
+/* ---- Control Panel ---------------------------------------------------------------- */
+
+#define CONTROL_STATE "control-panel" /* "classic" or "category" */
+
+gboolean xd_control_classic_view(void) {
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines(CONTROL_STATE, &lines, &n, 1);
+    gboolean classic = n > 0 && strcmp(lines[0], "classic") == 0;
+    xd_free_lines(lines, n);
+    return classic;
+}
+
+void xd_control_set_classic_view(gboolean classic) {
+    char *line = g_strdup(classic ? "classic" : "category");
+    if (!xd_state_write_lines(CONTROL_STATE, &line, 1))
+        g_printerr("xd-files: cannot save the Control Panel's view\n");
+    g_free(line);
+}
+
+const XdControlCategory *xd_control_page(GFile *location) {
+    if (location == nullptr || !g_file_has_uri_scheme(location, "control"))
+        return nullptr;
+    char *uri = g_file_get_uri(location);
+    char *key = g_str_has_prefix(uri, XD_CONTROL_URI) ? uri + strlen(XD_CONTROL_URI) : uri;
+    size_t len = strlen(key);
+    if (len > 0 && key[len - 1] == '/')
+        key[len - 1] = '\0';
+    const XdControlCategory *c = *key != '\0' ? xd_control_category(key) : nullptr;
+    g_free(uri);
+    return c;
+}
+
+static void control_item_free(gpointer p) {
+    XdControlItem *it = p;
+    g_clear_object(&it->file);
+    g_clear_object(&it->icon);
+    g_free(it->name);
+    g_free(it->comment);
+    g_free(it);
+}
+
+static XdControlItem *applet_item(GDesktopAppInfo *info) {
+    const char *path = g_desktop_app_info_get_filename(info);
+    if (path == nullptr)
+        return nullptr;
+    XdControlItem *it = g_new0(XdControlItem, 1);
+    it->file = g_file_new_for_path(path);
+    it->name = g_strdup(g_app_info_get_name(G_APP_INFO(info)));
+    const char *comment = g_app_info_get_description(G_APP_INFO(info));
+    it->comment = g_strdup(comment != nullptr ? comment : "");
+    GIcon *icon = g_app_info_get_icon(G_APP_INFO(info));
+    it->icon = icon != nullptr ? g_object_ref(icon) : g_themed_icon_new("preferences-system");
+    return it;
+}
+
+GPtrArray *xd_control_items(GFile *location) {
+    GPtrArray *out = g_ptr_array_new_with_free_func(control_item_free);
+    const XdControlCategory *page = xd_control_page(location);
+    GList *applets = xd_control_applets();
+    if (page == nullptr && !xd_control_classic_view()) {
+        /* Category View: "Pick a category", each with its applets' names
+         * (Tiles shows them). "Other" only when something is in it. */
+        for (size_t i = 0; i < xd_control_category_count; i++) {
+            const XdControlCategory *c = &xd_control_categories[i];
+            GString *names = g_string_new(nullptr);
+            for (GList *l = applets; l != nullptr; l = l->next) {
+                if (!xd_control_applet_in(l->data, c->key))
+                    continue;
+                if (names->len > 0)
+                    g_string_append(names, ", ");
+                g_string_append(names, g_app_info_get_name(G_APP_INFO(l->data)));
+            }
+            if (names->len == 0 && strcmp(c->key, XD_CONTROL_OTHER) == 0) {
+                g_string_free(names, TRUE);
+                continue;
+            }
+            XdControlItem *it = g_new0(XdControlItem, 1);
+            it->file = control_page_file(c);
+            it->name = g_strdup(c->title);
+            it->comment = g_string_free(names, FALSE);
+            it->icon = xd_control_category_icon(c);
+            it->category = TRUE;
+            g_ptr_array_add(out, it);
+        }
+    } else {
+        for (GList *l = applets; l != nullptr; l = l->next) {
+            if (page != nullptr && !xd_control_applet_in(l->data, page->key))
+                continue;
+            XdControlItem *it = applet_item(l->data);
+            if (it != nullptr)
+                g_ptr_array_add(out, it);
+        }
+    }
+    g_list_free_full(applets, g_object_unref);
+    return out;
+}
+
+GDesktopAppInfo *xd_control_item_applet(GFile *item) {
+    char *path = item != nullptr ? g_file_get_path(item) : nullptr;
+    GDesktopAppInfo *info = path != nullptr && g_str_has_suffix(path, ".desktop")
+                                ? g_desktop_app_info_new_from_filename(path)
+                                : nullptr;
+    g_free(path);
+    if (info != nullptr && !xd_control_is_applet(info))
+        g_clear_object(&info);
+    return info;
 }
 
 /* ---- Recycle Bin ------------------------------------------------------------------- */

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Taskbar and Start Menu
+Comment=Customize the Start menu and the taskbar, such as the types of items to be displayed and how they should appear
+Exec=xd-taskbar
+Icon=preferences-desktop
+Terminal=false
+NoDisplay=true
+Categories=Settings;DesktopSettings;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=appearance;
+StartupWMClass=xd-taskbar

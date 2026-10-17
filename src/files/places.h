@@ -1,35 +1,41 @@
 /* SPDX-License-Identifier: MIT
  * Windows XP's special folders for xd-files: My Computer (computer:///,
- * the drives and mounts from GIO's volume monitor) and the Recycle Bin
+ * the drives and mounts from GIO's volume monitor), the Recycle Bin
  * (trash:///, the freedesktop.org trash in $XDG_DATA_HOME/Trash, read
- * directly so GNOME's gvfs isn't needed).
+ * directly so GNOME's gvfs isn't needed) and Control Panel (control:///,
+ * the applets' desktop entries; control:///<category> in Category View).
  */
 #ifndef XD_FILES_PLACES_H
 #define XD_FILES_PLACES_H
 
 #include <gtk/gtk.h>
 
+#include "control.h"
 #include "rename.h"
 
 G_BEGIN_DECLS
 
-typedef enum { XD_PLACE_FOLDER, XD_PLACE_COMPUTER, XD_PLACE_TRASH } XdPlace;
+typedef enum { XD_PLACE_FOLDER, XD_PLACE_COMPUTER, XD_PLACE_TRASH, XD_PLACE_CONTROL } XdPlace;
 
 #define XD_COMPUTER_URI "computer:///"
 #define XD_TRASH_URI "trash:///"
+#define XD_CONTROL_URI "control:///"
 
 /* What `location` is: an ordinary folder or one of the special ones. */
 XdPlace xd_place_of(GFile *location);
 /* The special folders' locations (new references). */
 GFile *xd_place_computer(void);
 GFile *xd_place_trash(void);
-/* "My Computer", "Recycle Bin" or nullptr; and the icon to show. */
+GFile *xd_place_control(void);
+/* "My Computer", "Recycle Bin", "Control Panel", a Control Panel
+ * category's name, or nullptr; and the icon to show. */
 const char *xd_place_title(GFile *location);
 const char *xd_place_icon(GFile *location);
 /* "/" and mount points: their "Up" is My Computer, as drives are in XP. */
 gboolean xd_place_is_drive_root(GFile *dir);
 /* A location typed in the address bar or given on the command line:
- * "My Computer", "Recycle Bin", "computer:", "trash:" (else nullptr). */
+ * "My Computer", "Recycle Bin", "Control Panel", "computer:", "trash:",
+ * "control:" (else nullptr). */
 GFile *xd_place_parse(const char *text);
 
 /* ---- My Computer ---- */
@@ -57,6 +63,31 @@ gboolean xd_computer_can_eject(GFile *item);
 char *xd_format_drive_size(guint64 bytes);
 /* The volume monitor, for live updates (owned by GIO). */
 GVolumeMonitor *xd_computer_monitor(void);
+
+/* ---- Control Panel ---- */
+
+/* XP's two views of control:///, remembered: Category View (the
+ * categories, each opening control:///<category> with its applets) or
+ * Classic View (every applet). */
+gboolean xd_control_classic_view(void);
+void xd_control_set_classic_view(gboolean classic);
+/* The category whose page `location` is (control:///<key>), or nullptr. */
+const XdControlCategory *xd_control_page(GFile *location);
+
+typedef struct XdControlItem {
+    GFile *file;   /* a category's page, or the applet's desktop file */
+    char *name;
+    char *comment; /* the applet's Comment; a category's applets */
+    GIcon *icon;
+    gboolean category;
+} XdControlItem;
+
+/* What `location` lists: the categories (Category View) or applets.
+ * Free with g_ptr_array_unref. */
+GPtrArray *xd_control_items(GFile *location);
+/* The applet a Control Panel item stands for (a new reference), or
+ * nullptr (a category, or not an applet). */
+GDesktopAppInfo *xd_control_item_applet(GFile *item);
 
 /* ---- Recycle Bin ---- */
 

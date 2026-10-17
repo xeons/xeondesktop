@@ -869,6 +869,7 @@ int main(int argc, char **argv) {
     shell.settings_fd = xd_settings_watch();
     xd_quicklaunch_init(&shell);
     xd_apps_load(&shell.apps);
+    xd_apps_load_control_panel(&shell.control_apps);
     xd_menu_tree_init(&shell.menu_tree);
     xd_menu_tree_init(&shell.context_tree);
     xd_menu_tree_init(&shell.docs_tree);
@@ -927,6 +928,7 @@ int main(int argc, char **argv) {
     xd_menu_tree_free(&shell.context_tree);
     xd_menu_tree_free(&shell.docs_tree);
     xd_apps_free(&shell.apps);
+    xd_apps_free(&shell.control_apps);
     xd_quicklaunch_finish(&shell);
     xd_free(shell.desktop_hidden);
     xd_icons_destroy(shell.icons);

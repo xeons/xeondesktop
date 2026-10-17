@@ -1565,6 +1565,12 @@ static bool opens_sub(const xd_start7 *m, int hit) {
            (m->xp && hit == HIT_ALL);
 }
 
+/* ...on press. Control Panel's applets cascade on hover, but clicking it
+ * opens the folder, as XP's and Windows 7's default link does. */
+static bool opens_on_press(const xd_start7 *m, int hit) {
+    return opens_sub(m, hit) && hit != R_CONTROL;
+}
+
 static void open_sub(xd_start7 *m, int owner) {
     if (m->sub_owner == owner && m->sub != nullptr)
         return;
@@ -1587,15 +1593,7 @@ static void open_sub(xd_start7 *m, int owner) {
         mm = recent_model(m);
         anchor = xp_or_right_item(m, R_RECENT);
     } else if (owner == R_CONTROL) {
-        mm = xd_menu_model_new(&m->tree);
-        add_cmd(&m->tree, mm, "Date and Time", "preferences-system-time",
-                xd_shell_own_command(shell, "xd-timedate", nullptr));
-        add_cmd(&m->tree, mm, "Display", "preferences-desktop-display",
-                xd_shell_own_command(shell, "xd-desk", nullptr));
-        add_cmd(&m->tree, mm, "System", "computer",
-                xd_shell_own_command(shell, "xd-sysdm", nullptr));
-        add_cmd(&m->tree, mm, "Taskbar and Start Menu", "preferences-desktop",
-                xd_shell_own_command(shell, "xd-taskbar", nullptr));
+        mm = xd_start_control_model(shell, &m->tree);
         anchor = xp_or_right_item(m, R_CONTROL);
     } else if (owner == HIT_SHUTDOWN_ARROW) {
         mm = xd_menu_model_new(&m->tree);
@@ -1685,8 +1683,10 @@ static void activate_right(xd_start7 *m, int hit) {
     case R_RUN:
         run_command(m, xd_shell_own_command(shell, "xd-run", nullptr));
         return;
-    case R_RECENT:
     case R_CONTROL:
+        run_command(m, xd_shell_own_command(shell, "xd-control", nullptr));
+        return;
+    case R_RECENT:
     case HIT_SHUTDOWN_ARROW:
         open_sub(m, hit);
         return;
@@ -1918,7 +1918,7 @@ void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
     if (pressed) {
         m->pressed = target;
         /* ▸ items open on press, like menus. */
-        if (opens_sub(m, m->hot_right))
+        if (opens_on_press(m, m->hot_right))
             activate_right(m, m->hot_right);
         return;
     }
@@ -1928,7 +1928,7 @@ void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
         return;
     if (target >= 1000) {
         int hit = target - 1000;
-        if (!opens_sub(m, hit) && !(hit < R_COUNT && right_items[hit].disabled))
+        if (!opens_on_press(m, hit) && !(hit < R_COUNT && right_items[hit].disabled))
             activate_right(m, hit); /* may free m */
     } else {
         activate_left(m, target); /* may free m */

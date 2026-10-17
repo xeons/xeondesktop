@@ -115,6 +115,20 @@ xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree) {
     return programs;
 }
 
+xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree) {
+    xd_menu_model *m = xd_menu_model_new(tree);
+    const xd_app_list *applets = &shell->control_apps;
+    for (size_t i = 0; i < applets->count; i++) {
+        const xd_app *app = &applets->items[i];
+        xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, app->name, app->icon);
+        it->fallback_icon = "preferences-system";
+        it->app = app;
+    }
+    if (m->count == 0)
+        xd_menu_add(tree, m, XD_MENU_ACTION, "(Empty)", nullptr)->disabled = true;
+    return m;
+}
+
 static xd_menu_item *add_disabled(xd_menu_tree *tree, xd_menu_model *m, xd_menu_kind kind,
                                   const char *label, const char *icon) {
     xd_menu_item *it = xd_menu_add(tree, m, kind, label, icon);
@@ -200,25 +214,17 @@ void xd_start_menu_build(xd_shell *shell) {
     docs->fallback_icon = "folder";
     docs->submenu = nullptr; /* filled each time the menu opens */
 
-    /* Not implemented yet: shown, but greyed out like unavailable items in
-     * Windows. They light up as Control Panel and Help land. */
+    /* Items not implemented yet are shown, but greyed out like unavailable
+     * items in Windows. They light up as Printers, Search and Help land. */
     xd_menu_item *settings =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Settings", "preferences-system");
     settings->submenu = xd_menu_model_new(tree);
-    /* "Expand Control Panel" style: a cascading list of applets. */
+    /* "Expand Control Panel" style: a cascading list of applets; clicking
+     * Control Panel itself opens the folder. */
     xd_menu_item *control =
         xd_menu_add(tree, settings->submenu, XD_MENU_SUBMENU, "Control Panel", "preferences-system");
-    control->submenu = xd_menu_model_new(tree);
-    xd_menu_item *datetime = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "Date/Time",
-                                         "preferences-system-time");
-    datetime->command = xd_shell_own_command(shell, "xd-timedate", nullptr);
-    xd_menu_item *display = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "Display",
-                                        "preferences-desktop-display");
-    display->fallback_icon = "video-display";
-    display->command = xd_shell_own_command(shell, "xd-desk", nullptr);
-    xd_menu_item *system = xd_menu_add(tree, control->submenu, XD_MENU_ACTION, "System",
-                                       "computer");
-    system->command = xd_shell_own_command(shell, "xd-sysdm", nullptr);
+    control->submenu = xd_start_control_model(shell, tree);
+    control->command = xd_shell_own_command(shell, "xd-control", nullptr);
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Network and Dial-up Connections",
                  "network-workgroup");
     add_disabled(tree, settings->submenu, XD_MENU_ACTION, "Printers", "printer");

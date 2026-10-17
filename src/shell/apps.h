@@ -33,6 +33,9 @@ typedef struct xd_app_list {
  * name. */
 void xd_apps_load(xd_app_list *list);
 void xd_apps_free(xd_app_list *list);
+/* The Control Panel applets (X-XeonDesktop-ControlPanel, NoDisplay ones
+ * included), sorted by name, for the Start menus' Control Panel. */
+void xd_apps_load_control_panel(xd_app_list *list);
 
 /* Loads one .desktop file (Quick Launch shortcuts). Strings go in `arena`;
  * release with xd_app_release. */

@@ -296,6 +296,7 @@ static xd_menu *menu_create(xd_shell *shell, const xd_menu_model *model) {
     menu->shell = shell;
     menu->model = model;
     menu->hot = -1;
+    menu->pressed = -1;
     menu->child_index = -1;
     menu->scale = 1.0;
     layout(menu);
@@ -583,6 +584,19 @@ void xd_menu_pointer_button(xd_menu *menu, uint32_t button, bool pressed) {
     if (index < 0)
         return;
     const xd_menu_item *it = &menu->model->items[index];
+    int was_pressed = menu->pressed;
+    menu->pressed = pressed && button == BTN_LEFT ? index : -1;
+    /* A click on a submenu with its own command (Windows 2000's Control
+     * Panel) runs it: pressed and released here, not dragged onto. */
+    if (!pressed && button == BTN_LEFT && was_pressed == index && it->kind == XD_MENU_SUBMENU &&
+        it->command != nullptr && !it->disabled) {
+        xd_shell *shell = menu->shell;
+        char *cmd = xd_str_dup_cstr(xd_str_from_cstr(it->command));
+        xd_menu_close_all(shell); /* frees `it` */
+        xd_shell_launch(shell, cmd);
+        xd_free(cmd);
+        return;
+    }
     /* Submenus open on press; commands run on release, so a press-drag-
      * release from the Start button works as in Windows. */
     if (pressed ? it->kind == XD_MENU_SUBMENU : it->kind == XD_MENU_ACTION)

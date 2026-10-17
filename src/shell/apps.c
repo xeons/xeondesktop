@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "../core/alloc.h"
+#include "../files/control.h"
 #include "apps.h"
 
 /* Windows-style Programs folders for the freedesktop main categories,
@@ -116,6 +117,20 @@ void xd_apps_load(xd_app_list *list) {
     g_list_free_full(all, g_object_unref);
     if (list->count > 1)
         qsort(list->items, list->count, sizeof(*list->items), compare_apps);
+}
+
+void xd_apps_load_control_panel(xd_app_list *list) {
+    *list = (xd_app_list){0};
+    xd_arena_init(&list->arena, 4 * 1024);
+    GList *applets = xd_control_applets(); /* by name */
+    for (GList *l = applets; l != nullptr; l = l->next) {
+        if (list->count == list->cap) {
+            list->cap = list->cap == 0 ? 16 : list->cap * 2;
+            list->items = xd_realloc_array(list->items, list->cap, sizeof(*list->items));
+        }
+        fill(l->data, &list->arena, &list->items[list->count++]);
+    }
+    g_list_free_full(applets, g_object_unref);
 }
 
 void xd_apps_free(xd_app_list *list) {

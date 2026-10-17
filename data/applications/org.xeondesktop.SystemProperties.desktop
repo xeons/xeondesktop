@@ -1,11 +1,14 @@
 [Desktop Entry]
 Type=Application
-Name=System Properties
+Name=System
+GenericName=System Properties
 Comment=See information about this computer, its hardware, and its startup settings
 Exec=xd-sysdm
 Icon=computer
 Terminal=false
-Categories=Settings;HardwareSettings;GTK;
+NoDisplay=true
+Categories=Settings;HardwareSettings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=performance;
 StartupWMClass=org.xeondesktop.SystemProperties
 Actions=DeviceManager;
 

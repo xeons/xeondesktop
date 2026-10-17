@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Display
+Comment=Change the appearance of your desktop, such as the background, screen saver, colors, font sizes, and screen resolution
+Exec=xd-desk
+Icon=preferences-desktop-display
+Terminal=false
+NoDisplay=true
+Categories=Settings;DesktopSettings;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=appearance;
+StartupWMClass=xd-desk

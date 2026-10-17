@@ -185,7 +185,12 @@ applet was a separate `.cpl` you could run on its own (`control desk.cpl`):
 - **The Control Panel is a virtual `control:` folder in `xd-files`**, with
   XP's category view and the classic icon view. Applets register with a
   `.desktop` file (`Categories=X-XeonDesktop-ControlPanel;`), so a new
-  one just appears.
+  one just appears. `X-XeonDesktop-ControlPanel-Category=` puts it in XP's
+  categories (`appearance`, `network`, `programs`, `sound`, `performance`,
+  `hardware`, `accounts`, `datetime`, `accessibility`; others go under
+  Other Control Panel Options), and `NoDisplay=true` keeps it out of All
+  Programs, as in XP. `xd-control` opens the folder, `xd-control desk`
+  (or `desk.cpl`) the applet whose program is `xd-desk`.
 - **Applets never run as root.** System changes go through polkit-guarded
   services (timedated, NetworkManager, AccountsService, ...). Desktop
   settings go through `xd-settingsd`. Nothing is setuid.
