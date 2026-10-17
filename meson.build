@@ -850,6 +850,13 @@ executable(
   c_args: ['-D_GNU_SOURCE'],
 )
 
+# Lists a session's windows (title, app id, state), for the UI tests.
+executable(
+  'xd-windows',
+  'tools/xd-windows.c',
+  dependencies: [core_dep, client_protocol_dep],
+)
+
 test_exe = executable(
   'xd-tests',
   'tests/test_main.c',
@@ -887,6 +894,29 @@ test(
     'UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1',
   ],
 )
+
+# UI tests (tests/ui/run.py): each scenario drives a headless session of its
+# own. They test what's built, so build first, and they're left out of a
+# plain `meson test`:
+#   ninja -C build && meson test -C build --setup ui --suite ui
+# A failed scenario's screenshots and log go to meson-logs/ui.
+python3 = find_program('python3', required: false)
+if python3.found()
+  ui_runner = files('tests/ui/run.py')
+  ui_scenarios = run_command(python3, ui_runner, '--names', check: true).stdout().split()
+  foreach name : ui_scenarios
+    test(
+      name,
+      python3,
+      args: [ui_runner, '--build-dir', meson.project_build_root(),
+             '--keep', meson.project_build_root() / 'meson-logs' / 'ui', name],
+      suite: 'ui',
+      timeout: 240,
+    )
+  endforeach
+endif
+add_test_setup('default', is_default: true, exclude_suites: ['ui'])
+add_test_setup('ui')
 
 install_subdir('data/schemes', install_dir: get_option('datadir') / 'xeondesktop')
 install_subdir('data/maps', install_dir: get_option('datadir') / 'xeondesktop')
