@@ -17,6 +17,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <gio/gio.h>
+#include <pango/pangocairo.h>
+
 #include "../core/alloc.h"
 #include "../saver/savers.h"
 #include "../settings/settings.h"
@@ -52,9 +55,21 @@ typedef struct desk {
     int preview_full_w; /* the file's real width, for Center/Tile */
     char preview_path[1024];
     xd_widget *browse;
+    xd_widget *customize;
     int chooser_fd;
     xd_ui_source *chooser_src;
     xd_strbuf chooser_out;
+    bool choosing_icon; /* the chooser is Change Icon's, not Browse's */
+
+    /* Desktop Items (Customize Desktop...), edited apart from `pending`
+     * until its OK. */
+    xd_window *items;
+    xd_desktop_icon_settings items_edit;
+    xd_widget *items_checks[4];
+    xd_widget *items_list;
+    int items_sel; /* xd_desk_icon */
+    xd_widget *change_icon;
+    xd_widget *restore_icon;
 
     /* Screen Saver */
     xd_widget *saver_preview;
@@ -80,6 +95,7 @@ typedef struct desk {
     /* Effects */
     xd_widget *smoothing_check;
     xd_widget *smoothing_combo;
+    xd_widget *large_icons;
 
     /* Settings */
     disp_head *heads;       /* as edited */
@@ -327,6 +343,9 @@ static void choose_wallpaper(desk *d, const char *path) {
     changed(d);
 }
 
+static void items_chose_icon(desk *d, const char *path);
+static void items_update_buttons(desk *d);
+
 static void chooser_output(void *user) {
     desk *d = user;
     char buf[1024];
@@ -345,28 +364,236 @@ static void chooser_output(void *user) {
     xd_str path = xd_str_trim(xd_strbuf_view(&d->chooser_out));
     if (path.len > 0) {
         char *p = xd_str_dup_cstr(path);
-        choose_wallpaper(d, p);
+        if (!d->choosing_icon)
+            choose_wallpaper(d, p);
+        else if (d->items != nullptr)
+            items_chose_icon(d, p);
         xd_free(p);
     }
     xd_strbuf_clear(&d->chooser_out);
     xd_widget_set_enabled(d->browse, true);
+    if (d->items != nullptr)
+        items_update_buttons(d);
+}
+
+/* Runs xd-choose-file; its answer comes to chooser_output. */
+static bool start_chooser(desk *d, const char *const *args, bool icon) {
+    if (d->chooser_src != nullptr)
+        return false;
+    int fd = -1;
+    if (xd_spawn_own("xd-choose-file", args, &fd) == 0)
+        return false;
+    d->chooser_fd = fd;
+    d->chooser_src = xd_ui_add_fd(d->ui, fd, chooser_output, d);
+    d->choosing_icon = icon;
+    xd_widget_set_enabled(d->browse, false);
+    if (d->items != nullptr)
+        items_update_buttons(d);
+    return true;
 }
 
 static void on_browse([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
-    if (d->chooser_src != nullptr)
-        return;
     char folder[1024] = "/usr/share/backgrounds";
     const char *home = getenv("HOME");
     if (home != nullptr)
         snprintf(folder, sizeof(folder), "%s/Pictures", home);
     const char *args[] = {"--images", "--title", "Browse", "--folder", folder, nullptr};
-    int fd = -1;
-    if (xd_spawn_own("xd-choose-file", args, &fd) == 0)
+    start_chooser(d, args, false);
+}
+
+/* ---- Desktop Items --------------------------------------------------------------- */
+
+/* XP's Customize Desktop...: which special icons the desktop shows and
+ * their pictures. OK puts the choices into the property sheet, which
+ * Apply saves, as in XP. The Web tab (Active Desktop) and Desktop
+ * Cleanup aren't there. */
+
+static constexpr int ITEMS_LIST_W = 304;
+static constexpr int ITEMS_LIST_H = 98;
+
+static const char *const item_labels[XD_DESK_ICON_COUNT] = {
+    [XD_DESK_ICON_COMPUTER] = "My Computer",
+    [XD_DESK_ICON_DOCUMENTS] = "My Documents",
+    [XD_DESK_ICON_NETWORK] = "My Network Places",
+    [XD_DESK_ICON_TRASH_FULL] = "Recycle Bin (full)",
+    [XD_DESK_ICON_TRASH_EMPTY] = "Recycle Bin (empty)",
+};
+
+/* My Network Places needs GIO's network:// (gvfs); the shell leaves the
+ * icon out without it, so its box is greyed here. */
+static bool network_available(void) {
+    const gchar *const *schemes = g_vfs_get_supported_uri_schemes(g_vfs_get_default());
+    return schemes != nullptr && g_strv_contains(schemes, "network");
+}
+
+static void items_update_buttons(desk *d) {
+    bool custom = d->items_edit.icons[d->items_sel][0] != '\0';
+    xd_widget_set_enabled(d->change_icon, d->chooser_src == nullptr);
+    xd_widget_set_enabled(d->restore_icon, custom);
+}
+
+static void items_chose_icon(desk *d, const char *path) {
+    char(*slot)[sizeof(d->items_edit.icons[0])] = &d->items_edit.icons[d->items_sel];
+    if (path[0] == '/' && strlen(path) < sizeof(*slot))
+        snprintf(*slot, sizeof(*slot), "%s", path);
+    xd_widget_redraw(d->items_list);
+    items_update_buttons(d);
+}
+
+/* The icons in a row, as XP's list view: each picture over its name, the
+ * selected one highlighted. */
+static void draw_items_list([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
+                            const xd_theme *t, void *user) {
+    desk *d = user;
+    xd_rect in = xd_theme_draw_field(t, cr, r, false);
+    xd_field_colors fc = xd_theme_field_colors(t);
+    int cell = in.w / XD_DESK_ICON_COUNT;
+    int px = xd_tpx(t, 32);
+    for (int i = 0; i < XD_DESK_ICON_COUNT; i++) {
+        xd_rect c = {in.x + i * cell, in.y, cell, in.h};
+        const char *names[2];
+        size_t n = 0;
+        if (d->items_edit.icons[i][0] != '\0')
+            names[n++] = d->items_edit.icons[i];
+        names[n++] = xd_desk_icon_default((xd_desk_icon)i);
+        cairo_surface_t *img = xd_icons_get_any(xd_ui_icons(d->ui), names, n, px);
+        int ix = c.x + (cell - px) / 2, iy = c.y + xd_tpx(t, 6);
+        bool sel = i == d->items_sel;
+        if (img != nullptr) {
+            cairo_set_source_surface(cr, img, ix, iy);
+            cairo_paint(cr);
+            if (sel) {
+                cairo_set_source_rgba(cr, fc.selection.r, fc.selection.g, fc.selection.b, 0.5);
+                cairo_mask_surface(cr, img, ix, iy);
+            }
+        }
+        xd_text_style st = xd_text(t, XD_FONT_ICON, sel ? fc.selection_text : fc.text,
+                                   XD_ALIGN_CENTER);
+        PangoLayout *l = xd_text_layout(cr, item_labels[i], &st);
+        int text_w = cell - xd_tpx(t, 4);
+        pango_layout_set_width(l, text_w * PANGO_SCALE);
+        pango_layout_set_alignment(l, PANGO_ALIGN_CENTER);
+        pango_layout_set_wrap(l, PANGO_WRAP_WORD_CHAR);
+        PangoRectangle ink, logical;
+        pango_layout_get_pixel_extents(l, &ink, &logical);
+        int tx = c.x + xd_tpx(t, 2), ty = iy + px + xd_tpx(t, 4);
+        if (sel) {
+            xd_fill_rect(cr,
+                         (xd_rect){tx + logical.x - xd_tpx(t, 1), ty, logical.width + xd_tpx(t, 2),
+                                   logical.height},
+                         fc.selection);
+        }
+        cairo_set_source_rgba(cr, st.color.r, st.color.g, st.color.b, st.color.a);
+        cairo_move_to(cr, tx, ty);
+        pango_cairo_show_layout(cr, l);
+        g_object_unref(l);
+    }
+}
+
+static void on_items_pointer(xd_widget *w, xd_pointer_event ev, double x,
+                             [[maybe_unused]] double y, void *user) {
+    desk *d = user;
+    if (ev != XD_POINTER_PRESS)
         return;
-    d->chooser_fd = fd;
-    d->chooser_src = xd_ui_add_fd(d->ui, fd, chooser_output, d);
-    xd_widget_set_enabled(d->browse, false);
+    double f = floor(x / (ITEMS_LIST_W / (double)XD_DESK_ICON_COUNT));
+    d->items_sel = XD_CLAMP((int)f, 0, XD_DESK_ICON_COUNT - 1);
+    xd_widget_redraw(w);
+    items_update_buttons(d);
+}
+
+static void on_change_icon([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    /* Windows lists the icons in a file; here any picture will do. */
+    const char *args[] = {"--images", "--title", "Change Icon", "--folder", "/usr/share/icons",
+                          nullptr};
+    start_chooser(d, args, true);
+}
+
+static void on_restore_icon([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    d->items_edit.icons[d->items_sel][0] = '\0';
+    xd_widget_redraw(d->items_list);
+    items_update_buttons(d);
+}
+
+static void items_close(desk *d) {
+    if (d->items == nullptr)
+        return;
+    xd_window *items = d->items;
+    d->items = nullptr;
+    xd_window_close(items);
+    xd_widget_set_enabled(d->customize, true);
+}
+
+static void on_items_ok([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    xd_desktop_icon_settings *e = &d->items_edit;
+    e->documents = xd_checkbox_checked(d->items_checks[0]);
+    e->computer = xd_checkbox_checked(d->items_checks[1]);
+    e->network = xd_checkbox_checked(d->items_checks[2]);
+    e->browser = xd_checkbox_checked(d->items_checks[3]);
+    d->pending.desktop_icons = *e;
+    items_close(d);
+    changed(d);
+}
+
+static void on_items_cancel([[maybe_unused]] xd_widget *w, void *user) { items_close(user); }
+
+static void on_customize([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    if (d->items != nullptr)
+        return;
+    d->items_edit = d->pending.desktop_icons;
+    d->items_sel = XD_DESK_ICON_COMPUTER;
+    xd_window *win = d->items = xd_window_create(d->ui, "Desktop Items", "xd-desk", 362, 404);
+    static const char *const tabs[] = {"General"};
+    xd_tabs(win, (xd_rect){7, 7, 348, 358}, tabs, XD_ARRAY_LEN(tabs), nullptr, nullptr);
+
+    xd_groupbox(win, (xd_rect){17, 35, 328, 210}, "Desktop icons");
+    const xd_desktop_icon_settings *e = &d->items_edit;
+    d->items_checks[0] =
+        xd_checkbox(win, (xd_rect){29, 55, 145, 18}, "My Documents", e->documents, nullptr, d);
+    d->items_checks[1] =
+        xd_checkbox(win, (xd_rect){29, 75, 145, 18}, "My Computer", e->computer, nullptr, d);
+    d->items_checks[2] = xd_checkbox(win, (xd_rect){180, 55, 155, 18}, "My Network Places",
+                                     e->network, nullptr, d);
+    xd_widget_set_enabled(d->items_checks[2], network_available());
+    /* XP's Internet Explorer: here the default web browser, by its name. */
+    GAppInfo *browser = g_app_info_get_default_for_uri_scheme("http");
+    d->items_checks[3] =
+        xd_checkbox(win, (xd_rect){180, 75, 155, 18},
+                    browser != nullptr ? g_app_info_get_name(browser) : "Web Browser",
+                    e->browser, nullptr, d);
+    xd_widget_set_enabled(d->items_checks[3], browser != nullptr);
+    g_clear_object(&browser);
+    d->items_list = xd_custom(win, (xd_rect){29, 101, ITEMS_LIST_W, ITEMS_LIST_H},
+                              draw_items_list, d);
+    xd_custom_set_pointer(d->items_list, on_items_pointer);
+    d->change_icon =
+        xd_button(win, (xd_rect){157, 209, 85, 23}, "Change Icon...", on_change_icon, d);
+    d->restore_icon =
+        xd_button(win, (xd_rect){248, 209, 85, 23}, "Restore Default", on_restore_icon, d);
+
+    xd_groupbox(win, (xd_rect){17, 253, 328, 102}, "Desktop cleanup");
+    xd_label(win, (xd_rect){29, 273, 304, 16},
+             "Desktop cleanup moves unused desktop items to a folder.", XD_LABEL_WRAP);
+    xd_widget_set_enabled(xd_checkbox(win, (xd_rect){29, 297, 304, 18},
+                                      "Run Desktop Cleanup Wizard every 60 days", false, nullptr,
+                                      nullptr),
+                          false);
+    xd_widget_set_enabled(
+        xd_button(win, (xd_rect){219, 323, 114, 23}, "Clean Desktop Now", nullptr, nullptr),
+        false);
+
+    xd_widget *ok = xd_button(win, (xd_rect){199, 373, 75, 23}, "OK", on_items_ok, d);
+    xd_widget *cancel = xd_button(win, (xd_rect){280, 373, 75, 23}, "Cancel", on_items_cancel, d);
+    xd_window_set_default(win, ok);
+    xd_window_set_cancel(win, cancel);
+    xd_window_set_focus(win, d->items_checks[0]);
+    items_update_buttons(d);
+    xd_widget_set_enabled(d->customize, false);
+    xd_window_show(win);
 }
 
 static void build_background(desk *d) {
@@ -376,7 +603,7 @@ static void build_background(desk *d) {
     xd_widget_set_page(xd_label(win, (xd_rect){20, 218, 360, 16},
                                 "Select a picture to use as wallpaper:", 0),
                        PAGE_BACKGROUND);
-    d->wallpaper_list = xd_listbox(win, (xd_rect){20, 236, 268, 160}, on_wallpaper, d);
+    d->wallpaper_list = xd_listbox(win, (xd_rect){20, 236, 268, 132}, on_wallpaper, d);
     xd_widget_set_page(d->wallpaper_list, PAGE_BACKGROUND);
     int current = 0;
     for (size_t i = 0; i < d->wallpaper_count; i++) {
@@ -397,6 +624,10 @@ static void build_background(desk *d) {
     for (size_t i = 0; i < XD_ARRAY_LEN(modes); i++)
         xd_widget_add_item(d->wallpaper_mode, modes[i]);
     xd_widget_select(d->wallpaper_mode, (int)d->pending.wallpaper_mode);
+    /* XP's Desktop tab: under the list. */
+    d->customize = xd_button(win, (xd_rect){20, 376, 120, 23}, "Customize Desktop...",
+                             on_customize, d);
+    xd_widget_set_page(d->customize, PAGE_BACKGROUND);
 }
 
 /* ---- running helpers ---------------------------------------------------------- */
@@ -825,6 +1056,12 @@ static void on_smoothing(xd_widget *w, void *user) {
     changed(d);
 }
 
+static void on_large_icons(xd_widget *w, void *user) {
+    desk *d = user;
+    d->pending.large_icons = xd_checkbox_checked(w);
+    changed(d);
+}
+
 static void build_effects(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_EFFECTS;
@@ -844,9 +1081,10 @@ static void build_effects(desk *d) {
     xd_widget_select(d->smoothing_combo, d->pending.font_smoothing == XD_SMOOTH_CLEARTYPE ? 1 : 0);
     xd_widget_set_enabled(d->smoothing_combo, d->pending.font_smoothing != XD_SMOOTH_NONE);
 
-    on_page_disabled(xd_checkbox(win, (xd_rect){32, 114, 340, 20}, "Use large icons",
-                                 d->pending.large_icons, nullptr, nullptr),
-                     P);
+    /* So far only the desktop's icons grow (XP's Shell Icon Size). */
+    d->large_icons = xd_checkbox(win, (xd_rect){32, 114, 340, 20}, "Use large icons",
+                                 d->pending.large_icons, on_large_icons, d);
+    xd_widget_set_page(d->large_icons, P);
     on_page_disabled(xd_checkbox(win, (xd_rect){32, 140, 340, 20},
                                  "Show window contents while dragging",
                                  d->pending.full_window_drag, nullptr, nullptr),
@@ -1639,8 +1877,8 @@ static bool apply(desk *d) {
 
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
-    if (d->confirm != nullptr)
-        return; /* answer Monitor Settings first */
+    if (d->confirm != nullptr || d->items != nullptr)
+        return; /* answer Monitor Settings or Desktop Items first */
     if (d->display_dirty) {
         /* Closes once the new display settings are kept. */
         d->close_after_apply = true;
@@ -1653,6 +1891,7 @@ static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
 
 static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
+    items_close(d);
     xd_window_close(d->win);
 }
 
