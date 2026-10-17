@@ -92,6 +92,8 @@ typedef struct dm {
     selection sel;
     GHashTable *can_format; /* fs type -> "yes" / "no" */
     GHashTable *resize;     /* fs type -> modes + 1 (0: not known yet) */
+    GtkWidget *action_menu; /* the menu bar's Action menu */
+    bool action_stale;      /* to refill once it closes */
     guint refresh_source;
     bool busy, updating;
 } dm;
@@ -540,6 +542,7 @@ static volume *extended_of(const disk *d) {
 }
 
 static void show_selection_status(dm *m);
+static void fill_action_menu(dm *m);
 
 static void select_volume_row(dm *m) {
     volume *v = sel_volume(m);
@@ -560,10 +563,24 @@ static void select_volume_row(dm *m) {
     m->updating = false;
 }
 
-static void set_selection(dm *m, disk *d, int seg) {
+/* Redraws disk `d`'s row of the map. */
+static void queue_draw_disk(dm *m, const disk *d) {
+    for (guint i = 0; d != nullptr && i < m->disks->len; i++)
+        if (g_ptr_array_index(m->disks, i) == d)
+            gtk_widget_queue_draw_area(m->map, 0, MARGIN + (int)i * (ROW_H + ROW_GAP),
+                                       gtk_widget_get_allocated_width(m->map), ROW_H + 1);
+}
+
+/* Moves the selection, redrawing only the rows it leaves and enters. */
+static void move_selection(dm *m, disk *d, int seg) {
+    queue_draw_disk(m, m->sel.d);
     m->sel = (selection){.d = d, .seg = seg};
+    queue_draw_disk(m, d);
+}
+
+static void set_selection(dm *m, disk *d, int seg) {
+    move_selection(m, d, seg);
     select_volume_row(m);
-    gtk_widget_queue_draw(m->map);
     show_selection_status(m);
 }
 
@@ -757,10 +774,12 @@ static void set_busy(dm *m, const char *what) {
         gdk_window_set_cursor(w, c);
         g_clear_object(&c);
     }
-    if (what != nullptr)
+    if (what != nullptr) {
         gtk_label_set_text(GTK_LABEL(m->status), what);
-    else
+        fill_action_menu(m);
+    } else {
         show_selection_status(m);
+    }
 }
 
 static void op_next(op *o);
@@ -975,6 +994,7 @@ static void initialize_disk(dm *m) {
 
 typedef struct wizard {
     dm *m;
+    GPtrArray *disks; /* keeps d alive across refreshes */
     disk *d;
     guint64 offset, max_size;
     xd_new_part_kinds kinds;
@@ -1078,7 +1098,11 @@ static void on_wizard_close(GtkAssistant *a, [[maybe_unused]] gpointer data) {
     gtk_widget_destroy(GTK_WIDGET(a));
 }
 
-static void on_wizard_destroy([[maybe_unused]] GtkWidget *a, gpointer data) { g_free(data); }
+static void on_wizard_destroy([[maybe_unused]] GtkWidget *a, gpointer data) {
+    wizard *w = data;
+    g_ptr_array_unref(w->disks);
+    g_free(w);
+}
 
 static GtkWidget *wizard_page(wizard *w, const char *title, GtkAssistantPageType type,
                               GtkWidget *body) {
@@ -1128,6 +1152,7 @@ static void new_partition(dm *m) {
                        "be at least 1 MB.");
         return;
     }
+    w->disks = g_ptr_array_ref(m->disks);
     w->assistant = gtk_assistant_new();
     gtk_window_set_title(GTK_WINDOW(w->assistant), "New Partition Wizard");
     gtk_window_set_transient_for(GTK_WINDOW(w->assistant), GTK_WINDOW(m->window));
@@ -1817,6 +1842,9 @@ static void properties(dm *m) {
         }
         gtk_box_pack_start(GTK_BOX(page), sg, FALSE, FALSE, 0);
         if (v->fs_total > 0) {
+            /* The pie draws `v`, which a refresh would free. */
+            g_object_set_data_full(G_OBJECT(dlg), "disks", g_ptr_array_ref(m->disks),
+                                   (GDestroyNotify)g_ptr_array_unref);
             GtkWidget *pie = gtk_drawing_area_new();
             gtk_widget_set_size_request(pie, 160, 90);
             gtk_widget_set_halign(pie, GTK_ALIGN_CENTER);
@@ -1846,10 +1874,19 @@ typedef struct action_box {
     action_fn fn;
 } action_box;
 
+/* Runs an action. Its dialogs run nested main loops, where a refresh can
+ * replace m->disks: the volumes and disks it holds stay alive until it's
+ * done. */
+static void run_action(dm *m, action_fn fn) {
+    GPtrArray *held = g_ptr_array_ref(m->disks);
+    fn(m);
+    g_ptr_array_unref(held);
+}
+
 static void on_action(GtkMenuItem *i, gpointer data) {
     const action_box *a = g_object_get_data(G_OBJECT(i), "fn");
     if (a != nullptr && a->fn != nullptr)
-        a->fn(data);
+        run_action(data, a->fn);
 }
 
 /* An item, greyed with the reason as its tooltip when it can't be done. */
@@ -1957,10 +1994,30 @@ static void fill_selection_menu(dm *m, GtkWidget *menu) {
     item(menu, "P_roperties", properties, m, nullptr);
 }
 
-static GtkWidget *selection_menu(dm *m) {
+/* GTK deactivates a menu before running the chosen item, so destroying it
+ * on "deactivate" would drop the click; destroy it once that's done. */
+static gboolean destroy_menu_idle(gpointer menu) {
+    gtk_widget_destroy(menu);
+    return G_SOURCE_REMOVE;
+}
+
+static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer data) {
+    g_idle_add(destroy_menu_idle, menu);
+}
+
+/* The context menu for the selection, at the pointer (or, from the
+ * keyboard, over `attach`). */
+static void popup_selection_menu(dm *m, GtkWidget *attach, GdkEvent *ev, bool at_pointer) {
     GtkWidget *menu = gtk_menu_new();
     fill_selection_menu(m, menu);
-    return menu;
+    gtk_menu_attach_to_widget(GTK_MENU(menu), attach, nullptr);
+    g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
+    gtk_widget_show_all(menu);
+    if (at_pointer)
+        gtk_menu_popup_at_pointer(GTK_MENU(menu), ev);
+    else
+        gtk_menu_popup_at_widget(GTK_MENU(menu), attach, GDK_GRAVITY_CENTER,
+                                 GDK_GRAVITY_NORTH_WEST, ev);
 }
 
 /* ---- the volume list ------------------------------------------------------------------ */
@@ -2010,9 +2067,7 @@ static void on_list_selection(GtkTreeSelection *ts, gpointer data) {
     gtk_tree_model_get(model, &it, COL_VOL, &v, -1);
     if (v == nullptr)
         return;
-    int seg = (int)seg_index_of(v);
-    m->sel = (selection){.d = v->d, .seg = seg};
-    gtk_widget_queue_draw(m->map);
+    move_selection(m, v->d, (int)seg_index_of(v));
     show_selection_status(m);
 }
 
@@ -2030,9 +2085,7 @@ static gboolean on_list_button(GtkWidget *w, GdkEventButton *ev, gpointer data) 
         gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(w)), path);
         gtk_tree_path_free(path);
     }
-    GtkWidget *menu = selection_menu(m);
-    gtk_widget_show_all(menu);
-    gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)ev);
+    popup_selection_menu(m, w, (GdkEvent *)ev, true);
     return TRUE;
 }
 
@@ -2126,9 +2179,15 @@ static gboolean draw_map(GtkWidget *w, cairo_t *cr, gpointer data) {
     cairo_set_source_rgb(cr, 1, 1, 1);
     cairo_paint(cr);
     cairo_set_line_width(cr, 1);
+    /* Only the rows in the area being redrawn: a selection change redraws
+     * one or two, and scrolling only what comes into view. */
+    GdkRectangle clip = {0, 0, width, gtk_widget_get_allocated_height(w)};
+    gdk_cairo_get_clip_rectangle(cr, &clip);
     for (guint i = 0; i < m->disks->len; i++) {
         disk *d = g_ptr_array_index(m->disks, i);
         double y = MARGIN + i * (ROW_H + ROW_GAP);
+        if (y + ROW_H < clip.y || y > clip.y + clip.height)
+            continue;
         /* The disk's header, on the left. */
         cairo_rectangle(cr, MARGIN + 0.5, y + 0.5, HEADER_W - 3, ROW_H - 1);
         cairo_set_source_rgb(cr, 0.93, 0.92, 0.87);
@@ -2259,9 +2318,7 @@ static gboolean on_map_button(GtkWidget *w, GdkEventButton *ev, gpointer data) {
         return TRUE;
     }
     if (ev->button == GDK_BUTTON_SECONDARY) {
-        GtkWidget *menu = selection_menu(m);
-        gtk_widget_show_all(menu);
-        gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)ev);
+        popup_selection_menu(m, w, (GdkEvent *)ev, true);
     }
     return TRUE;
 }
@@ -2273,7 +2330,9 @@ static void resize_map(dm *m) {
 
 /* ---- refreshing ---------------------------------------------------------------------- */
 
+/* The status bar, and the Action menu, for the selection. */
 static void show_selection_status(dm *m) {
+    fill_action_menu(m);
     if (m->busy)
         return;
     volume *v = sel_volume(m);
@@ -2353,22 +2412,30 @@ static void queue_refresh(dm *m) {
         m->refresh_source = g_timeout_add(250, refresh_later, m);
 }
 
-static void on_om_changed([[maybe_unused]] GDBusObjectManager *om, [[maybe_unused]] gpointer a,
+/* Only drives and block devices are shown. Jobs, whose progress changes
+ * many times a second while one runs, and RAID arrays' sync progress
+ * would otherwise reread everything over and over. */
+static void queue_refresh_for(dm *m, GDBusObject *o) {
+    const char *path = g_dbus_object_get_object_path(o);
+    if (g_str_has_prefix(path, UD_PATH "/drives/") ||
+        g_str_has_prefix(path, UD_PATH "/block_devices/"))
+        queue_refresh(m);
+}
+
+static void on_om_changed([[maybe_unused]] GDBusObjectManager *om, GDBusObject *o,
                           gpointer data) {
-    queue_refresh(data);
+    queue_refresh_for(data, o);
 }
 
-static void on_om_iface_changed([[maybe_unused]] GDBusObjectManager *om,
-                                [[maybe_unused]] GDBusObject *o,
+static void on_om_iface_changed([[maybe_unused]] GDBusObjectManager *om, GDBusObject *o,
                                 [[maybe_unused]] GDBusInterface *i, gpointer data) {
-    queue_refresh(data);
+    queue_refresh_for(data, o);
 }
 
-static void on_om_props([[maybe_unused]] GDBusObjectManagerClient *om,
-                        [[maybe_unused]] GDBusObjectProxy *o,
+static void on_om_props([[maybe_unused]] GDBusObjectManagerClient *om, GDBusObjectProxy *o,
                         [[maybe_unused]] GDBusProxy *p, [[maybe_unused]] GVariant *changed,
                         [[maybe_unused]] const char *const *invalidated, gpointer data) {
-    queue_refresh(data);
+    queue_refresh_for(data, G_DBUS_OBJECT(o));
 }
 
 /* ---- the window ---------------------------------------------------------------------- */
@@ -2380,13 +2447,21 @@ static void on_exit([[maybe_unused]] GtkWidget *w, gpointer data) {
     gtk_widget_destroy(m->window);
 }
 
-/* The Action menu is rebuilt for the selection each time it opens. */
-static void on_action_menu(GtkMenuItem *top, gpointer data) {
-    dm *m = data;
-    /* Refill the submenu that is opening: replacing it here would leave GTK
-     * grabbing input for the old one, which never shows, so the window
-     * stopped responding. */
-    GtkWidget *menu = gtk_menu_item_get_submenu(top);
+/* The Action menu follows the selection, refilled whenever it (or what's
+ * on the disks) changes. GTK pops a submenu up before its item's
+ * "activate" handlers run, so filling it as it opened showed it empty, or
+ * as it was for the last selection. Replacing the submenu instead left
+ * GTK grabbing input for a menu that never showed. */
+static void fill_action_menu(dm *m) {
+    GtkWidget *menu = m->action_menu;
+    if (menu == nullptr)
+        return;
+    if (gtk_widget_get_mapped(menu)) {
+        /* Open: once it has closed, and the chosen item has run. */
+        m->action_stale = true;
+        return;
+    }
+    m->action_stale = false;
     GList *old = gtk_container_get_children(GTK_CONTAINER(menu));
     for (GList *l = old; l != nullptr; l = l->next)
         gtk_widget_destroy(l->data);
@@ -2399,6 +2474,19 @@ static void on_action_menu(GtkMenuItem *top, gpointer data) {
     gtk_widget_show_all(menu);
 }
 
+static gboolean refill_action_menu(gpointer data) {
+    dm *m = data;
+    if (m->action_stale)
+        fill_action_menu(m);
+    return G_SOURCE_REMOVE;
+}
+
+static void on_action_menu_closed([[maybe_unused]] GtkMenuShell *menu, gpointer data) {
+    dm *m = data;
+    if (m->action_stale)
+        g_idle_add(refill_action_menu, m);
+}
+
 static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
     dm *m = data;
     if (ev->keyval == GDK_KEY_F5) {
@@ -2406,14 +2494,11 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
         return TRUE;
     }
     if (ev->keyval == GDK_KEY_Delete && sel_volume(m) != nullptr) {
-        delete_partition(m);
+        run_action(m, delete_partition);
         return TRUE;
     }
     if (ev->keyval == GDK_KEY_Menu || (ev->keyval == GDK_KEY_F10 && (ev->state & GDK_SHIFT_MASK))) {
-        GtkWidget *menu = selection_menu(m);
-        gtk_widget_show_all(menu);
-        gtk_menu_popup_at_widget(GTK_MENU(menu), m->map, GDK_GRAVITY_CENTER, GDK_GRAVITY_NORTH_WEST,
-                                 (GdkEvent *)ev);
+        popup_selection_menu(m, m->map, (GdkEvent *)ev, false);
         return TRUE;
     }
     return FALSE;
@@ -2492,8 +2577,9 @@ static void build(dm *m) {
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), fm);
     gtk_menu_shell_append(GTK_MENU_SHELL(bar), file);
     GtkWidget *action = gtk_menu_item_new_with_mnemonic("_Action");
-    gtk_menu_item_set_submenu(GTK_MENU_ITEM(action), gtk_menu_new());
-    g_signal_connect(action, "activate", G_CALLBACK(on_action_menu), m);
+    m->action_menu = gtk_menu_new();
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(action), m->action_menu);
+    g_signal_connect(m->action_menu, "deactivate", G_CALLBACK(on_action_menu_closed), m);
     gtk_menu_shell_append(GTK_MENU_SHELL(bar), action);
     gtk_box_pack_start(GTK_BOX(vbox), bar, FALSE, FALSE, 0);
 
