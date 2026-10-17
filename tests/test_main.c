@@ -31,6 +31,7 @@
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
 #include "../src/shell/apps.h"
+#include "../src/startmenu/searchlib.h"
 #include "../src/ui/textedit.h"
 #include "../src/users/users.h"
 #include "../src/theme/theme.h"
@@ -2319,6 +2320,39 @@ static void test_scanners(void) {
     CHECK(!xd_scan_convert_line(SANE_FRAME_GRAY, 4, 1, green, rgb));
 }
 
+/* xd-search: part of a name or a wildcard pattern, ignoring case; text
+ * in a file's bytes. */
+static void test_search_match(void) {
+    xd_search_name n;
+    xd_search_name_init(&n, "  ");
+    CHECK(xd_search_name_matches(&n, "anything"));
+    xd_search_name_clear(&n);
+    xd_search_name_init(&n, "Report");
+    CHECK(xd_search_name_matches(&n, "Annual report 2026.odt"));
+    CHECK(xd_search_name_matches(&n, "REPORT"));
+    CHECK(!xd_search_name_matches(&n, "Repo.txt"));
+    xd_search_name_clear(&n);
+    xd_search_name_init(&n, "*.TXT");
+    CHECK(xd_search_name_matches(&n, "notes.txt"));
+    CHECK(!xd_search_name_matches(&n, "notes.txt.bak"));
+    xd_search_name_clear(&n);
+    xd_search_name_init(&n, "l?tter*");
+    CHECK(xd_search_name_matches(&n, "Letter.txt"));
+    CHECK(!xd_search_name_matches(&n, "a Letter.txt"));
+    xd_search_name_clear(&n);
+    xd_search_name_init(&n, "\u00FCn\u00EF");
+    CHECK(xd_search_name_matches(&n, "\u00DCN\u00CFCODE"));
+    xd_search_name_clear(&n);
+    CHECK(n.part == nullptr && n.glob == nullptr);
+
+    static const char data[] = "Dear Sir,\nShopping\0list";
+    CHECK(xd_search_text_in(data, sizeof(data) - 1, "dear sir"));
+    CHECK(xd_search_text_in(data, sizeof(data) - 1, "LIST"));
+    CHECK(xd_search_text_in(data, sizeof(data) - 1, ""));
+    CHECK(!xd_search_text_in(data, sizeof(data) - 1, "shopping list"));
+    CHECK(!xd_search_text_in("ab", 2, "abc"));
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -2357,6 +2391,7 @@ int main(void) {
     test_printers();
     test_scanners();
     test_schedtasks();
+    test_search_match();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

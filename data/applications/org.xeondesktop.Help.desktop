@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Help and Support
+Comment=Help for XeonDesktop: starting programs, keyboard shortcuts and settings
+Exec=xd-help
+Icon=help-browser
+Terminal=false
+NoDisplay=true
+Categories=Utility;GTK;
+StartupWMClass=org.xeondesktop.Help

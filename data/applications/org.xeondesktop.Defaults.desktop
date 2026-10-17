@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Set Program Access and Defaults
+Comment=Chooses the default programs for Web browsing, e-mail, music, video, pictures and text
+Exec=xd-defaults
+Icon=preferences-desktop-default-applications
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;
+StartupWMClass=org.xeondesktop.Defaults

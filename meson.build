@@ -469,6 +469,9 @@ install_data(
   'data/applications/org.xeondesktop.AddRemovePrograms.desktop',
   'data/applications/org.xeondesktop.Printers.desktop',
   'data/applications/org.xeondesktop.Scanners.desktop',
+  'data/applications/org.xeondesktop.Search.desktop',
+  'data/applications/org.xeondesktop.Help.desktop',
+  'data/applications/org.xeondesktop.Defaults.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -622,6 +625,30 @@ executable(
 executable(
   'xd-access',
   'src/access/main.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+
+# The Start menus' Search, Help and Set Program Access and Defaults.
+executable(
+  'xd-search',
+  'src/startmenu/search.c',
+  'src/startmenu/searchlib.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+executable(
+  'xd-help',
+  'src/startmenu/help.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+executable(
+  'xd-defaults',
+  'src/startmenu/defaults.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep],
   install: true,
@@ -844,6 +871,7 @@ test_exe = executable(
   'src/appwiz/programs.c',
   'src/printers/printlib.c',
   'src/scanners/scanlib.c',
+  'src/startmenu/searchlib.c',
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep,
                  sane_dep.partial_dependency(compile_args: true)],
