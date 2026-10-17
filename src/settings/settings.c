@@ -446,6 +446,14 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             s->standby = (int)m;
         } else if (KEY("Hibernate") && xd_str_parse_i64(v, 0, 1440, &m)) {
             s->hibernate = (int)m;
+        } else if (KEY("MonitorOffOnBattery")) {
+            parse_int(v, 0, 1440, &s->monitor_off_battery);
+        } else if (KEY("StandbyOnBattery")) {
+            parse_int(v, 0, 1440, &s->standby_battery);
+        } else if (KEY("HibernateOnBattery")) {
+            parse_int(v, 0, 1440, &s->hibernate_battery);
+        } else if (KEY("CustomScheme")) {
+            copy_into(s->power_scheme_custom, sizeof(s->power_scheme_custom), v);
         } else if (KEY("AlwaysShowIcon")) {
             parse_bool(v, &s->battery_icon);
         } else if (KEY("PasswordOnResume")) {
@@ -594,6 +602,10 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Power", "Scheme", power_scheme_names[s->power_scheme]);
     g_key_file_set_integer(kf, "Power", "Standby", s->standby);
     g_key_file_set_integer(kf, "Power", "Hibernate", s->hibernate);
+    g_key_file_set_integer(kf, "Power", "MonitorOffOnBattery", s->monitor_off_battery);
+    g_key_file_set_integer(kf, "Power", "StandbyOnBattery", s->standby_battery);
+    g_key_file_set_integer(kf, "Power", "HibernateOnBattery", s->hibernate_battery);
+    g_key_file_set_string(kf, "Power", "CustomScheme", s->power_scheme_custom);
     g_key_file_set_boolean(kf, "Power", "AlwaysShowIcon", s->battery_icon);
     g_key_file_set_boolean(kf, "Power", "PasswordOnResume", s->resume_password);
     g_key_file_set_boolean(kf, "Bluetooth", "ShowIcon", s->bluetooth_icon);

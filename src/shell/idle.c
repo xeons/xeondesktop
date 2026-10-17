@@ -149,12 +149,16 @@ void xd_idle_update(xd_shell *shell) {
     const xd_settings *s = &shell->settings;
     if (xd_saver_find(s->screensaver) != nullptr && s->screensaver_wait > 0)
         shell->saver_note = add_note(shell, s->screensaver_wait, &saver_listener);
-    if (s->monitor_off > 0)
-        shell->monitor_note = add_note(shell, s->monitor_off, &monitor_listener);
+    /* Power Options' "Plugged in" or "Running on batteries" column. */
+    int monitor = shell->on_battery ? s->monitor_off_battery : s->monitor_off;
+    int standby = shell->on_battery ? s->standby_battery : s->standby;
+    int hibernate = shell->on_battery ? s->hibernate_battery : s->hibernate;
+    if (monitor > 0)
+        shell->monitor_note = add_note(shell, monitor, &monitor_listener);
     else if (shell->monitors_off)
         set_monitors(shell, true);
-    if (s->standby > 0)
-        shell->standby_note = add_note(shell, s->standby, &standby_listener);
-    if (s->hibernate > 0)
-        shell->hibernate_note = add_note(shell, s->hibernate, &hibernate_listener);
+    if (standby > 0)
+        shell->standby_note = add_note(shell, standby, &standby_listener);
+    if (hibernate > 0)
+        shell->hibernate_note = add_note(shell, hibernate, &hibernate_listener);
 }

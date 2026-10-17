@@ -15,6 +15,7 @@
 #include "../src/admin/admin.h"
 #include "../src/appwiz/programs.h"
 #include "../src/apps/runcmd.h"
+#include "../src/power/schemes.h"
 #include "../src/printers/printlib.h"
 #include "../src/scanners/scanlib.h"
 #include "../src/bluetooth/btinfo.h"
@@ -756,9 +757,65 @@ static void test_power_settings(void) {
     xd_settings_parse(xd_strbuf_view(&text), &b);
     CHECK(xd_settings_equal(&a, &b) && b.standby == 20 && !b.volume_icon);
     xd_strbuf_free(&text);
+    /* The battery column and a scheme of the user's own. */
+    xd_settings_parse(XD_STR("[Power]\nMonitorOffOnBattery=5\nStandbyOnBattery=10\n"
+                             "HibernateOnBattery=45\nCustomScheme=My Lab\n"),
+                      &a);
+    CHECK(a.monitor_off_battery == 5 && a.standby_battery == 10 && a.hibernate_battery == 45);
+    CHECK(strcmp(a.power_scheme_custom, "My Lab") == 0 && a.standby == 0);
+    xd_settings_serialize(&a, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && b.hibernate_battery == 45);
+    CHECK(strcmp(b.power_scheme_custom, "My Lab") == 0);
+    xd_strbuf_free(&text);
     /* Out of range or unknown: the defaults stay. */
     xd_settings_parse(XD_STR("[Power]\nScheme=turbo\nStandby=-5\nHibernate=99999\n"), &a);
     CHECK(a.power_scheme == XD_POWER_HOME && a.standby == 0 && a.hibernate == 0);
+}
+
+static void test_power_schemes(void) {
+    /* No file: XP's six, with both columns. */
+    GPtrArray *s = xd_power_schemes_load("/nonexistent/power-schemes.ini");
+    CHECK(s->len == XD_POWER_SCHEME_COUNT);
+    xd_power_scheme_def *d = xd_power_schemes_find(s, "Portable/Laptop");
+    CHECK(d != nullptr && d->builtin == XD_POWER_PORTABLE && d->ac.hibernate == 180 &&
+          d->dc.monitor == 5);
+    CHECK(strcmp(xd_power_builtin_label(XD_POWER_MAX_BATTERY), "Max Battery") == 0);
+    CHECK(xd_power_scheme_name_valid("My Lab") && !xd_power_scheme_name_valid("") &&
+          !xd_power_scheme_name_valid("a[b]") && !xd_power_scheme_name_valid(" pad") &&
+          !xd_power_scheme_name_valid("tab\there"));
+
+    /* A changed built-in one, a deleted one and one of the user's own
+     * come back as saved. */
+    d->ac.monitor = 3;
+    g_ptr_array_remove(s, xd_power_schemes_find(s, "Max Battery"));
+    d = xd_power_schemes_put(s, "My Lab", (xd_power_timers){10, 30, 0},
+                             (xd_power_timers){2, 5, 60});
+    CHECK(d->builtin == -1 && s->len == XD_POWER_SCHEME_COUNT);
+    char *dir = g_dir_make_tmp("xd-power-XXXXXX", nullptr);
+    char *path = g_build_filename(dir, "xeondesktop", "power-schemes.ini", nullptr);
+    CHECK(xd_power_schemes_save(path, s, nullptr));
+    g_ptr_array_unref(s);
+    s = xd_power_schemes_load(path);
+    CHECK(s->len == XD_POWER_SCHEME_COUNT && xd_power_schemes_find(s, "Max Battery") == nullptr);
+    d = xd_power_schemes_find(s, "Portable/Laptop");
+    CHECK(d != nullptr && d->ac.monitor == 3 && d->ac.standby == 20);
+    d = g_ptr_array_index(s, s->len - 1);
+    CHECK(strcmp(d->name, "My Lab") == 0 && d->ac.standby == 30 && d->dc.hibernate == 60);
+    /* Saving over a name replaces its timers; a deleted built-in one can
+     * be saved again. */
+    xd_power_schemes_put(s, "My Lab", (xd_power_timers){1, 2, 3}, (xd_power_timers){4, 5, 6});
+    d = xd_power_schemes_put(s, "Max Battery", (xd_power_timers){0}, (xd_power_timers){0});
+    CHECK(d->builtin == XD_POWER_MAX_BATTERY && s->len == XD_POWER_SCHEME_COUNT + 1);
+    CHECK(xd_power_schemes_find(s, "My Lab")->dc.monitor == 4);
+    g_ptr_array_unref(s);
+    g_remove(path);
+    char *sub = g_path_get_dirname(path);
+    g_rmdir(sub);
+    g_free(sub);
+    g_rmdir(dir);
+    g_free(path);
+    g_free(dir);
 }
 
 static void test_sound_scheme(void) {
@@ -2525,6 +2582,7 @@ int main(void) {
     test_desktop_icon_settings();
     test_tray_rules();
     test_power_settings();
+    test_power_schemes();
     test_sound_scheme();
     test_gtk_css();
     test_passwd();

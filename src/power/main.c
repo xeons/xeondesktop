@@ -3,7 +3,10 @@
  *
  *   Power Schemes  turn off the monitor, stand by and hibernate after so
  *                  long idle: [ScreenSaver] MonitorOff and [Power] in
- *                  desktop.ini, which the shell acts on (idle.c, sleep.c)
+ *                  desktop.ini, which the shell acts on (idle.c, sleep.c);
+ *                  with a battery (UPower), XP's "Plugged in" and
+ *                  "Running on batteries" columns; schemes of the user's
+ *                  own with Save As and Delete (schemes.h)
  *   Advanced       the battery icon, locking before sleep, and logind's
  *                  lid and power button actions (system settings, shown
  *                  read-only)
@@ -16,6 +19,7 @@
 
 #include "../gtkapp/gtkapp.h"
 #include "../settings/settings.h"
+#include "schemes.h"
 
 #define LOGIN1 "org.freedesktop.login1"
 #define LOGIN1_PATH "/org/freedesktop/login1"
@@ -23,30 +27,29 @@
 #define PROFILES "org.freedesktop.UPower.PowerProfiles"
 #define PROFILES_PATH "/org/freedesktop/UPower/PowerProfiles"
 
-static constexpr char TITLE[] = "Power Options";
+#define UPOWER "org.freedesktop.UPower"
+#define UPOWER_DISPLAY "/org/freedesktop/UPower/devices/DisplayDevice"
+#define UPOWER_DEVICE "org.freedesktop.UPower.Device"
 
-/* XP's power schemes, plugged in: monitor, standby, hibernate minutes. */
-static const struct {
-    const char *label;
-    int monitor, standby, hibernate;
-} schemes[XD_POWER_SCHEME_COUNT] = {
-    [XD_POWER_HOME] = {"Home/Office Desk", 20, 0, 0},
-    [XD_POWER_PORTABLE] = {"Portable/Laptop", 15, 20, 180},
-    [XD_POWER_PRESENTATION] = {"Presentation", 0, 0, 0},
-    [XD_POWER_ALWAYS_ON] = {"Always On", 20, 0, 0},
-    [XD_POWER_MINIMAL] = {"Minimal Power Management", 15, 0, 0},
-    [XD_POWER_MAX_BATTERY] = {"Max Battery", 15, 20, 45},
-};
+static constexpr char TITLE[] = "Power Options";
 
 /* XP's choices; 0 = Never. */
 static const int minutes[] = {1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60, 120, 180, 240, 300, 0};
+
+/* The Power Schemes rows. */
+enum { ROW_MONITOR, ROW_STANDBY, ROW_HIBERNATE, ROW_COUNT };
 
 typedef struct props {
     GtkWidget *window, *apply;
     bool updating;
     GDBusProxy *logind;
     /* Power Schemes */
-    GtkWidget *scheme, *scheme_frame, *monitor, *standby, *hibernate;
+    GPtrArray *schemes; /* xd_power_scheme_def * */
+    bool battery;       /* this computer has one: XP's laptop columns */
+    GtkWidget *scheme, *scheme_frame, *delete;
+    GtkWidget *ac[ROW_COUNT], *dc[ROW_COUNT]; /* plugged in; on batteries (with a battery) */
+    bool row_ok[ROW_COUNT];                   /* standby and hibernate need logind's yes */
+    xd_power_timers dc_values;                /* without a battery: kept as they were */
     /* Advanced */
     GtkWidget *battery_icon, *password;
 } props;
@@ -176,27 +179,169 @@ static GtkWidget *minutes_combo(props *p, int value) {
     return c;
 }
 
+static char *schemes_path(void) {
+    return g_build_filename(g_get_user_config_dir(), "xeondesktop", "power-schemes.ini", nullptr);
+}
+
+static xd_power_scheme_def *active_scheme(props *p) {
+    return xd_power_schemes_find(p->schemes,
+                                 gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->scheme)));
+}
+
 static void show_scheme_title(props *p) {
-    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(p->scheme));
-    char *title = g_strdup_printf("Settings for %s power scheme",
-                                  i >= 0 && i < XD_POWER_SCHEME_COUNT ? schemes[i].label : "the");
+    const xd_power_scheme_def *d = active_scheme(p);
+    char *title = g_strdup_printf("Settings for %s power scheme", d != nullptr ? d->name : "the");
     gtk_frame_set_label(GTK_FRAME(p->scheme_frame), title);
     g_free(title);
+    /* The last scheme can't go: there would be nothing to choose. */
+    gtk_widget_set_sensitive(p->delete, d != nullptr && p->schemes->len > 1);
+}
+
+static xd_power_timers read_timers(GtkWidget *const combos[ROW_COUNT]) {
+    return (xd_power_timers){get_minutes(combos[ROW_MONITOR]), get_minutes(combos[ROW_STANDBY]),
+                             get_minutes(combos[ROW_HIBERNATE])};
+}
+
+static void show_timers(GtkWidget *const combos[ROW_COUNT], xd_power_timers t) {
+    set_minutes(combos[ROW_MONITOR], t.monitor);
+    set_minutes(combos[ROW_STANDBY], t.standby);
+    set_minutes(combos[ROW_HIBERNATE], t.hibernate);
+}
+
+/* The schemes, `active` selected (by name). */
+static void fill_schemes(props *p, const char *active) {
+    p->updating = true;
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(p->scheme));
+    for (guint i = 0; i < p->schemes->len; i++) {
+        const xd_power_scheme_def *d = g_ptr_array_index(p->schemes, i);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->scheme), d->name, d->name);
+    }
+    if (active == nullptr || !gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->scheme), active))
+        gtk_combo_box_set_active(GTK_COMBO_BOX(p->scheme), -1);
+    p->updating = false;
+    show_scheme_title(p);
+}
+
+/* Choosing a scheme shows its timers. */
+static void show_scheme(props *p) {
+    const xd_power_scheme_def *d = active_scheme(p);
+    if (d == nullptr)
+        return;
+    bool was = p->updating;
+    p->updating = true;
+    show_timers(p->ac, d->ac);
+    if (p->battery)
+        show_timers(p->dc, d->dc);
+    else
+        p->dc_values = d->dc;
+    p->updating = was;
 }
 
 static void on_scheme([[maybe_unused]] GtkComboBox *c, gpointer data) {
     props *p = data;
-    show_scheme_title(p);
     if (p->updating)
         return;
-    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(p->scheme));
-    if (i < 0 || i >= XD_POWER_SCHEME_COUNT)
+    show_scheme_title(p);
+    show_scheme(p);
+    changed(p);
+}
+
+static void error_box(props *p, const char *what, const GError *error) {
+    char *text = g_strdup_printf("%s\n\n%s", what, error != nullptr ? error->message : "");
+    xd_message_box(GTK_WINDOW(p->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, text);
+    g_free(text);
+}
+
+static bool save_schemes(props *p) {
+    char *path = schemes_path();
+    GError *error = nullptr;
+    bool ok = xd_power_schemes_save(path, p->schemes, &error);
+    g_free(path);
+    if (!ok) {
+        error_box(p, "The power schemes could not be saved.", error);
+        g_error_free(error);
+    }
+    return ok;
+}
+
+static void on_name_changed(GtkEditable *e, gpointer ok) {
+    gtk_widget_set_sensitive(ok, xd_power_scheme_name_valid(gtk_entry_get_text(GTK_ENTRY(e))));
+}
+
+/* Save As...: XP's Save Scheme box. The settings as they are on the page
+ * become a scheme of that name, which is then the one selected. */
+static void on_save_as([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    GtkWidget *d = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(d), "Save Scheme");
+    gtk_window_set_transient_for(GTK_WINDOW(d), GTK_WINDOW(p->window));
+    gtk_window_set_modal(GTK_WINDOW(d), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+    GtkWidget *ok = gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    GtkWidget *l = gtk_label_new_with_mnemonic("_Save this power scheme as:");
+    gtk_label_set_xalign(GTK_LABEL(l), 0);
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(entry), 63);
+    gtk_entry_set_width_chars(GTK_ENTRY(entry), 36);
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    const xd_power_scheme_def *current = active_scheme(p);
+    gtk_entry_set_text(GTK_ENTRY(entry), current != nullptr ? current->name : "");
+    gtk_label_set_mnemonic_widget(GTK_LABEL(l), entry);
+    g_signal_connect(entry, "changed", G_CALLBACK(on_name_changed), ok);
+    on_name_changed(GTK_EDITABLE(entry), ok);
+    gtk_box_pack_start(GTK_BOX(box), l, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), box, TRUE, TRUE, 0);
+    gtk_widget_show_all(d);
+
+    while (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK) {
+        const char *name = gtk_entry_get_text(GTK_ENTRY(entry));
+        if (!xd_power_scheme_name_valid(name))
+            continue;
+        if (xd_power_schemes_find(p->schemes, name) != nullptr && current != nullptr &&
+            strcmp(name, current->name) != 0) {
+            char *q = g_strdup_printf("A power scheme named '%s' already exists. Do you want "
+                                      "to replace it?",
+                                      name);
+            int r = xd_message_box(GTK_WINDOW(d), TITLE, XD_MB_WARNING, XD_MB_YES_NO, TRUE, q);
+            g_free(q);
+            if (r != GTK_RESPONSE_YES)
+                continue;
+        }
+        xd_power_timers dc = p->battery ? read_timers(p->dc) : p->dc_values;
+        char *saved = g_strdup(name);
+        xd_power_schemes_put(p->schemes, saved, read_timers(p->ac), dc);
+        if (save_schemes(p)) {
+            fill_schemes(p, saved);
+            changed(p);
+        }
+        g_free(saved);
+        break;
+    }
+    gtk_widget_destroy(d);
+}
+
+static void on_delete([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    xd_power_scheme_def *d = active_scheme(p);
+    if (d == nullptr || p->schemes->len <= 1)
         return;
-    set_minutes(p->monitor, schemes[i].monitor);
-    if (gtk_widget_get_sensitive(p->standby))
-        set_minutes(p->standby, schemes[i].standby);
-    if (gtk_widget_get_sensitive(p->hibernate))
-        set_minutes(p->hibernate, schemes[i].hibernate);
+    char *q = g_strdup_printf("Are you sure you want to delete the power scheme '%s'?", d->name);
+    int r = xd_message_box(GTK_WINDOW(p->window), "Confirm Scheme Delete", XD_MB_QUESTION,
+                           XD_MB_YES_NO, TRUE, q);
+    g_free(q);
+    if (r != GTK_RESPONSE_YES)
+        return;
+    g_ptr_array_remove(p->schemes, d);
+    save_schemes(p);
+    /* The first one left takes its place, applied with OK or Apply. */
+    const xd_power_scheme_def *first = g_ptr_array_index(p->schemes, 0);
+    fill_schemes(p, first->name);
+    show_scheme(p);
     changed(p);
 }
 
@@ -222,6 +367,37 @@ static char *power_profile(void) {
     return profile;
 }
 
+/* UPower's display device is a battery: a portable computer, which XP
+ * shows separate "Plugged in" and "Running on batteries" timers for. */
+static bool has_battery(void) {
+    GDBusProxy *proxy = g_dbus_proxy_new_for_bus_sync(
+        G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_DO_NOT_CONNECT_SIGNALS, nullptr, UPOWER,
+        UPOWER_DISPLAY, UPOWER_DEVICE, nullptr, nullptr);
+    if (proxy == nullptr)
+        return false;
+    GVariant *present = g_dbus_proxy_get_cached_property(proxy, "IsPresent");
+    GVariant *type = g_dbus_proxy_get_cached_property(proxy, "Type");
+    bool battery = present != nullptr && type != nullptr &&
+                   g_variant_is_of_type(present, G_VARIANT_TYPE_BOOLEAN) &&
+                   g_variant_is_of_type(type, G_VARIANT_TYPE_UINT32) &&
+                   g_variant_get_boolean(present) && g_variant_get_uint32(type) == 2;
+    if (present != nullptr)
+        g_variant_unref(present);
+    if (type != nullptr)
+        g_variant_unref(type);
+    g_object_unref(proxy);
+    return battery;
+}
+
+/* A column heading of the laptop layout: its icon over its name. */
+static GtkWidget *column_head(const char *icon, const char *text) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_box_pack_start(GTK_BOX(box), gtk_image_new_from_icon_name(icon, GTK_ICON_SIZE_DND), FALSE,
+                       FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), gtk_label_new(text), FALSE, FALSE, 0);
+    return box;
+}
+
 static GtkWidget *schemes_page(props *p, const xd_settings *s) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
@@ -235,36 +411,63 @@ static GtkWidget *schemes_page(props *p, const xd_settings *s) {
     gtk_label_set_xalign(GTK_LABEL(l), 0);
     gtk_box_pack_start(GTK_BOX(page), l, FALSE, FALSE, 0);
     p->scheme = gtk_combo_box_text_new();
-    for (int i = 0; i < XD_POWER_SCHEME_COUNT; i++)
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->scheme), schemes[i].label);
     gtk_label_set_mnemonic_widget(GTK_LABEL(l), p->scheme);
     gtk_box_pack_start(GTK_BOX(page), p->scheme, FALSE, FALSE, 0);
+    GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *save_as = gtk_button_new_with_mnemonic("Sa_ve As...");
+    p->delete = gtk_button_new_with_mnemonic("_Delete");
+    gtk_widget_set_size_request(save_as, 75, -1);
+    gtk_widget_set_size_request(p->delete, 75, -1);
+    g_signal_connect(save_as, "clicked", G_CALLBACK(on_save_as), p);
+    g_signal_connect(p->delete, "clicked", G_CALLBACK(on_delete), p);
+    gtk_box_pack_end(GTK_BOX(buttons), p->delete, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(buttons), save_as, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), buttons, FALSE, FALSE, 0);
 
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
     char *can_suspend = logind_can(p, "CanSuspend");
     char *can_hibernate = logind_can(p, "CanHibernate");
-    struct {
-        const char *text;
-        GtkWidget **combo;
-        int value;
-        bool available;
-    } rows[] = {
-        {"Turn off _monitor:", &p->monitor, s->monitor_off, true},
-        {"System _standby:", &p->standby, s->standby, can(can_suspend)},
-        {"System _hibernates:", &p->hibernate, s->hibernate, can(can_hibernate)},
-    };
-    for (int i = 0; i < (int)XD_ARRAY_LEN(rows); i++) {
-        GtkWidget *rl = gtk_label_new_with_mnemonic(rows[i].text);
+    p->row_ok[ROW_MONITOR] = true;
+    p->row_ok[ROW_STANDBY] = can(can_suspend);
+    p->row_ok[ROW_HIBERNATE] = can(can_hibernate);
+    static const char *const texts[ROW_COUNT] = {"Turn off _monitor:", "System _standby:",
+                                                 "System _hibernates:"};
+    const int ac[ROW_COUNT] = {s->monitor_off, s->standby, s->hibernate};
+    const int dc[ROW_COUNT] = {s->monitor_off_battery, s->standby_battery, s->hibernate_battery};
+    p->dc_values = (xd_power_timers){dc[0], dc[1], dc[2]};
+    int top = 0;
+    /* The two columns alike, as XP draws them. */
+    GtkSizeGroup *columns = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
+    if (p->battery) {
+        GtkWidget *when = gtk_label_new("When computer is:");
+        gtk_label_set_xalign(GTK_LABEL(when), 0);
+        gtk_widget_set_valign(when, GTK_ALIGN_END);
+        gtk_grid_attach(GTK_GRID(grid), when, 0, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), column_head("ac-adapter", "Plugged in"), 1, 0, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), column_head("battery", "Running on batteries"), 2, 0, 1,
+                        1);
+        top = 1;
+    }
+    for (int i = 0; i < ROW_COUNT; i++) {
+        GtkWidget *rl = gtk_label_new_with_mnemonic(texts[i]);
         gtk_label_set_xalign(GTK_LABEL(rl), 0);
-        *rows[i].combo = minutes_combo(p, rows[i].value);
-        gtk_widget_set_hexpand(*rows[i].combo, TRUE);
-        gtk_label_set_mnemonic_widget(GTK_LABEL(rl), *rows[i].combo);
-        gtk_widget_set_sensitive(rl, rows[i].available);
-        gtk_widget_set_sensitive(*rows[i].combo, rows[i].available);
-        gtk_grid_attach(GTK_GRID(grid), rl, 0, i, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), *rows[i].combo, 1, i, 1, 1);
+        p->ac[i] = minutes_combo(p, ac[i]);
+        gtk_widget_set_hexpand(p->ac[i], TRUE);
+        gtk_size_group_add_widget(columns, p->ac[i]);
+        gtk_label_set_mnemonic_widget(GTK_LABEL(rl), p->ac[i]);
+        gtk_widget_set_sensitive(rl, p->row_ok[i]);
+        gtk_widget_set_sensitive(p->ac[i], p->row_ok[i]);
+        gtk_grid_attach(GTK_GRID(grid), rl, 0, top + i, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), p->ac[i], 1, top + i, 1, 1);
+        if (p->battery) {
+            p->dc[i] = minutes_combo(p, dc[i]);
+            gtk_widget_set_hexpand(p->dc[i], TRUE);
+            gtk_size_group_add_widget(columns, p->dc[i]);
+            gtk_widget_set_sensitive(p->dc[i], p->row_ok[i]);
+            gtk_grid_attach(GTK_GRID(grid), p->dc[i], 2, top + i, 1, 1);
+        }
     }
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
@@ -275,6 +478,7 @@ static GtkWidget *schemes_page(props *p, const xd_settings *s) {
         gtk_box_pack_start(GTK_BOX(box), label(text), FALSE, FALSE, 0);
         g_free(text);
     }
+    g_object_unref(columns);
     g_free(can_suspend);
     g_free(can_hibernate);
     p->scheme_frame = frame("", box);
@@ -290,10 +494,13 @@ static GtkWidget *schemes_page(props *p, const xd_settings *s) {
         g_free(profile);
     }
 
-    p->updating = true;
-    gtk_combo_box_set_active(GTK_COMBO_BOX(p->scheme), s->power_scheme);
-    p->updating = false;
-    show_scheme_title(p);
+    /* The timers shown are the ones in use; the scheme is the user's own
+     * if it still exists, else the built-in one. */
+    const char *active = s->power_scheme_custom[0] != '\0' &&
+                                 xd_power_schemes_find(p->schemes, s->power_scheme_custom) != nullptr
+                             ? s->power_scheme_custom
+                             : xd_power_builtin_label(s->power_scheme);
+    fill_schemes(p, active);
     g_signal_connect(p->scheme, "changed", G_CALLBACK(on_scheme), p);
     return page;
 }
@@ -418,14 +625,33 @@ static bool apply(props *p) {
     /* Re-read: another applet may have saved since we opened. */
     xd_settings s;
     xd_settings_load(&s);
-    int scheme = gtk_combo_box_get_active(GTK_COMBO_BOX(p->scheme));
-    if (scheme >= 0 && scheme < XD_POWER_SCHEME_COUNT)
-        s.power_scheme = (xd_power_scheme)scheme;
-    s.monitor_off = get_minutes(p->monitor);
-    if (gtk_widget_get_sensitive(p->standby))
-        s.standby = get_minutes(p->standby);
-    if (gtk_widget_get_sensitive(p->hibernate))
-        s.hibernate = get_minutes(p->hibernate);
+    xd_power_timers ac = read_timers(p->ac);
+    xd_power_timers dc = p->battery ? read_timers(p->dc) : p->dc_values;
+    /* "Changing the settings below will modify the selected scheme." */
+    xd_power_scheme_def *d = active_scheme(p);
+    if (d != nullptr) {
+        d->ac = ac;
+        d->dc = dc;
+        if (!save_schemes(p))
+            return false;
+        if (d->builtin >= 0) {
+            s.power_scheme = (xd_power_scheme)d->builtin;
+            s.power_scheme_custom[0] = '\0';
+        } else {
+            g_strlcpy(s.power_scheme_custom, d->name, sizeof(s.power_scheme_custom));
+        }
+    }
+    s.monitor_off = ac.monitor;
+    s.monitor_off_battery = dc.monitor;
+    /* What logind can't do keeps what it was. */
+    if (p->row_ok[ROW_STANDBY]) {
+        s.standby = ac.standby;
+        s.standby_battery = dc.standby;
+    }
+    if (p->row_ok[ROW_HIBERNATE]) {
+        s.hibernate = ac.hibernate;
+        s.hibernate_battery = dc.hibernate;
+    }
     s.battery_icon = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->battery_icon));
     s.resume_password = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->password));
     if (!xd_settings_save(&s)) {
@@ -467,6 +693,10 @@ int main(int argc, char **argv) {
         g_printerr("xd-power: %s\n", error->message);
         g_error_free(error);
     }
+    char *path = schemes_path();
+    p.schemes = xd_power_schemes_load(path);
+    g_free(path);
+    p.battery = has_battery();
 
     p.window = gtk_dialog_new();
     gtk_window_set_title(GTK_WINDOW(p.window), "Power Options Properties");
@@ -496,5 +726,6 @@ int main(int argc, char **argv) {
     gtk_main();
     if (p.logind != nullptr)
         g_object_unref(p.logind);
+    g_ptr_array_unref(p.schemes);
     return EXIT_SUCCESS;
 }

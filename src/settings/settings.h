@@ -229,6 +229,12 @@ typedef struct xd_settings {
     xd_power_scheme power_scheme;
     int standby;          /* minutes of idle before standby (suspend); 0 = never */
     int hibernate;        /* minutes of idle before hibernating; 0 = never */
+    /* The same three while running on batteries (XP's laptop columns);
+     * the shell switches when the power cord does. */
+    int monitor_off_battery, standby_battery, hibernate_battery;
+    /* The user's own scheme (Power Options' Save As), by name; "" = the
+     * built-in power_scheme. */
+    char power_scheme_custom[64];
     bool battery_icon;    /* "Always show icon on the taskbar"; else only on battery */
     bool resume_password; /* lock the screen before sleeping */
 

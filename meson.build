@@ -587,6 +587,7 @@ executable(
 executable(
   'xd-power',
   'src/power/main.c',
+  'src/power/schemes.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep],
   install: true,
@@ -886,6 +887,7 @@ test_exe = executable(
   'src/users/users.c',
   'src/folders/filetypes.c',
   'src/fonts/fontlist.c',
+  'src/power/schemes.c',
   'src/keyboard/layouts.c',
   'src/mouse/cursors.c',
   'src/schedtasks/task.c',

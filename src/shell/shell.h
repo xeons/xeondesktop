@@ -205,6 +205,7 @@ struct xd_shell {
     struct ext_idle_notification_v1 *monitor_note;
     struct ext_idle_notification_v1 *standby_note;   /* Power Options' System standby */
     struct ext_idle_notification_v1 *hibernate_note; /* and System hibernates */
+    bool on_battery; /* UPower's: the timers are the "Running on batteries" ones */
     xd_sleep *sleep; /* logind (sleep.c), or nullptr */
     xd_account *account; /* full name, Switch User (account.c) */
     struct zwlr_output_power_manager_v1 *power_manager;

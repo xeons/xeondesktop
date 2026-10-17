@@ -66,6 +66,12 @@ static void read_props(battery *b) {
                    b->state == PENDING_CHARGE;
     g_snprintf(b->icon, sizeof(b->icon), "battery-%s%s", level,
                b->state == FULLY_CHARGED ? "-charged" : plugged ? "-charging" : "");
+    /* Unplugging switches to Power Options' battery timers, and back. */
+    bool on_battery = b->present && (b->state == DISCHARGING || b->state == EMPTY);
+    if (on_battery != b->shell->on_battery) {
+        b->shell->on_battery = on_battery;
+        xd_idle_update(b->shell);
+    }
     xd_tray_changed(b->shell);
     xd_shell_battery_sound(b->percent, b->present && (b->state == DISCHARGING || b->state == EMPTY));
 }
