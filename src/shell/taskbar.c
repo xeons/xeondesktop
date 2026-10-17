@@ -1006,8 +1006,10 @@ void xd_taskbar_toggle_start(xd_taskbar *bar, uint32_t serial) {
         xd_menu_close_all(shell);
     else if (shell->settings.start_style != XD_START_CLASSIC)
         xd_start7_open(bar, serial, shell->settings.start_style == XD_START_XP);
-    else
+    else {
+        xd_start_menu_refresh_documents(shell);
         xd_taskbar_open_start_menu(bar, serial);
+    }
 }
 
 void xd_taskbar_popup_position(const xd_taskbar *bar, xd_rect anchor,

@@ -547,35 +547,48 @@ static void run_files(xd_shell *shell, const char *option, GPtrArray *args) {
     g_free(exe);
 }
 
-static void open_icon(xd_deskicons *di, icon *ic) {
-    xd_shell *shell = di->shell;
-    if (ic->special || ic->is_dir) {
+void xd_shell_open_uri(xd_shell *shell, const char *uri) {
+    GFile *f = g_file_new_for_uri(uri);
+    GFileInfo *info = g_file_query_info(f,
+                                        G_FILE_ATTRIBUTE_STANDARD_TYPE
+                                        "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+                                        G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
+    char *path = g_file_get_path(f);
+    g_object_unref(f);
+    bool dir = info == nullptr || g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
+    const char *ctype = info != nullptr ? g_file_info_get_content_type(info) : nullptr;
+    if (dir) {
+        /* Folders, and places only xd-files knows (My Computer). */
         GPtrArray *args = g_ptr_array_new();
-        g_ptr_array_add(args, ic->uri);
+        g_ptr_array_add(args, (gpointer)(uintptr_t)uri);
         run_files(shell, nullptr, args);
         g_ptr_array_unref(args);
-        return;
-    }
-    GDesktopAppInfo *app = nullptr;
-    if (ic->is_launcher && ic->path != nullptr) {
-        app = g_desktop_app_info_new_from_filename(ic->path);
-        if (app != nullptr && !xd_app_launch_info(app, nullptr))
-            fprintf(stderr, "xd-shell: cannot start %s\n", ic->path);
+    } else if (ctype != nullptr && g_content_type_is_a(ctype, "application/x-desktop") &&
+               path != nullptr) {
+        /* A launcher runs its program. */
+        GDesktopAppInfo *app = g_desktop_app_info_new_from_filename(path);
+        if (app == nullptr || !xd_app_launch_info(app, nullptr))
+            fprintf(stderr, "xd-shell: cannot start %s\n", path);
         g_clear_object(&app);
-        return;
-    }
-    /* A document: the program its type opens with. */
-    GAppInfo *handler = ic->sort_type[0] != '\0'
-                            ? g_app_info_get_default_for_type(ic->sort_type, FALSE)
-                            : nullptr;
-    if (handler != nullptr && G_IS_DESKTOP_APP_INFO(handler)) {
-        GList uris = {.data = ic->uri};
-        if (!xd_app_launch_info(G_DESKTOP_APP_INFO(handler), &uris))
-            fprintf(stderr, "xd-shell: cannot open %s\n", ic->uri);
     } else {
-        fprintf(stderr, "xd-shell: no program opens %s\n", ic->uri);
+        /* A document: the program its type opens with. */
+        GAppInfo *handler = ctype != nullptr ? g_app_info_get_default_for_type(ctype, FALSE)
+                                             : nullptr;
+        if (handler != nullptr && G_IS_DESKTOP_APP_INFO(handler)) {
+            GList uris = {.data = (gpointer)(uintptr_t)uri};
+            if (!xd_app_launch_info(G_DESKTOP_APP_INFO(handler), &uris))
+                fprintf(stderr, "xd-shell: cannot open %s\n", uri);
+        } else {
+            fprintf(stderr, "xd-shell: no program opens %s\n", uri);
+        }
+        g_clear_object(&handler);
     }
-    g_clear_object(&handler);
+    g_clear_object(&info);
+    g_free(path);
+}
+
+static void open_icon(xd_deskicons *di, icon *ic) {
+    xd_shell_open_uri(di->shell, ic->uri);
 }
 
 /* The selection's files (paths), for xd-files. */

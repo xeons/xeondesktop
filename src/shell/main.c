@@ -445,6 +445,15 @@ static char *activation_token(xd_shell *shell) {
     return name;
 }
 
+int xd_shell_screen_height(const xd_shell *shell) {
+    int h = 0;
+    XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
+        if (bar->desktop != nullptr && bar->desktop->configured)
+            h = XD_MAX(h, bar->desktop->height);
+    }
+    return h > 0 ? h : 768;
+}
+
 pid_t xd_shell_launch(xd_shell *shell, const char *command) {
     posix_spawnattr_t attr;
     if (posix_spawnattr_init(&attr) != 0)
@@ -796,6 +805,7 @@ int main(int argc, char **argv) {
     xd_apps_load(&shell.apps);
     xd_menu_tree_init(&shell.menu_tree);
     xd_menu_tree_init(&shell.context_tree);
+    xd_menu_tree_init(&shell.docs_tree);
     shell.last_arrange = -1;
     xd_start_menu_build(&shell);
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
@@ -848,6 +858,7 @@ int main(int argc, char **argv) {
     if (shell.own_commands != nullptr)
         g_hash_table_destroy(shell.own_commands);
     xd_menu_tree_free(&shell.context_tree);
+    xd_menu_tree_free(&shell.docs_tree);
     xd_apps_free(&shell.apps);
     xd_quicklaunch_finish(&shell);
     xd_free(shell.desktop_hidden);

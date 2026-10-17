@@ -204,6 +204,8 @@ struct xd_shell {
     struct xd_window_arranger_v1 *arranger; /* Cascade/Tile (nullptr: not offered) */
     int last_arrange;          /* mode of the last Cascade/Tile, -1 if undone */
     xd_menu_model *start_model;
+    size_t start_docs_index; /* Documents in the Windows 2000 menu */
+    xd_menu_tree docs_tree;  /* its submenu, rebuilt as the menu opens */
     xd_menu *start_menu;    /* open root menu (2000 style), or nullptr */
     xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
     bool pointer_start7;    /* pointer is over start7 */
@@ -408,6 +410,10 @@ void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool p
                          uint32_t time, uint32_t serial);
 /* Redraws them (the taskbar moved, the theme changed). */
 void xd_deskicons_relayout(xd_shell *shell);
+/* Opens a file or place as a double-click would: folders (and My
+ * Computer, the Recycle Bin) in xd-files, launchers run, documents in the
+ * program for their type. */
+void xd_shell_open_uri(xd_shell *shell, const char *uri);
 
 /* desktop.c */
 xd_desktop *xd_desktop_for_surface(xd_shell *shell, struct wl_surface *surface);
@@ -419,6 +425,8 @@ void xd_desktop_render(xd_desktop *d);
 void xd_taskbar_retheme(xd_taskbar *bar);
 
 /* main.c */
+/* The tallest monitor's height (logical), for menus that would be taller. */
+int xd_shell_screen_height(const xd_shell *shell);
 /* Runs a shell command line detached; returns its pid (0 on failure). */
 pid_t xd_shell_launch(xd_shell *shell, const char *command);
 
@@ -430,6 +438,8 @@ void xd_shell_start_menu_closed(xd_shell *shell);
 
 /* startmenu.c */
 void xd_start_menu_build(xd_shell *shell);
+/* The Windows 2000 menu's Documents: recent files, as of now. */
+void xd_start_menu_refresh_documents(xd_shell *shell);
 
 /* toplevels.c */
 void xd_toplevels_init(xd_shell *shell);

@@ -5,8 +5,11 @@
 #include <unistd.h>
 
 #include "apps.h"
+#include <gio/gio.h>
 #include <glib.h>
 
+#include "../settings/state.h"
+#include "recent.h"
 #include "shell.h"
 
 /* Appends s to a shell command line as one single-quoted word. */
@@ -119,6 +122,66 @@ static xd_menu_item *add_disabled(xd_menu_tree *tree, xd_menu_model *m, xd_menu_
     return it;
 }
 
+static void open_recent(xd_shell *shell, void *data) { xd_shell_open_uri(shell, data); }
+
+/* Documents: My Documents, the Home folder, then the recently used files
+ * in name order (Windows 2000 sorts them), or "(Empty)". */
+void xd_start_menu_refresh_documents(xd_shell *shell) {
+    if (shell->start_model == nullptr || shell->start_docs_index >= shell->start_model->count)
+        return;
+    xd_menu_tree *tree = &shell->docs_tree;
+    xd_menu_tree_free(tree);
+    xd_menu_tree_init(tree);
+    xd_menu_model *m = xd_menu_model_new(tree);
+    xd_menu_item *mydocs = xd_menu_add(tree, m, XD_MENU_ACTION, "My Documents", "folder-documents");
+    mydocs->command = xd_shell_own_command(
+        shell, "xd-files", "\"$(xdg-user-dir DOCUMENTS 2>/dev/null || echo \"$HOME/Documents\")\"");
+    xd_menu_item *home = xd_menu_add(tree, m, XD_MENU_ACTION, "Home Folder", "user-home");
+    home->command = xd_shell_own_command(shell, "xd-files", "\"$HOME\"");
+    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+
+    char **paths = nullptr;
+    size_t n = 0;
+    xd_recent_load(&paths, &n, 15);
+    GPtrArray *names = g_ptr_array_new();
+    for (size_t i = 0; i < n; i++)
+        g_ptr_array_add(names, paths[i]);
+    g_ptr_array_sort_values(names, (GCompareFunc)g_utf8_collate);
+    for (guint i = 0; i < names->len; i++) {
+        const char *path = g_ptr_array_index(names, i);
+        char *base = g_path_get_basename(path);
+        char *label = g_filename_display_name(base);
+        char *ctype = g_content_type_guess(path, nullptr, 0, nullptr);
+        char *icon = ctype != nullptr ? g_content_type_get_generic_icon_name(ctype) : nullptr;
+        GIcon *gicon = ctype != nullptr ? g_content_type_get_icon(ctype) : nullptr;
+        const char *specific = gicon != nullptr && G_IS_THEMED_ICON(gicon)
+                                   ? g_themed_icon_get_names(G_THEMED_ICON(gicon))[0]
+                                   : nullptr;
+        xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, label,
+                                       specific != nullptr ? specific : icon);
+        it->fallback_icon = icon != nullptr ? xd_str_arena_cstr(&tree->arena,
+                                                                xd_str_from_cstr(icon))
+                                            : "text-x-generic";
+        char *uri = g_filename_to_uri(path, nullptr, nullptr);
+        it->action = open_recent;
+        it->action_data =
+            uri != nullptr ? xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(uri)) : nullptr;
+        if (uri == nullptr)
+            it->disabled = true;
+        g_free(uri);
+        g_clear_object(&gicon);
+        g_free(icon);
+        g_free(ctype);
+        g_free(label);
+        g_free(base);
+    }
+    if (names->len == 0)
+        xd_menu_add(tree, m, XD_MENU_ACTION, "(Empty)", nullptr)->disabled = true;
+    g_ptr_array_unref(names);
+    xd_free_lines(paths, n);
+    shell->start_model->items[shell->start_docs_index].submenu = m;
+}
+
 void xd_start_menu_build(xd_shell *shell) {
     xd_menu_tree *tree = &shell->menu_tree;
     xd_menu_model *root = xd_menu_model_new(tree);
@@ -131,17 +194,11 @@ void xd_start_menu_build(xd_shell *shell) {
     programs->fallback_icon = "folder";
     programs->submenu = xd_start_programs_model(shell, tree);
 
+    shell->start_docs_index = root->count;
     xd_menu_item *docs =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Documents", "folder-documents");
     docs->fallback_icon = "folder";
-    docs->submenu = xd_menu_model_new(tree);
-    xd_menu_item *mydocs =
-        xd_menu_add(tree, docs->submenu, XD_MENU_ACTION, "My Documents", "folder-documents");
-    mydocs->command = xd_shell_own_command(
-        shell, "xd-files", "\"$(xdg-user-dir DOCUMENTS 2>/dev/null || echo \"$HOME/Documents\")\"");
-    xd_menu_item *home = xd_menu_add(tree, docs->submenu, XD_MENU_ACTION, "Home Folder",
-                                     "user-home");
-    home->command = xd_shell_own_command(shell, "xd-files", "\"$HOME\"");
+    docs->submenu = nullptr; /* filled each time the menu opens */
 
     /* Not implemented yet: shown, but greyed out like unavailable items in
      * Windows. They light up as Control Panel and Help land. */

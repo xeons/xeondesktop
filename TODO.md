@@ -295,8 +295,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Recent Documents and Control Panel submenus in the XP layout.
 - [ ] Windows 7 menu: pinning/unpinning from the menu (edit
       `~/.config/xeondesktop/start-pinned` by hand), jump lists.
-- [ ] Windows 2000 menu: Documents doesn't list recent files; a Programs
-      folder taller than the screen is cut off instead of using columns.
+- [x] Windows 2000 menu: Documents lists My Documents, the Home folder and
+      the 15 most recent files (recently-used.xbel) in name order, rebuilt
+      as the menu opens; a menu taller than the screen continues in more
+      columns. Tested at 2x (360px tall): System Tools in two columns,
+      hover in both.
+- [x] Menus: one highlight at a time when moving quickly (the item whose
+      submenu waits to close no longer stays lit); the Windows 2000 banner
+      counts as part of the menu.
 - [ ] Greyed-out items: Search, Help, Devices and Printers, Default
       Programs, Switch user.
 - [?] Start menu keyboard navigation after the focus fix (typing into the

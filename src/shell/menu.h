@@ -81,7 +81,8 @@ typedef struct xd_menu {
     int width, height; /* logical */
     int *item_y;       /* logical top of each item */
     int *item_h;
-    int item_x, item_w;
+    int *item_xs;      /* logical left of each item (columns) */
+    int item_x, item_w; /* the first column's left; every column's width */
     double scale;
     bool configured;
     bool shown; /* first frame committed: the compositor knows where it is */

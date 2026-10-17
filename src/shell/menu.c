@@ -85,27 +85,47 @@ static void layout(xd_menu *menu) {
 
     menu->item_y = xd_alloc_array(XD_MAX(m->count, 1), sizeof(int));
     menu->item_h = xd_alloc_array(XD_MAX(m->count, 1), sizeof(int));
+    menu->item_xs = xd_alloc_array(XD_MAX(m->count, 1), sizeof(int));
+    menu->item_x = mm.border + banner;
+    menu->item_w = item_w;
+    /* A menu taller than the screen continues in another column, as
+     * Windows 2000's Programs folders do. */
+    int max_h = xd_shell_screen_height(menu->shell) - 2 * mm.border;
+    int x = menu->item_x;
     int y = mm.border;
+    int tallest = 0;
+    int columns = 1;
     for (size_t i = 0; i < m->count; i++) {
         int h = m->items[i].kind == XD_MENU_SEPARATOR ? mm.separator_h
                 : m->large                            ? mm.large_item_h
                                                       : mm.item_h;
+        if (y + h > mm.border + max_h && y > mm.border) {
+            x += item_w;
+            y = mm.border;
+            columns++;
+        }
+        menu->item_xs[i] = x;
         menu->item_y[i] = y;
         menu->item_h[i] = h;
         y += h;
+        tallest = XD_MAX(tallest, y);
     }
-    menu->item_x = mm.border + banner;
-    menu->item_w = item_w;
-    menu->width = mm.border * 2 + banner + item_w;
-    menu->height = y + mm.border;
+    menu->width = mm.border * 2 + banner + item_w * columns;
+    menu->height = XD_MAX(tallest, mm.border) + mm.border;
 }
 
 static int item_at(const xd_menu *menu, double x, double y) {
-    /* Anywhere across the menu's width counts, the Windows 2000 banner
-     * beside the items too. */
     if (x < 0 || x >= menu->width)
         return -1;
     for (size_t i = 0; i < menu->model->count; i++) {
+        /* The first column reaches the left edge (the Windows 2000 banner
+         * beside the items counts too); the last, the right one. */
+        int left = menu->item_xs[i] == menu->item_x ? 0 : menu->item_xs[i];
+        int right = menu->item_xs[i] + menu->item_w;
+        if (right + menu->item_w > menu->width)
+            right = menu->width;
+        if (x < left || x >= right)
+            continue;
         if (y >= menu->item_y[i] && y < menu->item_y[i] + menu->item_h[i])
             return menu->model->items[i].kind == XD_MENU_SEPARATOR ? -1 : (int)i;
     }
@@ -175,7 +195,7 @@ static void render(xd_menu *menu) {
 
     for (size_t i = 0; i < m->count; i++) {
         const xd_menu_item *it = &m->items[i];
-        xd_rect r = to_device(menu->item_x, menu->item_y[i], menu->item_w, menu->item_h[i], s);
+        xd_rect r = to_device(menu->item_xs[i], menu->item_y[i], menu->item_w, menu->item_h[i], s);
         if (it->kind == XD_MENU_SEPARATOR) {
             xd_theme_draw_menu_separator(&t, cr, r);
             continue;
@@ -378,7 +398,7 @@ xd_menu *xd_menu_open_child(xd_menu *menu, int index) {
     int border = xd_theme_menu_metrics(&t).border;
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
     xdg_positioner_set_size(pos, child->width, child->height);
-    xdg_positioner_set_anchor_rect(pos, menu->item_x, menu->item_y[index], menu->item_w,
+    xdg_positioner_set_anchor_rect(pos, menu->item_xs[index], menu->item_y[index], menu->item_w,
                                    menu->item_h[index]);
     xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_TOP_RIGHT);
     xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
@@ -444,6 +464,7 @@ static void menu_destroy(xd_menu *menu) {
     xd_shm_ring_finish(&menu->ring);
     xd_free(menu->item_y);
     xd_free(menu->item_h);
+    xd_free(menu->item_xs);
     xd_free(menu);
 }
 
