@@ -7,5 +7,5 @@ Icon=preferences-desktop-locale
 Terminal=false
 NoDisplay=true
 Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
-X-XeonDesktop-ControlPanel-Category=regional
+X-XeonDesktop-ControlPanel-Category=datetime
 StartupWMClass=org.xeondesktop.RegionalOptions

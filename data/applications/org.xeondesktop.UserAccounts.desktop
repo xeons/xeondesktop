@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=User Accounts
+Comment=Change user account settings and passwords for people who share this computer
+Exec=xd-users
+Icon=system-users
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=accounts
+StartupWMClass=org.xeondesktop.UserAccounts

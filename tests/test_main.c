@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <crypt.h>
 #include <poll.h>
 
 #include "../src/apps/runcmd.h"
@@ -15,6 +16,7 @@
 #include "../src/settings/sounds.h"
 #include "../src/shell/apps.h"
 #include "../src/ui/textedit.h"
+#include "../src/users/users.h"
 #include "../src/theme/theme.h"
 
 static int failures = 0;
@@ -764,6 +766,71 @@ static void test_intl(void) {
     g_free(dir);
 }
 
+static void test_users(void) {
+    CHECK(xd_users_valid_name("bob") && xd_users_valid_name("a1_b-c"));
+    CHECK(!xd_users_valid_name("") && !xd_users_valid_name("Bob") && !xd_users_valid_name("1bob"));
+    CHECK(!xd_users_valid_name("-bob") && !xd_users_valid_name("_bob") &&
+          !xd_users_valid_name("bo b") && !xd_users_valid_name(nullptr));
+    CHECK(xd_users_valid_name("abcdefghijklmnopqrstuvwxyzabcdef") &&
+          !xd_users_valid_name("abcdefghijklmnopqrstuvwxyzabcdefg"));
+
+    char *s = xd_users_suggest_name("Robert Smith");
+    CHECK(strcmp(s, "robertsmith") == 0);
+    g_free(s);
+    s = xd_users_suggest_name("2nd O'Brien 3");
+    CHECK(strcmp(s, "ndobrien3") == 0 && xd_users_valid_name(s));
+    g_free(s);
+    s = xd_users_suggest_name("\u4e2d\u6587");
+    CHECK(s != nullptr && !xd_users_valid_name(s)); /* nothing usable: "" or "??" dropped */
+    g_free(s);
+
+    /* A hash crypt() accepts for the password and nothing else. */
+    char *hash = xd_users_hash_password("s3cret pw");
+    CHECK(hash != nullptr && hash[0] == '$');
+    if (hash != nullptr) {
+        struct crypt_data *cd = g_new0(struct crypt_data, 1);
+        const char *again = crypt_r("s3cret pw", hash, cd);
+        CHECK(again != nullptr && strcmp(again, hash) == 0);
+        const char *wrong = crypt_r("s3cret px", hash, cd);
+        CHECK(wrong == nullptr || strcmp(wrong, hash) != 0);
+        g_free(cd);
+    }
+    char *other = xd_users_hash_password("s3cret pw");
+    CHECK(other != nullptr && hash != nullptr && strcmp(other, hash) != 0); /* salted */
+    g_free(other);
+    g_free(hash);
+
+    /* Pictures: the centre square, scaled. */
+    char *dir = g_dir_make_tmp("xd-users-XXXXXX", nullptr);
+    char *src = g_build_filename(dir, "wide.png", nullptr);
+    char *dst = g_build_filename(dir, "face.png", nullptr);
+    GdkPixbuf *wide = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 300, 100);
+    gdk_pixbuf_fill(wide, 0xff000000);
+    /* A green centre, so the crop shows. */
+    GdkPixbuf *centre = gdk_pixbuf_new_subpixbuf(wide, 100, 0, 100, 100);
+    gdk_pixbuf_fill(centre, 0x00ff0000);
+    g_object_unref(centre);
+    CHECK(gdk_pixbuf_save(wide, src, "png", nullptr, nullptr));
+    g_object_unref(wide);
+    CHECK(xd_users_make_picture(src, dst, 96, nullptr));
+    GdkPixbuf *face = gdk_pixbuf_new_from_file(dst, nullptr);
+    CHECK(face != nullptr && gdk_pixbuf_get_width(face) == 96 && gdk_pixbuf_get_height(face) == 96);
+    if (face != nullptr) {
+        const guchar *px = gdk_pixbuf_read_pixels(face);
+        CHECK(px[0] < 16 && px[1] > 240); /* green, not the red edges */
+        g_object_unref(face);
+    }
+    GError *error = nullptr;
+    CHECK(!xd_users_make_picture("/nonexistent.png", dst, 96, &error) && error != nullptr);
+    g_clear_error(&error);
+    g_remove(src);
+    g_remove(dst);
+    g_rmdir(dir);
+    g_free(src);
+    g_free(dst);
+    g_free(dir);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -783,6 +850,7 @@ int main(void) {
     test_gtk_css();
     test_passwd();
     test_intl();
+    test_users();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
