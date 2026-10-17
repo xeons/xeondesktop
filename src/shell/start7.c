@@ -1093,31 +1093,34 @@ static xp_palette xp_colors(const xd_theme *t) {
     case XD_STYLE_COUNT:
         break;
     }
+    /* Luna: the colour variant's own (theme.h). */
+    xd_luna_start_colors c;
+    xd_theme_luna_start_colors(t, &c);
     return (xp_palette){
-        .head_a = xd_rgba_hex(0x3D85EE),
-        .head_b = xd_rgba_hex(0x1B58CF),
-        .foot_a = xd_rgba_hex(0x3D82EC),
-        .foot_b = xd_rgba_hex(0x1A52C6),
-        .frame_light = xd_rgba_hex(0x0E3FAA),
-        .frame_dark = xd_rgba_hex(0x0E3FAA),
-        .left_bg = white,
-        .left_text = xd_rgba_hex(0x000000),
-        .left_sub = xd_rgba_hex(0x6D6D6D),
-        .left_sep = xd_rgba_hex(0xE0DED8),
+        .head_a = xd_rgba_hex(c.head_a),
+        .head_b = xd_rgba_hex(c.head_b),
+        .foot_a = xd_rgba_hex(c.foot_a),
+        .foot_b = xd_rgba_hex(c.foot_b),
+        .frame_light = xd_rgba_hex(c.frame),
+        .frame_dark = xd_rgba_hex(c.frame),
+        .left_bg = xd_rgba_hex(c.left_bg),
+        .left_text = xd_rgba_hex(c.left_text),
+        .left_sub = xd_rgba_hex(c.left_sub),
+        .left_sep = xd_rgba_hex(c.left_sep),
         .panel_border = none,
-        .right_bg = xd_rgba_hex(0xD3E5FA),
-        .right_text = xd_rgba_hex(0x0A246A),
-        .right_dim = xd_rgba_hex(0x7A8AA8),
-        .right_sep = xd_rgba_hex(0xA9C3EA),
-        .column_edge = xd_rgba_hex(0x95BDEE),
-        .hot = xd_rgba_hex(0x316AC5),
+        .right_bg = xd_rgba_hex(c.right_bg),
+        .right_text = xd_rgba_hex(c.right_text),
+        .right_dim = xd_rgba_hex(c.right_dim),
+        .right_sep = xd_rgba_hex(c.right_sep),
+        .column_edge = xd_rgba_hex(c.column_edge),
+        .hot = xd_rgba_hex(c.hot),
         .hot_text = white,
-        .right_hot = xd_rgba_hex(0x316AC5),
+        .right_hot = xd_rgba_hex(c.hot),
         .right_hot_text = white,
         .name = white,
         .foot_text = white,
         .foot_hot = xd_rgba_alpha(white, 0.2),
-        .accent = xd_rgba_hex(0xF09A3C),
+        .accent = c.accent ? xd_rgba_hex(0xF09A3C) : none,
     };
 }
 

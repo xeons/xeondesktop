@@ -175,8 +175,9 @@ static void test_shipped_schemes(void) {
         g_dir_close(d);
     g_hash_table_destroy(names);
     xd_strbuf_free(&dir);
-    /* XP's 22 classic schemes and Windows XP style's three colours. */
-    CHECK(count == 25);
+    /* XP's 22 classic schemes, Windows XP style's three colours and
+     * Royale's Energy Blue. */
+    CHECK(count == 26);
 
     /* Spot checks against the reference (Windows XP's registry values). */
     static const struct {
@@ -219,6 +220,8 @@ static void test_shipped_schemes(void) {
          .color = XD_COLOR_ACTIVE_TITLE, .r = 139, .g = 161, .b = 105, .luna = XD_LUNA_OLIVE},
         {.stem = "luna-silver", .name = "Silver",
          .color = XD_COLOR_BUTTON_FACE, .r = 224, .g = 223, .b = 227, .luna = XD_LUNA_SILVER},
+        {.stem = "luna-energyblue", .name = "Energy Blue",
+         .color = XD_COLOR_BUTTON_FACE, .r = 235, .g = 233, .b = 237, .luna = XD_LUNA_ENERGY},
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(want); i++) {
         xd_scheme s;
@@ -259,8 +262,9 @@ static void test_luna_variants(void) {
         {"luna-blue", 0x0054E3},
         {"luna-olive", 0xA7B580},
         {"luna-silver", 0xACABC4},
+        {"luna-energyblue", 0x6DAAE9},
     };
-    uint32_t close[3], minimize[3];
+    uint32_t close[4], minimize[4];
     for (size_t i = 0; i < XD_ARRAY_LEN(variants); i++) {
         xd_scheme scheme;
         CHECK(load_shipped_scheme(variants[i].stem, &scheme));
@@ -285,8 +289,8 @@ static void test_luna_variants(void) {
         cairo_destroy(cr);
         cairo_surface_destroy(surf);
     }
-    CHECK(minimize[1] != minimize[0] && minimize[2] != minimize[0]);
-    for (size_t i = 0; i < 3; i++)
+    CHECK(minimize[1] != minimize[0] && minimize[2] != minimize[0] && minimize[3] != minimize[0]);
+    for (size_t i = 0; i < 4; i++)
         CHECK(((close[i] >> 16) & 0xFF) > ((close[i] >> 8) & 0xFF) + 64);
 
     /* Silver is drawn as measured off XP: a glossy caption from a light
@@ -327,6 +331,23 @@ static void test_luna_variants(void) {
     CHECK(((off >> 8) & 0xFF) - (off & 0xFF) < ((on >> 8) & 0xFF) - (on & 0xFF));
     xd_theme_draw_task_button(&st, scr, (xd_rect){0, 60, 160, 25}, XD_STATE_PRESSED, "", nullptr);
     CHECK(near(pixel(ss, 80, 70), 0x8D977E, 0));
+
+    /* The XP Start menu takes each variant's colours: Blue's own, Energy
+     * Blue's measured navy program list and blue column. */
+    xd_luna_start_colors sc;
+    xd_scheme bl;
+    CHECK(load_shipped_scheme("luna-blue", &bl));
+    xd_theme_init(&st, XD_STYLE_LUNA, &bl, 1.0);
+    xd_theme_luna_start_colors(&st, &sc);
+    CHECK(sc.left_bg == 0xFFFFFF && sc.right_bg == 0xD3E5FA && sc.head_a == 0x3D85EE && sc.accent);
+    xd_scheme eb;
+    CHECK(load_shipped_scheme("luna-energyblue", &eb));
+    xd_theme_init(&st, XD_STYLE_LUNA, &eb, 1.0);
+    xd_theme_luna_start_colors(&st, &sc);
+    CHECK(sc.left_bg == 0x10377C && sc.right_bg == 0x5373BF && sc.left_text == 0xFFFFFF &&
+          !sc.accent);
+    xd_theme_draw_taskbar(&st, scr, (xd_rect){0, 60, 300, 30}, XD_EDGE_BOTTOM);
+    CHECK(near(pixel(ss, 150, 61), 0x99C6F1, 0));
     cairo_destroy(scr);
     cairo_surface_destroy(ss);
 
@@ -345,6 +366,8 @@ static void test_luna_variants(void) {
     xd_scheme s;
     CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=homestead\n"), &s, nullptr));
     CHECK(s.luna_color == XD_LUNA_OLIVE);
+    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=EnergyBlue\n"), &s, nullptr));
+    CHECK(s.luna_color == XD_LUNA_ENERGY);
     CHECK(!xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=Green\n"), &s, nullptr));
     CHECK(s.luna_color == XD_LUNA_NONE);
 }
@@ -936,7 +959,8 @@ static void test_gtk_css(void) {
     /* Style properties (-GtkScrollbar-*) need the widget classes. */
     g_type_ensure(GTK_TYPE_SCROLLBAR);
     static const char *const schemes[] = {"",           "windows-classic", "high-contrast-black",
-                                          "high-contrast-white", "luna-olive", "luna-silver"};
+                                          "high-contrast-white", "luna-olive", "luna-silver",
+                                          "luna-energyblue"};
     for (int style = 0; style < XD_STYLE_COUNT; style++) {
         for (size_t k = 0; k < XD_ARRAY_LEN(schemes); k++) {
             xd_scheme scheme;

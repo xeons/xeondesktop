@@ -46,11 +46,12 @@ typedef struct modern_palette {
 
 static const modern_palette *pal(const xd_theme *t);
 
-/* Olive Green and Silver: the dialog, menu and selection colours are the
+/* Olive Green, Silver and Energy Blue: the dialog, menu and selection colours are the
  * variant's system colours, which its scheme file carries; Blue keeps the
  * palette (the same values, as measured). */
 static bool variant(const xd_theme *t) {
-    return t->scheme.luna_color == XD_LUNA_OLIVE || t->scheme.luna_color == XD_LUNA_SILVER;
+    return t->scheme.luna_color == XD_LUNA_OLIVE || t->scheme.luna_color == XD_LUNA_SILVER ||
+           t->scheme.luna_color == XD_LUNA_ENERGY;
 }
 
 /* A palette colour (Blue's) in the theme's colour variant. */

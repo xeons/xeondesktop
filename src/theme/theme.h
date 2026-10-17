@@ -164,6 +164,18 @@ void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
 /* Notification area well at the right end of the taskbar: the clock is
  * drawn right-aligned inside the margins; tray icons go to its left. */
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
+
+/* Windows XP style's Start menu colours (0xRRGGBB) in the theme's colour
+ * variant: header and footer gradients, frame, the program list (left),
+ * the places column (right), the hot item, and the accent line. */
+typedef struct xd_luna_start_colors {
+    uint32_t head_a, head_b, foot_a, foot_b, frame;
+    uint32_t left_bg, left_text, left_sub, left_sep;
+    uint32_t right_bg, right_text, right_dim, right_sep, column_edge;
+    uint32_t hot;
+    bool accent; /* XP's orange line under the header */
+} xd_luna_start_colors;
+void xd_theme_luna_start_colors(const xd_theme *t, xd_luna_start_colors *out);
 /* Space (device px) between the well's edges and its contents. */
 void xd_theme_tray_margins(const xd_theme *t, int *left, int *right);
 

@@ -113,14 +113,17 @@ typedef enum xd_font_smoothing : uint8_t {
 } xd_font_smoothing;
 
 /* Windows XP style's colour variants ([Scheme] LunaColor=, named as XP's
- * msstyles names them). A scheme with one is listed under Windows XP
- * style rather than Windows Classic; its colours are XP's system colours
- * for that variant, and the Luna artwork is recoloured to match. */
+ * msstyles names them; Energy Blue, from the separate Royale msstyles that
+ * calls its colour NormalColor too, takes a name of its own). A scheme
+ * with one is listed under Windows XP style rather than Windows Classic;
+ * its colours are that variant's system colours, and the Luna artwork is
+ * the variant's. */
 typedef enum xd_luna_color : uint8_t {
     XD_LUNA_NONE = 0, /* a classic scheme */
     XD_LUNA_BLUE,     /* "NormalColor": Default (blue) */
     XD_LUNA_OLIVE,    /* "HomeStead": Olive Green */
     XD_LUNA_SILVER,   /* "Metallic": Silver */
+    XD_LUNA_ENERGY,   /* "EnergyBlue": Energy Blue (Royale) */
 } xd_luna_color;
 
 typedef struct xd_scheme {

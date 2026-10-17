@@ -7,6 +7,8 @@ luna.c draws from:
     tools/luna-measure.py SCREENSHOT.png > src/theme/luna_data.h
     tools/luna-measure.py --variant silver SCREENSHOT.png > src/theme/luna_data_silver.h
     tools/luna-measure.py --variant olive SCREENSHOT.png > src/theme/luna_data_olive.h
+    tools/luna-measure.py --variant energyblue SCREENSHOT.png STARTMENU.png \
+        > src/theme/luna_data_energyblue.h
 
 Only colours are taken: per-row/per-column gradient profiles, edge lines,
 corner masks, and smooth polynomial surfaces fitted to the caption buttons.
@@ -15,21 +17,27 @@ Glyphs, text and icons are drawn by the theme engine itself.
 The coordinates below are where each element sits in the reference
 screenshot (an active Notepad window, an inactive Explorer window and the
 taskbar of a stock Windows XP SP3 desktop at 1920x972). Needs ImageMagick.
-Silver and Olive Green (--variant) have their own references, layouts and
-tables; see LAYOUTS below.
+Silver, Olive Green and Energy Blue (--variant) have their own references,
+layouts and tables; see LAYOUTS below.
 """
 import re
 import subprocess
 import sys
 
 VARIANT = "blue"
-if len(sys.argv) == 4 and sys.argv[1] == "--variant":
-    VARIANT = sys.argv[2]
-elif len(sys.argv) != 2:
-    sys.exit("usage: luna-measure.py [--variant blue|silver|olive] SCREENSHOT.png")
-if VARIANT not in ("blue", "silver", "olive"):
+START_REF = None
+args = sys.argv[1:]
+if len(args) >= 3 and args[0] == "--variant":
+    VARIANT = args[1]
+    args = args[2:]
+if VARIANT not in ("blue", "silver", "olive", "energyblue"):
     sys.exit(f"unknown variant {VARIANT!r}")
-REF = sys.argv[-1]
+if len(args) != (2 if VARIANT == "energyblue" else 1):
+    sys.exit("usage: luna-measure.py [--variant silver|olive] SCREENSHOT.png\n"
+             "       luna-measure.py --variant energyblue SCREENSHOT.png STARTMENU.png")
+REF = args[0]
+if VARIANT == "energyblue":
+    START_REF = args[1]
 
 # Reference layout.
 ACTIVE = dict(x0=88, y0=116, x1=640, y1=438, mid=400,
@@ -253,6 +261,26 @@ def main_blue():
 # glyph colours), no Restore glyph, no pressed task button and no hot or
 # pressed states; luna.c derives those.
 #
+# Energy Blue (the "Royale" theme Microsoft shipped for Media Center and
+# Tablet PC editions): Jason Prahl's screenshot,
+# https://www.jasonprahl.com/wp-content/uploads/2006/01/xp.png (1364x839,
+# full colour; not redistributed here), an XP desktop in a virtual machine
+# whose frame takes the left 10 columns and the bottom rows: the guest's
+# x 0 is the image's x 10. It is 1:1 (the caption is 30 rows, the caption
+# buttons 21px, as XP's metrics give). It shows an active Explorer window
+# and the taskbar with one, pressed, task button; it has no inactive
+# window, no normal task button and no Help button: luna.c fades the
+# active artwork for an inactive window (as for Olive Green), recolours
+# Blue's normal task button, and draws Help on the Minimize face. Energy
+# Blue's caption buttons sit 5 columns from the frame's right edge where
+# Blue's sit 6; luna.c keeps Blue's layout.
+#
+# Its Start menu comes from a second screenshot, from the Reddit post "A
+# retrospective on the Luna theme and Royale" (1024x768, a
+# cf.preview.redd.it image; not redistributed here). That image is
+# quantized to a 256-colour palette, so its colours are averages (or the
+# commonest colour) over regions, not single pixels.
+#
 # Olive Green: a screenshot hosted on DeviantArt,
 # https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/i/a844a3cf-6fdd-4ee5-85e5-f51c27600fd7/dzg2-bb82fa90-d395-4600-b555-aa0274bd3ad1.png
 # (800x600, lossless; not redistributed here). It is a pre-release build
@@ -322,6 +350,44 @@ LAYOUTS = dict(
                  task_pressed=dict(left=(276, 281), mid=425, right=(431, 436)),
                  tray=dict(left=(635, 640), a=650, b=799)),
         push=None,
+    ),
+    energyblue=dict(
+        title="Energy Blue",
+        desktop=None,                # a wallpaper
+        caption_rows=30,
+        extra_row=None,
+        edge3=False,
+        white_glyphs=True,
+        active=dict(
+            x0=34, y0=189, x1=831, y1=786,     # My Documents
+            mid=[(500, 0, 30)],
+            right_rows=30,
+            side_y=500, bottom_x=500,
+            side_right=True, corner_br=True,
+            buttons=dict(minimize=(760, 195), maximize=(783, 195), close=(806, 195)),
+            button_rows=21,
+        ),
+        inactive=None,
+        bar=dict(y=802, x=700,
+                 start=dict(left=(10, 18), right=(86, 109)),
+                 task=None,
+                 task_pressed=dict(left=(169, 174), mid=300, right=(322, 327)),  # My Documents
+                 tray=dict(left=(1228, 1233), a=1233, b=1356)),
+        push=None,
+        # The Start menu screenshot: (x, y, w, h) regions.
+        startmenu=dict(
+            frame=(200, 260, 170, 1),        # the top edge
+            head_a=(200, 261, 170, 3),       # right of the user's name
+            head_b=(200, 320, 170, 3),
+            left_bg=(5, 330, 175, 360),      # the programs: commonest colour
+            left_sub=(45, 352, 60, 10),      # "Internet Explorer", under "Internet"
+            left_sep=(20, 417, 140, 1),
+            column_edge=(188, 330, 1, 360),
+            right_bg=(195, 330, 180, 360),
+            right_sep=(200, 487, 170, 1),
+            foot_a=(10, 699, 160, 3),        # left of Log Off
+            foot_b=(10, 735, 160, 3),
+        ),
     ),
 )
 L = LAYOUTS.get(VARIANT)
@@ -561,6 +627,7 @@ def bar_tables_measured():
         return table(f"{name}[{rows}]", [hexc(pix(x, top + r)) for r in range(rows)])
 
     out = ["/* Taskbar, top to bottom. */", col(f"{pre}_taskbar", b["x"], 30, y0)]
+    # Normal task buttons are measured unless the reference shows none.
     out.append("/* Start button: left columns, then right columns (the text and logo"
                " area between is interpolated). */")
     out.append(block(f"{pre}_start_left", b["start"]["left"], 30, y0))
@@ -597,6 +664,28 @@ def bar_tables_measured():
     return "\n".join(out)
 
 
+def startmenu_tables():
+    """The Start menu's colours, from the second screenshot, by region:
+    the mean, or for a body the commonest colour (the palette's dither
+    leaves other colours around its text and icons)."""
+    global REF, _PIX
+    REF, _PIX = START_REF, None
+    out = ["/* Start menu: averaged over regions of a palette-quantized screenshot. */"]
+    for name, (x, y, w, h) in L["startmenu"].items():
+        px = [pix(x + i, y + j) for j in range(h) for i in range(w)]
+        if name in ("left_bg", "right_bg", "column_edge", "left_sub"):
+            counts = {}
+            for p in px:
+                counts[p] = counts.get(p, 0) + 1
+            ranked = sorted(counts, key=lambda p: -counts[p])
+            # The subtitle: the commonest colour that isn't the background.
+            c = ranked[1] if name == "left_sub" else ranked[0]
+        else:
+            c = tuple(round(sum(p[k] for p in px) / len(px)) for k in range(3))
+        out.append(f"static const uint32_t luna_{VARIANT}_startmenu_{name} = {hexc(c)};")
+    return "\n".join(out)
+
+
 def main_measured():
     guard = f"XD_THEME_LUNA_DATA_{VARIANT.upper()}_H"
     print(f"""/* SPDX-License-Identifier: MIT
@@ -618,6 +707,9 @@ def main_measured():
         print(text)
         print()
     print(bar_tables_measured())
+    if "startmenu" in L:
+        print()
+        print(startmenu_tables())
     print("\n#endif")
 
 
