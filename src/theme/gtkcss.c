@@ -772,6 +772,23 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
                       H(c.tooltip_fg), H(c.base), H(c.classic ? c.shadow : c.field_border),
                       H(c.selected_bg), H(c.classic ? c.face : c.bg),
                       H(c.classic ? c.dkshadow : c.field_border));
+    /* Popovers (other programs' menus) look like Windows menus: square,
+     * the menu colour and border, highlighted rows, the submenu arrow. */
+    xd_strbuf_appendf(
+        out,
+        "popover.background { background-color: %s; color: %s; border: 1px solid %s;\n"
+        "  border-radius: 0; box-shadow: %s; padding: 2px; }\n"
+        "popover.background modelbutton.flat { border-radius: 0; min-height: 18px;\n"
+        "  padding: 1px 8px; color: %s; }\n"
+        "popover.background modelbutton.flat:hover { background-color: %s; color: %s; }\n"
+        "popover.background modelbutton.flat:disabled { color: %s; }\n"
+        "modelbutton.flat arrow.right { -gtk-icon-source: url(\"%s\"); }\n"
+        "modelbutton.flat:hover arrow.right { -gtk-icon-source: url(\"%s\"); }\n"
+        "popover.background separator { margin: 3px 0; }\n",
+        H(c.menu_bg), H(c.menu_fg), H(c.menu_border),
+        c.classic ? "inset 1px 1px #ffffff, inset -1px -1px #808080" : "none", H(c.menu_fg),
+        H(c.menu_hot), H(c.menu_hot_fg), H(c.disabled), xd_gtk_assets[XD_GTK_MENU_ARROW],
+        xd_gtk_assets[XD_GTK_MENU_ARROW_HOT]);
     /* Windows menus show only the mark of a check or radio item, never a box. */
     xd_strbuf_append(out, XD_STR("menu menuitem check, menu menuitem radio, menu menuitem check:hover,\n"
                                  "menu menuitem radio:hover {\n"

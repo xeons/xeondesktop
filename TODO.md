@@ -473,8 +473,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       sunken track and a button-like thumb), progress bars (Windows 2000's
       blocks in Classic; XP's green blocks in Luna). Checked with a GTK
       test window in Classic and Luna.
-- [ ] Not yet styled: combo box pop-up lists, popovers (the Views menu),
-      GtkFileChooser's sidebar and path bar. Our GTK apps turn off dialog
+- [x] Popovers (other programs' menus) look like Windows menus: square,
+      the menu colour and border, highlighted rows, the submenu arrow.
+      Combo box pop-ups are GTK menus, already styled.
+- [ ] Not yet styled: GtkFileChooser's sidebar and path bar; combo
+      pop-ups are menus (Windows drops down a list box). Our GTK apps turn off dialog
       header bars (buttons at the bottom, our title bar); other apps'
       header-bar dialogs keep GTK's look.
 - [ ] Other apps' GtkMessageDialogs show GTK's own title strip inside the
