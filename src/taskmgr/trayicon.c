@@ -218,15 +218,19 @@ static GVariant *menu_node(const xd_trayicon *ti, int id) {
     return g_variant_new("(i@a{sv}av)", id, menu_props(ti, id), &kids);
 }
 
-static void menu_event(xd_trayicon *ti, int id, const char *event) {
+/* False once Close has run: that frees `ti`. */
+static bool menu_event(xd_trayicon *ti, int id, const char *event) {
     if (strcmp(event, "clicked") != 0)
-        return;
-    if (id == MENU_RESTORE)
+        return true;
+    if (id == MENU_RESTORE) {
         ti->ops->restore(ti->data);
-    else if (id == MENU_ON_TOP)
+    } else if (id == MENU_ON_TOP) {
         ti->ops->set_on_top(!ti->on_top, ti->data);
-    else if (id == MENU_CLOSE)
+    } else if (id == MENU_CLOSE) {
         ti->ops->close(ti->data);
+        return false;
+    }
+    return true;
 }
 
 static void menu_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
@@ -283,8 +287,10 @@ static void menu_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] cons
         g_variant_builder_init(&bad, G_VARIANT_TYPE("ai"));
         g_dbus_method_invocation_return_value(inv, g_variant_new("(@ai)",
                                                                  g_variant_builder_end(&bad)));
-        while (g_variant_iter_next(events, "(i&svu)", &id, &event, nullptr, nullptr))
-            menu_event(ti, id, event);
+        while (g_variant_iter_next(events, "(i&svu)", &id, &event, nullptr, nullptr)) {
+            if (!menu_event(ti, id, event))
+                break;
+        }
         g_variant_iter_free(events);
     } else if (strcmp(method, "AboutToShow") == 0) {
         g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", FALSE));
