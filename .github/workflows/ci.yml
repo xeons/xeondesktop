@@ -58,3 +58,32 @@ jobs:
         with:
           name: meson-logs-${{ matrix.name }}
           path: build/meson-logs/
+
+  # tests/ui/run.py: each scenario in a headless session of its own. The
+  # sessions live in user and mount namespaces (unshare), which Docker's
+  # default seccomp profile refuses, hence --privileged.
+  ui:
+    name: UI tests
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed base-devel clang meson ninja wayland-protocols \
+            wlroots0.20 wayland libxkbcommon libxcb xcb-util-wm libdrm cairo pango fontconfig \
+            glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse libcanberra json-glib mesa pixman git libinput libxcursor libevdev libnm packagekit flatpak libcups sane libgphoto2 \
+            ttf-dejavu grim python-gobject python-dbusmock
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: meson setup build
+      - name: Build
+        run: ninja -C build
+      - name: UI tests
+        run: meson test -C build --setup ui --suite ui --print-errorlogs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: meson-logs-ui
+          path: build/meson-logs/
