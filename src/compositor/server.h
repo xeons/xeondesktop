@@ -274,6 +274,13 @@ struct xd_server {
     struct wl_listener new_input;
     struct wl_listener request_cursor;
     struct wl_listener request_set_selection;
+    struct wl_listener request_set_primary_selection;
+    /* Drag and drop: the icon under the pointer, above everything. */
+    struct wl_listener request_start_drag;
+    struct wl_listener start_drag;
+    struct wl_listener drag_destroy;
+    struct wlr_scene_tree *layer_drag;
+    struct wlr_scene_tree *drag_icon;
     struct wl_listener new_virtual_keyboard;
     struct wl_listener new_virtual_pointer;
 

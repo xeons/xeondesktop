@@ -13,6 +13,7 @@
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 #include <wlr/util/log.h>
@@ -764,7 +765,10 @@ static void process_resize(xd_server *server) {
                             moving);
 }
 
+static void place_drag_icon(xd_server *server);
+
 static void process_motion(xd_server *server, uint32_t time_msec) {
+    place_drag_icon(server);
     switch (server->mode) {
     case XD_CURSOR_MOVE: {
         xd_view *v = server->grab_view;
@@ -1039,6 +1043,52 @@ static void handle_request_set_selection(struct wl_listener *listener, void *dat
     wlr_seat_set_selection(server->seat, e->source, e->serial);
 }
 
+static void handle_request_set_primary_selection(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_set_primary_selection);
+    const struct wlr_seat_request_set_primary_selection_event *e = data;
+    wlr_seat_set_primary_selection(server->seat, e->source, e->serial);
+}
+
+/* ---- drag and drop -------------------------------------------------------------- */
+
+static void handle_request_start_drag(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_start_drag);
+    const struct wlr_seat_request_start_drag_event *e = data;
+    /* Only for a button held over the client that asks. */
+    if (!server->locked && server->mode == XD_CURSOR_PASSTHROUGH &&
+        wlr_seat_validate_pointer_grab_serial(server->seat, e->origin, e->serial))
+        wlr_seat_start_pointer_drag(server->seat, e->drag, e->serial);
+    else
+        wlr_data_source_destroy(e->drag->source);
+}
+
+static void place_drag_icon(xd_server *server) {
+    if (server->drag_icon != nullptr)
+        wlr_scene_node_set_position(&server->drag_icon->node, (int)server->cursor->x,
+                                    (int)server->cursor->y);
+}
+
+static void handle_drag_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, drag_destroy);
+    xd_unlisten(&server->drag_destroy);
+    /* wlroots removes the icon's scene tree with the icon. */
+    server->drag_icon = nullptr;
+    /* The drop took the pointer: give it back to what's under it. */
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    process_motion(server, (uint32_t)(now.tv_sec * 1000 + now.tv_nsec / 1000000));
+}
+
+static void handle_start_drag(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, start_drag);
+    struct wlr_drag *drag = data;
+    if (drag->icon != nullptr) {
+        server->drag_icon = wlr_scene_drag_icon_create(server->layer_drag, drag->icon);
+        place_drag_icon(server);
+    }
+    XD_LISTEN(&drag->events.destroy, server, drag_destroy, handle_drag_destroy);
+}
+
 static int handle_sigchld([[maybe_unused]] int sig, void *data) {
     xd_server *server = data;
     int status = 0;
@@ -1077,6 +1127,11 @@ void xd_input_init(xd_server *server) {
               handle_request_cursor);
     XD_LISTEN(&server->seat->events.request_set_selection, server, request_set_selection,
               handle_request_set_selection);
+    XD_LISTEN(&server->seat->events.request_set_primary_selection, server,
+              request_set_primary_selection, handle_request_set_primary_selection);
+    XD_LISTEN(&server->seat->events.request_start_drag, server, request_start_drag,
+              handle_request_start_drag);
+    XD_LISTEN(&server->seat->events.start_drag, server, start_drag, handle_start_drag);
 
     struct wlr_cursor_shape_manager_v1 *shapes =
         wlr_cursor_shape_manager_v1_create(server->display, 1);

@@ -146,6 +146,7 @@ static bool server_init(xd_server *server) {
     server->layer_x11_popups = wlr_scene_tree_create(root);
     server->layers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] = wlr_scene_tree_create(root);
     server->layer_lock = wlr_scene_tree_create(root); /* screen locker, topmost */
+    server->layer_drag = wlr_scene_tree_create(root); /* the dragged thing, over all */
 
     xd_layers_init(server);
     xd_view_init(server);
@@ -189,6 +190,8 @@ static void server_finish(xd_server *server) {
         &server->cursor_frame,        &server->request_cursor_shape,
         &server->new_input,           &server->request_cursor,
         &server->request_set_selection, &server->new_virtual_keyboard,
+        &server->request_set_primary_selection, &server->request_start_drag,
+        &server->start_drag,          &server->drag_destroy,
         &server->new_virtual_pointer,
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(listeners); i++)
