@@ -82,7 +82,11 @@ struct _XdFolderView {
     GCancellable *cancel;
     GFileMonitor *monitor;
     guint reload_source;
+    gboolean reload_again; /* the folder changed while it was loading */
     GPtrArray *all;   /* item*, owned */
+    /* Items being listed (owned), which replace `all` once they're all
+     * in: a refresh keeps showing the old ones until then. */
+    GPtrArray *loading;
     GPtrArray *shown; /* item*, borrowed: filtered and sorted */
 
     XdViewMode mode;
@@ -1086,6 +1090,10 @@ static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cr) {
 
 /* ---- loading ------------------------------------------------------------------------ */
 
+static item *item_at(XdFolderView *v, int i);
+static void set_hover(XdFolderView *v, int i);
+static gboolean reload_timeout(gpointer data);
+
 /* Selects the kept files that are here; returns how many. */
 static guint apply_keep(XdFolderView *v) {
     if (v->keep == nullptr)
@@ -1115,6 +1123,30 @@ static void forget_keep(XdFolderView *v) {
 
 static void loading_done(XdFolderView *v) {
     g_clear_object(&v->cancel);
+    /* The selection survives a refresh, as it is now (unless files are
+     * already waiting to be selected). */
+    if (v->keep == nullptr && v->shown->len > 0) {
+        v->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+        for (guint k = 0; k < v->shown->len; k++) {
+            item *it = g_ptr_array_index(v->shown, k);
+            if (it->selected)
+                g_hash_table_add(v->keep, g_file_get_uri(it->file));
+        }
+        item *f = item_at(v, v->focus);
+        v->keep_focus = f != nullptr ? g_file_get_uri(f->file) : nullptr;
+    }
+    /* The new items replace the old: indices into `shown` start over
+     * (the selection and focus come back from `keep`). */
+    g_ptr_array_set_size(v->shown, 0);
+    g_ptr_array_unref(v->all);
+    v->all = v->loading;
+    v->loading = g_ptr_array_new_with_free_func(item_free);
+    v->focus = -1;
+    v->anchor = -1;
+    v->pressed = -1;
+    v->drop_index = -1;
+    v->drag_pending = FALSE;
+    set_hover(v, -1);
     refilter(v);
     if (v->keep != nullptr) {
         guint found = apply_keep(v);
@@ -1125,6 +1157,10 @@ static void loading_done(XdFolderView *v) {
     }
     g_signal_emit(v, signals[SIG_CONTENTS], 0);
     g_signal_emit(v, signals[SIG_SELECTION], 0);
+    if (v->reload_again && v->reload_source == 0) {
+        v->reload_again = FALSE;
+        v->reload_source = g_timeout_add(300, reload_timeout, v);
+    }
 }
 
 /* A Recycle Bin item: its original name, the folder it came from (in the
@@ -1180,7 +1216,7 @@ static void load_drives(XdFolderView *v) {
             g_free(free_text);
             g_free(total_text);
         }
-        g_ptr_array_add(v->all, it);
+        g_ptr_array_add(v->loading, it);
     }
     g_ptr_array_unref(drives);
 }
@@ -1200,7 +1236,7 @@ static void load_control(XdFolderView *v) {
         it->is_dir = c->category;
         it->icon = g_object_ref(c->icon);
         it->order = (int)i;
-        g_ptr_array_add(v->all, it);
+        g_ptr_array_add(v->loading, it);
     }
     g_ptr_array_unref(items);
 }
@@ -1249,8 +1285,8 @@ static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data) {
     }
     GFile *dir = g_file_enumerator_get_container(e);
     for (GList *l = infos; l != nullptr; l = l->next)
-        g_ptr_array_add(v->all, v->place == XD_PLACE_TRASH ? trash_item(dir, l->data)
-                                                           : item_new(dir, l->data));
+        g_ptr_array_add(v->loading, v->place == XD_PLACE_TRASH ? trash_item(dir, l->data)
+                                                               : item_new(dir, l->data));
     g_list_free_full(infos, g_object_unref);
     request_more(e, v);
 }
@@ -1277,14 +1313,24 @@ static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data) {
     request_more(e, data);
 }
 
-static void start_loading(XdFolderView *v) {
+/* Lists the folder: a new one from empty (`fresh`), or the same one again,
+ * still showing the old list until the new one is in. */
+static void start_loading(XdFolderView *v, gboolean fresh) {
     if (v->cancel != nullptr)
         g_cancellable_cancel(v->cancel);
     g_clear_object(&v->cancel);
-    g_ptr_array_set_size(v->shown, 0);
-    g_ptr_array_set_size(v->all, 0);
-    v->focus = -1;
-    v->anchor = -1;
+    g_ptr_array_set_size(v->loading, 0);
+    v->reload_again = FALSE;
+    if (fresh) {
+        g_ptr_array_set_size(v->shown, 0);
+        g_ptr_array_set_size(v->all, 0);
+        v->focus = -1;
+        v->anchor = -1;
+        v->pressed = -1;
+        v->drop_index = -1;
+        v->drag_pending = FALSE;
+        set_hover(v, -1);
+    }
     v->cancel = g_cancellable_new();
     if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_CONTROL) {
         if (v->place == XD_PLACE_COMPUTER)
@@ -1301,14 +1347,21 @@ static void start_loading(XdFolderView *v) {
     }
     g_file_enumerate_children_async(v->listed, ATTRIBUTES, G_FILE_QUERY_INFO_NONE,
                                     G_PRIORITY_DEFAULT, v->cancel, enumerate_ready, v);
-    layout_contents(v);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    if (fresh) {
+        layout_contents(v);
+        gtk_widget_queue_draw(GTK_WIDGET(v));
+    }
 }
 
 static gboolean reload_timeout(gpointer data) {
     XdFolderView *v = data;
     v->reload_source = 0;
-    xd_folder_view_reload(v);
+    /* Still listing (a big folder that keeps changing): restarting would
+     * never let it finish. List it again once this one is in. */
+    if (v->cancel != nullptr)
+        v->reload_again = TRUE;
+    else
+        xd_folder_view_reload(v);
     return G_SOURCE_REMOVE;
 }
 
@@ -1468,12 +1521,23 @@ static gboolean folder_view_button_release(GtkWidget *widget, GdkEventButton *ev
     return FALSE;
 }
 
+/* Redraws item i only (an index past the end draws nothing). */
+static void queue_draw_item(XdFolderView *v, int i) {
+    if (i < 0)
+        return;
+    GdkRectangle r = item_rect(v, i);
+    gtk_widget_queue_draw_area(GTK_WIDGET(v), r.x - ifloor(hval(v)), r.y - ifloor(vval(v)),
+                               r.width, r.height);
+}
+
 /* Single-click: underline the item under the pointer, with a hand. */
 static void set_hover(XdFolderView *v, int i) {
     if (i == v->hover)
         return;
+    /* Only the two labels change, not the whole folder. */
+    queue_draw_item(v, v->hover);
+    queue_draw_item(v, i);
     v->hover = i;
-    gtk_widget_queue_draw(GTK_WIDGET(v));
     GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(v));
     if (win == nullptr)
         return;
@@ -1910,6 +1974,7 @@ static void folder_view_finalize(GObject *obj) {
     XdFolderView *v = XD_FOLDER_VIEW(obj);
     g_ptr_array_unref(v->shown);
     g_ptr_array_unref(v->all);
+    g_ptr_array_unref(v->loading);
     g_clear_pointer(&v->more_listed, g_ptr_array_unref);
     clear_headings(v);
     g_array_unref(v->headings);
@@ -1965,6 +2030,7 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
 
 static void xd_folder_view_init(XdFolderView *v) {
     v->all = g_ptr_array_new_with_free_func(item_free);
+    v->loading = g_ptr_array_new_with_free_func(item_free);
     v->shown = g_ptr_array_new();
     v->rects = g_array_new(FALSE, TRUE, sizeof(GdkRectangle));
     v->headings = g_array_new(FALSE, TRUE, sizeof(heading));
@@ -2024,7 +2090,7 @@ void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
         gtk_adjustment_set_value(v->hadj, 0);
     if (v->vadj != nullptr)
         gtk_adjustment_set_value(v->vadj, 0);
-    start_loading(v);
+    start_loading(v, TRUE);
 }
 
 GFile *xd_folder_view_get_location(XdFolderView *v) { return v->dir; }
@@ -2032,25 +2098,9 @@ GFile *xd_folder_view_get_location(XdFolderView *v) { return v->dir; }
 void xd_folder_view_reload(XdFolderView *v) {
     if (v->dir == nullptr)
         return;
-    /* The selection survives (unless files are already waiting to be). */
-    if (v->keep == nullptr) {
-        v->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-        for (guint k = 0; k < v->shown->len; k++) {
-            item *it = g_ptr_array_index(v->shown, k);
-            if (it->selected)
-                g_hash_table_add(v->keep, g_file_get_uri(it->file));
-        }
-        item *f = item_at(v, v->focus);
-        v->keep_focus = f != nullptr ? g_file_get_uri(f->file) : nullptr;
-    }
-    double h = hval(v);
-    double y = vval(v);
-    start_loading(v);
-    /* Keep the scroll position across a live refresh. */
-    if (v->hadj != nullptr)
-        gtk_adjustment_set_value(v->hadj, h);
-    if (v->vadj != nullptr)
-        gtk_adjustment_set_value(v->vadj, y);
+    /* The old items stay until the new ones are in: no blank view, and
+     * the scroll position is kept. */
+    start_loading(v, FALSE);
 }
 
 void xd_folder_view_set_mode(XdFolderView *v, XdViewMode mode) {
