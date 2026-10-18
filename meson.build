@@ -145,6 +145,8 @@ if build_compositor
   wayland_server_dep = dependency('wayland-server', include_type: 'system')
   libdrm_dep = dependency('libdrm')
   libinput_dep = dependency('libinput', include_type: 'system')
+  # Damage regions for window capture (capture.c).
+  pixman_dep = dependency('pixman-1', include_type: 'system')
 else
   wlroots_dep = disabler()
   xcb_dep = disabler()
@@ -152,6 +154,7 @@ else
   wayland_server_dep = disabler()
   libdrm_dep = disabler()
   libinput_dep = disabler()
+  pixman_dep = disabler()
 endif
 wayland_client_dep = dependency('wayland-client', include_type: 'system')
 xkbcommon_dep = dependency('xkbcommon', include_type: 'system')
@@ -181,6 +184,12 @@ client_protocol_xml = {
   'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
   'ext-idle-notify-v1': wp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
   'ext-session-lock-v1': wp_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
+  'ext-foreign-toplevel-list-v1':
+    wp_dir / 'staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml',
+  'ext-image-capture-source-v1':
+    wp_dir / 'staging/ext-image-capture-source/ext-image-capture-source-v1.xml',
+  'ext-image-copy-capture-v1':
+    wp_dir / 'staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml',
   'wlr-output-management-unstable-v1': files('protocols/wlr-output-management-unstable-v1.xml'),
   'wlr-output-power-management-unstable-v1': files(
     'protocols/wlr-output-power-management-unstable-v1.xml',
@@ -272,6 +281,7 @@ compositor_src = files(
   'src/compositor/snap.c',
   'src/compositor/appicons.c',
   'src/compositor/arrange.c',
+  'src/compositor/capture.c',
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
   'src/compositor/xwayland.c',
@@ -313,6 +323,7 @@ compositor_deps = [
   xkbcommon_dep,
   libdrm_dep,
   libinput_dep,
+  pixman_dep,
 ]
 executable(
   'xd-compositor',
@@ -886,6 +897,7 @@ executable(
   'src/shell/taskmenu.c',
   'src/shell/recent.c',
   'src/shell/superbar.c',
+  'src/shell/thumbs.c',
   'src/shell/jumplist.c',
   'src/shell/sleep.c',
   'src/shell/account.c',

@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * Cascade and tile windows for the taskbar menu, and the window menu's
- * keyboard Move and Size, and the language indicator's keyboard layout
- * (xd-window-arranger-v1, a private protocol only the shell we started
- * can see).
+ * Cascade and tile windows for the taskbar menu, the window menu's
+ * keyboard Move and Size, the language indicator's keyboard layout, and
+ * Aero Peek and Windows 7's thumbnails (xd-window-arranger-v1, a private
+ * protocol only the shell we started can see).
  */
 #include <limits.h>
 #include <math.h>
@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 
 #include "../core/alloc.h"
 #include "server.h"
@@ -214,6 +215,23 @@ static void handle_set_keyboard_layout(struct wl_client *client, struct wl_resou
     xd_input_set_keyboard_layout(server_of(res), index);
 }
 
+/* Windows 7's taskbar thumbnails: which ext-foreign-toplevel-list handle
+ * is this window's, so the shell can capture it. */
+static void handle_identify(struct wl_client *client, struct wl_resource *res,
+                            struct wl_resource *toplevel) {
+    (void)client;
+    xd_view *v = view_for_handle(server_of(res), toplevel);
+    if (v != nullptr && v->ext_toplevel != nullptr && v->ext_toplevel->identifier != nullptr)
+        xd_window_arranger_v1_send_identifier(res, toplevel, v->ext_toplevel->identifier);
+}
+
+static void handle_peek_window(struct wl_client *client, struct wl_resource *res,
+                               struct wl_resource *toplevel) {
+    (void)client;
+    xd_server *server = server_of(res);
+    xd_view_peek_window(server, toplevel != nullptr ? view_for_handle(server, toplevel) : nullptr);
+}
+
 static void handle_arrange_marked(struct wl_client *client, struct wl_resource *res,
                                   uint32_t mode) {
     (void)client;
@@ -272,8 +290,10 @@ static void handle_destroy(struct wl_client *client, struct wl_resource *res) {
 static void resource_destroyed(struct wl_resource *res) {
     arranger_client *ac = wl_resource_get_user_data(res);
     xd_server *server = ac->server;
-    if (server->arranger_resource == res)
+    if (server->arranger_resource == res) {
         server->arranger_resource = nullptr;
+        xd_view_peek(server, false); /* a shell gone mid-peek leaves no glass behind */
+    }
     for (size_t c = 0; c < server->arranger_clients_n; c++) {
         if (server->arranger_clients[c] == ac) {
             server->arranger_clients[c] = server->arranger_clients[--server->arranger_clients_n];
@@ -367,6 +387,8 @@ static const struct xd_window_arranger_v1_interface arranger_impl = {
     .set_always_on_top = handle_set_always_on_top,
     .peek = handle_peek,
     .set_keyboard_layout = handle_set_keyboard_layout,
+    .identify = handle_identify,
+    .peek_window = handle_peek_window,
 };
 
 static void bind_arranger(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
@@ -417,21 +439,23 @@ static bool is_task_manager(pid_t pid) {
     return ok;
 }
 
-/* Only the shell we started and our Task Manager see the global. */
+/* Only the shell we started and our Task Manager see the global; window
+ * capture (capture.c), only the shell. */
 static bool global_filter(const struct wl_client *client, const struct wl_global *global,
                           void *data) {
     xd_server *server = data;
-    if (global != server->arranger)
+    bool capture = xd_capture_global_private(server, global);
+    if (global != server->arranger && !capture)
         return true;
     pid_t pid = 0;
     wl_client_get_credentials((struct wl_client *)(uintptr_t)client, &pid, nullptr, nullptr);
     if (server->shell_pid > 0 && pid == server->shell_pid)
         return true;
-    return pid > 0 && is_task_manager(pid);
+    return !capture && pid > 0 && is_task_manager(pid);
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 7,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 8,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

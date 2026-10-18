@@ -670,6 +670,175 @@ static void aero_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
     };
 }
 
+/* ---- taskbar thumbnails and jump lists ------------------------------------------------ */
+
+/* Drawn by the shell's Aero taskbar alone, so not through the style
+ * table. Colours are from memory of Windows 7 with the default "Sky"
+ * colourisation. */
+
+void xd_theme_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    double rad = xd_tpx(t, 6);
+    cairo_save(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    xd_path_rounded(cr, r.x, r.y, r.w, r.h, rad, rad, rad, rad);
+    cairo_clip(cr);
+    /* The taskbar's glass, a little lighter, with its sheen. */
+    if (t->glass)
+        cairo_set_source_rgba(cr, 0.12, 0.22, 0.34, 0.66);
+    else
+        cairo_set_source_rgb(cr, 0.20, 0.32, 0.47);
+    cairo_paint(cr);
+    cairo_pattern_t *p = cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
+    cairo_pattern_add_color_stop_rgba(p, 0, 1, 1, 1, 0.22);
+    cairo_pattern_add_color_stop_rgba(p, 0.45, 1, 1, 1, 0.06);
+    cairo_pattern_add_color_stop_rgba(p, 1, 1, 1, 1, 0.02);
+    cairo_set_source(cr, p);
+    cairo_paint(cr);
+    cairo_pattern_destroy(p);
+    cairo_restore(cr);
+    cairo_set_line_width(cr, 1);
+    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.6);
+    cairo_stroke(cr);
+    xd_path_rounded(cr, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad - 1, rad - 1, rad - 1,
+                    rad - 1);
+    cairo_set_source_rgba(cr, 1, 1, 1, 0.35);
+    cairo_stroke(cr);
+}
+
+void xd_theme_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    bool hot = state & XD_STATE_HOT, pressed = state & XD_STATE_PRESSED;
+    if (!hot && !pressed)
+        return;
+    double rad = xd_tpx(t, 3);
+    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
+    double lit = pressed ? 0.7 : 1.0;
+    gloss(cr, r, (xd_rgba){1, 1, 1, 0.34 * lit}, (xd_rgba){1, 1, 1, 0.18 * lit},
+          (xd_rgba){1, 1, 1, 0.10 * lit}, (xd_rgba){1, 1, 1, 0.20 * lit});
+    cairo_new_path(cr);
+    app_button_edges(t, cr, r, 0.5);
+}
+
+void xd_theme_draw_thumb_title(const xd_theme *t, cairo_t *cr, xd_rect r, const char *title) {
+    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_START);
+    st.ellipsize = true;
+    st.shadow = true;
+    st.shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.8);
+    xd_draw_text(cr, r, title != nullptr ? title : "", &st);
+}
+
+void xd_theme_draw_thumb_close(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    bool hot = state & XD_STATE_HOT, pressed = state & XD_STATE_PRESSED;
+    double rad = xd_tpx(t, 3);
+    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
+    if (pressed)
+        gloss(cr, r, xd_rgba_hex(0xC8705E), xd_rgba_hex(0xA83A28), xd_rgba_hex(0x8C1C10),
+              xd_rgba_hex(0xB0402C));
+    else if (hot)
+        gloss(cr, r, xd_rgba_hex(0xF4B0A0), xd_rgba_hex(0xE8604A), xd_rgba_hex(0xD8301A),
+              xd_rgba_hex(0xF07A50));
+    else
+        gloss(cr, r, xd_rgba_hex(0xE8A898), xd_rgba_hex(0xD06C5C), xd_rgba_hex(0xC04232),
+              xd_rgba_hex(0xD06450));
+    cairo_set_line_width(cr, 1);
+    cairo_set_source_rgba(cr, 0.25, 0, 0, 0.7);
+    cairo_stroke(cr);
+    int gs = XD_MIN(r.w, r.h) - xd_tpx(t, 6);
+    xd_rect gr = {r.x + (r.w - gs) / 2, r.y + (r.h - gs) / 2, gs, gs};
+    xd_draw_glyph(t, cr, gr, XD_GLYPH_CLOSE, xd_rgba_hex(0xFFFFFF), 1.4);
+}
+
+void xd_theme_draw_jumplist_frame(const xd_theme *t, cairo_t *cr, xd_rect r, int band_y) {
+    xd_fill_rect(cr, r, xd_rgba_hex(0xFFFFFF));
+    if (band_y < r.y + r.h) {
+        xd_rect band = {r.x, band_y, r.w, r.y + r.h - band_y};
+        xd_fill_gradient(cr, band, xd_rgba_hex(0xEEF3FA), xd_rgba_hex(0xDFE8F5), false);
+        int px = xd_tpx(t, 1);
+        xd_fill_rect(cr, (xd_rect){r.x, band_y, r.w, px}, xd_rgba_hex(0xCCD9EA));
+        xd_fill_rect(cr, (xd_rect){r.x, band_y + px, r.w, px}, xd_rgba_hex(0xF8FAFD));
+    }
+    cairo_set_line_width(cr, xd_tpx(t, 1));
+    cairo_rectangle(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    xd_set_color(cr, xd_rgba_hex(0x8C8C8C));
+    cairo_stroke(cr);
+}
+
+void xd_theme_draw_jumplist_header(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label) {
+    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0x6D6D6D), XD_ALIGN_START);
+    st.ellipsize = true;
+    xd_draw_text(cr, r, label, &st);
+}
+
+/* Windows 7's hover: a rounded pale blue box with a blue edge. */
+static void hover_box(const xd_theme *t, cairo_t *cr, xd_rect r, bool strong) {
+    double rad = xd_tpx(t, 2);
+    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
+    cairo_pattern_t *p = cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
+    xd_rgba a = xd_rgba_hex(strong ? 0xD5E6FA : 0xF2F7FE);
+    xd_rgba b = xd_rgba_hex(strong ? 0xB8D6FB : 0xDDEBFC);
+    cairo_pattern_add_color_stop_rgb(p, 0, a.r, a.g, a.b);
+    cairo_pattern_add_color_stop_rgb(p, 1, b.r, b.g, b.b);
+    cairo_set_source(cr, p);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(p);
+    cairo_set_line_width(cr, 1);
+    xd_set_color(cr, xd_rgba_hex(strong ? 0x7DA2CE : 0x9DBBE1));
+    cairo_stroke(cr);
+}
+
+void xd_theme_draw_jumplist_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                 const char *label, int text_x) {
+    bool disabled = state & XD_STATE_DISABLED;
+    if ((state & XD_STATE_HOT) && !disabled)
+        hover_box(t, cr, r, false);
+    xd_text_style st =
+        xd_text(t, XD_FONT_MENU, xd_rgba_hex(disabled ? 0x6D6D6D : 0x1E1E1E), XD_ALIGN_START);
+    st.ellipsize = true;
+    xd_draw_text(cr, (xd_rect){r.x + text_x, r.y, r.w - text_x - xd_tpx(t, 4), r.h}, label, &st);
+}
+
+void xd_theme_draw_pushpin([[maybe_unused]] const xd_theme *t, cairo_t *cr, xd_rect r,
+                           bool pinned) {
+    double s = XD_MIN(r.w, r.h);
+    cairo_save(cr);
+    cairo_translate(cr, r.x + r.w / 2.0, r.y + r.h / 2.0);
+    /* Pushed in it stands upright, needle down; otherwise it lies on its
+     * side, needle to the left. */
+    if (!pinned)
+        cairo_rotate(cr, G_PI / 2);
+    cairo_scale(cr, s / 16.0, s / 16.0);
+    cairo_set_line_width(cr, 1.2);
+    xd_set_color(cr, xd_rgba_hex(0x5A5A5A));
+    cairo_move_to(cr, 0, 2);
+    cairo_line_to(cr, 0, 7.5);
+    cairo_stroke(cr);
+    /* Head, then the wider collar. */
+    cairo_rectangle(cr, -2.5, -6.5, 5, 5.5);
+    cairo_rectangle(cr, -4.5, -1.5, 9, 2.5);
+    cairo_pattern_t *p = cairo_pattern_create_linear(-4.5, 0, 4.5, 0);
+    cairo_pattern_add_color_stop_rgb(p, 0, 0.98, 0.98, 0.98);
+    cairo_pattern_add_color_stop_rgb(p, 1, 0.70, 0.74, 0.80);
+    cairo_set_source(cr, p);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(p);
+    xd_set_color(cr, xd_rgba_hex(0x4E5B6E));
+    cairo_set_line_width(cr, 1);
+    cairo_stroke(cr);
+    cairo_restore(cr);
+}
+
+void xd_theme_draw_jumplist_pin(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                bool pinned) {
+    if (state & (XD_STATE_HOT | XD_STATE_PRESSED))
+        hover_box(t, cr, r, true);
+    int g = xd_tpx(t, 16);
+    xd_theme_draw_pushpin(t, cr, (xd_rect){r.x + (r.w - g) / 2, r.y + (r.h - g) / 2, g, g},
+                          pinned);
+}
+
 const xd_style_ops xd_style_aero = {
     .name = "Aero",
     .frame_insets = aero_frame_insets,

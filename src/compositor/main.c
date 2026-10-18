@@ -247,6 +247,7 @@ static bool server_init(xd_server *server) {
     xd_input_init(server);
     xd_access_init(server);
     xd_arrange_init(server);
+    xd_capture_init(server);
     xd_protocols_init(server);
     xd_lock_init(server);
     xd_xwayland_init(server);

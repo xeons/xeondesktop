@@ -377,6 +377,8 @@ void xd_view_focus(xd_view *view) {
     if (prev != nullptr && prev != view)
         set_activated(prev, false);
     raise_family(view);
+    XD_FREE(&server->peek_order); /* a peek ending leaves it in front */
+    server->peek_order_n = 0;
     wl_list_remove(&view->link);
     wl_list_insert(&server->views, &view->link);
     set_activated(view, true);
@@ -662,6 +664,7 @@ static void ftl_create(xd_view *view) {
     XD_LISTEN(&view->ftl->events.request_close, view, ftl_close, handle_ftl_close);
     XD_LISTEN(&view->ftl->events.set_rectangle, view, ftl_set_rectangle,
               handle_ftl_set_rectangle);
+    xd_capture_view_shown(view);
 }
 
 static void ftl_destroy(xd_view *view) {
@@ -673,6 +676,7 @@ static void ftl_destroy(xd_view *view) {
     xd_unlisten(&view->ftl_close);
     xd_unlisten(&view->ftl_set_rectangle);
     view->has_button_box = false;
+    xd_capture_view_hidden(view);
     wlr_foreign_toplevel_handle_v1_destroy(view->ftl);
     view->ftl = nullptr;
     view->ftl_output = nullptr;
@@ -755,18 +759,78 @@ static void set_buffer_opacity(struct wlr_scene_buffer *buffer, [[maybe_unused]]
     wlr_scene_buffer_set_opacity(buffer, *(const float *)data);
 }
 
-void xd_view_peek(xd_server *server, bool on) {
-    if (server->peeking == on)
-        return;
-    server->peeking = on;
+/* Who shows in a peek: nobody (Show desktop), or the peeked window and
+ * its dialogs. */
+static bool peek_shows(const xd_server *server, const xd_view *v) {
+    const xd_view *only = server->peek_view;
+    return only != nullptr && (v == only || parent_of(v) == only);
+}
+
+static void apply_peek(xd_server *server) {
     /* Contents vanish; the frame stays as a faint outline, as in Windows 7. */
-    float content = on ? 0.0f : 1.0f;
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         if (!v->mapped)
             continue;
+        bool shown = !server->peeking || peek_shows(server, v);
+        float content = shown ? 1.0f : 0.0f;
         wlr_scene_node_for_each_buffer(&v->tree->node, set_buffer_opacity, &content);
-        wlr_scene_buffer_set_opacity(v->frame, on ? 0.25f : 1.0f);
+        wlr_scene_buffer_set_opacity(v->frame, shown ? 1.0f : 0.25f);
     }
+}
+
+void xd_view_peek(xd_server *server, bool on) {
+    if (server->peeking == on && server->peek_view == nullptr)
+        return;
+    xd_view_peek_window(server, nullptr);
+    server->peeking = on;
+    apply_peek(server);
+}
+
+/* The windows sharing the peeked window's layer, bottom first. */
+static void save_order(xd_server *server, xd_view *view) {
+    struct wlr_scene_tree *parent = view->tree->node.parent;
+    size_t n = (size_t)wl_list_length(&parent->children);
+    server->peek_order = xd_alloc_array(XD_MAX(n, 1), sizeof(*server->peek_order));
+    server->peek_order_n = 0;
+    struct wlr_scene_node *node;
+    wl_list_for_each(node, &parent->children, link) {
+        xd_view *v = xd_view_from_node(node);
+        if (v != nullptr && &v->tree->node == node && server->peek_order_n < n)
+            server->peek_order[server->peek_order_n++] = v;
+    }
+}
+
+/* Puts back the windows a peek brought forward, unless one was raised for
+ * real meanwhile (a thumbnail clicked). */
+static void restore_order(xd_server *server) {
+    for (size_t i = 0; i < server->peek_order_n; i++) {
+        xd_view *v = server->peek_order[i];
+        bool alive = false;
+        XD_LIST_FOR_EACH(w, &server->views, xd_view, link) {
+            alive = alive || w == v;
+        }
+        if (alive && v->mapped)
+            wlr_scene_node_raise_to_top(&v->tree->node);
+    }
+    XD_FREE(&server->peek_order);
+    server->peek_order_n = 0;
+}
+
+void xd_view_peek_window(xd_server *server, xd_view *view) {
+    if (view == server->peek_view)
+        return;
+    if (server->peek_view != nullptr) {
+        restore_order(server);
+        server->peek_view = nullptr;
+        server->peeking = false;
+    }
+    if (view != nullptr && view->mapped) {
+        server->peek_view = view;
+        server->peeking = true;
+        save_order(server, view);
+        raise_family(view);
+    }
+    apply_peek(server);
 }
 
 void xd_view_on_map(xd_view *view) {
@@ -813,6 +877,8 @@ void xd_view_on_unmap(xd_view *view) {
     view->pressed = XD_PART_NONE;
     wlr_scene_node_set_enabled(&view->tree->node, true);
     ftl_destroy(view);
+    if (server->peek_view == view)
+        xd_view_peek_window(server, nullptr);
 
     if (server->hover_view == view)
         server->hover_view = nullptr;
@@ -854,6 +920,7 @@ void xd_view_on_commit(xd_view *view) {
     apply_anchor(view);
     update_content_position(view);
     xd_frame_render(view, false);
+    xd_capture_view_committed(view);
 }
 
 static void handle_request_move(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -961,6 +1028,7 @@ void xd_view_title_changed(xd_view *view) {
         wlr_foreign_toplevel_handle_v1_set_title(view->ftl, shown_title(view));
     view->drawn.title_dirty = true;
     xd_frame_render(view, false);
+    xd_capture_view_changed(view);
 }
 
 static void handle_set_title(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -1046,6 +1114,7 @@ static void handle_set_app_id(struct wl_listener *listener, [[maybe_unused]] voi
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, set_app_id);
     if (view->ftl != nullptr && xd_view_app_id(view) != nullptr)
         wlr_foreign_toplevel_handle_v1_set_app_id(view->ftl, xd_view_app_id(view));
+    xd_capture_view_changed(view);
     xd_frame_render(view, false); /* its icon */
 }
 

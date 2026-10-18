@@ -99,6 +99,7 @@ static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *h)
     g_free(t->icon);
     g_free(t->app_name);
     g_free(t->desktop_id);
+    g_free(t->identifier);
     xd_taskbars_mark_dirty(t->shell);
     xd_free(t);
 }
@@ -128,6 +129,10 @@ static void handle_toplevel(void *data,
     t->id = ++shell->next_toplevel_id;
     wl_list_insert(shell->toplevels.prev, &t->link);
     zwlr_foreign_toplevel_handle_v1_add_listener(handle, &handle_listener, t);
+    /* Which window it is to the capture protocols, for its thumbnail. */
+    if (shell->arranger != nullptr && xd_window_arranger_v1_get_version(shell->arranger) >=
+                                          XD_WINDOW_ARRANGER_V1_IDENTIFY_SINCE_VERSION)
+        xd_window_arranger_v1_identify(shell->arranger, handle);
 }
 
 static void handle_finished(void *data, struct zwlr_foreign_toplevel_manager_v1 *manager) {

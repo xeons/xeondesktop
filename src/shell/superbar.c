@@ -10,9 +10,15 @@
  * that aren't pinned follow them in the order they started, or were
  * dragged into, for the session.
  *
- * Right-clicking a button opens its jump list: the program's recent files
- * (recently-used.xbel), its desktop actions as Tasks, then the program,
- * Pin/Unpin and Close window.
+ * Right-clicking a button opens its jump list, in Windows 7's own look:
+ * the files pinned to it (~/.config/xeondesktop/jumplist-pinned, a group
+ * per program), its recent files (recently-used.xbel), its desktop
+ * actions as Tasks, then the band with the program, Pin/Unpin and Close
+ * window. A hovered file has a pin button; dropping a file on a button
+ * pins it there, and dropping a program on the bar pins the program.
+ *
+ * Hovering a running program's button shows its windows' thumbnails
+ * (thumbs.c).
  */
 #include <gio/gdesktopappinfo.h>
 #include <glib/gstdio.h>
@@ -49,6 +55,10 @@ struct xd_superbar {
     GBookmarkFile *recent; /* recently-used.xbel as last read */
     gint64 recent_stamp;   /* its mtime (ns) and size then */
     gint64 recent_size;
+    GKeyFile *jl_pins;     /* jumplist-pinned: files pinned to programs' jump lists */
+    /* The open jump list's button, to build it again after a pin. */
+    char *jl_key;
+    uint64_t jl_window; /* a window's own button: its id; else 0 */
 };
 
 /* ---- programs and pins --------------------------------------------------------- */
@@ -62,7 +72,9 @@ static GDesktopAppInfo *info_for(xd_superbar *sb, const char *id) {
     gpointer v = nullptr;
     if (g_hash_table_lookup_extended(sb->infos, id, nullptr, &v))
         return v;
-    GDesktopAppInfo *info = g_desktop_app_info_new(id);
+    /* A launcher pinned from elsewhere (the desktop) is kept by its path. */
+    GDesktopAppInfo *info = g_path_is_absolute(id) ? g_desktop_app_info_new_from_filename(id)
+                                                   : g_desktop_app_info_new(id);
     g_hash_table_insert(sb->infos, g_strdup(id), info);
     return info;
 }
@@ -145,6 +157,24 @@ static void load_pins(xd_superbar *sb) {
     g_free(path);
 }
 
+static char *jl_pins_path(void) {
+    return g_build_filename(g_get_user_config_dir(), "xeondesktop", "jumplist-pinned", nullptr);
+}
+
+static void save_jl_pins(xd_superbar *sb) {
+    char *path = jl_pins_path();
+    char *dir = g_path_get_dirname(path);
+    GError *error = nullptr;
+    if (g_mkdir_with_parents(dir, 0700) != 0 ||
+        !g_key_file_save_to_file(sb->jl_pins, path, &error)) {
+        fprintf(stderr, "xd-shell: cannot save %s: %s\n", path,
+                error != nullptr ? error->message : g_strerror(errno));
+        g_clear_error(&error);
+    }
+    g_free(dir);
+    g_free(path);
+}
+
 static void save_pins(xd_superbar *sb) {
     sb->pins_changed = false;
     GString *text = g_string_new(nullptr);
@@ -170,6 +200,10 @@ void xd_superbar_init(xd_shell *shell) {
     sb->order = g_ptr_array_new_with_free_func(g_free);
     sb->infos = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, unref_info);
     sb->recent_stamp = -1;
+    sb->jl_pins = g_key_file_new();
+    char *jl = jl_pins_path();
+    g_key_file_load_from_file(sb->jl_pins, jl, G_KEY_FILE_KEEP_COMMENTS, nullptr);
+    g_free(jl);
     shell->superbar = sb;
     load_pins(sb);
 }
@@ -185,6 +219,8 @@ void xd_superbar_finish(xd_shell *shell) {
     g_hash_table_destroy(sb->infos);
     if (sb->recent != nullptr)
         g_bookmark_file_free(sb->recent);
+    g_key_file_free(sb->jl_pins);
+    g_free(sb->jl_key);
     xd_free(sb);
     shell->superbar = nullptr;
 }
@@ -243,6 +279,7 @@ typedef struct program {
     bool pinned;
     GPtrArray *windows; /* xd_toplevel *, in the order they opened */
     char *icon;         /* the desktop file's Icon (g_free) */
+    bool combined;      /* "when full": one button for its windows */
 } program;
 
 typedef struct programs {
@@ -364,13 +401,13 @@ typedef struct item {
     xd_rect r;
 } item;
 
-static size_t make_items(const programs *ps, item *items, xd_taskbar_buttons mode, bool combine) {
+static size_t make_items(const programs *ps, item *items, xd_taskbar_buttons mode) {
     size_t n = 0;
     for (size_t i = 0; i < ps->count; i++) {
         const program *p = &ps->items[i];
         if (mode == XD_BUTTONS_ALWAYS_COMBINE || p->windows->len == 0) {
             items[n++] = (item){.prog = i};
-        } else if (combine) {
+        } else if (p->combined) {
             items[n++] = (item){.prog = i, .labelled = true};
         } else {
             for (guint k = 0; k < p->windows->len; k++)
@@ -568,15 +605,35 @@ void xd_superbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
     int th = row_h - 2 * xd_tpx(t, 1);
     size_t fits = (size_t)XD_MAX(1, (band.h + gap) / (th + gap));
 
-    bool combine = mode == XD_BUTTONS_ALWAYS_COMBINE;
-    size_t n = make_items(&ps, items, mode, combine);
+    size_t n = make_items(&ps, items, mode);
     int shared = size_items(items, n, t, band.w, rows, side);
     size_t pages = flow(items, n, t, band, band.w, rows, row_h, side, fits);
-    if (mode == XD_BUTTONS_WHEN_FULL &&
-        (pages > 1 || (!side && shared < xd_tpx(t, LABEL_COMBINE_W)))) {
-        n = make_items(&ps, items, mode, true);
-        size_items(items, n, t, band.w, rows, side);
-        pages = flow(items, n, t, band, band.w, rows, row_h, side, fits);
+    /* "Combine when taskbar is full": programs are combined one at a time,
+     * the least recently used first, until the buttons fit. */
+    if (mode == XD_BUTTONS_WHEN_FULL) {
+        size_t *wins = xd_alloc_array(XD_MAX(ps.count, 1), sizeof(*wins));
+        uint64_t *used = xd_alloc_array(XD_MAX(ps.count, 1), sizeof(*used));
+        bool *done = xd_alloc_array(XD_MAX(ps.count, 1), sizeof(*done));
+        for (size_t i = 0; i < ps.count; i++) {
+            wins[i] = ps.items[i].windows->len;
+            used[i] = 0;
+            for (guint k = 0; k < ps.items[i].windows->len; k++)
+                used[i] = XD_MAX(used[i], ((xd_toplevel *)g_ptr_array_index(ps.items[i].windows,
+                                                                            k))->active_seq);
+            done[i] = false;
+        }
+        while (pages > 1 || (!side && shared < xd_tpx(t, LABEL_COMBINE_W))) {
+            size_t next = xd_jumplist_combine_next(wins, used, done, ps.count);
+            if (next == SIZE_MAX)
+                break;
+            done[next] = ps.items[next].combined = true;
+            n = make_items(&ps, items, mode);
+            shared = size_items(items, n, t, band.w, rows, side);
+            pages = flow(items, n, t, band, band.w, rows, row_h, side, fits);
+        }
+        xd_free(wins);
+        xd_free(used);
+        xd_free(done);
     }
     int avail = band.w;
     if (pages > 1) {
@@ -644,6 +701,7 @@ void xd_superbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
     cairo_restore(cr);
     xd_free(items);
     programs_free(&ps);
+    xd_thumbs_refresh(shell);
 }
 
 /* ---- input ----------------------------------------------------------------------- */
@@ -672,6 +730,7 @@ void xd_superbar_click(xd_taskbar *bar, int hit, uint32_t button) {
     xd_shell *shell = bar->shell;
     if (!xd_superbar_is_button(bar, hit))
         return;
+    xd_thumbs_close(shell);
     const xd_bar_button *b = &bar->bar_buttons[hit];
     /* The middle button starts another one, as Shift+click does. */
     if (button == BTN_MIDDLE) {
@@ -694,8 +753,8 @@ void xd_superbar_click(xd_taskbar *bar, int hit, uint32_t button) {
         xd_toplevel_click(wins[0]);
     } else {
         /* Several windows: the one used last, then each in turn while one
-         * of them is active (Windows 7's Ctrl+click; without thumbnails a
-         * plain click does it). */
+         * of them is active (Windows 7's Ctrl+click; the thumbnails show
+         * them all to pick from). */
         size_t active = SIZE_MAX, last = 0;
         for (size_t i = 0; i < n; i++) {
             if (window_lit(wins[i]))
@@ -712,6 +771,8 @@ char *xd_superbar_tooltip(xd_taskbar *bar, int hit) {
         return nullptr;
     const xd_bar_button *b = &bar->bar_buttons[hit];
     const xd_toplevel *tl = bar->task_views[hit];
+    if (xd_thumbs_cover(bar->shell, b->windows))
+        return nullptr; /* its thumbnails say it */
     if (b->windows == 1 && tl != nullptr)
         return xd_str_dup_cstr(xd_str_from_cstr(window_title(tl)));
     if (is_desktop_key(b->key)) {
@@ -748,6 +809,7 @@ bool xd_superbar_drag(xd_taskbar *bar, double x, double y) {
         if (fabs(x - bar->press_x) < DRAG_SLOP && fabs(y - bar->press_y) < DRAG_SLOP)
             return false;
         bar->drag_key = g_strdup(bar->bar_buttons[bar->pressed].key);
+        xd_thumbs_close(shell);
         xd_tooltip_hide(shell);
         xd_tooltip_disarm(shell);
         bar->dirty = true;
@@ -823,6 +885,40 @@ static void act_task(xd_shell *shell, void *data) {
 
 static void act_launch(xd_shell *shell, void *data) { launch(shell, ((const jump_ref *)data)->key); }
 
+static xd_menu_model *taskbar_jump_list(xd_shell *shell, xd_menu_tree *tree, const char *key,
+                                        uint64_t window_id);
+
+/* A file pinned to or unpinned from the open jump list: it moves between
+ * Pinned and Recent, and the list stays open. */
+static void act_pin_item(xd_shell *shell, void *data) {
+    const jump_ref *r = data;
+    xd_superbar *sb = shell->superbar;
+    if (sb == nullptr || r->arg == nullptr)
+        return;
+    bool pinned = false;
+    char **list = xd_jumplist_pinned(sb->jl_pins, r->key);
+    for (char **u = list; *u != nullptr && !pinned; u++)
+        pinned = strcmp(*u, r->arg) == 0;
+    g_strfreev(list);
+    if (xd_jumplist_set_pinned(sb->jl_pins, r->key, r->arg, !pinned))
+        save_jl_pins(sb);
+    xd_menu *menu = shell->start_menu;
+    if (menu == nullptr || !shell->context_menu || sb->jl_key == nullptr)
+        return;
+    xd_menu_tree tree;
+    xd_menu_tree_init(&tree);
+    xd_menu_model *m = taskbar_jump_list(shell, &tree, sb->jl_key, sb->jl_window);
+    xd_menu_replace_model(menu, m);
+    xd_menu_tree_free(&shell->context_tree); /* `r` with it */
+    shell->context_tree = tree;
+}
+
+void xd_superbar_pin_file(xd_shell *shell, const char *desktop_id, const char *uri) {
+    xd_superbar *sb = shell->superbar;
+    if (sb != nullptr && xd_jumplist_set_pinned(sb->jl_pins, desktop_id, uri, true))
+        save_jl_pins(sb);
+}
+
 static void act_pin(xd_shell *shell, void *data) {
     xd_superbar_set_pinned(shell, ((const jump_ref *)data)->key, true);
 }
@@ -875,28 +971,42 @@ static const char *file_icon(xd_menu_tree *tree, const char *path) {
     return out;
 }
 
-/* Recent and Tasks, as both jump lists start. */
+/* One file of a jump list, opening in the program; with its pin button. */
+static void file_item(xd_menu_tree *tree, xd_menu_model *m, const char *key, const char *uri,
+                      bool pinned) {
+    char *path = g_filename_from_uri(uri, nullptr, nullptr);
+    if (path == nullptr)
+        return;
+    char *label = g_filename_display_basename(path);
+    xd_menu_item *it = action(tree, m, label, nullptr, act_open_recent, ref(tree, key, uri));
+    it->icon = file_icon(tree, path);
+    it->fallback_icon = "text-x-generic";
+    it->pin = act_pin_item;
+    it->pinned = pinned;
+    g_free(label);
+    g_free(path);
+}
+
+/* Pinned, Recent and Tasks, as both jump lists start. */
 static void jump_items(xd_shell *shell, xd_menu_tree *tree, xd_menu_model *m, const char *key) {
     xd_superbar *sb = shell->superbar;
     GDesktopAppInfo *info = sb != nullptr && is_desktop_key(key) ? info_for(sb, key) : nullptr;
     if (info == nullptr)
         return;
+    char **pinned = xd_jumplist_pinned(sb->jl_pins, key);
+    if (pinned[0] != nullptr)
+        xd_menu_add(tree, m, XD_MENU_HEADER, "Pinned", nullptr);
+    for (char **u = pinned; *u != nullptr; u++)
+        file_item(tree, m, key, *u, true);
     char **uris = xd_jumplist_recent(recent_file(sb), key,
                                      g_app_info_get_executable(G_APP_INFO(info)), RECENT_MAX);
+    xd_jumplist_drop_pinned(uris, pinned);
     if (uris[0] != nullptr)
         xd_menu_add(tree, m, XD_MENU_HEADER, "Recent", nullptr);
-    for (char **u = uris; *u != nullptr; u++) {
-        char *path = g_filename_from_uri(*u, nullptr, nullptr);
-        if (path == nullptr)
-            continue;
-        char *label = g_filename_display_basename(path);
-        xd_menu_item *it = action(tree, m, label, nullptr, act_open_recent, ref(tree, key, *u));
-        it->icon = file_icon(tree, path);
-        it->fallback_icon = "text-x-generic";
-        g_free(label);
-        g_free(path);
-    }
+    for (char **u = uris; *u != nullptr; u++)
+        file_item(tree, m, key, *u, false);
     g_strfreev(uris);
+    g_strfreev(pinned);
     const char *const *actions = g_desktop_app_info_list_actions(info);
     if (actions != nullptr && actions[0] != nullptr)
         xd_menu_add(tree, m, XD_MENU_HEADER, "Tasks", nullptr);
@@ -927,26 +1037,37 @@ xd_menu_model *xd_jumplist_model(xd_shell *shell, xd_menu_tree *tree, const char
     return m;
 }
 
-/* The taskbar's: Recent, Tasks, then the program, Pin/Unpin and Close. */
-static xd_menu_model *taskbar_jump_list(xd_taskbar *bar, xd_menu_tree *tree, int hit) {
-    xd_shell *shell = bar->shell;
-    const xd_bar_button *b = &bar->bar_buttons[hit];
-    xd_menu_model *m = xd_jumplist_model(shell, tree, b->key);
-    if (m->count > 0)
-        xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+/* The taskbar's, in Windows 7's look: Pinned, Recent, Tasks, then the
+ * band with the program, Pin/Unpin and Close. `window_id`: a window's own
+ * (labelled) button. */
+static xd_menu_model *taskbar_jump_list(xd_shell *shell, xd_menu_tree *tree, const char *key,
+                                        uint64_t window_id) {
+    xd_menu_model *m = xd_jumplist_model(shell, tree, key);
+    m->jumplist = true;
+    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr); /* the band */
     GDesktopAppInfo *info =
-        is_desktop_key(b->key) && shell->superbar != nullptr ? info_for(shell->superbar, b->key)
-                                                              : nullptr;
-    const xd_toplevel *tl = bar->task_views[hit];
-    jump_ref *r = ref(tree, b->key, nullptr);
+        is_desktop_key(key) && shell->superbar != nullptr ? info_for(shell->superbar, key)
+                                                           : nullptr;
+    const xd_toplevel *tl = nullptr;
+    XD_LIST_FOR_EACH(w, &shell->toplevels, xd_toplevel, link) {
+        if ((window_id != 0 && w->id == window_id) || (window_id == 0 && tl == nullptr &&
+                                                       window_is(w, key)))
+            tl = w;
+    }
+    jump_ref *r = ref(tree, key, nullptr);
     if (info != nullptr) {
         char *icon = g_desktop_app_info_get_string(info, "Icon");
-        action(tree, m, g_app_info_get_name(G_APP_INFO(info)), icon, act_launch, r)
-            ->fallback_icon = "application-x-executable";
+        xd_menu_item *it =
+            action(tree, m, g_app_info_get_name(G_APP_INFO(info)), icon, act_launch, r);
+        it->fallback_icon = "application-x-executable";
+        it->band = true;
         g_free(icon);
-        bool pinned = xd_superbar_pinned(shell, b->key);
-        action(tree, m, pinned ? "Unpin this program from taskbar" : "Pin this program to taskbar",
-               nullptr, pinned ? act_unpin : act_pin, r);
+        bool pinned = xd_superbar_pinned(shell, key);
+        it = action(tree, m,
+                    pinned ? "Unpin this program from taskbar" : "Pin this program to taskbar",
+                    nullptr, pinned ? act_unpin : act_pin, r);
+        it->band = true;
+        it->pushpin = pinned ? 2 : 1;
     } else if (tl != nullptr) {
         /* Not from an installed program: nothing to start or pin. */
         xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION,
@@ -954,25 +1075,28 @@ static xd_menu_model *taskbar_jump_list(xd_taskbar *bar, xd_menu_tree *tree, int
                                        tl->icon);
         it->fallback_icon = "application-x-executable";
         it->disabled = true;
+        it->band = true;
     }
     size_t windows = 0;
     XD_LIST_FOR_EACH(w, &shell->toplevels, xd_toplevel, link) {
-        if (window_is(w, b->key))
+        if (window_is(w, key))
             windows++;
     }
     xd_menu_item *close = nullptr;
-    if (b->window != nullptr) {
+    if (window_id != 0 && tl != nullptr) {
         /* A window's own button (with labels): that window alone, by the
          * id that is never reused. */
-        close = action(tree, m, "Close window", nullptr, act_close_one,
-                       ref(tree, b->key, nullptr));
-        ((jump_ref *)close->action_data)->window = b->window->id;
+        close = action(tree, m, "Close window", nullptr, act_close_one, ref(tree, key, nullptr));
+        ((jump_ref *)close->action_data)->window = window_id;
     } else if (windows > 0) {
         close = action(tree, m, windows > 1 ? "Close all windows" : "Close window", nullptr,
                        act_close_all, r);
     }
-    if (close != nullptr)
-        close->glyph = XD_MENU_GLYPH_CLOSE;
+    if (close != nullptr) {
+        close->icon = "window-close";
+        close->fallback_icon = "process-stop";
+        close->band = true;
+    }
     return m;
 }
 
@@ -981,9 +1105,16 @@ void xd_superbar_jump_list(xd_taskbar *bar, int hit, uint32_t serial) {
     if (!xd_superbar_is_button(bar, hit))
         return;
     xd_menu_close_all(shell);
+    xd_thumbs_close(shell);
     xd_menu_tree_free(&shell->context_tree);
     xd_menu_tree_init(&shell->context_tree);
-    xd_menu_model *model = taskbar_jump_list(bar, &shell->context_tree, hit);
+    const xd_bar_button *b = &bar->bar_buttons[hit];
+    xd_superbar *sb = shell->superbar;
+    g_free(sb->jl_key);
+    sb->jl_key = g_strdup(b->key);
+    sb->jl_window = b->window != nullptr ? b->window->id : 0;
+    xd_menu_model *model = taskbar_jump_list(shell, &shell->context_tree, sb->jl_key,
+                                             sb->jl_window);
     /* Above the button (device px -> surface-local logical). */
     xd_rect r = bar->task_rects[hit];
     xd_rect anchor = {(int)(r.x / bar->scale), (int)(r.y / bar->scale), (int)(r.w / bar->scale),
@@ -993,4 +1124,91 @@ void xd_superbar_jump_list(xd_taskbar *bar, int hit, uint32_t serial) {
     xd_menu_open_root_bar(shell, model, bar, anchor, serial);
     shell->start_bar = bar;
     bar->dirty = true;
+}
+
+/* ---- for thumbnails and drops ------------------------------------------------------ */
+
+size_t xd_superbar_windows(xd_shell *shell, const char *key, uint64_t window_id,
+                           xd_toplevel **out, size_t cap) {
+    size_t n = 0;
+    XD_LIST_FOR_EACH(tl, &shell->toplevels, xd_toplevel, link) {
+        bool mine = window_id != 0 ? tl->id == window_id : window_is(tl, key);
+        if (mine && n < cap)
+            out[n++] = tl;
+    }
+    return n;
+}
+
+const char *xd_superbar_key(const xd_taskbar *bar, int hit, uint64_t *window_id) {
+    if (!xd_superbar_is_button(bar, hit))
+        return nullptr;
+    const xd_bar_button *b = &bar->bar_buttons[hit];
+    if (window_id != nullptr)
+        *window_id = b->window != nullptr ? b->window->id : 0;
+    return b->key;
+}
+
+/* A launcher's desktop id: its file name when a launcher by that name is
+ * installed (a copy on the desktop is that program, and its windows group
+ * with its button), else its path. nullptr: not a launcher. */
+static char *launcher_id(xd_superbar *sb, const char *path) {
+    if (!g_str_has_suffix(path, ".desktop"))
+        return nullptr;
+    GDesktopAppInfo *own = g_desktop_app_info_new_from_filename(path);
+    if (own == nullptr)
+        return nullptr;
+    g_object_unref(own);
+    char *base = g_path_get_basename(path);
+    if (info_for(sb, base) != nullptr)
+        return base;
+    g_free(base);
+    return g_strdup(path);
+}
+
+void xd_superbar_dropped(xd_shell *shell, const char *key, char **uris) {
+    xd_superbar *sb = shell->superbar;
+    if (sb == nullptr)
+        return;
+    bool changed = false;
+    for (char **u = uris; *u != nullptr; u++) {
+        char *path = g_filename_from_uri(*u, nullptr, nullptr);
+        if (path == nullptr)
+            continue;
+        char *id = launcher_id(sb, path);
+        if (id != nullptr) {
+            /* A program: pinned to the taskbar. */
+            if (!pin_index(sb, id, nullptr)) {
+                g_ptr_array_add(sb->pins, g_strdup(id));
+                changed = true;
+            }
+        } else if (key != nullptr && is_desktop_key(key) && info_for(sb, key) != nullptr) {
+            /* A file on a program's button: pinned to its jump list. */
+            xd_superbar_pin_file(shell, key, *u);
+        } else {
+            /* Elsewhere on the bar: to the jump list of the program that
+             * opens it, which is pinned too, as Windows 7 does. */
+            char *type = g_content_type_guess(path, nullptr, 0, nullptr);
+            GAppInfo *app = type != nullptr ? g_app_info_get_default_for_type(type, FALSE)
+                                            : nullptr;
+            const char *app_id = app != nullptr && G_IS_DESKTOP_APP_INFO(app)
+                                     ? g_app_info_get_id(app)
+                                     : nullptr;
+            if (app_id != nullptr) {
+                xd_superbar_pin_file(shell, app_id, *u);
+                if (!pin_index(sb, app_id, nullptr)) {
+                    g_ptr_array_add(sb->pins, g_strdup(app_id));
+                    changed = true;
+                }
+            }
+            if (app != nullptr)
+                g_object_unref(app);
+            g_free(type);
+        }
+        g_free(id);
+        g_free(path);
+    }
+    if (changed) {
+        save_pins(sb);
+        xd_taskbars_forget_layout(shell);
+    }
 }

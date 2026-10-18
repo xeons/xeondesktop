@@ -125,6 +125,10 @@ typedef struct xd_view {
     struct wlr_scene_shadow *shadow;
 #endif
     struct wlr_scene_tree *content; /* the client's surfaces */
+    /* capture.c: its ext-foreign-toplevel-list handle (while it has a
+     * taskbar button) and capture source (once the shell asked). */
+    struct wlr_ext_foreign_toplevel_handle_v1 *ext_toplevel;
+    struct xd_capture_source *capture;
 
     bool mapped;
     bool minimized;
@@ -361,6 +365,11 @@ struct xd_server {
     struct wlr_scene_tree *layer_drag;
     struct wl_list zooms; /* animate.c: minimize/maximize animations in flight */
     bool peeking;         /* Aero Peek */
+    xd_view *peek_view;   /* Aero Peek at this window alone (a thumbnail hovered) */
+    /* Windows in the stacking order before it came forward (bottom
+     * first), to put back; nullptr once a window was raised for real. */
+    xd_view **peek_order;
+    size_t peek_order_n;
     /* A virtual machine's GPU drawing with 3D (vmwgfx and the like): its
      * cursor plane takes our cursor and shows nothing, so the cursor is
      * drawn in software. */
@@ -410,6 +419,11 @@ struct xd_server {
     struct wl_resource *arranger_resource; /* the shell's binding, for events */
     struct arranger_client **arranger_clients; /* every binding (shell, Task Manager) */
     size_t arranger_clients_n, arranger_clients_cap;
+    /* capture.c: thumbnails for the shell's taskbar, shell only. */
+    struct wlr_ext_foreign_toplevel_list_v1 *ext_toplevels;
+    struct wl_global *capture_globals[3];
+    struct wl_listener capture_request;
+    struct wl_listener capture_sources_destroy;
     uint32_t shell_restarts;
     struct timespec shell_restart_window;
     /* The polkit agent too: without it, administrator actions just fail. */
@@ -540,6 +554,9 @@ void xd_arrange_forget_view(xd_server *server, xd_view *view);
 void xd_view_set_on_top(xd_view *view, bool on_top);
 /* Aero Peek: windows fade to their outline, and back. */
 void xd_view_peek(xd_server *server, bool on);
+/* Aero Peek at one window (a taskbar thumbnail): the others fade, it
+ * comes in front of them; nullptr ends it. */
+void xd_view_peek_window(xd_server *server, xd_view *view);
 /* Not Responding: a ping timed out (view.c pings; X11 windows that
  * support _NET_WM_PING too). The title the frame and taskbar show. */
 void xd_view_ping_timed_out(xd_view *view);
@@ -618,6 +635,17 @@ void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_
                      xd_server *glass_server);
 /* Forget an output that is going away. */
 void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output);
+
+/* capture.c: window pictures for the shell's taskbar thumbnails. */
+void xd_capture_init(xd_server *server);
+/* Whether `global` is one of capture's, offered to the shell alone. */
+bool xd_capture_global_private(const xd_server *server, const struct wl_global *global);
+/* The window got or lost its taskbar button, or its title or app id
+ * changed, or it committed. */
+void xd_capture_view_shown(xd_view *view);
+void xd_capture_view_hidden(xd_view *view);
+void xd_capture_view_changed(xd_view *view);
+void xd_capture_view_committed(xd_view *view);
 
 /* frame.c */
 void xd_frame_render(xd_view *view, bool force);

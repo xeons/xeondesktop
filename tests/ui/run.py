@@ -701,6 +701,71 @@ def aero_snap(s):
     s.check("maximized" not in s.window(title="Control Panel")["states"], "snapped, not maximized")
 
 
+@scenario(AERO_INI)
+def superbar_thumbnails(s):
+    """Aero: hovering a running program's button shows its windows'
+    thumbnails above it; hovering one peeks at its window, clicking one
+    brings it forward; the jump list pins a file and lists it under
+    Pinned."""
+    bar = (0, HEIGHT - 40, WIDTH, 40)
+    before = s.settle("taskbar")
+    for folder in ("Documents", "Pictures"):
+        s.launch("xd-files", os.path.join(s.home, folder))
+        s.wait_window(title=folder, state="activated")
+    after = s.settle("two-windows")
+    button = after.changed_box(before, bar)
+    s.check(button is not None, f"the Files button lights up ({button})")
+    cx, cy = button[0] + button[2] // 2, HEIGHT - 20
+
+    s.inject("move", cx, cy, "sleep", 1000)
+    shown = s.settle("thumbnails")
+    above = (0, HEIGHT - 240, WIDTH, 200)
+    popup = shown.changed_box(after, above)
+    s.check(popup is not None and popup[2] > 300,
+            f"two thumbnails show above the button ({popup})")  # fmt: skip
+
+    # The first is Documents (the older window): hovered, it peeks at it.
+    tx, ty = popup[0] + popup[2] // 4, popup[1] + popup[3] // 2
+    s.inject("move", cx, popup[1] + popup[3] - 4, "move", tx, ty, "sleep", 1500)
+    peek = s.settle("peek")
+    s.check(peek.differs(shown, (0, 0, WIDTH, popup[1] - 8)) > 0.05,
+            "hovering a thumbnail peeks at its window")  # fmt: skip
+    s.inject("click")
+    s.wait_window(title="Documents", state="activated")
+    s.log("ok: clicking the thumbnail brought Documents forward")
+
+    # The jump list: pin a recent file, which then shows under Pinned.
+    notes = "file://" + os.path.join(s.home, "Documents", "Notes.txt")
+    recent = os.path.join(s.data, "recently-used.xbel")
+    with open(recent, "w") as f:
+        f.write(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/'
+            'desktop-bookmarks" xmlns:mime="http://www.freedesktop.org/standards/'
+            'shared-mime-info">\n'
+            f'<bookmark href="{notes}" added="2026-01-01T00:00:00Z" '
+            'modified="2026-01-01T00:00:00Z" visited="2026-01-01T00:00:00Z"><info>'
+            '<metadata owner="http://freedesktop.org"><mime:mime-type type="text/plain"/>'
+            '<bookmark:applications><bookmark:application name="org.xeondesktop.Files" '
+            "exec=\"'xd-files %u'\" modified=\"2026-01-01T00:00:00Z\" count=\"1\"/>"
+            "</bookmark:applications></metadata></info></bookmark>\n</xbel>\n"
+        )
+    s.inject("move", WIDTH // 2, HEIGHT // 2, "sleep", 600)
+    closed = s.settle("thumbnails-gone")
+    s.inject("move", cx, cy, "sleep", 200, "click", "right", "sleep", 800)
+    menu = s.settle("jump-list")
+    jl = menu.changed_box(closed, above)
+    s.check(jl is not None, f"the jump list opened ({jl})")
+    # Its first item is the recent file; the pin button is at its right end.
+    item_y = jl[1] + 6 + 24 + 13
+    s.inject("move", jl[0] + 60, item_y, "move", jl[0] + jl[2] - 14, item_y, "sleep", 300,
+             "click", "sleep", 800)  # fmt: skip
+    pins = os.path.join(s.config, "jumplist-pinned")
+    s.wait(lambda: os.path.exists(pins) and notes in open(pins).read(), "the pin to be saved")
+    s.log("ok: the pin button pinned Notes.txt to the Files jump list")
+    s.inject("key", "Escape")
+
+
 @scenario()
 def file_manager(s):
     """Explorer: File > New > Folder, rename in place, Delete to the Recycle

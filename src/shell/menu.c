@@ -15,6 +15,22 @@
 enum { XD_MENU_DELAY_MS = 400, XD_MENU_MIN_W = 120 };
 static constexpr double XD_MENU_DRAG_PX = 5;
 
+/* Windows 7's jump lists, logical px (from memory): items with a 16px
+ * icon, grey headers, a band at the bottom; items stop short of the
+ * panel's edges, and a hovered one shows its pin button at the right. */
+enum {
+    JL_ITEM_H = 26,
+    JL_HEADER_H = 24,
+    JL_PAD = 6,     /* above the first item, between sections, around the band */
+    JL_INSET = 4,   /* an item's box from the panel's sides */
+    JL_ICON_X = 6,  /* the icon, from the item's left */
+    JL_TEXT_X = 30, /* the text */
+    JL_HEADER_X = 10,
+    JL_PIN_W = 26,
+    JL_MIN_W = 256,
+    JL_MAX_W = 360,
+};
+
 /* ---- models ------------------------------------------------------------------ */
 
 void xd_menu_tree_init(xd_menu_tree *tree) {
@@ -59,6 +75,43 @@ xd_menu_item *xd_menu_add(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind
 
 /* ---- layout -------------------------------------------------------------------- */
 
+/* A jump list: one column, sections under their headers, then the band
+ * (from the separator on). */
+static void layout_jumplist(xd_menu *menu, int text_w) {
+    const xd_menu_model *m = menu->model;
+    size_t n = XD_MAX(m->count, 1);
+    menu->item_y = xd_alloc_array(n, sizeof(int));
+    menu->item_h = xd_alloc_array(n, sizeof(int));
+    menu->item_xs = xd_alloc_array(n, sizeof(int));
+    menu->width = XD_CLAMP(JL_TEXT_X + text_w + JL_PIN_W + 2 * JL_INSET + 12, JL_MIN_W, JL_MAX_W);
+    menu->item_x = JL_INSET;
+    menu->item_w = menu->width - 2 * JL_INSET;
+    menu->band_y = -1;
+    int y = 1 + JL_PAD;
+    bool any = false;
+    for (size_t i = 0; i < m->count; i++) {
+        const xd_menu_item *it = &m->items[i];
+        int h = JL_ITEM_H;
+        if (it->kind == XD_MENU_SEPARATOR) {
+            menu->band_y = any ? y + JL_PAD : 0;
+            y = menu->band_y + JL_PAD;
+            h = 0;
+        } else if (it->kind == XD_MENU_HEADER) {
+            if (any)
+                y += JL_PAD;
+            h = JL_HEADER_H;
+        }
+        menu->item_xs[i] = JL_INSET;
+        menu->item_y[i] = y;
+        menu->item_h[i] = h;
+        y += h;
+        any = true;
+    }
+    menu->height = y + JL_PAD + 1;
+    if (menu->band_y < 0)
+        menu->band_y = menu->height;
+}
+
 /* Sizes the menu in logical units from a scale-1 theme. */
 static void layout(xd_menu *menu) {
     const xd_menu_model *m = menu->model;
@@ -82,6 +135,10 @@ static void layout(xd_menu *menu) {
     }
     cairo_destroy(cr);
     cairo_surface_destroy(scratch);
+    if (m->jumplist) {
+        layout_jumplist(menu, text_w);
+        return;
+    }
 
     int banner = m->banner_product != nullptr ? mm.banner_w : 0;
     int text_x = m->large ? mm.large_text_x : mm.text_x;
@@ -117,6 +174,19 @@ static void layout(xd_menu *menu) {
     }
     menu->width = mm.border * 2 + banner + item_w * columns;
     menu->height = XD_MAX(tallest, mm.border) + mm.border;
+}
+
+/* A jump list item's pin button (logical), at its right end. */
+static xd_rect pin_rect(const xd_menu *menu, int i) {
+    return (xd_rect){menu->item_xs[i] + menu->item_w - JL_PIN_W, menu->item_y[i], JL_PIN_W,
+                     menu->item_h[i]};
+}
+
+static bool on_pin(const xd_menu *menu, int i, double x, double y) {
+    if (!menu->model->jumplist || i < 0 || menu->model->items[i].pin == nullptr)
+        return false;
+    xd_rect r = pin_rect(menu, i);
+    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
 static int item_at(const xd_menu *menu, double x, double y) {
@@ -173,6 +243,45 @@ static void draw_icon(xd_shell *shell, cairo_t *cr, const xd_menu_item *it, xd_r
     cairo_restore(cr);
 }
 
+static void render_jumplist(xd_menu *menu, const xd_theme *t, cairo_t *cr, int dw, int dh) {
+    xd_shell *shell = menu->shell;
+    const xd_menu_model *m = menu->model;
+    double s = menu->scale;
+    xd_theme_draw_jumplist_frame(t, cr, (xd_rect){0, 0, dw, dh}, dev(menu->band_y, s));
+    int icon = xd_tpx(t, 16);
+    for (size_t i = 0; i < m->count; i++) {
+        const xd_menu_item *it = &m->items[i];
+        if (it->kind == XD_MENU_SEPARATOR)
+            continue;
+        xd_rect r = to_device(menu->item_xs[i], menu->item_y[i], menu->item_w, menu->item_h[i], s);
+        if (it->kind == XD_MENU_HEADER) {
+            int hx = dev(JL_HEADER_X - JL_INSET, s);
+            xd_theme_draw_jumplist_header(t, cr, (xd_rect){r.x + hx, r.y, r.w - hx, r.h},
+                                          it->label);
+            continue;
+        }
+        bool hot = menu->hot == (int)i;
+        uint8_t state = (uint8_t)((hot ? XD_STATE_HOT : 0) | (it->disabled ? XD_STATE_DISABLED : 0));
+        xd_rect text_r = r;
+        if (it->pin != nullptr)
+            text_r.w -= dev(JL_PIN_W, s);
+        xd_theme_draw_jumplist_item(t, cr, text_r, state, it->label, dev(JL_TEXT_X, s));
+        xd_rect ir = {r.x + dev(JL_ICON_X, s), r.y + (r.h - icon) / 2, icon, icon};
+        if (it->pushpin != 0)
+            xd_theme_draw_pushpin(t, cr, ir, it->pushpin == 2);
+        else
+            draw_icon(shell, cr, it, ir, it->disabled);
+        if (hot && it->pin != nullptr) {
+            xd_rect pr = pin_rect(menu, (int)i);
+            uint8_t ps = menu->hot_pin ? XD_STATE_HOT : 0;
+            if (menu->hot_pin && menu->pressed == (int)i)
+                ps |= XD_STATE_PRESSED;
+            xd_theme_draw_jumplist_pin(t, cr, to_device(pr.x, pr.y, pr.w, pr.h, s), ps,
+                                       it->pinned);
+        }
+    }
+}
+
 static void render(xd_menu *menu) {
     xd_shell *shell = menu->shell;
     double s = menu->scale;
@@ -189,6 +298,11 @@ static void render(xd_menu *menu) {
     xd_menu_metrics mm = xd_theme_menu_metrics(&t);
     const xd_menu_model *m = menu->model;
     cairo_t *cr = cairo_create(buf->surface);
+    if (m->jumplist) {
+        render_jumplist(menu, &t, cr, dw, dh);
+        cairo_destroy(cr);
+        goto commit;
+    }
     xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, dw, dh});
 
     if (m->banner_product != nullptr) {
@@ -231,6 +345,7 @@ static void render(xd_menu *menu) {
                   it->disabled);
     }
     cairo_destroy(cr);
+commit:
     cairo_surface_flush(buf->surface);
 
     wl_surface_attach(menu->surface, buf->buffer, 0, 0);
@@ -347,6 +462,8 @@ xd_menu *xd_menu_open_root_bar(xd_shell *shell, const xd_menu_model *model, xd_t
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
     xdg_positioner_set_size(pos, menu->width, menu->height);
     xd_taskbar_popup_position(bar, anchor, pos);
+    menu->bar = bar;
+    menu->anchor = anchor;
     menu->popup = xdg_surface_get_popup(menu->xdg_surface, nullptr, pos);
     xdg_positioner_destroy(pos);
     zwlr_layer_surface_v1_get_popup(bar->layer, menu->popup);
@@ -453,6 +570,28 @@ xd_menu *xd_menu_open_attached(xd_shell *shell, const xd_menu_model *model,
 }
 
 void xd_menu_destroy(xd_menu *menu) { menu_destroy(menu); }
+
+void xd_menu_replace_model(xd_menu *menu, const xd_menu_model *model) {
+    int old_w = menu->width, old_h = menu->height;
+    XD_FREE(&menu->item_y);
+    XD_FREE(&menu->item_h);
+    XD_FREE(&menu->item_xs);
+    menu->model = model;
+    menu->hot = -1;
+    menu->pressed = -1;
+    menu->hot_pin = false;
+    layout(menu);
+    menu->dirty = true;
+    xd_shell *shell = menu->shell;
+    if ((menu->width == old_w && menu->height == old_h) || menu->bar == nullptr ||
+        xdg_popup_get_version(menu->popup) < XDG_POPUP_REPOSITION_SINCE_VERSION)
+        return;
+    struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
+    xdg_positioner_set_size(pos, menu->width, menu->height);
+    xd_taskbar_popup_position(menu->bar, menu->anchor, pos);
+    xdg_popup_reposition(menu->popup, pos, 0);
+    xdg_positioner_destroy(pos);
+}
 
 /* Destroys `menu` and everything opened from it, topmost first as the
  * protocol requires. */
@@ -568,6 +707,11 @@ void xd_menu_pointer_motion(xd_menu *menu, double x, double y) {
         menu->parent->dirty = true;
     }
     set_hot(menu, item_at(menu, x, y));
+    bool pin = on_pin(menu, menu->hot, x, y);
+    if (pin != menu->hot_pin) {
+        menu->hot_pin = pin;
+        menu->dirty = true;
+    }
 }
 
 void xd_menu_pointer_leave(xd_menu *menu) {
@@ -700,6 +844,16 @@ void xd_menu_pointer_button(xd_menu *menu, uint32_t button, bool pressed) {
         menu->shell->start7 != nullptr) {
         if (!pressed && !it->disabled)
             open_context(menu, index);
+        return;
+    }
+    /* A jump list item's pin button: pinned or unpinned, and the list
+     * stays open, laid out again. */
+    if (menu->hot_pin && it->pin != nullptr && button == BTN_LEFT) {
+        menu->dirty = true;
+        if (!pressed && was_pressed == index) {
+            void (*fn)(xd_shell *, void *) = it->pin;
+            fn(menu->shell, it->action_data); /* may replace the model and `it` */
+        }
         return;
     }
     /* A click on a submenu with its own command (Windows 2000's Control

@@ -107,7 +107,13 @@ and xdg-shell, they use:
 - `wlr-data-control` and `ext-data-control` (clipboard managers and
   VirtualBox's shared clipboard);
 - `xd-window-arranger-v1`, our private protocol, offered only to the shell
-  the compositor started: Cascade/Tile Windows with Undo, Aero Peek;
+  the compositor started: Cascade/Tile Windows with Undo, Aero Peek (of
+  the desktop or one window), and which window each
+  `ext-foreign-toplevel-list` handle is;
+- `ext-image-copy-capture-v1` with `ext-foreign-toplevel-image-capture-source-v1`
+  and `ext-foreign-toplevel-list-v1`, also offered to the shell alone:
+  Windows 7's taskbar thumbnails, captured into shared memory at thumbnail
+  size;
 - `wlr-virtual-pointer` and `virtual-keyboard`, only with
   `--allow-virtual-input` (UI tests).
 

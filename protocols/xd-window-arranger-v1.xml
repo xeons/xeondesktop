@@ -9,11 +9,11 @@
     Windows menu's Tile and Cascade). The shell uses it for the taskbar
     menu's
     Cascade Windows, Tile Windows Horizontally/Vertically and their Undo,
-    for the window menu's Move and Size, and for the language indicator
-    (the keyboard layout).
+    for the window menu's Move and Size, for the language indicator (the
+    keyboard layout), and for Windows 7's taskbar thumbnails and Aero Peek.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="7">
+  <interface name="xd_window_arranger_v1" version="8">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -147,5 +147,36 @@
       </description>
       <arg name="index" type="uint"/>
     </event>
+
+    <request name="identify" since="8">
+      <description summary="ask for a window's ext-foreign-toplevel-list identifier">
+        The compositor answers with the identifier event if the window has
+        an ext_foreign_toplevel_handle_v1, so the shell can capture it
+        (ext-image-copy-capture-v1 through
+        ext-foreign-toplevel-image-capture-source-v1) for its taskbar
+        thumbnail. Those globals, like this one, are only offered to the
+        shell the compositor started.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+
+    <event name="identifier" since="8">
+      <description summary="a window's ext-foreign-toplevel-list identifier">
+        The answer to identify: the identifier of the window's
+        ext_foreign_toplevel_handle_v1.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="identifier" type="string"/>
+    </event>
+
+    <request name="peek_window" since="8">
+      <description summary="Aero Peek at one window">
+        A taskbar thumbnail hovered: every other window turns to its faint
+        outline, as peek does, and this one shows in front of them. Null
+        ends it. A minimized window isn't shown.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"
+           allow-null="true"/>
+    </request>
   </interface>
 </protocol>

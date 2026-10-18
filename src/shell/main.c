@@ -88,6 +88,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
     shell->pointer_start7 = xd_start7_owns(shell, surface);
     shell->pointer_flyout = xd_volume_flyout_owns(shell, surface);
     shell->pointer_desktop = xd_desktop_for_surface(shell, surface);
+    shell->pointer_thumbs = xd_thumbs_owns(shell, surface);
     shell->enter_serial = serial;
     shell->cursor = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
     if (shell->cursor_shape != nullptr)
@@ -109,6 +110,8 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
     }
     if (shell->pointer_desktop != nullptr)
         xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
+    if (shell->pointer_thumbs)
+        xd_thumbs_pointer_motion(shell, lx, ly);
 }
 
 static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -121,6 +124,9 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_menu_pointer_leave(shell->pointer_menu);
     if (shell->pointer_start7)
         xd_start7_pointer_leave(shell);
+    if (shell->pointer_thumbs)
+        xd_thumbs_pointer_leave(shell);
+    shell->pointer_thumbs = false;
     shell->pointer_bar = nullptr;
     shell->pointer_menu = nullptr;
     shell->pointer_start7 = false;
@@ -146,6 +152,8 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
     }
     if (shell->pointer_desktop != nullptr)
         xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
+    if (shell->pointer_thumbs)
+        xd_thumbs_pointer_motion(shell, lx, ly);
 }
 
 static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
@@ -170,7 +178,9 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
         shell->eat_release = false;
         return;
     }
-    if (shell->pointer_flyout)
+    if (shell->pointer_thumbs)
+        xd_thumbs_pointer_button(shell, button, pressed);
+    else if (shell->pointer_flyout)
         xd_volume_flyout_button(shell, button, pressed, shell->flyout_x, shell->flyout_y);
     else if (shell->pointer_menu != nullptr)
         xd_menu_pointer_button(shell->pointer_menu, button, pressed);
@@ -451,7 +461,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         shell->toplevel_manager =
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
-        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 7);
+        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 8);
         xd_taskmenu_bind(shell);
     } else if (xd_str_eq(iface, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
         xd_primary_bind(shell, reg, name, version);
@@ -477,6 +487,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     } else if (xd_str_eq(iface, xd_str_from_cstr(wp_cursor_shape_manager_v1_interface.name))) {
         shell->cursor_shape_manager =
             bind(reg, name, &wp_cursor_shape_manager_v1_interface, version, 1);
+    } else {
+        xd_thumbs_bind(shell, reg, name, interface, version);
     }
 }
 
@@ -818,6 +830,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         xd_menus_render_dirty(shell);
         xd_start7_render_dirty(shell);
         xd_tooltip_render_dirty(shell);
+        xd_thumbs_render_dirty(shell);
         xd_volume_flyout_render_dirty(shell);
         while (wl_display_prepare_read(d) != 0)
             wl_display_dispatch_pending(d);
@@ -966,6 +979,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "xd-shell: cannot connect to a Wayland compositor\n");
         return EXIT_FAILURE;
     }
+    xd_thumbs_init(&shell); /* binds its globals as they come */
     shell.registry = wl_display_get_registry(shell.display);
     wl_registry_add_listener(shell.registry, &registry_listener, &shell);
     wl_display_roundtrip(shell.display);
@@ -1061,6 +1075,7 @@ int main(int argc, char **argv) {
     xd_apps_free(&shell.apps);
     xd_apps_free(&shell.control_apps);
     xd_quicklaunch_finish(&shell);
+    xd_thumbs_finish(&shell);
     xd_superbar_finish(&shell);
     xd_free(shell.desktop_hidden);
     xd_icons_destroy(shell.icons);

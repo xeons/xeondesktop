@@ -158,6 +158,27 @@ typedef struct xd_app_button {
 } xd_app_button;
 void xd_theme_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                               const xd_app_button *b);
+/* Windows 7's taskbar thumbnails (Aero's taskbar only; device px): the
+ * glass panel above a button, one window's tile in it (lit when
+ * XD_STATE_HOT, deeper when _PRESSED), its title, and the red close
+ * button in a hovered tile's corner (state: _HOT, _PRESSED). */
+void xd_theme_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_theme_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_theme_draw_thumb_title(const xd_theme *t, cairo_t *cr, xd_rect r, const char *title);
+void xd_theme_draw_thumb_close(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+/* Windows 7's jump lists (Aero's taskbar; device px): a white panel with
+ * the bottom band from band_y down (its program, Pin and Close items),
+ * grey section headers, items (the caller draws the icon; state:
+ * XD_STATE_HOT, _DISABLED), and the pin button at a hovered item's right
+ * end (state: _HOT, _PRESSED; pinned: the item is pinned). */
+void xd_theme_draw_jumplist_frame(const xd_theme *t, cairo_t *cr, xd_rect r, int band_y);
+void xd_theme_draw_jumplist_header(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label);
+void xd_theme_draw_jumplist_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                 const char *label, int text_x);
+void xd_theme_draw_jumplist_pin(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                bool pinned);
+/* The pushpin alone (a band item's icon): upright when pinned. */
+void xd_theme_draw_pushpin(const xd_theme *t, cairo_t *cr, xd_rect r, bool pinned);
 /* Taskbar toolbar grip (the ridge you drag a toolbar by), vertical. */
 int xd_theme_toolbar_grip_width(const xd_theme *t);
 void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r);

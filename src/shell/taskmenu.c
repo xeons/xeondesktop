@@ -506,11 +506,18 @@ static void handle_keyboard_layout(void *data,
     xd_langbar_set_active(data, index);
 }
 
+static void handle_identifier(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *a,
+                              struct zwlr_foreign_toplevel_handle_v1 *toplevel,
+                              const char *identifier) {
+    xd_thumbs_identifier(data, toplevel, identifier);
+}
+
 static const struct xd_window_arranger_v1_listener arranger_listener = {
     .start_menu = handle_start_menu,
     .window_menu = handle_window_menu,
     .attention = handle_attention,
     .keyboard_layout = handle_keyboard_layout,
+    .identifier = handle_identifier,
 };
 
 void xd_taskmenu_bind(xd_shell *shell) {

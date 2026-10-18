@@ -5,6 +5,8 @@
  *   they land;
  * - a drag held over a task button brings that window forward, so the
  *   drop can go into it;
+ * - on Windows 7's taskbar (Aero), a file dropped on a program's button is
+ *   pinned to its jump list, and a program dropped on the bar is pinned;
  *
  * the desktop as a drop target (into the Desktop folder, or onto a folder
  * or the Recycle Bin under the pointer) and its icons as a drag source;
@@ -148,6 +150,20 @@ static int task_at(const xd_taskbar *bar, double lx) {
     return -1;
 }
 
+/* Aero: over Windows 7's buttons, or the bar's free space between the
+ * Start button and the notification area, a drop pins. */
+static bool pins_here(const xd_taskbar *bar, double lx, double ly) {
+    if (!bar->superbar)
+        return false;
+    if (task_at(bar, lx) >= 0)
+        return true;
+    int x = (int)(lx * bar->scale), y = (int)(ly * bar->scale);
+    xd_rect q = bar->quick_band;
+    bool on_quick = x >= q.x && x < q.x + q.w && y >= q.y && y < q.y + q.h;
+    return !on_quick && x >= bar->start_rect.x + bar->start_rect.w &&
+           (xd_rect_empty(bar->tray_rect) || x < bar->tray_rect.x);
+}
+
 static void track(xd_dnd *d) {
     if (d->desk != nullptr && d->offer != nullptr) {
         xd_drop_kind k = d->uris ? xd_deskicons_drag_over(d->shell, d->desk, d->x, d->y,
@@ -175,9 +191,9 @@ static void track(xd_dnd *d) {
         bar->drop_insert = insert;
         bar->dirty = true;
     }
-    if (insert >= 0) {
+    if (insert >= 0 || (d->uris && pins_here(bar, d->x, d->y))) {
         wl_data_offer_accept(d->offer, d->serial, URI_LIST);
-        /* A shortcut to it: the dragged file stays where it is. */
+        /* A shortcut to it, or a pin: the dragged file stays where it is. */
         wl_data_offer_set_actions(d->offer, WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,
                                   WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
     } else {
@@ -267,6 +283,54 @@ static gboolean read_drop(int fd, [[maybe_unused]] GIOCondition cond, gpointer d
     return G_SOURCE_REMOVE;
 }
 
+/* Files dropped to be pinned (Aero), and the button they were dropped on. */
+typedef struct pin_drop {
+    xd_shell *shell;
+    struct wl_data_offer *offer; /* ours until read */
+    int fd;
+    GString *text;
+    char *key; /* the program's, or nullptr */
+} pin_drop;
+
+static gboolean read_pin_drop(int fd, [[maybe_unused]] GIOCondition cond, gpointer data) {
+    pin_drop *pd = data;
+    char buf[4096];
+    ssize_t n = read(fd, buf, sizeof(buf));
+    if (n > 0)
+        g_string_append_len(pd->text, buf, n);
+    if ((n > 0 && pd->text->len < (1u << 20)) || (n < 0 && (errno == EINTR || errno == EAGAIN)))
+        return G_SOURCE_CONTINUE;
+    char **uris = n > 0 ? nullptr : g_uri_list_extract_uris(pd->text->str);
+    if (uris != nullptr && uris[0] != nullptr)
+        xd_superbar_dropped(pd->shell, pd->key, uris);
+    g_strfreev(uris);
+    finish_offer(pd->offer);
+    g_string_free(pd->text, TRUE);
+    g_free(pd->key);
+    close(pd->fd);
+    g_free(pd);
+    return G_SOURCE_REMOVE;
+}
+
+static void drop_to_pin(xd_dnd *d) {
+    xd_taskbar *bar = d->bar;
+    int fds[2];
+    if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0)
+        return;
+    wl_data_offer_receive(d->offer, URI_LIST, fds[1]);
+    close(fds[1]);
+    pin_drop *pd = g_new0(pin_drop, 1);
+    pd->shell = d->shell;
+    pd->offer = d->offer;
+    d->offer = nullptr; /* the read finishes it */
+    pd->fd = fds[0];
+    pd->text = g_string_new(nullptr);
+    const char *key = xd_superbar_key(bar, task_at(bar, d->x), nullptr);
+    pd->key = key != nullptr ? g_strdup(key) : nullptr;
+    g_unix_fd_add(fds[0], (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR), read_pin_drop, pd);
+    wl_display_flush(d->shell->display);
+}
+
 typedef struct desk_drop {
     xd_shell *shell;
     struct wl_data_offer *offer; /* ours until read */
@@ -336,7 +400,10 @@ static void device_drop(void *data, [[maybe_unused]] struct wl_data_device *dev)
     }
     xd_taskbar *bar = d->bar;
     int at = bar != nullptr ? bar->drop_insert : -1;
-    if (d->offer != nullptr && d->uris && at >= 0) {
+    if (d->offer != nullptr && d->uris && at < 0 && bar != nullptr &&
+        pins_here(bar, d->x, d->y)) {
+        drop_to_pin(d);
+    } else if (d->offer != nullptr && d->uris && at >= 0) {
         int fds[2];
         if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0) {
             wl_data_offer_receive(d->offer, URI_LIST, fds[1]);

@@ -31,6 +31,7 @@ typedef struct xd_langbar xd_langbar;
 typedef struct xd_account xd_account;
 typedef struct xd_shellbus xd_shellbus;
 typedef struct xd_superbar xd_superbar;
+typedef struct xd_thumbs xd_thumbs;
 
 typedef struct xd_early_output {
     struct wl_output *output;
@@ -48,6 +49,9 @@ typedef struct xd_toplevel {
     char *icon;     /* its application's Icon key, from app_id; may be nullptr */
     char *app_name; /* its application's name, for a group's button; may be nullptr */
     char *desktop_id; /* its application's desktop file id; may be nullptr */
+    /* Its ext-foreign-toplevel-list identifier (for its thumbnail), once
+     * the compositor told; nullptr until then. */
+    char *identifier;
     uint64_t active_seq; /* when it was last activated (xd_shell.active_seq) */
     bool activated;
     bool minimized;
@@ -237,6 +241,8 @@ struct xd_shell {
     uint64_t next_toplevel_id;
     uint64_t active_seq; /* counts window activations */
     xd_superbar *superbar; /* Windows 7's pinned programs */
+    xd_thumbs *thumbs;     /* Windows 7's taskbar thumbnails */
+    bool pointer_thumbs;   /* pointer is over the thumbnails */
     struct _GHashTable *own_commands; /* xd_shell_own_command's results */
 
     xd_taskbar *pointer_bar; /* taskbar under the pointer */
@@ -625,6 +631,44 @@ char *xd_superbar_tooltip(xd_taskbar *bar, int hit); /* xd_free */
 void xd_superbar_jump_list(xd_taskbar *bar, int hit, uint32_t serial);
 bool xd_superbar_pinned(xd_shell *shell, const char *desktop_id);
 void xd_superbar_set_pinned(xd_shell *shell, const char *desktop_id, bool pin);
+/* Pins a file (URI) to a program's jump list. */
+void xd_superbar_pin_file(xd_shell *shell, const char *desktop_id, const char *uri);
+/* Files dropped on the bar, on the button of program `key` (or nullptr):
+ * launchers are pinned to the taskbar, other files to the program's jump
+ * list (or to the jump list of the program that opens them, pinned too). */
+void xd_superbar_dropped(xd_shell *shell, const char *key, char **uris);
+/* Button `hit`'s program, and its window if it's a window's own; nullptr
+ * if `hit` isn't a program's button. */
+const char *xd_superbar_key(const xd_taskbar *bar, int hit, uint64_t *window_id);
+/* The windows behind a button: program `key`'s, or the one window. */
+size_t xd_superbar_windows(xd_shell *shell, const char *key, uint64_t window_id,
+                           xd_toplevel **out, size_t cap);
+
+/* thumbs.c: Windows 7's taskbar thumbnails (Aero's taskbar): hovering a
+ * running program's button shows its windows' live pictures, captured
+ * through ext-image-copy-capture-v1; hovering one peeks at its window. */
+void xd_thumbs_init(xd_shell *shell);
+void xd_thumbs_finish(xd_shell *shell);
+/* Binds the capture globals; false if `iface` isn't one of them. */
+bool xd_thumbs_bind(xd_shell *shell, struct wl_registry *reg, uint32_t name, const char *iface,
+                    uint32_t version);
+/* Thumbnails stand in for the tooltip of a button for `windows` windows. */
+bool xd_thumbs_cover(const xd_shell *shell, size_t windows);
+/* The pointer is over item `hit` (an XD_HIT_*) of an Aero taskbar. */
+void xd_thumbs_hover(xd_taskbar *bar, int hit);
+void xd_thumbs_close(xd_shell *shell);
+/* Windows came or went or changed: open thumbnails follow. */
+void xd_thumbs_refresh(xd_shell *shell);
+void xd_thumbs_bar_gone(xd_shell *shell, xd_taskbar *bar);
+bool xd_thumbs_owns(xd_shell *shell, struct wl_surface *surface);
+void xd_thumbs_pointer_motion(xd_shell *shell, double x, double y);
+void xd_thumbs_pointer_leave(xd_shell *shell);
+void xd_thumbs_pointer_button(xd_shell *shell, uint32_t button, bool pressed);
+void xd_thumbs_render_dirty(xd_shell *shell);
+/* The compositor told a window's identifier (xd-window-arranger-v1). */
+void xd_thumbs_identifier(xd_shell *shell, struct zwlr_foreign_toplevel_handle_v1 *handle,
+                          const char *identifier);
+
 /* A program's Recent and Tasks (the Start menu's jump list), and whether
  * it has any. */
 xd_menu_model *xd_jumplist_model(xd_shell *shell, xd_menu_tree *tree, const char *desktop_id);

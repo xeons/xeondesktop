@@ -3529,6 +3529,47 @@ static void test_superbar(void) {
     CHECK(xd_jumplist_move(items, 4, 0, 3));
     CHECK(items[0] == ids[3] && items[1] == ids[1] && items[2] == ids[2] && items[3] == ids[0]);
     CHECK(!xd_jumplist_move(items, 4, 1, 1) && !xd_jumplist_move(items, 4, 4, 0));
+
+    /* Files pinned to a jump list: in the order pinned, kept in the key
+     * file across a save and load, and left out of Recent. */
+    GKeyFile *kf = g_key_file_new();
+    char **none = xd_jumplist_pinned(kf, "gedit.desktop");
+    CHECK(none != nullptr && none[0] == nullptr);
+    g_strfreev(none);
+    CHECK(xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///a.txt", true));
+    CHECK(xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///b;c.txt", true));
+    CHECK(!xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///a.txt", true));
+    char *data = g_key_file_to_data(kf, nullptr, nullptr);
+    GKeyFile *again = g_key_file_new();
+    CHECK(g_key_file_load_from_data(again, data, (gsize)-1, G_KEY_FILE_NONE, nullptr));
+    char **pinned = xd_jumplist_pinned(again, "gedit.desktop");
+    CHECK(g_strv_length(pinned) == 2 && strcmp(pinned[0], "file:///a.txt") == 0 &&
+          strcmp(pinned[1], "file:///b;c.txt") == 0);
+    char **recent_uris = g_strsplit("file:///b;c.txt|file:///d.txt|file:///a.txt", "|", -1);
+    xd_jumplist_drop_pinned(recent_uris, pinned);
+    CHECK(g_strv_length(recent_uris) == 1 && strcmp(recent_uris[0], "file:///d.txt") == 0);
+    g_strfreev(recent_uris);
+    g_strfreev(pinned);
+    g_key_file_free(again);
+    g_free(data);
+    CHECK(xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///a.txt", false));
+    CHECK(xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///b;c.txt", false));
+    CHECK(!g_key_file_has_group(kf, "gedit.desktop"));
+    CHECK(!xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///a.txt", false));
+    g_key_file_free(kf);
+
+    /* "Combine when taskbar is full": the least recently used program with
+     * more than one window first, then the next. */
+    size_t wins[] = {3, 1, 2, 4};
+    uint64_t used[] = {50, 5, 20, 90};
+    bool combined[] = {false, false, false, false};
+    CHECK(xd_jumplist_combine_next(wins, used, combined, 4) == 2);
+    combined[2] = true;
+    CHECK(xd_jumplist_combine_next(wins, used, combined, 4) == 0);
+    combined[0] = true;
+    CHECK(xd_jumplist_combine_next(wins, used, combined, 4) == 3);
+    combined[3] = true;
+    CHECK(xd_jumplist_combine_next(wins, used, combined, 4) == SIZE_MAX);
 }
 
 /* Printers and Faxes: CUPS's states in XP's words, sizes, ports, names. */

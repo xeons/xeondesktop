@@ -47,6 +47,14 @@ typedef struct xd_menu_item {
      * in Windows; 0: the label's first letter. */
     uint32_t mnemonic;
     bool highlight; /* XP's newly installed programs (and their folders) */
+    /* Jump lists (Windows 7's look): in the bottom band; a pushpin for
+     * the icon (1: lying, 2: pushed in); the pin button shown at the
+     * item's right end while hovered, which runs `pin` (with
+     * action_data) and leaves the list open. */
+    bool band;
+    uint8_t pushpin;
+    void (*pin)(xd_shell *shell, void *data);
+    bool pinned;
 } xd_menu_item;
 
 /* The pale orange behind XP's newly installed programs. */
@@ -56,6 +64,7 @@ struct xd_menu_model {
     xd_menu_item *items;
     size_t count, cap;
     bool large;                 /* 32px icons (Start menu top level) */
+    bool jumplist;              /* Windows 7's jump list look (Aero's taskbar) */
     const char *banner_product; /* Windows 2000 side banner, or nullptr */
     const char *banner_edition;
 };
@@ -107,6 +116,10 @@ typedef struct xd_menu {
      * It owns its model. */
     bool context;
     xd_menu_tree *own_tree;
+    bool hot_pin;      /* jump list: the pointer is on the hot item's pin button */
+    int band_y;        /* jump list: the bottom band's top (logical) */
+    struct xd_taskbar *bar; /* opened from a taskbar button: its taskbar and the */
+    xd_rect anchor;         /* button (surface-local logical), to reposition */
 } xd_menu;
 
 /* Opens `model` as a popup of the taskbar's layer surface, anchored to
@@ -125,6 +138,9 @@ void xd_menu_close_all(xd_shell *shell);
 xd_menu *xd_menu_open_attached(xd_shell *shell, const xd_menu_model *model,
                                struct xdg_surface *parent, xd_rect anchor, uint32_t serial);
 void xd_menu_destroy(xd_menu *menu);
+/* Shows `model` in place of the menu's (a jump list after a pin): laid
+ * out again and moved to fit where it opened. */
+void xd_menu_replace_model(xd_menu *menu, const xd_menu_model *model);
 /* Keyboard navigation in the chain starting at root. */
 bool xd_menu_key_chain(xd_menu *root, uint32_t keysym);
 /* Opens the submenu of item `index`, closing any other open child. */

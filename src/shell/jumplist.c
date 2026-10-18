@@ -109,3 +109,64 @@ bool xd_jumplist_move(void **items, size_t n, size_t from, size_t to) {
     items[to] = moving;
     return true;
 }
+
+static constexpr char PINNED_KEY[] = "Pinned";
+
+char **xd_jumplist_pinned(GKeyFile *kf, const char *desktop_id) {
+    char **list = kf != nullptr && desktop_id != nullptr
+                      ? g_key_file_get_string_list(kf, desktop_id, PINNED_KEY, nullptr, nullptr)
+                      : nullptr;
+    return list != nullptr ? list : g_new0(char *, 1);
+}
+
+bool xd_jumplist_set_pinned(GKeyFile *kf, const char *desktop_id, const char *uri, bool pin) {
+    char **list = xd_jumplist_pinned(kf, desktop_id);
+    GPtrArray *out = g_ptr_array_new();
+    bool found = false;
+    for (char **u = list; *u != nullptr; u++) {
+        if (strcmp(*u, uri) == 0) {
+            found = true;
+            if (!pin)
+                continue;
+        }
+        g_ptr_array_add(out, *u);
+    }
+    bool changed = pin != found;
+    if (pin && !found)
+        g_ptr_array_add(out, (char *)(uintptr_t)uri);
+    if (changed && out->len > 0)
+        g_key_file_set_string_list(kf, desktop_id, PINNED_KEY, (const char *const *)out->pdata,
+                                   out->len);
+    else if (changed)
+        g_key_file_remove_group(kf, desktop_id, nullptr);
+    g_ptr_array_free(out, TRUE);
+    g_strfreev(list);
+    return changed;
+}
+
+void xd_jumplist_drop_pinned(char **uris, char *const *pinned) {
+    size_t k = 0;
+    for (size_t i = 0; uris[i] != nullptr; i++) {
+        bool is_pinned = false;
+        for (char *const *p = pinned; *p != nullptr && !is_pinned; p++)
+            is_pinned = strcmp(uris[i], *p) == 0;
+        if (is_pinned)
+            g_free(uris[i]);
+        else
+            uris[k++] = uris[i];
+    }
+    for (size_t i = k; uris[i] != nullptr; i++)
+        uris[i] = nullptr;
+}
+
+size_t xd_jumplist_combine_next(const size_t *windows, const uint64_t *last_used,
+                                const bool *combined, size_t n) {
+    size_t best = SIZE_MAX;
+    for (size_t i = 0; i < n; i++) {
+        if (combined[i] || windows[i] < 2)
+            continue;
+        if (best == SIZE_MAX || last_used[i] < last_used[best])
+            best = i;
+    }
+    return best;
+}

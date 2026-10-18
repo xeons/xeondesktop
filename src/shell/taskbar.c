@@ -1086,6 +1086,8 @@ void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
         return;
     int hot = hit_test(bar, x, y);
     track_peek(bar, hot);
+    if (bar->superbar)
+        xd_thumbs_hover(bar, hot); /* Aero: Windows 7's thumbnails */
     if (hot != bar->hot) {
         bar->hot = hot;
         bar->dirty = true;
@@ -1212,6 +1214,7 @@ void xd_taskbar_page(xd_taskbar *bar, int delta) {
 
 void xd_taskbar_pointer_leave(xd_taskbar *bar) {
     set_peek(bar, false);
+    xd_thumbs_hover(bar, XD_HIT_NONE);
     xd_superbar_drop(bar);
     xd_taskbars_schedule_tuck(bar->shell);
     xd_tooltip_hide(bar->shell);
@@ -1560,6 +1563,7 @@ static void surface_destroy(xd_taskbar *bar) {
     if (shell->pointer_bar == bar)
         shell->pointer_bar = nullptr; /* no leave will come */
     set_peek(bar, false);              /* ...to end a peek either */
+    xd_thumbs_bar_gone(shell, bar);
     xd_tooltip_hide(shell);
     if (bar->layer != nullptr)
         zwlr_layer_surface_v1_destroy(bar->layer);
