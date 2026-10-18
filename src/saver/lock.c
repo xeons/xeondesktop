@@ -13,6 +13,14 @@
  * opens "Unlock Computer", which checks the password with PAM (service
  * "xeondesktop", falling back to "login") on a worker thread so the screen
  * keeps responding.
+ *
+ * logind speaks for the display manager: after Switch User its greeter
+ * checks the password, then asks logind to unlock our session, which
+ * sends the session's Unlock signal. We unlock then, so returning doesn't
+ * ask for the password twice; Lock (loginctl lock-session, or the display
+ * manager) turns a running unprotected saver into a lock. LockedHint tells
+ * logind's other clients whether we're holding the lock. A thread of its
+ * own runs the D-Bus side, so the loop below stays plain poll().
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -21,6 +29,7 @@
 #include <pthread.h>
 #include <pwd.h>
 #include <security/pam_appl.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -33,6 +42,7 @@
 
 #include "../core/alloc.h"
 #include "../core/wlist.h"
+#include "../settings/login1.h"
 #include "../settings/settings.h"
 #include "../ui/icons.h"
 #include "../ui/protocols.h"
@@ -76,6 +86,24 @@ typedef struct output {
 /* Button hit areas from the last render (device pixels, on the dialog
  * output). */
 typedef enum hit : uint8_t { HIT_NONE, HIT_OK, HIT_CANCEL } hit;
+
+/* What the logind thread tells the main loop, a byte each. */
+enum : char { LOGIND_LOCK = 'L', LOGIND_UNLOCK = 'U' };
+
+/* The logind thread. The main thread shares only `pipe`, `cancel`,
+ * `locking` and `unlocked` with it. */
+typedef struct logind_watch {
+    bool started;
+    pthread_t thread;
+    int pipe[2];
+    GCancellable *cancel;
+    atomic_bool locking;  /* we hold, or are taking, the session lock */
+    atomic_bool unlocked; /* leaving unlocked (not crashed or lost) */
+    /* the thread's own */
+    GDBusConnection *bus;
+    char *session; /* our session's object path */
+    bool hinted;   /* LockedHint set */
+} logind_watch;
 
 struct app {
     struct wl_display *display;
@@ -130,6 +158,8 @@ struct app {
 
     xd_rect ok_rect, cancel_rect; /* device px on the dialog output */
     output *dialog_output;
+
+    logind_watch logind;
 };
 
 /* ---- PAM -------------------------------------------------------------------- */
@@ -592,17 +622,9 @@ static void create_surface(app *a, output *o) {
     }
 }
 
-static void destroy_output(output *o) {
+/* The output's surface and everything on it; the output stays. */
+static void drop_surface(output *o) {
     app *a = o->app;
-    if (a->dialog_output == o) {
-        a->dialog_output = nullptr;
-        XD_LIST_FOR_EACH(other, &a->outputs, output, link) {
-            if (other != o && other->configured && a->dialog_output == nullptr) {
-                a->dialog_output = other;
-                other->dirty = true;
-            }
-        }
-    }
     if (a->pointer_output == o)
         a->pointer_output = nullptr;
     if (o->frame != nullptr)
@@ -620,6 +642,29 @@ static void destroy_output(output *o) {
     if (o->surface != nullptr)
         wl_surface_destroy(o->surface);
     xd_shm_ring_finish(&o->ring);
+    o->frame = nullptr;
+    o->saver = nullptr;
+    o->lock_surface = nullptr;
+    o->layer_surface = nullptr;
+    o->fractional = nullptr;
+    o->viewport = nullptr;
+    o->surface = nullptr;
+    o->configured = false;
+    o->throttled = false;
+}
+
+static void destroy_output(output *o) {
+    app *a = o->app;
+    if (a->dialog_output == o) {
+        a->dialog_output = nullptr;
+        XD_LIST_FOR_EACH(other, &a->outputs, output, link) {
+            if (other != o && other->configured && a->dialog_output == nullptr) {
+                a->dialog_output = other;
+                other->dirty = true;
+            }
+        }
+    }
+    drop_surface(o);
     wl_output_release(o->wl_output);
     wl_list_remove(&o->link);
     xd_free(o);
@@ -646,6 +691,153 @@ static const struct ext_session_lock_v1_listener lock_listener = {
     .locked = lock_locked,
     .finished = lock_finished,
 };
+
+/* An unprotected saver becomes a lock: the overlay surfaces give way to
+ * lock surfaces, and the saver keeps running on them. */
+static void begin_lock(app *a) {
+    if (a->locking)
+        return;
+    if (a->lock_manager == nullptr) {
+        fprintf(stderr, "xd-lock: the compositor can't lock the screen (ext-session-lock)\n");
+        return;
+    }
+    XD_LIST_FOR_EACH(o, &a->outputs, output, link) {
+        drop_surface(o);
+    }
+    a->dialog_output = nullptr;
+    a->locking = true;
+    atomic_store(&a->logind.locking, true);
+    a->lock = ext_session_lock_manager_v1_lock(a->lock_manager);
+    ext_session_lock_v1_add_listener(a->lock, &lock_listener, a);
+    XD_LIST_FOR_EACH(o, &a->outputs, output, link) {
+        create_surface(a, o);
+    }
+}
+
+/* ---- logind ------------------------------------------------------------------- */
+
+static void set_locked_hint(logind_watch *w, bool locked, GCancellable *cancel) {
+    GError *error = nullptr;
+    GVariant *r = g_dbus_connection_call_sync(w->bus, XD_LOGIN1, w->session, XD_LOGIN1_SESSION,
+                                              "SetLockedHint", g_variant_new("(b)", locked),
+                                              nullptr, G_DBUS_CALL_FLAGS_NONE, 2000, cancel,
+                                              &error);
+    if (r != nullptr) {
+        g_variant_unref(r);
+        w->hinted = locked;
+    } else {
+        if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+            fprintf(stderr, "xd-lock: cannot set logind's LockedHint: %s\n", error->message);
+        g_error_free(error);
+    }
+}
+
+static void logind_signal([[maybe_unused]] GDBusConnection *bus,
+                          [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                          [[maybe_unused]] const char *iface, const char *member,
+                          [[maybe_unused]] GVariant *params, gpointer data) {
+    logind_watch *w = data;
+    char c = 0;
+    if (strcmp(member, "Unlock") == 0) {
+        c = LOGIND_UNLOCK;
+    } else if (strcmp(member, "Lock") == 0) {
+        c = LOGIND_LOCK;
+        if (!w->hinted)
+            set_locked_hint(w, true, w->cancel);
+    }
+    if (c != 0)
+        (void)!write(w->pipe[1], &c, 1);
+}
+
+static gboolean logind_cancelled([[maybe_unused]] GCancellable *c, gpointer loop) {
+    g_main_loop_quit(loop);
+    return G_SOURCE_REMOVE;
+}
+
+static void *logind_thread(void *data) {
+    logind_watch *w = data;
+    GMainContext *ctx = g_main_context_new();
+    g_main_context_push_thread_default(ctx);
+    GMainLoop *loop = g_main_loop_new(ctx, FALSE);
+    /* Quits the loop when the main thread cancels, even before it runs. */
+    GSource *quit = g_cancellable_source_new(w->cancel);
+    g_source_set_callback(quit, G_SOURCE_FUNC(logind_cancelled), loop, nullptr);
+    g_source_attach(quit, ctx);
+
+    GError *error = nullptr;
+    w->bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, w->cancel, &error);
+    if (w->bus != nullptr)
+        w->session = xd_login1_own_session(w->bus, w->cancel, &error);
+    if (w->session != nullptr) {
+        /* Signals come to this thread's context. */
+        guint sub = g_dbus_connection_signal_subscribe(
+            w->bus, XD_LOGIN1, XD_LOGIN1_SESSION, nullptr, w->session, nullptr,
+            G_DBUS_SIGNAL_FLAGS_NONE, logind_signal, w, nullptr);
+        if (atomic_load(&w->locking))
+            set_locked_hint(w, true, w->cancel);
+        g_main_loop_run(loop);
+        g_dbus_connection_signal_unsubscribe(w->bus, sub);
+        /* Cleared only if we really let go: a lost lock stays locked for
+         * the compositor's next locker. */
+        if (w->hinted && atomic_load(&w->unlocked))
+            set_locked_hint(w, false, nullptr);
+    } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+        fprintf(stderr, "xd-lock: not following logind's Lock and Unlock: %s\n",
+                error != nullptr ? error->message : "no session");
+    }
+    g_clear_error(&error);
+    g_clear_pointer(&w->session, g_free);
+    g_clear_object(&w->bus);
+    g_source_destroy(quit);
+    g_source_unref(quit);
+    g_main_loop_unref(loop);
+    g_main_context_pop_thread_default(ctx);
+    g_main_context_unref(ctx);
+    return nullptr;
+}
+
+/* Only in a real session (or a test's mock logind), as for the shell's
+ * sleep and Switch User: a nested session's logind is the host's. */
+static void logind_start(app *a) {
+    logind_watch *w = &a->logind;
+    w->pipe[0] = w->pipe[1] = -1;
+    atomic_store(&w->locking, a->locking);
+    if (xd_login1_simulated())
+        return;
+    if (pipe2(w->pipe, O_CLOEXEC | O_NONBLOCK) < 0) {
+        w->pipe[0] = w->pipe[1] = -1;
+        return;
+    }
+    w->cancel = g_cancellable_new();
+    w->started = pthread_create(&w->thread, nullptr, logind_thread, w) == 0;
+}
+
+static void logind_stop(app *a) {
+    logind_watch *w = &a->logind;
+    if (w->started) {
+        g_cancellable_cancel(w->cancel);
+        pthread_join(w->thread, nullptr);
+    }
+    g_clear_object(&w->cancel);
+    if (w->pipe[0] >= 0) {
+        close(w->pipe[0]);
+        close(w->pipe[1]);
+    }
+}
+
+static void logind_message(app *a) {
+    char c = 0;
+    while (read(a->logind.pipe[0], &c, 1) == 1) {
+        if (c == LOGIND_UNLOCK) {
+            /* The display manager's greeter checked the password. A PAM
+             * check of our own may still be running; main joins it. */
+            fprintf(stderr, "xd-lock: logind unlocked the session\n");
+            unlock(a);
+        } else if (c == LOGIND_LOCK && !a->locking) {
+            begin_lock(a);
+        }
+    }
+}
 
 /* ---- input -------------------------------------------------------------------- */
 
@@ -1079,13 +1271,14 @@ static void run(app *a) {
             wl_display_cancel_read(d);
             break;
         }
-        struct pollfd fds[4] = {
+        struct pollfd fds[5] = {
             {.fd = wl_display_get_fd(d), .events = POLLIN},
             {.fd = a->pam_pipe[0], .events = POLLIN},
             {.fd = a->idle_fd, .events = POLLIN},
             {.fd = a->frame_fd, .events = POLLIN},
+            {.fd = a->logind.pipe[0], .events = POLLIN}, /* -1 without logind: ignored */
         };
-        if (poll(fds, 4, -1) < 0) {
+        if (poll(fds, 5, -1) < 0) {
             wl_display_cancel_read(d);
             if (errno == EINTR)
                 continue;
@@ -1118,6 +1311,8 @@ static void run(app *a) {
                 o->throttled = false;
             }
         }
+        if (fds[4].revents & POLLIN)
+            logind_message(a);
     }
     flush(d);
 }
@@ -1220,8 +1415,11 @@ int main(int argc, char **argv) {
         create_surface(&a, o);
     }
     a.running = true;
+    logind_start(&a);
     arm_idle(&a);
     run(&a);
+    atomic_store(&a.logind.unlocked, a.lock == nullptr);
+    logind_stop(&a);
 
     if (a.pam_running)
         pthread_join(a.pam_thread, nullptr);

@@ -1077,6 +1077,106 @@ def disk_management_menu(s):
         DBusTestCase.tearDownClass()
 
 
+def mock_logind(s, display_manager=False):
+    """A private system bus with dbusmock's logind: our session (c1, found
+    by pid) and another user's switched away from (c2); with a mock
+    display manager too if asked. Returns the logind mock and a function
+    giving what the mocks were called with so far."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    logs = []
+
+    def spawn(template):
+        path = os.path.join(s.base, f"mock-{len(logs)}.log")
+        log = open(path, "w")
+        proc, obj = DBusTestCase.spawn_server_template(
+            template, {}, stdout=log, system_bus=True
+        )
+        s.children.append(proc)
+        logs.append(path)
+        return obj
+
+    logind = spawn("logind")
+    logind.AddSession("c1", "seat0", dbus.UInt32(os.getuid()), "user", True,
+                      dbus_interface=MOCK_IFACE)  # fmt: skip
+    logind.AddSession("c2", "seat0", dbus.UInt32(os.getuid() + 1), "guest", False,
+                      dbus_interface=MOCK_IFACE)  # fmt: skip
+    logind.AddMethod("org.freedesktop.login1.Manager", "GetSessionByPID", "u", "o",
+                     'ret = dbus.ObjectPath("/org/freedesktop/login1/session/c1")',
+                     dbus_interface=MOCK_IFACE)  # fmt: skip
+    if display_manager:
+        spawn(os.path.join(SOURCE_ROOT, "tests", "dbusmock", "displaymanager.py"))
+
+    def calls():
+        text = ""
+        for path in logs:
+            with open(path) as f:
+                text += f.read()
+        return text
+
+    return logind, calls
+
+
+def logind_session_call(method):
+    """Our mock session's Lock or Unlock, as logind does it for a display
+    manager: the session object sends the signal."""
+    from dbusmock import DBusTestCase
+
+    bus = DBusTestCase.get_dbus(system_bus=True)
+    session = bus.get_object("org.freedesktop.login1", "/org/freedesktop/login1/session/c1")
+    session.get_dbus_method(method, "org.freedesktop.login1.Session")()
+
+
+@scenario(LUNA_INI, requires=("dbusmock",))
+def switch_user_and_back(s):
+    """XP's Log Off box (on a dbusmock logind and display manager): Switch
+    User locks the screen and goes to the greeter; logind's Unlock, which
+    the display manager sends once its greeter has let the user back in,
+    unlocks without asking for the password again."""
+    from dbusmock import DBusTestCase
+
+    try:
+        _, calls = mock_logind(s, display_manager=True)
+        before = s.settle("desktop")
+        s.launch("xd-shutdown", "--logoff")
+        s.wait_window(title="Log Off XeonDesktop", state="activated")
+        dialog = s.settle("log-off")
+        box = dialog.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+        s.check(box is not None and 300 < box[2] < 340, f"XP's Log Off box opened ({box})")
+        # Switch User's tile, from the box's top left (see shutdown.c).
+        s.inject("move", box[0] + 110, box[1] + 113, "click")
+        s.wait(lambda: "SwitchToGreeter" in calls(), "the switch to the greeter")
+        s.log("ok: Switch User asked the display manager for its greeter")
+        locked = s.settle("locked")
+        s.check(locked.differs(before, (0, HEIGHT - 30, WIDTH, 30)) > 0.5,
+                "the screen was locked first")  # fmt: skip
+        s.check("SetLockedHint True" in calls(), "xd-lock told logind it locked")
+        logind_session_call("Unlock")
+        s.wait(lambda: "SetLockedHint False" in calls(), "xd-lock to unlock")
+        back = s.settle("unlocked")
+        s.check(back.differs(before, (0, 0, WIDTH, HEIGHT - 30)) < 0.02,
+                "logind's Unlock unlocked without a password")  # fmt: skip
+
+        # Lock turns a running unprotected screen saver into a lock.
+        s.launch("xd-lock", "--saver", "blank", "--no-lock")
+        s.wait(lambda: s.shot("saver").pixel(WIDTH // 2, HEIGHT - 4) == (0, 0, 0), "the saver")
+        logind_session_call("Lock")
+        s.wait(lambda: calls().count("SetLockedHint True") == 2, "the saver to lock")
+        s.inject("move", 100, 100, "move", 400, 400)
+        dialog = s.settle("saver-locked")
+        # Computer Locked: no taskbar, a dialog in the middle.
+        s.check(dialog.differs(before, (0, HEIGHT - 30, WIDTH, 30)) > 0.5
+                and dialog.differs(before, (310, 280, 400, 200)) > 0.3,
+                "input showed Computer Locked, not the desktop")  # fmt: skip
+        logind_session_call("Unlock")
+        s.wait(lambda: calls().count("SetLockedHint False") == 2, "xd-lock to unlock again")
+        s.log("ok: Lock made the saver a lock; Unlock ended it")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

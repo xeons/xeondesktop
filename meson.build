@@ -414,6 +414,7 @@ executable(
   'xd-shutdown',
   'src/apps/shutdown.c',
   'src/settings/soundplay.c',
+  'src/settings/login1.c',
   apps_common,
   dependencies: [ui_dep, canberra_dep],
   c_args: ['-D_GNU_SOURCE'],
@@ -893,6 +894,7 @@ executable(
 executable(
   'xd-lock',
   'src/saver/lock.c',
+  'src/settings/login1.c',
   dependencies: [
     ui_dep,
     settings_dep,
