@@ -1,272 +1,304 @@
 # XeonDesktop architecture
 
-A Windows 2000/XP-style desktop environment for Linux, written in C23.
+A Windows 2000, XP and 7-style desktop environment for Linux (Wayland),
+written in strict C23. This describes how it is built today; TODO.md tracks
+what's left.
 
 ## Goals
 
-- Faithful Windows 2000 / XP desktop: taskbar, Start menu, Quick Launch,
-  notification area, optional taskbar grouping, desktop icons.
-- Three Start menu layouts: **Windows 2000** (single column with the side
-  banner), **Windows XP** (two columns, pinned + recent), **Windows 7**
-  (single column with search, jump lists).
-- Visual styles as in XP: **Classic** (Windows 2000, with colour schemes),
-  **Luna** (XP) and **Whistler** (pre-release look).
+- A faithful Windows 2000 / XP / 7 desktop: taskbar, Start menu, Quick
+  Launch, notification area, desktop icons, Explorer, Control Panel, Task
+  Manager.
+- Three Start menu layouts: **Windows 2000** (cascading, with the side
+  banner), **Windows XP** (two columns, pinned and most used) and **Windows
+  7** (one column with search and jump lists).
+- Visual styles as in Windows: **Classic** (2000, with XP's 22 colour
+  schemes), **Luna** (XP: Blue, Olive Green, Silver and Royale's Energy
+  Blue), **Whistler** (the pre-release Watercolor look) and **Aero**
+  (Windows 7, with blurred glass on a GPU).
 - Per-monitor DPI and full multi-monitor support.
 - Memory safety as far as C allows (see below).
 
-## Components
+## Processes
 
 Every component is its own process. In Windows, explorer.exe is both the
 taskbar and the file manager, so a slow network folder or a bad thumbnail
-can freeze the taskbar. Here a crash or hang only takes down the program it
-happens in.
+can freeze the taskbar; here a crash or hang only takes down the program it
+happens in, and the compositor restarts the shell and the lock screen if
+they die.
 
-```
-libxdcore    allocation, strings, INI                       (done)
-libxdtheme   styles, schemes, DPI drawing, frame hit tests   (done)
-libxdui      Win32-style widget toolkit + Wayland client plumbing
-libxdfolder  folder view, icons, file types, thumbnail cache client
+| Program | Toolkit | Role |
+|---|---|---|
+| `xd-compositor` | wlroots 0.20 | Wayland compositor and window manager: server-side frames drawn by the theme engine, focus, Alt+Tab, Aero Snap, per-output scale, layer-shell work areas, Xwayland, keyboard shortcuts, the accessibility keys, "Not Responding" detection, title bar icons, window sounds. |
+| `xd-compositor-fx` | wlroots + SceneFX | The same compositor on SceneFX's scene graph: Aero's blurred glass and window shadows. `xd-compositor` hands over to it when a GPU renderer is available. |
+| `xd-shell` | libxdui | Taskbar (or Windows 7's icon taskbar), Start menus, Quick Launch, notification area (StatusNotifierItem host with dbusmenu; built-in clock, volume, network, Bluetooth and battery icons), desktop (wallpaper and icons), screen saver timer. A layer-shell client. |
+| `xd-lock` | libxdui | Lock Computer (ext-session-lock) and the screen savers. |
+| `xd-files` | GTK3 | Explorer: folders, My Computer, Recycle Bin, Control Panel (`control:`), file operations, Properties. |
+| `xd-taskmgr` | GTK3 | Task Manager, with its tray CPU meter. |
+| `xd-desk`, `xd-taskbar` | libxdui | Display Properties and Taskbar and Start Menu Properties, whose previews must match the compositor's frames pixel for pixel. |
+| `xd-run`, `xd-shutdown`, `xd-endtask`, `xd-message` | libxdui | Run, Shut Down / Log Off, End Program, message boxes for programs without dialogs of their own. |
+| `xd-security` | GTK3 | Windows Security (Ctrl+Alt+Delete) and Change Password. |
+| `xd-polkit` | GTK3 | The polkit authentication agent. |
+| `xd-search`, `xd-help`, `xd-defaults` | GTK3 | Search for Files or Folders, Help and Support, Set Program Access and Defaults. |
+| `xd-control` | none | Opens `control:` in `xd-files`, or one applet (`xd-control desk`). |
+| `xd-access`, `xd-mouse`, `xd-keyboard`, `xd-sound`, `xd-power`, `xd-timedate`, `xd-intl`, `xd-folders`, `xd-fonts`, `xd-users`, `xd-sysdm`, `xd-netconn`, `xd-bluetooth`, `xd-joy`, `xd-printers`, `xd-scanners`, `xd-appwiz`, `xd-schedtasks`, `xd-eventvwr`, ... | GTK3 | Control Panel applets and Administrative Tools, one program each. |
 
-xd-compositor   window manager                      (milestone 2)
-xd-shell        taskbar, Start menu, tray, desktop  (uses libxdfolder)
-xd-settingsd    settings store + live apply
-xd-files        file manager, also hosts control:   (uses libxdfolder)
-xd-thumbnailer  sandboxed thumbnail generator
-xd-desk, xd-mouse, xd-keyboard, xd-power, ...   Control Panel applets
-```
+Development tools: `xd-themeview` (renders theme previews to PNG),
+`xd-inject` (virtual pointer and keyboard for UI tests), `xd-windows`
+(lists windows for UI tests), `tools/luna-measure.py` (measures Luna
+artwork from reference screenshots into colour tables).
 
-| Binary              | Role                                                         |
-|---------------------|--------------------------------------------------------------|
-| `xd-compositor`     | Wayland compositor + window manager (wlroots 0.20). Draws window frames server-side with the theme engine, handles focus, Alt+Tab, per-output scale, layer-shell work areas. |
-| `xd-shell`          | Taskbar, Start menu, Quick Launch, tray, desktop icons. A layer-shell client; gets the window list from `wlr-foreign-toplevel-management`. |
-| `xd-settingsd`      | (Planned) for settings that need a running process. The GTK3 theme is generated by the compositor (`libxdtheme`'s `xd_theme_gtk_css`, installed by `libxdsettings`). |
-| `xd-files`          | File manager (see below). Also shows the `control:` folder.  |
-| `xd-thumbnailer`    | Generates thumbnails in a sandbox (see below).               |
-| `xd-taskmgr`        | Task Manager (GTK3): Applications via `wlr-foreign-toplevel-management`, Processes and Performance from procps-ng's `libproc2`. Ctrl+Alt+Delete / Ctrl+Shift+Esc in the compositor focus it or start it. |
-| `xd-control`        | Launcher that opens `control:` in `xd-files`.                |
-| `xd-desk`, ...      | One small executable per Control Panel applet.               |
-| `xd-themeview`      | Developer tool that renders theme previews to PNG.           |
+### Libraries (static, linked into the programs)
 
-Shared libraries:
-
-- `libxdcore`: checked allocation, arenas, strings, INI, logging.
-- `libxdtheme`: colour schemes, metrics, visual styles, DPI-aware drawing,
-  frame layout and hit testing.
-- `libxdui` (planned): our own small widget layer, used where the exact
-  look matters most: the shell (taskbar, Start menu, desktop, Run and Shut
-  Down dialogs) and Display Properties, whose previews must match the
-  compositor's frames pixel for pixel. Drawn with libxdtheme; includes the
-  Wayland client plumbing (shm buffers, per-output fractional scaling,
-  popups, input).
+| Library | Contents |
+|---|---|
+| `libxdcore` | Checked allocation, arenas, length-carrying strings, lists. |
+| `libxdtheme` | Colour schemes, metrics, the four visual styles, DPI-aware drawing, frame layout and hit testing, the GTK CSS generator. |
+| `libxdsettings` | `desktop.ini` and the other settings files, watching them, the generated GTK theme and Qt palette, installed icon/GTK/Qt themes, the sound scheme and its player. |
+| `libxdui` | Our own Win32-style widget toolkit and Wayland client plumbing: shm buffers, fractional scaling, popups, text editing, icons. |
+| `libxdappicons` | Icon theme lookup (GTK3's GtkIconTheme, GTK not initialised) and which application a window belongs to (GDesktopAppInfo). Shared by libxdui and the compositor. |
+| `libxdfolder` | The folder view widget, places (My Computer, Recycle Bin), file operations: used by `xd-files` and the desktop. |
+| `libxdgtkapp` | Shared GTK3 helpers: theme and settings following, message boxes, file chooser. |
+| `libxdsaver` | The screen savers, shared by `xd-lock` and Display Properties' preview. |
+| `libxdrename` | Rename helpers (GIO only), shared by the shell and `xd-files`. |
 
 ### Toolkit decision: hybrid
 
-Decided 2026-10-15. Larger companion apps (`xd-files` and most Control
-Panel applets) use **GTK3**, because it brings text input with input
-methods, accessibility (AT-SPI), drag and drop, and mature list and tree
-views that would take a long time to rebuild safely in C. To keep them
-matching the desktop, the compositor **generates a GTK3 theme from the
-active style and colour scheme** whenever the appearance changes (the Chicago95 project shows Classic is
-achievable in GTK3 CSS) and switches it live. GTK4/libadwaita is avoided
-because libadwaita apps ignore custom themes. Trade-off accepted: GTK apps
-look close to, not identical to, the shell, and Luna/Whistler in GTK will
-need more theme work than Classic.
+Decided 2026-10-15. Programs where the exact look matters most (the shell,
+the lock screen, Display Properties and the small system dialogs) use
+**libxdui**, drawn with the same theme engine as the window frames. Larger
+programs (Explorer, Task Manager and most Control Panel applets) use
+**GTK3**, which brings input methods, accessibility (AT-SPI), drag and drop
+and mature list and tree views that would take long to rebuild safely in C.
 
-- `libxdfolder` (planned): the folder view used by both `xd-files` and the
-  desktop, so the two behave identically. It is **our own GTK3 widget**
-  rather than `GtkIconView`, which slows down badly on folders with
-  thousands of files (Thunar ships its own fork for this reason). The
-  widget draws all five views with cairo and lays out only the visible
-  items; GTK still provides scrolling, focus, drag and drop, accessibility
-  and the inline rename box. Thumbnails come from the freedesktop cache
-  (normal 128px, large 256px, x-large 512px, chosen by the size slider) and
-  are generated by `xd-thumbnailer`, so they don't depend on the toolkit.
+To make GTK3 programs match, the compositor **generates a GTK3 theme from
+the active style and colour scheme** (`~/.local/share/themes/XeonDesktop`)
+whenever the appearance changes; our GTK apps reload it at once, others get
+it through `GTK_THEME`. The same generator writes a Qt palette
+(`QT_GUI_GTK_JSON`) so that Qt 5 and 6 programs, which the session points
+at Qt's own GTK platform theme (`QT_QPA_PLATFORMTHEME=gtk3`), follow too,
+with Qt's Windows style for Classic and Fusion otherwise. The user can pick
+any installed GTK theme, Qt style and icon theme instead in Display
+Properties; variables the user sets themselves are left alone. GTK4 and
+libadwaita are avoided because libadwaita ignores themes.
+
+The folder view is **our own GTK3 widget** rather than `GtkIconView`, which
+slows down badly on folders with thousands of files (Thunar ships its own
+fork for this reason). It draws all five views with cairo, lays out only
+what's visible, and keeps items on screen while a folder refreshes.
+
+## Wayland protocols
+
+The shell and the other programs are ordinary clients. Besides the core
+and xdg-shell, they use:
+
+- `wlr-layer-shell` (taskbar, desktop, menus, savers), with exclusive zones
+  for the work area;
+- `wlr-foreign-toplevel-management` (task buttons, Task Manager's
+  Applications, Alt+Tab-independent window lists);
+- `ext-session-lock-v1` (Lock Computer), `ext-idle-notify-v1` (screen saver,
+  monitor power-off), `wlr-output-power-management`;
+- `wlr-output-management` (Display Properties' Settings tab, with Windows'
+  15-second revert);
+- `wp_fractional_scale_v1` and `wp_viewporter`, `wp_cursor_shape_v1`,
+  `xdg-activation-v1`;
+- `xdg-decoration` and KDE's server decoration (GTK 3 uses it) to put our
+  frames on every window;
+- `wlr-data-control` and `ext-data-control` (clipboard managers and
+  VirtualBox's shared clipboard);
+- `xd-window-arranger-v1`, our private protocol, offered only to the shell
+  the compositor started: Cascade/Tile Windows with Undo, Aero Peek;
+- `wlr-virtual-pointer` and `virtual-keyboard`, only with
+  `--allow-virtual-input` (UI tests).
+
+## Compositor
+
+- **Rendering.** wlroots' scene graph. On a GPU, `xd-compositor` hands over
+  to `xd-compositor-fx` (SceneFX: blur, shadows, rounded corners for Aero).
+  On a virtual GPU (vmwgfx, virtio-gpu, qxl, VirtualBox), whose GL is too
+  slow, it renders with pixman and draws the cursor in software.
+- **Frames** are drawn by libxdtheme into a buffer per window, redrawn only
+  when size, scale, focus, hover, title or icon change. Title bar icons come
+  from each window's application (its desktop file's Icon, else an icon
+  named after the app id, else the generic program), loaded in a thread so
+  theme lookups and image decoding never stall the compositor.
+- **Window management**: cascade placement, maximize/minimize/restore,
+  Aero Snap (edges and Win+arrows, across monitors), resizing from the
+  top/left keeping the opposite edge still, the window menu with keyboard
+  Move and Size, Alt+Tab, Show Desktop.
+- **Not Responding**: windows that stop answering pings get "(Not
+  Responding)" and End Program; a program whose main loop runs but ignores
+  input (a stuck grab) can't be seen this way.
+- **Input**: libinput settings from Mouse Properties, XKB layouts and
+  repeat from Keyboard, and the accessibility features (StickyKeys,
+  FilterKeys/SlowKeys/BounceKeys, ToggleKeys, MouseKeys, ClickLock) with
+  XP's activation shortcuts.
+- **Session.** In a real login the compositor gives the systemd user
+  manager the display (`WAYLAND_DISPLAY`, `DISPLAY`, `XDG_*`, the theme
+  variables) and starts `xeondesktop-session.target`, which binds
+  `graphical-session.target` and pulls in `xdg-desktop-autostart.target`,
+  so autostart entries and "When I log on" scheduled tasks run.
+  `xeondesktop-session` stops it when the compositor exits. Nested and test
+  sessions never touch the user manager. A drop-in makes VirtualBox's
+  guest client share the clipboard as a Wayland client.
 
 ## Display and DPI model
 
 - All theme metrics are in **logical units** (1 unit = 1 px at 96 DPI).
 - Each output has its own scale (1.0, 1.25, 1.5, 2.0, ...). Surfaces are
-  rendered at the scale of the output they're on (`wp_fractional_scale_v1`
-  + `wp_viewporter`).
+  rendered at the scale of the output they're on.
 - `xd_px()` converts logical units to whole device pixels, never rounding a
-  visible line down to 0. That keeps 1-unit bevels crisp at fractional scales.
-- Multi-monitor: each output gets its own taskbar (optional, like Windows 8+)
-  or only the primary one (like XP). Windows maximize to their own output's
-  work area. A frame drawn across two outputs takes the scale of the output
-  holding most of the window.
+  visible line down to 0, which keeps 1-unit bevels crisp at fractional
+  scales.
+- Each output gets its own taskbar, or only the primary one. Windows
+  maximize to their own output's work area. A frame across two outputs
+  takes the scale of the output holding most of it.
 
 ## Theme engine
 
 - **Colour schemes** (`data/schemes/*.ini`) use the Windows registry colour
-  names (`ActiveTitle`, `ButtonFace`, ...) plus `[Metrics]` and `[Fonts]`.
-  A scheme file only needs to list what differs from Windows Standard.
-- **Classic** draws everything from the scheme, so every classic scheme
-  (Standard, Classic, High Contrast, Brick, Desert, Eggplant, Lilac, Maple,
-  Marine, Plum, Pumpkin, Rainy Day, Rose, Slate, Spruce, Storm, Teal, Wheat,
-  plus Large/Extra Large variants) is just a data file. Shipped so far:
-  Standard, Classic, High Contrast Black/White. Values written from memory
-  need checking against a reference before release.
-- **Luna / Whistler** are palettes for one shared rounded-gradient renderer.
-  Luna gets Blue / Olive Green / Silver colour variants the same way.
-- All artwork is drawn procedurally. No bitmaps from Microsoft products are
-  shipped. Users can supply their own fonts (Tahoma, Trebuchet MS); the
-  defaults fall back to DejaVu/Noto.
+  names (`ActiveTitle`, `ButtonFace`, ...) plus `[Metrics]` and `[Fonts]`;
+  a scheme lists only what differs from Windows Standard. All 22 of XP's
+  classic schemes ship, with every colour taken from a published table of
+  XP's system colours and cross-checked against ReactOS (cited in each
+  file).
+- **Classic** draws everything from the scheme.
+- **Luna** draws from colour tables measured from screenshots of real
+  Windows XP (`tools/luna-measure.py` writes `luna_data*.h`): Blue, Silver,
+  Olive Green and Energy Blue each have their own caption, frame, caption
+  buttons, taskbar, Start button, task buttons and tray, and the XP Start
+  menu takes the variant's colours. What no reference shows (hover and
+  pressed states, some inactive windows) is derived.
+- **Whistler** and **Aero** have their own renderers; Aero's glass is
+  translucent and the compositor blurs what's behind it.
+- All artwork is drawn procedurally; no bitmaps from Microsoft products are
+  shipped. Free fonts stand in for Tahoma, Trebuchet MS and Franklin Gothic,
+  and the real ones are used if installed.
 
 ## Settings
 
-`~/.config/xeondesktop/desktop.ini` is the single source of truth. Display
-Properties writes it atomically (write, then rename); the compositor, the
-shell and libxdui dialogs read it at startup and the long-running ones
-watch its directory with inotify, re-theming live when it changes. This
-replaced the original D-Bus broadcast plan: a watched file needs no daemon,
-keeps working if any one component crashes, and is easy to inspect or edit
-by hand. Unknown keys are ignored so older builds can read newer files;
-values are validated (a scheme is a file stem, never a path).
+`~/.config/xeondesktop/desktop.ini` is the single source of truth for the
+desktop's own settings, with separate files for monitors, pins, folder
+views and other state. Programs write it atomically (write, then rename)
+and merge only the keys they changed, so two dialogs can't undo each
+other's changes. The compositor, the shell and our GTK apps watch it with
+inotify and apply changes live. A watched file needs no daemon, keeps
+working if any one component crashes, and is easy to inspect or edit.
+Unknown keys are ignored so older builds can read newer files; values are
+validated (a scheme is a file stem, never a path).
 
-## Display Properties (`xd-desk`)
+System settings (time zone, locale, accounts, network, printers, disks,
+services, packages) go through the system's own services and their polkit
+checks, never through programs running as root.
 
-Five tabs, as in Windows XP:
-
-1. **Desktop / Background**: wallpaper list + browse, position (centre,
-   tile, stretch, fill, fit), background colour, per-monitor wallpaper,
-   "Customize Desktop" (desktop icons, icon cleanup).
-2. **Screen Saver**: saver list with live preview in the monitor picture,
-   wait time, "On resume, password protect" (hands off to the lock screen),
-   Settings/Preview buttons, and a **Power** button that opens Power Options.
-   Savers are plugins drawn on a layer-shell overlay surface. Idle detection
-   uses `ext-idle-notify-v1`.
-3. **Appearance**: windows and buttons style (Classic / Luna / Whistler),
-   colour scheme, font size (Normal / Large / Extra Large), **Effects...**
-   and **Advanced** (per-item colours, sizes and fonts, with a live preview of
-   active/inactive windows and a message box, like Windows 2000's).
-4. **Effects**: menu/tooltip transition (fade / scroll / none), font
-   smoothing (none / standard / ClearType-style subpixel), large icons, menu
-   shadows, show window contents while dragging, hide underlined access
-   keys until Alt is pressed.
-5. **Settings**: draggable monitor arrangement, per-output resolution,
-   refresh rate, scale (DPI), orientation, primary monitor, "Extend my
-   desktop onto this monitor", Identify, Troubleshoot. Changes use
-   `wlr-output-management` and roll back automatically after 15 s unless
-   confirmed.
+Settings shared with other desktops are written only where Linux expects
+them, and only when the user changes them: the GTK theme and icon theme in
+GTK's `settings.ini` and GNOME's interface GSettings (the icon theme in use
+is also written at login, since GTK on Wayland reads it only there), MIME
+defaults in `mimeapps.list`, environment variables in
+`~/.config/environment.d`, customised formats as a compiled locale.
 
 ## File manager (`xd-files`)
 
 Modelled on Windows XP's Explorer windows:
 
-- **Views**: Thumbnails, Tiles, Icons, List, Details (sortable, resizable,
-  reorderable columns), with a **thumbnail size** slider.
-- **Left pane**: the Folders tree, or XP's blue task pane (File and Folder
-  Tasks, Other Places, Details), toggled from the toolbar.
-- Address bar, Back/Forward/Up, Search, per-folder view settings,
-  rename in place, drag and drop, cut/copy/paste, Properties dialogs.
-- Special folders: My Documents (`~/Documents`), My Computer (drives and
-  mounts), Recycle Bin (freedesktop trash), Network Places (gvfs),
-  Control Panel (`control:`).
-- **File operations use GIO**, which we already depend on through pango:
-  copy/move with progress and conflict dialogs, trash, mounting via
-  UDisks2, MIME detection (shared-mime-info), change monitoring, and
-  SMB/SFTP through gvfs. Rewriting that in C would add risk for no gain.
-- **Thumbnails** follow the freedesktop thumbnail spec
-  (`~/.cache/thumbnails`), so they're shared with other Linux apps. Missing
-  ones are made by `xd-thumbnailer`, a separate process confined with
-  seccomp and only given the file to decode. Decoding untrusted images,
-  PDFs and videos is the riskiest code in the desktop, so it never runs
-  inside the file manager or the shell.
-- The desktop is a `libxdfolder` view of `~/Desktop` drawn by `xd-shell`.
+- **Views**: Thumbnails, Tiles, Icons, List and Details (sortable,
+  resizable and reorderable columns chosen from the header), with a
+  thumbnail size slider, Show in Groups, Auto Arrange and free placement,
+  remembered per folder.
+- Folders tree, address bar, Back/Forward/Up, rename in place, drag and
+  drop, cut/copy/paste through the shell's clipboard, Send To, multi-level
+  Undo, Properties dialogs.
+- Special folders: My Documents, My Computer (every mount from GIO's
+  volume monitor, with mount and eject), Recycle Bin (freedesktop trash,
+  including other drives' `.Trash-UID`), My Network Places (gvfs), Control
+  Panel (`control:`).
+- **File operations use GIO**: copy/move with progress and conflict
+  dialogs, trash, mounting through UDisks2, MIME detection, change
+  monitoring, SMB/SFTP through gvfs. A running job keeps the process alive
+  until it finishes, even if its window is closed.
+- **Thumbnails** follow the freedesktop thumbnail spec, so they're shared
+  with other programs. Only thumbnails already in the cache are shown; a
+  sandboxed `xd-thumbnailer` (seccomp, given only the file to decode) is
+  planned, so that decoding untrusted images never runs inside the file
+  manager or the shell.
 
 ## Control Panel
 
-As in Windows, where Control Panel was a special folder in Explorer and each
-applet was a separate `.cpl` you could run on its own (`control desk.cpl`):
+As in Windows, where Control Panel was a special folder and each applet a
+separate `.cpl` you could run on its own:
 
-- **Each applet is its own executable** (`xd-desk`, `xd-mouse`,
-  `xd-power`, ...). A crash in one doesn't affect the others, and each can be
-  opened directly: right-click the desktop, Properties, runs `xd-desk`.
-- **The Control Panel is a virtual `control:` folder in `xd-files`**, with
-  XP's category view and the classic icon view. Applets register with a
-  `.desktop` file (`Categories=X-XeonDesktop-ControlPanel;`), so a new
-  one just appears. `X-XeonDesktop-ControlPanel-Category=` puts it in XP's
-  categories (`appearance`, `network`, `programs`, `sound`, `performance`,
-  `hardware`, `accounts`, `datetime`, `accessibility`; others go under
-  Other Control Panel Options), and `NoDisplay=true` keeps it out of All
-  Programs, as in XP. `xd-control` opens the folder, `xd-control desk`
-  (or `desk.cpl`) the applet whose program is `xd-desk`.
-- **Applets never run as root.** System changes go through polkit-guarded
-  services (timedated, NetworkManager, AccountsService, ...). Desktop
-  settings go through `xd-settingsd`. Nothing is setuid.
-- Plugins (shared modules) are only used for things that must live inside
-  another process: screen savers and, later, shell extensions.
+- **Each applet is its own program.** A crash in one doesn't affect the
+  others, and each opens directly (`xd-control desk`, as `control
+  desk.cpl`).
+- **Control Panel is the virtual `control:` folder in `xd-files`**, with
+  XP's Category View and Classic View. Applets register with a `.desktop`
+  file (`Categories=...;X-XeonDesktop-ControlPanel;`,
+  `X-XeonDesktop-ControlPanel-Category=` for XP's categories,
+  `NoDisplay=true` to stay out of All Programs), so a new one just appears.
+- **Applets never run as root**; nothing is setuid. Long system calls
+  (polkit prompts, UDisks, CUPS, PackageKit) are made asynchronously so a
+  password prompt never freezes a window.
 
-Applets that make sense on Linux:
-
-| Applet                    | Backend                                              |
-|---------------------------|------------------------------------------------------|
-| Display                   | `xd-desk` (above)                                    |
-| Taskbar and Start Menu    | `xd-settingsd`: Start style 2000/XP/7, grouping, Quick Launch, auto-hide, clock, tray icon hiding |
-| Folder Options            | file manager settings, file associations (`mimeapps.list`) |
-| Fonts                     | fontconfig: install, preview, remove                 |
-| Mouse                     | libinput through the compositor: speed, acceleration, double-click, buttons, pointer scheme (XCursor themes), wheel |
-| Keyboard                  | repeat rate/delay, xkb layouts and options           |
-| Sounds and Audio Devices  | PipeWire (`wireplumber` / `pw-cli`), system sound scheme |
-| Date and Time             | `org.freedesktop.timedate1` (timedated), NTP         |
-| Regional and Language     | `org.freedesktop.locale1`, number/date formats      |
-| Network Connections       | NetworkManager D-Bus                                 |
-| Power Options             | UPower, `org.freedesktop.login1` (lid/power button), screen blanking |
-| User Accounts             | AccountsService, picture, password (via polkit)      |
-| Add or Remove Programs    | PackageKit and Flatpak                               |
-| Printers and Faxes        | CUPS                                                 |
-| Scanners and Cameras      | SANE, gphoto2                                        |
-| Bluetooth Devices         | BlueZ D-Bus                                          |
-| System                    | general info (CPU/RAM/OS), hostname (`hostname1`), device manager view (udev), performance options |
-| Administrative Tools      | services (systemd units), event viewer (journald), disk management (UDisks2) |
-| Accessibility Options     | sticky/filter keys, high contrast toggle, cursor size |
-| Scheduled Tasks           | systemd user timers                                  |
-| Game Controllers          | evdev joystick test/calibration                      |
+| Applet | Backend |
+|---|---|
+| Accessibility Options | the compositor (StickyKeys, FilterKeys, ToggleKeys, MouseKeys, High Contrast) |
+| Add or Remove Programs | PackageKit and Flatpak |
+| Administrative Tools | Services (systemd), Event Viewer (journald), Disk Management (UDisks2: partitioning, formatting, resizing), Device Manager (udev) |
+| Bluetooth Devices | BlueZ |
+| Date and Time | timedated |
+| Display | `desktop.ini`, `monitors.ini`, `wlr-output-management` |
+| Folder Options | the file manager's settings, `mimeapps.list`, the user's shared-mime-info database |
+| Fonts | fontconfig; printing through GtkPrintOperation |
+| Game Controllers | udev and libevdev |
+| Keyboard, Mouse | the compositor (XKB, libinput), XCursor themes |
+| Network Connections | NetworkManager (libnm) |
+| Power Options | logind, UPower, the shell's idle timers |
+| Printers and Faxes | CUPS |
+| Regional and Language Options | localed; customised formats compiled with localedef |
+| Scanners and Cameras | SANE, libgphoto2 |
+| Scheduled Tasks | systemd user timers |
+| Sounds and Audio Devices | PulseAudio/PipeWire, the sound scheme through libcanberra |
+| System | hostnamed, udev, kernel modules, swap, boot loader entries |
+| Taskbar and Start Menu | `desktop.ini` |
+| User Accounts | AccountsService |
 
 ## Taskbar and Start menu
 
-- The taskbar is a layer-shell surface with an exclusive zone, so the
-  compositor shrinks each output's work area and maximized windows stop
-  above it. One taskbar per output, or only on the primary one (setting).
-- Task list from `wlr-foreign-toplevel-management`. A private protocol is
-  added only where that falls short (window icons, Alt+Tab thumbnails).
-  Clicking the active window's button minimizes it, as in Windows.
-  Grouping is optional: always, never, or when the taskbar is full (XP's
-  rule).
-- Quick Launch: a folder of `.desktop` files or symlinks
-  (`~/.local/share/xeondesktop/quicklaunch/`), ordered by name and watched
-  with inotify. Show Desktop is a `.desktop` file with
-  `X-XeonDesktop-Action=show-desktop`. Drag and drop to add and reorder
-  comes later.
-- Windows 7 Start menu layout (requested with Open-Shell's Windows 7 style
-  as the reference): white left column of pinned and frequent programs
-  with "All Programs" expanding in place and a search box; dark right column
-  with the user picture, user folders, Control Panel, Run and a Shut Down
-  split button. Done, except pinning from the menu (edit
-  `~/.config/xeondesktop/start-pinned`) and blur: the see-through right
-  panel is semi-transparent; real blur needs a compositor blur pass, which
-  wlroots' scene graph lacks. Recent Items read `recently-used.xbel` with
-  GLib's GBookmarkFile.
-- Notification area: StatusNotifierItem (KDE/Ayatana) host plus legacy XEmbed
-  bridging is out of scope on Wayland. Clock, volume, network and battery
-  are built in.
-- Start menu content comes from XDG menus (`applications.menu`), recent
-  documents (`recently-used.xbel`), and pinned items in settings.
+- The taskbar is a layer-shell surface with an exclusive zone, so the work
+  area shrinks and maximized windows stop above it. One per output, or only
+  on the primary one.
+- Task buttons come from `wlr-foreign-toplevel-management`, grouped as XP
+  does (always, never, or when full). In Aero the taskbar is Windows 7's:
+  pinned and running programs share one row of icon buttons
+  (`taskbar-pinned`), with jump lists (recent files from
+  `recently-used.xbel` per program, the desktop file's actions).
+- Quick Launch is a folder of `.desktop` files or symlinks
+  (`~/.local/share/xeondesktop/quicklaunch/`), watched with inotify.
+- The notification area hosts StatusNotifierItems (with dbusmenu menus) and
+  the built-in clock, volume, network, Bluetooth and battery icons, hiding
+  inactive icons behind a chevron as XP does. Legacy XEmbed icons aren't
+  supported on Wayland.
+- Start menus are built from installed `.desktop` files, recent documents
+  and the pinned lists (`start-pinned`, `taskbar-pinned`); the Windows 7
+  search also finds Control Panel applets. All three menus work from the
+  keyboard.
+- The shell plays the menu, device and battery sounds; clicks on its own
+  desktop close its menus, since the compositor's popup grab only ends for
+  clicks in other programs.
 
 ## Memory-safety rules
 
 - Standard formats are parsed with maintained libraries, never by hand:
-  GLib's GKeyFile (settings, colour schemes), GIO's GDesktopAppInfo
-  (.desktop entries, including launching apps) and GBookmarkFile
-  (recently-used.xbel), and GTK3's GtkIconTheme for icon theme lookup
-  (theme inheritance, hicolor fallback; GTK isn't initialized, only the
-  icon theme is used). GLib was already a dependency through pango and
-  gdk-pixbuf, and GTK3 is the toolkit for the larger apps.
-
+  GLib's GKeyFile (settings, colour schemes, `index.theme`), GIO's
+  GDesktopAppInfo (desktop entries and launching), GBookmarkFile
+  (`recently-used.xbel`), GtkIconTheme (icon themes), json-glib (the Qt
+  palette); libarchive writes zip files.
 - C23, `-Werror` with the warning set in `meson.build` (conversion, sign,
-  shadow, cast-qual/align, format=2, VLA ban, etc.), clean on GCC and Clang.
-- Debug builds use ASan + UBSan. `meson test` runs with leak checking.
-  `-Danalyzer=true` adds GCC `-fanalyzer`.
+  shadow, cast-qual/align, format=2, VLA ban, ...). GCC and Clang build with
+  zero warnings, in debug and optimized builds, and CI checks both.
+- Debug builds use ASan and UBSan; `meson test` runs with leak checking.
+  `-Danalyzer=true` adds GCC's `-fanalyzer`, also run in CI.
 - Hardening: `_FORTIFY_SOURCE=3`, stack protector, stack-clash and CET
   protection, zero-initialised automatics, full RELRO, PIE.
 - `strcpy`, `strcat`, `sprintf`, `strtok`, `strncpy`, `gets`, ... are
@@ -276,36 +308,29 @@ Applets that make sense on Linux:
 - Strings are length-carrying `xd_str` slices. Parsers never trust input
   lengths and never write through caller-supplied buffers without bounds.
 - Lifetimes: arenas for per-frame or per-file data; one clear owner for
-  everything else; `XD_FREE` nulls the pointer.
+  everything else; `XD_FREE` nulls the pointer. Signal handlers on
+  long-lived objects (D-Bus proxies, NetworkManager, UDisks) are
+  disconnected with the window that owns them, and dialogs keep what they
+  use alive until they close.
 
-## Milestones
+## Testing
 
-1. Foundations + theme engine (done): core lib, scheme files, Classic /
-   Luna / Whistler frames, buttons, check boxes, taskbar pieces, DPI scaling,
-   tests, `xd-themeview`.
-2. Compositor (in progress): wlroots 0.20 scene graph, xdg-shell, forced
-   server-side decorations drawn by libxdtheme at each output's scale,
-   move/resize, caption buttons, focus, Alt+Tab, cascade placement,
-   maximize/minimize, per-output DPI scale. Still to do: window menu,
-   fullscreen, keyboard layout settings, output hotplug rearrangement.
-3. Shell, part 1 (done): layer-shell work areas, taskbar with task
-   buttons and clock, one per output, DPI-aware.
-4. Shell, part 2 (done): Start menu (2000 layout first) with the
-   Programs menu built from installed applications, icon theme lookup.
-5. `libxdui` basics and Run / Shut Down / Log Off dialogs (done); settings
-   file with live re-theming, wallpaper, Display Properties (in progress:
-   Appearance, Background and font smoothing work; Screen Saver needs idle
-   detection, Settings needs output management, Advanced needs a per-item
-   editor), Quick Launch (done: folder of shortcuts, Show Desktop). Still
-   to do: drag and drop onto Quick Launch, tooltips.
-   Windows 7 Start menu (done, see below) and Taskbar and Start Menu
-   Properties (`xd-taskbar`).
-6. `libxdfolder`, `xd-files` (GTK3), `xd-thumbnailer`, desktop icons. In
-   progress: `xd-files` with the folder view (five views, thumbnail slider,
-   sorting, selection, keyboard navigation, live updates), Folders tree,
-   address bar and history, the Properties dialog (General, Permissions,
-   Details) and a basic context menu; the GTK3 theme. Still to do:
-   `xd-thumbnailer`, file operations and the clipboard, rename in place,
-   full context menus, search, desktop icons. See TODO.md.
-7. Start menu XP and 7 layouts (done), grouping, tray (SNI).
-8. Remaining Control Panel applets (GTK3), roughly in table order.
+- **Unit tests** (`xd-tests`, `meson test`): settings, schemes and theme
+  rendering, parsers, file operations, the applets' logic, against
+  python-dbusmock services where a system service is involved.
+- **UI tests** (`tests/ui/run.py`, `meson test --setup ui --suite ui`):
+  each scenario runs a headless compositor in a private mount namespace
+  with a scratch home, no system bus and sounds logged rather than played,
+  drives it with `xd-inject`, and checks windows (`xd-windows`), files,
+  settings and parts of screenshots. Regressions fixed so far each get a
+  scenario that fails without the fix.
+- **CI**: GCC and Clang debug builds with the unit tests, optimized GCC and
+  Clang builds, a GCC `-fanalyzer` build, the UI tests, and Debian, Arch
+  and CachyOS packages built and installed in containers.
+
+## Status
+
+Every part described above exists and has been tested headless; TODO.md
+lists what's untested on real hardware, the remaining Windows features, and
+known gaps (among them `xd-thumbnailer`, a standalone taskbar for other
+wlroots compositors, and Qt's file dialogs).

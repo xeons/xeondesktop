@@ -25,11 +25,18 @@ gradient made for them.
 
 ## Build
 
-Dependencies: meson, ninja, wlroots 0.20, wayland and wayland-protocols,
-xkbcommon, xcb and xcb-icccm, cairo, pango, GLib/GIO, GTK 3, gdk-pixbuf,
-procps-ng's libproc2 (Task Manager), PAM (Lock Computer), libudev (Device
-Manager) and polkit's agent library. At run time, Xwayland
-(`xorg-xwayland`) runs X11 applications; without it only Wayland ones work.
+Dependencies: meson, ninja, wlroots 0.20 (SceneFX, for Aero's blurred glass,
+is built from `subprojects/` and linked in statically), wayland and
+wayland-protocols, xkbcommon and xkbregistry, xcb and xcb-icccm, libdrm,
+libinput, cairo, pango, fontconfig, GLib/GIO, GTK 3, gdk-pixbuf, json-glib,
+procps-ng's libproc2 (Task Manager), PAM and libxcrypt (Lock Computer, User
+Accounts), libudev and libevdev (Device Manager, Game Controllers),
+polkit's agent library, libpulse and libcanberra (volume, sounds), libnm
+(Network Connections), PackageKit and Flatpak (Add or Remove Programs),
+libcups, SANE and libgphoto2 (printers, scanners, cameras), libsystemd,
+libxcursor (pointer previews) and libarchive (Send To > Compressed Folder).
+At run time, Xwayland (`xorg-xwayland`) runs X11 applications; without it
+only Wayland ones work.
 Fonts: Windows' fonts are replaced by the closest freely packaged ones,
 DejaVu Sans Condensed for Tahoma (its width and shapes), Source Sans 3 for
 Trebuchet MS (Luna captions) and Roboto Condensed for Franklin Gothic (XP's
@@ -57,8 +64,14 @@ locally with podman (or docker):
     podman run --rm -v "$PWD":/src -w /src cachyos/cachyos packaging/build-arch.sh
 
 The packages land in `dist/`. Installing one adds **XeonDesktop** to the
-display manager's session list (`xeondesktop-session`, which reads
-`~/.config/environment.d` and starts the compositor).
+display manager's session list. `xeondesktop-session` reads
+`~/.config/environment.d` and starts the compositor, which gives systemd's
+user manager the session's display and starts `xeondesktop-session.target`
+(binding `graphical-session.target`): autostart entries
+(`/etc/xdg/autostart`, `~/.config/autostart`) and "When I log on" scheduled
+tasks run then, and stop when you log off. In a VirtualBox guest, the guest
+additions' shared clipboard is started as a Wayland client so copy and paste
+work both ways.
 
 ## Run the compositor
 
@@ -69,13 +82,22 @@ Nested in an existing X11 or Wayland session (opens a window), or from a TTY:
 The compositor starts `xd-shell` (the taskbar) itself, passing on the style
 and scheme, and restarts it if it crashes. Use `--no-shell` to skip it.
 Clicking a task button activates that window; clicking the active window's
-button minimizes it.
+button minimizes it. The style (including Aero) normally comes from
+Display Properties. On a GPU it hands over to `xd-compositor-fx` for Aero's
+blur and shadows; on a virtual machine's GPU it renders in software
+instead, which is faster there.
 
 | Keys                | Action                                          |
 |---------------------|-------------------------------------------------|
+| Win, Ctrl+Esc       | Start menu                                      |
 | Alt+Tab / Alt+Shift+Tab | Switch windows (release Alt to choose)      |
 | Alt+F4              | Close window                                    |
+| Alt+Space           | Window menu                                     |
 | Win+Up / Win+Down   | Maximize / restore or minimize                  |
+| Win+Left / Win+Right | Aero Snap to half the screen, then the next monitor (Aero) |
+| Win+Shift+Up        | As tall as the screen (Aero)                    |
+| Win+Shift+Left/Right | Move to the next monitor (Aero)                |
+| Win+Space           | Aero Peek at the desktop (Aero)                 |
 | Ctrl+Alt+T          | Open terminal (`--terminal CMD`)                |
 | Ctrl+Alt+Delete     | Windows Security (Classic style) or Task Manager (XP styles) |
 | Ctrl+Shift+Esc      | Task Manager                                    |
@@ -137,8 +159,16 @@ Launch, Cascade Windows, Tile Windows Horizontally/Vertically (with Undo),
 Show the Desktop, Task Manager, Lock the Taskbar and Properties. Arranging
 windows goes through `xd-window-arranger-v1`, a private protocol the
 compositor offers only to the shell it started. Right-clicking a task
-button opens the window menu: Restore, Move, Size, Minimize, Maximize and
-Close (Move and Size aren't available yet).
+button opens the window menu: Restore, Move, Size (with the arrow keys, as
+in Windows), Minimize, Maximize and Close.
+
+### Notification area
+
+The tray shows StatusNotifierItem icons (the protocol KDE, Ayatana and most
+current Linux programs use), with their menus, next to the built-in clock,
+volume, network, Bluetooth and battery icons; inactive icons fold behind a
+chevron as in XP (Customize... in Taskbar Properties). Old XEmbed tray icons
+don't exist on Wayland.
 
 ### Quick Launch
 
@@ -332,7 +362,10 @@ back to `XKB_DEFAULT_*`. Control Panel > Keyboard edits them.
 
 | Variable              | Effect                                                   |
 |-----------------------|----------------------------------------------------------|
-| `XD_ICON_THEME`       | Icon theme to use (default `breeze`, falls back to Adwaita, hicolor) |
+| `XD_ICON_THEME`       | Icon theme while Display Properties' Icons is left at Default (default `breeze`, falls back to Adwaita, hicolor) |
+| `XD_SOUND_TRACE`      | Write the sounds that would play to this file instead of playing them (tests) |
+| `XD_VM_GPU=1`         | Use the GPU renderer even on a virtual machine's GPU     |
+| `XD_HARDWARE_CURSORS=1` | Try the hardware cursor where the software one is used |
 | `TERMINAL`            | Terminal for `Terminal=true` apps (default `alacritty`)  |
 | `XD_SHELL_OPEN_MENU`  | Testing aid: open the Start menu along a path at startup, e.g. `Programs/Accessories` |
 
