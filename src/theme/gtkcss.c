@@ -156,7 +156,12 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  padding: 4px 7px 2px 9px;\n}\n"
         "button:checked { background-color: %s; }\n"
         "button:disabled label { color: %s; text-shadow: 1px 1px %s; }\n"
-        "button.default { box-shadow: 0 0 0 1px %s, inset -1px -1px %s, inset 1px 1px %s; }\n"
+        /* The default button's black frame is its outermost pixel, inside
+         * Windows' 75x23, with the usual bevel within it. (GTK paints the
+         * later shadows over the earlier ones: the inner pair first.) */
+        "button.default { border-color: %s;\n"
+        "  box-shadow: inset 2px 2px %s, inset -2px -2px %s, inset 1px 1px %s,\n"
+        "    inset -1px -1px %s; }\n"
         /* Flat buttons: toolbars, combo arrows inside entries */
         "toolbar button, button.flat, button.image-button.flat {\n"
         "  background-color: transparent;\n  border-color: transparent;\n"
@@ -187,7 +192,7 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "radio { border-radius: 50%%; }\n"
         "check:disabled, radio:disabled { background-color: %s; color: %s; }\n",
         face, H(c->fg), hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, dk.s, hi.s, hi.s, dk.s, sh.s,
-        li.s, H(dither), H(c->disabled), hi.s, H(c->frame), sh.s, li.s, hi.s, sh.s, sh.s, hi.s,
+        li.s, H(dither), H(c->disabled), hi.s, H(c->frame), li.s, sh.s, hi.s, dk.s, hi.s, sh.s, sh.s, hi.s,
         sh.s, hi.s, hi.s, sh.s, H(dither), face, sh.s, hi.s, H(c->base), H(c->text), sh.s, hi.s,
         hi.s, sh.s, dk.s, li.s, face, sh.s, hi.s, hi.s, sh.s, dk.s, li.s, H(c->base), H(c->text),
         sh.s, hi.s, hi.s, sh.s, dk.s, li.s, face, H(c->disabled));
@@ -693,11 +698,6 @@ static void xp_buttons(const xd_toolkit_colors *c, xd_strbuf *o) {
         {":active, " XP_BUTTON ":checked", "button-pressed"},
         {":disabled", "button-disabled"},
     };
-    /* Dialog button rows: GTK's own 85x27 minimum would win otherwise. */
-    xd_strbuf_append(o, XD_STR("buttonbox {\n  -GtkButtonBox-child-min-width: 75;\n"
-                               "  -GtkButtonBox-child-min-height: 23;\n"
-                               "  -GtkButtonBox-child-internal-pad-x: 0;\n"
-                               "  -GtkButtonBox-child-internal-pad-y: 0;\n}\n"));
     xd_strbuf_append(o, XD_STR(XP_BUTTON " {\n"
                                "  border-style: solid;\n  border-width: 4px 5px;\n"
                                "  border-radius: 0;\n  background-image: none;\n"
@@ -826,6 +826,12 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     defines(&c, out);
     font_rules(t, out);
     common(&c, out);
+    /* Dialog button rows in every style: Windows' 75x23 (50x14 dialog
+     * units); GTK's own 85x27 minimum would win otherwise. */
+    xd_strbuf_append(out, XD_STR("buttonbox {\n  -GtkButtonBox-child-min-width: 75;\n"
+                                 "  -GtkButtonBox-child-min-height: 23;\n"
+                                 "  -GtkButtonBox-child-internal-pad-x: 0;\n"
+                                 "  -GtkButtonBox-child-internal-pad-y: 0;\n}\n"));
     if (c.classic) {
         classic(&c, out);
         /* Windows 2000's progress bar: blocks of the highlight colour. */

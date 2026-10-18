@@ -23,7 +23,7 @@ GtkWidget *sysdm_label(const char *text) {
     GtkWidget *l = gtk_label_new(text);
     gtk_label_set_xalign(GTK_LABEL(l), 0);
     gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 50);
+    gtk_label_set_max_width_chars(GTK_LABEL(l), 30);
     return l;
 }
 
@@ -71,7 +71,8 @@ GtkWidget *sysdm_button_row(GtkWidget *first, ...) {
 
 GtkWidget *sysdm_button(const char *label, GCallback cb, gpointer data) {
     GtkWidget *b = gtk_button_new_with_mnemonic(label);
-    gtk_widget_set_size_request(b, 112, -1);
+    /* Windows' 75 (50 dialog units), wider only for a longer label. */
+    gtk_widget_set_size_request(b, 75, -1);
     if (cb != nullptr)
         g_signal_connect(b, "clicked", cb, data);
     else
