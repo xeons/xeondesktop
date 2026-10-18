@@ -432,35 +432,49 @@ static xd_menu_model *start_button_menu(xd_shell *shell, xd_menu_tree *tree) {
 static void handle_window_menu(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *a,
                                struct wl_output *output, int32_t x, int32_t y, uint32_t serial) {
     xd_shell *shell = data;
-    xd_taskbar *bar = nullptr, *b;
+    /* That monitor's taskbar and desktop; without a taskbar there ("Show
+     * the taskbar on all displays" off), one shown elsewhere takes the
+     * keyboard for the menu. */
+    xd_taskbar *here = nullptr, *keys = nullptr, *b;
     wl_list_for_each(b, &shell->taskbars, link) {
-        if (b->output == output && b->configured)
-            bar = b;
+        if (b->output == output)
+            here = b;
+        if (b->configured && (keys == nullptr || b->output == output))
+            keys = b;
     }
     xd_toplevel *focused = nullptr, *t;
     wl_list_for_each(t, &shell->toplevels, link) {
         if (t->activated)
             focused = t;
     }
-    if (bar == nullptr || focused == nullptr || bar->desktop == nullptr)
+    if (here == nullptr || keys == nullptr || focused == nullptr || here->desktop == nullptr)
+        return;
+    struct zwlr_layer_surface_v1 *parent;
+    xd_rect anchor = {x, y, 1, 1};
+    if (here->configured) {
+        /* Popups hang off the taskbar's surface: convert from the output's
+         * coordinates to its own, wherever it's docked. */
+        if (shell->settings.edge == XD_EDGE_BOTTOM)
+            anchor.y -= here->desktop->height - here->height;
+        else if (shell->settings.edge == XD_EDGE_RIGHT)
+            anchor.x -= here->desktop->width - here->width;
+        parent = here->layer;
+    } else {
+        /* The desktop covers the whole monitor: its coordinates are the
+         * output's. */
+        parent = here->desktop->layer;
+    }
+    if (parent == nullptr)
         return;
     xd_menu_close_all(shell);
     xd_menu_tree_free(&shell->context_tree);
     xd_menu_tree_init(&shell->context_tree);
     xd_menu_model *model = window_menu(shell, &shell->context_tree, focused);
-    /* Popups hang off the taskbar's surface: convert from the output's
-     * coordinates to its own, wherever it's docked. */
-    int ox = 0, oy = 0;
-    if (shell->settings.edge == XD_EDGE_BOTTOM)
-        oy = bar->desktop->height - bar->height;
-    else if (shell->settings.edge == XD_EDGE_RIGHT)
-        ox = bar->desktop->width - bar->width;
-    xd_rect anchor = {x - ox, y - oy, 1, 1};
-    xd_taskbar_take_keyboard(bar);
+    xd_taskbar_take_keyboard(keys);
     shell->context_menu = true;
-    xd_menu_open_root_dir(shell, model, bar->layer, anchor, serial, true);
-    shell->start_bar = bar;
-    bar->dirty = true;
+    xd_menu_open_root_dir(shell, model, parent, anchor, serial, true);
+    shell->start_bar = keys;
+    keys->dirty = true;
 }
 
 /* The Windows key or Ctrl+Esc. */

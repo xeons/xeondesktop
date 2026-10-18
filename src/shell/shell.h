@@ -26,6 +26,7 @@ typedef struct xd_tray_item xd_tray_item;
 typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
 typedef struct xd_sleep xd_sleep;
+typedef struct xd_primary xd_primary;
 typedef struct xd_account xd_account;
 typedef struct xd_shellbus xd_shellbus;
 typedef struct xd_superbar xd_superbar;
@@ -304,6 +305,8 @@ struct xd_shell {
     xd_toplevel **desktop_hidden;
     size_t desktop_hidden_n, desktop_hidden_cap;
 
+    xd_primary *primary; /* which monitor is the primary one (primary.c) */
+
     /* Outputs announced before startup finished binding globals. */
     bool started;
     xd_early_output early_outputs[32];
@@ -495,6 +498,13 @@ const char *xd_shell_own_command(xd_shell *shell, const char *program, const cha
 char *xd_shell_own_program(const char *program);
 /* Whether `program` is in PATH. */
 bool xd_shell_have_program(const char *program);
+/* primary.c: the primary monitor (the one at 0,0) has the first
+ * taskbar. bind: zxdg_output_manager_v1; track/forget: each output, with
+ * its taskbar. */
+void xd_primary_bind(xd_shell *shell, struct wl_registry *reg, uint32_t name, uint32_t version);
+void xd_primary_track(xd_shell *shell, struct wl_output *output);
+void xd_primary_forget(xd_shell *shell, struct wl_output *output);
+void xd_primary_finish(xd_shell *shell);
 /* sleep.c: standby and hibernate through logind, and locking the screen
  * before sleeping ([Power] PasswordOnResume). */
 void xd_sleep_init(xd_shell *shell);

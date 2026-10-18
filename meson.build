@@ -892,6 +892,7 @@ executable(
   'src/shell/sounds.c',
   'src/shell/shellbus.c',
   'src/shell/session.c',
+  'src/shell/primary.c',
   'src/settings/soundplay.c',
   'src/settings/themes.c',
   link_with: rename_lib,

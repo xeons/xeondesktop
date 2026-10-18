@@ -436,8 +436,10 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         struct wl_output *output = bind(reg, name, &wl_output_interface, version, 3);
         /* Globals arrive in any order; outputs seen before the layer shell
          * get their taskbar after the first roundtrip (see main). */
-        if (shell->started)
+        if (shell->started) {
             xd_taskbar_create(shell, output, name);
+            xd_primary_track(shell, output);
+        }
         else if (shell->early_count < XD_ARRAY_LEN(shell->early_outputs))
             shell->early_outputs[shell->early_count++] = (xd_early_output){output, name};
         else
@@ -451,6 +453,8 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
         shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 6);
         xd_taskmenu_bind(shell);
+    } else if (xd_str_eq(iface, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
+        xd_primary_bind(shell, reg, name, version);
     } else if (xd_str_eq(iface, xd_str_from_cstr(ext_idle_notifier_v1_interface.name))) {
         shell->idle_notifier = bind(reg, name, &ext_idle_notifier_v1_interface, version, 1);
     } else if (xd_str_eq(iface,
@@ -480,8 +484,10 @@ static void registry_global_remove(void *data, [[maybe_unused]] struct wl_regist
                                    uint32_t name) {
     xd_shell *shell = data;
     XD_LIST_FOR_EACH_SAFE(bar, tmp, &shell->taskbars, xd_taskbar, link) {
-        if (bar->output_global == name)
+        if (bar->output_global == name) {
+            xd_primary_forget(shell, bar->output);
             xd_taskbar_destroy(bar);
+        }
     }
 }
 
@@ -1010,8 +1016,10 @@ int main(int argc, char **argv) {
     xd_session_logon_sound(compositor);
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
-    for (size_t i = 0; i < shell.early_count; i++)
+    for (size_t i = 0; i < shell.early_count; i++) {
         xd_taskbar_create(&shell, shell.early_outputs[i].output, shell.early_outputs[i].name);
+        xd_primary_track(&shell, shell.early_outputs[i].output);
+    }
     shell.early_count = 0;
 
     int signal_fd = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
@@ -1022,6 +1030,7 @@ int main(int argc, char **argv) {
 
     xd_menu_close_all(&shell);
 
+    xd_primary_finish(&shell);
     XD_LIST_FOR_EACH_SAFE(bar, tmp, &shell.taskbars, xd_taskbar, link) {
         xd_taskbar_destroy(bar);
     }

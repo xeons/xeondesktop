@@ -58,14 +58,23 @@ AERO_INI = "[Appearance]\nStyle=aero\n\n[StartMenu]\nStyle=win7\n"
 LUNA_INI = "[Appearance]\nStyle=luna\n\n[StartMenu]\nStyle=xp\n"
 
 SCENARIOS = {}
+# Per scenario: "outputs", the monitors as (width, height, scale) side by
+# side from (0, 0) (default: one WIDTH x HEIGHT at scale 1); "setup", a
+# function of the session run before the compositor starts (a system bus
+# for the programs it starts).
+SCENARIO_OPTIONS = {}
 
 
-def scenario(desktop_ini=CLASSIC_INI, requires=()):
+def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None):
     """Registers a scenario: a function of the session (Session), run with
     that desktop.ini; it's skipped without the Python modules it requires."""
 
     def register(fn):
         SCENARIOS[fn.__name__] = (fn, desktop_ini, requires)
+        SCENARIO_OPTIONS[fn.__name__] = {
+            "outputs": outputs or [(WIDTH, HEIGHT, 1)],
+            "setup": setup,
+        }
         return fn
 
     return register
@@ -195,7 +204,7 @@ XDG_DIRS = {
 }
 
 
-def populate(base, home_src, desktop_ini):
+def populate(base, home_src, desktop_ini, outputs):
     for d in XDG_DIRS.values():
         os.makedirs(os.path.join(home_src, d))
     cfg = os.path.join(home_src, XDG_DIRS["XDG_CONFIG_HOME"], "xeondesktop")
@@ -203,7 +212,11 @@ def populate(base, home_src, desktop_ini):
     with open(os.path.join(cfg, "desktop.ini"), "w") as f:
         f.write(desktop_ini)
     with open(os.path.join(cfg, "monitors.ini"), "w") as f:
-        f.write(f"[HEADLESS-1]\nEnabled=true\nWidth={WIDTH}\nHeight={HEIGHT}\nScale=1\n")
+        x = 0
+        for i, (w, h, scale) in enumerate(outputs, 1):
+            f.write(f"[HEADLESS-{i}]\nEnabled=true\nWidth={w}\nHeight={h}\nScale={scale}\n"
+                    f"X={x}\nY=0\n\n")
+            x += round(w / scale)
     apps = os.path.join(home_src, XDG_DIRS["XDG_DATA_HOME"], "applications")
     os.makedirs(apps)
     src_apps = os.path.join(SOURCE_ROOT, "data", "applications")
@@ -225,7 +238,8 @@ def run_scenario(name, build, keep, keep_all=False):
     runtime = os.path.join(base, "run")
     os.mkdir(runtime, 0o700)
     home_src = os.path.join(base, "home")
-    populate(base, home_src, desktop_ini)
+    outputs = SCENARIO_OPTIONS[name]["outputs"]
+    populate(base, home_src, desktop_ini, outputs)
 
     env = {
         k: v
@@ -258,7 +272,7 @@ def run_scenario(name, build, keep, keep_all=False):
             "XD_SOUND_TRACE": os.path.join(runtime, "sounds.log"),
             "WLR_BACKENDS": "headless",
             "WLR_RENDERER": "pixman",
-            "WLR_HEADLESS_OUTPUTS": "1",
+            "WLR_HEADLESS_OUTPUTS": str(len(outputs)),
             "PATH": build + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
@@ -512,7 +526,8 @@ class Session:
     def shot(self, label):
         self.shots += 1
         path = os.path.join(self.base, "shots", f"{self.shots:02d}-{label}.png")
-        r = subprocess.run(["grim", path], stderr=subprocess.PIPE, timeout=30)
+        # At scale 1, so pixels are logical coordinates on every monitor.
+        r = subprocess.run(["grim", "-s", "1", path], stderr=subprocess.PIPE, timeout=30)
         if r.returncode != 0:
             raise Failure("grim: " + r.stderr.decode().strip())
         return Shot(path)
@@ -558,6 +573,9 @@ def inner(args):
 
     if args.outer:
         threading.Thread(target=watchdog, daemon=True).start()
+    setup = SCENARIO_OPTIONS[args.inner]["setup"]
+    if setup is not None:
+        setup(s)
     comp = subprocess.Popen(
         [os.path.join(build, "xd-compositor"), "--allow-virtual-input"],
         preexec_fn=die_with_parent,
@@ -1474,6 +1492,173 @@ def screen_saver_settings(s):
     s.wait(lambda: s.ini().get("ScreenSaver.Pipes", "Pipes", fallback="") == "multiple",
            "desktop.ini to have Multiple pipes")
     s.log("ok: 3D Pipes Setup saved Multiple")
+
+
+# ---- several monitors -------------------------------------------------------------
+
+# The primary monitor at scale 1, and a second one to its right at 1.5
+# (683x512 logical).
+TWO_MONITORS = [(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)]
+SECOND_X, SECOND_W, SECOND_H = WIDTH, round(WIDTH / 1.5), round(HEIGHT / 1.5)
+BOTH = (0, 0, SECOND_X + SECOND_W, HEIGHT)
+
+
+def share_unlike(shot, rect, colour, step=4, tolerance=8):
+    """The share (0..1) of sampled pixels in rect not of that colour (a
+    monitor at another scale is resampled, a little)."""
+    x0, y0, w, h = rect
+    total = other = 0
+    for y in range(y0, y0 + h, step):
+        for x in range(x0, x0 + w, step):
+            total += 1
+            other += max(abs(p - q) for p, q in zip(shot.pixel(x, y), colour)) > tolerance
+    return other / max(total, 1)
+
+
+def wait_change(s, before, rect, what, label="changed"):
+    """Waits until rect differs from `before`, then until it holds still;
+    returns the last shot and the bounding box of what changed."""
+    s.wait(lambda: s.shot(label).changed_box(before, rect) is not None, what)
+    prev = s.shot(label)
+    for _ in range(20):
+        time.sleep(0.3)
+        cur = s.shot(label)
+        if cur.changed_box(prev, rect) is None:
+            break
+        prev = cur
+    return cur, cur.changed_box(before, rect)
+
+
+@scenario(outputs=TWO_MONITORS)
+def two_monitors(s):
+    """Two monitors at different scales (1 and 1.5): the desktop icons are
+    on the primary one (at 0,0), the second monitor's taskbar opens its
+    Start menu there, and a window opened there shows its window menu
+    (Alt+Space) and maximizes to that monitor's work area."""
+    desk = s.settle("desktop")
+    bg = desk.pixel(500, 300)
+    s.check(share_unlike(desk, (0, 0, 80, 240), bg) > 0.05, "icons on the primary monitor")
+    s.check(share_unlike(desk, (SECOND_X + 2, 0, 80, 240), bg) == 0, "none on the second")
+    s.check(desk.pixel(SECOND_X + SECOND_W // 2, SECOND_H - 4) != bg,
+            "a taskbar on the second monitor")  # fmt: skip
+    s.inject("move", SECOND_X + 20, SECOND_H - 12, "click")
+    _, box = wait_change(s, desk, BOTH, "the Start menu", "start-menu")
+    s.check(box[0] >= SECOND_X and box[1] + box[3] <= SECOND_H,
+            f"the Start menu opened on the second monitor ({box})")  # fmt: skip
+    s.inject("key", "Escape", "move", SECOND_X + 300, 200)
+    s.wait(lambda: s.shot("closed").changed_box(desk, BOTH) is None, "the Start menu to close")
+
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    opened = s.settle("window")
+    # (Above the taskbars, which both have its button now.)
+    win = opened.changed_box(desk, (0, 0, SECOND_X + SECOND_W, SECOND_H - 30))
+    s.check(win is not None and win[0] >= SECOND_X, f"the window opened on the second ({win})")
+    s.inject("key", "alt+space")
+    _, menu = wait_change(s, opened, BOTH, "the window menu", "window-menu")
+    s.check(menu[0] >= SECOND_X and menu[1] < 120,
+            f"Alt+Space's menu under the caption, on the second monitor ({menu})")  # fmt: skip
+    # Restore, Move, Size, Minimize, Maximize.
+    s.inject("key", "Down", "key", "Down", "key", "Down", "key", "Down", "key", "Down",
+             "key", "Return")  # fmt: skip
+    s.wait_window(title="Control Panel", state="maximized")
+    big = s.settle("maximized")
+    s.check(share_unlike(big, (SECOND_X + 40, 60, SECOND_W - 80, SECOND_H - 120), bg) > 0.9,
+            "maximized, it fills the second monitor")  # fmt: skip
+    start = (SECOND_X + 20, SECOND_H - 12)
+    s.check(big.pixel(*start) == desk.pixel(*start), "but not its taskbar")
+    s.check(share_unlike(big, (200, 200, 600, 400), bg) == 0, "and not the first monitor")
+
+
+@scenario(CLASSIC_INI + "\n[Taskbar]\nEdge=left\nAllDisplays=false\n", outputs=TWO_MONITORS)
+def window_menu_without_taskbar(s):
+    """A left taskbar only on the primary monitor: a window on the second
+    still gets its window menu (Alt+Space) under its caption icon there."""
+    desk = s.settle("desktop")
+    bg = desk.pixel(500, 300)
+    s.check(desk.pixel(10, HEIGHT // 2) != bg, "the taskbar is on the primary monitor's left")
+    s.check(share_unlike(desk, (SECOND_X + 2, 2, SECOND_W - 6, SECOND_H - 6), bg) == 0,
+            "and not on the second")  # fmt: skip
+    s.inject("move", SECOND_X + 300, 200)
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    opened = s.settle("window")
+    s.inject("key", "alt+space")
+    _, menu = wait_change(s, opened, BOTH, "the window menu", "window-menu")
+    s.check(menu[0] >= SECOND_X and menu[1] < 120,
+            f"the menu under the caption, on the second monitor ({menu})")  # fmt: skip
+    s.inject("key", "Escape")
+    s.wait(lambda: s.shot("closed").changed_box(opened, BOTH) is None, "the menu to close")
+    s.log("ok: Esc closed it")
+
+
+@scenario(outputs=TWO_MONITORS)
+def lock_two_monitors(s):
+    """Lock Computer covers both monitors, and its dialog shows on the one
+    with the pointer (the second), as Unlock Computer then does."""
+    desk = s.settle("desktop")
+    s.inject("move", SECOND_X + 300, 200, "key", "super+l")
+    bars = ((WIDTH // 2, HEIGHT - 4), (SECOND_X + SECOND_W // 2, SECOND_H - 4))
+    s.wait(lambda: all(s.shot("locking").pixel(x, y) != desk.pixel(x, y) for x, y in bars),
+           "both taskbars to be covered", 30)  # fmt: skip
+    locked = s.settle("locked")
+    bg = locked.pixel(100, 100)
+    s.check(share_unlike(locked, (0, 0, WIDTH, HEIGHT), bg) == 0,
+            "the first monitor is covered, without the dialog")  # fmt: skip
+    s.check(share_unlike(locked, (SECOND_X, 0, SECOND_W, SECOND_H), bg) > 0.1,
+            "the Computer Locked dialog is on the second")  # fmt: skip
+    s.inject("key", "ctrl+alt+Delete")
+    _, box = wait_change(s, locked, BOTH, "Unlock Computer", "unlock")
+    s.check(box[0] >= SECOND_X, f"Unlock Computer is on the second monitor too ({box})")
+
+
+def mock_polkitd(s):
+    """Before the compositor starts: a private system bus with dbusmock's
+    polkitd, for the session's agent to register with."""
+    from dbusmock import DBusTestCase
+
+    DBusTestCase.start_system_bus()
+    log = open(os.path.join(s.base, "polkitd.log"), "w")
+    proc, _ = DBusTestCase.spawn_server_template("polkitd", {}, stdout=log, system_bus=True)
+    s.children.append(proc)
+
+
+def session_program(name):
+    """Pids of this session's processes running `name`."""
+    pids = []
+    for pid in session_pids(os.environ["XDG_RUNTIME_DIR"]):
+        try:
+            with open(f"/proc/{pid}/comm") as f:
+                if f.read().strip() == name:
+                    pids.append(pid)
+        except OSError:
+            pass
+    return pids
+
+
+@scenario(requires=("dbusmock",), setup=mock_polkitd)
+def polkit_agent_restarts(s):
+    """The polkit agent the compositor started is started again when it
+    crashes, as the shell is."""
+
+    def registrations():
+        with open(os.path.join(s.base, "polkitd.log")) as f:
+            return f.read().count("RegisterAuthenticationAgent")
+
+    deadline = time.monotonic() + 15
+    while registrations() == 0 and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if registrations() == 0:
+        # polkit finds the login session from the process's cgroup: not
+        # there when the tests run outside a login session.
+        s.log("skipped: the agent couldn't register (no login session?)")
+        return
+    first = s.wait(lambda: session_program("xd-polkit"), "the agent")
+    os.kill(first[0], signal.SIGABRT)
+    s.wait(lambda: [p for p in session_program("xd-polkit") if p not in first],
+           "the agent to be started again")  # fmt: skip
+    s.wait(lambda: registrations() >= 2, "it to register again")
+    s.log("ok: the crashed agent was started again and registered")
 
 
 def main():
