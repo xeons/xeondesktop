@@ -699,14 +699,15 @@ executable(
   install: true,
 )
 fontconfig_dep = dependency('fontconfig', include_type: 'system')
-cairo_ft_dep = dependency('cairo-ft', include_type: 'system')
+# The viewer draws a font file alone through Pango's fontconfig font map.
+pangoft2_dep = dependency('pangoft2', include_type: 'system')
 executable(
   'xd-fonts',
   'src/fonts/main.c',
   'src/fonts/viewer.c',
   'src/fonts/fontlist.c',
   link_with: [gtkapp_lib],
-  dependencies: [core_dep, settings_dep, gtk_dep, fontconfig_dep, cairo_ft_dep],
+  dependencies: [core_dep, settings_dep, gtk_dep, fontconfig_dep, pangoft2_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )

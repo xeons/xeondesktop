@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MIT */
-#include <cairo-ft.h>
 #include <fontconfig/fontconfig.h>
 #include <fontconfig/fcfreetype.h>
 #include <glib/gstdio.h>
+#include <pango/pangofc-fontmap.h>
 
 #include "../gtkapp/gtkapp.h"
 #include "fontlist.h"
@@ -20,18 +20,121 @@ static constexpr double MARGIN = 12;
 
 typedef struct viewer {
     GtkWidget *window, *area;
-    cairo_font_face_t *face;
+    /* The font alone: Pango with a fontconfig of this file only, so the
+     * text is shaped (Arabic, Indic...) but nothing comes from another font
+     * (what it lacks shows as boxes, as in Windows). */
+    FcConfig *config;
+    PangoFontMap *fonts;
+    PangoFontDescription *desc;
     char *info[3]; /* typeface name, file size, version */
     char *title;   /* "Arial (TrueType)" */
+    char *lines[3]; /* the character lines; "" for none */
+    char *sample;   /* the line at each size */
 } viewer;
 
 static void viewer_free(gpointer data) {
     viewer *v = data;
-    cairo_font_face_destroy(v->face);
+    g_clear_object(&v->fonts);
+    if (v->config != nullptr)
+        FcConfigDestroy(v->config);
+    if (v->desc != nullptr)
+        pango_font_description_free(v->desc);
     for (size_t i = 0; i < G_N_ELEMENTS(v->info); i++)
         g_free(v->info[i]);
+    for (size_t i = 0; i < G_N_ELEMENTS(v->lines); i++)
+        g_free(v->lines[i]);
+    g_free(v->sample);
     g_free(v->title);
     g_free(v);
+}
+
+/* `text` without the punctuation the font lacks (a Noto font for one
+ * script leaves the full stop to others), or nullptr when it lacks
+ * anything else. */
+static char *covered_sentence(FcCharSet *cs, const char *text) {
+    GString *out = g_string_new(nullptr);
+    for (const char *p = text; *p != '\0'; p = g_utf8_next_char(p)) {
+        gunichar c = g_utf8_get_char(p);
+        if (c == ' ' || FcCharSetHasChar(cs, c)) {
+            g_string_append_unichar(out, c);
+        } else if (!g_unichar_ispunct(c)) {
+            g_string_free(out, TRUE);
+            return nullptr;
+        }
+    }
+    return g_strstrip(g_string_free(out, FALSE));
+}
+
+/* Whether the font has every character of `text` but spaces. */
+static bool covers(FcCharSet *cs, const char *text) {
+    for (const char *p = text; *p != '\0'; p = g_utf8_next_char(p)) {
+        gunichar c = g_utf8_get_char(p);
+        if (c != ' ' && !FcCharSetHasChar(cs, c))
+            return false;
+    }
+    return true;
+}
+
+/* Up to three lines of the font's own characters, 26 to a line: those
+ * past Latin-1 first (a font for another script has a few Latin ones
+ * too), any it has when it has nothing else. Lone combining marks and
+ * what doesn't print are left out. */
+static void own_lines(viewer *v, FcCharSet *cs) {
+    GString *line[G_N_ELEMENTS(v->lines)] = {0};
+    for (size_t i = 0; i < G_N_ELEMENTS(line); i++)
+        line[i] = g_string_new(nullptr);
+    for (int pass = 0; pass < 2 && line[0]->len == 0; pass++) {
+        size_t n = 0;
+        FcChar32 map[FC_CHARSET_MAP_SIZE];
+        FcChar32 next = 0;
+        for (FcChar32 base = FcCharSetFirstPage(cs, map, &next);
+             base != FC_CHARSET_DONE && n < G_N_ELEMENTS(line) * 26;
+             base = FcCharSetNextPage(cs, map, &next)) {
+            for (unsigned i = 0; i < FC_CHARSET_MAP_SIZE * 32 && n < G_N_ELEMENTS(line) * 26; i++) {
+                if ((map[i / 32] & (1u << (i % 32))) == 0)
+                    continue;
+                gunichar c = base + i;
+                if ((pass == 0 && (c < 0x100 || g_unichar_ispunct(c))) || !g_unichar_isgraph(c) ||
+                    g_unichar_ismark(c))
+                    continue;
+                g_string_append_unichar(line[n / 26], c);
+                n++;
+            }
+        }
+    }
+    for (size_t i = 0; i < G_N_ELEMENTS(line); i++)
+        v->lines[i] = g_string_free(line[i], FALSE);
+}
+
+/* What the page shows: Windows' alphabet and "The quick brown fox" for a
+ * font with the Latin alphabet; for one without, as Windows 7's viewer
+ * did, its own characters and a sentence in a language it covers (Pango's
+ * sample for that language), else its characters again. */
+static void choose_samples(viewer *v, FcPattern *pat) {
+    FcCharSet *cs = nullptr;
+    if (FcPatternGetCharSet(pat, FC_CHARSET, 0, &cs) != FcResultMatch ||
+        covers(cs, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")) {
+        for (size_t i = 0; i < G_N_ELEMENTS(v->lines); i++)
+            v->lines[i] = g_strdup(alphabet[i]);
+        v->sample = g_strdup(SAMPLE);
+        return;
+    }
+    own_lines(v, cs);
+    FcLangSet *ls = nullptr;
+    if (FcPatternGetLangSet(pat, FC_LANG, 0, &ls) == FcResultMatch) {
+        FcStrSet *langs = FcLangSetGetLangs(ls);
+        FcStrList *it = FcStrListCreate(langs);
+        for (FcChar8 *lang; v->sample == nullptr && (lang = FcStrListNext(it)) != nullptr;) {
+            const char *text =
+                pango_language_get_sample_string(pango_language_from_string((const char *)lang));
+            if (text != nullptr)
+                v->sample = covered_sentence(cs, text);
+        }
+        FcStrListDone(it);
+        FcStrSetDestroy(langs);
+    }
+    if (v->sample == nullptr)
+        v->sample = g_strdup(v->lines[0]);
 }
 
 /* Points at 96 DPI, in logical pixels. */
@@ -51,19 +154,32 @@ static double ui_text(PangoContext *ui, cairo_t *cr, const char *text, double x,
     return lh;
 }
 
+/* `text` in the font at `pt` points, laid out for `cr`. */
+static PangoLayout *font_layout(viewer *v, cairo_t *cr, const char *text, int pt) {
+    PangoContext *ctx = pango_font_map_create_context(v->fonts);
+    pango_cairo_update_context(cr, ctx);
+    PangoFontDescription *d = pango_font_description_copy(v->desc);
+    double px = pt_to_px(pt);
+    pango_font_description_set_absolute_size(d, px * PANGO_SCALE);
+    PangoLayout *l = pango_layout_new(ctx);
+    g_object_unref(ctx);
+    pango_layout_set_font_description(l, d);
+    pango_font_description_free(d);
+    pango_layout_set_text(l, text, -1);
+    return l;
+}
+
 /* One line in the font itself, its top at y; returns its height. */
 static double font_text(viewer *v, cairo_t *cr, const char *text, int pt, double x, double y,
                         double *right) {
-    cairo_set_font_face(cr, v->face);
-    cairo_set_font_size(cr, pt_to_px(pt));
-    cairo_font_extents_t fe;
-    cairo_font_extents(cr, &fe);
-    cairo_text_extents_t te;
-    cairo_text_extents(cr, text, &te);
-    cairo_move_to(cr, x, y + fe.ascent);
-    cairo_show_text(cr, text);
-    *right = MAX(*right, x + te.x_advance);
-    return fe.height;
+    PangoLayout *l = font_layout(v, cr, text, pt);
+    int lw = 0, lh = 0;
+    pango_layout_get_pixel_size(l, &lw, &lh);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, l);
+    g_object_unref(l);
+    *right = MAX(*right, x + lw);
+    return lh;
 }
 
 static void rule(cairo_t *cr, double y, double width) {
@@ -89,8 +205,9 @@ static double paint(viewer *v, PangoContext *ui, cairo_t *cr, double width,
     y += 8;
     rule(cr, y, width);
     y += 10;
-    for (size_t i = 0; i < G_N_ELEMENTS(alphabet); i++)
-        y += font_text(v, cr, alphabet[i], 12, MARGIN, y, right);
+    for (size_t i = 0; i < G_N_ELEMENTS(v->lines); i++)
+        if (v->lines[i][0] != '\0')
+            y += font_text(v, cr, v->lines[i], 12, MARGIN, y, right);
     y += 8;
     rule(cr, y, width);
     y += 10;
@@ -98,16 +215,15 @@ static double paint(viewer *v, PangoContext *ui, cairo_t *cr, double width,
         char label[8];
         g_snprintf(label, sizeof(label), "%d", sample_sizes[i]);
         /* The size on the sample's baseline. */
-        cairo_set_font_face(cr, v->face);
-        cairo_set_font_size(cr, pt_to_px(sample_sizes[i]));
-        cairo_font_extents_t fe;
-        cairo_font_extents(cr, &fe);
+        PangoLayout *fl = font_layout(v, cr, v->sample, sample_sizes[i]);
+        double ascent = pango_layout_get_baseline(fl) / (double)PANGO_SCALE;
+        g_object_unref(fl);
         PangoLayout *l = pango_layout_new(ui);
         pango_layout_set_text(l, label, -1);
         double base = pango_layout_get_baseline(l) / (double)PANGO_SCALE;
         g_object_unref(l);
-        double lh = ui_text(ui, cr, label, MARGIN, y + fe.ascent - base, right);
-        double fh = font_text(v, cr, SAMPLE, sample_sizes[i], MARGIN + 36, y, right);
+        double lh = ui_text(ui, cr, label, MARGIN, y + ascent - base, right);
+        double fh = font_text(v, cr, v->sample, sample_sizes[i], MARGIN + 36, y, right);
         y += MAX(lh, fh) + 6;
     }
     return y + MARGIN;
@@ -165,7 +281,12 @@ static viewer *viewer_load(GtkWindow *parent, const char *file, int index) {
         return nullptr;
     }
     viewer *v = g_new0(viewer, 1);
-    v->face = cairo_ft_font_face_create_for_pattern(pat);
+    v->config = FcConfigCreate();
+    FcConfigAppFontAddFile(v->config, (const FcChar8 *)file);
+    v->fonts = pango_cairo_font_map_new();
+    pango_fc_font_map_set_config(PANGO_FC_FONT_MAP(v->fonts), v->config);
+    v->desc = pango_fc_font_description_from_pattern(pat, FALSE);
+    choose_samples(v, pat);
     FcChar8 *s = nullptr;
     const char *family = FcPatternGetString(pat, FC_FAMILY, 0, &s) == FcResultMatch
                              ? (const char *)s
