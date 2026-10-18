@@ -59,6 +59,7 @@ Depends:
  dbus-bin,
  passwd,
  bubblewrap,
+ iso-codes,
  fonts-dejavu-core,
  fonts-dejavu-extra,
  fonts-adobe-sourcesans3,

@@ -45,6 +45,7 @@ depends=(
   'libarchive' # Files: Send To > Compressed (zipped) Folder
   'libseccomp' # xd-thumbnailer's sandbox
   'bubblewrap' # xd-thumbnailer's sandbox
+  'iso-codes'  # the language bar's two-letter codes
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
