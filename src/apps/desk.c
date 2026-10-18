@@ -99,8 +99,10 @@ typedef struct desk {
     xd_widget *large_icons;
     GPtrArray *icon_themes; /* xd_installed_theme, as the Icons list shows them */
     GPtrArray *gtk_themes;  /* ...and Program style's, after its first item */
+    GPtrArray *qt_styles;   /* ...and the Qt one's */
     xd_widget *icon_combo;
     xd_widget *gtk_combo;
+    xd_widget *qt_combo;
 
     /* Settings */
     disp_head *heads;       /* as edited */
@@ -1068,8 +1070,9 @@ static void on_large_icons(xd_widget *w, void *user) {
 }
 
 /* Icons and Program style: the freedesktop icon theme everything draws
- * from, and the GTK theme GTK programs get. Windows had neither; they sit
- * below its visual effects. */
+ * from, the GTK theme GTK programs get, and the widget style of Qt
+ * programs (which take the rest from the GTK theme). Windows had none of
+ * them; they sit below its visual effects. */
 static const char *theme_dir_at(GPtrArray *list, int item) {
     /* Item 0 is the default. */
     if (item <= 0 || (guint)item > list->len)
@@ -1088,6 +1091,13 @@ static void on_gtk_theme(xd_widget *w, void *user) {
     desk *d = user;
     snprintf(d->pending.gtk_theme, sizeof(d->pending.gtk_theme), "%s",
              theme_dir_at(d->gtk_themes, xd_widget_selected(w)));
+    changed(d);
+}
+
+static void on_qt_style(xd_widget *w, void *user) {
+    desk *d = user;
+    snprintf(d->pending.qt_style, sizeof(d->pending.qt_style), "%s",
+             theme_dir_at(d->qt_styles, xd_widget_selected(w)));
     changed(d);
 }
 
@@ -1121,8 +1131,11 @@ static void build_themes(desk *d) {
     dirs = xd_gtk_theme_dirs();
     d->gtk_themes = xd_gtk_themes_list((const char *const *)dirs);
     g_strfreev(dirs);
+    dirs = xd_qt_plugin_dirs();
+    d->qt_styles = xd_qt_styles_list((const char *const *)dirs);
+    g_strfreev(dirs);
 
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 264, 364, 86}, "Icons and program style"),
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 264, 364, 116}, "Icons and program style"),
                        P);
     xd_widget_set_page(xd_label(win, (xd_rect){32, 289, 130, 16}, "Icons:", 0), P);
     d->icon_combo = xd_combo(win, (xd_rect){164, 286, 208, 21}, false, on_icon_theme, d);
@@ -1147,6 +1160,13 @@ static void build_themes(desk *d) {
     xd_widget_set_page(d->gtk_combo, P);
     xd_widget_add_item(d->gtk_combo, "XeonDesktop (matches the style)");
     fill_themes(d->gtk_combo, d->gtk_themes, d->pending.gtk_theme);
+
+    /* Qt programs read it at start: those running keep their style. */
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 349, 130, 16}, "Program style (Qt):", 0), P);
+    d->qt_combo = xd_combo(win, (xd_rect){164, 346, 208, 21}, false, on_qt_style, d);
+    xd_widget_set_page(d->qt_combo, P);
+    xd_widget_add_item(d->qt_combo, "Automatic (matches the style)");
+    fill_themes(d->qt_combo, d->qt_styles, d->pending.qt_style);
 }
 
 static void build_effects(desk *d) {
@@ -2057,5 +2077,6 @@ int main(int argc, char **argv) {
     xd_scheme_list_free(&d.schemes);
     g_ptr_array_unref(d.icon_themes);
     g_ptr_array_unref(d.gtk_themes);
+    g_ptr_array_unref(d.qt_styles);
     return EXIT_SUCCESS;
 }

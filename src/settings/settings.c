@@ -110,6 +110,53 @@ const char *xd_settings_gtk_theme(const xd_settings *s) {
     return s->gtk_theme[0] != '\0' ? s->gtk_theme : XD_GTK_THEME_NAME;
 }
 
+const char *xd_qt_style_auto(xd_visual_style style) {
+    /* Windows draws 2000's raised and sunken bevels; Fusion's flat,
+     * rounded and lightly shaded controls are the closest Qt has to XP's
+     * and 7's. */
+    return style == XD_STYLE_CLASSIC ? "Windows" : "Fusion";
+}
+
+const char *xd_settings_qt_style(const xd_settings *s) {
+    return s->qt_style[0] != '\0' ? s->qt_style : xd_qt_style_auto(s->style);
+}
+
+/* Sets `var` to `value` unless the user set it: it isn't set, or holds
+ * what we set before (XEONDESKTOP_<var>). */
+static bool qt_env_set(const char *var, const char *value) {
+    const char *old = getenv(var);
+    if (old != nullptr && !xd_qt_env_ours(var))
+        return false;
+    bool changed = old == nullptr || strcmp(old, value) != 0;
+    char *mark = g_strconcat("XEONDESKTOP_", var, nullptr);
+    setenv(var, value, true);
+    setenv(mark, value, true);
+    g_free(mark);
+    return changed;
+}
+
+bool xd_qt_env_ours(const char *var) {
+    char *mark = g_strconcat("XEONDESKTOP_", var, nullptr);
+    const char *ours = getenv(mark);
+    const char *now = getenv(var);
+    g_free(mark);
+    return ours != nullptr && now != nullptr && strcmp(ours, now) == 0;
+}
+
+bool xd_settings_qt_env(const xd_settings *s) {
+    /* All are evaluated: no short circuit. */
+    bool theme = qt_env_set("QT_QPA_PLATFORMTHEME", "gtk3");
+    bool style = qt_env_set("QT_STYLE_OVERRIDE", xd_settings_qt_style(s));
+    /* Our palette goes with our GTK theme; with another, Qt takes that
+     * theme's colours its own way. Empty rather than unset, so that the
+     * D-Bus and systemd environments, which can only be given values,
+     * follow too. */
+    char *palette = s->gtk_theme[0] == '\0' ? xd_gtk_theme_qt_palette_path() : g_strdup("");
+    bool colours = qt_env_set("QT_GUI_GTK_JSON", palette);
+    g_free(palette);
+    return theme || style || colours;
+}
+
 const char *xd_power_scheme_name(xd_power_scheme scheme) {
     XD_ASSERT((unsigned)scheme < XD_POWER_SCHEME_COUNT);
     return power_scheme_names[scheme];
@@ -206,6 +253,16 @@ static void parse_theme_dir(xd_str v, char *dst, size_t cap) {
     bool ok = v.len < cap && (v.len == 0 || v.ptr[0] != '.');
     for (size_t i = 0; ok && i < v.len; i++)
         ok = v.ptr[i] != '/' && (unsigned char)v.ptr[i] >= ' ';
+    if (ok)
+        copy_into(dst, cap, v);
+}
+
+/* A Qt style's key ("Fusion", "kvantum-dark"): it goes into the
+ * environment, so nothing else. */
+static void parse_qt_style(xd_str v, char *dst, size_t cap) {
+    bool ok = v.len < cap;
+    for (size_t i = 0; ok && i < v.len; i++)
+        ok = g_ascii_isalnum(v.ptr[i]) || memchr("-_.+", v.ptr[i], 4) != nullptr;
     if (ok)
         copy_into(dst, cap, v);
 }
@@ -348,6 +405,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_theme_dir(v, s->icon_theme, sizeof(s->icon_theme));
         } else if (KEY("GtkTheme")) {
             parse_theme_dir(v, s->gtk_theme, sizeof(s->gtk_theme));
+        } else if (KEY("QtStyle")) {
+            parse_qt_style(v, s->qt_style, sizeof(s->qt_style));
         }
     } else if (SEC("Desktop")) {
         if (KEY("Wallpaper")) {
@@ -581,6 +640,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Appearance", "FontSmoothing", smoothing_names[s->font_smoothing]);
     g_key_file_set_string(kf, "Appearance", "IconTheme", s->icon_theme);
     g_key_file_set_string(kf, "Appearance", "GtkTheme", s->gtk_theme);
+    g_key_file_set_string(kf, "Appearance", "QtStyle", s->qt_style);
     g_key_file_set_comment(kf, "Appearance", nullptr,
                            " XeonDesktop settings. Written by Display Properties; edits are\n"
                            " picked up immediately.",

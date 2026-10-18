@@ -18,6 +18,7 @@
 
 #include "../core/alloc.h"
 #include "../settings/soundplay.h"
+#include "../settings/themes.h"
 #include "../ui/image.h"
 #include "shell.h"
 
@@ -589,6 +590,28 @@ static void load_wallpaper(xd_shell *shell) {
                            : nullptr;
 }
 
+/* GTK3 on Wayland, and with it Qt's GTK platform theme, takes the icon
+ * theme from GSettings (org.gnome.desktop.interface), never from our
+ * settings: in a real session the icon theme in use goes there too, as
+ * Plasma does with its own. Not in a nested or test session, whose
+ * GSettings are the host desktop's. GTK_THEME covers the GTK theme. */
+static void export_icon_theme(const xd_settings *s) {
+    const char *nested = getenv("XEONDESKTOP_NESTED");
+    if (nested == nullptr || strcmp(nested, "0") != 0)
+        return;
+    const char *theme = xd_settings_icon_theme(s);
+    char **dirs = xd_icon_theme_dirs();
+    bool installed = false;
+    for (char **d = dirs; *d != nullptr && !installed; d++) {
+        char *index = g_build_filename(*d, theme, "index.theme", nullptr);
+        installed = g_file_test(index, G_FILE_TEST_IS_REGULAR);
+        g_free(index);
+    }
+    g_strfreev(dirs);
+    if (installed)
+        xd_gtk_settings_export(g_get_user_config_dir(), nullptr, nullptr, theme);
+}
+
 /* Applies desktop.ini; command-line overrides only win at startup. */
 static void apply_settings(xd_shell *shell, bool startup) {
     char old_wallpaper[sizeof(shell->settings.wallpaper)];
@@ -601,6 +624,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     if (startup || strcmp(old_icons, shell->settings.icon_theme) != 0) {
         xd_icons_destroy(shell->icons);
         shell->icons = xd_icons_create(xd_settings_icon_theme(&shell->settings));
+        export_icon_theme(&shell->settings);
     }
     if (!startup) {
         shell->cli_style = false;
@@ -627,6 +651,8 @@ static void apply_settings(xd_shell *shell, bool startup) {
     setenv("XCURSOR_SIZE", cursor_size, true);
     /* And Display Properties' GTK theme, as the compositor gives it. */
     setenv("GTK_THEME", xd_settings_gtk_theme(&shell->settings), true);
+    /* And Qt's style; Qt programs already running keep theirs. */
+    xd_settings_qt_env(&shell->settings);
     if (startup)
         return;
     xd_tray_changed(shell); /* the volume and power icons may come or go */

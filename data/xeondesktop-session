@@ -38,6 +38,15 @@ if [ -n "${LOCPATH-}" ] && locale 2>&1 >/dev/null | grep -q 'Cannot set'; then
     done
 fi
 
+# The compositor gives Qt programs Qt's GTK platform theme, our palette
+# for it and the Qt style chosen in Display Properties, unless these are
+# set already (the user's own, for qt6ct or Kvantum); it imports only its
+# own into the user manager, so only those are taken back at the end.
+qt_vars=
+[ -n "${QT_QPA_PLATFORMTHEME+set}" ] || qt_vars=QT_QPA_PLATFORMTHEME
+[ -n "${QT_STYLE_OVERRIDE+set}" ] || qt_vars="$qt_vars QT_STYLE_OVERRIDE"
+[ -n "${QT_GUI_GTK_JSON+set}" ] || qt_vars="$qt_vars QT_GUI_GTK_JSON"
+
 # The compositor starts xeondesktop-session.target in the user manager
 # (graphical-session.target with it); when it exits, however it exits,
 # the session's services stop and the manager forgets this display. A
@@ -46,7 +55,8 @@ fi
 end_session() {
     systemctl --user stop xeondesktop-session.target
     systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP \
-        XDG_SESSION_TYPE XDG_SESSION_DESKTOP GTK_THEME XEONDESKTOP_PID XEONDESKTOP_NESTED
+        XDG_SESSION_TYPE XDG_SESSION_DESKTOP GTK_THEME XEONDESKTOP_PID XEONDESKTOP_NESTED \
+        $qt_vars
 }
 trap end_session EXIT
 trap 'exit 143' TERM

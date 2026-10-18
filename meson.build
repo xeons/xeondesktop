@@ -117,17 +117,21 @@ theme_dep = declare_dependency(
   dependencies: [core_dep, cairo_dep, pango_dep, glib_dep, m_dep],
 )
 
+# The Qt palette file beside the GTK theme (src/settings/qtpalette.c).
+json_glib_dep = dependency('json-glib-1.0', include_type: 'system')
 settings_lib = static_library(
   'xdsettings',
   'src/settings/settings.c',
   'src/settings/state.c',
   'src/settings/monitors.c',
   'src/settings/gtktheme.c',
+  'src/settings/qtpalette.c',
   'src/settings/sounds.c',
-  dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
+  dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
-settings_dep = declare_dependency(link_with: settings_lib, dependencies: [theme_dep, glib_dep])
+settings_dep = declare_dependency(link_with: settings_lib,
+                                  dependencies: [theme_dep, glib_dep, json_glib_dep])
 
 wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
 xcb_dep = dependency('xcb', include_type: 'system')
@@ -837,6 +841,7 @@ executable(
   'src/shell/account.c',
   'src/shell/sounds.c',
   'src/settings/soundplay.c',
+  'src/settings/themes.c',
   link_with: rename_lib,
   dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep, udev_dep],
   c_args: ['-D_GNU_SOURCE'],

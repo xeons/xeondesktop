@@ -31,6 +31,16 @@ char **xd_gtk_theme_dirs(void);
  * theme is left out: it is the "matches the style" choice. */
 GPtrArray *xd_gtk_themes_list(const char *const *dirs);
 
+/* Qt's plugin directories: $QT_PLUGIN_PATH's, then Qt 6's and Qt 5's as
+ * qtpaths6/qmake6 and qmake-qt5 report them, else where distributions
+ * install them. Only those that exist. Free with g_strfreev. */
+char **xd_qt_plugin_dirs(void);
+/* Qt widget styles for QtStyle, both name and dir being the key: Qt's
+ * built-in Windows and Fusion, then the style plugins in `plugin_dirs`'
+ * styles/, sorted. A plugin is named by its file (breeze6.so is
+ * "Breeze"): Qt matches style keys without regard to case. */
+GPtrArray *xd_qt_styles_list(const char *const *plugin_dirs);
+
 /* Sets `key` in a GTK settings.ini's [Settings] (nullptr removes it),
  * keeping the rest of the file. */
 bool xd_gtk_ini_set(const char *path, const char *key, const char *value);

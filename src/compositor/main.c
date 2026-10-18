@@ -350,6 +350,26 @@ static void set_gtk_theme_env(const xd_server *server, const xd_settings *settin
     }
 }
 
+/* Qt programs started from now on follow the GTK theme and get
+ * Display Properties' Qt style (see xd_settings_qt_env); so do those D-Bus
+ * and systemd start, once the session is real. Running Qt programs can't
+ * change style: they keep theirs until restarted. */
+static void set_qt_env(const xd_server *server, const xd_settings *settings, bool startup) {
+    if (!xd_settings_qt_env(settings) || startup || server->session == nullptr)
+        return;
+    static char prog[] = "dbus-update-activation-environment", systemd[] = "--systemd",
+                style[] = "QT_STYLE_OVERRIDE", palette[] = "QT_GUI_GTK_JSON";
+    char *update[5] = {prog, systemd};
+    size_t n = 2;
+    if (xd_qt_env_ours(style))
+        update[n++] = style;
+    if (xd_qt_env_ours(palette))
+        update[n++] = palette;
+    update[n] = nullptr;
+    if (n > 2)
+        xd_spawn_argv(update);
+}
+
 /* Title bar icons from the settings' icon theme: a new theme starts a new
  * cache (the callers redraw every frame afterwards). */
 static void update_appicons(xd_server *server, const xd_settings *settings) {
@@ -401,6 +421,7 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
 
     install_gtk_theme(server);
     set_gtk_theme_env(server, &settings, false);
+    set_qt_env(server, &settings, false);
     update_appicons(server, &settings);
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
         xd_view_update_decorations(view);
@@ -575,6 +596,9 @@ int main(int argc, char **argv) {
     install_gtk_theme(&server);
     set_gtk_theme_env(&server, &settings, true);
     setenv("GTK_OVERLAY_SCROLLING", "0", true);
+    /* Qt programs follow the GTK theme, unless the user set up their own
+     * (qt6ct, Kvantum, ...) in the environment. */
+    set_qt_env(&server, &settings, true);
     /* Programs that D-Bus and systemd start for the session (portals,
      * notification daemons, scheduled tasks, ...) need to find this
      * display too. Once the user manager has the variables, starting
@@ -588,8 +612,20 @@ int main(int argc, char **argv) {
                     arg0[] = "xd-session-start", v1[] = "WAYLAND_DISPLAY", v2[] = "DISPLAY",
                     v3[] = "XDG_CURRENT_DESKTOP", v4[] = "XDG_SESSION_TYPE",
                     v5[] = "XDG_SESSION_DESKTOP", v6[] = "DBUS_SESSION_BUS_ADDRESS",
-                    v7[] = "GTK_THEME", v8[] = "XEONDESKTOP_PID", v9[] = "XEONDESKTOP_NESTED";
-        char *update[] = {sh, flag, script, arg0, v1, v2, v3, v4, v5, v6, v7, v8, v9, nullptr};
+                    v7[] = "GTK_THEME", v8[] = "XEONDESKTOP_PID", v9[] = "XEONDESKTOP_NESTED",
+                    qt1[] = "QT_QPA_PLATFORMTHEME", qt2[] = "QT_STYLE_OVERRIDE",
+                    qt3[] = "QT_GUI_GTK_JSON";
+        char *update[16] = {sh, flag, script, arg0, v1, v2, v3, v4, v5, v6, v7, v8, v9};
+        size_t n = 13;
+        /* The Qt variables only if they're ours: the user's own setup
+         * (environment.d) is the user manager's already. */
+        if (xd_qt_env_ours(qt1))
+            update[n++] = qt1;
+        if (xd_qt_env_ours(qt2))
+            update[n++] = qt2;
+        if (xd_qt_env_ours(qt3))
+            update[n++] = qt3;
+        update[n] = nullptr;
         xd_spawn_argv(update);
     }
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,

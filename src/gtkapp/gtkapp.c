@@ -101,6 +101,8 @@ static void on_settings_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused
     xd_settings cfg;
     xd_settings_load(&cfg);
     apply_input_settings(&cfg);
+    /* Qt programs we start from now on get the new Qt style. */
+    xd_settings_qt_env(&cfg);
     /* Only when they changed: setting a theme makes GTK reload it. */
     if (strcmp(cfg.gtk_theme, applied_gtk) != 0 || strcmp(cfg.icon_theme, applied_icons) != 0)
         apply_theme_settings(&cfg);

@@ -127,6 +127,141 @@ GPtrArray *xd_gtk_themes_list(const char *const *dirs) {
     return list;
 }
 
+/* What `argv` prints on its first line, if it runs. */
+static char *query(const char *const argv[static 4]) {
+    char *prog = g_find_program_in_path(argv[0]);
+    if (prog == nullptr)
+        return nullptr;
+    /* g_spawn_sync wants them writable. */
+    char *args[4] = {prog};
+    for (size_t i = 1; i < G_N_ELEMENTS(args) - 1 && argv[i] != nullptr; i++)
+        args[i] = g_strdup(argv[i]);
+    char *out = nullptr;
+    int status = 0;
+    if (!g_spawn_sync(nullptr, args, nullptr, G_SPAWN_STDERR_TO_DEV_NULL, nullptr, nullptr,
+                      &out, nullptr, &status, nullptr) ||
+        !g_spawn_check_wait_status(status, nullptr)) {
+        g_clear_pointer(&out, g_free);
+    }
+    for (size_t i = 0; args[i] != nullptr; i++)
+        g_free(args[i]);
+    if (out != nullptr)
+        out[strcspn(out, "\n")] = '\0';
+    return out;
+}
+
+static void add_dir(GPtrArray *dirs, char *dir) {
+    bool dup = dir == nullptr || dir[0] != '/' || !g_file_test(dir, G_FILE_TEST_IS_DIR);
+    for (guint i = 0; !dup && i < dirs->len; i++)
+        dup = strcmp(g_ptr_array_index(dirs, i), dir) == 0;
+    if (dup)
+        g_free(dir);
+    else
+        g_ptr_array_add(dirs, dir);
+}
+
+char **xd_qt_plugin_dirs(void) {
+    GPtrArray *dirs = g_ptr_array_new();
+    const char *env = g_getenv("QT_PLUGIN_PATH");
+    if (env != nullptr) {
+        char **parts = g_strsplit(env, ":", -1);
+        for (char **p = parts; *p != nullptr; p++)
+            add_dir(dirs, g_strdup(*p));
+        g_strfreev(parts);
+    }
+    /* Qt 6 then Qt 5, each from the first tool that answers. */
+    static const char *const qt6[][4] = {
+        {"qtpaths6", "--query", "QT_INSTALL_PLUGINS", nullptr},
+        {"qmake6", "-query", "QT_INSTALL_PLUGINS", nullptr},
+    };
+    static const char *const qt5[][4] = {
+        {"qmake-qt5", "-query", "QT_INSTALL_PLUGINS", nullptr},
+        {"qtpaths-qt5", "--plugin-dir", nullptr, nullptr},
+    };
+    char *dir = nullptr;
+    for (size_t i = 0; i < G_N_ELEMENTS(qt6) && dir == nullptr; i++)
+        dir = query(qt6[i]);
+    add_dir(dirs, dir);
+    dir = nullptr;
+    for (size_t i = 0; i < G_N_ELEMENTS(qt5) && dir == nullptr; i++)
+        dir = query(qt5[i]);
+    add_dir(dirs, dir);
+    /* Arch, Debian/Ubuntu (x86-64), Fedora. */
+    static const char *const known[] = {
+        "/usr/lib/qt6/plugins",        "/usr/lib/x86_64-linux-gnu/qt6/plugins",
+        "/usr/lib64/qt6/plugins",      "/usr/lib/qt/plugins",
+        "/usr/lib/x86_64-linux-gnu/qt5/plugins", "/usr/lib64/qt5/plugins",
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(known); i++)
+        add_dir(dirs, g_strdup(known[i]));
+    g_ptr_array_add(dirs, nullptr);
+    return (char **)g_ptr_array_free(dirs, FALSE);
+}
+
+/* A style plugin's key from its file name: no "lib" or ".so", no Qt
+ * version suffix (breeze6, oxygen6), the first letter capitalized as most
+ * keys are. nullptr for what isn't a plugin. */
+static char *qt_style_key(const char *file) {
+    if (!g_str_has_suffix(file, ".so"))
+        return nullptr;
+    const char *start = g_str_has_prefix(file, "lib") ? file + 3 : file;
+    size_t len = strlen(start) - 3;
+    if (len >= 2 && (start[len - 1] == '5' || start[len - 1] == '6') &&
+        g_ascii_isalpha(start[len - 2]))
+        len--;
+    if (len == 0)
+        return nullptr;
+    char *key = g_strndup(start, len);
+    key[0] = g_ascii_toupper(key[0]);
+    return key;
+}
+
+static int by_key(gconstpointer a, gconstpointer b) {
+    const xd_installed_theme *x = *(xd_installed_theme *const *)a;
+    const xd_installed_theme *y = *(xd_installed_theme *const *)b;
+    return g_ascii_strcasecmp(x->dir, y->dir);
+}
+
+GPtrArray *xd_qt_styles_list(const char *const *plugin_dirs) {
+    GPtrArray *list = g_ptr_array_new_with_free_func(theme_free);
+    /* Keys are compared without case, as Qt does. */
+    GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    static const char *const builtin[] = {"Windows", "Fusion"};
+    for (size_t i = 0; i < G_N_ELEMENTS(builtin); i++) {
+        g_hash_table_add(seen, g_ascii_strdown(builtin[i], -1));
+        add(list, seen, builtin[i], nullptr);
+    }
+    guint first = list->len;
+    for (; plugin_dirs != nullptr && *plugin_dirs != nullptr; plugin_dirs++) {
+        char *styles = g_build_filename(*plugin_dirs, "styles", nullptr);
+        GDir *d = g_dir_open(styles, 0, nullptr);
+        g_free(styles);
+        if (d == nullptr)
+            continue;
+        const char *entry;
+        while ((entry = g_dir_read_name(d)) != nullptr) {
+            char *key = qt_style_key(entry);
+            if (key == nullptr)
+                continue;
+            char *lower = g_ascii_strdown(key, -1);
+            if (!g_hash_table_contains(seen, lower)) {
+                g_hash_table_add(seen, g_strdup(lower));
+                add(list, seen, key, nullptr);
+            }
+            g_free(lower);
+            g_free(key);
+        }
+        g_dir_close(d);
+    }
+    g_hash_table_destroy(seen);
+    /* The built-in ones stay first. */
+    if (list->len > first) {
+        xd_installed_theme **items = (xd_installed_theme **)list->pdata + first;
+        qsort(items, list->len - first, sizeof(*items), by_key);
+    }
+    return list;
+}
+
 bool xd_gtk_ini_set(const char *path, const char *key, const char *value) {
     GKeyFile *kf = g_key_file_new();
     GError *err = nullptr;

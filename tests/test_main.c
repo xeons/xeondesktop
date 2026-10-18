@@ -34,12 +34,14 @@
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
 #include "../src/security/passwd.h"
+#include "../src/settings/qtpalette.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
 #include "../src/settings/themes.h"
 /* For GSettings in memory, never the user's dconf. */
 #define G_SETTINGS_ENABLE_BACKEND
 #include <gio/gsettingsbackend.h>
+#include <json-glib/json-glib.h>
 #include "../src/shell/apps.h"
 #include "../src/startmenu/searchlib.h"
 #include "../src/shell/jumplist.h"
@@ -1948,6 +1950,194 @@ static void test_kbd_layouts(void) {
     g_free(o);
 }
 
+/* Restores an environment variable a test changed. */
+static void env_restore(const char *var, char *saved) {
+    if (saved != nullptr)
+        g_setenv(var, saved, TRUE);
+    else
+        g_unsetenv(var);
+    g_free(saved);
+}
+
+static void test_qt_style(void) {
+    /* [Appearance] QtStyle: a style key, "" = automatic. */
+    xd_settings a;
+    xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nQtStyle=kvantum-dark\n"), &a);
+    CHECK(strcmp(a.qt_style, "kvantum-dark") == 0);
+    CHECK(strcmp(xd_settings_qt_style(&a), "kvantum-dark") == 0);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "QtStyle=kvantum-dark") != nullptr);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && strcmp(b.qt_style, "kvantum-dark") == 0);
+    xd_strbuf_free(&text);
+    /* It goes into the environment: no spaces, paths or shell syntax. */
+    static const char *const bad[] = {
+        "[Appearance]\nQtStyle=../breeze\n", "[Appearance]\nQtStyle=Br eeze\n",
+        "[Appearance]\nQtStyle=a;b\n",
+        "[Appearance]\nQtStyle=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"};
+    for (size_t i = 0; i < G_N_ELEMENTS(bad); i++) {
+        xd_settings_parse(xd_str_from_cstr(bad[i]), &a);
+        CHECK(a.qt_style[0] == '\0');
+    }
+    /* Automatic: 2000's bevels for Classic, Fusion for the rest. */
+    xd_settings_defaults(&a);
+    CHECK(a.qt_style[0] == '\0');
+    CHECK(strcmp(xd_settings_qt_style(&a), "Windows") == 0);
+    static const xd_visual_style fusion[] = {XD_STYLE_LUNA, XD_STYLE_WHISTLER, XD_STYLE_AERO};
+    for (size_t i = 0; i < G_N_ELEMENTS(fusion); i++) {
+        a.style = fusion[i];
+        CHECK(strcmp(xd_settings_qt_style(&a), "Fusion") == 0);
+    }
+    CHECK(strcmp(xd_qt_style_auto(XD_STYLE_CLASSIC), "Windows") == 0);
+
+    /* The environment: ours follows the setting, the user's stays. */
+    static const char *const vars[] = {"QT_QPA_PLATFORMTHEME",
+                                       "QT_STYLE_OVERRIDE",
+                                       "QT_GUI_GTK_JSON",
+                                       "XEONDESKTOP_QT_QPA_PLATFORMTHEME",
+                                       "XEONDESKTOP_QT_STYLE_OVERRIDE",
+                                       "XEONDESKTOP_QT_GUI_GTK_JSON"};
+    char *saved[G_N_ELEMENTS(vars)];
+    for (size_t i = 0; i < G_N_ELEMENTS(vars); i++) {
+        saved[i] = g_strdup(g_getenv(vars[i]));
+        g_unsetenv(vars[i]);
+    }
+    xd_settings_defaults(&a);
+    CHECK(xd_settings_qt_env(&a));
+    CHECK(g_strcmp0(g_getenv("QT_QPA_PLATFORMTHEME"), "gtk3") == 0);
+    CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "Windows") == 0);
+    CHECK(xd_qt_env_ours("QT_QPA_PLATFORMTHEME") && xd_qt_env_ours("QT_STYLE_OVERRIDE"));
+    /* Our palette with our GTK theme, none with another. */
+    CHECK(g_str_has_suffix(g_getenv("QT_GUI_GTK_JSON"), "/XeonDesktop/" XD_QT_PALETTE_FILE));
+    CHECK(!xd_settings_qt_env(&a)); /* nothing new */
+    snprintf(a.gtk_theme, sizeof(a.gtk_theme), "%s", "Adwaita");
+    CHECK(xd_settings_qt_env(&a));
+    CHECK(g_strcmp0(g_getenv("QT_GUI_GTK_JSON"), "") == 0 && xd_qt_env_ours("QT_GUI_GTK_JSON"));
+    a.gtk_theme[0] = '\0';
+    a.style = XD_STYLE_AERO; /* a child of ours, after a change */
+    CHECK(xd_settings_qt_env(&a));
+    CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "Fusion") == 0);
+    /* The user's own (qt6ct, Kvantum), set before the desktop started... */
+    for (size_t i = 0; i < G_N_ELEMENTS(vars); i++)
+        g_unsetenv(vars[i]);
+    g_setenv("QT_QPA_PLATFORMTHEME", "qt6ct", TRUE);
+    g_setenv("QT_STYLE_OVERRIDE", "kvantum", TRUE);
+    xd_settings_qt_env(&a); /* only adds our palette file, which they ignore */
+    CHECK(!xd_settings_qt_env(&a));
+    CHECK(g_strcmp0(g_getenv("QT_QPA_PLATFORMTHEME"), "qt6ct") == 0);
+    CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "kvantum") == 0);
+    CHECK(!xd_qt_env_ours("QT_STYLE_OVERRIDE"));
+    /* ...or over ours, for one program started from a terminal. */
+    g_unsetenv("QT_STYLE_OVERRIDE");
+    CHECK(xd_settings_qt_env(&a) && xd_qt_env_ours("QT_STYLE_OVERRIDE"));
+    g_setenv("QT_STYLE_OVERRIDE", "Breeze", TRUE);
+    CHECK(!xd_settings_qt_env(&a));
+    CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "Breeze") == 0);
+    for (size_t i = 0; i < G_N_ELEMENTS(vars); i++)
+        env_restore(vars[i], saved[i]);
+
+    /* Styles: Qt's built-in two first, then plugins by key, once each
+     * (a Qt 5 and a Qt 6 build of one, and one named like a built-in). */
+    char *root = g_dir_make_tmp("xd-qtstyles-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    put_file(root, "qt6/styles/breeze6.so", "");
+    put_file(root, "qt6/styles/libkvantum.so", "");
+    put_file(root, "qt6/styles/libqt6ct-style.so", "");
+    put_file(root, "qt6/styles/README", "");
+    put_file(root, "qt5/styles/breeze.so", "");
+    put_file(root, "qt5/styles/libfusion.so", "");
+    put_file(root, "qt5/styles/oxygen.so", "");
+    char *qt6 = g_build_filename(root, "qt6", nullptr);
+    char *qt5 = g_build_filename(root, "qt5", nullptr);
+    const char *dirs[] = {qt6, qt5, "/nonexistent", nullptr};
+    GPtrArray *styles = xd_qt_styles_list(dirs);
+    static const char *const want[] = {"Windows", "Fusion", "Breeze", "Kvantum", "Oxygen",
+                                       "Qt6ct-style"};
+    CHECK(styles->len == G_N_ELEMENTS(want));
+    for (guint i = 0; i < G_N_ELEMENTS(want); i++)
+        CHECK(theme_at(styles, i) && strcmp(theme_at(styles, i)->dir, want[i]) == 0 &&
+              strcmp(theme_at(styles, i)->name, want[i]) == 0);
+    g_ptr_array_unref(styles);
+    styles = xd_qt_styles_list(nullptr);
+    CHECK(styles->len == 2);
+    g_ptr_array_unref(styles);
+    g_free(qt6);
+    g_free(qt5);
+    rm_tree(root);
+    g_free(root);
+    /* Only directories that exist, each once. */
+    char **found = xd_qt_plugin_dirs();
+    for (char **d = found; *d != nullptr; d++) {
+        CHECK(g_file_test(*d, G_FILE_TEST_IS_DIR));
+        for (char **e = d + 1; *e != nullptr; e++)
+            CHECK(strcmp(*d, *e) != 0);
+    }
+    g_strfreev(found);
+}
+
+/* The colour Qt's palette file gives `role` in its active group. */
+static char *qt_palette_color(JsonNode *root, const char *palette, const char *role) {
+    JsonObject *o = json_object_get_object_member(json_node_get_object(root), "QtGtk3Palettes");
+    o = o != nullptr ? json_object_get_object_member(o, palette) : nullptr;
+    JsonArray *entries = o != nullptr ? json_object_get_array_member(o, role) : nullptr;
+    for (guint i = 0; entries != nullptr && i < json_array_get_length(entries); i++) {
+        JsonObject *e = json_array_get_object_element(entries, i);
+        if (strcmp(json_object_get_string_member(e, "ColorGroup"), "Active") != 0 ||
+            strcmp(json_object_get_string_member(e, "SourceType"), "Fixed") != 0)
+            continue;
+        JsonObject *data = json_object_get_object_member(e, "SourceData");
+        JsonObject *brush = json_object_get_object_member(data, "FixedBrush");
+        return g_strdup(json_object_get_string_member(brush, "Color"));
+    }
+    return nullptr;
+}
+
+static void test_qt_palette(void) {
+    /* Windows Standard: white fields, the scheme's bevel colours (Qt's
+     * own mapping makes fields grey and works bevels out from the face). */
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    xd_strbuf json = {0};
+    xd_qt_palette_json(&t, &json);
+    JsonParser *parser = json_parser_new();
+    CHECK(json_parser_load_from_data(parser, xd_strbuf_cstr(&json), (gssize)json.len, nullptr));
+    JsonNode *root = json_parser_get_root(parser);
+    static const struct {
+        const char *palette, *role, *color;
+    } want[] = {
+        {"SystemPalette", "Window", "#d4d0c8"}, {"SystemPalette", "Base", "#ffffff"},
+        {"SystemPalette", "Light", "#ffffff"},  {"SystemPalette", "Dark", "#808080"},
+        {"SystemPalette", "Shadow", "#404040"}, {"SystemPalette", "Highlight", "#0a246a"},
+        {"MenuPalette", "Window", "#d4d0c8"},
+    };
+    for (size_t i = 0; root != nullptr && i < G_N_ELEMENTS(want); i++) {
+        char *c = qt_palette_color(root, want[i].palette, want[i].role);
+        CHECK(g_strcmp0(c, want[i].color) == 0);
+        g_free(c);
+    }
+    g_object_unref(parser);
+    /* Luna: XP's white menus and its selection blue. */
+    xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
+    xd_qt_palette_json(&t, &json);
+    parser = json_parser_new();
+    CHECK(json_parser_load_from_data(parser, xd_strbuf_cstr(&json), (gssize)json.len, nullptr));
+    root = json_parser_get_root(parser);
+    char *c = root != nullptr ? qt_palette_color(root, "MenuPalette", "Window") : nullptr;
+    CHECK(g_strcmp0(c, "#ffffff") == 0);
+    g_free(c);
+    c = root != nullptr ? qt_palette_color(root, "SystemPalette", "Highlight") : nullptr;
+    CHECK(g_strcmp0(c, "#316ac5") == 0);
+    g_free(c);
+    g_object_unref(parser);
+    xd_strbuf_free(&json);
+}
+
 static void test_cursor_themes(void) {
     char *root = g_dir_make_tmp("xd-cursors-XXXXXX", nullptr);
     CHECK(root != nullptr);
@@ -3172,6 +3362,8 @@ int main(void) {
     test_cursor_themes();
     test_file_types_edit();
     test_theme_settings();
+    test_qt_style();
+    test_qt_palette();
     test_fonts();
     test_bluetooth_info();
     test_joystick();

@@ -9,11 +9,13 @@
 
 #define XD_GTK_THEME_NAME "XeonDesktop"
 
-/* Writes gtk-3.0/gtk.css and index.theme atomically. Returns false and
+/* Writes gtk-3.0/gtk.css, index.theme and the Qt palette atomically. Returns false and
  * describes the problem in *err on failure. */
 [[nodiscard]] bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme,
                                         xd_strbuf *err);
 /* Path of the installed gtk.css (whether or not it exists yet). */
 void xd_gtk_theme_css_path(xd_strbuf *out);
+/* Path of the Qt palette written with it (see qtpalette.h). g_free it. */
+char *xd_gtk_theme_qt_palette_path(void);
 
 #endif

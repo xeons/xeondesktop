@@ -180,6 +180,7 @@ typedef struct xd_settings {
      * and xd_settings_gtk_theme). */
     char icon_theme[64]; /* IconTheme: a freedesktop icon theme under icons/ */
     char gtk_theme[64];  /* GtkTheme: an installed GTK3 theme instead of ours */
+    char qt_style[64];   /* QtStyle: a Qt widget style's key; "" = automatic */
 
     /* [Desktop] */
     char wallpaper[1024]; /* absolute path, "" = none */
@@ -280,6 +281,23 @@ const char *xd_settings_icon_theme(const xd_settings *s);
 /* The GTK theme programs get (GTK_THEME): GtkTheme if set, else the one
  * generated from the appearance (XD_GTK_THEME_NAME). */
 const char *xd_settings_gtk_theme(const xd_settings *s);
+/* The Qt widget style for `style` when QtStyle is automatic: Qt's own
+ * Windows (2000's bevels) for Classic, Fusion for the others. */
+const char *xd_qt_style_auto(xd_visual_style style);
+/* The Qt widget style programs get (QT_STYLE_OVERRIDE): QtStyle if set,
+ * else xd_qt_style_auto's. */
+const char *xd_settings_qt_style(const xd_settings *s);
+/* Qt programs started from now on take their palette, fonts, icon theme
+ * and file dialogs from the GTK theme (Qt's own "gtk3" platform theme,
+ * QT_QPA_PLATFORMTHEME), with our GTK theme its Qt palette file
+ * (QT_GUI_GTK_JSON, see qtpalette.h), and the widget style from QtStyle
+ * (QT_STYLE_OVERRIDE). A variable the user set in the environment is left
+ * alone: XEONDESKTOP_<variable> remembers what we set, so that our
+ * children, which inherit ours, can still tell the two apart. Returns
+ * whether anything changed. */
+bool xd_settings_qt_env(const xd_settings *s);
+/* Whether `var` (one of those) holds what xd_settings_qt_env set. */
+bool xd_qt_env_ours(const char *var);
 /* "home", "portable", ...: [Power] Scheme's values. */
 const char *xd_power_scheme_name(xd_power_scheme scheme);
 

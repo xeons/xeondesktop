@@ -3,6 +3,7 @@
 #include <glib/gstdio.h>
 
 #include "gtktheme.h"
+#include "qtpalette.h"
 
 static char *theme_dir(void) {
     return g_build_filename(g_get_user_data_dir(), "themes", XD_GTK_THEME_NAME, nullptr);
@@ -15,6 +16,13 @@ void xd_gtk_theme_css_path(xd_strbuf *out) {
     xd_strbuf_append(out, xd_str_from_cstr(css));
     g_free(css);
     g_free(dir);
+}
+
+char *xd_gtk_theme_qt_palette_path(void) {
+    char *dir = theme_dir();
+    char *path = g_build_filename(dir, XD_QT_PALETTE_FILE, nullptr);
+    g_free(dir);
+    return path;
 }
 
 static bool write_file(const char *path, xd_str text, xd_strbuf *err) {
@@ -98,6 +106,15 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, xd_str
                                       button_images[i].state, scale, err);
         }
         g_free(assets_dir);
+        /* Qt programs read theirs at start, like the CSS. */
+        if (ok) {
+            xd_strbuf json = {0};
+            xd_qt_palette_json(&t, &json);
+            char *path = xd_gtk_theme_qt_palette_path();
+            ok = write_file(path, xd_strbuf_view(&json), err);
+            g_free(path);
+            xd_strbuf_free(&json);
+        }
         xd_strbuf css = {0};
         if (ok) {
             xd_theme_gtk_css(&t, &css);
