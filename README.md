@@ -198,7 +198,10 @@ under `[Taskbar]` in `desktop.ini`.
 tabs, and one for what only Linux has:
 
 - Background: the wallpaper (from the usual folders or Browse...) and how
-  it's placed.
+  it's placed. Five come with XeonDesktop (in `/usr/share/wallpapers/xeondesktop`):
+  Watercolor Blue, a large version of Watercolor's caption mosaic, and Rolling
+  Hills, Olive Meadow, Silver Mist and Energy for the XP colours. All are
+  painted by `tools/xd-wallpapers` from noise; none come from Windows.
 - Screen Saver: eight savers (3D Pipes and 3D Text among them), each with
   its Settings (saved to `[ScreenSaver.*]`), a live preview, Wait, Password protected,
   and when to turn the monitors off.

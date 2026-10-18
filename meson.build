@@ -972,6 +972,18 @@ install_data('data/ananicy/xeondesktop.rules',
 
 executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep])
 
+# The wallpapers, painted by tools/xd-wallpapers (run by hand; the pictures
+# are committed), where Display Properties' Background list finds them.
+executable('xd-wallpapers', 'tools/xd-wallpapers.c', dependencies: [gdk_pixbuf_dep, m_dep])
+install_data(
+  'data/wallpapers/Watercolor Blue.jpg',
+  'data/wallpapers/Rolling Hills.jpg',
+  'data/wallpapers/Olive Meadow.jpg',
+  'data/wallpapers/Silver Mist.jpg',
+  'data/wallpapers/Energy.jpg',
+  install_dir: get_option('datadir') / 'wallpapers' / 'xeondesktop',
+)
+
 # Drives a session with --allow-virtual-input, for automated UI tests.
 executable(
   'xd-inject',
