@@ -207,6 +207,7 @@ typedef struct s7_palette {
     xd_rgba right_bg, right_text, right_dim, right_hot, right_sep;
     xd_rgba frame, separator;
     bool classic;
+    bool square; /* Watercolor: square highlights, as its menus have */
 } s7_palette;
 
 static s7_palette palette(const xd_theme *t) {
@@ -230,20 +231,24 @@ static s7_palette palette(const xd_theme *t) {
             .classic = true,
         };
     case XD_STYLE_WHISTLER:
+        /* Watercolor's, as its XP menu (xp_colors) and taskbar have them:
+         * the white list inset in the flat blue body, white text on blue
+         * on the right, its menus' blue highlight. */
         return (s7_palette){
             .left_bg = xd_rgba_hex(0xFFFFFF),
-            .left_text = xd_rgba_hex(0x10265A),
-            .left_dim = xd_rgba_hex(0x8A93A8),
-            .left_hot = xd_rgba_hex(0xE4ECF8),
-            .left_hot_text = xd_rgba_hex(0x10265A),
-            .left_hot_border = xd_rgba_hex(0x9AB0D6),
-            .right_bg = xd_rgba_hex(0xC9D6EA),
-            .right_text = xd_rgba_hex(0x10265A),
-            .right_dim = xd_rgba_hex(0x7A8AA8),
-            .right_hot = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.55),
-            .right_sep = xd_rgba_alpha(xd_rgba_hex(0x5F7598), 0.5),
-            .frame = xd_rgba_hex(0x5F7598),
-            .separator = xd_rgba_hex(0xD5DCE8),
+            .left_text = xd_rgba_hex(0x000000),
+            .left_dim = xd_rgba_hex(0x7A7A7A),
+            .left_hot = xd_rgba_hex(0x316AC5),
+            .left_hot_text = xd_rgba_hex(0xFFFFFF),
+            .left_hot_border = xd_rgba_hex(0x316AC5),
+            .right_bg = xd_rgba_hex(0x3573D6),
+            .right_text = xd_rgba_hex(0xFFFFFF),
+            .right_dim = xd_rgba_hex(0xA9C7F2),
+            .right_hot = xd_rgba_hex(0x5297F9),
+            .right_sep = xd_rgba_hex(0x6FA2EA),
+            .frame = xd_rgba_hex(0x2B5FB5),
+            .separator = xd_rgba_hex(0xD8D8D0),
+            .square = true,
         };
     case XD_STYLE_LUNA:
     case XD_STYLE_AERO: /* Windows 7's own colours */
@@ -835,7 +840,7 @@ static void draw_icon(xd_shell *shell, cairo_t *cr, const char *icon, const char
 }
 
 static void draw_hot(cairo_t *cr, const xd_theme *t, xd_rect r, const s7_palette *p) {
-    if (p->classic) {
+    if (p->classic || p->square) {
         xd_fill_rect(cr, r, p->left_hot);
         return;
     }
@@ -992,7 +997,7 @@ static void draw_right(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pa
         }
         bool hot = (m->hot_right == k || m->sub_owner == k) && !right_items[k].disabled;
         if (hot) {
-            if (p->classic)
+            if (p->classic || p->square)
                 xd_fill_rect(cr, D(r, s), p->right_hot);
             else {
                 double rad = xd_tpx(t, 3);
