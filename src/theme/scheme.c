@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "scheme.h"
 #include <glib.h>
+#include <math.h>
 
 static const char *const color_names[XD_COLOR_COUNT] = {
 #define XD_X(id, name) [XD_COLOR_##id] = name,
@@ -23,8 +24,11 @@ static const int metric_defaults[XD_METRIC_COUNT] = {
 static const char *const font_names[XD_FONT_COUNT] = {
     [XD_FONT_CAPTION] = "CaptionFont", [XD_FONT_MENU] = "MenuFont",
     [XD_FONT_MESSAGE] = "MessageFont", [XD_FONT_ICON] = "IconFont",
-    [XD_FONT_TOOLTIP] = "StatusFont",
+    [XD_FONT_TOOLTIP] = "StatusFont", [XD_FONT_SMCAPTION] = "SmCaptionFont",
 };
+
+static_assert(XD_COLOR_COUNT <= 32 && XD_METRIC_COUNT <= 32 && XD_FONT_COUNT <= 32,
+              "xd_scheme_custom's masks hold a bit each");
 
 const char *xd_syscolor_name(xd_syscolor c) {
     XD_ASSERT((unsigned)c < XD_COLOR_COUNT);
@@ -94,6 +98,7 @@ void xd_scheme_init_default(xd_scheme *s) {
     set_font(&s->fonts[XD_FONT_MESSAGE], ui, 8, false);
     set_font(&s->fonts[XD_FONT_ICON], ui, 8, false);
     set_font(&s->fonts[XD_FONT_TOOLTIP], ui, 8, false);
+    set_font(&s->fonts[XD_FONT_SMCAPTION], ui, 8, true);
     s->gradient_captions = true;
     s->glass_color = XD_GLASS_DEFAULT;
 }
@@ -312,4 +317,105 @@ bool xd_scheme_load(const char *path, xd_scheme *scheme, xd_strbuf *err) {
     bool ok = xd_scheme_parse(xd_strbuf_view(&text), scheme, err);
     xd_strbuf_free(&text);
     return ok;
+}
+
+/* ---- custom schemes ---------------------------------------------------------- */
+
+void xd_scheme_apply_custom(xd_scheme *s, const xd_scheme_custom *c) {
+    for (size_t i = 0; i < XD_COLOR_COUNT; i++) {
+        if (c->color_mask & (1u << i))
+            s->colors[i] = c->colors[i];
+    }
+    for (size_t i = 0; i < XD_METRIC_COUNT; i++) {
+        if (c->metric_mask & (1u << i))
+            s->metrics[i] = c->metrics[i];
+    }
+    for (size_t i = 0; i < XD_FONT_COUNT; i++) {
+        if (c->font_mask & (1u << i))
+            s->fonts[i] = c->fonts[i];
+    }
+}
+
+bool xd_scheme_custom_set(xd_scheme_custom *c, xd_str key, xd_str value) {
+    xd_syscolor color;
+    if (xd_syscolor_from_name(key, &color)) {
+        if (!parse_rgb(value, &c->colors[color]))
+            return false;
+        c->color_mask |= 1u << color;
+        return true;
+    }
+    for (size_t i = 0; i < XD_METRIC_COUNT; i++) {
+        if (xd_str_eq_nocase(key, xd_str_from_cstr(metric_names[i]))) {
+            int64_t v;
+            if (!xd_str_parse_i64(value, 0, 256, &v))
+                return false;
+            c->metrics[i] = (int)v;
+            c->metric_mask |= 1u << i;
+            return true;
+        }
+    }
+    for (size_t i = 0; i < XD_FONT_COUNT; i++) {
+        if (xd_str_eq_nocase(key, xd_str_from_cstr(font_names[i]))) {
+            if (!parse_font(value, &c->fonts[i]))
+                return false;
+            c->font_mask |= 1u << i;
+            return true;
+        }
+    }
+    return false;
+}
+
+void xd_font_spec_format(const xd_font_spec *f, char *out, size_t cap) {
+    /* Not %g: the locale could make the size "8,5", which reads back as
+     * another token. */
+    char size[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_formatd(size, sizeof(size), "%g", f->size_pt);
+    snprintf(out, cap, "%s, %s%s%s", f->family, size, f->bold ? ", bold" : "",
+             f->italic ? ", italic" : "");
+}
+
+void xd_scheme_custom_foreach(const xd_scheme_custom *c,
+                              void (*fn)(void *user, const char *key, const char *value),
+                              void *user) {
+    char buf[256];
+    for (size_t i = 0; i < XD_COLOR_COUNT; i++) {
+        if (c->color_mask & (1u << i)) {
+            snprintf(buf, sizeof(buf), "%u %u %u", c->colors[i].r, c->colors[i].g,
+                     c->colors[i].b);
+            fn(user, color_names[i], buf);
+        }
+    }
+    for (size_t i = 0; i < XD_METRIC_COUNT; i++) {
+        if (c->metric_mask & (1u << i)) {
+            snprintf(buf, sizeof(buf), "%d", c->metrics[i]);
+            fn(user, metric_names[i], buf);
+        }
+    }
+    for (size_t i = 0; i < XD_FONT_COUNT; i++) {
+        if (c->font_mask & (1u << i)) {
+            xd_font_spec_format(&c->fonts[i], buf, sizeof(buf));
+            fn(user, font_names[i], buf);
+        }
+    }
+}
+
+static bool same_font(const xd_font_spec *a, const xd_font_spec *b) {
+    return strcmp(a->family, b->family) == 0 && fabs(a->size_pt - b->size_pt) < 0.01 &&
+           a->bold == b->bold && a->italic == b->italic;
+}
+
+void xd_scheme_custom_trim(xd_scheme_custom *c, const xd_scheme *base) {
+    for (size_t i = 0; i < XD_COLOR_COUNT; i++) {
+        const xd_rgb *a = &c->colors[i], *b = &base->colors[i];
+        if (a->r == b->r && a->g == b->g && a->b == b->b)
+            c->color_mask &= ~(1u << i);
+    }
+    for (size_t i = 0; i < XD_METRIC_COUNT; i++) {
+        if (c->metrics[i] == base->metrics[i])
+            c->metric_mask &= ~(1u << i);
+    }
+    for (size_t i = 0; i < XD_FONT_COUNT; i++) {
+        if (same_font(&c->fonts[i], &base->fonts[i]))
+            c->font_mask &= ~(1u << i);
+    }
 }

@@ -63,10 +63,16 @@ struct xd_widget {
     int smin, smax, svalue; /* slider */
 };
 
-/* The drop-down list of a combo box. */
+/* The drop-down list of a combo box, or a panel the program draws
+ * (xd_popup_custom: `combo` is nullptr, `anchor` the widget it hangs
+ * from). */
 typedef struct xd_listpopup {
     xd_window *owner;
     xd_widget *combo;
+    xd_widget *anchor;
+    xd_draw_cb draw;
+    xd_pointer_cb pointer;
+    void *user;
     struct wl_surface *surface;
     struct xdg_surface *xdg_surface;
     struct xdg_popup *popup;

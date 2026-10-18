@@ -130,6 +130,9 @@ xd_widget *xd_banner(xd_window *win, xd_rect r, const char *product, const char 
 xd_widget *xd_button(xd_window *win, xd_rect r, const char *label, xd_widget_cb on_click,
                      void *user);
 xd_widget *xd_edit(xd_window *win, xd_rect r, const char *text);
+/* Runs on_change whenever an edit's text changes (typing, pasting;
+ * xd_widget_set_text doesn't). */
+void xd_edit_set_on_change(xd_widget *edit, xd_widget_cb on_change, void *user);
 /* Editable combos have a text field (Run's "Open:" box); others are drop-
  * down lists (Shut Down's choice). on_change runs when the selection or
  * text changes. */
@@ -181,6 +184,16 @@ typedef enum xd_pointer_event : uint8_t {
 } xd_pointer_event;
 typedef void (*xd_pointer_cb)(xd_widget *w, xd_pointer_event ev, double x, double y, void *user);
 void xd_custom_set_pointer(xd_widget *w, xd_pointer_cb cb);
+/* A drop-down panel the program draws (Windows' colour picker), hanging
+ * from `anchor` as a combo box's list does: `draw` paints it (r in device
+ * px, from 0,0) and `pointer` gets the pointer over it (logical, relative
+ * to it; motion comes with no button held too, for hover). Like the list,
+ * it takes the keyboard (Esc closes it) and closes on a click anywhere
+ * else. Callbacks get `anchor` as their widget. */
+void xd_popup_custom(xd_widget *anchor, int width, int height, xd_draw_cb draw,
+                     xd_pointer_cb pointer, void *user);
+/* Closes the window's drop-down list or panel, if one is open. */
+void xd_popup_dismiss(xd_window *win);
 
 /* A trackbar (Windows' slider) from min to max with a tick per step.
  * on_change runs as the thumb moves. */

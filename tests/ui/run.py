@@ -1347,6 +1347,88 @@ def taskbar_only(s):
 
 
 @scenario()
+def advanced_appearance(s):
+    """Display Properties' Advanced Appearance: a click on the preview's
+    title bar selects Active Title Bar (its Color 2 comes on); the Desktop's
+    Color 1 drop-down sets red; OK and OK write [CustomScheme], the desktop
+    turns red, and the editor shows red again when opened anew."""
+    empty = s.settle("desktop")
+    s.launch("xd-desk", "--page", "2")
+    s.wait_window(title="Display Properties", state="activated")
+    props = s.settle("appearance")
+    dp = props.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dp is not None, f"Display Properties is up at {dp}")
+
+    def open_advanced():
+        # Tabs, style, scheme, font size, then Advanced.
+        s.inject("key", "Tab", "key", "Tab", "key", "Tab", "key", "Tab", "sleep", 200,
+                 "key", "Return")
+        s.wait_window(title="Advanced Appearance", state="activated")
+        shot = s.settle("advanced")
+        # Below Display Properties' caption (which only turns inactive).
+        below = dp[1] + 30
+        box = shot.changed_box(props, (0, below, WIDTH, HEIGHT - 40 - below))
+        s.check(box is not None, f"Advanced Appearance is up at {box}")
+        # The client area (404 x 362), inside the dialog frame, from the
+        # bottom: what changed at the top may include Display Properties'
+        # tabs losing focus.
+        return shot, box[0] + 2, box[1] + box[3] - 365
+
+    shot, cx, cy = open_advanced()
+    color2 = (cx + 340, cy + 243, 40, 12)  # Color 2's swatch
+    # The active window's title bar in the preview.
+    s.inject("move", cx + 150, cy + 52, "click", "sleep", 400)
+    title = s.settle("title-bar-picked")
+    s.check(title.differs(shot, color2, step=2) > 0.3,
+            "a click on the preview's title bar picked Active Title Bar (Color 2 is on)")
+
+    # Back to the Desktop: the preview's desktop, right of the inactive
+    # window. Its Color 1 drops down the palette; red is in the fourth row.
+    s.inject("move", cx + 372, cy + 22, "click", "sleep", 400)
+    s.check(s.settle("desktop-picked").differs(title, color2, step=2) > 0.3,
+            "a click on the preview's desktop picked Desktop (Color 2 is off)")
+    s.inject("move", cx + 298, cy + 248, "click", "sleep", 500)
+    s.settle("palette")
+    s.inject("move", cx + 270 + 31, cy + 260 + 67, "click", "sleep", 400)
+    picked = s.settle("red-picked")
+    r, g, b = picked.pixel(cx + 22, cy + 160)  # the preview's desktop, bottom left
+    s.check(r > 200 and g < 40 and b < 40, f"the preview's desktop is red ({r},{g},{b})")
+    s.inject("key", "Return")  # OK
+    s.wait_window(title="Advanced Appearance", gone=True)
+    s.wait_window(title="Display Properties", state="activated")
+    s.inject("key", "Return")  # OK: apply and close
+    s.wait_window(title="Display Properties", gone=True)
+
+    def written():
+        c = s.ini()
+        return c.has_section("CustomScheme") and c["CustomScheme"].get("Background") == "255 0 0"
+
+    s.wait(written, "desktop.ini to take the custom scheme")
+    s.log("ok: [CustomScheme] Background=255 0 0")
+
+    def red_desktop():
+        r, g, b = s.shot("desktop-red").pixel(WIDTH - 60, 60)
+        return r > 200 and g < 40 and b < 40
+
+    s.wait(red_desktop, "the desktop to turn red")
+    s.log("ok: the shell took the custom scheme")
+
+    # Opened again, the editor starts from what was saved.
+    empty = s.settle("desktop-red")
+    s.launch("xd-desk", "--page", "2")
+    s.wait_window(title="Display Properties", state="activated")
+    props = s.settle("appearance-again")
+    dp = props.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    shot, cx, cy = open_advanced()
+    r, g, b = shot.pixel(cx + 290, cy + 248)  # Color 1's swatch
+    s.check(r > 200 and g < 40 and b < 40, f"Desktop's Color 1 is red again ({r},{g},{b})")
+    s.inject("key", "Escape")
+    s.wait_window(title="Advanced Appearance", gone=True)
+    s.inject("key", "Escape")
+    s.wait_window(title="Display Properties", gone=True)
+
+
+@scenario()
 def combo_list_scrolls(s):
     """A drop-down list longer than its eight rows has a scroll bar: its
     arrow scrolls the list, its thumb drags to the end, and the last item

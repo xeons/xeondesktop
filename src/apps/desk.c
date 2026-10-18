@@ -27,6 +27,7 @@
 #include "../ui/image.h"
 #include "../ui/ui.h"
 #include "common.h"
+#include "desk_advanced.h"
 #include "desk_saver.h"
 
 enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS };
@@ -96,6 +97,7 @@ typedef struct desk {
     xd_widget *font_combo;
     xd_widget *appearance_preview;
     xd_widget *advanced;
+    advanced *adv; /* Advanced Appearance, while open */
 
     /* Window Color and Appearance (Aero), editing `pending` as it goes so
      * the preview follows; Cancel puts these back. */
@@ -1029,6 +1031,7 @@ static void on_style(xd_widget *w, void *user) {
      * Windows Standard. */
     if (was_luna != (d->pending.style == XD_STYLE_LUNA)) {
         d->pending.scheme[0] = '\0';
+        d->pending.custom_scheme = (xd_scheme_custom){0};
         ptrdiff_t first = listed_scheme(d, 0);
         if (d->pending.style == XD_STYLE_LUNA && first >= 0)
             snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s",
@@ -1036,7 +1039,6 @@ static void on_style(xd_widget *w, void *user) {
         fill_schemes(d);
         xd_widget_redraw(d->scheme_combo);
     }
-    xd_widget_set_enabled(d->advanced, d->pending.style == XD_STYLE_AERO && d->color == nullptr);
     xd_widget_redraw(d->appearance_preview);
     changed(d);
 }
@@ -1047,6 +1049,8 @@ static void on_scheme(xd_widget *w, void *user) {
     if (i < 0)
         return;
     ptrdiff_t k = listed_scheme(d, i);
+    /* A scheme sets every item, as in Windows: Advanced's changes go. */
+    d->pending.custom_scheme = (xd_scheme_custom){0};
     if (k < 0)
         d->pending.scheme[0] = '\0';
     else
@@ -1058,10 +1062,47 @@ static void on_scheme(xd_widget *w, void *user) {
 static void on_font_size(xd_widget *w, void *user) {
     desk *d = user;
     int i = xd_widget_selected(w);
-    if (i >= 0 && i <= XD_FONT_EXTRA_LARGE)
+    if (i >= 0 && i <= XD_FONT_EXTRA_LARGE && (xd_font_size)i != d->pending.font_size) {
+        /* Windows' Large and Extra Large are schemes of their own. */
         d->pending.font_size = (xd_font_size)i;
+        d->pending.custom_scheme = (xd_scheme_custom){0};
+    }
     xd_widget_redraw(d->appearance_preview);
     changed(d);
+}
+
+/* ---- Advanced Appearance ------------------------------------------------------------ */
+
+static void on_advanced_done(const xd_scheme_custom *custom, void *user) {
+    desk *d = user;
+    d->adv = nullptr;
+    xd_widget_set_enabled(d->advanced, d->color == nullptr);
+    if (custom == nullptr)
+        return;
+    d->pending.custom_scheme = *custom;
+    xd_widget_redraw(d->appearance_preview);
+    changed(d);
+}
+
+static void open_advanced(desk *d) {
+    if (d->adv != nullptr)
+        return;
+    d->adv = advanced_open(d->ui, &d->pending, on_advanced_done, d);
+    xd_widget_set_enabled(d->advanced, false);
+}
+
+/* Windows 7's "Advanced appearance settings..." link, at the bottom of
+ * Window Color and Appearance. */
+static void draw_advanced_link([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
+                               const xd_theme *t, [[maybe_unused]] void *user) {
+    xd_text_style st = xd_text(t, XD_FONT_MESSAGE, xd_rgba_hex(0x0066CC), XD_ALIGN_START);
+    xd_draw_text(cr, r, "Advanced appearance settings...", &st);
+}
+
+static void on_advanced_link([[maybe_unused]] xd_widget *w, xd_pointer_event ev,
+                             [[maybe_unused]] double x, [[maybe_unused]] double y, void *user) {
+    if (ev == XD_POINTER_RELEASE)
+        open_advanced(user);
 }
 
 /* ---- Window Color and Appearance (Aero) ------------------------------------------- */
@@ -1271,7 +1312,7 @@ static void color_close(desk *d) {
     xd_window *color = d->color;
     d->color = nullptr;
     xd_window_close(color);
-    xd_widget_set_enabled(d->advanced, d->pending.style == XD_STYLE_AERO);
+    xd_widget_set_enabled(d->advanced, d->adv == nullptr);
 }
 
 static void on_color_save([[maybe_unused]] xd_widget *w, void *user) {
@@ -1332,9 +1373,21 @@ static void on_window_color([[maybe_unused]] xd_widget *w, void *user) {
                                   on_color_cancel, d);
     xd_window_set_default(win, save);
     xd_window_set_cancel(win, cancel);
+    xd_widget *link = xd_custom(win, (xd_rect){20, COLOR_H - 30, 200, 16}, draw_advanced_link, d);
+    xd_custom_set_pointer(link, on_advanced_link);
     xd_window_set_focus(win, d->transparency);
     xd_widget_set_enabled(d->advanced, false);
     xd_window_show(win);
+}
+
+/* XP's Advanced opens the editor; in Aero, Windows 7's Window Color and
+ * Appearance, which links to it. */
+static void on_advanced([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    if (d->pending.style == XD_STYLE_AERO)
+        on_window_color(w, d);
+    else
+        open_advanced(d);
 }
 
 static void build_appearance(desk *d) {
@@ -1364,11 +1417,8 @@ static void build_appearance(desk *d) {
         xd_widget_add_item(d->font_combo, sizes[i]);
     xd_widget_select(d->font_combo, (int)d->pending.font_size);
 
-    /* Aero: Windows 7's Window Color and Appearance. The other styles'
-     * per-item colours and fonts editor, as in Windows 2000, comes later. */
-    d->advanced = xd_button(win, (xd_rect){298, 352, 86, 23}, "Advanced", on_window_color, d);
+    d->advanced = xd_button(win, (xd_rect){298, 352, 86, 23}, "Advanced", on_advanced, d);
     xd_widget_set_page(d->advanced, P);
-    xd_widget_set_enabled(d->advanced, d->pending.style == XD_STYLE_AERO);
 }
 
 /* ---- Effects ------------------------------------------------------------------------ */
@@ -2386,9 +2436,9 @@ static bool apply(desk *d) {
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
     if (d->confirm != nullptr || d->items != nullptr || d->color != nullptr ||
-        d->saver_setup != nullptr)
-        return; /* answer Monitor Settings, Desktop Items, Window Color or a saver's
-                 * Settings first */
+        d->saver_setup != nullptr || d->adv != nullptr)
+        return; /* answer Monitor Settings, Desktop Items, Window Color, a saver's
+                 * Settings or Advanced Appearance first */
     if (d->display_dirty) {
         /* Closes once the new display settings are kept. */
         d->close_after_apply = true;
@@ -2402,6 +2452,8 @@ static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
 static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
     items_close(d);
+    if (d->adv != nullptr)
+        advanced_cancel(d->adv);
     color_close(d);
     if (d->saver_setup != nullptr)
         saver_setup_cancel(d->saver_setup);

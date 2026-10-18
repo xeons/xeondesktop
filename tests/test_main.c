@@ -164,6 +164,109 @@ static bool rgb_is(xd_rgb c, uint8_t r, uint8_t g, uint8_t b) {
     return c.r == r && c.g == g && c.b == b;
 }
 
+static void collect_custom(void *user, const char *key, const char *value) {
+    xd_strbuf_appendf(user, "%s=%s\n", key, value);
+}
+
+/* Advanced Appearance's changes: set by scheme-file key, written back the
+ * same way, laid over a scheme, and carried in desktop.ini's
+ * [CustomScheme] through a dialog's merge. */
+static void test_scheme_custom(void) {
+    xd_scheme_custom c = {0};
+    CHECK(xd_scheme_custom_set(&c, XD_STR("ActiveTitle"), XD_STR("128 0 0")));
+    CHECK(xd_scheme_custom_set(&c, XD_STR("captionheight"), XD_STR("25")));
+    CHECK(xd_scheme_custom_set(&c, XD_STR("MenuFont"),
+                               XD_STR("DejaVu Serif, Bitstream, 12.5, italic")));
+    CHECK(xd_scheme_custom_set(&c, XD_STR("SmCaptionFont"), XD_STR("Arial, 7, bold")));
+    CHECK(xd_scheme_custom_set(&c, XD_STR("IconVerticalSpacing"), XD_STR("90")));
+    /* Bad keys and values change nothing. */
+    xd_scheme_custom before = c;
+    CHECK(!xd_scheme_custom_set(&c, XD_STR("Bogus"), XD_STR("1")));
+    CHECK(!xd_scheme_custom_set(&c, XD_STR("Window"), XD_STR("1 2")));
+    CHECK(!xd_scheme_custom_set(&c, XD_STR("BorderWidth"), XD_STR("-3")));
+    CHECK(!xd_scheme_custom_set(&c, XD_STR("CaptionFont"), XD_STR("Arial")));
+    CHECK(memcmp(&before, &c, sizeof(c)) == 0);
+    CHECK(c.color_mask == 1u << XD_COLOR_ACTIVE_TITLE);
+
+    xd_strbuf out = {0};
+    xd_scheme_custom_foreach(&c, collect_custom, &out);
+    CHECK(strcmp(xd_strbuf_cstr(&out),
+                 "ActiveTitle=128 0 0\nCaptionHeight=25\nIconVerticalSpacing=90\n"
+                 "MenuFont=DejaVu Serif, Bitstream, 12.5, italic\n"
+                 "SmCaptionFont=Arial, 7, bold\n") == 0);
+    xd_strbuf_free(&out);
+
+    /* Laid over Windows Standard: only what was set changes. */
+    xd_scheme s;
+    xd_scheme_init_default(&s);
+    xd_scheme_apply_custom(&s, &c);
+    CHECK(rgb_is(s.colors[XD_COLOR_ACTIVE_TITLE], 128, 0, 0));
+    CHECK(rgb_is(s.colors[XD_COLOR_BUTTON_FACE], 212, 208, 200));
+    CHECK(s.metrics[XD_METRIC_CAPTION_HEIGHT] == 25 && s.metrics[XD_METRIC_BORDER_WIDTH] == 1);
+    CHECK(strcmp(s.fonts[XD_FONT_MENU].family, "DejaVu Serif, Bitstream") == 0);
+    CHECK(s.fonts[XD_FONT_MENU].size_pt == 12.5 && s.fonts[XD_FONT_MENU].italic &&
+          !s.fonts[XD_FONT_MENU].bold);
+    CHECK(s.fonts[XD_FONT_SMCAPTION].bold && s.fonts[XD_FONT_SMCAPTION].size_pt == 7);
+
+    /* Trimming drops what the scheme has anyway. */
+    xd_scheme_custom t = c;
+    CHECK(xd_scheme_custom_set(&t, XD_STR("Background"), XD_STR("58 110 165")));
+    CHECK(xd_scheme_custom_set(&t, XD_STR("MessageFont"), XD_STR(XD_FONT_FAMILY_TAHOMA ", 8")));
+    xd_scheme std;
+    xd_scheme_init_default(&std);
+    xd_scheme_custom_trim(&t, &std);
+    CHECK(t.color_mask == c.color_mask && t.metric_mask == c.metric_mask &&
+          t.font_mask == c.font_mask);
+
+    /* In desktop.ini, and back. */
+    xd_settings a, b;
+    xd_settings_defaults(&a);
+    a.custom_scheme = c;
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "[CustomScheme]\nActiveTitle=128 0 0\n") != nullptr);
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b));
+    CHECK(b.custom_scheme.font_mask == c.font_mask &&
+          b.custom_scheme.fonts[XD_FONT_MENU].size_pt == 12.5);
+    xd_strbuf_free(&text);
+    /* A bad value is left out, the rest kept. */
+    xd_settings_parse(XD_STR("[CustomScheme]\nWindow=1 2 3\nMenu=oops\nCaptionHeight=x\n"), &b);
+    CHECK(b.custom_scheme.color_mask == 1u << XD_COLOR_WINDOW && b.custom_scheme.metric_mask == 0);
+
+    /* The scheme the settings select: the changes go over the font size
+     * (as they were made, at that size), not under High Contrast. */
+    a.font_size = XD_FONT_LARGE;
+    xd_settings_scheme(&a, &s);
+    CHECK(s.metrics[XD_METRIC_CAPTION_HEIGHT] == 25);
+    CHECK(s.metrics[XD_METRIC_MENU_HEIGHT] == 23); /* 18 x 1.25, not changed */
+    CHECK(rgb_is(s.colors[XD_COLOR_ACTIVE_TITLE], 128, 0, 0));
+    a.access.high_contrast = true;
+    xd_settings_scheme(&a, &s);
+    CHECK(rgb_is(s.colors[XD_COLOR_ACTIVE_TITLE], 10, 36, 106));
+
+    /* Apply carries them over another program's save, key by key; one
+     * dropped since is removed. */
+    xd_settings base, pending, now;
+    xd_settings_defaults(&base);
+    base.custom_scheme = c;
+    pending = base;
+    pending.custom_scheme.color_mask = 0; /* ActiveTitle back to the scheme's */
+    CHECK(xd_scheme_custom_set(&pending.custom_scheme, XD_STR("Window"), XD_STR("1 2 3")));
+    now = base;
+    now.style = XD_STYLE_WHISTLER;
+    xd_settings_merge(&base, &pending, &now);
+    CHECK(now.style == XD_STYLE_WHISTLER);
+    CHECK(now.custom_scheme.color_mask == 1u << XD_COLOR_WINDOW);
+    CHECK(now.custom_scheme.metric_mask == c.metric_mask);
+
+    /* A font's text reads back as itself, its size whatever the locale. */
+    xd_font_spec f = {.family = "A, B", .size_pt = 9.5, .bold = true, .italic = true};
+    char buf[256];
+    xd_font_spec_format(&f, buf, sizeof(buf));
+    CHECK(strcmp(buf, "A, B, 9.5, bold, italic") == 0);
+}
+
 static void test_shipped_schemes(void) {
     /* Every shipped scheme parses and has its own name. */
     xd_strbuf dir = {0};
@@ -4190,6 +4293,7 @@ int main(void) {
     test_str();
     test_arena();
     test_scheme();
+    test_scheme_custom();
     test_shipped_schemes();
     test_luna_variants();
     test_px();

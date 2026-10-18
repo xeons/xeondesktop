@@ -741,6 +741,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             if (i >= 0)
                 s->wallpaper_mode = (xd_wallpaper_mode)i;
         }
+    } else if (SEC("CustomScheme")) {
+        (void)xd_scheme_custom_set(&s->custom_scheme, key, v); /* a bad value is left out */
     } else if (SEC("DesktopIcons")) {
         parse_desktop_icons(&s->desktop_icons, key, v);
     } else if (SEC("Effects")) {
@@ -982,6 +984,10 @@ void xd_settings_load(xd_settings *s) {
     xd_strbuf_free(&path);
 }
 
+static void set_custom_key(void *user, const char *key, const char *value) {
+    g_key_file_set_string(user, "CustomScheme", key, value);
+}
+
 static GKeyFile *to_keyfile(const xd_settings *s) {
     GKeyFile *kf = g_key_file_new();
     g_key_file_set_string(kf, "Appearance", "Style", xd_visual_style_name(s->style));
@@ -999,6 +1005,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
                            " XeonDesktop settings. Written by Display Properties; edits are\n"
                            " picked up immediately.",
                            nullptr);
+    xd_scheme_custom_foreach(&s->custom_scheme, set_custom_key, kf);
     g_key_file_set_string(kf, "Desktop", "Wallpaper", s->wallpaper);
     g_key_file_set_string(kf, "Desktop", "WallpaperMode", mode_names[s->wallpaper_mode]);
     const xd_desktop_icon_settings *di = &s->desktop_icons;
@@ -1367,12 +1374,17 @@ void xd_settings_scheme(const xd_settings *s, xd_scheme *out) {
     if (f != 1.0) {
         for (size_t i = 0; i < XD_FONT_COUNT; i++)
             out->fonts[i].size_pt *= f;
-        static const xd_metric scaled[] = {XD_METRIC_CAPTION_HEIGHT,
-                                           XD_METRIC_CAPTION_BUTTON_WIDTH, XD_METRIC_MENU_HEIGHT,
-                                           XD_METRIC_TASKBAR_HEIGHT};
+        static const xd_metric scaled[] = {
+            XD_METRIC_CAPTION_HEIGHT, XD_METRIC_CAPTION_BUTTON_WIDTH, XD_METRIC_MENU_HEIGHT,
+            XD_METRIC_TASKBAR_HEIGHT, XD_METRIC_SM_CAPTION_HEIGHT};
         for (size_t i = 0; i < XD_ARRAY_LEN(scaled); i++)
             out->metrics[scaled[i]] = (int)lround(out->metrics[scaled[i]] * f);
     }
+    /* Advanced Appearance's changes, as they were made: over the font
+     * size. High Contrast's scheme goes without them (they come back when
+     * it's turned off). */
+    if (!s->access.high_contrast)
+        xd_scheme_apply_custom(out, &s->custom_scheme);
     out->font_smoothing = s->font_smoothing;
     out->glass_color = s->glass_color;
     out->glass_opaque = !s->glass_transparency;

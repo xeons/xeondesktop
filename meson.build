@@ -450,6 +450,8 @@ executable(
 executable(
   'xd-desk',
   'src/apps/desk.c',
+  'src/apps/desk_advanced.c',
+  'src/apps/desk_color.c',
   'src/apps/desk_saver.c',
   'src/settings/themes.c',
   apps_common,

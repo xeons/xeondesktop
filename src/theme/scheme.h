@@ -56,6 +56,9 @@ typedef enum xd_syscolor {
 const char *xd_syscolor_name(xd_syscolor c);
 [[nodiscard]] bool xd_syscolor_from_name(xd_str name, xd_syscolor *out);
 
+/* SmCaptionHeight, IconSize and IconVerticalSpacing (Advanced
+ * Appearance's Palette Title, Icon and Icon Spacing (Vertical)) are kept
+ * with the scheme, but nothing draws with them yet; nor with IconSpacing. */
 #define XD_METRICS(X)                                                          \
     X(BORDER_WIDTH, "BorderWidth", 1)                                          \
     X(CAPTION_HEIGHT, "CaptionHeight", 18)                                     \
@@ -63,7 +66,10 @@ const char *xd_syscolor_name(xd_syscolor c);
     X(MENU_HEIGHT, "MenuHeight", 18)                                           \
     X(SCROLL_WIDTH, "ScrollWidth", 16)                                         \
     X(ICON_SPACING, "IconSpacing", 75)                                         \
-    X(TASKBAR_HEIGHT, "TaskbarHeight", 28)
+    X(TASKBAR_HEIGHT, "TaskbarHeight", 28)                                     \
+    X(SM_CAPTION_HEIGHT, "SmCaptionHeight", 15)                                \
+    X(ICON_SIZE, "IconSize", 32)                                               \
+    X(ICON_VERTICAL_SPACING, "IconVerticalSpacing", 75)
 
 typedef enum xd_metric {
 #define XD_X(id, name, def) XD_METRIC_##id,
@@ -101,6 +107,7 @@ typedef enum xd_font_role {
     XD_FONT_MESSAGE,
     XD_FONT_ICON,
     XD_FONT_TOOLTIP,
+    XD_FONT_SMCAPTION, /* palette (tool window) titles: Advanced Appearance's Palette Title */
     XD_FONT_COUNT
 } xd_font_role;
 
@@ -156,5 +163,33 @@ void xd_scheme_init_default(xd_scheme *scheme);
  * the problem and the scheme is left at defaults. */
 [[nodiscard]] bool xd_scheme_parse(xd_str text, xd_scheme *scheme, xd_strbuf *err);
 [[nodiscard]] bool xd_scheme_load(const char *path, xd_scheme *scheme, xd_strbuf *err);
+
+/* A scheme changed item by item (Display Properties' Advanced
+ * Appearance): the values that differ from the selected scheme, each
+ * marked in its mask, laid over it. Stored in desktop.ini's
+ * [CustomScheme] under the keys scheme files use. */
+typedef struct xd_scheme_custom {
+    uint32_t color_mask;  /* 1u << xd_syscolor */
+    uint32_t metric_mask; /* 1u << xd_metric */
+    uint32_t font_mask;   /* 1u << xd_font_role */
+    xd_rgb colors[XD_COLOR_COUNT];
+    int metrics[XD_METRIC_COUNT];
+    xd_font_spec fonts[XD_FONT_COUNT];
+} xd_scheme_custom;
+
+void xd_scheme_apply_custom(xd_scheme *scheme, const xd_scheme_custom *custom);
+/* Sets one value from its scheme-file key: a colour ("ActiveTitle"),
+ * metric ("CaptionHeight") or font ("CaptionFont") name, with its value as
+ * the [Colors], [Metrics] or [Fonts] sections write it. False for an
+ * unknown key or a bad value, which leave `custom` as it was. */
+[[nodiscard]] bool xd_scheme_custom_set(xd_scheme_custom *custom, xd_str key, xd_str value);
+/* Calls fn with each value set, as its key and value text. */
+void xd_scheme_custom_foreach(const xd_scheme_custom *custom,
+                              void (*fn)(void *user, const char *key, const char *value),
+                              void *user);
+/* Unmarks the values that `base` has anyway. */
+void xd_scheme_custom_trim(xd_scheme_custom *custom, const xd_scheme *base);
+/* A font as scheme files write it: "Family, size[, bold][, italic]". */
+void xd_font_spec_format(const xd_font_spec *font, char *out, size_t cap);
 
 #endif

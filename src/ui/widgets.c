@@ -720,6 +720,26 @@ static void popup_scroll_to(xd_listpopup *p, int index) {
     popup_set_first(p, first);
 }
 
+/* The drop-down list's rows and scroll bar, in its 1px border. */
+static void draw_list(const xd_listpopup *p, const xd_theme *t, cairo_t *cr, xd_rect all) {
+    double s = p->scale;
+    xd_fill_rect(cr, all, xd_sys(t, XD_COLOR_WINDOW));
+    xd_rgba border = t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_WINDOW_FRAME)
+                                                  : xd_rgba_hex(0x7F9DB9);
+    xd_draw_bevel(cr, all, xd_tpx(t, 1), border, border);
+    for (int i = 0; i < p->rows; i++) {
+        int idx = p->first + i;
+        if (idx >= (int)p->combo->count)
+            break;
+        xd_rect row =
+            to_device((xd_rect){1, 1 + i * XD_LIST_ROW_H, popup_row_w(p), XD_LIST_ROW_H}, s);
+        xd_theme_draw_list_item(t, cr, row, idx == p->hot, p->combo->items[idx]);
+    }
+    if (popup_has_scrollbar(p))
+        xd_theme_draw_vscrollbar(t, cr, to_device(popup_scrollbar(p), s), p->first, p->rows,
+                                 (int)p->combo->count);
+}
+
 void xd_popup_render(xd_listpopup *p) {
     xd_ui *ui = p->owner->ui;
     if (p->frame != nullptr)
@@ -735,21 +755,10 @@ void xd_popup_render(xd_listpopup *p) {
     cairo_t *cr = cairo_create(buf->surface);
 
     xd_rect all = {0, 0, dw, dh};
-    xd_fill_rect(cr, all, xd_sys(&t, XD_COLOR_WINDOW));
-    xd_rgba border = t.style == XD_STYLE_CLASSIC ? xd_sys(&t, XD_COLOR_WINDOW_FRAME)
-                                                 : xd_rgba_hex(0x7F9DB9);
-    xd_draw_bevel(cr, all, xd_tpx(&t, 1), border, border);
-    for (int i = 0; i < p->rows; i++) {
-        int idx = p->first + i;
-        if (idx >= (int)p->combo->count)
-            break;
-        xd_rect row =
-            to_device((xd_rect){1, 1 + i * XD_LIST_ROW_H, popup_row_w(p), XD_LIST_ROW_H}, s);
-        xd_theme_draw_list_item(&t, cr, row, idx == p->hot, p->combo->items[idx]);
-    }
-    if (popup_has_scrollbar(p))
-        xd_theme_draw_vscrollbar(&t, cr, to_device(popup_scrollbar(p), s), p->first, p->rows,
-                                 (int)p->combo->count);
+    if (p->draw != nullptr)
+        p->draw(p->anchor, cr, all, &t, p->user);
+    else
+        draw_list(p, &t, cr, all);
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
 
@@ -807,21 +816,10 @@ static const struct wp_fractional_scale_v1_listener popup_fractional_listener = 
     .preferred_scale = popup_scale,
 };
 
-static void popup_open(xd_window *win, xd_widget *combo) {
+/* Maps a popup of p->width x p->height under p->anchor, with a grab. */
+static void popup_map(xd_window *win, xd_listpopup *p) {
     xd_ui *ui = win->ui;
-    if (combo->count == 0 || win->popup != nullptr)
-        return;
-    tip_hide(win);
-    xd_listpopup *p = XD_NEW(xd_listpopup);
-    p->owner = win;
-    p->combo = combo;
-    p->scale = win->scale;
-    p->rows = (int)XD_MIN(combo->count, (size_t)XD_LIST_MAX_ROWS);
-    p->width = combo->r.w;
-    p->height = p->rows * XD_LIST_ROW_H + 2;
-    p->hot = XD_MAX(combo->selected, 0);
-    popup_scroll_to(p, p->hot);
-
+    xd_widget *anchor = p->anchor;
     p->surface = wl_compositor_create_surface(ui->compositor);
     if (ui->fractional_manager != nullptr && ui->viewporter != nullptr) {
         p->fractional =
@@ -834,7 +832,7 @@ static void popup_open(xd_window *win, xd_widget *combo) {
 
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(ui->wm_base);
     xdg_positioner_set_size(pos, p->width, p->height);
-    xdg_positioner_set_anchor_rect(pos, combo->r.x, combo->r.y, combo->r.w, combo->r.h);
+    xdg_positioner_set_anchor_rect(pos, anchor->r.x, anchor->r.y, anchor->r.w, anchor->r.h);
     xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_BOTTOM_LEFT);
     xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
     xdg_positioner_set_constraint_adjustment(pos,
@@ -852,6 +850,43 @@ static void popup_open(xd_window *win, xd_widget *combo) {
     win->popup = p;
     win->dirty = true;
 }
+
+static void popup_open(xd_window *win, xd_widget *combo) {
+    if (combo->count == 0 || win->popup != nullptr)
+        return;
+    tip_hide(win);
+    xd_listpopup *p = XD_NEW(xd_listpopup);
+    p->owner = win;
+    p->combo = combo;
+    p->anchor = combo;
+    p->scale = win->scale;
+    p->rows = (int)XD_MIN(combo->count, (size_t)XD_LIST_MAX_ROWS);
+    p->width = combo->r.w;
+    p->height = p->rows * XD_LIST_ROW_H + 2;
+    p->hot = XD_MAX(combo->selected, 0);
+    popup_scroll_to(p, p->hot);
+    popup_map(win, p);
+}
+
+void xd_popup_custom(xd_widget *anchor, int width, int height, xd_draw_cb draw,
+                     xd_pointer_cb pointer, void *user) {
+    xd_window *win = anchor->win;
+    if (win->popup != nullptr)
+        return;
+    tip_hide(win);
+    xd_listpopup *p = XD_NEW(xd_listpopup);
+    p->owner = win;
+    p->anchor = anchor;
+    p->draw = draw;
+    p->pointer = pointer;
+    p->user = user;
+    p->scale = win->scale;
+    p->width = width;
+    p->height = height;
+    popup_map(win, p);
+}
+
+void xd_popup_dismiss(xd_window *win) { popup_close(win); }
 
 static void popup_close(xd_window *win) {
     xd_listpopup *p = win->popup;
@@ -933,6 +968,12 @@ static void popup_sb_release(xd_listpopup *p) {
 }
 
 void xd_popup_pointer_motion(xd_listpopup *p, double x, double y) {
+    if (p->combo == nullptr) {
+        p->dirty = true;
+        if (p->pointer != nullptr)
+            p->pointer(p->anchor, XD_POINTER_MOTION, x, y, p->user);
+        return;
+    }
     p->pointer_y = y;
     if (p->sb_pressed == SB_THUMB) {
         popup_set_first(p, sb_first_at(p->owner->ui, popup_scrollbar(p), p->first, p->rows,
@@ -954,6 +995,12 @@ void xd_popup_pointer_button(xd_listpopup *p, uint32_t button, bool pressed) {
     xd_ui *ui = p->owner->ui;
     double x = ui->pointer_x;
     double y = ui->pointer_y;
+    if (p->combo == nullptr) {
+        p->dirty = true;
+        if (p->pointer != nullptr) /* may close the popup, or the window */
+            p->pointer(p->anchor, pressed ? XD_POINTER_PRESS : XD_POINTER_RELEASE, x, y, p->user);
+        return;
+    }
     p->pointer_y = y;
     if (pressed) {
         /* A drag whose release went to another program ends here. */
@@ -983,6 +1030,8 @@ void xd_popup_pointer_button(xd_listpopup *p, uint32_t button, bool pressed) {
 }
 
 void xd_popup_pointer_axis(xd_listpopup *p, double value) {
+    if (p->combo == nullptr)
+        return;
     popup_set_first(p, p->first + (value > 0 ? 1 : -1));
 }
 
@@ -1394,6 +1443,12 @@ xd_widget *xd_edit(xd_window *win, xd_rect r, const char *text) {
     w->edit.max_len = 4096;
     xd_textedit_set(&w->edit, xd_str_from_cstr(text));
     return w;
+}
+
+void xd_edit_set_on_change(xd_widget *w, xd_widget_cb on_change, void *user) {
+    XD_ASSERT(w->kind == XD_W_EDIT);
+    w->cb = on_change;
+    w->user = user;
 }
 
 xd_widget *xd_combo(xd_window *win, xd_rect r, bool editable, xd_widget_cb on_change,
@@ -1858,11 +1913,10 @@ static void focus_step(xd_window *win, int dir) {
 
 static void edit_changed(xd_widget *w) {
     w->win->dirty = true;
-    if (w->kind == XD_W_COMBO) {
+    if (w->kind == XD_W_COMBO)
         w->selected = -1; /* typed text no longer matches an item */
-        if (w->cb != nullptr)
-            w->cb(w, w->user);
-    }
+    if (w->cb != nullptr)
+        w->cb(w, w->user); /* may close the window */
 }
 
 /* Text editing keys; returns true if handled. */
@@ -1974,6 +2028,16 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
 
     /* An open drop-down list takes navigation keys. */
     xd_listpopup *p = win->popup;
+    if (p != nullptr && p->combo == nullptr) {
+        /* A panel: Esc puts it away, Tab moves on past it. */
+        if (sym != XKB_KEY_Tab && sym != XKB_KEY_ISO_Left_Tab && sym != XKB_KEY_Escape &&
+            sym != XKB_KEY_F4)
+            return;
+        popup_close(win);
+        if (sym != XKB_KEY_Tab && sym != XKB_KEY_ISO_Left_Tab)
+            return;
+        p = nullptr;
+    }
     if (p != nullptr) {
         switch (sym) {
         case XKB_KEY_Up:

@@ -315,6 +315,9 @@ typedef struct xd_settings {
     char icon_theme[64]; /* IconTheme: a freedesktop icon theme under icons/ */
     char gtk_theme[64];  /* GtkTheme: an installed GTK3 theme instead of ours */
     char qt_style[64];   /* QtStyle: a Qt widget style's key; "" = automatic */
+    /* [CustomScheme]: Advanced Appearance's changes to the scheme. Choosing
+     * another scheme or font size drops them, as in Windows. */
+    xd_scheme_custom custom_scheme;
 
     /* [Desktop] */
     char wallpaper[1024]; /* absolute path, "" = none */
