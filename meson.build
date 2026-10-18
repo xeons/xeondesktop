@@ -557,6 +557,7 @@ install_data(
   'data/applications/org.xeondesktop.ColorManagement.desktop',
   'data/applications/org.xeondesktop.RegionalOptions.desktop',
   'data/applications/org.xeondesktop.UserAccounts.desktop',
+  'data/applications/org.xeondesktop.Keys.desktop',
   'data/applications/org.xeondesktop.FolderOptions.desktop',
   'data/applications/org.xeondesktop.Fonts.desktop',
   'data/applications/org.xeondesktop.Mouse.desktop',
@@ -684,6 +685,24 @@ executable(
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, crypt_dep],
   c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+# Passwords and Keys (User Accounts): the Secret Service through
+# libsecret, SSH keys through OpenSSH's tools, GnuPG through gpgme.
+libsecret_dep = dependency('libsecret-1', include_type: 'system')
+gpgme_dep = dependency('gpgme', include_type: 'system')
+executable(
+  'xd-keys',
+  'src/keys/main.c',
+  'src/keys/passwords.c',
+  'src/keys/sshpage.c',
+  'src/keys/gpgpage.c',
+  'src/keys/keyslib.c',
+  'src/keys/sshkeys.c',
+  'src/keys/gpgkeys.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, libsecret_dep, gpgme_dep],
   install: true,
 )
 
@@ -1100,9 +1119,12 @@ test_exe = executable(
   'src/privacy/permissions.c',
   'src/compositor/vcgt.c',
   'src/color/colorlib.c',
+  'src/keys/keyslib.c',
+  'src/keys/sshkeys.c',
+  'src/keys/gpgkeys.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
-                 fontconfig_dep, packagekit_dep, cups_dep,
+                 fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,
                  sane_dep.partial_dependency(compile_args: true), lcms2_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE',
            '-DXD_VERSION="' + meson.project_version() + '"'] + lcms2_args,
@@ -1192,6 +1214,7 @@ install_man(
   'man/xd-diskmgmt.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1', 'man/xd-files.1',
   'man/xd-flatpak.1',
   'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',
+  'man/xd-keys.1',
   'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mouse.1',
   'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1', 'man/xd-privacy.1',
   'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1', 'man/xd-search.1',

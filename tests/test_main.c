@@ -14,6 +14,7 @@
 #include <math.h>
 #include <monetary.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -33,6 +34,9 @@
 #include "../src/scanners/scanlib.h"
 #include "../src/bluetooth/btinfo.h"
 #include "../src/joy/joyinfo.h"
+#include "../src/keys/gpgkeys.h"
+#include "../src/keys/keyslib.h"
+#include "../src/keys/sshkeys.h"
 #include "../src/netconn/netconn.h"
 #include "../src/intl/intl.h"
 #include "../src/keyboard/layouts.h"
@@ -5580,7 +5584,399 @@ static void test_input_method(void) {
     CHECK(r.y == 26);
 }
 
+/* Passwords and Keys: texts and parsing, then OpenSSH's tools and GnuPG on
+ * scratch directories (never ~/.ssh, ~/.gnupg or the user's agents). */
+static void test_keys_texts(void) {
+    int bits = 0;
+    char *fp = nullptr, *comment = nullptr, *type = nullptr;
+    CHECK(xd_ssh_parse_fingerprint("256 SHA256:pnWloDphx2AYPb8i0CarZphDkkSXZczXrHWFfSOLFI0 "
+                                   "user@host (ED25519)\n",
+                                   &bits, &fp, &comment, &type));
+    CHECK(bits == 256);
+    CHECK(g_strcmp0(fp, "SHA256:pnWloDphx2AYPb8i0CarZphDkkSXZczXrHWFfSOLFI0") == 0);
+    CHECK(g_strcmp0(comment, "user@host") == 0);
+    CHECK(g_strcmp0(type, "ED25519") == 0);
+    g_free(fp);
+    g_free(comment);
+    g_free(type);
+    /* A comment with spaces and brackets of its own. */
+    CHECK(xd_ssh_parse_fingerprint("4096 SHA256:abc my work key (old) (RSA)", &bits, nullptr,
+                                   &comment, &type));
+    CHECK(bits == 4096 && g_strcmp0(comment, "my work key (old)") == 0 &&
+          g_strcmp0(type, "RSA") == 0);
+    g_free(comment);
+    g_free(type);
+    CHECK(!xd_ssh_parse_fingerprint("The agent has no identities.", nullptr, nullptr, nullptr,
+                                    nullptr));
+    CHECK(!xd_ssh_parse_fingerprint("", nullptr, nullptr, nullptr, nullptr));
+    CHECK(!xd_ssh_parse_fingerprint("abc SHA256:x c (RSA)", nullptr, nullptr, nullptr, nullptr));
+
+    CHECK(g_str_equal(xd_secret_kind("org.gnome.keyring.NetworkPassword"), "Network password"));
+    CHECK(g_str_equal(xd_secret_kind("org.gnome.GVfs.Luks.Password"),
+                      "Encrypted volume password"));
+    CHECK(g_str_equal(xd_secret_kind(nullptr), "Password"));
+    CHECK(g_str_equal(xd_secret_kind("com.example.Unknown"), "Password"));
+    CHECK(g_str_equal(xd_secret_display_name("Mail", nullptr), "Mail"));
+    CHECK(g_str_equal(xd_secret_display_name("", "org.gnome.keyring.Note"), "Stored note"));
+
+    char *uid = xd_gpg_user_id("Ann Smith", "ann@example.com", "work");
+    CHECK(g_str_equal(uid, "Ann Smith (work) <ann@example.com>"));
+    g_free(uid);
+    uid = xd_gpg_user_id("", "ann@example.com", "");
+    CHECK(g_str_equal(uid, "<ann@example.com>"));
+    g_free(uid);
+    uid = xd_gpg_user_id("Ann", nullptr, nullptr);
+    CHECK(g_str_equal(uid, "Ann"));
+    g_free(uid);
+    CHECK(g_str_equal(xd_gpg_validity_text(5), "Ultimate"));
+    CHECK(g_str_equal(xd_gpg_validity_text(0), "Unknown"));
+    CHECK(g_str_equal(xd_gpg_validity_text(2), "Never"));
+
+    CHECK(xd_ssh_valid_key_name("id_ed25519"));
+    CHECK(xd_ssh_valid_key_name("work key"));
+    CHECK(!xd_ssh_valid_key_name(""));
+    CHECK(!xd_ssh_valid_key_name("../id"));
+    CHECK(!xd_ssh_valid_key_name(".hidden"));
+    CHECK(!xd_ssh_valid_key_name("id.pub"));
+    CHECK(!xd_ssh_valid_key_name("authorized_keys"));
+    CHECK(!xd_ssh_valid_key_name("config"));
+
+    char *e = xd_ssh_error_text("Load key \"/home/u/.ssh/id\": incorrect passphrase supplied "
+                                "to decrypt private key\n");
+    CHECK(g_str_equal(e, "Incorrect passphrase supplied to decrypt private key."));
+    g_free(e);
+    e = xd_ssh_error_text("\n  \n");
+    CHECK(g_str_equal(e, "The program failed without saying why."));
+    g_free(e);
+
+    char **argv = xd_ssh_keygen_argv("rsa", 4096, "me@here", "/x/id_rsa", true);
+    const char *want[] = {"ssh-keygen", "-q", "-t", "rsa", "-b", "4096", "-C", "me@here",
+                          "-f", "/x/id_rsa", "-N", "", nullptr};
+    CHECK(g_strv_equal((const char *const *)argv, want));
+    g_strfreev(argv);
+    argv = xd_ssh_keygen_argv("ed25519", 0, "c", "/x/id", false);
+    /* The passphrase is never on the command line. */
+    CHECK(!g_strv_contains((const char *const *)argv, "-N") &&
+          !g_strv_contains((const char *const *)argv, "-b"));
+    g_strfreev(argv);
+    argv = xd_ssh_add_argv("/x/id.pub", true);
+    const char *want_add[] = {"ssh-add", "-d", "/x/id.pub", nullptr};
+    CHECK(g_strv_equal((const char *const *)argv, want_add));
+    g_strfreev(argv);
+    char *answers = xd_ssh_answers((const char *const[]){"old", "new", "new", nullptr});
+    CHECK(g_str_equal(answers, "old\nnew\nnew\n"));
+    g_free(answers);
+    answers = xd_ssh_answers(nullptr);
+    CHECK(g_str_equal(answers, ""));
+    g_free(answers);
+
+    char *date = xd_keys_date(0);
+    CHECK(g_str_equal(date, ""));
+    g_free(date);
+    date = xd_keys_day(86400 * 365);
+    CHECK(date[0] != '\0');
+    g_free(date);
+}
+
+/* Ends what a test started in a scratch GnuPG home: gpg-agent (and
+ * scdaemon), found by that home on their command lines, since gpg-agent
+ * keeps its environment unreadable. Then its socket directory. */
+static void stop_scratch_gpg(const char *home) {
+    GDir *proc = g_dir_open("/proc", 0, nullptr);
+    char *arg = g_strdup_printf("--homedir%c%s", '\0', home);
+    size_t arg_len = strlen("--homedir") + 1 + strlen(home);
+    for (const char *e; proc != nullptr && (e = g_dir_read_name(proc)) != nullptr;) {
+        if (!g_ascii_isdigit(e[0]))
+            continue;
+        char *path = g_strdup_printf("/proc/%s/cmdline", e);
+        char *cmd = nullptr;
+        gsize len = 0;
+        if (g_file_get_contents(path, &cmd, &len, nullptr) &&
+            memmem(cmd, len, arg, arg_len) != nullptr) {
+            pid_t pid = (pid_t)atoi(e);
+            struct stat st;
+            char *dir = g_strdup_printf("/proc/%s", e);
+            if (pid > 1 && stat(dir, &st) == 0 && st.st_uid == getuid())
+                kill(pid, SIGTERM);
+            g_free(dir);
+        }
+        g_free(cmd);
+        g_free(path);
+    }
+    if (proc != nullptr)
+        g_dir_close(proc);
+    g_free(arg);
+    /* gpg-agent removes its sockets as it ends. */
+    for (int i = 0; i < 50; i++) {
+        char *out = nullptr;
+        const char *dirs[] = {"gpgconf", "--homedir", home, "--list-dirs", "agent-socket", nullptr};
+        g_spawn_sync(nullptr, (char **)(uintptr_t)dirs, nullptr,
+                     G_SPAWN_SEARCH_PATH | G_SPAWN_STDERR_TO_DEV_NULL, nullptr, nullptr, &out,
+                     nullptr, nullptr, nullptr);
+        bool gone = out == nullptr || !g_file_test(g_strstrip(out), G_FILE_TEST_EXISTS);
+        g_free(out);
+        if (gone)
+            break;
+        g_usleep(100000);
+    }
+    const char *rm[] = {"gpgconf", "--homedir", home, "--remove-socketdir", nullptr};
+    g_spawn_sync(nullptr, (char **)(uintptr_t)rm, nullptr,
+                 G_SPAWN_SEARCH_PATH | G_SPAWN_STDERR_TO_DEV_NULL | G_SPAWN_STDOUT_TO_DEV_NULL,
+                 nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+}
+
+static void test_keys_ssh(void) {
+    char *keygen = g_find_program_in_path("ssh-keygen");
+    char *agent_prog = g_find_program_in_path("ssh-agent");
+    bool have = keygen != nullptr && agent_prog != nullptr;
+    g_free(keygen);
+    g_free(agent_prog);
+    if (!have) {
+        fprintf(stderr, "test_keys_ssh: skipped, OpenSSH isn't installed\n");
+        return;
+    }
+    char *dir = g_dir_make_tmp("xd-keys-ssh-XXXXXX", nullptr);
+    CHECK(dir != nullptr);
+    if (dir == nullptr)
+        return;
+    /* xd-tests is its own askpass (main()). */
+    char *self = g_file_read_link("/proc/self/exe", nullptr);
+    char *path = g_build_filename(dir, "id_ed25519", nullptr);
+
+    char *name = xd_ssh_new_key_name(dir, "ed25519");
+    CHECK(g_str_equal(name, "id_ed25519"));
+    g_free(name);
+
+    /* A key with a passphrase: asked twice, answered from the pipe. */
+    char **argv = xd_ssh_keygen_argv("ed25519", 0, "test key", path, false);
+    GError *error = nullptr;
+    CHECK(xd_ssh_run((const char *const *)argv, self, (const char *const[]){"pw1", "pw1", nullptr},
+                     &error));
+    g_clear_error(&error);
+    g_strfreev(argv);
+    name = xd_ssh_new_key_name(dir, "ed25519");
+    CHECK(g_str_equal(name, "id_ed25519_2"));
+    g_free(name);
+
+    GPtrArray *keys = xd_ssh_list_keys(dir);
+    CHECK(keys->len == 1);
+    if (keys->len == 1) {
+        const xd_ssh_key *k = keys->pdata[0];
+        CHECK(g_str_equal(k->name, "id_ed25519"));
+        CHECK(g_str_equal(k->type, "ED25519") && k->bits == 256);
+        CHECK(g_str_equal(k->comment, "test key"));
+        CHECK(g_str_has_prefix(k->fingerprint, "SHA256:"));
+        CHECK(k->has_private && k->encrypted);
+    }
+
+    /* A wrong old passphrase is refused, and says so. */
+    argv = xd_ssh_passwd_argv(path, false);
+    CHECK(!xd_ssh_run((const char *const *)argv, self,
+                      (const char *const[]){"wrong", "pw2", "pw2", nullptr}, &error));
+    CHECK(error != nullptr && strstr(error->message, "passphrase") != nullptr);
+    g_clear_error(&error);
+    /* The right one changes it; then none at all. */
+    CHECK(xd_ssh_run((const char *const *)argv, self,
+                     (const char *const[]){"pw1", "pw2", "pw2", nullptr}, &error));
+    g_clear_error(&error);
+    g_strfreev(argv);
+    argv = xd_ssh_passwd_argv(path, true);
+    CHECK(xd_ssh_run((const char *const *)argv, self, (const char *const[]){"pw2", nullptr},
+                     &error));
+    g_clear_error(&error);
+    g_strfreev(argv);
+    CHECK(!xd_ssh_key_encrypted(path));
+    argv = xd_ssh_passwd_argv(path, false);
+    CHECK(xd_ssh_run((const char *const *)argv, self, (const char *const[]){"pw3", "pw3", nullptr},
+                     &error));
+    g_clear_error(&error);
+    g_strfreev(argv);
+    CHECK(xd_ssh_key_encrypted(path));
+
+    /* An agent of our own on a scratch socket, never the user's. */
+    char *sock = g_build_filename(dir, "agent.sock", nullptr);
+    char *saved = g_strdup(g_getenv("SSH_AUTH_SOCK"));
+    g_unsetenv("SSH_AUTH_SOCK");
+    char **none = xd_ssh_agent_fingerprints(&error);
+    CHECK(none == nullptr && error != nullptr);
+    g_clear_error(&error);
+    const char *agent_argv[] = {"ssh-agent", "-D", "-a", sock, nullptr};
+    GPid agent = 0;
+    bool started = g_spawn_async(nullptr, (char **)(uintptr_t)agent_argv, nullptr,
+                                 G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD |
+                                     G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
+                                 nullptr, nullptr, &agent, nullptr);
+    CHECK(started);
+    for (int i = 0; started && i < 50 && !g_file_test(sock, G_FILE_TEST_EXISTS); i++)
+        g_usleep(100000);
+    g_setenv("SSH_AUTH_SOCK", sock, TRUE);
+    char **fps = xd_ssh_agent_fingerprints(&error);
+    CHECK(fps != nullptr && g_strv_length(fps) == 0);
+    g_strfreev(fps);
+    g_clear_error(&error);
+    char **add = xd_ssh_add_argv(path, false);
+    /* A wrong passphrase: askpass has no second answer, so ssh-add gives up. */
+    CHECK(!xd_ssh_run((const char *const *)add, self, (const char *const[]){"nope", nullptr},
+                      &error));
+    g_clear_error(&error);
+    CHECK(xd_ssh_run((const char *const *)add, self, (const char *const[]){"pw3", nullptr},
+                     &error));
+    g_clear_error(&error);
+    g_strfreev(add);
+    fps = xd_ssh_agent_fingerprints(&error);
+    CHECK(fps != nullptr && g_strv_length(fps) == 1);
+    xd_ssh_mark_agent_keys(keys, fps);
+    CHECK(keys->len == 1 && ((xd_ssh_key *)keys->pdata[0])->in_agent);
+    g_strfreev(fps);
+    char *pub = g_strconcat(path, ".pub", nullptr);
+    add = xd_ssh_add_argv(pub, true);
+    CHECK(xd_ssh_run((const char *const *)add, self, nullptr, &error));
+    g_clear_error(&error);
+    g_strfreev(add);
+    fps = xd_ssh_agent_fingerprints(&error);
+    CHECK(fps != nullptr && g_strv_length(fps) == 0);
+    g_strfreev(fps);
+    if (started) {
+        kill(agent, SIGTERM);
+        waitpid(agent, nullptr, 0);
+        g_spawn_close_pid(agent);
+    }
+    if (saved != nullptr)
+        g_setenv("SSH_AUTH_SOCK", saved, TRUE);
+    else
+        g_unsetenv("SSH_AUTH_SOCK");
+    g_free(saved);
+    g_ptr_array_unref(keys);
+
+    /* A public key alone is listed, without a private half. */
+    CHECK(g_remove(path) == 0);
+    keys = xd_ssh_list_keys(dir);
+    CHECK(keys->len == 1 && !((xd_ssh_key *)keys->pdata[0])->has_private);
+    g_ptr_array_unref(keys);
+    g_remove(sock);
+    g_free(sock);
+    g_free(pub);
+    g_free(path);
+    g_free(self);
+    rm_tree(dir);
+    g_free(dir);
+}
+
+static char *no_passphrase([[maybe_unused]] void *data, [[maybe_unused]] const char *hint,
+                           [[maybe_unused]] bool again) {
+    return nullptr;
+}
+
+static void test_keys_gpg(void) {
+    char *gpg = g_find_program_in_path("gpg");
+    g_free(gpg);
+    if (gpg == nullptr) {
+        fprintf(stderr, "test_keys_gpg: skipped, GnuPG isn't installed\n");
+        return;
+    }
+    char *home = g_dir_make_tmp("xd-keys-gpg-XXXXXX", nullptr);
+    CHECK(home != nullptr);
+    if (home == nullptr)
+        return;
+    /* No smartcard daemon for a scratch keyring. */
+    char *conf = g_build_filename(home, "gpg-agent.conf", nullptr);
+    CHECK(g_file_set_contents(conf, "disable-scdaemon\n", -1, nullptr));
+    g_free(conf);
+    GError *error = nullptr;
+    xd_gpg *g = xd_gpg_new(home, no_passphrase, nullptr, &error);
+    CHECK(g != nullptr);
+    g_clear_error(&error);
+    if (g == nullptr) {
+        rm_tree(home);
+        g_free(home);
+        return;
+    }
+    GPtrArray *keys = xd_gpg_list(g, &error);
+    CHECK(keys != nullptr && keys->len == 0);
+    if (keys != nullptr)
+        g_ptr_array_unref(keys);
+    g_clear_error(&error);
+
+    char *uid = xd_gpg_user_id("Test User", "test@example.com", "unit test");
+    char *fpr = nullptr;
+    CHECK(xd_gpg_create(g, uid, "", 0, &fpr, &error));
+    g_clear_error(&error);
+    g_free(uid);
+    CHECK(fpr != nullptr && strlen(fpr) == 40);
+    keys = xd_gpg_list(g, &error);
+    CHECK(keys != nullptr && keys->len == 1);
+    if (keys != nullptr && keys->len == 1) {
+        const xd_gpg_key *k = keys->pdata[0];
+        CHECK(g_str_equal(k->name, "Test User"));
+        CHECK(g_str_equal(k->email, "test@example.com"));
+        CHECK(g_str_equal(k->comment, "unit test"));
+        CHECK(g_strcmp0(k->fingerprint, fpr) == 0);
+        CHECK(g_str_has_suffix(fpr, k->key_id));
+        CHECK(k->secret && k->expires == 0 && k->created > 0);
+        CHECK(k->validity == 5); /* our own: ultimate */
+        CHECK(g_strcmp0(k->algorithm, "ed25519") == 0);
+        CHECK(k->subkeys == 2);  /* and Curve25519 for encryption */
+    }
+    if (keys != nullptr)
+        g_ptr_array_unref(keys);
+
+    /* A year from now; the key has no passphrase, so nothing is asked. */
+    CHECK(xd_gpg_set_expiry(g, fpr, 365ULL * 86400, &error));
+    g_clear_error(&error);
+    keys = xd_gpg_list(g, &error);
+    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+    CHECK(keys != nullptr && keys->len == 1 &&
+          ((xd_gpg_key *)keys->pdata[0])->expires > now + 364 * 86400);
+    if (keys != nullptr)
+        g_ptr_array_unref(keys);
+
+    char *armour = xd_gpg_export(g, fpr, &error);
+    CHECK(armour != nullptr && strstr(armour, "BEGIN PGP PUBLIC KEY BLOCK") != nullptr &&
+          strstr(armour, "PRIVATE") == nullptr);
+    g_clear_error(&error);
+    char *file = g_build_filename(home, "exported.asc", nullptr);
+    CHECK(armour != nullptr && g_file_set_contents(file, armour, -1, nullptr));
+    g_free(armour);
+
+    CHECK(xd_gpg_delete(g, fpr, &error));
+    g_clear_error(&error);
+    keys = xd_gpg_list(g, &error);
+    CHECK(keys != nullptr && keys->len == 0);
+    if (keys != nullptr)
+        g_ptr_array_unref(keys);
+
+    /* Back as a public key alone. */
+    int imported = 0, unchanged = 0;
+    CHECK(xd_gpg_import_file(g, file, &imported, &unchanged, &error));
+    g_clear_error(&error);
+    CHECK(imported == 1 && unchanged == 0);
+    CHECK(xd_gpg_import_file(g, file, &imported, &unchanged, &error));
+    g_clear_error(&error);
+    CHECK(imported == 0 && unchanged == 1);
+    keys = xd_gpg_list(g, &error);
+    CHECK(keys != nullptr && keys->len == 1 && !((xd_gpg_key *)keys->pdata[0])->secret);
+    if (keys != nullptr)
+        g_ptr_array_unref(keys);
+    /* Expiry needs the secret key. */
+    CHECK(!xd_gpg_set_expiry(g, fpr, 0, &error));
+    g_clear_error(&error);
+    /* Not a key file. */
+    CHECK(g_file_set_contents(file, "hello\n", -1, nullptr));
+    CHECK(!xd_gpg_import_file(g, file, &imported, &unchanged, &error));
+    CHECK(error != nullptr);
+    g_clear_error(&error);
+    g_free(file);
+    g_free(fpr);
+    xd_gpg_free(g);
+    stop_scratch_gpg(home);
+    rm_tree(home);
+    g_free(home);
+}
+
 int main(void) {
+    /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
+    if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
+        return xd_keys_askpass_main();
     test_str();
     test_arena();
     test_scheme();
@@ -5648,6 +6044,9 @@ int main(void) {
     test_disk_cleanup();
     test_timedate_ntp();
     test_privacy();
+    test_keys_texts();
+    test_keys_ssh();
+    test_keys_gpg();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

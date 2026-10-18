@@ -4270,6 +4270,167 @@ def _find(method, arg):
         return None
 
 
+# ---- Passwords and Keys -------------------------------------------------------------
+
+
+def secret_service_call(path, iface, method, args=None, sig=None):
+    """A call to the session's (mock) Secret Service; its unpacked result."""
+    from gi.repository import Gio, GLib
+
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    params = GLib.Variant(sig, args) if sig else None
+    r = bus.call_sync("org.freedesktop.secrets", path, iface, method, params, None,
+                      Gio.DBusCallFlags.NONE, 5000, None)  # fmt: skip
+    return r.unpack()
+
+
+def secret_prop(path, iface, name):
+    return secret_service_call(path, "org.freedesktop.DBus.Properties", "Get", (iface, name),
+                               "(ss)")[0]  # fmt: skip
+
+
+def stop_scratch_gpg(home):
+    """gpg-agent keeps its environment unreadable, so the session's
+    teardown can't tell it's ours: it's found by its scratch home on its
+    command line instead, and its socket directory (in the real
+    /run/user/UID/gnupg) removed after it."""
+    want = b"--homedir\0" + home.encode() + b"\0"
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.stat(f"/proc/{entry}").st_uid != os.getuid():
+                continue
+            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                if want in f.read():
+                    os.kill(int(entry), signal.SIGTERM)
+        except OSError:
+            pass
+    sock = subprocess.run(["gpgconf", "--homedir", home, "--list-dirs", "agent-socket"],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode().strip()  # fmt: skip
+    deadline = time.monotonic() + 5
+    while sock and os.path.exists(sock) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    subprocess.run(["gpgconf", "--homedir", home, "--remove-socketdir"], stderr=subprocess.DEVNULL)
+
+
+def keys_dialog(s, before, label):
+    """Waits for one of xd-keys' dialogs to come up over `before` (they're
+    transient, so not in the window list) and to hold still."""
+    shot, box = wait_change(s, before, (0, 0, WIDTH, HEIGHT - 40), label, label)
+    return shot
+
+
+@scenario(LUNA_INI, requires=("dbusmock",))
+def passwords_and_keys(s):
+    """Passwords and Keys (xd-keys) on a mock Secret Service, an ssh-agent
+    and a GnuPG home of its own: unlocking the locked Work keyring (through
+    the service's prompt) and adding a password to it; loading an SSH key
+    into the agent and making a new one with a passphrase; making a PGP key
+    pair."""
+    from dbusmock import DBusTestCase
+
+    for tool in ("ssh-keygen", "ssh-agent", "ssh-add", "gpg", "gpgconf"):
+        if shutil.which(tool) is None:
+            s.log(f"skipped: {tool} isn't installed")
+            return
+    runtime = os.environ["XDG_RUNTIME_DIR"]
+    # Not ~/.gnupg: the scratch home stands in for the real one, but the
+    # default home's sockets in /run/user/UID/gnupg are the real agent's.
+    gnupg = os.path.join(runtime, "gnupg")
+    os.mkdir(gnupg, 0o700)
+    with open(os.path.join(gnupg, "gpg-agent.conf"), "w") as f:
+        f.write("disable-scdaemon\n")
+    # Never the user's agent (SSH_AUTH_SOCK comes from their environment).
+    agent_sock = os.path.join(runtime, "ssh-agent.sock")
+    env = {"SSH_AUTH_SOCK": agent_sock, "GNUPGHOME": gnupg}
+    tool_env = dict(os.environ, **env)
+    ssh = os.path.join(s.home, ".ssh")
+    os.mkdir(ssh, 0o700)
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "first@test", "-f",
+                    os.path.join(ssh, "id_ed25519")], check=True)  # fmt: skip
+    mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "secrets.py")
+    proc, _ = DBusTestCase.spawn_server_template(mock, {}, stdout=subprocess.DEVNULL)
+    s.children.append(proc)
+    s.launch("ssh-agent", "-D", "-a", agent_sock)
+    s.wait(lambda: os.path.exists(agent_sock), "the SSH agent")
+    try:
+        s.launch("xd-keys", env=env)
+        s.wait_window(title="Passwords and Keys", state="activated")
+        s.settle("passwords")
+
+        # The Work keyring (second), locked: Unlock goes through the
+        # service's prompt.
+        work = "/org/freedesktop/secrets/collection/work"
+        coll = "org.freedesktop.Secret.Collection"
+        s.inject("key", "alt+k", "sleep", 200, "key", "Down", "sleep", 500, "key", "alt+u")
+        s.wait(lambda: not secret_prop(work, coll, "Locked"), "the Work keyring to unlock")
+        unlocked = s.settle("unlocked")
+        s.log("ok: Unlock unlocked the Work keyring")
+        s.inject("key", "alt+a")
+        keys_dialog(s, unlocked, "add-password")
+        s.inject("type", "Bank PIN", "key", "Tab", "type", "4321", "key", "Tab", "type", "4321")
+        s.settle("add-password-typed")
+        s.inject("key", "Return")
+
+        def labels():
+            return [secret_prop(i, "org.freedesktop.Secret.Item", "Label")
+                    for i in secret_prop(work, coll, "Items")]  # fmt: skip
+
+        s.wait(lambda: "Bank PIN" in labels(), "the new password in the Work keyring")
+        s.settle("added")
+        s.log("ok: Add stored the password in the Work keyring")
+
+        # SSH Keys: the key, loaded into our agent.
+        s.inject("key", "ctrl+Tab", "sleep", 500, "key", "Tab", "sleep", 200, "key", "Down",
+                 "sleep", 300, "key", "alt+a")  # fmt: skip
+
+        def agent_keys():
+            r = subprocess.run(["ssh-add", "-l"], env=tool_env, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL)  # fmt: skip
+            return r.stdout.decode().count("SHA256:")
+
+        s.wait(lambda: agent_keys() == 1, "the key in the SSH agent")
+        ssh_tab = s.settle("ssh-keys")
+        s.log("ok: Add to Agent loaded the key")
+        # A new key with a passphrase (focus starts on it).
+        s.inject("key", "alt+n")
+        keys_dialog(s, ssh_tab, "new-ssh-key")
+        s.inject("type", "pw123", "key", "Tab", "type", "pw123")
+        s.settle("new-ssh-key")
+        s.inject("key", "Return")
+        new_key = os.path.join(ssh, "id_ed25519_2")
+        s.wait(lambda: os.path.exists(new_key + ".pub"), "the new key pair")
+        r = subprocess.run(["ssh-keygen", "-y", "-P", "pw123", "-f", new_key],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # fmt: skip
+        s.check(r.returncode == 0, "the new key is protected by the passphrase typed")
+        s.settle("ssh-new")
+
+        # PGP Keys: a key pair without a passphrase.
+        s.inject("key", "ctrl+Tab")
+        pgp_tab = s.settle("pgp-tab")
+        s.inject("key", "alt+n")
+        keys_dialog(s, pgp_tab, "new-pgp-key")
+        s.inject("key", "alt+n", "type", "Test User", "key", "alt+e", "type", "test@example.com")
+        s.settle("new-pgp-key-typed")
+        s.inject("key", "Return")
+
+        def secret_uids():
+            r = subprocess.run(["gpg", "--batch", "--with-colons", "--list-secret-keys"],
+                               env=tool_env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)  # fmt: skip
+            return r.stdout.decode()
+
+        s.wait(lambda: "Test User <test@example.com>" in secret_uids(), "the PGP key pair",
+               timeout=60)  # fmt: skip
+        s.log("ok: New made the PGP key pair")
+        s.settle("pgp-keys")
+        s.inject("key", "Escape")
+        s.wait_window(title="Passwords and Keys", gone=True)
+        s.log("ok: Escape closed it")
+    finally:
+        stop_scratch_gpg(gnupg)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

@@ -1,0 +1,73 @@
+.TH XD\-KEYS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-keys \- Passwords and Keys
+.SH SYNOPSIS
+.SY xd\-keys
+.OP \-\-page n
+.YS
+.SH DESCRIPTION
+.B xd\-keys
+manages stored passwords, SSH keys and PGP keys, as GNOME's Seahorse does,
+in a Control Panel applet (User Accounts).
+User Accounts' \(lqManage my network passwords\(rq opens it, as it opened
+Stored User Names and Passwords in Windows XP.
+Changes take effect at once.
+.TP
+.B Passwords
+The keyrings of the Secret Service (GNOME Keyring, KeePassXC and others),
+through libsecret: lock and unlock a keyring (the service asks for its
+password); add, remove and rename passwords; show a password
+(\(lqShow password\(rq), copy it and change it.
+Properties also shows when it was stored and changed, and the attributes
+programs look it up by.
+.TP
+.B SSH Keys
+The key pairs in
+.IR ~/.ssh ,
+with their fingerprints and comments
+.RB ( ssh\-keygen (1)
+.BR \-l ):
+make a new one (Ed25519 by default, or RSA or ECDSA), change its
+passphrase, copy the public key to the clipboard, and delete it (to the
+Recycle Bin).
+Which keys
+.BR ssh\-agent (1)
+holds, and adding keys to it or removing them
+.RB ( ssh\-add (1)).
+.TP
+.B PGP Keys
+GnuPG's keyring, through gpgme: public keys and key pairs with their user
+IDs, key IDs, fingerprints, expiry dates and trust; make a key pair
+(Ed25519 and Curve25519), import keys from a file, export a public key
+(armoured), delete a key, and change a key pair's expiry date.
+.PP
+Passphrases are asked for in its own dialogs.
+For SSH keys,
+.B xd\-keys
+is the askpass program of the
+.B ssh\-keygen
+and
+.B ssh\-add
+it runs, and hands them the passphrases on a pipe; for PGP keys,
+gpg\-agent asks it through loopback pinentry.
+Passphrases never appear on a command line.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on the
+.IR n th
+tab, from 0 (Passwords).
+.SH ENVIRONMENT
+.TP
+.B SSH_AUTH_SOCK
+The SSH agent to list and load keys into.
+.TP
+.B GNUPGHOME
+The GnuPG keyring, instead of
+.IR ~/.gnupg .
+.SH SEE ALSO
+.BR xd\-users (1),
+.BR ssh\-keygen (1),
+.BR ssh\-add (1),
+.BR gpg (1),
+.BR secret\-tool (1)

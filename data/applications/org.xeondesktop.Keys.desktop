@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Passwords and Keys
+Comment=Manage stored passwords, SSH keys and PGP keys
+Exec=xd-keys
+Icon=dialog-password
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=accounts
+Keywords=password;keyring;secret;ssh;gpg;pgp;key;seahorse;
+StartupWMClass=org.xeondesktop.Keys

@@ -782,6 +782,18 @@ static void on_profiles(ua *u) {
     }
 }
 
+/* XP's "Manage my network passwords" opened Stored User Names and
+ * Passwords; here it's Passwords and Keys. */
+static void on_passwords(ua *u) {
+    const char *argv[] = {"xd-keys", nullptr};
+    GError *error = nullptr;
+    if (!g_spawn_async(nullptr, (char **)(uintptr_t)argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
+                       nullptr, nullptr, &error)) {
+        error_box(u, "Passwords and Keys could not be started.", error);
+        g_error_free(error);
+    }
+}
+
 /* ---- pages ------------------------------------------------------------------------- */
 
 static void page_home(ua *u, GtkWidget *box) {
@@ -1132,6 +1144,9 @@ static void build_pane(ua *u) {
     if (u->cur.kind != PAGE_HOME)
         pane_add(related, task("Change another account", G_CALLBACK(on_go_change), u));
     pane_add(related, task("Create a new account", G_CALLBACK(on_go_create), u));
+    GDBusProxy *cur = cur_account(u);
+    if (u->cur.kind == PAGE_ACCOUNT && cur != nullptr && is_me(u, cur))
+        pane_add(related, task("Manage my network passwords", G_CALLBACK(on_passwords), u));
     gtk_box_pack_start(GTK_BOX(u->pane), related, FALSE, FALSE, 0);
     GtkWidget *see = pane_box("See Also");
     pane_add(see, task("User profiles", G_CALLBACK(on_profiles), u));

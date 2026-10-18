@@ -42,6 +42,8 @@ depends=(
   'libcups'    # Printers and Faxes
   'sane'       # Scanners and Cameras
   'libgphoto2' # Scanners and Cameras
+  'gpgme'      # Passwords and Keys: PGP keys
+  'libsecret'  # Passwords and Keys: stored passwords
   'libarchive' # Files: Send To > Compressed (zipped) Folder
   'libseccomp' # xd-thumbnailer's sandbox
   'bubblewrap' # xd-thumbnailer's sandbox
@@ -55,13 +57,15 @@ depends=(
 # Header-only at build time: xcb-icccm's hint structures, libdrm's formats.
 # mesa: EGL/GLES headers for SceneFX (xd-compositor-fx, Aero's blur).
 makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm' 'mesa')
-checkdepends=('ttf-dejavu')
+checkdepends=('ttf-dejavu' 'openssh' 'gnupg')
 optdepends=(
   'xorg-xwayland: X11 applications'
   'breeze-icons: icons for the Start menu and file manager'
   'xdg-desktop-portal-gtk: file chooser and settings portals'
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
   'accountsservice: User Accounts'
+  'gnome-keyring: Passwords and Keys (or another Secret Service, such as KeePassXC)'
+  'openssh: Passwords and Keys > SSH Keys'
   'bluez: Bluetooth Devices'
   'udisks2: Disk Management'
   'cups: Printers and Faxes'
