@@ -60,14 +60,9 @@ static GdkPixbuf *fit(GdkPixbuf *pb, int px) {
     return scaled;
 }
 
-static int decode(XdThumbSize size, char **rest) {
-    if (rest == nullptr || rest[0] == nullptr)
-        return EXIT_DECODE_FAILED;
-    /* stdout carries the pixels; anything a library prints goes to
-     * stderr instead. */
-    int out = dup(STDOUT_FILENO);
-    if (out < 0 || dup2(STDERR_FILENO, STDOUT_FILENO) < 0 || !write_all(out, MAGIC, sizeof(MAGIC)))
-        return EXIT_DECODE_FAILED;
+/* Decodes rest[0] (or runs the thumbnailer in rest[1...]) and writes the
+ * picture's size and pixels to `out`. */
+static int decode_to(int out, XdThumbSize size, char **rest) {
     const char *input = rest[0];
     if (rest[1] != nullptr) {
         /* An installed thumbnailer, run in here with the same limits: it
@@ -105,9 +100,32 @@ static int decode(XdThumbSize size, char **rest) {
     for (guint32 y = 0; ok && y < dims[1]; y++)
         ok = write_all(out, pixels + y * stride, (size_t)dims[0] * 4);
     g_object_unref(rgba);
-    close(out);
     return ok ? EXIT_OK : EXIT_DECODE_FAILED;
 }
+
+/* GCC's analyzer takes dup2()'s result for a new descriptor to close, but
+ * it's stdout, which stays pointed at stderr until the process exits. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+#endif
+static int decode(XdThumbSize size, char **rest) {
+    if (rest == nullptr || rest[0] == nullptr)
+        return EXIT_DECODE_FAILED;
+    /* stdout carries the pixels; anything a library prints goes to
+     * stderr instead. */
+    int out = dup(STDOUT_FILENO);
+    if (out < 0)
+        return EXIT_DECODE_FAILED;
+    int status = EXIT_DECODE_FAILED;
+    if (dup2(STDERR_FILENO, STDOUT_FILENO) == STDOUT_FILENO && write_all(out, MAGIC, sizeof(MAGIC)))
+        status = decode_to(out, size, rest);
+    close(out);
+    return status;
+}
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 /* ---- outside ---------------------------------------------------------------------- */
 

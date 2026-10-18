@@ -250,8 +250,9 @@ static bool switch_user(void) {
     if (ok) {
         g_variant_unref(r);
     } else {
-        fprintf(stderr, "xd-shutdown: cannot switch user: %s\n", error->message);
-        g_error_free(error);
+        fprintf(stderr, "xd-shutdown: cannot switch user: %s\n",
+                error != nullptr ? error->message : "no display manager seat");
+        g_clear_error(&error);
     }
     g_object_unref(bus);
     return ok;
