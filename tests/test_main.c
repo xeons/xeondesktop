@@ -44,6 +44,8 @@
 #include "../src/security/passwd.h"
 #include "../src/saver/savers.h"
 #include "../src/settings/gtktheme.h"
+#include "../src/settings/inputmethod.h"
+#include "../src/compositor/imeplace.h"
 #include "../src/settings/qtpalette.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
@@ -5118,6 +5120,145 @@ static void test_privacy(void) {
     g_free(root);
 }
 
+/* Input methods: [Keyboard] InputMethod, the variables programs get, the
+ * frameworks' own autostart entries, the candidate window's place. */
+static void test_input_method(void) {
+    xd_settings s;
+    xd_settings_defaults(&s);
+    CHECK(s.keyboard.input_method[0] == '\0');
+    xd_settings_parse(XD_STR("[Keyboard]\nInputMethod=ibus\n"), &s);
+    CHECK(xd_im_from_name(s.keyboard.input_method) == XD_IM_IBUS);
+    xd_strbuf out = {0};
+    xd_settings_serialize(&s, &out);
+    CHECK(strstr(xd_strbuf_cstr(&out), "InputMethod=ibus") != nullptr);
+    xd_strbuf_free(&out);
+    CHECK(xd_im_from_name("fcitx5") == XD_IM_FCITX5);
+    CHECK(xd_im_from_name("fcitx") == XD_IM_NONE && xd_im_from_name(nullptr) == XD_IM_NONE);
+    CHECK(strcmp(xd_im_name(XD_IM_FCITX5), "fcitx5") == 0 && xd_im_name(XD_IM_NONE)[0] == 0);
+    CHECK(xd_im_argv(XD_IM_NONE) == nullptr && strcmp(xd_im_argv(XD_IM_FCITX5)[0], "fcitx5") == 0);
+    CHECK(strcmp(xd_im_config_tool(XD_IM_IBUS), "ibus-setup") == 0);
+    CHECK(xd_im_program_is_framework("ibus-wayland") && xd_im_program_is_framework("fcitx5") &&
+          !xd_im_program_is_framework("fcitx5-configtool") && !xd_im_program_is_framework(""));
+
+    /* XIM and Qt's module; never GTK_IM_MODULE (GTK uses text-input-v3). */
+    char *saved[XD_IM_ENV_VARS], *marks[XD_IM_ENV_VARS];
+    for (size_t i = 0; i < XD_IM_ENV_VARS; i++) {
+        char *mark = g_strconcat("XEONDESKTOP_", xd_im_env_vars[i], nullptr);
+        saved[i] = g_strdup(g_getenv(xd_im_env_vars[i]));
+        marks[i] = g_strdup(g_getenv(mark));
+        g_unsetenv(xd_im_env_vars[i]);
+        g_unsetenv(mark);
+        g_free(mark);
+    }
+    char *gtk_saved = g_strdup(g_getenv("GTK_IM_MODULE"));
+    g_unsetenv("GTK_IM_MODULE");
+    CHECK(!xd_im_env_apply(XD_IM_NONE) && g_getenv("XMODIFIERS") == nullptr);
+    CHECK(xd_im_env_apply(XD_IM_FCITX5));
+    CHECK(strcmp(g_getenv("XMODIFIERS"), "@im=fcitx") == 0);
+    CHECK(strcmp(g_getenv("QT_IM_MODULE"), "fcitx") == 0);
+    CHECK(strcmp(g_getenv("QT_IM_MODULES"), "wayland;fcitx") == 0);
+    CHECK(g_getenv("GTK_IM_MODULE") == nullptr);
+    CHECK(!xd_im_env_apply(XD_IM_FCITX5));
+    /* The user's own value stays; ours follow the choice, and are emptied
+     * (not unset) for none. */
+    g_setenv("QT_IM_MODULE", "mine", TRUE);
+    CHECK(xd_im_env_apply(XD_IM_IBUS));
+    CHECK(strcmp(g_getenv("XMODIFIERS"), "@im=ibus") == 0);
+    CHECK(strcmp(g_getenv("QT_IM_MODULE"), "mine") == 0);
+    CHECK(xd_im_env_apply(XD_IM_NONE));
+    CHECK(strcmp(g_getenv("XMODIFIERS"), "") == 0 && strcmp(g_getenv("QT_IM_MODULE"), "mine") == 0);
+    for (size_t i = 0; i < XD_IM_ENV_VARS; i++) {
+        char *mark = g_strconcat("XEONDESKTOP_", xd_im_env_vars[i], nullptr);
+        env_restore(xd_im_env_vars[i], saved[i]);
+        env_restore(mark, marks[i]);
+        g_free(saved[i]);
+        g_free(marks[i]);
+        g_free(mark);
+    }
+    env_restore("GTK_IM_MODULE", gtk_saved);
+    g_free(gtk_saved);
+
+    /* Fcitx 5's autostart entry: not in XeonDesktop, still in others. */
+    char *root = g_dir_make_tmp("xd-im-XXXXXX", nullptr);
+    char *sys1 = g_build_filename(root, "etc1", nullptr);
+    char *sys2 = g_build_filename(root, "etc2", nullptr);
+    char *user = g_build_filename(root, "user", "autostart", nullptr);
+    g_mkdir_with_parents(sys1, 0700);
+    g_mkdir_with_parents(sys2, 0700);
+    g_mkdir_with_parents(user, 0700);
+    char *f = g_build_filename(sys1, "org.fcitx.Fcitx5.desktop", nullptr);
+    CHECK(g_file_set_contents(f,
+                              "[Desktop Entry]\nType=Application\nName=Fcitx 5\n"
+                              "Exec=/usr/bin/fcitx5 -d\nNotShowIn=Weston;\n",
+                              -1, nullptr));
+    g_free(f);
+    /* A later directory's entry of the same name doesn't count. */
+    f = g_build_filename(sys2, "org.fcitx.Fcitx5.desktop", nullptr);
+    CHECK(g_file_set_contents(f, "[Desktop Entry]\nType=Application\nName=Other\nExec=true\n",
+                              -1, nullptr));
+    g_free(f);
+    f = g_build_filename(sys1, "ibus.desktop", nullptr);
+    CHECK(g_file_set_contents(f,
+                              "[Desktop Entry]\nType=Application\nName=IBus\n"
+                              "Exec=ibus start --type wayland\n",
+                              -1, nullptr));
+    g_free(f);
+    f = g_build_filename(sys1, "other.desktop", nullptr);
+    CHECK(g_file_set_contents(f, "[Desktop Entry]\nType=Application\nName=Other\nExec=foo\n",
+                              -1, nullptr));
+    g_free(f);
+    /* The user's own copy of IBus's is theirs. */
+    f = g_build_filename(user, "ibus.desktop", nullptr);
+    CHECK(g_file_set_contents(f, "[Desktop Entry]\nType=Application\nName=Mine\nExec=ibus\n",
+                              -1, nullptr));
+    g_free(f);
+    const char *dirs[] = {sys1, sys2, nullptr};
+    CHECK(xd_im_autostart_override(dirs, user, nullptr));
+    CHECK(xd_im_autostart_override(dirs, user, nullptr)); /* again: ours, rewritten */
+    GKeyFile *kf = g_key_file_new();
+    f = g_build_filename(user, "org.fcitx.Fcitx5.desktop", nullptr);
+    CHECK(g_key_file_load_from_file(kf, f, G_KEY_FILE_NONE, nullptr));
+    char *not_in = g_key_file_get_string(kf, "Desktop Entry", "NotShowIn", nullptr);
+    CHECK(not_in != nullptr && strcmp(not_in, "Weston;XeonDesktop;") == 0);
+    char *exec = g_key_file_get_string(kf, "Desktop Entry", "Exec", nullptr);
+    CHECK(exec != nullptr && strcmp(exec, "/usr/bin/fcitx5 -d") == 0);
+    g_free(not_in);
+    g_free(exec);
+    g_free(f);
+    g_key_file_free(kf);
+    kf = g_key_file_new();
+    f = g_build_filename(user, "ibus.desktop", nullptr);
+    CHECK(g_key_file_load_from_file(kf, f, G_KEY_FILE_NONE, nullptr));
+    char *name = g_key_file_get_string(kf, "Desktop Entry", "Name", nullptr);
+    CHECK(name != nullptr && strcmp(name, "Mine") == 0);
+    g_free(name);
+    g_free(f);
+    g_key_file_free(kf);
+    f = g_build_filename(user, "other.desktop", nullptr);
+    CHECK(!g_file_test(f, G_FILE_TEST_EXISTS));
+    g_free(f);
+    rm_tree(root);
+    g_free(sys1);
+    g_free(sys2);
+    g_free(user);
+    g_free(root);
+
+    /* The candidate window: under the caret; above it at the bottom of
+     * the screen; moved left at the right edge, never past the left. */
+    xd_ime_rect screen = {1024, 0, 800, 600}; /* a second monitor */
+    xd_ime_rect r = xd_ime_popup_place((xd_ime_rect){1100, 100, 1, 16}, 120, 30, screen);
+    CHECK(r.x == 1100 && r.y == 116 && r.width == 120 && r.height == 30);
+    r = xd_ime_popup_place((xd_ime_rect){1100, 570, 1, 16}, 120, 30, screen);
+    CHECK(r.x == 1100 && r.y == 540);
+    r = xd_ime_popup_place((xd_ime_rect){1800, 100, 1, 16}, 120, 30, screen);
+    CHECK(r.x == 1824 - 120 && r.y == 116);
+    r = xd_ime_popup_place((xd_ime_rect){1030, 100, 1, 16}, 900, 30, screen);
+    CHECK(r.x == 1024);
+    /* Too tall for either side: stays below. */
+    r = xd_ime_popup_place((xd_ime_rect){1100, 10, 1, 16}, 120, 590, screen);
+    CHECK(r.y == 26);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -5154,6 +5295,7 @@ int main(void) {
     test_folder_options();
     test_input_settings();
     test_kbd_layouts();
+    test_input_method();
     test_cursor_themes();
     test_file_types_edit();
     test_theme_settings();

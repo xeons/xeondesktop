@@ -350,11 +350,14 @@ static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void
     if (server->cycle_view != nullptr &&
         !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_ALT))
         finish_cycle(server);
-    wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
     /* Win+Space's peek ends with the Windows key. */
     if (server->peeking && !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_LOGO))
         xd_view_peek(server, false);
-    wlr_seat_keyboard_notify_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
+    /* While the input method has the keyboard, it passes them on. */
+    if (!xd_ime_modifiers(kb)) {
+        wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
+        wlr_seat_keyboard_notify_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
+    }
     /* wlroots' drag grab swallows modifiers, but the client being dragged
      * over picks copy, move or shortcut by Ctrl, Shift and Alt (Windows'
      * rules): it still gets them. */
@@ -696,7 +699,9 @@ static void handle_key(struct wl_listener *listener, void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, key);
     const struct wlr_keyboard_key_event *event = data;
     xd_idle_activity(kb->server);
-    if (bounced(kb, event) || xd_access_key(kb, event))
+    /* The input method's keyboard sends keys that went through the
+     * filters already, on their way to it. */
+    if (!xd_ime_own_keyboard(kb) && (bounced(kb, event) || xd_access_key(kb, event)))
         return;
     xd_input_key(kb, event);
 }
@@ -749,23 +754,32 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
         return;
     }
 
+    /* Keys the input method passes back saw the shortcuts (and the
+     * Windows key) on their way to it; the rest go to it while it has the
+     * keyboard. */
+    bool from_ime = xd_ime_own_keyboard(kb);
+
     /* The Windows key on its own (pressed and released with nothing in
      * between) opens the Start menu; with another key it's a modifier. */
-    bool super_key = false;
-    for (int i = 0; i < nsyms; i++)
-        super_key = super_key || syms[i] == XKB_KEY_Super_L || syms[i] == XKB_KEY_Super_R;
-    if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
-        server->super_alone = super_key;
-    else if (super_key && server->super_alone && !server->locked) {
-        server->super_alone = false;
-        xd_start_menu_toggle(server);
+    if (!from_ime) {
+        bool super_key = false;
+        for (int i = 0; i < nsyms; i++)
+            super_key = super_key || syms[i] == XKB_KEY_Super_L || syms[i] == XKB_KEY_Super_R;
+        if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED)
+            server->super_alone = super_key;
+        else if (super_key && server->super_alone && !server->locked) {
+            server->super_alone = false;
+            xd_start_menu_toggle(server);
+        }
     }
 
     bool handled = false;
-    if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+    if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED && !from_ime) {
         for (int i = 0; i < nsyms; i++)
             handled = handle_binding(server, mods, syms[i]) || handled;
     }
+    if (!handled && !from_ime)
+        handled = xd_ime_key(kb, event);
     if (!handled) {
         if (wlr_seat_get_keyboard(server->seat) != kb->wlr_keyboard || kb->resend_layout) {
             wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
@@ -1021,7 +1035,7 @@ static void handle_new_virtual_keyboard(struct wl_listener *listener, void *data
     register_keyboard(server, &vk->keyboard, &vk->keyboard.base);
     adopt_group(server);
     update_seat_caps(server);
-    wlr_log(WLR_INFO, "virtual keyboard connected (testing)");
+    wlr_log(WLR_INFO, "virtual keyboard connected");
 }
 
 static void handle_new_virtual_pointer(struct wl_listener *listener, void *data) {
@@ -1033,12 +1047,10 @@ static void handle_new_virtual_pointer(struct wl_listener *listener, void *data)
 }
 
 void xd_input_enable_virtual(xd_server *server) {
-    struct wlr_virtual_keyboard_manager_v1 *kbm =
-        wlr_virtual_keyboard_manager_v1_create(server->display);
+    /* Virtual keyboards are always there (for the input method); the
+     * global filter now lets everyone have them. */
     struct wlr_virtual_pointer_manager_v1 *pm =
         wlr_virtual_pointer_manager_v1_create(server->display);
-    XD_LISTEN(&kbm->events.new_virtual_keyboard, server, new_virtual_keyboard,
-              handle_new_virtual_keyboard);
     XD_LISTEN(&pm->events.new_virtual_pointer, server, new_virtual_pointer,
               handle_new_virtual_pointer);
     wlr_log(WLR_INFO, "virtual input enabled: any client can inject input (testing only)");
@@ -1716,6 +1728,8 @@ static int handle_sigchld([[maybe_unused]] int sig, void *data) {
     int status = 0;
     pid_t pid;
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (xd_ime_child_exited(server, pid, status))
+            continue;
         if (pid == server->polkit_pid && pid > 0) {
             server->polkit_pid = 0;
             /* Only a crash: it exits with an error when another agent
@@ -1775,4 +1789,11 @@ void xd_input_init(xd_server *server) {
               handle_request_cursor_shape);
 
     server->sigchld = wl_event_loop_add_signal(server->loop, SIGCHLD, handle_sigchld, server);
+
+    /* The input method passes back keys it doesn't use through a virtual
+     * keyboard; only it sees the global (ime.c), unless
+     * --allow-virtual-input. */
+    server->virtual_keyboards = wlr_virtual_keyboard_manager_v1_create(server->display);
+    XD_LISTEN(&server->virtual_keyboards->events.new_virtual_keyboard, server,
+              new_virtual_keyboard, handle_new_virtual_keyboard);
 }

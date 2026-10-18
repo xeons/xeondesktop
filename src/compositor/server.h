@@ -58,6 +58,7 @@ typedef enum xd_cursor_mode : uint8_t {
 
 typedef struct xd_server xd_server;
 typedef struct xd_access xd_access;
+typedef struct xd_ime xd_ime;
 
 typedef struct xd_output {
     struct wl_list link; /* xd_server.outputs */
@@ -385,6 +386,8 @@ struct xd_server {
     struct wlr_scene_tree *drag_icon;
     struct wl_listener new_virtual_keyboard;
     struct wl_listener new_virtual_pointer;
+    /* Always there, for the input method (ime.c decides who sees it). */
+    struct wlr_virtual_keyboard_manager_v1 *virtual_keyboards;
 
     /* Pointer grab state. */
     xd_cursor_mode mode;
@@ -440,6 +443,7 @@ struct xd_server {
     struct timespec polkit_restart_window;
     bool terminating;
     xd_access *access; /* access.c's state */
+    xd_ime *ime;       /* ime.c's */
     struct xd_outline *outline; /* outline.c's, while one shows */
 };
 
@@ -613,6 +617,27 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);
 void xd_input_button(xd_server *server, uint32_t time_msec, uint32_t button,
                      enum wl_pointer_button_state state);
 void xd_input_move_pointer(xd_server *server, double dx, double dy, uint32_t time_msec);
+
+/* ime.c: input methods (text-input-v3 relayed to input-method-v2). */
+void xd_ime_init(xd_server *server);
+void xd_ime_finish(xd_server *server);
+/* config.keyboard.input_method: the environment programs get (true if it
+ * changed) and the framework running. */
+bool xd_ime_apply(xd_server *server);
+/* The input method's protocols (and virtual keyboards, unless
+ * --allow-virtual-input) are offered only where xd_ime_client_allowed. */
+bool xd_ime_global_private(const xd_server *server, const struct wl_global *global);
+bool xd_ime_client_allowed(const xd_server *server, const struct wl_client *client);
+/* The input method's own virtual keyboard: keys it passes back. */
+bool xd_ime_own_keyboard(const xd_keyboard *kb);
+/* A key or the modifiers for the input method's keyboard grab: true if
+ * it took them. */
+bool xd_ime_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);
+bool xd_ime_modifiers(xd_keyboard *kb);
+/* The screen locked or unlocked: candidate windows hide or come back. */
+void xd_ime_lock_changed(xd_server *server);
+/* SIGCHLD: true if `pid` was the input method we started. */
+bool xd_ime_child_exited(xd_server *server, pid_t pid, int status);
 
 /* lock.c: ext-session-lock. */
 void xd_lock_init(xd_server *server);

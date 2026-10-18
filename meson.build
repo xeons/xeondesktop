@@ -127,6 +127,7 @@ settings_lib = static_library(
   'src/settings/gtktheme.c',
   'src/settings/qtpalette.c',
   'src/settings/sounds.c',
+  'src/settings/inputmethod.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -190,6 +191,7 @@ client_protocol_xml = {
   ),
   'wlr-virtual-pointer-unstable-v1': files('protocols/wlr-virtual-pointer-unstable-v1.xml'),
   'virtual-keyboard-unstable-v1': files('protocols/virtual-keyboard-unstable-v1.xml'),
+  'input-method-unstable-v2': files('protocols/input-method-unstable-v2.xml'),
   'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
   'ext-idle-notify-v1': wp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
   'ext-session-lock-v1': wp_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
@@ -297,6 +299,7 @@ compositor_src = files(
   'src/compositor/lock.c',
   'src/compositor/xwayland.c',
   'src/compositor/access.c',
+  'src/compositor/ime.c',
   'src/settings/soundplay.c',
 )
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
@@ -1020,6 +1023,14 @@ executable(
   'xd-inject',
   'tools/xd-inject.c',
   dependencies: [core_dep, client_protocol_dep, xkbcommon_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
+
+# A stand-in input method (input-method-v2), for the UI tests.
+executable(
+  'xd-test-ime',
+  'tools/xd-test-ime.c',
+  dependencies: [client_protocol_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
 

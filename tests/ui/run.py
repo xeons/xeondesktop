@@ -3863,6 +3863,129 @@ def flatpak_permissions(s):
     s.log("ok: Disable disabled the user's remote")
 
 
+# ---- input methods ---------------------------------------------------------------
+
+# A text box that writes what it holds to argv[1] whenever it changes.
+GTK_ENTRY = r"""
+import sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+w = Gtk.Window(title="IME test")
+w.set_default_size(360, 120)
+e = Gtk.Entry()
+e.set_input_purpose(Gtk.InputPurpose.ALPHA)
+def changed(entry):
+    with open(sys.argv[1], "w") as f:
+        f.write(entry.get_text())
+e.connect("changed", changed)
+box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, border_width=20)
+box.pack_start(e, False, False, 0)
+w.add(box)
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+Gtk.main()
+"""
+
+IME_INI = CLASSIC_INI + "\n[Keyboard]\nInputMethod=fcitx5\n"
+
+
+def stand_in_ime(s):
+    """The compositor starts xd-test-ime in place of Fcitx 5."""
+    os.environ["XD_IME_COMMAND"] = s.tool("xd-test-ime")
+    os.environ["XD_TEST_IME_LOG"] = os.path.join(s.base, "ime.log")
+
+
+def magenta(shot, rect):
+    """The bounding box of xd-test-ime's candidate window in rect, or None."""
+    x0, y0, w, h = rect
+    xs, ys = [], []
+    for y in range(y0, y0 + h, 2):
+        for x in range(x0, x0 + w, 2):
+            r, g, b = shot.pixel(x, y)
+            if r > 240 and g < 20 and b > 240:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+
+
+@scenario(IME_INI, setup=stand_in_ime)
+def input_method_relay(s):
+    """The input method the compositor started (a stand-in for Fcitx 5)
+    activates for a GTK text box, hears its content type and surrounding
+    text, types into it through the compositor (A becomes 日本語; other
+    keys come back through its own virtual keyboard), and shows its
+    candidate window at the caret. Other programs aren't offered the input
+    method protocol."""
+    if not have_gtk3(s):
+        return
+    log = os.path.join(s.base, "ime.log")
+
+    def heard(what):
+        try:
+            with open(log) as f:
+                return what in f.read()
+        except OSError:
+            return False
+
+    s.wait(lambda: heard("ready"), "the input method to connect")
+    probe = subprocess.run([s.tool("xd-test-ime"), "--probe"], stdout=subprocess.PIPE,
+                           timeout=10).stdout.decode()  # fmt: skip
+    s.check("input-method no" in probe, "another program isn't offered the input method")
+    s.check("virtual-keyboard yes" in probe, "virtual keyboards are (--allow-virtual-input)")
+    shell = s.wait(lambda: session_program("xd-shell"), "the shell")[0]
+    with open(f"/proc/{shell}/environ", "rb") as f:
+        env = dict(v.split(b"=", 1) for v in f.read().split(b"\0") if b"=" in v)
+    s.check(env.get(b"XMODIFIERS") == b"@im=fcitx" and env.get(b"QT_IM_MODULE") == b"fcitx"
+            and b"GTK_IM_MODULE" not in env,
+            "programs get XMODIFIERS and QT_IM_MODULE for Fcitx 5, and no GTK_IM_MODULE")  # fmt: skip
+
+    script = os.path.join(s.base, "entry.py")
+    with open(script, "w") as f:
+        f.write(GTK_ENTRY)
+    text = os.path.join(s.base, "entry.txt")
+    s.launch(sys.executable, script, text, env={"GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="IME test", state="activated")
+    # GTK 3 asks for the input method when its text box gets the focus
+    # with the protocol ready, which isn't so yet when the window first
+    # comes up: the desktop is clicked, then the text box.
+    s.settle("window")
+    s.inject("move", 600, 400, "click", "sleep", 300, "move", 190, 65, "click")
+    s.wait(lambda: heard("activate"), "the input method to be activated")
+    s.check(heard("content-type"), "it heard the text box's content type")
+    s.check(heard('surrounding ""'), "it heard the (empty) surrounding text")
+    box = s.wait(lambda: magenta(s.shot("popup"), (0, 0, WIDTH, HEIGHT)),
+                 "the candidate window")  # fmt: skip
+    # The text box is at y 55-75 (its window cascades to the top left).
+    s.check(30 <= box[0] <= 60 and 60 <= box[1] <= 85,
+            f"the candidate window is under the caret, at the text box's start ({box})")  # fmt: skip
+    s.check(heard("rectangle"), "it was told where the caret is")
+    s.inject("type", "xa")
+
+    def entry():
+        try:
+            with open(text) as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    s.wait(lambda: entry() == "x日本語", f"the text box to hold x日本語 (has {entry()!r})")
+    s.check(heard("forwarded"), "the X key came back through its virtual keyboard")
+    s.log(f"ok: the text box holds {entry()!r}")
+    s.wait(lambda: heard('surrounding "x日本語"'), "the new surrounding text")
+    moved = s.wait(lambda: (b := magenta(s.shot("typed"), (0, 0, WIDTH, HEIGHT))) and
+                   b[0] > box[0] + 20 and b, "the candidate window to follow the caret")  # fmt: skip
+    s.log(f"ok: the candidate window followed the caret ({box} -> {moved})")
+    # Another window takes the keyboard: the input method goes inactive and
+    # its candidate window goes.
+    s.inject("key", "super")
+    s.wait(lambda: heard("deactivate"), "the input method to be deactivated")
+    s.wait(lambda: magenta(s.shot("menu"), (0, 0, WIDTH, HEIGHT)) is None,
+           "the candidate window to hide")  # fmt: skip
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

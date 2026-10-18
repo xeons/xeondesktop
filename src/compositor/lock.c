@@ -124,6 +124,7 @@ static void handle_unlock(struct wl_listener *listener, [[maybe_unused]] void *d
     xd_server *server = lk->server;
     server->locked = false;
     server->lock_focus = nullptr;
+    xd_ime_lock_changed(server);
     if (server->lock_cover != nullptr) {
         wlr_scene_node_destroy(&server->lock_cover->node);
         server->lock_cover = nullptr;
@@ -185,6 +186,7 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
         wlr_seat_keyboard_end_grab(server->seat);
         xd_cursor_cancel_grab(server);
         wlr_seat_pointer_clear_focus(server->seat);
+        xd_ime_lock_changed(server);
         wlr_log(WLR_INFO, "session locked");
     }
     update_cover(server);

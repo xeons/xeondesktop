@@ -56,6 +56,26 @@ writes; the compositor follows changes to the file at once.
 It also generates a GTK 3 theme matching the style, so GTK programs look
 the same, and gives Qt programs Qt's GTK platform theme with a matching
 palette unless the user set up Qt theming of their own.
+.PP
+It starts the input method framework chosen in Keyboard Properties
+.RB ( xd\-keyboard (1),
+.B [Keyboard] InputMethod
+in
+.IR desktop.ini ):
+.BR fcitx5 ,
+or IBus with
+.BR "ibus start \-\-type wayland" ,
+restarted if it crashes and switched when the setting changes.
+Programs reach it through the compositor: Wayland programs with
+text-input-v3, which the compositor relays to the input method's
+input-method-v2, with its candidate window at the text cursor.
+Only the input method is offered input-method-v2 and the virtual keyboard
+it passes unused keys back with: a program the compositor started for it,
+or an installed framework's own program
+.RB ( fcitx5 ,
+.BR ibus\-daemon ,
+.BR ibus\-wayland ).
+While the screen is locked, keys never go to the input method.
 .SH OPTIONS
 .TP
 .BI \-\-style " style"
@@ -95,7 +115,8 @@ The shell program to start instead of
 Start no shell.
 .TP
 .B \-\-allow\-virtual\-input
-Let clients create virtual pointers and keyboards, for automated UI tests.
+Let clients create virtual pointers and keyboards, for automated UI tests
+(without it, only the input method may create a virtual keyboard).
 Never use it for a real session: any program could then type and click as
 you.
 .TP
@@ -200,6 +221,11 @@ playing them (for tests).
 .B XD_ACCESS_RESET_SECONDS
 Accessibility Options' automatic reset after this many seconds instead of
 the configured minutes (for tests).
+.TP
+.B XD_IME_COMMAND
+A program to start as the input method instead of the chosen framework's
+(for tests, with
+.BR xd\-test\-ime ).
 .PP
 The compositor sets
 .BR WAYLAND_DISPLAY ,
@@ -211,6 +237,17 @@ The compositor sets
 .B XEONDESKTOP_NESTED
 (0 in a session on a seat, 1 when nested or headless) for the programs it
 starts.
+With an input method chosen it also sets
+.B XMODIFIERS
+.RB ( @im=fcitx " or " @im=ibus ,
+for X11 programs' XIM),
+.B QT_IM_MODULE
+(Qt 5, and Qt 6 before 6.8.2, which can't use text-input-v3) and
+.B QT_IM_MODULES
+.RB ( wayland;fcitx " or " wayland;ibus ),
+unless the user set them; never
+.BR GTK_IM_MODULE ,
+as GTK uses text-input-v3 (Fcitx 5's guidance for wlroots compositors).
 In a nested session Shut Down and the other power actions are only
 printed.
 .SH FILES

@@ -115,6 +115,9 @@ typedef struct xd_keyboard_settings {
     int repeat_delay; /* ms before a held key repeats */
     int repeat_rate;  /* repeats per second; 0 = no repeat */
     int cursor_blink_ms; /* text caret on (and off) time, as in Windows; 0 = steady */
+    /* InputMethod: the input method framework the compositor starts
+     * ("fcitx5", "ibus"; "" = none), see inputmethod.h. */
+    char input_method[16];
 } xd_keyboard_settings;
 
 /* [Folders]: Folder Options (xd-folders), obeyed by xd-files. */

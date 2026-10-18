@@ -949,6 +949,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             k->repeat_rate = (int)n;
         else if (KEY("CursorBlinkMs") && xd_str_parse_i64(v, 0, 2000, &n))
             k->cursor_blink_ms = (int)n;
+        else if (KEY("InputMethod"))
+            copy_into(k->input_method, sizeof(k->input_method), v);
     } else if (SEC("Mouse")) {
         parse_mouse(&s->mouse, key, v);
     } else if (SEC("Accessibility")) {
@@ -1201,6 +1203,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Folders", "RememberViews", f->remember_views);
     g_key_file_set_string(kf, "Folders", "DefaultView", f->default_view);
     g_key_file_set_integer(kf, "Keyboard", "CursorBlinkMs", s->keyboard.cursor_blink_ms);
+    g_key_file_set_string(kf, "Keyboard", "InputMethod", s->keyboard.input_method);
     const xd_mouse_settings *m = &s->mouse;
     g_key_file_set_boolean(kf, "Mouse", "LeftHanded", m->left_handed);
     g_key_file_set_integer(kf, "Mouse", "Speed", m->speed);

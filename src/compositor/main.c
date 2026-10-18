@@ -32,6 +32,7 @@
 #include <xf86drm.h>
 
 #include "../settings/gtktheme.h"
+#include "../settings/inputmethod.h"
 #include "../settings/settings.h"
 #include "../settings/soundplay.h"
 #include "appicons.h"
@@ -293,6 +294,7 @@ static bool server_init(xd_server *server) {
     xd_capture_init(server);
     xd_protocols_init(server);
     xd_lock_init(server);
+    xd_ime_init(server);
     xd_xwayland_init(server);
     if (server->config.virtual_input)
         xd_input_enable_virtual(server);
@@ -319,6 +321,7 @@ static void server_finish(xd_server *server) {
     xd_xwayland_finish(server);
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
+    xd_ime_finish(server);
     /* wlroots asserts that nothing still listens to an object it
      * destroys, so detach every server-level listener first. */
     struct wl_listener *listeners[] = {
@@ -423,6 +426,24 @@ static void set_qt_env(const xd_server *server, const xd_settings *settings, boo
         xd_spawn_argv(update);
 }
 
+/* The input method framework [Keyboard] chose (ime.c), and the
+ * variables programs find it by; those D-Bus and systemd start get them
+ * too once the session is real (at startup, with the others in main). */
+static void set_ime(xd_server *server, bool startup) {
+    if (!xd_ime_apply(server) || startup || server->session == nullptr)
+        return;
+    static char prog[] = "dbus-update-activation-environment", systemd[] = "--systemd";
+    char *update[3 + XD_IM_ENV_VARS] = {prog, systemd};
+    size_t n = 2;
+    for (size_t i = 0; i < XD_IM_ENV_VARS; i++) {
+        if (xd_qt_env_ours(xd_im_env_vars[i]))
+            update[n++] = (char *)(uintptr_t)xd_im_env_vars[i];
+    }
+    update[n] = nullptr;
+    if (n > 2)
+        xd_spawn_argv(update);
+}
+
 /* Title bar icons from the settings' icon theme: a new theme starts a new
  * cache (the callers redraw every frame afterwards). */
 static void update_appicons(xd_server *server, const xd_settings *settings) {
@@ -452,6 +473,7 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     server->config.menu_transition = settings.menu_transition;
     server->config.full_window_drag = settings.full_window_drag;
     const xd_keyboard_settings *a = &server->config.keyboard, *b = &settings.keyboard;
+    bool ime_changed = strcmp(a->input_method, b->input_method) != 0;
     if (strcmp(a->layout, b->layout) != 0 || strcmp(a->variant, b->variant) != 0 ||
         strcmp(a->options, b->options) != 0 || strcmp(a->model, b->model) != 0 ||
         a->repeat_delay != b->repeat_delay || a->repeat_rate != b->repeat_rate) {
@@ -467,6 +489,11 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
         xd_input_apply_mouse(server);
         if (cursor_changed)
             xd_input_apply_cursor_theme(server);
+    }
+    if (ime_changed) {
+        memcpy(server->config.keyboard.input_method, settings.keyboard.input_method,
+               sizeof(server->config.keyboard.input_method));
+        set_ime(server, false);
     }
     if (memcmp(&server->config.access, &settings.access, sizeof(settings.access)) != 0) {
         server->config.access = settings.access;
@@ -659,6 +686,8 @@ int main(int argc, char **argv) {
     /* Qt programs follow the GTK theme, unless the user set up their own
      * (qt6ct, Kvantum, ...) in the environment. */
     set_qt_env(&server, &settings, true);
+    /* The input method, for X11 programs (XIM) and Qt. */
+    set_ime(&server, true);
     /* Programs that D-Bus and systemd start for the session (portals,
      * notification daemons, scheduled tasks, ...) need to find this
      * display too. Once the user manager has the variables, starting
@@ -675,7 +704,8 @@ int main(int argc, char **argv) {
                     v7[] = "GTK_THEME", v8[] = "XEONDESKTOP_PID", v9[] = "XEONDESKTOP_NESTED",
                     qt1[] = "QT_QPA_PLATFORMTHEME", qt2[] = "QT_STYLE_OVERRIDE",
                     qt3[] = "QT_GUI_GTK_JSON";
-        char *update[16] = {sh, flag, script, arg0, v1, v2, v3, v4, v5, v6, v7, v8, v9};
+        char *update[16 + XD_IM_ENV_VARS] = {sh, flag, script, arg0, v1, v2, v3,
+                                             v4, v5, v6, v7, v8, v9};
         size_t n = 13;
         /* The Qt variables only if they're ours: the user's own setup
          * (environment.d) is the user manager's already. */
@@ -685,6 +715,10 @@ int main(int argc, char **argv) {
             update[n++] = qt2;
         if (xd_qt_env_ours(qt3))
             update[n++] = qt3;
+        for (size_t i = 0; i < XD_IM_ENV_VARS; i++) {
+            if (xd_qt_env_ours(xd_im_env_vars[i]))
+                update[n++] = (char *)(uintptr_t)xd_im_env_vars[i];
+        }
         update[n] = nullptr;
         xd_spawn_argv(update);
     }
