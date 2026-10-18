@@ -73,6 +73,24 @@ def hexc(p, alpha=0xFF):
     return f"0x{alpha:02X}{p[0]:02X}{p[1]:02X}{p[2]:02X}"
 
 
+def drop_window_icon(rows):
+    """The reference window's own icon starts at the caption's 7th column,
+    inside the left end measured here. Where columns 7 and 8 differ sharply
+    from the caption beside them (column 6), below the rounded corner, they
+    are the icon's pixels, not the frame's: take the caption's colour. Real
+    shading there changes by up to 12 levels; an icon's edge by more."""
+    def rgb(h):
+        v = int(h, 16) & 0xFFFFFF
+        return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+    for y, row in enumerate(rows):
+        if y < 5:
+            continue
+        for c in (6, 7):
+            if max(abs(a - b) for a, b in zip(rgb(row[c]), rgb(row[5]))) > 24:
+                row[c] = row[5]
+    return rows
+
+
 def column(x, y, h):
     return [r[0] for r in region(x, y, 1, h)]
 
@@ -144,7 +162,7 @@ def frame_tables(tag, f):
         f"/* {tag} caption: middle column, top to bottom. */",
         table(f"luna_{tag}_cap_mid[{CAPTION_H}]", mid),
         f"/* {tag} caption: the 8 left and 5 right columns (alpha 0 = cut corner). */",
-        table(f"luna_{tag}_cap_left[{CAPTION_H}][8]", left),
+        table(f"luna_{tag}_cap_left[{CAPTION_H}][8]", drop_window_icon(left)),
         table(f"luna_{tag}_cap_right[{CAPTION_H}][5]", right),
         f"/* {tag} borders: left and right outside to in... left: outer first;"
         " right: inner first; bottom: top row first. */",
@@ -568,7 +586,8 @@ def frame_tables_measured(tag, f, active_faces=None, active_glyphs=None):
         f"/* {tag} caption: middle column, top to bottom. */",
         table(f"{pre}_cap_mid[{CAPTION_H}]", [hexc(p) for p in mid]),
         f"/* {tag} caption: the 8 left and 5 right columns (alpha 0 = cut corner). */",
-        table(f"{pre}_cap_left[{CAPTION_H}][8]", [[hexo(p) for p in r] for r in left]),
+        table(f"{pre}_cap_left[{CAPTION_H}][8]",
+              drop_window_icon([[hexo(p) for p in r] for r in left])),
         table(f"{pre}_cap_right[{CAPTION_H}][5]", [[hexo(p) for p in r] for r in right]),
         f"/* {tag} borders: left: outer first; right: inner first; bottom: top row first. */",
         table(f"{pre}_side_left[{BORDER}]", [hexc(p) for p in side_l]),
