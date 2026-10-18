@@ -311,6 +311,10 @@ static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *k,
 
 static void handle_key(xd_shell *shell, uint32_t key, uint32_t serial) {
     xkb_keysym_t sym = xkb_state_key_get_one_sym(shell->xkb_state, key + 8);
+    /* The keyboard used in a menu: it underlines its access keys from now
+     * on, as Windows' menus do when they hide them until then. */
+    if (shell->start7 != nullptr || shell->start_menu != nullptr)
+        xd_menu_show_cues(shell);
     if (shell->start7 != nullptr) {
         char utf8[16] = {0};
         xkb_state_key_get_utf8(shell->xkb_state, key + 8, utf8, sizeof(utf8));
@@ -472,7 +476,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         shell->toplevel_manager =
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
-        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 8);
+        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 9);
         xd_taskmenu_bind(shell);
     } else if (xd_str_eq(iface, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
         xd_primary_bind(shell, reg, name, version);
@@ -602,6 +606,7 @@ void xd_shell_start_menu_closed(xd_shell *shell) {
     xd_taskbar *bar = shell->start_bar;
     shell->start_bar = nullptr;
     shell->context_menu = false;
+    shell->menu_cues = false;
     xd_start_menu_reload_later(shell); /* programs installed while it was open */
     if (bar == nullptr)
         return;

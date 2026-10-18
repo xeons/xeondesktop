@@ -1367,9 +1367,10 @@ static void act_new(xd_shell *shell, void *data) {
     }
 }
 
+/* label: with its access key, as Windows writes it ("P&roperties"). */
 static xd_menu_item *add_action(xd_menu_tree *tree, xd_menu_model *m, const char *label,
                                 void (*action)(xd_shell *, void *), void *data) {
-    xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, label, nullptr);
+    xd_menu_item *it = xd_menu_add_keyed(tree, m, XD_MENU_ACTION, label, nullptr);
     it->action = action;
     it->action_data = data;
     return it;
@@ -1381,37 +1382,37 @@ static void separator(xd_menu_tree *tree, xd_menu_model *m) {
 
 static xd_menu_model *icon_menu(xd_deskicons *di, xd_menu_tree *tree, icon *ic) {
     xd_menu_model *m = xd_menu_model_new(tree);
-    add_action(tree, m, "Open", act_open, nullptr)->bold = true;
+    add_action(tree, m, "&Open", act_open, nullptr)->bold = true;
     if (strcmp(ic->id, SPECIAL_COMPUTER) == 0) {
         separator(tree, m);
         /* XP: My Computer's Properties are System Properties. */
-        add_action(tree, m, "Properties", act_command, (void *)(uintptr_t)"xd-sysdm");
+        add_action(tree, m, "P&roperties", act_command, (void *)(uintptr_t)"xd-sysdm");
     } else if (strcmp(ic->id, SPECIAL_TRASH) == 0) {
         separator(tree, m);
-        add_action(tree, m, "Empty Recycle Bin", act_empty_trash, nullptr)->disabled =
+        add_action(tree, m, "Empty Recycle &Bin", act_empty_trash, nullptr)->disabled =
             trash_empty();
     } else if (strcmp(ic->id, SPECIAL_DOCUMENTS) == 0) {
         separator(tree, m);
-        add_action(tree, m, "Properties", act_documents_properties, nullptr);
+        add_action(tree, m, "P&roperties", act_documents_properties, nullptr);
     } else if (strcmp(ic->id, SPECIAL_NETWORK) == 0) {
         separator(tree, m);
         /* XP: My Network Places' Properties are Network Connections. */
-        add_action(tree, m, "Properties", act_command, (void *)(uintptr_t)"xd-netconn");
+        add_action(tree, m, "P&roperties", act_command, (void *)(uintptr_t)"xd-netconn");
     } else if (ic->special) {
         /* The web browser: there's no Internet Options to offer. */
     } else {
         separator(tree, m);
-        add_action(tree, m, "Cut", act_cut, nullptr);
-        add_action(tree, m, "Copy", act_copy, nullptr);
+        add_action(tree, m, "Cu&t", act_cut, nullptr);
+        add_action(tree, m, "&Copy", act_copy, nullptr);
         separator(tree, m);
-        add_action(tree, m, "Delete", act_files, (void *)(uintptr_t)"--trash");
+        add_action(tree, m, "&Delete", act_files, (void *)(uintptr_t)"--trash");
         /* Rename works on one item. */
         guint n = 0;
         for (guint i = 0; i < di->icons->len; i++)
             n += ((icon *)g_ptr_array_index(di->icons, i))->selected ? 1u : 0u;
-        add_action(tree, m, "Rename", act_rename, nullptr)->disabled = n != 1;
+        add_action(tree, m, "Rena&me", act_rename, nullptr)->disabled = n != 1;
         separator(tree, m);
-        add_action(tree, m, "Properties", act_files, (void *)(uintptr_t)"--properties");
+        add_action(tree, m, "P&roperties", act_files, (void *)(uintptr_t)"--properties");
     }
     return m;
 }
@@ -1419,14 +1420,14 @@ static xd_menu_model *icon_menu(xd_deskicons *di, xd_menu_tree *tree, icon *ic) 
 static void add_view_toggles(xd_shell *shell, xd_menu_tree *tree, xd_menu_model *m,
                              bool win7) {
     const xd_desktop_icon_settings *s = &shell->deskicons->applied;
-    add_action(tree, m, win7 ? "Auto arrange icons" : "Auto Arrange", act_view,
+    add_action(tree, m, win7 ? "&Auto arrange icons" : "&Auto Arrange", act_view,
                GINT_TO_POINTER(VIEW_AUTO_ARRANGE))
         ->checked = s->auto_arrange;
-    add_action(tree, m, win7 ? "Align icons to grid" : "Align to Grid", act_view,
+    add_action(tree, m, win7 ? "A&lign icons to grid" : "Align to &Grid", act_view,
                GINT_TO_POINTER(VIEW_ALIGN_TO_GRID))
         ->checked = s->align_to_grid;
     separator(tree, m);
-    add_action(tree, m, win7 ? "Show desktop icons" : "Show Desktop Icons", act_view,
+    add_action(tree, m, win7 ? "Show &desktop icons" : "Show &Desktop Icons", act_view,
                GINT_TO_POINTER(VIEW_SHOW_ICONS))
         ->checked = s->show;
 }
@@ -1438,42 +1439,42 @@ static xd_menu_model *background_menu(xd_shell *shell, xd_menu_tree *tree) {
         /* Windows 7: View (the icon sizes and the toggles) and Sort by. */
         xd_desk_icon_size size = shell->deskicons->applied.size;
         xd_menu_model *view = xd_menu_model_new(tree);
-        add_action(tree, view, "Large icons", act_view, GINT_TO_POINTER(VIEW_LARGE))->checked =
+        add_action(tree, view, "Lar&ge icons", act_view, GINT_TO_POINTER(VIEW_LARGE))->checked =
             size == XD_DESK_ICONS_LARGE;
-        add_action(tree, view, "Medium icons", act_view, GINT_TO_POINTER(VIEW_MEDIUM))
+        add_action(tree, view, "&Medium icons", act_view, GINT_TO_POINTER(VIEW_MEDIUM))
             ->checked = size == XD_DESK_ICONS_MEDIUM;
-        add_action(tree, view, "Small icons", act_view, GINT_TO_POINTER(VIEW_SMALL))->checked =
+        add_action(tree, view, "&Small icons", act_view, GINT_TO_POINTER(VIEW_SMALL))->checked =
             size == XD_DESK_ICONS_SMALL;
         separator(tree, view);
         add_view_toggles(shell, tree, view, true);
-        xd_menu_add(tree, m, XD_MENU_SUBMENU, "View", nullptr)->submenu = view;
+        xd_menu_add_keyed(tree, m, XD_MENU_SUBMENU, "&View", nullptr)->submenu = view;
         add_action(tree, arrange, "Name", act_arrange, GINT_TO_POINTER(ARRANGE_NAME));
         add_action(tree, arrange, "Size", act_arrange, GINT_TO_POINTER(ARRANGE_SIZE));
         add_action(tree, arrange, "Item type", act_arrange, GINT_TO_POINTER(ARRANGE_TYPE));
         add_action(tree, arrange, "Date modified", act_arrange,
                    GINT_TO_POINTER(ARRANGE_MODIFIED));
-        xd_menu_add(tree, m, XD_MENU_SUBMENU, "Sort by", nullptr)->submenu = arrange;
+        xd_menu_add_keyed(tree, m, XD_MENU_SUBMENU, "S&ort by", nullptr)->submenu = arrange;
     } else {
-        add_action(tree, arrange, "Name", act_arrange, GINT_TO_POINTER(ARRANGE_NAME));
-        add_action(tree, arrange, "Size", act_arrange, GINT_TO_POINTER(ARRANGE_SIZE));
-        add_action(tree, arrange, "Type", act_arrange, GINT_TO_POINTER(ARRANGE_TYPE));
-        add_action(tree, arrange, "Modified", act_arrange, GINT_TO_POINTER(ARRANGE_MODIFIED));
+        add_action(tree, arrange, "&Name", act_arrange, GINT_TO_POINTER(ARRANGE_NAME));
+        add_action(tree, arrange, "Si&ze", act_arrange, GINT_TO_POINTER(ARRANGE_SIZE));
+        add_action(tree, arrange, "&Type", act_arrange, GINT_TO_POINTER(ARRANGE_TYPE));
+        add_action(tree, arrange, "&Modified", act_arrange, GINT_TO_POINTER(ARRANGE_MODIFIED));
         separator(tree, arrange);
         add_view_toggles(shell, tree, arrange, false);
-        xd_menu_add(tree, m, XD_MENU_SUBMENU, "Arrange Icons By", nullptr)->submenu = arrange;
+        xd_menu_add_keyed(tree, m, XD_MENU_SUBMENU, "Arrange &Icons By", nullptr)->submenu = arrange;
     }
-    add_action(tree, m, "Refresh", act_refresh, nullptr);
+    add_action(tree, m, "R&efresh", act_refresh, nullptr);
     separator(tree, m);
-    add_action(tree, m, "Paste", act_paste, nullptr)->disabled = !xd_clipboard_has_files(shell);
+    add_action(tree, m, "&Paste", act_paste, nullptr)->disabled = !xd_clipboard_has_files(shell);
     separator(tree, m);
     xd_menu_model *new_menu = xd_menu_model_new(tree);
-    add_action(tree, new_menu, "Folder", act_new, (void *)(uintptr_t)"folder");
+    add_action(tree, new_menu, "&Folder", act_new, (void *)(uintptr_t)"folder");
     separator(tree, new_menu);
     add_action(tree, new_menu, "Text Document", act_new, nullptr);
-    xd_menu_add(tree, m, XD_MENU_SUBMENU, "New", nullptr)->submenu = new_menu;
+    xd_menu_add_keyed(tree, m, XD_MENU_SUBMENU, "Ne&w", nullptr)->submenu = new_menu;
     separator(tree, m);
     /* XP: the desktop's Properties are Display Properties. */
-    add_action(tree, m, "Properties", act_command, (void *)(uintptr_t)"xd-desk");
+    add_action(tree, m, "P&roperties", act_command, (void *)(uintptr_t)"xd-desk");
     return m;
 }
 
@@ -2170,6 +2171,8 @@ bool xd_deskicons_key(xd_shell *shell, uint32_t sym, const char *utf8, uint32_t 
             xd_rect at = on_icon ? (xd_rect){ic->hit.x + ic->hit.w / 2, ic->hit.y + ic->hit.h / 2, 1, 1}
                                  : (xd_rect){di->work.x + 8, di->work.y + 8, 1, 1};
             context_menu(di, d, on_icon ? focus : -1, at, serial);
+            /* From the keyboard: its letters underlined at once. */
+            shell->menu_cues = shell->start_menu != nullptr;
         }
         return true;
     default:

@@ -276,6 +276,7 @@ typedef struct xd_menu_item_extras {
     bool checked;       /* check mark in the icon column */
     xd_menu_glyph glyph;
     const char *accel;  /* right-aligned shortcut, e.g. "Alt+F4"; may be nullptr */
+    const char *underline; /* into the label: its access key, underlined; may be nullptr */
 } xd_menu_item_extras;
 
 /* xd_theme_draw_menu_item with a bold default, check mark, glyph and

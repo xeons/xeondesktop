@@ -154,6 +154,23 @@ static const xp_item xp_items[] = {
     {R_RUN, "Run...", "system-run", false, false, false, false},
 };
 
+/* XP's underlined letters, for the items whose letter is known (as in
+ * XP's Win, U, U); the others go by their first letter, not underlined. */
+static uint32_t xp_key(int hit) {
+    switch (hit) {
+    case HIT_ALL:
+        return 'p'; /* All &Programs */
+    case R_RUN:
+        return 'r'; /* &Run... */
+    case HIT_LOGOFF:
+        return 'l'; /* &Log Off */
+    case HIT_TURNOFF:
+        return 'u'; /* T&urn Off Computer */
+    default:
+        return 0;
+    }
+}
+
 struct xd_start7 {
     xd_shell *shell;
     xd_taskbar *bar;
@@ -1248,6 +1265,19 @@ static bool new_programs(const xd_start7 *m) {
            g_hash_table_size(shell->new_apps) > 0;
 }
 
+/* Where an item's letter is underlined in its label, while the menus show
+ * their access keys (xd_menu_cues). */
+static const char *xp_underline(const xd_start7 *m, const char *label, int hit) {
+    uint32_t key = xp_key(hit);
+    if (key == 0 || !xd_menu_cues(m->shell))
+        return nullptr;
+    for (const char *c = label; *c != '\0'; c++) {
+        if ((uint32_t)g_ascii_tolower(*c) == key)
+            return c;
+    }
+    return nullptr;
+}
+
 static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_palette *p) {
     double s = t->scale;
     xd_rect lr = list_rect(m);
@@ -1307,7 +1337,9 @@ static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_
     xd_text_style st = xd_text(t, XD_FONT_MENU, hot ? p->hot_text : p->left_text, XD_ALIGN_END);
     st.font = &bold;
     int mid = ar.x + ar.w / 2 + 24;
-    xd_draw_text(cr, D((xd_rect){ar.x, ar.y, mid - ar.x, ar.h}, s), "All Programs", &st);
+    static const char all[] = "All Programs";
+    st.underline = xp_underline(m, all, HIT_ALL);
+    xd_draw_text(cr, D((xd_rect){ar.x, ar.y, mid - ar.x, ar.h}, s), all, &st);
     xd_rect arrow = {mid + 8, ar.y + (ar.h - 16) / 2, 16, 16};
     xp_palette ap = *p;
     if (hot)
@@ -1339,6 +1371,7 @@ static void draw_right_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp
             st.wrap = true;
             st.ellipsize = false;
         }
+        st.underline = xp_underline(m, it->label, it->hit);
         xd_draw_text(cr, D(xd_rect_inset4(r, 4 + icon + 6, 0, it->submenu ? 16 : 4, 0), s),
                      it->label, &st);
         if (it->submenu)
@@ -1392,7 +1425,7 @@ static void draw_foot_icon(cairo_t *cr, const xd_theme *t, xd_rect r, bool power
 }
 
 static void draw_foot_button(cairo_t *cr, const xd_theme *t, const xp_palette *p, xd_rect r,
-                             bool hot, bool power, const char *label) {
+                             bool hot, bool power, const char *label, const char *underline) {
     double s = t->scale;
     if (hot) {
         xd_rect d = D(r, s);
@@ -1408,6 +1441,7 @@ static void draw_foot_button(cairo_t *cr, const xd_theme *t, const xp_palette *p
     int is = 22;
     draw_foot_icon(cr, t, D((xd_rect){r.x + 3, r.y + (r.h - is) / 2, is, is}, s), power);
     xd_text_style st = xd_text(t, XD_FONT_MENU, p->foot_text, XD_ALIGN_START);
+    st.underline = underline;
     xd_draw_text(cr, D((xd_rect){r.x + 3 + is + 5, r.y, r.w - is - 10, r.h}, s), label, &st);
 }
 
@@ -1520,10 +1554,11 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
 
     draw_left_xp(m, cr, t, &p);
     draw_right_xp(m, cr, t, &p);
-    draw_foot_button(cr, t, &p, xp_logoff_rect(m), m->hot_right == HIT_LOGOFF, false,
-                     "Log Off");
-    draw_foot_button(cr, t, &p, xp_turnoff_rect(m), m->hot_right == HIT_TURNOFF, true,
-                     "Turn Off Computer");
+    static const char logoff[] = "Log Off", turnoff[] = "Turn Off Computer";
+    draw_foot_button(cr, t, &p, xp_logoff_rect(m), m->hot_right == HIT_LOGOFF, false, logoff,
+                     xp_underline(m, logoff, HIT_LOGOFF));
+    draw_foot_button(cr, t, &p, xp_turnoff_rect(m), m->hot_right == HIT_TURNOFF, true, turnoff,
+                     xp_underline(m, turnoff, HIT_TURNOFF));
 }
 
 static void render_7(xd_start7 *m, cairo_t *cr, const xd_theme *tp) {
@@ -1626,6 +1661,15 @@ static xd_menu_item *add_cmd(xd_menu_tree *tree, xd_menu_model *mm, const char *
     return it;
 }
 
+/* As add_cmd, the label written as Windows writes it ("&Restart"). */
+static xd_menu_item *add_keyed_cmd(xd_menu_tree *tree, xd_menu_model *mm, const char *label,
+                                   const char *icon, const char *cmd) {
+    xd_menu_item *it = xd_menu_add_keyed(tree, mm, XD_MENU_ACTION, label, icon);
+    it->command = cmd;
+    it->disabled = cmd == nullptr;
+    return it;
+}
+
 static xd_menu_model *recent_model(xd_start7 *m) {
     xd_menu_model *mm = xd_menu_model_new(&m->tree);
     char **paths = nullptr;
@@ -1701,7 +1745,7 @@ static xd_menu_model *context_model(xd_start7 *m, const row *r) {
     bool is_pinned = false;
     for (size_t i = 0; i < np; i++)
         is_pinned = is_pinned || pinned[i] == r->app;
-    xd_menu_item *it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION, "Open", nullptr);
+    xd_menu_item *it = xd_menu_add_keyed(&m->tree, mm, XD_MENU_ACTION, "&Open", nullptr);
     it->bold = true;
     it->action = ctx_open;
     it->action_data = id;
@@ -1709,8 +1753,8 @@ static xd_menu_model *context_model(xd_start7 *m, const row *r) {
     if (!m->xp && m->shell->style == XD_STYLE_AERO) {
         /* Windows 7's other place to pin to (Aero's taskbar shows it). */
         bool on_bar = xd_superbar_pinned(m->shell, r->app->id);
-        it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION,
-                         on_bar ? "Unpin from Taskbar" : "Pin to Taskbar", nullptr);
+        it = xd_menu_add_keyed(&m->tree, mm, XD_MENU_ACTION,
+                               on_bar ? "Unpin from Tas&kbar" : "Pin to Tas&kbar", nullptr);
         it->action = on_bar ? ctx_unpin_bar : ctx_pin_bar;
         it->action_data = id;
     }
@@ -1720,7 +1764,9 @@ static xd_menu_model *context_model(xd_start7 *m, const row *r) {
     it->action_data = id;
     it->disabled = !is_pinned && np >= MAX_PINNED;
     if (m->mode == MODE_HOME && !is_pinned) {
-        it = xd_menu_add(&m->tree, mm, XD_MENU_ACTION, "Remove from this list", nullptr);
+        it = xd_menu_add_keyed(&m->tree, mm, XD_MENU_ACTION,
+                               m->xp ? "Remove from This &List" : "Remove from this &list",
+                               nullptr);
         it->action = ctx_forget;
         it->action_data = id;
     }
@@ -1770,20 +1816,20 @@ static void open_sub(xd_start7 *m, int owner) {
         anchor = xp_or_right_item(m, R_CONTROL);
     } else if (owner == HIT_SHUTDOWN_ARROW) {
         mm = xd_menu_model_new(&m->tree);
-        xd_menu_item *sw = xd_menu_add(&m->tree, mm, XD_MENU_ACTION, "Switch user",
-                                       "system-switch-user");
+        xd_menu_item *sw = xd_menu_add_keyed(&m->tree, mm, XD_MENU_ACTION, "S&witch user",
+                                             "system-switch-user");
         sw->action = switch_user;
         sw->disabled = !xd_account_can_switch_user(shell);
-        add_cmd(&m->tree, mm, "Log off", "system-log-out",
+        add_keyed_cmd(&m->tree, mm, "&Log off", "system-log-out",
                 xd_shell_own_command(shell, "xd-shutdown", "--action logoff"));
-        add_cmd(&m->tree, mm, "Lock", "system-lock-screen",
+        add_keyed_cmd(&m->tree, mm, "L&ock", "system-lock-screen",
                 xd_shell_own_command(shell, "xd-lock", nullptr));
         xd_menu_add(&m->tree, mm, XD_MENU_SEPARATOR, nullptr, nullptr);
-        add_cmd(&m->tree, mm, "Restart", "system-reboot",
+        add_keyed_cmd(&m->tree, mm, "&Restart", "system-reboot",
                 xd_shell_own_command(shell, "xd-shutdown", "--action restart"));
-        add_cmd(&m->tree, mm, "Sleep", "system-suspend",
+        add_keyed_cmd(&m->tree, mm, "&Sleep", "system-suspend",
                 xd_shell_own_command(shell, "xd-shutdown", "--action standby"));
-        add_cmd(&m->tree, mm, "Hibernate", "system-suspend-hibernate",
+        add_keyed_cmd(&m->tree, mm, "&Hibernate", "system-suspend-hibernate",
                 xd_shell_own_command(shell, "xd-shutdown", "--action hibernate"));
         anchor = shutdown_arrow_rect();
     } else {
@@ -2024,6 +2070,7 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     xd_menu_tree_init(&m->tree);
     load_user(m);
     shell->start7 = m;
+    shell->menu_cues = false; /* the keyboard's openers say otherwise */
     if (xp)
         xd_start_menu_note_programs(shell); /* what's new since it last opened */
     rebuild(m);
@@ -2089,6 +2136,11 @@ void xd_start7_close(xd_shell *shell) {
 
 bool xd_start7_owns(xd_shell *shell, struct wl_surface *surface) {
     return shell->start7 != nullptr && shell->start7->surface == surface;
+}
+
+void xd_start7_redraw(xd_shell *shell) {
+    if (shell->start7 != nullptr)
+        shell->start7->dirty = true;
 }
 
 void xd_start7_render_dirty(xd_shell *shell) {
@@ -2503,15 +2555,15 @@ static size_t xp_letter_stops(const xd_start7 *m, letter_stop *out, size_t max) 
         out[n++] = (letter_stop){(int)i, -1, role != nullptr ? role : r->app->name, 0};
     }
     if (n < max)
-        out[n++] = (letter_stop){-1, HIT_ALL, "All Programs", 'p'};
+        out[n++] = (letter_stop){-1, HIT_ALL, "All Programs", xp_key(HIT_ALL)};
     for (size_t i = 0; i < XD_ARRAY_LEN(xp_items) && n < max; i++) {
         const xp_item *it = &xp_items[i];
         if (it->hit != R_SEP && !it->disabled)
-            out[n++] = (letter_stop){-1, it->hit, it->label, it->hit == R_RUN ? 'r' : 0};
+            out[n++] = (letter_stop){-1, it->hit, it->label, xp_key(it->hit)};
     }
     if (n + 2 <= max) {
-        out[n++] = (letter_stop){-1, HIT_LOGOFF, "Log Off", 'l'};
-        out[n++] = (letter_stop){-1, HIT_TURNOFF, "Turn Off Computer", 'u'};
+        out[n++] = (letter_stop){-1, HIT_LOGOFF, "Log Off", xp_key(HIT_LOGOFF)};
+        out[n++] = (letter_stop){-1, HIT_TURNOFF, "Turn Off Computer", xp_key(HIT_TURNOFF)};
     }
     return n;
 }

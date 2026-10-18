@@ -13,7 +13,7 @@
     keyboard layout), and for Windows 7's taskbar thumbnails and Aero Peek.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="8">
+  <interface name="xd_window_arranger_v1" version="9">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -178,5 +178,13 @@
       <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"
            allow-null="true"/>
     </request>
+
+    <event name="window_menu_keyboard" since="9">
+      <description summary="the next window menu was asked for from the keyboard">
+        Sent just before window_menu when Alt+Space asked for it, not the
+        pointer: the menu underlines its access keys even when they're
+        hidden until the keyboard is used, as Windows' menus do.
+      </description>
+    </event>
   </interface>
 </protocol>

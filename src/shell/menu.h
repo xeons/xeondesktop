@@ -47,6 +47,7 @@ typedef struct xd_menu_item {
     /* The letter that picks it (lower case), as an underlined letter does
      * in Windows; 0: the label's first letter. */
     uint32_t mnemonic;
+    const char *key; /* into label: that letter, underlined (xd_menu_add_keyed) */
     bool highlight; /* XP's newly installed programs (and their folders) */
     /* Jump lists (Windows 7's look): in the bottom band; a pushpin for
      * the icon (1: lying, 2: pushed in); the pin button shown at the
@@ -94,6 +95,17 @@ xd_menu_model *xd_menu_model_new(xd_menu_tree *tree);
  * callers can set submenu/command/disabled. */
 xd_menu_item *xd_menu_add(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind kind,
                           const char *label, const char *icon);
+/* As xd_menu_add, with the label written as Windows writes it, "Mi&nimize":
+ * the letter after '&' is the item's access key, underlined ("&&" is a
+ * plain '&'). */
+xd_menu_item *xd_menu_add_keyed(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind kind,
+                                const char *label, const char *icon);
+/* Whether menus underline their access keys now: always, unless they're
+ * hidden until the keyboard is used (Display Properties' Effects), as in
+ * Windows; then once a menu was opened or used from the keyboard. */
+bool xd_menu_cues(const xd_shell *shell);
+/* The keyboard opened or used the menus: they show their underlines. */
+void xd_menu_show_cues(xd_shell *shell);
 
 typedef struct xd_menu {
     xd_shell *shell;

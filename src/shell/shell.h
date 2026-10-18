@@ -264,6 +264,7 @@ struct xd_shell {
     xd_menu_tree menu_tree;
     xd_menu_tree context_tree; /* the open right-click menu's models */
     bool context_menu;         /* the open root menu is a right-click menu */
+    bool menu_cues; /* the keyboard opened or used the open menus: access keys underlined */
     struct xd_window_arranger_v1 *arranger; /* Cascade/Tile (nullptr: not offered) */
     int last_arrange;          /* mode of the last Cascade/Tile, -1 if undone */
     xd_menu_model *start_model;
@@ -489,6 +490,7 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp);
 void xd_start7_close(xd_shell *shell);
 bool xd_start7_owns(xd_shell *shell, struct wl_surface *surface);
 void xd_start7_render_dirty(xd_shell *shell);
+void xd_start7_redraw(xd_shell *shell); /* drawn again (the access keys' underlines) */
 xd_menu *xd_start7_submenu(xd_shell *shell);
 void xd_start7_pointer_motion(xd_shell *shell, double x, double y);
 void xd_start7_pointer_leave(xd_shell *shell);

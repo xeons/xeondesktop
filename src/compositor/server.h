@@ -625,8 +625,9 @@ void xd_xwayland_finish(xd_server *server);
  * mouse) until Enter, a click, or Esc to put the window back. */
 void xd_view_begin_keyboard_move(xd_view *view);
 void xd_view_begin_keyboard_size(xd_view *view);
-/* arrange.c: asks the shell to show the window menu at layout (lx, ly). */
-void xd_window_menu_show(xd_view *view, double lx, double ly);
+/* arrange.c: asks the shell to show the window menu at layout (lx, ly);
+ * keyboard: Alt+Space asked (the menu then underlines its access keys). */
+void xd_window_menu_show(xd_view *view, double lx, double ly, bool keyboard);
 /* arrange.c: asks the shell to open (or close) the Start menu. */
 void xd_start_menu_toggle(xd_server *server);
 /* arrange.c: tells the shell the active keyboard layout (kb_group). */

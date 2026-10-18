@@ -725,13 +725,19 @@ cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *it, int px) {
 
 /* ---- clicks and menus ------------------------------------------------------- */
 
-/* A dbusmenu label: '_' marks the access key ("__" is a real one). */
+/* A dbusmenu label: '_' marks the access key ("__" is a real one).
+ * Written as Windows writes it for xd_menu_add_keyed: "&" for the key,
+ * "&&" for a real '&'. */
 static char *menu_label(const char *label) {
     GString *s = g_string_new(nullptr);
     for (const char *p = label; *p != '\0'; p++) {
         if (*p == '_' && p[1] == '_')
             g_string_append_c(s, *p++);
-        else if (*p != '_')
+        else if (*p == '_')
+            g_string_append_c(s, '&');
+        else if (*p == '&')
+            g_string_append(s, "&&");
+        else
             g_string_append_c(s, *p);
     }
     return g_string_free(s, FALSE);
@@ -786,9 +792,9 @@ static xd_menu_model *build_menu(xd_menu_tree *tree, GVariant *node, int depth) 
                 char *text = menu_label(label != nullptr ? label : "");
                 bool sub = depth < 8 && (has_kids || (display != nullptr &&
                                                       strcmp(display, "submenu") == 0));
-                xd_menu_item *item = xd_menu_add(tree, m, sub ? XD_MENU_SUBMENU : XD_MENU_ACTION,
-                                                 text, icon != nullptr && icon[0] != '\0' ? icon
-                                                                                          : nullptr);
+                xd_menu_item *item =
+                    xd_menu_add_keyed(tree, m, sub ? XD_MENU_SUBMENU : XD_MENU_ACTION, text,
+                                      icon != nullptr && icon[0] != '\0' ? icon : nullptr);
                 g_free(text);
                 if (sub) {
                     item->submenu = build_menu(tree, boxed, depth + 1);

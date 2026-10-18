@@ -2359,6 +2359,52 @@ def xp_start_letters_and_drag(s):
 
 
 @scenario()
+def window_menu_letters(s):
+    """Alt+Space opens the window menu, whose letters work as Windows': X
+    maximizes, R restores, N minimizes."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    opened = s.settle("window")
+    s.inject("key", "alt+space")
+    wait_change(s, opened, (0, 0, 400, 300), "the window menu", "window-menu")
+    s.inject("key", "x")
+    s.wait_window(title="Control Panel", state="maximized")
+    s.log("ok: Alt+Space, X maximized")
+    s.inject("sleep", 300, "key", "alt+space", "sleep", 500, "key", "r")
+    s.wait(lambda: "maximized" not in s.window(title="Control Panel")["states"], "restore")
+    s.log("ok: Alt+Space, R restored")
+    s.inject("sleep", 300, "key", "alt+space", "sleep", 500, "key", "n")
+    s.wait_window(title="Control Panel", state="minimized")
+    s.log("ok: Alt+Space, N minimized")
+
+
+# Display Properties' Effects: "Hide underlined letters for keyboard
+# navigation until I press the Alt key".
+HIDDEN_CUES_INI = LUNA_INI + "\n[Effects]\nHideKeyboardCues=true\n"
+XP_ALL_PROGRAMS = (40, 662, 100, 30)  # "All Programs", in an empty XP Start menu
+
+
+@scenario(HIDDEN_CUES_INI)
+def xp_start_underlines(s):
+    """With underlines hidden until the keyboard is used, the XP Start menu
+    opened with the mouse has none; opened with Ctrl+Esc it underlines
+    All Programs' P (only that, in that line), and R opens Run."""
+    s.settle("desktop")
+    s.inject("move", 30, 755, "click")
+    clicked = s.settle("clicked")
+    s.inject("key", "Escape")
+    s.settle("closed")
+    s.inject("key", "ctrl+Escape")
+    keyed = s.settle("keyed")
+    box = keyed.changed_box(clicked, XP_ALL_PROGRAMS, step=1)
+    s.check(box is not None and box[2] <= 10 and box[3] <= 2,
+            f"Ctrl+Esc: a short line under one letter of All Programs ({box})")  # fmt: skip
+    s.inject("key", "r")
+    s.wait_window(title="Run", state="activated")
+    s.log("ok: R opened Run")
+
+
+@scenario()
 def screen_saver_settings(s):
     """Display Properties' Screen Saver tab: the preview shows each saver
     (moving, or Blank Screen's black standing still); a saver's Settings

@@ -176,6 +176,14 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
     /* GDI never joins letters: no "fi" ligatures, as on Windows. */
     PangoAttrList *attrs = pango_attr_list_new();
     pango_attr_list_insert(attrs, pango_attr_font_features_new("liga 0, clig 0"));
+    /* The access key's underline, as GDI draws it (Pango's own placing). */
+    size_t len = strlen(utf8);
+    if (st->underline != nullptr && st->underline >= utf8 && st->underline < utf8 + len) {
+        PangoAttribute *u = pango_attr_underline_new(PANGO_UNDERLINE_SINGLE);
+        u->start_index = (guint)(st->underline - utf8);
+        u->end_index = (guint)(g_utf8_next_char(st->underline) - utf8);
+        pango_attr_list_insert(attrs, u);
+    }
     pango_layout_set_attributes(layout, attrs);
     pango_attr_list_unref(attrs);
     return layout;
@@ -183,6 +191,24 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
 
 PangoLayout *xd_text_layout(cairo_t *cr, const char *utf8, const xd_text_style *style) {
     return make_layout(cr, utf8, style);
+}
+
+char *xd_text_strip_prefix(const char *label, int *key) {
+    GString *out = g_string_sized_new(strlen(label));
+    *key = -1;
+    for (const char *p = label; *p != '\0'; p++) {
+        if (*p != '&') {
+            g_string_append_c(out, *p);
+            continue;
+        }
+        if (p[1] == '&') {
+            g_string_append_c(out, '&');
+            p++;
+        } else if (p[1] != '\0' && *key < 0) {
+            *key = (int)out->len;
+        }
+    }
+    return g_string_free(out, FALSE);
 }
 
 int xd_text_width(cairo_t *cr, const char *utf8, const xd_text_style *style) {

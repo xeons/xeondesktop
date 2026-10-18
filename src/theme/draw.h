@@ -68,6 +68,9 @@ typedef struct xd_text_style {
      * the block aligned as `align` says (the clock's day and date). */
     bool lines;
     xd_font_smoothing smoothing;
+    /* Points into the text drawn: the character underlined as its access
+     * key (Windows' "&File"); nullptr for none. */
+    const char *underline;
 } xd_text_style;
 
 /* Draws one line of text vertically centred in r and clipped to it. */
@@ -79,6 +82,10 @@ void xd_draw_start_logo(cairo_t *cr, xd_rect r);
 void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style *style);
 /* Width in device pixels of one line of text. */
 int xd_text_width(cairo_t *cr, const char *utf8, const xd_text_style *style);
+/* A label written as Windows writes one, "&Restore" or "Mi&nimize": the
+ * text without its '&'s ("&&" is one '&'), g_free'd, and in *key the byte
+ * offset of the access key that follows the first single '&', or -1. */
+char *xd_text_strip_prefix(const char *label, int *key);
 
 /* The Pango layout xd_draw_text would use, for callers that need caret
  * positions or hit testing (edit controls). Free with g_object_unref. */

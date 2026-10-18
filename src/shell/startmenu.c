@@ -332,60 +332,66 @@ void xd_start_menu_build(xd_shell *shell) {
     root->banner_edition = "Professional";
 
     xd_menu_item *programs =
-        xd_menu_add(tree, root, XD_MENU_SUBMENU, "Programs", "applications-other");
+        xd_menu_add_keyed(tree, root, XD_MENU_SUBMENU, "&Programs", "applications-other");
     programs->fallback_icon = "folder";
     programs->submenu = xd_start_programs_model(shell, tree, false);
 
     shell->start_docs_index = root->count;
     xd_menu_item *docs =
-        xd_menu_add(tree, root, XD_MENU_SUBMENU, "Documents", "folder-documents");
+        xd_menu_add_keyed(tree, root, XD_MENU_SUBMENU, "&Documents", "folder-documents");
     docs->fallback_icon = "folder";
     docs->submenu = nullptr; /* filled each time the menu opens */
 
     xd_menu_item *settings =
-        xd_menu_add(tree, root, XD_MENU_SUBMENU, "Settings", "preferences-system");
+        xd_menu_add_keyed(tree, root, XD_MENU_SUBMENU, "&Settings", "preferences-system");
     settings->submenu = xd_menu_model_new(tree);
     /* "Expand Control Panel" style: a cascading list of applets; clicking
      * Control Panel itself opens the folder. */
-    xd_menu_item *control =
-        xd_menu_add(tree, settings->submenu, XD_MENU_SUBMENU, "Control Panel", "preferences-system");
+    xd_menu_item *control = xd_menu_add_keyed(tree, settings->submenu, XD_MENU_SUBMENU,
+                                              "&Control Panel", "preferences-system");
     control->submenu = xd_start_control_model(shell, tree);
     control->command = xd_shell_own_command(shell, "xd-control", nullptr);
-    xd_menu_item *network = xd_menu_add(tree, settings->submenu, XD_MENU_ACTION,
-                                        "Network and Dial-up Connections", "network-workgroup");
+    xd_menu_item *network = xd_menu_add_keyed(tree, settings->submenu, XD_MENU_ACTION,
+                                              "&Network and Dial-up Connections",
+                                              "network-workgroup");
     network->command = xd_shell_own_command(shell, "xd-netconn", nullptr);
     xd_menu_item *printers =
-        xd_menu_add(tree, settings->submenu, XD_MENU_ACTION, "Printers", "printer");
+        xd_menu_add_keyed(tree, settings->submenu, XD_MENU_ACTION, "&Printers", "printer");
     printers->command = xd_shell_own_command(shell, "xd-printers", nullptr);
-    xd_menu_item *taskbar = xd_menu_add(tree, settings->submenu, XD_MENU_ACTION,
-                                        "Taskbar & Start Menu...", "preferences-desktop");
+    xd_menu_item *taskbar = xd_menu_add_keyed(tree, settings->submenu, XD_MENU_ACTION,
+                                              "&Taskbar && Start Menu...", "preferences-desktop");
     taskbar->command = xd_shell_own_command(shell, "xd-taskbar", nullptr);
 
-    xd_menu_item *search = xd_menu_add(tree, root, XD_MENU_SUBMENU, "Search", "system-search");
-    search->mnemonic = 'c'; /* Sear_c_h: S is Settings */
+    xd_menu_item *search =
+        xd_menu_add_keyed(tree, root, XD_MENU_SUBMENU, "Sear&ch", "system-search");
     search->submenu = xd_menu_model_new(tree);
-    xd_menu_item *files = xd_menu_add(tree, search->submenu, XD_MENU_ACTION,
-                                      "For Files or Folders...", "system-search");
+    xd_menu_item *files = xd_menu_add_keyed(tree, search->submenu, XD_MENU_ACTION,
+                                            "For &Files or Folders...", "system-search");
     files->command = xd_shell_own_command(shell, "xd-search", nullptr);
 
-    xd_menu_item *help = xd_menu_add(tree, root, XD_MENU_ACTION, "Help", "help-browser");
+    xd_menu_item *help = xd_menu_add_keyed(tree, root, XD_MENU_ACTION, "&Help", "help-browser");
     help->command = xd_shell_own_command(shell, "xd-help", nullptr);
-    xd_menu_item *run = xd_menu_add(tree, root, XD_MENU_ACTION, "Run...", "system-run");
+    xd_menu_item *run = xd_menu_add_keyed(tree, root, XD_MENU_ACTION, "&Run...", "system-run");
     run->command = xd_shell_own_command(shell, "xd-run", nullptr);
     xd_menu_add(tree, root, XD_MENU_SEPARATOR, nullptr, nullptr);
 
     const char *user = getenv("USER");
     xd_strbuf logoff = {0};
-    xd_strbuf_appendf(&logoff, "Log Off %s...", user != nullptr ? user : "");
+    xd_strbuf_append(&logoff, XD_STR("&Log Off "));
+    for (const char *c = user != nullptr ? user : ""; *c != '\0'; c++) {
+        if (*c == '&')
+            xd_strbuf_append_char(&logoff, '&'); /* the name's own, as it is */
+        xd_strbuf_append_char(&logoff, *c);
+    }
+    xd_strbuf_append(&logoff, XD_STR("..."));
     xd_menu_item *logoff_item =
-        xd_menu_add(tree, root, XD_MENU_ACTION, xd_strbuf_cstr(&logoff), "system-log-out");
+        xd_menu_add_keyed(tree, root, XD_MENU_ACTION, xd_strbuf_cstr(&logoff), "system-log-out");
     logoff_item->command = xd_shell_own_command(shell, "xd-shutdown", "--logoff");
-    logoff_item->mnemonic = 'l';
     xd_strbuf_free(&logoff);
+    /* Sh&ut Down: Windows' Win, U. */
     xd_menu_item *shutdown =
-        xd_menu_add(tree, root, XD_MENU_ACTION, "Shut Down...", "system-shutdown");
+        xd_menu_add_keyed(tree, root, XD_MENU_ACTION, "Sh&ut Down...", "system-shutdown");
     shutdown->command = xd_shell_own_command(shell, "xd-shutdown", nullptr);
-    shutdown->mnemonic = 'u'; /* Sh_u_t Down: Windows' Win, U */
 
     shell->start_model = root;
 }

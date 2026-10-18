@@ -326,7 +326,7 @@ void xd_start_menu_toggle(xd_server *server) {
                                               wl_display_next_serial(server->display));
 }
 
-void xd_window_menu_show(xd_view *view, double lx, double ly) {
+void xd_window_menu_show(xd_view *view, double lx, double ly, bool keyboard) {
     xd_server *server = view->server;
     xd_view_focus(view);
     struct wl_resource *res = server->arranger_resource;
@@ -347,6 +347,9 @@ void xd_window_menu_show(xd_view *view, double lx, double ly) {
         return;
     struct wlr_box box;
     wlr_output_layout_get_box(server->output_layout, out->wlr_output, &box);
+    if (keyboard &&
+        wl_resource_get_version(res) >= XD_WINDOW_ARRANGER_V1_WINDOW_MENU_KEYBOARD_SINCE_VERSION)
+        xd_window_arranger_v1_send_window_menu_keyboard(res);
     xd_window_arranger_v1_send_window_menu(res, output_res, (int32_t)(lx - box.x),
                                            (int32_t)(ly - box.y),
                                            wl_display_next_serial(server->display));
@@ -455,7 +458,7 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 8,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 9,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

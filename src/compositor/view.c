@@ -1029,7 +1029,7 @@ static void handle_request_window_menu(struct wl_listener *listener, void *data)
     }
     struct wlr_box outer = xd_view_outer_box(view);
     xd_insets in = xd_view_insets(view);
-    xd_window_menu_show(view, outer.x + in.left + e->x, outer.y + in.top + e->y);
+    xd_window_menu_show(view, outer.x + in.left + e->x, outer.y + in.top + e->y, false);
 }
 
 static void handle_request_minimize(struct wl_listener *listener, [[maybe_unused]] void *data) {

@@ -585,6 +585,63 @@ static void test_menus(void) {
     }
 }
 
+/* Access keys written as Windows writes them, and their underline. */
+static void test_access_keys(void) {
+    struct {
+        const char *in, *out;
+        int key;
+    } cases[] = {
+        {"&Restore", "Restore", 0},     {"Mi&nimize", "Minimize", 2},
+        {"Ma&ximize", "Maximize", 2},   {"&Taskbar && Start Menu...", "Taskbar & Start Menu...", 0},
+        {"Tom && Jerry", "Tom & Jerry", -1}, {"No key", "No key", -1},
+        {"Trailing&", "Trailing", -1},  {"&a&b", "ab", 0},
+        {"Caf\xC3\xA9 &\xC3\x89t\xC3\xA9", "Caf\xC3\xA9 \xC3\x89t\xC3\xA9", 6},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(cases); i++) {
+        int key = -2;
+        char *out = xd_text_strip_prefix(cases[i].in, &key);
+        CHECK(strcmp(out, cases[i].out) == 0);
+        CHECK(key == cases[i].key);
+        g_free(out);
+    }
+
+    /* The underline shows under the letter, and only there. */
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    xd_menu_metrics m = xd_theme_menu_metrics(&t);
+    cairo_surface_t *surf[2];
+    static const char label[] = "Minimize";
+    for (int u = 0; u < 2; u++) {
+        surf[u] = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 160, m.item_h);
+        cairo_t *cr = cairo_create(surf[u]);
+        xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 160, m.item_h});
+        xd_menu_item_extras x = {.underline = u == 1 ? label + 2 : nullptr};
+        xd_theme_draw_menu_item_ex(&t, cr, (xd_rect){0, 0, 160, m.item_h}, 0, label, false,
+                                   false, &x);
+        cairo_destroy(cr);
+        cairo_surface_flush(surf[u]);
+    }
+    int stride = cairo_image_surface_get_stride(surf[0]);
+    const uint8_t *a = cairo_image_surface_get_data(surf[0]);
+    const uint8_t *b = cairo_image_surface_get_data(surf[1]);
+    int changed = 0, left = 160, right = -1;
+    for (int y = 0; y < m.item_h; y++) {
+        for (int x = 0; x < 160; x++) {
+            if (memcmp(a + y * stride + x * 4, b + y * stride + x * 4, 4) != 0) {
+                changed++;
+                left = XD_MIN(left, x);
+                right = XD_MAX(right, x);
+            }
+        }
+    }
+    /* A short line under the "n", right of the text's start. */
+    CHECK(changed > 0 && right - left < 12 && left > m.text_x);
+    cairo_surface_destroy(surf[0]);
+    cairo_surface_destroy(surf[1]);
+}
+
 static bool text_is(const xd_textedit *e, const char *want) {
     return xd_str_eq(xd_textedit_view(e), xd_str_from_cstr(want));
 }
@@ -4140,6 +4197,7 @@ int main(void) {
     test_hit();
     test_apps();
     test_menus();
+    test_access_keys();
     test_textedit();
     test_runcmd();
     test_settings();

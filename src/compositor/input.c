@@ -226,7 +226,7 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         if (focused != nullptr) {
             double x, y;
             xd_view_menu_anchor(focused, &x, &y);
-            xd_window_menu_show(focused, x, y);
+            xd_window_menu_show(focused, x, y, true);
         }
         return true;
     }
@@ -1320,7 +1320,7 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
     if (button == BTN_RIGHT) {
         /* Right-click on the frame: the window menu at the pointer. */
         if (p->part == XD_PART_CAPTION || p->part == XD_PART_SYSMENU)
-            xd_window_menu_show(view, server->cursor->x, server->cursor->y);
+            xd_window_menu_show(view, server->cursor->x, server->cursor->y, false);
         return;
     }
     if (button != BTN_LEFT)
@@ -1343,7 +1343,7 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
         }
         double x, y;
         xd_view_menu_anchor(view, &x, &y);
-        xd_window_menu_show(view, x, y);
+        xd_window_menu_show(view, x, y, false);
         return;
     }
     if (p->part == XD_PART_CAPTION) {

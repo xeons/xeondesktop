@@ -7,6 +7,7 @@
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "../settings/soundplay.h"
+#include "../theme/draw.h"
 #include "../ui/icons.h"
 #include "menu.h"
 #include "shell.h"
@@ -71,6 +72,40 @@ xd_menu_item *xd_menu_add(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind
                                 : nullptr,
     };
     return it;
+}
+
+xd_menu_item *xd_menu_add_keyed(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind kind,
+                                const char *label, const char *icon) {
+    int key = -1;
+    char *text = xd_text_strip_prefix(label, &key);
+    xd_menu_item *it = xd_menu_add(tree, model, kind, text, icon);
+    g_free(text);
+    if (key >= 0) {
+        it->key = it->label + key;
+        gunichar c = g_utf8_get_char_validated(it->key, -1);
+        if (c != (gunichar)-1 && c != (gunichar)-2)
+            it->mnemonic = g_unichar_tolower(c);
+        else
+            it->key = nullptr;
+    }
+    return it;
+}
+
+/* ---- keyboard cues --------------------------------------------------------------- */
+
+bool xd_menu_cues(const xd_shell *shell) {
+    return !shell->settings.hide_keyboard_cues || shell->menu_cues;
+}
+
+void xd_menu_show_cues(xd_shell *shell) {
+    if (shell->menu_cues)
+        return;
+    shell->menu_cues = true;
+    for (xd_menu *m = shell->start_menu; m != nullptr; m = m->child)
+        m->dirty = true;
+    for (xd_menu *m = xd_start7_submenu(shell); m != nullptr; m = m->child)
+        m->dirty = true;
+    xd_start7_redraw(shell);
 }
 
 /* ---- layout -------------------------------------------------------------------- */
@@ -297,6 +332,7 @@ static void render(xd_menu *menu) {
     xd_theme_init(&t, shell->style, &shell->scheme, s);
     xd_menu_metrics mm = xd_theme_menu_metrics(&t);
     const xd_menu_model *m = menu->model;
+    bool cues = xd_menu_cues(shell);
     cairo_t *cr = cairo_create(buf->surface);
     if (m->jumplist) {
         render_jumplist(menu, &t, cr, dw, dh);
@@ -337,7 +373,8 @@ static void render(xd_menu *menu) {
         xd_menu_item_extras extras = {.bold = it->bold || header,
                                       .checked = it->checked,
                                       .glyph = it->glyph,
-                                      .accel = it->accel};
+                                      .accel = it->accel,
+                                      .underline = cues ? it->key : nullptr};
         xd_theme_draw_menu_item_ex(&t, cr, r, state, it->label, it->kind == XD_MENU_SUBMENU,
                                    m->large, &extras);
         int icon = m->large ? mm.large_icon : mm.icon;
@@ -470,6 +507,7 @@ xd_menu *xd_menu_open_root_bar(xd_shell *shell, const xd_menu_model *model, xd_t
     menu_finish_popup(menu, serial);
     shell->start_menu = menu;
     shell->menu_serial = serial;
+    shell->menu_cues = false; /* the keyboard's openers say otherwise */
     return menu;
 }
 
@@ -499,6 +537,7 @@ xd_menu *xd_menu_open_root_dir(xd_shell *shell, const xd_menu_model *model,
 
     shell->start_menu = menu;
     shell->menu_serial = serial;
+    shell->menu_cues = false;
     return menu;
 }
 
@@ -809,7 +848,7 @@ static void ctx_unpin(xd_shell *shell, void *data) {
 static xd_menu_model *app_context(xd_shell *shell, xd_menu_tree *tree, const xd_app *app) {
     xd_menu_model *mm = xd_menu_model_new(tree);
     void *data = (void *)(uintptr_t)app;
-    xd_menu_item *it = xd_menu_add(tree, mm, XD_MENU_ACTION, "Open", nullptr);
+    xd_menu_item *it = xd_menu_add_keyed(tree, mm, XD_MENU_ACTION, "&Open", nullptr);
     it->bold = true;
     it->action = ctx_open;
     it->action_data = data;

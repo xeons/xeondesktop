@@ -315,6 +315,7 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
     if (disabled && !hot && p.disabled_emboss.a > 0) {
         int px = xd_tpx(t, 1);
         xd_text_style emboss = xd_text(t, XD_FONT_MENU, p.disabled_emboss, XD_ALIGN_START);
+        emboss.underline = x != nullptr ? x->underline : nullptr;
         xd_draw_text(cr, (xd_rect){tr.x + px, tr.y + px, tr.w, tr.h}, label, &emboss);
     }
     xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
@@ -322,6 +323,8 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
     xd_text_style st = xd_text(t, XD_FONT_MENU, text, XD_ALIGN_START);
     if (x != nullptr && x->bold)
         st.font = &bold;
+    if (x != nullptr)
+        st.underline = x->underline;
     if (x != nullptr && x->accel != nullptr) {
         xd_text_style ac = xd_text(t, XD_FONT_MENU, text, XD_ALIGN_END);
         xd_draw_text(cr, tr, x->accel, &ac);
