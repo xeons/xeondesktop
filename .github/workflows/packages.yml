@@ -1,6 +1,7 @@
-# Builds the Debian and Arch Linux / CachyOS packages on every push and pull
-# request (as downloadable artifacts) and attaches them to a GitHub release
-# when a v* tag is pushed. The package builds also run the unit tests.
+# Builds the Debian and Ubuntu packages (amd64 and arm64) and the Arch Linux
+# / CachyOS packages (x86_64) on every push and pull request (as
+# downloadable artifacts) and attaches them to a GitHub release when a v*
+# tag is pushed. The package builds also run the unit tests.
 name: Packages
 
 on:
@@ -43,14 +44,17 @@ jobs:
 
   debian:
     needs: version
-    name: Debian package (${{ matrix.image }})
-    runs-on: ubuntu-latest
+    name: Debian package (${{ matrix.image }}, ${{ matrix.arch }})
+    # arm64 builds natively on GitHub's arm64 runners (the Debian and
+    # Ubuntu images are multi-arch), not under emulation.
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         # wlroots 0.20 is in Debian testing (forky) and unstable; Ubuntu
         # 26.04 LTS has 0.19, so its package builds our pinned copy in.
         image: ['debian:testing', 'debian:unstable', 'ubuntu:26.04']
+        arch: [amd64, arm64]
     container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v7
@@ -62,13 +66,21 @@ jobs:
         run: |
           apt-get install -y --no-install-recommends ./dist/*.deb
           dpkg -L xeondesktop | grep -E 'bin/xd-compositor$|wayland-sessions/xeondesktop.desktop$'
+          dpkg -L xeondesktop | grep 'man1/xd-compositor.1.gz$'
+          test "$(dpkg --print-architecture)" = ${{ matrix.arch }}
           xd-compositor --help
       - uses: actions/upload-artifact@v7
         with:
-          name: xeondesktop-${{ matrix.image == 'debian:testing' && 'debian-testing' || matrix.image == 'debian:unstable' && 'debian-unstable' || 'ubuntu-26.04' }}
+          # Artifact names are unique per run: one per image and
+          # architecture. The release job drops the architecture again (the
+          # .deb's own name has it).
+          name: xeondesktop-${{ matrix.image == 'debian:testing' && 'debian-testing' || matrix.image == 'debian:unstable' && 'debian-unstable' || 'ubuntu-26.04' }}-${{ matrix.arch }}
           path: dist/*.deb
           if-no-files-found: error
 
+  # x86_64 only: the archlinux and cachyos/cachyos images have no arm64
+  # variant (Arch Linux ARM is a separate project, CachyOS is x86-64 only).
+  # The PKGBUILD itself also builds on aarch64.
   arch:
     needs: version
     name: ${{ matrix.name }}
@@ -94,6 +106,7 @@ jobs:
         run: |
           pacman -U --noconfirm dist/*.pkg.tar.zst
           pacman -Ql xeondesktop | grep -E 'bin/xd-compositor$|wayland-sessions/xeondesktop.desktop$'
+          pacman -Ql xeondesktop | grep 'man1/xd-compositor.1.gz$'
           xd-compositor --help
       - uses: actions/upload-artifact@v7
         with:
@@ -111,12 +124,20 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: packages
+      # debian-testing_xeondesktop_0.3.0_amd64.deb and _arm64.deb: the
+      # artifact's -amd64/-arm64 is dropped, as the package's name has its
+      # architecture (x86_64 in Arch's). Two packages may never get the
+      # same name.
       - name: Name the packages after their distribution
         run: |
           cd packages
           for dir in */; do
-            dist=${dir%/}; dist=${dist#xeondesktop-}
-            for f in "$dir"*; do mv "$f" "${dist}_$(basename "$f")"; done
+            dist=${dir%/}; dist=${dist#xeondesktop-}; dist=${dist%-amd64}; dist=${dist%-arm64}
+            for f in "$dir"*; do
+              name="${dist}_$(basename "$f")"
+              if [ -e "$name" ]; then echo "two packages named $name" >&2; exit 1; fi
+              mv "$f" "$name"
+            done
             rmdir "$dir"
           done
           ls -l
