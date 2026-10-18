@@ -30,18 +30,20 @@ static GtkWidget *grid_label(const char *mnemonic, GtkWidget *target) {
     return l;
 }
 
-static const char *ask([[maybe_unused]] const char *prompt, http_t *http,
-                       [[maybe_unused]] const char *method,
-                       [[maybe_unused]] const char *resource, [[maybe_unused]] void *data) {
-    explicit_bzero(password, sizeof(password));
-    if (++tries > MAX_TRIES)
-        return nullptr;
+/* The server's name for the box. A local socket's "host" is its path:
+ * this computer. */
+static void server_name(http_t *http, char *out, size_t size) {
     char host[256] = "";
     if (http != nullptr)
         httpGetHostname(http, host, (int)sizeof(host));
-    /* A local socket's "host" is its path: this computer. */
-    const char *server = host[0] == '\0' || host[0] == '/' ? "localhost" : host;
+    g_strlcpy(out, host[0] == '\0' || host[0] == '/' ? "localhost" : host, size);
+}
 
+/* The box itself, on the main thread. `user` comes in as the name to
+ * offer and goes out as the one typed; `pass` gets the password. False
+ * if it was cancelled. */
+static bool password_box(const char *server, bool retry, char *user, size_t user_size,
+                         char *pass, size_t pass_size) {
     GtkWidget *dlg = gtk_dialog_new();
     char *title = g_strdup_printf("Connect to %s", server);
     gtk_window_set_title(GTK_WINDOW(dlg), title);
@@ -62,9 +64,9 @@ static const char *ask([[maybe_unused]] const char *prompt, http_t *http,
     gtk_widget_set_valign(icon, GTK_ALIGN_START);
     gtk_box_pack_start(GTK_BOX(top), icon, FALSE, FALSE, 0);
     char *text = g_strdup_printf(
-        tries > 1 ? "The user name or password is incorrect. Type them again to connect to %s."
-                  : "Connecting to %s. Changing printers needs the user name and password of "
-                    "a printer administrator.",
+        retry ? "The user name or password is incorrect. Type them again to connect to %s."
+              : "Connecting to %s. Changing printers needs the user name and password of "
+                "a printer administrator.",
         server);
     GtkWidget *msg = gtk_label_new(text);
     g_free(text);
@@ -77,37 +79,51 @@ static const char *ask([[maybe_unused]] const char *prompt, http_t *http,
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    GtkWidget *user = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(user), cupsUser());
-    gtk_entry_set_activates_default(GTK_ENTRY(user), TRUE);
-    gtk_widget_set_hexpand(user, TRUE);
-    GtkWidget *pass = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(pass), FALSE);
-    gtk_entry_set_input_purpose(GTK_ENTRY(pass), GTK_INPUT_PURPOSE_PASSWORD);
-    gtk_entry_set_activates_default(GTK_ENTRY(pass), TRUE);
-    gtk_grid_attach(GTK_GRID(grid), grid_label("_User name:", user), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), user, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), grid_label("_Password:", pass), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), pass, 1, 1, 1, 1);
+    GtkWidget *name = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(name), user);
+    gtk_entry_set_activates_default(GTK_ENTRY(name), TRUE);
+    gtk_widget_set_hexpand(name, TRUE);
+    GtkWidget *secret = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(secret), FALSE);
+    gtk_entry_set_input_purpose(GTK_ENTRY(secret), GTK_INPUT_PURPOSE_PASSWORD);
+    gtk_entry_set_activates_default(GTK_ENTRY(secret), TRUE);
+    gtk_grid_attach(GTK_GRID(grid), grid_label("_User name:", name), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), name, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), grid_label("_Password:", secret), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), secret, 1, 1, 1, 1);
     gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box);
     gtk_widget_show_all(dlg);
-    gtk_widget_grab_focus(pass);
+    gtk_widget_grab_focus(secret);
 
-    const char *result = nullptr;
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
-        const char *name = gtk_entry_get_text(GTK_ENTRY(user));
-        if (name[0] != '\0')
-            cupsSetUser(name);
-        g_strlcpy(password, gtk_entry_get_text(GTK_ENTRY(pass)), sizeof(password));
-        result = password;
+    bool ok = gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK;
+    if (ok) {
+        g_strlcpy(user, gtk_entry_get_text(GTK_ENTRY(name)), user_size);
+        g_strlcpy(pass, gtk_entry_get_text(GTK_ENTRY(secret)), pass_size);
     }
     /* Not left in the entry's buffer either. */
-    gtk_entry_set_text(GTK_ENTRY(pass), "");
+    gtk_entry_set_text(GTK_ENTRY(secret), "");
     gtk_widget_destroy(dlg);
-    if (result == nullptr)
+    return ok;
+}
+
+/* The main thread's requests. */
+static const char *ask([[maybe_unused]] const char *prompt, http_t *http,
+                       [[maybe_unused]] const char *method,
+                       [[maybe_unused]] const char *resource, [[maybe_unused]] void *data) {
+    explicit_bzero(password, sizeof(password));
+    if (++tries > MAX_TRIES)
+        return nullptr;
+    char server[256], user[256];
+    server_name(http, server, sizeof(server));
+    g_strlcpy(user, cupsUser(), sizeof(user));
+    if (!password_box(server, tries > 1, user, sizeof(user), password, sizeof(password))) {
         tries = MAX_TRIES;
-    return result;
+        return nullptr;
+    }
+    if (user[0] != '\0')
+        cupsSetUser(user);
+    return password;
 }
 
 void xd_cups_auth_init(void) { cupsSetPasswordCB2(ask, nullptr); }
@@ -115,4 +131,83 @@ void xd_cups_auth_init(void) { cupsSetPasswordCB2(ask, nullptr); }
 void xd_cups_auth_reset(void) {
     tries = 0;
     explicit_bzero(password, sizeof(password));
+}
+
+/* ---- a worker thread's requests ------------------------------------------------------ */
+
+/* A worker's question, answered on the main thread while the worker
+ * waits. */
+typedef struct question {
+    GMutex lock;
+    GCond answered;
+    bool done, ok, retry;
+    char server[256], user[256], pass[256];
+} question;
+
+static gboolean answer(gpointer data) {
+    question *q = data;
+    bool ok =
+        password_box(q->server, q->retry, q->user, sizeof(q->user), q->pass, sizeof(q->pass));
+    g_mutex_lock(&q->lock);
+    q->ok = ok;
+    q->done = true;
+    g_cond_signal(&q->answered);
+    g_mutex_unlock(&q->lock);
+    return G_SOURCE_REMOVE;
+}
+
+/* libcups keeps the user name and the password callback per thread; the
+ * worker's tries and password are its own too. */
+static thread_local int worker_tries;
+static thread_local char worker_password[256];
+
+static const char *ask_from_worker([[maybe_unused]] const char *prompt, http_t *http,
+                                   [[maybe_unused]] const char *method,
+                                   [[maybe_unused]] const char *resource,
+                                   [[maybe_unused]] void *data) {
+    explicit_bzero(worker_password, sizeof(worker_password));
+    if (++worker_tries > MAX_TRIES)
+        return nullptr;
+    question q = {.retry = worker_tries > 1};
+    g_mutex_init(&q.lock);
+    g_cond_init(&q.answered);
+    server_name(http, q.server, sizeof(q.server));
+    g_strlcpy(q.user, cupsUser(), sizeof(q.user));
+    g_main_context_invoke(nullptr, answer, &q);
+    g_mutex_lock(&q.lock);
+    while (!q.done)
+        g_cond_wait(&q.answered, &q.lock);
+    g_mutex_unlock(&q.lock);
+    g_mutex_clear(&q.lock);
+    g_cond_clear(&q.answered);
+    const char *result = nullptr;
+    if (q.ok) {
+        if (q.user[0] != '\0')
+            cupsSetUser(q.user);
+        g_strlcpy(worker_password, q.pass, sizeof(worker_password));
+        result = worker_password;
+    } else {
+        worker_tries = MAX_TRIES;
+    }
+    explicit_bzero(q.pass, sizeof(q.pass));
+    return result;
+}
+
+static const char *no_password([[maybe_unused]] const char *prompt,
+                               [[maybe_unused]] http_t *http,
+                               [[maybe_unused]] const char *method,
+                               [[maybe_unused]] const char *resource,
+                               [[maybe_unused]] void *data) {
+    return nullptr;
+}
+
+void xd_cups_auth_worker_begin(void) {
+    worker_tries = 0;
+    explicit_bzero(worker_password, sizeof(worker_password));
+    cupsSetPasswordCB2(ask_from_worker, nullptr);
+}
+
+void xd_cups_auth_worker_end(void) {
+    explicit_bzero(worker_password, sizeof(worker_password));
+    cupsSetPasswordCB2(no_password, nullptr);
 }

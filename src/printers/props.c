@@ -34,6 +34,80 @@ static void dest_close(dest_info *d) {
     d->dinfo = nullptr;
 }
 
+/* What Properties and Printing Preferences show, fetched in a worker
+ * thread before they open: a scheduler that can't be reached holds
+ * libcups for up to its 30-second connection timeout, and
+ * cupsCopyDestInfo asks the printer itself. (Once that worked, the
+ * scheduler answers the main thread's dest calls building the pages;
+ * they mostly read what was fetched.) */
+typedef struct fetched {
+    xd_printer *printer; /* Properties only */
+    dest_info d;
+    GError *error;
+} fetched;
+
+static void fetched_free(gpointer data) {
+    fetched *f = data;
+    xd_printer_free(f->printer);
+    dest_close(&f->d);
+    g_clear_error(&f->error);
+    g_free(f);
+}
+
+/* Opens the window from what was fetched; it may take f->d. `parent` is
+ * nullptr if it closed meanwhile. */
+typedef void (*fetched_fn)(GtkWindow *parent, const char *name, fetched *f);
+
+typedef struct fetch {
+    GtkWidget *parent; /* a weak pointer */
+    char *name;
+    bool printer;
+    fetched_fn done;
+} fetch;
+
+static void fetch_free(gpointer data) {
+    fetch *o = data;
+    if (o->parent != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(o->parent), (gpointer *)&o->parent);
+    g_free(o->name);
+    g_free(o);
+}
+
+static void fetch_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
+                         [[maybe_unused]] GCancellable *c) {
+    const fetch *o = data;
+    xd_cups_thread_init();
+    fetched *f = g_new0(fetched, 1);
+    if (o->printer)
+        f->printer = xd_printer_get(o->name, &f->error);
+    if (f->error == nullptr)
+        dest_open(&f->d, o->name);
+    g_task_return_pointer(task, f, fetched_free);
+}
+
+static void on_fetched([[maybe_unused]] GObject *src, GAsyncResult *res,
+                       [[maybe_unused]] gpointer data) {
+    const fetch *o = g_task_get_task_data(G_TASK(res));
+    fetched *f = g_task_propagate_pointer(G_TASK(res), nullptr);
+    o->done(o->parent != nullptr ? GTK_WINDOW(o->parent) : nullptr, o->name, f);
+    fetched_free(f);
+}
+
+static void fetch_and_open(GtkWindow *parent, const char *name, bool printer, fetched_fn done) {
+    fetch *o = g_new0(fetch, 1);
+    o->name = g_strdup(name);
+    o->printer = printer;
+    o->done = done;
+    if (parent != nullptr) {
+        o->parent = GTK_WIDGET(parent);
+        g_object_add_weak_pointer(G_OBJECT(parent), (gpointer *)&o->parent);
+    }
+    GTask *task = g_task_new(nullptr, nullptr, on_fetched, nullptr);
+    g_task_set_task_data(task, o, fetch_free);
+    g_task_run_in_thread(task, fetch_thread);
+    g_object_unref(task);
+}
+
 /* An IPP value as text: enums and integers as numbers (as lpoptions
  * keeps them), keywords as they are. */
 static char *value_text(ipp_attribute_t *a, int i) {
@@ -429,16 +503,16 @@ static void on_prefs_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     g_free(p);
 }
 
-void xd_printer_preferences_open(GtkWindow *parent, const char *name) {
-    prefs *p = g_new0(prefs, 1);
-    if (!dest_open(&p->d, name)) {
+static void prefs_fetched(GtkWindow *parent, const char *name, fetched *f) {
+    if (f->d.dest == nullptr) {
         char *msg = g_strdup_printf("The printer %s no longer exists.", name);
         xd_message_box(parent, "Printing Preferences", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
         g_free(msg);
-        dest_close(&p->d);
-        g_free(p);
         return;
     }
+    prefs *p = g_new0(prefs, 1);
+    p->d = f->d;
+    f->d = (dest_info){0};
     p->name = g_strdup(name);
     p->choices = g_ptr_array_new_with_free_func((GDestroyNotify)choice_free);
     p->window = gtk_dialog_new();
@@ -468,6 +542,10 @@ void xd_printer_preferences_open(GtkWindow *parent, const char *name) {
     g_signal_connect(p->window, "destroy", G_CALLBACK(on_prefs_destroy), p);
     gtk_widget_show_all(p->window);
     gtk_widget_set_sensitive(p->apply, FALSE);
+}
+
+void xd_printer_preferences_open(GtkWindow *parent, const char *name) {
+    fetch_and_open(parent, name, false, prefs_fetched);
 }
 
 /* ==== Properties ======================================================================= */
@@ -711,16 +789,12 @@ static void on_props_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     g_free(p);
 }
 
-void xd_printer_properties_open(GtkWindow *parent, const char *name) {
-    GError *error = nullptr;
-    xd_printer *pr = xd_printer_get(name, &error);
+static void props_fetched(GtkWindow *parent, const char *name, fetched *f) {
+    const xd_printer *pr = f->printer;
     if (pr == nullptr) {
-        xd_printers_error(parent, error);
-        g_clear_error(&error);
+        xd_printers_error(parent, f->error);
         return;
     }
-    dest_info d = {0};
-    dest_open(&d, name);
     props *p = g_new0(props, 1);
     p->name = g_strdup(name);
     p->window = gtk_dialog_new();
@@ -739,12 +813,10 @@ void xd_printer_properties_open(GtkWindow *parent, const char *name) {
 
     GtkWidget *tabs = gtk_notebook_new();
     gtk_container_set_border_width(GTK_CONTAINER(tabs), 6);
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), general_page(p, pr, &d),
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), general_page(p, pr, &f->d),
                              gtk_label_new_with_mnemonic("_General"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), ports_page(pr),
                              gtk_label_new_with_mnemonic("P_orts"));
-    dest_close(&d);
-    xd_printer_free(pr);
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(p->window))), tabs, TRUE,
                        TRUE, 0);
     xd_gtk_notebook_ctrl_tab(p->window, GTK_NOTEBOOK(tabs));
@@ -752,4 +824,8 @@ void xd_printer_properties_open(GtkWindow *parent, const char *name) {
     g_signal_connect(p->window, "destroy", G_CALLBACK(on_props_destroy), p);
     gtk_widget_show_all(p->window);
     gtk_widget_set_sensitive(p->apply, FALSE);
+}
+
+void xd_printer_properties_open(GtkWindow *parent, const char *name) {
+    fetch_and_open(parent, name, true, props_fetched);
 }

@@ -362,6 +362,101 @@ static void error_box(add_wizard *a, const char *msg) {
                    XD_MB_OK, FALSE, msg);
 }
 
+/* ---- waiting for the scheduler -------------------------------------------------------- */
+
+/* While Next asks whether the name is taken and Finish adds the printer
+ * (a slow or unreachable scheduler mustn't freeze the program): the
+ * wizard greyed, Cancel too, under a busy cursor. */
+static void set_busy(add_wizard *a, bool busy) {
+    GtkWidget *win = xd_wizard_window(a->w);
+    gtk_widget_set_sensitive(win, !busy);
+    GdkWindow *gdk = gtk_widget_get_window(win);
+    if (gdk == nullptr)
+        return;
+    GdkCursor *wait =
+        busy ? gdk_cursor_new_from_name(gdk_window_get_display(gdk), "wait") : nullptr;
+    gdk_window_set_cursor(gdk, wait);
+    if (wait != nullptr)
+        g_object_unref(wait);
+}
+
+/* The wizard's tasks share its cancellable, cancelled when it's
+ * destroyed (the close button still works while greyed): their callbacks
+ * then mustn't touch it. */
+static bool wizard_gone(GAsyncResult *res) {
+    return g_cancellable_is_cancelled(g_task_get_cancellable(G_TASK(res)));
+}
+
+static void name_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
+                        [[maybe_unused]] GCancellable *c) {
+    g_task_return_boolean(task, xd_printer_exists(data));
+}
+
+static void on_name_checked([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
+    if (wizard_gone(res))
+        return;
+    add_wizard *a = data;
+    set_busy(a, false);
+    if (g_task_propagate_boolean(G_TASK(res), nullptr)) {
+        error_box(a, "A printer with this name already exists. Type another name.");
+        gtk_widget_grab_focus(a->name);
+        return;
+    }
+    xd_wizard_go(a->w, PAGE_TEST);
+}
+
+/* What Finish adds, for the worker. */
+typedef struct adding {
+    char *name, *uri, *info, *location;
+    bool set_default, test_page;
+    GError *error;      /* adding it */
+    GError *afterwards; /* making it the default, its test page */
+} adding;
+
+static void adding_free(gpointer data) {
+    adding *d = data;
+    g_free(d->name);
+    g_free(d->uri);
+    g_free(d->info);
+    g_free(d->location);
+    g_clear_error(&d->error);
+    g_clear_error(&d->afterwards);
+    g_free(d);
+}
+
+static void add_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
+                       [[maybe_unused]] GCancellable *c) {
+    adding *d = data;
+    /* cupsd may want a printer administrator's password. */
+    xd_cups_auth_worker_begin();
+    /* The scheduler asks the printer about itself: a few seconds. */
+    if (xd_printer_add(d->name, d->uri, d->info, d->location, &d->error)) {
+        if (d->set_default)
+            xd_printer_set_default(d->name, &d->afterwards);
+        if (d->test_page && d->afterwards == nullptr)
+            xd_printer_print_test_page(d->name, nullptr, &d->afterwards);
+    }
+    xd_cups_auth_worker_end();
+    g_task_return_boolean(task, TRUE);
+}
+
+static void on_added([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
+    adding *d = g_task_get_task_data(G_TASK(res));
+    add_wizard *a = wizard_gone(res) ? nullptr : data;
+    GtkWindow *win = a != nullptr ? GTK_WINDOW(xd_wizard_window(a->w)) : nullptr;
+    if (a != nullptr)
+        set_busy(a, false);
+    if (d->error != nullptr) {
+        /* The wizard stays, to try again or change something. */
+        xd_printers_error(win, d->error);
+        return;
+    }
+    xd_printers_changed();
+    xd_printers_error(win, d->afterwards);
+    if (a != nullptr)
+        gtk_widget_destroy(GTK_WIDGET(win));
+}
+
 static int next_page([[maybe_unused]] xd_wizard *w, int page, gpointer data) {
     add_wizard *a = data;
     if (page == PAGE_FIND) {
@@ -395,12 +490,13 @@ static int next_page([[maybe_unused]] xd_wizard *w, int page, gpointer data) {
                          "characters, or contain spaces or the characters / \\ # ? ' \".");
             return -1;
         }
-        cups_dest_t *existing = cupsGetNamedDest(CUPS_HTTP_DEFAULT, name, nullptr);
-        if (existing != nullptr) {
-            cupsFreeDests(1, existing);
-            error_box(a, "A printer with this name already exists. Type another name.");
-            return -1;
-        }
+        /* Whether it's taken, from the scheduler: on_name_checked goes on. */
+        set_busy(a, true);
+        GTask *task = g_task_new(nullptr, a->cancel, on_name_checked, a);
+        g_task_set_task_data(task, g_strdup(name), g_free);
+        g_task_run_in_thread(task, name_thread);
+        g_object_unref(task);
+        return -1;
     }
     return page + 1;
 }
@@ -428,44 +524,25 @@ static void enter_page([[maybe_unused]] xd_wizard *w, int page, gpointer data) {
     }
 }
 
-static bool finish(xd_wizard *w, gpointer data) {
+static bool finish([[maybe_unused]] xd_wizard *w, gpointer data) {
     add_wizard *a = data;
-    GtkWindow *win = GTK_WINDOW(xd_wizard_window(w));
     char *uri = nullptr, *model = nullptr;
     if (!chosen(a, &uri, &model))
         return false;
-    char *name = g_strdup(gtk_entry_get_text(GTK_ENTRY(a->name)));
-    GdkWindow *gdk = gtk_widget_get_window(GTK_WIDGET(win));
-    GdkCursor *busy = gdk_cursor_new_from_name(gdk_window_get_display(gdk), "wait");
-    gdk_window_set_cursor(gdk, busy);
-    xd_wizard_set_next_sensitive(w, false);
-    /* The scheduler asks the printer about itself: a few seconds. */
-    while (gtk_events_pending())
-        gtk_main_iteration();
-    xd_cups_auth_reset();
-    GError *error = nullptr;
-    bool ok = xd_printer_add(name, uri, gtk_entry_get_text(GTK_ENTRY(a->comment)),
-                             gtk_entry_get_text(GTK_ENTRY(a->location)), &error);
-    gdk_window_set_cursor(gdk, nullptr);
-    g_object_unref(busy);
-    xd_wizard_set_next_sensitive(w, true);
-    if (!ok) {
-        xd_printers_error(win, error);
-        g_error_free(error);
-    } else {
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->default_yes)))
-            xd_printer_do_set_default(win, name);
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->test_yes)) &&
-            !xd_printer_print_test_page(name, nullptr, &error)) {
-            xd_printers_error(win, error);
-            g_clear_error(&error);
-        }
-        xd_printers_changed();
-    }
-    g_free(name);
-    g_free(uri);
     g_free(model);
-    return ok;
+    adding *d = g_new0(adding, 1);
+    d->name = g_strdup(gtk_entry_get_text(GTK_ENTRY(a->name)));
+    d->uri = uri;
+    d->info = g_strdup(gtk_entry_get_text(GTK_ENTRY(a->comment)));
+    d->location = g_strdup(gtk_entry_get_text(GTK_ENTRY(a->location)));
+    d->set_default = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->default_yes));
+    d->test_page = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->test_yes));
+    set_busy(a, true);
+    GTask *task = g_task_new(nullptr, a->cancel, on_added, a);
+    g_task_set_task_data(task, d, adding_free);
+    g_task_run_in_thread(task, add_thread);
+    g_object_unref(task);
+    return false; /* on_added closes it */
 }
 
 static void add_wizard_free(gpointer data) {

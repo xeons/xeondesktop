@@ -23,7 +23,7 @@ static const char *no_password([[maybe_unused]] const char *prompt,
     return nullptr;
 }
 
-static void thread_init(void) {
+void xd_cups_thread_init(void) {
     static thread_local bool done = false;
     /* The main thread (whose id is the process's) has the real box. */
     if (done || gettid() == getpid())
@@ -121,7 +121,7 @@ static int by_name(gconstpointer a, gconstpointer b) {
 }
 
 GPtrArray *xd_printers_list(GError **error) {
-    thread_init();
+    xd_cups_thread_init();
     cups_dest_t *dests = nullptr;
     int n = cupsGetDests2(CUPS_HTTP_DEFAULT, &dests);
     GPtrArray *list = g_ptr_array_new_with_free_func((GDestroyNotify)xd_printer_free);
@@ -143,7 +143,7 @@ GPtrArray *xd_printers_list(GError **error) {
 }
 
 xd_printer *xd_printer_get(const char *name, GError **error) {
-    thread_init();
+    xd_cups_thread_init();
     cups_dest_t *dests = nullptr;
     int n = cupsGetDests2(CUPS_HTTP_DEFAULT, &dests);
     cups_dest_t *d = cupsGetDest(name, nullptr, n, dests);
@@ -153,6 +153,13 @@ xd_printer *xd_printer_get(const char *name, GError **error) {
         g_set_error(error, XD_CUPS_ERROR, IPP_STATUS_ERROR_NOT_FOUND,
                     "The printer %s no longer exists.", name);
     return p;
+}
+
+bool xd_printer_exists(const char *name) {
+    xd_cups_thread_init();
+    cups_dest_t *d = cupsGetNamedDest(CUPS_HTTP_DEFAULT, name, nullptr);
+    cupsFreeDests(d != nullptr ? 1 : 0, d);
+    return d != nullptr;
 }
 
 /* ipp://localhost/printers/NAME: how the scheduler names its queues. */
@@ -185,7 +192,7 @@ static void free_job(xd_print_job *j) {
 }
 
 GPtrArray *xd_print_jobs_list(const char *printer, GError **error) {
-    thread_init();
+    xd_cups_thread_init();
     static const char *const wanted[] = {
         "job-id",           "job-name",         "job-originating-user-name",
         "job-state",        "job-k-octets",     "job-impressions",

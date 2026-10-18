@@ -34,6 +34,7 @@ typedef struct queue {
     guint poll;
     int busy; /* actions running, which may wait in a question or the password box */
     bool loading, again, paused, syncing, gone;
+    bool seen; /* the printer, by a refresh (the window opens before) */
 } queue;
 
 /* What a refresh brings back from its thread. */
@@ -166,16 +167,25 @@ static void on_loaded([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer
         return; /* the scheduler went away; try again at the next poll */
     }
     if (s->printer == nullptr) {
+        snapshot_free(s);
+        if (!q->seen) {
+            /* It was gone before the window could show it. */
+            char *msg = g_strdup_printf("The printer %s no longer exists.", q->name);
+            xd_message_box(GTK_WINDOW(q->window), q->name, XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+            g_free(msg);
+            gtk_widget_destroy(q->window);
+            return;
+        }
         /* Deleted, here or elsewhere: nothing left to show. Not under an
          * action waiting in a question or the password box, though: it
          * still uses the window; it closes it when it's done. */
-        snapshot_free(s);
         if (q->busy > 0)
             q->gone = true;
         else
             gtk_widget_destroy(q->window);
         return;
     }
+    q->seen = true;
     show_printer(q, s->printer);
     char *port = xd_printer_port_text(s->printer->device_uri);
     if (s->jobs != nullptr)
@@ -451,14 +461,9 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     g_free(q);
 }
 
-void xd_print_queue_open(GtkWindow *parent, const char *name) {
-    GError *error = nullptr;
-    xd_printer *p = xd_printer_get(name, &error);
-    if (p == nullptr) {
-        xd_printers_error(parent, error);
-        g_clear_error(&error);
-        return;
-    }
+/* The window opens at once; the first refresh fills it in (the
+ * scheduler may take its time, or not answer at all). */
+void xd_print_queue_open([[maybe_unused]] GtkWindow *parent, const char *name) {
     queue *q = g_new0(queue, 1);
     q->name = g_strdup(name);
     q->cancel = g_cancellable_new();
@@ -502,8 +507,7 @@ void xd_print_queue_open(GtkWindow *parent, const char *name) {
     gtk_widget_set_margin_bottom(q->status, 2);
     gtk_box_pack_start(GTK_BOX(box), q->status, FALSE, FALSE, 0);
 
-    show_printer(q, p);
-    xd_printer_free(p);
+    gtk_window_set_title(GTK_WINDOW(q->window), name);
     gtk_widget_show_all(q->window);
     update_status(q);
     reload(q);

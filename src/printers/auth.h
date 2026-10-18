@@ -12,4 +12,13 @@ void xd_cups_auth_init(void);
  * (and gives up after three wrong passwords). */
 void xd_cups_auth_reset(void);
 
+/* For a change made in a worker thread, so the window doesn't freeze
+ * while the scheduler takes its time (libcups's callback is per thread):
+ * between these, the worker's requests ask with the same box, shown on
+ * the main thread while the worker waits for the answer. Begin is also
+ * the worker's reset; end leaves it asking nobody, as listing threads
+ * do. */
+void xd_cups_auth_worker_begin(void);
+void xd_cups_auth_worker_end(void);
+
 #endif

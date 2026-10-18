@@ -3,7 +3,8 @@
  * their jobs, and what changes them. Each call blocks until the scheduler
  * answers; listing is safe in worker threads (libcups keeps a connection
  * per thread). Changes run on the main thread, where cupsd may ask for a
- * password through the box auth.c shows.
+ * password through the box auth.c shows, or in a worker thread between
+ * xd_cups_auth_worker_begin and _end (Add Printer).
  */
 #ifndef XD_PRINTERS_CUPSOPS_H
 #define XD_PRINTERS_CUPSOPS_H
@@ -42,6 +43,11 @@ typedef enum xd_job_op : uint8_t {
     XD_JOB_CANCEL,
 } xd_job_op;
 
+/* A worker thread's libcups requests ask nobody for a password (libcups
+ * would ask on the terminal). The calls here that read do it themselves;
+ * a worker calling libcups directly does it first. */
+void xd_cups_thread_init(void);
+
 GQuark xd_cups_error_quark(void);
 #define XD_CUPS_ERROR (xd_cups_error_quark())
 /* Error codes are IPP status codes; this one means the password box was
@@ -53,6 +59,9 @@ GPtrArray *xd_printers_list(GError **error);
 /* One printer, or nullptr. Free with xd_printer_free. */
 xd_printer *xd_printer_get(const char *name, GError **error);
 void xd_printer_free(xd_printer *p);
+/* Whether a printer or class has this name (false if the scheduler can't
+ * be reached). */
+bool xd_printer_exists(const char *name);
 
 /* The printer's documents not yet printed, oldest first. */
 GPtrArray *xd_print_jobs_list(const char *printer, GError **error);
