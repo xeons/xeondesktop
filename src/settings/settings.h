@@ -65,6 +65,23 @@ typedef enum xd_power_scheme : uint8_t {
     XD_POWER_SCHEME_COUNT,
 } xd_power_scheme;
 
+/* Power Options' Alarms: what a battery alarm does when the charge falls
+ * to its level (Alarm Action...). The shell acts on them. */
+typedef enum xd_alarm_action : uint8_t {
+    XD_ALARM_NOTHING,   /* "When the alarm goes off" unchecked */
+    XD_ALARM_STANDBY,
+    XD_ALARM_HIBERNATE,
+    XD_ALARM_SHUTDOWN,
+    XD_ALARM_ACTION_COUNT,
+} xd_alarm_action;
+typedef struct xd_battery_alarm {
+    bool on;      /* "Activate ... battery alarm when power level reaches:" */
+    int percent;  /* that level */
+    bool sound;   /* Notification: Sound alarm (the scheme's battery sound) */
+    bool message; /* Notification: Display message */
+    xd_alarm_action action;
+} xd_battery_alarm;
+
 /* [Keyboard]: XKB names ("" = XKB_DEFAULT_* or the system default) and
  * key repeat, applied by the compositor to every keyboard. */
 typedef struct xd_keyboard_settings {
@@ -242,6 +259,7 @@ typedef struct xd_settings {
     char power_scheme_custom[64];
     bool battery_icon;    /* "Always show icon on the taskbar"; else only on battery */
     bool resume_password; /* lock the screen before sleeping */
+    xd_battery_alarm low_alarm, critical_alarm; /* Alarms */
 
     /* [Bluetooth] */
     bool bluetooth_icon; /* "Show the Bluetooth icon in the notification area" */
@@ -300,6 +318,23 @@ bool xd_settings_qt_env(const xd_settings *s);
 bool xd_qt_env_ours(const char *var);
 /* "home", "portable", ...: [Power] Scheme's values. */
 const char *xd_power_scheme_name(xd_power_scheme scheme);
+
+/* The battery alarms: which one goes off now, as the charge reaches
+ * `percent`. Each goes off once on the way down (the critical one marks
+ * the low one done too); `discharging` false (plugged in) starts them
+ * again. `done` holds that between calls: zero it to start. */
+typedef enum xd_alarm_fired : uint8_t {
+    XD_ALARM_FIRED_NONE,
+    XD_ALARM_FIRED_LOW,
+    XD_ALARM_FIRED_CRITICAL,
+} xd_alarm_fired;
+typedef struct xd_alarm_done {
+    bool low, critical;
+} xd_alarm_done;
+xd_alarm_fired xd_battery_alarm_check(const xd_settings *s, xd_alarm_done *done, double percent,
+                                      bool discharging);
+/* "standby", ...: [Power] *AlarmAction's values. */
+const char *xd_alarm_action_name(xd_alarm_action action);
 
 /* Limits of the [Mouse] values, for the applets' sliders. */
 enum {

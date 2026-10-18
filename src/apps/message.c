@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * xd-message [--error|--warning|--info] TITLE TEXT: a Windows message box
- * with an OK button, for programs without dialogs of their own (the
- * shell: "Error Renaming File or Folder").
+ * xd-message [--quiet] [--error|--warning|--info] TITLE TEXT: a Windows
+ * message box with an OK button, for programs without dialogs of their own
+ * (the shell: "Error Renaming File or Folder", the battery alarms).
+ * --quiet: no sound (the battery alarms have their own, if any).
  */
 #include <stdlib.h>
 #include <string.h>
@@ -46,19 +47,22 @@ int main(int argc, char **argv) {
     const char *icon = "dialog-information";
     xd_sound_event sound = XD_SOUND_ASTERISK; /* each icon's, as in Windows */
     int first = 1;
-    if (argc > 1 && strcmp(argv[1], "--error") == 0) {
+    bool quiet = argc > first && strcmp(argv[first], "--quiet") == 0;
+    if (quiet)
+        first++;
+    if (argc > first && strcmp(argv[first], "--error") == 0) {
         icon = "dialog-error";
         sound = XD_SOUND_CRITICAL_STOP;
-        first = 2;
-    } else if (argc > 1 && strcmp(argv[1], "--warning") == 0) {
+        first++;
+    } else if (argc > first && strcmp(argv[first], "--warning") == 0) {
         icon = "dialog-warning";
         sound = XD_SOUND_EXCLAMATION;
-        first = 2;
-    } else if (argc > 1 && strcmp(argv[1], "--info") == 0) {
-        first = 2;
+        first++;
+    } else if (argc > first && strcmp(argv[first], "--info") == 0) {
+        first++;
     }
     if (argc - first != 2) {
-        fprintf(stderr, "usage: xd-message [--error|--warning|--info] TITLE TEXT\n");
+        fprintf(stderr, "usage: xd-message [--quiet] [--error|--warning|--info] TITLE TEXT\n");
         return EXIT_FAILURE;
     }
     const char *title = argv[first];
@@ -80,7 +84,8 @@ int main(int argc, char **argv) {
     xd_window_set_cancel(win, ok);
     xd_window_set_focus(win, ok);
     xd_window_show(win);
-    xd_sound_play_event(sound);
+    if (!quiet)
+        xd_sound_play_event(sound);
     xd_ui_run(ui);
     xd_ui_destroy(ui);
     return EXIT_SUCCESS;

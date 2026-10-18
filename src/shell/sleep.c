@@ -209,7 +209,7 @@ void xd_sleep_finish(xd_shell *shell) {
 }
 
 static void slept(GObject *src, GAsyncResult *res, gpointer data) {
-    const char *method = GPOINTER_TO_INT(data) != 0 ? "Hibernate" : "Suspend";
+    const char *method = data;
     GError *error = nullptr;
     GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
     if (r != nullptr) {
@@ -221,17 +221,23 @@ static void slept(GObject *src, GAsyncResult *res, gpointer data) {
     }
 }
 
-void xd_sleep_now(xd_shell *shell, bool hibernate) {
-    const char *method = hibernate ? "Hibernate" : "Suspend";
+/* Suspend, Hibernate or PowerOff. */
+static void call_logind(xd_shell *shell, const char *method) {
     xd_sleep *sl = shell->sleep;
     if (sl == nullptr || sl->bus == nullptr) {
-        fprintf(stderr, "xd-shell: idle; %s\n",
-                simulated() ? "nested session, not sleeping" : "no system bus, not sleeping");
+        fprintf(stderr, "xd-shell: %s; %s\n", method,
+                simulated() ? "nested session, not doing it" : "no system bus, not doing it");
         return;
     }
     /* interactive = false: no password prompt; logind just refuses if
-     * polkit wants one, or if a program blocks sleep. */
+     * polkit wants one, or if a program blocks it. */
     g_dbus_connection_call(sl->bus, LOGIN1, LOGIN1_PATH, LOGIN1_MANAGER, method,
                            g_variant_new("(b)", FALSE), nullptr, G_DBUS_CALL_FLAGS_NONE, -1,
-                           sl->cancel, slept, GINT_TO_POINTER(hibernate));
+                           sl->cancel, slept, (gpointer)(uintptr_t)method);
 }
+
+void xd_sleep_now(xd_shell *shell, bool hibernate) {
+    call_logind(shell, hibernate ? "Hibernate" : "Suspend");
+}
+
+void xd_power_off_now(xd_shell *shell) { call_logind(shell, "PowerOff"); }

@@ -1063,6 +1063,50 @@ static void test_power_settings(void) {
     CHECK(a.power_scheme == XD_POWER_HOME && a.standby == 0 && a.hibernate == 0);
 }
 
+/* Power Options' Alarms: the keys, and when each alarm goes off. */
+static void test_battery_alarms(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    /* XP's levels, sound and message on, no action. */
+    CHECK(a.low_alarm.on && a.low_alarm.percent == 10 && a.low_alarm.sound &&
+          a.low_alarm.message && a.low_alarm.action == XD_ALARM_NOTHING);
+    CHECK(a.critical_alarm.on && a.critical_alarm.percent == 3 &&
+          a.critical_alarm.action == XD_ALARM_NOTHING);
+    xd_settings_parse(XD_STR("[Power]\nLowAlarmLevel=25\nLowAlarmSound=false\n"
+                             "CriticalAlarmAction=hibernate\nCriticalAlarmMessage=false\n"
+                             "LowAlarmAction=reboot\nCriticalAlarmLevel=101\n"),
+                      &a);
+    CHECK(a.low_alarm.percent == 25 && !a.low_alarm.sound && a.low_alarm.message);
+    /* An unknown action and a level out of range: the defaults. */
+    CHECK(a.low_alarm.action == XD_ALARM_NOTHING && a.critical_alarm.percent == 3);
+    CHECK(a.critical_alarm.action == XD_ALARM_HIBERNATE && !a.critical_alarm.message);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "CriticalAlarmAction=hibernate") != nullptr);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && b.low_alarm.percent == 25);
+    xd_strbuf_free(&text);
+
+    /* Discharging from 30%: low at 25, critical at 3, each once. */
+    xd_alarm_done done = {0};
+    CHECK(xd_battery_alarm_check(&a, &done, 30, true) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&a, &done, 25, true) == XD_ALARM_FIRED_LOW);
+    CHECK(xd_battery_alarm_check(&a, &done, 20, true) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&a, &done, 3, true) == XD_ALARM_FIRED_CRITICAL);
+    CHECK(xd_battery_alarm_check(&a, &done, 1, true) == XD_ALARM_FIRED_NONE);
+    /* Plugged in, then unplugged again lower down: they start over, and a
+     * fall straight past both is only the critical one. */
+    CHECK(xd_battery_alarm_check(&a, &done, 2, false) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&a, &done, 2, true) == XD_ALARM_FIRED_CRITICAL);
+    CHECK(xd_battery_alarm_check(&a, &done, 2, true) == XD_ALARM_FIRED_NONE);
+    /* An alarm turned off never goes off. */
+    a.critical_alarm.on = false;
+    done = (xd_alarm_done){0};
+    CHECK(xd_battery_alarm_check(&a, &done, 2, true) == XD_ALARM_FIRED_LOW);
+    CHECK(xd_battery_alarm_check(&a, &done, 1, true) == XD_ALARM_FIRED_NONE);
+}
+
 static void test_power_schemes(void) {
     /* No file: XP's six, with both columns. */
     GPtrArray *s = xd_power_schemes_load("/nonexistent/power-schemes.ini");
@@ -3669,6 +3713,7 @@ int main(void) {
     test_desktop_icon_settings();
     test_tray_rules();
     test_power_settings();
+    test_battery_alarms();
     test_power_schemes();
     test_sound_scheme();
     test_gtk_css();

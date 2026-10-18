@@ -465,13 +465,16 @@ bool xd_shell_have_program(const char *program);
  * before sleeping ([Power] PasswordOnResume). */
 void xd_sleep_init(xd_shell *shell);
 void xd_sleep_finish(xd_shell *shell);
-/* sounds.c: Device Connect and Disconnect, and the battery alarms. */
+/* sounds.c: Device Connect and Disconnect, and Power Options' battery
+ * alarms (their sound, message and action). */
 void xd_shell_sounds_init(void);
-void xd_shell_battery_sound(double percent, bool discharging);
+void xd_shell_battery_alarm(xd_shell *shell, double percent, bool discharging);
 /* Settings changed. */
 void xd_sleep_update(xd_shell *shell);
 /* Idle long enough: stand by (or hibernate). */
 void xd_sleep_now(xd_shell *shell, bool hibernate);
+/* A battery alarm's Shut down. */
+void xd_power_off_now(xd_shell *shell);
 /* account.c: the user's full name (XP Start menu) and Switch User. */
 void xd_account_init(xd_shell *shell);
 void xd_account_finish(xd_shell *shell);

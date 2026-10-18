@@ -1211,6 +1211,59 @@ def task_manager_users(s):
         DBusTestCase.tearDownClass()
 
 
+@scenario(LUNA_INI, requires=("dbusmock",))
+def power_alarms(s):
+    """Power Options on a laptop (a dbusmock UPower battery): the Alarms and
+    Power Meter tabs are there, and the critical alarm's Alarm Action box
+    saves its action."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    try:
+        for template, params in (("upower", {"OnBattery": True}), ("logind", {})):
+            proc, _ = DBusTestCase.spawn_server_template(
+                template, params, stdout=subprocess.DEVNULL, system_bus=True
+            )
+            s.children.append(proc)
+        bus = dbus.SystemBus()
+        upower = bus.get_object("org.freedesktop.UPower", "/org/freedesktop/UPower")
+        mock = dbus.Interface(upower, MOCK_IFACE)
+        mock.AddDischargingBattery("BAT0", "Battery", 50.0, 3600)
+        mock.SetupDisplayDevice(2, 2, 50.0, 50.0, 100.0, 10.0, 3600, 0, True, "battery-good", 1)
+
+        empty = s.settle("desktop")
+        s.launch("xd-power", "--page", "1")
+        s.wait_window(title="Power Options Properties", state="activated")
+        dialog = s.settle("alarms")
+        x, y, _, _ = dialog.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        # The critical alarm's Alarm Action...: a dialog box of the window
+        # (not on the taskbar, so not in xd-windows' list).
+        s.inject("move", x + 78, y + 259, "click", "sleep", 500)
+        actions = s.settle("alarm-actions")
+        # Centred on its window (whose title bar goes inactive too).
+        ax, ay = x + 69, y + 102
+        s.check(actions.differs(dialog, (ax + 20, ay + 40, 240, 180)) > 0.2,
+                "Alarm Action opened its box")  # fmt: skip
+        # "When the alarm goes off" (Stand by, the first choice), OK, Apply.
+        s.inject("move", ax + 31, ay + 150, "click", "sleep", 300, "move", ax + 153, ay + 221,
+                 "click")  # fmt: skip
+        s.inject("sleep", 500)
+        s.inject("move", x + 372, y + 425, "click", "sleep", 500)
+
+        def saved():
+            ini = s.ini()
+            return ini.has_section("Power") and ini["Power"].get("CriticalAlarmAction")
+
+        s.check(s.wait(saved, "the alarm saved") == "standby", "Critical alarm: Stand by saved")
+        s.inject("move", x + 200, y + 49, "click", "sleep", 500)  # the Power Meter tab
+        meter = s.settle("power-meter")
+        s.check(meter.differs(dialog, (x + 20, y + 70, 380, 250)) > 0.02,
+                "the Power Meter tab shows")  # fmt: skip
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

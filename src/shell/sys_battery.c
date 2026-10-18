@@ -73,7 +73,7 @@ static void read_props(battery *b) {
         xd_idle_update(b->shell);
     }
     xd_tray_changed(b->shell);
-    xd_shell_battery_sound(b->percent, b->present && (b->state == DISCHARGING || b->state == EMPTY));
+    xd_shell_battery_alarm(b->shell, b->percent, on_battery);
 }
 
 static void props_changed([[maybe_unused]] GDBusProxy *p, [[maybe_unused]] GVariant *changed,

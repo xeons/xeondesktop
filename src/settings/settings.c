@@ -33,6 +33,12 @@ static const char *const power_scheme_names[XD_POWER_SCHEME_COUNT] = {
     [XD_POWER_MINIMAL] = "minimal",
     [XD_POWER_MAX_BATTERY] = "maxbattery",
 };
+static const char *const alarm_action_names[XD_ALARM_ACTION_COUNT] = {
+    [XD_ALARM_NOTHING] = "none",
+    [XD_ALARM_STANDBY] = "standby",
+    [XD_ALARM_HIBERNATE] = "hibernate",
+    [XD_ALARM_SHUTDOWN] = "shutdown",
+};
 static const char *const desk_icon_size_names[] = {"small", "medium", "large"};
 /* [DesktopIcons]' Change Icon keys, by xd_desk_icon. */
 static const char *const desk_icon_keys[XD_DESK_ICON_COUNT] = {
@@ -157,6 +163,28 @@ bool xd_settings_qt_env(const xd_settings *s) {
     return theme || style || colours;
 }
 
+const char *xd_alarm_action_name(xd_alarm_action action) {
+    return action < XD_ALARM_ACTION_COUNT ? alarm_action_names[action] : alarm_action_names[0];
+}
+
+xd_alarm_fired xd_battery_alarm_check(const xd_settings *s, xd_alarm_done *done, double percent,
+                                      bool discharging) {
+    if (!discharging) {
+        *done = (xd_alarm_done){0};
+        return XD_ALARM_FIRED_NONE;
+    }
+    const xd_battery_alarm *low = &s->low_alarm, *critical = &s->critical_alarm;
+    if (critical->on && percent <= critical->percent && !done->critical) {
+        done->critical = done->low = true;
+        return XD_ALARM_FIRED_CRITICAL;
+    }
+    if (low->on && percent <= low->percent && !done->low) {
+        done->low = true;
+        return XD_ALARM_FIRED_LOW;
+    }
+    return XD_ALARM_FIRED_NONE;
+}
+
 const char *xd_power_scheme_name(xd_power_scheme scheme) {
     XD_ASSERT((unsigned)scheme < XD_POWER_SCHEME_COUNT);
     return power_scheme_names[scheme];
@@ -200,6 +228,10 @@ void xd_settings_defaults(xd_settings *s) {
         .volume_icon = true,
         .battery_icon = true,
         .resume_password = true, /* as in XP */
+        /* XP's levels. No action by default: UPower takes its own
+         * CriticalPowerAction just below. */
+        .low_alarm = {.on = true, .percent = 10, .sound = true, .message = true},
+        .critical_alarm = {.on = true, .percent = 3, .sound = true, .message = true},
         .bluetooth_icon = true,
         /* XP's, except extensions, which stay visible: renaming edits the
          * whole name. */
@@ -347,6 +379,25 @@ static void parse_access(xd_access_settings *a, xd_str key, xd_str v) {
             a->saved_style = st;
     } else if (KEY("SavedScheme")) {
         parse_stem(v, a->saved_scheme, sizeof(a->saved_scheme));
+    }
+#undef KEY
+}
+
+/* [Power] LowAlarm*, CriticalAlarm*: `key` without its prefix. */
+static void parse_alarm(xd_battery_alarm *al, xd_str key, xd_str v) {
+#define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
+    if (KEY("")) {
+        parse_bool(v, &al->on);
+    } else if (KEY("Level")) {
+        parse_int(v, 0, 100, &al->percent);
+    } else if (KEY("Sound")) {
+        parse_bool(v, &al->sound);
+    } else if (KEY("Message")) {
+        parse_bool(v, &al->message);
+    } else if (KEY("Action")) {
+        int i = index_of(alarm_action_names, XD_ARRAY_LEN(alarm_action_names), v);
+        if (i >= 0)
+            al->action = (xd_alarm_action)i;
     }
 #undef KEY
 }
@@ -544,6 +595,11 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &s->battery_icon);
         } else if (KEY("PasswordOnResume")) {
             parse_bool(v, &s->resume_password);
+        } else if (key.len >= 8 && xd_str_eq_nocase(xd_str_sub(key, 0, 8), XD_STR("LowAlarm"))) {
+            parse_alarm(&s->low_alarm, xd_str_sub(key, 8, key.len), v);
+        } else if (key.len >= 13 &&
+                   xd_str_eq_nocase(xd_str_sub(key, 0, 13), XD_STR("CriticalAlarm"))) {
+            parse_alarm(&s->critical_alarm, xd_str_sub(key, 13, key.len), v);
         }
     } else if (SEC("Folders")) {
         xd_folder_settings *f = &s->folders;
@@ -697,6 +753,23 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Power", "CustomScheme", s->power_scheme_custom);
     g_key_file_set_boolean(kf, "Power", "AlwaysShowIcon", s->battery_icon);
     g_key_file_set_boolean(kf, "Power", "PasswordOnResume", s->resume_password);
+    const struct {
+        const char *prefix;
+        const xd_battery_alarm *alarm;
+    } alarms[] = {{"LowAlarm", &s->low_alarm}, {"CriticalAlarm", &s->critical_alarm}};
+    for (size_t i = 0; i < XD_ARRAY_LEN(alarms); i++) {
+        const xd_battery_alarm *al = alarms[i].alarm;
+        char key[32];
+        g_key_file_set_boolean(kf, "Power", alarms[i].prefix, al->on);
+        g_snprintf(key, sizeof(key), "%sLevel", alarms[i].prefix);
+        g_key_file_set_integer(kf, "Power", key, al->percent);
+        g_snprintf(key, sizeof(key), "%sSound", alarms[i].prefix);
+        g_key_file_set_boolean(kf, "Power", key, al->sound);
+        g_snprintf(key, sizeof(key), "%sMessage", alarms[i].prefix);
+        g_key_file_set_boolean(kf, "Power", key, al->message);
+        g_snprintf(key, sizeof(key), "%sAction", alarms[i].prefix);
+        g_key_file_set_string(kf, "Power", key, alarm_action_names[al->action]);
+    }
     g_key_file_set_boolean(kf, "Bluetooth", "ShowIcon", s->bluetooth_icon);
     const xd_folder_settings *f = &s->folders;
     g_key_file_set_boolean(kf, "Folders", "NewWindow", f->new_window);
