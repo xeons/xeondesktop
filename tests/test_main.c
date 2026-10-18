@@ -36,6 +36,7 @@
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
 #include "../src/security/passwd.h"
+#include "../src/settings/gtktheme.h"
 #include "../src/settings/qtpalette.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
@@ -820,6 +821,7 @@ static void test_theme_settings(void) {
     put_file(root, "one/themes/Zap/gtk-3.0/gtk.css", "");
     put_file(root, "one/themes/Old/gtk-2.0/gtkrc", "");
     put_file(root, "one/themes/XeonDesktop/gtk-3.0/gtk.css", "");
+    put_file(root, "one/themes/XeonDesktop-alt/gtk-3.0/gtk.css", "");
     put_file(root, "one/themes/Breeze/gtk-3.0/gtk.css", "");
     put_file(root, "two/themes/Breeze/gtk-3.0/gtk.css", "");
 
@@ -908,7 +910,32 @@ static void test_theme_settings(void) {
         v = g_settings_get_string(s, "icon-theme");
         CHECK(strcmp(v, "zed") == 0);
         g_free(v);
+        /* After a rewrite, ours switches between its two names (GTK only
+         * reloads a theme when the name changes)... */
+        CHECK(xd_gtk_theme_nudge(backend));
+        v = g_settings_get_string(s, "gtk-theme");
+        CHECK(strcmp(v, XD_GTK_THEME_ALT_NAME) == 0);
+        g_free(v);
+        CHECK(xd_gtk_theme_nudge(backend));
+        v = g_settings_get_string(s, "gtk-theme");
+        CHECK(strcmp(v, XD_GTK_THEME_NAME) == 0);
+        g_free(v);
+        /* ...but another theme set there stays. */
+        g_settings_set_string(s, "gtk-theme", "Zap");
+        CHECK(!xd_gtk_theme_nudge(backend));
+        v = g_settings_get_string(s, "gtk-theme");
+        CHECK(strcmp(v, "Zap") == 0);
+        g_free(v);
         g_object_unref(s);
+        /* Nothing set at all: ours goes in. */
+        GSettingsBackend *fresh = g_memory_settings_backend_new();
+        CHECK(xd_gtk_theme_nudge(fresh));
+        s = g_settings_new_full(schema, fresh, nullptr);
+        v = g_settings_get_string(s, "gtk-theme");
+        CHECK(strcmp(v, XD_GTK_THEME_NAME) == 0);
+        g_free(v);
+        g_object_unref(s);
+        g_object_unref(fresh);
         g_settings_schema_unref(schema);
     }
     g_object_unref(backend);

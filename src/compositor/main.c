@@ -324,11 +324,19 @@ static void server_finish(xd_server *server) {
         wl_display_destroy(server->display);
 }
 
-/* Regenerates the GTK3 theme to match the current style and scheme. */
-static void install_gtk_theme(xd_server *server) {
+/* Regenerates the GTK3 theme to match the current style and scheme. After
+ * a change (`settings`; nullptr at startup), other programs' GTK 3
+ * windows follow it too: they're told through GSettings, which only a
+ * real session may touch (a nested one's are the host desktop's), and
+ * only while ours is the GTK theme in use. */
+static void install_gtk_theme(xd_server *server, const xd_settings *settings) {
     xd_strbuf err = {0};
-    if (!xd_gtk_theme_install(server->config.style, &server->config.scheme, &err))
+    bool changed = false;
+    if (!xd_gtk_theme_install(server->config.style, &server->config.scheme, &changed, &err))
         wlr_log(WLR_ERROR, "cannot write the GTK theme: %s", xd_strbuf_cstr(&err));
+    else if (changed && settings != nullptr && server->session != nullptr &&
+             settings->gtk_theme[0] == '\0')
+        xd_gtk_theme_nudge(nullptr);
     xd_strbuf_free(&err);
 }
 
@@ -419,7 +427,7 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     xd_settings_scheme(&settings, &server->config.scheme);
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
 
-    install_gtk_theme(server);
+    install_gtk_theme(server, &settings);
     set_gtk_theme_env(server, &settings, false);
     set_qt_env(server, &settings, false);
     update_appicons(server, &settings);
@@ -593,7 +601,7 @@ int main(int argc, char **argv) {
     /* GTK3 apps use the theme generated from our appearance settings (or
      * the one chosen in Display Properties), with Windows-style permanent
      * scroll bars. */
-    install_gtk_theme(&server);
+    install_gtk_theme(&server, nullptr);
     set_gtk_theme_env(&server, &settings, true);
     setenv("GTK_OVERLAY_SCROLLING", "0", true);
     /* Qt programs follow the GTK theme, unless the user set up their own

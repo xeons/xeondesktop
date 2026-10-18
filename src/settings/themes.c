@@ -107,6 +107,7 @@ GPtrArray *xd_gtk_themes_list(const char *const *dirs) {
     add(list, seen, "Adwaita", nullptr);
     add(list, seen, "HighContrast", nullptr);
     g_hash_table_add(seen, g_strdup(XD_GTK_THEME_NAME));
+    g_hash_table_add(seen, g_strdup(XD_GTK_THEME_ALT_NAME));
     for (; dirs != nullptr && *dirs != nullptr; dirs++) {
         GDir *d = g_dir_open(*dirs, 0, nullptr);
         if (d == nullptr)

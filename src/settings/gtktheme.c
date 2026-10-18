@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <string.h>
 
 #include "gtktheme.h"
 #include "qtpalette.h"
@@ -75,7 +76,66 @@ static bool write_button_png(xd_visual_style style, const xd_scheme *scheme, con
     return ok;
 }
 
-bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, xd_strbuf *err) {
+/* The theme's own settings, which GTK reads with it: dialogs that say how
+ * (message boxes among them) put the affirmative button first, Yes before
+ * No and OK before Cancel, as Windows does. */
+static bool write_settings_ini(const char *gtk3, xd_strbuf *err) {
+    GKeyFile *kf = g_key_file_new();
+    g_key_file_set_boolean(kf, "Settings", "gtk-alternative-button-order", TRUE);
+    gsize len = 0;
+    char *data = g_key_file_to_data(kf, &len, nullptr);
+    char *path = g_build_filename(gtk3, "settings.ini", nullptr);
+    bool ok = write_file(path, (xd_str){data, len}, err);
+    g_free(path);
+    g_free(data);
+    g_key_file_free(kf);
+    return ok;
+}
+
+static bool write_index(const char *dir, const char *name, xd_strbuf *err) {
+    GKeyFile *kf = g_key_file_new();
+    g_key_file_set_string(kf, "Desktop Entry", "Type", "X-GNOME-Metatheme");
+    g_key_file_set_string(kf, "Desktop Entry", "Name", name);
+    g_key_file_set_string(kf, "Desktop Entry", "Comment",
+                          "Generated from the XeonDesktop appearance");
+    g_key_file_set_string(kf, "X-GNOME-Metatheme", "GtkTheme", name);
+    gsize len = 0;
+    char *data = g_key_file_to_data(kf, &len, nullptr);
+    char *path = g_build_filename(dir, "index.theme", nullptr);
+    bool ok = write_file(path, (xd_str){data, len}, err);
+    g_free(path);
+    g_free(data);
+    g_key_file_free(kf);
+    return ok;
+}
+
+/* The same theme under a second name (its CSS imports ours), for
+ * xd_gtk_theme_nudge to switch to and back. */
+static bool install_alt(xd_strbuf *err) {
+    char *dir = g_build_filename(g_get_user_data_dir(), "themes", XD_GTK_THEME_ALT_NAME, nullptr);
+    char *gtk3 = g_build_filename(dir, "gtk-3.0", nullptr);
+    bool ok = g_mkdir_with_parents(gtk3, 0755) == 0;
+    if (!ok && err != nullptr)
+        xd_strbuf_appendf(err, "cannot create %s", gtk3);
+    if (ok) {
+        static const char css[] = "@import url(\"../../" XD_GTK_THEME_NAME "/gtk-3.0/gtk.css\");\n";
+        char *path = g_build_filename(gtk3, "gtk.css", nullptr);
+        ok = write_file(path, (xd_str){css, sizeof(css) - 1}, err);
+        g_free(path);
+    }
+    if (ok)
+        ok = write_settings_ini(gtk3, err);
+    if (ok)
+        ok = write_index(dir, XD_GTK_THEME_ALT_NAME, err);
+    g_free(gtk3);
+    g_free(dir);
+    return ok;
+}
+
+bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, bool *changed,
+                          xd_strbuf *err) {
+    if (changed != nullptr)
+        *changed = false;
     char *dir = theme_dir();
     char *gtk3 = g_build_filename(dir, "gtk-3.0", nullptr);
     bool ok = g_mkdir_with_parents(gtk3, 0755) == 0;
@@ -115,27 +175,58 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, xd_str
             g_free(path);
             xd_strbuf_free(&json);
         }
+        if (ok)
+            ok = write_settings_ini(gtk3, err);
         xd_strbuf css = {0};
         if (ok) {
             xd_theme_gtk_css(&t, &css);
             char *path = g_build_filename(gtk3, "gtk.css", nullptr);
+            if (changed != nullptr) {
+                char *old = nullptr;
+                gsize len = 0;
+                *changed = !g_file_get_contents(path, &old, &len, nullptr) ||
+                           !xd_str_eq((xd_str){old, len}, xd_strbuf_view(&css));
+                g_free(old);
+            }
             ok = write_file(path, xd_strbuf_view(&css), err);
             g_free(path);
         }
         xd_strbuf_free(&css);
     }
-    if (ok) {
-        static const char index_theme[] = "[Desktop Entry]\n"
-                                          "Type=X-GNOME-Metatheme\n"
-                                          "Name=" XD_GTK_THEME_NAME "\n"
-                                          "Comment=Generated from the XeonDesktop appearance\n"
-                                          "\n[X-GNOME-Metatheme]\n"
-                                          "GtkTheme=" XD_GTK_THEME_NAME "\n";
-        char *path = g_build_filename(dir, "index.theme", nullptr);
-        ok = write_file(path, (xd_str){index_theme, sizeof(index_theme) - 1}, err);
-        g_free(path);
-    }
+    if (ok)
+        ok = write_index(dir, XD_GTK_THEME_NAME, err);
+    if (ok)
+        ok = install_alt(err);
     g_free(gtk3);
     g_free(dir);
     return ok;
+}
+
+bool xd_gtk_theme_nudge(GSettingsBackend *backend) {
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    GSettingsSchema *schema = src != nullptr ? g_settings_schema_source_lookup(
+                                                   src, "org.gnome.desktop.interface", TRUE)
+                                             : nullptr;
+    if (schema == nullptr)
+        return false;
+    bool done = false;
+    if (g_settings_schema_has_key(schema, "gtk-theme")) {
+        GSettings *s = g_settings_new_full(schema, backend, nullptr);
+        GVariant *set = g_settings_get_user_value(s, "gtk-theme");
+        char *now = g_settings_get_string(s, "gtk-theme");
+        bool ours = strcmp(now, XD_GTK_THEME_NAME) == 0;
+        /* A theme chosen there with other tools (GNOME Tweaks, nwg-look)
+         * stays: only ours, or none at all, is switched. */
+        if (set == nullptr || ours || strcmp(now, XD_GTK_THEME_ALT_NAME) == 0) {
+            done = g_settings_set_string(s, "gtk-theme",
+                                         ours ? XD_GTK_THEME_ALT_NAME : XD_GTK_THEME_NAME);
+            g_settings_sync();
+        }
+        g_free(now);
+        if (set != nullptr)
+            g_variant_unref(set);
+        g_object_unref(s);
+    }
+    g_settings_schema_unref(schema);
+    return done;
 }
