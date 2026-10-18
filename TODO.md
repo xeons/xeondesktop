@@ -289,7 +289,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       **Untested against the real timedated** (it would change this
       machine's clock). The Time Zone tab draws XP's world map from Natural
       Earth's land outlines, with the zone's band lit and its city marked.
-      Not yet: 12-hour time entry, styled spin buttons.
+      Internet Time is XP's: the servers timesyncd uses (timesync1),
+      Update Now (restarts timesyncd), a typed server through
+      SetRuntimeNTPServers (kept until restart; keeping it for good needs
+      a root helper writing timesyncd.conf.d); greyed with a reason under
+      chrony or ntpd. The hardware clock in local time (SetLocalRTC), for
+      dual boot. Tested against dbusmock (UI tests timedate_*). Not yet:
+      12-hour time entry, styled spin buttons.
 - [~] Our own applets, drawn by the theme engine: volume (libpulse; XP's
       flyout with slider and Mute, the wheel, Mute and pavucontrol in the
       menu), network (NetworkManager: wired / Wi-Fi with signal, networks in
@@ -800,7 +806,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       and Audio Devices (libpulse: volume, default devices; XP's sound
       scheme with libcanberra), Power Options (`[Power]`: monitor off,
       standby and hibernate timers through logind, the battery icon, lock
-      on resume; lid/power buttons read-only from logind), Regional and
+      on resume; the lid, power and sleep buttons per user: the shell takes
+      logind's block inhibitors for the ones changed and acts itself, the
+      lid doing nothing when docked; UI test power_buttons on dbusmock's
+      logind, the real lid switch untested), Regional and
       Language Options (your LC_* formats in environment.d with samples;
       the system locale and keyboard through localed), User Accounts (XP's
       task pages over AccountsService: picture to ~/.face, name, password
@@ -856,8 +865,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       install, package files, groups).
 - [ ] Second-round applets untested for real: Disk Management's writes on a
       real disk (try a spare virtual disk first: initialize, create,
-      format, resize, delete), real polkit prompts for services, packages
-      and printers, real pairing, a real controller's test page, real
+      format, resize, delete, a full format, a startup mount point in
+      /etc/fstab and booting with it), real polkit prompts for services,
+      packages and printers, automatic logon with a real GDM
+      (`xd-control userpasswords2`), a next-start boot entry with a real
+      systemd-boot, real pairing, a real controller's test page, real
       printers/scanners/cameras, DNS-SD printer discovery, a real systemd
       user manager running scheduled tasks.
 - [~] Session: a real login hands the user manager WAYLAND_DISPLAY,
@@ -876,10 +888,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Hardware (Kernel Modules, Driver Signing = Secure Boot / module
       signature enforcement / lockdown / taint, Device Manager from udev
       with General/Driver/Details per device, Power Profiles through
-      power-profiles-daemon); User Profiles (home folders with their size);
+      power-profiles-daemon); User Profiles (home folders with their size;
+      Delete removes the account through AccountsService; Change Type and
+      Copy To stay greyed, with no Linux meaning);
       Advanced (Performance = scheduler and swap/zram, Environment
       Variables in `~/.config/environment.d`, Startup and Recovery = the
-      boot loader's entries from EFI variables, panic and core dump
+      boot loader's entries from EFI variables, the next start's entry
+      through logind's SetRebootToBootLoaderEntry where it can (the
+      permanent default needs an administrator), panic and core dump
       handling). Tested: every tab and dialog opens and shows the right
       data; adding a user environment variable. **Untested: renaming the
       computer, its description and changing the power profile** (they go
@@ -920,9 +936,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       ~410).
 - [x] Alt+letter opens that menu in our GTK apps (GTK on Wayland's synthetic
       enter during the menu bar's grab selected File).
-- [ ] Printer changes (Pause, Delete, Properties' Apply, Preferences) still
-      call CUPS on the main thread; Add Printer's Name page shares N between
-      "Printer name" and "Next". Fixed: desktop submenus behind windows,
+- [x] Printer changes (Pause, Delete, Properties' Apply, Preferences) run
+      off the main thread (xd_printers_run); Add Printer's name box has P.
+      Printer Properties' Ports tab changes the device URI (Add Port from
+      CUPS-Get-Devices, Configure Port) and a Sharing tab shares it, turning
+      on the server's sharing when asked; tested against xd-cupsmock (a
+      libcups stand-in: Arch's cupsd is root-only). Fixed: desktop submenus behind windows,
       long drop-downs, frame pacing, the Add Printer freeze, Network
       Connections closing under its dialogs.
 - [x] CI (.github/workflows/ci.yml): GCC and Clang debug builds (ASan,

@@ -49,6 +49,17 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    /* XP's `control userpasswords2`: User Accounts' advanced window (its
+     * Users tab, with automatic logon), which has no applet of its own. */
+    if (argc == 2 && g_ascii_strcasecmp(argv[1], "userpasswords2") == 0) {
+        char program[] = "xd-users";
+        char advanced[] = "--advanced";
+        char *child[] = {program, advanced, nullptr};
+        execvp(program, child);
+        fprintf(stderr, "xd-control: cannot run %s\n", program);
+        return EXIT_FAILURE;
+    }
+
     if (argc == 2) {
         GDesktopAppInfo *info = xd_control_find(argv[1]);
         if (info == nullptr) {

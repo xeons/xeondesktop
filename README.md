@@ -265,9 +265,9 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 |---|---|---|
 | Accessibility Options | `xd-access` | StickyKeys, FilterKeys (SlowKeys, BounceKeys), ToggleKeys, MouseKeys and High Contrast, with XP's shortcuts, done by the compositor |
 | Add or Remove Programs | `xd-appwiz` | installed programs (size, last used, where each came from: the package manager's repository, Flatpak, AppImage), remove and install through PackageKit and Flatpak |
-| Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, formatting, resizing), Device Manager |
+| Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, quick or full formatting, resizing, startup mount points in /etc/fstab), Device Manager |
 | Bluetooth Devices | `xd-bluetooth` | pairing (XP SP2's wizard and passkeys), device properties, the adapter's options, through BlueZ |
-| Date and Time | `xd-timedate` | the clock and time zone, through timedated |
+| Date and Time | `xd-timedate` | the clock and time zone, through timedated; Internet Time's servers and Update Now on timesyncd; the hardware clock in local time, for dual boot |
 | Display | `xd-desk` | style, colours, wallpaper, screen saver, monitors |
 | Folder Options | `xd-folders` | the file manager's options, file types (`mimeapps.list`; new types in your shared-mime-info database) |
 | Fonts | `xd-fonts` | lists, previews, prints, installs and removes your fonts (fontconfig) |
@@ -275,15 +275,15 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 | Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options |
 | Mouse | `xd-mouse` | buttons, ClickLock, double-click speed, pointer theme and size, speed, wheel |
 | Network Connections | `xd-netconn` | connections, status, TCP/IP settings, wireless networks, through NetworkManager |
-| Power Options | `xd-power` | power schemes (plugged in and on batteries), monitor, standby and hibernate timers, battery alarms, the power meter, the battery icon, locking on resume |
-| Printers and Faxes | `xd-printers` | CUPS printers, queues, preferences, test pages, the Add Printer wizard |
+| Power Options | `xd-power` | power schemes (plugged in and on batteries), monitor, standby and hibernate timers, battery alarms, the power meter, the battery icon, locking on resume, and what the lid and the power and sleep buttons do, per user |
+| Printers and Faxes | `xd-printers` | CUPS printers, queues, preferences, test pages, the Add Printer wizard, ports and sharing |
 | Regional and Language Options | `xd-intl` | your formats, customised (numbers, currency, time, date); the system locale and keyboard through localed |
 | Scanners and Cameras | `xd-scanners` | SANE scanners and gphoto2 cameras, the Scanner and Camera Wizard |
 | Scheduled Tasks | `xd-schedtasks` | XP's wizard over systemd user timers: run programs daily, weekly, at logon... |
 | Sounds and Audio Devices | `xd-sound` | volume, default devices, the sound scheme: windows, menus, message boxes, devices, battery, Recycle Bin, logon and logoff (libcanberra) |
 | System | `xd-sysdm` | see below |
 | Taskbar and Start Menu | `xd-taskbar` | the taskbar and Start menu options |
-| User Accounts | `xd-users` | pictures, names, passwords and accounts, through AccountsService |
+| User Accounts | `xd-users` | pictures, names, passwords and accounts, through AccountsService; automatic logon (`xd-control userpasswords2`, for display managers that follow AccountsService) |
 
 Settings go to `desktop.ini` (`[Mouse]`, `[Accessibility]`, `[Power]`,
 `[Sound]`, `[Folders]`, ...), which the compositor, the shell and our GTK
