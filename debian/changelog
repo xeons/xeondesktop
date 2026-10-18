@@ -1,3 +1,23 @@
+xeondesktop (0.2.0) unstable; urgency=medium
+
+  * Aero (Windows 7) style with blurred glass on a GPU, Aero Snap, Peek and
+    Shake, and Windows 7's icon taskbar with pinned programs and jump lists.
+  * Luna colour schemes measured from Windows XP: Silver, Olive Green and
+    Energy Blue; all 22 classic colour schemes with checked colours.
+  * Control Panel: every applet, Administrative Tools (Services, Event
+    Viewer, Disk Management) and Scheduled Tasks.
+  * Start menus: Search, Help and Support, Default Programs, Switch User,
+    keyboard use; desktop icons with Customize Desktop and Auto Arrange.
+  * Explorer: file operations, Details columns, Send To, Undo, Recycle Bin.
+  * Sound scheme events, accessibility keys, title bar icons, icon theme,
+    GTK theme and Qt style settings; Qt programs follow the desktop's look.
+  * Session: systemd graphical-session.target, XDG autostart, VirtualBox's
+    shared clipboard; software rendering on virtual machine GPUs.
+  * Many fixes from a bug hunt, a headless UI test suite, and zero-warning
+    GCC and Clang builds, debug and optimized.
+
+ -- xeon <xeon.productions@gmail.com>  Sun, 18 Oct 2026 01:15:43 +0000
+
 xeondesktop (0.1.0) unstable; urgency=medium
 
   * First package.
