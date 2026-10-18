@@ -5,7 +5,10 @@
  *
  *   Date & Time    the month, year and day; an analog clock and the time
  *   Time Zone      the zone timedated knows
- *   Internet Time  network time synchronization (systemd-timesyncd)
+ *   Internet Time  network time synchronization: on or off through
+ *                  timedated; systemd-timesyncd's server and Update Now
+ *                  through timesyncd (org.freedesktop.timesync1) and
+ *                  systemd, when timesyncd is the time service
  */
 #include <math.h>
 #include <stdlib.h>
@@ -16,13 +19,24 @@
 #include "../core/common.h"
 #include "../settings/settings.h"
 #include "../gtkapp/gtkapp.h"
+#include "ntp.h"
 
 #define TIMEDATE "org.freedesktop.timedate1"
 #define TIMEDATE_PATH "/org/freedesktop/timedate1"
+#define TIMESYNC "org.freedesktop.timesync1"
+#define TIMESYNC_PATH "/org/freedesktop/timesync1"
+#define TIMESYNC_MANAGER "org.freedesktop.timesync1.Manager"
+#define TIMESYNC_UNIT "systemd-timesyncd.service"
+
+/* How long Update Now waits for the server's answer. */
+static constexpr guint SYNC_SECONDS = 15;
 
 typedef struct props {
     GtkWidget *window, *apply;
     GDBusProxy *td;
+    GDBusProxy *ts;      /* timesyncd, whether it runs or not */
+    GDBusProxy *systemd; /* for restarting timesyncd, made when needed */
+    bool ts_activatable; /* the bus starts timesyncd when asked: it's installed */
     /* Date & Time */
     GtkWidget *month, *year, *calendar, *clock, *hour, *minute, *second, *zone_label;
     bool time_edited, date_edited;
@@ -32,7 +46,12 @@ typedef struct props {
     GtkWidget *zones, *map;
     char *zone; /* as timedated has it */
     /* Internet Time */
-    GtkWidget *ntp, *ntp_status;
+    GtkWidget *ntp, *server, *update, *ntp_status, *ntp_note;
+    bool server_edited;
+    gint64 sync_since; /* Update Now waits for an answer received after this (0: it doesn't) */
+    char *sync_server;
+    guint sync_timeout;
+    char *sync_failed; /* why the last Update Now failed, shown until the next */
 } props;
 
 static void changed(props *p) { gtk_widget_set_sensitive(p->apply, TRUE); }
@@ -523,42 +542,8 @@ static GtkWidget *zone_page(props *p) {
     return page;
 }
 
-/* ---- Internet Time ---------------------------------------------------------- */
 
-static void show_ntp(props *p) {
-    p->updating = true;
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->ntp), td_bool(p, "NTP"));
-    p->updating = false;
-    gtk_widget_set_sensitive(p->ntp, td_bool(p, "CanNTP"));
-    gtk_label_set_text(GTK_LABEL(p->ntp_status),
-                       !td_bool(p, "CanNTP")        ? "Network time synchronization isn't available."
-                       : td_bool(p, "NTPSynchronized") ? "The clock is synchronized."
-                                                       : "The clock isn't synchronized yet.");
-}
-
-static void on_ntp([[maybe_unused]] GtkToggleButton *b, gpointer data) {
-    props *p = data;
-    if (!p->updating)
-        changed(p);
-}
-
-static GtkWidget *internet_page(props *p) {
-    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_container_set_border_width(GTK_CONTAINER(page), 10);
-    p->ntp = gtk_check_button_new_with_mnemonic(
-        "Automatically _synchronize with an Internet time server");
-    g_signal_connect(p->ntp, "toggled", G_CALLBACK(on_ntp), p);
-    gtk_box_pack_start(GTK_BOX(page), p->ntp, FALSE, FALSE, 0);
-    GtkWidget *server = gtk_label_new("Servers: those systemd-timesyncd is set up to use.");
-    gtk_label_set_xalign(GTK_LABEL(server), 0);
-    gtk_box_pack_start(GTK_BOX(page), server, FALSE, FALSE, 0);
-    p->ntp_status = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(p->ntp_status), 0);
-    gtk_box_pack_start(GTK_BOX(page), p->ntp_status, FALSE, FALSE, 0);
-    return page;
-}
-
-/* ---- applying -------------------------------------------------------------------- */
+/* ---- calling the services -------------------------------------------------------- */
 
 static void error_box(props *p, const char *what, GError *error) {
     char *text = g_strdup_printf("%s\n\n%s", what, error->message);
@@ -566,8 +551,8 @@ static void error_box(props *p, const char *what, GError *error) {
     g_free(text);
 }
 
-/* Apply waits for timedated (and its password prompt, which has no time
- * limit) in a main loop of its own, so the window keeps drawing and
+/* A call waits for its service (and its password prompt, which has no
+ * time limit) in a main loop of its own, so the window keeps drawing and
  * answering the compositor instead of turning "Not Responding". It takes
  * no input meanwhile. */
 typedef struct pending_call {
@@ -582,26 +567,377 @@ static void call_done(GObject *src, GAsyncResult *res, gpointer data) {
     g_main_loop_quit(c->loop);
 }
 
-static bool call(props *p, const char *method, GVariant *args, const char *what) {
+/* timesyncd and systemd ask polkit for a password only when the call
+ * allows it; timedated takes that as an argument. */
+static bool call_full(props *p, GDBusProxy *proxy, const char *method, GVariant *args,
+                      GError **error) {
     pending_call c = {.loop = g_main_loop_new(nullptr, FALSE)};
     p->busy = true;
     gtk_widget_set_sensitive(p->window, FALSE);
-    g_dbus_proxy_call(p->td, method, args, G_DBUS_CALL_FLAGS_NONE, G_MAXINT, nullptr, call_done,
-                      &c);
+    g_dbus_proxy_call(proxy, method, args, G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION,
+                      G_MAXINT, nullptr, call_done, &c);
     g_main_loop_run(c.loop);
     g_main_loop_unref(c.loop);
     gtk_widget_set_sensitive(p->window, TRUE);
     p->busy = false;
     if (c.result == nullptr) {
-        error_box(p, what, c.error);
-        g_error_free(c.error);
+        g_propagate_error(error, c.error);
         return false;
     }
     g_variant_unref(c.result);
     return true;
 }
 
-/* Nor may the window be destroyed under Apply. */
+static bool call(props *p, GDBusProxy *proxy, const char *method, GVariant *args,
+                 const char *what) {
+    GError *error = nullptr;
+    if (call_full(p, proxy, method, args, &error))
+        return true;
+    error_box(p, what, error);
+    g_error_free(error);
+    return false;
+}
+
+/* ---- Internet Time ---------------------------------------------------------- */
+
+static bool ts_running(props *p) {
+    if (p->ts == nullptr)
+        return false;
+    char *owner = g_dbus_proxy_get_name_owner(p->ts);
+    bool running = owner != nullptr;
+    g_free(owner);
+    return running;
+}
+
+static GVariant *ts_prop(props *p, const char *name) {
+    return ts_running(p) ? g_dbus_proxy_get_cached_property(p->ts, name) : nullptr;
+}
+
+static char **ts_strv(props *p, const char *name) {
+    GVariant *v = ts_prop(p, name);
+    char **list = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING_ARRAY)
+                      ? g_variant_dup_strv(v, nullptr)
+                      : nullptr;
+    if (v != nullptr)
+        g_variant_unref(v);
+    return list;
+}
+
+static char *ts_string(props *p, const char *name) {
+    GVariant *v = ts_prop(p, name);
+    char *s = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)
+                  ? g_variant_dup_string(v, nullptr)
+                  : nullptr;
+    if (v != nullptr)
+        g_variant_unref(v);
+    return s;
+}
+
+static guint64 ts_u64(props *p, const char *name) {
+    GVariant *v = ts_prop(p, name);
+    guint64 n = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_UINT64)
+                    ? g_variant_get_uint64(v)
+                    : 0;
+    if (v != nullptr)
+        g_variant_unref(v);
+    return n;
+}
+
+/* timesyncd takes a server while it runs since systemd 255, which added
+ * RuntimeNTPServers with SetRuntimeNTPServers. */
+static bool ts_can_set_server(props *p) {
+    GVariant *v = ts_prop(p, "RuntimeNTPServers");
+    if (v == nullptr)
+        return false;
+    g_variant_unref(v);
+    return true;
+}
+
+static gint64 ts_received(props *p) {
+    GVariant *v = ts_prop(p, "NTPMessage");
+    gint64 when = xd_ntp_message_received(v);
+    if (v != nullptr)
+        g_variant_unref(v);
+    return when;
+}
+
+/* The servers timesyncd knows, and in *current the one it uses (or would
+ * try first). */
+static char **ts_servers(props *p, char **current) {
+    char **runtime = ts_strv(p, "RuntimeNTPServers"), **link = ts_strv(p, "LinkNTPServers"),
+         **system = ts_strv(p, "SystemNTPServers"), **fallback = ts_strv(p, "FallbackNTPServers");
+    char **list = xd_ntp_server_list((const char *const *)runtime, (const char *const *)link,
+                                     (const char *const *)system, (const char *const *)fallback);
+    g_strfreev(runtime);
+    g_strfreev(link);
+    g_strfreev(system);
+    g_strfreev(fallback);
+    *current = ts_string(p, "ServerName");
+    if ((*current == nullptr || (*current)[0] == '\0') && list[0] != nullptr) {
+        g_free(*current);
+        *current = g_strdup(list[0]);
+    }
+    return list;
+}
+
+static GtkWidget *server_entry(props *p) { return gtk_bin_get_child(GTK_BIN(p->server)); }
+
+/* The server as typed, trimmed. */
+static char *server_text(props *p) {
+    return g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(server_entry(p)))));
+}
+
+static void fill_servers(props *p) {
+    char *current = nullptr;
+    char **list = ts_running(p) ? ts_servers(p, &current) : nullptr;
+    bool was_updating = p->updating;
+    p->updating = true;
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(p->server));
+    for (size_t i = 0; list != nullptr && list[i] != nullptr; i++)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->server), list[i]);
+    gtk_entry_set_text(GTK_ENTRY(server_entry(p)), current != nullptr ? current : "");
+    p->updating = was_updating;
+    g_strfreev(list);
+    g_free(current);
+}
+
+/* What the tab says under the server: Update Now's progress or failure,
+ * else when the clock was last synchronized and will be next, as XP. */
+static char *ntp_status_text(props *p) {
+    if (p->sync_since != 0)
+        return g_strdup_printf("Please wait while the time is synchronized with %s...",
+                               p->sync_server);
+    if (p->sync_failed != nullptr)
+        return g_strdup(p->sync_failed);
+    if (!td_bool(p, "CanNTP"))
+        return g_strdup("Network time synchronization isn't available.");
+    if (!td_bool(p, "NTP"))
+        return g_strdup("");
+    gint64 received = ts_received(p);
+    if (received <= 0)
+        return g_strdup(td_bool(p, "NTPSynchronized") ? "The clock is synchronized."
+                                                      : "The clock isn't synchronized yet.");
+    char *server = nullptr;
+    g_strfreev(ts_servers(p, &server));
+    GDateTime *last = g_date_time_new_from_unix_local_usec(received);
+    char *text = xd_ntp_synced_text(server != nullptr ? server : "the time server", last);
+    /* timesyncd asks again after its poll interval. */
+    guint64 poll = ts_u64(p, "PollIntervalUSec");
+    if (poll > 0 && poll < (guint64)(G_MAXINT64 - received)) {
+        GDateTime *next = g_date_time_new_from_unix_local_usec(received + (gint64)poll);
+        char *n = xd_ntp_next_text(next);
+        char *both = g_strdup_printf("%s\n%s", text, n);
+        g_free(n);
+        g_free(text);
+        text = both;
+        g_date_time_unref(next);
+    }
+    g_date_time_unref(last);
+    g_free(server);
+    return text;
+}
+
+/* Why the server can't be chosen or Update Now pressed, if so; else how
+ * long a server chosen here lasts. */
+static const char *ntp_note_text(props *p, bool on) {
+    if (!td_bool(p, "CanNTP"))
+        return "";
+    if (!ts_running(p) && !p->ts_activatable)
+        return "This computer keeps its time with a time service other than "
+               "systemd-timesyncd: choose its servers in that service's settings.";
+    if (!ts_running(p))
+        return on ? "Click Apply to turn on synchronization before choosing a server." : "";
+    if (!ts_can_set_server(p))
+        return "This version of systemd-timesyncd can't change its server while it runs: "
+               "choose servers in timesyncd.conf.";
+    return "A server you choose here is used until you restart the computer.";
+}
+
+static void show_internet(props *p) {
+    bool on = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->ntp));
+    bool can = td_bool(p, "CanNTP");
+    bool waiting = p->sync_since != 0;
+    if (!p->server_edited && !waiting)
+        fill_servers(p);
+    gtk_widget_set_sensitive(p->server, on && can && ts_can_set_server(p) && !waiting);
+    gtk_widget_set_sensitive(p->update,
+                             on && can && (ts_running(p) || p->ts_activatable) && !waiting);
+    char *status = ntp_status_text(p);
+    gtk_label_set_text(GTK_LABEL(p->ntp_status), status);
+    g_free(status);
+    gtk_label_set_text(GTK_LABEL(p->ntp_note), ntp_note_text(p, on));
+}
+
+static void show_ntp(props *p) {
+    p->updating = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->ntp), td_bool(p, "NTP"));
+    p->updating = false;
+    gtk_widget_set_sensitive(p->ntp, td_bool(p, "CanNTP"));
+    show_internet(p);
+}
+
+static void end_sync(props *p, const char *failure) {
+    if (p->sync_timeout != 0)
+        g_source_remove(p->sync_timeout);
+    p->sync_timeout = 0;
+    p->sync_since = 0;
+    g_free(p->sync_failed);
+    p->sync_failed = failure != nullptr ? xd_ntp_failed_text(p->sync_server, failure) : nullptr;
+    show_internet(p);
+}
+
+/* Update Now succeeded once timesyncd has an answer received since. */
+static void check_sync(props *p) {
+    if (p->sync_since != 0 && ts_received(p) >= p->sync_since)
+        end_sync(p, nullptr);
+}
+
+static gboolean sync_timed_out(gpointer data) {
+    props *p = data;
+    p->sync_timeout = 0;
+    /* Windows' own words for it. */
+    end_sync(p, "This operation returned because the timeout period expired.");
+    return G_SOURCE_REMOVE;
+}
+
+/* SetRuntimeNTPServers' argument: the server, or none (back to the
+ * servers timesyncd is set up with) when the box is empty. */
+static GVariant *servers_arg(const char *server) {
+    const char *list[] = {server, nullptr};
+    return g_variant_new("(^as)", server[0] != '\0' ? list : list + 1);
+}
+
+/* timesyncd forgets the servers it was given when it restarts (it keeps
+ * them nowhere), so Update Now hands them over again instead, which makes
+ * it connect afresh too. Otherwise it's restarted, which systemd lets an
+ * administrator do (polkit), and it synchronizes as it starts. */
+static bool start_sync(props *p, const char *server, GError **error) {
+    if (!td_bool(p, "NTP"))
+        return call_full(p, p->td, "SetNTP", g_variant_new("(bb)", TRUE, TRUE), error);
+    if (p->server_edited && ts_can_set_server(p)) {
+        if (!call_full(p, p->ts, "SetRuntimeNTPServers", servers_arg(server), error))
+            return false;
+        p->server_edited = false;
+        return true;
+    }
+    char **runtime = ts_strv(p, "RuntimeNTPServers");
+    if (runtime != nullptr && runtime[0] != nullptr) {
+        bool ok = call_full(p, p->ts, "SetRuntimeNTPServers",
+                            g_variant_new("(^as)", runtime), error);
+        g_strfreev(runtime);
+        return ok;
+    }
+    g_strfreev(runtime);
+    if (p->systemd == nullptr) {
+        p->systemd = g_dbus_proxy_new_for_bus_sync(
+            G_BUS_TYPE_SYSTEM,
+            G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES | G_DBUS_PROXY_FLAGS_DO_NOT_CONNECT_SIGNALS |
+                G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START,
+            nullptr, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager", nullptr, error);
+        if (p->systemd == nullptr)
+            return false;
+    }
+    return call_full(p, p->systemd, "RestartUnit",
+                     g_variant_new("(ss)", TIMESYNC_UNIT, "replace"), error);
+}
+
+static void on_update([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    if (p->busy || p->sync_since != 0)
+        return;
+    char *server = server_text(p);
+    g_free(p->sync_server);
+    p->sync_server = g_strdup(server[0] != '\0' ? server : "the time server");
+    gint64 since = g_get_real_time();
+    GError *error = nullptr;
+    if (start_sync(p, server, &error)) {
+        g_clear_pointer(&p->sync_failed, g_free);
+        p->sync_since = since;
+        p->sync_timeout = g_timeout_add_seconds(SYNC_SECONDS, sync_timed_out, p);
+        show_internet(p);
+        check_sync(p);
+    } else {
+        end_sync(p, error->message);
+        g_error_free(error);
+    }
+    g_free(server);
+}
+
+static void on_ntp([[maybe_unused]] GtkToggleButton *b, gpointer data) {
+    props *p = data;
+    show_internet(p);
+    if (!p->updating)
+        changed(p);
+}
+
+static void on_server([[maybe_unused]] GtkComboBox *c, gpointer data) {
+    props *p = data;
+    if (p->updating)
+        return;
+    p->server_edited = true;
+    changed(p);
+}
+
+static void ts_changed(props *p) {
+    check_sync(p);
+    if (p->sync_since == 0)
+        show_internet(p);
+}
+
+static void ts_props_changed([[maybe_unused]] GDBusProxy *proxy, [[maybe_unused]] GVariant *c,
+                             [[maybe_unused]] const char *const *inv, gpointer data) {
+    ts_changed(data);
+}
+
+/* timesyncd restarted, started or stopped. */
+static void ts_owner_changed([[maybe_unused]] GObject *o, [[maybe_unused]] GParamSpec *ps,
+                             gpointer data) {
+    ts_changed(data);
+}
+
+static GtkWidget *internet_page(props *p) {
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 10);
+    p->ntp = gtk_check_button_new_with_mnemonic(
+        "Automatically _synchronize with an Internet time server");
+    g_signal_connect(p->ntp, "toggled", G_CALLBACK(on_ntp), p);
+    gtk_box_pack_start(GTK_BOX(page), p->ntp, FALSE, FALSE, 0);
+
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *label = gtk_label_new_with_mnemonic("Se_rver:");
+    p->server = gtk_combo_box_text_new_with_entry();
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), p->server);
+    gtk_entry_set_width_chars(GTK_ENTRY(server_entry(p)), 24);
+    g_signal_connect(p->server, "changed", G_CALLBACK(on_server), p);
+    p->update = gtk_button_new_with_mnemonic("_Update Now");
+    g_signal_connect(p->update, "clicked", G_CALLBACK(on_update), p);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), p->server, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row), p->update, FALSE, FALSE, 0);
+    gtk_widget_set_margin_start(row, 20);
+    gtk_box_pack_start(GTK_BOX(page), row, FALSE, FALSE, 0);
+
+    p->ntp_status = gtk_label_new("");
+    p->ntp_note = gtk_label_new("");
+    GtkWidget *online = gtk_label_new(
+        "Synchronization can occur only when your computer is connected to the Internet.");
+    GtkWidget *labels[] = {p->ntp_status, p->ntp_note, online};
+    for (size_t i = 0; i < XD_ARRAY_LEN(labels); i++) {
+        gtk_label_set_xalign(GTK_LABEL(labels[i]), 0);
+        gtk_label_set_line_wrap(GTK_LABEL(labels[i]), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(labels[i]), 60);
+    }
+    gtk_box_pack_start(GTK_BOX(page), p->ntp_status, FALSE, FALSE, 0);
+    /* At the foot of the tab, as XP's. */
+    gtk_box_pack_end(GTK_BOX(page), online, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(page), p->ntp_note, FALSE, FALSE, 0);
+    return page;
+}
+
+/* ---- applying -------------------------------------------------------------------- */
+
+/* Nor may the window be destroyed under a call. */
 static gboolean on_delete([[maybe_unused]] GtkWidget *w, [[maybe_unused]] GdkEvent *e,
                           gpointer data) {
     return ((props *)data)->busy;
@@ -613,7 +949,7 @@ static bool apply(props *p) {
     bool ok = true;
     const char *zone = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->zones));
     if (zone != nullptr && (p->zone == nullptr || strcmp(zone, p->zone) != 0)) {
-        ok = call(p, "SetTimezone", g_variant_new("(sb)", zone, TRUE),
+        ok = call(p, p->td, "SetTimezone", g_variant_new("(sb)", zone, TRUE),
                   "The time zone could not be changed.");
         if (ok) {
             g_free(p->zone);
@@ -630,8 +966,16 @@ static bool apply(props *p) {
     if (set_time && ntp)
         ntp = false;
     if (ok && ntp != td_bool(p, "NTP"))
-        ok = call(p, "SetNTP", g_variant_new("(bb)", ntp, TRUE),
+        ok = call(p, p->td, "SetNTP", g_variant_new("(bb)", ntp, TRUE),
                   "Network time synchronization could not be changed.");
+    if (ok && ntp && p->server_edited && ts_can_set_server(p)) {
+        char *server = server_text(p);
+        ok = call(p, p->ts, "SetRuntimeNTPServers", servers_arg(server),
+                  "The time server could not be changed.");
+        g_free(server);
+        if (ok)
+            p->server_edited = false;
+    }
     if (ok && set_time) {
         guint y = 0, m = 0, d = 0;
         gtk_calendar_get_date(GTK_CALENDAR(p->calendar), &y, &m, &d);
@@ -644,7 +988,7 @@ static bool apply(props *p) {
         g_date_time_unref(now);
         if (when != nullptr) {
             gint64 usec = g_date_time_to_unix(when) * G_USEC_PER_SEC;
-            ok = call(p, "SetTime", g_variant_new("(xbb)", usec, FALSE, TRUE),
+            ok = call(p, p->td, "SetTime", g_variant_new("(xbb)", usec, FALSE, TRUE),
                       "The date and time could not be changed.");
             g_date_time_unref(when);
         }
@@ -677,7 +1021,29 @@ static void td_changed([[maybe_unused]] GDBusProxy *proxy, [[maybe_unused]] GVar
     show_ntp(p);
 }
 
+/* Whether the bus starts `name` when asked, i.e. it's installed:
+ * timesyncd runs only while synchronization is on. */
+static bool activatable(GDBusConnection *bus, const char *name) {
+    GVariant *r = g_dbus_connection_call_sync(
+        bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+        "ListActivatableNames", nullptr, G_VARIANT_TYPE("(as)"), G_DBUS_CALL_FLAGS_NONE, -1,
+        nullptr, nullptr);
+    if (r == nullptr)
+        return false;
+    char **names = nullptr;
+    g_variant_get(r, "(^as)", &names);
+    bool found = g_strv_contains((const char *const *)names, name);
+    g_strfreev(names);
+    g_variant_unref(r);
+    return found;
+}
+
 int main(int argc, char **argv) {
+    int page = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--page") == 0 && i + 1 < argc)
+            page = atoi(argv[++i]);
+    }
     xd_gtk_app_preinit("org.xeondesktop.DateTime");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
@@ -687,7 +1053,17 @@ int main(int argc, char **argv) {
                                          TIMEDATE, TIMEDATE_PATH, TIMEDATE, nullptr, &error);
     if (p.td == nullptr) {
         g_printerr("xd-timedate: %s\n", error->message);
-        g_error_free(error);
+        g_clear_error(&error);
+    }
+    /* Never started for us: it runs only while synchronization is on. */
+    p.ts = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START,
+                                         nullptr, TIMESYNC, TIMESYNC_PATH, TIMESYNC_MANAGER,
+                                         nullptr, &error);
+    if (p.ts == nullptr) {
+        g_printerr("xd-timedate: %s\n", error->message);
+        g_clear_error(&error);
+    } else {
+        p.ts_activatable = activatable(g_dbus_proxy_get_connection(p.ts), TIMESYNC);
     }
     GVariant *z = td_prop(&p, "Timezone");
     p.zone = z != nullptr ? g_variant_dup_string(z, nullptr) : nullptr;
@@ -726,11 +1102,16 @@ int main(int argc, char **argv) {
         fill_zones(&p, list);
         g_strfreev(list);
     }
+    if (p.ts != nullptr) {
+        g_signal_connect(p.ts, "g-properties-changed", G_CALLBACK(ts_props_changed), &p);
+        g_signal_connect(p.ts, "notify::g-name-owner", G_CALLBACK(ts_owner_changed), &p);
+    }
     g_timeout_add(1000, tick, &p);
     g_signal_connect(p.window, "response", G_CALLBACK(on_response), &p);
     g_signal_connect(p.window, "delete-event", G_CALLBACK(on_delete), &p);
     g_signal_connect(p.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
     gtk_widget_show_all(p.window);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), page);
     gtk_main();
     return EXIT_SUCCESS;
 }

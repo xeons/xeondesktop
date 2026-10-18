@@ -52,6 +52,7 @@
 #include "../src/shell/apps.h"
 #include "../src/startmenu/searchlib.h"
 #include "../src/taskmgr/netstat.h"
+#include "../src/timedate/ntp.h"
 #include "../src/shell/jumplist.h"
 #include "../src/ui/textedit.h"
 #include "../src/users/users.h"
@@ -4620,6 +4621,50 @@ static void test_disk_cleanup(void) {
     g_free(root);
 }
 
+/* Date and Time's Internet Time tab. */
+static void test_timedate_ntp(void) {
+    /* timesyncd's order (runtime, timesyncd.conf, network, fallback), each
+     * server once. */
+    const char *runtime[] = {"ntp.example.com", nullptr};
+    const char *system[] = {"time.example.org", "NTP.example.com", "", nullptr};
+    const char *fallback[] = {"0.arch.pool.ntp.org", "time.example.org", nullptr};
+    char **list = xd_ntp_server_list(runtime, nullptr, system, fallback);
+    CHECK(g_strv_length(list) == 3);
+    CHECK(g_str_equal(list[0], "ntp.example.com") && g_str_equal(list[1], "time.example.org") &&
+          g_str_equal(list[2], "0.arch.pool.ntp.org"));
+    g_strfreev(list);
+    list = xd_ntp_server_list(nullptr, nullptr, nullptr, nullptr);
+    CHECK(list != nullptr && list[0] == nullptr);
+    g_strfreev(list);
+
+    /* NTPMessage's DestinationTimestamp; nothing from anything else. */
+    const guint8 ref[] = {'G', 'P', 'S', 0};
+    GVariant *msg = g_variant_ref_sink(g_variant_new(
+        "(uuuuitt@ayttttbtt)", 0u, 4u, 4u, 2u, -23, (guint64)1000, (guint64)2000,
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, ref, sizeof(ref), 1), (guint64)1,
+        (guint64)2, (guint64)3, (guint64)1792342436704110, FALSE, (guint64)1, (guint64)0));
+    CHECK(xd_ntp_message_received(msg) == 1792342436704110);
+    g_variant_unref(msg);
+    GVariant *other = g_variant_ref_sink(g_variant_new("(t)", (guint64)5));
+    CHECK(xd_ntp_message_received(other) == 0);
+    CHECK(xd_ntp_message_received(nullptr) == 0);
+    g_variant_unref(other);
+
+    /* XP's words, the locale's short date and time (C here). */
+    GDateTime *when = g_date_time_new_utc(2026, 10, 18, 9, 5, 0);
+    check_text(xd_ntp_synced_text("time.example.org", when),
+               "The time has been successfully synchronized with time.example.org on 10/18/26 "
+               "at 9:05 AM.");
+    GDateTime *pm = g_date_time_new_utc(2026, 10, 25, 21, 5, 0);
+    check_text(xd_ntp_next_text(pm), "Next synchronization: 10/25/26 at 9:05 PM");
+    g_date_time_unref(pm);
+    g_date_time_unref(when);
+    check_text(xd_ntp_failed_text("time.example.org", nullptr),
+               "An error occurred while synchronizing with time.example.org.");
+    check_text(xd_ntp_failed_text("time.example.org", "Access denied"),
+               "An error occurred while synchronizing with time.example.org.\nAccess denied");
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -4679,6 +4724,7 @@ int main(void) {
     test_launcher_fields();
     test_taskmgr_netstat();
     test_disk_cleanup();
+    test_timedate_ntp();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

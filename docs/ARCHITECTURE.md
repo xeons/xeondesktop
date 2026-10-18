@@ -269,7 +269,7 @@ separate `.cpl` you could run on its own:
 | Add or Remove Programs | PackageKit and Flatpak |
 | Administrative Tools | Services (systemd), Event Viewer (journald), Disk Management (UDisks2: partitioning, formatting, resizing), Device Manager (udev) |
 | Bluetooth Devices | BlueZ |
-| Date and Time | timedated |
+| Date and Time | timedated; timesyncd (org.freedesktop.timesync1) and systemd for the time server and Update Now |
 | Display | `desktop.ini`, `monitors.ini`, `wlr-output-management` |
 | Folder Options | the file manager's settings, `mimeapps.list`, the user's shared-mime-info database |
 | Fonts | fontconfig; printing through GtkPrintOperation |

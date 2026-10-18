@@ -638,6 +638,7 @@ executable(
 executable(
   'xd-timedate',
   'src/timedate/main.c',
+  'src/timedate/ntp.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, m_dep,
                  dependency('json-glib-1.0', include_type: 'system')],
@@ -1030,6 +1031,7 @@ test_exe = executable(
   'src/files/launcher.c',
   'src/files/cleanup.c',
   'src/taskmgr/netstat.c',
+  'src/timedate/ntp.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep,

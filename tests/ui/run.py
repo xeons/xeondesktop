@@ -2991,6 +2991,144 @@ def language_indicator(s):
     s.check(text() == "zy", f"typed with the German layout ({text()!r})")
 
 
+def mock_timedate(s, timesync=None):
+    """A private system bus with dbusmock's timedated (synchronizing,
+    hardware clock in UTC), systemd's manager with RestartUnit, and
+    timesyncd (tests/dbusmock/timesync.py) with `timesync` as its
+    parameters, unless it's None (another time service). Returns the
+    timesyncd mock and a function giving what the mocks were called with."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    logs = []
+
+    def log():
+        logs.append(os.path.join(s.base, f"mock-{len(logs)}.log"))
+        return open(logs[-1], "w")
+
+    for template, params in (("timedated", {"Timezone": "Europe/London", "NTP": True}),):
+        proc, _ = DBusTestCase.spawn_server_template(template, params, stdout=log(),
+                                                     system_bus=True)  # fmt: skip
+        s.children.append(proc)
+    proc = DBusTestCase.spawn_server("org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+                                     "org.freedesktop.systemd1.Manager", system_bus=True,
+                                     stdout=log())  # fmt: skip
+    s.children.append(proc)
+    bus = dbus.SystemBus()
+    systemd = bus.get_object("org.freedesktop.systemd1", "/org/freedesktop/systemd1")
+    systemd.AddMethod("org.freedesktop.systemd1.Manager", "RestartUnit", "ss", "o",
+                      'ret = dbus.ObjectPath("/org/freedesktop/systemd1/job/1")',
+                      dbus_interface=MOCK_IFACE)  # fmt: skip
+    ts = None
+    if timesync is not None:
+        template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "timesync.py")
+        proc, obj = DBusTestCase.spawn_server_template(template, timesync, stdout=log(),
+                                                       system_bus=True)  # fmt: skip
+        s.children.append(proc)
+        ts = dbus.Interface(obj, MOCK_IFACE)
+
+    def calls():
+        text = ""
+        for path in logs:
+            with open(path) as f:
+                text += f.read()
+        return text
+
+    return ts, calls
+
+
+@scenario(requires=("dbusmock",))
+def timedate_internet_time(s):
+    """Date and Time Properties' Internet Time tab on dbusmock's timedated,
+    timesyncd and systemd: Update Now restarts timesyncd and reports the
+    answer; a server typed in goes to SetRuntimeNTPServers."""
+    from dbusmock import DBusTestCase
+
+    try:
+        ts, calls = mock_timedate(s, {"SystemNTPServers": ["time.example.org"],
+                                      "ServerName": "time.example.org",
+                                      "Received": time.time() - 3600})
+        empty = s.settle("desktop")
+        s.launch("xd-timedate", "--page", "2")
+        s.wait_window(title="Date and Time Properties", state="activated")
+        dialog = s.settle("internet-time")
+        x, y, _, _ = dialog.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        status = (x + 20, y + 115, 520, 40)  # under the server
+        update = (x + 512, y + 96)
+
+        def called(text, n=1):
+            s.wait(lambda: calls().count(text) >= n, text)
+
+        # Update Now restarts timesyncd, then waits for its answer.
+        s.inject("move", *update, "click")
+        called('RestartUnit "systemd-timesyncd.service" "replace"')
+        waiting = s.settle("waiting")
+        s.check(waiting.differs(dialog, status) > 0.01, "Update Now waits")
+        ts.Answer("time.example.org")
+        answered = s.settle("answered")
+        s.check(answered.differs(waiting, status) > 0.01, "the answer was reported")
+        # A server typed in is handed to timesyncd (not restarted, which
+        # would forget it).
+        s.inject("move", x + 200, y + 96, "click", "key", "ctrl+a", "type", "ntp.example.com",
+                 "move", *update, "click")  # fmt: skip
+        called('SetRuntimeNTPServers ["ntp.example.com"]')
+        ts.Answer("ntp.example.com")
+        s.settle("answered-new-server")
+        # Update Now again hands it over again; with no answer, it fails.
+        s.inject("move", *update, "click")
+        called('SetRuntimeNTPServers ["ntp.example.com"]', 2)
+        s.check(calls().count("RestartUnit") == 1, "timesyncd was restarted only once")
+        waiting = s.settle("waiting-again")
+        time.sleep(16)
+        failed = s.settle("failed")
+        s.check(failed.differs(waiting, status) > 0.01, "no answer was reported")
+        log = calls()
+        s.check("SetNTP" not in log and "SetTime " not in log and "SetTimezone" not in log,
+                "nothing else changed")  # fmt: skip
+    finally:
+        DBusTestCase.tearDownClass()
+
+
+@scenario(requires=("dbusmock",))
+def timedate_other_time_service(s):
+    """Internet Time without timesyncd (another time service): no server,
+    Update Now greyed. Once a timesyncd older than systemd 255 appears, its
+    server shows, greyed (it can't take one while it runs), and Update Now
+    restarts it."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    try:
+        _, calls = mock_timedate(s)
+        empty = s.settle("desktop")
+        s.launch("xd-timedate", "--page", "2")
+        s.wait_window(title="Date and Time Properties", state="activated")
+        dialog = s.settle("no-timesyncd")
+        x, y, _, _ = dialog.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        s.inject("move", x + 512, y + 96, "click", "sleep", 1000)
+        s.check("RestartUnit" not in calls(), "Update Now is greyed")
+        template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "timesync.py")
+        proc, obj = DBusTestCase.spawn_server_template(template, {"runtime": False},
+                                                       stdout=subprocess.DEVNULL,
+                                                       system_bus=True)  # fmt: skip
+        s.children.append(proc)
+        # dbusmock takes the bus name before it has the properties, unlike
+        # timesyncd: they're sent again as changed, for xd-timedate to see.
+        manager = "org.freedesktop.timesync1.Manager"
+        props = obj.GetAll(manager, dbus_interface=dbus.PROPERTIES_IFACE)
+        obj.UpdateProperties(manager, props, dbus_interface=MOCK_IFACE)
+        server = (x + 80, y + 85, 360, 20)
+        s.wait(lambda: s.shot("started").differs(dialog, server) > 0.01,
+               "timesyncd's server to show")  # fmt: skip
+        s.settle("timesyncd")
+        s.inject("move", x + 512, y + 96, "click")
+        s.wait(lambda: 'RestartUnit "systemd-timesyncd.service"' in calls(), "the restart")
+        s.log("ok: Update Now restarted timesyncd")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def mock_polkitd(s):
     """Before the compositor starts: a private system bus with dbusmock's
     polkitd, for the session's agent to register with."""

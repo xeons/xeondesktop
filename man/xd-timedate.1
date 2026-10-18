@@ -3,6 +3,7 @@
 xd\-timedate \- Date and Time Properties
 .SH SYNOPSIS
 .SY xd\-timedate
+.OP \-\-page n
 .YS
 .SH DESCRIPTION
 .B xd\-timedate
@@ -16,13 +17,37 @@ The month, year and day, an analog clock and the time.
 The time zone.
 .TP
 .B Internet Time
-Network time synchronization (systemd-timesyncd).
+Network time synchronization on or off; with systemd-timesyncd, the
+server it uses (from all it knows of: its runtime list, timesyncd.conf,
+the network's and the fallback servers) and
+.BR "Update Now" ,
+which makes it synchronize again and reports the answer.
+A server chosen here is given to timesyncd at runtime
+.RB ( SetRuntimeNTPServers ,
+systemd 255 and later) and lasts until the computer restarts; to keep one,
+set
+.B NTP=
+in
+.BR timesyncd.conf (5).
+With another time service (chrony, ntpd), only synchronization on or off
+is offered.
 .PP
 Changes go through systemd-timedated
 .RB ( org.freedesktop.timedate1 ),
-which asks polkit, so
+systemd-timesyncd
+.RB ( org.freedesktop.timesync1 )
+and, for Update Now, systemd (restarting
+.BR systemd\-timesyncd.service ),
+which ask polkit, so
 .BR xd\-polkit (1)
 asks for a password when one is needed.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on the
+.IR n th
+tab, from 0 (Date & Time).
 .SH SEE ALSO
 .BR timedatectl (1),
+.BR systemd\-timesyncd (8),
 .BR xd\-control (1)
