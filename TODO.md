@@ -234,6 +234,19 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Shell (taskbar, Start menus, desktop)
 
+- [ ] Standalone taskbar for other wlroots compositors (sway, Hyprland,
+      labwc, Wayfire, river, niri): xd-shell already needs only
+      wlr-layer-shell, with wlr-foreign-toplevel for task buttons and our
+      arranger protocol optional. Needed: a `-Dcompositor=false` build
+      option (wlroots 0.20 is required today only for the compositor); a
+      `--taskbar-only` mode that skips the desktop layer (wallpaper and
+      icons); a way for another compositor to open the Start menu from a
+      key binding (a command or D-Bus call); Log Off ending the logind
+      session instead of looking for xd-compositor; a systemd unit or
+      autostart entry to restart it in place of our compositor. KDE Plasma
+      would show no task buttons (no wlr-foreign-toplevel); GNOME has no
+      layer-shell. Another panel's StatusNotifierWatcher (waybar) would
+      compete for the tray.
 - [~] Notification area: StatusNotifierItem icons (we're the watcher, or a
       host of another desktop's), named or pixmap icons, attention icons,
       Passive items hidden, tooltips, Activate / SecondaryActivate, and
