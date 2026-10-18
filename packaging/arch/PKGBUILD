@@ -83,7 +83,13 @@ optdepends=(
   'pipewire-pulse: the volume icon (or PulseAudio)'
   'sound-theme-freedesktop: the default sound scheme'
   'colord: Color Management'
-  'geoclue: Night Light finding sunset and sunrise by itself'
+  'geoclue: Night Light finding sunset and sunrise by itself; Privacy > Location'
+  'fcitx5: an input method (Keyboard > Text Services; with fcitx5-gtk, fcitx5-qt, fcitx5-configtool)'
+  'ibus: an input method (Keyboard > Text Services)'
+  'switcheroo-control: Run with dedicated graphics card'
+  'gvfs-smb: Map Network Drive to Windows shares; My Network Places'
+  'gvfs-nfs: Map Network Drive to NFS shares'
+  'samba: a folder Properties Sharing tab (Samba user shares)'
 )
 backup=('etc/pam.d/xeondesktop')
 source=("$pkgname-$pkgver.tar.gz")

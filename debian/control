@@ -111,6 +111,13 @@ Recommends:
 Suggests:
  bluez,
  blueman,
+ fwupd,
+ gnome-keyring,
+ fcitx5,
+ ibus,
+ switcheroo-control,
+ gvfs-backends,
+ samba,
 Description: desktop environment in the style of Windows 2000 and XP
  XeonDesktop is a Wayland desktop that looks and works like Windows 2000
  and Windows XP: a wlroots compositor with Classic, Luna and Watercolor
