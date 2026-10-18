@@ -7,7 +7,8 @@ xd\-desk \- Display Properties
 .YS
 .SH DESCRIPTION
 .B xd\-desk
-is Display Properties (Control Panel > Display), with Windows 2000's tabs:
+is Display Properties (Control Panel > Display), with Windows 2000's tabs
+and one for what only Linux has:
 .TP
 .B Background
 The wallpaper and how it is placed.
@@ -18,16 +19,20 @@ and when to turn the monitors off.
 .TP
 .B Appearance
 The visual style (Classic, Luna, Watercolor or Aero), colour scheme and
-font size, with a preview; in Aero, Windows 7's window colours.
+font size, with a preview; Advanced Appearance, the scheme item by item;
+in Aero, Windows 7's window colours.
 .TP
 .B Effects
-Font smoothing, large icons, the icon theme, and the GTK and Qt styles of
-other programs.
+Menu and tooltip transitions, font smoothing, large icons, dragging
+windows as an outline, and hiding underlined letters until Alt is pressed.
 .TP
 .B Settings
 Each monitor's position, resolution, refresh rate, scale and orientation,
-or turning it off.
+or turning it off; Identify shows each monitor's number on it.
 New display settings revert after 15 seconds unless kept.
+.TP
+.B Linux
+The icon theme, and the GTK and Qt styles of other programs.
 .PP
 Apply and OK write
 .IR desktop.ini ,
@@ -37,7 +42,7 @@ which the compositor, the shell and the other programs follow at once.
 .BI \-\-page " n"
 Open on tab
 .IR n ,
-from 0 (Background) to 4 (Settings); the default is 2 (Appearance), as
+from 0 (Background) to 5 (Linux); the default is 2 (Appearance), as
 Windows' desk.cpl.
 .TP
 .BI \-\-style " style"
@@ -52,6 +57,7 @@ The visual style and colour scheme of the dialog instead of those in
 .BR [Desktop] ,
 .BR [Wallpaper] ,
 .BR [Effects] ,
+.BR [CustomScheme] ,
 .B [ScreenSaver]
 and
 .BR [ScreenSaver.*] .

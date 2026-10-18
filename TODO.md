@@ -135,8 +135,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       ubuntu:26.04). Ubuntu 26.04 LTS has wlroots 0.19, so its package
       builds our pinned wlroots 0.20 (subprojects/wlroots.wrap) in
       statically. The workflow and the release job pass on GitHub (v0.3.0).
-      Not yet: arm64 builds, man pages (lintian's only complaint), an
-      apt/pacman repository to install from.
+      Man pages for every program (lintian is clean but for two
+      desktop-entry-lacks-keywords notes, Files and Task Manager). The
+      .debs are also built for arm64 (ubuntu-24.04-arm runners); the Arch
+      and CachyOS images are x86-64 only. Not yet: arm64 seen building on
+      GitHub, an apt/pacman repository to install from.
 
 ## Compositor
 
@@ -144,8 +147,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       icon, a right-click on the title bar and xdg_toplevel.show_window_menu
       all open the shell's window menu (via xd-window-arranger-v1). Tested:
       Alt+Space, icon click, right-click, double-clicking the icon to close.
-      Untested: show_window_menu from a client, keyboard use of the menu
-      when opened by Alt+Space (the shell's menus have no mnemonics yet).
+      A client's show_window_menu (a GTK 3 header bar's right-click) opens
+      it at the pointer; the menu's access keys (R, M, S, N, X, C) work,
+      their underlines shown at once when Alt+Space opened it. UI tests:
+      client_window_menu, window_menu_letters.
 - [~] Windows that ask to draw their own decorations (xdg-decoration
       client-side, or the KDE protocol's client mode, e.g. Firefox with tabs
       in the title bar) get no XP frame, plus an invisible 6px resize margin.
@@ -230,9 +235,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (ext-image-copy-capture, only for our shell), Windows 7's jump list
       look with pinned items, pins by dropping files or launchers,
       combining as needed (least recently used first). Tested headless.
-      Sizes are from memory. Not yet: jump list items' right-click menus,
-      reordering pinned items, thumbnails for side taskbars, thumbnail
-      toolbar buttons.
+      Jump list items' right-click menus (Open, Pin/Unpin, Remove from
+      this list, Properties), dragging pinned items to reorder them,
+      thumbnails stacked beside side taskbars, and Previous/Play-Pause/
+      Next under a media player's thumbnail through MPRIS (only for one
+      window with one matching player). Windows' own thumbnail toolbars
+      have no Linux counterpart. Sizes and the items' menus are from
+      memory; no keyboard way to open an item's menu; removing the last
+      item of the Start menu's jump list leaves it empty.
 - [x] A window resized from its left or top edge snapped back to its old
       place at its next commit after being moved (the resize's anchor was
       never released), and windows that redraw constantly (Firefox) fought
@@ -290,10 +300,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       python-dbusmock's NetworkManager, UPower and BlueZ on a private bus
       and a private PipeWire with a null sink. **Untested on real
       hardware**: actual Wi-Fi connects (WPA3/SAE, WEP, hidden networks),
-      a real battery, real Bluetooth devices. Not yet: a status dialog for
-      the connection, pairing new Bluetooth devices, enterprise (802.1X)
-      networks in our own UI (nm-connection-editor opens instead), the
-      volume flyout's keyboard use, XP's low-battery warnings.
+      a real battery, real Bluetooth devices. A double click on the
+      network icon opens XP's connection Status (General and Support
+      tabs); the volume flyout takes the arrow keys, Page Up/Down,
+      Home/End, Space and Esc (step sizes are guesses); XP's low and
+      critical battery alarms (UI test battery_alarms); Open Power Meter.
+      Not yet: pairing new Bluetooth devices, enterprise (802.1X) networks
+      in our own UI (nm-connection-editor opens instead), access keys in
+      the tray icons' own menus.
 - [~] Task buttons: the application's icon (desktop file found from the
       app id or WM_CLASS); tooltips with the whole title when it's cut
       short; pages with up/down arrows (and the wheel) when buttons would
@@ -329,16 +343,19 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Start button's (Open, Explore, Properties, Open/Explore All Users).
       Move and Size run the compositor's keyboard move/size (arrows 8px, Ctrl
       1px, mouse too; Enter or a click keeps it, Esc undoes it). Tested:
-      Move by arrows, Size by arrows, Esc restoring. Untested: mouse during
-      keyboard move/size, Ctrl steps, corners (two edges). The clock's menu
+      Move by arrows, Size by arrows, Esc restoring, the mouse during
+      keyboard move/size, Ctrl's 1px steps, corners (UI test
+      keyboard_move_size). The clock's menu
       adds Adjust Date/Time; Quick Launch's has its own (below). Not yet:
       the Address, Links, Desktop and New Toolbar toolbars, Search... in
       the Start button's menu. Start button menu: Open tested; Explore,
       Properties and
       the All Users items untested. Tested: the taskbar menu, Tile Vertically, Undo Tile
-      showing up, Minimize and the minimized window's menu. Untested:
-      Cascade, Tile Horizontally, Undo itself, Lock toggling, Restore,
-      Maximize, Close from the menu, several monitors.
+      showing up, Minimize and the minimized window's menu, Cascade, Tile
+      Horizontally, Undo, Lock toggling (UI test taskbar_menu_arrange).
+      Untested: Restore, Maximize, Close from the menu, several monitors.
+      Every shell menu has Windows' access keys, underlined, hidden until
+      the keyboard is used when [Effects] HideKeyboardCues is on.
 - [~] Quick Launch: tooltips (the shortcut's name); a shortcut's menu
       (Open, Delete, Properties) and the toolbar's (Open Folder, Close
       Toolbar); files and applications dropped on it become shortcuts
@@ -400,8 +417,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       column and the footer. Pinning from All Programs, letter
       shortcuts, the highlight for newly installed programs, Customize
       Start Menu (large/small icons, number of programs, Clear List); all
-      tested headless. Not yet: drawn underlines, the "New programs
-      installed" balloon, Send To / Properties in a program's menu.
+      tested headless. Drawn underlines (All Programs, Run, Log Off, Turn
+      Off Computer), the "New programs installed" balloon, Send To
+      (Desktop, My Documents) and Properties in a program's menu. Not
+      yet: Send To's other targets; the right column's own access keys
+      (unknown).
 - [x] Windows 7 and XP menus: a program's right-click menu (Open, Pin to
       Start menu / Unpin from Start menu, and Remove from this list for
       the frequently used ones) writes `start-pinned` / `start-frequent`.
@@ -509,11 +529,22 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
     monitor, and Windows' 15-second "keep these settings?" check that
     reverts by itself. Tested with two headless outputs: scale change,
     revert on timeout, dragging a monitor underneath and keeping it. Not
-    tested with real modes or rotation. No Identify, no Advanced.
+    tested with real modes or rotation. Identify shows each monitor's
+    number on it (the shell's org.xeondesktop.Shell.Identify). No
+    Advanced.
   - Background: Browse... (GTK file chooser). Tested.
-  - Effects: menu transitions, large icons, outline dragging, hiding
-    keyboard cues are still greyed out;
-  - Appearance: Advanced per-item editor.
+  - Effects: menu and tooltip transitions (Fade/Scroll, done by the
+    compositor for the shell's popups, Windows 7 thumbnails and the
+    volume flyout too), large icons (desktop and XP Start menu), outline
+    dragging (a checkered frame; Aero's blur isn't clipped during the
+    animation), hiding keyboard cues. Not yet: "Show shadows under
+    menus".
+  - Appearance: Advanced (Windows XP's Advanced Appearance: the clickable
+    preview, 18 items, sizes, two colours, fonts; the 20-colour palette
+    and the Color dialog), saved as desktop.ini's [CustomScheme]. Icon
+    Size, Icon Spacing and Palette Title are saved but not drawn with
+    yet; colour buttons take no keyboard focus.
+  - Linux tab: the icon theme and the GTK and Qt program styles.
 - [~] Display Properties' Apply (tested: screen saver settings, display
       settings with the keep/revert check). Untested: OK with unapplied
       display changes (it applies, asks, then closes on Yes).
@@ -619,8 +650,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       second drive's trash (a bind mount) listed and restored. Untested:
       mounting a volume and ejecting (no spare disk here).
 - [x] My Computer: drive Properties with XP's pie chart; groups in Details
-      (List view can't group, as in XP). Not yet: renaming a drive, Disk
-      Cleanup, Tools and Hardware tabs.
+      (List view can't group, as in XP). Renaming a drive (UDisks2
+      SetLabel), Disk Cleanup (the user's own files only), the Tools tab
+      (Check Now through UDisks2, Defragment's "not needed", Backup with a
+      backup program) and the Hardware tab; tested against dbusmock's
+      UDisks2. Untested: a successful check or repair, real polkit
+      prompts, real disks.
 - [x] The first arrow key in a fresh folder selected the second item.
 - [?] Folders tree clicks, address bar typing, the Views menu, the
       thumbnail slider, Details header sorting, Show Hidden Files, opening
@@ -707,9 +742,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       a frozen program. A hung window that draws its own title bar
       (Firefox, GNOME programs) gets our frame meanwhile, as XP's ghost
       window, whose Close offers End Program; it goes back as it was when
-      the program answers (UI test: hung_csd_window_ghost_frame). Not yet:
-      the box for a window that only stops responding after the close
-      request.
+      the program answers (UI test: hung_csd_window_ghost_frame). A
+      window that hangs after a close request gets the box after 5s
+      (UI test end_program_after_close); one that asks "Save changes?"
+      doesn't.
 - [x] Options > Always On Top (saved): xd-window-arranger-v1 version 5's
       set_always_on_top puts the client's own window (and its dialogs) in
       a layer above ordinary windows, below the taskbar. Tested: Task
@@ -874,6 +910,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       moving after a left-edge resize, and more since. Its own CI job
       (privileged container), passing on GitHub. The test sessions set
       XD_CLOCK_FIXED so the taskbar clock never ticks mid-scenario.
+- [~] Under full parallel load, task_manager_users once timed out waiting
+      for Logoff to end the guest's session (passes alone in 5s and in
+      the next full run).
+- [x] Fixed: GTK header-bar windows were drawn offset by their shadow
+      margin (tiled or snapped ones fell short of the edges; UI test
+      csd_window_tiled); Classic GTK buttons were 87x28 instead of
+      Windows' 75x23; System Properties was 513 pixels wide (Windows':
+      ~410).
 - [x] Alt+letter opens that menu in our GTK apps (GTK on Wayland's synthetic
       enter during the menu bar's grab selected File).
 - [ ] Printer changes (Pause, Delete, Properties' Apply, Preferences) still

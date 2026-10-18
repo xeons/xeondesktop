@@ -58,8 +58,8 @@ Static analysis: `meson setup build-analyze -Danalyzer=true`.
 
 GitHub Actions (`.github/workflows/packages.yml`) builds a `.deb` for Debian
 testing and unstable and for Ubuntu 26.04 LTS (whose wlroots is 0.19, so its
-package has our wlroots 0.20 built in) and a
-package for Arch Linux and CachyOS on every push; they're under the run's
+package has our wlroots 0.20 built in), each for amd64 and arm64, and an
+x86-64 package for Arch Linux and CachyOS on every push; they're under the run's
 Artifacts, and tagging `vX.Y.Z` attaches them to a release. To build them
 locally with podman (or docker):
 
@@ -195,7 +195,7 @@ under `[Taskbar]` in `desktop.ini`.
 ### Display Properties
 
 `xd-desk` (Start > Settings > Control Panel > Display) has Windows 2000's
-tabs:
+tabs, and one for what only Linux has:
 
 - Background: the wallpaper (from the usual folders or Browse...) and how
   it's placed.
@@ -207,12 +207,21 @@ tabs:
 - Appearance: style, colour scheme and font size, with a live preview: all
   22 of XP's classic colour schemes, and for the XP style Default (blue),
   Olive Green, Silver and Energy Blue (Royale), each measured from a
-  screenshot of the real thing. In Aero, Advanced opens Window Color and
-  Appearance: Windows 7's 16 glass colours, transparency, intensity and a
-  colour mixer.
-- Effects: font smoothing and large icons; the icon theme and the GTK
-  theme ("Program style"), our generated one matching the style by
-  default. A chosen GTK theme is also written where other desktops'
+  screenshot of the real thing. Advanced opens Windows XP's Advanced
+  Appearance: click a part of the preview or pick an item, and set its
+  size, colours and font (saved as `[CustomScheme]` over the scheme). In
+  Aero, Advanced opens Window Color and Appearance: Windows 7's 16 glass
+  colours, transparency, intensity and a colour mixer, with a link to
+  Advanced Appearance.
+- Effects: XP's Effects: fade or scroll menus and tooltips, font
+  smoothing, large icons, "Show window contents while dragging" (off, a
+  window is dragged as an outline) and hiding the underlined letters until
+  Alt is pressed.
+- Settings: as below, and Identify, which shows each monitor's number on
+  it.
+- Linux: the icon theme and the GTK theme ("Program style"), our
+  generated one matching the style by default, and Qt's widget style. A
+  chosen GTK theme is also written where other desktops'
   settings tools put it (`~/.config/gtk-3.0` and `gtk-4.0` `settings.ini`,
   `org.gnome.desktop.interface`), so GTK programs however started agree.
 - Settings: drag the monitors into place, and set each one's resolution,
@@ -348,7 +357,7 @@ and pick up changes when restarted.
 Qt 5 and Qt 6 programs follow it too: the session sets
 `QT_QPA_PLATFORMTHEME=gtk3` (Qt's own GTK platform theme: fonts, icons, file
 dialogs) and, with our GTK theme, a matching Qt palette (`QT_GUI_GTK_JSON`).
-Display Properties > Effects > Program style (Qt) picks the widget style;
+Display Properties > Linux > Program style (Qt) picks the widget style;
 Automatic is Windows for Classic and Fusion for the XP and 7 styles.
 Variables you set yourself (for qt6ct or Kvantum) are left alone. Running Qt
 programs keep their style until restarted. Because GTK on Wayland (and Qt
