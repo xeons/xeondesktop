@@ -585,6 +585,10 @@ void xd_account_refresh(xd_shell *shell);
 bool xd_account_can_switch_user(xd_shell *shell);
 /* Locks the screen and goes to the display manager's greeter. */
 void xd_account_switch_user(xd_shell *shell);
+/* housekeeping.c: Privacy's emptying of old Recycle Bin items and
+ * temporary files (org.gnome.desktop.privacy), daily. */
+void xd_housekeeping_init(xd_shell *shell);
+void xd_housekeeping_finish(xd_shell *shell);
 /* sys_*.c: our notification area applets. */
 void xd_sys_battery_init(xd_shell *shell);
 void xd_sys_network_init(xd_shell *shell);

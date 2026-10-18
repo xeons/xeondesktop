@@ -1,0 +1,53 @@
+.TH XD\-PRIVACY 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-privacy \- Privacy Properties
+.SH SYNOPSIS
+.SY xd\-privacy
+.OP \-\-page n
+.YS
+.SH DESCRIPTION
+.B xd\-privacy
+is the Privacy applet (Control Panel > User Accounts):
+.TP
+.B General
+Whether programs and the Start menus list your recently opened documents,
+for how long, and Clear List; and emptying old items from the Recycle Bin
+and old temporary files automatically.
+.TP
+.B Location
+Whether programs may use your location, and the programs that asked, with
+Allow, Deny and Remove.
+.TP
+.B Program Permissions
+What programs were allowed or refused through the desktop portals (camera,
+microphone, speakers, notifications, running in the background,
+screenshots, the desktop background, location), per program, with Allow,
+Deny and Remove.
+A removed answer makes the program ask again.
+.PP
+The settings are GNOME's
+.RB ( org.gnome.desktop.privacy
+and
+.BR org.gnome.system.location ),
+which GTK, xdg-desktop-portal and GeoClue already honour.
+.BR xd\-shell (1)
+honours the recent documents settings in its Start menus and jump lists,
+and once a day deletes the Recycle Bin's items deleted longer ago than the
+chosen number of days (by their deletion date) and the user's own
+temporary files in
+.B $TMPDIR
+untouched for as long.
+Answers given to programs are kept in xdg-desktop-portal's permission store
+.RB ( org.freedesktop.impl.portal.PermissionStore ),
+and changes to them take effect at once.
+Finding the location needs GeoClue.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on tab
+.I n
+(0: General, 1: Location, 2: Program Permissions).
+.SH SEE ALSO
+.BR xd\-control (1),
+.BR xd\-shell (1),
+.BR xdg\-desktop\-portal (1)

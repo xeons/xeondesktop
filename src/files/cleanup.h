@@ -55,6 +55,7 @@ typedef struct XdCleanupCategory {
     GPtrArray *roots;        /* char*: the folders the items are in */
     GPtrArray *items;        /* char*: what goes (each deleted whole) */
     guint64 size;            /* bytes on disk */
+    gint64 age;              /* temporary files: untouched this long (µs) */
 } XdCleanupCategory;
 
 /* The drive's categories, with what each would delete: the Recycle Bin
@@ -66,10 +67,21 @@ typedef struct XdCleanupCategory {
 GPtrArray *xd_cleanup_scan(const XdCleanupPlaces *places, uid_t uid, gint64 now,
                            GCancellable *cancel, gint *scanning);
 
+/* Housekeeping, as GNOME's gsd-housekeeping does it for the Privacy
+ * settings (org.gnome.desktop.privacy remove-old-trash-files,
+ * remove-old-temp-files, old-files-age): with `trash`, the Recycle Bin's
+ * items deleted more than `age` (µs) before `now` by their .trashinfo's
+ * DeletionDate (the item and its .trashinfo; an item without a readable
+ * date stays); with `temp`, the temporary files untouched for `age`,
+ * under Disk Cleanup's rules. The categories, as xd_cleanup_scan's, for
+ * xd_cleanup_delete. Free with g_ptr_array_unref. */
+GPtrArray *xd_cleanup_scan_old(const XdCleanupPlaces *places, uid_t uid, gint64 now, gint64 age,
+                               gboolean trash, gboolean temp, GCancellable *cancel);
+
 /* Deletes a category's items (checked again: still the user's, still in
- * the category's folders, not through links; temporary files still a
- * week old at `now`). Returns FALSE and sets `err` to the first failure,
- * after trying everything. */
+ * the category's folders, not through links; temporary files still
+ * untouched for the category's age at `now`). Returns FALSE and sets
+ * `err` to the first failure, after trying everything. */
 gboolean xd_cleanup_delete(const XdCleanupCategory *c, uid_t uid, gint64 now,
                            GCancellable *cancel, GError **err);
 

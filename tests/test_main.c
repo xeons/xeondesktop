@@ -23,6 +23,7 @@
 #include "../src/apps/runcmd.h"
 #include "../src/power/schemes.h"
 #include "../src/printers/cupsops.h"
+#include "../src/privacy/permissions.h"
 #include "../src/printers/printlib.h"
 #include "../src/scanners/scanlib.h"
 #include "../src/bluetooth/btinfo.h"
@@ -55,6 +56,7 @@
 #include "../src/taskmgr/netstat.h"
 #include "../src/timedate/ntp.h"
 #include "../src/shell/jumplist.h"
+#include "../src/shell/recent.h"
 #include "../src/ui/textedit.h"
 #include "../src/users/accounts.h"
 #include "../src/users/users.h"
@@ -4798,6 +4800,131 @@ static void test_timedate_ntp(void) {
                "An error occurred while synchronizing with time.example.org.\nAccess denied");
 }
 
+/* A .trashinfo deleted at `when` (Unix seconds, local time as the spec
+ * has it), or with no date if `when` is 0. */
+static void put_trashinfo(const char *root, const char *name, gint64 when) {
+    char *rel = g_strdup_printf("Trash/info/%s.trashinfo", name);
+    GDateTime *dt = when != 0 ? g_date_time_new_from_unix_local(when) : nullptr;
+    char *date = dt != nullptr ? g_date_time_format(dt, "%Y-%m-%dT%H:%M:%S") : nullptr;
+    char *text = g_strdup_printf("[Trash Info]\nPath=/home/me/%s\n%s%s\n", name,
+                                 date != nullptr ? "DeletionDate=" : "",
+                                 date != nullptr ? date : "");
+    put_file(root, rel, text);
+    g_free(text);
+    g_free(date);
+    if (dt != nullptr)
+        g_date_time_unref(dt);
+    g_free(rel);
+}
+
+static gboolean cleanup_items_has(const XdCleanupCategory *c, const char *root, const char *rel) {
+    char *path = g_build_filename(root, rel, nullptr);
+    gboolean found = g_ptr_array_find_with_equal_func(c->items, path, g_str_equal, nullptr);
+    g_free(path);
+    return found;
+}
+
+static void test_privacy(void) {
+    /* Recent documents: as GTK, -1 keeps them for ever and 0 not at all. */
+    gint64 day = 24 * 60 * 60, t = 1800000000;
+    CHECK(xd_recent_shown(true, -1, 0, t));
+    CHECK(!xd_recent_shown(false, -1, t, t));
+    CHECK(!xd_recent_shown(true, 0, t, t));
+    CHECK(xd_recent_shown(true, 7, t - 7 * day, t) && !xd_recent_shown(true, 7, t - 8 * day, t));
+
+    /* Portal permissions: yes/no, location's accuracy and its time kept. */
+    const XdPermKind *loc = &xd_perm_kinds[0], *camera = nullptr;
+    for (size_t i = 0; i < xd_perm_kind_count; i++)
+        if (g_str_equal(xd_perm_kinds[i].id, "camera"))
+            camera = &xd_perm_kinds[i];
+    CHECK(g_str_equal(loc->table, "location") && camera != nullptr &&
+          g_str_equal(camera->table, "devices"));
+    if (camera == nullptr)
+        return;
+    CHECK(xd_perm_allowed(camera, (const char *const[]){"yes", nullptr}));
+    CHECK(!xd_perm_allowed(camera, (const char *const[]){"no", nullptr}));
+    CHECK(!xd_perm_allowed(camera, (const char *const[]){"ask", nullptr}));
+    CHECK(!xd_perm_allowed(camera, (const char *const[]){nullptr}));
+    CHECK(xd_perm_allowed(loc, (const char *const[]){"CITY", "1800000000", nullptr}));
+    CHECK(!xd_perm_allowed(loc, (const char *const[]){"NONE", "1800000000", nullptr}));
+    char **v = xd_perm_values_set(loc, (const char *const[]){"EXACT", "1800000000", nullptr},
+                                  FALSE);
+    CHECK(g_strv_length(v) == 2 && g_str_equal(v[0], "NONE") && g_str_equal(v[1], "1800000000"));
+    char maps[] = "org.example.Maps", host[] = "";
+    XdPermEntry e = {.kind = loc, .app = maps, .values = v};
+    CHECK(xd_perm_last_used(&e) == 1800000000);
+    g_strfreev(v);
+    v = xd_perm_values_set(camera, nullptr, TRUE);
+    CHECK(g_strv_length(v) == 1 && g_str_equal(v[0], "yes"));
+    e = (XdPermEntry){.kind = camera, .app = host, .values = v};
+    CHECK(xd_perm_last_used(&e) == -1);
+    g_strfreev(v);
+
+    /* Housekeeping: a month's Recycle Bin items by their deletion date,
+     * and temporary files untouched as long. "Now" is 40 days on (a
+     * file's change time can't be set back). */
+    char *root = g_dir_make_tmp("xd-privacy-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    uid_t uid = getuid();
+    gint64 real = g_get_real_time() / G_USEC_PER_SEC;
+    gint64 now = (real + 40 * day) * G_USEC_PER_SEC;
+    char *data = g_build_filename(root, "data", nullptr);
+    char *tmp = g_build_filename(root, "tmp", nullptr);
+    put_file(data, "Trash/files/old.txt", "x");
+    put_trashinfo(data, "old.txt", real);
+    put_file(data, "Trash/files/olddir/in.txt", "x");
+    put_trashinfo(data, "olddir", real);
+    put_file(data, "Trash/files/new.txt", "x");
+    put_trashinfo(data, "new.txt", real + 35 * day);
+    put_file(data, "Trash/files/nodate.txt", "x");
+    put_trashinfo(data, "nodate.txt", 0);
+    put_trashinfo(data, "gone.txt", real); /* its file went already */
+    put_file(data, "Trash/files/noinfo.txt", "x");
+    put_file(tmp, "old.txt", "x");
+    put_file(tmp, "recent.txt", "x");
+    set_times_at(tmp, "old.txt", real - day);
+    set_times_at(tmp, "recent.txt", real + 20 * day);
+
+    const char *roots[] = {"/", nullptr};
+    const char *temps[] = {tmp, nullptr};
+    XdCleanupPlaces *p = xd_cleanup_places_new("/", roots, data, nullptr, temps, uid);
+    GPtrArray *only_trash = xd_cleanup_scan_old(p, uid, now, 30 * day * G_USEC_PER_SEC, TRUE,
+                                                FALSE, nullptr);
+    CHECK(only_trash->len == 1);
+    g_ptr_array_unref(only_trash);
+    GPtrArray *cats = xd_cleanup_scan_old(p, uid, now, 30 * day * G_USEC_PER_SEC, TRUE, TRUE,
+                                          nullptr);
+    const XdCleanupCategory *trash = cleanup_find(cats, XD_CLEANUP_TRASH);
+    const XdCleanupCategory *temp = cleanup_find(cats, XD_CLEANUP_TEMP);
+    CHECK(trash != nullptr && trash->items->len == 5 &&
+          cleanup_items_has(trash, data, "Trash/files/old.txt") &&
+          cleanup_items_has(trash, data, "Trash/info/old.txt.trashinfo") &&
+          cleanup_items_has(trash, data, "Trash/files/olddir") &&
+          cleanup_items_has(trash, data, "Trash/info/olddir.trashinfo") &&
+          cleanup_items_has(trash, data, "Trash/info/gone.txt.trashinfo"));
+    CHECK(temp != nullptr && temp->items->len == 1 && cleanup_items_has(temp, tmp, "old.txt"));
+    for (guint i = 0; i < cats->len; i++) {
+        GError *err = nullptr;
+        CHECK(xd_cleanup_delete(g_ptr_array_index(cats, i), uid, now, nullptr, &err));
+        g_clear_error(&err);
+    }
+    CHECK(!exists_at(data, "Trash/files/old.txt") && !exists_at(data, "Trash/files/olddir") &&
+          !exists_at(data, "Trash/info/old.txt.trashinfo") &&
+          !exists_at(data, "Trash/info/olddir.trashinfo") &&
+          !exists_at(data, "Trash/info/gone.txt.trashinfo"));
+    CHECK(exists_at(data, "Trash/files/new.txt") && exists_at(data, "Trash/info/new.txt.trashinfo") &&
+          exists_at(data, "Trash/files/nodate.txt") && exists_at(data, "Trash/files/noinfo.txt"));
+    CHECK(!exists_at(tmp, "old.txt") && exists_at(tmp, "recent.txt"));
+    g_ptr_array_unref(cats);
+    xd_cleanup_places_free(p);
+    rm_tree(root);
+    g_free(tmp);
+    g_free(data);
+    g_free(root);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -4859,6 +4986,7 @@ int main(void) {
     test_taskmgr_netstat();
     test_disk_cleanup();
     test_timedate_ntp();
+    test_privacy();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

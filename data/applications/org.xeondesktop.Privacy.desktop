@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Privacy
+Comment=Choose what your computer remembers and what programs may use, such as your location and camera
+Exec=xd-privacy
+Icon=preferences-security
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=accounts
+Keywords=privacy;recent;documents;history;trash;recycle;temporary;location;geoclue;permissions;camera;microphone;notifications;portal;
+StartupWMClass=org.xeondesktop.Privacy

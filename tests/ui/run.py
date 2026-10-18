@@ -3606,6 +3606,155 @@ def users_automatic_logon(s):
         DBusTestCase.tearDownClass()
 
 
+PRIVACY_STORE = {
+    "location": {"location": {"org.example.Maps": ["EXACT", "1800000000"]}},
+    "devices": {"camera": {"org.example.Cam": ["yes"]}},
+    "notifications": {"notification": {"org.example.Cam": ["no"]}},
+}
+
+
+def privacy_setup(s):
+    """Before the compositor starts: GSettings in a keyfile of the scratch
+    home (shared by the applet and the shell, never the real dconf); the
+    shell's housekeeping on in this test session, with a temporary folder
+    of its own; a dbusmock GeoClue on a private system bus (in use), and a
+    dbusmock permission store on the session bus. In the Recycle Bin, an
+    item deleted 60 days ago and one deleted now."""
+    from dbusmock import DBusTestCase
+
+    os.environ["GSETTINGS_BACKEND"] = "keyfile"
+    os.environ["XD_HOUSEKEEPING"] = "1"
+    tmp = os.path.join(s.home, "tmp")
+    os.makedirs(tmp)
+    os.environ["TMPDIR"] = tmp
+    with open(os.path.join(tmp, "in-use.txt"), "w") as f:
+        f.write("a program's\n")
+    trash = os.path.join(s.data, "Trash")
+    for name, days in (("old.txt", 60), ("new.txt", 0)):
+        os.makedirs(os.path.join(trash, "files"), exist_ok=True)
+        os.makedirs(os.path.join(trash, "info"), exist_ok=True)
+        with open(os.path.join(trash, "files", name), "w") as f:
+            f.write("deleted\n")
+        when = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - days * 86400))
+        with open(os.path.join(trash, "info", name + ".trashinfo"), "w") as f:
+            f.write(f"[Trash Info]\nPath={s.home}/{name}\nDeletionDate={when}\n")
+    doc = os.path.join(s.home, "Documents", "Notes.txt")
+    os.makedirs(os.path.dirname(doc), exist_ok=True)
+    with open(doc, "w") as f:
+        f.write("notes\n")
+    write_recent(s, [("file://" + urllib.parse.quote(doc), "2026-10-01T10:00:00Z")])
+
+    DBusTestCase.start_system_bus()
+    for template, system, params in (
+        ("geoclue.py", True, {"InUse": True}),
+        ("permissionstore.py", False, {"tables": PRIVACY_STORE}),
+    ):
+        log = open(os.path.join(s.base, f"mock-{template}.log"), "w")
+        proc, _ = DBusTestCase.spawn_server_template(
+            os.path.join(SOURCE_ROOT, "tests", "dbusmock", template), params, stdout=log,
+            system_bus=system,
+        )  # fmt: skip
+        s.children.append(proc)
+
+
+def gsettings_keyfile(s):
+    c = configparser.ConfigParser(interpolation=None, strict=False)
+    c.optionxform = str
+    c.read(os.path.join(os.environ["XDG_CONFIG_HOME"], "glib-2.0", "settings", "keyfile"))
+    return c
+
+
+@scenario(LUNA_INI, requires=("dbusmock",), setup=privacy_setup)
+def privacy_settings(s):
+    """Privacy Properties (on a dbusmock GeoClue and permission store):
+    turning on "Empty old items from the Recycle Bin" makes the shell
+    delete the item deleted 60 days ago (not today's, nor a temporary file
+    in use); Clear List empties recently-used.xbel; Location turns on and
+    denies a program; Program Permissions denies one program's camera and
+    forgets another's answers."""
+    import dbus
+
+    store = dbus.Interface(
+        dbus.SessionBus().get_object(
+            "org.freedesktop.impl.portal.PermissionStore",
+            "/org/freedesktop/impl/portal/PermissionStore",
+        ),
+        "org.freedesktop.impl.portal.PermissionStore",
+    )
+
+    def lookup(table, entry):
+        try:
+            return {str(k): [str(x) for x in v] for k, v in store.Lookup(table, entry)[0].items()}
+        except dbus.exceptions.DBusException:
+            return {}
+
+    s.launch("xd-privacy")
+    s.wait_window(title="Privacy Properties", state="activated")
+    s.settle("general")
+    trash = os.path.join(s.data, "Trash")
+
+    # Empty old items from the Recycle Bin, Apply.
+    s.inject("key", "alt+e", "sleep", 200, "key", "alt+a", "sleep", 500)
+
+    def privacy_key(key):
+        c = gsettings_keyfile(s)
+        return c.get("org/gnome/desktop/privacy", key, fallback=None)
+
+    s.wait(lambda: privacy_key("remove-old-trash-files") == "true", "the setting saved")
+    s.log("ok: remove-old-trash-files saved")
+    s.wait(lambda: not os.path.exists(os.path.join(trash, "files", "old.txt")),
+           "the old item to go", timeout=30)  # fmt: skip
+    s.check(not os.path.exists(os.path.join(trash, "info", "old.txt.trashinfo")) and
+            os.path.exists(os.path.join(trash, "files", "new.txt")) and
+            os.path.exists(os.path.join(trash, "info", "new.txt.trashinfo")) and
+            os.path.exists(os.path.join(s.home, "tmp", "in-use.txt")),
+            "only the item deleted 60 days ago went")  # fmt: skip
+
+    # Clear List, at once.
+    xbel = os.path.join(s.data, "recently-used.xbel")
+    s.inject("key", "alt+c")
+
+    def cleared():
+        with open(xbel) as f:
+            return "<bookmark " not in f.read()
+
+    s.wait(cleared, "the recent documents list to clear")
+    s.log("ok: Clear List emptied recently-used.xbel")
+
+    # Location: turn it on, deny Maps.
+    s.inject("key", "ctrl+Tab", "sleep", 300)
+    s.settle("location")
+    s.inject("key", "alt+u", "sleep", 200, "key", "alt+k", "sleep", 200)
+    s.inject("key", "space", "sleep", 200, "key", "alt+d", "sleep", 500)
+    s.wait(lambda: lookup("location", "location").get("org.example.Maps") == ["NONE", "1800000000"],
+           "Maps denied its location")  # fmt: skip
+    s.log("ok: Maps denied, its last use kept")
+    s.inject("key", "alt+a", "sleep", 500)
+    s.wait(lambda: gsettings_keyfile(s).get("org/gnome/system/location", "enabled",
+                                            fallback=None) == "true",
+           "location turned on")  # fmt: skip
+    s.log("ok: location services on")
+    s.settle("location-on")
+
+    # Program Permissions: Cam's camera denied, then all Maps' answers removed.
+    s.inject("key", "ctrl+Tab", "sleep", 300)
+    s.settle("permissions")
+    # The rows: Cam, Camera, Notifications, Maps, Location.
+    s.inject("key", "alt+n", "sleep", 200, "key", "Home", "key", "Down", "sleep", 200,
+             "key", "alt+d", "sleep", 500)  # fmt: skip
+    s.wait(lambda: lookup("devices", "camera").get("org.example.Cam") == ["no"],
+           "Cam's camera denied")  # fmt: skip
+    s.log("ok: camera denied")
+    s.inject("key", "alt+n", "sleep", 200, "key", "End", "key", "Up", "sleep", 200,
+             "key", "alt+r", "sleep", 500)  # fmt: skip
+    s.wait(lambda: "org.example.Maps" not in lookup("location", "location"),
+           "Maps' answers removed")  # fmt: skip
+    s.check(lookup("devices", "camera").get("org.example.Cam") == ["no"] and
+            lookup("notifications", "notification").get("org.example.Cam") == ["no"],
+            "the other program's answers stay")  # fmt: skip
+    s.settle("permissions-after")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

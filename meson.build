@@ -542,6 +542,7 @@ install_data(
   'data/applications/org.xeondesktop.Taskbar.desktop',
   'data/applications/org.xeondesktop.Sound.desktop',
   'data/applications/org.xeondesktop.Power.desktop',
+  'data/applications/org.xeondesktop.Privacy.desktop',
   'data/applications/org.xeondesktop.RegionalOptions.desktop',
   'data/applications/org.xeondesktop.UserAccounts.desktop',
   'data/applications/org.xeondesktop.FolderOptions.desktop',
@@ -689,6 +690,16 @@ executable(
   'src/power/schemes.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+
+# Privacy: recent documents, old files, location, portal permissions.
+executable(
+  'xd-privacy',
+  'src/privacy/main.c',
+  'src/privacy/permissions.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep],
   install: true,
 )
 
@@ -946,6 +957,8 @@ executable(
   'src/shell/session.c',
   'src/shell/primary.c',
   'src/shell/langbar.c',
+  'src/shell/housekeeping.c',
+  'src/files/cleanup.c',
   'src/settings/soundplay.c',
   'src/settings/themes.c',
   link_with: rename_lib,
@@ -1038,6 +1051,8 @@ test_exe = executable(
   'src/files/cleanup.c',
   'src/taskmgr/netstat.c',
   'src/timedate/ntp.c',
+  'src/shell/recent.c',
+  'src/privacy/permissions.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep,
@@ -1130,7 +1145,7 @@ install_man(
   'man/xd-diskmgmt.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1', 'man/xd-files.1',
   'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',
   'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mouse.1',
-  'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1',
+  'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1', 'man/xd-privacy.1',
   'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1', 'man/xd-search.1',
   'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1',
   'man/xd-sound.1', 'man/xd-sysdm.1', 'man/xd-taskbar.1', 'man/xd-taskmgr.1',

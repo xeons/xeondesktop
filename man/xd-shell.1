@@ -96,6 +96,14 @@ instead of minutes (for tests).
 .B XD_TRAY_INACTIVE_SECONDS
 How long a notification area icon stays quiet before it folds behind the
 chevron, in seconds, instead of three minutes (for tests).
+.TP
+.B XD_HOUSEKEEPING
+Set to
+.B 1
+to empty old Recycle Bin items and temporary files as Privacy says
+.RB ( xd\-privacy (1))
+in a nested or test session too, not only in a real one (for tests, with
+a scratch home).
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/desktop.ini

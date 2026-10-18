@@ -29,6 +29,7 @@
 
 #include "../core/alloc.h"
 #include "jumplist.h"
+#include "recent.h"
 #include "shell.h"
 
 /* Logical px. Windows 7's large-icon buttons: a 32px icon on a button
@@ -270,6 +271,26 @@ static GBookmarkFile *recent_file(xd_superbar *sb) {
     }
     g_free(path);
     return sb->recent;
+}
+
+/* Takes out of `uris` what Privacy says not to remember (any more). The
+ * file itself is left alone: GTK clamps it the next time it writes. */
+static void drop_forgotten(GBookmarkFile *recent, char **uris) {
+    bool remember;
+    int max_age;
+    xd_recent_privacy(&remember, &max_age);
+    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+    size_t k = 0;
+    for (size_t i = 0; uris[i] != nullptr; i++) {
+        GDateTime *dt = recent != nullptr ? g_bookmark_file_get_modified_date_time(
+                                                recent, uris[i], nullptr)
+                                          : nullptr;
+        if (xd_recent_shown(remember, max_age, dt != nullptr ? g_date_time_to_unix(dt) : 0, now))
+            uris[k++] = uris[i];
+        else
+            g_free(uris[i]);
+    }
+    uris[k] = nullptr;
 }
 
 /* A program on the taskbar this time round. */
@@ -1104,9 +1125,11 @@ static void jump_items(xd_shell *shell, xd_menu_tree *tree, xd_menu_model *m, co
         xd_menu_add(tree, m, XD_MENU_HEADER, "Pinned", nullptr);
     for (char **u = pinned; *u != nullptr; u++)
         file_item(tree, m, key, *u, true);
-    char **uris = xd_jumplist_recent(recent_file(sb), key,
-                                     g_app_info_get_executable(G_APP_INFO(info)), RECENT_MAX);
+    GBookmarkFile *recent = recent_file(sb);
+    char **uris = xd_jumplist_recent(recent, key, g_app_info_get_executable(G_APP_INFO(info)),
+                                     RECENT_MAX);
     xd_jumplist_drop_pinned(uris, pinned);
+    drop_forgotten(recent, uris);
     if (uris[0] != nullptr)
         xd_menu_add(tree, m, XD_MENU_HEADER, "Recent", nullptr);
     for (char **u = uris; *u != nullptr; u++)

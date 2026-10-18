@@ -1057,6 +1057,7 @@ int main(int argc, char **argv) {
     xd_sleep_init(&shell);
     xd_buttons_init(&shell);
     xd_account_init(&shell);
+    xd_housekeeping_init(&shell);
     xd_shell_sounds_init();
     xd_shellbus_init(&shell);
     xd_session_logon_sound(compositor);
@@ -1097,6 +1098,7 @@ int main(int argc, char **argv) {
     xd_sleep_finish(&shell);
     xd_buttons_finish(&shell);
     xd_account_finish(&shell);
+    xd_housekeeping_finish(&shell);
     xd_sound_finish();
     xd_deskicons_finish(&shell);
     xd_dnd_finish(&shell);

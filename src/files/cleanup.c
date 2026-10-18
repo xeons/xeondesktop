@@ -212,7 +212,7 @@ static void walk_at(int at, const char *name, walk *w, int depth) {
     closedir(d);
 }
 
-/* The items in `dir` (each deleted whole, if `accept`), with their size. */
+/* The items in `dir` (each deleted whole), with their size. */
 static void scan_dir(XdCleanupCategory *c, const char *dir, uid_t uid, gboolean strict,
                      gint64 now, GCancellable *cancel) {
     int fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -238,7 +238,7 @@ static void scan_dir(XdCleanupCategory *c, const char *dir, uid_t uid, gboolean 
         walk w = {.dev = top.st_dev,
                   .uid = uid,
                   .strict = strict,
-                  .cutoff = (now - TEMP_AGE) / G_USEC_PER_SEC,
+                  .cutoff = (now - c->age) / G_USEC_PER_SEC,
                   .cancel = cancel,
                   .ok = TRUE};
         walk_at(dirfd(d), e->d_name, &w, 0);
@@ -285,6 +285,7 @@ static XdCleanupCategory *category_new(XdCleanupKind kind) {
     c->title = info[kind].title;
     c->description = info[kind].description;
     c->checked = info[kind].checked;
+    c->age = TEMP_AGE;
     c->roots = g_ptr_array_new_with_free_func(g_free);
     c->items = g_ptr_array_new_with_free_func(g_free);
     return c;
@@ -354,6 +355,113 @@ GPtrArray *xd_cleanup_scan(const XdCleanupPlaces *places, uid_t uid, gint64 now,
         if (d != nullptr)
             g_dir_close(d);
         c->view = g_strdup(places->thumbnails);
+        g_ptr_array_add(out, c);
+    }
+    return out;
+}
+
+/* ---- housekeeping ------------------------------------------------------------------ */
+
+/* When a trashed item was deleted (µs), from its .trashinfo (`info`, a
+ * name in the folder `at`); -1 if that can't be told. The date is local
+ * time without a zone, as the trash specification has it. */
+static gint64 deletion_date(int at, const char *info, uid_t uid) {
+    struct stat st;
+    if (fstatat(at, info, &st, AT_SYMLINK_NOFOLLOW) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_uid != uid || st.st_size > 64 * 1024)
+        return -1;
+    int fd = openat(at, info, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    char *buf = g_malloc((gsize)st.st_size + 1);
+    ssize_t n = read(fd, buf, (size_t)st.st_size);
+    close(fd);
+    GKeyFile *kf = g_key_file_new();
+    char *date = n > 0 && g_key_file_load_from_data(kf, buf, (gsize)n, G_KEY_FILE_NONE, nullptr)
+                     ? g_key_file_get_string(kf, "Trash Info", "DeletionDate", nullptr)
+                     : nullptr;
+    g_key_file_unref(kf);
+    g_free(buf);
+    GTimeZone *tz = g_time_zone_new_local();
+    GDateTime *dt = date != nullptr ? g_date_time_new_from_iso8601(date, tz) : nullptr;
+    g_time_zone_unref(tz);
+    g_free(date);
+    gint64 when = dt != nullptr ? g_date_time_to_unix_usec(dt) : -1;
+    if (dt != nullptr)
+        g_date_time_unref(dt);
+    return when;
+}
+
+/* A trash's items deleted before `cutoff` (µs): each item in files/,
+ * then its .trashinfo (alone if the item is gone already). An item
+ * that couldn't be judged (another owner, a mount inside) stays with
+ * its .trashinfo. */
+static void scan_old_trash(XdCleanupCategory *c, const char *trash, uid_t uid, gint64 cutoff,
+                           GCancellable *cancel) {
+    char *files = g_build_filename(trash, "files", nullptr);
+    char *info = g_build_filename(trash, "info", nullptr);
+    int ifd = own_dir(info, uid) && own_dir(files, uid)
+                  ? open(info, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                  : -1;
+    int ffd = ifd >= 0 ? open(files, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
+    struct stat top;
+    DIR *d = ffd >= 0 && fstat(ffd, &top) == 0 ? fdopendir(ifd) : nullptr;
+    if (d == nullptr) {
+        if (ifd >= 0)
+            close(ifd);
+        if (ffd >= 0)
+            close(ffd);
+        g_free(files);
+        g_free(info);
+        return;
+    }
+    g_ptr_array_add(c->roots, g_strdup(files));
+    g_ptr_array_add(c->roots, g_strdup(info));
+    const size_t suffix = strlen(".trashinfo");
+    struct dirent *e;
+    while (!g_cancellable_is_cancelled(cancel) && (e = readdir(d)) != nullptr) {
+        if (!g_str_has_suffix(e->d_name, ".trashinfo") || strlen(e->d_name) == suffix)
+            continue;
+        gint64 when = deletion_date(dirfd(d), e->d_name, uid);
+        if (when < 0 || when >= cutoff)
+            continue;
+        char *name = g_strndup(e->d_name, strlen(e->d_name) - suffix);
+        struct stat st;
+        if (fstatat(ffd, name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+            walk w = {.dev = top.st_dev, .uid = uid, .cancel = cancel, .ok = st.st_uid == uid};
+            walk_at(ffd, name, &w, 0);
+            if (!w.ok) {
+                g_free(name);
+                continue;
+            }
+            g_ptr_array_add(c->items, g_build_filename(files, name, nullptr));
+            c->size += w.size;
+        }
+        g_ptr_array_add(c->items, g_build_filename(info, e->d_name, nullptr));
+        g_free(name);
+    }
+    closedir(d);
+    close(ffd);
+    g_free(files);
+    g_free(info);
+}
+
+GPtrArray *xd_cleanup_scan_old(const XdCleanupPlaces *places, uid_t uid, gint64 now, gint64 age,
+                               gboolean trash, gboolean temp, GCancellable *cancel) {
+    GPtrArray *out = g_ptr_array_new_with_free_func(category_free);
+    if (trash) {
+        XdCleanupCategory *c = category_new(XD_CLEANUP_TRASH);
+        for (char **t = places->trashes; *t != nullptr; t++)
+            scan_old_trash(c, *t, uid, now - age, cancel);
+        c->view = g_strdup("trash:///");
+        g_ptr_array_add(out, c);
+    }
+    if (temp && places->temp_dirs[0] != nullptr) {
+        XdCleanupCategory *c = category_new(XD_CLEANUP_TEMP);
+        c->age = age;
+        for (char **dir = places->temp_dirs; *dir != nullptr; dir++)
+            scan_dir(c, *dir, uid, TRUE, now, cancel);
+        c->view = g_strdup(places->temp_dirs[0]);
         g_ptr_array_add(out, c);
     }
     return out;
@@ -433,7 +541,7 @@ gboolean xd_cleanup_delete(const XdCleanupCategory *c, uid_t uid, gint64 now,
                     walk w = {.dev = top.st_dev,
                               .uid = uid,
                               .strict = TRUE,
-                              .cutoff = (now - TEMP_AGE) / G_USEC_PER_SEC,
+                              .cutoff = (now - c->age) / G_USEC_PER_SEC,
                               .cancel = cancel,
                               .ok = TRUE};
                     walk_at(fd, base, &w, 0);
