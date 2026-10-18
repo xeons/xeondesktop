@@ -1770,6 +1770,7 @@ static xd_menu_model *context_model(xd_start7 *m, const row *r) {
         it->action = ctx_forget;
         it->action_data = id;
     }
+    xd_menu_add_program_items(&m->tree, mm, r->app);
     return mm;
 }
 

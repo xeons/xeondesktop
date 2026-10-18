@@ -2404,6 +2404,20 @@ def xp_start_underlines(s):
     s.log("ok: R opened Run")
 
 
+@scenario(LUNA_INI)
+def xp_start_send_to(s):
+    """A program's right-click menu in the XP Start menu: Send To > Desktop
+    (create shortcut) puts it on the desktop (by its letters, N then D)."""
+    with open(os.path.join(s.config, "start-pinned"), "w") as f:
+        f.write("org.xeondesktop.Files.desktop\n")
+    s.inject("key", "ctrl+Escape", "sleep", 600)
+    s.settle("menu")
+    s.inject("move", 90, 352, "click", "right", "sleep", 600, "key", "n", "sleep", 600, "key", "d")
+    shortcut = os.path.join(s.home, "Desktop", "org.xeondesktop.Files.desktop")
+    s.wait(lambda: os.path.exists(shortcut), "the program's shortcut on the desktop")
+    s.log("ok: Send To > Desktop (create shortcut) put it there")
+
+
 @scenario()
 def screen_saver_settings(s):
     """Display Properties' Screen Saver tab: the preview shows each saver

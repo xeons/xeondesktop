@@ -100,6 +100,10 @@ xd_menu_item *xd_menu_add(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind
  * plain '&'). */
 xd_menu_item *xd_menu_add_keyed(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind kind,
                                 const char *label, const char *icon);
+/* A program's right-click menu, after its pinning items: Send To (Desktop
+ * (create shortcut), My Documents) and Properties, as XP's and Windows 7's
+ * Start menus have. The app belongs to shell->apps. */
+void xd_menu_add_program_items(xd_menu_tree *tree, xd_menu_model *model, const xd_app *app);
 /* Whether menus underline their access keys now: always, unless they're
  * hidden until the keyboard is used (Display Properties' Effects), as in
  * Windows; then once a menu was opened or used from the keyboard. */

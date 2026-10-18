@@ -3,6 +3,7 @@
 #include <math.h>
 #include <sys/timerfd.h>
 #include <glib.h>
+#include <gio/gdesktopappinfo.h>
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -845,6 +846,73 @@ static void ctx_unpin(xd_shell *shell, void *data) {
     xd_start7_set_pinned(shell, ((const xd_app *)data)->id, false);
 }
 
+/* Send To and Properties act on the program's desktop entry, through the
+ * file manager as its own commands do: a copy on the desktop is Linux's
+ * shortcut to a program, as dropping one there makes. */
+static const char *program_file(const xd_app *app) {
+    return app->info != nullptr ? g_desktop_app_info_get_filename(app->info) : nullptr;
+}
+
+static void run_files(xd_shell *shell, const char *option, const char *path) {
+    char *exe = xd_shell_own_program("xd-files");
+    char *qexe = g_shell_quote(exe);
+    char *qopt = g_shell_quote(option);
+    char *qpath = g_shell_quote(path);
+    char *cmd = g_strdup_printf("%s %s %s", qexe, qopt, qpath);
+    xd_shell_launch(shell, cmd);
+    g_free(cmd);
+    g_free(qpath);
+    g_free(qopt);
+    g_free(qexe);
+    g_free(exe);
+}
+
+static void send_to(xd_shell *shell, const xd_app *app, GUserDirectory which,
+                    const char *fallback) {
+    const char *file = program_file(app);
+    if (file == nullptr)
+        return;
+    const char *dir = g_get_user_special_dir(which);
+    char *own = dir == nullptr ? g_build_filename(g_get_home_dir(), fallback, nullptr) : nullptr;
+    char *option = g_strconcat("--copy-to=", dir != nullptr ? dir : own, nullptr);
+    run_files(shell, option, file);
+    g_free(option);
+    g_free(own);
+}
+
+static void ctx_send_desktop(xd_shell *shell, void *data) {
+    send_to(shell, data, G_USER_DIRECTORY_DESKTOP, "Desktop");
+}
+static void ctx_send_documents(xd_shell *shell, void *data) {
+    send_to(shell, data, G_USER_DIRECTORY_DOCUMENTS, "Documents");
+}
+static void ctx_properties(xd_shell *shell, void *data) {
+    const char *file = program_file(data);
+    if (file != nullptr)
+        run_files(shell, "--properties", file);
+}
+
+void xd_menu_add_program_items(xd_menu_tree *tree, xd_menu_model *model, const xd_app *app) {
+    void *data = (void *)(uintptr_t)app;
+    bool file = program_file(app) != nullptr;
+    xd_menu_add(tree, model, XD_MENU_SEPARATOR, nullptr, nullptr);
+    xd_menu_item *send = xd_menu_add_keyed(tree, model, XD_MENU_SUBMENU, "Se&nd To", nullptr);
+    send->submenu = xd_menu_model_new(tree);
+    send->disabled = !file;
+    xd_menu_item *it = xd_menu_add(tree, send->submenu, XD_MENU_ACTION,
+                                   "Desktop (create shortcut)", "user-desktop");
+    it->action = ctx_send_desktop;
+    it->action_data = data;
+    it = xd_menu_add(tree, send->submenu, XD_MENU_ACTION, "My Documents", "folder-documents");
+    it->action = ctx_send_documents;
+    it->action_data = data;
+    xd_menu_add(tree, model, XD_MENU_SEPARATOR, nullptr, nullptr);
+    it = xd_menu_add_keyed(tree, model, XD_MENU_ACTION, "P&roperties", nullptr);
+    it->action = ctx_properties;
+    it->action_data = data;
+    it->disabled = !file;
+}
+
 static xd_menu_model *app_context(xd_shell *shell, xd_menu_tree *tree, const xd_app *app) {
     xd_menu_model *mm = xd_menu_model_new(tree);
     void *data = (void *)(uintptr_t)app;
@@ -860,6 +928,7 @@ static xd_menu_model *app_context(xd_shell *shell, xd_menu_tree *tree, const xd_
     it->action = pinned ? ctx_unpin : ctx_pin;
     it->action_data = data;
     it->disabled = !pinned && full;
+    xd_menu_add_program_items(tree, mm, app);
     return mm;
 }
 
