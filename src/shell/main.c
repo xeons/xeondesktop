@@ -24,8 +24,17 @@
 
 /* ---- clock ------------------------------------------------------------------ */
 
-/* Updates shell->clock; returns true if the text changed. */
+/* Updates shell->clock; returns true if the text changed.
+ * XD_CLOCK_FIXED=TEXT shows TEXT instead and never ticks, for the UI
+ * tests, whose screenshots would otherwise differ at each new minute. */
 static bool update_clock(xd_shell *shell) {
+    const char *fixed = getenv("XD_CLOCK_FIXED");
+    if (fixed != nullptr && fixed[0] != '\0') {
+        if (strcmp(fixed, shell->clock) == 0)
+            return false;
+        snprintf(shell->clock, sizeof(shell->clock), "%s", fixed);
+        return true;
+    }
     /* The precise clock: time() reads a coarse one that can still say :59
      * when the minute timer fires, leaving the clock a minute behind. Half
      * a second's margin for timer slack the other way. */

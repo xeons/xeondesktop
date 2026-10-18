@@ -270,6 +270,9 @@ def run_scenario(name, build, keep, keep_all=False):
             "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=" + os.path.join(runtime, "no-system-bus"),
             # Never the real speakers: sounds are logged, not played.
             "XD_SOUND_TRACE": os.path.join(runtime, "sounds.log"),
+            # The taskbar clock holds still, so screenshots don't change
+            # when a minute ends mid-scenario.
+            "XD_CLOCK_FIXED": "12:00 PM",
             "WLR_BACKENDS": "headless",
             "WLR_RENDERER": "pixman",
             "WLR_HEADLESS_OUTPUTS": str(len(outputs)),
@@ -1580,15 +1583,18 @@ def screen_saver_settings(s):
     savers = ["3D Pipes", "3D Text", "Beziers", "Blank Screen", "Flying Penguins",
               "Marquee Display", "Mystify Your Mind", "Starfield Simulation"]
     for name in savers:
+        label = name.replace(" ", "-").lower()
         s.inject("key", "Down", "sleep", 600)
-        a = s.shot(name.replace(" ", "-").lower())
-        time.sleep(0.5)
-        b = s.shot(name.replace(" ", "-").lower())
-        moved = b.differs(a, dialog, step=2, tolerance=8)
+        a = s.shot(label)
         if name == "Blank Screen":
+            time.sleep(0.5)
+            moved = s.shot(label).differs(a, dialog, step=2, tolerance=8)
             s.check(moved == 0, "the preview's Blank Screen stands still")
         else:
-            s.check(moved > 0, f"the preview shows {name} moving ({moved:.4f} changed)")
+            # Until it moves: a loaded machine (CI's) starts it late.
+            s.wait(lambda: s.shot(label).differs(a, dialog, step=2, tolerance=8) > 0,
+                   f"the preview to show {name} moving", timeout=10)  # fmt: skip
+            s.log(f"ok: the preview shows {name} moving")
 
     # Marquee Display (two up): Settings... is the next control.
     s.inject("key", "Up", "sleep", 200, "key", "Up", "sleep", 300, "key", "Tab", "sleep", 200,
@@ -1623,6 +1629,8 @@ def screen_saver_settings(s):
 TWO_MONITORS = [(WIDTH, HEIGHT, 1), (WIDTH, HEIGHT, 1.5)]
 SECOND_X, SECOND_W, SECOND_H = WIDTH, round(WIDTH / 1.5), round(HEIGHT / 1.5)
 BOTH = (0, 0, SECOND_X + SECOND_W, HEIGHT)
+# The second monitor alone: the first's taskbar clock may change meanwhile.
+SECOND = (SECOND_X, 0, SECOND_W, SECOND_H)
 
 
 def share_unlike(shot, rect, colour, step=4, tolerance=8):
@@ -1664,11 +1672,13 @@ def two_monitors(s):
     s.check(desk.pixel(SECOND_X + SECOND_W // 2, SECOND_H - 4) != bg,
             "a taskbar on the second monitor")  # fmt: skip
     s.inject("move", SECOND_X + 20, SECOND_H - 12, "click")
-    _, box = wait_change(s, desk, BOTH, "the Start menu", "start-menu")
-    s.check(box[0] >= SECOND_X and box[1] + box[3] <= SECOND_H,
-            f"the Start menu opened on the second monitor ({box})")  # fmt: skip
+    # On the second monitor; the first stays as it was above its taskbar.
+    menu_shot, box = wait_change(s, desk, SECOND, "the Start menu", "start-menu")
+    s.check(box[3] > 100, f"the Start menu opened on the second monitor ({box})")
+    s.check(menu_shot.changed_box(desk, (0, 0, SECOND_X, HEIGHT - 30)) is None,
+            "nothing opened on the first")  # fmt: skip
     s.inject("key", "Escape", "move", SECOND_X + 300, 200)
-    s.wait(lambda: s.shot("closed").changed_box(desk, BOTH) is None, "the Start menu to close")
+    s.wait(lambda: s.shot("closed").changed_box(desk, SECOND) is None, "the Start menu to close")
 
     s.launch("xd-control")
     s.wait_window(title="Control Panel", state="activated")
@@ -1677,7 +1687,7 @@ def two_monitors(s):
     win = opened.changed_box(desk, (0, 0, SECOND_X + SECOND_W, SECOND_H - 30))
     s.check(win is not None and win[0] >= SECOND_X, f"the window opened on the second ({win})")
     s.inject("key", "alt+space")
-    _, menu = wait_change(s, opened, BOTH, "the window menu", "window-menu")
+    _, menu = wait_change(s, opened, SECOND, "the window menu", "window-menu")
     s.check(menu[0] >= SECOND_X and menu[1] < 120,
             f"Alt+Space's menu under the caption, on the second monitor ({menu})")  # fmt: skip
     # Restore, Move, Size, Minimize, Maximize.
@@ -1706,11 +1716,11 @@ def window_menu_without_taskbar(s):
     s.wait_window(title="Control Panel", state="activated")
     opened = s.settle("window")
     s.inject("key", "alt+space")
-    _, menu = wait_change(s, opened, BOTH, "the window menu", "window-menu")
+    _, menu = wait_change(s, opened, SECOND, "the window menu", "window-menu")
     s.check(menu[0] >= SECOND_X and menu[1] < 120,
             f"the menu under the caption, on the second monitor ({menu})")  # fmt: skip
     s.inject("key", "Escape")
-    s.wait(lambda: s.shot("closed").changed_box(opened, BOTH) is None, "the menu to close")
+    s.wait(lambda: s.shot("closed").changed_box(opened, SECOND) is None, "the menu to close")
     s.log("ok: Esc closed it")
 
 
