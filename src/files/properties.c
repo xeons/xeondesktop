@@ -11,7 +11,12 @@
 #include <unistd.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "launcher.h"
+#include "places.h"
 #include "properties.h"
+
+static constexpr GtkDialogFlags MODAL_DIALOG =
+    (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT);
 
 /* ---- formatting ------------------------------------------------------------------ */
 
@@ -231,6 +236,13 @@ typedef struct props {
     int bit_init[NBITS];
     GtkWidget *octal, *symbolic, *group, *recursive;
     gint64 group_init; /* -1 when the files' groups differ */
+
+    /* Shortcut (one launcher): the file the fields were read from (a user
+     * copy once a system launcher was changed), and as they were. */
+    char *sc_path;
+    XdLauncher sc_orig;
+    char *sc_icon;
+    GtkWidget *sc_target, *sc_start, *sc_comment, *sc_icon_image;
 } props;
 
 static entry *first(props *p) { return g_ptr_array_index(p->entries, 0); }
@@ -1086,6 +1098,367 @@ static GtkWidget *build_details(props *p) {
     return grid;
 }
 
+/* ---- Shortcut tab (launchers) ---------------------------------------------------- */
+
+/* The program a launcher's command runs, found in $PATH; nullptr if not. */
+static char *target_program(const char *command) {
+    char **argv = nullptr;
+    if (command == nullptr || !g_shell_parse_argv(command, nullptr, &argv, nullptr))
+        return nullptr;
+    char *prog = argv[0] != nullptr ? g_find_program_in_path(argv[0]) : nullptr;
+    g_strfreev(argv);
+    return prog;
+}
+
+/* An icon from the launcher's Icon: a theme name or an image file. */
+static void set_icon_image(GtkWidget *image, const char *icon) {
+    if (icon != nullptr && g_path_is_absolute(icon)) {
+        GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(icon, 32, 32, nullptr);
+        if (pb != nullptr) {
+            gtk_image_set_from_pixbuf(GTK_IMAGE(image), pb);
+            g_object_unref(pb);
+            return;
+        }
+    }
+    gtk_image_set_from_icon_name(GTK_IMAGE(image),
+                                 icon != nullptr && *icon != '\0' ? icon
+                                                                  : "application-x-executable",
+                                 GTK_ICON_SIZE_DND);
+    gtk_image_set_pixel_size(GTK_IMAGE(image), 32);
+}
+
+enum { ICON_COL_PIXBUF, ICON_COL_NAME, ICON_COL_COUNT };
+
+static void on_icon_chosen(GtkIconView *view, gpointer name_entry) {
+    GList *sel = gtk_icon_view_get_selected_items(view);
+    GtkTreeIter it;
+    if (sel != nullptr &&
+        gtk_tree_model_get_iter(gtk_icon_view_get_model(view), &it, sel->data)) {
+        char *name = nullptr;
+        gtk_tree_model_get(gtk_icon_view_get_model(view), &it, ICON_COL_NAME, &name, -1);
+        gtk_entry_set_text(GTK_ENTRY(name_entry), name);
+        g_free(name);
+    }
+    g_list_free_full(sel, (GDestroyNotify)gtk_tree_path_free);
+}
+
+static void on_icon_activated(GtkIconView *view, [[maybe_unused]] GtkTreePath *tp,
+                              gpointer dialog) {
+    (void)view;
+    gtk_dialog_response(GTK_DIALOG(dialog), GTK_RESPONSE_OK);
+}
+
+static void on_icon_browse([[maybe_unused]] GtkButton *b, gpointer name_entry) {
+    GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(name_entry));
+    GtkWidget *d = gtk_file_chooser_dialog_new("Change Icon", GTK_WINDOW(top),
+                                               GTK_FILE_CHOOSER_ACTION_OPEN, "Cancel",
+                                               GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT,
+                                               nullptr);
+    GtkFileFilter *f = gtk_file_filter_new();
+    gtk_file_filter_set_name(f, "Icon Files");
+    gtk_file_filter_add_pixbuf_formats(f);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(d), f);
+    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_ACCEPT) {
+        char *file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(d));
+        if (file != nullptr)
+            gtk_entry_set_text(GTK_ENTRY(name_entry), file);
+        g_free(file);
+    }
+    gtk_widget_destroy(d);
+}
+
+/* Windows' Change Icon box: where the icon comes from (here a theme
+ * icon's name or an image file, with Browse...) and the icons to pick
+ * from (the theme's program icons). Returns the choice, or nullptr. */
+static char *change_icon_dialog(GtkWindow *parent, const char *current) {
+    GtkWidget *dlg = gtk_dialog_new_with_buttons("Change Icon", parent,
+                                                 MODAL_DIALOG,
+                                                 "OK", GTK_RESPONSE_OK, "Cancel",
+                                                 GTK_RESPONSE_CANCEL, nullptr);
+    gtk_window_set_default_size(GTK_WINDOW(dlg), 420, 360);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    GtkWidget *look = gtk_label_new_with_mnemonic("_Look for icons in this file or icon name:");
+    gtk_label_set_xalign(GTK_LABEL(look), 0);
+    gtk_box_pack_start(GTK_BOX(box), look, FALSE, FALSE, 0);
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *name_entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(name_entry), current != nullptr ? current : "");
+    gtk_entry_set_activates_default(GTK_ENTRY(name_entry), TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(look), name_entry);
+    gtk_box_pack_start(GTK_BOX(row), name_entry, TRUE, TRUE, 0);
+    GtkWidget *browse = gtk_button_new_with_mnemonic("_Browse...");
+    g_signal_connect(browse, "clicked", G_CALLBACK(on_icon_browse), name_entry);
+    gtk_box_pack_start(GTK_BOX(row), browse, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
+    GtkWidget *pick = gtk_label_new_with_mnemonic("_Select an icon from the list below:");
+    gtk_label_set_xalign(GTK_LABEL(pick), 0);
+    gtk_box_pack_start(GTK_BOX(box), pick, FALSE, FALSE, 0);
+
+    GtkListStore *store = gtk_list_store_new(ICON_COL_COUNT, GDK_TYPE_PIXBUF, G_TYPE_STRING);
+    GtkIconTheme *theme = gtk_icon_theme_get_default();
+    GList *names = gtk_icon_theme_list_icons(theme, "Applications");
+    names = g_list_sort(names, (GCompareFunc)g_strcmp0);
+    for (GList *l = names; l != nullptr; l = l->next) {
+        if (g_str_has_suffix(l->data, "-symbolic"))
+            continue;
+        GdkPixbuf *pb = gtk_icon_theme_load_icon(theme, l->data, 32, GTK_ICON_LOOKUP_FORCE_SIZE,
+                                                 nullptr);
+        if (pb == nullptr)
+            continue;
+        gtk_list_store_insert_with_values(store, nullptr, -1, ICON_COL_PIXBUF, pb, ICON_COL_NAME,
+                                          l->data, -1);
+        g_object_unref(pb);
+    }
+    g_list_free_full(names, g_free);
+    GtkWidget *icons = gtk_icon_view_new_with_model(GTK_TREE_MODEL(store));
+    g_object_unref(store);
+    gtk_icon_view_set_pixbuf_column(GTK_ICON_VIEW(icons), ICON_COL_PIXBUF);
+    gtk_icon_view_set_tooltip_column(GTK_ICON_VIEW(icons), ICON_COL_NAME);
+    gtk_icon_view_set_item_width(GTK_ICON_VIEW(icons), 40);
+    gtk_icon_view_set_margin(GTK_ICON_VIEW(icons), 4);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(pick), icons);
+    g_signal_connect(icons, "selection-changed", G_CALLBACK(on_icon_chosen), name_entry);
+    g_signal_connect(icons, "item-activated", G_CALLBACK(on_icon_activated), dlg);
+    GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
+    gtk_container_add(GTK_CONTAINER(scroll), icons);
+    gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box, TRUE, TRUE, 0);
+    gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_OK);
+    gtk_widget_show_all(dlg);
+    char *chosen = nullptr;
+    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK)
+        chosen = g_strdup(gtk_entry_get_text(GTK_ENTRY(name_entry)));
+    gtk_widget_destroy(dlg);
+    return chosen;
+}
+
+static void on_change_icon([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    char *icon = change_icon_dialog(GTK_WINDOW(p->window), p->sc_icon);
+    if (icon != nullptr && g_strcmp0(icon, p->sc_icon) != 0) {
+        g_free(p->sc_icon);
+        p->sc_icon = icon;
+        set_icon_image(p->sc_icon_image, icon);
+        mark_dirty(p);
+    } else {
+        g_free(icon);
+    }
+}
+
+/* Find Target...: the folder the program is in. */
+static void on_find_target([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    char *prog = target_program(gtk_entry_get_text(GTK_ENTRY(p->sc_target)));
+    if (prog == nullptr) {
+        xd_message_box(GTK_WINDOW(p->window), "Problem with Shortcut", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, "The item that this shortcut refers to cannot be found.");
+        return;
+    }
+    char *dir = g_path_get_dirname(prog);
+    char *files = g_strdup("xd-files");
+    char *argv[] = {files, dir, nullptr};
+    GError *err = nullptr;
+    if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr,
+                       &err)) {
+        xd_message_box(GTK_WINDOW(p->window), "Properties", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       err->message);
+        g_error_free(err);
+    }
+    g_free(files);
+    g_free(dir);
+    g_free(prog);
+}
+
+/* XP's Shortcut tab for a launcher: Target (Exec, or a link's URL), Start
+ * in (Path), Run (launchers have no window state: always Normal window),
+ * Comment, Find Target... and Change Icon.... */
+static GtkWidget *build_shortcut(props *p) {
+    const XdLauncher *l = &p->sc_orig;
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 5);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
+    int row = 0;
+    p->sc_icon_image = gtk_image_new();
+    set_icon_image(p->sc_icon_image, p->sc_icon);
+    gtk_widget_set_halign(p->sc_icon_image, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), p->sc_icon_image, 0, row, 1, 1);
+    GtkWidget *name = value_label(l->name != nullptr ? l->name : display_name(first(p)));
+    gtk_grid_attach(GTK_GRID(grid), name, 1, row++, 2, 1);
+    add_separator(grid, &row);
+
+    char *prog = l->is_link ? nullptr : target_program(l->target);
+    char *where = nullptr;
+    if (prog != nullptr) {
+        char *dir = g_path_get_dirname(prog);
+        where = g_filename_display_basename(dir);
+        g_free(dir);
+    }
+    add_row(grid, &row, "Target type:", l->is_link ? "Location" : "Application");
+    add_row(grid, &row, "Target location:", where != nullptr ? where : "");
+    g_free(where);
+    g_free(prog);
+
+    GtkWidget *t = gtk_label_new_with_mnemonic("_Target:");
+    gtk_label_set_xalign(GTK_LABEL(t), 0);
+    p->sc_target = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(p->sc_target), l->target != nullptr ? l->target : "");
+    gtk_widget_set_hexpand(p->sc_target, TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(t), p->sc_target);
+    gtk_grid_attach(GTK_GRID(grid), t, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), p->sc_target, 1, row++, 2, 1);
+    add_separator(grid, &row);
+
+    t = gtk_label_new_with_mnemonic("_Start in:");
+    gtk_label_set_xalign(GTK_LABEL(t), 0);
+    p->sc_start = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(p->sc_start), l->start_in != nullptr ? l->start_in : "");
+    gtk_label_set_mnemonic_widget(GTK_LABEL(t), p->sc_start);
+    gtk_widget_set_sensitive(p->sc_start, !l->is_link);
+    gtk_grid_attach(GTK_GRID(grid), t, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), p->sc_start, 1, row++, 2, 1);
+
+    t = gtk_label_new_with_mnemonic("_Run:");
+    gtk_label_set_xalign(GTK_LABEL(t), 0);
+    GtkWidget *run = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(run), "Normal window");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(run), 0);
+    gtk_widget_set_sensitive(run, FALSE); /* a launcher can't ask for another */
+    gtk_widget_set_halign(run, GTK_ALIGN_START);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(t), run);
+    gtk_grid_attach(GTK_GRID(grid), t, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), run, 1, row++, 2, 1);
+
+    t = gtk_label_new_with_mnemonic("C_omment:");
+    gtk_label_set_xalign(GTK_LABEL(t), 0);
+    p->sc_comment = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(p->sc_comment), l->comment != nullptr ? l->comment : "");
+    gtk_label_set_mnemonic_widget(GTK_LABEL(t), p->sc_comment);
+    gtk_grid_attach(GTK_GRID(grid), t, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), p->sc_comment, 1, row++, 2, 1);
+    g_signal_connect_swapped(p->sc_target, "changed", G_CALLBACK(mark_dirty), p);
+    g_signal_connect_swapped(p->sc_start, "changed", G_CALLBACK(mark_dirty), p);
+    g_signal_connect_swapped(p->sc_comment, "changed", G_CALLBACK(mark_dirty), p);
+
+    GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_top(buttons, 8);
+    GtkWidget *find = gtk_button_new_with_mnemonic("_Find Target...");
+    gtk_widget_set_sensitive(find, !l->is_link);
+    g_signal_connect(find, "clicked", G_CALLBACK(on_find_target), p);
+    GtkWidget *change = gtk_button_new_with_mnemonic("_Change Icon...");
+    g_signal_connect(change, "clicked", G_CALLBACK(on_change_icon), p);
+    gtk_box_pack_start(GTK_BOX(buttons), find, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons), change, FALSE, FALSE, 0);
+    gtk_widget_set_halign(buttons, GTK_ALIGN_CENTER);
+    gtk_grid_attach(GTK_GRID(grid), buttons, 0, row++, 3, 1);
+    return grid;
+}
+
+/* A launcher that has a Shortcut tab (a program or a location). */
+static void load_shortcut(props *p) {
+    entry *e = first(p);
+    const char *ctype = g_file_info_get_content_type(e->info);
+    if (!single(p) || e->is_dir || ctype == nullptr ||
+        !g_content_type_is_a(ctype, "application/x-desktop"))
+        return;
+    char *path = g_file_get_path(e->file);
+    if (path != nullptr && xd_launcher_read(path, &p->sc_orig, nullptr)) {
+        p->sc_path = path;
+        p->sc_icon = g_strdup(p->sc_orig.icon);
+    } else {
+        g_free(path);
+    }
+}
+
+static gboolean field_changed(const char *was, const char *now) {
+    return g_strcmp0(was != nullptr ? was : "", now != nullptr ? now : "") != 0;
+}
+
+/* Writes the Shortcut tab's changes (a system launcher as a user copy,
+ * which is what's shown and changed from then on). */
+static void apply_shortcut(props *p, GString *errors) {
+    if (p->sc_path == nullptr)
+        return;
+    XdLauncher now = {
+        .target = g_strdup(gtk_entry_get_text(GTK_ENTRY(p->sc_target))),
+        .start_in = g_strdup(gtk_entry_get_text(GTK_ENTRY(p->sc_start))),
+        .comment = g_strdup(gtk_entry_get_text(GTK_ENTRY(p->sc_comment))),
+        .icon = g_strdup(p->sc_icon),
+    };
+    const XdLauncher *was = &p->sc_orig;
+    if (!field_changed(was->target, now.target) && !field_changed(was->start_in, now.start_in) &&
+        !field_changed(was->comment, now.comment) && !field_changed(was->icon, now.icon)) {
+        xd_launcher_clear(&now);
+        return;
+    }
+    char *user_dir = g_build_filename(g_get_user_data_dir(), "applications", nullptr);
+    GError *err = nullptr;
+    char *written = xd_launcher_write(p->sc_path, &now, user_dir, &err);
+    g_free(user_dir);
+    xd_launcher_clear(&now);
+    if (written == nullptr) {
+        g_string_append_printf(errors, "%s\n", err->message);
+        g_error_free(err);
+        return;
+    }
+    g_free(p->sc_path);
+    p->sc_path = written;
+    XdLauncher fresh;
+    if (xd_launcher_read(written, &fresh, nullptr)) {
+        xd_launcher_clear(&p->sc_orig);
+        p->sc_orig = fresh;
+    }
+}
+
+/* ---- Summary tab (pictures) --------------------------------------------------------- */
+
+/* XP's Summary for a picture (its Advanced view): Width and Height, read
+ * from the file's header by gdk-pixbuf without decoding the picture. */
+static GtkWidget *build_image_summary(props *p) {
+    entry *e = first(p);
+    const char *ctype = g_file_info_get_content_type(e->info);
+    if (!single(p) || e->is_dir || ctype == nullptr || !g_str_has_prefix(ctype, "image/"))
+        return nullptr;
+    char *path = g_file_get_path(e->file);
+    int w = 0, h = 0;
+    GdkPixbufFormat *fmt = path != nullptr ? gdk_pixbuf_get_file_info(path, &w, &h) : nullptr;
+    g_free(path);
+    if (fmt == nullptr || w <= 0 || h <= 0)
+        return nullptr;
+    GtkTreeStore *store = gtk_tree_store_new(2, G_TYPE_STRING, G_TYPE_STRING);
+    GtkTreeIter group, it;
+    gtk_tree_store_insert_with_values(store, &group, nullptr, -1, 0, "<b>Image</b>", 1, "", -1);
+    char *v = g_strdup_printf("%d pixels", w);
+    gtk_tree_store_insert_with_values(store, &it, &group, -1, 0, "Width", 1, v, -1);
+    g_free(v);
+    v = g_strdup_printf("%d pixels", h);
+    gtk_tree_store_insert_with_values(store, &it, &group, -1, 0, "Height", 1, v, -1);
+    g_free(v);
+    GtkWidget *list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
+    g_object_unref(store);
+    gtk_tree_view_set_show_expanders(GTK_TREE_VIEW(list), FALSE);
+    gtk_tree_view_set_level_indentation(GTK_TREE_VIEW(list), 12);
+    GtkCellRenderer *r = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *c = gtk_tree_view_column_new_with_attributes("Property", r, "markup", 0,
+                                                                    nullptr);
+    gtk_tree_view_column_set_min_width(c, 160);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(list), c);
+    gtk_tree_view_append_column(
+        GTK_TREE_VIEW(list),
+        gtk_tree_view_column_new_with_attributes("Value", gtk_cell_renderer_text_new(), "text", 1,
+                                                 nullptr));
+    gtk_tree_view_expand_all(GTK_TREE_VIEW(list));
+    GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER,
+                                   GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(scroll), list);
+    gtk_container_set_border_width(GTK_CONTAINER(scroll), 10);
+    return scroll;
+}
+
 /* ---- applying --------------------------------------------------------------------- */
 
 typedef struct recurse_job {
@@ -1212,6 +1585,7 @@ static void apply(props *p) {
             gid = g;
     }
 
+    apply_shortcut(p, errors);
     for (guint i = 0; i < p->entries->len; i++) {
         entry *e = g_ptr_array_index(p->entries, i);
         GError *err = nullptr;
@@ -1355,6 +1729,9 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     stop_count(p);
     g_ptr_array_unref(p->entries);
     g_free(p->orig_name);
+    g_free(p->sc_path);
+    g_free(p->sc_icon);
+    xd_launcher_clear(&p->sc_orig);
     g_free(p);
 }
 
@@ -1416,7 +1793,15 @@ GtkWidget *xd_properties_show(GtkWindow *parent, GList *files) {
     GtkWidget *perms = build_permissions(p);
     p->syncing = TRUE;
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), general, gtk_label_new("General"));
+    /* A launcher's Shortcut tab follows General, as a .lnk's does. */
+    load_shortcut(p);
+    if (p->sc_path != nullptr)
+        gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_shortcut(p),
+                                 gtk_label_new("Shortcut"));
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), perms, gtk_label_new("Permissions"));
+    GtkWidget *summary = build_image_summary(p);
+    if (summary != nullptr)
+        gtk_notebook_append_page(GTK_NOTEBOOK(notebook), summary, gtk_label_new("Summary"));
     if (single(p))
         gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_details(p),
                                  gtk_label_new("Details"));
@@ -1428,4 +1813,187 @@ GtkWidget *xd_properties_show(GtkWindow *parent, GList *files) {
     gtk_widget_show_all(p->window);
     gtk_widget_grab_focus(p->ok_button);
     return p->window;
+}
+
+/* ---- a drive's Properties (My Computer) ------------------------------------------- */
+
+typedef struct drive_space {
+    guint64 total, free;
+} drive_space;
+
+/* XP's 3D pie: blue for used space, magenta for free, a darker rim
+ * beneath. */
+static void pie_slice(cairo_t *cr, double cx, double cy, double rx, double ry, double from,
+                      double to) {
+    cairo_save(cr);
+    cairo_translate(cr, cx, cy);
+    cairo_scale(cr, rx, ry);
+    cairo_move_to(cr, 0, 0);
+    cairo_arc(cr, 0, 0, 1, from, to);
+    cairo_close_path(cr);
+    cairo_restore(cr);
+}
+
+static gboolean draw_drive_pie(GtkWidget *w, cairo_t *cr, gpointer data) {
+    const drive_space *d = data;
+    double width = gtk_widget_get_allocated_width(w), height = gtk_widget_get_allocated_height(w);
+    constexpr double depth = 10;
+    double rx = width / 2 - 2, ry = (height - depth) / 2 - 2, cx = width / 2, cy = ry + 2;
+    double used = d->total > 0 ? (double)(d->total - MIN(d->free, d->total)) / (double)d->total
+                               : 0;
+    double split = -G_PI / 2 + used * 2 * G_PI;
+    for (int layer = (int)depth; layer >= 0; layer--) {
+        gboolean top = layer == 0;
+        pie_slice(cr, cx, cy + layer, rx, ry, -G_PI / 2, split);
+        cairo_set_source_rgb(cr, 0.0, 0.0, top ? 1.0 : 0.5);
+        cairo_fill(cr);
+        pie_slice(cr, cx, cy + layer, rx, ry, split, 3 * G_PI / 2);
+        cairo_set_source_rgb(cr, top ? 1.0 : 0.5, 0.0, top ? 1.0 : 0.5);
+        cairo_fill(cr);
+    }
+    return FALSE;
+}
+
+static gboolean draw_swatch(GtkWidget *w, cairo_t *cr, gpointer data) {
+    gboolean used = GPOINTER_TO_INT(data);
+    cairo_rectangle(cr, 0.5, 0.5, gtk_widget_get_allocated_width(w) - 1,
+                    gtk_widget_get_allocated_height(w) - 1);
+    cairo_set_source_rgb(cr, used ? 0.0 : 1.0, 0.0, 1.0);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgb(cr, 0, 0, 0);
+    cairo_set_line_width(cr, 1);
+    cairo_stroke(cr);
+    return FALSE;
+}
+
+/* "21,476,839,424 bytes" and "20.0 GB", in their columns, as XP has them. */
+static void space_row(GtkWidget *grid, int row, const char *title, int swatch, guint64 bytes) {
+    if (swatch >= 0) {
+        GtkWidget *sw = gtk_drawing_area_new();
+        gtk_widget_set_size_request(sw, 14, 14);
+        gtk_widget_set_valign(sw, GTK_ALIGN_CENTER);
+        g_signal_connect(sw, "draw", G_CALLBACK(draw_swatch), GINT_TO_POINTER(swatch));
+        gtk_grid_attach(GTK_GRID(grid), sw, 0, row, 1, 1);
+    }
+    GtkWidget *t = gtk_label_new(title);
+    gtk_label_set_xalign(GTK_LABEL(t), 0);
+    gtk_grid_attach(GTK_GRID(grid), t, 1, row, 1, 1);
+    GString *s = g_string_new(nullptr);
+    append_grouped(s, bytes);
+    g_string_append(s, " bytes");
+    GtkWidget *b = gtk_label_new(s->str);
+    gtk_label_set_xalign(GTK_LABEL(b), 1);
+    gtk_label_set_selectable(GTK_LABEL(b), TRUE);
+    gtk_widget_set_can_focus(b, FALSE);
+    gtk_widget_set_hexpand(b, TRUE);
+    gtk_grid_attach(GTK_GRID(grid), b, 2, row, 1, 1);
+    g_string_truncate(s, 0);
+    append_short_size(s, bytes);
+    GtkWidget *h = gtk_label_new(s->str);
+    gtk_label_set_xalign(GTK_LABEL(h), 1);
+    gtk_grid_attach(GTK_GRID(grid), h, 3, row, 1, 1);
+    g_string_free(s, TRUE);
+}
+
+static void on_drive_response(GtkDialog *dlg, [[maybe_unused]] gint response,
+                              [[maybe_unused]] gpointer data) {
+    gtk_widget_destroy(GTK_WIDGET(dlg));
+}
+
+GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item) {
+    GPtrArray *drives = xd_computer_drives();
+    const XdDrive *d = nullptr;
+    for (guint i = 0; i < drives->len && d == nullptr; i++) {
+        const XdDrive *x = g_ptr_array_index(drives, i);
+        if (g_file_equal(x->root, item) && strcmp(x->kind, "File Folder") != 0)
+            d = x;
+    }
+    if (d == nullptr) {
+        g_ptr_array_unref(drives);
+        return nullptr;
+    }
+    char *title = g_strdup_printf("%s Properties", d->name);
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(title, parent, GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                 "OK", GTK_RESPONSE_OK, "Cancel",
+                                                 GTK_RESPONSE_CANCEL, "_Apply",
+                                                 GTK_RESPONSE_APPLY, nullptr);
+    g_free(title);
+    if (parent != nullptr) {
+        GtkApplication *app = gtk_window_get_application(parent);
+        if (app != nullptr)
+            gtk_window_set_application(GTK_WINDOW(dlg), app);
+    }
+    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+    gtk_window_set_icon_name(GTK_WINDOW(dlg), "document-properties");
+    /* Nothing here changes yet (renaming a drive needs UDisks). */
+    gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), GTK_RESPONSE_APPLY, FALSE);
+    GtkWidget *nb = gtk_notebook_new();
+    gtk_container_set_border_width(GTK_CONTAINER(nb), 6);
+    gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), nb);
+    xd_gtk_notebook_ctrl_tab(dlg, GTK_NOTEBOOK(nb));
+
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 5);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 10);
+    int row = 0;
+    GtkWidget *icon = d->icon != nullptr ? gtk_image_new_from_gicon(d->icon, GTK_ICON_SIZE_DND)
+                                         : gtk_image_new_from_icon_name("drive-harddisk",
+                                                                        GTK_ICON_SIZE_DND);
+    gtk_widget_set_halign(icon, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), icon, 0, row, 2, 1);
+    GtkWidget *label = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(label), d->name);
+    gtk_widget_set_sensitive(label, FALSE);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    gtk_grid_attach(GTK_GRID(grid), label, 2, row++, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), 0, row++, 4,
+                    1);
+
+    char *fs_type = nullptr;
+    GFileInfo *fs = g_file_query_filesystem_info(d->root, G_FILE_ATTRIBUTE_FILESYSTEM_TYPE,
+                                                 nullptr, nullptr);
+    if (fs != nullptr) {
+        fs_type = g_strdup(g_file_info_get_attribute_string(fs, G_FILE_ATTRIBUTE_FILESYSTEM_TYPE));
+        g_object_unref(fs);
+    }
+    const struct {
+        const char *title, *value;
+    } info[] = {{"Type:", d->kind}, {"File system:", fs_type != nullptr ? fs_type : ""}};
+    for (size_t i = 0; i < G_N_ELEMENTS(info); i++) {
+        GtkWidget *t = gtk_label_new(info[i].title);
+        gtk_label_set_xalign(GTK_LABEL(t), 0);
+        gtk_grid_attach(GTK_GRID(grid), t, 0, row, 2, 1);
+        GtkWidget *v = value_label(info[i].value);
+        gtk_grid_attach(GTK_GRID(grid), v, 2, row++, 2, 1);
+    }
+    g_free(fs_type);
+    gtk_grid_attach(GTK_GRID(grid), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), 0, row++, 4,
+                    1);
+    drive_space *space = g_new(drive_space, 1);
+    space->total = d->total;
+    space->free = MIN(d->free, d->total);
+    space_row(grid, row++, "Used space:", 1, space->total - space->free);
+    space_row(grid, row++, "Free space:", 0, space->free);
+    gtk_grid_attach(GTK_GRID(grid), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), 0, row++, 4,
+                    1);
+    space_row(grid, row++, "Capacity:", -1, space->total);
+
+    GtkWidget *pie = gtk_drawing_area_new();
+    gtk_widget_set_size_request(pie, 150, 80);
+    gtk_widget_set_halign(pie, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_top(pie, 8);
+    g_object_set_data_full(G_OBJECT(pie), "xd-space", space, g_free);
+    g_signal_connect(pie, "draw", G_CALLBACK(draw_drive_pie), space);
+    gtk_grid_attach(GTK_GRID(grid), pie, 0, row++, 4, 1);
+    gtk_widget_set_visible(pie, space->total > 0);
+    gtk_widget_set_no_show_all(pie, space->total == 0);
+    GtkWidget *caption = gtk_label_new(d->name);
+    gtk_grid_attach(GTK_GRID(grid), caption, 0, row++, 4, 1);
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), grid, gtk_label_new("General"));
+    g_ptr_array_unref(drives);
+
+    g_signal_connect(dlg, "response", G_CALLBACK(on_drive_response), nullptr);
+    gtk_widget_show_all(dlg);
+    return dlg;
 }

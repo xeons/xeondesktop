@@ -24,6 +24,12 @@
  * files could be read (an error was shown). */
 GtkWidget *xd_properties_show(GtkWindow *parent, GList *files);
 
+/* A drive's Properties, from My Computer (`item` is its item there): XP's
+ * General tab with the label, type, file system, used and free space,
+ * capacity and the pie chart. nullptr if `item` isn't a drive (My
+ * Documents is an ordinary folder). */
+GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item);
+
 /* "1.23 MB (1,291,234 bytes)", as Windows shows sizes in Properties.
  * Free with g_free. */
 char *xd_format_size_long(guint64 bytes);

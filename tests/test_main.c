@@ -30,6 +30,7 @@
 #include "../src/mouse/cursors.h"
 #include "../src/files/columns.h"
 #include "../src/files/favorites.h"
+#include "../src/files/launcher.h"
 #include "../src/files/names.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
@@ -3466,6 +3467,89 @@ static void test_favorites(void) {
     g_free(dir);
 }
 
+/* The Shortcut tab: Exec, Path, Comment and Icon; a system launcher is
+ * changed as a user copy, everything else in it kept. */
+static void test_launcher_fields(void) {
+    char *dir = g_dir_make_tmp("xd-launcher-XXXXXX", nullptr);
+    char *sys = g_build_filename(dir, "sys", nullptr);
+    char *user = g_build_filename(dir, "user", "applications", nullptr);
+    CHECK(g_mkdir(sys, 0755) == 0);
+    char *path = g_build_filename(sys, "editor.desktop", nullptr);
+    static const char entry[] = "# keep me\n[Desktop Entry]\nType=Application\nName=Editor\n"
+                                "Name[fr]=Éditeur\nExec=editor %F\nComment=Edits text\n"
+                                "Comment[xx_YY]=Other\nIcon=accessories-text-editor\n"
+                                "Path=/srv\n\n[Desktop Action new]\nName=New\nExec=editor -n\n";
+    CHECK(g_file_set_contents(path, entry, -1, nullptr));
+    XdLauncher l;
+    CHECK(xd_launcher_read(path, &l, nullptr));
+    CHECK(g_strcmp0(l.target, "editor %F") == 0 && g_strcmp0(l.start_in, "/srv") == 0);
+    CHECK(g_strcmp0(l.comment, "Edits text") == 0 && !l.is_link);
+    CHECK(g_strcmp0(l.icon, "accessories-text-editor") == 0);
+    g_free(l.target);
+    l.target = g_strdup("editor --new-window %F");
+    g_free(l.start_in);
+    l.start_in = g_strdup("");
+    g_free(l.comment);
+    l.comment = g_strdup("Writes notes");
+    /* Read-only (a system launcher): the change goes to a user copy. */
+    CHECK(g_chmod(sys, 0555) == 0);
+    char *written = xd_launcher_write(path, &l, user, nullptr);
+    char *want = g_build_filename(user, "editor.desktop", nullptr);
+    CHECK(g_strcmp0(written, want) == 0);
+    XdLauncher back;
+    CHECK(written != nullptr && xd_launcher_read(written, &back, nullptr));
+    CHECK(g_strcmp0(back.target, "editor --new-window %F") == 0 && back.start_in == nullptr);
+    CHECK(g_strcmp0(back.comment, "Writes notes") == 0);
+    xd_launcher_clear(&back);
+    GKeyFile *kf = g_key_file_new();
+    CHECK(written != nullptr &&
+          g_key_file_load_from_file(kf, written, G_KEY_FILE_KEEP_TRANSLATIONS, nullptr));
+    char *fr = g_key_file_get_string(kf, "Desktop Entry", "Name[fr]", nullptr);
+    char *other = g_key_file_get_string(kf, "Desktop Entry", "Comment[xx_YY]", nullptr);
+    char *action = g_key_file_get_string(kf, "Desktop Action new", "Exec", nullptr);
+    CHECK(g_strcmp0(fr, "Éditeur") == 0 && g_strcmp0(other, "Other") == 0);
+    CHECK(g_strcmp0(action, "editor -n") == 0);
+    g_free(fr);
+    g_free(other);
+    g_free(action);
+    g_key_file_unref(kf);
+    /* The original is untouched. */
+    char *orig = nullptr;
+    CHECK(g_file_get_contents(path, &orig, nullptr, nullptr) && strcmp(orig, entry) == 0);
+    g_free(orig);
+    /* Writable: in place. */
+    CHECK(g_chmod(sys, 0755) == 0);
+    char *again = xd_launcher_write(path, &l, user, nullptr);
+    CHECK(g_strcmp0(again, path) == 0);
+    g_free(again);
+    xd_launcher_clear(&l);
+
+    char *dir_entry = g_build_filename(sys, "folder.desktop", nullptr);
+    CHECK(g_file_set_contents(dir_entry, "[Desktop Entry]\nType=Directory\nName=X\n", -1,
+                              nullptr));
+    CHECK(!xd_launcher_read(dir_entry, &l, nullptr));
+    char *link = g_build_filename(sys, "site.desktop", nullptr);
+    CHECK(g_file_set_contents(link, "[Desktop Entry]\nType=Link\nName=Site\nURL=https://a.b/\n",
+                              -1, nullptr));
+    CHECK(xd_launcher_read(link, &l, nullptr) && l.is_link &&
+          g_strcmp0(l.target, "https://a.b/") == 0);
+    xd_launcher_clear(&l);
+
+    CHECK(g_remove(link) == 0 && g_remove(dir_entry) == 0 && g_remove(path) == 0);
+    CHECK(g_remove(want) == 0 && g_rmdir(user) == 0 && g_rmdir(sys) == 0);
+    char *user_parent = g_path_get_dirname(user);
+    CHECK(g_rmdir(user_parent) == 0 && g_rmdir(dir) == 0);
+    g_free(user_parent);
+    g_free(link);
+    g_free(dir_entry);
+    g_free(written);
+    g_free(want);
+    g_free(path);
+    g_free(user);
+    g_free(sys);
+    g_free(dir);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -3514,6 +3598,7 @@ int main(void) {
     test_search_match();
     test_thumbnail_cache();
     test_favorites();
+    test_launcher_fields();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

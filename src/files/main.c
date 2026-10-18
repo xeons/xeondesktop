@@ -1098,12 +1098,23 @@ static void cb_invert([[maybe_unused]] GtkWidget *w, gpointer d) {
 /* Properties of the selection, or of the folder itself when nothing is
  * selected. */
 static void show_properties(explorer *e) {
-    /* A drive's Properties would count everything on it; Control Panel's
-     * items aren't files to show. */
+    /* Control Panel's items aren't files to show. */
     XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
-    if (place == XD_PLACE_COMPUTER || place == XD_PLACE_CONTROL)
+    if (place == XD_PLACE_CONTROL)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
+    if (place == XD_PLACE_COMPUTER) {
+        /* A drive's own Properties (counting everything on it would take
+         * ages); My Documents is a folder's. One at a time, as XP. */
+        if (files != nullptr && xd_properties_show_drive(GTK_WINDOW(e->window), files->data) ==
+                                    nullptr) {
+            GList *one = g_list_append(nullptr, files->data);
+            xd_properties_show(GTK_WINDOW(e->window), one);
+            g_list_free(one);
+        }
+        g_list_free_full(files, g_object_unref);
+        return;
+    }
     if (files == nullptr) {
         GFile *dir = xd_folder_view_get_location(e->view);
         if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER)
