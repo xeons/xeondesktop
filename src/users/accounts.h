@@ -18,4 +18,15 @@
 void xd_accounts_delete_user(GDBusConnection *system_bus, gint64 uid, bool remove_files,
                              GCancellable *cancellable, GAsyncReadyCallback done, gpointer data);
 
+/* The running display manager's unit ("gdm.service"): what systemd's
+ * display-manager.service alias stands for, read without changing
+ * anything. nullptr if none runs or systemd can't be asked. */
+char *xd_accounts_display_manager_unit(GDBusConnection *system_bus);
+
+/* Whether the display manager `unit` ("gdm.service", or nullptr if
+ * unknown) obeys AccountsService's automatic logon setting, as a note for
+ * under the setting. Only GDM reads it; SDDM, LightDM and the others keep
+ * their own in their configuration files. */
+char *xd_accounts_autologin_note(const char *unit);
+
 #endif

@@ -3454,6 +3454,41 @@ def sysdm_boot_next_time(s):
         DBusTestCase.tearDownClass()
 
 
+@scenario(LUNA_INI, requires=("dbusmock",))
+def users_automatic_logon(s):
+    """XP's advanced User Accounts (xd-users --advanced, on a dbusmock
+    AccountsService and a systemd running SDDM): unticking "Users must
+    enter a user name and password" asks which user logs on
+    automatically and sets AutomaticLogin; ticking it again turns it off."""
+    from dbusmock import DBusTestCase
+
+    try:
+        _, calls = mock_accounts(s, systemd={"display_manager": "sddm.service"})
+        mine = f"/org/freedesktop/Accounts/User{os.getuid()}"
+        def users_active():
+            w = s.window(title="User Accounts")
+            return w is not None and "activated" in w["states"]
+
+        s.launch("xd-users", "--advanced")
+        s.wait_window(title="User Accounts", state="activated")
+        s.settle("user accounts")
+        s.inject("key", "alt+m", "sleep", 300, "key", "alt+a")
+        s.wait(lambda: not users_active(), "the Automatically Log On box")
+        s.settle("automatically log on")
+        s.inject("key", "Return")
+        s.wait(lambda: ("SetAutomaticLogin", [True]) in calls(mine), "SetAutomaticLogin(true)")
+        s.log("ok: automatic logon was turned on for us (the selected user)")
+        s.settle("applied")
+        s.inject("key", "alt+m", "sleep", 300, "key", "alt+a")
+        s.wait(lambda: ("SetAutomaticLogin", [False]) in calls(mine), "SetAutomaticLogin(false)")
+        s.log("ok: ticking it again turned it off")
+        s.settle("turned off")
+        s.inject("key", "Escape")
+        s.wait_window(title="User Accounts", gone=True)
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

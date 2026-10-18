@@ -58,6 +58,21 @@ def add_user(mock, uid, name, real_name, account_type, home=None):
             ("SetAccountType", "i", "", setter("AccountType")),
             ("SetLocked", "b", "", setter("Locked")),
             ("SetPasswordMode", "i", "", setter("PasswordMode")),
+            # One account logs on automatically at most: AccountsService
+            # turns it off for the others (GDM's custom.conf has one).
+            (
+                "SetAutomaticLogin",
+                "b",
+                "",
+                "from dbusmock import mockobject\n"
+                "if args[0]:\n"
+                "    for p, o in mockobject.objects.items():\n"
+                f"        if p.startswith('{MAIN_OBJ}/User') and o is not self "
+                f"and o.Get('{USER_IFACE}', 'AutomaticLogin'):\n"
+                f"            o.Set('{USER_IFACE}', 'AutomaticLogin', False)\n"
+                f"            o.EmitSignal('{USER_IFACE}', 'Changed', '', [])\n"
+                + setter("AutomaticLogin"),
+            ),
             (
                 "SetPassword",
                 "ss",

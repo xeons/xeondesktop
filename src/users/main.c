@@ -10,6 +10,9 @@
  *   other accounts     name, picture, password, account type, delete
  *   new accounts       name, then account type
  *
+ * `xd-users --advanced` is XP's other User Accounts (control
+ * userpasswords2) instead, for automatic logon.
+ *
  * Changing other accounts is an administrator's job: AccountsService asks
  * polkit, so xd-polkit asks for an administrator's password. The picture
  * is also copied to ~/.face, which the Start menu shows.
@@ -67,6 +70,11 @@ typedef struct ua {
     bool name_edited; /* the user name was typed, not suggested */
     bool suggesting;  /* we're filling it in */
     char *new_full, *new_name; /* the account being created */
+    /* XP's advanced User Accounts (control userpasswords2), --advanced */
+    bool advanced;
+    GtkWidget *must_logon, *users_view, *apply;
+    GtkListStore *users;
+    bool closing; /* OK was pressed: close once the change is made */
 } ua;
 
 /* ---- AccountsService --------------------------------------------------------- */
@@ -192,10 +200,15 @@ static void call(ua *u, GDBusProxy *p, const char *method, GVariant *args, const
 }
 
 static void build_page(ua *u);
+static void adv_fill(ua *u);
 
 static gboolean rebuild_now(gpointer data) {
     ua *u = data;
     u->rebuild_idle = 0;
+    if (u->advanced) {
+        adv_fill(u);
+        return G_SOURCE_REMOVE;
+    }
     /* The account may be gone (deleted elsewhere). */
     if (u->cur.user != nullptr && find_account(u, u->cur.user) == nullptr) {
         g_clear_pointer(&u->cur.user, g_free);
@@ -208,7 +221,7 @@ static gboolean rebuild_now(gpointer data) {
 /* Pages that only show accounts are rebuilt when an account changes;
  * forms aren't, so nothing typed is lost. */
 static void account_changed(ua *u) {
-    bool showing = u->cur.kind == PAGE_HOME || u->cur.kind == PAGE_ACCOUNT;
+    bool showing = u->advanced || u->cur.kind == PAGE_HOME || u->cur.kind == PAGE_ACCOUNT;
     if (showing && u->rebuild_idle == 0)
         u->rebuild_idle = g_idle_add(rebuild_now, u);
 }
@@ -1184,6 +1197,244 @@ static void build_page(ua *u) {
         gtk_widget_grab_focus(u->entry[0]);
 }
 
+/* ---- advanced (control userpasswords2) ------------------------------------------ */
+
+/* XP's other User Accounts, the one `control userpasswords2` opens: here
+ * only its Users tab's "Users must enter a user name and password" (off
+ * is automatic logon, AccountsService's AutomaticLogin) and the list of
+ * users. */
+
+enum { ADV_NAME, ADV_GROUP, ADV_PATH, ADV_NCOLS };
+
+static bool anyone_logs_on_automatically(ua *u) {
+    for (guint i = 0; i < u->accounts->len; i++) {
+        if (bool_prop(g_ptr_array_index(u->accounts, i), "AutomaticLogin"))
+            return true;
+    }
+    return false;
+}
+
+static void adv_fill(ua *u) {
+    /* Keep the selection across a refresh. */
+    char *selected = nullptr;
+    GtkTreeModel *m = nullptr;
+    GtkTreeIter it;
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(u->users_view));
+    if (gtk_tree_selection_get_selected(sel, &m, &it))
+        gtk_tree_model_get(m, &it, ADV_PATH, &selected, -1);
+    gtk_list_store_clear(u->users);
+    for (guint i = 0; i < u->accounts->len; i++) {
+        GDBusProxy *p = g_ptr_array_index(u->accounts, i);
+        char *name = str_prop(p, "UserName");
+        const char *path = g_dbus_proxy_get_object_path(p);
+        gtk_list_store_insert_with_values(u->users, &it, -1, ADV_NAME, name, ADV_GROUP,
+                                          is_admin(p) ? "Administrators" : "Users", ADV_PATH,
+                                          path, -1);
+        if (g_strcmp0(path, selected != nullptr ? selected : u->my_path) == 0)
+            gtk_tree_selection_select_iter(sel, &it);
+        g_free(name);
+    }
+    g_free(selected);
+}
+
+static void adv_set_dirty(ua *u, bool dirty) { gtk_widget_set_sensitive(u->apply, dirty); }
+
+static void on_must_logon_toggled([[maybe_unused]] GtkToggleButton *t, gpointer data) {
+    adv_set_dirty(data, true);
+}
+
+/* The last change is made: Apply greys, and OK closes. */
+static void adv_applied(ua *u, [[maybe_unused]] GVariant *reply) {
+    if (u->calls > 0)
+        return;
+    adv_set_dirty(u, false);
+    if (u->closing)
+        gtk_widget_destroy(u->window);
+}
+
+/* XP's Automatically Log On box: which account logs on by itself. XP also
+ * asked for its password, to keep in the registry; AccountsService needs
+ * none. nullptr if cancelled. */
+static GDBusProxy *ask_auto_logon(ua *u) {
+    GtkWidget *d = gtk_dialog_new_with_buttons("Automatically Log On", GTK_WINDOW(u->window),
+                                               GTK_DIALOG_MODAL, "OK", GTK_RESPONSE_OK, "Cancel",
+                                               GTK_RESPONSE_CANCEL, nullptr);
+    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), box, TRUE, TRUE, 0);
+    GtkWidget *text = label("You can set up your computer so that users do not have to type a "
+                            "user name and password to log on. To do this, specify a user that "
+                            "will be automatically logged on below:",
+                            nullptr);
+    gtk_label_set_max_width_chars(GTK_LABEL(text), 50);
+    gtk_box_pack_start(GTK_BOX(box), text, FALSE, FALSE, 0);
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *l = gtk_label_new_with_mnemonic("_User name:");
+    gtk_box_pack_start(GTK_BOX(row), l, FALSE, FALSE, 0);
+    GtkWidget *combo = gtk_combo_box_text_new();
+    gtk_label_set_mnemonic_widget(GTK_LABEL(l), combo);
+    /* The account selected in the list, as XP filled in. */
+    char *selected = nullptr;
+    GtkTreeModel *m = nullptr;
+    GtkTreeIter it;
+    if (gtk_tree_selection_get_selected(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(u->users_view)), &m, &it))
+        gtk_tree_model_get(m, &it, ADV_PATH, &selected, -1);
+    for (guint i = 0; i < u->accounts->len; i++) {
+        GDBusProxy *p = g_ptr_array_index(u->accounts, i);
+        char *name = str_prop(p, "UserName");
+        const char *path = g_dbus_proxy_get_object_path(p);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), path, name);
+        g_free(name);
+    }
+    if (selected == nullptr || !gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), selected))
+        gtk_combo_box_set_active(GTK_COMBO_BOX(combo), 0);
+    g_free(selected);
+    gtk_widget_set_hexpand(combo, TRUE);
+    gtk_box_pack_start(GTK_BOX(row), combo, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
+    gtk_widget_show_all(d);
+    /* Enter is OK, as in XP's box (on the list, GTK would open it). */
+    gtk_widget_grab_focus(gtk_dialog_get_widget_for_response(GTK_DIALOG(d), GTK_RESPONSE_OK));
+    GDBusProxy *who = nullptr;
+    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK)
+        who = find_account(u, gtk_combo_box_get_active_id(GTK_COMBO_BOX(combo)));
+    gtk_widget_destroy(d);
+    return who;
+}
+
+/* Makes the check box's setting so; false if there was nothing to do (or
+ * it was cancelled, `cancelled`). */
+static bool adv_apply(ua *u, bool *cancelled) {
+    *cancelled = false;
+    bool must = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(u->must_logon));
+    if (must == !anyone_logs_on_automatically(u))
+        return false;
+    if (!must) {
+        GDBusProxy *who = ask_auto_logon(u);
+        if (who == nullptr) {
+            *cancelled = true;
+            return false;
+        }
+        /* AccountsService turns it off for whoever had it. */
+        call(u, who, "SetAutomaticLogin", g_variant_new("(b)", TRUE),
+             "Automatic logon could not be turned on.", adv_applied);
+        return true;
+    }
+    for (guint i = 0; i < u->accounts->len; i++) {
+        GDBusProxy *p = g_ptr_array_index(u->accounts, i);
+        if (bool_prop(p, "AutomaticLogin"))
+            call(u, p, "SetAutomaticLogin", g_variant_new("(b)", FALSE),
+                 "Automatic logon could not be turned off.", adv_applied);
+    }
+    return true;
+}
+
+static void on_adv_response(GtkDialog *d, int response, gpointer data) {
+    ua *u = data;
+    if (u->calls > 0)
+        return; /* a change is still being made */
+    if (response != GTK_RESPONSE_OK && response != GTK_RESPONSE_APPLY) {
+        gtk_widget_destroy(GTK_WIDGET(d));
+        return;
+    }
+    u->closing = response == GTK_RESPONSE_OK;
+    bool cancelled = false;
+    if (adv_apply(u, &cancelled))
+        return; /* adv_applied finishes */
+    if (cancelled) {
+        /* As it was: someone still has to log on. */
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->must_logon), TRUE);
+        u->closing = false;
+    }
+    adv_set_dirty(u, false);
+    if (u->closing)
+        gtk_widget_destroy(GTK_WIDGET(d));
+}
+
+static void build_advanced(ua *u) {
+    u->window = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(u->window), TITLE);
+    gtk_window_set_icon_name(GTK_WINDOW(u->window), "system-users");
+    gtk_window_set_resizable(GTK_WINDOW(u->window), FALSE);
+    /* Greyed, buttons and all, while AccountsService makes a change. */
+    u->body = gtk_bin_get_child(GTK_BIN(u->window));
+    GtkWidget *notebook = gtk_notebook_new();
+    gtk_container_set_border_width(GTK_CONTAINER(notebook), 6);
+    gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(u->window))),
+                      notebook);
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 12);
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), page, gtk_label_new("Users"));
+
+    GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GtkWidget *img = gtk_image_new_from_icon_name("system-users", GTK_ICON_SIZE_DND);
+    gtk_widget_set_valign(img, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(top), img, FALSE, FALSE, 0);
+    GtkWidget *intro = label("Use the list below to see who can use your computer. To change "
+                             "their names, pictures and passwords, use User Accounts in Control "
+                             "Panel.",
+                             nullptr);
+    gtk_label_set_max_width_chars(GTK_LABEL(intro), 50);
+    gtk_box_pack_start(GTK_BOX(top), intro, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(page), top, FALSE, FALSE, 0);
+
+    u->must_logon = gtk_check_button_new_with_mnemonic(
+        "Users _must enter a user name and password to use this computer.");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(u->must_logon),
+                                 !anyone_logs_on_automatically(u));
+    g_signal_connect(u->must_logon, "toggled", G_CALLBACK(on_must_logon_toggled), u);
+    gtk_widget_set_sensitive(u->must_logon, u->manager != nullptr);
+    gtk_box_pack_start(GTK_BOX(page), u->must_logon, FALSE, FALSE, 0);
+
+    GtkWidget *l = gtk_label_new_with_mnemonic("U_sers for this computer:");
+    gtk_label_set_xalign(GTK_LABEL(l), 0);
+    gtk_box_pack_start(GTK_BOX(page), l, FALSE, FALSE, 0);
+    u->users = gtk_list_store_new(ADV_NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    u->users_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(u->users));
+    g_object_unref(u->users);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(l), u->users_view);
+    static const char *const titles[] = {"User Name", "Group"};
+    for (int i = 0; i < 2; i++) {
+        GtkTreeViewColumn *c = gtk_tree_view_column_new_with_attributes(
+            titles[i], gtk_cell_renderer_text_new(), "text", i, nullptr);
+        gtk_tree_view_column_set_resizable(c, TRUE);
+        gtk_tree_view_column_set_expand(c, TRUE);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(u->users_view), c);
+    }
+    GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
+    gtk_widget_set_size_request(scroll, 360, 150);
+    gtk_container_add(GTK_CONTAINER(scroll), u->users_view);
+    gtk_box_pack_start(GTK_BOX(page), scroll, TRUE, TRUE, 0);
+    adv_fill(u);
+
+    /* Whether the logon screen obeys the check box at all. */
+    char *unit = u->manager != nullptr
+                     ? xd_accounts_display_manager_unit(g_dbus_proxy_get_connection(u->manager))
+                     : nullptr;
+    char *text = u->manager != nullptr
+                     ? xd_accounts_autologin_note(unit)
+                     : g_strdup("Accounts can't be shown: AccountsService isn't available.");
+    GtkWidget *note = label(text, nullptr);
+    gtk_label_set_max_width_chars(GTK_LABEL(note), 56);
+    gtk_style_context_add_class(gtk_widget_get_style_context(note), "dim-label");
+    gtk_box_pack_start(GTK_BOX(page), note, FALSE, FALSE, 0);
+    g_free(text);
+    g_free(unit);
+
+    GtkWidget *ok = gtk_dialog_add_button(GTK_DIALOG(u->window), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(u->window), "Cancel", GTK_RESPONSE_CANCEL);
+    u->apply = gtk_dialog_add_button(GTK_DIALOG(u->window), "_Apply", GTK_RESPONSE_APPLY);
+    gtk_dialog_set_default_response(GTK_DIALOG(u->window), GTK_RESPONSE_OK);
+    adv_set_dirty(u, false);
+    g_signal_connect(u->window, "response", G_CALLBACK(on_adv_response), u);
+    gtk_widget_show_all(u->window);
+    gtk_widget_grab_focus(ok);
+}
+
 /* ---- window ------------------------------------------------------------------------ */
 
 static GtkWidget *toolbar_button(const char *icon, const char *text, GCallback cb, ua *u) {
@@ -1207,6 +1458,41 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
         return TRUE;
     }
     return FALSE;
+}
+
+/* The task pages' window: Back and Home, the blue task pane and the page. */
+static void build_window(ua *u) {
+    u->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(u->window), TITLE);
+    gtk_window_set_icon_name(GTK_WINDOW(u->window), "system-users");
+    gtk_window_set_default_size(GTK_WINDOW(u->window), 720, 520);
+    g_signal_connect(u->window, "key-press-event", G_CALLBACK(on_key), u);
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(u->window), outer);
+    u->body = outer;
+    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+    gtk_container_set_border_width(GTK_CONTAINER(bar), 2);
+    u->back = toolbar_button("go-previous", "_Back", G_CALLBACK(go_back), u);
+    gtk_box_pack_start(GTK_BOX(bar), u->back, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bar), toolbar_button("go-home", "_Home", G_CALLBACK(go_home), u),
+                       FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(outer), bar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
+                       FALSE, 0);
+    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    u->pane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_container_set_border_width(GTK_CONTAINER(u->pane), 12);
+    gtk_widget_set_size_request(u->pane, 200, -1);
+    GtkWidget *pane_bg = gtk_event_box_new();
+    add_class(pane_bg, "xd-ua-pane");
+    gtk_container_add(GTK_CONTAINER(pane_bg), u->pane);
+    gtk_box_pack_start(GTK_BOX(body), pane_bg, FALSE, FALSE, 0);
+    u->main = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *main_bg = gtk_event_box_new();
+    add_class(main_bg, "xd-ua-main");
+    gtk_container_add(GTK_CONTAINER(main_bg), u->main);
+    gtk_box_pack_start(GTK_BOX(body), main_bg, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(outer), body, TRUE, TRUE, 0);
 }
 
 int main(int argc, char **argv) {
@@ -1238,42 +1524,18 @@ int main(int argc, char **argv) {
                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(provider);
 
-    u.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(u.window), TITLE);
-    gtk_window_set_icon_name(GTK_WINDOW(u.window), "system-users");
-    gtk_window_set_default_size(GTK_WINDOW(u.window), 720, 520);
-    g_signal_connect(u.window, "key-press-event", G_CALLBACK(on_key), &u);
-    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(u.window), outer);
-    u.body = outer;
-    GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-    gtk_container_set_border_width(GTK_CONTAINER(bar), 2);
-    u.back = toolbar_button("go-previous", "_Back", G_CALLBACK(go_back), &u);
-    gtk_box_pack_start(GTK_BOX(bar), u.back, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(bar), toolbar_button("go-home", "_Home", G_CALLBACK(go_home), &u),
-                       FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(outer), bar, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(outer), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
-                       FALSE, 0);
-    GtkWidget *body = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    u.pane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    gtk_container_set_border_width(GTK_CONTAINER(u.pane), 12);
-    gtk_widget_set_size_request(u.pane, 200, -1);
-    GtkWidget *pane_bg = gtk_event_box_new();
-    add_class(pane_bg, "xd-ua-pane");
-    gtk_container_add(GTK_CONTAINER(pane_bg), u.pane);
-    gtk_box_pack_start(GTK_BOX(body), pane_bg, FALSE, FALSE, 0);
-    u.main = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget *main_bg = gtk_event_box_new();
-    add_class(main_bg, "xd-ua-main");
-    gtk_container_add(GTK_CONTAINER(main_bg), u.main);
-    gtk_box_pack_start(GTK_BOX(body), main_bg, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(outer), body, TRUE, TRUE, 0);
-
+    /* --advanced: XP's `control userpasswords2` instead of the task pages. */
+    for (int i = 1; i < argc; i++)
+        u.advanced = u.advanced || strcmp(argv[i], "--advanced") == 0;
     u.cur = (nav){PAGE_HOME, nullptr};
-    build_page(&u);
+    if (u.advanced) {
+        build_advanced(&u);
+    } else {
+        build_window(&u);
+        build_page(&u);
+        gtk_widget_show_all(u.window);
+    }
     g_signal_connect(u.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
-    gtk_widget_show_all(u.window);
     gtk_main();
     clear_history(&u);
     g_array_free(u.history, TRUE);

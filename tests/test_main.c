@@ -55,6 +55,7 @@
 #include "../src/timedate/ntp.h"
 #include "../src/shell/jumplist.h"
 #include "../src/ui/textedit.h"
+#include "../src/users/accounts.h"
 #include "../src/users/users.h"
 #include "../src/theme/theme.h"
 #include "../src/thumbnailer/thumbcache.h"
@@ -2167,6 +2168,34 @@ static void test_intl(void) {
     g_free(envd);
     g_free(path);
     g_free(dir);
+}
+
+/* The note under automatic logon names the display manager and says
+ * whether it follows AccountsService's setting. */
+static void test_autologin_note(void) {
+    char *n = xd_accounts_autologin_note("gdm.service");
+    CHECK(strstr(n, "GDM") != nullptr && strstr(n, "follows this setting") != nullptr);
+    g_free(n);
+    n = xd_accounts_autologin_note("gdm3.service"); /* Debian's */
+    CHECK(strstr(n, "GDM") != nullptr && strstr(n, "follows") != nullptr);
+    g_free(n);
+    n = xd_accounts_autologin_note("sddm.service");
+    CHECK(strstr(n, "SDDM") != nullptr && strstr(n, "no effect") != nullptr &&
+          strstr(n, "GDM") == nullptr);
+    g_free(n);
+    n = xd_accounts_autologin_note("lightdm.service");
+    CHECK(strstr(n, "LightDM, which keeps its own") != nullptr);
+    g_free(n);
+    /* Unknown: named, with what's known in general. */
+    n = xd_accounts_autologin_note("mydm.service");
+    CHECK(strstr(n, "is mydm.") != nullptr && strstr(n, "as GDM does") != nullptr);
+    g_free(n);
+    char *none = xd_accounts_autologin_note(nullptr);
+    char *empty = xd_accounts_autologin_note("");
+    CHECK(strcmp(none, empty) == 0 && strstr(none, "SDDM and LightDM keep their own") != nullptr);
+    g_free(none);
+    g_free(empty);
+    CHECK(xd_accounts_display_manager_unit(nullptr) == nullptr);
 }
 
 static void test_users(void) {
@@ -4756,6 +4785,7 @@ int main(void) {
     test_intl();
     test_intl_custom();
     test_users();
+    test_autologin_note();
     test_folder_options();
     test_input_settings();
     test_kbd_layouts();

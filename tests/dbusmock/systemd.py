@@ -8,6 +8,8 @@ too little of it.
     python3 -m dbusmock --session -t tests/dbusmock/systemd.py -p '{"user": true}'
 
 A unit named "broken.service" fails to start (its job ends "failed").
+With -p '{"display_manager": "sddm.service"}', that unit runs and
+display-manager.service is its alias.
 """
 
 # SPDX-License-Identifier: MIT
@@ -58,7 +60,13 @@ def unit_path(name):
 def load(mock, parameters):
     mock.next_job = 1
     mock.units = {}  # id -> dict
-    units = USER_UNITS if parameters.get("user", False) else SYSTEM_UNITS
+    units = dict(USER_UNITS if parameters.get("user", False) else SYSTEM_UNITS)
+    # "display_manager": "sddm.service" runs that, as display-manager.service.
+    mock.aliases = {}
+    dm = parameters.get("display_manager")
+    if dm:
+        units[dm] = ("Display Manager", "active", "enabled", True, "", [f"/usr/bin/{dm[:-8]}"])
+        mock.aliases["display-manager.service"] = dm
     for uid, (desc, active, state, loaded, user, argv) in units.items():
         mock.units[uid] = {
             "desc": desc, "active": active, "state": state, "loaded": loaded,
@@ -111,7 +119,7 @@ def set_active(mock, uid, active):
 
 
 def unit(mock, name):
-    name = str(name)
+    name = mock.aliases.get(str(name), str(name))
     if name not in mock.units:
         raise dbus.exceptions.DBusException(
             f"Unit {name} not found.", name="org.freedesktop.systemd1.NoSuchUnit")

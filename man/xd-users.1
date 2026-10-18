@@ -4,6 +4,9 @@ xd\-users \- User Accounts
 .SH SYNOPSIS
 .SY xd\-users
 .YS
+.SY xd\-users
+.B \-\-advanced
+.YS
 .SH DESCRIPTION
 .B xd\-users
 is Windows XP's User Accounts (Control Panel), through AccountsService
@@ -18,6 +21,15 @@ Administrators also change other accounts' names, pictures, passwords and
 types, create accounts and delete them; AccountsService asks polkit, so
 .BR xd\-polkit (1)
 asks for an administrator's password.
+.SH OPTIONS
+.TP
+.B \-\-advanced
+XP's other User Accounts window (\fBcontrol userpasswords2\fR): the users
+and "Users must enter a user name and password to use this computer".
+Unticked, the user chosen logs on automatically (AccountsService's
+automatic logon). Only display managers that read AccountsService's
+setting follow it, as GDM does; SDDM and LightDM keep their own, and the
+window says which display manager is running.
 .SH FILES
 .TP
 .I ~/.face
