@@ -30,7 +30,7 @@
 #include "desk_advanced.h"
 #include "desk_saver.h"
 
-enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS };
+enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS, PAGE_LINUX };
 
 /* One monitor in the Settings tab. */
 typedef struct disp_head {
@@ -1466,10 +1466,9 @@ static void on_keyboard_cues(xd_widget *w, void *user) {
     changed(d);
 }
 
-/* Icons and Program style: the freedesktop icon theme everything draws
- * from, the GTK theme GTK programs get, and the widget style of Qt
- * programs (which take the rest from the GTK theme). Windows had none of
- * them; they sit below its visual effects. */
+/* The Linux tab: the freedesktop icon theme everything draws from, the GTK
+ * theme GTK programs get, and the widget style of Qt programs (which take
+ * the rest from the GTK theme). Windows had none of them. */
 static const char *theme_dir_at(GPtrArray *list, int item) {
     /* Item 0 is the default. */
     if (item <= 0 || (guint)item > list->len)
@@ -1521,7 +1520,7 @@ static void fill_themes(xd_widget *combo, GPtrArray *list, const char *dir) {
 
 static void build_themes(desk *d) {
     xd_window *win = d->win;
-    const int P = PAGE_EFFECTS;
+    const int P = PAGE_LINUX;
     char **dirs = xd_icon_theme_dirs();
     d->icon_themes = xd_icon_themes_list((const char *const *)dirs);
     g_strfreev(dirs);
@@ -1532,10 +1531,10 @@ static void build_themes(desk *d) {
     d->qt_styles = xd_qt_styles_list((const char *const *)dirs);
     g_strfreev(dirs);
 
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 264, 364, 116}, "Icons and program style"),
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 116}, "Icons and program style"),
                        P);
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 289, 130, 16}, "Icons:", 0), P);
-    d->icon_combo = xd_combo(win, (xd_rect){164, 286, 208, 21}, false, on_icon_theme, d);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 65, 130, 16}, "Icons:", 0), P);
+    d->icon_combo = xd_combo(win, (xd_rect){164, 62, 208, 21}, false, on_icon_theme, d);
     xd_widget_set_page(d->icon_combo, P);
     /* The default ($XD_ICON_THEME, else Breeze), as the list names it. */
     xd_settings def = d->pending;
@@ -1552,18 +1551,22 @@ static void build_themes(desk *d) {
     g_free(label);
     fill_themes(d->icon_combo, d->icon_themes, d->pending.icon_theme);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 319, 130, 16}, "Program style (GTK):", 0), P);
-    d->gtk_combo = xd_combo(win, (xd_rect){164, 316, 208, 21}, false, on_gtk_theme, d);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 95, 130, 16}, "Program style (GTK):", 0), P);
+    d->gtk_combo = xd_combo(win, (xd_rect){164, 92, 208, 21}, false, on_gtk_theme, d);
     xd_widget_set_page(d->gtk_combo, P);
     xd_widget_add_item(d->gtk_combo, "XeonDesktop (matches the style)");
     fill_themes(d->gtk_combo, d->gtk_themes, d->pending.gtk_theme);
 
-    /* Qt programs read it at start: those running keep their style. */
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 349, 130, 16}, "Program style (Qt):", 0), P);
-    d->qt_combo = xd_combo(win, (xd_rect){164, 346, 208, 21}, false, on_qt_style, d);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 125, 130, 16}, "Program style (Qt):", 0), P);
+    d->qt_combo = xd_combo(win, (xd_rect){164, 122, 208, 21}, false, on_qt_style, d);
     xd_widget_set_page(d->qt_combo, P);
     xd_widget_add_item(d->qt_combo, "Automatic (matches the style)");
     fill_themes(d->qt_combo, d->qt_styles, d->pending.qt_style);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 166, 364, 28},
+                                "Qt programs that are already running keep their style until "
+                                "they are started again.",
+                                XD_LABEL_WRAP),
+                       P);
 }
 
 static void build_effects(desk *d) {
@@ -2478,14 +2481,15 @@ int main(int argc, char **argv) {
     for (int i = 1; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--page") == 0) {
             int64_t v;
-            if (xd_str_parse_i64(xd_str_from_cstr(argv[i + 1]), 0, PAGE_SETTINGS, &v))
+            if (xd_str_parse_i64(xd_str_from_cstr(argv[i + 1]), 0, PAGE_LINUX, &v))
                 page = (int)v;
         }
     }
 
     d.win = xd_window_create(d.ui, "Display Properties", "xd-desk", 404, 448);
+    /* Windows 2000's tabs, and one for what only Linux has. */
     static const char *const tabs[] = {"Background", "Screen Saver", "Appearance", "Effects",
-                                       "Settings"};
+                                       "Settings",   "Linux"};
     xd_widget *tab = xd_tabs(d.win, (xd_rect){7, 7, 390, 401}, tabs, XD_ARRAY_LEN(tabs),
                              on_page, &d);
     build_background(&d);

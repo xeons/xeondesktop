@@ -137,17 +137,20 @@ static char *query(const char *const argv[static 4]) {
     char *args[4] = {prog};
     for (size_t i = 1; i < G_N_ELEMENTS(args) - 1 && argv[i] != nullptr; i++)
         args[i] = g_strdup(argv[i]);
+    /* Not its exit status: a program that ignores SIGCHLD (Display
+     * Properties does, for its previews) can't have it, and the answer is
+     * only used when it names a directory that exists. */
     char *out = nullptr;
-    int status = 0;
     if (!g_spawn_sync(nullptr, args, nullptr, G_SPAWN_STDERR_TO_DEV_NULL, nullptr, nullptr,
-                      &out, nullptr, &status, nullptr) ||
-        !g_spawn_check_wait_status(status, nullptr)) {
+                      &out, nullptr, nullptr, nullptr))
         g_clear_pointer(&out, g_free);
-    }
     for (size_t i = 0; args[i] != nullptr; i++)
         g_free(args[i]);
     if (out != nullptr)
         out[strcspn(out, "\n")] = '\0';
+    /* Only a path is an answer: the next tool is asked otherwise. */
+    if (out != nullptr && out[0] != '/')
+        g_clear_pointer(&out, g_free);
     return out;
 }
 
