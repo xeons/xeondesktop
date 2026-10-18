@@ -8,6 +8,7 @@
  * picking one activates its saved connection, or adds one, asking for the
  * key (xd-wifi-key) if the network is secured; then Disconnect, Wi-Fi on
  * or off, the connection's Status and Network Connections (xd-netconn).
+ * A double click opens the Status, as in XP.
  */
 #include <errno.h>
 #include <gio/gio.h>
@@ -481,6 +482,34 @@ static void act_connections(xd_shell *shell, [[maybe_unused]] void *d) {
     xd_shell_launch(shell, xd_shell_own_command(shell, "xd-netconn", nullptr));
 }
 
+static bool have_wifi(network *n) {
+    bool any = false;
+    GList *objs = n->objects != nullptr ? g_dbus_object_manager_get_objects(n->objects) : nullptr;
+    for (GList *o = objs; o != nullptr && !any; o = o->next) {
+        GDBusProxy *wifi = proxy_for(n, g_dbus_object_get_object_path(o->data), IFACE_WIRELESS);
+        any = wifi != nullptr;
+        if (wifi != nullptr)
+            g_object_unref(wifi);
+    }
+    g_list_free_full(objs, g_object_unref);
+    return any;
+}
+
+/* A double click: XP's "Local Area Connection Status" (or Wireless
+ * Network Connection's). Not connected, there's no Status to show: the
+ * networks in range, or Network Connections. */
+static void open_status(void *data) {
+    network *n = data;
+    if (n->nm == nullptr)
+        return;
+    if (n->connected)
+        act_status(n->shell, n);
+    else if (have_wifi(n))
+        xd_shell_launch(n->shell, xd_shell_own_command(n->shell, "xd-netconn", "--wireless"));
+    else
+        act_connections(n->shell, n);
+}
+
 /* ---- the menu ------------------------------------------------------------------- */
 
 typedef struct listed {
@@ -700,6 +729,7 @@ static const xd_sysicon_ops ops = {
     .icon = icon,
     .tooltip = tooltip,
     .menu = menu,
+    .open = open_status,
     .destroy = destroy,
 };
 

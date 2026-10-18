@@ -1655,6 +1655,76 @@ def power_alarms(s):
         DBusTestCase.tearDownClass()
 
 
+def mock_networkmanager(s):
+    """Before the compositor starts: a private system bus with dbusmock's
+    NetworkManager and xd-netconn's scene (tests/dbusmock/netconn.py): a
+    connected wired adapter, one unplugged, Wi-Fi with two networks."""
+    from dbusmock import DBusTestCase
+
+    DBusTestCase.start_system_bus()
+    template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "netconn.py")
+    proc, _ = DBusTestCase.spawn_server_template(
+        template, {}, stdout=subprocess.DEVNULL, system_bus=True
+    )
+    s.children.append(proc)
+
+
+TRAY = (WIDTH - 300, HEIGHT - 30, 236, 30)  # the notification area, up to the clock
+
+
+@scenario(LUNA_INI, requires=("dbusmock",), setup=mock_networkmanager)
+def network_status(s):
+    """dbusmock's NetworkManager with a connected wired adapter: a single
+    click on the network icon does nothing (as in XP), a double click opens
+    "Local Area Connection Status", whose Disable disconnects the adapter
+    through NetworkManager and closes it."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    try:
+        bus = dbus.SystemBus()
+        nm = bus.get_object("org.freedesktop.NetworkManager", "/org/freedesktop")
+        mock = dbus.Interface(nm, MOCK_IFACE)
+        # Where the icon is: it changes while NetworkManager says it's
+        # offline, and back.
+        s.inject("move", 300, 300)
+        before = s.settle("desktop")
+        mock.SetGlobalConnectionState(dbus.UInt32(20))
+        _, box = wait_change(s, before, TRAY, "the network icon to go offline", "offline")
+        x, y = box[0] + box[2] // 2, box[1] + box[3] // 2
+        mock.SetGlobalConnectionState(dbus.UInt32(70))
+        s.wait(lambda: s.shot("online").changed_box(before, TRAY) is None, "it to come back")
+        s.inject("move", 300, 300)
+        icon = s.settle("network-icon")
+        s.inject("move", x, y, "click", "sleep", 1000, "move", 300, 300, "sleep", 300)
+        s.check(s.settle("single-click").differs(icon, (WIDTH - 400, HEIGHT - 400, 400, 360)) == 0,
+                "a single click opens nothing")  # fmt: skip
+        s.inject("move", x, y, "click", "click")
+        s.wait_window(title="Local Area Connection Status", state="activated")
+        s.log("ok: a double click opened Local Area Connection Status")
+        dialog = s.settle("status")
+        s.check(dialog.differs(icon, (WIDTH // 2 - 150, HEIGHT // 2 - 150, 300, 300)) > 0.2,
+                "the Status dialog shows")  # fmt: skip
+        s.inject("key", "ctrl+Tab")  # Support
+        support = s.settle("support")
+        s.check(support.differs(dialog, (WIDTH // 2 - 150, HEIGHT // 2 - 150, 300, 300)) > 0.02,
+                "its Support tab shows")  # fmt: skip
+        s.inject("key", "ctrl+Tab", "sleep", 300, "key", "alt+d")  # General's Disable
+
+        def eth0_state():
+            dev = bus.get_object("org.freedesktop.NetworkManager",
+                                 "/org/freedesktop/NetworkManager/Devices/mock_eth0")  # fmt: skip
+            return dev.Get("org.freedesktop.NetworkManager.Device", "State",
+                           dbus_interface=dbus.PROPERTIES_IFACE)  # fmt: skip
+
+        s.wait(lambda: eth0_state() == 30, "the adapter to be disconnected")
+        s.log("ok: Disable disconnected the adapter")
+        s.wait_window(title="Local Area Connection Status", gone=True)
+        s.log("ok: Status closed with the connection")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 # Another program's GTK 3 window with a combo box, which drops down once
 # the file named on the command line exists.
 GTK_COMBO = r"""

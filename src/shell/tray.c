@@ -41,6 +41,7 @@ struct xd_tray_item {
     guint signals;
     GCancellable *cancel;
     int64_t active_ms; /* last registered, changed or clicked (monotonic) */
+    int64_t left_ms;   /* our applet's last single left click, for double clicks */
 };
 
 /* Quiet this long, a program's icon folds behind the chevron;
@@ -907,10 +908,22 @@ void xd_tray_item_click(xd_shell *shell, xd_tray_item *it, uint32_t button, xd_t
     it->active_ms = now_ms();
     if (it->ops != nullptr) {
         /* Our applets: left click does the applet's thing (the volume
-         * slider), else everything opens its menu. */
+         * slider), else everything opens its menu. XP's applets with a
+         * window open it on a double click instead. */
+        bool xp_open = button == XD_TRAY_BUTTON_LEFT && it->ops->open != nullptr &&
+                       !bar->superbar;
+        if (xp_open) {
+            int64_t now = now_ms();
+            if (now - it->left_ms <= shell->settings.mouse.double_click_ms) {
+                it->left_ms = 0;
+                it->ops->open(it->data);
+                return;
+            }
+            it->left_ms = now;
+        }
         if (button == XD_TRAY_BUTTON_LEFT && it->ops->activate != nullptr) {
             it->ops->activate(it->data, bar, anchor, serial);
-        } else if (it->ops->menu != nullptr) {
+        } else if (it->ops->menu != nullptr && !xp_open) {
             xd_menu_close_all(shell);
             xd_menu_tree_free(&shell->context_tree);
             xd_menu_tree_init(&shell->context_tree);

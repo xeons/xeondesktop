@@ -397,6 +397,10 @@ typedef struct xd_sysicon_ops {
     void (*menu)(void *data, xd_menu_tree *tree, xd_menu_model *menu);
     /* Left click; nullptr: the menu. anchor: surface-local logical. */
     void (*activate)(void *data, xd_taskbar *bar, xd_rect anchor, uint32_t serial);
+    /* Left double click, as in XP: the applet's own window (a connection's
+     * Status, the Power Meter). Without activate, a single left click then
+     * does nothing, except on Windows 7's taskbar, where it's the menu. */
+    void (*open)(void *data);
     void (*scroll)(void *data, double delta); /* wheel steps, + is down */
     /* Draws the icon into r (device px); nullptr: the `icon` theme icon. */
     void (*draw)(void *data, const xd_theme *t, cairo_t *cr, xd_rect r);
