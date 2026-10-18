@@ -22,13 +22,25 @@ void xd_printers_changed(void);
  * cancelled. */
 void xd_printers_error(GtkWindow *parent, const GError *error);
 
-/* The actions of XP's Printer menu. Each asks first where XP did (Cancel
- * All Documents, Delete), shows what went wrong, and returns whether it
- * was done. */
-bool xd_printer_do_set_default(GtkWindow *parent, const char *name);
-bool xd_printer_do_pause(GtkWindow *parent, const char *name, bool paused);
-bool xd_printer_do_cancel_all(GtkWindow *parent, const char *name);
-bool xd_printer_do_delete(GtkWindow *parent, const char *name);
+/* A change to make in a worker thread (the scheduler may take its time,
+ * or want a password), and what to do once it's done, on the main
+ * thread. */
+typedef bool (*xd_printers_change_fn)(gpointer data, GError **error);
+typedef void (*xd_printers_done_fn)(bool ok, gpointer user);
+/* Runs fn(data) in a worker, then frees data with `free`, shows what went
+ * wrong over `parent` (if still open), tells the windows
+ * (xd_printers_changed) and calls done(ok, user) if given. The program
+ * waits for it. */
+void xd_printers_run(GtkWindow *parent, xd_printers_change_fn fn, gpointer data,
+                     GDestroyNotify free, xd_printers_done_fn done, gpointer user);
+
+/* The actions of XP's Printer menu, made with xd_printers_run. Each asks
+ * first where XP did (Cancel All Documents, Delete). */
+void xd_printer_do_set_default(GtkWindow *parent, const char *name);
+void xd_printer_do_pause(GtkWindow *parent, const char *name, bool paused,
+                         xd_printers_done_fn done, gpointer user);
+void xd_printer_do_cancel_all(GtkWindow *parent, const char *name);
+void xd_printer_do_delete(GtkWindow *parent, const char *name);
 
 /* The printer's icon, `size` pixels square at `scale`: a fax or a
  * printer, XP's check mark on the default one, a pause sign on a paused
@@ -49,5 +61,9 @@ void xd_add_printer_wizard_open(GtkWindow *parent);
  * last one. */
 void xd_printers_hold(GtkWidget *window);
 bool xd_printers_any_open(void);
+/* The same for a window still being fetched (Properties, Printing
+ * Preferences): the program waits for it. */
+void xd_printers_hold_begin(void);
+void xd_printers_hold_end(void);
 
 #endif

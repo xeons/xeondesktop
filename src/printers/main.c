@@ -268,7 +268,7 @@ static void cb_pause([[maybe_unused]] GtkWidget *w, gpointer data) {
     bool paused = false;
     char *name = selected_name(f, &paused);
     if (name != nullptr)
-        xd_printer_do_pause(win(f), name, !paused);
+        xd_printer_do_pause(win(f), name, !paused, nullptr, nullptr);
     g_free(name);
 }
 

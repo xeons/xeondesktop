@@ -7,11 +7,6 @@
 
 static constexpr int MAX_TRIES = 3;
 
-static int tries;
-/* libcups reads the password after the callback returns, so it lives
- * here until the next operation (which wipes it). */
-static char password[256];
-
 static GtkWindow *active_window(void) {
     GList *all = gtk_window_list_toplevels();
     GtkWindow *found = nullptr;
@@ -107,32 +102,6 @@ static bool password_box(const char *server, bool retry, char *user, size_t user
     return ok;
 }
 
-/* The main thread's requests. */
-static const char *ask([[maybe_unused]] const char *prompt, http_t *http,
-                       [[maybe_unused]] const char *method,
-                       [[maybe_unused]] const char *resource, [[maybe_unused]] void *data) {
-    explicit_bzero(password, sizeof(password));
-    if (++tries > MAX_TRIES)
-        return nullptr;
-    char server[256], user[256];
-    server_name(http, server, sizeof(server));
-    g_strlcpy(user, cupsUser(), sizeof(user));
-    if (!password_box(server, tries > 1, user, sizeof(user), password, sizeof(password))) {
-        tries = MAX_TRIES;
-        return nullptr;
-    }
-    if (user[0] != '\0')
-        cupsSetUser(user);
-    return password;
-}
-
-void xd_cups_auth_init(void) { cupsSetPasswordCB2(ask, nullptr); }
-
-void xd_cups_auth_reset(void) {
-    tries = 0;
-    explicit_bzero(password, sizeof(password));
-}
-
 /* ---- a worker thread's requests ------------------------------------------------------ */
 
 /* A worker's question, answered on the main thread while the worker
@@ -200,6 +169,10 @@ static const char *no_password([[maybe_unused]] const char *prompt,
                                [[maybe_unused]] void *data) {
     return nullptr;
 }
+
+/* The main thread changes nothing (the windows make their changes in
+ * workers): its reads never ask, on the terminal or otherwise. */
+void xd_cups_auth_init(void) { cupsSetPasswordCB2(no_password, nullptr); }
 
 void xd_cups_auth_worker_begin(void) {
     worker_tries = 0;

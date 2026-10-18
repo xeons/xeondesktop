@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+#include <cups/adminutil.h>
 #include <cups/cups.h>
 #include <stdlib.h>
 #include <string.h>
@@ -312,12 +313,128 @@ bool xd_printer_add(const char *name, const char *device_uri, const char *info,
     return send_request(req, "/admin/", error, "The printer could not be added");
 }
 
-bool xd_printer_modify(const char *name, const char *info, const char *location,
-                       GError **error) {
+ipp_t *xd_printer_modify_request(const char *name, const xd_printer_changes *changes) {
     ipp_t *req = printer_request(IPP_OP_CUPS_ADD_MODIFY_PRINTER, name);
-    add_text(req, "printer-info", info);
-    add_text(req, "printer-location", location);
-    return send_request(req, "/admin/", error, "The printer's properties could not be saved");
+    add_text(req, "printer-info", changes->info);
+    add_text(req, "printer-location", changes->location);
+    if (changes->device_uri != nullptr)
+        ippAddString(req, IPP_TAG_PRINTER, IPP_TAG_URI, "device-uri", nullptr,
+                     changes->device_uri);
+    if (changes->shared >= 0)
+        ippAddBoolean(req, IPP_TAG_PRINTER, "printer-is-shared", (char)(changes->shared != 0));
+    return req;
+}
+
+bool xd_printer_modify(const char *name, const xd_printer_changes *changes, GError **error) {
+    return send_request(xd_printer_modify_request(name, changes), "/admin/", error,
+                        "The printer's properties could not be saved");
+}
+
+static void free_device(xd_print_device *d) {
+    g_free(d->uri);
+    g_free(d->info);
+    g_free(d->model);
+    g_free(d->kind);
+    g_free(d);
+}
+
+/* CUPS-Get-Devices itself: libcups's cupsGetDevices is deprecated. */
+GPtrArray *xd_print_devices_list(int timeout, GError **error) {
+    ipp_t *req = ippNewRequest(IPP_OP_CUPS_GET_DEVICES);
+    ippAddString(req, IPP_TAG_OPERATION, IPP_TAG_NAME, "requesting-user-name", nullptr,
+                 cupsUser());
+    ippAddInteger(req, IPP_TAG_OPERATION, IPP_TAG_INTEGER, "timeout", timeout);
+    ipp_t *resp = cupsDoRequest(CUPS_HTTP_DEFAULT, req, "/");
+    if (resp == nullptr || !check(error, "The ports could not be listed")) {
+        ippDelete(resp);
+        return nullptr;
+    }
+    GPtrArray *list = g_ptr_array_new_with_free_func((GDestroyNotify)free_device);
+    GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
+    ipp_attribute_t *a = ippFirstAttribute(resp);
+    while (a != nullptr) {
+        while (a != nullptr && ippGetGroupTag(a) != IPP_TAG_PRINTER)
+            a = ippNextAttribute(resp);
+        if (a == nullptr)
+            break;
+        xd_print_device *d = g_new0(xd_print_device, 1);
+        for (; a != nullptr && ippGetGroupTag(a) == IPP_TAG_PRINTER; a = ippNextAttribute(resp)) {
+            const char *n = ippGetName(a);
+            const char *v = ippGetString(a, 0, nullptr);
+            if (n == nullptr || v == nullptr)
+                continue;
+            char **field = strcmp(n, "device-uri") == 0              ? &d->uri
+                           : strcmp(n, "device-info") == 0           ? &d->info
+                           : strcmp(n, "device-make-and-model") == 0 ? &d->model
+                           : strcmp(n, "device-class") == 0          ? &d->kind
+                                                                     : nullptr;
+            if (field != nullptr) {
+                g_free(*field);
+                *field = g_strdup(v);
+            }
+        }
+        /* A backend may report the same device twice. */
+        if (d->uri == nullptr || g_hash_table_contains(seen, d->uri)) {
+            free_device(d);
+            continue;
+        }
+        if (d->info == nullptr)
+            d->info = g_strdup(d->uri);
+        if (d->model == nullptr || strcmp(d->model, "Unknown") == 0) {
+            g_free(d->model);
+            d->model = g_strdup("");
+        }
+        if (d->kind == nullptr)
+            d->kind = g_strdup("");
+        g_hash_table_add(seen, d->uri);
+        g_ptr_array_add(list, d);
+    }
+    g_hash_table_unref(seen);
+    ippDelete(resp);
+    return list;
+}
+
+int xd_cups_server_sharing(const char *printer) {
+    xd_cups_thread_init();
+    /* The scheduler tells anyone, as a printer attribute... */
+    ipp_t *req = printer_request(IPP_OP_GET_PRINTER_ATTRIBUTES, printer);
+    ippAddString(req, IPP_TAG_OPERATION, IPP_TAG_KEYWORD, "requested-attributes", nullptr,
+                 "server-is-sharing-printers");
+    ipp_t *resp = cupsDoRequest(CUPS_HTTP_DEFAULT, req, "/");
+    ipp_attribute_t *a = resp != nullptr ? ippFindAttribute(resp, "server-is-sharing-printers",
+                                                            IPP_TAG_BOOLEAN)
+                                         : nullptr;
+    int sharing = a != nullptr ? ippGetBoolean(a, 0) != 0 : -1;
+    ippDelete(resp);
+    if (sharing >= 0)
+        return sharing;
+    /* ...else it's in cupsd.conf, which only administrators may read:
+     * the thread's password callback decides whether to ask. */
+    int n = 0;
+    cups_option_t *settings = nullptr;
+    if (cupsAdminGetServerSettings(CUPS_HTTP_DEFAULT, &n, &settings)) {
+        const char *v = cupsGetOption(CUPS_SERVER_SHARE_PRINTERS, n, settings);
+        if (v != nullptr)
+            sharing = strcmp(v, "1") == 0;
+    }
+    cupsFreeOptions(n, settings);
+    return sharing;
+}
+
+bool xd_cups_set_server_sharing(bool on, GError **error) {
+    int n = 0;
+    cups_option_t *settings = nullptr;
+    n = cupsAddOption(CUPS_SERVER_SHARE_PRINTERS, on ? "1" : "0", n, &settings);
+    /* It reads cupsd.conf, changes what sharing needs and puts it back:
+     * the other settings stay as they were. */
+    bool ok = cupsAdminSetServerSettings(CUPS_HTTP_DEFAULT, n, settings) != 0;
+    cupsFreeOptions(n, settings);
+    const char *what = on ? "Printer sharing could not be turned on"
+                          : "Printer sharing could not be turned off";
+    if (ok || !check(error, what))
+        return ok;
+    g_set_error(error, XD_CUPS_ERROR, IPP_STATUS_ERROR_INTERNAL, "%s.", what);
+    return false;
 }
 
 bool xd_printer_print_test_page(const char *name, int *job_id, GError **error) {

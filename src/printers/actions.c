@@ -46,15 +46,22 @@ void xd_printers_changed(void) {
 
 /* ---- windows ----------------------------------------------------------------------- */
 
+/* Open windows and windows still fetching what they show. */
 static int open_windows;
 
-static void on_held_destroy([[maybe_unused]] GtkWidget *w, [[maybe_unused]] gpointer data) {
+void xd_printers_hold_begin(void) { open_windows++; }
+
+void xd_printers_hold_end(void) {
     if (--open_windows == 0)
         gtk_main_quit();
 }
 
+static void on_held_destroy([[maybe_unused]] GtkWidget *w, [[maybe_unused]] gpointer data) {
+    xd_printers_hold_end();
+}
+
 void xd_printers_hold(GtkWidget *window) {
-    open_windows++;
+    xd_printers_hold_begin();
     g_signal_connect(window, "destroy", G_CALLBACK(on_held_destroy), nullptr);
 }
 
@@ -69,46 +76,128 @@ void xd_printers_error(GtkWindow *parent, const GError *error) {
     xd_message_box(parent, TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, error->message);
 }
 
-/* Shows the error, if any, and tells the windows. */
-static bool finish(GtkWindow *parent, bool ok, GError *error) {
-    if (!ok)
-        xd_printers_error(parent, error);
-    g_clear_error(&error);
+typedef struct change {
+    GtkWidget *parent; /* a weak pointer */
+    xd_printers_change_fn fn;
+    gpointer data;
+    GDestroyNotify free;
+    xd_printers_done_fn done;
+    gpointer user;
+    bool ok;
+    GError *error;
+} change;
+
+static void change_free(gpointer data) {
+    change *ch = data;
+    if (ch->parent != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(ch->parent), (gpointer *)&ch->parent);
+    if (ch->free != nullptr)
+        ch->free(ch->data);
+    g_clear_error(&ch->error);
+    g_free(ch);
+}
+
+static void change_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
+                          [[maybe_unused]] GCancellable *c) {
+    change *ch = data;
+    /* cupsd may want a printer administrator's password. */
+    xd_cups_auth_worker_begin();
+    ch->ok = ch->fn(ch->data, &ch->error);
+    xd_cups_auth_worker_end();
+    g_task_return_boolean(task, TRUE);
+}
+
+static void on_change_done([[maybe_unused]] GObject *src, GAsyncResult *res,
+                           [[maybe_unused]] gpointer data) {
+    change *ch = g_task_get_task_data(G_TASK(res));
+    if (!ch->ok)
+        xd_printers_error(ch->parent != nullptr ? GTK_WINDOW(ch->parent) : nullptr, ch->error);
     xd_printers_changed();
-    return ok;
+    if (ch->done != nullptr)
+        ch->done(ch->ok, ch->user);
+    xd_printers_hold_end();
 }
 
-bool xd_printer_do_set_default(GtkWindow *parent, const char *name) {
-    GError *error = nullptr;
-    return finish(parent, xd_printer_set_default(name, &error), error);
+void xd_printers_run(GtkWindow *parent, xd_printers_change_fn fn, gpointer data,
+                     GDestroyNotify free, xd_printers_done_fn done, gpointer user) {
+    change *ch = g_new0(change, 1);
+    if (parent != nullptr) {
+        ch->parent = GTK_WIDGET(parent);
+        g_object_add_weak_pointer(G_OBJECT(parent), (gpointer *)&ch->parent);
+    }
+    ch->fn = fn;
+    ch->data = data;
+    ch->free = free;
+    ch->done = done;
+    ch->user = user;
+    /* The program stays until it's done, even if its window closes. */
+    xd_printers_hold_begin();
+    GTask *task = g_task_new(nullptr, nullptr, on_change_done, nullptr);
+    g_task_set_task_data(task, ch, change_free);
+    g_task_run_in_thread(task, change_thread);
+    g_object_unref(task);
 }
 
-bool xd_printer_do_pause(GtkWindow *parent, const char *name, bool paused) {
-    xd_cups_auth_reset();
-    GError *error = nullptr;
-    return finish(parent, xd_printer_pause(name, paused, &error), error);
+/* A printer and, for Pause Printing, which way. */
+typedef struct named {
+    char *name;
+    bool flag;
+} named;
+
+static named *named_new(const char *name, bool flag) {
+    named *n = g_new0(named, 1);
+    n->name = g_strdup(name);
+    n->flag = flag;
+    return n;
 }
 
-bool xd_printer_do_cancel_all(GtkWindow *parent, const char *name) {
+static void named_free(gpointer data) {
+    named *n = data;
+    g_free(n->name);
+    g_free(n);
+}
+
+static bool set_default(gpointer data, GError **error) {
+    return xd_printer_set_default(((named *)data)->name, error);
+}
+
+static bool pause_printer(gpointer data, GError **error) {
+    const named *n = data;
+    return xd_printer_pause(n->name, n->flag, error);
+}
+
+static bool cancel_all(gpointer data, GError **error) {
+    return xd_printer_cancel_all(((named *)data)->name, error);
+}
+
+static bool delete_printer(gpointer data, GError **error) {
+    return xd_printer_delete(((named *)data)->name, error);
+}
+
+void xd_printer_do_set_default(GtkWindow *parent, const char *name) {
+    xd_printers_run(parent, set_default, named_new(name, false), named_free, nullptr, nullptr);
+}
+
+void xd_printer_do_pause(GtkWindow *parent, const char *name, bool paused,
+                         xd_printers_done_fn done, gpointer user) {
+    xd_printers_run(parent, pause_printer, named_new(name, paused), named_free, done, user);
+}
+
+void xd_printer_do_cancel_all(GtkWindow *parent, const char *name) {
     char *q = g_strdup_printf("Are you sure you want to cancel all documents for %s?", name);
     int r = xd_message_box(parent, name, XD_MB_QUESTION, XD_MB_YES_NO, TRUE, q);
     g_free(q);
-    if (r != GTK_RESPONSE_YES)
-        return false;
-    xd_cups_auth_reset();
-    GError *error = nullptr;
-    return finish(parent, xd_printer_cancel_all(name, &error), error);
+    if (r == GTK_RESPONSE_YES)
+        xd_printers_run(parent, cancel_all, named_new(name, false), named_free, nullptr, nullptr);
 }
 
-bool xd_printer_do_delete(GtkWindow *parent, const char *name) {
+void xd_printer_do_delete(GtkWindow *parent, const char *name) {
     char *q = g_strdup_printf("Are you sure you want to delete the printer %s?", name);
     int r = xd_message_box(parent, TITLE, XD_MB_QUESTION, XD_MB_YES_NO, TRUE, q);
     g_free(q);
-    if (r != GTK_RESPONSE_YES)
-        return false;
-    xd_cups_auth_reset();
-    GError *error = nullptr;
-    return finish(parent, xd_printer_delete(name, &error), error);
+    if (r == GTK_RESPONSE_YES)
+        xd_printers_run(parent, delete_printer, named_new(name, false), named_free, nullptr,
+                        nullptr);
 }
 
 /* ---- icons ------------------------------------------------------------------------- */

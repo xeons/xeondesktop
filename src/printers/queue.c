@@ -5,7 +5,6 @@
 #include <cups/cups.h>
 
 #include "../gtkapp/gtkapp.h"
-#include "auth.h"
 #include "printers.h"
 #include "printlib.h"
 
@@ -260,18 +259,23 @@ static void cb_prefs([[maybe_unused]] GtkWidget *w, gpointer data) {
     release(q);
 }
 
+/* Pause Printing failed: the check mark goes back. */
+static void paused(bool ok, gpointer data) {
+    queue *q = data;
+    if (!ok) {
+        q->syncing = true;
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(q->pause_item), q->paused);
+        q->syncing = false;
+    }
+    release(q);
+}
+
 static void cb_pause(GtkCheckMenuItem *item, gpointer data) {
     queue *q = data;
     if (q->syncing)
         return;
-    bool want = gtk_check_menu_item_get_active(item);
     hold(q);
-    if (!xd_printer_do_pause(win(q), q->name, want)) {
-        q->syncing = true;
-        gtk_check_menu_item_set_active(item, q->paused);
-        q->syncing = false;
-    }
-    release(q);
+    xd_printer_do_pause(win(q), q->name, gtk_check_menu_item_get_active(item), paused, q);
 }
 
 static void cb_cancel_all([[maybe_unused]] GtkWidget *w, gpointer data) {
@@ -296,6 +300,32 @@ static void cb_refresh([[maybe_unused]] GtkWidget *w, gpointer data) { reload(da
 
 /* ---- the Document menu -------------------------------------------------------------- */
 
+/* The selected documents and what to do with them, for the worker. */
+typedef struct job_change {
+    char *printer;
+    GList *ids;
+    xd_job_op op;
+} job_change;
+
+static void job_change_free(gpointer data) {
+    job_change *c = data;
+    g_free(c->printer);
+    g_list_free(c->ids);
+    g_free(c);
+}
+
+/* Each document in turn, stopping at the first that fails. */
+static bool jobs_do(gpointer data, GError **error) {
+    const job_change *c = data;
+    for (const GList *l = c->ids; l != nullptr; l = l->next) {
+        if (!xd_print_job_do(c->printer, GPOINTER_TO_INT(l->data), c->op, error))
+            return false;
+    }
+    return true;
+}
+
+static void jobs_done([[maybe_unused]] bool ok, gpointer data) { release(data); }
+
 static void job_op(queue *q, xd_job_op op) {
     GList *ids = selected_ids(q);
     if (ids == nullptr)
@@ -311,18 +341,11 @@ static void job_op(queue *q, xd_job_op op) {
         release(q);
         return;
     }
-    xd_cups_auth_reset();
-    for (GList *l = ids; l != nullptr; l = l->next) {
-        GError *error = nullptr;
-        if (!xd_print_job_do(q->name, GPOINTER_TO_INT(l->data), op, &error)) {
-            xd_printers_error(win(q), error);
-            g_error_free(error);
-            break;
-        }
-    }
-    g_list_free(ids);
-    xd_printers_changed();
-    release(q);
+    job_change *c = g_new0(job_change, 1);
+    c->printer = g_strdup(q->name);
+    c->ids = ids;
+    c->op = op;
+    xd_printers_run(win(q), jobs_do, c, job_change_free, jobs_done, q);
 }
 
 static void cb_doc_pause([[maybe_unused]] GtkWidget *w, gpointer data) {

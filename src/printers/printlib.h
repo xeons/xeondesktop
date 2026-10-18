@@ -41,6 +41,15 @@ const char *xd_printer_port_description(const char *device_uri);
  * cable). */
 bool xd_printer_uri_is_network(const char *device_uri);
 
+/* Whether a typed device URI says where to print: a scheme and, for the
+ * network's, a host ("socket://10.0.0.5", "usb://HP/LaserJet",
+ * "file:/dev/null"; not "socket" or "ipp://"). */
+bool xd_printer_device_uri_complete(const char *device_uri);
+/* What Add Port puts in its Device URI box for a port CUPS-Get-Devices
+ * found: the URI, or for a kind of port with no address yet (the bare
+ * scheme, "socket") its start, "socket://". Free with g_free. */
+char *xd_printer_device_uri_start(const char *device_uri);
+
 /* Whether CUPS accepts `name` for a printer: 1 to 127 bytes, printable,
  * without spaces, '/', '\\', '#', '?', quotes. */
 bool xd_printer_name_valid(const char *name);

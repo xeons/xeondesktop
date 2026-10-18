@@ -877,6 +877,8 @@ executable(
                                                           default_value: '/usr/share/cups') + '"'],
   install: true,
 )
+# A stand-in for cupsd, for the UI tests (cupsd itself needs root).
+executable('xd-cupsmock', 'tests/cupsmock.c', dependencies: [glib_dep, cups_dep])
 executable(
   'xd-scanners',
   'src/scanners/main.c',
@@ -1028,6 +1030,7 @@ test_exe = executable(
   'src/admin/admin.c',
   'src/appwiz/programs.c',
   'src/printers/printlib.c',
+  'src/printers/cupsops.c',
   'src/scanners/scanlib.c',
   'src/startmenu/searchlib.c',
   'src/files/favorites.c',

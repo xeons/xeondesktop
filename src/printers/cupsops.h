@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: MIT
  * Printers and Faxes' requests to CUPS, through libcups: the printers and
  * their jobs, and what changes them. Each call blocks until the scheduler
- * answers; listing is safe in worker threads (libcups keeps a connection
- * per thread). Changes run on the main thread, where cupsd may ask for a
- * password through the box auth.c shows, or in a worker thread between
- * xd_cups_auth_worker_begin and _end (Add Printer).
+ * answers, so the windows make them in worker threads (libcups keeps a
+ * connection per thread): listing ones ask nobody for a password, and
+ * changes run between xd_cups_auth_worker_begin and _end, where cupsd
+ * may ask for one through the box auth.c shows.
  */
 #ifndef XD_PRINTERS_CUPSOPS_H
 #define XD_PRINTERS_CUPSOPS_H
 
+#include <cups/ipp.h>
 #include <glib.h>
 
 typedef struct xd_printer {
@@ -77,9 +78,38 @@ bool xd_printer_delete(const char *name, GError **error);
  * accepting jobs. */
 bool xd_printer_add(const char *name, const char *device_uri, const char *info,
                     const char *location, GError **error);
-/* Changes the Comment and Location. */
-bool xd_printer_modify(const char *name, const char *info, const char *location,
-                       GError **error);
+/* What Properties' Apply changes: nullptr strings and a negative
+ * `shared` are left as they are. */
+typedef struct xd_printer_changes {
+    const char *info, *location;
+    const char *device_uri; /* the Ports tab's port */
+    int shared;             /* the Sharing tab: printer-is-shared */
+} xd_printer_changes;
+/* The CUPS-Add-Modify-Printer request for `changes` (the unit tests
+ * read it). Free with ippDelete. */
+ipp_t *xd_printer_modify_request(const char *name, const xd_printer_changes *changes);
+bool xd_printer_modify(const char *name, const xd_printer_changes *changes, GError **error);
+
+/* A port CUPS-Get-Devices found: a device CUPS's backends see (a USB
+ * printer, one on the network), or a kind of port with no address yet
+ * ("socket", "lpd": the uri is the bare scheme). */
+typedef struct xd_print_device {
+    char *uri, *info, *model;
+    char *kind; /* device-class: "direct", "network", "file", "serial" */
+} xd_print_device;
+/* The ports, in the order CUPS gives them, after the backends have
+ * looked for up to `timeout` seconds. Run it in a worker between
+ * xd_cups_auth_worker_begin and _end: cupsd's default policy keeps the
+ * list to printer administrators. Free with g_ptr_array_unref. */
+GPtrArray *xd_print_devices_list(int timeout, GError **error);
+
+/* Whether the scheduler shares its printers on the network (cupsd.conf's
+ * Browsing and BrowseLocalProtocols, CUPS_SERVER_SHARE_PRINTERS): 1, 0,
+ * or -1 if it can't be told without a printer administrator's password.
+ * `printer` is one of its printers, for the attribute that says so. */
+int xd_cups_server_sharing(const char *printer);
+/* Turns the scheduler's printer sharing on or off (cupsd restarts). */
+bool xd_cups_set_server_sharing(bool on, GError **error);
 /* Prints CUPS's test page; `job_id` gets the job's number. */
 bool xd_printer_print_test_page(const char *name, int *job_id, GError **error);
 

@@ -22,6 +22,7 @@
 #include "../src/appwiz/programs.h"
 #include "../src/apps/runcmd.h"
 #include "../src/power/schemes.h"
+#include "../src/printers/cupsops.h"
 #include "../src/printers/printlib.h"
 #include "../src/scanners/scanlib.h"
 #include "../src/bluetooth/btinfo.h"
@@ -4089,6 +4090,50 @@ static void test_printers(void) {
     char *k = xd_print_keyword_label("stationery-heavyweight");
     CHECK(strcmp(k, "Stationery heavyweight") == 0);
     g_free(k);
+
+    /* The Ports tab's typed URIs, and Add Port's start for a kind of port. */
+    CHECK(xd_printer_device_uri_complete("socket://192.168.1.5:9100"));
+    CHECK(xd_printer_device_uri_complete("usb://HP/LaserJet?serial=1"));
+    CHECK(xd_printer_device_uri_complete("file:/dev/null"));
+    CHECK(xd_printer_device_uri_complete("parallel:/dev/lp0"));
+    CHECK(!xd_printer_device_uri_complete("socket"));
+    CHECK(!xd_printer_device_uri_complete("socket://"));
+    CHECK(!xd_printer_device_uri_complete("ipp://"));
+    CHECK(!xd_printer_device_uri_complete(""));
+    CHECK(!xd_printer_device_uri_complete(nullptr));
+    k = xd_printer_device_uri_start("socket");
+    CHECK(strcmp(k, "socket://") == 0);
+    g_free(k);
+    k = xd_printer_device_uri_start("usb://HP/x");
+    CHECK(strcmp(k, "usb://HP/x") == 0);
+    g_free(k);
+
+    /* Properties' Apply: one CUPS-Add-Modify-Printer with what changed. */
+    xd_printer_changes c = {.info = "Hall", .device_uri = "socket://10.0.0.9", .shared = 1};
+    ipp_t *req = xd_printer_modify_request("Office_Laser", &c);
+    CHECK(ippGetOperation(req) == IPP_OP_CUPS_ADD_MODIFY_PRINTER);
+    ipp_attribute_t *a = ippFindAttribute(req, "printer-uri", IPP_TAG_URI);
+    CHECK(a != nullptr && g_str_has_suffix(ippGetString(a, 0, nullptr), "/printers/Office_Laser"));
+    a = ippFindAttribute(req, "device-uri", IPP_TAG_URI);
+    CHECK(a != nullptr && ippGetGroupTag(a) == IPP_TAG_PRINTER &&
+          strcmp(ippGetString(a, 0, nullptr), "socket://10.0.0.9") == 0);
+    a = ippFindAttribute(req, "printer-is-shared", IPP_TAG_BOOLEAN);
+    CHECK(a != nullptr && ippGetGroupTag(a) == IPP_TAG_PRINTER && ippGetBoolean(a, 0));
+    a = ippFindAttribute(req, "printer-info", IPP_TAG_TEXT);
+    CHECK(a != nullptr && strcmp(ippGetString(a, 0, nullptr), "Hall") == 0);
+    CHECK(ippFindAttribute(req, "printer-location", IPP_TAG_ZERO) == nullptr);
+    ippDelete(req);
+    /* Unchanged port and sharing: neither is sent. */
+    c = (xd_printer_changes){.info = "", .location = "", .shared = -1};
+    req = xd_printer_modify_request("Office_Laser", &c);
+    CHECK(ippFindAttribute(req, "device-uri", IPP_TAG_ZERO) == nullptr);
+    CHECK(ippFindAttribute(req, "printer-is-shared", IPP_TAG_ZERO) == nullptr);
+    c.shared = 0;
+    ippDelete(req);
+    req = xd_printer_modify_request("Office_Laser", &c);
+    a = ippFindAttribute(req, "printer-is-shared", IPP_TAG_BOOLEAN);
+    CHECK(a != nullptr && !ippGetBoolean(a, 0));
+    ippDelete(req);
 }
 
 /* Scanners and Cameras: SANE modes for XP's picture types, resolutions,

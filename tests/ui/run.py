@@ -3278,6 +3278,123 @@ def mock_polkitd(s):
     s.children.append(proc)
 
 
+def mock_cups(s, auth=False):
+    """A stand-in for cupsd (xd-cupsmock, cupsd itself needs root) on a
+    socket in the session's runtime dir, with two printers, a few devices
+    and printer sharing off (and with auth, changes that want a password);
+    the environment that points libcups at it, and the log of the changes
+    it was asked for."""
+    runtime = os.environ["XDG_RUNTIME_DIR"]
+    sock = os.path.join(runtime, "cups.sock")
+    log = os.path.join(s.base, "shots", "cups.log")  # kept with --keep
+    s.launch(s.tool("xd-cupsmock"), sock, log, *(["--auth"] if auth else []))
+    s.wait(lambda: os.path.exists(sock), "the CUPS stand-in")
+    return {"CUPS_SERVER": sock}, log
+
+
+def file_text(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+@scenario(LUNA_INI)
+def printer_ports_sharing(s):
+    """A printer's Properties (on xd-cupsmock): Sharing turns the
+    scheduler's printer sharing on and shares the printer; Ports' Add
+    Port lists CUPS-Get-Devices' ports and takes a typed one; Apply sends
+    one CUPS-Add-Modify-Printer with the new device-uri and
+    printer-is-shared."""
+    env, log = mock_cups(s)
+    empty = s.settle("desktop")
+    s.launch("xd-printers", "--properties", "Office_Laser", env=env)
+    s.wait_window(title="Office_Laser Properties", state="activated")
+    general = s.settle("general")
+    x, y, w, h = general.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.log(f"properties at {x},{y} {w}x{h}")
+
+    # Sharing: printer sharing is off, so XP SP2's note and link show.
+    s.inject("key", "alt+h")
+    sharing = s.settle("sharing-off")
+    s.check(sharing.differs(general, (x, y + 60, w, h - 120)) > 0.05, "the Sharing tab shows")
+    # Its link turns sharing on: cupsAdminSetServerSettings puts back a
+    # cupsd.conf that browses.
+    s.inject("move", x + 100, y + 168, "click")
+    s.wait(lambda: "cupsd.conf Browsing On" in file_text(log), "sharing turned on")
+    s.log("ok: the link turned the scheduler's printer sharing on")
+    s.inject("sleep", 300, "key", "alt+s")
+    shared = s.settle("sharing-on")
+    s.check(shared.differs(sharing, (x + 10, y + 100, w - 20, 120)) > 0.05,
+            "the note went and Share this printer is chosen")  # fmt: skip
+
+    # Ports: Add Port lists what CUPS-Get-Devices found; a typed URI is
+    # taken (Return is New Port).
+    s.inject("key", "alt+o")
+    ports = s.settle("ports")
+    s.inject("key", "alt+t")
+    s.wait(lambda: "get-devices" in file_text(log), "CUPS-Get-Devices")
+    s.inject("sleep", 500)
+    found = s.settle("add-port")
+    s.check(found.differs(ports, (x + 20, y + 60, w - 40, 200)) > 0.1, "Add Port opened")
+    s.inject("type", "socket://10.0.0.9", "key", "Return")
+    added = s.settle("port-added")
+    s.check(added.differs(ports, (x + 10, y + 100, w - 20, 200)) > 0.01, "the new port is listed")
+    # Configure Port changes the new port's address (it's selected).
+    s.inject("key", "alt+c", "sleep", 500, "key", "ctrl+a", "type", "socket://10.0.0.10",
+             "key", "Return")  # fmt: skip
+    configured = s.settle("port-configured")
+    s.check(configured.changed_box(added, (x + 10, y + 100, w - 20, 200), step=1) is not None,
+            "Configure Port changed the port")  # fmt: skip
+
+    # Apply: one CUPS-Add-Modify-Printer with the port and sharing.
+    s.inject("key", "alt+a")
+    s.wait(lambda: "device-uri=socket://10.0.0.10" in file_text(log), "the new port saved")
+    s.check("Office_Laser printer-is-shared=true" in file_text(log), "the printer is shared")
+    s.inject("move", x + 190, y + 391, "click")
+    s.wait_window(title="Office_Laser Properties", gone=True)
+    s.log("ok: OK closed Properties")
+
+
+@scenario(LUNA_INI)
+def printer_queue_pause(s):
+    """A printer's queue (on xd-cupsmock): Pause Printing, made in a worker
+    thread, pauses it, and the title says so; again resumes it."""
+    env, log = mock_cups(s)
+    s.launch("xd-printers", "--queue", "Office_Laser", env=env)
+    s.wait_window(title="Office_Laser", state="activated")
+    s.settle("queue")
+    s.inject("key", "alt+p", "sleep", 300, "key", "p")
+    s.wait(lambda: "pause Office_Laser" in file_text(log), "Pause-Printer")
+    s.wait_window(title="Office_Laser - Paused")
+    s.log("ok: Pause Printing paused the printer")
+    s.inject("key", "alt+p", "sleep", 300, "key", "p")
+    s.wait(lambda: "resume Office_Laser" in file_text(log), "Resume-Printer")
+    s.wait_window(title="Office_Laser")
+    s.log("ok: Pause Printing again resumed it")
+
+
+@scenario(LUNA_INI)
+def printer_apply_password(s):
+    """Properties' Apply on a scheduler that wants a printer
+    administrator's password (xd-cupsmock --auth): the worker's request
+    asks with XP's Connect to box, and goes through with the password."""
+    env, log = mock_cups(s, auth=True)
+    s.launch("xd-printers", "--properties", "Office_Laser", env=env)
+    s.wait_window(title="Office_Laser Properties", state="activated")
+    general = s.settle("general")
+    s.inject("key", "alt+c", "key", "ctrl+a", "type", "Front desk", "key", "alt+a")
+    s.wait(lambda: "password asked" in file_text(log), "the password asked for")
+    s.inject("sleep", 500)
+    box = s.settle("connect-to")
+    s.check(box.differs(general, (0, 0, WIDTH, HEIGHT - 40)) > 0.01, "the Connect to box shows")
+    s.inject("type", "secret", "key", "Return")
+    s.wait(lambda: "printer-info=Front desk" in file_text(log), "the comment saved")
+    s.check("authorized for /admin/ as xeon with a password" in file_text(log),
+            "it went with the password")  # fmt: skip
+
+
 def session_program(name):
     """Pids of this session's processes running `name`."""
     pids = []

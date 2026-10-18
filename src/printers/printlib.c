@@ -159,6 +159,26 @@ bool xd_printer_uri_is_network(const char *device_uri) {
     return false;
 }
 
+bool xd_printer_device_uri_complete(const char *device_uri) {
+    uri_parts u;
+    if (device_uri == nullptr || strchr(device_uri, ':') == nullptr ||
+        !split_uri(device_uri, &u) || u.scheme[0] == '\0')
+        return false;
+    for (size_t i = 0; i < G_N_ELEMENTS(network_schemes); i++) {
+        if (strcmp(u.scheme, network_schemes[i]) == 0)
+            return u.host[0] != '\0';
+    }
+    return u.host[0] != '\0' || (u.resource[0] != '\0' && strcmp(u.resource, "/") != 0);
+}
+
+char *xd_printer_device_uri_start(const char *device_uri) {
+    if (device_uri == nullptr)
+        return g_strdup("");
+    if (strchr(device_uri, ':') != nullptr)
+        return g_strdup(device_uri);
+    return g_strdup_printf("%s://", device_uri);
+}
+
 /* "/dev/lp0" to 0, "/dev/ttyS1" to 1: the number at the end of a device. */
 static int device_number(const char *path) {
     size_t n = strlen(path);
