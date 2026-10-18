@@ -139,11 +139,13 @@ xd_view *xd_view_focused(xd_server *server) {
     return front->mapped && !front->minimized ? front : nullptr;
 }
 
-/* Places the client surfaces inside the frame. */
+/* Places the client surfaces inside the frame. The content tree's origin
+ * is the window geometry's: wlroots' xdg scene tree already shifts the
+ * surface by the geometry's offset (a client's shadow margins), and an X11
+ * window's geometry starts at its surface. */
 static void update_content_position(xd_view *view) {
     xd_insets in = xd_view_insets(view);
-    struct wlr_box geo = client_geometry(view);
-    wlr_scene_node_set_position(&view->content->node, in.left - geo.x, in.top - geo.y);
+    wlr_scene_node_set_position(&view->content->node, in.left, in.top);
 }
 
 /* Tells the taskbar which output the window is on (by its centre). */
@@ -1011,12 +1013,19 @@ static void handle_request_maximize(struct wl_listener *listener, [[maybe_unused
 }
 
 /* A client-decorated window (e.g. a GTK header bar) asks for the window
- * menu; x, y are relative to its window geometry. */
+ * menu; x, y are relative to its window geometry. Clicked for, it opens
+ * at the pointer, as Windows' does: GTK sends surface coordinates, its
+ * shadow margin included. */
 static void handle_request_window_menu(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_window_menu);
     const struct wlr_xdg_toplevel_show_window_menu_event *e = data;
     if (!view->mapped)
         return;
+    xd_server *server = view->server;
+    if (server->seat->pointer_state.focused_surface == view->toplevel->base->surface) {
+        xd_window_menu_show(view, server->cursor->x, server->cursor->y);
+        return;
+    }
     struct wlr_box outer = xd_view_outer_box(view);
     xd_insets in = xd_view_insets(view);
     xd_window_menu_show(view, outer.x + in.left + e->x, outer.y + in.top + e->y);

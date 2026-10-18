@@ -2021,6 +2021,233 @@ def end_program_after_close(s):
     s.log("ok: the box went away when the program closed")
 
 
+def window_edges(shot, empty, inside):
+    """The box (x, y, w, h) of the window around the point inside, exact to
+    the pixel: how far what differs from the empty desktop reaches along
+    its row and column."""
+    x, y = inside
+
+    def diff(px, py):
+        return max(abs(a - b) for a, b in zip(shot.pixel(px, py), empty.pixel(px, py))) > 8
+
+    left, right, top, bottom = x, x, y, y
+    while left > 0 and diff(left - 1, y):
+        left -= 1
+    while right < WIDTH - 1 and diff(right + 1, y):
+        right += 1
+    while top > 0 and diff(x, top - 1):
+        top -= 1
+    while bottom < HEIGHT - 1 and diff(x, bottom + 1):
+        bottom += 1
+    return (left, top, right - left + 1, bottom - top + 1)
+
+
+@scenario()
+def keyboard_move_size(s):
+    """The window menu's Move and Size: Ctrl+arrows step 1px; the mouse
+    drags the window, or the chosen edges, until a click; two arrows pick
+    a corner (two edges) to size from, the opposite corner staying put."""
+    empty = s.settle("desktop")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    x, y, w, h = s.settle("window").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+
+    def box(label):
+        b = window_edges(s.settle(label), empty, (x + w // 2, y + h // 2))
+        s.log(f"{label}: {b}")
+        return b
+
+    start = box("start")
+
+    def menu(letter):
+        s.inject("key", "alt+space", "sleep", 400, "key", letter, "sleep", 300)
+
+    # Move: Ctrl+Right three times, Ctrl+Down twice: 3px and 2px.
+    menu("m")
+    s.inject("key", "ctrl+Right", "key", "ctrl+Right", "key", "ctrl+Right",
+             "key", "ctrl+Down", "key", "ctrl+Down", "sleep", 200, "key", "Return")  # fmt: skip
+    b = box("moved-ctrl")
+    s.check(b == (start[0] + 3, start[1] + 2, start[2], start[3]),
+            f"Ctrl+arrows moved it 1px at a time ({start} -> {b})")  # fmt: skip
+
+    # Move with the mouse: the pointer starts on the caption; the window
+    # follows it until a click.
+    menu("m")
+    cx, cy = b[0] + b[2] // 2, b[1] + 10  # where Move put the pointer (about)
+    s.inject("move", cx + 20, cy + 15, "sleep", 100, "move", cx + 60, cy + 40, "sleep", 300)
+    dragging = box("move-mouse")
+    s.check(dragging[2:] == b[2:] and dragging[0] > b[0] + 30 and dragging[1] > b[1] + 20,
+            f"the window follows the mouse ({b} -> {dragging})")  # fmt: skip
+    s.inject("click", "sleep", 200, "move", cx + 200, cy + 200, "sleep", 300)
+    kept = box("move-clicked")
+    s.check(kept == dragging, f"a click left it there ({kept})")
+    s.check(s.window(title="Control Panel") is not None, "and closed nothing")
+
+    # Size from the top-left corner: Left picks the left edge, Up the top;
+    # then Left and Up (8px each) move them out, Ctrl+Left 1px more.
+    menu("s")
+    s.inject("key", "Left", "key", "Up", "key", "Left", "key", "Up", "key", "ctrl+Left",
+             "sleep", 200, "key", "Return")  # fmt: skip
+    sized = box("sized-corner")
+    want = (kept[0] - 9, kept[1] - 8, kept[2] + 9, kept[3] + 8)
+    s.check(sized == want, f"sized from the top-left corner ({kept} -> {sized}, want {want})")
+
+    # Size the bottom-right corner with the mouse after picking it.
+    menu("s")
+    s.inject("key", "Right", "key", "Down", "sleep", 200)
+    rx, ry = sized[0] + sized[2] - 1, sized[1] + sized[3] - 1  # the pointer's on the corner
+    s.inject("move", rx + 15, ry + 10, "sleep", 100, "move", rx + 40, ry + 30, "sleep", 300,
+             "click", "sleep", 200, "move", 900, 600)  # fmt: skip
+    final = box("sized-mouse")
+    want = (sized[0], sized[1], sized[2] + 40, sized[3] + 30)
+    s.check(final == want, f"the mouse sized the corner ({sized} -> {final}, want {want})")
+
+    # Esc puts it back as it was when Size began.
+    menu("s")
+    s.inject("key", "Left", "key", "Left", "key", "Left", "sleep", 200)
+    s.check(box("sizing")[0] == final[0] - 16, "two more Lefts moved the left edge 16px")
+    s.inject("key", "Escape")
+    s.check(box("escaped") == final, "Esc undid the sizing")
+
+
+@scenario()
+def client_window_menu(s):
+    """A window drawing its own title bar (a GTK 3 header bar) asks for the
+    window menu on a right-click there (xdg_toplevel.show_window_menu): the
+    shell's menu opens at the pointer, and works (Maximize)."""
+    if not have_gtk3(s):
+        return
+    script = os.path.join(s.base, "csd.py")
+    with open(script, "w") as f:
+        f.write(GTK_CSD)
+    empty = s.settle("desktop")
+    s.launch(sys.executable, script, env={"GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="Ghost test", state="activated")
+    shown = s.settle("window")
+    x, y, w, h = shown.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    # On the header bar, left of its title.
+    px, py = x + w // 4, y + 14
+    s.inject("move", px, py, "sleep", 200, "click", "right")
+    _, menu = wait_change(s, shown, (0, 0, WIDTH, HEIGHT - 40), "the window menu", "menu")
+    s.check(abs(menu[0] - px) <= 1 and abs(menu[1] - py) <= 1 and menu[3] > 100,
+            f"the window menu opened at the pointer ({menu}, pointer {px},{py})")  # fmt: skip
+    s.inject("key", "Escape")
+    s.wait(lambda: s.shot("closed").differs(shown, menu) == 0, "the menu to close")
+    s.log("ok: Esc closed it")
+    s.inject("move", px, py, "sleep", 200, "click", "right")
+    wait_change(s, shown, (0, 0, WIDTH, HEIGHT - 40), "the window menu", "menu")
+    s.inject("key", "x")
+    s.wait_window(title="Ghost test", state="maximized")
+    s.log("ok: its Maximize maximized the window")
+
+
+def taskbar_menu(s, item, label):
+    """Picks item from the taskbar's menu (classic, bottom taskbar): a row
+    counted from Cascade Windows (the third row, after Toolbars and a
+    line), or from the bottom when negative (-1 Properties, -2 Lock the
+    Taskbar); returns the screen once it's settled."""
+    shown = s.shot("before menu")
+    s.inject("move", 700, HEIGHT - 14, "click", "right")
+    # Below the windows' captions (the menu takes the focus from them).
+    _, (mx, my, mw, mh) = wait_change(s, shown, (650, 450, 374, 290), "the menu", "menu")
+    y = my + 44 + 22 * item if item >= 0 else my + mh + 9 + 22 * item
+    s.inject("move", mx + 40, y, "sleep", 200, "click")
+    return s.settle(label)
+
+
+@scenario()
+def taskbar_menu_arrange(s):
+    """The taskbar's menu: Cascade Windows, Tile Windows Horizontally, Undo
+    Tile (back to the cascade), and Lock the Taskbar toggling."""
+    empty = s.settle("desktop")
+    for folder in ("Documents", "Pictures"):
+        s.launch("xd-files", os.path.join(s.home, folder))
+        s.wait_window(title=folder, state="activated")
+    s.settle("two windows")
+
+    work = HEIGHT - 40  # above the taskbar
+
+    def captions(shot, x=600):
+        """Where title bars cross column x: runs of 12 or more rows in the
+        classic active (blue) or inactive (grey) caption colours."""
+        runs, start = [], None
+        for y in range(work + 1):
+            r, g, b = shot.pixel(x, y) if y < work else (255, 255, 255)
+            caption = b - r > 60 or (max(r, g, b) - min(r, g, b) <= 2 and 120 <= r <= 200)
+            if caption and start is None:
+                start = y
+            elif not caption and start is not None:
+                if y - start >= 12:
+                    runs.append(start)
+                start = None
+        return runs
+
+    def desktop_at(shot, x, y):
+        return shot.pixel(x, y) == empty.pixel(x, y)
+
+    cascaded = taskbar_menu(s, 0, "cascaded")
+    bars = captions(cascaded)
+    s.check(len(bars) == 2 and 20 <= bars[1] - bars[0] <= 32 and bars[0] < 8,
+            f"Cascade: two title bars a caption apart at the top ({bars})")  # fmt: skip
+    s.check(not desktop_at(cascaded, 10, 10) and not desktop_at(cascaded, WIDTH - 10, 40)
+            and desktop_at(cascaded, WIDTH - 10, 10) and desktop_at(cascaded, 10, work - 10),
+            "each a step right and down from the one behind")  # fmt: skip
+
+    tiled = taskbar_menu(s, 1, "tiled")
+    bars = captions(tiled)
+    s.check(len(bars) == 2 and bars[0] < 8 and abs(bars[1] - work // 2) < 12,
+            f"Tile Horizontally: one window above the other ({bars})")  # fmt: skip
+    s.check(tiled.differs(empty, (0, 0, WIDTH, work), tolerance=0) > 0.99,
+            "the two fill the screen above the taskbar")  # fmt: skip
+    s.check(not any("maximized" in w["states"] for w in s.windows()), "neither maximized")
+
+    undone = taskbar_menu(s, 3, "undone")
+    s.check(undone.differs(cascaded, (0, 0, WIDTH, work), tolerance=0) == 0,
+            "Undo Tile put them back as they were (cascaded)")  # fmt: skip
+
+    def locked_key():
+        return s.ini().get("Taskbar", "Locked", fallback="")
+
+    s.check(locked_key() in ("", "true"), "the taskbar starts locked")
+    taskbar_menu(s, -2, "unlocked")
+    s.wait(lambda: locked_key() == "false", "Locked=false")
+    unlocked = s.settle("unlocked")
+    bar = (0, work, WIDTH, 40)
+    s.check(unlocked.differs(undone, bar, step=1) > 0, "Lock the Taskbar unticked: grips show")
+    taskbar_menu(s, -2, "locked")
+    s.wait(lambda: locked_key() == "true", "Locked=true")
+    locked = s.settle("locked")
+    s.check(locked.differs(undone, bar, step=1) == 0, "ticked again: as it was")
+
+
+@scenario()
+def csd_window_tiled(s):
+    """A window drawing its own title bar and shadow (GTK 3) tiled alone
+    fills the screen above the taskbar to the pixel: its window geometry,
+    not its shadow, is placed (the shadow's offset used to be taken off
+    twice, leaving it short of the right and bottom edges)."""
+    if not have_gtk3(s):
+        return
+    script = os.path.join(s.base, "csd.py")
+    with open(script, "w") as f:
+        f.write(GTK_CSD)
+    s.launch(sys.executable, script, env={"GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="Ghost test", state="activated")
+    s.settle("window")
+    tiled = taskbar_menu(s, 2, "tiled")  # Tile Windows Vertically
+    work = HEIGHT - 40
+
+    def near(a, b):
+        return max(abs(p - q) for p, q in zip(tiled.pixel(*a), tiled.pixel(*b))) <= 12
+
+    s.check(near((WIDTH - 1, work // 2), (WIDTH - 5, work // 2)),
+            "the window reaches the right edge")  # fmt: skip
+    s.check(near((WIDTH // 2, work - 1), (WIDTH // 2, work - 5)),
+            "the window reaches the taskbar")  # fmt: skip
+    s.check(near((0, 14), (4, 14)) and near((WIDTH // 2, 0), (WIDTH // 2, 4)),
+            "and the left and top edges")  # fmt: skip
+
+
 @scenario()
 def gtk_combo_list(s):
     """Other programs' GTK 3 combo boxes (themed through GTK_THEME) drop
