@@ -194,11 +194,41 @@ int xd_text_width(cairo_t *cr, const char *utf8, const xd_text_style *style) {
     return w;
 }
 
+/* Several lines, each centred on the widest, the block placed in r. */
+static void draw_lines(cairo_t *cr, xd_rect r, PangoLayout *layout, const xd_text_style *st) {
+    pango_layout_set_single_paragraph_mode(layout, false);
+    pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+    int tw = 0, th = 0;
+    pango_layout_get_pixel_size(layout, &tw, &th);
+    int x = st->align == XD_ALIGN_CENTER ? r.x + (r.w - tw) / 2
+            : st->align == XD_ALIGN_END  ? r.x + r.w - tw
+                                         : r.x;
+    int y = r.y + (r.h - th) / 2;
+    cairo_save(cr);
+    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+    cairo_clip(cr);
+    if (st->shadow) {
+        int off = xd_px(st->scale, 1);
+        xd_set_color(cr, st->shadow_color);
+        cairo_move_to(cr, x + off, y + off);
+        pango_cairo_show_layout(cr, layout);
+    }
+    xd_set_color(cr, st->color);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, layout);
+    cairo_restore(cr);
+}
+
 void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style *st) {
     if (xd_rect_empty(r) || utf8 == nullptr || utf8[0] == '\0')
         return;
 
     PangoLayout *layout = make_layout(cr, utf8, st);
+    if (st->lines && strchr(utf8, '\n') != nullptr) {
+        draw_lines(cr, r, layout, st);
+        g_object_unref(layout);
+        return;
+    }
     pango_layout_set_width(layout, r.w * PANGO_SCALE);
     if (st->wrap) {
         pango_layout_set_single_paragraph_mode(layout, false);

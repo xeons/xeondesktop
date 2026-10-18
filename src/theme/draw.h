@@ -64,6 +64,9 @@ typedef struct xd_text_style {
     bool shadow; /* 1px drop shadow (Luna caption text) */
     xd_rgba shadow_color;
     bool wrap; /* wrap at word boundaries and align to the top of the rect */
+    /* '\n' starts another line; the lines are centred on each other and
+     * the block aligned as `align` says (the clock's day and date). */
+    bool lines;
     xd_font_smoothing smoothing;
 } xd_text_style;
 

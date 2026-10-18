@@ -347,6 +347,7 @@ static void classic_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const c
                                   xd_sys(t, XD_COLOR_BUTTON_HILIGHT));
     xd_text_style st = xd_text(t, XD_FONT_MENU, xd_sys(t, XD_COLOR_BUTTON_TEXT),
                                XD_ALIGN_END);
+    st.lines = true; /* a tall taskbar's day and date under the time */
     xd_draw_text(cr, xd_rect_inset(inner, xd_tpx(t, 6), 0), clock, &st);
 }
 

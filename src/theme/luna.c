@@ -879,6 +879,7 @@ void xd_luna_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *cl
         image_paint(cr, &im, r);
     }
     xd_text_style st = xd_text(t, XD_FONT_MENU, bar_text(&art, art.tray_a[15]), XD_ALIGN_END);
+    st.lines = true; /* a tall taskbar's day and date under the time */
     xd_draw_text(cr, xd_rect_inset4(r, xd_tpx(t, 10), 0, xd_tpx(t, 13), 0), clock, &st);
 }
 

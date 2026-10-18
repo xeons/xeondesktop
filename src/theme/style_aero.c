@@ -601,6 +601,7 @@ static void aero_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char
     xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_END);
     st.shadow = true;
     st.shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.8);
+    st.lines = true; /* a tall taskbar's day and date under the time */
     xd_draw_text(cr, xd_rect_inset4(r, xd_tpx(t, 8), 0, xd_tpx(t, 8), 0), clock, &st);
 }
 

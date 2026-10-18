@@ -323,6 +323,7 @@ static void whistler_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const 
     xd_fill_rect(cr, (xd_rect){b.x, b.y, px, b.h}, hex(BAR_EDGE));
     xd_fill_rect(cr, (xd_rect){b.x + px, b.y, px, b.h}, hex(BAR_TOP));
     xd_text_style st = xd_text(t, XD_FONT_MENU, hex(0xFFFFFF), XD_ALIGN_END);
+    st.lines = true; /* a tall taskbar's day and date under the time */
     xd_draw_text(cr, xd_rect_inset(b, xd_tpx(t, 10), 0), clock, &st);
 }
 

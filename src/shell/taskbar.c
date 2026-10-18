@@ -8,6 +8,7 @@
 #include <glib.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
+#include <pango/pangocairo.h>
 #include <stdlib.h>
 #include <sys/timerfd.h>
 #include <time.h>
@@ -271,6 +272,39 @@ static void draw_tray_icon(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size
     }
 }
 
+/* The clock's text for a top or bottom taskbar `avail_h` tall (device
+ * px): the time, then as XP shows them when the taskbar is tall enough,
+ * the day of the week and the date. Its width in *width. */
+static void clock_text(const xd_shell *shell, const xd_theme *t, cairo_t *cr, int avail_h,
+                       char *out, size_t size, int *width) {
+    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0), XD_ALIGN_END);
+    PangoLayout *probe = xd_text_layout(cr, "Ag", &st);
+    int line_h = 0;
+    pango_layout_get_pixel_size(probe, nullptr, &line_h);
+    g_object_unref(probe);
+    int lines = line_h > 0 ? (avail_h - xd_tpx(t, 8)) / line_h : 1;
+    char day[64] = "", date[64] = "";
+    GDateTime *now = lines >= 2 ? g_date_time_new_now_local() : nullptr;
+    if (now != nullptr) {
+        char *d = g_date_time_format(now, "%A");
+        /* The locale's short date, as Windows' clock shows it. */
+        char *x = lines >= 3 ? g_date_time_format(now, "%x") : nullptr;
+        g_strlcpy(day, d != nullptr ? d : "", sizeof(day));
+        g_strlcpy(date, x != nullptr ? x : "", sizeof(date));
+        g_free(x);
+        g_free(d);
+        g_date_time_unref(now);
+    }
+    snprintf(out, size, "%s%s%s%s%s", shell->clock, day[0] != '\0' ? "\n" : "", day,
+             date[0] != '\0' ? "\n" : "", date);
+    *width = 0;
+    const char *parts[] = {shell->clock, day, date};
+    for (size_t i = 0; i < XD_ARRAY_LEN(parts); i++) {
+        if (parts[i][0] != '\0')
+            *width = XD_MAX(*width, xd_text_width(cr, parts[i], &st));
+    }
+}
+
 /* The notification area at the end of the taskbar (the right end of rows,
  * the bottom of a side taskbar): the chevron, icons (in as many rows as
  * the taskbar has, or a grid on a side one) and the clock. */
@@ -303,7 +337,14 @@ static void layout_tray(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
     int pitch = xd_tpx(t, 22);
     int chevron_w = any_inactive ? xd_tpx(t, 15) : 0;
     bool clock = shell->settings.show_clock;
-    int clock_w = clock ? xd_text_width(cr, shell->clock, &clock_style) + xd_tpx(t, 1) : 0;
+    char clock_lines[192];
+    int clock_w = 0;
+    if (clock && !side) {
+        clock_text(shell, t, cr, c.h, clock_lines, sizeof(clock_lines), &clock_w);
+        clock_w += xd_tpx(t, 1);
+    } else if (clock) {
+        clock_w = xd_text_width(cr, shell->clock, &clock_style) + xd_tpx(t, 1);
+    }
     bar->tray_count = 0;
     bar->tray_chevron = (xd_rect){0};
     if (icons == 0 && chevron_w == 0 && !clock) {
@@ -343,7 +384,7 @@ static void layout_tray(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
         if (clock && icons == 0)
             w = XD_MAX(xd_tpx(t, 60), w);
         bar->tray_rect = (xd_rect){c.x + c.w - w, c.y, w, c.h};
-        xd_theme_draw_tray(t, cr, bar->tray_rect, clock ? shell->clock : "");
+        xd_theme_draw_tray(t, cr, bar->tray_rect, clock ? clock_lines : "");
         slots_origin = (xd_rect){bar->tray_rect.x + margin_l + chevron_w, c.y, pitch, row_h};
     }
     if (chevron_w > 0) {
