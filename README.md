@@ -265,18 +265,23 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 |---|---|---|
 | Accessibility Options | `xd-access` | StickyKeys, FilterKeys (SlowKeys, BounceKeys), ToggleKeys, MouseKeys and High Contrast, with XP's shortcuts, done by the compositor |
 | Add or Remove Programs | `xd-appwiz` | installed programs (size, last used, where each came from: the package manager's repository, Flatpak, AppImage), remove and install through PackageKit and Flatpak |
-| Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, quick or full formatting, resizing, startup mount points in /etc/fstab), Device Manager |
+| Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, quick or full formatting, resizing, startup mount points in /etc/fstab, encrypted (LUKS) volumes), Device Manager, System Configuration Utility (`msconfig`: startup programs and your systemd user services) |
+| Automatic Updates | `xd-wuaucpl` | distribution (PackageKit) and Flatpak updates in one list, firmware (fwupd) and its Host Security ID; a scheduled check with XP's tray balloon, never installing without your click |
 | Bluetooth Devices | `xd-bluetooth` | pairing (XP SP2's wizard and passkeys), device properties, the adapter's options, through BlueZ |
+| Color Management | `xd-color` | colord's devices and ICC profiles; a monitor's calibration applied to its gamma ramp |
 | Date and Time | `xd-timedate` | the clock and time zone, through timedated; Internet Time's servers and Update Now on timesyncd; the hardware clock in local time, for dual boot |
-| Display | `xd-desk` | style, colours, wallpaper, screen saver, monitors |
+| Display | `xd-desk` | style, colours, wallpaper, screen saver, monitors, night light |
+| Flatpak | `xd-flatpak` | Flatpak apps' permissions (sockets, devices, files, environment, D-Bus names) as your own overrides, and remotes |
 | Folder Options | `xd-folders` | the file manager's options, file types (`mimeapps.list`; new types in your shared-mime-info database) |
 | Fonts | `xd-fonts` | lists, previews, prints, installs and removes your fonts (fontconfig) |
 | Game Controllers | `xd-joy` | joysticks and gamepads from udev, with a live test page (read only) |
-| Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options |
+| Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options; Text Services: the input method (Fcitx 5 or IBus), the Compose key |
 | Mouse | `xd-mouse` | buttons, ClickLock, double-click speed, pointer theme and size, speed, wheel |
 | Network Connections | `xd-netconn` | connections, status, TCP/IP settings, wireless networks, through NetworkManager |
+| Passwords and Keys | `xd-keys` | stored passwords (the Secret Service), SSH keys and ssh-agent, PGP keys (GnuPG) |
 | Power Options | `xd-power` | power schemes (plugged in and on batteries), monitor, standby and hibernate timers, battery alarms, the power meter, the battery icon, locking on resume, and what the lid and the power and sleep buttons do, per user |
 | Printers and Faxes | `xd-printers` | CUPS printers, queues, preferences, test pages, the Add Printer wizard, ports and sharing |
+| Privacy | `xd-privacy` | recent documents, emptying old Recycle Bin and temporary files, location services, programs' portal permissions |
 | Regional and Language Options | `xd-intl` | your formats, customised (numbers, currency, time, date); the system locale and keyboard through localed |
 | Scanners and Cameras | `xd-scanners` | SANE scanners and gphoto2 cameras, the Scanner and Camera Wizard |
 | Scheduled Tasks | `xd-schedtasks` | XP's wizard over systemd user timers: run programs daily, weekly, at logon... |
@@ -337,6 +342,15 @@ attributes (`chattr` flags) under Advanced, and a Permissions tab for owner,
 group, read/write/execute and the special bits, optionally applied to
 everything inside a folder. `xd-files --properties FILE...` shows just the
 dialog.
+
+Network and encrypted drives: Tools > Map Network Drive... mounts a Windows
+or NFS share (`\\server\share`, `smb://`, `nfs://`) through gvfs, optionally
+reconnected at logon (`~/.config/xeondesktop/network.ini`); My Network Places
+lists the network, places and mapped drives. A folder's Sharing tab shares
+it as a Samba user share where the system allows them. Encrypted (LUKS)
+drives show in My Computer locked; opening one asks for the passphrase,
+optionally remembered in your keyring (gvfs's schema, so GNOME's tools
+share it). Network shares need gvfs-smb or gvfs-nfs.
 
 ### Task Manager
 
