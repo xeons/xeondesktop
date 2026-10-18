@@ -148,10 +148,57 @@ static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *d
 #endif
 }
 
+/* A popup of a layer surface below the windows (the desktop's menu, a
+ * taskbar that isn't kept on top), lifted over them. */
+typedef struct xd_layer_popup {
+    xd_layer_surface *ls;
+    struct wlr_scene_tree *tree; /* in the top layer, where `ls` is */
+    struct wl_listener commit;
+    struct wl_listener destroy;
+} xd_layer_popup;
+
+static void layer_popup_sync(xd_layer_popup *lp) {
+    int x = 0;
+    int y = 0;
+    if (wlr_scene_node_coords(&lp->ls->scene->tree->node, &x, &y))
+        wlr_scene_node_set_position(&lp->tree->node, x, y);
+}
+
+static void handle_layer_popup_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    layer_popup_sync(XD_CONTAINER_OF(listener, xd_layer_popup, commit));
+}
+
+static void handle_layer_popup_destroy(struct wl_listener *listener,
+                                       [[maybe_unused]] void *data) {
+    xd_layer_popup *lp = XD_CONTAINER_OF(listener, xd_layer_popup, destroy);
+    xd_unlisten(&lp->commit);
+    xd_unlisten(&lp->destroy);
+    wlr_scene_node_destroy(&lp->tree->node);
+    xd_free(lp);
+}
+
 static void handle_new_popup(struct wl_listener *listener, void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, new_popup);
+    struct wlr_xdg_popup *popup = data;
+    struct wlr_scene_tree *parent = ls->scene->tree;
+    if (ls->layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP) {
+        /* Menus go over every window, as on Windows, even when the surface
+         * they belong to is under them: the desktop's menu (and with it its
+         * submenus, which are its children) would otherwise open behind any
+         * window it overlaps. The tree stands in for the layer surface, at
+         * its position, so input and placement still find it. */
+        xd_layer_popup *lp = XD_NEW(xd_layer_popup);
+        lp->ls = ls;
+        lp->tree =
+            wlr_scene_tree_create(tree_for_layer(ls->server, ZWLR_LAYER_SHELL_V1_LAYER_TOP));
+        lp->tree->node.data = &ls->tag;
+        layer_popup_sync(lp);
+        XD_LISTEN(&popup->base->surface->events.commit, lp, commit, handle_layer_popup_commit);
+        XD_LISTEN(&popup->events.destroy, lp, destroy, handle_layer_popup_destroy);
+        parent = lp->tree;
+    }
     /* The shell's popups (the Start menus) may be glass. */
-    xd_popup_attach(data, ls->scene->tree, ls->server);
+    xd_popup_attach(popup, parent, ls->server);
 }
 
 static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {

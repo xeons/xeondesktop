@@ -871,6 +871,40 @@ def taskbar_only(s):
     s.check(s.settle("escaped").differs(bare, region) < 0.02, "Esc closed it: it had the keyboard")
 
 
+@scenario()
+def desktop_submenu_over_window(s):
+    """The desktop menu and its submenus draw over windows (a submenu, Arrange
+    Icons By, once drew behind them)."""
+    empty = s.settle("desktop")
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(app_id="org.xeondesktop.Files", state="activated")
+    area = (0, 0, WIDTH, HEIGHT - 40)  # above the taskbar
+    window = s.settle("explorer")
+    x, y, w, h = window.changed_box(empty, area)
+    s.log(f"Explorer at {x},{y} {w}x{h}")
+    s.check(WIDTH - (x + w) > 150, "Explorer leaves room on its right for the menu")
+    # Right-click on the desktop just right of the window: the menu fits
+    # there, and its submenu, with no room on the right, flips left over
+    # the window.
+    s.inject("move", x + w + 10, y + 30, "click", "right")
+    root = s.settle("menu")
+    # (The window goes inactive too, so look only right of it.)
+    box = root.changed_box(window, (x + w, 0, WIDTH - x - w, HEIGHT - 40))
+    s.log(f"the menu drew at {box}")
+    s.check(box is not None and box[3] > 100, "the menu opened")
+    # Down selects Arrange Icons By, Right opens it.
+    s.inject("key", "Down", "sleep", 200, "key", "Right")
+    sub = s.settle("submenu")
+    sbox = sub.changed_box(root, area)
+    s.log(f"the submenu drew at {sbox}")
+    s.check(sbox is not None and sbox[0] < x + w - 60 and sbox[3] > 60,
+            "the submenu draws over the window")
+    s.inject("key", "Escape", "sleep", 200, "key", "Escape")
+    closed = s.settle("closed")
+    s.check(closed.changed_box(empty, (x + w, 0, WIDTH - x - w, HEIGHT - 40)) is None,
+            "Esc closed both")
+
+
 @scenario(requires=("dbusmock",))
 def disk_management_menu(s):
     """Disk Management (on a dbusmock UDisks2): the Action menu opens with
