@@ -81,6 +81,8 @@
 #include "../src/users/users.h"
 #include "../src/theme/theme.h"
 #include "../src/thumbnailer/thumbcache.h"
+#include "../src/wuaucpl/state.h"
+#include "../src/wuaucpl/updlib.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -6630,6 +6632,159 @@ static void test_usershare(void) {
     g_free(dir);
 }
 
+/* Automatic Updates: [Updates], the schedule, the state the shell watches,
+ * importance, and reading what fwupd says. */
+static int64_t utc_at(int y, int mo, int d, int h, int mi) {
+    GDateTime *t = g_date_time_new_utc(y, mo, d, h, mi, 0);
+    int64_t s = g_date_time_to_unix(t);
+    g_date_time_unref(t);
+    return s;
+}
+
+static void test_updates(void) {
+    xd_settings s;
+    xd_settings_defaults(&s);
+    CHECK(s.updates.mode == XD_UPDATES_DOWNLOAD && s.updates.day == 0 && s.updates.hour == 3);
+    xd_settings_parse(XD_STR("[Updates]\nMode=notify\nDay=friday\nHour=22\n"), &s);
+    CHECK(s.updates.mode == XD_UPDATES_NOTIFY && s.updates.day == 6 && s.updates.hour == 22);
+    xd_settings_parse(XD_STR("[Updates]\nMode=always\nDay=someday\nHour=24\n"), &s);
+    CHECK(s.updates.mode == XD_UPDATES_DOWNLOAD && s.updates.day == 0 && s.updates.hour == 3);
+    s.updates = (xd_update_settings){.mode = XD_UPDATES_OFF, .day = 7, .hour = 0};
+    xd_strbuf out = {0};
+    xd_settings_serialize(&s, &out);
+    CHECK(strstr(xd_strbuf_cstr(&out), "Mode=off") != nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&out), "Day=saturday") != nullptr);
+    xd_settings t;
+    xd_settings_parse(xd_strbuf_view(&out), &t);
+    CHECK(t.updates.mode == XD_UPDATES_OFF && t.updates.day == 7 && t.updates.hour == 0);
+    xd_strbuf_free(&out);
+    CHECK(strcmp(xd_updates_mode_name(XD_UPDATES_NOTIFY), "notify") == 0);
+
+    /* The schedule (UTC; 2026-10-18 is a Sunday). */
+    GTimeZone *utc = g_time_zone_new_utc();
+    xd_update_settings daily = {.mode = XD_UPDATES_DOWNLOAD, .day = 0, .hour = 3};
+    CHECK(xd_updates_next_check(&daily, 0, utc) == 0); /* never checked: now */
+    CHECK(xd_updates_next_check(&daily, utc_at(2026, 10, 18, 2, 0), utc) ==
+          utc_at(2026, 10, 18, 3, 0));
+    CHECK(xd_updates_next_check(&daily, utc_at(2026, 10, 18, 3, 0), utc) ==
+          utc_at(2026, 10, 19, 3, 0));
+    CHECK(xd_updates_next_check(&daily, utc_at(2026, 10, 18, 9, 30), utc) ==
+          utc_at(2026, 10, 19, 3, 0));
+    CHECK(xd_updates_next_check(&daily, utc_at(2026, 12, 31, 23, 0), utc) ==
+          utc_at(2027, 1, 1, 3, 0));
+    xd_update_settings sunday = {.mode = XD_UPDATES_NOTIFY, .day = 1, .hour = 15};
+    CHECK(xd_updates_next_check(&sunday, utc_at(2026, 10, 18, 9, 0), utc) ==
+          utc_at(2026, 10, 18, 15, 0));
+    CHECK(xd_updates_next_check(&sunday, utc_at(2026, 10, 18, 16, 0), utc) ==
+          utc_at(2026, 10, 25, 15, 0));
+    xd_update_settings saturday = {.mode = XD_UPDATES_DOWNLOAD, .day = 7, .hour = 0};
+    CHECK(xd_updates_next_check(&saturday, utc_at(2026, 10, 18, 0, 0), utc) ==
+          utc_at(2026, 10, 24, 0, 0));
+    /* A week missed (the computer was off): due at once. */
+    CHECK(xd_updates_next_check(&daily, utc_at(2026, 10, 1, 12, 0), utc) <
+          utc_at(2026, 10, 18, 0, 0));
+    xd_update_settings off = {.mode = XD_UPDATES_OFF};
+    CHECK(xd_updates_next_check(&off, 0, utc) == INT64_MAX);
+    g_time_zone_unref(utc);
+
+    /* The state file. */
+    char *dir = g_dir_make_tmp("xd-updates-XXXXXX", nullptr);
+    char *path = g_build_filename(dir, "updates.ini", nullptr);
+    xd_updates_state st;
+    CHECK(!xd_updates_state_read(path, &st) && st.checked == 0);
+    const char *ids[] = {"b;2;x86_64;extra", "a;1;x86_64;core"};
+    const char *rev[] = {ids[1], ids[0]};
+    xd_updates_state w = {.checked = 1760000000, .software = 5, .firmware = 1, .important = 2,
+                          .downloaded = true};
+    xd_updates_signature(ids, 2, w.signature);
+    char sig2[41];
+    xd_updates_signature(rev, 2, sig2);
+    CHECK(strlen(w.signature) == 40 && strcmp(w.signature, sig2) == 0);
+    xd_updates_signature(ids, 1, sig2);
+    CHECK(strcmp(w.signature, sig2) != 0);
+    xd_updates_signature(ids, 0, sig2);
+    CHECK(sig2[0] == '\0');
+    g_strlcpy(w.error, "Listing the updates: no network", sizeof(w.error));
+    CHECK(xd_updates_state_write(path, &w));
+    CHECK(xd_updates_state_read(path, &st));
+    CHECK(st.checked == 1760000000 && st.software == 5 && st.firmware == 1 && st.important == 2);
+    CHECK(st.downloaded && !st.metered && strcmp(st.signature, w.signature) == 0);
+    CHECK(strcmp(st.error, w.error) == 0);
+    CHECK(g_file_set_contents(path, "[Updates]\nSoftware=-4\nSignature=../../x\n", -1, nullptr));
+    CHECK(xd_updates_state_read(path, &st) && st.software == 0 && st.signature[0] == '\0');
+    g_unlink(path);
+    g_rmdir(dir);
+    g_free(path);
+    g_free(dir);
+
+    /* Importance. */
+    CHECK(xd_update_rank_of_package(PK_INFO_ENUM_SECURITY, PK_INFO_ENUM_UNKNOWN) ==
+          XD_RANK_SECURITY);
+    CHECK(xd_update_rank_of_package(PK_INFO_ENUM_NORMAL, PK_INFO_ENUM_CRITICAL) ==
+          XD_RANK_CRITICAL);
+    CHECK(xd_update_rank_of_package(PK_INFO_ENUM_AVAILABLE, PK_INFO_ENUM_UNKNOWN) ==
+          XD_RANK_UNKNOWN);
+    CHECK(strcmp(xd_update_rank_name(XD_RANK_BUGFIX), "Bug fix") == 0);
+    CHECK(strcmp(xd_update_rank_name(XD_RANK_UNKNOWN), "") == 0);
+    CHECK(xd_update_rank_important(XD_RANK_SECURITY) && !xd_update_rank_important(XD_RANK_BUGFIX));
+    CHECK(xd_update_rank_of_urgency(4) == XD_RANK_CRITICAL);
+    CHECK(xd_update_rank_of_urgency(2) == XD_RANK_RECOMMENDED);
+    CHECK(xd_update_rank_of_urgency(77) == XD_RANK_UNKNOWN);
+    CHECK(xd_update_restart_system(PK_RESTART_ENUM_SECURITY_SYSTEM));
+    CHECK(!xd_update_restart_system(PK_RESTART_ENUM_SESSION));
+    CHECK(xd_update_restart_text(PK_RESTART_ENUM_NONE) == nullptr);
+    CHECK(strstr(xd_update_restart_text(PK_RESTART_ENUM_SYSTEM), "restart") != nullptr);
+
+    /* fwupd's release notes, checksums and locations. */
+    char *text = xd_fwupd_markup_to_text("<p>This release fixes\n  security issues.</p>"
+                                         "<ul><li>Fixes CVE-1 &amp; CVE-2</li><li>Faster "
+                                         "<em>boot</em></li></ul><p>Thanks.</p>");
+    CHECK(text != nullptr && strcmp(text, "This release fixes security issues.\n\n"
+                                          "• Fixes CVE-1 & CVE-2\n• Faster boot\n\n"
+                                          "Thanks.") == 0);
+    g_free(text);
+    text = xd_fwupd_markup_to_text("Plain text");
+    CHECK(text != nullptr && strcmp(text, "Plain text") == 0);
+    g_free(text);
+    CHECK(xd_fwupd_markup_to_text(nullptr) == nullptr);
+    GBytes *hello = g_bytes_new_static("hello", 5);
+    const char *sha1 = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+    const char *sha256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+    CHECK(xd_fwupd_checksum_ok(sha1, hello));
+    char *both = g_strdup_printf("%s,%s", sha1, sha256);
+    CHECK(xd_fwupd_checksum_ok(both, hello));
+    g_free(both);
+    /* SHA-256 given: a wrong one fails even with a right SHA-1. */
+    both = g_strdup_printf("%s,%064d", sha1, 0);
+    CHECK(!xd_fwupd_checksum_ok(both, hello));
+    g_free(both);
+    CHECK(!xd_fwupd_checksum_ok("5d41402abc4b2a76b9719d911017c592", hello)); /* MD5 only */
+    CHECK(!xd_fwupd_checksum_ok(nullptr, hello) && !xd_fwupd_checksum_ok("", hello));
+    g_bytes_unref(hello);
+    const char *locs[] = {"http://x.invalid/a.cab", "https://cdn.fwupd.org/a.cab", nullptr};
+    CHECK(strcmp(xd_fwupd_pick_location(locs, nullptr), "https://cdn.fwupd.org/a.cab") == 0);
+    const char *plain[] = {"http://x.invalid/a.cab", nullptr};
+    CHECK(xd_fwupd_pick_location(plain, nullptr) == nullptr);
+    CHECK(strcmp(xd_fwupd_pick_location(nullptr, "file:///var/lib/a.cab"), "file:///var/lib/a.cab") == 0);
+
+    /* The Host Security ID. */
+    bool runtime = false;
+    CHECK(xd_fwupd_hsi_level("HSI:2! (v1.9.6)", &runtime) == 2 && runtime);
+    CHECK(xd_fwupd_hsi_level("HSI:0", &runtime) == 0 && !runtime);
+    CHECK(xd_fwupd_hsi_level("HSI:INVALID:missing-data", &runtime) == -1);
+    CHECK(xd_fwupd_hsi_level(nullptr, &runtime) == -1);
+    CHECK(strcmp(xd_fwupd_hsi_result_text(1), "Enabled") == 0);
+    CHECK(strcmp(xd_fwupd_hsi_result_text(6), "Not locked") == 0);
+    CHECK(strcmp(xd_fwupd_hsi_result_text(99), "") == 0);
+    CHECK(strcmp(xd_fwupd_attr_title("org.fwupd.hsi.Iommu", "Pre-boot DMA", nullptr),
+                 "Pre-boot DMA") == 0);
+    CHECK(strcmp(xd_fwupd_attr_title("org.fwupd.hsi.Uefi.SecureBoot", nullptr, "x"),
+                 "UEFI Secure Boot") == 0);
+    CHECK(strcmp(xd_fwupd_attr_title("org.example.New", "", "Something"), "Something") == 0);
+    CHECK(strcmp(xd_fwupd_attr_title("org.example.New", nullptr, nullptr), "org.example.New") ==
+          0);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -6689,6 +6844,7 @@ int main(void) {
     test_admin_disks();
     test_appwiz();
     test_flatpak_perms();
+    test_updates();
     test_superbar();
     test_printers();
     test_scanners();

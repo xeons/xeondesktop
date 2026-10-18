@@ -123,6 +123,8 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
         xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
     if (shell->pointer_thumbs)
         xd_thumbs_pointer_motion(shell, lx, ly);
+    if (shell->pointer_balloon)
+        xd_balloon_pointer_motion(shell, lx, ly);
 }
 
 static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
@@ -166,6 +168,8 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
     if (shell->pointer_thumbs)
         xd_thumbs_pointer_motion(shell, lx, ly);
+    if (shell->pointer_balloon)
+        xd_balloon_pointer_motion(shell, lx, ly);
 }
 
 static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
@@ -1055,6 +1059,7 @@ int main(int argc, char **argv) {
         xd_deskicons_init(&shell);
     xd_sys_battery_init(&shell);
     xd_sys_access_init(&shell);
+    xd_sys_updates_init(&shell);
     xd_sleep_init(&shell);
     xd_buttons_init(&shell);
     xd_account_init(&shell);

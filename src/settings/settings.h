@@ -105,6 +105,21 @@ typedef enum xd_button_action : uint8_t {
     XD_BUTTON_ACTION_COUNT,
 } xd_button_action;
 
+/* [Updates]: Automatic Updates (xd-wuaucpl). On the schedule the shell
+ * checks for software and firmware updates and, in Download mode, downloads
+ * them; nothing is ever installed without the user's click. */
+typedef enum xd_updates_mode : uint8_t {
+    XD_UPDATES_DOWNLOAD, /* "Download updates for me, but let me choose when to install them" */
+    XD_UPDATES_NOTIFY,   /* "Notify me but don't automatically download or install them" */
+    XD_UPDATES_OFF,      /* "Turn off Automatic Updates" */
+    XD_UPDATES_MODE_COUNT,
+} xd_updates_mode;
+typedef struct xd_update_settings {
+    xd_updates_mode mode; /* Mode */
+    int day;              /* Day: 0 every day, 1..7 Sunday..Saturday */
+    int hour;             /* Hour: 0..23, local time */
+} xd_update_settings;
+
 /* [Keyboard]: XKB names ("" = XKB_DEFAULT_* or the system default) and
  * key repeat, applied by the compositor to every keyboard. */
 typedef struct xd_keyboard_settings {
@@ -453,6 +468,8 @@ typedef struct xd_settings {
     /* [Bluetooth] */
     bool bluetooth_icon; /* "Show the Bluetooth icon in the notification area" */
 
+    xd_update_settings updates; /* [Updates] */
+
     xd_nightlight_settings night_light; /* [NightLight] */
     xd_color_profile_rule color_profiles[XD_COLOR_PROFILES_MAX]; /* [ColorProfiles] */
     size_t color_profile_count;
@@ -538,6 +555,8 @@ typedef struct xd_alarm_done {
 } xd_alarm_done;
 xd_alarm_fired xd_battery_alarm_check(const xd_settings *s, xd_alarm_done *done, double percent,
                                       bool discharging);
+/* "download", "notify", "off": [Updates] Mode's values. */
+const char *xd_updates_mode_name(xd_updates_mode mode);
 /* "standby", ...: [Power] *AlarmAction's values. */
 const char *xd_alarm_action_name(xd_alarm_action action);
 

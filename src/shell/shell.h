@@ -492,6 +492,16 @@ void xd_balloon_hide(xd_shell *shell);
 bool xd_balloon_owns(const xd_shell *shell, struct wl_surface *surface);
 void xd_balloon_button(xd_shell *shell, bool pressed);
 void xd_balloon_render_dirty(xd_shell *shell);
+/* A notification area icon's balloon: `icon`, a bold `title` and a line
+ * of `text`, pointing at the icon whose id is `item` (or the chevron it's
+ * folded behind); a click on it (not its close box) calls `clicked`. */
+void xd_balloon_tray(xd_shell *shell, const char *item, const char *icon, const char *title,
+                     const char *text, void (*clicked)(xd_shell *shell, void *data),
+                     void *data);
+/* Hides `item`'s balloon, if it's showing or waiting to. */
+void xd_balloon_hide_tray(xd_shell *shell, const char *item);
+/* The pointer over the balloon (surface-local logical). */
+void xd_balloon_pointer_motion(xd_shell *shell, double x, double y);
 /* startmenu.c: Control Panel's applets, by name (all three Start menus). */
 xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree);
 
@@ -596,6 +606,8 @@ void xd_sys_bluetooth_init(xd_shell *shell);
 /* sys_access.c: StickyKeys', FilterKeys' and MouseKeys' status icons. */
 void xd_sys_access_init(xd_shell *shell);
 void xd_sys_volume_init(xd_shell *shell);
+/* sys_updates.c: Automatic Updates' schedule, icon and balloon. */
+void xd_sys_updates_init(xd_shell *shell);
 /* sys_volume.c: the volume flyout's input (surface-local logical). */
 bool xd_volume_flyout_owns(xd_shell *shell, struct wl_surface *surface);
 void xd_volume_flyout_motion(xd_shell *shell, double x, double y);

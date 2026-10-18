@@ -589,6 +589,7 @@ install_data(
   'data/applications/org.xeondesktop.Search.desktop',
   'data/applications/org.xeondesktop.Help.desktop',
   'data/applications/org.xeondesktop.Defaults.desktop',
+  'data/applications/org.xeondesktop.AutomaticUpdates.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 
@@ -949,6 +950,23 @@ executable(
   install: true,
 )
 
+# Automatic Updates: PackageKit and Flatpak updates, fwupd's firmware (over
+# D-Bus; firmware is downloaded with libsoup), and the shell's check.
+executable(
+  'xd-wuaucpl',
+  'src/wuaucpl/main.c',
+  'src/wuaucpl/software.c',
+  'src/wuaucpl/firmware.c',
+  'src/wuaucpl/updlib.c',
+  'src/wuaucpl/state.c',
+  'src/appwiz/programs.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep, packagekit_dep, flatpak_dep,
+                 dependency('libsoup-3.0', include_type: 'system')],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
 # Printers and Faxes (CUPS) and Scanners and Cameras (SANE, libgphoto2).
 cups_dep = dependency('cups', include_type: 'system')
 sane_dep = dependency('sane-backends', include_type: 'system')
@@ -1041,6 +1059,8 @@ executable(
   'src/shell/session.c',
   'src/shell/primary.c',
   'src/shell/langbar.c',
+  'src/shell/sys_updates.c',
+  'src/wuaucpl/state.c',
   'src/shell/housekeeping.c',
   'src/files/cleanup.c',
   'src/settings/soundplay.c',
@@ -1137,6 +1157,8 @@ test_exe = executable(
   'src/netconn/netconn.c',
   'src/admin/admin.c',
   'src/appwiz/programs.c',
+  'src/wuaucpl/updlib.c',
+  'src/wuaucpl/state.c',
   'src/flatpak/perms.c',
   'src/printers/printlib.c',
   'src/printers/cupsops.c',
@@ -1256,6 +1278,7 @@ install_man(
   'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1',
   'man/xd-sound.1', 'man/xd-sysdm.1', 'man/xd-taskbar.1', 'man/xd-taskmgr.1',
   'man/xd-thumbnailer.1', 'man/xd-timedate.1', 'man/xd-users.1', 'man/xd-wifi-key.1',
+  'man/xd-wuaucpl.1',
 )
 if build_compositor
   install_man('man/xd-compositor.1', 'man/xeondesktop-session.1')

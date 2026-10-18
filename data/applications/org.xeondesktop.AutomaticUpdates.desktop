@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Automatic Updates
+Comment=Check for and install updates to programs and device firmware
+Exec=xd-wuaucpl
+Icon=software-update-available
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=performance
+Keywords=update;updates;upgrade;security;firmware;fwupd;packagekit;flatpak;
+StartupWMClass=org.xeondesktop.AutomaticUpdates

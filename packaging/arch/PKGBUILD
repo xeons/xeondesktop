@@ -39,6 +39,7 @@ depends=(
   'libnm'      # Network Connections
   'packagekit' # Add or Remove Programs
   'flatpak'    # Add or Remove Programs
+  'libsoup3'   # Automatic Updates: firmware downloads
   'libcups'    # Printers and Faxes
   'sane'       # Scanners and Cameras
   'libgphoto2' # Scanners and Cameras
@@ -75,6 +76,7 @@ optdepends=(
   'networkmanager: the network icon'
   'nm-connection-editor: Open Network Connections'
   'upower: the battery icon'
+  'fwupd: Automatic Updates: firmware updates and Device Security'
   'bluez: the Bluetooth icon'
   'blueman: Bluetooth Devices...'
   'pavucontrol: Open Volume Control'

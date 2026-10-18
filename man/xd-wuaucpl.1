@@ -1,0 +1,81 @@
+.TH XD\-WUAUCPL 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-wuaucpl \- Automatic Updates
+.SH SYNOPSIS
+.SY xd\-wuaucpl
+.OP \-\-page n
+.YS
+.SY xd\-wuaucpl
+.B \-\-check
+.YS
+.SH DESCRIPTION
+.B xd\-wuaucpl
+is Windows XP's Automatic Updates (Control Panel), with the updates
+themselves, which XP left to the Windows Update web site:
+.TP
+.B Automatic Updates
+Whether to download updates and let you choose when to install them,
+only tell you about them, or not check at all; and when to check (every
+day, or one day of the week, at an hour).
+Updates are never installed until you click Install, and never downloaded
+while NetworkManager says the connection is metered.
+.TP
+.B Software Updates
+The distribution's updates (through PackageKit) and those of Flatpak apps
+and runtimes (the user's installation and the system ones), with their
+importance, where they come from, what they fix and whether a restart is
+needed.
+Check the ones to install, then click Install; PackageKit and Flatpak ask
+for an administrator's password where needed.
+Check for Updates refreshes the lists first.
+.TP
+.B Firmware
+The devices fwupd knows, their firmware versions and the updates the Linux
+Vendor Firmware Service has for them.
+Update downloads one, checks it against its checksum and gives it to
+fwupd to install, which asks for an administrator's password.
+.TP
+.B Device Security
+fwupd's Host Security ID (HSI) and the protections it is made of
+(Secure Boot, the TPM, the IOMMU, the firmware's write protection, ...),
+level by level.
+.PP
+.BR xd\-shell (1)
+checks on the schedule chosen (running
+.BR "xd\-wuaucpl \-\-check" ),
+and once a check finds updates shows an icon in the notification area
+and XP's balloon; a click on either opens Software Updates.
+A check missed while the computer was off runs a few minutes after the
+next log on.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on the
+.IR n th
+tab, from 0 (Automatic Updates).
+.TP
+.B \-\-check
+Without a window: refresh PackageKit's lists without asking for a
+password, count the updates waiting (packages, Flatpaks and firmware) and,
+in the download mode and off metered connections, download the software
+updates without installing them (PackageKit's only-download, Flatpak's
+no-deploy).
+What it found goes to the state file below.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.BR [Updates] :
+.BR Mode " (" download ", " notify " or " off ),
+.BR Day " (" daily ", " sunday " ... " saturday )
+and
+.BR Hour " (0 to 23)."
+.TP
+.I $XDG_STATE_HOME/xeondesktop/updates.ini
+What the last check found, which the shell's icon shows.
+.SH SEE ALSO
+.BR xd\-shell (1),
+.BR xd\-appwiz (1),
+.BR xd\-control (1),
+.BR pkcon (1),
+.BR flatpak (1),
+.BR fwupdmgr (1)

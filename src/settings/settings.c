@@ -46,6 +46,14 @@ static const char *const alarm_action_names[XD_ALARM_ACTION_COUNT] = {
     [XD_ALARM_HIBERNATE] = "hibernate",
     [XD_ALARM_SHUTDOWN] = "shutdown",
 };
+static const char *const updates_mode_names[XD_UPDATES_MODE_COUNT] = {
+    [XD_UPDATES_DOWNLOAD] = "download",
+    [XD_UPDATES_NOTIFY] = "notify",
+    [XD_UPDATES_OFF] = "off",
+};
+/* [Updates] Day: XP's "Every day", "Every Sunday", ... */
+static const char *const updates_day_names[] = {"daily",     "sunday",   "monday", "tuesday",
+                                                "wednesday", "thursday", "friday", "saturday"};
 static const char *const button_action_names[XD_BUTTON_ACTION_COUNT] = {
     [XD_BUTTON_LOGIND] = "logind",       [XD_BUTTON_NOTHING] = "nothing",
     [XD_BUTTON_ASK] = "ask",             [XD_BUTTON_STANDBY] = "standby",
@@ -341,6 +349,11 @@ xd_button_action xd_power_button_action(const xd_settings *s, xd_power_button bu
     return a;
 }
 
+const char *xd_updates_mode_name(xd_updates_mode mode) {
+    XD_ASSERT((unsigned)mode < XD_UPDATES_MODE_COUNT);
+    return updates_mode_names[mode];
+}
+
 const char *xd_power_scheme_name(xd_power_scheme scheme) {
     XD_ASSERT((unsigned)scheme < XD_POWER_SCHEME_COUNT);
     return power_scheme_names[scheme];
@@ -396,6 +409,8 @@ void xd_settings_defaults(xd_settings *s) {
         .low_alarm = {.on = true, .percent = 10, .sound = true, .message = true},
         .critical_alarm = {.on = true, .percent = 3, .sound = true, .message = true},
         .bluetooth_icon = true,
+        /* XP SP2's every day at 3:00 AM, downloading but never installing. */
+        .updates = {.mode = XD_UPDATES_DOWNLOAD, .day = 0, .hour = 3},
         /* Off, as in Windows 10; turned on, from sunset to sunrise (the
          * set hours until there is a location) at about Windows 10's
          * middle strength. */
@@ -1100,6 +1115,16 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     } else if (SEC("Bluetooth")) {
         if (KEY("ShowIcon"))
             parse_bool(v, &s->bluetooth_icon);
+    } else if (SEC("Updates")) {
+        int i = -1;
+        if (KEY("Mode") &&
+            (i = index_of(updates_mode_names, XD_ARRAY_LEN(updates_mode_names), v)) >= 0)
+            s->updates.mode = (xd_updates_mode)i;
+        else if (KEY("Day") &&
+                 (i = index_of(updates_day_names, XD_ARRAY_LEN(updates_day_names), v)) >= 0)
+            s->updates.day = i;
+        else if (KEY("Hour"))
+            parse_int(v, 0, 23, &s->updates.hour);
     } else if (SEC("Power")) {
         int64_t m;
         if (KEY("Scheme")) {
@@ -1332,6 +1357,9 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
                                   button_action_names[s->power_buttons[b]]);
     }
     g_key_file_set_boolean(kf, "Bluetooth", "ShowIcon", s->bluetooth_icon);
+    g_key_file_set_string(kf, "Updates", "Mode", updates_mode_names[s->updates.mode]);
+    g_key_file_set_string(kf, "Updates", "Day", updates_day_names[s->updates.day]);
+    g_key_file_set_integer(kf, "Updates", "Hour", s->updates.hour);
     const xd_nightlight_settings *nl = &s->night_light;
     g_key_file_set_boolean(kf, "NightLight", "Enabled", nl->enabled);
     g_key_file_set_string(kf, "NightLight", "Schedule", nightlight_schedule_names[nl->schedule]);

@@ -15,6 +15,17 @@ Parameters:
     Deny        true: installs and removals fail as if polkit said no
     packages    a list of packages replacing the built-in ones (see
                 PACKAGES)
+    Log         a file that gets a line per RefreshCache and UpdatePackages
+                ("refresh-cache", "update-packages FLAGS ID..."), so a test
+                can tell a download (FLAGS has only-download) from an
+                install
+
+Updates: an installed package with an "update" (version, info: low ...
+critical, restart: none, application, session or system, text) is listed
+by GetUpdates and described by GetUpdateDetail (as UpdateDetails, the
+plural signal packagekit-glib2 asks for). UpdatePackages with
+only-download only marks it downloaded; without, it installs the new
+version (RequireRestart for a "system" restart), or fails with Deny.
 
 InstallFiles takes any file: with the only-trusted flag it fails with a
 missing signature unless the file name contains "signed", as for a local
@@ -38,14 +49,22 @@ TX_IFACE = "org.freedesktop.PackageKit.Transaction"
 SYSTEM_BUS = True
 
 # packagekit-glib2's enums (pk-enum.h).
-ROLE = {"get-details": 4, "get-files": 5, "get-packages": 6, "install-files": 11,
-        "install-packages": 12, "remove-packages": 15, "resolve": 18, "search-file": 20,
-        "search-group": 21, "search-name": 22}
+ROLE = {"get-details": 3, "get-files": 4, "get-packages": 5, "get-update-detail": 8,
+        "get-updates": 9, "install-files": 10, "install-packages": 11, "refresh-cache": 13,
+        "remove-packages": 14, "resolve": 17, "search-file": 19, "search-group": 20,
+        "search-name": 21, "update-packages": 22}
 STATUS_WAIT, STATUS_SETUP, STATUS_QUERY = 1, 2, 4
-STATUS_REMOVE, STATUS_DOWNLOAD, STATUS_INSTALL = 6, 8, 9
+STATUS_REMOVE, STATUS_REFRESH_CACHE, STATUS_DOWNLOAD, STATUS_INSTALL, STATUS_UPDATE = 6, 7, 8, 9, 10
+STATUS_DOWNLOAD_REPOSITORY = 20
 STATUS_DEP_RESOLVE, STATUS_COMMIT, STATUS_FINISHED, STATUS_WAITING_FOR_AUTH = 13, 16, 18, 31
 INFO_INSTALLED, INFO_AVAILABLE, INFO_DOWNLOADING = 1, 2, 10
 INFO_INSTALLING, INFO_REMOVING, INFO_FINISHED = 12, 13, 18
+INFO_UPDATING = 11
+# An update's kind (info) and severity (the high 16 bits, PackageKit 1.2.4).
+INFO = {"low": 3, "enhancement": 4, "normal": 5, "bugfix": 6, "important": 7, "security": 8,
+        "critical": 26}
+RESTART = {"none": 1, "application": 2, "session": 3, "system": 4}
+FLAG_ONLY_DOWNLOAD = 1 << 3
 EXIT_SUCCESS, EXIT_FAILED, EXIT_CANCELLED, EXIT_NEED_UNTRUSTED = 1, 2, 3, 8
 ERROR_PACKAGE_NOT_INSTALLED, ERROR_PACKAGE_NOT_FOUND = 7, 8
 ERROR_DEP_RESOLUTION_FAILED, ERROR_TRANSACTION_CANCELLED = 13, 17
@@ -62,7 +81,14 @@ ROLES = sum(1 << r for r in ROLE.values())
 PACKAGES = [
     {"name": "xdtest-editor", "version": "2.4.1-1", "installed": True, "group": "accessories",
      "size": 23477862, "summary": "A small text editor",
-     "apps": [["xdtest-editor", "XD Test Editor"]], "requires": []},
+     "apps": [["xdtest-editor", "XD Test Editor"]], "requires": [],
+     "update": {"version": "2.4.2-1", "info": "security", "severity": "important",
+                "restart": "application", "text": "Fixes a crash opening long lines.",
+                "cves": ["https://example.org/CVE-2026-0001"]}},
+    {"name": "xdtest-kernel", "version": "6.1-1", "installed": True, "group": "system",
+     "size": 150000000, "summary": "The operating system kernel", "apps": [], "requires": [],
+     "update": {"version": "6.2-1", "info": "normal", "restart": "system",
+                "text": "A newer kernel with more drivers."}},
     {"name": "xdtest-libpaint", "version": "1.0-1", "installed": True, "group": "system",
      "size": 2000000, "summary": "Drawing library and tools",
      "apps": [["xdtest-painttools", "XD Test Paint Tools"]], "requires": []},
@@ -86,7 +112,13 @@ PACKAGES = [
      "requires": []},
 ]
 
-state = {"packages": [], "apps_dir": None, "delay": 400, "deny": False, "next": 1}
+state = {"packages": [], "apps_dir": None, "delay": 400, "deny": False, "next": 1, "log": None}
+
+
+def log(line):
+    if state["log"]:
+        with open(state["log"], "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 def package_id(p):
@@ -141,6 +173,7 @@ def load(mock, parameters):
     state["apps_dir"] = parameters.get("AppsDir")
     state["delay"] = int(parameters.get("Delay", 400))
     state["deny"] = bool(parameters.get("Deny", False))
+    state["log"] = parameters.get("Log")
     if state["apps_dir"]:
         os.makedirs(state["apps_dir"], exist_ok=True)
         for p in state["packages"]:
@@ -426,6 +459,105 @@ def tx_install_files(self, flags, paths):
     run.start()
 
 
+def update_id(p):
+    return f"{p['name']};{p['update']['version']};x86_64;extra"
+
+
+def with_updates():
+    return [p for p in state["packages"] if p["installed"] and p.get("update")]
+
+
+def update_info(p):
+    u = p["update"]
+    return INFO.get(u.get("info", "normal"), 5) | (INFO.get(u.get("severity", ""), 0) << 16)
+
+
+def emit_package(run, info, pid, summary):
+    run.call(lambda: run.tx.EmitSignal(TX_IFACE, "Package", "uss", [dbus.UInt32(info), pid, summary]))
+
+
+def tx_refresh_cache(self, _force):
+    log("refresh-cache")
+    run = Run(self, "refresh-cache", 50)
+    run.status(STATUS_REFRESH_CACHE, 0)
+    run.status(STATUS_DOWNLOAD_REPOSITORY, 50)
+    run.status(STATUS_REFRESH_CACHE, 100)
+    run.start()
+
+
+def tx_get_updates(self, _flt):
+    run = query(self, "get-updates")
+    for p in with_updates():
+        emit_package(run, update_info(p), update_id(p), p["summary"])
+    run.start()
+
+
+def tx_get_update_detail(self, ids):
+    run = query(self, "get-update-detail")
+    details = []
+    for i in ids:
+        p = find(i)
+        if p is None or not p.get("update"):
+            continue
+        u = p["update"]
+        details.append(dbus.Struct(
+            (i, dbus.Array([package_id(p)], signature="s"), dbus.Array([], signature="s"),
+             dbus.Array([], signature="s"), dbus.Array([], signature="s"),
+             dbus.Array(u.get("cves", []), signature="s"),
+             dbus.UInt32(RESTART[u.get("restart", "none")]), u.get("text", ""), "",
+             dbus.UInt32(1), "2026-10-01T00:00:00Z", ""),
+            signature="sasasasasasussuss"))  # fmt: skip
+    run.call(lambda: self.EmitSignal(TX_IFACE, "UpdateDetails", "a(sasasasasasussuss)",
+                                     [dbus.Array(details, signature="(sasasasasasussuss)")]))
+    run.start()
+
+
+def do_update(run, p):
+    restart = p["update"].get("restart", "none")
+    p["version"] = p["update"]["version"]
+    del p["update"]
+    if restart == "system":
+        run.tx.EmitSignal(TX_IFACE, "RequireRestart", "us", [dbus.UInt32(RESTART["system"]),
+                                                               package_id(p)])
+
+
+def tx_update_packages(self, flags, ids):
+    log(f"update-packages {int(flags)} {' '.join(ids)}")
+    simulate = flags & FLAG_SIMULATE
+    run = Run(self, "update-packages", 5 if simulate else state["delay"])
+    targets = [find(i) for i in ids]
+    if any(p is None or not p.get("update") for p in targets):
+        run.error(ERROR_PACKAGE_NOT_FOUND, "There is no such update")
+        run.start()
+        return
+    if simulate:
+        for p in targets:
+            emit_package(run, INFO_UPDATING, update_id(p), p["summary"])
+    elif flags & FLAG_ONLY_DOWNLOAD:
+        # Into the package cache only: no permission needed, nothing changes.
+        run.status(STATUS_DOWNLOAD, 0)
+        for n, p in enumerate(targets):
+            emit_package(run, INFO_DOWNLOADING, update_id(p), p["summary"])
+            run.call(lambda p=p: p["update"].__setitem__("downloaded", True))
+            run.status(STATUS_DOWNLOAD, 100 * (n + 1) // len(targets))
+    else:
+        run.status(STATUS_WAITING_FOR_AUTH)
+        if state["deny"]:
+            run.error(ERROR_NOT_AUTHORIZED, "Failed to obtain authentication.")
+            run.start()
+            return
+        if not all(p["update"].get("downloaded") for p in targets):
+            run.status(STATUS_DOWNLOAD, 10)
+        run.status(STATUS_UPDATE, 30)
+        for n, p in enumerate(targets):
+            new = update_id(p)
+            emit_package(run, INFO_UPDATING, new, p["summary"])
+            run.call(lambda p=p: do_update(run, p))
+            run.status(STATUS_UPDATE, 30 + 70 * (n + 1) // len(targets))
+            emit_package(run, INFO_FINISHED, new, p["summary"])
+    run.start()
+
+
 def tx_cancel(self):
     self.cancelled = True
 
@@ -444,6 +576,10 @@ TX_METHODS = [
     ("RemovePackages", "tasbb", tx_remove_packages),
     ("InstallPackages", "tas", tx_install_packages),
     ("InstallFiles", "tas", tx_install_files),
+    ("RefreshCache", "b", tx_refresh_cache),
+    ("GetUpdates", "t", tx_get_updates),
+    ("GetUpdateDetail", "as", tx_get_update_detail),
+    ("UpdatePackages", "tas", tx_update_packages),
 ]
 
 

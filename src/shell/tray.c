@@ -600,6 +600,7 @@ static void remember(xd_tray *tray, const xd_tray_item *it) {
         {"stickykeys", "StickyKeys"},
         {"filterkeys", "FilterKeys"},
         {"mousekeys", "MouseKeys"},
+        {"updates", "Automatic Updates"},
     };
     char *title = g_strdup(it->title);
     const char *name = title;

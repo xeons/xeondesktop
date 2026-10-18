@@ -5077,6 +5077,145 @@ def folder_sharing(s):
     s.check(os.listdir(shares) == ["documents"], "nothing shared while sharing is off")
 
 
+def mock_updates(s):
+    """Before the compositor starts: a private system bus with the PackageKit
+    and fwupd mocks (tests/dbusmock), logging what they're asked to change;
+    empty Flatpak installations of the session's own; and the shell's first
+    scheduled check two seconds after logon, not five minutes."""
+    from dbusmock import DBusTestCase
+
+    DBusTestCase.start_system_bus()
+    mocks = (
+        ("packagekit", {"Log": os.path.join(s.base, "pk.log"), "Delay": 100}),
+        ("fwupd", {"CabDir": os.path.join(s.base, "cabs"), "Log": os.path.join(s.base, "fw.log"),
+                   "Delay": 150}),
+    )  # fmt: skip
+    for name, params in mocks:
+        template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", name + ".py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            template, params, stdout=subprocess.DEVNULL, system_bus=True
+        )
+        s.children.append(proc)
+    for var in ("FLATPAK_USER_DIR", "FLATPAK_SYSTEM_DIR", "FLATPAK_CONFIG_DIR"):
+        path = os.path.join(s.base, var.lower())
+        os.makedirs(path, exist_ok=True)
+        os.environ[var] = path
+    os.environ["XD_UPDATES_DELAY"] = "2"
+
+
+def info_window_box(shot, rect, colour=(255, 255, 225)):
+    """The bounding box of the balloon's InfoWindow yellow within rect, and
+    how many sampled pixels have it."""
+    x0, y0, w, h = rect
+    xs, ys = [], []
+    for y in range(y0, y0 + h, 2):
+        for x in range(x0, x0 + w, 2):
+            if max(abs(a - b) for a, b in zip(shot.pixel(x, y), colour)) <= 4:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None, 0
+    return (min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1), len(xs)
+
+
+@scenario(LUNA_INI, requires=("dbusmock",), setup=mock_updates)
+def automatic_updates(s):
+    """Automatic Updates on dbusmock PackageKit and fwupd: the shell's
+    scheduled check refreshes and downloads (only-download, never an
+    install) and XP's balloon points at the new notification area icon; a
+    click opens Software Updates, whose Install updates the checked ones
+    (asking about the restart a kernel needs); the Firmware tab updates a
+    device through fwupd with the downloaded, checksummed cabinet file;
+    Device Security shows the HSI; the options save [Updates]."""
+    state_path = os.path.join(os.environ["XDG_STATE_HOME"], "xeondesktop", "updates.ini")
+    pk_log = os.path.join(s.base, "pk.log")
+    fw_log = os.path.join(s.base, "fw.log")
+
+    def state():
+        c = configparser.ConfigParser(interpolation=None)
+        c.optionxform = str
+        c.read(state_path)
+        return dict(c["Updates"]) if c.has_section("Updates") else None
+
+    def lines(path):
+        try:
+            with open(path) as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+    st = s.wait(state, "the scheduled check", 40)
+    s.check(st["Software"] == "2" and st["Firmware"] == "2" and st["Important"] == "3",
+            f"the check found two package and two firmware updates ({st})")  # fmt: skip
+    s.check(st["Downloaded"] == "true", "and downloaded the packages")
+    updates = [l for l in lines(pk_log) if l.startswith("update-packages")]
+    s.check("refresh-cache" in lines(pk_log), "the check refreshed PackageKit's lists")
+    s.check(updates and all(int(l.split()[1]) & 8 for l in updates),
+            f"the check only downloaded, never installed ({updates})")  # fmt: skip
+
+    near_tray = (WIDTH - 460, HEIGHT - 130, 460, 100)
+
+    def balloon():
+        box, n = info_window_box(s.shot("balloon"), near_tray)
+        return box if n > 300 else None
+
+    box = s.wait(balloon, "the balloon over the notification area")
+    s.check(box[0] + box[2] > WIDTH - 120, f"the balloon points at the tray ({box})")
+    desk = s.settle("desktop")
+    # Its text, away from the close box: Software Updates opens.
+    s.inject("move", box[0] + 40, box[1] + box[3] // 2 + 6, "click")
+    s.wait_window(title="Automatic Updates", state="activated")
+    s.log("ok: a click on the balloon opened Automatic Updates")
+    s.wait(lambda: s.window(title="Automatic Updates") and balloon() is None,
+           "the balloon to go")  # fmt: skip
+    software = s.settle("software")
+    x, y, _, _ = software.changed_box(desk, (0, 0, WIDTH, 600))
+
+    # Install, with both updates checked: the kernel needs a restart.
+    s.inject("key", "alt+i")
+    s.wait(lambda: any(not int(l.split()[1]) & 8 for l in lines(pk_log)
+                       if l.startswith("update-packages")), "the install")  # fmt: skip
+    installs = [l for l in lines(pk_log) if l.startswith("update-packages")][-1]
+    s.check("xdtest-editor" in installs and "xdtest-kernel" in installs,
+            f"Install updated both packages ({installs})")  # fmt: skip
+    s.wait(lambda: state()["Software"] == "0", "the count to drop")
+    restart = s.settle("restart-question")
+    s.check(restart.differs(software, (WIDTH // 2 - 150, HEIGHT // 2 - 60, 300, 120)) > 0.1,
+            "a restart question shows")  # fmt: skip
+    s.inject("key", "Escape")  # Restart Later
+    s.inject("sleep", 500)
+
+    # Firmware: the first device (System Firmware, with an update), Update...
+    s.inject("key", "ctrl+Tab")
+    firmware = s.settle("firmware")
+    s.inject("move", x + 84, y + 157, "click")
+    details = s.settle("firmware-details")
+    s.check(details.differs(firmware, (x + 30, y + 365, 500, 90)) > 0.02,
+            "the device's details show")  # fmt: skip
+    s.inject("key", "alt+p", "sleep", 800, "key", "Return")  # Update..., Yes
+    s.wait(lambda: any(l.startswith("install ") for l in lines(fw_log)), "fwupd's Install")
+    s.check(lines(fw_log)[0].startswith("install a45df35ac0e948ee180fe216a5f703f32dda163f"),
+            f"the system firmware's cabinet went to fwupd ({lines(fw_log)})")  # fmt: skip
+    s.wait(lambda: state()["Firmware"] == "1", "the firmware count to drop")
+    s.settle("firmware-restart")
+    s.inject("key", "Escape", "sleep", 500)  # Restart Later
+    flashed = s.settle("firmware-done")
+    s.check(flashed.differs(details, (x + 380, y + 150, 160, 30)) > 0.02,
+            "the device shows its new version")  # fmt: skip
+
+    s.inject("key", "ctrl+Tab")
+    security = s.settle("device-security")
+    s.check(security.differs(flashed, (x + 20, y + 80, 520, 400)) > 0.1,
+            "Device Security shows the HSI")  # fmt: skip
+
+    # Automatic Updates: notify only, applied.
+    s.inject("key", "alt+u", "sleep", 500, "key", "alt+n", "sleep", 300, "key", "alt+a")
+    s.wait(lambda: s.ini().has_section("Updates") and s.ini()["Updates"].get("Mode") == "notify",
+           "Mode=notify saved")  # fmt: skip
+    s.settle("options")
+    s.log("ok: notify only saved in [Updates]")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

@@ -41,6 +41,7 @@ Build-Depends:
  libnm-dev,
  libpackagekit-glib2-dev,
  libflatpak-dev,
+ libsoup-3.0-dev,
  libcups2-dev,
  libsane-dev,
  libgphoto2-dev,
