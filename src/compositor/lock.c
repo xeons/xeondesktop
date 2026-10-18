@@ -21,9 +21,11 @@ typedef struct xd_lock {
 } xd_lock;
 
 typedef struct xd_lock_surface {
+    struct wl_list link; /* xd_server.lock_surfaces */
     xd_server *server;
     struct wlr_session_lock_surface_v1 *surface;
     struct wlr_scene_tree *tree;
+    uint32_t width, height; /* the size last asked of the locker */
     struct wl_listener map;
     struct wl_listener destroy;
 } xd_lock_surface;
@@ -42,9 +44,32 @@ static void update_cover(xd_server *server) {
     wlr_scene_node_lower_to_bottom(&server->lock_cover->node);
 }
 
+/* Puts a locker surface over its output, at the output's size. */
+static void place_surface(xd_lock_surface *ls) {
+    if (ls->surface->output == nullptr)
+        return;
+    struct wlr_box box;
+    wlr_output_layout_get_box(ls->server->output_layout, ls->surface->output, &box);
+    if (wlr_box_empty(&box))
+        return; /* off (not in the layout): nothing to cover there */
+    wlr_scene_node_set_position(&ls->tree->node, box.x, box.y);
+    if (ls->width != (uint32_t)box.width || ls->height != (uint32_t)box.height) {
+        ls->width = (uint32_t)box.width;
+        ls->height = (uint32_t)box.height;
+        wlr_session_lock_surface_v1_configure(ls->surface, ls->width, ls->height);
+    }
+}
+
+/* Monitors were moved, resized or rescaled while locked: every locker
+ * surface follows its own monitor, and the cover the whole layout. */
 void xd_lock_layout_changed(xd_server *server) {
-    if (server->locked)
-        update_cover(server);
+    if (!server->locked)
+        return;
+    update_cover(server);
+    xd_lock_surface *ls;
+    wl_list_for_each(ls, &server->lock_surfaces, link) {
+        place_surface(ls);
+    }
 }
 
 static void handle_surface_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -64,6 +89,7 @@ static void handle_surface_destroy(struct wl_listener *listener, [[maybe_unused]
         server->lock_focus = nullptr;
         xd_keyboard_refocus(server);
     }
+    wl_list_remove(&ls->link);
     xd_unlisten(&ls->map);
     xd_unlisten(&ls->destroy);
     xd_free(ls);
@@ -77,10 +103,8 @@ static void handle_new_surface(struct wl_listener *listener, void *data) {
     ls->server = server;
     ls->surface = surface;
     ls->tree = wlr_scene_subsurface_tree_create(server->layer_lock, surface->surface);
-    struct wlr_box box;
-    wlr_output_layout_get_box(server->output_layout, surface->output, &box);
-    wlr_scene_node_set_position(&ls->tree->node, box.x, box.y);
-    wlr_session_lock_surface_v1_configure(surface, (uint32_t)box.width, (uint32_t)box.height);
+    wl_list_insert(&server->lock_surfaces, &ls->link);
+    place_surface(ls);
     XD_LISTEN(&surface->surface->events.map, ls, map, handle_surface_map);
     XD_LISTEN(&surface->events.destroy, ls, destroy, handle_surface_destroy);
 }
@@ -170,6 +194,7 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
 }
 
 void xd_lock_init(xd_server *server) {
+    wl_list_init(&server->lock_surfaces);
     struct wlr_session_lock_manager_v1 *mgr = wlr_session_lock_manager_v1_create(server->display);
     XD_LISTEN(&mgr->events.new_lock, server, new_lock, handle_new_lock);
 }

@@ -999,10 +999,23 @@ static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *k, 
     a->xkb_state = xkb_state_new(keymap);
 }
 
-static void keyboard_enter([[maybe_unused]] void *data, [[maybe_unused]] struct wl_keyboard *k,
-                           [[maybe_unused]] uint32_t serial,
-                           [[maybe_unused]] struct wl_surface *surface,
-                           [[maybe_unused]] struct wl_array *keys) {}
+/* The compositor gives the keyboard to the surface on the monitor with
+ * the pointer: the dialog goes there, as Windows puts it where the user
+ * is looking rather than always on the first monitor. */
+static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k,
+                           [[maybe_unused]] uint32_t serial, struct wl_surface *surface,
+                           [[maybe_unused]] struct wl_array *keys) {
+    app *a = data;
+    XD_LIST_FOR_EACH(o, &a->outputs, output, link) {
+        if (o->surface == surface && o->configured && a->dialog_output != o) {
+            if (a->dialog_output != nullptr)
+                a->dialog_output->dirty = true;
+            a->dialog_output = o;
+            o->dirty = true;
+            a->pressed = HIT_NONE;
+        }
+    }
+}
 static void keyboard_leave([[maybe_unused]] void *data, [[maybe_unused]] struct wl_keyboard *k,
                            [[maybe_unused]] uint32_t serial,
                            [[maybe_unused]] struct wl_surface *surface) {}

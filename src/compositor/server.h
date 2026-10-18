@@ -326,6 +326,7 @@ struct xd_server {
     struct xd_lock *lock;             /* the locker client, while it runs */
     struct wlr_scene_rect *lock_cover;
     struct wlr_surface *lock_focus;   /* locker surface with the keyboard */
+    struct wl_list lock_surfaces;     /* xd_lock_surface.link: one per output */
     struct wl_listener new_lock;
     int locker_restarts;              /* recent automatic restarts */
     struct timespec locker_restart_window;
