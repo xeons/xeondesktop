@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=System Configuration
+Comment=Chooses the programs and services that start when you log on
+Exec=xd-msconfig
+Icon=preferences-system
+Terminal=false
+NoDisplay=true
+Categories=System;GTK;
+Keywords=msconfig;startup;autostart;log on;services;systemd;
+X-XeonDesktop-AdminTool=true
+X-XeonDesktop-AppPath=msconfig;
+StartupWMClass=org.xeondesktop.SystemConfiguration

@@ -1,0 +1,69 @@
+.TH XD\-MSCONFIG 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-msconfig \- System Configuration Utility
+.SH SYNOPSIS
+.SY xd\-msconfig
+.OP \-\-page N
+.YS
+.SH DESCRIPTION
+.B xd\-msconfig
+is Windows XP's System Configuration Utility (\fBmsconfig\fR, which the
+Run dialog also finds it as), for what starts when you log on.
+It is listed in Administrative Tools.
+.TP
+.B General
+Normal Startup turns every startup program and user service on;
+Selective Startup shows what the other tabs leave on (Load User Services,
+Load Startup Items), and clearing either box turns that whole list off.
+XP's Diagnostic Startup and its SYSTEM.INI, WIN.INI and BOOT.INI settings
+have nothing to stand for in a desktop session and aren't there.
+.TP
+.B Services
+The systemd user services enabled into
+.IR default.target ,
+.I graphical\-session.target
+or
+.IR xeondesktop\-session.target ,
+through the user manager's D\-Bus interface, and those turned off here
+before.
+Clearing one disables it; ticking it enables it again.
+Services enabled for every user (in
+.IR /etc/systemd/user )
+are greyed: only an administrator can turn them off.
+.TP
+.B Startup
+XDG autostart entries that apply to this desktop (OnlyShowIn and NotShowIn
+against
+.BR $XDG_CURRENT_DESKTOP ,
+TryExec, X\-systemd\-skip), the system's and your own, with their command
+and folder.
+Clearing a system entry writes your own copy of it with
+.B Hidden=true
+(the autostart specification's way); ticking it removes that copy again.
+.B Add...
+adds an installed program or a command line as your own entry;
+.B Remove
+deletes one of your own entries.
+.PP
+As in Windows, changes count from the next log on; OK offers to log off.
+.SH OPTIONS
+.TP
+.BI \-\-page " N"
+Show the Nth tab, from 0 (General, Services, Startup).
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/autostart/*.desktop
+Your startup programs, and your copies hiding the system's.
+.TP
+.I $XDG_CONFIG_DIRS/autostart/*.desktop
+The system's (usually
+.IR /etc/xdg/autostart ).
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/startup.ini
+The user services turned off here, which stay listed so they can be
+turned on again.
+.SH SEE ALSO
+.BR systemd\-xdg\-autostart\-generator (8),
+.BR systemctl (1),
+.BR xd\-services (1),
+.BR xd\-admintools (1)

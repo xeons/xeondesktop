@@ -4737,6 +4737,120 @@ def passwords_and_keys(s):
         stop_scratch_gpg(gnupg)
 
 
+def mock_startup(s):
+    """Before the compositor starts: dbusmock's user manager on the session
+    bus (tests/dbusmock/systemd_startup.py: a sync client you enabled,
+    PipeWire enabled for every user, others not starting with the session),
+    and system autostart entries in a scratch $XDG_CONFIG_DIRS."""
+    from dbusmock import DBusTestCase
+
+    log = open(os.path.join(s.base, "systemd.log"), "w")
+    template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "systemd_startup.py")
+    proc, _ = DBusTestCase.spawn_server_template(template, {}, stdout=log, system_bus=False)
+    s.children.append(proc)
+    xdg = os.path.join(s.base, "xdg")
+    os.makedirs(os.path.join(xdg, "autostart"))
+    entries = {
+        "alpha.desktop": "Name=Alpha Sync\nExec=true --sync\n",
+        "gnome.desktop": "Name=Gnome Only\nExec=true\nOnlyShowIn=GNOME;\n",
+    }
+    for name, body in entries.items():
+        with open(os.path.join(xdg, "autostart", name), "w") as f:
+            f.write("[Desktop Entry]\nType=Application\n" + body)
+    mine = os.path.join(os.environ["XDG_CONFIG_HOME"], "autostart")
+    os.makedirs(mine)
+    with open(os.path.join(mine, "mine.desktop"), "w") as f:
+        f.write("[Desktop Entry]\nType=Application\nName=My Notes\nExec=true --notes\n")
+    os.environ["XDG_CONFIG_DIRS"] = xdg
+    os.environ["XDG_CURRENT_DESKTOP"] = "XeonDesktop"
+
+
+@scenario(LUNA_INI, requires=("dbusmock",), setup=mock_startup)
+def msconfig_startup(s):
+    """Run's "msconfig" opens the System Configuration Utility. On its
+    Startup tab, clearing a system entry writes your copy with Hidden=true;
+    on Services, clearing a service disables it through the user manager
+    and remembers it; General then shows Selective Startup, and Normal
+    Startup turns both back on."""
+    import dbus
+
+    title = "System Configuration Utility"
+    autostart = os.path.join(os.environ["XDG_CONFIG_HOME"], "autostart")
+    alpha = os.path.join(autostart, "alpha.desktop")
+    remembered = os.path.join(s.config, "startup.ini")
+    manager = dbus.Interface(
+        dbus.SessionBus().get_object("org.freedesktop.systemd1", "/org/freedesktop/systemd1"),
+        "org.freedesktop.systemd1.Manager",
+    )
+
+    def sync_enabled():
+        return len(manager.GetUnitFileLinks("syncthing.service", False)) > 0
+
+    def read(path):
+        try:
+            with open(path) as f:
+                return f.read()
+        except OSError:
+            return None
+
+    desk = s.settle("desktop")
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    s.inject("type", "msconfig", "key", "Return")
+    s.wait_window(title=title, state="activated")
+    s.log("ok: Run's msconfig opened the System Configuration Utility")
+    general = s.settle("general")
+    # The window, from what changed on the desktop (it opens on General).
+    box = general.changed_box(desk, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None and box[2] > 400, f"the window shows ({box})")
+
+    # The lists' check boxes, rows 1 and 2 (the same place on both tabs).
+    check_x, row1, row2 = box[0] + 33, box[1] + 100, box[1] + 121
+
+    # Startup: the system's Alpha Sync (first, by name) cleared.
+    s.inject("key", "alt+t", "sleep", 300, "move", check_x, row1, "click", "sleep", 300,
+             "key", "alt+a")  # fmt: skip
+    s.wait(lambda: read(alpha) is not None, "your copy of Alpha Sync")
+    s.check("Hidden=true" in read(alpha) and "Name=Alpha Sync" in read(alpha),
+            "clearing a system entry wrote your copy with Hidden=true")  # fmt: skip
+
+    # Add...: a command of your own. (Dialogs have no taskbar button, so
+    # they're seen on the screen.)
+    startup = s.settle("startup")
+    s.inject("key", "alt+d")
+    wait_change(s, startup, box, "the Add Startup Item dialog", "add")
+    s.inject("key", "alt+c", "type", "true --added", "key", "Return")
+    added = os.path.join(autostart, "true.desktop")
+    s.wait(lambda: read(added) is not None, "the added entry")
+    s.check("Exec=true --added" in read(added), "Add... wrote a command's entry")
+
+    # Services: Syncthing (after PipeWire, which is greyed) cleared.
+    s.inject("key", "alt+s", "sleep", 300, "move", check_x, row2, "click", "sleep", 300,
+             "key", "alt+a")  # fmt: skip
+    s.wait(lambda: not sync_enabled(), "Syncthing to be disabled")
+    s.check("syncthing.service" in (read(remembered) or ""), "the disabled service is remembered")
+    s.check(len(manager.GetUnitFileLinks("pipewire.service", False)) == 1,
+            "PipeWire (every user's) was left alone")  # fmt: skip
+
+    # General: Selective now; Normal turns both back on.
+    s.inject("key", "alt+g", "sleep", 300)
+    s.settle("selective")
+    s.inject("key", "alt+n", "sleep", 300, "key", "alt+a")
+    s.wait(sync_enabled, "Syncthing to be enabled again")
+    s.wait(lambda: read(alpha) is None, "your copy of Alpha Sync to go")
+    s.check("syncthing" not in (read(remembered) or ""), "nothing remembered as disabled")
+    s.log("ok: Normal Startup turned the service and the entry back on")
+
+    # OK: XP's restart question, here to log off; not now.
+    before = s.settle("general-again")
+    s.inject("key", "Return")
+    wait_change(s, before, box, "the log off question", "log-off-question")
+    s.inject("key", "alt+x")
+    s.wait_window(title=title, gone=True)
+    time.sleep(1)
+    s.check(not session_program("xd-shutdown"), "Exit Without Log Off didn't log off")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

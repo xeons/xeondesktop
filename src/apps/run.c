@@ -6,6 +6,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <gio/gdesktopappinfo.h>
+
 #include "../core/alloc.h"
 #include "../ui/ui.h"
 #include "common.h"
@@ -92,6 +94,25 @@ static bool launch(const xd_run_target *t, xd_strbuf *err) {
     return ok;
 }
 
+/* In the child: a session of its own, as xd_launch_argv's programs. */
+static void detach([[maybe_unused]] gpointer data) { setsid(); }
+
+static bool launch_app(const char *id) {
+    GDesktopAppInfo *info = g_desktop_app_info_new(id);
+    if (info == nullptr)
+        return false;
+    GError *error = nullptr;
+    bool ok = g_desktop_app_info_launch_uris_as_manager(info, nullptr, nullptr,
+                                                        G_SPAWN_SEARCH_PATH, detach, nullptr,
+                                                        nullptr, nullptr, &error);
+    if (!ok) {
+        fprintf(stderr, "xd-run: cannot start %s: %s\n", id, error->message);
+        g_error_free(error);
+    }
+    g_object_unref(info);
+    return ok;
+}
+
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     run_dialog *d = user;
     const char *text = xd_widget_text(d->combo);
@@ -101,7 +122,17 @@ static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
         return;
     }
     if (t.kind == XD_RUN_NOT_FOUND) {
-        show_not_found(d->ui, xd_strbuf_cstr(&t.target));
+        /* A Windows name for one of ours ("msconfig"), as App Paths has. */
+        char *id = xd_run_app_path(xd_str_from_cstr(text));
+        if (id != nullptr && launch_app(id)) {
+            char *cmd = xd_str_dup_cstr(xd_str_trim(xd_str_from_cstr(text)));
+            remember(d, cmd);
+            xd_free(cmd);
+            xd_window_close(d->win);
+        } else {
+            show_not_found(d->ui, xd_strbuf_cstr(&t.target));
+        }
+        g_free(id);
         xd_run_target_free(&t);
         return;
     }

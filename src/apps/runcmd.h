@@ -24,4 +24,10 @@ typedef struct xd_run_target {
 xd_run_target xd_run_classify(xd_str input, const char *path_env, const char *home);
 void xd_run_target_free(xd_run_target *t);
 
+/* Windows' App Paths: a program known by its Windows name ("msconfig",
+ * "msconfig.exe", any case), from the installed desktop entries'
+ * X-XeonDesktop-AppPath lists. Its desktop file id (free with g_free), or
+ * nullptr. Only for a name on its own, which nothing in PATH answers. */
+char *xd_run_app_path(xd_str input);
+
 #endif

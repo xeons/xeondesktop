@@ -844,6 +844,21 @@ executable(
   install: true,
 )
 
+# System Configuration Utility (msconfig): autostart entries and the
+# systemd user services that start with the session.
+executable(
+  'xd-msconfig',
+  'src/startup/main.c',
+  'src/startup/autostart.c',
+  'src/startup/services.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep],
+  install: true,
+)
+install_data('data/applications/org.xeondesktop.SystemConfiguration.desktop',
+             install_dir: get_option('datadir') / 'applications')
+install_man('man/xd-msconfig.1')
+
 # Bluetooth Devices (BlueZ over D-Bus) and Game Controllers (udev and
 # evdev, read-only).
 executable(
@@ -1109,6 +1124,8 @@ test_exe = executable(
   'src/mouse/cursors.c',
   'src/settings/themes.c',
   'src/schedtasks/task.c',
+  'src/startup/autostart.c',
+  'src/startup/services.c',
   'src/bluetooth/btinfo.c',
   'src/joy/joyinfo.c',
   'src/netconn/netconn.c',

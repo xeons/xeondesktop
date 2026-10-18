@@ -3,6 +3,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <gio/gdesktopappinfo.h>
+
 #include "runcmd.h"
 
 static bool looks_like_url(xd_str s) {
@@ -116,3 +118,29 @@ xd_run_target xd_run_classify(xd_str input, const char *path_env, const char *ho
 }
 
 void xd_run_target_free(xd_run_target *t) { xd_strbuf_free(&t->target); }
+
+char *xd_run_app_path(xd_str input) {
+    xd_str s = xd_str_trim(input);
+    if (s.len == 0 || xd_str_find_char(s, ' ', &(size_t){0}) ||
+        xd_str_find_char(s, '/', &(size_t){0}))
+        return nullptr;
+    char *name = g_strndup(s.ptr, s.len);
+    if (s.len > 4 && g_ascii_strcasecmp(name + s.len - 4, ".exe") == 0)
+        name[s.len - 4] = '\0';
+    char *found = nullptr;
+    GList *all = g_app_info_get_all(); /* NoDisplay ones too: the tools are */
+    for (GList *l = all; l != nullptr && found == nullptr; l = l->next) {
+        if (!G_IS_DESKTOP_APP_INFO(l->data))
+            continue;
+        char **names = g_desktop_app_info_get_string_list(l->data, "X-XeonDesktop-AppPath",
+                                                          nullptr);
+        for (size_t i = 0; names != nullptr && names[i] != nullptr && found == nullptr; i++) {
+            if (g_ascii_strcasecmp(names[i], name) == 0)
+                found = g_strdup(g_app_info_get_id(l->data));
+        }
+        g_strfreev(names);
+    }
+    g_list_free_full(all, g_object_unref);
+    g_free(name);
+    return found;
+}

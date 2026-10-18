@@ -67,6 +67,7 @@
 #include <gio/gsettingsbackend.h>
 #include <json-glib/json-glib.h>
 #include "../src/shell/apps.h"
+#include "../src/startup/startup.h"
 #include "../src/startmenu/searchlib.h"
 #include "../src/taskmgr/netstat.h"
 #include "../src/timedate/ntp.h"
@@ -4823,6 +4824,200 @@ static void test_taskmgr_netstat(void) {
     CHECK(xd_proc_peak_kb(-1) == 0);
 }
 
+static const xd_autostart *autostart_at(GPtrArray *list, const char *file) {
+    for (guint i = 0; i < list->len; i++) {
+        const xd_autostart *a = g_ptr_array_index(list, i);
+        if (strcmp(a->file, file) == 0)
+            return a;
+    }
+    return nullptr;
+}
+
+static bool file_has(const char *path, const char *text) {
+    char *data = nullptr;
+    bool has = g_file_get_contents(path, &data, nullptr, nullptr) && strstr(data, text) != nullptr;
+    g_free(data);
+    return has;
+}
+
+static void test_startup_programs(void) {
+    char *root = g_dir_make_tmp("xd-autostart-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    const char *app = "[Desktop Entry]\nType=Application\nExec=true\n";
+    char *t;
+#define PUT(rel, extra)                                                                            \
+    do {                                                                                           \
+        t = g_strconcat(app, extra, nullptr);                                                      \
+        put_file(root, rel, t);                                                                    \
+        g_free(t);                                                                                 \
+    } while (0)
+    PUT("sys1/a.desktop", "Name=Alpha\nIcon=alpha\n");
+    PUT("sys2/a.desktop", "Name=Shadowed\n"); /* sys1's comes first */
+    PUT("sys1/gnome.desktop", "Name=Gnome Only\nOnlyShowIn=GNOME;\n");
+    PUT("sys1/notus.desktop", "Name=Not Us\nNotShowIn=XeonDesktop;\n");
+    PUT("sys1/us.desktop", "Name=Us\nOnlyShowIn=KDE;XeonDesktop;\n");
+    PUT("sys1/skip.desktop", "Name=Skip\nX-systemd-skip=true\n");
+    PUT("sys1/phase.desktop", "Name=Phase\nX-GNOME-Autostart-Phase=Initialization\n");
+    PUT("sys1/notry.desktop", "Name=No Try\nTryExec=/nonexistent/xd-no-such\n");
+    PUT("sys1/off.desktop", "Name=Off\nX-GNOME-Autostart-enabled=false\n");
+    PUT("sys2/hid.desktop", "Name=Hid\n");
+    PUT("user/hid.desktop", "Name=Hid\nHidden=true\n");
+    PUT("user/mine.desktop", "Name=Mine\n");
+    PUT("sys1/gone.desktop", "Name=Gone\nOnlyShowIn=GNOME;\n");
+    PUT("user/gone.desktop", "Name=Gone\nHidden=true\n"); /* hides one not shown here */
+#undef PUT
+    char *user = g_build_filename(root, "user", nullptr);
+    char *sys1 = g_build_filename(root, "sys1", nullptr);
+    char *sys2 = g_build_filename(root, "sys2", nullptr);
+    const char *sys[] = {sys1, sys2, nullptr};
+
+    GPtrArray *list = xd_autostart_list(user, sys, "XeonDesktop");
+    CHECK(list->len == 5); /* Alpha, Hid, Mine, Off, Us: by name */
+    const char *order[] = {"Alpha", "Hid", "Mine", "Off", "Us"};
+    for (guint i = 0; i < list->len && i < G_N_ELEMENTS(order); i++)
+        CHECK(strcmp(((const xd_autostart *)g_ptr_array_index(list, i))->name, order[i]) == 0);
+    const xd_autostart *a = autostart_at(list, "a.desktop");
+    CHECK(a != nullptr && a->enabled && !a->user_only && strcmp(a->icon, "alpha") == 0 &&
+          strcmp(a->location, sys1) == 0 && strcmp(a->command, "true") == 0);
+    const xd_autostart *hid = autostart_at(list, "hid.desktop");
+    CHECK(hid != nullptr && !hid->enabled && !hid->user_only && strcmp(hid->location, sys2) == 0);
+    const xd_autostart *mine = autostart_at(list, "mine.desktop");
+    CHECK(mine != nullptr && mine->enabled && mine->user_only &&
+          strcmp(mine->location, user) == 0);
+    const xd_autostart *off = autostart_at(list, "off.desktop");
+    CHECK(off != nullptr && !off->enabled);
+
+    /* Off: your copy with Hidden=true; on again: the copy goes. */
+    GError *err = nullptr;
+    char *ua = g_build_filename(user, "a.desktop", nullptr);
+    CHECK(a != nullptr && xd_autostart_set_enabled(a, user, false, &err));
+    CHECK(file_has(ua, "Hidden=true") && file_has(ua, "Name=Alpha"));
+    CHECK(a != nullptr && xd_autostart_set_enabled(a, user, true, &err));
+    CHECK(!g_file_test(ua, G_FILE_TEST_EXISTS));
+    /* The hiding copy of Hid goes too; GNOME's switch is turned on in a copy. */
+    char *uh = g_build_filename(user, "hid.desktop", nullptr);
+    CHECK(hid != nullptr && xd_autostart_set_enabled(hid, user, true, &err));
+    CHECK(!g_file_test(uh, G_FILE_TEST_EXISTS));
+    char *uo = g_build_filename(user, "off.desktop", nullptr);
+    CHECK(off != nullptr && xd_autostart_set_enabled(off, user, true, &err));
+    CHECK(file_has(uo, "X-GNOME-Autostart-enabled=true") && !file_has(uo, "Hidden"));
+    /* Your own: Hidden in place, and Remove deletes it. */
+    char *um = g_build_filename(user, "mine.desktop", nullptr);
+    CHECK(mine != nullptr && xd_autostart_set_enabled(mine, user, false, &err));
+    CHECK(file_has(um, "Hidden=true"));
+    CHECK(err == nullptr);
+    g_ptr_array_unref(list);
+
+    list = xd_autostart_list(user, sys, "XeonDesktop");
+    CHECK(list->len == 5);
+    CHECK(autostart_at(list, "a.desktop") && autostart_at(list, "a.desktop")->enabled);
+    CHECK(autostart_at(list, "hid.desktop") && autostart_at(list, "hid.desktop")->enabled);
+    CHECK(autostart_at(list, "off.desktop") && autostart_at(list, "off.desktop")->enabled);
+    mine = autostart_at(list, "mine.desktop");
+    CHECK(mine != nullptr && !mine->enabled && mine->user_only);
+    CHECK(mine != nullptr && xd_autostart_remove(mine, &err) && !g_file_test(um, G_FILE_TEST_EXISTS));
+    /* A system entry can't be removed, only turned off. */
+    CHECK(!xd_autostart_remove(autostart_at(list, "a.desktop"), &err) && err != nullptr);
+    g_clear_error(&err);
+    g_ptr_array_unref(list);
+    /* Another desktop sees its own. */
+    list = xd_autostart_list(user, sys, "GNOME");
+    CHECK(autostart_at(list, "gnome.desktop") != nullptr && autostart_at(list, "us.desktop") == nullptr &&
+          autostart_at(list, "notus.desktop") != nullptr);
+    g_ptr_array_unref(list);
+
+    /* Adding: a command (quoted for Exec, never over another entry), a program. */
+    const char *argv[] = {"/usr/bin/foo", "a b", "$HOME", "50%", "plain", nullptr};
+    char *exec = xd_exec_quote(argv);
+    CHECK(strcmp(exec, "/usr/bin/foo \"a b\" \"\\$HOME\" 50%% plain") == 0);
+    g_free(exec);
+    char *f1 = xd_autostart_add_command(user, "true --flag 'a b' 100%", &err);
+    char *f2 = xd_autostart_add_command(user, "true", &err);
+    CHECK(f1 != nullptr && strcmp(f1, "true.desktop") == 0);
+    CHECK(f2 != nullptr && strcmp(f2, "true-2.desktop") == 0);
+    CHECK(xd_autostart_add_command(user, "broken 'quote", &err) == nullptr && err != nullptr);
+    g_clear_error(&err);
+    list = xd_autostart_list(user, sys, "XeonDesktop");
+    const xd_autostart *tool = autostart_at(list, "true.desktop");
+    CHECK(tool != nullptr && tool->enabled && tool->user_only &&
+          strcmp(tool->name, "true") == 0 &&
+          strcmp(tool->command, "true --flag \"a b\" 100%%") == 0);
+    g_ptr_array_unref(list);
+    put_file(root, "apps/org.example.Game.desktop",
+             "[Desktop Entry]\nType=Application\nName=Game\nExec=true --play\nNoDisplay=true\n");
+    char *src = g_build_filename(root, "apps", "org.example.Game.desktop", nullptr);
+    GDesktopAppInfo *info = g_desktop_app_info_new_from_filename(src);
+    CHECK(info != nullptr);
+    if (info != nullptr) {
+        char *f3 = xd_autostart_add_app(user, info, &err);
+        CHECK(f3 != nullptr && strcmp(f3, "org.example.Game.desktop") == 0);
+        char *u3 = g_build_filename(user, f3 != nullptr ? f3 : "x", nullptr);
+        CHECK(file_has(u3, "Exec=true --play"));
+        g_free(u3);
+        g_free(f3);
+        g_object_unref(info);
+    }
+    CHECK(err == nullptr);
+    g_free(src);
+    g_free(f1);
+    g_free(f2);
+    g_free(ua);
+    g_free(uh);
+    g_free(uo);
+    g_free(um);
+    g_free(user);
+    g_free(sys1);
+    g_free(sys2);
+    rm_tree(root);
+    g_free(root);
+}
+
+static void test_startup_services(void) {
+    const char *home = "/home/u/.config/systemd/user";
+    bool global = true;
+    const char *mine[] = {"/home/u/.config/systemd/user/default.target.wants/a.service", nullptr};
+    CHECK(xd_service_links_start_session(mine, home, &global) && !global);
+    const char *gs[] = {"/home/u/.config/systemd/user/sockets.target.wants/a.service",
+                        "/home/u/.config/systemd/user/graphical-session.target.wants/a.service",
+                        nullptr};
+    CHECK(xd_service_links_start_session(gs, home, &global) && !global);
+    const char *all[] = {"/etc/systemd/user/default.target.wants/p.service", nullptr};
+    CHECK(xd_service_links_start_session(all, home, &global) && global);
+    const char *other[] = {"/home/u/.config/systemd/user/timers.target.wants/t.service", nullptr};
+    CHECK(!xd_service_links_start_session(other, home, &global) && !global);
+    CHECK(!xd_service_links_start_session(nullptr, home, &global));
+
+    /* The services turned off here, remembered. */
+    char *root = g_dir_make_tmp("xd-startup-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    char *path = g_build_filename(root, "xeondesktop", "startup.ini", nullptr);
+    char **none = xd_startup_disabled_load(path);
+    CHECK(none != nullptr && none[0] == nullptr);
+    g_strfreev(none);
+    const char *units[] = {"a.service", "b.service", nullptr};
+    GError *err = nullptr;
+    CHECK(xd_startup_disabled_save(path, units, &err));
+    char **back = xd_startup_disabled_load(path);
+    CHECK(back != nullptr && g_strv_length(back) == 2 && strcmp(back[1], "b.service") == 0);
+    g_strfreev(back);
+    const char *empty[] = {nullptr};
+    CHECK(xd_startup_disabled_save(path, empty, &err) && !file_has(path, "Disabled"));
+    CHECK(err == nullptr);
+    g_free(path);
+    rm_tree(root);
+    g_free(root);
+
+    /* Run's Windows names. */
+    char *id = xd_run_app_path(XD_STR("xd-no-such-windows-name"));
+    CHECK(id == nullptr);
+    CHECK(xd_run_app_path(XD_STR("two words")) == nullptr);
+    CHECK(xd_run_app_path(XD_STR("/usr/bin/msconfig")) == nullptr);
+}
+
 static void test_search_match(void) {
     xd_search_name n;
     xd_search_name_init(&n, "  ");
@@ -6107,6 +6302,8 @@ int main(void) {
     test_printers();
     test_scanners();
     test_schedtasks();
+    test_startup_programs();
+    test_startup_services();
     test_search_match();
     test_thumbnail_cache();
     test_favorites();
