@@ -3404,6 +3404,7 @@ static void test_thumbnail_cache(void) {
     g_free(dir);
     g_free(dest);
     g_free(root);
+}
 
 /* xd-files' Favorites: GTK's bookmarks file, other lines kept as they are. */
 static void test_favorites(void) {
