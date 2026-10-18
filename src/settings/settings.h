@@ -52,6 +52,8 @@ typedef struct xd_tray_behavior {
     xd_tray_rule rule;
 } xd_tray_behavior;
 enum { XD_TRAY_RULES_MAX = 48 };
+/* The most "Number of programs on Start menu" goes to. */
+enum { XD_START_PROGRAMS_MAX = 30 };
 
 /* [Power] Scheme: XP's power schemes. Choosing one in Power Options fills
  * in its timeouts; the timeouts themselves are what the shell uses. */
@@ -253,9 +255,18 @@ typedef struct xd_settings {
     xd_edge edge;      /* where the taskbar is */
     int rows;          /* a top or bottom taskbar's height, in rows */
     int side_width;    /* a left or right taskbar's width, logical px */
+    /* Quick Launch's own View menu, as XP's toolbars have. */
+    bool quick_large;      /* View > Large Icons (else Small Icons) */
+    bool quick_show_text;  /* Show Text: each shortcut's name beside its icon */
+    bool quick_show_title; /* Show Title: "Quick Launch" before the buttons */
 
     /* [StartMenu] */
     xd_start_style start_style;
+    /* XP's Customize Start Menu: the program list's icon size, how many
+     * most-used programs it shows, and the highlight for new programs. */
+    bool start_large_icons;
+    int start_programs;
+    bool start_highlight_new;
 
     /* [ScreenSaver] */
     char screensaver[64];

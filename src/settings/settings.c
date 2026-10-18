@@ -218,6 +218,9 @@ void xd_settings_defaults(xd_settings *s) {
         .edge = XD_EDGE_BOTTOM,
         .rows = 1,
         .side_width = 150,
+        .start_large_icons = true,
+        .start_programs = 6, /* XP's */
+        .start_highlight_new = true,
         .screensaver_wait = 15,
         /* Windows' defaults: about 30 repeats a second after half a second. */
         .keyboard = {.repeat_delay = 500, .repeat_rate = 30, .cursor_blink_ms = 530},
@@ -556,12 +559,26 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             int64_t n;
             if (xd_str_parse_i64(v, 40, 800, &n))
                 s->side_width = (int)n;
+        } else if (KEY("QuickLaunchLargeIcons")) {
+            parse_bool(v, &s->quick_large);
+        } else if (KEY("QuickLaunchShowText")) {
+            parse_bool(v, &s->quick_show_text);
+        } else if (KEY("QuickLaunchShowTitle")) {
+            parse_bool(v, &s->quick_show_title);
         }
     } else if (SEC("StartMenu")) {
         if (KEY("Style")) {
             int i = index_of(start_style_names, XD_ARRAY_LEN(start_style_names), v);
             if (i >= 0)
                 s->start_style = (xd_start_style)i;
+        } else if (KEY("LargeIcons")) {
+            parse_bool(v, &s->start_large_icons);
+        } else if (KEY("Programs")) {
+            int64_t n;
+            if (xd_str_parse_i64(v, 0, XD_START_PROGRAMS_MAX, &n))
+                s->start_programs = (int)n;
+        } else if (KEY("HighlightNewPrograms")) {
+            parse_bool(v, &s->start_highlight_new);
         }
     } else if (SEC("ScreenSaver")) {
         if (KEY("Name")) {
@@ -774,7 +791,13 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Taskbar", "Edge", edge_names[s->edge]);
     g_key_file_set_integer(kf, "Taskbar", "Rows", s->rows);
     g_key_file_set_integer(kf, "Taskbar", "SideWidth", s->side_width);
+    g_key_file_set_boolean(kf, "Taskbar", "QuickLaunchLargeIcons", s->quick_large);
+    g_key_file_set_boolean(kf, "Taskbar", "QuickLaunchShowText", s->quick_show_text);
+    g_key_file_set_boolean(kf, "Taskbar", "QuickLaunchShowTitle", s->quick_show_title);
     g_key_file_set_string(kf, "StartMenu", "Style", start_style_names[s->start_style]);
+    g_key_file_set_boolean(kf, "StartMenu", "LargeIcons", s->start_large_icons);
+    g_key_file_set_integer(kf, "StartMenu", "Programs", s->start_programs);
+    g_key_file_set_boolean(kf, "StartMenu", "HighlightNewPrograms", s->start_highlight_new);
     g_key_file_set_string(kf, "ScreenSaver", "Name", s->screensaver);
     g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);
     g_key_file_set_boolean(kf, "ScreenSaver", "Password", s->screensaver_password);

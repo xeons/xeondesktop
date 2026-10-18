@@ -350,18 +350,23 @@ static xd_menu_model *window_menu(xd_shell *shell, xd_menu_tree *tree, xd_toplev
     xd_menu_item *it = add(tree, m, "Restore", restorable ? act_restore : nullptr, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_RESTORE;
     it->bold = restorable;
+    it->mnemonic = 'r';
     /* Fixed-size windows ignore Size (the compositor knows which they are). */
     bool movable = !restorable && shell->arranger != nullptr;
-    add(tree, m, "Move", movable ? act_move : nullptr, toplevel_ref(t));
-    add(tree, m, "Size", movable ? act_size : nullptr, toplevel_ref(t));
+    /* The system menu's letters: &Move, &Size, Mi&nimize, Ma&ximize. */
+    add(tree, m, "Move", movable ? act_move : nullptr, toplevel_ref(t))->mnemonic = 'm';
+    add(tree, m, "Size", movable ? act_size : nullptr, toplevel_ref(t))->mnemonic = 's';
     it = add(tree, m, "Minimize", t->minimized ? nullptr : act_minimize, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_MINIMIZE;
+    it->mnemonic = 'n';
     it = add(tree, m, "Maximize", t->maximized ? nullptr : act_maximize, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_MAXIMIZE;
+    it->mnemonic = 'x';
     separator(tree, m);
     it = add(tree, m, "Close", act_close, toplevel_ref(t));
     it->glyph = XD_MENU_GLYPH_CLOSE;
     it->accel = "Alt+F4";
+    it->mnemonic = 'c';
     it->bold = !restorable;
     return m;
 }

@@ -1393,6 +1393,38 @@ def gtk_combo_list(s):
     s.check(white > total // 2, "a white list box, not a menu")
 
 
+@scenario(LUNA_INI)
+def xp_start_letters_and_drag(s):
+    """The XP Start menu: a letter picks an item (U: Turn Off Computer, as
+    XP's Win, U, U), and a program dragged from it onto Quick Launch
+    becomes a shortcut there."""
+    with open(os.path.join(s.config, "start-pinned"), "w") as f:
+        f.write("org.xeondesktop.Files.desktop\n")
+    s.inject("key", "ctrl+Escape", "sleep", 600, "key", "u")
+    s.wait_window(title="Shut Down XeonDesktop", state="activated")
+    s.log("ok: U chose Turn Off Computer")
+    s.inject("key", "Escape")
+    s.wait_window(title="Shut Down XeonDesktop", gone=True)
+    # The one pinned program is the list's first row; Quick Launch starts
+    # just right of the Start button.
+    s.inject("key", "ctrl+Escape", "sleep", 600)
+    s.settle("menu")
+    s.inject("move", 90, 352, "sleep", 200, "down", "sleep", 100, "move", 100, 360, "sleep", 100,
+             "move", 110, 600, "sleep", 100, "move", 110, 752, "sleep", 200, "move", 111, 752,
+             "sleep", 300, "up", "sleep", 500)
+    folder = os.path.join(s.data, "xeondesktop", "quicklaunch")
+
+    def added():
+        for name in os.listdir(folder):
+            path = os.path.join(folder, name)
+            if os.path.islink(path) and os.readlink(path).endswith("org.xeondesktop.Files.desktop"):
+                return name
+        return None
+
+    name = s.wait(added, "the dropped program in Quick Launch")
+    s.check(name.startswith("10-"), f"it went in first, where it was dropped ({name})")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

@@ -2,6 +2,8 @@
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <sys/timerfd.h>
+#include <glib.h>
+#include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "../settings/soundplay.h"
@@ -9,8 +11,9 @@
 #include "menu.h"
 #include "shell.h"
 
-/* Windows' default MenuShowDelay. */
+/* Windows' default MenuShowDelay; how far a press moves before it drags. */
 enum { XD_MENU_DELAY_MS = 400, XD_MENU_MIN_W = 120 };
+static constexpr double XD_MENU_DRAG_PX = 5;
 
 /* ---- models ------------------------------------------------------------------ */
 
@@ -205,6 +208,8 @@ static void render(xd_menu *menu) {
             xd_theme_draw_menu_separator(&t, cr, r);
             continue;
         }
+        if (it->highlight && menu->hot != (int)i)
+            xd_fill_rect(cr, r, xd_rgba_hex(XD_NEW_PROGRAM_COLOR));
         uint8_t state = 0;
         /* Only the item under the pointer: the one whose submenu is still
          * open (it closes after the hover delay) loses its highlight at
@@ -472,6 +477,10 @@ static void menu_destroy(xd_menu *menu) {
         wp_fractional_scale_v1_destroy(menu->fractional);
     wl_surface_destroy(menu->surface);
     xd_shm_ring_finish(&menu->ring);
+    if (menu->own_tree != nullptr) {
+        xd_menu_tree_free(menu->own_tree);
+        xd_free(menu->own_tree);
+    }
     xd_free(menu->item_y);
     xd_free(menu->item_h);
     xd_free(menu->item_xs);
@@ -518,7 +527,7 @@ void xd_menu_timer_fired(xd_shell *shell) {
         xd_start7_timer_fired(shell);
     xd_menu *menu = shell->pending_menu;
     shell->pending_menu = nullptr;
-    if (menu == nullptr)
+    if (menu == nullptr || (menu->child != nullptr && menu->child->context))
         return;
     /* Settle on whatever the pointer rests on: open its submenu, or close
      * a submenu the pointer has left. */
@@ -539,6 +548,20 @@ static void set_hot(xd_menu *menu, int hot) {
 
 void xd_menu_pointer_motion(xd_menu *menu, double x, double y) {
     menu->shell->pointer_menu = menu;
+    menu->ptr_x = x;
+    menu->ptr_y = y;
+    /* A program's right-click menu is up: this one waits for it. */
+    if (menu->child != nullptr && menu->child->context)
+        return;
+    /* A program pressed and pulled: dragged (to Quick Launch, the desktop). */
+    if (menu->pressed >= 0 && menu->pressed == menu->hot &&
+        menu->model->items[menu->pressed].app != nullptr &&
+        fabs(x - menu->press_x) + fabs(y - menu->press_y) > XD_MENU_DRAG_PX) {
+        const xd_app *app = menu->model->items[menu->pressed].app;
+        menu->pressed = -1;
+        if (xd_dnd_start_app_drag(menu->shell, app, menu->surface, menu->scale))
+            return;
+    }
     /* Moving into a submenu keeps its parent item highlighted. */
     if (menu->parent != nullptr && menu->parent->hot != menu->parent->child_index) {
         menu->parent->hot = menu->parent->child_index;
@@ -550,6 +573,8 @@ void xd_menu_pointer_motion(xd_menu *menu, double x, double y) {
 void xd_menu_pointer_leave(xd_menu *menu) {
     if (menu->shell->pointer_menu == menu)
         menu->shell->pointer_menu = nullptr;
+    if (menu->child != nullptr && menu->child->context)
+        return;
     /* Keep the item whose submenu is open highlighted. */
     int keep = menu->child != nullptr ? menu->child_index : -1;
     if (menu->hot != keep) {
@@ -587,15 +612,96 @@ static void activate(xd_menu *menu, int index) {
     }
 }
 
+/* A program's right-click menu: what its own name does, and pinning it
+ * (XP's All Programs, the XP and Windows 7 menus' Control Panel). The
+ * actions run after the menus close; the app belongs to shell->apps. */
+static void ctx_open([[maybe_unused]] xd_shell *shell, void *data) {
+    const xd_app *app = data;
+    if (xd_app_launch(app))
+        xd_start7_count_launch(app->id);
+}
+static void ctx_pin(xd_shell *shell, void *data) {
+    xd_start7_set_pinned(shell, ((const xd_app *)data)->id, true);
+}
+static void ctx_unpin(xd_shell *shell, void *data) {
+    xd_start7_set_pinned(shell, ((const xd_app *)data)->id, false);
+}
+
+static void open_context(xd_menu *menu, int index) {
+    const xd_app *app = menu->model->items[index].app;
+    xd_shell *shell = menu->shell;
+    if (!menu->shown)
+        return;
+    if (menu->child != nullptr)
+        menu_destroy(menu->child);
+    xd_menu_tree *tree = XD_NEW(xd_menu_tree);
+    xd_menu_tree_init(tree);
+    xd_menu_model *mm = xd_menu_model_new(tree);
+    void *data = (void *)(uintptr_t)app;
+    xd_menu_item *it = xd_menu_add(tree, mm, XD_MENU_ACTION, "Open", nullptr);
+    it->bold = true;
+    it->action = ctx_open;
+    it->action_data = data;
+    xd_menu_add(tree, mm, XD_MENU_SEPARATOR, nullptr, nullptr);
+    bool full = false;
+    bool pinned = xd_start7_pinned(shell, app->id, &full);
+    it = xd_menu_add(tree, mm, XD_MENU_ACTION,
+                     pinned ? "Unpin from Start menu" : "Pin to Start menu", nullptr);
+    it->action = pinned ? ctx_unpin : ctx_pin;
+    it->action_data = data;
+    it->disabled = !pinned && full;
+
+    xd_menu *child = menu_create(shell, mm);
+    child->parent = menu;
+    child->context = true;
+    child->own_tree = tree;
+    struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
+    xdg_positioner_set_size(pos, child->width, child->height);
+    xdg_positioner_set_anchor_rect(pos, (int)menu->ptr_x, (int)menu->ptr_y, 1, 1);
+    xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_TOP_LEFT);
+    xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+    xdg_positioner_set_constraint_adjustment(
+        pos, XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X |
+                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y |
+                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |
+                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
+    child->popup = xdg_surface_get_popup(child->xdg_surface, menu->xdg_surface, pos);
+    xdg_positioner_destroy(pos);
+    menu_finish_popup(child, shell->menu_serial);
+    menu->child = child;
+    menu->child_index = index;
+    menu->hot = index;
+    menu->dirty = true;
+}
+
 void xd_menu_pointer_button(xd_menu *menu, uint32_t button, bool pressed) {
     if (button != BTN_LEFT && button != BTN_RIGHT)
         return;
+    /* A click beside a program's right-click menu closes just that. */
+    if (menu->child != nullptr && menu->child->context) {
+        if (pressed)
+            menu_destroy(menu->child);
+        menu->pressed = -1;
+        return;
+    }
     int index = menu->hot;
     if (index < 0)
         return;
     const xd_menu_item *it = &menu->model->items[index];
     int was_pressed = menu->pressed;
     menu->pressed = pressed && button == BTN_LEFT ? index : -1;
+    if (pressed) {
+        menu->press_x = menu->ptr_x;
+        menu->press_y = menu->ptr_y;
+    }
+    /* A program's own menu, on release as in Windows; in the XP and
+     * Windows 7 menus only, which have a pinned list. */
+    if (button == BTN_RIGHT && it->kind == XD_MENU_ACTION && it->app != nullptr &&
+        menu->shell->start7 != nullptr) {
+        if (!pressed && !it->disabled)
+            open_context(menu, index);
+        return;
+    }
     /* A click on a submenu with its own command (Windows 2000's Control
      * Panel) runs it: pressed and released here, not dragged onto. */
     if (!pressed && button == BTN_LEFT && was_pressed == index && it->kind == XD_MENU_SUBMENU &&
@@ -625,6 +731,38 @@ static int step(const xd_menu *menu, int from, int dir) {
             return i;
     }
     return -1;
+}
+
+/* The letter that picks an item: its mnemonic, else its label's first. */
+static uint32_t item_letter(const xd_menu_item *it) {
+    if (it->mnemonic != 0)
+        return it->mnemonic;
+    gunichar c = g_utf8_get_char_validated(it->label, -1);
+    return c == (gunichar)-1 || c == (gunichar)-2 ? 0 : g_unichar_tolower(c);
+}
+
+/* Typing a letter: the items it picks (mnemonics first, as Windows' own
+ * menus do when some items have one), counted in *count; returns the next
+ * after the highlighted one, round from the top. */
+static int letter_next(const xd_menu *menu, uint32_t ch, int *count) {
+    const xd_menu_model *m = menu->model;
+    bool explicit = false;
+    for (size_t i = 0; i < m->count; i++)
+        explicit = explicit || (m->items[i].mnemonic == ch && !m->items[i].disabled);
+    *count = 0;
+    int first = -1, next = -1;
+    for (size_t i = 0; i < m->count; i++) {
+        const xd_menu_item *it = &m->items[i];
+        if (it->kind == XD_MENU_SEPARATOR || it->kind == XD_MENU_HEADER || it->disabled ||
+            (explicit ? it->mnemonic != ch : item_letter(it) != ch))
+            continue;
+        (*count)++;
+        if (first < 0)
+            first = (int)i;
+        if (next < 0 && (int)i > menu->hot)
+            next = (int)i;
+    }
+    return next >= 0 ? next : first;
 }
 
 bool xd_menu_key(xd_shell *shell, uint32_t sym) {
@@ -678,6 +816,20 @@ bool xd_menu_key_chain(xd_menu *root, uint32_t sym) {
             xd_menu_close_all(shell);
         return true;
     default:
-        return false;
+        break;
     }
+    /* A letter: the one item it picks runs (or opens); several take turns
+     * being highlighted, as in Windows. */
+    uint32_t ch = xkb_keysym_to_utf32(sym);
+    if (ch <= 0x20 || ch == 0x7F)
+        return false;
+    int count = 0;
+    int next = letter_next(menu, g_unichar_tolower(ch), &count);
+    if (count > 0) {
+        menu->hot = next;
+        menu->dirty = true;
+        if (count == 1)
+            return xd_menu_key_chain(root, XKB_KEY_Return);
+    }
+    return true;
 }

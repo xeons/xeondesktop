@@ -152,6 +152,8 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
                            uint32_t time, uint32_t button, uint32_t state) {
     xd_shell *shell = data;
     bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
+    if (pressed)
+        shell->button_serial = serial;
     /* The compositor only dismisses the flyout's grab for clicks in other
      * programs; the desktop and taskbar are ours. */
     if (pressed && !shell->pointer_flyout)
@@ -571,6 +573,7 @@ void xd_shell_start_menu_closed(xd_shell *shell) {
     xd_taskbar *bar = shell->start_bar;
     shell->start_bar = nullptr;
     shell->context_menu = false;
+    xd_start_menu_reload_later(shell); /* programs installed while it was open */
     if (bar == nullptr)
         return;
     if (bar->layer != nullptr)
@@ -982,6 +985,7 @@ int main(int argc, char **argv) {
     xd_menu_tree_init(&shell.docs_tree);
     shell.last_arrange = -1;
     xd_start_menu_build(&shell);
+    xd_start_menu_watch_programs(&shell);
     shell.menu_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     shell.flash_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     shell.tooltip_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
@@ -1043,6 +1047,7 @@ int main(int argc, char **argv) {
         g_hash_table_destroy(shell.own_commands);
     xd_menu_tree_free(&shell.context_tree);
     xd_menu_tree_free(&shell.docs_tree);
+    xd_start_menu_unwatch_programs(&shell);
     xd_apps_free(&shell.apps);
     xd_apps_free(&shell.control_apps);
     xd_quicklaunch_finish(&shell);

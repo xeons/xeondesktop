@@ -1094,6 +1094,23 @@ static void test_settings(void) {
     xd_settings_merge(&base, &pending, &now);
     CHECK(now.style == XD_STYLE_LUNA && strcmp(now.wallpaper, "/w/new.jpg") == 0);
     CHECK(!now.show_clock && xd_settings_tray_rule(&now, "nm-applet") == XD_TRAY_AUTO);
+
+    /* Customize Start Menu and Quick Launch's View menu. */
+    xd_settings_defaults(&a);
+    CHECK(a.start_large_icons && a.start_programs == 6 && a.start_highlight_new);
+    CHECK(!a.quick_large && !a.quick_show_text && !a.quick_show_title);
+    xd_settings_parse(XD_STR("[StartMenu]\nLargeIcons=false\nPrograms=12\n"
+                             "HighlightNewPrograms=false\n[Taskbar]\nQuickLaunchLargeIcons=true\n"
+                             "QuickLaunchShowText=true\nQuickLaunchShowTitle=true\n"),
+                      &a);
+    CHECK(!a.start_large_icons && a.start_programs == 12 && !a.start_highlight_new);
+    CHECK(a.quick_large && a.quick_show_text && a.quick_show_title);
+    xd_settings_serialize(&a, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && b.start_programs == 12 && b.quick_show_title);
+    xd_strbuf_free(&text);
+    xd_settings_parse(XD_STR("[StartMenu]\nPrograms=31\n"), &a);
+    CHECK(a.start_programs == 6);
 }
 
 static void test_desktop_icon_settings(void) {

@@ -116,7 +116,7 @@ enum {
 enum {
     XP_W = 420,
     XP_LEFT_W = 190,
-    XP_BODY_H = 372,
+    XP_BODY_H = 372, /* the least; more programs make it taller */
     XP_PAD = 6,
     XP_PIN_ROW = 42,
     XP_ROW = 36,
@@ -125,8 +125,10 @@ enum {
     XP_BOLD_ROW = 30,
     XP_RIGHT_ROW = 26,
     XP_TALL_ROW = 36,
-    XP_MFU = 6,
     XP_PICTURE = 48,
+    /* Customize Start Menu's "Small icons": 16px icons in shorter rows. */
+    XP_ROW_SMALL = 22,
+    XP_PIN_ROW_SMALL = 32, /* Internet and E-mail keep their two lines */
 };
 
 typedef struct xp_item {
@@ -166,6 +168,9 @@ struct xd_start7 {
     bool xp;                /* Windows XP layout */
     xd_visual_style look;   /* style when opened (XP header and footer sizes) */
     int w, h;               /* logical size */
+    bool large;             /* XP: the program list's large icons */
+    int body_h;             /* XP: between the header and the footer */
+    double press_x, press_y; /* where a program was pressed, to drag it */
 
     left_mode mode;
     row *rows;
@@ -197,6 +202,8 @@ struct xd_start7 {
 
 /* sub_owner for a program's jump list. */
 static constexpr int OWNER_JUMP = 5001;
+/* How far a pressed program moves before it's dragged. */
+static constexpr double S7_DRAG_PX = 5;
 /* Width of a program's jump list ▸ at the right of its row. */
 static constexpr int S7_JUMP_W = 24;
 
@@ -309,8 +316,8 @@ static int xp_foot(const xd_start7 *m) { return watercolor(m) ? 34 : 40; }
 static xd_rect xp_left_panel(const xd_start7 *m) {
     int top = xp_head(m);
     if (watercolor(m))
-        return (xd_rect){4, top + 3, XP_LEFT_W - 4, XP_BODY_H - 6};
-    return (xd_rect){0, top, XP_LEFT_W, XP_BODY_H};
+        return (xd_rect){4, top + 3, XP_LEFT_W - 4, m->body_h - 6};
+    return (xd_rect){0, top, XP_LEFT_W, m->body_h};
 }
 static int xp_item_height(const xp_item *it) {
     return it->hit == R_SEP ? XP_SEP : it->tall ? XP_TALL_ROW : it->bold ? XP_BOLD_ROW : XP_RIGHT_ROW;
@@ -374,9 +381,16 @@ static xd_rect picture_rect(void) {
 }
 
 static int row_height(left_mode mode, const row *r);
+static const char *app_role(const xd_app *app);
 static int row_h(const xd_start7 *m, const row *r) {
-    if (m->xp)
-        return r->kind == ROW_SEP ? XP_SEP : r->pinned ? XP_PIN_ROW : XP_ROW;
+    if (m->xp) {
+        if (r->kind == ROW_SEP)
+            return XP_SEP;
+        if (m->large)
+            return r->pinned ? XP_PIN_ROW : XP_ROW;
+        return r->pinned && r->kind == ROW_APP && app_role(r->app) != nullptr ? XP_PIN_ROW_SMALL
+                                                                              : XP_ROW_SMALL;
+    }
     return row_height(m->mode, r);
 }
 
@@ -508,6 +522,22 @@ static void set_pinned(const xd_shell *shell, const char *id, bool pin) {
     g_string_free(text, TRUE);
 }
 
+bool xd_start7_pinned(const xd_shell *shell, const char *id, bool *full) {
+    const xd_app *apps[MAX_PINNED];
+    size_t n = 0;
+    load_pinned(shell, apps, &n, MAX_PINNED);
+    bool pinned = false;
+    for (size_t i = 0; i < n; i++)
+        pinned = pinned || strcmp(apps[i]->id, id) == 0;
+    if (full != nullptr)
+        *full = n >= MAX_PINNED;
+    return pinned;
+}
+
+void xd_start7_set_pinned(const xd_shell *shell, const char *id, bool pin) {
+    set_pinned(shell, id, pin);
+}
+
 /* Remove from this list: forgets a program's launches. */
 static void forget_launches(const char *id) {
     char **lines = nullptr;
@@ -556,6 +586,7 @@ static void note_launch_time(const char *id) {
 
 void xd_start7_count_launch(const char *id) {
     note_launch_time(id);
+    xd_start_menu_program_opened(id); /* not "newly installed" any more */
     /* "count<TAB>id" lines; the most used come first. */
     char **lines = nullptr;
     size_t n = 0;
@@ -608,7 +639,7 @@ static void build_home(xd_start7 *m) {
     xd_state_read_lines("start-frequent", &lines, &n, 64);
     bool sep = false;
     size_t shown = 0;
-    size_t most = m->xp ? XP_MFU : S7_FREQUENT;
+    size_t most = m->xp ? (size_t)XD_MAX(shell->settings.start_programs, 0) : S7_FREQUENT;
     for (size_t i = 0; i < n && shown < most; i++) {
         xd_str line = xd_str_from_cstr(lines[i]);
         size_t tab;
@@ -1209,6 +1240,13 @@ static void draw_xp_arrow(cairo_t *cr, const xd_theme *t, xd_rect r, const xp_pa
     cairo_fill(cr);
 }
 
+/* XP lights All Programs while a newly installed program is in it. */
+static bool new_programs(const xd_start7 *m) {
+    const xd_shell *shell = m->shell;
+    return shell->settings.start_highlight_new && shell->new_apps != nullptr &&
+           g_hash_table_size(shell->new_apps) > 0;
+}
+
 static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_palette *p) {
     double s = t->scale;
     xd_rect lr = list_rect(m);
@@ -1229,7 +1267,7 @@ static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_
         bool hot = (int)i == m->hot_left;
         if (hot)
             xd_fill_rect(cr, D(rr, s), p->hot);
-        int icon = 32;
+        int icon = m->large ? 32 : 16;
         draw_icon(m->shell, cr, r->app->icon, nullptr,
                   D((xd_rect){rr.x + 4, rr.y + (h - icon) / 2, icon, icon}, s));
         int tx = rr.x + 4 + icon + 6;
@@ -1261,6 +1299,8 @@ static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_
     bool hot = m->hot_right == HIT_ALL || m->sub_owner == HIT_ALL;
     if (hot)
         xd_fill_rect(cr, D(ar, s), p->hot);
+    else if (new_programs(m))
+        xd_fill_rect(cr, D(ar, s), xd_rgba_hex(XD_NEW_PROGRAM_COLOR));
     xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
     bold.bold = true;
     xd_text_style st = xd_text(t, XD_FONT_MENU, hot ? p->hot_text : p->left_text, XD_ALIGN_END);
@@ -1376,8 +1416,8 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
     int head = xp_head(m), foot = xp_foot(m);
     xd_rect whole = D((xd_rect){0, 0, m->w, m->h}, s);
     xd_rect head_r = D((xd_rect){0, 0, m->w, head}, s);
-    xd_rect body_r = D((xd_rect){0, head, m->w, XP_BODY_H}, s);
-    xd_rect foot_r = D((xd_rect){0, head + XP_BODY_H, m->w, foot}, s);
+    xd_rect body_r = D((xd_rect){0, head, m->w, m->body_h}, s);
+    xd_rect foot_r = D((xd_rect){0, head + m->body_h, m->w, foot}, s);
     double rad = p.classic || p.whistler ? 0 : xd_tpx(t, 7);
 
     cairo_save(cr);
@@ -1401,7 +1441,7 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
         xd_fill_rect(cr, left, p.left_bg);
         xd_draw_bevel(cr, left, XD_MAX(xd_tpx(t, 1), 1), p.panel_border, p.panel_border);
     } else {
-        xd_rect right = D((xd_rect){XP_LEFT_W, head, m->w - XP_LEFT_W, XP_BODY_H}, s);
+        xd_rect right = D((xd_rect){XP_LEFT_W, head, m->w - XP_LEFT_W, m->body_h}, s);
         xd_fill_rect(cr, left, p.left_bg);
         xd_fill_rect(cr, right, p.right_bg);
         xd_fill_rect(cr, (xd_rect){right.x, right.y, XD_MAX(xd_tpx(t, 1), 1), right.h},
@@ -1719,7 +1759,7 @@ static void open_sub(xd_start7 *m, int owner) {
         mm = context_model(m, &m->rows[m->context_row]);
         anchor = (xd_rect){(int)m->ptr_x, (int)m->ptr_y, 1, 1};
     } else if (m->xp && owner == HIT_ALL) {
-        mm = xd_start_programs_model(shell, &m->tree);
+        mm = xd_start_programs_model(shell, &m->tree, shell->settings.start_highlight_new);
         anchor = all_rect(m);
     } else if (owner == R_RECENT) {
         mm = recent_model(m);
@@ -1947,6 +1987,21 @@ static void load_user(xd_start7 *m) {
     xd_strbuf_free(&p);
 }
 
+/* XP's menu is as tall as its columns need: the right one's items, or the
+ * program list (more most-used programs than fit make it taller), but no
+ * taller than the screen. */
+static int xp_body_height(const xd_start7 *m) {
+    int right = 2 * XP_PAD;
+    for (size_t i = 0; i < XD_ARRAY_LEN(xp_items); i++)
+        right += xp_item_height(&xp_items[i]);
+    int left = 2 * XP_PAD + XP_SEP + XP_ALL_H + (watercolor(m) ? 6 : 0);
+    for (size_t i = 0; i < m->row_count; i++)
+        left += row_h(m, &m->rows[i]);
+    int most = xd_shell_screen_height(m->shell) - xp_head(m) - xp_foot(m) -
+               xd_taskbar_thickness(m->shell);
+    return XD_MAX(XD_MIN(XD_MAX(XD_MAX(right, left), XP_BODY_H), most), right);
+}
+
 void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     xd_shell *shell = bar->shell;
     xd_menu_close_all(shell);
@@ -1963,11 +2018,15 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     m->xp = xp;
     m->look = shell->style;
     m->w = xp ? XP_W : S7_W;
-    m->h = xp ? xp_head(m) + XP_BODY_H + xp_foot(m) : S7_H;
+    m->large = shell->settings.start_large_icons;
     xd_menu_tree_init(&m->tree);
     load_user(m);
     shell->start7 = m;
+    if (xp)
+        xd_start_menu_note_programs(shell); /* what's new since it last opened */
     rebuild(m);
+    m->body_h = xp ? xp_body_height(m) : 0;
+    m->h = xp ? xp_head(m) + m->body_h + xp_foot(m) : S7_H;
 
     m->surface = wl_compositor_create_surface(shell->compositor);
     if (shell->fractional_manager != nullptr && shell->viewporter != nullptr) {
@@ -2073,6 +2132,16 @@ void xd_start7_pointer_motion(xd_shell *shell, double x, double y) {
         return;
     m->ptr_x = x;
     m->ptr_y = y;
+    /* A program pressed and pulled: dragged (to Quick Launch, the desktop),
+     * as from XP's and Windows 7's menus. */
+    if (m->pressed >= 0 && m->pressed < 1000 && (size_t)m->pressed < m->row_count &&
+        m->rows[m->pressed].kind == ROW_APP &&
+        fabs(x - m->press_x) + fabs(y - m->press_y) > S7_DRAG_PX) {
+        const xd_app *app = m->rows[m->pressed].app;
+        m->pressed = -1;
+        if (xd_dnd_start_app_drag(shell, app, m->surface, m->scale))
+            return;
+    }
     int left = row_at(m, x, y);
     int right = right_at(m, x, y);
     if (contains(all_rect(m), x, y) && m->mode != MODE_SEARCH)
@@ -2125,6 +2194,8 @@ void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
     int target = m->hot_left >= 0 ? m->hot_left : (m->hot_right >= 0 ? 1000 + m->hot_right : -1);
     if (pressed) {
         m->pressed = target;
+        m->press_x = m->ptr_x;
+        m->press_y = m->ptr_y;
         /* ▸ items open on press, like menus. */
         if (opens_on_press(m, m->hot_right))
             activate_right(m, m->hot_right);
@@ -2409,6 +2480,80 @@ static void key_activate(xd_start7 *m) {
         activate_right(m, hit);
 }
 
+/* XP's letters: typing one picks the item it starts (or the underlined
+ * letter, for the few whose letter is known: All Programs, Run..., Log Off,
+ * Turn Off Computer, as in XP's Win, U, U). One item: it runs or opens;
+ * several: they take turns being highlighted. Across the program list,
+ * the right column and the footer, in that order. */
+typedef struct letter_stop {
+    int left, right; /* row index or -1; hit code or -1 */
+    const char *label;
+    uint32_t mnemonic;
+} letter_stop;
+
+static size_t xp_letter_stops(const xd_start7 *m, letter_stop *out, size_t max) {
+    size_t n = 0;
+    for (size_t i = 0; i < m->row_count && n < max; i++) {
+        const row *r = &m->rows[i];
+        if (r->kind != ROW_APP)
+            continue;
+        const char *role = r->pinned ? app_role(r->app) : nullptr;
+        out[n++] = (letter_stop){(int)i, -1, role != nullptr ? role : r->app->name, 0};
+    }
+    if (n < max)
+        out[n++] = (letter_stop){-1, HIT_ALL, "All Programs", 'p'};
+    for (size_t i = 0; i < XD_ARRAY_LEN(xp_items) && n < max; i++) {
+        const xp_item *it = &xp_items[i];
+        if (it->hit != R_SEP && !it->disabled)
+            out[n++] = (letter_stop){-1, it->hit, it->label, it->hit == R_RUN ? 'r' : 0};
+    }
+    if (n + 2 <= max) {
+        out[n++] = (letter_stop){-1, HIT_LOGOFF, "Log Off", 'l'};
+        out[n++] = (letter_stop){-1, HIT_TURNOFF, "Turn Off Computer", 'u'};
+    }
+    return n;
+}
+
+static uint32_t first_letter(const char *label) {
+    gunichar c = g_utf8_get_char_validated(label, -1);
+    return c == (gunichar)-1 || c == (gunichar)-2 ? 0 : g_unichar_tolower(c);
+}
+
+static bool xp_letter(xd_start7 *m, const char *utf8) {
+    gunichar c = g_utf8_get_char_validated(utf8, -1);
+    if (c == (gunichar)-1 || c == (gunichar)-2 || c <= 0x20)
+        return false;
+    uint32_t ch = g_unichar_tolower(c);
+    letter_stop stops[MAX_PINNED + XD_START_PROGRAMS_MAX + 32];
+    size_t n = xp_letter_stops(m, stops, XD_ARRAY_LEN(stops));
+    bool explicit = false;
+    for (size_t i = 0; i < n; i++)
+        explicit = explicit || stops[i].mnemonic == ch;
+    /* Where the highlight is now, in the same order. */
+    size_t at = n;
+    for (size_t i = 0; i < n; i++) {
+        if ((stops[i].left >= 0 && stops[i].left == m->hot_left) ||
+            (stops[i].left < 0 && m->hot_left < 0 && stops[i].right == m->hot_right))
+            at = i;
+    }
+    size_t count = 0, pick = n;
+    for (size_t k = 1; k <= n; k++) {
+        size_t i = at == n ? k - 1 : (at + k) % n;
+        bool match = explicit ? stops[i].mnemonic == ch
+                              : stops[i].mnemonic == 0 && first_letter(stops[i].label) == ch;
+        if (!match)
+            continue;
+        if (count++ == 0)
+            pick = i;
+    }
+    if (count == 0)
+        return true;
+    set_hot(m, stops[pick].left, stops[pick].right);
+    if (count == 1)
+        key_activate(m); /* may free m */
+    return true;
+}
+
 bool xd_start7_key(xd_shell *shell, uint32_t sym, const char *utf8, bool ctrl_or_alt) {
     xd_start7 *m = shell->start7;
     if (m == nullptr)
@@ -2465,6 +2610,8 @@ bool xd_start7_key(xd_shell *shell, uint32_t sym, const char *utf8, bool ctrl_or
     default:
         break;
     }
+    if (m->xp && !ctrl_or_alt && utf8 != nullptr && utf8[0] != '\0')
+        return xp_letter(m, utf8); /* may free m */
     /* Any other typing goes to the search box, as on Windows 7 (XP has none). */
     if (!m->xp && !ctrl_or_alt && utf8 != nullptr && (unsigned char)utf8[0] >= 0x20 && utf8[0] != 0x7F) {
         xd_textedit_move(&m->search, XD_MOTION_END, false);

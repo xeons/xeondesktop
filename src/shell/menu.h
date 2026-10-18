@@ -43,7 +43,14 @@ typedef struct xd_menu_item {
     bool bold;            /* the default item */
     xd_menu_glyph glyph;  /* window-menu glyph in the icon column */
     const char *accel;    /* shortcut text, e.g. "Alt+F4" */
+    /* The letter that picks it (lower case), as an underlined letter does
+     * in Windows; 0: the label's first letter. */
+    uint32_t mnemonic;
+    bool highlight; /* XP's newly installed programs (and their folders) */
 } xd_menu_item;
+
+/* The pale orange behind XP's newly installed programs. */
+static constexpr uint32_t XD_NEW_PROGRAM_COLOR = 0xFCE3A4;
 
 struct xd_menu_model {
     xd_menu_item *items;
@@ -93,6 +100,13 @@ typedef struct xd_menu {
     bool dirty;
     int hot; /* highlighted item or -1 */
     int pressed; /* item the left button went down on, or -1 */
+    double ptr_x, ptr_y;     /* the pointer (logical): where a drag starts */
+    double press_x, press_y; /* ...and where the press was */
+    /* A program's right-click menu (Open, Pin to Start menu) over this
+     * menu's item child_index: its parent ignores the pointer meanwhile.
+     * It owns its model. */
+    bool context;
+    xd_menu_tree *own_tree;
 } xd_menu;
 
 /* Opens `model` as a popup of the taskbar's layer surface, anchored to

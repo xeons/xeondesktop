@@ -21,13 +21,22 @@ typedef struct customize {
     xd_tray_rule *rules;
 } customize;
 
+/* XP's Customize Start Menu: what it changes goes to `pending` on OK. */
+typedef struct start_custom {
+    xd_window *win;
+    xd_widget *large, *programs, *highlight;
+    bool clear; /* Clear List was pressed */
+} start_custom;
+
 typedef struct props {
     xd_ui *ui;
     xd_window *win;
     xd_settings saved, pending;
     xd_widget *apply;
     xd_widget *description;
+    xd_widget *start_customize;
     customize *cust;
+    start_custom *start_cust;
 } props;
 
 static const char *const descriptions[XD_START_STYLE_COUNT] = {
@@ -100,6 +109,9 @@ static void on_style(xd_widget *w, void *user) {
     if (i >= 0 && i < XD_START_STYLE_COUNT) {
         p->pending.start_style = (xd_start_style)i;
         xd_widget_set_text(p->description, descriptions[i]);
+        /* Only the XP menu's options are here so far. */
+        if (p->start_customize != nullptr)
+            xd_widget_set_enabled(p->start_customize, i == XD_START_XP);
     }
     changed(p);
 }
@@ -243,15 +255,119 @@ static void on_customize([[maybe_unused]] xd_widget *w, void *user) {
     xd_window_show(c->win);
 }
 
+/* ---- Customize Start Menu (XP) ----------------------------------------------- */
+
+static void close_start_custom(props *p) {
+    start_custom *c = p->start_cust;
+    if (c == nullptr)
+        return;
+    p->start_cust = nullptr;
+    xd_window_close(c->win);
+    xd_free(c);
+}
+
+static void on_start_clear([[maybe_unused]] xd_widget *w, void *user) {
+    props *p = user;
+    if (p->start_cust != nullptr) {
+        p->start_cust->clear = true;
+        xd_widget_set_enabled(w, false);
+    }
+}
+
+static void on_start_custom_ok([[maybe_unused]] xd_widget *w, void *user) {
+    props *p = user;
+    start_custom *c = p->start_cust;
+    p->pending.start_large_icons = xd_checkbox_checked(c->large);
+    int n = xd_widget_selected(c->programs);
+    if (n >= 0 && n <= XD_START_PROGRAMS_MAX)
+        p->pending.start_programs = n;
+    p->pending.start_highlight_new = xd_checkbox_checked(c->highlight);
+    /* Clear List: the most-used programs are forgotten (not the programs). */
+    if (c->clear && !xd_state_write_lines("start-frequent", nullptr, 0))
+        fprintf(stderr, "xd-taskbar: cannot clear the Start menu's list\n");
+    changed(p);
+    close_start_custom(p);
+}
+
+static void on_start_custom_cancel([[maybe_unused]] xd_widget *w, void *user) {
+    close_start_custom(user);
+}
+
+static void on_start_customize([[maybe_unused]] xd_widget *w, void *user) {
+    props *p = user;
+    if (p->start_cust != nullptr)
+        return;
+    start_custom *c = XD_NEW(start_custom);
+    p->start_cust = c;
+    c->win = xd_window_create(p->ui, "Customize Start Menu", "xd-taskbar", 380, 356);
+    static const char *const tabs[] = {"General", "Advanced"};
+    xd_widget *tab = xd_tabs(c->win, (xd_rect){7, 7, 366, 310}, tabs, 2, nullptr, p);
+
+    /* General */
+    xd_widget_set_page(xd_groupbox(c->win, (xd_rect){20, 40, 340, 84},
+                                   "Select an icon size for programs"),
+                       0);
+    xd_widget_set_page(xd_image(c->win, (xd_rect){40, 62, 32, 32}, "application-x-executable"),
+                       0);
+    c->large = xd_radio(c->win, (xd_rect){80, 68, 100, 20}, "Large icons", true, nullptr, p);
+    xd_widget_set_page(c->large, 0);
+    xd_widget_set_page(xd_image(c->win, (xd_rect){200, 70, 16, 16}, "application-x-executable"),
+                       0);
+    xd_widget *small = xd_radio(c->win, (xd_rect){224, 68, 100, 20}, "Small icons", false,
+                                nullptr, p);
+    xd_widget_set_page(small, 0);
+    xd_radio_set(p->pending.start_large_icons ? c->large : small);
+
+    xd_widget_set_page(xd_groupbox(c->win, (xd_rect){20, 134, 340, 132}, "Programs"), 0);
+    xd_widget_set_page(xd_label(c->win, (xd_rect){32, 154, 316, 44},
+                                "The Start menu contains shortcuts to the programs you use "
+                                "most often. Clearing the list of shortcuts does not delete "
+                                "the programs.",
+                                XD_LABEL_WRAP),
+                       0);
+    xd_widget_set_page(xd_label(c->win, (xd_rect){32, 207, 200, 16},
+                                "Number of programs on Start menu:", 0),
+                       0);
+    c->programs = xd_combo(c->win, (xd_rect){236, 204, 60, 21}, false, nullptr, p);
+    xd_widget_set_page(c->programs, 0);
+    for (int i = 0; i <= XD_START_PROGRAMS_MAX; i++) {
+        char num[8];
+        snprintf(num, sizeof(num), "%d", i);
+        xd_widget_add_item(c->programs, num);
+    }
+    xd_widget_select(c->programs, p->pending.start_programs);
+    xd_widget_set_page(xd_button(c->win, (xd_rect){264, 234, 84, 23}, "Clear List",
+                                 on_start_clear, p),
+                       0);
+
+    /* Advanced */
+    xd_widget_set_page(xd_groupbox(c->win, (xd_rect){20, 40, 340, 56}, "Start menu settings"),
+                       1);
+    c->highlight = xd_checkbox(c->win, (xd_rect){32, 62, 316, 20},
+                               "Highlight newly installed programs",
+                               p->pending.start_highlight_new, nullptr, p);
+    xd_widget_set_page(c->highlight, 1);
+
+    xd_widget *ok = xd_button(c->win, (xd_rect){217, 325, 75, 23}, "OK", on_start_custom_ok, p);
+    xd_widget *cancel = xd_button(c->win, (xd_rect){298, 325, 75, 23}, "Cancel",
+                                  on_start_custom_cancel, p);
+    xd_window_set_default(c->win, ok);
+    xd_window_set_cancel(c->win, cancel);
+    xd_window_set_focus(c->win, tab);
+    xd_window_show(c->win);
+}
+
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     props *p = user;
     close_customize(p);
+    close_start_custom(p);
     if (xd_settings_equal(&p->saved, &p->pending) || apply(p))
         xd_window_close(p->win);
 }
 static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     props *p = user;
     close_customize(p);
+    close_start_custom(p);
     xd_window_close(p->win);
 }
 static void on_apply([[maybe_unused]] xd_widget *w, void *user) { apply(user); }
@@ -326,6 +442,9 @@ int main(int argc, char **argv) {
     xd_widget_set_page(xd_label(p.win, (xd_rect){20, 44, 340, 16}, "Start menu style:", 0), 1);
     xd_widget *style = xd_combo(p.win, (xd_rect){20, 62, 220, 21}, false, on_style, &p);
     xd_widget_set_page(style, 1);
+    p.start_customize = xd_button(p.win, (xd_rect){276, 61, 84, 23}, "Customize...",
+                                  on_start_customize, &p);
+    xd_widget_set_page(p.start_customize, 1);
     xd_widget_add_item(style, "Classic (Windows 2000)");
     xd_widget_add_item(style, "Windows XP");
     xd_widget_add_item(style, "Windows 7");
@@ -333,6 +452,7 @@ int main(int argc, char **argv) {
                              descriptions[p.pending.start_style], XD_LABEL_WRAP);
     xd_widget_set_page(p.description, 1);
     xd_widget_select(style, (int)p.pending.start_style);
+    xd_widget_set_enabled(p.start_customize, p.pending.start_style == XD_START_XP);
     xd_widget_select(tab, page);
 
     xd_widget *ok = xd_button(p.win, (xd_rect){136, 309, 75, 23}, "OK", on_ok, &p);

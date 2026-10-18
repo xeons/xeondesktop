@@ -242,6 +242,14 @@ struct xd_shell {
     xd_icons *icons;
     xd_app_list apps;
     xd_app_list control_apps; /* Control Panel's applets */
+    /* Newly installed programs (desktop ids) not opened yet, for XP's
+     * highlight; recomputed as the Start menu opens. */
+    struct _GHashTable *new_apps;
+    /* Programs installed or removed since: reloaded once no menu shows
+     * them (menus point into `apps`). */
+    struct _GAppInfoMonitor *app_monitor;
+    unsigned apps_reload; /* GLib idle source, or 0 */
+    bool apps_stale;
     xd_menu_tree menu_tree;
     xd_menu_tree context_tree; /* the open right-click menu's models */
     bool context_menu;         /* the open root menu is a right-click menu */
@@ -258,6 +266,7 @@ struct xd_shell {
     xd_desktop *pointer_desktop; /* a desktop under the pointer */
     struct xd_deskicons *deskicons;
     uint32_t enter_serial;  /* for cursor shapes */
+    uint32_t button_serial; /* of the last button press (drags from the Start menu) */
     uint32_t cursor;        /* the shape set since, wp_cursor_shape_device_v1 */
     double flyout_x, flyout_y;
     bool pending_start7;    /* start7 waits for the hover delay */
@@ -350,6 +359,11 @@ void xd_clipboard_clear_cut(xd_shell *shell);
  * as the drag image; false if it can't. */
 bool xd_dnd_start_drag(xd_shell *shell, char *const *uris, struct wl_surface *origin,
                        struct wl_surface *icon, uint32_t serial);
+/* Starts dragging a program from the Start menus (its desktop file, which
+ * Quick Launch and the desktop take as a shortcut), from the press that
+ * shell->button_serial holds. scale: the origin's, for the drag image. */
+bool xd_dnd_start_app_drag(xd_shell *shell, const xd_app *app, struct wl_surface *origin,
+                           double scale);
 /* Shows the previous (delta < 0) or next page of task buttons. */
 void xd_taskbar_page(xd_taskbar *bar, int delta);
 /* Gives the taskbar keyboard focus; call before opening a menu popup. */
@@ -429,8 +443,23 @@ void xd_taskbars_forget(xd_shell *shell, xd_toplevel *toplevel);
 /* Drop hit-test layout after Quick Launch changed (indices shift). */
 void xd_taskbars_forget_layout(xd_shell *shell);
 
-/* startmenu.c: Programs, one submenu per folder (also XP's All Programs). */
-xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree);
+/* startmenu.c: Programs, one submenu per folder (also XP's All Programs).
+ * highlight_new: newly installed programs and their folders are lit, as
+ * XP's All Programs does. */
+xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree, bool highlight_new);
+/* startmenu.c: newly installed programs. A program first seen after the
+ * first run (state file start-seen) is new until it's opened. Updates
+ * shell->new_apps. */
+void xd_start_menu_note_programs(xd_shell *shell);
+bool xd_start_menu_is_new(const xd_shell *shell, const char *id);
+/* A program was opened: it isn't new any more. */
+void xd_start_menu_program_opened(const char *id);
+/* Watches for programs being installed or removed (GAppInfoMonitor). */
+void xd_start_menu_watch_programs(xd_shell *shell);
+void xd_start_menu_unwatch_programs(xd_shell *shell);
+/* Reloads the programs, if they changed, once no menu is open (from an
+ * idle callback: an item being activated may point into the lists). */
+void xd_start_menu_reload_later(xd_shell *shell);
 /* startmenu.c: Control Panel's applets, by name (all three Start menus). */
 xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree);
 
@@ -453,6 +482,10 @@ void xd_start7_timer_fired(xd_shell *shell);
 void xd_start7_count_launch(const char *app_id);
 /* The account's full name changed (account.c). */
 void xd_start7_user_changed(xd_shell *shell);
+/* Pinned to the Start menu (start-pinned), and whether the list is full. */
+bool xd_start7_pinned(const xd_shell *shell, const char *app_id, bool *full);
+/* Pin to / Unpin from Start menu. */
+void xd_start7_set_pinned(const xd_shell *shell, const char *app_id, bool pin);
 
 /* startmenu.c */
 /* Command line for one of our programs (next to xd-shell in a build tree). */

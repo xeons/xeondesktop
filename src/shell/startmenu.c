@@ -93,7 +93,7 @@ const char *xd_shell_own_command(xd_shell *shell, const char *program, const cha
 }
 
 /* Programs: one submenu per folder, apps sorted by name inside. */
-xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree) {
+xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree, bool highlight_new) {
     xd_menu_model *programs = xd_menu_model_new(tree);
     const xd_app_list *apps = &shell->apps;
 
@@ -108,11 +108,146 @@ xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree) {
             xd_menu_item *it =
                 xd_menu_add(tree, f->submenu, XD_MENU_ACTION, app->name, app->icon);
             it->app = app;
+            /* A new program, and the folder on the way to it, are lit. */
+            it->highlight = highlight_new && xd_start_menu_is_new(shell, app->id);
+            f->highlight = f->highlight || it->highlight;
         }
     }
     if (programs->count == 0)
         xd_menu_add(tree, programs, XD_MENU_ACTION, "(Empty)", nullptr)->disabled = true;
     return programs;
+}
+
+/* ---- newly installed programs ------------------------------------------------- */
+
+/* start-seen: "seconds<TAB>id" for every program, when it was first seen,
+ * or 0 for one that was there at the first run or has been opened since.
+ * A program is new while its time isn't 0: XP highlights a program from
+ * its installation until it's first used. */
+static constexpr size_t SEEN_MAX = 8192;
+
+void xd_start_menu_note_programs(xd_shell *shell) {
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines("start-seen", &lines, &n, SEEN_MAX);
+    bool first_run = n == 0;
+    GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal); /* id -> line */
+    for (size_t i = 0; i < n; i++) {
+        char *tab = strchr(lines[i], '\t');
+        if (tab != nullptr)
+            g_hash_table_insert(seen, tab + 1, lines[i]);
+    }
+    if (shell->new_apps == nullptr)
+        shell->new_apps = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    g_hash_table_remove_all(shell->new_apps);
+
+    /* Only the programs installed now: one removed and installed again is
+     * new again. */
+    const xd_app_list *apps = &shell->apps;
+    char **out = xd_alloc_array(XD_MAX(apps->count, 1), sizeof(char *));
+    size_t m = 0;
+    bool changed = apps->count != n;
+    long long now = (long long)(g_get_real_time() / G_USEC_PER_SEC);
+    for (size_t i = 0; i < apps->count && m < SEEN_MAX; i++) {
+        const char *id = apps->items[i].id;
+        const char *line = g_hash_table_lookup(seen, id);
+        long long when = line != nullptr ? strtoll(line, nullptr, 10) : first_run ? 0 : now;
+        changed = changed || line == nullptr;
+        if (when > 0)
+            g_hash_table_add(shell->new_apps, g_strdup(id));
+        xd_strbuf entry = {0};
+        xd_strbuf_appendf(&entry, "%lld\t%s", when, id);
+        out[m++] = xd_str_dup_cstr(xd_strbuf_view(&entry));
+        xd_strbuf_free(&entry);
+    }
+    if (changed && !xd_state_write_lines("start-seen", out, m))
+        fprintf(stderr, "xd-shell: cannot save the programs seen\n");
+    xd_free_lines(out, m);
+    g_hash_table_unref(seen);
+    xd_free_lines(lines, n);
+}
+
+bool xd_start_menu_is_new(const xd_shell *shell, const char *id) {
+    return shell->new_apps != nullptr && id != nullptr &&
+           g_hash_table_contains(shell->new_apps, id);
+}
+
+void xd_start_menu_program_opened(const char *id) {
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines("start-seen", &lines, &n, SEEN_MAX);
+    bool changed = false;
+    for (size_t i = 0; i < n; i++) {
+        char *tab = strchr(lines[i], '\t');
+        if (tab == nullptr || strcmp(tab + 1, id) != 0 || strtoll(lines[i], nullptr, 10) == 0)
+            continue;
+        xd_strbuf entry = {0};
+        xd_strbuf_appendf(&entry, "0\t%s", id);
+        xd_free(lines[i]);
+        lines[i] = xd_str_dup_cstr(xd_strbuf_view(&entry));
+        xd_strbuf_free(&entry);
+        changed = true;
+    }
+    if (changed && !xd_state_write_lines("start-seen", lines, n))
+        fprintf(stderr, "xd-shell: cannot save the programs seen\n");
+    xd_free_lines(lines, n);
+}
+
+static void reload_if_stale(xd_shell *shell) {
+    if (!shell->apps_stale || shell->start_menu != nullptr || shell->start7 != nullptr)
+        return;
+    shell->apps_stale = false;
+    xd_apps_free(&shell->apps);
+    xd_apps_load(&shell->apps);
+    xd_apps_free(&shell->control_apps);
+    xd_apps_load_control_panel(&shell->control_apps);
+    /* The Windows 2000 menu's models point into the old lists. */
+    xd_menu_tree_free(&shell->menu_tree);
+    xd_menu_tree_init(&shell->menu_tree);
+    xd_start_menu_build(shell);
+    xd_start_menu_note_programs(shell);
+}
+
+static gboolean reload_idle(gpointer data) {
+    xd_shell *shell = data;
+    shell->apps_reload = 0;
+    reload_if_stale(shell); /* else once the menu closes */
+    return G_SOURCE_REMOVE;
+}
+
+void xd_start_menu_reload_later(xd_shell *shell) {
+    if (shell->apps_stale && shell->apps_reload == 0)
+        shell->apps_reload = g_idle_add(reload_idle, shell);
+}
+
+/* Reloaded from an idle callback, never at once: a menu item being
+ * activated may still point into the lists. */
+static void programs_changed([[maybe_unused]] GAppInfoMonitor *monitor, gpointer data) {
+    xd_shell *shell = data;
+    shell->apps_stale = true;
+    xd_start_menu_reload_later(shell);
+}
+
+void xd_start_menu_watch_programs(xd_shell *shell) {
+    shell->app_monitor = g_app_info_monitor_get();
+    g_signal_connect(shell->app_monitor, "changed", G_CALLBACK(programs_changed), shell);
+    xd_start_menu_note_programs(shell);
+}
+
+void xd_start_menu_unwatch_programs(xd_shell *shell) {
+    if (shell->app_monitor != nullptr) {
+        g_signal_handlers_disconnect_by_data(shell->app_monitor, shell);
+        g_object_unref(shell->app_monitor);
+        shell->app_monitor = nullptr;
+    }
+    if (shell->apps_reload != 0) {
+        g_source_remove(shell->apps_reload);
+        shell->apps_reload = 0;
+    }
+    if (shell->new_apps != nullptr) {
+        g_hash_table_unref(shell->new_apps);
+        shell->new_apps = nullptr;
+    }
 }
 
 xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree) {
@@ -199,7 +334,7 @@ void xd_start_menu_build(xd_shell *shell) {
     xd_menu_item *programs =
         xd_menu_add(tree, root, XD_MENU_SUBMENU, "Programs", "applications-other");
     programs->fallback_icon = "folder";
-    programs->submenu = xd_start_programs_model(shell, tree);
+    programs->submenu = xd_start_programs_model(shell, tree, false);
 
     shell->start_docs_index = root->count;
     xd_menu_item *docs =
@@ -227,6 +362,7 @@ void xd_start_menu_build(xd_shell *shell) {
     taskbar->command = xd_shell_own_command(shell, "xd-taskbar", nullptr);
 
     xd_menu_item *search = xd_menu_add(tree, root, XD_MENU_SUBMENU, "Search", "system-search");
+    search->mnemonic = 'c'; /* Sear_c_h: S is Settings */
     search->submenu = xd_menu_model_new(tree);
     xd_menu_item *files = xd_menu_add(tree, search->submenu, XD_MENU_ACTION,
                                       "For Files or Folders...", "system-search");
@@ -244,10 +380,12 @@ void xd_start_menu_build(xd_shell *shell) {
     xd_menu_item *logoff_item =
         xd_menu_add(tree, root, XD_MENU_ACTION, xd_strbuf_cstr(&logoff), "system-log-out");
     logoff_item->command = xd_shell_own_command(shell, "xd-shutdown", "--logoff");
+    logoff_item->mnemonic = 'l';
     xd_strbuf_free(&logoff);
     xd_menu_item *shutdown =
         xd_menu_add(tree, root, XD_MENU_ACTION, "Shut Down...", "system-shutdown");
     shutdown->command = xd_shell_own_command(shell, "xd-shutdown", nullptr);
+    shutdown->mnemonic = 'u'; /* Sh_u_t Down: Windows' Win, U */
 
     shell->start_model = root;
 }

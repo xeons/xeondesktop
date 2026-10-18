@@ -14,7 +14,9 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <glib-unix.h>
+#include <gio/gdesktopappinfo.h>
 #include <glib.h>
 #include <unistd.h>
 
@@ -39,9 +41,12 @@ struct xd_dnd {
     struct wl_data_source *source;
     char **source_uris;
     bool source_cut;
-    /* Our drag (desktop icons). */
+    /* Our drag (desktop icons, or a program from the Start menu). */
     struct wl_data_source *drag_source;
     char **drag_uris;
+    bool menu_drag;               /* from the Start menu, not the desktop */
+    struct wl_surface *drag_icon; /* the menu drag's image */
+    xd_shm_ring drag_ring;
     /* The drag over us. */
     struct wl_data_offer *offer;
     bool uris;
@@ -130,6 +135,9 @@ static gboolean hover_activate(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+/* The desktop's own icons being dragged (they know where they are). */
+static bool own_icons(const xd_dnd *d) { return d->drag_source != nullptr && !d->menu_drag; }
+
 static int task_at(const xd_taskbar *bar, double lx) {
     int x = (int)(lx * bar->scale);
     for (size_t i = 0; i < bar->task_count; i++) {
@@ -143,7 +151,7 @@ static int task_at(const xd_taskbar *bar, double lx) {
 static void track(xd_dnd *d) {
     if (d->desk != nullptr && d->offer != nullptr) {
         xd_drop_kind k = d->uris ? xd_deskicons_drag_over(d->shell, d->desk, d->x, d->y,
-                                                          d->drag_source != nullptr)
+                                                          own_icons(d))
                                  : XD_DROP_NONE;
         if (k == XD_DROP_NONE) {
             wl_data_offer_accept(d->offer, d->serial, nullptr);
@@ -291,7 +299,7 @@ static gboolean read_desk_drop(int fd, [[maybe_unused]] GIOCondition cond, gpoin
 
 static void drop_on_desktop(xd_dnd *d) {
     bool move = d->action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
-    if (d->drag_source != nullptr) {
+    if (own_icons(d)) {
         /* Our own icons: the desktop knows what they are. */
         xd_deskicons_drop(d->shell, d->desk, nullptr, d->x, d->y, move);
     } else {
@@ -534,13 +542,25 @@ void xd_clipboard_get_files(xd_shell *shell, xd_clipboard_got got, void *user) {
 /* ---- dragging the desktop's icons ------------------------------------------------ */
 
 static void drag_end(xd_dnd *d, struct wl_data_source *s) {
+    bool menu = false;
     if (s == d->drag_source) {
         d->drag_source = nullptr;
         g_strfreev(d->drag_uris);
         d->drag_uris = nullptr;
-        xd_deskicons_drag_ended(d->shell);
+        menu = d->menu_drag;
+        d->menu_drag = false;
+        if (d->drag_icon != nullptr) {
+            wl_surface_destroy(d->drag_icon);
+            d->drag_icon = nullptr;
+        }
+        xd_shm_ring_finish(&d->drag_ring);
+        if (!menu)
+            xd_deskicons_drag_ended(d->shell);
     }
     wl_data_source_destroy(s);
+    /* Dropped (or not): the Start menu it came from closes, as in XP. */
+    if (menu)
+        xd_menu_close_all(d->shell);
 }
 
 static void drag_send(void *data, [[maybe_unused]] struct wl_data_source *s, const char *mime,
@@ -594,6 +614,62 @@ bool xd_dnd_start_drag(xd_shell *shell, char *const *uris, struct wl_surface *or
     return true;
 }
 
+/* The program's icon, half see-through, under the pointer. */
+static struct wl_surface *app_drag_image(xd_dnd *d, const xd_app *app, double scale) {
+    xd_shell *shell = d->shell;
+    double up = ceil(scale);
+    int bs = XD_CLAMP((int)up, 1, 4);
+    int px = 32 * bs;
+    const char *names[] = {app->icon, "application-x-executable"};
+    cairo_surface_t *img = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), px);
+    if (img == nullptr || shell->compositor == nullptr || shell->shm == nullptr)
+        return nullptr;
+    xd_shm_buffer *buf = xd_shm_ring_acquire(&d->drag_ring, shell->shm, px, px);
+    if (buf == nullptr)
+        return nullptr;
+    cairo_t *cr = cairo_create(buf->surface);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    cairo_set_source_surface(cr, img, 0, 0);
+    cairo_paint_with_alpha(cr, 0.5);
+    cairo_destroy(cr);
+    cairo_surface_flush(buf->surface);
+    struct wl_surface *surface = wl_compositor_create_surface(shell->compositor);
+    wl_surface_set_buffer_scale(surface, bs);
+    /* Its middle on the pointer (wl_compositor 4: attach's offset). */
+    wl_surface_attach(surface, buf->buffer, -16, -16);
+    wl_surface_damage_buffer(surface, 0, 0, INT32_MAX, INT32_MAX);
+    buf->busy = true;
+    wl_surface_commit(surface);
+    return surface;
+}
+
+bool xd_dnd_start_app_drag(xd_shell *shell, const xd_app *app, struct wl_surface *origin,
+                           double scale) {
+    xd_dnd *d = shell->dnd;
+    const char *file = app->info != nullptr ? g_desktop_app_info_get_filename(app->info) : nullptr;
+    char *uri = file != nullptr ? g_filename_to_uri(file, nullptr, nullptr) : nullptr;
+    if (d == nullptr || uri == nullptr || d->drag_source != nullptr ||
+        wl_data_device_manager_get_version(d->manager) < 3) {
+        g_free(uri);
+        return false;
+    }
+    char *uris[] = {uri, nullptr};
+    struct wl_data_source *src = wl_data_device_manager_create_data_source(d->manager);
+    wl_data_source_add_listener(src, &drag_listener, d);
+    wl_data_source_offer(src, URI_LIST);
+    /* Only ever a copy: the program's own desktop file stays where it is. */
+    wl_data_source_set_actions(src, WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
+    d->drag_source = src;
+    d->drag_uris = g_strdupv(uris);
+    d->menu_drag = true;
+    d->drag_icon = app_drag_image(d, app, scale);
+    wl_data_device_start_drag(d->device, src, origin, d->drag_icon, shell->button_serial);
+    g_free(uri);
+    return true;
+}
+
 void xd_clipboard_clear_cut(xd_shell *shell) {
     xd_dnd *d = shell->dnd;
     if (d != nullptr && d->source != nullptr && d->source_cut) {
@@ -639,6 +715,9 @@ void xd_dnd_finish(xd_shell *shell) {
     if (d->drag_source != nullptr)
         wl_data_source_destroy(d->drag_source);
     g_strfreev(d->drag_uris);
+    if (d->drag_icon != nullptr)
+        wl_surface_destroy(d->drag_icon);
+    xd_shm_ring_finish(&d->drag_ring);
     if (wl_data_device_get_version(d->device) >= WL_DATA_DEVICE_RELEASE_SINCE_VERSION)
         wl_data_device_release(d->device);
     else
