@@ -218,10 +218,16 @@ Modelled on Windows XP's Explorer windows:
   monitoring, SMB/SFTP through gvfs. A running job keeps the process alive
   until it finishes, even if its window is closed.
 - **Thumbnails** follow the freedesktop thumbnail spec, so they're shared
-  with other programs. Only thumbnails already in the cache are shown; a
-  sandboxed `xd-thumbnailer` (seccomp, given only the file to decode) is
-  planned, so that decoding untrusted images never runs inside the file
-  manager or the shell.
+  with other programs. Those missing from the cache are made by
+  `xd-thumbnailer`, a process per file, a few at a time, what's on screen
+  first; a folder change stops them. Decoding untrusted files never runs
+  inside the file manager or the shell: `xd-thumbnailer` decodes (with
+  gdk-pixbuf, or an installed `.thumbnailer` such as ffmpegthumbnailer) in
+  a bubblewrap sandbox with no network and nothing of the file system but
+  /usr and the one file, read-only, under a seccomp filter and limits on
+  memory, CPU time and file size. Only raw pixels come out; the PNG is
+  written outside. glycin's own nested sandbox is refused there, so its
+  loader runs directly inside ours.
 
 ## Control Panel
 
@@ -332,5 +338,5 @@ separate `.cpl` you could run on its own:
 
 Every part described above exists and has been tested headless; TODO.md
 lists what's untested on real hardware, the remaining Windows features, and
-known gaps (among them `xd-thumbnailer`, a standalone taskbar for other
-wlroots compositors, and Qt's file dialogs).
+known gaps (among them a standalone taskbar for other wlroots compositors,
+and Qt's file dialogs).

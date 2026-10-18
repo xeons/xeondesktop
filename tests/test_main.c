@@ -48,6 +48,7 @@
 #include "../src/ui/textedit.h"
 #include "../src/users/users.h"
 #include "../src/theme/theme.h"
+#include "../src/thumbnailer/thumbcache.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -3332,6 +3333,77 @@ static void test_search_match(void) {
     CHECK(!xd_search_text_in("ab", 2, "abc"));
 }
 
+/* The freedesktop thumbnail cache: MD5-of-URI names, the sizes' folders,
+ * the PNG's Thumb:: metadata, and failure markers. */
+static void test_thumbnail_cache(void) {
+    /* The spec's own example. */
+    char *p = xd_thumb_path("/c", "file:///home/jens/photos/me.png", XD_THUMB_NORMAL);
+    CHECK(strcmp(p, "/c/normal/c6ee772d9e49320e97ec29a7eb5b1697.png") == 0);
+    g_free(p);
+    p = xd_thumb_path("/c", "file:///home/jens/photos/me.png", XD_THUMB_XXLARGE);
+    CHECK(strcmp(p, "/c/xx-large/c6ee772d9e49320e97ec29a7eb5b1697.png") == 0);
+    g_free(p);
+    p = xd_thumb_fail_path("/c", "file:///home/jens/photos/me.png");
+    CHECK(strcmp(p, "/c/fail/xd-thumbnailer-" XD_VERSION "/c6ee772d9e49320e97ec29a7eb5b1697.png") ==
+          0);
+    g_free(p);
+    CHECK(xd_thumb_size_for(48) == XD_THUMB_NORMAL && xd_thumb_size_for(128) == XD_THUMB_NORMAL);
+    CHECK(xd_thumb_size_for(129) == XD_THUMB_LARGE && xd_thumb_size_for(248) == XD_THUMB_LARGE);
+    CHECK(xd_thumb_size_for(600) == XD_THUMB_XXLARGE && xd_thumb_size_for(5000) == XD_THUMB_XXLARGE);
+    XdThumbSize size = XD_THUMB_NORMAL;
+    CHECK(xd_thumb_size_parse("x-large", &size) && size == XD_THUMB_XLARGE);
+    CHECK(!xd_thumb_size_parse("huge", &size) && size == XD_THUMB_XLARGE);
+    CHECK(xd_thumb_size_px(XD_THUMB_LARGE) == 256 && strcmp(xd_thumb_size_name(XD_THUMB_LARGE), "large") == 0);
+    CHECK(xd_thumb_in_cache("/c/thumbnails", "/c/thumbnails/large/x.png"));
+    CHECK(xd_thumb_in_cache("/c/thumbnails/", "/c/thumbnails/../thumbnails/normal/x.png"));
+    CHECK(!xd_thumb_in_cache("/c/thumbnails", "/c/thumbnails-old/x.png"));
+    CHECK(xd_thumb_pixbuf_reads("image/png") && xd_thumb_supported("image/png"));
+    CHECK(!xd_thumb_supported("inode/directory"));
+
+    char *root = g_dir_make_tmp("xd-thumbs-XXXXXX", nullptr);
+    const char *uri = "file:///tmp/a%20picture.png";
+    char *dest = xd_thumb_path(root, uri, XD_THUMB_LARGE);
+    GdkPixbuf *pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 40, 30);
+    gdk_pixbuf_fill(pb, 0x336699ff);
+    CHECK(xd_thumb_save(pb, dest, uri, 1700000000, 1234, "image/png", nullptr));
+    g_object_unref(pb);
+    GStatBuf st;
+    CHECK(g_stat(dest, &st) == 0 && (st.st_mode & 0777) == 0600);
+    char *dir = g_path_get_dirname(dest);
+    CHECK(g_stat(dir, &st) == 0 && (st.st_mode & 0777) == 0700);
+    pb = gdk_pixbuf_new_from_file(dest, nullptr);
+    CHECK(pb != nullptr);
+    if (pb != nullptr) {
+        CHECK(gdk_pixbuf_get_width(pb) == 40 && gdk_pixbuf_get_height(pb) == 30);
+        CHECK(g_strcmp0(gdk_pixbuf_get_option(pb, "tEXt::Thumb::URI"), uri) == 0);
+        CHECK(g_strcmp0(gdk_pixbuf_get_option(pb, "tEXt::Thumb::MTime"), "1700000000") == 0);
+        CHECK(g_strcmp0(gdk_pixbuf_get_option(pb, "tEXt::Thumb::Size"), "1234") == 0);
+        CHECK(g_strcmp0(gdk_pixbuf_get_option(pb, "tEXt::Thumb::Mimetype"), "image/png") == 0);
+        g_object_unref(pb);
+    }
+    CHECK(xd_thumb_is_current(dest, uri, 1700000000));
+    CHECK(!xd_thumb_is_current(dest, uri, 1700000001)); /* the file changed */
+    CHECK(!xd_thumb_is_current(dest, "file:///tmp/other.png", 1700000000));
+
+    CHECK(!xd_thumb_has_failed(root, uri, 1700000000));
+    CHECK(xd_thumb_mark_failed(root, uri, 1700000000, nullptr));
+    CHECK(xd_thumb_has_failed(root, uri, 1700000000));
+    CHECK(!xd_thumb_has_failed(root, uri, 1700000005)); /* changed since: try again */
+    char *fail = xd_thumb_fail_path(root, uri);
+    CHECK(g_file_test(fail, G_FILE_TEST_IS_REGULAR));
+
+    char *fail_dir = g_path_get_dirname(fail);
+    char *fail_parent = g_path_get_dirname(fail_dir);
+    CHECK(g_remove(fail) == 0 && g_rmdir(fail_dir) == 0 && g_rmdir(fail_parent) == 0);
+    CHECK(g_remove(dest) == 0 && g_rmdir(dir) == 0 && g_rmdir(root) == 0);
+    g_free(fail_parent);
+    g_free(fail_dir);
+    g_free(fail);
+    g_free(dir);
+    g_free(dest);
+    g_free(root);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -3378,6 +3450,7 @@ int main(void) {
     test_scanners();
     test_schedtasks();
     test_search_match();
+    test_thumbnail_cache();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

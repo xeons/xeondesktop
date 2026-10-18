@@ -4,6 +4,7 @@
 
 #include "../core/alloc.h"
 #include "../theme/draw.h"
+#include "../thumbnailer/queue.h"
 #include "columns.h"
 #include "folderview.h"
 #include "names.h"
@@ -16,6 +17,7 @@
     "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_BACKUP \
     "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK \
     "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_THUMBNAIL_PATH \
+    "," G_FILE_ATTRIBUTE_THUMBNAIL_IS_VALID \
     "," G_FILE_ATTRIBUTE_TIME_CREATED "," G_FILE_ATTRIBUTE_TIME_ACCESS     \
     "," G_FILE_ATTRIBUTE_OWNER_USER "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE
 
@@ -59,6 +61,9 @@ typedef struct item {
     int icon_px;
     GdkPixbuf *thumb_pb;
     int thumb_px;
+    /* xd-thumbnailer can make its thumbnail; the cached one is of an older
+     * version of the file; making one failed. */
+    gboolean thumb_want, thumb_stale, thumb_failed;
     int name_w; /* List view: measured label width, 0 = not yet */
     gboolean selected;
     gboolean shortcut; /* a symbolic link or a launcher: XP's arrow */
@@ -103,6 +108,7 @@ struct _XdFolderView {
 
     XdViewMode mode;
     int thumb;
+    XdThumbQueue *thumbs; /* thumbnails being made, for the Thumbnails view */
     XdSortColumn sort;
     gboolean desc;
     gboolean show_hidden;
@@ -316,6 +322,11 @@ static item *item_new(GFile *dir, GFileInfo *info) {
     g_free(path);
     const char *thumb = g_file_info_get_attribute_byte_string(info, G_FILE_ATTRIBUTE_THUMBNAIL_PATH);
     it->thumb_path = thumb != nullptr ? g_strdup(thumb) : nullptr;
+    it->thumb_stale = thumb != nullptr &&
+                      g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_THUMBNAIL_IS_VALID) &&
+                      !g_file_info_get_attribute_boolean(info, G_FILE_ATTRIBUTE_THUMBNAIL_IS_VALID);
+    it->thumb_want = !it->is_dir && !launcher && g_file_is_native(it->file) &&
+                     xd_thumb_supported(ctype);
     return it;
 }
 
@@ -365,9 +376,51 @@ static void icon_theme_changed([[maybe_unused]] GtkIconTheme *theme, gpointer da
     gtk_widget_queue_draw(GTK_WIDGET(v));
 }
 
-/* A cached thumbnail scaled to fit px x px, or nullptr. Only reads the
- * freedesktop cache; generating thumbnails is xd-thumbnailer's job. */
-static GdkPixbuf *item_thumb(item *it, int px) {
+/* A thumbnail xd-thumbnailer made (nullptr `path`: it couldn't): the item
+ * shows it, if it's still here. */
+static void thumb_done(const char *uri, const char *path, gpointer data) {
+    XdFolderView *v = data;
+    GFile *file = g_file_new_for_uri(uri);
+    for (guint i = 0; i < v->all->len; i++) {
+        item *it = g_ptr_array_index(v->all, i);
+        if (!g_file_equal(it->file, file))
+            continue;
+        if (path != nullptr) {
+            g_free(it->thumb_path);
+            it->thumb_path = g_strdup(path);
+            it->thumb_stale = FALSE;
+            g_clear_object(&it->thumb_pb);
+            it->thumb_px = 0;
+        } else {
+            it->thumb_failed = TRUE;
+        }
+        gtk_widget_queue_draw(GTK_WIDGET(v));
+        break;
+    }
+    g_object_unref(file);
+}
+
+/* Asks for a thumbnail the cache doesn't have (or has only smaller, or of
+ * an older version of the file). Asked while drawing, so what's on screen
+ * is asked for last, and made first. */
+static void want_thumb(XdFolderView *v, item *it, int px) {
+    if (!it->thumb_want || it->thumb_failed)
+        return;
+    XdThumbSize size = xd_thumb_size_for(px);
+    if (it->thumb_path != nullptr && !it->thumb_stale &&
+        (size == XD_THUMB_NORMAL || strstr(it->thumb_path, "/normal/") == nullptr))
+        return;
+    if (v->thumbs == nullptr)
+        v->thumbs = xd_thumb_queue_new(thumb_done, v);
+    char *uri = g_file_get_uri(it->file);
+    xd_thumb_queue_request(v->thumbs, uri, size);
+    g_free(uri);
+}
+
+/* A cached thumbnail scaled to fit px x px, or nullptr (one is asked for:
+ * the item is drawn again when it's made). */
+static GdkPixbuf *item_thumb(XdFolderView *v, item *it, int px) {
+    want_thumb(v, it, px);
     if (it->thumb_path == nullptr)
         return nullptr;
     if (it->thumb_pb != nullptr && it->thumb_px == px)
@@ -1199,7 +1252,7 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         cairo_set_line_width(cr, sel ? 2 : 1);
         cairo_rectangle(cr, bx + 0.5, by + 0.5, box - 1, box - 1);
         cairo_stroke(cr);
-        GdkPixbuf *pb = item_thumb(it, box - 8);
+        GdkPixbuf *pb = item_thumb(v, it, box - 8);
         if (pb == nullptr)
             pb = item_icon(v, it, MIN(box / 2, 64));
         if (pb != nullptr)
@@ -2643,6 +2696,7 @@ static void folder_view_dispose(GObject *obj) {
     if (v->cancel != nullptr)
         g_cancellable_cancel(v->cancel);
     g_clear_object(&v->cancel);
+    g_clear_pointer(&v->thumbs, xd_thumb_queue_free);
     if (v->reload_source != 0) {
         g_source_remove(v->reload_source);
         v->reload_source = 0;
@@ -2778,6 +2832,8 @@ void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
     g_return_if_fail(G_IS_FILE(dir));
     g_set_object(&v->dir, dir);
     forget_keep(v);
+    if (v->thumbs != nullptr)
+        xd_thumb_queue_cancel(v->thumbs);
     /* Icons' places are the folder's own: given just before, or none. */
     if (!v->positions_given)
         g_hash_table_remove_all(v->positions);

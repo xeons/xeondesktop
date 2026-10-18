@@ -445,6 +445,27 @@ rename_lib = static_library(
   dependencies: [gio_unix_dep],
 )
 
+# Thumbnails (freedesktop cache): the cache and the request queue, linked
+# into xd-files; xd-thumbnailer decodes in a bubblewrap sandbox with a
+# seccomp filter (libseccomp), bwrap being needed at run time.
+thumb_lib = static_library(
+  'xdthumb',
+  'src/thumbnailer/thumbcache.c',
+  'src/thumbnailer/queue.c',
+  c_args: ['-DXD_VERSION="' + meson.project_version() + '"'],
+  dependencies: [gdk_pixbuf_dep, gio_unix_dep],
+)
+seccomp_dep = dependency('libseccomp', include_type: 'system')
+executable(
+  'xd-thumbnailer',
+  'src/thumbnailer/main.c',
+  'src/thumbnailer/sandbox.c',
+  c_args: ['-D_GNU_SOURCE'],
+  link_with: thumb_lib,
+  dependencies: [gdk_pixbuf_dep, gio_unix_dep, seccomp_dep],
+  install: true,
+)
+
 # xd-files: the file manager (GTK3), with the folder view (libxdfolder).
 # libarchive makes Send To's Compressed (zipped) Folder; without it the
 # item isn't offered.
@@ -459,6 +480,7 @@ folder_lib = static_library(
   'src/files/sendto.c',
   'src/files/undo.c',
   c_args: ['-D_GNU_SOURCE', '-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0')],
+  link_with: thumb_lib,
   dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep, archive_dep],
 )
 
@@ -925,10 +947,12 @@ test_exe = executable(
   'src/printers/printlib.c',
   'src/scanners/scanlib.c',
   'src/startmenu/searchlib.c',
+  link_with: thumb_lib,
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep,
                  sane_dep.partial_dependency(compile_args: true)],
-  c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE'],
+  c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE',
+           '-DXD_VERSION="' + meson.project_version() + '"'],
 )
 test(
   'unit',

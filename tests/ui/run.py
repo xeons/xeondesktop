@@ -712,6 +712,46 @@ def file_manager(s):
 
 
 @scenario()
+def thumbnails(s):
+    """Thumbnails view: pictures with no thumbnail in the cache get one from
+    xd-thumbnailer (sandboxed), written to the freedesktop cache and drawn
+    as each arrives."""
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    pics = os.path.join(s.home, "Pictures")
+    colours = {"Red": (0xC8, 0x20, 0x28), "Green": (0x20, 0xA8, 0x40), "Blue": (0x28, 0x40, 0xC8)}
+    for name, (r, g, b) in colours.items():
+        pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 400, 300)
+        pb.fill((r << 24) | (g << 16) | (b << 8) | 0xFF)
+        pb.savev(os.path.join(pics, name + ".png"), "png", [], [])
+    s.launch("xd-files", "--view=thumbnails", pics)
+    s.wait_window(app_id="org.xeondesktop.Files", state="activated")
+    # The default thumbnail size (96) is the spec's "normal" (128).
+    cache = os.path.join(os.environ["XDG_CACHE_HOME"], "thumbnails", "normal")
+    s.wait(lambda: os.path.isdir(cache) and len(os.listdir(cache)) == len(colours),
+           "xd-thumbnailer to fill the cache")  # fmt: skip
+    s.log("ok: three thumbnails in the cache")
+    shot = s.settle("thumbnails")
+
+    def area(rgb):
+        n = 0
+        for y in range(0, HEIGHT, 2):
+            for x in range(0, WIDTH, 2):
+                if max(abs(p - q) for p, q in zip(shot.pixel(x, y), rgb)) <= 6:
+                    n += 1
+        return n
+
+    # A thumbnail 88 px across, scaled from 4:3: about 88 x 66 px, sampled
+    # every other pixel both ways.
+    for name, rgb in colours.items():
+        n = area(rgb)
+        s.check(n > 1000, f"{name}.png is drawn as its thumbnail ({n} samples)")
+
+
+@scenario()
 def move_after_left_resize(s):
     """A window resized from its left edge and then moved stays where it's
     dropped when it next redraws (the resize's anchor used to pull it back
