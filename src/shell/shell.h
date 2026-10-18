@@ -448,7 +448,8 @@ void xd_start7_pointer_button(xd_shell *shell, uint32_t button, bool pressed);
 void xd_start7_pointer_axis(xd_shell *shell, double value);
 bool xd_start7_key(xd_shell *shell, uint32_t keysym, const char *utf8, bool ctrl_or_alt);
 void xd_start7_timer_fired(xd_shell *shell);
-/* Records a launch for the "frequently used" list. */
+/* Records a launch for the "frequently used" list, and when it was (Add or
+ * Remove Programs' Last Used On). */
 void xd_start7_count_launch(const char *app_id);
 /* The account's full name changed (account.c). */
 void xd_start7_user_changed(xd_shell *shell);

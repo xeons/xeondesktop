@@ -28,6 +28,13 @@ const char *xd_appwiz_usage_name(xd_appwiz_usage usage);
 GHashTable *xd_appwiz_parse_launch_counts(char *const *lines, size_t count);
 int64_t xd_appwiz_launches(GHashTable *counts, const char *desktop_id);
 
+/* When the Start menu (or the taskbar) last started each program
+ * ("seconds<TAB>desktop id" lines, from $XDG_STATE_HOME/xeondesktop/
+ * start-last-used): desktop id -> seconds since the epoch. */
+GHashTable *xd_appwiz_parse_launch_times(char *const *lines, size_t count);
+/* 0 if never. */
+int64_t xd_appwiz_launch_time(GHashTable *times, const char *desktop_id);
+
 /* When a program last opened something, from the recent documents list
  * (recently-used.xbel), which records each program by name or command:
  * matches the desktop id without ".desktop" or the executable's base

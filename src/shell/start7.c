@@ -517,7 +517,35 @@ static void forget_launches(const char *id) {
     xd_free_lines(lines, m);
 }
 
+/* When each program was last started: "seconds<TAB>id" lines, the latest
+ * first, for Add or Remove Programs' "Last Used On" (the counts have no
+ * dates). */
+static void note_launch_time(const char *id) {
+    char **lines = nullptr;
+    size_t n = 0;
+    xd_state_read_lines("start-last-used", &lines, &n, 200);
+    char **out = xd_alloc_array(n + 1, sizeof(char *));
+    size_t m = 0;
+    xd_strbuf entry = {0};
+    xd_strbuf_appendf(&entry, "%lld\t%s", (long long)g_get_real_time() / G_USEC_PER_SEC, id);
+    out[m++] = xd_str_dup_cstr(xd_strbuf_view(&entry));
+    for (size_t i = 0; i < n && m < 200; i++) {
+        xd_str line = xd_str_from_cstr(lines[i]);
+        size_t tab;
+        if (!xd_str_find_char(line, '\t', &tab) ||
+            xd_str_eq(xd_str_sub(line, tab + 1, line.len), xd_str_from_cstr(id)))
+            continue;
+        out[m++] = xd_str_dup_cstr(line);
+    }
+    if (!xd_state_write_lines("start-last-used", out, m))
+        fprintf(stderr, "xd-shell: cannot save launch times\n");
+    xd_strbuf_free(&entry);
+    xd_free_lines(out, m);
+    xd_free_lines(lines, n);
+}
+
 void xd_start7_count_launch(const char *id) {
+    note_launch_time(id);
     /* "count<TAB>id" lines; the most used come first. */
     char **lines = nullptr;
     size_t n = 0;

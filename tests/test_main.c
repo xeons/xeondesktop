@@ -3037,6 +3037,19 @@ static void test_appwiz(void) {
     CHECK(xd_appwiz_launches(nullptr, "firefox.desktop") == 0);
     g_hash_table_unref(counts);
 
+    /* When the shell last started each program: the newest line wins. */
+    char *times[] = {(char *)(uintptr_t)"1790000000\tfirefox.desktop",
+                     (char *)(uintptr_t)"1780000000\tfirefox.desktop",
+                     (char *)(uintptr_t)"1700000000\tgimp.desktop",
+                     (char *)(uintptr_t)"0\tzero.desktop", (char *)(uintptr_t)"soon\tbad.desktop"};
+    GHashTable *launched = xd_appwiz_parse_launch_times(times, G_N_ELEMENTS(times));
+    CHECK(g_hash_table_size(launched) == 2);
+    CHECK(xd_appwiz_launch_time(launched, "firefox.desktop") == 1790000000);
+    CHECK(xd_appwiz_launch_time(launched, "gimp.desktop") == 1700000000);
+    CHECK(xd_appwiz_launch_time(launched, "zero.desktop") == 0);
+    CHECK(xd_appwiz_launch_time(nullptr, "gimp.desktop") == 0);
+    g_hash_table_unref(launched);
+
     /* Sizes as XP wrote them. */
     char *s = xd_appwiz_format_size(23477862);
     CHECK(strcmp(s, "22.39MB") == 0);

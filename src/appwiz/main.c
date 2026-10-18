@@ -5,8 +5,9 @@
  *   Change or Remove Programs   the programs in the Start menu, each with
  *                               the package or Flatpak it came from: size,
  *                               how often it's used (the Start menu's
- *                               launch counts), support information and
- *                               Remove
+ *                               launch counts), when it was last used
+ *                               (started by the shell, or opening a
+ *                               document), support information and Remove
  *   Add New Programs            install a package file, or search the
  *                               software sources and Flatpak remotes
  *   Add/Remove Windows          PackageKit's package groups
@@ -608,6 +609,11 @@ static void load_usage(appwiz *w) {
     w->have_counts = g_hash_table_size(w->counts) > 0;
     xd_free_lines(lines, n);
 
+    g_clear_pointer(&w->launched, g_hash_table_unref);
+    xd_state_read_lines("start-last-used", &lines, &n, 200);
+    w->launched = xd_appwiz_parse_launch_times(lines, n);
+    xd_free_lines(lines, n);
+
     g_clear_pointer(&w->recent, g_bookmark_file_free);
     w->recent = g_bookmark_file_new();
     char *xbel = g_build_filename(g_get_user_data_dir(), "recently-used.xbel", nullptr);
@@ -627,7 +633,10 @@ static program *new_program(appwiz *w, GDesktopAppInfo *info) {
     GIcon *icon = g_app_info_get_icon(app);
     p->icon = icon != nullptr ? g_object_ref(icon) : nullptr;
     p->key.launches = xd_appwiz_launches(w->counts, p->id);
-    p->key.last_used = xd_appwiz_last_used(w->recent, p->id, p->exec);
+    /* Started from the Start menu or the taskbar, or opening a document
+     * (from wherever it was started), whichever was later. */
+    p->key.last_used = XD_MAX(xd_appwiz_last_used(w->recent, p->id, p->exec),
+                              xd_appwiz_launch_time(w->launched, p->id));
 
     char *flatpak = g_desktop_app_info_get_string(info, "X-Flatpak");
     flatpak_app *f = flatpak != nullptr ? g_hash_table_lookup(w->flatpaks, flatpak) : nullptr;
@@ -898,6 +907,7 @@ int main(int argc, char **argv) {
     g_hash_table_unref(w.flatpaks);
     g_clear_pointer(&w.counts, g_hash_table_unref);
     g_clear_pointer(&w.recent, g_bookmark_file_free);
+    g_clear_pointer(&w.launched, g_hash_table_unref);
     g_clear_pointer(&w.result_rows, g_hash_table_unref);
     g_object_unref(w.pk);
     g_object_unref(w.pk_task);

@@ -55,6 +55,28 @@ int64_t xd_appwiz_launches(GHashTable *counts, const char *desktop_id) {
     return GPOINTER_TO_INT(n);
 }
 
+GHashTable *xd_appwiz_parse_launch_times(char *const *lines, size_t count) {
+    GHashTable *t = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    for (size_t i = 0; i < count; i++) {
+        const char *tab = strchr(lines[i], '\t');
+        if (tab == nullptr || tab[1] == '\0')
+            continue;
+        char *num = g_strndup(lines[i], (gsize)(tab - lines[i]));
+        gint64 when = 0;
+        bool ok = g_ascii_string_to_signed(num, 10, 1, G_MAXINT64, &when, nullptr);
+        g_free(num);
+        /* Newest first: a repeated id keeps the first. */
+        if (ok && !g_hash_table_contains(t, tab + 1))
+            g_hash_table_insert(t, g_strdup(tab + 1), g_memdup2(&when, sizeof(when)));
+    }
+    return t;
+}
+
+int64_t xd_appwiz_launch_time(GHashTable *times, const char *desktop_id) {
+    const gint64 *when = times != nullptr ? g_hash_table_lookup(times, desktop_id) : nullptr;
+    return when != nullptr ? *when : 0;
+}
+
 /* The program a recent-files entry names: GTK records g_get_prgname(),
  * which is the executable's name, or the application id for GApplications
  * (the desktop id without ".desktop"). The command's first word is

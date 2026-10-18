@@ -34,6 +34,7 @@ typedef struct appwiz {
     GHashTable *flatpaks; /* app id -> installed Flatpak */
     GHashTable *counts;   /* Start menu launch counts */
     bool have_counts;
+    GHashTable *launched; /* desktop id -> when the shell last started it */
     GBookmarkFile *recent;
     GQueue lookups;    /* programs whose package isn't known yet */
     GPtrArray *detail_ids; /* package ids waiting for GetDetails */
