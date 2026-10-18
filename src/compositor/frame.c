@@ -65,6 +65,14 @@ static xd_cairo_buffer *cairo_buffer_create(int width, int height) {
     return buf;
 }
 
+struct wlr_buffer *xd_cairo_buffer_new(int width, int height, cairo_surface_t **surface) {
+    xd_cairo_buffer *buf = cairo_buffer_create(width, height);
+    if (buf == nullptr)
+        return nullptr;
+    *surface = buf->surface;
+    return &buf->base;
+}
+
 double xd_view_scale(const xd_view *view) {
     struct wlr_box box = xd_view_outer_box(view);
     return xd_output_scale_at(view->server, box.x + box.width / 2.0, box.y + box.height / 2.0);

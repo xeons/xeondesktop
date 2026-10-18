@@ -169,6 +169,7 @@ struct xd_start7 {
     xd_visual_style look;   /* style when opened (XP header and footer sizes) */
     int w, h;               /* logical size */
     bool large;             /* XP: the program list's large icons */
+    int big_icon;           /* XP: their size; 48 with Effects' "Use large icons" */
     int body_h;             /* XP: between the header and the footer */
     double press_x, press_y; /* where a program was pressed, to drag it */
 
@@ -387,7 +388,7 @@ static int row_h(const xd_start7 *m, const row *r) {
         if (r->kind == ROW_SEP)
             return XP_SEP;
         if (m->large)
-            return r->pinned ? XP_PIN_ROW : XP_ROW;
+            return (r->pinned ? XP_PIN_ROW : XP_ROW) + m->big_icon - 32;
         return r->pinned && r->kind == ROW_APP && app_role(r->app) != nullptr ? XP_PIN_ROW_SMALL
                                                                               : XP_ROW_SMALL;
     }
@@ -1267,7 +1268,7 @@ static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_
         bool hot = (int)i == m->hot_left;
         if (hot)
             xd_fill_rect(cr, D(rr, s), p->hot);
-        int icon = m->large ? 32 : 16;
+        int icon = m->large ? m->big_icon : 16;
         draw_icon(m->shell, cr, r->app->icon, nullptr,
                   D((xd_rect){rr.x + 4, rr.y + (h - icon) / 2, icon, icon}, s));
         int tx = rr.x + 4 + icon + 6;
@@ -2019,6 +2020,7 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     m->look = shell->style;
     m->w = xp ? XP_W : S7_W;
     m->large = shell->settings.start_large_icons;
+    m->big_icon = shell->settings.large_icons ? 48 : 32;
     xd_menu_tree_init(&m->tree);
     load_user(m);
     shell->start7 = m;

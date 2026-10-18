@@ -287,6 +287,8 @@ compositor_src = files(
   'src/compositor/view.c',
   'src/compositor/frame.c',
   'src/compositor/animate.c',
+  'src/compositor/transition.c',
+  'src/compositor/outline.c',
   'src/compositor/snap.c',
   'src/compositor/appicons.c',
   'src/compositor/arrange.c',

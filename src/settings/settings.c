@@ -22,6 +22,7 @@ static const char *const mode_names[XD_WALLPAPER_MODE_COUNT] = {
 static const char *const font_size_names[] = {"normal", "large", "extralarge"};
 static const char *const start_style_names[] = {"classic", "xp", "win7"};
 static const char *const smoothing_names[] = {"standard", "none", "cleartype"};
+static const char *const transition_names[] = {"fade", "scroll"};
 static const char *const edge_names[] = {"bottom", "top", "left", "right"};
 static const char *const buttons_names[] = {"always", "whenfull", "never"};
 static const char *const tray_rule_names[] = {"auto", "hide", "show"};
@@ -743,16 +744,21 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     } else if (SEC("DesktopIcons")) {
         parse_desktop_icons(&s->desktop_icons, key, v);
     } else if (SEC("Effects")) {
-        if (KEY("MenuTransitions"))
+        if (KEY("MenuTransitions")) {
             parse_bool(v, &s->menu_transitions);
-        else if (KEY("FullWindowDrag"))
+        } else if (KEY("MenuTransition")) {
+            int i = index_of(transition_names, XD_ARRAY_LEN(transition_names), v);
+            if (i >= 0)
+                s->menu_transition = (xd_menu_transition)i;
+        } else if (KEY("FullWindowDrag")) {
             parse_bool(v, &s->full_window_drag);
-        else if (KEY("AnimateWindows"))
+        } else if (KEY("AnimateWindows")) {
             parse_bool(v, &s->animate_windows);
-        else if (KEY("LargeIcons"))
+        } else if (KEY("LargeIcons")) {
             parse_bool(v, &s->large_icons);
-        else if (KEY("HideKeyboardCues"))
+        } else if (KEY("HideKeyboardCues")) {
             parse_bool(v, &s->hide_keyboard_cues);
+        }
     } else if (SEC("Windows")) {
         if (KEY("AlwaysDrawFrames"))
             parse_bool(v, &s->always_frames);
@@ -1007,6 +1013,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     for (size_t i = 0; i < XD_DESK_ICON_COUNT; i++)
         g_key_file_set_string(kf, "DesktopIcons", desk_icon_keys[i], di->icons[i]);
     g_key_file_set_boolean(kf, "Effects", "MenuTransitions", s->menu_transitions);
+    g_key_file_set_string(kf, "Effects", "MenuTransition", transition_names[s->menu_transition]);
     g_key_file_set_boolean(kf, "Effects", "FullWindowDrag", s->full_window_drag);
     g_key_file_set_boolean(kf, "Effects", "AnimateWindows", s->animate_windows);
     g_key_file_set_boolean(kf, "Effects", "LargeIcons", s->large_icons);

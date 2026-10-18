@@ -896,6 +896,7 @@ void xd_view_on_unmap(xd_view *view) {
         /* The grab ends where it is; an unmapped window isn't configured. */
         if (server->mode == XD_CURSOR_MOVE)
             xd_snap_cancel(server);
+        xd_outline_hide(server);
         server->mode = XD_CURSOR_PASSTHROUGH;
         server->grab_view = nullptr;
     }
@@ -1214,6 +1215,7 @@ void xd_view_on_destroy(xd_view *view) {
     if (server->grab_view == view) {
         if (server->mode == XD_CURSOR_MOVE)
             xd_snap_cancel(server);
+        xd_outline_hide(server);
         server->grab_view = nullptr;
         server->mode = XD_CURSOR_PASSTHROUGH;
     }
@@ -1543,15 +1545,20 @@ void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_
     XD_LISTEN(&popup->events.destroy, p, destroy, handle_popup_destroy);
 }
 
-static void handle_new_popup([[maybe_unused]] struct wl_listener *listener, void *data) {
+static void handle_new_popup(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_popup);
     struct wlr_xdg_popup *popup = data;
     /* Layer-shell popups (the Start menu) are created without a parent and
      * arrive again through the layer surface's new_popup; see layers.c. */
     if (popup->parent == nullptr)
         return;
     struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(popup->parent);
-    if (xdg != nullptr && xdg->data != nullptr)
-        xd_popup_attach(popup, xdg->data, nullptr);
+    if (xdg == nullptr || xdg->data == nullptr)
+        return;
+    xd_popup_attach(popup, xdg->data, nullptr);
+    /* The shell's submenus. */
+    if (xd_layer_from_node(&((struct wlr_scene_tree *)xdg->data)->node) != nullptr)
+        xd_transition_watch_popup(server, popup);
 }
 
 void xd_view_init(xd_server *server) {

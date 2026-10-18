@@ -199,6 +199,7 @@ static void handle_new_popup(struct wl_listener *listener, void *data) {
     }
     /* The shell's popups (the Start menus) may be glass. */
     xd_popup_attach(popup, parent, ls->server);
+    xd_transition_watch_popup(ls->server, popup);
 }
 
 static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {

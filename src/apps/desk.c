@@ -112,6 +112,8 @@ typedef struct desk {
     xd_widget *mixer_widgets[9]; /* label, slider and gradient for each */
 
     /* Effects */
+    xd_widget *transition_check;
+    xd_widget *transition_combo;
     xd_widget *smoothing_check;
     xd_widget *smoothing_combo;
     xd_widget *large_icons;
@@ -907,12 +909,6 @@ static void build_screensaver(desk *d) {
     saver_controls(d);
 }
 
-static xd_widget *on_page_disabled(xd_widget *w, int page) {
-    xd_widget_set_enabled(w, false);
-    xd_widget_set_page(w, page);
-    return w;
-}
-
 /* ---- Appearance ---------------------------------------------------------------- */
 
 static void draw_appearance_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t,
@@ -1391,9 +1387,32 @@ static void on_smoothing(xd_widget *w, void *user) {
     changed(d);
 }
 
+static void on_transition(xd_widget *w, void *user) {
+    (void)w;
+    desk *d = user;
+    bool on = xd_checkbox_checked(d->transition_check);
+    xd_widget_set_enabled(d->transition_combo, on);
+    d->pending.menu_transitions = on;
+    d->pending.menu_transition =
+        xd_widget_selected(d->transition_combo) == 1 ? XD_TRANSITION_SCROLL : XD_TRANSITION_FADE;
+    changed(d);
+}
+
 static void on_large_icons(xd_widget *w, void *user) {
     desk *d = user;
     d->pending.large_icons = xd_checkbox_checked(w);
+    changed(d);
+}
+
+static void on_full_drag(xd_widget *w, void *user) {
+    desk *d = user;
+    d->pending.full_window_drag = xd_checkbox_checked(w);
+    changed(d);
+}
+
+static void on_keyboard_cues(xd_widget *w, void *user) {
+    desk *d = user;
+    d->pending.hide_keyboard_cues = xd_checkbox_checked(w);
     changed(d);
 }
 
@@ -1500,37 +1519,50 @@ static void build_themes(desk *d) {
 static void build_effects(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_EFFECTS;
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 190}, "Visual effects"), P);
-    on_page_disabled(xd_checkbox(win, (xd_rect){32, 62, 340, 20},
-                                 "Use transition effects for menus and tooltips",
-                                 d->pending.menu_transitions, nullptr, nullptr),
-                     P);
-    d->smoothing_check = xd_checkbox(win, (xd_rect){32, 88, 200, 20},
-                                     "Smooth edges of screen fonts",
-                                     d->pending.font_smoothing != XD_SMOOTH_NONE, on_smoothing, d);
+    /* XP's Effects dialog, its combo boxes under the boxes they belong to. */
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 216}, "Visual effects"), P);
+    d->transition_check =
+        xd_checkbox(win, (xd_rect){32, 62, 340, 20},
+                    "Use the following transition effect for menus and tooltips:",
+                    d->pending.menu_transitions, on_transition, d);
+    xd_widget_set_page(d->transition_check, P);
+    d->transition_combo = xd_combo(win, (xd_rect){52, 84, 150, 21}, false, on_transition, d);
+    xd_widget_set_page(d->transition_combo, P);
+    xd_widget_add_item(d->transition_combo, "Fade Effect");
+    xd_widget_add_item(d->transition_combo, "Scroll Effect");
+    xd_widget_select(d->transition_combo,
+                     d->pending.menu_transition == XD_TRANSITION_SCROLL ? 1 : 0);
+    xd_widget_set_enabled(d->transition_combo, d->pending.menu_transitions);
+
+    d->smoothing_check =
+        xd_checkbox(win, (xd_rect){32, 112, 340, 20},
+                    "Use the following method to smooth edges of screen fonts:",
+                    d->pending.font_smoothing != XD_SMOOTH_NONE, on_smoothing, d);
     xd_widget_set_page(d->smoothing_check, P);
-    d->smoothing_combo = xd_combo(win, (xd_rect){236, 87, 136, 21}, false, on_smoothing, d);
+    d->smoothing_combo = xd_combo(win, (xd_rect){52, 134, 150, 21}, false, on_smoothing, d);
     xd_widget_set_page(d->smoothing_combo, P);
     xd_widget_add_item(d->smoothing_combo, "Standard");
     xd_widget_add_item(d->smoothing_combo, "ClearType");
     xd_widget_select(d->smoothing_combo, d->pending.font_smoothing == XD_SMOOTH_CLEARTYPE ? 1 : 0);
     xd_widget_set_enabled(d->smoothing_combo, d->pending.font_smoothing != XD_SMOOTH_NONE);
 
-    /* So far only the desktop's icons grow (XP's Shell Icon Size). */
-    d->large_icons = xd_checkbox(win, (xd_rect){32, 114, 340, 20}, "Use large icons",
+    /* XP's Shell Icon Size: the desktop's icons and the XP Start menu's
+     * program list. */
+    d->large_icons = xd_checkbox(win, (xd_rect){32, 162, 340, 20}, "Use large icons",
                                  d->pending.large_icons, on_large_icons, d);
     xd_widget_set_page(d->large_icons, P);
-    on_page_disabled(xd_checkbox(win, (xd_rect){32, 140, 340, 20},
-                                 "Show window contents while dragging",
-                                 d->pending.full_window_drag, nullptr, nullptr),
-                     P);
-    on_page_disabled(xd_checkbox(win, (xd_rect){32, 166, 340, 34},
-                                 "Hide keyboard navigation indicators until I use the Alt key",
-                                 d->pending.hide_keyboard_cues, nullptr, nullptr),
-                     P);
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 238, 364, 16},
-                                "Greyed-out effects aren't available yet.", XD_LABEL_DIM),
+    /* Off: moving or sizing a window drags its outline (the compositor's). */
+    xd_widget_set_page(xd_checkbox(win, (xd_rect){32, 186, 340, 20},
+                                   "Show window contents while dragging",
+                                   d->pending.full_window_drag, on_full_drag, d),
                        P);
+    /* Check boxes draw one line: XP's wrapped label goes on in a label. */
+    xd_widget_set_page(
+        xd_checkbox(win, (xd_rect){32, 210, 340, 20},
+                    "Hide underlined letters for keyboard navigation until I press",
+                    d->pending.hide_keyboard_cues, on_keyboard_cues, d),
+        P);
+    xd_widget_set_page(xd_label(win, (xd_rect){50, 228, 322, 16}, "the Alt key", 0), P);
     build_themes(d);
 }
 

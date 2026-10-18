@@ -1042,13 +1042,15 @@ static void test_settings(void) {
     xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nScheme=windows-classic\n"
                              "FontSize=large\nFontSmoothing=cleartype\nFuture=ignored\n"
                              "[Desktop]\nWallpaper=/w/p.jpg\nWallpaperMode=tile\n"
-                             "[Effects]\nLargeIcons=true\n[ScreenSaver]\nWait=7\n"
+                             "[Effects]\nLargeIcons=true\nMenuTransition=Scroll\n"
+                             "FullWindowDrag=false\n[ScreenSaver]\nWait=7\n"
                              "[SomethingNew]\nKey=v\n"),
                       &a);
     CHECK(a.style == XD_STYLE_LUNA && strcmp(a.scheme, "windows-classic") == 0);
     CHECK(a.font_size == XD_FONT_LARGE && a.font_smoothing == XD_SMOOTH_CLEARTYPE);
     CHECK(strcmp(a.wallpaper, "/w/p.jpg") == 0 && a.wallpaper_mode == XD_WALLPAPER_TILE);
     CHECK(a.large_icons && a.screensaver_wait == 7);
+    CHECK(a.menu_transition == XD_TRANSITION_SCROLL && !a.full_window_drag);
 
     /* Serialize -> parse round trip. */
     xd_strbuf text = {0};
@@ -1058,14 +1060,18 @@ static void test_settings(void) {
     CHECK(xd_settings_equal(&a, &b));
     b.large_icons = false;
     CHECK(!xd_settings_equal(&a, &b));
+    b.large_icons = true;
+    b.menu_transition = XD_TRANSITION_FADE;
+    CHECK(!xd_settings_equal(&a, &b));
     xd_strbuf_free(&text);
 
     /* Bad values keep defaults; a scheme can't be a path. */
     xd_settings_parse(XD_STR("[Appearance]\nStyle=bogus\nScheme=../../etc/x\n"
                              "[Desktop]\nWallpaper=relative.jpg\nWallpaperMode=x\n"
-                             "[ScreenSaver]\nWait=0\n"),
+                             "[Effects]\nMenuTransition=wipe\n[ScreenSaver]\nWait=0\n"),
                       &a);
     CHECK(a.style == XD_STYLE_CLASSIC && a.scheme[0] == '\0' && a.wallpaper[0] == '\0');
+    CHECK(a.menu_transition == XD_TRANSITION_FADE && a.full_window_drag);
     CHECK(a.wallpaper_mode == XD_WALLPAPER_FILL && a.screensaver_wait == 15);
     /* A syntax error leaves everything at defaults. */
     xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nbroken line\n"), &a);

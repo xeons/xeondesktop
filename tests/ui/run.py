@@ -1140,6 +1140,45 @@ def move_after_left_resize(s):
             f"the window stayed where it was dropped ({mx},{my}, expected {rx + 100},{ry + 60})")
 
 
+def is_checker(shot, x, y, n=6):
+    """Whether pixels from (x, y) rightwards alternate between black and
+    white, as the dragged outline's checkerboard does."""
+    seen = {shot.pixel(x + i, y) for i in range(n)}
+    return seen == {(0, 0, 0), (255, 255, 255)}
+
+
+@scenario(CLASSIC_INI + "\n[Effects]\nFullWindowDrag=false\n")
+def outline_drag(s):
+    """"Show window contents while dragging" off: dragging a caption moves
+    only a checkered outline; the window stays put until the button is let
+    go, and then jumps to where the outline was."""
+    empty = s.settle("desktop")
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(app_id="org.xeondesktop.Files", state="activated")
+    area = (0, 0, WIDTH, HEIGHT - 40)  # above the taskbar
+    before = s.settle("explorer")
+    x, y, w, h = before.changed_box(empty, area)
+    cx, cy = x + w // 2, y + 10  # on the caption
+    # One xd-inject holds the button throughout (its pointer lets go as it
+    # exits); the screenshot is taken meanwhile.
+    steps = ("move", cx, cy, "down", "sleep", 100, "move", cx + 50, cy + 30, "sleep", 100,
+             "move", cx + 100, cy + 60, "sleep", 2500, "up")
+    drag = s.launch(s.tool("xd-inject"), *map(str, steps))
+    time.sleep(1.2)
+    held = s.shot("dragging")
+    # Left of the outline the window is as it was; the outline's left edge
+    # is checkered, the window's is not.
+    s.check(held.differs(before, (x, y, 96, h), step=2, tolerance=0) == 0,
+            "while the button is held the window hasn't moved")  # fmt: skip
+    s.check(is_checker(held, x + 100, y + 60 + h // 2), "a checkered outline where it's dragged")
+    s.check(not is_checker(held, x, y + h // 2), "and none round the window itself")
+    drag.wait(timeout=10)
+    mx, my, _, _ = s.settle("dropped").changed_box(empty, area)
+    s.check(abs(mx - (x + 100)) <= 4 and abs(my - (y + 60)) <= 4,
+            f"on release the window went there ({mx},{my}, expected {x + 100},{y + 60})")
+    s.check(not is_checker(s.shot("after"), x + 100, y + 60 + h // 2), "and the outline is gone")
+
+
 @scenario()
 def display_style(s):
     """Display Properties: picking another style and Apply writes it."""

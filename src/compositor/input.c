@@ -434,12 +434,17 @@ static void begin_keyboard(xd_view *view, xd_cursor_mode mode) {
 void xd_view_begin_keyboard_move(xd_view *view) { begin_keyboard(view, XD_CURSOR_KEY_MOVE); }
 void xd_view_begin_keyboard_size(xd_view *view) { begin_keyboard(view, XD_CURSOR_KEY_SIZE); }
 
-/* Applies key_box, keeping a minimum client size. */
-static void apply_key_box(xd_server *server) {
+/* Applies key_box, keeping a minimum client size; with outline dragging,
+ * only its outline moves until Enter (`done`). */
+static void apply_key_box_now(xd_server *server, bool done) {
     xd_view *view = server->grab_view;
     struct wlr_box *b = &server->key_box;
+    bool outline = !done && xd_outline_dragging(server);
     if (server->mode == XD_CURSOR_KEY_MOVE) {
-        xd_view_set_position(view, b->x, b->y);
+        if (outline)
+            xd_outline_show(server, *b);
+        else
+            xd_view_set_position(view, b->x, b->y);
         return;
     }
     xd_insets in = xd_view_insets(view);
@@ -455,15 +460,24 @@ static void apply_key_box(xd_server *server) {
             b->y -= min_h - b->height;
         b->height = min_h;
     }
-    xd_view_resize_anchored(view, *b, server->key_edges);
+    if (outline)
+        xd_outline_show(server, *b);
+    else
+        xd_view_resize_anchored(view, *b, server->key_edges);
 }
+
+static void apply_key_box(xd_server *server) { apply_key_box_now(server, false); }
 
 static void end_keyboard(xd_server *server, bool keep) {
     xd_view *view = server->grab_view;
     xd_cursor_mode mode = server->mode;
+    /* Enter after dragging an outline: the window goes there now. */
+    if (keep && view != nullptr && server->outline != nullptr)
+        apply_key_box_now(server, true);
+    xd_outline_hide(server);
     server->key_box = server->grab_box;
     if (!keep && view != nullptr)
-        apply_key_box(server); /* Esc: back where it was */
+        apply_key_box_now(server, true); /* Esc: back where it was */
     if (view != nullptr && mode == XD_CURSOR_KEY_SIZE)
         xd_view_set_resizing(view, false);
     server->mode = XD_CURSOR_PASSTHROUGH;
@@ -1133,7 +1147,8 @@ static void set_hover(xd_server *server, xd_view *view, xd_frame_part part) {
         xd_view_set_hover(view, hot, view->pressed);
 }
 
-static void process_resize(xd_server *server) {
+/* The box a resize has reached, and the edges it moves. */
+static struct wlr_box resize_box(xd_server *server, uint32_t *moving_out) {
     xd_view *view = server->grab_view;
     xd_insets in = xd_view_insets(view);
     struct wlr_box b = server->grab_box;
@@ -1161,8 +1176,23 @@ static void process_resize(xd_server *server) {
         moving |= WLR_EDGE_LEFT;
     if (p == XD_PART_TOP || p == XD_PART_TOP_LEFT || p == XD_PART_TOP_RIGHT)
         moving |= WLR_EDGE_TOP;
-    xd_view_resize_anchored(view, (struct wlr_box){left, top, right - left, bottom - top},
-                            moving);
+    *moving_out = moving;
+    return (struct wlr_box){left, top, right - left, bottom - top};
+}
+
+static void process_resize(xd_server *server) {
+    uint32_t moving = 0;
+    struct wlr_box b = resize_box(server, &moving);
+    if (xd_outline_dragging(server))
+        xd_outline_show(server, b);
+    else
+        xd_view_resize_anchored(server->grab_view, b, moving);
+}
+
+/* Where a move has the window (its outer box's corner). */
+static void move_position(const xd_server *server, int *x, int *y) {
+    *x = (int)(server->cursor->x - server->grab_x);
+    *y = (int)(server->cursor->y - server->grab_y);
 }
 
 static void place_drag_icon(xd_server *server);
@@ -1210,9 +1240,16 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
         xd_view *v = server->grab_view;
         xd_snap_motion(server, v);
         /* A maximized window stays put until it's dragged far enough. */
-        if (!v->maximized)
-            xd_view_set_position(v, (int)(server->cursor->x - server->grab_x),
-                                 (int)(server->cursor->y - server->grab_y));
+        if (v->maximized)
+            return;
+        int x, y;
+        move_position(server, &x, &y);
+        if (xd_outline_dragging(server)) {
+            struct wlr_box b = xd_view_outer_box(v);
+            xd_outline_show(server, (struct wlr_box){x, y, b.width, b.height});
+        } else {
+            xd_view_set_position(v, x, y);
+        }
         return;
     }
     case XD_CURSOR_RESIZE:
@@ -1342,12 +1379,25 @@ static void end_grab(xd_server *server) {
     xd_cursor_mode mode = server->mode;
     server->mode = XD_CURSOR_PASSTHROUGH;
     server->grab_view = nullptr;
+    /* An outline was dragged: the window goes where it ended. */
+    bool outline = server->outline != nullptr;
+    xd_outline_hide(server);
     if (view == nullptr)
         return;
 
     if (mode == XD_CURSOR_MOVE) {
+        if (outline && !view->maximized) {
+            int x, y;
+            move_position(server, &x, &y);
+            xd_view_set_position(view, x, y);
+        }
         xd_snap_end(server, view);
     } else if (mode == XD_CURSOR_RESIZE) {
+        if (outline) {
+            uint32_t moving = 0;
+            struct wlr_box b = resize_box(server, &moving);
+            xd_view_resize_anchored(view, b, moving);
+        }
         xd_view_set_resizing(view, false);
     } else if (mode == XD_CURSOR_BUTTON) {
         xd_frame_part part = server->grab_part;
@@ -1386,6 +1436,7 @@ static void end_grab(xd_server *server) {
 void xd_cursor_cancel_grab(xd_server *server) {
     xd_view *view = server->grab_view;
     xd_cursor_mode mode = server->mode;
+    xd_outline_hide(server); /* the window stays where it was */
     server->mode = XD_CURSOR_PASSTHROUGH;
     server->grab_view = nullptr;
     server->cursor_name = nullptr;

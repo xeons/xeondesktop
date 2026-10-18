@@ -254,6 +254,9 @@ typedef struct xd_config {
     bool virtual_input;  /* --allow-virtual-input: for automated UI tests */
     bool always_frames;  /* [Windows] AlwaysDrawFrames */
     bool animate_windows; /* [Effects] AnimateWindows */
+    bool menu_transitions;              /* [Effects] MenuTransitions */
+    xd_menu_transition menu_transition; /* ...and MenuTransition */
+    bool full_window_drag;              /* [Effects] FullWindowDrag; off: outlines */
     xd_keyboard_settings keyboard; /* [Keyboard] */
     xd_mouse_settings mouse;       /* [Mouse] */
     xd_access_settings access;     /* [Accessibility] */
@@ -437,6 +440,7 @@ struct xd_server {
     struct timespec polkit_restart_window;
     bool terminating;
     xd_access *access; /* access.c's state */
+    struct xd_outline *outline; /* outline.c's, while one shows */
 };
 
 /* output.c */
@@ -539,6 +543,16 @@ void xd_animate_zoom(xd_server *server, struct wlr_box from, struct wlr_box to,
                      xd_view *reveal);
 void xd_animate_forget_view(xd_server *server, xd_view *view);
 void xd_animate_finish(xd_server *server);
+
+/* transition.c: the shell's menus and tooltips fade or scroll in. */
+void xd_transition_watch_popup(xd_server *server, struct wlr_xdg_popup *popup);
+
+/* outline.c: "Show window contents while dragging" off. Moving and sizing
+ * show the window's outline at `box` (layout coordinates) until hidden;
+ * the window itself moves on release. */
+bool xd_outline_dragging(const xd_server *server);
+void xd_outline_show(xd_server *server, struct wlr_box box);
+void xd_outline_hide(xd_server *server);
 
 /* snap.c: Windows 7's Snap and Shake (Aero style only). begin returns
  * whether the window may be moved (a maximized one, only in Aero). */
@@ -659,5 +673,8 @@ void xd_frame_render(xd_view *view, bool force);
 /* An application's icon has loaded: redraws its windows' frames. */
 void xd_frame_icon_ready(void *server, const char *app_id);
 double xd_view_scale(const xd_view *view);
+/* A buffer the compositor draws into with cairo (*surface, owned by the
+ * buffer), or nullptr. */
+struct wlr_buffer *xd_cairo_buffer_new(int width, int height, cairo_surface_t **surface);
 
 #endif

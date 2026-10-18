@@ -293,6 +293,12 @@ enum {
     XD_FLYING_DENSITY_MAX = 200,
 };
 
+/* XP's "Use the following transition effect for menus and tooltips". */
+typedef enum xd_menu_transition : uint8_t {
+    XD_TRANSITION_FADE = 0,
+    XD_TRANSITION_SCROLL, /* the menu slides out from where it opens */
+} xd_menu_transition;
+
 typedef struct xd_settings {
     /* [Appearance] */
     xd_visual_style style;
@@ -315,11 +321,12 @@ typedef struct xd_settings {
     xd_wallpaper_mode wallpaper_mode;
     xd_desktop_icon_settings desktop_icons; /* [DesktopIcons] */
 
-    /* [Effects] (stored; not all are implemented yet) */
+    /* [Effects] */
     bool menu_transitions;
+    xd_menu_transition menu_transition; /* MenuTransition: which one */
     bool animate_windows; /* XP's "Animate windows when minimizing and maximizing" */
-    bool full_window_drag;
-    bool large_icons;
+    bool full_window_drag; /* off: moving and sizing drag an outline */
+    bool large_icons;       /* XP's Shell Icon Size 48: desktop and Start menu */
     bool hide_keyboard_cues;
 
     /* [Windows] */

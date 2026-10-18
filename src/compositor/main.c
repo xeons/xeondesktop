@@ -344,6 +344,7 @@ static void server_finish(xd_server *server) {
     if (server->zooms.next != nullptr)
         xd_animate_finish(server);
     xd_snap_finish(server);
+    xd_outline_hide(server);
     if (server->scene != nullptr) {
         /* Destroying the scene frees every node in it, including each
          * output's background; outputs are destroyed later with the
@@ -447,6 +448,9 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     server->config.style = settings.style;
     server->config.always_frames = settings.always_frames;
     server->config.animate_windows = settings.animate_windows;
+    server->config.menu_transitions = settings.menu_transitions;
+    server->config.menu_transition = settings.menu_transition;
+    server->config.full_window_drag = settings.full_window_drag;
     const xd_keyboard_settings *a = &server->config.keyboard, *b = &settings.keyboard;
     if (strcmp(a->layout, b->layout) != 0 || strcmp(a->variant, b->variant) != 0 ||
         strcmp(a->options, b->options) != 0 || strcmp(a->model, b->model) != 0 ||
@@ -583,6 +587,9 @@ int main(int argc, char **argv) {
         server.config.style = settings.style;
     server.config.always_frames = settings.always_frames;
     server.config.animate_windows = settings.animate_windows;
+    server.config.menu_transitions = settings.menu_transitions;
+    server.config.menu_transition = settings.menu_transition;
+    server.config.full_window_drag = settings.full_window_drag;
     server.config.keyboard = settings.keyboard;
     server.config.mouse = settings.mouse;
     server.config.access = settings.access;
