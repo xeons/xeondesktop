@@ -234,19 +234,16 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Shell (taskbar, Start menus, desktop)
 
-- [ ] Standalone taskbar for other wlroots compositors (sway, Hyprland,
-      labwc, Wayfire, river, niri): xd-shell already needs only
-      wlr-layer-shell, with wlr-foreign-toplevel for task buttons and our
-      arranger protocol optional. Needed: a `-Dcompositor=false` build
-      option (wlroots 0.20 is required today only for the compositor); a
-      `--taskbar-only` mode that skips the desktop layer (wallpaper and
-      icons); a way for another compositor to open the Start menu from a
-      key binding (a command or D-Bus call); Log Off ending the logind
-      session instead of looking for xd-compositor; a systemd unit or
-      autostart entry to restart it in place of our compositor. KDE Plasma
-      would show no task buttons (no wlr-foreign-toplevel); GNOME has no
-      layer-shell. Another panel's StatusNotifierWatcher (waybar) would
-      compete for the tray.
+- [x] Standalone taskbar for other wlroots compositors: `-Dcompositor=false`
+      builds without wlroots 0.20 (CI builds it too); `xd-shell
+      --taskbar-only` (no desktop layer); `xd-shell --toggle-start-menu`
+      (D-Bus org.xeondesktop.Shell) for a key binding;
+      xeondesktop-taskbar.service (installed, not enabled); Log Off through
+      logind's TerminateSession when our compositor isn't the session's.
+      Tested only under our own headless compositor (labwc, sway not
+      installed). KDE Plasma would show no task buttons (no
+      wlr-foreign-toplevel); GNOME has no layer-shell; another panel's
+      StatusNotifierWatcher (waybar) competes for the tray.
 - [~] Notification area: StatusNotifierItem icons (we're the watcher, or a
       host of another desktop's), named or pixmap icons, attention icons,
       Passive items hidden, tooltips, Activate / SecondaryActivate, and
@@ -417,9 +414,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Start menu keyboard navigation (XP and Windows 7): arrows within and
       across columns, Tab round them, Enter, Esc. Tested headless; Windows
       7's exact Left/Right/Tab behaviour is a best guess.
-- [ ] Switch User locks first, and xd-lock doesn't answer logind's Unlock,
-      so returning asks for the password twice. XP's Log Off dialog has no
-      Switch User button yet.
+- [x] Switch User: xd-lock follows logind's Unlock (sent by the display
+      manager after its greeter) and Lock, so returning asks once; XP's Log
+      Off box in Luna has Switch User. A logind Lock does nothing while
+      xd-lock isn't running; the box's big buttons can't take keyboard focus.
 - [?] Windows 7 menu: Recent Items, the Shut Down ▸ submenu, Run, the
       frequently-used list showing launched apps.
 - [?] Quick Launch buttons launching apps; Show Desktop's second click
@@ -483,10 +481,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 ## Dialogs and libxdui
 
 - [ ] No input method (text-input-v3) support, no accessibility (AT-SPI),
-      no radio buttons, no tooltips, no drag and drop in libxdui. libxdui
-      windows can't be owned by another (Monitor Settings gets its own
-      taskbar button). The slider (trackbar) is drawn Classic-style in
-      every theme.
+      no drag and drop in libxdui (radio buttons and tooltips exist, unused
+      so far). libxdui windows can't be owned by another (Monitor Settings
+      gets its own taskbar button). The slider (trackbar) is drawn
+      Classic-style in every theme. A scroll-thumb drag stops when the
+      pointer leaves the program's own windows.
 - [x] Run: Browse... opens the GTK chooser (xd-choose-file) with XP's
       Programs filter and puts the choice in the Open box.
 - [~] Display Properties:
@@ -551,8 +550,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Thunderbird/Evolution/KMail, My Documents, removable drives), a
       modifier pressed mid-drag applies at once. Untested: Mail Recipient,
       Send To a removable drive.
-- [ ] Favorites menu; the toolbar's Search button is still greyed (it
-      could open xd-search). My Network Places is titled network:///.
+- [x] Favorites menu (GTK bookmarks, shared with file choosers), the Search
+      button and F3 (xd-search in the current folder), "My Network Places"
+      and GIO's names as titles.
 - [~] Properties dialog. Tested: General for a file, Permissions (ticking
       Group Write and Apply changed 644 to 664), Details, and the size and
       contents count for a folder plus a file (matches find/du exactly).
@@ -560,10 +560,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       name), Read-only, Advanced (chattr) apply, Change... (default app),
       changing the group, "Apply changes to all files and folders inside",
       tri-state check boxes with several mixed items, the error paths.
-- [ ] Properties: no Shortcut tab for .desktop files, no per-type tabs
-      (image size, audio tags), no ACLs or SELinux context.
-- [ ] `xd-thumbnailer` (sandboxed): only thumbnails already in the
-      freedesktop cache are shown.
+- [~] Properties: a Shortcut tab for .desktop files (a user copy when the
+      file isn't writable), a picture's Summary (dimensions). Not yet: audio
+      tags (no tag library), ACLs, SELinux context.
+- [x] `xd-thumbnailer`: missing thumbnails made in a bubblewrap + seccomp
+      sandbox (no network, only the input file, CPU/memory/time limits;
+      only raw pixels come out), images by gdk-pixbuf, other types by
+      installed .thumbnailer programs; visible items first. Local files only.
 - [x] Details view: column resizing (double-click a divider to fit),
       reordering, and the header's column menu (Date Created/Accessed,
       Attributes, Owner), remembered per folder. No Dimensions column (GIO
@@ -603,8 +606,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       type, Eject offered for the CD (not pressed), Restore replacing, a
       second drive's trash (a bind mount) listed and restored. Untested:
       mounting a volume and ejecting (no spare disk here).
-- [ ] My Computer: the drive Properties' pie chart; groups in the List
-      and Details views. Network Places and Control Panel (`control:`).
+- [x] My Computer: drive Properties with XP's pie chart; groups in Details
+      (List view can't group, as in XP). Not yet: renaming a drive, Disk
+      Cleanup, Tools and Hardware tabs.
 - [x] The first arrow key in a fresh folder selected the second item.
 - [?] Folders tree clicks, address bar typing, the Views menu, the
       thumbnail slider, Details header sorting, Show Hidden Files, opening
@@ -633,14 +637,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Popovers (other programs' menus) look like Windows menus: square,
       the menu colour and border, highlighted rows, the submenu arrow.
       Combo box pop-ups are GTK menus, already styled.
-- [ ] Not yet styled: GtkFileChooser's sidebar and path bar; combo
-      pop-ups are menus (Windows drops down a list box). Our GTK apps turn off dialog
-      header bars (buttons at the bottom, our title bar); other apps'
-      header-bar dialogs keep GTK's look.
-- [ ] Other apps' GtkMessageDialogs show GTK's own title strip inside the
-      window and stretched buttons; our apps use `xd_message_box` instead.
-- [ ] The selected tab doesn't overlap its neighbours by 2px as in Windows
-      (GTK ignores the negative margins).
+- [x] GtkFileChooser's sidebar (a list) and path bar (flat buttons); combo
+      pop-ups are list boxes. Other apps' header-bar dialogs keep a GNOME
+      layout (GDK forces gtk-dialogs-use-header on Wayland).
+- [~] Other apps' GtkMessageDialogs: Windows' dialog frame, Yes before No;
+      buttons still stretched (set in GTK's code), title centred, no close
+      button, strip doubled under AlwaysDrawFrames.
+- [x] The selected tab overlaps its neighbours by 2px (box shadows).
 - [?] Luna tabs, group boxes, combo boxes and check glyphs: seen in the
       System Properties and Run As screenshots and look right, but not
       compared pixel for pixel with XP like the buttons were.
@@ -653,8 +656,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       scheme other than Windows Standard: only checked to parse (unit test),
       not looked at.
 
-- [ ] Third-party GTK3 apps pick up the theme at start (via `GTK_THEME`);
-      they don't follow later changes until restarted.
+- [x] Third-party GTK3 apps follow appearance changes: a real session
+      switches GSettings' gtk-theme between XeonDesktop and XeonDesktop-alt
+      (only while ours is used and the key is ours or empty). Sandboxed
+      programs and GTK 4 don't follow.
 - [ ] GTK4/libadwaita apps aren't themed (libadwaita ignores themes).
 
 - [x] Display Properties > Effects: icon theme (IconTheme=; the setting
@@ -713,8 +718,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (the compositor loads them in a thread).
 - [ ] Handles has no Linux equivalent; Open Files is shown instead, and is
       0 for other users' processes (as is I/O).
-- [ ] Peak Mem Usage only covers the time Task Manager has been open.
-- [ ] Not Windows: no Users or Networking tab (those are XP).
+- [x] Peak Mem Usage is the lifetime peak (VmHWM).
+- [x] XP's Networking tab (per-adapter graphs, sysfs) and Users tab
+      (logind sessions, Logoff; Disconnect for your own session; Send
+      Message greyed).
 - Tested: Ctrl+Alt+Delete and Ctrl+Shift+Esc opening it, Applications
   listing windows and End Task closing one, Processes (type-ahead select,
   Delete, warning, Yes killed the process), Performance meters, graphs
@@ -757,12 +764,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       suspend/hibernate and lock on resume, real sound cards and default
       device switches, real localed/AccountsService/polkit prompts, a
       changed password at logon, a logon picking up the formats file.
-- [ ] Applets: not done: UPS; Power Options' Alarms and Power Meter tabs;
-      on-screen status indicators for the accessibility features, the
-      Sound tab (SoundSentry/ShowSounds); Customize Regional Options' fields
-      glibc can't express (list separator, two-digit years, long date...);
-      limited users see administrator tasks in User Accounts; other GTK
-      apps don't follow the double-click time or caret blink.
+- [ ] Applets: not done: UPS (Linux uses NUT/apcupsd; UPower lists USB UPSes
+      as batteries); Customize Regional Options' fields glibc can't express
+      (list separator, two-digit years, long date...); limited users see
+      administrator tasks in User Accounts; other GTK apps don't follow the
+      double-click time or caret blink.
+- [x] Power Options' Alarms and Power Meter tabs (the shell's alarms follow
+      them); Accessibility's Sound tab (SoundSentry flashes), status icons
+      in the tray, automatic reset after idle. Untested on a real laptop.
 - [x] Sound events: window open/close/minimize/maximize/restore (the
       compositor), menu popup and command, device connect/disconnect, low
       and critical battery (the shell), message box sounds, Empty Recycle
@@ -805,8 +814,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       xeondesktop-session stops when the compositor exits; so "When I log
       on" tasks run and scheduled programs can open windows. Tested against
       a mock user manager; untested with a real login.
-- [ ] Add or Remove Programs: "Last Used On" only for programs that open
-      documents (the Start menu's launch counts have no dates).
+- [x] Add or Remove Programs: Last Used On (shell launches and documents),
+      each program's source (pacman/APT repository, Flatpak remote,
+      AppImage, not from a package) and Sort by: Source.
 - [~] **System Properties** (`xd-sysdm`, Windows 2000's layout, Linux
       inside): General (distribution, kernel, owner, machine ID, CPU,
       firmware, RAM); Network Identification (host name and description
@@ -847,14 +857,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       style, the desktop menu, Disk Management's Action menu (dbusmock),
       moving after a left-edge resize. Its own CI job (privileged
       container); not yet seen running on GitHub.
-- [ ] Alt+letter opens the first menu in our GTK apps (Alt+A in Disk
-      Management opens File); F10 then the letter works.
-- [ ] Bugs found in passing: a submenu of the desktop's context menu can
-      draw behind a window; libxdui's combo drop-down shows 8 items and no
-      scroll bar; the Add Printer wizard adds the printer on the main
-      thread (freezes for seconds; its Cancel stays live), and other
-      printer dialogs block on an unreachable CUPS server; closing Network
-      Connections' main window quits under open dialogs; libxdui draws
-      without frame callbacks (a slider drag can outrun the display).
+- [x] Alt+letter opens that menu in our GTK apps (GTK on Wayland's synthetic
+      enter during the menu bar's grab selected File).
+- [ ] Printer changes (Pause, Delete, Properties' Apply, Preferences) still
+      call CUPS on the main thread; Add Printer's Name page shares N between
+      "Printer name" and "Next". Fixed: desktop submenus behind windows,
+      long drop-downs, frame pacing, the Add Printer freeze, Network
+      Connections closing under its dialogs.
 - [x] CI (.github/workflows/ci.yml): GCC and Clang debug builds (ASan,
       UBSan, -Werror) with the unit tests, and a GCC -fanalyzer build.

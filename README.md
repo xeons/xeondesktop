@@ -234,7 +234,7 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 | Applet | Program | What it changes |
 |---|---|---|
 | Accessibility Options | `xd-access` | StickyKeys, FilterKeys (SlowKeys, BounceKeys), ToggleKeys, MouseKeys and High Contrast, with XP's shortcuts, done by the compositor |
-| Add or Remove Programs | `xd-appwiz` | installed programs (size, use), remove and install through PackageKit and Flatpak |
+| Add or Remove Programs | `xd-appwiz` | installed programs (size, last used, where each came from: the package manager's repository, Flatpak, AppImage), remove and install through PackageKit and Flatpak |
 | Administrative Tools | `xd-admintools` | Services (systemd), Event Viewer (the journal), Disk Management (UDisks2: partitions, formatting, resizing), Device Manager |
 | Bluetooth Devices | `xd-bluetooth` | pairing (XP SP2's wizard and passkeys), device properties, the adapter's options, through BlueZ |
 | Date and Time | `xd-timedate` | the clock and time zone, through timedated |
@@ -245,7 +245,7 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 | Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options |
 | Mouse | `xd-mouse` | buttons, ClickLock, double-click speed, pointer theme and size, speed, wheel |
 | Network Connections | `xd-netconn` | connections, status, TCP/IP settings, wireless networks, through NetworkManager |
-| Power Options | `xd-power` | power schemes (plugged in and on batteries), monitor, standby and hibernate timers, the battery icon, locking on resume |
+| Power Options | `xd-power` | power schemes (plugged in and on batteries), monitor, standby and hibernate timers, battery alarms, the power meter, the battery icon, locking on resume |
 | Printers and Faxes | `xd-printers` | CUPS printers, queues, preferences, test pages, the Add Printer wizard |
 | Regional and Language Options | `xd-intl` | your formats, customised (numbers, currency, time, date); the system locale and keyboard through localed |
 | Scanners and Cameras | `xd-scanners` | SANE scanners and gphoto2 cameras, the Scanner and Camera Wizard |
@@ -288,10 +288,16 @@ and the five Windows XP views with a thumbnail size slider. The folder view
 (`src/files/folderview.c`) is our own GTK3 widget that only lays out and draws
 what's visible. Folders update live; double-click or Enter opens files with
 their default application. Start menu folder items open it. Thumbnails shown
-are the ones already in the freedesktop cache. Details columns resize,
+missing from the freedesktop cache are made by `xd-thumbnailer`, which
+decodes each file in a bubblewrap + seccomp sandbox (images with gdk-pixbuf,
+other types with installed .thumbnailer programs). Details columns resize,
 reorder and can be chosen from the header's menu; icons can be arranged
 freely (Auto Arrange off); Send To zips, copies or makes a desktop shortcut;
 Edit > Undo reverses the last renames, copies, moves and deletions.
+Favorites are GTK bookmarks, shared with file choosers; Search (and F3)
+opens Search for Files or Folders in the current folder. Properties has a
+Shortcut tab for launchers, picture dimensions, and XP's pie chart for
+drives.
 
 File > Properties (Alt+Enter, or right-click) opens the Windows 2000
 Properties dialog for the selection or the folder: name, type, default
@@ -311,6 +317,8 @@ selectable columns, End Process, End Process Tree, Set Priority and Set
 Affinity. Performance has the LED meters and history graphs, with the totals
 in Linux terms (committed memory is `Committed_AS`, kernel memory is
 reclaimable and unreclaimable slab). Memory can be shown in KB, MB or GB.
+Networking graphs each adapter; Users lists the logind sessions (Logoff,
+Disconnect).
 Process data comes from procps-ng's `libproc2`.
 
 ### GTK theme
@@ -355,7 +363,8 @@ back to `XKB_DEFAULT_*`. Control Panel > Keyboard edits them.
   26 commands (`~/.local/state/xeondesktop/run-history`).
 - `xd-shutdown`: Log off, Shut down, Restart, Stand by and Hibernate (the
   last two only if the kernel supports them), through `systemctl`.
-  `xd-shutdown --logoff` asks "Are you sure you want to log off?".
+  `xd-shutdown --logoff` asks "Are you sure you want to log off?" (in Luna,
+  XP's Log Off box with Switch User).
 - **In a nested session** (compositor started inside another desktop), and
   with `--dry-run`, power actions are only printed, never run. Log off ends
   the nested session.
@@ -368,6 +377,22 @@ back to `XKB_DEFAULT_*`. Control Panel > Keyboard edits them.
 | `XD_HARDWARE_CURSORS=1` | Try the hardware cursor where the software one is used |
 | `TERMINAL`            | Terminal for `Terminal=true` apps (default `alacritty`)  |
 | `XD_SHELL_OPEN_MENU`  | Testing aid: open the Start menu along a path at startup, e.g. `Programs/Accessories` |
+
+## Under another compositor
+
+The taskbar runs on its own under other wlroots compositors. Build with
+`meson setup build -Dcompositor=false` if wlroots 0.20 isn't available. Run
+`xd-shell --taskbar-only` from your compositor's autostart, or `systemctl
+--user enable --now xeondesktop-taskbar.service` if its session starts
+graphical-session.target. Bind a key to `xd-shell --toggle-start-menu`:
+
+- sway: `exec xd-shell --taskbar-only` and `bindsym Mod4+Escape exec xd-shell --toggle-start-menu`
+- Hyprland: `exec-once = xd-shell --taskbar-only` and `bind = SUPER, Escape, exec, xd-shell --toggle-start-menu`
+- labwc (`rc.xml`): `<keybind key="W-Escape"><action name="Execute" command="xd-shell --toggle-start-menu"/></keybind>`, with `xd-shell --taskbar-only &` in `autostart`
+
+Task buttons need wlr-foreign-toplevel-management, so none appear on KDE
+Plasma. GNOME has no layer-shell, so the taskbar can't run there. Another
+panel's tray (waybar) competes for the notification area.
 
 ## Automated UI testing
 
