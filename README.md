@@ -165,7 +165,11 @@ tabs:
   22 of XP's classic colour schemes, and for the XP style Default (blue),
   Olive Green, Silver and Energy Blue (Royale), each measured from a
   screenshot of the real thing.
-- Effects: font smoothing and large icons.
+- Effects: font smoothing and large icons; the icon theme and the GTK
+  theme ("Program style"), our generated one matching the style by
+  default. A chosen GTK theme is also written where other desktops'
+  settings tools put it (`~/.config/gtk-3.0` and `gtk-4.0` `settings.ini`,
+  `org.gnome.desktop.interface`), so GTK programs however started agree.
 - Settings: drag the monitors into place, and set each one's resolution,
   refresh rate, scale and orientation, or turn it off. As in Windows, new
   display settings revert after 15 seconds unless you keep them. They're

@@ -644,6 +644,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       they don't follow later changes until restarted.
 - [ ] GTK4/libadwaita apps aren't themed (libadwaita ignores themes).
 
+- [x] Display Properties > Effects: icon theme (IconTheme=; the setting
+      wins over XD_ICON_THEME) and GTK theme (GtkTheme=, written to
+      gtk-3.0/gtk-4.0 settings.ini and GSettings only when changed there).
+      The shell, title bars, xd-files and our GTK apps follow it live;
+      libxdui apps and the lock screen at their next start.
+
 ## Task Manager (xd-taskmgr)
 
 - [x] "Not Responding": the compositor pings every Wayland window every 2s
