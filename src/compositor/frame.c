@@ -122,7 +122,7 @@ void xd_frame_render(xd_view *view, bool force) {
     if (!view->mapped)
         return;
     /* The client draws its own decorations. */
-    bool none = view->csd || view->fullscreen;
+    bool none = !xd_view_framed(view);
     wlr_scene_node_set_enabled(&view->frame->node, !none);
 #ifdef XD_SCENEFX
     update_glass(view, xd_view_outer_box(view), !none);

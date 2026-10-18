@@ -1437,6 +1437,63 @@ Gtk.main()
 """
 
 
+# A window that draws its own title bar (a GTK header bar).
+GTK_CSD = r"""
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+w = Gtk.Window(title="Ghost test")
+bar = Gtk.HeaderBar(title="Ghost test", show_close_button=True)
+w.set_titlebar(bar)
+w.set_default_size(420, 300)
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+Gtk.main()
+"""
+
+
+@scenario()
+def hung_csd_window_ghost_frame(s):
+    """A window drawing its own title bar that stops responding gets our
+    frame, as Windows' ghost window: its own close button can't work, ours
+    offers End Program. It goes back where it was when it answers again."""
+    probe = subprocess.run(
+        [sys.executable, "-c", "import gi; gi.require_version('Gtk', '3.0')"],
+        stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        s.log("skipped: no GTK 3 introspection data for Python")
+        return
+    script = os.path.join(s.base, "csd.py")
+    with open(script, "w") as f:
+        f.write(GTK_CSD)
+    empty = s.settle("desktop")
+    area = (0, 0, WIDTH, HEIGHT - 40)
+    app = s.launch(sys.executable, script, env={"GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="Ghost test", state="activated")
+    before = s.settle("answering").changed_box(empty, area)
+    s.check(before is not None, "the window is drawn")
+    try:
+        app.send_signal(signal.SIGSTOP)
+        s.wait(lambda: s.window(title="Ghost test (Not Responding)"), "Not Responding",
+               timeout=15)  # fmt: skip
+        x, y, w, h = s.settle("hung").changed_box(empty, area)
+        s.check(h >= before[3] + 15 and w >= before[2],
+                f"our frame around it ({before[2]}x{before[3]} -> {w}x{h})")  # fmt: skip
+        # The frame's Close button, at its caption's right end.
+        s.inject("move", x + w - 12, y + 12, "click")
+        s.wait(lambda: any(t["title"].startswith("End Program") for t in s.windows()),
+               "End Program")  # fmt: skip
+        s.log("ok: our frame's Close button offers End Program")
+        s.inject("key", "Escape")  # Cancel
+    finally:
+        app.send_signal(signal.SIGCONT)
+    s.wait(lambda: s.window(title="Ghost test") is not None, "it to answer again", timeout=15)
+    after = s.settle("answering again").changed_box(empty, area)
+    s.check(after is not None and all(abs(a - b) <= 2 for a, b in zip(after, before)),
+            f"back where it was, without our frame ({before} -> {after})")  # fmt: skip
+
+
 @scenario()
 def gtk_combo_list(s):
     """Other programs' GTK 3 combo boxes (themed through GTK_THEME) drop

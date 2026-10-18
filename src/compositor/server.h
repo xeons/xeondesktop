@@ -144,6 +144,7 @@ typedef struct xd_view {
     bool maximized;
     bool dialog; /* fixed size (min == max): dialog frame, no resizing */
     bool csd;    /* the client draws its own decorations: no frame from us */
+    int ghost_dx, ghost_dy; /* how far our frame moved it while it hangs */
     bool fullscreen;
     struct wlr_box fullscreen_restore; /* outer box before fullscreen */
     /* Top/left edge resizing: the edges that stay put, applied when the
@@ -505,6 +506,8 @@ void xd_view_set_outer_box(xd_view *view, struct wlr_box outer);
 void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t moving);
 void xd_view_set_fullscreen(xd_view *view, bool fullscreen);
 struct wlr_box xd_view_outer_box(const xd_view *view);
+/* Whether we draw its frame (also around a hung client-decorated one). */
+bool xd_view_framed(const xd_view *view);
 xd_insets xd_view_insets(const xd_view *view);
 /* Kind-independent access (xdg-shell or X11). */
 struct wlr_surface *xd_view_surface(const xd_view *view);

@@ -653,7 +653,7 @@ static void sentry_flash(xd_access *acc) {
     /* No window (or no caption of ours): what there is. */
     if (effect != XD_SENTRY_DESKTOP && view == nullptr)
         effect = XD_SENTRY_DESKTOP;
-    else if (effect == XD_SENTRY_CAPTION && (view->csd || view->fullscreen))
+    else if (effect == XD_SENTRY_CAPTION && !xd_view_framed(view))
         effect = XD_SENTRY_WINDOW;
     switch (effect) {
     case XD_SENTRY_CAPTION:

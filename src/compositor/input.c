@@ -1099,7 +1099,7 @@ static pick pick_at(xd_server *server, double lx, double ly) {
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         if (v == under)
             break;
-        if (!v->mapped || v->minimized || !v->csd || v->maximized || v->fullscreen)
+        if (!v->mapped || v->minimized || xd_view_framed(v) || v->maximized || v->fullscreen)
             continue;
         xd_frame_part part = csd_margin_part(v, lx, ly);
         if (part != XD_PART_NONE)

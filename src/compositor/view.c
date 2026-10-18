@@ -92,8 +92,15 @@ xd_frame xd_view_frame(const xd_view *view, bool active) {
     };
 }
 
+/* Whether we draw the window's frame: ours, or, like Windows' ghost
+ * window, around a client-decorated window that isn't responding, whose
+ * own close button can't work. */
+bool xd_view_framed(const xd_view *view) {
+    return !view->fullscreen && (!view->csd || view->hung);
+}
+
 xd_insets xd_view_insets(const xd_view *view) {
-    if (view->csd || view->fullscreen)
+    if (!xd_view_framed(view))
         return (xd_insets){0};
     xd_frame f = xd_view_frame(view, true);
     return xd_theme_frame_insets(&view->server->logical_theme, &f);
@@ -246,7 +253,7 @@ void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly) {
     struct wlr_box outer = xd_view_outer_box(view);
     *lx = outer.x;
     *ly = outer.y;
-    if (view->csd)
+    if (!xd_view_framed(view))
         return;
     xd_frame f = xd_view_frame(view, true);
     xd_frame_layout l;
@@ -257,7 +264,7 @@ void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly) {
 }
 
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly) {
-    if (view->csd || view->fullscreen)
+    if (!xd_view_framed(view))
         return XD_PART_CLIENT;
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = view->drawn.scale > 0 ? view->drawn.scale : 1.0;
@@ -1041,7 +1048,16 @@ static constexpr uint32_t PING_TIMEOUT_MS = 5000; /* Windows' hung-window time *
 static constexpr int PING_EVERY_MS = 2000;
 
 static void set_hung(xd_view *view, bool hung) {
+    bool was = view->hung;
+    /* A client-decorated window gains our frame while it hangs (and loses
+     * it when it answers again), its contents staying where they are. */
+    bool ghost = view->csd && was != hung && view->mapped;
+    xd_insets in = {0};
+    if (ghost && was)
+        in = xd_view_insets(view);
     view->hung = hung;
+    if (ghost && hung)
+        in = xd_view_insets(view);
     xd_free(view->hung_title);
     view->hung_title = nullptr;
     if (hung) {
@@ -1054,6 +1070,27 @@ static void set_hung(xd_view *view, bool hung) {
     if (view->ftl != nullptr && shown_title(view) != nullptr)
         wlr_foreign_toplevel_handle_v1_set_title(view->ftl, shown_title(view));
     view->drawn.title_dirty = true;
+    if (ghost) {
+        if (hung) {
+            /* Out by the frame, but its caption (the close button) stays on
+             * the screen: with no room above, the contents move down. */
+            struct wlr_box b = xd_view_outer_box(view);
+            struct wlr_box work = xd_output_work_area_at(view->server, b.x + b.width / 2.0,
+                                                         b.y + b.height / 2.0);
+            int x = view->x - in.left, y = view->y - in.top;
+            if (work.width > 0 && y < work.y)
+                y = work.y;
+            view->ghost_dx = view->x - x;
+            view->ghost_dy = view->y - y;
+            place(view, x, y);
+        } else {
+            place(view, view->x + view->ghost_dx, view->y + view->ghost_dy);
+            view->ghost_dx = view->ghost_dy = 0;
+        }
+        update_content_position(view);
+        xd_frame_render(view, true);
+        return;
+    }
     xd_frame_render(view, false);
 }
 
