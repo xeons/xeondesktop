@@ -17,7 +17,7 @@ if pacman-conf DisableSandboxNetwork >/dev/null 2>&1 &&
     sed -i '0,/^\[options\]/s//&\nDisableSandboxNetwork/' /etc/pacman.conf
 fi
 
-pacman -Syu --noconfirm --needed base-devel git >/dev/null
+pacman -Syu --noconfirm --needed base-devel git meson >/dev/null
 
 src=$PWD
 packaging/fetch-subprojects.sh

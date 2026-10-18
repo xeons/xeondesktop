@@ -25,8 +25,10 @@ gradient made for them.
 
 ## Build
 
-Dependencies: meson, ninja, wlroots 0.20 (SceneFX, for Aero's blurred glass,
-is built from `subprojects/` and linked in statically), wayland and
+Dependencies: meson, ninja, wlroots 0.20 (where the system has none, a
+pinned copy is built from `subprojects/` and linked in statically, needing
+libseat, libdisplay-info, hwdata and libgbm; SceneFX, for Aero's blurred
+glass, always is), wayland and
 wayland-protocols, xkbcommon and xkbregistry, xcb and xcb-icccm, libdrm,
 libinput, cairo, pango, fontconfig, GLib/GIO, GTK 3, gdk-pixbuf, json-glib,
 procps-ng's libproc2 (Task Manager), PAM and libxcrypt (Lock Computer, User
@@ -55,12 +57,14 @@ Static analysis: `meson setup build-analyze -Danalyzer=true`.
 ## Packages
 
 GitHub Actions (`.github/workflows/packages.yml`) builds a `.deb` for Debian
-testing and unstable (wlroots 0.20 isn't in a stable release yet) and a
+testing and unstable and for Ubuntu 26.04 LTS (whose wlroots is 0.19, so its
+package has our wlroots 0.20 built in) and a
 package for Arch Linux and CachyOS on every push; they're under the run's
 Artifacts, and tagging `vX.Y.Z` attaches them to a release. To build them
 locally with podman (or docker):
 
     podman run --rm -v "$PWD":/src -w /src debian:testing packaging/build-deb.sh
+    podman run --rm -v "$PWD":/src -w /src ubuntu:26.04 packaging/build-deb.sh
     podman run --rm -v "$PWD":/src -w /src cachyos/cachyos packaging/build-arch.sh
 
 The packages land in `dist/`. Installing one adds **XeonDesktop** to the

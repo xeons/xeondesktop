@@ -1,0 +1,11 @@
+# wlroots 0.20.2 (the tag's commit), for systems that don't ship 0.20
+# (Ubuntu 26.04 LTS has 0.19): meson builds this copy when the system has
+# no wlroots-0.20, and links it in statically; SceneFX (scenefx.wrap) uses
+# the same copy.
+[wrap-git]
+url = https://gitlab.freedesktop.org/wlroots/wlroots.git
+revision = d783533489e1f75d6886c2ab5c5960090ef268f8
+depth = 1
+
+[provide]
+dependency_names = wlroots-0.20

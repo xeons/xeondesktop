@@ -1,18 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Fetches the pinned subprojects (SceneFX, for xd-compositor-fx) into
-# subprojects/, so package builds (which don't download) include them.
+# Fetches the pinned subprojects (SceneFX, for xd-compositor-fx; wlroots,
+# for systems without 0.20) into subprojects/, so package builds (which
+# don't download) include them. Meson reads the wraps and applies their
+# patches; ones already there are left as they are.
 set -eu
 cd "$(dirname "$0")/.."
-wrap=subprojects/scenefx.wrap
-dir=subprojects/scenefx
-[ -d "$dir" ] && exit 0
-url=$(sed -n 's/^url = //p' "$wrap")
-rev=$(sed -n 's/^revision = //p' "$wrap")
-git init -q "$dir"
-git -C "$dir" fetch -q --depth 1 "$url" "$rev"
-git -C "$dir" checkout -q FETCH_HEAD
-# The wrap's patches (meson applies them only when it downloads itself).
-for patch in $(sed -n 's/^diff_files = //p' "$wrap" | tr ',' ' '); do
-    git -C "$dir" apply "$PWD/subprojects/packagefiles/$patch"
-done
+meson subprojects download

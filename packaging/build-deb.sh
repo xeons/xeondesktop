@@ -9,8 +9,16 @@ set -eu
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends build-essential devscripts equivs git ca-certificates >/dev/null
+apt-get install -y -qq --no-install-recommends build-essential devscripts equivs git ca-certificates \
+    meson >/dev/null
 packaging/fetch-subprojects.sh
+
+# Without the system's wlroots 0.20 (Ubuntu 26.04 LTS has 0.19), our pinned
+# copy is built in, with its own build dependencies instead.
+if ! apt-cache show libwlroots-0.20-dev >/dev/null 2>&1; then
+    export DEB_BUILD_PROFILES="${DEB_BUILD_PROFILES:+$DEB_BUILD_PROFILES }pkg.xeondesktop.bundled-wlroots"
+    echo "No wlroots 0.20 here: building with the bundled copy"
+fi
 
 # Build in a copy, so the tree (and its build directories) stay as they are.
 work=$(mktemp -d)

@@ -1,0 +1,16 @@
+diff --git a/include/types/wlr_output.h b/include/types/wlr_output.h
+index 3981bd2..547266a 100644
+--- a/include/types/wlr_output.h
++++ b/include/types/wlr_output.h
+@@ -4,6 +4,11 @@
+ #include <wlr/render/drm_format_set.h>
+ #include <wlr/types/wlr_output.h>
+ 
++/* Copies of wlroots' internal helpers: their own names, so they don't
++ * clash with wlroots' when both are linked in statically. */
++#define output_pending_resolution fx_output_pending_resolution
++#define output_pending_image_description fx_output_pending_image_description
++
+ void output_pending_resolution(struct wlr_output *output,
+ 	const struct wlr_output_state *state, int *width, int *height);
+ 

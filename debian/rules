@@ -8,8 +8,15 @@ include /usr/share/dpkg/architecture.mk
 # The project defaults to a debug build with sanitizers and -Werror, for
 # development; packages are built with the distribution's flags.
 override_dh_auto_configure:
-	dh_auto_configure -- -Db_sanitize=none -Dwerror=false -Daero_blur=enabled
+	dh_auto_configure -- -Db_sanitize=none -Dwerror=false -Daero_blur=enabled $(BUNDLED_WLROOTS)
 
-# SceneFX is linked in statically; none of it is installed.
+# The pkg.xeondesktop.bundled-wlroots profile (systems without wlroots
+# 0.20): our pinned copy, even if another is found.
+ifneq ($(filter pkg.xeondesktop.bundled-wlroots,$(DEB_BUILD_PROFILES)),)
+BUNDLED_WLROOTS = --force-fallback-for=wlroots-0.20
+endif
+
+# SceneFX (and a bundled wlroots) are linked in statically; none of them
+# is installed.
 override_dh_auto_install:
 	DESTDIR=$(CURDIR)/debian/xeondesktop meson install -C obj-$(DEB_HOST_GNU_TYPE) --skip-subprojects

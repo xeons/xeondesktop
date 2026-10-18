@@ -43,13 +43,14 @@ jobs:
 
   debian:
     needs: version
-    name: Debian (${{ matrix.image }})
+    name: Debian package (${{ matrix.image }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # wlroots 0.20 is in Debian testing (forky) and unstable.
-        image: ['debian:testing', 'debian:unstable']
+        # wlroots 0.20 is in Debian testing (forky) and unstable; Ubuntu
+        # 26.04 LTS has 0.19, so its package builds our pinned copy in.
+        image: ['debian:testing', 'debian:unstable', 'ubuntu:26.04']
     container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +65,7 @@ jobs:
           xd-compositor --help
       - uses: actions/upload-artifact@v4
         with:
-          name: xeondesktop-${{ matrix.image == 'debian:testing' && 'debian-testing' || 'debian-unstable' }}
+          name: xeondesktop-${{ matrix.image == 'debian:testing' && 'debian-testing' || matrix.image == 'debian:unstable' && 'debian-unstable' || 'ubuntu-26.04' }}
           path: dist/*.deb
           if-no-files-found: error
 

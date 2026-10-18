@@ -6,7 +6,8 @@ url = https://github.com/wlrfx/scenefx.git
 revision = b96cb6c923b8bf721ad11fa2136fe070d9adc2dd
 depth = 1
 # Effect framebuffers in BGRA when the driver can't allocate RGBA (vmwgfx).
-diff_files = scenefx-bgra-framebuffers.patch
+# Its copies of two wlroots helpers renamed, for a static wlroots too.
+diff_files = scenefx-bgra-framebuffers.patch, scenefx-static-wlroots.patch
 
 [provide]
 dependency_names = scenefx-0.5

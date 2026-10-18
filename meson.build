@@ -139,7 +139,16 @@ settings_dep = declare_dependency(link_with: settings_lib,
 # looked for, and the disabler leaves out every target that uses it.
 build_compositor = get_option('compositor')
 if build_compositor
-  wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
+  # The system's, or our pinned copy (subprojects/wlroots.wrap) linked in
+  # statically: the GLES2 and pixman renderers, DRM and libinput, Xwayland.
+  wlroots_dep = dependency(
+    'wlroots-0.20',
+    include_type: 'system',
+    default_options: ['default_library=static', 'examples=false', 'werror=false',
+                      'renderers=gles2', 'backends=drm,libinput', 'allocators=gbm',
+                      'session=enabled', 'xwayland=enabled', 'libliftoff=disabled',
+                      'color-management=disabled', 'xcb-errors=disabled'],
+  )
   xcb_dep = dependency('xcb', include_type: 'system')
   xcb_icccm_dep = dependency('xcb-icccm', include_type: 'system')
   wayland_server_dep = dependency('wayland-server', include_type: 'system')
@@ -355,7 +364,9 @@ if scenefx_dep.found()
     server_protocol_headers,
     server_protocol_headers_extra,
     arranger_server_src,
-    dependencies: compositor_deps + [scenefx_dep.as_system()],
+    # SceneFX first: its scene graph replaces wlroots' (same symbols), which
+    # matters when wlroots is linked in statically too.
+    dependencies: [scenefx_dep.as_system()] + compositor_deps,
     c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE', '-DXD_SCENEFX'],
     install: true,
   )
