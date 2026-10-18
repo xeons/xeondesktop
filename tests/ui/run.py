@@ -1946,6 +1946,81 @@ def hung_csd_window_ghost_frame(s):
             f"back where it was, without our frame ({before} -> {after})")  # fmt: skip
 
 
+# A window slow to close: "hang" stops answering for 12s when asked to
+# close, then closes; "ask" asks "Save changes?" instead.
+GTK_SLOW_CLOSE = r"""
+import sys, time
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+w = Gtk.Window(title="Slow close")
+w.set_default_size(360, 240)
+def delete(win, event):
+    if sys.argv[1] == "hang":
+        time.sleep(12)
+        return False
+    d = Gtk.MessageDialog(transient_for=win, message_type=Gtk.MessageType.QUESTION,
+                          buttons=Gtk.ButtonsType.YES_NO, text="Save changes?")
+    d.show()
+    return True
+w.connect("delete-event", delete)
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+Gtk.main()
+"""
+
+
+def have_gtk3(s):
+    probe = subprocess.run(
+        [sys.executable, "-c", "import gi; gi.require_version('Gtk', '3.0')"],
+        stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        s.log("skipped: no GTK 3 introspection data for Python")
+    return probe.returncode == 0
+
+
+def end_program_box(s):
+    return any(t["title"].startswith("End Program") for t in s.windows())
+
+
+@scenario()
+def end_program_after_close(s):
+    """A window that stops responding once asked to close (Alt+F4) gets
+    Windows' End Program box after the hung-window time, which goes away by
+    itself when the program does close; one that asks "Save changes?"
+    instead is responding and gets none."""
+    if not have_gtk3(s):
+        return
+    script = os.path.join(s.base, "slow.py")
+    with open(script, "w") as f:
+        f.write(GTK_SLOW_CLOSE)
+    env = {"GSETTINGS_BACKEND": "memory"}
+    s.launch(sys.executable, script, "ask", env=env)
+    s.wait_window(title="Slow close", state="activated")
+    s.settle("asking")
+    s.inject("key", "alt+F4")
+    time.sleep(9)  # past the 5s timeout and a ping round after it
+    s.settle("save changes")
+    s.check(not end_program_box(s), "no End Program box for a window asking Save changes?")
+    s.check(s.window(title="Slow close") is not None, "and the window is still open")
+
+    p = s.launch(sys.executable, script, "hang", env=env)
+    s.wait(lambda: sum(w["title"] == "Slow close" for w in s.windows()) == 2, "the second window")
+    s.wait(lambda: any(w["title"] == "Slow close" and "activated" in w["states"]
+                       for w in s.windows()), "it to be focused")  # fmt: skip
+    s.settle("hanging one")
+    s.inject("key", "alt+F4")
+    start = time.monotonic()
+    s.wait(lambda: end_program_box(s), "End Program", timeout=10)
+    waited = time.monotonic() - start
+    s.settle("end program")
+    s.check(waited >= 4, f"End Program after the hung-window time ({waited:.1f}s)")
+    s.wait(lambda: p.poll() is not None, "the program to close by itself", timeout=15)
+    s.wait(lambda: not end_program_box(s), "the box to go with it", timeout=5)
+    s.log("ok: the box went away when the program closed")
+
+
 @scenario()
 def gtk_combo_list(s):
     """Other programs' GTK 3 combo boxes (themed through GTK_THEME) drop

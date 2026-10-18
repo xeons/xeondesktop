@@ -141,6 +141,10 @@ typedef struct xd_view {
     bool sentry_dim; /* SoundSentry flashing its caption: drawn inactive */
     bool ping_out; /* a ping to its program hasn't timed out (yet) */
     char *hung_title;
+    /* Asked to close while responding: if it stops responding before
+     * handling that, Windows' End Program box follows. CLOSE_SENT until a
+     * ping goes out after the request, CLOSE_PINGED until it's answered. */
+    enum : uint8_t { XD_CLOSE_NONE, XD_CLOSE_SENT, XD_CLOSE_PINGED } close_wait;
     bool maximized;
     bool dialog; /* fixed size (min == max): dialog frame, no resizing */
     bool csd;    /* the client draws its own decorations: no frame from us */

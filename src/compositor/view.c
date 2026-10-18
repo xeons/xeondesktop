@@ -424,24 +424,46 @@ static pid_t view_pid(const xd_view *view) {
     return pid;
 }
 
+/* Windows' End Program box for a window that isn't responding; false
+ * when there's none to show. */
+static bool offer_end_now(xd_view *view) {
+    if (view->server->config.endtask == nullptr)
+        return false;
+    pid_t pid = view_pid(view);
+    if (pid <= 1 || pid == getpid())
+        return false;
+    const char *title = xd_view_title(view);
+    char pid_text[24];
+    snprintf(pid_text, sizeof(pid_text), "%d", (int)pid);
+    char *argv[] = {(char *)(uintptr_t)view->server->config.endtask, pid_text,
+                    (char *)(uintptr_t)(title != nullptr ? title : "Program"), nullptr};
+    xd_spawn_argv(argv);
+    return true;
+}
+
+static bool pingable(const xd_view *v);
+static bool ping_answered(const xd_view *v);
+static void send_ping(xd_view *v);
+
 void xd_view_close(xd_view *view) {
     /* Closing a window that isn't responding: Windows offers End Now. */
-    if (view->hung && view->server->config.endtask != nullptr) {
-        pid_t pid = view_pid(view);
-        const char *title = xd_view_title(view);
-        char pid_text[24];
-        snprintf(pid_text, sizeof(pid_text), "%d", (int)pid);
-        if (pid > 1 && pid != getpid()) {
-            char *argv[] = {(char *)(uintptr_t)view->server->config.endtask, pid_text,
-                            (char *)(uintptr_t)(title != nullptr ? title : "Program"), nullptr};
-            xd_spawn_argv(argv);
-            return;
-        }
-    }
+    if (view->hung && offer_end_now(view))
+        return;
     if (view->kind == XD_VIEW_X11)
         wlr_xwayland_surface_close(view->xsurface);
     else
         wlr_xdg_toplevel_send_close(view->toplevel);
+    /* Then a ping, as Windows does: a program that doesn't answer it in
+     * time gets the End Program box (one asking "Save changes?" answers).
+     * The ping follows the close request on the same connection, so its
+     * answer means the program got past the request. */
+    if (view->hung || !pingable(view))
+        return;
+    view->close_wait = XD_CLOSE_SENT;
+    if (ping_answered(view)) {
+        send_ping(view);
+        view->close_wait = XD_CLOSE_PINGED;
+    }
 }
 
 void xd_view_set_maximized(xd_view *view, bool maximized) {
@@ -1105,6 +1127,12 @@ void xd_view_ping_timed_out(xd_view *view) {
         wlr_log(WLR_INFO, "%s isn't responding", t != nullptr ? t : "a window");
         set_hung(view, true);
     }
+    /* It stopped responding with the close request unhandled. */
+    if (view->close_wait != XD_CLOSE_NONE) {
+        view->close_wait = XD_CLOSE_NONE;
+        if (view->mapped)
+            offer_end_now(view);
+    }
 }
 
 static bool pingable(const xd_view *v) {
@@ -1126,20 +1154,32 @@ static bool ping_answered(const xd_view *v) {
  * times out, so `ping_out` (cleared by the timeout) tells them apart: a
  * hung window whose ping is no longer pending and didn't time out is
  * responding again. All windows are checked before the next pings go. */
+static void send_ping(xd_view *v) {
+    if (v->kind == XD_VIEW_X11)
+        wlr_xwayland_surface_ping(v->xsurface);
+    else
+        wlr_xdg_surface_ping(v->toplevel->base);
+    v->ping_out = true;
+}
+
 static int ping_tick(void *data) {
     xd_server *server = data;
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (pingable(v) && v->hung && v->ping_out && ping_answered(v))
-            set_hung(v, false);
+        if (pingable(v) && v->ping_out && ping_answered(v)) {
+            if (v->hung)
+                set_hung(v, false);
+            /* It got past the close request and still responds. */
+            if (v->close_wait == XD_CLOSE_PINGED)
+                v->close_wait = XD_CLOSE_NONE;
+        }
     }
     XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
         if (!pingable(v))
             continue;
         if (ping_answered(v)) {
-            if (v->kind == XD_VIEW_X11)
-                wlr_xwayland_surface_ping(v->xsurface);
-            else
-                wlr_xdg_surface_ping(v->toplevel->base);
+            send_ping(v);
+            if (v->close_wait == XD_CLOSE_SENT)
+                v->close_wait = XD_CLOSE_PINGED;
         }
         v->ping_out = true;
     }
