@@ -1531,6 +1531,7 @@ void xd_taskbar_create(xd_shell *shell, struct wl_output *output, uint32_t globa
 
 void xd_taskbar_destroy(xd_taskbar *bar) {
     xd_shell *shell = bar->shell;
+    xd_shellbus_taskbar_gone(shell, bar);
     surface_destroy(bar);
     if (bar->peek_timer != 0)
         g_source_remove(bar->peek_timer);

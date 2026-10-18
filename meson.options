@@ -2,3 +2,5 @@ option('analyzer', type: 'boolean', value: false,
        description: 'Build with GCC -fanalyzer (slow; for CI and audits)')
 option('aero_blur', type: 'feature', value: 'auto',
        description: 'Build xd-compositor-fx with SceneFX: blur behind Aero glass and window shadows (GPU only)')
+option('compositor', type: 'boolean', value: true,
+       description: 'Build xd-compositor (needs wlroots 0.20); without it, xd-shell --taskbar-only and the programs run under another wlroots compositor')

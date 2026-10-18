@@ -2,6 +2,8 @@
  * The desktop background: one layer-shell surface per output, below
  * everything, filled with the scheme's Background colour and the
  * wallpaper, and on the first monitor the desktop icons (deskicons.c).
+ * With --taskbar-only it's never drawn, so never shown: the compositor
+ * still tells it the output's size, which menus and the taskbar go by.
  */
 #include <math.h>
 
@@ -65,8 +67,9 @@ xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output) {
     /* -1: cover the whole output, under the taskbar too. */
     zwlr_layer_surface_v1_set_exclusive_zone(d->layer, -1);
     /* A click gives it the keyboard (the icons' keys), as on Windows. */
-    zwlr_layer_surface_v1_set_keyboard_interactivity(
-        d->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND);
+    if (!shell->taskbar_only)
+        zwlr_layer_surface_v1_set_keyboard_interactivity(
+            d->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND);
     zwlr_layer_surface_v1_add_listener(d->layer, &desktop_layer_listener, d);
     wl_surface_commit(d->surface);
     return d;
@@ -141,6 +144,10 @@ static void paint_background(xd_desktop *d, cairo_t *cr, int dw, int dh) {
 
 void xd_desktop_render(xd_desktop *d) {
     xd_shell *shell = d->shell;
+    if (shell->taskbar_only) {
+        d->dirty = false;
+        return;
+    }
     if (!d->configured || d->closed || d->width <= 0 || d->height <= 0)
         return;
     double dw_f = ceil(d->width * d->scale);

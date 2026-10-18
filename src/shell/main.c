@@ -270,12 +270,13 @@ static void repeat_stop(xd_shell *shell) {
     repeat_arm(shell, 0, 0);
 }
 
-static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k,
-                           [[maybe_unused]] uint32_t serial, struct wl_surface *surface,
-                           [[maybe_unused]] struct wl_array *keys) {
+static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
+                           struct wl_surface *surface, [[maybe_unused]] struct wl_array *keys) {
     xd_shell *shell = data;
     shell->kb_surface = surface;
+    shell->kb_serial = serial;
     xd_deskicons_relayout(shell); /* the focus rectangle */
+    xd_shellbus_keyboard_entered(shell, surface, serial);
 }
 
 static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *k,
@@ -585,7 +586,7 @@ static void load_wallpaper(xd_shell *shell) {
     if (shell->wallpaper != nullptr)
         cairo_surface_destroy(shell->wallpaper);
     /* Big enough for a 4K output without keeping a 5K image in memory. */
-    shell->wallpaper = shell->settings.wallpaper[0] != '\0'
+    shell->wallpaper = shell->settings.wallpaper[0] != '\0' && !shell->taskbar_only
                            ? xd_image_load(shell->settings.wallpaper, 4096, 4096)
                            : nullptr;
 }
@@ -594,10 +595,11 @@ static void load_wallpaper(xd_shell *shell) {
  * theme from GSettings (org.gnome.desktop.interface), never from our
  * settings: in a real session the icon theme in use goes there too, as
  * Plasma does with its own. Not in a nested or test session, whose
- * GSettings are the host desktop's. GTK_THEME covers the GTK theme. */
-static void export_icon_theme(const xd_settings *s) {
+ * GSettings are the host desktop's, nor under another compositor, whose
+ * desktop they belong to. GTK_THEME covers the GTK theme. */
+static void export_icon_theme(const xd_shell *shell, const xd_settings *s) {
     const char *nested = getenv("XEONDESKTOP_NESTED");
-    if (nested == nullptr || strcmp(nested, "0") != 0)
+    if (shell->standalone || nested == nullptr || strcmp(nested, "0") != 0)
         return;
     const char *theme = xd_settings_icon_theme(s);
     char **dirs = xd_icon_theme_dirs();
@@ -624,7 +626,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     if (startup || strcmp(old_icons, shell->settings.icon_theme) != 0) {
         xd_icons_destroy(shell->icons);
         shell->icons = xd_icons_create(xd_settings_icon_theme(&shell->settings));
-        export_icon_theme(&shell->settings);
+        export_icon_theme(shell, &shell->settings);
     }
     if (!startup) {
         shell->cli_style = false;
@@ -667,23 +669,6 @@ static void apply_settings(xd_shell *shell, bool startup) {
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
         xd_taskbar_retheme(bar);
     }
-}
-
-/* The Windows Logon sound, once a session: the compositor restarts a
- * shell that crashed, which mustn't greet the user again. */
-static void logon_sound(void) {
-    const char *session = getenv("XEONDESKTOP_PID");
-    if (session == nullptr)
-        return; /* not started by the compositor */
-    char *name = g_strdup_printf("xeondesktop-logon-%s", session);
-    char *path = g_build_filename(g_get_user_runtime_dir(), name, nullptr);
-    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (fd >= 0) {
-        close(fd);
-        xd_sound_play_event(XD_SOUND_LOGON);
-    }
-    g_free(path);
-    g_free(name);
 }
 
 /* XD_SHELL_OPEN_MENU="Programs/Accessories" opens the Start menu and that
@@ -731,7 +716,13 @@ static void debug_open_menu(xd_shell *shell) {
 /* ---- main loop ------------------------------------------------------------------- */
 
 static void usage(FILE *f) {
-    fprintf(f, "usage: xd-shell [--style classic|luna|whistler] [--scheme FILE]\n");
+    fprintf(f, "usage: xd-shell [--style classic|luna|whistler] [--scheme FILE] [--taskbar-only]\n"
+               "       xd-shell --toggle-start-menu\n"
+               "\n"
+               "  --taskbar-only       taskbars, Start menu and notification area, no desktop\n"
+               "                       (wallpaper, icons): for another compositor's session\n"
+               "  --toggle-start-menu  open or close the running shell's Start menu (for a\n"
+               "                       compositor's key binding)\n");
 }
 
 static bool parse_args(int argc, char **argv, xd_shell *shell) {
@@ -740,6 +731,12 @@ static bool parse_args(int argc, char **argv, xd_shell *shell) {
         if (xd_str_eq(arg, XD_STR("-h")) || xd_str_eq(arg, XD_STR("--help"))) {
             usage(stdout);
             exit(EXIT_SUCCESS);
+        }
+        if (xd_str_eq(arg, XD_STR("--toggle-start-menu")))
+            exit(xd_shellbus_call_toggle());
+        if (xd_str_eq(arg, XD_STR("--taskbar-only"))) {
+            shell->taskbar_only = true;
+            continue;
         }
         if (i + 1 >= argc) {
             fprintf(stderr, "xd-shell: missing value for %s\n", argv[i]);
@@ -779,6 +776,18 @@ static bool flush_display(struct wl_display *display) {
             return false;
     }
     return true;
+}
+
+/* The connection to the compositor ended. A protocol error is ours: a
+ * failure, which xd-compositor or systemd restarts us after; the
+ * compositor going away ends the session, and the shell cleanly. */
+static int display_lost(struct wl_display *display) {
+    if (wl_display_get_error(display) == EPROTO) {
+        fprintf(stderr, "xd-shell: Wayland protocol error\n");
+        return EXIT_FAILURE;
+    }
+    fprintf(stderr, "xd-shell: the compositor went away\n");
+    return EXIT_SUCCESS;
 }
 
 /* Our own descriptors, then GLib's (D-Bus for the notification area),
@@ -842,7 +851,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         }
         if (fds[0].revents & POLLIN) {
             if (wl_display_read_events(d) < 0) {
-                rc = EXIT_FAILURE;
+                rc = display_lost(d);
                 break;
             }
         } else {
@@ -850,7 +859,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         }
         /* POLLHUP: the compositor went away. */
         if ((fds[0].revents & (POLLERR | POLLHUP)) || wl_display_dispatch_pending(d) < 0) {
-            rc = EXIT_FAILURE;
+            rc = display_lost(d);
             break;
         }
         /* GLib's callbacks (D-Bus, pipes) run once the Wayland read is
@@ -932,6 +941,16 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    /* SIGTERM and SIGINT end the loop (through a signalfd) and exit 0, so
+     * neither xd-compositor nor systemd restarts us. Blocked before GLib
+     * starts its threads (D-Bus), which inherit the mask: a thread that
+     * didn't block them would take the signal and die of it. */
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGTERM);
+    sigprocmask(SIG_BLOCK, &mask, nullptr);
+
     shell.xkb = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     shell.display = wl_display_connect(nullptr);
     if (shell.display == nullptr) {
@@ -947,6 +966,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "xd-shell: compositor lacks wl_shm, xdg-shell or wlr-layer-shell\n");
         return EXIT_FAILURE;
     }
+    pid_t compositor = xd_session_compositor_pid(shell.display);
+    xd_session_detect(&shell, compositor);
 
     /* Launched apps are reaped automatically. */
     signal(SIGCHLD, SIG_IGN);
@@ -974,23 +995,20 @@ int main(int argc, char **argv) {
     xd_sys_bluetooth_init(&shell);
     xd_sys_network_init(&shell);
     xd_sys_volume_init(&shell);
-    xd_deskicons_init(&shell);
+    if (!shell.taskbar_only)
+        xd_deskicons_init(&shell);
     xd_sys_battery_init(&shell);
     xd_sleep_init(&shell);
     xd_account_init(&shell);
     xd_shell_sounds_init();
-    logon_sound();
+    xd_shellbus_init(&shell);
+    xd_session_logon_sound(compositor);
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
     for (size_t i = 0; i < shell.early_count; i++)
         xd_taskbar_create(&shell, shell.early_outputs[i].output, shell.early_outputs[i].name);
     shell.early_count = 0;
 
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGINT);
-    sigaddset(&mask, SIGTERM);
-    sigprocmask(SIG_BLOCK, &mask, nullptr);
     int signal_fd = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
     int timer_fd = clock_timer_create();
 
@@ -1012,6 +1030,7 @@ int main(int argc, char **argv) {
         wl_list_remove(&t->link);
         xd_free(t);
     }
+    xd_shellbus_finish(&shell);
     xd_tray_finish(&shell);
     xd_sleep_finish(&shell);
     xd_account_finish(&shell);

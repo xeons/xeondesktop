@@ -27,6 +27,7 @@ typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
 typedef struct xd_sleep xd_sleep;
 typedef struct xd_account xd_account;
+typedef struct xd_shellbus xd_shellbus;
 typedef struct xd_superbar xd_superbar;
 
 typedef struct xd_early_output {
@@ -217,6 +218,7 @@ struct xd_shell {
     struct xkb_keymap *keymap;
     struct xkb_state *xkb_state;
     struct wl_surface *kb_surface; /* ours with the keyboard focus, if any */
+    uint32_t kb_serial;            /* of its keyboard enter */
     struct xdg_wm_base *wm_base;
     struct zwlr_layer_shell_v1 *layer_shell;
     struct zwlr_foreign_toplevel_manager_v1 *toplevel_manager;
@@ -280,6 +282,13 @@ struct xd_shell {
 
     char clock[32];
     bool running;
+    /* --taskbar-only: no desktop (wallpaper, icons), for another
+     * compositor's session. */
+    bool taskbar_only;
+    /* Not under xd-compositor (XEONDESKTOP_PID isn't the compositor we're
+     * connected to). */
+    bool standalone;
+    xd_shellbus *shellbus; /* org.xeondesktop.Shell (shellbus.c) */
 
     xd_quicklaunch quicklaunch;
     /* Windows minimized by Show Desktop, restored by the next click. */
@@ -567,6 +576,26 @@ pid_t xd_shell_launch(xd_shell *shell, const char *command);
 void xd_idle_update(xd_shell *shell);
 /* Called after the Start menu closed for any reason. */
 void xd_shell_start_menu_closed(xd_shell *shell);
+
+/* shellbus.c: org.xeondesktop.Shell, the Start menu for another
+ * compositor's key binding. */
+void xd_shellbus_init(xd_shell *shell);
+void xd_shellbus_finish(xd_shell *shell);
+void xd_shell_toggle_start_menu(xd_shell *shell);
+void xd_shellbus_keyboard_entered(xd_shell *shell, struct wl_surface *surface, uint32_t serial);
+void xd_shellbus_taskbar_gone(xd_shell *shell, xd_taskbar *bar);
+/* xd-shell --toggle-start-menu: asks the running shell; an exit status. */
+int xd_shellbus_call_toggle(void);
+
+/* session.c */
+/* The compositor at the other end of the Wayland connection (0 if that
+ * can't be told). */
+pid_t xd_session_compositor_pid(struct wl_display *display);
+/* Under xd-compositor, or another compositor (sets shell->standalone and
+ * fixes up XEONDESKTOP_PID and XEONDESKTOP_NESTED for what we start)? */
+void xd_session_detect(xd_shell *shell, pid_t compositor);
+/* The Windows Logon sound, once a session. */
+void xd_session_logon_sound(pid_t compositor);
 
 /* startmenu.c */
 void xd_start_menu_build(xd_shell *shell);

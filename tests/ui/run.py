@@ -822,6 +822,55 @@ def combo_closes_on_tab(s):
     s.check(closed.differs(tab, below) < 0.02, "a click elsewhere in the dialog closed the list")
 
 
+@scenario(LUNA_INI)
+def taskbar_only(s):
+    """xd-shell --taskbar-only, as under another compositor: no desktop
+    (wallpaper, icons), and `xd-shell --toggle-start-menu` (a key binding's)
+    opens and closes the Start menu."""
+    import gi
+
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+
+    with_desktop = s.settle("desktop")
+    # The session's shell, by the name it owns, makes way.
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    pid = bus.call_sync(
+        "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+        "GetConnectionUnixProcessID", GLib.Variant("(s)", ("org.xeondesktop.Shell",)),
+        GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 5000, None,
+    ).unpack()[0]  # fmt: skip
+    os.kill(pid, signal.SIGTERM)
+    s.wait(lambda: not os.path.exists(f"/proc/{pid}"), "the session's shell to exit")
+    # A XEONDESKTOP_PID that isn't the compositor's: as if left over in the
+    # user manager from an earlier XeonDesktop session.
+    s.launch(s.tool("xd-shell"), "--taskbar-only", env={"XEONDESKTOP_PID": "1"})
+    s.wait(lambda: s.shot("taskbar-only").pixel(WIDTH // 2, HEIGHT - 4) != (0, 0, 0), "the taskbar")
+    bare = s.settle("taskbar-only")
+    # The desktop icons, top left, are gone: what's there is the
+    # compositor's own background, the same everywhere.
+    icons = (0, 0, 80, 210)
+    s.check(bare.differs(with_desktop, icons) > 0.05, "no desktop icons")
+    s.check(bare.pixel(38, 170) == bare.pixel(WIDTH // 2, HEIGHT // 2), "nothing drawn over the output")
+    s.check(bare.differs(with_desktop, (0, HEIGHT - 30, 80, 30)) < 0.05, "the Start button is there")
+
+    def toggle():
+        r = subprocess.run([s.tool("xd-shell"), "--toggle-start-menu"], timeout=10)
+        if r.returncode != 0:
+            raise Failure(f"xd-shell --toggle-start-menu exited {r.returncode}")
+
+    region = (0, 300, 400, 420)
+    toggle()
+    menu = s.settle("start-menu")
+    s.check(menu.differs(bare, region) > 0.2, "--toggle-start-menu opened the Start menu")
+    toggle()
+    s.check(s.settle("closed").differs(bare, region) < 0.02, "and again closed it")
+    toggle()
+    s.check(s.settle("reopened").differs(bare, region) > 0.2, "it opens again")
+    s.inject("key", "Escape")
+    s.check(s.settle("escaped").differs(bare, region) < 0.02, "Esc closed it: it had the keyboard")
+
+
 @scenario(requires=("dbusmock",))
 def disk_management_menu(s):
     """Disk Management (on a dbusmock UDisks2): the Action menu opens with

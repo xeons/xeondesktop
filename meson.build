@@ -133,13 +133,28 @@ settings_lib = static_library(
 settings_dep = declare_dependency(link_with: settings_lib,
                                   dependencies: [theme_dep, glib_dep, json_glib_dep])
 
-wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
-xcb_dep = dependency('xcb', include_type: 'system')
-xcb_icccm_dep = dependency('xcb-icccm', include_type: 'system')
-wayland_server_dep = dependency('wayland-server', include_type: 'system')
+# -Dcompositor=false: the shell, libxdui and GTK programs without
+# xd-compositor, for another wlroots compositor (sway, Hyprland, labwc...)
+# on systems without wlroots 0.20. What only the compositor needs isn't
+# looked for, and the disabler leaves out every target that uses it.
+build_compositor = get_option('compositor')
+if build_compositor
+  wlroots_dep = dependency('wlroots-0.20', include_type: 'system')
+  xcb_dep = dependency('xcb', include_type: 'system')
+  xcb_icccm_dep = dependency('xcb-icccm', include_type: 'system')
+  wayland_server_dep = dependency('wayland-server', include_type: 'system')
+  libdrm_dep = dependency('libdrm')
+  libinput_dep = dependency('libinput', include_type: 'system')
+else
+  wlroots_dep = disabler()
+  xcb_dep = disabler()
+  xcb_icccm_dep = disabler()
+  wayland_server_dep = disabler()
+  libdrm_dep = disabler()
+  libinput_dep = disabler()
+endif
 wayland_client_dep = dependency('wayland-client', include_type: 'system')
 xkbcommon_dep = dependency('xkbcommon', include_type: 'system')
-libdrm_dep = dependency('libdrm', include_type: 'system').partial_dependency(compile_args: true)
 
 # ---- Wayland protocols --------------------------------------------------------
 wayland_scanner = find_program(
@@ -296,8 +311,8 @@ compositor_deps = [
   xcb_icccm_dep,
   wayland_server_dep,
   xkbcommon_dep,
-  dependency('libdrm'),
-  dependency('libinput', include_type: 'system'),
+  libdrm_dep,
+  libinput_dep,
 ]
 executable(
   'xd-compositor',
@@ -317,7 +332,8 @@ executable(
 # installed.
 scenefx_proj = subproject(
   'scenefx',
-  required: get_option('aero_blur'),
+  required: get_option('aero_blur').require(build_compositor,
+                                            error_message: 'needs -Dcompositor=true'),
   default_options: ['default_library=static', 'examples=false', 'werror=false'],
 )
 scenefx_dep = scenefx_proj.found() ? scenefx_proj.get_variable('scenefx') : dependency('', required: false)
@@ -840,6 +856,8 @@ executable(
   'src/shell/sleep.c',
   'src/shell/account.c',
   'src/shell/sounds.c',
+  'src/shell/shellbus.c',
+  'src/shell/session.c',
   'src/settings/soundplay.c',
   'src/settings/themes.c',
   link_with: rename_lib,
@@ -948,17 +966,36 @@ add_test_setup('ui')
 install_subdir('data/schemes', install_dir: get_option('datadir') / 'xeondesktop')
 install_subdir('data/maps', install_dir: get_option('datadir') / 'xeondesktop')
 
-# The session, for display managers.
-install_data('data/xeondesktop-session', install_dir: get_option('bindir'), install_mode: 'rwxr-xr-x')
-# Started by the compositor, stopped by xeondesktop-session: binds
-# graphical-session.target to the session.
 systemd_pc = dependency('systemd', required: false)
-install_data(
-  'data/systemd/user/xeondesktop-session.target',
-  install_dir: systemd_pc.found()
-    ? systemd_pc.get_variable(pkgconfig: 'systemd_user_unit_dir',
-                              pkgconfig_define: ['prefix', get_option('prefix')])
-    : get_option('prefix') / 'lib' / 'systemd' / 'user',
+systemd_user_unit_dir = systemd_pc.found() \
+  ? systemd_pc.get_variable(pkgconfig: 'systemd_user_unit_dir',
+                            pkgconfig_define: ['prefix', get_option('prefix')]) \
+  : get_option('prefix') / 'lib' / 'systemd' / 'user'
+if build_compositor
+  # The session, for display managers.
+  install_data('data/xeondesktop-session', install_dir: get_option('bindir'),
+               install_mode: 'rwxr-xr-x')
+  # Started by the compositor, stopped by xeondesktop-session: binds
+  # graphical-session.target to the session.
+  install_data('data/systemd/user/xeondesktop-session.target',
+               install_dir: systemd_user_unit_dir)
+  install_data(
+    'data/wayland-sessions/xeondesktop.desktop',
+    install_dir: get_option('datadir') / 'wayland-sessions',
+  )
+  install_data(
+    'data/xdg-desktop-portal/xeondesktop-portals.conf',
+    install_dir: get_option('datadir') / 'xdg-desktop-portal',
+  )
+endif
+# The taskbar alone under another compositor's session, for those who
+# enable it (systemctl --user enable xeondesktop-taskbar).
+configure_file(
+  input: 'data/systemd/user/xeondesktop-taskbar.service.in',
+  output: 'xeondesktop-taskbar.service',
+  configuration: {'BINDIR': get_option('prefix') / get_option('bindir')},
+  install_dir: systemd_user_unit_dir,
+  install_tag: 'runtime',
 )
 # VirtualBox guests: its shared clipboard as a Wayland client.
 install_data('data/xd-vboxclient', install_dir: get_option('libexecdir'),
@@ -967,17 +1004,6 @@ configure_file(
   input: 'data/systemd/user/app-vboxclient@autostart.service.d/xeondesktop.conf',
   output: 'xeondesktop-vboxclient.conf',
   configuration: {'LIBEXECDIR': get_option('prefix') / get_option('libexecdir')},
-  install_dir: (systemd_pc.found()
-    ? systemd_pc.get_variable(pkgconfig: 'systemd_user_unit_dir',
-                              pkgconfig_define: ['prefix', get_option('prefix')])
-    : get_option('prefix') / 'lib' / 'systemd' / 'user') / 'app-vboxclient@autostart.service.d',
+  install_dir: systemd_user_unit_dir / 'app-vboxclient@autostart.service.d',
   install_tag: 'runtime',
-)
-install_data(
-  'data/wayland-sessions/xeondesktop.desktop',
-  install_dir: get_option('datadir') / 'wayland-sessions',
-)
-install_data(
-  'data/xdg-desktop-portal/xeondesktop-portals.conf',
-  install_dir: get_option('datadir') / 'xdg-desktop-portal',
 )
