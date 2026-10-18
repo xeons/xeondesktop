@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Flatpak
+Comment=Change what Flatpak applications can use, and the remotes they come from
+Exec=xd-flatpak
+Icon=security-high
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=programs
+Keywords=flatpak;permissions;sandbox;override;flatseal;remote;repository;flathub;
+StartupWMClass=org.xeondesktop.Flatpak

@@ -271,6 +271,7 @@ separate `.cpl` you could run on its own:
 | Bluetooth Devices | BlueZ |
 | Date and Time | timedated; timesyncd (org.freedesktop.timesync1) and systemd for the time server and Update Now |
 | Display | `desktop.ini`, `monitors.ini`, `wlr-output-management` |
+| Flatpak | libflatpak (remotes), the user's override files (`flatpak override --user`'s format) |
 | Folder Options | the file manager's settings, `mimeapps.list`, the user's shared-mime-info database |
 | Fonts | fontconfig; printing through GtkPrintOperation |
 | Game Controllers | udev and libevdev |

@@ -1,0 +1,85 @@
+.TH XD\-FLATPAK 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-flatpak \- Flatpak application permissions and remotes
+.SH SYNOPSIS
+.SY xd\-flatpak
+.OP \-\-page n
+.YS
+.SH DESCRIPTION
+.B xd\-flatpak
+(Flatpak in the Control Panel's Add or Remove Programs category) shows
+what Flatpak applications may use outside their sandbox, lets the user
+change it, and manages the remotes Flatpak installs from.
+It works through libflatpak on the user's and the system's
+installations.
+.TP
+.B Applications
+The installed applications.
+.B Permissions...
+opens an application's permissions as they come from its metadata, its
+runtime's and the overrides (the system's global and per-application
+overrides for an application of a system installation, then the user's
+global ones), with the user's own changes on top, shown in bold:
+shared subsystems (network, IPC), sockets, devices and features on the
+.B General
+and
+.B Devices
+tabs; filesystems with their access (read and write, read only, created
+if missing, no access) and persistent folders on
+.BR "File System" ;
+environment variables set or unset on
+.BR Environment ;
+and session and system bus names the application may see, talk to or own
+on
+.BR D\-Bus .
+A change that matches what the application has anyway leaves no entry.
+.B Restore Defaults
+in the dialog, and
+.B Reset
+in the list, remove the user's changes.
+Changes take effect the next time the application starts.
+.TP
+.B Remotes
+The remotes of each installation: name, title, address, the
+installation, and whether it's enabled.
+.BR Add... ,
+from a
+.I .flatpakrepo
+file (with the remote's signing key) or an address (without one),
+.BR Remove ,
+and
+.BR Enable / Disable .
+Changes to a system installation go through Flatpak's system helper,
+which asks polkit for an administrator's password.
+.PP
+Portal permissions (screenshots, location and the like, kept by
+xdg\-desktop\-portal's permission store) aren't shown here.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on the
+.IR n th
+tab, from 0 (Applications).
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/flatpak/overrides/APP\-ID
+The user's override for an application, in the format
+.BR flatpak\-metadata (5)
+describes and
+.B flatpak override \-\-user
+writes.
+.B $FLATPAK_USER_DIR
+moves the user installation, overrides included, as for
+.BR flatpak (1).
+.TP
+.I $XDG_DATA_HOME/flatpak/overrides/global
+.TQ
+.I /var/lib/flatpak/overrides/
+The user's overrides for all applications, and the system's, which are
+read but not changed.
+.SH SEE ALSO
+.BR flatpak\-override (1),
+.BR flatpak\-metadata (5),
+.BR flatpak\-remote\-add (1),
+.BR xd\-appwiz (1),
+.BR xd\-control (1)

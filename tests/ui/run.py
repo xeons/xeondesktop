@@ -3755,6 +3755,114 @@ def privacy_settings(s):
     s.settle("permissions-after")
 
 
+FLATPAK_APP = "org.xd.Test.Hello"
+
+
+def scratch_flatpak(s):
+    """Before the compositor starts: scratch user and system Flatpak
+    installations (FLATPAK_USER_DIR, FLATPAK_SYSTEM_DIR), the real ones
+    untouched, holding a tiny runtime and app built and installed offline
+    from a local repository, and a remote in each."""
+    fp = os.path.join(s.base, "flatpak")
+    os.environ.update(
+        {
+            "FLATPAK_USER_DIR": os.path.join(fp, "user"),
+            "FLATPAK_SYSTEM_DIR": os.path.join(fp, "system"),
+            "FLATPAK_CONFIG_DIR": os.path.join(fp, "config"),
+        }
+    )
+    s.flatpak = shutil.which("flatpak")
+    if s.flatpak is None:
+        return
+    rt, app, repo = (os.path.join(fp, d) for d in ("src-rt", "src-app", "repo"))
+    for d in (os.path.join(rt, "files", "bin"), os.path.join(app, "files", "bin"),
+              os.path.join(app, "export")):  # fmt: skip
+        os.makedirs(d)
+    with open(os.path.join(rt, "metadata"), "w") as f:
+        f.write("[Runtime]\nname=org.xd.Test.Platform\n")
+    with open(os.path.join(app, "files", "bin", "hello"), "w") as f:
+        f.write("#!/bin/sh\necho hello\n")
+    with open(os.path.join(app, "metadata"), "w") as f:
+        f.write(f"[Application]\nname={FLATPAK_APP}\nruntime=org.xd.Test.Platform/"
+                f"{subprocess.check_output([s.flatpak, '--default-arch'], text=True).strip()}/1\n"
+                "command=hello\n\n[Context]\nshared=network;\nsockets=wayland;pulseaudio;\n"
+                "filesystems=xdg-download:ro;\n")  # fmt: skip
+
+    def run(*cmd, user_dir=None):
+        env = dict(os.environ)
+        if user_dir:
+            env["FLATPAK_USER_DIR"] = user_dir
+        subprocess.run([s.flatpak, *cmd], env=env, check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)  # fmt: skip
+
+    run("build-export", "--runtime", "--files=files", repo, rt, "1")
+    run("build-export", repo, app, "stable")
+    run("build-update-repo", repo)
+    run("--user", "remote-add", "--no-gpg-verify", "test-repo", "file://" + repo)
+    run("--user", "install", "-y", "--noninteractive", "test-repo", FLATPAK_APP + "//stable")
+    # The system installation is filled as a user one would be: the real
+    # one needs root (Flatpak's system helper), which the tests never use.
+    run("--user", "remote-add", "--no-gpg-verify", "sys-repo", "file://" + repo,
+        user_dir=os.environ["FLATPAK_SYSTEM_DIR"])  # fmt: skip
+
+
+@scenario(LUNA_INI, setup=scratch_flatpak)
+def flatpak_permissions(s):
+    """Flatpak (xd-flatpak) on scratch installations with a test app: by
+    keyboard, Permissions..., Network off and Apply write the user's
+    override as `flatpak override --user` would; a filesystem added read
+    only joins it; Restore Defaults removes the file; on Remotes, Disable
+    disables the user's remote through libflatpak."""
+    if s.flatpak is None:
+        s.log("skipped: flatpak isn't installed")
+        return
+    override = os.path.join(os.environ["FLATPAK_USER_DIR"], "overrides", FLATPAK_APP)
+
+    def context():
+        c = configparser.ConfigParser(interpolation=None, strict=False, delimiters=("=",))
+        c.optionxform = str
+        c.read(override)
+        return c["Context"] if c.has_section("Context") else {}
+
+    empty = s.settle("desktop")
+    s.launch("xd-flatpak")
+    s.wait_window(title="Flatpak", state="activated")
+    apps = s.settle("applications")
+    s.check(apps.differs(empty, (40, 150, 400, 60)) > 0.05, "the test app is listed")
+    # The list has the focus and its first row is selected.
+    s.inject("key", "alt+p", "sleep", 800)
+    perms = s.settle("permissions")
+    s.check(perms.differs(apps, (0, 0, WIDTH, HEIGHT - 40)) > 0.05, "Permissions... opened")
+    s.inject("key", "alt+n", "sleep", 300, "key", "alt+a", "sleep", 500)
+    s.wait(lambda: context().get("shared") == "!network;", "shared=!network; written")
+    s.log("ok: Network off wrote shared=!network;")
+    # File System (third tab): Add..., xdg-music read only, OK, Apply.
+    s.inject("key", "ctrl+Tab", "key", "ctrl+Tab", "sleep", 300, "key", "alt+d", "sleep", 800,
+             "type", "xdg-music", "key", "alt+o", "key", "Return", "sleep", 500, "key", "alt+a",
+             "sleep", 500)  # fmt: skip
+    s.wait(lambda: "xdg-music:ro;" in context().get("filesystems", ""), "xdg-music:ro written")
+    s.check(context().get("shared") == "!network;", "the earlier change kept")
+    s.settle("filesystem")
+    # Restore Defaults, Apply: nothing of the user's is left, so no file.
+    s.inject("key", "alt+f", "sleep", 300, "key", "alt+a", "sleep", 500)
+    s.wait(lambda: not os.path.exists(override), "the override file to go")
+    s.log("ok: Restore Defaults removed the override")
+    s.inject("key", "Escape", "sleep", 800)
+    # Remotes: the user's remote comes first; Disable.
+    s.inject("key", "alt+m", "sleep", 500)
+    s.settle("remotes")
+    s.inject("key", "alt+s", "sleep", 1000)
+
+    def disabled():
+        out = subprocess.run([s.flatpak, "remotes", "--user", "--show-disabled",
+                              "--columns=name,options"], capture_output=True, text=True)  # fmt: skip
+        return any(l.startswith("test-repo") and "disabled" in l for l in out.stdout.splitlines())
+
+    s.wait(disabled, "test-repo disabled")
+    s.settle("remote-disabled")
+    s.log("ok: Disable disabled the user's remote")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

@@ -20,6 +20,7 @@
 
 #include "../src/admin/admin.h"
 #include "../src/appwiz/programs.h"
+#include "../src/flatpak/perms.h"
 #include "../src/apps/runcmd.h"
 #include "../src/power/schemes.h"
 #include "../src/printers/cupsops.h"
@@ -3676,6 +3677,198 @@ static void test_admin_disks(void) {
     CHECK(xd_format_unit_args("btrfs", 4096, 512) == nullptr);
 }
 
+/* Flatpak permissions: merging layers as flatpak does (checked against
+ * `flatpak info --show-permissions`), and the user override written in
+ * `flatpak override --user`'s format. */
+static void fp_merge(xd_fp_perms *p, const char *text) {
+    GKeyFile *kf = g_key_file_new();
+    CHECK(g_key_file_load_from_data(kf, text, (gsize)-1, G_KEY_FILE_NONE, nullptr));
+    xd_fp_perms_merge(p, kf);
+    g_key_file_free(kf);
+}
+
+static void test_flatpak_perms(void) {
+    xd_fp_perms *p = xd_fp_perms_new();
+    fp_merge(p, "[Context]\nsockets=x11;if:x11:!has-wayland;pulseaudio;\n"
+                "devices=dri;\nfilesystems=xdg-download:ro;home/Games:create;/srv//data/;\n"
+                "persistent=.hello;\nunset-environment=GONE;\n"
+                "[Session Bus Policy]\norg.freedesktop.Notifications=talk\n"
+                "[Environment]\nHELLO_MODE=fast\nGONE=\n");
+    /* A plain "x11" beside conditions is for older Flatpaks. */
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "x11") == XD_FP_CONDITIONAL);
+    const GPtrArray *conds = xd_fp_perms_conditions(p, XD_FP_SOCKETS, "x11");
+    CHECK(conds != nullptr && conds->len == 1 &&
+          strcmp(g_ptr_array_index(conds, 0), "!has-wayland") == 0);
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "pulseaudio") == XD_FP_ON);
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "cups") == XD_FP_UNSET);
+    bool found;
+    CHECK(xd_fp_perms_filesystem(p, "xdg-download", &found) == XD_FP_FS_RO && found);
+    CHECK(xd_fp_perms_filesystem(p, "~/Games", &found) == XD_FP_FS_CREATE && found);
+    CHECK(xd_fp_perms_filesystem(p, "/srv/data", &found) == XD_FP_FS_RW && found);
+    xd_fp_perms_filesystem(p, "home", &found);
+    CHECK(!found);
+    CHECK(g_strcmp0(xd_fp_perms_env(p, "HELLO_MODE", &found), "fast") == 0 && found);
+    CHECK(xd_fp_perms_env(p, "GONE", &found) == nullptr && found);
+    xd_fp_perms_env(p, "OTHER", &found);
+    CHECK(!found);
+    CHECK(g_strcmp0(xd_fp_perms_bus(p, XD_FP_SESSION_BUS, "org.freedesktop.Notifications"),
+                    "talk") == 0);
+    CHECK(xd_fp_perms_bus(p, XD_FP_SYSTEM_BUS, "org.freedesktop.Notifications") == nullptr);
+
+    /* A layer above changes only what it mentions; "!x" also ends a lower
+     * layer's conditions; a reset drops the filesystems below. */
+    xd_fp_perms *base = xd_fp_perms_copy(p);
+    fp_merge(p, "[Context]\nsockets=!x11;cups;!pulseaudio;newsock;\n"
+                "filesystems=!host:reset;!host;home:ro;\npersistent=.more;\n"
+                "[System Bus Policy]\norg.bluez=talk\n"
+                "[Session Bus Policy]\norg.freedesktop.Notifications=none\n");
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "x11") == XD_FP_OFF);
+    CHECK(xd_fp_perms_conditions(p, XD_FP_SOCKETS, "x11") == nullptr);
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "cups") == XD_FP_ON);
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "pulseaudio") == XD_FP_OFF);
+    CHECK(xd_fp_perms_state(p, XD_FP_DEVICES, "dri") == XD_FP_ON);
+    GPtrArray *other = xd_fp_perms_other_names(p, XD_FP_SOCKETS);
+    CHECK(other->len == 1 && strcmp(g_ptr_array_index(other, 0), "newsock") == 0);
+    g_ptr_array_unref(other);
+    GPtrArray *fs = xd_fp_perms_filesystems(p);
+    CHECK(fs->len == 2 && strcmp(g_ptr_array_index(fs, 0), "home") == 0 &&
+          strcmp(g_ptr_array_index(fs, 1), "host") == 0);
+    g_ptr_array_unref(fs);
+    CHECK(xd_fp_perms_filesystem(p, "~", &found) == XD_FP_FS_RO && found);
+    CHECK(xd_fp_perms_filesystem(p, "host", &found) == XD_FP_FS_NONE && found);
+    GPtrArray *dirs = xd_fp_perms_persistent(p);
+    CHECK(dirs->len == 2);
+    g_ptr_array_unref(dirs);
+    CHECK(g_strcmp0(xd_fp_perms_bus(p, XD_FP_SESSION_BUS, "org.freedesktop.Notifications"),
+                    "none") == 0);
+    CHECK(g_strcmp0(xd_fp_perms_bus(p, XD_FP_SYSTEM_BUS, "org.bluez"), "talk") == 0);
+    /* The copy kept what was there before. */
+    CHECK(xd_fp_perms_state(base, XD_FP_SOCKETS, "x11") == XD_FP_CONDITIONAL);
+    CHECK(xd_fp_perms_filesystem(base, "xdg-download", &found) == XD_FP_FS_RO && found);
+    xd_fp_perms_free(base);
+    xd_fp_perms_free(p);
+
+    /* Names. */
+    xd_fp_fs_mode mode;
+    char *canon = xd_fp_filesystem_parse("!~/", &mode);
+    CHECK(g_strcmp0(canon, "home") == 0 && mode == XD_FP_FS_NONE);
+    g_free(canon);
+    canon = xd_fp_filesystem_parse("xdg-config/app/./x//:rw", &mode);
+    CHECK(g_strcmp0(canon, "xdg-config/app/x") == 0 && mode == XD_FP_FS_RW);
+    g_free(canon);
+    canon = xd_fp_filesystem_parse("/:ro", &mode);
+    CHECK(g_strcmp0(canon, "/") == 0 && mode == XD_FP_FS_RO);
+    g_free(canon);
+    CHECK(xd_fp_filesystem_parse("", &mode) == nullptr);
+    CHECK(xd_fp_filesystem_valid("home") && xd_fp_filesystem_valid("xdg-download/Games"));
+    CHECK(xd_fp_filesystem_valid("~/x") && xd_fp_filesystem_valid("/mnt"));
+    CHECK(xd_fp_filesystem_valid("host-etc") && !xd_fp_filesystem_valid("host/x"));
+    CHECK(xd_fp_filesystem_valid("xdg-run/pipewire-0") && !xd_fp_filesystem_valid("xdg-run"));
+    CHECK(!xd_fp_filesystem_valid("Documents") && !xd_fp_filesystem_valid(""));
+    CHECK(xd_fp_bus_name_valid("org.example.App") && xd_fp_bus_name_valid("org.example.*"));
+    CHECK(!xd_fp_bus_name_valid("org") && !xd_fp_bus_name_valid(":1.5") &&
+          !xd_fp_bus_name_valid("org..x"));
+    CHECK(xd_fp_env_name_valid("GTK_THEME") && xd_fp_env_name_valid("_X1"));
+    CHECK(!xd_fp_env_name_valid("1X") && !xd_fp_env_name_valid("A=B") &&
+          !xd_fp_env_name_valid(""));
+
+    /* Editing: what `flatpak override --user --share=ipc --unshare=network
+     * --nosocket=wayland --socket=x11 --filesystem=home:ro
+     * --nofilesystem=xdg-download --filesystem=/srv/data:create
+     * --persist=.foo --env=A=1 --unset-env=HELLO_MODE --talk-name=org.a.B
+     * --no-talk-name=org.freedesktop.Notifications
+     * --system-talk-name=org.bluez` writes, with an entry made by hand
+     * kept and a conditional one replaced. */
+    char *dir = g_dir_make_tmp("xd-flatpak-XXXXXX", nullptr);
+    char *path = xd_fp_override_path(dir, "org.xd.Test");
+    char *expect_path = g_build_filename(dir, "overrides", "org.xd.Test", nullptr);
+    CHECK(strcmp(path, expect_path) == 0);
+    g_free(expect_path);
+    GKeyFile *ov = xd_fp_override_load(path, nullptr);
+    CHECK(ov != nullptr);
+    g_key_file_set_string(ov, "Context", "sockets", "x11;if:x11:!has-wayland;ssh-auth;");
+    xd_fp_override_set_state(ov, XD_FP_SHARED, "ipc", XD_FP_ON);
+    xd_fp_override_set_state(ov, XD_FP_SHARED, "network", XD_FP_OFF);
+    xd_fp_override_set_state(ov, XD_FP_SOCKETS, "wayland", XD_FP_OFF);
+    xd_fp_override_set_state(ov, XD_FP_SOCKETS, "x11", XD_FP_ON);
+    xd_fp_override_set_filesystem(ov, "home:ro", XD_FP_FS_RO, false);
+    xd_fp_override_set_filesystem(ov, "xdg-download", XD_FP_FS_NONE, false);
+    xd_fp_override_set_filesystem(ov, "/srv/data", XD_FP_FS_CREATE, false);
+    xd_fp_override_set_filesystem(ov, "/tmp/gone", XD_FP_FS_RW, false);
+    xd_fp_override_set_filesystem(ov, "/tmp/gone/", XD_FP_FS_RW, true);
+    xd_fp_override_set_persistent(ov, ".foo", true);
+    xd_fp_override_set_persistent(ov, ".foo", true);
+    xd_fp_override_set_env(ov, "A", "1", false);
+    xd_fp_override_set_env(ov, "HELLO_MODE", nullptr, false);
+    xd_fp_override_set_bus(ov, XD_FP_SESSION_BUS, "org.a.B", "talk");
+    xd_fp_override_set_bus(ov, XD_FP_SESSION_BUS, "org.freedesktop.Notifications", "none");
+    xd_fp_override_set_bus(ov, XD_FP_SYSTEM_BUS, "org.bluez", "talk");
+    xd_fp_override_set_state(ov, XD_FP_DEVICES, "kvm", XD_FP_ON);
+    xd_fp_override_set_state(ov, XD_FP_DEVICES, "kvm", XD_FP_UNSET);
+    CHECK(xd_fp_override_save(ov, path, nullptr));
+    g_key_file_free(ov);
+    char *text = nullptr;
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr));
+    CHECK(g_strcmp0(text, "[Context]\n"
+                          "sockets=ssh-auth;!wayland;x11;\n"
+                          "shared=ipc;!network;\n"
+                          "filesystems=home:ro;!xdg-download;/srv/data:create;\n"
+                          "persistent=.foo;\n"
+                          "unset-environment=HELLO_MODE;\n"
+                          "\n"
+                          "[Environment]\n"
+                          "A=1\n"
+                          "HELLO_MODE=\n"
+                          "\n"
+                          "[Session Bus Policy]\n"
+                          "org.a.B=talk\n"
+                          "org.freedesktop.Notifications=none\n"
+                          "\n"
+                          "[System Bus Policy]\n"
+                          "org.bluez=talk\n") == 0);
+    g_free(text);
+
+    /* Read back as the top layer. */
+    ov = xd_fp_override_load(path, nullptr);
+    p = xd_fp_perms_new();
+    fp_merge(p, "[Context]\nshared=network;\nsockets=wayland;\n[Environment]\nHELLO_MODE=fast\n");
+    xd_fp_perms_merge(p, ov);
+    CHECK(xd_fp_perms_state(p, XD_FP_SHARED, "network") == XD_FP_OFF);
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "wayland") == XD_FP_OFF);
+    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "x11") == XD_FP_ON);
+    CHECK(xd_fp_perms_env(p, "HELLO_MODE", &found) == nullptr && found);
+    xd_fp_perms_free(p);
+
+    /* Taking everything back out leaves no file, as `--reset` does. */
+    xd_fp_override_set_env(ov, "HELLO_MODE", nullptr, true);
+    xd_fp_override_set_env(ov, "A", nullptr, true);
+    xd_fp_override_set_bus(ov, XD_FP_SESSION_BUS, "org.a.B", nullptr);
+    xd_fp_override_set_bus(ov, XD_FP_SESSION_BUS, "org.freedesktop.Notifications", nullptr);
+    xd_fp_override_set_bus(ov, XD_FP_SYSTEM_BUS, "org.bluez", nullptr);
+    xd_fp_override_set_persistent(ov, ".foo", false);
+    for (const char *const *n = xd_fp_list_names(XD_FP_SOCKETS); *n != nullptr; n++)
+        xd_fp_override_set_state(ov, XD_FP_SOCKETS, *n, XD_FP_UNSET);
+    xd_fp_override_set_state(ov, XD_FP_SHARED, "ipc", XD_FP_UNSET);
+    xd_fp_override_set_state(ov, XD_FP_SHARED, "network", XD_FP_UNSET);
+    CHECK(xd_fp_override_save(ov, path, nullptr));
+    CHECK(g_file_test(path, G_FILE_TEST_EXISTS)); /* the filesystems are left */
+    xd_fp_override_set_filesystem(ov, "~", XD_FP_FS_NONE, true);
+    xd_fp_override_set_filesystem(ov, "xdg-download", XD_FP_FS_NONE, true);
+    xd_fp_override_set_filesystem(ov, "/srv/data", XD_FP_FS_NONE, true);
+    CHECK(xd_fp_override_save(ov, path, nullptr));
+    CHECK(!g_file_test(path, G_FILE_TEST_EXISTS));
+    CHECK(xd_fp_override_save(ov, path, nullptr)); /* nothing to remove: fine */
+    g_key_file_free(ov);
+    /* A file that isn't a key file is an error, not an empty override. */
+    CHECK(g_file_set_contents(path, "not [a key file\n", -1, nullptr));
+    GError *error = nullptr;
+    CHECK(xd_fp_override_load(path, &error) == nullptr && error != nullptr);
+    g_clear_error(&error);
+    g_free(path);
+    rm_tree(dir);
+    g_free(dir);
+}
+
 static void test_appwiz(void) {
     /* Usage buckets: nothing without counts at all. */
     CHECK(xd_appwiz_usage_for(50, false) == XD_USAGE_UNKNOWN);
@@ -4975,6 +5168,7 @@ int main(void) {
     test_admin_events();
     test_admin_disks();
     test_appwiz();
+    test_flatpak_perms();
     test_superbar();
     test_printers();
     test_scanners();

@@ -559,6 +559,7 @@ install_data(
   'data/applications/org.xeondesktop.EventViewer.desktop',
   'data/applications/org.xeondesktop.DiskManagement.desktop',
   'data/applications/org.xeondesktop.AddRemovePrograms.desktop',
+  'data/applications/org.xeondesktop.Flatpak.desktop',
   'data/applications/org.xeondesktop.Printers.desktop',
   'data/applications/org.xeondesktop.Scanners.desktop',
   'data/applications/org.xeondesktop.Search.desktop',
@@ -865,6 +866,17 @@ executable(
   dependencies: [core_dep, settings_dep, gtk_dep, packagekit_dep, flatpak_dep],
   install: true,
 )
+# Flatpak: app permissions (the user's overrides) and remotes.
+executable(
+  'xd-flatpak',
+  'src/flatpak/main.c',
+  'src/flatpak/appperms.c',
+  'src/flatpak/perms.c',
+  'src/flatpak/remotes.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, flatpak_dep],
+  install: true,
+)
 
 # Printers and Faxes (CUPS) and Scanners and Cameras (SANE, libgphoto2).
 cups_dep = dependency('cups', include_type: 'system')
@@ -1042,6 +1054,7 @@ test_exe = executable(
   'src/netconn/netconn.c',
   'src/admin/admin.c',
   'src/appwiz/programs.c',
+  'src/flatpak/perms.c',
   'src/printers/printlib.c',
   'src/printers/cupsops.c',
   'src/scanners/scanlib.c',
@@ -1143,6 +1156,7 @@ install_man(
   'man/xd-access.1', 'man/xd-admintools.1', 'man/xd-appwiz.1', 'man/xd-bluetooth.1',
   'man/xd-choose-file.1', 'man/xd-control.1', 'man/xd-defaults.1', 'man/xd-desk.1',
   'man/xd-diskmgmt.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1', 'man/xd-files.1',
+  'man/xd-flatpak.1',
   'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',
   'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mouse.1',
   'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1', 'man/xd-privacy.1',
