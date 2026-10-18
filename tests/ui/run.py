@@ -4949,6 +4949,89 @@ def dedicated_graphics(s):
     s.check(env.get("DRI_PRIME") == "0", "Run with integrated graphics card used the default's")
 
 
+# gvfs (GIO's other file systems) for the network scenarios: the sessions
+# run with GIO_USE_VFS=local, so programs are started without it. gvfsd
+# comes up on the session's own bus. Its "localtest" backend (local files
+# through gvfs, no password) stands in for a network share: gvfs-smb and a
+# Samba server aren't there to test with.
+GVFS = ("env", "-u", "GIO_USE_VFS")
+
+
+def gvfs_mounts():
+    env = {k: v for k, v in os.environ.items() if k != "GIO_USE_VFS"}
+    r = subprocess.run(["gio", "mount", "-l"], env=env, stdout=subprocess.PIPE,
+                       stderr=subprocess.DEVNULL, timeout=20)  # fmt: skip
+    return r.stdout.decode(errors="replace")
+
+
+def have_localtest(s):
+    if not os.path.exists("/usr/share/gvfs/mounts/localtest.mount") or not shutil.which("gio"):
+        s.log("skipped: no gvfs (its localtest backend) or gio")
+        return False
+    return True
+
+
+@scenario()
+def network_drives(s):
+    """Reconnect at logon (xd-files --reconnect: a drive mounted, one whose
+    kind GIO can't open skipped, one mapped without Reconnect forgotten);
+    Tools > Map Network Drive... (\\\\server\\share explains what isn't
+    installed; a folder GIO can mount is connected, remembered and opened);
+    Tools > Disconnect Network Drive... unmounts and forgets."""
+    if not have_localtest(s):
+        return
+    ini = os.path.join(s.config, "network.ini")
+    with open(ini, "w") as f:
+        f.write("[Drive 1]\nURI=localtest:///\nReconnect=true\n\n"
+                "[Drive 2]\nURI=smb://fileserver/public\nReconnect=true\n\n"
+                "[Drive 3]\nURI=smb://old/session\nReconnect=false\n")  # fmt: skip
+    p = s.launch(*GVFS, "xd-files", "--reconnect")
+    s.wait(lambda: p.poll() is not None, "xd-files --reconnect to finish", 60)
+    s.check("localtest -> localtest:///" in gvfs_mounts(), "the drive was reconnected")
+    drives = s.ini("network.ini")
+    s.check(drives.has_section("Drive 2") and not drives.has_section("Drive 3"),
+            "the unreachable drive kept, the one without Reconnect forgotten")  # fmt: skip
+
+    s.launch(*GVFS, "xd-files", "computer:///")
+    s.wait_window(title="My Computer", state="activated")
+    s.settle("my computer")
+
+    # Dialogs of the window aren't in the window list: the window loses
+    # the focus to them, and the screen changes.
+    def dialog_up(what):
+        s.wait(lambda: "activated" not in s.window(title="My Computer")["states"], what)
+        return s.settle(what)
+
+    # Tools > Map Network Drive...: a Windows share, which needs gvfs-smb.
+    s.inject("key", "alt+t", "sleep", 400, "key", "n")
+    wizard = dialog_up("map network drive")
+    s.inject("type", "\\\\server\\share", "key", "Return")
+    wait_change(s, wizard, (0, 0, WIDTH, HEIGHT - 40), "the explanation", "needs gvfs-smb")
+    s.inject("key", "Return", "sleep", 400, "key", "ctrl+a", "type", "localtest:///etc",
+             "key", "Return")  # fmt: skip
+    s.wait_window(title="etc", timeout=30)
+    def mapped():
+        c = s.ini("network.ini")
+        return [c[g] for g in c.sections() if c[g].get("URI") == "localtest:///etc"]
+
+    drive = s.wait(mapped, "the drive remembered")[0]
+    s.check(drive.get("Reconnect") == "true",
+            "Map Network Drive connected, remembered and opened the folder")  # fmt: skip
+    s.settle("mapped")
+    s.inject("key", "ctrl+w")
+    s.wait_window(title="My Computer", state="activated")
+
+    # Tools > Disconnect Network Drive...: the first (localtest:///), OK.
+    s.inject("key", "alt+t", "sleep", 400, "key", "d")
+    dialog_up("disconnect")
+    s.inject("key", "Return")
+    s.wait(lambda: "localtest" not in gvfs_mounts(), "the drive to be unmounted")
+    left = s.ini("network.ini")
+    uris = [left[g]["URI"] for g in left.sections() if g.startswith("Drive ")]
+    s.check(uris == ["smb://fileserver/public"],
+            f"Disconnect forgot the drive and the one inside it ({uris})")  # fmt: skip
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

@@ -987,6 +987,9 @@ static void act_files(xd_shell *shell, void *data) {
     g_ptr_array_unref(paths);
 }
 
+/* xd-files with just an option (Map Network Drive...). */
+static void act_files_option(xd_shell *shell, void *data) { run_files(shell, data, nullptr); }
+
 static void act_empty_trash(xd_shell *shell, [[maybe_unused]] void *data) {
     run_files(shell, "--empty-trash", nullptr);
 }
@@ -1383,6 +1386,14 @@ static void separator(xd_menu_tree *tree, xd_menu_model *m) {
 static xd_menu_model *icon_menu(xd_deskicons *di, xd_menu_tree *tree, icon *ic) {
     xd_menu_model *m = xd_menu_model_new(tree);
     add_action(tree, m, "&Open", act_open, nullptr)->bold = true;
+    if (strcmp(ic->id, SPECIAL_COMPUTER) == 0 || strcmp(ic->id, SPECIAL_NETWORK) == 0) {
+        /* XP has these on both icons. */
+        separator(tree, m);
+        add_action(tree, m, "Map &Network Drive...", act_files_option,
+                   (void *)(uintptr_t) "--map-drive");
+        add_action(tree, m, "Dis&connect Network Drive...", act_files_option,
+                   (void *)(uintptr_t) "--disconnect-drive");
+    }
     if (strcmp(ic->id, SPECIAL_COMPUTER) == 0) {
         separator(tree, m);
         /* XP: My Computer's Properties are System Properties. */

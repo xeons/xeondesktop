@@ -1062,7 +1062,7 @@ int main(int argc, char **argv) {
     xd_gpu_watch();
     xd_shell_sounds_init();
     xd_shellbus_init(&shell);
-    xd_session_logon_sound(compositor);
+    xd_session_logon(compositor);
     /* From here on, new outputs get a taskbar as soon as they appear. */
     shell.started = true;
     for (size_t i = 0; i < shell.early_count; i++) {

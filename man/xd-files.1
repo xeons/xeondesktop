@@ -26,6 +26,9 @@ xd\-files \- the XeonDesktop file manager
 .SY xd\-files
 .B \-\-empty\-trash
 .YS
+.SY xd\-files
+.RB { \-\-map\-drive | \-\-disconnect\-drive | \-\-reconnect }
+.YS
 .SH DESCRIPTION
 .B xd\-files
 is the file manager, modelled on Windows XP's Explorer windows: a menu
@@ -44,8 +47,27 @@ the freedesktop.org trash, read directly),
 Control Panel
 .RB ( control:/// )
 and My Network Places
-.RB ( network:/// ,
-where gvfs provides it).
+.RB ( network:/// :
+the network places added with Add Network Place, the mapped drives and
+the shares open now, and Entire Network, whose Microsoft Windows Network
+is gvfs's
+.BR smb:/// ).
+.PP
+Network folders are mounted through GIO (gvfs) when they are opened,
+asking for a user name and password in XP's \(lqConnect to server\(rq box;
+\(lqRemember my password\(rq has gvfs keep it in the Secret Service.
+They can be typed in the address bar as
+.B \e\eserver\eshare
+or as URIs such as
+.B smb://server/share
+or
+.BR nfs://server/path .
+Tools \(-> Map Network Drive... connects one and lists it in My Computer
+under Network Drives (Linux has no drive letters); a drive mapped with
+\(lqReconnect at logon\(rq is mounted again when the user logs on, and shown
+with an X while it isn't connected.
+Windows network folders need gvfs's SMB backend (gvfs\-smb), NFS ones its
+NFS backend (gvfs\-nfs).
 .PP
 My Computer lists encrypted (LUKS) volumes that UDisks2 knows, locked
 ones too.
@@ -110,6 +132,20 @@ Move the
 into
 .IR dir .
 .TP
+.B \-\-map\-drive
+Map Network Drive (the desktop's My Computer and My Network Places).
+.TP
+.B \-\-disconnect\-drive
+Disconnect Network Drives.
+.TP
+.B \-\-reconnect
+Mount the network drives mapped with \(lqReconnect at logon\(rq, without
+asking for anything (a server that is away, or wants a password the
+Secret Service doesn't have, is skipped), and forget those mapped without
+it.
+.BR xd\-shell (1)
+runs it once a session.
+.TP
 .BR \-h ", " \-\-help
 Show a summary of the options and exit.
 .SH FILES
@@ -118,6 +154,10 @@ Show a summary of the options and exit.
 Folder Options
 .RB ( [Folders] ),
 which open windows follow at once.
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/network.ini
+The mapped network drives (their folder, Reconnect at logon, Connect As's
+user name) and the network places; never passwords.
 .TP
 .I $XDG_CACHE_HOME/thumbnails/
 The thumbnail cache.

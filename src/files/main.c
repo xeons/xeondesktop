@@ -17,6 +17,8 @@
 #include "favorites.h"
 #include "fileops.h"
 #include "folderview.h"
+#include "netdrives.h"
+#include "netui.h"
 #include "places.h"
 #include "properties.h"
 #include "sendto.h"
@@ -82,8 +84,9 @@ static gboolean view_given;               /* --view given: Folder Options' defau
 /* Folder Options ([Folders] in desktop.ini), followed live. */
 static xd_folder_settings options;
 static gboolean properties_only;          /* --properties: just the dialog */
-/* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to: one
- * job for the desktop (the shell isn't a GTK program), then exit. */
+/* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to,
+ * --map-drive, --disconnect-drive: one job for the desktop (the shell
+ * isn't a GTK program), then exit. */
 typedef enum {
     JOB_NONE,
     JOB_TRASH,
@@ -91,7 +94,9 @@ typedef enum {
     JOB_RENAME,
     JOB_EMPTY_TRASH,
     JOB_COPY,
-    JOB_MOVE
+    JOB_MOVE,
+    JOB_MAP_DRIVE,
+    JOB_DISCONNECT_DRIVE
 } cli_job;
 static cli_job job;
 static char *job_dest; /* --copy-to / --move-to */
@@ -124,8 +129,9 @@ static void update_status(explorer *e) {
     g_free(space);
     gtk_label_set_text(GTK_LABEL(e->status), text);
     g_free(text);
-    /* Control Panel's items have no size. */
-    char *size = xd_place_of(xd_folder_view_get_location(e->view)) == XD_PLACE_CONTROL
+    /* Control Panel's and My Network Places' items have no size. */
+    XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
+    char *size = place == XD_PLACE_CONTROL || place == XD_PLACE_NETWORK
                      ? g_strdup("")
                      : xd_format_size(xd_folder_view_get_size(e->view, sel > 0));
     gtk_label_set_text(GTK_LABEL(e->status_size), size);
@@ -217,8 +223,12 @@ static void update_chrome(explorer *e) {
     gtk_widget_set_sensitive(e->forward_button, e->forward != nullptr);
     /* A drive's Up is My Computer, as in XP; so is Control Panel's, whose
      * category pages go up to it. */
+    char *uri = g_file_get_uri(dir);
     gtk_widget_set_sensitive(e->up_button,
-                             special == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL);
+                             special == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL ||
+                                 strcmp(uri, XD_ENTIRE_NETWORK_URI) == 0 ||
+                                 strcmp(uri, XD_WINDOWS_NETWORK_URI) == 0);
+    g_free(uri);
     gtk_widget_set_visible(e->slider, xd_folder_view_get_mode(e->view) == XD_VIEW_THUMBNAILS);
     update_control_switch(e);
 }
@@ -743,9 +753,93 @@ static void cb_eject([[maybe_unused]] GtkWidget *w, gpointer d) {
     g_list_free_full(files, g_object_unref);
 }
 
-static void navigate(explorer *e, GFile *dir, gboolean record) {
-    if (mount_and_open(e, dir, record))
+/* ---- network folders not connected yet -------------------------------------------- */
+
+static void show_location(explorer *e, GFile *dir, gboolean record);
+
+static void connected(explorer *e, GFile *location, const GError *error, gboolean record) {
+    if (error == nullptr) {
+        show_location(e, location, record);
         return;
+    }
+    /* "Handled": the user cancelled the password question. */
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_FAILED_HANDLED))
+        return;
+    char *uri = g_file_get_uri(location);
+    char *shown = xd_net_display_path(uri);
+    char *msg = g_strdup_printf("%s is not accessible.\n\n%s", shown, error->message);
+    xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+    g_free(msg);
+    g_free(shown);
+    g_free(uri);
+}
+
+/* xd_net_mount calls these only while the window is open. */
+static void connected_recorded(GFile *location, const GError *error, gpointer data) {
+    connected(data, location, error, TRUE);
+}
+
+static void connected_unrecorded(GFile *location, const GError *error, gpointer data) {
+    connected(data, location, error, FALSE);
+}
+
+/* Connect As's user name for a mapped drive at `uri`, or nullptr. Free
+ * with g_free. */
+static char *mapped_user(const char *uri) {
+    char *config = xd_net_config_path();
+    GPtrArray *drives = xd_net_drives_load(config);
+    g_free(config);
+    char *user = nullptr;
+    for (guint i = 0; i < drives->len && user == nullptr; i++) {
+        XdNetDrive *d = g_ptr_array_index(drives, i);
+        if (d->user != nullptr && xd_net_same_uri(d->uri, uri))
+            user = g_strdup(d->user);
+    }
+    g_ptr_array_unref(drives);
+    return user;
+}
+
+/* A network folder that isn't connected (a mapped drive at logon, a
+ * share opened from the network, an address typed) is mounted first,
+ * asking for a password in XP's "Connect to server" box, then opened. A
+ * kind GIO can't open here is explained. */
+static gboolean connect_and_open(explorer *e, GFile *dir, gboolean record) {
+    if (g_file_is_native(dir) || xd_place_of(dir) != XD_PLACE_FOLDER)
+        return FALSE;
+    char *uri = g_file_get_uri(dir);
+    char *scheme = g_file_get_uri_scheme(dir);
+    gboolean supported = xd_net_scheme_supported(scheme);
+    g_free(scheme);
+    if (!supported) {
+        char *msg = xd_net_unsupported_text(uri);
+        xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+        g_free(msg);
+        g_free(uri);
+        return TRUE;
+    }
+    GError *err = nullptr;
+    GMount *m = g_file_find_enclosing_mount(dir, nullptr, &err);
+    gboolean not_mounted = m == nullptr && g_error_matches(err, G_IO_ERROR,
+                                                          G_IO_ERROR_NOT_MOUNTED);
+    g_clear_error(&err);
+    g_clear_object(&m);
+    if (not_mounted) {
+        char *user = mapped_user(uri);
+        xd_net_mount(GTK_WINDOW(e->window), dir, user, nullptr,
+                     record ? connected_recorded : connected_unrecorded, e);
+        g_free(user);
+    }
+    g_free(uri);
+    return not_mounted;
+}
+
+static void navigate(explorer *e, GFile *dir, gboolean record) {
+    if (mount_and_open(e, dir, record) || connect_and_open(e, dir, record))
+        return;
+    show_location(e, dir, record);
+}
+
+static void show_location(explorer *e, GFile *dir, gboolean record) {
     GFile *current = xd_folder_view_get_location(e->view);
     if (record && current != nullptr && !g_file_equal(current, dir)) {
         e->back = g_list_prepend(e->back, g_object_ref(current));
@@ -790,9 +884,26 @@ static void go_up(explorer *e) {
         g_object_unref(up);
         return;
     }
+    if (xd_place_of(dir) == XD_PLACE_NETWORK) {
+        /* Entire Network is in My Network Places. */
+        char *uri = g_file_get_uri(dir);
+        if (strcmp(uri, XD_ENTIRE_NETWORK_URI) == 0) {
+            GFile *up = g_file_new_for_uri(XD_NETWORK_URI);
+            navigate(e, up, TRUE);
+            g_object_unref(up);
+        }
+        g_free(uri);
+        return;
+    }
     if (xd_place_of(dir) != XD_PLACE_FOLDER)
         return;
-    GFile *parent = xd_place_is_drive_root(dir) ? xd_place_computer() : g_file_get_parent(dir);
+    /* Windows' network goes up a level at a time: share, computer,
+     * workgroup, Microsoft Windows Network, Entire Network. */
+    gboolean smb = g_file_has_uri_scheme(dir, "smb");
+    GFile *parent = smb && !g_file_has_parent(dir, nullptr)
+                        ? g_file_new_for_uri(XD_ENTIRE_NETWORK_URI)
+                    : !smb && xd_place_is_drive_root(dir) ? xd_place_computer()
+                                                          : g_file_get_parent(dir);
     if (parent != nullptr) {
         navigate(e, parent, TRUE);
         g_object_unref(parent);
@@ -829,9 +940,28 @@ static gboolean launch_applet(explorer *e, GFile *file) {
     return TRUE;
 }
 
+/* My Network Places' and Map Network Drive's new folders open in a
+ * window of their own, as in XP. */
+static void open_in_new_window(GFile *location, gpointer data) {
+    explorer *e = data;
+    open_window(gtk_window_get_application(GTK_WINDOW(e->window)), location);
+}
+
+/* Windows 2000's Add Network Place item: the wizard. */
+static gboolean add_network_place_item(explorer *e, GFile *file) {
+    char *uri = g_file_get_uri(file);
+    gboolean is = strcmp(uri, XD_ADD_NETWORK_PLACE_URI) == 0;
+    g_free(uri);
+    if (is)
+        xd_net_add_place(GTK_WINDOW(e->window), nullptr, open_in_new_window, e);
+    return is;
+}
+
 static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gboolean is_dir,
                          gpointer data) {
     explorer *e = data;
+    if (xd_place_of(current_dir(e)) == XD_PLACE_NETWORK && add_network_place_item(e, file))
+        return;
     if (xd_place_of(current_dir(e)) == XD_PLACE_TRASH) {
         /* Items in the Recycle Bin open their Properties, as in XP. */
         GList *one = g_list_append(nullptr, file);
@@ -877,7 +1007,40 @@ static void on_address_activate(GtkEntry *entry, gpointer data) {
         gtk_widget_grab_focus(GTK_WIDGET(e->view));
         return;
     }
+    /* \\server\share, as Windows writes a share. */
+    const char *typed = gtk_entry_get_text(entry);
+    if (typed[0] == '\\' && typed[1] == '\\') {
+        GError *err = nullptr;
+        char *uri = xd_net_parse_folder(typed, FALSE, &err);
+        if (uri == nullptr) {
+            xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
+                           err->message);
+            g_error_free(err);
+            return;
+        }
+        GFile *share = g_file_new_for_uri(uri);
+        navigate(e, share, TRUE);
+        g_object_unref(share);
+        g_free(uri);
+        gtk_widget_grab_focus(GTK_WIDGET(e->view));
+        return;
+    }
     GFile *f = g_file_parse_name(gtk_entry_get_text(entry));
+    /* A network folder not connected yet: connected, then opened (asking
+     * it what it is would only say it isn't mounted). */
+    if (!g_file_is_native(f) && xd_place_of(f) == XD_PLACE_FOLDER) {
+        GError *err = nullptr;
+        GMount *m = g_file_find_enclosing_mount(f, nullptr, &err);
+        gboolean connect = m == nullptr && !g_error_matches(err, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+        g_clear_error(&err);
+        g_clear_object(&m);
+        if (connect) {
+            navigate(e, f, TRUE);
+            g_object_unref(f);
+            gtk_widget_grab_focus(GTK_WIDGET(e->view));
+            return;
+        }
+    }
     GFileType type = g_file_query_file_type(f, G_FILE_QUERY_INFO_NONE, nullptr);
     if (type == G_FILE_TYPE_DIRECTORY) {
         navigate(e, f, TRUE);
@@ -1120,7 +1283,7 @@ static void cb_invert([[maybe_unused]] GtkWidget *w, gpointer d) {
 static void show_properties(explorer *e) {
     /* Control Panel's items aren't files to show. */
     XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
-    if (place == XD_PLACE_CONTROL)
+    if (place == XD_PLACE_CONTROL || place == XD_PLACE_NETWORK)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (place == XD_PLACE_COMPUTER) {
@@ -1179,6 +1342,7 @@ static void cb_open_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
         /* My Computer's items are all drives (some not mounted yet), and
          * Control Panel's categories are pages of it. */
         gboolean is_dir = xd_place_of(current_dir(e)) == XD_PLACE_COMPUTER ||
+                          xd_place_of(current_dir(e)) == XD_PLACE_NETWORK ||
                           xd_place_of(l->data) == XD_PLACE_CONTROL ||
                           g_file_query_file_type(l->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
                               G_FILE_TYPE_DIRECTORY;
@@ -1237,6 +1401,105 @@ static void cb_folder_options([[maybe_unused]] GtkWidget *w, gpointer d) {
     }
     g_free(prog);
     g_free(view);
+}
+
+/* ---- network drives and places ------------------------------------------------------ */
+
+static void cb_map_drive([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    xd_net_map_drive(GTK_WINDOW(e->window), nullptr, nullptr, open_in_new_window, e);
+}
+
+static void cb_disconnect_drives([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    xd_net_disconnect_dialog(GTK_WINDOW(e->window), nullptr);
+}
+
+/* The network place (from Add Network Place) `f` is, or nullptr. Free
+ * with g_free. */
+static char *network_place_name(GFile *f) {
+    char *config = xd_net_config_path();
+    GPtrArray *places = xd_net_places_load(config);
+    g_free(config);
+    char *uri = g_file_get_uri(f);
+    char *name = nullptr;
+    for (guint i = 0; i < places->len && name == nullptr; i++) {
+        XdNetPlace *pl = g_ptr_array_index(places, i);
+        if (xd_net_same_uri(pl->uri, uri))
+            name = g_strdup(pl->name);
+    }
+    g_free(uri);
+    g_ptr_array_unref(places);
+    return name;
+}
+
+/* A selected item Disconnect applies to: a network drive or share
+ * (mapped, or open now), not a network place or My Network Places' own
+ * items. */
+static gboolean disconnectable(GFile *f) {
+    if (g_file_is_native(f) || g_file_has_uri_scheme(f, "network"))
+        return FALSE;
+    char *place = network_place_name(f);
+    g_free(place);
+    return place == nullptr;
+}
+
+static void cb_disconnect_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    for (GList *l = files; l != nullptr; l = l->next)
+        if (disconnectable(l->data))
+            xd_net_disconnect(GTK_WINDOW(e->window), l->data);
+    g_list_free_full(files, g_object_unref);
+}
+
+/* Delete in My Network Places: the selected network places go (their
+ * folders stay where they are). */
+static void remove_network_places(explorer *e) {
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    GPtrArray *uris = g_ptr_array_new_with_free_func(g_free);
+    char *first = nullptr;
+    for (GList *l = files; l != nullptr; l = l->next) {
+        char *name = network_place_name(l->data);
+        if (name == nullptr)
+            continue;
+        g_ptr_array_add(uris, g_file_get_uri(l->data));
+        if (first == nullptr)
+            first = name;
+        else
+            g_free(name);
+    }
+    g_list_free_full(files, g_object_unref);
+    if (uris->len > 0) {
+        char *q = uris->len == 1
+                      ? g_strdup_printf("Are you sure you want to remove '%s' from My Network "
+                                        "Places?",
+                                        first)
+                      : g_strdup_printf("Are you sure you want to remove these %u network "
+                                        "places?",
+                                        uris->len);
+        if (xd_message_box(GTK_WINDOW(e->window), "Confirm Network Place Delete", XD_MB_QUESTION,
+                           XD_MB_YES_NO, FALSE, q) == GTK_RESPONSE_YES) {
+            char *config = xd_net_config_path();
+            for (guint i = 0; i < uris->len; i++) {
+                GError *err = nullptr;
+                if (!xd_net_place_remove(config, g_ptr_array_index(uris, i), &err)) {
+                    xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
+                                   err->message);
+                    g_error_free(err);
+                    break;
+                }
+            }
+            g_free(config);
+        }
+        g_free(q);
+    }
+    g_free(first);
+    g_ptr_array_unref(uris);
+}
+
+static void cb_remove_places([[maybe_unused]] GtkWidget *w, gpointer d) {
+    remove_network_places(d);
 }
 
 static void cb_about([[maybe_unused]] GtkWidget *w, gpointer d) {
@@ -1570,7 +1833,8 @@ static void select_created(GList *created, gpointer data) {
 }
 
 static void copy_or_cut(explorer *e, gboolean cut) {
-    if (current_place(e) == XD_PLACE_COMPUTER || current_place(e) == XD_PLACE_CONTROL)
+    if (current_place(e) == XD_PLACE_COMPUTER || current_place(e) == XD_PLACE_CONTROL ||
+        current_place(e) == XD_PLACE_NETWORK)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files == nullptr)
@@ -1642,7 +1906,9 @@ static GFile *paste_target(explorer *e) {
 
 static void delete_selected(explorer *e, gboolean permanently) {
     XdPlace place = current_place(e);
-    if (place == XD_PLACE_COMPUTER || place == XD_PLACE_CONTROL)
+    if (place == XD_PLACE_NETWORK)
+        remove_network_places(e);
+    if (place == XD_PLACE_COMPUTER || place == XD_PLACE_CONTROL || place == XD_PLACE_NETWORK)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     gboolean in_trash = place == XD_PLACE_TRASH;
@@ -1655,7 +1921,7 @@ static void delete_selected(explorer *e, gboolean permanently) {
 
 /* Edit > Copy To Folder... / Move To Folder... */
 static void copy_to_folder(explorer *e, gboolean move) {
-    if (current_place(e) == XD_PLACE_CONTROL)
+    if (current_place(e) == XD_PLACE_CONTROL || current_place(e) == XD_PLACE_NETWORK)
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files == nullptr)
@@ -2181,6 +2447,10 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     g_signal_connect(favorites, "show", G_CALLBACK(fill_favorites), e);
 
     GtkWidget *tools = submenu(bar, "_Tools");
+    menu_item(tools, "Map _Network Drive...", G_CALLBACK(cb_map_drive), e, nullptr, 0, NO_MODS);
+    menu_item(tools, "_Disconnect Network Drive...", G_CALLBACK(cb_disconnect_drives), e, nullptr,
+              0, NO_MODS);
+    gtk_menu_shell_append(GTK_MENU_SHELL(tools), gtk_separator_menu_item_new());
     menu_item(tools, "Folder _Options...", G_CALLBACK(cb_folder_options), e, nullptr, 0, NO_MODS);
 
     GtkWidget *help = submenu(bar, "_Help");
@@ -2281,20 +2551,44 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
         menu_item(menu, xd_control_classic_view() ? "Switch to Category View"
                                                   : "Switch to Classic View",
                   G_CALLBACK(cb_control_switch), e, nullptr, 0, NO_MODS);
+    } else if (selected && place == XD_PLACE_NETWORK) {
+        bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
+        GList *files = xd_folder_view_get_selected_files(view);
+        gboolean places = FALSE, drives = FALSE;
+        for (GList *l = files; l != nullptr; l = l->next) {
+            char *name = network_place_name(l->data);
+            places = places || name != nullptr;
+            drives = drives || (name == nullptr && disconnectable(l->data));
+            g_free(name);
+        }
+        g_list_free_full(files, g_object_unref);
+        if (drives || places)
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        if (drives)
+            menu_item(menu, "Dis_connect", G_CALLBACK(cb_disconnect_selected), e, nullptr, 0,
+                      NO_MODS);
+        if (places)
+            menu_item(menu, "_Delete", G_CALLBACK(cb_remove_places), e, nullptr, 0, NO_MODS);
     } else if (selected && place == XD_PLACE_COMPUTER) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
         GList *files = xd_folder_view_get_selected_files(view);
-        gboolean eject = FALSE, lock = FALSE;
+        /* Network drives disconnect, as XP's do; disks eject; an unlocked
+         * encrypted drive locks again (unmounted first). */
+        gboolean eject = FALSE, lock = FALSE, network = FALSE;
         for (GList *l = files; l != nullptr; l = l->next) {
-            eject = eject || xd_computer_can_eject(l->data);
-            lock = lock || xd_encrypted_can_lock(l->data);
+            gboolean remote = !g_file_is_native(l->data);
+            network = network || remote;
+            eject = eject || (!remote && xd_computer_can_eject(l->data));
+            lock = lock || (!remote && xd_encrypted_can_lock(l->data));
         }
         g_list_free_full(files, g_object_unref);
-        if (eject || lock)
+        if (eject || lock || network)
             gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-        /* An unlocked encrypted drive locks again (unmounted first). */
         if (lock)
             menu_item(menu, "Loc_k", G_CALLBACK(cb_lock), e, nullptr, 0, NO_MODS);
+        if (network)
+            menu_item(menu, "Dis_connect", G_CALLBACK(cb_disconnect_selected), e, nullptr, 0,
+                      NO_MODS);
         if (eject)
             menu_item(menu, "E_ject", G_CALLBACK(cb_eject), e, nullptr, 0, NO_MODS);
         /* XP's drives rename (their label). */
@@ -2335,6 +2629,13 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
     } else {
         add_view_submenu(e, menu);
         menu_item(menu, "R_efresh", G_CALLBACK(cb_refresh), e, nullptr, 0, NO_MODS);
+        if (place == XD_PLACE_COMPUTER || place == XD_PLACE_NETWORK) {
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+            menu_item(menu, "Map _Network Drive...", G_CALLBACK(cb_map_drive), e, nullptr, 0,
+                      NO_MODS);
+            menu_item(menu, "Dis_connect Network Drive...", G_CALLBACK(cb_disconnect_drives), e,
+                      nullptr, 0, NO_MODS);
+        }
         if (place == XD_PLACE_FOLDER) {
             gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
             GtkWidget *paste = menu_item(menu, "_Paste", G_CALLBACK(cb_paste), e, nullptr, 0,
@@ -2353,7 +2654,8 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
             add_new_menu(e, menu);
         }
     }
-    if (place == XD_PLACE_FOLDER || (selected && place != XD_PLACE_CONTROL)) {
+    if (place == XD_PLACE_FOLDER ||
+        (selected && place != XD_PLACE_CONTROL && place != XD_PLACE_NETWORK)) {
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         menu_item(menu, "P_roperties", G_CALLBACK(cb_properties), e, nullptr, 0, NO_MODS);
     }
@@ -2677,6 +2979,9 @@ static void rename_dialog(GFile *file) {
     g_free(old);
 }
 
+/* The desktop's Map Network Drive: the new drive opens in a window. */
+static void open_mapped(GFile *location, gpointer app) { open_window(app, location); }
+
 static void run_job(GtkApplication *app, GFile **files, gint n) {
     GList *list = nullptr;
     for (gint i = n; i > 0; i--)
@@ -2709,6 +3014,12 @@ static void run_job(GtkApplication *app, GFile **files, gint n) {
         g_object_unref(dest);
         break;
     }
+    case JOB_MAP_DRIVE:
+        xd_net_map_drive(nullptr, G_APPLICATION(app), nullptr, open_mapped, app);
+        break;
+    case JOB_DISCONNECT_DRIVE:
+        xd_net_disconnect_dialog(nullptr, G_APPLICATION(app));
+        break;
     case JOB_NONE:
         break;
     }
@@ -2762,6 +3073,10 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
         job = JOB_RENAME;
     if (g_variant_dict_contains(opts, "empty-trash"))
         job = JOB_EMPTY_TRASH;
+    if (g_variant_dict_contains(opts, "map-drive"))
+        job = JOB_MAP_DRIVE;
+    if (g_variant_dict_contains(opts, "disconnect-drive"))
+        job = JOB_DISCONNECT_DRIVE;
     const char *dest = nullptr;
     if (g_variant_dict_lookup(opts, "copy-to", "^&ay", &dest)) {
         job = JOB_COPY;
@@ -2795,7 +3110,37 @@ static void on_startup(GApplication *app, [[maybe_unused]] gpointer data) {
         g_unix_fd_add(fd, G_IO_IN, on_settings_changed, app);
 }
 
+/* --reconnect: the shell's logon step. Mounts the mapped drives marked
+ * Reconnect at logon, quietly (a server that's away or wants a password
+ * not in the keyring is left disconnected), without GTK or a display. */
+typedef struct reconnect_wait {
+    GMainLoop *loop;
+    gboolean finished;
+} reconnect_wait;
+
+static void reconnect_done([[maybe_unused]] guint connected, [[maybe_unused]] guint failed,
+                           gpointer data) {
+    reconnect_wait *w = data;
+    w->finished = TRUE;
+    g_main_loop_quit(w->loop);
+}
+
+static int reconnect_drives(void) {
+    reconnect_wait w = {g_main_loop_new(nullptr, FALSE), FALSE};
+    char *config = xd_net_config_path();
+    /* A minute each at most: the shell doesn't wait for us anyway. */
+    xd_net_reconnect_all(config, 60, reconnect_done, &w);
+    if (!w.finished)
+        g_main_loop_run(w.loop);
+    g_main_loop_unref(w.loop);
+    g_free(config);
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++)
+        if (strcmp(argv[i], "--reconnect") == 0)
+            return reconnect_drives();
     xd_gtk_app_preinit("org.xeondesktop.Files");
     /* Each window is its own process, like Windows' "separate process"
      * option: a hang in one folder can't freeze the others. */
@@ -2827,6 +3172,14 @@ int main(int argc, char **argv) {
                                   G_OPTION_ARG_FILENAME, "Copy FILE... into DIR and exit", "DIR");
     g_application_add_main_option(G_APPLICATION(app), "move-to", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_FILENAME, "Move FILE... into DIR and exit", "DIR");
+    g_application_add_main_option(G_APPLICATION(app), "map-drive", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE, "Map Network Drive", nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "disconnect-drive", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE, "Disconnect Network Drives", nullptr);
+    g_application_add_main_option(G_APPLICATION(app), "reconnect", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE,
+                                  "Reconnect the network drives mapped to reconnect at logon",
+                                  nullptr);
     g_signal_connect(app, "handle-local-options", G_CALLBACK(on_options), nullptr);
     int rc = g_application_run(G_APPLICATION(app), argc, argv);
     g_object_unref(app);

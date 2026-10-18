@@ -26,8 +26,9 @@ xd_wizard *xd_wizard_new(GtkWindow *parent, const char *title, const char *icon_
                          gpointer data, GDestroyNotify destroy);
 GtkWidget *xd_wizard_window(xd_wizard *w);
 
-/* Adds a page and returns its index (from 0). A page added with
- * `final` shows Finish instead of Next. */
+/* Adds a page and returns its index (from 0); an exterior page may have
+ * no heading (nullptr). A page added with `final` shows Finish instead
+ * of Next. */
 int xd_wizard_add_exterior(xd_wizard *w, const char *heading, GtkWidget *body, bool final);
 int xd_wizard_add_interior(xd_wizard *w, const char *heading, const char *subheading,
                            GtkWidget *body, bool final);

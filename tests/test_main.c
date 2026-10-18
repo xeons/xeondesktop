@@ -47,6 +47,7 @@
 #include "../src/files/launcher.h"
 #include "../src/files/luks.h"
 #include "../src/files/names.h"
+#include "../src/files/netdrives.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
@@ -6289,6 +6290,193 @@ static void test_keys_gpg(void) {
     g_free(home);
 }
 
+/* Map Network Drive: folders as typed, the remembered list, and the
+ * answers given to gvfs's questions. */
+static gboolean net_parses(const char *text, gboolean need_share, const char *want) {
+    GError *err = nullptr;
+    char *uri = xd_net_parse_folder(text, need_share, &err);
+    gboolean ok = want == nullptr ? uri == nullptr && err != nullptr
+                                  : uri != nullptr && strcmp(uri, want) == 0 && err == nullptr;
+    if (!ok)
+        fprintf(stderr, "  parse %s: %s\n", text, uri != nullptr ? uri : err->message);
+    g_free(uri);
+    g_clear_error(&err);
+    return ok;
+}
+
+static GMountOperationResult net_reply_result;
+static int net_replies;
+
+static void net_on_reply([[maybe_unused]] GMountOperation *op, GMountOperationResult result,
+                         [[maybe_unused]] gpointer data) {
+    net_reply_result = result;
+    net_replies++;
+}
+
+static void test_network_drives(void) {
+    CHECK(net_parses("\\\\server\\share", TRUE, "smb://server/share"));
+    CHECK(net_parses("  \\\\server\\my share\\sub dir\\ ", TRUE,
+                     "smb://server/my%20share/sub%20dir"));
+    CHECK(net_parses("\\\\server/share/", TRUE, "smb://server/share"));
+    CHECK(net_parses("\\\\server", TRUE, nullptr));
+    CHECK(net_parses("\\\\server", FALSE, "smb://server/"));
+    CHECK(net_parses("\\\\", FALSE, nullptr));
+    CHECK(net_parses("nfs://nas/export/home/", TRUE, "nfs://nas/export/home"));
+    CHECK(net_parses("SMB://Server/Share", TRUE, "smb://Server/Share"));
+    CHECK(net_parses("sftp://me@host:2222/srv/", TRUE, "sftp://me@host:2222/srv"));
+    CHECK(net_parses("smb:///", FALSE, nullptr));
+    /* Kinds without servers (gvfs's localtest), but nothing local. */
+    CHECK(net_parses("localtest:///etc/", TRUE, "localtest:///etc"));
+    CHECK(net_parses("localtest:///", TRUE, nullptr));
+    CHECK(net_parses("file:///etc", TRUE, nullptr));
+    CHECK(net_parses("trash:///x", TRUE, nullptr));
+    CHECK(net_parses("server\\share", TRUE, nullptr));
+    CHECK(net_parses("", FALSE, nullptr));
+
+    CHECK(xd_net_same_uri("smb://SERVER/Share/", "smb://server/share"));
+    CHECK(xd_net_same_uri("smb://s/my%20share", "smb://s/My%20Share"));
+    CHECK(!xd_net_same_uri("nfs://nas/Export", "nfs://nas/export"));
+    CHECK(!xd_net_same_uri("smb://a/share", "smb://b/share"));
+    CHECK(!xd_net_same_uri("smb://a/share", "nfs://a/share"));
+
+    char *s = xd_net_display_path("smb://server/my%20share/sub");
+    CHECK(strcmp(s, "\\\\server\\my share\\sub") == 0);
+    g_free(s);
+    s = xd_net_display_path("smb://server/");
+    CHECK(strcmp(s, "\\\\server") == 0);
+    g_free(s);
+    s = xd_net_display_path("nfs://nas/export%20x");
+    CHECK(strcmp(s, "nfs://nas/export x") == 0);
+    g_free(s);
+    s = xd_net_drive_name("smb://server/my%20share");
+    CHECK(strcmp(s, "my share on 'server'") == 0);
+    g_free(s);
+    s = xd_net_drive_name("smb://server/");
+    CHECK(strcmp(s, "server") == 0);
+    g_free(s);
+    s = xd_net_drive_name("localtest:///etc");
+    CHECK(strcmp(s, "etc") == 0);
+    g_free(s);
+    s = xd_net_host("nfs://nas.local/export");
+    CHECK(g_strcmp0(s, "nas.local") == 0);
+    g_free(s);
+    s = xd_net_unsupported_text("smb://server/share");
+    CHECK(strstr(s, "gvfs-smb") != nullptr);
+    g_free(s);
+    s = xd_net_unsupported_text("nfs://server/path");
+    CHECK(strstr(s, "gvfs-nfs") != nullptr);
+    g_free(s);
+
+    /* The list: drives and places, unknown groups kept. */
+    char *dir = g_dir_make_tmp("xd-network-XXXXXX", nullptr);
+    char *path = g_build_filename(dir, "xeondesktop", "network.ini", nullptr);
+    GPtrArray *none = xd_net_drives_load(path);
+    CHECK(none->len == 0);
+    g_ptr_array_unref(none);
+    CHECK(xd_net_drive_add(path, "smb://server/share", nullptr, TRUE, nullptr));
+    CHECK(xd_net_drive_add(path, "nfs://nas/export", "OFFICE\\bob", FALSE, nullptr));
+    CHECK(xd_net_place_add(path, "sftp://example.org/srv", "Web files", nullptr));
+    char *text = nullptr;
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr));
+    char *more = g_strconcat(text, "\n[Future]\nKey=1\n", nullptr);
+    CHECK(g_file_set_contents(path, more, -1, nullptr));
+    g_free(more);
+    g_free(text);
+    /* The same folder written differently: replaced, not added. */
+    CHECK(xd_net_drive_add(path, "smb://SERVER/share/", "alice", TRUE, nullptr));
+    GPtrArray *drives = xd_net_drives_load(path);
+    CHECK(drives->len == 2);
+    if (drives->len == 2) {
+        XdNetDrive *a = g_ptr_array_index(drives, 0), *b = g_ptr_array_index(drives, 1);
+        CHECK(strcmp(a->uri, "smb://SERVER/share/") == 0 && a->reconnect &&
+              g_strcmp0(a->user, "alice") == 0);
+        CHECK(strcmp(b->uri, "nfs://nas/export") == 0 && !b->reconnect &&
+              g_strcmp0(b->user, "OFFICE\\bob") == 0);
+    }
+    g_ptr_array_unref(drives);
+    GPtrArray *places = xd_net_places_load(path);
+    CHECK(places->len == 1 &&
+          strcmp(((XdNetPlace *)g_ptr_array_index(places, 0))->name, "Web files") == 0);
+    g_ptr_array_unref(places);
+    /* Logon forgets the drive mapped without Reconnect. */
+    CHECK(xd_net_forget_session_drives(path, nullptr));
+    drives = xd_net_drives_load(path);
+    CHECK(drives->len == 1);
+    g_ptr_array_unref(drives);
+    CHECK(xd_net_drive_remove(path, "smb://server/share", nullptr));
+    CHECK(xd_net_place_remove(path, "sftp://example.org/srv/", nullptr));
+    CHECK(xd_net_drive_remove(path, "smb://nowhere/x", nullptr));
+    drives = xd_net_drives_load(path);
+    places = xd_net_places_load(path);
+    CHECK(drives->len == 0 && places->len == 0);
+    g_ptr_array_unref(drives);
+    g_ptr_array_unref(places);
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr));
+    CHECK(strstr(text, "[Future]") != nullptr);
+    g_free(text);
+    char *sub = g_path_get_dirname(path);
+    CHECK(g_remove(path) == 0);
+    CHECK(g_rmdir(sub) == 0);
+    CHECK(g_rmdir(dir) == 0);
+    g_free(sub);
+    g_free(path);
+    g_free(dir);
+
+    /* "Connect to server" answers: DOMAIN\user split, the password kept
+     * by the Secret Service only when asked and possible. */
+    GMountOperation *op = g_mount_operation_new();
+    g_signal_connect(op, "reply", G_CALLBACK(net_on_reply), nullptr);
+    GAskPasswordFlags all = (GAskPasswordFlags)(G_ASK_PASSWORD_NEED_USERNAME |
+                                                G_ASK_PASSWORD_NEED_PASSWORD |
+                                                G_ASK_PASSWORD_NEED_DOMAIN |
+                                                G_ASK_PASSWORD_SAVING_SUPPORTED);
+    net_replies = 0;
+    xd_net_login_reply(op, all, "OFFICE\\bob", "pw", TRUE);
+    CHECK(net_replies == 1 && net_reply_result == G_MOUNT_OPERATION_HANDLED);
+    CHECK(g_strcmp0(g_mount_operation_get_username(op), "bob") == 0);
+    CHECK(g_strcmp0(g_mount_operation_get_domain(op), "OFFICE") == 0);
+    CHECK(g_strcmp0(g_mount_operation_get_password(op), "pw") == 0);
+    CHECK(g_mount_operation_get_password_save(op) == G_PASSWORD_SAVE_PERMANENTLY);
+    CHECK(!g_mount_operation_get_anonymous(op));
+    xd_net_login_reply(op, (GAskPasswordFlags)(G_ASK_PASSWORD_NEED_USERNAME |
+                                               G_ASK_PASSWORD_NEED_PASSWORD),
+                       "OFFICE\\carol", "x", TRUE);
+    CHECK(g_strcmp0(g_mount_operation_get_username(op), "OFFICE\\carol") == 0);
+    CHECK(g_mount_operation_get_password_save(op) == G_PASSWORD_SAVE_NEVER);
+    xd_net_login_reply(op, (GAskPasswordFlags)(all | G_ASK_PASSWORD_ANONYMOUS_SUPPORTED), "",
+                       "", FALSE);
+    CHECK(g_mount_operation_get_anonymous(op));
+    g_object_unref(op);
+
+    /* Connect As answers the first question by itself, not the next. */
+    op = g_mount_operation_new();
+    g_signal_connect(op, "reply", G_CALLBACK(net_on_reply), nullptr);
+    xd_net_operation_preset(op, "alice", "secret");
+    net_replies = 0;
+    CHECK(xd_net_answer_preset(op, all));
+    CHECK(net_replies == 1 && g_strcmp0(g_mount_operation_get_username(op), "alice") == 0 &&
+          g_strcmp0(g_mount_operation_get_password(op), "secret") == 0);
+    CHECK(!xd_net_answer_preset(op, all));
+    CHECK(net_replies == 1);
+    g_object_unref(op);
+
+    /* The logon one answers nothing: one reply, Aborted, and not the
+     * default handler's "unhandled" after it. */
+    op = xd_net_quiet_operation_new();
+    g_signal_connect(op, "reply", G_CALLBACK(net_on_reply), nullptr);
+    net_replies = 0;
+    g_signal_emit_by_name(op, "ask-password", "Password required", "me", "WORKGROUP", all);
+    for (int i = 0; i < 20; i++)
+        g_main_context_iteration(nullptr, FALSE);
+    CHECK(net_replies == 1 && net_reply_result == G_MOUNT_OPERATION_ABORTED);
+    const char *choices[] = {"Yes", "No", nullptr};
+    g_signal_emit_by_name(op, "ask-question", "Trust this key?", choices);
+    for (int i = 0; i < 20; i++)
+        g_main_context_iteration(nullptr, FALSE);
+    CHECK(net_replies == 2 && net_reply_result == G_MOUNT_OPERATION_ABORTED);
+    g_object_unref(op);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -6367,6 +6555,7 @@ int main(void) {
     test_keys_texts();
     test_keys_ssh();
     test_keys_gpg();
+    test_network_drives();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

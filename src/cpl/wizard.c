@@ -111,10 +111,13 @@ int xd_wizard_add_exterior(xd_wizard *w, const char *heading, GtkWidget *body, b
     gtk_widget_set_margin_end(right, 18);
     gtk_widget_set_margin_top(right, 16);
     gtk_widget_set_margin_bottom(right, 12);
-    char *markup = g_markup_printf_escaped("<span size='x-large' weight='bold'>%s</span>",
-                                           heading);
-    gtk_box_pack_start(GTK_BOX(right), wrap_label(markup), FALSE, FALSE, 0);
-    g_free(markup);
+    /* Map Network Drive's one page has the band but no heading. */
+    if (heading != nullptr) {
+        char *markup = g_markup_printf_escaped("<span size='x-large' weight='bold'>%s</span>",
+                                               heading);
+        gtk_box_pack_start(GTK_BOX(right), wrap_label(markup), FALSE, FALSE, 0);
+        g_free(markup);
+    }
     if (body != nullptr)
         gtk_box_pack_start(GTK_BOX(right), body, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(page), right, TRUE, TRUE, 0);

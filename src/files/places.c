@@ -10,6 +10,7 @@
 #include "../settings/state.h"
 #include "fileops.h"
 #include "luks.h"
+#include "netdrives.h"
 #include "udisks.h"
 
 #define TRASHINFO_GROUP "Trash Info"
@@ -32,6 +33,8 @@ XdPlace xd_place_of(GFile *location) {
         return XD_PLACE_TRASH;
     if (location != nullptr && g_file_has_uri_scheme(location, "control"))
         return XD_PLACE_CONTROL;
+    if (has_uri(location, XD_NETWORK_URI) || has_uri(location, XD_ENTIRE_NETWORK_URI))
+        return XD_PLACE_NETWORK;
     return XD_PLACE_FOLDER;
 }
 
@@ -39,12 +42,9 @@ GFile *xd_place_computer(void) { return g_file_new_for_uri(XD_COMPUTER_URI); }
 GFile *xd_place_trash(void) { return g_file_new_for_uri(XD_TRASH_URI); }
 GFile *xd_place_control(void) { return g_file_new_for_uri(XD_CONTROL_URI); }
 
-/* gvfs's network:/// is XP's My Network Places (GIO calls it "Network"). */
-#define NETWORK_URI "network:///"
-
 const char *xd_place_title(GFile *location) {
-    if (has_uri(location, NETWORK_URI))
-        return "My Network Places";
+    if (has_uri(location, XD_WINDOWS_NETWORK_URI))
+        return "Microsoft Windows Network";
     switch (xd_place_of(location)) {
     case XD_PLACE_COMPUTER:
         return "My Computer";
@@ -54,6 +54,8 @@ const char *xd_place_title(GFile *location) {
         const XdControlCategory *c = xd_control_page(location);
         return c != nullptr ? c->title : "Control Panel";
     }
+    case XD_PLACE_NETWORK:
+        return has_uri(location, XD_ENTIRE_NETWORK_URI) ? "Entire Network" : "My Network Places";
     case XD_PLACE_FOLDER:
         break;
     }
@@ -61,7 +63,7 @@ const char *xd_place_title(GFile *location) {
 }
 
 const char *xd_place_icon(GFile *location) {
-    if (has_uri(location, NETWORK_URI))
+    if (has_uri(location, XD_WINDOWS_NETWORK_URI))
         return "network-workgroup";
     switch (xd_place_of(location)) {
     case XD_PLACE_COMPUTER:
@@ -72,6 +74,8 @@ const char *xd_place_icon(GFile *location) {
         const XdControlCategory *c = xd_control_page(location);
         return c != nullptr ? c->icon : "preferences-system";
     }
+    case XD_PLACE_NETWORK:
+        return "network-workgroup";
     case XD_PLACE_FOLDER:
         break;
     }
@@ -100,7 +104,9 @@ GFile *xd_place_parse(const char *text) {
         f = xd_place_control();
     } else if (g_ascii_strcasecmp(t, "My Network Places") == 0 ||
                g_ascii_strcasecmp(t, "network:") == 0) {
-        f = g_file_new_for_uri(NETWORK_URI);
+        f = g_file_new_for_uri(XD_NETWORK_URI);
+    } else if (g_ascii_strcasecmp(t, "Entire Network") == 0) {
+        f = g_file_new_for_uri(XD_ENTIRE_NETWORK_URI);
     } else {
         /* A category's page, by its address or its name. */
         const char *key = g_ascii_strncasecmp(t, XD_CONTROL_URI, strlen(XD_CONTROL_URI)) == 0
@@ -280,6 +286,58 @@ static void add_encrypted(GPtrArray *out) {
     g_ptr_array_unref(all);
 }
 
+/* Whether a mount's root is `uri` or holds it (a drive mapped to a
+ * folder inside a share). */
+static gboolean mounted_at(GList *mounts, const char *uri) {
+    GFile *f = g_file_new_for_uri(uri);
+    gboolean found = FALSE;
+    for (GList *l = mounts; l != nullptr && !found; l = l->next) {
+        GFile *root = g_mount_get_root(l->data);
+        char *root_uri = g_file_get_uri(root);
+        found = g_file_equal(root, f) || g_file_has_prefix(f, root) ||
+                xd_net_same_uri(root_uri, uri);
+        g_free(root_uri);
+        g_object_unref(root);
+    }
+    g_object_unref(f);
+    return found;
+}
+
+/* XP's network drive with a red X: the icon theme's "unreadable" emblem. */
+static GIcon *disconnected_icon(void) {
+    GIcon *base = g_themed_icon_new("folder-remote");
+    GIcon *x = g_themed_icon_new("emblem-unreadable");
+    GEmblem *emblem = g_emblem_new(x);
+    GIcon *icon = g_emblemed_icon_new(base, emblem);
+    g_object_unref(emblem);
+    g_object_unref(x);
+    g_object_unref(base);
+    return icon;
+}
+
+/* Mapped drives to reconnect that aren't connected now: listed, as XP
+ * lists them, and connected when opened. */
+static void add_disconnected(GPtrArray *out) {
+    char *config = xd_net_config_path();
+    GPtrArray *mapped = xd_net_drives_load(config);
+    g_free(config);
+    GList *mounts = mapped->len > 0 ? g_volume_monitor_get_mounts(xd_computer_monitor()) : nullptr;
+    for (guint i = 0; i < mapped->len; i++) {
+        XdNetDrive *d = g_ptr_array_index(mapped, i);
+        if (!d->reconnect || mounted_at(mounts, d->uri))
+            continue;
+        GFile *f = g_file_new_for_uri(d->uri);
+        char *name = xd_net_drive_name(d->uri);
+        GIcon *icon = disconnected_icon();
+        g_ptr_array_add(out, drive_new(f, name, XD_DISCONNECTED_DRIVE, icon));
+        g_object_unref(icon);
+        g_free(name);
+        g_object_unref(f);
+    }
+    g_list_free_full(mounts, g_object_unref);
+    g_ptr_array_unref(mapped);
+}
+
 GPtrArray *xd_computer_drives(void) {
     GPtrArray *out = g_ptr_array_new_with_free_func(drive_free);
     GFile *slash = g_file_new_for_path("/");
@@ -358,6 +416,7 @@ GPtrArray *xd_computer_drives(void) {
         g_free(uri);
     }
     g_list_free_full(volumes, g_object_unref);
+    add_disconnected(out);
     return out;
 }
 
@@ -402,6 +461,147 @@ gboolean xd_computer_can_eject(GFile *item) {
     gboolean can = m != nullptr && (g_mount_can_eject(m) || g_mount_can_unmount(m));
     g_clear_object(&m);
     return can;
+}
+
+/* ---- My Network Places ------------------------------------------------------------ */
+
+static void network_item_free(gpointer p) {
+    XdNetworkItem *it = p;
+    g_clear_object(&it->file);
+    g_clear_object(&it->icon);
+    g_free(it->name);
+    g_free(it->comment);
+    g_free(it->location);
+    g_free(it);
+}
+
+static XdNetworkItem *add_network_item(GPtrArray *out, GFile *file, const char *name,
+                                        const char *comment, GIcon *icon, gboolean folder) {
+    XdNetworkItem *it = g_new0(XdNetworkItem, 1);
+    it->file = g_object_ref(file);
+    it->name = g_strdup(name);
+    it->comment = g_strdup(comment);
+    char *uri = g_file_get_uri(file);
+    it->location = g_file_has_uri_scheme(file, "network") ? g_strdup("") : xd_net_display_path(uri);
+    g_free(uri);
+    it->icon = g_object_ref(icon);
+    it->folder = folder;
+    g_ptr_array_add(out, it);
+    return it;
+}
+
+static void add_named(GPtrArray *out, const char *uri, const char *name, const char *icon_name,
+                      gboolean folder) {
+    GFile *f = g_file_new_for_uri(uri);
+    GIcon *icon = g_themed_icon_new(icon_name);
+    add_network_item(out, f, name, "", icon, folder);
+    g_object_unref(icon);
+    g_object_unref(f);
+}
+
+static gboolean network_listed(GPtrArray *items, const char *uri) {
+    for (guint i = 0; i < items->len; i++) {
+        char *u = g_file_get_uri(((XdNetworkItem *)g_ptr_array_index(items, i))->file);
+        gboolean same = xd_net_same_uri(u, uri);
+        g_free(u);
+        if (same)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* A mount of a network folder: not on this computer, and not a device
+ * (a phone or camera has a volume). */
+static gboolean network_mount(GMount *m) {
+    GFile *root = g_mount_get_root(m);
+    GVolume *vol = g_mount_get_volume(m);
+    gboolean network = !g_file_is_native(root) && vol == nullptr && !g_mount_is_shadowed(m);
+    g_clear_object(&vol);
+    g_object_unref(root);
+    return network;
+}
+
+GPtrArray *xd_network_items(GFile *location) {
+    GPtrArray *out = g_ptr_array_new_with_free_func(network_item_free);
+    if (has_uri(location, XD_ENTIRE_NETWORK_URI)) {
+        /* XP's Entire Network: the kinds of network; Windows' is gvfs's
+         * SMB browsing (workgroups, then their computers). */
+        add_named(out, XD_WINDOWS_NETWORK_URI, "Microsoft Windows Network", "network-workgroup",
+                  TRUE);
+        return out;
+    }
+    /* Windows 2000's first two items (XP moved Add Network Place to the
+     * task pane, which this window hasn't got). */
+    add_named(out, XD_ADD_NETWORK_PLACE_URI, "Add Network Place", "folder-new", FALSE);
+    add_named(out, XD_ENTIRE_NETWORK_URI, "Entire Network", "network-workgroup", TRUE);
+
+    char *config = xd_net_config_path();
+    GPtrArray *places = xd_net_places_load(config);
+    GIcon *remote = g_themed_icon_new("folder-remote");
+    for (guint i = 0; i < places->len; i++) {
+        XdNetPlace *pl = g_ptr_array_index(places, i);
+        if (network_listed(out, pl->uri))
+            continue;
+        GFile *f = g_file_new_for_uri(pl->uri);
+        add_network_item(out, f, pl->name, "Network Place", remote, TRUE);
+        g_object_unref(f);
+    }
+    g_ptr_array_unref(places);
+    GPtrArray *drives = xd_net_drives_load(config);
+    for (guint i = 0; i < drives->len; i++) {
+        XdNetDrive *d = g_ptr_array_index(drives, i);
+        if (network_listed(out, d->uri))
+            continue;
+        GFile *f = g_file_new_for_uri(d->uri);
+        char *name = xd_net_drive_name(d->uri);
+        add_network_item(out, f, name, "Network Drive", remote, TRUE)->connection = TRUE;
+        g_free(name);
+        g_object_unref(f);
+    }
+    g_ptr_array_unref(drives);
+    g_free(config);
+
+    /* Shares open now (XP added a place for each share opened). */
+    GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
+    for (GList *l = mounts; l != nullptr; l = l->next) {
+        if (!network_mount(l->data))
+            continue;
+        GFile *root = g_mount_get_root(l->data);
+        char *uri = g_file_get_uri(root);
+        if (!network_listed(out, uri)) {
+            char *name = g_mount_get_name(l->data);
+            GIcon *icon = g_mount_get_icon(l->data);
+            add_network_item(out, root, name, "", icon != nullptr ? icon : remote, TRUE)
+                ->connection = TRUE;
+            g_clear_object(&icon);
+            g_free(name);
+        }
+        g_free(uri);
+        g_object_unref(root);
+    }
+    g_list_free_full(mounts, g_object_unref);
+    g_object_unref(remote);
+    return out;
+}
+
+GMount *xd_network_mount(GFile *item) {
+    GMount *found = nullptr;
+    char *uri = g_file_get_uri(item);
+    GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
+    for (GList *l = mounts; l != nullptr && found == nullptr; l = l->next) {
+        if (!network_mount(l->data))
+            continue;
+        GFile *root = g_mount_get_root(l->data);
+        char *root_uri = g_file_get_uri(root);
+        if (g_file_equal(root, item) || g_file_has_prefix(item, root) ||
+            xd_net_same_uri(root_uri, uri))
+            found = g_object_ref(l->data);
+        g_free(root_uri);
+        g_object_unref(root);
+    }
+    g_list_free_full(mounts, g_object_unref);
+    g_free(uri);
+    return found;
 }
 
 /* ---- Control Panel ---------------------------------------------------------------- */

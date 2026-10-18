@@ -2,10 +2,13 @@
  * Which session the shell runs in: xd-compositor's, or another
  * compositor's (--taskbar-only, xeondesktop-taskbar.service), told by the
  * compositor at the other end of the Wayland connection rather than by
- * the environment alone; and the Logon sound, once a session.
+ * the environment alone; and what happens once a session: the Logon
+ * sound, and reconnecting the network drives mapped to reconnect.
  */
 #include <fcntl.h>
 #include <glib.h>
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -42,11 +45,30 @@ void xd_session_detect(xd_shell *shell, pid_t compositor) {
     unsetenv("XEONDESKTOP_PID");
 }
 
+static void unblock_signals([[maybe_unused]] gpointer data) {
+    sigset_t none;
+    sigemptyset(&none);
+    sigprocmask(SIG_SETMASK, &none, nullptr);
+}
+
+/* XP's "Reconnect at logon": xd-files mounts them in the background, so
+ * a server that's away delays nothing (it's shown disconnected). */
+static void reconnect_network_drives(void) {
+    char *argv[] = {xd_shell_own_program("xd-files"), (char *)(uintptr_t) "--reconnect", nullptr};
+    GError *error = nullptr;
+    if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_SEARCH_PATH, unblock_signals, nullptr,
+                       nullptr, &error)) {
+        fprintf(stderr, "xd-shell: cannot reconnect network drives: %s\n", error->message);
+        g_error_free(error);
+    }
+    g_free(argv[0]);
+}
+
 /* A shell that crashed and was restarted (by xd-compositor or by
  * systemd) mustn't greet the user again. A session is the compositor's
  * process, told apart from a later one with the same pid by its start
  * time; the marker is in XDG_RUNTIME_DIR, which logging out clears. */
-void xd_session_logon_sound(pid_t compositor) {
+void xd_session_logon(pid_t compositor) {
     if (compositor == 0)
         return;
     char *stat_path = g_strdup_printf("/proc/%d/stat", (int)compositor);
@@ -66,6 +88,7 @@ void xd_session_logon_sound(pid_t compositor) {
         if (fd >= 0) {
             close(fd);
             xd_sound_play_event(XD_SOUND_LOGON);
+            reconnect_network_drives();
         }
         g_free(path);
         g_free(name);

@@ -748,8 +748,9 @@ pid_t xd_session_compositor_pid(struct wl_display *display);
 /* Under xd-compositor, or another compositor (sets shell->standalone and
  * fixes up XEONDESKTOP_PID and XEONDESKTOP_NESTED for what we start)? */
 void xd_session_detect(xd_shell *shell, pid_t compositor);
-/* The Windows Logon sound, once a session. */
-void xd_session_logon_sound(pid_t compositor);
+/* Once a session: the Windows Logon sound, and the network drives
+ * mapped to reconnect at logon (xd-files --reconnect). */
+void xd_session_logon(pid_t compositor);
 
 /* startmenu.c */
 void xd_start_menu_build(xd_shell *shell);

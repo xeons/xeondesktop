@@ -3,7 +3,9 @@
  * the drives and mounts from GIO's volume monitor), the Recycle Bin
  * (trash:///, the freedesktop.org trash in $XDG_DATA_HOME/Trash, read
  * directly so GNOME's gvfs isn't needed) and Control Panel (control:///,
- * the applets' desktop entries; control:///<category> in Category View).
+ * the applets' desktop entries; control:///<category> in Category View)
+ * and My Network Places (network:///: the mapped drives, network places
+ * and the shares mounted now, with Entire Network for browsing).
  */
 #ifndef XD_FILES_PLACES_H
 #define XD_FILES_PLACES_H
@@ -15,11 +17,25 @@
 
 G_BEGIN_DECLS
 
-typedef enum { XD_PLACE_FOLDER, XD_PLACE_COMPUTER, XD_PLACE_TRASH, XD_PLACE_CONTROL } XdPlace;
+typedef enum {
+    XD_PLACE_FOLDER,
+    XD_PLACE_COMPUTER,
+    XD_PLACE_TRASH,
+    XD_PLACE_CONTROL,
+    XD_PLACE_NETWORK,
+} XdPlace;
 
 #define XD_COMPUTER_URI "computer:///"
 #define XD_TRASH_URI "trash:///"
 #define XD_CONTROL_URI "control:///"
+/* My Network Places, its Entire Network page, and Windows 2000's "Add
+ * Network Place" item in it (the wizard, not a folder). GIO's own
+ * network:/// (gvfs) isn't listed: our page stands in for it. */
+#define XD_NETWORK_URI "network:///"
+#define XD_ENTIRE_NETWORK_URI "network:///entire-network"
+#define XD_ADD_NETWORK_PLACE_URI "network:///add-network-place"
+/* Entire Network's Microsoft Windows Network: gvfs's SMB browsing. */
+#define XD_WINDOWS_NETWORK_URI "smb:///"
 
 /* What `location` is: an ordinary folder or one of the special ones. */
 XdPlace xd_place_of(GFile *location);
@@ -64,6 +80,28 @@ gboolean xd_computer_can_eject(GFile *item);
 char *xd_format_drive_size(guint64 bytes);
 /* The volume monitor, for live updates (owned by GIO). */
 GVolumeMonitor *xd_computer_monitor(void);
+
+/* My Computer's kind for a mapped drive that isn't connected (XP's red
+ * X), listed with the Network Drives. */
+#define XD_DISCONNECTED_DRIVE "Disconnected Network Drive"
+
+/* ---- My Network Places ---- */
+
+typedef struct XdNetworkItem {
+    GFile *file;
+    char *name;
+    char *comment;  /* "Network Drive", "Network Place", "" */
+    char *location; /* \\server\share, or the address */
+    GIcon *icon;
+    gboolean folder;     /* opens as a folder (not Add Network Place) */
+    gboolean connection; /* a mapped drive or a share open now: it disconnects */
+} XdNetworkItem;
+
+/* What My Network Places or its Entire Network page lists. Free with
+ * g_ptr_array_unref. */
+GPtrArray *xd_network_items(GFile *location);
+/* The network mount `item` is (a new reference), or nullptr. */
+GMount *xd_network_mount(GFile *item);
 
 /* ---- Control Panel ---- */
 

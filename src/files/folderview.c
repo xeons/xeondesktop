@@ -8,6 +8,7 @@
 #include "columns.h"
 #include "folderview.h"
 #include "names.h"
+#include "netdrives.h"
 #include "places.h"
 #include "udisks.h"
 
@@ -465,6 +466,7 @@ static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
             {"Removable Disk", "Devices with Removable Storage"},
             {"CD Drive", "Devices with Removable Storage"},
             {"Network Drive", "Network Drives"},
+            {XD_DISCONNECTED_DRIVE, "Network Drives"},
         };
         it->group_rank = (int)G_N_ELEMENTS(kinds);
         it->group = g_strdup("Other");
@@ -472,7 +474,9 @@ static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
             if (g_strcmp0(it->type_desc, kinds[k].kind) == 0) {
                 g_free(it->group);
                 it->group = g_strdup(kinds[k].group);
-                it->group_rank = k >= 3 ? (int)k - 1 : (int)k; /* CDs with removables */
+                /* CDs with removables, disconnected drives with the
+                 * connected ones. */
+                it->group_rank = k >= 5 ? (int)k - 2 : k >= 3 ? (int)k - 1 : (int)k;
                 break;
             }
         }
@@ -591,7 +595,8 @@ static int compare_items(gconstpointer pa, gconstpointer pb, gpointer data) {
     }
     /* My Computer's drives and Control Panel's categories keep their own
      * order. */
-    if (v->place == XD_PLACE_COMPUTER || (v->place == XD_PLACE_CONTROL && a->is_dir && b->is_dir))
+    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK ||
+        (v->place == XD_PLACE_CONTROL && a->is_dir && b->is_dir))
         return a->order - b->order;
     /* Folders first, always, as in Windows. */
     if (a->is_dir != b->is_dir)
@@ -754,6 +759,7 @@ static const char *column_title(const XdFolderView *v, int col) {
     static const char *const trash_titles[] = {"Name", "Size", "Original Location",
                                                "Date Deleted"};
     static const char *const control_titles[] = {"Name", "", "Comments", ""};
+    static const char *const network_titles[] = {"Name", "", "Comments", "Network Location"};
     if (col < 0 || col >= XD_SORT_COUNT)
         return "";
     if (col <= XD_SORT_MODIFIED) {
@@ -764,6 +770,8 @@ static const char *column_title(const XdFolderView *v, int col) {
             return trash_titles[col];
         case XD_PLACE_CONTROL:
             return control_titles[col];
+        case XD_PLACE_NETWORK:
+            return network_titles[col];
         case XD_PLACE_FOLDER:
             break;
         }
@@ -779,6 +787,8 @@ static gboolean column_available(const XdFolderView *v, int col) {
         return col >= 0 && col < XD_SORT_COUNT;
     case XD_PLACE_CONTROL:
         return col == XD_SORT_NAME || col == XD_SORT_TYPE;
+    case XD_PLACE_NETWORK:
+        return col == XD_SORT_NAME || col == XD_SORT_TYPE || col == XD_SORT_MODIFIED;
     case XD_PLACE_COMPUTER:
     case XD_PLACE_TRASH:
         break;
@@ -1694,6 +1704,29 @@ static void load_control(XdFolderView *v) {
     g_ptr_array_unref(items);
 }
 
+/* My Network Places: its items, with their network location in the date
+ * column (and Tiles' third line). */
+static void load_network(XdFolderView *v) {
+    GPtrArray *items = xd_network_items(v->dir);
+    for (guint i = 0; i < items->len; i++) {
+        XdNetworkItem *n = g_ptr_array_index(items, i);
+        item *it = XD_NEW(item);
+        it->file = g_object_ref(n->file);
+        it->name = g_strdup(n->name);
+        it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
+        it->type_desc = g_strdup(n->comment);
+        it->size_text = g_strdup("");
+        it->date_text = g_strdup(n->location);
+        if (n->location[0] != '\0')
+            it->extra = g_strdup(n->location);
+        it->is_dir = n->folder;
+        it->icon = g_object_ref(n->icon);
+        it->order = (int)i;
+        g_ptr_array_add(v->loading, it);
+    }
+    g_ptr_array_unref(items);
+}
+
 static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data);
 static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data);
 
@@ -1785,9 +1818,12 @@ static void start_loading(XdFolderView *v, gboolean fresh) {
         set_hover(v, -1);
     }
     v->cancel = g_cancellable_new();
-    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_CONTROL) {
+    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_CONTROL ||
+        v->place == XD_PLACE_NETWORK) {
         if (v->place == XD_PLACE_COMPUTER)
             load_drives(v);
+        else if (v->place == XD_PLACE_NETWORK)
+            load_network(v);
         else
             load_control(v);
         loading_done(v);
@@ -1821,7 +1857,7 @@ static gboolean reload_timeout(gpointer data) {
 static void drives_changed([[maybe_unused]] GVolumeMonitor *m, [[maybe_unused]] gpointer mount,
                            gpointer data) {
     XdFolderView *v = data;
-    if (v->place == XD_PLACE_COMPUTER && v->reload_source == 0)
+    if ((v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK) && v->reload_source == 0)
         v->reload_source = g_timeout_add(300, reload_timeout, v);
 }
 
@@ -2279,6 +2315,9 @@ static gboolean folder_view_motion(GtkWidget *widget, GdkEventMotion *ev) {
     /* Control Panel's applets can be copied out (a shortcut to them), not
      * moved; its categories aren't files at all. */
     GdkDragAction actions = (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK);
+    /* Network places and drives are connections, not files to copy. */
+    if (v->place == XD_PLACE_NETWORK)
+        return TRUE;
     if (v->place == XD_PLACE_CONTROL) {
         actions = (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_LINK);
         for (guint k = 0; k < v->shown->len; k++) {
@@ -2369,7 +2408,8 @@ static gboolean can_reposition(XdFolderView *v, GdkDragContext *ctx, GFile *dest
 
 static GdkDragAction drop_action(XdFolderView *v, GdkDragContext *ctx, char **uris, GFile *dest) {
     if (dest == nullptr || uris == nullptr || uris[0] == nullptr ||
-        xd_place_of(dest) == XD_PLACE_COMPUTER || xd_place_of(dest) == XD_PLACE_CONTROL)
+        xd_place_of(dest) == XD_PLACE_COMPUTER || xd_place_of(dest) == XD_PLACE_CONTROL ||
+        xd_place_of(dest) == XD_PLACE_NETWORK)
         return NO_ACTION;
     if (xd_place_of(dest) == XD_PLACE_TRASH) {
         /* Into the Recycle Bin: a delete, carried as a move. */
@@ -2903,7 +2943,17 @@ void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
     v->place = xd_place_of(dir);
     g_clear_object(&v->listed);
     v->listed = v->place == XD_PLACE_TRASH ? xd_trash_files_dir() : g_object_ref(dir);
-    if (v->place == XD_PLACE_COMPUTER) {
+    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK) {
+        /* Drives mapped or disconnected, places added (by any window). */
+        char *config = xd_net_config_path();
+        GFile *f = g_file_new_for_path(config);
+        v->monitor = g_file_monitor_file(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+        if (v->monitor != nullptr)
+            g_signal_connect(v->monitor, "changed", G_CALLBACK(monitor_changed), v);
+        g_object_unref(f);
+        g_free(config);
+    }
+    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK) {
         if (!v->watching_drives) {
             GVolumeMonitor *vm = xd_computer_monitor();
             g_signal_connect(vm, "mount-added", G_CALLBACK(drives_changed), v);
