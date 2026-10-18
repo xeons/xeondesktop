@@ -921,6 +921,7 @@ executable(
   'src/shell/recent.c',
   'src/shell/superbar.c',
   'src/shell/thumbs.c',
+  'src/shell/mpris.c',
   'src/shell/jumplist.c',
   'src/shell/sleep.c',
   'src/shell/account.c',

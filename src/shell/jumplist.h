@@ -2,8 +2,9 @@
  * Windows 7's jump lists: a program's recent files, from the recently used
  * list (recently-used.xbel, through GLib's GBookmarkFile), the items
  * pinned to it (jumplist-pinned, a GKeyFile), moving items in an ordered
- * list (the taskbar's pinned programs), and which program "Combine when
- * taskbar is full" combines next.
+ * list (the taskbar's pinned programs), which program "Combine when
+ * taskbar is full" combines next, and which media player is a program's
+ * (for its thumbnail's buttons).
  */
 #ifndef XD_SHELL_JUMPLIST_H
 #define XD_SHELL_JUMPLIST_H
@@ -53,5 +54,11 @@ void xd_jumplist_drop_pinned(char **uris, char *const *pinned);
  * Returns its index, or SIZE_MAX when none is left. */
 size_t xd_jumplist_combine_next(const size_t *windows, const uint64_t *last_used,
                                 const bool *combined, size_t n);
+
+/* Whether an MPRIS media player is the program's: its DesktopEntry (or,
+ * without one, the name after org.mpris.MediaPlayer2.) is the program's
+ * desktop file id without ".desktop", or its windows' app id. */
+bool xd_jumplist_player_of(const char *desktop_entry, const char *bus_name,
+                           const char *desktop_id, const char *app_id);
 
 #endif

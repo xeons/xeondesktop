@@ -219,3 +219,34 @@ size_t xd_jumplist_combine_next(const size_t *windows, const uint64_t *last_used
     }
     return best;
 }
+
+static constexpr char MPRIS_PREFIX[] = "org.mpris.MediaPlayer2.";
+
+bool xd_jumplist_player_of(const char *desktop_entry, const char *bus_name,
+                           const char *desktop_id, const char *app_id) {
+    char *name = nullptr;
+    if (desktop_entry != nullptr && desktop_entry[0] != '\0') {
+        name = g_strdup(desktop_entry);
+    } else if (bus_name != nullptr && g_str_has_prefix(bus_name, MPRIS_PREFIX)) {
+        /* Without DesktopEntry, the name it took: org.mpris.MediaPlayer2.vlc,
+         * or .vlc.instance1234 for another of its processes. */
+        name = g_strdup(bus_name + strlen(MPRIS_PREFIX));
+        char *instance = strstr(name, ".instance");
+        if (instance != nullptr)
+            *instance = '\0';
+    }
+    if (name == nullptr || name[0] == '\0') {
+        g_free(name);
+        return false;
+    }
+    bool same = app_id != nullptr && strcmp(name, app_id) == 0;
+    if (!same && desktop_id != nullptr) {
+        /* The id's own name: a launcher kept by its path counts by its file's. */
+        char *base = g_path_get_basename(desktop_id);
+        size_t len = strlen(name);
+        same = strncmp(base, name, len) == 0 && strcmp(base + len, ".desktop") == 0;
+        g_free(base);
+    }
+    g_free(name);
+    return same;
+}

@@ -3594,6 +3594,15 @@ static void test_superbar(void) {
     combined[3] = true;
     CHECK(xd_jumplist_combine_next(wins, used, combined, 4) == SIZE_MAX);
 
+    /* A media player is the program whose desktop file or app id it names. */
+    CHECK(xd_jumplist_player_of("vlc", "org.mpris.MediaPlayer2.vlc", "vlc.desktop", "vlc"));
+    CHECK(xd_jumplist_player_of("org.gnome.Totem", nullptr, "org.gnome.Totem.desktop", nullptr));
+    CHECK(xd_jumplist_player_of("mpv", nullptr, "/home/u/Desktop/mpv.desktop", nullptr));
+    CHECK(xd_jumplist_player_of("", "org.mpris.MediaPlayer2.vlc.instance42", nullptr, "vlc"));
+    CHECK(!xd_jumplist_player_of("vlc", "org.mpris.MediaPlayer2.vlc", "mpv.desktop", "mpv"));
+    CHECK(!xd_jumplist_player_of("vl", nullptr, "vlc.desktop", nullptr));
+    CHECK(!xd_jumplist_player_of(nullptr, "org.example.Other", "vlc.desktop", "vlc"));
+    CHECK(!xd_jumplist_player_of(nullptr, nullptr, "vlc.desktop", "vlc"));
 }
 
 /* Printers and Faxes: CUPS's states in XP's words, sizes, ports, names. */

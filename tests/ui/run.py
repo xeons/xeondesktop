@@ -894,6 +894,124 @@ def superbar_jumplist_items(s):
     s.inject("key", "Escape")
 
 
+@scenario(AERO_INI + "\n[Taskbar]\nEdge=left\n")
+def superbar_side_thumbnails(s):
+    """Aero with the taskbar at the left: a program's thumbnails show to the
+    right of its button, stacked down."""
+    bar = (0, 0, 80, HEIGHT)
+    before = s.settle("taskbar")
+    for folder in ("Documents", "Pictures"):
+        s.launch("xd-files", os.path.join(s.home, folder))
+        s.wait_window(title=folder, state="activated")
+    after = s.settle("two-windows")
+    button = after.changed_box(before, bar)
+    s.check(button is not None, f"the Files button lights up ({button})")
+    cx, cy = button[0] + button[2] // 2, button[1] + button[3] // 2
+    s.inject("move", cx, cy, "sleep", 1000)
+    shown = s.settle("thumbnails")
+    # The bar is wider than the button's lit part: from past it.
+    beside = (button[0] + button[2] + 80, 0, 400, HEIGHT)
+    popup = shown.changed_box(after, beside)
+    s.check(popup is not None and popup[3] > 300 and popup[2] < 260 and popup[1] < cy,
+            f"two thumbnails stacked beside the button ({popup})")  # fmt: skip
+    # The upper one is Documents (the older window): clicking it brings it
+    # forward.
+    s.inject("move", popup[0] + 20, cy, "move", popup[0] + popup[2] // 2, popup[1] + 6 + 77,
+             "sleep", 300, "click")  # fmt: skip
+    s.wait_window(title="Documents", state="activated")
+    s.log("ok: clicking the upper thumbnail brought Documents forward")
+
+
+# A media player on the session bus (MPRIS) naming Explorer's desktop
+# file: its method calls go to the file named on the command line.
+MPRIS_PLAYER = r"""
+import sys
+import gi
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib
+
+XML = '''<node>
+<interface name="org.mpris.MediaPlayer2">
+  <method name="Raise"/><method name="Quit"/>
+  <property name="DesktopEntry" type="s" access="read"/>
+  <property name="Identity" type="s" access="read"/>
+</interface>
+<interface name="org.mpris.MediaPlayer2.Player">
+  <method name="Previous"/><method name="Next"/><method name="PlayPause"/>
+  <property name="PlaybackStatus" type="s" access="read"/>
+  <property name="CanControl" type="b" access="read"/>
+  <property name="CanGoPrevious" type="b" access="read"/>
+  <property name="CanGoNext" type="b" access="read"/>
+  <property name="CanPlay" type="b" access="read"/>
+  <property name="CanPause" type="b" access="read"/>
+</interface>
+</node>'''
+log = sys.argv[1]
+state = {"status": "Paused"}
+node = Gio.DBusNodeInfo.new_for_xml(XML)
+
+def get_property(conn, sender, path, iface, prop):
+    if prop == "DesktopEntry":
+        return GLib.Variant("s", "org.xeondesktop.Files")
+    if prop == "Identity":
+        return GLib.Variant("s", "Test Player")
+    if prop == "PlaybackStatus":
+        return GLib.Variant("s", state["status"])
+    return GLib.Variant("b", True)
+
+def method_call(conn, sender, path, iface, method, params, invocation):
+    with open(log, "a") as f:
+        f.write(method + "\n")
+    if method == "PlayPause":
+        state["status"] = "Playing" if state["status"] != "Playing" else "Paused"
+        conn.emit_signal(None, path, "org.freedesktop.DBus.Properties", "PropertiesChanged",
+                         GLib.Variant("(sa{sv}as)", ("org.mpris.MediaPlayer2.Player",
+                                      {"PlaybackStatus": GLib.Variant("s", state["status"])}, [])))
+    invocation.return_value(None)
+
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+for iface in node.interfaces:
+    bus.register_object("/org/mpris/MediaPlayer2", iface, method_call, get_property)
+Gio.bus_own_name_on_connection(bus, "org.mpris.MediaPlayer2.xdtest", 0, None)
+GLib.MainLoop().run()
+"""
+
+
+@scenario(AERO_INI)
+def superbar_media_buttons(s):
+    """Aero: a media player (MPRIS) of a program with one window puts
+    Previous, Play/Pause and Next under its thumbnail; they reach the
+    player, and the middle one turns to Pause while it plays."""
+    calls = os.path.join(s.base, "mpris-calls")
+    s.launch(sys.executable, "-c", MPRIS_PLAYER, calls)
+    cx, cy = files_button(s)
+    after = s.settle("one-window")
+    s.inject("move", cx, cy, "sleep", 1000)
+    shown = s.settle("thumbnail")
+    above = (0, HEIGHT - 300, WIDTH, 260)
+    popup = shown.changed_box(after, above)
+    # A tile with the buttons is taller than the 166 of one without.
+    s.check(popup is not None and popup[3] > 180, f"the thumbnail has a button row ({popup})")
+    x0 = popup[0] + 6 + (208 - 94) // 2
+    by = popup[1] + 6 + 22 + 4 + 120 + 4 + 3 + 12
+
+    def called():
+        return open(calls).read().split() if os.path.exists(calls) else []
+
+    s.inject("move", cx, popup[1] + popup[3] - 4, "move", x0 + 64 + 15, by, "sleep", 300, "click")
+    s.wait(lambda: called() == ["Next"], "Next to reach the player")
+    s.log("ok: the Next button called the player's Next")
+    paused = s.settle("paused")
+    s.inject("move", x0 + 32 + 15, by, "sleep", 300, "click", "sleep", 500)
+    s.wait(lambda: called() == ["Next", "PlayPause"], "Play to reach the player")
+    s.log("ok: the Play button called PlayPause")
+    s.inject("move", x0 + 15, by, "sleep", 500)
+    playing = s.settle("playing")
+    s.check(playing.differs(paused, (x0 + 32, by - 10, 30, 20), step=1) > 0.05,
+            "the middle button shows Pause while it plays")  # fmt: skip
+    s.check(s.window(title="Documents") is not None, "the window is still there")
+
+
 @scenario()
 def file_manager(s):
     """Explorer: File > New > Folder, rename in place, Delete to the Recycle

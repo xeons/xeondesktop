@@ -5,7 +5,15 @@
  * Hovering a picture a moment peeks at that window (Aero Peek: the others
  * turn to glass outlines); clicking it brings the window forward, and the
  * middle button closes it. When the pictures wouldn't fit across the
- * screen, the windows are listed by title instead, as Windows 7 did.
+ * screen, the windows are listed by title instead, as Windows 7 did. On a
+ * taskbar at the screen's left or right they stack down beside it, and are
+ * listed when they wouldn't fit down the screen.
+ *
+ * A media player's picture has Previous, Play/Pause and Next buttons under
+ * it, as Windows Media Player's thumbnail toolbar had: through MPRIS
+ * (mpris.c), for a program with one window and one player that names it
+ * (its DesktopEntry), since nothing tells which window a player's process
+ * drew.
  *
  * The pictures come from the compositor through ext-image-copy-capture-v1
  * with ext-foreign-toplevel-image-capture-source-v1, in shared memory, at
@@ -25,6 +33,7 @@
 #include <glib.h>
 
 #include "../core/alloc.h"
+#include "mpris.h"
 #include "shell.h"
 
 /* Logical px (from memory of Windows 7 at 96 dpi). */
@@ -40,6 +49,10 @@ enum {
     CLOSE_H = 18,
     ROW_H = 26,     /* the list of titles */
     LIST_W = 300,
+    TOOLBAR_H = 30, /* a media player's buttons, under its picture */
+    TBTN_W = 30,
+    TBTN_H = 24,
+    TBTN_COUNT = 3, /* Previous, Play/Pause, Next */
 };
 
 static constexpr int SHOW_MS = 400;     /* hover before they show (Windows' hover time) */
@@ -100,8 +113,15 @@ struct xd_thumbs {
     thumb **items;
     size_t count;
     bool titles; /* titles only, no pictures */
+    bool side;   /* stacked down beside a side taskbar */
     int hot, pressed;
     bool hot_close, pressed_close;
+    /* The media players (from the first time pictures showed), the one
+     * tile's player's bus name (or nullptr), and its button under the
+     * pointer and pressed (-1: none). */
+    xd_mpris *mpris;
+    char *player;
+    int hot_button, pressed_button;
     uint64_t peeking; /* the window peeked at, or 0 */
     uint64_t peek_next;
 };
@@ -398,10 +418,21 @@ static void thumb_free(thumb *t) {
 
 /* ---- layout ------------------------------------------------------------------------- */
 
+static int tile_h(const xd_thumbs *th) { return TILE_H + (th->player != nullptr ? TOOLBAR_H : 0); }
+
 static xd_rect tile_rect(const xd_thumbs *th, size_t i) {
     if (th->titles)
         return (xd_rect){PAD, PAD + (int)i * ROW_H, th->width - 2 * PAD, ROW_H};
-    return (xd_rect){PAD + (int)i * (TILE_W + GAP), PAD, TILE_W, TILE_H};
+    if (th->side)
+        return (xd_rect){PAD, PAD + (int)i * (tile_h(th) + GAP), TILE_W, tile_h(th)};
+    return (xd_rect){PAD + (int)i * (TILE_W + GAP), PAD, TILE_W, tile_h(th)};
+}
+
+/* A media player's button k, in a row centred under the picture. */
+static xd_rect button_of(xd_rect tile, int k) {
+    int row = TBTN_COUNT * TBTN_W + (TBTN_COUNT - 1) * GAP;
+    return (xd_rect){tile.x + (tile.w - row) / 2 + k * (TBTN_W + GAP),
+                     tile.y + TITLE_H + 4 + IMG_H + 4 + (TOOLBAR_H - TBTN_H) / 2, TBTN_W, TBTN_H};
 }
 
 static xd_rect close_rect(xd_rect tile) {
@@ -415,16 +446,44 @@ static int room_across(const xd_taskbar *bar) {
     return XD_MAX(bar->width, 640);
 }
 
+/* Logical height there is down the taskbar's output. */
+static int room_down(const xd_taskbar *bar) {
+    if (bar->desktop != nullptr && bar->desktop->configured)
+        return bar->desktop->height;
+    return XD_MAX(bar->height, 480);
+}
+
+/* The one window's media player, when the program has just that window
+ * and one player of its own. */
+static void find_player(xd_thumbs *th) {
+    g_free(th->player);
+    th->player = nullptr;
+    xd_toplevel *wins[2];
+    if (th->mpris == nullptr || th->count != 1 ||
+        xd_superbar_windows(th->shell, th->key, 0, wins, XD_ARRAY_LEN(wins)) != 1)
+        return;
+    th->player = g_strdup(xd_mpris_player_of(th->mpris, wins[0]->desktop_id, wins[0]->app_id));
+}
+
 static void measure(xd_thumbs *th) {
     size_t n = XD_MAX(th->count, 1);
-    int tiles_w = 2 * PAD + (int)n * TILE_W + ((int)n - 1) * GAP;
-    th->titles = !can_capture(th->shell) || tiles_w > room_across(th->bar);
+    th->side = th->shell->settings.edge == XD_EDGE_LEFT ||
+               th->shell->settings.edge == XD_EDGE_RIGHT;
+    find_player(th);
+    int tiles = (int)n * (th->side ? tile_h(th) : TILE_W) + ((int)n - 1) * GAP + 2 * PAD;
+    th->titles = !can_capture(th->shell) ||
+                 tiles > (th->side ? room_down(th->bar) : room_across(th->bar));
     if (th->titles) {
+        g_free(th->player);
+        th->player = nullptr;
         th->width = LIST_W;
         th->height = 2 * PAD + (int)n * ROW_H;
+    } else if (th->side) {
+        th->width = 2 * PAD + TILE_W;
+        th->height = tiles;
     } else {
-        th->width = tiles_w;
-        th->height = 2 * PAD + TILE_H;
+        th->width = tiles;
+        th->height = 2 * PAD + tile_h(th);
     }
 }
 
@@ -453,6 +512,67 @@ static const char *title_of(const xd_toplevel *tl) {
     if (tl->title != nullptr && tl->title[0] != '\0')
         return tl->title;
     return tl->app_id != nullptr ? tl->app_id : "";
+}
+
+/* A media button's symbol, white as on Windows Media Player's: skip back
+ * (a bar and two triangles), play (a triangle) or pause (two bars), skip
+ * forward. */
+static void draw_media_glyph(cairo_t *cr, xd_rect r, int k, bool playing, double s,
+                             bool enabled) {
+    double cx = r.x + r.w / 2.0, cy = r.y + r.h / 2.0;
+    double h = 10 * s, w = 7 * s;
+    cairo_save(cr);
+    cairo_new_path(cr);
+    if (k == 1 && playing) {
+        double bw = 3 * s, gap = 3 * s;
+        cairo_rectangle(cr, cx - gap / 2 - bw, cy - h / 2, bw, h);
+        cairo_rectangle(cr, cx + gap / 2, cy - h / 2, bw, h);
+    } else if (k == 1) {
+        cairo_move_to(cr, cx - w / 2, cy - h / 2);
+        cairo_line_to(cr, cx + w / 2 + s, cy);
+        cairo_line_to(cr, cx - w / 2, cy + h / 2);
+        cairo_close_path(cr);
+    } else {
+        /* Two triangles and a bar, pointing the way it skips. */
+        double dir = k == 2 ? 1 : -1, tw = 5 * s, bar = 2 * s;
+        double x0 = cx - dir * (tw + bar / 2);
+        for (int j = 0; j < 2; j++) {
+            double bx = x0 + dir * j * tw;
+            cairo_move_to(cr, bx, cy - h / 2);
+            cairo_line_to(cr, bx + dir * tw, cy);
+            cairo_line_to(cr, bx, cy + h / 2);
+            cairo_close_path(cr);
+        }
+        double barx = x0 + dir * 2 * tw;
+        cairo_rectangle(cr, k == 2 ? barx : barx - bar, cy - h / 2, bar, h);
+    }
+    cairo_set_source_rgba(cr, 0, 0, 0, enabled ? 0.55 : 0.25);
+    cairo_set_line_width(cr, 1.5 * s);
+    cairo_stroke_preserve(cr);
+    cairo_set_source_rgba(cr, 1, 1, 1, enabled ? 1.0 : 0.4);
+    cairo_fill(cr);
+    cairo_restore(cr);
+}
+
+static bool button_enabled(const xd_mpris_state *st, int k) {
+    return k == 0 ? st->can_previous : k == 1 ? st->can_play_pause : st->can_next;
+}
+
+static void draw_toolbar(xd_thumbs *th, const xd_theme *t, cairo_t *cr, xd_rect tile) {
+    xd_mpris_state st;
+    if (!xd_mpris_state_of(th->mpris, th->player, &st))
+        return;
+    for (int k = 0; k < TBTN_COUNT; k++) {
+        xd_rect r = to_device(button_of(tile, k), th->scale);
+        bool enabled = button_enabled(&st, k);
+        uint8_t state = 0;
+        if (enabled && th->hot_button == k)
+            state |= XD_STATE_HOT;
+        if (enabled && th->hot_button == k && th->pressed_button == k)
+            state |= XD_STATE_PRESSED;
+        xd_theme_draw_thumb_tile(t, cr, r, state);
+        draw_media_glyph(cr, r, k, st.playing, th->scale, enabled);
+    }
 }
 
 static void draw_tile(xd_thumbs *th, const xd_theme *t, cairo_t *cr, size_t i) {
@@ -489,6 +609,8 @@ static void draw_tile(xd_thumbs *th, const xd_theme *t, cairo_t *cr, size_t i) {
     xd_rect box = to_device((xd_rect){lr.x + (TILE_W - IMG_W) / 2, lr.y + TITLE_H + 4, IMG_W,
                                       IMG_H},
                             s);
+    if (th->player != nullptr)
+        draw_toolbar(th, t, cr, lr);
     cairo_surface_t *pic = th->items[i]->pic;
     if (pic == nullptr) {
         /* Nothing yet (or no capture): its icon, large. */
@@ -726,8 +848,11 @@ void xd_thumbs_close(xd_shell *shell) {
     th->count = 0;
     g_free(th->key);
     th->key = nullptr;
+    g_free(th->player);
+    th->player = nullptr;
     th->open = false;
     th->hot = th->pressed = -1;
+    th->hot_button = th->pressed_button = -1;
 }
 
 /* Brings the tiles in line with the button's windows: pictures of the
@@ -765,8 +890,14 @@ static bool sync_windows(xd_thumbs *th) {
     return n > 0;
 }
 
+static void players_changed(void *data) { xd_thumbs_refresh(((xd_thumbs *)data)->shell); }
+
 static void open_for(xd_thumbs *th, xd_taskbar *bar, const char *key, uint64_t window_id) {
     xd_thumbs_close(th->shell);
+    /* The media players are followed from the first time pictures show
+     * (the Aero taskbar's), not in the other styles. */
+    if (th->mpris == nullptr && can_capture(th->shell))
+        th->mpris = xd_mpris_new(players_changed, th);
     xd_tooltip_hide(th->shell);
     th->open = true;
     th->bar = bar;
@@ -886,18 +1017,23 @@ void xd_thumbs_pointer_motion(xd_shell *shell, double x, double y) {
     if (th == nullptr || !th->open)
         return;
     stop_timer(&th->hide_timer);
-    int hot = -1;
+    int hot = -1, hot_button = -1;
     bool close = false;
     for (size_t i = 0; i < th->count; i++) {
         xd_rect r = tile_rect(th, i);
         if (inside(r, x, y)) {
             hot = (int)i;
             close = !th->titles && inside(close_rect(r), x, y);
+            for (int k = 0; th->player != nullptr && k < TBTN_COUNT; k++) {
+                if (inside(button_of(r, k), x, y))
+                    hot_button = k;
+            }
         }
     }
-    if (hot != th->hot || close != th->hot_close) {
+    if (hot != th->hot || close != th->hot_close || hot_button != th->hot_button) {
         th->hot = hot;
         th->hot_close = close;
+        th->hot_button = hot_button;
         th->dirty = true;
     }
     /* Aero Peek at the hovered window: after a moment, then at once as
@@ -921,6 +1057,7 @@ void xd_thumbs_pointer_leave(xd_shell *shell) {
         return;
     set_peek(th, 0);
     th->hot = th->pressed = -1;
+    th->hot_button = th->pressed_button = -1;
     th->hot_close = false;
     th->dirty = true;
     arm_hide(th);
@@ -933,13 +1070,24 @@ void xd_thumbs_pointer_button(xd_shell *shell, uint32_t button, bool pressed) {
     if (pressed) {
         th->pressed = th->hot;
         th->pressed_close = th->hot_close;
+        th->pressed_button = button == BTN_LEFT ? th->hot_button : -1;
         th->dirty = true;
         return;
     }
     int target = th->pressed;
     bool on_close = th->pressed_close;
-    th->pressed = -1;
+    int media = th->pressed_button;
+    th->pressed = th->pressed_button = -1;
     th->dirty = true;
+    /* A media player's button: the player is told, the pictures stay. */
+    if (media >= 0) {
+        xd_mpris_state st;
+        static const char *const methods[TBTN_COUNT] = {"Previous", "PlayPause", "Next"};
+        if (button == BTN_LEFT && media == th->hot_button &&
+            xd_mpris_state_of(th->mpris, th->player, &st) && button_enabled(&st, media))
+            xd_mpris_send(th->mpris, th->player, methods[media]);
+        return;
+    }
     if (target < 0 || target != th->hot || on_close != th->hot_close)
         return; /* released elsewhere */
     xd_toplevel *tl = toplevel_by_id(shell, th->items[target]->window_id);
@@ -968,6 +1116,7 @@ void xd_thumbs_init(xd_shell *shell) {
     xd_thumbs *th = XD_NEW(xd_thumbs);
     th->shell = shell;
     th->hot = th->pressed = -1;
+    th->hot_button = th->pressed_button = -1;
     th->scale = 1.0;
     wl_list_init(&th->handles);
     shell->thumbs = th;
@@ -992,6 +1141,7 @@ void xd_thumbs_finish(xd_shell *shell) {
     if (th->copier != nullptr)
         ext_image_copy_capture_manager_v1_destroy(th->copier);
     g_free(th->want_key);
+    xd_mpris_free(th->mpris);
     xd_free(th);
     shell->thumbs = nullptr;
 }
