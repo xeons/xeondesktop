@@ -151,6 +151,7 @@ static void handle_new_inhibitor(struct wl_listener *listener, void *data) {
 }
 
 void xd_idle_activity(xd_server *server) {
+    xd_access_activity(server);
     if (server->idle_notifier != nullptr)
         wlr_idle_notifier_v1_notify_activity(server->idle_notifier, server->seat);
 }

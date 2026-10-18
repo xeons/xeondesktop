@@ -130,7 +130,7 @@ void xd_frame_render(xd_view *view, bool force) {
 
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = xd_view_scale(view);
-    bool active = xd_view_focused(view->server) == view;
+    bool active = xd_view_focused(view->server) == view && !view->sentry_dim;
     /* nullptr until it has loaded: then xd_frame_icon_ready redraws. */
     cairo_surface_t *icon =
         xd_appicons_get(view->server->appicons, xd_view_app_id(view), xd_px(scale, 16));

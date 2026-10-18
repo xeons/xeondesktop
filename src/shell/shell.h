@@ -490,6 +490,8 @@ void xd_account_switch_user(xd_shell *shell);
 void xd_sys_battery_init(xd_shell *shell);
 void xd_sys_network_init(xd_shell *shell);
 void xd_sys_bluetooth_init(xd_shell *shell);
+/* sys_access.c: StickyKeys', FilterKeys' and MouseKeys' status icons. */
+void xd_sys_access_init(xd_shell *shell);
 void xd_sys_volume_init(xd_shell *shell);
 /* sys_volume.c: the volume flyout's input (surface-local logical). */
 bool xd_volume_flyout_owns(xd_shell *shell, struct wl_surface *surface);

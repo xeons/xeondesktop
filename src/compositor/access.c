@@ -16,10 +16,19 @@
  *               it; turned on, xd-access asks whether to keep it, as XP's
  *               dialogs do.
  *
+ *   SoundSentry a sound playing (the compositor's own: window sounds and
+ *               the system bell) flashes the active window's caption,
+ *               the active window or the desktop
+ *   reset       Accessibility Options' "Turn off accessibility features
+ *               after idle for": no input for so long turns them off
+ *
  * And the system bell (xdg-system-bell-v1): the scheme's Default Beep.
  */
 #include <linux/input-event-codes.h>
 #include <math.h>
+#include <stdlib.h>
+#include <sys/eventfd.h>
+#include <unistd.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
@@ -47,6 +56,8 @@ static constexpr uint32_t SHIFT_GAP_MS = 2000; /* a pause longer than this start
 static constexpr int FILTER_HOLD_MS = 8000;
 static constexpr int TOGGLE_HOLD_MS = 5000;
 static constexpr int MOUSE_TICK_MS = 20;
+/* How long SoundSentry's flash lasts. */
+static constexpr int SENTRY_FLASH_MS = 200;
 
 struct xd_access {
     xd_server *server;
@@ -85,6 +96,16 @@ struct xd_access {
     uint32_t press_msec;
     bool click_locked;
     bool unlocking; /* the click that ends the lock is under way */
+
+    /* SoundSentry: the sound player's eventfd, and the flash showing. */
+    int sentry_fd;
+    struct wl_event_source *sentry_source, *sentry_timer;
+    struct wlr_scene_rect *sentry_rect; /* the window or the desktop */
+    xd_view *sentry_view;               /* its caption, drawn inactive */
+
+    /* Automatic reset: the last input, and the timer that checks it. */
+    int64_t last_input_ms;
+    struct wl_event_source *reset_timer;
 };
 
 static int64_t now_ms(void) {
@@ -580,6 +601,153 @@ bool xd_access_button(xd_server *server, uint32_t button, bool pressed, uint32_t
     return false;
 }
 
+/* ---- SoundSentry -------------------------------------------------------------------- */
+
+static bool view_alive(xd_server *server, const xd_view *view) {
+    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
+        if (v == view)
+            return true;
+    }
+    return false;
+}
+
+static void sentry_end(xd_access *acc) {
+    if (acc->sentry_rect != nullptr) {
+        wlr_scene_node_destroy(&acc->sentry_rect->node);
+        acc->sentry_rect = nullptr;
+    }
+    /* The window may have gone in the meantime. */
+    if (acc->sentry_view != nullptr && view_alive(acc->server, acc->sentry_view)) {
+        acc->sentry_view->sentry_dim = false;
+        xd_frame_render(acc->sentry_view, true);
+    }
+    acc->sentry_view = nullptr;
+}
+
+static int sentry_over(void *data) {
+    sentry_end(data);
+    return 0;
+}
+
+/* XP inverted the caption, window or screen; a dark veil stands in for
+ * the inversion, which the scene graph can't do. */
+static void sentry_veil(xd_access *acc, struct wlr_box box) {
+    xd_server *server = acc->server;
+    static const float veil[4] = {0, 0, 0, 0.5f};
+    struct wlr_scene_tree *top = server->layers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY];
+    acc->sentry_rect = wlr_scene_rect_create(top, box.width, box.height, veil);
+    if (acc->sentry_rect == nullptr)
+        return;
+    wlr_scene_node_set_position(&acc->sentry_rect->node, box.x, box.y);
+    wlr_scene_node_raise_to_top(&acc->sentry_rect->node);
+}
+
+static void sentry_flash(xd_access *acc) {
+    xd_server *server = acc->server;
+    const xd_access_settings *a = &server->config.access;
+    if (!a->sound_sentry || a->sound_sentry_effect == XD_SENTRY_NONE || server->locked)
+        return;
+    sentry_end(acc); /* a new sound starts the flash over */
+    xd_view *view = xd_view_focused(server);
+    xd_sound_sentry effect = a->sound_sentry_effect;
+    /* No window (or no caption of ours): what there is. */
+    if (effect != XD_SENTRY_DESKTOP && view == nullptr)
+        effect = XD_SENTRY_DESKTOP;
+    else if (effect == XD_SENTRY_CAPTION && (view->csd || view->fullscreen))
+        effect = XD_SENTRY_WINDOW;
+    switch (effect) {
+    case XD_SENTRY_CAPTION:
+        view->sentry_dim = true;
+        acc->sentry_view = view;
+        xd_frame_render(view, true);
+        break;
+    case XD_SENTRY_WINDOW:
+        sentry_veil(acc, xd_view_outer_box(view));
+        break;
+    case XD_SENTRY_DESKTOP: {
+        struct wlr_box all;
+        wlr_output_layout_get_box(server->output_layout, nullptr, &all);
+        sentry_veil(acc, all);
+        break;
+    }
+    case XD_SENTRY_NONE:
+    case XD_SENTRY_COUNT:
+        return;
+    }
+    wl_event_source_timer_update(acc->sentry_timer, SENTRY_FLASH_MS);
+}
+
+static int sentry_readable(int fd, [[maybe_unused]] uint32_t mask, void *data) {
+    uint64_t n = 0;
+    if (read(fd, &n, sizeof(n)) == (ssize_t)sizeof(n) && n > 0)
+        sentry_flash(data);
+    return 0;
+}
+
+/* ---- automatic reset ------------------------------------------------------------- */
+
+static bool any_feature_on(const xd_access_settings *a) {
+    return a->sticky_keys || a->filter_keys || a->toggle_keys || a->mouse_keys ||
+           a->sound_sentry || a->high_contrast;
+}
+
+/* XD_ACCESS_RESET_SECONDS shortens it for testing. */
+static int64_t reset_after_ms(const xd_access_settings *a) {
+    const char *test = getenv("XD_ACCESS_RESET_SECONDS");
+    long long secs = test != nullptr ? strtoll(test, nullptr, 10) : 0;
+    return secs > 0 ? secs * 1000 : (int64_t)a->auto_reset_minutes * 60 * 1000;
+}
+
+/* Sets the timer for when the reset would be due, or stops it. */
+static void arm_reset(xd_access *acc) {
+    const xd_access_settings *a = &acc->server->config.access;
+    if (!a->auto_reset || !any_feature_on(a)) {
+        wl_event_source_timer_update(acc->reset_timer, 0);
+        return;
+    }
+    int64_t left = acc->last_input_ms + reset_after_ms(a) - now_ms();
+    wl_event_source_timer_update(acc->reset_timer, (int)XD_CLAMP(left, 1, INT32_MAX));
+}
+
+/* Turns the features off (as XP's timeout did, High Contrast included),
+ * now and in desktop.ini. */
+static void reset_features(xd_server *server) {
+    xd_settings s;
+    xd_settings_load(&s);
+    xd_access_settings *a = &s.access;
+    a->sticky_keys = a->filter_keys = a->toggle_keys = a->mouse_keys = false;
+    a->sound_sentry = false;
+    if (a->high_contrast)
+        xd_settings_set_high_contrast(&s, false, "");
+    if (!xd_settings_save(&s))
+        wlr_log(WLR_ERROR, "cannot save the accessibility settings");
+    wlr_log(WLR_INFO, "accessibility: features turned off after %lld idle seconds",
+            (long long)(reset_after_ms(&server->config.access) / 1000));
+    /* The appearance follows when the compositor reloads the file. */
+    xd_access_settings *now = &server->config.access;
+    now->sticky_keys = now->filter_keys = now->toggle_keys = now->mouse_keys = false;
+    now->sound_sentry = false;
+    xd_input_apply_access(server);
+    if (now->sound_on_off)
+        xd_sound_play_tone(XD_TONE_FALL);
+}
+
+static int reset_due(void *data) {
+    xd_access *acc = data;
+    const xd_access_settings *a = &acc->server->config.access;
+    if (a->auto_reset && any_feature_on(a) && now_ms() - acc->last_input_ms >= reset_after_ms(a))
+        reset_features(acc->server);
+    else
+        arm_reset(acc); /* there was input since: later */
+    return 0;
+}
+
+void xd_access_activity(xd_server *server) {
+    /* Only noted: the timer looks at it when it fires. */
+    if (server->access != nullptr)
+        server->access->last_input_ms = now_ms();
+}
+
 /* ---- setup ------------------------------------------------------------------------- */
 
 static void handle_bell_ring([[maybe_unused]] struct wl_listener *listener,
@@ -606,6 +774,9 @@ void xd_access_apply(xd_server *server) {
         acc->unlocking = false;
         xd_input_button(server, (uint32_t)now_ms(), BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
     }
+    if (!a->sound_sentry)
+        sentry_end(acc);
+    arm_reset(acc);
 }
 
 void xd_access_keyboard_gone(xd_keyboard *kb) {
@@ -627,7 +798,17 @@ void xd_access_init(xd_server *server) {
     acc->mk_timer = wl_event_loop_add_timer(server->loop, mk_tick, acc);
     acc->bell = wlr_xdg_system_bell_v1_create(server->display, 1);
     XD_LISTEN(&acc->bell->events.ring, acc, bell_ring, handle_bell_ring);
+    acc->sentry_timer = wl_event_loop_add_timer(server->loop, sentry_over, acc);
+    acc->sentry_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (acc->sentry_fd >= 0) {
+        acc->sentry_source = wl_event_loop_add_fd(server->loop, acc->sentry_fd, WL_EVENT_READABLE,
+                                                  sentry_readable, acc);
+        xd_sound_notify_fd(acc->sentry_fd);
+    }
+    acc->reset_timer = wl_event_loop_add_timer(server->loop, reset_due, acc);
+    acc->last_input_ms = now_ms();
     server->access = acc;
+    arm_reset(acc);
 }
 
 void xd_access_finish(xd_server *server) {
@@ -635,6 +816,14 @@ void xd_access_finish(xd_server *server) {
     if (acc == nullptr)
         return;
     xd_unlisten(&acc->bell_ring);
+    sentry_end(acc);
+    xd_sound_notify_fd(-1);
+    if (acc->sentry_source != nullptr)
+        wl_event_source_remove(acc->sentry_source);
+    if (acc->sentry_fd >= 0)
+        close(acc->sentry_fd);
+    wl_event_source_remove(acc->sentry_timer);
+    wl_event_source_remove(acc->reset_timer);
     wl_event_source_remove(acc->hold_timer);
     wl_event_source_remove(acc->slow_timer);
     wl_event_source_remove(acc->mk_timer);

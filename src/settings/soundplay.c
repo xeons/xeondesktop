@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #include <canberra.h>
 #include <glib.h>
+#include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "soundplay.h"
 
@@ -10,6 +13,7 @@ static GThreadPool *pool;
 static ca_context *player; /* the worker's */
 static char *trace_path;   /* XD_SOUND_TRACE, read on the caller's thread */
 static constexpr uint32_t PLAY_ID = 1;
+static atomic_int notify_fd = -1; /* xd_sound_notify_fd's */
 
 /* xd_sound_play_event_wait's: the caller and the sound's end both hold
  * it, as the caller may stop waiting first. */
@@ -134,6 +138,12 @@ static int play(job *j) {
     }
     if (xd_sound_kind_of(j->sound) == XD_SOUND_NONE)
         return CA_SUCCESS;
+    int fd = atomic_load(&notify_fd);
+    if (j->kind == JOB_EVENT && fd >= 0) {
+        uint64_t one = 1;
+        /* Failing (closed, or full) only loses a flash. */
+        [[maybe_unused]] ssize_t n = write(fd, &one, sizeof(one));
+    }
     if (trace_path != nullptr) {
         trace(j);
         return CA_SUCCESS;
@@ -235,6 +245,8 @@ void xd_sound_play_tone(xd_sound_tone tone) {
     j->tone = tone;
     push(j);
 }
+
+void xd_sound_notify_fd(int fd) { atomic_store(&notify_fd, fd); }
 
 void xd_sound_finish(void) {
     if (pool != nullptr)

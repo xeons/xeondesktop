@@ -1107,6 +1107,32 @@ static void test_battery_alarms(void) {
     CHECK(xd_battery_alarm_check(&a, &done, 1, true) == XD_ALARM_FIRED_NONE);
 }
 
+/* Accessibility Options' Sound tab, status indicators and reset. */
+static void test_access_extra_settings(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    const xd_access_settings *ac = &a.access;
+    CHECK(ac->sticky_indicator && ac->filter_indicator && ac->mouse_keys_indicator);
+    CHECK(!ac->sound_sentry && ac->sound_sentry_effect == XD_SENTRY_WINDOW && !ac->show_sounds);
+    CHECK(!ac->auto_reset && ac->auto_reset_minutes == XD_AUTO_RESET_MIN);
+    xd_settings_parse(XD_STR("[Accessibility]\nSoundSentry=true\nSoundSentryEffect=desktop\n"
+                             "ShowSounds=true\nMouseKeysIndicator=false\nAutoReset=true\n"
+                             "AutoResetMinutes=20\n"),
+                      &a);
+    CHECK(ac->sound_sentry && ac->sound_sentry_effect == XD_SENTRY_DESKTOP && ac->show_sounds);
+    CHECK(!ac->mouse_keys_indicator && ac->auto_reset && ac->auto_reset_minutes == 20);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && b.access.sound_sentry_effect == XD_SENTRY_DESKTOP);
+    xd_strbuf_free(&text);
+    /* An unknown effect and minutes out of range: the defaults. */
+    xd_settings_parse(XD_STR("[Accessibility]\nSoundSentryEffect=strobe\nAutoResetMinutes=2\n"),
+                      &a);
+    CHECK(ac->sound_sentry_effect == XD_SENTRY_WINDOW && ac->auto_reset_minutes == 5);
+}
+
 static void test_power_schemes(void) {
     /* No file: XP's six, with both columns. */
     GPtrArray *s = xd_power_schemes_load("/nonexistent/power-schemes.ini");
@@ -3714,6 +3740,7 @@ int main(void) {
     test_tray_rules();
     test_power_settings();
     test_battery_alarms();
+    test_access_extra_settings();
     test_power_schemes();
     test_sound_scheme();
     test_gtk_css();

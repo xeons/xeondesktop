@@ -32,6 +32,10 @@ void xd_sound_play_event(xd_sound_event ev);
 void xd_sound_play_event_wait(xd_sound_event ev, int timeout_ms);
 /* Plays an accessibility tone. */
 void xd_sound_play_tone(xd_sound_tone tone);
+/* From now on, each event sound that plays (or is traced) adds 1 to the
+ * eventfd `fd`, from the worker thread: the compositor's SoundSentry
+ * flashes then. Events whose scheme has no sound don't count. -1 stops. */
+void xd_sound_notify_fd(int fd);
 /* At exit: drops sounds not started yet. One still playing is left to
  * end with the process. */
 void xd_sound_finish(void);

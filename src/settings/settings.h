@@ -124,6 +124,15 @@ typedef struct xd_mouse_settings {
     int click_lock_ms;     /* how long that press is */
 } xd_mouse_settings;
 
+/* SoundSentry's "Choose the visual warning". */
+typedef enum xd_sound_sentry : uint8_t {
+    XD_SENTRY_NONE,
+    XD_SENTRY_CAPTION, /* Flash active caption bar */
+    XD_SENTRY_WINDOW,  /* Flash active window */
+    XD_SENTRY_DESKTOP, /* Flash desktop */
+    XD_SENTRY_COUNT,
+} xd_sound_sentry;
+
 /* [Accessibility]: StickyKeys, FilterKeys, ToggleKeys and MouseKeys,
  * done by the compositor (with the keyboard shortcuts that turn them on);
  * High Contrast switches [Appearance] and remembers what to switch back
@@ -154,6 +163,18 @@ typedef struct xd_access_settings {
     bool warn;                 /* a shortcut asks whether to keep a feature it turned on */
     bool sound_on_off;         /* a rising or falling tone as a feature goes on or off */
     bool high_contrast;
+    /* XP's "Show ... status on screen": an icon in the notification area
+     * while the feature is on (the shell's). */
+    bool sticky_indicator, filter_indicator, mouse_keys_indicator;
+    /* Sound tab: SoundSentry flashes something whenever the compositor
+     * plays a sound (its window sounds and the system bell); ShowSounds
+     * asks programs for captions (only stored: no toolkit reads it). */
+    bool sound_sentry;
+    xd_sound_sentry sound_sentry_effect;
+    bool show_sounds;
+    /* General: turn the features off after so long with no input. */
+    bool auto_reset;
+    int auto_reset_minutes;
     xd_visual_style saved_style; /* the look from before High Contrast */
     char saved_scheme[64];
 } xd_access_settings;
@@ -350,6 +371,8 @@ enum {
     XD_MOUSE_KEYS_SPEED_MAX = 360,
     XD_MOUSE_KEYS_ACCEL_MIN = 1000,
     XD_MOUSE_KEYS_ACCEL_MAX = 5000,
+    XD_AUTO_RESET_MIN = 5, /* Accessibility's automatic reset, minutes */
+    XD_AUTO_RESET_MAX = 30,
 };
 
 /* Directory holding data/ (schemes, ...): $XD_DATA_DIR, the source tree

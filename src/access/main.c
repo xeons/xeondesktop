@@ -5,19 +5,26 @@
  * (input.c, access.c).
  *
  *   Keyboard  StickyKeys, FilterKeys (BounceKeys or SlowKeys), ToggleKeys,
- *             each with XP's Settings dialog and keyboard shortcut
+ *             each with XP's Settings dialog and keyboard shortcut; the
+ *             dialogs' "Show ... status on screen" puts an icon in the
+ *             notification area while the feature is on (the shell's)
+ *   Sound     SoundSentry (the compositor flashes the caption, window or
+ *             desktop when it plays a sound) and ShowSounds (stored for
+ *             programs; none read it yet)
  *   Display   High Contrast, the caret's blink rate, the pointer size
  *   Mouse     MouseKeys
- *   General   the shortcuts' warning and sounds
+ *   General   turning the features off after so long idle (the
+ *             compositor's), the shortcuts' warning and sounds
  *
  * xd-access --shortcut stickykeys|filterkeys|togglekeys|mousekeys is what
  * the compositor runs when a shortcut has turned a feature on: XP's box
  * asking whether to keep it (Cancel turns it off again, Settings opens its
  * settings).
  *
- * Not here: the "Show ... status on screen" options (greyed), XP's Sound
- * tab (SoundSentry, ShowSounds), and the General tab's automatic reset,
- * SerialKey devices and administrative options.
+ * xd-access [--page N] opens the Nth tab (0 Keyboard ... 4 General).
+ *
+ * Not here: the General tab's SerialKey devices and administrative
+ * options.
  */
 #include <math.h>
 #include <stddef.h>
@@ -35,6 +42,8 @@ typedef struct props {
     bool updating;
     /* Keyboard */
     GtkWidget *sticky, *filter, *toggle;
+    /* Sound */
+    GtkWidget *sentry, *sentry_effect, *show_sounds;
     /* Display */
     GtkWidget *contrast, *contrast_scheme, *blink, *caret, *pointer_size;
     bool caret_on;
@@ -42,7 +51,7 @@ typedef struct props {
     /* Mouse */
     GtkWidget *mouse_keys;
     /* General */
-    GtkWidget *warn, *sound_on_off;
+    GtkWidget *reset, *reset_minutes, *warn, *sound_on_off;
 } props;
 
 static void changed(props *p) {
@@ -79,13 +88,6 @@ static GtkWidget *check(GtkWidget *box, const char *label, bool on) {
 }
 
 static bool checked(GtkWidget *c) { return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(c)); }
-
-/* XP's "Show ... status on screen": there's no status indicator. */
-static void unavailable_check(GtkWidget *box, const char *label) {
-    GtkWidget *c = check(box, label, false);
-    gtk_widget_set_sensitive(c, FALSE);
-    gtk_widget_set_tooltip_text(c, "Not available yet.");
-}
 
 /* ---- the Settings dialogs ------------------------------------------------------- */
 
@@ -132,7 +134,7 @@ static bool sticky_settings(GtkWindow *parent, xd_access_settings *a) {
     gtk_box_pack_start(GTK_BOX(page), frame("Options", options), FALSE, FALSE, 0);
     GtkWidget *notify = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     GtkWidget *sound = check(notify, "_Make sounds when modifier key is pressed", a->sticky_sound);
-    unavailable_check(notify, "_Show StickyKeys status on screen");
+    GtkWidget *indicator = check(notify, "_Show StickyKeys status on screen", a->sticky_indicator);
     gtk_box_pack_start(GTK_BOX(page), frame("Notification", notify), FALSE, FALSE, 0);
     GtkWidget *d = settings_dialog(parent, "Settings for StickyKeys", page);
     bool ok = run_ok(d);
@@ -141,6 +143,7 @@ static bool sticky_settings(GtkWindow *parent, xd_access_settings *a) {
         a->sticky_lock = checked(lock);
         a->sticky_two_keys_off = checked(two);
         a->sticky_sound = checked(sound);
+        a->sticky_indicator = checked(indicator);
     }
     gtk_widget_destroy(d);
     return ok;
@@ -295,7 +298,7 @@ static bool filter_settings(GtkWindow *parent, xd_access_settings *a) {
     gtk_box_pack_start(GTK_BOX(page), frame("Filter options", options), FALSE, FALSE, 0);
     GtkWidget *notify = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     GtkWidget *beep = check(notify, "_Beep when keys pressed or accepted", a->filter_beep);
-    unavailable_check(notify, "_Show FilterKeys status on screen");
+    GtkWidget *indicator = check(notify, "_Show FilterKeys status on screen", a->filter_indicator);
     gtk_box_pack_start(GTK_BOX(page), frame("Notification", notify), FALSE, FALSE, 0);
     GtkWidget *d = settings_dialog(parent, "Settings for FilterKeys", page);
     bool ok = run_ok(d);
@@ -303,6 +306,7 @@ static bool filter_settings(GtkWindow *parent, xd_access_settings *a) {
         copy.filter_shortcut = checked(shortcut);
         copy.slow_keys = !checked(f.bounce);
         copy.filter_beep = checked(beep);
+        copy.filter_indicator = checked(indicator);
         *a = copy;
     }
     gtk_widget_destroy(d);
@@ -366,7 +370,7 @@ static bool mouse_keys_settings(GtkWindow *parent, xd_access_settings *a) {
     gtk_box_pack_start(GTK_BOX(num), on, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(num), off, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), num, FALSE, FALSE, 0);
-    unavailable_check(page, "_Show MouseKey status on screen");
+    GtkWidget *indicator = check(page, "_Show MouseKey status on screen", a->mouse_keys_indicator);
     GtkWidget *d = settings_dialog(parent, "Settings for MouseKeys", page);
     bool ok = run_ok(d);
     if (ok) {
@@ -375,6 +379,7 @@ static bool mouse_keys_settings(GtkWindow *parent, xd_access_settings *a) {
         a->mouse_keys_accel_ms = range_int(GTK_RANGE(accel));
         a->mouse_keys_modifiers = checked(mods);
         a->mouse_keys_numlock = checked(on);
+        a->mouse_keys_indicator = checked(indicator);
     }
     gtk_widget_destroy(d);
     return ok;
@@ -440,6 +445,68 @@ static GtkWidget *keyboard_page(props *p) {
     g_signal_connect(p->sticky, "toggled", G_CALLBACK(on_keyboard_option), p);
     g_signal_connect(p->filter, "toggled", G_CALLBACK(on_keyboard_option), p);
     g_signal_connect(p->toggle, "toggled", G_CALLBACK(on_keyboard_option), p);
+    return page;
+}
+
+/* ---- Sound --------------------------------------------------------------------------- */
+
+static void on_sound_option([[maybe_unused]] GtkWidget *w, gpointer data) {
+    props *p = data;
+    xd_access_settings *a = &p->now.access;
+    a->sound_sentry = checked(p->sentry);
+    a->show_sounds = checked(p->show_sounds);
+    /* The list is in xd_sound_sentry's order. */
+    int effect = gtk_combo_box_get_active(GTK_COMBO_BOX(p->sentry_effect));
+    if (effect >= 0 && effect < XD_SENTRY_COUNT)
+        a->sound_sentry_effect = (xd_sound_sentry)effect;
+    gtk_widget_set_sensitive(p->sentry_effect, a->sound_sentry);
+    changed(p);
+}
+
+static GtkWidget *sound_page(props *p) {
+    const xd_access_settings *a = &p->now.access;
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 10);
+
+    GtkWidget *sentry = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_pack_start(GTK_BOX(sentry),
+                       wrapped("Use SoundSentry if you want Windows to generate visual warnings "
+                               "when your system makes a sound."),
+                       FALSE, FALSE, 0);
+    p->sentry = check(sentry, "Use _SoundSentry", a->sound_sentry);
+    GtkWidget *label = gtk_label_new_with_mnemonic("_Choose the visual warning:");
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_box_pack_start(GTK_BOX(sentry), label, FALSE, FALSE, 0);
+    p->sentry_effect = gtk_combo_box_text_new();
+    static const char *const effects[XD_SENTRY_COUNT] = {
+        [XD_SENTRY_NONE] = "[None]",
+        [XD_SENTRY_CAPTION] = "Flash active caption bar",
+        [XD_SENTRY_WINDOW] = "Flash active window",
+        [XD_SENTRY_DESKTOP] = "Flash desktop",
+    };
+    char id[8];
+    for (int i = 0; i < XD_SENTRY_COUNT; i++) {
+        g_snprintf(id, sizeof(id), "%d", i);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->sentry_effect), id, effects[i]);
+    }
+    g_snprintf(id, sizeof(id), "%d", (int)a->sound_sentry_effect);
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->sentry_effect), id);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), p->sentry_effect);
+    gtk_widget_set_sensitive(p->sentry_effect, a->sound_sentry);
+    gtk_box_pack_start(GTK_BOX(sentry), p->sentry_effect, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("SoundSentry", sentry), FALSE, FALSE, 0);
+
+    GtkWidget *show = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_pack_start(GTK_BOX(show),
+                       wrapped("Use ShowSounds to tell your programs to display captions for the "
+                               "speech and sounds they make."),
+                       FALSE, FALSE, 0);
+    p->show_sounds = check(show, "Use Show_Sounds", a->show_sounds);
+    gtk_box_pack_start(GTK_BOX(page), frame("ShowSounds", show), FALSE, FALSE, 0);
+
+    g_signal_connect(p->sentry, "toggled", G_CALLBACK(on_sound_option), p);
+    g_signal_connect(p->sentry_effect, "changed", G_CALLBACK(on_sound_option), p);
+    g_signal_connect(p->show_sounds, "toggled", G_CALLBACK(on_sound_option), p);
     return page;
 }
 
@@ -621,6 +688,11 @@ static GtkWidget *mouse_page(props *p) {
 
 static void on_general([[maybe_unused]] GtkWidget *w, gpointer data) {
     props *p = data;
+    p->now.access.auto_reset = checked(p->reset);
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->reset_minutes));
+    if (id != nullptr)
+        p->now.access.auto_reset_minutes = atoi(id);
+    gtk_widget_set_sensitive(p->reset_minutes, p->now.access.auto_reset);
     p->now.access.warn = checked(p->warn);
     p->now.access.sound_on_off = checked(p->sound_on_off);
     changed(p);
@@ -629,11 +701,34 @@ static void on_general([[maybe_unused]] GtkWidget *w, gpointer data) {
 static GtkWidget *general_page(props *p) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
+    const xd_access_settings *a = &p->now.access;
+    GtkWidget *reset = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    p->reset = check(reset, "_Turn off accessibility features after idle for:", a->auto_reset);
+    p->reset_minutes = gtk_combo_box_text_new();
+    char id[8], text[32];
+    for (int m = XD_AUTO_RESET_MIN; m <= XD_AUTO_RESET_MAX; m += 5) {
+        g_snprintf(id, sizeof(id), "%d", m);
+        g_snprintf(text, sizeof(text), "%d minutes", m);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->reset_minutes), id, text);
+    }
+    g_snprintf(id, sizeof(id), "%d", a->auto_reset_minutes);
+    if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->reset_minutes), id)) {
+        g_snprintf(text, sizeof(text), "%d minutes", a->auto_reset_minutes);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->reset_minutes), id, text);
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->reset_minutes), id);
+    }
+    gtk_widget_set_margin_start(p->reset_minutes, 20);
+    gtk_widget_set_halign(p->reset_minutes, GTK_ALIGN_START);
+    gtk_widget_set_sensitive(p->reset_minutes, a->auto_reset);
+    gtk_box_pack_start(GTK_BOX(reset), p->reset_minutes, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Automatic reset", reset), FALSE, FALSE, 0);
     GtkWidget *notify = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     p->warn = check(notify, "Give _warning message when turning a feature on", p->now.access.warn);
     p->sound_on_off = check(notify, "Make a sound when turning a feature on or o_ff",
                             p->now.access.sound_on_off);
     gtk_box_pack_start(GTK_BOX(page), frame("Notification", notify), FALSE, FALSE, 0);
+    g_signal_connect(p->reset, "toggled", G_CALLBACK(on_general), p);
+    g_signal_connect(p->reset_minutes, "changed", G_CALLBACK(on_general), p);
     g_signal_connect(p->warn, "toggled", G_CALLBACK(on_general), p);
     g_signal_connect(p->sound_on_off, "toggled", G_CALLBACK(on_general), p);
     return page;
@@ -779,6 +874,11 @@ int main(int argc, char **argv) {
     xd_gtk_app_follow_theme();
     if (argc == 3 && strcmp(argv[1], "--shortcut") == 0)
         return confirm_shortcut(argv[2]);
+    int page = 0;
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--page") == 0)
+            page = atoi(argv[++i]);
+    }
     static props p;
     xd_settings_load(&p.orig);
     p.now = p.orig;
@@ -797,6 +897,8 @@ int main(int argc, char **argv) {
     p.updating = true;
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), keyboard_page(&p),
                              gtk_label_new_with_mnemonic("_Keyboard"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), sound_page(&p),
+                             gtk_label_new_with_mnemonic("_Sound"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), display_page(&p),
                              gtk_label_new_with_mnemonic("_Display"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), mouse_page(&p),
@@ -812,6 +914,8 @@ int main(int argc, char **argv) {
     g_signal_connect(p.window, "response", G_CALLBACK(on_response), &p);
     g_signal_connect(p.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
     gtk_widget_show_all(p.window);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs),
+                                  XD_CLAMP(page, 0, gtk_notebook_get_n_pages(GTK_NOTEBOOK(tabs)) - 1));
     gtk_main();
     if (p.caret_timer != 0)
         g_source_remove(p.caret_timer);

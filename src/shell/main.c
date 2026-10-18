@@ -998,6 +998,7 @@ int main(int argc, char **argv) {
     if (!shell.taskbar_only)
         xd_deskicons_init(&shell);
     xd_sys_battery_init(&shell);
+    xd_sys_access_init(&shell);
     xd_sleep_init(&shell);
     xd_account_init(&shell);
     xd_shell_sounds_init();

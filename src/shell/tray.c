@@ -596,6 +596,9 @@ static void remember(xd_tray *tray, const xd_tray_item *it) {
         {"network", "Network Connections"},
         {"battery", "Power Meter"},
         {"bluetooth", "Bluetooth Devices"},
+        {"stickykeys", "StickyKeys"},
+        {"filterkeys", "FilterKeys"},
+        {"mousekeys", "MouseKeys"},
     };
     char *title = g_strdup(it->title);
     const char *name = title;

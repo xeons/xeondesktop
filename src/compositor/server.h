@@ -134,6 +134,7 @@ typedef struct xd_view {
     xd_snap snapped;            /* Aero Snap: half the screen */
     struct wlr_box snap_restore; /* its size before */
     bool hung;
+    bool sentry_dim; /* SoundSentry flashing its caption: drawn inactive */
     bool ping_out; /* a ping to its program hasn't timed out (yet) */
     char *hung_title;
     bool maximized;
@@ -549,6 +550,8 @@ bool xd_access_button(xd_server *server, uint32_t button, bool pressed, uint32_t
 /* config.access or config.mouse changed. */
 void xd_access_apply(xd_server *server);
 void xd_access_keyboard_gone(xd_keyboard *kb);
+/* Input from the user (xd_idle_activity): the automatic reset's clock. */
+void xd_access_activity(xd_server *server);
 /* input.c, for access.c: a key event past the accessibility filters, a
  * button event as if from a mouse, and a pointer move. */
 void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);

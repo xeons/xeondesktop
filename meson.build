@@ -876,6 +876,7 @@ executable(
   'src/shell/tray.c',
   'src/shell/dnd.c',
   'src/shell/sys_battery.c',
+  'src/shell/sys_access.c',
   'src/shell/sys_bluetooth.c',
   'src/shell/sys_network.c',
   'src/shell/sys_volume.c',

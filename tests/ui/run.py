@@ -1211,6 +1211,32 @@ def task_manager_users(s):
         DBusTestCase.tearDownClass()
 
 
+@scenario()
+def access_indicators(s):
+    """MouseKeys turned on puts its status icon in the notification area;
+    unchecking "Show MouseKey status on screen" takes it away."""
+    tray = (WIDTH - 200, HEIGHT - 30, 140, 30)  # left of the clock, which may tick
+    before = s.settle("no-indicator")
+
+    def set_access(**keys):
+        ini = s.ini()
+        if not ini.has_section("Accessibility"):
+            ini.add_section("Accessibility")
+        for k, v in keys.items():
+            ini["Accessibility"][k] = v
+        with open(os.path.join(s.config, "desktop.ini"), "w") as f:
+            ini.write(f, space_around_delimiters=False)
+
+    set_access(MouseKeys="true")
+    on = s.wait(lambda: (lambda shot: shot if shot.differs(before, tray, step=2) > 0 else None)(
+        s.shot("indicator")), "the MouseKeys icon")  # fmt: skip
+    s.check(on.changed_box(before, tray) is not None, "MouseKeys' icon is in the tray")
+    set_access(MouseKeysIndicator="false")
+    s.wait(lambda: s.shot("indicator-off").differs(before, tray, step=2) == 0,
+           "the icon to go")  # fmt: skip
+    s.log("ok: the icon goes with its Show ... status on screen")
+
+
 @scenario(LUNA_INI, requires=("dbusmock",))
 def power_alarms(s):
     """Power Options on a laptop (a dbusmock UPower battery): the Alarms and

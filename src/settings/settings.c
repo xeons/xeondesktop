@@ -39,6 +39,12 @@ static const char *const alarm_action_names[XD_ALARM_ACTION_COUNT] = {
     [XD_ALARM_HIBERNATE] = "hibernate",
     [XD_ALARM_SHUTDOWN] = "shutdown",
 };
+static const char *const sentry_names[XD_SENTRY_COUNT] = {
+    [XD_SENTRY_NONE] = "none",
+    [XD_SENTRY_CAPTION] = "caption",
+    [XD_SENTRY_WINDOW] = "window",
+    [XD_SENTRY_DESKTOP] = "desktop",
+};
 static const char *const desk_icon_size_names[] = {"small", "medium", "large"};
 /* [DesktopIcons]' Change Icon keys, by xd_desk_icon. */
 static const char *const desk_icon_keys[XD_DESK_ICON_COUNT] = {
@@ -224,7 +230,9 @@ void xd_settings_defaults(xd_settings *s) {
                    .toggle_shortcut = true, .mouse_keys_shortcut = true,
                    .mouse_keys_modifiers = true, .mouse_keys_numlock = true,
                    .mouse_keys_speed = 80, .mouse_keys_accel_ms = 3000, .warn = true,
-                   .sound_on_off = true},
+                   .sound_on_off = true, .sticky_indicator = true, .filter_indicator = true,
+                   .mouse_keys_indicator = true, .sound_sentry_effect = XD_SENTRY_WINDOW,
+                   .auto_reset_minutes = XD_AUTO_RESET_MIN},
         .volume_icon = true,
         .battery_icon = true,
         .resume_password = true, /* as in XP */
@@ -352,6 +360,12 @@ static void parse_access(xd_access_settings *a, xd_str key, xd_str v) {
         {"MouseKeysNumLock", offsetof(xd_access_settings, mouse_keys_numlock)},
         {"WarnOnShortcut", offsetof(xd_access_settings, warn)},
         {"SoundOnOff", offsetof(xd_access_settings, sound_on_off)},
+        {"StickyKeysIndicator", offsetof(xd_access_settings, sticky_indicator)},
+        {"FilterKeysIndicator", offsetof(xd_access_settings, filter_indicator)},
+        {"MouseKeysIndicator", offsetof(xd_access_settings, mouse_keys_indicator)},
+        {"SoundSentry", offsetof(xd_access_settings, sound_sentry)},
+        {"ShowSounds", offsetof(xd_access_settings, show_sounds)},
+        {"AutoReset", offsetof(xd_access_settings, auto_reset)},
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(flags); i++) {
         if (xd_str_eq_nocase(key, xd_str_from_cstr(flags[i].key))) {
@@ -371,6 +385,12 @@ static void parse_access(xd_access_settings *a, xd_str key, xd_str v) {
         parse_int(v, XD_MOUSE_KEYS_SPEED_MIN, XD_MOUSE_KEYS_SPEED_MAX, &a->mouse_keys_speed);
     } else if (KEY("MouseKeysAccelMs")) {
         parse_int(v, XD_MOUSE_KEYS_ACCEL_MIN, XD_MOUSE_KEYS_ACCEL_MAX, &a->mouse_keys_accel_ms);
+    } else if (KEY("SoundSentryEffect")) {
+        int i = index_of(sentry_names, XD_ARRAY_LEN(sentry_names), v);
+        if (i >= 0)
+            a->sound_sentry_effect = (xd_sound_sentry)i;
+    } else if (KEY("AutoResetMinutes")) {
+        parse_int(v, XD_AUTO_RESET_MIN, XD_AUTO_RESET_MAX, &a->auto_reset_minutes);
     } else if (KEY("HighContrast")) {
         parse_bool(v, &a->high_contrast);
     } else if (KEY("SavedStyle")) {
@@ -816,6 +836,15 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_integer(kf, "Accessibility", "MouseKeysAccelMs", a->mouse_keys_accel_ms);
     g_key_file_set_boolean(kf, "Accessibility", "WarnOnShortcut", a->warn);
     g_key_file_set_boolean(kf, "Accessibility", "SoundOnOff", a->sound_on_off);
+    g_key_file_set_boolean(kf, "Accessibility", "StickyKeysIndicator", a->sticky_indicator);
+    g_key_file_set_boolean(kf, "Accessibility", "FilterKeysIndicator", a->filter_indicator);
+    g_key_file_set_boolean(kf, "Accessibility", "MouseKeysIndicator", a->mouse_keys_indicator);
+    g_key_file_set_boolean(kf, "Accessibility", "SoundSentry", a->sound_sentry);
+    g_key_file_set_string(kf, "Accessibility", "SoundSentryEffect",
+                          sentry_names[a->sound_sentry_effect]);
+    g_key_file_set_boolean(kf, "Accessibility", "ShowSounds", a->show_sounds);
+    g_key_file_set_boolean(kf, "Accessibility", "AutoReset", a->auto_reset);
+    g_key_file_set_integer(kf, "Accessibility", "AutoResetMinutes", a->auto_reset_minutes);
     g_key_file_set_boolean(kf, "Accessibility", "HighContrast", a->high_contrast);
     g_key_file_set_string(kf, "Accessibility", "SavedStyle", xd_visual_style_name(a->saved_style));
     g_key_file_set_string(kf, "Accessibility", "SavedScheme", a->saved_scheme);
