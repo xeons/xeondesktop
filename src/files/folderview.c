@@ -11,6 +11,7 @@
 #include "netdrives.h"
 #include "places.h"
 #include "udisks.h"
+#include "usershare.h"
 
 #define ATTRIBUTES                                                             \
     G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME  \
@@ -69,6 +70,7 @@ typedef struct item {
     int name_w; /* List view: measured label width, 0 = not yet */
     gboolean selected;
     gboolean shortcut; /* a symbolic link or a launcher: XP's arrow */
+    gboolean shared;   /* a folder shared on the network: XP's hand */
     int order;    /* My Computer: the drives' own order */
     char *extra;  /* Tiles' third line instead of the size (a drive's free space) */
     /* Show in Groups: the heading it's under, and the groups' order. */
@@ -1272,6 +1274,40 @@ static void paint_pixbuf(cairo_t *cr, GdkPixbuf *pb, double x, double y, gboolea
     }
 }
 
+/* XP's sharing overlay: an open hand, palm up, in a blue cuff, holding
+ * the bottom of an icon of `px` whose top left is (x, y). Drawn on a
+ * 32-unit grid. */
+static void draw_share_hand(cairo_t *cr, double x, double y, double px) {
+    double u = px / 32.0;
+    cairo_save(cr);
+    cairo_translate(cr, round(x), round(y));
+    cairo_scale(cr, u, u);
+    cairo_set_line_width(cr, MAX(1.0, 1.0 / u));
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+    /* The palm and fingers, reaching right under the icon. */
+    cairo_move_to(cr, 6, 25);
+    cairo_line_to(cr, 13, 24);
+    cairo_curve_to(cr, 15, 21, 18, 20, 19.5, 21.5); /* the thumb */
+    cairo_line_to(cr, 17, 24.5);
+    cairo_line_to(cr, 25, 24.5);
+    cairo_curve_to(cr, 27.5, 24.5, 27.5, 27, 25, 27);
+    cairo_line_to(cr, 23, 27);
+    cairo_curve_to(cr, 25, 27.5, 24.5, 30, 22, 30);
+    cairo_line_to(cr, 6, 30.5);
+    cairo_close_path(cr);
+    cairo_set_source_rgb(cr, 0.98, 0.82, 0.62);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgb(cr, 0.45, 0.25, 0.10);
+    cairo_stroke(cr);
+    /* The cuff. */
+    cairo_rectangle(cr, 0.5, 23.5, 6, 8);
+    cairo_set_source_rgb(cr, 0.16, 0.36, 0.80);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgb(cr, 0.05, 0.15, 0.45);
+    cairo_stroke(cr);
+    cairo_restore(cr);
+}
+
 static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboolean has_focus) {
     item *it = g_ptr_array_index(v->shown, (guint)i);
     GdkRectangle r = item_rect(v, i);
@@ -1312,6 +1348,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         int px = 32;
         GdkPixbuf *pb = item_icon(v, it, px);
         paint_pixbuf(cr, pb, r.x + (r.width - px) / 2.0, r.y + 4, sel, faded, c);
+        if (it->shared)
+            draw_share_hand(cr, r.x + (r.width - px) / 2.0, r.y + 4, px);
         if (it->shortcut)
             xd_draw_shortcut_arrow(cr, r.x + (r.width - px) / 2.0, r.y + 4, px);
         draw_label_box(v, cr, item_label(v, it), r.x + 2, r.y + px + 8, r.width - 4, 2,
@@ -1322,6 +1360,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
         int px = 48;
         GdkPixbuf *pb = item_icon(v, it, px);
         paint_pixbuf(cr, pb, r.x + 6, r.y + (r.height - px) / 2.0, sel, faded, c);
+        if (it->shared)
+            draw_share_hand(cr, r.x + 6, r.y + (r.height - px) / 2.0, px);
         if (it->shortcut)
             xd_draw_shortcut_arrow(cr, r.x + 6, r.y + (r.height - px) / 2.0, px);
         int tx = r.x + px + 14;
@@ -1338,6 +1378,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
     case XD_VIEW_LIST: {
         GdkPixbuf *pb = item_icon(v, it, LIST_ICON);
         paint_pixbuf(cr, pb, r.x + 1, r.y + 1, sel, faded, c);
+        if (it->shared)
+            draw_share_hand(cr, r.x + 1, r.y + 1, LIST_ICON);
         if (it->shortcut)
             xd_draw_shortcut_arrow(cr, r.x + 1, r.y + 1, LIST_ICON);
         draw_label_box(v, cr, item_label(v, it), r.x + LIST_ICON + 5, r.y + 1,
@@ -1357,6 +1399,8 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
                 cairo_rectangle(cr, x, r.y, cw, r.height);
                 cairo_clip(cr);
                 paint_pixbuf(cr, pb, x + 4, r.y + 1, sel, faded, c);
+                if (it->shared)
+                    draw_share_hand(cr, x + 4, r.y + 1, LIST_ICON);
                 if (it->shortcut)
                     xd_draw_shortcut_arrow(cr, x + 4, r.y + 1, LIST_ICON);
                 draw_label_box(v, cr, item_label(v, it), x + LIST_ICON + 8, r.y + 1,
@@ -1584,6 +1628,30 @@ static void forget_keep(XdFolderView *v) {
     v->keep_sticky = FALSE;
 }
 
+/* XP's hand under shared folders: Samba's user shares, listed in the
+ * background (the hands appear once they're known). */
+static void mark_shared(XdFolderView *v) {
+    GHashTable *paths = v->place == XD_PLACE_FOLDER && v->dir != nullptr && g_file_is_native(v->dir)
+                            ? xd_usershare_shared_paths()
+                            : nullptr;
+    gboolean any = paths != nullptr && g_hash_table_size(paths) > 0;
+    for (guint i = 0; i < v->all->len; i++) {
+        item *it = g_ptr_array_index(v->all, i);
+        it->shared = FALSE;
+        if (any && it->is_dir) {
+            char *path = g_file_get_path(it->file);
+            it->shared = path != nullptr && g_hash_table_contains(paths, path);
+            g_free(path);
+        }
+    }
+}
+
+static void shares_changed(gpointer data) {
+    XdFolderView *v = data;
+    mark_shared(v);
+    gtk_widget_queue_draw(GTK_WIDGET(v));
+}
+
 static void loading_done(XdFolderView *v) {
     g_clear_object(&v->cancel);
     /* The selection survives a refresh, as it is now (unless files are
@@ -1604,6 +1672,7 @@ static void loading_done(XdFolderView *v) {
     g_ptr_array_unref(v->all);
     v->all = v->loading;
     v->loading = g_ptr_array_new_with_free_func(item_free);
+    mark_shared(v);
     v->focus = -1;
     v->anchor = -1;
     v->pressed = -1;
@@ -2829,6 +2898,7 @@ static void folder_view_dispose(GObject *obj) {
     }
     g_clear_pointer(&v->cut, g_hash_table_unref);
     g_clear_pointer(&v->band_base, g_array_unref);
+    xd_usershare_unwatch(v);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->dispose(obj);
 }
 
@@ -2911,6 +2981,7 @@ static void xd_folder_view_init(XdFolderView *v) {
     v->positions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     v->theme_id = g_signal_connect(gtk_icon_theme_get_default(), "changed",
                                    G_CALLBACK(icon_theme_changed), v);
+    xd_usershare_watch(shares_changed, v);
     default_columns(v);
     gtk_widget_set_can_focus(GTK_WIDGET(v), TRUE);
     gtk_drag_dest_set(GTK_WIDGET(v), (GtkDestDefaults)0, nullptr, 0,

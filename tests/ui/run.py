@@ -5032,6 +5032,51 @@ def network_drives(s):
             f"Disconnect forgot the drive and the one inside it ({uris})")  # fmt: skip
 
 
+@scenario()
+def folder_sharing(s):
+    """A folder's Properties, Sharing: "Share this folder on the network"
+    with "Allow network users to change my files" makes a Samba user share
+    (net usershare, on a scratch smb.conf); with user shares turned off the
+    tab says what an administrator must do and shares nothing."""
+    if not shutil.which("net"):
+        s.log("skipped: Samba's net isn't installed")
+        return
+    shares = os.path.join(s.base, "usershares")
+    os.mkdir(shares, 0o1770)
+    on = os.path.join(s.base, "on.conf")
+    with open(on, "w") as f:
+        f.write(f"[global]\n  usershare path = {shares}\n  usershare max shares = 10\n")
+    off = os.path.join(s.base, "off.conf")
+    with open(off, "w") as f:
+        f.write("[global]\n  workgroup = TEST\n")
+    docs = os.path.join(s.home, "Documents")
+
+    s.launch("xd-files", "--properties", docs, env={"XD_SMB_CONF": on})
+    s.wait_window(title="Documents Properties", state="activated")
+    s.inject("key", "ctrl+Tab", "sleep", 400)
+    s.settle("sharing")
+    s.inject("key", "alt+h", "sleep", 200, "key", "alt+w", "sleep", 200, "key", "Return")
+    made = os.path.join(shares, "documents")
+    s.wait(lambda: os.path.exists(made), "the user share")
+    with open(made) as f:
+        text = f.read()
+    s.check(f"path={docs}\n" in text and "usershare_acl=S-1-1-0:F" in text,
+            "the folder is shared, writable by everyone")  # fmt: skip
+    s.wait_window(title="Documents Properties", gone=True)
+
+    music = os.path.join(s.home, "Music")
+    s.launch("xd-files", "--properties", music, env={"XD_SMB_CONF": off})
+    s.wait_window(title="Music Properties", state="activated")
+    before = s.settle("general")
+    s.inject("key", "ctrl+Tab", "sleep", 400)
+    shot = s.settle("sharing turned off")
+    box = shot.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, "the Sharing tab shows")
+    s.inject("key", "alt+h", "sleep", 200, "key", "Return")
+    s.wait_window(title="Music Properties", gone=True)
+    s.check(os.listdir(shares) == ["documents"], "nothing shared while sharing is off")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

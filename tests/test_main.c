@@ -48,6 +48,7 @@
 #include "../src/files/luks.h"
 #include "../src/files/names.h"
 #include "../src/files/netdrives.h"
+#include "../src/files/usershare.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
@@ -6477,6 +6478,158 @@ static void test_network_drives(void) {
     g_object_unref(op);
 }
 
+/* Sharing: `net usershare` against a scratch smb.conf (XD_SMB_CONF), never
+ * the system's. */
+static char *usershare_conf(const char *dir, const char *name, const char *body) {
+    char *conf = g_build_filename(dir, name, nullptr);
+    CHECK(g_file_set_contents(conf, body, -1, nullptr));
+    return conf;
+}
+
+static void test_usershare(void) {
+    static const char info[] = "[docs]\n"
+                               "path=/home/me/My Docs\n"
+                               "comment=\n"
+                               "usershare_acl=S-1-1-0:F,\n"
+                               "guest_ok=n\n"
+                               "\n"
+                               "[music]\n"
+                               "path=/home/me/Music\n"
+                               "comment=tunes\n"
+                               "usershare_acl=Everyone:R,\n"
+                               "guest_ok=y\n";
+    GPtrArray *shares = xd_usershare_parse_info(info);
+    CHECK(shares->len == 2);
+    const XdUsershare *docs = xd_usershare_find(shares, "/home/me/My Docs");
+    const XdUsershare *music = xd_usershare_find(shares, "/home/me/Music");
+    CHECK(docs != nullptr && strcmp(docs->name, "docs") == 0 && docs->writable &&
+          !docs->guest_ok);
+    CHECK(music != nullptr && !music->writable && music->guest_ok &&
+          strcmp(music->comment, "tunes") == 0);
+    CHECK(xd_usershare_find(shares, "/home/me") == nullptr);
+    g_ptr_array_unref(shares);
+
+    CHECK(xd_usershare_status_of("net usershare: usershares are currently disabled") ==
+          XD_USERSHARE_DISABLED);
+    CHECK(xd_usershare_status_of("net usershare add: cannot create tmp file /var/lib/x/:tmp") ==
+          XD_USERSHARE_NO_PERMISSION);
+    CHECK(xd_usershare_status_of("something else") == XD_USERSHARE_FAILED);
+    CHECK(xd_usershare_name_problem("") != nullptr);
+    CHECK(xd_usershare_name_problem("Shared Docs") == nullptr);
+    CHECK(xd_usershare_name_problem("a:b") != nullptr);
+    CHECK(xd_usershare_name_problem("a%b") != nullptr);
+    char *long_name = g_strnfill(81, 'x');
+    CHECK(xd_usershare_name_problem(long_name) != nullptr);
+    g_free(long_name);
+    char *name = xd_usershare_default_name("/home/me/Work: 2026");
+    CHECK(strcmp(name, "Work_ 2026") == 0);
+    g_free(name);
+    char *help = xd_usershare_help_text(XD_USERSHARE_DISABLED, nullptr);
+    CHECK(strstr(help, "usershare path") != nullptr && strstr(help, "smb.conf") != nullptr);
+    g_free(help);
+    CHECK(xd_usershare_help_text(XD_USERSHARE_OK, nullptr) == nullptr);
+
+    char *dir = g_dir_make_tmp("xd-usershare-XXXXXX", nullptr);
+    char *store = g_build_filename(dir, "usershares", nullptr);
+    char *ro = g_build_filename(dir, "readonly", nullptr);
+    char *folder = g_build_filename(dir, "My Folder", nullptr);
+    CHECK(g_mkdir(store, 01770) == 0 && g_mkdir(ro, 0555) == 0 && g_mkdir(folder, 0755) == 0);
+    CHECK(xd_usershare_dir_writable(store, nullptr));
+    char *group = nullptr;
+    if (geteuid() != 0) {
+        CHECK(!xd_usershare_dir_writable(ro, &group));
+        CHECK(group != nullptr);
+        help = xd_usershare_help_text(XD_USERSHARE_NO_PERMISSION, ro);
+        CHECK(strstr(help, ro) != nullptr && group != nullptr && strstr(help, group) != nullptr);
+        g_free(help);
+    }
+    g_free(group);
+
+    char *net = g_find_program_in_path("net");
+    char *testparm = g_find_program_in_path("testparm");
+    if (net == nullptr) {
+        printf("  (net not installed: user share runs skipped)\n");
+    } else {
+        char *saved = g_strdup(g_getenv("XD_SMB_CONF"));
+        char *body = g_strdup_printf("[global]\n  usershare path = %s\n"
+                                     "  usershare max shares = 10\n",
+                                     store);
+        char *on = usershare_conf(dir, "on.conf", body);
+        g_free(body);
+        g_setenv("XD_SMB_CONF", on, TRUE);
+        XdUsershareStatus st;
+        char *detail = nullptr;
+        shares = xd_usershare_probe(&st, &detail);
+        CHECK(st == XD_USERSHARE_OK && shares->len == 0);
+        g_ptr_array_unref(shares);
+        g_free(detail);
+        GError *err = nullptr;
+        CHECK(xd_usershare_add("xdtest", folder, "", TRUE, &err));
+        if (err != nullptr)
+            fprintf(stderr, "  usershare add: %s\n", err->message);
+        g_clear_error(&err);
+        shares = xd_usershare_probe(&st, nullptr);
+        const XdUsershare *made = xd_usershare_find(shares, folder);
+        CHECK(made != nullptr && strcmp(made->name, "xdtest") == 0 && made->writable &&
+              !made->guest_ok);
+        g_ptr_array_unref(shares);
+        CHECK(xd_usershare_add("xdtest", folder, "", FALSE, nullptr));
+        shares = xd_usershare_probe(&st, nullptr);
+        made = xd_usershare_find(shares, folder);
+        CHECK(made != nullptr && !made->writable);
+        g_ptr_array_unref(shares);
+        CHECK(xd_usershare_delete("xdtest", nullptr));
+        shares = xd_usershare_probe(&st, nullptr);
+        CHECK(shares->len == 0);
+        g_ptr_array_unref(shares);
+        char *share_file = g_build_filename(store, "xdtest", nullptr);
+        CHECK(!g_file_test(share_file, G_FILE_TEST_EXISTS));
+        g_free(share_file);
+
+        /* Turned off: no usershare path. */
+        char *off = usershare_conf(dir, "off.conf", "[global]\n  workgroup = TEST\n");
+        g_setenv("XD_SMB_CONF", off, TRUE);
+        shares = xd_usershare_probe(&st, &detail);
+        CHECK(st == XD_USERSHARE_DISABLED);
+        g_ptr_array_unref(shares);
+        g_free(detail);
+        CHECK(!xd_usershare_add("xdtest", folder, "", FALSE, &err));
+        CHECK(err != nullptr && xd_usershare_status_of(err->message) == XD_USERSHARE_DISABLED);
+        g_clear_error(&err);
+
+        /* A folder we can't write: not in the group. */
+        if (testparm != nullptr && geteuid() != 0) {
+            body = g_strdup_printf("[global]\n  usershare path = %s\n"
+                                   "  usershare max shares = 10\n",
+                                   ro);
+            char *denied = usershare_conf(dir, "denied.conf", body);
+            g_free(body);
+            g_setenv("XD_SMB_CONF", denied, TRUE);
+            shares = xd_usershare_probe(&st, &detail);
+            CHECK(st == XD_USERSHARE_NO_PERMISSION && g_strcmp0(detail, ro) == 0);
+            g_ptr_array_unref(shares);
+            g_free(detail);
+            CHECK(g_remove(denied) == 0);
+            g_free(denied);
+        }
+        if (saved != nullptr)
+            g_setenv("XD_SMB_CONF", saved, TRUE);
+        else
+            g_unsetenv("XD_SMB_CONF");
+        g_free(saved);
+        CHECK(g_remove(on) == 0 && g_remove(off) == 0);
+        g_free(on);
+        g_free(off);
+    }
+    g_free(net);
+    g_free(testparm);
+    CHECK(g_rmdir(store) == 0 && g_rmdir(ro) == 0 && g_rmdir(folder) == 0 && g_rmdir(dir) == 0);
+    g_free(store);
+    g_free(ro);
+    g_free(folder);
+    g_free(dir);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -6556,6 +6709,7 @@ int main(void) {
     test_keys_ssh();
     test_keys_gpg();
     test_network_drives();
+    test_usershare();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

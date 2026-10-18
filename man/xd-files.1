@@ -81,6 +81,17 @@ then on without asking.
 Lock, in its right-click menu, unmounts and locks it; its Properties'
 Encryption tab changes the passphrase and forgets a remembered one.
 .PP
+A folder's Properties have XP's Sharing tab: \(lqShare this folder on the
+network\(rq makes a Samba user share
+.RB ( "net usershare" ),
+which an administrator must have turned on (smb.conf's
+.B usershare path
+and
+.BR "usershare max shares" ,
+and membership of the group owning that folder); the tab says which is
+missing.
+Shared folders show XP's hand under their icons.
+.PP
 Thumbnails missing from the freedesktop.org cache are made by
 .BR xd\-thumbnailer (1).
 Favorites are GTK's bookmarks, shared with file choosers.
@@ -161,6 +172,14 @@ user name) and the network places; never passwords.
 .TP
 .I $XDG_CACHE_HOME/thumbnails/
 The thumbnail cache.
+.SH ENVIRONMENT
+.TP
+.B XD_SMB_CONF
+An smb.conf for
+.B net
+and
+.B testparm
+to use instead of the system's (for tests).
 .SH SEE ALSO
 .BR xd\-folders (1),
 .BR xd\-thumbnailer (1),

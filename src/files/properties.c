@@ -16,6 +16,7 @@
 #include "launcher.h"
 #include "places.h"
 #include "properties.h"
+#include "usershare.h"
 
 static constexpr GtkDialogFlags MODAL_DIALOG =
     (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT);
@@ -245,6 +246,14 @@ typedef struct props {
     XdLauncher sc_orig;
     char *sc_icon;
     GtkWidget *sc_target, *sc_start, *sc_comment, *sc_icon_image;
+
+    /* Sharing (one folder): Samba's user shares, and the share as it was
+     * (`share_name` nullptr when the folder wasn't shared). */
+    GtkWidget *share_check, *share_name_entry, *share_write;
+    GPtrArray *shares;
+    gboolean share_ok; /* sharing is possible here */
+    char *share_name;
+    gboolean share_writable;
 } props;
 
 static entry *first(props *p) { return g_ptr_array_index(p->entries, 0); }
@@ -1461,6 +1470,160 @@ static GtkWidget *build_image_summary(props *p) {
     return scroll;
 }
 
+/* ---- Sharing tab -------------------------------------------------------------------- */
+
+/* Reads the folder's share, if it has one, from `net usershare`; returns
+ * what an administrator must do when sharing isn't possible (free with
+ * g_free), else nullptr. */
+static char *load_sharing(props *p) {
+    XdUsershareStatus status;
+    char *detail = nullptr;
+    g_clear_pointer(&p->shares, g_ptr_array_unref);
+    p->shares = xd_usershare_probe(&status, &detail);
+    p->share_ok = status == XD_USERSHARE_OK;
+    char *help = xd_usershare_help_text(status, detail);
+    g_free(detail);
+    char *path = g_file_get_path(first(p)->file);
+    const XdUsershare *s = xd_usershare_find(p->shares, path);
+    g_free(path);
+    g_free(p->share_name);
+    p->share_name = s != nullptr ? g_strdup(s->name) : nullptr;
+    p->share_writable = s != nullptr && s->writable;
+    return help;
+}
+
+static void sync_sharing(props *p) {
+    gboolean on = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->share_check));
+    gtk_widget_set_sensitive(p->share_check, p->share_ok);
+    gtk_widget_set_sensitive(p->share_name_entry, p->share_ok && on);
+    gtk_widget_set_sensitive(p->share_write, p->share_ok && on);
+}
+
+static void on_sharing_changed([[maybe_unused]] GtkWidget *w, gpointer data) {
+    props *p = data;
+    if (p->syncing)
+        return;
+    sync_sharing(p);
+    mark_dirty(p);
+}
+
+/* The check box and fields as the share is. */
+static void show_sharing(props *p) {
+    p->syncing = TRUE;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->share_check), p->share_name != nullptr);
+    char *name = p->share_name != nullptr ? g_strdup(p->share_name) : nullptr;
+    if (name == nullptr) {
+        char *path = g_file_get_path(first(p)->file);
+        name = xd_usershare_default_name(path);
+        g_free(path);
+    }
+    gtk_entry_set_text(GTK_ENTRY(p->share_name_entry), name);
+    g_free(name);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->share_write), p->share_writable);
+    p->syncing = FALSE;
+    sync_sharing(p);
+}
+
+/* XP's Sharing tab, as with Simple File Sharing: "Network sharing and
+ * security". Without user shares turned on, what an administrator must
+ * do, with the boxes greyed. */
+static GtkWidget *build_sharing(props *p) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    GtkWidget *frame = gtk_frame_new("Network sharing and security");
+    GtkWidget *inner = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(inner), 10);
+    gtk_container_add(GTK_CONTAINER(frame), inner);
+
+    GtkWidget *intro = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *icon = gtk_image_new_from_icon_name("network-workgroup", GTK_ICON_SIZE_DND);
+    gtk_widget_set_valign(icon, GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(intro), icon, FALSE, FALSE, 0);
+    GtkWidget *text = gtk_label_new("To share this folder with network users, select the first "
+                                    "check box below and type a share name.");
+    gtk_label_set_xalign(GTK_LABEL(text), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(text), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(text), 44);
+    gtk_box_pack_start(GTK_BOX(intro), text, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(inner), intro, FALSE, FALSE, 0);
+
+    p->share_check = gtk_check_button_new_with_mnemonic("S_hare this folder on the network");
+    gtk_box_pack_start(GTK_BOX(inner), p->share_check, FALSE, FALSE, 0);
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *nl = gtk_label_new_with_mnemonic("Share _name:");
+    p->share_name_entry = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(p->share_name_entry), 80);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(nl), p->share_name_entry);
+    gtk_box_pack_start(GTK_BOX(row), nl, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), p->share_name_entry, TRUE, TRUE, 0);
+    gtk_widget_set_margin_start(row, 20);
+    gtk_box_pack_start(GTK_BOX(inner), row, FALSE, FALSE, 0);
+    p->share_write =
+        gtk_check_button_new_with_mnemonic("Allow net_work users to change my files");
+    gtk_widget_set_margin_start(p->share_write, 20);
+    gtk_box_pack_start(GTK_BOX(inner), p->share_write, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), frame, FALSE, FALSE, 0);
+
+    char *help = load_sharing(p);
+    if (help != nullptr) {
+        GtkWidget *why = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        GtkWidget *warn = gtk_image_new_from_icon_name("dialog-information", GTK_ICON_SIZE_DND);
+        gtk_widget_set_valign(warn, GTK_ALIGN_START);
+        gtk_box_pack_start(GTK_BOX(why), warn, FALSE, FALSE, 0);
+        GtkWidget *l = gtk_label_new(help);
+        gtk_label_set_xalign(GTK_LABEL(l), 0);
+        gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(l), 50);
+        gtk_label_set_selectable(GTK_LABEL(l), TRUE);
+        gtk_box_pack_start(GTK_BOX(why), l, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(box), why, FALSE, FALSE, 0);
+        g_free(help);
+    }
+    show_sharing(p);
+    g_signal_connect(p->share_check, "toggled", G_CALLBACK(on_sharing_changed), p);
+    g_signal_connect(p->share_write, "toggled", G_CALLBACK(on_sharing_changed), p);
+    g_signal_connect(p->share_name_entry, "changed", G_CALLBACK(on_sharing_changed), p);
+    return box;
+}
+
+/* Shares, unshares or changes the share, as the tab says. */
+static void apply_sharing(props *p, GString *errors) {
+    if (p->share_check == nullptr || !p->share_ok)
+        return;
+    gboolean want = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->share_check));
+    char *name = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(p->share_name_entry))));
+    gboolean writable = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->share_write));
+    char *path = g_file_get_path(first(p)->file);
+    GError *err = nullptr;
+    gboolean same = p->share_name != nullptr && g_ascii_strcasecmp(name, p->share_name) == 0 &&
+                    writable == p->share_writable;
+    if (!want && p->share_name != nullptr) {
+        if (!xd_usershare_delete(p->share_name, &err))
+            g_string_append_printf(errors, "%s\n", err->message);
+    } else if (want && !same) {
+        const char *problem = xd_usershare_name_problem(name);
+        /* Another folder's share by that name would be replaced. */
+        for (guint i = 0; problem == nullptr && p->shares != nullptr && i < p->shares->len; i++) {
+            XdUsershare *s = g_ptr_array_index(p->shares, i);
+            if (g_ascii_strcasecmp(s->name, name) == 0 && g_strcmp0(s->path, path) != 0)
+                problem = "The share name you have chosen already exists for a different "
+                          "resource. Please choose another share name.";
+        }
+        if (problem != nullptr) {
+            g_string_append_printf(errors, "%s\n", problem);
+        } else if (p->share_name != nullptr && g_ascii_strcasecmp(name, p->share_name) != 0 &&
+                   !xd_usershare_delete(p->share_name, &err)) {
+            g_string_append_printf(errors, "%s\n", err->message);
+        } else if (!xd_usershare_add(name, path, "", writable, &err)) {
+            g_string_append_printf(errors, "%s\n", err->message);
+        }
+    }
+    g_clear_error(&err);
+    g_free(path);
+    g_free(name);
+    g_free(load_sharing(p));
+}
+
 /* ---- applying --------------------------------------------------------------------- */
 
 typedef struct recurse_job {
@@ -1588,6 +1751,8 @@ static void apply(props *p) {
     }
 
     apply_shortcut(p, errors);
+    /* Before a rename: the share is of the folder's path as it is. */
+    apply_sharing(p, errors);
     for (guint i = 0; i < p->entries->len; i++) {
         entry *e = g_ptr_array_index(p->entries, i);
         GError *err = nullptr;
@@ -1706,6 +1871,8 @@ static void reload(props *p) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->recursive), FALSE);
     p->syncing = FALSE;
     load_permissions(p);
+    if (p->share_check != nullptr)
+        show_sharing(p);
     set_title(p);
     gtk_widget_set_sensitive(p->apply_button, FALSE);
 }
@@ -1734,6 +1901,8 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     g_free(p->sc_path);
     g_free(p->sc_icon);
     xd_launcher_clear(&p->sc_orig);
+    g_clear_pointer(&p->shares, g_ptr_array_unref);
+    g_free(p->share_name);
     g_free(p);
 }
 
@@ -1800,6 +1969,10 @@ GtkWidget *xd_properties_show(GtkWindow *parent, GList *files) {
     if (p->sc_path != nullptr)
         gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_shortcut(p),
                                  gtk_label_new("Shortcut"));
+    /* XP's Sharing tab, for one folder on this computer. */
+    if (single(p) && first(p)->is_dir && g_file_is_native(first(p)->file))
+        gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_sharing(p),
+                                 gtk_label_new("Sharing"));
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), perms, gtk_label_new("Permissions"));
     GtkWidget *summary = build_image_summary(p);
     if (summary != nullptr)
