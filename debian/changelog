@@ -1,3 +1,27 @@
+xeondesktop (0.3.0) unstable; urgency=medium
+
+  * Windows 7's taskbar: window thumbnails with Aero Peek, jump lists with
+    pinning, buttons combined as needed; Aero's Window Color and Appearance.
+  * XP Start menu: pinning from All Programs, new-program highlights, icon
+    size; Quick Launch view options; a tall taskbar's clock shows the date.
+  * Screen savers: per-saver Settings, 3D Pipes and 3D Text.
+  * The Language bar's indicator on the taskbar, with its layout menu.
+  * Several monitors: desktop icons on the primary one, the lock dialog
+    where the pointer is, window menus without a taskbar.
+  * Explorer: Thumbnails view (decoded in a sandbox), Favorites, Search,
+    groups in Details view, a Shortcut tab and drive pie charts.
+  * Task Manager's Networking and Users tabs; Power Options' Alarms and
+    Power Meter; Accessibility's Sound tab; Add or Remove Programs shows
+    each program's source and Last Used On.
+  * The taskbar can run alone under other wlroots compositors.
+  * Hung programs that draw their own title bar get a frame to close them;
+    the compositor runs at raised priority, as other desktops' do.
+  * GTK programs: list-box drop-downs, framed message boxes, appearance
+    changes followed live, no blue frame around menus.
+  * Packages for Ubuntu 26.04 LTS, with wlroots 0.20 built in.
+
+ -- xeon <xeon.productions@gmail.com>  Sun, 18 Oct 2026 01:03:55 -0500
+
 xeondesktop (0.2.0) unstable; urgency=medium
 
   * Aero (Windows 7) style with blurred glass on a GPU, Aero Snap, Peek and
