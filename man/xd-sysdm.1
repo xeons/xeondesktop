@@ -28,7 +28,8 @@ Home folders and their sizes.
 .TP
 .B Advanced
 Swap and zram; the user's environment variables; the boot loader's
-entries and crash handling.
+entries and crash handling. Where logind can (systemd-boot), Startup and
+Recovery picks an entry to start the next time only.
 .PP
 System changes go through the system services and their polkit checks, so
 .BR xd\-polkit (1)
@@ -52,4 +53,5 @@ and systemd's user manager read at the next logon.
 .SH SEE ALSO
 .BR xd\-control (1),
 .BR hostnamectl (1),
+.BR bootctl (1),
 .BR environment.d (5)

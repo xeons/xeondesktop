@@ -119,6 +119,20 @@ char *sysdm_grouped(guint64 v) {
     return g_string_free(out, FALSE);
 }
 
+void sysdm_call_failed(GtkWindow *parent, const char *what, GError *err) {
+    char *remote = g_dbus_error_get_remote_error(err);
+    g_dbus_error_strip_remote_error(err);
+    char *text = g_strdup_printf(
+        "%s:\n\n%s%s", what, err->message,
+        remote != nullptr && strstr(remote, "InteractiveAuthorizationRequired") != nullptr
+            ? "\n\nChanging it needs an administrator's password, and no password prompt "
+              "(polkit agent) is running."
+            : "");
+    xd_message_box(parent, "System Properties", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+    g_free(text);
+    g_free(remote);
+}
+
 char *sysdm_read_line(const char *path) {
     char *text = nullptr;
     if (!g_file_get_contents(path, &text, nullptr, nullptr))
@@ -466,18 +480,7 @@ static void hostname_call_done(GObject *src, GAsyncResult *res, gpointer data) {
     }
     sysdm *s = req->s;
     if (r == nullptr) {
-        char *msg = g_dbus_error_get_remote_error(err);
-        g_dbus_error_strip_remote_error(err);
-        char *text = g_strdup_printf(
-            "The computer's name could not be changed:\n\n%s%s", err->message,
-            msg != nullptr && strstr(msg, "InteractiveAuthorizationRequired") != nullptr
-                ? "\n\nChanging it needs an administrator's password, and no password prompt "
-                  "(polkit agent) is running."
-                : "");
-        xd_message_box(GTK_WINDOW(s->window), "System Properties", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       text);
-        g_free(text);
-        g_free(msg);
+        sysdm_call_failed(GTK_WINDOW(s->window), "The computer's name could not be changed", err);
         g_error_free(err);
     } else {
         g_variant_unref(r);

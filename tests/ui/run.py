@@ -3316,6 +3316,66 @@ def polkit_agent_restarts(s):
     s.log("ok: the crashed agent was started again and registered")
 
 
+@scenario(LUNA_INI, requires=("dbusmock",))
+def sysdm_boot_next_time(s):
+    """Startup and Recovery (on a dbusmock logind that can start a boot
+    loader entry the next time only): choosing another entry ticks "Start
+    this one the next time only" and OK sets it through
+    SetRebootToBootLoaderEntry; unticking it later clears it with ""."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    try:
+        proc, logind = DBusTestCase.spawn_server_template(
+            "logind", {}, stdout=subprocess.DEVNULL, system_bus=True
+        )
+        s.children.append(proc)
+        manager = "org.freedesktop.login1.Manager"
+        logind.AddMethod(manager, "CanRebootToBootLoaderEntry", "", "s", 'ret = "yes"',
+                         dbus_interface=MOCK_IFACE)  # fmt: skip
+        logind.AddProperty(manager, "BootLoaderEntries",
+                           dbus.Array(["arch.conf", "windows.conf"], signature="s"),
+                           dbus_interface=MOCK_IFACE)  # fmt: skip
+        logind.AddProperty(manager, "RebootToBootLoaderEntry", "", dbus_interface=MOCK_IFACE)
+        logind.AddMethod(manager, "SetRebootToBootLoaderEntry", "s", "",
+                         f'self.Set("{manager}", "RebootToBootLoaderEntry", args[0])',
+                         dbus_interface=MOCK_IFACE)  # fmt: skip
+
+        def set_calls():
+            return [str(c[1][0]) for c in logind.GetMethodCalls("SetRebootToBootLoaderEntry",
+                                                               dbus_interface=MOCK_IFACE)]
+
+        def sysdm_active():
+            w = s.window(title="System Properties")
+            return w is not None and "activated" in w["states"]
+
+        s.launch("xd-sysdm", "--page", "4")
+        s.wait_window(title="System Properties", state="activated")
+        s.settle("advanced")
+        s.inject("key", "alt+s")
+        s.wait(lambda: not sysdm_active(), "Startup and Recovery")
+        s.settle("startup and recovery")
+        # The list (Alt+D), its last entry (whatever the host's EFI
+        # variables call the default): the check box ticks itself.
+        s.inject("key", "alt+d", "sleep", 300, "key", "End", "sleep", 300)
+        s.settle("windows chosen")
+        # On to OK past the check box (Enter would open the list).
+        s.inject("key", "Tab", "key", "Tab", "key", "Return")
+        s.wait(lambda: set_calls() == ["windows.conf"], 'SetRebootToBootLoaderEntry("windows.conf")')
+        s.wait(sysdm_active, "Startup and Recovery to close")
+        s.log("ok: OK set windows.conf for the next time only")
+
+        s.inject("key", "alt+s")
+        s.wait(lambda: not sysdm_active(), "Startup and Recovery again")
+        s.settle("set for next time")
+        s.inject("key", "alt+n", "sleep", 300, "key", "Tab", "key", "Return")
+        s.wait(lambda: set_calls() == ["windows.conf", ""], 'SetRebootToBootLoaderEntry("")')
+        s.log("ok: unticking it cleared the one-off entry")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

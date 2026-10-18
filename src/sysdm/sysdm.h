@@ -51,6 +51,9 @@ GtkWidget *sysdm_dialog(sysdm *s, const char *title, const char *icon, gboolean 
 char *sysdm_grouped(guint64 v);
 /* Reads a small text file; nullptr if it can't. Trailing newline removed. */
 char *sysdm_read_line(const char *path);
+/* An error box: `what` failed (a system service's D-Bus call), why, and
+ * whether it's for want of a polkit agent. */
+void sysdm_call_failed(GtkWindow *parent, const char *what, GError *err);
 
 /* ---- tabs ---- */
 GtkWidget *sysdm_hardware_page(sysdm *s);

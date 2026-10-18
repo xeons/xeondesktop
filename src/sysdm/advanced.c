@@ -7,8 +7,9 @@
  *   ~/.config/environment.d/99-xeondesktop.conf (systemd reads it at
  *   logon); system variables (/etc/environment, environment.d) are shown;
  * - Startup and Recovery: the boot loader's entries as it reports them in
- *   EFI variables (the Boot Loader Interface, readable without root), and
- *   what happens when the kernel or a program crashes.
+ *   EFI variables (the Boot Loader Interface, readable without root), one
+ *   to start the next time only where logind can set it (systemd-boot),
+ *   and what happens when the kernel or a program crashes.
  */
 #include <stdlib.h>
 
@@ -472,9 +473,127 @@ static char *loader_string(const char *name) {
     return out;
 }
 
+/* Starting another entry the next time only, through logind
+ * (SetRebootToBootLoaderEntry: systemd-boot's LoaderEntryOneShot). The
+ * default entry is in the boot loader's configuration, which only an
+ * administrator can change. */
+typedef struct boot_next {
+    GtkWidget *combo, *once;
+    GDBusProxy *login1;
+    char *def; /* what starts otherwise */
+    char *was; /* the one-off entry already set, or "" */
+    gboolean syncing;
+    gboolean busy;
+} boot_next;
+
+static void boot_next_free(gpointer data) {
+    boot_next *n = data;
+    g_clear_object(&n->login1);
+    g_free(n->def);
+    g_free(n->was);
+    g_free(n);
+}
+
+/* logind's manager, if it can start an entry the next time only (it says
+ * "challenge" when that takes an administrator's password). */
+static GDBusProxy *login1_for_boot_entries(void) {
+    GDBusProxy *p = g_dbus_proxy_new_for_bus_sync(
+        G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_DO_NOT_CONNECT_SIGNALS, nullptr,
+        "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+        nullptr, nullptr);
+    if (p == nullptr)
+        return nullptr;
+    GVariant *r = g_dbus_proxy_call_sync(p, "CanRebootToBootLoaderEntry", nullptr,
+                                         G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, nullptr);
+    const char *can = nullptr;
+    if (r != nullptr && g_variant_is_of_type(r, G_VARIANT_TYPE("(s)")))
+        g_variant_get(r, "(&s)", &can);
+    gboolean ok = g_strcmp0(can, "yes") == 0 || g_strcmp0(can, "challenge") == 0;
+    if (r != nullptr)
+        g_variant_unref(r);
+    if (!ok)
+        g_clear_object(&p);
+    return p;
+}
+
+static char *login1_string(GDBusProxy *p, const char *name) {
+    GVariant *v = g_dbus_proxy_get_cached_property(p, name);
+    char *out = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)
+                    ? g_variant_dup_string(v, nullptr)
+                    : g_strdup("");
+    if (v != nullptr)
+        g_variant_unref(v);
+    return out;
+}
+
+/* Choosing another entry means the next time only: the default can't be
+ * changed here. */
+static void on_boot_entry_changed([[maybe_unused]] GtkComboBox *c, gpointer data) {
+    boot_next *n = data;
+    if (n->syncing)
+        return;
+    n->syncing = TRUE;
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(n->combo));
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(n->once), g_strcmp0(id, n->def) != 0);
+    n->syncing = FALSE;
+}
+
+/* Unticked, the default starts as usual. */
+static void on_boot_once_toggled(GtkToggleButton *t, gpointer data) {
+    boot_next *n = data;
+    if (n->syncing || gtk_toggle_button_get_active(t))
+        return;
+    n->syncing = TRUE;
+    if (n->def == nullptr || !gtk_combo_box_set_active_id(GTK_COMBO_BOX(n->combo), n->def))
+        gtk_combo_box_set_active(GTK_COMBO_BOX(n->combo), -1); /* not one of these */
+    n->syncing = FALSE;
+}
+
+static void on_boot_next_set(GObject *src, GAsyncResult *res, gpointer data) {
+    GtkWidget *dialog = data;
+    GError *err = nullptr;
+    GVariant *r = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &err);
+    /* Gone if the window was closed meanwhile. */
+    boot_next *n = g_object_get_data(G_OBJECT(dialog), "boot-next");
+    if (n != nullptr && r != nullptr) {
+        gtk_widget_destroy(dialog);
+    } else if (n != nullptr) {
+        n->busy = FALSE;
+        gtk_widget_set_sensitive(dialog, TRUE);
+        sysdm_call_failed(GTK_WINDOW(dialog),
+                          "The operating system to start next could not be set", err);
+    }
+    if (r != nullptr)
+        g_variant_unref(r);
+    g_clear_error(&err);
+    g_object_unref(dialog);
+}
+
+static void on_boot_next_response(GtkDialog *d, int response, gpointer data) {
+    boot_next *n = data;
+    if (n->busy)
+        return; /* waiting for logind (and polkit's password prompt) */
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(n->combo));
+    bool once = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(n->once));
+    /* "" clears a one-off entry set before. */
+    const char *want = once && id != nullptr ? id : "";
+    if (response != GTK_RESPONSE_OK || strcmp(want, n->was) == 0) {
+        gtk_widget_destroy(GTK_WIDGET(d));
+        return;
+    }
+    n->busy = TRUE;
+    gtk_widget_set_sensitive(GTK_WIDGET(d), FALSE);
+    g_dbus_proxy_call(n->login1, "SetRebootToBootLoaderEntry", g_variant_new("(s)", want),
+                      G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
+                      on_boot_next_set, g_object_ref(d));
+}
+
 static void on_startup_recovery([[maybe_unused]] GtkButton *b, gpointer data) {
     sysdm *s = data;
-    GtkWidget *box = sysdm_dialog(s, "Startup and Recovery", "system-reboot", FALSE, nullptr);
+    GDBusProxy *login1 = login1_for_boot_entries();
+    GtkWidget *dialog = nullptr;
+    GtkWidget *box = sysdm_dialog(s, "Startup and Recovery", "system-reboot", login1 != nullptr,
+                                  login1 != nullptr ? &dialog : nullptr);
 
     GtkWidget *start = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     char **entries = loader_strings("LoaderEntries");
@@ -482,21 +601,59 @@ static void on_startup_recovery([[maybe_unused]] GtkButton *b, gpointer data) {
     char *booted = loader_string("LoaderEntrySelected");
     char *info = loader_string("LoaderInfo");
     char *timeout = loader_string("LoaderConfigTimeout");
-    gtk_box_pack_start(GTK_BOX(start), sysdm_label("Default operating system:"), FALSE, FALSE, 0);
-    GtkWidget *combo = gtk_combo_box_text_new();
-    int active = -1;
-    int i = 0;
-    for (char **e = entries; e != nullptr && *e != nullptr; e++, i++) {
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(combo), *e);
-        if (g_strcmp0(*e, def != nullptr ? def : booted) == 0)
-            active = i;
+    char *was = login1 != nullptr ? login1_string(login1, "RebootToBootLoaderEntry") : nullptr;
+    if (login1 != nullptr) {
+        /* logind's list, the ones it can start; the same IDs as the EFI
+         * variable's. */
+        GVariant *v = g_dbus_proxy_get_cached_property(login1, "BootLoaderEntries");
+        if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING_ARRAY) &&
+            g_variant_n_children(v) > 0) {
+            g_strfreev(entries);
+            entries = g_variant_dup_strv(v, nullptr);
+        }
+        if (v != nullptr)
+            g_variant_unref(v);
     }
-    if (entries == nullptr)
+    const char *usual = def != nullptr ? def : booted;
+    GtkWidget *l = gtk_label_new_with_mnemonic("_Default operating system:");
+    gtk_label_set_xalign(GTK_LABEL(l), 0);
+    gtk_box_pack_start(GTK_BOX(start), l, FALSE, FALSE, 0);
+    GtkWidget *combo = gtk_combo_box_text_new();
+    gtk_label_set_mnemonic_widget(GTK_LABEL(l), combo);
+    for (char **e = entries; e != nullptr && *e != nullptr; e++)
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), *e, *e);
+    bool any = entries != nullptr && entries[0] != nullptr;
+    if (!any)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(combo),
                                        "(the boot loader doesn't report its entries)");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(combo), active >= 0 ? active : 0);
-    gtk_widget_set_sensitive(combo, FALSE);
+    /* Nothing shown if the default isn't among the entries (the boot loader
+     * didn't say, or logind lists others): showing the first would claim
+     * it's the default. */
+    const char *shown = was != nullptr && was[0] != '\0' ? was : usual;
+    if (!any)
+        gtk_combo_box_set_active(GTK_COMBO_BOX(combo), 0);
+    else if (shown != nullptr)
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), shown);
     gtk_box_pack_start(GTK_BOX(start), combo, FALSE, FALSE, 0);
+    if (login1 != nullptr && any) {
+        boot_next *n = g_new0(boot_next, 1);
+        n->combo = combo;
+        n->login1 = g_steal_pointer(&login1);
+        n->def = g_strdup(usual);
+        n->was = g_strdup(was);
+        n->once = gtk_check_button_new_with_mnemonic("Start this one the _next time only");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(n->once), n->was[0] != '\0');
+        gtk_box_pack_start(GTK_BOX(start), n->once, FALSE, FALSE, 0);
+        g_signal_connect(combo, "changed", G_CALLBACK(on_boot_entry_changed), n);
+        g_signal_connect(n->once, "toggled", G_CALLBACK(on_boot_once_toggled), n);
+        g_object_set_data_full(G_OBJECT(dialog), "boot-next", n, boot_next_free);
+        g_signal_connect(dialog, "response", G_CALLBACK(on_boot_next_response), n);
+    } else {
+        gtk_widget_set_sensitive(combo, FALSE);
+        if (dialog != nullptr) /* logind could, but there's nothing to choose */
+            g_signal_connect(dialog, "response", G_CALLBACK(gtk_widget_destroy), nullptr);
+    }
+    g_clear_object(&login1);
     char *line = timeout != nullptr
                      ? g_strdup_printf("Display list of operating systems for %s seconds.", timeout)
                      : g_strdup("The boot loader's menu timeout is set in its configuration.");
@@ -507,8 +664,13 @@ static void on_startup_recovery([[maybe_unused]] GtkButton *b, gpointer data) {
                            booted != nullptr ? booted : "unknown");
     gtk_box_pack_start(GTK_BOX(start), sysdm_label(line), FALSE, FALSE, 0);
     g_free(line);
-    GtkWidget *note = sysdm_label("The boot loader's files are readable only by administrators; "
-                                  "these come from what it reports at startup.");
+    GtkWidget *note = sysdm_label(
+        gtk_widget_get_sensitive(combo)
+            ? "The default, started every other time, is set in the boot loader's "
+              "configuration, which only an administrator can change (for systemd-boot, with "
+              "bootctl set-default)."
+            : "The boot loader's files are readable only by administrators; these come from "
+              "what it reports at startup.");
     gtk_style_context_add_class(gtk_widget_get_style_context(note), "dim-label");
     gtk_box_pack_start(GTK_BOX(start), note, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), sysdm_group("System startup", start), FALSE, FALSE, 0);
@@ -551,6 +713,7 @@ static void on_startup_recovery([[maybe_unused]] GtkButton *b, gpointer data) {
     g_free(booted);
     g_free(info);
     g_free(timeout);
+    g_free(was);
     gtk_widget_set_size_request(gtk_widget_get_toplevel(box), 420, -1);
     gtk_widget_show_all(gtk_widget_get_toplevel(box));
 }
