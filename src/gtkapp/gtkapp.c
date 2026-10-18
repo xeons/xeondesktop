@@ -123,10 +123,41 @@ static gboolean theme_installed(const char *name) {
     return found;
 }
 
+/* Alt+letter on a menu bar: the menu bar takes a grab, and GDK on Wayland
+ * reports the pointer entering at the last place it saw it on the window
+ * (0,0 if never) even when it's elsewhere on the screen. The menu bar then
+ * selects the item there, usually File, over the one the letter opened
+ * (Alt+A opened File; F10 first hid it, as F10 selects File anyway). A
+ * menu bar here only takes enter events while the pointer really is on its
+ * window. */
+static gboolean (*menu_bar_enter)(GtkWidget *, GdkEventCrossing *);
+
+static gboolean menu_bar_enter_notify(GtkWidget *w, GdkEventCrossing *ev) {
+    GdkDevice *d = gdk_event_get_device((GdkEvent *)ev);
+    if (d != nullptr && ev->window != nullptr &&
+        gdk_device_get_source(d) != GDK_SOURCE_KEYBOARD) {
+        GdkWindow *under = gdk_device_get_window_at_position(d, nullptr, nullptr);
+        if (under == nullptr ||
+            gdk_window_get_toplevel(under) != gdk_window_get_toplevel(ev->window))
+            return TRUE;
+    }
+    return menu_bar_enter(w, ev);
+}
+
+static void fix_menu_bar_mnemonics(void) {
+    /* The class lives as long as the process (never unreferenced). */
+    GtkWidgetClass *c = g_type_class_ref(GTK_TYPE_MENU_BAR);
+    if (c->enter_notify_event != menu_bar_enter_notify) {
+        menu_bar_enter = c->enter_notify_event;
+        c->enter_notify_event = menu_bar_enter_notify;
+    }
+}
+
 void xd_gtk_app_follow_theme(void) {
     GtkSettings *s = gtk_settings_get_default();
     if (s == nullptr)
         return;
+    fix_menu_bar_mnemonics();
     xd_settings cfg;
     xd_settings_load(&cfg);
     apply_theme_settings(&cfg);

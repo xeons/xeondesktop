@@ -1054,14 +1054,17 @@ def disk_management_menu(s):
         before = s.settle("disk-management")
 
         def action_menu(label):
-            # F10 selects the menu bar and A opens Action, as in Windows.
-            # (Alt+A opens File instead here; see the report.)
-            s.inject("key", "F10", "sleep", 200, "key", "a")
+            # Alt+A opens Action, as in Windows (it once opened File, the
+            # menu under where GDK last saw the pointer).
+            s.inject("key", "alt+a")
             shot = s.settle(label)
             box = shot.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
             # A menu of the selected volume's actions and Refresh: well over
-            # a few items tall (it once came up empty).
-            s.check(box is not None and box[3] > 100, f"the Action menu opened with items ({box})")
+            # a few items tall (it once came up empty), right of File.
+            s.check(
+                box is not None and box[3] > 100 and box[0] > 40,
+                f"the Action menu opened with items ({box})",
+            )
             s.inject("key", "Escape", "sleep", 200, "key", "Escape")
             closed = s.settle(label + "-closed")
             s.check(closed.changed_box(before, (0, 0, WIDTH, HEIGHT - 40)) is None, "Esc closed it")
