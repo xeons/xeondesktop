@@ -9,6 +9,8 @@
 
 #include <gio/gio.h>
 
+#include "../theme/scheme.h"
+
 typedef struct xd_installed_theme {
     char *dir;  /* directory name: what [Appearance] stores */
     char *name; /* what the list shows */
@@ -53,5 +55,12 @@ bool xd_gtk_ini_set(const char *path, const char *key, const char *value);
  * GSettings' (nullptr = the default, dconf). */
 void xd_gtk_settings_export(const char *config_dir, GSettingsBackend *backend,
                             const char *gtk_theme, const char *icon_theme);
+
+/* Font smoothing for other programs: org.gnome.desktop.interface's
+ * font-antialiasing, font-hinting and font-rgba-order (with font-rendering
+ * manual, which GTK 4.16 needs to heed them), and GTK's gtk-xft-* keys in
+ * gtk-3.0 and gtk-4.0/settings.ini for GTK programs on X11. */
+void xd_font_settings_export(const char *config_dir, GSettingsBackend *backend,
+                             const xd_font_smoothing *fs);
 
 #endif

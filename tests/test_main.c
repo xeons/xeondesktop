@@ -1102,6 +1102,47 @@ static void test_theme_settings(void) {
         g_object_unref(fresh);
         g_settings_schema_unref(schema);
     }
+    /* Font smoothing: GTK's settings.ini keys, and GNOME's where it has them. */
+    xd_font_smoothing fs = {XD_SMOOTH_SUBPIXEL, XD_SUBPIXEL_BGR, XD_HINT_MEDIUM};
+    xd_font_settings_export(config, backend, &fs);
+    kf = g_key_file_new();
+    CHECK(g_key_file_load_from_file(kf, ini3, G_KEY_FILE_NONE, nullptr));
+    v = g_key_file_get_string(kf, "Settings", "gtk-xft-rgba", nullptr);
+    CHECK(g_strcmp0(v, "bgr") == 0);
+    g_free(v);
+    v = g_key_file_get_string(kf, "Settings", "gtk-xft-hintstyle", nullptr);
+    CHECK(g_strcmp0(v, "hintmedium") == 0);
+    g_free(v);
+    CHECK(g_key_file_get_integer(kf, "Settings", "gtk-xft-antialias", nullptr) == 1);
+    g_key_file_free(kf);
+    fs = (xd_font_smoothing){XD_SMOOTH_NONE, XD_SUBPIXEL_BGR, XD_HINT_NONE};
+    xd_font_settings_export(config, backend, &fs);
+    kf = g_key_file_new();
+    CHECK(g_key_file_load_from_file(kf, ini4, G_KEY_FILE_NONE, nullptr));
+    v = g_key_file_get_string(kf, "Settings", "gtk-xft-rgba", nullptr);
+    CHECK(g_strcmp0(v, "none") == 0);
+    g_free(v);
+    CHECK(g_key_file_get_integer(kf, "Settings", "gtk-xft-antialias", nullptr) == 0);
+    CHECK(g_key_file_get_integer(kf, "Settings", "gtk-xft-hinting", nullptr) == 0);
+    g_key_file_free(kf);
+    schema = src != nullptr
+                 ? g_settings_schema_source_lookup(src, "org.gnome.desktop.interface", TRUE)
+                 : nullptr;
+    if (schema != nullptr && g_settings_schema_has_key(schema, "font-antialiasing")) {
+        GSettings *s = g_settings_new_full(schema, backend, nullptr);
+        v = g_settings_get_string(s, "font-antialiasing");
+        CHECK(strcmp(v, "none") == 0);
+        g_free(v);
+        v = g_settings_get_string(s, "font-hinting");
+        CHECK(strcmp(v, "none") == 0);
+        g_free(v);
+        v = g_settings_get_string(s, "font-rgba-order");
+        CHECK(strcmp(v, "bgr") == 0);
+        g_free(v);
+        g_object_unref(s);
+    }
+    if (schema != nullptr)
+        g_settings_schema_unref(schema);
     g_object_unref(backend);
     /* Removing from a file that isn't there creates nothing. */
     char *none = g_build_filename(config, "gtk-5.0", "settings.ini", nullptr);
@@ -1210,7 +1251,9 @@ static void test_settings(void) {
                              "[SomethingNew]\nKey=v\n"),
                       &a);
     CHECK(a.style == XD_STYLE_LUNA && strcmp(a.scheme, "windows-classic") == 0);
-    CHECK(a.font_size == XD_FONT_LARGE && a.font_smoothing == XD_SMOOTH_CLEARTYPE);
+    /* An older file's Windows name for subpixel smoothing still reads. */
+    CHECK(a.font_size == XD_FONT_LARGE && a.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL);
+    CHECK(a.font_smoothing.order == XD_SUBPIXEL_RGB && a.font_smoothing.hinting == XD_HINT_SLIGHT);
     CHECK(strcmp(a.wallpaper, "/w/p.jpg") == 0 && a.wallpaper_mode == XD_WALLPAPER_TILE);
     CHECK(a.large_icons && a.screensaver_wait == 7);
     CHECK(a.menu_transition == XD_TRANSITION_SCROLL && !a.full_window_drag);
@@ -1227,6 +1270,23 @@ static void test_settings(void) {
     b.menu_transition = XD_TRANSITION_FADE;
     CHECK(!xd_settings_equal(&a, &b));
     xd_strbuf_free(&text);
+
+    /* Font smoothing's three keys, written with their own names. */
+    a.font_smoothing = (xd_font_smoothing){XD_SMOOTH_SUBPIXEL, XD_SUBPIXEL_VBGR, XD_HINT_FULL};
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "FontSmoothing=subpixel") != nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&text), "FontSubpixelOrder=vbgr") != nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&text), "FontHinting=full") != nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&text), "cleartype") == nullptr);
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(b.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL &&
+          b.font_smoothing.order == XD_SUBPIXEL_VBGR && b.font_smoothing.hinting == XD_HINT_FULL);
+    b.font_smoothing.hinting = XD_HINT_NONE;
+    CHECK(!xd_settings_equal(&a, &b));
+    xd_strbuf_free(&text);
+    xd_settings_parse(XD_STR("[Appearance]\nFontSmoothing=standard\nFontHinting=bogus\n"), &b);
+    CHECK(b.font_smoothing.antialias == XD_SMOOTH_GRAYSCALE &&
+          b.font_smoothing.hinting == XD_HINT_SLIGHT);
 
     /* Bad values keep defaults; a scheme can't be a path. */
     xd_settings_parse(XD_STR("[Appearance]\nStyle=bogus\nScheme=../../etc/x\n"

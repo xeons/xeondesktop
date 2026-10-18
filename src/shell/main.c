@@ -661,6 +661,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     memcpy(old_wallpaper, shell->settings.wallpaper, sizeof(old_wallpaper));
     char old_icons[sizeof(shell->settings.icon_theme)];
     memcpy(old_icons, shell->settings.icon_theme, sizeof(old_icons));
+    xd_font_smoothing old_smoothing = shell->settings.font_smoothing;
     xd_settings_load(&shell->settings);
     /* A new icon theme: everything is drawn from the cache afresh below
      * (nothing keeps its surfaces between draws). */
@@ -668,6 +669,14 @@ static void apply_settings(xd_shell *shell, bool startup) {
         xd_icons_destroy(shell->icons);
         shell->icons = xd_icons_create(xd_settings_icon_theme(&shell->settings));
         export_icon_theme(shell, &shell->settings);
+    }
+    /* Font smoothing for other programs too, under the same rule. */
+    if (startup || memcmp(&old_smoothing, &shell->settings.font_smoothing,
+                          sizeof(old_smoothing)) != 0) {
+        const char *nested = getenv("XEONDESKTOP_NESTED");
+        if (!shell->standalone && nested != nullptr && strcmp(nested, "0") == 0)
+            xd_font_settings_export(g_get_user_config_dir(), nullptr,
+                                    &shell->settings.font_smoothing);
     }
     if (!startup) {
         shell->cli_style = false;

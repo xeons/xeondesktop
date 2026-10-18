@@ -111,12 +111,34 @@ typedef enum xd_font_role {
     XD_FONT_COUNT
 } xd_font_role;
 
-/* "Smooth edges of screen fonts". Zero is the default so structs built
- * without it get standard antialiasing. */
-typedef enum xd_font_smoothing : uint8_t {
-    XD_SMOOTH_STANDARD = 0,
+/* Font smoothing as FreeType (through fontconfig and cairo) does it, under
+ * the names GNOME gives these settings. Zero is the default in each, so
+ * structs built without it get grayscale antialiasing, RGB order and
+ * slight hinting. */
+typedef enum xd_font_antialias : uint8_t {
+    XD_SMOOTH_GRAYSCALE = 0,
     XD_SMOOTH_NONE,
-    XD_SMOOTH_CLEARTYPE, /* subpixel, RGB order */
+    XD_SMOOTH_SUBPIXEL,
+} xd_font_antialias;
+
+typedef enum xd_subpixel_order : uint8_t {
+    XD_SUBPIXEL_RGB = 0,
+    XD_SUBPIXEL_BGR,
+    XD_SUBPIXEL_VRGB,
+    XD_SUBPIXEL_VBGR,
+} xd_subpixel_order;
+
+typedef enum xd_font_hinting : uint8_t {
+    XD_HINT_SLIGHT = 0,
+    XD_HINT_NONE,
+    XD_HINT_MEDIUM,
+    XD_HINT_FULL,
+} xd_font_hinting;
+
+typedef struct xd_font_smoothing {
+    xd_font_antialias antialias;
+    xd_subpixel_order order; /* with subpixel antialiasing */
+    xd_font_hinting hinting;
 } xd_font_smoothing;
 
 /* Windows XP style's colour variants ([Scheme] LunaColor=, named as XP's

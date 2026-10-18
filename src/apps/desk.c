@@ -116,8 +116,9 @@ typedef struct desk {
     /* Effects */
     xd_widget *transition_check;
     xd_widget *transition_combo;
-    xd_widget *smoothing_check;
-    xd_widget *smoothing_combo;
+    xd_widget *antialias_combo; /* Font smoothing */
+    xd_widget *subpixel_combo;
+    xd_widget *hinting_combo;
     xd_widget *large_icons;
     GPtrArray *icon_themes; /* xd_installed_theme, as the Icons list shows them */
     GPtrArray *gtk_themes;  /* ...and Program style's, after its first item */
@@ -1423,17 +1424,31 @@ static void build_appearance(desk *d) {
 
 /* ---- Effects ------------------------------------------------------------------------ */
 
-static void on_smoothing(xd_widget *w, void *user) {
-    (void)w;
+/* Font smoothing's lists, in the order shown (GNOME's names), and the
+ * values they stand for. */
+static const xd_font_antialias antialias_items[] = {XD_SMOOTH_NONE, XD_SMOOTH_GRAYSCALE,
+                                                    XD_SMOOTH_SUBPIXEL};
+static const char *const antialias_labels[] = {"None", "Standard (grayscale)",
+                                               "Subpixel (for LCD screens)"};
+static const char *const subpixel_labels[] = {"RGB", "BGR", "Vertical RGB", "Vertical BGR"};
+static const xd_font_hinting hinting_items[] = {XD_HINT_NONE, XD_HINT_SLIGHT, XD_HINT_MEDIUM,
+                                                XD_HINT_FULL};
+static const char *const hinting_labels[] = {"None", "Slight", "Medium", "Full"};
+
+static void on_smoothing([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
-    bool on = xd_checkbox_checked(d->smoothing_check);
-    xd_widget_set_enabled(d->smoothing_combo, on);
-    if (!on)
-        d->pending.font_smoothing = XD_SMOOTH_NONE;
-    else
-        d->pending.font_smoothing = xd_widget_selected(d->smoothing_combo) == 1
-                                        ? XD_SMOOTH_CLEARTYPE
-                                        : XD_SMOOTH_STANDARD;
+    int aa = xd_widget_selected(d->antialias_combo);
+    int hint = xd_widget_selected(d->hinting_combo);
+    int order = xd_widget_selected(d->subpixel_combo);
+    if (aa >= 0 && (size_t)aa < XD_ARRAY_LEN(antialias_items))
+        d->pending.font_smoothing.antialias = antialias_items[aa];
+    if (hint >= 0 && (size_t)hint < XD_ARRAY_LEN(hinting_items))
+        d->pending.font_smoothing.hinting = hinting_items[hint];
+    if (order >= 0 && (size_t)order < XD_ARRAY_LEN(subpixel_labels))
+        d->pending.font_smoothing.order = (xd_subpixel_order)order;
+    /* The order only matters to subpixel smoothing. */
+    xd_widget_set_enabled(d->subpixel_combo,
+                          d->pending.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL);
     changed(d);
 }
 
@@ -1573,7 +1588,7 @@ static void build_effects(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_EFFECTS;
     /* XP's Effects dialog, its combo boxes under the boxes they belong to. */
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 216}, "Visual effects"), P);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 166}, "Visual effects"), P);
     d->transition_check =
         xd_checkbox(win, (xd_rect){32, 62, 340, 20},
                     "Use the following transition effect for menus and tooltips:",
@@ -1587,35 +1602,52 @@ static void build_effects(desk *d) {
                      d->pending.menu_transition == XD_TRANSITION_SCROLL ? 1 : 0);
     xd_widget_set_enabled(d->transition_combo, d->pending.menu_transitions);
 
-    d->smoothing_check =
-        xd_checkbox(win, (xd_rect){32, 112, 340, 20},
-                    "Use the following method to smooth edges of screen fonts:",
-                    d->pending.font_smoothing != XD_SMOOTH_NONE, on_smoothing, d);
-    xd_widget_set_page(d->smoothing_check, P);
-    d->smoothing_combo = xd_combo(win, (xd_rect){52, 134, 150, 21}, false, on_smoothing, d);
-    xd_widget_set_page(d->smoothing_combo, P);
-    xd_widget_add_item(d->smoothing_combo, "Standard");
-    xd_widget_add_item(d->smoothing_combo, "ClearType");
-    xd_widget_select(d->smoothing_combo, d->pending.font_smoothing == XD_SMOOTH_CLEARTYPE ? 1 : 0);
-    xd_widget_set_enabled(d->smoothing_combo, d->pending.font_smoothing != XD_SMOOTH_NONE);
-
     /* XP's Shell Icon Size: the desktop's icons and the XP Start menu's
      * program list. */
-    d->large_icons = xd_checkbox(win, (xd_rect){32, 162, 340, 20}, "Use large icons",
+    d->large_icons = xd_checkbox(win, (xd_rect){32, 112, 340, 20}, "Use large icons",
                                  d->pending.large_icons, on_large_icons, d);
     xd_widget_set_page(d->large_icons, P);
     /* Off: moving or sizing a window drags its outline (the compositor's). */
-    xd_widget_set_page(xd_checkbox(win, (xd_rect){32, 186, 340, 20},
+    xd_widget_set_page(xd_checkbox(win, (xd_rect){32, 136, 340, 20},
                                    "Show window contents while dragging",
                                    d->pending.full_window_drag, on_full_drag, d),
                        P);
     /* Check boxes draw one line: XP's wrapped label goes on in a label. */
     xd_widget_set_page(
-        xd_checkbox(win, (xd_rect){32, 210, 340, 20},
+        xd_checkbox(win, (xd_rect){32, 160, 340, 20},
                     "Hide underlined letters for keyboard navigation until I press",
                     d->pending.hide_keyboard_cues, on_keyboard_cues, d),
         P);
-    xd_widget_set_page(xd_label(win, (xd_rect){50, 228, 322, 16}, "the Alt key", 0), P);
+    xd_widget_set_page(xd_label(win, (xd_rect){50, 178, 322, 16}, "the Alt key", 0), P);
+
+    /* Windows had one choice here ("Smooth edges of screen fonts"); these
+     * are FreeType's, as fontconfig and cairo take them, and go to other
+     * programs too (GNOME's settings and GTK's settings.ini). */
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 214, 364, 112}, "Font smoothing"), P);
+    const xd_font_smoothing *fs = &d->pending.font_smoothing;
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 239, 130, 16}, "Antialiasing:", 0), P);
+    d->antialias_combo = xd_combo(win, (xd_rect){164, 236, 208, 21}, false, on_smoothing, d);
+    xd_widget_set_page(d->antialias_combo, P);
+    for (size_t i = 0; i < XD_ARRAY_LEN(antialias_labels); i++) {
+        xd_widget_add_item(d->antialias_combo, antialias_labels[i]);
+        if (antialias_items[i] == fs->antialias)
+            xd_widget_select(d->antialias_combo, (int)i);
+    }
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 269, 130, 16}, "Subpixel order:", 0), P);
+    d->subpixel_combo = xd_combo(win, (xd_rect){164, 266, 208, 21}, false, on_smoothing, d);
+    xd_widget_set_page(d->subpixel_combo, P);
+    for (size_t i = 0; i < XD_ARRAY_LEN(subpixel_labels); i++)
+        xd_widget_add_item(d->subpixel_combo, subpixel_labels[i]);
+    xd_widget_select(d->subpixel_combo, (int)fs->order);
+    xd_widget_set_enabled(d->subpixel_combo, fs->antialias == XD_SMOOTH_SUBPIXEL);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 299, 130, 16}, "Hinting:", 0), P);
+    d->hinting_combo = xd_combo(win, (xd_rect){164, 296, 208, 21}, false, on_smoothing, d);
+    xd_widget_set_page(d->hinting_combo, P);
+    for (size_t i = 0; i < XD_ARRAY_LEN(hinting_labels); i++) {
+        xd_widget_add_item(d->hinting_combo, hinting_labels[i]);
+        if (hinting_items[i] == fs->hinting)
+            xd_widget_select(d->hinting_combo, (int)i);
+    }
     build_themes(d);
 }
 

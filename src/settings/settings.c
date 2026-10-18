@@ -21,7 +21,13 @@ static const char *const mode_names[XD_WALLPAPER_MODE_COUNT] = {
 
 static const char *const font_size_names[] = {"normal", "large", "extralarge"};
 static const char *const start_style_names[] = {"classic", "xp", "win7"};
-static const char *const smoothing_names[] = {"standard", "none", "cleartype"};
+/* [Appearance] FontSmoothing, FontSubpixelOrder and FontHinting, in the
+ * enums' order (fontconfig's and GNOME's words). */
+static const char *const smoothing_names[] = {"grayscale", "none", "subpixel"};
+/* What FontSmoothing said before: Windows' names. */
+static const char *const smoothing_old_names[] = {"standard", "none", "cleartype"};
+static const char *const subpixel_names[] = {"rgb", "bgr", "vrgb", "vbgr"};
+static const char *const hinting_names[] = {"slight", "none", "medium", "full"};
 static const char *const transition_names[] = {"fade", "scroll"};
 static const char *const edge_names[] = {"bottom", "top", "left", "right"};
 static const char *const buttons_names[] = {"always", "whenfull", "never"};
@@ -719,8 +725,18 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
                 s->font_size = (xd_font_size)i;
         } else if (KEY("FontSmoothing")) {
             int i = index_of(smoothing_names, XD_ARRAY_LEN(smoothing_names), v);
+            if (i < 0)
+                i = index_of(smoothing_old_names, XD_ARRAY_LEN(smoothing_old_names), v);
             if (i >= 0)
-                s->font_smoothing = (xd_font_smoothing)i;
+                s->font_smoothing.antialias = (xd_font_antialias)i;
+        } else if (KEY("FontSubpixelOrder")) {
+            int i = index_of(subpixel_names, XD_ARRAY_LEN(subpixel_names), v);
+            if (i >= 0)
+                s->font_smoothing.order = (xd_subpixel_order)i;
+        } else if (KEY("FontHinting")) {
+            int i = index_of(hinting_names, XD_ARRAY_LEN(hinting_names), v);
+            if (i >= 0)
+                s->font_smoothing.hinting = (xd_font_hinting)i;
         } else if (KEY("GlassColor")) {
             parse_argb(v, &s->glass_color);
         } else if (KEY("GlassTransparency")) {
@@ -993,7 +1009,12 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Appearance", "Style", xd_visual_style_name(s->style));
     g_key_file_set_string(kf, "Appearance", "Scheme", s->scheme);
     g_key_file_set_string(kf, "Appearance", "FontSize", font_size_names[s->font_size]);
-    g_key_file_set_string(kf, "Appearance", "FontSmoothing", smoothing_names[s->font_smoothing]);
+    g_key_file_set_string(kf, "Appearance", "FontSmoothing",
+                          smoothing_names[s->font_smoothing.antialias]);
+    g_key_file_set_string(kf, "Appearance", "FontSubpixelOrder",
+                          subpixel_names[s->font_smoothing.order]);
+    g_key_file_set_string(kf, "Appearance", "FontHinting",
+                          hinting_names[s->font_smoothing.hinting]);
     char glass[16];
     snprintf(glass, sizeof(glass), "%08X", (unsigned)s->glass_color);
     g_key_file_set_string(kf, "Appearance", "GlassColor", glass);

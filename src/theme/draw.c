@@ -156,18 +156,34 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
     pango_font_description_free(fd);
 
     cairo_font_options_t *fo = cairo_font_options_create();
-    switch (st->smoothing) {
+    switch (st->smoothing.antialias) {
     case XD_SMOOTH_NONE:
         cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_NONE);
         break;
-    case XD_SMOOTH_CLEARTYPE:
+    case XD_SMOOTH_SUBPIXEL: {
+        static const cairo_subpixel_order_t orders[] = {
+            [XD_SUBPIXEL_RGB] = CAIRO_SUBPIXEL_ORDER_RGB,
+            [XD_SUBPIXEL_BGR] = CAIRO_SUBPIXEL_ORDER_BGR,
+            [XD_SUBPIXEL_VRGB] = CAIRO_SUBPIXEL_ORDER_VRGB,
+            [XD_SUBPIXEL_VBGR] = CAIRO_SUBPIXEL_ORDER_VBGR,
+        };
         cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_SUBPIXEL);
-        cairo_font_options_set_subpixel_order(fo, CAIRO_SUBPIXEL_ORDER_RGB);
+        cairo_font_options_set_subpixel_order(
+            fo, orders[st->smoothing.order < XD_ARRAY_LEN(orders) ? st->smoothing.order : 0]);
         break;
-    case XD_SMOOTH_STANDARD:
+    }
+    case XD_SMOOTH_GRAYSCALE:
         cairo_font_options_set_antialias(fo, CAIRO_ANTIALIAS_GRAY);
         break;
     }
+    static const cairo_hint_style_t hints[] = {
+        [XD_HINT_SLIGHT] = CAIRO_HINT_STYLE_SLIGHT,
+        [XD_HINT_NONE] = CAIRO_HINT_STYLE_NONE,
+        [XD_HINT_MEDIUM] = CAIRO_HINT_STYLE_MEDIUM,
+        [XD_HINT_FULL] = CAIRO_HINT_STYLE_FULL,
+    };
+    cairo_font_options_set_hint_style(
+        fo, hints[st->smoothing.hinting < XD_ARRAY_LEN(hints) ? st->smoothing.hinting : 0]);
     pango_cairo_context_set_font_options(pango_layout_get_context(layout), fo);
     cairo_font_options_destroy(fo);
     pango_layout_context_changed(layout);

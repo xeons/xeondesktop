@@ -213,10 +213,13 @@ tabs, and one for what only Linux has:
   Aero, Advanced opens Window Color and Appearance: Windows 7's 16 glass
   colours, transparency, intensity and a colour mixer, with a link to
   Advanced Appearance.
-- Effects: XP's Effects: fade or scroll menus and tooltips, font
-  smoothing, large icons, "Show window contents while dragging" (off, a
-  window is dragged as an outline) and hiding the underlined letters until
-  Alt is pressed.
+- Effects: XP's Effects: fade or scroll menus and tooltips, large icons,
+  "Show window contents while dragging" (off, a window is dragged as an
+  outline) and hiding the underlined letters until Alt is pressed; and
+  Font smoothing as FreeType does it, under GNOME's names: Antialiasing
+  (None, Standard (grayscale), Subpixel (for LCD screens)), Subpixel order
+  and Hinting. Other programs get them too: a real session writes them to
+  `org.gnome.desktop.interface` and GTK's `settings.ini`.
 - Settings: as below, and Identify, which shows each monitor's number on
   it.
 - Linux: the icon theme and the GTK theme ("Program style"), our

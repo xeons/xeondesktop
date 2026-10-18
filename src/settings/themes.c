@@ -316,6 +316,37 @@ static void gsettings_set(GSettingsBackend *backend, const char *key, const char
     g_settings_schema_unref(schema);
 }
 
+void xd_font_settings_export(const char *config_dir, GSettingsBackend *backend,
+                             const xd_font_smoothing *fs) {
+    static const char *const antialias[] = {
+        [XD_SMOOTH_GRAYSCALE] = "grayscale", [XD_SMOOTH_NONE] = "none",
+        [XD_SMOOTH_SUBPIXEL] = "rgba"};
+    static const char *const order[] = {[XD_SUBPIXEL_RGB] = "rgb", [XD_SUBPIXEL_BGR] = "bgr",
+                                        [XD_SUBPIXEL_VRGB] = "vrgb",
+                                        [XD_SUBPIXEL_VBGR] = "vbgr"};
+    static const char *const hinting[] = {[XD_HINT_SLIGHT] = "slight", [XD_HINT_NONE] = "none",
+                                          [XD_HINT_MEDIUM] = "medium", [XD_HINT_FULL] = "full"};
+    if (fs->antialias >= G_N_ELEMENTS(antialias) || fs->order >= G_N_ELEMENTS(order) ||
+        fs->hinting >= G_N_ELEMENTS(hinting))
+        return;
+    bool subpixel = fs->antialias == XD_SMOOTH_SUBPIXEL;
+    gsettings_set(backend, "font-rendering", "manual");
+    gsettings_set(backend, "font-antialiasing", antialias[fs->antialias]);
+    gsettings_set(backend, "font-hinting", hinting[fs->hinting]);
+    gsettings_set(backend, "font-rgba-order", order[fs->order]);
+    char *hintstyle = g_strconcat("hint", hinting[fs->hinting], nullptr);
+    const char *const files[] = {"gtk-3.0", "gtk-4.0"};
+    for (size_t i = 0; i < G_N_ELEMENTS(files); i++) {
+        char *ini = g_build_filename(config_dir, files[i], "settings.ini", nullptr);
+        xd_gtk_ini_set(ini, "gtk-xft-antialias", fs->antialias == XD_SMOOTH_NONE ? "0" : "1");
+        xd_gtk_ini_set(ini, "gtk-xft-hinting", fs->hinting == XD_HINT_NONE ? "0" : "1");
+        xd_gtk_ini_set(ini, "gtk-xft-hintstyle", hintstyle);
+        xd_gtk_ini_set(ini, "gtk-xft-rgba", subpixel ? order[fs->order] : "none");
+        g_free(ini);
+    }
+    g_free(hintstyle);
+}
+
 void xd_gtk_settings_export(const char *config_dir, GSettingsBackend *backend,
                             const char *gtk_theme, const char *icon_theme) {
     char *gtk3 = g_build_filename(config_dir, "gtk-3.0", "settings.ini", nullptr);
