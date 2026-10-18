@@ -2150,6 +2150,32 @@ static void on_display_change(void *user) {
     xd_widget_redraw(d->monitors);
 }
 
+/* Identify: the shell shows each monitor's number on that monitor, as
+ * this tab numbers them (monitors that are off show nothing). */
+static void on_identify([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    GVariantBuilder b;
+    g_variant_builder_init(&b, G_VARIANT_TYPE("a(su)"));
+    for (size_t i = 0; i < d->head_count; i++) {
+        if (d->heads[i].set.enabled)
+            g_variant_builder_add(&b, "(su)", d->heads[i].set.name, (guint32)(i + 1));
+    }
+    GVariant *args = g_variant_new("(a(su))", &b);
+    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
+    if (bus == nullptr) {
+        g_variant_unref(g_variant_ref_sink(args));
+        return;
+    }
+    /* The shell answers at once; waiting for it keeps the call from being
+     * lost with the connection. */
+    GVariant *ret = g_dbus_connection_call_sync(
+        bus, "org.xeondesktop.Shell", "/org/xeondesktop/Shell", "org.xeondesktop.Shell",
+        "Identify", args, nullptr, G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, nullptr, nullptr);
+    if (ret != nullptr)
+        g_variant_unref(ret);
+    g_object_unref(bus);
+}
+
 static void build_settings(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_SETTINGS;
@@ -2197,9 +2223,11 @@ static void build_settings(desk *d) {
     for (size_t i = 0; i < XD_ARRAY_LEN(orientations); i++)
         xd_widget_add_item(d->orient_combo, orientations[i]);
 
-    d->extend_check = xd_checkbox(win, (xd_rect){20, 340, 300, 20},
+    d->extend_check = xd_checkbox(win, (xd_rect){20, 340, 280, 20},
                                   "Extend my desktop onto this monitor.", true, on_extend, d);
     xd_widget_set_page(d->extend_check, P);
+    xd_widget *identify = xd_button(win, (xd_rect){309, 338, 75, 23}, "Identify", on_identify, d);
+    xd_widget_set_page(identify, P);
     d->display_note = xd_label(win, (xd_rect){20, 368, 364, 30}, "", XD_LABEL_WRAP | XD_LABEL_DIM);
     xd_widget_set_page(d->display_note, P);
 
@@ -2210,6 +2238,7 @@ static void build_settings(desk *d) {
         xd_widget_set_text(d->display_note,
                            "This compositor doesn't let programs change display settings.");
         xd_widget_set_enabled(d->display_combo, false);
+        xd_widget_set_enabled(identify, false);
     }
 }
 

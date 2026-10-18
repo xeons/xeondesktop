@@ -32,6 +32,7 @@ typedef struct xd_account xd_account;
 typedef struct xd_shellbus xd_shellbus;
 typedef struct xd_superbar xd_superbar;
 typedef struct xd_thumbs xd_thumbs;
+typedef struct xd_identify xd_identify;
 
 typedef struct xd_early_output {
     struct wl_output *output;
@@ -316,6 +317,7 @@ struct xd_shell {
 
     xd_primary *primary; /* which monitor is the primary one (primary.c) */
     xd_langbar *langbar; /* the keyboard layout indicator (langbar.c) */
+    xd_identify *identify; /* Display Properties' Identify, while shown (identify.c) */
 
     /* Outputs announced before startup finished binding globals. */
     bool started;
@@ -518,6 +520,8 @@ bool xd_shell_have_program(const char *program);
 void xd_primary_bind(xd_shell *shell, struct wl_registry *reg, uint32_t name, uint32_t version);
 void xd_primary_track(xd_shell *shell, struct wl_output *output);
 void xd_primary_forget(xd_shell *shell, struct wl_output *output);
+/* The output with that xdg-output name, or nullptr. */
+struct wl_output *xd_primary_output_named(xd_shell *shell, const char *output_name);
 void xd_primary_finish(xd_shell *shell);
 /* langbar.c: XP's Language bar minimized into the taskbar ("EN"), shown
  * with more than one [Keyboard] Layout. The compositor tells the active
@@ -704,6 +708,12 @@ void xd_shellbus_keyboard_entered(xd_shell *shell, struct wl_surface *surface, u
 void xd_shellbus_taskbar_gone(xd_shell *shell, xd_taskbar *bar);
 /* xd-shell --toggle-start-menu: asks the running shell; an exit status. */
 int xd_shellbus_call_toggle(void);
+
+/* identify.c: numbers[i] big on the output named outputs[i], for a few
+ * seconds (Display Properties' Identify). */
+void xd_identify_show(xd_shell *shell, const char *const *outputs, const unsigned *numbers,
+                      size_t count);
+void xd_identify_hide(xd_shell *shell);
 
 /* session.c */
 /* The compositor at the other end of the Wayland connection (0 if that

@@ -929,6 +929,7 @@ executable(
   'src/shell/account.c',
   'src/shell/sounds.c',
   'src/shell/shellbus.c',
+  'src/shell/identify.c',
   'src/shell/session.c',
   'src/shell/primary.c',
   'src/shell/langbar.c',

@@ -25,6 +25,9 @@ static constexpr guint FOCUS_WAIT_MS = 250;
 static const char shell_xml[] = "<node>"
                                 "  <interface name='" SHELL_NAME "'>"
                                 "    <method name='ToggleStartMenu'/>"
+                                "    <method name='Identify'>"
+                                "      <arg name='monitors' type='a(su)' direction='in'/>"
+                                "    </method>"
                                 "  </interface>"
                                 "</node>";
 
@@ -107,6 +110,21 @@ void xd_shellbus_taskbar_gone(xd_shell *shell, xd_taskbar *bar) {
         cancel_pending(sb);
 }
 
+/* Display Properties' Identify: (output name, monitor number) pairs. */
+static void identify(xd_shell *shell, GVariant *params) {
+    GVariant *list = g_variant_get_child_value(params, 0);
+    size_t n = XD_MIN(g_variant_n_children(list), (size_t)32);
+    const char *names[32];
+    unsigned numbers[32];
+    for (size_t i = 0; i < n; i++) {
+        guint32 number = 0;
+        g_variant_get_child(list, i, "(&su)", &names[i], &number);
+        numbers[i] = number;
+    }
+    xd_identify_show(shell, names, numbers, n);
+    g_variant_unref(list);
+}
+
 static void method_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
                         [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
                         const char *method, [[maybe_unused]] GVariant *params,
@@ -114,6 +132,11 @@ static void method_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] co
     xd_shellbus *sb = data;
     if (g_strcmp0(method, "ToggleStartMenu") == 0) {
         xd_shell_toggle_start_menu(sb->shell);
+        g_dbus_method_invocation_return_value(inv, nullptr);
+        return;
+    }
+    if (g_strcmp0(method, "Identify") == 0) {
+        identify(sb->shell, params);
         g_dbus_method_invocation_return_value(inv, nullptr);
         return;
     }

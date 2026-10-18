@@ -1054,6 +1054,7 @@ int main(int argc, char **argv) {
     int rc = run(&shell, timer_fd, signal_fd);
 
     xd_menu_close_all(&shell);
+    xd_identify_hide(&shell);
 
     xd_primary_finish(&shell);
     xd_langbar_finish(&shell);

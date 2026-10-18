@@ -2534,6 +2534,37 @@ def lock_two_monitors(s):
     s.check(box[0] >= SECOND_X, f"Unlock Computer is on the second monitor too ({box})")
 
 
+@scenario(outputs=TWO_MONITORS)
+def identify_monitors(s):
+    """Display Properties' Identify (Settings tab): each monitor shows its
+    number, big, white outlined in black, at its top left, for a few
+    seconds."""
+    s.inject("move", WIDTH // 2, HEIGHT // 2)  # Display Properties opens on the first
+    empty = s.settle("desktop")
+    s.launch("xd-desk", "--page", "4")
+    s.wait_window(title="Display Properties", state="activated")
+    tab = s.settle("settings-tab")
+    x, y, w, h = tab.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    # The dialog's client area is 404x448, framed evenly at the sides and
+    # bottom; Identify is at (309, 338), 75x23.
+    edge = (w - 404) // 2
+    left, top = x + edge, y + h - edge - 448
+    s.inject("move", left + 346, top + 349, "click", "move", WIDTH // 2, HEIGHT // 2)
+    first = (0, 0, 300, 300)
+    second = (SECOND_X, 0, 300, 300)
+    shot = s.wait(lambda: (lambda sh: sh if sh.changed_box(tab, first) and
+                           sh.changed_box(tab, second) else None)(s.shot("identify")),
+                  "numbers on both monitors", 10)  # fmt: skip
+    boxes = [shot.changed_box(tab, r) for r in (first, second)]
+    for name, (bx, by, bw, bh) in zip(("first", "second"), boxes):
+        s.check(bh > 120 and bx < (SECOND_X if name == "second" else 0) + 80,
+                f"a big number at the top left of the {name} monitor ({bx},{by} {bw}x{bh})")
+    s.check(abs(boxes[0][2] - boxes[1][2]) > 8, f"and the two are different numbers ({boxes})")
+    s.wait(lambda: s.shot("gone").changed_box(tab, first) is None and
+           s.shot("gone").changed_box(tab, second) is None, "the numbers to go", 10)  # fmt: skip
+    s.log("ok: the numbers went away by themselves")
+
+
 LANG_INI = LUNA_INI + "\n[Keyboard]\nLayout=us,de\nOptions=grp:alt_shift_toggle\n"
 
 ENTRY_TEST = r"""

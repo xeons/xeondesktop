@@ -20,6 +20,7 @@ typedef struct watched {
     struct zxdg_output_v1 *xdg;
     int x, y;
     bool known;
+    char *name; /* the connector's ("DP-1"), for Display Properties' Identify */
 } watched;
 
 struct xd_primary {
@@ -75,8 +76,11 @@ static void logical_position(void *data, [[maybe_unused]] struct zxdg_output_v1 
 static void logical_size([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o,
                          [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
 static void done([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o) {}
-static void name([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o,
-                 [[maybe_unused]] const char *n) {}
+static void name(void *data, [[maybe_unused]] struct zxdg_output_v1 *o, const char *n) {
+    watched *w = data;
+    xd_free(w->name);
+    w->name = xd_str_dup_cstr(xd_str_from_cstr(n));
+}
 static void description([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o,
                         [[maybe_unused]] const char *d) {}
 
@@ -119,6 +123,17 @@ void xd_primary_bind(xd_shell *shell, struct wl_registry *reg, uint32_t name, ui
 
 void xd_primary_track(xd_shell *shell, struct wl_output *output) { watch(shell, output); }
 
+struct wl_output *xd_primary_output_named(xd_shell *shell, const char *output_name) {
+    if (shell->primary == nullptr)
+        return nullptr;
+    watched *w;
+    wl_list_for_each(w, &shell->primary->outputs, link) {
+        if (w->name != nullptr && strcmp(w->name, output_name) == 0)
+            return w->output;
+    }
+    return nullptr;
+}
+
 void xd_primary_forget(xd_shell *shell, struct wl_output *output) {
     if (shell->primary == nullptr)
         return;
@@ -126,6 +141,7 @@ void xd_primary_forget(xd_shell *shell, struct wl_output *output) {
         if (w->output == output) {
             zxdg_output_v1_destroy(w->xdg);
             wl_list_remove(&w->link);
+            xd_free(w->name);
             xd_free(w);
         }
     }
@@ -138,6 +154,7 @@ void xd_primary_finish(xd_shell *shell) {
     XD_LIST_FOR_EACH_SAFE(w, tmp, &p->outputs, watched, link) {
         zxdg_output_v1_destroy(w->xdg);
         wl_list_remove(&w->link);
+        xd_free(w->name);
         xd_free(w);
     }
     if (p->manager != nullptr)
