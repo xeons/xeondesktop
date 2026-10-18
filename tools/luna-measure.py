@@ -8,7 +8,7 @@ luna.c draws from:
     tools/luna-measure.py --variant silver SCREENSHOT.png > src/theme/luna_data_silver.h
     tools/luna-measure.py --variant olive SCREENSHOT.png > src/theme/luna_data_olive.h
     tools/luna-measure.py --variant energyblue SCREENSHOT.png STARTMENU.png \
-        > src/theme/luna_data_energyblue.h
+        TASKBAR.jpg > src/theme/luna_data_energyblue.h
 
 Only colours are taken: per-row/per-column gradient profiles, edge lines,
 corner masks, and smooth polynomial surfaces fitted to the caption buttons.
@@ -26,18 +26,21 @@ import sys
 
 VARIANT = "blue"
 START_REF = None
+TASKBAR_REF = None
 args = sys.argv[1:]
 if len(args) >= 3 and args[0] == "--variant":
     VARIANT = args[1]
     args = args[2:]
 if VARIANT not in ("blue", "silver", "olive", "energyblue"):
     sys.exit(f"unknown variant {VARIANT!r}")
-if len(args) != (2 if VARIANT == "energyblue" else 1):
+if len(args) != (3 if VARIANT == "energyblue" else 1):
     sys.exit("usage: luna-measure.py [--variant silver|olive] SCREENSHOT.png\n"
-             "       luna-measure.py --variant energyblue SCREENSHOT.png STARTMENU.png")
+             "       luna-measure.py --variant energyblue SCREENSHOT.png STARTMENU.png"
+             " TASKBAR.jpg")
 REF = args[0]
 if VARIANT == "energyblue":
     START_REF = args[1]
+    TASKBAR_REF = args[2]
 
 # Reference layout.
 ACTIVE = dict(x0=88, y0=116, x1=640, y1=438, mid=400,
@@ -299,6 +302,15 @@ def main_blue():
 # quantized to a 256-colour palette, so its colours are averages (or the
 # commonest colour) over regions, not single pixels.
 #
+# Its normal (inactive) task buttons come from a third screenshot,
+# https://cutecomputer.wordpress.com/wp-content/uploads/2006/09/winxp-royale.JPG
+# (1024x768 JPEG; not redistributed here): the Start menu open, so both
+# task buttons, "Mozilla Firefox" and "My Documents", are normal. Its
+# taskbar matches the first screenshot's row for row, within JPEG noise,
+# so its rows line up with the measured taskbar; the button sits on rows
+# 4-27 (row 3 is the bar's). Being JPEG, each column is averaged over the
+# two buttons, and the middle over text-free columns of both.
+#
 # Olive Green: a screenshot hosted on DeviantArt,
 # https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/i/a844a3cf-6fdd-4ee5-85e5-f51c27600fd7/dzg2-bb82fa90-d395-4600-b555-aa0274bd3ad1.png
 # (800x600, lossless; not redistributed here). It is a pre-release build
@@ -386,6 +398,12 @@ LAYOUTS = dict(
             button_rows=21,
         ),
         inactive=None,
+        # The third screenshot: two normal task buttons, (left, right) the
+        # columns at each end, mid the text-free columns, all averaged.
+        task_ref=dict(y=738, buttons=[
+            dict(left=(258, 262), right=(411, 416), mid=(365, 406)),   # Mozilla Firefox
+            dict(left=(418, 422), right=(571, 576), mid=(530, 566)),   # My Documents
+        ]),
         bar=dict(y=802, x=700,
                  start=dict(left=(10, 18), right=(86, 109)),
                  task=None,
@@ -683,6 +701,36 @@ def bar_tables_measured():
     return "\n".join(out)
 
 
+def task_ref_tables():
+    """The normal task button from the third screenshot (a JPEG): each
+    column the mean of the same column of every button there, the middle
+    the mean of their text-free columns."""
+    global REF, _PIX
+    REF, _PIX = TASKBAR_REF, None
+    t = L["task_ref"]
+    r0, r1 = TASK_ROWS
+    rows = range(t["y"] + r0, t["y"] + r1)
+
+    def mean(ps):
+        return tuple(round(sum(p[i] for p in ps) / len(ps)) for i in range(3))
+
+    def block(side):
+        width = t["buttons"][0][side][1] - t["buttons"][0][side][0]
+        return [[hexc(mean([pix(b[side][0] + c, y) for b in t["buttons"]])) for c in range(width)]
+                for y in rows]
+
+    mid = [hexc(mean([pix(x, y) for b in t["buttons"] for x in range(*b["mid"])])) for y in rows]
+    pre = f"luna_{VARIANT}"
+    n = r1 - r0
+    return "\n".join([
+        "/* Task button (normal), from the third screenshot: left, middle and right"
+        " columns. */",
+        table(f"{pre}_task_normal_left[{n}][4]", block("left")),
+        table(f"{pre}_task_normal_mid[{n}]", mid),
+        table(f"{pre}_task_normal_right[{n}][5]", block("right")),
+    ])
+
+
 def startmenu_tables():
     """The Start menu's colours, from the second screenshot, by region:
     the mean, or for a body the commonest colour (the palette's dither
@@ -726,6 +774,9 @@ def main_measured():
         print(text)
         print()
     print(bar_tables_measured())
+    if L.get("task_ref") is not None:
+        print()
+        print(task_ref_tables())
     if "startmenu" in L:
         print()
         print(startmenu_tables())

@@ -655,8 +655,8 @@ void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_
 int xd_luna_taskbar_height(const xd_theme *t) { return xd_tpx(t, 30); }
 
 /* The taskbar's artwork: Blue's, or a variant's, measured (Silver's
- * reference shows no pressed task button: null). Energy Blue's shows no
- * normal task button: Blue's, recoloured by `task_tn`. */
+ * reference shows no pressed task button: null). `task_tn` recolours a
+ * normal task button taken from Blue's (none does now). */
 typedef struct bar_art {
     tint tn, task_tn;
     const uint32_t *bar; /* [30] */
@@ -684,13 +684,12 @@ static bar_art bar_art_for(const xd_theme *t) {
         };
     if (energy(t))
         return (bar_art){
-            .task_tn = tint_for(t, true),
             .bar = luna_energyblue_taskbar,
             .start_left = luna_energyblue_start_left,
             .start_right = luna_energyblue_start_right,
-            .task_left = luna_task_normal_left,
-            .task_mid = luna_task_normal_mid,
-            .task_right = luna_task_normal_right,
+            .task_left = luna_energyblue_task_normal_left,
+            .task_mid = luna_energyblue_task_normal_mid,
+            .task_right = luna_energyblue_task_normal_right,
             .pressed_left = luna_energyblue_task_pressed_left,
             .pressed_mid = luna_energyblue_task_pressed_mid,
             .pressed_right = luna_energyblue_task_pressed_right,
