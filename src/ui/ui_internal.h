@@ -71,12 +71,18 @@ typedef struct xd_listpopup {
     struct wp_viewport *viewport;
     xd_shm_ring ring;
     int width, height; /* logical */
+    int x, y;          /* relative to the owner window, as configured */
     int rows;          /* visible rows */
     int first;         /* first visible item (scrolling) */
     int hot;
     double scale;
     bool configured;
     bool dirty;
+    /* The scroll bar, when there are more items than rows. */
+    uint8_t sb_pressed;       /* the part held down (sb_part in widgets.c), 0 = none */
+    double sb_offset;         /* thumb drag: pointer y - thumb top */
+    double pointer_y;         /* logical, while the pointer is over the list */
+    xd_ui_source *sb_repeat;  /* auto-repeat of a held arrow or track */
 } xd_listpopup;
 
 struct xd_window {

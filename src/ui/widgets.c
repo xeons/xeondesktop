@@ -217,6 +217,73 @@ static void slider_changed(xd_widget *w, int value) {
         w->cb(w, w->user); /* may close the window */
 }
 
+/* ---- vertical scroll bars (logical units) ----------------------------------------- */
+
+/* Where a press on a scroll bar lands. */
+typedef enum sb_part : uint8_t {
+    SB_NONE,
+    SB_LINE_UP,
+    SB_LINE_DOWN,
+    SB_PAGE_UP,
+    SB_PAGE_DOWN,
+    SB_THUMB,
+} sb_part;
+
+static int sb_arrow(xd_rect sb) { return XD_MIN(sb.w, sb.h / 2); }
+
+/* The thumb of scroll bar `sb` showing `page` of `total` rows from `first`,
+ * measured as the theme draws it. */
+static xd_rect sb_thumb(const xd_ui *ui, xd_rect sb, int first, int page, int total) {
+    xd_theme t;
+    xd_theme_init(&t, ui->style, &ui->scheme, 1.0);
+    return xd_theme_vscrollbar_thumb(&t, sb, first, page, total);
+}
+
+static sb_part sb_hit(const xd_ui *ui, xd_rect sb, int first, int page, int total, double y) {
+    int arrow = sb_arrow(sb);
+    if (y < sb.y + arrow)
+        return SB_LINE_UP;
+    if (y >= sb.y + sb.h - arrow)
+        return SB_LINE_DOWN;
+    xd_rect thumb = sb_thumb(ui, sb, first, page, total);
+    if (y < thumb.y)
+        return SB_PAGE_UP;
+    if (y >= thumb.y + thumb.h)
+        return SB_PAGE_DOWN;
+    return SB_THUMB;
+}
+
+/* The first row that puts the thumb's top at `thumb_y` (thumb dragging). */
+static int sb_first_at(const xd_ui *ui, xd_rect sb, int first, int page, int total,
+                       double thumb_y) {
+    xd_rect thumb = sb_thumb(ui, sb, first, page, total);
+    int arrow = sb_arrow(sb);
+    double track_h = sb.h - 2 * arrow - thumb.h;
+    int range = total - page;
+    if (track_h <= 0 || range <= 0)
+        return first;
+    double pos = (thumb_y - (sb.y + arrow)) / track_h;
+    return (int)lround(XD_CLAMP(pos, 0.0, 1.0) * range);
+}
+
+/* The first row after a click on `part` (not the thumb). */
+static int sb_step(sb_part part, int first, int page) {
+    switch (part) {
+    case SB_LINE_UP:
+        return first - 1;
+    case SB_LINE_DOWN:
+        return first + 1;
+    case SB_PAGE_UP:
+        return first - page;
+    case SB_PAGE_DOWN:
+        return first + page;
+    case SB_NONE:
+    case SB_THUMB:
+        break;
+    }
+    return first;
+}
+
 /* ---- list box and tab geometry (logical units) ---------------------------------- */
 
 static int list_rows(const xd_widget *w) {
@@ -528,12 +595,32 @@ void xd_window_render(xd_window *win) {
 
 static void popup_close(xd_window *win);
 
+static bool popup_has_scrollbar(const xd_listpopup *p) { return (int)p->combo->count > p->rows; }
+
+/* Inside the 1px border, on the right. */
+static xd_rect popup_scrollbar(const xd_listpopup *p) {
+    return (xd_rect){p->width - 1 - XD_SCROLL_W, 1, XD_SCROLL_W, p->height - 2};
+}
+
+static int popup_row_w(const xd_listpopup *p) {
+    return p->width - 2 - (popup_has_scrollbar(p) ? XD_SCROLL_W : 0);
+}
+
+static void popup_set_first(xd_listpopup *p, int first) {
+    first = XD_CLAMP(first, 0, XD_MAX((int)p->combo->count - p->rows, 0));
+    if (first != p->first) {
+        p->first = first;
+        p->dirty = true;
+    }
+}
+
 static void popup_scroll_to(xd_listpopup *p, int index) {
-    if (index < p->first)
-        p->first = index;
-    if (index >= p->first + p->rows)
-        p->first = index - p->rows + 1;
-    p->first = XD_CLAMP(p->first, 0, XD_MAX((int)p->combo->count - p->rows, 0));
+    int first = p->first;
+    if (index < first)
+        first = index;
+    if (index >= first + p->rows)
+        first = index - p->rows + 1;
+    popup_set_first(p, first);
 }
 
 void xd_popup_render(xd_listpopup *p) {
@@ -557,9 +644,13 @@ void xd_popup_render(xd_listpopup *p) {
         int idx = p->first + i;
         if (idx >= (int)p->combo->count)
             break;
-        xd_rect row = to_device((xd_rect){1, 1 + i * XD_LIST_ROW_H, p->width - 2, XD_LIST_ROW_H}, s);
+        xd_rect row =
+            to_device((xd_rect){1, 1 + i * XD_LIST_ROW_H, popup_row_w(p), XD_LIST_ROW_H}, s);
         xd_theme_draw_list_item(&t, cr, row, idx == p->hot, p->combo->items[idx]);
     }
+    if (popup_has_scrollbar(p))
+        xd_theme_draw_vscrollbar(&t, cr, to_device(popup_scrollbar(p), s), p->first, p->rows,
+                                 (int)p->combo->count);
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
 
@@ -581,9 +672,12 @@ static void popup_xdg_configure(void *data, struct xdg_surface *xdg, uint32_t se
 
 static const struct xdg_surface_listener popup_xdg_listener = {.configure = popup_xdg_configure};
 
-static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *x,
-                            [[maybe_unused]] int32_t px, [[maybe_unused]] int32_t py,
-                            [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+static void popup_configure(void *data, [[maybe_unused]] struct xdg_popup *x, int32_t px,
+                            int32_t py, [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {
+    xd_listpopup *p = data;
+    p->x = px;
+    p->y = py;
+}
 
 static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *x) {
     xd_listpopup *p = data;
@@ -666,6 +760,7 @@ static void popup_close(xd_window *win) {
     win->dirty = true;
     if (win->ui->pointer_popup == p)
         win->ui->pointer_popup = nullptr;
+    xd_ui_remove_source(p->sb_repeat);
     xdg_popup_destroy(p->popup);
     xdg_surface_destroy(p->xdg_surface);
     if (p->viewport != nullptr)
@@ -702,7 +797,9 @@ xd_listpopup *xd_popup_for_surface(xd_ui *ui, struct wl_surface *s) {
     return nullptr;
 }
 
-static int popup_row_at(const xd_listpopup *p, double y) {
+static int popup_row_at(const xd_listpopup *p, double x, double y) {
+    if (x >= 1 + popup_row_w(p))
+        return -1; /* on the scroll bar */
     double f = floor((y - 1) / (double)XD_LIST_ROW_H);
     if (!(f >= 0 && f < (double)XD_LIST_MAX_ROWS))
         return -1;
@@ -712,8 +809,37 @@ static int popup_row_at(const xd_listpopup *p, double y) {
     return p->first + row;
 }
 
-void xd_popup_pointer_motion(xd_listpopup *p, [[maybe_unused]] double x, double y) {
-    int hot = popup_row_at(p, y);
+static sb_part popup_sb_hit(const xd_listpopup *p, double y) {
+    return sb_hit(p->owner->ui, popup_scrollbar(p), p->first, p->rows, (int)p->combo->count, y);
+}
+
+/* A held arrow or track scrolls on, as Windows' does: the track only while
+ * the pointer is still on the same side of the thumb. */
+static void popup_sb_repeat(void *user) {
+    xd_listpopup *p = user;
+    sb_part part = p->sb_pressed;
+    if (p->sb_repeat != nullptr && !p->sb_repeat->repeat)
+        p->sb_repeat = xd_ui_add_timer(p->owner->ui, 50, true, popup_sb_repeat, p);
+    if (popup_sb_hit(p, p->pointer_y) == part)
+        popup_set_first(p, sb_step(part, p->first, p->rows));
+}
+
+static void popup_sb_release(xd_listpopup *p) {
+    p->sb_pressed = SB_NONE;
+    xd_ui_remove_source(p->sb_repeat);
+    p->sb_repeat = nullptr;
+}
+
+void xd_popup_pointer_motion(xd_listpopup *p, double x, double y) {
+    p->pointer_y = y;
+    if (p->sb_pressed == SB_THUMB) {
+        popup_set_first(p, sb_first_at(p->owner->ui, popup_scrollbar(p), p->first, p->rows,
+                                       (int)p->combo->count, y - p->sb_offset));
+        return;
+    }
+    if (p->sb_pressed != SB_NONE)
+        return;
+    int hot = popup_row_at(p, x, y);
     if (hot >= 0 && hot != p->hot) {
         p->hot = hot;
         p->dirty = true;
@@ -721,20 +847,41 @@ void xd_popup_pointer_motion(xd_listpopup *p, [[maybe_unused]] double x, double 
 }
 
 void xd_popup_pointer_button(xd_listpopup *p, uint32_t button, bool pressed) {
-    if (button != BTN_LEFT || pressed)
+    if (button != BTN_LEFT)
         return;
-    int row = popup_row_at(p, p->owner->ui->pointer_y);
+    xd_ui *ui = p->owner->ui;
+    double x = ui->pointer_x;
+    double y = ui->pointer_y;
+    p->pointer_y = y;
+    if (pressed) {
+        /* A drag whose release went to another program ends here. */
+        popup_sb_release(p);
+        if (!popup_has_scrollbar(p) || !contains(popup_scrollbar(p), x, y))
+            return;
+        sb_part part = popup_sb_hit(p, y);
+        p->sb_pressed = part;
+        if (part == SB_THUMB) {
+            xd_rect thumb = sb_thumb(ui, popup_scrollbar(p), p->first, p->rows,
+                                     (int)p->combo->count);
+            p->sb_offset = y - thumb.y;
+        } else {
+            popup_set_first(p, sb_step(part, p->first, p->rows));
+            xd_ui_remove_source(p->sb_repeat);
+            p->sb_repeat = xd_ui_add_timer(ui, 400, false, popup_sb_repeat, p);
+        }
+        return;
+    }
+    if (p->sb_pressed != SB_NONE) {
+        popup_sb_release(p); /* the list stays open */
+        return;
+    }
+    int row = popup_row_at(p, x, y);
     if (row >= 0)
         popup_choose(p->owner, row);
 }
 
 void xd_popup_pointer_axis(xd_listpopup *p, double value) {
-    int step = value > 0 ? 1 : -1;
-    int first = XD_CLAMP(p->first + step, 0, XD_MAX((int)p->combo->count - p->rows, 0));
-    if (first != p->first) {
-        p->first = first;
-        p->dirty = true;
-    }
+    popup_set_first(p, p->first + (value > 0 ? 1 : -1));
 }
 
 /* ---- window lifecycle --------------------------------------------------------- */
@@ -1183,18 +1330,8 @@ static void select_index(xd_widget *w, int index) {
 
 /* Scroll thumb dragging: map the pointer back to a first row. */
 static void list_drag_thumb(xd_widget *w, double y) {
-    xd_theme t;
-    xd_theme_init(&t, w->win->ui->style, &w->win->ui->scheme, 1.0);
-    xd_rect sb = list_scrollbar(w);
-    int rows = list_rows(w);
-    xd_rect thumb = xd_theme_vscrollbar_thumb(&t, sb, w->first, rows, (int)w->count);
-    int arrow = XD_MIN(sb.w, sb.h / 2);
-    double track_h = sb.h - 2 * arrow - thumb.h;
-    int range = (int)w->count - rows;
-    if (track_h <= 0 || range <= 0)
-        return;
-    double pos = (y - w->win->thumb_offset - (sb.y + arrow)) / track_h;
-    int first = (int)lround(XD_CLAMP(pos, 0.0, 1.0) * range);
+    int first = sb_first_at(w->win->ui, list_scrollbar(w), w->first, list_rows(w), (int)w->count,
+                            y - w->win->thumb_offset);
     if (first != w->first) {
         w->first = first;
         w->win->dirty = true;
@@ -1211,6 +1348,13 @@ void xd_window_pointer_axis(xd_window *win, double value) {
 }
 
 void xd_window_pointer_motion(xd_window *win, double x, double y) {
+    /* A drag of the drop-down's scroll thumb goes on past the list: the
+     * popup grab hands the pointer to this window once it leaves. */
+    xd_listpopup *p = win->popup;
+    if (p != nullptr && p->sb_pressed != SB_NONE) {
+        xd_popup_pointer_motion(p, x - p->x, y - p->y);
+        return;
+    }
     xd_widget *pw = win->pressed;
     if (pw != nullptr && pw->kind == XD_W_CUSTOM && pw->pointer != nullptr) {
         pw->pointer(pw, XD_POINTER_MOTION, x - pw->r.x, y - pw->r.y, pw->user);
@@ -1245,6 +1389,13 @@ void xd_window_pointer_leave(xd_window *win) {
 }
 
 void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
+    if (win->popup != nullptr && win->popup->sb_pressed != SB_NONE) {
+        /* The end of a scroll bar drag that left the list (or, on a press,
+         * one whose release went to another program). */
+        popup_sb_release(win->popup);
+        if (!pressed)
+            return;
+    }
     /* The compositor ends the drop-down's grab only for clicks in other
      * programs. A click in this window (another tab, a button) closes the
      * list and does nothing else, as in Windows. */
@@ -1318,23 +1469,15 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
     }
     if (w->kind == XD_W_LISTBOX) {
         if (list_has_scrollbar(w) && contains(list_scrollbar(w), x, y)) {
-            xd_theme t;
-            xd_theme_init(&t, win->ui->style, &win->ui->scheme, 1.0);
             xd_rect sb = list_scrollbar(w);
             int rows = list_rows(w);
-            xd_rect thumb = xd_theme_vscrollbar_thumb(&t, sb, w->first, rows, (int)w->count);
-            int arrow = XD_MIN(sb.w, sb.h / 2);
-            if (y < sb.y + arrow)
-                w->first -= 1;
-            else if (y >= sb.y + sb.h - arrow)
-                w->first += 1;
-            else if (y < thumb.y)
-                w->first -= rows;
-            else if (y >= thumb.y + thumb.h)
-                w->first += rows;
-            else {
+            int total = (int)w->count;
+            sb_part part = sb_hit(win->ui, sb, w->first, rows, total, y);
+            if (part == SB_THUMB) {
                 win->thumb_drag = true;
-                win->thumb_offset = y - thumb.y;
+                win->thumb_offset = y - sb_thumb(win->ui, sb, w->first, rows, total).y;
+            } else {
+                w->first = sb_step(part, w->first, rows);
             }
             list_clamp(w);
             win->dirty = true;
@@ -1503,6 +1646,30 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
                 return;
             }
             p->hot = XD_CLAMP(p->hot + (sym == XKB_KEY_Down ? 1 : -1), 0, (int)p->combo->count - 1);
+            popup_scroll_to(p, p->hot);
+            p->dirty = true;
+            return;
+        case XKB_KEY_Prior:
+        case XKB_KEY_Next: {
+            /* As in a Windows list: first to the edge of the visible page,
+             * then a page further (keeping one row in view). */
+            int last = (int)p->combo->count - 1;
+            int page = XD_MAX(p->rows - 1, 1);
+            int target;
+            if (sym == XKB_KEY_Next) {
+                int bottom = XD_MIN(p->first + p->rows - 1, last);
+                target = p->hot < bottom ? bottom : p->hot + page;
+            } else {
+                target = p->hot > p->first ? p->first : p->hot - page;
+            }
+            p->hot = XD_CLAMP(target, 0, last);
+            popup_scroll_to(p, p->hot);
+            p->dirty = true;
+            return;
+        }
+        case XKB_KEY_Home:
+        case XKB_KEY_End:
+            p->hot = sym == XKB_KEY_Home ? 0 : (int)p->combo->count - 1;
             popup_scroll_to(p, p->hot);
             p->dirty = true;
             return;

@@ -872,6 +872,62 @@ def taskbar_only(s):
 
 
 @scenario()
+def combo_list_scrolls(s):
+    """A drop-down list longer than its eight rows has a scroll bar: its
+    arrow scrolls the list, its thumb drags to the end, and the last item
+    (Display Properties' 23rd colour scheme) can be picked; Home, End and
+    the page keys move through it too."""
+    s.launch("xd-desk", "--page", "2")
+    s.wait_window(title="Display Properties", state="activated")
+    # Focus starts on the tabs; Tab goes to the style list, then the colour
+    # schemes.
+    s.inject("key", "Tab", "sleep", 200, "key", "Tab", "sleep", 200)
+    focused = s.settle("scheme-focused")
+    s.inject("key", "alt+Down")
+    listed = s.settle("list-open")
+    box = listed.changed_box(focused, (0, 0, WIDTH, HEIGHT - 40), step=1)
+    s.check(box is not None and box[3] > 138, f"Alt+Down opened the list ({box})")
+    # The list is as wide as the combo box (the arrow button changed too),
+    # 8 rows of 17px and a border, at the bottom of what changed.
+    lx, lw = box[0], box[2]
+    ly = box[1] + box[3] - 138
+    bar_x = lx + lw - 9  # the middle of the scroll bar
+
+    # The scroll bar's down arrow scrolls the list by one: the rows move.
+    s.inject("move", bar_x, ly + 138 - 8, "click", "sleep", 300)
+    scrolled = s.settle("arrow-clicked")
+    rows = (lx + 4, ly + 2, lw - 30, 134)
+    s.check(scrolled.differs(listed, rows) > 0.02, "the down arrow scrolled the list")
+    s.check(scrolled.differs(listed, (bar_x - 6, ly + 20, 12, 100)) > 0.0,
+            "the scroll bar's thumb moved")
+
+    # Drag the thumb from near the top to the bottom (past the list, still
+    # over the dialog), then pick the last row.
+    s.inject("move", bar_x, ly + 22, "down", "sleep", 100, "move", bar_x, ly + 80, "sleep", 100,
+             "move", bar_x - 40, ly - 30, "sleep", 100,  # back up, over the dialog
+             "move", bar_x, ly + 136, "sleep", 300, "up", "sleep", 300)
+    s.settle("thumb-dragged")
+    s.inject("move", lx + 40, ly + 138 - 9, "sleep", 200, "click", "sleep", 400)
+    picked = s.settle("last-picked")
+    combo_text = (lx + 4, ly - 18, lw - 30, 14)  # the combo box, just above the list
+    s.check(picked.differs(focused, combo_text) > 0.02, "a click picked the last row")
+    s.check(picked.differs(focused, rows) < 0.02, "and closed the list")
+
+    # Keyboard: Home, then PageDown twice and End, then back to the last.
+    s.inject("key", "alt+Down", "sleep", 300, "key", "Home", "sleep", 200)
+    top = s.settle("home")
+    s.inject("key", "Next", "sleep", 200, "key", "Next", "sleep", 200)
+    paged = s.settle("paged")
+    s.check(paged.differs(top, rows) > 0.02, "PageDown moved through the list")
+    s.inject("key", "End", "sleep", 200, "key", "Return", "sleep", 300)
+    s.inject("key", "Return")  # OK: apply and close
+    s.wait_window(title="Display Properties", gone=True)
+    s.wait(lambda: s.ini().get("Appearance", "Scheme", fallback="") == "windows-standard",
+           "desktop.ini to name the last scheme")
+    s.log("ok: the last scheme, Windows Standard, was picked and applied")
+
+
+@scenario()
 def desktop_submenu_over_window(s):
     """The desktop menu and its submenus draw over windows (a submenu, Arrange
     Icons By, once drew behind them)."""
