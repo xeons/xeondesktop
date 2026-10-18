@@ -27,6 +27,8 @@ typedef struct sysdm {
 
     /* User Profiles */
     GtkListStore *profiles;
+    GtkWidget *profiles_view;
+    GtkWidget *profile_delete;
     GCancellable *sizing;
 } sysdm;
 

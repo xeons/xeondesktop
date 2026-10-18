@@ -23,11 +23,12 @@
 
 #include "../core/common.h"
 #include "../gtkapp/gtkapp.h"
+#include "accounts.h"
 #include "users.h"
 
-#define ACCOUNTS "org.freedesktop.Accounts"
-#define ACCOUNTS_PATH "/org/freedesktop/Accounts"
-#define USER_IFACE "org.freedesktop.Accounts.User"
+#define ACCOUNTS XD_ACCOUNTS_NAME
+#define ACCOUNTS_PATH XD_ACCOUNTS_PATH
+#define USER_IFACE XD_ACCOUNTS_USER_IFACE
 #define TITLE "User Accounts"
 /* Pictures are stored at XP's size, doubled for HiDPI. */
 static constexpr int PICTURE_SIZE = 96;
@@ -152,7 +153,9 @@ static void call_done(GObject *src, GAsyncResult *res, gpointer data) {
     pending_call *c = data;
     ua *u = c->u;
     GError *error = nullptr;
-    GVariant *r = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &error);
+    GVariant *r = G_IS_DBUS_PROXY(src)
+                      ? g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &error)
+                      : g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
     if (--u->calls == 0)
         gtk_widget_set_sensitive(u->body, TRUE);
     if (r == nullptr) {
@@ -170,17 +173,22 @@ static void call_done(GObject *src, GAsyncResult *res, gpointer data) {
 /* Calls AccountsService without waiting: polkit's password prompt may be
  * up for a while, and the window must keep drawing and answering
  * meanwhile. It's greyed until the reply, so the page stays as it was;
- * then `done` runs, or an error box says `what` failed. */
-static void call(ua *u, GDBusProxy *p, const char *method, GVariant *args, const char *what,
-                 reply_fn done) {
+ * then `done` runs, or an error box says `what` failed. begin_call's
+ * result goes to the call as call_done's data. */
+static pending_call *begin_call(ua *u, const char *what, reply_fn done) {
     pending_call *c = g_new0(pending_call, 1);
     c->u = u;
     c->what = g_strdup(what);
     c->done = done;
     if (u->calls++ == 0)
         gtk_widget_set_sensitive(u->body, FALSE);
+    return c;
+}
+
+static void call(ua *u, GDBusProxy *p, const char *method, GVariant *args, const char *what,
+                 reply_fn done) {
     g_dbus_proxy_call(p, method, args, G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION,
-                      G_MAXINT, nullptr, call_done, c);
+                      G_MAXINT, nullptr, call_done, begin_call(u, what, done));
 }
 
 static void build_page(ua *u);
@@ -670,8 +678,9 @@ static void on_delete(ua *u) {
     GDBusProxy *p = cur_account(u);
     if (p == nullptr || u->manager == nullptr)
         return;
-    call(u, u->manager, "DeleteUser", g_variant_new("(xb)", (gint64)uid_prop(p), !u->keep_files),
-         "The account could not be deleted.", deleted);
+    xd_accounts_delete_user(g_dbus_proxy_get_connection(u->manager), (gint64)uid_prop(p),
+                            !u->keep_files, nullptr, call_done,
+                            begin_call(u, "The account could not be deleted.", deleted));
 }
 
 static void on_full_name_changed([[maybe_unused]] GtkEditable *e, gpointer data) {

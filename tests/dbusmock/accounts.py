@@ -1,6 +1,7 @@
 """AccountsService (org.freedesktop.Accounts) for python-dbusmock, which
 has no template of its own in every version: the manager and user objects
-xd-users uses. The calling user (an administrator) and "bob" exist.
+xd-users uses. The calling user (an administrator) and "bob" exist;
+the parameter "BobHome" gives bob's home folder (default /home/bob).
 
     python3 -m dbusmock --system -t tests/dbusmock/accounts.py
 """
@@ -29,7 +30,7 @@ def setter(prop, extra=""):
     return f'self.Set("{USER_IFACE}", "{prop}", args[0]); {extra}self.EmitSignal("{USER_IFACE}", "Changed", "", [])'
 
 
-def add_user(mock, uid, name, real_name, account_type):
+def add_user(mock, uid, name, real_name, account_type, home=None):
     path = user_path(uid)
     mock.AddObject(
         path,
@@ -39,7 +40,7 @@ def add_user(mock, uid, name, real_name, account_type):
             "UserName": name,
             "RealName": real_name,
             "AccountType": dbus.Int32(account_type),
-            "HomeDirectory": f"/home/{name}",
+            "HomeDirectory": home or f"/home/{name}",
             "Shell": "/bin/bash",
             "Email": "",
             "Language": "",
@@ -73,8 +74,9 @@ def add_user(mock, uid, name, real_name, account_type):
 def load(mock, parameters):
     mock.next_uid = 2000
     me = pwd.getpwuid(os.getuid()).pw_name
-    add_user(mock, os.getuid(), me, parameters.get("RealName", "Test User"), 1)
-    add_user(mock, 1999, "bob", "Bob", 0)
+    add_user(mock, os.getuid(), me, parameters.get("RealName", "Test User"), 1,
+             pwd.getpwuid(os.getuid()).pw_dir)
+    add_user(mock, 1999, "bob", "Bob", 0, parameters.get("BobHome"))
     mock.AddProperties(
         MAIN_IFACE,
         dbus.Dictionary(

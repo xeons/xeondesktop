@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "../theme/draw.h"
+#include "../users/accounts.h"
 #include "sysdm.h"
 
 /* ---- helpers ------------------------------------------------------------------- */
@@ -664,7 +665,7 @@ static GtkWidget *build_network(sysdm *s) {
 
 /* ---- User Profiles --------------------------------------------------------------- */
 
-enum { COL_NAME, COL_SIZE, COL_TYPE, COL_MODIFIED, COL_HOME, NCOLS };
+enum { COL_NAME, COL_SIZE, COL_TYPE, COL_MODIFIED, COL_HOME, COL_UID, NCOLS };
 
 static _Thread_local guint64 walk_total;
 
@@ -740,8 +741,14 @@ static void fill_profiles(sysdm *s) {
         g_strfreev(lines);
         g_free(defs);
     }
-    setpwent();
-    for (struct passwd *pw = getpwent(); pw != nullptr; pw = getpwent()) {
+    /* XD_SYSDM_PASSWD: a passwd file to list instead, for the UI tests,
+     * which can't add users to the system's. */
+    const char *file = g_getenv("XD_SYSDM_PASSWD");
+    FILE *f = file != nullptr ? fopen(file, "re") : nullptr;
+    if (f == nullptr)
+        setpwent();
+    for (struct passwd *pw = f != nullptr ? fgetpwent(f) : getpwent(); pw != nullptr;
+         pw = f != nullptr ? fgetpwent(f) : getpwent()) {
         if (pw->pw_uid < uid_min || pw->pw_uid > uid_max || pw->pw_dir == nullptr)
             continue;
         struct stat st;
@@ -753,7 +760,8 @@ static void fill_profiles(sysdm *s) {
         GtkTreeIter it;
         gtk_list_store_append(s->profiles, &it);
         gtk_list_store_set(s->profiles, &it, COL_NAME, pw->pw_name, COL_SIZE, "Calculating...",
-                           COL_TYPE, "Local", COL_MODIFIED, modified, COL_HOME, pw->pw_dir, -1);
+                           COL_TYPE, "Local", COL_MODIFIED, modified, COL_HOME, pw->pw_dir,
+                           COL_UID, (guint)pw->pw_uid, -1);
         g_free(modified);
 
         GtkTreePath *path = gtk_tree_model_get_path(GTK_TREE_MODEL(s->profiles), &it);
@@ -766,7 +774,10 @@ static void fill_profiles(sysdm *s) {
         g_task_run_in_thread(task, size_thread);
         g_object_unref(task);
     }
-    endpwent();
+    if (f != nullptr)
+        fclose(f);
+    else
+        endpwent();
 }
 
 static void on_open_profile([[maybe_unused]] GtkButton *b, gpointer data) {
@@ -781,6 +792,96 @@ static void on_open_profile([[maybe_unused]] GtkButton *b, gpointer data) {
     if (uri != nullptr)
         g_app_info_launch_default_for_uri(uri, nullptr, nullptr);
     g_free(uri);
+    g_free(home);
+}
+
+/* Delete is for another user's profile: XP refused the one in use. */
+static void on_profile_selected(GtkTreeSelection *sel, gpointer data) {
+    sysdm *s = data;
+    GtkTreeModel *m = nullptr;
+    GtkTreeIter it;
+    guint uid = 0;
+    gboolean any = gtk_tree_selection_get_selected(sel, &m, &it);
+    if (any)
+        gtk_tree_model_get(m, &it, COL_UID, &uid, -1);
+    gtk_widget_set_sensitive(s->profile_delete, any && uid != (guint)getuid());
+}
+
+typedef struct profile_req {
+    sysdm *s;
+    GtkTreeRowReference *row;
+} profile_req;
+
+static void on_profile_deleted(GObject *src, GAsyncResult *res, gpointer data) {
+    profile_req *req = data;
+    GError *err = nullptr;
+    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+    if (r == nullptr && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+        g_error_free(err); /* the window is gone */
+    } else if (r == nullptr) {
+        gtk_widget_set_sensitive(req->s->notebook, TRUE);
+        sysdm_call_failed(GTK_WINDOW(req->s->window), "The profile could not be deleted", err);
+        g_error_free(err);
+    } else {
+        gtk_widget_set_sensitive(req->s->notebook, TRUE);
+        GtkTreePath *path = gtk_tree_row_reference_get_path(req->row);
+        GtkTreeIter it;
+        if (path != nullptr &&
+            gtk_tree_model_get_iter(GTK_TREE_MODEL(req->s->profiles), &it, path))
+            gtk_list_store_remove(req->s->profiles, &it);
+        gtk_tree_path_free(path);
+        g_variant_unref(r);
+    }
+    gtk_tree_row_reference_free(req->row);
+    g_free(req);
+}
+
+/* Deletes the selected profile. An account without its home folder would
+ * be broken, so AccountsService deletes both, as User Accounts' Delete
+ * Files does; it asks polkit for an administrator's password. */
+static void on_delete_profile([[maybe_unused]] GtkButton *b, gpointer data) {
+    sysdm *s = data;
+    GtkTreeModel *m = nullptr;
+    GtkTreeIter it;
+    if (!gtk_tree_selection_get_selected(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(s->profiles_view)), &m, &it))
+        return;
+    char *name = nullptr;
+    char *home = nullptr;
+    guint uid = 0;
+    gtk_tree_model_get(m, &it, COL_NAME, &name, COL_HOME, &home, COL_UID, &uid, -1);
+    if (uid == (guint)getuid()) {
+        /* Greyed already; this is in case it's reached anyway. */
+        xd_message_box(GTK_WINDOW(s->window), "System Properties", XD_MB_WARNING, XD_MB_OK,
+                       FALSE, "The profile you are logged on with can't be deleted.");
+    } else {
+        char *text = g_strdup_printf("Are you sure you want to delete this profile?\n\nOn Linux "
+                                     "a profile can't go without its account, so %s's account is "
+                                     "deleted too, with its home folder %s.",
+                                     name, home);
+        GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, nullptr);
+        if (xd_message_box(GTK_WINDOW(s->window), "Confirm Delete", XD_MB_QUESTION, XD_MB_YES_NO,
+                           TRUE, text) != GTK_RESPONSE_YES) {
+            /* Not deleted. */
+        } else if (bus == nullptr) {
+            xd_message_box(GTK_WINDOW(s->window), "System Properties", XD_MB_ERROR, XD_MB_OK,
+                           FALSE, "The profile could not be deleted: the system bus isn't "
+                                  "available.");
+        } else {
+            profile_req *req = g_new0(profile_req, 1);
+            req->s = s;
+            GtkTreePath *path = gtk_tree_model_get_path(m, &it);
+            req->row = gtk_tree_row_reference_new(m, path);
+            gtk_tree_path_free(path);
+            /* Greyed until AccountsService answers. */
+            gtk_widget_set_sensitive(s->notebook, FALSE);
+            xd_accounts_delete_user(bus, (gint64)uid, true, s->calls, on_profile_deleted, req);
+        }
+        if (bus != nullptr)
+            g_object_unref(bus);
+        g_free(text);
+    }
+    g_free(name);
     g_free(home);
 }
 
@@ -801,8 +902,9 @@ static GtkWidget *build_profiles(sysdm *s) {
                        FALSE, 4);
 
     s->profiles = gtk_list_store_new(NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                     G_TYPE_STRING, G_TYPE_STRING);
+                                     G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT);
     GtkWidget *view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(s->profiles));
+    s->profiles_view = view;
     g_object_unref(s->profiles);
     static const char *const titles[] = {"Name", "Size", "Type", "Modified"};
     for (int i = 0; i < 4; i++) {
@@ -821,14 +923,25 @@ static GtkWidget *build_profiles(sysdm *s) {
     gtk_container_add(GTK_CONTAINER(scroll), view);
     gtk_box_pack_start(GTK_BOX(page), scroll, TRUE, TRUE, 0);
 
-    /* Deleting, retyping or copying profiles is an administrator's job
-     * (userdel, cp -a); Open shows the folder. */
+    /* Open shows the folder; Delete goes through AccountsService. Linux
+     * has no roaming profiles to change the type to, and nothing that
+     * copies one user's settings to another (cp -a, then fixing owners
+     * and paths, is an administrator's job). */
+    GtkWidget *type = sysdm_button("Change _Type...", nullptr, nullptr);
+    gtk_widget_set_tooltip_text(type, "Linux profiles are always local: there are no roaming "
+                                      "profiles to change to.");
+    s->profile_delete = sysdm_button("_Delete", G_CALLBACK(on_delete_profile), s);
+    GtkWidget *copy = sysdm_button("Copy _To...", nullptr, nullptr);
+    gtk_widget_set_tooltip_text(copy, "Linux has no way to copy one user's settings to another "
+                                      "user; an administrator copies the files and changes their "
+                                      "owner.");
     gtk_box_pack_start(GTK_BOX(page),
                        sysdm_button_row(sysdm_button("_Open", G_CALLBACK(on_open_profile), view),
-                                        sysdm_button("Change _Type...", nullptr, nullptr),
-                                        sysdm_button("_Delete", nullptr, nullptr),
-                                        sysdm_button("Copy _To...", nullptr, nullptr), nullptr),
+                                        type, s->profile_delete, copy, nullptr),
                        FALSE, FALSE, 0);
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
+    g_signal_connect(sel, "changed", G_CALLBACK(on_profile_selected), s);
+    on_profile_selected(sel, s);
     s->sizing = g_cancellable_new();
     fill_profiles(s);
     return page;
@@ -873,6 +986,9 @@ static void on_response(GtkDialog *d, int response, gpointer data) {
 
 static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     sysdm *s = data;
+    /* The list's selection changes as it goes; Delete may be gone first. */
+    g_signal_handlers_disconnect_by_data(
+        gtk_tree_view_get_selection(GTK_TREE_VIEW(s->profiles_view)), s);
     g_cancellable_cancel(s->sizing);
     g_clear_object(&s->sizing);
     g_cancellable_cancel(s->calls);

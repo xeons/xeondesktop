@@ -3316,6 +3316,84 @@ def polkit_agent_restarts(s):
     s.log("ok: the crashed agent was started again and registered")
 
 
+def mock_accounts(s, systemd=None):
+    """A private system bus with tests/dbusmock/accounts.py (us, an
+    administrator, and bob, whose home is in the scratch tree), and our
+    systemd mock with `systemd`'s parameters if given. Returns a function
+    giving an AccountsService object's calls so far, by path."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    bob_home = os.path.join(s.base, "bob")
+    os.makedirs(os.path.join(bob_home, "Documents"), exist_ok=True)
+    templates = [("accounts.py", {"BobHome": bob_home})]
+    if systemd is not None:
+        templates.append(("systemd.py", systemd))
+    for template, params in templates:
+        proc, _ = DBusTestCase.spawn_server_template(
+            os.path.join(SOURCE_ROOT, "tests", "dbusmock", template), params,
+            stdout=subprocess.DEVNULL, system_bus=True,
+        )  # fmt: skip
+        s.children.append(proc)
+    bus = DBusTestCase.get_dbus(system_bus=True)
+
+    def calls(path="/org/freedesktop/Accounts"):
+        obj = bus.get_object("org.freedesktop.Accounts", path)
+        return [(str(c[1]), [a for a in c[2]]) for c in obj.GetCalls(dbus_interface=MOCK_IFACE)]
+
+    return bob_home, calls
+
+
+@scenario(LUNA_INI, requires=("dbusmock",))
+def sysdm_delete_profile(s):
+    """System Properties' User Profiles (on a dbusmock AccountsService):
+    Delete is greyed for our own profile; for bob's it asks XP's "Are you
+    sure you want to delete this profile?" and, on Yes, deletes the
+    account and its files through AccountsService's DeleteUser."""
+    from dbusmock import DBusTestCase
+
+    try:
+        bob_home, calls = mock_accounts(s)
+        me = pwd.getpwuid(os.getuid())
+        passwd = os.path.join(s.base, "passwd")
+        with open(passwd, "w") as f:
+            f.write(f"{me.pw_name}:x:{me.pw_uid}:{me.pw_gid}:Me:{s.home}:/bin/sh\n")
+            f.write(f"bob:x:1999:1999:Bob:{bob_home}:/bin/sh\n")
+        empty = s.settle("desktop")
+        s.launch("xd-sysdm", "--page", "3", env={"XD_SYSDM_PASSWD": passwd})
+        s.wait_window(title="System Properties", state="activated")
+        page = s.settle("user profiles")
+        x, y, w, h = page.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        # Our profile, the list's first row (below the window's top edge),
+        # then Alt+D: nothing (greyed).
+        s.inject("move", x + 80, y + 180, "click", "sleep", 300, "key", "alt+d",
+                 "sleep", 800)  # fmt: skip
+        def sysdm_active():
+            w = s.window(title="System Properties")
+            return w is not None and "activated" in w["states"]
+
+        s.check(not any(c[0] == "DeleteUser" for c in calls()) and sysdm_active(),
+                "Delete does nothing for our own profile")  # fmt: skip
+        # Bob's, the second row: the question (a message box), No, then Yes.
+        s.inject("key", "Down", "sleep", 300, "key", "alt+d")
+        s.wait(lambda: not sysdm_active(), "the Confirm Delete box")
+        s.settle("are you sure")
+        s.inject("key", "Return")  # No has the focus
+        s.wait(sysdm_active, "No to close the box")
+        s.check(not any(c[0] == "DeleteUser" for c in calls()), "No deleted nothing")
+        s.inject("key", "alt+d")
+        s.wait(lambda: not sysdm_active(), "the Confirm Delete box again")
+        s.settle("are you sure again")
+        s.inject("key", "alt+y")
+        s.wait(lambda: ("DeleteUser", [1999, True]) in calls(), "DeleteUser(1999, true)")
+        s.log("ok: Yes called DeleteUser(1999, true)")
+        gone = s.settle("deleted")
+        s.check(gone.differs(page, (x, y, w, h)) > 0, "the profile left the list")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 @scenario(LUNA_INI, requires=("dbusmock",))
 def sysdm_boot_next_time(s):
     """Startup and Recovery (on a dbusmock logind that can start a boot
