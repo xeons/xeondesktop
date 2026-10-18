@@ -270,11 +270,16 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  border-color: %s %s %s %s;\n  border-radius: 2px 2px 0 0;\n"
         "  box-shadow: inset -1px 0 %s%.0s;\n"
         "  margin: 2px 0 0 0; padding: 1px 6px 1px 6px; min-height: 0; outline-offset: -3px;\n}\n"
-        /* The selected tab is taller, overlaps its neighbours and covers
-         * the page's top edge. */
-        "notebook > header > tabs > tab:checked { margin: 0 -2px -1px -2px;\n"
-        "  padding: 2px 8px 3px 8px; }\n"
-        "notebook > header > tabs > tab:first-child:checked { margin-left: 0; }\n"
+        /* The selected tab is 2px taller and wider on each side, over its
+         * neighbours, and covers the page's top edge. GTK ignores negative
+         * margins on tabs but draws the selected one last, so its edges
+         * are drawn outside its box as shadows (GTK 3 paints them in
+         * order, the last on top): Windows 2000's raised edge with its
+         * rounded corner, 2px out from the box. */
+        "notebook > header > tabs > tab:checked { margin: 2px 0 -1px 0;\n"
+        "  padding: 0 6px 3px 6px; border-color: %s;\n"
+        "  box-shadow: 1px -1px %s, -1px -1px %s, 0 -2px %s, 2px 0 %s, -2px 0 %s,\n"
+        "    0 -1px %s, 1px 0 %s, -1px 0 %s; }\n"
         "notebook > stack:not(:only-child) {\n  border-style: solid; border-width: 0 1px 1px 1px;\n"
         "  border-color: %s %s %s %s;\n  box-shadow: inset -1px -1px %s, inset 1px 0 %s;\n}\n"
         "frame > border {\n  border-style: solid; border-width: 1px;\n"
@@ -300,7 +305,8 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  background-color: %s; color: %s;\n  border-style: solid; border-width: 1px;\n"
         "  border-color: %s %s %s %s; box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n}\n"
         "combobox button.combo:checked arrow { border-color: %s; box-shadow: none; }\n",
-        face, hi.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, hi.s, dk.s, dk.s, hi.s, sh.s, li.s,
+        face, hi.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, sh.s, hi.s, hi.s, dk.s, hi.s,
+        face, sh.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s,
         sh.s, hi.s, hi.s, sh.s, hi.s, sh.s, sh.s, hi.s, hi.s, sh.s, H(c->base), H(c->text), sh.s, hi.s, hi.s, sh.s, dk.s,
         li.s, H(c->base), sh.s, hi.s, hi.s, sh.s, dk.s, li.s, H(c->base), face, H(c->fg), li.s,
         dk.s, dk.s, li.s, hi.s, sh.s, sh.s);
@@ -308,7 +314,41 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
 
 /* ---- Luna and Whistler (Windows XP) ----------------------------------------------- */
 
-static void modern(const xd_toolkit_colors *c, xd_strbuf *o) {
+/* The selected tab, as libxdui draws it: 2px wider on each side, over its
+ * neighbours (GTK ignores negative margins on tabs but draws the selected
+ * one last, so the extra edges are shadows outside its box; GTK 3 paints
+ * shadows in order, the last on top), 2px taller, its label 2px higher.
+ * `edge` is the outline, `fill` the inside; `pad_bottom` takes the box a
+ * pixel below the unselected tabs, over the page's top edge. */
+static void flat_selected_tab(xd_strbuf *o, xd_rgba edge, xd_rgba fill, int pad_bottom) {
+    hexbuf e = hex(edge);
+    hexbuf f = hex(fill);
+    xd_strbuf_appendf(o,
+                      "notebook > header > tabs > tab:checked {\n"
+                      "  margin: 2px 0 -1px 0; padding: 0 8px %dpx 8px; border: 1px solid %s;\n"
+                      "  border-bottom: none; border-radius: 0;\n"
+                      "  box-shadow: -2px -2px %s, 2px -2px %s, -2px 0 %s, 2px 0 %s,\n"
+                      "    -1px -1px %s, 1px -1px %s, -1px 0 %s, 1px 0 %s;\n}\n",
+                      pad_bottom, f.s, e.s, e.s, e.s, e.s, f.s, f.s, f.s, f.s);
+}
+
+/* Luna's selected tab: as above, with XP's orange band (two light rows and
+ * a darker one) across the top. */
+static void luna_selected_tab(xd_strbuf *o, xd_rgba border, xd_rgba hot) {
+    hexbuf b = hex(border);
+    hexbuf h = hex(hot);
+    xd_strbuf_appendf(o,
+                      "notebook > header > tabs > tab:checked {\n"
+                      "  margin: 2px 0 -1px 0; padding: 0 8px 5px 8px;\n"
+                      "  border: 1px solid #fdfdfe; border-top-color: #e6a000;\n"
+                      "  border-bottom: none; border-radius: 0;\n"
+                      "  background-image: linear-gradient(#ffffff, #fcfcfe);\n"
+                      "  box-shadow: -2px -2px %s, 2px -2px %s, -2px 0 #e6a000, 2px 0 #e6a000,\n"
+                      "    -2px 1px %s, 2px 1px %s, -1px 1px #fdfdfe, 1px 1px #fdfdfe;\n}\n",
+                      h.s, h.s, b.s, b.s);
+}
+
+static void modern(const xd_toolkit_colors *c, bool aero, xd_strbuf *o) {
     hexbuf fb = hex(c->field_border);
     xd_strbuf_appendf(
         o,
@@ -387,10 +427,7 @@ static void modern(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  background-image: linear-gradient(#ffffff, #ecebe6);\n"
         "  border: 1px solid %s;\n  border-bottom: none;\n  border-radius: 3px 3px 0 0;\n"
         "  margin-top: 2px;\n}\n"
-        "notebook > header > tabs > tab:hover, notebook > header > tabs > tab:checked {\n"
-        "  box-shadow: inset 0 2px %s;\n}\n"
-        "notebook > header > tabs > tab:checked { margin-top: 0; padding-bottom: 4px;\n"
-        "  background-image: linear-gradient(#ffffff, #fcfcfe); }\n"
+        "notebook > header > tabs > tab:hover { box-shadow: inset 0 2px %s; }\n"
         "notebook > stack:not(:only-child) { background-color: #fcfcfe;\n"
         "  border: 1px solid %s; }\n"
         "treeview.view header button {\n  background-image: linear-gradient(#ffffff, #ebeadb);\n"
@@ -415,7 +452,6 @@ static void modern(const xd_toolkit_colors *c, xd_strbuf *o) {
         o,
         "notebook > header { border: none; border-bottom: 1px solid %s; padding: 0 2px; }\n"
         "notebook > header > tabs > tab { margin: 2px 0 0 0; min-height: 0; }\n"
-        "notebook > header > tabs > tab:checked { margin: 0 0 -1px 0; }\n"
         "notebook > stack:not(:only-child) { border: 1px solid %s; border-top: none; }\n"
         "frame > border { border: 1px solid #d0d0bf; border-radius: 3px; box-shadow: none; }\n"
         "frame { padding-left: 6px; }\n"
@@ -432,6 +468,11 @@ static void modern(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  border: 1px solid #ffffff; border-radius: 2px;\n}\n",
         H(c->tab_border), H(c->tab_border), H(c->selected_bg), H(c->base), H(c->text),
         H(c->field_border), H(c->thumb_top), H(c->thumb_bottom));
+    /* Windows 7's selected tab is plain white; XP's has the orange band. */
+    if (aero)
+        flat_selected_tab(o, c->tab_border, xd_rgba_hex(0xFCFCFE), 5);
+    else
+        luna_selected_tab(o, c->tab_border, c->tab_hot);
 }
 
 const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT] = {
@@ -610,9 +651,7 @@ static void whistler(xd_strbuf *o) {
         "notebook > header > tabs > tab {\n  background-color: #dbdbce; background-image: none;\n"
         "  border: none; border-radius: 0; box-shadow: inset -1px 0 #ffffff;\n"
         "  margin: 2px 0 0 0; padding: 2px 8px; min-height: 0; outline-offset: -3px;\n}\n"
-        "notebook > header > tabs > tab:checked {\n  background-color: #f3f3ef;\n"
-        "  border: 1px solid #ffffff; border-bottom: none; box-shadow: none;\n"
-        "  margin: 0 0 -1px 0; padding: 2px 8px 4px 8px;\n}\n"
+        "notebook > header > tabs > tab:checked { background-color: #f3f3ef; }\n"
         "notebook > stack:not(:only-child) {\n  background-color: #f3f3ef; border: 1px solid;\n"
         "  border-color: #ffffff #c1c1bb #c1c1bb #ffffff; border-top: none;\n}\n"
         "frame { padding-left: 6px; }\n"
@@ -638,6 +677,7 @@ static void whistler(xd_strbuf *o) {
         "  border: 1px solid #808080; border-radius: 0; box-shadow: inset 1px 1px #ffffff;\n"
         "  margin: -9px 0; }\n"
         "scale highlight { background: none; }\n"));
+    flat_selected_tab(o, xd_rgba_hex(0xFFFFFF), xd_rgba_hex(0xF3F3EF), 4);
 }
 
 /* XP push buttons: the theme engine's own button (saved as PNGs by
@@ -683,6 +723,96 @@ static void xp_buttons(const xd_toolkit_colors *c, xd_strbuf *o) {
 }
 #undef XP_BUTTON
 
+/* Combo boxes drop down a list box, as in Windows, instead of a menu over
+ * the field: white, a 1px border (libxdui's), the highlight following the
+ * pointer. GTK names the pop-up window, not its combo box. */
+static void combo_lists(const xd_toolkit_colors *c, xd_strbuf *o) {
+    xd_rgba border = c->classic ? c->frame : xd_rgba_hex(0x7F9DB9);
+    xd_strbuf_appendf(o,
+                      "combobox { -GtkComboBox-appears-as-list: 1; }\n"
+                      "#gtk-combobox-popup-window scrolledwindow.frame {\n"
+                      "  border: 1px solid %s; border-radius: 0; box-shadow: none; padding: 0;\n}\n"
+                      "#gtk-combobox-popup-window treeview.view {\n"
+                      "  -GtkTreeView-vertical-separator: 0; background-color: %s; color: %s;\n}\n"
+                      "#gtk-combobox-popup-window treeview.view:selected {\n"
+                      "  background-color: %s; color: %s;\n}\n",
+                      H(border), H(c->base), H(c->text), H(c->selected_bg), H(c->selected_fg));
+}
+
+/* The file chooser as far as CSS reaches XP's Open dialog: the places
+ * sidebar is a sunken list with full-colour icons, the path bar flat
+ * buttons that rise under the pointer (the current folder in bold). XP
+ * push buttons are border images, which the path bar must drop. */
+#define PATH_BUTTON ".path-bar button"
+#define PATH_XP_BUTTON ".path-bar button.text-button:not(.flat):not(.combo)"
+static void file_chooser(const xd_toolkit_colors *c, xd_strbuf *o) {
+    if (c->classic)
+        xd_strbuf_appendf(o,
+                          "placessidebar {\n  border-style: solid; border-width: 1px;\n"
+                          "  border-color: %s %s %s %s;\n"
+                          "  box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n}\n",
+                          H(c->shadow), H(c->hilight), H(c->hilight), H(c->shadow),
+                          H(c->dkshadow), H(c->light));
+    else
+        xd_strbuf_appendf(o, "placessidebar { border: 1px solid %s; }\n", H(c->field_border));
+    xd_strbuf_appendf(
+        o,
+        "placessidebar { -gtk-icon-style: regular; background-color: %s; padding: 1px; }\n"
+        "placessidebar list { background-color: %s; }\n"
+        "placessidebar row.sidebar-row { min-height: 0; padding: 1px 4px; }\n"
+        "placessidebar row.sidebar-row:selected label,\n"
+        "placessidebar row.sidebar-row:selected image { color: %s; }\n"
+        "placessidebar separator { margin: 3px 0; }\n"
+        PATH_BUTTON ", " PATH_XP_BUTTON " {\n"
+        "  background-color: transparent; background-image: none; border-image: none;\n"
+        "  border: 1px solid transparent; border-radius: 0; box-shadow: none;\n"
+        "  padding: 1px 4px; min-height: 0; min-width: 0; -gtk-icon-style: regular;\n}\n"
+        PATH_BUTTON ":hover, " PATH_XP_BUTTON ":hover {\n"
+        "  border-image: none; background-image: none; border-color: %s %s %s %s;\n}\n"
+        PATH_BUTTON ":active, " PATH_XP_BUTTON ":active {\n"
+        "  border-image: none; background-image: none; border-color: %s %s %s %s;\n"
+        "  padding: 1px 4px;\n}\n"
+        PATH_BUTTON ":checked, " PATH_XP_BUTTON ":checked { font-weight: bold; }\n",
+        H(c->base), H(c->base), H(c->selected_fg),
+        H(c->classic ? c->hilight : c->field_border), H(c->classic ? c->shadow : c->field_border),
+        H(c->classic ? c->shadow : c->field_border), H(c->classic ? c->hilight : c->field_border),
+        H(c->classic ? c->shadow : c->field_border), H(c->classic ? c->hilight : c->field_border),
+        H(c->classic ? c->hilight : c->field_border), H(c->classic ? c->shadow : c->field_border));
+}
+#undef PATH_BUTTON
+#undef PATH_XP_BUTTON
+
+/* Windows that draw their own title bar (other programs' message boxes,
+ * which GTK always gives one, and header-bar dialogs) get no frame from
+ * the compositor, so they draw Windows' dialog frame themselves. Message
+ * boxes: Yes before No comes from the theme's settings.ini (GTK's
+ * alternative button order); GTK stretches the buttons across the box in
+ * code, so CSS can only space them apart as Windows does. */
+static void client_frames(const xd_toolkit_colors *c, xd_strbuf *o) {
+    const char *frame = ".csd:not(.maximized):not(.fullscreen):not(.tiled) > decoration";
+    if (c->classic)
+        /* Windows 2000's 3px dialog frame. */
+        xd_strbuf_appendf(o,
+                          "%s {\n  border-style: solid; border-width: 1px;\n"
+                          "  border-color: %s %s %s %s;\n"
+                          "  box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n"
+                          "  padding: 1px; background-color: %s;\n}\n"
+                          /* GTK pads the title by 6px in code: Windows'
+                           * caption is 18px. */
+                          "messagedialog > box.titlebar > label.title {\n"
+                          "  margin-top: -4px; margin-bottom: -4px;\n}\n",
+                          frame, H(c->light), H(c->dkshadow), H(c->dkshadow), H(c->light),
+                          H(c->hilight), H(c->shadow), H(c->face));
+    else
+        xd_strbuf_appendf(o, "%s {\n  border: 3px solid %s; border-top-width: 0;\n}\n", frame,
+                          H(c->title_bg));
+    xd_strbuf_append(o, XD_STR("messagedialog .dialog-action-area > button { margin: 0 3px; }\n"
+                               "messagedialog .dialog-action-area > button:first-child {\n"
+                               "  margin-left: 0;\n}\n"
+                               "messagedialog .dialog-action-area > button:last-child {\n"
+                               "  margin-right: 0;\n}\n"));
+}
+
 void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     xd_toolkit_colors c;
     xd_theme_toolkit_colors(t, &c);
@@ -706,7 +836,7 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     else if (t->style == XD_STYLE_WHISTLER)
         whistler(out);
     else
-        modern(&c, out);
+        modern(&c, t->style == XD_STYLE_AERO, out);
     if (!c.classic)
         xp_buttons(&c, out);
     /* Windows' pixel check mark and radio dot, drawn by xd_theme_gtk_asset. */
@@ -795,4 +925,7 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
                                  "  background-image: none;\n  background-color: transparent;\n"
                                  "  border-color: transparent;\n  box-shadow: none;\n"
                                  "  color: inherit;\n}\n"));
+    combo_lists(&c, out);
+    file_chooser(&c, out);
+    client_frames(&c, out);
 }

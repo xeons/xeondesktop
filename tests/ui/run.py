@@ -1290,6 +1290,73 @@ def power_alarms(s):
         DBusTestCase.tearDownClass()
 
 
+# Another program's GTK 3 window with a combo box, which drops down once
+# the file named on the command line exists.
+GTK_COMBO = r"""
+import os, sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk
+w = Gtk.Window(title="Combo test")
+w.set_default_size(300, 200)
+box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin=10)
+combo = Gtk.ComboBoxText()
+for t in ("One", "Two", "Three", "Four", "Five"):
+    combo.append_text(t)
+combo.set_active(0)
+box.pack_start(combo, False, False, 0)
+w.add(box)
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+def poll():
+    if os.path.exists(sys.argv[1]):
+        combo.popup()
+        return False
+    return True
+GLib.timeout_add(100, poll)
+Gtk.main()
+"""
+
+
+@scenario()
+def gtk_combo_list(s):
+    """Other programs' GTK 3 combo boxes (themed through GTK_THEME) drop
+    down a white list box below the field, as in Windows, rather than a
+    grey menu over it."""
+    probe = subprocess.run(
+        [sys.executable, "-c", "import gi; gi.require_version('Gtk', '3.0')"],
+        stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        s.log("skipped: no GTK 3 introspection data for Python")
+        return
+    script = os.path.join(s.base, "combo.py")
+    trigger = os.path.join(s.base, "drop-down")
+    with open(script, "w") as f:
+        f.write(GTK_COMBO)
+    empty = s.settle("desktop")
+    s.launch(sys.executable, script, trigger,
+             env={"GTK_THEME": "XeonDesktop", "GSETTINGS_BACKEND": "memory"})  # fmt: skip
+    s.wait_window(title="Combo test", state="activated")
+    closed = s.settle("closed")
+    win = closed.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(win is not None, "the window is drawn")
+    open(trigger, "w").close()
+    s.wait(lambda: s.shot("opening").changed_box(closed) is not None, "the drop-down")
+    opened = s.settle("open")
+    x, y, w, h = opened.changed_box(closed)
+    s.check(h >= 5 * 15, f"a list of five rows dropped down ({w}x{h})")
+    s.check(y > win[1] + 30, "below the field, not over it")
+    white = sum(
+        1
+        for py in range(y + 2, y + h - 2, 2)
+        for px in range(x + 2, x + w - 2, 2)
+        if opened.pixel(px, py) == (255, 255, 255)
+    )
+    total = len(range(y + 2, y + h - 2, 2)) * len(range(x + 2, x + w - 2, 2))
+    s.check(white > total // 2, "a white list box, not a menu")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))
