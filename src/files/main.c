@@ -12,6 +12,7 @@
 #include "../gtkapp/gtkapp.h"
 #include "../settings/settings.h"
 #include "../settings/state.h"
+#include "favorites.h"
 #include "fileops.h"
 #include "folderview.h"
 #include "places.h"
@@ -22,6 +23,8 @@
 enum { COL_NAME, COL_ICON, COL_FILE, COL_LOADED, COL_COUNT };
 
 static constexpr GdkModifierType NO_MODS = (GdkModifierType)0;
+static constexpr GtkDialogFlags MODAL_DIALOG =
+    (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT);
 
 typedef struct explorer {
     GtkWidget *window;
@@ -43,6 +46,7 @@ typedef struct explorer {
     GtkWidget *hidden_item;  /* View > Show Hidden Files */
     GtkWidget *undo_item;    /* Edit > Undo ... */
     GtkWidget *send_to_item; /* File > Send To */
+    GtkWidget *add_favorite_item; /* Favorites > Add to Favorites... */
     /* Menu items that need a selection, or files on the clipboard. */
     GPtrArray *need_selection;
     GPtrArray *need_clipboard;
@@ -61,6 +65,11 @@ typedef struct explorer {
     GList *back;    /* GFile*, most recent first */
     GList *forward;
     gboolean syncing; /* updating widgets programmatically */
+    /* A gvfs location's name as GIO gives it ("data on example.org"),
+     * asked once per location; its own name is shown meanwhile. */
+    GFile *named;
+    char *gio_name;
+    GCancellable *naming;
 } explorer;
 
 static void navigate(explorer *e, GFile *dir, gboolean record);
@@ -133,13 +142,61 @@ static void update_control_switch(explorer *e) {
     gtk_menu_item_set_label(GTK_MENU_ITEM(e->control_item), label);
 }
 
+static void update_chrome(explorer *e);
+
+static void got_gio_name(GObject *src, GAsyncResult *res, gpointer data) {
+    GError *err = nullptr;
+    GFileInfo *info = g_file_query_info_finish(G_FILE(src), res, &err);
+    if (info == nullptr) {
+        /* Cancelled: the window may be gone (don't touch it). */
+        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+            explorer *e = data;
+            g_clear_object(&e->naming);
+        }
+        g_error_free(err);
+        return;
+    }
+    explorer *e = data;
+    g_clear_object(&e->naming);
+    const char *name = g_file_info_get_display_name(info);
+    if (name != nullptr && *name != '\0') {
+        g_set_object(&e->named, G_FILE(src));
+        g_free(e->gio_name);
+        e->gio_name = g_strdup(name);
+        update_chrome(e);
+    }
+    g_object_unref(info);
+}
+
+/* The name to show for a location that isn't on a local disk: GIO's
+ * display name (asked in the background), or nullptr until it's known. */
+static const char *gio_name(explorer *e, GFile *dir) {
+    if (g_file_is_native(dir))
+        return nullptr;
+    if (e->named != nullptr && g_file_equal(e->named, dir))
+        return e->gio_name;
+    if (e->naming != nullptr) {
+        g_cancellable_cancel(e->naming);
+        g_clear_object(&e->naming);
+    }
+    g_clear_object(&e->named);
+    g_clear_pointer(&e->gio_name, g_free);
+    e->naming = g_cancellable_new();
+    g_file_query_info_async(dir, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME, G_FILE_QUERY_INFO_NONE,
+                            G_PRIORITY_DEFAULT, e->naming, got_gio_name, e);
+    return nullptr;
+}
+
 static void update_chrome(explorer *e) {
     GFile *dir = xd_folder_view_get_location(e->view);
     if (dir == nullptr)
         return; /* nothing loaded yet */
     const char *special = xd_place_title(dir);
     char *parse = special != nullptr ? g_strdup(special) : g_file_get_parse_name(dir);
-    char *base = special != nullptr ? nullptr : g_file_get_basename(dir);
+    const char *named = special != nullptr ? nullptr : gio_name(e, dir);
+    char *base = special != nullptr ? nullptr
+                 : named != nullptr ? g_strdup(named)
+                                    : g_file_get_basename(dir);
     /* Folder Options: the folder's name alone, unless the full path. */
     const char *shown = options.full_path_address || base == nullptr ? parse : base;
     g_object_set_data_full(G_OBJECT(e->address), "xd-shown", g_strdup(shown), g_free);
@@ -148,8 +205,8 @@ static void update_chrome(explorer *e) {
     gtk_entry_set_icon_from_icon_name(GTK_ENTRY(e->address), GTK_ENTRY_ICON_PRIMARY,
                                       xd_place_icon(dir));
     e->syncing = FALSE;
-    gboolean short_title = !options.full_path_title && g_file_has_parent(dir, nullptr) &&
-                           base != nullptr;
+    gboolean short_title = !options.full_path_title && base != nullptr &&
+                           (g_file_has_parent(dir, nullptr) || named != nullptr);
     gtk_window_set_title(GTK_WINDOW(e->window), short_title ? base : parse);
     g_free(base);
     g_free(parse);
@@ -1108,6 +1165,31 @@ static void cb_go([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
     on_address_activate(GTK_ENTRY(e->address), e);
 }
+/* Search (F3): XP's search pane, here the Search window, looking in this
+ * folder (My Computer's is every local drive, as XP's "Local Hard
+ * Drives"). Places that aren't folders on disk start in its default. */
+static void open_search(explorer *e) {
+    GFile *dir = current_dir(e);
+    char *path = nullptr;
+    if (dir != nullptr && xd_place_of(dir) == XD_PLACE_COMPUTER)
+        path = g_strdup("/");
+    else if (dir != nullptr && xd_place_of(dir) == XD_PLACE_FOLDER)
+        path = g_file_get_path(dir);
+    char *prog = g_strdup("xd-search");
+    char *argv[] = {prog, path, nullptr};
+    GError *err = nullptr;
+    if (!g_spawn_async(nullptr, argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr,
+                       &err)) {
+        xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       err->message);
+        g_error_free(err);
+    }
+    g_free(prog);
+    g_free(path);
+}
+
+static void cb_search([[maybe_unused]] GtkWidget *w, gpointer d) { open_search(d); }
+
 /* Tools > Folder Options: xd-folders, told this folder's view so that
  * Apply to All Folders can use it. */
 static void cb_folder_options([[maybe_unused]] GtkWidget *w, gpointer d) {
@@ -1131,6 +1213,292 @@ static void cb_about([[maybe_unused]] GtkWidget *w, gpointer d) {
     gtk_show_about_dialog(GTK_WINDOW(e->window), "program-name", "XeonDesktop Files",
                           "comments", "The XeonDesktop file manager.", "license-type",
                           GTK_LICENSE_MIT_X11, "logo-icon-name", "system-file-manager", nullptr);
+}
+
+/* ---- Favorites ------------------------------------------------------------------- */
+
+/* The name a folder's favorite has without a label of its own. */
+static char *favorite_default_name(const char *uri) {
+    XdFavorite f = {(char *)(uintptr_t)uri, nullptr};
+    return xd_favorite_name(&f);
+}
+
+static void favorite_error(GtkWindow *parent, GError *err) {
+    char *msg = g_strdup_printf("Cannot change your Favorites: %s", err->message);
+    xd_message_box(parent, "Favorites", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+    g_free(msg);
+    g_error_free(err);
+}
+
+/* Favorites > Add to Favorites...: XP's Add Favorite box, asking the name
+ * to show. Only folders (they're GTK's bookmarks too, which file choosers
+ * open; My Computer or the Recycle Bin they couldn't). */
+static void add_favorite(explorer *e) {
+    GFile *dir = current_dir(e);
+    if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER)
+        return;
+    char *uri = g_file_get_uri(dir);
+    char *name = favorite_default_name(uri);
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(
+        "Add Favorite", GTK_WINDOW(e->window), MODAL_DIALOG,
+        "OK", GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL, nullptr);
+    gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    gtk_box_pack_start(GTK_BOX(box), gtk_image_new_from_icon_name("starred", GTK_ICON_SIZE_DIALOG),
+                       FALSE, FALSE, 0);
+    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    GtkWidget *text = gtk_label_new("This folder will be added to your Favorites list.");
+    gtk_label_set_xalign(GTK_LABEL(text), 0);
+    gtk_box_pack_start(GTK_BOX(right), text, FALSE, FALSE, 0);
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *label = gtk_label_new_with_mnemonic("_Name:");
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry), name);
+    gtk_entry_set_width_chars(GTK_ENTRY(entry), 36);
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), entry);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), entry, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(right), row, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), right, TRUE, TRUE, 0);
+    gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box);
+    gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_OK);
+    gtk_widget_show_all(dlg);
+    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
+        const char *typed = gtk_entry_get_text(GTK_ENTRY(entry));
+        /* The folder's own name needs no label: it follows a rename. */
+        const char *label_text = *typed == '\0' || strcmp(typed, name) == 0 ? nullptr : typed;
+        char *path = xd_favorites_path();
+        GError *err = nullptr;
+        if (!xd_favorites_add(path, uri, label_text, &err))
+            favorite_error(GTK_WINDOW(e->window), err);
+        g_free(path);
+    }
+    gtk_widget_destroy(dlg);
+    g_free(name);
+    g_free(uri);
+}
+
+/* Organize Favorites: rename in place, delete, drag to reorder. */
+enum { FAV_NAME, FAV_URI, FAV_COUNT };
+
+typedef struct organizer {
+    GtkWidget *dialog, *list;
+    GtkListStore *store;
+    gboolean filling; /* the store being filled, not reordered */
+} organizer;
+
+static void organizer_fill(organizer *o) {
+    o->filling = TRUE;
+    gtk_list_store_clear(o->store);
+    char *path = xd_favorites_path();
+    GPtrArray *favs = xd_favorites_load(path);
+    for (guint i = 0; i < favs->len; i++) {
+        XdFavorite *f = g_ptr_array_index(favs, i);
+        char *name = xd_favorite_name(f);
+        gtk_list_store_insert_with_values(o->store, nullptr, -1, FAV_NAME, name, FAV_URI, f->uri,
+                                          -1);
+        g_free(name);
+    }
+    g_ptr_array_unref(favs);
+    g_free(path);
+    o->filling = FALSE;
+}
+
+static char *organizer_selected(organizer *o, GtkTreeIter *iter) {
+    GtkTreeModel *model;
+    char *uri = nullptr;
+    if (gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(o->list)),
+                                        &model, iter))
+        gtk_tree_model_get(model, iter, FAV_URI, &uri, -1);
+    return uri;
+}
+
+static void on_favorite_edited([[maybe_unused]] GtkCellRendererText *cell, char *tree_path,
+                               char *text, gpointer data) {
+    organizer *o = data;
+    GtkTreeIter iter;
+    if (!gtk_tree_model_get_iter_from_string(GTK_TREE_MODEL(o->store), &iter, tree_path))
+        return;
+    char *uri = nullptr;
+    gtk_tree_model_get(GTK_TREE_MODEL(o->store), &iter, FAV_URI, &uri, -1);
+    char *plain = favorite_default_name(uri);
+    char *path = xd_favorites_path();
+    GError *err = nullptr;
+    if (*text != '\0' &&
+        !xd_favorites_rename(path, uri, strcmp(text, plain) == 0 ? nullptr : text, &err))
+        favorite_error(GTK_WINDOW(o->dialog), err);
+    g_free(path);
+    g_free(plain);
+    g_free(uri);
+    organizer_fill(o);
+}
+
+static void on_favorite_rename([[maybe_unused]] GtkButton *b, gpointer data) {
+    organizer *o = data;
+    GtkTreeIter iter;
+    char *uri = organizer_selected(o, &iter);
+    if (uri == nullptr)
+        return;
+    GtkTreePath *tp = gtk_tree_model_get_path(GTK_TREE_MODEL(o->store), &iter);
+    gtk_widget_grab_focus(o->list);
+    gtk_tree_view_set_cursor(GTK_TREE_VIEW(o->list), tp,
+                             gtk_tree_view_get_column(GTK_TREE_VIEW(o->list), 0), TRUE);
+    gtk_tree_path_free(tp);
+    g_free(uri);
+}
+
+static void on_favorite_delete([[maybe_unused]] GtkButton *b, gpointer data) {
+    organizer *o = data;
+    GtkTreeIter iter;
+    char *uri = organizer_selected(o, &iter);
+    if (uri == nullptr)
+        return;
+    char *name = nullptr;
+    gtk_tree_model_get(GTK_TREE_MODEL(o->store), &iter, FAV_NAME, &name, -1);
+    char *question = g_strdup_printf("Are you sure you want to remove '%s' from your Favorites?",
+                                     name);
+    if (xd_message_box(GTK_WINDOW(o->dialog), "Confirm Favorite Delete", XD_MB_QUESTION,
+                       XD_MB_YES_NO, FALSE, question) == GTK_RESPONSE_YES) {
+        char *path = xd_favorites_path();
+        GError *err = nullptr;
+        if (!xd_favorites_remove(path, uri, &err))
+            favorite_error(GTK_WINDOW(o->dialog), err);
+        g_free(path);
+        organizer_fill(o);
+    }
+    g_free(question);
+    g_free(name);
+    g_free(uri);
+}
+
+/* A drag in the list moved a row (its old place is deleted last). */
+static void on_favorites_reordered([[maybe_unused]] GtkTreeModel *model,
+                                   [[maybe_unused]] GtkTreePath *tp, gpointer data) {
+    organizer *o = data;
+    if (o->filling)
+        return;
+    GPtrArray *uris = g_ptr_array_new_with_free_func(g_free);
+    GtkTreeIter iter;
+    for (gboolean ok = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(o->store), &iter); ok;
+         ok = gtk_tree_model_iter_next(GTK_TREE_MODEL(o->store), &iter)) {
+        char *uri = nullptr;
+        gtk_tree_model_get(GTK_TREE_MODEL(o->store), &iter, FAV_URI, &uri, -1);
+        if (uri != nullptr)
+            g_ptr_array_add(uris, uri);
+    }
+    g_ptr_array_add(uris, nullptr);
+    char *path = xd_favorites_path();
+    GError *err = nullptr;
+    if (!xd_favorites_reorder(path, (const char *const *)uris->pdata, &err))
+        favorite_error(GTK_WINDOW(o->dialog), err);
+    g_free(path);
+    g_ptr_array_unref(uris);
+}
+
+static void organize_favorites(explorer *e) {
+    organizer o = {0};
+    o.dialog = gtk_dialog_new_with_buttons("Organize Favorites", GTK_WINDOW(e->window),
+                                           MODAL_DIALOG,
+                                           "Close", GTK_RESPONSE_CLOSE, nullptr);
+    gtk_window_set_default_size(GTK_WINDOW(o.dialog), 520, 320);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 10);
+    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    GtkWidget *help = gtk_label_new("To rename or delete an item, select the item and click "
+                                    "Rename or Delete. To change the order, drag an item.");
+    gtk_label_set_line_wrap(GTK_LABEL(help), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(help), 26);
+    gtk_label_set_xalign(GTK_LABEL(help), 0);
+    gtk_box_pack_start(GTK_BOX(left), help, FALSE, FALSE, 0);
+    GtkWidget *buttons = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(buttons), 6);
+    gtk_grid_set_column_homogeneous(GTK_GRID(buttons), TRUE);
+    GtkWidget *rename = gtk_button_new_with_mnemonic("_Rename");
+    GtkWidget *del = gtk_button_new_with_mnemonic("_Delete");
+    g_signal_connect(rename, "clicked", G_CALLBACK(on_favorite_rename), &o);
+    g_signal_connect(del, "clicked", G_CALLBACK(on_favorite_delete), &o);
+    gtk_grid_attach(GTK_GRID(buttons), rename, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(buttons), del, 1, 0, 1, 1);
+    gtk_box_pack_start(GTK_BOX(left), buttons, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), left, FALSE, FALSE, 0);
+
+    o.store = gtk_list_store_new(FAV_COUNT, G_TYPE_STRING, G_TYPE_STRING);
+    o.list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(o.store));
+    g_object_unref(o.store);
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(o.list), FALSE);
+    gtk_tree_view_set_reorderable(GTK_TREE_VIEW(o.list), TRUE);
+    GtkTreeViewColumn *col = gtk_tree_view_column_new();
+    GtkCellRenderer *icon = gtk_cell_renderer_pixbuf_new();
+    g_object_set(icon, "icon-name", "folder", nullptr);
+    GtkCellRenderer *text = gtk_cell_renderer_text_new();
+    g_object_set(text, "editable", TRUE, nullptr);
+    g_signal_connect(text, "edited", G_CALLBACK(on_favorite_edited), &o);
+    gtk_tree_view_column_pack_start(col, icon, FALSE);
+    gtk_tree_view_column_pack_start(col, text, TRUE);
+    gtk_tree_view_column_add_attribute(col, text, "text", FAV_NAME);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(o.list), col);
+    organizer_fill(&o);
+    g_signal_connect(o.store, "row-deleted", G_CALLBACK(on_favorites_reordered), &o);
+    GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
+    gtk_container_add(GTK_CONTAINER(scroll), o.list);
+    gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(o.dialog))), box, TRUE,
+                       TRUE, 0);
+    gtk_widget_show_all(o.dialog);
+    gtk_dialog_run(GTK_DIALOG(o.dialog));
+    /* The store goes with the list: no more reordering to save. */
+    g_signal_handlers_disconnect_by_data(o.store, &o);
+    gtk_widget_destroy(o.dialog);
+}
+
+static void cb_add_favorite([[maybe_unused]] GtkWidget *w, gpointer d) { add_favorite(d); }
+static void cb_organize_favorites([[maybe_unused]] GtkWidget *w, gpointer d) {
+    organize_favorites(d);
+}
+
+static void on_favorite_item(GtkWidget *item, gpointer data) {
+    explorer *e = data;
+    const char *uri = g_object_get_data(G_OBJECT(item), "xd-favorite");
+    GFile *f = g_file_new_for_uri(uri);
+    navigate(e, f, TRUE);
+    g_object_unref(f);
+}
+
+/* The menu's favorites, read afresh each time it opens (a file chooser
+ * may have added some). */
+static void fill_favorites(GtkWidget *menu, gpointer data) {
+    explorer *e = data;
+    GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
+    for (GList *l = items; l != nullptr; l = l->next)
+        if (g_object_get_data(G_OBJECT(l->data), "xd-favorites-entry") != nullptr)
+            gtk_widget_destroy(l->data);
+    g_list_free(items);
+    gtk_widget_set_sensitive(e->add_favorite_item,
+                             xd_place_of(current_dir(e)) == XD_PLACE_FOLDER);
+    char *path = xd_favorites_path();
+    GPtrArray *favs = xd_favorites_load(path);
+    g_free(path);
+    for (guint i = 0; i < favs->len; i++) {
+        XdFavorite *f = g_ptr_array_index(favs, i);
+        if (i == 0) {
+            GtkWidget *sep = gtk_separator_menu_item_new();
+            g_object_set_data(G_OBJECT(sep), "xd-favorites-entry", GINT_TO_POINTER(1));
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), sep);
+            gtk_widget_show(sep);
+        }
+        char *name = xd_favorite_name(f);
+        GtkWidget *item = gtk_menu_item_new_with_label(name);
+        g_free(name);
+        g_object_set_data(G_OBJECT(item), "xd-favorites-entry", GINT_TO_POINTER(1));
+        g_object_set_data_full(G_OBJECT(item), "xd-favorite", g_strdup(f->uri), g_free);
+        g_signal_connect(item, "activate", G_CALLBACK(on_favorite_item), e);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+        gtk_widget_show(item);
+    }
+    g_ptr_array_unref(favs);
 }
 
 /* ---- file operations ------------------------------------------------------------- */
@@ -1728,6 +2096,13 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     menu_item(go, "_Up One Level", G_CALLBACK(cb_up), e, accel, GDK_KEY_Up, GDK_MOD1_MASK);
     menu_item(go, "_Home Folder", G_CALLBACK(cb_home), e, accel, GDK_KEY_Home, GDK_MOD1_MASK);
 
+    GtkWidget *favorites = submenu(bar, "F_avorites");
+    e->add_favorite_item = menu_item(favorites, "_Add to Favorites...",
+                                     G_CALLBACK(cb_add_favorite), e, nullptr, 0, NO_MODS);
+    menu_item(favorites, "_Organize Favorites...", G_CALLBACK(cb_organize_favorites), e, nullptr,
+              0, NO_MODS);
+    g_signal_connect(favorites, "show", G_CALLBACK(fill_favorites), e);
+
     GtkWidget *tools = submenu(bar, "_Tools");
     menu_item(tools, "Folder _Options...", G_CALLBACK(cb_folder_options), e, nullptr, 0, NO_MODS);
 
@@ -1913,6 +2288,10 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
         go_up(e);
         return TRUE;
     }
+    if (ev->keyval == GDK_KEY_F3 && (ev->state & gtk_accelerator_get_default_mod_mask()) == 0) {
+        open_search(e);
+        return TRUE;
+    }
     if (ev->keyval == GDK_KEY_l && (ev->state & GDK_CONTROL_MASK)) {
         gtk_widget_grab_focus(e->address);
         return TRUE;
@@ -1935,6 +2314,11 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     g_clear_object(&e->renaming);
     g_clear_object(&e->pending_rename);
     g_clear_handle_id(&e->commit_idle, g_source_remove);
+    if (e->naming != nullptr)
+        g_cancellable_cancel(e->naming); /* its callback leaves `e` alone */
+    g_clear_object(&e->naming);
+    g_clear_object(&e->named);
+    g_free(e->gio_name);
     g_free(e);
 }
 
@@ -2002,11 +2386,7 @@ static void open_window(GtkApplication *app, GFile *dir) {
     gtk_tool_item_set_is_important(GTK_TOOL_ITEM(e->forward_button), FALSE);
     gtk_tool_item_set_is_important(GTK_TOOL_ITEM(e->up_button), FALSE);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), gtk_separator_tool_item_new(), -1);
-    GtkToolItem *search = gtk_tool_button_new(nullptr, "Search");
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(search), "system-search");
-    gtk_tool_item_set_is_important(search, TRUE);
-    gtk_widget_set_sensitive(GTK_WIDGET(search), FALSE); /* comes later */
-    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), search, -1);
+    tool_button(toolbar, "system-search", "Search", G_CALLBACK(cb_search), e);
     GtkToolItem *folders = gtk_toggle_tool_button_new();
     gtk_tool_button_set_label(GTK_TOOL_BUTTON(folders), "Folders");
     gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(folders), "folder");

@@ -43,6 +43,7 @@ import tempfile
 import threading
 import time
 import traceback
+import urllib.parse
 
 SKIP = 77
 SOURCE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -749,6 +750,39 @@ def thumbnails(s):
     for name, rgb in colours.items():
         n = area(rgb)
         s.check(n > 1000, f"{name}.png is drawn as its thumbnail ({n} samples)")
+
+
+@scenario()
+def favorites(s):
+    """Explorer's Favorites > Add to Favorites...: the folder goes into GTK's
+    bookmarks under the name given, after the lines already there, and the
+    menu lists it."""
+    docs = os.path.join(s.home, "Documents")
+    gtk = os.path.join(os.environ["XDG_CONFIG_HOME"], "gtk-3.0")
+    os.makedirs(gtk, exist_ok=True)
+    bookmarks = os.path.join(gtk, "bookmarks")
+    with open(bookmarks, "w") as f:
+        f.write("# kept\nfile:///tmp Scratch\n")
+    empty = s.settle("desktop")
+    s.launch("xd-files", docs)
+    s.wait_window(app_id="org.xeondesktop.Files", state="activated")
+    x, y, _, _ = s.settle("explorer").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    # The menu bar's Favorites, then its first item, Add to Favorites...
+    s.inject("move", x + 171, y + 32, "click", "sleep", 500)
+    s.settle("favorites menu")
+    s.inject("move", x + 210, y + 55, "click")
+    # The box is a dialog of the window (not in the window list): the
+    # window loses the focus to it.
+    s.wait(lambda: "activated" not in s.window(app_id="org.xeondesktop.Files")["states"],
+           "the Add Favorite box to take the focus")
+    s.settle("add favorite")
+    s.inject("key", "ctrl+a", "type", "Paperwork", "key", "Return")
+    want = "# kept\nfile:///tmp Scratch\n" + "file://" + urllib.parse.quote(docs) + " Paperwork\n"
+    s.wait(lambda: open(bookmarks).read() == want, "the bookmark to be added")
+    s.log("ok: Add to Favorites wrote the bookmark, the other lines kept")
+    s.inject("move", x + 171, y + 32, "click", "sleep", 500)
+    s.settle("favorites menu with Paperwork")
+    s.inject("key", "Escape")
 
 
 @scenario()

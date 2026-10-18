@@ -473,6 +473,7 @@ archive_dep = dependency('libarchive', required: false, include_type: 'system')
 folder_lib = static_library(
   'xdfolder',
   'src/files/control.c',
+  'src/files/favorites.c',
   'src/files/fileops.c',
   'src/files/folderview.c',
   'src/files/places.c',
@@ -947,6 +948,7 @@ test_exe = executable(
   'src/printers/printlib.c',
   'src/scanners/scanlib.c',
   'src/startmenu/searchlib.c',
+  'src/files/favorites.c',
   link_with: thumb_lib,
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep,

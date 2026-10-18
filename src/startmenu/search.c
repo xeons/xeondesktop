@@ -421,7 +421,9 @@ static GtkWidget *search_pane(search *s, const char *start_dir) {
     add_place(s, home, "Home Folder");
     add_place(s, "/", "Local Hard Drives");
     if (start_dir != nullptr) {
-        char *label = g_filename_display_name(start_dir);
+        /* The folder's name, as XP's Look in shows it ("/" has none). */
+        char *label = strcmp(start_dir, "/") == 0 ? g_strdup("Local Hard Drives")
+                                                  : g_filename_display_basename(start_dir);
         add_place(s, start_dir, label);
         g_free(label);
     }

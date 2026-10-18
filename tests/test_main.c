@@ -29,6 +29,7 @@
 #include "../src/keyboard/layouts.h"
 #include "../src/mouse/cursors.h"
 #include "../src/files/columns.h"
+#include "../src/files/favorites.h"
 #include "../src/files/names.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
@@ -3402,6 +3403,67 @@ static void test_thumbnail_cache(void) {
     g_free(dir);
     g_free(dest);
     g_free(root);
+
+/* xd-files' Favorites: GTK's bookmarks file, other lines kept as they are. */
+static void test_favorites(void) {
+    char *dir = g_dir_make_tmp("xd-favorites-XXXXXX", nullptr);
+    char *path = g_build_filename(dir, "gtk-3.0", "bookmarks", nullptr);
+    GPtrArray *none = xd_favorites_load(path);
+    CHECK(none->len == 0);
+    g_ptr_array_unref(none);
+    /* Adding creates the folder and file. */
+    CHECK(xd_favorites_add(path, "file:///home/me/Music", nullptr, nullptr));
+    char *gtk_dir = g_path_get_dirname(path);
+    CHECK(g_file_test(gtk_dir, G_FILE_TEST_IS_DIR));
+    static const char start[] = "# made by hand\n"
+                                "file:///home/me/My%20Work Work stuff\r\n"
+                                "\n"
+                                "not a bookmark line\n"
+                                "sftp://example.org/srv/data\n"
+                                "smb://server/\n";
+    CHECK(g_file_set_contents(path, start, -1, nullptr));
+    GPtrArray *f = xd_favorites_load(path);
+    CHECK(f->len == 3);
+    if (f->len == 3) {
+        XdFavorite *a = g_ptr_array_index(f, 0), *b = g_ptr_array_index(f, 1),
+                   *c = g_ptr_array_index(f, 2);
+        CHECK(strcmp(a->uri, "file:///home/me/My%20Work") == 0);
+        CHECK(g_strcmp0(a->label, "Work stuff") == 0);
+        CHECK(b->label == nullptr);
+        char *name = xd_favorite_name(b);
+        CHECK(strcmp(name, "data") == 0);
+        g_free(name);
+        name = xd_favorite_name(c);
+        CHECK(strcmp(name, "server") == 0);
+        g_free(name);
+        g_clear_pointer(&a->label, g_free);
+        name = xd_favorite_name(a);
+        CHECK(strcmp(name, "My Work") == 0);
+        g_free(name);
+    }
+    g_ptr_array_unref(f);
+
+    CHECK(xd_favorites_add(path, "file:///tmp", "Scratch", nullptr));
+    CHECK(xd_favorites_add(path, "sftp://example.org/srv/data", "Data\nServer", nullptr));
+    CHECK(xd_favorites_rename(path, "file:///home/me/My%20Work", "", nullptr));
+    CHECK(xd_favorites_remove(path, "smb://server/", nullptr));
+    const char *order[] = {"file:///tmp", "file:///home/me/My%20Work", nullptr};
+    CHECK(xd_favorites_reorder(path, order, nullptr));
+    char *text = nullptr;
+    CHECK(g_file_get_contents(path, &text, nullptr, nullptr));
+    CHECK(g_strcmp0(text, "# made by hand\n"
+                          "file:///tmp Scratch\n"
+                          "\n"
+                          "not a bookmark line\n"
+                          "file:///home/me/My%20Work\n"
+                          "sftp://example.org/srv/data Data Server\n") == 0);
+    g_free(text);
+    CHECK(g_remove(path) == 0);
+    CHECK(g_rmdir(gtk_dir) == 0);
+    CHECK(g_rmdir(dir) == 0);
+    g_free(gtk_dir);
+    g_free(path);
+    g_free(dir);
 }
 
 int main(void) {
@@ -3451,6 +3513,7 @@ int main(void) {
     test_schedtasks();
     test_search_match();
     test_thumbnail_cache();
+    test_favorites();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

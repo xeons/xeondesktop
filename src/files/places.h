@@ -28,14 +28,15 @@ GFile *xd_place_computer(void);
 GFile *xd_place_trash(void);
 GFile *xd_place_control(void);
 /* "My Computer", "Recycle Bin", "Control Panel", a Control Panel
- * category's name, or nullptr; and the icon to show. */
+ * category's name, "My Network Places" (network:///), or nullptr; and the
+ * icon to show. */
 const char *xd_place_title(GFile *location);
 const char *xd_place_icon(GFile *location);
 /* "/" and mount points: their "Up" is My Computer, as drives are in XP. */
 gboolean xd_place_is_drive_root(GFile *dir);
 /* A location typed in the address bar or given on the command line:
- * "My Computer", "Recycle Bin", "Control Panel", "computer:", "trash:",
- * "control:" (else nullptr). */
+ * "My Computer", "Recycle Bin", "Control Panel", "My Network Places",
+ * "computer:", "trash:", "control:", "network:" (else nullptr). */
 GFile *xd_place_parse(const char *text);
 
 /* ---- My Computer ---- */

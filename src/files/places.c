@@ -37,7 +37,12 @@ GFile *xd_place_computer(void) { return g_file_new_for_uri(XD_COMPUTER_URI); }
 GFile *xd_place_trash(void) { return g_file_new_for_uri(XD_TRASH_URI); }
 GFile *xd_place_control(void) { return g_file_new_for_uri(XD_CONTROL_URI); }
 
+/* gvfs's network:/// is XP's My Network Places (GIO calls it "Network"). */
+#define NETWORK_URI "network:///"
+
 const char *xd_place_title(GFile *location) {
+    if (has_uri(location, NETWORK_URI))
+        return "My Network Places";
     switch (xd_place_of(location)) {
     case XD_PLACE_COMPUTER:
         return "My Computer";
@@ -54,6 +59,8 @@ const char *xd_place_title(GFile *location) {
 }
 
 const char *xd_place_icon(GFile *location) {
+    if (has_uri(location, NETWORK_URI))
+        return "network-workgroup";
     switch (xd_place_of(location)) {
     case XD_PLACE_COMPUTER:
         return "computer";
@@ -89,6 +96,9 @@ GFile *xd_place_parse(const char *text) {
                g_ascii_strcasecmp(t, "control:") == 0 ||
                g_ascii_strcasecmp(t, XD_CONTROL_URI) == 0) {
         f = xd_place_control();
+    } else if (g_ascii_strcasecmp(t, "My Network Places") == 0 ||
+               g_ascii_strcasecmp(t, "network:") == 0) {
+        f = g_file_new_for_uri(NETWORK_URI);
     } else {
         /* A category's page, by its address or its name. */
         const char *key = g_ascii_strncasecmp(t, XD_CONTROL_URI, strlen(XD_CONTROL_URI)) == 0
