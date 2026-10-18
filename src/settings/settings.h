@@ -176,6 +176,10 @@ typedef struct xd_settings {
     char scheme[64]; /* scheme file stem, e.g. "windows-standard"; "" = built in */
     xd_font_size font_size;
     xd_font_smoothing font_smoothing;
+    /* Theme directory names; "" = the default (see xd_settings_icon_theme
+     * and xd_settings_gtk_theme). */
+    char icon_theme[64]; /* IconTheme: a freedesktop icon theme under icons/ */
+    char gtk_theme[64];  /* GtkTheme: an installed GTK3 theme instead of ours */
 
     /* [Desktop] */
     char wallpaper[1024]; /* absolute path, "" = none */
@@ -269,6 +273,13 @@ const char *xd_desk_icon_default(xd_desk_icon icon);
 /* The desktop's icon size in logical px: Small 16, Large 48, Medium the
  * shell's icon size, 32 (48 with "Use large icons", XP's Shell Icon Size). */
 int xd_desk_icon_px(const xd_settings *s);
+/* The icon theme to use: IconTheme if set; else $XD_ICON_THEME (for
+ * testing a theme without touching the settings); else "breeze".
+ * xd_icons_create falls back further if it isn't installed. */
+const char *xd_settings_icon_theme(const xd_settings *s);
+/* The GTK theme programs get (GTK_THEME): GtkTheme if set, else the one
+ * generated from the appearance (XD_GTK_THEME_NAME). */
+const char *xd_settings_gtk_theme(const xd_settings *s);
 /* "home", "portable", ...: [Power] Scheme's values. */
 const char *xd_power_scheme_name(xd_power_scheme scheme);
 

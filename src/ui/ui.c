@@ -726,8 +726,8 @@ xd_ui *xd_ui_connect(int argc, char **argv) {
     wl_display_roundtrip(ui->display);
 
     ui->repeat_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-    const char *icon_theme = getenv("XD_ICON_THEME");
-    ui->icons = xd_icons_create(icon_theme != nullptr ? icon_theme : "breeze");
+    /* Taken at start: these programs are short-lived dialogs. */
+    ui->icons = xd_icons_create(xd_settings_icon_theme(&settings));
     return ui;
 }
 

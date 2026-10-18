@@ -19,6 +19,8 @@ typedef void (*xd_appicons_ready_fn)(void *data, const char *app_id);
 [[nodiscard]] xd_appicons *xd_appicons_create(struct wl_event_loop *loop, const char *theme,
                                               xd_appicons_ready_fn ready, void *data);
 void xd_appicons_destroy(xd_appicons *ai);
+/* The theme it was created with. */
+const char *xd_appicons_theme(const xd_appicons *ai);
 
 /* The icon for windows of `app_id` (nullptr or "" for none), px x px device
  * px. Owned by the cache and kept until it's destroyed, so the same app

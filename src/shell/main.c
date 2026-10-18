@@ -593,7 +593,15 @@ static void load_wallpaper(xd_shell *shell) {
 static void apply_settings(xd_shell *shell, bool startup) {
     char old_wallpaper[sizeof(shell->settings.wallpaper)];
     memcpy(old_wallpaper, shell->settings.wallpaper, sizeof(old_wallpaper));
+    char old_icons[sizeof(shell->settings.icon_theme)];
+    memcpy(old_icons, shell->settings.icon_theme, sizeof(old_icons));
     xd_settings_load(&shell->settings);
+    /* A new icon theme: everything is drawn from the cache afresh below
+     * (nothing keeps its surfaces between draws). */
+    if (startup || strcmp(old_icons, shell->settings.icon_theme) != 0) {
+        xd_icons_destroy(shell->icons);
+        shell->icons = xd_icons_create(xd_settings_icon_theme(&shell->settings));
+    }
     if (!startup) {
         shell->cli_style = false;
         shell->scheme_path = nullptr;
@@ -617,6 +625,8 @@ static void apply_settings(xd_shell *shell, bool startup) {
     char cursor_size[16];
     snprintf(cursor_size, sizeof(cursor_size), "%d", m->cursor_size);
     setenv("XCURSOR_SIZE", cursor_size, true);
+    /* And Display Properties' GTK theme, as the compositor gives it. */
+    setenv("GTK_THEME", xd_settings_gtk_theme(&shell->settings), true);
     if (startup)
         return;
     xd_tray_changed(shell); /* the volume and power icons may come or go */
@@ -914,9 +924,7 @@ int main(int argc, char **argv) {
 
     /* Launched apps are reaped automatically. */
     signal(SIGCHLD, SIG_IGN);
-    const char *icon_theme = getenv("XD_ICON_THEME");
-    shell.icons = xd_icons_create(icon_theme != nullptr ? icon_theme : "breeze");
-    apply_settings(&shell, true);
+    apply_settings(&shell, true); /* also loads the icon theme */
     shell.settings_fd = xd_settings_watch();
     xd_quicklaunch_init(&shell);
     xd_superbar_init(&shell);

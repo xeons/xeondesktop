@@ -10,6 +10,7 @@
 
 #include "../core/alloc.h"
 #include <glib.h>
+#include "gtktheme.h"
 #include "settings.h"
 
 static const char *const mode_names[XD_WALLPAPER_MODE_COUNT] = {
@@ -96,6 +97,17 @@ int xd_desk_icon_px(const xd_settings *s) {
         break;
     }
     return s->large_icons ? 48 : 32;
+}
+
+const char *xd_settings_icon_theme(const xd_settings *s) {
+    if (s->icon_theme[0] != '\0')
+        return s->icon_theme;
+    const char *env = getenv("XD_ICON_THEME");
+    return env != nullptr && env[0] != '\0' ? env : "breeze";
+}
+
+const char *xd_settings_gtk_theme(const xd_settings *s) {
+    return s->gtk_theme[0] != '\0' ? s->gtk_theme : XD_GTK_THEME_NAME;
 }
 
 const char *xd_power_scheme_name(xd_power_scheme scheme) {
@@ -185,6 +197,17 @@ static void parse_int(xd_str v, int64_t lo, int64_t hi, int *out) {
     int64_t n;
     if (xd_str_parse_i64(v, lo, hi, &n))
         *out = (int)n;
+}
+
+/* A theme's directory name under icons/ or themes/: no paths, nothing
+ * hidden, nothing that needs escaping in an environment variable. GtkTheme
+ * may carry GTK_THEME's variant (":dark"). */
+static void parse_theme_dir(xd_str v, char *dst, size_t cap) {
+    bool ok = v.len < cap && (v.len == 0 || v.ptr[0] != '.');
+    for (size_t i = 0; ok && i < v.len; i++)
+        ok = v.ptr[i] != '/' && (unsigned char)v.ptr[i] >= ' ';
+    if (ok)
+        copy_into(dst, cap, v);
 }
 
 static void parse_mouse(xd_mouse_settings *m, xd_str key, xd_str v) {
@@ -321,6 +344,10 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             int i = index_of(smoothing_names, XD_ARRAY_LEN(smoothing_names), v);
             if (i >= 0)
                 s->font_smoothing = (xd_font_smoothing)i;
+        } else if (KEY("IconTheme")) {
+            parse_theme_dir(v, s->icon_theme, sizeof(s->icon_theme));
+        } else if (KEY("GtkTheme")) {
+            parse_theme_dir(v, s->gtk_theme, sizeof(s->gtk_theme));
         }
     } else if (SEC("Desktop")) {
         if (KEY("Wallpaper")) {
@@ -552,6 +579,8 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Appearance", "Scheme", s->scheme);
     g_key_file_set_string(kf, "Appearance", "FontSize", font_size_names[s->font_size]);
     g_key_file_set_string(kf, "Appearance", "FontSmoothing", smoothing_names[s->font_smoothing]);
+    g_key_file_set_string(kf, "Appearance", "IconTheme", s->icon_theme);
+    g_key_file_set_string(kf, "Appearance", "GtkTheme", s->gtk_theme);
     g_key_file_set_comment(kf, "Appearance", nullptr,
                            " XeonDesktop settings. Written by Display Properties; edits are\n"
                            " picked up immediately.",

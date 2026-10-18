@@ -14,9 +14,14 @@ void xd_gtk_app_preinit(const char *app_id) {
     g_unsetenv("GTK_THEME");
 }
 
+/* Display Properties' themes as last applied: GtkTheme ("" = ours) and
+ * the icon theme. */
+static char applied_gtk[sizeof(((xd_settings *)nullptr)->gtk_theme)];
+static char applied_icons[sizeof(((xd_settings *)nullptr)->icon_theme)];
+
 static void reload_theme(void) {
     GtkSettings *s = gtk_settings_get_default();
-    if (s == nullptr)
+    if (s == nullptr || applied_gtk[0] != '\0')
         return;
     /* GTK re-reads a theme's CSS when the theme name changes. */
     g_object_set(s, "gtk-theme-name", "Adwaita", nullptr);
@@ -35,14 +40,12 @@ static void on_css_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GF
  * the cursor theme and size, the caret's blinking. Other GTK programs
  * take these from their own settings (GSettings, settings.ini); only the
  * cursor reaches them, through XCURSOR_THEME/XCURSOR_SIZE. */
-static void apply_input_settings(void) {
+static void apply_input_settings(const xd_settings *cfg) {
     GtkSettings *s = gtk_settings_get_default();
     if (s == nullptr)
         return;
-    xd_settings cfg;
-    xd_settings_load(&cfg);
-    const xd_mouse_settings *m = &cfg.mouse;
-    int blink = cfg.keyboard.cursor_blink_ms;
+    const xd_mouse_settings *m = &cfg->mouse;
+    int blink = cfg->keyboard.cursor_blink_ms;
     /* "default" is the system's cursor theme (icons/default). */
     g_object_set(s, "gtk-double-click-time", m->double_click_ms, "gtk-cursor-theme-name",
                  m->cursor_theme[0] != '\0' ? m->cursor_theme : "default",
@@ -53,12 +56,54 @@ static void apply_input_settings(void) {
         g_object_set(s, "gtk-cursor-blink-time", blink * 2, nullptr);
 }
 
+static gboolean theme_installed(const char *name);
+
+/* Display Properties' themes: the GTK theme (ours, once it has been
+ * written, unless another is chosen) and the shell's icon theme. */
+static void apply_theme_settings(const xd_settings *cfg) {
+    GtkSettings *s = gtk_settings_get_default();
+    if (s == nullptr)
+        return;
+    if (cfg->gtk_theme[0] != '\0') {
+        /* GTK_THEME's "name:variant" is two settings here. */
+        char *name = g_strdup(cfg->gtk_theme);
+        char *colon = strchr(name, ':');
+        if (colon != nullptr)
+            *colon = '\0';
+        g_object_set(s, "gtk-theme-name", name, "gtk-application-prefer-dark-theme",
+                     colon != nullptr && strcmp(colon + 1, "dark") == 0, nullptr);
+        g_free(name);
+    } else {
+        xd_strbuf path = {0};
+        xd_gtk_theme_css_path(&path);
+        if (g_file_test(xd_strbuf_cstr(&path), G_FILE_TEST_IS_REGULAR))
+            g_object_set(s, "gtk-theme-name", XD_GTK_THEME_NAME,
+                         "gtk-application-prefer-dark-theme", FALSE, nullptr);
+        xd_strbuf_free(&path);
+    }
+    snprintf(applied_gtk, sizeof(applied_gtk), "%s", cfg->gtk_theme);
+
+    /* Same icon theme as the shell, else breeze, else GTK's default. */
+    const char *icons = xd_settings_icon_theme(cfg);
+    if (!theme_installed(icons))
+        icons = theme_installed("breeze") ? "breeze" : nullptr;
+    if (icons != nullptr)
+        g_object_set(s, "gtk-icon-theme-name", icons, nullptr);
+    snprintf(applied_icons, sizeof(applied_icons), "%s", cfg->icon_theme);
+}
+
 static void on_settings_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GFile *f,
                                 [[maybe_unused]] GFile *other, GFileMonitorEvent ev,
                                 [[maybe_unused]] gpointer data) {
-    if (ev == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || ev == G_FILE_MONITOR_EVENT_CREATED ||
-        ev == G_FILE_MONITOR_EVENT_RENAMED || ev == G_FILE_MONITOR_EVENT_MOVED_IN)
-        apply_input_settings();
+    if (ev != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT && ev != G_FILE_MONITOR_EVENT_CREATED &&
+        ev != G_FILE_MONITOR_EVENT_RENAMED && ev != G_FILE_MONITOR_EVENT_MOVED_IN)
+        return;
+    xd_settings cfg;
+    xd_settings_load(&cfg);
+    apply_input_settings(&cfg);
+    /* Only when they changed: setting a theme makes GTK reload it. */
+    if (strcmp(cfg.gtk_theme, applied_gtk) != 0 || strcmp(cfg.icon_theme, applied_icons) != 0)
+        apply_theme_settings(&cfg);
 }
 
 static gboolean theme_installed(const char *name) {
@@ -80,18 +125,11 @@ void xd_gtk_app_follow_theme(void) {
     GtkSettings *s = gtk_settings_get_default();
     if (s == nullptr)
         return;
+    xd_settings cfg;
+    xd_settings_load(&cfg);
+    apply_theme_settings(&cfg);
     xd_strbuf path = {0};
     xd_gtk_theme_css_path(&path);
-    if (g_file_test(xd_strbuf_cstr(&path), G_FILE_TEST_IS_REGULAR))
-        g_object_set(s, "gtk-theme-name", XD_GTK_THEME_NAME, nullptr);
-
-    /* Same icon theme as the shell: XD_ICON_THEME, else breeze, else
-     * GTK's default. */
-    const char *icons = getenv("XD_ICON_THEME");
-    if (icons == nullptr || !theme_installed(icons))
-        icons = theme_installed("breeze") ? "breeze" : nullptr;
-    if (icons != nullptr)
-        g_object_set(s, "gtk-icon-theme-name", icons, nullptr);
     /* Dialogs (file choosers, ...) get our title bar and their buttons at
      * the bottom, as in Windows, instead of a GNOME header bar. */
     g_object_set(s, "gtk-dialogs-use-header", FALSE, nullptr);
@@ -104,7 +142,7 @@ void xd_gtk_app_follow_theme(void) {
         g_signal_connect(mon, "changed", G_CALLBACK(on_css_changed), nullptr);
     g_object_unref(css);
 
-    apply_input_settings();
+    apply_input_settings(&cfg);
     xd_settings_path(&path);
     GFile *ini = g_file_new_for_path(xd_strbuf_cstr(&path));
     mon = g_file_monitor_file(ini, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);

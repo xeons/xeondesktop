@@ -168,6 +168,8 @@ void xd_appicons_destroy(xd_appicons *ai) {
     xd_free(ai);
 }
 
+const char *xd_appicons_theme(const xd_appicons *ai) { return ai->theme; }
+
 cairo_surface_t *xd_appicons_get(xd_appicons *ai, const char *app_id, int px) {
     if (ai == nullptr || px <= 0)
         return nullptr;

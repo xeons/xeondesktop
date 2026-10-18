@@ -332,6 +332,34 @@ static void install_gtk_theme(xd_server *server) {
     xd_strbuf_free(&err);
 }
 
+/* Programs started from now on get Display Properties' GTK theme; so do
+ * those D-Bus and systemd start for the session, once it's real (see
+ * main). */
+static void set_gtk_theme_env(const xd_server *server, const xd_settings *settings,
+                              bool startup) {
+    const char *theme = xd_settings_gtk_theme(settings);
+    const char *old = getenv("GTK_THEME");
+    if (old != nullptr && strcmp(old, theme) == 0)
+        return;
+    setenv("GTK_THEME", theme, true);
+    if (!startup && server->session != nullptr) {
+        static char prog[] = "dbus-update-activation-environment", systemd[] = "--systemd",
+                    var[] = "GTK_THEME";
+        char *update[] = {prog, systemd, var, nullptr};
+        xd_spawn_argv(update);
+    }
+}
+
+/* Title bar icons from the settings' icon theme: a new theme starts a new
+ * cache (the callers redraw every frame afterwards). */
+static void update_appicons(xd_server *server, const xd_settings *settings) {
+    const char *theme = xd_settings_icon_theme(settings);
+    if (server->appicons != nullptr && strcmp(xd_appicons_theme(server->appicons), theme) == 0)
+        return;
+    xd_appicons_destroy(server->appicons);
+    server->appicons = xd_appicons_create(server->loop, theme, xd_frame_icon_ready, server);
+}
+
 /* Display Properties saved new settings: re-theme everything. */
 static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uint32_t mask,
                                    void *data) {
@@ -372,6 +400,8 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
 
     install_gtk_theme(server);
+    set_gtk_theme_env(server, &settings, false);
+    update_appicons(server, &settings);
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
         xd_view_update_decorations(view);
     }
@@ -539,10 +569,11 @@ int main(int argc, char **argv) {
     else
         unsetenv("DISPLAY");
     setenv("XDG_CURRENT_DESKTOP", "XeonDesktop", true);
-    /* GTK3 apps use the theme generated from our appearance settings, with
-     * Windows-style permanent scroll bars. */
+    /* GTK3 apps use the theme generated from our appearance settings (or
+     * the one chosen in Display Properties), with Windows-style permanent
+     * scroll bars. */
     install_gtk_theme(&server);
-    setenv("GTK_THEME", XD_GTK_THEME_NAME, true);
+    set_gtk_theme_env(&server, &settings, true);
     setenv("GTK_OVERLAY_SCROLLING", "0", true);
     /* Programs that D-Bus and systemd start for the session (portals,
      * notification daemons, scheduled tasks, ...) need to find this
@@ -565,9 +596,7 @@ int main(int argc, char **argv) {
             xd_visual_style_name(server.config.style), server.config.scheme.name);
 
     /* The shell's icon theme, for title bars. */
-    const char *icon_theme = getenv("XD_ICON_THEME");
-    server.appicons = xd_appicons_create(server.loop, icon_theme != nullptr ? icon_theme : "breeze",
-                                         xd_frame_icon_ready, &server);
+    update_appicons(&server, &settings);
 
     server.settings_fd = xd_settings_watch();
     if (server.settings_fd >= 0)

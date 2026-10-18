@@ -36,6 +36,10 @@
 #include "../src/security/passwd.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
+#include "../src/settings/themes.h"
+/* For GSettings in memory, never the user's dconf. */
+#define G_SETTINGS_ENABLE_BACKEND
+#include <gio/gsettingsbackend.h>
 #include "../src/shell/apps.h"
 #include "../src/startmenu/searchlib.h"
 #include "../src/shell/jumplist.h"
@@ -700,6 +704,218 @@ static void test_tray_rules(void) {
     xd_settings_parse(xd_strbuf_view(&text), &b);
     CHECK(xd_settings_equal(&a, &b) && xd_settings_tray_rule(&b, "nm-applet") == XD_TRAY_ALWAYS_HIDE);
     xd_strbuf_free(&text);
+}
+
+/* Writes `text` to root/rel, making its directories. */
+static void put_file(const char *root, const char *rel, const char *text) {
+    char *path = g_build_filename(root, rel, nullptr);
+    char *dir = g_path_get_dirname(path);
+    g_mkdir_with_parents(dir, 0700);
+    CHECK(g_file_set_contents(path, text, -1, nullptr));
+    g_free(dir);
+    g_free(path);
+}
+
+static void rm_tree(const char *path) {
+    GDir *d = g_dir_open(path, 0, nullptr);
+    if (d != nullptr) {
+        const char *e;
+        while ((e = g_dir_read_name(d)) != nullptr) {
+            char *child = g_build_filename(path, e, nullptr);
+            if (g_file_test(child, G_FILE_TEST_IS_DIR) &&
+                !g_file_test(child, G_FILE_TEST_IS_SYMLINK))
+                rm_tree(child);
+            else
+                CHECK(g_remove(child) == 0);
+            g_free(child);
+        }
+        g_dir_close(d);
+    }
+    CHECK(g_rmdir(path) == 0);
+}
+
+static const xd_installed_theme *theme_at(GPtrArray *list, guint i) {
+    return i < list->len ? g_ptr_array_index(list, i) : nullptr;
+}
+
+static void test_theme_settings(void) {
+    /* [Appearance] IconTheme and GtkTheme: directory names, "" = default. */
+    xd_settings a;
+    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=oxygen\nGtkTheme=Adwaita:dark\n"), &a);
+    CHECK(strcmp(a.icon_theme, "oxygen") == 0 && strcmp(a.gtk_theme, "Adwaita:dark") == 0);
+    CHECK(strcmp(xd_settings_icon_theme(&a), "oxygen") == 0);
+    CHECK(strcmp(xd_settings_gtk_theme(&a), "Adwaita:dark") == 0);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && strcmp(b.icon_theme, "oxygen") == 0);
+    xd_strbuf_free(&text);
+    /* No paths, nothing hidden, nothing too long. */
+    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=../../etc\nGtkTheme=.hidden\n"), &a);
+    CHECK(a.icon_theme[0] == '\0' && a.gtk_theme[0] == '\0');
+    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"),
+                      &a);
+    CHECK(a.icon_theme[0] == '\0');
+    /* Unset: ours, and $XD_ICON_THEME before breeze. */
+    xd_settings_defaults(&a);
+    CHECK(strcmp(xd_settings_gtk_theme(&a), "XeonDesktop") == 0);
+    char *env = g_strdup(g_getenv("XD_ICON_THEME"));
+    g_unsetenv("XD_ICON_THEME");
+    CHECK(strcmp(xd_settings_icon_theme(&a), "breeze") == 0);
+    g_setenv("XD_ICON_THEME", "Adwaita", TRUE);
+    CHECK(strcmp(xd_settings_icon_theme(&a), "Adwaita") == 0);
+    snprintf(a.icon_theme, sizeof(a.icon_theme), "%s", "oxygen");
+    CHECK(strcmp(xd_settings_icon_theme(&a), "oxygen") == 0); /* the setting wins */
+    if (env != nullptr)
+        g_setenv("XD_ICON_THEME", env, TRUE);
+    else
+        g_unsetenv("XD_ICON_THEME");
+    g_free(env);
+    /* A dialog's Apply carries them like any other key. */
+    xd_settings base, pending, now;
+    xd_settings_defaults(&base);
+    pending = base;
+    snprintf(pending.gtk_theme, sizeof(pending.gtk_theme), "%s", "Breeze");
+    now = base;
+    now.style = XD_STYLE_LUNA;
+    xd_settings_merge(&base, &pending, &now);
+    CHECK(strcmp(now.gtk_theme, "Breeze") == 0 && now.style == XD_STYLE_LUNA);
+
+    /* Discovery, in a scratch tree laid out like two $XDG_DATA_DIRS. */
+    char *root = g_dir_make_tmp("xd-themes-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    /* one: "zed" (full), "cur" (cursors only, no Directories), "cur2"
+     * (Directories=cursors), "hid" (Hidden), "Adwaita" (Hidden, listed
+     * anyway), "noindex", "default"; two: another "zed" (hidden by
+     * one's), "Alpha" (no Name). */
+    put_file(root, "one/icons/zed/index.theme",
+             "[Icon Theme]\nName=Zed Icons\nDirectories=16x16/apps\n"
+             "[16x16/apps]\nSize=16\n");
+    put_file(root, "one/icons/cur/index.theme", "[Icon Theme]\nName=Cursors\n");
+    put_file(root, "one/icons/cur2/index.theme",
+             "[Icon Theme]\nName=Cursors 2\nDirectories=cursors\n");
+    put_file(root, "one/icons/hid/index.theme",
+             "[Icon Theme]\nName=Hid\nHidden=true\nDirectories=16x16/apps\n");
+    put_file(root, "one/icons/Adwaita/index.theme",
+             "[Icon Theme]\nName=Adwaita\nHidden=true\nDirectories=16x16/apps\n");
+    put_file(root, "one/icons/noindex/16x16/apps/x.png", "");
+    put_file(root, "one/icons/default/index.theme",
+             "[Icon Theme]\nInherits=zed\nDirectories=16x16/apps\n");
+    put_file(root, "two/icons/zed/index.theme",
+             "[Icon Theme]\nName=Other Zed\nDirectories=16x16/apps\n");
+    put_file(root, "two/icons/Alpha/index.theme",
+             "[Icon Theme]\nScaledDirectories=scalable/apps\n");
+    /* GTK: "Zap" (gtk-3.0), "Old" (gtk-2.0 only), our generated theme,
+     * and a "Breeze" in both. */
+    put_file(root, "one/themes/Zap/gtk-3.0/gtk.css", "");
+    put_file(root, "one/themes/Old/gtk-2.0/gtkrc", "");
+    put_file(root, "one/themes/XeonDesktop/gtk-3.0/gtk.css", "");
+    put_file(root, "one/themes/Breeze/gtk-3.0/gtk.css", "");
+    put_file(root, "two/themes/Breeze/gtk-3.0/gtk.css", "");
+
+    char *one = g_build_filename(root, "one", "icons", nullptr);
+    char *two = g_build_filename(root, "two", "icons", nullptr);
+    const char *icon_dirs[] = {one, two, "/nonexistent", nullptr};
+    GPtrArray *icons = xd_icon_themes_list(icon_dirs);
+    CHECK(icons->len == 3);
+    CHECK(theme_at(icons, 0) && strcmp(theme_at(icons, 0)->dir, "Adwaita") == 0);
+    CHECK(theme_at(icons, 1) && strcmp(theme_at(icons, 1)->dir, "Alpha") == 0 &&
+          strcmp(theme_at(icons, 1)->name, "Alpha") == 0);
+    CHECK(theme_at(icons, 2) && strcmp(theme_at(icons, 2)->dir, "zed") == 0 &&
+          strcmp(theme_at(icons, 2)->name, "Zed Icons") == 0);
+    g_ptr_array_unref(icons);
+    g_free(one);
+    g_free(two);
+
+    one = g_build_filename(root, "one", "themes", nullptr);
+    two = g_build_filename(root, "two", "themes", nullptr);
+    const char *gtk_dirs[] = {one, two, nullptr};
+    GPtrArray *gtk = xd_gtk_themes_list(gtk_dirs);
+    static const char *const want[] = {"Adwaita", "Breeze", "HighContrast", "Zap"};
+    CHECK(gtk->len == G_N_ELEMENTS(want));
+    for (guint i = 0; i < G_N_ELEMENTS(want); i++)
+        CHECK(theme_at(gtk, i) && strcmp(theme_at(gtk, i)->dir, want[i]) == 0);
+    g_ptr_array_unref(gtk);
+    g_free(one);
+    g_free(two);
+
+    char **search = xd_icon_theme_dirs();
+    CHECK(g_strv_length(search) >= 3 && g_str_has_suffix(search[1], "/.icons"));
+    g_strfreev(search);
+    search = xd_gtk_theme_dirs();
+    CHECK(g_strv_length(search) >= 3 && g_str_has_suffix(search[1], "/.themes"));
+    g_strfreev(search);
+
+    /* settings.ini: the user's other keys and comments stay. */
+    char *config = g_build_filename(root, "config", nullptr);
+    put_file(config, "gtk-3.0/settings.ini",
+             "# mine\n[Settings]\ngtk-font-name=Sans 10\ngtk-theme-name=Old\n");
+    put_file(config, "gtk-4.0/settings.ini", "[Settings]\ngtk-theme-name=Old\n");
+    GSettingsBackend *backend = g_memory_settings_backend_new();
+    xd_gtk_settings_export(config, backend, "Zap", "zed");
+    char *ini3 = g_build_filename(config, "gtk-3.0", "settings.ini", nullptr);
+    char *ini4 = g_build_filename(config, "gtk-4.0", "settings.ini", nullptr);
+    GKeyFile *kf = g_key_file_new();
+    CHECK(g_key_file_load_from_file(kf, ini3, G_KEY_FILE_KEEP_COMMENTS, nullptr));
+    char *v = g_key_file_get_string(kf, "Settings", "gtk-theme-name", nullptr);
+    CHECK(g_strcmp0(v, "Zap") == 0);
+    g_free(v);
+    v = g_key_file_get_string(kf, "Settings", "gtk-icon-theme-name", nullptr);
+    CHECK(g_strcmp0(v, "zed") == 0);
+    g_free(v);
+    v = g_key_file_get_string(kf, "Settings", "gtk-font-name", nullptr);
+    CHECK(g_strcmp0(v, "Sans 10") == 0);
+    g_free(v);
+    v = g_key_file_get_comment(kf, nullptr, nullptr, nullptr);
+    CHECK(v != nullptr && strstr(v, "mine") != nullptr);
+    g_free(v);
+    g_key_file_free(kf);
+    /* Ours: GTK4 has no such theme, so its file loses the key. */
+    xd_gtk_settings_export(config, backend, "XeonDesktop", nullptr);
+    kf = g_key_file_new();
+    CHECK(g_key_file_load_from_file(kf, ini4, G_KEY_FILE_NONE, nullptr));
+    CHECK(!g_key_file_has_key(kf, "Settings", "gtk-theme-name", nullptr));
+    v = g_key_file_get_string(kf, "Settings", "gtk-icon-theme-name", nullptr);
+    CHECK(g_strcmp0(v, "zed") == 0);
+    g_free(v);
+    g_key_file_free(kf);
+    kf = g_key_file_new();
+    CHECK(g_key_file_load_from_file(kf, ini3, G_KEY_FILE_NONE, nullptr));
+    v = g_key_file_get_string(kf, "Settings", "gtk-theme-name", nullptr);
+    CHECK(g_strcmp0(v, "XeonDesktop") == 0);
+    g_free(v);
+    g_key_file_free(kf);
+    /* GSettings, where the schema is installed (in memory here). */
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    GSettingsSchema *schema =
+        src != nullptr ? g_settings_schema_source_lookup(src, "org.gnome.desktop.interface", TRUE)
+                       : nullptr;
+    if (schema != nullptr) {
+        GSettings *s = g_settings_new_full(schema, backend, nullptr);
+        v = g_settings_get_string(s, "gtk-theme");
+        CHECK(strcmp(v, "XeonDesktop") == 0);
+        g_free(v);
+        v = g_settings_get_string(s, "icon-theme");
+        CHECK(strcmp(v, "zed") == 0);
+        g_free(v);
+        g_object_unref(s);
+        g_settings_schema_unref(schema);
+    }
+    g_object_unref(backend);
+    /* Removing from a file that isn't there creates nothing. */
+    char *none = g_build_filename(config, "gtk-5.0", "settings.ini", nullptr);
+    CHECK(xd_gtk_ini_set(none, "gtk-theme-name", nullptr));
+    CHECK(!g_file_test(none, G_FILE_TEST_EXISTS));
+    g_free(none);
+    g_free(ini3);
+    g_free(ini4);
+    g_free(config);
+    rm_tree(root);
+    g_free(root);
 }
 
 static void test_settings(void) {
@@ -2955,6 +3171,7 @@ int main(void) {
     test_kbd_layouts();
     test_cursor_themes();
     test_file_types_edit();
+    test_theme_settings();
     test_fonts();
     test_bluetooth_info();
     test_joystick();

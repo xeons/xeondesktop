@@ -1210,8 +1210,7 @@ int main(int argc, char **argv) {
     }
     a.idle_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
     a.frame_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-    a.icons = xd_icons_create(getenv("XD_ICON_THEME") != nullptr ? getenv("XD_ICON_THEME")
-                                                                 : "breeze");
+    a.icons = xd_icons_create(xd_settings_icon_theme(&a.settings));
 
     if (a.locking) {
         a.lock = ext_session_lock_manager_v1_lock(a.lock_manager);

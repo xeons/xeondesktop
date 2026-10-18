@@ -23,6 +23,7 @@
 #include "../core/alloc.h"
 #include "../saver/savers.h"
 #include "../settings/settings.h"
+#include "../settings/themes.h"
 #include "../ui/image.h"
 #include "../ui/ui.h"
 #include "common.h"
@@ -96,6 +97,10 @@ typedef struct desk {
     xd_widget *smoothing_check;
     xd_widget *smoothing_combo;
     xd_widget *large_icons;
+    GPtrArray *icon_themes; /* xd_installed_theme, as the Icons list shows them */
+    GPtrArray *gtk_themes;  /* ...and Program style's, after its first item */
+    xd_widget *icon_combo;
+    xd_widget *gtk_combo;
 
     /* Settings */
     disp_head *heads;       /* as edited */
@@ -1062,6 +1067,88 @@ static void on_large_icons(xd_widget *w, void *user) {
     changed(d);
 }
 
+/* Icons and Program style: the freedesktop icon theme everything draws
+ * from, and the GTK theme GTK programs get. Windows had neither; they sit
+ * below its visual effects. */
+static const char *theme_dir_at(GPtrArray *list, int item) {
+    /* Item 0 is the default. */
+    if (item <= 0 || (guint)item > list->len)
+        return "";
+    return ((xd_installed_theme *)g_ptr_array_index(list, (guint)item - 1))->dir;
+}
+
+static void on_icon_theme(xd_widget *w, void *user) {
+    desk *d = user;
+    snprintf(d->pending.icon_theme, sizeof(d->pending.icon_theme), "%s",
+             theme_dir_at(d->icon_themes, xd_widget_selected(w)));
+    changed(d);
+}
+
+static void on_gtk_theme(xd_widget *w, void *user) {
+    desk *d = user;
+    snprintf(d->pending.gtk_theme, sizeof(d->pending.gtk_theme), "%s",
+             theme_dir_at(d->gtk_themes, xd_widget_selected(w)));
+    changed(d);
+}
+
+/* Fills a theme list after its default item and selects `dir` ("" = the
+ * default). A theme that isn't installed (any more) is listed by its
+ * directory, so that the setting stays as it is until changed. */
+static void fill_themes(xd_widget *combo, GPtrArray *list, const char *dir) {
+    int sel = 0;
+    for (guint i = 0; dir[0] != '\0' && sel == 0 && i < list->len; i++) {
+        if (strcmp(((xd_installed_theme *)g_ptr_array_index(list, i))->dir, dir) == 0)
+            sel = (int)i + 1;
+    }
+    if (dir[0] != '\0' && sel == 0) {
+        xd_installed_theme *t = g_new0(xd_installed_theme, 1);
+        t->dir = g_strdup(dir);
+        t->name = g_strdup(dir);
+        g_ptr_array_add(list, t);
+        sel = (int)list->len;
+    }
+    for (guint i = 0; i < list->len; i++)
+        xd_widget_add_item(combo, ((xd_installed_theme *)g_ptr_array_index(list, i))->name);
+    xd_widget_select(combo, sel);
+}
+
+static void build_themes(desk *d) {
+    xd_window *win = d->win;
+    const int P = PAGE_EFFECTS;
+    char **dirs = xd_icon_theme_dirs();
+    d->icon_themes = xd_icon_themes_list((const char *const *)dirs);
+    g_strfreev(dirs);
+    dirs = xd_gtk_theme_dirs();
+    d->gtk_themes = xd_gtk_themes_list((const char *const *)dirs);
+    g_strfreev(dirs);
+
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 264, 364, 86}, "Icons and program style"),
+                       P);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 289, 130, 16}, "Icons:", 0), P);
+    d->icon_combo = xd_combo(win, (xd_rect){164, 286, 208, 21}, false, on_icon_theme, d);
+    xd_widget_set_page(d->icon_combo, P);
+    /* The default ($XD_ICON_THEME, else Breeze), as the list names it. */
+    xd_settings def = d->pending;
+    def.icon_theme[0] = '\0';
+    const char *def_dir = xd_settings_icon_theme(&def);
+    const char *def_name = def_dir;
+    for (guint i = 0; i < d->icon_themes->len; i++) {
+        const xd_installed_theme *t = g_ptr_array_index(d->icon_themes, i);
+        if (strcmp(t->dir, def_dir) == 0)
+            def_name = t->name;
+    }
+    char *label = g_strdup_printf("Default (%s)", def_name);
+    xd_widget_add_item(d->icon_combo, label);
+    g_free(label);
+    fill_themes(d->icon_combo, d->icon_themes, d->pending.icon_theme);
+
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 319, 130, 16}, "Program style (GTK):", 0), P);
+    d->gtk_combo = xd_combo(win, (xd_rect){164, 316, 208, 21}, false, on_gtk_theme, d);
+    xd_widget_set_page(d->gtk_combo, P);
+    xd_widget_add_item(d->gtk_combo, "XeonDesktop (matches the style)");
+    fill_themes(d->gtk_combo, d->gtk_themes, d->pending.gtk_theme);
+}
+
 static void build_effects(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_EFFECTS;
@@ -1096,6 +1183,7 @@ static void build_effects(desk *d) {
     xd_widget_set_page(xd_label(win, (xd_rect){20, 238, 364, 16},
                                 "Greyed-out effects aren't available yet.", XD_LABEL_DIM),
                        P);
+    build_themes(d);
 }
 
 /* ---- Settings ------------------------------------------------------------------ */
@@ -1866,6 +1954,17 @@ static bool apply(desk *d) {
         fprintf(stderr, "xd-desk: cannot write settings\n");
         return false;
     }
+    /* Themes chosen here also go where other desktops' settings tools put
+     * them, for GTK programs that don't get ours through GTK_THEME (those
+     * D-Bus or a terminal starts, GTK4's). Only when changed here, so that
+     * themes set with those tools aren't overwritten behind the user's
+     * back. */
+    bool gtk = strcmp(d->saved.gtk_theme, d->pending.gtk_theme) != 0;
+    bool icons = strcmp(d->saved.icon_theme, d->pending.icon_theme) != 0;
+    if (gtk || icons)
+        xd_gtk_settings_export(g_get_user_config_dir(), nullptr,
+                               gtk ? xd_settings_gtk_theme(&now) : nullptr,
+                               icons ? xd_settings_icon_theme(&now) : nullptr);
     d->saved = d->pending = now;
     /* Re-theme this dialog too, as Windows does after Apply. */
     xd_scheme scheme;
@@ -1956,5 +2055,7 @@ int main(int argc, char **argv) {
         xd_free(d.wallpapers[i]);
     xd_free(d.wallpapers);
     xd_scheme_list_free(&d.schemes);
+    g_ptr_array_unref(d.icon_themes);
+    g_ptr_array_unref(d.gtk_themes);
     return EXIT_SUCCESS;
 }

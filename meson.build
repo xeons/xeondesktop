@@ -403,6 +403,7 @@ executable(
 executable(
   'xd-desk',
   'src/apps/desk.c',
+  'src/settings/themes.c',
   apps_common,
   dependencies: [ui_dep, saver_dep],
   c_args: ['-D_GNU_SOURCE'],
@@ -891,6 +892,7 @@ test_exe = executable(
   'src/power/schemes.c',
   'src/keyboard/layouts.c',
   'src/mouse/cursors.c',
+  'src/settings/themes.c',
   'src/schedtasks/task.c',
   'src/bluetooth/btinfo.c',
   'src/joy/joyinfo.c',
