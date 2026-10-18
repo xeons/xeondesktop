@@ -104,6 +104,11 @@ xd_menu_item *xd_menu_add_keyed(xd_menu_tree *tree, xd_menu_model *model, xd_men
  * (create shortcut), My Documents) and Properties, as XP's and Windows 7's
  * Start menus have. The app belongs to shell->apps. */
 void xd_menu_add_program_items(xd_menu_tree *tree, xd_menu_model *model, const xd_app *app);
+/* After a program's Open, on a laptop with two graphics cards
+ * (switcheroo-control): "Run with dedicated graphics card" (or the
+ * integrated one, for a program that starts on the dedicated one) and
+ * "Always run with dedicated graphics card". Nothing with one card. */
+void xd_menu_add_gpu_items(xd_menu_tree *tree, xd_menu_model *model, const xd_app *app);
 /* Whether menus underline their access keys now: always, unless they're
  * hidden until the keyboard is used (Display Properties' Effects), as in
  * Windows; then once a menu was opened or used from the keyboard. */

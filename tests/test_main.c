@@ -67,6 +67,7 @@
 #include <gio/gsettingsbackend.h>
 #include <json-glib/json-glib.h>
 #include "../src/shell/apps.h"
+#include "../src/shell/gpu.h"
 #include "../src/startup/startup.h"
 #include "../src/startmenu/searchlib.h"
 #include "../src/taskmgr/netstat.h"
@@ -5018,6 +5019,55 @@ static void test_startup_services(void) {
     CHECK(xd_run_app_path(XD_STR("/usr/bin/msconfig")) == nullptr);
 }
 
+static void test_gpu(void) {
+    GVariant *v = g_variant_ref_sink(g_variant_new_parsed(
+        "[{'Name': <'Intel UHD'>, 'Environment': <['DRI_PRIME', '0']>, 'Default': <true>},"
+        " {'Name': <'NVIDIA'>, 'Environment': <['DRI_PRIME', '1', 'ODD']>, 'Default': <false>},"
+        " {'Default': <false>}]"));
+    xd_gpu_list gpus;
+    xd_gpu_list_parse(v, &gpus);
+    g_variant_unref(v);
+    CHECK(gpus.count == 3);
+    CHECK(xd_gpu_list_default(&gpus) == 0 && xd_gpu_list_other(&gpus) == 1);
+    if (gpus.count == 3) {
+        CHECK(strcmp(gpus.items[1].name, "NVIDIA") == 0 && !gpus.items[1].is_default);
+        /* Pairs only: the odd one out is dropped. */
+        CHECK(g_strv_length(gpus.items[1].env) == 2 &&
+              strcmp(gpus.items[1].env[1], "1") == 0);
+        CHECK(gpus.items[2].env != nullptr && gpus.items[2].env[0] == nullptr &&
+              gpus.items[2].name[0] != '\0');
+    }
+    CHECK(xd_gpu_choose(&gpus, false, XD_GPU_PREF_AUTO) == -1);
+    CHECK(xd_gpu_choose(&gpus, true, XD_GPU_PREF_AUTO) == 1);
+    CHECK(xd_gpu_choose(&gpus, true, XD_GPU_PREF_DEFAULT) == -1);
+    CHECK(xd_gpu_choose(&gpus, false, XD_GPU_PREF_OTHER) == 1);
+    xd_gpu_list one = {.items = gpus.items, .count = 1};
+    CHECK(xd_gpu_choose(&one, true, XD_GPU_PREF_OTHER) == -1);
+    xd_gpu_list_free(&gpus);
+    CHECK(gpus.count == 0);
+    xd_gpu_list_parse(nullptr, &gpus);
+    CHECK(gpus.count == 0);
+    /* Without switcheroo-control (never watched here): one card. */
+    CHECK(xd_gpu_current()->count == 0);
+
+    char *root = g_dir_make_tmp("xd-gpu-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    char *path = g_build_filename(root, "xeondesktop", "gpu.ini", nullptr);
+    CHECK(xd_gpu_pref_get(path, "game.desktop") == XD_GPU_PREF_AUTO);
+    CHECK(xd_gpu_pref_set(path, "game.desktop", XD_GPU_PREF_OTHER));
+    CHECK(xd_gpu_pref_set(path, "browser.desktop", XD_GPU_PREF_DEFAULT));
+    CHECK(xd_gpu_pref_get(path, "game.desktop") == XD_GPU_PREF_OTHER);
+    CHECK(xd_gpu_pref_get(path, "browser.desktop") == XD_GPU_PREF_DEFAULT);
+    CHECK(file_has(path, "game.desktop=dedicated"));
+    CHECK(xd_gpu_pref_set(path, "game.desktop", XD_GPU_PREF_AUTO));
+    CHECK(xd_gpu_pref_get(path, "game.desktop") == XD_GPU_PREF_AUTO && !file_has(path, "game"));
+    g_free(path);
+    rm_tree(root);
+    g_free(root);
+}
+
 static void test_search_match(void) {
     xd_search_name n;
     xd_search_name_init(&n, "  ");
@@ -6304,6 +6354,7 @@ int main(void) {
     test_schedtasks();
     test_startup_programs();
     test_startup_services();
+    test_gpu();
     test_search_match();
     test_thumbnail_cache();
     test_favorites();

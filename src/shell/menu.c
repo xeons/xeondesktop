@@ -10,6 +10,7 @@
 #include "../settings/soundplay.h"
 #include "../theme/draw.h"
 #include "../ui/icons.h"
+#include "gpu.h"
 #include "menu.h"
 #include "shell.h"
 
@@ -913,6 +914,63 @@ void xd_menu_add_program_items(xd_menu_tree *tree, xd_menu_model *model, const x
     it->disabled = !file;
 }
 
+/* Hybrid graphics: run on another card than the program's own, once or
+ * always (gpu.h). One action per card, as the data is the app. */
+static void run_on(const xd_app *app, int gpu) {
+    if (xd_app_launch_gpu(app, gpu))
+        xd_start7_count_launch(app->id);
+}
+static void ctx_gpu0([[maybe_unused]] xd_shell *shell, void *data) { run_on(data, 0); }
+static void ctx_gpu1([[maybe_unused]] xd_shell *shell, void *data) { run_on(data, 1); }
+static void ctx_gpu2([[maybe_unused]] xd_shell *shell, void *data) { run_on(data, 2); }
+static void ctx_gpu3([[maybe_unused]] xd_shell *shell, void *data) { run_on(data, 3); }
+static void (*const ctx_gpu[])(xd_shell *, void *) = {ctx_gpu0, ctx_gpu1, ctx_gpu2, ctx_gpu3};
+
+/* "Always run with dedicated graphics card" ticked or unticked: what the
+ * user chose, kept only where it differs from the desktop entry's own. */
+static void ctx_gpu_always([[maybe_unused]] xd_shell *shell, void *data) {
+    GDesktopAppInfo *info = ((const xd_app *)data)->info;
+    bool other = !xd_gpu_app_uses_other(info);
+    bool prefers = g_desktop_app_info_get_boolean(info, "PrefersNonDefaultGPU");
+    char *key = xd_gpu_app_key(info);
+    xd_gpu_pref_set(nullptr, key, other == prefers ? XD_GPU_PREF_AUTO
+                         : other         ? XD_GPU_PREF_OTHER
+                                         : XD_GPU_PREF_DEFAULT);
+    g_free(key);
+}
+
+void xd_menu_add_gpu_items(xd_menu_tree *tree, xd_menu_model *model, const xd_app *app) {
+    const xd_gpu_list *gpus = xd_gpu_current();
+    if (gpus->count < 2 || app->info == nullptr)
+        return;
+    void *data = (void *)(uintptr_t)app;
+    bool other = xd_gpu_app_uses_other(app->info);
+    /* GNOME's wording; with several other cards, each by its name. */
+    size_t others = 0;
+    for (size_t i = 0; i < gpus->count; i++)
+        others += gpus->items[i].is_default ? 0 : 1;
+    for (size_t i = 0; i < gpus->count && i < XD_ARRAY_LEN(ctx_gpu); i++) {
+        const xd_gpu *g = &gpus->items[i];
+        /* Offered: the cards it doesn't start on by itself. */
+        if (g->is_default != other)
+            continue;
+        char *label = g->is_default    ? g_strdup("Run with integrated graphics card")
+                      : others == 1    ? g_strdup("Run with dedicated graphics card")
+                                       : g_strdup_printf("Run with %s", g->name);
+        xd_menu_item *it = xd_menu_add(tree, model, XD_MENU_ACTION, label, nullptr);
+        it->action = ctx_gpu[i];
+        it->action_data = data;
+        g_free(label);
+        if (g->is_default)
+            break; /* one default card */
+    }
+    xd_menu_item *it = xd_menu_add(tree, model, XD_MENU_ACTION,
+                                   "Always run with dedicated graphics card", nullptr);
+    it->checked = other;
+    it->action = ctx_gpu_always;
+    it->action_data = data;
+}
+
 static xd_menu_model *app_context(xd_shell *shell, xd_menu_tree *tree, const xd_app *app) {
     xd_menu_model *mm = xd_menu_model_new(tree);
     void *data = (void *)(uintptr_t)app;
@@ -920,6 +978,7 @@ static xd_menu_model *app_context(xd_shell *shell, xd_menu_tree *tree, const xd_
     it->bold = true;
     it->action = ctx_open;
     it->action_data = data;
+    xd_menu_add_gpu_items(tree, mm, app);
     xd_menu_add(tree, mm, XD_MENU_SEPARATOR, nullptr, nullptr);
     bool full = false;
     bool pinned = xd_start7_pinned(shell, app->id, &full);

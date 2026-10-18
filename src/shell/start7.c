@@ -1749,6 +1749,7 @@ static xd_menu_model *context_model(xd_start7 *m, const row *r) {
     it->bold = true;
     it->action = ctx_open;
     it->action_data = id;
+    xd_menu_add_gpu_items(&m->tree, mm, r->app);
     xd_menu_add(&m->tree, mm, XD_MENU_SEPARATOR, nullptr, nullptr);
     if (!m->xp && m->shell->style == XD_STYLE_AERO) {
         /* Windows 7's other place to pin to (Aero's taskbar shows it). */

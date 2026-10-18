@@ -46,6 +46,9 @@ void xd_app_release(xd_app *app);
 /* Launches the application detached from the shell (own session, default
  * signal handling). Returns false on failure. */
 bool xd_app_launch(const xd_app *app);
+/* As xd_app_launch, on graphics card `gpu` (an index into xd_gpu_current;
+ * < 0: the program's own choice, as every other launch makes it). */
+bool xd_app_launch_gpu(const xd_app *app, int gpu);
 /* Launches a program with files (URIs, GList of char*; may be nullptr),
  * detached the same way. */
 typedef struct _GList GList;

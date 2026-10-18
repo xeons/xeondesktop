@@ -4851,6 +4851,104 @@ def msconfig_startup(s):
     s.check(not session_program("xd-shutdown"), "Exit Without Log Off didn't log off")
 
 
+# XP's Start menu: its pinned programs' rows, from (90, 352) down.
+XP_PINNED_ROW = 38
+GPU_PROBES = {"xd-gpu-game.desktop": ("GPU Game", "game.env", True),
+              "xd-gpu-probe.desktop": ("GPU Probe", "probe.env", False)}  # fmt: skip
+
+
+def mock_hybrid_graphics(s):
+    """Before the compositor starts: a private system bus with
+    switcheroo-control (tests/dbusmock/switcheroo.py: an integrated card,
+    the default, and a dedicated one taking DRI_PRIME=1), and two games
+    that write their environment to a file, one with
+    PrefersNonDefaultGPU=true, pinned to the XP Start menu."""
+    from dbusmock import DBusTestCase
+
+    DBusTestCase.start_system_bus()
+    template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "switcheroo.py")
+    proc, _ = DBusTestCase.spawn_server_template(
+        template, {}, stdout=subprocess.DEVNULL, system_bus=True
+    )
+    s.children.append(proc)
+    probe = os.path.join(s.base, "probe.sh")
+    with open(probe, "w") as f:
+        f.write('#!/bin/sh\nenv > "$1.tmp" && mv "$1.tmp" "$1"\n')
+    os.chmod(probe, 0o755)
+    for name, (title, out, prefers) in GPU_PROBES.items():
+        with open(os.path.join(s.data, "applications", name), "w") as f:
+            f.write(f"[Desktop Entry]\nType=Application\nName={title}\n"
+                    f"Exec={probe} {os.path.join(s.base, out)}\nCategories=Game;\n"
+                    + ("PrefersNonDefaultGPU=true\n" if prefers else ""))  # fmt: skip
+    with open(os.path.join(s.config, "start-pinned"), "w") as f:
+        f.write("".join(name + "\n" for name in GPU_PROBES))
+
+
+@scenario(LUNA_INI, requires=("dbusmock",), setup=mock_hybrid_graphics)
+def dedicated_graphics(s):
+    """With two graphics cards (dbusmock switcheroo-control): a game with
+    PrefersNonDefaultGPU=true starts on the dedicated card; another's
+    right-click menu in the Start menu runs it there once ("Run with
+    dedicated graphics card") or always (kept in gpu.ini); the first one's
+    offers the integrated card instead."""
+    game, probe = (90, 352), (90, 352 + XP_PINNED_ROW)
+    gpu_ini = os.path.join(s.config, "gpu.ini")
+
+    def env_of(out):
+        try:
+            with open(os.path.join(s.base, out)) as f:
+                lines = f.read().splitlines()
+        except OSError:
+            return None
+        return dict(l.split("=", 1) for l in lines if "=" in l)
+
+    def run(row, out, what, *keys):
+        """Starts a program from the Start menu: clicked, or with `keys`
+        in its right-click menu; returns its environment."""
+        try:
+            os.remove(os.path.join(s.base, out))
+        except FileNotFoundError:
+            pass
+        s.inject("key", "ctrl+Escape", "sleep", 600)
+        s.settle("menu")
+        if keys:
+            s.inject("move", *row, "sleep", 200, "click", "right", "sleep", 600)
+            s.settle("program-menu")
+            steps = []
+            for k in keys:
+                steps += ["key", k]
+            s.inject(*steps)
+        else:
+            s.inject("move", *row, "sleep", 200, "click")
+        return s.wait(lambda: env_of(out), what)
+
+    env = run(game, "game.env", "GPU Game to start")
+    s.check(env.get("DRI_PRIME") == "1" and env.get("__GLX_VENDOR_LIBRARY_NAME") == "mesa",
+            "PrefersNonDefaultGPU started it on the dedicated card")  # fmt: skip
+    env = run(probe, "probe.env", "GPU Probe to start")
+    s.check("DRI_PRIME" not in env, "another program starts on the default card")
+
+    # Its menu: Open, Run with dedicated graphics card, Always run with...
+    env = run(probe, "probe.env", "Run with dedicated graphics card", "Down", "Down", "Return")
+    s.check(env.get("DRI_PRIME") == "1", "Run with dedicated graphics card used its variables")
+    s.check(not os.path.exists(gpu_ini), "running it there once remembers nothing")
+
+    s.inject("key", "ctrl+Escape", "sleep", 600)
+    s.settle("menu")
+    s.inject("move", *probe, "sleep", 200, "click", "right", "sleep", 600,
+             "key", "Down", "key", "Down", "key", "Down", "key", "Return")  # fmt: skip
+    s.wait(lambda: os.path.exists(gpu_ini), "gpu.ini")
+    with open(gpu_ini) as f:
+        s.check("xd-gpu-probe.desktop=dedicated" in f.read(),
+                "Always run with dedicated graphics card is kept")  # fmt: skip
+    env = run(probe, "probe.env", "GPU Probe to start again")
+    s.check(env.get("DRI_PRIME") == "1", "it starts on the dedicated card from then on")
+
+    # GPU Game's menu offers the integrated card.
+    env = run(game, "game.env", "Run with integrated graphics card", "Down", "Down", "Return")
+    s.check(env.get("DRI_PRIME") == "0", "Run with integrated graphics card used the default's")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

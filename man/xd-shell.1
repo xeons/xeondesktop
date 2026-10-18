@@ -22,6 +22,16 @@ Taskbar and Start Menu Properties
 its programs come from the installed desktop entries.
 It also starts the screen saver after the configured wait.
 .PP
+On a laptop with two graphics cards (as switcheroo-control reports them),
+a program whose desktop entry has
+.B PrefersNonDefaultGPU=true
+starts on the card that isn't the default, however it's started (Start
+menu, Quick Launch, desktop, taskbar).
+A program's right-click menu in the XP and Windows 7 Start menus offers
+\(lqRun with dedicated graphics card\(rq (or the integrated one, for a
+program that starts on the dedicated one) and \(lqAlways run with dedicated
+graphics card\(rq.
+.PP
 .BR xd\-compositor (1)
 starts it, passing on its own
 .B \-\-style
@@ -120,6 +130,14 @@ Programs pinned to the Windows 7 taskbar, one desktop file id a line.
 .I ~/.local/share/xeondesktop/quicklaunch/
 The Quick Launch shortcuts: desktop entries or links to them, in file
 name order.
+.TP
+.I ~/.config/xeondesktop/gpu.ini
+The graphics card chosen per program:
+.B [Programs]
+.IB id = dedicated
+or
+.BR default ,
+where it differs from the program's own choice.
 .TP
 .I ~/.face
 The picture at the top of the XP and Windows 7 Start menus.

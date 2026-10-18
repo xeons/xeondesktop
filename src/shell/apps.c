@@ -7,6 +7,7 @@
 #include "../core/alloc.h"
 #include "../files/control.h"
 #include "apps.h"
+#include "gpu.h"
 
 /* Windows-style Programs folders for the freedesktop main categories,
  * checked in this order (an entry often lists several). */
@@ -168,32 +169,36 @@ static void child_setup([[maybe_unused]] gpointer data) {
     setsid();
 }
 
-bool xd_app_launch(const xd_app *app) {
-    if (app->info == nullptr)
-        return false;
+/* Launches `info` detached; `chooser` is the program whose graphics card
+ * it starts on: card `gpu`, or with gpu < 0 the program's own (hybrid
+ * graphics laptops, gpu.h). */
+static bool launch(GDesktopAppInfo *info, GList *uris, GDesktopAppInfo *chooser, int gpu,
+                   const char *what) {
+    GAppLaunchContext *ctx = g_app_launch_context_new();
+    xd_gpu_setup_launch(ctx, chooser, gpu);
     GError *err = nullptr;
-    bool ok = g_desktop_app_info_launch_uris_as_manager(
-        app->info, nullptr, nullptr, G_SPAWN_SEARCH_PATH, child_setup, nullptr, nullptr, nullptr,
-        &err);
-    if (!ok) {
-        fprintf(stderr, "xd-shell: cannot launch %s: %s\n", app->id,
-                err != nullptr ? err->message : "unknown error");
-        g_clear_error(&err);
-    }
-    return ok;
-}
-
-bool xd_app_launch_info(GDesktopAppInfo *info, GList *uris) {
-    GError *err = nullptr;
-    bool ok = g_desktop_app_info_launch_uris_as_manager(info, uris, nullptr, G_SPAWN_SEARCH_PATH,
+    bool ok = g_desktop_app_info_launch_uris_as_manager(info, uris, ctx, G_SPAWN_SEARCH_PATH,
                                                         child_setup, nullptr, nullptr, nullptr,
                                                         &err);
     if (!ok) {
-        fprintf(stderr, "xd-shell: cannot launch %s: %s\n",
-                g_app_info_get_name(G_APP_INFO(info)), err != nullptr ? err->message : "?");
+        fprintf(stderr, "xd-shell: cannot launch %s: %s\n", what,
+                err != nullptr ? err->message : "unknown error");
         g_clear_error(&err);
     }
+    g_object_unref(ctx);
     return ok;
+}
+
+bool xd_app_launch(const xd_app *app) { return xd_app_launch_gpu(app, -1); }
+
+bool xd_app_launch_gpu(const xd_app *app, int gpu) {
+    if (app->info == nullptr)
+        return false;
+    return launch(app->info, nullptr, app->info, gpu, app->id);
+}
+
+bool xd_app_launch_info(GDesktopAppInfo *info, GList *uris) {
+    return launch(info, uris, info, -1, g_app_info_get_name(G_APP_INFO(info)));
 }
 
 bool xd_app_launch_action(GDesktopAppInfo *info, const char *action) {
@@ -216,7 +221,8 @@ bool xd_app_launch_action(GDesktopAppInfo *info, const char *action) {
         g_key_file_set_string(entry, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_EXEC, exec);
         GDesktopAppInfo *one = g_desktop_app_info_new_from_keyfile(entry);
         if (one != nullptr) {
-            ok = xd_app_launch_info(one, nullptr);
+            /* On the card the program itself starts on. */
+            ok = launch(one, nullptr, info, -1, g_app_info_get_name(G_APP_INFO(info)));
             g_object_unref(one);
         }
         g_key_file_free(entry);
