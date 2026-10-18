@@ -76,6 +76,7 @@ typedef struct xd_listpopup {
     int first;         /* first visible item (scrolling) */
     int hot;
     double scale;
+    struct wl_callback *frame; /* pending frame callback: don't draw yet */
     bool configured;
     bool dirty;
     /* The scroll bar, when there are more items than rows. */
@@ -96,6 +97,7 @@ struct xd_window {
     xd_shm_ring ring;
     int width, height; /* logical */
     double scale;
+    struct wl_callback *frame; /* pending frame callback: don't draw yet */
     bool configured;
     bool dirty;
     bool active;

@@ -562,8 +562,36 @@ static void draw_widget(xd_window *win, const xd_theme *t, cairo_t *cr, xd_widge
     }
 }
 
+/* ---- frame pacing ------------------------------------------------------------------ */
+
+/* A surface draws at most once per frame the compositor shows: changes made
+ * while a frame is pending (a slider dragged faster than the display) wait
+ * for its done event and go out together, instead of queueing buffers the
+ * compositor would only drop. */
+static void frame_done(void *data, struct wl_callback *cb, [[maybe_unused]] uint32_t time) {
+    struct wl_callback **slot = data;
+    wl_callback_destroy(cb);
+    *slot = nullptr;
+}
+
+static const struct wl_callback_listener frame_listener = {.done = frame_done};
+
+/* Asks for the next frame's done event; before the commit it belongs to. */
+static void request_frame(struct wl_surface *surface, struct wl_callback **slot) {
+    *slot = wl_surface_frame(surface);
+    wl_callback_add_listener(*slot, &frame_listener, slot);
+}
+
+static void cancel_frame(struct wl_callback **slot) {
+    if (*slot != nullptr)
+        wl_callback_destroy(*slot);
+    *slot = nullptr;
+}
+
 void xd_window_render(xd_window *win) {
     xd_ui *ui = win->ui;
+    if (win->frame != nullptr)
+        return; /* stays dirty until the frame is done */
     double s = win->scale;
     int dw = dev(win->width, s);
     int dh = dev(win->height, s);
@@ -586,6 +614,7 @@ void xd_window_render(xd_window *win) {
     wl_surface_damage_buffer(win->surface, 0, 0, dw, dh);
     if (win->viewport != nullptr)
         wp_viewport_set_destination(win->viewport, win->width, win->height);
+    request_frame(win->surface, &win->frame);
     wl_surface_commit(win->surface);
     buf->busy = true;
     win->dirty = false;
@@ -625,6 +654,8 @@ static void popup_scroll_to(xd_listpopup *p, int index) {
 
 void xd_popup_render(xd_listpopup *p) {
     xd_ui *ui = p->owner->ui;
+    if (p->frame != nullptr)
+        return;
     double s = p->scale;
     int dw = dev(p->width, s);
     int dh = dev(p->height, s);
@@ -658,6 +689,7 @@ void xd_popup_render(xd_listpopup *p) {
     wl_surface_damage_buffer(p->surface, 0, 0, dw, dh);
     if (p->viewport != nullptr)
         wp_viewport_set_destination(p->viewport, p->width, p->height);
+    request_frame(p->surface, &p->frame);
     wl_surface_commit(p->surface);
     buf->busy = true;
     p->dirty = false;
@@ -761,6 +793,7 @@ static void popup_close(xd_window *win) {
     if (win->ui->pointer_popup == p)
         win->ui->pointer_popup = nullptr;
     xd_ui_remove_source(p->sb_repeat);
+    cancel_frame(&p->frame);
     xdg_popup_destroy(p->popup);
     xdg_surface_destroy(p->xdg_surface);
     if (p->viewport != nullptr)
@@ -996,6 +1029,7 @@ void xd_window_close(xd_window *win) {
         ui->pointer_window = nullptr;
     if (ui->keyboard_window == win)
         ui->keyboard_window = nullptr;
+    cancel_frame(&win->frame);
     xdg_toplevel_destroy(win->toplevel);
     xdg_surface_destroy(win->xdg_surface);
     if (win->viewport != nullptr)
