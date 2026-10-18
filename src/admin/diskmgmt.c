@@ -25,6 +25,8 @@
 #include <unistd.h>
 
 #include "../core/common.h"
+#include "../files/luks.h"
+#include "../files/luksdlg.h"
 #include "../gtkapp/gtkapp.h"
 #include "admin.h"
 
@@ -37,6 +39,7 @@
 #define UD_PART UD ".Partition"
 #define UD_FS UD ".Filesystem"
 #define UD_SWAP UD ".Swapspace"
+#define UD_ENC UD ".Encrypted"
 
 /* The MBR boot flag in Partition.Flags. */
 static constexpr guint64 DOS_ACTIVE = 0x80;
@@ -61,6 +64,7 @@ typedef struct volume {
     char *fs_path; /* where its Filesystem is: itself, or an unlocked volume's cleartext */
     char *device;  /* "/dev/sdb1" */
     char *label, *id_type, *id_version, *id_usage;
+    char *fs_type; /* the file system's IdType: id_type, or what's inside an unlocked volume */
     char **mounts; /* nullptr-terminated, maybe empty */
     char *uuid;    /* the filesystem's UUID, "" when it has none */
     char **fstab;  /* its /etc/fstab mount points */
@@ -70,6 +74,11 @@ typedef struct volume {
     char *ptype;
     bool partition, container, contained, whole_disk;
     bool has_fs, swap_active, unlocked;
+    /* An encrypted (LUKS) volume: its header's UUID, and its
+     * /etc/crypttab entries ("(sa{sv})" GVariants) on `path`. */
+    bool encrypted;
+    char *luks_uuid;
+    GPtrArray *crypttab_items;
     guint64 fs_total, fs_free; /* from statvfs when mounted; 0 when unknown */
 } volume;
 
@@ -99,6 +108,8 @@ typedef struct dm {
     GHashTable *resize;     /* fs type -> modes + 1 (0: not known yet) */
     GHashTable *asked;      /* "format:TYPE" / "resize:TYPE" asked of UDisks */
     char *version;          /* UDisks2's Manager.Version, once read */
+    char *luks_type;        /* the encryption it makes ("luks2"), once read; nullptr: none */
+    bool luks_read;
     GtkWidget *action_menu; /* the menu bar's Action menu */
     bool action_stale;      /* to refill once it closes */
     guint refresh_source;
@@ -218,6 +229,36 @@ static char **fstab_dirs(GDBusProxy *block, GPtrArray *items) {
     return (char **)g_ptr_array_free(dirs, FALSE);
 }
 
+/* An encrypted volume's own block (not its cleartext's): its LUKS UUID
+ * and /etc/crypttab entries. */
+static void read_crypt(volume *v, GDBusObject *o) {
+    GDBusProxy *enc = iface(o, UD_ENC);
+    GDBusProxy *b = iface(o, UD_BLOCK);
+    v->encrypted = enc != nullptr;
+    g_free(v->luks_uuid);
+    v->luks_uuid = prop_str(b, "IdUUID");
+    if (v->crypttab_items != nullptr)
+        g_ptr_array_unref(v->crypttab_items);
+    v->crypttab_items = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
+    GVariant *c = prop(b, "Configuration");
+    if (c != nullptr && g_variant_is_of_type(c, G_VARIANT_TYPE("a(sa{sv})"))) {
+        GVariantIter it;
+        GVariant *entry = nullptr;
+        g_variant_iter_init(&it, c);
+        while ((entry = g_variant_iter_next_value(&it)) != nullptr) {
+            const char *kind = nullptr;
+            g_variant_get(entry, "(&s@a{sv})", &kind, nullptr);
+            if (strcmp(kind, "crypttab") == 0)
+                g_ptr_array_add(v->crypttab_items, g_variant_ref(entry));
+            g_variant_unref(entry);
+        }
+    }
+    if (c != nullptr)
+        g_variant_unref(c);
+    g_clear_object(&enc);
+    g_clear_object(&b);
+}
+
 static void volume_free(gpointer data) {
     volume *v = data;
     g_free(v->path);
@@ -232,6 +273,10 @@ static void volume_free(gpointer data) {
     if (v->fstab_items != nullptr)
         g_ptr_array_unref(v->fstab_items);
     g_free(v->uuid);
+    g_free(v->luks_uuid);
+    g_free(v->fs_type);
+    if (v->crypttab_items != nullptr)
+        g_ptr_array_unref(v->crypttab_items);
     g_free(v->ptype);
     g_free(v);
 }
@@ -264,6 +309,8 @@ static void read_fs(volume *v, GDBusObject *fs_obj) {
     v->label = prop_str(b, "IdLabel");
     v->id_version = prop_str(b, "IdVersion");
     v->id_usage = prop_str(b, "IdUsage");
+    g_free(v->fs_type);
+    v->fs_type = prop_str(b, "IdType");
     if (!v->unlocked) {
         g_free(v->id_type);
         v->id_type = prop_str(b, "IdType");
@@ -391,6 +438,7 @@ static GPtrArray *read_disks(dm *m) {
                         v->whole_disk = true;
                         v->id_type = prop_str(b, "IdType");
                         read_fs(v, l->data);
+                        read_crypt(v, l->data);
                         g_ptr_array_add(d->vols, v);
                     }
                     g_free(usage);
@@ -425,6 +473,7 @@ static GPtrArray *read_disks(dm *m) {
             v->contained = prop_bool(part, "IsContained");
             v->id_type = prop_str(b, "IdType");
             read_fs(v, l->data);
+            read_crypt(v, l->data);
             g_ptr_array_add(d->vols, v);
             g_clear_object(&b);
         }
@@ -491,9 +540,10 @@ static char *volume_name(const volume *v) {
 }
 
 static char *volume_fs(const volume *v) {
-    char *fs = xd_disk_fs_label(v->id_type, v->id_version);
+    char *fs = xd_disk_fs_label(v->unlocked ? v->fs_type : v->id_type, v->id_version);
     if (v->unlocked && v->has_fs) {
-        /* What's inside, read into id_version/label by read_fs. */
+        /* What's inside, read into fs_type, id_version and label by
+         * read_fs. */
         char *out = g_strdup_printf("%s (encrypted)", fs);
         g_free(fs);
         return out;
@@ -884,6 +934,18 @@ static void op_next(op *o) {
         op_next(o);
         return;
     }
+    /* The new partition encrypted: its file system is in the cleartext
+     * device UDisks2 left unlocked. */
+    g_autofree char *cleartext = nullptr;
+    if (s->path == nullptr && strcmp(s->iface, UD_FS) == 0 && m->om != nullptr) {
+        GDBusInterface *enc = g_dbus_object_manager_get_interface(m->om, path, UD_ENC);
+        if (enc != nullptr) {
+            cleartext = prop_str(G_DBUS_PROXY(enc), "CleartextDevice");
+            if (strcmp(cleartext, "/") != 0 && cleartext[0] != '\0')
+                path = cleartext;
+            g_object_unref(enc);
+        }
+    }
     /* No timeout: polkit's password box, and formatting, take a while. */
     g_dbus_connection_call(m->bus, UD, path, s->iface, s->method, s->args, nullptr,
                            G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
@@ -972,6 +1034,7 @@ static GtkWidget *fs_combo(dm *m, const char *preferred) {
 typedef struct format_opts {
     dm *m;
     GtkWidget *fs, *unit, *quick, *compress;
+    GtkWidget *encrypt, *pass, *confirm, *encrypt_rows; /* Encrypt this volume (LUKS) */
     guint sector_size; /* the disk's logical sector size */
 } format_opts;
 
@@ -1051,6 +1114,38 @@ static void format_fs_rows(format_opts *f, dm *m, const disk *d, GtkWidget *grid
     g_signal_connect(f->fs, "changed", G_CALLBACK(on_fs_changed), f);
 }
 
+/* The encryption UDisks2 makes (Manager.DefaultEncryptionType, else
+ * the first of SupportedEncryptionTypes: "luks2"), or nullptr when it
+ * can't encrypt. */
+static const char *encryption_type(dm *m) {
+    if (!m->luks_read && m->om != nullptr) {
+        m->luks_read = true;
+        GDBusInterface *i =
+            g_dbus_object_manager_get_interface(m->om, UD_PATH "/Manager", UD_MANAGER);
+        GVariant *types = i != nullptr ? prop(G_DBUS_PROXY(i), "SupportedEncryptionTypes")
+                                       : nullptr;
+        g_autofree char *def = i != nullptr ? prop_str(G_DBUS_PROXY(i), "DefaultEncryptionType")
+                                            : nullptr;
+        if (types != nullptr && g_variant_is_of_type(types, G_VARIANT_TYPE_STRING_ARRAY)) {
+            g_autofree const char **all = g_variant_get_strv(types, nullptr);
+            if (def != nullptr && g_strv_contains(all, def))
+                m->luks_type = g_strdup(def);
+            else if (all[0] != nullptr)
+                m->luks_type = g_strdup(all[0]);
+        }
+        if (types != nullptr)
+            g_variant_unref(types);
+        g_clear_object(&i);
+    }
+    return m->luks_type;
+}
+
+static void on_encrypt_toggled(GtkToggleButton *b, gpointer data) {
+    format_opts *f = data;
+    gtk_widget_set_sensitive(f->encrypt_rows, gtk_toggle_button_get_active(b) &&
+                                                  gtk_widget_get_sensitive(GTK_WIDGET(b)));
+}
+
 static void format_checks(format_opts *f, GtkWidget *box) {
     f->quick = gtk_check_button_new_with_mnemonic("Perform a _quick format");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(f->quick), TRUE);
@@ -1060,6 +1155,52 @@ static void format_checks(format_opts *f, GtkWidget *box) {
     gtk_widget_set_sensitive(f->compress, FALSE);
     gtk_box_pack_start(GTK_BOX(box), f->quick, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), f->compress, FALSE, FALSE, 0);
+    /* Linux's counterpart of BitLocker, which XP didn't have: the volume
+     * is LUKS, with the file system inside, unlocked by the passphrase. */
+    f->encrypt = gtk_check_button_new_with_mnemonic("Encrypt this volume (_LUKS)");
+    const char *luks = encryption_type(f->m);
+    gtk_widget_set_sensitive(f->encrypt, luks != nullptr);
+    gtk_widget_set_tooltip_text(f->encrypt, luks != nullptr
+                                                ? "What's on the volume can only be read with "
+                                                  "the passphrase. Don't lose it: nobody can "
+                                                  "get the files back without it."
+                                                : "UDisks2 can't make encrypted volumes here "
+                                                  "(cryptsetup is missing).");
+    gtk_box_pack_start(GTK_BOX(box), f->encrypt, FALSE, FALSE, 0);
+    f->encrypt_rows = grid_new();
+    gtk_widget_set_margin_start(f->encrypt_rows, 24);
+    f->pass = gtk_entry_new();
+    f->confirm = gtk_entry_new();
+    GtkWidget *entries[] = {f->pass, f->confirm};
+    for (int i = 0; i < 2; i++) {
+        gtk_entry_set_visibility(GTK_ENTRY(entries[i]), FALSE);
+        gtk_entry_set_input_purpose(GTK_ENTRY(entries[i]), GTK_INPUT_PURPOSE_PASSWORD);
+        gtk_entry_set_activates_default(GTK_ENTRY(entries[i]), TRUE);
+    }
+    grid_row(f->encrypt_rows, 0, "Pa_ssphrase:", f->pass);
+    grid_row(f->encrypt_rows, 1, "Confi_rm passphrase:", f->confirm);
+    gtk_widget_set_sensitive(f->encrypt_rows, FALSE);
+    gtk_box_pack_start(GTK_BOX(box), f->encrypt_rows, FALSE, FALSE, 0);
+    g_signal_connect(f->encrypt, "toggled", G_CALLBACK(on_encrypt_toggled), f);
+}
+
+static bool format_encrypt(const format_opts *f) {
+    return gtk_widget_get_sensitive(f->encrypt) &&
+           gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(f->encrypt));
+}
+
+/* Why the passphrases typed can't encrypt the volume, or nullptr (also
+ * when it isn't to be encrypted). */
+static const char *format_encrypt_problem(const format_opts *f) {
+    return format_encrypt(f) ? xd_luks_passphrase_problem(gtk_entry_get_text(GTK_ENTRY(f->pass)),
+                                                          gtk_entry_get_text(GTK_ENTRY(f->confirm)))
+                             : nullptr;
+}
+
+/* Empties the passphrase entries, so the passphrase isn't left in them. */
+static void format_forget_passphrase(const format_opts *f) {
+    gtk_entry_set_text(GTK_ENTRY(f->pass), "");
+    gtk_entry_set_text(GTK_ENTRY(f->confirm), "");
 }
 
 static bool format_quick(const format_opts *f) {
@@ -1076,10 +1217,16 @@ static const char FULL_FORMAT_NOTE[] =
     "A full format writes zeros over the whole volume first. This can take a long time: hours "
     "on a large disk.";
 
+/* What encrypting adds to a format's confirmation. */
+#define ENCRYPT_NOTE                                                                              \
+    "It will be encrypted: what's on it can only be read with the passphrase. If the "        \
+    "passphrase is lost, so is everything on the volume."
+
 /* UDisks2 Format's options. A full format is "erase": "zero"; an
- * allocation unit size goes to mkfs through "mkfs-args". */
+ * allocation unit size goes to mkfs through "mkfs-args"; encryption is
+ * "encrypt.passphrase" and "encrypt.type" (`luks`, nullptr for none). */
 static GVariant *format_options(const char *label, const char *type, bool quick, guint unit,
-                                guint sector_size) {
+                                guint sector_size, const char *passphrase, const char *luks) {
     GVariantBuilder b;
     g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
     if (label != nullptr && label[0] != '\0')
@@ -1094,12 +1241,19 @@ static GVariant *format_options(const char *label, const char *type, bool quick,
         g_variant_builder_add(&b, "{sv}", "mkfs-args",
                               g_variant_new_strv((const char *const *)args, -1));
     g_strfreev(args);
+    if (passphrase != nullptr && luks != nullptr) {
+        g_variant_builder_add(&b, "{sv}", "encrypt.passphrase", g_variant_new_string(passphrase));
+        g_variant_builder_add(&b, "{sv}", "encrypt.type", g_variant_new_string(luks));
+    }
     return g_variant_builder_end(&b);
 }
 
 /* The options as the dialog has them; `type` is the file system's. */
 static GVariant *format_opts_variant(const format_opts *f, const char *type, const char *label) {
-    return format_options(label, type, format_quick(f), format_unit(f), f->sector_size);
+    bool encrypt = format_encrypt(f);
+    return format_options(label, type, format_quick(f), format_unit(f), f->sector_size,
+                          encrypt ? gtk_entry_get_text(GTK_ENTRY(f->pass)) : nullptr,
+                          encrypt ? encryption_type(f->m) : nullptr);
 }
 
 /* ---- Initialize Disk -------------------------------------------------------------- */
@@ -1170,7 +1324,7 @@ typedef struct wizard {
     guint64 offset, max_size;
     xd_new_part_kinds kinds;
     GtkWidget *assistant, *primary, *extended, *logical, *size, *no_format, *do_format, *label,
-        *mount, *summary;
+        *mount, *summary, *fmt_page, *fmt_hint;
     format_opts fo;
 } wizard;
 
@@ -1212,11 +1366,18 @@ static void wizard_summary(wizard *w) {
                                    unit != nullptr ? unit : "Default",
                                    gtk_entry_get_text(GTK_ENTRY(w->label)),
                                    format_quick(&w->fo) ? "Yes" : "No");
+        bool encrypt = fmt && format_encrypt(&w->fo);
+        char *luks = encrypt ? g_ascii_strup(encryption_type(w->m), -1) : nullptr;
+        if (fmt)
+            g_string_append_printf(s, "Encryption: %s\n", encrypt ? luks : "None");
+        g_free(luks);
         g_string_append_printf(
             s, "Mount it: %s\n",
             fmt && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->mount)) ? "Yes" : "No");
         if (fmt && !format_quick(&w->fo))
             g_string_append_printf(s, "\n%s\n", FULL_FORMAT_NOTE);
+        if (encrypt)
+            g_string_append_printf(s, "\n%s\n", ENCRYPT_NOTE);
         g_free(fs);
         g_free(unit);
     }
@@ -1231,6 +1392,14 @@ static void on_wizard_prepare(GtkAssistant *a, GtkWidget *page, gpointer data) {
         wizard_summary(w);
 }
 
+/* Next only once an encrypted volume's passphrase is typed twice alike;
+ * the hint says why not. */
+static void update_format_page(wizard *w) {
+    const char *why = format_encrypt_problem(&w->fo);
+    gtk_assistant_set_page_complete(GTK_ASSISTANT(w->assistant), w->fmt_page, why == nullptr);
+    gtk_label_set_text(GTK_LABEL(w->fmt_hint), why != nullptr ? why : "");
+}
+
 static void on_format_toggled(GtkToggleButton *b, gpointer data) {
     wizard *w = data;
     bool on = gtk_toggle_button_get_active(b);
@@ -1238,8 +1407,11 @@ static void on_format_toggled(GtkToggleButton *b, gpointer data) {
     gtk_widget_set_sensitive(w->label, on);
     gtk_widget_set_sensitive(w->mount, on);
     gtk_widget_set_sensitive(w->fo.quick, on);
+    gtk_widget_set_sensitive(w->fo.encrypt, on && encryption_type(w->m) != nullptr);
+    on_encrypt_toggled(GTK_TOGGLE_BUTTON(w->fo.encrypt), &w->fo);
     /* Back on, only where the file system can choose. */
     fill_units(&w->fo);
+    update_format_page(w);
 }
 
 static void on_wizard_apply([[maybe_unused]] GtkAssistant *a, gpointer data) {
@@ -1278,6 +1450,7 @@ static void on_wizard_apply([[maybe_unused]] GtkAssistant *a, gpointer data) {
     }
     g_free(title);
     g_free(dn);
+    format_forget_passphrase(&w->fo);
     /* GtkAssistant emits "close" after this, which destroys it. */
     op_run(o);
 }
@@ -1419,9 +1592,14 @@ static void new_partition(dm *m) {
     w->mount = gtk_check_button_new_with_mnemonic("_Mount it when it's formatted");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->mount), TRUE);
     gtk_box_pack_start(GTK_BOX(opts), w->mount, FALSE, FALSE, 0);
+    w->fmt_hint = wrap_label("");
+    gtk_box_pack_start(GTK_BOX(opts), w->fmt_hint, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(fmt), opts, FALSE, FALSE, 0);
     g_signal_connect(w->do_format, "toggled", G_CALLBACK(on_format_toggled), w);
-    wizard_page(w, "Format Partition", GTK_ASSISTANT_PAGE_CONTENT, fmt);
+    g_signal_connect_swapped(w->fo.encrypt, "toggled", G_CALLBACK(update_format_page), w);
+    g_signal_connect_swapped(w->fo.pass, "changed", G_CALLBACK(update_format_page), w);
+    g_signal_connect_swapped(w->fo.confirm, "changed", G_CALLBACK(update_format_page), w);
+    w->fmt_page = wizard_page(w, "Format Partition", GTK_ASSISTANT_PAGE_CONTENT, fmt);
 
     w->summary = wrap_label("");
     wizard_page(w, "Completing the New Partition Wizard", GTK_ASSISTANT_PAGE_CONFIRM, w->summary);
@@ -1490,20 +1668,30 @@ static void format_volume(dm *m) {
     gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
     format_checks(&fo, box);
     gtk_widget_show_all(dlg);
-    int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    int r = 0;
+    const char *bad = nullptr;
+    while ((r = gtk_dialog_run(GTK_DIALOG(dlg))) == GTK_RESPONSE_OK &&
+           (bad = format_encrypt_problem(&fo)) != nullptr) {
+        xd_message_box(GTK_WINDOW(dlg), "Format", XD_MB_ERROR, XD_MB_OK, FALSE, bad);
+        format_forget_passphrase(&fo);
+        gtk_widget_grab_focus(fo.pass);
+    }
     char *new_label = g_strdup(gtk_entry_get_text(GTK_ENTRY(label)));
     char *type = g_strdup(gtk_combo_box_get_active_id(GTK_COMBO_BOX(fo.fs)));
     bool quick = format_quick(&fo);
+    bool encrypt = format_encrypt(&fo);
     GVariant *opts = type != nullptr ? g_variant_ref_sink(format_opts_variant(&fo, type, new_label))
                                      : nullptr;
+    format_forget_passphrase(&fo);
     gtk_widget_destroy(dlg);
     if (r == GTK_RESPONSE_OK && type != nullptr) {
         char *desc = volume_description(v);
         char *text = g_strdup_printf("%s\n\nFormatting this volume will erase all data on it.%s "
-                                     "Back up any data you want to keep before formatting.%s%s"
+                                     "Back up any data you want to keep before formatting.%s%s%s"
                                      "\n\nDo you want to continue?",
                                      desc, unmount ? " It will be unmounted first." : "",
-                                     quick ? "" : "\n\n", quick ? "" : FULL_FORMAT_NOTE);
+                                     quick ? "" : "\n\n", quick ? "" : FULL_FORMAT_NOTE,
+                                     encrypt ? "\n\n" ENCRYPT_NOTE : "");
         if (confirm(m, "Format", text)) {
             char *busy = g_strdup_printf(quick ? "Formatting %s..."
                                                : "Formatting %s (a full format: this can take a "
@@ -1760,6 +1948,178 @@ static void mount_volume(dm *m, volume *v, bool mount) {
     g_free(title);
 }
 
+/* ---- encryption (UDisks2's Encrypted interface) ---------------------------------------- */
+
+/* What the passphrase boxes call the volume: its label, else its device
+ * ("sde1"). */
+static const char *crypt_name(const volume *v) {
+    return v->label != nullptr && v->label[0] != '\0' ? v->label : dev_name(v->device);
+}
+
+static bool needed_by_system(const volume *v) {
+    for (char **mp = v->mounts; mp != nullptr && *mp != nullptr; mp++)
+        if (xd_mount_is_system(*mp))
+            return true;
+    return false;
+}
+
+/* Why Unlock (`unlock`), Lock or Change Passphrase (`change`) can't be
+ * done to the volume, or nullptr. */
+static const char *crypt_reason(dm *m, const volume *v, bool unlock, bool change) {
+    if (m->busy)
+        return "Disk Management is busy with another operation.";
+    if (v == nullptr || !v->encrypted)
+        return "This volume isn't encrypted.";
+    if (change)
+        return nullptr;
+    if (unlock)
+        return v->unlocked ? "It's unlocked already." : nullptr;
+    if (!v->unlocked)
+        return "It's locked already.";
+    return needed_by_system(v) ? "The running system needs this volume." : nullptr;
+}
+
+/* An Unlock or ChangePassphrase on its way; the volume may be gone when
+ * it's done, so what's needed is copied. */
+typedef struct crypt_req {
+    dm *m;
+    char *path, *name;
+} crypt_req;
+
+static crypt_req *crypt_req_new(dm *m, const volume *v) {
+    crypt_req *c = g_new0(crypt_req, 1);
+    c->m = m;
+    c->path = g_strdup(v->path);
+    c->name = g_strdup(crypt_name(v));
+    return c;
+}
+
+static void crypt_req_free(crypt_req *c) {
+    g_free(c->path);
+    g_free(c->name);
+    g_free(c);
+}
+
+/* The call's error, or nullptr (then *wrong says whether the passphrase
+ * was wrong; a cancelled polkit box is no error). */
+static GError *crypt_finish(GObject *src, GAsyncResult *res, bool *wrong, bool *dismissed) {
+    GError *err = nullptr;
+    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+    if (r != nullptr)
+        g_variant_unref(r);
+    *wrong = *dismissed = false;
+    if (err != nullptr) {
+        char *name = g_dbus_error_get_remote_error(err);
+        g_dbus_error_strip_remote_error(err);
+        *wrong = xd_luks_wrong_passphrase(name, err->message);
+        *dismissed = g_strcmp0(name, UD ".Error.NotAuthorizedDismissed") == 0;
+        g_free(name);
+    }
+    return err;
+}
+
+static void ask_unlock(dm *m, const char *path, const char *name, bool retry);
+
+static void on_unlocked(GObject *src, GAsyncResult *res, gpointer data) {
+    crypt_req *c = data;
+    dm *m = c->m;
+    bool wrong = false, dismissed = false;
+    GError *err = crypt_finish(src, res, &wrong, &dismissed);
+    set_busy(m, nullptr);
+    if (err != nullptr && wrong) {
+        ask_unlock(m, c->path, c->name, true);
+    } else if (err != nullptr && !dismissed) {
+        char *text = g_strdup_printf("%s could not be unlocked.\n\n%s", c->name, err->message);
+        xd_message_box(GTK_WINDOW(m->window), "Disk Management", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       text);
+        g_free(text);
+    }
+    g_clear_error(&err);
+    crypt_req_free(c);
+    refresh(m);
+}
+
+/* The passphrase box (again, saying so, after a wrong one), then
+ * Unlock. */
+static void ask_unlock(dm *m, const char *path, const char *name, bool retry) {
+    char *pass = xd_luks_ask_passphrase(GTK_WINDOW(m->window), name, retry, nullptr);
+    if (pass == nullptr)
+        return;
+    crypt_req *c = g_new0(crypt_req, 1);
+    c->m = m;
+    c->path = g_strdup(path);
+    c->name = g_strdup(name);
+    char *busy = g_strdup_printf("Unlocking %s...", name);
+    set_busy(m, busy);
+    g_free(busy);
+    g_dbus_connection_call(m->bus, UD, path, UD_ENC, "Unlock",
+                           g_variant_new("(sa{sv})", pass, nullptr), G_VARIANT_TYPE("(o)"),
+                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
+                           on_unlocked, c);
+    xd_luks_passphrase_free(pass);
+}
+
+static void unlock_volume(dm *m) {
+    volume *v = sel_volume(m);
+    if (crypt_reason(m, v, true, false) == nullptr)
+        ask_unlock(m, v->path, crypt_name(v), false);
+}
+
+/* Lock: what's inside is unmounted first. */
+static void lock_volume(dm *m) {
+    volume *v = sel_volume(m);
+    if (crypt_reason(m, v, false, false) != nullptr)
+        return;
+    char *title = g_strdup_printf("Locking %s...", crypt_name(v));
+    op *o = op_new(m, title);
+    op_unmount(o, v);
+    op_add(o, v->path, UD_ENC, "Lock", g_variant_new("(@a{sv})", no_options()));
+    op_run(o);
+    g_free(title);
+}
+
+static void on_passphrase_changed(GObject *src, GAsyncResult *res, gpointer data) {
+    crypt_req *c = data;
+    dm *m = c->m;
+    bool wrong = false, dismissed = false;
+    GError *err = crypt_finish(src, res, &wrong, &dismissed);
+    set_busy(m, nullptr);
+    if (err == nullptr) {
+        xd_message_box(GTK_WINDOW(m->window), "Change Passphrase", XD_MB_INFO, XD_MB_OK, FALSE,
+                       "The passphrase has been changed.");
+    } else if (!dismissed) {
+        char *text = wrong ? g_strdup("The old passphrase you typed is incorrect. The "
+                                      "passphrase has not been changed.")
+                           : g_strdup_printf("The passphrase could not be changed.\n\n%s",
+                                             err->message);
+        xd_message_box(GTK_WINDOW(m->window), "Change Passphrase", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       text);
+        g_free(text);
+    }
+    g_clear_error(&err);
+    crypt_req_free(c);
+    refresh(m);
+}
+
+static void change_passphrase(dm *m) {
+    volume *v = sel_volume(m);
+    if (crypt_reason(m, v, false, true) != nullptr)
+        return;
+    char *old = nullptr, *new_passphrase = nullptr;
+    if (!xd_luks_ask_change(GTK_WINDOW(m->window), crypt_name(v), &old, &new_passphrase))
+        return;
+    crypt_req *c = crypt_req_new(m, v);
+    char *busy = g_strdup_printf("Changing the passphrase of %s...", c->name);
+    set_busy(m, busy);
+    g_free(busy);
+    g_dbus_connection_call(m->bus, UD, c->path, UD_ENC, "ChangePassphrase",
+                           g_variant_new("(ssa{sv})", old, new_passphrase, nullptr), nullptr,
+                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
+                           on_passphrase_changed, c);
+    xd_luks_passphrase_free(old);
+    xd_luks_passphrase_free(new_passphrase);
+}
+
 /* ---- startup mount points (/etc/fstab, written by UDisks2) ------------------------------ */
 
 /* Whether the running system mounts the volume, now or at startup. */
@@ -1777,6 +2137,9 @@ static bool volume_is_system(const volume *v) {
 static const char *startup_reason(dm *m, const volume *v) {
     if (m->busy)
         return "Disk Management is busy with another operation.";
+    if (v->encrypted && !v->unlocked)
+        return "Unlock the volume first: the file system inside, which is what's mounted, "
+               "can only be seen unlocked.";
     if (!v->has_fs)
         return "There's no file system to mount.";
     if (v->d->optical)
@@ -1784,9 +2147,6 @@ static const char *startup_reason(dm *m, const volume *v) {
     if (volume_is_system(v))
         return "The running system mounts this volume itself: its /etc/fstab entry can't be "
                "changed here.";
-    if (v->unlocked)
-        return "An encrypted volume would also need an /etc/crypttab entry to be unlocked when "
-               "the computer starts, which Disk Management can't add.";
     if (v->uuid == nullptr || v->uuid[0] == '\0')
         return "This volume has no UUID to find it by when the computer starts.";
     return nullptr;
@@ -1899,11 +2259,72 @@ static void on_browse_folder(GtkButton *b, gpointer entry) {
     g_free(current);
 }
 
+/* How an encrypted volume is unlocked at startup (its /etc/crypttab
+ * entry): asking for the passphrase, the default; or with a key file
+ * UDisks2 writes in /etc/luks-keys, which holds the passphrase. */
+typedef struct crypt_startup {
+    GtkWidget *ask, *keyfile, *pass, *confirm;
+    bool use_keyfile;
+    char *passphrase; /* for the key file; free with xd_luks_passphrase_free */
+} crypt_startup;
+
+static void on_keyfile_toggled(GtkToggleButton *b, gpointer data) {
+    crypt_startup *c = data;
+    bool on = gtk_toggle_button_get_active(b);
+    gtk_widget_set_sensitive(c->pass, on);
+    gtk_widget_set_sensitive(c->confirm, on);
+}
+
+/* The "Unlocking at startup" group of the Add box. */
+static void crypt_startup_rows(crypt_startup *c, const volume *v, GtkWidget *box) {
+    GtkWidget *frame = gtk_frame_new("Unlocking at startup");
+    GtkWidget *fb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(fb), 8);
+    c->ask = gtk_radio_button_new_with_mnemonic(nullptr, "As_k for the passphrase when the "
+                                                         "computer starts");
+    c->keyfile = gtk_radio_button_new_with_mnemonic_from_widget(
+        GTK_RADIO_BUTTON(c->ask), "Unlock it with a key _file kept on this computer");
+    gtk_box_pack_start(GTK_BOX(fb), c->ask, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(fb), c->keyfile, FALSE, FALSE, 0);
+    char *name = xd_crypttab_name(v->luks_uuid);
+    char *path = xd_crypttab_key_path(name);
+    char *warning = g_strdup_printf(
+        "A key file (%s) holds the passphrase itself. Only administrators can read it, but "
+        "anyone who can read this computer's system disk can too: unless that disk is "
+        "encrypted as well, this volume's encryption then no longer protects it from someone "
+        "who takes the computer.",
+        path);
+    GtkWidget *w = wrap_label(warning);
+    gtk_widget_set_margin_start(w, 24);
+    gtk_box_pack_start(GTK_BOX(fb), w, FALSE, FALSE, 0);
+    g_free(warning);
+    g_free(path);
+    g_free(name);
+    GtkWidget *g = grid_new();
+    gtk_widget_set_margin_start(g, 24);
+    c->pass = gtk_entry_new();
+    c->confirm = gtk_entry_new();
+    GtkWidget *entries[] = {c->pass, c->confirm};
+    for (int i = 0; i < 2; i++) {
+        gtk_entry_set_visibility(GTK_ENTRY(entries[i]), FALSE);
+        gtk_entry_set_input_purpose(GTK_ENTRY(entries[i]), GTK_INPUT_PURPOSE_PASSWORD);
+        gtk_entry_set_activates_default(GTK_ENTRY(entries[i]), TRUE);
+        gtk_widget_set_sensitive(entries[i], FALSE);
+    }
+    grid_row(g, 0, "Pa_ssphrase:", c->pass);
+    grid_row(g, 1, "_Confirm passphrase:", c->confirm);
+    gtk_box_pack_start(GTK_BOX(fb), g, FALSE, FALSE, 0);
+    g_signal_connect(c->keyfile, "toggled", G_CALLBACK(on_keyfile_toggled), c);
+    gtk_container_add(GTK_CONTAINER(frame), fb);
+    gtk_box_pack_start(GTK_BOX(box), frame, FALSE, FALSE, 0);
+}
+
 /* XP's Add Drive Letter or Path, for a folder: where and how the volume
- * is mounted at startup. False when cancelled; else *dir and *opts are
- * set (free them). */
+ * is mounted at startup, and with `crypt` (an encrypted volume without
+ * an /etc/crypttab entry yet) how it's unlocked. False when cancelled;
+ * else *dir and *opts are set (free them), and crypt's choice. */
 static bool startup_dialog(dm *m, const volume *v, const char *title, const char *dir0,
-                           const char *opts0, char **dir, char **opts) {
+                           const char *opts0, char **dir, char **opts, crypt_startup *crypt) {
     GtkWidget *box = nullptr;
     GtkWidget *dlg = dialog_new(m, title, &box);
     char *desc = volume_description(v);
@@ -1936,6 +2357,8 @@ static bool startup_dialog(dm *m, const volume *v, const char *title, const char
                                   "uid and gid: whose the files are, on file systems without "
                                   "owners (FAT, exFAT, NTFS)."),
                        FALSE, FALSE, 0);
+    if (crypt != nullptr)
+        crypt_startup_rows(crypt, v, box);
     gtk_widget_show_all(dlg);
     bool ok = false;
     while (!ok && gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
@@ -1945,6 +2368,14 @@ static bool startup_dialog(dm *m, const volume *v, const char *title, const char
         if (why == nullptr && (o[0] == '\0' || strpbrk(o, " \t\n") != nullptr))
             why = g_strdup("Type the mount options separated by commas, without spaces (or "
                            "\"defaults\").");
+        bool keyfile =
+            crypt != nullptr && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(crypt->keyfile));
+        if (why == nullptr && keyfile) {
+            const char *bad =
+                xd_luks_passphrase_problem(gtk_entry_get_text(GTK_ENTRY(crypt->pass)),
+                                           gtk_entry_get_text(GTK_ENTRY(crypt->confirm)));
+            why = bad != nullptr ? g_strdup(bad) : nullptr;
+        }
         if (why != nullptr) {
             xd_message_box(GTK_WINDOW(dlg), title, XD_MB_ERROR, XD_MB_OK, FALSE, why);
             g_free(why);
@@ -1954,10 +2385,45 @@ static bool startup_dialog(dm *m, const volume *v, const char *title, const char
         }
         *dir = d;
         *opts = o;
+        if (crypt != nullptr) {
+            crypt->use_keyfile = keyfile;
+            crypt->passphrase = keyfile ? g_strdup(gtk_entry_get_text(GTK_ENTRY(crypt->pass)))
+                                        : nullptr;
+        }
         ok = true;
+    }
+    if (crypt != nullptr) {
+        /* Not left in the entries' buffers. */
+        gtk_entry_set_text(GTK_ENTRY(crypt->pass), "");
+        gtk_entry_set_text(GTK_ENTRY(crypt->confirm), "");
     }
     gtk_widget_destroy(dlg);
     return ok;
+}
+
+/* The /etc/crypttab entry that unlocks the volume at startup: named as
+ * systemd and GNOME Disks name it, the volume by its LUKS UUID, "nofail"
+ * so a missing disk doesn't stop the computer starting. With a key file,
+ * UDisks2 writes passphrase-contents to passphrase-path (root only, and
+ * only in /etc/luks-keys); without one, both are empty (UDisks2 wants
+ * them there) and the passphrase is asked for at startup, as GNOME Disks
+ * does it. */
+static GVariant *crypttab_item(const volume *v, const crypt_startup *c) {
+    char *name = xd_crypttab_name(v->luks_uuid);
+    char *device = g_strdup_printf("UUID=%s", v->luks_uuid);
+    char *key = c->use_keyfile ? xd_crypttab_key_path(name) : g_strdup("");
+    GVariantBuilder b;
+    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&b, "{sv}", "name", g_variant_new_bytestring(name));
+    g_variant_builder_add(&b, "{sv}", "device", g_variant_new_bytestring(device));
+    g_variant_builder_add(&b, "{sv}", "passphrase-path", g_variant_new_bytestring(key));
+    g_variant_builder_add(&b, "{sv}", "passphrase-contents",
+                          g_variant_new_bytestring(c->use_keyfile ? c->passphrase : ""));
+    g_variant_builder_add(&b, "{sv}", "options", g_variant_new_bytestring("nofail"));
+    g_free(name);
+    g_free(device);
+    g_free(key);
+    return g_variant_new("(s@a{sv})", "crypttab", g_variant_builder_end(&b));
 }
 
 /* Mounts the volume at its new startup mount point now, as Windows'
@@ -1989,21 +2455,31 @@ static void add_startup(dm *m, volume *v) {
     if (startup_reason(m, v) != nullptr)
         return;
     char *suggested = xd_fstab_suggest_dir(v->label, v->device);
-    char *defaults = xd_fstab_default_options(v->id_type, (guint)getuid(), (guint)getgid());
+    char *defaults = xd_fstab_default_options(v->fs_type, (guint)getuid(), (guint)getgid());
     char *dir = nullptr, *opts = nullptr;
-    if (startup_dialog(m, v, "Add Startup Mount Point", suggested, defaults, &dir, &opts)) {
+    /* An encrypted volume is unlocked first, by its /etc/crypttab entry
+     * (one already there is kept). */
+    bool needs_crypttab = v->unlocked && v->crypttab_items != nullptr &&
+                          v->crypttab_items->len == 0;
+    crypt_startup crypt = {};
+    if (startup_dialog(m, v, "Add Startup Mount Point", suggested, defaults, &dir, &opts,
+                       needs_crypttab ? &crypt : nullptr)) {
         char *fsname = g_strdup_printf("UUID=%s", v->uuid);
         op *o = op_new(m, "Adding the startup mount point...");
+        if (needs_crypttab)
+            op_add(o, v->path, UD_BLOCK, "AddConfigurationItem",
+                   g_variant_new("(@(sa{sv})@a{sv})", crypttab_item(v, &crypt), no_options()));
         /* freq 0, passno 0: no dump, and no fsck holding up the start
          * (as GNOME Disks adds them). */
         op_add(o, v->fs_path, UD_BLOCK, "AddConfigurationItem",
                g_variant_new("(@(sa{sv})@a{sv})",
-                             fstab_item(fsname, dir, fstab_type(v->id_type), opts, 0, 0),
+                             fstab_item(fsname, dir, fstab_type(v->fs_type), opts, 0, 0),
                              no_options()));
         startup_mount_now(m, o, v, dir);
         op_run(o);
         g_free(fsname);
     }
+    xd_luks_passphrase_free(crypt.passphrase);
     g_free(dir);
     g_free(opts);
     g_free(suggested);
@@ -2016,7 +2492,7 @@ static void change_startup(dm *m, volume *v, guint index) {
     GVariant *old = g_ptr_array_index(v->fstab_items, index);
     char *dir0 = item_str(old, "dir"), *opts0 = item_str(old, "opts");
     char *dir = nullptr, *opts = nullptr;
-    if (startup_dialog(m, v, "Change Startup Mount Point", dir0, opts0, &dir, &opts) &&
+    if (startup_dialog(m, v, "Change Startup Mount Point", dir0, opts0, &dir, &opts, nullptr) &&
         (strcmp(dir, dir0) != 0 || strcmp(opts, opts0) != 0)) {
         /* The rest of the entry stays as it was. */
         char *fsname = item_str(old, "fsname"), *type = item_str(old, "type");
@@ -2043,14 +2519,25 @@ static void remove_startup(dm *m, volume *v, guint index) {
     GVariant *old = g_ptr_array_index(v->fstab_items, index);
     char *dir = item_str(old, "dir");
     char *name = volume_name(v);
-    char *text = g_strdup_printf("%s won't be mounted in %s when the computer starts. It stays "
-                                 "mounted until you unmount it.\n\nDo you want to remove this "
-                                 "startup mount point?",
-                                 name, dir);
+    /* With its last startup mount point, an encrypted volume needn't be
+     * unlocked at startup either. */
+    bool crypttab = v->fstab_items->len == 1 && v->crypttab_items != nullptr &&
+                    v->crypttab_items->len > 0;
+    char *text = g_strdup_printf("%s won't be mounted in %s when the computer starts.%s It "
+                                 "stays mounted until you unmount it.\n\nDo you want to remove "
+                                 "this startup mount point?",
+                                 name, dir,
+                                 crypttab ? " Nor will it be unlocked: its /etc/crypttab entry "
+                                            "goes too, and its key file if it has one."
+                                          : "");
     if (confirm(m, "Remove Startup Mount Point", text)) {
         op *o = op_new(m, "Removing the startup mount point...");
         op_add(o, v->fs_path, UD_BLOCK, "RemoveConfigurationItem",
                g_variant_new("(@(sa{sv})@a{sv})", old, no_options()));
+        for (guint i = 0; crypttab && i < v->crypttab_items->len; i++)
+            op_add(o, v->path, UD_BLOCK, "RemoveConfigurationItem",
+                   g_variant_new("(@(sa{sv})@a{sv})", g_ptr_array_index(v->crypttab_items, i),
+                                 no_options()));
         op_run(o);
     }
     g_free(text);
@@ -2142,6 +2629,19 @@ static void mount_points(dm *m) {
         gtk_box_pack_start(GTK_BOX(buttons), b[i], FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(box), buttons, FALSE, FALSE, 0);
+    /* An encrypted volume's /etc/crypttab entry: how it's unlocked. */
+    for (guint i = 0; v->crypttab_items != nullptr && i < v->crypttab_items->len; i++) {
+        char *key = item_str(g_ptr_array_index(v->crypttab_items, i), "passphrase-path");
+        bool asks = key[0] == '\0' || strcmp(key, "none") == 0 || strcmp(key, "-") == 0;
+        char *how = asks ? g_strdup("/etc/crypttab unlocks it when the computer starts, asking "
+                                    "for its passphrase.")
+                         : g_strdup_printf("/etc/crypttab unlocks it when the computer starts, "
+                                           "with the key file %s.",
+                                           key);
+        gtk_box_pack_start(GTK_BOX(box), wrap_label(how), FALSE, FALSE, 0);
+        g_free(how);
+        g_free(key);
+    }
     const char *why = startup_reason(m, v);
     /* One startup mount point is enough; more can be in /etc/fstab
      * already, and are shown, changed and removed here. */
@@ -2556,7 +3056,20 @@ static void fill_selection_menu(dm *m, GtkWidget *menu) {
              busy ? busy : !mounted(v) ? "It isn't mounted."
                          : system ? "The running system needs this volume." : nullptr);
         item(menu, "Change Mount _Point...", mount_points, m,
-             busy ? busy : v->has_fs ? nullptr : "There's no file system to mount.");
+             busy         ? busy
+             : v->has_fs  ? nullptr
+             : v->encrypted ? "Unlock the volume first: what's mounted is the file system "
+                              "inside."
+                            : "There's no file system to mount.");
+        if (v->encrypted) {
+            separator(menu);
+            if (v->unlocked)
+                item(menu, "Loc_k", lock_volume, m, crypt_reason(m, v, false, false));
+            else
+                item(menu, "Unloc_k...", unlock_volume, m, crypt_reason(m, v, true, false));
+            item(menu, "Change Pa_ssphrase...", change_passphrase, m,
+                 crypt_reason(m, v, false, true));
+        }
         item(menu, "Mark Partition as _Active", mark_active, m,
              volume_reason(m, XD_ACTION_SET_ACTIVE));
         separator(menu);

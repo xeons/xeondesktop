@@ -9,6 +9,7 @@
 #include "../settings/soundplay.h"
 #include "../settings/state.h"
 #include "fileops.h"
+#include "luks.h"
 #include "udisks.h"
 
 #define TRASHINFO_GROUP "Trash Info"
@@ -229,6 +230,56 @@ static char *drive_name(GFile *root, const char *fallback) {
     return g_strdup(fs != nullptr && fs->label[0] != '\0' ? fs->label : fallback);
 }
 
+/* The icon of an encrypted drive, where the theme has one. */
+static GIcon *encrypted_icon(gboolean removable, gboolean locked) {
+    const char *plain = removable ? "drive-removable-media" : "drive-harddisk";
+    char *special = g_strconcat(plain, "-encrypted", nullptr);
+    GtkIconTheme *theme = gtk_icon_theme_get_default();
+    GIcon *icon = g_themed_icon_new(locked && theme != nullptr &&
+                                            gtk_icon_theme_has_icon(theme, special)
+                                        ? special
+                                        : plain);
+    g_free(special);
+    return icon;
+}
+
+/* Encrypted (LUKS) volumes, through UDisks2: a locked one, or one
+ * unlocked but not mounted, as computer:///encrypted/<uuid> (opening it
+ * asks for the passphrase and mounts it); one mounted where GIO doesn't
+ * list it, by its mount point. One already listed (an encrypted /, a
+ * mount GIO knows) isn't added again. */
+static void add_encrypted(GPtrArray *out) {
+    GPtrArray *all = xd_udisks_encrypted();
+    for (guint i = 0; i < all->len; i++) {
+        const XdUdisksCrypt *c = g_ptr_array_index(all, i);
+        /* Hidden ones, and what holds no file system to open (LVM). */
+        if (c->ignore || (c->cleartext != nullptr && !c->has_fs))
+            continue;
+        GFile *root = c->mount_point != nullptr ? g_file_new_for_path(c->mount_point) : nullptr;
+        if (root == nullptr) {
+            char *uri = xd_luks_item_uri(c->uuid);
+            root = g_file_new_for_uri(uri);
+            g_free(uri);
+        }
+        gboolean listed = FALSE;
+        for (guint k = 0; k < out->len && !listed; k++)
+            listed = g_file_equal(((XdDrive *)g_ptr_array_index(out, k))->root, root);
+        if (!listed) {
+            char *size = xd_format_drive_size(c->size);
+            char *name = xd_luks_volume_name(c->inner_label, c->label, size);
+            GIcon *icon = encrypted_icon(c->removable, c->cleartext == nullptr);
+            g_ptr_array_add(out, drive_new(root, name, c->removable ? "Removable Disk"
+                                                                    : "Local Disk",
+                                           icon));
+            g_object_unref(icon);
+            g_free(name);
+            g_free(size);
+        }
+        g_object_unref(root);
+    }
+    g_ptr_array_unref(all);
+}
+
 GPtrArray *xd_computer_drives(void) {
     GPtrArray *out = g_ptr_array_new_with_free_func(drive_free);
     GFile *slash = g_file_new_for_path("/");
@@ -272,6 +323,7 @@ GPtrArray *xd_computer_drives(void) {
     }
     g_list_free_full(mounts, g_object_unref);
     g_object_unref(slash);
+    add_encrypted(out);
 
     /* Volumes not mounted yet: shown as drives, mounted when opened. */
     GList *volumes = g_volume_monitor_get_volumes(xd_computer_monitor());
@@ -283,6 +335,11 @@ GPtrArray *xd_computer_drives(void) {
             continue;
         }
         if (!g_volume_can_mount(vol))
+            continue;
+        /* gvfs's encrypted volumes: listed above, with our passphrase box. */
+        g_autofree char *device =
+            g_volume_get_identifier(vol, G_VOLUME_IDENTIFIER_KIND_UNIX_DEVICE);
+        if (xd_udisks_is_crypt_device(device))
             continue;
         char *uri = volume_uri(vol);
         GFile *item = g_file_new_for_uri(uri);

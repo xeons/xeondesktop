@@ -1835,6 +1835,13 @@ static void udisks_changed([[maybe_unused]] GDBusObjectManagerClient *m,
     drives_changed(nullptr, nullptr, data);
 }
 
+/* A volume appearing or going: an encrypted drive's cleartext when it's
+ * unlocked or locked. */
+static void udisks_object_changed([[maybe_unused]] GDBusObjectManager *m,
+                                  [[maybe_unused]] GDBusObject *o, gpointer data) {
+    drives_changed(nullptr, nullptr, data);
+}
+
 static void apps_changed([[maybe_unused]] GAppInfoMonitor *m, gpointer data) {
     XdFolderView *v = data;
     if (v->place == XD_PLACE_CONTROL && v->reload_source == 0)
@@ -2903,9 +2910,12 @@ void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
             g_signal_connect(vm, "mount-removed", G_CALLBACK(drives_changed), v);
             g_signal_connect(vm, "mount-changed", G_CALLBACK(drives_changed), v);
             GDBusObjectManager *udisks = xd_udisks_manager();
-            if (udisks != nullptr)
+            if (udisks != nullptr) {
                 g_signal_connect(udisks, "interface-proxy-properties-changed",
                                  G_CALLBACK(udisks_changed), v);
+                g_signal_connect(udisks, "object-added", G_CALLBACK(udisks_object_changed), v);
+                g_signal_connect(udisks, "object-removed", G_CALLBACK(udisks_object_changed), v);
+            }
             v->watching_drives = TRUE;
         }
     } else if (v->place == XD_PLACE_CONTROL) {

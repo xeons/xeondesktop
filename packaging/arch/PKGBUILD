@@ -45,6 +45,7 @@ depends=(
   'gpgme'      # Passwords and Keys: PGP keys
   'libsecret'  # Passwords and Keys: stored passwords
   'libarchive' # Files: Send To > Compressed (zipped) Folder
+  'libsecret'  # Files: remembered passphrases of encrypted drives
   'libseccomp' # xd-thumbnailer's sandbox
   'bubblewrap' # xd-thumbnailer's sandbox
   'iso-codes'  # the language bar's two-letter codes

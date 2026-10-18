@@ -47,6 +47,18 @@ and My Network Places
 .RB ( network:/// ,
 where gvfs provides it).
 .PP
+My Computer lists encrypted (LUKS) volumes that UDisks2 knows, locked
+ones too.
+Opening a locked one asks for its passphrase, unlocks it, mounts it and
+opens it.
+With
+.B Remember my passphrase
+ticked, the passphrase is kept in your keyring (the Secret Service,
+through libsecret) as GNOME's Files and Disks keep it, and used from
+then on without asking.
+Lock, in its right-click menu, unmounts and locks it; its Properties'
+Encryption tab changes the passphrase and forgets a remembered one.
+.PP
 Thumbnails missing from the freedesktop.org cache are made by
 .BR xd\-thumbnailer (1).
 Favorites are GTK's bookmarks, shared with file choosers.

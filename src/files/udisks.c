@@ -5,6 +5,7 @@
 
 #include <string.h>
 
+#include "luks.h"
 #include "places.h"
 
 #define UD "org.freedesktop.UDisks2"
@@ -340,6 +341,124 @@ GPtrArray *xd_udisks_volumes(const char *drive_object) {
     g_list_free_full(objects, g_object_unref);
     g_ptr_array_sort(out, by_device);
     return out;
+}
+
+/* ---- encrypted volumes ---- */
+
+void xd_udisks_crypt_free(XdUdisksCrypt *c) {
+    if (c == nullptr)
+        return;
+    g_free(c->object);
+    g_free(c->drive);
+    g_free(c->device);
+    g_free(c->uuid);
+    g_free(c->label);
+    g_free(c->version);
+    g_free(c->cleartext);
+    g_free(c->inner_label);
+    g_free(c->mount_point);
+    g_free(c);
+}
+
+static void crypt_free(gpointer p) { xd_udisks_crypt_free(p); }
+
+static gint by_crypt_device(gconstpointer a, gconstpointer b) {
+    const XdUdisksCrypt *x = *(XdUdisksCrypt *const *)a, *y = *(XdUdisksCrypt *const *)b;
+    return g_strcmp0(x->device, y->device);
+}
+
+GPtrArray *xd_udisks_encrypted(void) {
+    GPtrArray *out = g_ptr_array_new_with_free_func(crypt_free);
+    GDBusObjectManager *m = xd_udisks_manager();
+    if (m == nullptr)
+        return out;
+    GList *objects = g_dbus_object_manager_get_objects(m);
+    for (GList *l = objects; l != nullptr; l = l->next) {
+        GDBusProxy *enc = iface_of(l->data, XD_UDISKS_ENCRYPTED);
+        GDBusProxy *block = iface_of(l->data, UD_BLOCK);
+        if (enc != nullptr && block != nullptr) {
+            XdUdisksCrypt *c = g_new0(XdUdisksCrypt, 1);
+            c->object = g_strdup(g_dbus_object_get_object_path(l->data));
+            c->drive = prop_str(block, "Drive");
+            c->device = prop_str(block, "Device");
+            c->uuid = prop_str(block, "IdUUID");
+            c->label = prop_str(block, "IdLabel");
+            c->version = prop_str(block, "IdVersion");
+            c->size = prop_u64(block, "Size");
+            c->ignore = prop_bool(block, "HintIgnore");
+            c->inner_label = g_strdup("");
+            GDBusInterface *d = g_dbus_object_manager_get_interface(m, c->drive, UD_DRIVE);
+            if (d != nullptr) {
+                c->removable = prop_bool(G_DBUS_PROXY(d), "Removable") ||
+                               prop_bool(G_DBUS_PROXY(d), "MediaRemovable");
+                g_object_unref(d);
+            }
+            g_autofree char *clear = prop_str(enc, "CleartextDevice");
+            GDBusObject *co = clear[0] != '\0' && strcmp(clear, "/") != 0
+                                  ? g_dbus_object_manager_get_object(m, clear)
+                                  : nullptr;
+            if (co != nullptr) {
+                c->cleartext = g_strdup(clear);
+                GDBusProxy *cb = iface_of(co, UD_BLOCK);
+                GDBusProxy *fsi = iface_of(co, XD_UDISKS_FILESYSTEM);
+                c->has_fs = fsi != nullptr;
+                g_free(c->inner_label);
+                c->inner_label = prop_str(cb, "IdLabel");
+                g_auto(GStrv) points = prop_strv(fsi, "MountPoints");
+                c->mount_point = g_strdup(points[0]);
+                g_clear_object(&cb);
+                g_clear_object(&fsi);
+                g_object_unref(co);
+            }
+            g_ptr_array_add(out, c);
+        }
+        g_clear_object(&enc);
+        g_clear_object(&block);
+    }
+    g_list_free_full(objects, g_object_unref);
+    g_ptr_array_sort(out, by_crypt_device);
+    return out;
+}
+
+XdUdisksCrypt *xd_udisks_crypt_for(GFile *item) {
+    if (item == nullptr || xd_udisks_manager() == nullptr)
+        return nullptr;
+    g_autofree char *uri = g_file_get_uri(item);
+    g_autofree char *uuid = xd_luks_item_uuid(uri);
+    g_autofree char *path = g_file_is_native(item) ? g_file_get_path(item) : nullptr;
+    if (uuid == nullptr && path == nullptr)
+        return nullptr;
+    GPtrArray *all = xd_udisks_encrypted();
+    XdUdisksCrypt *found = nullptr;
+    for (guint i = 0; i < all->len && found == nullptr; i++) {
+        XdUdisksCrypt *c = g_ptr_array_index(all, i);
+        if ((uuid != nullptr && g_ascii_strcasecmp(c->uuid, uuid) == 0) ||
+            (path != nullptr && g_strcmp0(c->mount_point, path) == 0))
+            found = g_ptr_array_steal_index(all, i);
+    }
+    g_ptr_array_unref(all);
+    return found;
+}
+
+gboolean xd_udisks_is_crypt_device(const char *device) {
+    GDBusObjectManager *m = xd_udisks_manager();
+    if (m == nullptr || device == nullptr)
+        return FALSE;
+    volume_id id = {device, nullptr};
+    gboolean is = FALSE;
+    GList *objects = g_dbus_object_manager_get_objects(m);
+    for (GList *l = objects; l != nullptr && !is; l = l->next) {
+        GDBusProxy *block = iface_of(l->data, UD_BLOCK);
+        if (block != nullptr && is_volume(block, nullptr, &id)) {
+            GDBusProxy *enc = iface_of(l->data, XD_UDISKS_ENCRYPTED);
+            g_autofree char *backing = prop_str(block, "CryptoBackingDevice");
+            is = enc != nullptr || (backing[0] != '\0' && strcmp(backing, "/") != 0);
+            g_clear_object(&enc);
+        }
+        g_clear_object(&block);
+    }
+    g_list_free_full(objects, g_object_unref);
+    return is;
 }
 
 /* ---- calls ---- */

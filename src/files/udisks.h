@@ -67,6 +67,41 @@ typedef struct XdUdisksVolume {
  * Free with g_ptr_array_unref. */
 GPtrArray *xd_udisks_volumes(const char *drive_object);
 
+#define XD_UDISKS_BLOCK "org.freedesktop.UDisks2.Block"
+#define XD_UDISKS_ENCRYPTED "org.freedesktop.UDisks2.Encrypted"
+
+/* An encrypted (LUKS) volume UDisks2 knows: locked, or unlocked with its
+ * cleartext device (what's inside). */
+typedef struct XdUdisksCrypt {
+    char *object;      /* the encrypted block device's object path */
+    char *drive;       /* its Drive's object path, or "/" */
+    char *device;      /* "/dev/sdb1" */
+    char *uuid;        /* the LUKS header's UUID */
+    char *label;       /* the LUKS2 header's label, "" when none */
+    char *version;     /* IdVersion: "2", "1" */
+    guint64 size;
+    gboolean removable; /* on a removable drive */
+    gboolean ignore;    /* HintIgnore: not to be shown */
+    char *cleartext;   /* the cleartext block's object path; nullptr when locked */
+    gboolean has_fs;   /* the cleartext holds a file system */
+    char *inner_label; /* the file system's label, "" when locked or none */
+    char *mount_point; /* where it's mounted, or nullptr */
+} XdUdisksCrypt;
+
+void xd_udisks_crypt_free(XdUdisksCrypt *c);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(XdUdisksCrypt, xd_udisks_crypt_free)
+
+/* Every encrypted volume, by device. Free with g_ptr_array_unref. */
+GPtrArray *xd_udisks_encrypted(void);
+/* The encrypted volume a My Computer item is: its computer:///encrypted/
+ * item, or the root of its cleartext's mount; nullptr for anything
+ * else. */
+XdUdisksCrypt *xd_udisks_crypt_for(GFile *item);
+/* Whether `device` ("/dev/sdb1", "/dev/dm-0", a /dev/mapper or
+ * /dev/disk link) is an encrypted volume or one's cleartext, which My
+ * Computer lists itself rather than as GIO's volumes. */
+gboolean xd_udisks_is_crypt_device(const char *device);
+
 /* Calls `method` of `iface` on `object`, letting polkit ask (no
  * timeout: polkit's box, and checking a disk, take a while). Finish with
  * xd_udisks_call_finish, which strips D-Bus's error name from messages

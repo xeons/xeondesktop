@@ -352,7 +352,8 @@ GtkWidget *xd_send_to_menu(GtkWindow *parent, GList *files, XdFileOpDone done, g
     GPtrArray *drives = xd_computer_drives();
     for (guint i = 0; i < drives->len; i++) {
         XdDrive *d = g_ptr_array_index(drives, i);
-        if (g_strcmp0(d->kind, "Removable Disk") != 0)
+        /* (A locked encrypted drive has nowhere to copy to yet.) */
+        if (g_strcmp0(d->kind, "Removable Disk") != 0 || !g_file_is_native(d->root))
             continue;
         GVolume *unmounted = xd_computer_volume(d->root);
         if (unmounted != nullptr) {

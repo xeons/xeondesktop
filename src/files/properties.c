@@ -12,6 +12,7 @@
 
 #include "../gtkapp/gtkapp.h"
 #include "drives.h"
+#include "encrypted.h"
 #include "launcher.h"
 #include "places.h"
 #include "properties.h"
@@ -2072,6 +2073,9 @@ GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item) {
                              gtk_label_new("Tools"));
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), xd_drive_hardware_page(dlg, d->root),
                              gtk_label_new("Hardware"));
+    GtkWidget *encryption = xd_encrypted_page(dlg, d->root, d->name);
+    if (encryption != nullptr)
+        gtk_notebook_append_page(GTK_NOTEBOOK(nb), encryption, gtk_label_new("Encryption"));
     g_ptr_array_unref(drives);
 
     g_signal_connect(dlg, "response", G_CALLBACK(on_drive_response), dp);

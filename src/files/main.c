@@ -13,6 +13,7 @@
 #include "../settings/settings.h"
 #include "../settings/state.h"
 #include "drives.h"
+#include "encrypted.h"
 #include "favorites.h"
 #include "fileops.h"
 #include "folderview.h"
@@ -656,9 +657,17 @@ static void volume_mounted(GObject *src, GAsyncResult *res, gpointer data) {
     mount_request_free(r);
 }
 
+static void encrypted_opened(GFile *root, gpointer e) { navigate(e, root, TRUE); }
+static void encrypted_opened_again(GFile *root, gpointer e) { navigate(e, root, FALSE); }
+
 /* Opening a drive that isn't mounted mounts it first, as XP's drives are
- * simply there. */
+ * simply there; an encrypted one is unlocked first. */
 static gboolean mount_and_open(explorer *e, GFile *item, gboolean record) {
+    if (xd_encrypted_needs_unlock(item)) {
+        xd_encrypted_open(GTK_WINDOW(e->window), item,
+                          record ? encrypted_opened : encrypted_opened_again, e);
+        return TRUE;
+    }
     GVolume *vol = xd_computer_volume(item);
     if (vol == nullptr)
         return FALSE;
@@ -714,6 +723,15 @@ static void eject_item(explorer *e, GFile *item) {
     g_clear_object(&vol);
     g_clear_object(&m);
     g_object_unref(op);
+}
+
+static void cb_lock([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    for (GList *l = files; l != nullptr; l = l->next)
+        if (xd_encrypted_can_lock(l->data))
+            xd_encrypted_lock(GTK_WINDOW(e->window), l->data);
+    g_list_free_full(files, g_object_unref);
 }
 
 static void cb_eject([[maybe_unused]] GtkWidget *w, gpointer d) {
@@ -2266,14 +2284,19 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
     } else if (selected && place == XD_PLACE_COMPUTER) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
         GList *files = xd_folder_view_get_selected_files(view);
-        gboolean eject = FALSE;
-        for (GList *l = files; l != nullptr; l = l->next)
+        gboolean eject = FALSE, lock = FALSE;
+        for (GList *l = files; l != nullptr; l = l->next) {
             eject = eject || xd_computer_can_eject(l->data);
-        g_list_free_full(files, g_object_unref);
-        if (eject) {
-            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-            menu_item(menu, "E_ject", G_CALLBACK(cb_eject), e, nullptr, 0, NO_MODS);
+            lock = lock || xd_encrypted_can_lock(l->data);
         }
+        g_list_free_full(files, g_object_unref);
+        if (eject || lock)
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+        /* An unlocked encrypted drive locks again (unmounted first). */
+        if (lock)
+            menu_item(menu, "Loc_k", G_CALLBACK(cb_lock), e, nullptr, 0, NO_MODS);
+        if (eject)
+            menu_item(menu, "E_ject", G_CALLBACK(cb_eject), e, nullptr, 0, NO_MODS);
         /* XP's drives rename (their label). */
         if (can_rename(e)) {
             gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());

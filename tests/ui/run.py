@@ -1786,6 +1786,312 @@ def drive_rename_tools_cleanup(s):
         DBusTestCase.tearDownClass()
 
 
+@scenario(requires=("dbusmock",))
+def disk_management_encryption(s):
+    """Disk Management (on a dbusmock UDisks2 with a locked LUKS stick):
+    Unlock... asks for the passphrase (again after a wrong one); Change
+    Mount Point's Add for the unlocked volume adds an /etc/crypttab entry
+    that asks for the passphrase at startup (the default) with the fstab
+    entry for what's inside, Remove takes both away, and Add with a key
+    file has UDisks2 keep the passphrase in /etc/luks-keys; Lock unmounts
+    and locks it; Change Passphrase...; Format with "Encrypt this volume
+    (LUKS)" refuses passphrases that differ and passes encrypt.type and
+    encrypt.passphrase."""
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    try:
+        mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "udisks2.py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            mock, {"encrypted": True}, stdout=subprocess.DEVNULL, system_bus=True
+        )
+        s.children.append(proc)
+        udisks = DBusTestCase.get_dbus(system_bus=True).get_object(
+            "org.freedesktop.UDisks2", "/org/freedesktop/UDisks2"
+        )
+        sde1 = "/org/freedesktop/UDisks2/block_devices/sde1"
+        dm0 = "/org/freedesktop/UDisks2/block_devices/dm_2d0"
+
+        def calls():
+            return [str(c) for c in udisks.MockCalls(dbus_interface=MOCK_IFACE)]
+
+        def called(what):
+            return what in calls()
+
+        empty = s.settle("desktop")
+        s.launch("xd-diskmgmt")
+        s.wait_window(title="Disk Management", state="activated")
+        x, y, _, _ = s.settle("disk-management").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+
+        def opened(what, label):
+            s.wait(lambda: "activated" not in s.window(title="Disk Management")["states"],
+                   f"the {what} dialog")  # fmt: skip
+            s.settle(label)
+
+        def back(label):
+            s.wait(lambda: "activated" in s.window(title="Disk Management")["states"],
+                   "Disk Management again")  # fmt: skip
+            s.settle(label)
+
+        def select_stick(label):
+            # The volume list: sda1-3, Data, Stuff, USBSTICK, then sde1.
+            s.inject("move", x + 120, y + 70, "click", "sleep", 300)
+            for _ in range(6):
+                s.inject("key", "Down", "sleep", 100)
+            s.settle(label)
+
+        def menu(key, what, label):
+            s.inject("key", "Menu", "sleep", 400, "key", key)
+            opened(what, label)
+
+        # Unlock...: a wrong passphrase, then the right one.
+        select_stick("locked stick")
+        menu("k", "Unlock", "unlock")
+        s.inject("type", "nope", "key", "Return")
+        s.wait(lambda: called(f"Unlock {sde1} wrong"), "Unlock with the wrong passphrase")
+        s.settle("unlock again")
+        s.inject("type", "correct horse", "key", "Return")
+        s.wait(lambda: called(f"Unlock {sde1} right"), "Unlock with the right passphrase")
+        back("unlocked")
+        s.log("ok: Unlock asked again after a wrong passphrase, then unlocked")
+
+        # Add a startup mount point: crypttab (asking at startup), then
+        # fstab for what's inside, then mounted there.
+        select_stick("unlocked stick")
+        s.inject("key", "alt+a", "sleep", 400, "key", "p")
+        opened("Change Mount Point", "change mount point")
+        s.inject("key", "alt+a")
+        opened("Add Startup Mount Point", "add startup")
+        s.inject("key", "Return")
+        ask = (f"AddConfigurationItem {sde1} crypttab name=luks-uuid-sde1 device=UUID=uuid-sde1 "
+               "passphrase-path= options=nofail passphrase-contents=")
+        fstab = (f"AddConfigurationItem {dm0} fsname=UUID=uuid-private dir=/mnt/Private type=ext4 "
+                 "opts=nofail,x-mount.mkdir freq=0 passno=0")
+        s.wait(lambda: calls()[-3:] == [ask, fstab, f"Mount {dm0}"],
+               "the crypttab and fstab entries, then a mount")  # fmt: skip
+        s.log("ok: Add made an /etc/crypttab entry that asks, and the fstab entry")
+
+        # Remove: both entries go.
+        back("added")
+        s.inject("key", "alt+a", "sleep", 400, "key", "p")
+        opened("Change Mount Point", "change mount point 2")
+        s.inject("key", "alt+r")
+        opened("Remove Startup Mount Point", "remove?")
+        s.inject("key", "alt+y")
+        s.wait(lambda: calls()[-1].startswith(f"RemoveConfigurationItem {sde1} crypttab"),
+               "both entries removed")  # fmt: skip
+        s.check(calls()[-2].startswith(f"RemoveConfigurationItem {dm0} fsname=UUID=uuid-private"),
+                "the fstab entry went first")  # fmt: skip
+        s.log("ok: Remove took the fstab and crypttab entries away")
+
+        # Add again, with a key file: the passphrase twice.
+        back("removed")
+        s.inject("key", "alt+a", "sleep", 400, "key", "p")
+        opened("Change Mount Point", "change mount point 3")
+        s.inject("key", "alt+a")
+        opened("Add Startup Mount Point", "add startup 2")
+        s.inject("key", "alt+f", "sleep", 200, "key", "alt+s", "type", "correct horse",
+                 "key", "alt+c", "type", "correct horse", "sleep", 200)  # fmt: skip
+        s.settle("key file")
+        s.inject("key", "Return")
+        keyfile = (f"AddConfigurationItem {sde1} crypttab name=luks-uuid-sde1 "
+                   "device=UUID=uuid-sde1 passphrase-path=/etc/luks-keys/luks-uuid-sde1 "
+                   "options=nofail passphrase-contents=correct horse")
+        s.wait(lambda: called(keyfile), "the crypttab entry with a key file")
+        s.log("ok: Add with a key file had UDisks2 keep the passphrase in /etc/luks-keys")
+
+        # Lock: it's mounted, so unmounted first.
+        back("key file added")
+        select_stick("mounted stick")
+        s.inject("key", "Menu", "sleep", 400, "key", "k")
+        s.wait(lambda: calls()[-2:] == [f"Unmount {dm0}", f"Lock {sde1}"], "Unmount, then Lock")
+        s.log("ok: Lock unmounted and locked it")
+
+        # Change Passphrase...
+        s.settle("locked")
+        select_stick("locked again")
+        menu("s", "Change Passphrase", "change passphrase")
+        s.inject("type", "correct horse", "key", "Tab", "type", "battery staple", "key", "Tab",
+                 "type", "battery staple", "key", "Return")  # fmt: skip
+        s.wait(lambda: called(f"ChangePassphrase {sde1} right -> battery staple"),
+               "ChangePassphrase")  # fmt: skip
+        s.settle("changed")
+        s.inject("key", "Return")
+        back("passphrase changed")
+        s.log("ok: Change Passphrase changed it")
+
+        # Format, encrypted: passphrases that differ are refused first.
+        select_stick("to format")
+        menu("f", "Format", "format")
+        s.inject("key", "alt+l", "sleep", 200, "key", "alt+s", "type", "pw1", "key", "alt+r",
+                 "type", "pw2", "key", "Return")  # fmt: skip
+        s.settle("passphrases differ")
+        s.inject("key", "Return", "sleep", 400)
+        s.check(not any(c.startswith(f"Format {sde1}") for c in calls()),
+                "passphrases that differ didn't format")  # fmt: skip
+        s.inject("key", "alt+s", "type", "pw1", "key", "alt+r", "type", "pw1", "key", "Return")
+        opened("Format", "format confirm")
+        s.inject("key", "alt+y")
+        fmt = (f"Format {sde1} ext4 label=New Volume tear-down=True encrypt.type=luks2 "
+               "encrypt.passphrase=pw1")
+        s.wait(lambda: called(fmt), "an encrypted format")
+        back("formatted")
+        s.log("ok: Format encrypted the volume with the passphrase")
+
+        # The New Partition Wizard in Disk 1's unallocated space: Next
+        # stays greyed while the passphrases differ.
+        s.inject("move", x + 778, y + 353, "click", "sleep", 300)
+        menu("n", "New Partition Wizard", "wizard")
+        for i in range(3):
+            s.inject("key", "alt+n", "sleep", 400)
+        s.inject("key", "alt+l", "sleep", 200, "key", "alt+s", "type", "pw", "key", "alt+r",
+                 "type", "px", "sleep", 300, "key", "alt+n", "sleep", 400)  # fmt: skip
+        s.settle("wizard passphrases differ")
+        s.inject("key", "alt+r", "key", "ctrl+a", "type", "pw", "sleep", 200, "key", "alt+n",
+                 "sleep", 500)  # fmt: skip
+        s.settle("wizard summary")
+        s.inject("key", "alt+a")
+        s.wait(lambda: any(c.startswith("Format ") and c.endswith(
+            "encrypt.type=luks2 encrypt.passphrase=pw") for c in calls()),
+            "the new partition formatted encrypted")  # fmt: skip
+        s.check(sum(c.startswith("CreatePartitionAndFormat") for c in calls()) == 1,
+                "one partition made")  # fmt: skip
+        # Mounted: what's inside, not the encrypted partition itself.
+        s.wait(lambda: calls()[-1] == "Mount /org/freedesktop/UDisks2/block_devices/dm_2d1",
+               "the new volume's cleartext mounted")  # fmt: skip
+        back("partition made")
+        s.log("ok: the New Partition Wizard made an encrypted volume, and mounted it")
+        s.inject("key", "alt+F4")
+        s.wait_window(title="Disk Management", gone=True, timeout=10)
+    finally:
+        DBusTestCase.tearDownClass()
+
+
+@scenario(requires=("dbusmock",))
+def encrypted_drive(s):
+    """My Computer's encrypted drive (on a dbusmock UDisks2's locked LUKS
+    stick and a dbusmock Secret Service): opening it asks for the
+    passphrase, a wrong one asks again, the right one with "Remember my
+    passphrase" unlocks (Encrypted.Unlock), mounts and opens it, and
+    stores the passphrase under gvfs's schema; Lock unmounts and locks
+    it; opened again, it's unlocked with the remembered passphrase
+    without asking."""
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    media = os.path.join(s.home, "media")
+    os.makedirs(os.path.join(media, "Private"))
+    with open(os.path.join(media, "Private", "diary.txt"), "w") as f:
+        f.write("Dear diary\n")
+
+    DBusTestCase.start_system_bus()
+    try:
+        mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "udisks2.py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            mock, {"encrypted": True, "media": media}, stdout=subprocess.DEVNULL,
+            system_bus=True)  # fmt: skip
+        s.children.append(proc)
+        secrets = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "luks_secrets.py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            secrets, {}, stdout=subprocess.DEVNULL, system_bus=False)  # fmt: skip
+        s.children.append(proc)
+        udisks = DBusTestCase.get_dbus(system_bus=True).get_object(
+            "org.freedesktop.UDisks2", "/org/freedesktop/UDisks2"
+        )
+        keyring = DBusTestCase.get_dbus(system_bus=False).get_object(
+            "org.freedesktop.secrets", "/org/freedesktop/secrets"
+        )
+        sde1 = "/org/freedesktop/UDisks2/block_devices/sde1"
+        dm0 = "/org/freedesktop/UDisks2/block_devices/dm_2d0"
+
+        def calls():
+            return [str(c) for c in udisks.MockCalls(dbus_interface=MOCK_IFACE)]
+
+        def items():
+            return [(str(l), {str(k): str(v) for k, v in a.items()}, str(p))
+                    for l, a, p in keyring.MockItems(dbus_interface=MOCK_IFACE)]  # fmt: skip
+
+        empty = s.settle("desktop")
+        s.launch("xd-files", "computer:///")
+        s.wait_window(title="My Computer", state="activated")
+        x, y, _, _ = s.settle("my computer").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+
+        def files_active(title):
+            w = s.window(title=title)
+            return w is not None and "activated" in w["states"]
+
+        def open_stick():
+            # The stick is the last drive (Devices with Removable Storage,
+            # after any the computer itself has): the first item, then End.
+            s.inject("move", x + 264, y + 168, "click", "sleep", 300, "key", "End", "sleep", 300,
+                     "key", "Return")  # fmt: skip
+
+        # Locked: the passphrase box. A wrong passphrase is asked again.
+        open_stick()
+        s.wait(lambda: not files_active("My Computer"), "the passphrase box")
+        s.settle("passphrase")
+        s.inject("type", "guess", "key", "Return")
+        s.wait(lambda: f"Unlock {sde1} wrong" in calls(), "Unlock with the wrong passphrase")
+        s.settle("passphrase again")
+        s.check(not files_active("Private"), "a wrong passphrase didn't open it")
+        # The right one, remembered: unlocked, mounted and opened.
+        s.inject("type", "correct horse", "key", "alt+r", "sleep", 200, "key", "Return")
+        s.wait(lambda: files_active("Private"), "the stick to open")
+        s.check(calls()[-2:] == [f"Unlock {sde1} right", f"Mount {dm0}"],
+                f"unlocked and mounted ({calls()[-3:]})")  # fmt: skip
+        s.wait(lambda: items(), "the passphrase to be remembered")
+        label, attrs, secret = items()[0]
+        s.check(label == "Encryption passphrase for 7.45 GB Encrypted Volume"
+                and attrs.get("gvfs-luks-uuid") == "uuid-sde1" and secret == "correct horse",
+                f"remembered under gvfs's schema ({items()})")  # fmt: skip
+        s.settle("opened")
+        s.log("ok: unlocked with the passphrase, opened, and remembered")
+
+        # Back in My Computer, Lock from its menu: unmounted, then locked.
+        s.inject("key", "alt+Left")
+        s.wait(lambda: files_active("My Computer"), "My Computer again")
+        s.settle("unlocked in my computer")
+        s.inject("move", x + 264, y + 168, "click", "sleep", 300, "key", "End", "sleep", 300,
+                 "key", "Menu", "sleep", 500)  # fmt: skip
+        s.settle("context menu")
+        s.inject("key", "k")
+        s.wait(lambda: calls()[-2:] == [f"Unmount {dm0}", f"Lock {sde1}"], "Unmount, then Lock")
+        s.log("ok: Lock unmounted and locked it")
+
+        # Opened again: the remembered passphrase, without asking.
+        s.settle("locked")
+        open_stick()
+        s.wait(lambda: files_active("Private"), "the stick to open with its remembered passphrase")
+        s.check(calls()[-2:] == [f"Unlock {sde1} right", f"Mount {dm0}"],
+                f"unlocked with the keyring's passphrase ({calls()[-3:]})")  # fmt: skip
+        s.log("ok: the remembered passphrase unlocked it without asking")
+
+        # Its Properties' Encryption tab (after General, Tools and
+        # Hardware): Change Passphrase..., the old one and the new one
+        # twice; the remembered passphrase follows.
+        s.inject("key", "alt+Left")
+        s.wait(lambda: files_active("My Computer"), "My Computer again")
+        s.inject("move", x + 264, y + 168, "click", "sleep", 300, "key", "End", "sleep", 300,
+                 "key", "alt+Return")  # fmt: skip
+        s.wait(lambda: not files_active("My Computer"), "the drive's Properties")
+        s.inject("key", "ctrl+Tab", "sleep", 200, "key", "ctrl+Tab", "sleep", 200, "key",
+                 "ctrl+Tab", "sleep", 300)  # fmt: skip
+        s.settle("encryption tab")
+        s.inject("key", "alt+h", "sleep", 500)
+        s.settle("change passphrase")
+        s.inject("type", "correct horse", "key", "Tab", "type", "battery staple", "key", "Tab",
+                 "type", "battery staple", "key", "Return")  # fmt: skip
+        s.wait(lambda: f"ChangePassphrase {sde1} right -> battery staple" in calls(),
+               "ChangePassphrase")  # fmt: skip
+        s.wait(lambda: [p for _, _, p in items()] == ["battery staple"],
+               "the remembered passphrase to change too")  # fmt: skip
+        s.settle("passphrase changed")
+        s.inject("key", "Return", "sleep", 300, "key", "Escape")
+        s.wait(lambda: files_active("My Computer"), "the Properties to close")
+        s.log("ok: Change Passphrase changed it, and the remembered one")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def mock_logind(s, display_manager=False):
     """A private system bus with dbusmock's logind: our session (c1, found
     by pid) and another user's switched away from (c2); with a mock

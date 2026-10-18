@@ -49,6 +49,7 @@ Build-Depends:
  openssh-client <!nocheck>,
  gnupg <!nocheck>,
  libarchive-dev,
+ libsecret-1-dev,
  libseccomp-dev,
  libsystemd-dev,
  libpolkit-agent-1-dev,

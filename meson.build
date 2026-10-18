@@ -509,25 +509,32 @@ executable(
 
 # xd-files: the file manager (GTK3), with the folder view (libxdfolder).
 # libarchive makes Send To's Compressed (zipped) Folder; without it the
-# item isn't offered.
+# item isn't offered. libsecret remembers encrypted drives' passphrases;
+# without it, they're asked for each time.
 archive_dep = dependency('libarchive', required: false, include_type: 'system')
+secret_dep = dependency('libsecret-1', required: false, include_type: 'system')
 folder_lib = static_library(
   'xdfolder',
   'src/files/cleanup.c',
   'src/files/control.c',
   'src/files/drives.c',
+  'src/files/encrypted.c',
   'src/files/favorites.c',
   'src/files/fileops.c',
   'src/files/folderview.c',
   'src/files/launcher.c',
+  'src/files/luks.c',
+  'src/files/luksdlg.c',
   'src/files/places.c',
   'src/files/properties.c',
   'src/files/sendto.c',
   'src/files/udisks.c',
   'src/files/undo.c',
-  c_args: ['-D_GNU_SOURCE', '-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0')],
+  c_args: ['-D_GNU_SOURCE', '-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0'),
+           '-DXD_HAVE_LIBSECRET=' + (secret_dep.found() ? '1' : '0')],
   link_with: thumb_lib,
-  dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep, archive_dep],
+  dependencies: [core_dep, settings_dep, theme_dep, gtk_dep, gio_unix_dep, m_dep, archive_dep,
+                 secret_dep],
 )
 
 # xd-control: opens Control Panel (control:/// in xd-files) or an applet.
@@ -883,6 +890,8 @@ foreach tool : ['services', 'diskmgmt', 'admintools']
   executable(
     'xd-' + tool,
     'src/admin/' + tool + '.c',
+    # Disk Management's passphrase boxes, shared with My Computer.
+    tool == 'diskmgmt' ? files('src/files/luks.c', 'src/files/luksdlg.c') : [],
     link_with: [gtkapp_lib, admin_lib],
     dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep],
     install: true,
@@ -1113,6 +1122,7 @@ test_exe = executable(
   'src/files/favorites.c',
   'src/files/launcher.c',
   'src/files/cleanup.c',
+  'src/files/luks.c',
   'src/taskmgr/netstat.c',
   'src/timedate/ntp.c',
   'src/shell/recent.c',

@@ -24,6 +24,21 @@ its filesystem, and formatting with mkntfs (missing here); and to check
 or repair a mounted filesystem. USBSTICK has errors: Check finds them,
 Repair fixes them. "MockCalls" on /org/freedesktop/UDisks2 lists what
 was called.
+
+Parameters: "media", the folder Mount mounts in (default
+/run/media/xeon), so a test can make the folders; "encrypted": true adds
+
+  sde  8 GB USB stick: an encrypted (LUKS2) partition, locked, whose
+       passphrase is "correct horse"; unlocked, it holds Private (ext4)
+
+with the Encrypted interface's Unlock (a wrong passphrase is refused),
+Lock (refused while the cleartext is mounted) and ChangePassphrase.
+Format's "encrypt.passphrase" makes any volume encrypted, its file
+system inside, unlocked. Add- and RemoveConfigurationItem take
+/etc/crypttab entries too ("crypttab": name, device, passphrase-path,
+options and the optional passphrase-contents, all bytestrings); the
+cleartext's /etc/fstab entries stay in Encrypted.ChildConfiguration
+while it's locked.
 """
 
 # SPDX-License-Identifier: MIT
@@ -47,6 +62,7 @@ BLOCK = U + ".Block"
 PTABLE = U + ".PartitionTable"
 PART = U + ".Partition"
 FS = U + ".Filesystem"
+ENC = U + ".Encrypted"
 SWAP = U + ".Swapspace"
 OM = "org.freedesktop.DBus.ObjectManager"
 ERR = U + ".Error"
@@ -69,7 +85,9 @@ NATURAL = {"gpt": {"vfat": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
            "dos": {"vfat": "0x0c", "ntfs": "0x07", "exfat": "0x07", "swap": "0x82"}}
 LINUX = {"gpt": "0fc63daf-8483-4772-8e79-3d69d8477de4", "dos": "0x83"}
 
-state = types.SimpleNamespace(main=None, fs_size={}, calls=[], damaged=set())
+state = types.SimpleNamespace(main=None, fs_size={}, calls=[], damaged=set(),
+                              media="/run/media/xeon", passphrase={}, inner={}, child_config={},
+                              keyfiles={})
 
 
 def ay(s):
@@ -245,8 +263,13 @@ def add_table(path, ttype):
               table_methods())
 
 
-def load(mock, _parameters):
+def load(mock, parameters):
     state.main = mock
+    state.media = str(parameters.get("media", "/run/media/xeon"))
+    state.passphrase = {}
+    state.inner = {}
+    state.child_config = {}
+    state.keyfiles = {}
     state.fs_size = {}
     state.calls = []
     state.damaged = {path_of("sdd1")}
@@ -254,7 +277,8 @@ def load(mock, _parameters):
         format=do_format, mount=do_mount, unmount=do_unmount, set_label=do_set_label,
         check=do_check,
         fs_resize=do_fs_resize, delete=do_delete, part_resize=do_part_resize,
-        set_part=do_set_part, create=do_create, eject=do_eject, config=do_config)
+        set_part=do_set_part, create=do_create, eject=do_eject, config=do_config,
+        unlock=do_unlock, lock=do_lock, change_passphrase=do_change_passphrase)
     mock.AddMethod(MOCK_IFACE, "MockCalls", "", "as", "ret = xd_udisks.calls()")
     mockobject.xd_udisks.calls = lambda: dbus.Array(state.calls, signature="s")
 
@@ -321,6 +345,16 @@ def load(mock, _parameters):
                   media=False, sortkey="04sr0")
     add_block(mock, "sr0", 0, d)
 
+    if parameters.get("encrypted", False):
+        # sde: a USB stick with an encrypted partition, locked
+        d = add_drive(mock, "Kingston_DataTraveler_sde", "DataTraveler 3.0", 8_000_000_000,
+                      removable=True, ejectable=True, bus="usb", sortkey="05sde")
+        add_block(mock, "sde", 8_000_000_000, d)
+        add_table(path_of("sde"), "dos")
+        p = add_partition(mock, "sde", "sde1", 1, MIB, 8_000_000_000 - MIB, "0x83",
+                          usage="crypto", fstype="crypto_LUKS", version="2")
+        make_encrypted(p, "correct horse", ("ext4", "Private", "uuid-private"))
+
 
 # ---- methods ------------------------------------------------------------------------------
 
@@ -385,6 +419,10 @@ def do_format(self, args):
         extra += f" erase={opts['erase']}"
     if "mkfs-args" in opts:
         extra += f" mkfs-args={','.join(str(a) for a in opts['mkfs-args'])}"
+    encrypt = opts.get("encrypt.passphrase")
+    if encrypt is not None:
+        encrypt = text(encrypt) if isinstance(encrypt, dbus.Array) else str(encrypt)
+        extra += f" encrypt.type={opts.get('encrypt.type', '')} encrypt.passphrase={encrypt}"
     log(f"Format {self.path} {fstype} label={opts.get('label', '')} "
         f"tear-down={bool(opts.get('tear-down', False))}{extra}")
     if mounted(self.path):
@@ -395,9 +433,17 @@ def do_format(self, args):
         fail("Failed", f"Error formatting: mk{fstype} is not installed")
     if opts.get("erase", "zero") != "zero":
         fail("Failed", f"Error formatting: erase {opts['erase']} isn't supported here")
+    if ENC in self.props and cleartext_of(self.path) is not None:
+        if not opts.get("tear-down", False):
+            fail("DeviceBusy", "Error formatting: the encrypted device is unlocked")
+        lock(self.path)
     if opts.get("tear-down", False):
-        # The old filesystem's /etc/fstab entries go with it.
+        # The old filesystem's /etc/fstab (and crypttab) entries go with it.
         self.UpdateProperties(BLOCK, {"Configuration": dbus.Array([], signature="(sa{sv})")})
+        state.child_config.pop(self.path, None)
+    if ENC in self.props:
+        remove_iface(self.path, ENC)
+        state.inner.pop(self.path, None)
     if fstype in ("gpt", "dos"):
         if PART in self.props:
             fail("Failed", "Error formatting: a partition table can't go in a partition")
@@ -415,6 +461,19 @@ def do_format(self, args):
     if PTABLE in self.props:
         fail("Failed", "Error formatting: the disk has a partition table")
     version = "FAT32" if fstype == "vfat" else ""
+    if encrypt is not None:
+        # LUKS here, the file system inside, unlocked (as UDisks2 leaves it).
+        luks = str(opts.get("encrypt.type", "luks2"))
+        set_fs(self.path, "", "")
+        self.UpdateProperties(BLOCK, {"IdType": "crypto_LUKS", "IdUsage": "crypto",
+                                      "IdVersion": luks[-1],
+                                      "IdUUID": f"new-luks-{self.path.rsplit('/', 1)[1]}"})
+        name = self.path.rsplit("/", 1)[1]
+        make_encrypted(self.path, encrypt,
+                       (fstype, str(opts.get("label", "")), f"new-uuid-{name}-inside"))
+        emit_added(self.path, [ENC])
+        unlock(self.path)
+        return
     set_fs(self.path, fstype, str(opts.get("label", "")), version)
     if opts.get("update-partition-type", False) and PART in self.props:
         table = str(obj(disk_of(self.path)).props[PTABLE]["Type"])
@@ -427,7 +486,7 @@ def do_mount(self, _args):
     if mounted(self.path):
         fail("AlreadyMounted", "Device is already mounted")
     label = str(self.props[BLOCK]["IdLabel"]) or str(self.props[BLOCK]["IdUUID"])
-    point = f"/run/media/xeon/{label}"
+    point = f"{state.media}/{label}"
     # As UDisks2 does, where /etc/fstab says.
     for kind, details in self.props[BLOCK]["Configuration"]:
         if kind == "fstab":
@@ -576,6 +635,41 @@ def add_fstab(path, *fields):
     o.props[BLOCK]["Configuration"] = dbus.Array(items, signature="(sa{sv})")
 
 
+CRYPTTAB_STR = ("name", "device", "passphrase-path", "options")
+
+
+def crypttab_item(f):
+    return dbus.Struct(("crypttab", dbus.Dictionary({k: ay(f[k]) for k in CRYPTTAB_STR},
+                                                    signature="sv")), signature="sa{sv}")
+
+
+def is_bytes(v):
+    return isinstance(v, dbus.ByteArray) or (isinstance(v, dbus.Array) and v.signature == "y")
+
+
+def config_fields(item):
+    """A configuration item as UDisks2 reads it: (kind, fields). An
+    fstab entry's strings are 'ay', its numbers 'i', all six there; a
+    crypttab entry's four are 'ay', and passphrase-contents (what UDisks2
+    writes to passphrase-path) may come too."""
+    kind = str(item[0])
+    if kind == "fstab":
+        return kind, fstab_fields(item)
+    if kind != "crypttab":
+        fail("Failed", f"only fstab and crypttab entries here, not {kind}")
+    details = item[1]
+    out = {}
+    for key in CRYPTTAB_STR:
+        if not is_bytes(details.get(key)):
+            fail("Failed", f"crypttab {key} must be a bytestring (ay)")
+        out[key] = text(details[key])
+    if "passphrase-contents" in details:
+        if not is_bytes(details["passphrase-contents"]):
+            fail("Failed", "crypttab passphrase-contents must be a bytestring (ay)")
+        out["passphrase-contents"] = text(details["passphrase-contents"])
+    return kind, out
+
+
 def fstab_fields(item):
     """An fstab item as UDisks2 reads it: the strings as 'ay', the numbers
     as 'i', all six there."""
@@ -597,14 +691,25 @@ def fstab_fields(item):
     return out
 
 
-def describe(f):
+def describe(kf):
+    kind, f = kf
+    if kind == "crypttab":
+        return "crypttab " + " ".join(f"{k}={f[k]}" for k in f)
     return " ".join(f"{k}={f[k]}" for k in FSTAB_STR + FSTAB_INT)
 
 
+def kept(kf):
+    """An entry as Configuration shows it: never a crypttab entry's
+    passphrase-contents (only GetSecretConfiguration would)."""
+    kind, f = kf
+    return kind, {k: v for k, v in f.items() if k != "passphrase-contents"}
+
+
 def do_config(self, old, new):
-    """Add (old None), Update or Remove (new None) an /etc/fstab entry."""
-    old_f = fstab_fields(old) if old is not None else None
-    new_f = fstab_fields(new) if new is not None else None
+    """Add (old None), Update or Remove (new None) an /etc/fstab or
+    /etc/crypttab entry."""
+    old_f = config_fields(old) if old is not None else None
+    new_f = config_fields(new) if new is not None else None
     if new_f is None:
         log(f"RemoveConfigurationItem {self.path} {describe(old_f)}")
     elif old_f is None:
@@ -612,16 +717,141 @@ def do_config(self, old, new):
     else:
         log(f"UpdateConfigurationItem {self.path} {describe(old_f)} -> {describe(new_f)}")
     items = list(self.props[BLOCK]["Configuration"])
-    current = [fstab_fields(i) for i in items]
+    current = [config_fields(i) for i in items]
     if old_f is not None:
-        if old_f not in current:
-            fail("Failed", "Didn't find the entry to remove in /etc/fstab")
-        del items[current.index(old_f)]
+        if kept(old_f) not in current:
+            fail("Failed", f"Didn't find the entry to remove in /etc/{old_f[0]}")
+        del items[current.index(kept(old_f))]
     if new_f is not None:
-        if not new_f["dir"].startswith("/"):
-            fail("Failed", "the mount point must be an absolute path")
-        items.append(fstab_item(*(new_f[k] for k in FSTAB_STR + FSTAB_INT)))
-    self.UpdateProperties(BLOCK, {"Configuration": dbus.Array(items, signature="(sa{sv})")})
+        kind, f = new_f
+        if kind == "fstab":
+            if not f["dir"].startswith("/"):
+                fail("Failed", "the mount point must be an absolute path")
+            items.append(fstab_item(*(f[k] for k in FSTAB_STR + FSTAB_INT)))
+        else:
+            if ENC not in self.props:
+                fail("Failed", "a crypttab entry is for an encrypted device")
+            # As UDisks2 2.11: contents are required, and a key file can
+            # only go in /etc/luks-keys.
+            if "passphrase-contents" not in f:
+                fail("Failed", "Missing options or passphrase-contents parameter in entry to add")
+            if f["passphrase-contents"]:
+                if not f["passphrase-path"].startswith("/etc/luks-keys/"):
+                    fail("Failed", "Crypttab passphrase file can only be created in the "
+                         "/etc/luks-keys directory")
+                state.keyfiles[f["passphrase-path"]] = f["passphrase-contents"]
+            items.append(crypttab_item(f))
+    if old_f is not None and old_f[0] == "crypttab" and new_f is None:
+        state.keyfiles.pop(old_f[1]["passphrase-path"], None)
+    items = dbus.Array(items, signature="(sa{sv})")
+    self.UpdateProperties(BLOCK, {"Configuration": items})
+    # A cleartext's entries are its encrypted volume's ChildConfiguration.
+    backing = str(self.props[BLOCK]["CryptoBackingDevice"])
+    if backing != "/":
+        state.child_config[backing] = items
+        obj(backing).UpdateProperties(ENC, {"ChildConfiguration": items})
+
+
+# ---- encryption ----------------------------------------------------------------------------
+
+
+def make_encrypted(path, passphrase, inside):
+    """The Encrypted interface on `path`, locked; `inside` is (type, label,
+    uuid) of the file system it holds."""
+    state.passphrase[path] = passphrase
+    state.inner[path] = inside
+    add_iface(path, ENC, {
+        "ChildConfiguration": dbus.Array([], signature="(sa{sv})"),
+        "CleartextDevice": dbus.ObjectPath("/"),
+        "HintEncryptionType": "luks2",
+        "MetadataSize": dbus.UInt64(16 * MIB),
+    }, [("Unlock", "sa{sv}", "o", "ret = xd_udisks.unlock(self, args)"),
+        ("Lock", "a{sv}", "", "xd_udisks.lock(self, args)"),
+        ("ChangePassphrase", "ssa{sv}", "", "xd_udisks.change_passphrase(self, args)")])
+
+
+def cleartext_of(path):
+    o = obj(path)
+    c = str(o.props[ENC]["CleartextDevice"]) if ENC in o.props else "/"
+    return None if c == "/" else c
+
+
+def device_of(path):
+    return text(obj(path).props[BLOCK]["Device"])
+
+
+def unlock(path):
+    """The cleartext device appears (dm-N), with the file system inside."""
+    o = obj(path)
+    n = 0
+    while f"{MAIN_OBJ}/block_devices/dm_2d{n}" in mockobject.objects:
+        n += 1
+    name = f"dm_2d{n}"
+    fstype, label, uuid = state.inner[path]
+    luks_uuid = str(o.props[BLOCK]["IdUUID"])
+    clear = add_block(state.main, name, int(o.props[BLOCK]["Size"]) - 16 * MIB,
+                      o.props[BLOCK]["Drive"], usage="filesystem", fstype=fstype,
+                      version="FAT32" if fstype == "vfat" else "1.0", label=label)
+    c = obj(clear)
+    # New, so no PropertiesChanged: InterfacesAdded has them.
+    c.props[BLOCK].update({
+        "Device": ay(f"/dev/dm-{n}"), "PreferredDevice": ay(f"/dev/mapper/luks-{luks_uuid}"),
+        "IdUUID": uuid, "CryptoBackingDevice": dbus.ObjectPath(path), "HintPartitionable": False,
+        "Configuration": state.child_config.get(path, dbus.Array([], signature="(sa{sv})"))})
+    emit_added(clear, list(c.props))
+    set_cleartext(path, clear)
+    return dbus.ObjectPath(clear)
+
+
+def set_cleartext(path, clear):
+    """CleartextDevice, signalled by hand: dbusmock's UpdateProperties
+    can't wrap an object path."""
+    o = obj(path)
+    o.props[ENC]["CleartextDevice"] = dbus.ObjectPath(clear)
+    o.EmitSignal(dbus.PROPERTIES_IFACE, "PropertiesChanged", "sa{sv}as",
+                 [ENC, dbus.Dictionary({"CleartextDevice": dbus.ObjectPath(clear, variant_level=1)},
+                                       signature="sv"), dbus.Array([], signature="s")])
+
+
+def lock(path):
+    clear = cleartext_of(path)
+    if clear is None:
+        fail("NotUnlocked", f"Device {device_of(path)} is not unlocked")
+    if mounted(clear):
+        fail("DeviceBusy", f"Error locking {device_of(clear)} ({device_of(path)}): "
+             f"Device {device_of(clear)} is mounted")
+    emit_removed(clear, list(obj(clear).props))
+    state.main.RemoveObject(clear)
+    state.fs_size.pop(clear, None)
+    set_cleartext(path, "/")
+
+
+def do_unlock(self, args):
+    passphrase = str(args[0])
+    right = passphrase == state.passphrase.get(self.path)
+    log(f"Unlock {self.path} {'right' if right else 'wrong'}")
+    if cleartext_of(self.path) is not None:
+        fail("AlreadyUnlocked", f"Device {device_of(self.path)} is already unlocked as "
+             f"{device_of(cleartext_of(self.path))}")
+    if not right:
+        fail("Failed", f"Error unlocking {device_of(self.path)}: Failed to activate device: "
+             "Incorrect passphrase.")
+    return unlock(self.path)
+
+
+def do_lock(self, _args):
+    log(f"Lock {self.path}")
+    lock(self.path)
+
+
+def do_change_passphrase(self, args):
+    old, new = str(args[0]), str(args[1])
+    right = old == state.passphrase.get(self.path)
+    log(f"ChangePassphrase {self.path} {'right' if right else 'wrong'} -> {new}")
+    if not right:
+        fail("Failed", f"Error changing passphrase on device {device_of(self.path)}: Failed to "
+             "change passphrase: No key available with this passphrase.")
+    state.passphrase[self.path] = new
 
 
 def do_eject(self, _args):

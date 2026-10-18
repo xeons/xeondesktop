@@ -29,6 +29,23 @@ and
 so the files are yours.
 The system's own entries can't be changed here.
 .PP
+Encrypted (LUKS) volumes are unlocked (asking for the passphrase),
+locked (unmounted first) and given a new passphrase from the Action menu.
+Format and the New Partition Wizard can encrypt a volume (LUKS2, or
+whatever UDisks2 makes by default), the file system inside it.
+Adding a startup mount point to an unlocked encrypted volume also adds
+its
+.BR crypttab (5)
+entry, so it's unlocked when the computer starts: by default the
+passphrase is asked for then; or it's kept in a key file that UDisks2
+writes in
+.IR /etc/luks\-keys ,
+readable by root, and by anyone who can read the system disk, so the
+volume is then only as safe as that disk.
+Removing the last startup mount point removes the
+.BR crypttab (5)
+entry, and the key file with it.
+.PP
 Everything goes through UDisks2, which asks polkit, so
 .BR xd\-polkit (1)
 asks for a password; nothing runs as root here.

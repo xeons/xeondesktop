@@ -45,6 +45,7 @@
 #include "../src/files/columns.h"
 #include "../src/files/favorites.h"
 #include "../src/files/launcher.h"
+#include "../src/files/luks.h"
 #include "../src/files/names.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
@@ -5110,6 +5111,76 @@ static void set_times_at(const char *root, const char *rel, gint64 seconds) {
     g_free(path);
 }
 
+/* Encrypted volumes: names, items, remembered passphrases' attributes,
+ * crypttab names, and telling a wrong passphrase from other failures. */
+static void test_luks(void) {
+    /* gvfs's and GNOME Disks' schema, so remembered passphrases are shared. */
+    CHECK(strcmp(XD_LUKS_SECRET_SCHEMA, "org.gnome.GVfs.Luks.Password") == 0);
+    CHECK(strcmp(XD_LUKS_SECRET_ATTRIBUTE, "gvfs-luks-uuid") == 0);
+    char *s = xd_luks_secret_label("Private");
+    CHECK(strcmp(s, "Encryption passphrase for Private") == 0);
+    g_free(s);
+
+    s = xd_luks_item_uri("1234-ab cd");
+    CHECK(strcmp(s, "computer:///encrypted/1234-ab%20cd") == 0);
+    char *uuid = xd_luks_item_uuid(s);
+    CHECK(uuid != nullptr && strcmp(uuid, "1234-ab cd") == 0);
+    g_free(uuid);
+    g_free(s);
+    CHECK(xd_luks_item_uuid("computer:///encrypted/") == nullptr);
+    CHECK(xd_luks_item_uuid("computer:///volume/abc") == nullptr);
+    CHECK(xd_luks_item_uuid("computer:///encrypted/a%2Fb") == nullptr); /* no slashes in it */
+    CHECK(xd_luks_item_uuid(nullptr) == nullptr);
+
+    s = xd_luks_volume_name("Private", "Header", "7.45 GB");
+    CHECK(strcmp(s, "Private") == 0);
+    g_free(s);
+    s = xd_luks_volume_name("", "Header", "7.45 GB");
+    CHECK(strcmp(s, "Header") == 0);
+    g_free(s);
+    s = xd_luks_volume_name("", "", "7.45 GB");
+    CHECK(strcmp(s, "7.45 GB Encrypted Volume") == 0);
+    g_free(s);
+    s = xd_luks_volume_name(nullptr, nullptr, nullptr);
+    CHECK(strcmp(s, "Encrypted Volume") == 0);
+    g_free(s);
+    s = xd_luks_version_label("2");
+    CHECK(strcmp(s, "LUKS2") == 0);
+    g_free(s);
+    s = xd_luks_version_label("");
+    CHECK(strcmp(s, "LUKS") == 0);
+    g_free(s);
+
+    CHECK(xd_luks_passphrase_problem("a b", "a b") == nullptr);
+    CHECK(xd_luks_passphrase_problem("", "") != nullptr);
+    CHECK(xd_luks_passphrase_problem("one", "One") != nullptr);
+    CHECK(xd_luks_passphrase_problem("one", nullptr) != nullptr);
+
+    const char *failed = "org.freedesktop.UDisks2.Error.Failed";
+    CHECK(xd_luks_wrong_passphrase(failed, "Error unlocking /dev/sdb1: Failed to activate "
+                                           "device: Operation not permitted"));
+    CHECK(xd_luks_wrong_passphrase(failed, "Error unlocking /dev/sde1: Failed to activate "
+                                           "device: Incorrect passphrase."));
+    CHECK(xd_luks_wrong_passphrase(failed, "Error changing passphrase on device /dev/sde1: "
+                                           "No key available with this passphrase."));
+    CHECK(!xd_luks_wrong_passphrase(failed, "Error unlocking /dev/sdb1: Failed to activate "
+                                            "device: No such device"));
+    CHECK(!xd_luks_wrong_passphrase("org.freedesktop.UDisks2.Error.NotAuthorizedDismissed",
+                                    "Operation not permitted"));
+    CHECK(!xd_luks_wrong_passphrase(nullptr, nullptr));
+
+    s = xd_crypttab_name("uuid-1");
+    CHECK(strcmp(s, "luks-uuid-1") == 0);
+    char *key = xd_crypttab_key_path(s);
+    CHECK(strcmp(key, "/etc/luks-keys/luks-uuid-1") == 0);
+    g_free(key);
+    g_free(s);
+
+    char *pass = g_strdup("secret");
+    xd_luks_passphrase_free(pass);
+    xd_luks_passphrase_free(nullptr);
+}
+
 static void test_disk_cleanup(void) {
     char *k = xd_cleanup_format_kb(0);
     CHECK(g_str_equal(k, "0 KB"));
@@ -6042,6 +6113,7 @@ int main(void) {
     test_launcher_fields();
     test_taskmgr_netstat();
     test_disk_cleanup();
+    test_luks();
     test_timedate_ntp();
     test_privacy();
     test_keys_texts();
