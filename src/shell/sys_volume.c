@@ -2,14 +2,16 @@
  * The volume icon in the notification area, through libpulse (PulseAudio
  * or PipeWire's pulse server) on GLib's main loop: the default output's
  * volume and mute. A click opens XP's volume flyout (a vertical slider
- * and Mute); the wheel over the icon changes the volume; the menu opens
- * the full mixer (pavucontrol) when it's installed.
+ * and Mute), which works from the keyboard as XP's did; the wheel over
+ * the icon changes the volume; the menu opens the full mixer
+ * (pavucontrol) when it's installed.
  */
 #include <gio/gio.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <pulse/glib-mainloop.h>
 #include <pulse/pulseaudio.h>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "../core/alloc.h"
 #include "../theme/draw.h"
@@ -189,9 +191,14 @@ static constexpr int TRACK_TOP = 32;
 static constexpr int TRACK_BOTTOM = 112;
 static constexpr int THUMB_W = 22;
 static constexpr int THUMB_H = 11;
+/* The slider's keys, in percent: Windows' trackbar moves a line per arrow
+ * and a fifth of its range per page. */
+static constexpr int LINE_STEP = 2;
+static constexpr int PAGE_STEP = 20;
 
 struct flyout {
     volume *vol;
+    xd_taskbar *bar; /* has the keyboard while we're open */
     struct wl_surface *surface;
     struct xdg_surface *xdg_surface;
     struct xdg_popup *popup;
@@ -291,6 +298,16 @@ static void flyout_close(volume *v) {
         wp_viewport_destroy(f->viewport);
     wl_surface_destroy(f->surface);
     xd_shm_ring_finish(&f->ring);
+    /* The keyboard back to the windows, unless the taskbar went with its
+     * monitor meanwhile. */
+    XD_LIST_FOR_EACH(bar, &v->shell->taskbars, xd_taskbar, link) {
+        if (bar == f->bar && bar->layer != nullptr) {
+            zwlr_layer_surface_v1_set_keyboard_interactivity(
+                bar->layer, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE);
+            wl_surface_commit(bar->surface);
+            bar->dirty = true;
+        }
+    }
     xd_free(f);
     xd_taskbars_schedule_tuck(v->shell);
 }
@@ -339,6 +356,7 @@ static void flyout_open(volume *v, xd_taskbar *bar, xd_rect anchor, uint32_t ser
         return;
     flyout *f = XD_NEW(flyout);
     f->vol = v;
+    f->bar = bar;
     f->scale = bar->scale;
     f->surface = wl_compositor_create_surface(shell->compositor);
     if (shell->viewporter != nullptr)
@@ -359,6 +377,9 @@ static void flyout_open(volume *v, xd_taskbar *bar, xd_rect anchor, uint32_t ser
     xdg_positioner_destroy(pos);
     zwlr_layer_surface_v1_get_popup(bar->layer, f->popup);
     xdg_popup_add_listener(f->popup, &fly_popup_listener, f);
+    /* The slider's keys reach us only with the keyboard taken before the
+     * grab starts (see xd_taskbar_take_keyboard). */
+    xd_taskbar_take_keyboard(bar);
     if (shell->seat != nullptr && serial != 0)
         xdg_popup_grab(f->popup, shell->seat, serial);
     wl_surface_commit(f->surface);
@@ -395,6 +416,58 @@ void xd_volume_flyout_button([[maybe_unused]] xd_shell *shell, uint32_t button, 
         f->dragging = true;
         set_percent(v, value_at(y));
     }
+}
+
+/* XP's flyout had the slider focused: a vertical trackbar, top loudest, so
+ * Up, Left, Page Up and Home go up and Down, Right, Page Down and End go
+ * down, as Windows' trackbar keys do. Space and Alt+M (its mnemonic)
+ * check Mute; Esc closes it. */
+bool xd_volume_flyout_key([[maybe_unused]] xd_shell *shell, uint32_t sym) {
+    volume *v = the_volume;
+    if (v == nullptr || v->fly == nullptr)
+        return false;
+    int p = percent(v);
+    switch (sym) {
+    case XKB_KEY_Up:
+    case XKB_KEY_Left:
+    case XKB_KEY_KP_Up:
+    case XKB_KEY_KP_Left:
+        set_percent(v, p + LINE_STEP);
+        break;
+    case XKB_KEY_Down:
+    case XKB_KEY_Right:
+    case XKB_KEY_KP_Down:
+    case XKB_KEY_KP_Right:
+        set_percent(v, p - LINE_STEP);
+        break;
+    case XKB_KEY_Page_Up:
+    case XKB_KEY_KP_Page_Up:
+        set_percent(v, p + PAGE_STEP);
+        break;
+    case XKB_KEY_Page_Down:
+    case XKB_KEY_KP_Page_Down:
+        set_percent(v, p - PAGE_STEP);
+        break;
+    case XKB_KEY_Home:
+    case XKB_KEY_KP_Home:
+        set_percent(v, 100);
+        break;
+    case XKB_KEY_End:
+    case XKB_KEY_KP_End:
+        set_percent(v, 0);
+        break;
+    case XKB_KEY_space:
+    case XKB_KEY_m:
+    case XKB_KEY_M:
+        set_mute(v, !v->muted);
+        break;
+    case XKB_KEY_Escape:
+        flyout_close(v);
+        break;
+    default:
+        break; /* others are the flyout's too while it's open */
+    }
+    return true;
 }
 
 void xd_volume_flyout_dismiss([[maybe_unused]] xd_shell *shell) {

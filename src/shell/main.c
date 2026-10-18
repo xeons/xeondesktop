@@ -322,6 +322,8 @@ static void handle_key(xd_shell *shell, uint32_t key, uint32_t serial) {
         xd_start7_key(shell, sym, utf8, ctrl_alt);
         return;
     }
+    if (xd_volume_flyout_key(shell, sym))
+        return;
     /* An open menu first: its popup's keys arrive at the surface it hangs
      * off, and the desktop's right-click menu hangs off the desktop. */
     if (shell->start_menu != nullptr) {

@@ -1794,6 +1794,73 @@ def battery_alarms(s):
         DBusTestCase.tearDownClass()
 
 
+def private_pipewire(s):
+    """Before the compositor starts: a sound server of the session's own,
+    PipeWire and its pulse server in the session's runtime dir, with one
+    null sink. With no session manager, no real sound device is opened."""
+    if not shutil.which("pipewire-pulse") or not shutil.which("pactl"):
+        return
+    log = open(os.path.join(s.base, "shots", "pipewire.log"), "w")  # kept with --keep
+    for program in ("pipewire", "pipewire-pulse"):
+        s.children.append(subprocess.Popen([program], stdout=log, stderr=log,
+                                           preexec_fn=die_with_parent))  # fmt: skip
+    socket = os.path.join(os.environ["XDG_RUNTIME_DIR"], "pulse", "native")
+    s.wait(lambda: os.path.exists(socket), "the pulse server", 15)
+    subprocess.run(["pactl", "load-module", "module-null-sink", "sink_name=test-sink"],
+                   stdout=subprocess.DEVNULL, timeout=10, check=True)  # fmt: skip
+
+
+def sink_state():
+    """The test sink's volume (percent, the loudest channel) and mute."""
+    import re
+
+    vol = subprocess.run(["pactl", "get-sink-volume", "test-sink"], capture_output=True,
+                         text=True, timeout=10).stdout  # fmt: skip
+    mute = subprocess.run(["pactl", "get-sink-mute", "test-sink"], capture_output=True,
+                          text=True, timeout=10).stdout  # fmt: skip
+    percents = [int(p) for p in re.findall(r"(\d+)%", vol)]
+    return (max(percents) if percents else None), "yes" in mute
+
+
+@scenario(LUNA_INI, setup=private_pipewire)
+def volume_keys(s):
+    """The volume flyout from the keyboard, as XP's: Home and End go to the
+    top and bottom, Page Up a fifth up, Up/Left a step up and Down/Right a
+    step down, Space checks and unchecks Mute, Esc closes it."""
+    if not shutil.which("pipewire-pulse") or not shutil.which("pactl"):
+        s.log("skipped: needs pipewire-pulse and pactl")
+        return
+    subprocess.run(["pactl", "set-sink-volume", "test-sink", "50%"], timeout=10, check=True)
+    s.inject("move", 300, 300)
+    before = s.settle("desktop")
+    # Where the icon is: it changes when muted, and back.
+    subprocess.run(["pactl", "set-sink-mute", "test-sink", "1"], timeout=10, check=True)
+    _, box = wait_change(s, before, TRAY, "the volume icon to show Mute", "muted")
+    subprocess.run(["pactl", "set-sink-mute", "test-sink", "0"], timeout=10, check=True)
+    s.wait(lambda: s.shot("unmuted").changed_box(before, TRAY) is None, "it to come back")
+    x, y = box[0] + box[2] // 2, box[1] + box[3] // 2
+    s.inject("move", x, y, "click", "move", 300, 300)
+    flyout = s.settle("flyout")
+    s.check(flyout.differs(before, (x - 60, HEIGHT - 200, 120, 160)) > 0.2, "the flyout opened")
+
+    def keys_give(keys, want, what):
+        s.inject(*[a for k in keys for a in ("key", k)])
+        s.wait(lambda: sink_state() == want, f"{what} ({want}, now {sink_state()})", 10)
+        s.log(f"ok: {what}")
+
+    keys_give(["Home"], (100, False), "Home: 100%")
+    keys_give(["End"], (0, False), "End: 0%")
+    keys_give(["Page_Up"], (20, False), "Page Up: 20%")
+    keys_give(["Up", "Up", "Left"], (26, False), "Up, Up, Left: 26%")
+    keys_give(["Down", "Right"], (22, False), "Down, Right: 22%")
+    keys_give(["space"], (22, True), "Space: muted")
+    keys_give(["space"], (22, False), "Space again: not muted")
+    s.inject("key", "Escape")
+    s.wait(lambda: s.shot("closed").differs(before, (x - 60, HEIGHT - 200, 120, 160)) < 0.02,
+           "Esc to close the flyout")  # fmt: skip
+    s.log("ok: Esc closed the flyout")
+
+
 # Another program's GTK 3 window with a combo box, which drops down once
 # the file named on the command line exists.
 GTK_COMBO = r"""

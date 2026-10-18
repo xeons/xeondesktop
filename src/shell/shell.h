@@ -571,6 +571,8 @@ bool xd_volume_flyout_owns(xd_shell *shell, struct wl_surface *surface);
 void xd_volume_flyout_motion(xd_shell *shell, double x, double y);
 void xd_volume_flyout_button(xd_shell *shell, uint32_t button, bool pressed, double x, double y);
 void xd_volume_flyout_render_dirty(xd_shell *shell);
+/* A key while the flyout is open; false if it isn't. */
+bool xd_volume_flyout_key(xd_shell *shell, uint32_t sym);
 /* Closes the flyout (a click elsewhere in the shell, a menu opening). */
 void xd_volume_flyout_dismiss(xd_shell *shell);
 
