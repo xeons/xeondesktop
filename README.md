@@ -115,7 +115,11 @@ categories. Run..., Log Off and Shut Down... open `xd-run` and `xd-shutdown`;
 Search opens `xd-search` (find files by name, wildcard or text inside them),
 Help opens `xd-help`, and Settings holds Control Panel, Network Connections,
 Printers and Taskbar & Start Menu. The menus work from the keyboard: arrows
-within and across columns, Tab, Enter and Esc.
+within and across columns, Tab, Enter and Esc, and typing a letter picks
+the item it starts with (or its underlined letter: Win, U, U turns the
+computer off). In the XP menu, right-click a program in All Programs to pin
+it; newly installed programs are highlighted until first opened;
+Customize Start Menu picks large or small icons and how many programs.
 
 ### Start menu styles
 
@@ -149,8 +153,12 @@ desktop file id per line). A running program's button is framed, with
 stacked edges for more windows; click to start it, switch to it or cycle its
 windows, middle-click for another, drag to reorder. Right-click for its jump
 list: recent files, its tasks, pin or unpin, close. Taskbar Properties'
-"Taskbar buttons" also offers "Combine when taskbar is full" and "Never
-combine", with labels.
+"Taskbar buttons" also offers "Combine when taskbar is full" (combining
+the least recently used programs first, only as needed) and "Never
+combine", with labels. Hovering a running program's button shows live
+thumbnails of its windows; hovering a thumbnail peeks at that window. Jump
+lists keep pinned files above Recent; drop a file on a program's button to
+pin it there, or a launcher on the bar to pin the program.
 
 ### Taskbar menus
 
@@ -187,14 +195,17 @@ tabs:
 
 - Background: the wallpaper (from the usual folders or Browse...) and how
   it's placed.
-- Screen Saver: six savers with a live preview, Wait, Password protected,
+- Screen Saver: eight savers (3D Pipes and 3D Text among them), each with
+  its Settings (saved to `[ScreenSaver.*]`), a live preview, Wait, Password protected,
   and when to turn the monitors off.
 - Desktop: Customize Desktop picks which of My Documents, My Computer, My
   Network Places and the web browser show on the desktop, and their icons.
 - Appearance: style, colour scheme and font size, with a live preview: all
   22 of XP's classic colour schemes, and for the XP style Default (blue),
   Olive Green, Silver and Energy Blue (Royale), each measured from a
-  screenshot of the real thing.
+  screenshot of the real thing. In Aero, Advanced opens Window Color and
+  Appearance: Windows 7's 16 glass colours, transparency, intensity and a
+  colour mixer.
 - Effects: font smoothing and large icons; the icon theme and the GTK
   theme ("Program style"), our generated one matching the style by
   default. A chosen GTK theme is also written where other desktops'
@@ -355,7 +366,9 @@ apply (`xd-security --change-password` opens it alone).
 keyboard, applied immediately: `Layout` (e.g. `us,de`), `Variant`,
 `Options` (e.g. `grp:alt_shift_toggle`), `Model`, `RepeatDelay` (ms,
 default 500) and `RepeatRate` (per second, default 30). Empty names fall
-back to `XKB_DEFAULT_*`. Control Panel > Keyboard edits them.
+back to `XKB_DEFAULT_*`. Control Panel > Keyboard edits them. With more than
+one layout, XP's Language bar sits left of the notification area ("EN"):
+its menu switches the layout for the session, as the switching keys do.
 
 ### Run and Shut Down
 

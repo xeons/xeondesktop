@@ -17,8 +17,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] **Multiple monitors**: tested with two headless outputs: a taskbar
       and wallpaper on each, dragging a window across and maximizing it on
       the second, turning one off (its windows move over), rearranging them
-      in Display Properties. Untested: real monitors, hotplug, different
-      scales side by side, the Start menu on the second monitor.
+      in Display Properties; scales 1 and 1.5 side by side, the Start menu,
+      window menu and maximize on the second, desktop icons on the primary
+      (UI test two_monitors). Untested: real monitors, hotplug.
 - [?] **Automatic per-output scale** from EDID size: untested (only the
       `--scale` override has been used).
 - [~] Scaling smoke test (2026-10-15, nested 1024x768 with --scale 1.25,
@@ -64,8 +65,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       names fall back to `XKB_DEFAULT_*`, a bad layout to the default with a
       log message. Tested in a nested session: the bad-layout fallback and a
       live change to `de` (compiled and applied; typing in it not checked).
-      Not yet: the Keyboard applet (Speed and Input Locales tabs), a layout
-      indicator on the taskbar.
+      The Keyboard applet and XP's minimized Language bar ("EN", left of
+      the tray, with more than one layout: a menu switches the session's
+      layout; the compositor reports switches by keys too).
 - [~] **Output management** (`wlr-output-management`) and output power:
       tested with wlr-randr (scale, off/on, two outputs). Windows on an
       output that's turned off move to the nearest one, maximized ones
@@ -101,16 +103,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       `xeondesktop` PAM service) locking with Win+L and unlocking with the
       right password. The PAM service file
       (`/etc/pam.d/xeondesktop`, `auth include login`) is installed by
-      `meson install`; until then `login` is used. Not yet: several
-      monitors (the dialog shows on the first), Switch User. (Change
+      `meson install`; until then `login` is used. Every monitor is
+      covered, the dialog on the one with the pointer; logind's Unlock
+      (Switch User) unlocks. (Change
       Password is in Windows Security, below.)
 - [~] **Screen savers**: Blank Screen, Starfield Simulation, Mystify Your
       Mind, Beziers, Marquee Display and Flying Penguins, started by the
       shell after [ScreenSaver] Wait minutes idle (held off by video
       players), password protected or not; monitors off after MonitorOff
       minutes (wlr-output-power). Tested in a headless session (with
-      XD_IDLE_SECONDS=1). Not yet: per-saver Settings (Marquee text,
-      speeds), 3D Pipes / 3D Text, hardware tests of monitor power.
+      XD_IDLE_SECONDS=1). Each saver's Settings
+      ([ScreenSaver.*]), 3D Pipes and 3D Text drawn in software. Not yet:
+      hardware tests of monitor power; textured surfaces.
 - [ ] Power actions (Shut down / Restart / Stand by / Hibernate) have only
       ever run **simulated** in nested sessions; never executed for real.
 
@@ -134,8 +138,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       all open the shell's window menu (via xd-window-arranger-v1). Tested:
       Alt+Space, icon click, right-click, double-clicking the icon to close.
       Untested: show_window_menu from a client, keyboard use of the menu
-      when opened by Alt+Space, taskbars not at the bottom (the menu is
-      positioned relative to a bottom taskbar).
+      when opened by Alt+Space (the shell's menus have no mnemonics yet).
 - [~] Windows that ask to draw their own decorations (xdg-decoration
       client-side, or the KDE protocol's client mode, e.g. Firefox with tabs
       in the title bar) get no XP frame, plus an invisible 6px resize margin.
@@ -182,9 +185,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       there the cursor is drawn in software (vmwgfx's hardware cursor
       shows nothing), and a SceneFX patch allocates its effect buffers in
       BGRA. Tested: the hand-over and hand-back, Aero Basic, the VM check,
-      the blur buffers on VirtualBox 3D (headless). **Untested: how the
-      blur looks on a real GPU.** Not yet: blur behind the Windows 7 Start
-      menu's glass (its panel is opaque), colourisation.
+      the blur buffers on VirtualBox 3D (headless). The Windows 7 Start
+      menu and taskbar are blurred too (checked headless on vmwgfx's GLES).
+      Window Color and Appearance: 16 swatches, transparency, intensity,
+      mixer. **Untested: how the blur looks on a real GPU.**
 - [x] XP's "Animate windows when minimizing and maximizing" ([Effects]
       AnimateWindows, on by default): a bar in the active caption colour
       flies from the title bar to the taskbar button and back (the shell
@@ -215,10 +219,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       windows; click activates or cycles, middle-click starts another,
       dragging reorders pins. Jump lists: Recent (recently-used.xbel, per
       program), Tasks (desktop actions), pin/unpin, close. Taskbar
-      Properties' "Taskbar buttons" choice. Tested headless. Not yet:
-      thumbnails, pinning inside a jump list, pinning by dropping a file,
-      Windows 7's own jump list look; sizes are from memory; "Combine when
-      taskbar is full" combines every program at once.
+      Properties' "Taskbar buttons" choice. Live thumbnails with Aero Peek
+      (ext-image-copy-capture, only for our shell), Windows 7's jump list
+      look with pinned items, pins by dropping files or launchers,
+      combining as needed (least recently used first). Tested headless.
+      Sizes are from memory. Not yet: jump list items' right-click menus,
+      reordering pinned items, thumbnails for side taskbars, thumbnail
+      toolbar buttons.
 - [x] A window resized from its left or top edge snapped back to its old
       place at its next commit after being moved (the resize's anchor was
       never released), and windows that redraw constantly (Firefox) fought
@@ -289,24 +296,24 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Horizontally/Vertically (xd-window-arranger-v1 v3's arrange_app),
       Minimize Group and Close Group. A drag held over a task button
       brings its window forward. Tested in Luna with 30 and 14+2 windows.
-      Not yet: the window frame's caption icon (still generic).
+      The window frame's caption shows the application's icon too.
 - [~] Taskbar options in Taskbar and Start Menu Properties: Auto-hide
       (tucked to 2px, out on hover or a menu), Keep on top (off: the bottom
       layer), Show the clock, Show the taskbar on all displays (off: only
       the first monitor's); Lock the Taskbar hides the toolbar grips.
       Tested headless, two outputs for all displays. Untested: Auto-hide
       with the Windows key, real monitors. With all displays off, Alt+Space
-      can't open the window menu on monitors without a taskbar.
+      opens the window menu on monitors without a taskbar too.
 - [~] Taskbar on any edge and in several rows ([Taskbar] Edge, Rows,
       SideWidth): rows of task buttons and tray icons on top and bottom
       taskbars, a stacked layout on side ones; menus, paging, grouping,
       Auto-hide and drops follow the edge. Unlocked, it's dragged to
       another edge and resized by its inner edge, as in XP. Tested
       headless in Luna and Classic: all four edges, 1-3 rows, moving and
-      resizing by mouse, the Start menus. Untested: Watercolor, real
-      monitors, the window menu (Alt+Space) from a side or top taskbar,
-      several monitors. Not yet: XP's Show Quick Launch toolbar text, the
-      clock's date lines on a tall taskbar.
+      resizing by mouse, the Start menus, the window menu from any edge, the
+      clock's day and date on a tall taskbar, Quick Launch's Show Text.
+      Untested: Watercolor, real monitors. Not yet: the date on side
+      taskbars.
 - [~] Right-click menus (XP): the taskbar's (Toolbars ▸ Quick Launch, Cascade,
       Tile Horizontally/Vertically and Undo, Show the Desktop, Task Manager,
       Lock the Taskbar, Properties) and a task button's window menu
@@ -331,8 +338,8 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       where they land (a mark shows where), and its buttons can be dragged
       along to rearrange them. xd-files drags its selection out (to Quick
       Launch or any program). Tested headless with a GTK drag source and
-      xd-files. Not yet: dragging from our own Start menu, large icons,
-      Show Text / Show Title.
+      xd-files. Dragging from our own Start menu, View > Large/Small Icons,
+      Show Text, Show Title work too.
 - [x] Desktop icons (deskicons.c), on the first monitor: My Documents, My
       Computer, Recycle Bin (empty/full icon), then the Desktop folder
       (launchers show their program's name and icon), watched live. XP's
@@ -383,11 +390,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Turn Off Computer, Search (xd-search), Help and Support (xd-help),
       Set Program Access and Defaults (xd-defaults), Printers and Faxes,
       the user's full name in the header, keyboard navigation of every
-      column and the footer. Not yet: pinning from the menu; letter
-      shortcuts; the
-      highlight for newly installed programs; the large-icon/small-icon
-      option. Untested: keyboard use, Log Off / Turn Off from the footer,
-      Recent Documents and Control Panel submenus in the XP layout.
+      column and the footer. Pinning from All Programs, letter
+      shortcuts, the highlight for newly installed programs, Customize
+      Start Menu (large/small icons, number of programs, Clear List); all
+      tested headless. Not yet: drawn underlines, the "New programs
+      installed" balloon, Send To / Properties in a program's menu.
 - [x] Windows 7 and XP menus: a program's right-click menu (Open, Pin to
       Start menu / Unpin from Start menu, and Remove from this list for
       the frequently used ones) writes `start-pinned` / `start-frequent`.
@@ -459,14 +466,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       the title (Segoe UI, Open Sans standing in) on a soft white glow;
       a glass taskbar with a glossy round Start orb and glass task
       buttons; Windows 7's light buttons, check boxes, menus and dialog
-      colours. Not yet: blur behind the glass (needs the GPU, see the
-      compositor), Windows 7's taskbar (icon-only, pinned), Aero's GTK
-      theme beyond the shared rules, colourisation choices.
+      colours. Blur, Windows 7's taskbar and colourisation: see above.
+      Not yet: Aero's GTK theme beyond the shared rules.
 - [~] Whistler is the "Watercolor" look, matched against screenshots
       (frame, caption mosaic, caption buttons, buttons, fields, tabs, scroll
-      bars, taskbar). Not yet: the Windows 2000 and 7 Start menus still use
-      the older silvery Whistler colours; menus, group boxes, the window
-      icon and inactive colours are guesses.
+      bars, taskbar). The Start menus use Watercolor's colours. Menus, group
+      boxes and inactive colours are guesses.
 - [x] Fonts without Wine: the closest packaged fonts stand in for Windows'
       (src/theme/scheme.h). Measured against Wine's Tahoma at 8pt (11px)
       from outlines, among 20 sans families packaged by both Arch and
@@ -843,7 +848,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       password, cancelling (reported as dismissed). **Untested: a correct
       password, and registering for a real XeonDesktop login session**
       (nested, the host desktop's agent owns the session, so ours exits).
-      Not restarted if it crashes. Its error line ("The password is
+      Restarted if it crashes (5 times in 30 s). Its error line ("The password is
       incorrect") isn't coloured.
 
 ## Testing
