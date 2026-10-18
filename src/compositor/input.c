@@ -57,18 +57,22 @@ void xd_spawn(xd_server *server, const char *command) {
     xd_free(cmd);
 }
 
+/* Restarts at most 5 times in 30 seconds, so a program that crashes on
+ * startup doesn't spin. */
+static bool may_start(struct timespec *window, uint32_t *starts) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec - window->tv_sec > 30) {
+        *window = now;
+        *starts = 0;
+    }
+    return ++*starts <= 5;
+}
+
 void xd_shell_start(xd_server *server) {
     if (server->config.shell == nullptr || server->terminating)
         return;
-    /* Restart at most 5 times in 30 seconds, so a shell that crashes on
-     * startup doesn't spin. */
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    if (now.tv_sec - server->shell_restart_window.tv_sec > 30) {
-        server->shell_restart_window = now;
-        server->shell_restarts = 0;
-    }
-    if (++server->shell_restarts > 5) {
+    if (!may_start(&server->shell_restart_window, &server->shell_restarts)) {
         wlr_log(WLR_ERROR, "shell keeps exiting; not restarting it");
         return;
     }
@@ -97,6 +101,19 @@ void xd_shell_start(xd_server *server) {
     xd_free(scheme);
     xd_free(style);
     xd_free(shell);
+}
+
+void xd_polkit_start(xd_server *server) {
+    if (server->config.polkit == nullptr || server->terminating)
+        return;
+    if (!may_start(&server->polkit_restart_window, &server->polkit_restarts)) {
+        wlr_log(WLR_ERROR, "polkit agent keeps crashing; not restarting it");
+        return;
+    }
+    char *agent = xd_str_dup_cstr(xd_str_from_cstr(server->config.polkit));
+    char *argv[] = {agent, nullptr};
+    server->polkit_pid = xd_spawn_argv(argv);
+    xd_free(agent);
 }
 
 /* ---- keyboard --------------------------------------------------------------- */
@@ -1484,6 +1501,18 @@ static int handle_sigchld([[maybe_unused]] int sig, void *data) {
     int status = 0;
     pid_t pid;
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (pid == server->polkit_pid && pid > 0) {
+            server->polkit_pid = 0;
+            /* Only a crash: it exits with an error when another agent
+             * already serves the session (nested) or polkit isn't there,
+             * and starting it again wouldn't change that. */
+            if (WIFSIGNALED(status)) {
+                wlr_log(WLR_ERROR, "polkit agent killed by signal %d; restarting",
+                        WTERMSIG(status));
+                xd_polkit_start(server);
+            }
+            continue;
+        }
         if (pid != server->shell_pid)
             continue;
         server->shell_pid = 0;

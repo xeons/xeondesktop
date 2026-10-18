@@ -651,8 +651,8 @@ int main(int argc, char **argv) {
     xd_shell_start(&server);
     /* Password prompts for administrator actions. In a nested session the
      * host desktop's agent usually has the session already; ours then
-     * just exits. */
-    xd_spawn(&server, server.config.polkit);
+     * just exits. Restarted if it crashes, like the shell. */
+    xd_polkit_start(&server);
     if (server.config.startup != nullptr)
         xd_spawn(&server, server.config.startup);
 

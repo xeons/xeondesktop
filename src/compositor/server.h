@@ -404,6 +404,10 @@ struct xd_server {
     size_t arranger_clients_n, arranger_clients_cap;
     uint32_t shell_restarts;
     struct timespec shell_restart_window;
+    /* The polkit agent too: without it, administrator actions just fail. */
+    pid_t polkit_pid;
+    uint32_t polkit_restarts;
+    struct timespec polkit_restart_window;
     bool terminating;
     xd_access *access; /* access.c's state */
 };
@@ -453,6 +457,8 @@ pid_t xd_spawn_argv(char *const argv[]);
 /* Runs a shell command line. */
 void xd_spawn(xd_server *server, const char *command);
 void xd_shell_start(xd_server *server);
+/* Starts config.polkit, the session's polkit authentication agent. */
+void xd_polkit_start(xd_server *server);
 
 /* view.c */
 void xd_view_init(xd_server *server);
