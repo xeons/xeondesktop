@@ -27,6 +27,7 @@
 #include "../ui/image.h"
 #include "../ui/ui.h"
 #include "common.h"
+#include "desk_saver.h"
 
 enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS };
 
@@ -76,6 +77,8 @@ typedef struct desk {
     xd_widget *saver_preview;
     xd_widget *saver_combo;
     xd_widget *saver_preview_btn;
+    xd_widget *saver_settings_btn;
+    saver_setup *saver_setup; /* its Settings dialog, while open */
     xd_widget *saver_password;
     xd_widget *saver_wait;
     int wait_values[24];
@@ -692,7 +695,7 @@ static void draw_saver_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_th
             xd_saver_destroy(d->preview_saver);
         /* A miniature: sized as if the real screen were shrunk to fit. */
         double scale = fmax(0.2, t->scale * screen.w / 1024.0);
-        d->preview_saver = xd_saver_create(id, screen.w, screen.h, scale);
+        d->preview_saver = xd_saver_create(id, &d->pending.savers, screen.w, screen.h, scale);
         snprintf(d->preview_saver_id, sizeof(d->preview_saver_id), "%s", id);
         d->preview_saver_w = screen.w;
         d->preview_saver_h = screen.h;
@@ -729,6 +732,8 @@ static const int monitor_minutes[] = {0, 1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60,
 
 static void saver_controls(desk *d) {
     bool on = pending_saver(d)[0] != '\0';
+    xd_widget_set_enabled(d->saver_settings_btn,
+                          d->saver_setup == nullptr && xd_saver_has_settings(pending_saver(d)));
     xd_widget_set_enabled(d->saver_preview_btn, on);
     xd_widget_set_enabled(d->saver_password, on);
     xd_widget_set_enabled(d->saver_wait, on);
@@ -771,6 +776,38 @@ static void on_monitor_off(xd_widget *w, void *user) {
     changed(d);
 }
 
+/* Like Windows' savers, whose Settings wrote their own registry keys on
+ * OK: saved at once, apart from the rest of Display Properties. */
+static void on_saver_setup_done(const xd_saver_settings *sv, void *user) {
+    desk *d = user;
+    d->saver_setup = nullptr;
+    if (sv != nullptr) {
+        xd_settings now;
+        xd_settings_load(&now);
+        now.savers = *sv;
+        if (!xd_settings_save(&now))
+            fprintf(stderr, "xd-desk: cannot write settings\n");
+        d->saved.savers = d->pending.savers = *sv;
+        /* The preview starts again with them. */
+        if (d->preview_saver != nullptr)
+            xd_saver_destroy(d->preview_saver);
+        d->preview_saver = nullptr;
+        xd_widget_redraw(d->saver_preview);
+    }
+    saver_controls(d);
+    xd_window_set_focus(d->win, d->saver_settings_btn);
+    changed(d);
+}
+
+static void on_saver_settings([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    if (d->saver_setup != nullptr)
+        return;
+    d->saver_setup = saver_setup_open(d->ui, pending_saver(d), &d->pending.savers,
+                                      on_saver_setup_done, d);
+    saver_controls(d);
+}
+
 static void on_saver_preview_button([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
     const char *id = pending_saver(d);
@@ -810,10 +847,9 @@ static void build_screensaver(desk *d) {
     }
     xd_widget_select(d->saver_combo, current);
 
-    /* The savers have no options of their own yet. */
-    xd_widget *settings = xd_button(win, (xd_rect){210, 237, 80, 23}, "Settings", nullptr, nullptr);
-    xd_widget_set_enabled(settings, false);
-    xd_widget_set_page(settings, P);
+    d->saver_settings_btn =
+        xd_button(win, (xd_rect){210, 237, 80, 23}, "Settings", on_saver_settings, d);
+    xd_widget_set_page(d->saver_settings_btn, P);
     d->saver_preview_btn =
         xd_button(win, (xd_rect){296, 237, 80, 23}, "Preview", on_saver_preview_button, d);
     xd_widget_set_page(d->saver_preview_btn, P);
@@ -2288,8 +2324,10 @@ static bool apply(desk *d) {
 
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
-    if (d->confirm != nullptr || d->items != nullptr || d->color != nullptr)
-        return; /* answer Monitor Settings, Desktop Items or Window Color first */
+    if (d->confirm != nullptr || d->items != nullptr || d->color != nullptr ||
+        d->saver_setup != nullptr)
+        return; /* answer Monitor Settings, Desktop Items, Window Color or a saver's
+                 * Settings first */
     if (d->display_dirty) {
         /* Closes once the new display settings are kept. */
         d->close_after_apply = true;
@@ -2304,6 +2342,8 @@ static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
     items_close(d);
     color_close(d);
+    if (d->saver_setup != nullptr)
+        saver_setup_cancel(d->saver_setup);
     xd_window_close(d->win);
 }
 

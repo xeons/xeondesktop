@@ -250,6 +250,7 @@ void xd_settings_defaults(xd_settings *s) {
          * whole name. */
         .folders = {.full_path_address = true, .remember_views = true},
     };
+    xd_saver_settings_defaults(&s->savers);
 }
 
 static void copy_into(char *dst, size_t cap, xd_str v) {
@@ -470,6 +471,236 @@ static void parse_desktop_icons(xd_desktop_icon_settings *d, xd_str key, xd_str 
 #undef KEY
 }
 
+/* ---- [ScreenSaver.*] --------------------------------------------------------- */
+
+static const char *const pipes_joint_names[XD_PIPES_JOINT_COUNT] = {
+    [XD_PIPES_ELBOW] = "elbow", [XD_PIPES_BALL] = "ball", [XD_PIPES_MIXED] = "mixed",
+    [XD_PIPES_CYCLE] = "cycle"};
+static const char *const text3d_rotation_names[XD_TEXT3D_ROTATION_COUNT] = {
+    [XD_TEXT3D_NONE] = "none", [XD_TEXT3D_SPIN] = "spin", [XD_TEXT3D_SEESAW] = "seesaw",
+    [XD_TEXT3D_WOBBLE] = "wobble", [XD_TEXT3D_RANDOM] = "random"};
+static const char *const text3d_surface_names[XD_TEXT3D_SURFACE_COUNT] = {
+    [XD_TEXT3D_SOLID] = "solid", [XD_TEXT3D_REFLECTION] = "reflection"};
+
+void xd_saver_settings_defaults(xd_saver_settings *s) {
+    *s = (xd_saver_settings){
+        .marquee = {.text = "XeonDesktop",
+                    .font = {.family = "Times New Roman", .size_pt = 48},
+                    .color = {255, 0, 0},
+                    .random_position = true,
+                    .speed = 5},
+        .starfield = {.speed = 5, .density = 200},
+        .mystify = {.shapes = {{.active = true, .lines = 8, .colors = {{255, 0, 0}, {255, 255, 0}}},
+                               {.active = true, .lines = 8, .colors = {{0, 0, 255}, {0, 255, 255}}}},
+                    .clear_screen = true},
+        .beziers = {.curves = 1, .lines = 24, .speed = 5},
+        .flying = {.speed = 5, .density = 20},
+        .pipes = {.joints = XD_PIPES_MIXED},
+        .text3d = {.text = "XeonDesktop",
+                   .rotation = XD_TEXT3D_SPIN,
+                   .speed = 5,
+                   .size = 5,
+                   .surface = XD_TEXT3D_REFLECTION,
+                   .color = {255, 0, 0}},
+    };
+}
+
+/* "R G B", as the registry keeps Windows' colours (and our schemes do). */
+static void parse_rgb_value(xd_str v, xd_rgb *out) {
+    gchar *text = g_strndup(v.ptr, v.len);
+    gchar **parts = g_strsplit_set(g_strstrip(text), " \t", -1);
+    int64_t c[3];
+    size_t n = 0;
+    bool ok = true;
+    for (gchar **p = parts; ok && *p != nullptr; p++) {
+        if (**p == '\0')
+            continue; /* runs of spaces */
+        ok = n < 3 && xd_str_parse_i64(xd_str_from_cstr(*p), 0, 255, &c[n++]);
+    }
+    if (ok && n == 3)
+        *out = (xd_rgb){(uint8_t)c[0], (uint8_t)c[1], (uint8_t)c[2]};
+    g_strfreev(parts);
+    g_free(text);
+}
+
+static void set_rgb(GKeyFile *kf, const char *group, const char *key, xd_rgb c) {
+    char buf[16];
+    g_snprintf(buf, sizeof(buf), "%u %u %u", c.r, c.g, c.b);
+    g_key_file_set_string(kf, group, key, buf);
+}
+
+/* Free text shown on the screen: anything but control characters. */
+static void parse_saver_text(xd_str v, char *dst, size_t cap) {
+    bool ok = v.len < cap;
+    for (size_t i = 0; ok && i < v.len; i++)
+        ok = (unsigned char)v.ptr[i] >= ' ';
+    if (ok)
+        copy_into(dst, cap, v);
+}
+
+static void parse_saver_entry(xd_saver_settings *sv, xd_str section, xd_str key, xd_str v) {
+#define SEC(n) xd_str_eq_nocase(section, XD_STR("ScreenSaver." n))
+#define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
+    if (SEC("Marquee")) {
+        xd_marquee_settings *m = &sv->marquee;
+        if (KEY("Text"))
+            parse_saver_text(v, m->text, sizeof(m->text));
+        else if (KEY("Font"))
+            parse_saver_text(v, m->font.family, sizeof(m->font.family));
+        else if (KEY("FontSize")) {
+            int pt = (int)m->font.size_pt;
+            parse_int(v, 6, 200, &pt);
+            m->font.size_pt = pt;
+        } else if (KEY("Bold"))
+            parse_bool(v, &m->font.bold);
+        else if (KEY("Italic"))
+            parse_bool(v, &m->font.italic);
+        else if (KEY("TextColor"))
+            parse_rgb_value(v, &m->color);
+        else if (KEY("BackgroundColor"))
+            parse_rgb_value(v, &m->background);
+        else if (KEY("Position")) {
+            if (xd_str_eq_nocase(v, XD_STR("random")))
+                m->random_position = true;
+            else if (xd_str_eq_nocase(v, XD_STR("centered")))
+                m->random_position = false;
+        } else if (KEY("Speed"))
+            parse_int(v, 0, XD_SAVER_SLIDER_MAX, &m->speed);
+    } else if (SEC("Starfield")) {
+        if (KEY("WarpSpeed"))
+            parse_int(v, 0, XD_SAVER_SLIDER_MAX, &sv->starfield.speed);
+        else if (KEY("Density"))
+            parse_int(v, XD_STARFIELD_DENSITY_MIN, XD_STARFIELD_DENSITY_MAX,
+                      &sv->starfield.density);
+    } else if (SEC("Mystify")) {
+        if (KEY("ClearScreen")) {
+            parse_bool(v, &sv->mystify.clear_screen);
+            return;
+        }
+        /* Polygon1Active, Polygon2Lines, ... */
+        for (int i = 0; i < XD_MYSTIFY_SHAPES; i++) {
+            char prefix[16];
+            g_snprintf(prefix, sizeof(prefix), "Polygon%d", i + 1);
+            xd_str p = xd_str_from_cstr(prefix);
+            if (key.len <= p.len || !xd_str_eq_nocase(xd_str_sub(key, 0, p.len), p))
+                continue;
+            xd_str rest = xd_str_sub(key, p.len, key.len);
+            xd_mystify_shape *sh = &sv->mystify.shapes[i];
+            if (xd_str_eq_nocase(rest, XD_STR("Active")))
+                parse_bool(v, &sh->active);
+            else if (xd_str_eq_nocase(rest, XD_STR("Lines")))
+                parse_int(v, 1, XD_MYSTIFY_LINES_MAX, &sh->lines);
+            else if (xd_str_eq_nocase(rest, XD_STR("Colors"))) {
+                if (xd_str_eq_nocase(v, XD_STR("two")))
+                    sh->two_colors = true;
+                else if (xd_str_eq_nocase(v, XD_STR("random")))
+                    sh->two_colors = false;
+            } else if (xd_str_eq_nocase(rest, XD_STR("Color1")))
+                parse_rgb_value(v, &sh->colors[0]);
+            else if (xd_str_eq_nocase(rest, XD_STR("Color2")))
+                parse_rgb_value(v, &sh->colors[1]);
+        }
+    } else if (SEC("Beziers")) {
+        if (KEY("Curves"))
+            parse_int(v, 1, XD_BEZIERS_CURVES_MAX, &sv->beziers.curves);
+        else if (KEY("Lines"))
+            parse_int(v, 1, XD_BEZIERS_LINES_MAX, &sv->beziers.lines);
+        else if (KEY("Speed"))
+            parse_int(v, 0, XD_SAVER_SLIDER_MAX, &sv->beziers.speed);
+    } else if (SEC("Flying")) {
+        if (KEY("WarpSpeed"))
+            parse_int(v, 0, XD_SAVER_SLIDER_MAX, &sv->flying.speed);
+        else if (KEY("Density"))
+            parse_int(v, XD_FLYING_DENSITY_MIN, XD_FLYING_DENSITY_MAX, &sv->flying.density);
+    } else if (SEC("Pipes")) {
+        if (KEY("Pipes")) {
+            if (xd_str_eq_nocase(v, XD_STR("multiple")))
+                sv->pipes.multiple = true;
+            else if (xd_str_eq_nocase(v, XD_STR("single")))
+                sv->pipes.multiple = false;
+        } else if (KEY("Joints")) {
+            int i = index_of(pipes_joint_names, XD_ARRAY_LEN(pipes_joint_names), v);
+            if (i >= 0)
+                sv->pipes.joints = (xd_pipes_joint)i;
+        }
+    } else if (SEC("Text3D")) {
+        xd_text3d_settings *t = &sv->text3d;
+        if (KEY("Display")) {
+            if (xd_str_eq_nocase(v, XD_STR("time")))
+                t->show_time = true;
+            else if (xd_str_eq_nocase(v, XD_STR("text")))
+                t->show_time = false;
+        } else if (KEY("Text"))
+            parse_saver_text(v, t->text, sizeof(t->text));
+        else if (KEY("Rotation")) {
+            int i = index_of(text3d_rotation_names, XD_ARRAY_LEN(text3d_rotation_names), v);
+            if (i >= 0)
+                t->rotation = (xd_text3d_rotation)i;
+        } else if (KEY("Speed"))
+            parse_int(v, 0, XD_SAVER_SLIDER_MAX, &t->speed);
+        else if (KEY("Size"))
+            parse_int(v, 0, XD_SAVER_SLIDER_MAX, &t->size);
+        else if (KEY("Surface")) {
+            int i = index_of(text3d_surface_names, XD_ARRAY_LEN(text3d_surface_names), v);
+            if (i >= 0)
+                t->surface = (xd_text3d_surface)i;
+        } else if (KEY("Color"))
+            parse_rgb_value(v, &t->color);
+    }
+#undef SEC
+#undef KEY
+}
+
+static void saver_settings_to_keyfile(GKeyFile *kf, const xd_saver_settings *sv) {
+    const char *g = "ScreenSaver.Marquee";
+    g_key_file_set_string(kf, g, "Text", sv->marquee.text);
+    g_key_file_set_string(kf, g, "Font", sv->marquee.font.family);
+    g_key_file_set_integer(kf, g, "FontSize", (int)sv->marquee.font.size_pt);
+    g_key_file_set_boolean(kf, g, "Bold", sv->marquee.font.bold);
+    g_key_file_set_boolean(kf, g, "Italic", sv->marquee.font.italic);
+    set_rgb(kf, g, "TextColor", sv->marquee.color);
+    set_rgb(kf, g, "BackgroundColor", sv->marquee.background);
+    g_key_file_set_string(kf, g, "Position", sv->marquee.random_position ? "random" : "centered");
+    g_key_file_set_integer(kf, g, "Speed", sv->marquee.speed);
+    g = "ScreenSaver.Starfield";
+    g_key_file_set_integer(kf, g, "WarpSpeed", sv->starfield.speed);
+    g_key_file_set_integer(kf, g, "Density", sv->starfield.density);
+    g = "ScreenSaver.Mystify";
+    for (int i = 0; i < XD_MYSTIFY_SHAPES; i++) {
+        const xd_mystify_shape *sh = &sv->mystify.shapes[i];
+        char key[32];
+        g_snprintf(key, sizeof(key), "Polygon%dActive", i + 1);
+        g_key_file_set_boolean(kf, g, key, sh->active);
+        g_snprintf(key, sizeof(key), "Polygon%dLines", i + 1);
+        g_key_file_set_integer(kf, g, key, sh->lines);
+        g_snprintf(key, sizeof(key), "Polygon%dColors", i + 1);
+        g_key_file_set_string(kf, g, key, sh->two_colors ? "two" : "random");
+        g_snprintf(key, sizeof(key), "Polygon%dColor1", i + 1);
+        set_rgb(kf, g, key, sh->colors[0]);
+        g_snprintf(key, sizeof(key), "Polygon%dColor2", i + 1);
+        set_rgb(kf, g, key, sh->colors[1]);
+    }
+    g_key_file_set_boolean(kf, g, "ClearScreen", sv->mystify.clear_screen);
+    g = "ScreenSaver.Beziers";
+    g_key_file_set_integer(kf, g, "Curves", sv->beziers.curves);
+    g_key_file_set_integer(kf, g, "Lines", sv->beziers.lines);
+    g_key_file_set_integer(kf, g, "Speed", sv->beziers.speed);
+    g = "ScreenSaver.Flying";
+    g_key_file_set_integer(kf, g, "WarpSpeed", sv->flying.speed);
+    g_key_file_set_integer(kf, g, "Density", sv->flying.density);
+    g = "ScreenSaver.Pipes";
+    g_key_file_set_string(kf, g, "Pipes", sv->pipes.multiple ? "multiple" : "single");
+    g_key_file_set_string(kf, g, "Joints", pipes_joint_names[sv->pipes.joints]);
+    g = "ScreenSaver.Text3D";
+    g_key_file_set_string(kf, g, "Display", sv->text3d.show_time ? "time" : "text");
+    g_key_file_set_string(kf, g, "Text", sv->text3d.text);
+    g_key_file_set_string(kf, g, "Rotation", text3d_rotation_names[sv->text3d.rotation]);
+    g_key_file_set_integer(kf, g, "Speed", sv->text3d.speed);
+    g_key_file_set_integer(kf, g, "Size", sv->text3d.size);
+    g_key_file_set_string(kf, g, "Surface", text3d_surface_names[sv->text3d.surface]);
+    set_rgb(kf, g, "Color", sv->text3d.color);
+}
+
 static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     xd_settings *s = user;
 #define SEC(n) xd_str_eq_nocase(section, XD_STR(n))
@@ -594,6 +825,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             if (xd_str_parse_i64(v, 0, 1440, &m))
                 s->monitor_off = (int)m;
         }
+    } else if (xd_str_eq_nocase(xd_str_sub(section, 0, 12), XD_STR("ScreenSaver."))) {
+        parse_saver_entry(&s->savers, section, key, v);
     } else if (SEC("Notifications")) {
         int i = index_of(tray_rule_names, XD_ARRAY_LEN(tray_rule_names), v);
         if (i > 0 && key.len > 0 && key.len < sizeof(s->tray_rules[0].id)) {
@@ -802,6 +1035,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_integer(kf, "ScreenSaver", "Wait", s->screensaver_wait);
     g_key_file_set_boolean(kf, "ScreenSaver", "Password", s->screensaver_password);
     g_key_file_set_integer(kf, "ScreenSaver", "MonitorOff", s->monitor_off);
+    saver_settings_to_keyfile(kf, &s->savers);
     g_key_file_set_string(kf, "Keyboard", "Layout", s->keyboard.layout);
     g_key_file_set_string(kf, "Keyboard", "Variant", s->keyboard.variant);
     g_key_file_set_string(kf, "Keyboard", "Options", s->keyboard.options);

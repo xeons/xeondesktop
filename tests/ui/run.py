@@ -1425,6 +1425,57 @@ def xp_start_letters_and_drag(s):
     s.check(name.startswith("10-"), f"it went in first, where it was dropped ({name})")
 
 
+@scenario()
+def screen_saver_settings(s):
+    """Display Properties' Screen Saver tab: the preview shows each saver
+    (moving, or Blank Screen's black standing still); a saver's Settings
+    dialog saves its options on OK (Marquee's text, 3D Pipes' Multiple)."""
+    empty = s.settle("desktop")
+    s.launch("xd-desk", "--page", "1")
+    s.wait_window(title="Display Properties", state="activated")
+    dialog = s.settle("screen-saver-tab").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dialog is not None, f"Display Properties is up at {dialog}")
+    # Focus starts on the tabs; the saver list is next. (None) is chosen.
+    s.inject("key", "Tab", "sleep", 200)
+    savers = ["3D Pipes", "3D Text", "Beziers", "Blank Screen", "Flying Penguins",
+              "Marquee Display", "Mystify Your Mind", "Starfield Simulation"]
+    for name in savers:
+        s.inject("key", "Down", "sleep", 600)
+        a = s.shot(name.replace(" ", "-").lower())
+        time.sleep(0.5)
+        b = s.shot(name.replace(" ", "-").lower())
+        moved = b.differs(a, dialog, step=2, tolerance=8)
+        if name == "Blank Screen":
+            s.check(moved == 0, "the preview's Blank Screen stands still")
+        else:
+            s.check(moved > 0, f"the preview shows {name} moving ({moved:.4f} changed)")
+
+    # Marquee Display (two up): Settings... is the next control.
+    s.inject("key", "Up", "sleep", 200, "key", "Up", "sleep", 300, "key", "Tab", "sleep", 200,
+             "key", "space")
+    s.wait_window(title="Marquee Setup", state="activated")
+    s.shot("marquee-setup")  # its Text Example keeps moving
+    s.inject("key", "ctrl+a", "type", "Hello there", "sleep", 300)
+    s.shot("marquee-text")
+    s.inject("key", "Return")
+    s.wait_window(title="Marquee Setup", gone=True)
+    s.wait(lambda: s.ini().get("ScreenSaver.Marquee", "Text", fallback="") == "Hello there",
+           "desktop.ini to have the Marquee's text")
+    s.log("ok: Marquee Setup's OK saved the text at once")
+
+    # 3D Pipes: Single to Multiple with the arrow keys.
+    s.wait_window(title="Display Properties", state="activated")
+    s.inject("key", "shift+Tab", "sleep", 200, "key", "Home", "sleep", 200, "key", "Down",
+             "sleep", 300, "key", "Tab", "sleep", 200, "key", "space")
+    s.wait_window(title="3D Pipes Setup", state="activated")
+    s.settle("pipes-setup")
+    s.inject("key", "Down", "sleep", 200, "key", "Return")
+    s.wait_window(title="3D Pipes Setup", gone=True)
+    s.wait(lambda: s.ini().get("ScreenSaver.Pipes", "Pipes", fallback="") == "multiple",
+           "desktop.ini to have Multiple pipes")
+    s.log("ok: 3D Pipes Setup saved Multiple")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

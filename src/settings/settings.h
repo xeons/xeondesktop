@@ -210,6 +210,89 @@ typedef struct xd_desktop_icon_settings {
     char icons[XD_DESK_ICON_COUNT][512];
 } xd_desktop_icon_settings;
 
+/* [ScreenSaver.*]: each screen saver's Settings dialog, as Windows kept
+ * them under "Control Panel\Screen Saver.<name>". Speeds and sizes are
+ * trackbar positions, 0 (slow, small) to XD_SAVER_SLIDER_MAX. */
+enum { XD_SAVER_SLIDER_MAX = 10, XD_MYSTIFY_SHAPES = 2 };
+typedef enum xd_pipes_joint : uint8_t {
+    XD_PIPES_ELBOW,
+    XD_PIPES_BALL,
+    XD_PIPES_MIXED,
+    XD_PIPES_CYCLE, /* elbows, balls, then mixed: another kind each time the screen fills */
+    XD_PIPES_JOINT_COUNT,
+} xd_pipes_joint;
+typedef enum xd_text3d_rotation : uint8_t {
+    XD_TEXT3D_NONE,
+    XD_TEXT3D_SPIN,
+    XD_TEXT3D_SEESAW,
+    XD_TEXT3D_WOBBLE,
+    XD_TEXT3D_RANDOM,
+    XD_TEXT3D_ROTATION_COUNT,
+} xd_text3d_rotation;
+typedef enum xd_text3d_surface : uint8_t {
+    XD_TEXT3D_SOLID,      /* Solid Color: lit faces in the chosen colour */
+    XD_TEXT3D_REFLECTION, /* Reflection: chrome, reflecting a sky and the ground */
+    XD_TEXT3D_SURFACE_COUNT,
+} xd_text3d_surface;
+typedef struct xd_marquee_settings {
+    char text[256];
+    xd_font_spec font;
+    xd_rgb color, background;
+    bool random_position; /* Position: Random, else Centered */
+    int speed;
+} xd_marquee_settings;
+typedef struct xd_mystify_shape {
+    bool active;
+    int lines;       /* outlines in its trail */
+    bool two_colors; /* else Multiple random colors */
+    xd_rgb colors[2];
+} xd_mystify_shape;
+typedef struct xd_text3d_settings {
+    bool show_time; /* Display: Time, else the text */
+    char text[64];
+    xd_text3d_rotation rotation;
+    int speed;
+    int size;
+    xd_text3d_surface surface;
+    xd_rgb color; /* Solid Color's colour */
+} xd_text3d_settings;
+typedef struct xd_saver_settings {
+    xd_marquee_settings marquee;
+    struct {
+        int speed;   /* Warp speed */
+        int density; /* stars */
+    } starfield;
+    struct {
+        xd_mystify_shape shapes[XD_MYSTIFY_SHAPES]; /* Polygon 1, Polygon 2 */
+        bool clear_screen; /* off: the trails stay on the screen */
+    } mystify;
+    struct {
+        int curves; /* loops at once */
+        int lines;  /* outlines in each loop's trail */
+        int speed;
+    } beziers;
+    struct {
+        int speed;   /* Warp speed */
+        int density; /* how many fly at once */
+    } flying;
+    struct {
+        bool multiple; /* several pipes grow at once */
+        xd_pipes_joint joints;
+    } pipes;
+    xd_text3d_settings text3d;
+} xd_saver_settings;
+
+/* Limits of the [ScreenSaver.*] counts, for the Settings dialogs. */
+enum {
+    XD_STARFIELD_DENSITY_MIN = 10,
+    XD_STARFIELD_DENSITY_MAX = 200,
+    XD_MYSTIFY_LINES_MAX = 15,
+    XD_BEZIERS_CURVES_MAX = 10,
+    XD_BEZIERS_LINES_MAX = 50,
+    XD_FLYING_DENSITY_MIN = 10,
+    XD_FLYING_DENSITY_MAX = 200,
+};
+
 typedef struct xd_settings {
     /* [Appearance] */
     xd_visual_style style;
@@ -273,6 +356,7 @@ typedef struct xd_settings {
     int screensaver_wait; /* minutes */
     bool screensaver_password;
     int monitor_off; /* minutes of idle before monitors turn off; 0 = never */
+    xd_saver_settings savers; /* [ScreenSaver.*] */
     xd_keyboard_settings keyboard;
     xd_folder_settings folders;
     xd_mouse_settings mouse;
@@ -308,6 +392,9 @@ xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id);
 void xd_settings_set_tray_rule(xd_settings *s, const char *id, xd_tray_rule rule);
 
 void xd_settings_defaults(xd_settings *s);
+/* The savers' settings before their Settings dialogs change anything
+ * (part of xd_settings_defaults). */
+void xd_saver_settings_defaults(xd_saver_settings *s);
 /* Parses settings text on top of the defaults. Never fails: bad values
  * keep their defaults. */
 void xd_settings_parse(xd_str text, xd_settings *s);

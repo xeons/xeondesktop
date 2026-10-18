@@ -36,6 +36,7 @@
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
 #include "../src/security/passwd.h"
+#include "../src/saver/savers.h"
 #include "../src/settings/gtktheme.h"
 #include "../src/settings/qtpalette.h"
 #include "../src/settings/settings.h"
@@ -1111,6 +1112,153 @@ static void test_settings(void) {
     xd_strbuf_free(&text);
     xd_settings_parse(XD_STR("[StartMenu]\nPrograms=31\n"), &a);
     CHECK(a.start_programs == 6);
+}
+
+static void test_saver_settings(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    const xd_saver_settings *sv = &a.savers;
+    CHECK(strcmp(sv->marquee.text, "XeonDesktop") == 0 && sv->marquee.random_position);
+    CHECK(sv->starfield.density == 200 && sv->mystify.clear_screen && sv->beziers.curves == 1);
+    CHECK(!sv->pipes.multiple && sv->pipes.joints == XD_PIPES_MIXED);
+    CHECK(sv->text3d.surface == XD_TEXT3D_REFLECTION && sv->text3d.rotation == XD_TEXT3D_SPIN);
+
+    xd_settings_parse(XD_STR("[ScreenSaver.Marquee]\nText=Gone fishing\nFont=DejaVu Serif\n"
+                             "FontSize=36\nBold=true\nTextColor=255 255 0\n"
+                             "BackgroundColor=0  0 128\nPosition=centered\nSpeed=8\n"
+                             "[ScreenSaver.Starfield]\nWarpSpeed=10\nDensity=50\n"
+                             "[ScreenSaver.Mystify]\nPolygon2Active=false\nPolygon1Lines=3\n"
+                             "Polygon1Colors=two\nPolygon1Color2=0 255 0\nClearScreen=false\n"
+                             "[ScreenSaver.Beziers]\nCurves=4\nLines=40\nSpeed=0\n"
+                             "[ScreenSaver.Flying]\nWarpSpeed=2\nDensity=120\n"
+                             "[ScreenSaver.Pipes]\nPipes=multiple\nJoints=cycle\n"
+                             "[screensaver.text3d]\nDisplay=time\nText=Hi\nRotation=wobble\n"
+                             "Speed=3\nSize=9\nSurface=solid\nColor=0 128 128\n"),
+                      &a);
+    CHECK(strcmp(sv->marquee.text, "Gone fishing") == 0 &&
+          strcmp(sv->marquee.font.family, "DejaVu Serif") == 0);
+    CHECK(sv->marquee.font.size_pt == 36 && sv->marquee.font.bold && !sv->marquee.font.italic);
+    CHECK(sv->marquee.color.r == 255 && sv->marquee.color.g == 255 && sv->marquee.color.b == 0);
+    CHECK(sv->marquee.background.b == 128 && !sv->marquee.random_position &&
+          sv->marquee.speed == 8);
+    CHECK(sv->starfield.speed == 10 && sv->starfield.density == 50);
+    CHECK(sv->mystify.shapes[0].active && !sv->mystify.shapes[1].active);
+    CHECK(sv->mystify.shapes[0].lines == 3 && sv->mystify.shapes[0].two_colors &&
+          sv->mystify.shapes[0].colors[1].g == 255 && !sv->mystify.clear_screen);
+    CHECK(sv->beziers.curves == 4 && sv->beziers.lines == 40 && sv->beziers.speed == 0);
+    CHECK(sv->flying.speed == 2 && sv->flying.density == 120);
+    CHECK(sv->pipes.multiple && sv->pipes.joints == XD_PIPES_CYCLE);
+    CHECK(sv->text3d.show_time && strcmp(sv->text3d.text, "Hi") == 0);
+    CHECK(sv->text3d.rotation == XD_TEXT3D_WOBBLE && sv->text3d.speed == 3 &&
+          sv->text3d.size == 9 && sv->text3d.surface == XD_TEXT3D_SOLID &&
+          sv->text3d.color.g == 128);
+
+    /* Serialize -> parse round trip. */
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && memcmp(&a.savers, &b.savers, sizeof(a.savers)) == 0);
+    xd_strbuf_free(&text);
+
+    /* Out of range or malformed values keep the defaults. */
+    xd_settings_parse(XD_STR("[ScreenSaver.Marquee]\nSpeed=11\nTextColor=256 0 0\n"
+                             "BackgroundColor=1 2\nPosition=left\nText=a\tb\n"
+                             "[ScreenSaver.Starfield]\nDensity=5\n"
+                             "[ScreenSaver.Mystify]\nPolygon1Lines=16\nPolygon3Active=false\n"
+                             "[ScreenSaver.Beziers]\nCurves=0\nLines=51\n"
+                             "[ScreenSaver.Pipes]\nJoints=bogus\nPipes=many\n"
+                             "[ScreenSaver.Text3D]\nRotation=tumble\nSize=-1\n"),
+                      &a);
+    xd_saver_settings def;
+    xd_saver_settings_defaults(&def);
+    CHECK(memcmp(&a.savers, &def, sizeof(def)) == 0);
+}
+
+/* Renders `frames` frames of a saver from `seed` into a small image. */
+static cairo_surface_t *saver_frames(const char *id, const xd_saver_settings *o, uint64_t seed,
+                                     int frames, double dt) {
+    cairo_surface_t *img = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 160, 120);
+    cairo_t *cr = cairo_create(img);
+    xd_saver *sv = xd_saver_create_seeded(id, o, 160, 120, 0.5, seed);
+    for (int i = 0; i < frames; i++)
+        xd_saver_frame(sv, cr, dt);
+    xd_saver_destroy(sv);
+    cairo_destroy(cr);
+    cairo_surface_flush(img);
+    return img;
+}
+
+static bool same_pixels(cairo_surface_t *a, cairo_surface_t *b) {
+    size_t n = (size_t)cairo_image_surface_get_stride(a) * (size_t)cairo_image_surface_get_height(a);
+    return memcmp(cairo_image_surface_get_data(a), cairo_image_surface_get_data(b), n) == 0;
+}
+
+static void test_savers(void) {
+    const xd_saver_info *list = nullptr;
+    size_t n = xd_savers(&list);
+    CHECK(n == 8 && strcmp(list[0].name, "3D Pipes") == 0 && strcmp(list[1].id, "text3d") == 0);
+    CHECK(xd_saver_find("pipes") != nullptr && xd_saver_find("nope") == nullptr);
+    CHECK(!xd_saver_animated("blank") && !xd_saver_has_settings("blank"));
+    CHECK(xd_saver_has_settings("marquee") && xd_saver_create("nope", nullptr, 10, 10, 1) == nullptr);
+
+    xd_settings st;
+    xd_settings_defaults(&st);
+    for (size_t i = 0; i < n; i++) {
+        const char *id = list[i].id;
+        /* The same seed and frame times give the same picture... */
+        cairo_surface_t *a = saver_frames(id, &st.savers, 7, 40, 1.0 / 30);
+        cairo_surface_t *b = saver_frames(id, &st.savers, 7, 40, 1.0 / 30);
+        bool same = same_pixels(a, b);
+        CHECK(same);
+        if (!same)
+            fprintf(stderr, "  saver %s isn't deterministic\n", id);
+        /* ...and the picture moves on (Blank Screen's stays black). */
+        cairo_surface_t *c = saver_frames(id, &st.savers, 7, 41, 1.0 / 30);
+        bool moved = !same_pixels(a, c);
+        CHECK(moved == xd_saver_animated(id));
+        if (moved != xd_saver_animated(id))
+            fprintf(stderr, "  saver %s: moved %d\n", id, moved);
+        cairo_surface_destroy(a);
+        cairo_surface_destroy(b);
+        cairo_surface_destroy(c);
+    }
+    /* Where the random numbers show, another seed is another picture. */
+    static const char *const random_ones[] = {"pipes", "beziers", "mystify", "starfield", "flying"};
+    for (size_t i = 0; i < XD_ARRAY_LEN(random_ones); i++) {
+        cairo_surface_t *a = saver_frames(random_ones[i], &st.savers, 7, 20, 1.0 / 30);
+        cairo_surface_t *b = saver_frames(random_ones[i], &st.savers, 8, 20, 1.0 / 30);
+        CHECK(!same_pixels(a, b));
+        cairo_surface_destroy(a);
+        cairo_surface_destroy(b);
+    }
+
+    /* Every option draws: 3D Pipes filling the screen several times over,
+     * Mystify keeping its trails, 3D Text in each rotation and surface. */
+    xd_saver_settings o = st.savers;
+    o.pipes.multiple = true;
+    o.pipes.joints = XD_PIPES_CYCLE;
+    cairo_surface_destroy(saver_frames("pipes", &o, 3, 600, 0.25));
+    o.mystify.clear_screen = false;
+    o.mystify.shapes[0].two_colors = true;
+    cairo_surface_t *m1 = saver_frames("mystify", &o, 3, 30, 1.0 / 30);
+    cairo_surface_t *m2 = saver_frames("mystify", &o, 3, 34, 1.0 / 30);
+    CHECK(!same_pixels(m1, m2));
+    cairo_surface_destroy(m1);
+    cairo_surface_destroy(m2);
+    for (int r = 0; r < XD_TEXT3D_ROTATION_COUNT; r++) {
+        o.text3d.rotation = (xd_text3d_rotation)r;
+        o.text3d.surface = r % 2 == 0 ? XD_TEXT3D_SOLID : XD_TEXT3D_REFLECTION;
+        cairo_surface_t *a = saver_frames("text3d", &o, 5, 15, 0.1);
+        cairo_surface_t *b = saver_frames("text3d", &o, 5, 15, 0.1);
+        CHECK(same_pixels(a, b));
+        cairo_surface_destroy(a);
+        cairo_surface_destroy(b);
+    }
+    o.text3d.show_time = true;
+    cairo_surface_destroy(saver_frames("text3d", &o, 5, 3, 0.1));
+    o.marquee.text[0] = '\0';
+    cairo_surface_destroy(saver_frames("marquee", &o, 5, 3, 0.1));
 }
 
 static void test_desktop_icon_settings(void) {
@@ -3908,6 +4056,8 @@ int main(void) {
     test_runcmd();
     test_settings();
     test_glass_color();
+    test_saver_settings();
+    test_savers();
     test_desktop_icon_settings();
     test_tray_rules();
     test_power_settings();

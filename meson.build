@@ -377,10 +377,12 @@ ui_dep = declare_dependency(
 saver_lib = static_library(
   'xdsaver',
   'src/saver/savers.c',
-  dependencies: [theme_dep, m_dep],
+  'src/saver/pipes.c',
+  'src/saver/text3d.c',
+  dependencies: [theme_dep, settings_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
-saver_dep = declare_dependency(link_with: saver_lib, dependencies: [theme_dep])
+saver_dep = declare_dependency(link_with: saver_lib, dependencies: [theme_dep, settings_dep])
 
 
 apps_common = files('src/apps/common.c')
@@ -424,6 +426,7 @@ executable(
 executable(
   'xd-desk',
   'src/apps/desk.c',
+  'src/apps/desk_saver.c',
   'src/settings/themes.c',
   apps_common,
   dependencies: [ui_dep, saver_dep],
@@ -960,7 +963,7 @@ test_exe = executable(
   'src/files/favorites.c',
   'src/files/launcher.c',
   'src/taskmgr/netstat.c',
-  link_with: thumb_lib,
+  link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep,
                  sane_dep.partial_dependency(compile_args: true)],

@@ -507,7 +507,7 @@ static void render(output *o) {
         if (o->saver == nullptr || o->saver_w != dw || o->saver_h != dh) {
             if (o->saver != nullptr)
                 xd_saver_destroy(o->saver);
-            o->saver = xd_saver_create(a->saver_id, dw, dh, s);
+            o->saver = xd_saver_create(a->saver_id, &a->settings.savers, dw, dh, s);
             o->saver_w = dw;
             o->saver_h = dh;
             o->last_frame = (struct timespec){0};
