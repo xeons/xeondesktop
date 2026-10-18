@@ -789,7 +789,10 @@ static void file_chooser(const xd_toolkit_colors *c, xd_strbuf *o) {
  * alternative button order); GTK stretches the buttons across the box in
  * code, so CSS can only space them apart as Windows does. */
 static void client_frames(const xd_toolkit_colors *c, xd_strbuf *o) {
-    const char *frame = ".csd:not(.maximized):not(.fullscreen):not(.tiled) > decoration";
+    /* Menus and tooltips are client-decorated windows too (Wayland popups):
+     * they have their own border. */
+    const char *frame = "window.csd:not(.popup):not(.tooltip):not(.maximized):not(.fullscreen)"
+                        ":not(.tiled) > decoration";
     if (c->classic)
         /* Windows 2000's 3px dialog frame. */
         xd_strbuf_appendf(o,
