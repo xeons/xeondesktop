@@ -31,6 +31,18 @@ static bool names_program(const char *app, const char *exec, const char *id_stem
     return same;
 }
 
+/* The program's stem (desktop id without ".desktop") and executable's
+ * name, as names_program compares them. g_free both. */
+static void program_names(const char *desktop_id, const char *executable, char **stem,
+                          char **exe_base) {
+    *stem = desktop_id == nullptr                         ? nullptr
+            : g_str_has_suffix(desktop_id, ".desktop") ? g_strndup(desktop_id,
+                                                                   strlen(desktop_id) - 8)
+                                                       : g_strdup(desktop_id);
+    *exe_base = executable != nullptr && executable[0] != '\0' ? g_path_get_basename(executable)
+                                                                : nullptr;
+}
+
 typedef struct used {
     char *uri;
     gint64 when;
@@ -48,13 +60,8 @@ char **xd_jumplist_recent(GBookmarkFile *recent, const char *desktop_id, const c
         g_ptr_array_add(out, nullptr);
         return (char **)g_ptr_array_free(out, FALSE);
     }
-    char *stem = desktop_id == nullptr                         ? nullptr
-                 : g_str_has_suffix(desktop_id, ".desktop") ? g_strndup(desktop_id,
-                                                                        strlen(desktop_id) - 8)
-                                                            : g_strdup(desktop_id);
-    char *exe_base = executable != nullptr && executable[0] != '\0'
-                         ? g_path_get_basename(executable)
-                         : nullptr;
+    char *stem = nullptr, *exe_base = nullptr;
+    program_names(desktop_id, executable, &stem, &exe_base);
     GArray *found = g_array_new(FALSE, FALSE, sizeof(used));
     gsize n = 0;
     char **uris = g_bookmark_file_get_uris(recent, &n);
@@ -96,6 +103,31 @@ char **xd_jumplist_recent(GBookmarkFile *recent, const char *desktop_id, const c
     g_free(stem);
     g_ptr_array_add(out, nullptr);
     return (char **)g_ptr_array_free(out, FALSE);
+}
+
+bool xd_jumplist_forget(GBookmarkFile *recent, const char *uri, const char *desktop_id,
+                        const char *executable) {
+    if (recent == nullptr || uri == nullptr || (desktop_id == nullptr && executable == nullptr))
+        return false;
+    char *stem = nullptr, *exe_base = nullptr;
+    program_names(desktop_id, executable, &stem, &exe_base);
+    gsize napps = 0;
+    char **apps = g_bookmark_file_get_applications(recent, uri, &napps, nullptr);
+    bool changed = false;
+    for (gsize a = 0; apps != nullptr && a < napps; a++) {
+        char *exec = nullptr;
+        if (!g_bookmark_file_get_application_info(recent, uri, apps[a], &exec, nullptr, nullptr,
+                                                  nullptr))
+            continue;
+        if (names_program(apps[a], exec, stem, exe_base) &&
+            g_bookmark_file_remove_application(recent, uri, apps[a], nullptr))
+            changed = true;
+        g_free(exec);
+    }
+    g_strfreev(apps);
+    g_free(exe_base);
+    g_free(stem);
+    return changed;
 }
 
 bool xd_jumplist_move(void **items, size_t n, size_t from, size_t to) {
@@ -142,6 +174,23 @@ bool xd_jumplist_set_pinned(GKeyFile *kf, const char *desktop_id, const char *ur
     g_ptr_array_free(out, TRUE);
     g_strfreev(list);
     return changed;
+}
+
+bool xd_jumplist_move_pinned(GKeyFile *kf, const char *desktop_id, const char *uri,
+                             const char *onto) {
+    char **list = xd_jumplist_pinned(kf, desktop_id);
+    size_t n = g_strv_length(list), from = SIZE_MAX, to = SIZE_MAX;
+    for (size_t i = 0; i < n; i++) {
+        if (strcmp(list[i], uri) == 0)
+            from = i;
+        if (strcmp(list[i], onto) == 0)
+            to = i;
+    }
+    bool moved = xd_jumplist_move((void **)list, n, from, to);
+    if (moved)
+        g_key_file_set_string_list(kf, desktop_id, PINNED_KEY, (const char *const *)list, n);
+    g_strfreev(list);
+    return moved;
 }
 
 void xd_jumplist_drop_pinned(char **uris, char *const *pinned) {

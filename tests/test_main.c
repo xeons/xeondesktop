@@ -3510,6 +3510,21 @@ static void test_superbar(void) {
     got = xd_jumplist_recent(nullptr, "firefox.desktop", "firefox", 10);
     CHECK(got[0] == nullptr);
     g_strfreev(got);
+    /* "Remove from this list": gone from the program's list, still in
+     * GIMP's. */
+    char *a_uri = g_filename_to_uri(a_txt, nullptr, nullptr);
+    CHECK(xd_jumplist_forget(recent, a_uri, "org.gnome.TextEditor.desktop",
+                             "/usr/bin/gnome-text-editor"));
+    CHECK(!xd_jumplist_forget(recent, a_uri, "org.gnome.TextEditor.desktop",
+                              "/usr/bin/gnome-text-editor"));
+    got = xd_jumplist_recent(recent, "org.gnome.TextEditor.desktop",
+                             "/usr/bin/gnome-text-editor", 10);
+    CHECK(g_strv_length(got) == 1 && g_str_has_suffix(got[0], "/b.txt"));
+    g_strfreev(got);
+    got = xd_jumplist_recent(recent, "gimp.desktop", "gimp", 10);
+    CHECK(g_strv_length(got) == 2 && g_str_has_suffix(got[0], "/a.txt"));
+    g_strfreev(got);
+    g_free(a_uri);
     g_bookmark_file_free(recent);
     g_remove(a_txt);
     g_remove(b_txt);
@@ -3552,6 +3567,14 @@ static void test_superbar(void) {
     g_strfreev(pinned);
     g_key_file_free(again);
     g_free(data);
+    /* Dragged within Pinned: b;c above a, and back. */
+    CHECK(xd_jumplist_move_pinned(kf, "gedit.desktop", "file:///b;c.txt", "file:///a.txt"));
+    pinned = xd_jumplist_pinned(kf, "gedit.desktop");
+    CHECK(g_strv_length(pinned) == 2 && strcmp(pinned[0], "file:///b;c.txt") == 0);
+    g_strfreev(pinned);
+    CHECK(!xd_jumplist_move_pinned(kf, "gedit.desktop", "file:///a.txt", "file:///a.txt"));
+    CHECK(!xd_jumplist_move_pinned(kf, "gedit.desktop", "file:///x.txt", "file:///a.txt"));
+    CHECK(xd_jumplist_move_pinned(kf, "gedit.desktop", "file:///b;c.txt", "file:///a.txt"));
     CHECK(xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///a.txt", false));
     CHECK(xd_jumplist_set_pinned(kf, "gedit.desktop", "file:///b;c.txt", false));
     CHECK(!g_key_file_has_group(kf, "gedit.desktop"));
@@ -3570,6 +3593,7 @@ static void test_superbar(void) {
     CHECK(xd_jumplist_combine_next(wins, used, combined, 4) == 3);
     combined[3] = true;
     CHECK(xd_jumplist_combine_next(wins, used, combined, 4) == SIZE_MAX);
+
 }
 
 /* Printers and Faxes: CUPS's states in XP's words, sizes, ports, names. */

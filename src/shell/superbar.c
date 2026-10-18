@@ -888,6 +888,36 @@ static void act_launch(xd_shell *shell, void *data) { launch(shell, ((const jump
 static xd_menu_model *taskbar_jump_list(xd_shell *shell, xd_menu_tree *tree, const char *key,
                                         uint64_t window_id);
 
+/* The open jump list shows the program's again (after a pin, a removal,
+ * a move): the taskbar's, or the Start menu's beside a program. Its old
+ * items, and their jump_refs, are freed. */
+static void jump_list_changed(xd_shell *shell, const char *key) {
+    xd_superbar *sb = shell->superbar;
+    xd_menu *menu = shell->start_menu;
+    bool taskbar = menu != nullptr && shell->context_menu && menu->model->jumplist &&
+                   sb->jl_key != nullptr;
+    if (!taskbar)
+        menu = xd_start7_submenu(shell);
+    if (menu == nullptr)
+        return;
+    xd_menu_tree tree;
+    xd_menu_tree_init(&tree);
+    xd_menu_model *m = taskbar ? taskbar_jump_list(shell, &tree, sb->jl_key, sb->jl_window)
+                               : xd_jumplist_model(shell, &tree, key);
+    xd_menu_replace_model(menu, m);
+    xd_menu_tree_free(&shell->context_tree);
+    shell->context_tree = tree;
+}
+
+static bool is_pinned_item(xd_superbar *sb, const char *key, const char *uri) {
+    bool pinned = false;
+    char **list = xd_jumplist_pinned(sb->jl_pins, key);
+    for (char **u = list; *u != nullptr && !pinned; u++)
+        pinned = strcmp(*u, uri) == 0;
+    g_strfreev(list);
+    return pinned;
+}
+
 /* A file pinned to or unpinned from the open jump list: it moves between
  * Pinned and Recent, and the list stays open. */
 static void act_pin_item(xd_shell *shell, void *data) {
@@ -895,22 +925,63 @@ static void act_pin_item(xd_shell *shell, void *data) {
     xd_superbar *sb = shell->superbar;
     if (sb == nullptr || r->arg == nullptr)
         return;
-    bool pinned = false;
-    char **list = xd_jumplist_pinned(sb->jl_pins, r->key);
-    for (char **u = list; *u != nullptr && !pinned; u++)
-        pinned = strcmp(*u, r->arg) == 0;
-    g_strfreev(list);
-    if (xd_jumplist_set_pinned(sb->jl_pins, r->key, r->arg, !pinned))
+    if (xd_jumplist_set_pinned(sb->jl_pins, r->key, r->arg, !is_pinned_item(sb, r->key, r->arg)))
         save_jl_pins(sb);
-    xd_menu *menu = shell->start_menu;
-    if (menu == nullptr || !shell->context_menu || sb->jl_key == nullptr)
+    char *key = g_strdup(r->key);
+    jump_list_changed(shell, key); /* may free `r` */
+    g_free(key);
+}
+
+/* A pinned file dragged onto another: it takes that one's place. */
+static void act_move_item(xd_shell *shell, void *data, void *onto) {
+    const jump_ref *r = data, *o = onto;
+    xd_superbar *sb = shell->superbar;
+    if (sb == nullptr || r->arg == nullptr || o->arg == nullptr ||
+        !xd_jumplist_move_pinned(sb->jl_pins, r->key, r->arg, o->arg))
         return;
-    xd_menu_tree tree;
-    xd_menu_tree_init(&tree);
-    xd_menu_model *m = taskbar_jump_list(shell, &tree, sb->jl_key, sb->jl_window);
-    xd_menu_replace_model(menu, m);
-    xd_menu_tree_free(&shell->context_tree); /* `r` with it */
-    shell->context_tree = tree;
+    save_jl_pins(sb);
+    char *key = g_strdup(r->key);
+    jump_list_changed(shell, key); /* frees `r` and `o` */
+    g_free(key);
+}
+
+/* "Remove from this list": the recently used list no longer says this
+ * program used the file (other programs' lists keep it), so it's gone from
+ * Recent until the program opens it again, as in Windows 7. */
+static void act_remove_item(xd_shell *shell, void *data) {
+    const jump_ref *r = data;
+    xd_superbar *sb = shell->superbar;
+    GDesktopAppInfo *info = ref_info(shell, r);
+    GBookmarkFile *recent = sb != nullptr ? recent_file(sb) : nullptr;
+    if (info == nullptr || recent == nullptr || r->arg == nullptr ||
+        !xd_jumplist_forget(recent, r->arg, r->key, g_app_info_get_executable(G_APP_INFO(info))))
+        return;
+    char *path = g_build_filename(g_get_user_data_dir(), "recently-used.xbel", nullptr);
+    GError *error = nullptr;
+    if (!g_bookmark_file_to_file(recent, path, &error)) {
+        fprintf(stderr, "xd-shell: cannot save %s: %s\n", path, error->message);
+        g_clear_error(&error);
+    }
+    g_free(path);
+    jump_list_changed(shell, r->key);
+}
+
+/* A file's Properties, in Explorer's dialog. */
+static void act_item_properties(xd_shell *shell, void *data) {
+    const jump_ref *r = data;
+    char *path = r->arg != nullptr ? g_filename_from_uri(r->arg, nullptr, nullptr) : nullptr;
+    if (path == nullptr)
+        return;
+    char *exe = xd_shell_own_program("xd-files");
+    char *qexe = g_shell_quote(exe);
+    char *qpath = g_shell_quote(path);
+    char *cmd = g_strdup_printf("%s --properties %s", qexe, qpath);
+    xd_shell_launch(shell, cmd);
+    g_free(cmd);
+    g_free(qpath);
+    g_free(qexe);
+    g_free(exe);
+    g_free(path);
 }
 
 void xd_superbar_pin_file(xd_shell *shell, const char *desktop_id, const char *uri) {
@@ -971,7 +1042,40 @@ static const char *file_icon(xd_menu_tree *tree, const char *path) {
     return out;
 }
 
-/* One file of a jump list, opening in the program; with its pin button. */
+/* A file's right-click menu in a jump list, as Windows 7's (from memory):
+ * Open; Pin to (or Unpin from) this list, and for a recent one Remove from
+ * this list; Properties. Pinning and removing leave the jump list open. Its
+ * jump_refs are its own tree's, as the list's may be freed first. */
+static xd_menu_model *file_context(xd_shell *shell, xd_menu_tree *tree, void *data) {
+    const jump_ref *from = data;
+    xd_superbar *sb = shell->superbar;
+    if (sb == nullptr || from->arg == nullptr)
+        return nullptr;
+    jump_ref *r = ref(tree, from->key, from->arg);
+    xd_menu_model *m = xd_menu_model_new(tree);
+    action(tree, m, "Open", nullptr, act_open_recent, r)->bold = true;
+    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+    bool pinned = is_pinned_item(sb, r->key, r->arg);
+    action(tree, m, pinned ? "Unpin from this list" : "Pin to this list", nullptr, act_pin_item, r)
+        ->keep_open = true;
+    if (!pinned)
+        action(tree, m, "Remove from this list", nullptr, act_remove_item, r)->keep_open = true;
+    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+    action(tree, m, "Properties", nullptr, act_item_properties, r);
+    return m;
+}
+
+/* A task's: just Open. */
+static xd_menu_model *task_context([[maybe_unused]] xd_shell *shell, xd_menu_tree *tree,
+                                   void *data) {
+    const jump_ref *from = data;
+    xd_menu_model *m = xd_menu_model_new(tree);
+    action(tree, m, "Open", nullptr, act_task, ref(tree, from->key, from->arg))->bold = true;
+    return m;
+}
+
+/* One file of a jump list, opening in the program; with its pin button and
+ * right-click menu. Pinned ones are dragged into another order. */
 static void file_item(xd_menu_tree *tree, xd_menu_model *m, const char *key, const char *uri,
                       bool pinned) {
     char *path = g_filename_from_uri(uri, nullptr, nullptr);
@@ -983,6 +1087,8 @@ static void file_item(xd_menu_tree *tree, xd_menu_model *m, const char *key, con
     it->fallback_icon = "text-x-generic";
     it->pin = act_pin_item;
     it->pinned = pinned;
+    it->context = file_context;
+    it->move = pinned ? act_move_item : nullptr;
     g_free(label);
     g_free(path);
 }
@@ -1013,9 +1119,10 @@ static void jump_items(xd_shell *shell, xd_menu_tree *tree, xd_menu_model *m, co
     char *icon = g_desktop_app_info_get_string(info, "Icon");
     for (size_t i = 0; actions != nullptr && actions[i] != nullptr; i++) {
         char *name = g_desktop_app_info_get_action_name(info, actions[i]);
-        action(tree, m, name != nullptr ? name : actions[i], icon, act_task,
-               ref(tree, key, actions[i]))
-            ->fallback_icon = "application-x-executable";
+        xd_menu_item *it = action(tree, m, name != nullptr ? name : actions[i], icon, act_task,
+                                  ref(tree, key, actions[i]));
+        it->fallback_icon = "application-x-executable";
+        it->context = task_context;
         g_free(name);
     }
     g_free(icon);

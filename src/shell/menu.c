@@ -581,6 +581,11 @@ void xd_menu_replace_model(xd_menu *menu, const xd_menu_model *model) {
     menu->pressed = -1;
     menu->hot_pin = false;
     layout(menu);
+    /* The pointer resting on it is on whichever item is there now. */
+    if (menu->shell->pointer_menu == menu) {
+        menu->hot = item_at(menu, menu->ptr_x, menu->ptr_y);
+        menu->hot_pin = on_pin(menu, menu->hot, menu->ptr_x, menu->ptr_y);
+    }
     menu->dirty = true;
     xd_shell *shell = menu->shell;
     if ((menu->width == old_w && menu->height == old_h) || menu->bar == nullptr ||
@@ -701,6 +706,25 @@ void xd_menu_pointer_motion(xd_menu *menu, double x, double y) {
         if (xd_dnd_start_app_drag(menu->shell, app, menu->surface, menu->scale))
             return;
     }
+    /* A jump list's pinned item pulled over another: moved there, as
+     * Windows 7 reorders its Pinned group. */
+    if (menu->pressed >= 0 && menu->model->items[menu->pressed].move != nullptr) {
+        menu->moving = menu->moving ||
+                       fabs(x - menu->press_x) + fabs(y - menu->press_y) > XD_MENU_DRAG_PX;
+        if (menu->moving) {
+            const xd_menu_item *from = &menu->model->items[menu->pressed];
+            int onto = item_at(menu, x, y);
+            if (onto >= 0 && onto != menu->pressed && menu->model->items[onto].move == from->move) {
+                from->move(menu->shell, from->action_data,
+                           menu->model->items[onto].action_data); /* replaces the model */
+                menu->pressed = menu->hot = onto;
+                menu->moving = true;
+                menu->hot_pin = false;
+                menu->dirty = true;
+            }
+            return;
+        }
+    }
     /* Moving into a submenu keeps its parent item highlighted. */
     if (menu->parent != nullptr && menu->parent->hot != menu->parent->child_index) {
         menu->parent->hot = menu->parent->child_index;
@@ -740,8 +764,19 @@ static void activate(xd_menu *menu, int index) {
         void (*fn)(xd_shell *, void *) = it->action;
         void *data = it->action_data;
         xd_shell *shell = menu->shell;
-        xd_menu_close_all(shell); /* frees `it` */
+        /* A right-click menu's data is in its own tree: kept until the
+         * action has run. */
+        xd_menu_tree *own = menu->own_tree;
+        menu->own_tree = nullptr;
+        if (it->keep_open && menu->parent != nullptr)
+            menu_destroy(menu); /* frees `it` */
+        else
+            xd_menu_close_all(shell); /* frees `it` */
         fn(shell, data);
+        if (own != nullptr) {
+            xd_menu_tree_free(own);
+            xd_free(own);
+        }
     } else if (it->kind == XD_MENU_ACTION && it->app != nullptr) {
         const xd_app *app = it->app; /* owned by shell->apps, outlives the menu */
         xd_menu_close_all(menu->shell);   /* frees `it` */
@@ -771,15 +806,7 @@ static void ctx_unpin(xd_shell *shell, void *data) {
     xd_start7_set_pinned(shell, ((const xd_app *)data)->id, false);
 }
 
-static void open_context(xd_menu *menu, int index) {
-    const xd_app *app = menu->model->items[index].app;
-    xd_shell *shell = menu->shell;
-    if (!menu->shown)
-        return;
-    if (menu->child != nullptr)
-        menu_destroy(menu->child);
-    xd_menu_tree *tree = XD_NEW(xd_menu_tree);
-    xd_menu_tree_init(tree);
+static xd_menu_model *app_context(xd_shell *shell, xd_menu_tree *tree, const xd_app *app) {
     xd_menu_model *mm = xd_menu_model_new(tree);
     void *data = (void *)(uintptr_t)app;
     xd_menu_item *it = xd_menu_add(tree, mm, XD_MENU_ACTION, "Open", nullptr);
@@ -794,7 +821,25 @@ static void open_context(xd_menu *menu, int index) {
     it->action = pinned ? ctx_unpin : ctx_pin;
     it->action_data = data;
     it->disabled = !pinned && full;
+    return mm;
+}
 
+static void open_context(xd_menu *menu, int index) {
+    const xd_menu_item *item = &menu->model->items[index];
+    xd_shell *shell = menu->shell;
+    if (!menu->shown)
+        return;
+    if (menu->child != nullptr)
+        menu_destroy(menu->child);
+    xd_menu_tree *tree = XD_NEW(xd_menu_tree);
+    xd_menu_tree_init(tree);
+    xd_menu_model *mm = item->context != nullptr ? item->context(shell, tree, item->action_data)
+                                                 : app_context(shell, tree, item->app);
+    if (mm == nullptr || mm->count == 0) {
+        xd_menu_tree_free(tree);
+        xd_free(tree);
+        return;
+    }
     xd_menu *child = menu_create(shell, mm);
     child->parent = menu;
     child->context = true;
@@ -828,6 +873,15 @@ void xd_menu_pointer_button(xd_menu *menu, uint32_t button, bool pressed) {
         menu->pressed = -1;
         return;
     }
+    /* A jump list item dragged to its new place: let go, nothing runs. */
+    if (menu->moving) {
+        if (!pressed) {
+            menu->moving = false;
+            menu->pressed = -1;
+            menu->dirty = true;
+        }
+        return;
+    }
     int index = menu->hot;
     if (index < 0)
         return;
@@ -839,9 +893,10 @@ void xd_menu_pointer_button(xd_menu *menu, uint32_t button, bool pressed) {
         menu->press_y = menu->ptr_y;
     }
     /* A program's own menu, on release as in Windows; in the XP and
-     * Windows 7 menus only, which have a pinned list. */
-    if (button == BTN_RIGHT && it->kind == XD_MENU_ACTION && it->app != nullptr &&
-        menu->shell->start7 != nullptr) {
+     * Windows 7 menus only, which have a pinned list. A jump list item's
+     * own, wherever it is. */
+    if (button == BTN_RIGHT && it->kind == XD_MENU_ACTION &&
+        (it->context != nullptr || (it->app != nullptr && menu->shell->start7 != nullptr))) {
         if (!pressed && !it->disabled)
             open_context(menu, index);
         return;

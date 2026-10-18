@@ -23,6 +23,7 @@ typedef enum xd_menu_kind : uint8_t {
 } xd_menu_kind;
 
 typedef struct xd_menu_model xd_menu_model;
+typedef struct xd_menu_tree xd_menu_tree;
 
 typedef struct xd_menu_item {
     xd_menu_kind kind;
@@ -55,6 +56,16 @@ typedef struct xd_menu_item {
     uint8_t pushpin;
     void (*pin)(xd_shell *shell, void *data);
     bool pinned;
+    /* Its right-click menu (a jump list item's), built in `tree` from
+     * action_data when asked; nullptr: none (a program's comes from `app`). */
+    xd_menu_model *(*context)(xd_shell *shell, xd_menu_tree *tree, void *data);
+    /* In a right-click menu: runs with just that menu closed, leaving the
+     * one it came from open (a jump list's "Pin to this list"). */
+    bool keep_open;
+    /* Jump list: dragged onto another item with the same `move` (the
+     * pinned ones), move(shell, data, the other's data) runs, which shows
+     * the list again in its new order with this item where that one was. */
+    void (*move)(xd_shell *shell, void *data, void *onto);
 } xd_menu_item;
 
 /* The pale orange behind XP's newly installed programs. */
@@ -117,6 +128,7 @@ typedef struct xd_menu {
     bool context;
     xd_menu_tree *own_tree;
     bool hot_pin;      /* jump list: the pointer is on the hot item's pin button */
+    bool moving;       /* jump list: the pressed item is being dragged (`move`) */
     int band_y;        /* jump list: the bottom band's top (logical) */
     struct xd_taskbar *bar; /* opened from a taskbar button: its taskbar and the */
     xd_rect anchor;         /* button (surface-local logical), to reposition */

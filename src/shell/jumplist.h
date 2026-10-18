@@ -21,6 +21,12 @@ typedef struct _GKeyFile GKeyFile;
 char **xd_jumplist_recent(GBookmarkFile *recent, const char *desktop_id, const char *executable,
                           size_t max);
 
+/* "Remove from this list": `recent` no longer says the program (as
+ * xd_jumplist_recent tells it) used `uri`; other programs' uses of it
+ * stay. False if it didn't say so. */
+bool xd_jumplist_forget(GBookmarkFile *recent, const char *uri, const char *desktop_id,
+                        const char *executable);
+
 /* Moves item `from` of `items` (n long) to index `to`, shifting the ones
  * between; false if either is out of range or they're the same. */
 bool xd_jumplist_move(void **items, size_t n, size_t from, size_t to);
@@ -32,6 +38,10 @@ char **xd_jumplist_pinned(GKeyFile *kf, const char *desktop_id);
 /* Pins `uri` at the end of the program's list, or unpins it; false if
  * that changes nothing. A program left with none loses its group. */
 bool xd_jumplist_set_pinned(GKeyFile *kf, const char *desktop_id, const char *uri, bool pin);
+/* Moves pinned `uri` to where pinned `onto` is, shifting those between
+ * (dragging in the Pinned group); false if that changes nothing. */
+bool xd_jumplist_move_pinned(GKeyFile *kf, const char *desktop_id, const char *uri,
+                             const char *onto);
 /* Takes the pinned ones out of `uris` (nullptr-terminated, g_strfreev'd
  * by the caller), as Windows 7 doesn't list a pinned item under Recent. */
 void xd_jumplist_drop_pinned(char **uris, char *const *pinned);

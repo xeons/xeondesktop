@@ -769,6 +769,131 @@ def superbar_thumbnails(s):
     s.inject("key", "Escape")
 
 
+def write_recent(s, uses):
+    """recently-used.xbel saying xd-files opened each (uri, ISO time)."""
+    marks = []
+    for uri, when in uses:
+        marks.append(
+            f'<bookmark href="{uri}" added="{when}" modified="{when}" visited="{when}"><info>'
+            '<metadata owner="http://freedesktop.org"><mime:mime-type type="text/plain"/>'
+            '<bookmark:applications><bookmark:application name="org.xeondesktop.Files" '
+            f"exec=\"'xd-files %u'\" modified=\"{when}\" count=\"1\"/>"
+            "</bookmark:applications></metadata></info></bookmark>\n"
+        )
+    with open(os.path.join(s.data, "recently-used.xbel"), "w") as f:
+        f.write(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/'
+            'desktop-bookmarks" xmlns:mime="http://www.freedesktop.org/standards/'
+            'shared-mime-info">\n' + "".join(marks) + "</xbel>\n"
+        )
+
+
+def files_button(s):
+    """Opens one Explorer window on Documents; its taskbar button's centre."""
+    bar = (0, HEIGHT - 40, WIDTH, 40)
+    before = s.settle("taskbar")
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(title="Documents", state="activated")
+    after = s.settle("files-window")
+    button = after.changed_box(before, bar)
+    s.check(button is not None, f"the Files button lights up ({button})")
+    return button[0] + button[2] // 2, HEIGHT - 20
+
+
+@scenario(AERO_INI)
+def superbar_jumplist_items(s):
+    """Aero: a jump list item's right-click menu pins it (the list stays
+    open, the item under Pinned) and removes a recent one from the list;
+    dragging a pinned item puts it above another."""
+    docs = os.path.join(s.home, "Documents")
+    for name in ("Todo.txt", "Plan.txt"):
+        with open(os.path.join(docs, name), "w") as f:
+            f.write(name + "\n")
+    uri = {n: "file://" + os.path.join(docs, n) for n in ("Todo.txt", "Notes.txt", "Plan.txt")}
+    write_recent(s, [(uri["Todo.txt"], "2026-01-03T00:00:00Z"),
+                     (uri["Notes.txt"], "2026-01-02T00:00:00Z"),
+                     (uri["Plan.txt"], "2026-01-01T00:00:00Z")])  # fmt: skip
+    cx, cy = files_button(s)
+    s.inject("move", WIDTH // 2, HEIGHT // 2, "sleep", 600)
+    closed = s.settle("no-jump-list")
+    above = (0, 0, WIDTH, HEIGHT - 40)
+    pins = os.path.join(s.config, "jumplist-pinned")
+
+    def pinned():
+        if not os.path.exists(pins):
+            return []
+        c = configparser.ConfigParser(interpolation=None, strict=False)
+        c.optionxform = str
+        c.read(pins)
+        if not c.has_section("org.xeondesktop.Files.desktop"):
+            return []
+        return [u for u in c["org.xeondesktop.Files.desktop"].get("Pinned", "").split(";") if u]
+
+    def jump_list(label):
+        shot = s.settle(label)
+        box = shot.changed_box(closed, above)
+        s.check(box is not None, f"the jump list is open ({label}: {box})")
+        return shot, box
+
+    def item_menu(box, y):
+        """Right-clicks the item centred `y` below the list's top."""
+        s.inject("move", box[0] + 60, box[1] + y, "sleep", 200, "click", "right", "sleep", 600)
+        return s.settle("item-menu")
+
+    # Recent: Todo, Notes, Plan (newest first).
+    s.inject("move", cx, cy, "sleep", 200, "click", "right", "sleep", 800)
+    shot, jl = jump_list("jump-list")
+    menu = item_menu(jl, 6 + 24 + 13)
+    ctx = menu.changed_box(shot, above)
+    s.check(ctx is not None and ctx[3] > 60, f"Todo.txt's right-click menu opened ({ctx})")
+    # Open, Pin to this list, Remove from this list, Properties.
+    s.inject("key", "Down", "key", "Down", "key", "Return", "sleep", 600)
+    s.wait(lambda: pinned() == [uri["Todo.txt"]], "Pin to this list to pin Todo.txt")
+    s.log("ok: Pin to this list pinned Todo.txt")
+    # The list stayed open: Pinned (Todo), Recent (Notes, Plan).
+    shot, jl = jump_list("pinned-todo")
+    item_menu(jl, 6 + 24 + 26 + 6 + 24 + 26 + 13)
+    s.inject("key", "Down", "key", "Down", "key", "Return", "sleep", 600)
+    s.wait(lambda: pinned() == [uri["Todo.txt"], uri["Plan.txt"]], "Plan.txt to be pinned")
+    s.log("ok: Plan.txt pinned after Todo.txt")
+
+    # Pinned (Todo, Plan), Recent (Notes): Remove from this list.
+    shot, jl = jump_list("pinned-two")
+    item_menu(jl, 6 + 24 + 2 * 26 + 6 + 24 + 13)
+    s.inject("key", "Down", "key", "Down", "key", "Down", "key", "Return", "sleep", 600)
+
+    def removed():
+        import gi
+
+        gi.require_version("GLib", "2.0")
+        from gi.repository import GLib
+
+        bf = GLib.BookmarkFile()
+        bf.load_from_file(os.path.join(s.data, "recently-used.xbel"))
+        # Used by no other program, the entry goes altogether.
+        if not bf.has_item(uri["Notes.txt"]):
+            return bf.has_item(uri["Todo.txt"])
+        return "org.xeondesktop.Files" not in bf.get_applications(uri["Notes.txt"])
+
+    s.wait(removed, "Remove from this list to forget Notes.txt for Explorer")
+    s.log("ok: Remove from this list took Notes.txt off Explorer's recent files")
+    shot, jl = jump_list("removed")
+    s.check(jl[3] < 6 + 24 + 2 * 26 + 6 + 24 + 26 + 40,
+            f"the list is shorter without Recent ({jl})")  # fmt: skip
+
+    # Plan dragged above Todo.
+    x = jl[0] + 60
+    s.inject("move", x, jl[1] + 6 + 24 + 26 + 13, "down", "sleep", 100,
+             "move", x, jl[1] + 6 + 24 + 26 + 4, "sleep", 100,
+             "move", x, jl[1] + 6 + 24 + 13, "sleep", 200, "up", "sleep", 400)  # fmt: skip
+    s.wait(lambda: pinned() == [uri["Plan.txt"], uri["Todo.txt"]], "the drag to reorder")
+    s.log("ok: dragging Plan.txt onto Todo.txt put it first")
+    s.check(s.window(title="Plan.txt") is None and s.window(title="Todo.txt") is None,
+            "the drag opened nothing")  # fmt: skip
+    s.inject("key", "Escape")
+
+
 @scenario()
 def file_manager(s):
     """Explorer: File > New > Folder, rename in place, Delete to the Recycle
