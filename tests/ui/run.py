@@ -1725,6 +1725,75 @@ def network_status(s):
         DBusTestCase.tearDownClass()
 
 
+def mock_laptop(s):
+    """Before the compositor starts: a private system bus with dbusmock's
+    UPower (a battery at 50%, discharging) and logind (logging its calls)."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    for template, params in (("upower", {"OnBattery": True}), ("logind", {})):
+        log = open(os.path.join(s.base, template + ".log"), "w")
+        proc, _ = DBusTestCase.spawn_server_template(template, params, stdout=log, system_bus=True)
+        s.children.append(proc)
+    upower = dbus.SystemBus().get_object("org.freedesktop.UPower", "/org/freedesktop/UPower")
+    mock = dbus.Interface(upower, MOCK_IFACE)
+    mock.AddDischargingBattery("BAT0", "Battery", 50.0, 3600)
+    mock.SetupDisplayDevice(2, 2, 50.0, 50.0, 100.0, 10.0, 3600, 0, True, "battery-good", 1)
+
+
+@scenario(LUNA_INI + "\n[Power]\nCriticalAlarmAction=standby\n", requires=("dbusmock",),
+          setup=mock_laptop)  # fmt: skip
+def battery_alarms(s):
+    """A dbusmock battery running down: at 10% the low battery alarm sounds
+    and shows "Low Battery Alarm"; at 3% the critical one sounds, shows
+    "Critical Battery Alarm" and stands by (its Alarm Action) through
+    logind. A double click on the power meter opens Power Options."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    display = "/org/freedesktop/UPower/devices/DisplayDevice"
+    sounds = os.path.join(os.environ["XDG_RUNTIME_DIR"], "sounds.log")
+
+    def played(name):
+        try:
+            with open(sounds) as f:
+                return any(line.startswith(name + "\t") for line in f)
+        except OSError:
+            return False
+
+    def logind_called(method):
+        with open(os.path.join(s.base, "logind.log")) as f:
+            return any(f" {method} " in line for line in f)
+
+    try:
+        upower = dbus.SystemBus().get_object("org.freedesktop.UPower", "/org/freedesktop/UPower")
+        mock = dbus.Interface(upower, MOCK_IFACE)
+        s.inject("move", 300, 300)
+        before = s.settle("desktop")
+        mock.SetDeviceProperties(display, {"Percentage": dbus.Double(9.0)})
+        s.wait_window(title="Low Battery Alarm")
+        s.log("ok: at 9% the low battery alarm's message shows")
+        s.check(s.wait(lambda: played("Low Battery Alarm"), "its sound"), "it sounded")
+        s.check(not logind_called("Suspend"), "the low alarm does nothing more")
+        # Where the meter is: it drew the lower charge.
+        _, box = wait_change(s, before, TRAY, "the power meter to change", "meter")
+        x, y = box[0] + box[2] // 2, box[1] + box[3] // 2
+        s.inject("move", 300, 300)
+        mock.SetDeviceProperties(display, {"Percentage": dbus.Double(2.0)})
+        s.wait_window(title="Critical Battery Alarm")
+        s.log("ok: at 2% the critical battery alarm's message shows")
+        s.check(s.wait(lambda: played("Critical Battery Alarm"), "its sound"), "it sounded")
+        s.check(s.wait(lambda: logind_called("Suspend"), "logind's Suspend"),
+                "the critical alarm stood the computer by")  # fmt: skip
+        s.inject("move", x, y, "click", "click")
+        s.wait_window(title="Power Options Properties", state="activated")
+        s.settle("power-meter")
+        s.log("ok: a double click on the power meter opened Power Options")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 # Another program's GTK 3 window with a combo box, which drops down once
 # the file named on the command line exists.
 GTK_COMBO = r"""

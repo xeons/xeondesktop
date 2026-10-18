@@ -142,12 +142,22 @@ static void power_options(xd_shell *shell, [[maybe_unused]] void *d) {
     xd_shell_launch(shell, xd_shell_own_command(shell, "xd-power", nullptr));
 }
 
-static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
+/* Power Options' Power Meter tab (the third, with a battery). */
+static void power_meter(xd_shell *shell, [[maybe_unused]] void *d) {
+    xd_shell_launch(shell, xd_shell_own_command(shell, "xd-power", "--page 2"));
+}
+
+static void open_meter(void *data) {
     battery *b = data;
+    power_meter(b->shell, b);
+}
+
+static void menu([[maybe_unused]] void *data, xd_menu_tree *tree, xd_menu_model *m) {
     xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, "Adjust Power Properties", nullptr);
     it->action = power_options;
     it->bold = true;
-    (void)b;
+    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Open Power Meter", nullptr);
+    it->action = power_meter;
 }
 
 static void destroy(void *data) {
@@ -172,6 +182,7 @@ static const xd_sysicon_ops ops = {
     .icon = icon,
     .tooltip = tooltip,
     .menu = menu,
+    .open = open_meter,
     .destroy = destroy,
 };
 
