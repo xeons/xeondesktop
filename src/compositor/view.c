@@ -1024,7 +1024,7 @@ static void handle_request_window_menu(struct wl_listener *listener, void *data)
         return;
     xd_server *server = view->server;
     if (server->seat->pointer_state.focused_surface == view->toplevel->base->surface) {
-        xd_window_menu_show(view, server->cursor->x, server->cursor->y);
+        xd_window_menu_show(view, server->cursor->x, server->cursor->y, false);
         return;
     }
     struct wlr_box outer = xd_view_outer_box(view);
