@@ -663,6 +663,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       The shell, title bars, xd-files and our GTK apps follow it live;
       libxdui apps and the lock screen at their next start.
 
+- [x] Qt programs: QT_QPA_PLATFORMTHEME=gtk3 with our palette
+      (QT_GUI_GTK_JSON, written beside the generated GTK theme), and
+      Display Properties' Program style (Qt) (QtStyle=; Automatic: Windows
+      for Classic, Fusion otherwise); the user's own QT_* variables win.
+- [ ] Qt: file dialogs are GTK's chooser with a GNOME header bar (GDK on
+      Wayland forces it); Fusion can't draw Luna's gradients; Qt 5 gets no
+      palette file; GtkTheme/IconTheme are re-read only by Qt programs
+      started after a change. The icon theme is written to GSettings at
+      every real login, which other desktops sharing that key also see.
+      Our GTK apps unset GTK_THEME, so programs started from xd-files fall
+      back to the GSettings GTK theme.
+
 ## Task Manager (xd-taskmgr)
 
 - [x] "Not Responding": the compositor pings every Wayland window every 2s

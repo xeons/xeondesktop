@@ -292,6 +292,17 @@ Luna and Whistler) and rewrites it whenever the appearance changes. Our own
 GTK apps reload it straight away; other GTK3 apps get it through `GTK_THEME`
 and pick up changes when restarted.
 
+Qt 5 and Qt 6 programs follow it too: the session sets
+`QT_QPA_PLATFORMTHEME=gtk3` (Qt's own GTK platform theme: fonts, icons, file
+dialogs) and, with our GTK theme, a matching Qt palette (`QT_GUI_GTK_JSON`).
+Display Properties > Effects > Program style (Qt) picks the widget style;
+Automatic is Windows for Classic and Fusion for the XP and 7 styles.
+Variables you set yourself (for qt6ct or Kvantum) are left alone. Running Qt
+programs keep their style until restarted. Because GTK on Wayland (and Qt
+through it) reads the icon theme only from GSettings, a real session writes
+the icon theme in use to `org.gnome.desktop.interface` at login, as Plasma
+does; other desktops sharing that setting see it too.
+
 ### Windows Security
 
 In the Classic style Ctrl+Alt+Delete opens Windows 2000's Windows Security
