@@ -951,6 +951,88 @@ static void test_theme_settings(void) {
     g_free(root);
 }
 
+/* Aero's Window Color and Appearance: the settings, and the glass they
+ * give the frames, taskbar and Start menu. */
+static bool near0(double d) { return d < 1e-9 && d > -1e-9; }
+
+static void test_glass_color(void) {
+    xd_settings s;
+    xd_settings_defaults(&s);
+    CHECK(s.glass_color == XD_GLASS_DEFAULT && s.glass_transparency);
+    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=a8ce0f0f\nGlassTransparency=false\n"), &s);
+    CHECK(s.glass_color == 0xA8CE0F0Fu && !s.glass_transparency);
+    /* Not 8 hex digits: ignored. */
+    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=0xA8CE0F\n"), &s);
+    CHECK(s.glass_color == XD_GLASS_DEFAULT);
+    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=-1234567\n"), &s);
+    CHECK(s.glass_color == XD_GLASS_DEFAULT);
+    s.glass_color = 0x54FCFCFCu;
+    s.glass_transparency = false;
+    xd_strbuf text = {0};
+    xd_settings_serialize(&s, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "GlassColor=54FCFCFC") != nullptr);
+    xd_settings back;
+    xd_settings_parse(xd_strbuf_view(&text), &back);
+    CHECK(back.glass_color == 0x54FCFCFCu && !back.glass_transparency);
+    xd_strbuf_free(&text);
+    xd_scheme scheme;
+    xd_settings_scheme(&back, &scheme);
+    CHECK(scheme.glass_color == 0x54FCFCFCu && scheme.glass_opaque);
+
+    /* HSV round trip, greys included. */
+    static const uint32_t rgbs[] = {0x74B8FC, 0xCE0F0F, 0x555555, 0x14A600, 0xFF0099, 0};
+    for (size_t i = 0; i < XD_ARRAY_LEN(rgbs); i++) {
+        xd_rgba c = xd_rgba_hex(rgbs[i]);
+        xd_rgba back_c = xd_rgba_from_hsv(xd_rgba_to_hsv(c), 0.5);
+        CHECK(near0(back_c.r - c.r) && near0(back_c.g - c.g) &&
+              near0(back_c.b - c.b) && back_c.a == 0.5);
+    }
+    CHECK(near0(xd_rgba_to_hsv(xd_rgba_hex(0x0000FF)).h - 240));
+
+    /* Sixteen named swatches, Sky first and the default. */
+    CHECK(strcmp(xd_glass_swatches[0].name, "Sky") == 0 &&
+          xd_glass_swatches[0].argb == XD_GLASS_DEFAULT);
+    CHECK(strcmp(xd_glass_swatches[XD_GLASS_SWATCH_COUNT - 1].name, "Frost") == 0);
+
+    /* Opaque glass: the colour in light grey by its intensity. */
+    xd_scheme_init_default(&scheme);
+    scheme.glass_color = 0x80FF0000u;
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_AERO, &scheme, 1.0);
+    t.glass = false;
+    xd_glass_colors g;
+    xd_theme_glass_colors(&t, &g);
+    double k = 0x80 / 255.0, grey = 0xEB / 255.0;
+    CHECK(!g.translucent && g.frame.a == 1.0 && near0(g.frame.r - (grey + (1 - grey) * k)) &&
+          near0(g.frame.g - grey * (1 - k)));
+    /* Translucent with blur and transparency on: more intensity, more colour. */
+    t.glass = true;
+    xd_theme_glass_colors(&t, &g);
+    CHECK(g.translucent && g.frame.a < 1.0 && g.frame.r == 1.0 && g.frame.g == 0.0);
+    double low = g.frame.a;
+    t.scheme.glass_color = 0xC0FF0000u;
+    xd_theme_glass_colors(&t, &g);
+    CHECK(g.frame.a > low && g.taskbar.a > 0 && g.taskbar.r > g.taskbar.g);
+    /* Transparency off: opaque even with blur. */
+    t.scheme.glass_opaque = true;
+    xd_theme_glass_colors(&t, &g);
+    CHECK(!g.translucent && g.frame.a == 1.0 && g.taskbar.a == 1.0 && g.menu.a == 1.0);
+
+    /* The GTK theme's title bars follow the colour. */
+    xd_strbuf sky = {0}, ruby = {0};
+    xd_scheme_init_default(&scheme);
+    xd_theme_init(&t, XD_STYLE_AERO, &scheme, 1.0);
+    xd_theme_gtk_css(&t, &sky);
+    t.scheme.glass_color = 0xA8CE0F0Fu;
+    xd_theme_gtk_css(&t, &ruby);
+    CHECK(!xd_str_eq(xd_strbuf_view(&sky), xd_strbuf_view(&ruby)));
+    xd_toolkit_colors tc;
+    xd_theme_toolkit_colors(&t, &tc);
+    CHECK(tc.title_bg.r > tc.title_bg.g + 0.4 && tc.title_bg2.r > tc.title_bg2.b);
+    xd_strbuf_free(&sky);
+    xd_strbuf_free(&ruby);
+}
+
 static void test_settings(void) {
     xd_settings a;
     xd_settings_defaults(&a);
@@ -3808,6 +3890,7 @@ int main(void) {
     test_textedit();
     test_runcmd();
     test_settings();
+    test_glass_color();
     test_desktop_icon_settings();
     test_tray_rules();
     test_power_settings();

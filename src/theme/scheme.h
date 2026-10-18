@@ -138,7 +138,15 @@ typedef struct xd_scheme {
     bool high_contrast;
     xd_font_smoothing font_smoothing;
     xd_luna_color luna_color;
+    /* Aero's glass colour (Windows 7's Window Color and Appearance), as
+     * 0xAARRGGBB like DWM's ColorizationColor: the alpha byte is the colour
+     * intensity. From desktop.ini, not from scheme files. */
+    uint32_t glass_color;
+    bool glass_opaque; /* "Enable transparency" unchecked */
 } xd_scheme;
+
+/* Windows 7's default glass colour, Sky. */
+#define XD_GLASS_DEFAULT 0x6B74B8FCu
 
 /* The built-in "Windows Standard" scheme, used as the base for every
  * scheme file so a file only needs to list what it changes. */

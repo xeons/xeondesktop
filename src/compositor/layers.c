@@ -123,7 +123,7 @@ static void update_glass(xd_layer_surface *ls) {
     }
     wlr_scene_blur_set_size(ls->blur, (int)l->current.actual_width,
                             (int)l->current.actual_height);
-    wlr_scene_node_set_enabled(&ls->blur->node, true);
+    wlr_scene_node_set_enabled(&ls->blur->node, !ls->server->config.scheme.glass_opaque);
 }
 #endif
 

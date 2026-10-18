@@ -214,6 +214,11 @@ typedef struct xd_settings {
     char scheme[64]; /* scheme file stem, e.g. "windows-standard"; "" = built in */
     xd_font_size font_size;
     xd_font_smoothing font_smoothing;
+    /* Aero's Window Color and Appearance: GlassColor, AARRGGBB in hex as
+     * DWM's ColorizationColor (the alpha is the colour intensity), and
+     * GlassTransparency ("Enable transparency"). */
+    uint32_t glass_color;
+    bool glass_transparency;
     /* Theme directory names; "" = the default (see xd_settings_icon_theme
      * and xd_settings_gtk_theme). */
     char icon_theme[64]; /* IconTheme: a freedesktop icon theme under icons/ */

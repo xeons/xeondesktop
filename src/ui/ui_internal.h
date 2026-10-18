@@ -55,6 +55,7 @@ struct xd_widget {
     int *tab_w;
 
     int page;      /* tab page, or -1 = always shown */
+    bool hidden;   /* xd_widget_set_visible(false) */
     bool checked;  /* checkbox */
     xd_draw_cb draw;
     xd_pointer_cb pointer; /* custom: mouse input */

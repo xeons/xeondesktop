@@ -840,6 +840,39 @@ def display_style(s):
     s.log("ok: the taskbar took the new style")
 
 
+@scenario(AERO_INI)
+def window_color(s):
+    """Aero: Display Properties' Advanced opens Window Color and Appearance;
+    its choices reach desktop.ini on OK, and Cancel leaves them alone."""
+    s.launch("xd-desk", "--page", "2")
+    s.wait_window(title="Display Properties", state="activated")
+    s.settle("appearance")
+    # Tabs, style, scheme, font size, then Advanced.
+    s.inject("key", "Tab", "key", "Tab", "key", "Tab", "key", "Tab", "sleep", 200, "key", "Return")
+    s.wait_window(title="Window Color and Appearance", state="activated")
+    s.settle("window-color")
+    # Esc is Cancel: nothing changes.
+    s.inject("key", "Escape")
+    s.wait_window(title="Window Color and Appearance", gone=True)
+    s.inject("key", "Tab", "key", "Tab", "key", "Tab", "key", "Tab", "sleep", 200, "key", "Return")
+    s.wait_window(title="Window Color and Appearance", state="activated")
+    # Focus starts on Enable transparency: off; then the intensity to its
+    # least; Enter is Save changes, and Display Properties' OK.
+    s.inject("key", "space", "sleep", 200, "key", "Tab", "key", "Home", "sleep", 300)
+    s.settle("chosen")
+    s.inject("key", "Return")
+    s.wait_window(title="Window Color and Appearance", gone=True)
+    s.inject("key", "Return")
+    s.wait_window(title="Display Properties", gone=True)
+
+    def written():
+        a = s.ini()["Appearance"]
+        return a.get("GlassTransparency") == "false" and a.get("GlassColor") == "0074B8FC"
+
+    s.wait(written, "desktop.ini to take the glass colour")
+    s.log("ok: GlassColor=0074B8FC, GlassTransparency=false (Sky at no intensity)")
+
+
 @scenario()
 def desktop_menu(s):
     """A right-click on the desktop opens its menu; Esc closes it."""

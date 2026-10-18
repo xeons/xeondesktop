@@ -31,6 +31,13 @@ xd_rgba xd_rgba_from_rgb(xd_rgb c);
 xd_rgba xd_rgba_hex(uint32_t rgb);
 xd_rgba xd_rgba_mix(xd_rgba a, xd_rgba b, double t);
 xd_rgba xd_rgba_alpha(xd_rgba c, double a);
+/* Hue (0-360), saturation and value (0-1), as Windows 7's colour mixer
+ * shows a colour; the alpha is kept. */
+typedef struct xd_hsv {
+    double h, s, v;
+} xd_hsv;
+xd_hsv xd_rgba_to_hsv(xd_rgba c);
+xd_rgba xd_rgba_from_hsv(xd_hsv hsv, double alpha);
 
 void xd_set_color(cairo_t *cr, xd_rgba c);
 void xd_fill_rect(cairo_t *cr, xd_rect r, xd_rgba c);

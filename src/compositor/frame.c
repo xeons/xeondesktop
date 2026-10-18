@@ -103,7 +103,9 @@ static void update_glass(xd_view *view, struct wlr_box outer, bool shown) {
     wlr_scene_blur_set_size(view->blur, outer.width, outer.height);
     wlr_scene_blur_set_corner_radius(view->blur, radius);
     wlr_scene_node_set_position(&view->blur->node, 0, 0);
-    wlr_scene_node_set_enabled(&view->blur->node, true);
+    /* With transparency off (Window Color and Appearance) the glass is
+     * opaque: nothing behind it to blur. */
+    wlr_scene_node_set_enabled(&view->blur->node, !view->server->config.scheme.glass_opaque);
     /* No shadow when maximized, as in Windows. */
     int s = SHADOW_SIGMA;
     wlr_scene_shadow_set_size(view->shadow, outer.width + 2 * s, outer.height + 2 * s);

@@ -199,6 +199,8 @@ const char *xd_power_scheme_name(xd_power_scheme scheme) {
 void xd_settings_defaults(xd_settings *s) {
     *s = (xd_settings){
         .style = XD_STYLE_CLASSIC,
+        .glass_color = XD_GLASS_DEFAULT,
+        .glass_transparency = true,
         .wallpaper_mode = XD_WALLPAPER_FILL,
         /* Windows 2000's icons but Internet Explorer; Align to Grid on. */
         .desktop_icons = {.documents = true, .computer = true, .network = true, .show = true,
@@ -278,6 +280,18 @@ static void parse_stem(xd_str v, char *dst, size_t cap) {
     }
     if (ok)
         copy_into(dst, cap, v);
+}
+
+/* A colour as AARRGGBB in hex, as Windows writes ColorizationColor. */
+static void parse_argb(xd_str v, uint32_t *out) {
+    char buf[9];
+    if (v.len != 8)
+        return;
+    memcpy(buf, v.ptr, 8);
+    buf[8] = '\0';
+    guint64 n;
+    if (g_ascii_string_to_unsigned(buf, 16, 0, UINT32_MAX, &n, nullptr))
+        *out = (uint32_t)n;
 }
 
 static void parse_int(xd_str v, int64_t lo, int64_t hi, int *out) {
@@ -472,6 +486,10 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             int i = index_of(smoothing_names, XD_ARRAY_LEN(smoothing_names), v);
             if (i >= 0)
                 s->font_smoothing = (xd_font_smoothing)i;
+        } else if (KEY("GlassColor")) {
+            parse_argb(v, &s->glass_color);
+        } else if (KEY("GlassTransparency")) {
+            parse_bool(v, &s->glass_transparency);
         } else if (KEY("IconTheme")) {
             parse_theme_dir(v, s->icon_theme, sizeof(s->icon_theme));
         } else if (KEY("GtkTheme")) {
@@ -714,6 +732,10 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Appearance", "Scheme", s->scheme);
     g_key_file_set_string(kf, "Appearance", "FontSize", font_size_names[s->font_size]);
     g_key_file_set_string(kf, "Appearance", "FontSmoothing", smoothing_names[s->font_smoothing]);
+    char glass[16];
+    snprintf(glass, sizeof(glass), "%08X", (unsigned)s->glass_color);
+    g_key_file_set_string(kf, "Appearance", "GlassColor", glass);
+    g_key_file_set_boolean(kf, "Appearance", "GlassTransparency", s->glass_transparency);
     g_key_file_set_string(kf, "Appearance", "IconTheme", s->icon_theme);
     g_key_file_set_string(kf, "Appearance", "GtkTheme", s->gtk_theme);
     g_key_file_set_string(kf, "Appearance", "QtStyle", s->qt_style);
@@ -1088,6 +1110,8 @@ void xd_settings_scheme(const xd_settings *s, xd_scheme *out) {
             out->metrics[scaled[i]] = (int)lround(out->metrics[scaled[i]] * f);
     }
     out->font_smoothing = s->font_smoothing;
+    out->glass_color = s->glass_color;
+    out->glass_opaque = !s->glass_transparency;
 }
 
 void xd_settings_set_high_contrast(xd_settings *s, bool on, const char *scheme) {

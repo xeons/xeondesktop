@@ -92,6 +92,21 @@ typedef struct desk {
     xd_widget *scheme_combo;
     xd_widget *font_combo;
     xd_widget *appearance_preview;
+    xd_widget *advanced;
+
+    /* Window Color and Appearance (Aero), editing `pending` as it goes so
+     * the preview follows; Cancel puts these back. */
+    xd_window *color;
+    uint32_t color_was;
+    bool transparency_was;
+    bool mixer_shown;
+    xd_hsv mixer; /* the mixer's own values: a grey keeps its hue */
+    xd_widget *swatches;
+    xd_widget *color_name;
+    xd_widget *transparency;
+    xd_widget *intensity;
+    xd_widget *mixer_toggle;
+    xd_widget *mixer_widgets[9]; /* label, slider and gradient for each */
 
     /* Effects */
     xd_widget *smoothing_check;
@@ -989,6 +1004,7 @@ static void on_style(xd_widget *w, void *user) {
         fill_schemes(d);
         xd_widget_redraw(d->scheme_combo);
     }
+    xd_widget_set_enabled(d->advanced, d->pending.style == XD_STYLE_AERO && d->color == nullptr);
     xd_widget_redraw(d->appearance_preview);
     changed(d);
 }
@@ -1014,6 +1030,279 @@ static void on_font_size(xd_widget *w, void *user) {
         d->pending.font_size = (xd_font_size)i;
     xd_widget_redraw(d->appearance_preview);
     changed(d);
+}
+
+/* ---- Window Color and Appearance (Aero) ------------------------------------------- */
+
+/* Windows 7's Personalization > Window Color: the glass colour of the
+ * frames, taskbar and Start menu. */
+static constexpr int SWATCH_COLUMNS = 8;
+static constexpr int SWATCH_PITCH = 52; /* logical px per swatch, its margin included */
+static constexpr int SWATCH_MARGIN = 4;
+static constexpr int COLOR_W = 456;
+static constexpr int COLOR_H = 414;
+
+static uint32_t glass_rgb(uint32_t argb) { return argb & 0xFFFFFFu; }
+
+/* The swatch with the pending colour, or -1 (a colour mixed by hand). */
+static int current_swatch(const desk *d) {
+    for (int i = 0; i < XD_GLASS_SWATCH_COUNT; i++) {
+        if (glass_rgb(xd_glass_swatches[i].argb) == glass_rgb(d->pending.glass_color))
+            return i;
+    }
+    return -1;
+}
+
+static void color_changed(desk *d) {
+    int i = current_swatch(d);
+    char text[64];
+    snprintf(text, sizeof(text), "Current color: %s", i >= 0 ? xd_glass_swatches[i].name : "Custom");
+    xd_widget_set_text(d->color_name, text);
+    xd_widget_redraw(d->swatches);
+    xd_widget_redraw(d->appearance_preview);
+    changed(d);
+}
+
+/* A swatch: the colour under a glassy sheen, as Windows 7 draws them. */
+static void draw_swatch(const xd_theme *t, cairo_t *cr, xd_rect r, uint32_t argb) {
+    double rad = xd_tpx(t, 3);
+    xd_rgba c = xd_rgba_hex(glass_rgb(argb));
+    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
+    xd_set_color(cr, c);
+    cairo_fill_preserve(cr);
+    cairo_pattern_t *p = cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
+    cairo_pattern_add_color_stop_rgba(p, 0, 1, 1, 1, 0.55);
+    cairo_pattern_add_color_stop_rgba(p, 0.48, 1, 1, 1, 0.2);
+    cairo_pattern_add_color_stop_rgba(p, 0.48, 1, 1, 1, 0.0);
+    cairo_pattern_add_color_stop_rgba(p, 1, 1, 1, 1, 0.12);
+    cairo_set_source(cr, p);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(p);
+    cairo_set_line_width(cr, 1);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.45);
+    cairo_stroke(cr);
+    xd_path_rounded(cr, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad - 1, rad - 1, rad - 1,
+                    rad - 1);
+    cairo_set_source_rgba(cr, 1, 1, 1, 0.6);
+    cairo_stroke(cr);
+}
+
+static void draw_swatches([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
+                          const xd_theme *t, void *user) {
+    desk *d = user;
+    int sel = current_swatch(d);
+    int pitch = xd_tpx(t, SWATCH_PITCH), margin = xd_tpx(t, SWATCH_MARGIN);
+    for (int i = 0; i < XD_GLASS_SWATCH_COUNT; i++) {
+        xd_rect cell = {r.x + (i % SWATCH_COLUMNS) * pitch, r.y + (i / SWATCH_COLUMNS) * pitch,
+                        pitch, pitch};
+        if (i == sel) {
+            /* Selected: the light-blue highlight of Windows 7's lists. */
+            double rad = xd_tpx(t, 3);
+            xd_rect h = xd_rect_inset(cell, xd_tpx(t, 1), xd_tpx(t, 1));
+            xd_path_rounded(cr, h.x + 0.5, h.y + 0.5, h.w - 1, h.h - 1, rad, rad, rad, rad);
+            xd_set_color(cr, xd_rgba_hex(0xDCEBFC));
+            cairo_fill_preserve(cr);
+            cairo_set_line_width(cr, 1);
+            xd_set_color(cr, xd_rgba_hex(0x7DA2CE));
+            cairo_stroke(cr);
+        }
+        draw_swatch(t, cr, xd_rect_inset(cell, margin, margin), xd_glass_swatches[i].argb);
+    }
+}
+
+static void mixer_from_color(desk *d) {
+    d->mixer = xd_rgba_to_hsv(xd_rgba_hex(glass_rgb(d->pending.glass_color)));
+    xd_slider_set(d->mixer_widgets[1], 0, 359, (int)lround(d->mixer.h) % 360);
+    xd_slider_set(d->mixer_widgets[4], 0, 100, (int)lround(d->mixer.s * 100));
+    xd_slider_set(d->mixer_widgets[7], 0, 100, (int)lround(d->mixer.v * 100));
+    for (size_t i = 2; i < XD_ARRAY_LEN(d->mixer_widgets); i += 3)
+        xd_widget_redraw(d->mixer_widgets[i]);
+}
+
+/* Choosing a swatch takes its colour and its intensity, as in Windows 7. */
+static void on_swatch_pointer(xd_widget *w, xd_pointer_event ev, double x, double y,
+                              void *user) {
+    desk *d = user;
+    if (ev != XD_POINTER_PRESS || x < 0 || y < 0)
+        return;
+    int col = (int)(x / SWATCH_PITCH), row = (int)(y / SWATCH_PITCH);
+    int i = row * SWATCH_COLUMNS + col;
+    if (col >= SWATCH_COLUMNS || i >= XD_GLASS_SWATCH_COUNT)
+        return;
+    d->pending.glass_color = xd_glass_swatches[i].argb;
+    xd_slider_set(d->intensity, 0, 255, (int)(d->pending.glass_color >> 24));
+    mixer_from_color(d);
+    xd_widget_redraw(w);
+    color_changed(d);
+}
+
+static void on_transparency(xd_widget *w, void *user) {
+    desk *d = user;
+    d->pending.glass_transparency = xd_checkbox_checked(w);
+    color_changed(d);
+}
+
+static void on_intensity(xd_widget *w, void *user) {
+    desk *d = user;
+    uint32_t a = (uint32_t)XD_CLAMP(xd_slider_value(w), 0, 255);
+    d->pending.glass_color = (a << 24) | glass_rgb(d->pending.glass_color);
+    color_changed(d);
+}
+
+static void on_mixer([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    d->mixer = (xd_hsv){xd_slider_value(d->mixer_widgets[1]),
+                        xd_slider_value(d->mixer_widgets[4]) / 100.0,
+                        xd_slider_value(d->mixer_widgets[7]) / 100.0};
+    xd_rgba c = xd_rgba_from_hsv(d->mixer, 1.0);
+    uint32_t rgb = ((uint32_t)lround(c.r * 255) << 16) | ((uint32_t)lround(c.g * 255) << 8) |
+                   (uint32_t)lround(c.b * 255);
+    d->pending.glass_color = (d->pending.glass_color & 0xFF000000u) | rgb;
+    /* The other sliders' gradients run through the new colour. */
+    for (size_t i = 2; i < XD_ARRAY_LEN(d->mixer_widgets); i += 3)
+        xd_widget_redraw(d->mixer_widgets[i]);
+    color_changed(d);
+}
+
+/* Under each mixer slider, the colours it runs through. */
+static void draw_mixer_gradient(xd_widget *w, cairo_t *cr, xd_rect r,
+                                [[maybe_unused]] const xd_theme *t, void *user) {
+    desk *d = user;
+    int which = 0;
+    while (which < 3 && d->mixer_widgets[which * 3 + 2] != w)
+        which++;
+    cairo_pattern_t *p = cairo_pattern_create_linear(r.x, 0, r.x + r.w, 0);
+    for (int k = 0; k <= 12; k++) {
+        double f = k / 12.0;
+        xd_hsv hsv = d->mixer;
+        if (which == 0)
+            hsv = (xd_hsv){f * 360, 1, 1};
+        else if (which == 1)
+            hsv.s = f;
+        else
+            hsv.v = f;
+        xd_rgba c = xd_rgba_from_hsv(hsv, 1);
+        cairo_pattern_add_color_stop_rgb(p, f, c.r, c.g, c.b);
+    }
+    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+    cairo_set_source(cr, p);
+    cairo_fill(cr);
+    cairo_pattern_destroy(p);
+}
+
+static void show_mixer(desk *d, bool shown) {
+    d->mixer_shown = shown;
+    for (size_t i = 0; i < XD_ARRAY_LEN(d->mixer_widgets); i++)
+        xd_widget_set_visible(d->mixer_widgets[i], shown);
+    xd_widget_redraw(d->mixer_toggle);
+}
+
+/* Windows 7's expander: a round button with a chevron, and its label. */
+static void draw_mixer_toggle([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
+                              const xd_theme *t, void *user) {
+    desk *d = user;
+    double rad = xd_tpx(t, 8);
+    double cx = r.x + rad, cy = r.y + r.h / 2.0;
+    cairo_arc(cr, cx, cy, rad - 0.5, 0, 2 * G_PI);
+    cairo_pattern_t *p = cairo_pattern_create_linear(0, cy - rad, 0, cy + rad);
+    cairo_pattern_add_color_stop_rgb(p, 0, 1, 1, 1);
+    cairo_pattern_add_color_stop_rgb(p, 1, 0.86, 0.88, 0.91);
+    cairo_set_source(cr, p);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(p);
+    cairo_set_line_width(cr, 1);
+    xd_set_color(cr, xd_rgba_hex(0x8E9AAC));
+    cairo_stroke(cr);
+    /* Down to show, up to hide. */
+    double a = rad * 0.4, dir = d->mixer_shown ? -1 : 1;
+    cairo_move_to(cr, cx - a, cy - dir * a / 2);
+    cairo_line_to(cr, cx, cy + dir * a / 2);
+    cairo_line_to(cr, cx + a, cy - dir * a / 2);
+    cairo_set_line_width(cr, xd_tpx(t, 1) * 1.5);
+    xd_set_color(cr, xd_rgba_hex(0x404A5A));
+    cairo_stroke(cr);
+    xd_text_style st = xd_text(t, XD_FONT_MESSAGE, xd_rgba_hex(0x000000), XD_ALIGN_START);
+    int tx = r.x + (int)(2 * rad) + xd_tpx(t, 6);
+    xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx, r.h},
+                 d->mixer_shown ? "Hide color mixer" : "Show color mixer", &st);
+}
+
+static void on_mixer_toggle([[maybe_unused]] xd_widget *w, xd_pointer_event ev,
+                            [[maybe_unused]] double x, [[maybe_unused]] double y, void *user) {
+    if (ev == XD_POINTER_PRESS)
+        show_mixer(user, !((desk *)user)->mixer_shown);
+}
+
+static void color_close(desk *d) {
+    if (d->color == nullptr)
+        return;
+    xd_window *color = d->color;
+    d->color = nullptr;
+    xd_window_close(color);
+    xd_widget_set_enabled(d->advanced, d->pending.style == XD_STYLE_AERO);
+}
+
+static void on_color_save([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    color_close(d);
+    changed(d);
+}
+
+static void on_color_cancel([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    d->pending.glass_color = d->color_was;
+    d->pending.glass_transparency = d->transparency_was;
+    xd_widget_redraw(d->appearance_preview);
+    color_close(d);
+    changed(d);
+}
+
+static void on_window_color([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    if (d->color != nullptr)
+        return;
+    d->color_was = d->pending.glass_color;
+    d->transparency_was = d->pending.glass_transparency;
+    xd_window *win = d->color =
+        xd_window_create(d->ui, "Window Color and Appearance", "xd-desk", COLOR_W, COLOR_H);
+    xd_label(win, (xd_rect){20, 14, 416, 18},
+             "Change the color of your window borders, Start menu, and taskbar", XD_LABEL_BOLD);
+    d->swatches = xd_custom(win,
+                            (xd_rect){20, 42, SWATCH_COLUMNS * SWATCH_PITCH,
+                                      (XD_GLASS_SWATCH_COUNT / SWATCH_COLUMNS) * SWATCH_PITCH},
+                            draw_swatches, d);
+    xd_custom_set_pointer(d->swatches, on_swatch_pointer);
+    d->color_name = xd_label(win, (xd_rect){24, 154, 300, 16}, "", 0);
+    d->transparency = xd_checkbox(win, (xd_rect){24, 178, 300, 18}, "Enable transparency",
+                                  d->pending.glass_transparency, on_transparency, d);
+    xd_label(win, (xd_rect){24, 208, 100, 16}, "Color intensity:", 0);
+    d->intensity = xd_slider(win, (xd_rect){124, 202, 300, 26}, 0, 255,
+                             (int)(d->pending.glass_color >> 24), on_intensity, d);
+    d->mixer_toggle = xd_custom(win, (xd_rect){24, 238, 200, 20}, draw_mixer_toggle, d);
+    xd_custom_set_pointer(d->mixer_toggle, on_mixer_toggle);
+    static const char *const names[] = {"Hue:", "Saturation:", "Brightness:"};
+    for (int i = 0; i < 3; i++) {
+        int y = 264 + i * 32;
+        d->mixer_widgets[i * 3] = xd_label(win, (xd_rect){44, y + 6, 76, 16}, names[i], 0);
+        d->mixer_widgets[i * 3 + 1] =
+            xd_slider(win, (xd_rect){124, y, 300, 26}, 0, i == 0 ? 359 : 100, 0, on_mixer, d);
+        d->mixer_widgets[i * 3 + 2] =
+            xd_custom(win, (xd_rect){130, y + 26, 288, 4}, draw_mixer_gradient, d);
+    }
+    mixer_from_color(d);
+    show_mixer(d, false);
+    color_changed(d);
+
+    xd_widget *save =
+        xd_button(win, (xd_rect){COLOR_W - 200, COLOR_H - 34, 100, 23}, "Save changes",
+                  on_color_save, d);
+    xd_widget *cancel = xd_button(win, (xd_rect){COLOR_W - 92, COLOR_H - 34, 75, 23}, "Cancel",
+                                  on_color_cancel, d);
+    xd_window_set_default(win, save);
+    xd_window_set_cancel(win, cancel);
+    xd_window_set_focus(win, d->transparency);
+    xd_widget_set_enabled(d->advanced, false);
+    xd_window_show(win);
 }
 
 static void build_appearance(desk *d) {
@@ -1043,8 +1332,11 @@ static void build_appearance(desk *d) {
         xd_widget_add_item(d->font_combo, sizes[i]);
     xd_widget_select(d->font_combo, (int)d->pending.font_size);
 
-    /* Per-item colours/fonts editor, as in Windows 2000, comes later. */
-    on_page_disabled(xd_button(win, (xd_rect){298, 352, 86, 23}, "Advanced", nullptr, nullptr), P);
+    /* Aero: Windows 7's Window Color and Appearance. The other styles'
+     * per-item colours and fonts editor, as in Windows 2000, comes later. */
+    d->advanced = xd_button(win, (xd_rect){298, 352, 86, 23}, "Advanced", on_window_color, d);
+    xd_widget_set_page(d->advanced, P);
+    xd_widget_set_enabled(d->advanced, d->pending.style == XD_STYLE_AERO);
 }
 
 /* ---- Effects ------------------------------------------------------------------------ */
@@ -1996,8 +2288,8 @@ static bool apply(desk *d) {
 
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
-    if (d->confirm != nullptr || d->items != nullptr)
-        return; /* answer Monitor Settings or Desktop Items first */
+    if (d->confirm != nullptr || d->items != nullptr || d->color != nullptr)
+        return; /* answer Monitor Settings, Desktop Items or Window Color first */
     if (d->display_dirty) {
         /* Closes once the new display settings are kept. */
         d->close_after_apply = true;
@@ -2011,6 +2303,7 @@ static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
 static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
     items_close(d);
+    color_close(d);
     xd_window_close(d->win);
 }
 

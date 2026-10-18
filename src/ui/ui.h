@@ -145,6 +145,8 @@ void xd_combo_select(xd_widget *combo, int index);
 xd_widget *xd_tabs(xd_window *win, xd_rect r, const char *const *labels, size_t count,
                    xd_widget_cb on_change, void *user);
 void xd_widget_set_page(xd_widget *w, int page);
+/* Shows or hides a widget (Windows 7's expanders: Show color mixer). */
+void xd_widget_set_visible(xd_widget *w, bool visible);
 
 xd_widget *xd_checkbox(xd_window *win, xd_rect r, const char *label, bool checked,
                        xd_widget_cb on_change, void *user);

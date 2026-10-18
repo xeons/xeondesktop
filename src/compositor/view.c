@@ -1326,7 +1326,7 @@ static void update_popup_glass(xd_popup *p) {
     struct wlr_surface *s = p->popup->base->surface;
     wlr_scene_blur_set_size(p->blur, s->current.width, s->current.height);
     wlr_scene_node_set_position(&p->blur->node, found.x - tree->node.x, found.y - tree->node.y);
-    wlr_scene_node_set_enabled(&p->blur->node, true);
+    wlr_scene_node_set_enabled(&p->blur->node, !p->glass_server->config.scheme.glass_opaque);
 }
 #endif
 

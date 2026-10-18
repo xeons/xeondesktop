@@ -27,12 +27,61 @@ enum {
 
 static const xd_font_spec title_font = {.family = XD_FONT_FAMILY_SEGOE, .size_pt = 9};
 
-/* The default colourisation ("Sky"), active and inactive; opaque without
- * the compositor's blur (Windows 7 Basic). */
+/* Windows 7's Window Color and Appearance swatches, as DWM stores them in
+ * ColorizationColor (0xAARRGGBB, the alpha is the colour intensity). Read
+ * off Windows 7's registry by others: AeroThemePlasma's colour mixer
+ * documentation lists all sixteen, and Mozilla bug 578780 (comments 27,
+ * 29 and 31) gives Sky, Sea, Lime, Sun, Pumpkin, Ruby, Violet and
+ * Chocolate with the same values. */
+const xd_glass_swatch xd_glass_swatches[XD_GLASS_SWATCH_COUNT] = {
+    {"Sky", 0x6B74B8FC},     {"Twilight", 0xA80046AD},  {"Sea", 0x8032CDCD},
+    {"Leaf", 0x6614A600},    {"Lime", 0x6697D937},      {"Sun", 0x54FADC0E},
+    {"Pumpkin", 0x80FF9C00}, {"Ruby", 0xA8CE0F0F},      {"Fuchsia", 0x66FF0099},
+    {"Blush", 0x70FCC7F8},   {"Violet", 0x856E3BA1},    {"Lavender", 0x528D5A94},
+    {"Taupe", 0x6698844C},   {"Chocolate", 0xA84F1B1B}, {"Slate", 0x80555555},
+    {"Frost", 0x54FCFCFC},
+};
+
+/* The colour's hue, deeper and darker: the taskbar's and Start menu's
+ * glass, darker than the frames' in Windows 7. */
+static xd_rgba deepen(xd_hsv c, double value) {
+    return xd_rgba_from_hsv((xd_hsv){c.h, fmin(1.0, c.s * 1.3), c.v * value}, 1.0);
+}
+
+void xd_theme_glass_colors(const xd_theme *t, xd_glass_colors *out) {
+    uint32_t argb = t->scheme.glass_color;
+    xd_rgba c = xd_rgba_hex(argb & 0xFFFFFFu);
+    double intensity = ((argb >> 24) & 0xFFu) / 255.0;
+    xd_hsv hsv = xd_rgba_to_hsv(c);
+    out->translucent = t->glass && !t->scheme.glass_opaque;
+    if (out->translucent) {
+        /* Over the blur: the intensity is how much of the colour shows.
+         * Sky's comes to Windows 7's default look. */
+        double a = fmin(0.2 + 0.85 * intensity, 0.95);
+        out->frame = xd_rgba_alpha(c, a);
+        /* Inactive glass is paler and clearer. */
+        out->frame_inactive = xd_rgba_alpha(xd_rgba_mix(c, xd_rgba_hex(0xD9D9D9), 0.7),
+                                            0.08 + 0.6 * a);
+        out->taskbar = xd_rgba_alpha(deepen(hsv, 0.26), 0.45 + 0.4 * intensity);
+        out->menu = xd_rgba_alpha(deepen(hsv, 0.36), 0.3 + 0.35 * intensity);
+        out->menu_frame = xd_rgba_alpha(deepen(hsv, 0.25), 0.55 + 0.35 * intensity);
+        return;
+    }
+    /* Opaque (transparency off, or no blur: Windows 7 Basic): the colour
+     * blended into light grey by its intensity, as Windows 7 does with
+     * transparency off. */
+    xd_rgba grey = xd_rgba_hex(0xEBEBEB);
+    out->frame = xd_rgba_mix(grey, c, intensity);
+    out->frame_inactive = xd_rgba_mix(grey, c, intensity * 0.5);
+    out->taskbar = deepen(hsv, 0.42);
+    out->menu = deepen(hsv, 0.36);
+    out->menu_frame = deepen(hsv, 0.25);
+}
+
 static xd_rgba glass(const xd_theme *t, bool active) {
-    if (!t->glass)
-        return active ? (xd_rgba){0.73, 0.82, 0.92, 1} : (xd_rgba){0.84, 0.88, 0.94, 1};
-    return active ? (xd_rgba){0.45, 0.67, 0.89, 0.55} : (xd_rgba){0.80, 0.84, 0.89, 0.42};
+    xd_glass_colors g;
+    xd_theme_glass_colors(t, &g);
+    return active ? g.frame : g.frame_inactive;
 }
 
 static int border_of(const xd_theme *t, const xd_frame *f) {
@@ -353,10 +402,9 @@ static int aero_taskbar_height(const xd_theme *t) { return xd_tpx(t, TASKBAR_H);
 static void aero_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
     cairo_save(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-    if (t->glass)
-        cairo_set_source_rgba(cr, 0.08, 0.16, 0.26, 0.62);
-    else
-        cairo_set_source_rgb(cr, 0.16, 0.27, 0.42); /* Basic: opaque */
+    xd_glass_colors g;
+    xd_theme_glass_colors(t, &g);
+    xd_set_color(cr, g.taskbar);
     cairo_rectangle(cr, r.x, r.y, r.w, r.h);
     cairo_fill(cr);
     cairo_restore(cr);
@@ -578,8 +626,13 @@ static void aero_menu_palette([[maybe_unused]] const xd_theme *t, xd_menu_palett
     };
 }
 
-static void aero_toolkit_colors([[maybe_unused]] const xd_theme *t, xd_toolkit_colors *c) {
+static void aero_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c) {
     xd_rgba white = xd_rgba_hex(0xFFFFFF);
+    /* GTK's title bars (client-side decorations, message dialogs' frames)
+     * in the glass colour, opaque: a little deeper, fading lighter. */
+    xd_rgba hue = xd_rgba_hex(t->scheme.glass_color & 0xFFFFFFu);
+    xd_hsv hsv = xd_rgba_to_hsv(hue);
+    hsv.v *= 0.9;
     *c = (xd_toolkit_colors){
         .bg = xd_rgba_hex(0xF0F0F0),
         .fg = xd_rgba_hex(0x000000),
@@ -596,8 +649,8 @@ static void aero_toolkit_colors([[maybe_unused]] const xd_theme *t, xd_toolkit_c
         .menu_hot = xd_rgba_hex(0xDCE9F7),
         .menu_hot_fg = xd_rgba_hex(0x000000),
         .menubar_bg = xd_rgba_hex(0xF0F0F0),
-        .title_bg = xd_rgba_hex(0x74A8E0),
-        .title_bg2 = xd_rgba_hex(0xA8CCF0),
+        .title_bg = xd_rgba_from_hsv(hsv, 1.0),
+        .title_bg2 = xd_rgba_mix(hue, white, 0.35),
         .title_fg = xd_rgba_hex(0x000000),
         .face = xd_rgba_hex(0xF0F0F0),
         .field_border = xd_rgba_hex(0xABADB3),

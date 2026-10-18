@@ -95,6 +95,7 @@ void xd_scheme_init_default(xd_scheme *s) {
     set_font(&s->fonts[XD_FONT_ICON], ui, 8, false);
     set_font(&s->fonts[XD_FONT_TOOLTIP], ui, 8, false);
     s->gradient_captions = true;
+    s->glass_color = XD_GLASS_DEFAULT;
 }
 
 static bool parse_rgb(xd_str v, xd_rgb *out) {

@@ -169,6 +169,25 @@ void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
  * drawn right-aligned inside the margins; tray icons go to its left. */
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
 
+/* Windows 7's glass colours, in Window Color and Appearance's order, as
+ * 0xAARRGGBB (the alpha is the swatch's colour intensity). */
+typedef struct xd_glass_swatch {
+    const char *name;
+    uint32_t argb;
+} xd_glass_swatch;
+enum { XD_GLASS_SWATCH_COUNT = 16 };
+extern const xd_glass_swatch xd_glass_swatches[XD_GLASS_SWATCH_COUNT];
+
+/* Aero's glass in the scheme's glass colour: translucent where the
+ * compositor blurs behind it and transparency is on, else opaque. */
+typedef struct xd_glass_colors {
+    bool translucent;
+    xd_rgba frame, frame_inactive; /* window frames */
+    xd_rgba taskbar;
+    xd_rgba menu, menu_frame; /* the Windows 7 Start menu's right column, its frame */
+} xd_glass_colors;
+void xd_theme_glass_colors(const xd_theme *t, xd_glass_colors *out);
+
 /* Windows XP style's Start menu colours (0xRRGGBB) in the theme's colour
  * variant: header and footer gradients, frame, the program list (left),
  * the places column (right), the hot item, and the accent line. */

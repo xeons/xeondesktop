@@ -65,10 +65,10 @@ static bool is_text_widget(const xd_widget *w) {
     return w->kind == XD_W_EDIT || (w->kind == XD_W_COMBO && w->editable);
 }
 
-/* Hidden when it belongs to a tab page that isn't selected. */
+/* Hidden when it belongs to a tab page that isn't selected, or was hidden. */
 static bool is_visible(const xd_widget *w) {
     const xd_widget *tabs = w->win->tabs;
-    return w->page < 0 || tabs == nullptr || tabs->selected == w->page;
+    return !w->hidden && (w->page < 0 || tabs == nullptr || tabs->selected == w->page);
 }
 
 static bool is_focusable(const xd_widget *w) {
@@ -1487,6 +1487,13 @@ xd_widget *xd_tabs(xd_window *win, xd_rect r, const char *const *labels, size_t 
 
 void xd_widget_set_page(xd_widget *w, int page) {
     w->page = page;
+    w->win->dirty = true;
+}
+
+void xd_widget_set_visible(xd_widget *w, bool visible) {
+    w->hidden = !visible;
+    if (!visible && w->win->focus == w)
+        w->win->focus = nullptr;
     w->win->dirty = true;
 }
 

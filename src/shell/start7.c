@@ -253,8 +253,12 @@ static s7_palette palette(const xd_theme *t) {
     /* Luna: white list, dark navy panel (the reference look). The panels are
      * opaque: Windows 7 blurs what's behind its glass, and without blur in
      * the compositor a see-through panel just shows the wallpaper sharply.
-     * Aero with the compositor's blur: the panel and frame are glass. */
-    if (t->style == XD_STYLE_AERO && t->glass)
+     * Aero with the compositor's blur: the panel and frame are glass.
+     * Aero's are in the glass colour (Window Color and Appearance). */
+    if (t->style == XD_STYLE_AERO) {
+        xd_glass_colors glass;
+        xd_theme_glass_colors(t, &glass);
+        bool see = glass.translucent;
         return (s7_palette){
             .left_bg = xd_rgba_hex(0xFFFFFF),
             .left_text = xd_rgba_hex(0x000000),
@@ -262,14 +266,15 @@ static s7_palette palette(const xd_theme *t) {
             .left_hot = xd_rgba_hex(0xDCEBFC),
             .left_hot_text = xd_rgba_hex(0x000000),
             .left_hot_border = xd_rgba_hex(0x7DA2CE),
-            .right_bg = xd_rgba_alpha(xd_rgba_hex(0x1B3A5C), 0.45),
+            .right_bg = glass.menu,
             .right_text = xd_rgba_hex(0xFFFFFF),
-            .right_dim = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.55),
-            .right_hot = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.22),
-            .right_sep = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), 0.3),
-            .frame = xd_rgba_alpha(xd_rgba_hex(0x0E2440), 0.7),
+            .right_dim = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), see ? 0.55 : 0.45),
+            .right_hot = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), see ? 0.22 : 0.18),
+            .right_sep = xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), see ? 0.3 : 0.25),
+            .frame = glass.menu_frame,
             .separator = xd_rgba_hex(0xD6E5F5),
         };
+    }
     return (s7_palette){
         .left_bg = xd_rgba_hex(0xFFFFFF),
         .left_text = xd_rgba_hex(0x000000),

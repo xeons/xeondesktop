@@ -50,6 +50,37 @@ xd_rgba xd_rgba_alpha(xd_rgba c, double a) {
     return c;
 }
 
+xd_hsv xd_rgba_to_hsv(xd_rgba c) {
+    double hi = fmax(c.r, fmax(c.g, c.b));
+    double lo = fmin(c.r, fmin(c.g, c.b));
+    double d = hi - lo;
+    xd_hsv o = {0, hi > 0 ? d / hi : 0, hi};
+    if (d <= 0)
+        return o;
+    if (hi == c.r)
+        o.h = 60 * fmod((c.g - c.b) / d + 6, 6);
+    else if (hi == c.g)
+        o.h = 60 * ((c.b - c.r) / d + 2);
+    else
+        o.h = 60 * ((c.r - c.g) / d + 4);
+    return o;
+}
+
+xd_rgba xd_rgba_from_hsv(xd_hsv hsv, double alpha) {
+    double h = fmod(fmod(hsv.h, 360) + 360, 360) / 60;
+    double s = fmin(fmax(hsv.s, 0), 1), v = fmin(fmax(hsv.v, 0), 1);
+    double c = v * s;
+    double x = c * (1 - fabs(fmod(h, 2) - 1));
+    /* The sextant of the hue circle: which channel leads, which follows. */
+    static const uint8_t lead[6] = {0, 1, 1, 2, 2, 0}, follow[6] = {1, 0, 2, 1, 0, 2};
+    double rgb[3] = {0, 0, 0};
+    int k = XD_CLAMP((int)h, 0, 5);
+    rgb[lead[k]] = c;
+    rgb[follow[k]] = x;
+    double m = v - c;
+    return (xd_rgba){rgb[0] + m, rgb[1] + m, rgb[2] + m, alpha};
+}
+
 void xd_set_color(cairo_t *cr, xd_rgba c) { cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a); }
 
 void xd_fill_rect(cairo_t *cr, xd_rect r, xd_rgba c) {
