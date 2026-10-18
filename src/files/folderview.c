@@ -79,6 +79,7 @@ struct _XdFolderView {
     GtkDrawingArea parent;
     GtkAdjustment *hadj, *vadj;
     gulong hadj_id, vadj_id;
+    gulong theme_id; /* the icon theme's "changed" */
     GtkScrollablePolicy hpolicy, vpolicy;
 
     GFile *dir;
@@ -350,6 +351,18 @@ static GdkPixbuf *item_icon(XdFolderView *v, item *it, int px) {
     }
     (void)v;
     return it->icon_pb;
+}
+
+/* Another icon theme (Display Properties): every item's icon is drawn again
+ * from it, as the rest of the window already is. */
+static void icon_theme_changed([[maybe_unused]] GtkIconTheme *theme, gpointer data) {
+    XdFolderView *v = data;
+    for (guint i = 0; i < v->all->len; i++) {
+        item *it = g_ptr_array_index(v->all, i);
+        g_clear_object(&it->icon_pb);
+        it->icon_px = 0;
+    }
+    gtk_widget_queue_draw(GTK_WIDGET(v));
 }
 
 /* A cached thumbnail scaled to fit px x px, or nullptr. Only reads the
@@ -2623,6 +2636,10 @@ static void folder_view_size_allocate(GtkWidget *widget, GtkAllocation *alloc) {
 
 static void folder_view_dispose(GObject *obj) {
     XdFolderView *v = XD_FOLDER_VIEW(obj);
+    if (v->theme_id != 0) {
+        g_signal_handler_disconnect(gtk_icon_theme_get_default(), v->theme_id);
+        v->theme_id = 0;
+    }
     if (v->cancel != nullptr)
         g_cancellable_cancel(v->cancel);
     g_clear_object(&v->cancel);
@@ -2741,6 +2758,8 @@ static void xd_folder_view_init(XdFolderView *v) {
     v->auto_arrange = TRUE;
     v->align_grid = TRUE;
     v->positions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    v->theme_id = g_signal_connect(gtk_icon_theme_get_default(), "changed",
+                                   G_CALLBACK(icon_theme_changed), v);
     default_columns(v);
     gtk_widget_set_can_focus(GTK_WIDGET(v), TRUE);
     gtk_drag_dest_set(GTK_WIDGET(v), (GtkDestDefaults)0, nullptr, 0,
