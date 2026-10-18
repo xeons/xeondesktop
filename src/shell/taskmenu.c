@@ -53,6 +53,21 @@ static void act_lock(xd_shell *shell, [[maybe_unused]] void *d) {
 static void act_quick_launch(xd_shell *shell, [[maybe_unused]] void *d) {
     toggle_setting(shell, &shell->settings.quick_launch);
 }
+/* Quick Launch's View > Large Icons / Small Icons, Show Text, Show Title. */
+static void act_quick_large(xd_shell *shell, [[maybe_unused]] void *d) {
+    if (!shell->settings.quick_large)
+        toggle_setting(shell, &shell->settings.quick_large);
+}
+static void act_quick_small(xd_shell *shell, [[maybe_unused]] void *d) {
+    if (shell->settings.quick_large)
+        toggle_setting(shell, &shell->settings.quick_large);
+}
+static void act_quick_text(xd_shell *shell, [[maybe_unused]] void *d) {
+    toggle_setting(shell, &shell->settings.quick_show_text);
+}
+static void act_quick_title(xd_shell *shell, [[maybe_unused]] void *d) {
+    toggle_setting(shell, &shell->settings.quick_show_title);
+}
 
 /* Window menu: the toplevel is looked up again by its id, in case it
  * closed (a new window may have been given the same address). */
@@ -301,7 +316,18 @@ static xd_menu_model *taskbar_menu(xd_shell *shell, xd_menu_tree *tree, bool clo
     xd_menu_model *m = xd_menu_model_new(tree);
     bool can_arrange = shell->arranger != nullptr;
     if (quick) {
+        /* XP's toolbar menu. */
+        xd_menu_item *view = xd_menu_add(tree, m, XD_MENU_SUBMENU, "View", nullptr);
+        view->submenu = xd_menu_model_new(tree);
+        add(tree, view->submenu, "Large Icons", act_quick_large, nullptr)->checked =
+            shell->settings.quick_large;
+        add(tree, view->submenu, "Small Icons", act_quick_small, nullptr)->checked =
+            !shell->settings.quick_large;
         add(tree, m, "Open Folder", act_quick_folder, nullptr);
+        add(tree, m, "Show Text", act_quick_text, nullptr)->checked =
+            shell->settings.quick_show_text;
+        add(tree, m, "Show Title", act_quick_title, nullptr)->checked =
+            shell->settings.quick_show_title;
         add(tree, m, "Close Toolbar", act_quick_launch, nullptr);
         separator(tree, m);
     }

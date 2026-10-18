@@ -165,20 +165,55 @@ static xd_rect content_box(const xd_theme *t, xd_edge edge, int dw, int dh) {
     return c;
 }
 
+/* Text on the taskbar's own face (Quick Launch's Show Text and Show
+ * Title), as the other toolbar text. */
+static xd_text_style toolbar_text(const xd_theme *t) {
+    xd_rgba ink = t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
+                                               : xd_rgba_hex(0xFFFFFF);
+    return xd_text(t, XD_FONT_MENU, ink, XD_ALIGN_START);
+}
+
+/* Quick Launch's icons: View > Small Icons (16) or Large Icons (32, or
+ * what the row's height leaves room for). */
+static int quick_icon_px(const xd_shell *shell, const xd_theme *t, int button_h) {
+    int small = xd_tpx(t, 16);
+    if (!shell->settings.quick_large)
+        return small;
+    return XD_MAX(small, XD_MIN(xd_tpx(t, 32), button_h - xd_tpx(t, 4)));
+}
+
+/* A button's width: the icon, and with Show Text its name (XP cuts long
+ * names short). */
+static int quick_button_w(const xd_shell *shell, const xd_theme *t, cairo_t *cr, size_t i,
+                          int icon) {
+    int w = icon + xd_tpx(t, 7);
+    const char *name = shell->quicklaunch.items[i].name;
+    if (!shell->settings.quick_show_text || name == nullptr)
+        return w;
+    xd_text_style st = toolbar_text(t);
+    return w + XD_MIN(xd_text_width(cr, name, &st), xd_tpx(t, 120)) + xd_tpx(t, 4);
+}
+
 static void draw_quick_button(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t i,
-                              xd_rect b) {
+                              xd_rect b, int icon) {
     const xd_quicklaunch *ql = &bar->shell->quicklaunch;
     int hit = XD_HIT_QUICK - (int)i;
     xd_theme_draw_toolbar_button(t, cr, b, button_state(bar, hit));
-    int icon = xd_tpx(t, 16);
+    bool text = bar->shell->settings.quick_show_text && ql->items[i].name != nullptr;
+    int pressed = bar->pressed == hit && bar->hot == hit ? xd_tpx(t, 1) : 0;
+    int ix = text ? b.x + xd_tpx(t, 3) : b.x + (b.w - icon) / 2;
     const char *names[] = {ql->items[i].icon, "application-x-executable"};
     cairo_surface_t *img = xd_icons_get_any(bar->shell->icons, names, XD_ARRAY_LEN(names), icon);
-    if (img == nullptr)
-        return;
-    int pressed = bar->pressed == hit && bar->hot == hit ? xd_tpx(t, 1) : 0;
-    cairo_set_source_surface(cr, img, b.x + (b.w - icon) / 2 + pressed,
-                             b.y + (b.h - icon) / 2 + pressed);
-    cairo_paint(cr);
+    if (img != nullptr) {
+        cairo_set_source_surface(cr, img, ix + pressed, b.y + (b.h - icon) / 2 + pressed);
+        cairo_paint(cr);
+    }
+    if (text) {
+        xd_text_style st = toolbar_text(t);
+        int tx = ix + icon + xd_tpx(t, 4);
+        xd_draw_text(cr, (xd_rect){tx + pressed, b.y + pressed, b.x + b.w - tx - xd_tpx(t, 2), b.h},
+                     ql->items[i].name, &st);
+    }
 }
 
 /* XP's black (or white) bar where a drop or a dragged button goes. */
@@ -220,20 +255,32 @@ static int layout_quick_launch(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, 
         bar->quick_rects =
             xd_realloc_array(bar->quick_rects, bar->quick_cap, sizeof(*bar->quick_rects));
     }
-    int qw = xd_tpx(t, 23);
     int qh = t->style == XD_STYLE_CLASSIC ? row_h : row_h - xd_tpx(t, 6);
     int qy = t->style == XD_STYLE_CLASSIC ? y : y + xd_tpx(t, 3);
+    int icon = quick_icon_px(shell, t, qh);
+    int qw = icon + xd_tpx(t, 7);
+    bool text = shell->settings.quick_show_text;
+    xd_text_style title_st = toolbar_text(t);
+    const char *title = "Quick Launch";
     if (side) {
-        /* A grid, as many across as fit. */
-        int cols = XD_MAX(1, width / qw);
+        /* Show Title: its own line on top. */
+        int band_y = qy;
+        if (shell->settings.quick_show_title) {
+            xd_draw_text(cr, (xd_rect){x + xd_tpx(t, 4), qy, width - xd_tpx(t, 8), qh}, title,
+                         &title_st);
+            qy += qh;
+        }
+        /* A grid, as many across as fit; with Show Text, one a line. */
+        int cols = text ? 1 : XD_MAX(1, width / qw);
+        int bw = text ? width : qw;
         for (size_t i = 0; i < ql->count; i++) {
-            xd_rect b = {x + (int)(i % (size_t)cols) * qw, qy + (int)(i / (size_t)cols) * qh, qw,
+            xd_rect b = {x + (int)(i % (size_t)cols) * bw, qy + (int)(i / (size_t)cols) * qh, bw,
                          qh};
             bar->quick_rects[bar->quick_count++] = b;
-            draw_quick_button(bar, t, cr, i, b);
+            draw_quick_button(bar, t, cr, i, b, icon);
         }
         int rows = (int)((ql->count + (size_t)cols - 1) / (size_t)cols);
-        bar->quick_band = (xd_rect){x, qy, width, rows * qh};
+        bar->quick_band = (xd_rect){x, band_y, width, qy - band_y + rows * qh};
         draw_insert_mark(bar, t, cr, true);
         return qy + rows * qh + xd_tpx(t, 4);
     }
@@ -243,11 +290,19 @@ static int layout_quick_launch(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, 
     if (!locked)
         xd_theme_draw_toolbar_grip(t, cr, (xd_rect){x, qy, grip, qh});
     int qx = x + grip + xd_tpx(t, 1);
+    /* Show Title: "Quick Launch" before the buttons. */
+    if (shell->settings.quick_show_title) {
+        int tw = xd_text_width(cr, title, &title_st);
+        xd_draw_text(cr, (xd_rect){qx + xd_tpx(t, 2), qy, tw + xd_tpx(t, 2), qh}, title,
+                     &title_st);
+        qx += tw + xd_tpx(t, 8);
+    }
     for (size_t i = 0; i < ql->count; i++) {
-        xd_rect b = {qx, qy, qw, qh};
+        int bw = quick_button_w(shell, t, cr, i, icon);
+        xd_rect b = {qx, qy, bw, qh};
         bar->quick_rects[bar->quick_count++] = b;
-        draw_quick_button(bar, t, cr, i, b);
-        qx += qw;
+        draw_quick_button(bar, t, cr, i, b, icon);
+        qx += bw;
     }
     if (!locked)
         xd_theme_draw_toolbar_grip(t, cr, (xd_rect){qx + xd_tpx(t, 2), qy, grip, qh});
