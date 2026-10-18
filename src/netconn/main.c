@@ -894,6 +894,8 @@ static void select_key(nc_app *app, const char *key) {
         return;
     g_free(app->selected);
     app->selected = g_strdup(key);
+    if (app->pane == nullptr)
+        return; /* the window is going */
     build_pane(app);
     build_file_menu(app);
 }
@@ -1435,6 +1437,29 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
     return FALSE;
 }
 
+/* The window closed: the Properties, Status and wizard dialogs over it go
+ * too, and the program ends once NetworkManager has answered what's
+ * still pending (maybe_quit), as with a dialog alone. Nothing may reach
+ * the window's widgets meanwhile: a change from NetworkManager only
+ * rebuilds the items. */
+static void on_window_destroy(GtkWidget *w, gpointer data) {
+    nc_app *app = data;
+    app->window = nullptr;
+    app->stack = app->groups = app->tree = app->pane = nullptr;
+    app->file_menu = app->tiles_item = app->details_item = nullptr;
+    app->store = nullptr;
+    /* Referenced: destroying one may take others with it. */
+    GList *all = gtk_window_list_toplevels();
+    for (GList *l = all; l != nullptr; l = l->next)
+        g_object_ref(l->data);
+    for (GList *l = all; l != nullptr; l = l->next) {
+        if (gtk_window_get_transient_for(l->data) == GTK_WINDOW(w))
+            gtk_widget_destroy(l->data);
+    }
+    g_list_free_full(all, g_object_unref);
+    maybe_quit(app);
+}
+
 static void build_window(nc_app *app) {
     GtkCssProvider *provider = gtk_css_provider_new();
     gtk_css_provider_load_from_data(provider, css, -1, nullptr);
@@ -1485,7 +1510,7 @@ static void build_window(nc_app *app) {
     gtk_stack_add_named(GTK_STACK(app->stack), tiles_sw, "tiles");
     gtk_stack_add_named(GTK_STACK(app->stack), make_list(app), "details");
     gtk_box_pack_start(GTK_BOX(body), app->stack, TRUE, TRUE, 0);
-    g_signal_connect(app->window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    g_signal_connect(app->window, "destroy", G_CALLBACK(on_window_destroy), app);
 }
 
 /* The item for IFACE (an interface or connection name), or the primary
