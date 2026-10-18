@@ -6,7 +6,8 @@
  *                     Customize... changes them (customize.c), compiled
  *                     into a locale of the user's own with localedef
  *   Languages         Details... opens the Keyboard applet's input
- *                     languages (only if xd-keyboard is installed)
+ *                     languages and text services (only if xd-keyboard
+ *                     is installed)
  *   Advanced          the system locale and the keyboard of the logon
  *                     screen and text consoles, through systemd's localed
  *                     (org.freedesktop.locale1); changing them goes
@@ -252,9 +253,11 @@ static char *find_own(const char *program) {
     return g_find_program_in_path(program);
 }
 
+/* XP's Text Services and Input Languages: Keyboard Properties' Input
+ * Languages tab, beside its Text Services. */
 static void on_details(GtkButton *b, [[maybe_unused]] gpointer data) {
     char *exe = find_own("xd-keyboard");
-    const char *argv[] = {exe, nullptr};
+    const char *argv[] = {exe, "--page", "1", nullptr};
     GError *error = nullptr;
     if (exe == nullptr || !g_spawn_async(nullptr, (char **)(uintptr_t)argv, nullptr,
                                          G_SPAWN_DEFAULT, nullptr, nullptr, nullptr, &error)) {

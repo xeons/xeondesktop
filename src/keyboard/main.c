@@ -7,10 +7,14 @@
  *                    blink rate
  *   Input Languages  up to four XKB layouts and variants, the keys that
  *                    switch between them, other XKB options
+ *   Text Services    the input method framework (Fcitx 5, IBus) the
+ *                    compositor starts, the Compose key, emoji
  *   Hardware         the keyboard model, the keyboards udev knows
  *
  * The lists of layouts, variants, options and models come from
  * xkeyboard-config through libxkbregistry.
+ *
+ *   xd-keyboard [--page N]   the Nth tab shown, from 0 (Speed)
  */
 #include <math.h>
 #include <stdlib.h>
@@ -21,6 +25,7 @@
 #include "../core/common.h"
 #include "../cpl/inputdevs.h"
 #include "../gtkapp/gtkapp.h"
+#include "../settings/inputmethod.h"
 #include "../settings/settings.h"
 #include "layouts.h"
 
@@ -43,6 +48,9 @@ typedef struct props {
     /* Input Languages */
     GtkListStore *layouts;
     GtkWidget *layout_view, *add, *remove, *up, *down, *switch_keys, *options_label;
+    /* Text Services */
+    GtkWidget *im_combo, *im_settings, *compose, *emoji_note, *emoji;
+    bool im_touched; /* the framework was chosen: its autostart entries follow */
     /* Hardware */
     GtkWidget *model;
 } props;
@@ -474,6 +482,8 @@ static void on_option_toggled([[maybe_unused]] GtkCellRendererToggle *r, char *p
     gtk_tree_store_set(store, &it, OPT_ACTIVE, !active, -1);
 }
 
+static void show_compose(props *p);
+
 static void on_options([[maybe_unused]] GtkButton *b, gpointer data) {
     props *p = data;
     GtkTreeStore *store = gtk_tree_store_new(OPT_COLS, G_TYPE_STRING, G_TYPE_STRING,
@@ -554,6 +564,7 @@ static void on_options([[maybe_unused]] GtkButton *b, gpointer data) {
         }
         g_free(opts);
         show_options_count(p);
+        show_compose(p);
     }
     gtk_widget_destroy(dlg);
     g_object_unref(store);
@@ -662,6 +673,180 @@ static GtkWidget *languages_page(props *p) {
     return page;
 }
 
+/* ---- Text Services ------------------------------------------------------------ */
+
+/* Runs a program of the input method's; tells the user if it can't. */
+static void run_tool(props *p, const char *const *argv) {
+    GError *error = nullptr;
+    if (!g_spawn_async(nullptr, (char **)(uintptr_t)argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
+                       nullptr, nullptr, &error)) {
+        xd_message_box(GTK_WINDOW(p->window), "Keyboard Properties", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       error->message);
+        g_error_free(error);
+    }
+}
+
+static xd_im_framework chosen_im(props *p) {
+    return xd_im_from_name(p->kb.input_method);
+}
+
+static bool on_path(const char *program) {
+    char *path = program != nullptr ? g_find_program_in_path(program) : nullptr;
+    bool found = path != nullptr;
+    g_free(path);
+    return found;
+}
+
+/* The buttons and the emoji note follow the framework chosen. */
+static void show_im(props *p) {
+    xd_im_framework fw = chosen_im(p);
+    gtk_widget_set_sensitive(p->im_settings, on_path(xd_im_config_tool(fw)));
+    const char *hint = xd_im_emoji_hint(fw);
+    gtk_label_set_text(GTK_LABEL(p->emoji_note),
+                       hint != nullptr ? hint
+                                       : "With an input method, you can type emoji and other "
+                                         "characters by name.");
+    /* IBus has an emoji picker of its own, as a program. */
+    gtk_widget_set_visible(p->emoji, fw == XD_IM_IBUS && xd_im_installed(fw));
+}
+
+static void on_im(GtkComboBox *c, gpointer data) {
+    props *p = data;
+    const char *id = gtk_combo_box_get_active_id(c);
+    g_strlcpy(p->kb.input_method, id != nullptr ? id : "", sizeof(p->kb.input_method));
+    p->im_touched = true;
+    show_im(p);
+    changed(p);
+}
+
+static void on_im_settings([[maybe_unused]] GtkButton *b, gpointer data) {
+    props *p = data;
+    const char *argv[] = {xd_im_config_tool(chosen_im(p)), nullptr};
+    if (argv[0] != nullptr)
+        run_tool(p, argv);
+}
+
+static void on_emoji([[maybe_unused]] GtkButton *b, gpointer data) {
+    const char *argv[] = {"ibus", "emoji", nullptr};
+    run_tool(data, argv);
+}
+
+/* The Compose key choice shows the first compose: option set. */
+static void show_compose(props *p) {
+    char *compose = xd_kbd_option_in_group(p->kb.options, "compose");
+    bool was = p->updating;
+    p->updating = true;
+    if (compose != nullptr && !gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->compose), compose)) {
+        /* Not one xkeyboard-config lists: keep it. */
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->compose), compose, compose);
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->compose), compose);
+    } else if (compose == nullptr) {
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->compose), "");
+    }
+    p->updating = was;
+    g_free(compose);
+}
+
+static void on_compose(GtkComboBox *c, gpointer data) {
+    props *p = data;
+    if (p->updating)
+        return;
+    const char *id = gtk_combo_box_get_active_id(c);
+    char *opts = xd_kbd_options_clear_group(p->kb.options, "compose");
+    char *with = id != nullptr && id[0] != '\0' ? xd_kbd_option_set(opts, id, true) : g_strdup(opts);
+    if (strlen(with) < sizeof(p->kb.options))
+        g_strlcpy(p->kb.options, with, sizeof(p->kb.options));
+    g_free(opts);
+    g_free(with);
+    show_options_count(p);
+    changed(p);
+}
+
+static GtkWidget *labelled_row(const char *mnemonic, GtkWidget *widget) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *label = gtk_label_new_with_mnemonic(mnemonic);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), widget);
+    gtk_widget_set_size_request(label, 110, -1);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), widget, TRUE, TRUE, 0);
+    return row;
+}
+
+static GtkWidget *text_services_page(props *p) {
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 10);
+
+    /* The input method framework: the installed ones, and the chosen one
+     * even if it has gone. */
+    GtkWidget *im = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_pack_start(GTK_BOX(im),
+                       wrapped("An input method lets you type languages that have more "
+                               "characters than the keyboard has keys, such as Chinese, "
+                               "Japanese and Korean. It starts when you log on."),
+                       FALSE, FALSE, 0);
+    p->im_combo = gtk_combo_box_text_new();
+    xd_im_framework current = chosen_im(p);
+    bool any = false;
+    for (int i = 0; i < XD_IM_COUNT; i++) {
+        xd_im_framework fw = (xd_im_framework)i;
+        bool installed = xd_im_installed(fw);
+        any = any || (installed && fw != XD_IM_NONE);
+        if (installed || fw == current) {
+            char *text = installed ? g_strdup(xd_im_display_name(fw))
+                                   : g_strdup_printf("%s (not installed)", xd_im_display_name(fw));
+            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->im_combo), xd_im_name(fw), text);
+            g_free(text);
+        }
+    }
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->im_combo), xd_im_name(current));
+    g_signal_connect(p->im_combo, "changed", G_CALLBACK(on_im), p);
+    GtkWidget *im_row = labelled_row("Input _method:", p->im_combo);
+    p->im_settings = button("_Properties...", G_CALLBACK(on_im_settings), p);
+    gtk_box_pack_start(GTK_BOX(im_row), p->im_settings, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(im), im_row, FALSE, FALSE, 0);
+    if (!any)
+        gtk_box_pack_start(GTK_BOX(im),
+                           wrapped("No input method is installed. Install Fcitx 5 or IBus to "
+                                   "choose one here."),
+                           FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Input method", im), FALSE, FALSE, 0);
+
+    /* The Compose key: an XKB option, kept with the others. */
+    GtkWidget *compose = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_box_pack_start(GTK_BOX(compose),
+                       wrapped("Press the Compose key and then two keys to type a character "
+                               "the keyboard doesn't have: Compose, ' and e types é."),
+                       FALSE, FALSE, 0);
+    p->compose = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->compose), "", "(None)");
+    for (struct rxkb_option_group *g = first_group(p); g != nullptr;
+         g = rxkb_option_group_next(g)) {
+        for (struct rxkb_option *o = rxkb_option_first(g); o != nullptr; o = rxkb_option_next(o)) {
+            if (g_str_has_prefix(rxkb_option_get_name(o), "compose:"))
+                gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->compose), rxkb_option_get_name(o),
+                                          rxkb_option_get_description(o));
+        }
+    }
+    show_compose(p);
+    g_signal_connect(p->compose, "changed", G_CALLBACK(on_compose), p);
+    gtk_box_pack_start(GTK_BOX(compose), labelled_row("_Compose key:", p->compose), FALSE, FALSE,
+                       0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Compose key", compose), FALSE, FALSE, 0);
+
+    /* Emoji: each framework's own way. */
+    GtkWidget *emoji = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    p->emoji_note = wrapped("");
+    gtk_box_pack_start(GTK_BOX(emoji), p->emoji_note, TRUE, TRUE, 0);
+    p->emoji = button("_Emoji...", G_CALLBACK(on_emoji), p);
+    gtk_widget_set_valign(p->emoji, GTK_ALIGN_START);
+    gtk_widget_set_no_show_all(p->emoji, TRUE);
+    gtk_box_pack_start(GTK_BOX(emoji), p->emoji, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Emoji and symbols", emoji), FALSE, FALSE, 0);
+    show_im(p);
+    return page;
+}
+
 /* ---- Hardware ------------------------------------------------------------------- */
 
 static void on_model(GtkComboBox *c, gpointer data) {
@@ -743,6 +928,15 @@ static bool apply(props *p) {
                        FALSE, "The settings could not be saved.");
         return false;
     }
+    /* The compositor starts the framework chosen; the frameworks' own
+     * autostart entries mustn't start it (or another) again. */
+    GError *error = nullptr;
+    if (p->im_touched && !xd_im_autostart_override_session(&error)) {
+        xd_message_box(GTK_WINDOW(p->window), "Keyboard Properties", XD_MB_WARNING, XD_MB_OK,
+                       FALSE, error->message);
+        g_error_free(error);
+    }
+    p->im_touched = false;
     gtk_widget_set_sensitive(p->apply, FALSE);
     return true;
 }
@@ -759,6 +953,11 @@ static void on_response(GtkDialog *d, int response, gpointer data) {
 }
 
 int main(int argc, char **argv) {
+    int page = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--page") == 0 && i + 1 < argc)
+            page = atoi(argv[++i]);
+    }
     xd_gtk_app_preinit("org.xeondesktop.Keyboard");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
@@ -789,6 +988,8 @@ int main(int argc, char **argv) {
                              gtk_label_new_with_mnemonic("_Speed"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), languages_page(&p),
                              gtk_label_new_with_mnemonic("_Input Languages"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), text_services_page(&p),
+                             gtk_label_new_with_mnemonic("_Text Services"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), hardware_page(&p),
                              gtk_label_new_with_mnemonic("_Hardware"));
     p.updating = false;
@@ -800,6 +1001,7 @@ int main(int argc, char **argv) {
     g_signal_connect(p.window, "response", G_CALLBACK(on_response), &p);
     g_signal_connect(p.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
     gtk_widget_show_all(p.window);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), page);
     gtk_main();
     stop_repeat(&p);
     if (p.caret_timer != 0)

@@ -3986,6 +3986,65 @@ def input_method_relay(s):
            "the candidate window to hide")  # fmt: skip
 
 
+def fake_frameworks(s):
+    """Fcitx 5 "installed": fcitx5 and fcitx5-configtool stand-ins on PATH
+    that say they ran, and its autostart entry in the system's."""
+    bin_dir = os.path.join(s.base, "bin")
+    os.makedirs(bin_dir)
+    for name in ("fcitx5", "fcitx5-configtool"):
+        path = os.path.join(bin_dir, name)
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n"
+                    f'env > "{s.base}/{name}.ran"\n'
+                    'exec sleep 600\n')  # fmt: skip
+        os.chmod(path, 0o755)
+    os.environ["PATH"] = bin_dir + os.pathsep + os.environ["PATH"]
+    etc = os.path.join(s.base, "etc-xdg")
+    os.makedirs(os.path.join(etc, "autostart"))
+    with open(os.path.join(etc, "autostart", "org.fcitx.Fcitx5.desktop"), "w") as f:
+        f.write("[Desktop Entry]\nType=Application\nName=Fcitx 5\nExec=fcitx5\n")
+    os.environ["XDG_CONFIG_DIRS"] = etc
+
+
+@scenario(setup=fake_frameworks)
+def keyboard_text_services(s):
+    """Keyboard Properties' Text Services tab: the installed input method
+    is chosen, its Properties... opens its own configuration tool, a Compose
+    key is picked; OK saves both, the compositor starts the input method
+    with XMODIFIERS for X11 programs, and its own autostart entry no longer
+    starts it in XeonDesktop."""
+    s.launch(s.tool("xd-keyboard"), "--page", "2", env={"GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="Keyboard Properties", state="activated")
+    s.settle("text services")
+    # Input method: (None) -> Fcitx 5, then its Properties...
+    s.inject("key", "alt+m", "sleep", 200, "key", "Down", "sleep", 300, "key", "alt+p")
+    ran = os.path.join(s.base, "fcitx5-configtool.ran")
+    s.wait(lambda: os.path.exists(ran), "Properties... to run fcitx5-configtool")
+    s.log("ok: Properties... ran fcitx5-configtool")
+    # Compose key: (None) -> the first one xkeyboard-config lists.
+    s.wait_window(title="Keyboard Properties", state="activated")
+    s.inject("key", "alt+c", "sleep", 200, "key", "Down", "sleep", 300)
+    s.settle("chosen")
+    s.inject("key", "alt+a")  # Apply
+    s.wait(lambda: s.ini().get("Keyboard", "InputMethod", fallback="") == "fcitx5",
+           "InputMethod=fcitx5")  # fmt: skip
+    s.log("ok: InputMethod=fcitx5 saved")
+    s.check(s.ini()["Keyboard"].get("Options", "").startswith("compose:"),
+            f"a Compose key saved ({s.ini()['Keyboard'].get('Options')!r})")  # fmt: skip
+    started = os.path.join(s.base, "fcitx5.ran")
+    s.wait(lambda: os.path.exists(started), "the compositor to start fcitx5")
+    with open(started) as f:
+        env = f.read().splitlines()
+    s.check("XMODIFIERS=@im=fcitx" in env and not any(l.startswith("GTK_IM_MODULE=") for l in env),
+            "it runs with XMODIFIERS=@im=fcitx, without GTK_IM_MODULE")  # fmt: skip
+    entry = os.path.join(os.environ["XDG_CONFIG_HOME"], "autostart", "org.fcitx.Fcitx5.desktop")
+    s.wait(lambda: os.path.exists(entry), "Fcitx 5's autostart entry to be overridden")
+    with open(entry) as f:
+        text = f.read()
+    s.check("NotShowIn=XeonDesktop;" in text and "Exec=fcitx5" in text,
+            "its autostart entry is kept for other desktops, not XeonDesktop")  # fmt: skip
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

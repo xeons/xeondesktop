@@ -3,6 +3,8 @@
 xd\-keyboard \- Keyboard Properties
 .SH SYNOPSIS
 .SY xd\-keyboard
+.RB [ \-\-page
+.IR N ]
 .YS
 .SH DESCRIPTION
 .B xd\-keyboard
@@ -17,6 +19,24 @@ rate.
 Up to four XKB layouts and variants, the keys that switch between them,
 and other XKB options.
 .TP
+.B Text Services
+The input method framework (None, Fcitx 5 or IBus; those installed), which
+.BR xd\-compositor (1)
+starts when you log on, and Properties... for its own settings
+.RB ( fcitx5\-configtool ", " ibus\-setup ),
+where its languages and engines are chosen.
+The Compose key (an XKB
+.B compose:
+option).
+How to type emoji with the framework chosen; Emoji... opens IBus's
+emoji picker
+.RB ( "ibus emoji" ).
+Choosing a framework also keeps the frameworks' own autostart entries from
+starting one in XeonDesktop: a copy in
+.I $XDG_CONFIG_HOME/autostart
+adds XeonDesktop to their
+.BR NotShowIn .
+.TP
 .B Hardware
 The keyboard model, and the keyboards udev knows.
 .PP
@@ -30,6 +50,10 @@ applies them to every keyboard at once.
 With more than one layout,
 .BR xd\-shell (1)
 shows XP's Language bar.
+.SH OPTIONS
+.TP
+.BI \-\-page " N"
+Open the Nth tab, from 0 (Speed).
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
@@ -39,9 +63,12 @@ shows XP's Language bar.
 .BR Options " (e.g. " grp:alt_shift_toggle ),
 .BR Model ,
 .B RepeatDelay
-(milliseconds, default 500) and
+(milliseconds, default 500),
 .B RepeatRate
-(per second, default 30).
+(per second, default 30) and
+.B InputMethod
+.RB ( fcitx5 ", " ibus ;
+empty for none).
 Empty names fall back to the
 .B XKB_DEFAULT_*
 environment variables.
