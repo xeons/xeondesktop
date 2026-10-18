@@ -500,10 +500,17 @@ static void handle_attention(void *data, [[maybe_unused]] struct xd_window_arran
     xd_toplevel_attention(data, toplevel);
 }
 
+static void handle_keyboard_layout(void *data,
+                                   [[maybe_unused]] struct xd_window_arranger_v1 *arranger,
+                                   uint32_t index) {
+    xd_langbar_set_active(data, index);
+}
+
 static const struct xd_window_arranger_v1_listener arranger_listener = {
     .start_menu = handle_start_menu,
     .window_menu = handle_window_menu,
     .attention = handle_attention,
+    .keyboard_layout = handle_keyboard_layout,
 };
 
 void xd_taskmenu_bind(xd_shell *shell) {

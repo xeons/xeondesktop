@@ -54,6 +54,9 @@ typedef struct inject {
 
     struct xkb_context *xkb;
     struct xkb_keymap *keymap;
+    /* Follows our own keys, for the layout (group) the switching keys
+     * select when the keymap has several ([Keyboard] Layout=us,de). */
+    struct xkb_state *state;
     key_entry *keys;
     size_t key_count;
     uint32_t mod_shift, mod_ctrl, mod_alt, mod_super;
@@ -165,6 +168,9 @@ static bool setup_keyboard(inject *in) {
                      : nullptr;
     if (in->keymap == nullptr)
         return false;
+    in->state = xkb_state_new(in->keymap);
+    if (in->state == nullptr)
+        return false;
 
     /* Send the keymap so the compositor interprets our keycodes as we do. */
     char *text = xkb_keymap_get_as_string(in->keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
@@ -222,10 +228,13 @@ static void send_key(inject *in, xkb_keycode_t code, bool pressed) {
     zwp_virtual_keyboard_v1_key(in->keyboard, now_ms(), code - 8,
                                 pressed ? WL_KEYBOARD_KEY_STATE_PRESSED
                                         : WL_KEYBOARD_KEY_STATE_RELEASED);
+    xkb_state_update_key(in->state, code, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
 }
 
 static void send_mods(inject *in, uint32_t depressed) {
-    zwp_virtual_keyboard_v1_modifiers(in->keyboard, depressed, 0, 0, 0);
+    zwp_virtual_keyboard_v1_modifiers(
+        in->keyboard, depressed, 0, 0,
+        xkb_state_serialize_layout(in->state, XKB_STATE_LAYOUT_LOCKED));
 }
 
 /* Presses a key with modifiers held, then releases everything. */
@@ -515,6 +524,7 @@ int main(int argc, char **argv) {
     zwp_virtual_keyboard_v1_destroy(in.keyboard);
     wl_display_roundtrip(in.display);
     xd_free(in.keys);
+    xkb_state_unref(in.state);
     xkb_keymap_unref(in.keymap);
     xkb_context_unref(in.xkb);
     wl_display_disconnect(in.display);

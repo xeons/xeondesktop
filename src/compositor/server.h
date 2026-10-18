@@ -209,9 +209,11 @@ typedef struct xd_keyboard {
     xd_server *server;
     struct wlr_keyboard *wlr_keyboard;
     struct wl_listener modifiers;
+    struct wl_listener keymap;
     struct wl_listener key;
     struct wl_listener destroy;
     bool physical; /* gets [Keyboard]'s keymap (virtual keyboards bring their own) */
+    bool resend_layout; /* a new keymap: the focused client needs the layout again */
     /* StickyKeys ([Accessibility]), as xkb modifier masks. */
     uint32_t sticky_alone;   /* a modifier is down with no other key yet */
     uint32_t sticky_latched; /* applies to the next key */
@@ -342,6 +344,11 @@ struct xd_server {
 
     struct wlr_seat *seat;
     struct wl_list keyboards;
+    /* The active keyboard layout (XKB group), the same on every keyboard
+     * for the whole session; the shell's language indicator shows it. */
+    uint32_t kb_group;
+    uint32_t kb_layouts;   /* in [Keyboard]'s keymap; 0: not counted yet */
+    bool kb_group_syncing; /* setting it on the keyboards: their events are ours */
     struct wl_list pointers; /* xd_pointer */
     struct wl_listener new_input;
     struct wl_listener request_cursor;
@@ -447,6 +454,9 @@ void xd_input_apply_mouse(xd_server *server);
 void xd_input_apply_cursor_theme(xd_server *server);
 /* config.access changed: drops StickyKeys' latched and locked modifiers. */
 void xd_input_apply_access(xd_server *server);
+/* Makes layout `group` the active one on every keyboard (the language
+ * indicator); ignored past the keymap's layouts. */
+void xd_input_set_keyboard_layout(xd_server *server, uint32_t group);
 /* Lets clients inject keyboard/pointer input. Testing only. */
 void xd_input_enable_virtual(xd_server *server);
 void xd_cursor_set(xd_server *server, const char *name);
@@ -581,6 +591,8 @@ void xd_view_begin_keyboard_size(xd_view *view);
 void xd_window_menu_show(xd_view *view, double lx, double ly);
 /* arrange.c: asks the shell to open (or close) the Start menu. */
 void xd_start_menu_toggle(xd_server *server);
+/* arrange.c: tells the shell the active keyboard layout (kb_group). */
+void xd_arrange_keyboard_layout(xd_server *server);
 /* arrange.c: asks the shell to flash the window's taskbar button. */
 void xd_view_attention(xd_view *view);
 /* Where the window menu opens from the keyboard or the caption icon:

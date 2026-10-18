@@ -761,14 +761,21 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
         int y = layout_quick_launch(bar, t, cr, c.x, c.y + row_h + xd_tpx(t, 4), row_h, c.w);
         layout_tray(bar, t, cr, c, 1, row_h);
         int top = y + xd_tpx(t, 2);
-        layout_tasks(bar, t, cr,
-                     (xd_rect){c.x, top, c.w, bar->tray_rect.y - xd_tpx(t, 4) - top}, 1, row_h);
+        /* The language indicator sits above the notification area. */
+        xd_rect left = xd_langbar_layout(bar, t, cr,
+                                         (xd_rect){c.x, top, c.w, bar->tray_rect.y - top}, true,
+                                         row_h);
+        layout_tasks(bar, t, cr, (xd_rect){c.x, top, c.w, left.y + left.h - xd_tpx(t, 4) - top},
+                     1, row_h);
         return;
     }
     int x = layout_quick_launch(bar, t, cr, c.x + sw + gap, c.y, row_h, 0);
     layout_tray(bar, t, cr, c, rows, row_h);
     int x0 = x + xd_tpx(t, 4);
-    int x1 = bar->tray_rect.x - xd_tpx(t, 6);
+    /* The language indicator sits left of the notification area. */
+    xd_rect left = xd_langbar_layout(bar, t, cr, (xd_rect){x0, c.y, bar->tray_rect.x - x0, c.h},
+                                     false, row_h);
+    int x1 = left.x + left.w - xd_tpx(t, 6);
     layout_tasks(bar, t, cr, (xd_rect){x0, c.y, x1 - x0, c.h}, rows, row_h);
 }
 
@@ -887,6 +894,8 @@ static int hit_test(const xd_taskbar *bar, double lx, double ly) {
         if (rect_contains(bar->tray_rects[i], x, y))
             return XD_HIT_TRAY_ICON - (int)i;
     }
+    if (rect_contains(bar->lang_rect, x, y))
+        return XD_HIT_LANG;
     if (rect_contains(bar->tray_chevron, x, y))
         return XD_HIT_TRAY_CHEVRON;
     if (rect_contains(bar->tray_rect, x, y))
@@ -1099,6 +1108,10 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
         return xd_str_dup_cstr(XD_STR("Click here to begin"));
     if (hit == XD_HIT_PEEK)
         return xd_str_dup_cstr(XD_STR("Show desktop"));
+    if (hit == XD_HIT_LANG) {
+        const char *name = xd_langbar_tooltip(shell);
+        return name != nullptr ? xd_str_dup_cstr(xd_str_from_cstr(name)) : nullptr;
+    }
     if (hit == XD_HIT_TRAY) {
         time_t now = time(nullptr);
         struct tm tm;
@@ -1321,6 +1334,14 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
                          : button == BTN_MIDDLE ? XD_TRAY_BUTTON_MIDDLE
                                                 : XD_TRAY_BUTTON_LEFT;
         xd_tray_item_click(bar->shell, item, which, bar, anchor, serial);
+        return;
+    }
+    if (bar->hot == XD_HIT_LANG) {
+        /* The language indicator's menus open on release. */
+        bar->pressed = pressed ? XD_HIT_LANG : XD_HIT_NONE;
+        bar->dirty = true;
+        if (!pressed)
+            xd_langbar_click(bar, button, serial);
         return;
     }
     if (button == BTN_RIGHT) {

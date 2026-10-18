@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Cascade and tile windows for the taskbar menu, and the window menu's
- * keyboard Move and Size (xd-window-arranger-v1, a private protocol only
- * the shell we started can see).
+ * keyboard Move and Size, and the language indicator's keyboard layout
+ * (xd-window-arranger-v1, a private protocol only the shell we started
+ * can see).
  */
 #include <limits.h>
 #include <math.h>
@@ -207,6 +208,12 @@ static void handle_peek(struct wl_client *client, struct wl_resource *res, uint3
     xd_view_peek(server_of(res), on != 0);
 }
 
+static void handle_set_keyboard_layout(struct wl_client *client, struct wl_resource *res,
+                                       uint32_t index) {
+    (void)client;
+    xd_input_set_keyboard_layout(server_of(res), index);
+}
+
 static void handle_arrange_marked(struct wl_client *client, struct wl_resource *res,
                                   uint32_t mode) {
     (void)client;
@@ -325,6 +332,13 @@ void xd_window_menu_show(xd_view *view, double lx, double ly) {
                                            wl_display_next_serial(server->display));
 }
 
+void xd_arrange_keyboard_layout(xd_server *server) {
+    struct wl_resource *res = server->arranger_resource;
+    if (res != nullptr &&
+        wl_resource_get_version(res) >= XD_WINDOW_ARRANGER_V1_KEYBOARD_LAYOUT_SINCE_VERSION)
+        xd_window_arranger_v1_send_keyboard_layout(res, server->kb_group);
+}
+
 void xd_view_attention(xd_view *view) {
     struct wl_resource *res = view->server->arranger_resource;
     if (res == nullptr || view->ftl == nullptr ||
@@ -352,6 +366,7 @@ static const struct xd_window_arranger_v1_interface arranger_impl = {
     .arrange_marked = handle_arrange_marked,
     .set_always_on_top = handle_set_always_on_top,
     .peek = handle_peek,
+    .set_keyboard_layout = handle_set_keyboard_layout,
 };
 
 static void bind_arranger(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
@@ -375,8 +390,10 @@ static void bind_arranger(struct wl_client *client, void *data, uint32_t version
     /* Events (Start menu, window menu, attention) go to the shell. */
     pid_t pid = 0;
     wl_client_get_credentials(client, &pid, nullptr, nullptr);
-    if (server->shell_pid > 0 && pid == server->shell_pid)
+    if (server->shell_pid > 0 && pid == server->shell_pid) {
         server->arranger_resource = res;
+        xd_arrange_keyboard_layout(server); /* the language indicator's start */
+    }
 }
 
 /* Whether `pid` runs our Task Manager: the xd-taskmgr installed beside
@@ -414,7 +431,7 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 6,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 7,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

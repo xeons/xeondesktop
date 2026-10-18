@@ -9,10 +9,11 @@
     Windows menu's Tile and Cascade). The shell uses it for the taskbar
     menu's
     Cascade Windows, Tile Windows Horizontally/Vertically and their Undo,
-    and for the window menu's Move and Size.
+    for the window menu's Move and Size, and for the language indicator
+    (the keyboard layout).
   </description>
 
-  <interface name="xd_window_arranger_v1" version="6">
+  <interface name="xd_window_arranger_v1" version="7">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -126,5 +127,25 @@
       </description>
       <arg name="on" type="uint"/>
     </request>
+
+    <request name="set_keyboard_layout" since="7">
+      <description summary="switch the keyboard layout">
+        The taskbar's language indicator: makes layout `index` (the XKB
+        group, counted from 0 in [Keyboard] Layout's order) the active one
+        on every keyboard, at once and for this session only, as the
+        layout switching keys do. An index past the keymap's layouts is
+        ignored.
+      </description>
+      <arg name="index" type="uint"/>
+    </request>
+
+    <event name="keyboard_layout" since="7">
+      <description summary="the active keyboard layout">
+        Sent to the shell when it binds and whenever the active layout
+        changes: by the switching keys, set_keyboard_layout, or a new
+        keymap. index is the XKB group, counted from 0.
+      </description>
+      <arg name="index" type="uint"/>
+    </event>
   </interface>
 </protocol>

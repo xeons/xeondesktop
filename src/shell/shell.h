@@ -27,6 +27,7 @@ typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
 typedef struct xd_sleep xd_sleep;
 typedef struct xd_primary xd_primary;
+typedef struct xd_langbar xd_langbar;
 typedef struct xd_account xd_account;
 typedef struct xd_shellbus xd_shellbus;
 typedef struct xd_superbar xd_superbar;
@@ -101,6 +102,7 @@ enum {
     XD_HIT_QUICK_BAND = -6, /* Quick Launch, between or around its buttons */
     XD_HIT_TRAY_CHEVRON = -7, /* shows or folds inactive notification icons */
     XD_HIT_PEEK = -8,         /* Aero: Show desktop, at the far end (hover peeks) */
+    XD_HIT_LANG = -9,         /* the language indicator (langbar.c) */
     XD_HIT_QUICK = -100,     /* Quick Launch button i: XD_HIT_QUICK - i */
     XD_HIT_TRAY_ICON = -1000, /* notification area icon i: XD_HIT_TRAY_ICON - i */
 };
@@ -140,6 +142,7 @@ typedef struct xd_taskbar {
     unsigned int peek_timer; /* GLib source id */
     bool peeking;
     xd_rect tray_rect;
+    xd_rect lang_rect; /* the language indicator; empty when not shown */
     size_t quick_count;
     xd_rect quick_band; /* the whole Quick Launch toolbar, grips included */
     size_t quick_cap;
@@ -306,6 +309,7 @@ struct xd_shell {
     size_t desktop_hidden_n, desktop_hidden_cap;
 
     xd_primary *primary; /* which monitor is the primary one (primary.c) */
+    xd_langbar *langbar; /* the keyboard layout indicator (langbar.c) */
 
     /* Outputs announced before startup finished binding globals. */
     bool started;
@@ -505,6 +509,21 @@ void xd_primary_bind(xd_shell *shell, struct wl_registry *reg, uint32_t name, ui
 void xd_primary_track(xd_shell *shell, struct wl_output *output);
 void xd_primary_forget(xd_shell *shell, struct wl_output *output);
 void xd_primary_finish(xd_shell *shell);
+/* langbar.c: XP's Language bar minimized into the taskbar ("EN"), shown
+ * with more than one [Keyboard] Layout. The compositor tells the active
+ * layout (xd-window-arranger-v1's keyboard_layout); choosing one from its
+ * menu switches through the compositor. */
+void xd_langbar_set_active(xd_shell *shell, uint32_t index);
+/* Lays it out at the end of `room` (device px: a row's right end, or the
+ * bottom of a side taskbar's column), draws it and sets bar->lang_rect;
+ * returns the room left before it. */
+xd_rect xd_langbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect room,
+                          bool side, int row_h);
+/* A click on it (on release): the layouts' menu, or its own menu. */
+void xd_langbar_click(xd_taskbar *bar, uint32_t button, uint32_t serial);
+/* Its tooltip: the active layout's name, or nullptr. */
+const char *xd_langbar_tooltip(xd_shell *shell);
+void xd_langbar_finish(xd_shell *shell);
 /* sleep.c: standby and hibernate through logind, and locking the screen
  * before sleeping ([Power] PasswordOnResume). */
 void xd_sleep_init(xd_shell *shell);

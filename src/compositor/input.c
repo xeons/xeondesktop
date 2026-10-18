@@ -276,9 +276,76 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
     return false;
 }
 
+/* Puts every keyboard but `except` on layout `group` (those whose keymap
+ * has it), so the layout is the session's, not each device's. */
+static void sync_group(xd_server *server, uint32_t group, const xd_keyboard *except) {
+    server->kb_group_syncing = true;
+    XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
+        struct wlr_keyboard *k = kb->wlr_keyboard;
+        if (kb == except || k->keymap == nullptr || group >= xkb_keymap_num_layouts(k->keymap) ||
+            k->modifiers.group == group)
+            continue;
+        wlr_keyboard_notify_modifiers(k, k->modifiers.depressed, k->modifiers.latched,
+                                      k->modifiers.locked, group);
+    }
+    server->kb_group_syncing = false;
+}
+
+static uint32_t layouts_of(const struct wlr_keyboard *k) {
+    return k->keymap != nullptr ? xkb_keymap_num_layouts(k->keymap) : 0;
+}
+
+static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *k);
+
+/* How many layouts the session has: [Keyboard] Layout's (or a keyboard's
+ * own, if it brought more). */
+static uint32_t session_layouts(xd_server *server) {
+    if (server->kb_layouts == 0) {
+        struct xkb_keymap *keymap = configured_keymap(&server->config.keyboard);
+        server->kb_layouts = keymap != nullptr ? xkb_keymap_num_layouts(keymap) : 1;
+        xkb_keymap_unref(keymap);
+    }
+    uint32_t n = server->kb_layouts;
+    XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
+        n = XD_MAX(n, layouts_of(kb->wlr_keyboard));
+    }
+    return n;
+}
+
+/* Every keyboard that has it switches to `group`; the focused client and
+ * the shell hear of it. */
+static void switch_group(xd_server *server, uint32_t group, const xd_keyboard *except) {
+    sync_group(server, group, except);
+    struct wlr_keyboard *seat_kb = wlr_seat_get_keyboard(server->seat);
+    if (seat_kb != nullptr)
+        wlr_seat_keyboard_notify_modifiers(server->seat, &seat_kb->modifiers);
+    bool changed = group != server->kb_group;
+    if (changed)
+        wlr_log(WLR_DEBUG, "keyboard layout %u", group);
+    server->kb_group = group;
+    if (changed)
+        xd_arrange_keyboard_layout(server);
+}
+
+void xd_input_set_keyboard_layout(xd_server *server, uint32_t group) {
+    if (group < session_layouts(server))
+        switch_group(server, group, nullptr);
+}
+
+/* A keyboard came, or the keymap changed: everything takes the session's
+ * layout, or the first one if the keymap no longer has it. */
+static void adopt_group(xd_server *server) {
+    uint32_t group = server->kb_group < session_layouts(server) ? server->kb_group : 0;
+    server->kb_group = UINT32_MAX; /* tell the shell in any case */
+    switch_group(server, group, nullptr);
+}
+
 static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, modifiers);
     xd_server *server = kb->server;
+    /* Our own layout change on a keyboard not in use: nothing to tell. */
+    if (server->kb_group_syncing)
+        return;
     if (server->cycle_view != nullptr &&
         !(wlr_keyboard_get_modifiers(kb->wlr_keyboard) & WLR_MODIFIER_ALT))
         finish_cycle(server);
@@ -292,6 +359,13 @@ static void handle_modifiers(struct wl_listener *listener, [[maybe_unused]] void
      * rules): it still gets them. */
     if (server->seat->drag != nullptr)
         wlr_seat_keyboard_send_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
+    /* The switching keys ([Keyboard] Options' grp:, Left Alt+Shift in
+     * XP) changed the layout: the other keyboards follow. */
+    /* (A keyboard with one layout, such as a test's virtual one, has no
+     * say.) */
+    uint32_t group = kb->wlr_keyboard->modifiers.group;
+    if (layouts_of(kb->wlr_keyboard) > 1 && group != server->kb_group)
+        switch_group(server, group, kb);
 }
 
 /* ---- keyboard move and size (window menu) -------------------------------------- */
@@ -654,7 +728,13 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
             handled = handle_binding(server, mods, syms[i]) || handled;
     }
     if (!handled) {
-        wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
+        if (wlr_seat_get_keyboard(server->seat) != kb->wlr_keyboard || kb->resend_layout) {
+            wlr_seat_set_keyboard(server->seat, kb->wlr_keyboard);
+            /* The client starts a keymap it's sent afresh, on the first
+             * layout: tell it the session's, which this keyboard is on. */
+            wlr_seat_keyboard_notify_modifiers(server->seat, &kb->wlr_keyboard->modifiers);
+            kb->resend_layout = false;
+        }
         wlr_seat_keyboard_notify_key(server->seat, event->time_msec, event->keycode,
                                      event->state);
     }
@@ -662,10 +742,22 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
         sticky_update(kb, 0, kb->sticky_locked);
 }
 
+/* A keyboard's keymap arrived (a virtual keyboard sends its own) or
+ * changed: it's put on the session's layout, if it has it. Clients get
+ * the keymap after us (from the seat), so they hear of the layout with
+ * the next key. */
+static void handle_keymap(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, keymap);
+    if (!kb->server->kb_group_syncing)
+        sync_group(kb->server, kb->server->kb_group, nullptr);
+    kb->resend_layout = true;
+}
+
 static void handle_keyboard_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_keyboard *kb = XD_CONTAINER_OF(listener, xd_keyboard, destroy);
     xd_access_keyboard_gone(kb);
     xd_unlisten(&kb->modifiers);
+    xd_unlisten(&kb->keymap);
     xd_unlisten(&kb->key);
     xd_unlisten(&kb->destroy);
     wl_list_remove(&kb->link);
@@ -722,11 +814,13 @@ void xd_input_apply_keyboard(xd_server *server) {
     wlr_log(WLR_INFO, "keyboard settings: layout '%s', variant '%s', options '%s', model '%s', "
             "repeat %d/s after %d ms",
             k->layout, k->variant, k->options, k->model, k->repeat_rate, k->repeat_delay);
+    server->kb_layouts = keymap != nullptr ? xkb_keymap_num_layouts(keymap) : 1;
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
         if (kb->physical)
             configure_keyboard(server, kb->wlr_keyboard, keymap);
     }
     xkb_keymap_unref(keymap);
+    adopt_group(server);
 }
 
 static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
@@ -739,6 +833,7 @@ static void add_keyboard(xd_server *server, struct wlr_input_device *device) {
     configure_keyboard(server, wlr_kb, keymap);
     xkb_keymap_unref(keymap);
     register_keyboard(server, wlr_kb, device)->physical = true;
+    adopt_group(server);
 }
 
 static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
@@ -748,6 +843,7 @@ static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wl
     kb->wlr_keyboard = wlr_kb;
     XD_LISTEN(&wlr_kb->events.modifiers, kb, modifiers, handle_modifiers);
     XD_LISTEN(&wlr_kb->events.key, kb, key, handle_key);
+    XD_LISTEN(&wlr_kb->events.keymap, kb, keymap, handle_keymap);
     XD_LISTEN(&device->events.destroy, kb, destroy, handle_keyboard_destroy);
     wlr_seat_set_keyboard(server->seat, wlr_kb);
     wl_list_insert(&server->keyboards, &kb->link);
@@ -842,6 +938,7 @@ static void handle_new_virtual_keyboard(struct wl_listener *listener, void *data
      * held key (xd-inject's press) repeats as a real one would. */
     apply_repeat(server, &vk->keyboard);
     register_keyboard(server, &vk->keyboard, &vk->keyboard.base);
+    adopt_group(server);
     update_seat_caps(server);
     wlr_log(WLR_INFO, "virtual keyboard connected (testing)");
 }

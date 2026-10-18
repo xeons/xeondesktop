@@ -1612,6 +1612,85 @@ def lock_two_monitors(s):
     s.check(box[0] >= SECOND_X, f"Unlock Computer is on the second monitor too ({box})")
 
 
+LANG_INI = LUNA_INI + "\n[Keyboard]\nLayout=us,de\nOptions=grp:alt_shift_toggle\n"
+
+ENTRY_TEST = r"""
+import sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+w = Gtk.Window(title="Entry test")
+w.set_default_size(300, 100)
+e = Gtk.Entry()
+def changed(entry):
+    with open(sys.argv[1], "w") as f:
+        f.write(entry.get_text())
+e.connect("changed", changed)
+w.add(e)
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+Gtk.main()
+"""
+
+
+def inject_two_layouts(s, *steps):
+    """xd-inject with the session's two layouts and switching keys, so
+    Alt+Shift switches and typing follows the active layout."""
+    env = dict(os.environ, XKB_DEFAULT_LAYOUT="us,de", XKB_DEFAULT_OPTIONS="grp:alt_shift_toggle")
+    r = subprocess.run([s.tool("xd-inject"), *map(str, steps)], env=env,
+                       stderr=subprocess.PIPE, timeout=60)  # fmt: skip
+    if r.returncode != 0:
+        raise Failure("xd-inject: " + r.stderr.decode().strip())
+
+
+@scenario(LANG_INI)
+def language_indicator(s):
+    """With two keyboard layouts, the taskbar shows the language indicator
+    (EN); Alt+Shift switches the layout and it shows DE; its menu switches
+    back, and typing follows the layout chosen there (German: y and z
+    swapped)."""
+    desk = s.settle("desktop")
+    near_tray = (WIDTH - 300, HEIGHT - 30, 236, 30)  # up to the clock
+    inject_two_layouts(s, "hold", "alt", "key", "Shift_L", "release", "alt")
+    german, box = wait_change(s, desk, near_tray, "the indicator to change", "alt-shift")
+    s.check(box[2] < 40, f"Alt+Shift changed the indicator only ({box})")
+    s.inject("move", box[0] + box[2] // 2, box[1] + box[3] // 2, "click")
+    _, menu = wait_change(s, german, (WIDTH - 400, HEIGHT - 300, 400, 270), "the menu", "menu")
+    s.check(menu[1] + menu[3] <= HEIGHT - 28, f"its menu opened above the taskbar ({menu})")
+    # The first item: English.
+    s.inject("key", "Down", "key", "Return", "move", 500, 300)
+    s.wait(lambda: s.shot("english").changed_box(desk, near_tray) is None, "EN again")
+    s.log("ok: the menu switched back to English")
+
+    probe = subprocess.run(
+        [sys.executable, "-c", "import gi; gi.require_version('Gtk', '3.0')"],
+        stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        s.log("skipped typing: no GTK 3 introspection data for Python")
+        return
+    script = os.path.join(s.base, "entry.py")
+    typed = os.path.join(s.base, "typed")
+    with open(script, "w") as f:
+        f.write(ENTRY_TEST)
+    s.launch(sys.executable, script, typed, env={"GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="Entry test", state="activated")
+    s.inject("move", box[0] + box[2] // 2, box[1] + box[3] // 2, "click", "sleep", 500,
+             "key", "Down", "key", "Down", "key", "Return", "move", 500, 300)  # fmt: skip
+    s.wait(lambda: s.shot("german").changed_box(german, near_tray) is None, "DE again")
+    inject_two_layouts(s, "type", "yz")
+
+    def text():
+        try:
+            with open(typed) as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    s.wait(lambda: len(text()) == 2, "the typing")
+    s.check(text() == "zy", f"typed with the German layout ({text()!r})")
+
+
 def mock_polkitd(s):
     """Before the compositor starts: a private system bus with dbusmock's
     polkitd, for the session's agent to register with."""

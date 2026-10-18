@@ -893,10 +893,12 @@ executable(
   'src/shell/shellbus.c',
   'src/shell/session.c',
   'src/shell/primary.c',
+  'src/shell/langbar.c',
   'src/settings/soundplay.c',
   'src/settings/themes.c',
   link_with: rename_lib,
-  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep, udev_dep],
+  dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep, udev_dep,
+                 xkbregistry_dep, json_glib_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
