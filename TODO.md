@@ -518,8 +518,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Dialogs and libxdui
 
-- [ ] No input method (text-input-v3) support, no accessibility (AT-SPI),
-      no drag and drop in libxdui (radio buttons and tooltips exist, unused
+- [ ] libxdui's own text boxes (Run...) don't use text-input-v3 yet (the
+      compositor relays it for GTK and Qt programs: see Linux settings), no
+      accessibility (AT-SPI), no drag and drop in libxdui (radio buttons and tooltips exist, unused
       so far). libxdui windows can't be owned by another (Monitor Settings
       gets its own taskbar button). The slider (trackbar) is drawn
       Classic-style in every theme. A scroll-thumb drag stops when the
@@ -913,6 +914,43 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (nested, the host desktop's agent owns the session, so ours exits).
       Restarted if it crashes (5 times in 30 s). Its error line ("The password is
       incorrect") isn't coloured.
+
+## Linux settings
+
+Applets for what Linux users set, beyond Windows'. All tested headless
+against mocks or scratch directories; none yet against the real services.
+
+- [~] Input methods: the compositor relays text-input-v3 to
+      input-method-v2 (Fcitx 5 or IBus, started from Keyboard Properties'
+      Text Services); tested with a stand-in IME and GTK3. Untested with a
+      real Fcitx 5 or IBus.
+- [~] Flatpak (`xd-flatpak`): per-app permissions as `flatpak override
+      --user` files (checked against a real flatpak with a scratch app) and
+      remotes. Untested: a system remote's change through flatpak's helper.
+- [~] Automatic Updates (`xd-wuaucpl`): PackageKit, Flatpak and fwupd
+      updates, the Host Security ID, the shell's scheduled check and XP's
+      balloon. Untested against a real PackageKit transaction and a real
+      fwupd (its flag bits and enums were written from memory).
+- [~] System Configuration Utility (`xd-msconfig`): autostart entries and
+      user services. Untested against a real user manager.
+- [~] Dedicated graphics (switcheroo-control): "Run with dedicated graphics
+      card" and per-program defaults. Untested on a real hybrid laptop.
+- [~] Night light (compositor gamma ramp; GeoClue or typed location) and
+      Color Management (`xd-color`, colord, vcgt calibration via lcms2).
+      Untested: a real DRM gamma ramp (headless outputs have none), real
+      colord and GeoClue. lcms2 reads the user's chosen ICC file inside the
+      compositor; a malformed profile is a robustness risk to review.
+- [~] Encrypted (LUKS) drives in My Computer and Disk Management: unlock,
+      lock, change passphrase, remembered passphrases (gvfs's schema),
+      crypttab at startup, encrypted formats. Untested on a real disk.
+- [~] Passwords and Keys (`xd-keys`): Secret Service items, SSH keys and
+      ssh-agent, GnuPG keys. Untested with a real gnome-keyring.
+- [~] Privacy (`xd-privacy`): recent documents, the shell's old-file
+      housekeeping, location, portal permissions. No GeoClue agent in the
+      shell yet; untested with a real permission store and GeoClue.
+- [~] Network drives and sharing in xd-files: Map Network Drive with
+      reconnect at logon, My Network Places, Samba user shares. Untested
+      with a real SMB/NFS server (needs gvfs-smb/gvfs-nfs).
 
 ## Testing
 
