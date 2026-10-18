@@ -1563,6 +1563,97 @@ def disk_management_menu(s):
         DBusTestCase.tearDownClass()
 
 
+@scenario(requires=("dbusmock",))
+def drive_rename_tools_cleanup(s):
+    """My Computer's drive (on a dbusmock UDisks2, where / is sda2, label
+    "root"): F2 renames it through Filesystem.SetLabel; its Properties'
+    Tools tab checks it (Automatically fix: Repair, refused as it's
+    mounted), Hardware lists the mock's drives, and Disk Cleanup empties
+    the Recycle Bin, the thumbnails and Firefox's cache in the scratch
+    home, leaving everything else."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    cache = os.environ["XDG_CACHE_HOME"]
+    keep = os.path.join(cache, "other", "keep")
+    junk = [
+        os.path.join(s.data, "Trash", "files", "old report.txt"),
+        os.path.join(s.data, "Trash", "info", "old report.txt.trashinfo"),
+        os.path.join(cache, "thumbnails", "normal", "0123.png"),
+        os.path.join(cache, "mozilla", "firefox", "abc.default", "cache2", "entries", "E1"),
+    ]
+    for path in junk + [keep]:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"x" * 100000)
+
+    DBusTestCase.start_system_bus()
+    try:
+        mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "udisks2.py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            mock, {}, stdout=subprocess.DEVNULL, system_bus=True
+        )
+        s.children.append(proc)
+        udisks = DBusTestCase.get_dbus(system_bus=True).get_object(
+            "org.freedesktop.UDisks2", "/org/freedesktop/UDisks2"
+        )
+        sda2 = "/org/freedesktop/UDisks2/block_devices/sda2"
+
+        def called(what):
+            return any(c == what for c in udisks.MockCalls(dbus_interface=MOCK_IFACE))
+
+        empty = s.settle("desktop")
+        s.launch("xd-files", "computer:///")
+        s.wait_window(title="My Computer", state="activated")
+        x, y, _, _ = s.settle("my computer").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        # The first of Hard Disk Drives, under My Documents' group.
+        s.inject("move", x + 264, y + 278, "click", "sleep", 300, "key", "F2", "sleep", 300,
+                 "key", "ctrl+a", "type", "Win2Root", "key", "Return")  # fmt: skip
+        s.wait(lambda: called(f"SetLabel {sda2} Win2Root"), "F2 to set the label")
+        s.log("ok: renaming the drive in place called SetLabel")
+
+        def files_active():
+            w = s.window(title="My Computer")
+            return w is not None and "activated" in w["states"]
+
+        # Its Properties: Tools (Ctrl+Tab), Check Now... with Automatically
+        # fix ticked asks for Repair, which UDisks2 refuses: / is mounted.
+        s.inject("key", "alt+Return")
+        s.wait(lambda: not files_active(), "the drive's Properties")
+        s.settle("properties")
+        s.inject("key", "ctrl+Tab", "sleep", 300, "key", "alt+c", "sleep", 800, "key", "alt+a",
+                 "sleep", 200, "key", "alt+s")  # fmt: skip
+        s.wait(lambda: called(f"Repair {sda2}"), "Check Disk to ask UDisks2 for Repair")
+        s.check(not called(f"Check {sda2}"), "Automatically fix asked for Repair, not Check")
+        s.settle("check refused")
+        s.inject("key", "Return", "sleep", 500)  # the message's OK
+        # Hardware: the mock's drives; Properties opens the selected one's.
+        s.inject("key", "ctrl+Tab", "sleep", 300)
+        hardware = s.settle("hardware")
+        s.inject("key", "alt+r")
+        device = s.settle("device properties")
+        box = device.changed_box(hardware, (0, 0, WIDTH, HEIGHT - 40))
+        s.check(box is not None and box[2] > 200 and box[3] > 200,
+                f"the disk drive's Properties opened ({box})")  # fmt: skip
+        s.inject("key", "Escape", "sleep", 500)
+
+        # General's Disk Cleanup: tick the Recycle Bin (second), OK, Yes.
+        s.inject("key", "ctrl+Tab", "sleep", 300, "key", "alt+u")
+        s.settle("disk cleanup")
+        s.inject("key", "Down", "sleep", 200, "key", "space", "sleep", 200, "key", "Return",
+                 "sleep", 800)  # fmt: skip
+        s.settle("are you sure")
+        s.inject("key", "Return")
+        s.wait(lambda: not any(os.path.exists(p) for p in junk), "Disk Cleanup to delete")
+        s.check(os.path.exists(keep) and os.path.isdir(os.path.dirname(os.path.dirname(junk[3]))),
+                "Disk Cleanup left the rest of the cache, and the cache folders")  # fmt: skip
+        s.settle("cleaned")
+        s.inject("key", "Escape")
+        s.wait(files_active, "the Properties to close")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def mock_logind(s, display_manager=False):
     """A private system bus with dbusmock's logind: our session (c1, found
     by pid) and another user's switched away from (c2); with a mock

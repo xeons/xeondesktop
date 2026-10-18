@@ -25,9 +25,10 @@
 GtkWidget *xd_properties_show(GtkWindow *parent, GList *files);
 
 /* A drive's Properties, from My Computer (`item` is its item there): XP's
- * General tab with the label, type, file system, used and free space,
- * capacity and the pie chart. nullptr if `item` isn't a drive (My
- * Documents is an ordinary folder). */
+ * General tab with the label (changed through UDisks2), type, file
+ * system, used and free space, capacity, the pie chart and Disk Cleanup;
+ * then Tools and Hardware (drives.h). nullptr if `item` isn't a drive
+ * (My Documents is an ordinary folder). */
 GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item);
 
 /* "1.23 MB (1,291,234 bytes)", as Windows shows sizes in Properties.

@@ -9,6 +9,7 @@
 #include "../settings/soundplay.h"
 #include "../settings/state.h"
 #include "fileops.h"
+#include "udisks.h"
 
 #define TRASHINFO_GROUP "Trash Info"
 
@@ -220,11 +221,21 @@ static char *volume_uri(GVolume *vol) {
     return uri;
 }
 
+/* A mounted drive's name: its label, as XP names drives (so renaming one
+ * shows), else what GIO calls it. */
+static char *drive_name(GFile *root, const char *fallback) {
+    g_autofree char *path = g_file_get_path(root);
+    g_autoptr(XdUdisksFs) fs = path != nullptr ? xd_udisks_fs_at(path) : nullptr;
+    return g_strdup(fs != nullptr && fs->label[0] != '\0' ? fs->label : fallback);
+}
+
 GPtrArray *xd_computer_drives(void) {
     GPtrArray *out = g_ptr_array_new_with_free_func(drive_free);
     GFile *slash = g_file_new_for_path("/");
     GIcon *disk = g_themed_icon_new("drive-harddisk");
-    g_ptr_array_add(out, drive_new(slash, "File System", "Local Disk", disk));
+    char *slash_name = drive_name(slash, "File System");
+    g_ptr_array_add(out, drive_new(slash, slash_name, "Local Disk", disk));
+    g_free(slash_name);
     g_object_unref(disk);
 
     /* XP lists the user's documents beside the drives. */
@@ -250,9 +261,11 @@ GPtrArray *xd_computer_drives(void) {
         GFile *root = g_mount_get_root(m);
         if (!g_file_equal(root, slash)) {
             GIcon *icon = g_mount_get_icon(m);
-            char *name = g_mount_get_name(m);
+            char *gio_name = g_mount_get_name(m);
+            char *name = drive_name(root, gio_name);
             g_ptr_array_add(out, drive_new(root, name, mount_kind(m, root, icon), icon));
             g_free(name);
+            g_free(gio_name);
             g_clear_object(&icon);
         }
         g_object_unref(root);

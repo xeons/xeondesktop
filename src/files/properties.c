@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "drives.h"
 #include "launcher.h"
 #include "places.h"
 #include "properties.h"
@@ -1895,9 +1896,67 @@ static void space_row(GtkWidget *grid, int row, const char *title, int swatch, g
     g_string_free(s, TRUE);
 }
 
-static void on_drive_response(GtkDialog *dlg, [[maybe_unused]] gint response,
-                              [[maybe_unused]] gpointer data) {
-    gtk_widget_destroy(GTK_WIDGET(dlg));
+/* The drive's label, changed through UDisks2 on Apply or OK. */
+typedef struct drive_props {
+    GtkWidget *dlg, *label;
+    GFile *root;
+    char *name, *orig;
+    gboolean busy, close_after;
+} drive_props;
+
+static void drive_props_free(gpointer data) {
+    drive_props *dp = data;
+    g_object_unref(dp->root);
+    g_free(dp->name);
+    g_free(dp->orig);
+    g_free(dp);
+}
+
+static void on_drive_label_changed([[maybe_unused]] GtkEditable *ed, gpointer data) {
+    drive_props *dp = data;
+    gtk_dialog_set_response_sensitive(GTK_DIALOG(dp->dlg), GTK_RESPONSE_APPLY,
+                                      !dp->busy && dp->orig != nullptr &&
+                                          strcmp(gtk_entry_get_text(GTK_ENTRY(dp->label)),
+                                                 dp->orig) != 0);
+}
+
+static void drive_label_set(gboolean ok, gpointer data) {
+    drive_props *dp = data;
+    dp->busy = FALSE;
+    gtk_widget_set_sensitive(dp->dlg, TRUE);
+    if (ok) {
+        g_free(dp->orig);
+        dp->orig = g_strdup(gtk_entry_get_text(GTK_ENTRY(dp->label)));
+        if (dp->close_after) {
+            gtk_widget_destroy(dp->dlg);
+            return;
+        }
+    }
+    dp->close_after = FALSE;
+    on_drive_label_changed(nullptr, dp);
+}
+
+static void on_drive_response(GtkDialog *dlg, gint response, gpointer data) {
+    drive_props *dp = data;
+    if (dp->busy)
+        return;
+    const char *text = gtk_entry_get_text(GTK_ENTRY(dp->label));
+    gboolean changed = dp->orig != nullptr && strcmp(text, dp->orig) != 0;
+    if ((response == GTK_RESPONSE_OK || response == GTK_RESPONSE_APPLY) && changed) {
+        dp->busy = TRUE;
+        dp->close_after = response == GTK_RESPONSE_OK;
+        /* Until UDisks2 (and polkit) answer. */
+        gtk_widget_set_sensitive(GTK_WIDGET(dlg), FALSE);
+        xd_drive_set_label(GTK_WINDOW(dlg), dp->root, dp->name, text, drive_label_set, dp);
+        return;
+    }
+    if (response != GTK_RESPONSE_APPLY)
+        gtk_widget_destroy(GTK_WIDGET(dlg));
+}
+
+static void on_disk_cleanup([[maybe_unused]] GtkButton *b, gpointer data) {
+    drive_props *dp = data;
+    xd_drive_cleanup(GTK_WINDOW(dp->dlg), dp->root, dp->name);
 }
 
 GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item) {
@@ -1925,8 +1984,12 @@ GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item) {
     }
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     gtk_window_set_icon_name(GTK_WINDOW(dlg), "document-properties");
-    /* Nothing here changes yet (renaming a drive needs UDisks). */
     gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), GTK_RESPONSE_APPLY, FALSE);
+    drive_props *dp = g_new0(drive_props, 1);
+    dp->dlg = dlg;
+    dp->root = g_object_ref(d->root);
+    dp->name = g_strdup(d->name);
+    g_object_set_data_full(G_OBJECT(dlg), "xd-drive", dp, drive_props_free);
     GtkWidget *nb = gtk_notebook_new();
     gtk_container_set_border_width(GTK_CONTAINER(nb), 6);
     gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), nb);
@@ -1942,9 +2005,14 @@ GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item) {
                                                                         GTK_ICON_SIZE_DND);
     gtk_widget_set_halign(icon, GTK_ALIGN_START);
     gtk_grid_attach(GTK_GRID(grid), icon, 0, row, 2, 1);
+    /* The file system's label, as XP's; greyed where UDisks2 doesn't
+     * know the drive (a network drive). */
     GtkWidget *label = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(label), d->name);
-    gtk_widget_set_sensitive(label, FALSE);
+    dp->label = label;
+    gboolean can_label = xd_drive_label(d->root, &dp->orig);
+    gtk_entry_set_text(GTK_ENTRY(label), can_label ? dp->orig : d->name);
+    gtk_widget_set_sensitive(label, can_label);
+    g_signal_connect(label, "changed", G_CALLBACK(on_drive_label_changed), dp);
     gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
     gtk_grid_attach(GTK_GRID(grid), label, 2, row++, 2, 1);
     gtk_grid_attach(GTK_GRID(grid), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), 0, row++, 4,
@@ -1985,15 +2053,28 @@ GtkWidget *xd_properties_show_drive(GtkWindow *parent, GFile *item) {
     gtk_widget_set_margin_top(pie, 8);
     g_object_set_data_full(G_OBJECT(pie), "xd-space", space, g_free);
     g_signal_connect(pie, "draw", G_CALLBACK(draw_drive_pie), space);
-    gtk_grid_attach(GTK_GRID(grid), pie, 0, row++, 4, 1);
+    gtk_grid_attach(GTK_GRID(grid), pie, 0, row, 4, 1);
     gtk_widget_set_visible(pie, space->total > 0);
     gtk_widget_set_no_show_all(pie, space->total == 0);
+    /* XP's Disk Cleanup button, right of the pie. */
+    if (xd_drive_can_cleanup(d->root, d->kind)) {
+        GtkWidget *clean = gtk_button_new_with_mnemonic("Disk Clean_up");
+        gtk_widget_set_halign(clean, GTK_ALIGN_END);
+        gtk_widget_set_valign(clean, GTK_ALIGN_END);
+        g_signal_connect(clean, "clicked", G_CALLBACK(on_disk_cleanup), dp);
+        gtk_grid_attach(GTK_GRID(grid), clean, 3, row + 1, 1, 1);
+    }
+    row++;
     GtkWidget *caption = gtk_label_new(d->name);
-    gtk_grid_attach(GTK_GRID(grid), caption, 0, row++, 4, 1);
+    gtk_grid_attach(GTK_GRID(grid), caption, 1, row++, 2, 1);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), grid, gtk_label_new("General"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), xd_drive_tools_page(dlg, d->root, d->name, d->kind),
+                             gtk_label_new("Tools"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), xd_drive_hardware_page(dlg, d->root),
+                             gtk_label_new("Hardware"));
     g_ptr_array_unref(drives);
 
-    g_signal_connect(dlg, "response", G_CALLBACK(on_drive_response), nullptr);
+    g_signal_connect(dlg, "response", G_CALLBACK(on_drive_response), dp);
     gtk_widget_show_all(dlg);
     return dlg;
 }

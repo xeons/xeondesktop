@@ -15,8 +15,10 @@ The disks:
 
 Like UDisks2, it refuses to format, delete or shrink what's mounted,
 partitions that overlap or leave their disk, a partition shrunk below
-its filesystem, and formatting with mkntfs (missing here). "MockCalls"
-on /org/freedesktop/UDisks2 lists what was called.
+its filesystem, and formatting with mkntfs (missing here); and to check
+or repair a mounted filesystem. USBSTICK has errors: Check finds them,
+Repair fixes them. "MockCalls" on /org/freedesktop/UDisks2 lists what
+was called.
 """
 
 # SPDX-License-Identifier: MIT
@@ -51,6 +53,8 @@ GIB = 1024 * MIB
 # shrink 8, online grow 16.
 RESIZE = {"ext4": 2 | 4 | 16, "ext3": 2 | 4 | 16, "xfs": 4 | 16, "btrfs": 8 | 16,
           "vfat": 2 | 4, "ntfs": 2 | 4}
+# Manager.CanCheck / CanRepair: the fsck programs "installed" here.
+CHECKS = {"ext4", "vfat", "ntfs"}
 FORMATS = {"ext4": True, "btrfs": True, "xfs": True, "vfat": True, "exfat": True,
            "ntfs": False, "swap": True}
 NATURAL = {"gpt": {"vfat": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
@@ -60,7 +64,7 @@ NATURAL = {"gpt": {"vfat": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
            "dos": {"vfat": "0x0c", "ntfs": "0x07", "exfat": "0x07", "swap": "0x82"}}
 LINUX = {"gpt": "0fc63daf-8483-4772-8e79-3d69d8477de4", "dos": "0x83"}
 
-state = types.SimpleNamespace(main=None, fs_size={}, calls=[])
+state = types.SimpleNamespace(main=None, fs_size={}, calls=[], damaged=set())
 
 
 def ay(s):
@@ -127,6 +131,8 @@ def fs_methods():
     return [("Mount", "a{sv}", "s", "ret = xd_udisks.mount(self, args)"),
             ("Unmount", "a{sv}", "", "xd_udisks.unmount(self, args)"),
             ("SetLabel", "sa{sv}", "", "xd_udisks.set_label(self, args)"),
+            ("Check", "a{sv}", "b", "ret = xd_udisks.check(self, False)"),
+            ("Repair", "a{sv}", "b", "ret = xd_udisks.check(self, True)"),
             ("Resize", "ta{sv}", "", "xd_udisks.fs_resize(self, args)")]
 
 
@@ -235,8 +241,10 @@ def load(mock, _parameters):
     state.main = mock
     state.fs_size = {}
     state.calls = []
+    state.damaged = {path_of("sdd1")}
     mockobject.xd_udisks = types.SimpleNamespace(
         format=do_format, mount=do_mount, unmount=do_unmount, set_label=do_set_label,
+        check=do_check,
         fs_resize=do_fs_resize, delete=do_delete, part_resize=do_part_resize,
         set_part=do_set_part, create=do_create, eject=do_eject)
     mock.AddMethod(MOCK_IFACE, "MockCalls", "", "as", "ret = xd_udisks.calls()")
@@ -251,10 +259,15 @@ def load(mock, _parameters):
         ("CanFormat", "s", "(bs)",
          "ret = (xd_udisks_formats.get(args[0], False), "
          "'' if xd_udisks_formats.get(args[0], False) else 'mk' + args[0])"),
+        ("CanCheck", "s", "(bs)",
+         "ret = (args[0] in xd_udisks_checks, '' if args[0] in xd_udisks_checks else 'fsck')"),
+        ("CanRepair", "s", "(bs)",
+         "ret = (args[0] in xd_udisks_checks, '' if args[0] in xd_udisks_checks else 'fsck')"),
         ("CanResize", "s", "(bts)",
          "ret = (args[0] in xd_udisks_resize, dbus.UInt64(xd_udisks_resize.get(args[0], 0)), '')"),
     ])
     mockobject.xd_udisks_formats = FORMATS
+    mockobject.xd_udisks_checks = CHECKS
     mockobject.xd_udisks_resize = RESIZE
 
     # sda: the system disk, GPT
@@ -411,6 +424,19 @@ def do_unmount(self, _args):
 def do_set_label(self, args):
     log(f"SetLabel {self.path} {args[0]}")
     self.UpdateProperties(BLOCK, {"IdLabel": str(args[0])})
+
+
+def do_check(self, repair):
+    log(f"{'Repair' if repair else 'Check'} {self.path}")
+    if mounted(self.path):
+        device = bytes(self.props[BLOCK]["Device"]).rstrip(b"\0").decode()
+        fail("DeviceBusy", f"Cannot {'repair' if repair else 'check'} {device}: it is mounted")
+    if str(self.props[BLOCK]["IdType"]) not in CHECKS:
+        fail("NotSupported", "Checking this filesystem is not supported")
+    if repair:
+        state.damaged.discard(self.path)
+        return True
+    return self.path not in state.damaged
 
 
 def do_fs_resize(self, args):

@@ -8,10 +8,12 @@
 #include <unistd.h>
 
 #include <crypt.h>
+#include <fcntl.h>
 #include <langinfo.h>
 #include <locale.h>
 #include <monetary.h>
 #include <poll.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <fontconfig/fontconfig.h>
@@ -28,6 +30,7 @@
 #include "../src/intl/intl.h"
 #include "../src/keyboard/layouts.h"
 #include "../src/mouse/cursors.h"
+#include "../src/files/cleanup.h"
 #include "../src/files/columns.h"
 #include "../src/files/favorites.h"
 #include "../src/files/launcher.h"
@@ -4289,6 +4292,205 @@ static void test_launcher_fields(void) {
     g_free(dir);
 }
 
+/* Disk Cleanup on a scratch drive: which places are the drive's, what
+ * each category finds, and that deleting takes exactly that. */
+static gboolean cleanup_has(const XdCleanupCategory *c, const char *root, const char *rel) {
+    char *path = g_build_filename(root, rel, nullptr);
+    gboolean has = g_ptr_array_find_with_equal_func(c->items, path, g_str_equal, nullptr);
+    g_free(path);
+    return has;
+}
+
+static const XdCleanupCategory *cleanup_find(GPtrArray *cats, XdCleanupKind kind) {
+    for (guint i = 0; i < cats->len; i++) {
+        const XdCleanupCategory *c = g_ptr_array_index(cats, i);
+        if (c->kind == kind)
+            return c;
+    }
+    return nullptr;
+}
+
+static gboolean exists_at(const char *root, const char *rel) {
+    char *path = g_build_filename(root, rel, nullptr);
+    struct stat st;
+    gboolean there = lstat(path, &st) == 0;
+    g_free(path);
+    return there;
+}
+
+static void set_times_at(const char *root, const char *rel, gint64 seconds) {
+    char *path = g_build_filename(root, rel, nullptr);
+    struct timespec t[2] = {{.tv_sec = (time_t)seconds}, {.tv_sec = (time_t)seconds}};
+    CHECK(utimensat(AT_FDCWD, path, t, AT_SYMLINK_NOFOLLOW) == 0);
+    g_free(path);
+}
+
+static void test_disk_cleanup(void) {
+    char *k = xd_cleanup_format_kb(0);
+    CHECK(g_str_equal(k, "0 KB"));
+    g_free(k);
+    k = xd_cleanup_format_kb(1);
+    CHECK(g_str_equal(k, "1 KB"));
+    g_free(k);
+    k = xd_cleanup_format_kb(1025);
+    CHECK(g_str_equal(k, "2 KB"));
+    g_free(k);
+    k = xd_cleanup_format_kb(12345678);
+    CHECK(g_str_equal(k, "12,057 KB"));
+    g_free(k);
+    k = xd_cleanup_format_kb(1024ULL * 1000000);
+    CHECK(g_str_equal(k, "1,000,000 KB"));
+    g_free(k);
+
+    char *root = g_dir_make_tmp("xd-cleanup-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    uid_t uid = getuid();
+    char *drive = g_build_filename(root, "drive", nullptr);
+    char *usb = g_build_filename(drive, "media", "usb", nullptr);
+    char *data = g_build_filename(drive, "home", ".local", "share", nullptr);
+    char *cache = g_build_filename(drive, "home", ".cache", nullptr);
+    char *tmp = g_build_filename(drive, "tmp", nullptr);
+    char *usb_trash = g_strdup_printf("media/usb/.Trash-%u/files/z.txt", (unsigned)uid);
+    const char *files[] = {
+        "home/.local/share/Trash/files/a.txt",
+        "home/.local/share/Trash/files/dir/b.txt",
+        "home/.local/share/Trash/info/a.txt.trashinfo",
+        "home/.local/share/Trash/info/dir.trashinfo",
+        "home/.cache/thumbnails/normal/x.png",
+        "home/.cache/thumbnails/fail/gnome-thumbnail-factory/y.png",
+        "home/.cache/mozilla/firefox/abc.default/cache2/entries/E1",
+        "home/.cache/mozilla/firefox/abc.default/keep.txt",
+        "home/.cache/chromium/Default/Cache/data_0",
+        "home/.cache/chromium/Default/Preferences",
+        "home/.cache/other/keep",
+        "tmp/old.txt",
+        "tmp/new.txt",
+        "tmp/olddir/inside.txt",
+        "outside/precious",
+        usb_trash,
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(files); i++)
+        put_file(drive, files[i], "some bytes\n");
+    char *fifo_dir = g_build_filename(tmp, "pipes", nullptr);
+    char *fifo = g_build_filename(fifo_dir, "fifo", nullptr);
+    CHECK(g_mkdir(fifo_dir, 0700) == 0 && mkfifo(fifo, 0600) == 0);
+    char *link = g_build_filename(tmp, "link", nullptr);
+    char *precious = g_build_filename(drive, "outside", "precious", nullptr);
+    CHECK(symlink(precious, link) == 0);
+    /* A read-only folder of the user's in the Recycle Bin still goes. */
+    char *ro = g_build_filename(data, "Trash", "files", "dir", nullptr);
+    CHECK(g_chmod(ro, 0555) == 0);
+
+    /* "Now" is a month on, so what's untouched since today is old;
+     * new.txt was touched in the future, so it's recent. */
+    gint64 real = g_get_real_time() / G_USEC_PER_SEC;
+    gint64 now = (real + 30 * 24 * 3600) * G_USEC_PER_SEC;
+    set_times_at(drive, "tmp/old.txt", real - 30 * 24 * 3600);
+    set_times_at(drive, "tmp/olddir/inside.txt", real - 30 * 24 * 3600);
+    set_times_at(drive, "tmp/olddir", real - 30 * 24 * 3600);
+    set_times_at(drive, "tmp/new.txt", real + 30 * 24 * 3600);
+
+    const char *roots[] = {drive, usb, nullptr};
+    const char *temps[] = {tmp, "/nonexistent-xd-tmp", nullptr};
+    XdCleanupPlaces *p = xd_cleanup_places_new(drive, roots, data, cache, temps, uid);
+    CHECK(g_strv_length(p->trashes) == 1 && g_str_has_suffix(p->trashes[0], "share/Trash"));
+    CHECK(p->thumbnails != nullptr && g_str_has_suffix(p->thumbnails, ".cache/thumbnails"));
+    CHECK(g_strv_length(p->browser_caches) == 2 &&
+          g_str_has_suffix(p->browser_caches[0], "chromium/Default/Cache") &&
+          g_str_has_suffix(p->browser_caches[1], "firefox/abc.default/cache2"));
+    CHECK(g_strv_length(p->temp_dirs) == 1 && g_str_equal(p->temp_dirs[0], tmp));
+
+    /* The USB drive has only its own trash. */
+    XdCleanupPlaces *pu = xd_cleanup_places_new(usb, roots, data, cache, temps, uid);
+    CHECK(g_strv_length(pu->trashes) == 1 &&
+          strstr(pu->trashes[0], "/media/usb/.Trash-") != nullptr);
+    CHECK(pu->thumbnails == nullptr && pu->browser_caches[0] == nullptr &&
+          pu->temp_dirs[0] == nullptr);
+    GPtrArray *ucats = xd_cleanup_scan(pu, uid, now, nullptr, nullptr);
+    CHECK(ucats->len == 1);
+    const XdCleanupCategory *ut = cleanup_find(ucats, XD_CLEANUP_TRASH);
+    CHECK(ut != nullptr && ut->items->len == 1 && ut->size > 0);
+
+    gint scanning = -1;
+    GPtrArray *cats = xd_cleanup_scan(p, uid, now, nullptr, &scanning);
+    CHECK(cats->len == 4 && scanning == XD_CLEANUP_THUMBNAILS);
+    const XdCleanupCategory *web = cleanup_find(cats, XD_CLEANUP_INTERNET);
+    const XdCleanupCategory *trash = cleanup_find(cats, XD_CLEANUP_TRASH);
+    const XdCleanupCategory *temp = cleanup_find(cats, XD_CLEANUP_TEMP);
+    const XdCleanupCategory *thumbs = cleanup_find(cats, XD_CLEANUP_THUMBNAILS);
+    CHECK(web != nullptr && web->items->len == 2 && web->checked && web->size > 0 &&
+          cleanup_has(web, drive, "home/.cache/mozilla/firefox/abc.default/cache2/entries") &&
+          cleanup_has(web, drive, "home/.cache/chromium/Default/Cache/data_0"));
+    CHECK(trash != nullptr && trash->items->len == 4 && !trash->checked &&
+          g_strcmp0(trash->view, "trash:///") == 0);
+    /* Old things, and the link (not what it points at); not the new
+     * file, nor the folder with a FIFO in it. */
+    CHECK(temp != nullptr && temp->items->len == 3 && !temp->checked &&
+          cleanup_has(temp, drive, "tmp/old.txt") && cleanup_has(temp, drive, "tmp/olddir") &&
+          cleanup_has(temp, drive, "tmp/link") && !cleanup_has(temp, drive, "tmp/new.txt") &&
+          !cleanup_has(temp, drive, "tmp/pipes"));
+    CHECK(thumbs != nullptr && thumbs->items->len == 2 && thumbs->checked &&
+          cleanup_has(thumbs, drive, "home/.cache/thumbnails/normal/x.png") &&
+          cleanup_has(thumbs, drive, "home/.cache/thumbnails/fail/gnome-thumbnail-factory"));
+
+    /* Something that isn't in the category's folders is never deleted. */
+    XdCleanupCategory rogue = *temp;
+    rogue.items = g_ptr_array_new();
+    g_ptr_array_add(rogue.items, precious);
+    GError *err = nullptr;
+    CHECK(!xd_cleanup_delete(&rogue, uid, now, nullptr, &err) && err != nullptr);
+    g_clear_error(&err);
+    g_ptr_array_unref(rogue.items);
+    CHECK(exists_at(drive, "outside/precious"));
+
+    for (guint i = 0; i < cats->len; i++) {
+        CHECK(xd_cleanup_delete(g_ptr_array_index(cats, i), uid, now, nullptr, &err));
+        if (err != nullptr) {
+            fprintf(stderr, "cleanup: %s\n", err->message);
+            g_clear_error(&err);
+        }
+    }
+    CHECK(!exists_at(drive, "home/.local/share/Trash/files/a.txt") &&
+          !exists_at(drive, "home/.local/share/Trash/files/dir") &&
+          !exists_at(drive, "home/.local/share/Trash/info/dir.trashinfo") &&
+          exists_at(drive, "home/.local/share/Trash/files") &&
+          exists_at(drive, "home/.local/share/Trash/info"));
+    CHECK(!exists_at(drive, "home/.cache/thumbnails/normal/x.png") &&
+          exists_at(drive, "home/.cache/thumbnails/normal") &&
+          !exists_at(drive, "home/.cache/thumbnails/fail/gnome-thumbnail-factory"));
+    CHECK(!exists_at(drive, "home/.cache/mozilla/firefox/abc.default/cache2/entries") &&
+          exists_at(drive, "home/.cache/mozilla/firefox/abc.default/cache2") &&
+          exists_at(drive, "home/.cache/mozilla/firefox/abc.default/keep.txt") &&
+          !exists_at(drive, "home/.cache/chromium/Default/Cache/data_0") &&
+          exists_at(drive, "home/.cache/chromium/Default/Preferences") &&
+          exists_at(drive, "home/.cache/other/keep"));
+    CHECK(!exists_at(drive, "tmp/old.txt") && !exists_at(drive, "tmp/olddir") &&
+          !exists_at(drive, "tmp/link") && exists_at(drive, "tmp/new.txt") &&
+          exists_at(drive, "tmp/pipes/fifo") && exists_at(drive, "outside/precious"));
+    /* The other drive's trash wasn't this drive's to empty. */
+    CHECK(exists_at(drive, usb_trash));
+
+    g_ptr_array_unref(cats);
+    g_ptr_array_unref(ucats);
+    xd_cleanup_places_free(p);
+    xd_cleanup_places_free(pu);
+    rm_tree(root);
+    g_free(link);
+    g_free(precious);
+    g_free(fifo);
+    g_free(fifo_dir);
+    g_free(ro);
+    g_free(usb_trash);
+    g_free(tmp);
+    g_free(cache);
+    g_free(data);
+    g_free(usb);
+    g_free(drive);
+    g_free(root);
+}
+
 int main(void) {
     test_str();
     test_arena();
@@ -4346,6 +4548,7 @@ int main(void) {
     test_favorites();
     test_launcher_fields();
     test_taskmgr_netstat();
+    test_disk_cleanup();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

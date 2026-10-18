@@ -502,7 +502,9 @@ executable(
 archive_dep = dependency('libarchive', required: false, include_type: 'system')
 folder_lib = static_library(
   'xdfolder',
+  'src/files/cleanup.c',
   'src/files/control.c',
+  'src/files/drives.c',
   'src/files/favorites.c',
   'src/files/fileops.c',
   'src/files/folderview.c',
@@ -510,6 +512,7 @@ folder_lib = static_library(
   'src/files/places.c',
   'src/files/properties.c',
   'src/files/sendto.c',
+  'src/files/udisks.c',
   'src/files/undo.c',
   c_args: ['-D_GNU_SOURCE', '-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0')],
   link_with: thumb_lib,
@@ -1011,6 +1014,7 @@ test_exe = executable(
   'src/startmenu/searchlib.c',
   'src/files/favorites.c',
   'src/files/launcher.c',
+  'src/files/cleanup.c',
   'src/taskmgr/netstat.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,

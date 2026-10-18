@@ -9,6 +9,7 @@
 #include "folderview.h"
 #include "names.h"
 #include "places.h"
+#include "udisks.h"
 
 #define ATTRIBUTES                                                             \
     G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME  \
@@ -1824,6 +1825,16 @@ static void drives_changed([[maybe_unused]] GVolumeMonitor *m, [[maybe_unused]] 
         v->reload_source = g_timeout_add(300, reload_timeout, v);
 }
 
+/* A drive renamed (its label), mounted or checked: UDisks2 says so
+ * before GIO does, if GIO ever does. */
+static void udisks_changed([[maybe_unused]] GDBusObjectManagerClient *m,
+                           [[maybe_unused]] GDBusObjectProxy *o,
+                           [[maybe_unused]] GDBusProxy *iface,
+                           [[maybe_unused]] GVariant *changed,
+                           [[maybe_unused]] const char *const *invalidated, gpointer data) {
+    drives_changed(nullptr, nullptr, data);
+}
+
 static void apps_changed([[maybe_unused]] GAppInfoMonitor *m, gpointer data) {
     XdFolderView *v = data;
     if (v->place == XD_PLACE_CONTROL && v->reload_source == 0)
@@ -2755,6 +2766,8 @@ static void folder_view_dispose(GObject *obj) {
     g_clear_object(&v->listed);
     if (v->watching_drives) {
         g_signal_handlers_disconnect_by_data(xd_computer_monitor(), v);
+        if (xd_udisks_manager() != nullptr)
+            g_signal_handlers_disconnect_by_data(xd_udisks_manager(), v);
         v->watching_drives = FALSE;
     }
     if (v->apps_monitor != nullptr) {
@@ -2889,6 +2902,10 @@ void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
             g_signal_connect(vm, "mount-added", G_CALLBACK(drives_changed), v);
             g_signal_connect(vm, "mount-removed", G_CALLBACK(drives_changed), v);
             g_signal_connect(vm, "mount-changed", G_CALLBACK(drives_changed), v);
+            GDBusObjectManager *udisks = xd_udisks_manager();
+            if (udisks != nullptr)
+                g_signal_connect(udisks, "interface-proxy-properties-changed",
+                                 G_CALLBACK(udisks_changed), v);
             v->watching_drives = TRUE;
         }
     } else if (v->place == XD_PLACE_CONTROL) {

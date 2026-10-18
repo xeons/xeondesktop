@@ -12,6 +12,7 @@
 #include "../gtkapp/gtkapp.h"
 #include "../settings/settings.h"
 #include "../settings/state.h"
+#include "drives.h"
 #include "favorites.h"
 #include "fileops.h"
 #include "folderview.h"
@@ -47,6 +48,7 @@ typedef struct explorer {
     GtkWidget *undo_item;    /* Edit > Undo ... */
     GtkWidget *send_to_item; /* File > Send To */
     GtkWidget *add_favorite_item; /* Favorites > Add to Favorites... */
+    GtkWidget *rename_item;       /* File > Rename: files, and drives in My Computer */
     /* Menu items that need a selection, or files on the clipboard. */
     GPtrArray *need_selection;
     GPtrArray *need_clipboard;
@@ -1688,7 +1690,9 @@ static void begin_rename(explorer *e, GFile *file) {
     xd_folder_view_select_files(e->view, one);
     g_list_free(one);
     g_set_object(&e->renaming, file);
-    char *name = xd_rename_text(file);
+    char *name = nullptr;
+    if (current_place(e) != XD_PLACE_COMPUTER || !xd_drive_label(file, &name))
+        name = xd_rename_text(file);
     gtk_entry_set_text(GTK_ENTRY(e->rename_entry), name);
     g_free(name);
     place_rename_entry(e);
@@ -1697,8 +1701,22 @@ static void begin_rename(explorer *e, GFile *file) {
     gtk_editable_select_region(GTK_EDITABLE(e->rename_entry), 0, -1);
 }
 
+/* Whether Rename applies to the selection: files in a folder, or a
+ * drive in My Computer whose label can be changed. */
+static gboolean can_rename(explorer *e) {
+    XdPlace place = current_place(e);
+    if (place == XD_PLACE_FOLDER)
+        return xd_folder_view_get_selected_count(e->view) > 0;
+    if (place != XD_PLACE_COMPUTER)
+        return FALSE;
+    GList *files = xd_folder_view_get_selected_files(e->view);
+    gboolean can = files != nullptr && xd_drive_label(files->data, nullptr);
+    g_list_free_full(files, g_object_unref);
+    return can;
+}
+
 static void rename_selected(explorer *e) {
-    if (current_place(e) != XD_PLACE_FOLDER)
+    if (!can_rename(e))
         return;
     GList *files = xd_folder_view_get_selected_files(e->view);
     if (files != nullptr)
@@ -1706,10 +1724,41 @@ static void rename_selected(explorer *e) {
     g_list_free_full(files, g_object_unref);
 }
 
+static char *drive_name(GFile *item) {
+    GPtrArray *drives = xd_computer_drives();
+    char *name = nullptr;
+    for (guint i = 0; i < drives->len && name == nullptr; i++) {
+        const XdDrive *d = g_ptr_array_index(drives, i);
+        if (g_file_equal(d->root, item))
+            name = g_strdup(d->name);
+    }
+    g_ptr_array_unref(drives);
+    return name != nullptr ? name : g_file_get_parse_name(item);
+}
+
+/* A drive's new label goes to UDisks2, which may have polkit ask; My
+ * Computer shows it when UDisks2 has it. An empty label is allowed, as
+ * in XP (the drive goes back to its usual name). */
+static void commit_drive_rename(explorer *e) {
+    char *old = nullptr;
+    const char *text = gtk_entry_get_text(GTK_ENTRY(e->rename_entry));
+    if (xd_drive_label(e->renaming, &old) && strcmp(text, old) != 0) {
+        char *name = drive_name(e->renaming);
+        xd_drive_set_label(GTK_WINDOW(e->window), e->renaming, name, text, nullptr, nullptr);
+        g_free(name);
+    }
+    g_free(old);
+    end_rename(e);
+}
+
 /* Returns FALSE to keep editing (the name was refused). */
 static gboolean commit_rename(explorer *e) {
     if (e->renaming == nullptr || e->committing)
         return TRUE;
+    if (current_place(e) == XD_PLACE_COMPUTER) {
+        commit_drive_rename(e);
+        return TRUE;
+    }
     const char *text = gtk_entry_get_text(GTK_ENTRY(e->rename_entry));
     char *old = xd_rename_text(e->renaming);
     gboolean done = TRUE;
@@ -1959,6 +2008,7 @@ static void update_menu_items(GtkWidget *menu, gpointer data) {
     }
     for (guint i = 0; i < e->trash_only->len; i++)
         gtk_widget_set_visible(g_ptr_array_index(e->trash_only, i), place == XD_PLACE_TRASH);
+    gtk_widget_set_sensitive(e->rename_item, can_rename(e));
     /* "Undo Rename", "Undo Copy"..., or a greyed "Undo". */
     const char *undo = xd_undo_label();
     gtk_menu_item_set_label(GTK_MENU_ITEM(e->undo_item), undo != nullptr ? undo : "_Undo");
@@ -2030,10 +2080,8 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     item = menu_item(file, "_Delete", G_CALLBACK(cb_delete), e, nullptr, 0, NO_MODS);
     show_accel(item, GDK_KEY_Delete, NO_MODS);
     g_ptr_array_add(e->need_selection, item);
-    item = menu_item(file, "Rena_me", G_CALLBACK(cb_rename), e, nullptr, 0, NO_MODS);
-    show_accel(item, GDK_KEY_F2, NO_MODS);
-    g_ptr_array_add(e->need_selection, item);
-    g_ptr_array_add(e->folders_only, item);
+    e->rename_item = menu_item(file, "Rena_me", G_CALLBACK(cb_rename), e, nullptr, 0, NO_MODS);
+    show_accel(e->rename_item, GDK_KEY_F2, NO_MODS);
     menu_item(file, "P_roperties", G_CALLBACK(cb_properties), e, accel, GDK_KEY_Return,
               GDK_MOD1_MASK);
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
@@ -2225,6 +2273,11 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
         if (eject) {
             gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
             menu_item(menu, "E_ject", G_CALLBACK(cb_eject), e, nullptr, 0, NO_MODS);
+        }
+        /* XP's drives rename (their label). */
+        if (can_rename(e)) {
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+            menu_item(menu, "Rena_me", G_CALLBACK(cb_rename), e, nullptr, 0, NO_MODS);
         }
     } else if (selected) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));

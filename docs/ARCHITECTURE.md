@@ -223,6 +223,14 @@ Modelled on Windows XP's Explorer windows:
   dialogs, trash, mounting through UDisks2, MIME detection, change
   monitoring, SMB/SFTP through gvfs. A running job keeps the process alive
   until it finishes, even if its window is closed.
+- **Drives talk to UDisks2 directly** (`udisks.c`): a drive's name is its
+  file system's label, renamed with `Filesystem.SetLabel`; the Tools tab's
+  Check Now... calls `Check` (read-only) or `Repair`; the Hardware tab lists
+  its `Drive` objects. polkit asks, as for Disk Management. Disk Cleanup
+  (`cleanup.c`, no GTK) deletes only the user's own disposable files (the
+  Recycle Bin, the thumbnail cache, known browser caches, week-old entries
+  in the temporary folders), walking with `openat()` and never following
+  links or crossing into another file system.
 - **Thumbnails** follow the freedesktop thumbnail spec, so they're shared
   with other programs. Those missing from the cache are made by
   `xd-thumbnailer`, a process per file, a few at a time, what's on screen
