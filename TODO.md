@@ -115,6 +115,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       XD_IDLE_SECONDS=1). Each saver's Settings
       ([ScreenSaver.*]), 3D Pipes and 3D Text drawn in software. Not yet:
       hardware tests of monitor power; textured surfaces.
+- [x] **Priority**: a display manager can run at background priority
+      (CachyOS's ananicy-cpp types sddm as a "Launcher": nice 16, idle I/O)
+      and the session inherited it, delaying input by seconds. The
+      compositor raises itself (nice -10 as far as RLIMIT_NICE allows,
+      normal I/O, SCHED_RESET_ON_FORK for its children) and ships an
+      ananicy-cpp rule like KWin's and Sway's. Tested on CachyOS.
 - [ ] Power actions (Shut down / Restart / Stand by / Hibernate) have only
       ever run **simulated** in nested sessions; never executed for real.
 
@@ -125,11 +131,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       every push and pull request, and attaches them to a release for v*
       tags. The Debian dependencies come from dpkg-shlibdeps; the Arch ones
       were checked with namcap. Built, tested and installed locally in
-      podman containers (debian:testing, archlinux, cachyos/cachyos). The
-      workflow passes on GitHub; the release job is untested until the
-      first v* tag. Not yet: Ubuntu
-      (no wlroots 0.20 in a release), arm64 builds, man pages (lintian's
-      only complaint), an apt/pacman repository to install from.
+      podman containers (debian:testing, archlinux, cachyos/cachyos,
+      ubuntu:26.04). Ubuntu 26.04 LTS has wlroots 0.19, so its package
+      builds our pinned wlroots 0.20 (subprojects/wlroots.wrap) in
+      statically. The workflow and the release job pass on GitHub (v0.3.0).
+      Not yet: arm64 builds, man pages (lintian's only complaint), an
+      apt/pacman repository to install from.
 
 ## Compositor
 
@@ -496,7 +503,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] Display Properties:
   - Screen Saver tab: saver list with a live preview, Preview, Password
     protected, Wait, and "Turn off monitor" (instead of Power Options).
-    Tested. The Settings button stays greyed (savers have no options yet).
+    Tested. Settings opens the chosen saver's own options.
   - Settings tab: monitor arrangement by dragging (snaps edge to edge),
     resolution slider, refresh rate, scale, orientation, extending onto a
     monitor, and Windows' 15-second "keep these settings?" check that
@@ -697,8 +704,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       GDK_BACKEND=x11. Closing a window that isn't responding opens
       Windows' End Program box (xd-endtask: End Now kills the program,
       checking it's still the same process; Cancel). Tested: End Now on
-      a frozen program. Not yet: XP's ghost window, and the box for a
-      window that only stops responding after the close request.
+      a frozen program. A hung window that draws its own title bar
+      (Firefox, GNOME programs) gets our frame meanwhile, as XP's ghost
+      window, whose Close offers End Program; it goes back as it was when
+      the program answers (UI test: hung_csd_window_ghost_frame). Not yet:
+      the box for a window that only stops responding after the close
+      request.
 - [x] Options > Always On Top (saved): xd-window-arranger-v1 version 5's
       set_always_on_top puts the client's own window (and its dialogs) in
       a layer above ordinary windows, below the taskbar. Tested: Task
@@ -860,8 +871,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       regions. Scenarios: Start menu and Run, Alt+Tab, maximize/minimize,
       Alt+F4, Aero Snap, Explorer's new/rename/delete, Display Properties'
       style, the desktop menu, Disk Management's Action menu (dbusmock),
-      moving after a left-edge resize. Its own CI job (privileged
-      container); not yet seen running on GitHub.
+      moving after a left-edge resize, and more since. Its own CI job
+      (privileged container), passing on GitHub. The test sessions set
+      XD_CLOCK_FIXED so the taskbar clock never ticks mid-scenario.
 - [x] Alt+letter opens that menu in our GTK apps (GTK on Wayland's synthetic
       enter during the menu bar's grab selected File).
 - [ ] Printer changes (Pause, Delete, Properties' Apply, Preferences) still
