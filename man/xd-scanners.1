@@ -1,0 +1,41 @@
+.TH XD\-SCANNERS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-scanners \- Scanners and Cameras
+.SH SYNOPSIS
+.SY xd\-scanners
+.YS
+.SY xd\-scanners
+.B \-\-scan
+.I device
+.YS
+.SY xd\-scanners
+.B \-\-camera
+.I model
+.I port
+.YS
+.SH DESCRIPTION
+.B xd\-scanners
+is Windows XP's Scanners and Cameras folder: scanners from SANE and
+cameras from libgphoto2, which both find devices themselves.
+A device's Properties tests it; opening a device starts the Scanner and
+Camera Wizard, which scans pictures or copies them from the camera.
+.SH OPTIONS
+.TP
+.BI \-\-scan " device"
+Only the wizard, for the SANE device
+.IR device .
+.TP
+.BI \-\-camera " model port"
+Only the wizard, for a camera, given as for
+.BR "gphoto2 \-\-camera" " \fImodel\fR " "\-\-port" " \fIport\fR."
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH ENVIRONMENT
+.TP
+.B SANE_CONFIG_DIR
+SANE's configuration, as for every SANE program.
+.SH SEE ALSO
+.BR scanimage (1),
+.BR gphoto2 (1),
+.BR xd\-control (1)

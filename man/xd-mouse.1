@@ -1,0 +1,39 @@
+.TH XD\-MOUSE 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-mouse \- Mouse Properties
+.SH SYNOPSIS
+.SY xd\-mouse
+.YS
+.SH DESCRIPTION
+.B xd\-mouse
+is Windows XP's Mouse Properties (Control Panel):
+.TP
+.B Buttons
+Switching the primary and secondary buttons, the double-click speed (with
+XP's test folder) and ClickLock.
+.TP
+.B Pointers
+The pointer (XCursor) theme, with a preview of its pointers, and its size.
+.TP
+.B Pointer Options
+The pointer's speed, and Enhance pointer precision (acceleration).
+.TP
+.B Wheel
+How many lines a notch of the wheel scrolls.
+.TP
+.B Hardware
+The pointing devices udev knows.
+.PP
+The settings go to
+.IR desktop.ini ,
+and
+.BR xd\-compositor (1)
+applies them to every libinput pointer at once.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.BR [Mouse] .
+.SH SEE ALSO
+.BR xd\-keyboard (1),
+.BR xd\-access (1),
+.BR xd\-control (1)

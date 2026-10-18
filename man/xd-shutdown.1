@@ -1,0 +1,67 @@
+.TH XD\-SHUTDOWN 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-shutdown \- the Shut Down and Log Off dialogs
+.SH SYNOPSIS
+.SY xd\-shutdown
+.OP \-\-logoff
+.OP \-\-dry\-run
+.YS
+.SY xd\-shutdown
+.B \-\-action
+.I action
+.OP \-\-dry\-run
+.YS
+.SH DESCRIPTION
+.B xd\-shutdown
+is the Shut Down Windows dialog: Log off, Shut down, Restart, Stand by and
+Hibernate (the last two only if the kernel supports them).
+.PP
+Shut down, restart, stand by and hibernate run
+.BR "systemctl poweroff" ,
+.BR reboot ,
+.B suspend
+and
+.BR hibernate ;
+logind decides through polkit whether the user may.
+Log off ends the session: it ends the XeonDesktop compositor, or, when the
+taskbar runs under another compositor, asks logind to end the session.
+.PP
+Power actions are only carried out in a XeonDesktop session on a seat
+.RB ( XEONDESKTOP_NESTED=0 );
+in a nested or test session, or outside a XeonDesktop session, they are
+only printed, so a test can't power off the computer.
+.SH OPTIONS
+.TP
+.B \-\-logoff
+The Log Off confirmation instead: in the Luna style, XP's Log Off box with
+Switch User and Log Off; otherwise Windows 2000's \(lqAre you sure you want
+to log off?\(rq.
+.TP
+.BI \-\-action " action"
+Act at once, without a dialog:
+.BR logoff ", " shutdown ", " restart ", " standby ", " hibernate ,
+or
+.B switchuser
+(lock the screen and go to the display manager's greeter).
+.TP
+.B \-\-dry\-run
+Only print the power actions.
+.TP
+.BI \-\-style " style"
+.TQ
+.BI \-\-scheme " file"
+The visual style and colour scheme instead of those in
+.IR desktop.ini .
+.SH ENVIRONMENT
+.TP
+.B XEONDESKTOP_PID
+The compositor that Log off ends, set by
+.BR xd\-compositor (1).
+.TP
+.B XEONDESKTOP_NESTED
+.B 0
+in a session on a seat, where power actions are carried out.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR systemctl (1),
+.BR loginctl (1)

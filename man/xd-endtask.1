@@ -1,0 +1,25 @@
+.TH XD\-ENDTASK 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-endtask \- the End Program box for a program that isn't responding
+.SH SYNOPSIS
+.SY xd\-endtask
+.I pid
+.I title
+.YS
+.SH DESCRIPTION
+.B xd\-endtask
+is an internal helper of XeonDesktop:
+.BR xd\-compositor (1)
+runs it when a window that is closed doesn't respond.
+It shows Windows' \(lqEnd Program \- \fItitle\fR\(rq box:
+End Now kills the process
+.I pid
+(SIGKILL), losing its unsaved data; Cancel leaves it running.
+If the process has gone, or its id now belongs to another user's
+process, nothing is killed.
+.SH EXIT STATUS
+0, or 1 for a bad process id or when there is no Wayland compositor to
+show the box on.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xd\-taskmgr (1)

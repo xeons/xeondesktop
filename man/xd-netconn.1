@@ -1,0 +1,53 @@
+.TH XD\-NETCONN 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-netconn \- Network Connections
+.SH SYNOPSIS
+.SY xd\-netconn
+.YS
+.SY xd\-netconn
+.B \-\-status
+.RI [ interface ]
+.YS
+.SY xd\-netconn
+.B \-\-wireless
+.RI [ interface ]
+.YS
+.SY xd\-netconn
+.B \-\-new
+.YS
+.SH DESCRIPTION
+.B xd\-netconn
+is Windows XP's Network Connections (Control Panel), through
+NetworkManager: a connection per network adapter, and VPN, broadband and
+spare wired connections, grouped as in XP, as tiles or details, with XP's
+task pane.
+A connection can be enabled or disabled, connected or disconnected,
+repaired, renamed and deleted, and its Status, Properties and TCP/IP
+settings opened.
+.PP
+Every change is a NetworkManager call, so NetworkManager's polkit rules
+decide what needs a password, which
+.BR xd\-polkit (1)
+asks for.
+Configure and Advanced open
+.BR nm\-connection\-editor (1)
+when it is installed.
+.SH OPTIONS
+.TP
+.BR \-\-status " [\fIinterface\fR]"
+Only the Status of the connection on
+.IR interface ,
+or of the primary connection.
+The network icon of
+.BR xd\-shell (1)
+opens this.
+.TP
+.BR \-\-wireless " [\fIinterface\fR]"
+Only View Available Wireless Networks.
+.TP
+.B \-\-new
+Only the New Connection Wizard.
+.SH SEE ALSO
+.BR nmcli (1),
+.BR xd\-wifi\-key (1),
+.BR xd\-control (1)

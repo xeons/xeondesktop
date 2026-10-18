@@ -1,0 +1,51 @@
+.TH XD\-KEYBOARD 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-keyboard \- Keyboard Properties
+.SH SYNOPSIS
+.SY xd\-keyboard
+.YS
+.SH DESCRIPTION
+.B xd\-keyboard
+is Windows XP's Keyboard Properties (Control Panel), with the input
+languages XP kept in Regional and Language Options:
+.TP
+.B Speed
+Repeat delay and rate (with a box to test them in) and the cursor's blink
+rate.
+.TP
+.B Input Languages
+Up to four XKB layouts and variants, the keys that switch between them,
+and other XKB options.
+.TP
+.B Hardware
+The keyboard model, and the keyboards udev knows.
+.PP
+The lists of layouts, variants, options and models come from
+xkeyboard-config.
+The settings go to
+.IR desktop.ini ,
+and
+.BR xd\-compositor (1)
+applies them to every keyboard at once.
+With more than one layout,
+.BR xd\-shell (1)
+shows XP's Language bar.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.B [Keyboard]:
+.BR Layout " (e.g. " us,de ),
+.BR Variant ,
+.BR Options " (e.g. " grp:alt_shift_toggle ),
+.BR Model ,
+.B RepeatDelay
+(milliseconds, default 500) and
+.B RepeatRate
+(per second, default 30).
+Empty names fall back to the
+.B XKB_DEFAULT_*
+environment variables.
+.SH SEE ALSO
+.BR xd\-intl (1),
+.BR xd\-mouse (1),
+.BR xkeyboard\-config (7)

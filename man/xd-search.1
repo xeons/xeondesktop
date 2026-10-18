@@ -1,0 +1,25 @@
+.TH XD\-SEARCH 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-search \- Search for Files or Folders
+.SH SYNOPSIS
+.SY xd\-search
+.RI [ folder ]
+.YS
+.SH DESCRIPTION
+.B xd\-search
+is Windows 2000's Search for Files or Folders, from the Start menus'
+Search items and F3 in
+.BR xd\-files (1).
+It finds files by name (with
+.B *
+and
+.B ?
+wildcards) or by text inside them, under the folder in Look in, and lists
+them with their folder, size, type and date; double-clicking one opens it.
+Links aren't followed, and hidden files and folders are skipped.
+.PP
+.I folder
+starts in Look in.
+.SH SEE ALSO
+.BR xd\-files (1),
+.BR find (1)

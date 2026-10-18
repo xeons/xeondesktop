@@ -1,0 +1,67 @@
+.TH XD\-DESK 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-desk \- Display Properties
+.SH SYNOPSIS
+.SY xd\-desk
+.OP \-\-page n
+.YS
+.SH DESCRIPTION
+.B xd\-desk
+is Display Properties (Control Panel > Display), with Windows 2000's tabs:
+.TP
+.B Background
+The wallpaper and how it is placed.
+.TP
+.B Screen Saver
+The screen saver, its settings and a preview, the Wait, Password protected,
+and when to turn the monitors off.
+.TP
+.B Appearance
+The visual style (Classic, Luna, Watercolor or Aero), colour scheme and
+font size, with a preview; in Aero, Windows 7's window colours.
+.TP
+.B Effects
+Font smoothing, large icons, the icon theme, and the GTK and Qt styles of
+other programs.
+.TP
+.B Settings
+Each monitor's position, resolution, refresh rate, scale and orientation,
+or turning it off.
+New display settings revert after 15 seconds unless kept.
+.PP
+Apply and OK write
+.IR desktop.ini ,
+which the compositor, the shell and the other programs follow at once.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on tab
+.IR n ,
+from 0 (Background) to 4 (Settings); the default is 2 (Appearance), as
+Windows' desk.cpl.
+.TP
+.BI \-\-style " style"
+.TQ
+.BI \-\-scheme " file"
+The visual style and colour scheme of the dialog instead of those in
+.IR desktop.ini .
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.BR [Appearance] ,
+.BR [Desktop] ,
+.BR [Wallpaper] ,
+.BR [Effects] ,
+.B [ScreenSaver]
+and
+.BR [ScreenSaver.*] .
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/monitors.ini
+The monitors' settings.
+.TP
+.I /usr/share/xeondesktop/schemes/
+The colour schemes.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xd\-lock (1),
+.BR xd\-control (1)

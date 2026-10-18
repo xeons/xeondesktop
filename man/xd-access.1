@@ -1,0 +1,58 @@
+.TH XD\-ACCESS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-access \- Accessibility Options
+.SH SYNOPSIS
+.SY xd\-access
+.OP \-\-page n
+.YS
+.SY xd\-access
+.B \-\-shortcut
+.I feature
+.YS
+.SH DESCRIPTION
+.B xd\-access
+is Windows XP's Accessibility Options (Control Panel):
+.TP
+.B Keyboard
+StickyKeys, FilterKeys (SlowKeys and BounceKeys) and ToggleKeys, each with
+its settings and XP's keyboard shortcut.
+.TP
+.B Sound
+SoundSentry (a flash when a sound plays) and ShowSounds.
+.TP
+.B Display
+High Contrast, the text cursor's blink rate, and the pointer's size.
+.TP
+.B Mouse
+MouseKeys.
+.TP
+.B General
+Turning the features off after a time idle, and the shortcuts' warnings
+and sounds.
+.PP
+The settings go to
+.IR desktop.ini ,
+and
+.BR xd\-compositor (1)
+carries them out.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on tab
+.IR n :
+0 Keyboard, 1 Sound, 2 Display, 3 Mouse, 4 General.
+.TP
+.BI \-\-shortcut " feature"
+The box asking whether to keep a feature that its keyboard shortcut has
+just turned on (Cancel turns it off again):
+.BR stickykeys ", " filterkeys ", " togglekeys " or " mousekeys .
+The compositor runs this.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.BR [Accessibility] ,
+and High Contrast's look in
+.BR [Appearance] .
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xd\-control (1)

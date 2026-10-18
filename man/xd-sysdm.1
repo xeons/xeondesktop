@@ -1,0 +1,55 @@
+.TH XD\-SYSDM 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-sysdm \- System Properties and Device Manager
+.SH SYNOPSIS
+.SY xd\-sysdm
+.OP \-\-page n
+.YS
+.SY xd\-sysdm
+.B \-\-devmgr
+.YS
+.SH DESCRIPTION
+.B xd\-sysdm
+is Windows 2000's System Properties (Control Panel > System) with Linux
+inside:
+.TP
+.B General
+The distribution, kernel, owner, CPU, firmware and memory.
+.TP
+.B Network Identification
+The computer's name and description, through systemd-hostnamed.
+.TP
+.B Hardware
+Device Manager, built from udev, with each device's driver and details;
+the loaded kernel modules; Secure Boot and module signing; power profiles.
+.TP
+.B User Profiles
+Home folders and their sizes.
+.TP
+.B Advanced
+Swap and zram; the user's environment variables; the boot loader's
+entries and crash handling.
+.PP
+System changes go through the system services and their polkit checks, so
+.BR xd\-polkit (1)
+asks for a password when one is needed.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on tab
+.IR n :
+0 General, 1 Network Identification, 2 Hardware, 3 User Profiles,
+4 Advanced.
+.TP
+.B \-\-devmgr
+Device Manager on its own.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/environment.d/99\-xeondesktop.conf
+The environment variables set on the Advanced tab, which
+.BR xeondesktop\-session (1)
+and systemd's user manager read at the next logon.
+.SH SEE ALSO
+.BR xd\-control (1),
+.BR hostnamectl (1),
+.BR environment.d (5)

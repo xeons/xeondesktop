@@ -1,0 +1,24 @@
+.TH XD\-ADMINTOOLS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-admintools \- the Administrative Tools folder
+.SH SYNOPSIS
+.SY xd\-admintools
+.YS
+.SH DESCRIPTION
+.B xd\-admintools
+is Windows XP's Administrative Tools folder (Control Panel > Performance
+and Maintenance): shortcuts to the system tools, each a program of its
+own: Services
+.RB ( xd\-services (1)),
+Event Viewer
+.RB ( xd\-eventvwr (1)),
+Disk Management
+.RB ( xd\-diskmgmt (1))
+and Device Manager
+.RB ( "xd\-sysdm \-\-devmgr" ).
+.PP
+A tool is listed when its desktop entry has
+.BR X\-XeonDesktop\-AdminTool=true .
+.SH SEE ALSO
+.BR xd\-control (1),
+.BR xd\-sysdm (1)

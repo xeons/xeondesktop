@@ -1,0 +1,123 @@
+.TH XD\-SHELL 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-shell \- the XeonDesktop taskbar, Start menu and desktop
+.SH SYNOPSIS
+.SY xd\-shell
+.OP \-\-style style
+.OP \-\-scheme file
+.OP \-\-taskbar\-only
+.YS
+.SY xd\-shell
+.B \-\-toggle\-start\-menu
+.YS
+.SH DESCRIPTION
+.B xd\-shell
+puts a taskbar on every monitor, with the Start button, task buttons, Quick
+Launch and the notification area (the clock, volume, network, Bluetooth,
+battery and the Language bar, and StatusNotifierItem icons of other
+programs), and draws the desktop's wallpaper and icons.
+The Start menu is Windows 2000's, XP's or Windows 7's, as chosen in
+Taskbar and Start Menu Properties
+.RB ( xd\-taskbar (1));
+its programs come from the installed desktop entries.
+It also starts the screen saver after the configured wait.
+.PP
+.BR xd\-compositor (1)
+starts it, passing on its own
+.B \-\-style
+and
+.BR \-\-scheme ,
+and restarts it if it crashes.
+.PP
+Under another wlroots compositor (sway, Hyprland, labwc...),
+.B xd\-shell \-\-taskbar\-only
+runs the taskbar on its own; or, if that compositor's session starts
+.IR graphical\-session.target ,
+.B systemctl \-\-user enable \-\-now xeondesktop\-taskbar.service
+starts it with the session.
+Task buttons need the wlr-foreign-toplevel-management protocol and the
+taskbar needs wlr-layer-shell.
+.SH OPTIONS
+.TP
+.BI \-\-style " style"
+The visual style
+.RB ( classic ", " luna ", " whistler " or " aero )
+instead of the one in
+.IR desktop.ini .
+.TP
+.BI \-\-scheme " file"
+A colour scheme
+.RI ( .ini
+file) instead of the one in
+.IR desktop.ini .
+.TP
+.B \-\-taskbar\-only
+Taskbars, Start menu and notification area, without the desktop
+(wallpaper and icons): for another compositor's session.
+.TP
+.B \-\-toggle\-start\-menu
+Open or close the running shell's Start menu, and exit; for another
+compositor's key binding.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH ENVIRONMENT
+.TP
+.B TERMINAL
+The terminal for programs whose desktop entries say
+.B Terminal=true
+(default
+.BR alacritty ).
+.TP
+.B XD_ICON_THEME
+The icon theme used while Display Properties leaves Icons at Default
+(default
+.BR breeze ).
+.TP
+.B XD_SOUND_TRACE
+A file to write the sounds that would play to instead of playing them
+(for tests).
+.TP
+.B XD_CLOCK_FIXED
+Text shown in place of the clock, which then never changes (for
+screenshots and tests).
+.TP
+.B XD_SHELL_OPEN_MENU
+Open the Start menu along this path at start-up, e.g.
+.B Programs/Accessories
+(for screenshots and tests).
+.TP
+.B XD_IDLE_SECONDS
+Set to
+.B 1
+to count the screen saver's, monitor's and sleep timers in seconds
+instead of minutes (for tests).
+.TP
+.B XD_TRAY_INACTIVE_SECONDS
+How long a notification area icon stays quiet before it folds behind the
+chevron, in seconds, instead of three minutes (for tests).
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+The settings (default
+.IR ~/.config/xeondesktop/desktop.ini );
+changes are followed at once.
+.TP
+.I ~/.config/xeondesktop/start\-pinned
+Programs pinned to the Windows 7 Start menu, one desktop file id a line.
+.TP
+.I ~/.config/xeondesktop/taskbar\-pinned
+Programs pinned to the Windows 7 taskbar, one desktop file id a line.
+.TP
+.I ~/.local/share/xeondesktop/quicklaunch/
+The Quick Launch shortcuts: desktop entries or links to them, in file
+name order.
+.TP
+.I ~/.face
+The picture at the top of the XP and Windows 7 Start menus.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xd\-taskbar (1),
+.BR xd\-run (1),
+.BR xd\-shutdown (1),
+.BR xd\-lock (1)

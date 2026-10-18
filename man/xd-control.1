@@ -1,0 +1,72 @@
+.TH XD\-CONTROL 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-control \- open Control Panel or one of its applets
+.SH SYNOPSIS
+.SY xd\-control
+.RI [ applet ]
+.YS
+.SH DESCRIPTION
+Without an argument,
+.B xd\-control
+opens the Control Panel folder
+.RB ( control:///
+in
+.BR xd\-files (1)),
+in Windows XP's Category View or Classic View.
+.PP
+With one, it opens that applet, as Windows'
+.B control desk.cpl
+does.
+.I applet
+may be the program's name with or without
+.B xd\-
+.RB ( desk ", " xd\-desk ),
+with
+.B .cpl
+.RB ( desk.cpl ),
+the desktop entry's id or its name
+.RB ( Display ),
+in any case.
+.PP
+An applet is any installed desktop entry with
+.B X\-XeonDesktop\-ControlPanel
+in its
+.BR Categories ;
+its
+.B X\-XeonDesktop\-ControlPanel\-Category
+key
+.RB ( appearance ", " network ", " programs ", " sound ", " performance ,
+.BR hardware ", " accounts ", " datetime " or " accessibility )
+files it in Category View.
+.PP
+XeonDesktop's applets:
+.BR xd\-access (1),
+.BR xd\-admintools (1),
+.BR xd\-appwiz (1),
+.BR xd\-bluetooth (1),
+.BR xd\-desk (1),
+.BR xd\-folders (1),
+.BR xd\-fonts (1),
+.BR xd\-intl (1),
+.BR xd\-joy (1),
+.BR xd\-keyboard (1),
+.BR xd\-mouse (1),
+.BR xd\-netconn (1),
+.BR xd\-power (1),
+.BR xd\-printers (1),
+.BR xd\-scanners (1),
+.BR xd\-schedtasks (1),
+.BR xd\-sound (1),
+.BR xd\-sysdm (1),
+.BR xd\-taskbar (1),
+.BR xd\-timedate (1)
+and
+.BR xd\-users (1).
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show a summary and exit.
+.SH EXIT STATUS
+1 when there is no such applet or it can't be started.
+.SH SEE ALSO
+.BR xd\-files (1)

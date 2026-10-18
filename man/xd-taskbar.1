@@ -1,0 +1,42 @@
+.TH XD\-TASKBAR 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-taskbar \- Taskbar and Start Menu Properties
+.SH SYNOPSIS
+.SY xd\-taskbar
+.RB [ "\-\-page 1" ]
+.YS
+.SH DESCRIPTION
+.B xd\-taskbar
+is Taskbar and Start Menu Properties (Control Panel > Taskbar and Start
+Menu).
+The Taskbar tab sets locking, auto-hide, keeping the taskbar on top,
+grouping or combining task buttons, Quick Launch, showing the taskbar on
+all displays, the clock and hiding inactive notification icons (with
+Customize Notifications).
+The Start Menu tab picks the Windows 2000, XP or Windows 7 Start menu and
+customizes it.
+.PP
+Apply and OK write
+.IR desktop.ini ,
+which
+.BR xd\-shell (1)
+follows at once.
+.SH OPTIONS
+.TP
+.B "\-\-page 1"
+Open on the Start Menu tab.
+.TP
+.BI \-\-style " style"
+.TQ
+.BI \-\-scheme " file"
+The visual style and colour scheme instead of those in
+.IR desktop.ini .
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.B [Taskbar]
+and
+.BR [StartMenu] .
+.SH SEE ALSO
+.BR xd\-shell (1),
+.BR xd\-control (1)

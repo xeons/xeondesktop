@@ -1,0 +1,37 @@
+.TH XD\-COMPOSITOR\-FX 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-compositor\-fx \- the XeonDesktop compositor with blurred Aero glass
+.SH SYNOPSIS
+.SY xd\-compositor\-fx
+.RI [ options ]
+.YS
+.SH DESCRIPTION
+.B xd\-compositor\-fx
+is
+.BR xd\-compositor (1)
+built on SceneFX's scene graph: in the Aero style it blurs what is behind
+translucent glass (window frames, the taskbar, the Start menu) and draws
+window shadows.
+It takes the same options and reads the same files.
+.PP
+It needs a GPU renderer (OpenGL ES 2).
+.B xd\-compositor
+hands over to it on a GPU, so it is not normally run by hand.
+Without a GPU it hands back to
+.B xd\-compositor
+with
+.B XD_NO_FX
+set, which draws in software and without blur.
+It sets
+.B XD_GLASS=1
+for the session, which tells the shell and the other programs that glass
+is blurred, so they draw Aero translucent.
+.SH OPTIONS
+As for
+.BR xd\-compositor (1).
+.SH ENVIRONMENT
+As for
+.BR xd\-compositor (1).
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xeondesktop\-session (1)

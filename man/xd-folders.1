@@ -1,0 +1,54 @@
+.TH XD\-FOLDERS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-folders \- Folder Options
+.SH SYNOPSIS
+.SY xd\-folders
+.OP \-\-view view
+.YS
+.SH DESCRIPTION
+.B xd\-folders
+is Windows XP's Folder Options (Control Panel; Tools > Folder Options in
+.BR xd\-files (1)):
+.TP
+.B General
+Open each folder in the same window or its own; single- or double-click to
+open an item.
+.TP
+.B View
+Apply to All Folders and Reset All Folders, and the advanced settings.
+.TP
+.B File Types
+The file types by extension and the program each opens with; Change...
+sets the default.
+New and Delete change the user's MIME database.
+.PP
+The settings go to
+.IR desktop.ini ,
+which
+.B xd\-files
+follows at once; the programs files open with go to GIO's
+.IR mimeapps.list .
+.SH OPTIONS
+.TP
+.BI \-\-view= view
+The view of the folder Folder Options was opened from
+.RB ( Thumbnails ", " Tiles ", " Icons ", " List " or " Details ),
+for Apply to All Folders; without it, that button is greyed.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.BR [Folders] .
+.TP
+.I $XDG_CONFIG_HOME/mimeapps.list
+Default applications.
+.TP
+.I $XDG_DATA_HOME/mime/packages/
+New file types, compiled by
+.BR update\-mime\-database (1).
+.SH SEE ALSO
+.BR xd\-files (1),
+.BR xd\-defaults (1),
+.BR update\-mime\-database (1)

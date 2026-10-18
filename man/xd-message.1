@@ -1,0 +1,40 @@
+.TH XD\-MESSAGE 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-message \- show a Windows-style message box
+.SH SYNOPSIS
+.SY xd\-message
+.OP \-\-quiet
+.RB [ \-\-error | \-\-warning | \-\-info ]
+.I title
+.I text
+.YS
+.SH DESCRIPTION
+.B xd\-message
+shows a message box with an icon,
+.I text
+and an OK button, in a window titled
+.IR title ,
+and plays the sound the sound scheme gives that kind of message.
+It returns when the box is closed.
+.PP
+It is an internal helper of XeonDesktop, used by
+.BR xd\-shell (1)
+for messages such as errors renaming files and the battery alarms, but
+scripts may use it too.
+The options must come in the order shown.
+.SH OPTIONS
+.TP
+.B \-\-quiet
+Play no sound.
+.TP
+.B \-\-error
+The error icon and the Critical Stop sound.
+.TP
+.B \-\-warning
+The warning icon and the Exclamation sound.
+.TP
+.B \-\-info
+The information icon and the Asterisk sound (the default).
+.SH SEE ALSO
+.BR xd\-shell (1),
+.BR xd\-sound (1)

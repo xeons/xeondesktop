@@ -1,0 +1,43 @@
+.TH XD\-SOUND 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-sound \- Sounds and Audio Devices Properties
+.SH SYNOPSIS
+.SY xd\-sound
+.OP \-\-page n
+.YS
+.SH DESCRIPTION
+.B xd\-sound
+is Windows XP's Sounds and Audio Devices Properties (Control Panel), on
+the sound server through libpulse (PulseAudio, or PipeWire's PulseAudio
+server):
+.TP
+.B Volume
+The default output's volume and mute, and the taskbar's volume icon.
+.TP
+.B Sounds
+The sound scheme: the sounds played for windows, menus, message boxes,
+devices, the battery, the Recycle Bin, logon and logoff (libcanberra).
+.TP
+.B Audio
+The default output and input devices.
+.TP
+.B Hardware
+The sound cards.
+.PP
+The buttons that opened XP's Volume Control (Advanced..., Program
+Volume...) open
+.BR pavucontrol (1),
+which must be installed for them.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on tab
+.IR n :
+0 Volume, 1 Sounds, 2 Audio, 3 Hardware.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.BR [Sound] .
+.SH SEE ALSO
+.BR xd\-control (1),
+.BR xd\-message (1)

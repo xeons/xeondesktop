@@ -1,0 +1,47 @@
+.TH XD\-PRINTERS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-printers \- Printers and Faxes
+.SH SYNOPSIS
+.SY xd\-printers
+.RB [ \-\-queue
+.IR name " |"
+.B \-\-properties
+.IR name " |"
+.B \-\-preferences
+.IR name " |"
+.BR \-\-add ]
+.YS
+.SH DESCRIPTION
+.B xd\-printers
+is Windows XP's Printers and Faxes folder, on CUPS: the printers the
+scheduler has, the default one with XP's check mark.
+It opens a printer's queue, Properties and Printing Preferences, prints
+test pages, pauses and deletes printers, and adds network printers with
+the Add Printer Wizard.
+Changes go through the CUPS scheduler's own authorization, which may ask
+for a password.
+.SH OPTIONS
+.TP
+.BI \-\-queue " name"
+Only the queue of the printer
+.IR name .
+.TP
+.BI \-\-properties " name"
+Only its Properties.
+.TP
+.BI \-\-preferences " name"
+Only its Printing Preferences.
+.TP
+.B \-\-add
+Only the Add Printer Wizard.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH ENVIRONMENT
+.TP
+.B CUPS_SERVER
+The CUPS scheduler to use, as for every CUPS program.
+.SH SEE ALSO
+.BR lpstat (1),
+.BR lpadmin (8),
+.BR xd\-control (1)

@@ -1,0 +1,42 @@
+.TH XD\-TASKMGR 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-taskmgr \- Task Manager
+.SH SYNOPSIS
+.SY xd\-taskmgr
+.YS
+.SH DESCRIPTION
+.B xd\-taskmgr
+is the Windows 2000 Task Manager, with Windows XP's Networking and Users
+tabs:
+.TP
+.B Applications
+The open windows: End Task, Switch To and New Task.
+.TP
+.B Processes
+Every process, with selectable columns: End Process, End Process Tree,
+Set Priority and Set Affinity.
+.TP
+.B Performance
+CPU and memory meters, history graphs and totals, in Linux terms
+(committed memory is
+.BR Committed_AS ;
+kernel memory is the reclaimable and unreclaimable slab).
+.TP
+.B Networking
+A graph per network adapter.
+.TP
+.B Users
+The logind sessions, with Logoff and Disconnect.
+.PP
+Ctrl+Shift+Esc (and Ctrl+Alt+Delete in the XP and 7 styles) opens it, or
+brings the running one forward.
+While it runs, its CPU meter sits in the notification area.
+Process data comes from procps-ng's libproc2.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show GApplication's summary of options and exit.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xd\-security (1),
+.BR ps (1)

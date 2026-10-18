@@ -1,0 +1,21 @@
+.TH XD\-DEFAULTS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-defaults \- Set Program Access and Defaults
+.SH SYNOPSIS
+.SY xd\-defaults
+.YS
+.SH DESCRIPTION
+.B xd\-defaults
+is Windows XP's Set Program Access and Defaults (Default Programs in the
+Windows 7 Start menu): the default web browser, e-mail program and other
+programs, one section per activity, as in XP's Custom configuration.
+\(lqUse my current ...\(rq keeps what is set.
+OK writes the choices through GIO, which other desktops' programs read
+too.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/mimeapps.list
+The default applications.
+.SH SEE ALSO
+.BR xd\-folders (1),
+.BR xdg\-mime (1)

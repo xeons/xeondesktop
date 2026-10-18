@@ -1,0 +1,26 @@
+.TH XD\-SERVICES 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-services \- the Services console for systemd
+.SH SYNOPSIS
+.SY xd\-services
+.OP \-\-user
+.YS
+.SH DESCRIPTION
+.B xd\-services
+is Windows XP's Services console with systemd's services in it: those of
+the system manager and of the user's own manager, on the System and User
+tabs.
+Services can be started, stopped and restarted, and their startup type
+changed.
+.PP
+Changing system services goes through polkit, so
+.BR xd\-polkit (1)
+asks for a password; the user's own services don't need one.
+systemd has no paused state, so Pause and Resume are greyed.
+.SH OPTIONS
+.TP
+.B \-\-user
+Open on the User tab.
+.SH SEE ALSO
+.BR systemctl (1),
+.BR xd\-admintools (1)

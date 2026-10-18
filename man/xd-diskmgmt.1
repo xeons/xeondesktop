@@ -1,0 +1,26 @@
+.TH XD\-DISKMGMT 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-diskmgmt \- Disk Management
+.SH SYNOPSIS
+.SY xd\-diskmgmt
+.YS
+.SH DESCRIPTION
+.B xd\-diskmgmt
+is Windows XP's Disk Management, over UDisks2: the volume list above and
+the disk map below, in XP's colours.
+It initializes disks (GPT or MBR), creates, deletes, formats (quick
+format only), extends and shrinks partitions, changes labels and
+partition types, marks partitions active, mounts and unmounts them, and
+ejects media.
+.PP
+Everything goes through UDisks2, which asks polkit, so
+.BR xd\-polkit (1)
+asks for a password; nothing runs as root here.
+As Windows does for its system and boot volumes, what the running system
+uses (\fI/\fR, \fI/boot\fR, \fI/usr\fR, swap in use...) can't be deleted,
+formatted or shrunk.
+Every destructive action asks first, naming the disk, the partition and
+its size.
+.SH SEE ALSO
+.BR udisksctl (1),
+.BR xd\-admintools (1)

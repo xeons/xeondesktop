@@ -1,0 +1,48 @@
+.TH XD\-POWER 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-power \- Power Options Properties
+.SH SYNOPSIS
+.SY xd\-power
+.OP \-\-page n
+.YS
+.SH DESCRIPTION
+.B xd\-power
+is Windows XP's Power Options Properties (Control Panel):
+.TP
+.B Power Schemes
+When to turn off the monitor, stand by and hibernate; with a battery
+(through UPower), separately when plugged in and on batteries.
+Schemes of the user's own are kept with Save As and Delete.
+.TP
+.B Alarms
+With a battery, the low and critical battery alarms and their actions
+(sound, message, stand by, hibernate or shut down).
+.TP
+.B Power Meter
+With a battery, the power source and charge.
+.TP
+.B Advanced
+The battery icon, locking the computer on resume, and logind's lid and
+power button actions (shown read-only).
+.TP
+.B Hibernate
+Whether the computer can hibernate, and the space it needs.
+.PP
+.BR xd\-shell (1)
+carries the settings out.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on the
+.IR n th
+tab shown, from 0 (Power Schemes).
+Without a battery, Alarms and Power Meter aren't shown.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.B [Power]
+and
+.BR [ScreenSaver] .
+.SH SEE ALSO
+.BR xd\-shell (1),
+.BR xd\-control (1)

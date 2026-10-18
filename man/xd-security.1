@@ -1,0 +1,29 @@
+.TH XD\-SECURITY 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-security \- the Windows Security dialog
+.SH SYNOPSIS
+.SY xd\-security
+.YS
+.SY xd\-security
+.B \-\-change\-password
+.YS
+.SH DESCRIPTION
+.B xd\-security
+is Windows 2000's Windows Security dialog, which Ctrl+Alt+Delete opens in
+the Classic style: who is logged on and since when, and Lock Computer,
+Log Off, Shut Down, Change Password and Task Manager.
+.PP
+Change Password runs
+.BR passwd (1)
+for the user, answering its prompts, so the system's password rules
+apply.
+.SH OPTIONS
+.TP
+.B \-\-change\-password
+Only the Change Password dialog.
+It must be the first argument.
+.SH SEE ALSO
+.BR xd\-lock (1),
+.BR xd\-shutdown (1),
+.BR xd\-taskmgr (1),
+.BR passwd (1)

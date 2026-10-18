@@ -1,0 +1,38 @@
+.TH XD\-APPWIZ 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-appwiz \- Add or Remove Programs
+.SH SYNOPSIS
+.SY xd\-appwiz
+.RB [ \-\-add | \-\-components ]
+.YS
+.SH DESCRIPTION
+.B xd\-appwiz
+is Windows XP's Add or Remove Programs (Control Panel), through PackageKit
+and Flatpak:
+.TP
+.B Change or Remove Programs
+The programs in the Start menu, each with the package or Flatpak it came
+from, its size, how often and when it was last used, and Remove.
+.TP
+.B Add New Programs
+Install a package file, or search the software sources and Flatpak
+remotes.
+.TP
+.B Add/Remove Windows Components
+PackageKit's package groups.
+.PP
+Nothing runs as root: PackageKit and Flatpak's system helper ask polkit,
+so
+.BR xd\-polkit (1)
+asks for an administrator's password when needed.
+.SH OPTIONS
+.TP
+.B \-\-add
+Open on Add New Programs.
+.TP
+.B \-\-components
+Open on Add/Remove Windows Components.
+.SH SEE ALSO
+.BR pkcon (1),
+.BR flatpak (1),
+.BR xd\-control (1)

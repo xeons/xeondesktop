@@ -1,0 +1,63 @@
+.TH XD\-THUMBNAILER 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-thumbnailer \- make a file's thumbnail in a sandbox
+.SH SYNOPSIS
+.SY xd\-thumbnailer
+.OP \-\-size size
+.OP \-\-verbose
+.I file
+.YS
+.SH DESCRIPTION
+.B xd\-thumbnailer
+makes the freedesktop.org thumbnail of
+.I file
+(a path or URI) in the thumbnail cache and prints the thumbnail's path.
+.BR xd\-files (1)
+runs it for the thumbnails the cache doesn't have yet.
+.PP
+The file is decoded only inside a
+.BR bwrap (1)
+sandbox with a seccomp filter, without the network and with nothing of the
+user's but the file itself: pictures with gdk-pixbuf, other types with the
+installed thumbnailers
+.RI ( thumbnailers/*.thumbnailer
+in the XDG data directories).
+Only raw pixels come out of the sandbox; the PNG is written outside it.
+When decoding fails, a failure marker is left in the cache, so the file
+isn't tried again until it changes.
+.SH OPTIONS
+.TP
+.BR \-s ", " \-\-size " \fIsize\fR"
+.B normal
+(128 pixels),
+.B large
+(256, the default),
+.B x\-large
+(512) or
+.B xx\-large
+(1024).
+.TP
+.BR \-v ", " \-\-verbose
+Say why a file wasn't thumbnailed.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH EXIT STATUS
+.TP
+.B 0
+The thumbnail's path was printed.
+.TP
+.B 1
+The file can't be thumbnailed.
+.TP
+.B 2
+The sandbox can't run (for instance, bubblewrap isn't installed), or the
+arguments are wrong.
+.SH FILES
+.TP
+.I $XDG_CACHE_HOME/thumbnails/
+The thumbnail cache (default
+.IR ~/.cache/thumbnails ).
+.SH SEE ALSO
+.BR xd\-files (1),
+.BR bwrap (1)

@@ -1,0 +1,36 @@
+.TH XD\-POLKIT 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-polkit \- the XeonDesktop polkit authentication agent
+.SH SYNOPSIS
+.SY xd\-polkit
+.OP \-\-process pid
+.YS
+.SH DESCRIPTION
+.B xd\-polkit
+is the session's polkit authentication agent.
+When a program asks for something only an administrator may do (rename
+the computer, change the time, mount a disk, install a package...),
+polkit asks the agent of the user's session to confirm it, and
+.B xd\-polkit
+asks in a Windows XP-style Run As dialog: the reason, whose password
+(when several administrators qualify) and the password, which polkit's
+own helper checks through PAM.
+.PP
+.BR xd\-compositor (1)
+starts it with the session and restarts it if it crashes.
+If another agent already serves the session (in a nested session, the
+host desktop's), it exits.
+.SH OPTIONS
+.TP
+.BI \-\-process " pid"
+Serve only the process
+.I pid
+rather than the whole login session, as
+.B pkttyagent \-\-process
+does; for testing beside another desktop's agent.
+.SH EXIT STATUS
+1 when it is not in a login session or can't register as the agent.
+.SH SEE ALSO
+.BR polkit (8),
+.BR pkexec (1),
+.BR xd\-compositor (1)

@@ -1,0 +1,35 @@
+.TH XD\-RUN 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-run \- the Run dialog
+.SH SYNOPSIS
+.SY xd\-run
+.YS
+.SH DESCRIPTION
+.B xd\-run
+is the Run dialog of the Start menu: type the name of a program, folder,
+document or Internet address, and it opens it.
+A command line runs if its program is in
+.B PATH
+or given by its path
+.RB ( ~
+is the home folder); folders, documents and addresses open with their
+default applications, through
+.BR xdg\-open (1).
+Browse... picks a file.
+.PP
+It remembers the last 26 commands; the last one is pre-filled.
+.SH OPTIONS
+.TP
+.BI \-\-style " style"
+.TQ
+.BI \-\-scheme " file"
+The visual style and colour scheme instead of those in
+.IR desktop.ini .
+.SH FILES
+.TP
+.I $XDG_STATE_HOME/xeondesktop/run\-history
+The commands run, newest first (default
+.IR ~/.local/state/xeondesktop/run\-history ).
+.SH SEE ALSO
+.BR xd\-shell (1),
+.BR xd\-choose\-file (1)

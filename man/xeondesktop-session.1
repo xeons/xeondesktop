@@ -1,0 +1,54 @@
+.TH XEONDESKTOP\-SESSION 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xeondesktop\-session \- start a XeonDesktop session
+.SH SYNOPSIS
+.SY xeondesktop\-session
+.RI [ xd\-compositor\ options ]
+.YS
+.SH DESCRIPTION
+.B xeondesktop\-session
+starts a XeonDesktop session.
+Display managers run it from
+.IR /usr/share/wayland\-sessions/xeondesktop.desktop ,
+which lists XeonDesktop among the sessions to log on to.
+.PP
+It sets up the session's environment, then runs
+.BR xd\-compositor (1)
+with its own arguments:
+.IP \(bu 2
+.BR XDG_SESSION_TYPE=wayland ,
+.B XDG_CURRENT_DESKTOP=XeonDesktop
+and
+.BR XDG_SESSION_DESKTOP=xeondesktop ;
+.IP \(bu
+variables that make Firefox, Qt, SDL and Java programs use Wayland
+.RB ( MOZ_ENABLE_WAYLAND ,
+.BR QT_QPA_PLATFORM ,
+.BR SDL_VIDEODRIVER ,
+.BR _JAVA_AWT_WM_NONREPARENTING );
+.IP \(bu
+the variables in
+.I ~/.config/environment.d
+(System Properties > Advanced > Environment Variables writes them there),
+as systemd's environment generator merges them;
+.IP \(bu
+if formats customized in Regional and Language Options need a locale that
+is no longer installed, the formats without the customizations.
+.PP
+When the compositor exits, however it exits, it stops
+.I xeondesktop\-session.target
+in the user manager (and with it
+.I graphical\-session.target
+and the session's services) and takes the session's variables back out of
+the user manager's environment.
+.SH FILES
+.TP
+.I ~/.config/environment.d/*.conf
+The user's environment variables.
+.TP
+.I /usr/share/wayland\-sessions/xeondesktop.desktop
+The session entry for display managers.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR environment.d (5),
+.BR systemd.special (7)

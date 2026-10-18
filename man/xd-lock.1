@@ -1,0 +1,78 @@
+.TH XD\-LOCK 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-lock \- Lock Computer and screen savers
+.SH SYNOPSIS
+.SY xd\-lock
+.YS
+.SY xd\-lock
+.B \-\-saver
+.RI [ id ]
+.RB [ \-\-lock | \-\-no\-lock ]
+.YS
+.SH DESCRIPTION
+Without options,
+.B xd\-lock
+locks the computer as Windows 2000 did: the screen says
+\(lqComputer Locked\(rq, and Ctrl+Alt+Delete opens Unlock Computer, which
+checks the user's password with PAM.
+After the screen saver's usual wait, a locked computer runs the screen
+saver.
+Win+L runs it.
+.PP
+It locks with the ext-session-lock protocol: the compositor shows nothing
+else until it unlocks, and keeps the screen locked if it crashes
+.RB ( xd\-compositor (1)
+then starts it again).
+When the display manager's greeter lets the user back in after Switch
+User, logind tells it to unlock, so the password isn't asked twice; and
+logind's Lock
+.RB ( "loginctl lock\-session" )
+turns a running screen saver into a locked screen.
+.PP
+With
+.BR \-\-saver ,
+it runs a screen saver until the mouse moves or a key is pressed.
+.BR xd\-shell (1)
+runs it after the Wait set in Display Properties.
+.SH OPTIONS
+.TP
+.BR \-\-saver " [\fIid\fR]"
+Run the screen saver
+.IR id ,
+or the one chosen in Display Properties:
+.BR pipes " (3D Pipes), " text3d " (3D Text), " beziers ,
+.BR blank " (Blank Screen), " flying " (Flying Penguins), "
+.BR marquee " (Marquee Display), " mystify " (Mystify Your Mind) or "
+.B starfield
+(Starfield Simulation).
+.TP
+.B \-\-lock
+With
+.BR \-\-saver ,
+lock when the saver ends, asking for the password.
+.TP
+.B \-\-no\-lock
+With
+.BR \-\-saver ,
+don't lock.
+Without either, the saver's Password protected setting decides.
+.TP
+.BI \-\-style " style"
+.TQ
+.BI \-\-scheme " file"
+The visual style and colour scheme instead of those in
+.IR desktop.ini .
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+The screen saver, its Wait and Password protected, and each saver's
+settings
+.RB ( [ScreenSaver] ", " [ScreenSaver.*] ).
+.TP
+.I /etc/pam.d/xeondesktop
+The PAM service the password is checked with; without it,
+.IR login 's.
+.SH SEE ALSO
+.BR xd\-desk (1),
+.BR xd\-shell (1),
+.BR loginctl (1)

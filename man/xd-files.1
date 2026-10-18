@@ -1,0 +1,116 @@
+.TH XD\-FILES 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-files \- the XeonDesktop file manager
+.SH SYNOPSIS
+.SY xd\-files
+.OP \-\-view view
+.RI [ folder ...]
+.YS
+.SY xd\-files
+.B \-\-properties
+.IR file ...
+.YS
+.SY xd\-files
+.RB { \-\-trash | \-\-delete }
+.IR file ...
+.YS
+.SY xd\-files
+.B \-\-rename
+.I file
+.YS
+.SY xd\-files
+.RB { \-\-copy\-to | \-\-move\-to }
+.I dir
+.IR file ...
+.YS
+.SY xd\-files
+.B \-\-empty\-trash
+.YS
+.SH DESCRIPTION
+.B xd\-files
+is the file manager, modelled on Windows XP's Explorer windows: a menu
+bar, Back, Forward and Up, the Folders tree, an address bar, the five
+views (Thumbnails, Tiles, Icons, List and Details) and a status bar.
+It opens each
+.I folder
+(a path or URI) in a window of its own, or the home folder.
+Each window is a process of its own.
+.PP
+Besides folders it opens My Computer
+.RB ( computer:/// ),
+the Recycle Bin
+.RB ( trash:/// ,
+the freedesktop.org trash, read directly),
+Control Panel
+.RB ( control:/// )
+and My Network Places
+.RB ( network:/// ,
+where gvfs provides it).
+.PP
+Thumbnails missing from the freedesktop.org cache are made by
+.BR xd\-thumbnailer (1).
+Favorites are GTK's bookmarks, shared with file choosers.
+.PP
+The options other than
+.B \-\-view
+do one thing without opening a folder window, and exit when it is done;
+the desktop's icons use them.
+.SH OPTIONS
+.TP
+.BI \-\-view= view
+Open in the view
+.IR view :
+.BR Thumbnails ", " Tiles ", " Icons ", " List " or " Details
+(in any case).
+.TP
+.B \-\-properties
+Show the Properties of the
+.IR file s,
+one dialog for them all.
+.TP
+.B \-\-trash
+Send the
+.IR file s
+to the Recycle Bin, asking first.
+.TP
+.B \-\-delete
+Delete the
+.IR file s,
+asking first.
+.TP
+.B \-\-rename
+Ask for a new name for
+.IR file .
+.TP
+.B \-\-empty\-trash
+Empty the Recycle Bin, asking first.
+.TP
+.BI \-\-copy\-to= dir
+Copy the
+.IR file s
+into
+.IR dir ,
+with the Copying... dialog and its questions.
+.TP
+.BI \-\-move\-to= dir
+Move the
+.IR file s
+into
+.IR dir .
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+Folder Options
+.RB ( [Folders] ),
+which open windows follow at once.
+.TP
+.I $XDG_CACHE_HOME/thumbnails/
+The thumbnail cache.
+.SH SEE ALSO
+.BR xd\-folders (1),
+.BR xd\-thumbnailer (1),
+.BR xd\-control (1),
+.BR xd\-search (1)

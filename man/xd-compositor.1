@@ -1,0 +1,236 @@
+.TH XD\-COMPOSITOR 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-compositor \- the XeonDesktop Wayland compositor
+.SH SYNOPSIS
+.SY xd\-compositor
+.OP \-\-style style
+.OP \-\-scheme file
+.OP \-\-scale n
+.OP \-\-terminal command
+.OP \-\-shell path
+.OP \-\-no\-shell
+.OP \-\-allow\-virtual\-input
+.OP \-s command
+.OP \-d
+.YS
+.SY xd\-compositor
+.B \-\-help
+.YS
+.SH DESCRIPTION
+.B xd\-compositor
+is the window manager and display server of XeonDesktop, a desktop in the
+style of Windows 2000, XP and 7.
+It is a wlroots compositor that draws the window frames of the chosen
+visual style and runs X11 programs through Xwayland when it is installed.
+.PP
+It runs from a text console (through logind or seatd) or nested in another
+X11 or Wayland session, where it opens a window.
+Display managers start it through
+.BR xeondesktop\-session (1).
+.PP
+At start-up it starts
+.BR xd\-shell (1)
+(the taskbar, Start menu and desktop) and restarts it if it crashes, and
+starts the polkit agent
+.BR xd\-polkit (1).
+In a session on a seat it gives the session's display to systemd's user
+manager and D-Bus, then starts
+.I xeondesktop\-session.target
+(which binds
+.IR graphical\-session.target ,
+so autostart entries run).
+.PP
+On a GPU it hands over to
+.BR xd\-compositor\-fx (1),
+the same compositor built with SceneFX, which blurs what is behind Aero's
+glass and draws window shadows.
+When every GPU is a virtual machine's (VirtualBox, VMware, virtio, QXL) it
+draws in software instead, which is faster there; Aero is then opaque, as
+Windows 7 Basic.
+.PP
+The appearance comes from
+.IR desktop.ini ,
+which Display Properties
+.RB ( xd\-desk (1))
+writes; the compositor follows changes to the file at once.
+It also generates a GTK 3 theme matching the style, so GTK programs look
+the same, and gives Qt programs Qt's GTK platform theme with a matching
+palette unless the user set up Qt theming of their own.
+.SH OPTIONS
+.TP
+.BI \-\-style " style"
+The visual style:
+.BR classic " (Windows 2000), " luna " (XP), " whistler
+(Watercolor) or
+.B aero
+(Windows 7).
+Without it the style comes from
+.IR desktop.ini ,
+and the default is
+.BR classic .
+A style given here overrides the file until the file next changes.
+.TP
+.BI \-\-scheme " file"
+A colour scheme
+.RI ( .ini
+file, as in
+.IR /usr/share/xeondesktop/schemes )
+instead of the one in
+.IR desktop.ini .
+.TP
+.BI \-\-scale " n"
+Scale every output by
+.I n
+(0.5 to 4) instead of each output's own scale.
+.TP
+.BI \-\-terminal " command"
+The terminal Ctrl+Alt+T opens (default
+.BR alacritty ).
+.TP
+.BI \-\-shell " path"
+The shell program to start instead of
+.BR xd\-shell .
+.TP
+.B \-\-no\-shell
+Start no shell.
+.TP
+.B \-\-allow\-virtual\-input
+Let clients create virtual pointers and keyboards, for automated UI tests.
+Never use it for a real session: any program could then type and click as
+you.
+.TP
+.BR \-s ", " \-\-startup " \fIcommand\fR"
+Run
+.I command
+with
+.B /bin/sh \-c
+once the compositor is up.
+.TP
+.BR \-d ", " \-\-debug
+Verbose logging.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH KEYS
+.TP
+.BR Win ", " Ctrl+Esc
+The Start menu.
+.TP
+.BR Alt+Tab ", " Alt+Shift+Tab
+Switch windows; releasing Alt chooses.
+.TP
+.B Alt+F4
+Close the window.
+.TP
+.B Alt+Space
+The window menu.
+.TP
+.BR Win+Up ", " Win+Down
+Maximize; restore or minimize.
+.TP
+.BR Win+Left ", " Win+Right
+Aero Snap to half the screen, then to the next monitor (Aero).
+.TP
+.B Win+Shift+Up
+As tall as the screen (Aero).
+.TP
+.BR Win+Shift+Left ", " Win+Shift+Right
+Move the window to the next monitor (Aero).
+.TP
+.B Win+Space
+Aero Peek at the desktop (Aero).
+.TP
+.B Ctrl+Alt+T
+A terminal
+.RB ( \-\-terminal ).
+.TP
+.B Ctrl+Alt+Delete
+Windows Security
+.RB ( xd\-security (1))
+in the Classic style, Task Manager
+.RB ( xd\-taskmgr (1))
+in the others.
+.TP
+.B Ctrl+Shift+Esc
+Task Manager.
+.TP
+.B Win+L
+Lock Computer
+.RB ( xd\-lock (1)).
+.TP
+.B Ctrl+Alt+Backspace
+Quit the compositor.
+.SH ENVIRONMENT
+.TP
+.B XD_VM_GPU
+Set to use the GPU even when every GPU is a virtual machine's.
+.TP
+.B XD_HARDWARE_CURSORS
+Set to try the hardware cursor where the software cursor would be used (on
+virtual machines' GPUs, whose hardware cursor is often invisible).
+.TP
+.B WLR_RENDERER
+wlroots' renderer.
+Any value but
+.B gles2
+keeps the compositor from handing over to
+.BR xd\-compositor\-fx ;
+.B pixman
+draws in software.
+.TP
+.B XD_NO_FX
+Set to keep the compositor from handing over to
+.BR xd\-compositor\-fx .
+.TP
+.B XD_ICON_THEME
+The icon theme used while Display Properties leaves Icons at Default
+(default
+.BR breeze ,
+falling back to Adwaita and hicolor).
+.TP
+.B XD_DATA_DIR
+An absolute path to use instead of the installed data directory
+.RI ( schemes ,
+.IR maps ).
+.TP
+.B XD_SOUND_TRACE
+A file to write the sounds that would play to, one per line, instead of
+playing them (for tests).
+.TP
+.B XD_ACCESS_RESET_SECONDS
+Accessibility Options' automatic reset after this many seconds instead of
+the configured minutes (for tests).
+.PP
+The compositor sets
+.BR WAYLAND_DISPLAY ,
+.B DISPLAY
+(Xwayland),
+.BR XDG_CURRENT_DESKTOP=XeonDesktop ,
+.BR GTK_THEME ,
+.BR XEONDESKTOP_PID " and"
+.B XEONDESKTOP_NESTED
+(0 in a session on a seat, 1 when nested or headless) for the programs it
+starts.
+In a nested session Shut Down and the other power actions are only
+printed.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+The desktop's settings: appearance, keyboard, mouse, accessibility and
+more (default
+.IR ~/.config/xeondesktop/desktop.ini ).
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/monitors.ini
+Each monitor's resolution, refresh rate, scale, orientation and position.
+.TP
+.I ~/.local/share/themes/XeonDesktop
+The generated GTK 3 theme.
+.TP
+.I /etc/pam.d/xeondesktop
+The PAM service Lock Computer checks passwords with.
+.SH SEE ALSO
+.BR xeondesktop\-session (1),
+.BR xd\-compositor\-fx (1),
+.BR xd\-shell (1),
+.BR xd\-desk (1),
+.BR xd\-lock (1)

@@ -1,0 +1,22 @@
+.TH XD\-WIFI\-KEY 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-wifi\-key \- ask for a wireless network's key
+.SH SYNOPSIS
+.SY xd\-wifi\-key
+.I ssid
+.YS
+.SH DESCRIPTION
+.B xd\-wifi\-key
+is an internal helper of XeonDesktop: the network icon of
+.BR xd\-shell (1)
+and the New Connection Wizard of
+.BR xd\-netconn (1)
+run it to ask for the key of a secured wireless network, in Windows XP's
+Wireless Network Connection box (the key typed twice).
+It prints the key on standard output.
+.SH EXIT STATUS
+0 when a key was entered, 1 when the box was cancelled, 2 for wrong
+arguments.
+.SH SEE ALSO
+.BR xd\-shell (1),
+.BR xd\-netconn (1)

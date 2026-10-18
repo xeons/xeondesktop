@@ -1,0 +1,39 @@
+.TH XD\-BLUETOOTH 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-bluetooth \- Bluetooth Devices
+.SH SYNOPSIS
+.SY xd\-bluetooth
+.RB [ \-\-add | \-\-options ]
+.YS
+.SH DESCRIPTION
+.B xd\-bluetooth
+is Windows XP SP2's Bluetooth Devices (Control Panel), over BlueZ's D-Bus
+interface:
+.TP
+.B Devices
+The paired devices: Add (the Add Bluetooth Device Wizard), Remove and
+Properties.
+.TP
+.B Options
+Discovery, new pairings, the notification area icon, and the computer's
+Bluetooth name.
+.TP
+.B Hardware
+The Bluetooth radios.
+.PP
+While it runs, it is BlueZ's pairing agent, asking for passkeys and
+confirmations.
+.SH OPTIONS
+.TP
+.B \-\-add
+Only the Add Bluetooth Device Wizard (the notification area icon's Add a
+Bluetooth Device).
+.TP
+.B \-\-options
+Open on the Options tab.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options and exit.
+.SH SEE ALSO
+.BR bluetoothctl (1),
+.BR xd\-control (1)

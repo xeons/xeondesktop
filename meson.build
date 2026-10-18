@@ -1089,3 +1089,23 @@ configure_file(
   install_dir: systemd_user_unit_dir / 'app-vboxclient@autostart.service.d',
   install_tag: 'runtime',
 )
+
+# Manual pages (roff, in man/), one per program installed in bindir.
+install_man(
+  'man/xd-access.1', 'man/xd-admintools.1', 'man/xd-appwiz.1', 'man/xd-bluetooth.1',
+  'man/xd-choose-file.1', 'man/xd-control.1', 'man/xd-defaults.1', 'man/xd-desk.1',
+  'man/xd-diskmgmt.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1', 'man/xd-files.1',
+  'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',
+  'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mouse.1',
+  'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1',
+  'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1', 'man/xd-search.1',
+  'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1',
+  'man/xd-sound.1', 'man/xd-sysdm.1', 'man/xd-taskbar.1', 'man/xd-taskmgr.1',
+  'man/xd-thumbnailer.1', 'man/xd-timedate.1', 'man/xd-users.1', 'man/xd-wifi-key.1',
+)
+if build_compositor
+  install_man('man/xd-compositor.1', 'man/xeondesktop-session.1')
+endif
+if scenefx_dep.found()
+  install_man('man/xd-compositor-fx.1')
+endif

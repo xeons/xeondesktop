@@ -1,0 +1,29 @@
+.TH XD\-SCHEDTASKS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-schedtasks \- Scheduled Tasks
+.SH SYNOPSIS
+.SY xd\-schedtasks
+.YS
+.SH DESCRIPTION
+.B xd\-schedtasks
+is Windows XP's Scheduled Tasks folder (Control Panel), on systemd user
+timers: the user's own service manager, without root.
+Add Scheduled Task opens XP's wizard (run a program daily, weekly,
+monthly, once, at logon...).
+A task's menu runs it, ends it, deletes it or opens its Properties.
+Details shows XP's columns: Name, Schedule, Next Run Time, Last Run Time,
+Status and Last Result.
+.PP
+The user's other timers are listed too, read-only.
+Tasks that run \(lqWhen I log on\(rq start with
+.IR graphical\-session.target .
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/systemd/user/xd\-task\-*.timer
+.TQ
+.I $XDG_CONFIG_HOME/systemd/user/xd\-task\-*.service
+A task's timer and service.
+.SH SEE ALSO
+.BR systemd.timer (5),
+.BR systemctl (1),
+.BR xd\-control (1)

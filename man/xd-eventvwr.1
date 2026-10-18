@@ -1,0 +1,34 @@
+.TH XD\-EVENTVWR 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-eventvwr \- Event Viewer for the systemd journal
+.SH SYNOPSIS
+.SY xd\-eventvwr
+.RB [ application | security | system ]
+.YS
+.SH DESCRIPTION
+.B xd\-eventvwr
+is Windows XP's Event Viewer, reading the systemd journal.
+XP's three logs are views of it:
+.TP
+.B Application
+The user's own programs and user services.
+.TP
+.B Security
+Authentication: the auth facilities, sudo, polkit, sshd...
+.TP
+.B System
+The kernel and the system's services.
+.PP
+It only reads.
+Without membership of the
+.B systemd\-journal
+(or
+.B wheel
+or
+.BR adm )
+group, only the user's own journal can be read; the window says so.
+.PP
+The argument opens that log (in any case).
+.SH SEE ALSO
+.BR journalctl (1),
+.BR xd\-admintools (1)

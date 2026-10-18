@@ -1,0 +1,27 @@
+.TH XD\-USERS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-users \- User Accounts
+.SH SYNOPSIS
+.SY xd\-users
+.YS
+.SH DESCRIPTION
+.B xd\-users
+is Windows XP's User Accounts (Control Panel), through AccountsService
+.RB ( org.freedesktop.Accounts ).
+As in XP, it is a set of task pages: pick a task or an account, then what
+to change about it.
+.PP
+Users change their own name and picture, and their password through
+.BR passwd (1),
+so the system's password rules apply.
+Administrators also change other accounts' names, pictures, passwords and
+types, create accounts and delete them; AccountsService asks polkit, so
+.BR xd\-polkit (1)
+asks for an administrator's password.
+.SH FILES
+.TP
+.I ~/.face
+A copy of the user's picture, which the Start menu shows.
+.SH SEE ALSO
+.BR xd\-security (1),
+.BR passwd (1)

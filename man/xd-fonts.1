@@ -1,0 +1,30 @@
+.TH XD\-FONTS 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-fonts \- the Fonts folder and font viewer
+.SH SYNOPSIS
+.SY xd\-fonts
+.RI [ file ]
+.YS
+.SH DESCRIPTION
+Without an argument,
+.B xd\-fonts
+is Windows XP's Fonts folder (Control Panel > Fonts): the fonts fontconfig
+knows, as large icons, a list or details (Hide Variations shows each
+family's regular face).
+Opening one shows the font viewer, which prints a sample sheet.
+Fonts installed from the folder are copied to the user's font folder;
+fonts there can be deleted.
+System fonts can't: they belong to the package manager.
+.PP
+With a
+.IR file ,
+it shows only the font viewer on that font file, as Windows' fontview
+did.
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/fonts/
+The user's fonts (default
+.IR ~/.local/share/fonts ).
+.SH SEE ALSO
+.BR fc\-list (1),
+.BR xd\-control (1)

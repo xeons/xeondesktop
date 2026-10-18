@@ -1,0 +1,45 @@
+.TH XD\-INTL 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-intl \- Regional and Language Options
+.SH SYNOPSIS
+.SY xd\-intl
+.YS
+.SH DESCRIPTION
+.B xd\-intl
+is Windows XP's Regional and Language Options (Control Panel):
+.TP
+.B Regional Options
+The user's standards and formats (numbers, currency, time, date), with
+samples.
+Customize... changes them; the customized formats are compiled with
+.BR localedef (1)
+into a locale of the user's own.
+.TP
+.B Languages
+Details... opens the input languages of
+.BR xd\-keyboard (1)
+(only if it is installed).
+.TP
+.B Advanced
+The system locale and the keyboard of the logon screen and text consoles,
+through systemd-localed
+.RB ( org.freedesktop.locale1 ),
+which asks polkit, so
+.BR xd\-polkit (1)
+asks for a password when one is needed.
+.PP
+Only installed locales are offered.
+Programs use new formats after the user logs off and on again.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/environment.d/60\-xeondesktop\-locale.conf
+The user's formats
+.RB ( LC_NUMERIC ,
+.BR LC_TIME ,
+\&...), which
+.BR xeondesktop\-session (1)
+and systemd's user manager read.
+.SH SEE ALSO
+.BR localectl (1),
+.BR locale (7),
+.BR xeondesktop\-session (1)
