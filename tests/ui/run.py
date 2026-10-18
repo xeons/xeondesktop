@@ -3042,7 +3042,8 @@ def mock_timedate(s, timesync=None):
 def timedate_internet_time(s):
     """Date and Time Properties' Internet Time tab on dbusmock's timedated,
     timesyncd and systemd: Update Now restarts timesyncd and reports the
-    answer; a server typed in goes to SetRuntimeNTPServers."""
+    answer; a server typed in goes to SetRuntimeNTPServers; the Time Zone
+    tab's hardware clock box calls SetLocalRTC."""
     from dbusmock import DBusTestCase
 
     try:
@@ -3083,6 +3084,11 @@ def timedate_internet_time(s):
         time.sleep(16)
         failed = s.settle("failed")
         s.check(failed.differs(waiting, status) > 0.01, "no answer was reported")
+        # The Time Zone tab's hardware clock box.
+        s.inject("move", x + 122, y + 40, "click", "sleep", 500, "move", x + 28, y + 291,
+                 "click", "sleep", 300, "move", x + 524, y + 332, "click")  # fmt: skip
+        called("SetLocalRTC True False True")
+        s.settle("local-rtc")
         log = calls()
         s.check("SetNTP" not in log and "SetTime " not in log and "SetTimezone" not in log,
                 "nothing else changed")  # fmt: skip

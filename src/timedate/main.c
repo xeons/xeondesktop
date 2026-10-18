@@ -4,7 +4,8 @@
  * xd-polkit asks for a password when needed.
  *
  *   Date & Time    the month, year and day; an analog clock and the time
- *   Time Zone      the zone timedated knows
+ *   Time Zone      the zone timedated knows; whether the hardware clock
+ *                  keeps local time (timedated's LocalRTC)
  *   Internet Time  network time synchronization: on or off through
  *                  timedated; systemd-timesyncd's server and Update Now
  *                  through timesyncd (org.freedesktop.timesync1) and
@@ -43,7 +44,7 @@ typedef struct props {
     bool updating; /* we're setting the widgets ourselves */
     bool busy;      /* Apply is waiting for the service */
     /* Time Zone */
-    GtkWidget *zones, *map;
+    GtkWidget *zones, *map, *local_rtc;
     char *zone; /* as timedated has it */
     /* Internet Time */
     GtkWidget *ntp, *server, *update, *ntp_status, *ntp_note;
@@ -522,6 +523,19 @@ static void on_zone([[maybe_unused]] GtkComboBox *c, gpointer data) {
         changed(p);
 }
 
+static void on_local_rtc([[maybe_unused]] GtkToggleButton *b, gpointer data) {
+    props *p = data;
+    if (!p->updating)
+        changed(p);
+}
+
+static void show_local_rtc(props *p) {
+    p->updating = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->local_rtc), td_bool(p, "LocalRTC"));
+    p->updating = false;
+    gtk_widget_set_sensitive(p->local_rtc, p->td != nullptr);
+}
+
 static GtkWidget *zone_page(props *p) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
@@ -539,6 +553,14 @@ static GtkWidget *zone_page(props *p) {
     gtk_label_set_xalign(GTK_LABEL(note), 0);
     gtk_label_set_line_wrap(GTK_LABEL(note), TRUE);
     gtk_box_pack_start(GTK_BOX(page), note, FALSE, FALSE, 0);
+    /* Where XP has "Automatically adjust clock for daylight saving
+     * changes": Windows keeps the hardware clock in local time, Linux in
+     * UTC, so a computer that runs both shows the wrong time in one of
+     * them unless Linux keeps local time too. */
+    p->local_rtc = gtk_check_button_new_with_mnemonic(
+        "The _hardware clock keeps local time (for computers that also run Windows)");
+    g_signal_connect(p->local_rtc, "toggled", G_CALLBACK(on_local_rtc), p);
+    gtk_box_pack_start(GTK_BOX(page), p->local_rtc, FALSE, FALSE, 0);
     return page;
 }
 
@@ -959,6 +981,12 @@ static bool apply(props *p) {
             tzset();
         }
     }
+    bool local_rtc = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->local_rtc));
+    /* The system clock is right: the hardware clock is set from it in its
+     * new reckoning (fix_system false). */
+    if (ok && local_rtc != td_bool(p, "LocalRTC"))
+        ok = call(p, p->td, "SetLocalRTC", g_variant_new("(bbb)", local_rtc, FALSE, TRUE),
+                  "The hardware clock could not be changed.");
     bool ntp = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->ntp));
     bool set_time = p->time_edited || p->date_edited;
     /* Setting the time by hand turns network time off, as timedated
@@ -995,8 +1023,10 @@ static bool apply(props *p) {
         if (ok)
             p->time_edited = p->date_edited = false;
     }
-    if (ok)
+    if (ok) {
         gtk_widget_set_sensitive(p->apply, FALSE);
+        show_local_rtc(p);
+    }
     show_zone_label(p);
     show_ntp(p);
     return ok;
@@ -1092,6 +1122,7 @@ int main(int argc, char **argv) {
                        TRUE, 0);
     xd_gtk_notebook_ctrl_tab(p.window, GTK_NOTEBOOK(tabs));
     show_zone_label(&p);
+    show_local_rtc(&p);
     show_ntp(&p);
     if (p.td != nullptr) {
         g_signal_connect(p.td, "g-properties-changed", G_CALLBACK(td_changed), &p);
