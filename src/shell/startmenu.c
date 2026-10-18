@@ -126,7 +126,7 @@ xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree, bool
  * its installation until it's first used. */
 static constexpr size_t SEEN_MAX = 8192;
 
-void xd_start_menu_note_programs(xd_shell *shell) {
+size_t xd_start_menu_note_programs(xd_shell *shell) {
     char **lines = nullptr;
     size_t n = 0;
     xd_state_read_lines("start-seen", &lines, &n, SEEN_MAX);
@@ -147,12 +147,15 @@ void xd_start_menu_note_programs(xd_shell *shell) {
     char **out = xd_alloc_array(XD_MAX(apps->count, 1), sizeof(char *));
     size_t m = 0;
     bool changed = apps->count != n;
+    size_t unseen = 0;
     long long now = (long long)(g_get_real_time() / G_USEC_PER_SEC);
     for (size_t i = 0; i < apps->count && m < SEEN_MAX; i++) {
         const char *id = apps->items[i].id;
         const char *line = g_hash_table_lookup(seen, id);
         long long when = line != nullptr ? strtoll(line, nullptr, 10) : first_run ? 0 : now;
         changed = changed || line == nullptr;
+        if (line == nullptr && !first_run)
+            unseen++;
         if (when > 0)
             g_hash_table_add(shell->new_apps, g_strdup(id));
         xd_strbuf entry = {0};
@@ -165,6 +168,7 @@ void xd_start_menu_note_programs(xd_shell *shell) {
     xd_free_lines(out, m);
     g_hash_table_unref(seen);
     xd_free_lines(lines, n);
+    return unseen;
 }
 
 bool xd_start_menu_is_new(const xd_shell *shell, const char *id) {
@@ -205,7 +209,8 @@ static void reload_if_stale(xd_shell *shell) {
     xd_menu_tree_free(&shell->menu_tree);
     xd_menu_tree_init(&shell->menu_tree);
     xd_start_menu_build(shell);
-    xd_start_menu_note_programs(shell);
+    if (xd_start_menu_note_programs(shell) > 0)
+        xd_balloon_new_programs(shell);
 }
 
 static gboolean reload_idle(gpointer data) {
@@ -231,10 +236,13 @@ static void programs_changed([[maybe_unused]] GAppInfoMonitor *monitor, gpointer
 void xd_start_menu_watch_programs(xd_shell *shell) {
     shell->app_monitor = g_app_info_monitor_get();
     g_signal_connect(shell->app_monitor, "changed", G_CALLBACK(programs_changed), shell);
-    xd_start_menu_note_programs(shell);
+    /* Installed since the last session: XP says so at logon. */
+    if (xd_start_menu_note_programs(shell) > 0)
+        xd_balloon_new_programs(shell);
 }
 
 void xd_start_menu_unwatch_programs(xd_shell *shell) {
+    xd_balloon_hide(shell);
     if (shell->app_monitor != nullptr) {
         g_signal_handlers_disconnect_by_data(shell->app_monitor, shell);
         g_object_unref(shell->app_monitor);

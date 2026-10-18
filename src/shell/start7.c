@@ -2072,6 +2072,7 @@ void xd_start7_open(xd_taskbar *bar, uint32_t serial, bool xp) {
     load_user(m);
     shell->start7 = m;
     shell->menu_cues = false; /* the keyboard's openers say otherwise */
+    xd_balloon_hide(shell);  /* "New programs installed": here they are */
     if (xp)
         xd_start_menu_note_programs(shell); /* what's new since it last opened */
     rebuild(m);

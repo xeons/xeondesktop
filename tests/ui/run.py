@@ -2418,6 +2418,20 @@ def xp_start_send_to(s):
     s.log("ok: Send To > Desktop (create shortcut) put it there")
 
 
+@scenario(LUNA_INI)
+def xp_new_programs_balloon(s):
+    """A program installed while the session runs: XP's "New programs
+    installed" balloon over the Start button; a click puts it away."""
+    before = s.settle("desktop")
+    with open(os.path.join(s.data, "applications", "xd-test-new.desktop"), "w") as f:
+        f.write("[Desktop Entry]\nType=Application\nName=New Program\nExec=true\n")
+    above_start = (0, 600, 300, 135)
+    shot, box = wait_change(s, before, above_start, "the balloon", "balloon")
+    s.check(box[1] + box[3] >= 725 and box[0] < 60, f"a balloon pointing at Start ({box})")
+    s.inject("move", box[0] + box[2] // 2, box[1] + 12, "click")
+    s.wait(lambda: s.shot("gone").differs(before, above_start) < 0.01, "the balloon to go")
+    s.log("ok: a click put it away")
+
 @scenario()
 def screen_saver_settings(s):
     """Display Properties' Screen Saver tab: the preview shows each saver

@@ -912,6 +912,7 @@ executable(
   'src/shell/quicklaunch.c',
   'src/shell/start7.c',
   'src/shell/tooltip.c',
+  'src/shell/balloon.c',
   'src/shell/tray.c',
   'src/shell/dnd.c',
   'src/shell/sys_battery.c',

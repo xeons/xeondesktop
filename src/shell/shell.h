@@ -289,6 +289,8 @@ struct xd_shell {
     /* Taskbar tooltips: the one shown, and the hover delay before one. */
     xd_tooltip *tooltip;
     int tooltip_timer_fd;
+    struct xd_balloon *balloon; /* XP's "New programs installed" over Start */
+    bool pointer_balloon;
     int autohide_timer_fd; /* tucks Auto-hide taskbars away after the pointer leaves */
     /* Key repeat (the compositor's rate and delay; clients repeat keys). */
     int repeat_timer_fd;
@@ -470,7 +472,7 @@ xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree, bool
 /* startmenu.c: newly installed programs. A program first seen after the
  * first run (state file start-seen) is new until it's opened. Updates
  * shell->new_apps. */
-void xd_start_menu_note_programs(xd_shell *shell);
+size_t xd_start_menu_note_programs(xd_shell *shell); /* how many never seen before */
 bool xd_start_menu_is_new(const xd_shell *shell, const char *id);
 /* A program was opened: it isn't new any more. */
 void xd_start_menu_program_opened(const char *id);
@@ -480,6 +482,14 @@ void xd_start_menu_unwatch_programs(xd_shell *shell);
 /* Reloads the programs, if they changed, once no menu is open (from an
  * idle callback: an item being activated may point into the lists). */
 void xd_start_menu_reload_later(xd_shell *shell);
+/* balloon.c: XP's "New programs installed" balloon, over the Start
+ * button, once after programs are installed (with the XP Start menu and
+ * its highlight of new programs). A click or the Start menu puts it away. */
+void xd_balloon_new_programs(xd_shell *shell);
+void xd_balloon_hide(xd_shell *shell);
+bool xd_balloon_owns(const xd_shell *shell, struct wl_surface *surface);
+void xd_balloon_button(xd_shell *shell, bool pressed);
+void xd_balloon_render_dirty(xd_shell *shell);
 /* startmenu.c: Control Panel's applets, by name (all three Start menus). */
 xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree);
 

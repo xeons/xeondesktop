@@ -98,6 +98,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
     shell->pointer_flyout = xd_volume_flyout_owns(shell, surface);
     shell->pointer_desktop = xd_desktop_for_surface(shell, surface);
     shell->pointer_thumbs = xd_thumbs_owns(shell, surface);
+    shell->pointer_balloon = xd_balloon_owns(shell, surface);
     shell->enter_serial = serial;
     shell->cursor = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
     if (shell->cursor_shape != nullptr)
@@ -136,6 +137,7 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
     if (shell->pointer_thumbs)
         xd_thumbs_pointer_leave(shell);
     shell->pointer_thumbs = false;
+    shell->pointer_balloon = false;
     shell->pointer_bar = nullptr;
     shell->pointer_menu = nullptr;
     shell->pointer_start7 = false;
@@ -187,7 +189,9 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
         shell->eat_release = false;
         return;
     }
-    if (shell->pointer_thumbs)
+    if (shell->pointer_balloon)
+        xd_balloon_button(shell, pressed);
+    else if (shell->pointer_thumbs)
         xd_thumbs_pointer_button(shell, button, pressed);
     else if (shell->pointer_flyout)
         xd_volume_flyout_button(shell, button, pressed, shell->flyout_x, shell->flyout_y);
@@ -846,6 +850,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         xd_menus_render_dirty(shell);
         xd_start7_render_dirty(shell);
         xd_tooltip_render_dirty(shell);
+        xd_balloon_render_dirty(shell);
         xd_thumbs_render_dirty(shell);
         xd_volume_flyout_render_dirty(shell);
         while (wl_display_prepare_read(d) != 0)
