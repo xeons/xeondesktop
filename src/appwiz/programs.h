@@ -47,12 +47,29 @@ char *xd_appwiz_format_size(guint64 bytes);
 /* The short local date ("10/3/2006" in the US), or "" for 0. */
 char *xd_appwiz_format_date(int64_t when);
 
+/* Where a program came from, as the selected row's "Source" says it. */
+/* The distribution's own name for PackageKit's backend ("alpm" is
+ * "pacman", "aptcc" "APT"); the backend's own name if it isn't known,
+ * "a package manager" without one. */
+const char *xd_appwiz_package_manager(const char *backend);
+/* "pacman (extra)": the package manager and the repository in the
+ * package id's data field; "pacman (local package)" for one installed
+ * from a file; "pacman" when PackageKit doesn't say. g_free it. */
+char *xd_appwiz_package_source(const char *backend, const char *package_id);
+/* "Flatpak (flathub, system)": the remote and the installation ("user",
+ * "system" for the default system one, else its id). g_free it. */
+char *xd_appwiz_flatpak_source(const char *remote, const char *installation);
+/* A desktop entry that no package owns: "AppImage" when it starts one,
+ * else "Not from a package". */
+const char *xd_appwiz_other_source(const char *executable);
+
 /* What the list is sorted by: the Sort by box. */
 typedef enum xd_appwiz_sort {
     XD_SORT_NAME,
     XD_SORT_SIZE,
     XD_SORT_FREQUENCY,
     XD_SORT_DATE,
+    XD_SORT_SOURCE,
 } xd_appwiz_sort;
 
 typedef struct xd_appwiz_key {
@@ -60,6 +77,7 @@ typedef struct xd_appwiz_key {
     guint64 size; /* 0: not known */
     int64_t launches;
     int64_t last_used; /* 0: never */
+    const char *source; /* Source's text; nullptr: not known (yet) */
 } xd_appwiz_key;
 
 /* Name A-Z; the others largest, most used or most recent first, unknowns

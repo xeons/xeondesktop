@@ -59,6 +59,8 @@ typedef struct appwiz {
 
 /* main.c */
 void xd_appwiz_reload(appwiz *w);
+/* PackageKit's backend became known: the programs' Source again. */
+void xd_appwiz_sources_changed(appwiz *w);
 void xd_appwiz_show_page(appwiz *w, xd_appwiz_page page);
 void xd_appwiz_error(appwiz *w, const char *what, const char *detail);
 GtkWidget *xd_appwiz_label(const char *text, const char *css_class);

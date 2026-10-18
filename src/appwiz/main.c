@@ -37,7 +37,7 @@ typedef enum source {
 
 /* An installed Flatpak app. */
 typedef struct flatpak_app {
-    char *installation, *ref, *version, *summary, *license, *publisher, *homepage;
+    char *installation, *origin, *ref, *version, *summary, *license, *publisher, *homepage;
     guint64 size;
 } flatpak_app;
 
@@ -48,9 +48,10 @@ typedef struct program {
     GIcon *icon;
     source src;
     char *package_id;   /* PackageKit's id, or the Flatpak ref */
-    char *installation; /* Flatpak's */
+    char *installation, *remote; /* Flatpak's */
+    char *source;                /* the Source row's text, or nullptr */
     char *version, *publisher, *url, *description, *license;
-    GtkWidget *row, *size_key, *size;
+    GtkWidget *row, *size_key, *size, *source_key, *source_value, *how, *remove;
     GPtrArray *extra; /* shown when selected */
 } program;
 
@@ -63,6 +64,8 @@ static void program_free(gpointer data) {
     g_clear_object(&p->icon);
     g_free(p->package_id);
     g_free(p->installation);
+    g_free(p->remote);
+    g_free(p->source);
     g_free(p->version);
     g_free(p->publisher);
     g_free(p->url);
@@ -76,6 +79,7 @@ static void program_free(gpointer data) {
 static void flatpak_app_free(gpointer data) {
     flatpak_app *f = data;
     g_free(f->installation);
+    g_free(f->origin);
     g_free(f->ref);
     g_free(f->version);
     g_free(f->summary);
@@ -158,6 +162,7 @@ static void index_installation(appwiz *w, FlatpakInstallation *inst) {
         f->license = g_strdup(flatpak_installed_ref_get_appdata_license(r));
         f->size = flatpak_installed_ref_get_installed_size(r);
         const char *origin = flatpak_installed_ref_get_origin(r);
+        f->origin = g_strdup(origin);
         FlatpakRemote *remote = origin != nullptr
                                     ? flatpak_installation_get_remote_by_name(inst, origin,
                                                                               w->quit, nullptr)
@@ -199,6 +204,8 @@ static xd_appwiz_sort current_sort(appwiz *w) {
         return XD_SORT_FREQUENCY;
     case 3:
         return XD_SORT_DATE;
+    case 4:
+        return XD_SORT_SOURCE;
     default:
         return XD_SORT_NAME;
     }
@@ -218,7 +225,8 @@ static gboolean resort_now(gpointer data) {
 }
 
 static void resort_later(appwiz *w) {
-    if (w->sort_idle == 0 && current_sort(w) == XD_SORT_SIZE)
+    xd_appwiz_sort sort = current_sort(w);
+    if (w->sort_idle == 0 && (sort == XD_SORT_SIZE || sort == XD_SORT_SOURCE))
         w->sort_idle = g_timeout_add(200, resort_now, w);
 }
 
@@ -235,6 +243,59 @@ static void show_size(program *p) {
 static void show_extra(program *p, bool show) {
     for (guint i = 0; i < p->extra->len; i++)
         gtk_widget_set_visible(g_ptr_array_index(p->extra, i), show);
+    /* Not known yet: no Source row. */
+    if (p->source == nullptr) {
+        gtk_widget_hide(p->source_key);
+        gtk_widget_hide(p->source_value);
+    }
+}
+
+/* Remove, or why not: a desktop file that PackageKit then found no
+ * package for can't be removed after all. */
+static void show_removable(program *p) {
+    bool removable = p->src != SOURCE_NONE;
+    gtk_label_set_text(GTK_LABEL(p->how), removable
+                                              ? "To remove this program from your computer, "
+                                                "click Remove."
+                                              : "This program wasn't installed with a package "
+                                                "manager, so it can't be removed here.");
+    gtk_widget_set_sensitive(p->remove, removable);
+}
+
+/* Where the program came from: the package manager and repository, the
+ * Flatpak remote and installation, or nothing. Not known while
+ * PackageKit is still being asked, or when there's no PackageKit. */
+static void find_source(appwiz *w, program *p) {
+    g_clear_pointer(&p->source, g_free);
+    switch (p->src) {
+    case SOURCE_PACKAGE:
+        if (p->package_id != nullptr) {
+            char *backend = nullptr;
+            g_object_get(w->control, "backend-name", &backend, nullptr);
+            p->source = xd_appwiz_package_source(backend, p->package_id);
+            g_free(backend);
+        }
+        break;
+    case SOURCE_FLATPAK:
+        p->source = xd_appwiz_flatpak_source(p->remote, p->installation);
+        break;
+    case SOURCE_NONE:
+        p->source = g_strdup(xd_appwiz_other_source(p->exec));
+        break;
+    }
+    p->key.source = p->source;
+    if (p->source_value == nullptr)
+        return; /* no row yet */
+    gtk_label_set_text(GTK_LABEL(p->source_value), p->source != nullptr ? p->source : "");
+    show_removable(p);
+    GtkListBoxRow *sel = gtk_list_box_get_selected_row(GTK_LIST_BOX(w->list));
+    show_extra(p, sel != nullptr && GTK_WIDGET(sel) == p->row);
+}
+
+void xd_appwiz_sources_changed(appwiz *w) {
+    for (guint i = 0; i < w->programs->len; i++)
+        find_source(w, g_ptr_array_index(w->programs, i));
+    resort_later(w);
 }
 
 static void on_row_selected([[maybe_unused]] GtkListBox *box, GtkListBoxRow *row, gpointer data) {
@@ -414,6 +475,14 @@ static GtkWidget *program_row(appwiz *w, program *p) {
         gtk_grid_attach(GTK_GRID(grid), k, 2, r, 1, 1);
         gtk_grid_attach(GTK_GRID(grid), v, 3, r++, 1, 1);
     }
+    /* Not XP's (its programs all came from Windows Installer or their
+     * own setup): which package manager, or Flatpak, or none. */
+    p->source_key = right_label("Source", "xd-arp-key");
+    p->source_value = right_label(p->source != nullptr ? p->source : "", nullptr);
+    extra(p, p->source_key);
+    extra(p, p->source_value);
+    gtk_grid_attach(GTK_GRID(grid), p->source_key, 2, r, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), p->source_value, 3, r++, 1, 1);
 
     GtkWidget *link = gtk_button_new_with_label("Click here for support information.");
     gtk_button_set_relief(GTK_BUTTON(link), GTK_RELIEF_NONE);
@@ -424,23 +493,17 @@ static GtkWidget *program_row(appwiz *w, program *p) {
     extra(p, link);
     gtk_grid_attach(GTK_GRID(grid), link, 1, 1, 1, 1);
 
-    bool removable = p->src != SOURCE_NONE;
-    GtkWidget *how = xd_appwiz_label(removable
-                                         ? "To remove this program from your computer, click "
-                                           "Remove."
-                                         : "This program wasn't installed with a package "
-                                           "manager, so it can't be removed here.",
-                                     nullptr);
-    extra(p, how);
-    gtk_grid_attach(GTK_GRID(grid), how, 1, XD_MAX(r, 2), 1, 1);
-    GtkWidget *remove = gtk_button_new_with_mnemonic("_Remove");
-    gtk_widget_set_size_request(remove, 80, -1);
-    gtk_widget_set_halign(remove, GTK_ALIGN_END);
-    gtk_widget_set_sensitive(remove, removable);
-    g_object_set_data(G_OBJECT(remove), "program", p);
-    g_signal_connect(remove, "clicked", G_CALLBACK(on_remove), w);
-    extra(p, remove);
-    gtk_grid_attach(GTK_GRID(grid), remove, 2, XD_MAX(r, 2), 2, 1);
+    p->how = xd_appwiz_label("", nullptr);
+    extra(p, p->how);
+    gtk_grid_attach(GTK_GRID(grid), p->how, 1, XD_MAX(r, 2), 1, 1);
+    p->remove = gtk_button_new_with_mnemonic("_Remove");
+    gtk_widget_set_size_request(p->remove, 80, -1);
+    gtk_widget_set_halign(p->remove, GTK_ALIGN_END);
+    g_object_set_data(G_OBJECT(p->remove), "program", p);
+    g_signal_connect(p->remove, "clicked", G_CALLBACK(on_remove), w);
+    extra(p, p->remove);
+    gtk_grid_attach(GTK_GRID(grid), p->remove, 2, XD_MAX(r, 2), 2, 1);
+    show_removable(p);
 
     GtkWidget *row = gtk_list_box_row_new();
     gtk_container_add(GTK_CONTAINER(row), grid);
@@ -556,6 +619,7 @@ static void on_searched(GObject *src, GAsyncResult *res, gpointer data) {
             if (pkgs->len > 0) {
                 const char *id = pk_package_get_id(g_ptr_array_index(pkgs, 0));
                 l->p->package_id = g_strdup(id);
+                find_source(w, l->p);
                 /* The package's other programs may have brought its
                  * details already. */
                 PkDetails *known = g_hash_table_lookup(w->details, id);
@@ -568,6 +632,7 @@ static void on_searched(GObject *src, GAsyncResult *res, gpointer data) {
             } else {
                 /* Not from a package after all. */
                 l->p->src = SOURCE_NONE;
+                find_source(w, l->p);
             }
             g_ptr_array_unref(pkgs);
             if (w->detail_ids->len >= DETAILS_BATCH)
@@ -645,6 +710,7 @@ static program *new_program(appwiz *w, GDesktopAppInfo *info) {
         p->src = SOURCE_FLATPAK;
         p->package_id = g_strdup(f->ref);
         p->installation = g_strdup(f->installation);
+        p->remote = g_strdup(f->origin);
         p->key.size = f->size;
         p->version = g_strdup(f->version);
         p->publisher = g_strdup(f->publisher);
@@ -656,6 +722,7 @@ static program *new_program(appwiz *w, GDesktopAppInfo *info) {
         /* Packages don't install into home folders. */
         p->src = SOURCE_PACKAGE;
     }
+    find_source(w, p);
     return p;
 }
 
@@ -730,7 +797,8 @@ static GtkWidget *remove_page(appwiz *w) {
     gtk_box_pack_start(GTK_BOX(top), title, TRUE, TRUE, 0);
     GtkWidget *sort_label = gtk_label_new_with_mnemonic("S_ort by:");
     w->sort = gtk_combo_box_text_new();
-    static const char *const sorts[] = {"Name", "Size", "Frequency of use", "Date last used"};
+    static const char *const sorts[] = {"Name", "Size", "Frequency of use", "Date last used",
+                                        "Source"};
     for (size_t i = 0; i < XD_ARRAY_LEN(sorts); i++)
         gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(w->sort), sorts[i]);
     gtk_combo_box_set_active(GTK_COMBO_BOX(w->sort), 0);

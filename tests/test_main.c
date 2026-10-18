@@ -3068,8 +3068,9 @@ static void test_appwiz(void) {
     g_free(s);
 
     /* Sort orders. */
-    xd_appwiz_key a = {"Alpha", 100, 1, 50}, b = {"beta", 300, 1, 0}, c = {"Gamma", 0, 9, 70},
-                  d = {"delta", 100, 0, 50};
+    xd_appwiz_key a = {"Alpha", 100, 1, 50, "pacman (extra)"},
+                  b = {"beta", 300, 1, 0, "Flatpak (flathub, system)"},
+                  c = {"Gamma", 0, 9, 70, nullptr}, d = {"delta", 100, 0, 50, "pacman (extra)"};
     CHECK(xd_appwiz_compare(&a, &b, XD_SORT_NAME) < 0);
     CHECK(xd_appwiz_compare(&b, &c, XD_SORT_NAME) < 0); /* case doesn't matter */
     CHECK(xd_appwiz_compare(&b, &a, XD_SORT_SIZE) < 0); /* largest first */
@@ -3080,6 +3081,37 @@ static void test_appwiz(void) {
     CHECK(xd_appwiz_compare(&c, &a, XD_SORT_DATE) < 0);  /* most recent first */
     CHECK(xd_appwiz_compare(&d, &b, XD_SORT_DATE) < 0);  /* never used last */
     CHECK(xd_appwiz_compare(&a, &a, XD_SORT_DATE) == 0);
+    CHECK(xd_appwiz_compare(&b, &a, XD_SORT_SOURCE) < 0); /* by source */
+    CHECK(xd_appwiz_compare(&a, &d, XD_SORT_SOURCE) < 0); /* then by name */
+    CHECK(xd_appwiz_compare(&d, &c, XD_SORT_SOURCE) < 0); /* not known last */
+
+    /* Where a program came from. */
+    CHECK(strcmp(xd_appwiz_package_manager("alpm"), "pacman") == 0);
+    CHECK(strcmp(xd_appwiz_package_manager("aptcc"), "APT") == 0);
+    CHECK(strcmp(xd_appwiz_package_manager("mock"), "mock") == 0);
+    CHECK(strcmp(xd_appwiz_package_manager(nullptr), "a package manager") == 0);
+    static const char *const sources[][3] = {
+        {"alpm", "gimp;3.0.4-1;x86_64;installed:extra", "pacman (extra)"},
+        {"alpm", "alacritty;0.17.0-1;x86_64;installed", "pacman"},
+        {"alpm", "mytool;1.0-1;x86_64;installed:local", "pacman (local package)"},
+        {"aptcc", "vim;2:9.1;amd64;installed:debian-stable-main", "APT (debian-stable-main)"},
+        {"dnf", "nano;8.0;x86_64;local", "DNF (local package)"},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(sources); i++) {
+        char *src = xd_appwiz_package_source(sources[i][0], sources[i][1]);
+        CHECK(strcmp(src, sources[i][2]) == 0);
+        g_free(src);
+    }
+    char *fp = xd_appwiz_flatpak_source("flathub", "default");
+    CHECK(strcmp(fp, "Flatpak (flathub, system)") == 0);
+    g_free(fp);
+    fp = xd_appwiz_flatpak_source("fedora", "user");
+    CHECK(strcmp(fp, "Flatpak (fedora, user)") == 0);
+    g_free(fp);
+    CHECK(strcmp(xd_appwiz_other_source("/home/me/Apps/Krita-5.2.AppImage"), "AppImage") == 0);
+    CHECK(strcmp(xd_appwiz_other_source("/opt/tool/run.appimage"), "AppImage") == 0);
+    CHECK(strcmp(xd_appwiz_other_source("/home/me/bin/tool"), "Not from a package") == 0);
+    CHECK(strcmp(xd_appwiz_other_source(nullptr), "Not from a package") == 0);
 
     /* PackageKit ids, split by PackageKit. */
     char *name = nullptr, *version = nullptr, *repo = nullptr;

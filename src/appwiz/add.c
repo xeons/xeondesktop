@@ -556,6 +556,7 @@ static void on_properties(GObject *src, GAsyncResult *res, gpointer data) {
         return;
     }
     appwiz *w = data;
+    xd_appwiz_sources_changed(w);
     PkBitfield have = 0;
     g_object_get(w->control, "groups", &have, nullptr);
     int n = 0;

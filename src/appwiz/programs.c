@@ -187,8 +187,64 @@ int xd_appwiz_compare(const xd_appwiz_key *a, const xd_appwiz_key *b, xd_appwiz_
     case XD_SORT_DATE:
         r = larger_first(a->last_used, b->last_used);
         break;
+    case XD_SORT_SOURCE:
+        /* Together by source, A-Z; not known last. */
+        if ((a->source == nullptr) != (b->source == nullptr))
+            r = a->source == nullptr ? 1 : -1;
+        else if (a->source != nullptr)
+            r = g_utf8_collate(a->source, b->source);
+        break;
     }
     return r != 0 ? r : by_name(a, b);
+}
+
+const char *xd_appwiz_package_manager(const char *backend) {
+    static const char *const names[][2] = {
+        {"alpm", "pacman"},   {"aptcc", "APT"},       {"apt", "APT"},
+        {"dnf", "DNF"},       {"dnf5", "DNF"},        {"zypp", "zypper"},
+        {"apk", "apk"},       {"portage", "Portage"}, {"eopkg", "eopkg"},
+        {"freebsd", "pkg"},   {"nix", "Nix"},         {"slack", "slackpkg"},
+        {"poldek", "poldek"}, {"yum", "YUM"},
+    };
+    if (backend == nullptr || backend[0] == '\0')
+        return "a package manager";
+    for (size_t i = 0; i < G_N_ELEMENTS(names); i++) {
+        if (strcmp(backend, names[i][0]) == 0)
+            return names[i][1];
+    }
+    return backend;
+}
+
+char *xd_appwiz_package_source(const char *backend, const char *package_id) {
+    const char *manager = xd_appwiz_package_manager(backend);
+    char **parts = package_id != nullptr ? pk_package_id_split(package_id) : nullptr;
+    const char *data = parts != nullptr ? parts[PK_PACKAGE_ID_DATA] : "";
+    /* "installed:extra" or "extra": the repository; "installed": none
+     * known; "local" or "installed:local": from a package file. */
+    const char *repo = g_str_has_prefix(data, "installed:") ? data + strlen("installed:")
+                       : strcmp(data, "installed") == 0  ? ""
+                                                         : data;
+    char *s = strcmp(repo, "local") == 0 ? g_strdup_printf("%s (local package)", manager)
+              : repo[0] != '\0'          ? g_strdup_printf("%s (%s)", manager, repo)
+                                         : g_strdup(manager);
+    g_strfreev(parts);
+    return s;
+}
+
+char *xd_appwiz_flatpak_source(const char *remote, const char *installation) {
+    const char *where = installation == nullptr || strcmp(installation, "default") == 0
+                            ? "system"
+                            : installation;
+    return remote != nullptr && remote[0] != '\0'
+               ? g_strdup_printf("Flatpak (%s, %s)", remote, where)
+               : g_strdup_printf("Flatpak (%s)", where);
+}
+
+const char *xd_appwiz_other_source(const char *executable) {
+    char *lower = executable != nullptr ? g_ascii_strdown(executable, -1) : nullptr;
+    bool appimage = lower != nullptr && g_str_has_suffix(lower, ".appimage");
+    g_free(lower);
+    return appimage ? "AppImage" : "Not from a package";
 }
 
 bool xd_appwiz_split_package_id(const char *package_id, char **name, char **version,
