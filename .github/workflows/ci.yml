@@ -50,7 +50,7 @@ jobs:
             wayland libxkbcommon libxcb xcb-util-wm libdrm cairo pango fontconfig \
             glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse libcanberra json-glib mesa pixman git libinput libxcursor libevdev libnm packagekit flatpak libcups sane libgphoto2 libarchive libseccomp bubblewrap \
             ttf-dejavu
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         env:
           CC: ${{ matrix.cc }}
@@ -59,7 +59,7 @@ jobs:
         run: ninja -C build
       - name: Unit tests
         run: meson test -C build --print-errorlogs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: meson-logs-${{ matrix.name }}
@@ -81,14 +81,14 @@ jobs:
             wlroots0.20 wayland libxkbcommon libxcb xcb-util-wm libdrm cairo pango fontconfig \
             glib2 gtk3 gdk-pixbuf2 procps-ng systemd-libs polkit pam libpulse libcanberra json-glib mesa pixman git libinput libxcursor libevdev libnm packagekit flatpak libcups sane libgphoto2 libarchive libseccomp bubblewrap \
             ttf-dejavu grim python-gobject python-dbusmock
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: meson setup build
       - name: Build
         run: ninja -C build
       - name: UI tests
         run: meson test -C build --setup ui --suite ui --print-errorlogs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: meson-logs-ui
