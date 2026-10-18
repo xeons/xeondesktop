@@ -378,6 +378,32 @@ void xd_view_attention(xd_view *view) {
     }
 }
 
+/* xd_power_event is the protocol's enum. */
+static_assert((int)XD_POWER_EVENT_LID_CLOSED ==
+                  (int)XD_WINDOW_ARRANGER_V1_POWER_BUTTON_LID_CLOSED &&
+              (int)XD_POWER_EVENT_LID_OPENED ==
+                  (int)XD_WINDOW_ARRANGER_V1_POWER_BUTTON_LID_OPENED &&
+              (int)XD_POWER_EVENT_POWER == (int)XD_WINDOW_ARRANGER_V1_POWER_BUTTON_POWER &&
+              (int)XD_POWER_EVENT_SLEEP == (int)XD_WINDOW_ARRANGER_V1_POWER_BUTTON_SLEEP);
+
+bool xd_arrange_power_button(xd_server *server, xd_power_event event) {
+    struct wl_resource *res = server->arranger_resource;
+    if (res == nullptr ||
+        wl_resource_get_version(res) < XD_WINDOW_ARRANGER_V1_POWER_BUTTON_SINCE_VERSION)
+        return false;
+    xd_window_arranger_v1_send_power_button(res, event);
+    return true;
+}
+
+/* Testing only (a headless compositor has no lid): the global is offered
+ * to every client then, and the request ignored otherwise. */
+static void handle_test_lid(struct wl_client *client, struct wl_resource *res, uint32_t closed) {
+    (void)client;
+    xd_server *server = server_of(res);
+    if (server->config.virtual_input)
+        xd_input_lid(server, closed != 0);
+}
+
 static const struct xd_window_arranger_v1_interface arranger_impl = {
     .arrange = handle_arrange,
     .arrange_app = handle_arrange_app,
@@ -392,6 +418,7 @@ static const struct xd_window_arranger_v1_interface arranger_impl = {
     .set_keyboard_layout = handle_set_keyboard_layout,
     .identify = handle_identify,
     .peek_window = handle_peek_window,
+    .test_lid = handle_test_lid,
 };
 
 static void bind_arranger(struct wl_client *client, void *data, uint32_t version, uint32_t id) {
@@ -450,6 +477,9 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
     bool capture = xd_capture_global_private(server, global);
     if (global != server->arranger && !capture)
         return true;
+    /* UI tests' xd-inject toggles the lid through it (test_lid). */
+    if (global == server->arranger && server->config.virtual_input)
+        return true;
     pid_t pid = 0;
     wl_client_get_credentials((struct wl_client *)(uintptr_t)client, &pid, nullptr, nullptr);
     if (server->shell_pid > 0 && pid == server->shell_pid)
@@ -458,7 +488,7 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 9,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 10,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

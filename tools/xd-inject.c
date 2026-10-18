@@ -13,6 +13,7 @@
  *   hold|release MOD  keep ctrl, alt, shift or super down across steps
  *   press|lift KEY    hold any key down (key repeat), e.g. press Down
  *   sleep MS          wait
+ *   lid close|open    the laptop lid (xd-window-arranger-v1's test_lid)
  *
  * Example: xd-inject move 20 728 click sleep 500 type alacritty key Return
  */
@@ -47,6 +48,7 @@ typedef struct inject {
     struct zwlr_virtual_pointer_manager_v1 *pointer_manager;
     struct zwp_virtual_keyboard_manager_v1 *keyboard_manager;
     struct zxdg_output_manager_v1 *xdg_output_manager;
+    struct xd_window_arranger_v1 *arranger; /* for the lid, which has no virtual device */
     struct zwlr_virtual_pointer_v1 *pointer;
     struct zwp_virtual_keyboard_v1 *keyboard;
     output outputs[16];
@@ -124,6 +126,10 @@ static void global(void *data, struct wl_registry *reg, uint32_t name, const cha
     } else if (xd_str_eq(i, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
         in->xdg_output_manager =
             wl_registry_bind(reg, name, &zxdg_output_manager_v1_interface, XD_MIN(version, 3u));
+    } else if (xd_str_eq(i, xd_str_from_cstr(xd_window_arranger_v1_interface.name)) &&
+               version >= XD_WINDOW_ARRANGER_V1_TEST_LID_SINCE_VERSION) {
+        in->arranger = wl_registry_bind(reg, name, &xd_window_arranger_v1_interface,
+                                        XD_WINDOW_ARRANGER_V1_TEST_LID_SINCE_VERSION);
     } else if (xd_str_eq(i, xd_str_from_cstr(wl_output_interface.name)) &&
                in->output_count < XD_ARRAY_LEN(in->outputs)) {
         in->outputs[in->output_count++].wl = wl_registry_bind(reg, name, &wl_output_interface, 1);
@@ -477,6 +483,15 @@ static int run_steps(inject *in, int argc, char **argv) {
             if (!press_key(in, a1, strcmp(cmd, "press") == 0))
                 return EXIT_FAILURE;
             i++;
+        } else if (strcmp(cmd, "lid") == 0 && a1 != nullptr &&
+                   (strcmp(a1, "close") == 0 || strcmp(a1, "open") == 0)) {
+            if (in->arranger == nullptr) {
+                fprintf(stderr, "xd-inject: the compositor offers no lid to toggle\n");
+                return EXIT_FAILURE;
+            }
+            xd_window_arranger_v1_test_lid(in->arranger, strcmp(a1, "close") == 0);
+            settle(in);
+            i++;
         } else if (strcmp(cmd, "sleep") == 0 && parse_int(a1, 0, 600000, &v1)) {
             sleep_ms((long)v1);
             i++;
@@ -522,6 +537,8 @@ int main(int argc, char **argv) {
 
     zwlr_virtual_pointer_v1_destroy(in.pointer);
     zwp_virtual_keyboard_v1_destroy(in.keyboard);
+    if (in.arranger != nullptr)
+        xd_window_arranger_v1_destroy(in.arranger);
     wl_display_roundtrip(in.display);
     xd_free(in.keys);
     xkb_state_unref(in.state);

@@ -1566,6 +1566,75 @@ static void test_power_settings(void) {
     CHECK(a.power_scheme == XD_POWER_HOME && a.standby == 0 && a.hibernate == 0);
 }
 
+/* Power Options' Power buttons: [Power] LidAction and the buttons' keys,
+ * what the shell inhibits in logind, and what it does. */
+static void test_power_buttons(void) {
+    xd_settings a;
+    xd_settings_defaults(&a);
+    char what[128];
+    /* Unset: logind acts, nothing is inhibited or written. */
+    for (size_t b = 0; b < XD_POWER_BUTTON_COUNT; b++)
+        CHECK(a.power_buttons[b] == XD_BUTTON_LOGIND);
+    xd_power_buttons_inhibit_what(&a, what, sizeof(what));
+    CHECK(what[0] == '\0');
+    CHECK(xd_power_button_action(&a, XD_BUTTON_POWER, false) == XD_BUTTON_NOTHING);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "LidAction") == nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&text), "ButtonAction") == nullptr);
+    xd_strbuf_free(&text);
+
+    xd_settings_parse(XD_STR("[Power]\nLidAction=lock\nPowerButtonAction=ask\n"
+                             "SleepButtonAction=reboot\n"),
+                      &a);
+    CHECK(a.power_buttons[XD_BUTTON_LID] == XD_BUTTON_LOCK);
+    CHECK(a.power_buttons[XD_BUTTON_POWER] == XD_BUTTON_ASK);
+    CHECK(a.power_buttons[XD_BUTTON_SLEEP] == XD_BUTTON_LOGIND); /* unknown: unset */
+    xd_power_buttons_inhibit_what(&a, what, sizeof(what));
+    CHECK(strcmp(what, "handle-lid-switch:handle-power-key") == 0);
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "PowerButtonAction=ask") != nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&text), "SleepButtonAction") == nullptr);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && b.power_buttons[XD_BUTTON_LID] == XD_BUTTON_LOCK);
+    xd_strbuf_free(&text);
+
+    /* The sleep button is logind's suspend and hibernate keys. */
+    a.power_buttons[XD_BUTTON_SLEEP] = XD_BUTTON_HIBERNATE;
+    xd_power_buttons_inhibit_what(&a, what, sizeof(what));
+    CHECK(strcmp(what, "handle-lid-switch:handle-power-key:handle-suspend-key:"
+                       "handle-hibernate-key") == 0);
+    CHECK(xd_power_button_action(&a, XD_BUTTON_SLEEP, true) == XD_BUTTON_HIBERNATE);
+    /* Docked or with another monitor, closing the lid does nothing, as
+     * logind's HandleLidSwitchDocked=ignore; the lid never asks. */
+    CHECK(xd_power_button_action(&a, XD_BUTTON_LID, false) == XD_BUTTON_LOCK);
+    CHECK(xd_power_button_action(&a, XD_BUTTON_LID, true) == XD_BUTTON_NOTHING);
+    a.power_buttons[XD_BUTTON_LID] = XD_BUTTON_ASK;
+    CHECK(xd_power_button_action(&a, XD_BUTTON_LID, false) == XD_BUTTON_NOTHING);
+    CHECK(xd_power_button_action(&a, XD_BUTTON_POWER, true) == XD_BUTTON_ASK);
+
+    /* Names, and logind's values in Power Options' terms. */
+    xd_button_action act;
+    CHECK(xd_button_action_from_name("standby", &act) && act == XD_BUTTON_STANDBY);
+    CHECK(!xd_button_action_from_name("reboot", &act));
+    CHECK(strcmp(xd_button_action_name(XD_BUTTON_SHUTDOWN), "shutdown") == 0);
+    CHECK(xd_button_action_from_logind("suspend", &act) && act == XD_BUTTON_STANDBY);
+    CHECK(xd_button_action_from_logind("poweroff", &act) && act == XD_BUTTON_SHUTDOWN);
+    CHECK(xd_button_action_from_logind("ignore", &act) && act == XD_BUTTON_NOTHING);
+    CHECK(!xd_button_action_from_logind("suspend-then-hibernate", &act));
+    CHECK(!xd_button_action_from_logind(nullptr, &act));
+
+    /* Set back to logind's while another applet saved meanwhile: merging
+     * removes the key. */
+    xd_settings base = a, pending = a, now;
+    xd_settings_defaults(&now);
+    now.power_buttons[XD_BUTTON_POWER] = XD_BUTTON_ASK;
+    pending.power_buttons[XD_BUTTON_POWER] = XD_BUTTON_LOGIND;
+    xd_settings_merge(&base, &pending, &now);
+    CHECK(now.power_buttons[XD_BUTTON_POWER] == XD_BUTTON_LOGIND);
+}
+
 /* Power Options' Alarms: the keys, and when each alarm goes off. */
 static void test_battery_alarms(void) {
     xd_settings a;
@@ -4574,6 +4643,7 @@ int main(void) {
     test_tray_rules();
     test_power_settings();
     test_battery_alarms();
+    test_power_buttons();
     test_access_extra_settings();
     test_power_schemes();
     test_sound_scheme();

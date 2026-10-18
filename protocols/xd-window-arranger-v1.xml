@@ -10,10 +10,11 @@
     menu's
     Cascade Windows, Tile Windows Horizontally/Vertically and their Undo,
     for the window menu's Move and Size, for the language indicator (the
-    keyboard layout), and for Windows 7's taskbar thumbnails and Aero Peek.
+    keyboard layout), for Windows 7's taskbar thumbnails and Aero Peek,
+    and to hear of the lid and the power and sleep buttons.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="9">
+  <interface name="xd_window_arranger_v1" version="10">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -186,5 +187,33 @@
         hidden until the keyboard is used, as Windows' menus do.
       </description>
     </event>
+
+    <enum name="power_button" since="10">
+      <entry name="lid_closed" value="0" summary="the lid switch closed"/>
+      <entry name="lid_opened" value="1" summary="the lid switch opened"/>
+      <entry name="power" value="2" summary="the power button (XF86PowerOff)"/>
+      <entry name="sleep" value="3" summary="the sleep button (XF86Sleep, XF86Suspend)"/>
+    </enum>
+
+    <event name="power_button" since="10">
+      <description summary="the lid or a power button">
+        Sent to the shell when the lid switch toggles and when the power
+        or sleep button is pressed (those keys go to no window). The shell
+        carries out Power Options' action for it while it holds logind's
+        block inhibitor for that button; otherwise logind acts and the
+        shell ignores the event.
+      </description>
+      <arg name="button" type="uint" enum="power_button"/>
+    </event>
+
+    <request name="test_lid" since="10">
+      <description summary="testing only: as if the lid switch toggled">
+        For UI tests on a headless compositor, which has no lid switch:
+        the compositor acts as for the lid closing (closed nonzero) or
+        opening. Ignored unless it runs with --allow-virtual-input, which
+        also offers this global to every client.
+      </description>
+      <arg name="closed" type="uint"/>
+    </request>
   </interface>
 </protocol>

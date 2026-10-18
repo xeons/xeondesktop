@@ -528,6 +528,23 @@ static void handle_identifier(void *data, [[maybe_unused]] struct xd_window_arra
     xd_thumbs_identifier(data, toplevel, identifier);
 }
 
+static void handle_power_button(void *data, [[maybe_unused]] struct xd_window_arranger_v1 *a,
+                                uint32_t button) {
+    switch (button) {
+    case XD_WINDOW_ARRANGER_V1_POWER_BUTTON_LID_CLOSED:
+        xd_buttons_event(data, XD_BUTTON_LID);
+        break;
+    case XD_WINDOW_ARRANGER_V1_POWER_BUTTON_POWER:
+        xd_buttons_event(data, XD_BUTTON_POWER);
+        break;
+    case XD_WINDOW_ARRANGER_V1_POWER_BUTTON_SLEEP:
+        xd_buttons_event(data, XD_BUTTON_SLEEP);
+        break;
+    default: /* the lid opening does nothing */
+        break;
+    }
+}
+
 static const struct xd_window_arranger_v1_listener arranger_listener = {
     .start_menu = handle_start_menu,
     .window_menu = handle_window_menu,
@@ -535,6 +552,7 @@ static const struct xd_window_arranger_v1_listener arranger_listener = {
     .keyboard_layout = handle_keyboard_layout,
     .identifier = handle_identifier,
     .window_menu_keyboard = handle_window_menu_keyboard,
+    .power_button = handle_power_button,
 };
 
 void xd_taskmenu_bind(xd_shell *shell) {

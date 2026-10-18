@@ -26,6 +26,7 @@ typedef struct xd_tray_item xd_tray_item;
 typedef struct xd_dnd xd_dnd;
 typedef struct xd_start7 xd_start7;
 typedef struct xd_sleep xd_sleep;
+typedef struct xd_buttons xd_buttons;
 typedef struct xd_primary xd_primary;
 typedef struct xd_langbar xd_langbar;
 typedef struct xd_account xd_account;
@@ -217,6 +218,7 @@ struct xd_shell {
     struct ext_idle_notification_v1 *hibernate_note; /* and System hibernates */
     bool on_battery; /* UPower's: the timers are the "Running on batteries" ones */
     xd_sleep *sleep; /* logind (sleep.c), or nullptr */
+    xd_buttons *buttons; /* the lid and power buttons (buttons.c), or nullptr */
     xd_account *account; /* full name, Switch User (account.c) */
     struct zwlr_output_power_manager_v1 *power_manager;
     int saver_pidfd; /* the running screen saver, or -1 */
@@ -564,6 +566,14 @@ void xd_sleep_update(xd_shell *shell);
 void xd_sleep_now(xd_shell *shell, bool hibernate);
 /* A battery alarm's Shut down. */
 void xd_power_off_now(xd_shell *shell);
+/* buttons.c: Power Options' lid and power button actions, logind's
+ * inhibitor held for those set. */
+void xd_buttons_init(xd_shell *shell);
+void xd_buttons_finish(xd_shell *shell);
+/* Settings changed. */
+void xd_buttons_update(xd_shell *shell);
+/* The compositor says the lid closed or a button was pressed. */
+void xd_buttons_event(xd_shell *shell, xd_power_button button);
 /* account.c: the user's full name (XP Start menu) and Switch User. */
 void xd_account_init(xd_shell *shell);
 void xd_account_finish(xd_shell *shell);

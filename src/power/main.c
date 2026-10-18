@@ -14,9 +14,10 @@
  *   Power Meter    (with a battery) the power source and charge, from
  *                  UPower, each battery's with "Show details for each
  *                  battery", and a battery's details when it's clicked
- *   Advanced       the battery icon, locking before sleep, and logind's
- *                  lid and power button actions (system settings, shown
- *                  read-only)
+ *   Advanced       the battery icon, locking before sleep, and what closing
+ *                  the lid and the power and sleep buttons do ([Power]
+ *                  LidAction...; the shell does it, src/shell/buttons.c),
+ *                  logind's own settings until the user chooses
  *   Hibernate      whether logind can hibernate, and the space it needs
  *
  *   xd-power [--page N]   the Nth tab shown, from 0 (Power Schemes)
@@ -84,6 +85,9 @@ typedef struct props {
     GtkWidget *meter_source, *meter_total, *meter_details, *meter_box;
     /* Advanced */
     GtkWidget *battery_icon, *password;
+    GtkWidget *button[XD_POWER_BUTTON_COUNT]; /* Power buttons */
+    char *button_shown[XD_POWER_BUTTON_COUNT]; /* the choice as opened or applied */
+    bool button_unset[XD_POWER_BUTTON_COUNT];  /* then logind's */
 } props;
 
 static void changed(props *p) {
@@ -1041,6 +1045,83 @@ static GtkWidget *meter_page(props *p) {
 
 /* ---- Advanced --------------------------------------------------------------------- */
 
+static const char *button_label(xd_button_action a) {
+    switch (a) {
+    case XD_BUTTON_NOTHING:
+        return "Do nothing";
+    case XD_BUTTON_ASK:
+        return "Ask me what to do";
+    case XD_BUTTON_STANDBY:
+        return "Stand by";
+    case XD_BUTTON_HIBERNATE:
+        return "Hibernate";
+    case XD_BUTTON_SHUTDOWN:
+        return "Shut down";
+    case XD_BUTTON_LOCK:
+        return "Lock the computer";
+    case XD_BUTTON_LOGIND:
+    case XD_BUTTON_ACTION_COUNT:
+        break;
+    }
+    return "";
+}
+
+/* A Power buttons list: XP's choices (the lid can't ask; it can lock, as
+ * Linux users expect), Stand by and Hibernate if logind can. Unset, it
+ * shows what logind does, which it keeps until another is chosen. */
+static GtkWidget *button_combo(props *p, const xd_settings *s, xd_power_button b) {
+    /* logind's settings, and its defaults where it doesn't say. */
+    static const char *const keys[XD_POWER_BUTTON_COUNT][2] = {
+        [XD_BUTTON_LID] = {"HandleLidSwitch", "suspend"},
+        [XD_BUTTON_POWER] = {"HandlePowerKey", "poweroff"},
+        [XD_BUTTON_SLEEP] = {"HandleSuspendKey", "suspend"},
+    };
+    GtkWidget *c = gtk_combo_box_text_new();
+    xd_button_action offered[] = {XD_BUTTON_NOTHING, XD_BUTTON_LOCK,      XD_BUTTON_ASK,
+                                  XD_BUTTON_STANDBY, XD_BUTTON_HIBERNATE, XD_BUTTON_SHUTDOWN};
+    for (size_t i = 0; i < XD_ARRAY_LEN(offered); i++) {
+        xd_button_action a = offered[i];
+        if ((a == XD_BUTTON_LOCK && b != XD_BUTTON_LID) ||
+            (a == XD_BUTTON_ASK && b == XD_BUTTON_LID) ||
+            (a == XD_BUTTON_STANDBY && !p->can_standby) ||
+            (a == XD_BUTTON_HIBERNATE && !p->can_hibernate))
+            continue;
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(c), xd_button_action_name(a),
+                                  button_label(a));
+    }
+    xd_button_action a = s->power_buttons[b];
+    if (a == XD_BUTTON_LOGIND) {
+        char *handle = logind_string(p, keys[b][0]);
+        const char *v = handle != nullptr ? handle : keys[b][1];
+        if (!xd_button_action_from_logind(v, &a)) {
+            /* One we don't offer (Restart, Stand by, then hibernate...). */
+            gtk_combo_box_text_prepend(GTK_COMBO_BOX_TEXT(c), "logind", action_label(v));
+            a = XD_BUTTON_LOGIND;
+        }
+        g_free(handle);
+    }
+    const char *id = xd_button_action_name(a);
+    if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(c), id)) {
+        /* Set by hand, or what this computer can't do: shown as it is. */
+        gtk_combo_box_text_prepend(GTK_COMBO_BOX_TEXT(c), id, button_label(a));
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(c), id);
+    }
+    p->button_shown[b] = g_strdup(id);
+    p->button_unset[b] = s->power_buttons[b] == XD_BUTTON_LOGIND;
+    g_signal_connect(c, "changed", G_CALLBACK(on_value), p);
+    return c;
+}
+
+/* The choice to save: unset stays so while it shows logind's. */
+static xd_button_action button_chosen(props *p, xd_power_button b) {
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->button[b]));
+    xd_button_action a;
+    if (id == nullptr || (p->button_unset[b] && strcmp(id, p->button_shown[b]) == 0) ||
+        !xd_button_action_from_name(id, &a))
+        return XD_BUTTON_LOGIND;
+    return a;
+}
+
 static GtkWidget *advanced_page(props *p, const xd_settings *s) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
@@ -1063,29 +1144,23 @@ static GtkWidget *advanced_page(props *p, const xd_settings *s) {
     gtk_box_pack_start(GTK_BOX(opts), p->password, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), frame("Options", opts), FALSE, FALSE, 0);
 
-    /* logind's, for every user: shown, not changed. */
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    static const char *const keys[][2] = {
-        {"HandleLidSwitch", "When I c_lose the lid of my portable computer:"},
-        {"HandlePowerKey", "When I press the power _button on my computer:"},
-        {"HandleSuspendKey", "When I press the sl_eep button on my computer:"},
+    static const char *const texts[XD_POWER_BUTTON_COUNT] = {
+        [XD_BUTTON_LID] = "When I c_lose the lid of my portable computer:",
+        [XD_BUTTON_POWER] = "When I press the power _button on my computer:",
+        [XD_BUTTON_SLEEP] = "When I press the sl_eep button on my computer:",
     };
-    for (size_t i = 0; i < XD_ARRAY_LEN(keys); i++) {
-        GtkWidget *l = gtk_label_new_with_mnemonic(keys[i][1]);
+    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++) {
+        GtkWidget *l = gtk_label_new_with_mnemonic(texts[b]);
         gtk_label_set_xalign(GTK_LABEL(l), 0);
         gtk_box_pack_start(GTK_BOX(buttons), l, FALSE, FALSE, 0);
-        GtkWidget *c = gtk_combo_box_text_new();
-        char *action = logind_string(p, keys[i][0]);
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(c), action_label(action));
-        gtk_combo_box_set_active(GTK_COMBO_BOX(c), 0);
-        gtk_widget_set_sensitive(c, FALSE);
-        gtk_label_set_mnemonic_widget(GTK_LABEL(l), c);
-        gtk_box_pack_start(GTK_BOX(buttons), c, FALSE, FALSE, 0);
-        g_free(action);
+        p->button[b] = button_combo(p, s, (xd_power_button)b);
+        gtk_label_set_mnemonic_widget(GTK_LABEL(l), p->button[b]);
+        gtk_box_pack_start(GTK_BOX(buttons), p->button[b], FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(buttons),
-                       label("These are system settings, the same for every user. An "
-                             "administrator changes them in /etc/systemd/logind.conf."),
+                       label("These are your own; logind's settings apply until you change "
+                             "them. Docked or with another monitor, the lid does nothing."),
                        FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), frame("Power buttons", buttons), FALSE, FALSE, 0);
     return page;
@@ -1192,10 +1267,19 @@ static bool apply(props *p) {
         s.low_alarm = p->alarms[ALARM_LOW];
         s.critical_alarm = p->alarms[ALARM_CRITICAL];
     }
+    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++)
+        s.power_buttons[b] = button_chosen(p, (xd_power_button)b);
     if (!xd_settings_save(&s)) {
         xd_message_box(GTK_WINDOW(p->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE,
                        "The settings could not be saved.");
         return false;
+    }
+    /* What's saved is what the lists started from now. */
+    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++) {
+        g_free(p->button_shown[b]);
+        p->button_shown[b] =
+            g_strdup(gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->button[b])));
+        p->button_unset[b] = s.power_buttons[b] == XD_BUTTON_LOGIND;
     }
     gtk_widget_set_sensitive(p->apply, FALSE);
     return true;
@@ -1281,5 +1365,7 @@ int main(int argc, char **argv) {
     if (p.display != nullptr)
         g_object_unref(p.display);
     g_ptr_array_unref(p.schemes);
+    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++)
+        g_free(p.button_shown[b]);
     return EXIT_SUCCESS;
 }

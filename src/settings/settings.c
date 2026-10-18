@@ -46,6 +46,18 @@ static const char *const alarm_action_names[XD_ALARM_ACTION_COUNT] = {
     [XD_ALARM_HIBERNATE] = "hibernate",
     [XD_ALARM_SHUTDOWN] = "shutdown",
 };
+static const char *const button_action_names[XD_BUTTON_ACTION_COUNT] = {
+    [XD_BUTTON_LOGIND] = "logind",       [XD_BUTTON_NOTHING] = "nothing",
+    [XD_BUTTON_ASK] = "ask",             [XD_BUTTON_STANDBY] = "standby",
+    [XD_BUTTON_HIBERNATE] = "hibernate", [XD_BUTTON_SHUTDOWN] = "shutdown",
+    [XD_BUTTON_LOCK] = "lock",
+};
+static int index_of(const char *const *names, size_t n, xd_str v);
+static const char *const button_keys[XD_POWER_BUTTON_COUNT] = {
+    [XD_BUTTON_LID] = "LidAction",
+    [XD_BUTTON_POWER] = "PowerButtonAction",
+    [XD_BUTTON_SLEEP] = "SleepButtonAction",
+};
 static const char *const sentry_names[XD_SENTRY_COUNT] = {
     [XD_SENTRY_NONE] = "none",
     [XD_SENTRY_CAPTION] = "caption",
@@ -196,6 +208,68 @@ xd_alarm_fired xd_battery_alarm_check(const xd_settings *s, xd_alarm_done *done,
         return XD_ALARM_FIRED_LOW;
     }
     return XD_ALARM_FIRED_NONE;
+}
+
+const char *xd_button_action_name(xd_button_action action) {
+    return action < XD_BUTTON_ACTION_COUNT ? button_action_names[action] : button_action_names[0];
+}
+
+bool xd_button_action_from_name(const char *name, xd_button_action *out) {
+    int i = name != nullptr ? index_of(button_action_names, XD_ARRAY_LEN(button_action_names),
+                                       xd_str_from_cstr(name))
+                            : -1;
+    if (i < 0)
+        return false;
+    *out = (xd_button_action)i;
+    return true;
+}
+
+bool xd_button_action_from_logind(const char *handle, xd_button_action *out) {
+    static const struct {
+        const char *handle;
+        xd_button_action action;
+    } map[] = {
+        {"ignore", XD_BUTTON_NOTHING},     {"suspend", XD_BUTTON_STANDBY},
+        {"hibernate", XD_BUTTON_HIBERNATE}, {"poweroff", XD_BUTTON_SHUTDOWN},
+        {"lock", XD_BUTTON_LOCK},
+    };
+    for (size_t i = 0; handle != nullptr && i < XD_ARRAY_LEN(map); i++) {
+        if (strcmp(handle, map[i].handle) == 0) {
+            *out = map[i].action;
+            return true;
+        }
+    }
+    return false;
+}
+
+void xd_power_buttons_inhibit_what(const xd_settings *s, char *out, size_t cap) {
+    static const char *const what[XD_POWER_BUTTON_COUNT] = {
+        [XD_BUTTON_LID] = "handle-lid-switch",
+        [XD_BUTTON_POWER] = "handle-power-key",
+        /* XF86Sleep is logind's suspend key, XF86Suspend its hibernate
+         * key: both are XP's one sleep button. */
+        [XD_BUTTON_SLEEP] = "handle-suspend-key:handle-hibernate-key",
+    };
+    XD_ASSERT(cap > 0);
+    out[0] = '\0';
+    for (size_t b = 0; b < XD_POWER_BUTTON_COUNT; b++) {
+        if (s->power_buttons[b] == XD_BUTTON_LOGIND)
+            continue;
+        if (out[0] != '\0')
+            g_strlcat(out, ":", cap);
+        g_strlcat(out, what[b], cap);
+    }
+}
+
+xd_button_action xd_power_button_action(const xd_settings *s, xd_power_button button,
+                                        bool docked) {
+    XD_ASSERT((unsigned)button < XD_POWER_BUTTON_COUNT);
+    xd_button_action a = s->power_buttons[button];
+    if (a == XD_BUTTON_LOGIND)
+        return XD_BUTTON_NOTHING; /* logind acts */
+    if (button == XD_BUTTON_LID && (docked || a == XD_BUTTON_ASK))
+        return XD_BUTTON_NOTHING;
+    return a;
 }
 
 const char *xd_power_scheme_name(xd_power_scheme scheme) {
@@ -912,6 +986,11 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
         } else if (key.len >= 13 &&
                    xd_str_eq_nocase(xd_str_sub(key, 0, 13), XD_STR("CriticalAlarm"))) {
             parse_alarm(&s->critical_alarm, xd_str_sub(key, 13, key.len), v);
+        } else {
+            int b = index_of(button_keys, XD_ARRAY_LEN(button_keys), key);
+            int i = index_of(button_action_names, XD_ARRAY_LEN(button_action_names), v);
+            if (b >= 0 && i >= 0)
+                s->power_buttons[b] = (xd_button_action)i;
         }
     } else if (SEC("Folders")) {
         xd_folder_settings *f = &s->folders;
@@ -1103,6 +1182,13 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
         g_key_file_set_boolean(kf, "Power", key, al->message);
         g_snprintf(key, sizeof(key), "%sAction", alarms[i].prefix);
         g_key_file_set_string(kf, "Power", key, alarm_action_names[al->action]);
+    }
+    /* Unset leaves them to logind, which a written "logind" would too;
+     * left out, desktop.ini says nothing about them. */
+    for (size_t b = 0; b < XD_POWER_BUTTON_COUNT; b++) {
+        if (s->power_buttons[b] != XD_BUTTON_LOGIND)
+            g_key_file_set_string(kf, "Power", button_keys[b],
+                                  button_action_names[s->power_buttons[b]]);
     }
     g_key_file_set_boolean(kf, "Bluetooth", "ShowIcon", s->bluetooth_icon);
     const xd_folder_settings *f = &s->folders;

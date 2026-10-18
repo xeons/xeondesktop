@@ -108,8 +108,11 @@ and xdg-shell, they use:
   VirtualBox's shared clipboard);
 - `xd-window-arranger-v1`, our private protocol, offered only to the shell
   the compositor started: Cascade/Tile Windows with Undo, Aero Peek (of
-  the desktop or one window), and which window each
-  `ext-foreign-toplevel-list` handle is;
+  the desktop or one window), which window each
+  `ext-foreign-toplevel-list` handle is, and the lid switch and the power
+  and sleep keys (for Power Options' Power buttons, which the shell
+  carries out holding logind's block inhibitors; with
+  `--allow-virtual-input` every client sees it, for `xd-inject lid`);
 - `ext-image-copy-capture-v1` with `ext-foreign-toplevel-image-capture-source-v1`
   and `ext-foreign-toplevel-list-v1`, also offered to the shell alone:
   Windows 7's taskbar thumbnails, captured into shared memory at thumbnail

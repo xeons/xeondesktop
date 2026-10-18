@@ -16,6 +16,7 @@
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_primary_selection.h>
+#include <wlr/types/wlr_switch.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_virtual_pointer_v1.h>
 #include <wlr/util/log.h>
@@ -700,6 +701,25 @@ static void handle_key(struct wl_listener *listener, void *data) {
     xd_input_key(kb, event);
 }
 
+/* XF86PowerOff, XF86Sleep or XF86Suspend: told to the shell (on press)
+ * and kept from windows. Without a shell to hear them they go on as any
+ * key. */
+static bool power_key(xd_server *server, const xkb_keysym_t *syms, int nsyms, bool pressed) {
+    for (int i = 0; i < nsyms; i++) {
+        xd_power_event e;
+        if (syms[i] == XKB_KEY_XF86PowerOff)
+            e = XD_POWER_EVENT_POWER;
+        else if (syms[i] == XKB_KEY_XF86Sleep || syms[i] == XKB_KEY_XF86Suspend)
+            e = XD_POWER_EVENT_SLEEP;
+        else
+            continue;
+        if (!pressed)
+            return server->arranger_resource != nullptr;
+        return xd_arrange_power_button(server, e);
+    }
+    return false;
+}
+
 void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
     xd_server *server = kb->server;
     /* libinput keycodes are offset by 8 from XKB keycodes. */
@@ -714,6 +734,11 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
     bool unlatch = pressed && kb->sticky_latched != 0 && kb->sticky_alone == 0;
     for (int i = 0; unlatch && i < nsyms; i++)
         unlatch = modifier_of(kb->wlr_keyboard->keymap, syms[i]) == 0;
+
+    /* The power and sleep buttons are the shell's (Power Options), even
+     * mid-grab or with the screen locked, as logind's would be. */
+    if (power_key(server, syms, nsyms, pressed))
+        return;
 
     /* Keyboard move/size takes every key until it ends. */
     if (keyboard_grab(server)) {
@@ -917,6 +942,46 @@ static void add_pointer(xd_server *server, struct wlr_input_device *device) {
     wlr_cursor_attach_input_device(server->cursor, device);
 }
 
+/* ---- the lid ---------------------------------------------------------------- */
+
+/* A switch device (libinput's): the lid is the one we act on; tablet
+ * mode and the rest go nowhere. */
+typedef struct xd_switch {
+    xd_server *server;
+    struct wl_listener toggle;
+    struct wl_listener destroy;
+} xd_switch;
+
+void xd_input_lid(xd_server *server, bool closed) {
+    /* Opening the lid wakes the screen, as a key does. */
+    if (!closed)
+        xd_idle_activity(server);
+    xd_arrange_power_button(server,
+                            closed ? XD_POWER_EVENT_LID_CLOSED : XD_POWER_EVENT_LID_OPENED);
+}
+
+static void handle_switch_toggle(struct wl_listener *listener, void *data) {
+    xd_switch *sw = XD_CONTAINER_OF(listener, xd_switch, toggle);
+    const struct wlr_switch_toggle_event *e = data;
+    if (e->switch_type == WLR_SWITCH_TYPE_LID)
+        xd_input_lid(sw->server, e->switch_state == WLR_SWITCH_STATE_ON);
+}
+
+static void handle_switch_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
+    xd_switch *sw = XD_CONTAINER_OF(listener, xd_switch, destroy);
+    xd_unlisten(&sw->toggle);
+    xd_unlisten(&sw->destroy);
+    xd_free(sw);
+}
+
+static void add_switch(xd_server *server, struct wlr_input_device *device) {
+    xd_switch *sw = XD_NEW(xd_switch);
+    sw->server = server;
+    XD_LISTEN(&wlr_switch_from_input_device(device)->events.toggle, sw, toggle,
+              handle_switch_toggle);
+    XD_LISTEN(&device->events.destroy, sw, destroy, handle_switch_destroy);
+}
+
 static void update_seat_caps(xd_server *server) {
     uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
     if (!wl_list_empty(&server->keyboards))
@@ -934,10 +999,12 @@ static void handle_new_input(struct wl_listener *listener, void *data) {
     case WLR_INPUT_DEVICE_POINTER:
         add_pointer(server, device);
         break;
+    case WLR_INPUT_DEVICE_SWITCH:
+        add_switch(server, device);
+        break;
     case WLR_INPUT_DEVICE_TOUCH:
     case WLR_INPUT_DEVICE_TABLET:
     case WLR_INPUT_DEVICE_TABLET_PAD:
-    case WLR_INPUT_DEVICE_SWITCH:
         break;
     }
     update_seat_caps(server);

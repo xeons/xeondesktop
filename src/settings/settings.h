@@ -84,6 +84,27 @@ typedef struct xd_battery_alarm {
     xd_alarm_action action;
 } xd_battery_alarm;
 
+/* Power Options' Advanced "Power buttons": what closing the lid, the power
+ * button and the sleep button do, for this user. The shell carries them
+ * out, holding logind's block inhibitor for each one set; unset, logind's
+ * own HandleLidSwitch, HandlePowerKey and HandleSuspendKey act. */
+typedef enum xd_power_button : uint8_t {
+    XD_BUTTON_LID,   /* [Power] LidAction */
+    XD_BUTTON_POWER, /* [Power] PowerButtonAction */
+    XD_BUTTON_SLEEP, /* [Power] SleepButtonAction (XF86Sleep and XF86Suspend) */
+    XD_POWER_BUTTON_COUNT,
+} xd_power_button;
+typedef enum xd_button_action : uint8_t {
+    XD_BUTTON_LOGIND, /* unset: logind's setting */
+    XD_BUTTON_NOTHING,
+    XD_BUTTON_ASK, /* the Shut Down dialog */
+    XD_BUTTON_STANDBY,
+    XD_BUTTON_HIBERNATE,
+    XD_BUTTON_SHUTDOWN,
+    XD_BUTTON_LOCK,
+    XD_BUTTON_ACTION_COUNT,
+} xd_button_action;
+
 /* [Keyboard]: XKB names ("" = XKB_DEFAULT_* or the system default) and
  * key repeat, applied by the compositor to every keyboard. */
 typedef struct xd_keyboard_settings {
@@ -391,6 +412,7 @@ typedef struct xd_settings {
     bool battery_icon;    /* "Always show icon on the taskbar"; else only on battery */
     bool resume_password; /* lock the screen before sleeping */
     xd_battery_alarm low_alarm, critical_alarm; /* Alarms */
+    xd_button_action power_buttons[XD_POWER_BUTTON_COUNT]; /* Advanced's Power buttons */
 
     /* [Bluetooth] */
     bool bluetooth_icon; /* "Show the Bluetooth icon in the notification area" */
@@ -469,6 +491,26 @@ xd_alarm_fired xd_battery_alarm_check(const xd_settings *s, xd_alarm_done *done,
                                       bool discharging);
 /* "standby", ...: [Power] *AlarmAction's values. */
 const char *xd_alarm_action_name(xd_alarm_action action);
+
+/* "nothing", "ask", ...: [Power] LidAction's and the buttons' values
+ * ("logind" for unset, which isn't written). */
+const char *xd_button_action_name(xd_button_action action);
+/* By that name; false if it's none. */
+bool xd_button_action_from_name(const char *name, xd_button_action *out);
+/* logind's HandleLidSwitch-style value in our terms ("suspend" is
+ * XD_BUTTON_STANDBY); false for those Power Options doesn't offer
+ * ("reboot", "suspend-then-hibernate"...). */
+bool xd_button_action_from_logind(const char *handle, xd_button_action *out);
+/* What the shell inhibits in logind ("handle-lid-switch:handle-power-key"):
+ * the buttons set; "" if none. The sleep button is logind's suspend and
+ * hibernate keys both. */
+void xd_power_buttons_inhibit_what(const xd_settings *s, char *out, size_t cap);
+/* What the shell does for `button` (pressed, or the lid closed): its
+ * action; nothing for one left to logind, and for the lid while docked or
+ * with another monitor connected (as logind's HandleLidSwitchDocked=ignore).
+ * The lid never asks. */
+xd_button_action xd_power_button_action(const xd_settings *s, xd_power_button button,
+                                        bool docked);
 
 /* Limits of the [Mouse] values, for the applets' sliders. */
 enum {

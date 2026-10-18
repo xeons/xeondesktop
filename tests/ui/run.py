@@ -2006,6 +2006,106 @@ def battery_alarms(s):
         DBusTestCase.tearDownClass()
 
 
+def mock_logind_docked(s):
+    """Before the compositor starts: a private system bus with dbusmock's
+    logind (logging its calls), not docked."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    log = open(os.path.join(s.base, "logind.log"), "w")
+    proc, obj = DBusTestCase.spawn_server_template("logind", {}, stdout=log, system_bus=True)
+    s.children.append(proc)
+    obj.AddProperty("org.freedesktop.login1.Manager", "Docked", dbus.Boolean(False),
+                    dbus_interface=MOCK_IFACE)  # fmt: skip
+
+
+@scenario(LUNA_INI + "\n[Power]\nPowerButtonAction=standby\nLidAction=shutdown\n",
+          requires=("dbusmock",), setup=mock_logind_docked)  # fmt: skip
+def power_buttons(s):
+    """Power Options' Power buttons (on a dbusmock logind): the shell blocks
+    logind's handling of the buttons set, and carries their actions out:
+    the power button stands by, closing the lid shuts down, but not while
+    docked; the sleep button, left to logind, does nothing here. Setting it
+    to Hibernate in Power Options' Advanced tab takes it over too."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    def calls(method):
+        with open(os.path.join(s.base, "logind.log")) as f:
+            return [line for line in f if f" {method} " in line]
+
+    def inhibited(what):
+        return any(f'"{what}"' in line and '"block"' in line for line in calls("Inhibit"))
+
+    try:
+        s.wait(lambda: inhibited("handle-lid-switch:handle-power-key"),
+               "the shell to block logind's lid and power key")  # fmt: skip
+        s.log("ok: the shell holds logind's block inhibitor for the lid and power key")
+        s.inject("key", "XF86PowerOff")
+        s.wait(lambda: calls("Suspend"), "the power button to stand by")
+        s.log("ok: the power button stood by (logind's Suspend)")
+        s.inject("lid", "close", "lid", "open")
+        s.wait(lambda: calls("PowerOff"), "closing the lid to shut down")
+        s.log("ok: closing the lid shut down (logind's PowerOff)")
+
+        logind = dbus.SystemBus().get_object("org.freedesktop.login1", "/org/freedesktop/login1")
+        logind.UpdateProperties("org.freedesktop.login1.Manager",
+                                {"Docked": dbus.Boolean(True)},
+                                dbus_interface=MOCK_IFACE)  # fmt: skip
+        # Docked: the lid does nothing. The sleep button is logind's, so
+        # nothing here either. The power button again marks the end.
+        s.inject("lid", "close", "sleep", 1000, "key", "XF86Sleep", "sleep", 1000,
+                 "key", "XF86PowerOff")  # fmt: skip
+        s.wait(lambda: len(calls("Suspend")) == 2, "the power button again")
+        s.inject("sleep", 1000)
+        s.check(len(calls("PowerOff")) == 1, "closing the lid while docked did nothing")
+        s.check(len(calls("Suspend")) == 2 and not calls("Hibernate"),
+                "the sleep button, left to logind, did nothing in the session")  # fmt: skip
+        s.log("ok: docked, closing the lid does nothing; the unset sleep button is logind's")
+
+        # Power Options (no battery: Advanced is the second tab): the sleep
+        # button from logind's Stand by to Hibernate, then Apply.
+        s.launch("xd-power", "--page", "1")
+        s.wait_window(title="Power Options Properties", state="activated")
+        s.settle("advanced")
+        s.inject("key", "alt+e", "sleep", 300, "key", "Down", "sleep", 300)
+        s.settle("hibernate-chosen")
+        s.inject("key", "alt+a")
+
+        def saved():
+            ini = s.ini()
+            return ini.has_section("Power") and ini["Power"].get("SleepButtonAction")
+
+        s.check(s.wait(saved, "the sleep button saved") == "hibernate", "Hibernate saved")
+        power = s.ini()["Power"]
+        s.check(power.get("PowerButtonAction") == "standby" and
+                power.get("LidAction") == "shutdown", "the others kept theirs")  # fmt: skip
+        s.wait(lambda: inhibited("handle-lid-switch:handle-power-key:handle-suspend-key:"
+                                 "handle-hibernate-key"),
+               "the shell to block logind's sleep keys too")  # fmt: skip
+        # (Besides sleep.c's delay inhibitor, for locking before sleep.)
+        held = lambda: [str(i[0]) for i in logind.ListInhibitors(
+            dbus_interface="org.freedesktop.login1.Manager") if str(i[3]) == "block"]  # fmt: skip
+        s.wait(lambda: len(held()) == 1, "the old inhibitor to go")
+        s.check(held()[0].endswith("handle-hibernate-key"), "one inhibitor, the new one")
+        s.inject("sleep", 500, "key", "XF86Sleep")
+        s.wait(lambda: calls("Hibernate"), "the sleep button to hibernate")
+        s.log("ok: set in Power Options, the sleep button hibernates")
+
+        # "Ask me what to do": the Shut Down dialog.
+        ini = s.ini()
+        ini["Power"]["PowerButtonAction"] = "ask"
+        with open(os.path.join(s.config, "desktop.ini"), "w") as f:
+            ini.write(f, space_around_delimiters=False)
+        s.inject("sleep", 1000, "key", "XF86PowerOff")
+        s.wait_window(title="Shut Down XeonDesktop")
+        s.check(len(calls("Suspend")) == 2, "asking stood nothing by")
+        s.log("ok: Ask me what to do opens the Shut Down dialog")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def private_pipewire(s):
     """Before the compositor starts: a sound server of the session's own,
     PipeWire and its pulse server in the session's runtime dir, with one

@@ -632,6 +632,18 @@ void xd_window_menu_show(xd_view *view, double lx, double ly, bool keyboard);
 void xd_start_menu_toggle(xd_server *server);
 /* arrange.c: tells the shell the active keyboard layout (kb_group). */
 void xd_arrange_keyboard_layout(xd_server *server);
+/* arrange.c: tells the shell of the lid or the power or sleep button
+ * (xd-window-arranger-v1's power_button, whose values these are), for
+ * Power Options' action. Returns whether a shell heard it. */
+typedef enum xd_power_event : uint8_t {
+    XD_POWER_EVENT_LID_CLOSED,
+    XD_POWER_EVENT_LID_OPENED,
+    XD_POWER_EVENT_POWER,
+    XD_POWER_EVENT_SLEEP,
+} xd_power_event;
+bool xd_arrange_power_button(xd_server *server, xd_power_event event);
+/* input.c: the lid closed or opened (its switch, or a UI test's). */
+void xd_input_lid(xd_server *server, bool closed);
 /* arrange.c: asks the shell to flash the window's taskbar button. */
 void xd_view_attention(xd_view *view);
 /* Where the window menu opens from the keyboard or the caption icon:

@@ -480,7 +480,7 @@ static void registry_global(void *data, struct wl_registry *reg, uint32_t name,
         shell->toplevel_manager =
             bind(reg, name, &zwlr_foreign_toplevel_manager_v1_interface, version, 3);
     } else if (xd_str_eq(iface, xd_str_from_cstr(xd_window_arranger_v1_interface.name))) {
-        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 9);
+        shell->arranger = bind(reg, name, &xd_window_arranger_v1_interface, version, 10);
         xd_taskmenu_bind(shell);
     } else if (xd_str_eq(iface, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
         xd_primary_bind(shell, reg, name, version);
@@ -691,6 +691,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     shell->background_gen++; /* the colour or wallpaper mode may have changed */
     xd_idle_update(shell);
     xd_sleep_update(shell);
+    xd_buttons_update(shell);
     /* Programs started from the shell get Mouse Properties' cursors (the
      * compositor sets these too, but only for what it starts). */
     const xd_mouse_settings *m = &shell->settings.mouse;
@@ -1054,6 +1055,7 @@ int main(int argc, char **argv) {
     xd_sys_battery_init(&shell);
     xd_sys_access_init(&shell);
     xd_sleep_init(&shell);
+    xd_buttons_init(&shell);
     xd_account_init(&shell);
     xd_shell_sounds_init();
     xd_shellbus_init(&shell);
@@ -1093,6 +1095,7 @@ int main(int argc, char **argv) {
     xd_shellbus_finish(&shell);
     xd_tray_finish(&shell);
     xd_sleep_finish(&shell);
+    xd_buttons_finish(&shell);
     xd_account_finish(&shell);
     xd_sound_finish();
     xd_deskicons_finish(&shell);

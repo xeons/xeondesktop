@@ -933,6 +933,7 @@ executable(
   'src/shell/mpris.c',
   'src/shell/jumplist.c',
   'src/shell/sleep.c',
+  'src/shell/buttons.c',
   'src/shell/account.c',
   'src/shell/sounds.c',
   'src/shell/shellbus.c',
