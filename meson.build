@@ -550,6 +550,18 @@ install_data(
 
 # xd-taskmgr: the Task Manager (GTK3), with process data from libproc2.
 proc2_dep = dependency('libproc2', include_type: 'system')
+# Older libproc2 (4.0.4, Ubuntu 26.04) takes the info in PIDS_VAL and
+# STAT_VAL too.
+taskmgr_args = ['-D_GNU_SOURCE']
+if not cc.compiles('''#include <libproc2/pids.h>
+int f(struct pids_stack *s) { return PIDS_VAL(PIDS_ID_PID, s_int, s); }''',
+                   dependencies: proc2_dep, name: 'libproc2 PIDS_VAL without the info')
+  taskmgr_args += '-DXD_PROC2_VAL_TAKES_INFO'
+endif
+# The Handles column's item, since libproc2 4.0.5.
+if cc.has_header_symbol('libproc2/pids.h', 'PIDS_OPEN_FILES', dependencies: proc2_dep)
+  taskmgr_args += '-DXD_PROC2_HAS_OPEN_FILES'
+endif
 executable(
   'xd-taskmgr',
   'src/taskmgr/main.c',
@@ -562,7 +574,7 @@ executable(
   'src/taskmgr/users.c',
   'src/taskmgr/widgets.c',
   'src/settings/login1.c',
-  c_args: ['-D_GNU_SOURCE'],
+  c_args: taskmgr_args,
   link_with: gtkapp_lib,
   dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep, proc2_dep, client_protocol_dep, m_dep],
   install: true,

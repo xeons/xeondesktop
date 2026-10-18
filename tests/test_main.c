@@ -4023,32 +4023,38 @@ static void test_launcher_fields(void) {
     l.start_in = g_strdup("");
     g_free(l.comment);
     l.comment = g_strdup("Writes notes");
-    /* Read-only (a system launcher): the change goes to a user copy. */
+    /* Read-only (a system launcher): the change goes to a user copy. Not
+     * as root (package builds in containers), which writes anyway. */
     CHECK(g_chmod(sys, 0555) == 0);
-    char *written = xd_launcher_write(path, &l, user, nullptr);
+    bool read_only = access(sys, W_OK) != 0;
+    if (!read_only)
+        g_printerr("test_launcher_fields: running as root, skipped the read-only launcher\n");
+    char *written = read_only ? xd_launcher_write(path, &l, user, nullptr) : nullptr;
     char *want = g_build_filename(user, "editor.desktop", nullptr);
-    CHECK(g_strcmp0(written, want) == 0);
-    XdLauncher back;
-    CHECK(written != nullptr && xd_launcher_read(written, &back, nullptr));
-    CHECK(g_strcmp0(back.target, "editor --new-window %F") == 0 && back.start_in == nullptr);
-    CHECK(g_strcmp0(back.comment, "Writes notes") == 0);
-    xd_launcher_clear(&back);
-    GKeyFile *kf = g_key_file_new();
-    CHECK(written != nullptr &&
-          g_key_file_load_from_file(kf, written, G_KEY_FILE_KEEP_TRANSLATIONS, nullptr));
-    char *fr = g_key_file_get_string(kf, "Desktop Entry", "Name[fr]", nullptr);
-    char *other = g_key_file_get_string(kf, "Desktop Entry", "Comment[xx_YY]", nullptr);
-    char *action = g_key_file_get_string(kf, "Desktop Action new", "Exec", nullptr);
-    CHECK(g_strcmp0(fr, "Éditeur") == 0 && g_strcmp0(other, "Other") == 0);
-    CHECK(g_strcmp0(action, "editor -n") == 0);
-    g_free(fr);
-    g_free(other);
-    g_free(action);
-    g_key_file_unref(kf);
-    /* The original is untouched. */
-    char *orig = nullptr;
-    CHECK(g_file_get_contents(path, &orig, nullptr, nullptr) && strcmp(orig, entry) == 0);
-    g_free(orig);
+    if (read_only) {
+        CHECK(g_strcmp0(written, want) == 0);
+        XdLauncher back;
+        CHECK(written != nullptr && xd_launcher_read(written, &back, nullptr));
+        CHECK(g_strcmp0(back.target, "editor --new-window %F") == 0 && back.start_in == nullptr);
+        CHECK(g_strcmp0(back.comment, "Writes notes") == 0);
+        xd_launcher_clear(&back);
+        GKeyFile *kf = g_key_file_new();
+        CHECK(written != nullptr &&
+              g_key_file_load_from_file(kf, written, G_KEY_FILE_KEEP_TRANSLATIONS, nullptr));
+        char *fr = g_key_file_get_string(kf, "Desktop Entry", "Name[fr]", nullptr);
+        char *other = g_key_file_get_string(kf, "Desktop Entry", "Comment[xx_YY]", nullptr);
+        char *action = g_key_file_get_string(kf, "Desktop Action new", "Exec", nullptr);
+        CHECK(g_strcmp0(fr, "Éditeur") == 0 && g_strcmp0(other, "Other") == 0);
+        CHECK(g_strcmp0(action, "editor -n") == 0);
+        g_free(fr);
+        g_free(other);
+        g_free(action);
+        g_key_file_unref(kf);
+        /* The original is untouched. */
+        char *orig = nullptr;
+        CHECK(g_file_get_contents(path, &orig, nullptr, nullptr) && strcmp(orig, entry) == 0);
+        g_free(orig);
+    }
     /* Writable: in place. */
     CHECK(g_chmod(sys, 0755) == 0);
     char *again = xd_launcher_write(path, &l, user, nullptr);
@@ -4068,10 +4074,12 @@ static void test_launcher_fields(void) {
     xd_launcher_clear(&l);
 
     CHECK(g_remove(link) == 0 && g_remove(dir_entry) == 0 && g_remove(path) == 0);
-    CHECK(g_remove(want) == 0 && g_rmdir(user) == 0 && g_rmdir(sys) == 0);
-    char *user_parent = g_path_get_dirname(user);
-    CHECK(g_rmdir(user_parent) == 0 && g_rmdir(dir) == 0);
-    g_free(user_parent);
+    if (read_only) {
+        char *user_parent = g_path_get_dirname(user);
+        CHECK(g_remove(want) == 0 && g_rmdir(user) == 0 && g_rmdir(user_parent) == 0);
+        g_free(user_parent);
+    }
+    CHECK(g_rmdir(sys) == 0 && g_rmdir(dir) == 0);
     g_free(link);
     g_free(dir_entry);
     g_free(written);

@@ -2,6 +2,17 @@
 #include <libproc2/meminfo.h>
 #include <libproc2/pids.h>
 #include <libproc2/stat.h>
+#include <stdio.h>
+
+/* libproc2 4.0.4 (Ubuntu 26.04) takes the info as well; later versions
+ * don't. */
+#ifdef XD_PROC2_VAL_TAKES_INFO
+#define XD_PIDS_VAL(item, type, stack) PIDS_VAL(item, type, stack, si->pids)
+#define XD_STAT_VAL(item, type, stack) STAT_VAL(item, type, stack, si->stat)
+#else
+#define XD_PIDS_VAL(item, type, stack) PIDS_VAL(item, type, stack)
+#define XD_STAT_VAL(item, type, stack) STAT_VAL(item, type, stack)
+#endif
 #include <unistd.h>
 
 #include "netstat.h"
@@ -42,6 +53,7 @@ struct xd_sysinfo {
     int nitems;
     int i_handles, i_io_read, i_io_write; /* -1 when not collected */
     gboolean peak;                        /* read VmHWM */
+    gboolean count_files;                 /* open files, without PIDS_OPEN_FILES */
     GArray *procs;                        /* xd_proc */
     xd_sysstats stats;
 };
@@ -56,9 +68,14 @@ static void set_items(xd_sysinfo *si, gboolean handles, gboolean io) {
     for (int i = 0; i < P_BASE_COUNT; i++)
         si->items[si->nitems++] = base_items[i];
     si->i_handles = si->i_io_read = si->i_io_write = -1;
+    si->count_files = FALSE;
     if (handles) {
+#ifdef XD_PROC2_HAS_OPEN_FILES
         si->i_handles = si->nitems;
         si->items[si->nitems++] = PIDS_OPEN_FILES;
+#else
+        si->count_files = TRUE;
+#endif
     }
     if (io) {
         si->i_io_read = si->nitems;
@@ -124,12 +141,12 @@ static void sample_cpu(xd_sysinfo *si) {
     if (r == nullptr)
         return;
     struct stat_stack *sum = r->summary;
-    long total = STAT_VAL(S_TOTAL, sl_int, sum);
+    long total = XD_STAT_VAL(S_TOTAL, sl_int, sum);
     st->total_delta = total > 0 ? (guint64)total : 0;
-    st->cpu = ratio(STAT_VAL(S_BUSY, sl_int, sum), total);
-    st->cpu_kernel = ratio(STAT_VAL(S_SYSTEM, sl_int, sum), total);
+    st->cpu = ratio(XD_STAT_VAL(S_BUSY, sl_int, sum), total);
+    st->cpu_kernel = ratio(XD_STAT_VAL(S_SYSTEM, sl_int, sum), total);
     st->idle = total > 0 ? 1.0 - st->cpu : 1.0;
-    st->idle_ticks = STAT_VAL(S_IDLE, ull_int, sum);
+    st->idle_ticks = XD_STAT_VAL(S_IDLE, ull_int, sum);
 
     int n = r->cpus != nullptr ? r->cpus->total : 0;
     if (n != st->ncpu) {
@@ -141,12 +158,12 @@ static void sample_cpu(xd_sysinfo *si) {
     }
     for (int i = 0; i < n; i++) {
         struct stat_stack *c = r->cpus->stacks[i];
-        int id = STAT_VAL(S_ID, s_int, c);
+        int id = XD_STAT_VAL(S_ID, s_int, c);
         if (id < 0 || id >= n)
             continue;
-        long t = STAT_VAL(S_TOTAL, sl_int, c);
-        st->cpu_each[id] = ratio(STAT_VAL(S_BUSY, sl_int, c), t);
-        st->kernel_each[id] = ratio(STAT_VAL(S_SYSTEM, sl_int, c), t);
+        long t = XD_STAT_VAL(S_TOTAL, sl_int, c);
+        st->cpu_each[id] = ratio(XD_STAT_VAL(S_BUSY, sl_int, c), t);
+        st->kernel_each[id] = ratio(XD_STAT_VAL(S_SYSTEM, sl_int, c), t);
     }
 }
 
@@ -174,6 +191,23 @@ static void sample_memory(xd_sysinfo *si) {
     g_free(text);
 }
 
+#ifndef XD_PROC2_HAS_OPEN_FILES
+/* Older libproc2 (4.0.4) has no PIDS_OPEN_FILES: count /proc/PID/fd as it
+ * does. -1 when it can't be read (other users' processes). */
+static int open_files(int pid) {
+    char path[32];
+    snprintf(path, sizeof(path), "/proc/%d/fd", pid);
+    GDir *dir = g_dir_open(path, 0, nullptr);
+    if (dir == nullptr)
+        return -1;
+    int n = 0;
+    while (g_dir_read_name(dir) != nullptr)
+        n++;
+    g_dir_close(dir);
+    return n;
+}
+#endif
+
 gboolean xd_sysinfo_sample(xd_sysinfo *si) {
     sample_cpu(si);
     sample_memory(si);
@@ -187,24 +221,28 @@ gboolean xd_sysinfo_sample(xd_sysinfo *si) {
     for (int i = 0; i < n; i++) {
         struct pids_stack *s = f->stacks[i];
         xd_proc p = {
-            .pid = PIDS_VAL(P_PID, s_int, s),
-            .ppid = PIDS_VAL(P_PPID, s_int, s),
-            .name = PIDS_VAL(P_CMD, str, s),
-            .user = PIDS_VAL(P_USER, str, s),
-            .cpu_ticks = PIDS_VAL(P_TICS, ull_int, s),
-            .cpu_delta = PIDS_VAL(P_TICS_DELTA, u_int, s),
-            .mem_kb = PIDS_VAL(P_RES, ul_int, s),
-            .vm_kb = PIDS_VAL(P_VIRT, ul_int, s),
-            .faults = (guint64)PIDS_VAL(P_FLT_MAJ, ul_int, s) + PIDS_VAL(P_FLT_MIN, ul_int, s),
-            .threads = PIDS_VAL(P_NLWP, s_int, s),
-            .nice = PIDS_VAL(P_NICE, s_int, s),
-            .handles = si->i_handles >= 0 ? PIDS_VAL(si->i_handles, s_int, s) : -1,
-            .io_read = si->i_io_read >= 0 ? PIDS_VAL(si->i_io_read, ul_int, s) : 0,
-            .io_write = si->i_io_write >= 0 ? PIDS_VAL(si->i_io_write, ul_int, s) : 0,
+            .pid = XD_PIDS_VAL(P_PID, s_int, s),
+            .ppid = XD_PIDS_VAL(P_PPID, s_int, s),
+            .name = XD_PIDS_VAL(P_CMD, str, s),
+            .user = XD_PIDS_VAL(P_USER, str, s),
+            .cpu_ticks = XD_PIDS_VAL(P_TICS, ull_int, s),
+            .cpu_delta = XD_PIDS_VAL(P_TICS_DELTA, u_int, s),
+            .mem_kb = XD_PIDS_VAL(P_RES, ul_int, s),
+            .vm_kb = XD_PIDS_VAL(P_VIRT, ul_int, s),
+            .faults = (guint64)XD_PIDS_VAL(P_FLT_MAJ, ul_int, s) + XD_PIDS_VAL(P_FLT_MIN, ul_int, s),
+            .threads = XD_PIDS_VAL(P_NLWP, s_int, s),
+            .nice = XD_PIDS_VAL(P_NICE, s_int, s),
+            .handles = si->i_handles >= 0 ? XD_PIDS_VAL(si->i_handles, s_int, s) : -1,
+            .io_read = si->i_io_read >= 0 ? XD_PIDS_VAL(si->i_io_read, ul_int, s) : 0,
+            .io_write = si->i_io_write >= 0 ? XD_PIDS_VAL(si->i_io_write, ul_int, s) : 0,
         };
         /* libproc2 has no item for VmHWM; one more read per process. */
         if (si->peak)
             p.peak_kb = xd_proc_peak_kb(p.pid);
+#ifndef XD_PROC2_HAS_OPEN_FILES
+        if (si->count_files)
+            p.handles = open_files(p.pid);
+#endif
         threads += (guint)MAX(p.threads, 0);
         g_array_append_val(si->procs, p);
     }
