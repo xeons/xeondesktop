@@ -11,12 +11,16 @@
 #include <fcntl.h>
 #include <langinfo.h>
 #include <locale.h>
+#include <math.h>
 #include <monetary.h>
 #include <poll.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <fontconfig/fontconfig.h>
+#ifdef XD_HAVE_LCMS2
+#include <lcms2.h>
+#endif
 
 #include "../src/admin/admin.h"
 #include "../src/appwiz/programs.h"
@@ -43,9 +47,12 @@
 #include "../src/schedtasks/task.h"
 #include "../src/security/passwd.h"
 #include "../src/saver/savers.h"
+#include "../src/color/colorlib.h"
+#include "../src/compositor/vcgt.h"
 #include "../src/settings/gtktheme.h"
 #include "../src/settings/inputmethod.h"
 #include "../src/compositor/imeplace.h"
+#include "../src/settings/nightlight.h"
 #include "../src/settings/qtpalette.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
@@ -3226,6 +3233,320 @@ static void test_bluetooth_settings(void) {
     xd_strbuf_free(&out);
 }
 
+/* [NightLight] and [ColorProfiles]: parsing, bad values, round trip, and
+ * two programs' changes merging. */
+static void test_nightlight_settings(void) {
+    xd_settings s;
+    xd_settings_defaults(&s);
+    CHECK(!s.night_light.enabled);
+    CHECK(s.night_light.schedule == XD_NIGHTLIGHT_SUNSET);
+    CHECK(!s.night_light.has_location);
+    xd_settings_parse(XD_STR("[NightLight]\nEnabled=true\nSchedule=manual\nTemperature=2500\n"
+                             "TurnOn=20:30\nTurnOff=06:15\nLatitude=51.5074\nLongitude=-0.1278\n"
+                             "AutomaticLocation=false\n"
+                             "[ColorProfiles]\nDell Inc. U2415 7MT0=/home/u/.local/share/icc/d.icc\n"
+                             "HEADLESS-1=relative.icc\n"),
+                      &s);
+    const xd_nightlight_settings *n = &s.night_light;
+    CHECK(n->enabled && n->schedule == XD_NIGHTLIGHT_MANUAL && n->temperature == 2500);
+    CHECK(n->on_minute == 20 * 60 + 30 && n->off_minute == 6 * 60 + 15);
+    CHECK(n->has_location && fabs(n->latitude - 51.5074) < 1e-9 &&
+          fabs(n->longitude + 0.1278) < 1e-9);
+    CHECK(!n->auto_location);
+    CHECK(s.color_profile_count == 1);
+    CHECK(g_strcmp0(xd_settings_color_profile(&s, "Dell Inc. U2415 7MT0"),
+                    "/home/u/.local/share/icc/d.icc") == 0);
+    CHECK(xd_settings_color_profile(&s, "HEADLESS-1") == nullptr);
+
+    /* Round trip, and a locale with a decimal comma doesn't matter. */
+    xd_strbuf out = {0};
+    xd_settings_serialize(&s, &out);
+    CHECK(strstr(xd_strbuf_cstr(&out), "Latitude=51.5074") != nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&out), "TurnOff=06:15") != nullptr);
+    xd_settings t;
+    xd_settings_parse(xd_strbuf_view(&out), &t);
+    CHECK(xd_settings_equal(&s, &t));
+    xd_strbuf_free(&out);
+
+    /* Out of range or malformed: the value before stays. */
+    xd_settings_parse(XD_STR("[NightLight]\nTemperature=99999\nTurnOn=25:00\nTurnOff=7\n"
+                             "Latitude=91\nLongitude=abc\nSchedule=sometimes\n"),
+                      &t);
+    CHECK(t.night_light.temperature == 3400 && t.night_light.on_minute == 21 * 60 &&
+          t.night_light.off_minute == 7 * 60 && !t.night_light.has_location &&
+          t.night_light.schedule == XD_NIGHTLIGHT_SUNSET);
+
+    /* Keys GKeyFile can't hold, relative paths, and removal. */
+    CHECK(!xd_settings_set_color_profile(&t, "A=B", "/x.icc"));
+    CHECK(!xd_settings_set_color_profile(&t, "[A]", "/x.icc"));
+    CHECK(!xd_settings_set_color_profile(&t, "A", "x.icc"));
+    CHECK(xd_settings_set_color_profile(&t, "A", "/x.icc"));
+    CHECK(xd_settings_set_color_profile(&t, "A", "/y.icc"));
+    CHECK(t.color_profile_count == 1 && strcmp(t.color_profiles[0].path, "/y.icc") == 0);
+    CHECK(xd_settings_set_color_profile(&t, "A", nullptr) && t.color_profile_count == 0);
+
+    /* Color Management sets a profile while Display Properties turns night
+     * light on: both survive. */
+    xd_settings base, mine, now;
+    xd_settings_defaults(&base);
+    mine = base;
+    now = base;
+    CHECK(xd_settings_set_color_profile(&mine, "HEADLESS-1", "/p.icc"));
+    now.night_light.enabled = true;
+    xd_settings_merge(&base, &mine, &now);
+    CHECK(now.night_light.enabled);
+    CHECK(g_strcmp0(xd_settings_color_profile(&now, "HEADLESS-1"), "/p.icc") == 0);
+    /* ...and removing it again goes through a merge too. */
+    base = mine;
+    xd_settings_set_color_profile(&mine, "HEADLESS-1", "");
+    xd_settings_merge(&base, &mine, &now);
+    CHECK(xd_settings_color_profile(&now, "HEADLESS-1") == nullptr && now.night_light.enabled);
+}
+
+/* Night light's arithmetic: colour temperatures, the sun, the schedule's
+ * transitions, and the gamma ramps. */
+static void test_nightlight_math(void) {
+    double rgb[3];
+    xd_blackbody_rgb(XD_NIGHTLIGHT_DAY, rgb);
+    CHECK(rgb[0] == 1.0 && rgb[1] == 1.0 && rgb[2] == 1.0);
+    xd_blackbody_rgb(9000, rgb); /* never bluer than day */
+    CHECK(rgb[0] == 1.0 && rgb[1] == 1.0 && rgb[2] == 1.0);
+    xd_blackbody_rgb(3400, rgb);
+    CHECK(rgb[0] == 1.0 && fabs(rgb[1] - 0.746) < 0.005 && fabs(rgb[2] - 0.541) < 0.005);
+    xd_blackbody_rgb(1700, rgb);
+    CHECK(rgb[0] == 1.0 && fabs(rgb[1] - 0.475) < 0.005 && rgb[2] == 0.0);
+    /* Warmer is redder all the way down. */
+    double prev[3] = {1, 1, 1};
+    bool monotonic = true;
+    for (int k = XD_NIGHTLIGHT_K_DAY; k >= XD_NIGHTLIGHT_K_MIN; k -= 100) {
+        xd_blackbody_rgb(k, rgb);
+        monotonic = monotonic && rgb[0] == 1.0 && rgb[1] <= prev[1] && rgb[2] <= prev[2];
+        memcpy(prev, rgb, sizeof(prev));
+    }
+    CHECK(monotonic);
+
+    /* Sunrise and sunset in UTC minutes, against published tables (to the
+     * minute; NOAA's approximation is good to a couple). */
+    double rise, set;
+    CHECK(xd_sun_times(2026, 6, 21, 51.5074, -0.1278, &rise, &set) == XD_SUN_RISES_AND_SETS);
+    CHECK(fabs(rise - (3 * 60 + 43)) < 3 && fabs(set - (20 * 60 + 21)) < 3); /* London */
+    CHECK(xd_sun_times(2026, 12, 21, 40.7128, -74.0060, &rise, &set) == XD_SUN_RISES_AND_SETS);
+    CHECK(fabs(rise - (12 * 60 + 16)) < 3 && fabs(set - (21 * 60 + 32)) < 3); /* New York */
+    CHECK(xd_sun_times(2026, 3, 20, -33.8688, 151.2093, &rise, &set) == XD_SUN_RISES_AND_SETS);
+    /* Sydney: 6:59 AM and 7:08 PM AEDT (UTC+11) on the equinox. */
+    CHECK(fabs(rise - (-4 * 60 - 1)) < 3 && fabs(set - (8 * 60 + 8)) < 3);
+    CHECK(xd_sun_times(2026, 6, 21, 69.6492, 18.9553, &rise, &set) == XD_SUN_UP_ALL_DAY);
+    CHECK(xd_sun_times(2026, 12, 21, 69.6492, 18.9553, &rise, &set) == XD_SUN_DOWN_ALL_DAY);
+
+    /* 9 PM to 7 AM, half an hour's change centred on each. */
+    CHECK(xd_nightlight_fraction(12 * 60, 1260, 420, 30) == 0.0);
+    CHECK(xd_nightlight_fraction(1245, 1260, 420, 30) == 0.0);
+    CHECK(xd_nightlight_fraction(1260, 1260, 420, 30) == 0.5);
+    CHECK(fabs(xd_nightlight_fraction(1252.5, 1260, 420, 30) - 0.25) < 1e-9);
+    CHECK(xd_nightlight_fraction(1275, 1260, 420, 30) == 1.0);
+    CHECK(xd_nightlight_fraction(0, 1260, 420, 30) == 1.0);
+    CHECK(xd_nightlight_fraction(1439.9, 1260, 420, 30) == 1.0);
+    CHECK(xd_nightlight_fraction(420, 1260, 420, 30) == 0.5);
+    CHECK(fabs(xd_nightlight_fraction(427.5, 1260, 420, 30) - 0.25) < 1e-9);
+    CHECK(xd_nightlight_fraction(435, 1260, 420, 30) == 0.0);
+    /* A change at midnight spreads over both days. */
+    CHECK(fabs(xd_nightlight_fraction(1430, 0, 360, 30) - 1.0 / 6.0) < 1e-9);
+    CHECK(fabs(xd_nightlight_fraction(5, 0, 360, 30) - 2.0 / 3.0) < 1e-9);
+    /* Night in the day (a shift worker's hours), and none at all. */
+    CHECK(xd_nightlight_fraction(12 * 60, 9 * 60, 17 * 60, 30) == 1.0);
+    CHECK(xd_nightlight_fraction(12 * 60, 600, 600, 30) == 0.0);
+    /* A night shorter than its ramps peaks without jumping. */
+    CHECK(xd_nightlight_fraction(605, 600, 610, 30) == 1.0);
+    CHECK(xd_nightlight_fraction(600, 600, 610, 30) == 0.5);
+    /* Smooth: no step bigger than a ramp's slope allows over the day. */
+    double last = xd_nightlight_fraction(0, 1260, 420, 30);
+    bool smooth = true;
+    for (int i = 1; i <= 2880; i++) {
+        double f = xd_nightlight_fraction(i / 2.0, 1260, 420, 30);
+        smooth = smooth && fabs(f - last) <= 0.5 / 30 + 1e-9;
+        last = f;
+    }
+    CHECK(smooth);
+
+    /* The schedule, in UTC. */
+    const char *tz = getenv("TZ");
+    char *saved_tz = tz != nullptr ? g_strdup(tz) : nullptr;
+    setenv("TZ", "UTC", 1);
+    tzset();
+    struct tm noon = {.tm_year = 126, .tm_mon = 5, .tm_mday = 21, .tm_hour = 12};
+    time_t t_noon = timegm(&noon);
+    xd_nightlight_settings nl;
+    xd_settings def;
+    xd_settings_defaults(&def);
+    nl = def.night_light;
+    CHECK(xd_nightlight_kelvin(&nl, t_noon) == XD_NIGHTLIGHT_DAY); /* off */
+    nl.enabled = true;
+    nl.schedule = XD_NIGHTLIGHT_ALWAYS;
+    CHECK(xd_nightlight_kelvin(&nl, t_noon) == 3400);
+    nl.schedule = XD_NIGHTLIGHT_MANUAL;
+    CHECK(xd_nightlight_kelvin(&nl, t_noon) == XD_NIGHTLIGHT_DAY);
+    CHECK(xd_nightlight_kelvin(&nl, t_noon + 9 * 3600) == 4950); /* 9 PM: halfway */
+    CHECK(xd_nightlight_kelvin(&nl, t_noon + 12 * 3600) == 3400);
+    /* Sunset to sunrise without a location: the set hours. */
+    nl.schedule = XD_NIGHTLIGHT_SUNSET;
+    CHECK(xd_nightlight_kelvin(&nl, t_noon + 9 * 3600) == 4950);
+    /* In London: night by 22:00 UTC on midsummer, day at 21:00 BST
+     * (20:00 UTC), and changing at 20:21. */
+    nl.has_location = true;
+    nl.latitude = 51.5074;
+    nl.longitude = -0.1278;
+    CHECK(xd_nightlight_kelvin(&nl, t_noon + 10 * 3600) == 3400);
+    CHECK(xd_nightlight_kelvin(&nl, t_noon + 8 * 3600) == XD_NIGHTLIGHT_DAY);
+    double k = xd_nightlight_kelvin(&nl, t_noon + 8 * 3600 + 21 * 60);
+    CHECK(k > 4500 && k < 5500);
+    double on, off;
+    CHECK(xd_nightlight_times(&nl, t_noon, &on, &off) == XD_SUN_RISES_AND_SETS);
+    CHECK(fabs(on - (20 * 60 + 21)) < 3 && fabs(off - (3 * 60 + 43)) < 3);
+    /* Tromsø: all day either way. */
+    nl.latitude = 69.6492;
+    nl.longitude = 18.9553;
+    CHECK(xd_nightlight_kelvin(&nl, t_noon) == XD_NIGHTLIGHT_DAY);
+    struct tm midwinter = {.tm_year = 126, .tm_mon = 11, .tm_mday = 21, .tm_hour = 12};
+    CHECK(xd_nightlight_kelvin(&nl, timegm(&midwinter)) == 3400);
+    if (saved_tz != nullptr)
+        setenv("TZ", saved_tz, 1);
+    else
+        unsetenv("TZ");
+    tzset();
+    g_free(saved_tz);
+
+    /* Ramps: identity, scaled, and calibration first. */
+    uint16_t r[4], g[4], b[4];
+    xd_gamma_ramp_fill(r, g, b, 4, (double[3]){1, 1, 1}, nullptr);
+    CHECK(r[0] == 0 && r[1] == 21845 && r[2] == 43690 && r[3] == 65535 && g[3] == 65535);
+    xd_gamma_ramp_fill(r, g, b, 4, (double[3]){1, 0.5, 0}, nullptr);
+    CHECK(r[3] == 65535 && g[1] == 10923 && g[3] == 32768 && b[3] == 0);
+    const float calibration[12] = {0, 0.5f, 0.5f, 1, 0, 0, 0, 0.8f, 0, 0.25f, 0.5f, 2};
+    xd_gamma_ramp_fill(r, g, b, 4, (double[3]){1, 0.5, 1}, calibration);
+    CHECK(r[1] == 32768 && r[2] == 32768 && r[3] == 65535);
+    CHECK(g[2] == 0 && g[3] == 26214); /* 0.8 x 0.5 */
+    CHECK(b[3] == 65535);              /* clamped */
+}
+
+/* A monitor profile's calibration curves (vcgt), through Little CMS. */
+static void test_vcgt(void) {
+    float out[15];
+    CHECK(!xd_vcgt_load("/nonexistent/profile.icc", 5, out));
+#ifdef XD_HAVE_LCMS2
+    char *dir = g_dir_make_tmp("xd-vcgt-XXXXXX", nullptr);
+    char *with = g_build_filename(dir, "calibrated.icc", nullptr);
+    char *without = g_build_filename(dir, "plain.icc", nullptr);
+    cmsHPROFILE p = cmsCreate_sRGBProfile();
+    CHECK(cmsSaveProfileToFile(p, without));
+    cmsToneCurve *red = cmsBuildGamma(nullptr, 2.0);
+    cmsToneCurve *green = cmsBuildGamma(nullptr, 1.0);
+    cmsToneCurve *blue = cmsBuildGamma(nullptr, 0.5);
+    cmsToneCurve *curves[3] = {red, green, blue};
+    CHECK(cmsWriteTag(p, cmsSigVcgtTag, curves));
+    CHECK(cmsSaveProfileToFile(p, with));
+    cmsCloseProfile(p);
+    cmsFreeToneCurve(red);
+    cmsFreeToneCurve(green);
+    cmsFreeToneCurve(blue);
+    CHECK(!xd_vcgt_load(without, 5, out));
+    CHECK(xd_vcgt_load(with, 5, out));
+    CHECK(fabsf(out[0]) < 1e-3f && fabsf(out[1] - 0.0625f) < 1e-3f &&
+          fabsf(out[2] - 0.25f) < 1e-3f && fabsf(out[4] - 1.0f) < 1e-3f);
+    CHECK(fabsf(out[5 + 2] - 0.5f) < 1e-3f);
+    CHECK(fabsf(out[10 + 1] - 0.5f) < 1e-3f && fabsf(out[14] - 1.0f) < 1e-3f);
+    g_remove(with);
+    g_remove(without);
+    g_rmdir(dir);
+    g_free(with);
+    g_free(without);
+    g_free(dir);
+#endif
+}
+
+/* Color Management: colord ids and names, and installing ICC files into
+ * the user's store. */
+static void test_color_management(void) {
+    char *id = xd_color_display_id("Dell Inc.", "U2415", "7MT0", "DP-1");
+    CHECK(strcmp(id, "xrandr-Dell Inc.-U2415-7MT0") == 0);
+    g_free(id);
+    id = xd_color_display_id("BOE", "", nullptr, "eDP-1");
+    CHECK(strcmp(id, "xrandr-BOE") == 0);
+    g_free(id);
+    id = xd_color_display_id("", nullptr, "", "HEADLESS-1");
+    CHECK(strcmp(id, "xrandr-HEADLESS-1") == 0);
+    g_free(id);
+    CHECK(strcmp(xd_color_kind_label("printer"), "Printer") == 0);
+    CHECK(strcmp(xd_color_kind_label("plotter"), "Device") == 0);
+    char *label = xd_color_device_label("printer", "HP", "HP LaserJet 4", "cups-LJ");
+    CHECK(strcmp(label, "Printer: HP LaserJet 4") == 0);
+    g_free(label);
+    label = xd_color_device_label("display", "Dell Inc.", "U2415", "x");
+    CHECK(strcmp(label, "Display: Dell Inc. U2415") == 0);
+    g_free(label);
+    label = xd_color_device_label("scanner", "", "", "sane-test:0");
+    CHECK(strcmp(label, "Scanner: sane-test:0") == 0);
+    g_free(label);
+
+    /* A minimal profile: the header's size and signature. */
+    guint8 icc[132] = {0, 0, 0, 132};
+    memcpy(icc + 36, "acsp", 4);
+    CHECK(xd_color_looks_like_icc(icc, sizeof(icc)));
+    CHECK(!xd_color_looks_like_icc(icc, 100));
+    icc[3] = 200; /* claims more than there is */
+    CHECK(!xd_color_looks_like_icc(icc, sizeof(icc)));
+    icc[3] = 132;
+
+    char *dir = g_dir_make_tmp("xd-color-XXXXXX", nullptr);
+    char *store = g_build_filename(dir, "share", "icc", nullptr);
+    char *src = g_build_filename(dir, "Monitor.icm", nullptr);
+    char *junk = g_build_filename(dir, "notes.icc", nullptr);
+    CHECK(g_file_set_contents(src, (const char *)icc, sizeof(icc), nullptr));
+    CHECK(g_file_set_contents(junk, "not a profile", -1, nullptr));
+    char *pid = nullptr;
+    char *stored = xd_color_import(src, store, &pid, nullptr);
+    char *want = g_build_filename(store, "Monitor.icm", nullptr);
+    CHECK(g_strcmp0(stored, want) == 0 && g_file_test(want, G_FILE_TEST_EXISTS));
+    char *md5 = g_compute_checksum_for_data(G_CHECKSUM_MD5, icc, sizeof(icc));
+    char *want_id = g_strdup_printf("icc-%s", md5);
+    CHECK(g_strcmp0(pid, want_id) == 0);
+    /* The same file again: the copy already there. */
+    char *again = xd_color_import(src, store, nullptr, nullptr);
+    CHECK(g_strcmp0(again, want) == 0);
+    /* Another profile of that name: beside it. */
+    icc[100] = 1;
+    CHECK(g_file_set_contents(src, (const char *)icc, sizeof(icc), nullptr));
+    char *other = xd_color_import(src, store, nullptr, nullptr);
+    char *want2 = g_build_filename(store, "Monitor-2.icm", nullptr);
+    CHECK(g_strcmp0(other, want2) == 0);
+    GError *error = nullptr;
+    CHECK(xd_color_import(junk, store, nullptr, &error) == nullptr && error != nullptr);
+    g_clear_error(&error);
+    CHECK(xd_color_import("/nonexistent.icc", store, nullptr, &error) == nullptr &&
+          error != nullptr);
+    g_clear_error(&error);
+    g_remove(want);
+    g_remove(want2);
+    g_rmdir(store);
+    char *share = g_path_get_dirname(store);
+    g_rmdir(share);
+    g_remove(src);
+    g_remove(junk);
+    g_rmdir(dir);
+    g_free(share);
+    g_free(want2);
+    g_free(other);
+    g_free(again);
+    g_free(want_id);
+    g_free(md5);
+    g_free(want);
+    g_free(stored);
+    g_free(pid);
+    g_free(junk);
+    g_free(src);
+    g_free(store);
+    g_free(dir);
+}
+
 /* Network Connections: XP's groups and status texts for NetworkManager's
  * states, the Status dialog's numbers, the TCP/IP form. */
 static void test_netconn(void) {
@@ -5305,6 +5626,10 @@ int main(void) {
     test_bluetooth_info();
     test_joystick();
     test_bluetooth_settings();
+    test_nightlight_settings();
+    test_nightlight_math();
+    test_vcgt();
+    test_color_management();
     test_netconn();
     test_admin_services();
     test_admin_events();

@@ -76,6 +76,17 @@ or an installed framework's own program
 .BR ibus\-daemon ,
 .BR ibus\-wayland ).
 While the screen is locked, keys never go to the input method.
+.PP
+Each monitor's gamma ramp carries its calibration (the vcgt curves of the
+ICC profile Color Management,
+.BR xd\-color (1),
+made its default; read with Little CMS) and the night light
+.RB ( [NightLight] ),
+changing over half an hour around sunset and sunrise or the set hours.
+A program that sets the gamma itself through wlr-gamma-control
+(gammastep, wlsunset) takes over while it runs.
+The ramp is loaded by the display hardware, so it costs no drawing, but
+nested and headless outputs have none.
 .SH OPTIONS
 .TP
 .BI \-\-style " style"
@@ -218,6 +229,10 @@ An absolute path to use instead of the installed data directory
 A file to write the sounds that would play to, one per line, instead of
 playing them (for tests).
 .TP
+.B XD_GAMMA_TRACE
+A file to log every gamma ramp decided to, one per line, with what white
+becomes, whether or not the output can show it (for tests).
+.TP
 .B XD_ACCESS_RESET_SECONDS
 Accessibility Options' automatic reset after this many seconds instead of
 the configured minutes (for tests).
@@ -270,4 +285,5 @@ The PAM service Lock Computer checks passwords with.
 .BR xd\-compositor\-fx (1),
 .BR xd\-shell (1),
 .BR xd\-desk (1),
+.BR xd\-color (1),
 .BR xd\-lock (1)

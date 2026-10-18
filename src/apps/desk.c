@@ -28,6 +28,7 @@
 #include "../ui/ui.h"
 #include "common.h"
 #include "desk_advanced.h"
+#include "desk_nightlight.h"
 #include "desk_saver.h"
 
 enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS, PAGE_LINUX };
@@ -98,6 +99,7 @@ typedef struct desk {
     xd_widget *appearance_preview;
     xd_widget *advanced;
     advanced *adv; /* Advanced Appearance, while open */
+    nightlight_dialog *night; /* Night Light (Linux tab), while open */
 
     /* Window Color and Appearance (Aero), editing `pending` as it goes so
      * the preview follows; Cancel puts these back. */
@@ -1533,6 +1535,25 @@ static void fill_themes(xd_widget *combo, GPtrArray *list, const char *dir) {
     xd_widget_select(combo, sel);
 }
 
+static void on_night_light_done(const xd_nightlight_settings *s, void *user) {
+    desk *d = user;
+    d->night = nullptr;
+    if (s != nullptr)
+        d->pending.night_light = *s;
+    changed(d);
+}
+
+static void on_night_light([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    if (d->night == nullptr)
+        d->night =
+            nightlight_dialog_open(d->ui, &d->pending.night_light, on_night_light_done, d);
+}
+
+static void on_color_management([[maybe_unused]] xd_widget *w, [[maybe_unused]] void *user) {
+    xd_spawn_own("xd-color", (const char *const[]){nullptr}, nullptr);
+}
+
 static void build_themes(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_LINUX;
@@ -1581,6 +1602,21 @@ static void build_themes(desk *d) {
                                 "Qt programs that are already running keep their style until "
                                 "they are started again.",
                                 XD_LABEL_WRAP),
+                       P);
+
+    /* Colour: the night light (desk_nightlight.c) and colord's profiles
+     * (xd-color), which XP kept in Settings > Advanced > Color Management. */
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 204, 364, 92}, "Color"), P);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 224, 340, 28},
+                                "Warmer colors at night, and the color profiles of monitors, "
+                                "printers and scanners.",
+                                XD_LABEL_WRAP),
+                       P);
+    xd_widget_set_page(xd_button(win, (xd_rect){32, 260, 110, 23}, "Night Light...",
+                                 on_night_light, d),
+                       P);
+    xd_widget_set_page(xd_button(win, (xd_rect){150, 260, 130, 23}, "Color Management...",
+                                 on_color_management, d),
                        P);
 }
 
@@ -2471,9 +2507,9 @@ static bool apply(desk *d) {
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
     if (d->confirm != nullptr || d->items != nullptr || d->color != nullptr ||
-        d->saver_setup != nullptr || d->adv != nullptr)
+        d->saver_setup != nullptr || d->adv != nullptr || d->night != nullptr)
         return; /* answer Monitor Settings, Desktop Items, Window Color, a saver's
-                 * Settings or Advanced Appearance first */
+                 * Settings, Advanced Appearance or Night Light first */
     if (d->display_dirty) {
         /* Closes once the new display settings are kept. */
         d->close_after_apply = true;
@@ -2492,6 +2528,8 @@ static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
     color_close(d);
     if (d->saver_setup != nullptr)
         saver_setup_cancel(d->saver_setup);
+    if (d->night != nullptr)
+        nightlight_dialog_cancel(d->night);
     xd_window_close(d->win);
 }
 

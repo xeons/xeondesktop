@@ -108,6 +108,75 @@ void xd_settings_set_tray_rule(xd_settings *s, const char *id, xd_tray_rule rule
     memcpy(b->id, id, strlen(id) + 1);
 }
 
+static const char *const nightlight_schedule_names[XD_NIGHTLIGHT_SCHEDULE_COUNT] = {
+    [XD_NIGHTLIGHT_ALWAYS] = "always",
+    [XD_NIGHTLIGHT_SUNSET] = "sunset",
+    [XD_NIGHTLIGHT_MANUAL] = "manual",
+};
+
+const char *xd_nightlight_schedule_name(xd_nightlight_schedule schedule) {
+    XD_ASSERT((unsigned)schedule < XD_NIGHTLIGHT_SCHEDULE_COUNT);
+    return nightlight_schedule_names[schedule];
+}
+
+const char *xd_settings_color_profile(const xd_settings *s, const char *monitor) {
+    for (size_t i = 0; monitor != nullptr && i < s->color_profile_count; i++) {
+        if (strcmp(s->color_profiles[i].monitor, monitor) == 0)
+            return s->color_profiles[i].path;
+    }
+    return nullptr;
+}
+
+/* A monitor key as a GKeyFile key: no brackets, '=' or control characters,
+ * and no space at either end (GKeyFile trims them). */
+static bool profile_key_ok(const char *key) {
+    size_t n = strlen(key);
+    if (n == 0 || n >= sizeof(((xd_color_profile_rule *)nullptr)->monitor) || key[0] == ' ' ||
+        key[n - 1] == ' ')
+        return false;
+    for (size_t i = 0; i < n; i++) {
+        if ((unsigned char)key[i] < ' ' || strchr("[]=", key[i]) != nullptr)
+            return false;
+    }
+    return true;
+}
+
+static bool profile_path_ok(const char *path) {
+    size_t n = strlen(path);
+    if (path[0] != '/' || n >= sizeof(((xd_color_profile_rule *)nullptr)->path))
+        return false;
+    for (size_t i = 0; i < n; i++) {
+        if ((unsigned char)path[i] < ' ')
+            return false;
+    }
+    return true;
+}
+
+bool xd_settings_set_color_profile(xd_settings *s, const char *monitor, const char *path) {
+    bool remove = path == nullptr || path[0] == '\0';
+    for (size_t i = 0; i < s->color_profile_count; i++) {
+        if (strcmp(s->color_profiles[i].monitor, monitor) != 0)
+            continue;
+        if (remove) {
+            s->color_profiles[i] = s->color_profiles[--s->color_profile_count];
+            return true;
+        }
+        if (!profile_path_ok(path))
+            return false;
+        snprintf(s->color_profiles[i].path, sizeof(s->color_profiles[i].path), "%s", path);
+        return true;
+    }
+    if (remove)
+        return true;
+    if (s->color_profile_count == XD_COLOR_PROFILES_MAX || !profile_key_ok(monitor) ||
+        !profile_path_ok(path))
+        return false;
+    xd_color_profile_rule *r = &s->color_profiles[s->color_profile_count++];
+    snprintf(r->monitor, sizeof(r->monitor), "%s", monitor);
+    snprintf(r->path, sizeof(r->path), "%s", path);
+    return true;
+}
+
 const char *xd_wallpaper_mode_name(xd_wallpaper_mode m) {
     XD_ASSERT((unsigned)m < XD_WALLPAPER_MODE_COUNT);
     return mode_names[m];
@@ -327,6 +396,11 @@ void xd_settings_defaults(xd_settings *s) {
         .low_alarm = {.on = true, .percent = 10, .sound = true, .message = true},
         .critical_alarm = {.on = true, .percent = 3, .sound = true, .message = true},
         .bluetooth_icon = true,
+        /* Off, as in Windows 10; turned on, from sunset to sunrise (the
+         * set hours until there is a location) at about Windows 10's
+         * middle strength. */
+        .night_light = {.schedule = XD_NIGHTLIGHT_SUNSET, .temperature = 3400,
+                        .on_minute = 21 * 60, .off_minute = 7 * 60, .auto_location = true},
         /* XP's, except extensions, which stay visible: renaming edits the
          * whole name. */
         .folders = {.full_path_address = true, .remember_views = true},
@@ -782,6 +856,61 @@ static void saver_settings_to_keyfile(GKeyFile *kf, const xd_saver_settings *sv)
     set_rgb(kf, g, "Color", sv->text3d.color);
 }
 
+/* "21:30": minutes after midnight. */
+static void parse_clock(xd_str v, int *out) {
+    size_t colon;
+    int64_t h, m;
+    if (xd_str_find_char(v, ':', &colon) &&
+        xd_str_parse_i64(xd_str_sub(v, 0, colon), 0, 23, &h) &&
+        xd_str_parse_i64(xd_str_sub(v, colon + 1, v.len), 0, 59, &m))
+        *out = (int)(h * 60 + m);
+}
+
+/* Degrees in C notation whatever the locale; false if not one, or not
+ * within ±limit. */
+static bool parse_degrees(xd_str v, double limit, double *out) {
+    char buf[32];
+    if (v.len == 0 || v.len >= sizeof(buf))
+        return false;
+    copy_into(buf, sizeof(buf), v);
+    char *end = nullptr;
+    double d = g_ascii_strtod(buf, &end);
+    if (end == buf || *end != '\0' || !(fabs(d) <= limit))
+        return false;
+    *out = d;
+    return true;
+}
+
+static void parse_nightlight(xd_nightlight_settings *n, xd_str key, xd_str v) {
+#define KEY(k) xd_str_eq_nocase(key, XD_STR(k))
+    if (KEY("Enabled")) {
+        parse_bool(v, &n->enabled);
+    } else if (KEY("Schedule")) {
+        int i = index_of(nightlight_schedule_names, XD_ARRAY_LEN(nightlight_schedule_names), v);
+        if (i >= 0)
+            n->schedule = (xd_nightlight_schedule)i;
+    } else if (KEY("Temperature")) {
+        parse_int(v, XD_NIGHTLIGHT_K_MIN, XD_NIGHTLIGHT_K_MAX, &n->temperature);
+    } else if (KEY("TurnOn")) {
+        parse_clock(v, &n->on_minute);
+    } else if (KEY("TurnOff")) {
+        parse_clock(v, &n->off_minute);
+    } else if (KEY("AutomaticLocation")) {
+        parse_bool(v, &n->auto_location);
+    } else if (KEY("Latitude") || KEY("Longitude")) {
+        /* Both or neither; an empty value clears them. */
+        bool lat = KEY("Latitude");
+        double d;
+        if (parse_degrees(v, lat ? 90.0 : 180.0, &d)) {
+            *(lat ? &n->latitude : &n->longitude) = d;
+            n->has_location = true;
+        } else if (v.len == 0) {
+            n->has_location = false;
+        }
+    }
+#undef KEY
+}
+
 static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
     xd_settings *s = user;
 #define SEC(n) xd_str_eq_nocase(section, XD_STR(n))
@@ -925,6 +1054,16 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
         }
     } else if (xd_str_eq_nocase(xd_str_sub(section, 0, 12), XD_STR("ScreenSaver."))) {
         parse_saver_entry(&s->savers, section, key, v);
+    } else if (SEC("NightLight")) {
+        parse_nightlight(&s->night_light, key, v);
+    } else if (SEC("ColorProfiles")) {
+        char monitor[sizeof(s->color_profiles[0].monitor)];
+        char path[sizeof(s->color_profiles[0].path)];
+        if (key.len < sizeof(monitor) && v.len < sizeof(path)) {
+            copy_into(monitor, sizeof(monitor), key);
+            copy_into(path, sizeof(path), v);
+            (void)xd_settings_set_color_profile(s, monitor, path);
+        }
     } else if (SEC("Notifications")) {
         int i = index_of(tray_rule_names, XD_ARRAY_LEN(tray_rule_names), v);
         if (i > 0 && key.len > 0 && key.len < sizeof(s->tray_rules[0].id)) {
@@ -1193,6 +1332,27 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
                                   button_action_names[s->power_buttons[b]]);
     }
     g_key_file_set_boolean(kf, "Bluetooth", "ShowIcon", s->bluetooth_icon);
+    const xd_nightlight_settings *nl = &s->night_light;
+    g_key_file_set_boolean(kf, "NightLight", "Enabled", nl->enabled);
+    g_key_file_set_string(kf, "NightLight", "Schedule", nightlight_schedule_names[nl->schedule]);
+    g_key_file_set_integer(kf, "NightLight", "Temperature", nl->temperature);
+    char clock[8];
+    g_snprintf(clock, sizeof(clock), "%02d:%02d", nl->on_minute / 60, nl->on_minute % 60);
+    g_key_file_set_string(kf, "NightLight", "TurnOn", clock);
+    g_snprintf(clock, sizeof(clock), "%02d:%02d", nl->off_minute / 60, nl->off_minute % 60);
+    g_key_file_set_string(kf, "NightLight", "TurnOff", clock);
+    g_key_file_set_boolean(kf, "NightLight", "AutomaticLocation", nl->auto_location);
+    char deg[G_ASCII_DTOSTR_BUF_SIZE];
+    g_key_file_set_string(kf, "NightLight", "Latitude",
+                          nl->has_location ? g_ascii_formatd(deg, sizeof(deg), "%.4f", nl->latitude)
+                                           : "");
+    g_key_file_set_string(kf, "NightLight", "Longitude",
+                          nl->has_location
+                              ? g_ascii_formatd(deg, sizeof(deg), "%.4f", nl->longitude)
+                              : "");
+    for (size_t i = 0; i < s->color_profile_count; i++)
+        g_key_file_set_string(kf, "ColorProfiles", s->color_profiles[i].monitor,
+                              s->color_profiles[i].path);
     const xd_folder_settings *f = &s->folders;
     g_key_file_set_boolean(kf, "Folders", "NewWindow", f->new_window);
     g_key_file_set_boolean(kf, "Folders", "SingleClick", f->single_click);

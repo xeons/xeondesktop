@@ -4045,6 +4045,231 @@ def keyboard_text_services(s):
             "its autostart entry is kept for other desktops, not XeonDesktop")  # fmt: skip
 
 
+def mock_geoclue(s):
+    """Before the compositor starts: a private system bus with GeoClue
+    (tests/dbusmock/geoclue.py, finding London), and the compositor's gamma
+    trace, since headless outputs have no gamma to see."""
+    from dbusmock import DBusTestCase
+
+    os.environ["XD_GAMMA_TRACE"] = os.path.join(s.base, "shots", "gamma.log")
+    DBusTestCase.start_system_bus()
+    template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "geoclue.py")
+    proc, _ = DBusTestCase.spawn_server_template(
+        template, {"latitude": 51.5074, "longitude": -0.1278}, stdout=subprocess.DEVNULL,
+        system_bus=True,
+    )
+    s.children.append(proc)
+
+
+def gamma_trace(s):
+    try:
+        with open(os.environ["XD_GAMMA_TRACE"]) as f:
+            return f.read().splitlines()
+    except FileNotFoundError:
+        return []
+
+
+def client_origin(s, before, title, width, height, top=0):
+    """The top left of a new window's client area (width x height), from
+    the bottom right of what changed since `before` below `top` (the
+    window it came from changes too: its caption goes inactive)."""
+    shot = s.settle(title.lower().replace(" ", "-"))
+    box = shot.changed_box(before, (0, top, WIDTH, HEIGHT - 40 - top))
+    s.check(box is not None, f"{title} is up at {box}")
+    return shot, box[0] + box[2] - 3 - width, box[1] + box[3] - 2 - height
+
+
+@scenario(requires=("dbusmock",), setup=mock_geoclue)
+def night_light(s):
+    """Display Properties' Linux tab: Night Light... turns it on from
+    sunset to sunrise, with GeoClue (dbusmock) finding the place; Apply
+    writes [NightLight]; then All the time, and the compositor's gamma ramp
+    (seen through XD_GAMMA_TRACE) fades to 3400 K's colours."""
+    s.check(not gamma_trace(s) or "night-light" not in "".join(gamma_trace(s)),
+            "night light starts off")  # fmt: skip
+    empty = s.settle("desktop")
+    s.launch("xd-desk", "--page", "5")
+    s.wait_window(title="Display Properties", state="activated")
+    props, x, y = client_origin(s, empty, "Display Properties", 404, 448)
+
+    def open_dialog(label):
+        s.inject("move", x + 32 + 55, y + 260 + 11, "click")
+        s.wait_window(title="Night Light", state="activated")
+        return client_origin(s, props, "Night Light", 320, 424, top=y + 10)
+
+    _, nx, ny = open_dialog("night-light")
+    # Turn on night light, then Sunset to sunrise: GeoClue is asked.
+    s.inject("move", nx + 20, ny + 20, "click", "sleep", 200,
+             "move", nx + 32, ny + 202, "click")  # fmt: skip
+    s.wait(lambda: s.window(title="Night Light") is not None, "the dialog")
+    time.sleep(1.5)  # the mock's fix takes 300 ms
+    found = s.settle("location-found")
+    # The latitude box shows the place GeoClue gave (greyed: GeoClue's).
+    lat_box = (nx + 82, ny + 318, 66, 17)
+    dark = sum(1 for yy in range(lat_box[1], lat_box[1] + lat_box[3], 2)
+               for xx in range(lat_box[0], lat_box[0] + lat_box[2], 2)
+               if max(found.pixel(xx, yy)) < 170)  # fmt: skip
+    s.check(dark > 5, f"the latitude was filled in ({dark} dark pixels)")
+    s.inject("key", "Return")  # OK
+    s.wait_window(title="Night Light", gone=True)
+    s.inject("move", x + 322 + 37, y + 416 + 11, "click")  # Apply
+
+    def saved():
+        c = s.ini()
+        return c.has_section("NightLight") and c["NightLight"].get("Enabled") == "true" and c[
+            "NightLight"].get("Schedule") == "sunset" and c["NightLight"]
+
+    nl = s.wait(saved, "[NightLight] to be saved")
+    s.check(nl.get("Latitude") == "51.5074" and nl.get("Longitude") == "-0.1278",
+            f"GeoClue's place was saved ({nl.get('Latitude')}, {nl.get('Longitude')})")
+
+    # All the time: the ramp fades to 3400 K.
+    open_dialog("night-light-again")
+    s.inject("move", nx + 32, ny + 180, "click", "sleep", 200, "key", "Return")
+    s.wait_window(title="Night Light", gone=True)
+    s.inject("move", x + 322 + 37, y + 416 + 11, "click")
+    s.wait(lambda: s.ini()["NightLight"].get("Schedule") == "always", "Schedule=always")
+
+    def warm():
+        lines = gamma_trace(s)
+        return lines and lines[-1].startswith("HEADLESS-1 night-light 3400 ") and lines[-1]
+
+    last = s.wait(warm, "the ramp to reach 3400 K")
+    s.check("r=1.000 g=0.746 b=0.541" in last, f"3400 K's ramp: {last}")
+    steps = [l for l in gamma_trace(s) if " night-light " in l]
+    s.check(len(steps) > 5, f"it faded in over {len(steps)} steps")
+    s.inject("key", "Escape")
+    s.wait_window(title="Display Properties", gone=True)
+
+
+def write_calibration_profile(path, red=0.5):
+    """A minimal ICC v2 monitor profile with only a vcgt tag: a 256-entry
+    table, red scaled by `red`, green and blue straight. (Written byte by
+    byte: there's no ICC writer for Python here.)"""
+    import struct
+
+    n = 256
+    table = b"".join(
+        struct.pack(">H", round(i / (n - 1) * scale * 65535))
+        for scale in (red, 1.0, 1.0)
+        for i in range(n)
+    )
+    vcgt = b"vcgt" + b"\0" * 4 + struct.pack(">IHHH", 0, 3, n, 2) + table
+    offset = 128 + 4 + 12
+    size = offset + len(vcgt)
+    header = struct.pack(
+        ">I4sI4s4s4s12s4s4sIII8sI12s4s16s28s",
+        size, b"lcms", 0x02100000, b"mntr", b"RGB ", b"XYZ ", b"\0" * 12, b"acsp", b"\0" * 4,
+        0, 0, 0, b"\0" * 8, 0,
+        struct.pack(">iii", 0xF6D6, 0x10000, 0xD32D),  # D50
+        b"\0" * 4, b"\0" * 16, b"\0" * 28,
+    )  # fmt: skip
+    assert len(header) == 128
+    tags = struct.pack(">I4sII", 1, b"vcgt", offset, len(vcgt))
+    with open(path, "wb") as f:
+        f.write(header + tags + vcgt)
+
+
+def mock_colord(s):
+    """Before the compositor starts: a private system bus with colord
+    (tests/dbusmock/colord.py: a printer, a scanner, colord's profiles), a
+    calibrated profile in the user's store, and the gamma trace."""
+    from dbusmock import DBusTestCase
+
+    os.environ["XD_GAMMA_TRACE"] = os.path.join(s.base, "shots", "gamma.log")
+    store = os.path.join(s.data, "icc")
+    os.makedirs(store, exist_ok=True)
+    write_calibration_profile(os.path.join(store, "Calibrated.icc"))
+    DBusTestCase.start_system_bus()
+    log = open(os.path.join(s.base, "shots", "colord.log"), "w")
+    template = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "colord.py")
+    proc, _ = DBusTestCase.spawn_server_template(template, {}, stdout=log, system_bus=True)
+    s.children.append(proc)
+
+
+@scenario(requires=("dbusmock",), setup=mock_colord)
+def color_management(s):
+    """Color Management (on a dbusmock colord): the monitor is registered
+    and shown first, the store's profile is installed; Add... associates
+    it, which makes it the default, so [ColorProfiles] names it and the
+    compositor loads its calibration (vcgt) into the gamma ramp; Set as
+    Default Profile on sRGB moves both on."""
+    import dbus
+
+    bus = dbus.SystemBus()
+    colord = dbus.Interface(bus.get_object("org.freedesktop.ColorManager",
+                                           "/org/freedesktop/ColorManager"),
+                            "org.freedesktop.ColorManager")  # fmt: skip
+    empty = s.settle("desktop")
+    s.launch("xd-color")
+    s.wait_window(title="Color Management", state="activated")
+    shot = s.settle("color-management")
+    box = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, f"Color Management is up at {box}")
+    device = s.wait(lambda: _find(colord.FindDeviceById, "xrandr-HEADLESS-1"),
+                    "the monitor to be registered")  # fmt: skip
+    stored = os.path.join(s.data, "icc", "Calibrated.icc")
+    mine = str(s.wait(lambda: _find(colord.FindProfileByFilename, stored), "the store's profile"))
+    s.log(f"ok: monitor {device} registered, {mine} installed")
+
+    def device_profiles():
+        obj = bus.get_object("org.freedesktop.ColorManager", device)
+        return [str(p) for p in obj.Get("org.freedesktop.ColorManager.Device", "Profiles",
+                                        dbus_interface=dbus.PROPERTIES_IFACE)]  # fmt: skip
+
+    def associate(name):
+        # Add... (the monitor is the device shown); the profile list has
+        # the keyboard: typing finds a profile, Enter picks it.
+        before = s.settle("before-add")
+        s.inject("key", "alt+a")
+        s.wait(lambda: s.shot("associate").differs(before, box) > 0.1,
+               "Associate Color Profile")  # fmt: skip
+        s.settle("associate")
+        s.inject("type", name, "sleep", 300, "key", "Return")
+
+    associate("Calibrated")
+    s.wait(lambda: device_profiles() == [mine], "the profile to be associated")
+    s.log("ok: Add... associated the store's profile with the monitor")
+
+    def profile_setting():
+        c = s.ini()
+        return c.has_section("ColorProfiles") and c["ColorProfiles"].get("HEADLESS-1")
+
+    s.check(s.wait(profile_setting, "[ColorProfiles]") == stored,
+            "desktop.ini names it for HEADLESS-1")  # fmt: skip
+
+    def trace_ends(prefix):
+        lines = gamma_trace(s)
+        return lines and lines[-1].startswith(prefix) and lines[-1]
+
+    last = s.wait(lambda: trace_ends("HEADLESS-1 calibration 6500 "),
+                  "the compositor to load the calibration")  # fmt: skip
+    s.check("r=0.500 g=1.000 b=1.000" in last, f"the ramp is the profile's vcgt: {last}")
+
+    # sRGB too, then made the default: colord's sRGB has no curves, so
+    # the compositor drops them.
+    associate("sRGB")
+    srgb = str(colord.FindProfileById("icc-srgb"))
+    s.wait(lambda: device_profiles() == [mine, srgb], "sRGB to be associated")
+    s.settle("two-profiles")
+    # Its row, the second in the list, then Set as Default Profile.
+    s.inject("move", box[0] + 90, box[1] + 162, "click", "sleep", 300, "key", "alt+s")
+    s.wait(lambda: device_profiles()[0] == srgb, "sRGB to be the default")
+    s.wait(lambda: profile_setting() == "/usr/share/color/icc/colord/sRGB.icc",
+           "[ColorProfiles] to follow")  # fmt: skip
+    s.wait(lambda: trace_ends("HEADLESS-1 none 6500 "), "the calibration to go")
+    s.log("ok: Set as Default Profile moved the monitor to sRGB, without curves")
+    s.inject("key", "Escape")
+    s.wait_window(title="Color Management", gone=True)
+
+
+def _find(method, arg):
+    try:
+        return method(arg)
+    except Exception:
+        return None
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

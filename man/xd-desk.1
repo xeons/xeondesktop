@@ -35,6 +35,11 @@ New display settings revert after 15 seconds unless kept.
 .TP
 .B Linux
 The icon theme, and the GTK and Qt styles of other programs.
+Night Light... makes the screen warmer at night: its strength (1700 to
+4700 K), and all the time, from sunset to sunrise (at a place GeoClue
+finds, or typed in as latitude and longitude) or between set hours.
+Color Management... opens
+.BR xd\-color (1).
 .PP
 Apply and OK write
 .IR desktop.ini ,
@@ -60,9 +65,10 @@ The visual style and colour scheme of the dialog instead of those in
 .BR [Wallpaper] ,
 .BR [Effects] ,
 .BR [CustomScheme] ,
-.B [ScreenSaver]
+.BR [ScreenSaver] ,
+.B [ScreenSaver.*]
 and
-.BR [ScreenSaver.*] .
+.BR [NightLight] .
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/monitors.ini
 The monitors' settings.
@@ -71,5 +77,6 @@ The monitors' settings.
 The colour schemes.
 .SH SEE ALSO
 .BR xd\-compositor (1),
+.BR xd\-color (1),
 .BR xd\-lock (1),
 .BR xd\-control (1)

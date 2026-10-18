@@ -59,6 +59,7 @@ typedef enum xd_cursor_mode : uint8_t {
 typedef struct xd_server xd_server;
 typedef struct xd_access xd_access;
 typedef struct xd_ime xd_ime;
+typedef struct xd_gamma xd_gamma;
 
 typedef struct xd_output {
     struct wl_list link; /* xd_server.outputs */
@@ -71,6 +72,7 @@ typedef struct xd_output {
      * other monitors (the layout is shifted to start at 0,0). */
     bool has_position;
     int want_x, want_y;
+    struct xd_gamma_output *gamma; /* gamma.c's: its calibration and night light */
     struct wl_listener frame;
     struct wl_listener request_state;
     struct wl_listener destroy;
@@ -444,6 +446,7 @@ struct xd_server {
     bool terminating;
     xd_access *access; /* access.c's state */
     xd_ime *ime;       /* ime.c's */
+    xd_gamma *gamma;   /* gamma.c's: night light and calibration */
     struct xd_outline *outline; /* outline.c's, while one shows */
 };
 
@@ -694,6 +697,18 @@ void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_
                      xd_server *glass_server);
 /* Forget an output that is going away. */
 void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output);
+
+/* gamma.c: monitors' gamma ramps (calibration and night light). */
+void xd_gamma_init(xd_server *server);
+void xd_gamma_finish(xd_server *server);
+/* [NightLight] and [ColorProfiles] from the settings (at startup too). */
+void xd_gamma_apply_settings(xd_server *server, const xd_settings *s);
+void xd_gamma_output_added(xd_output *out);
+void xd_gamma_output_removed(xd_output *out);
+/* Whether the output's ramp must go into its next frame... */
+bool xd_gamma_pending(const xd_output *out);
+/* ...which this does, given the frame's state. */
+void xd_gamma_frame(xd_output *out, struct wlr_output_state *state);
 
 /* capture.c: window pictures for the shell's taskbar thumbnails. */
 void xd_capture_init(xd_server *server);

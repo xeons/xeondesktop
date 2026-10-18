@@ -317,6 +317,39 @@ enum {
     XD_FLYING_DENSITY_MAX = 200,
 };
 
+/* [NightLight]: warmer colours in the evening, done by the compositor
+ * through each monitor's gamma ramp (nightlight.h has the arithmetic). */
+typedef enum xd_nightlight_schedule : uint8_t {
+    XD_NIGHTLIGHT_ALWAYS, /* on all the time while turned on */
+    XD_NIGHTLIGHT_SUNSET, /* Sunset to sunrise, at Latitude/Longitude */
+    XD_NIGHTLIGHT_MANUAL, /* Set hours: TurnOn to TurnOff */
+    XD_NIGHTLIGHT_SCHEDULE_COUNT,
+} xd_nightlight_schedule;
+typedef struct xd_nightlight_settings {
+    bool enabled;
+    xd_nightlight_schedule schedule;
+    int temperature;            /* K at night: XD_NIGHTLIGHT_K_MIN..XD_NIGHTLIGHT_K_MAX */
+    int on_minute, off_minute;  /* Set hours, minutes after local midnight */
+    bool auto_location;         /* find Latitude/Longitude with GeoClue */
+    bool has_location;          /* Latitude/Longitude are set */
+    double latitude, longitude; /* degrees, north and east positive */
+} xd_nightlight_settings;
+enum {
+    XD_NIGHTLIGHT_K_MIN = 1700,
+    XD_NIGHTLIGHT_K_MAX = 4700,
+    XD_NIGHTLIGHT_K_DAY = 6500, /* no change: sRGB's white point */
+};
+
+/* [ColorProfiles]: the ICC profile whose calibration curves (vcgt) the
+ * compositor loads into a monitor's gamma ramp, by the monitor's
+ * monitors.ini key. Color Management (xd-color) writes it as a display's
+ * default profile changes in colord. */
+typedef struct xd_color_profile_rule {
+    char monitor[192];
+    char path[1024];
+} xd_color_profile_rule;
+enum { XD_COLOR_PROFILES_MAX = 8 };
+
 /* XP's "Use the following transition effect for menus and tooltips". */
 typedef enum xd_menu_transition : uint8_t {
     XD_TRANSITION_FADE = 0,
@@ -419,7 +452,20 @@ typedef struct xd_settings {
 
     /* [Bluetooth] */
     bool bluetooth_icon; /* "Show the Bluetooth icon in the notification area" */
+
+    xd_nightlight_settings night_light; /* [NightLight] */
+    xd_color_profile_rule color_profiles[XD_COLOR_PROFILES_MAX]; /* [ColorProfiles] */
+    size_t color_profile_count;
 } xd_settings;
+
+/* The ICC profile of a monitor (its monitors.ini key), or nullptr. */
+const char *xd_settings_color_profile(const xd_settings *s, const char *monitor);
+/* Sets it; nullptr or "" removes it. False if the key or path can't be
+ * stored (too long, a key GKeyFile can't hold, a relative path) or the
+ * list is full. */
+bool xd_settings_set_color_profile(xd_settings *s, const char *monitor, const char *path);
+/* "always", "sunset", "manual": [NightLight] Schedule's values. */
+const char *xd_nightlight_schedule_name(xd_nightlight_schedule schedule);
 
 /* An icon's rule ([Notifications]), XD_TRAY_AUTO if it has none. */
 xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id);

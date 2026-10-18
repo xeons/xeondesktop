@@ -100,6 +100,8 @@ and xdg-shell, they use:
   monitor power-off), `wlr-output-power-management`;
 - `wlr-output-management` (Display Properties' Settings tab, with Windows'
   15-second revert);
+- `wlr-gamma-control` (gammastep, wlsunset: their ramp replaces the
+  compositor's own while they hold it);
 - `wp_fractional_scale_v1` and `wp_viewporter`, `wp_cursor_shape_v1`,
   `xdg-activation-v1`;
 - `xdg-decoration` and KDE's server decoration (GTK 3 uses it) to put our
@@ -142,6 +144,12 @@ and xdg-shell, they use:
   repeat from Keyboard, and the accessibility features (StickyKeys,
   FilterKeys/SlowKeys/BounceKeys, ToggleKeys, MouseKeys, ClickLock) with
   XP's activation shortcuts.
+- **Gamma.** Each monitor's gamma ramp combines its calibration (the
+  vcgt curves of its ICC profile, read with Little CMS) and the night
+  light (a black-body white point by Tanner Helland's fit, scheduled by
+  NOAA's sunrise and sunset equations or set hours, changing over half
+  an hour). The ramp goes into a frame's commit and is loaded by KMS, so
+  it works with pixman too; headless and nested outputs have none.
 - **Session.** In a real login the compositor gives the systemd user
   manager the display (`WAYLAND_DISPLAY`, `DISPLAY`, `XDG_*`, the theme
   variables) and starts `xeondesktop-session.target`, which binds
@@ -269,8 +277,9 @@ separate `.cpl` you could run on its own:
 | Add or Remove Programs | PackageKit and Flatpak |
 | Administrative Tools | Services (systemd), Event Viewer (journald), Disk Management (UDisks2: partitioning, formatting, resizing), Device Manager (udev) |
 | Bluetooth Devices | BlueZ |
+| Color Management | colord; monitors registered from `wlr-output-management`, their default profile in `desktop.ini` for the compositor |
 | Date and Time | timedated; timesyncd (org.freedesktop.timesync1) and systemd for the time server and Update Now |
-| Display | `desktop.ini`, `monitors.ini`, `wlr-output-management` |
+| Display | `desktop.ini`, `monitors.ini`, `wlr-output-management`; Night Light's location from GeoClue |
 | Flatpak | libflatpak (remotes), the user's override files (`flatpak override --user`'s format) |
 | Folder Options | the file manager's settings, `mimeapps.list`, the user's shared-mime-info database |
 | Fonts | fontconfig; printing through GtkPrintOperation |

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Color Management
+Comment=Change advanced color management settings for displays, scanners, and printers
+Exec=xd-color
+Icon=preferences-desktop-color
+Terminal=false
+NoDisplay=true
+Categories=Settings;GTK;X-XeonDesktop-ControlPanel;
+X-XeonDesktop-ControlPanel-Category=appearance
+Keywords=color;colour;profile;icc;calibration;colord;monitor;printer;scanner;
+StartupWMClass=org.xeondesktop.ColorManagement

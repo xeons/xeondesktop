@@ -128,6 +128,7 @@ settings_lib = static_library(
   'src/settings/qtpalette.c',
   'src/settings/sounds.c',
   'src/settings/inputmethod.c',
+  'src/settings/nightlight.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -302,6 +303,11 @@ compositor_src = files(
   'src/compositor/ime.c',
   'src/settings/soundplay.c',
 )
+# Gamma ramps: night light, and monitor calibration from ICC profiles'
+# vcgt curves, read with Little CMS when it's there.
+compositor_src += files('src/compositor/gamma.c', 'src/compositor/vcgt.c')
+lcms2_dep = dependency('lcms2', required: false, include_type: 'system')
+lcms2_args = lcms2_dep.found() ? ['-DXD_HAVE_LCMS2'] : []
 gtk_dep = dependency('gtk+-3.0', include_type: 'system')
 gdk_pixbuf_dep = dependency('gdk-pixbuf-2.0', include_type: 'system')
 gio_unix_dep = dependency('gio-unix-2.0', include_type: 'system')
@@ -338,6 +344,7 @@ compositor_deps = [
   libdrm_dep,
   libinput_dep,
   pixman_dep,
+  lcms2_dep,
 ]
 executable(
   'xd-compositor',
@@ -346,7 +353,7 @@ executable(
   server_protocol_headers_extra,
   arranger_server_src,
   dependencies: compositor_deps,
-  c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE'],
+  c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE'] + lcms2_args,
   install: true,
 )
 # The same compositor on SceneFX's scene graph: Aero's blurred glass and
@@ -372,7 +379,7 @@ if scenefx_dep.found()
     # SceneFX first: its scene graph replaces wlroots' (same symbols), which
     # matters when wlroots is linked in statically too.
     dependencies: [scenefx_dep.as_system()] + compositor_deps,
-    c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE', '-DXD_SCENEFX'],
+    c_args: ['-DWLR_USE_UNSTABLE', '-D_GNU_SOURCE', '-DXD_SCENEFX'] + lcms2_args,
     install: true,
   )
 endif
@@ -455,6 +462,7 @@ executable(
   'src/apps/desk.c',
   'src/apps/desk_advanced.c',
   'src/apps/desk_color.c',
+  'src/apps/desk_nightlight.c',
   'src/apps/desk_saver.c',
   'src/settings/themes.c',
   apps_common,
@@ -546,6 +554,7 @@ install_data(
   'data/applications/org.xeondesktop.Sound.desktop',
   'data/applications/org.xeondesktop.Power.desktop',
   'data/applications/org.xeondesktop.Privacy.desktop',
+  'data/applications/org.xeondesktop.ColorManagement.desktop',
   'data/applications/org.xeondesktop.RegionalOptions.desktop',
   'data/applications/org.xeondesktop.UserAccounts.desktop',
   'data/applications/org.xeondesktop.FolderOptions.desktop',
@@ -704,6 +713,18 @@ executable(
   'src/privacy/permissions.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep],
+  install: true,
+)
+
+# Color Management (colord's devices and profiles; the monitors from
+# wlr-output-management).
+executable(
+  'xd-color',
+  'src/color/main.c',
+  'src/color/colorlib.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, gio_unix_dep, client_protocol_dep],
+  c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
 
@@ -1077,12 +1098,14 @@ test_exe = executable(
   'src/timedate/ntp.c',
   'src/shell/recent.c',
   'src/privacy/permissions.c',
+  'src/compositor/vcgt.c',
+  'src/color/colorlib.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep,
-                 sane_dep.partial_dependency(compile_args: true)],
+                 sane_dep.partial_dependency(compile_args: true), lcms2_dep],
   c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"', '-D_GNU_SOURCE',
-           '-DXD_VERSION="' + meson.project_version() + '"'],
+           '-DXD_VERSION="' + meson.project_version() + '"'] + lcms2_args,
 )
 test(
   'unit',
@@ -1165,7 +1188,7 @@ configure_file(
 # Manual pages (roff, in man/), one per program installed in bindir.
 install_man(
   'man/xd-access.1', 'man/xd-admintools.1', 'man/xd-appwiz.1', 'man/xd-bluetooth.1',
-  'man/xd-choose-file.1', 'man/xd-control.1', 'man/xd-defaults.1', 'man/xd-desk.1',
+  'man/xd-choose-file.1', 'man/xd-color.1', 'man/xd-control.1', 'man/xd-defaults.1', 'man/xd-desk.1',
   'man/xd-diskmgmt.1', 'man/xd-endtask.1', 'man/xd-eventvwr.1', 'man/xd-files.1',
   'man/xd-flatpak.1',
   'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',

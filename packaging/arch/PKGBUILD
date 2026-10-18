@@ -49,6 +49,7 @@ depends=(
   'json-glib'
   'libglvnd'  # EGL/GLESv2: xd-compositor-fx
   'pixman'
+  'lcms2'     # monitor calibration curves (vcgt)
   'sh'
 )
 # Header-only at build time: xcb-icccm's hint structures, libdrm's formats.
@@ -74,6 +75,8 @@ optdepends=(
   'pavucontrol: Open Volume Control'
   'pipewire-pulse: the volume icon (or PulseAudio)'
   'sound-theme-freedesktop: the default sound scheme'
+  'colord: Color Management'
+  'geoclue: Night Light finding sunset and sunrise by itself'
 )
 backup=('etc/pam.d/xeondesktop')
 source=("$pkgname-$pkgver.tar.gz")

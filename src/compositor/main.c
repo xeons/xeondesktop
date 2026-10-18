@@ -293,6 +293,7 @@ static bool server_init(xd_server *server) {
     xd_arrange_init(server);
     xd_capture_init(server);
     xd_protocols_init(server);
+    xd_gamma_init(server);
     xd_lock_init(server);
     xd_ime_init(server);
     xd_xwayland_init(server);
@@ -318,6 +319,7 @@ static bool server_init(xd_server *server) {
 static void server_finish(xd_server *server) {
     server->terminating = true;
     xd_access_finish(server);
+    xd_gamma_finish(server);
     xd_xwayland_finish(server);
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
@@ -501,6 +503,7 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     }
     xd_settings_scheme(&settings, &server->config.scheme);
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
+    xd_gamma_apply_settings(server, &settings);
 
     install_gtk_theme(server, &settings);
     set_gtk_theme_env(server, &settings, false);
@@ -639,6 +642,8 @@ int main(int argc, char **argv) {
 #endif
         return EXIT_FAILURE;
     }
+    /* Before the outputs appear, so they start with their ramps. */
+    xd_gamma_apply_settings(&server, &settings);
 
     const char *socket = wl_display_add_socket_auto(server.display);
     if (socket == nullptr) {

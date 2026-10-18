@@ -59,6 +59,7 @@ Build-Depends:
  libegl-dev,
  libgles-dev,
  libpixman-1-dev,
+ liblcms2-dev,
  fonts-dejavu-core <!nocheck>,
 Standards-Version: 4.7.2
 Homepage: https://github.com/xeons/xeondesktop
@@ -96,6 +97,8 @@ Recommends:
  cups,
  sane-utils,
  network-manager-gnome,
+ colord,
+ geoclue-2.0,
 Suggests:
  bluez,
  blueman,

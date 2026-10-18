@@ -1,0 +1,61 @@
+.TH XD\-COLOR 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-color \- Color Management
+.SH SYNOPSIS
+.SY xd\-color
+.OP \-\-page n
+.YS
+.SH DESCRIPTION
+.B xd\-color
+is Color Management (Control Panel), after Windows 7's; Windows XP had the
+same choices on a Color Management tab in a monitor's and a printer's
+properties.
+It is a client of colord, which keeps the devices, the ICC profiles and
+which profile each device uses.
+.TP
+.B Devices
+A device (monitors, printers, scanners, cameras), the profiles associated
+with it, the default first; Add... associates an installed profile or,
+with Browse..., a file; Remove and Set as Default Profile.
+.TP
+.B All Profiles
+Every profile colord knows; Add... installs a file, and Remove uninstalls
+one installed here (it goes to the Recycle Bin).
+.PP
+colord finds printers and scanners itself; the monitors the compositor
+has are registered by
+.B xd\-color
+(with the device ids gnome-settings-daemon uses).
+Profiles are copied into the user's profile store and handed to colord,
+and the store's profiles are handed to it again at start, as colord
+forgets them when it restarts.
+.PP
+A monitor's default profile is written to
+.IR desktop.ini ,
+from which
+.BR xd\-compositor (1)
+loads its calibration curves (vcgt) into the monitor's gamma ramp.
+A default set by another program (colormgr) reaches the compositor the
+next time
+.B xd\-color
+is opened.
+.SH OPTIONS
+.TP
+.BI \-\-page " n"
+Open on tab
+.IR n :
+0 (Devices) or 1 (All Profiles).
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/icc/
+The user's profile store (default
+.IR ~/.local/share/icc ).
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
+.BR [ColorProfiles] :
+each monitor's profile, by its key in
+.IR monitors.ini .
+.SH SEE ALSO
+.BR xd\-desk (1),
+.BR xd\-compositor (1),
+.BR colormgr (1)

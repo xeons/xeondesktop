@@ -61,7 +61,17 @@ static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *da
     struct wlr_scene_output *so = wlr_scene_get_scene_output(out->server->scene, out->wlr_output);
     if (so == nullptr)
         return;
-    wlr_scene_output_commit(so, nullptr);
+    /* wlr_scene_output_commit, with our gamma ramp (gamma.c) in the same
+     * commit when it changed. */
+    if (wlr_scene_output_needs_frame(so) || xd_gamma_pending(out)) {
+        struct wlr_output_state state;
+        wlr_output_state_init(&state);
+        if (wlr_scene_output_build_state(so, &state, nullptr)) {
+            xd_gamma_frame(out, &state);
+            wlr_output_commit_state(out->wlr_output, &state);
+        }
+        wlr_output_state_finish(&state);
+    }
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     wlr_scene_output_send_frame_done(so, &now);
@@ -81,6 +91,7 @@ static void handle_output_destroy(struct wl_listener *listener, [[maybe_unused]]
         wlr_layer_surface_v1_destroy(ls->layer_surface);
     }
     xd_view_output_gone(out->server, out->wlr_output);
+    xd_gamma_output_removed(out);
     xd_unlisten(&out->frame);
     xd_unlisten(&out->request_state);
     xd_unlisten(&out->destroy);
@@ -202,6 +213,7 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
     XD_LISTEN(&wlr_output->events.request_state, out, request_state, handle_request_state);
     XD_LISTEN(&wlr_output->events.destroy, out, destroy, handle_output_destroy);
     wl_list_insert(server->outputs.prev, &out->link);
+    xd_gamma_output_added(out);
 
     struct wlr_scene_output *so = wlr_scene_output_create(server->scene, wlr_output);
     if (remembered) {
