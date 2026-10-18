@@ -4,6 +4,7 @@
 #include <libproc2/stat.h>
 #include <unistd.h>
 
+#include "netstat.h"
 #include "sysinfo.h"
 
 /* Process items, in stack order; the optional ones come last. */
@@ -40,6 +41,7 @@ struct xd_sysinfo {
     enum pids_item items[P_BASE_COUNT + 3];
     int nitems;
     int i_handles, i_io_read, i_io_write; /* -1 when not collected */
+    gboolean peak;                        /* read VmHWM */
     GArray *procs;                        /* xd_proc */
     xd_sysstats stats;
 };
@@ -101,6 +103,8 @@ void xd_sysinfo_set_extras(xd_sysinfo *si, gboolean handles, gboolean io) {
     if (procps_pids_reset(si->pids, si->items, si->nitems) < 0)
         set_items(si, FALSE, FALSE);
 }
+
+void xd_sysinfo_set_peak(xd_sysinfo *si, gboolean peak) { si->peak = peak; }
 
 static guint64 mem_value(xd_sysinfo *si, enum meminfo_item item) {
     struct meminfo_result *r = procps_meminfo_get(si->mem, item);
@@ -198,6 +202,9 @@ gboolean xd_sysinfo_sample(xd_sysinfo *si) {
             .io_read = si->i_io_read >= 0 ? PIDS_VAL(si->i_io_read, ul_int, s) : 0,
             .io_write = si->i_io_write >= 0 ? PIDS_VAL(si->i_io_write, ul_int, s) : 0,
         };
+        /* libproc2 has no item for VmHWM; one more read per process. */
+        if (si->peak)
+            p.peak_kb = xd_proc_peak_kb(p.pid);
         threads += (guint)MAX(p.threads, 0);
         g_array_append_val(si->procs, p);
     }

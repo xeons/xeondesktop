@@ -46,6 +46,7 @@
 #include <json-glib/json-glib.h>
 #include "../src/shell/apps.h"
 #include "../src/startmenu/searchlib.h"
+#include "../src/taskmgr/netstat.h"
 #include "../src/shell/jumplist.h"
 #include "../src/ui/textedit.h"
 #include "../src/users/users.h"
@@ -3304,6 +3305,106 @@ static void test_scanners(void) {
 
 /* xd-search: part of a name or a wildcard pattern, ignoring case; text
  * in a file's bytes. */
+/* Task Manager: Networking's adapters from a sysfs-like tree, and Peak
+ * Mem Usage's VmHWM. */
+static void put_attr(const char *root, const char *rel, const char *text) {
+    char *path = g_build_filename(root, rel, nullptr);
+    char *dir = g_path_get_dirname(path);
+    g_mkdir_with_parents(dir, 0700);
+    CHECK(g_file_set_contents(path, text, -1, nullptr));
+    g_free(dir);
+    g_free(path);
+}
+
+static void test_taskmgr_netstat(void) {
+    char *root = g_dir_make_tmp("xd-net-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    /* lo: skipped. eth0: up at 1 Gb/s. wlan0: up, no speed. eth1: cable
+     * out. br0: disabled. vpn0: up, link unknown (tun). */
+    put_attr(root, "lo/type", "772\n");
+    put_attr(root, "lo/operstate", "unknown\n");
+    put_attr(root, "lo/flags", "0x9\n");
+    put_attr(root, "eth0/type", "1\n");
+    put_attr(root, "eth0/operstate", "up\n");
+    put_attr(root, "eth0/flags", "0x1003\n");
+    put_attr(root, "eth0/speed", "1000\n");
+    put_attr(root, "eth0/statistics/rx_bytes", "1000000\n");
+    put_attr(root, "eth0/statistics/tx_bytes", "250000\n");
+    put_attr(root, "wlan0/type", "1\n");
+    put_attr(root, "wlan0/operstate", "up\n");
+    put_attr(root, "wlan0/flags", "0x1003\n");
+    put_attr(root, "wlan0/speed", "-1\n");
+    put_attr(root, "eth1/type", "1\n");
+    put_attr(root, "eth1/operstate", "down\n");
+    put_attr(root, "eth1/flags", "0x1003\n");
+    put_attr(root, "br0/type", "1\n");
+    put_attr(root, "br0/operstate", "down\n");
+    put_attr(root, "br0/flags", "0x1002\n");
+    put_attr(root, "vpn0/type", "65534\n");
+    put_attr(root, "vpn0/operstate", "unknown\n");
+    put_attr(root, "vpn0/flags", "0x10d1\n");
+    GArray *ifs = xd_netifs_read(root);
+    CHECK(ifs->len == 5);
+    if (ifs->len == 5) {
+        const xd_netif *n = (const xd_netif *)(const void *)ifs->data;
+        CHECK(strcmp(n[0].name, "br0") == 0 && n[0].state == XD_NETIF_NON_OPERATIONAL);
+        CHECK(strcmp(n[1].name, "eth0") == 0 && n[1].state == XD_NETIF_OPERATIONAL &&
+              n[1].speed_mbps == 1000 && n[1].rx_bytes == 1000000 && n[1].tx_bytes == 250000);
+        CHECK(strcmp(n[2].name, "eth1") == 0 && n[2].state == XD_NETIF_DISCONNECTED &&
+              n[2].speed_mbps == 0);
+        CHECK(strcmp(n[3].name, "vpn0") == 0 && n[3].state == XD_NETIF_OPERATIONAL);
+        CHECK(strcmp(n[4].name, "wlan0") == 0 && n[4].speed_mbps == 0);
+    }
+    xd_netifs_free(ifs);
+    rm_tree(root);
+    g_free(root);
+    ifs = xd_netifs_read("/nonexistent");
+    CHECK(ifs->len == 0);
+    xd_netifs_free(ifs);
+
+    CHECK(xd_netif_state_from("dormant", TRUE) == XD_NETIF_CONNECTING);
+    CHECK(xd_netif_state_from("up", FALSE) == XD_NETIF_NON_OPERATIONAL);
+    CHECK(strcmp(xd_netif_state_text(XD_NETIF_OPERATIONAL), "Operational") == 0);
+    CHECK(strcmp(xd_netif_state_text(XD_NETIF_NON_OPERATIONAL), "Non Operational") == 0);
+
+    static const struct {
+        guint64 mbps;
+        const char *text;
+    } speeds[] = {{0, ""}, {10, "10 Mbps"}, {100, "100 Mbps"}, {1000, "1 Gbps"},
+                  {2500, "2.5 Gbps"}, {10000, "10 Gbps"}};
+    for (size_t i = 0; i < G_N_ELEMENTS(speeds); i++) {
+        char *t = xd_netif_speed_text(speeds[i].mbps);
+        CHECK(strcmp(t, speeds[i].text) == 0);
+        g_free(t);
+    }
+    /* 12.5 MB in 1 s on 100 Mb/s is all of it; 125 kB is 1 %. */
+    CHECK(xd_netif_utilization(12500000, 1.0, 100) == 1.0);
+    double one_pct = xd_netif_utilization(125000, 1.0, 100);
+    CHECK(one_pct > 0.0099999 && one_pct < 0.0100001);
+    CHECK(xd_netif_utilization(1000, 1.0, 0) == 0 && xd_netif_utilization(1000, 0, 100) == 0);
+    CHECK(xd_netif_utilization(G_MAXUINT64 / 16, 1.0, 10) == 1.0);
+    static const struct {
+        double share;
+        const char *text;
+    } utils[] = {{0, "0 %"}, {0.00001, "0 %"}, {0.0012, "0.12 %"}, {0.015, "1.5 %"},
+                 {0.37, "37 %"}, {1.0, "100 %"}};
+    for (size_t i = 0; i < G_N_ELEMENTS(utils); i++) {
+        char *t = xd_netif_utilization_text(utils[i].share);
+        CHECK(strcmp(t, utils[i].text) == 0);
+        g_free(t);
+    }
+
+    CHECK(xd_status_peak_kb("Name:\tbash\nVmPeak:\t  20000 kB\nVmHWM:\t    5120 kB\n"
+                            "VmRSS:\t    4096 kB\n") == 5120);
+    CHECK(xd_status_peak_kb("Name:\tkthreadd\nThreads:\t1\n") == 0);
+    CHECK(xd_status_peak_kb("") == 0);
+    /* Our own: at least what we use now. */
+    CHECK(xd_proc_peak_kb((int)getpid()) > 0);
+    CHECK(xd_proc_peak_kb(-1) == 0);
+}
+
 static void test_search_match(void) {
     xd_search_name n;
     xd_search_name_init(&n, "  ");
@@ -3600,6 +3701,7 @@ int main(void) {
     test_thumbnail_cache();
     test_favorites();
     test_launcher_fields();
+    test_taskmgr_netstat();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -4,8 +4,9 @@
  * Applications lists the open windows (End Task, Switch To, New Task),
  * Processes lists every process with selectable columns (End Process,
  * End Process Tree, Set Priority, Set Affinity), and Performance shows the
- * CPU and memory meters, history graphs and totals. Ctrl+Alt+Delete and
- * Ctrl+Shift+Esc open it (handled by the compositor).
+ * CPU and memory meters, history graphs and totals. Windows XP's
+ * Networking (network.c) and Users (users.c) tabs follow. Ctrl+Alt+Delete
+ * and Ctrl+Shift+Esc open it (handled by the compositor).
  */
 #include <errno.h>
 #include <gio/gdesktopappinfo.h>
@@ -18,6 +19,7 @@
 #include "../settings/state.h"
 #include "graph.h"
 #include "sysinfo.h"
+#include "taskmgr.h"
 #include "trayicon.h"
 #include "tasks.h"
 
@@ -108,7 +110,7 @@ enum { AP_TASK, AP_ICON16, AP_ICON32, AP_TITLE, AP_STATUS, AP_APP_ID, AP_COUNT }
 enum { VIEW_LARGE, VIEW_SMALL, VIEW_DETAILS, VIEW_COUNT };
 enum { SPEED_HIGH, SPEED_NORMAL, SPEED_LOW, SPEED_PAUSED, SPEED_COUNT };
 static const guint speed_ms[SPEED_COUNT] = {500, 2000, 4000, 0};
-enum { TAB_APPS, TAB_PROCS, TAB_PERF };
+enum { TAB_APPS, TAB_PROCS, TAB_PERF, TAB_NET, TAB_USERS };
 enum { UNIT_KB, UNIT_MB, UNIT_GB, UNIT_COUNT };
 static const char *const unit_names[UNIT_COUNT] = {"KB", "MB", "GB"};
 static int mem_unit = UNIT_MB; /* View > Memory Units */
@@ -166,6 +168,10 @@ typedef struct taskmgr {
     GtkWidget *handles, *threads, *processes, *phys_total, *phys_avail, *phys_cache, *commit_total,
         *commit_limit, *commit_peak, *kern_total, *kern_paged, *kern_nonpaged;
     guint64 peak_commit;
+
+    /* Networking and Users */
+    xd_net_tab *net;
+    xd_users_tab *users;
 
     /* Status bar */
     GtkWidget *st_procs, *st_cpu, *st_mem;
@@ -260,7 +266,7 @@ static void load_settings(taskmgr *t, int *tab) {
     if (g_key_file_load_from_file(kf, xd_strbuf_cstr(&path), G_KEY_FILE_NONE, nullptr)) {
         GError *err = nullptr;
         int v = g_key_file_get_integer(kf, "TaskManager", "Tab", &err);
-        if (err == nullptr && v >= TAB_APPS && v <= TAB_PERF)
+        if (err == nullptr && v >= TAB_APPS && v <= TAB_USERS)
             *tab = v;
         g_clear_error(&err);
         v = g_key_file_get_integer(kf, "TaskManager", "UpdateSpeed", &err);
@@ -637,26 +643,6 @@ static void set_apps_view(taskmgr *t, int view) {
     update_app_buttons(t);
 }
 
-static GtkWidget *scrolled(GtkWidget *child) {
-    GtkWidget *sw = gtk_scrolled_window_new(nullptr, nullptr);
-    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sw), GTK_SHADOW_IN);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw), GTK_POLICY_AUTOMATIC,
-                                   GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(sw), child);
-    gtk_widget_set_vexpand(sw, TRUE);
-    return sw;
-}
-
-/* Buttons along the bottom right of a tab. */
-static GtkWidget *button_row(GtkWidget **buttons, int n) {
-    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    for (int i = n - 1; i >= 0; i--)
-        gtk_box_pack_end(GTK_BOX(row), buttons[i], FALSE, FALSE, 0);
-    for (int i = 0; i < n; i++)
-        gtk_widget_set_size_request(buttons[i], 84, -1);
-    return row;
-}
-
 static GtkWidget *build_apps(taskmgr *t) {
     t->apps = gtk_list_store_new(AP_COUNT, G_TYPE_POINTER, GDK_TYPE_PIXBUF, GDK_TYPE_PIXBUF,
                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
@@ -712,7 +698,7 @@ static GtkWidget *build_apps(taskmgr *t) {
     static const char *const names[VIEW_COUNT] = {"large", "small", "details"};
     for (int v = 0; v < VIEW_COUNT; v++) {
         g_signal_connect(t->apps_views[v], "button-press-event", G_CALLBACK(on_apps_button), t);
-        gtk_stack_add_named(GTK_STACK(t->apps_stack), scrolled(t->apps_views[v]), names[v]);
+        gtk_stack_add_named(GTK_STACK(t->apps_stack), xd_tm_scrolled(t->apps_views[v]), names[v]);
     }
     gtk_box_pack_start(GTK_BOX(box), t->apps_stack, TRUE, TRUE, 0);
 
@@ -723,7 +709,7 @@ static GtkWidget *build_apps(taskmgr *t) {
     g_signal_connect(t->switch_to, "clicked", G_CALLBACK(cb_switch_to), t);
     g_signal_connect(new_task, "clicked", G_CALLBACK(cb_new_task), t);
     GtkWidget *buttons[] = {t->end_task, t->switch_to, new_task};
-    gtk_box_pack_start(GTK_BOX(box), button_row(buttons, 3), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), xd_tm_button_row(buttons, 3), FALSE, FALSE, 0);
 
     t->tasks = xd_tasklist_new(gdk_display_get_default(), on_task_changed, on_task_closed, t);
     if (t->on_top_item != nullptr)
@@ -808,14 +794,17 @@ static void format_cell([[maybe_unused]] GtkTreeViewColumn *col, GtkCellRenderer
 static void apply_columns(taskmgr *t) {
     for (size_t i = 0; i < NCOLUMNS; i++)
         gtk_tree_view_column_set_visible(t->proc_cols[i], t->col_on[i]);
-    gboolean handles = FALSE, io = FALSE;
+    gboolean handles = FALSE, io = FALSE, peak = FALSE;
     for (size_t i = 0; i < NCOLUMNS; i++) {
         if (t->col_on[i] && columns[i].store == PS_HANDLES)
             handles = TRUE;
         if (t->col_on[i] && (columns[i].store == PS_IOR || columns[i].store == PS_IOW))
             io = TRUE;
+        if (t->col_on[i] && columns[i].store == PS_PEAK)
+            peak = TRUE;
     }
     xd_sysinfo_set_extras(t->si, handles, io);
+    xd_sysinfo_set_peak(t->si, peak);
 }
 
 static void update_processes(taskmgr *t) {
@@ -840,7 +829,9 @@ static void update_processes(taskmgr *t) {
                         : (int)(st->idle * 100 + 0.5);
         cpu = CLAMP(cpu, 0, 99);
         GtkTreeIter *iter = g_hash_table_lookup(t->rows, GINT_TO_POINTER(p->pid));
-        guint64 old_mem = p->mem_kb, old_faults = p->faults, peak = p->mem_kb;
+        /* The kernel's lifetime peak (VmHWM), as Windows' Peak Mem Usage;
+         * what we've seen covers processes without one. */
+        guint64 old_mem = p->mem_kb, old_faults = p->faults, peak = MAX(p->mem_kb, p->peak_kb);
         if (iter == nullptr) {
             iter = g_new(GtkTreeIter, 1);
             gtk_list_store_append(t->procs, iter);
@@ -1154,45 +1145,21 @@ static GtkWidget *build_processes(taskmgr *t) {
     GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(t->procs_tree));
     g_signal_connect(sel, "changed", G_CALLBACK(on_procs_selection), t);
     g_signal_connect(t->procs_tree, "button-press-event", G_CALLBACK(on_procs_button), t);
-    gtk_box_pack_start(GTK_BOX(box), scrolled(t->procs_tree), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), xd_tm_scrolled(t->procs_tree), TRUE, TRUE, 0);
     t->end_process = gtk_button_new_with_mnemonic("_End Process");
     gtk_widget_set_sensitive(t->end_process, FALSE);
     g_signal_connect(t->end_process, "clicked", G_CALLBACK(cb_end_process), t);
     GtkWidget *buttons[] = {t->end_process};
-    gtk_box_pack_start(GTK_BOX(box), button_row(buttons, 1), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), xd_tm_button_row(buttons, 1), FALSE, FALSE, 0);
     return box;
 }
 
 /* ---- Performance tab -------------------------------------------------------------- */
 
-/* A black well with a thin sunken edge. Returns the inside rectangle. */
-static void draw_well(GtkWidget *w, cairo_t *cr, double *x, double *y, double *wd, double *ht) {
-    int width = gtk_widget_get_allocated_width(w);
-    int height = gtk_widget_get_allocated_height(w);
-    GtkStyleContext *sc = gtk_widget_get_style_context(w);
-    GdkRGBA shadow = {0.5, 0.5, 0.5, 1}, light = {1, 1, 1, 1};
-    gtk_style_context_lookup_color(sc, "borders", &shadow);
-    cairo_set_line_width(cr, 1);
-    gdk_cairo_set_source_rgba(cr, &shadow);
-    cairo_move_to(cr, 0.5, height - 1);
-    cairo_line_to(cr, 0.5, 0.5);
-    cairo_line_to(cr, width - 1, 0.5);
-    cairo_stroke(cr);
-    gdk_cairo_set_source_rgba(cr, &light);
-    cairo_move_to(cr, width - 0.5, 0);
-    cairo_line_to(cr, width - 0.5, height - 0.5);
-    cairo_line_to(cr, 0, height - 0.5);
-    cairo_stroke(cr);
-    *x = 1;
-    *y = 1;
-    *wd = width - 2;
-    *ht = height - 2;
-}
-
 static gboolean draw_cpu_meter(GtkWidget *w, cairo_t *cr, gpointer data) {
     taskmgr *t = data;
     double x, y, wd, ht;
-    draw_well(w, cr, &x, &y, &wd, &ht);
+    xd_tm_draw_well(w, cr, &x, &y, &wd, &ht);
     xd_meter_draw(cr, x, y, wd, ht, t->cpu_now, t->kernel_now, t->show_kernel, t->cpu_text);
     return TRUE;
 }
@@ -1200,7 +1167,7 @@ static gboolean draw_cpu_meter(GtkWidget *w, cairo_t *cr, gpointer data) {
 static gboolean draw_mem_meter(GtkWidget *w, cairo_t *cr, gpointer data) {
     taskmgr *t = data;
     double x, y, wd, ht;
-    draw_well(w, cr, &x, &y, &wd, &ht);
+    xd_tm_draw_well(w, cr, &x, &y, &wd, &ht);
     xd_meter_draw(cr, x, y, wd, ht, t->mem_now, 0, FALSE, t->mem_text);
     return TRUE;
 }
@@ -1209,7 +1176,7 @@ static gboolean draw_history(GtkWidget *w, cairo_t *cr, gpointer data) {
     taskmgr *t = g_object_get_data(G_OBJECT(w), "taskmgr");
     const xd_history *h = data;
     double x, y, wd, ht;
-    draw_well(w, cr, &x, &y, &wd, &ht);
+    xd_tm_draw_well(w, cr, &x, &y, &wd, &ht);
     xd_history_draw(cr, x, y, wd, ht, h, h != &t->mem_hist && t->show_kernel);
     return TRUE;
 }
@@ -1220,16 +1187,6 @@ static GtkWidget *graph_area(taskmgr *t, xd_history *h, int min_w, int min_h) {
     g_object_set_data(G_OBJECT(a), "taskmgr", t);
     g_signal_connect(a, "draw", G_CALLBACK(draw_history), h);
     return a;
-}
-
-static GtkWidget *group(const char *title, GtkWidget *child) {
-    GtkWidget *f = gtk_frame_new(title);
-    gtk_widget_set_margin_start(child, 8);
-    gtk_widget_set_margin_end(child, 8);
-    gtk_widget_set_margin_top(child, 4);
-    gtk_widget_set_margin_bottom(child, 8);
-    gtk_container_add(GTK_CONTAINER(f), child);
-    return f;
 }
 
 /* A group of "Name  value" rows; values are right-aligned. */
@@ -1246,7 +1203,7 @@ static GtkWidget *info_group(const char *title, const char *const *names, GtkWid
         gtk_grid_attach(GTK_GRID(grid), name, 0, i, 1, 1);
         gtk_grid_attach(GTK_GRID(grid), values[i], 1, i, 1, 1);
     }
-    return group(title, grid);
+    return xd_tm_group(title, grid);
 }
 
 static void rebuild_cpu_graphs(taskmgr *t) {
@@ -1292,10 +1249,10 @@ static GtkWidget *build_performance(taskmgr *t) {
     gtk_box_pack_start(GTK_BOX(cpu_hbox), t->cpu_graphs_box, TRUE, TRUE, 0);
     t->mem_graph = graph_area(t, &t->mem_hist, 120, 80);
     gtk_widget_set_hexpand(t->mem_graph, TRUE);
-    gtk_grid_attach(GTK_GRID(top), group("CPU Usage", t->cpu_meter), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(top), group("CPU Usage History", cpu_hbox), 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(top), group("MEM Usage", t->mem_meter), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(top), group("Memory Usage History", t->mem_graph), 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(top), xd_tm_group("CPU Usage", t->cpu_meter), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(top), xd_tm_group("CPU Usage History", cpu_hbox), 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(top), xd_tm_group("MEM Usage", t->mem_meter), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(top), xd_tm_group("Memory Usage History", t->mem_graph), 1, 1, 1, 1);
     gtk_box_pack_start(GTK_BOX(box), top, TRUE, TRUE, 0);
 
     GtkWidget *bottom = gtk_grid_new();
@@ -1429,6 +1386,10 @@ static void sample(taskmgr *t) {
     if (!t->procs_stale)
         update_processes(t);
     update_performance(t);
+    int tab = gtk_notebook_get_current_page(GTK_NOTEBOOK(t->notebook));
+    xd_net_tab_sample(t->net, tab == TAB_NET && !off_screen(t));
+    if (tab == TAB_USERS && !off_screen(t))
+        xd_users_tab_refresh(t->users);
 }
 
 /* Back on screen: bring the process list up to the last sample. */
@@ -1708,6 +1669,8 @@ static void on_tab([[maybe_unused]] GtkNotebook *nb, [[maybe_unused]] GtkWidget 
     gtk_widget_set_visible(t->view_columns, procs);
     gtk_widget_set_visible(t->view_cpu_history, perf);
     gtk_widget_set_visible(t->view_kernel, perf);
+    if (num == TAB_USERS && t->users != nullptr)
+        xd_users_tab_refresh(t->users);
     if (t->window != nullptr && gtk_widget_get_realized(t->window))
         save_settings(t);
 }
@@ -1750,6 +1713,8 @@ static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
         g_source_remove(t->timer);
     xd_tasklist_free(t->tasks);
     xd_sysinfo_free(t->si);
+    xd_net_tab_free(t->net);
+    xd_users_tab_free(t->users);
     g_hash_table_unref(t->rows);
     xd_history_clear(&t->cpu_hist);
     xd_history_clear(&t->mem_hist);
@@ -1794,6 +1759,12 @@ static void open_window(GtkApplication *app) {
                              gtk_label_new_with_mnemonic("Processes"));
     gtk_notebook_append_page(GTK_NOTEBOOK(t->notebook), build_performance(t),
                              gtk_label_new_with_mnemonic("Performance"));
+    t->net = xd_net_tab_new();
+    gtk_notebook_append_page(GTK_NOTEBOOK(t->notebook), xd_net_tab_widget(t->net),
+                             gtk_label_new_with_mnemonic("Networking"));
+    t->users = xd_users_tab_new(GTK_WINDOW(t->window));
+    gtk_notebook_append_page(GTK_NOTEBOOK(t->notebook), xd_users_tab_widget(t->users),
+                             gtk_label_new_with_mnemonic("Users"));
     gtk_box_pack_start(GTK_BOX(vbox), t->notebook, TRUE, TRUE, 0);
     xd_gtk_notebook_ctrl_tab(t->window, GTK_NOTEBOOK(t->notebook));
 

@@ -27,5 +27,9 @@ void xd_meter_draw(cairo_t *cr, double x, double y, double w, double h, double v
 /* History graph filling the rectangle; with kernel, a red line too. */
 void xd_history_draw(cairo_t *cr, double x, double y, double w, double h, const xd_history *hist,
                      gboolean show_kernel);
+/* The same with `full` (0..1) at the top: Networking's graphs zoom in on
+ * low utilization. */
+void xd_history_draw_scaled(cairo_t *cr, double x, double y, double w, double h,
+                            const xd_history *hist, gboolean show_kernel, double full);
 
 #endif

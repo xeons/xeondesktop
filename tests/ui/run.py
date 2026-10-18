@@ -1177,6 +1177,40 @@ def switch_user_and_back(s):
         DBusTestCase.tearDownClass()
 
 
+@scenario(LUNA_INI, requires=("dbusmock",))
+def task_manager_users(s):
+    """Task Manager's Users tab (on a dbusmock logind) lists the sessions;
+    Logoff on another user's ends it through logind."""
+    from dbusmock import DBusTestCase
+
+    try:
+        _, calls = mock_logind(s)
+        before = s.settle("desktop")
+        s.launch("xd-taskmgr")
+        s.wait_window(title="Task Manager", state="activated")
+        # Applications, Processes, Performance, Networking, Users.
+        s.inject(*(["key", "ctrl+Tab", "sleep", 200] * 4))
+        users = s.settle("users")
+        box = users.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+        s.check(box is not None, f"Task Manager is on screen ({box})")
+        s.wait(lambda: "ListSessions" in calls(), "the Users tab to ask logind")
+        # The second row (guest), then Logoff (see users.c), from the
+        # window's top left.
+        s.inject("move", box[0] + 44, box[1] + 133, "click", "sleep", 300)
+        selected = s.settle("selected")
+        s.inject("move", box[0] + 270, box[1] + 443, "click")
+        # "Are you sure...?" over the list.
+        s.wait(lambda: s.shot("confirm").differs(selected, (box[0] + 60, box[1] + 180, 320, 140)) > 0.2,
+               "the confirmation")  # fmt: skip
+        s.settle("confirm")
+        # No is the default: Shift+Tab to Yes.
+        s.inject("key", "shift+Tab", "key", "Return")
+        s.wait(lambda: 'TerminateSession "c2"' in calls(), "Logoff to end the guest's session")
+        s.check('TerminateSession "c1"' not in calls(), "Logoff ended the selected session only")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

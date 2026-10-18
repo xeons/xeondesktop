@@ -101,13 +101,14 @@ void xd_meter_draw(cairo_t *cr, double x, double y, double w, double h, double v
 }
 
 static void plot(cairo_t *cr, double x, double y, double w, double h, const xd_history *hist,
-                 const double *data) {
+                 const double *data, double full) {
     int n = MIN(hist->len, (int)(w / STEP) + 2);
     if (n < 2)
         return;
     for (int i = 0; i < n; i++) {
         double px = x + w - 1 - i * STEP + 0.5;
-        double py = y + (h - 1) * (1.0 - hist_at(hist, data, i)) + 0.5;
+        double v = MIN(hist_at(hist, data, i) / full, 1.0);
+        double py = y + (h - 1) * (1.0 - v) + 0.5;
         if (i == 0)
             cairo_move_to(cr, px, py);
         else
@@ -118,6 +119,11 @@ static void plot(cairo_t *cr, double x, double y, double w, double h, const xd_h
 
 void xd_history_draw(cairo_t *cr, double x, double y, double w, double h, const xd_history *hist,
                      gboolean show_kernel) {
+    xd_history_draw_scaled(cr, x, y, w, h, hist, show_kernel, 1.0);
+}
+
+void xd_history_draw_scaled(cairo_t *cr, double x, double y, double w, double h,
+                            const xd_history *hist, gboolean show_kernel, double full) {
     cairo_save(cr);
     cairo_rectangle(cr, x, y, w, h);
     cairo_clip(cr);
@@ -141,10 +147,10 @@ void xd_history_draw(cairo_t *cr, double x, double y, double w, double h, const 
     if (hist->cap > 0) {
         if (show_kernel) {
             rgb(cr, 255, 0, 0);
-            plot(cr, x, y, w, h, hist, hist->kernel);
+            plot(cr, x, y, w, h, hist, hist->kernel, full);
         }
         rgb(cr, 0, 255, 0);
-        plot(cr, x, y, w, h, hist, hist->value);
+        plot(cr, x, y, w, h, hist, hist->value, full);
     }
     cairo_restore(cr);
 }

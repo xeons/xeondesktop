@@ -19,6 +19,7 @@ typedef struct xd_proc {
     int threads, nice;
     int handles;           /* open files; -1 when not collected */
     guint64 io_read, io_write; /* bytes; 0 when not collected or not ours */
+    guint64 peak_kb;           /* lifetime peak resident (VmHWM); 0 when not collected */
 } xd_proc;
 
 typedef struct xd_sysstats {
@@ -42,6 +43,8 @@ typedef struct xd_sysinfo xd_sysinfo;
 xd_sysinfo *xd_sysinfo_new(void);
 void xd_sysinfo_free(xd_sysinfo *si);
 void xd_sysinfo_set_extras(xd_sysinfo *si, gboolean handles, gboolean io);
+/* Peak Mem Usage: each process's VmHWM, read from /proc/PID/status. */
+void xd_sysinfo_set_peak(xd_sysinfo *si, gboolean peak);
 
 /* Takes a new sample. Returns FALSE if /proc couldn't be read. */
 [[nodiscard]] gboolean xd_sysinfo_sample(xd_sysinfo *si);
