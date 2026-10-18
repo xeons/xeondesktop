@@ -3583,6 +3583,65 @@ static void test_admin_disks(void) {
     CHECK(w[0] + w[1] + w[2] == 400 && w[0] >= 50 && w[2] > w[0] && w[0] == w[1]);
     xd_disk_block_widths(sizes, 3, 100, 50, w);
     CHECK(w[0] == 50 && w[1] == 50 && w[2] == 50);
+
+    /* Startup mount points and format options. */
+    CHECK(xd_udisks_version_at_least("2.11.0", 2, 10) && xd_udisks_version_at_least("3", 2, 10));
+    CHECK(!xd_udisks_version_at_least("2.9.4", 2, 10) && !xd_udisks_version_at_least("", 2, 10));
+    char *dir = xd_fstab_dir_clean("  /mnt/data//  ");
+    CHECK(strcmp(dir, "/mnt/data") == 0);
+    g_free(dir);
+    dir = xd_fstab_dir_clean("/");
+    CHECK(strcmp(dir, "/") == 0);
+    g_free(dir);
+    CHECK(xd_fstab_dir_problem("/mnt/data") == nullptr);
+    CHECK(xd_fstab_dir_problem("/srv") != nullptr && xd_fstab_dir_problem("/srv/media") == nullptr);
+    CHECK(xd_fstab_dir_problem("/data/media files") == nullptr);
+    CHECK(xd_fstab_dir_problem("") != nullptr && xd_fstab_dir_problem("mnt/data") != nullptr);
+    CHECK(xd_fstab_dir_problem("/mnt/../etc") != nullptr);
+    CHECK(xd_fstab_dir_problem("/mnt/a\nb") != nullptr);
+    CHECK(xd_fstab_dir_problem("/") != nullptr && xd_fstab_dir_problem("/home") != nullptr);
+    CHECK(xd_fstab_dir_problem("/proc/x") != nullptr && xd_fstab_dir_problem("/usr/local") != nullptr);
+    CHECK(xd_fstab_dir_problem("/mnt") != nullptr && xd_fstab_dir_problem("/procs") == nullptr);
+    dir = xd_fstab_suggest_dir("My Data", "/dev/sdb1");
+    CHECK(strcmp(dir, "/mnt/My_Data") == 0);
+    g_free(dir);
+    dir = xd_fstab_suggest_dir("", "/dev/sdb1");
+    CHECK(strcmp(dir, "/mnt/sdb1") == 0);
+    g_free(dir);
+    dir = xd_fstab_suggest_dir("..", nullptr);
+    CHECK(strcmp(dir, "/mnt/volume") == 0);
+    g_free(dir);
+    char *opts = xd_fstab_default_options("ext4", 1000, 1000);
+    CHECK(strcmp(opts, "nofail,x-mount.mkdir") == 0);
+    g_free(opts);
+    opts = xd_fstab_default_options("vfat", 1000, 100);
+    CHECK(strcmp(opts, "nofail,x-mount.mkdir,uid=1000,gid=100") == 0);
+    g_free(opts);
+
+    CHECK(xd_format_unit_sizes("btrfs") == nullptr && xd_format_unit_sizes("swap") == nullptr);
+    CHECK(xd_format_unit_sizes("ntfs")[7] == 65536 && xd_format_unit_sizes("ntfs")[8] == 0);
+    char *ul = xd_format_unit_label(4096);
+    CHECK(strcmp(ul, "4096 bytes") == 0);
+    g_free(ul);
+    ul = xd_format_unit_label(65536);
+    CHECK(strcmp(ul, "64K") == 0);
+    g_free(ul);
+    char **args = xd_format_unit_args("ext4", 4096, 512);
+    CHECK(args != nullptr && strcmp(args[0], "-b") == 0 && strcmp(args[1], "4096") == 0 &&
+          args[2] == nullptr);
+    g_strfreev(args);
+    args = xd_format_unit_args("vfat", 32768, 512);
+    CHECK(args != nullptr && strcmp(args[0], "-s") == 0 && strcmp(args[1], "64") == 0);
+    g_strfreev(args);
+    args = xd_format_unit_args("xfs", 2048, 512);
+    CHECK(args != nullptr && strcmp(args[1], "size=2048") == 0);
+    g_strfreev(args);
+    args = xd_format_unit_args("exfat", 131072, 4096);
+    CHECK(args != nullptr && strcmp(args[0], "-c") == 0 && strcmp(args[1], "131072") == 0);
+    g_strfreev(args);
+    CHECK(xd_format_unit_args("ntfs", 512, 4096) == nullptr); /* smaller than a sector */
+    CHECK(xd_format_unit_args("ext4", 8192, 512) == nullptr); /* not offered */
+    CHECK(xd_format_unit_args("btrfs", 4096, 512) == nullptr);
 }
 
 static void test_appwiz(void) {

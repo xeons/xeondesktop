@@ -7,9 +7,11 @@
  *
  * Everything goes through UDisks2, which asks polkit; nothing runs as
  * root here. Initialize Disk (a GPT or MBR partition table), New
- * Partition, Delete Partition, Format (quick only), Extend and Shrink
- * Volume, Change Label, Mark Partition as Active, Change Partition Type,
- * mounting and unmounting (XP's Change Drive Letter and Paths), Eject.
+ * Partition, Delete Partition, Format (quick or full, with a choice of
+ * allocation unit size), Extend and Shrink Volume, Change Label, Mark
+ * Partition as Active, Change Partition Type, mounting and unmounting
+ * and the mount point used at startup (XP's Change Drive Letter and
+ * Paths; /etc/fstab, written by UDisks2), Eject.
  *
  * As Windows does for the system and boot volumes, what the running
  * system uses ("/", "/boot", "/usr", swap in use, ...) can't be deleted,
@@ -20,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/statvfs.h>
+#include <unistd.h>
 
 #include "../core/common.h"
 #include "../gtkapp/gtkapp.h"
@@ -59,7 +62,9 @@ typedef struct volume {
     char *device;  /* "/dev/sdb1" */
     char *label, *id_type, *id_version, *id_usage;
     char **mounts; /* nullptr-terminated, maybe empty */
+    char *uuid;    /* the filesystem's UUID, "" when it has none */
     char **fstab;  /* its /etc/fstab mount points */
+    GPtrArray *fstab_items; /* ... and their entries, "(sa{sv})" GVariants, in the same order */
     guint64 offset, size, flags;
     guint number;
     char *ptype;
@@ -93,6 +98,7 @@ typedef struct dm {
     GHashTable *can_format; /* fs type -> "yes" / "no" */
     GHashTable *resize;     /* fs type -> modes + 1 (0: not known yet) */
     GHashTable *asked;      /* "format:TYPE" / "resize:TYPE" asked of UDisks */
+    char *version;          /* UDisks2's Manager.Version, once read */
     GtkWidget *action_menu; /* the menu bar's Action menu */
     bool action_stale;      /* to refill once it closes */
     guint refresh_source;
@@ -180,24 +186,30 @@ static char **prop_bytestrings(GDBusProxy *p, const char *name) {
     return out != nullptr ? out : g_new0(char *, 1);
 }
 
-/* The fstab mount points in Block.Configuration. */
-static char **fstab_dirs(GDBusProxy *block) {
+/* The fstab mount points in Block.Configuration, and (into `items`) the
+ * entries themselves, as Update- and RemoveConfigurationItem want them
+ * back. */
+static char **fstab_dirs(GDBusProxy *block, GPtrArray *items) {
     GPtrArray *dirs = g_ptr_array_new();
     GVariant *v = prop(block, "Configuration");
     if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE("a(sa{sv})"))) {
         GVariantIter it;
-        const char *kind = nullptr;
-        GVariant *details = nullptr;
+        GVariant *entry = nullptr;
         g_variant_iter_init(&it, v);
-        while (g_variant_iter_next(&it, "(&s@a{sv})", &kind, &details)) {
+        while ((entry = g_variant_iter_next_value(&it)) != nullptr) {
+            const char *kind = nullptr;
+            GVariant *details = nullptr;
+            g_variant_get(entry, "(&s@a{sv})", &kind, &details);
             GVariant *dir = strcmp(kind, "fstab") == 0
                                 ? g_variant_lookup_value(details, "dir", G_VARIANT_TYPE_BYTESTRING)
                                 : nullptr;
             if (dir != nullptr) {
                 g_ptr_array_add(dirs, g_variant_dup_bytestring(dir, nullptr));
+                g_ptr_array_add(items, g_variant_ref(entry));
                 g_variant_unref(dir);
             }
             g_variant_unref(details);
+            g_variant_unref(entry);
         }
     }
     if (v != nullptr)
@@ -217,6 +229,9 @@ static void volume_free(gpointer data) {
     g_free(v->id_usage);
     g_strfreev(v->mounts);
     g_strfreev(v->fstab);
+    if (v->fstab_items != nullptr)
+        g_ptr_array_unref(v->fstab_items);
+    g_free(v->uuid);
     g_free(v->ptype);
     g_free(v);
 }
@@ -256,7 +271,12 @@ static void read_fs(volume *v, GDBusObject *fs_obj) {
     g_strfreev(v->mounts);
     v->mounts = f != nullptr ? prop_bytestrings(f, "MountPoints") : g_new0(char *, 1);
     g_strfreev(v->fstab);
-    v->fstab = fstab_dirs(b);
+    if (v->fstab_items != nullptr)
+        g_ptr_array_unref(v->fstab_items);
+    v->fstab_items = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
+    v->fstab = fstab_dirs(b, v->fstab_items);
+    g_free(v->uuid);
+    v->uuid = prop_str(b, "IdUUID");
     v->has_fs = f != nullptr;
     v->swap_active = s != nullptr && prop_bool(s, "Active");
     g_free(v->fs_path);
@@ -946,20 +966,120 @@ static GtkWidget *fs_combo(dm *m, const char *preferred) {
     return c;
 }
 
-/* XP's greyed-out format options: quick only, default cluster size, no
- * compression. */
-static void quick_format_options(GtkWidget *box) {
-    GtkWidget *quick = gtk_check_button_new_with_mnemonic("Perform a _quick format");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(quick), TRUE);
-    gtk_widget_set_sensitive(quick, FALSE);
-    gtk_widget_set_tooltip_text(quick, "Only quick formats are done here.");
-    GtkWidget *compress = gtk_check_button_new_with_mnemonic("_Enable file and folder compression");
-    gtk_widget_set_sensitive(compress, FALSE);
-    gtk_box_pack_start(GTK_BOX(box), quick, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), compress, FALSE, FALSE, 0);
+/* XP's format options: the file system, its allocation unit size, a
+ * quick or full format, and compression (greyed: none of the file
+ * systems made here compresses the way NTFS did). */
+typedef struct format_opts {
+    dm *m;
+    GtkWidget *fs, *unit, *quick, *compress;
+    guint sector_size; /* the disk's logical sector size */
+} format_opts;
+
+/* The disk's logical sector size from sysfs (UDisks2 doesn't say), 512
+ * when it can't be read. */
+static guint sector_size_of(const disk *d) {
+    char *path = g_strdup_printf("/sys/class/block/%s/queue/logical_block_size",
+                                 dev_name(d->device));
+    char *text = nullptr;
+    guint size = 512;
+    if (g_file_get_contents(path, &text, nullptr, nullptr)) {
+        guint64 n = g_ascii_strtoull(text, nullptr, 10);
+        if (n >= 512 && n <= 65536)
+            size = (guint)n;
+    }
+    g_free(text);
+    g_free(path);
+    return size;
 }
 
-static GVariant *format_options(const char *label) {
+/* UDisks2 2.10 added Format's "mkfs-args", which the allocation unit
+ * size goes through. */
+static bool udisks_has_mkfs_args(dm *m) {
+    if (m->version == nullptr && m->om != nullptr) {
+        GDBusInterface *i =
+            g_dbus_object_manager_get_interface(m->om, UD_PATH "/Manager", UD_MANAGER);
+        if (i != nullptr) {
+            m->version = prop_str(G_DBUS_PROXY(i), "Version");
+            g_object_unref(i);
+        }
+    }
+    return xd_udisks_version_at_least(m->version, 2, 10);
+}
+
+/* The allocation unit sizes the chosen file system can be made with:
+ * Default only (greyed) when it, mkfs or UDisks2 can't choose. */
+static void fill_units(format_opts *f) {
+    const char *type = gtk_combo_box_get_active_id(GTK_COMBO_BOX(f->fs));
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(f->unit));
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(f->unit), "0", "Default");
+    const guint *sizes = xd_format_unit_sizes(type);
+    bool supported = sizes != nullptr && udisks_has_mkfs_args(f->m);
+    int n = 0;
+    for (size_t i = 0; supported && sizes[i] != 0; i++) {
+        char **args = xd_format_unit_args(type, sizes[i], f->sector_size);
+        if (args == nullptr)
+            continue;
+        g_strfreev(args);
+        char *id = g_strdup_printf("%u", sizes[i]), *label = xd_format_unit_label(sizes[i]);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(f->unit), id, label);
+        g_free(id);
+        g_free(label);
+        n++;
+    }
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(f->unit), "0");
+    gtk_widget_set_sensitive(f->unit, n > 0 && gtk_widget_get_sensitive(f->fs));
+    gtk_widget_set_tooltip_text(f->unit,
+                                n > 0                ? nullptr
+                                : sizes == nullptr ? "This file system is made with its default "
+                                                     "size only."
+                                                   : "This version of UDisks2 can't choose the "
+                                                     "size (2.10 and later can).");
+}
+
+static void on_fs_changed([[maybe_unused]] GtkComboBox *c, gpointer data) { fill_units(data); }
+
+/* The File system and Allocation unit size rows, from `row` on. */
+static void format_fs_rows(format_opts *f, dm *m, const disk *d, GtkWidget *grid, int row,
+                           const char *preferred) {
+    f->m = m;
+    f->sector_size = sector_size_of(d);
+    f->fs = fs_combo(m, preferred);
+    grid_row(grid, row, "File s_ystem:", f->fs);
+    f->unit = gtk_combo_box_text_new();
+    grid_row(grid, row + 1, "_Allocation unit size:", f->unit);
+    fill_units(f);
+    g_signal_connect(f->fs, "changed", G_CALLBACK(on_fs_changed), f);
+}
+
+static void format_checks(format_opts *f, GtkWidget *box) {
+    f->quick = gtk_check_button_new_with_mnemonic("Perform a _quick format");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(f->quick), TRUE);
+    gtk_widget_set_tooltip_text(f->quick, "Unticked, the whole volume is overwritten with zeros "
+                                          "before it's formatted, which can take a long time.");
+    f->compress = gtk_check_button_new_with_mnemonic("_Enable file and folder compression");
+    gtk_widget_set_sensitive(f->compress, FALSE);
+    gtk_box_pack_start(GTK_BOX(box), f->quick, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), f->compress, FALSE, FALSE, 0);
+}
+
+static bool format_quick(const format_opts *f) {
+    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(f->quick));
+}
+
+static guint format_unit(const format_opts *f) {
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(f->unit));
+    return id != nullptr ? (guint)g_ascii_strtoull(id, nullptr, 10) : 0;
+}
+
+/* What a full format adds to its confirmation. */
+static const char FULL_FORMAT_NOTE[] =
+    "A full format writes zeros over the whole volume first. This can take a long time: hours "
+    "on a large disk.";
+
+/* UDisks2 Format's options. A full format is "erase": "zero"; an
+ * allocation unit size goes to mkfs through "mkfs-args". */
+static GVariant *format_options(const char *label, const char *type, bool quick, guint unit,
+                                guint sector_size) {
     GVariantBuilder b;
     g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
     if (label != nullptr && label[0] != '\0')
@@ -967,7 +1087,19 @@ static GVariant *format_options(const char *label) {
     /* Removes the old filesystem's /etc/fstab and crypttab entries. */
     g_variant_builder_add(&b, "{sv}", "tear-down", g_variant_new_boolean(TRUE));
     g_variant_builder_add(&b, "{sv}", "update-partition-type", g_variant_new_boolean(TRUE));
+    if (!quick)
+        g_variant_builder_add(&b, "{sv}", "erase", g_variant_new_string("zero"));
+    char **args = unit != 0 ? xd_format_unit_args(type, unit, sector_size) : nullptr;
+    if (args != nullptr)
+        g_variant_builder_add(&b, "{sv}", "mkfs-args",
+                              g_variant_new_strv((const char *const *)args, -1));
+    g_strfreev(args);
     return g_variant_builder_end(&b);
+}
+
+/* The options as the dialog has them; `type` is the file system's. */
+static GVariant *format_opts_variant(const format_opts *f, const char *type, const char *label) {
+    return format_options(label, type, format_quick(f), format_unit(f), f->sector_size);
 }
 
 /* ---- Initialize Disk -------------------------------------------------------------- */
@@ -1037,8 +1169,9 @@ typedef struct wizard {
     disk *d;
     guint64 offset, max_size;
     xd_new_part_kinds kinds;
-    GtkWidget *assistant, *primary, *extended, *logical, *size, *no_format, *do_format, *fs,
-        *label, *mount, *summary;
+    GtkWidget *assistant, *primary, *extended, *logical, *size, *no_format, *do_format, *label,
+        *mount, *summary;
+    format_opts fo;
 } wizard;
 
 static bool wizard_extended(wizard *w) {
@@ -1068,13 +1201,24 @@ static void wizard_summary(wizard *w) {
     g_free(st);
     if (!wizard_extended(w)) {
         bool fmt = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->do_format));
-        char *fs = fmt ? gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(w->fs)) : nullptr;
+        char *fs = fmt ? gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(w->fo.fs)) : nullptr;
+        char *unit = fmt ? gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(w->fo.unit))
+                         : nullptr;
+        g_string_append_printf(s, "File system: %s\n", fs != nullptr ? fs : "None");
+        if (fmt)
+            g_string_append_printf(s,
+                                   "Allocation unit size: %s\nVolume label: %s\nQuick format: "
+                                   "%s\n",
+                                   unit != nullptr ? unit : "Default",
+                                   gtk_entry_get_text(GTK_ENTRY(w->label)),
+                                   format_quick(&w->fo) ? "Yes" : "No");
         g_string_append_printf(
-            s, "File system: %s\nVolume label: %s\nQuick format: Yes\nMount it: %s\n",
-            fs != nullptr ? fs : "None",
-            fmt ? gtk_entry_get_text(GTK_ENTRY(w->label)) : "",
+            s, "Mount it: %s\n",
             fmt && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->mount)) ? "Yes" : "No");
+        if (fmt && !format_quick(&w->fo))
+            g_string_append_printf(s, "\n%s\n", FULL_FORMAT_NOTE);
         g_free(fs);
+        g_free(unit);
     }
     g_string_append(s, "\nTo close this wizard and create the partition, click Apply.");
     gtk_label_set_text(GTK_LABEL(w->summary), s->str);
@@ -1090,9 +1234,12 @@ static void on_wizard_prepare(GtkAssistant *a, GtkWidget *page, gpointer data) {
 static void on_format_toggled(GtkToggleButton *b, gpointer data) {
     wizard *w = data;
     bool on = gtk_toggle_button_get_active(b);
-    gtk_widget_set_sensitive(w->fs, on);
+    gtk_widget_set_sensitive(w->fo.fs, on);
     gtk_widget_set_sensitive(w->label, on);
     gtk_widget_set_sensitive(w->mount, on);
+    gtk_widget_set_sensitive(w->fo.quick, on);
+    /* Back on, only where the file system can choose. */
+    fill_units(&w->fo);
 }
 
 static void on_wizard_apply([[maybe_unused]] GtkAssistant *a, gpointer data) {
@@ -1116,11 +1263,13 @@ static void on_wizard_apply([[maybe_unused]] GtkAssistant *a, gpointer data) {
     char *title = g_strdup_printf("Creating a partition on %s...", dn);
     op *o = op_new(m, title);
     if (fmt) {
-        const char *type = gtk_combo_box_get_active_id(GTK_COMBO_BOX(w->fs));
+        const char *type = gtk_combo_box_get_active_id(GTK_COMBO_BOX(w->fo.fs));
+        if (type == nullptr)
+            type = "ext4";
         op_add(o, w->d->block_path, UD_TABLE, "CreatePartitionAndFormat",
-               g_variant_new("(ttss@a{sv}s@a{sv})", w->offset, size, "", "", opts,
-                             type != nullptr ? type : "ext4",
-                             format_options(gtk_entry_get_text(GTK_ENTRY(w->label)))));
+               g_variant_new("(ttss@a{sv}s@a{sv})", w->offset, size, "", "", opts, type,
+                             format_opts_variant(&w->fo, type,
+                                                 gtk_entry_get_text(GTK_ENTRY(w->label)))));
         if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->mount)))
             op_add(o, nullptr, UD_FS, "Mount", g_variant_new("(@a{sv})", no_options()));
     } else {
@@ -1258,15 +1407,15 @@ static void new_partition(dm *m) {
     gtk_box_pack_start(GTK_BOX(fmt), w->do_format, FALSE, FALSE, 0);
     GtkWidget *fg = grid_new();
     gtk_widget_set_margin_start(fg, 24);
-    w->fs = fs_combo(m, "ext4");
-    grid_row(fg, 0, "File s_ystem:", w->fs);
+    /* XP's order: File system, Allocation unit size, Volume label. */
+    format_fs_rows(&w->fo, m, d, fg, 0, "ext4");
     w->label = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(w->label), "New Volume");
-    grid_row(fg, 1, "_Volume label:", w->label);
+    grid_row(fg, 2, "_Volume label:", w->label);
     gtk_box_pack_start(GTK_BOX(fmt), fg, FALSE, FALSE, 0);
     GtkWidget *opts = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_widget_set_margin_start(opts, 24);
-    quick_format_options(opts);
+    format_checks(&w->fo, opts);
     w->mount = gtk_check_button_new_with_mnemonic("_Mount it when it's formatted");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->mount), TRUE);
     gtk_box_pack_start(GTK_BOX(opts), w->mount, FALSE, FALSE, 0);
@@ -1334,40 +1483,44 @@ static void format_volume(dm *m) {
     gtk_entry_set_text(GTK_ENTRY(label), v->label != nullptr && v->label[0] != '\0'
                                              ? v->label
                                              : "New Volume");
+    gtk_entry_set_activates_default(GTK_ENTRY(label), TRUE);
     grid_row(g, 0, "_Volume label:", label);
-    GtkWidget *fs = fs_combo(m, v->has_fs ? v->id_type : "ext4");
-    grid_row(g, 1, "_File system:", fs);
-    GtkWidget *unit = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(unit), "Default");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(unit), 0);
-    gtk_widget_set_sensitive(unit, FALSE);
-    grid_row(g, 2, "_Allocation unit size:", unit);
+    format_opts fo = {};
+    format_fs_rows(&fo, m, v->d, g, 1, v->has_fs ? v->id_type : "ext4");
     gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
-    quick_format_options(box);
+    format_checks(&fo, box);
     gtk_widget_show_all(dlg);
     int r = gtk_dialog_run(GTK_DIALOG(dlg));
     char *new_label = g_strdup(gtk_entry_get_text(GTK_ENTRY(label)));
-    char *type = g_strdup(gtk_combo_box_get_active_id(GTK_COMBO_BOX(fs)));
+    char *type = g_strdup(gtk_combo_box_get_active_id(GTK_COMBO_BOX(fo.fs)));
+    bool quick = format_quick(&fo);
+    GVariant *opts = type != nullptr ? g_variant_ref_sink(format_opts_variant(&fo, type, new_label))
+                                     : nullptr;
     gtk_widget_destroy(dlg);
     if (r == GTK_RESPONSE_OK && type != nullptr) {
         char *desc = volume_description(v);
         char *text = g_strdup_printf("%s\n\nFormatting this volume will erase all data on it.%s "
-                                     "Back up any data you want to keep before formatting.\n\n"
-                                     "Do you want to continue?",
-                                     desc, unmount ? " It will be unmounted first." : "");
+                                     "Back up any data you want to keep before formatting.%s%s"
+                                     "\n\nDo you want to continue?",
+                                     desc, unmount ? " It will be unmounted first." : "",
+                                     quick ? "" : "\n\n", quick ? "" : FULL_FORMAT_NOTE);
         if (confirm(m, "Format", text)) {
-            char *busy = g_strdup_printf("Formatting %s...", dev_name(v->device));
+            char *busy = g_strdup_printf(quick ? "Formatting %s..."
+                                               : "Formatting %s (a full format: this can take a "
+                                                 "long time)...",
+                                         dev_name(v->device));
             op *o = op_new(m, busy);
             if (unmount)
                 op_unmount(o, v);
-            op_add(o, v->path, UD_BLOCK, "Format",
-                   g_variant_new("(s@a{sv})", type, format_options(new_label)));
+            op_add(o, v->path, UD_BLOCK, "Format", g_variant_new("(s@a{sv})", type, opts));
             op_run(o);
             g_free(busy);
         }
         g_free(text);
         g_free(desc);
     }
+    if (opts != nullptr)
+        g_variant_unref(opts);
     g_free(type);
     g_free(new_label);
     g_free(dn);
@@ -1607,7 +1760,339 @@ static void mount_volume(dm *m, volume *v, bool mount) {
     g_free(title);
 }
 
-/* XP's Change Drive Letter and Paths: where the volume is mounted. */
+/* ---- startup mount points (/etc/fstab, written by UDisks2) ------------------------------ */
+
+/* Whether the running system mounts the volume, now or at startup. */
+static bool volume_is_system(const volume *v) {
+    for (char **mp = v->mounts; mp != nullptr && *mp != nullptr; mp++)
+        if (xd_mount_is_system(*mp))
+            return true;
+    for (char **f = v->fstab; f != nullptr && *f != nullptr; f++)
+        if (xd_mount_is_system(*f))
+            return true;
+    return false;
+}
+
+/* Why the volume's startup mount points can't be changed, or nullptr. */
+static const char *startup_reason(dm *m, const volume *v) {
+    if (m->busy)
+        return "Disk Management is busy with another operation.";
+    if (!v->has_fs)
+        return "There's no file system to mount.";
+    if (v->d->optical)
+        return "CDs and DVDs are mounted when they're inserted.";
+    if (volume_is_system(v))
+        return "The running system mounts this volume itself: its /etc/fstab entry can't be "
+               "changed here.";
+    if (v->unlocked)
+        return "An encrypted volume would also need an /etc/crypttab entry to be unlocked when "
+               "the computer starts, which Disk Management can't add.";
+    if (v->uuid == nullptr || v->uuid[0] == '\0')
+        return "This volume has no UUID to find it by when the computer starts.";
+    return nullptr;
+}
+
+/* A field of an fstab entry ("(sa{sv})"): a string ("" when missing), or
+ * a number. */
+static char *item_str(GVariant *item, const char *key) {
+    GVariant *details = g_variant_get_child_value(item, 1);
+    GVariant *v = g_variant_lookup_value(details, key, G_VARIANT_TYPE_BYTESTRING);
+    char *s = v != nullptr ? g_variant_dup_bytestring(v, nullptr) : g_strdup("");
+    if (v != nullptr)
+        g_variant_unref(v);
+    g_variant_unref(details);
+    return s;
+}
+
+static gint32 item_int(GVariant *item, const char *key) {
+    GVariant *details = g_variant_get_child_value(item, 1);
+    gint32 n = 0;
+    g_variant_lookup(details, key, "i", &n);
+    g_variant_unref(details);
+    return n;
+}
+
+static GVariant *fstab_item(const char *fsname, const char *dir, const char *type,
+                            const char *opts, gint32 freq, gint32 passno) {
+    GVariantBuilder b;
+    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&b, "{sv}", "fsname", g_variant_new_bytestring(fsname));
+    g_variant_builder_add(&b, "{sv}", "dir", g_variant_new_bytestring(dir));
+    g_variant_builder_add(&b, "{sv}", "type", g_variant_new_bytestring(type));
+    g_variant_builder_add(&b, "{sv}", "opts", g_variant_new_bytestring(opts));
+    g_variant_builder_add(&b, "{sv}", "freq", g_variant_new_int32(freq));
+    g_variant_builder_add(&b, "{sv}", "passno", g_variant_new_int32(passno));
+    return g_variant_new("(s@a{sv})", "fstab", g_variant_builder_end(&b));
+}
+
+/* The file system type for /etc/fstab: blkid's, except that NTFS goes to
+ * the kernel's ntfs3 driver unless ntfs-3g (mount.ntfs) is installed. */
+static const char *fstab_type(const char *id_type) {
+    if (g_strcmp0(id_type, "ntfs") == 0 && !g_file_test("/usr/bin/mount.ntfs", G_FILE_TEST_EXISTS) &&
+        !g_file_test("/usr/sbin/mount.ntfs", G_FILE_TEST_EXISTS) &&
+        !g_file_test("/sbin/mount.ntfs", G_FILE_TEST_EXISTS))
+        return "ntfs3";
+    return id_type != nullptr && id_type[0] != '\0' ? id_type : "auto";
+}
+
+/* The volume other than `v` mounted at `dir` at startup, or nullptr. */
+static volume *startup_owner(dm *m, const volume *v, const char *dir) {
+    for (guint i = 0; i < m->disks->len; i++) {
+        disk *d = g_ptr_array_index(m->disks, i);
+        for (guint k = 0; k < d->vols->len; k++) {
+            volume *o = g_ptr_array_index(d->vols, k);
+            if (o != v && o->fstab != nullptr && g_strv_contains((const char *const *)o->fstab, dir))
+                return o;
+        }
+    }
+    return nullptr;
+}
+
+/* Why the folder `dir` (cleaned) can't take the volume, or nullptr. */
+static char *startup_dir_problem(dm *m, const volume *v, const char *dir) {
+    const char *why = xd_fstab_dir_problem(dir);
+    if (why != nullptr)
+        return g_strdup(why);
+    volume *other = startup_owner(m, v, dir);
+    if (other != nullptr) {
+        char *name = volume_name(other);
+        char *text = g_strdup_printf("%s is mounted in %s when the computer starts. Choose "
+                                     "another folder.",
+                                     name, dir);
+        g_free(name);
+        return text;
+    }
+    if (g_file_test(dir, G_FILE_TEST_EXISTS) && !g_file_test(dir, G_FILE_TEST_IS_DIR))
+        return g_strdup_printf("%s is a file, not a folder.", dir);
+    /* As Windows mounts only in an empty folder: what's in it would be
+     * hidden while the volume is mounted over it. */
+    bool here = v->mounts != nullptr && g_strv_contains((const char *const *)v->mounts, dir);
+    GDir *gd = here ? nullptr : g_dir_open(dir, 0, nullptr);
+    bool empty = gd == nullptr || g_dir_read_name(gd) == nullptr;
+    if (gd != nullptr)
+        g_dir_close(gd);
+    if (!empty)
+        return g_strdup_printf("%s isn't empty. Choose an empty folder: what's in it would be "
+                               "hidden while the volume is mounted there.",
+                               dir);
+    return nullptr;
+}
+
+static void on_browse_folder(GtkButton *b, gpointer entry) {
+    GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(b));
+    GtkWidget *fc = gtk_file_chooser_dialog_new("Browse for Empty Folder", GTK_WINDOW(top),
+                                                GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel",
+                                                GTK_RESPONSE_CANCEL, "OK", GTK_RESPONSE_ACCEPT,
+                                                nullptr);
+    char *current = xd_fstab_dir_clean(gtk_entry_get_text(GTK_ENTRY(entry)));
+    char *parent = g_path_get_dirname(current);
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(fc),
+                                        g_file_test(parent, G_FILE_TEST_IS_DIR) ? parent : "/");
+    if (gtk_dialog_run(GTK_DIALOG(fc)) == GTK_RESPONSE_ACCEPT) {
+        char *chosen = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(fc));
+        if (chosen != nullptr)
+            gtk_entry_set_text(GTK_ENTRY(entry), chosen);
+        g_free(chosen);
+    }
+    gtk_widget_destroy(fc);
+    g_free(parent);
+    g_free(current);
+}
+
+/* XP's Add Drive Letter or Path, for a folder: where and how the volume
+ * is mounted at startup. False when cancelled; else *dir and *opts are
+ * set (free them). */
+static bool startup_dialog(dm *m, const volume *v, const char *title, const char *dir0,
+                           const char *opts0, char **dir, char **opts) {
+    GtkWidget *box = nullptr;
+    GtkWidget *dlg = dialog_new(m, title, &box);
+    char *desc = volume_description(v);
+    gtk_box_pack_start(GTK_BOX(box), wrap_label(desc), FALSE, FALSE, 0);
+    g_free(desc);
+    GtkWidget *where = gtk_label_new_with_mnemonic(
+        "Mount this volume in the following _empty folder when the computer starts:");
+    gtk_label_set_xalign(GTK_LABEL(where), 0);
+    gtk_box_pack_start(GTK_BOX(box), where, FALSE, FALSE, 0);
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry), dir0);
+    gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
+    gtk_entry_set_width_chars(GTK_ENTRY(entry), 36);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(where), entry);
+    GtkWidget *browse = gtk_button_new_with_mnemonic("B_rowse...");
+    g_signal_connect(browse, "clicked", G_CALLBACK(on_browse_folder), entry);
+    gtk_box_pack_start(GTK_BOX(row), entry, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row), browse, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
+    GtkWidget *g = grid_new();
+    GtkWidget *options = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(options), opts0);
+    gtk_entry_set_activates_default(GTK_ENTRY(options), TRUE);
+    grid_row(g, 0, "Mount _options:", options);
+    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box),
+                       wrap_label("nofail: the computer still starts when the disk isn't there. "
+                                  "x-mount.mkdir: the folder is made if it doesn't exist. "
+                                  "uid and gid: whose the files are, on file systems without "
+                                  "owners (FAT, exFAT, NTFS)."),
+                       FALSE, FALSE, 0);
+    gtk_widget_show_all(dlg);
+    bool ok = false;
+    while (!ok && gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
+        char *d = xd_fstab_dir_clean(gtk_entry_get_text(GTK_ENTRY(entry)));
+        char *o = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(options))));
+        char *why = startup_dir_problem(m, v, d);
+        if (why == nullptr && (o[0] == '\0' || strpbrk(o, " \t\n") != nullptr))
+            why = g_strdup("Type the mount options separated by commas, without spaces (or "
+                           "\"defaults\").");
+        if (why != nullptr) {
+            xd_message_box(GTK_WINDOW(dlg), title, XD_MB_ERROR, XD_MB_OK, FALSE, why);
+            g_free(why);
+            g_free(d);
+            g_free(o);
+            continue;
+        }
+        *dir = d;
+        *opts = o;
+        ok = true;
+    }
+    gtk_widget_destroy(dlg);
+    return ok;
+}
+
+/* Mounts the volume at its new startup mount point now, as Windows'
+ * new drive letter works straight away: UDisks2 mounts a volume in
+ * /etc/fstab where the entry says. One mounted elsewhere is moved if the
+ * user agrees. */
+static void startup_mount_now(dm *m, op *o, const volume *v, const char *dir) {
+    if (!mounted(v)) {
+        op_add(o, v->fs_path, UD_FS, "Mount", g_variant_new("(@a{sv})", no_options()));
+        return;
+    }
+    if (g_strv_contains((const char *const *)v->mounts, dir))
+        return;
+    char *name = volume_name(v);
+    char *text = g_strdup_printf("%s is mounted in %s now. Do you want to move it to %s now?\n\n"
+                                 "Programs using files on it might not run correctly. If you "
+                                 "choose No, it moves the next time the computer starts.",
+                                 name, v->mounts[0], dir);
+    if (xd_message_box(GTK_WINDOW(m->window), "Disk Management", XD_MB_QUESTION, XD_MB_YES_NO,
+                       FALSE, text) == GTK_RESPONSE_YES) {
+        op_unmount(o, v);
+        op_add(o, v->fs_path, UD_FS, "Mount", g_variant_new("(@a{sv})", no_options()));
+    }
+    g_free(text);
+    g_free(name);
+}
+
+static void add_startup(dm *m, volume *v) {
+    if (startup_reason(m, v) != nullptr)
+        return;
+    char *suggested = xd_fstab_suggest_dir(v->label, v->device);
+    char *defaults = xd_fstab_default_options(v->id_type, (guint)getuid(), (guint)getgid());
+    char *dir = nullptr, *opts = nullptr;
+    if (startup_dialog(m, v, "Add Startup Mount Point", suggested, defaults, &dir, &opts)) {
+        char *fsname = g_strdup_printf("UUID=%s", v->uuid);
+        op *o = op_new(m, "Adding the startup mount point...");
+        /* freq 0, passno 0: no dump, and no fsck holding up the start
+         * (as GNOME Disks adds them). */
+        op_add(o, v->fs_path, UD_BLOCK, "AddConfigurationItem",
+               g_variant_new("(@(sa{sv})@a{sv})",
+                             fstab_item(fsname, dir, fstab_type(v->id_type), opts, 0, 0),
+                             no_options()));
+        startup_mount_now(m, o, v, dir);
+        op_run(o);
+        g_free(fsname);
+    }
+    g_free(dir);
+    g_free(opts);
+    g_free(suggested);
+    g_free(defaults);
+}
+
+static void change_startup(dm *m, volume *v, guint index) {
+    if (startup_reason(m, v) != nullptr || index >= v->fstab_items->len)
+        return;
+    GVariant *old = g_ptr_array_index(v->fstab_items, index);
+    char *dir0 = item_str(old, "dir"), *opts0 = item_str(old, "opts");
+    char *dir = nullptr, *opts = nullptr;
+    if (startup_dialog(m, v, "Change Startup Mount Point", dir0, opts0, &dir, &opts) &&
+        (strcmp(dir, dir0) != 0 || strcmp(opts, opts0) != 0)) {
+        /* The rest of the entry stays as it was. */
+        char *fsname = item_str(old, "fsname"), *type = item_str(old, "type");
+        op *o = op_new(m, "Changing the startup mount point...");
+        op_add(o, v->fs_path, UD_BLOCK, "UpdateConfigurationItem",
+               g_variant_new("(@(sa{sv})@(sa{sv})@a{sv})", old,
+                             fstab_item(fsname, dir, type, opts, item_int(old, "freq"),
+                                        item_int(old, "passno")),
+                             no_options()));
+        startup_mount_now(m, o, v, dir);
+        op_run(o);
+        g_free(fsname);
+        g_free(type);
+    }
+    g_free(dir);
+    g_free(opts);
+    g_free(dir0);
+    g_free(opts0);
+}
+
+static void remove_startup(dm *m, volume *v, guint index) {
+    if (startup_reason(m, v) != nullptr || index >= v->fstab_items->len)
+        return;
+    GVariant *old = g_ptr_array_index(v->fstab_items, index);
+    char *dir = item_str(old, "dir");
+    char *name = volume_name(v);
+    char *text = g_strdup_printf("%s won't be mounted in %s when the computer starts. It stays "
+                                 "mounted until you unmount it.\n\nDo you want to remove this "
+                                 "startup mount point?",
+                                 name, dir);
+    if (confirm(m, "Remove Startup Mount Point", text)) {
+        op *o = op_new(m, "Removing the startup mount point...");
+        op_add(o, v->fs_path, UD_BLOCK, "RemoveConfigurationItem",
+               g_variant_new("(@(sa{sv})@a{sv})", old, no_options()));
+        op_run(o);
+    }
+    g_free(text);
+    g_free(name);
+    g_free(dir);
+}
+
+/* The Change Mount Point dialog's responses beyond Mount and Unmount. */
+enum { MP_MOUNT = 1, MP_UNMOUNT, MP_ADD, MP_CHANGE, MP_REMOVE };
+
+static void on_startup_button(GtkButton *b, gpointer dlg) {
+    gtk_dialog_response(GTK_DIALOG(dlg),
+                        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "response")));
+}
+
+static void on_startup_selection(GtkTreeSelection *ts, gpointer buttons) {
+    bool any = gtk_tree_selection_count_selected_rows(ts) > 0;
+    GtkWidget **b = buttons;
+    bool allowed = g_object_get_data(G_OBJECT(b[0]), "allowed") != nullptr;
+    gtk_widget_set_sensitive(b[0], any && allowed);
+    gtk_widget_set_sensitive(b[1], any && allowed);
+}
+
+static GtkWidget *path_list(GtkListStore *ls, GtkWidget **view) {
+    GtkWidget *tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(ls));
+    g_object_unref(ls);
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(tv), FALSE);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(tv), gtk_tree_view_column_new_with_attributes(
+                                                       "", gtk_cell_renderer_text_new(), "text",
+                                                       0, nullptr));
+    GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
+    gtk_widget_set_size_request(sc, 380, 64);
+    gtk_container_add(GTK_CONTAINER(sc), tv);
+    if (view != nullptr)
+        *view = tv;
+    return sc;
+}
+
+/* XP's Change Drive Letter and Paths: where the volume is mounted now,
+ * and where it's mounted when the computer starts (/etc/fstab), with
+ * Add, Change and Remove for those. */
 static void mount_points(dm *m) {
     volume *v = sel_volume(m);
     if (v == nullptr || !v->has_fs || m->busy)
@@ -1616,8 +2101,8 @@ static void mount_points(dm *m) {
     char *title = g_strdup_printf("Change Mount Point for %s", dn);
     g_free(dn);
     GtkWidget *dlg = gtk_dialog_new_with_buttons(title, GTK_WINDOW(m->window), GTK_DIALOG_MODAL,
-                                                 "_Mount", 1, "_Unmount", 2, "Close",
-                                                 GTK_RESPONSE_CLOSE, nullptr);
+                                                 "_Mount", MP_MOUNT, "_Unmount", MP_UNMOUNT,
+                                                 "Close", GTK_RESPONSE_CLOSE, nullptr);
     g_free(title);
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -1627,36 +2112,91 @@ static void mount_points(dm *m) {
     GtkListStore *ls = gtk_list_store_new(1, G_TYPE_STRING);
     for (char **mp = v->mounts; *mp != nullptr; mp++)
         gtk_list_store_insert_with_values(ls, nullptr, -1, 0, *mp, -1);
-    GtkWidget *tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(ls));
-    g_object_unref(ls);
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(tv), FALSE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(tv), gtk_tree_view_column_new_with_attributes(
-                                                       "", gtk_cell_renderer_text_new(), "text",
-                                                       0, nullptr));
-    GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
-    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
-    gtk_widget_set_size_request(sc, 360, 80);
-    gtk_container_add(GTK_CONTAINER(sc), tv);
-    gtk_box_pack_start(GTK_BOX(box), sc, FALSE, FALSE, 0);
-    GString *notes = g_string_new(nullptr);
+    gtk_box_pack_start(GTK_BOX(box), path_list(ls, nullptr), FALSE, FALSE, 0);
     if (!mounted(v))
-        g_string_append(notes, "It isn't mounted. Mount puts it in /run/media.\n");
-    for (char **f = v->fstab; f != nullptr && *f != nullptr; f++)
-        g_string_append_printf(notes, "/etc/fstab mounts it at %s when the computer starts.\n",
-                                *f);
-    g_string_append(notes, "Startup mount points (/etc/fstab entries) can't be added here yet.");
-    gtk_box_pack_start(GTK_BOX(box), wrap_label(notes->str), FALSE, FALSE, 0);
-    g_string_free(notes, TRUE);
-    bool system = false;
-    for (char **mp = v->mounts; *mp != nullptr; mp++)
-        system |= xd_mount_is_system(*mp);
-    gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), 1, !mounted(v));
-    gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), 2, mounted(v) && !system);
+        gtk_box_pack_start(GTK_BOX(box),
+                           wrap_label(v->fstab[0] != nullptr
+                                          ? "It isn't mounted. Mount puts it in its startup "
+                                            "mount point."
+                                          : "It isn't mounted. Mount puts it in /run/media."),
+                           FALSE, FALSE, 0);
+
+    /* The startup mount points. */
+    gtk_box_pack_start(GTK_BOX(box), wrap_label("Mount this volume when the computer starts at:"),
+                       FALSE, FALSE, 6);
+    ls = gtk_list_store_new(1, G_TYPE_STRING);
+    for (char **f = v->fstab; *f != nullptr; f++)
+        gtk_list_store_insert_with_values(ls, nullptr, -1, 0, *f, -1);
+    GtkWidget *startup = nullptr;
+    gtk_box_pack_start(GTK_BOX(box), path_list(ls, &startup), FALSE, FALSE, 0);
+    GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    static const struct {
+        const char *label;
+        int response;
+    } bs[] = {{"_Add...", MP_ADD}, {"C_hange...", MP_CHANGE}, {"_Remove", MP_REMOVE}};
+    GtkWidget *b[3];
+    for (size_t i = 0; i < G_N_ELEMENTS(bs); i++) {
+        b[i] = gtk_button_new_with_mnemonic(bs[i].label);
+        g_object_set_data(G_OBJECT(b[i]), "response", GINT_TO_POINTER(bs[i].response));
+        g_signal_connect(b[i], "clicked", G_CALLBACK(on_startup_button), dlg);
+        gtk_box_pack_start(GTK_BOX(buttons), b[i], FALSE, FALSE, 0);
+    }
+    gtk_box_pack_start(GTK_BOX(box), buttons, FALSE, FALSE, 0);
+    const char *why = startup_reason(m, v);
+    /* One startup mount point is enough; more can be in /etc/fstab
+     * already, and are shown, changed and removed here. */
+    bool has_one = v->fstab[0] != nullptr;
+    gtk_widget_set_sensitive(b[0], why == nullptr && !has_one);
+    gtk_widget_set_tooltip_text(b[0], why != nullptr ? why
+                                      : has_one     ? "It has a startup mount point: change that "
+                                                      "one instead."
+                                                    : nullptr);
+    GtkWidget *change_remove[2] = {b[1], b[2]};
+    if (why == nullptr)
+        g_object_set_data(G_OBJECT(b[1]), "allowed", GINT_TO_POINTER(1));
+    GtkTreeSelection *ts = gtk_tree_view_get_selection(GTK_TREE_VIEW(startup));
+    gulong selection_handler =
+        g_signal_connect(ts, "changed", G_CALLBACK(on_startup_selection), change_remove);
+    GtkTreeIter first;
+    if (gtk_tree_model_get_iter_first(GTK_TREE_MODEL(ls), &first))
+        gtk_tree_selection_select_iter(ts, &first);
+    on_startup_selection(ts, change_remove);
+    if (why != nullptr)
+        gtk_box_pack_start(GTK_BOX(box), wrap_label(why), FALSE, FALSE, 0);
+
+    gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), MP_MOUNT, !mounted(v));
+    gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), MP_UNMOUNT,
+                                      mounted(v) && !volume_is_system(v));
     gtk_widget_show_all(dlg);
     int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    /* Which startup mount point Change and Remove are for. */
+    guint index = 0;
+    GtkTreeModel *model = nullptr;
+    GtkTreeIter it;
+    if (gtk_tree_selection_get_selected(ts, &model, &it)) {
+        GtkTreePath *p = gtk_tree_model_get_path(model, &it);
+        index = (guint)gtk_tree_path_get_indices(p)[0];
+        gtk_tree_path_free(p);
+    }
+    g_signal_handler_disconnect(ts, selection_handler);
     gtk_widget_destroy(dlg);
-    if (r == 1 || r == 2)
-        mount_volume(m, v, r == 1);
+    switch (r) {
+    case MP_MOUNT:
+    case MP_UNMOUNT:
+        mount_volume(m, v, r == MP_MOUNT);
+        break;
+    case MP_ADD:
+        add_startup(m, v);
+        break;
+    case MP_CHANGE:
+        change_startup(m, v, index);
+        break;
+    case MP_REMOVE:
+        remove_startup(m, v, index);
+        break;
+    default:
+        break;
+    }
 }
 
 static void explore(dm *m) {

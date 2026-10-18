@@ -222,4 +222,41 @@ const char *xd_part_type_name(const char *table_type, const char *id);
 /* Whether it's the EFI System Partition's type. */
 bool xd_part_type_is_esp(const char *id);
 
+/* ---- Disk Management: startup mount points and format options ---- */
+
+/* Whether UDisks2's Manager.Version ("2.11.0") is at least major.minor. */
+bool xd_udisks_version_at_least(const char *version, int major, int minor);
+
+/* A typed mount point tidied: surrounding blanks and trailing slashes
+ * dropped ("/" stays). Free with g_free. */
+char *xd_fstab_dir_clean(const char *typed);
+
+/* Why `dir` (cleaned) can't be a startup mount point, or nullptr: it
+ * must be a full path without "." or ".." in it, not one the running
+ * system uses or keeps for itself (/, /usr, /etc, /proc, ...). */
+const char *xd_fstab_dir_problem(const char *dir);
+
+/* The mount point Add suggests: /mnt/ and the label (or the device's
+ * name, "sdb1"), with anything but letters, digits, ".", "_" and "-"
+ * made "_". Free with g_free. */
+char *xd_fstab_suggest_dir(const char *label, const char *device);
+
+/* The options a new startup mount point gets: "nofail" (a missing disk
+ * doesn't stop the computer starting), "x-mount.mkdir" (the folder is
+ * made if it isn't there), and for file systems without Unix owners
+ * (FAT, exFAT, NTFS) uid= and gid= so the files are the user's. Free
+ * with g_free. */
+char *xd_fstab_default_options(const char *id_type, guint uid, guint gid);
+
+/* The allocation unit sizes (bytes, 0-terminated) Format can ask mkfs
+ * for on `type`, or nullptr when only Default is possible. */
+const guint *xd_format_unit_sizes(const char *type);
+/* XP's names for them: "512 bytes" ... "8192 bytes", then "16K", "64K".
+ * Free with g_free. */
+char *xd_format_unit_label(guint bytes);
+/* The mkfs arguments (UDisks2 Format's "mkfs-args") for allocation unit
+ * `bytes` on `type`, for a disk of `sector_size` byte logical sectors;
+ * nullptr when that size can't be made. Free with g_strfreev. */
+char **xd_format_unit_args(const char *type, guint bytes, guint sector_size);
+
 #endif

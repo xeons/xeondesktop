@@ -1564,6 +1564,138 @@ def disk_management_menu(s):
 
 
 @scenario(requires=("dbusmock",))
+def disk_management_startup_format(s):
+    """Disk Management (on a dbusmock UDisks2): Change Mount Point adds,
+    changes and removes the USB stick's /etc/fstab entry through UDisks2's
+    configuration items (UUID=, nofail, the user's uid for FAT), mounting
+    it there; then a full format with a chosen allocation unit size asks
+    Format for "erase": "zero" and mkfs's cluster size."""
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    try:
+        mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "udisks2.py")
+        proc, _ = DBusTestCase.spawn_server_template(
+            mock, {}, stdout=subprocess.DEVNULL, system_bus=True
+        )
+        s.children.append(proc)
+        udisks = DBusTestCase.get_dbus(system_bus=True).get_object(
+            "org.freedesktop.UDisks2", "/org/freedesktop/UDisks2"
+        )
+        sdd1 = "/org/freedesktop/UDisks2/block_devices/sdd1"
+
+        def calls():
+            return [str(c) for c in udisks.MockCalls(dbus_interface=MOCK_IFACE)]
+
+        def called(what):
+            return what in calls()
+
+        empty = s.settle("desktop")
+        s.launch("xd-diskmgmt")
+        s.wait_window(title="Disk Management", state="activated")
+        shot = s.settle("disk-management")
+        x, y, _, _ = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        def opened(what, label):
+            """Waits for a dialog over Disk Management (xd-windows doesn't
+            list dialogs, but the main window loses the focus), so a key
+            gone astray fails here rather than several steps on."""
+            s.wait(lambda: "activated" not in s.window(title="Disk Management")["states"],
+                   f"the {what} dialog")  # fmt: skip
+            s.settle(label)
+
+        def change_mount_point(label):
+            s.inject("key", "alt+a", "sleep", 400, "key", "p")
+            opened("Change Mount Point", label)
+
+        # The volume list's second row, root (/): the system's own
+        # /etc/fstab entry can't be removed (or changed) here.
+        s.inject("move", x + 120, y + 70, "click", "sleep", 300, "key", "Down", "sleep", 300)
+        change_mount_point("root's mount points")
+        s.inject("key", "alt+r", "sleep", 500, "key", "alt+h", "sleep", 500)
+        s.check(not any("ConfigurationItem" in c for c in calls()), "root's entry stays as it is")
+        s.inject("key", "Escape", "sleep", 500)
+        s.log("ok: the system volume's startup mount point is locked")
+
+        # Down to USBSTICK (sda1-3, Data, Stuff, USBSTICK).
+        for _ in range(4):
+            s.inject("key", "Down", "sleep", 100)
+        s.settle("usbstick")
+
+        uid, gid = os.getuid(), os.getgid()
+        opts = f"nofail,x-mount.mkdir,uid={uid},gid={gid}"
+        entry = (f"fsname=UUID=uuid-sdd1 dir=/mnt/USBSTICK type=vfat opts={opts} freq=0 "
+                 "passno=0")
+
+        # Add: the suggested folder and options; it isn't mounted, so it's
+        # mounted there.
+        change_mount_point("change mount point")
+        s.inject("key", "alt+a")
+        opened("Add Startup Mount Point", "add startup mount point")
+        s.inject("key", "Return")
+        s.wait(lambda: called(f"AddConfigurationItem {sdd1} {entry}"), "AddConfigurationItem")
+        s.wait(lambda: called(f"Mount {sdd1}"), "the stick mounted at its startup mount point")
+        s.log("ok: Add made the fstab entry through UDisks2 and mounted it")
+
+        # Change: a new folder; it's mounted at the old one, so it moves
+        # (Yes, the default).
+        s.settle("added")
+        change_mount_point("change mount point 2")
+        s.inject("key", "alt+h")
+        opened("Change Startup Mount Point", "change startup mount point")
+        s.inject("key", "ctrl+a", "type", "/mnt/stick", "key", "Return")
+        opened("Disk Management", "move it now")
+        s.inject("key", "Return")
+        moved = entry.replace("dir=/mnt/USBSTICK", "dir=/mnt/stick")
+        s.wait(lambda: called(f"UpdateConfigurationItem {sdd1} {entry} -> {moved}"),
+               "UpdateConfigurationItem")  # fmt: skip
+        s.wait(lambda: calls()[-2:] == [f"Unmount {sdd1}", f"Mount {sdd1}"],
+               "the stick moved to the new folder")  # fmt: skip
+        s.log("ok: Change updated the entry and moved the stick")
+
+        # Remove, after a confirmation (No is its default).
+        s.settle("changed")
+        change_mount_point("change mount point 3")
+        s.inject("key", "alt+r")
+        opened("Remove Startup Mount Point", "remove?")
+        s.inject("key", "alt+y")
+        s.wait(lambda: called(f"RemoveConfigurationItem {sdd1} {moved}"),
+               "RemoveConfigurationItem")  # fmt: skip
+        s.log("ok: Remove removed the entry")
+
+        # Format: FAT32, 4096 bytes (after Default, the sizes from the
+        # disk's sector size up: 512, 1024, 2048, 4096), quick format
+        # unticked; it's mounted, so unmounted first. The sector size is
+        # read from sysfs, by the device's name.
+        sector = 512
+        try:
+            with open("/sys/class/block/sdd/queue/logical_block_size") as f:
+                sector = int(f.read())
+        except (OSError, ValueError):
+            pass
+        s.settle("removed")
+        # The context menu: the Action menu's F is Format and Refresh both.
+        s.inject("key", "Menu", "sleep", 400, "key", "f")
+        opened("Format USBSTICK", "format")
+        s.inject("key", "alt+a", "sleep", 200)
+        for _ in [u for u in (512, 1024, 2048, 4096) if u >= sector]:
+            s.inject("key", "Down", "sleep", 100)
+        s.inject("key", "alt+q", "sleep", 200)
+        s.settle("format full 4096")
+        s.inject("key", "alt+v", "sleep", 200, "key", "Return")
+        opened("Format", "format confirm")
+        s.inject("key", "alt+y")
+        sectors = 4096 // sector
+        full = f"Format {sdd1} vfat label=USBSTICK tear-down=True erase=zero mkfs-args=-s,{sectors}"
+        s.wait(lambda: calls()[-2:] == [f"Unmount {sdd1}", full],
+               "an unmount, then a full format with 4096-byte clusters")  # fmt: skip
+        s.log("ok: a full format with 4096-byte clusters")
+        s.inject("key", "alt+F4")
+        s.wait_window(title="Disk Management", gone=True, timeout=10)
+    finally:
+        DBusTestCase.tearDownClass()
+
+
+@scenario(requires=("dbusmock",))
 def drive_rename_tools_cleanup(s):
     """My Computer's drive (on a dbusmock UDisks2, where / is sda2, label
     "root"): F2 renames it through Filesystem.SetLabel; its Properties'

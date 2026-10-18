@@ -13,6 +13,11 @@ The disks:
   sdd  16 GB USB stick (removable, ejectable): USBSTICK (FAT32)
   sr0  DVD drive without a disc
 
+/ and /boot/efi are in /etc/fstab (Block.Configuration); Add-, Update-
+and RemoveConfigurationItem change those entries (checking their types,
+and that the one updated or removed is there), and Mount mounts where
+the volume's entry says.
+
 Like UDisks2, it refuses to format, delete or shrink what's mounted,
 partitions that overlap or leave their disk, a partition shrunk below
 its filesystem, and formatting with mkntfs (missing here); and to check
@@ -119,7 +124,10 @@ def mounted(path):
 
 def block_methods():
     return [("Format", "sa{sv}", "", "xd_udisks.format(self, args)"),
-            ("AddConfigurationItem", "(sa{sv})a{sv}", "", "")]
+            ("AddConfigurationItem", "(sa{sv})a{sv}", "", "xd_udisks.config(self, None, args[0])"),
+            ("UpdateConfigurationItem", "(sa{sv})(sa{sv})a{sv}", "",
+             "xd_udisks.config(self, args[0], args[1])"),
+            ("RemoveConfigurationItem", "(sa{sv})a{sv}", "", "xd_udisks.config(self, args[0], None)")]
 
 
 def fs_props(points):
@@ -246,7 +254,7 @@ def load(mock, _parameters):
         format=do_format, mount=do_mount, unmount=do_unmount, set_label=do_set_label,
         check=do_check,
         fs_resize=do_fs_resize, delete=do_delete, part_resize=do_part_resize,
-        set_part=do_set_part, create=do_create, eject=do_eject)
+        set_part=do_set_part, create=do_create, eject=do_eject, config=do_config)
     mock.AddMethod(MOCK_IFACE, "MockCalls", "", "as", "ret = xd_udisks.calls()")
     mockobject.xd_udisks.calls = lambda: dbus.Array(state.calls, signature="s")
 
@@ -281,6 +289,9 @@ def load(mock, _parameters):
     add_partition(mock, "sda", "sda3", 3, 513 * MIB + 40 * GIB, 4 * GIB,
                   "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f", usage="other", fstype="swap",
                   swap_active=True)
+
+    add_fstab(path_of("sda1"), "UUID=uuid-sda1", "/boot/efi", "vfat", "umask=0077", 0, 2)
+    add_fstab(path_of("sda2"), "UUID=uuid-sda2", "/", "ext4", "rw,relatime", 0, 1)
 
     # sdb: MBR with an extended partition
     d = add_drive(mock, "QEMU_HARDDISK_sdb", "QEMU HARDDISK", 8 * GIB, sortkey="01sdb")
@@ -369,14 +380,24 @@ def set_fs(path, fstype, label, version=""):
 
 def do_format(self, args):
     fstype, opts = str(args[0]), args[1]
+    extra = ""
+    if "erase" in opts:
+        extra += f" erase={opts['erase']}"
+    if "mkfs-args" in opts:
+        extra += f" mkfs-args={','.join(str(a) for a in opts['mkfs-args'])}"
     log(f"Format {self.path} {fstype} label={opts.get('label', '')} "
-        f"tear-down={bool(opts.get('tear-down', False))}")
+        f"tear-down={bool(opts.get('tear-down', False))}{extra}")
     if mounted(self.path):
         fail("DeviceBusy", "Error formatting: the device is mounted")
     if SWAP in self.props and self.props[SWAP]["Active"]:
         fail("DeviceBusy", "Error formatting: the swap space is in use")
     if not FORMATS.get(fstype, fstype in ("gpt", "dos", "empty")):
         fail("Failed", f"Error formatting: mk{fstype} is not installed")
+    if opts.get("erase", "zero") != "zero":
+        fail("Failed", f"Error formatting: erase {opts['erase']} isn't supported here")
+    if opts.get("tear-down", False):
+        # The old filesystem's /etc/fstab entries go with it.
+        self.UpdateProperties(BLOCK, {"Configuration": dbus.Array([], signature="(sa{sv})")})
     if fstype in ("gpt", "dos"):
         if PART in self.props:
             fail("Failed", "Error formatting: a partition table can't go in a partition")
@@ -407,6 +428,10 @@ def do_mount(self, _args):
         fail("AlreadyMounted", "Device is already mounted")
     label = str(self.props[BLOCK]["IdLabel"]) or str(self.props[BLOCK]["IdUUID"])
     point = f"/run/media/xeon/{label}"
+    # As UDisks2 does, where /etc/fstab says.
+    for kind, details in self.props[BLOCK]["Configuration"]:
+        if kind == "fstab":
+            point = text(details["dir"])
     self.UpdateProperties(FS, {"MountPoints": dbus.Array([ay(point)], signature="ay")})
     return point
 
@@ -526,6 +551,77 @@ def do_create(self, offset, size, ptype, name, opts, fstype, fsopts):
     if fstype:
         do_format(obj(path), [fstype, fsopts])
     return dbus.ObjectPath(path)
+
+
+# ---- /etc/fstab ----------------------------------------------------------------------------
+
+FSTAB_STR = ("fsname", "dir", "type", "opts")
+FSTAB_INT = ("freq", "passno")
+
+
+def text(ay):
+    return bytes(bytearray(int(b) for b in ay)).rstrip(b"\0").decode()
+
+
+def fstab_item(fsname, dir_, fstype, opts, freq, passno):
+    return dbus.Struct(("fstab", dbus.Dictionary({
+        "fsname": ay(fsname), "dir": ay(dir_), "type": ay(fstype), "opts": ay(opts),
+        "freq": dbus.Int32(freq), "passno": dbus.Int32(passno)}, signature="sv")),
+        signature="sa{sv}")
+
+
+def add_fstab(path, *fields):
+    o = obj(path)
+    items = list(o.props[BLOCK]["Configuration"]) + [fstab_item(*fields)]
+    o.props[BLOCK]["Configuration"] = dbus.Array(items, signature="(sa{sv})")
+
+
+def fstab_fields(item):
+    """An fstab item as UDisks2 reads it: the strings as 'ay', the numbers
+    as 'i', all six there."""
+    kind, details = item
+    if kind != "fstab":
+        fail("Failed", f"only fstab entries here, not {kind}")
+    out = {}
+    for key in FSTAB_STR:
+        v = details.get(key)
+        if not isinstance(v, dbus.ByteArray) and not (isinstance(v, dbus.Array)
+                                                      and v.signature == "y"):
+            fail("Failed", f"fstab {key} must be a bytestring (ay)")
+        out[key] = text(v)
+    for key in FSTAB_INT:
+        v = details.get(key)
+        if not isinstance(v, dbus.Int32):
+            fail("Failed", f"fstab {key} must be an int32 (i)")
+        out[key] = int(v)
+    return out
+
+
+def describe(f):
+    return " ".join(f"{k}={f[k]}" for k in FSTAB_STR + FSTAB_INT)
+
+
+def do_config(self, old, new):
+    """Add (old None), Update or Remove (new None) an /etc/fstab entry."""
+    old_f = fstab_fields(old) if old is not None else None
+    new_f = fstab_fields(new) if new is not None else None
+    if new_f is None:
+        log(f"RemoveConfigurationItem {self.path} {describe(old_f)}")
+    elif old_f is None:
+        log(f"AddConfigurationItem {self.path} {describe(new_f)}")
+    else:
+        log(f"UpdateConfigurationItem {self.path} {describe(old_f)} -> {describe(new_f)}")
+    items = list(self.props[BLOCK]["Configuration"])
+    current = [fstab_fields(i) for i in items]
+    if old_f is not None:
+        if old_f not in current:
+            fail("Failed", "Didn't find the entry to remove in /etc/fstab")
+        del items[current.index(old_f)]
+    if new_f is not None:
+        if not new_f["dir"].startswith("/"):
+            fail("Failed", "the mount point must be an absolute path")
+        items.append(fstab_item(*(new_f[k] for k in FSTAB_STR + FSTAB_INT)))
+    self.UpdateProperties(BLOCK, {"Configuration": dbus.Array(items, signature="(sa{sv})")})
 
 
 def do_eject(self, _args):

@@ -479,3 +479,136 @@ bool xd_part_type_is_esp(const char *id) {
     return id != nullptr && (g_ascii_strcasecmp(id, "c12a7328-f81f-11d2-ba4b-00a0c93ec93b") == 0 ||
                              g_ascii_strcasecmp(id, "0xef") == 0);
 }
+
+/* ---- Disk Management: startup mount points, format options ------------------------------ */
+
+bool xd_udisks_version_at_least(const char *version, int major, int minor) {
+    if (version == nullptr)
+        return false;
+    char *end = nullptr;
+    long ma = strtol(version, &end, 10);
+    if (end == version)
+        return false;
+    long mi = *end == '.' ? strtol(end + 1, nullptr, 10) : 0;
+    return ma > major || (ma == major && mi >= minor);
+}
+
+char *xd_fstab_dir_clean(const char *typed) {
+    char *dir = g_strstrip(g_strdup(typed != nullptr ? typed : ""));
+    size_t len = strlen(dir);
+    while (len > 1 && dir[len - 1] == '/')
+        dir[--len] = '\0';
+    return dir;
+}
+
+const char *xd_fstab_dir_problem(const char *dir) {
+    if (dir == nullptr || dir[0] == '\0')
+        return "Type the folder to mount the volume in.";
+    if (dir[0] != '/')
+        return "The folder must be a full path, starting with /.";
+    for (const char *c = dir; *c != '\0'; c++)
+        if (g_ascii_iscntrl(*c))
+            return "The folder's name can't have tabs or line breaks in it.";
+    char **parts = g_strsplit(dir, "/", -1);
+    bool dots = false;
+    for (char **p = parts; *p != nullptr; p++)
+        dots |= strcmp(*p, ".") == 0 || strcmp(*p, "..") == 0;
+    g_strfreev(parts);
+    if (dots)
+        return "The folder must be a full path without . or .. in it.";
+    /* Mounting over these would hide what the running system needs. */
+    static const char *const kept[] = {"/bin",  "/etc",   "/lib",       "/lib64", "/sbin", "/run",
+                                       "/tmp",  "/mnt",   "/media",     "/var/tmp",
+                                       "/run/media", nullptr};
+    if (xd_mount_is_system(dir) || g_strv_contains(kept, dir))
+        return "The running system uses that folder. Choose an empty folder of your own, such "
+               "as one in /mnt.";
+    static const char *const below[] = {"/proc", "/sys", "/dev", "/etc", "/usr", "/boot", nullptr};
+    for (size_t i = 0; below[i] != nullptr; i++) {
+        size_t n = strlen(below[i]);
+        if (strncmp(dir, below[i], n) == 0 && (dir[n] == '\0' || dir[n] == '/'))
+            return "The running system keeps that folder for itself. Choose an empty folder of "
+                   "your own, such as one in /mnt.";
+    }
+    return nullptr;
+}
+
+char *xd_fstab_suggest_dir(const char *label, const char *device) {
+    const char *name = label;
+    if (name == nullptr || name[0] == '\0') {
+        const char *slash = device != nullptr ? strrchr(device, '/') : nullptr;
+        name = slash != nullptr ? slash + 1 : device;
+    }
+    if (name == nullptr || name[0] == '\0')
+        name = "volume";
+    GString *s = g_string_new("/mnt/");
+    for (const char *c = name; *c != '\0'; c++)
+        g_string_append_c(s, g_ascii_isalnum(*c) || *c == '.' || *c == '_' || *c == '-' ? *c
+                                                                                       : '_');
+    /* "." or ".." alone isn't a folder's name. */
+    if (strcmp(s->str, "/mnt/.") == 0 || strcmp(s->str, "/mnt/..") == 0)
+        g_string_assign(s, "/mnt/volume");
+    return g_string_free(s, FALSE);
+}
+
+char *xd_fstab_default_options(const char *id_type, guint uid, guint gid) {
+    static const char *const ownerless[] = {"vfat", "exfat", "ntfs", "ntfs3", nullptr};
+    if (id_type != nullptr && g_strv_contains(ownerless, id_type))
+        return g_strdup_printf("nofail,x-mount.mkdir,uid=%u,gid=%u", uid, gid);
+    return g_strdup("nofail,x-mount.mkdir");
+}
+
+/* XP's lists: NTFS 512 bytes to 64K, FAT32 to 32K (FAT's own limit),
+ * exFAT to 32 MB; ext4 and XFS up to the page size Linux mounts. */
+static const guint units_ext[] = {1024, 2048, 4096, 0};
+static const guint units_fat[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 0};
+static const guint units_ntfs[] = {512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 0};
+static const guint units_exfat[] = {512,     1024,    2048,     4096,     8192,     16384,
+                                    32768,   65536,   131072,   262144,   524288,   1048576,
+                                    2097152, 4194304, 8388608,  16777216, 33554432, 0};
+
+const guint *xd_format_unit_sizes(const char *type) {
+    if (g_strcmp0(type, "ext4") == 0 || g_strcmp0(type, "xfs") == 0)
+        return units_ext;
+    if (g_strcmp0(type, "vfat") == 0)
+        return units_fat;
+    if (g_strcmp0(type, "ntfs") == 0)
+        return units_ntfs;
+    if (g_strcmp0(type, "exfat") == 0)
+        return units_exfat;
+    /* Btrfs's sector size has to be the page size; swap has no clusters. */
+    return nullptr;
+}
+
+char *xd_format_unit_label(guint bytes) {
+    return bytes < 16384 ? g_strdup_printf("%u bytes", bytes)
+                         : g_strdup_printf("%uK", bytes / 1024);
+}
+
+char **xd_format_unit_args(const char *type, guint bytes, guint sector_size) {
+    const guint *sizes = xd_format_unit_sizes(type);
+    bool listed = false;
+    for (size_t i = 0; sizes != nullptr && sizes[i] != 0; i++)
+        listed |= sizes[i] == bytes;
+    if (!listed || sector_size == 0 || bytes < sector_size)
+        return nullptr;
+    char *flag, *value;
+    if (strcmp(type, "vfat") == 0) {
+        /* mkfs.fat counts sectors per cluster, at most 128. */
+        if (bytes / sector_size > 128)
+            return nullptr;
+        flag = g_strdup("-s");
+        value = g_strdup_printf("%u", bytes / sector_size);
+    } else if (strcmp(type, "xfs") == 0) {
+        flag = g_strdup("-b");
+        value = g_strdup_printf("size=%u", bytes);
+    } else {
+        /* mke2fs -b, mkntfs -c and exfatprogs' mkfs.exfat -c take bytes. */
+        flag = g_strdup(strcmp(type, "ext4") == 0 ? "-b" : "-c");
+        value = g_strdup_printf("%u", bytes);
+    }
+    char **args = g_new0(char *, 3);
+    args[0] = flag;
+    args[1] = value;
+    return args;
+}

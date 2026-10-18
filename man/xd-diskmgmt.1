@@ -8,10 +8,26 @@ xd\-diskmgmt \- Disk Management
 .B xd\-diskmgmt
 is Windows XP's Disk Management, over UDisks2: the volume list above and
 the disk map below, in XP's colours.
-It initializes disks (GPT or MBR), creates, deletes, formats (quick
-format only), extends and shrinks partitions, changes labels and
-partition types, marks partitions active, mounts and unmounts them, and
-ejects media.
+It initializes disks (GPT or MBR), creates, deletes, formats (quick, or
+full: zeros written over the whole volume first; with a choice of
+allocation unit size where the file system has one), extends and shrinks
+partitions, changes labels and partition types, marks partitions active,
+mounts and unmounts them, and ejects media.
+.PP
+Change Mount Point adds, changes and removes the folder a volume is
+mounted in when the computer starts: an
+.BR fstab (5)
+entry, which UDisks2 writes, naming the volume by its UUID, with the
+options
+.B nofail
+(the computer still starts without the disk) and
+.B x\-mount.mkdir
+(the folder is made if it's missing), and for FAT, exFAT and NTFS
+.B uid
+and
+.B gid
+so the files are yours.
+The system's own entries can't be changed here.
 .PP
 Everything goes through UDisks2, which asks polkit, so
 .BR xd\-polkit (1)
