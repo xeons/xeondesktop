@@ -267,7 +267,7 @@ static GtkWidget *name_page(add_wizard *a) {
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    grid_entry(grid, 0, "Printer _name:", &a->name);
+    grid_entry(grid, 0, "_Printer name:", &a->name);
     grid_entry(grid, 1, "_Location:", &a->location);
     grid_entry(grid, 2, "_Comment:", &a->comment);
     gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 4);
