@@ -574,6 +574,129 @@ void xd_theme_draw_focus_rect(const xd_theme *t, cairo_t *cr, xd_rect r) {
     cairo_restore(cr);
 }
 
+/* Classic's 12x12 radio button, as DrawFrameControl draws it from Marlett's
+ * pieces: an outer ring of Shadow over Hilight, an inner one of DkShadow
+ * over Light (top-left over bottom-right), the well, and a 4x4 dot. */
+static const char *const radio_rows[12] = {
+    "....SSSS....", "..SSDDDDSS..", ".SDDWWWWLLH.", ".SDWWWWWWLH.",
+    "SDWWWWWWWWLH", "SDWWWWWWWWLH", "SDWWWWWWWWLH", "SDWWWWWWWWLH",
+    ".SDWWWWWWLH.", ".SLLWWWWLLH.", "..HHLLLLHH..", "....HHHH....",
+};
+static const char *const radio_dot[4] = {".##.", "####", "####", ".##."};
+
+static void classic_radio(const xd_theme *t, cairo_t *cr, xd_rect b, uint8_t state) {
+    bool disabled = state & XD_STATE_DISABLED;
+    xd_rgba well = xd_sys(t, (disabled || (state & XD_STATE_PRESSED)) ? XD_COLOR_BUTTON_FACE
+                                                                     : XD_COLOR_WINDOW);
+    xd_rgba dot = xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_WINDOW_TEXT);
+    double k = b.w / 12.0;
+    for (int y = 0; y < 12; y++) {
+        for (int x = 0; x < 12; x++) {
+            xd_rgba c;
+            switch (radio_rows[y][x]) {
+            case 'S':
+                c = xd_sys(t, XD_COLOR_BUTTON_SHADOW);
+                break;
+            case 'D':
+                c = xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW);
+                break;
+            case 'H':
+                c = xd_sys(t, XD_COLOR_BUTTON_HILIGHT);
+                break;
+            case 'L':
+                c = xd_sys(t, XD_COLOR_BUTTON_LIGHT);
+                break;
+            case 'W':
+                c = well;
+                if ((state & XD_STATE_CHECKED) && x >= 4 && x < 8 && y >= 4 && y < 8 &&
+                    radio_dot[y - 4][x - 4] == '#')
+                    c = dot;
+                break;
+            default:
+                continue;
+            }
+            /* Each design pixel covers whole device pixels, edges shared. */
+            int x0 = b.x + (int)lround(x * k);
+            int y0 = b.y + (int)lround(y * k);
+            int x1 = b.x + (int)lround((x + 1) * k);
+            int y1 = b.y + (int)lround((y + 1) * k);
+            xd_fill_rect(cr, (xd_rect){x0, y0, x1 - x0, y1 - y0}, c);
+        }
+    }
+}
+
+/* The flat styles' 13x13 round button: the check box's border and shading
+ * (XP's light-grey to white), its hover ring, and a dot in the check mark's
+ * colour. */
+static void flat_radio(const xd_theme *t, cairo_t *cr, xd_rect b, uint8_t state) {
+    xd_toolkit_colors c;
+    xd_theme_toolkit_colors(t, &c);
+    bool disabled = state & XD_STATE_DISABLED;
+    double px = xd_tpx(t, 1);
+    double cx = b.x + b.w / 2.0;
+    double cy = b.y + b.h / 2.0;
+    double r = b.w / 2.0;
+    cairo_save(cr);
+    cairo_new_path(cr);
+    cairo_arc(cr, cx, cy, r - px / 2, 0, 2 * XD_PI);
+    if (disabled) {
+        xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
+        cairo_fill_preserve(cr);
+    } else {
+        xd_rgba top = xd_rgba_hex((state & XD_STATE_PRESSED) ? 0xB0B0A7 : 0xDCDCD7);
+        cairo_pattern_t *g = cairo_pattern_create_linear(b.x, b.y, b.x + b.w, b.y + b.h);
+        cairo_pattern_add_color_stop_rgba(g, 0, top.r, top.g, top.b, 1);
+        cairo_pattern_add_color_stop_rgba(g, 1, 1, 1, 1, 1);
+        cairo_set_source(cr, g);
+        cairo_fill_preserve(cr);
+        cairo_pattern_destroy(g);
+    }
+    xd_set_color(cr, disabled ? c.disabled : c.check_border);
+    cairo_set_line_width(cr, px);
+    cairo_stroke(cr);
+    if (!disabled && (state & XD_STATE_HOT)) {
+        cairo_arc(cr, cx, cy, r - 2 * px, 0, 2 * XD_PI);
+        xd_set_color(cr, c.button_hot);
+        cairo_set_line_width(cr, 2 * px);
+        cairo_stroke(cr);
+    }
+    if (state & XD_STATE_CHECKED) {
+        cairo_arc(cr, cx, cy, 2.5 * px, 0, 2 * XD_PI);
+        xd_set_color(cr, disabled ? c.disabled : c.check_mark);
+        cairo_fill(cr);
+    }
+    cairo_restore(cr);
+}
+
+void xd_theme_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                         const char *label) {
+    /* The button sits where a check box's box does, so their labels line up. */
+    int slot = xd_tpx(t, 13);
+    bool disabled = state & XD_STATE_DISABLED;
+    if (classic(t)) {
+        int box = xd_tpx(t, 12);
+        classic_radio(t, cr, (xd_rect){r.x, r.y + (r.h - box) / 2, box, box}, state);
+    } else {
+        flat_radio(t, cr, (xd_rect){r.x, r.y + (r.h - slot) / 2, slot, slot}, state);
+    }
+    xd_rgba fg = xd_sys(t, XD_COLOR_WINDOW_TEXT);
+    if (disabled) {
+        xd_toolkit_colors c;
+        xd_theme_toolkit_colors(t, &c);
+        fg = classic(t) ? xd_sys(t, XD_COLOR_GRAY_TEXT) : c.disabled;
+    }
+    int gap = xd_tpx(t, 5);
+    xd_rect text = {r.x + slot + gap, r.y, r.w - slot - gap, r.h};
+    xd_text_style st = xd_text(t, XD_FONT_MESSAGE, fg, XD_ALIGN_START);
+    xd_draw_text(cr, text, label, &st);
+    if (state & XD_STATE_FOCUSED) {
+        int w = XD_MIN(xd_text_width(cr, label, &st), text.w);
+        xd_theme_draw_focus_rect(t, cr,
+                                 (xd_rect){text.x - xd_tpx(t, 1), r.y + xd_tpx(t, 2),
+                                           w + xd_tpx(t, 3), r.h - xd_tpx(t, 4)});
+    }
+}
+
 void xd_theme_draw_label(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text, bool wrap,
                          bool bold, bool disabled) {
     xd_font_spec font = t->scheme.fonts[XD_FONT_MESSAGE];

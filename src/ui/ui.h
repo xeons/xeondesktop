@@ -151,6 +151,17 @@ xd_widget *xd_checkbox(xd_window *win, xd_rect r, const char *label, bool checke
 bool xd_checkbox_checked(const xd_widget *w);
 void xd_checkbox_set(xd_widget *w, bool checked);
 
+/* Radio buttons. A group starts at a button made with `group` set (Windows'
+ * WS_GROUP) and runs through the radio buttons added right after it;
+ * checking one unchecks the others. Tab stops only at the group's checked
+ * button; the arrow keys move round the group and check as they go.
+ * on_change runs for the button that became checked; xd_checkbox_checked
+ * reads a radio button too. */
+xd_widget *xd_radio(xd_window *win, xd_rect r, const char *label, bool group,
+                    xd_widget_cb on_change, void *user);
+/* Checks w and unchecks the rest of its group (on_change doesn't run). */
+void xd_radio_set(xd_widget *w);
+
 /* Single-selection list with a scroll bar. */
 xd_widget *xd_listbox(xd_window *win, xd_rect r, xd_widget_cb on_change, void *user);
 xd_widget *xd_groupbox(xd_window *win, xd_rect r, const char *label);
@@ -188,6 +199,10 @@ size_t xd_widget_item_count(const xd_widget *w);
 const char *xd_widget_text(xd_widget *w);
 void xd_widget_set_text(xd_widget *w, const char *text);
 void xd_widget_set_enabled(xd_widget *w, bool enabled);
+/* A tooltip, shown when the pointer rests on the widget for half a second
+ * (in the active window), as Windows' tooltip controls do; nullptr or ""
+ * removes it. Any widget can have one, labels and images too. */
+void xd_widget_set_tooltip(xd_widget *w, const char *text);
 xd_window *xd_widget_window(xd_widget *w);
 
 #endif

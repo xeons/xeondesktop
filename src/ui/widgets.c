@@ -75,13 +75,76 @@ static bool is_focusable(const xd_widget *w) {
     return w->enabled && is_visible(w) &&
            (w->kind == XD_W_BUTTON || w->kind == XD_W_EDIT || w->kind == XD_W_COMBO ||
             w->kind == XD_W_TABS || w->kind == XD_W_CHECKBOX || w->kind == XD_W_LISTBOX ||
-            w->kind == XD_W_SLIDER);
+            w->kind == XD_W_SLIDER || w->kind == XD_W_RADIO);
 }
 
 /* Drawn differently under the pointer, so hovering it needs a redraw. */
 static bool draws_hot(const xd_widget *w) {
-    return w != nullptr &&
-           (w->kind == XD_W_BUTTON || w->kind == XD_W_CHECKBOX || w->kind == XD_W_COMBO);
+    return w != nullptr && (w->kind == XD_W_BUTTON || w->kind == XD_W_CHECKBOX ||
+                            w->kind == XD_W_COMBO || w->kind == XD_W_RADIO);
+}
+
+/* ---- radio button groups ---------------------------------------------------------- */
+
+enum { RADIO_GROUP_START = 1u << 0 }; /* xd_widget.flags of a radio button */
+
+static size_t widget_index(const xd_window *win, const xd_widget *w) {
+    for (size_t i = 0; i < win->count; i++) {
+        if (win->widgets[i] == w)
+            return i;
+    }
+    XD_ASSERT(false);
+    return 0;
+}
+
+/* The radio buttons of w's group: widgets [*first, *end). A group starts at
+ * a button made with `group` set, or after any other kind of widget. */
+static void radio_group(const xd_widget *w, size_t *first, size_t *end) {
+    const xd_window *win = w->win;
+    size_t i = widget_index(win, w);
+    size_t s = i;
+    while (s > 0 && !(win->widgets[s]->flags & RADIO_GROUP_START) &&
+           win->widgets[s - 1]->kind == XD_W_RADIO)
+        s--;
+    size_t e = i + 1;
+    while (e < win->count && win->widgets[e]->kind == XD_W_RADIO &&
+           !(win->widgets[e]->flags & RADIO_GROUP_START))
+        e++;
+    *first = s;
+    *end = e;
+}
+
+/* Tab stops at a group's checked button (or its first, if none is), as in
+ * a Windows dialog; the arrow keys reach the others. */
+static bool is_tab_stop(const xd_widget *w) {
+    if (!is_focusable(w))
+        return false;
+    if (w->kind != XD_W_RADIO || w->checked)
+        return true;
+    size_t first;
+    size_t end;
+    radio_group(w, &first, &end);
+    const xd_widget *stop = nullptr;
+    for (size_t i = first; i < end; i++) {
+        const xd_widget *r = w->win->widgets[i];
+        if (r->checked && is_focusable(r))
+            return false;
+        if (stop == nullptr && is_focusable(r))
+            stop = r;
+    }
+    return stop == w;
+}
+
+/* Checks w and unchecks the rest of its group. Returns whether w changed. */
+static bool radio_check(xd_widget *w) {
+    size_t first;
+    size_t end;
+    radio_group(w, &first, &end);
+    bool changed = !w->checked;
+    for (size_t i = first; i < end; i++)
+        w->win->widgets[i]->checked = w->win->widgets[i] == w;
+    w->win->dirty = true;
+    return changed;
 }
 
 /* Takes clicks without taking keyboard focus. */
@@ -488,7 +551,8 @@ static void draw_widget(xd_window *win, const xd_theme *t, cairo_t *cr, xd_widge
         }
         break;
     }
-    case XD_W_CHECKBOX: {
+    case XD_W_CHECKBOX:
+    case XD_W_RADIO: {
         uint8_t state = w->checked ? XD_STATE_CHECKED : 0;
         if (focused)
             state |= XD_STATE_FOCUSED;
@@ -498,7 +562,10 @@ static void draw_widget(xd_window *win, const xd_theme *t, cairo_t *cr, xd_widge
             state |= XD_STATE_PRESSED;
         if (!w->enabled)
             state |= XD_STATE_DISABLED;
-        xd_theme_draw_checkbox(t, cr, r, state, w->text);
+        if (w->kind == XD_W_RADIO)
+            xd_theme_draw_radio(t, cr, r, state, w->text);
+        else
+            xd_theme_draw_checkbox(t, cr, r, state, w->text);
         break;
     }
     case XD_W_LISTBOX: {
@@ -623,6 +690,7 @@ void xd_window_render(xd_window *win) {
 /* ---- drop-down list popup ------------------------------------------------------- */
 
 static void popup_close(xd_window *win);
+static void tip_hide(xd_window *win);
 
 static bool popup_has_scrollbar(const xd_listpopup *p) { return (int)p->combo->count > p->rows; }
 
@@ -743,6 +811,7 @@ static void popup_open(xd_window *win, xd_widget *combo) {
     xd_ui *ui = win->ui;
     if (combo->count == 0 || win->popup != nullptr)
         return;
+    tip_hide(win);
     xd_listpopup *p = XD_NEW(xd_listpopup);
     p->owner = win;
     p->combo = combo;
@@ -917,6 +986,206 @@ void xd_popup_pointer_axis(xd_listpopup *p, double value) {
     popup_set_first(p, p->first + (value > 0 ? 1 : -1));
 }
 
+/* ---- tooltips ----------------------------------------------------------------------- */
+
+/* As in Windows (TTM_SETDELAYTIME's defaults): shown after half a second's
+ * hover, gone after five; 4px of padding, the scheme's InfoWindow colours
+ * and a border in InfoText, like the taskbar's. */
+enum { TIP_INITIAL_MS = 500, TIP_AUTOPOP_MS = 5000, TIP_PAD_X = 4, TIP_BELOW_POINTER = 20 };
+
+static char *copy_str(const char *s);
+
+static xd_text_style tip_text_style(const xd_theme *t) {
+    return xd_text(t, XD_FONT_TOOLTIP, xd_sys(t, XD_COLOR_INFO_TEXT), XD_ALIGN_START);
+}
+
+void xd_tooltip_render(xd_tooltip *tip) {
+    if (tip->frame != nullptr)
+        return;
+    xd_ui *ui = tip->owner->ui;
+    double s = tip->scale;
+    int dw = dev(tip->width, s);
+    int dh = dev(tip->height, s);
+    xd_shm_buffer *buf = xd_shm_ring_acquire(&tip->ring, ui->shm, dw, dh);
+    if (buf == nullptr)
+        return;
+    xd_theme t;
+    xd_theme_init(&t, ui->style, &ui->scheme, s);
+    cairo_t *cr = cairo_create(buf->surface);
+    xd_rect all = {0, 0, dw, dh};
+    xd_fill_rect(cr, all, xd_sys(&t, XD_COLOR_INFO_WINDOW));
+    xd_rgba edge = xd_sys(&t, XD_COLOR_INFO_TEXT);
+    xd_draw_bevel(cr, all, xd_tpx(&t, 1), edge, edge);
+    xd_text_style st = tip_text_style(&t);
+    xd_draw_text(cr, xd_rect_inset(all, xd_tpx(&t, TIP_PAD_X), 0), tip->text, &st);
+    cairo_destroy(cr);
+    cairo_surface_flush(buf->surface);
+
+    wl_surface_attach(tip->surface, buf->buffer, 0, 0);
+    wl_surface_damage_buffer(tip->surface, 0, 0, dw, dh);
+    if (tip->viewport != nullptr)
+        wp_viewport_set_destination(tip->viewport, tip->width, tip->height);
+    request_frame(tip->surface, &tip->frame);
+    wl_surface_commit(tip->surface);
+    buf->busy = true;
+    tip->dirty = false;
+}
+
+static void tip_xdg_configure(void *data, struct xdg_surface *xdg, uint32_t serial) {
+    xd_tooltip *tip = data;
+    xdg_surface_ack_configure(xdg, serial);
+    tip->configured = true;
+    tip->dirty = true;
+}
+
+static const struct xdg_surface_listener tip_xdg_listener = {.configure = tip_xdg_configure};
+
+static void tip_popup_done(void *data, [[maybe_unused]] struct xdg_popup *x) {
+    tip_hide(((xd_tooltip *)data)->owner);
+}
+
+static void tip_popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *x,
+                                [[maybe_unused]] int32_t px, [[maybe_unused]] int32_t py,
+                                [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+
+static const struct xdg_popup_listener tip_popup_listener = {
+    .configure = tip_popup_configure,
+    .popup_done = tip_popup_done,
+    .repositioned = popup_repositioned,
+};
+
+static void tip_scale(void *data, [[maybe_unused]] struct wp_fractional_scale_v1 *f,
+                      uint32_t scale_120) {
+    xd_tooltip *tip = data;
+    double s = scale_120 / 120.0;
+    if (s >= 0.5 && s <= 8.0 && s != tip->scale) {
+        tip->scale = s;
+        tip->dirty = true;
+    }
+}
+
+static const struct wp_fractional_scale_v1_listener tip_fractional_listener = {
+    .preferred_scale = tip_scale,
+};
+
+static void tip_cancel_timer(xd_window *win) {
+    xd_ui_remove_source(win->tip_timer);
+    win->tip_timer = nullptr;
+}
+
+/* Takes the tip down; it shows again only once the pointer rests on
+ * another widget. */
+static void tip_hide(xd_window *win) {
+    tip_cancel_timer(win);
+    xd_tooltip *tip = win->tip;
+    if (tip == nullptr)
+        return;
+    win->tip = nullptr;
+    cancel_frame(&tip->frame);
+    xdg_popup_destroy(tip->popup);
+    xdg_surface_destroy(tip->xdg_surface);
+    if (tip->viewport != nullptr)
+        wp_viewport_destroy(tip->viewport);
+    if (tip->fractional != nullptr)
+        wp_fractional_scale_v1_destroy(tip->fractional);
+    wl_surface_destroy(tip->surface);
+    xd_shm_ring_finish(&tip->ring);
+    xd_free(tip->text);
+    xd_free(tip);
+}
+
+static void tip_autopop(void *user) {
+    xd_window *win = user;
+    win->tip_timer = nullptr; /* a one-shot, already finished */
+    tip_hide(win);
+}
+
+static void tip_show(void *user) {
+    xd_window *win = user;
+    win->tip_timer = nullptr;
+    xd_ui *ui = win->ui;
+    xd_widget *w = win->tip_widget;
+    if (w == nullptr || w->tooltip == nullptr || win->popup != nullptr || win->tip != nullptr ||
+        !win->active)
+        return;
+    xd_tooltip *tip = XD_NEW(xd_tooltip);
+    tip->owner = win;
+    tip->scale = win->scale;
+    tip->text = copy_str(w->tooltip);
+
+    /* Size in logical px, measured at scale 1. */
+    xd_theme t1;
+    xd_theme_init(&t1, ui->style, &ui->scheme, 1.0);
+    cairo_surface_t *probe = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+    cairo_t *cr = cairo_create(probe);
+    xd_text_style st = tip_text_style(&t1);
+    tip->width = xd_text_width(cr, tip->text, &st) + 2 * TIP_PAD_X + 2;
+    cairo_destroy(cr);
+    cairo_surface_destroy(probe);
+    tip->height = xd_metric_px(&t1, XD_METRIC_MENU_HEIGHT) + 1; /* 19px, as XP's */
+
+    tip->surface = wl_compositor_create_surface(ui->compositor);
+    /* The pointer goes through it to the widget underneath. */
+    struct wl_region *none = wl_compositor_create_region(ui->compositor);
+    wl_surface_set_input_region(tip->surface, none);
+    wl_region_destroy(none);
+    if (ui->fractional_manager != nullptr && ui->viewporter != nullptr) {
+        tip->fractional =
+            wp_fractional_scale_manager_v1_get_fractional_scale(ui->fractional_manager, tip->surface);
+        wp_fractional_scale_v1_add_listener(tip->fractional, &tip_fractional_listener, tip);
+        tip->viewport = wp_viewporter_get_viewport(ui->viewporter, tip->surface);
+    }
+    tip->xdg_surface = xdg_wm_base_get_xdg_surface(ui->wm_base, tip->surface);
+    xdg_surface_add_listener(tip->xdg_surface, &tip_xdg_listener, tip);
+
+    /* Under the pointer, clear of the arrow, as Windows places it. */
+    struct xdg_positioner *pos = xdg_wm_base_create_positioner(ui->wm_base);
+    xdg_positioner_set_size(pos, tip->width, tip->height);
+    xdg_positioner_set_anchor_rect(pos, (int)ui->pointer_x, (int)ui->pointer_y, 1, 1);
+    xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_TOP_LEFT);
+    xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
+    xdg_positioner_set_offset(pos, 0, TIP_BELOW_POINTER);
+    xdg_positioner_set_constraint_adjustment(pos,
+                                             XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |
+                                                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y |
+                                                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
+    tip->popup = xdg_surface_get_popup(tip->xdg_surface, win->xdg_surface, pos);
+    xdg_positioner_destroy(pos);
+    xdg_popup_add_listener(tip->popup, &tip_popup_listener, tip);
+    wl_surface_commit(tip->surface);
+    win->tip = tip;
+    win->tip_timer = xd_ui_add_timer(ui, TIP_AUTOPOP_MS, false, tip_autopop, win);
+}
+
+/* The topmost shown widget with a tooltip at window-local (x, y). */
+static xd_widget *tip_widget_at(xd_window *win, double x, double y) {
+    for (size_t i = win->count; i-- > 0;) {
+        xd_widget *w = win->widgets[i];
+        if (w->tooltip != nullptr && is_visible(w) && contains(w->r, x, y))
+            return w;
+    }
+    return nullptr;
+}
+
+/* Pointer motion over the window: arms the tip of the widget it's now on. */
+static void tip_track(xd_window *win, double x, double y) {
+    xd_widget *w = tip_widget_at(win, x, y);
+    if (w == win->tip_widget)
+        return;
+    tip_hide(win);
+    win->tip_widget = w;
+    if (w != nullptr)
+        win->tip_timer = xd_ui_add_timer(win->ui, TIP_INITIAL_MS, false, tip_show, win);
+}
+
+void xd_widget_set_tooltip(xd_widget *w, const char *text) {
+    XD_FREE(&w->tooltip);
+    if (text != nullptr && text[0] != '\0')
+        w->tooltip = copy_str(text);
+    if (w->win->tip_widget == w)
+        tip_hide(w->win);
+}
+
 /* ---- window lifecycle --------------------------------------------------------- */
 
 static void xdg_configure(void *data, struct xdg_surface *xdg, uint32_t serial) {
@@ -1004,13 +1273,14 @@ xd_window *xd_window_create(xd_ui *ui, const char *title, const char *app_id, in
 void xd_window_show(xd_window *win) {
     /* Focus the first focusable widget if the caller didn't pick one. */
     for (size_t i = 0; win->focus == nullptr && i < win->count; i++) {
-        if (is_focusable(win->widgets[i]))
+        if (is_tab_stop(win->widgets[i]))
             xd_window_set_focus(win, win->widgets[i]);
     }
     wl_surface_commit(win->surface);
 }
 
 static void widget_free(xd_widget *w) {
+    XD_FREE(&w->tooltip);
     XD_FREE(&w->text);
     XD_FREE(&w->text2);
     xd_textedit_free(&w->edit);
@@ -1024,6 +1294,7 @@ static void widget_free(xd_widget *w) {
 
 void xd_window_close(xd_window *win) {
     xd_ui *ui = win->ui;
+    tip_hide(win);
     popup_close(win);
     if (ui->pointer_window == win)
         ui->pointer_window = nullptr;
@@ -1236,6 +1507,21 @@ void xd_checkbox_set(xd_widget *w, bool checked) {
     w->win->dirty = true;
 }
 
+xd_widget *xd_radio(xd_window *win, xd_rect r, const char *label, bool group,
+                    xd_widget_cb on_change, void *user) {
+    xd_widget *w = add(win, XD_W_RADIO, r);
+    w->text = copy_str(label);
+    w->flags = group ? RADIO_GROUP_START : 0;
+    w->cb = on_change;
+    w->user = user;
+    return w;
+}
+
+void xd_radio_set(xd_widget *w) {
+    XD_ASSERT(w->kind == XD_W_RADIO);
+    radio_check(w);
+}
+
 xd_widget *xd_listbox(xd_window *win, xd_rect r, xd_widget_cb on_change, void *user) {
     xd_widget *w = add(win, XD_W_LISTBOX, r);
     w->cb = on_change;
@@ -1297,6 +1583,7 @@ const char *xd_widget_text(xd_widget *w) {
     case XD_W_GROUPBOX:
     case XD_W_CUSTOM:
     case XD_W_SLIDER:
+    case XD_W_RADIO:
         break;
     }
     return w->text != nullptr ? w->text : "";
@@ -1414,15 +1701,20 @@ void xd_window_pointer_motion(xd_window *win, double x, double y) {
         win->hot = hot;
     }
     xd_ui_set_cursor_text(win->ui, over_text(win, hot, x, y));
+    tip_track(win, x, y);
 }
 
 void xd_window_pointer_leave(xd_window *win) {
     if (draws_hot(win->hot))
         win->dirty = true;
     win->hot = nullptr;
+    tip_hide(win);
+    win->tip_widget = nullptr;
 }
 
 void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
+    if (pressed)
+        tip_hide(win); /* and it stays away until the pointer moves on */
     if (win->popup != nullptr && win->popup->sb_pressed != SB_NONE) {
         /* The end of a scroll bar drag that left the list (or, on a press,
          * one whose release went to another program). */
@@ -1462,6 +1754,9 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
         } else if (released_over && target->kind == XD_W_CHECKBOX) {
             target->checked = !target->checked;
             select_changed(target); /* may close the window */
+        } else if (released_over && target->kind == XD_W_RADIO) {
+            if (radio_check(target))
+                select_changed(target); /* may close the window */
         }
         return;
     }
@@ -1547,7 +1842,7 @@ static void focus_step(xd_window *win, int dir) {
     size_t i = start;
     for (size_t tries = 0; tries < n; tries++) {
         i = dir > 0 ? (i + 1) % n : (i + n - 1) % n;
-        if (is_focusable(win->widgets[i])) {
+        if (is_tab_stop(win->widgets[i])) {
             xd_window_set_focus(win, win->widgets[i]);
             return;
         }
@@ -1666,6 +1961,7 @@ static void combo_step(xd_widget *w, int dir) {
 }
 
 void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t mods) {
+    tip_hide(win); /* any key puts a tooltip away */
     xd_widget *f = win->focus;
     bool alt = mods & XD_MOD_ALT;
 
@@ -1770,6 +2066,31 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
         if (sym == XKB_KEY_space) {
             f->checked = !f->checked;
             select_changed(f);
+        }
+        return;
+    }
+    if (f->kind == XD_W_RADIO) {
+        int dir = sym == XKB_KEY_Down || sym == XKB_KEY_Right ? 1
+                  : sym == XKB_KEY_Up || sym == XKB_KEY_Left  ? -1
+                                                              : 0;
+        xd_widget *target = sym == XKB_KEY_space ? f : nullptr;
+        if (dir != 0) {
+            /* The arrows go round the group, checking as they go. */
+            size_t first;
+            size_t end;
+            radio_group(f, &first, &end);
+            size_t n = end - first;
+            size_t i = widget_index(win, f) - first;
+            for (size_t tries = 1; tries < n && target == nullptr; tries++) {
+                size_t j = first + (dir > 0 ? (i + tries) % n : (i + n - tries) % n);
+                if (is_focusable(win->widgets[j]))
+                    target = win->widgets[j];
+            }
+        }
+        if (target != nullptr) {
+            xd_window_set_focus(win, target);
+            if (radio_check(target))
+                select_changed(target); /* may close the window */
         }
         return;
     }

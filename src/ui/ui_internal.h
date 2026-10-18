@@ -27,6 +27,7 @@ typedef enum xd_widget_kind : uint8_t {
     XD_W_GROUPBOX,
     XD_W_CUSTOM,
     XD_W_SLIDER,
+    XD_W_RADIO,
 } xd_widget_kind;
 
 struct xd_widget {
@@ -57,6 +58,7 @@ struct xd_widget {
     bool checked;  /* checkbox */
     xd_draw_cb draw;
     xd_pointer_cb pointer; /* custom: mouse input */
+    char *tooltip; /* shown after hovering, or nullptr */
     int smin, smax, svalue; /* slider */
 };
 
@@ -86,6 +88,24 @@ typedef struct xd_listpopup {
     xd_ui_source *sb_repeat;  /* auto-repeat of a held arrow or track */
 } xd_listpopup;
 
+/* A widget's tooltip: a popup of its window without a grab, which takes no
+ * input. */
+typedef struct xd_tooltip {
+    xd_window *owner;
+    struct wl_surface *surface;
+    struct xdg_surface *xdg_surface;
+    struct xdg_popup *popup;
+    struct wp_fractional_scale_v1 *fractional;
+    struct wp_viewport *viewport;
+    xd_shm_ring ring;
+    struct wl_callback *frame;
+    char *text;
+    int width, height; /* logical */
+    double scale;
+    bool configured;
+    bool dirty;
+} xd_tooltip;
+
 struct xd_window {
     struct wl_list link; /* xd_ui.windows */
     xd_ui *ui;
@@ -114,6 +134,11 @@ struct xd_window {
     double thumb_offset;
     xd_widget *tabs; /* the window's tab control, if any */
     xd_listpopup *popup;
+    /* Tooltips: the widget under the pointer that has one, the timer that
+     * shows it (or, once shown, hides it again), and the tip itself. */
+    xd_widget *tip_widget;
+    xd_ui_source *tip_timer;
+    xd_tooltip *tip;
 };
 
 /* A timer or watched file descriptor. */
@@ -227,6 +252,7 @@ void xd_display_destroy(xd_ui *ui);
 /* widgets.c */
 void xd_window_render(xd_window *win);
 void xd_popup_render(xd_listpopup *p);
+void xd_tooltip_render(xd_tooltip *tip);
 xd_window *xd_window_for_surface(xd_ui *ui, struct wl_surface *s);
 xd_listpopup *xd_popup_for_surface(xd_ui *ui, struct wl_surface *s);
 void xd_window_pointer_motion(xd_window *win, double x, double y);

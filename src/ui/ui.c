@@ -805,6 +805,8 @@ static void render_dirty(xd_ui *ui) {
             xd_window_render(win);
         if (win->popup != nullptr && win->popup->dirty && win->popup->configured)
             xd_popup_render(win->popup);
+        if (win->tip != nullptr && win->tip->dirty && win->tip->configured)
+            xd_tooltip_render(win->tip);
     }
 }
 
