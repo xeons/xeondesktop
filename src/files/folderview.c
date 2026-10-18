@@ -442,9 +442,11 @@ static gboolean is_icon_mode(XdViewMode m) {
 }
 
 /* My Computer always shows its groups, as XP does; other folders when
- * Show in Groups is on. Only the icon views have them. */
+ * Show in Groups is on. The icon views and Details have them; XP's List
+ * view never shows groups (its list control can't). */
 static gboolean wants_groups(const XdFolderView *v) {
-    return is_icon_mode(v->mode) && (v->place == XD_PLACE_COMPUTER || v->groups);
+    return (is_icon_mode(v->mode) || v->mode == XD_VIEW_DETAILS) &&
+           (v->place == XD_PLACE_COMPUTER || v->groups);
 }
 
 /* XP's headings: My Computer by kind of drive; folders by the sort
@@ -714,6 +716,31 @@ static void layout_groups(XdFolderView *v) {
         }
     }
     v->content_h = y + (col > 0 ? v->cell_h : 0) + PAD;
+}
+
+/* Details in groups: each heading on a line of its own above its rows,
+ * under the column header. */
+static void layout_detail_groups(XdFolderView *v) {
+    int n = (int)v->shown->len;
+    g_array_set_size(v->rects, (guint)n);
+    clear_headings(v);
+    int y = HEADER_H;
+    const char *current = nullptr;
+    for (int i = 0; i < n; i++) {
+        item *it = g_ptr_array_index(v->shown, (guint)i);
+        const char *g = it->group != nullptr ? it->group : "";
+        if (current == nullptr || strcmp(g, current) != 0) {
+            if (current != nullptr)
+                y += GROUP_GAP;
+            heading hd = {y, g_strdup(g)};
+            g_array_append_val(v->headings, hd);
+            y += GROUP_H;
+            current = g;
+        }
+        g_array_index(v->rects, GdkRectangle, i) = (GdkRectangle){0, y, v->cell_w, ROW_H};
+        y += ROW_H;
+    }
+    v->content_h = y + PAD;
 }
 
 /* ---- Details columns ---------------------------------------------------------------- */
@@ -997,6 +1024,8 @@ static void layout_contents(XdFolderView *v) {
         v->rows = n;
         v->content_w = v->cell_w;
         v->content_h = HEADER_H + n * ROW_H + PAD;
+        if (v->grouped)
+            layout_detail_groups(v);
         break;
     }
     case XD_VIEW_COUNT:
@@ -1013,7 +1042,9 @@ static GdkRectangle item_rect(const XdFolderView *v, int i) {
         return (GdkRectangle){PAD + (i / v->rows) * v->cell_w, PAD + (i % v->rows) * ROW_H,
                               v->cell_w - 4, ROW_H};
     case XD_VIEW_DETAILS:
-        return (GdkRectangle){0, HEADER_H + i * ROW_H, v->cell_w, ROW_H};
+        if (!v->grouped)
+            return (GdkRectangle){0, HEADER_H + i * ROW_H, v->cell_w, ROW_H};
+        break; /* the rows' own places, below */
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
     case XD_VIEW_TILES:
@@ -1045,9 +1076,13 @@ static int index_at(XdFolderView *v, double wx, double wy) {
         break;
     }
     case XD_VIEW_DETAILS:
-        if (wy >= HEADER_H)
+        if (wy < HEADER_H)
+            break;
+        if (!v->grouped) {
             i = ifloor((y - HEADER_H) / ROW_H);
-        break;
+            break;
+        }
+        [[fallthrough]]; /* rows in groups: their own places */
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
     case XD_VIEW_TILES: {
@@ -1443,6 +1478,8 @@ static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cr) {
         last = MIN(n - 1, (ifloor((ox + w) / v->cell_w) + 1) * v->rows);
         break;
     case XD_VIEW_DETAILS:
+        if (v->grouped)
+            break; /* all, culled below */
         first = MAX(0, ifloor(oy / ROW_H));
         last = MIN(n - 1, ifloor((oy + h) / ROW_H) + 1);
         break;

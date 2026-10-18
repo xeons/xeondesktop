@@ -957,6 +957,8 @@ static void check_radio(GtkWidget *menu, int col, explorer *e) {
             gtk_check_menu_item_set_active(check, TRUE);
         } else if (which == ARRANGE_GROUPS) {
             gtk_check_menu_item_set_active(check, xd_folder_view_get_groups(e->view));
+            /* XP greys it in List view, which can't show groups. */
+            gtk_widget_set_sensitive(l->data, xd_folder_view_get_mode(e->view) != XD_VIEW_LIST);
         } else if (which == ARRANGE_AUTO) {
             gtk_check_menu_item_set_active(check, arranged || !placeable);
             gtk_widget_set_sensitive(l->data, placeable);
