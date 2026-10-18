@@ -701,12 +701,16 @@ typedef struct unit_call {
     GVariant *args;
 } unit_call;
 
-static GVariant *get_all(manager *m, const char *path, const char *iface) {
-    GVariant *r = g_dbus_connection_call_sync(m->bus, SD_NAME, path,
-                                              "org.freedesktop.DBus.Properties", "GetAll",
-                                              g_variant_new("(s)", iface),
-                                              G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE,
-                                              5000, nullptr, nullptr);
+static void get_all(manager *m, const char *path, const char *iface, GAsyncReadyCallback done,
+                    gpointer data) {
+    g_dbus_connection_call(m->bus, SD_NAME, path, "org.freedesktop.DBus.Properties", "GetAll",
+                           g_variant_new("(s)", iface), G_VARIANT_TYPE("(a{sv})"),
+                           G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, done, data);
+}
+
+/* GetAll's dictionary, or nullptr. */
+static GVariant *get_all_finish(GObject *src, GAsyncResult *res) {
+    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
     if (r == nullptr)
         return nullptr;
     GVariant *dict = g_variant_get_child_value(r, 0);
@@ -1114,36 +1118,31 @@ static GtkWidget *dependencies_page(props *p, GVariant *unit) {
     return page;
 }
 
-static void properties(manager *m, const char *id) {
+/* The Properties box already open for `id`, brought to the front. */
+static bool present_properties(manager *m, const char *id) {
     for (GList *l = m->dialogs; l != nullptr; l = l->next) {
         props *open = l->data;
         if (strcmp(open->id, id) == 0) {
             gtk_window_present(GTK_WINDOW(open->dialog));
-            return;
+            return true;
         }
     }
-    services *s = m->app;
-    GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_sync(m->bus, SD_NAME, SD_PATH, SD_MANAGER, "LoadUnit",
-                                              g_variant_new("(s)", id), G_VARIANT_TYPE("(o)"),
-                                              G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, &error);
-    if (r == nullptr) {
-        g_dbus_error_strip_remote_error(error);
-        xd_message_box(GTK_WINDOW(s->window), "Services", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       error->message);
-        g_error_free(error);
+    return false;
+}
+
+static void open_properties(manager *m, const char *id, const char *path, GVariant *unit,
+                            GVariant *service) {
+    /* Asked for twice while the unit loaded. */
+    if (present_properties(m, id))
         return;
-    }
+    services *s = m->app;
     props *p = g_new0(props, 1);
     p->m = m;
     p->id = g_strdup(id);
     g_queue_init(&p->calls);
     p->choice = -1;
     p->cancel = g_cancellable_new();
-    g_variant_get(r, "(o)", &p->path);
-    g_variant_unref(r);
-    GVariant *unit = get_all(m, p->path, SD_UNIT);
-    GVariant *service = get_all(m, p->path, SD_SERVICE);
+    p->path = g_strdup(path);
     p->file_state = lookup_string(unit, "UnitFileState");
     m->dialogs = g_list_prepend(m->dialogs, p);
 
@@ -1172,14 +1171,69 @@ static void properties(manager *m, const char *id) {
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(p->dialog))), nb, TRUE,
                        TRUE, 0);
     xd_gtk_notebook_ctrl_tab(p->dialog, GTK_NOTEBOOK(nb));
-    if (unit != nullptr)
-        g_variant_unref(unit);
-    if (service != nullptr)
-        g_variant_unref(service);
     show_props_status(p);
     g_signal_connect(p->dialog, "response", G_CALLBACK(on_props_response), p);
     g_signal_connect(p->dialog, "destroy", G_CALLBACK(on_props_destroy), p);
     gtk_widget_show_all(p->dialog);
+}
+
+/* The unit, loaded and read by asynchronous calls before its box opens:
+ * the manager may take its time, and the window doesn't wait. */
+typedef struct props_load {
+    manager *m;
+    char *id, *path;
+    GVariant *unit;
+} props_load;
+
+static void props_load_free(props_load *l) {
+    g_free(l->id);
+    g_free(l->path);
+    if (l->unit != nullptr)
+        g_variant_unref(l->unit);
+    g_free(l);
+}
+
+static void on_service_read(GObject *src, GAsyncResult *res, gpointer data) {
+    props_load *l = data;
+    GVariant *service = get_all_finish(src, res);
+    open_properties(l->m, l->id, l->path, l->unit, service);
+    if (service != nullptr)
+        g_variant_unref(service);
+    props_load_free(l);
+}
+
+static void on_unit_read(GObject *src, GAsyncResult *res, gpointer data) {
+    props_load *l = data;
+    l->unit = get_all_finish(src, res);
+    get_all(l->m, l->path, SD_SERVICE, on_service_read, l);
+}
+
+static void on_unit_loaded(GObject *src, GAsyncResult *res, gpointer data) {
+    props_load *l = data;
+    GError *error = nullptr;
+    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (r == nullptr) {
+        g_dbus_error_strip_remote_error(error);
+        xd_message_box(GTK_WINDOW(l->m->app->window), "Services", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       error->message);
+        g_error_free(error);
+        props_load_free(l);
+        return;
+    }
+    g_variant_get(r, "(o)", &l->path);
+    g_variant_unref(r);
+    get_all(l->m, l->path, SD_UNIT, on_unit_read, l);
+}
+
+static void properties(manager *m, const char *id) {
+    if (present_properties(m, id))
+        return;
+    props_load *l = g_new0(props_load, 1);
+    l->m = m;
+    l->id = g_strdup(id);
+    g_dbus_connection_call(m->bus, SD_NAME, SD_PATH, SD_MANAGER, "LoadUnit",
+                           g_variant_new("(s)", id), G_VARIANT_TYPE("(o)"),
+                           G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, on_unit_loaded, l);
 }
 
 static void on_properties([[maybe_unused]] GtkWidget *w, gpointer data) {

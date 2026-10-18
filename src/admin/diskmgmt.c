@@ -92,6 +92,7 @@ typedef struct dm {
     selection sel;
     GHashTable *can_format; /* fs type -> "yes" / "no" */
     GHashTable *resize;     /* fs type -> modes + 1 (0: not known yet) */
+    GHashTable *asked;      /* "format:TYPE" / "resize:TYPE" asked of UDisks */
     GtkWidget *action_menu; /* the menu bar's Action menu */
     bool action_stale;      /* to refill once it closes */
     guint refresh_source;
@@ -586,48 +587,86 @@ static void set_selection(dm *m, disk *d, int seg) {
 
 /* ---- capabilities ----------------------------------------------------------------- */
 
-static bool can_format(dm *m, const char *type) {
-    const char *known = g_hash_table_lookup(m->can_format, type);
-    if (known != nullptr)
-        return strcmp(known, "yes") == 0;
-    bool ok = false;
-    GVariant *r = m->bus != nullptr
-                      ? g_dbus_connection_call_sync(m->bus, UD, UD_PATH "/Manager", UD_MANAGER,
-                                                    "CanFormat", g_variant_new("(s)", type),
-                                                    G_VARIANT_TYPE("((bs))"),
-                                                    G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, nullptr)
-                      : nullptr;
-    if (r != nullptr) {
+/* CanFormat and CanResize are asked of UDisks in the background when the
+ * disks are read (UDisks may take its time looking for mkfs and resize
+ * tools), for each type New Partition and Format offer and each file
+ * system on the disks. Menus and dialogs only look the answers up: until
+ * one is in, the type can't be made or resized, and the Action menu is
+ * refilled when it comes. */
+
+typedef struct capability_ask {
+    dm *m;
+    char *key; /* in m->asked: "format:TYPE" or "resize:TYPE" */
+    char *type;
+    bool format;
+} capability_ask;
+
+static void on_capability(GObject *src, GAsyncResult *res, gpointer data) {
+    capability_ask *a = data;
+    dm *m = a->m;
+    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    if (r == nullptr) {
+        /* No answer: asked again at the next refresh. */
+        g_hash_table_remove(m->asked, a->key);
+    } else if (a->format) {
         gboolean available = FALSE;
         g_variant_get(r, "((b&s))", &available, nullptr);
-        ok = available;
-        g_variant_unref(r);
-    }
-    g_hash_table_insert(m->can_format, g_strdup(type), g_strdup(ok ? "yes" : "no"));
-    return ok;
-}
-
-/* CanResize's modes for a filesystem type, 0 if it can't. */
-static guint64 resize_modes(dm *m, const char *type) {
-    gpointer known = g_hash_table_lookup(m->resize, type);
-    if (known != nullptr)
-        return GPOINTER_TO_SIZE(known) - 1;
-    guint64 modes = 0;
-    GVariant *r = m->bus != nullptr && type[0] != '\0'
-                      ? g_dbus_connection_call_sync(m->bus, UD, UD_PATH "/Manager", UD_MANAGER,
-                                                    "CanResize", g_variant_new("(s)", type),
-                                                    G_VARIANT_TYPE("((bts))"),
-                                                    G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, nullptr)
-                      : nullptr;
-    if (r != nullptr) {
+        g_hash_table_insert(m->can_format, g_strdup(a->type), g_strdup(available ? "yes" : "no"));
+    } else {
         gboolean available = FALSE;
         guint64 flags = 0;
         g_variant_get(r, "((bt&s))", &available, &flags, nullptr);
-        modes = available ? flags : 0;
-        g_variant_unref(r);
+        guint64 modes = available ? flags : 0;
+        g_hash_table_insert(m->resize, g_strdup(a->type), GSIZE_TO_POINTER((gsize)modes + 1));
+        fill_action_menu(m);
     }
-    g_hash_table_insert(m->resize, g_strdup(type), GSIZE_TO_POINTER((gsize)modes + 1));
-    return modes;
+    if (r != nullptr)
+        g_variant_unref(r);
+    g_free(a->key);
+    g_free(a->type);
+    g_free(a);
+}
+
+static void ask_capability(dm *m, const char *type, bool format) {
+    if (m->bus == nullptr || type == nullptr || type[0] == '\0')
+        return;
+    char *key = g_strconcat(format ? "format:" : "resize:", type, nullptr);
+    /* The set takes key either way. */
+    if (!g_hash_table_add(m->asked, key))
+        return;
+    capability_ask *a = g_new0(capability_ask, 1);
+    a->m = m;
+    a->key = g_strdup(key);
+    a->type = g_strdup(type);
+    a->format = format;
+    g_dbus_connection_call(m->bus, UD, UD_PATH "/Manager", UD_MANAGER,
+                           format ? "CanFormat" : "CanResize", g_variant_new("(s)", type),
+                           G_VARIANT_TYPE(format ? "((bs))" : "((bts))"), G_DBUS_CALL_FLAGS_NONE,
+                           -1, nullptr, on_capability, a);
+}
+
+static void ask_capabilities(dm *m) {
+    for (size_t i = 0; i < G_N_ELEMENTS(formats); i++)
+        ask_capability(m, formats[i].type, true);
+    for (guint i = 0; i < m->disks->len; i++) {
+        const disk *d = g_ptr_array_index(m->disks, i);
+        for (guint k = 0; k < d->vols->len; k++) {
+            const volume *v = g_ptr_array_index(d->vols, k);
+            if (v->has_fs)
+                ask_capability(m, v->id_type, false);
+        }
+    }
+}
+
+static bool can_format(dm *m, const char *type) {
+    return g_strcmp0(g_hash_table_lookup(m->can_format, type), "yes") == 0;
+}
+
+/* CanResize's modes for a filesystem type, 0 if it can't (or isn't known
+ * yet). */
+static guint64 resize_modes(dm *m, const char *type) {
+    gpointer known = g_hash_table_lookup(m->resize, type);
+    return known != nullptr ? GPOINTER_TO_SIZE(known) - 1 : 0;
 }
 
 /* ---- what can be done ---------------------------------------------------------------- */
@@ -2370,6 +2409,7 @@ static void refresh(dm *m) {
     int seg = m->sel.seg;
     GPtrArray *old = m->disks;
     m->disks = read_disks(m);
+    ask_capabilities(m);
     m->sel = (selection){.d = nullptr, .seg = -1};
     for (guint i = 0; disk_key != nullptr && i < m->disks->len; i++) {
         disk *d = g_ptr_array_index(m->disks, i);
@@ -2625,6 +2665,7 @@ int main(int argc, char **argv) {
     m.sel.seg = -1;
     m.can_format = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     m.resize = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    m.asked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     build(&m);
     GError *error = nullptr;
     m.bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);

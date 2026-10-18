@@ -76,6 +76,9 @@ typedef struct eventvwr {
     GtkWidget *props;
     GtkWidget *p_date, *p_time, *p_type, *p_user, *p_computer, *p_source, *p_category, *p_id;
     GtkTextBuffer *p_desc, *p_data;
+    /* The journal the box reads entries' fields from, open while it is:
+     * opening it reads every journal file, too slow for each Up/Down. */
+    sd_journal *p_journal;
 } eventvwr;
 
 static const char *const log_names[XD_LOG_COUNT] = {
@@ -389,12 +392,29 @@ static event *selected_event(eventvwr *v, GtkTreeIter *it_out) {
 /* ---- Event Properties ------------------------------------------------------------------ */
 
 /* Every field of the entry, as the Data box shows it. */
-static char *all_fields(const char *cursor) {
-    sd_journal *j = nullptr;
-    if (cursor == nullptr || sd_journal_open(&j, SD_JOURNAL_LOCAL_ONLY) < 0)
+static bool seek_entry(sd_journal *j, const char *cursor) {
+    return sd_journal_seek_cursor(j, cursor) >= 0 && sd_journal_next(j) > 0 &&
+           sd_journal_test_cursor(j, cursor) > 0;
+}
+
+static char *all_fields(eventvwr *v, const char *cursor) {
+    if (cursor == nullptr)
         return g_strdup("");
+    if (v->p_journal == nullptr && sd_journal_open(&v->p_journal, SD_JOURNAL_LOCAL_ONLY) < 0)
+        v->p_journal = nullptr;
+    sd_journal *j = v->p_journal;
+    if (j != nullptr && !seek_entry(j, cursor)) {
+        /* In a journal file newer than the handle, maybe: once more,
+         * freshly opened. */
+        sd_journal_close(j);
+        if (sd_journal_open(&v->p_journal, SD_JOURNAL_LOCAL_ONLY) < 0)
+            v->p_journal = nullptr;
+        j = v->p_journal;
+        if (j != nullptr && !seek_entry(j, cursor))
+            j = nullptr;
+    }
     GString *s = g_string_new(nullptr);
-    if (sd_journal_seek_cursor(j, cursor) >= 0 && sd_journal_next(j) > 0) {
+    if (j != nullptr) {
         const void *data = nullptr;
         size_t len = 0;
         SD_JOURNAL_FOREACH_DATA(j, data, len) {
@@ -404,7 +424,6 @@ static char *all_fields(const char *cursor) {
             g_free(line);
         }
     }
-    sd_journal_close(j);
     return g_string_free(s, FALSE);
 }
 
@@ -428,7 +447,7 @@ static void props_fill(eventvwr *v) {
     gtk_label_set_text(GTK_LABEL(v->p_category), e->category);
     gtk_label_set_text(GTK_LABEL(v->p_id), e->event_id);
     gtk_text_buffer_set_text(v->p_desc, e->message != nullptr ? e->message : "", -1);
-    char *fields = all_fields(e->cursor);
+    char *fields = all_fields(v, e->cursor);
     gtk_text_buffer_set_text(v->p_data, fields, -1);
     g_free(fields);
 }
@@ -483,6 +502,9 @@ static void on_copy([[maybe_unused]] GtkButton *b, gpointer data) {
 static void on_props_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     eventvwr *v = data;
     v->props = nullptr;
+    if (v->p_journal != nullptr)
+        sd_journal_close(v->p_journal);
+    v->p_journal = nullptr;
 }
 
 static GtkWidget *value_label(GtkWidget **out) {
