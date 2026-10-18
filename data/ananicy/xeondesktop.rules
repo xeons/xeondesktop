@@ -1,0 +1,6 @@
+# ananicy-cpp: XeonDesktop's compositor at the priority it gives KWin, Sway
+# and GNOME Shell. Without a rule it inherits the display manager's (sddm is
+# a "Launcher": nice 16, idle I/O) when it can't raise its own; the programs
+# it starts return to normal priority (SCHED_RESET_ON_FORK).
+{ "name": "xd-compositor", "type": "LowLatency_RT" }
+{ "name": "xd-compositor-fx", "type": "LowLatency_RT" }

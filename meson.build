@@ -931,6 +931,10 @@ executable(
   install: true,
 )
 install_data('data/pam.d/xeondesktop', install_dir: get_option('sysconfdir') / 'pam.d')
+# ananicy-cpp (CachyOS and others): the compositor's priority, as for other
+# desktops' compositors.
+install_data('data/ananicy/xeondesktop.rules',
+             install_dir: get_option('sysconfdir') / 'ananicy.d' / 'xeondesktop')
 
 executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep])
 

@@ -5,8 +5,13 @@
  * Wayland session for development.
  */
 #include <dirent.h>
+#include <errno.h>
+#include <linux/ioprio.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <wlr/render/pixman.h>
 #include <wlr/types/wlr_compositor.h>
@@ -112,6 +117,44 @@ static bool is_virtual_driver(const char *name) {
             return true;
     }
     return false;
+}
+
+/* The compositor's priority, as KWin and Sway set theirs. A display
+ * manager may run at background priority (CachyOS's ananicy-cpp types sddm
+ * as a "Launcher": nice 16, idle I/O) and the session inherits it, so a
+ * busy system delays input and drawing by seconds. Normal I/O, and a raised
+ * nice as far as RLIMIT_NICE allows; SCHED_RESET_ON_FORK gives the shell
+ * and every program started from it normal priority again. ananicy-cpp's
+ * rule for us (data/ananicy) covers systems where the limit forbids it. */
+static void set_priority(void) {
+    constexpr int WANT = -10;
+    struct sched_param param = {0};
+    if (sched_setscheduler(0, SCHED_OTHER | SCHED_RESET_ON_FORK, &param) != 0)
+        wlr_log_errno(WLR_INFO, "cannot set SCHED_RESET_ON_FORK");
+    if (syscall(SYS_ioprio_set, IOPRIO_WHO_PROCESS, 0, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_NONE, 0)) !=
+        0)
+        wlr_log_errno(WLR_INFO, "cannot leave the inherited I/O priority");
+    errno = 0;
+    int was = getpriority(PRIO_PROCESS, 0);
+    if (errno != 0)
+        return;
+    /* Raising priority (a lower nice) goes as far as 20 - RLIMIT_NICE. */
+    struct rlimit lim;
+    int floor = 20;
+    if (getrlimit(RLIMIT_NICE, &lim) == 0)
+        floor = lim.rlim_cur == RLIM_INFINITY ? -20 : 20 - (int)XD_MIN(lim.rlim_cur, (rlim_t)40);
+    int now = was;
+    if (XD_MAX(WANT, floor) < was) {
+        if (setpriority(PRIO_PROCESS, 0, XD_MAX(WANT, floor)) == 0)
+            now = XD_MAX(WANT, floor);
+        else
+            wlr_log_errno(WLR_INFO, "cannot raise priority from nice %d", was);
+    }
+    if (now != was)
+        wlr_log(WLR_INFO, "priority: nice %d (was %d)", now, was);
+    if (now > 0)
+        wlr_log(WLR_ERROR, "running at background priority (nice %d): input and drawing may lag; "
+                "raise RLIMIT_NICE or let ananicy-cpp apply its rule for xd-compositor", now);
 }
 
 #ifndef XD_SCENEFX
@@ -531,6 +574,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     wlr_log_init(debug ? WLR_DEBUG : WLR_INFO, nullptr);
+    set_priority();
 
     /* desktop.ini, unless overridden on the command line. */
     xd_settings settings;
