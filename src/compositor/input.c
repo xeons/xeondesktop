@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Keyboard, pointer and seat handling; window-manager key bindings; frame
- * interaction (move, resize, caption buttons).
+ * interaction (move, resize, caption buttons). Touchscreens, drawing
+ * tablets and touchpad gestures are touch.c's, tablet.c's and
+ * gestures.c's; they work the pointer here where a program can't take
+ * them.
  */
 #include <signal.h>
 #include <spawn.h>
@@ -1000,12 +1003,15 @@ static void update_seat_caps(xd_server *server) {
     uint32_t caps = WL_SEAT_CAPABILITY_POINTER;
     if (!wl_list_empty(&server->keyboards))
         caps |= WL_SEAT_CAPABILITY_KEYBOARD;
+    if (xd_touch_present(server))
+        caps |= WL_SEAT_CAPABILITY_TOUCH;
     wlr_seat_set_capabilities(server->seat, caps);
 }
 
-static void handle_new_input(struct wl_listener *listener, void *data) {
-    xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_input);
-    struct wlr_input_device *device = data;
+void xd_input_update_caps(xd_server *server) { update_seat_caps(server); }
+
+/* Touchscreens go to touch.c, tablets and their pads to tablet.c. */
+void xd_input_add_device(xd_server *server, struct wlr_input_device *device) {
     switch (device->type) {
     case WLR_INPUT_DEVICE_KEYBOARD:
         add_keyboard(server, device);
@@ -1017,11 +1023,21 @@ static void handle_new_input(struct wl_listener *listener, void *data) {
         add_switch(server, device);
         break;
     case WLR_INPUT_DEVICE_TOUCH:
+        xd_touch_add(server, device);
+        break;
     case WLR_INPUT_DEVICE_TABLET:
+        xd_tablet_add(server, device);
+        break;
     case WLR_INPUT_DEVICE_TABLET_PAD:
+        xd_tablet_add_pad(server, device);
         break;
     }
     update_seat_caps(server);
+}
+
+static void handle_new_input(struct wl_listener *listener, void *data) {
+    xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_input);
+    xd_input_add_device(server, data);
 }
 
 /* ---- virtual input (testing only) ------------------------------------------ */
@@ -1053,6 +1069,9 @@ void xd_input_enable_virtual(xd_server *server) {
         wlr_virtual_pointer_manager_v1_create(server->display);
     XD_LISTEN(&pm->events.new_virtual_pointer, server, new_virtual_pointer,
               handle_new_virtual_pointer);
+    /* Touch, pens and gestures for xd-inject, which the headless
+     * backend has no devices for. */
+    xd_test_input_init(server);
     wlr_log(WLR_INFO, "virtual input enabled: any client can inject input (testing only)");
 }
 
@@ -1215,6 +1234,12 @@ static pick pick_at(xd_server *server, double lx, double ly) {
     if (p.view != nullptr)
         p.part = xd_view_hit(p.view, lx, ly);
     return p;
+}
+
+xd_input_target xd_input_target_at(xd_server *server, double lx, double ly) {
+    pick p = pick_at(server, lx, ly);
+    return (xd_input_target){.view = p.view, .layer = p.layer, .surface = p.surface,
+                             .sx = p.sx, .sy = p.sy, .part = p.part};
 }
 
 static void set_hover(xd_server *server, xd_view *view, xd_frame_part part) {
@@ -1546,6 +1571,15 @@ void xd_input_move_pointer(xd_server *server, double dx, double dy, uint32_t tim
     wlr_seat_pointer_notify_frame(server->seat);
 }
 
+/* A finger or a pen working the pointer: there at once, as an absolute
+ * pointer (a graphics tablet in mouse mode) goes. */
+void xd_input_warp_pointer(xd_server *server, double lx, double ly, uint32_t time_msec) {
+    wlr_cursor_warp(server->cursor, nullptr, lx, ly);
+    xd_idle_activity(server);
+    process_motion(server, time_msec);
+    wlr_seat_pointer_notify_frame(server->seat);
+}
+
 static void process_button(xd_server *server, const struct wlr_pointer_button_event *e);
 
 static void handle_cursor_button(struct wl_listener *listener, void *data) {
@@ -1796,4 +1830,14 @@ void xd_input_init(xd_server *server) {
     server->virtual_keyboards = wlr_virtual_keyboard_manager_v1_create(server->display);
     XD_LISTEN(&server->virtual_keyboards->events.new_virtual_keyboard, server,
               new_virtual_keyboard, handle_new_virtual_keyboard);
+
+    xd_touch_init(server);
+    xd_tablet_init(server);
+    xd_gestures_init(server);
+}
+
+void xd_input_finish(xd_server *server) {
+    xd_gestures_finish(server);
+    xd_tablet_finish(server);
+    xd_touch_finish(server);
 }

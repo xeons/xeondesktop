@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="xd_test_input_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT
+  </copyright>
+
+  <description summary="testing only: touchscreens, drawing tablets and touchpad gestures">
+    The UI tests run the compositor on wlroots' headless backend, which has
+    no input devices, and the virtual pointer and keyboard protocols have
+    no touch, pens or gestures. With this global (offered only when the
+    compositor runs with --allow-virtual-input) a client gets one device of
+    each kind, made by the compositor as a real wlroots device and handled
+    as one from libinput would be: a touchscreen, a drawing tablet with a
+    pen and a pad, and a touchpad that makes gestures. They appear on the
+    first request that uses them and go when this object is destroyed.
+
+    Coordinates are layout coordinates (the logical desktop); the
+    compositor converts them for the area the device is mapped to, as a
+    real device reports them.
+  </description>
+
+  <interface name="xd_test_input_v1" version="1">
+    <request name="destroy" type="destructor">
+      <description summary="removes the devices"/>
+    </request>
+
+    <request name="touch_down">
+      <description summary="a finger touches the screen (then a frame)"/>
+      <arg name="id" type="int"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </request>
+    <request name="touch_motion">
+      <description summary="a finger moves (then a frame)"/>
+      <arg name="id" type="int"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </request>
+    <request name="touch_up">
+      <description summary="a finger lifts (then a frame)"/>
+      <arg name="id" type="int"/>
+    </request>
+    <request name="touch_cancel">
+      <description summary="the touchscreen cancels a touch (then a frame)"/>
+      <arg name="id" type="int"/>
+    </request>
+
+    <request name="tool_proximity">
+      <description summary="the pen comes near the tablet (in nonzero) or leaves it"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+      <arg name="in" type="uint"/>
+    </request>
+    <request name="tool_motion">
+      <description summary="the pen moves; pressure 0 to 1, tilt in degrees"/>
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+      <arg name="pressure" type="fixed"/>
+      <arg name="tilt_x" type="fixed"/>
+      <arg name="tilt_y" type="fixed"/>
+    </request>
+    <request name="tool_tip">
+      <description summary="the pen's tip touches the tablet (down nonzero) or lifts"/>
+      <arg name="down" type="uint"/>
+    </request>
+    <request name="tool_button">
+      <description summary="a button on the pen (an evdev code, BTN_STYLUS...)"/>
+      <arg name="button" type="uint"/>
+      <arg name="pressed" type="uint"/>
+    </request>
+
+    <request name="pad_button">
+      <description summary="a button on the tablet's pad (counted from 0)"/>
+      <arg name="button" type="uint"/>
+      <arg name="pressed" type="uint"/>
+    </request>
+    <request name="pad_ring">
+      <description summary="a finger on the pad's ring, at an angle in degrees"/>
+      <arg name="ring" type="uint"/>
+      <arg name="position" type="fixed"/>
+    </request>
+    <request name="pad_strip">
+      <description summary="a finger on the pad's strip, 0 to 1"/>
+      <arg name="strip" type="uint"/>
+      <arg name="position" type="fixed"/>
+    </request>
+
+    <request name="swipe_begin">
+      <arg name="fingers" type="uint"/>
+    </request>
+    <request name="swipe_update">
+      <arg name="dx" type="fixed"/>
+      <arg name="dy" type="fixed"/>
+    </request>
+    <request name="swipe_end">
+      <arg name="cancelled" type="uint"/>
+    </request>
+    <request name="pinch_begin">
+      <arg name="fingers" type="uint"/>
+    </request>
+    <request name="pinch_update">
+      <description summary="scale against the start, rotation in degrees since the last"/>
+      <arg name="dx" type="fixed"/>
+      <arg name="dy" type="fixed"/>
+      <arg name="scale" type="fixed"/>
+      <arg name="rotation" type="fixed"/>
+    </request>
+    <request name="pinch_end">
+      <arg name="cancelled" type="uint"/>
+    </request>
+    <request name="hold_begin">
+      <arg name="fingers" type="uint"/>
+    </request>
+    <request name="hold_end">
+      <arg name="cancelled" type="uint"/>
+    </request>
+  </interface>
+</protocol>

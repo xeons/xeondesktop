@@ -194,6 +194,9 @@ client_protocol_xml = {
   'virtual-keyboard-unstable-v1': files('protocols/virtual-keyboard-unstable-v1.xml'),
   'input-method-unstable-v2': files('protocols/input-method-unstable-v2.xml'),
   'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
+  'xd-test-input-v1': files('protocols/xd-test-input-v1.xml'),
+  'pointer-gestures-unstable-v1':
+    wp_dir / 'unstable/pointer-gestures/pointer-gestures-unstable-v1.xml',
   'ext-idle-notify-v1': wp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
   'ext-session-lock-v1': wp_dir / 'staging/ext-session-lock/ext-session-lock-v1.xml',
   'ext-foreign-toplevel-list-v1':
@@ -249,6 +252,19 @@ arranger_server_src = [
     output: 'xd-window-arranger-v1-server-protocol.c',
     command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
   ),
+  # The UI tests' touchscreen, tablet and touchpad (testinput.c).
+  custom_target(
+    'xd-test-input-v1-server-header',
+    input: 'protocols/xd-test-input-v1.xml',
+    output: 'xd-test-input-v1-protocol.h',
+    command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+  ),
+  custom_target(
+    'xd-test-input-v1-server-code',
+    input: 'protocols/xd-test-input-v1.xml',
+    output: 'xd-test-input-v1-server-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  ),
   # Its attention event names a foreign-toplevel handle, whose interface
   # libwlroots doesn't export.
   custom_target(
@@ -287,6 +303,10 @@ compositor_src = files(
   'src/compositor/output.c',
   'src/compositor/layers.c',
   'src/compositor/input.c',
+  'src/compositor/touch.c',
+  'src/compositor/tablet.c',
+  'src/compositor/gestures.c',
+  'src/compositor/testinput.c',
   'src/compositor/view.c',
   'src/compositor/frame.c',
   'src/compositor/animate.c',
@@ -1119,6 +1139,15 @@ executable(
 executable(
   'xd-test-ime',
   'tools/xd-test-ime.c',
+  dependencies: [client_protocol_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
+
+# A window that logs the input reaching it (touch, pens, gestures), for
+# the UI tests.
+executable(
+  'xd-test-input',
+  'tools/xd-test-input.c',
   dependencies: [client_protocol_dep],
   c_args: ['-D_GNU_SOURCE'],
 )

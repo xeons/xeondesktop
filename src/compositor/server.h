@@ -60,6 +60,9 @@ typedef struct xd_server xd_server;
 typedef struct xd_access xd_access;
 typedef struct xd_ime xd_ime;
 typedef struct xd_gamma xd_gamma;
+typedef struct xd_touch xd_touch;
+typedef struct xd_tablets xd_tablets;
+typedef struct xd_gestures xd_gestures;
 
 typedef struct xd_output {
     struct wl_list link; /* xd_server.outputs */
@@ -449,6 +452,9 @@ struct xd_server {
     xd_ime *ime;       /* ime.c's */
     xd_gamma *gamma;   /* gamma.c's: night light and calibration */
     struct xd_outline *outline; /* outline.c's, while one shows */
+    xd_touch *touch;       /* touch.c's: touchscreens, and devices' monitors */
+    xd_tablets *tablets;   /* tablet.c's: drawing tablets */
+    xd_gestures *gestures; /* gestures.c's: touchpad gestures */
 };
 
 /* output.c */
@@ -488,8 +494,29 @@ void xd_input_apply_access(xd_server *server);
 /* Makes layout `group` the active one on every keyboard (the language
  * indicator); ignored past the keymap's layouts. */
 void xd_input_set_keyboard_layout(xd_server *server, uint32_t group);
-/* Lets clients inject keyboard/pointer input. Testing only. */
+/* Lets clients inject keyboard/pointer input (and touch, pens and
+ * gestures: testinput.c). Testing only. */
 void xd_input_enable_virtual(xd_server *server);
+/* A new input device, from the backend (or testinput.c). */
+void xd_input_add_device(xd_server *server, struct wlr_input_device *device);
+/* The seat's capabilities follow the devices there are. */
+void xd_input_update_caps(xd_server *server);
+/* At exit: touch.c's, tablet.c's and gestures.c's listeners go. */
+void xd_input_finish(xd_server *server);
+/* What's at layout (lx, ly), as the pointer finds it: a client's surface
+ * (and where on it), a window's frame, a layer surface. For touch.c and
+ * tablet.c. */
+typedef struct xd_input_target {
+    xd_view *view;
+    xd_layer_surface *layer;
+    struct wlr_surface *surface;
+    double sx, sy;
+    xd_frame_part part;
+} xd_input_target;
+xd_input_target xd_input_target_at(xd_server *server, double lx, double ly);
+/* A finger or pen working the pointer: it jumps to (lx, ly) and moves
+ * there as the mouse would. */
+void xd_input_warp_pointer(xd_server *server, double lx, double ly, uint32_t time_msec);
 void xd_cursor_set(xd_server *server, const char *name);
 /* Ends a move, size or caption-button grab where it is, without acting on
  * it (the screen locks). */
@@ -501,6 +528,37 @@ void xd_spawn(xd_server *server, const char *command);
 void xd_shell_start(xd_server *server);
 /* Starts config.polkit, the session's polkit authentication agent. */
 void xd_polkit_start(xd_server *server);
+
+/* touch.c: touchscreens (touch for programs that read it, the pointer
+ * elsewhere), and the monitor each touchscreen or tablet covers. */
+void xd_touch_init(xd_server *server);
+void xd_touch_finish(xd_server *server);
+void xd_touch_add(xd_server *server, struct wlr_input_device *device);
+bool xd_touch_present(const xd_server *server);
+/* A program asks to move or size its window with `serial`: if that's a
+ * touch's, the finger drives the move (the cursor goes to it first). */
+bool xd_touch_claim_grab(xd_server *server, struct wlr_surface *surface, uint32_t serial);
+/* Maps a touchscreen or tablet: one on a screen to its monitor (udev's
+ * `output_name`, else the built-in panel, else the first), others to the
+ * whole desktop; again whenever monitors change. */
+void xd_input_map_device(xd_server *server, struct wlr_input_device *device,
+                         const char *output_name, bool screen);
+/* The layout box a mapped device covers. */
+struct wlr_box xd_input_device_area(xd_server *server, const struct wlr_input_device *device);
+
+/* tablet.c: drawing tablets (tablet-v2; the pointer for other programs). */
+void xd_tablet_init(xd_server *server);
+void xd_tablet_finish(xd_server *server);
+void xd_tablet_add(xd_server *server, struct wlr_input_device *device);
+void xd_tablet_add_pad(xd_server *server, struct wlr_input_device *device);
+
+/* gestures.c: touchpad gestures for the program under the pointer. */
+void xd_gestures_init(xd_server *server);
+void xd_gestures_finish(xd_server *server);
+
+/* testinput.c: xd-test-input-v1, a touchscreen, tablet and touchpad for
+ * the UI tests (with --allow-virtual-input only). */
+void xd_test_input_init(xd_server *server);
 
 /* view.c */
 void xd_view_init(xd_server *server);

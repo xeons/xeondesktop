@@ -974,10 +974,16 @@ void xd_view_on_commit(xd_view *view) {
     xd_capture_view_committed(view);
 }
 
-static void handle_request_move(struct wl_listener *listener, [[maybe_unused]] void *data) {
+static void handle_request_move(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_move);
+    const struct wlr_xdg_toplevel_move_event *e = data;
     xd_server *server = view->server;
-    if (server->mode != XD_CURSOR_PASSTHROUGH || !xd_snap_begin(server, view))
+    if (server->mode != XD_CURSOR_PASSTHROUGH)
+        return;
+    /* Asked from a touch (a header bar dragged with a finger): it starts
+     * where the finger is. */
+    xd_touch_claim_grab(server, view->toplevel->base->surface, e->serial);
+    if (!xd_snap_begin(server, view))
         return;
     server->mode = XD_CURSOR_MOVE;
     server->grab_view = view;
@@ -1018,6 +1024,7 @@ static void handle_request_resize(struct wl_listener *listener, void *data) {
     xd_frame_part part = part_from_edges(event->edges);
     if (view->maximized || part == XD_PART_NONE || server->mode != XD_CURSOR_PASSTHROUGH)
         return;
+    xd_touch_claim_grab(server, view->toplevel->base->surface, event->serial);
     server->mode = XD_CURSOR_RESIZE;
     server->grab_view = view;
     server->grab_part = part;

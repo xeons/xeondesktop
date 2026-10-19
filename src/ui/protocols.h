@@ -16,6 +16,8 @@
 #include "ext-session-lock-v1-client-protocol.h"
 #include "fractional-scale-v1-client-protocol.h"
 #include "input-method-unstable-v2-client-protocol.h"
+#include "pointer-gestures-unstable-v1-client-protocol.h"
+#include "tablet-v2-client-protocol.h"
 #include "virtual-keyboard-unstable-v1-client-protocol.h"
 #include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
@@ -26,6 +28,7 @@
 #include "xdg-activation-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
+#include "xd-test-input-v1-client-protocol.h"
 #include "xd-window-arranger-v1-client-protocol.h"
 
 #endif

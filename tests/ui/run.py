@@ -5404,6 +5404,195 @@ def automatic_updates(s):
     s.log("ok: notify only saved in [Updates]")
 
 
+# ---- touchscreens, drawing tablets, touchpad gestures (xd-test-input-v1) ------------
+
+
+ORANGE = (255, 128, 0)  # xd-test-input's window
+
+
+def orange_box(shot):
+    """xd-test-input's client area on screen (x, y, w, h), or None."""
+    xs, ys = [], []
+    for y in range(0, HEIGHT, 4):
+        for x in range(0, WIDTH, 4):
+            if shot.pixel(x, y) == ORANGE:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+    while x0 > 0 and shot.pixel(x0 - 1, y0) == ORANGE:
+        x0 -= 1
+    while y0 > 0 and shot.pixel(x0, y0 - 1) == ORANGE:
+        y0 -= 1
+    while x1 + 1 < WIDTH and shot.pixel(x1 + 1, y1) == ORANGE:
+        x1 += 1
+    while y1 + 1 < HEIGHT and shot.pixel(x1, y1 + 1) == ORANGE:
+        y1 += 1
+    return (x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+
+
+def input_window(s, *args, title="Input test"):
+    """Opens xd-test-input (args: --no-touch, --no-tablet) and returns its
+    log's path and its client area's box (the orange), found on screen."""
+    log = os.path.join(s.base, f"{title.replace(' ', '-')}.log")
+    s.launch(s.tool("xd-test-input"), log, "--title", title, *args)
+    s.wait_window(title=title, state="activated")
+    box = orange_box(s.settle("input-window"))
+    if box is None:
+        raise Failure(f"no {title} window on screen")
+    return log, box
+
+
+def logged(path):
+    try:
+        with open(path) as f:
+            return f.read().splitlines()
+    except OSError:
+        return []
+
+
+def wait_logged(s, path, prefix, what):
+    """Waits for a line starting with prefix in the log; returns it."""
+
+    def found():
+        return next((l for l in logged(path) if l.startswith(prefix)), None)
+
+    return s.wait(found, what, timeout=10)
+
+
+@scenario()
+def touch_reaches_client(s):
+    """A finger on a program that reads touch reaches it as wl_touch, at the
+    right place on its surface, and isn't turned into clicks; a tap on the
+    taskbar's Start button (the shell reads only the pointer) opens the
+    Start menu, the pointer worked by the finger."""
+    log, (x, y, w, h) = input_window(s)
+    s.inject("touch", "down", 1, x + 50, y + 40, "touch", "move", 1, x + 80, y + 60,
+             "touch", "up", 1)  # fmt: skip
+    down = wait_logged(s, log, "touch down 1", "the touch")
+    s.check(down == "touch down 1 50 40", f"the finger landed at 50,40 on the surface ({down})")
+    s.check("touch motion 1 80 60" in logged(log), "and moved to 80,60")
+    wait_logged(s, log, "touch up 1", "the finger to lift")
+    s.check(not any(l.startswith("pointer button") for l in logged(log)),
+            "a program that reads touch gets no emulated clicks")  # fmt: skip
+    before = s.settle("before-start")
+    s.inject("touch", "down", 2, 20, HEIGHT - 12, "touch", "up", 2)
+    menu = s.settle("start-menu")
+    s.check(menu.differs(before, (0, 400, 160, 320)) > 0.2, "a tap on Start opened the Start menu")
+
+
+@scenario()
+def touch_close_button(s):
+    """A tap on a caption's Close button closes the window (touch works the
+    pointer on our frames)."""
+    log, (x, y, w, h) = input_window(s)
+    # The Close button: right of the caption, above the client area.
+    s.inject("touch", "down", 1, x + w - 12, y - 11, "sleep", 100, "touch", "up", 1)
+    wait_logged(s, log, "close", "the window to be asked to close")
+    s.wait_window(title="Input test", gone=True)
+    s.check(not any(l.startswith("touch") and l != "touchscreen" for l in logged(log)),
+            "the program saw no touch on the frame")  # fmt: skip
+
+
+@scenario()
+def touch_drag_caption(s):
+    """A finger dragging a caption moves the window; so does one on a
+    program that moves its window itself from a touch (as a header bar
+    does), the window following the finger."""
+    log, (x, y, w, h) = input_window(s, "--drag")
+    cx, cy = x + w // 3, y - 11  # on the caption
+    s.inject("touch", "down", 1, cx, cy, "sleep", 100, "touch", "move", 1, cx + 40, cy + 30,
+             "sleep", 100, "touch", "move", 1, cx + 90, cy + 70, "sleep", 300,
+             "touch", "up", 1)  # fmt: skip
+    mx, my, _, _ = input_window_box(s)
+    s.check(abs(mx - (x + 90)) <= 2 and abs(my - (y + 70)) <= 2,
+            f"the window followed the finger ({mx},{my}, expected {x + 90},{y + 70})")
+    s.check(not any(l.startswith("touch down") for l in logged(log)),
+            "the program saw no touch on its frame")  # fmt: skip
+    px, py = mx + 100, my + 100  # in the client area: the program asks to move
+    s.inject("touch", "down", 3, px, py, "sleep", 100, "touch", "move", 3, px - 30, py + 20,
+             "sleep", 100, "touch", "move", 3, px - 60, py + 40, "sleep", 300,
+             "touch", "up", 3)  # fmt: skip
+    wait_logged(s, log, "touch down 3 100 100", "the program's touch")
+    nx, ny, _, _ = input_window_box(s)
+    s.check(abs(nx - (mx - 60)) <= 2 and abs(ny - (my + 40)) <= 2,
+            f"the program's own move followed the finger ({nx},{ny}, expected "
+            f"{mx - 60},{my + 40})")  # fmt: skip
+
+
+def input_window_box(s):
+    box = orange_box(s.settle("moved"))
+    if box is None:
+        raise Failure("the window is gone")
+    return box
+
+
+@scenario()
+def pen_pressure(s):
+    """A pen on a program that reads tablets (tablet-v2) reaches it as a pen,
+    with its pressure and tilt; the tablet's pad follows the pen there and
+    its buttons and ring reach the program too."""
+    log, (x, y, w, h) = input_window(s)
+    s.inject("pen", "in", x + 100, y + 100, "pen", "move", x + 110, y + 105, 0, 0, 0,
+             "pen", "down", "pen", "move", x + 120, y + 110, 0.5, 20, -10,
+             "pen", "press", 1, "pen", "lift", 1, "pen", "up",
+             "pad", "press", 2, "pad", "lift", 2, "pad", "ring", 0, 90,
+             "pen", "out")  # fmt: skip
+    wait_logged(s, log, "tool proximity out", "the pen to leave")
+    got = logged(log)
+    s.check("tool proximity in" in got and "tool down" in got and "tool up" in got,
+            "the pen came in, touched and lifted")  # fmt: skip
+    s.check("tool motion 120 110" in got, "it moved on the surface's coordinates")
+    s.check("tool pressure 32767" in got, "with half pressure (32767 of 65535)")
+    s.check("tool tilt 20.0 -10.0" in got, "and its tilt")
+    s.check("tool button 331 pressed" in got, "its barrel button reached the program")
+    s.check("pad enter" in got and "pad button 2 pressed" in got and "pad ring 90.0" in got,
+            "the pad followed the pen: its button and ring reached the program")  # fmt: skip
+    s.check(not any(l.startswith("pointer button") for l in got),
+            "the pen made no emulated clicks")  # fmt: skip
+
+
+@scenario()
+def pen_without_tablet_support(s):
+    """A program without tablet-v2 gets the pen as the pointer: the tip
+    clicks, the barrel button right-clicks; on our frames the pen drags the
+    caption."""
+    log, (x, y, w, h) = input_window(s, "--no-tablet")
+    s.inject("pen", "in", x + 60, y + 50, "pen", "down", "pen", "up",
+             "pen", "press", 1, "pen", "lift", 1)  # fmt: skip
+    wait_logged(s, log, "pointer button 273 released", "the right button's release")
+    got = logged(log)
+    s.check("pointer button 272 pressed" in got and "pointer button 272 released" in got,
+            "the tip worked the left button")  # fmt: skip
+    s.check("pointer button 273 pressed" in got, "the barrel button the right one")
+    s.check(not any(l.startswith("tool") for l in got), "and no pen events")
+    cx, cy = x + w // 3, y - 11
+    s.inject("pen", "move", cx, cy, "pen", "down", "sleep", 100, "pen", "move", cx + 50, cy + 40,
+             "sleep", 100, "pen", "move", cx + 80, cy + 60, "sleep", 300, "pen", "up",
+             "pen", "out")  # fmt: skip
+    mx, my, _, _ = input_window_box(s)
+    s.check(abs(mx - (x + 80)) <= 2 and abs(my - (y + 60)) <= 2,
+            f"the pen dragged the caption ({mx},{my}, expected {x + 80},{y + 60})")
+
+
+@scenario()
+def touchpad_pinch(s):
+    """Touchpad gestures go to the program under the pointer: a pinch (and
+    a swipe and a hold) reach it with their fingers and scale."""
+    log, (x, y, w, h) = input_window(s)
+    s.inject("move", x + 100, y + 100, "pinch", "begin", 2, "pinch", "update", 0, 0, 1.5, 10,
+             "pinch", "end", "swipe", "begin", 3, "swipe", "update", 30, 0, "swipe", "end",
+             "rest", "begin", 2, "rest", "end", "cancel")  # fmt: skip
+    wait_logged(s, log, "hold end", "the hold to end")
+    got = logged(log)
+    s.check("pinch begin 2" in got and "pinch update scale 1.50 rotation 10.0" in got
+            and "pinch end" in got, "the pinch reached the program, scale 1.5")  # fmt: skip
+    s.check("swipe begin 3" in got and "swipe update 30.0 0.0" in got and "swipe end" in got,
+            "a three-finger swipe too")  # fmt: skip
+    s.check("hold begin 2" in got and "hold end cancelled" in got, "and a cancelled hold")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

@@ -15,6 +15,22 @@
  *   sleep MS          wait
  *   lid close|open    the laptop lid (xd-window-arranger-v1's test_lid)
  *
+ * And, through xd-test-input-v1, a touchscreen, a drawing tablet and a
+ * touchpad, plugged in while xd-inject runs:
+ *
+ *   touch down|move ID X Y   a finger (ID: any number) lands or moves
+ *   touch up|cancel ID       it lifts, or the screen gives up on it
+ *   pen in|move X Y [P [TX TY]]  the pen comes near or moves; P pressure
+ *                     (0 to 1), TX TY tilt in degrees (kept for later moves)
+ *   pen down|up|out   its tip touches or lifts; it goes out of reach
+ *   pen press|lift N  barrel button 1 or 2
+ *   pad press|lift N  a pad button (from 0)
+ *   pad ring|strip N POS  a finger on a ring (degrees) or strip (0 to 1)
+ *   swipe|pinch|rest begin FINGERS  a touchpad gesture starts (rest:
+ *                     fingers held still, a hold gesture)
+ *   swipe update DX DY, pinch update DX DY SCALE DEGREES
+ *   swipe|pinch|rest end [cancel]
+ *
  * Example: xd-inject move 20 728 click sleep 500 type alacritty key Return
  */
 #include <errno.h>
@@ -49,6 +65,9 @@ typedef struct inject {
     struct zwp_virtual_keyboard_manager_v1 *keyboard_manager;
     struct zxdg_output_manager_v1 *xdg_output_manager;
     struct xd_window_arranger_v1 *arranger; /* for the lid, which has no virtual device */
+    struct xd_test_input_v1 *test_input; /* touch, pens, gestures: bound only for those */
+    uint32_t test_input_name;
+    double pen_pressure, pen_tilt_x, pen_tilt_y;
     struct zwlr_virtual_pointer_v1 *pointer;
     struct zwp_virtual_keyboard_v1 *keyboard;
     output outputs[16];
@@ -130,6 +149,8 @@ static void global(void *data, struct wl_registry *reg, uint32_t name, const cha
                version >= XD_WINDOW_ARRANGER_V1_TEST_LID_SINCE_VERSION) {
         in->arranger = wl_registry_bind(reg, name, &xd_window_arranger_v1_interface,
                                         XD_WINDOW_ARRANGER_V1_TEST_LID_SINCE_VERSION);
+    } else if (xd_str_eq(i, xd_str_from_cstr(xd_test_input_v1_interface.name))) {
+        in->test_input_name = name;
     } else if (xd_str_eq(i, xd_str_from_cstr(wl_output_interface.name)) &&
                in->output_count < XD_ARRAY_LEN(in->outputs)) {
         in->outputs[in->output_count++].wl = wl_registry_bind(reg, name, &wl_output_interface, 1);
@@ -437,6 +458,136 @@ static bool parse_int(const char *s, int64_t lo, int64_t hi, int64_t *out) {
     return s != nullptr && xd_str_parse_i64(xd_str_from_cstr(s), lo, hi, out);
 }
 
+static bool parse_num(const char *s, double *out) {
+    return s != nullptr && xd_str_parse_double(xd_str_from_cstr(s), out);
+}
+
+/* ---- touch, pen and touchpad (xd-test-input-v1) ----------------------------------- */
+
+static const char *const test_input_steps[] = {"touch", "pen", "pad", "swipe", "pinch", "rest"};
+
+static bool is_test_input_step(const char *cmd) {
+    for (size_t i = 0; i < XD_ARRAY_LEN(test_input_steps); i++) {
+        if (strcmp(cmd, test_input_steps[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool needs_test_input(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        if (is_test_input_step(argv[i]))
+            return true;
+    }
+    return false;
+}
+
+static wl_fixed_t fx(double v) { return wl_fixed_from_double(v); }
+
+/* One touch, pen, pad or gesture step at argv[*i]; false if it's bad. */
+static bool test_input_step(inject *in, int argc, char **argv, int *i) {
+    struct xd_test_input_v1 *t = in->test_input;
+    const char *cmd = argv[*i];
+    const char *what = *i + 1 < argc ? argv[*i + 1] : "";
+    /* The numbers after the step's words. */
+    double n[5] = {0};
+    int count = 0;
+    int first = *i + 2;
+    while (count < (int)XD_ARRAY_LEN(n) && first + count < argc &&
+           parse_num(argv[first + count], &n[count]))
+        count++;
+    int used = 0;
+    if (strcmp(cmd, "touch") == 0) {
+        int32_t id = (int32_t)n[0];
+        if ((strcmp(what, "down") == 0 || strcmp(what, "move") == 0) && count >= 3) {
+            if (what[0] == 'd')
+                xd_test_input_v1_touch_down(t, id, fx(n[1]), fx(n[2]));
+            else
+                xd_test_input_v1_touch_motion(t, id, fx(n[1]), fx(n[2]));
+            used = 3;
+        } else if ((strcmp(what, "up") == 0 || strcmp(what, "cancel") == 0) && count >= 1) {
+            if (what[0] == 'u')
+                xd_test_input_v1_touch_up(t, id);
+            else
+                xd_test_input_v1_touch_cancel(t, id);
+            used = 1;
+        } else {
+            return false;
+        }
+    } else if (strcmp(cmd, "pen") == 0) {
+        if ((strcmp(what, "in") == 0 || strcmp(what, "move") == 0) && count >= 2) {
+            used = count >= 5 ? 5 : count >= 3 ? 3 : 2;
+            if (used >= 3)
+                in->pen_pressure = n[2];
+            if (used >= 5) {
+                in->pen_tilt_x = n[3];
+                in->pen_tilt_y = n[4];
+            }
+            if (what[0] == 'i')
+                xd_test_input_v1_tool_proximity(t, fx(n[0]), fx(n[1]), 1);
+            xd_test_input_v1_tool_motion(t, fx(n[0]), fx(n[1]), fx(in->pen_pressure),
+                                         fx(in->pen_tilt_x), fx(in->pen_tilt_y));
+        } else if (strcmp(what, "down") == 0 || strcmp(what, "up") == 0) {
+            xd_test_input_v1_tool_tip(t, what[0] == 'd');
+        } else if (strcmp(what, "out") == 0) {
+            xd_test_input_v1_tool_proximity(t, 0, 0, 0);
+        } else if ((strcmp(what, "press") == 0 || strcmp(what, "lift") == 0) && count >= 1 &&
+                   (n[0] == 1 || n[0] == 2)) {
+            xd_test_input_v1_tool_button(t, n[0] == 1 ? BTN_STYLUS : BTN_STYLUS2,
+                                         what[0] == 'p');
+            used = 1;
+        } else {
+            return false;
+        }
+    } else if (strcmp(cmd, "pad") == 0) {
+        if ((strcmp(what, "press") == 0 || strcmp(what, "lift") == 0) && count >= 1) {
+            xd_test_input_v1_pad_button(t, (uint32_t)n[0], what[0] == 'p');
+            used = 1;
+        } else if ((strcmp(what, "ring") == 0 || strcmp(what, "strip") == 0) && count >= 2) {
+            if (what[0] == 'r')
+                xd_test_input_v1_pad_ring(t, (uint32_t)n[0], fx(n[1]));
+            else
+                xd_test_input_v1_pad_strip(t, (uint32_t)n[0], fx(n[1]));
+            used = 2;
+        } else {
+            return false;
+        }
+    } else {
+        /* swipe, pinch, rest (a hold) */
+        char kind = cmd[0];
+        if (strcmp(what, "begin") == 0 && count >= 1) {
+            uint32_t fingers = (uint32_t)n[0];
+            if (kind == 's')
+                xd_test_input_v1_swipe_begin(t, fingers);
+            else if (kind == 'p')
+                xd_test_input_v1_pinch_begin(t, fingers);
+            else
+                xd_test_input_v1_hold_begin(t, fingers);
+            used = 1;
+        } else if (strcmp(what, "update") == 0 && kind == 's' && count >= 2) {
+            xd_test_input_v1_swipe_update(t, fx(n[0]), fx(n[1]));
+            used = 2;
+        } else if (strcmp(what, "update") == 0 && kind == 'p' && count >= 4) {
+            xd_test_input_v1_pinch_update(t, fx(n[0]), fx(n[1]), fx(n[2]), fx(n[3]));
+            used = 4;
+        } else if (strcmp(what, "end") == 0) {
+            bool cancel = *i + 2 < argc && strcmp(argv[*i + 2], "cancel") == 0;
+            if (kind == 's')
+                xd_test_input_v1_swipe_end(t, cancel);
+            else if (kind == 'p')
+                xd_test_input_v1_pinch_end(t, cancel);
+            else
+                xd_test_input_v1_hold_end(t, cancel);
+            *i += cancel ? 1 : 0;
+        } else {
+            return false;
+        }
+    }
+    *i += 1 + used;
+    settle(in);
+    return true;
+}
+
 static int run_steps(inject *in, int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         const char *cmd = argv[i];
@@ -492,6 +643,11 @@ static int run_steps(inject *in, int argc, char **argv) {
             xd_window_arranger_v1_test_lid(in->arranger, strcmp(a1, "close") == 0);
             settle(in);
             i++;
+        } else if (is_test_input_step(cmd) && in->test_input != nullptr) {
+            if (!test_input_step(in, argc, argv, &i)) {
+                fprintf(stderr, "xd-inject: bad %s step\n", cmd);
+                return EXIT_FAILURE;
+            }
         } else if (strcmp(cmd, "sleep") == 0 && parse_int(a1, 0, 600000, &v1)) {
             sleep_ms((long)v1);
             i++;
@@ -523,6 +679,14 @@ int main(int argc, char **argv) {
             zxdg_output_manager_v1_get_xdg_output(in.xdg_output_manager, in.outputs[i].wl);
         zxdg_output_v1_add_listener(in.outputs[i].xdg, &xdg_output_listener, &in.outputs[i]);
     }
+    if (needs_test_input(argc, argv)) {
+        if (in.test_input_name == 0) {
+            fprintf(stderr, "xd-inject: the compositor offers no test touchscreen, tablet or "
+                            "touchpad (start xd-compositor with --allow-virtual-input)\n");
+            return EXIT_FAILURE;
+        }
+        in.test_input = wl_registry_bind(reg, in.test_input_name, &xd_test_input_v1_interface, 1);
+    }
     in.pointer = zwlr_virtual_pointer_manager_v1_create_virtual_pointer(in.pointer_manager, in.seat);
     in.keyboard = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(in.keyboard_manager,
                                                                            in.seat);
@@ -532,6 +696,10 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     settle(&in);
+    /* Programs take the seat's new touch capability and the new tablet
+     * before the first touch. */
+    if (in.test_input != nullptr)
+        sleep_ms(300);
 
     int rc = run_steps(&in, argc, argv);
 
@@ -539,6 +707,8 @@ int main(int argc, char **argv) {
     zwp_virtual_keyboard_v1_destroy(in.keyboard);
     if (in.arranger != nullptr)
         xd_window_arranger_v1_destroy(in.arranger);
+    if (in.test_input != nullptr)
+        xd_test_input_v1_destroy(in.test_input);
     wl_display_roundtrip(in.display);
     xd_free(in.keys);
     xkb_state_unref(in.state);

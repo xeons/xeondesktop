@@ -87,6 +87,19 @@ A program that sets the gamma itself through wlr-gamma-control
 (gammastep, wlsunset) takes over while it runs.
 The ramp is loaded by the display hardware, so it costs no drawing, but
 nested and headless outputs have none.
+.PP
+Touchscreens work programs that read touch as touch; elsewhere (window
+frames, the taskbar and Start menu, programs without touch) a finger works
+the pointer: a tap clicks, a drag drags.
+Drawing tablets' pens reach programs that read tablets (tablet-v2) with
+their pressure, tilt and buttons, and the tablet's pad follows the pen;
+other programs get the pen as the pointer, the barrel button as the right
+button.
+A touchscreen covers the monitor udev names for it, else the built-in
+panel, else the first monitor; so does a pen display, while other tablets
+cover the whole desktop.
+Touchpad gestures (swipe, pinch, hold) go to the program under the
+pointer.
 .SH OPTIONS
 .TP
 .BI \-\-style " style"
@@ -127,7 +140,8 @@ Start no shell.
 .TP
 .B \-\-allow\-virtual\-input
 Let clients create virtual pointers and keyboards, for automated UI tests
-(without it, only the input method may create a virtual keyboard).
+(without it, only the input method may create a virtual keyboard), and a
+test touchscreen, drawing tablet and touchpad (xd-test-input-v1).
 Never use it for a real session: any program could then type and click as
 you.
 .TP

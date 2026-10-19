@@ -324,6 +324,7 @@ static void server_finish(xd_server *server) {
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
     xd_ime_finish(server);
+    xd_input_finish(server);
     /* wlroots asserts that nothing still listens to an object it
      * destroys, so detach every server-level listener first. */
     struct wl_listener *listeners[] = {

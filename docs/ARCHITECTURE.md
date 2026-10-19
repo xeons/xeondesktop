@@ -44,8 +44,9 @@ they die.
 | `xd-access`, `xd-mouse`, `xd-keyboard`, `xd-sound`, `xd-power`, `xd-timedate`, `xd-intl`, `xd-folders`, `xd-fonts`, `xd-users`, `xd-sysdm`, `xd-netconn`, `xd-bluetooth`, `xd-joy`, `xd-printers`, `xd-scanners`, `xd-appwiz`, `xd-schedtasks`, `xd-eventvwr`, ... | GTK3 | Control Panel applets and Administrative Tools, one program each. |
 
 Development tools: `xd-themeview` (renders theme previews to PNG),
-`xd-inject` (virtual pointer and keyboard for UI tests), `xd-windows`
-(lists windows for UI tests), `tools/luna-measure.py` (measures Luna
+`xd-inject` (virtual pointer and keyboard, touch, pen and touchpad
+gestures for UI tests), `xd-test-input` (a window that logs the input
+reaching it), `xd-windows` (lists windows for UI tests), `tools/luna-measure.py` (measures Luna
 artwork from reference screenshots into colour tables).
 
 ### Libraries (static, linked into the programs)
@@ -119,8 +120,14 @@ and xdg-shell, they use:
   and `ext-foreign-toplevel-list-v1`, also offered to the shell alone:
   Windows 7's taskbar thumbnails, captured into shared memory at thumbnail
   size;
+- `zwp_tablet_manager_v2` (drawing tablets' pens and pads) and
+  `zwp_pointer_gestures_v1` (touchpad swipes, pinches and holds) for
+  every program;
 - `wlr-virtual-pointer` and `virtual-keyboard`, only with
-  `--allow-virtual-input` (UI tests).
+  `--allow-virtual-input` (UI tests), and with it `xd-test-input-v1`, our
+  test protocol: a touchscreen, a tablet with pen and pad, and a touchpad
+  made as real wlroots devices, fed by `xd-inject`, since the headless
+  backend has no such devices and uinput would reach the real machine.
 
 ## Compositor
 
@@ -144,6 +151,24 @@ and xdg-shell, they use:
   repeat from Keyboard, and the accessibility features (StickyKeys,
   FilterKeys/SlowKeys/BounceKeys, ToggleKeys, MouseKeys, ClickLock) with
   XP's activation shortcuts.
+- **Touch and pens** (`touch.c`, `tablet.c`). A finger on a surface whose
+  program has `wl_touch` goes to it as touch. Anywhere else it works the
+  pointer (one finger at a time), as Windows 7 promotes touch to mouse
+  messages for programs that don't ask for touch: so our frames (caption
+  buttons, moving, sizing, Aero Snap), the shell (libxdui reads only the
+  pointer) and the locker work by touch without code of their own. A
+  program that moves its window from a touch (`xdg_toplevel.move` with the
+  touch's serial) has the finger drive our move. A pen goes to programs
+  that bound tablet-v2 on our seat as a pen (pressure, tilt, buttons; the
+  pad's focus follows it); to the rest as the pointer, its tip the left
+  button and barrel buttons right and middle. Which way is decided while
+  the pen hovers and kept for a whole stroke. Each touchscreen and pen
+  display is mapped to its monitor (udev's `WL_OUTPUT`, else the built-in
+  `eDP`/`LVDS`/`DSI` panel, else the first), other tablets to the whole
+  desktop, again whenever monitors change; libinput applies the
+  calibration matrix and wlr_cursor the monitor's rotation.
+- **Touchpad gestures** (`gestures.c`) go to the program under the
+  pointer; the compositor keeps none for itself.
 - **Gamma.** Each monitor's gamma ramp combines its calibration (the
   vcgt curves of its ICC profile, read with Little CMS) and the night
   light (a black-body white point by Tanner Helland's fit, scheduled by
