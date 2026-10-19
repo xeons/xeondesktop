@@ -226,6 +226,13 @@ Modelled on Windows XP's Explorer windows:
 - Folders tree, address bar, Back/Forward/Up, rename in place, drag and
   drop, cut/copy/paste through the shell's clipboard, Send To, multi-level
   Undo, Properties dialogs.
+- **Tabs** (Windows 11's; XP had none): a GtkNotebook over the folder
+  view, its strip shown only with two or more. Each tab (`tab` in
+  `main.c`) owns its XdFolderView, Back/Forward history and rename
+  entry; the window (`explorer`) owns the menus, toolbar, address bar,
+  Folders tree and status bar, which show the tab in front. A closed tab's
+  struct stays until the window closes, so a mount or a network name still
+  on its way finds it marked closed.
 - Special folders: My Documents, My Computer (every mount from GIO's
   volume monitor, with mount and eject), Recycle Bin (freedesktop trash,
   including other drives' `.Trash-UID`), My Network Places (gvfs), Control

@@ -207,6 +207,7 @@ enum {
     SIG_ERROR,
     SIG_CONTEXT,
     SIG_DROPPED,
+    SIG_MIDDLE,
     SIG_COUNT
 };
 static guint signals[SIG_COUNT];
@@ -2241,6 +2242,14 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
     }
     if (ev->type != GDK_BUTTON_PRESS)
         return FALSE;
+    /* The middle button opens an item in a new tab, as in Windows 11,
+     * leaving the selection alone. */
+    if (ev->button == GDK_BUTTON_MIDDLE) {
+        item *mid = item_at(v, i);
+        if (mid != nullptr)
+            g_signal_emit(v, signals[SIG_MIDDLE], 0, mid->file, mid->is_dir);
+        return TRUE;
+    }
     gboolean ctrl = ev->state & GDK_CONTROL_MASK;
     gboolean shift = ev->state & GDK_SHIFT_MASK;
     v->pressed = ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift ? i : -1;
@@ -2959,6 +2968,9 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
                                         G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr,
                                         G_TYPE_NONE, 3, G_TYPE_STRV, G_TYPE_FILE,
                                         GDK_TYPE_DRAG_ACTION);
+    signals[SIG_MIDDLE] = g_signal_new("item-middle-click", G_TYPE_FROM_CLASS(klass),
+                                       G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr,
+                                       G_TYPE_NONE, 2, G_TYPE_FILE, G_TYPE_BOOLEAN);
 }
 
 static void xd_folder_view_init(XdFolderView *v) {
@@ -3092,6 +3104,8 @@ void xd_folder_view_set_thumbnail_size(XdFolderView *v, int px) {
     layout_contents(v);
     gtk_widget_queue_draw(GTK_WIDGET(v));
 }
+
+int xd_folder_view_get_thumbnail_size(XdFolderView *v) { return v->thumb; }
 
 void xd_folder_view_set_sort(XdFolderView *v, XdSortColumn column, gboolean descending) {
     if (column >= XD_SORT_COUNT)

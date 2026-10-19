@@ -61,6 +61,7 @@ void xd_folder_view_set_mode(XdFolderView *view, XdViewMode mode);
 XdViewMode xd_folder_view_get_mode(XdFolderView *view);
 /* Thumbnail cell size in px (Thumbnails view), XD_THUMB_MIN..MAX. */
 void xd_folder_view_set_thumbnail_size(XdFolderView *view, int px);
+int xd_folder_view_get_thumbnail_size(XdFolderView *view);
 void xd_folder_view_set_sort(XdFolderView *view, XdSortColumn column, gboolean descending);
 XdSortColumn xd_folder_view_get_sort(XdFolderView *view);
 gboolean xd_folder_view_get_sort_descending(XdFolderView *view);
@@ -122,6 +123,8 @@ void xd_folder_view_set_cut_files(XdFolderView *view, GList *files);
  *   "files-dropped" (GStrv uris, GFile *folder, GdkDragAction action) -
  *       files dropped into the folder (or a folder item), with the action
  *       Windows would take (copy, move or shortcut)
+ *   "item-middle-click" (GFile *file, gboolean is_directory) - the middle
+ *       button pressed on an item (the selection stays as it was)
  */
 
 G_END_DECLS

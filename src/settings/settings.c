@@ -1162,6 +1162,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
         xd_folder_settings *f = &s->folders;
         if (KEY("NewWindow"))
             parse_bool(v, &f->new_window);
+        else if (KEY("NewTabs"))
+            parse_bool(v, &f->new_tabs);
         else if (KEY("SingleClick"))
             parse_bool(v, &f->single_click);
         else if (KEY("ShowHidden"))
@@ -1383,6 +1385,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
                               s->color_profiles[i].path);
     const xd_folder_settings *f = &s->folders;
     g_key_file_set_boolean(kf, "Folders", "NewWindow", f->new_window);
+    g_key_file_set_boolean(kf, "Folders", "NewTabs", f->new_tabs);
     g_key_file_set_boolean(kf, "Folders", "SingleClick", f->single_click);
     g_key_file_set_boolean(kf, "Folders", "ShowHidden", f->show_hidden);
     g_key_file_set_boolean(kf, "Folders", "HideExtensions", f->hide_extensions);

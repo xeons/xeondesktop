@@ -138,6 +138,7 @@ typedef struct xd_keyboard_settings {
 /* [Folders]: Folder Options (xd-folders), obeyed by xd-files. */
 typedef struct xd_folder_settings {
     bool new_window;      /* open each folder in its own window */
+    bool new_tabs;        /* ...in a new tab instead (xd-files' tabs, as Windows 11) */
     bool single_click;    /* single-click to open an item (point to select) */
     bool show_hidden;     /* show hidden files and folders */
     bool hide_extensions; /* hide extensions for known file types */

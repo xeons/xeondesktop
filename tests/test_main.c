@@ -2295,11 +2295,14 @@ static void test_folder_options(void) {
     xd_settings_defaults(&a);
     CHECK(!a.folders.new_window && !a.folders.single_click && !a.folders.show_hidden);
     CHECK(a.folders.full_path_address && !a.folders.full_path_title && a.folders.remember_views);
-    xd_settings_parse(XD_STR("[Folders]\nNewWindow=true\nSingleClick=1\nShowHidden=true\n"
-                             "HideExtensions=true\nFullPathAddress=false\nFullPathTitle=true\n"
-                             "RememberViews=false\nDefaultView=Details\n"),
+    /* Tabs instead of windows is off unless chosen: XP's behaviour. */
+    CHECK(!a.folders.new_tabs);
+    xd_settings_parse(XD_STR("[Folders]\nNewWindow=true\nNewTabs=true\nSingleClick=1\n"
+                             "ShowHidden=true\nHideExtensions=true\nFullPathAddress=false\n"
+                             "FullPathTitle=true\nRememberViews=false\nDefaultView=Details\n"),
                       &a);
-    CHECK(a.folders.new_window && a.folders.single_click && a.folders.show_hidden);
+    CHECK(a.folders.new_window && a.folders.new_tabs && a.folders.single_click &&
+          a.folders.show_hidden);
     CHECK(a.folders.hide_extensions && !a.folders.full_path_address && a.folders.full_path_title);
     CHECK(!a.folders.remember_views && strcmp(a.folders.default_view, "details") == 0);
     xd_strbuf text = {0};

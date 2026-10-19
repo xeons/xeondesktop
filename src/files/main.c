@@ -30,9 +30,50 @@ static constexpr GdkModifierType NO_MODS = (GdkModifierType)0;
 static constexpr GtkDialogFlags MODAL_DIALOG =
     (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT);
 
-typedef struct explorer {
-    GtkWidget *window;
+typedef struct explorer explorer;
+
+/* A tab: one folder with its own view (mode, sort, thumbnail size,
+ * selection, scroll position), Back/Forward history and renaming in
+ * place, as Windows 11's File Explorer keeps per tab. The window's chrome
+ * (title, address bar, status bar, Folders tree, View menu) shows the
+ * active one. */
+typedef struct tab {
+    explorer *e;
+    /* Closed while the window stays open: kept (widgets gone) until the
+     * window closes, so a mount or a name still on its way finds it and
+     * does nothing. */
+    gboolean closed;
+    GtkWidget *page;  /* the notebook's page: the Control Panel bar and the view */
+    GtkWidget *label; /* the tab: icon, name and close button */
+    GtkWidget *label_icon, *label_text, *close_button;
     XdFolderView *view;
+    /* Control Panel: the Switch to Classic/Category View link, in a bar
+     * above the view. */
+    GtkWidget *control_bar, *control_link;
+    /* Renaming in place: an entry over the item's name. `pending_rename`
+     * waits for a new item to appear. */
+    GtkWidget *overlay;
+    GtkWidget *rename_entry;
+    GFile *renaming;
+    GFile *pending_rename;
+    gboolean committing;
+    guint commit_idle;
+    GList *back; /* GFile*, most recent first */
+    GList *forward;
+    /* A gvfs location's name as GIO gives it ("data on example.org"),
+     * asked once per location; its own name is shown meanwhile. */
+    GFile *named;
+    char *gio_name;
+    GCancellable *naming;
+} tab;
+
+struct explorer {
+    GtkWidget *window;
+    /* The tabs; the strip shows only with two or more (one folder looks
+     * as XP's window does). */
+    GtkWidget *notebook;
+    tab *cur;          /* the active tab */
+    GPtrArray *closed; /* tab*, the closed ones (see tab.closed) */
     GtkWidget *address;
     GtkWidget *tree;
     GtkTreeStore *store;
@@ -44,9 +85,8 @@ typedef struct explorer {
     GtkWidget *folders_toggle;
     GtkWidget *view_items[XD_VIEW_COUNT];
     GtkWidget *arrange_item; /* View > Arrange Icons By */
-    /* Control Panel: the Switch to Classic/Category View link (in a bar
-     * above the view) and View menu item. */
-    GtkWidget *control_bar, *control_link, *control_item, *control_sep;
+    /* Control Panel: View's Switch to Classic/Category View. */
+    GtkWidget *control_item, *control_sep;
     GtkWidget *hidden_item;  /* View > Show Hidden Files */
     GtkWidget *undo_item;    /* Edit > Undo ... */
     GtkWidget *send_to_item; /* File > Send To */
@@ -59,25 +99,23 @@ typedef struct explorer {
      * only for the Recycle Bin (Restore, Empty Recycle Bin). */
     GPtrArray *folders_only;
     GPtrArray *trash_only;
-    /* Renaming in place: an entry over the item's name. `pending_rename`
-     * waits for a new item to appear. */
-    GtkWidget *overlay;
-    GtkWidget *rename_entry;
-    GFile *renaming;
-    GFile *pending_rename;
-    gboolean committing;
-    guint commit_idle;
-    GList *back;    /* GFile*, most recent first */
-    GList *forward;
     gboolean syncing; /* updating widgets programmatically */
-    /* A gvfs location's name as GIO gives it ("data on example.org"),
-     * asked once per location; its own name is shown meanwhile. */
-    GFile *named;
-    char *gio_name;
-    GCancellable *naming;
-} explorer;
+};
 
-static void navigate(explorer *e, GFile *dir, gboolean record);
+static XdPlace tab_place(tab *t) { return xd_place_of(xd_folder_view_get_location(t->view)); }
+
+/* The tabs, in the strip's order (dragging reorders them). */
+static guint tab_count(explorer *e) {
+    return (guint)gtk_notebook_get_n_pages(GTK_NOTEBOOK(e->notebook));
+}
+
+static tab *tab_at(explorer *e, guint i) {
+    GtkWidget *page = gtk_notebook_get_nth_page(GTK_NOTEBOOK(e->notebook), (int)i);
+    return g_object_get_data(G_OBJECT(page), "xd-tab");
+}
+
+static void navigate(tab *t, GFile *dir, gboolean record);
+static tab *add_tab(explorer *e, GFile *dir, gboolean activate);
 static int initial_view = XD_VIEW_ICONS; /* from --view */
 static gboolean view_forced;              /* --view given: it wins for the first folder */
 static gboolean view_given;               /* --view given: Folder Options' default doesn't apply */
@@ -120,9 +158,10 @@ static char *free_space_text(GFile *dir) {
 }
 
 static void update_status(explorer *e) {
-    guint sel = xd_folder_view_get_selected_count(e->view);
-    guint total = xd_folder_view_get_item_count(e->view);
-    char *space = sel > 0 ? nullptr : free_space_text(xd_folder_view_get_location(e->view));
+    XdFolderView *view = e->cur->view;
+    guint sel = xd_folder_view_get_selected_count(view);
+    guint total = xd_folder_view_get_item_count(view);
+    char *space = sel > 0 ? nullptr : free_space_text(xd_folder_view_get_location(view));
     char *text = sel > 0 ? g_strdup_printf("%u object%s selected", sel, sel == 1 ? "" : "s")
                          : g_strdup_printf("%u object%s%s", total, total == 1 ? "" : "s",
                                            space != nullptr ? space : "");
@@ -130,82 +169,126 @@ static void update_status(explorer *e) {
     gtk_label_set_text(GTK_LABEL(e->status), text);
     g_free(text);
     /* Control Panel's and My Network Places' items have no size. */
-    XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
+    XdPlace place = xd_place_of(xd_folder_view_get_location(view));
     char *size = place == XD_PLACE_CONTROL || place == XD_PLACE_NETWORK
                      ? g_strdup("")
-                     : xd_format_size(xd_folder_view_get_size(e->view, sel > 0));
+                     : xd_format_size(xd_folder_view_get_size(view, sel > 0));
     gtk_label_set_text(GTK_LABEL(e->status_size), size);
     g_free(size);
 }
 
+static const char *control_switch_label(void) {
+    return xd_control_classic_view() ? "Switch to Category View" : "Switch to Classic View";
+}
+
 /* Control Panel's "Switch to Classic View" / "Switch to Category View":
- * the link above the view and the View menu's item. */
-static void update_control_switch(explorer *e) {
-    gboolean control = xd_place_of(xd_folder_view_get_location(e->view)) == XD_PLACE_CONTROL;
-    const char *label = xd_control_classic_view() ? "Switch to Category View"
-                                                  : "Switch to Classic View";
-    gtk_widget_set_visible(e->control_bar, control);
-    gtk_button_set_label(GTK_BUTTON(e->control_link), label);
-    gtk_widget_set_visible(e->control_item, control);
-    gtk_widget_set_visible(e->control_sep, control);
-    gtk_menu_item_set_label(GTK_MENU_ITEM(e->control_item), label);
+ * the link above a tab's view, and the View menu's item for the active
+ * tab. */
+static void update_control_switch(tab *t) {
+    gboolean control = tab_place(t) == XD_PLACE_CONTROL;
+    gtk_widget_set_visible(t->control_bar, control);
+    gtk_button_set_label(GTK_BUTTON(t->control_link), control_switch_label());
+    if (t != t->e->cur)
+        return;
+    gtk_widget_set_visible(t->e->control_item, control);
+    gtk_widget_set_visible(t->e->control_sep, control);
+    gtk_menu_item_set_label(GTK_MENU_ITEM(t->e->control_item), control_switch_label());
 }
 
 static void update_chrome(explorer *e);
+static void update_tab_label(tab *t);
 
 static void got_gio_name(GObject *src, GAsyncResult *res, gpointer data) {
     GError *err = nullptr;
     GFileInfo *info = g_file_query_info_finish(G_FILE(src), res, &err);
     if (info == nullptr) {
-        /* Cancelled: the window may be gone (don't touch it). */
+        /* Cancelled: the tab or the window may be gone (don't touch it). */
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-            explorer *e = data;
-            g_clear_object(&e->naming);
+            tab *t = data;
+            g_clear_object(&t->naming);
         }
         g_error_free(err);
         return;
     }
-    explorer *e = data;
-    g_clear_object(&e->naming);
+    tab *t = data;
+    g_clear_object(&t->naming);
     const char *name = g_file_info_get_display_name(info);
     if (name != nullptr && *name != '\0') {
-        g_set_object(&e->named, G_FILE(src));
-        g_free(e->gio_name);
-        e->gio_name = g_strdup(name);
-        update_chrome(e);
+        g_set_object(&t->named, G_FILE(src));
+        g_free(t->gio_name);
+        t->gio_name = g_strdup(name);
+        update_tab_label(t);
+        if (t == t->e->cur)
+            update_chrome(t->e);
     }
     g_object_unref(info);
 }
 
 /* The name to show for a location that isn't on a local disk: GIO's
  * display name (asked in the background), or nullptr until it's known. */
-static const char *gio_name(explorer *e, GFile *dir) {
+static const char *gio_name(tab *t, GFile *dir) {
     if (g_file_is_native(dir))
         return nullptr;
-    if (e->named != nullptr && g_file_equal(e->named, dir))
-        return e->gio_name;
-    if (e->naming != nullptr) {
-        g_cancellable_cancel(e->naming);
-        g_clear_object(&e->naming);
+    if (t->named != nullptr && g_file_equal(t->named, dir))
+        return t->gio_name;
+    if (t->naming != nullptr) {
+        g_cancellable_cancel(t->naming);
+        g_clear_object(&t->naming);
     }
-    g_clear_object(&e->named);
-    g_clear_pointer(&e->gio_name, g_free);
-    e->naming = g_cancellable_new();
+    g_clear_object(&t->named);
+    g_clear_pointer(&t->gio_name, g_free);
+    t->naming = g_cancellable_new();
     g_file_query_info_async(dir, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME, G_FILE_QUERY_INFO_NONE,
-                            G_PRIORITY_DEFAULT, e->naming, got_gio_name, e);
+                            G_PRIORITY_DEFAULT, t->naming, got_gio_name, t);
     return nullptr;
 }
 
+/* A tab's folder's names: `parse` the full one (a special place's title),
+ * `base` its own (nullptr for the special places), `named` GIO's name of
+ * a network folder when known. Free `parse` and `base` with g_free. */
+static void folder_names(tab *t, GFile *dir, char **parse, char **base, const char **named) {
+    const char *special = xd_place_title(dir);
+    *parse = special != nullptr ? g_strdup(special) : g_file_get_parse_name(dir);
+    *named = special != nullptr ? nullptr : gio_name(t, dir);
+    *base = special != nullptr ? nullptr
+            : *named != nullptr ? g_strdup(*named)
+                                : g_file_get_basename(dir);
+}
+
+enum { TAB_NAME_CHARS = 20 };
+
+/* The tab shows the folder's icon and name (the full path in its
+ * tooltip), as Windows 11's tabs do. */
+static void update_tab_label(tab *t) {
+    GFile *dir = xd_folder_view_get_location(t->view);
+    if (dir == nullptr)
+        return;
+    char *parse = nullptr, *base = nullptr;
+    const char *named = nullptr;
+    folder_names(t, dir, &parse, &base, &named);
+    const char *name = base != nullptr ? base : parse;
+    gtk_label_set_text(GTK_LABEL(t->label_text), name);
+    /* The whole name up to a point, then "..." (a notebook gives a tab
+     * only the least its label asks for). */
+    gboolean is_long = g_utf8_strlen(name, -1) > TAB_NAME_CHARS;
+    gtk_label_set_ellipsize(GTK_LABEL(t->label_text),
+                            is_long ? PANGO_ELLIPSIZE_END : PANGO_ELLIPSIZE_NONE);
+    gtk_label_set_width_chars(GTK_LABEL(t->label_text), is_long ? TAB_NAME_CHARS : -1);
+    gtk_widget_set_tooltip_text(t->label, parse);
+    gtk_image_set_from_icon_name(GTK_IMAGE(t->label_icon), xd_place_icon(dir), GTK_ICON_SIZE_MENU);
+    g_free(base);
+    g_free(parse);
+}
+
+/* The window's title, address bar and buttons, for the active tab. */
 static void update_chrome(explorer *e) {
-    GFile *dir = xd_folder_view_get_location(e->view);
+    tab *t = e->cur;
+    GFile *dir = xd_folder_view_get_location(t->view);
     if (dir == nullptr)
         return; /* nothing loaded yet */
-    const char *special = xd_place_title(dir);
-    char *parse = special != nullptr ? g_strdup(special) : g_file_get_parse_name(dir);
-    const char *named = special != nullptr ? nullptr : gio_name(e, dir);
-    char *base = special != nullptr ? nullptr
-                 : named != nullptr ? g_strdup(named)
-                                    : g_file_get_basename(dir);
+    char *parse = nullptr, *base = nullptr;
+    const char *named = nullptr;
+    folder_names(t, dir, &parse, &base, &named);
     /* Folder Options: the folder's name alone, unless the full path. */
     const char *shown = options.full_path_address || base == nullptr ? parse : base;
     g_object_set_data_full(G_OBJECT(e->address), "xd-shown", g_strdup(shown), g_free);
@@ -219,18 +302,19 @@ static void update_chrome(explorer *e) {
     gtk_window_set_title(GTK_WINDOW(e->window), short_title ? base : parse);
     g_free(base);
     g_free(parse);
-    gtk_widget_set_sensitive(e->back_button, e->back != nullptr);
-    gtk_widget_set_sensitive(e->forward_button, e->forward != nullptr);
+    gtk_widget_set_sensitive(e->back_button, t->back != nullptr);
+    gtk_widget_set_sensitive(e->forward_button, t->forward != nullptr);
     /* A drive's Up is My Computer, as in XP; so is Control Panel's, whose
      * category pages go up to it. */
+    const char *special = xd_place_title(dir);
     char *uri = g_file_get_uri(dir);
     gtk_widget_set_sensitive(e->up_button,
                              special == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL ||
                                  strcmp(uri, XD_ENTIRE_NETWORK_URI) == 0 ||
                                  strcmp(uri, XD_WINDOWS_NETWORK_URI) == 0);
     g_free(uri);
-    gtk_widget_set_visible(e->slider, xd_folder_view_get_mode(e->view) == XD_VIEW_THUMBNAILS);
-    update_control_switch(e);
+    gtk_widget_set_visible(e->slider, xd_folder_view_get_mode(t->view) == XD_VIEW_THUMBNAILS);
+    update_control_switch(t);
 }
 
 /* ---- Folders tree ---------------------------------------------------------------- */
@@ -326,10 +410,32 @@ static void on_tree_selection(GtkTreeSelection *sel, gpointer data) {
     GFile *file = nullptr;
     gtk_tree_model_get(model, &iter, COL_FILE, &file, -1);
     if (file != nullptr) {
-        if (!g_file_equal(file, xd_folder_view_get_location(e->view)))
-            navigate(e, file, TRUE);
+        if (!g_file_equal(file, xd_folder_view_get_location(e->cur->view)))
+            navigate(e->cur, file, TRUE);
         g_object_unref(file);
     }
+}
+
+/* The middle button opens a folder of the tree in a new tab, behind the
+ * one shown (Windows 11's navigation pane). */
+static gboolean on_tree_press(GtkWidget *tree, GdkEventButton *ev, gpointer data) {
+    if (ev->type != GDK_BUTTON_PRESS || ev->button != GDK_BUTTON_MIDDLE)
+        return FALSE;
+    GtkTreePath *path = nullptr;
+    if (!gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(tree), (int)ev->x, (int)ev->y, &path,
+                                       nullptr, nullptr, nullptr))
+        return TRUE;
+    explorer *e = data;
+    GtkTreeIter iter;
+    GFile *file = nullptr;
+    if (gtk_tree_model_get_iter(GTK_TREE_MODEL(e->store), &iter, path))
+        gtk_tree_model_get(GTK_TREE_MODEL(e->store), &iter, COL_FILE, &file, -1);
+    gtk_tree_path_free(path);
+    if (file != nullptr) {
+        add_tab(e, file, FALSE);
+        g_object_unref(file);
+    }
+    return TRUE;
 }
 
 static void build_tree_roots(explorer *e) {
@@ -370,7 +476,8 @@ static gboolean select_matching(GtkTreeModel *model, GtkTreePath *path, GtkTreeI
     explorer *e = data;
     GFile *file = nullptr;
     gtk_tree_model_get(model, iter, COL_FILE, &file, -1);
-    gboolean match = file != nullptr && g_file_equal(file, xd_folder_view_get_location(e->view));
+    gboolean match =
+        file != nullptr && g_file_equal(file, xd_folder_view_get_location(e->cur->view));
     g_clear_object(&file);
     if (match) {
         gtk_tree_view_expand_to_path(GTK_TREE_VIEW(e->tree), path);
@@ -405,7 +512,7 @@ enum { FOLDER_VIEWS_MAX = 400 };
  * any file name is plain text) and their x, y pairs. */
 #define FOLDER_POSITIONS "folder-positions"
 
-static void set_mode(explorer *e, XdViewMode mode);
+static void set_mode(tab *t, XdViewMode mode);
 
 typedef struct folder_view_setting {
     int mode, sort;
@@ -455,14 +562,14 @@ static GKeyFile *load_positions(char **path_out) {
 }
 
 /* Keeps where the folder's icons are (Auto Arrange off), or forgets it. */
-static void remember_positions(explorer *e, const char *uri) {
+static void remember_positions(tab *t, const char *uri) {
     char *path = nullptr;
     GKeyFile *kf = load_positions(&path);
     gboolean had = g_key_file_has_group(kf, uri);
     XdViewMode mode = XD_VIEW_ICONS;
     char **names = nullptr;
     int *xy = nullptr;
-    gsize n = xd_folder_view_get_positions(e->view, &mode, &names, &xy);
+    gsize n = xd_folder_view_get_positions(t->view, &mode, &names, &xy);
     if (n > 0 || had) {
         g_key_file_remove_group(kf, uri, nullptr);
         if (n > 0) {
@@ -492,7 +599,7 @@ static void remember_positions(explorer *e, const char *uri) {
 }
 
 /* Puts the folder's icons back where they were (before it's listed). */
-static void restore_positions(explorer *e, const char *uri) {
+static void restore_positions(tab *t, const char *uri) {
     GKeyFile *kf = load_positions(nullptr);
     gsize n = 0, nxy = 0;
     char **escaped = g_key_file_get_string_list(kf, uri, "Names", &n, nullptr);
@@ -511,7 +618,7 @@ static void restore_positions(explorer *e, const char *uri) {
             kept[2 * k + 1] = xy[2 * i + 1];
             k++;
         }
-        xd_folder_view_set_positions(e->view, (XdViewMode)mode, names, kept, k);
+        xd_folder_view_set_positions(t->view, (XdViewMode)mode, names, kept, k);
         g_strfreev(names);
         g_free(kept);
     }
@@ -522,23 +629,23 @@ static void restore_positions(explorer *e, const char *uri) {
 
 /* Keeps the folder's view (most recent first), unless it's the default
  * and the folder wasn't remembered before. */
-static void remember_folder_view(explorer *e) {
-    GFile *dir = xd_folder_view_get_location(e->view);
+static void remember_folder_view(tab *t) {
+    GFile *dir = xd_folder_view_get_location(t->view);
     /* Control Panel always opens in its view's own look (below); with
      * "Remember each folder's view settings" off nothing is kept. */
     if (dir == nullptr || xd_place_of(dir) == XD_PLACE_CONTROL || !options.remember_views)
         return;
     char *uri = g_file_get_uri(dir);
-    remember_positions(e, uri);
-    XdViewMode view_mode = xd_folder_view_get_mode(e->view);
+    remember_positions(t, uri);
+    XdViewMode view_mode = xd_folder_view_get_mode(t->view);
     int mode = (int)view_mode;
-    XdSortColumn sort_col = xd_folder_view_get_sort(e->view);
+    XdSortColumn sort_col = xd_folder_view_get_sort(t->view);
     int sort = (int)sort_col;
-    gboolean desc = xd_folder_view_get_sort_descending(e->view);
-    gboolean groups = xd_folder_view_get_groups(e->view);
-    char *columns = xd_folder_view_get_columns(e->view);
-    gboolean arrange = xd_folder_view_get_auto_arrange(e->view);
-    gboolean align = xd_folder_view_get_align_to_grid(e->view);
+    gboolean desc = xd_folder_view_get_sort_descending(t->view);
+    gboolean groups = xd_folder_view_get_groups(t->view);
+    char *columns = xd_folder_view_get_columns(t->view);
+    gboolean arrange = xd_folder_view_get_auto_arrange(t->view);
+    gboolean align = xd_folder_view_get_align_to_grid(t->view);
     folder_view_setting old = {0};
     gboolean known = find_folder_view(uri, &old);
     gboolean is_default = mode == initial_view && sort == XD_SORT_NAME && !desc && !groups &&
@@ -574,7 +681,7 @@ static void remember_folder_view(explorer *e) {
 }
 
 /* The folder's own view, if it has one. */
-static void apply_folder_view(explorer *e, GFile *dir) {
+static void apply_folder_view(tab *t, GFile *dir) {
     if (view_forced) {
         view_forced = FALSE; /* --view, for the folder it opened */
         return;
@@ -583,11 +690,11 @@ static void apply_folder_view(explorer *e, GFile *dir) {
         /* Category View's categories as tiles (XP's big links); applets
          * as icons, as Classic View and the category pages show them. */
         gboolean categories = xd_control_page(dir) == nullptr && !xd_control_classic_view();
-        set_mode(e, categories ? XD_VIEW_TILES : XD_VIEW_ICONS);
-        xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
-        xd_folder_view_set_groups(e->view, FALSE);
-        xd_folder_view_set_columns(e->view, nullptr);
-        xd_folder_view_set_auto_arrange(e->view, TRUE);
+        set_mode(t, categories ? XD_VIEW_TILES : XD_VIEW_ICONS);
+        xd_folder_view_set_sort(t->view, XD_SORT_NAME, FALSE);
+        xd_folder_view_set_groups(t->view, FALSE);
+        xd_folder_view_set_columns(t->view, nullptr);
+        xd_folder_view_set_auto_arrange(t->view, TRUE);
         return;
     }
     /* Not remembering: every folder keeps the view last chosen, as in XP. */
@@ -596,29 +703,29 @@ static void apply_folder_view(explorer *e, GFile *dir) {
     char *uri = g_file_get_uri(dir);
     folder_view_setting fv = {0};
     if (find_folder_view(uri, &fv)) {
-        set_mode(e, (XdViewMode)fv.mode);
-        xd_folder_view_set_auto_arrange(e->view, fv.auto_arrange);
-        xd_folder_view_set_align_to_grid(e->view, fv.align_grid);
-        xd_folder_view_set_sort(e->view, (XdSortColumn)fv.sort, fv.desc);
-        if (xd_folder_view_get_groups(e->view) != fv.groups)
-            xd_folder_view_set_groups(e->view, fv.groups);
-        xd_folder_view_set_columns(e->view, fv.columns);
+        set_mode(t, (XdViewMode)fv.mode);
+        xd_folder_view_set_auto_arrange(t->view, fv.auto_arrange);
+        xd_folder_view_set_align_to_grid(t->view, fv.align_grid);
+        xd_folder_view_set_sort(t->view, (XdSortColumn)fv.sort, fv.desc);
+        if (xd_folder_view_get_groups(t->view) != fv.groups)
+            xd_folder_view_set_groups(t->view, fv.groups);
+        xd_folder_view_set_columns(t->view, fv.columns);
         if (!fv.auto_arrange)
-            restore_positions(e, uri);
+            restore_positions(t, uri);
         g_free(fv.columns);
     } else {
-        char *columns = xd_folder_view_get_columns(e->view);
-        if (xd_folder_view_get_mode(e->view) != (XdViewMode)initial_view ||
-            xd_folder_view_get_sort(e->view) != XD_SORT_NAME ||
-            xd_folder_view_get_sort_descending(e->view) || xd_folder_view_get_groups(e->view) ||
-            columns != nullptr || !xd_folder_view_get_auto_arrange(e->view) ||
-            !xd_folder_view_get_align_to_grid(e->view)) {
-            set_mode(e, (XdViewMode)initial_view);
-            xd_folder_view_set_auto_arrange(e->view, TRUE);
-            xd_folder_view_set_align_to_grid(e->view, TRUE);
-            xd_folder_view_set_sort(e->view, XD_SORT_NAME, FALSE);
-            xd_folder_view_set_groups(e->view, FALSE);
-            xd_folder_view_set_columns(e->view, nullptr);
+        char *columns = xd_folder_view_get_columns(t->view);
+        if (xd_folder_view_get_mode(t->view) != (XdViewMode)initial_view ||
+            xd_folder_view_get_sort(t->view) != XD_SORT_NAME ||
+            xd_folder_view_get_sort_descending(t->view) || xd_folder_view_get_groups(t->view) ||
+            columns != nullptr || !xd_folder_view_get_auto_arrange(t->view) ||
+            !xd_folder_view_get_align_to_grid(t->view)) {
+            set_mode(t, (XdViewMode)initial_view);
+            xd_folder_view_set_auto_arrange(t->view, TRUE);
+            xd_folder_view_set_align_to_grid(t->view, TRUE);
+            xd_folder_view_set_sort(t->view, XD_SORT_NAME, FALSE);
+            xd_folder_view_set_groups(t->view, FALSE);
+            xd_folder_view_set_columns(t->view, nullptr);
         }
         g_free(columns);
     }
@@ -630,7 +737,7 @@ static void apply_folder_view(explorer *e, GFile *dir) {
 /* A mount waiting to finish; the window may close meanwhile. */
 typedef struct mount_request {
     GtkWidget *window; /* weak */
-    explorer *e;
+    tab *t;            /* nullptr: Eject */
     gboolean record;
     gboolean unmount; /* Eject on a disk that only unmounts */
     char *name;
@@ -655,11 +762,11 @@ static void volume_mounted(GObject *src, GAsyncResult *res, gpointer data) {
             g_free(msg);
         }
         g_error_free(err);
-    } else if (r->window != nullptr) {
+    } else if (r->window != nullptr && !r->t->closed) {
         GMount *m = g_volume_get_mount(vol);
         if (m != nullptr) {
             GFile *root = g_mount_get_root(m);
-            navigate(r->e, root, r->record);
+            navigate(r->t, root, r->record);
             g_object_unref(root);
             g_object_unref(m);
         }
@@ -667,27 +774,37 @@ static void volume_mounted(GObject *src, GAsyncResult *res, gpointer data) {
     mount_request_free(r);
 }
 
-static void encrypted_opened(GFile *root, gpointer e) { navigate(e, root, TRUE); }
-static void encrypted_opened_again(GFile *root, gpointer e) { navigate(e, root, FALSE); }
+static void encrypted_opened(GFile *root, gpointer data) {
+    tab *t = data;
+    if (!t->closed)
+        navigate(t, root, TRUE);
+}
+
+static void encrypted_opened_again(GFile *root, gpointer data) {
+    tab *t = data;
+    if (!t->closed)
+        navigate(t, root, FALSE);
+}
 
 /* Opening a drive that isn't mounted mounts it first, as XP's drives are
  * simply there; an encrypted one is unlocked first. */
-static gboolean mount_and_open(explorer *e, GFile *item, gboolean record) {
+static gboolean mount_and_open(tab *t, GFile *item, gboolean record) {
+    GtkWidget *window = t->e->window;
     if (xd_encrypted_needs_unlock(item)) {
-        xd_encrypted_open(GTK_WINDOW(e->window), item,
-                          record ? encrypted_opened : encrypted_opened_again, e);
+        xd_encrypted_open(GTK_WINDOW(window), item,
+                          record ? encrypted_opened : encrypted_opened_again, t);
         return TRUE;
     }
     GVolume *vol = xd_computer_volume(item);
     if (vol == nullptr)
         return FALSE;
     mount_request *r = g_new0(mount_request, 1);
-    r->window = e->window;
+    r->window = window;
     g_object_add_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
-    r->e = e;
+    r->t = t;
     r->record = record;
     r->name = g_volume_get_name(vol);
-    GMountOperation *op = gtk_mount_operation_new(GTK_WINDOW(e->window));
+    GMountOperation *op = gtk_mount_operation_new(GTK_WINDOW(window));
     g_volume_mount(vol, G_MOUNT_MOUNT_NONE, op, nullptr, volume_mounted, r);
     g_object_unref(op);
     g_object_unref(vol);
@@ -716,7 +833,6 @@ static void eject_item(explorer *e, GFile *item) {
     mount_request *r = g_new0(mount_request, 1);
     r->window = e->window;
     g_object_add_weak_pointer(G_OBJECT(r->window), (gpointer *)&r->window);
-    r->e = e;
     GMountOperation *op = gtk_mount_operation_new(GTK_WINDOW(e->window));
     GVolume *vol = xd_computer_volume(item);
     GMount *m = vol == nullptr ? xd_computer_mount(item) : nullptr;
@@ -737,7 +853,7 @@ static void eject_item(explorer *e, GFile *item) {
 
 static void cb_lock([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     for (GList *l = files; l != nullptr; l = l->next)
         if (xd_encrypted_can_lock(l->data))
             xd_encrypted_lock(GTK_WINDOW(e->window), l->data);
@@ -746,7 +862,7 @@ static void cb_lock([[maybe_unused]] GtkWidget *w, gpointer d) {
 
 static void cb_eject([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     for (GList *l = files; l != nullptr; l = l->next)
         if (xd_computer_can_eject(l->data))
             eject_item(e, l->data);
@@ -755,11 +871,13 @@ static void cb_eject([[maybe_unused]] GtkWidget *w, gpointer d) {
 
 /* ---- network folders not connected yet -------------------------------------------- */
 
-static void show_location(explorer *e, GFile *dir, gboolean record);
+static void show_location(tab *t, GFile *dir, gboolean record);
 
-static void connected(explorer *e, GFile *location, const GError *error, gboolean record) {
+static void connected(tab *t, GFile *location, const GError *error, gboolean record) {
+    if (t->closed)
+        return;
     if (error == nullptr) {
-        show_location(e, location, record);
+        show_location(t, location, record);
         return;
     }
     /* "Handled": the user cancelled the password question. */
@@ -768,7 +886,7 @@ static void connected(explorer *e, GFile *location, const GError *error, gboolea
     char *uri = g_file_get_uri(location);
     char *shown = xd_net_display_path(uri);
     char *msg = g_strdup_printf("%s is not accessible.\n\n%s", shown, error->message);
-    xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+    xd_message_box(GTK_WINDOW(t->e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
     g_free(msg);
     g_free(shown);
     g_free(uri);
@@ -803,7 +921,8 @@ static char *mapped_user(const char *uri) {
  * share opened from the network, an address typed) is mounted first,
  * asking for a password in XP's "Connect to server" box, then opened. A
  * kind GIO can't open here is explained. */
-static gboolean connect_and_open(explorer *e, GFile *dir, gboolean record) {
+static gboolean connect_and_open(tab *t, GFile *dir, gboolean record) {
+    GtkWidget *window = t->e->window;
     if (g_file_is_native(dir) || xd_place_of(dir) != XD_PLACE_FOLDER)
         return FALSE;
     char *uri = g_file_get_uri(dir);
@@ -812,7 +931,7 @@ static gboolean connect_and_open(explorer *e, GFile *dir, gboolean record) {
     g_free(scheme);
     if (!supported) {
         char *msg = xd_net_unsupported_text(uri);
-        xd_message_box(GTK_WINDOW(e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+        xd_message_box(GTK_WINDOW(window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
         g_free(msg);
         g_free(uri);
         return TRUE;
@@ -825,62 +944,65 @@ static gboolean connect_and_open(explorer *e, GFile *dir, gboolean record) {
     g_clear_object(&m);
     if (not_mounted) {
         char *user = mapped_user(uri);
-        xd_net_mount(GTK_WINDOW(e->window), dir, user, nullptr,
-                     record ? connected_recorded : connected_unrecorded, e);
+        xd_net_mount(GTK_WINDOW(window), dir, user, nullptr,
+                     record ? connected_recorded : connected_unrecorded, t);
         g_free(user);
     }
     g_free(uri);
     return not_mounted;
 }
 
-static void navigate(explorer *e, GFile *dir, gboolean record) {
-    if (mount_and_open(e, dir, record) || connect_and_open(e, dir, record))
+static void navigate(tab *t, GFile *dir, gboolean record) {
+    if (mount_and_open(t, dir, record) || connect_and_open(t, dir, record))
         return;
-    show_location(e, dir, record);
+    show_location(t, dir, record);
 }
 
-static void show_location(explorer *e, GFile *dir, gboolean record) {
-    GFile *current = xd_folder_view_get_location(e->view);
+static void show_location(tab *t, GFile *dir, gboolean record) {
+    GFile *current = xd_folder_view_get_location(t->view);
     if (record && current != nullptr && !g_file_equal(current, dir)) {
-        e->back = g_list_prepend(e->back, g_object_ref(current));
-        free_history(&e->forward);
+        t->back = g_list_prepend(t->back, g_object_ref(current));
+        free_history(&t->forward);
     }
     if (current != nullptr)
-        remember_folder_view(e);
-    apply_folder_view(e, dir);
-    xd_folder_view_set_location(e->view, dir);
-    update_chrome(e);
-    sync_tree(e);
+        remember_folder_view(t);
+    apply_folder_view(t, dir);
+    xd_folder_view_set_location(t->view, dir);
+    update_tab_label(t);
+    if (t == t->e->cur) {
+        update_chrome(t->e);
+        sync_tree(t->e);
+    }
 }
 
-static void go_back(explorer *e) {
-    if (e->back == nullptr)
+static void go_back(tab *t) {
+    if (t->back == nullptr)
         return;
-    GFile *target = e->back->data;
-    e->back = g_list_delete_link(e->back, e->back);
-    e->forward = g_list_prepend(e->forward, g_object_ref(xd_folder_view_get_location(e->view)));
-    navigate(e, target, FALSE);
+    GFile *target = t->back->data;
+    t->back = g_list_delete_link(t->back, t->back);
+    t->forward = g_list_prepend(t->forward, g_object_ref(xd_folder_view_get_location(t->view)));
+    navigate(t, target, FALSE);
     g_object_unref(target);
 }
 
-static void go_forward(explorer *e) {
-    if (e->forward == nullptr)
+static void go_forward(tab *t) {
+    if (t->forward == nullptr)
         return;
-    GFile *target = e->forward->data;
-    e->forward = g_list_delete_link(e->forward, e->forward);
-    e->back = g_list_prepend(e->back, g_object_ref(xd_folder_view_get_location(e->view)));
-    navigate(e, target, FALSE);
+    GFile *target = t->forward->data;
+    t->forward = g_list_delete_link(t->forward, t->forward);
+    t->back = g_list_prepend(t->back, g_object_ref(xd_folder_view_get_location(t->view)));
+    navigate(t, target, FALSE);
     g_object_unref(target);
 }
 
-static void go_up(explorer *e) {
-    GFile *dir = xd_folder_view_get_location(e->view);
+static void go_up(tab *t) {
+    GFile *dir = xd_folder_view_get_location(t->view);
     if (dir == nullptr)
         return;
     if (xd_place_of(dir) == XD_PLACE_CONTROL) {
         /* A category's page is in Control Panel, which is in My Computer. */
         GFile *up = xd_control_page(dir) != nullptr ? xd_place_control() : xd_place_computer();
-        navigate(e, up, TRUE);
+        navigate(t, up, TRUE);
         g_object_unref(up);
         return;
     }
@@ -889,7 +1011,7 @@ static void go_up(explorer *e) {
         char *uri = g_file_get_uri(dir);
         if (strcmp(uri, XD_ENTIRE_NETWORK_URI) == 0) {
             GFile *up = g_file_new_for_uri(XD_NETWORK_URI);
-            navigate(e, up, TRUE);
+            navigate(t, up, TRUE);
             g_object_unref(up);
         }
         g_free(uri);
@@ -905,19 +1027,19 @@ static void go_up(explorer *e) {
                     : !smb && xd_place_is_drive_root(dir) ? xd_place_computer()
                                                           : g_file_get_parent(dir);
     if (parent != nullptr) {
-        navigate(e, parent, TRUE);
+        navigate(t, parent, TRUE);
         g_object_unref(parent);
     }
 }
 
-static void go_home(explorer *e) {
+static void go_home(tab *t) {
     GFile *home = g_file_new_for_path(g_get_home_dir());
-    navigate(e, home, TRUE);
+    navigate(t, home, TRUE);
     g_object_unref(home);
 }
 
 static GFile *current_dir(explorer *e);
-static void open_window(GtkApplication *app, GFile *dir);
+static explorer *open_window(GtkApplication *app, GFile *dir);
 
 /* Opens a Control Panel applet (its desktop file). FALSE if `file` isn't
  * one. */
@@ -940,12 +1062,18 @@ static gboolean launch_applet(explorer *e, GFile *file) {
     return TRUE;
 }
 
-/* My Network Places' and Map Network Drive's new folders open in a
- * window of their own, as in XP. */
-static void open_in_new_window(GFile *location, gpointer data) {
-    explorer *e = data;
-    open_window(gtk_window_get_application(GTK_WINDOW(e->window)), location);
+/* What XP opens in a window of its own (a folder with "Open each folder
+ * in its own window", My Network Places' and Map Network Drive's new
+ * folders): a new tab in front instead, with Folder Options' "Open
+ * folders in new tabs instead of new windows". */
+static void open_elsewhere(explorer *e, GFile *location) {
+    if (options.new_tabs)
+        add_tab(e, location, TRUE);
+    else
+        open_window(gtk_window_get_application(GTK_WINDOW(e->window)), location);
 }
+
+static void open_in_new_window(GFile *location, gpointer data) { open_elsewhere(data, location); }
 
 /* Windows 2000's Add Network Place item: the wizard. */
 static gboolean add_network_place_item(explorer *e, GFile *file) {
@@ -957,12 +1085,12 @@ static gboolean add_network_place_item(explorer *e, GFile *file) {
     return is;
 }
 
-static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gboolean is_dir,
-                         gpointer data) {
-    explorer *e = data;
-    if (xd_place_of(current_dir(e)) == XD_PLACE_NETWORK && add_network_place_item(e, file))
+static void activate_item(tab *t, GFile *file, gboolean is_dir) {
+    explorer *e = t->e;
+    XdPlace here = tab_place(t);
+    if (here == XD_PLACE_NETWORK && add_network_place_item(e, file))
         return;
-    if (xd_place_of(current_dir(e)) == XD_PLACE_TRASH) {
+    if (here == XD_PLACE_TRASH) {
         /* Items in the Recycle Bin open their Properties, as in XP. */
         GList *one = g_list_append(nullptr, file);
         xd_properties_show(GTK_WINDOW(e->window), one);
@@ -970,14 +1098,14 @@ static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gbool
         return;
     }
     if (is_dir && options.new_window) {
-        open_window(gtk_window_get_application(GTK_WINDOW(e->window)), file);
+        open_elsewhere(e, file);
         return;
     }
     if (is_dir) {
-        navigate(e, file, TRUE);
+        navigate(t, file, TRUE);
         return;
     }
-    if (xd_place_of(current_dir(e)) == XD_PLACE_CONTROL && launch_applet(e, file))
+    if (here == XD_PLACE_CONTROL && launch_applet(e, file))
         return;
     /* Open with the file type's default application. */
     char *uri = g_file_get_uri(file);
@@ -990,21 +1118,60 @@ static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gbool
     g_free(uri);
 }
 
+static void on_activated([[maybe_unused]] XdFolderView *view, GFile *file, gboolean is_dir,
+                         gpointer data) {
+    activate_item(data, file, is_dir);
+}
+
+static gboolean is_directory(GFile *f) {
+    return g_file_query_file_type(f, G_FILE_QUERY_INFO_NONE, nullptr) == G_FILE_TYPE_DIRECTORY;
+}
+
+/* Whether an item opens as a folder (in this window): My Computer's items
+ * are all drives (some not mounted yet), My Network Places' are network
+ * folders, and Control Panel's categories are pages of it. */
+static gboolean opens_as_folder(tab *t, GFile *item, gboolean is_dir) {
+    XdPlace here = tab_place(t);
+    if (here == XD_PLACE_TRASH)
+        return FALSE; /* its items open their Properties */
+    return is_dir || here == XD_PLACE_COMPUTER || here == XD_PLACE_NETWORK ||
+           xd_place_of(item) == XD_PLACE_CONTROL;
+}
+
+/* Whether an item can open in a tab: a folder, not Add Network Place
+ * (a wizard). */
+static gboolean opens_in_tab(tab *t, GFile *item, gboolean is_dir) {
+    char *uri = g_file_get_uri(item);
+    gboolean wizard = strcmp(uri, XD_ADD_NETWORK_PLACE_URI) == 0;
+    g_free(uri);
+    return !wizard && opens_as_folder(t, item, is_dir);
+}
+
+/* The middle button on a folder opens it in a new tab behind this one,
+ * as Windows 11's does; on anything else it does nothing. */
+static void on_middle_click([[maybe_unused]] XdFolderView *view, GFile *file, gboolean is_dir,
+                            gpointer data) {
+    tab *t = data;
+    if (opens_in_tab(t, file, is_dir))
+        add_tab(t->e, file, FALSE);
+}
+
 static void on_address_activate(GtkEntry *entry, gpointer data) {
     explorer *e = data;
+    tab *t = e->cur;
     /* The folder's name alone (Folder Options) stands for itself. */
     const char *shown = g_object_get_data(G_OBJECT(entry), "xd-shown");
     if (!options.full_path_address && shown != nullptr &&
         strcmp(shown, gtk_entry_get_text(entry)) == 0 && current_dir(e) != nullptr) {
-        xd_folder_view_reload(e->view);
-        gtk_widget_grab_focus(GTK_WIDGET(e->view));
+        xd_folder_view_reload(t->view);
+        gtk_widget_grab_focus(GTK_WIDGET(t->view));
         return;
     }
     GFile *place = xd_place_parse(gtk_entry_get_text(entry));
     if (place != nullptr) {
-        navigate(e, place, TRUE);
+        navigate(t, place, TRUE);
         g_object_unref(place);
-        gtk_widget_grab_focus(GTK_WIDGET(e->view));
+        gtk_widget_grab_focus(GTK_WIDGET(t->view));
         return;
     }
     /* \\server\share, as Windows writes a share. */
@@ -1019,10 +1186,10 @@ static void on_address_activate(GtkEntry *entry, gpointer data) {
             return;
         }
         GFile *share = g_file_new_for_uri(uri);
-        navigate(e, share, TRUE);
+        navigate(t, share, TRUE);
         g_object_unref(share);
         g_free(uri);
-        gtk_widget_grab_focus(GTK_WIDGET(e->view));
+        gtk_widget_grab_focus(GTK_WIDGET(t->view));
         return;
     }
     GFile *f = g_file_parse_name(gtk_entry_get_text(entry));
@@ -1035,18 +1202,18 @@ static void on_address_activate(GtkEntry *entry, gpointer data) {
         g_clear_error(&err);
         g_clear_object(&m);
         if (connect) {
-            navigate(e, f, TRUE);
+            navigate(t, f, TRUE);
             g_object_unref(f);
-            gtk_widget_grab_focus(GTK_WIDGET(e->view));
+            gtk_widget_grab_focus(GTK_WIDGET(t->view));
             return;
         }
     }
     GFileType type = g_file_query_file_type(f, G_FILE_QUERY_INFO_NONE, nullptr);
     if (type == G_FILE_TYPE_DIRECTORY) {
-        navigate(e, f, TRUE);
-        gtk_widget_grab_focus(GTK_WIDGET(e->view));
+        navigate(t, f, TRUE);
+        gtk_widget_grab_focus(GTK_WIDGET(t->view));
     } else if (type != G_FILE_TYPE_UNKNOWN) {
-        on_activated(e->view, f, FALSE, e);
+        activate_item(t, f, FALSE);
     } else {
         /* Windows' message for a bad address. */
         char *text = g_strdup_printf("Cannot find '%s'. Make sure the path is correct and try "
@@ -1060,27 +1227,31 @@ static void on_address_activate(GtkEntry *entry, gpointer data) {
 
 static void on_load_error([[maybe_unused]] XdFolderView *view, const char *message,
                           gpointer data) {
-    explorer *e = data;
-    gtk_label_set_text(GTK_LABEL(e->status), message);
+    tab *t = data;
+    if (t == t->e->cur)
+        gtk_label_set_text(GTK_LABEL(t->e->status), message);
 }
 
-static void begin_rename(explorer *e, GFile *file);
+static void begin_rename(tab *t, GFile *file);
 
 static void on_contents([[maybe_unused]] XdFolderView *view, gpointer data) {
-    explorer *e = data;
-    update_status(e);
+    tab *t = data;
+    if (t == t->e->cur)
+        update_status(t->e);
     /* A new item to name, now that it's loaded. */
-    if (e->pending_rename != nullptr) {
-        GFile *f = g_object_ref(e->pending_rename);
+    if (t->pending_rename != nullptr) {
+        GFile *f = g_object_ref(t->pending_rename);
         GdkRectangle a;
-        if (xd_folder_view_get_name_area(e->view, f, &a))
-            begin_rename(e, f);
+        if (xd_folder_view_get_name_area(t->view, f, &a))
+            begin_rename(t, f);
         g_object_unref(f);
     }
 }
 
 static void on_selection([[maybe_unused]] XdFolderView *view, gpointer data) {
-    update_status(data);
+    tab *t = data;
+    if (t == t->e->cur)
+        update_status(t->e);
 }
 
 /* ---- view menu and toolbar ------------------------------------------------------ */
@@ -1088,13 +1259,24 @@ static void on_selection([[maybe_unused]] XdFolderView *view, gpointer data) {
 static const char *const view_names[XD_VIEW_COUNT] = {"Thumbnails", "Tiles", "Icons", "List",
                                                       "Details"};
 
-static void set_mode(explorer *e, XdViewMode mode) {
-    xd_folder_view_set_mode(e->view, mode);
+/* The View menu's radio items and the thumbnail slider show the active
+ * tab's view. */
+static void sync_view_menu(explorer *e) {
+    XdViewMode mode = xd_folder_view_get_mode(e->cur->view);
     e->syncing = TRUE;
     for (int i = 0; i < XD_VIEW_COUNT; i++)
         gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(e->view_items[i]), i == (int)mode);
+    int px = xd_folder_view_get_thumbnail_size(e->cur->view);
+    gtk_range_set_value(GTK_RANGE(e->slider), (double)px);
     e->syncing = FALSE;
-    update_chrome(e);
+}
+
+static void set_mode(tab *t, XdViewMode mode) {
+    xd_folder_view_set_mode(t->view, mode);
+    if (t != t->e->cur)
+        return;
+    sync_view_menu(t->e);
+    update_chrome(t->e);
 }
 
 static void on_view_item(GtkCheckMenuItem *item, gpointer data) {
@@ -1102,13 +1284,15 @@ static void on_view_item(GtkCheckMenuItem *item, gpointer data) {
     if (e->syncing || !gtk_check_menu_item_get_active(item))
         return;
     int mode = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "xd-mode"));
-    set_mode(e, (XdViewMode)mode);
+    set_mode(e->cur, (XdViewMode)mode);
 }
 
 static void on_slider(GtkRange *range, gpointer data) {
     explorer *e = data;
+    if (e->syncing)
+        return;
     double px = gtk_range_get_value(range);
-    xd_folder_view_set_thumbnail_size(e->view, (int)px);
+    xd_folder_view_set_thumbnail_size(e->cur->view, (int)px);
 }
 
 static void on_folders_toggle(GtkToggleToolButton *b, gpointer data) {
@@ -1120,7 +1304,8 @@ static void on_folders_toggle(GtkToggleToolButton *b, gpointer data) {
 static void on_hidden(GtkCheckMenuItem *item, gpointer data) {
     explorer *e = data;
     gboolean show = gtk_check_menu_item_get_active(item);
-    xd_folder_view_set_show_hidden(e->view, show);
+    for (guint i = 0; i < tab_count(e); i++)
+        xd_folder_view_set_show_hidden(tab_at(e, i)->view, show);
     if (e->syncing || show == options.show_hidden)
         return;
     options.show_hidden = show;
@@ -1140,7 +1325,7 @@ static void on_arrange(GtkWidget *item, gpointer data) {
     if (e->syncing)
         return;
     int col = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(item), "xd-sort"));
-    xd_folder_view_set_sort(e->view, (XdSortColumn)col, FALSE);
+    xd_folder_view_set_sort(e->cur->view, (XdSortColumn)col, FALSE);
 }
 
 /* Arrange Icons by's check items after the columns ("xd-sort"). */
@@ -1150,44 +1335,47 @@ static void on_show_groups(GtkWidget *item, gpointer data) {
     explorer *e = data;
     if (e->syncing)
         return;
-    xd_folder_view_set_groups(e->view, gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)));
-    remember_folder_view(e);
+    xd_folder_view_set_groups(e->cur->view,
+                              gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)));
+    remember_folder_view(e->cur);
 }
 
 static void on_auto_arrange(GtkWidget *item, gpointer data) {
     explorer *e = data;
     if (e->syncing)
         return;
-    xd_folder_view_set_auto_arrange(e->view,
+    xd_folder_view_set_auto_arrange(e->cur->view,
                                     gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)));
-    remember_folder_view(e);
+    remember_folder_view(e->cur);
 }
 
 static void on_align_to_grid(GtkWidget *item, gpointer data) {
     explorer *e = data;
     if (e->syncing)
         return;
-    xd_folder_view_set_align_to_grid(e->view,
+    xd_folder_view_set_align_to_grid(e->cur->view,
                                      gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(item)));
-    remember_folder_view(e);
+    remember_folder_view(e->cur);
 }
 
 /* Auto Arrange and Align to Grid are for the icon views, and not while
  * they're shown in groups (always arranged); nor for My Computer or
  * Control Panel. Align to Grid is for icons put anywhere. */
 static gboolean can_place_icons(explorer *e) {
-    XdViewMode mode = xd_folder_view_get_mode(e->view);
-    XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
-    return mode != XD_VIEW_LIST && mode != XD_VIEW_DETAILS && !xd_folder_view_get_groups(e->view) &&
+    XdFolderView *view = e->cur->view;
+    XdViewMode mode = xd_folder_view_get_mode(view);
+    XdPlace place = tab_place(e->cur);
+    return mode != XD_VIEW_LIST && mode != XD_VIEW_DETAILS && !xd_folder_view_get_groups(view) &&
            (place == XD_PLACE_FOLDER || place == XD_PLACE_TRASH);
 }
 
 /* Checks radio `col` of an Arrange Icons by menu, and the check items. */
 static void check_radio(GtkWidget *menu, int col, explorer *e) {
     GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
+    XdFolderView *view = e->cur->view;
     e->syncing = TRUE;
     gboolean placeable = can_place_icons(e);
-    gboolean arranged = xd_folder_view_get_auto_arrange(e->view);
+    gboolean arranged = xd_folder_view_get_auto_arrange(view);
     for (GList *l = items; l != nullptr; l = l->next) {
         if (!GTK_IS_CHECK_MENU_ITEM(l->data))
             continue; /* the separator */
@@ -1196,14 +1384,14 @@ static void check_radio(GtkWidget *menu, int col, explorer *e) {
         if (which == col) {
             gtk_check_menu_item_set_active(check, TRUE);
         } else if (which == ARRANGE_GROUPS) {
-            gtk_check_menu_item_set_active(check, xd_folder_view_get_groups(e->view));
+            gtk_check_menu_item_set_active(check, xd_folder_view_get_groups(view));
             /* XP greys it in List view, which can't show groups. */
-            gtk_widget_set_sensitive(l->data, xd_folder_view_get_mode(e->view) != XD_VIEW_LIST);
+            gtk_widget_set_sensitive(l->data, xd_folder_view_get_mode(view) != XD_VIEW_LIST);
         } else if (which == ARRANGE_AUTO) {
             gtk_check_menu_item_set_active(check, arranged || !placeable);
             gtk_widget_set_sensitive(l->data, placeable);
         } else if (which == ARRANGE_ALIGN) {
-            gtk_check_menu_item_set_active(check, xd_folder_view_get_align_to_grid(e->view));
+            gtk_check_menu_item_set_active(check, xd_folder_view_get_align_to_grid(view));
             gtk_widget_set_sensitive(l->data, placeable && !arranged);
         }
     }
@@ -1217,7 +1405,7 @@ static GtkWidget *arrange_menu(explorer *e, gboolean radios) {
     GtkWidget *menu = gtk_menu_new();
     GSList *group = nullptr;
     /* The menus are built before the view: it starts by name. */
-    XdSortColumn sort = e->view != nullptr ? xd_folder_view_get_sort(e->view) : XD_SORT_NAME;
+    XdSortColumn sort = e->cur != nullptr ? xd_folder_view_get_sort(e->cur->view) : XD_SORT_NAME;
     int current = (int)sort;
     e->syncing = TRUE;
     for (int i = 0; i < XD_SORT_ARRANGE_COUNT; i++) {
@@ -1237,7 +1425,7 @@ static GtkWidget *arrange_menu(explorer *e, gboolean radios) {
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
     GtkWidget *groups = gtk_check_menu_item_new_with_mnemonic("Show in _Groups");
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(groups),
-                                   e->view != nullptr && xd_folder_view_get_groups(e->view));
+                                   e->cur != nullptr && xd_folder_view_get_groups(e->cur->view));
     g_object_set_data(G_OBJECT(groups), "xd-sort", GINT_TO_POINTER(ARRANGE_GROUPS));
     g_signal_connect(groups, "toggled", G_CALLBACK(on_show_groups), e);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), groups);
@@ -1250,7 +1438,7 @@ static GtkWidget *arrange_menu(explorer *e, gboolean radios) {
     g_signal_connect(align, "toggled", G_CALLBACK(on_align_to_grid), e);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), align);
     e->syncing = FALSE;
-    if (e->view != nullptr)
+    if (e->cur != nullptr)
         check_radio(menu, current, e);
     gtk_widget_show_all(menu);
     return menu;
@@ -1261,31 +1449,33 @@ static void on_view_menu_show(GtkWidget *menu, gpointer data) {
     (void)menu;
     explorer *e = data;
     GtkWidget *sub = gtk_menu_item_get_submenu(GTK_MENU_ITEM(e->arrange_item));
-    XdSortColumn sort = xd_folder_view_get_sort(e->view);
+    XdSortColumn sort = xd_folder_view_get_sort(e->cur->view);
     check_radio(sub, (int)sort, e);
 }
 
-static void cb_back([[maybe_unused]] GtkWidget *w, gpointer d) { go_back(d); }
-static void cb_forward([[maybe_unused]] GtkWidget *w, gpointer d) { go_forward(d); }
-static void cb_up([[maybe_unused]] GtkWidget *w, gpointer d) { go_up(d); }
-static void cb_home([[maybe_unused]] GtkWidget *w, gpointer d) { go_home(d); }
+static void cb_back([[maybe_unused]] GtkWidget *w, gpointer d) { go_back(((explorer *)d)->cur); }
+static void cb_forward([[maybe_unused]] GtkWidget *w, gpointer d) {
+    go_forward(((explorer *)d)->cur);
+}
+static void cb_up([[maybe_unused]] GtkWidget *w, gpointer d) { go_up(((explorer *)d)->cur); }
+static void cb_home([[maybe_unused]] GtkWidget *w, gpointer d) { go_home(((explorer *)d)->cur); }
 static void cb_refresh([[maybe_unused]] GtkWidget *w, gpointer d) {
-    xd_folder_view_reload(((explorer *)d)->view);
+    xd_folder_view_reload(((explorer *)d)->cur->view);
 }
 static void cb_select_all([[maybe_unused]] GtkWidget *w, gpointer d) {
-    xd_folder_view_select_all(((explorer *)d)->view);
+    xd_folder_view_select_all(((explorer *)d)->cur->view);
 }
 static void cb_invert([[maybe_unused]] GtkWidget *w, gpointer d) {
-    xd_folder_view_invert_selection(((explorer *)d)->view);
+    xd_folder_view_invert_selection(((explorer *)d)->cur->view);
 }
 /* Properties of the selection, or of the folder itself when nothing is
  * selected. */
 static void show_properties(explorer *e) {
     /* Control Panel's items aren't files to show. */
-    XdPlace place = xd_place_of(xd_folder_view_get_location(e->view));
+    XdPlace place = xd_place_of(xd_folder_view_get_location(e->cur->view));
     if (place == XD_PLACE_CONTROL || place == XD_PLACE_NETWORK)
         return;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     if (place == XD_PLACE_COMPUTER) {
         /* A drive's own Properties (counting everything on it would take
          * ages); My Documents is a folder's. One at a time, as XP. */
@@ -1299,7 +1489,7 @@ static void show_properties(explorer *e) {
         return;
     }
     if (files == nullptr) {
-        GFile *dir = xd_folder_view_get_location(e->view);
+        GFile *dir = xd_folder_view_get_location(e->cur->view);
         if (dir == nullptr || xd_place_of(dir) != XD_PLACE_FOLDER)
             return;
         files = g_list_append(nullptr, g_object_ref(dir));
@@ -1315,41 +1505,48 @@ static void cb_properties([[maybe_unused]] GtkWidget *w, gpointer d) { show_prop
  * Classic View's Control Panel. */
 static void cb_control_switch([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
-    GFile *dir = xd_folder_view_get_location(e->view);
+    GFile *dir = xd_folder_view_get_location(e->cur->view);
     if (xd_place_of(dir) != XD_PLACE_CONTROL)
         return;
     xd_control_set_classic_view(!xd_control_classic_view());
     if (xd_control_page(dir) != nullptr) {
         GFile *root = xd_place_control();
-        navigate(e, root, TRUE);
+        navigate(e->cur, root, TRUE);
         g_object_unref(root);
         return;
     }
-    apply_folder_view(e, dir);
-    xd_folder_view_reload(e->view);
+    apply_folder_view(e->cur, dir);
+    xd_folder_view_reload(e->cur->view);
     update_chrome(e);
 }
 
 static gboolean on_control_link(GtkLinkButton *b, gpointer d) {
-    cb_control_switch(GTK_WIDGET(b), d);
+    tab *t = d;
+    cb_control_switch(GTK_WIDGET(b), t->e);
     return TRUE; /* not a link to open */
 }
 
 static void cb_open_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     for (GList *l = files; l != nullptr; l = l->next) {
-        /* My Computer's items are all drives (some not mounted yet), and
-         * Control Panel's categories are pages of it. */
-        gboolean is_dir = xd_place_of(current_dir(e)) == XD_PLACE_COMPUTER ||
-                          xd_place_of(current_dir(e)) == XD_PLACE_NETWORK ||
-                          xd_place_of(l->data) == XD_PLACE_CONTROL ||
-                          g_file_query_file_type(l->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
-                              G_FILE_TYPE_DIRECTORY;
-        on_activated(e->view, l->data, is_dir, e);
+        gboolean is_dir = opens_as_folder(e->cur, l->data, is_directory(l->data));
+        activate_item(e->cur, l->data, is_dir);
         if (is_dir && !options.new_window)
             break; /* navigating replaces the view */
     }
+    g_list_free_full(files, g_object_unref);
+}
+
+/* Open in new tab (an item's right-click menu): the selected folders,
+ * each in a tab of its own behind this one. */
+static void cb_open_in_tabs([[maybe_unused]] GtkWidget *w, gpointer d) {
+    explorer *e = d;
+    tab *t = e->cur;
+    GList *files = xd_folder_view_get_selected_files(t->view);
+    for (GList *l = files; l != nullptr; l = l->next)
+        if (opens_in_tab(t, l->data, is_directory(l->data)))
+            add_tab(e, l->data, FALSE);
     g_list_free_full(files, g_object_unref);
 }
 
@@ -1389,7 +1586,7 @@ static void cb_search([[maybe_unused]] GtkWidget *w, gpointer d) { open_search(d
  * Apply to All Folders can use it. */
 static void cb_folder_options([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
-    char *view = g_strdup_printf("--view=%s", view_names[xd_folder_view_get_mode(e->view)]);
+    char *view = g_strdup_printf("--view=%s", view_names[xd_folder_view_get_mode(e->cur->view)]);
     char *prog = g_strdup("xd-folders");
     char *argv[] = {prog, view, nullptr};
     GError *err = nullptr;
@@ -1446,7 +1643,7 @@ static gboolean disconnectable(GFile *f) {
 
 static void cb_disconnect_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
     explorer *e = d;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     for (GList *l = files; l != nullptr; l = l->next)
         if (disconnectable(l->data))
             xd_net_disconnect(GTK_WINDOW(e->window), l->data);
@@ -1456,7 +1653,7 @@ static void cb_disconnect_selected([[maybe_unused]] GtkWidget *w, gpointer d) {
 /* Delete in My Network Places: the selected network places go (their
  * folders stay where they are). */
 static void remove_network_places(explorer *e) {
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     GPtrArray *uris = g_ptr_array_new_with_free_func(g_free);
     char *first = nullptr;
     for (GList *l = files; l != nullptr; l = l->next) {
@@ -1757,7 +1954,7 @@ static void on_favorite_item(GtkWidget *item, gpointer data) {
     explorer *e = data;
     const char *uri = g_object_get_data(G_OBJECT(item), "xd-favorite");
     GFile *f = g_file_new_for_uri(uri);
-    navigate(e, f, TRUE);
+    navigate(e->cur, f, TRUE);
     g_object_unref(f);
 }
 
@@ -1797,7 +1994,7 @@ static void fill_favorites(GtkWidget *menu, gpointer data) {
 
 /* ---- file operations ------------------------------------------------------------- */
 
-static GFile *current_dir(explorer *e) { return xd_folder_view_get_location(e->view); }
+static GFile *current_dir(explorer *e) { return xd_folder_view_get_location(e->cur->view); }
 
 static XdPlace current_place(explorer *e) { return xd_place_of(current_dir(e)); }
 
@@ -1806,7 +2003,7 @@ static void after_trash_change([[maybe_unused]] GList *created, [[maybe_unused]]
 }
 
 static void restore_selected(explorer *e) {
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     xd_trash_restore(GTK_WINDOW(e->window), files);
     g_list_free_full(files, g_object_unref);
 }
@@ -1828,19 +2025,25 @@ static void select_created(GList *created, gpointer data) {
     }
     here = g_list_reverse(here);
     if (here != nullptr)
-        xd_folder_view_select_files(e->view, here);
+        xd_folder_view_select_files(e->cur->view, here);
     g_list_free(here);
+}
+
+/* Cut files are faded in every tab showing them. */
+static void set_cut_files(explorer *e, GList *files) {
+    for (guint i = 0; i < tab_count(e); i++)
+        xd_folder_view_set_cut_files(tab_at(e, i)->view, files);
 }
 
 static void copy_or_cut(explorer *e, gboolean cut) {
     if (current_place(e) == XD_PLACE_COMPUTER || current_place(e) == XD_PLACE_CONTROL ||
         current_place(e) == XD_PLACE_NETWORK)
         return;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     if (files == nullptr)
         return;
     xd_clipboard_set_files(e->window, files, cut);
-    xd_folder_view_set_cut_files(e->view, cut ? files : nullptr);
+    set_cut_files(e, cut ? files : nullptr);
     g_list_free_full(files, g_object_unref);
 }
 
@@ -1853,7 +2056,7 @@ static void after_cut_paste(GList *created, gpointer data) {
     explorer *e = data;
     /* Cut files are gone once pasted: so is the clipboard's list. */
     xd_clipboard_clear_cut(e->window);
-    xd_folder_view_set_cut_files(e->view, nullptr);
+    set_cut_files(e, nullptr);
     xd_trash_tidy(); /* in case they came out of the Recycle Bin */
     select_created(created, e);
 }
@@ -1894,7 +2097,7 @@ static void paste_into(explorer *e, GFile *dest, gboolean shortcut) {
 
 /* Context menu Paste on a single folder pastes into it. */
 static GFile *paste_target(explorer *e) {
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     GFile *target = nullptr;
     if (files != nullptr && files->next == nullptr &&
         g_file_query_file_type(files->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
@@ -1910,7 +2113,7 @@ static void delete_selected(explorer *e, gboolean permanently) {
         remove_network_places(e);
     if (place == XD_PLACE_COMPUTER || place == XD_PLACE_CONTROL || place == XD_PLACE_NETWORK)
         return;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     gboolean in_trash = place == XD_PLACE_TRASH;
     /* Sending to the Recycle Bin can be undone; deleting can't. */
     xd_fileop_start_undoable(GTK_WINDOW(e->window),
@@ -1923,7 +2126,7 @@ static void delete_selected(explorer *e, gboolean permanently) {
 static void copy_to_folder(explorer *e, gboolean move) {
     if (current_place(e) == XD_PLACE_CONTROL || current_place(e) == XD_PLACE_NETWORK)
         return;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     if (files == nullptr)
         return;
     GtkWidget *dlg = gtk_file_chooser_dialog_new(
@@ -1945,44 +2148,46 @@ static void copy_to_folder(explorer *e, gboolean move) {
 
 /* ---- renaming in place ------------------------------------------------------------- */
 
-static void place_rename_entry(explorer *e) {
+static void place_rename_entry(tab *t) {
     GdkRectangle a;
-    if (e->renaming == nullptr || !xd_folder_view_get_name_area(e->view, e->renaming, &a))
+    if (t->renaming == nullptr || !xd_folder_view_get_name_area(t->view, t->renaming, &a))
         return;
     int x = 0, y = 0;
-    gtk_widget_translate_coordinates(GTK_WIDGET(e->view), e->overlay, a.x, a.y, &x, &y);
-    gtk_widget_set_margin_start(e->rename_entry, MAX(x, 0));
-    gtk_widget_set_margin_top(e->rename_entry, MAX(y, 0));
-    gtk_widget_set_size_request(e->rename_entry, MAX(a.width, 60), -1);
+    gtk_widget_translate_coordinates(GTK_WIDGET(t->view), t->overlay, a.x, a.y, &x, &y);
+    gtk_widget_set_margin_start(t->rename_entry, MAX(x, 0));
+    gtk_widget_set_margin_top(t->rename_entry, MAX(y, 0));
+    gtk_widget_set_size_request(t->rename_entry, MAX(a.width, 60), -1);
 }
 
-static void end_rename(explorer *e) {
-    g_clear_object(&e->renaming);
-    gtk_widget_hide(e->rename_entry);
-    gtk_widget_grab_focus(GTK_WIDGET(e->view));
+static void end_rename(tab *t) {
+    g_clear_object(&t->renaming);
+    gtk_widget_hide(t->rename_entry);
+    /* Not a tab behind (committed as another came forward). */
+    if (t == t->e->cur)
+        gtk_widget_grab_focus(GTK_WIDGET(t->view));
 }
 
-static void begin_rename(explorer *e, GFile *file) {
-    g_clear_object(&e->pending_rename);
+static void begin_rename(tab *t, GFile *file) {
+    g_clear_object(&t->pending_rename);
     GdkRectangle a;
-    if (!xd_folder_view_get_name_area(e->view, file, &a)) {
+    if (!xd_folder_view_get_name_area(t->view, file, &a)) {
         /* Not loaded yet (a new folder): when it appears. */
-        e->pending_rename = g_object_ref(file);
+        t->pending_rename = g_object_ref(file);
         return;
     }
     GList *one = g_list_append(nullptr, file);
-    xd_folder_view_select_files(e->view, one);
+    xd_folder_view_select_files(t->view, one);
     g_list_free(one);
-    g_set_object(&e->renaming, file);
+    g_set_object(&t->renaming, file);
     char *name = nullptr;
-    if (current_place(e) != XD_PLACE_COMPUTER || !xd_drive_label(file, &name))
+    if (tab_place(t) != XD_PLACE_COMPUTER || !xd_drive_label(file, &name))
         name = xd_rename_text(file);
-    gtk_entry_set_text(GTK_ENTRY(e->rename_entry), name);
+    gtk_entry_set_text(GTK_ENTRY(t->rename_entry), name);
     g_free(name);
-    place_rename_entry(e);
-    gtk_widget_show(e->rename_entry);
-    gtk_widget_grab_focus(e->rename_entry);
-    gtk_editable_select_region(GTK_EDITABLE(e->rename_entry), 0, -1);
+    place_rename_entry(t);
+    gtk_widget_show(t->rename_entry);
+    gtk_widget_grab_focus(t->rename_entry);
+    gtk_editable_select_region(GTK_EDITABLE(t->rename_entry), 0, -1);
 }
 
 /* Whether Rename applies to the selection: files in a folder, or a
@@ -1990,10 +2195,10 @@ static void begin_rename(explorer *e, GFile *file) {
 static gboolean can_rename(explorer *e) {
     XdPlace place = current_place(e);
     if (place == XD_PLACE_FOLDER)
-        return xd_folder_view_get_selected_count(e->view) > 0;
+        return xd_folder_view_get_selected_count(e->cur->view) > 0;
     if (place != XD_PLACE_COMPUTER)
         return FALSE;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     gboolean can = files != nullptr && xd_drive_label(files->data, nullptr);
     g_list_free_full(files, g_object_unref);
     return can;
@@ -2002,9 +2207,9 @@ static gboolean can_rename(explorer *e) {
 static void rename_selected(explorer *e) {
     if (!can_rename(e))
         return;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     if (files != nullptr)
-        begin_rename(e, files->data);
+        begin_rename(e->cur, files->data);
     g_list_free_full(files, g_object_unref);
 }
 
@@ -2023,42 +2228,42 @@ static char *drive_name(GFile *item) {
 /* A drive's new label goes to UDisks2, which may have polkit ask; My
  * Computer shows it when UDisks2 has it. An empty label is allowed, as
  * in XP (the drive goes back to its usual name). */
-static void commit_drive_rename(explorer *e) {
+static void commit_drive_rename(tab *t) {
     char *old = nullptr;
-    const char *text = gtk_entry_get_text(GTK_ENTRY(e->rename_entry));
-    if (xd_drive_label(e->renaming, &old) && strcmp(text, old) != 0) {
-        char *name = drive_name(e->renaming);
-        xd_drive_set_label(GTK_WINDOW(e->window), e->renaming, name, text, nullptr, nullptr);
+    const char *text = gtk_entry_get_text(GTK_ENTRY(t->rename_entry));
+    if (xd_drive_label(t->renaming, &old) && strcmp(text, old) != 0) {
+        char *name = drive_name(t->renaming);
+        xd_drive_set_label(GTK_WINDOW(t->e->window), t->renaming, name, text, nullptr, nullptr);
         g_free(name);
     }
     g_free(old);
-    end_rename(e);
+    end_rename(t);
 }
 
 /* Returns FALSE to keep editing (the name was refused). */
-static gboolean commit_rename(explorer *e) {
-    if (e->renaming == nullptr || e->committing)
+static gboolean commit_rename(tab *t) {
+    if (t->renaming == nullptr || t->committing)
         return TRUE;
-    if (current_place(e) == XD_PLACE_COMPUTER) {
-        commit_drive_rename(e);
+    if (tab_place(t) == XD_PLACE_COMPUTER) {
+        commit_drive_rename(t);
         return TRUE;
     }
-    const char *text = gtk_entry_get_text(GTK_ENTRY(e->rename_entry));
-    char *old = xd_rename_text(e->renaming);
+    const char *text = gtk_entry_get_text(GTK_ENTRY(t->rename_entry));
+    char *old = xd_rename_text(t->renaming);
     gboolean done = TRUE;
-    e->committing = TRUE;
+    t->committing = TRUE;
     if (*text != '\0' && strcmp(text, old) != 0) {
         if (strchr(text, '/') != nullptr) {
-            xd_message_box(GTK_WINDOW(e->window), "Rename", XD_MB_ERROR, XD_MB_OK, FALSE,
+            xd_message_box(GTK_WINDOW(t->e->window), "Rename", XD_MB_ERROR, XD_MB_OK, FALSE,
                            "A file name cannot contain the following character:\n        /");
             done = FALSE;
         } else {
             GError *err = nullptr;
-            GFile *renamed = xd_rename(e->renaming, text, &err);
+            GFile *renamed = xd_rename(t->renaming, text, &err);
             if (renamed != nullptr) {
                 xd_undo_add_rename(renamed, old);
                 GList *one = g_list_append(nullptr, renamed);
-                xd_folder_view_select_files(e->view, one);
+                xd_folder_view_select_files(t->view, one);
                 g_list_free(one);
                 g_object_unref(renamed);
             } else {
@@ -2068,7 +2273,7 @@ static gboolean commit_rename(explorer *e) {
                                           "already exists. Specify a different file name.",
                                           old)
                         : g_strdup_printf("Cannot rename %s: %s", old, err->message);
-                xd_message_box(GTK_WINDOW(e->window), "Error Renaming File or Folder",
+                xd_message_box(GTK_WINDOW(t->e->window), "Error Renaming File or Folder",
                                XD_MB_ERROR, XD_MB_OK, FALSE, msg);
                 g_free(msg);
                 g_error_free(err);
@@ -2076,13 +2281,13 @@ static gboolean commit_rename(explorer *e) {
             }
         }
     }
-    e->committing = FALSE;
+    t->committing = FALSE;
     g_free(old);
     if (done) {
-        end_rename(e);
+        end_rename(t);
     } else {
-        gtk_widget_grab_focus(e->rename_entry);
-        gtk_editable_select_region(GTK_EDITABLE(e->rename_entry), 0, -1);
+        gtk_widget_grab_focus(t->rename_entry);
+        gtk_editable_select_region(GTK_EDITABLE(t->rename_entry), 0, -1);
     }
     return done;
 }
@@ -2092,9 +2297,9 @@ static void on_rename_activate([[maybe_unused]] GtkEntry *entry, gpointer data) 
 }
 
 static gboolean on_rename_key([[maybe_unused]] GtkWidget *w, GdkEventKey *ev, gpointer data) {
-    explorer *e = data;
+    tab *t = data;
     if (ev->keyval == GDK_KEY_Escape) {
-        end_rename(e);
+        end_rename(t);
         return TRUE;
     }
     return FALSE;
@@ -2103,22 +2308,22 @@ static gboolean on_rename_key([[maybe_unused]] GtkWidget *w, GdkEventKey *ev, gp
 /* After a focus change has settled: commit unless the entry has the focus
  * again (a message box came and went). */
 static void commit_after_focus_change(gpointer data) {
-    explorer *e = data;
-    e->commit_idle = 0;
-    if (e->renaming != nullptr && !gtk_widget_has_focus(e->rename_entry) &&
-        gtk_window_is_active(GTK_WINDOW(e->window)))
-        commit_rename(e);
+    tab *t = data;
+    t->commit_idle = 0;
+    if (!t->closed && t->renaming != nullptr && !gtk_widget_has_focus(t->rename_entry) &&
+        gtk_window_is_active(GTK_WINDOW(t->e->window)))
+        commit_rename(t);
 }
 
 static gboolean on_rename_focus_out([[maybe_unused]] GtkWidget *w,
                                     [[maybe_unused]] GdkEventFocus *ev, gpointer data) {
-    explorer *e = data;
+    tab *t = data;
     /* Clicking elsewhere in the window keeps the new name, as in Windows;
      * the window losing the focus leaves the name being edited. */
-    if (!e->committing && e->renaming != nullptr &&
-        gtk_window_is_active(GTK_WINDOW(e->window)))
-        if (e->commit_idle == 0)
-            e->commit_idle = g_idle_add_once(commit_after_focus_change, e);
+    if (!t->closed && !t->committing && t->renaming != nullptr &&
+        gtk_window_is_active(GTK_WINDOW(t->e->window)))
+        if (t->commit_idle == 0)
+            t->commit_idle = g_idle_add_once(commit_after_focus_change, t);
     return FALSE;
 }
 
@@ -2145,8 +2350,8 @@ static void new_item(explorer *e, gboolean folder) {
         g_clear_object(&out);
     }
     if (ok) {
-        xd_folder_view_reload(e->view);
-        begin_rename(e, f);
+        xd_folder_view_reload(e->cur->view);
+        begin_rename(e->cur, f);
     } else {
         char *msg = g_strdup_printf("Unable to create the %s: %s", folder ? "folder" : "file",
                                     err->message);
@@ -2160,7 +2365,7 @@ static void new_item(explorer *e, gboolean folder) {
 static void create_shortcut(explorer *e) {
     if (current_place(e) != XD_PLACE_FOLDER)
         return;
-    GList *files = xd_folder_view_get_selected_files(e->view);
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
     xd_fileop_start(GTK_WINDOW(e->window), XD_FILEOP_LINK, files, current_dir(e), select_created,
                     e);
     g_list_free_full(files, g_object_unref);
@@ -2168,7 +2373,7 @@ static void create_shortcut(explorer *e) {
 
 static void on_files_dropped([[maybe_unused]] XdFolderView *view, char **uris, GFile *folder,
                              GdkDragAction action, gpointer data) {
-    explorer *e = data;
+    explorer *e = ((tab *)data)->e;
     GList *files = nullptr;
     for (char **u = uris; u != nullptr && *u != nullptr; u++)
         files = g_list_prepend(files, g_file_new_for_uri(*u));
@@ -2220,7 +2425,7 @@ static void cb_shortcut([[maybe_unused]] GtkWidget *w, gpointer d) { create_shor
 static gboolean file_key(explorer *e, GdkEventKey *ev) {
     gboolean ctrl = (ev->state & GDK_CONTROL_MASK) != 0;
     gboolean shift = (ev->state & GDK_SHIFT_MASK) != 0;
-    gboolean selected = xd_folder_view_get_selected_count(e->view) > 0;
+    gboolean selected = xd_folder_view_get_selected_count(e->cur->view) > 0;
     switch (ev->keyval) {
     case GDK_KEY_Delete:
     case GDK_KEY_KP_Delete:
@@ -2274,7 +2479,7 @@ static GtkWidget *send_to_menu(explorer *e, GList *files) {
 static void update_menu_items(GtkWidget *menu, gpointer data) {
     (void)menu;
     explorer *e = data;
-    gboolean selected = xd_folder_view_get_selected_count(e->view) > 0;
+    gboolean selected = xd_folder_view_get_selected_count(e->cur->view) > 0;
     for (guint i = 0; i < e->need_selection->len; i++)
         gtk_widget_set_sensitive(g_ptr_array_index(e->need_selection, i), selected);
     for (guint i = 0; i < e->need_clipboard->len; i++)
@@ -2298,7 +2503,8 @@ static void update_menu_items(GtkWidget *menu, gpointer data) {
     gtk_menu_item_set_label(GTK_MENU_ITEM(e->undo_item), undo != nullptr ? undo : "_Undo");
     gtk_widget_set_sensitive(e->undo_item, undo != nullptr);
     /* Send To, for what's selected now. */
-    GList *files = place == XD_PLACE_FOLDER ? xd_folder_view_get_selected_files(e->view) : nullptr;
+    GList *files =
+        place == XD_PLACE_FOLDER ? xd_folder_view_get_selected_files(e->cur->view) : nullptr;
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(e->send_to_item),
                               files != nullptr ? send_to_menu(e, files) : nullptr);
     gtk_widget_set_sensitive(e->send_to_item, files != nullptr);
@@ -2340,6 +2546,9 @@ static GtkWidget *submenu(GtkWidget *bar, const char *label) {
     return menu;
 }
 
+static void cb_new_tab(GtkWidget *w, gpointer d);
+static void cb_close_tab(GtkWidget *w, gpointer d);
+
 static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = submenu(bar, "_File");
@@ -2369,7 +2578,12 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     menu_item(file, "P_roperties", G_CALLBACK(cb_properties), e, accel, GDK_KEY_Return,
               GDK_MOD1_MASK);
     gtk_menu_shell_append(GTK_MENU_SHELL(file), gtk_separator_menu_item_new());
-    menu_item(file, "_Close", G_CALLBACK(cb_close), e, accel, GDK_KEY_w, GDK_CONTROL_MASK);
+    /* Windows 11's tabs: Ctrl+W closes the tab (the window with the
+     * last, as Ctrl+W did before there were tabs). */
+    menu_item(file, "New _Tab", G_CALLBACK(cb_new_tab), e, accel, GDK_KEY_t, GDK_CONTROL_MASK);
+    menu_item(file, "Close T_ab", G_CALLBACK(cb_close_tab), e, accel, GDK_KEY_w,
+              GDK_CONTROL_MASK);
+    menu_item(file, "_Close", G_CALLBACK(cb_close), e, nullptr, 0, NO_MODS);
     g_signal_connect(file, "show", G_CALLBACK(update_menu_items), e);
 
     GtkWidget *edit = submenu(bar, "_Edit");
@@ -2526,13 +2740,25 @@ static GtkWidget *bold_item(explorer *e, GtkWidget *menu, const char *label, GCa
     return item;
 }
 
+/* Windows 11's "Open in new tab", under Open, when a folder is
+ * selected. */
+static void add_open_in_tab(explorer *e, GtkWidget *menu) {
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
+    gboolean folder = FALSE;
+    for (GList *l = files; l != nullptr && !folder; l = l->next)
+        folder = opens_in_tab(e->cur, l->data, is_directory(l->data));
+    g_list_free_full(files, g_object_unref);
+    if (folder)
+        menu_item(menu, "Open in ne_w tab", G_CALLBACK(cb_open_in_tabs), e, nullptr, 0, NO_MODS);
+}
+
 /* Right-click menus. In folders: Open, Cut, Copy, Paste into a folder,
  * Create Shortcut, Delete, Rename; on the background View, Refresh,
  * Paste and New. My Computer's drives only open; the Recycle Bin's items
  * Restore, Cut and Delete, and its background empties it. Control
  * Panel's items open; its background switches between its two views. */
 static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) {
-    explorer *e = data;
+    explorer *e = ((tab *)data)->e;
     XdPlace place = current_place(e);
     GtkWidget *menu = gtk_menu_new();
     gboolean selected = xd_folder_view_get_selected_count(view) > 0;
@@ -2553,6 +2779,7 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
                   G_CALLBACK(cb_control_switch), e, nullptr, 0, NO_MODS);
     } else if (selected && place == XD_PLACE_NETWORK) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
+        add_open_in_tab(e, menu);
         GList *files = xd_folder_view_get_selected_files(view);
         gboolean places = FALSE, drives = FALSE;
         for (GList *l = files; l != nullptr; l = l->next) {
@@ -2571,6 +2798,7 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
             menu_item(menu, "_Delete", G_CALLBACK(cb_remove_places), e, nullptr, 0, NO_MODS);
     } else if (selected && place == XD_PLACE_COMPUTER) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
+        add_open_in_tab(e, menu);
         GList *files = xd_folder_view_get_selected_files(view);
         /* Network drives disconnect, as XP's do; disks eject; an unlocked
          * encrypted drive locks again (unmounted first). */
@@ -2598,6 +2826,7 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
         }
     } else if (selected) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
+        add_open_in_tab(e, menu);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         GtkWidget *send = gtk_menu_item_new_with_mnemonic("Se_nd To");
         GList *files = xd_folder_view_get_selected_files(view);
@@ -2669,15 +2898,335 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
                                  GDK_GRAVITY_NORTH_WEST, nullptr);
 }
 
+/* ---- tabs ------------------------------------------------------------------------- */
+
+/* XP's window, one folder, has no strip; it appears with a second tab
+ * and goes again at one, as Windows 11's doesn't (its strip is the title
+ * bar). */
+static void update_strip(explorer *e) {
+    gboolean several = tab_count(e) >= 2;
+    gtk_notebook_set_show_tabs(GTK_NOTEBOOK(e->notebook), several);
+    gtk_notebook_set_show_border(GTK_NOTEBOOK(e->notebook), several);
+}
+
+/* The window shows the active tab: title, address bar, Back and Forward,
+ * the View menu and slider, the status bar and the Folders tree. */
+static void show_active(explorer *e) {
+    sync_view_menu(e);
+    update_chrome(e);
+    update_status(e);
+    if (xd_folder_view_get_location(e->cur->view) != nullptr)
+        sync_tree(e);
+}
+
+static void on_switch_page([[maybe_unused]] GtkNotebook *nb, GtkWidget *page,
+                           [[maybe_unused]] guint num, gpointer data) {
+    explorer *e = data;
+    tab *t = g_object_get_data(G_OBJECT(page), "xd-tab");
+    if (t == nullptr || t->closed)
+        return;
+    e->cur = t;
+    show_active(e);
+    gtk_widget_grab_focus(GTK_WIDGET(t->view));
+}
+
+/* Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab, round. */
+static void cycle_tabs(explorer *e, int step) {
+    int n = (int)tab_count(e);
+    int i = gtk_notebook_get_current_page(GTK_NOTEBOOK(e->notebook));
+    if (n > 1)
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(e->notebook), ((i + step) % n + n) % n);
+}
+
+static void forget_tab(tab *t) {
+    free_history(&t->back);
+    free_history(&t->forward);
+    g_clear_object(&t->renaming);
+    g_clear_object(&t->pending_rename);
+    g_clear_handle_id(&t->commit_idle, g_source_remove);
+    if (t->naming != nullptr)
+        g_cancellable_cancel(t->naming); /* its callback leaves `t` alone */
+    g_clear_object(&t->naming);
+    g_clear_object(&t->named);
+    g_clear_pointer(&t->gio_name, g_free);
+}
+
+/* Closes a tab (its folder's view remembered, as on leaving it); the last
+ * one closes the window, as Windows 11's Ctrl+W does. */
+static void close_tab(tab *t) {
+    explorer *e = t->e;
+    if (t->closed)
+        return;
+    if (tab_count(e) <= 1) {
+        gtk_widget_destroy(e->window);
+        return;
+    }
+    remember_folder_view(t);
+    GtkNotebook *nb = GTK_NOTEBOOK(e->notebook);
+    int i = gtk_notebook_page_num(nb, t->page);
+    /* The tab to its right comes forward, or the one to its left. */
+    if (t == e->cur)
+        gtk_notebook_set_current_page(nb, i + 1 < (int)tab_count(e) ? i + 1 : i - 1);
+    t->closed = TRUE;
+    gtk_notebook_remove_page(nb, i);
+    forget_tab(t);
+    t->page = t->label = t->label_icon = t->label_text = t->close_button = nullptr;
+    t->control_bar = t->control_link = t->overlay = t->rename_entry = nullptr;
+    t->view = nullptr;
+    g_ptr_array_add(e->closed, t);
+    update_strip(e);
+}
+
+static void cb_new_tab([[maybe_unused]] GtkWidget *w, gpointer d) {
+    /* My Computer, as Windows 11's new tab opens its start page (Home,
+     * or This PC). */
+    GFile *computer = xd_place_computer();
+    add_tab(d, computer, TRUE);
+    g_object_unref(computer);
+}
+
+static void cb_close_tab([[maybe_unused]] GtkWidget *w, gpointer d) {
+    close_tab(((explorer *)d)->cur);
+}
+
+/* A tab's right-click menu, Windows 11's. */
+static void cb_tab_duplicate([[maybe_unused]] GtkWidget *w, gpointer d) {
+    tab *t = d;
+    /* Not while its drive is still being mounted. */
+    if (!t->closed && xd_folder_view_get_location(t->view) != nullptr)
+        add_tab(t->e, xd_folder_view_get_location(t->view), TRUE);
+}
+
+static void cb_tab_close([[maybe_unused]] GtkWidget *w, gpointer d) { close_tab(d); }
+
+/* Close other tabs / Close tabs to the right. */
+static void close_tabs_but(tab *keep, gboolean right_only) {
+    if (keep->closed)
+        return;
+    explorer *e = keep->e;
+    int from = right_only ? gtk_notebook_page_num(GTK_NOTEBOOK(e->notebook), keep->page) + 1 : 0;
+    GPtrArray *doomed = g_ptr_array_new();
+    for (guint i = (guint)from; i < tab_count(e); i++)
+        if (tab_at(e, i) != keep)
+            g_ptr_array_add(doomed, tab_at(e, i));
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(e->notebook),
+                                  gtk_notebook_page_num(GTK_NOTEBOOK(e->notebook), keep->page));
+    for (guint i = 0; i < doomed->len; i++)
+        close_tab(g_ptr_array_index(doomed, i));
+    g_ptr_array_unref(doomed);
+}
+
+static void cb_tab_close_others([[maybe_unused]] GtkWidget *w, gpointer d) {
+    close_tabs_but(d, FALSE);
+}
+
+static void cb_tab_close_right([[maybe_unused]] GtkWidget *w, gpointer d) {
+    close_tabs_but(d, TRUE);
+}
+
+static void tab_menu(tab *t, GdkEventButton *ev) {
+    explorer *e = t->e;
+    GtkWidget *menu = gtk_menu_new();
+    GtkWidget *item = gtk_menu_item_new_with_mnemonic("_Duplicate tab");
+    g_signal_connect(item, "activate", G_CALLBACK(cb_tab_duplicate), t);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+    item = gtk_menu_item_new_with_mnemonic("_Close tab");
+    g_signal_connect(item, "activate", G_CALLBACK(cb_tab_close), t);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    item = gtk_menu_item_new_with_mnemonic("Close _other tabs");
+    g_signal_connect(item, "activate", G_CALLBACK(cb_tab_close_others), t);
+    gtk_widget_set_sensitive(item, tab_count(e) > 1);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    item = gtk_menu_item_new_with_mnemonic("Close tabs to the _right");
+    g_signal_connect(item, "activate", G_CALLBACK(cb_tab_close_right), t);
+    gtk_widget_set_sensitive(item, gtk_notebook_page_num(GTK_NOTEBOOK(e->notebook), t->page) + 1 <
+                                       (int)tab_count(e));
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    gtk_menu_attach_to_widget(GTK_MENU(menu), t->label, nullptr);
+    g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
+    gtk_widget_show_all(menu);
+    gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)ev);
+}
+
+/* The tab under a click on the strip, or nullptr. The notebook draws
+ * the tabs around their labels (no windows of their own, so the
+ * notebook's hot-tracking and dragging see the pointer over them). */
+static tab *tab_under(explorer *e, GdkEventButton *ev) {
+    GdkWindow *target = gtk_widget_get_window(e->notebook);
+    GdkWindow *w = ev->window;
+    double x = ev->x, y = ev->y;
+    while (w != nullptr && w != target) {
+        gdk_window_coords_to_parent(w, x, y, &x, &y);
+        w = gdk_window_get_parent(w);
+    }
+    if (w == nullptr)
+        return nullptr;
+    /* The tab's own padding around its label counts too. */
+    enum { SLACK = 6 };
+    for (guint i = 0; i < tab_count(e); i++) {
+        tab *t = tab_at(e, i);
+        GtkAllocation a;
+        gtk_widget_get_allocation(t->label, &a);
+        if (gtk_widget_get_mapped(t->label) && x >= a.x - SLACK && x < a.x + a.width + SLACK &&
+            y >= a.y - SLACK && y < a.y + a.height + SLACK)
+            return t;
+    }
+    return nullptr;
+}
+
+/* On a tab: the middle button closes it, the right one has its menu; the
+ * left one is the notebook's (choosing, dragging to reorder). */
+static gboolean on_strip_press([[maybe_unused]] GtkWidget *w, GdkEventButton *ev, gpointer data) {
+    if (ev->type != GDK_BUTTON_PRESS || ev->button == GDK_BUTTON_PRIMARY)
+        return FALSE;
+    tab *t = tab_under(data, ev);
+    if (t == nullptr)
+        return FALSE;
+    if (ev->button == GDK_BUTTON_MIDDLE) {
+        close_tab(t);
+        return TRUE;
+    }
+    if (ev->button == GDK_BUTTON_SECONDARY) {
+        tab_menu(t, ev);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void on_tab_close_clicked([[maybe_unused]] GtkButton *b, gpointer data) { close_tab(data); }
+
+/* The tab itself: the folder's icon and name, and a close button. */
+static void build_tab_label(tab *t) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    t->label_icon = gtk_image_new_from_icon_name("folder", GTK_ICON_SIZE_MENU);
+    gtk_box_pack_start(GTK_BOX(box), t->label_icon, FALSE, FALSE, 0);
+    t->label_text = gtk_label_new("");
+    gtk_label_set_max_width_chars(GTK_LABEL(t->label_text), TAB_NAME_CHARS);
+    gtk_label_set_xalign(GTK_LABEL(t->label_text), 0);
+    gtk_box_pack_start(GTK_BOX(box), t->label_text, TRUE, TRUE, 0);
+    t->close_button = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
+    gtk_button_set_relief(GTK_BUTTON(t->close_button), GTK_RELIEF_NONE);
+    gtk_widget_set_focus_on_click(t->close_button, FALSE);
+    gtk_widget_set_can_focus(t->close_button, FALSE);
+    gtk_widget_set_tooltip_text(t->close_button, "Close tab");
+    gtk_widget_set_valign(t->close_button, GTK_ALIGN_CENTER);
+    gtk_style_context_add_class(gtk_widget_get_style_context(t->close_button), "xd-tab-close");
+    g_signal_connect(t->close_button, "clicked", G_CALLBACK(on_tab_close_clicked), t);
+    gtk_box_pack_start(GTK_BOX(box), t->close_button, FALSE, FALSE, 0);
+    t->label = box;
+    gtk_widget_show_all(t->label);
+}
+
+/* The tab's page: Control Panel's bar over the view, with the entry for
+ * renaming in place floating over it. */
+static void build_tab_page(tab *t) {
+    t->view = XD_FOLDER_VIEW(xd_folder_view_new());
+    g_signal_connect(t->view, "item-activated", G_CALLBACK(on_activated), t);
+    g_signal_connect(t->view, "item-middle-click", G_CALLBACK(on_middle_click), t);
+    g_signal_connect(t->view, "context-menu", G_CALLBACK(on_context_menu), t);
+    g_signal_connect(t->view, "contents-changed", G_CALLBACK(on_contents), t);
+    g_signal_connect(t->view, "selection-changed", G_CALLBACK(on_selection), t);
+    g_signal_connect(t->view, "load-error", G_CALLBACK(on_load_error), t);
+    g_signal_connect(t->view, "files-dropped", G_CALLBACK(on_files_dropped), t);
+    GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
+    gtk_container_add(GTK_CONTAINER(scroll), GTK_WIDGET(t->view));
+    g_signal_connect(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(t->view)), "value-changed",
+                     G_CALLBACK(on_view_scrolled), t);
+    g_signal_connect(gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(t->view)), "value-changed",
+                     G_CALLBACK(on_view_scrolled), t);
+    /* Renaming in place: an entry floating over the view. */
+    t->overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(t->overlay), scroll);
+    t->rename_entry = gtk_entry_new();
+    gtk_widget_set_halign(t->rename_entry, GTK_ALIGN_START);
+    gtk_widget_set_valign(t->rename_entry, GTK_ALIGN_START);
+    gtk_entry_set_width_chars(GTK_ENTRY(t->rename_entry), 1);
+    gtk_widget_set_no_show_all(t->rename_entry, TRUE);
+    g_signal_connect(t->rename_entry, "activate", G_CALLBACK(on_rename_activate), t);
+    g_signal_connect(t->rename_entry, "key-press-event", G_CALLBACK(on_rename_key), t);
+    g_signal_connect(t->rename_entry, "focus-out-event", G_CALLBACK(on_rename_focus_out), t);
+    gtk_overlay_add_overlay(GTK_OVERLAY(t->overlay), t->rename_entry);
+    /* Control Panel's link to its other view (XP has it in the task pane). */
+    t->page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    t->control_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_no_show_all(t->control_bar, TRUE);
+    GtkWidget *control_icon = gtk_image_new_from_icon_name("preferences-system",
+                                                           GTK_ICON_SIZE_LARGE_TOOLBAR);
+    gtk_widget_set_margin_start(control_icon, 6);
+    gtk_box_pack_start(GTK_BOX(t->control_bar), control_icon, FALSE, FALSE, 0);
+    t->control_link = gtk_link_button_new_with_label(XD_CONTROL_URI, "Switch to Classic View");
+    gtk_widget_set_tooltip_text(t->control_link, nullptr);
+    g_signal_connect(t->control_link, "activate-link", G_CALLBACK(on_control_link), t);
+    gtk_box_pack_start(GTK_BOX(t->control_bar), t->control_link, FALSE, FALSE, 0);
+    gtk_widget_show(control_icon);
+    gtk_widget_show(t->control_link);
+    gtk_box_pack_start(GTK_BOX(t->page), t->control_bar, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(t->page), t->overlay, TRUE, TRUE, 0);
+    g_object_set_data(G_OBJECT(t->page), "xd-tab", t);
+    gtk_widget_show_all(t->page);
+}
+
+/* Folder Options a tab's view follows. */
+static void apply_tab_options(tab *t) {
+    xd_folder_view_set_show_hidden(t->view, options.show_hidden);
+    xd_folder_view_set_hide_extensions(t->view, options.hide_extensions);
+    xd_folder_view_set_single_click(t->view, options.single_click);
+}
+
+/* A new tab at the end of the strip (Windows 11's place for one), showing
+ * `dir`; in front, or behind the one shown (a middle click). */
+static tab *add_tab(explorer *e, GFile *dir, gboolean activate) {
+    tab *t = g_new0(tab, 1);
+    t->e = e;
+    build_tab_page(t);
+    build_tab_label(t);
+    apply_tab_options(t);
+    xd_folder_view_set_mode(t->view, (XdViewMode)initial_view);
+    GtkNotebook *nb = GTK_NOTEBOOK(e->notebook);
+    if (e->cur == nullptr)
+        e->cur = t; /* the window's first */
+    int n = gtk_notebook_append_page(nb, t->page, t->label);
+    gtk_notebook_set_tab_reorderable(nb, t->page, TRUE);
+    gtk_container_child_set(GTK_CONTAINER(nb), t->page, "tab-expand", FALSE, nullptr);
+    navigate(t, dir, FALSE);
+    update_strip(e);
+    if (activate)
+        gtk_notebook_set_current_page(nb, n);
+    return t;
+}
+
+/* ---- keys and the window's end -------------------------------------------------------- */
+
 static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
     explorer *e = data;
+    GdkModifierType mods = ev->state & gtk_accelerator_get_default_mod_mask();
+    /* Windows 11's tab keys: Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+1..8 for that
+     * tab and Ctrl+9 for the last (Ctrl+T and Ctrl+W are File's). */
+    if (mods == GDK_CONTROL_MASK && ev->keyval == GDK_KEY_Tab) {
+        cycle_tabs(e, 1);
+        return TRUE;
+    }
+    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) &&
+        (ev->keyval == GDK_KEY_ISO_Left_Tab || ev->keyval == GDK_KEY_Tab)) {
+        cycle_tabs(e, -1);
+        return TRUE;
+    }
+    if (mods == GDK_CONTROL_MASK && ev->keyval >= GDK_KEY_1 && ev->keyval <= GDK_KEY_9) {
+        int want = (int)(ev->keyval - GDK_KEY_1);
+        int n = (int)tab_count(e);
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(e->notebook),
+                                      ev->keyval == GDK_KEY_9 ? n - 1 : MIN(want, n - 1));
+        return TRUE;
+    }
     /* Backspace goes up, as in Windows, unless typing in the address bar. */
     GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(e->window));
     if (ev->keyval == GDK_KEY_BackSpace && !GTK_IS_EDITABLE(focus)) {
-        go_up(e);
+        go_up(e->cur);
         return TRUE;
     }
-    if (ev->keyval == GDK_KEY_F3 && (ev->state & gtk_accelerator_get_default_mod_mask()) == 0) {
+    if (ev->keyval == GDK_KEY_F3 && mods == 0) {
         open_search(e);
         return TRUE;
     }
@@ -2685,38 +3234,45 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
         gtk_widget_grab_focus(e->address);
         return TRUE;
     }
-    if (focus == GTK_WIDGET(e->view) && file_key(e, ev))
+    if (focus == GTK_WIDGET(e->cur->view) && file_key(e, ev))
         return TRUE;
     (void)w;
     return FALSE;
 }
 
+/* The window's tabs go with it, all of them (Windows 11 doesn't ask). */
 static void on_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
     explorer *e = data;
-    remember_folder_view(e);
-    free_history(&e->back);
-    free_history(&e->forward);
+    /* Nothing of ours runs while the widgets are taken down. */
+    g_signal_handlers_disconnect_by_data(e->notebook, e);
+    g_signal_handlers_disconnect_by_data(gtk_tree_view_get_selection(GTK_TREE_VIEW(e->tree)), e);
+    for (guint i = 0; i < tab_count(e); i++) {
+        tab *t = tab_at(e, i);
+        remember_folder_view(t);
+        GObject *own[] = {G_OBJECT(t->view),
+                          G_OBJECT(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(t->view))),
+                          G_OBJECT(gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(t->view))),
+                          G_OBJECT(t->rename_entry),
+                          G_OBJECT(t->control_link),
+                          G_OBJECT(t->close_button)};
+        for (size_t k = 0; k < G_N_ELEMENTS(own); k++)
+            g_signal_handlers_disconnect_by_data(own[k], t);
+        forget_tab(t);
+        g_free(t);
+    }
+    g_ptr_array_unref(e->closed); /* frees them */
     g_ptr_array_unref(e->need_selection);
     g_ptr_array_unref(e->need_clipboard);
     g_ptr_array_unref(e->folders_only);
     g_ptr_array_unref(e->trash_only);
-    g_clear_object(&e->renaming);
-    g_clear_object(&e->pending_rename);
-    g_clear_handle_id(&e->commit_idle, g_source_remove);
-    if (e->naming != nullptr)
-        g_cancellable_cancel(e->naming); /* its callback leaves `e` alone */
-    g_clear_object(&e->naming);
-    g_clear_object(&e->named);
-    g_free(e->gio_name);
     g_free(e);
 }
 
 /* ---- Folder Options ---------------------------------------------------------------- */
 
 static void apply_options(explorer *e) {
-    xd_folder_view_set_show_hidden(e->view, options.show_hidden);
-    xd_folder_view_set_hide_extensions(e->view, options.hide_extensions);
-    xd_folder_view_set_single_click(e->view, options.single_click);
+    for (guint i = 0; i < tab_count(e); i++)
+        apply_tab_options(tab_at(e, i));
     e->syncing = TRUE;
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(e->hidden_item), options.show_hidden);
     e->syncing = FALSE;
@@ -2748,8 +3304,9 @@ static gboolean on_settings_changed(int fd, [[maybe_unused]] GIOCondition cond, 
     return G_SOURCE_CONTINUE;
 }
 
-static void open_window(GtkApplication *app, GFile *dir) {
+static explorer *open_window(GtkApplication *app, GFile *dir) {
     explorer *e = g_new0(explorer, 1);
+    e->closed = g_ptr_array_new_with_free_func(g_free);
     e->need_selection = g_ptr_array_new();
     e->need_clipboard = g_ptr_array_new();
     e->folders_only = g_ptr_array_new();
@@ -2824,6 +3381,7 @@ static void open_window(GtkApplication *app, GFile *dir) {
     gtk_tree_view_column_add_attribute(col, text, "text", COL_NAME);
     gtk_tree_view_append_column(GTK_TREE_VIEW(e->tree), col);
     g_signal_connect(e->tree, "test-expand-row", G_CALLBACK(on_row_expand), e);
+    g_signal_connect(e->tree, "button-press-event", G_CALLBACK(on_tree_press), e);
     g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(e->tree)), "changed",
                      G_CALLBACK(on_tree_selection), e);
     build_tree_roots(e);
@@ -2842,49 +3400,14 @@ static void open_window(GtkApplication *app, GFile *dir) {
     e->tree_pane = left;
     gtk_paned_pack1(GTK_PANED(paned), left, FALSE, FALSE);
 
-    e->view = XD_FOLDER_VIEW(xd_folder_view_new());
-    g_signal_connect(e->view, "item-activated", G_CALLBACK(on_activated), e);
-    g_signal_connect(e->view, "context-menu", G_CALLBACK(on_context_menu), e);
-    g_signal_connect(e->view, "contents-changed", G_CALLBACK(on_contents), e);
-    g_signal_connect(e->view, "selection-changed", G_CALLBACK(on_selection), e);
-    g_signal_connect(e->view, "load-error", G_CALLBACK(on_load_error), e);
-    g_signal_connect(e->view, "files-dropped", G_CALLBACK(on_files_dropped), e);
-    GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
-    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(scroll), GTK_WIDGET(e->view));
-    g_signal_connect(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(e->view)), "value-changed",
-                     G_CALLBACK(on_view_scrolled), e);
-    g_signal_connect(gtk_scrollable_get_hadjustment(GTK_SCROLLABLE(e->view)), "value-changed",
-                     G_CALLBACK(on_view_scrolled), e);
-    /* Renaming in place: an entry floating over the view. */
-    e->overlay = gtk_overlay_new();
-    gtk_container_add(GTK_CONTAINER(e->overlay), scroll);
-    e->rename_entry = gtk_entry_new();
-    gtk_widget_set_halign(e->rename_entry, GTK_ALIGN_START);
-    gtk_widget_set_valign(e->rename_entry, GTK_ALIGN_START);
-    gtk_entry_set_width_chars(GTK_ENTRY(e->rename_entry), 1);
-    gtk_widget_set_no_show_all(e->rename_entry, TRUE);
-    g_signal_connect(e->rename_entry, "activate", G_CALLBACK(on_rename_activate), e);
-    g_signal_connect(e->rename_entry, "key-press-event", G_CALLBACK(on_rename_key), e);
-    g_signal_connect(e->rename_entry, "focus-out-event", G_CALLBACK(on_rename_focus_out), e);
-    gtk_overlay_add_overlay(GTK_OVERLAY(e->overlay), e->rename_entry);
-    /* Control Panel's link to its other view (XP has it in the task pane). */
-    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    e->control_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    gtk_widget_set_no_show_all(e->control_bar, TRUE);
-    GtkWidget *control_icon = gtk_image_new_from_icon_name("preferences-system",
-                                                           GTK_ICON_SIZE_LARGE_TOOLBAR);
-    gtk_widget_set_margin_start(control_icon, 6);
-    gtk_box_pack_start(GTK_BOX(e->control_bar), control_icon, FALSE, FALSE, 0);
-    e->control_link = gtk_link_button_new_with_label(XD_CONTROL_URI, "Switch to Classic View");
-    gtk_widget_set_tooltip_text(e->control_link, nullptr);
-    g_signal_connect(e->control_link, "activate-link", G_CALLBACK(on_control_link), e);
-    gtk_box_pack_start(GTK_BOX(e->control_bar), e->control_link, FALSE, FALSE, 0);
-    gtk_widget_show(control_icon);
-    gtk_widget_show(e->control_link);
-    gtk_box_pack_start(GTK_BOX(right), e->control_bar, FALSE, FALSE, 2);
-    gtk_box_pack_start(GTK_BOX(right), e->overlay, TRUE, TRUE, 0);
-    gtk_paned_pack2(GTK_PANED(paned), right, TRUE, FALSE);
+    /* The tabs, over the folder they show; the Folders tree beside them
+     * is the window's, following the tab in front. */
+    e->notebook = gtk_notebook_new();
+    gtk_notebook_set_scrollable(GTK_NOTEBOOK(e->notebook), TRUE);
+    gtk_widget_set_can_focus(e->notebook, FALSE);
+    g_signal_connect_after(e->notebook, "switch-page", G_CALLBACK(on_switch_page), e);
+    g_signal_connect(e->notebook, "button-press-event", G_CALLBACK(on_strip_press), e);
+    gtk_paned_pack2(GTK_PANED(paned), e->notebook, TRUE, FALSE);
     gtk_paned_set_position(GTK_PANED(paned), 210);
 
     /* Status bar: object count, size, thumbnail slider. */
@@ -2909,10 +3432,11 @@ static void open_window(GtkApplication *app, GFile *dir) {
                      FALSE, 0);
 
     gtk_widget_show_all(e->window);
+    add_tab(e, dir, TRUE);
     apply_options(e);
-    set_mode(e, (XdViewMode)initial_view);
-    navigate(e, dir, FALSE);
-    gtk_widget_grab_focus(GTK_WIDGET(e->view));
+    show_active(e);
+    gtk_widget_grab_focus(GTK_WIDGET(e->cur->view));
+    return e;
 }
 
 /* ---- jobs for the desktop ---------------------------------------------------------- */
@@ -3053,6 +3577,14 @@ static void on_open(GtkApplication *app, GFile **files, gint n, [[maybe_unused]]
     }
     if (job != JOB_NONE) {
         run_job(app, files, n);
+        return;
+    }
+    /* Folders in tabs instead of windows: one window with a tab each,
+     * the first in front. */
+    if (options.new_tabs && n > 1) {
+        explorer *e = open_window(app, files[0]);
+        for (gint i = 1; i < n; i++)
+            add_tab(e, files[i], FALSE);
         return;
     }
     for (gint i = 0; i < n; i++)

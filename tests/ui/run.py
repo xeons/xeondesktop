@@ -1121,6 +1121,145 @@ def favorites(s):
     s.inject("key", "Escape")
 
 
+FILES = "org.xeondesktop.Files"
+
+
+def files_windows(s):
+    return [w for w in s.windows() if w["app_id"] == FILES]
+
+
+def files_title(s, title, what):
+    """Waits for the one xd-files window to be titled title."""
+    s.wait(lambda: [w["title"] for w in files_windows(s)] == [title], what)
+
+
+def open_documents(s):
+    """xd-files on Documents (Letters, then Notes.txt), the pointer out of
+    the way; returns the window's top left corner and its screenshot."""
+    empty = s.settle("desktop")
+    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.wait_window(app_id=FILES, state="activated")
+    files_title(s, "Documents", "Documents to open")
+    s.inject("move", WIDTH - 24, HEIGHT - 80)
+    shot = s.settle("documents")
+    x, y, _, _ = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    return x, y, shot
+
+
+# From the window's top left corner (Classic): the first item (Letters),
+# the Folders tree's first root (Home), and where the tab strip shows.
+LETTERS = (264, 148)
+TREE_HOME = (60, 143)
+
+
+def strip_rect(x, y):
+    return (x + 222, y + 115, 360, 24)
+
+
+@scenario()
+def files_tabs(s):
+    """xd-files' tabs: Ctrl+T opens My Computer in a new tab of the same
+    window, the tab strip shows with two tabs and goes again at one, a tab
+    dragged along the strip changes places (Ctrl+1, Ctrl+2 follow), and
+    Ctrl+W closes the tab, then the window with the last one."""
+    x, y, one = open_documents(s)
+    s.inject("key", "ctrl+t")
+    files_title(s, "My Computer", "Ctrl+T to open My Computer in a tab")
+    two = s.settle("two tabs")
+    s.check(len(files_windows(s)) == 1, "Ctrl+T opened a tab, not a window")
+    s.check(two.differs(one, strip_rect(x, y)) > 0.1, "the tab strip shows with two tabs")
+    # Dragged to the left of Documents, My Computer is the first tab.
+    steps = ["move", x + 400, y + 128, "down", "sleep", 200]
+    for dx in (380, 350, 300, 260, 230):
+        steps += ["move", x + dx, y + 128, "sleep", 100]
+    s.inject(*steps, "up", "sleep", 500, "key", "ctrl+2")
+    files_title(s, "Documents", "Ctrl+2 to show Documents, now second")
+    s.inject("key", "ctrl+1")
+    files_title(s, "My Computer", "Ctrl+1 to show My Computer, dragged first")
+    s.log("ok: dragging a tab reordered the tabs")
+    s.inject("key", "ctrl+w")
+    files_title(s, "Documents", "Ctrl+W to close the tab")
+    again = s.settle("one tab again")
+    s.check(again.differs(one, strip_rect(x, y)) < 0.02, "the strip went with the second tab")
+    s.inject("key", "ctrl+w")
+    s.wait_window(app_id=FILES, gone=True)
+    s.log("ok: Ctrl+W on the last tab closed the window")
+
+
+@scenario()
+def files_tab_middle_click(s):
+    """The middle button opens a folder in a new tab behind the one shown,
+    from the view and from the Folders tree; Ctrl+Tab and Ctrl+9 go to
+    them."""
+    x, y, one = open_documents(s)
+    s.inject("move", x + LETTERS[0], y + LETTERS[1], "click", "middle")
+    s.wait(lambda: s.shot("middle").differs(one, strip_rect(x, y)) > 0.1, "a second tab")
+    s.check([w["title"] for w in files_windows(s)] == ["Documents"],
+            "Letters opened in a tab behind Documents")  # fmt: skip
+    s.inject("key", "ctrl+Tab")
+    files_title(s, "Letters", "Ctrl+Tab to show Letters")
+    s.log("ok: Ctrl+Tab went to the Letters tab")
+    home = os.path.basename(os.path.realpath(s.home))
+    s.inject("move", x + TREE_HOME[0], y + TREE_HOME[1], "click", "middle", "sleep", 1000)
+    s.check([w["title"] for w in files_windows(s)] == ["Letters"],
+            "the tree's Home opened behind Letters")  # fmt: skip
+    s.inject("key", "ctrl+9")
+    files_title(s, home, "Ctrl+9 to show the last tab, Home")
+    s.inject("key", "ctrl+shift+Tab")
+    files_title(s, "Letters", "Ctrl+Shift+Tab to go back to Letters")
+    s.inject("key", "ctrl+1")
+    files_title(s, "Documents", "Ctrl+1 to show the first tab")
+    s.settle("three tabs")
+
+
+@scenario()
+def files_tab_history(s):
+    """Each tab has its own Back history: a new tab can't go back, the
+    first one goes back where it was."""
+    x, y, _ = open_documents(s)
+    s.inject("move", x + LETTERS[0], y + LETTERS[1], "click", "sleep", 100, "click")
+    files_title(s, "Letters", "Letters to open")
+    s.inject("key", "ctrl+t")
+    files_title(s, "My Computer", "Ctrl+T")
+    s.inject("key", "alt+Left", "sleep", 1000)
+    s.check([w["title"] for w in files_windows(s)] == ["My Computer"],
+            "the new tab has nothing to go back to")  # fmt: skip
+    s.inject("key", "ctrl+1")
+    files_title(s, "Letters", "Ctrl+1 to show the first tab")
+    s.inject("key", "alt+Left")
+    files_title(s, "Documents", "Back in the first tab to Documents")
+    s.inject("key", "ctrl+2")
+    files_title(s, "My Computer", "the second tab still on My Computer")
+    s.settle("history")
+
+
+@scenario()
+def folder_options_tabs(s):
+    """Folder Options' "Open folders in new tabs instead of new windows":
+    saved in [Folders], and with "Open each folder in its own window" a
+    folder opens in a tab of the same window."""
+    empty = s.settle("desktop")
+    s.launch("xd-folders")
+    s.wait_window(title="Folder Options", state="activated")
+    x, y, w, h = s.settle("folder options").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.inject("key", "alt+w", "sleep", 300, "key", "alt+n", "sleep", 300)
+    s.settle("ticked")
+    # OK, bottom right (Alt+A is also "s_ame window"'s).
+    s.inject("move", x + w - 208, y + h - 21, "click")
+    s.wait(lambda: s.ini().has_section("Folders")
+           and s.ini()["Folders"].get("NewTabs") == "true"
+           and s.ini()["Folders"].get("NewWindow") == "true", "NewTabs=true saved")  # fmt: skip
+    s.log("ok: NewTabs=true and NewWindow=true saved in [Folders]")
+    s.wait_window(title="Folder Options", gone=True)
+    x, y, _ = open_documents(s)
+    s.inject("move", x + LETTERS[0], y + LETTERS[1], "click", "sleep", 100, "click")
+    files_title(s, "Letters", "Letters to open in a tab of the same window")
+    s.settle("letters tab")
+    s.inject("key", "ctrl+w")
+    files_title(s, "Documents", "Ctrl+W to close the Letters tab")
+    s.log("ok: Letters opened in a tab, not a window of its own")
+
+
 @scenario()
 def move_after_left_resize(s):
     """A window resized from its left edge and then moved stays where it's

@@ -3,8 +3,9 @@
  * in desktop.ini, which xd-files follows live; file associations are
  * GIO's (mimeapps.list).
  *
- *   General     open folders in the same or their own window; single- or
- *               double-click to open (XP's task pane has no counterpart)
+ *   General     open folders in the same or their own window (or a new
+ *               tab, xd-files' own); single- or double-click to open (XP's
+ *               task pane has no counterpart)
  *   View        Apply to All Folders / Reset All Folders, and the
  *               advanced settings tree
  *   File Types  shared-mime-info's types by extension, and the program
@@ -52,7 +53,7 @@ typedef struct props {
     const char *current_view; /* --view, canonical name, or nullptr */
     bool updating;
     /* General */
-    GtkWidget *same_window, *own_window, *single_click, *double_click;
+    GtkWidget *same_window, *own_window, *new_tabs, *single_click, *double_click;
     /* View */
     GtkTreeStore *adv;
     GtkWidget *adv_view;
@@ -101,6 +102,7 @@ static void show_general(props *p, const xd_folder_settings *f) {
     p->updating = true;
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(f->new_window ? p->own_window : p->same_window),
                                  TRUE);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->new_tabs), f->new_tabs);
     gtk_toggle_button_set_active(
         GTK_TOGGLE_BUTTON(f->single_click ? p->single_click : p->double_click), TRUE);
     p->updating = false;
@@ -140,6 +142,15 @@ static GtkWidget *general_page(props *p) {
     GtkWidget *browse = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     p->same_window = radio(browse, nullptr, "Open each folder in the s_ame window", p);
     p->own_window = radio(browse, p->same_window, "Open each folder in its o_wn window", p);
+    /* Not in XP, which had no tabs: xd-files' own (Windows 11's), off by
+     * default. What would open a new window from a folder window (its
+     * own window above, a new network place or drive) opens a tab in it;
+     * the desktop and the Start menu still open windows, as Windows 11's. */
+    p->new_tabs = gtk_check_button_new_with_mnemonic("Open folders in _new tabs instead of new "
+                                                      "windows");
+    g_signal_connect(p->new_tabs, "toggled", G_CALLBACK(on_toggle_changed), p);
+    gtk_widget_set_margin_top(p->new_tabs, 4);
+    gtk_box_pack_start(GTK_BOX(browse), p->new_tabs, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), picture_frame("Browse folders", "window-new", browse),
                        FALSE, FALSE, 0);
 
@@ -939,6 +950,7 @@ static bool apply(props *p) {
     xd_settings_load(&s);
     xd_folder_settings *f = &s.folders;
     f->new_window = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->own_window));
+    f->new_tabs = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->new_tabs));
     f->single_click = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->single_click));
     f->full_path_address = f->full_path_title = f->show_hidden = f->hide_extensions =
         f->remember_views = false;
