@@ -44,6 +44,29 @@ void xd_monitor_key(char *out, size_t cap, const char *make, const char *model,
     }
 }
 
+xd_vrr_mode xd_vrr_mode_parse(const char *s) {
+    if (s == nullptr)
+        return XD_VRR_OFF;
+    if (g_ascii_strcasecmp(s, "always") == 0)
+        return XD_VRR_ALWAYS;
+    if (g_ascii_strcasecmp(s, "fullscreen") == 0 || g_ascii_strcasecmp(s, "true") == 0 ||
+        g_ascii_strcasecmp(s, "on") == 0)
+        return XD_VRR_FULLSCREEN;
+    return XD_VRR_OFF;
+}
+
+const char *xd_vrr_mode_name(xd_vrr_mode mode) {
+    switch (mode) {
+    case XD_VRR_FULLSCREEN:
+        return "fullscreen";
+    case XD_VRR_ALWAYS:
+        return "always";
+    case XD_VRR_OFF:
+        break;
+    }
+    return "off";
+}
+
 static GKeyFile *load(void) {
     GKeyFile *kf = g_key_file_new();
     char *path = monitors_path();
@@ -70,6 +93,9 @@ bool xd_monitors_lookup(const char *key, xd_monitor_config *out) {
         out->y = g_key_file_get_integer(kf, key, "Y", nullptr);
         out->scale = g_key_file_get_double(kf, key, "Scale", nullptr);
         out->transform = g_key_file_get_integer(kf, key, "Transform", nullptr) & 7;
+        char *vrr = g_key_file_get_string(kf, key, "AdaptiveSync", nullptr);
+        out->vrr = xd_vrr_mode_parse(vrr != nullptr ? g_strstrip(vrr) : nullptr);
+        g_free(vrr);
         if (out->scale < 0.25 || out->scale > 8.0)
             out->scale = 0;
     }
@@ -90,6 +116,7 @@ bool xd_monitors_store(const xd_monitor_config *configs, size_t count) {
         g_key_file_set_integer(kf, c->key, "Y", c->y);
         g_key_file_set_double(kf, c->key, "Scale", c->scale);
         g_key_file_set_integer(kf, c->key, "Transform", c->transform);
+        g_key_file_set_string(kf, c->key, "AdaptiveSync", xd_vrr_mode_name(c->vrr));
     }
     char *path = monitors_path();
     char *dir = g_path_get_dirname(path);

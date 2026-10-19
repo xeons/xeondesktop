@@ -18,11 +18,13 @@
 #include <drm_fourcc.h>
 #include <stdlib.h>
 #include <wlr/interfaces/wlr_ext_image_capture_source_v1.h>
+#include <wlr/render/drm_syncobj.h>
 #include <wlr/render/pass.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 #include <wlr/types/wlr_ext_image_capture_source_v1.h>
 #include <wlr/types/wlr_ext_image_copy_capture_v1.h>
+#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
 #include <wlr/util/log.h>
 
 #include "../core/alloc.h"
@@ -51,10 +53,17 @@ typedef struct capture_frame {
 
 /* ---- drawing the window -------------------------------------------------------- */
 
+/* Explicitly synced surfaces drawn (linux-drm-syncobj): each is told when
+ * our drawing is done with its buffer. Any more (subsurfaces) are left out
+ * of the picture. */
+enum { SYNCED_MAX = 16 };
+
 typedef struct draw_ctx {
     struct wlr_render_pass *pass;
     double sx, sy; /* buffer px per layout unit */
     int ox, oy;    /* the client surfaces' origin within the frame */
+    struct wlr_linux_drm_syncobj_surface_v1_state *synced[SYNCED_MAX];
+    size_t synced_n;
 } draw_ctx;
 
 static void draw_surface(struct wlr_surface *surface, int x, int y, void *data) {
@@ -62,6 +71,14 @@ static void draw_surface(struct wlr_surface *surface, int x, int y, void *data) 
     struct wlr_texture *tex = wlr_surface_get_texture(surface);
     if (tex == nullptr)
         return;
+    /* The program's GPU may still be drawing it: wait for its acquire
+     * point, as the scene graph does. */
+    struct wlr_linux_drm_syncobj_surface_v1_state *sync =
+        wlr_linux_drm_syncobj_v1_get_surface_state(surface);
+    if (sync != nullptr && c->synced_n == SYNCED_MAX)
+        return;
+    if (sync != nullptr)
+        c->synced[c->synced_n++] = sync;
     struct wlr_fbox src;
     wlr_surface_get_buffer_source_box(surface, &src);
     int lx = c->ox + x, ly = c->oy + y;
@@ -79,6 +96,11 @@ static void draw_surface(struct wlr_surface *surface, int x, int y, void *data) 
                                              .dst_box = dst,
                                              .transform = surface->current.transform,
                                              .filter_mode = WLR_SCALE_FILTER_BILINEAR,
+                                             .wait_timeline = sync != nullptr
+                                                                  ? sync->acquire_timeline
+                                                                  : nullptr,
+                                             .wait_point = sync != nullptr ? sync->acquire_point
+                                                                           : 0,
                                          });
 }
 
@@ -93,7 +115,17 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int w, i
     struct wlr_buffer *buf = wlr_allocator_create_buffer(server->allocator, w, h, fmt);
     if (buf == nullptr)
         return nullptr;
-    struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(server->renderer, buf, nullptr);
+    /* With explicit sync, the pass signals a point of our own timeline
+     * once it's done, which releases the programs' buffers it read. */
+    struct wlr_buffer_pass_options opts = {0};
+    if (server->syncobj != nullptr && server->capture_timeline == nullptr)
+        server->capture_timeline =
+            wlr_drm_syncobj_timeline_create(wlr_renderer_get_drm_fd(server->renderer));
+    if (server->capture_timeline != nullptr) {
+        opts.signal_timeline = server->capture_timeline;
+        opts.signal_point = ++server->capture_point;
+    }
+    struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(server->renderer, buf, &opts);
     if (pass == nullptr) {
         wlr_buffer_drop(buf);
         return nullptr;
@@ -128,6 +160,9 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int w, i
     bool ok = wlr_render_pass_submit(pass);
     if (frame_tex != nullptr)
         wlr_texture_destroy(frame_tex);
+    for (size_t i = 0; ok && opts.signal_timeline != nullptr && i < c.synced_n; i++)
+        wlr_linux_drm_syncobj_v1_state_add_release_point(c.synced[i], opts.signal_timeline,
+                                                         opts.signal_point, server->loop);
     if (!ok) {
         wlr_buffer_drop(buf);
         return nullptr;

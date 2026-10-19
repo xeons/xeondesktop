@@ -59,6 +59,7 @@
 #include "../src/settings/gtktheme.h"
 #include "../src/settings/inputmethod.h"
 #include "../src/compositor/imeplace.h"
+#include "../src/compositor/present.h"
 #include "../src/settings/nightlight.h"
 #include "../src/settings/qtpalette.h"
 #include "../src/settings/settings.h"
@@ -6789,6 +6790,88 @@ static void test_updates(void) {
           0);
 }
 
+/* Variable refresh rate and tearing (the compositor's present.c), and the
+ * setting in monitors.ini. */
+static void test_present(void) {
+    CHECK(xd_vrr_mode_parse("fullscreen") == XD_VRR_FULLSCREEN);
+    CHECK(xd_vrr_mode_parse("Always") == XD_VRR_ALWAYS);
+    CHECK(xd_vrr_mode_parse("true") == XD_VRR_FULLSCREEN);
+    CHECK(xd_vrr_mode_parse("off") == XD_VRR_OFF);
+    CHECK(xd_vrr_mode_parse("false") == XD_VRR_OFF);
+    CHECK(xd_vrr_mode_parse("sometimes") == XD_VRR_OFF);
+    CHECK(xd_vrr_mode_parse(nullptr) == XD_VRR_OFF);
+    for (int m = XD_VRR_OFF; m <= XD_VRR_ALWAYS; m++)
+        CHECK(xd_vrr_mode_parse(xd_vrr_mode_name((xd_vrr_mode)m)) == m);
+
+    /* monitors.ini: kept with the rest; off when it isn't there. */
+    char *dir = g_dir_make_tmp("xd-monitors-XXXXXX", nullptr);
+    char *saved = g_strdup(g_getenv("XDG_CONFIG_HOME"));
+    g_setenv("XDG_CONFIG_HOME", dir, TRUE);
+    xd_monitor_config cfgs[2] = {
+        {.key = "Acme Gamer 1", .enabled = true, .width = 2560, .height = 1440,
+         .refresh_mhz = 143998, .scale = 1.0, .vrr = XD_VRR_FULLSCREEN},
+        {.key = "Acme Office 2", .enabled = true, .width = 1920, .height = 1080, .scale = 1.0},
+    };
+    CHECK(xd_monitors_store(cfgs, 2));
+    xd_monitor_config got;
+    CHECK(xd_monitors_lookup("Acme Gamer 1", &got) && got.vrr == XD_VRR_FULLSCREEN &&
+          got.refresh_mhz == 143998);
+    CHECK(xd_monitors_lookup("Acme Office 2", &got) && got.vrr == XD_VRR_OFF);
+    char *ini = g_build_filename(dir, "xeondesktop", "monitors.ini", nullptr);
+    CHECK(g_file_set_contents(ini, "[Old]\nWidth=800\nHeight=600\n\n[Hand]\nAdaptiveSync= always \n",
+                              -1, nullptr));
+    CHECK(xd_monitors_lookup("Old", &got) && got.vrr == XD_VRR_OFF);
+    CHECK(xd_monitors_lookup("Hand", &got) && got.vrr == XD_VRR_ALWAYS);
+    g_free(ini);
+    env_restore("XDG_CONFIG_HOME", saved);
+    rm_tree(dir);
+    g_free(dir);
+
+    /* Off: never on, and a game may tear when it's alone on the monitor. */
+    xd_present_state game = {.vrr = XD_VRR_OFF, .fullscreen = true, .scanout = true,
+                             .async_hint = true};
+    xd_present_choice c = xd_present_choose(game);
+    CHECK(!c.set_vrr && c.tearing);
+    /* Only when it asked, and only when nothing is drawn over it. */
+    xd_present_state s = game;
+    s.async_hint = false;
+    CHECK(!xd_present_choose(s).tearing);
+    s = game;
+    s.scanout = false;
+    CHECK(!xd_present_choose(s).tearing);
+    s = game;
+    s.locked = true;
+    CHECK(!xd_present_choose(s).tearing);
+    /* On (full-screen windows): turned on when a game is in front, not
+     * tearing in that same commit; on the desktop, turned off again. */
+    s = game;
+    s.vrr = XD_VRR_FULLSCREEN;
+    c = xd_present_choose(s);
+    CHECK(c.set_vrr && c.vrr && !c.tearing);
+    s.vrr_on = true;
+    c = xd_present_choose(s);
+    CHECK(!c.set_vrr && c.tearing);
+    s.fullscreen = false;
+    c = xd_present_choose(s);
+    CHECK(c.set_vrr && !c.vrr && !c.tearing);
+    s.vrr_on = false;
+    CHECK(!xd_present_choose(s).set_vrr);
+    /* A monitor that refused it isn't asked again. */
+    s = game;
+    s.vrr = XD_VRR_FULLSCREEN;
+    s.vrr_rejected = true;
+    c = xd_present_choose(s);
+    CHECK(!c.set_vrr && c.tearing);
+    /* Always: on the desktop too, and the lock screen. */
+    xd_present_state desk = {.vrr = XD_VRR_ALWAYS, .locked = true};
+    c = xd_present_choose(desk);
+    CHECK(c.set_vrr && c.vrr && !c.tearing);
+    /* Turned off in the setting while on: off. */
+    xd_present_state off = {.vrr = XD_VRR_OFF, .vrr_on = true, .fullscreen = true};
+    c = xd_present_choose(off);
+    CHECK(c.set_vrr && !c.vrr);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -6870,6 +6953,7 @@ int main(void) {
     test_keys_gpg();
     test_network_drives();
     test_usershare();
+    test_present();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

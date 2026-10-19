@@ -100,6 +100,25 @@ panel, else the first monitor; so does a pen display, while other tablets
 cover the whole desktop.
 Touchpad gestures (swipe, pinch, hold) go to the program under the
 pointer.
+.PP
+For games: a full-screen window with nothing over it is scanned out
+directly, without being drawn again.
+Explicit sync (linux-drm-syncobj), which NVIDIA's own driver needs, is
+offered when the renderer and the display hardware can use DRM timelines
+(never in software).
+A monitor's variable refresh rate (adaptive sync) is off unless turned on
+in Display Properties (Settings, Advanced, Monitor), with
+.B "wlr\-randr \-\-adaptive\-sync enabled"
+or kanshi; then it is used while a full-screen window is in front, as
+Windows does for games
+.RB ( AdaptiveSync=always
+in
+.I monitors.ini
+keeps it on for the desktop too).
+A full-screen window that asks to tear (tearing-control's async hint: a
+game with vertical sync off, Vulkan's immediate present mode) is flipped
+at once, without waiting for the vertical blank, while it is scanned out
+directly.
 .SH OPTIONS
 .TP
 .BI \-\-style " style"
@@ -287,7 +306,14 @@ more (default
 .IR ~/.config/xeondesktop/desktop.ini ).
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/monitors.ini
-Each monitor's resolution, refresh rate, scale, orientation and position.
+Each monitor's resolution, refresh rate, scale, orientation and position,
+and its variable refresh rate:
+.B AdaptiveSync=off
+(the default),
+.B fullscreen
+(while a full-screen window is in front) or
+.BR always .
+The compositor rewrites the file when display settings change.
 .TP
 .I ~/.local/share/themes/XeonDesktop
 The generated GTK 3 theme.

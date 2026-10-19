@@ -3490,10 +3490,10 @@ def identify_monitors(s):
     tab = s.settle("settings-tab")
     x, y, w, h = tab.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
     # The dialog's client area is 404x448, framed evenly at the sides and
-    # bottom; Identify is at (309, 338), 75x23.
+    # bottom; Identify is at (228, 368), 75x23.
     edge = (w - 404) // 2
     left, top = x + edge, y + h - edge - 448
-    s.inject("move", left + 346, top + 349, "click", "move", WIDTH // 2, HEIGHT // 2)
+    s.inject("move", left + 265, top + 379, "click", "move", WIDTH // 2, HEIGHT // 2)
     first = (0, 0, 300, 300)
     second = (SECOND_X, 0, 300, 300)
     shot = s.wait(lambda: (lambda sh: sh if sh.changed_box(tab, first) and
@@ -3521,6 +3521,70 @@ def identify_monitors(s):
     s.wait(lambda: s.shot("gone").changed_box(tab, first) is None and
            s.shot("gone").changed_box(tab, second) is None, "the numbers to go", 10)  # fmt: skip
     s.log("ok: the numbers went away by themselves")
+
+
+def vrr_always(s):
+    """Before the compositor starts: monitors.ini asks for a variable
+    refresh rate all the time, which the headless output can't do."""
+    path = os.path.join(s.config, "monitors.ini")
+    with open(path) as f:
+        text = f.read()
+    with open(path, "w") as f:
+        f.write(text.replace("[HEADLESS-1]\n", "[HEADLESS-1]\nAdaptiveSync=always\n", 1))
+
+
+@scenario(setup=vrr_always)
+def display_adaptive_sync(s):
+    """The game protocols are offered as the renderer allows: tearing-control
+    always, explicit sync (linux-drm-syncobj) not with the software
+    renderer. A monitor that can't do variable refresh rates reports it off
+    through wlr-output-management (even with AdaptiveSync=always in
+    monitors.ini) and refuses having it turned on; Display Properties >
+    Settings > Advanced shows the Monitor tab with "Variable refresh rate"
+    unchecked and greyed."""
+    r = subprocess.run([s.tool("xd-windows")], env=dict(os.environ, WAYLAND_DEBUG="1"),
+                       capture_output=True, timeout=10)  # fmt: skip
+    globals_ = r.stderr.decode(errors="replace")
+    s.check('"wp_tearing_control_manager_v1"' in globals_, "tearing-control is offered")
+    s.check('"wp_linux_drm_syncobj_manager_v1"' not in globals_,
+            "explicit sync isn't, with the software renderer")  # fmt: skip
+    if shutil.which("wlr-randr"):
+        def randr(*args):
+            return subprocess.run(["wlr-randr", *args], capture_output=True, text=True, timeout=10)
+
+        s.check("Adaptive Sync: disabled" in randr().stdout,
+                "wlr-output-management reports adaptive sync off")  # fmt: skip
+        r = randr("--output", "HEADLESS-1", "--adaptive-sync", "enabled")
+        s.check(r.returncode != 0 or "failed" in r.stdout + r.stderr,
+                "turning it on is refused")  # fmt: skip
+        s.check("Adaptive Sync: disabled" in randr().stdout, "and it stays off")
+        s.check(s.ini("monitors.ini")["HEADLESS-1"].get("AdaptiveSync") == "always",
+                "monitors.ini keeps its own setting")  # fmt: skip
+    else:
+        s.log("wlr-randr isn't installed: wlr-output-management not checked")
+
+    empty = s.settle("desktop")
+    s.launch("xd-desk", "--page", "4")
+    s.wait_window(title="Display Properties", state="activated")
+    tab = s.settle("settings-tab")
+    x, y, w, h = tab.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    # Framed as in identify_monitors; Advanced is at (309, 368), 75x23.
+    edge = (w - 404) // 2
+    left, top = x + edge, y + h - edge - 448
+    s.inject("move", left + 346, top + 379, "click")
+    s.wait_window(title="Headless output 1 Properties", state="activated")
+    s.inject("move", WIDTH // 2, HEIGHT - 60)
+    dialog = s.settle("monitor-tab")
+    x, y, w, h = dialog.changed_box(tab, (0, 0, WIDTH, HEIGHT - 40))
+    # Its client area is 360x296; the check box's square is at (31, 183),
+    # 13x13: white inside when it can be checked, the face colour greyed.
+    edge = (w - 360) // 2
+    left, top = x + edge, y + h - edge - 296
+    inside = dialog.pixel(left + 37, top + 189)
+    s.check(min(inside) < 240 and max(inside) > 150,
+            f"Variable refresh rate is greyed and unchecked ({inside})")
+    s.inject("key", "Escape")
+    s.wait_window(title="Headless output 1 Properties", gone=True)
 
 
 LANG_INI = LUNA_INI + "\n[Keyboard]\nLayout=us,de\nOptions=grp:alt_shift_toggle\n"

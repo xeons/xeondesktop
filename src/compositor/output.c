@@ -62,12 +62,13 @@ static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *da
     if (so == nullptr)
         return;
     /* wlr_scene_output_commit, with our gamma ramp (gamma.c) in the same
-     * commit when it changed. */
-    if (wlr_scene_output_needs_frame(so) || xd_gamma_pending(out)) {
+     * commit when it changed, and adaptive sync and tearing (present.c). */
+    if (wlr_scene_output_needs_frame(so) || xd_gamma_pending(out) || xd_present_pending(out)) {
         struct wlr_output_state state;
         wlr_output_state_init(&state);
         if (wlr_scene_output_build_state(so, &state, nullptr)) {
             xd_gamma_frame(out, &state);
+            xd_present_frame(out, &state);
             wlr_output_commit_state(out->wlr_output, &state);
         }
         wlr_output_state_finish(&state);
@@ -220,6 +221,7 @@ static void handle_new_output(struct wl_listener *listener, void *data) {
         out->has_position = true;
         out->want_x = cfg.x;
         out->want_y = cfg.y;
+        out->vrr = cfg.vrr; /* present.c turns it on when it's wanted */
     }
     if (enabled) {
         struct wlr_output_layout_output *lo =
@@ -268,6 +270,7 @@ void xd_output_save_config(xd_server *server) {
             .refresh_mhz = o->refresh,
             .scale = (double)o->scale,
             .transform = (int)o->transform,
+            .vrr = out->vrr,
         };
         xd_output_key(o, c->key, sizeof(c->key));
         struct wlr_box box;

@@ -82,6 +82,7 @@ typedef struct xd_display_head {
     int x, y;              /* logical position */
     double scale;
     xd_display_transform transform;
+    bool adaptive_sync; /* variable refresh rate */
     const xd_display_mode *modes;
     size_t mode_count;
 } xd_display_head;
@@ -94,6 +95,7 @@ typedef struct xd_display_setting {
     int x, y;
     double scale;
     xd_display_transform transform;
+    bool adaptive_sync;
 } xd_display_setting;
 
 /* False if the compositor can't change display settings. The heads are
@@ -106,6 +108,10 @@ void xd_ui_on_display_change(xd_ui *ui, xd_ui_source_cb cb, void *user);
 typedef void (*xd_display_done_cb)(bool ok, void *user);
 void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t count,
                          xd_display_done_cb done, void *user);
+/* Asks whether the compositor would accept them, changing nothing (e.g.
+ * whether a monitor can do variable refresh rates). */
+void xd_ui_display_test(xd_ui *ui, const xd_display_setting *settings, size_t count,
+                        xd_display_done_cb done, void *user);
 /* Re-themes every open window, e.g. after the user applied new settings. */
 void xd_ui_set_theme(xd_ui *ui, xd_visual_style style, const xd_scheme *scheme);
 

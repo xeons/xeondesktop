@@ -100,7 +100,13 @@ and xdg-shell, they use:
 - `ext-session-lock-v1` (Lock Computer), `ext-idle-notify-v1` (screen saver,
   monitor power-off), `wlr-output-power-management`;
 - `wlr-output-management` (Display Properties' Settings tab, with Windows'
-  15-second revert);
+  15-second revert; its adaptive sync is the monitor's variable refresh
+  rate setting, and Advanced asks with a test configuration whether the
+  monitor can have it);
+- `linux-drm-syncobj-v1` (explicit sync, which NVIDIA's driver needs; only
+  when the renderer and backend both do DRM timelines, as sway decides) and
+  `tearing-control-v1` (games with vsync off). wlroots 0.20 has no
+  `fifo-v1` or `commit-timing-v1`, so neither is offered;
 - `wlr-gamma-control` (gammastep, wlsunset: their ramp replaces the
   compositor's own while they hold it);
 - `wp_fractional_scale_v1` and `wp_viewporter`, `wp_cursor_shape_v1`,
@@ -175,6 +181,25 @@ and xdg-shell, they use:
   NOAA's sunrise and sunset equations or set hours, changing over half
   an hour). The ramp goes into a frame's commit and is loaded by KMS, so
   it works with pixman too; headless and nested outputs have none.
+- **Games** (`present.c`). A full-screen window that's alone on its output
+  is scanned out directly by the scene graph: fullscreen windows have no
+  frame, blur or shadow nodes, sit above the taskbar (whose glass is then
+  hidden under an opaque window and culled), and the cursor is a hardware
+  plane except on virtual GPUs. Explicit sync works on both scene graphs:
+  wlroots' and SceneFX's wait for a buffer's acquire point when drawing or
+  scanning it out and signal its release point, and our own thumbnail
+  capture (`capture.c`) does the same. Variable refresh rate is per
+  monitor (`AdaptiveSync` in `monitors.ini`: off, fullscreen, always), off
+  by default; "fullscreen" turns it on in the frame's commit while a
+  full-screen window is in front (as Windows uses it for games) and off
+  again on the desktop, and a monitor that refuses it isn't asked again
+  until the setting changes. A full-screen window's tearing-control async
+  hint flips without waiting for vblank (`tearing_page_flip`) when the
+  frame is its own buffer (direct scanout), never in the commit that
+  changes adaptive sync, with a test commit first and a vsynced flip if the
+  driver refuses. No setting gates tearing: the program's hint is the
+  user's choice in that program, as with DXGI's ALLOW_TEARING. The
+  decisions are in `present.h`, unit-tested.
 - **Session.** In a real login the compositor gives the systemd user
   manager the display (`WAYLAND_DISPLAY`, `DISPLAY`, `XDG_*`, the theme
   variables) and starts `xeondesktop-session.target`, which binds

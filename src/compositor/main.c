@@ -13,6 +13,7 @@
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <wlr/render/drm_syncobj.h>
 #include <wlr/render/pixman.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_data_control_v1.h>
@@ -294,6 +295,7 @@ static bool server_init(xd_server *server) {
     xd_capture_init(server);
     xd_protocols_init(server);
     xd_gamma_init(server);
+    xd_present_init(server);
     xd_lock_init(server);
     xd_ime_init(server);
     xd_xwayland_init(server);
@@ -364,6 +366,8 @@ static void server_finish(xd_server *server) {
         wlr_xcursor_manager_destroy(server->xcursor);
     if (server->cursor != nullptr)
         wlr_cursor_destroy(server->cursor);
+    if (server->capture_timeline != nullptr)
+        wlr_drm_syncobj_timeline_unref(server->capture_timeline);
     if (server->allocator != nullptr)
         wlr_allocator_destroy(server->allocator);
     if (server->renderer != nullptr)

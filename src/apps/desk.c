@@ -28,6 +28,7 @@
 #include "../ui/ui.h"
 #include "common.h"
 #include "desk_advanced.h"
+#include "desk_monitor.h"
 #include "desk_nightlight.h"
 #include "desk_saver.h"
 
@@ -148,6 +149,14 @@ typedef struct desk {
     xd_widget *orient_combo;
     xd_widget *extend_check;
     xd_widget *display_note;
+    xd_widget *display_advanced;
+    /* Advanced (desk_monitor.c), while it's open or about to: the
+     * monitor's name and the refresh rates (modes) it was given. */
+    monitor_dialog *monitor;
+    bool monitor_probing; /* asking the compositor about variable refresh */
+    char monitor_name[64];
+    int monitor_modes[64];
+    size_t monitor_mode_count;
     bool dragging;
     double drag_x0, drag_y0, drag_dx, drag_dy;
     /* Monitor Settings confirmation */
@@ -1730,6 +1739,7 @@ static void load_heads(desk *d) {
         dh->set.y = h->y;
         dh->set.scale = h->scale > 0 ? h->scale : 1.0;
         dh->set.transform = h->transform;
+        dh->set.adaptive_sync = h->adaptive_sync;
         dh->mode_count = h->mode_count;
         dh->modes = xd_alloc_array(XD_MAX(h->mode_count, 1), sizeof(*dh->modes));
         memcpy(dh->modes, h->modes, h->mode_count * sizeof(*h->modes));
@@ -1779,7 +1789,8 @@ static bool heads_equal(const disp_head *a, const disp_head *b, size_t n) {
         const xd_display_setting *y = &b[i].set;
         if (x->enabled != y->enabled || (x->enabled && (x->mode != y->mode || x->x != y->x ||
                                                         x->y != y->y || x->scale != y->scale ||
-                                                        x->transform != y->transform)))
+                                                        x->transform != y->transform ||
+                                                        x->adaptive_sync != y->adaptive_sync)))
             return false;
     }
     return true;
@@ -1970,12 +1981,20 @@ static void on_extend(xd_widget *w, void *user) {
     display_changed(d);
 }
 
+/* "60 Hertz", as XP's refresh rates. */
+static void format_rate(int mhz, char *buf, size_t cap) {
+    if (mhz > 0)
+        snprintf(buf, cap, "%.3g Hertz", mhz / 1000.0);
+    else
+        snprintf(buf, cap, "Default");
+}
+
 /* Fills the controls from the selected monitor. */
 static void show_head(desk *d) {
     disp_head *h = sel_head(d);
     bool have = h != nullptr;
-    xd_widget *controls[] = {d->res_slider, d->scale_combo, d->refresh_combo, d->orient_combo,
-                             d->extend_check};
+    xd_widget *controls[] = {d->res_slider,   d->scale_combo,  d->refresh_combo,
+                             d->orient_combo, d->extend_check, d->display_advanced};
     for (size_t i = 0; i < XD_ARRAY_LEN(controls); i++)
         xd_widget_set_enabled(controls[i], have && (h->set.enabled || controls[i] == d->extend_check));
     if (!have) {
@@ -2017,11 +2036,7 @@ static void show_head(desk *d) {
     }
     int rsel = 0;
     for (size_t i = 0; i < d->refresh_count; i++) {
-        int mhz = h->modes[d->refresh_modes[i]].refresh_mhz;
-        if (mhz > 0)
-            snprintf(buf, sizeof(buf), "%.3g Hertz", mhz / 1000.0);
-        else
-            snprintf(buf, sizeof(buf), "Default");
+        format_rate(h->modes[d->refresh_modes[i]].refresh_mhz, buf, sizeof(buf));
         xd_widget_add_item(d->refresh_combo, buf);
         if (d->refresh_modes[i] == h->set.mode)
             rsel = (int)i;
@@ -2271,6 +2286,80 @@ static void on_display_change(void *user) {
     xd_widget_redraw(d->monitors);
 }
 
+/* ---- Advanced (the monitor's properties) ---------------------------------------- */
+
+static bool apply(desk *d);
+
+static void on_monitor_done(monitor_result r, const monitor_props *p, void *user) {
+    desk *d = user;
+    if (r != MONITOR_APPLY)
+        d->monitor = nullptr;
+    if (p == nullptr)
+        return;
+    /* The monitor it was opened for, wherever the selection is now. */
+    int was = d->sel;
+    for (size_t i = 0; i < d->head_count; i++) {
+        if (strcmp(d->heads[i].set.name, d->monitor_name) == 0)
+            d->sel = (int)i;
+    }
+    disp_head *h = sel_head(d);
+    if (h != nullptr && strcmp(h->set.name, d->monitor_name) == 0) {
+        if (p->rate >= 0 && (size_t)p->rate < d->monitor_mode_count)
+            set_mode_keeping_layout(d, d->monitor_modes[p->rate]);
+        h->set.adaptive_sync = p->vrr;
+    }
+    d->sel = was;
+    show_head(d);
+    display_changed(d);
+    if (r == MONITOR_APPLY)
+        apply(d);
+}
+
+/* The compositor answered whether the monitor could have a variable
+ * refresh rate: now the dialog can show it. */
+static void on_vrr_probed(bool ok, void *user) {
+    desk *d = user;
+    d->monitor_probing = false;
+    disp_head *h = sel_head(d);
+    if (h == nullptr || strcmp(h->set.name, d->monitor_name) != 0 || d->monitor != nullptr)
+        return;
+    const char *rates[XD_ARRAY_LEN(d->refresh_modes)];
+    char labels[XD_ARRAY_LEN(d->refresh_modes)][32];
+    monitor_props props = {.vrr = h->set.adaptive_sync};
+    d->monitor_mode_count = d->refresh_count;
+    for (size_t i = 0; i < d->refresh_count; i++) {
+        d->monitor_modes[i] = d->refresh_modes[i];
+        format_rate(h->modes[d->refresh_modes[i]].refresh_mhz, labels[i], sizeof(labels[i]));
+        rates[i] = labels[i];
+        if (d->refresh_modes[i] == h->set.mode)
+            props.rate = (int)i;
+    }
+    if (d->refresh_count == 0) {
+        rates[0] = "Default";
+        d->monitor_mode_count = 0;
+    }
+    d->monitor = monitor_dialog_open(d->ui, h->description[0] != '\0' ? h->description : "Monitor",
+                                     rates, XD_MAX(d->refresh_count, 1), props,
+                                     ok || h->set.adaptive_sync, on_monitor_done, d);
+}
+
+/* Advanced: first asks the compositor (a test configuration, changing
+ * nothing) whether this monitor would take a variable refresh rate. */
+static void on_display_advanced([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    disp_head *h = sel_head(d);
+    if (h == nullptr || !h->set.enabled || d->monitor != nullptr || d->monitor_probing)
+        return;
+    snprintf(d->monitor_name, sizeof(d->monitor_name), "%s", h->set.name);
+    xd_display_setting *sets = xd_alloc_array(XD_MAX(d->head_count, 1), sizeof(*sets));
+    for (size_t i = 0; i < d->head_count; i++)
+        sets[i] = d->heads[i].set;
+    sets[d->sel].adaptive_sync = true;
+    d->monitor_probing = true;
+    xd_ui_display_test(d->ui, sets, d->head_count, on_vrr_probed, d);
+    xd_free(sets);
+}
+
 /* Identify: the shell shows each monitor's number on that monitor, as
  * this tab numbers them (monitors that are off show nothing). */
 static void on_identify([[maybe_unused]] xd_widget *w, void *user) {
@@ -2300,7 +2389,7 @@ static void on_identify([[maybe_unused]] xd_widget *w, void *user) {
 static void build_settings(desk *d) {
     xd_window *win = d->win;
     const int P = PAGE_SETTINGS;
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 40, 364, 16},
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 40, 364, 28},
                                 "Drag the monitor icons to match the physical arrangement of your "
                                 "monitors.",
                                 XD_LABEL_WRAP),
@@ -2347,9 +2436,13 @@ static void build_settings(desk *d) {
     d->extend_check = xd_checkbox(win, (xd_rect){20, 340, 280, 20},
                                   "Extend my desktop onto this monitor.", true, on_extend, d);
     xd_widget_set_page(d->extend_check, P);
-    xd_widget *identify = xd_button(win, (xd_rect){309, 338, 75, 23}, "Identify", on_identify, d);
+    /* Windows 2000's row of buttons (Troubleshoot... has nothing to run). */
+    xd_widget *identify = xd_button(win, (xd_rect){228, 368, 75, 23}, "Identify", on_identify, d);
     xd_widget_set_page(identify, P);
-    d->display_note = xd_label(win, (xd_rect){20, 368, 364, 30}, "", XD_LABEL_WRAP | XD_LABEL_DIM);
+    d->display_advanced =
+        xd_button(win, (xd_rect){309, 368, 75, 23}, "Advanced", on_display_advanced, d);
+    xd_widget_set_page(d->display_advanced, P);
+    d->display_note = xd_label(win, (xd_rect){20, 364, 200, 36}, "", XD_LABEL_WRAP | XD_LABEL_DIM);
     xd_widget_set_page(d->display_note, P);
 
     xd_ui_on_display_change(d->ui, on_display_change, d);
@@ -2507,9 +2600,11 @@ static bool apply(desk *d) {
 static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
     desk *d = user;
     if (d->confirm != nullptr || d->items != nullptr || d->color != nullptr ||
-        d->saver_setup != nullptr || d->adv != nullptr || d->night != nullptr)
+        d->saver_setup != nullptr || d->adv != nullptr || d->night != nullptr ||
+        d->monitor != nullptr || d->monitor_probing)
         return; /* answer Monitor Settings, Desktop Items, Window Color, a saver's
-                 * Settings, Advanced Appearance or Night Light first */
+                 * Settings, Advanced Appearance, Night Light or the monitor's
+                 * properties first */
     if (d->display_dirty) {
         /* Closes once the new display settings are kept. */
         d->close_after_apply = true;
@@ -2530,6 +2625,8 @@ static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
         saver_setup_cancel(d->saver_setup);
     if (d->night != nullptr)
         nightlight_dialog_cancel(d->night);
+    if (d->monitor != nullptr)
+        monitor_dialog_cancel(d->monitor);
     xd_window_close(d->win);
 }
 

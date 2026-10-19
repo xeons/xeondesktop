@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: MIT
  * Desktop protocols the shell, settings and other tools rely on:
  *
- * - wlr-output-management: resolution, refresh, scale, position and
- *   enabling outputs (wlr-randr, kanshi, Display Properties' Settings tab);
+ * - wlr-output-management: resolution, refresh, scale, position,
+ *   variable refresh rate (adaptive sync) and enabling outputs (wlr-randr,
+ *   kanshi, Display Properties' Settings tab);
  * - wlr-output-power-management: turning monitors off and on (screen
  *   savers, swayidle);
  * - ext-idle-notify and idle-inhibit: idle timers for screen savers, held
@@ -39,6 +40,8 @@ void xd_output_config_changed(xd_server *server) {
             head->state.x = box.x;
             head->state.y = box.y;
         }
+        /* The setting: the monitor may be off it until a game is in front. */
+        head->state.adaptive_sync_enabled = xd_present_vrr_reported(out);
     }
     wlr_output_manager_v1_set_configuration(server->output_manager, config);
 }
@@ -63,21 +66,37 @@ static void apply_config(xd_server *server, struct wlr_output_configuration_v1 *
         struct wlr_output_state st;
         wlr_output_state_init(&st);
         wlr_output_head_v1_state_apply(&head->state, &st);
-        bool head_ok = test_only ? wlr_output_test_state(head->state.output, &st)
-                                 : wlr_output_commit_state(head->state.output, &st);
+        xd_output *out = xd_output_from_wlr(server, head->state.output);
+        /* Adaptive sync is the setting (present.c turns the monitor's on
+         * and off): tested only when it's being turned on, so that a
+         * monitor that can't refuses, and never committed here. */
+        bool vrr = head->state.enabled && head->state.adaptive_sync_enabled;
+        bool vrr_test = out != nullptr && vrr && !xd_present_vrr_reported(out);
+        st.committed &= ~(uint32_t)WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED;
+        if (vrr_test)
+            wlr_output_state_set_adaptive_sync_enabled(&st, true);
+        bool head_ok = wlr_output_test_state(head->state.output, &st);
+        if (head_ok && !test_only) {
+            st.committed &= ~(uint32_t)WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED;
+            head_ok = wlr_output_commit_state(head->state.output, &st);
+        }
         wlr_output_state_finish(&st);
         if (!head_ok) {
-            wlr_log(WLR_ERROR, "output %s: configuration rejected", head->state.output->name);
+            /* A test may well fail: Display Properties asks whether the
+             * monitor can do variable refresh rates that way. */
+            wlr_log(test_only ? WLR_DEBUG : WLR_ERROR, "output %s: configuration rejected",
+                    head->state.output->name);
             ok = false;
             continue;
         }
         if (test_only)
             continue;
-        xd_output *out = xd_output_from_wlr(server, head->state.output);
         if (out != nullptr) {
             out->has_position = true;
             out->want_x = head->state.x;
             out->want_y = head->state.y;
+            if (head->state.enabled)
+                xd_present_vrr_set(out, vrr);
         }
         if (head->state.enabled)
             place_in_layout(server, head->state.output, head->state.x, head->state.y);

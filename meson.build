@@ -321,6 +321,7 @@ compositor_src = files(
   'src/compositor/xwayland.c',
   'src/compositor/access.c',
   'src/compositor/ime.c',
+  'src/compositor/present.c',
   'src/settings/soundplay.c',
 )
 # Gamma ramps: night light, and monitor calibration from ICC profiles'
@@ -482,6 +483,7 @@ executable(
   'src/apps/desk.c',
   'src/apps/desk_advanced.c',
   'src/apps/desk_color.c',
+  'src/apps/desk_monitor.c',
   'src/apps/desk_nightlight.c',
   'src/apps/desk_saver.c',
   'src/settings/themes.c',

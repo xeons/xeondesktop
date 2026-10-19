@@ -131,9 +131,11 @@ static void head_model([[maybe_unused]] void *data,
 static void head_serial([[maybe_unused]] void *data,
                         [[maybe_unused]] struct zwlr_output_head_v1 *h,
                         [[maybe_unused]] const char *serial) {}
-static void head_adaptive_sync([[maybe_unused]] void *data,
-                               [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                               [[maybe_unused]] uint32_t state) {}
+static void head_adaptive_sync(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+                               uint32_t state) {
+    xd_ui_head *head = data;
+    head->info.adaptive_sync = state == ZWLR_OUTPUT_HEAD_V1_ADAPTIVE_SYNC_STATE_ENABLED;
+}
 
 static const struct zwlr_output_head_v1_listener head_listener = {
     .name = head_name,
@@ -279,8 +281,17 @@ static const xd_display_setting *setting_for(const xd_ui_head *head,
     return nullptr;
 }
 
-void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t count,
-                         xd_display_done_cb done, void *user) {
+/* Adaptive sync came with version 4 of the configuration head. */
+static void set_adaptive_sync(struct zwlr_output_configuration_head_v1 *ch, bool on) {
+    if (zwlr_output_configuration_head_v1_get_version(ch) >=
+        ZWLR_OUTPUT_CONFIGURATION_HEAD_V1_SET_ADAPTIVE_SYNC_SINCE_VERSION)
+        zwlr_output_configuration_head_v1_set_adaptive_sync(
+            ch, on ? ZWLR_OUTPUT_HEAD_V1_ADAPTIVE_SYNC_STATE_ENABLED
+                   : ZWLR_OUTPUT_HEAD_V1_ADAPTIVE_SYNC_STATE_DISABLED);
+}
+
+static void send_config(xd_ui *ui, const xd_display_setting *settings, size_t count,
+                        xd_display_done_cb done, void *user, bool test) {
     if (ui->output_manager == nullptr) {
         if (done != nullptr)
             done(false, user);
@@ -308,6 +319,7 @@ void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t c
             zwlr_output_configuration_head_v1_set_position(ch, head->info.x, head->info.y);
             zwlr_output_configuration_head_v1_set_scale(ch, wl_fixed_from_double(head->info.scale));
             zwlr_output_configuration_head_v1_set_transform(ch, (int32_t)head->info.transform);
+            set_adaptive_sync(ch, head->info.adaptive_sync);
             continue;
         }
         int j = 0;
@@ -318,6 +330,20 @@ void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t c
         zwlr_output_configuration_head_v1_set_position(ch, s->x, s->y);
         zwlr_output_configuration_head_v1_set_scale(ch, wl_fixed_from_double(s->scale));
         zwlr_output_configuration_head_v1_set_transform(ch, (int32_t)s->transform);
+        set_adaptive_sync(ch, s->adaptive_sync);
     }
-    zwlr_output_configuration_v1_apply(c);
+    if (test)
+        zwlr_output_configuration_v1_test(c);
+    else
+        zwlr_output_configuration_v1_apply(c);
+}
+
+void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t count,
+                         xd_display_done_cb done, void *user) {
+    send_config(ui, settings, count, done, user, false);
+}
+
+void xd_ui_display_test(xd_ui *ui, const xd_display_setting *settings, size_t count,
+                        xd_display_done_cb done, void *user) {
+    send_config(ui, settings, count, done, user, true);
 }

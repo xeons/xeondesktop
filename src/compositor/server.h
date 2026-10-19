@@ -29,6 +29,7 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 
+#include "../settings/monitors.h"
 #include "../settings/settings.h"
 #include "../theme/theme.h"
 #include "wl.h"
@@ -76,6 +77,10 @@ typedef struct xd_output {
     bool has_position;
     int want_x, want_y;
     struct xd_gamma_output *gamma; /* gamma.c's: its calibration and night light */
+    /* present.c: Variable refresh rate (monitors.ini), and whether the
+     * monitor refused it since. */
+    xd_vrr_mode vrr;
+    bool vrr_rejected;
     struct wl_listener frame;
     struct wl_listener request_state;
     struct wl_listener destroy;
@@ -332,6 +337,9 @@ struct xd_server {
     struct wl_listener new_idle_inhibitor;
     struct wl_listener request_activate;
     struct wl_listener new_activation_token;
+    /* present.c */
+    struct wlr_tearing_control_manager_v1 *tearing;
+    struct wlr_linux_drm_syncobj_manager_v1 *syncobj; /* nullptr: no explicit sync */
 
     /* xwayland.c */
     struct wlr_compositor *compositor;
@@ -441,6 +449,9 @@ struct xd_server {
     struct wl_global *capture_globals[3];
     struct wl_listener capture_request;
     struct wl_listener capture_sources_destroy;
+    /* Signalled as captures finish, with explicit sync. */
+    struct wlr_drm_syncobj_timeline *capture_timeline;
+    uint64_t capture_point;
     uint32_t shell_restarts;
     struct timespec shell_restart_window;
     /* The polkit agent too: without it, administrator actions just fail. */
@@ -773,6 +784,19 @@ void xd_gamma_output_removed(xd_output *out);
 bool xd_gamma_pending(const xd_output *out);
 /* ...which this does, given the frame's state. */
 void xd_gamma_frame(xd_output *out, struct wlr_output_state *state);
+
+/* present.c: explicit sync, variable refresh rate and tearing. */
+void xd_present_init(xd_server *server);
+/* Whether the output needs a frame to turn adaptive sync on or off. */
+bool xd_present_pending(xd_output *out);
+/* Adds adaptive sync and tearing to the output's next frame, as its
+ * setting and the window in front call for. */
+void xd_present_frame(xd_output *out, struct wlr_output_state *state);
+/* What wlr-output-management reports for adaptive sync (the setting, not
+ * whether it's on this moment)... */
+bool xd_present_vrr_reported(const xd_output *out);
+/* ...and a client set it to `on`. */
+void xd_present_vrr_set(xd_output *out, bool on);
 
 /* capture.c: window pictures for the shell's taskbar thumbnails. */
 void xd_capture_init(xd_server *server);
