@@ -258,20 +258,32 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ### Protocols other compositors have
 
-- [ ] Pointer lock and confinement (pointer-constraints, relative-pointer):
+- [x] Pointer lock and confinement (pointer-constraints, relative-pointer):
       games, Blender, VMs and remote desktop can't capture the mouse.
-- [ ] Touchscreens and drawing tablets (touch, tablet-v2): ignored on
-      purpose in input.c today.
-- [ ] Touchpad gestures (pointer-gestures): pinch to zoom, swipe
+- [~] Touchscreens and drawing tablets (touch, tablet-v2): ignored on
+      purpose in input.c today. Done, untested on real hardware: touch to
+      programs that read it, else as the mouse; pens with pressure and
+      tilt, else as the mouse; pads. Still to do: press-and-hold right
+      click, touch feedback, a setting for which monitor a touchscreen or
+      tablet maps to (Windows 7's Tablet PC Settings).
+- [~] Touchpad gestures (pointer-gestures): pinch to zoom, swipe
       back/forward, hold.
-- [ ] Letting a program take all shortcuts (keyboard-shortcuts-inhibit,
+- [x] Letting a program take all shortcuts (keyboard-shortcuts-inhibit,
       and the X11 programs' xwayland-keyboard-grab): VMs and remote
       desktop can't have Alt+Tab or the Windows key.
-- [ ] Explicit GPU sync (linux-drm-syncobj): NVIDIA's own driver flickers
+      Done: kept are Ctrl+Alt+Delete, Win+L, Ctrl+Alt+F1..F12 (which now
+      switch virtual terminals), Ctrl+Alt+Backspace, power and
+      accessibility keys; Ctrl+Alt alone releases. Untested with real
+      VirtualBox, VMware, games and Remmina.
+- [~] Explicit GPU sync (linux-drm-syncobj): NVIDIA's own driver flickers
       and stutters without it; before bare metal GPU testing.
-- [ ] Games: variable refresh rate (adaptive sync, with a Display setting),
+- [~] Games: variable refresh rate (adaptive sync, with a Display setting),
       tearing-control for lower latency, and the frame pacing protocols
-      recent Mesa uses (fifo, commit-timing).
+      recent Mesa uses (fifo, commit-timing). VRR (Display Properties >
+      Settings > Advanced > Monitor; full-screen windows only, or
+      AdaptiveSync=always in monitors.ini) and tearing (the async hint,
+      while scanned out directly) are done, untested on real hardware;
+      fifo and commit-timing wait for wlroots, which 0.20 lacks.
 - [ ] Sandboxes (security-context): Flatpak programs can use screen
       capture, clipboard managers' data-control and the like; deny them
       the privileged protocols.

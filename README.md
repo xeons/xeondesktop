@@ -107,9 +107,26 @@ instead, which is faster there.
 | Ctrl+Shift+Esc      | Task Manager                                    |
 | Win+L               | Lock Computer                                   |
 | Ctrl+Alt+Backspace  | Quit the compositor                             |
+| Ctrl+Alt+F1..F12    | Switch virtual terminal                         |
+| Ctrl+Alt (alone)    | Release a mouse or keyboard a program captured  |
 
 Mouse: drag the caption to move, drag edges/corners to resize, double-click
 the caption to maximize, double-click the window icon to close.
+
+Programs that capture the mouse and keyboard (games, Blender, virtual
+machines, remote desktops) can lock or confine the pointer and take the
+shortcuts above while their window is in front; Ctrl+Alt+Delete, Win+L,
+Ctrl+Alt+F1..F12 and Ctrl+Alt+Backspace always stay ours, and Ctrl+Alt on
+its own gives the mouse and keyboard back.
+
+Touchscreens and drawing tablets work in programs that read them, and as
+the mouse everywhere else (our window frames, the taskbar, older programs);
+touchpad gestures go to the program under the pointer.
+
+For games: explicit sync (linux-drm-syncobj, on any GPU whose driver has
+timelines), variable refresh rate for full-screen windows (Display
+Properties > Settings > Advanced > Monitor), tearing for games with vsync
+off, and full-screen windows scanned out directly.
 
 ### Start menu
 
