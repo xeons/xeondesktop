@@ -256,6 +256,33 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - Debug builds print LeakSanitizer reports from fontconfig/GTK caches at
   exit; only the unit tests use the suppression file.
 
+### Protocols other compositors have
+
+- [ ] Pointer lock and confinement (pointer-constraints, relative-pointer):
+      games, Blender, VMs and remote desktop can't capture the mouse.
+- [ ] Touchscreens and drawing tablets (touch, tablet-v2): ignored on
+      purpose in input.c today.
+- [ ] Touchpad gestures (pointer-gestures): pinch to zoom, swipe
+      back/forward, hold.
+- [ ] Letting a program take all shortcuts (keyboard-shortcuts-inhibit,
+      and the X11 programs' xwayland-keyboard-grab): VMs and remote
+      desktop can't have Alt+Tab or the Windows key.
+- [ ] Explicit GPU sync (linux-drm-syncobj): NVIDIA's own driver flickers
+      and stutters without it; before bare metal GPU testing.
+- [ ] Games: variable refresh rate (adaptive sync, with a Display setting),
+      tearing-control for lower latency, and the frame pacing protocols
+      recent Mesa uses (fifo, commit-timing).
+- [ ] Sandboxes (security-context): Flatpak programs can use screen
+      capture, clipboard managers' data-control and the like; deny them
+      the privileged protocols.
+- [ ] Window parenting (xdg-foreign, xdg-dialog): portal dialogs aren't
+      tied to the window of the Flatpak program that asked, and dialogs
+      can't be marked modal.
+- [ ] Icons programs send for their windows (xdg-toplevel-icon), for those
+      without a .desktop file.
+- [ ] Minor: DRM leasing (VR headsets), HDR colour management
+      (color-management-v1), content-type hints, alpha-modifier.
+
 ## Shell (taskbar, Start menus, desktop)
 
 - [x] Standalone taskbar for other wlroots compositors: `-Dcompositor=false`
