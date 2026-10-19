@@ -343,6 +343,12 @@ group, read/write/execute and the special bits, optionally applied to
 everything inside a folder. `xd-files --properties FILE...` shows just the
 dialog.
 
+Tabs, as Windows 11's Explorer has them: Ctrl+T opens one (My Computer),
+a middle click or "Open in new tab" opens a folder in one, Ctrl+W closes
+one, Ctrl+Tab and Ctrl+1..9 switch. Each keeps its own folder, history and
+view; the strip only shows with two or more, so one folder looks as XP's.
+Folder Options can open folders in new tabs instead of new windows.
+
 Network and encrypted drives: Tools > Map Network Drive... mounts a Windows
 or NFS share (`\\server\share`, `smb://`, `nfs://`) through gvfs, optionally
 reconnected at logon (`~/.config/xeondesktop/network.ini`); My Network Places

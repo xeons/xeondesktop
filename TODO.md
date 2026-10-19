@@ -663,6 +663,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       backup program) and the Hardware tab; tested against dbusmock's
       UDisks2. Untested: a successful check or repair, real polkit
       prompts, real disks.
+- [x] Tabs (Windows 11's): Ctrl+T/W, Ctrl+Tab, Ctrl+1..9, middle click and
+      "Open in new tab", per-tab history/view/selection, drag to reorder,
+      and Folder Options' "Open folders in new tabs instead of new
+      windows". Tested headless in all four styles. Unsure: whether
+      Windows 11 opens middle-clicked tabs in the background.
 - [x] The first arrow key in a fresh folder selected the second item.
 - [?] Folders tree clicks, address bar typing, the Views menu, the
       thumbnail slider, Details header sorting, Show Hidden Files, opening
