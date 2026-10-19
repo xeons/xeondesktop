@@ -77,8 +77,9 @@ static void refresh(gpg_page *p, const char *select) {
     if (p->gpg != nullptr)
         p->keys = xd_gpg_list(p->gpg, &error);
     if (p->gpg != nullptr && p->keys == nullptr) {
-        gtk_label_set_text(GTK_LABEL(p->note), error->message);
-        g_error_free(error);
+        gtk_label_set_text(GTK_LABEL(p->note), error != nullptr ? error->message
+                                                                 : "The keyring could not be read.");
+        g_clear_error(&error);
     }
     GtkTreeIter select_it;
     bool found = false;

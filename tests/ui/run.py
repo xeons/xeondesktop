@@ -241,10 +241,17 @@ def run_scenario(name, build, keep, keep_all=False):
     outputs = SCENARIO_OPTIONS[name]["outputs"]
     populate(base, home_src, desktop_ini, outputs)
 
+    # Nothing from the desktop the tests run on (its GTK and Qt themes,
+    # cursor, XeonDesktop's own session variables): a scenario sees the
+    # same environment here as in CI, setting what it needs itself.
+    session_prefixes = ("GTK_", "QT_", "XEONDESKTOP_", "XCURSOR_", "XDG_SESSION_", "MOZ_",
+                        "SDL_", "_JAVA_")
     env = {
         k: v
         for k, v in os.environ.items()
-        if k
+        if not k.startswith(session_prefixes)
+        and k not in ("XDG_CURRENT_DESKTOP", "XMODIFIERS", "GDK_BACKEND")
+        and k
         not in (
             "WAYLAND_DISPLAY",
             "DISPLAY",
@@ -2680,10 +2687,20 @@ def hung_csd_window_ghost_frame(s):
         s.wait(lambda: s.window(title="Ghost test (Not Responding)"), "Not Responding",
                timeout=15)  # fmt: skip
         x, y, w, h = s.settle("hung").changed_box(empty, area)
-        s.check(h >= before[3] + 15 and w >= before[2],
+        # Taller by our caption; no narrower. (What was measured before
+        # includes the client's own shadow where its theme draws one, which
+        # our frame then covers.)
+        s.check(h > before[3] + 5 and w >= before[2],
                 f"our frame around it ({before[2]}x{before[3]} -> {w}x{h})")  # fmt: skip
-        # The frame's Close button, at its caption's right end.
-        s.inject("move", x + w - 12, y + 12, "click")
+        # The frame's Close button, at its caption's right end: found on
+        # the caption's row from the desktop inwards, since the box above
+        # may take in the client's shadow beside the frame.
+        hung = s.shot("hung-frame")
+        bg = empty.pixel(x + w + 2, y + 12) if x + w + 2 < WIDTH else empty.pixel(WIDTH - 1, y + 12)
+        right = x + w - 1
+        while right > x and max(abs(p - q) for p, q in zip(hung.pixel(right, y + 12), bg)) <= 30:
+            right -= 1
+        s.inject("move", right - 11, y + 12, "click")
         s.wait(lambda: any(t["title"].startswith("End Program") for t in s.windows()),
                "End Program")  # fmt: skip
         s.log("ok: our frame's Close button offers End Program")
@@ -2975,9 +2992,11 @@ def csd_window_tiled(s):
     """A window drawing its own title bar and shadow (GTK 3) tiled alone
     fills the screen above the taskbar to the pixel: its window geometry,
     not its shadow, is placed (the shadow's offset used to be taken off
-    twice, leaving it short of the right and bottom edges)."""
+    twice, leaving it short of the right and bottom edges), and told it's
+    tiled, its corners are square (no desktop through a rounded one)."""
     if not have_gtk3(s):
         return
+    desk = s.settle("desktop").pixel(WIDTH // 2, HEIGHT // 2)
     script = os.path.join(s.base, "csd.py")
     with open(script, "w") as f:
         f.write(GTK_CSD)
@@ -2987,15 +3006,16 @@ def csd_window_tiled(s):
     tiled = taskbar_menu(s, 2, "tiled")  # Tile Windows Vertically
     work = HEIGHT - 40
 
-    def near(a, b):
-        return max(abs(p - q) for p, q in zip(tiled.pixel(*a), tiled.pixel(*b))) <= 12
+    # The window's own pixels there, not the desktop's: its theme may draw
+    # a border or a highlight line on the edge itself.
+    def window(*points):
+        return all(max(abs(p - q) for p, q in zip(tiled.pixel(*xy), desk)) > 30 for xy in points)
 
-    s.check(near((WIDTH - 1, work // 2), (WIDTH - 5, work // 2)),
-            "the window reaches the right edge")  # fmt: skip
-    s.check(near((WIDTH // 2, work - 1), (WIDTH // 2, work - 5)),
-            "the window reaches the taskbar")  # fmt: skip
-    s.check(near((0, 14), (4, 14)) and near((WIDTH // 2, 0), (WIDTH // 2, 4)),
-            "and the left and top edges")  # fmt: skip
+    s.check(window((WIDTH - 1, work // 2)), "the window reaches the right edge")
+    s.check(window((WIDTH // 2, work - 1)), "the window reaches the taskbar")
+    s.check(window((0, 14), (WIDTH // 2, 0)), "and the left and top edges")
+    s.check(window((0, 0), (WIDTH - 1, 0), (0, work - 1), (WIDTH - 1, work - 1)),
+            "and its corners are square")  # fmt: skip
 
 
 @scenario()
@@ -3344,7 +3364,21 @@ def identify_monitors(s):
     for name, (bx, by, bw, bh) in zip(("first", "second"), boxes):
         s.check(bh > 120 and bx < (SECOND_X if name == "second" else 0) + 80,
                 f"a big number at the top left of the {name} monitor ({bx},{by} {bw}x{bh})")
-    s.check(abs(boxes[0][2] - boxes[1][2]) > 8, f"and the two are different numbers ({boxes})")
+    # A 1 and a 2 have different shapes in any font: laid over each other
+    # (from their boxes' top left), much of their white fill doesn't match.
+    def white(box, dx, dy):
+        bx, by, _, _ = box
+        return min(shot.pixel(bx + dx, by + dy)) >= 235
+
+    cw, ch = min(b[2] for b in boxes), min(b[3] for b in boxes)
+    both = either = 0
+    for dy in range(0, ch, 2):
+        for dx in range(0, cw, 2):
+            a, b = white(boxes[0], dx, dy), white(boxes[1], dx, dy)
+            both += a and b
+            either += a or b
+    apart = 1 - both / either if either else 0
+    s.check(apart > 0.3, f"and the two are different numbers ({boxes}, {apart:.2f} apart)")
     s.wait(lambda: s.shot("gone").changed_box(tab, first) is None and
            s.shot("gone").changed_box(tab, second) is None, "the numbers to go", 10)  # fmt: skip
     s.log("ok: the numbers went away by themselves")
@@ -3697,7 +3731,8 @@ def printer_apply_password(s):
     s.check(box.differs(general, (0, 0, WIDTH, HEIGHT - 40)) > 0.01, "the Connect to box shows")
     s.inject("type", "secret", "key", "Return")
     s.wait(lambda: "printer-info=Front desk" in file_text(log), "the comment saved")
-    s.check("authorized for /admin/ as xeon with a password" in file_text(log),
+    me = pwd.getpwuid(os.getuid()).pw_name  # root in CI's container
+    s.check(f"authorized for /admin/ as {me} with a password" in file_text(log),
             "it went with the password")  # fmt: skip
 
 
@@ -3788,18 +3823,24 @@ def sysdm_delete_profile(s):
         s.wait_window(title="System Properties", state="activated")
         page = s.settle("user profiles")
         x, y, w, h = page.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
-        # Our profile, the list's first row (below the window's top edge),
-        # then Alt+D: nothing (greyed).
-        s.inject("move", x + 80, y + 180, "click", "sleep", 300, "key", "alt+d",
-                 "sleep", 800)  # fmt: skip
         def sysdm_active():
             w = s.window(title="System Properties")
             return w is not None and "activated" in w["states"]
 
-        s.check(not any(c[0] == "DeleteUser" for c in calls()) and sysdm_active(),
-                "Delete does nothing for our own profile")  # fmt: skip
-        # Bob's, the second row: the question (a message box), No, then Yes.
-        s.inject("key", "Down", "sleep", 300, "key", "alt+d")
+        # The list's first row (below the window's top edge). Only regular
+        # accounts are listed: as root (CI's container) ours isn't, and the
+        # first row is bob's.
+        s.inject("move", x + 80, y + 180, "click", "sleep", 300)
+        if me.pw_uid >= 1000:
+            # Ours, then Alt+D: nothing (greyed).
+            s.inject("key", "alt+d", "sleep", 800)
+            s.check(not any(c[0] == "DeleteUser" for c in calls()) and sysdm_active(),
+                    "Delete does nothing for our own profile")  # fmt: skip
+            s.inject("key", "Down", "sleep", 300)
+        else:
+            s.log("skipped: our own profile isn't listed when running as a system user")
+        # Bob's: the question (a message box), No, then Yes.
+        s.inject("key", "alt+d")
         s.wait(lambda: not sysdm_active(), "the Confirm Delete box")
         s.settle("are you sure")
         s.inject("key", "Return")  # No has the focus
@@ -4252,7 +4293,10 @@ def input_method_relay(s):
     with open(script, "w") as f:
         f.write(GTK_ENTRY)
     text = os.path.join(s.base, "entry.txt")
-    s.launch(sys.executable, script, text, env={"GSETTINGS_BACKEND": "memory"})
+    # Our GTK theme, as programs get it in a session (the positions below
+    # are its layout's).
+    s.launch(sys.executable, script, text,
+             env={"GTK_THEME": "XeonDesktop", "GSETTINGS_BACKEND": "memory"})  # fmt: skip
     s.wait_window(title="IME test", state="activated")
     # GTK 3 asks for the input method when its text box gets the focus
     # with the protocol ready, which isn't so yet when the window first
@@ -5002,13 +5046,18 @@ def network_drives(s):
         s.wait(lambda: "activated" not in s.window(title="My Computer")["states"], what)
         return s.settle(what)
 
-    # Tools > Map Network Drive...: a Windows share, which needs gvfs-smb.
+    # Tools > Map Network Drive...: a Windows share needs gvfs-smb. Where
+    # it's missing the wizard says so; where it's installed, a share is
+    # never tried (it would go looking on the network).
     s.inject("key", "alt+t", "sleep", 400, "key", "n")
     wizard = dialog_up("map network drive")
-    s.inject("type", "\\\\server\\share", "key", "Return")
-    wait_change(s, wizard, (0, 0, WIDTH, HEIGHT - 40), "the explanation", "needs gvfs-smb")
-    s.inject("key", "Return", "sleep", 400, "key", "ctrl+a", "type", "localtest:///etc",
-             "key", "Return")  # fmt: skip
+    if not os.path.exists("/usr/share/gvfs/mounts/smb.mount"):
+        s.inject("type", "\\\\server\\share", "key", "Return")
+        wait_change(s, wizard, (0, 0, WIDTH, HEIGHT - 40), "the explanation", "needs gvfs-smb")
+        s.inject("key", "Return", "sleep", 400)
+    else:
+        s.log("skipped: gvfs-smb is installed, so the missing-backend explanation isn't shown")
+    s.inject("key", "ctrl+a", "type", "localtest:///etc", "key", "Return")
     s.wait_window(title="etc", timeout=30)
     def mapped():
         c = s.ini("network.ini")

@@ -1955,6 +1955,7 @@ static void test_intl_custom(void) {
     check_text(xd_intl_grouping_text("\3\3"), "3;3");
     check_text(xd_intl_grouping_text(""), "-1");
     check_text(xd_intl_grouping_text("\3\177"), "3;-1");
+    check_text(xd_intl_grouping_text("\3\377"), "3;-1"); /* CHAR_MAX where char is unsigned */
 
     /* Samples from the effective settings. */
     xd_intl_custom e;

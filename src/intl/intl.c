@@ -320,7 +320,10 @@ char *xd_intl_grouping_text(const char *bytes) {
         int n = (unsigned char)*p;
         if (s->len > 0)
             g_string_append_c(s, ';');
-        if (n == CHAR_MAX || n == 0) {
+        /* "No further grouping" is CHAR_MAX: 127 where char is signed
+         * (x86), 255 where it isn't (ARM); locale data may carry either.
+         * No group is that long. */
+        if (n == 0 || n >= SCHAR_MAX) {
             g_string_append(s, "-1");
             break;
         }

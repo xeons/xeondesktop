@@ -21,8 +21,13 @@ static void helland(double kelvin, double out[3]) {
 void xd_blackbody_rgb(double kelvin, double rgb[3]) {
     if (!(kelvin >= 1000.0))
         kelvin = 1000.0;
-    if (kelvin > XD_NIGHTLIGHT_DAY)
-        kelvin = XD_NIGHTLIGHT_DAY;
+    /* Daylight is exactly white, not the fit divided by itself: an
+     * optimizer may fold one of the two and fuse the other's multiply-adds,
+     * leaving a ramp a hair off identity with night light off. */
+    if (kelvin >= XD_NIGHTLIGHT_DAY) {
+        rgb[0] = rgb[1] = rgb[2] = 1.0;
+        return;
+    }
     /* Relative to 6500 K, which the fit puts a touch off white
      * (255, 254, 250): white stays white with night light off. */
     double c[3], white[3];
