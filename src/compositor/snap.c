@@ -203,6 +203,10 @@ bool xd_snap_begin(xd_server *server, xd_view *view) {
     server->shake_dir = 0;
     server->shake_swings = 0;
     server->shake_start = now_ms();
+    /* A tiled window dragged away is a free one again (a snapped one is
+     * restored once it's dragged, which untiles it). */
+    if (view->snapped == XD_SNAP_NONE)
+        xd_view_set_tiled(view, 0);
     if (!aero(server))
         return !view->maximized;
     /* A maximized window lets go once it's dragged a little. */
@@ -241,6 +245,23 @@ void xd_snap_motion(xd_server *server, xd_view *view) {
     track_shake(server, view);
 }
 
+/* The edges a snapped window lies against: the screen's on three sides
+ * for a half, top and bottom for Win+Shift+Up's full height. */
+static uint32_t snap_edges(xd_snap side) {
+    switch (side) {
+    case XD_SNAP_LEFT:
+        return WLR_EDGE_LEFT | WLR_EDGE_TOP | WLR_EDGE_BOTTOM;
+    case XD_SNAP_RIGHT:
+        return WLR_EDGE_RIGHT | WLR_EDGE_TOP | WLR_EDGE_BOTTOM;
+    case XD_SNAP_TALL:
+        return WLR_EDGE_TOP | WLR_EDGE_BOTTOM;
+    case XD_SNAP_MAXIMIZE:
+    case XD_SNAP_NONE:
+        break;
+    }
+    return 0;
+}
+
 static void snap_to(xd_view *view, xd_snap side, double x, double y) {
     xd_server *server = view->server;
     if (side == XD_SNAP_MAXIMIZE) {
@@ -252,7 +273,7 @@ static void snap_to(xd_view *view, xd_snap side, double x, double y) {
     if (view->maximized)
         xd_view_set_maximized(view, false);
     view->snapped = side;
-    xd_view_set_outer_box(view, snap_box(server, x, y, side));
+    xd_view_set_tiled_box(view, snap_box(server, x, y, side), snap_edges(side));
 }
 
 void xd_snap_end(xd_server *server, xd_view *view) {
@@ -307,7 +328,8 @@ void xd_snap_tall(xd_view *view) {
     if (view->snapped == XD_SNAP_NONE)
         view->snap_restore = b;
     view->snapped = XD_SNAP_TALL;
-    xd_view_set_outer_box(view, (struct wlr_box){b.x, area.y, b.width, area.height});
+    xd_view_set_tiled_box(view, (struct wlr_box){b.x, area.y, b.width, area.height},
+                          snap_edges(XD_SNAP_TALL));
 }
 
 void xd_snap_to_monitor(xd_view *view, int dir) {
@@ -331,13 +353,15 @@ void xd_snap_to_monitor(xd_view *view, int dir) {
     case XD_SNAP_LEFT:
     case XD_SNAP_RIGHT:
         view->snap_restore = carry_box(view->snap_restore, from, to);
-        xd_view_set_outer_box(view, snap_box(server, tx, ty, view->snapped));
+        xd_view_set_tiled_box(view, snap_box(server, tx, ty, view->snapped),
+                              snap_edges(view->snapped));
         return;
     case XD_SNAP_TALL: {
         view->snap_restore = carry_box(view->snap_restore, from, to);
         struct wlr_box area = xd_output_work_area_at(server, tx, ty);
         struct wlr_box c = carry_box(b, from, to);
-        xd_view_set_outer_box(view, (struct wlr_box){c.x, area.y, c.width, area.height});
+        xd_view_set_tiled_box(view, (struct wlr_box){c.x, area.y, c.width, area.height},
+                              snap_edges(XD_SNAP_TALL));
         return;
     }
     case XD_SNAP_MAXIMIZE:

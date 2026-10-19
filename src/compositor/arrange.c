@@ -39,7 +39,9 @@ static void remember(xd_view *v) {
     v->undo_box = v->maximized ? v->restore : xd_view_outer_box(v);
 }
 
-static void place(xd_view *v, struct wlr_box box) {
+/* `tiled`: Tile Windows' cells, against the screen or a neighbour on
+ * every side (cascaded windows aren't). */
+static void place(xd_view *v, struct wlr_box box, bool tiled) {
     if (v->maximized)
         xd_view_set_maximized(v, false);
     if (v->dialog) {
@@ -50,7 +52,11 @@ static void place(xd_view *v, struct wlr_box box) {
         xd_view_set_position(v, XD_MAX(x, box.x), XD_MAX(y, box.y));
         return;
     }
-    xd_view_set_outer_box(v, box);
+    if (tiled)
+        xd_view_set_tiled_box(v, box, WLR_EDGE_LEFT | WLR_EDGE_RIGHT | WLR_EDGE_TOP |
+                                          WLR_EDGE_BOTTOM);
+    else
+        xd_view_set_outer_box(v, box);
 }
 
 static void arrange_output(xd_server *server, struct wlr_box area, xd_view **views, size_t n,
@@ -66,7 +72,7 @@ static void arrange_output(xd_server *server, struct wlr_box area, xd_view **vie
         for (size_t i = 0; i < n; i++) {
             xd_view *v = views[n - 1 - i];
             int off = (int)(i * CASCADE_STEP) % XD_MAX(area.height / 2, CASCADE_STEP);
-            place(v, (struct wlr_box){area.x + off, area.y + off, w, h});
+            place(v, (struct wlr_box){area.x + off, area.y + off, w, h}, false);
             wlr_scene_node_raise_to_top(&v->tree->node);
         }
         (void)server;
@@ -90,7 +96,7 @@ static void arrange_output(xd_server *server, struct wlr_box area, xd_view **vie
                 int cw = area.width / count, ch = area.height / lines;
                 cell = (struct wlr_box){area.x + k * cw, area.y + l * ch, cw, ch};
             }
-            place(views[i], cell);
+            place(views[i], cell, true);
         }
     }
 }

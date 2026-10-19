@@ -139,6 +139,7 @@ typedef struct xd_view {
      * title, as Windows shows, until it answers again. */
     bool on_top; /* Always On Top: in layer_on_top */
     xd_snap snapped;            /* Aero Snap: half the screen */
+    uint32_t tiled_edges;       /* the client was told these are tiled */
     struct wlr_box snap_restore; /* its size before */
     bool hung;
     bool sentry_dim; /* SoundSentry flashing its caption: drawn inactive */
@@ -510,6 +511,11 @@ void xd_view_focus(xd_view *view);
 void xd_view_deactivate_front(xd_server *server);
 void xd_view_focus_next(xd_server *server);
 void xd_view_close(xd_view *view);
+/* As xd_view_set_outer_box (which untiles), for a snapped or tiled window:
+ * `edges` (enum wlr_edges) lie against the screen or another window. */
+void xd_view_set_tiled_box(xd_view *view, struct wlr_box outer, uint32_t edges);
+/* Which edges the client is told are tiled (0: none). */
+void xd_view_set_tiled(xd_view *view, uint32_t edges);
 void xd_view_set_maximized(xd_view *view, bool maximized);
 void xd_view_minimize(xd_view *view);
 void xd_view_restore(xd_view *view);

@@ -210,10 +210,29 @@ static void send_client_size(xd_view *view, int outer_w, int outer_h) {
     wlr_xdg_toplevel_set_size(view->toplevel, w, h);
 }
 
+/* Tells a client which of its edges lie against the screen's or another
+ * window's (xdg-shell's tiled states), as sway and GNOME do for tiled and
+ * snapped windows: GTK and libadwaita square those corners and drop their
+ * shadow there instead of showing the desktop through a rounded corner. */
+void xd_view_set_tiled(xd_view *view, uint32_t edges) {
+    if (view->kind != XD_VIEW_XDG || view->tiled_edges == edges)
+        return;
+    view->tiled_edges = edges;
+    /* Clients bound before version 2 don't know the states. */
+    if (wl_resource_get_version(view->toplevel->resource) >= 2)
+        wlr_xdg_toplevel_set_tiled(view->toplevel, edges);
+}
+
 void xd_view_set_outer_box(xd_view *view, struct wlr_box outer) {
     view->anchor_edges = 0;
+    xd_view_set_tiled(view, 0);
     xd_view_set_position(view, outer.x, outer.y);
     send_client_size(view, outer.width, outer.height);
+}
+
+void xd_view_set_tiled_box(xd_view *view, struct wlr_box outer, uint32_t edges) {
+    xd_view_set_outer_box(view, outer);
+    xd_view_set_tiled(view, edges);
 }
 
 void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t moving) {
