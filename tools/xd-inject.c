@@ -5,6 +5,7 @@
  * order:
  *
  *   move X Y          pointer to logical desktop coordinates
+ *   rmove DX DY       pointer moved by DX, DY, as a mouse moves it (relative)
  *   click [BUTTON]    press and release (left, right, middle)
  *   down|up [BUTTON]  press or release only
  *   wheel N           scroll N notches (positive = down)
@@ -454,6 +455,14 @@ static void move(inject *in, int x, int y) {
     settle(in);
 }
 
+/* As a mouse moves (what a locked or confined pointer hears). */
+static void move_by(inject *in, int dx, int dy) {
+    zwlr_virtual_pointer_v1_motion(in->pointer, now_ms(), wl_fixed_from_int(dx),
+                                   wl_fixed_from_int(dy));
+    zwlr_virtual_pointer_v1_frame(in->pointer);
+    settle(in);
+}
+
 static bool parse_int(const char *s, int64_t lo, int64_t hi, int64_t *out) {
     return s != nullptr && xd_str_parse_i64(xd_str_from_cstr(s), lo, hi, out);
 }
@@ -598,6 +607,10 @@ static int run_steps(inject *in, int argc, char **argv) {
         if (strcmp(cmd, "move") == 0 && parse_int(a1, -100000, 100000, &v1) &&
             parse_int(a2, -100000, 100000, &v2)) {
             move(in, (int)v1, (int)v2);
+            i += 2;
+        } else if (strcmp(cmd, "rmove") == 0 && parse_int(a1, -100000, 100000, &v1) &&
+                   parse_int(a2, -100000, 100000, &v2)) {
+            move_by(in, (int)v1, (int)v2);
             i += 2;
         } else if (strcmp(cmd, "click") == 0 || strcmp(cmd, "down") == 0 ||
                    strcmp(cmd, "up") == 0) {

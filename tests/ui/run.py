@@ -61,11 +61,13 @@ SCENARIOS = {}
 # Per scenario: "outputs", the monitors as (width, height, scale) side by
 # side from (0, 0) (default: one WIDTH x HEIGHT at scale 1); "setup", a
 # function of the session run before the compositor starts (a system bus
-# for the programs it starts).
+# for the programs it starts); "x11", whether Xwayland can run (a private
+# /tmp/.X11-unix, as the real one's owner, root, isn't ours in the session's
+# user namespace).
 SCENARIO_OPTIONS = {}
 
 
-def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None):
+def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None, x11=False):
     """Registers a scenario: a function of the session (Session), run with
     that desktop.ini; it's skipped without the Python modules it requires."""
 
@@ -74,6 +76,7 @@ def scenario(desktop_ini=CLASSIC_INI, requires=(), outputs=None, setup=None):
         SCENARIO_OPTIONS[fn.__name__] = {
             "outputs": outputs or [(WIDTH, HEIGHT, 1)],
             "setup": setup,
+            "x11": x11,
         }
         return fn
 
@@ -301,6 +304,11 @@ def run_scenario(name, build, keep, keep_all=False):
             binds.append(f"mkdir -p {shlex.quote(inside)}")
             binds.append(f"mount --bind {shlex.quote(path)} {shlex.quote(inside)}")
     binds.append(f"mount --rbind {shlex.quote(home_src)} {shlex.quote(home)}")
+    # Xwayland's sockets: an empty directory of the session's own, ours
+    # (as root here is) once back to our uid.
+    if SCENARIO_OPTIONS[name]["x11"]:
+        binds.append("if [ -d /tmp/.X11-unix ]; then mount -t tmpfs -o mode=1777 tmpfs "
+                     "/tmp/.X11-unix; fi")  # fmt: skip
     binds.append(
         f'exec unshare --user --map-user={os.getuid()} --map-group={os.getgid()} "$0" "$@"'
     )
@@ -5655,6 +5663,293 @@ def touchpad_pinch(s):
     s.check("swipe begin 3" in got and "swipe update 30.0 0.0" in got and "swipe end" in got,
             "a three-finger swipe too")  # fmt: skip
     s.check("hold begin 2" in got and "hold end cancelled" in got, "and a cancelled hold")
+
+
+# ---- programs capturing the mouse and keyboard (constraints.c) ---------------------
+
+GRAB_BLUE = (0x20, 0x50, 0xC0)  # xd-test-grab's window
+X11_GREEN = (0x20, 0xA0, 0x40)  # xd-test-x11grab's
+
+
+def colour_box(shot, rgb, tolerance=6):
+    """The bounding box (x, y, w, h) of pixels of colour rgb, or None."""
+    xs, ys = [], []
+    for y in range(0, HEIGHT, 4):
+        for x in range(0, WIDTH, 4):
+            if max(abs(p - q) for p, q in zip(shot.pixel(x, y), rgb)) <= tolerance:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs) - min(xs) + 1, max(ys) - min(ys) + 1)
+
+
+class GrabLog:
+    """What xd-test-grab or xd-test-x11grab heard, a line each."""
+
+    def __init__(self, s):
+        self.s = s
+        self.path = os.path.join(s.base, "grab.log")
+        self.mark = 0
+
+    def lines(self):
+        try:
+            with open(self.path) as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+    def since(self):
+        """The lines since the last mark()."""
+        return self.lines()[self.mark :]
+
+    def set_mark(self):
+        self.mark = len(self.lines())
+
+    def wait(self, line, what=None):
+        """Waits for `line` (exactly) after the mark."""
+        try:
+            return self.s.wait(lambda: line in self.since(),
+                               what or f"the program to hear {line!r}")  # fmt: skip
+        except Failure as e:
+            raise Failure(f"{e}; it heard {self.lines()[-40:]}") from None
+
+    def motions(self):
+        """The absolute positions it heard since the mark."""
+        return [tuple(int(v) for v in l.split()[1:3]) for l in self.since()
+                if l.startswith("motion ")]  # fmt: skip
+
+
+def start_grab(s, *args):
+    """Starts xd-test-grab with args; returns its log and its window's box."""
+    log = GrabLog(s)
+    # The seat has its pointer and keyboard once xd-inject has connected.
+    s.inject("sleep", 1)
+    s.launch(s.tool("xd-test-grab"), *args, env={"XD_TEST_GRAB_LOG": log.path})
+    s.wait_window(title="Grab test", state="activated")
+    log.wait("ready")
+    box = s.wait(lambda: colour_box(s.settle("grab-window"), GRAB_BLUE), "the blue window")
+    s.check(box[2] >= 390 and box[3] >= 290, f"the program's window is on screen at {box}")
+    return log, box
+
+
+def ctrl_alt(s):
+    """Ctrl+Alt pressed and let go on its own."""
+    s.inject("hold", "ctrl", "hold", "alt", "release", "alt", "release", "ctrl")
+
+
+@scenario()
+def pointer_lock(s):
+    """A program locking the pointer (a game) hears relative motion, raw and
+    accelerated, and no absolute motion, while the pointer stays put; Ctrl+Alt
+    gives the pointer back where the program hinted, a click in the window
+    locks it again, and Alt+Tab ends the lock (pointer-constraints,
+    relative-pointer)."""
+    probe = subprocess.run([s.tool("xd-test-grab"), "--probe"], stdout=subprocess.PIPE,
+                           timeout=10).stdout.decode()  # fmt: skip
+    s.check("pointer-constraints yes" in probe and "relative-pointer yes" in probe
+            and "shortcuts-inhibit yes" in probe, "the protocols are offered")  # fmt: skip
+    s.check("xwayland-keyboard-grab no" in probe,
+            "Xwayland's keyboard grab isn't offered to other programs")
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    log, (x, y, w, h) = start_grab(s, "--lock", "--hint", "100,50")
+    s.inject("move", x + w // 2, y + h // 2)
+    log.wait("locked", "the pointer to lock when it's over the window")
+
+    log.set_mark()
+    s.inject("rmove", 30, 0, "rmove", 0, -20)
+    log.wait("relative 30 0 30 0")
+    log.wait("relative 0 -20 0 -20")
+    # An absolute pointer (a tablet, a nested session's) is held too.
+    s.inject("move", 5, 5, "sleep", 300)
+    lines = log.since()
+    s.check(not log.motions() and "pointer leave" not in lines,
+            f"no absolute motion while locked: {lines}")
+    s.check(any(l.startswith("relative ") and l != "relative 30 0 30 0"
+                and l != "relative 0 -20 0 -20" for l in lines),
+            "the absolute move came as relative motion")  # fmt: skip
+    s.log("ok: relative motion only while locked")
+
+    # Ctrl+Alt on its own: the pointer is back, at the hint (100, 50).
+    log.set_mark()
+    ctrl_alt(s)
+    log.wait("unlocked", "Ctrl+Alt to unlock the pointer")
+    s.inject("rmove", 1, 0)
+    log.wait("motion 101 50", "the pointer to move from the program's hint")
+    s.log("ok: Ctrl+Alt unlocked at the hint")
+    s.inject("rmove", 10, 10, "sleep", 200)
+    s.check("locked" not in log.since(), "it stays unlocked until the window is clicked")
+    log.set_mark()
+    s.inject("click")
+    log.wait("locked", "a click in the window to lock the pointer again")
+    s.log("ok: a click locks it again")
+
+    # Alt+Tab: unlocked at once, and the other window has the keyboard.
+    log.set_mark()
+    s.inject("key", "alt+Tab")
+    log.wait("unlocked", "Alt+Tab to unlock the pointer")
+    s.wait_window(title="Control Panel", state="activated")
+    s.log("ok: Alt+Tab unlocked the pointer")
+
+
+@scenario()
+def pointer_confine(s):
+    """A program confining the pointer (a strategy game, a remote desktop)
+    keeps it inside its window, also when moved far outside or by a
+    tablet's absolute motion, and gets the clicks there; confinement to a
+    region starts only once the pointer is in it; Ctrl+Alt lets it go."""
+    log, (x, y, w, h) = start_grab(s, "--confine")
+    s.inject("move", x + w // 2, y + h // 2)
+    log.wait("confined", "the pointer to be confined once over the window")
+    log.set_mark()
+    s.inject("rmove", 2000, 2000, "sleep", 200)
+    s.check("pointer leave" not in log.since() and log.motions()[-1] == (399, 299),
+            f"moved far right and down, it stopped at the corner: {log.motions()[-1:]}")
+    s.inject("move", 2, 2, "sleep", 200)
+    s.check("pointer leave" not in log.since() and log.motions()[-1] == (0, 0),
+            f"moved (absolute) to the top left, it stopped at the corner: {log.motions()[-1:]}")
+    log.set_mark()
+    s.inject("click")
+    log.wait("button 272 pressed", "the click to reach the program")
+    s.log("ok: confined to the window")
+
+    log.set_mark()
+    ctrl_alt(s)
+    log.wait("unconfined", "Ctrl+Alt to end the confinement")
+    s.inject("move", 900, 700)
+    log.wait("pointer leave", "the pointer to leave the window")
+    s.log("ok: Ctrl+Alt let the pointer go")
+
+
+@scenario()
+def pointer_confine_region(s):
+    """Confinement to a region of the window (a client's rectangle) starts
+    when the pointer enters that region and keeps it there."""
+    log, (x, y, w, h) = start_grab(s, "--confine", "--region", "100,100,50,50")
+    s.inject("move", x + 20, y + 20, "rmove", 10, 10, "sleep", 300)
+    s.check("confined" not in log.lines(), "outside the region, the pointer is free")
+    s.inject("move", x + 120, y + 120)
+    log.wait("confined", "the pointer to be confined once in the region")
+    log.set_mark()
+    s.inject("rmove", 500, 500, "sleep", 200)
+    last = log.motions()[-1]
+    s.check(149 <= last[0] <= 150 and 149 <= last[1] <= 150,
+            f"it stopped at the region's corner: {last}")
+    s.inject("rmove", -500, -500, "sleep", 200)
+    last = log.motions()[-1]
+    s.check(last == (100, 100), f"and at its other corner: {last}")
+
+
+@scenario()
+def shortcuts_inhibit(s):
+    """A program taking the shortcuts (a virtual machine) gets the Windows
+    key, Ctrl+Esc, Alt+Tab and Alt+F4 while our Start menu stays closed and
+    no window changes; Ctrl+Alt+Delete still opens Windows Security, and the
+    inhibitor ends as the window loses the keyboard."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    log, box = start_grab(s, "--inhibit")
+    log.wait("inhibitor active", "the inhibitor to be active for the focused window")
+    before = s.settle("inhibiting")
+    log.set_mark()
+    s.inject("key", "super", "key", "ctrl+Escape", "key", "alt+Tab", "key", "alt+F4",
+             "sleep", 500)  # fmt: skip
+    for code, name in ((125, "the Windows key"), (1, "Esc"), (15, "Tab"), (62, "F4")):
+        log.wait(f"key {code} pressed", f"the program to get {name}")
+    after = s.settle("keys-sent")
+    s.check(after.differs(before, (0, 400, 200, 368)) < 0.02, "the Start menu stayed closed")
+    # (Its keyboard leaves and comes back with xd-inject's own; the focus
+    # stays, and so the inhibitor.)
+    s.check("activated" in s.window(title="Grab test")["states"]
+            and "inhibitor inactive" not in log.since(),
+            "Alt+Tab and Alt+F4 didn't switch or close the window")  # fmt: skip
+    s.log("ok: the program got the Windows key, Ctrl+Esc, Alt+Tab and Alt+F4")
+
+    s.inject("key", "ctrl+alt+Delete")
+    s.wait_window(app_id="org.xeondesktop.Security", state="activated")
+    log.wait("inhibitor inactive", "the inhibitor to end with the focus")
+    s.log("ok: Ctrl+Alt+Delete still opened Windows Security")
+
+
+@scenario()
+def shortcuts_inhibit_focus(s):
+    """An inhibitor works only while its window has the keyboard: Ctrl+Alt
+    gives the shortcuts back (Alt+Tab switches windows again), and when its
+    window gets the keyboard back the inhibitor is active again."""
+    s.launch("xd-control")
+    s.wait_window(title="Control Panel", state="activated")
+    log, box = start_grab(s, "--inhibit")
+    log.wait("inhibitor active")
+    log.set_mark()
+    ctrl_alt(s)
+    log.wait("inhibitor inactive", "Ctrl+Alt to give the shortcuts back")
+    s.inject("key", "alt+Tab")
+    s.wait_window(title="Control Panel", state="activated")
+    s.check("key 15 pressed" not in log.since(), "Alt+Tab switched windows")
+    log.set_mark()
+    s.inject("key", "alt+Tab")
+    s.wait_window(title="Grab test", state="activated")
+    log.wait("inhibitor active", "the inhibitor to come back with the keyboard")
+    s.inject("key", "alt+Tab", "sleep", 500)
+    log.wait("key 15 pressed", "the program to get Alt+Tab again")
+    s.check("activated" in s.window(title="Grab test")["states"], "and the window stayed in front")
+
+
+def session_display():
+    """The DISPLAY the session's programs get (from the shell's environment)."""
+    for pid in session_program("xd-shell"):
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            for v in f.read().split(b"\0"):
+                if v.startswith(b"DISPLAY="):
+                    return v[8:].decode()
+    return None
+
+
+@scenario(x11=True)
+def x11_keyboard_grab(s):
+    """An X11 program grabbing the keyboard and the pointer (as VirtualBox's
+    and rdesktop's windows do): Xwayland's keyboard grab gives it Alt+Tab and
+    the Windows key, its pointer grab keeps the pointer in its window (with
+    no cursor of its own, Xwayland locks the pointer and moves its own),
+    and Ctrl+Alt+Delete still reaches us."""
+    if shutil.which("Xwayland") is None:
+        s.log("skipped: Xwayland is not installed")
+        return
+    display = s.wait(session_display, "the session's DISPLAY")
+    # Xwayland sets its keyboard grab up only for a keyboard the seat has as
+    # it starts: one stays connected meanwhile (headless has none).
+    s.launch(s.tool("xd-inject"), "sleep", "60000")
+    log = GrabLog(s)
+    s.launch(s.tool("xd-test-x11grab"), "--confine",
+             env={"DISPLAY": display, "XD_TEST_GRAB_LOG": log.path})  # fmt: skip
+    s.wait_window(title="X11 grab test", state="activated", timeout=40)
+    log.wait("grab keyboard 0", "the X11 program to grab the keyboard")
+    x, y, w, h = s.wait(lambda: colour_box(s.settle("x11-window"), X11_GREEN), "the green window")
+
+    before = s.settle("x11-grabbed")
+    log.set_mark()
+    s.inject("key", "alt+Tab", "key", "super", "sleep", 500)
+    log.wait("key 23 pressed", "the X11 program to get Tab")
+    log.wait("key 133 pressed", "the X11 program to get the Windows key")
+    after = s.settle("x11-keys")
+    s.check(after.differs(before, (0, 400, 200, 368)) < 0.02, "the Start menu stayed closed")
+    s.log("ok: the X11 grab took Alt+Tab and the Windows key")
+
+    # A click grabs the pointer (confine_to the window; no cursor, so
+    # Xwayland locks ours and moves its own within the window): moved
+    # far away, the next click still lands in it.
+    s.inject("move", x + w // 2, y + h // 2, "click")
+    log.wait("grab pointer 0", "the X11 program to grab the pointer")
+    s.inject("sleep", 300, "move", 1000, 740, "sleep", 300)
+    log.set_mark()
+    s.inject("click")
+    log.wait("button 1 pressed", "the click to stay in the X11 window")
+    s.log("ok: the X11 pointer grab kept the pointer in its window")
+
+    s.inject("key", "ctrl+alt+Delete")
+    s.wait_window(app_id="org.xeondesktop.Security", state="activated")
+    s.log("ok: Ctrl+Alt+Delete still reached us")
 
 
 def main():

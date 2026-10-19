@@ -290,6 +290,7 @@ static bool server_init(xd_server *server) {
     wl_list_init(&server->zooms);
     xd_view_init(server);
     xd_input_init(server);
+    xd_constraints_init(server);
     xd_access_init(server);
     xd_arrange_init(server);
     xd_capture_init(server);
@@ -325,6 +326,7 @@ static void server_finish(xd_server *server) {
     xd_xwayland_finish(server);
     if (server->display != nullptr)
         wl_display_destroy_clients(server->display);
+    xd_constraints_finish(server);
     xd_ime_finish(server);
     xd_input_finish(server);
     /* wlroots asserts that nothing still listens to an object it

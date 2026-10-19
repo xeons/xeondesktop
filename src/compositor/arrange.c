@@ -483,6 +483,9 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
     /* The input method's (ime.c). */
     if (xd_ime_global_private(server, global))
         return xd_ime_client_allowed(server, client);
+    /* Xwayland's keyboard grab (constraints.c), as the protocol requires. */
+    if (xd_constraints_global_private(server, global))
+        return xd_constraints_client_allowed(server, client);
     bool capture = xd_capture_global_private(server, global);
     if (global != server->arranger && !capture)
         return true;

@@ -178,6 +178,7 @@ wayland_scanner = find_program(
 wp_dir = dependency('wayland-protocols').get_variable('pkgdatadir')
 
 layer_shell_xml = files('protocols/wlr-layer-shell-unstable-v1.xml')
+x11_grab_xml = wp_dir / 'unstable/xwayland-keyboard-grab/xwayland-keyboard-grab-unstable-v1.xml'
 client_protocol_xml = {
   'xdg-shell': wp_dir / 'stable/xdg-shell/xdg-shell.xml',
   'viewporter': wp_dir / 'stable/viewporter/viewporter.xml',
@@ -209,6 +210,13 @@ client_protocol_xml = {
   'wlr-output-power-management-unstable-v1': files(
     'protocols/wlr-output-power-management-unstable-v1.xml',
   ),
+  'pointer-constraints-unstable-v1':
+    wp_dir / 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml',
+  'relative-pointer-unstable-v1':
+    wp_dir / 'unstable/relative-pointer/relative-pointer-unstable-v1.xml',
+  'keyboard-shortcuts-inhibit-unstable-v1':
+    wp_dir / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
+  'xwayland-keyboard-grab-unstable-v1': x11_grab_xml,
 }
 
 client_protocol_src = []
@@ -275,6 +283,22 @@ arranger_server_src = [
   ),
 ]
 
+# Xwayland's keyboard grab, which wlroots doesn't implement (constraints.c).
+x11_grab_server_src = [
+  custom_target(
+    'xwayland-keyboard-grab-server-header',
+    input: x11_grab_xml,
+    output: 'xwayland-keyboard-grab-unstable-v1-protocol.h',
+    command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+  ),
+  custom_target(
+    'xwayland-keyboard-grab-server-code',
+    input: x11_grab_xml,
+    output: 'xwayland-keyboard-grab-unstable-v1-server-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  ),
+]
+
 # wlroots' layer-shell header includes the server header by this name.
 server_protocol_headers = [
   custom_target(
@@ -322,8 +346,10 @@ compositor_src = files(
   'src/compositor/access.c',
   'src/compositor/ime.c',
   'src/compositor/present.c',
+  'src/compositor/constraints.c',
   'src/settings/soundplay.c',
 )
+compositor_src += x11_grab_server_src
 # Gamma ramps: night light, and monitor calibration from ICC profiles'
 # vcgt curves, read with Little CMS when it's there.
 compositor_src += files('src/compositor/gamma.c', 'src/compositor/vcgt.c')
@@ -1152,6 +1178,20 @@ executable(
   'tools/xd-test-input.c',
   dependencies: [client_protocol_dep],
   c_args: ['-D_GNU_SOURCE'],
+)
+# A program capturing the mouse and keyboard (pointer lock and
+# confinement, relative motion, taking the shortcuts), for the UI tests;
+# and an X11 one grabbing them through Xwayland.
+executable(
+  'xd-test-grab',
+  'tools/xd-test-grab.c',
+  dependencies: [client_protocol_dep],
+  c_args: ['-D_GNU_SOURCE'],
+)
+executable(
+  'xd-test-x11grab',
+  'tools/xd-test-x11grab.c',
+  dependencies: [xcb_dep],
 )
 
 # Lists a session's windows (title, app id, state), for the UI tests.

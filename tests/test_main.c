@@ -58,6 +58,7 @@
 #include "../src/compositor/vcgt.h"
 #include "../src/settings/gtktheme.h"
 #include "../src/settings/inputmethod.h"
+#include "../src/compositor/grabkeys.h"
 #include "../src/compositor/imeplace.h"
 #include "../src/compositor/present.h"
 #include "../src/settings/nightlight.h"
@@ -5909,6 +5910,67 @@ static void test_input_method(void) {
     CHECK(r.y == 26);
 }
 
+/* A program taking the shortcuts (constraints.c): which keys stay ours, and
+ * Ctrl+Alt on its own giving the mouse and keyboard back. */
+static bool chord(xd_release_chord *c, uint32_t sym, bool pressed) {
+    return xd_release_chord_key(c, &sym, 1, pressed);
+}
+
+static void test_grab_keys(void) {
+    xd_grab_mods none = {0}, ctrl_alt = {.ctrl = true, .alt = true},
+                 alt = {.alt = true}, logo = {.logo = true}, ctrl = {.ctrl = true};
+    CHECK(xd_grab_key_kept(ctrl_alt, XKB_KEY_Delete));
+    CHECK(xd_grab_key_kept(ctrl_alt, XKB_KEY_KP_Delete));
+    CHECK(xd_grab_key_kept(ctrl_alt, XKB_KEY_BackSpace));
+    CHECK(xd_grab_key_kept(ctrl_alt, XKB_KEY_XF86Switch_VT_1));
+    CHECK(xd_grab_key_kept(ctrl_alt, XKB_KEY_XF86Switch_VT_12));
+    CHECK(xd_grab_key_kept(logo, XKB_KEY_l));
+    CHECK(xd_grab_key_kept(logo, XKB_KEY_L));
+    /* The program's: Alt+Tab, Alt+F4, the Windows key and its combinations,
+     * Ctrl+Esc, Ctrl+Shift+Esc, Ctrl+Alt+T, Delete without Ctrl+Alt. */
+    CHECK(!xd_grab_key_kept(alt, XKB_KEY_Tab));
+    CHECK(!xd_grab_key_kept(alt, XKB_KEY_F4));
+    CHECK(!xd_grab_key_kept(none, XKB_KEY_Super_L));
+    CHECK(!xd_grab_key_kept(logo, XKB_KEY_Up));
+    CHECK(!xd_grab_key_kept(logo, XKB_KEY_d));
+    CHECK(!xd_grab_key_kept(ctrl, XKB_KEY_Escape));
+    CHECK(!xd_grab_key_kept((xd_grab_mods){.ctrl = true, .shift = true}, XKB_KEY_Escape));
+    CHECK(!xd_grab_key_kept(ctrl_alt, XKB_KEY_t));
+    CHECK(!xd_grab_key_kept(ctrl, XKB_KEY_Delete));
+    CHECK(!xd_grab_key_kept(ctrl_alt, XKB_KEY_F1)); /* a keymap without VT keys */
+    CHECK(!xd_grab_key_kept((xd_grab_mods){.logo = true, .ctrl = true}, XKB_KEY_l));
+
+    /* Ctrl, Alt, let go: fires once, on the first release, either order. */
+    xd_release_chord c = {0};
+    CHECK(!chord(&c, XKB_KEY_Control_L, true));
+    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
+    CHECK(chord(&c, XKB_KEY_Alt_L, false));
+    CHECK(!chord(&c, XKB_KEY_Control_L, false));
+    CHECK(!chord(&c, XKB_KEY_Alt_R, true));
+    CHECK(!chord(&c, XKB_KEY_Control_R, true));
+    CHECK(chord(&c, XKB_KEY_Control_R, false));
+    CHECK(!chord(&c, XKB_KEY_Alt_R, false));
+    /* Ctrl+Alt+Delete, Ctrl+Alt+T: a chord of their own. */
+    CHECK(!chord(&c, XKB_KEY_Control_L, true));
+    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
+    CHECK(!chord(&c, XKB_KEY_Delete, true));
+    CHECK(!chord(&c, XKB_KEY_Delete, false));
+    CHECK(!chord(&c, XKB_KEY_Alt_L, false));
+    CHECK(!chord(&c, XKB_KEY_Control_L, false));
+    /* Ctrl alone, Alt+Tab: nothing. */
+    CHECK(!chord(&c, XKB_KEY_Control_L, true));
+    CHECK(!chord(&c, XKB_KEY_Control_L, false));
+    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
+    CHECK(!chord(&c, XKB_KEY_Tab, true));
+    CHECK(!chord(&c, XKB_KEY_Tab, false));
+    CHECK(!chord(&c, XKB_KEY_Alt_L, false));
+    /* A key held from before (a game's W) doesn't spoil a fresh chord. */
+    CHECK(!chord(&c, XKB_KEY_w, true));
+    CHECK(!chord(&c, XKB_KEY_Control_L, true));
+    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
+    CHECK(chord(&c, XKB_KEY_Control_L, false));
+}
+
 /* Passwords and Keys: texts and parsing, then OpenSSH's tools and GnuPG on
  * scratch directories (never ~/.ssh, ~/.gnupg or the user's agents). */
 static void test_keys_texts(void) {
@@ -6954,6 +7016,7 @@ int main(void) {
     test_network_drives();
     test_usershare();
     test_present();
+    test_grab_keys();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

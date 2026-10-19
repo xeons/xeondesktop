@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <linux/input-event-codes.h>
 #include <wlr/backend/libinput.h>
+#include <wlr/backend/session.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_cursor_shape_v1.h>
 #include <wlr/types/wlr_data_device.h>
@@ -26,6 +27,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "../core/alloc.h"
+#include "grabkeys.h"
 #include "server.h"
 
 pid_t xd_spawn_argv(char *const argv[]) {
@@ -180,6 +182,13 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
 
     if (ctrl && alt && sym == XKB_KEY_BackSpace) {
         wl_display_terminate(server->display);
+        return true;
+    }
+    /* Ctrl+Alt+F1..F12 (the keymap's XF86Switch_VT_n): another virtual
+     * terminal, also from the lock screen. Nested sessions have none. */
+    if (sym >= XKB_KEY_XF86Switch_VT_1 && sym <= XKB_KEY_XF86Switch_VT_12 &&
+        server->session != nullptr) {
+        wlr_session_change_vt(server->session, sym - XKB_KEY_XF86Switch_VT_1 + 1);
         return true;
     }
     if (server->locked)
@@ -747,6 +756,8 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
      * mid-grab or with the screen locked, as logind's would be. */
     if (power_key(server, syms, nsyms, pressed))
         return;
+    if (!xd_ime_own_keyboard(kb))
+        xd_constraints_key(server, syms, nsyms, pressed);
 
     /* Keyboard move/size takes every key until it ends. */
     if (keyboard_grab(server)) {
@@ -761,10 +772,13 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
      * Windows key) on their way to it; the rest go to it while it has the
      * keyboard. */
     bool from_ime = xd_ime_own_keyboard(kb);
+    /* A program taking the shortcuts (a virtual machine, a remote
+     * desktop) gets the Windows key and all but grabkeys.h's keys. */
+    bool inhibited = xd_shortcuts_inhibited(server);
 
     /* The Windows key on its own (pressed and released with nothing in
      * between) opens the Start menu; with another key it's a modifier. */
-    if (!from_ime) {
+    if (!from_ime && !inhibited) {
         bool super_key = false;
         for (int i = 0; i < nsyms; i++)
             super_key = super_key || syms[i] == XKB_KEY_Super_L || syms[i] == XKB_KEY_Super_R;
@@ -772,14 +786,26 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
             server->super_alone = super_key;
         else if (super_key && server->super_alone && !server->locked) {
             server->super_alone = false;
+            xd_constraints_release(server);
             xd_start_menu_toggle(server);
         }
     }
 
     bool handled = false;
     if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED && !from_ime) {
-        for (int i = 0; i < nsyms; i++)
-            handled = handle_binding(server, mods, syms[i]) || handled;
+        xd_grab_mods held = {
+            .ctrl = mods & WLR_MODIFIER_CTRL,
+            .alt = mods & WLR_MODIFIER_ALT,
+            .shift = mods & WLR_MODIFIER_SHIFT,
+            .logo = mods & WLR_MODIFIER_LOGO,
+        };
+        for (int i = 0; i < nsyms; i++) {
+            if (!inhibited || xd_grab_key_kept(held, syms[i]))
+                handled = handle_binding(server, mods, syms[i]) || handled;
+        }
+        /* One of our shortcuts: a captured pointer is the desktop's again. */
+        if (handled)
+            xd_constraints_release(server);
     }
     if (!handled && !from_ime)
         handled = xd_ime_key(kb, event);
@@ -1390,20 +1416,35 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
     }
 }
 
+/* A motion by (dx, dy) through pointer-constraints (constraints.c): the
+ * program hears it as relative motion; a locked pointer stays put (and the
+ * program gets no wl_pointer motion), a confined one goes only so far. */
+static void constrained_motion(xd_server *server, struct wlr_input_device *device, double dx,
+                               double dy, double raw_dx, double raw_dy, uint32_t time_msec) {
+    xd_idle_activity(server);
+    if (!xd_constraints_motion(server, time_msec, &dx, &dy, raw_dx, raw_dy))
+        return;
+    wlr_cursor_move(server->cursor, device, dx, dy);
+    process_motion(server, time_msec);
+    xd_constraints_update(server);
+}
+
 static void handle_cursor_motion(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_motion);
     const struct wlr_pointer_motion_event *e = data;
-    wlr_cursor_move(server->cursor, &e->pointer->base, e->delta_x, e->delta_y);
-    xd_idle_activity(server);
-    process_motion(server, e->time_msec);
+    constrained_motion(server, &e->pointer->base, e->delta_x, e->delta_y, e->unaccel_dx,
+                       e->unaccel_dy, e->time_msec);
 }
 
 static void handle_cursor_motion_absolute(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_motion_absolute);
     const struct wlr_pointer_motion_absolute_event *e = data;
-    wlr_cursor_warp_absolute(server->cursor, &e->pointer->base, e->x, e->y);
-    xd_idle_activity(server);
-    process_motion(server, e->time_msec);
+    /* A nested session's pointer, a virtual one: as a motion from where
+     * the cursor is, so constraints hold for it too (as in sway). */
+    double lx, ly;
+    wlr_cursor_absolute_to_layout_coords(server->cursor, &e->pointer->base, e->x, e->y, &lx, &ly);
+    double dx = lx - server->cursor->x, dy = ly - server->cursor->y;
+    constrained_motion(server, &e->pointer->base, dx, dy, dx, dy, e->time_msec);
 }
 
 static bool is_double_click(xd_server *server, xd_view *view, xd_frame_part part,
@@ -1565,9 +1606,7 @@ static bool seat_has_button(const struct wlr_seat *seat, uint32_t button) {
 
 /* MouseKeys moves the pointer as a mouse would. */
 void xd_input_move_pointer(xd_server *server, double dx, double dy, uint32_t time_msec) {
-    wlr_cursor_move(server->cursor, nullptr, dx, dy);
-    xd_idle_activity(server);
-    process_motion(server, time_msec);
+    constrained_motion(server, nullptr, dx, dy, dx, dy, time_msec);
     wlr_seat_pointer_notify_frame(server->seat);
 }
 
@@ -1590,6 +1629,8 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
                          e->time_msec))
         return;
     process_button(server, e);
+    if (e->state == WL_POINTER_BUTTON_STATE_PRESSED)
+        xd_constraints_click(server);
 }
 
 void xd_input_button(xd_server *server, uint32_t time_msec, uint32_t button,

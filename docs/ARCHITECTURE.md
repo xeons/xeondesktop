@@ -129,6 +129,11 @@ and xdg-shell, they use:
 - `zwp_tablet_manager_v2` (drawing tablets' pens and pads) and
   `zwp_pointer_gestures_v1` (touchpad swipes, pinches and holds) for
   every program;
+- `pointer-constraints`, `relative-pointer` and
+  `keyboard-shortcuts-inhibit` for programs that capture the mouse and
+  keyboard (games, Blender, virtual machines, remote desktops), and
+  `xwayland-keyboard-grab`, which wlroots lacks and the compositor
+  implements, offered to Xwayland alone (see Compositor, Input capture);
 - `wlr-virtual-pointer` and `virtual-keyboard`, only with
   `--allow-virtual-input` (UI tests), and with it `xd-test-input-v1`, our
   test protocol: a touchscreen, a tablet with pen and pad, and a touchpad
@@ -156,7 +161,7 @@ and xdg-shell, they use:
 - **Input**: libinput settings from Mouse Properties, XKB layouts and
   repeat from Keyboard, and the accessibility features (StickyKeys,
   FilterKeys/SlowKeys/BounceKeys, ToggleKeys, MouseKeys, ClickLock) with
-  XP's activation shortcuts.
+  XP's activation shortcuts. Ctrl+Alt+F1..F12 switch virtual terminals.
 - **Touch and pens** (`touch.c`, `tablet.c`). A finger on a surface whose
   program has `wl_touch` goes to it as touch. Anywhere else it works the
   pointer (one finger at a time), as Windows 7 promotes touch to mouse
@@ -175,6 +180,35 @@ and xdg-shell, they use:
   calibration matrix and wlr_cursor the monitor's rotation.
 - **Touchpad gestures** (`gestures.c`) go to the program under the
   pointer; the compositor keeps none for itself.
+- **Input capture** (`constraints.c`). A program may lock the pointer (it
+  then gets only relative motion, raw and accelerated, which every motion
+  sends anyway) or confine it to its window or a region of it, as sway and
+  labwc do: only for the window with the keyboard, from when the pointer
+  is over it (in the region); it ends when the window loses the keyboard
+  and while our own grabs run (moving and sizing by mouse or from the
+  window menu, a drag, the lock screen). A lock that ends puts the pointer
+  at the program's cursor hint. Absolute motion (a tablet, a nested
+  session, MouseKeys) goes through the same path, as a motion from where
+  the cursor is. A program may also take our shortcuts
+  (`keyboard-shortcuts-inhibit`; for X11 programs, Xwayland's keyboard
+  grab, which it asks for on XGrabKeyboard, also for a menu of the window
+  with the keyboard): while its window has the keyboard, the Windows key,
+  Alt+Tab, Alt+F4, Alt+Space, Ctrl+Esc, Ctrl+Shift+Esc, Ctrl+Alt+T and
+  the Win+ keys go to it. Ours still: Ctrl+Alt+Delete (the secure
+  attention sequence, which no Windows program can take), Win+L (Winlogon's
+  in Windows), Ctrl+Alt+F1..F12 and Ctrl+Alt+Backspace (the session's),
+  the power and sleep keys and the accessibility shortcuts (`grabkeys.h`).
+  Inhibitors are always honoured, as in sway: Windows asks no permission
+  for a low-level keyboard hook either, and one works only while the user
+  keeps its window in front. Nothing strands the user: Ctrl+Alt pressed
+  and let go on its own (VMware's key) gives back the pointer and the
+  shortcuts until the window is clicked or gets the keyboard again; any
+  shortcut of ours that the program didn't take (Alt+Tab, the Windows key,
+  Ctrl+Esc, Win+arrows) releases the pointer the same way, and
+  Ctrl+Alt+Delete always reaches us. X11 programs get these through
+  Xwayland: a pointer grab with `confine_to` becomes a confinement, and
+  with no cursor shown, Xwayland locks the pointer and moves its own
+  (pointer warping, as X11 games use it).
 - **Gamma.** Each monitor's gamma ramp combines its calibration (the
   vcgt curves of its ICC profile, read with Little CMS) and the night
   light (a black-body white point by Tanner Helland's fit, scheduled by

@@ -64,6 +64,7 @@ typedef struct xd_gamma xd_gamma;
 typedef struct xd_touch xd_touch;
 typedef struct xd_tablets xd_tablets;
 typedef struct xd_gestures xd_gestures;
+typedef struct xd_constraints xd_constraints;
 
 typedef struct xd_output {
     struct wl_list link; /* xd_server.outputs */
@@ -466,6 +467,7 @@ struct xd_server {
     xd_touch *touch;       /* touch.c's: touchscreens, and devices' monitors */
     xd_tablets *tablets;   /* tablet.c's: drawing tablets */
     xd_gestures *gestures; /* gestures.c's: touchpad gestures */
+    xd_constraints *constraints; /* constraints.c's: pointer lock, shortcut inhibitors */
 };
 
 /* output.c */
@@ -716,6 +718,33 @@ bool xd_ime_modifiers(xd_keyboard *kb);
 void xd_ime_lock_changed(xd_server *server);
 /* SIGCHLD: true if `pid` was the input method we started. */
 bool xd_ime_child_exited(xd_server *server, pid_t pid, int status);
+
+/* constraints.c: programs capturing the input (pointer lock and
+ * confinement, relative motion, taking our shortcuts). */
+void xd_constraints_init(xd_server *server);
+void xd_constraints_finish(xd_server *server);
+/* A pointer motion by (dx, dy) (raw: without acceleration): relative
+ * motion goes to the program; a confinement shortens dx, dy. False if the
+ * pointer is locked and stays put. */
+bool xd_constraints_motion(xd_server *server, uint32_t time_msec, double *dx, double *dy,
+                           double raw_dx, double raw_dy);
+/* The pointer moved or our grab changed: a constraint under it starts, or
+ * one ends. */
+void xd_constraints_update(xd_server *server);
+/* A button press (after it was handled): a window clicked takes back what
+ * Ctrl+Alt gave the desktop. */
+void xd_constraints_click(xd_server *server);
+/* Each key event (but the input method's), for Ctrl+Alt on its own. */
+void xd_constraints_key(xd_server *server, const uint32_t *syms, int nsyms, bool pressed);
+/* One of our shortcuts was used: the pointer and shortcuts are the
+ * desktop's until the window is clicked or refocused. */
+void xd_constraints_release(xd_server *server);
+/* Whether the focused program takes our shortcuts now (grabkeys.h's
+ * xd_grab_key_kept are ours still). */
+bool xd_shortcuts_inhibited(const xd_server *server);
+/* Xwayland's keyboard grab is offered to Xwayland alone. */
+bool xd_constraints_global_private(const xd_server *server, const struct wl_global *global);
+bool xd_constraints_client_allowed(const xd_server *server, const struct wl_client *client);
 
 /* lock.c: ext-session-lock. */
 void xd_lock_init(xd_server *server);

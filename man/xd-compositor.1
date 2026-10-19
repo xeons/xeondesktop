@@ -225,6 +225,22 @@ Lock Computer
 .TP
 .B Ctrl+Alt+Backspace
 Quit the compositor.
+.TP
+.B Ctrl+Alt+F1 \fR...\fP Ctrl+Alt+F12
+Switch to another virtual terminal.
+.TP
+.B Ctrl+Alt
+Pressed and let go on its own: give back the mouse and the keys from a
+program that captured them (a game, a virtual machine, a remote desktop),
+until its window is clicked or gets the keyboard again.
+.PP
+A program may lock or confine the pointer while its window has the
+keyboard and the pointer is over it, and may take the keys above for
+itself while its window has the keyboard (keyboard-shortcuts-inhibit, or
+an X11 program's keyboard grab). Ctrl+Alt+Delete, Win+L, Ctrl+Alt+F1 to
+F12, Ctrl+Alt+Backspace and Ctrl+Alt on its own always stay the
+compositor's; any of the other keys that the program didn't take also
+gives the pointer back.
 .SH ENVIRONMENT
 .TP
 .B XD_VM_GPU
