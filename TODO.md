@@ -581,10 +581,15 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       xd-theme-import), "Scale theme images" in Effects.
 - [ ] GTK and Qt programs: the generated GTK theme drawn from the package
       (CSS border-image with its images), the Qt palette from its colours.
-- [ ] The rest of the controls: horizontal scroll bars and size boxes,
+- [x] The rest of the controls: horizontal scroll bars and size boxes,
       progress bars, sliders, spin buttons, list view headers, tree view
       glyphs, toolbars and rebars, status bars, tooltips, Vista/7 menus
-      (Menu), tool windows' small captions, MDI buttons.
+      (Menu), the taskbar's Quick Launch buttons and grips. Not done: tool
+      windows' small captions (xd_frame has no tool window flag), MDI
+      buttons (nothing draws them). Progress, spin, header, tree glyph,
+      status bar and menu bar have no caller outside xd-themeview yet.
+- [x] Vista's and 7's images are premultiplied: xd-theme-import makes
+      them straight (through cairo), or translucent parts came out dark.
 - [ ] Vista and 7 frames: DWMWindow's parts named (deduced), the glass
       frame and caption buttons drawn from its atlas, Basic from Window.
 - [ ] Taskbar and Start menus from packages: TaskBar, TaskBand,
@@ -607,9 +612,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       the imported packages and from our code, pixel-diff them, and fix
       Luna (Blue, Silver, Olive Green), Energy Blue (Royale), Aero (7) and
       their DPI sizes.
-- [ ] Tests: unit tests of the loader and renderer with a package made in
-      the test (our own images), and a UI scenario drawing frames and
-      controls from one.
+- [x] Tests: unit tests of the loader and renderer with a package made in
+      the test (our own images), and a UI scenario (theme_package) drawing
+      frames and controls from one.
 
 ## Dialogs and libxdui
 

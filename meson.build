@@ -1339,7 +1339,7 @@ configure_file(
   install_tag: 'runtime',
 )
 # Theme packages: Windows visual styles converted with xd-theme-import
-# (python-pefile, PyGObject's GdkPixbuf); uxtheme's names for it and the
+# (python-pefile, PyGObject's GdkPixbuf, PyCairo); uxtheme's names for it and the
 # theme engine. docs/THEMES.md.
 install_data('tools/xd-theme-import', install_dir: get_option('bindir'),
              install_mode: 'rwxr-xr-x')

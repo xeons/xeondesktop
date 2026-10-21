@@ -210,6 +210,33 @@ def pixbuf_from_png(data):
     return loader.get_pixbuf()
 
 
+def png_from_premultiplied(data):
+    """Vista's and 7's PNGs hold premultiplied colour (no pixel is brighter
+    than its alpha): as straight-alpha PNG, by cairo, whose ARGB32 is
+    premultiplied and which writes PNGs straight."""
+    import cairo
+
+    pb = pixbuf_from_png(data)
+    if not pb.get_has_alpha():
+        return pb
+    w, h, stride = pb.get_width(), pb.get_height(), pb.get_rowstride()
+    src = pb.get_pixels()
+    cstride = cairo.ImageSurface.format_stride_for_width(cairo.FORMAT_ARGB32, w)
+    out = bytearray(cstride * h)
+    for y in range(h):
+        row = src[y * stride:y * stride + w * 4]
+        o = y * cstride
+        # RGBA -> cairo's native-endian ARGB32: B, G, R, A in memory on
+        # little-endian machines, A, R, G, B on big-endian ones.
+        order = (2, 1, 0, 3) if sys.byteorder == "little" else (3, 0, 1, 2)
+        for i, channel in enumerate(order):
+            out[o + i:o + w * 4:4] = row[channel::4]
+    surface = cairo.ImageSurface.create_for_data(out, cairo.FORMAT_ARGB32, w, h, cstride)
+    buf = io.BytesIO()
+    surface.write_to_png(buf)
+    return pixbuf_from_png(buf.getvalue())
+
+
 def png_bytes(pixbuf):
     ok, buf = pixbuf.save_to_bufferv("png", [], [])
     if not ok:
@@ -533,11 +560,11 @@ def import_vista(res, names, pkg, mui):
             if typ == "FILENAME":
                 data = res.get("IMAGE", short)
                 value = pkg.image(("IMAGE", short), f"images/{short}.png",
-                                  lambda d=data: pixbuf_from_png(d) if d else None)
+                                  lambda d=data: png_from_premultiplied(d) if d else None)
             elif typ == "DISKSTREAM":
                 data = res.get("STREAM", short)
                 value = pkg.image(("STREAM", short), f"images/stream-{short}.png",
-                                  lambda d=data: pixbuf_from_png(d) if d else None)
+                                  lambda d=data: png_from_premultiplied(d) if d else None)
             elif typ in ("FONT", "STRING"):
                 value = font_value(string(short)) if typ == "FONT" else string(short)
             else:
