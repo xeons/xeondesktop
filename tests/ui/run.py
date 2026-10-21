@@ -1242,6 +1242,53 @@ def files_tab_history(s):
 
 
 @scenario()
+def files_undo_copy_merge(s):
+    """Undo Copy after a copy that merged into a folder and replaced a file
+    sends only what the copy brought in to the Recycle Bin: the files that
+    were in the folder before stay, and so does the replaced file (its old
+    contents are gone either way)."""
+    def write(path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+    incoming = os.path.join(s.home, "Incoming")
+    archive = os.path.join(s.home, "Archive")
+    write(os.path.join(incoming, "notes.txt"), "notes")
+    write(os.path.join(incoming, "project", "new.txt"), "new")
+    write(os.path.join(incoming, "project", "same.txt"), "copied")
+    write(os.path.join(archive, "project", "important.txt"), "keep me")
+    write(os.path.join(archive, "project", "same.txt"), "old")
+
+    s.launch("xd-files", incoming)
+    s.wait_window(app_id=FILES, state="activated")
+    files_title(s, "Incoming", "Incoming to open")
+    s.settle("incoming")
+    s.inject("key", "ctrl+a", "key", "ctrl+c", "key", "ctrl+l", "key", "ctrl+a",
+             "type", archive, "key", "Return")  # fmt: skip
+    files_title(s, "Archive", "Archive to open")
+    s.settle("archive")
+    # Confirm Folder Replace (merge), then Confirm File Replace: Yes to each.
+    s.inject("key", "ctrl+v", "sleep", 1500, "key", "Return", "sleep", 1500, "key", "Return")
+    same = os.path.join(archive, "project", "same.txt")
+    s.wait(lambda: os.path.exists(os.path.join(archive, "notes.txt"))
+           and os.path.exists(os.path.join(archive, "project", "new.txt"))
+           and file_text(same) == "copied", "the copy, merged")  # fmt: skip
+    s.settle("copied")
+    # Undo Copy asks whether to send the copies to the Recycle Bin: Yes.
+    s.inject("key", "ctrl+z", "sleep", 1500, "key", "Return")
+    s.wait(lambda: not os.path.exists(os.path.join(archive, "notes.txt"))
+           and not os.path.exists(os.path.join(archive, "project", "new.txt")),
+           "Undo Copy to take back what the copy brought in")  # fmt: skip
+    s.inject("sleep", 1000)
+    s.check(file_text(os.path.join(archive, "project", "important.txt")) == "keep me",
+            "the folder's own file stayed")  # fmt: skip
+    s.check(file_text(same) == "copied", "and the replaced file stayed where it was")
+    trashed = sorted(os.listdir(os.path.join(s.data, "Trash", "files")))
+    s.check(trashed == ["new.txt", "notes.txt"], f"only the new files were sent ({trashed})")
+
+
+@scenario()
 def folder_options_tabs(s):
     """Folder Options' "Open folders in new tabs instead of new windows":
     saved in [Folders], and with "Open each folder in its own window" a

@@ -141,6 +141,9 @@ static void undo_move(GtkWindow *parent, undo_entry *u, XdFileOpDone done, gpoin
     }
     for (GList *d = dirs; d != nullptr; d = d->next) {
         GList *files = g_hash_table_lookup(by_dir, d->data);
+        /* Files moved out of a folder merged into another came from a
+         * folder the move then removed: it's made again. */
+        g_file_make_directory_with_parents(d->data, nullptr, nullptr);
         xd_fileop_start(parent, XD_FILEOP_MOVE, files, d->data, done, user);
         g_list_free(files);
     }

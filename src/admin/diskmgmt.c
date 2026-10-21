@@ -2227,7 +2227,18 @@ static char *startup_dir_problem(dm *m, const volume *v, const char *dir) {
     /* As Windows mounts only in an empty folder: what's in it would be
      * hidden while the volume is mounted over it. */
     bool here = v->mounts != nullptr && g_strv_contains((const char *const *)v->mounts, dir);
-    GDir *gd = here ? nullptr : g_dir_open(dir, 0, nullptr);
+    GError *error = nullptr;
+    GDir *gd = here ? nullptr : g_dir_open(dir, 0, &error);
+    /* A folder that's there but can't be read may hold anything: not
+     * empty as far as we know. (One that isn't there is made empty.) */
+    if (error != nullptr && !g_error_matches(error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+        char *text = g_strdup_printf("%s can't be read (%s), so it can't be checked to be "
+                                     "empty. Choose another folder.",
+                                     dir, error->message);
+        g_error_free(error);
+        return text;
+    }
+    g_clear_error(&error);
     bool empty = gd == nullptr || g_dir_read_name(gd) == nullptr;
     if (gd != nullptr)
         g_dir_close(gd);

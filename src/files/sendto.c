@@ -6,6 +6,9 @@
 #if XD_HAVE_LIBARCHIVE
 #include <archive.h>
 #include <archive_entry.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 #include "../gtkapp/gtkapp.h"
@@ -40,6 +43,7 @@ typedef struct zip_job {
     GPtrArray *sources; /* GFile* */
     GFile *zip;
     char *error;
+    char *warning; /* the first thing left out, the zip made anyway */
     GtkWindow *parent; /* weak */
     gboolean had_parent;
     XdFileOpDone done;
@@ -57,6 +61,7 @@ static void zip_job_free(zip_job *z) {
     g_ptr_array_unref(z->sources);
     g_object_unref(z->zip);
     g_free(z->error);
+    g_free(z->warning);
     g_free(z);
 }
 
@@ -67,7 +72,7 @@ static char *archive_problem(struct archive *a) {
 
 /* Adds a file or folder (everything in it) to the zip, named from the
  * folder it's in down, as XP's zipped folders are. */
-static gboolean add_tree(struct archive *out, const char *path, char **error) {
+static gboolean add_tree(struct archive *out, const char *path, char **error, char **warning) {
     char *dir = g_path_get_dirname(path);
     size_t strip = strcmp(dir, "/") == 0 ? 1 : strlen(dir) + 1;
     g_free(dir);
@@ -92,7 +97,12 @@ static gboolean add_tree(struct archive *out, const char *path, char **error) {
             ok = FALSE;
             break;
         }
-        archive_read_disk_descend(disk);
+        /* Something here couldn't be read (a folder's listing, say): the
+         * entry still goes in, and the user hears what's missing. */
+        if (r == ARCHIVE_WARN && *warning == nullptr)
+            *warning = archive_problem(disk);
+        if (archive_read_disk_descend(disk) < ARCHIVE_WARN && *warning == nullptr)
+            *warning = archive_problem(disk);
         const char *name = archive_entry_pathname(entry);
         if (name != nullptr && strlen(name) > strip) {
             char *rel = g_strdup(name + strip);
@@ -126,14 +136,23 @@ static void zip_worker(GTask *task, [[maybe_unused]] gpointer source, gpointer d
                        [[maybe_unused]] GCancellable *cancel) {
     zip_job *z = data;
     char *zip_path = g_file_get_path(z->zip);
+    /* Made here, never opened over: the name was free when it was chosen,
+     * but something else may have taken it since. */
+    int fd = open(zip_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
+    if (fd < 0) {
+        z->error = g_strdup(g_strerror(errno));
+        g_free(zip_path);
+        g_task_return_boolean(task, FALSE);
+        return;
+    }
     struct archive *out = archive_write_new();
     archive_write_set_format_zip(out);
-    gboolean ok = archive_write_open_filename(out, zip_path) == ARCHIVE_OK;
+    gboolean ok = archive_write_open_fd(out, fd) == ARCHIVE_OK;
     if (!ok)
         z->error = archive_problem(out);
     for (guint i = 0; ok && i < z->sources->len; i++) {
         char *path = g_file_get_path(g_ptr_array_index(z->sources, i));
-        ok = path != nullptr && add_tree(out, path, &z->error);
+        ok = path != nullptr && add_tree(out, path, &z->error, &z->warning);
         g_free(path);
     }
     if (archive_write_close(out) != ARCHIVE_OK && ok) {
@@ -141,6 +160,10 @@ static void zip_worker(GTask *task, [[maybe_unused]] gpointer source, gpointer d
         ok = FALSE;
     }
     archive_write_free(out);
+    if (close(fd) != 0 && ok) {
+        z->error = g_strdup(g_strerror(errno));
+        ok = FALSE;
+    }
     if (!ok)
         g_file_delete(z->zip, nullptr, nullptr); /* not half a zip */
     g_free(zip_path);
@@ -157,7 +180,15 @@ static void zip_finished([[maybe_unused]] GObject *source, GAsyncResult *res, gp
         xd_message_box(z->parent, "Compressed (zipped) Folders Error", XD_MB_ERROR, XD_MB_OK,
                        FALSE, msg);
         g_free(msg);
-    } else if (ok && !window_gone && z->done != nullptr) {
+    } else if (ok && !window_gone && z->warning != nullptr) {
+        char *msg = g_strdup_printf("Some items could not be added to the compressed (zipped) "
+                                    "folder: %s",
+                                    z->warning);
+        xd_message_box(z->parent, "Compressed (zipped) Folders", XD_MB_WARNING, XD_MB_OK, FALSE,
+                       msg);
+        g_free(msg);
+    }
+    if (ok && !window_gone && z->done != nullptr) {
         GList *one = g_list_append(nullptr, z->zip);
         z->done(one, z->user);
         g_list_free(one);

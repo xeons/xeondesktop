@@ -193,7 +193,8 @@ static gboolean classify(struct udev_device *d, found *f) {
         if (g_strcmp0(type, "usb_device") != 0 || dc == nullptr || strcmp(dc, "09") != 0)
             return FALSE;
         f->c = CAT_USB;
-        const char *parent_sub = udev_device_get_subsystem(udev_device_get_parent(d));
+        struct udev_device *parent = udev_device_get_parent(d);
+        const char *parent_sub = parent != nullptr ? udev_device_get_subsystem(parent) : nullptr;
         f->name = g_strdup(g_strcmp0(parent_sub, "usb") == 0 ? "Generic USB Hub"
                                                               : "USB Root Hub");
         return TRUE;

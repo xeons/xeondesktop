@@ -308,6 +308,8 @@ static void key_prompt_free(key_prompt *k) {
 /* The helper's output, read until it closes stdout (the shell ignores
  * SIGCHLD, so its exit status isn't ours to wait for: no output means
  * Cancel). */
+enum { KEY_MAX = 256 };
+
 typedef struct key_reader {
     key_prompt *k;
     GString *out;
@@ -318,15 +320,19 @@ static gboolean read_key(int fd, [[maybe_unused]] GIOCondition cond, gpointer da
     key_reader *r = data;
     char buf[256];
     ssize_t n = read(fd, buf, sizeof(buf));
-    if (n > 0) {
+    /* No key is longer than 64 characters (WPA's in hex): anything much
+     * longer isn't one, and isn't kept. */
+    bool too_long = n > 0 && r->out->len + (size_t)n > KEY_MAX;
+    if (n > 0 && !too_long) {
         g_string_append_len(r->out, buf, n);
         explicit_bzero(buf, sizeof(buf));
         return G_SOURCE_CONTINUE;
     }
+    explicit_bzero(buf, sizeof(buf));
     if (n < 0 && errno == EINTR)
         return G_SOURCE_CONTINUE;
     g_strchomp(r->out->str);
-    if (r->out->str[0] != '\0')
+    if (!too_long && r->out->str[0] != '\0')
         add_and_activate(&r->k->choice, r->out->str);
     explicit_bzero(r->out->str, r->out->allocated_len);
     g_string_free(r->out, TRUE);

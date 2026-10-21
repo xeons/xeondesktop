@@ -30,10 +30,15 @@ typedef struct job {
     XdFileOpDone done;
     gpointer user;
     GCancellable *cancel;
-    GList *created; /* GFile*, built by the worker */
-    /* For Edit > Undo: what each created file came from (same order), and
-     * what went to the Recycle Bin. */
+    GList *created; /* GFile*, built by the worker: the top-level items made */
+    /* For Edit > Undo: the files the operation made or moved (`made`),
+     * what each came from (`origins`, same order), and what went to the
+     * Recycle Bin. Only what wasn't there before: a folder copied into one
+     * of the same name has the files it brought in listed, not the folder,
+     * and a copy over a file isn't listed at all, so Undo never takes away
+     * what the user already had. */
     bool undoable;
+    GList *made;
     GList *origins;
     GList *trashed;
 
@@ -262,7 +267,7 @@ static bool delete_tree(job *j, GFile *f, bool *removed) {
             return report_error(j, f, err);
         GFileInfo *child_info;
         bool go_on = true;
-        while (go_on && (child_info = g_file_enumerator_next_file(en, j->cancel, nullptr)) !=
+        while (go_on && (child_info = g_file_enumerator_next_file(en, j->cancel, &err)) !=
                             nullptr) {
             GFile *child = g_file_get_child(f, g_file_info_get_name(child_info));
             bool gone = false;
@@ -272,6 +277,12 @@ static bool delete_tree(job *j, GFile *f, bool *removed) {
             g_object_unref(child_info);
         }
         g_object_unref(en);
+        /* The listing broke off (not its end): what's left wasn't seen, so
+         * the folder stays. */
+        if (go_on && err != nullptr) {
+            all_gone = false;
+            go_on = report_error(j, f, err);
+        }
         if (!go_on)
             return false;
     }
@@ -381,9 +392,11 @@ static answer ask_replace_folder(job *j, GFileInfo *existing) {
     return ask_replace(j, "Confirm Folder Replace", XD_MB_QUESTION, text, ANSWER_YES);
 }
 
-static bool transfer(job *j, GFile *src, GFile *dst);
+static bool transfer(job *j, GFile *src, GFile *dst, bool undo);
 
-static bool transfer_children(job *j, GFile *src, GFile *dst) {
+/* `undo`: whether what each child makes is listed for Undo (it's in a
+ * folder that was there before, not one this operation made). */
+static bool transfer_children(job *j, GFile *src, GFile *dst, bool undo) {
     GError *err = nullptr;
     GFileEnumerator *en = g_file_enumerate_children(src, G_FILE_ATTRIBUTE_STANDARD_NAME,
                                                     G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
@@ -392,22 +405,32 @@ static bool transfer_children(job *j, GFile *src, GFile *dst) {
         return report_error(j, src, err);
     bool go_on = true;
     GFileInfo *info;
-    while (go_on && (info = g_file_enumerator_next_file(en, j->cancel, nullptr)) != nullptr) {
+    while (go_on && (info = g_file_enumerator_next_file(en, j->cancel, &err)) != nullptr) {
         const char *name = g_file_info_get_name(info);
         GFile *s = g_file_get_child(src, name);
         GFile *d = g_file_get_child(dst, name);
-        go_on = transfer(j, s, d);
+        go_on = transfer(j, s, d, undo);
         g_object_unref(s);
         g_object_unref(d);
         g_object_unref(info);
     }
     g_object_unref(en);
+    /* The listing broke off: not everything came over. Skipped, a move
+     * leaves the source folder (it's deleted only when empty). */
+    if (go_on && err != nullptr)
+        go_on = report_error(j, src, err);
     return go_on;
 }
 
+static void made(job *j, GFile *src, GFile *dst) {
+    j->made = g_list_prepend(j->made, g_object_ref(dst));
+    j->origins = g_list_prepend(j->origins, g_object_ref(src));
+}
+
 /* Copies or moves `src` to `dst`, asking about anything in the way. A
- * folder over a folder merges into it. Returns false to stop. */
-static bool transfer(job *j, GFile *src, GFile *dst) {
+ * folder over a folder merges into it. `undo`: list what it makes for
+ * Undo. Returns false to stop. */
+static bool transfer(job *j, GFile *src, GFile *dst, bool undo) {
     if (g_cancellable_is_cancelled(j->cancel))
         return false;
     GFile *dst_dir = g_file_get_parent(dst);
@@ -423,7 +446,7 @@ static bool transfer(job *j, GFile *src, GFile *dst) {
     guint64 bytes = !src_dir && size > 0 ? (guint64)size : 0;
     bool move = j->kind == XD_FILEOP_MOVE;
 
-    bool overwrite = false, merge = false;
+    bool overwrite = false, merge = false, replaced = false;
     GFileInfo *di = g_file_query_info(dst, INFO_ATTRS, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
                                       j->cancel, nullptr);
     if (di != nullptr) {
@@ -461,11 +484,16 @@ static bool transfer(job *j, GFile *src, GFile *dst) {
                 g_object_unref(si);
                 return false;
             }
+            replaced = true;
         } else {
             overwrite = true;
+            replaced = true;
         }
     }
 
+    /* Undo of a move puts it back where it came from; of a copy, sends the
+     * copy to the Recycle Bin, which mustn't take a file's old place. */
+    bool listed = undo && !merge && (move || !replaced);
     GFileCopyFlags flags = (GFileCopyFlags)(G_FILE_COPY_NOFOLLOW_SYMLINKS |
                                             G_FILE_COPY_ALL_METADATA |
                                             (overwrite ? G_FILE_COPY_OVERWRITE : 0));
@@ -483,6 +511,8 @@ static bool transfer(job *j, GFile *src, GFile *dst) {
             add_done(j, tree_bytes, tree_items);
             g_object_unref(si);
             j->wrote = true;
+            if (listed)
+                made(j, src, dst);
             return true;
         }
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED) &&
@@ -498,7 +528,11 @@ static bool transfer(job *j, GFile *src, GFile *dst) {
         if (!merge && !g_file_make_directory(dst, j->cancel, &err))
             return report_error(j, src, err);
         j->wrote = true;
-        if (!transfer_children(j, src, dst))
+        if (listed)
+            made(j, src, dst);
+        /* In a folder made here, Undo takes the folder; merged into one
+         * that was there, what came in, one by one. */
+        if (!transfer_children(j, src, dst, undo && merge))
             return false;
         /* Times and permissions once the contents are in. */
         g_file_copy_attributes(src, dst, (GFileCopyFlags)(G_FILE_COPY_NOFOLLOW_SYMLINKS |
@@ -514,6 +548,8 @@ static bool transfer(job *j, GFile *src, GFile *dst) {
     if (!g_file_copy(src, dst, flags, j->cancel, copy_progress, j, &err))
         return report_error(j, src, err);
     j->wrote = true;
+    if (listed)
+        made(j, src, dst);
     if (move && !g_file_delete(src, j->cancel, &err))
         return report_error(j, src, err);
     add_done(j, bytes, 1);
@@ -549,9 +585,8 @@ static GFile *destination(job *j, GFile *src, bool *go_on) {
     return dst;
 }
 
-static void created(job *j, GFile *src, GFile *f) {
+static void created(job *j, GFile *f) {
     j->created = g_list_prepend(j->created, g_object_ref(f));
-    j->origins = g_list_prepend(j->origins, g_object_ref(src));
 }
 
 static void run_transfer(job *j) {
@@ -569,7 +604,7 @@ static void run_transfer(job *j) {
             GError *err = nullptr;
             set_current(j, src, j->dest);
             if (g_file_make_symbolic_link(dst, path != nullptr ? path : uri, j->cancel, &err))
-                created(j, src, dst);
+                created(j, dst);
             else
                 go_on = report_error(j, src, err);
             g_free(path);
@@ -586,7 +621,8 @@ static void run_transfer(job *j) {
                                              G_FILE_COPY_ALL_METADATA |
                                              G_FILE_COPY_NO_FALLBACK_FOR_MOVE),
                             j->cancel, nullptr, nullptr, &err)) {
-                created(j, src, dst);
+                created(j, dst); /* nothing was in the way */
+                made(j, src, dst);
                 g_object_unref(dst);
                 continue;
             }
@@ -607,9 +643,9 @@ static void run_transfer(job *j) {
         for (guint i = 0; go_on && i < slow->len; i++) {
             GFile *dst = g_ptr_array_index(targets, i);
             j->wrote = false;
-            go_on = transfer(j, g_ptr_array_index(slow, i), dst);
+            go_on = transfer(j, g_ptr_array_index(slow, i), dst, true);
             if (j->wrote)
-                created(j, g_ptr_array_index(slow, i), dst);
+                created(j, dst);
         }
     }
     g_ptr_array_unref(slow);
@@ -642,6 +678,7 @@ static void worker(GTask *task, [[maybe_unused]] gpointer source, gpointer data,
         break;
     }
     j->created = g_list_reverse(j->created);
+    j->made = g_list_reverse(j->made);
     j->origins = g_list_reverse(j->origins);
     j->trashed = g_list_reverse(j->trashed);
     g_task_return_boolean(task, TRUE);
@@ -847,6 +884,7 @@ static void job_free(job *j) {
     g_clear_object(&j->dest);
     g_clear_object(&j->cancel);
     g_list_free_full(j->created, g_object_unref);
+    g_list_free_full(j->made, g_object_unref);
     g_list_free_full(j->origins, g_object_unref);
     g_list_free_full(j->trashed, g_object_unref);
     g_mutex_clear(&j->lock);
@@ -864,7 +902,7 @@ static void finished([[maybe_unused]] GObject *source, GAsyncResult *res, gpoint
     (void)g_task_propagate_boolean(G_TASK(res), nullptr);
     if (j->undoable)
         xd_undo_add_fileop(j->kind, j->kind == XD_FILEOP_TRASH ? j->trashed : j->origins,
-                           j->created);
+                           j->made);
     /* No one to tell when the window that started it has closed. */
     if (j->done != nullptr && (j->parent != nullptr || !j->had_parent))
         j->done(j->created, j->user);
