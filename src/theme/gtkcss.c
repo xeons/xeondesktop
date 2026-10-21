@@ -850,6 +850,14 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
         modern(&c, t->style == XD_STYLE_AERO, out);
     if (!c.classic)
         xp_buttons(&c, out);
+    /* A slider's tick marks: Windows' 1 px lines, 4 px long, in the
+     * trackbar's tick colour (without a size GTK draws them invisible). */
+    xd_rgba tics = xd_theme_trackbar_tics_color(t, false);
+    xd_strbuf_appendf(out,
+                      "scale marks mark indicator { background-color: %s; color: %s;\n"
+                      "  min-height: 4px; min-width: 1px; }\n"
+                      "scale.vertical marks mark indicator { min-height: 1px; min-width: 4px; }\n",
+                      H(tics), H(tics));
     /* Windows' pixel check mark and radio dot, drawn by xd_theme_gtk_asset. */
     xd_strbuf_appendf(
         out,
