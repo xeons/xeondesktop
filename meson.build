@@ -116,6 +116,7 @@ theme_lib = static_library(
   'src/theme/trayicons.c',
   'src/theme/pkg.c',
   'src/theme/pkginfo.c',
+  'src/theme/pkgfiles.c',
   'src/theme/style_pkg.c',
   'src/theme/controls.c',
   'src/theme/panes.c',
@@ -142,6 +143,7 @@ settings_lib = static_library(
   'src/settings/inputmethod.c',
   'src/settings/nightlight.c',
   'src/settings/themepkg.c',
+  'src/settings/themeset.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )

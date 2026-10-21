@@ -2,7 +2,9 @@
 
 Status: the format and `xd-theme-import` exist; the theme engine draws
 window frames and the common controls from a package, and Display
-Properties chooses and imports packages (see "Choosing a package"). The
+Properties chooses and imports packages (see "Choosing a package"), and
+in its Themes tab applies their wallpaper, sounds and pointers too (see
+"Wallpaper, sounds and pointers"). The
 rest of the controls, the taskbar and Start menus, and Explorer's panes
 are still drawn by the base style.
 
@@ -45,8 +47,8 @@ the built-in styles and then the installed packages by their names
 (theme.xml's), "Color scheme" the chosen package's colours and "Font
 size" the sizes its colour comes in, as XP's Appearance tab does for a
 visual style; the preview draws with the chosen package before Apply.
-Browse... beside "Windows and buttons" (XP had Browse... in the Themes
-tab's list) takes a `.msstyles` or a `.theme`, which `xd-theme-import`
+Browse... beside "Windows and buttons" (and the last item of the Themes
+tab's list, as in XP, which then chooses it as a theme) takes a `.msstyles` or a `.theme`, which `xd-theme-import`
 converts in the background into `~/.local/share/xeondesktop/themes/NAME.xdtheme`,
 or a `.xdtheme`, which is copied there; either is then chosen.
 
@@ -106,7 +108,9 @@ way, with names no Windows style uses: `ClassicStartMenu` (the Windows
     styles/NAME.xml           one per variant (colour x size)
     images/...                PNG, straight alpha
     shell/NAME.xml            Explorer's panes for a variant (optional)
-    wallpaper/, sounds/, cursors/   (optional, from a .theme file)
+    wallpaper/NAME            the wallpaper (optional; these three from a .theme file)
+    sounds/scheme.ini, *.wav  a sound scheme and its sounds
+    cursors/                  an XCursor theme: index.theme, cursors/NAME
 
 ## theme.xml
 
@@ -123,7 +127,7 @@ way, with names no Windows style uses: `ClassicStartMenu` (the Windows
   <!-- From a .theme file; each optional. -->
   <wallpaper file="wallpaper/bliss.jpg" style="stretch"/>
   <sounds scheme="sounds/scheme.ini"/>
-  <cursors scheme="cursors/scheme.ini"/>
+  <cursors theme="cursors"/>
 </xdtheme>
 ```
 
@@ -131,6 +135,69 @@ way, with names no Windows style uses: `ClassicStartMenu` (the Windows
 (`classic`, `luna`, `whistler`, `aero`). Display Properties lists the
 variants by `name` (Color scheme) and `size` (Font size), as XP's
 Appearance tab does.
+
+## Wallpaper, sounds and pointers
+
+What XP's Themes tab sets besides the visual style. Each is optional; a
+package with any of them is listed in Display Properties' Themes tab (one
+with only a style is listed in Appearance alone).
+
+- `<wallpaper file="..." style="...">`: a picture in the package, placed
+  as `[Desktop]`'s `WallpaperMode` names it (`center`, `tile`, `stretch`,
+  `fill`, `fit`; `stretch` if left out, as XP's .theme files default to).
+- `<sounds scheme="sounds/scheme.ini">`: a sound scheme in the format of
+  `sounds.ini` (src/settings/sounds.h), except that a sound file is a path
+  in the package:
+
+  ```ini
+  [Sounds]
+  Scheme=default            ; events not listed keep Windows Default's (or "none")
+  [Events]
+  WindowsLogon=sounds/Logon.wav   ; a file in the package
+  CriticalStop=dialog-error       ; a sound from the XDG sound theme, by name
+  Maximize=                       ; no sound
+  ```
+
+- `<cursors theme="cursors">`: a folder of the package holding an
+  XCursor theme as libXcursor reads one: `index.theme` (`[Icon Theme]`
+  `Name`, `Inherits=default` for the pointers it lacks) and
+  `cursors/NAME`, an XCursor file per pointer name (`left_ptr`, `wait`,
+  `text`, `pointer`...). A zip holds no links: the aliases are copies.
+
+Choosing a theme in the Themes tab unpacks these where the settings can
+point at them: the wallpaper and sounds into
+`$XDG_DATA_HOME/xeondesktop/theme-files/NAME/` (at their paths in the
+package), the pointers into `$XDG_DATA_HOME/icons/xdtheme-NAME/`. Apply
+then writes `[Appearance]` `ThemePackage` and `ThemeVariant` (its first
+variant) with `Style` its base, `[Desktop]` `Wallpaper` and
+`WallpaperMode`, `[Mouse]` `CursorTheme=xdtheme-NAME` and the sound scheme
+into `sounds.ini`. What a package doesn't bring is left as it is, as with
+XP's .theme files. The tab's built-in "Windows XP" (Luna, Default (blue),
+our Rolling Hills for Bliss, stretched, Windows' own pointers) and
+"Windows Classic" (no wallpaper) set the sounds not at all, as XP's own
+.theme files didn't.
+
+Save As... writes the current settings as a package: the chosen package's
+style and variants (the chosen one first), or an empty style over the
+built-in one when there is none; the wallpaper, the sound scheme with its
+sound files copied in, and the pointer theme's cursors (links followed).
+
+`xd-theme-import` takes a .theme's extras from beside it, found by file
+name (Windows' own `%SystemRoot%\Media` and `\Cursors` aren't there):
+
+- the wallpaper (`[Control Panel\Desktop]`);
+- the sounds of `[AppEvents\Schemes\Apps\.Default\EVENT\.Current]` and
+  `...\Explorer\EmptyRecycleBin\.Current` (`DefaultValue`), Windows'
+  event names mapped to ours (`SystemHand` is `CriticalStop`, `MailBeep`
+  `NewMail`, `AppGPFault` `ProgramError`...); an empty value is no sound,
+  a file not beside the theme keeps Windows Default's;
+- the pointers of `[Control Panel\Cursors]` (`Arrow`, `Help`,
+  `AppStarting`, `Wait`, `Crosshair`, `IBeam`, `NWPen`, `No`, `SizeNS`,
+  `SizeWE`, `SizeNWSE`, `SizeNESW`, `SizeAll`, `UpArrow`, `Hand`), .cur
+  and .ani converted to XCursor files with
+  [win2xcur](https://github.com/quantum5/win2xcur) under the XCursor
+  names toolkits ask for (`Arrow` is `left_ptr`, `default`, `arrow`...).
+  Without win2xcur the import goes on without the pointers and says so.
 
 ## styles/NAME.xml
 

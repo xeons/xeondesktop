@@ -115,6 +115,13 @@ typedef struct xd_pkg_info {
     xd_image_filter filter;
     size_t variant_count;
     xd_pkg_variant_info *variants; /* in theme.xml's order: the first is the default */
+    /* What it brings besides the style (from a .theme), paths in the
+     * package, nullptr for none: <wallpaper file style>, <sounds scheme>,
+     * <cursors theme>. */
+    char *wallpaper;
+    char *wallpaper_style; /* center, tile, stretch, fill, fit; nullptr: stretch */
+    char *sounds;          /* a sound scheme (sounds.ini's format) */
+    char *cursors;         /* a folder holding an XCursor theme */
 } xd_pkg_info;
 
 /* Reads only theme.xml of the package at `path` (a folder or .xdtheme),
@@ -122,5 +129,21 @@ typedef struct xd_pkg_info {
  * has no variant. */
 bool xd_pkg_read_info(const char *path, xd_pkg_info *out, GError **error);
 void xd_pkg_info_clear(xd_pkg_info *info);
+
+/* ---- a package's files (pkgfiles.c) ---- */
+
+/* The file `member` (a path in the package) of the package at `path`.
+ * nullptr with `error` set if it has none. */
+GBytes *xd_pkg_read_member(const char *path, const char *member, GError **error);
+/* Every file of the package: member path -> GBytes. */
+GHashTable *xd_pkg_read_members(const char *path, GError **error);
+/* Copies `member` (a file) or the files below it (a folder) into `dest`:
+ * a file as dest/NAME, a folder's files at their paths below it. Paths
+ * with ".." are skipped. False with `error` set if nothing could be
+ * copied or a file couldn't be written. */
+bool xd_pkg_extract(const char *path, const char *member, const char *dest, GError **error);
+/* Writes `files` (member path -> GBytes) as a .xdtheme zip at `dest`,
+ * theme.xml first, through a temporary file renamed into place. */
+bool xd_pkg_write_zip(const char *dest, GHashTable *files, GError **error);
 
 #endif

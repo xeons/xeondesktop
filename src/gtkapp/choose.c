@@ -3,8 +3,11 @@
  * none of their own. Prints the chosen path on stdout; exits 1 if the user
  * cancels.
  *
- *   xd-choose-file [--title TEXT] [--images | --programs | --styles] [--folder DIR]
+ *   xd-choose-file [--title TEXT] [--images | --programs | --styles | --themes]
+ *                  [--folder DIR] [--save NAME]
  *
+ * --save asks for a file to write (NAME first in the box) instead of one
+ * to open.
  * $XD_CHOOSE_FILE_ANSWER, for tests: the answer, printed without asking.
  */
 #include <stdio.h>
@@ -21,7 +24,8 @@ static gboolean is_program(const GtkFileFilterInfo *info, [[maybe_unused]] gpoin
 int main(int argc, char **argv) {
     const char *title = "Browse";
     const char *folder = nullptr;
-    bool images = false, programs = false, styles = false;
+    const char *save = nullptr;
+    bool images = false, programs = false, styles = false, themes = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--title") == 0 && i + 1 < argc)
             title = argv[++i];
@@ -33,6 +37,10 @@ int main(int argc, char **argv) {
             programs = true;
         else if (strcmp(argv[i], "--styles") == 0)
             styles = true;
+        else if (strcmp(argv[i], "--themes") == 0)
+            themes = true;
+        else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc)
+            save = argv[++i];
     }
     const char *answer = g_getenv("XD_CHOOSE_FILE_ANSWER");
     if (answer != nullptr) {
@@ -43,10 +51,13 @@ int main(int argc, char **argv) {
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
 
-    GtkWidget *dialog = gtk_file_chooser_dialog_new(title, nullptr, GTK_FILE_CHOOSER_ACTION_OPEN,
-                                                    "_Cancel", GTK_RESPONSE_CANCEL, "_Open",
-                                                    GTK_RESPONSE_ACCEPT, nullptr);
+    GtkWidget *dialog = gtk_file_chooser_dialog_new(
+        title, nullptr, save != nullptr ? GTK_FILE_CHOOSER_ACTION_SAVE : GTK_FILE_CHOOSER_ACTION_OPEN,
+        "_Cancel", GTK_RESPONSE_CANCEL, save != nullptr ? "_Save" : "_Open", GTK_RESPONSE_ACCEPT,
+        nullptr);
     GtkFileChooser *chooser = GTK_FILE_CHOOSER(dialog);
+    if (save != nullptr)
+        gtk_file_chooser_set_do_overwrite_confirmation(chooser, TRUE);
     if (images) {
         GtkFileFilter *pictures = gtk_file_filter_new();
         gtk_file_filter_set_name(pictures, "Pictures (*.bmp;*.jpg;*.png;*.webp)");
@@ -85,8 +96,25 @@ int main(int argc, char **argv) {
         gtk_file_filter_add_pattern(all, "*");
         gtk_file_chooser_add_filter(chooser, all);
     }
+    if (themes) {
+        /* Display Properties' Themes tab: XP's "Theme Files (*.theme)",
+         * converted when chosen, and our packages; saved as ours. */
+        GtkFileFilter *theme = gtk_file_filter_new();
+        gtk_file_filter_set_name(theme, save != nullptr ? "Theme Files (*.xdtheme)"
+                                                        : "Theme Files (*.theme;*.xdtheme)");
+        if (save == nullptr)
+            gtk_file_filter_add_pattern(theme, "*.[Tt][Hh][Ee][Mm][Ee]");
+        gtk_file_filter_add_pattern(theme, "*.xdtheme");
+        gtk_file_chooser_add_filter(chooser, theme);
+        GtkFileFilter *all = gtk_file_filter_new();
+        gtk_file_filter_set_name(all, "All Files (*.*)");
+        gtk_file_filter_add_pattern(all, "*");
+        gtk_file_chooser_add_filter(chooser, all);
+    }
     if (folder != nullptr)
         gtk_file_chooser_set_current_folder(chooser, folder);
+    if (save != nullptr)
+        gtk_file_chooser_set_current_name(chooser, save);
 
     int status = 1;
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {

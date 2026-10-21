@@ -1463,11 +1463,19 @@ xd_widget *xd_tabs(xd_window *win, xd_rect r, const char *const *labels, size_t 
     cairo_surface_t *scratch = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
     cairo_t *cr = cairo_create(scratch);
     xd_text_style st = xd_text(&t, XD_FONT_MESSAGE, xd_rgba_hex(0), XD_ALIGN_START);
+    /* 7px each side of a label; less, down to 3, where that wouldn't fit
+     * in one row (Display Properties' seven tabs). */
+    int text = 0;
+    for (size_t i = 0; i < count; i++)
+        text += xd_text_width(cr, labels[i], &st);
+    int pad = 14;
+    while (pad > 6 && count > 0 && text + pad * (int)count > r.w - 4)
+        pad -= 2;
     int x = 2;
     for (size_t i = 0; i < count; i++) {
         xd_widget_add_item_any(w, labels[i]);
         w->tab_x[i] = x;
-        w->tab_w[i] = xd_text_width(cr, labels[i], &st) + 14;
+        w->tab_w[i] = xd_text_width(cr, labels[i], &st) + pad;
         x += w->tab_w[i];
     }
     cairo_destroy(cr);

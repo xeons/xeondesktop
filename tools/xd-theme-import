@@ -1129,6 +1129,176 @@ def find_near(folder, windows_path):
     return None
 
 
+# Windows' sound events ([AppEvents\Schemes\Apps\APP\EVENT\.Current]) as
+# our sound scheme names them (src/settings/sounds.c, sounds.ini's [Events]).
+SOUND_EVENTS = {
+    (".default", ".default"): "DefaultBeep",
+    (".default", "appgpfault"): "ProgramError",
+    (".default", "close"): "CloseProgram",
+    (".default", "criticalbatteryalarm"): "CriticalBatteryAlarm",
+    (".default", "deviceconnect"): "DeviceConnect",
+    (".default", "devicedisconnect"): "DeviceDisconnect",
+    (".default", "lowbatteryalarm"): "LowBatteryAlarm",
+    (".default", "mailbeep"): "NewMail",
+    (".default", "maximize"): "Maximize",
+    (".default", "menucommand"): "MenuCommand",
+    (".default", "menupopup"): "MenuPopup",
+    (".default", "minimize"): "Minimize",
+    (".default", "open"): "OpenProgram",
+    (".default", "restoredown"): "RestoreDown",
+    (".default", "restoreup"): "RestoreUp",
+    (".default", "systemasterisk"): "Asterisk",
+    (".default", "systemexclamation"): "Exclamation",
+    (".default", "systemexit"): "ExitWindows",
+    (".default", "systemhand"): "CriticalStop",
+    (".default", "systemnotification"): "SystemNotification",
+    (".default", "systemquestion"): "Question",
+    (".default", "windowslogoff"): "WindowsLogoff",
+    (".default", "windowslogon"): "WindowsLogon",
+    ("explorer", "emptyrecyclebin"): "EmptyRecycleBin",
+}
+
+
+def theme_sounds(cp, folder):
+    """The .theme's sounds: our event name -> the file beside the theme, or
+    "" for none. Events whose file isn't beside it (Windows' own Media
+    folder) are left out: they keep Windows Default's sound."""
+    out = {}
+    for section in cp.sections():
+        parts = section.split("\\")
+        if (len(parts) != 6 or [p.lower() for p in parts[:3]] != ["appevents", "schemes", "apps"]
+                or parts[5].lower() != ".current"):
+            continue
+        event = SOUND_EVENTS.get((parts[3].lower(), parts[4].lower()))
+        if event is None:
+            continue
+        value = next((v for k, v in cp[section].items() if k.lower() == "defaultvalue"), "")
+        value = value.strip().strip('"')
+        if not value:
+            out[event] = ""
+            continue
+        path = find_near(folder, value)
+        if path:
+            out[event] = path
+    return out
+
+
+def import_sounds(pkg, sounds):
+    """Puts the sound files into sounds/ and the scheme, in sounds.ini's
+    format with package paths, into sounds/scheme.ini. Its path, or None."""
+    if not sounds:
+        return None
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.optionxform = str
+    cp["Sounds"] = {"Scheme": "default"}
+    cp["Events"] = {}
+    for event, path in sorted(sounds.items()):
+        member = ""
+        if path:
+            member = "sounds/" + os.path.basename(path)
+            with open(path, "rb") as f:
+                pkg.add(member, f.read())
+        cp["Events"][event] = member
+    text = io.StringIO()
+    cp.write(text, space_around_delimiters=False)
+    pkg.add("sounds/scheme.ini", text.getvalue().encode())
+    return "sounds/scheme.ini"
+
+
+# [Control Panel\Cursors] -> XCursor names: the name libXcursor and
+# toolkits ask for first, then the others they use for the same pointer
+# (copies: a zip holds no links).
+CURSOR_NAMES = {
+    "arrow": ["left_ptr", "default", "arrow", "top_left_arrow"],
+    "help": ["help", "question_arrow", "whats_this", "left_ptr_help"],
+    "appstarting": ["progress", "left_ptr_watch", "half-busy"],
+    "wait": ["wait", "watch"],
+    "crosshair": ["crosshair", "cross", "tcross"],
+    "ibeam": ["text", "xterm", "ibeam"],
+    "nwpen": ["pencil", "handwriting"],
+    "no": ["not-allowed", "no-drop", "forbidden", "crossed_circle", "circle"],
+    "sizens": ["ns-resize", "sb_v_double_arrow", "v_double_arrow", "size_ver", "n-resize",
+               "s-resize", "row-resize", "top_side", "bottom_side"],
+    "sizewe": ["ew-resize", "sb_h_double_arrow", "h_double_arrow", "size_hor", "e-resize",
+               "w-resize", "col-resize", "left_side", "right_side"],
+    "sizenwse": ["nwse-resize", "size_fdiag", "bd_double_arrow", "nw-resize", "se-resize",
+                 "top_left_corner", "bottom_right_corner"],
+    "sizenesw": ["nesw-resize", "size_bdiag", "fd_double_arrow", "ne-resize", "sw-resize",
+                 "top_right_corner", "bottom_left_corner"],
+    "sizeall": ["move", "fleur", "all-scroll", "size_all"],
+    "uparrow": ["up-arrow", "center_ptr"],
+    "hand": ["pointer", "hand2", "hand1", "pointing_hand"],
+}
+
+
+def theme_cursors(cp, folder):
+    """The .theme's pointers beside it: Windows' name (lowercase) -> the
+    .cur or .ani file. Empty values are Windows' own pointers."""
+    section = next((s for s in cp.sections() if s.lower() == "control panel\\cursors"), None)
+    out = {}
+    for key, value in cp[section].items() if section else []:
+        if key.lower() in CURSOR_NAMES and value.strip():
+            path = find_near(folder, value)
+            if path:
+                out[key.lower()] = path
+    return out
+
+
+def convert_cursor(data):
+    """A .cur or .ani as an XCursor file, with win2xcur (their hotspots and
+    frames, which GdkPixbuf doesn't give); None without it."""
+    try:
+        from win2xcur.parser import open_blob
+        from win2xcur.writer import to_x11
+    except ImportError:
+        return None
+    return to_x11(open_blob(data).frames)
+
+
+def import_cursors(pkg, cursors, name, convert=convert_cursor):
+    """The pointers as an XCursor theme in cursors/: its folder, or None.
+    Without win2xcur, a note on stderr and none."""
+    if not cursors:
+        return None
+    converted = {}
+    for key, path in sorted(cursors.items()):
+        with open(path, "rb") as f:
+            data = convert(f.read())
+        if data is None:
+            print("xd-theme-import: its pointers aren't imported: that needs win2xcur "
+                  "(python-win2xcur, or pip install win2xcur)", file=sys.stderr)
+            return None
+        converted[key] = data
+    for key, data in converted.items():
+        for xname in CURSOR_NAMES[key]:
+            pkg.add("cursors/cursors/" + xname, data)
+    pkg.add("cursors/index.theme", f"[Icon Theme]\nName={name}\nInherits=default\n".encode())
+    return "cursors"
+
+
+def import_theme_extras(cp, folder, pkg, name, convert=convert_cursor):
+    """What a .theme brings besides its visual style, from beside it: the
+    wallpaper, sounds and pointers, into the package. theme.xml's elements
+    for them, as (tag, attributes)."""
+    extras = []
+    wallpaper = find_near(folder, cp.get("Control Panel\\Desktop", "Wallpaper", fallback=""))
+    if wallpaper:
+        member = "wallpaper/" + os.path.basename(wallpaper)
+        with open(wallpaper, "rb") as f:
+            pkg.add(member, f.read())
+        tile = cp.get("Control Panel\\Desktop", "TileWallpaper", fallback="0").strip() == "1"
+        mode = {"0": "center", "2": "stretch", "6": "fit", "10": "fill"}.get(
+            cp.get("Control Panel\\Desktop", "WallpaperStyle", fallback="2").strip(), "stretch")
+        extras.append(("wallpaper", {"file": member, "style": "tile" if tile else mode}))
+    scheme = import_sounds(pkg, theme_sounds(cp, folder))
+    if scheme:
+        extras.append(("sounds", {"scheme": scheme}))
+    cursors = import_cursors(pkg, theme_cursors(cp, folder), name, convert)
+    if cursors:
+        extras.append(("cursors", {"theme": cursors}))
+    return extras
+
+
 # ---- main ---------------------------------------------------------------------------------
 
 
@@ -1178,14 +1348,8 @@ def main():
         display = cp.get("Theme", "DisplayName", fallback=None)
         if display and display.startswith("@"):
             display = None  # a Windows resource string
-        wallpaper = find_near(folder, cp.get("Control Panel\\Desktop", "Wallpaper", fallback=""))
-        if wallpaper:
-            name = "wallpaper/" + os.path.basename(wallpaper)
-            pkg.add(name, open(wallpaper, "rb").read())
-            tile = cp.get("Control Panel\\Desktop", "TileWallpaper", fallback="0").strip() == "1"
-            mode = {"0": "center", "2": "stretch", "6": "fit", "10": "fill"}.get(
-                cp.get("Control Panel\\Desktop", "WallpaperStyle", fallback="2").strip(), "stretch")
-            extras.append(("wallpaper", {"file": name, "style": "tile" if tile else mode}))
+        extras = import_theme_extras(
+            cp, folder, pkg, display or os.path.splitext(os.path.basename(args.source))[0])
         if not msstyles:
             sys.exit(f"xd-theme-import: {args.source}: its visual style isn't beside it")
     info, variants = import_style(msstyles, pkg, names)

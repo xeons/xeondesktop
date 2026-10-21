@@ -219,5 +219,107 @@ class Shell(unittest.TestCase):
         self.assertIn((21, None), made)
 
 
+THEME = r"""[Theme]
+DisplayName=Test Sounds
+
+[Control Panel\Desktop]
+Wallpaper=%ThemeDir%Pictures\Sky.png
+TileWallpaper=0
+WallpaperStyle=10
+
+[AppEvents\Schemes\Apps\.Default\WindowsLogon\.Current]
+DefaultValue=%ThemeDir%Sounds\Hello.wav
+
+[AppEvents\Schemes\Apps\.Default\SystemHand\.Current]
+DefaultValue="%ThemeDir%Sounds\Stop.wav"
+
+[AppEvents\Schemes\Apps\.Default\Maximize\.Current]
+DefaultValue=
+
+[AppEvents\Schemes\Apps\.Default\SystemAsterisk\.Current]
+DefaultValue=%SystemRoot%\Media\Windows XP Ding.wav
+
+[AppEvents\Schemes\Apps\Explorer\EmptyRecycleBin\.Current]
+DefaultValue=%ThemeDir%Sounds\Hello.wav
+
+[AppEvents\Schemes\Apps\.Default\Navigating\.Current]
+DefaultValue=%ThemeDir%Sounds\Hello.wav
+
+[Control Panel\Cursors]
+Arrow=%ThemeDir%Pointers\arrow.cur
+Wait=%ThemeDir%Pointers\busy.ani
+IBeam=
+Hand=%SystemRoot%\cursors\aero_link.cur
+DefaultValue=Test pointers
+"""
+
+
+class ThemeExtras(unittest.TestCase):
+    """A .theme's sounds and pointers (our own files, beside it)."""
+
+    def setUp(self):
+        import tempfile
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+        for rel, data in (("Pictures/Sky.png", b"png"), ("Sounds/Hello.wav", b"RIFFhello"),
+                          ("Sounds/Stop.wav", b"RIFFstop"), ("Pointers/arrow.cur", b"cur"),
+                          ("Pointers/busy.ani", b"ani")):
+            os.makedirs(os.path.dirname(os.path.join(self.dir, rel)), exist_ok=True)
+            with open(os.path.join(self.dir, rel), "wb") as f:
+                f.write(data)
+        path = os.path.join(self.dir, "test.theme")
+        with open(path, "w", encoding="cp1252") as f:
+            f.write(THEME)
+        self.cp = imp.read_theme_file(path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_sounds(self):
+        sounds = imp.theme_sounds(self.cp, self.dir)
+        hello = os.path.join(self.dir, "Sounds", "Hello.wav")
+        # Windows' own Media isn't beside it (Asterisk keeps the default);
+        # Explorer's events have theirs; Navigating has none of ours.
+        self.assertEqual(sounds, {"WindowsLogon": hello, "EmptyRecycleBin": hello,
+                                  "CriticalStop": os.path.join(self.dir, "Sounds", "Stop.wav"),
+                                  "Maximize": ""})
+        pkg = imp.Package()
+        self.assertEqual(imp.import_sounds(pkg, sounds), "sounds/scheme.ini")
+        self.assertEqual(pkg.files["sounds/Hello.wav"], b"RIFFhello")
+        self.assertEqual(pkg.files["sounds/Stop.wav"], b"RIFFstop")
+        scheme = pkg.files["sounds/scheme.ini"].decode()
+        self.assertIn("[Sounds]\nScheme=default\n", scheme)
+        for line in ("WindowsLogon=sounds/Hello.wav", "CriticalStop=sounds/Stop.wav",
+                     "EmptyRecycleBin=sounds/Hello.wav", "Maximize=\n"):
+            self.assertIn(line, scheme)
+        self.assertNotIn("Asterisk", scheme)
+        self.assertIsNone(imp.import_sounds(imp.Package(), {}))
+
+    def test_cursors(self):
+        cursors = imp.theme_cursors(self.cp, self.dir)
+        self.assertEqual(cursors, {"arrow": os.path.join(self.dir, "Pointers", "arrow.cur"),
+                                   "wait": os.path.join(self.dir, "Pointers", "busy.ani")})
+        pkg = imp.Package()
+        self.assertEqual(imp.import_cursors(pkg, cursors, "Test", lambda b: b"XC" + b), "cursors")
+        for name in ("left_ptr", "default", "arrow"):
+            self.assertEqual(pkg.files["cursors/cursors/" + name], b"XCcur")
+        for name in ("wait", "watch"):
+            self.assertEqual(pkg.files["cursors/cursors/" + name], b"XCani")
+        self.assertIn(b"Name=Test\nInherits=default", pkg.files["cursors/index.theme"])
+        # No converter (win2xcur missing): no pointers, rather than broken ones.
+        pkg = imp.Package()
+        self.assertIsNone(imp.import_cursors(pkg, cursors, "Test", lambda b: None))
+        self.assertEqual(pkg.files, {})
+
+    def test_extras(self):
+        pkg = imp.Package()
+        extras = imp.import_theme_extras(self.cp, self.dir, pkg, "Test", lambda b: b"XC")
+        self.assertEqual(extras, [("wallpaper", {"file": "wallpaper/Sky.png", "style": "fill"}),
+                                  ("sounds", {"scheme": "sounds/scheme.ini"}),
+                                  ("cursors", {"theme": "cursors"})])
+        self.assertEqual(pkg.files["wallpaper/Sky.png"], b"png")
+
+
 if __name__ == "__main__":
     unittest.main()

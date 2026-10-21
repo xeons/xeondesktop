@@ -1723,7 +1723,7 @@ def outline_drag(s):
 def display_style(s):
     """Display Properties: picking another style and Apply writes it."""
     s.check(s.ini()["Appearance"]["Style"] == "classic", "the session starts in the classic style")
-    s.launch("xd-desk", "--page", "2")
+    s.launch("xd-desk", "--page", "3")
     s.wait_window(title="Display Properties", state="activated")
     s.settle("appearance")
     # Focus starts on the tabs; the first control after them is the style list.
@@ -1752,7 +1752,7 @@ def display_style(s):
 def window_color(s):
     """Aero: Display Properties' Advanced opens Window Color and Appearance;
     its choices reach desktop.ini on OK, and Cancel leaves them alone."""
-    s.launch("xd-desk", "--page", "2")
+    s.launch("xd-desk", "--page", "3")
     s.wait_window(title="Display Properties", state="activated")
     s.settle("appearance")
     # Tabs, style, scheme, font size, then Advanced.
@@ -1851,7 +1851,7 @@ def display_theme_package(s):
     s.check(not near(hello.pixel(*cap), (255, 128, 0)), f"its caption isn't orange yet "
             f"{hello.pixel(*cap)}")
 
-    s.launch("xd-desk", "--page", "2")
+    s.launch("xd-desk", "--page", "3")
     s.wait_window(title="Display Properties", state="activated")
     props = s.settle("appearance")
     dp = props.changed_box(hello, (0, 0, WIDTH, HEIGHT - 40))
@@ -1909,7 +1909,7 @@ def display_theme_package(s):
     with open(bad, "wb") as f:
         f.write(b"MZ but not really a visual style")
     before = s.settle("before-second")
-    s.launch("xd-desk", "--page", "2", env={"XD_CHOOSE_FILE_ANSWER": bad})
+    s.launch("xd-desk", "--page", "3", env={"XD_CHOOSE_FILE_ANSWER": bad})
     s.wait_window(title="Display Properties", state="activated")
     dp = s.settle("appearance-again").changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
     s.check(dp is not None, f"Display Properties is up again at {dp}")
@@ -1946,7 +1946,7 @@ def display_theme_package(s):
                 full = os.path.join(folder, name)
                 z.write(full, os.path.relpath(full, src))
     before = s.settle("before-third")
-    s.launch("xd-desk", "--page", "2", env={"XD_CHOOSE_FILE_ANSWER": package})
+    s.launch("xd-desk", "--page", "3", env={"XD_CHOOSE_FILE_ANSWER": package})
     s.wait_window(title="Display Properties", state="activated")
     third = s.settle("appearance-third")
     dp = third.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
@@ -1964,6 +1964,207 @@ def display_theme_package(s):
     s.wait(lambda: near(s.shot("blue-frame").pixel(*cap), (0, 0, 255)),
            "the open window's caption to turn blue")
     s.log("ok: and the frame changed again, the old package freed")
+
+
+def write_wav(path, hz):
+    """A short tone of our own (16-bit mono), with the standard library's wave."""
+    import math
+    import struct
+    import wave
+
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(8000)
+        w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * hz * i / 8000)))
+                               for i in range(800)))
+
+
+def write_xcursor(path, size, rgba, hot):
+    """An XCursor file of one solid square, written with libXcursor."""
+    import ctypes
+    import ctypes.util
+
+    class Image(ctypes.Structure):
+        _fields_ = [("version", ctypes.c_uint), ("size", ctypes.c_uint),
+                    ("width", ctypes.c_uint), ("height", ctypes.c_uint),
+                    ("xhot", ctypes.c_uint), ("yhot", ctypes.c_uint),
+                    ("delay", ctypes.c_uint), ("pixels", ctypes.POINTER(ctypes.c_uint32))]
+
+    class Images(ctypes.Structure):
+        _fields_ = [("nimage", ctypes.c_int), ("images", ctypes.POINTER(ctypes.POINTER(Image))),
+                    ("name", ctypes.c_char_p)]
+
+    lib = ctypes.CDLL(ctypes.util.find_library("Xcursor") or "libXcursor.so.1")
+    lib.XcursorImageCreate.restype = ctypes.POINTER(Image)
+    lib.XcursorImagesCreate.restype = ctypes.POINTER(Images)
+    lib.XcursorFilenameSaveImages.argtypes = [ctypes.c_char_p, ctypes.POINTER(Images)]
+    img = lib.XcursorImageCreate(size, size)
+    img.contents.xhot, img.contents.yhot = hot
+    r, g, b, a = rgba
+    for i in range(size * size):
+        img.contents.pixels[i] = (a << 24) | (r << 16) | (g << 8) | b
+    images = lib.XcursorImagesCreate(1)
+    images.contents.images[0] = img
+    images.contents.nimage = 1
+    ok = lib.XcursorFilenameSaveImages(path.encode(), images)
+    lib.XcursorImagesDestroy(images)
+    if not ok:
+        raise Failure(f"libXcursor couldn't write {path}")
+
+
+def write_test_theme(folder, name, rgb):
+    """A theme package that brings more than a style: a wallpaper of one
+    colour (tiled), a sound scheme with two sounds of its own, and an
+    XCursor theme. All made here."""
+    write_test_package(folder, name, [("plain", "Plain", (90, 90, 90))])
+    os.makedirs(os.path.join(folder, "wallpaper"))
+    write_png(os.path.join(folder, "wallpaper", "tile.png"), 32, 32,
+              (rgb[0] << 16) | (rgb[1] << 8) | rgb[2])
+    os.makedirs(os.path.join(folder, "sounds"))
+    write_wav(os.path.join(folder, "sounds", "logon.wav"), 440)
+    write_wav(os.path.join(folder, "sounds", "max.wav"), 880)
+    with open(os.path.join(folder, "sounds", "scheme.ini"), "w") as f:
+        f.write("[Sounds]\nScheme=default\n\n[Events]\nWindowsLogon=sounds/logon.wav\n"
+                "Maximize=sounds/max.wav\nCriticalStop=\n")
+    os.makedirs(os.path.join(folder, "cursors", "cursors"))
+    with open(os.path.join(folder, "cursors", "index.theme"), "w") as f:
+        f.write(f"[Icon Theme]\nName={name} pointers\nInherits=default\n")
+    write_xcursor(os.path.join(folder, "cursors", "cursors", "left_ptr"), 24, (255, 0, 255, 255),
+                  (1, 1))
+    with open(os.path.join(folder, "theme.xml")) as f:
+        xml = f.read()
+    with open(os.path.join(folder, "theme.xml"), "w") as f:
+        f.write(xml.replace("</xdtheme>", '<wallpaper file="wallpaper/tile.png" style="tile"/>'
+                            '<sounds scheme="sounds/scheme.ini"/><cursors theme="cursors"/>'
+                            "</xdtheme>"))
+
+
+def themes_tab_setup(s):
+    themes = os.path.join(s.data, "xeondesktop", "themes")
+    write_test_theme(os.path.join(themes, "testtheme"), "Test Theme", (200, 40, 160))
+    # A package with no more than a style: not a theme.
+    write_test_package(os.path.join(themes, "styleonly"), "Style Only",
+                       [("green", "Green", (0, 200, 0))])
+
+
+@scenario(setup=themes_tab_setup)
+def display_themes_tab(s):
+    """Display Properties opens on XP's Themes tab. Its list holds the
+    packages that bring more than a style, after Windows XP and Windows
+    Classic; choosing one shows its wallpaper in the Sample, and OK writes
+    the package, the wallpaper, the sound scheme and the pointers, each
+    where the settings keep it, with the files unpacked there. Save As...
+    writes a .xdtheme of the current settings, Delete puts it in the Trash,
+    and Windows Classic takes the wallpaper and pointers back."""
+    data = s.data
+    files = os.path.join(data, "xeondesktop", "theme-files", "testtheme")
+    before = s.settle("desktop")
+    s.launch("xd-desk")
+    s.wait_window(title="Display Properties", state="activated")
+    props = s.settle("themes")
+    dp = props.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dp is not None, f"Display Properties is up at {dp}")
+    cx, cy = dp[0] + dp[2] - 3 - 404, dp[1] + dp[3] - 3 - 448
+    sample = (cx + 30, cy + 160, 340, 220)
+    magenta = (200, 40, 160)
+    s.check(share_like(props, sample, magenta) < 0.01, "the Sample has no magenta yet")
+    # The list (Theme: at 20, 98, 206 x 21; 17px rows below it) holds
+    # Windows XP, Windows Classic (this classic session), the package and
+    # Browse...: Style Only brings nothing but a style.
+    combo = (cx + 20, cy + 98)
+    s.inject("move", combo[0] + 196, combo[1] + 10, "click", "sleep", 400,
+             "move", combo[0] + 60, combo[1] + 21 + 2 * 17 + 8, "click", "sleep", 600)
+    chosen = s.settle("theme-chosen")
+    s.check(share_like(chosen, sample, magenta) > 0.2,
+            f"the Sample shows the theme's wallpaper ({share_like(chosen, sample, magenta):.2f})")
+    s.check(os.path.exists(os.path.join(files, "wallpaper", "tile.png")),
+            "choosing it unpacked its wallpaper")
+    s.inject("move", cx + 197, cy + 427, "click")  # OK
+    s.wait_window(title="Display Properties", gone=True)
+
+    def written():
+        c = s.ini()
+        return (c["Appearance"].get("ThemePackage") == "testtheme" and
+                c["Desktop"].get("Wallpaper") == os.path.join(files, "wallpaper", "tile.png") and
+                c["Desktop"].get("WallpaperMode") == "tile" and
+                c["Mouse"].get("CursorTheme") == "xdtheme-testtheme")
+
+    s.wait(written, "desktop.ini to take the theme")
+    s.log("ok: ThemePackage, Wallpaper (unpacked, tiled) and CursorTheme written")
+    sounds = s.ini("sounds.ini")["Events"]
+    s.check(sounds.get("WindowsLogon") == os.path.join(files, "sounds", "logon.wav") and
+            sounds.get("Maximize") == os.path.join(files, "sounds", "max.wav") and
+            sounds.get("CriticalStop") == "" and sounds.get("Exclamation") == "dialog-warning",
+            "sounds.ini has the theme's sounds, no Critical Stop, and Windows Default's others")
+    for f in ("logon.wav", "max.wav"):
+        s.check(os.path.getsize(os.path.join(files, "sounds", f)) > 1000, f"{f} is unpacked")
+    s.check(os.path.exists(os.path.join(data, "icons", "xdtheme-testtheme", "cursors",
+                                        "left_ptr")) and
+            os.path.exists(os.path.join(data, "icons", "xdtheme-testtheme", "index.theme")),
+            "the pointers are installed as an XCursor theme")
+    s.wait(lambda: share_like(s.shot("wallpaper"), (300, 200, 400, 300), magenta) > 0.9,
+           "the desktop to show the theme's wallpaper")
+    s.log("ok: the desktop shows it")
+
+    # Save As... (232, 97 in the client area): the current settings as a
+    # package among the user's themes, then chosen; Delete (309, 97) puts
+    # it in the Trash.
+    saved = os.path.join(data, "xeondesktop", "themes", "Saved.xdtheme")
+    before = s.settle("before-second")
+    s.launch("xd-desk", env={"XD_CHOOSE_FILE_ANSWER": saved})
+    s.wait_window(title="Display Properties", state="activated")
+    dp = s.settle("second").changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dp is not None, f"Display Properties is up again at {dp}")
+    cx, cy = dp[0] + dp[2] - 3 - 404, dp[1] + dp[3] - 3 - 448
+    s.inject("move", cx + 269, cy + 108, "click")
+    s.wait(lambda: os.path.exists(saved), "Save As... to write Saved.xdtheme")
+    import zipfile
+
+    with zipfile.ZipFile(saved) as z:
+        names = z.namelist()
+        xml = z.read("theme.xml").decode()
+        scheme = z.read("sounds/scheme.ini").decode()
+    s.check(names[0] == "theme.xml" and 'name="Saved"' in xml and
+            '<wallpaper file="wallpaper/tile.png" style="tile"/>' in xml and
+            '<cursors theme="cursors"/>' in xml and "cursors/cursors/left_ptr" in names and
+            "sounds/logon.wav" in names and "WindowsLogon=sounds/logon.wav" in scheme and
+            "styles/plain.xml" in names, f"Saved.xdtheme holds the look: {names}")
+    s.settle("saved")
+    s.inject("move", cx + 346, cy + 108, "click", "sleep", 500)
+    s.wait(lambda: not os.path.exists(saved), "Delete to remove Saved.xdtheme")
+    trash = os.path.join(data, "Trash", "files")
+    s.check(os.path.isdir(trash) and any(n.startswith("Saved") for n in os.listdir(trash)),
+            "it's in the Trash")
+    s.inject("move", cx + 278, cy + 427, "click")  # Cancel
+    s.wait_window(title="Display Properties", gone=True)
+    s.check(s.ini()["Appearance"].get("ThemePackage") == "testtheme",
+            "Cancel left the applied theme")
+
+    # Windows Classic: the list's second item.
+    before = s.settle("before-third")
+    s.launch("xd-desk")
+    s.wait_window(title="Display Properties", state="activated")
+    dp = s.settle("third").changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dp is not None, f"Display Properties is up a third time at {dp}")
+    cx, cy = dp[0] + dp[2] - 3 - 404, dp[1] + dp[3] - 3 - 448
+    sample = (cx + 30, cy + 160, 340, 220)
+    combo = (cx + 20, cy + 98)
+    s.inject("move", combo[0] + 196, combo[1] + 10, "click", "sleep", 400,
+             "move", combo[0] + 60, combo[1] + 21 + 17 + 8, "click", "sleep", 600)
+    s.wait(lambda: share_like(s.shot("classic"), sample, magenta) < 0.01,
+           "the Sample to lose the theme's wallpaper")
+    s.inject("move", cx + 197, cy + 427, "click")  # OK
+    s.wait_window(title="Display Properties", gone=True)
+
+    def classic():
+        c = s.ini()
+        return (c["Appearance"].get("ThemePackage") == "" and
+                c["Appearance"].get("Style", "").lower() == "classic" and
+                c["Desktop"].get("Wallpaper") == "" and c["Mouse"].get("CursorTheme") == "")
+
+    s.wait(classic, "Windows Classic to clear the package, wallpaper and pointers")
+    s.log("ok: Windows Classic took them back")
 
 
 @scenario()
@@ -2078,7 +2279,7 @@ def advanced_appearance(s):
     Color 1 drop-down sets red; OK and OK write [CustomScheme], the desktop
     turns red, and the editor shows red again when opened anew."""
     empty = s.settle("desktop")
-    s.launch("xd-desk", "--page", "2")
+    s.launch("xd-desk", "--page", "3")
     s.wait_window(title="Display Properties", state="activated")
     props = s.settle("appearance")
     dp = props.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
@@ -2140,7 +2341,7 @@ def advanced_appearance(s):
 
     # Opened again, the editor starts from what was saved.
     empty = s.settle("desktop-red")
-    s.launch("xd-desk", "--page", "2")
+    s.launch("xd-desk", "--page", "3")
     s.wait_window(title="Display Properties", state="activated")
     props = s.settle("appearance-again")
     dp = props.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
@@ -2159,7 +2360,7 @@ def combo_list_scrolls(s):
     arrow scrolls the list, its thumb drags to the end, and the last item
     (Display Properties' 23rd colour scheme) can be picked; Home, End and
     the page keys move through it too."""
-    s.launch("xd-desk", "--page", "2")
+    s.launch("xd-desk", "--page", "3")
     s.wait_window(title="Display Properties", state="activated")
     # Focus starts on the tabs; Tab goes to the style list, then the colour
     # schemes.
@@ -4003,7 +4204,7 @@ def screen_saver_settings(s):
     (moving, or Blank Screen's black standing still); a saver's Settings
     dialog saves its options on OK (Marquee's text, 3D Pipes' Multiple)."""
     empty = s.settle("desktop")
-    s.launch("xd-desk", "--page", "1")
+    s.launch("xd-desk", "--page", "2")
     s.wait_window(title="Display Properties", state="activated")
     dialog = s.settle("screen-saver-tab").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
     s.check(dialog is not None, f"Display Properties is up at {dialog}")
@@ -4180,7 +4381,7 @@ def identify_monitors(s):
     seconds."""
     s.inject("move", WIDTH // 2, HEIGHT // 2)  # Display Properties opens on the first
     empty = s.settle("desktop")
-    s.launch("xd-desk", "--page", "4")
+    s.launch("xd-desk", "--page", "5")
     s.wait_window(title="Display Properties", state="activated")
     tab = s.settle("settings-tab")
     x, y, w, h = tab.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
@@ -4259,7 +4460,7 @@ def display_adaptive_sync(s):
         s.log("wlr-randr isn't installed: wlr-output-management not checked")
 
     empty = s.settle("desktop")
-    s.launch("xd-desk", "--page", "4")
+    s.launch("xd-desk", "--page", "5")
     s.wait_window(title="Display Properties", state="activated")
     tab = s.settle("settings-tab")
     x, y, w, h = tab.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
@@ -5336,7 +5537,7 @@ def night_light(s):
     s.check(not gamma_trace(s) or "night-light" not in "".join(gamma_trace(s)),
             "night light starts off")  # fmt: skip
     empty = s.settle("desktop")
-    s.launch("xd-desk", "--page", "5")
+    s.launch("xd-desk", "--page", "6")
     s.wait_window(title="Display Properties", state="activated")
     props, x, y = client_origin(s, empty, "Display Properties", 404, 448)
 

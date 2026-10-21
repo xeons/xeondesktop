@@ -4,8 +4,9 @@ xd\-choose\-file \- pick a file and print its path
 .SH SYNOPSIS
 .SY xd\-choose\-file
 .OP \-\-title text
-.RB [ \-\-images | \-\-programs | \-\-styles ]
+.RB [ \-\-images | \-\-programs | \-\-styles | \-\-themes ]
 .OP \-\-folder dir
+.OP \-\-save name
 .YS
 .SH DESCRIPTION
 .B xd\-choose\-file
@@ -30,6 +31,18 @@ files.
 .B \-\-styles
 Offer visual styles first (Windows\(aq .msstyles and .theme files, and
 XeonDesktop theme packages, .xdtheme), then all files.
+.TP
+.B \-\-themes
+Offer themes first (Windows\(aq .theme files and XeonDesktop theme
+packages, .xdtheme; with
+.BR \-\-save ,
+only .xdtheme), then all files.
+.TP
+.BI \-\-save " name"
+Ask for a file to save to, with
+.I name
+in the box, instead of one to open; an existing file is replaced only
+when the user confirms.
 .TP
 .BI \-\-folder " dir"
 Start in

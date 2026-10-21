@@ -65,6 +65,14 @@ static const char *attr(const char **names, const char **values, const char *nam
     return nullptr;
 }
 
+/* A path in the package, as the loader takes them: relative, no "..". */
+static void set_member(char **out, const char *path) {
+    g_free(*out);
+    *out = path != nullptr && path[0] != '\0' && path[0] != '/' && strstr(path, "..") == nullptr
+               ? g_strdup(path)
+               : nullptr;
+}
+
 typedef struct info_ctx {
     xd_pkg_info *info;
     GArray *variants; /* xd_pkg_variant_info */
@@ -97,6 +105,17 @@ static void info_start(G_GNUC_UNUSED GMarkupParseContext *mc, const char *elemen
     } else if (strcmp(element, "scaling") == 0) {
         const char *f = attr(names, values, "filter");
         c->info->has_filter = f != nullptr && xd_image_filter_from_name(f, &c->info->filter);
+    } else if (strcmp(element, "wallpaper") == 0) {
+        set_member(&c->info->wallpaper, attr(names, values, "file"));
+        const char *style = attr(names, values, "style");
+        g_free(c->info->wallpaper_style);
+        c->info->wallpaper_style = c->info->wallpaper != nullptr && style != nullptr
+                                       ? g_ascii_strdown(style, -1)
+                                       : nullptr;
+    } else if (strcmp(element, "sounds") == 0) {
+        set_member(&c->info->sounds, attr(names, values, "scheme"));
+    } else if (strcmp(element, "cursors") == 0) {
+        set_member(&c->info->cursors, attr(names, values, "theme"));
     }
 }
 
@@ -137,5 +156,9 @@ void xd_pkg_info_clear(xd_pkg_info *info) {
     }
     g_free(info->variants);
     g_free(info->name);
+    g_free(info->wallpaper);
+    g_free(info->wallpaper_style);
+    g_free(info->sounds);
+    g_free(info->cursors);
     *info = (xd_pkg_info){0};
 }

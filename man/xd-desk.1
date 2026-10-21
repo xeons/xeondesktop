@@ -7,11 +7,24 @@ xd\-desk \- Display Properties
 .YS
 .SH DESCRIPTION
 .B xd\-desk
-is Display Properties (Control Panel > Display), with Windows 2000's tabs
-and one for what only Linux has:
+is Display Properties (Control Panel > Display), with Windows XP's tabs,
+Windows 2000's Effects, and one for what only Linux has:
 .TP
-.B Background
-The wallpaper and how it is placed.
+.B Themes
+A theme sets the visual style, the wallpaper, the sound scheme and the
+mouse pointers together, as XP's did: Windows XP and Windows Classic,
+and the installed theme packages that bring a wallpaper, sounds or
+pointers (see
+.IR docs/THEMES.md ),
+with a sample of the desktop. A theme changed in the other tabs shows as
+"(Modified)". Save As... saves the current settings as a theme package
+(.xdtheme), Delete moves one of the user's own to the Trash, and
+Browse... (the list's last item) installs a package or converts a Windows
+theme (.theme), its wallpaper, sounds and pointers with it, with
+.BR xd\-theme\-import .
+.TP
+.B Desktop
+The wallpaper and how it is placed (Windows 2000's Background).
 .TP
 .B Screen Saver
 The screen saver, its settings and a preview, the Wait, Password protected,
@@ -59,8 +72,8 @@ which the compositor, the shell and the other programs follow at once.
 .BI \-\-page " n"
 Open on tab
 .IR n ,
-from 0 (Background) to 5 (Linux); the default is 2 (Appearance), as
-Windows' desk.cpl.
+from 0 (Themes) to 6 (Linux): 1 Desktop, 2 Screen Saver, 3 Appearance,
+4 Effects, 5 Settings. The default is 0 (Themes), as XP's desk.cpl.
 .TP
 .BI \-\-style " style"
 .TQ
@@ -82,6 +95,15 @@ and
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/monitors.ini
 The monitors' settings.
+.TP
+.I $XDG_CONFIG_HOME/xeondesktop/sounds.ini
+The sound scheme, which a theme may set.
+.TP
+.I $XDG_DATA_HOME/xeondesktop/theme-files/
+.TQ
+.I $XDG_DATA_HOME/icons/xdtheme-*/
+A theme's wallpaper and sounds, and its pointers, unpacked when it is
+chosen.
 .TP
 .I /usr/share/xeondesktop/schemes/
 The colour schemes.

@@ -71,6 +71,7 @@
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
 #include "../src/settings/themepkg.h"
+#include "../src/settings/themeset.h"
 #include "../src/settings/themes.h"
 /* For GSettings in memory, never the user's dconf. */
 #define G_SETTINGS_ENABLE_BACKEND
@@ -2592,6 +2593,152 @@ static void test_theme_packages(void) {
     g_free(alpha_path);
     g_free(one);
     g_free(two);
+    rm_tree(root);
+    g_free(root);
+}
+
+/* Themes (Display Properties' Themes tab): what a package brings besides
+ * its style, unpacked and put into the settings, and Save As... */
+static void test_theme_sets(void) {
+    char *root = g_dir_make_tmp("xd-themeset-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    char *data = g_build_filename(root, "data", nullptr);
+    put_file(root, "pkgs/Sky/theme.xml",
+             "<xdtheme version=\"1\" name=\"Sky\" base=\"luna\">"
+             "<variant id=\"v\" name=\"Blue\" style=\"styles/v.xml\"/>"
+             "<wallpaper file=\"wallpaper/sky.png\" style=\"Tile\"/>"
+             "<sounds scheme=\"sounds/scheme.ini\"/><cursors theme=\"cursors\"/></xdtheme>");
+    put_file(root, "pkgs/Sky/styles/v.xml", "<style/>");
+    put_file(root, "pkgs/Sky/wallpaper/sky.png", "png");
+    put_file(root, "pkgs/Sky/sounds/hi.wav", "RIFFhi");
+    put_file(root, "pkgs/Sky/sounds/scheme.ini",
+             "[Sounds]\nScheme=default\n[Events]\nWindowsLogon=sounds/hi.wav\nMaximize=\n"
+             "Question=dialog-question\nMinimize=../../etc/passwd\n");
+    put_file(root, "pkgs/Sky/cursors/index.theme", "[Icon Theme]\nName=Sky\n");
+    put_file(root, "pkgs/Sky/cursors/cursors/left_ptr", "xcur");
+    put_file(root, "pkgs/Plain/theme.xml",
+             "<xdtheme name=\"Plain\"><variant id=\"v\" style=\"s.xml\"/>"
+             "<wallpaper file=\"../x.png\"/></xdtheme>");
+    char *pkgs = g_build_filename(root, "pkgs", nullptr);
+    const char *dirs[] = {pkgs, nullptr};
+    GPtrArray *list = xd_theme_packages_list(dirs);
+    CHECK(list->len == 2);
+    const xd_installed_package *plain = package_at(list, 0), *sky = package_at(list, 1);
+    if (plain == nullptr || sky == nullptr) {
+        g_ptr_array_unref(list);
+        return;
+    }
+    /* A path out of the package is none: Plain brings nothing more. */
+    CHECK(!xd_theme_set_has_extras(&plain->info) && xd_theme_set_has_extras(&sky->info));
+    CHECK(strcmp(sky->info.wallpaper_style, "tile") == 0);
+
+    xd_settings s;
+    xd_settings_defaults(&s);
+    snprintf(s.theme_package, sizeof(s.theme_package), "Sky");
+    xd_sound_scheme sounds;
+    xd_sound_scheme_init(&sounds, XD_SOUNDS_NONE);
+    bool sounds_set = false;
+    GError *error = nullptr;
+    /* Worked out without unpacking: nothing written. */
+    xd_settings probe = s;
+    CHECK(xd_theme_set_extras(sky, data, false, &probe, &sounds, &sounds_set, &error));
+    CHECK(!g_file_test(data, G_FILE_TEST_EXISTS));
+    CHECK(xd_theme_set_extras(sky, data, true, &s, &sounds, &sounds_set, &error));
+    CHECK(error == nullptr && sounds_set);
+    char *files = g_build_filename(data, "xeondesktop", "theme-files", "Sky", nullptr);
+    char *wall = g_build_filename(files, "wallpaper", "sky.png", nullptr);
+    char *hi = g_build_filename(files, "sounds", "hi.wav", nullptr);
+    char *cur = g_build_filename(data, "icons", "xdtheme-Sky", "cursors", "left_ptr", nullptr);
+    char *index = g_build_filename(data, "icons", "xdtheme-Sky", "index.theme", nullptr);
+    CHECK(strcmp(s.wallpaper, wall) == 0 && s.wallpaper_mode == XD_WALLPAPER_TILE);
+    CHECK(strcmp(probe.wallpaper, wall) == 0);
+    CHECK(strcmp(s.mouse.cursor_theme, "xdtheme-Sky") == 0);
+    CHECK(g_file_test(wall, G_FILE_TEST_IS_REGULAR) && g_file_test(hi, G_FILE_TEST_IS_REGULAR));
+    CHECK(g_file_test(cur, G_FILE_TEST_IS_REGULAR) && g_file_test(index, G_FILE_TEST_IS_REGULAR));
+    /* Its sounds, its silences and theme names; a bad value keeps the
+     * scheme's (Windows Default: the theme's base). */
+    CHECK(sounds.base == XD_SOUNDS_DEFAULT && strcmp(sounds.sounds[XD_SOUND_LOGON], hi) == 0);
+    CHECK(strcmp(sounds.sounds[XD_SOUND_MAXIMIZE], "") == 0);
+    CHECK(strcmp(sounds.sounds[XD_SOUND_QUESTION], "dialog-question") == 0);
+    CHECK(strcmp(sounds.sounds[XD_SOUND_MINIMIZE], "") == 0); /* Windows Default's */
+    CHECK(strcmp(sounds.sounds[XD_SOUND_EXCLAMATION], "dialog-warning") == 0);
+    CHECK(xd_theme_set_matches(sky, data, &s, &sounds));
+    xd_settings changed = s;
+    changed.wallpaper_mode = XD_WALLPAPER_CENTER;
+    CHECK(!xd_theme_set_matches(sky, data, &changed, &sounds));
+    changed = s;
+    changed.mouse.cursor_theme[0] = '\0';
+    CHECK(!xd_theme_set_matches(sky, data, &changed, &sounds));
+    CHECK(xd_sound_scheme_set(&sounds, XD_SOUND_MAXIMIZE, "bell"));
+    CHECK(!xd_theme_set_matches(sky, data, &s, &sounds));
+    CHECK(xd_sound_scheme_set(&sounds, XD_SOUND_MAXIMIZE, ""));
+    char name[64];
+    CHECK(!xd_theme_set_cursor_theme("a-name-far-too-long-for-a-cursor-theme-directory-name-of-sixty-four",
+                                     name, sizeof(name)));
+
+#if XD_HAVE_LIBARCHIVE
+    /* Save As...: Sky's style and the current wallpaper, sounds and
+     * cursors, as a zip; read back, and chosen in its turn. */
+    char *saved = g_build_filename(pkgs, "Mine.xdtheme", nullptr);
+    char *icons = g_build_filename(data, "icons", nullptr);
+    const char *icon_dirs[] = {icons, nullptr};
+    CHECK(xd_theme_set_save(saved, "Mine", &s, &sounds, sky->path, "v", icon_dirs, &error));
+    CHECK(error == nullptr);
+    g_clear_error(&error);
+    GBytes *xml = xd_pkg_read_member(saved, "theme.xml", nullptr);
+    CHECK(xml != nullptr && strstr(g_bytes_get_data(xml, nullptr), "name=\"Mine\"") != nullptr);
+    if (xml != nullptr)
+        g_bytes_unref(xml);
+    GBytes *scheme = xd_pkg_read_member(saved, "sounds/scheme.ini", nullptr);
+    CHECK(scheme != nullptr &&
+          strstr(g_bytes_get_data(scheme, nullptr), "WindowsLogon=sounds/hi.wav") != nullptr);
+    if (scheme != nullptr)
+        g_bytes_unref(scheme);
+    GPtrArray *again = xd_theme_packages_list(dirs);
+    const xd_installed_package *mine = package_at(again, 0);
+    CHECK(mine != nullptr && strcmp(mine->name, "Mine") == 0);
+    if (mine != nullptr) {
+        CHECK(mine->info.variant_count == 1 && strcmp(mine->info.variants[0].id, "v") == 0);
+        CHECK(g_strcmp0(mine->info.wallpaper, "wallpaper/sky.png") == 0 &&
+              g_strcmp0(mine->info.wallpaper_style, "tile") == 0 &&
+              g_strcmp0(mine->info.cursors, "cursors") == 0);
+        xd_settings t = s;
+        xd_sound_scheme other;
+        xd_sound_scheme_init(&other, XD_SOUNDS_NONE);
+        snprintf(t.theme_package, sizeof(t.theme_package), "Mine");
+        CHECK(xd_theme_set_extras(mine, data, true, &t, &other, &sounds_set, nullptr));
+        char *hi2 = g_build_filename(data, "xeondesktop", "theme-files", "Mine", "sounds",
+                                     "hi.wav", nullptr);
+        CHECK(strcmp(other.sounds[XD_SOUND_LOGON], hi2) == 0 &&
+              g_file_test(hi2, G_FILE_TEST_IS_REGULAR));
+        CHECK(strcmp(t.mouse.cursor_theme, "xdtheme-Mine") == 0);
+        CHECK(xd_theme_set_matches(mine, data, &t, &other));
+        g_free(hi2);
+        xd_sound_scheme_free(&other);
+    }
+    g_ptr_array_unref(again);
+    /* A missing member: an error, nothing unpacked. */
+    char *nowhere = g_build_filename(root, "nowhere", nullptr);
+    CHECK(!xd_pkg_extract(saved, "wallpaper/none.png", nowhere, &error) && error != nullptr);
+    g_clear_error(&error);
+    CHECK(!xd_pkg_extract(saved, "../theme.xml", nowhere, &error) && error != nullptr);
+    g_clear_error(&error);
+    CHECK(!g_file_test(nowhere, G_FILE_TEST_EXISTS));
+    g_free(nowhere);
+    g_free(icons);
+    g_free(saved);
+#endif
+    xd_sound_scheme_free(&sounds);
+    g_free(index);
+    g_free(cur);
+    g_free(hi);
+    g_free(wall);
+    g_free(files);
+    g_ptr_array_unref(list);
+    g_free(pkgs);
+    g_free(data);
     rm_tree(root);
     g_free(root);
 }
@@ -8802,6 +8949,7 @@ int main(void) {
     test_file_types_edit();
     test_theme_settings();
     test_theme_packages();
+    test_theme_sets();
     test_qt_style();
     test_qt_palette();
     test_fonts();

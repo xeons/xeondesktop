@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: MIT
  * xd-desk: Display Properties.
  *
- * Tabs follow Windows 2000: Background, Screen Saver, Appearance, Effects,
- * Settings. Changes are kept in `pending` and written to desktop.ini on
- * Apply/OK; the compositor and shell pick the file up immediately.
+ * Tabs follow Windows 2000 (Background, Screen Saver, Appearance, Effects,
+ * Settings) after XP's Themes. Changes are kept in `pending` (and the
+ * sound scheme a theme brings in `pending_sounds`) and written to
+ * desktop.ini (and sounds.ini) on Apply/OK; the compositor and shell pick
+ * the file up immediately.
  */
 #include <dirent.h>
 #include <errno.h>
@@ -28,6 +30,7 @@
 #include "../settings/soundplay.h"
 #include "../settings/themepkg.h"
 #include "../settings/themes.h"
+#include "../settings/themeset.h"
 #include "../ui/image.h"
 #include "../ui/ui.h"
 #include "common.h"
@@ -36,10 +39,37 @@
 #include "desk_nightlight.h"
 #include "desk_saver.h"
 
-enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS, PAGE_LINUX };
+enum {
+    PAGE_THEMES,
+    PAGE_BACKGROUND,
+    PAGE_SCREENSAVER,
+    PAGE_APPEARANCE,
+    PAGE_EFFECTS,
+    PAGE_SETTINGS,
+    PAGE_LINUX
+};
 
 /* What xd-choose-file is choosing. */
-typedef enum chooser_kind { CHOOSE_WALLPAPER, CHOOSE_ICON, CHOOSE_STYLE } chooser_kind;
+typedef enum chooser_kind {
+    CHOOSE_WALLPAPER,
+    CHOOSE_ICON,
+    CHOOSE_STYLE,
+    CHOOSE_THEME,      /* the Themes tab's Browse... */
+    CHOOSE_THEME_SAVE, /* ...and Save As... */
+} chooser_kind;
+
+/* What an item of the Themes tab's list stands for. */
+typedef enum theme_kind {
+    THEME_CURRENT, /* "My Current Theme", or the last one "(Modified)" */
+    THEME_XP,      /* Windows XP: Luna, Default (blue), Bliss (ours: Rolling Hills) */
+    THEME_CLASSIC, /* Windows Classic */
+    THEME_PACKAGE,
+    THEME_BROWSE,
+} theme_kind;
+typedef struct theme_item {
+    theme_kind kind;
+    guint package; /* THEME_PACKAGE: in `packages` */
+} theme_item;
 
 /* One monitor in the Settings tab. */
 typedef struct disp_head {
@@ -56,6 +86,18 @@ typedef struct desk {
     xd_settings pending;
     xd_widget *apply;
     int page;
+    /* The sound scheme (sounds.ini), which a theme may change, as loaded
+     * and as pending. */
+    xd_sound_scheme saved_sounds;
+    xd_sound_scheme pending_sounds;
+
+    /* Themes */
+    xd_widget *theme_combo;
+    xd_widget *theme_save;
+    xd_widget *theme_delete;
+    xd_widget *theme_preview;
+    GArray *theme_items; /* theme_item, as the list shows them */
+    bool theme_import;   /* Browse... is importing a .theme for the Themes tab */
 
     /* Background */
     char **wallpapers; /* paths; index 0 = (None) = nullptr */
@@ -199,18 +241,43 @@ typedef struct desk {
 
 /* ---- helpers --------------------------------------------------------------------- */
 
+static bool sounds_equal(const xd_sound_scheme *a, const xd_sound_scheme *b) {
+    if (a->base != b->base)
+        return false;
+    for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++) {
+        if (g_strcmp0(a->sounds[i], b->sounds[i]) != 0)
+            return false;
+    }
+    return true;
+}
+
+static void copy_sounds(xd_sound_scheme *to, const xd_sound_scheme *from) {
+    xd_sound_scheme_free(to);
+    xd_sound_scheme_init(to, from->base);
+    for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++)
+        (void)xd_sound_scheme_set(to, (xd_sound_event)i, from->sounds[i]);
+}
+
 static void changed(desk *d) {
-    xd_widget_set_enabled(d->apply,
-                          d->display_dirty || !xd_settings_equal(&d->saved, &d->pending));
+    xd_widget_set_enabled(d->apply, d->display_dirty ||
+                                        !xd_settings_equal(&d->saved, &d->pending) ||
+                                        !sounds_equal(&d->saved_sounds, &d->pending_sounds));
     xd_widget_redraw(d->apply);
 }
 
 static void update_animation(desk *d);
+static void fill_theme_list(desk *d);
 
 static void on_page(xd_widget *w, void *user) {
     desk *d = user;
     d->page = xd_widget_selected(w);
     update_animation(d);
+    /* What the other tabs changed shows as the theme "(Modified)". */
+    if (d->page == PAGE_THEMES && d->theme_combo != nullptr) {
+        fill_theme_list(d);
+        xd_widget_redraw(d->theme_combo);
+        xd_widget_redraw(d->theme_preview);
+    }
 }
 
 /* Pending appearance as a theme for previews: with the pending theme
@@ -354,14 +421,10 @@ static void load_wallpapers(desk *d) {
         qsort(d->wallpapers + 1, d->wallpaper_count - 1, sizeof(char *), compare_wallpapers);
 }
 
-static void draw_bg_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t, void *user) {
-    (void)w;
-    desk *d = user;
-    xd_rect screen = draw_monitor(cr, r, t, primary_aspect(d));
-    xd_theme pt;
-    pending_theme(d, t->scale, &pt);
-    xd_fill_rect(cr, screen, xd_sys(&pt, XD_COLOR_BACKGROUND));
-
+/* The pending wallpaper over the desktop colour, as the desktop paints
+ * it, into `screen` (the Background and Themes tabs' previews). */
+static void paint_pending_desktop(desk *d, cairo_t *cr, xd_rect screen, const xd_theme *pt) {
+    xd_fill_rect(cr, screen, xd_sys(pt, XD_COLOR_BACKGROUND));
     if (strcmp(d->preview_path, d->pending.wallpaper) != 0) {
         if (d->preview_image != nullptr)
             cairo_surface_destroy(d->preview_image);
@@ -382,6 +445,15 @@ static void draw_bg_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme
     if (d->preview_image != nullptr && d->preview_full_w > 0)
         scale *= (double)d->preview_full_w / cairo_image_surface_get_width(d->preview_image);
     xd_image_paint_wallpaper(cr, d->preview_image, screen, d->pending.wallpaper_mode, scale);
+}
+
+static void draw_bg_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t, void *user) {
+    (void)w;
+    desk *d = user;
+    xd_rect screen = draw_monitor(cr, r, t, primary_aspect(d));
+    xd_theme pt;
+    pending_theme(d, t->scale, &pt);
+    paint_pending_desktop(d, cr, screen, &pt);
 }
 
 static void on_wallpaper(xd_widget *w, void *user) {
@@ -423,6 +495,8 @@ static void items_chose_icon(desk *d, const char *path);
 static void items_update_buttons(desk *d);
 static void style_chosen(desk *d, const char *path);
 static void update_style_browse(desk *d);
+static void theme_save_to(desk *d, const char *path);
+static void update_theme_buttons(desk *d);
 
 /* `program` beside this one (a build tree, or the install's bindir), else
  * from PATH, with `args`. A GSubprocess, so that GLib reaps it. */
@@ -492,14 +566,31 @@ static void chooser_output(void *user) {
     update_style_browse(d);
     if (path.len > 0) {
         char *p = xd_str_dup_cstr(path);
-        if (d->choosing == CHOOSE_WALLPAPER)
+        if (d->choosing == CHOOSE_WALLPAPER) {
             choose_wallpaper(d, p);
-        else if (d->choosing == CHOOSE_STYLE)
+        } else if (d->choosing == CHOOSE_STYLE) {
             style_chosen(d, p);
-        else if (d->items != nullptr)
+        } else if (d->choosing == CHOOSE_THEME) {
+            /* Chosen as a theme once it's installed (select_installed). */
+            d->theme_import = true;
+            style_chosen(d, p);
+            /* Unless an import goes on in the background, it's done (or
+             * failed with a message). */
+            if (d->import == nullptr)
+                d->theme_import = false;
+        } else if (d->choosing == CHOOSE_THEME_SAVE) {
+            theme_save_to(d, p);
+        } else if (d->items != nullptr) {
             items_chose_icon(d, p);
+        }
         xd_free(p);
     }
+    /* The Themes list leaves Browse... for what it shows now. */
+    if (d->choosing == CHOOSE_THEME || d->choosing == CHOOSE_THEME_SAVE) {
+        fill_theme_list(d);
+        xd_widget_redraw(d->theme_combo);
+    }
+    update_theme_buttons(d);
     xd_strbuf_clear(&d->chooser_out);
     if (d->items != nullptr)
         items_update_buttons(d);
@@ -521,6 +612,7 @@ static bool start_chooser(desk *d, const char *const *args, chooser_kind what) {
     d->choosing = what;
     xd_widget_set_enabled(d->browse, false);
     update_style_browse(d);
+    update_theme_buttons(d);
     if (d->items != nullptr)
         items_update_buttons(d);
     return true;
@@ -1423,7 +1515,10 @@ static void error_box(desk *d, const char *text) {
 static void update_style_browse(desk *d) {
     if (d->style_browse != nullptr)
         xd_widget_set_enabled(d->style_browse, d->chooser_src == nullptr && d->import == nullptr);
+    update_theme_buttons(d);
 }
+
+static void theme_choose_installed(desk *d, const char *name);
 
 /* After installing package `name`: the list read again, and it chosen. */
 static void select_installed(desk *d, const char *name) {
@@ -1445,6 +1540,14 @@ static void select_installed(desk *d, const char *name) {
     }
     xd_widget_redraw(d->style_combo);
     appearance_changed(d);
+    if (d->theme_import) {
+        /* Browse... in the Themes tab: chosen as a theme, with its
+         * wallpaper, sounds and cursors. */
+        d->theme_import = false;
+        theme_choose_installed(d, name);
+    }
+    fill_theme_list(d);
+    xd_widget_redraw(d->theme_combo);
 }
 
 /* The name to install `stem` under in `dir`: the stem, unless a folder of
@@ -1565,6 +1668,7 @@ static void import_finished(desk *d, bool ok) {
     if (ok) {
         select_installed(d, d->import_name);
     } else {
+        d->theme_import = false;
         (void)g_remove(d->import_part);
         /* xd-theme-import says why on its last line ("needs pefile..."). */
         char **lines = g_strsplit(xd_strbuf_cstr(&d->import_out), "\n", -1);
@@ -1715,6 +1819,423 @@ static void on_style_browse([[maybe_unused]] xd_widget *w, void *user) {
     const char *args[] = {"--styles", "--title", "Open Visual Style", "--folder",
                           home != nullptr ? home : "/", nullptr};
     start_chooser(d, args, CHOOSE_STYLE);
+}
+
+/* ---- Themes ---------------------------------------------------------------------- */
+
+/* XP's Themes tab: a theme sets the visual style with its colours, the
+ * wallpaper, the sound scheme and the pointers together. Ours are the
+ * theme packages that bring more than a style, and XP's two built in. */
+
+/* Windows XP's Bliss: ours is Rolling Hills, in the source tree's data/
+ * or installed beside the other wallpapers. "" if it isn't there. */
+static void xp_wallpaper(char *out, size_t cap) {
+    out[0] = '\0';
+    xd_strbuf data = {0};
+    if (xd_data_dir(&data)) {
+        static const char *const places[] = {"wallpapers", "../wallpapers/xeondesktop"};
+        for (size_t i = 0; i < XD_ARRAY_LEN(places) && out[0] == '\0'; i++) {
+            char *path = g_build_filename(xd_strbuf_cstr(&data), places[i], "Rolling Hills.jpg",
+                                          nullptr);
+            char *canon = g_canonicalize_filename(path, nullptr);
+            if (g_file_test(canon, G_FILE_TEST_IS_REGULAR) && strlen(canon) < cap)
+                memcpy(out, canon, strlen(canon) + 1);
+            g_free(canon);
+            g_free(path);
+        }
+    }
+    xd_strbuf_free(&data);
+}
+
+/* The installed scheme that is Windows XP style's Default (blue). */
+static const char *luna_blue_scheme(const desk *d) {
+    for (size_t i = 0; i < d->schemes.count; i++) {
+        if (scheme_luna_color(d, i) == XD_LUNA_BLUE)
+            return d->schemes.stems[i];
+    }
+    return "";
+}
+
+static bool builtin_matches(const desk *d, theme_kind kind) {
+    const xd_settings *s = &d->pending;
+    if (s->theme_package[0] != '\0' || s->font_size != XD_FONT_NORMAL ||
+        s->custom_scheme.color_mask != 0 || s->custom_scheme.metric_mask != 0 ||
+        s->custom_scheme.font_mask != 0 || s->mouse.cursor_theme[0] != '\0')
+        return false;
+    if (kind == THEME_CLASSIC)
+        return s->style == XD_STYLE_CLASSIC && s->scheme[0] == '\0' && s->wallpaper[0] == '\0';
+    char wallpaper[sizeof(s->wallpaper)];
+    xp_wallpaper(wallpaper, sizeof(wallpaper));
+    return s->style == XD_STYLE_LUNA && strcmp(s->scheme, luna_blue_scheme(d)) == 0 &&
+           strcmp(s->wallpaper, wallpaper) == 0 &&
+           (wallpaper[0] == '\0' || s->wallpaper_mode == XD_WALLPAPER_STRETCH);
+}
+
+static const char *package_label(const xd_installed_package *p) {
+    return p->info.name[0] != '\0' ? p->info.name : p->name;
+}
+
+static const xd_installed_package *theme_package_at(const desk *d, const theme_item *it) {
+    return it->kind == THEME_PACKAGE && it->package < d->packages->len
+               ? g_ptr_array_index(d->packages, it->package)
+               : nullptr;
+}
+
+static const theme_item *selected_theme(const desk *d) {
+    int i = d->theme_combo != nullptr ? xd_widget_selected(d->theme_combo) : -1;
+    return i >= 0 && (guint)i < d->theme_items->len
+               ? &g_array_index(d->theme_items, theme_item, (guint)i)
+               : nullptr;
+}
+
+/* Delete: a package of the user's own (a .xdtheme in their themes, which
+ * Browse... and Save As... put there), not the one applied. */
+static bool theme_deletable(const desk *d, const xd_installed_package *p) {
+    if (p == nullptr || !g_str_has_suffix(p->path, ".xdtheme") ||
+        strcmp(p->name, d->saved.theme_package) == 0)
+        return false;
+    char *dir = xd_theme_package_user_dir();
+    char *parent = g_path_get_dirname(p->path);
+    bool own = strcmp(dir, parent) == 0;
+    g_free(parent);
+    g_free(dir);
+    return own;
+}
+
+static void update_theme_buttons(desk *d) {
+    if (d->theme_combo == nullptr)
+        return;
+    bool idle = d->chooser_src == nullptr && d->import == nullptr;
+    const theme_item *it = selected_theme(d);
+    xd_widget_set_enabled(d->theme_save, idle);
+    xd_widget_set_enabled(d->theme_delete,
+                          idle && it != nullptr && theme_deletable(d, theme_package_at(d, it)));
+    xd_widget_set_enabled(d->theme_combo, idle);
+    xd_widget_redraw(d->theme_save);
+    xd_widget_redraw(d->theme_delete);
+}
+
+static void add_theme_item(desk *d, const char *label, theme_kind kind, guint package) {
+    theme_item it = {.kind = kind, .package = package};
+    g_array_append_val(d->theme_items, it);
+    xd_widget_add_item(d->theme_combo, label);
+}
+
+/* The list, with the theme the pending settings are selected; when they
+ * are none of them, first "My Current Theme", or the theme they started
+ * from "(Modified)", as XP shows them. */
+static void fill_theme_list(desk *d) {
+    if (d->theme_combo == nullptr)
+        return;
+    xd_widget_clear_items(d->theme_combo);
+    g_array_set_size(d->theme_items, 0);
+    int current = -1;
+    const xd_installed_package *base = nullptr;
+    for (guint i = 0; i < d->packages->len && current < 0; i++) {
+        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
+        if (!xd_theme_set_has_extras(&p->info))
+            continue;
+        if (strcmp(p->name, d->pending.theme_package) == 0)
+            base = p;
+        if (xd_theme_set_matches(p, nullptr, &d->pending, &d->pending_sounds))
+            current = (int)i;
+    }
+    bool xp = builtin_matches(d, THEME_XP), classic = builtin_matches(d, THEME_CLASSIC);
+    if (current < 0 && !xp && !classic) {
+        char *label = nullptr;
+        if (base != nullptr)
+            label = g_strdup_printf("%s (Modified)", package_label(base));
+        else if (d->pending.theme_package[0] == '\0' && d->pending.style == XD_STYLE_LUNA)
+            label = g_strdup("Windows XP (Modified)");
+        else if (d->pending.theme_package[0] == '\0' && d->pending.style == XD_STYLE_CLASSIC)
+            label = g_strdup("Windows Classic (Modified)");
+        else
+            label = g_strdup("My Current Theme");
+        add_theme_item(d, label, THEME_CURRENT, 0);
+        g_free(label);
+    }
+    int select = 0;
+    if (xp)
+        select = (int)d->theme_items->len;
+    add_theme_item(d, "Windows XP", THEME_XP, 0);
+    if (classic)
+        select = (int)d->theme_items->len;
+    add_theme_item(d, "Windows Classic", THEME_CLASSIC, 0);
+    for (guint i = 0; i < d->packages->len; i++) {
+        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
+        if (!xd_theme_set_has_extras(&p->info))
+            continue;
+        if ((int)i == current)
+            select = (int)d->theme_items->len;
+        add_theme_item(d, package_label(p), THEME_PACKAGE, i);
+    }
+    add_theme_item(d, "Browse...", THEME_BROWSE, 0);
+    xd_widget_select(d->theme_combo, select);
+    update_theme_buttons(d);
+}
+
+/* After a theme changed `pending`: the other tabs show its choices. */
+static void theme_applied(desk *d) {
+    if (d->pending.wallpaper[0] != '\0') {
+        char *path = g_strdup(d->pending.wallpaper); /* choose_wallpaper writes it there */
+        choose_wallpaper(d, path);
+        g_free(path);
+    } else {
+        xd_widget_select(d->wallpaper_list, 0);
+        xd_widget_redraw(d->bg_preview);
+    }
+    xd_widget_select(d->wallpaper_mode, (int)d->pending.wallpaper_mode);
+    fill_styles(d);
+    xd_widget_redraw(d->style_combo);
+    appearance_changed(d);
+    fill_theme_list(d);
+    xd_widget_redraw(d->theme_combo);
+    xd_widget_redraw(d->theme_preview);
+    changed(d);
+}
+
+static void choose_builtin(desk *d, theme_kind kind) {
+    bool xp = kind == THEME_XP;
+    d->pending.theme_package[0] = '\0';
+    d->pending.theme_variant[0] = '\0';
+    set_style(d, xp ? XD_STYLE_LUNA : XD_STYLE_CLASSIC);
+    snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s", xp ? luna_blue_scheme(d) : "");
+    d->pending.font_size = XD_FONT_NORMAL;
+    d->pending.custom_scheme = (xd_scheme_custom){0};
+    /* XP's Windows XP.theme: Bliss, stretched; Windows Classic.theme: no
+     * wallpaper. Both: Windows' own pointers, and the sounds as they are. */
+    if (xp)
+        xp_wallpaper(d->pending.wallpaper, sizeof(d->pending.wallpaper));
+    else
+        d->pending.wallpaper[0] = '\0';
+    d->pending.wallpaper_mode = XD_WALLPAPER_STRETCH;
+    d->pending.mouse.cursor_theme[0] = '\0';
+    theme_applied(d);
+}
+
+/* A package as a theme: its style and first variant as Appearance's
+ * Windows and buttons chooses them, then what it brings besides, its
+ * files unpacked for the settings to point at. */
+static void choose_package_theme(desk *d, const xd_installed_package *p) {
+    xd_settings before = d->pending;
+    snprintf(d->pending.theme_package, sizeof(d->pending.theme_package), "%s", p->name);
+    set_style(d, p->info.base);
+    set_variant(d, &p->info.variants[0]);
+    GError *error = nullptr;
+    bool sounds_set = false;
+    if (!xd_theme_set_extras(p, nullptr, true, &d->pending, &d->pending_sounds, &sounds_set,
+                             &error)) {
+        d->pending = before;
+        char *text = g_strdup_printf("The theme \"%s\" cannot be used.\n\n%s", package_label(p),
+                                     error->message);
+        error_box(d, text);
+        g_free(text);
+        g_error_free(error);
+    }
+    theme_applied(d);
+}
+
+static void theme_choose_installed(desk *d, const char *name) {
+    for (guint i = 0; i < d->packages->len; i++) {
+        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
+        if (strcmp(p->name, name) == 0)
+            choose_package_theme(d, p);
+    }
+}
+
+static void on_theme(xd_widget *w, void *user) {
+    desk *d = user;
+    (void)w;
+    const theme_item *it = selected_theme(d);
+    if (it == nullptr)
+        return;
+    switch (it->kind) {
+    case THEME_CURRENT:
+        break;
+    case THEME_XP:
+    case THEME_CLASSIC:
+        choose_builtin(d, it->kind);
+        break;
+    case THEME_PACKAGE:
+        choose_package_theme(d, theme_package_at(d, it));
+        break;
+    case THEME_BROWSE: {
+        /* As Appearance's Browse...: a Windows theme (.theme) is
+         * converted, a package installed; either is then chosen. */
+        const char *home = getenv("HOME");
+        const char *args[] = {"--themes", "--title", "Open Theme", "--folder",
+                              home != nullptr ? home : "/", nullptr};
+        if (!start_chooser(d, args, CHOOSE_THEME)) {
+            fill_theme_list(d);
+            xd_widget_redraw(d->theme_combo);
+        }
+        break;
+    }
+    }
+}
+
+static void on_theme_save([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    char *dir = xd_theme_package_user_dir();
+    (void)g_mkdir_with_parents(dir, 0755);
+    const char *args[] = {"--themes", "--title", "Save As", "--folder", dir,
+                          "--save", "My Theme.xdtheme", nullptr};
+    start_chooser(d, args, CHOOSE_THEME_SAVE);
+    g_free(dir);
+}
+
+/* Save As...'s answer: the pending look written as a package; saved
+ * among the user's themes, it's listed and chosen. */
+static void theme_save_to(desk *d, const char *chosen) {
+    char *path = g_str_has_suffix(chosen, ".xdtheme") ? g_strdup(chosen)
+                                                      : g_strconcat(chosen, ".xdtheme", nullptr);
+    char *base = g_path_get_basename(path);
+    char *stem = g_strndup(base, strlen(base) - strlen(".xdtheme"));
+    const xd_installed_package *pkg = pending_package(d);
+    GError *error = nullptr;
+    if (stem[0] == '\0' || stem[0] == '.') {
+        char *text = g_strdup_printf("\"%s\" is not a name a theme can be saved as.", base);
+        error_box(d, text);
+        g_free(text);
+    } else if (!xd_theme_set_save(path, stem, &d->pending, &d->pending_sounds,
+                                  pkg != nullptr ? pkg->path : nullptr,
+                                  pkg != nullptr ? pending_variant(d, pkg)->id : nullptr, nullptr,
+                                  &error)) {
+        char *text = g_strdup_printf("The theme cannot be saved as \"%s\".\n\n%s", base,
+                                     error->message);
+        error_box(d, text);
+        g_free(text);
+        g_error_free(error);
+    } else {
+        char *dir = xd_theme_package_user_dir();
+        char *parent = g_path_get_dirname(path);
+        if (strcmp(dir, parent) == 0) {
+            d->theme_import = true;
+            select_installed(d, stem);
+        }
+        g_free(parent);
+        g_free(dir);
+    }
+    g_free(stem);
+    g_free(base);
+    g_free(path);
+}
+
+/* Delete: the package to the Trash. */
+static void on_theme_delete([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    const theme_item *it = selected_theme(d);
+    const xd_installed_package *p = it != nullptr ? theme_package_at(d, it) : nullptr;
+    if (!theme_deletable(d, p))
+        return;
+    GFile *f = g_file_new_for_path(p->path);
+    GError *error = nullptr;
+    if (!g_file_trash(f, nullptr, &error)) {
+        char *text = g_strdup_printf("The theme \"%s\" cannot be deleted.\n\n%s",
+                                     package_label(p), error->message);
+        error_box(d, text);
+        g_free(text);
+        g_error_free(error);
+    }
+    g_object_unref(f);
+    bool pending = strcmp(p->name, d->pending.theme_package) == 0;
+    char **dirs = xd_theme_package_dirs();
+    g_ptr_array_unref(d->packages);
+    d->packages = xd_theme_packages_list((const char *const *)dirs);
+    g_strfreev(dirs);
+    /* Chosen but not applied: back to what is. */
+    if (pending) {
+        d->pending.theme_package[0] = '\0';
+        set_style(d, d->saved.style);
+    }
+    g_clear_pointer(&d->preview_pkg_path, g_free);
+    fill_styles(d);
+    appearance_changed(d);
+    fill_theme_list(d);
+    xd_widget_redraw(d->theme_combo);
+    xd_widget_redraw(d->theme_preview);
+}
+
+/* Sample: the desktop as the theme makes it: its wallpaper, icons and a
+ * window in its style. */
+static void draw_theme_preview([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
+                               const xd_theme *t, void *user) {
+    desk *d = user;
+    xd_theme pt;
+    pending_theme(d, t->scale, &pt);
+    xd_rect well = xd_theme_draw_field(t, cr, r, false);
+    cairo_save(cr);
+    cairo_rectangle(cr, well.x, well.y, well.w, well.h);
+    cairo_clip(cr);
+    paint_pending_desktop(d, cr, well, &pt);
+
+    /* My Computer and the Recycle Bin, down the left as on the desktop. */
+    int px = xd_tpx(t, 32);
+    static const xd_desk_icon icons[] = {XD_DESK_ICON_COMPUTER, XD_DESK_ICON_TRASH_EMPTY};
+    static const char *const labels[] = {"My Computer", "Recycle Bin"};
+    for (size_t i = 0; i < XD_ARRAY_LEN(icons); i++) {
+        const char *names[2];
+        size_t n = 0;
+        if (d->pending.desktop_icons.icons[icons[i]][0] != '\0')
+            names[n++] = d->pending.desktop_icons.icons[icons[i]];
+        names[n++] = xd_desk_icon_default(icons[i]);
+        int cell = xd_tpx(t, 70);
+        int ix = well.x + xd_tpx(t, 8) + (cell - px) / 2;
+        int iy = well.y + xd_tpx(t, 8) + (int)i * xd_tpx(t, 64);
+        cairo_surface_t *img = xd_icons_get_any(xd_ui_icons(d->ui), names, n, px);
+        if (img != nullptr) {
+            cairo_set_source_surface(cr, img, ix, iy);
+            cairo_paint(cr);
+        }
+        xd_text_style st = xd_text(&pt, XD_FONT_ICON, xd_rgba_hex(0xFFFFFF), XD_ALIGN_CENTER);
+        st.shadow = true;
+        st.shadow_color = xd_rgba_hex(0x000000);
+        xd_draw_text(cr, (xd_rect){well.x + xd_tpx(t, 8), iy + px + xd_tpx(t, 2), cell,
+                                   xd_tpx(t, 16)},
+                     labels[i], &st);
+    }
+
+    /* An active window, its text in a box, over the right of the desktop. */
+    xd_frame active = {.title = "Active Window",
+                       .active = true,
+                       .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE};
+    xd_rect win = {well.x + xd_tpx(t, 96), well.y + xd_tpx(t, 24), well.w - xd_tpx(t, 120),
+                   well.h - xd_tpx(t, 60)};
+    xd_theme_draw_frame(&pt, cr, win, &active);
+    xd_insets in = xd_theme_frame_insets(&pt, &active);
+    xd_rect client = xd_rect_inset4(win, in.left, in.top, in.right, in.bottom);
+    xd_fill_rect(cr, client, xd_theme_dialog_color(&pt));
+    xd_rect field = xd_rect_inset(client, xd_tpx(&pt, 8), xd_tpx(&pt, 8));
+    xd_rect field_in = xd_theme_draw_field(&pt, cr, field, false);
+    xd_text_style st = xd_text(&pt, XD_FONT_MESSAGE, xd_sys(&pt, XD_COLOR_WINDOW_TEXT),
+                               XD_ALIGN_START);
+    xd_draw_text(cr,
+                 (xd_rect){field_in.x + xd_tpx(&pt, 4), field_in.y + xd_tpx(&pt, 2),
+                           field_in.w - xd_tpx(&pt, 8), xd_tpx(&pt, 16)},
+                 "Window Text", &st);
+    cairo_restore(cr);
+}
+
+static void build_theme_tab(desk *d) {
+    xd_window *win = d->win;
+    const int P = PAGE_THEMES;
+    d->theme_items = g_array_new(FALSE, TRUE, sizeof(theme_item));
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 40, 364, 30},
+                                "A theme is a background plus a set of sounds, icons, and other "
+                                "elements to help you personalize your computer with one click.",
+                                XD_LABEL_WRAP),
+                       P);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 80, 200, 16}, "Theme:", 0), P);
+    d->theme_combo = xd_combo(win, (xd_rect){20, 98, 206, 21}, false, on_theme, d);
+    xd_widget_set_page(d->theme_combo, P);
+    d->theme_save = xd_button(win, (xd_rect){232, 97, 75, 23}, "Save As...", on_theme_save, d);
+    xd_widget_set_page(d->theme_save, P);
+    d->theme_delete = xd_button(win, (xd_rect){309, 97, 75, 23}, "Delete", on_theme_delete, d);
+    xd_widget_set_page(d->theme_delete, P);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 130, 200, 16}, "Sample:", 0), P);
+    d->theme_preview = xd_custom(win, (xd_rect){20, 148, 364, 244}, draw_theme_preview, d);
+    xd_widget_set_page(d->theme_preview, P);
+    fill_theme_list(d);
 }
 
 /* ---- Advanced Appearance ------------------------------------------------------------ */
@@ -3242,6 +3763,14 @@ static void apply_display(desk *d, const disp_head *heads, size_t count, bool co
 static bool apply(desk *d) {
     if (d->display_dirty && d->confirm == nullptr)
         apply_display(d, d->heads, d->head_count, true);
+    if (!sounds_equal(&d->saved_sounds, &d->pending_sounds)) {
+        /* A theme's sounds: sounds.ini, as Sounds and Audio Devices
+         * writes it. */
+        if (!xd_sound_scheme_save(&d->pending_sounds))
+            return false;
+        copy_sounds(&d->saved_sounds, &d->pending_sounds);
+        changed(d);
+    }
     if (xd_settings_equal(&d->saved, &d->pending))
         return true;
     /* Only what changed here: another program may have saved since. */
@@ -3316,10 +3845,13 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     xd_settings_load(&d.saved);
     d.pending = d.saved;
+    xd_sound_scheme_load(&d.saved_sounds);
+    xd_sound_scheme_init(&d.pending_sounds, XD_SOUNDS_DEFAULT);
+    copy_sounds(&d.pending_sounds, &d.saved_sounds);
     xd_scheme_list_load(&d.schemes);
     load_wallpapers(&d);
 
-    int page = PAGE_APPEARANCE; /* like "desk.cpl,,2" */
+    int page = PAGE_THEMES; /* XP's desk.cpl opens on Themes */
     for (int i = 1; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--page") == 0) {
             int64_t v;
@@ -3329,14 +3861,16 @@ int main(int argc, char **argv) {
     }
 
     d.win = xd_window_create(d.ui, "Display Properties", "xd-desk", 404, 448);
-    /* Windows 2000's tabs, and one for what only Linux has. */
-    static const char *const tabs[] = {"Background", "Screen Saver", "Appearance", "Effects",
-                                       "Settings",   "Linux"};
+    /* XP's tabs (Windows 2000's Background is its Desktop), 2000's Effects, and
+     * one for what only Linux has. */
+    static const char *const tabs[] = {"Themes",  "Desktop",  "Screen Saver", "Appearance",
+                                       "Effects", "Settings", "Linux"};
     xd_widget *tab = xd_tabs(d.win, (xd_rect){7, 7, 390, 401}, tabs, XD_ARRAY_LEN(tabs),
                              on_page, &d);
     build_background(&d);
     build_screensaver(&d);
     build_appearance(&d);
+    build_theme_tab(&d);
     build_effects(&d);
     build_settings(&d);
     xd_widget_select(tab, page);
@@ -3372,6 +3906,9 @@ int main(int argc, char **argv) {
     g_free(d.import_dest);
     g_free(d.import_name);
     g_ptr_array_unref(d.packages);
+    g_array_unref(d.theme_items);
+    xd_sound_scheme_free(&d.saved_sounds);
+    xd_sound_scheme_free(&d.pending_sounds);
     xd_pkg_free(d.preview_pkg);
     g_free(d.preview_pkg_path);
     g_free(d.preview_pkg_variant);
