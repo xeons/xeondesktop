@@ -73,15 +73,32 @@ void xd_pkgstyle_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *
         bw = w;
         bh = h;
     }
-    int cx, cy, mx, my;
-    bool cr, mr;
-    if (!offset(t, "CloseButton", &cx, &cy, &cr) || !cr) {
-        cx = -bw - xd_tpx(t, 4);
-        cy = xd_tpx(t, 5);
+    /* Where Windows puts them: square buttons the caption bar's height
+     * less 4, centred in the bar below the frame's top edge, 2 px in from
+     * the right border and 2 px apart. A style's Offsets are used only
+     * where they make sense (Luna's agree with this; WE's don't). */
+    int bar = in.top - xd_tpx(t, 4);
+    int cbh = 0;
+    if (xd_pkg_sys_int(t->pkg, "CaptionBarHeight", &cbh) && cbh > 0)
+        bar = MIN(xd_tpx(t, cbh), in.top);
+    int frame_top = f->maximized ? 0 : in.top - bar;
+    int size = MAX(bar - xd_tpx(t, 4), xd_tpx(t, 8));
+    if (bh > size || bh <= 0) {
+        bw = bh = size;
     }
-    int step = bw + xd_tpx(t, 3);
-    if (offset(t, "MaxButton", &mx, &my, &mr) && mr && cx - mx > 0)
-        step = cx - mx;
+    int cx = -(f->maximized ? 0 : in.right) - xd_tpx(t, 2) - bw - border;
+    int cy = frame_top + (bar - bh) / 2 + border;
+    int step = bw + xd_tpx(t, 2);
+    int ox, oy, mx, my;
+    bool o_right, m_right;
+    if (offset(t, "CloseButton", &ox, &oy, &o_right) && o_right && ox <= -bw && oy >= 0 &&
+        oy + bh <= in.top + border) {
+        cx = ox;
+        cy = oy;
+        if (offset(t, "MaxButton", &mx, &my, &m_right) && m_right && ox - mx >= bw &&
+            ox - mx <= 2 * bw)
+            step = ox - mx;
+    }
     int bx = right + cx, by = MAX(top + cy, outer.y);
     static const struct {
         uint8_t flag;
