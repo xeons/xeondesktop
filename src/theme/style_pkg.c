@@ -1006,6 +1006,21 @@ void xd_theme_draw_taskbar_sizing_bar(const xd_theme *t, cairo_t *cr, xd_rect r,
     (void)xd_pkg_draw(t, cr, cls, part, "1", xd_style_rim_line(r, edge, 0, side ? w : h));
 }
 
+/* A Start button image drawn at its size (TrueSize: the WE styles') is
+ * the button's width; 0 for the style's own (Luna stretches its image to
+ * fit "start"). */
+int xd_pkgstyle_start_button_width(const xd_theme *t) {
+    const char *const SB = "Start::Button";
+    int w, h;
+    if (t->pkg == nullptr || seven(t) || !xd_pkg_has_own(t->pkg, SB, nullptr))
+        return 0;
+    const char *sizing = xd_pkg_prop(t->pkg, SB, nullptr, nullptr, "SizingType");
+    if (sizing == nullptr || g_ascii_strcasecmp(sizing, "TrueSize") != 0 ||
+        !xd_pkg_part_size(t, SB, nullptr, "1", &w, &h))
+        return 0;
+    return w;
+}
+
 bool xd_pkgstyle_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
     if (t->pkg == nullptr)
         return false;
@@ -1019,8 +1034,13 @@ bool xd_pkgstyle_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, ui
         return false;
     (void)xd_pkg_draw(t, cr, SB, nullptr, st, r);
     /* XP's flag is explorer.exe's, not the style's: our logo, then
-     * "start" in the style's font and colours. */
+     * "start" in the style's font and colours, where its content area
+     * is. Styles whose button image has its own logo (the WE styles) put
+     * the content area off the button and the font at 1 point: then
+     * neither is drawn. */
     xd_rect c = xd_pkg_content_rect(t, SB, nullptr, st, r);
+    if (c.x < r.x || c.x + c.w > r.x + r.w)
+        return true;
     int dy = (state & XD_STATE_PRESSED) ? xd_tpx(t, 1) : 0;
     int icon = xd_tpx(t, 20);
     int ix = r.x + xd_tpx(t, 8);
@@ -1028,6 +1048,8 @@ bool xd_pkgstyle_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, ui
     xd_font_spec font = {.family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 13, .bold = true,
                          .italic = true};
     (void)xd_pkg_font(t->pkg, SB, nullptr, st, "Font", &font, nullptr);
+    if (font.size_pt < 4)
+        return true;
     xd_text_style ts = xd_text(
         t, XD_FONT_MENU, text_color_st(t, SB, nullptr, st, xd_rgba_hex(0xFFFFFF)), XD_ALIGN_START);
     ts.font = &font;

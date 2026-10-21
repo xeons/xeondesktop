@@ -135,6 +135,7 @@ bool xd_pkgstyle_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, ui
  * (style_pkg.c's own section): true when drawn, false to draw them as
  * the style does. */
 bool xd_pkgstyle_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
+int xd_pkgstyle_start_button_width(const xd_theme *t);
 bool xd_pkgstyle_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
 /* count > 1: a group's button. */
 bool xd_pkgstyle_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,

@@ -193,7 +193,8 @@ xd_rect xd_style_rim_line(xd_rect r, xd_edge edge, int i, int px) {
     return (xd_rect){r.x, r.y + i, r.w, px};
 }
 int xd_theme_start_button_width(const xd_theme *t, cairo_t *cr) {
-    return ops(t)->start_button_width(t, cr);
+    int w = xd_pkgstyle_start_button_width(t);
+    return w > 0 ? w : ops(t)->start_button_width(t, cr);
 }
 void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
     if (xd_pkgstyle_draw_start_button(t, cr, r, state))
