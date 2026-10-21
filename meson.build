@@ -1295,6 +1295,9 @@ test(
     'ASAN_OPTIONS=detect_leaks=1',
     'LSAN_OPTIONS=suppressions=' + meson.project_source_root() / 'tests/lsan.supp' + ':print_suppressions=0',
     'UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1',
+    # The source tree's data (uxtheme.ini, schemes): a build directory
+    # outside the source tree (makepkg's) has no ../data beside it.
+    'XD_DATA_DIR=' + meson.project_source_root() / 'data',
   ],
 )
 
