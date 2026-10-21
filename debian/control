@@ -118,6 +118,9 @@ Suggests:
  switcheroo-control,
  gvfs-backends,
  samba,
+ python3-pefile,
+ python3-gi,
+ gir1.2-gdkpixbuf-2.0,
 Description: desktop environment in the style of Windows 2000 and XP
  XeonDesktop is a Wayland desktop that looks and works like Windows 2000
  and Windows XP: a wlroots compositor with Classic, Luna and Watercolor

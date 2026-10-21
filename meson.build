@@ -1327,6 +1327,13 @@ configure_file(
   install_dir: systemd_user_unit_dir,
   install_tag: 'runtime',
 )
+# Theme packages: Windows visual styles converted with xd-theme-import
+# (python-pefile, PyGObject's GdkPixbuf); uxtheme's names for it and the
+# theme engine. docs/THEMES.md.
+install_data('tools/xd-theme-import', install_dir: get_option('bindir'),
+             install_mode: 'rwxr-xr-x')
+install_data('data/theme/uxtheme.ini',
+             install_dir: get_option('datadir') / 'xeondesktop' / 'theme')
 # VirtualBox guests: its shared clipboard as a Wayland client.
 install_data('data/xd-vboxclient', install_dir: get_option('libexecdir'),
              install_mode: 'rwxr-xr-x')

@@ -1,0 +1,655 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Converts Windows visual styles into XeonDesktop theme packages.
+
+    xd-theme-import [--folder] SOURCE OUTPUT
+
+SOURCE is a .msstyles (Windows XP, Vista or 7) or a .theme file (which
+names its .msstyles, wallpaper, sounds and cursors). OUTPUT is the
+package: a NAME.xdtheme zip, or with --folder a folder of the same files.
+docs/THEMES.md describes the format.
+
+Reads the .msstyles with pefile; images are converted with GdkPixbuf.
+"""
+import argparse
+import configparser
+import io
+import os
+import re
+import struct
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
+
+try:
+    import pefile
+except ImportError:
+    sys.exit("xd-theme-import: needs pefile (python-pefile, python3-pefile)")
+import gi
+
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf, GLib  # noqa: E402
+
+FORMAT_VERSION = "1"
+
+
+# ---- uxtheme's names (data/theme/uxtheme.ini) ------------------------------------------
+
+
+def names_file():
+    here = os.path.dirname(os.path.realpath(__file__))
+    for path in (
+        os.environ.get("XD_UXTHEME_NAMES"),
+        os.path.join(here, "..", "data", "theme", "uxtheme.ini"),
+        os.path.join(here, "..", "share", "xeondesktop", "theme", "uxtheme.ini"),
+        "/usr/share/xeondesktop/theme/uxtheme.ini",
+    ):
+        if path and os.path.exists(path):
+            return path
+    sys.exit("xd-theme-import: uxtheme.ini not found")
+
+
+class Names:
+    """Property ids and types, enums, and each class's parts and states."""
+
+    def __init__(self, path):
+        cp = configparser.ConfigParser(interpolation=None, delimiters=("=",),
+                                       comment_prefixes=("#",))
+        cp.optionxform = str  # keep the spelling
+        cp.read(path, encoding="utf-8")
+        self.prop_by_id, self.prop_type, self.prop_name = {}, {}, {}
+        self.missing = set()
+        for name, value in cp["Properties"].items():
+            pid, _, typ = value.partition(";")
+            self.prop_by_id.setdefault(int(pid), name)
+            self.prop_type[name.lower()] = typ.upper()
+            self.prop_name[name.lower()] = name
+        self.enums = {}
+        self.parts, self.states = {}, {}
+        for sec in cp.sections():
+            kind, _, what = sec.partition(" ")
+            if kind not in ("Enum", "Parts", "States"):
+                continue
+            values = {k: int(v) for k, v in cp[sec].items()}
+            if kind == "Enum":
+                self.enums[what.lower()] = {v: k for k, v in values.items()}
+            elif kind == "Parts":
+                self.parts[what.lower()] = values
+            elif kind == "States":
+                self.states[what.lower()] = values
+
+    @staticmethod
+    def base(cls):
+        return cls.split("::")[-1].lower()
+
+    def part_name(self, cls, number):
+        for name, n in self.parts.get(self.base(cls), {}).items():
+            if n == number:
+                return name
+        return str(number)
+
+    def state_name(self, cls, part, number):
+        for name, n in self.states.get(f"{self.base(cls)}.{part.lower()}", {}).items():
+            if n == number:
+                return name
+        return str(number)
+
+    def enum_name(self, prop, number):
+        return self.enums.get(prop.lower(), {}).get(number, str(number))
+
+    def canonical(self, prop):
+        return self.prop_name.get(prop.lower(), prop)
+
+    def value(self, prop, value):
+        """A value spelled as the table spells it: enum names, booleans."""
+        typ = self.prop_type.get(prop.lower())
+        if typ == "ENUM":
+            for name in self.enums.get(prop.lower(), {}).values():
+                if name.lower() == value.lower():
+                    return name
+        elif typ == "BOOL" and value.lower() in ("true", "false", "1", "0"):
+            return "true" if value.lower() in ("true", "1") else "false"
+        return value
+
+
+# ---- reading PE resources ----------------------------------------------------------------
+
+
+class Resources:
+    def __init__(self, path):
+        self.pe = pefile.PE(path, fast_load=True)
+        self.pe.parse_data_directories(
+            directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"]])
+        self.res = {}
+        root = getattr(self.pe, "DIRECTORY_ENTRY_RESOURCE", None)
+        for t in root.entries if root else []:
+            tname = str(t.name) if t.name is not None else t.struct.Id
+            for e in t.directory.entries:
+                ename = str(e.name) if e.name is not None else e.struct.Id
+                for lang in e.directory.entries:
+                    d = lang.data.struct
+                    self.res.setdefault((tname, ename), self.pe.get_data(d.OffsetToData, d.Size))
+
+    def get(self, kind, name):
+        if isinstance(name, str):
+            for (k, n), data in self.res.items():
+                if k == kind and isinstance(n, str) and n.upper() == name.upper():
+                    return data
+            return None
+        return self.res.get((kind, name))
+
+    def names(self, kind):
+        return [n for (k, n) in self.res if k == kind]
+
+    def string(self, sid):
+        """A string table entry (RT_STRING = 6: blocks of 16)."""
+        block = self.res.get((6, sid // 16 + 1))
+        if block is None:
+            return None
+        off = 0
+        for i in range(16):
+            (n,) = struct.unpack_from("<H", block, off)
+            off += 2
+            if i == sid % 16:
+                return block[off:off + 2 * n].decode("utf-16-le")
+            off += 2 * n
+        return None
+
+
+def utf16(data):
+    return data.decode("utf-16-le").lstrip("﻿").rstrip("\0")
+
+
+# ---- images ------------------------------------------------------------------------------
+
+
+def pixbuf_from_bmp_resource(data):
+    """A bitmap resource (no file header) as a pixbuf. XP's 32-bit bitmaps
+    keep straight alpha in the fourth byte, which bitmap readers take for
+    padding: those rows go to GdkPixbuf as they are."""
+    header, width, height, _planes, bpp, compression = struct.unpack_from("<IiiHHI", data, 0)
+    if bpp == 32 and compression == 0:
+        h = abs(height)
+        stride = width * 4
+        bits = data[header:header + stride * h]
+        rows = [bits[i * stride:(i + 1) * stride] for i in range(h)]
+        if height > 0:
+            rows.reverse()  # stored bottom-up
+        rgba = bytearray(b"".join(rows))
+        rgba[0::4], rgba[2::4] = rgba[2::4], rgba[0::4]  # BGRA -> RGBA
+        if not any(rgba[3::4]):
+            rgba[3::4] = b"\xff" * (width * h)  # no alpha: opaque, as uxtheme takes it
+        return GdkPixbuf.Pixbuf.new_from_bytes(GLib.Bytes.new(bytes(rgba)),
+                                               GdkPixbuf.Colorspace.RGB, True, 8,
+                                               width, h, stride)
+    colors = struct.unpack_from("<I", data, 32)[0]
+    if colors == 0 and bpp <= 8:
+        colors = 1 << bpp
+    offset = 14 + header + 4 * colors
+    if compression == 3:
+        offset += 12  # BI_BITFIELDS masks
+    bmp = b"BM" + struct.pack("<IHHI", 14 + len(data), 0, 0, offset) + data
+    loader = GdkPixbuf.PixbufLoader.new_with_type("bmp")
+    loader.write(bmp)
+    loader.close()
+    return loader.get_pixbuf()
+
+
+def pixbuf_from_png(data):
+    loader = GdkPixbuf.PixbufLoader.new_with_type("png")
+    loader.write(data)
+    loader.close()
+    return loader.get_pixbuf()
+
+
+def png_bytes(pixbuf):
+    ok, buf = pixbuf.save_to_bufferv("png", [], [])
+    if not ok:
+        raise RuntimeError("PNG encoding failed")
+    return bytes(buf)
+
+
+def parse_color(value):
+    nums = [int(x) for x in re.findall(r"-?\d+", value)]
+    return tuple(nums[:3]) if len(nums) >= 3 else None
+
+
+# ---- the package being written ------------------------------------------------------------
+
+
+class Package:
+    def __init__(self):
+        self.files = {}  # path -> bytes
+        self.images = {}  # key -> path
+
+    def add(self, path, data):
+        self.files[path] = data
+
+    def image(self, key, path, make):
+        """Adds an image once per key; returns its path in the package."""
+        if key not in self.images:
+            pixbuf = make()
+            if pixbuf is None:
+                return None
+            base, n = path, 2
+            while path in self.files:
+                path = f"{os.path.splitext(base)[0]}-{n}.png"
+                n += 1
+            self.add(path, png_bytes(pixbuf))
+            self.images[key] = path
+        return self.images[key]
+
+    def write(self, output, folder):
+        if folder:
+            for path, data in self.files.items():
+                full = os.path.join(output, path)
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                with open(full, "wb") as f:
+                    f.write(data)
+            return
+        tmp = output + ".part"
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+            # theme.xml first: a reader finds it at once.
+            for path in sorted(self.files, key=lambda p: (p != "theme.xml", p)):
+                z.writestr(path, self.files[path])
+        os.replace(tmp, output)
+
+
+def xml_bytes(root):
+    ET.indent(root)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n"
+
+
+def slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "default"
+
+
+# Properties naming image files, and the ones naming glyph images.
+IMAGE_PROPS = {"imagefile", "stockimagefile"} | {f"imagefile{i}" for i in range(1, 8)}
+GLYPH_PROPS = {"glyphimagefile"}
+# Typed values written as space-separated numbers.
+NUMBER_TYPES = {"COLOR", "MARGINS", "POSITION", "SIZE", "RECT", "INTLIST"}
+
+# The part and state in a section name: "App::Class.Part(State)".
+SECTION = re.compile(r"^\s*([^.(]+?)\s*(?:\.\s*([^(]+?))?\s*(?:\(\s*(.+?)\s*\))?\s*$")
+
+
+class Style:
+    """One variant's styles/NAME.xml, built up section by section."""
+
+    def __init__(self, names):
+        self.names = names
+        self.root = ET.Element("style")
+        self.sysmetrics = ET.SubElement(self.root, "sysmetrics")
+        self.classes = {}
+
+    def klass(self, name):
+        key = name.lower()
+        if key not in self.classes:
+            self.classes[key] = ET.SubElement(self.root, "class", name=name)
+        return self.classes[key]
+
+    def part(self, cls, part, state, props):
+        attrs = {}
+        if part:
+            attrs["name"] = part
+        if state:
+            attrs["state"] = state
+        el = ET.SubElement(self.klass(cls), "part", attrs)
+        for k, v in props:
+            el.set(self.names.canonical(k), v)
+
+
+# ---- Windows XP: INI text and bitmaps -----------------------------------------------------
+
+SYSMETRIC_COLORS = {
+    "scrollbar", "background", "activecaption", "inactivecaption", "menu", "window",
+    "windowframe", "menutext", "windowtext", "captiontext", "activeborder", "inactiveborder",
+    "appworkspace", "highlight", "highlighttext", "btnface", "btnshadow", "graytext",
+    "btntext", "inactivecaptiontext", "btnhighlight", "dkshadow3d", "light3d", "infotext",
+    "infobk", "buttonalternateface", "hottracking", "gradientactivecaption",
+    "gradientinactivecaption", "menuhilight", "menubar",
+}
+
+
+def sysmetric(style, key, value):
+    k = key.lower()
+    canon = style.names.canonical(key)
+    if k in SYSMETRIC_COLORS:
+        ET.SubElement(style.sysmetrics, "color", name=canon, value=" ".join(map(str, parse_color(value) or ())))
+    elif k.endswith("font"):
+        face, *rest = [p.strip() for p in value.split(",")]
+        attrs = {"name": canon, "face": face}
+        if rest:
+            attrs["size"] = rest[0]
+        # Flags: "bold", "italic", "underline", "Quality:ClearType".
+        for flag in rest[1:]:
+            key, _, val = flag.partition(":")
+            key = key.strip().lower()
+            if key in ("bold", "italic", "underline"):
+                attrs[key] = "true"
+            elif key and re.fullmatch(r"[a-z]+", key):
+                attrs[key] = val.strip().lower() or "true"
+        ET.SubElement(style.sysmetrics, "font", attrs)
+    elif value.strip().lower() in ("true", "false"):
+        ET.SubElement(style.sysmetrics, "bool", name=canon, value=value.strip().lower())
+    else:
+        ET.SubElement(style.sysmetrics, "value", name=canon, value=value.strip())
+
+
+def ini(text):
+    cp = configparser.ConfigParser(inline_comment_prefixes=(";",), comment_prefixes=(";",),
+                                   strict=False, interpolation=None)
+    cp.optionxform = str
+    cp.read_string(text)
+    return cp
+
+
+def xp_image(pkg, res, variant, ref, transparent):
+    """An XP image file reference ("Blue\\Button.bmp") as a package PNG,
+    with its transparent colour (magenta) made alpha."""
+    resname = re.sub(r"[\\/.]", "_", ref.strip()).upper()
+    data = res.get(2, resname)  # RT_BITMAP
+    if data is None:
+        return None
+    key = (resname, transparent)
+    path = "images/" + "/".join(p.lower() for p in re.split(r"[\\/]", ref.strip()))
+    path = os.path.splitext(path)[0] + ".png"
+
+    def make():
+        pb = pixbuf_from_bmp_resource(data)
+        if transparent is not None and not pb.get_has_alpha():
+            pb = pb.add_alpha(True, *transparent)
+        return pb
+
+    return pkg.image(key, path, make)
+
+
+def import_xp(res, names, pkg):
+    themes = ini(utf16(res.get("TEXTFILE", "THEMES_INI")))
+    doc = themes["documentation"] if themes.has_section("documentation") else {}
+    info = {"base": "luna", "name": doc.get("DisplayName", "Imported style").strip(),
+            "author": doc.get("Author", "").strip(), "description": doc.get("Description", "").strip()}
+    variants = []
+    for sec in themes.sections():
+        if not sec.lower().startswith("file."):
+            continue
+        fid = sec.split(".", 1)[1]
+        text = res.get("TEXTFILE", fid.upper() + "_INI")
+        if text is None:
+            continue
+        color = themes[sec].get("ColorSchemes", "").split()[0] if themes[sec].get("ColorSchemes") else ""
+        size = themes[sec].get("Sizes", "").split()[0] if themes[sec].get("Sizes") else ""
+        cname = themes.get(f"ColorScheme.{color}", "DisplayName", fallback=color).strip()
+        sname = themes.get(f"Size.{size}", "DisplayName", fallback=size).strip()
+        style = Style(names)
+        cp = ini(utf16(text))
+        for section in cp.sections():
+            m = SECTION.match(section)
+            if not m:
+                continue
+            cls, part, state = m.groups()
+            props = list(cp[section].items())
+            if cls.lower() == "sysmetrics":
+                for k, v in props:
+                    sysmetric(style, k, v)
+                continue
+            if cls.lower() == "documentation":
+                continue
+            transparent_on = any(k.lower() == "transparent" and v.strip().lower() == "true" for k, v in props)
+            tcolor = next((parse_color(v) for k, v in props if k.lower() == "transparentcolor"), None)
+            glyph_on = any(k.lower() == "glyphtransparent" and v.strip().lower() == "true" for k, v in props)
+            gcolor = next((parse_color(v) for k, v in props if k.lower() == "glyphtransparentcolor"), None)
+            out = []
+            for k, v in props:
+                kl = k.lower()
+                v = v.strip()
+                if kl in IMAGE_PROPS or kl in GLYPH_PROPS:
+                    on, col = (glyph_on, gcolor) if kl in GLYPH_PROPS else (transparent_on, tcolor)
+                    path = xp_image(pkg, res, color, v, (col or (255, 0, 255)) if on else None)
+                    if path is None:
+                        print(f"xd-theme-import: {section}: no image {v}", file=sys.stderr)
+                        continue
+                    v = path
+                elif kl in ("transparentcolor", "glyphtransparentcolor"):
+                    continue  # now in the images' alpha
+                elif names.prop_type.get(kl) in NUMBER_TYPES:
+                    v = " ".join(re.findall(r"-?\d+", v))
+                else:
+                    v = names.value(k, v)
+                out.append((k, v))
+            style.part(cls, part, state, out)
+        vid = slug(f"{cname}-{sname}")
+        path = f"styles/{vid}.xml"
+        pkg.add(path, xml_bytes(style.root))
+        variants.append({"id": vid, "name": cname, "size": sname, "style": path,
+                         "color_key": color, "size_key": size})
+    return info, variants
+
+
+# ---- Windows Vista and 7: the binary property table and PNGs -------------------------------
+
+TYPE_NAMES = {200: "ENUM", 201: "STRING", 202: "INT", 203: "BOOL", 204: "COLOR", 205: "MARGINS",
+              206: "FILENAME", 207: "SIZE", 208: "POSITION", 209: "RECT", 210: "FONT",
+              211: "INTLIST", 212: "HBITMAP", 213: "DISKSTREAM", 214: "STREAM",
+              215: "BITMAPREF", 216: "FLOAT", 217: "FLOATLIST"}
+
+
+def class_map(data):
+    """CMAP: class names, each null-terminated UTF-16 and padded to 8 bytes."""
+    out, i = [], 0
+    while i < len(data):
+        j = i
+        while j + 1 < len(data) and data[j:j + 2] != b"\0\0":
+            j += 2
+        out.append(data[i:j].decode("utf-16-le"))
+        i = (j + 2 + 7) & ~7
+    return out
+
+
+def variant_records(data):
+    """VARIANT: records of a 32-byte header (property, type, class, part,
+    state, a short value, reserved, size) and size bytes padded to 8; a
+    non-zero short value is the value itself (a resource id) with no data."""
+    off = 0
+    while off + 32 <= len(data):
+        nid, tid, cls, part, state, short, _reserved, size = struct.unpack_from("<8i", data, off)
+        off += 32
+        if short != 0:
+            yield nid, tid, cls, part, state, short, None
+            continue
+        yield nid, tid, cls, part, state, None, data[off:off + size]
+        off += (size + 7) & ~7
+
+
+def font_value(text):
+    """"Segoe UI, 9, Bold" as XP writes fonts."""
+    return text.strip() if text else None
+
+
+def import_vista(res, names, pkg, mui):
+    cmap = class_map(res.get("CMAP", "CMAP"))
+    style = Style(names)
+    info = {"base": "aero", "name": "Imported style", "author": "", "description": ""}
+    groups = {}
+    order = []
+
+    def string(sid):
+        for r in (mui, res):
+            if r is not None:
+                s = r.string(sid)
+                if s is not None:
+                    return s
+        return None
+
+    for nid, tid, ci, part, state, short, raw in variant_records(res.get("VARIANT", "NORMAL")):
+        cls = cmap[ci] if 0 <= ci < len(cmap) else str(ci)
+        prop = names.prop_by_id.get(nid)
+        if prop is None:
+            prop = f"Property{nid}"  # not in uxtheme.ini: kept by number
+            names.missing.add(nid)
+        typ = TYPE_NAMES.get(tid, str(tid))
+        if short is not None:
+            if typ == "FILENAME":
+                data = res.get("IMAGE", short)
+                value = pkg.image(("IMAGE", short), f"images/{short}.png",
+                                  lambda d=data: pixbuf_from_png(d) if d else None)
+            elif typ == "DISKSTREAM":
+                data = res.get("STREAM", short)
+                value = pkg.image(("STREAM", short), f"images/stream-{short}.png",
+                                  lambda d=data: pixbuf_from_png(d) if d else None)
+            elif typ in ("FONT", "STRING"):
+                value = font_value(string(short)) if typ == "FONT" else string(short)
+            else:
+                value = str(short)
+            if value is None:
+                continue
+        elif typ in ("INT", "BOOL", "ENUM"):
+            (n,) = struct.unpack_from("<i", raw)
+            value = ("true" if n else "false") if typ == "BOOL" else \
+                names.enum_name(prop, n) if typ == "ENUM" else str(n)
+        elif typ == "COLOR":
+            value = "%d %d %d" % tuple(raw[:3])
+        elif typ in ("MARGINS", "RECT", "POSITION", "SIZE"):
+            # A size is one number (a length), a position two.
+            value = " ".join(map(str, struct.unpack_from(f"<{len(raw) // 4}i", raw)))
+        elif typ == "INTLIST":
+            (n,) = struct.unpack_from("<i", raw)
+            value = " ".join(map(str, struct.unpack_from(f"<{n}i", raw, 4)))
+        elif typ == "FLOAT":
+            value = repr(struct.unpack_from("<f", raw)[0])
+        elif typ == "STRING":
+            value = raw.decode("utf-16-le").rstrip("\0")
+        else:
+            continue  # nothing the renderer reads
+        low = cls.lower()
+        if low == "documentation":
+            if prop.lower() in ("displayname", "author", "description"):
+                info[{"displayname": "name"}.get(prop.lower(), prop.lower())] = value
+            continue
+        if low == "sysmetrics":
+            sysmetric(style, prop, value)
+            continue
+        if low.startswith(("colorvariant.", "sizevariant.")):
+            continue
+        key = (cls, part, state)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append((prop, value))
+    for cls, part, state in order:
+        pname = names.part_name(cls, part) if part else None
+        sname = names.state_name(cls, pname, state) if part and state else (str(state) if state else None)
+        style.part(cls, pname, sname, groups[(cls, part, state)])
+    path = "styles/normal.xml"
+    pkg.add(path, xml_bytes(style.root))
+    return info, [{"id": "normal", "name": "Default", "size": "Normal", "style": path,
+                   "color_key": "NormalColor", "size_key": "NormalSize"}]
+
+
+# ---- .theme files ---------------------------------------------------------------------------
+
+
+def read_theme_file(path):
+    data = open(path, "rb").read()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff") or (len(data) > 1 and data[1:2] == b"\0"):
+        text = data.decode("utf-16")
+    else:
+        text = data.decode("utf-8-sig", errors="replace") if data[:3] == b"\xef\xbb\xbf" \
+            else data.decode("cp1252", errors="replace")
+    cp = configparser.ConfigParser(strict=False, interpolation=None, comment_prefixes=(";",),
+                                   inline_comment_prefixes=None)
+    cp.optionxform = str
+    cp.read_string(text)
+    return cp
+
+
+def find_near(folder, windows_path):
+    """A file a .theme names by its Windows path, if it's beside the theme
+    (searched by file name)."""
+    if not windows_path:
+        return None
+    want = re.split(r"[\\/]", windows_path.strip().strip('"'))[-1].lower()
+    for root, _dirs, files in os.walk(folder):
+        for f in files:
+            if f.lower() == want:
+                return os.path.join(root, f)
+    return None
+
+
+# ---- main ---------------------------------------------------------------------------------
+
+
+def import_style(msstyles, pkg, names):
+    res = Resources(msstyles)
+    if res.get("TEXTFILE", "THEMES_INI") is not None:
+        return import_xp(res, names, pkg)
+    if res.get("VARIANT", "NORMAL") is not None:
+        mui = None
+        folder = os.path.dirname(msstyles)
+        for root, _d, files in os.walk(folder):
+            for f in files:
+                if f.lower() == os.path.basename(msstyles).lower() + ".mui":
+                    mui = Resources(os.path.join(root, f))
+                    break
+        info, variants = import_vista(res, names, pkg, mui)
+        if info["name"] == "Imported style":
+            stem = os.path.splitext(os.path.basename(msstyles))[0]
+            info["name"] = stem[:1].upper() + stem[1:]
+        return info, variants
+    sys.exit(f"xd-theme-import: {msstyles}: not a visual style")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("source", help=".msstyles or .theme")
+    ap.add_argument("output", help="the .xdtheme (or folder with --folder)")
+    ap.add_argument("--folder", action="store_true", help="write a folder, not a zip")
+    args = ap.parse_args()
+    names = Names(names_file())
+    pkg = Package()
+    theme = ET.Element("xdtheme", version=FORMAT_VERSION)
+    extras = []
+    msstyles, default_color, default_size, display = args.source, None, None, None
+    if args.source.lower().endswith(".theme"):
+        cp = read_theme_file(args.source)
+        folder = os.path.dirname(os.path.abspath(args.source))
+        msstyles = find_near(folder, cp.get("VisualStyles", "Path", fallback=""))
+        default_color = cp.get("VisualStyles", "ColorStyle", fallback=None)
+        default_size = cp.get("VisualStyles", "Size", fallback=None)
+        display = cp.get("Theme", "DisplayName", fallback=None)
+        if display and display.startswith("@"):
+            display = None  # a Windows resource string
+        wallpaper = find_near(folder, cp.get("Control Panel\\Desktop", "Wallpaper", fallback=""))
+        if wallpaper:
+            name = "wallpaper/" + os.path.basename(wallpaper)
+            pkg.add(name, open(wallpaper, "rb").read())
+            tile = cp.get("Control Panel\\Desktop", "TileWallpaper", fallback="0").strip() == "1"
+            mode = {"0": "center", "2": "stretch", "6": "fit", "10": "fill"}.get(
+                cp.get("Control Panel\\Desktop", "WallpaperStyle", fallback="2").strip(), "stretch")
+            extras.append(("wallpaper", {"file": name, "style": "tile" if tile else mode}))
+        if not msstyles:
+            sys.exit(f"xd-theme-import: {args.source}: its visual style isn't beside it")
+    info, variants = import_style(msstyles, pkg, names)
+    named = info["name"] if info["name"] != "Imported style" else None
+    theme.set("name", display or named or os.path.splitext(os.path.basename(args.output))[0])
+    theme.set("base", info["base"])
+    if info.get("author"):
+        ET.SubElement(theme, "author").text = info["author"]
+    ET.SubElement(theme, "description").text = \
+        f"Imported from {os.path.basename(msstyles)}" + (f": {info['description']}" if info.get("description") else "")
+    # The .theme's chosen variant first: it's the default.
+    variants.sort(key=lambda v: (v["color_key"].lower() != (default_color or v["color_key"]).lower(),
+                                 v["size_key"].lower() != (default_size or "normalsize").lower()))
+    for v in variants:
+        ET.SubElement(theme, "variant", id=v["id"], name=v["name"], size=v["size"], style=v["style"])
+    for tag, attrs in extras:
+        ET.SubElement(theme, tag, attrs)
+    pkg.add("theme.xml", xml_bytes(theme))
+    pkg.write(args.output, args.folder)
+    print(f"{args.output}: {len(variants)} variant(s), {len(pkg.images)} image(s)")
+
+
+if __name__ == "__main__":
+    main()

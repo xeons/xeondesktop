@@ -90,6 +90,8 @@ optdepends=(
   'gvfs-smb: Map Network Drive to Windows shares; My Network Places'
   'gvfs-nfs: Map Network Drive to NFS shares'
   'samba: a folder Properties Sharing tab (Samba user shares)'
+  'python-pefile: importing Windows visual styles (xd-theme-import)'
+  'python-gobject: importing Windows visual styles (xd-theme-import)'
 )
 backup=('etc/pam.d/xeondesktop')
 source=("$pkgname-$pkgver.tar.gz")
