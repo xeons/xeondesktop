@@ -185,6 +185,15 @@ void xd_theme_draw_taskbar_progress(const xd_theme *t, cairo_t *cr, xd_rect r,
                                     enum xd_taskbar_progress kind, double fraction);
 void xd_theme_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                               const xd_app_button *b);
+/* Alt+Tab's window (device px): `count` windows' icons (32 logical px,
+ * nullptr for the generic one) in rows of up to seven, the `selected` one
+ * framed, and its title: in a sunken box below them, as Windows 2000 and
+ * XP draw it in every style, or above them from a Vista or 7 package's
+ * AltTab class. Its size for `count` windows: */
+void xd_theme_switcher_size(const xd_theme *t, size_t count, int *w, int *h);
+void xd_theme_draw_switcher(const xd_theme *t, cairo_t *cr, xd_rect r,
+                            cairo_surface_t *const *icons, size_t count, size_t selected,
+                            const char *title);
 /* Windows 7's taskbar thumbnails (Aero's taskbar only; device px): the
  * glass panel above a button, one window's tile in it (lit when
  * XD_STATE_HOT, deeper when _PRESSED), its title, and the red close

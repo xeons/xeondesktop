@@ -65,6 +65,15 @@ bool xd_pkgstyle_has_frame(const xd_theme *t);
  * has them and the glass is on: false to draw Aero's own. */
 bool xd_pkgstyle_dwm_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
                             const xd_frame *f, bool leftmost, bool alone);
+/* Aero's glass from DWMWindow's reflections (drawn over the glass colour
+ * in `outer`), and its edges (outline, highlights and the client edge
+ * around `client`): false to draw Aero's own. has_reflections: whether
+ * the package's replace Aero's streaks. */
+bool xd_pkgstyle_dwm_has_reflections(const xd_theme *t);
+bool xd_pkgstyle_dwm_reflections(const xd_theme *t, cairo_t *cr, xd_rect outer,
+                                 const xd_frame *f);
+bool xd_pkgstyle_dwm_edges(const xd_theme *t, cairo_t *cr, xd_rect outer, xd_rect client,
+                           const xd_frame *f);
 xd_insets xd_pkgstyle_frame_insets(const xd_theme *t, const xd_frame *f);
 void xd_pkgstyle_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
                               xd_frame_layout *l);
@@ -135,6 +144,15 @@ bool xd_pkgstyle_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint
 bool xd_pkgstyle_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock,
                            xd_edge edge);
 bool xd_pkgstyle_clock_color(const xd_theme *t, xd_rgba *out);
+/* Alt+Tab from a Vista or 7 package's AltTab class (switcher.c lays it
+ * out): its box, an item's frame behind its icon (selected, or hot), and
+ * the title. has: whether the package has the class. */
+bool xd_pkgstyle_has_switcher(const xd_theme *t);
+void xd_pkgstyle_draw_switcher_box(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_pkgstyle_draw_switcher_item(const xd_theme *t, cairo_t *cr, xd_rect r, bool selected,
+                                    bool hot);
+void xd_pkgstyle_draw_switcher_title(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                     const char *title);
 bool xd_pkgstyle_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
 bool xd_pkgstyle_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
 bool xd_pkgstyle_thumb_title_color(const xd_theme *t, xd_rgba *out);

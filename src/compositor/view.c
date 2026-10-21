@@ -938,8 +938,10 @@ void xd_view_on_unmap(xd_view *view) {
         server->hover_view = nullptr;
     if (server->last_click_view == view)
         server->last_click_view = nullptr;
-    if (server->cycle_view == view)
+    if (server->cycle_view == view) {
         server->cycle_view = nullptr;
+        xd_switcher_hide(server);
+    }
 
     /* Move to the back so focus_next picks a different window. */
     wl_list_remove(&view->link);
@@ -1252,8 +1254,10 @@ void xd_view_on_destroy(xd_view *view) {
         server->hover_view = nullptr;
     if (server->last_click_view == view)
         server->last_click_view = nullptr;
-    if (server->cycle_view == view)
+    if (server->cycle_view == view) {
         server->cycle_view = nullptr;
+        xd_switcher_hide(server);
+    }
 
     xd_unlisten(&view->map);
     xd_unlisten(&view->unmap);

@@ -76,6 +76,11 @@ bool xd_pkg_draw_background(const xd_theme *t, cairo_t *cr, const char *cls, con
                             const char *state, xd_rect r);
 bool xd_pkg_draw_glyph(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
                        const char *state, xd_rect r);
+/* The `src` rectangle of the state's image (its own pixels, as drawn for
+ * 96 DPI) stretched into `dst`: for parts drawn piecewise, as DWM draws
+ * its frame. False when the part has no image. */
+bool xd_pkg_draw_slice(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                       const char *state, xd_rect src, xd_rect dst);
 /* The size of the part's largest image glyph at the theme's scale. */
 bool xd_pkg_glyph_size(const xd_theme *t, const char *cls, const char *part,
                        const char *state, int *w, int *h);

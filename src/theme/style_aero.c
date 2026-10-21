@@ -152,8 +152,8 @@ static void paint_glass(const xd_theme *t, cairo_t *cr, xd_rect r, bool active, 
     cairo_rectangle(cr, r.x, r.y, r.w, sheen_h);
     cairo_fill(cr);
     cairo_pattern_destroy(p);
-    if (!t->glass)
-        return; /* Basic: no reflections */
+    if (!t->glass || xd_pkgstyle_dwm_has_reflections(t))
+        return; /* Basic: no reflections; a package's are its own */
     /* Streaks every ~180px, leaning right. */
     double step = xd_tpx(t, 180), wide = xd_tpx(t, 36);
     for (double x = r.x - r.h; x < r.x + r.w; x += step) {
@@ -387,6 +387,7 @@ static void aero_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const
     cairo_paint(cr);
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     paint_glass(t, cr, outer, f->active, in.top + xd_tpx(t, 14));
+    (void)xd_pkgstyle_dwm_reflections(t, cr, outer, f);
     /* Around the client area: a dark line, and a light one outside it. */
     xd_rect client = {outer.x + in.left, outer.y + in.top, outer.w - in.left - in.right,
                       outer.h - in.top - in.bottom};
@@ -398,9 +399,10 @@ static void aero_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const
         cairo_fill(cr);
         cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     }
+    bool pkg_edges = xd_pkgstyle_dwm_edges(t, cr, outer, client, f);
     /* Lines a logical pixel wide, so they scale with the frame. */
     double px = xd_tpx(t, 1), half = px / 2;
-    if (!f->maximized && client.w > 0 && client.h > 0) {
+    if (!pkg_edges && !f->maximized && client.w > 0 && client.h > 0) {
         cairo_set_line_width(cr, px);
         cairo_rectangle(cr, client.x - px - half, client.y - px - half, client.w + 3 * px,
                         client.h + 3 * px);
@@ -411,7 +413,7 @@ static void aero_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const
         cairo_stroke(cr);
     }
     cairo_restore(cr);
-    if (!f->maximized) {
+    if (!pkg_edges && !f->maximized) {
         /* The outline, and a highlight just inside it. */
         cairo_set_line_width(cr, px);
         xd_path_rounded(cr, outer.x + half, outer.y + half, outer.w - px, outer.h - px, rad, rad,

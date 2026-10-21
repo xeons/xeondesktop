@@ -1342,6 +1342,24 @@ bool xd_pkg_draw(const xd_theme *t, cairo_t *cr, const char *cls, const char *pa
     return bg || glyph;
 }
 
+bool xd_pkg_draw_slice(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                       const char *state, xd_rect src, xd_rect dst) {
+    if (t->pkg == nullptr || dst.w <= 0 || dst.h <= 0 || !xd_pkg_has(t->pkg, cls, part))
+        return false;
+    part_image im;
+    if (!part_image_for(t, cls, part, state, dst, false, &im))
+        return false;
+    /* The frame's own pixels, scaled as the image was. */
+    int x0 = CLAMP(scaled(src.x, im.factor), 0, im.fw);
+    int y0 = CLAMP(scaled(src.y, im.factor), 0, im.fh);
+    int x1 = CLAMP(scaled(src.x + src.w, im.factor), x0, im.fw);
+    int y1 = CLAMP(scaled(src.y + src.h, im.factor), y0, im.fh);
+    if (x1 <= x0 || y1 <= y0)
+        return false;
+    blit(cr, &im, (xd_rect){x0, y0, x1 - x0, y1 - y0}, dst, false);
+    return true;
+}
+
 bool xd_pkg_glyph_size(const xd_theme *t, const char *cls, const char *part, const char *state,
                        int *w, int *h) {
     if (t->pkg == nullptr || !xd_pkg_has(t->pkg, cls, part) ||

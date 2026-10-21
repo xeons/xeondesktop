@@ -7012,6 +7012,76 @@ def theme_package_taskbar(s):
     s.log("ok: the taskbar, Start button and task button are the package's")
 
 
+# A package with 7's Alt+Tab class (AltTab, its deduced part names): the box
+# and the selected item's frame in our own flat colours.
+PKG_ALTTAB_BOX = (210, 180, 40)
+PKG_ALTTAB_SELECTED = (40, 90, 210)
+
+
+def write_alttab_package(s):
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    root = os.path.join(s.base, "alttabpkg")
+    os.makedirs(os.path.join(root, "images"))
+    os.makedirs(os.path.join(root, "styles"))
+
+    def png(name, rgb):
+        pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, 8, 8)
+        pb.fill((rgb[0] << 24) | (rgb[1] << 16) | (rgb[2] << 8) | 0xFF)
+        pb.savev(os.path.join(root, "images", name), "png", [], [])
+
+    png("box.png", PKG_ALTTAB_BOX)
+    png("selected.png", PKG_ALTTAB_SELECTED)
+    with open(os.path.join(root, "theme.xml"), "w") as f:
+        f.write('<xdtheme version="1" name="UI Alt+Tab Test" base="aero">\n'
+                '  <variant id="plain" name="Plain" size="normal" style="styles/plain.xml"/>\n'
+                "</xdtheme>\n")  # fmt: skip
+    with open(os.path.join(root, "styles", "plain.xml"), "w") as f:
+        f.write("""<style>
+  <class name="AltTab">
+    <part ImageFile="images/box.png" SizingMargins="0 0 0 0"/>
+    <part name="SelectedItem" ImageFile="images/selected.png" SizingMargins="0 0 0 0"/>
+    <part name="Title" TextColor="0 0 0"/>
+  </class>
+</style>
+""")
+    os.environ["XD_THEME_PACKAGE"] = root
+    os.environ["XD_UXTHEME_NAMES"] = os.path.join(SOURCE_ROOT, "data", "theme", "uxtheme.ini")
+
+
+@scenario(desktop_ini=AERO_INI, setup=write_alttab_package)
+def alt_tab_package(s):
+    """While Alt is held after Tab, Alt+Tab's window shows the windows,
+    drawn from a package's AltTab class: its box, and the selected
+    window's frame; releasing Alt switches and closes it."""
+    two_windows(s)
+    before = s.settle("before")
+    s.check(color_box(before, PKG_ALTTAB_BOX)[0] == 0, "no Alt+Tab window before Alt+Tab")
+    # Alt held in one xd-inject (its keyboard goes with it), the screenshot
+    # taken meanwhile.
+    held = subprocess.Popen([s.tool("xd-inject"), "hold", "alt", "key", "Tab", "sleep", "4000",
+                             "release", "alt"])  # fmt: skip
+    time.sleep(1.5)
+    shot = s.settle("switcher")
+    n, box = color_box(shot, PKG_ALTTAB_BOX)
+    s.check(n > 150 * 60, f"Alt+Tab's window is the package's box ({n} pixels at {box})")
+    s.check(abs((box[0] + box[2]) / 2 - WIDTH / 2) < 20,
+            f"Alt+Tab's window is centred ({box})")  # fmt: skip
+    n, sel = color_box(shot, PKG_ALTTAB_SELECTED)
+    s.check(n > 1000 and box[0] < sel[0] and sel[2] < box[2] and box[1] < sel[1] < box[3],
+            f"the selected window has the package's frame, in the box ({n} pixels at {sel})")  # fmt: skip
+    # Two windows: the second is selected, to the right of the first.
+    s.check(sel[0] > (box[0] + box[2]) / 2 - 10, f"the second window is selected ({sel})")
+    s.check(held.wait(timeout=30) == 0, "xd-inject held Alt and let go")
+    s.wait_window(title="Control Panel", state="activated")
+    after = s.settle("after")
+    s.check(color_box(after, PKG_ALTTAB_BOX)[0] == 0, "releasing Alt closed Alt+Tab's window")
+    s.log("ok: Alt+Tab's window is the package's, and closes with Alt")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

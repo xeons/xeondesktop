@@ -84,15 +84,41 @@ loses nothing and anyone who has edited one already knows it:
   named where their images and use make them clear, in
   data/theme/uxtheme.ini's `[Deduced Class Version]` sections (per Windows
   version, since the numbers changed between Vista and 7); the rest stay
-  numbered. So far: DWMWindow's caption buttons, glows and glyphs (one per
-  DPI: `CloseGlyph96` ... `CloseGlyph192`), its small close button and
-  the title's glow; 7's taskbar buttons and progress bars (TaskBand2),
-  thumbnails (TaskbandExtendedUI), Start menu (StartPanelPriv, and
-  StartPanel's parts past 11). See "The taskbar and Start menus".
-  Explorer's panes: Explorer's `CommandModule`, `PreviewPane`, `InfoBar`
-  and `SearchHome` (named as Vista's own `shellstyle.dll` stylesheet names
-  them: `CMOD_TASKBUTTON` is `TaskButton`), `ReadingPane`, and the one
-  part of `AddressBand`, `BreadcrumbBar` and `SearchBox` (`Background`).
+  numbered, with a note in the file saying what they look like. So far:
+  - DWMWindow: the caption buttons, glows and glyphs (one per DPI:
+    `CloseGlyph96` ... `CloseGlyph192`), the small close button, the
+    title's glow (`CaptionTextGlow`); the frame's edges (`FrameTop`,
+    `FrameBottom`, `FrameLeft`, `FrameRight`: see "Vista's and 7's glass
+    frame"), the drop shadow (`ShadowTop`, `ShadowBottom`, `ShadowLeft`,
+    `ShadowRight`) and the reflections over the glass
+    (`ReflectionStreaks`, `ReflectionTopLeft`, Vista's
+    `ReflectionTopRight`). Still numbered: the other sets of edge pieces
+    (a softer set, 7's without a client edge or with rounder corners, and
+    square-cornered ones), a strip of grey bands and 7's two animations.
+  - 7's taskbar buttons and progress bars (TaskBand2), thumbnails
+    (TaskbandExtendedUI), Start menu (StartPanelPriv, with StartPanel's
+    names where it has StartPanel's images: `MoreProgramsTab`, `NscHost`,
+    `LogoffSplitButtonDropdown`...). See "The taskbar and Start menus".
+  - Explorer's panes: `CommandModule`, `PreviewPane`, `InfoBar` and
+    `SearchHome` (named as Vista's own `shellstyle.dll` stylesheet names
+    them: `CMOD_TASKBUTTON` is `TaskButton`), `ReadingPane`, the one part
+    of `AddressBand`, `BreadcrumbBar`, `SearchBox` and `HelpSearchBox`
+    (`Background`), and 7's navigation pane, `ProperTree` (`Header`, the
+    Favorites and Libraries headings; `Background`), as 7's stylesheet
+    uses them.
+  - `AltTab` (`HotItem`, `SelectedItem`, `HotSelectedItem`, `Title`,
+    `ThumbnailShadow`; the class's own image is the box), `TextGlow`
+    (`Glow`) and 7's notification area overflow, `TrayNotifyFlyout`
+    (`Window`, `LinkArea`, as Flyout's documented parts).
+  - Still numbered: 7's `ItemsView` (search results' Content view),
+    `TryHarder` ("Search again in:"), `DropListControl`, `SearchEditBox`
+    and Vista's `QueryBuilder`, whose use the images don't make clear.
+
+  Some classes Vista's and 7's SDK leave out are documented in its
+  vssym32.h (Wine's has them), and are in the regular sections: `Link`,
+  `EmptyMarkup`, `Static`, `MonthCal` (the calendar) and StartPanel's
+  parts 12 to 19 (`MoreProgramsTab` ... `LogoffSplitButtonDropdown`, the
+  arrow beside 7's Shut down button).
 - A property not found for a part in a state is looked up for the part,
   then the class, then (for `App::Class`) in `Class`, then in
   `ClassStyle` if the package has one (Vista and 7 keep their shared
@@ -310,6 +336,7 @@ is a whole number" (on by default), saved in `desktop.ini`'s
 | Desktop element | Classes |
 |---|---|
 | Window frames, caption buttons | `Window` (Aero glass: `DWMWindow`) |
+| Alt+Tab | `AltTab` (Vista, 7; Windows 2000 and XP never themed it) |
 | Push, check and radio buttons, group boxes | `Button` |
 | Text boxes, drop-downs | `Edit`, `ComboBox` |
 | Scroll bars | `ScrollBar` |
@@ -410,8 +437,8 @@ draws it. With desktop composition (Vista's and 7's glass), a class's
   the same names, and (deduced) `MoreProgramsArrowBack`, `ProgListItem`
   (a program's highlight; with a jump list `ProgListItemLeft` and
   `ProgListItemSplit`), `PlacesListItem`, `ShutdownButton`,
-  `ShutdownArrow`; search results' headings in `StartMenu::ListView`
-  `GroupHeader`'s `Heading1TextColor`.
+  `LogoffSplitButtonDropdown` (its arrow); search results' headings in
+  `StartMenu::ListView` `GroupHeader`'s `Heading1TextColor`.
 - **The Start menus' cascades** (All Programs, Recent Documents, Control
   Panel): `StartMenu::Toolbar` (its background, `Button` Hot for the hot
   item, the class's `TextColor` and Hot one), `StartMenu::MenuBand`
@@ -427,6 +454,38 @@ draws it. With desktop composition (Vista's and 7's glass), a class's
   (Normal, Hot, Disabled, and their `TextColor`), `PinButton` (Normal,
   Hot, Pressed). Without them, a hot item or pin is 7's Start menu's
   `ProgListItem`, as 7 draws both with the same control.
+
+## Vista's and 7's glass frame and Alt+Tab
+
+With the glass on, Aero's frame takes from `DWMWindow`, where the package
+has them: the caption buttons with their glows and glyphs, the
+reflections laid over the glass colour from the window's top corners
+(`ReflectionStreaks`, `ReflectionTopLeft`, `ReflectionTopRight`, as they
+are, at the state's `Opacity`: 1 active, 2 inactive, 3 and 4 the same
+maximized), and the edges. Each edge piece is two frames, active and
+inactive:
+
+- `FrameTop` (21 x 27): rows 0-6 are the top corners (columns 0-6 and
+  14-20) and the top edge (column 10, stretched); rows 24-26 of columns
+  8-12 the client edge's top corners and its top line (column 10).
+- `FrameBottom` (21 x 11): rows 0-2 the client edge's bottom, rows 3-10
+  the bottom corners and edge.
+- `FrameLeft`, `FrameRight` (11 x 3): across a side, the outer edge (the
+  three columns at the window's edge) and the client edge (the three at
+  the client area's: a light line, a dark one, and one under the client
+  area).
+
+How DWM itself stretches them isn't documented (its `SizingMargins` would
+squeeze the client edge's light line out of an 8 px border), so the outer
+and client edges are each laid where their lines say, with the glass
+between. The shadow parts aren't used: the compositor draws its own.
+
+Alt+Tab's window is Windows 2000's and XP's in every style (a raised box,
+the icons in rows of seven, a square round the selected one, its title in
+a sunken box below), and from a package with `AltTab` 7's without glass:
+the class's image as the box, the title above the icons in `Title`'s
+colour and font on `TextGlow`'s glow, `SelectedItem` behind the selected
+window's icon.
 
 ## shell/NAME.xml
 

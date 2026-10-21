@@ -464,6 +464,7 @@ struct xd_server {
     xd_ime *ime;       /* ime.c's */
     xd_gamma *gamma;   /* gamma.c's: night light and calibration */
     struct xd_outline *outline; /* outline.c's, while one shows */
+    struct wlr_scene_buffer *switcher; /* switcher.c's Alt+Tab window, while it shows */
     xd_touch *touch;       /* touch.c's: touchscreens, and devices' monitors */
     xd_tablets *tablets;   /* tablet.c's: drawing tablets */
     xd_gestures *gestures; /* gestures.c's: touchpad gestures */
@@ -637,6 +638,11 @@ void xd_transition_watch_popup(xd_server *server, struct wlr_xdg_popup *popup);
 bool xd_outline_dragging(const xd_server *server);
 void xd_outline_show(xd_server *server, struct wlr_box box);
 void xd_outline_hide(xd_server *server);
+
+/* switcher.c: Alt+Tab's window, shown (or redrawn) for server->cycle_view,
+ * hidden without one. */
+void xd_switcher_show(xd_server *server);
+void xd_switcher_hide(xd_server *server);
 
 /* snap.c: Windows 7's Snap and Shake (Aero style only). begin returns
  * whether the window may be moved (a maximized one, only in Aero). */

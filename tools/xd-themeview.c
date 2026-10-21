@@ -5,7 +5,7 @@
  *
  *   xd-themeview [--style classic|luna|whistler] [--scheme FILE]
  *                [--scale N] [--out FILE.png]
- *                [--element active-frame|inactive-frame|taskbar]
+ *                [--element active-frame|inactive-frame|taskbar [--background RRGGBB]]
  *                [--package DIR|FILE.xdtheme [--variant ID]]
  *                [--filter nearest|integer|smooth|scale2x|...] [--integer 0|1]
  *
@@ -13,7 +13,8 @@
  * style; --filter and --integer choose how its images are scaled.
  *
  * --element draws just one element, at the size it has in the Windows XP
- * reference screenshot tools/luna-measure.py reads, over magenta, for
+ * reference screenshot tools/luna-measure.py reads, over magenta (or
+ * --background: what shows through glass), for
  * pixel comparisons.
  */
 #include <stdlib.h>
@@ -32,6 +33,7 @@ typedef struct options {
     const char *variant;
     xd_image_filter filter;
     bool integer;
+    uint32_t background; /* behind an --element */
 } options;
 
 static void usage(FILE *f) {
@@ -65,6 +67,14 @@ static bool parse_args(int argc, char **argv, options *o) {
             }
         } else if (xd_str_eq(arg, XD_STR("--element"))) {
             o->element = val.ptr;
+        } else if (xd_str_eq(arg, XD_STR("--background"))) {
+            char *end = nullptr;
+            unsigned long rgb = strtoul(val.ptr, &end, 16);
+            if (end == val.ptr || *end != '\0' || rgb > 0xFFFFFF) {
+                fprintf(stderr, "background must be RRGGBB\n");
+                return false;
+            }
+            o->background = (uint32_t)rgb;
         } else if (xd_str_eq(arg, XD_STR("--out"))) {
             o->out = val.ptr;
         } else if (xd_str_eq(arg, XD_STR("--package"))) {
@@ -249,13 +259,13 @@ static void draw_taskbar(const xd_theme *t, cairo_t *cr, int width, int height) 
 
 /* One element at its reference geometry. Returns the surface, or nullptr
  * for an unknown name. */
-static cairo_surface_t *draw_element(const xd_theme *t, const char *name) {
+static cairo_surface_t *draw_element(const xd_theme *t, const char *name, uint32_t background) {
     bool active = strcmp(name, "active-frame") == 0;
     if (active || strcmp(name, "inactive-frame") == 0) {
         int w = xd_tpx(t, active ? 553 : 800), h = xd_tpx(t, active ? 323 : 600);
         cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
         cairo_t *cr = cairo_create(s);
-        xd_fill_rect(cr, (xd_rect){0, 0, w, h}, xd_rgba_hex(0xFF00FF));
+        xd_fill_rect(cr, (xd_rect){0, 0, w, h}, xd_rgba_hex(background));
         xd_frame f = {.title = active ? "Untitled - Notepad" : "My Documents",
                       .active = active,
                       .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE};
@@ -288,7 +298,8 @@ int main(int argc, char **argv) {
                  .scale = 1.0,
                  .out = "themeview.png",
                  .filter = XD_FILTER_SMOOTH,
-                 .integer = true};
+                 .integer = true,
+                 .background = 0xFF00FF};
     if (!parse_args(argc, argv, &o)) {
         usage(stderr);
         return EXIT_FAILURE;
@@ -324,7 +335,7 @@ int main(int argc, char **argv) {
     const xd_theme *t = &theme;
 
     if (o.element != nullptr) {
-        cairo_surface_t *s = draw_element(t, o.element);
+        cairo_surface_t *s = draw_element(t, o.element, o.background);
         if (s == nullptr) {
             fprintf(stderr, "unknown element: %s\n", o.element);
             return EXIT_FAILURE;

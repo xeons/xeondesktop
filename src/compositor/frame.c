@@ -194,4 +194,7 @@ void xd_frame_icon_ready(void *data, const char *app_id) {
         if (strcmp(id != nullptr ? id : "", app_id) == 0)
             xd_frame_render(view, false);
     }
+    /* Alt+Tab's window shows the icons too. */
+    if (server->switcher != nullptr)
+        xd_switcher_show(server);
 }

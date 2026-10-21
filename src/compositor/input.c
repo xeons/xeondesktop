@@ -127,6 +127,7 @@ void xd_polkit_start(xd_server *server) {
 static void finish_cycle(xd_server *server) {
     xd_view *target = server->cycle_view;
     server->cycle_view = nullptr;
+    xd_switcher_hide(server);
     if (target != nullptr)
         xd_view_focus(target);
 }
@@ -149,6 +150,7 @@ static void cycle_step(xd_server *server, bool backwards) {
             /* Preview the selection by raising it without changing focus. */
             if (!v->minimized)
                 wlr_scene_node_raise_to_top(&v->tree->node);
+            xd_switcher_show(server);
             return;
         }
     } while (link != start);

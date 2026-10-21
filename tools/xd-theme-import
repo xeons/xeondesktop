@@ -563,8 +563,11 @@ def import_vista(res, names, pkg, mui):
                                   lambda d=data: png_from_premultiplied(d) if d else None)
             elif typ == "DISKSTREAM":
                 data = res.get("STREAM", short)
+                # DWM's atlas, unlike the IMAGE resources, is straight
+                # alpha (Vista's and 7's have white at partial alpha):
+                # un-premultiplied, its light pixels wrapped round to dark.
                 value = pkg.image(("STREAM", short), f"images/stream-{short}.png",
-                                  lambda d=data: png_from_premultiplied(d) if d else None)
+                                  lambda d=data: pixbuf_from_png(d) if d else None)
             elif typ in ("FONT", "STRING"):
                 value = font_value(string(short)) if typ == "FONT" else string(short)
             else:

@@ -8778,6 +8778,178 @@ static uint32_t rgba_to_hex(xd_rgba c) {
            (uint32_t)lround(c.b * 255);
 }
 
+/* A w x (h * frames) strip of frames, each pixel `color(frame, x, y)`. */
+static void pkg_png_frames(const char *root, const char *name, int w, int h, int frames,
+                           uint32_t (*color)(int frame, int x, int y)) {
+    uint32_t *px = g_new(uint32_t, (gsize)(w * h * frames));
+    for (int f = 0; f < frames; f++)
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                px[(f * h + y) * w + x] = color(f, x, y);
+    pkg_png(root, name, w, h * frames, px);
+    g_free(px);
+}
+
+/* DWMWindow's edge pieces, as 7's are laid out (uxtheme.ini): the outer
+ * edge's columns, the client edge's light and dark lines, glass between;
+ * the inactive frame all one grey but its client edge's light line. */
+static uint32_t dwm_left(int f, int x, [[maybe_unused]] int y) {
+    if (f == 1)
+        return x == 8 ? 0x00AA01 : 0x444444;
+    return x < 3 ? 0x110000 : x == 8 ? 0x00AA00 : x > 8 ? 0x0000AA : 0x777777;
+}
+static uint32_t dwm_right(int f, int x, [[maybe_unused]] int y) {
+    if (f == 1)
+        return 0x444444;
+    return x < 2 ? 0x0000BB : x == 2 ? 0x00BB00 : x > 7 ? 0x220000 : 0x777777;
+}
+static uint32_t dwm_top(int f, [[maybe_unused]] int x, int y) {
+    if (f == 1)
+        return 0x444444;
+    return y == 24 ? 0xCC0000 : y > 24 ? 0x660000 : 0x777777;
+}
+static uint32_t dwm_bottom(int f, [[maybe_unused]] int x, int y) {
+    if (f == 1)
+        return 0x444444;
+    return y < 2 ? 0x000066 : y == 2 ? 0x0000CC : 0x333333;
+}
+
+/* Vista's and 7's deduced parts drawn: DWMWindow's edges and reflections
+ * on Aero's glass frame, and Alt+Tab from AltTab; and names Wine's
+ * vssym32.h documents (MonthCal, StartPanel's later parts) as numbers. */
+static void test_theme_package_dwm(void) {
+    const char *names = XD_SOURCE_ROOT "/data/theme/uxtheme.ini";
+    char *root = g_dir_make_tmp("xd-pkg-XXXXXX", nullptr);
+    char *dir = g_build_filename(root, "styles", nullptr);
+    CHECK(g_mkdir(dir, 0755) == 0);
+    g_free(dir);
+    dir = g_build_filename(root, "images", nullptr);
+    CHECK(g_mkdir(dir, 0755) == 0);
+    g_free(dir);
+    pkg_text(root, "theme.xml",
+             "<xdtheme version=\"1\" name=\"DWM Test\" base=\"aero\">\n"
+             "  <variant id=\"a\" name=\"A\" size=\"normal\" style=\"styles/a.xml\"/>\n"
+             "</xdtheme>\n");
+    pkg_text(root, "styles/a.xml",
+             "<style>\n"
+             "  <class name=\"DWMWindow\">\n"
+             "    <part name=\"CloseButton\" ImageFile=\"images/close.png\"/>\n"
+             "    <part name=\"FrameTop\" ImageFile=\"images/top.png\" ImageCount=\"2\"\n"
+             "          ImageLayout=\"Vertical\"/>\n"
+             "    <part name=\"FrameBottom\" ImageFile=\"images/bottom.png\" ImageCount=\"2\"\n"
+             "          ImageLayout=\"Vertical\"/>\n"
+             "    <part name=\"FrameLeft\" ImageFile=\"images/left.png\" ImageCount=\"2\"\n"
+             "          ImageLayout=\"Vertical\"/>\n"
+             "    <part name=\"FrameRight\" ImageFile=\"images/right.png\" ImageCount=\"2\"\n"
+             "          ImageLayout=\"Vertical\"/>\n"
+             "    <part name=\"ReflectionStreaks\" ImageFile=\"images/streaks.png\"/>\n"
+             "    <part name=\"ReflectionStreaks\" state=\"1\" Opacity=\"100\"/>\n"
+             "    <part name=\"ReflectionStreaks\" state=\"2\" Opacity=\"0\"/>\n"
+             "  </class>\n"
+             "  <class name=\"AltTab\">\n"
+             "    <part ImageFile=\"images/box.png\"/>\n"
+             "    <part name=\"SelectedItem\" ImageFile=\"images/selected.png\"/>\n"
+             "    <part name=\"Title\" TextColor=\"1 2 3\"/>\n"
+             "  </class>\n"
+             "  <class name=\"MonthCal\"><part name=\"GridCell\" TextColor=\"0 102 204\"/></class>\n"
+             "  <class name=\"StartPanel\">\n"
+             "    <part name=\"LogoffSplitButtonDropdown\" TextColor=\"1 1 1\"/>\n"
+             "  </class>\n"
+             "</style>\n");
+    pkg_png_solid(root, "close.png", 4, 4, 0xE00000);
+    pkg_png_frames(root, "left.png", 11, 3, 2, dwm_left);
+    pkg_png_frames(root, "right.png", 11, 3, 2, dwm_right);
+    pkg_png_frames(root, "top.png", 21, 27, 2, dwm_top);
+    pkg_png_frames(root, "bottom.png", 21, 11, 2, dwm_bottom);
+    pkg_png_solid(root, "streaks.png", 50, 80, 0xABCDEF);
+    pkg_png_solid(root, "box.png", 4, 4, 0x204060);
+    pkg_png_solid(root, "selected.png", 4, 4, 0x60C020);
+    GError *error = nullptr;
+    xd_pkg *p = xd_pkg_load(root, nullptr, names, &error);
+    CHECK(p != nullptr && error == nullptr);
+    if (p == nullptr) {
+        g_clear_error(&error);
+        rm_tree(root);
+        g_free(root);
+        return;
+    }
+    /* Documented in vssym32.h: stored by number, found by name or number. */
+    CHECK(prop_is(p, "MonthCal", "6", nullptr, "TextColor", "0 102 204"));
+    CHECK(prop_is(p, "StartPanel", "19", nullptr, "TextColor", "1 1 1"));
+
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_scheme sc;
+    xd_scheme_init_default(&sc);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_AERO, &sc, 1.0);
+    t.glass = true;
+    /* 200 x 100: Aero's 8 px border and 30 px top, so the client area is
+     * 8, 30, 184 x 62. */
+    for (int active = 1; active >= 0; active--) {
+        cairo_t *cr;
+        cairo_surface_t *s = pkg_canvas(200, 100, &cr);
+        xd_frame f = {.title = "", .active = active, .buttons = XD_CAPBTN_CLOSE};
+        xd_theme_draw_frame(&t, cr, (xd_rect){0, 0, 200, 100}, &f);
+        cairo_destroy(cr);
+        if (active) {
+            /* The client edge: light then dark lines just outside it. */
+            CHECK(pixel(s, 6, 60) == 0x00AA00 && pixel(s, 7, 60) == 0x0000AA);
+            CHECK(pixel(s, 192, 60) == 0x0000BB && pixel(s, 193, 60) == 0x00BB00);
+            CHECK(pixel(s, 100, 28) == 0xCC0000 && pixel(s, 100, 29) == 0x660000);
+            CHECK(pixel(s, 100, 92) == 0x000066 && pixel(s, 100, 93) == 0x0000CC);
+            /* The outer edge, on the window's own edges. */
+            CHECK(pixel(s, 0, 60) == 0x110000 && pixel(s, 199, 60) == 0x220000);
+            CHECK(pixel(s, 100, 3) == 0x777777 && pixel(s, 100, 98) == 0x333333);
+            /* The streaks over the glass, at Opacity 100. */
+            CHECK(pixel(s, 4, 50) == 0xABCDEF);
+        } else {
+            CHECK(pixel(s, 6, 60) == 0x00AA01 && pixel(s, 100, 3) == 0x444444);
+            /* Opacity 0: no streaks. */
+            CHECK(pixel(s, 4, 50) != 0xABCDEF);
+        }
+        cairo_surface_destroy(s);
+    }
+
+    /* Alt+Tab: the box, the selected window's frame (the second of
+     * three), the title above the icons. */
+    int w = 0, h = 0;
+    xd_theme_switcher_size(&t, 3, &w, &h);
+    CHECK(w == 2 * 12 + 5 * 52 && h == 2 * 12 + 52 + 6 + 24);
+    cairo_t *cr;
+    cairo_surface_t *s = pkg_canvas(w, h, &cr);
+    cairo_surface_t *icons[3] = {nullptr, nullptr, nullptr};
+    xd_theme_draw_switcher(&t, cr, (xd_rect){0, 0, w, h}, icons, 3, 1, "Notepad");
+    cairo_destroy(cr);
+    int y = 12 + 24 + 6 + 2; /* inside the icons' row, above the icon */
+    CHECK(pixel(s, 1, 1) == 0x204060 && pixel(s, w - 2, h - 2) == 0x204060);
+    CHECK(pixel(s, w / 2, y) == 0x60C020); /* the middle one is selected */
+    CHECK(pixel(s, w / 2 - 52, y) == 0x204060 && pixel(s, w / 2 + 52, y) == 0x204060);
+    cairo_surface_destroy(s);
+
+    /* Without the package: Windows 2000's and XP's box, the selection a
+     * square in the selection colour round the icon, the title below. */
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
+    xd_theme_switcher_size(&t, 3, &w, &h);
+    CHECK(w == 2 * 10 + 5 * 43 && h == 2 * 10 + 43 + 8 + 24);
+    s = pkg_canvas(w, h, &cr);
+    xd_theme_draw_switcher(&t, cr, (xd_rect){0, 0, w, h}, icons, 3, 1, "Notepad");
+    cairo_destroy(cr);
+    uint32_t face = (uint32_t)sc.colors[XD_COLOR_BUTTON_FACE].r << 16 |
+                    (uint32_t)sc.colors[XD_COLOR_BUTTON_FACE].g << 8 |
+                    sc.colors[XD_COLOR_BUTTON_FACE].b;
+    uint32_t hilight = (uint32_t)sc.colors[XD_COLOR_HILIGHT].r << 16 |
+                       (uint32_t)sc.colors[XD_COLOR_HILIGHT].g << 8 | sc.colors[XD_COLOR_HILIGHT].b;
+    int sq = (43 - 40) / 2; /* the square: the 32 px icon and 4 px round it */
+    CHECK(pixel(s, 5, 5) == face);
+    CHECK(pixel(s, w / 2, 10 + sq) == hilight && pixel(s, w / 2 - 43, 10 + sq) == face);
+    cairo_surface_destroy(s);
+
+    xd_pkg_free(p);
+    rm_tree(root);
+    g_free(root);
+}
+
 static void test_explorer_panes(void) {
     char *root = g_dir_make_tmp("xd-panes-XXXXXX", nullptr);
     char *names = g_build_filename(XD_SOURCE_ROOT, "data", "theme", "uxtheme.ini", nullptr);
@@ -8995,6 +9167,7 @@ int main(void) {
     test_image_scale();
     test_theme_package();
     test_theme_package_shell();
+    test_theme_package_dwm();
     test_explorer_panes();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -4,6 +4,7 @@
  * painting does. See pkg.h.
  */
 #include <math.h>
+#include <pango/pangocairo.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -76,6 +77,112 @@ bool xd_pkgstyle_dwm_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_
                         : f->maximized             ? "RestoreGlyph"
                                                    : "MaxGlyph";
     dwm_glyph(t, cr, glyph, state, r);
+    return true;
+}
+
+/* ---- Vista's and 7's glass frame: DWMWindow's edges and reflections ---- */
+
+static const char *const DWM = "DWMWindow";
+
+bool xd_pkgstyle_dwm_has_reflections(const xd_theme *t) {
+    return dwm_frame(t) && xd_pkg_has(t->pkg, DWM, "ReflectionStreaks");
+}
+
+/* A reflection from the window's top corner, as it is, at its Opacity for
+ * the state (active, inactive, maximized active, maximized inactive). */
+static void reflection(const xd_theme *t, cairo_t *cr, const char *part, const xd_frame *f,
+                       xd_rect outer, bool right) {
+    const char *image = f->active ? "1" : "2";
+    const char *state = f->maximized ? (f->active ? "3" : "4") : image;
+    int w, h, opacity = 100;
+    if (!xd_pkg_part_size(t, DWM, part, image, &w, &h))
+        return;
+    (void)xd_pkg_int(t->pkg, DWM, part, state, "Opacity", &opacity);
+    if (opacity <= 0)
+        return;
+    cairo_push_group(cr);
+    (void)xd_pkg_draw(t, cr, DWM, part, image,
+                      (xd_rect){right ? outer.x + outer.w - w : outer.x, outer.y, w, h});
+    cairo_pop_group_to_source(cr);
+    cairo_paint_with_alpha(cr, MIN(opacity, 100) / 100.0);
+}
+
+bool xd_pkgstyle_dwm_reflections(const xd_theme *t, cairo_t *cr, xd_rect outer,
+                                 const xd_frame *f) {
+    if (!xd_pkgstyle_dwm_has_reflections(t))
+        return false;
+    /* The streaks aren't stretched: past their size (802 x 604 in 7)
+     * there's plain glass. */
+    reflection(t, cr, "ReflectionStreaks", f, outer, false);
+    reflection(t, cr, "ReflectionTopLeft", f, outer, false);
+    reflection(t, cr, "ReflectionTopRight", f, outer, true);
+    return true;
+}
+
+static void slice(const xd_theme *t, cairo_t *cr, const char *part, const char *state,
+                  xd_rect src, xd_rect dst) {
+    (void)xd_pkg_draw_slice(t, cr, DWM, part, state, src, dst);
+}
+
+/* DWM's edges are four pieces (uxtheme.ini's notes): FrameTop, 21 x 27,
+ * holds the top corners and edge (rows 0-6, its middle column stretched),
+ * and at its bottom centre the client edge's top corners (columns 8-12,
+ * rows 24-26: a light line, a dark one, and one under the client area);
+ * FrameBottom, 21 x 11, the client edge's bottom (rows 0-2) and the
+ * bottom corners (rows 3-10); FrameLeft and FrameRight, 11 x 3, the outer
+ * edge (3 columns) and the client edge (3 columns) across a side. How
+ * DWM stretches them between isn't documented: the outer edge and the
+ * client edge are each laid where their lines show they go, with the
+ * glass between, which keeps the client edge's light and dark lines (DWM's
+ * own SizingMargins would squeeze the light one out of an 8 px border). */
+bool xd_pkgstyle_dwm_edges(const xd_theme *t, cairo_t *cr, xd_rect o, xd_rect c,
+                           const xd_frame *f) {
+    static const char *const pieces[] = {"FrameTop", "FrameBottom", "FrameLeft", "FrameRight"};
+    if (!dwm_frame(t) || f->maximized)
+        return false;
+    for (size_t i = 0; i < XD_ARRAY_LEN(pieces); i++)
+        if (!xd_pkg_has(t->pkg, DWM, pieces[i]))
+            return false;
+    const char *st = f->active ? "1" : "2";
+    int u1 = xd_tpx(t, 1), u2 = xd_tpx(t, 2), u3 = xd_tpx(t, 3);
+    int u7 = xd_tpx(t, 7), u8 = xd_tpx(t, 8);
+    int right = o.x + o.w, bottom = o.y + o.h;
+    cairo_save(cr);
+    /* Nothing over the client area: a line under it shows only where the
+     * client is transparent. */
+    cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+    cairo_rectangle(cr, o.x, o.y, o.w, o.h);
+    if (c.w > 0 && c.h > 0)
+        cairo_rectangle(cr, c.x, c.y, c.w, c.h);
+    cairo_clip(cr);
+    /* The outer edge: corners, top and bottom, sides. */
+    slice(t, cr, "FrameTop", st, (xd_rect){0, 0, 7, 7}, (xd_rect){o.x, o.y, u7, u7});
+    slice(t, cr, "FrameTop", st, (xd_rect){10, 0, 1, 7}, (xd_rect){o.x + u7, o.y, o.w - 2 * u7, u7});
+    slice(t, cr, "FrameTop", st, (xd_rect){14, 0, 7, 7}, (xd_rect){right - u7, o.y, u7, u7});
+    slice(t, cr, "FrameBottom", st, (xd_rect){0, 3, 7, 8}, (xd_rect){o.x, bottom - u8, u7, u8});
+    slice(t, cr, "FrameBottom", st, (xd_rect){10, 3, 1, 8},
+          (xd_rect){o.x + u7, bottom - u8, o.w - 2 * u7, u8});
+    slice(t, cr, "FrameBottom", st, (xd_rect){14, 3, 7, 8}, (xd_rect){right - u7, bottom - u8, u7, u8});
+    int side = bottom - u8 - (o.y + u7);
+    slice(t, cr, "FrameLeft", st, (xd_rect){0, 0, 3, 3}, (xd_rect){o.x, o.y + u7, u3, side});
+    slice(t, cr, "FrameRight", st, (xd_rect){8, 0, 3, 3}, (xd_rect){right - u3, o.y + u7, u3, side});
+    /* The client edge: a light line outside a dark one. */
+    if (c.w > 0 && c.h > 0) {
+        int cr_ = c.x + c.w, cb = c.y + c.h;
+        slice(t, cr, "FrameTop", st, (xd_rect){8, 24, 2, 3}, (xd_rect){c.x - u3, c.y - u2, u2, u3});
+        slice(t, cr, "FrameTop", st, (xd_rect){10, 24, 1, 3},
+              (xd_rect){c.x - u1, c.y - u2, c.w + u2, u3});
+        slice(t, cr, "FrameTop", st, (xd_rect){11, 24, 2, 3}, (xd_rect){cr_ + u1, c.y - u2, u2, u3});
+        slice(t, cr, "FrameBottom", st, (xd_rect){8, 0, 2, 3}, (xd_rect){c.x - u3, cb - u1, u2, u3});
+        slice(t, cr, "FrameBottom", st, (xd_rect){10, 0, 1, 3},
+              (xd_rect){c.x - u1, cb - u1, c.w + u2, u3});
+        slice(t, cr, "FrameBottom", st, (xd_rect){11, 0, 2, 3}, (xd_rect){cr_ + u1, cb - u1, u2, u3});
+        slice(t, cr, "FrameLeft", st, (xd_rect){8, 0, 3, 3},
+              (xd_rect){c.x - u2, c.y + u1, u3, c.h - u2});
+        slice(t, cr, "FrameRight", st, (xd_rect){0, 0, 3, 3},
+              (xd_rect){cr_ - u1, c.y + u1, u3, c.h - u2});
+    }
+    cairo_restore(cr);
     return true;
 }
 
@@ -1154,6 +1261,59 @@ bool xd_theme_draw_show_desktop(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
     return true;
 }
 
+/* ---- Alt+Tab: AltTab (deduced names) ---- */
+
+static const char *const ALTTAB = "AltTab";
+
+bool xd_pkgstyle_has_switcher(const xd_theme *t) {
+    return t->pkg != nullptr && xd_pkg_has_own(t->pkg, ALTTAB, "SelectedItem");
+}
+
+void xd_pkgstyle_draw_switcher_box(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    /* The class's own image: 7's box without glass (with it, 7 shows live
+     * thumbnails on the glass; we show icons, as without). */
+    if (!xd_pkg_draw(t, cr, ALTTAB, nullptr, nullptr, r))
+        xd_fill_rect(cr, r, xd_rgba_from_rgb(t->scheme.colors[XD_COLOR_BUTTON_FACE]));
+}
+
+void xd_pkgstyle_draw_switcher_item(const xd_theme *t, cairo_t *cr, xd_rect r, bool selected,
+                                    bool hot) {
+    const char *part = selected && hot ? "HotSelectedItem"
+                       : selected      ? "SelectedItem"
+                       : hot           ? "HotItem"
+                                       : nullptr;
+    if (part != nullptr)
+        (void)xd_pkg_draw(t, cr, ALTTAB, part, nullptr, r);
+}
+
+void xd_pkgstyle_draw_switcher_title(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                     const char *title) {
+    if (title == nullptr || *title == '\0' || r.w <= 0)
+        return;
+    xd_rgba fg = xd_rgba_hex(0x000000);
+    (void)xd_pkg_color(t->pkg, ALTTAB, "Title", nullptr, "TextColor", &fg);
+    xd_text_style ts = xd_text(t, XD_FONT_CAPTION, fg, XD_ALIGN_START);
+    xd_font_spec font;
+    if (xd_pkg_font(t->pkg, ALTTAB, "Title", nullptr, "Font", &font, nullptr))
+        ts.font = &font;
+    ts.ellipsize = true;
+    /* On glass, 7 sets the title on a white glow (TextGlowSize): TextGlow's
+     * image round the text. */
+    int glow = 0;
+    if (xd_pkg_int(t->pkg, ALTTAB, "Title", nullptr, "TextGlowSize", &glow) && glow > 0 &&
+        xd_pkg_has(t->pkg, "TextGlow", "Glow")) {
+        PangoLayout *l = xd_text_layout(cr, title, &ts);
+        int tw = 0, th = 0;
+        pango_layout_get_pixel_size(l, &tw, &th);
+        g_object_unref(l);
+        int g = xd_tpx(t, glow) / 2;
+        tw = MIN(tw, r.w);
+        (void)xd_pkg_draw(t, cr, "TextGlow", "Glow", nullptr,
+                          (xd_rect){r.x - g, r.y + (r.h - th) / 2 - g, tw + 2 * g, th + 2 * g});
+    }
+    xd_draw_text(cr, r, title, &ts);
+}
+
 /* ---- 7's thumbnails: TaskbandExtendedUI (deduced names) ---- */
 
 static const char *const TEU = "TaskbandExtendedUI";
@@ -1256,7 +1416,7 @@ static const char *const start_names[XD_START_PART_COUNT] = {
     [XD_START_PROG_ITEM_SPLIT] = "ProgListItemSplit",
     [XD_START_PLACES_ITEM] = "PlacesListItem",
     [XD_START_SHUTDOWN] = "ShutdownButton",
-    [XD_START_SHUTDOWN_ARROW] = "ShutdownArrow",
+    [XD_START_SHUTDOWN_ARROW] = "LogoffSplitButtonDropdown",
 };
 
 /* The class drawing a part: 7's StartPanelPriv, then StartPanel (XP's
