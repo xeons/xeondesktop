@@ -3350,10 +3350,10 @@ def write_tiny_package(s):
             f'    <color name="BtnFace" value="{" ".join(map(str, PKG_FACE))}"/>\n'
             "  </sysmetrics>\n  <class name=\"Button\">\n"
             '    <part name="PushButton" BgType="ImageFile" ImageFile="images/button.png"'
-            ' ImageCount="5" SizingMargins="4 4 4 4" ContentMargins="3 3 3 3"'
+            ' ImageCount="5" ImageLayout="Vertical" SizingMargins="4 4 4 4" ContentMargins="3 3 3 3"'
             ' SizingType="Stretch" TextColor="0 0 0"/>\n'
             '    <part name="CheckBox" BgType="ImageFile" ImageFile="images/check.png"'
-            ' ImageCount="12" SizingType="TrueSize"/>\n'
+            ' ImageCount="12" ImageLayout="Vertical" SizingType="TrueSize"/>\n'
             "  </class>\n</style>\n"
         )
 
@@ -6170,7 +6170,7 @@ def x11_keyboard_grab(s):
 PKG_CAPTION = (200, 30, 160)
 PKG_BORDER = (30, 160, 200)
 PKG_CLOSE = (20, 200, 20)
-PKG_BUTTON = (30, 60, 230)
+THEME_PKG_BUTTON = (30, 60, 230)
 
 
 def write_theme_package(s):
@@ -6191,7 +6191,7 @@ def write_theme_package(s):
     png("caption.png", 8, 30, PKG_CAPTION)
     png("border.png", 4, 4, PKG_BORDER)
     png("close.png", 21, 21, PKG_CLOSE)
-    png("button.png", 10, 10, PKG_BUTTON)
+    png("button.png", 10, 10, THEME_PKG_BUTTON)
     with open(os.path.join(root, "theme.xml"), "w") as f:
         f.write('<xdtheme version="1" name="UI Test" base="classic">\n'
                 '  <variant id="plain" name="Plain" size="normal" style="styles/plain.xml"/>\n'
@@ -6248,7 +6248,7 @@ def theme_package(s):
             f"the close button is the package's 21x21 image ({n} pixels at {close})")  # fmt: skip
     s.check(cap[0] <= close[0] and close[2] <= cap[2] + 8 and cap[1] <= close[1]
             and close[3] <= cap[3], "the close button is on the caption")  # fmt: skip
-    n, buttons = color_box(shot, PKG_BUTTON)
+    n, buttons = color_box(shot, THEME_PKG_BUTTON)
     s.check(n > 3 * 60 * 15 and buttons[1] > cap[3] and cap[0] <= buttons[0]
             and buttons[2] <= cap[2], f"the push buttons are the package's ({n} pixels at {buttons})")  # fmt: skip
 

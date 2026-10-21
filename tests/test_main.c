@@ -7950,7 +7950,7 @@ static void test_gtk_package(void) {
         "          ContentMargins=\"2 2 2 2\" SizingType=\"Stretch\" TextColor=\"0 0 0\"/>\n"
         "    <part name=\"PushButton\" state=\"Disabled\" TextColor=\"128 128 128\"/>\n"
         "    <part name=\"CheckBox\" BgType=\"ImageFile\" ImageFile=\"images/check.png\"\n"
-        "          ImageCount=\"12\" SizingType=\"TrueSize\"/>\n"
+        "          ImageCount=\"12\" ImageLayout=\"Vertical\" SizingType=\"TrueSize\"/>\n"
         "  </class>\n</style>\n",
         -1, nullptr));
     g_free(p);
