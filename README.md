@@ -59,13 +59,15 @@ Static analysis: `meson setup build-analyze -Danalyzer=true`.
 GitHub Actions (`.github/workflows/packages.yml`) builds a `.deb` for Debian
 testing and unstable and for Ubuntu 26.04 LTS (whose wlroots is 0.19, so its
 package has our wlroots 0.20 built in), each for amd64 and arm64, and an
-x86-64 package for Arch Linux and CachyOS on every push; they're under the run's
-Artifacts, and tagging `vX.Y.Z` attaches them to a release. To build them
+x86-64 package for Arch Linux, CachyOS and Manjaro (stable, built against
+its own libraries) on every push; they're under the run's Artifacts, and
+tagging `vX.Y.Z` attaches them to a release. To build them
 locally with podman (or docker):
 
     podman run --rm -v "$PWD":/src -w /src debian:testing packaging/build-deb.sh
     podman run --rm -v "$PWD":/src -w /src ubuntu:26.04 packaging/build-deb.sh
     podman run --rm -v "$PWD":/src -w /src cachyos/cachyos packaging/build-arch.sh
+    podman run --rm -v "$PWD":/src -w /src manjarolinux/base packaging/build-arch.sh
 
 The packages land in `dist/`. Installing one adds **XeonDesktop** to the
 display manager's session list. `xeondesktop-session` reads

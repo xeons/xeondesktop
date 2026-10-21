@@ -79,7 +79,10 @@ jobs:
           if-no-files-found: error
 
   # x86_64 only: the archlinux and cachyos/cachyos images have no arm64
-  # variant (Arch Linux ARM is a separate project, CachyOS is x86-64 only).
+  # variant (Arch Linux ARM is a separate project, CachyOS is x86-64 only);
+  # manjarolinux/base has one (Manjaro ARM), not built yet. Manjaro's image
+  # is its stable branch, which holds Arch's packages back a few weeks:
+  # built against its own libraries rather than handed Arch's package.
   # The PKGBUILD itself also builds on aarch64.
   arch:
     needs: version
@@ -95,6 +98,9 @@ jobs:
           - name: CachyOS
             image: cachyos/cachyos:latest
             artifact: cachyos
+          - name: Manjaro
+            image: manjarolinux/base:latest
+            artifact: manjaro
     container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v7

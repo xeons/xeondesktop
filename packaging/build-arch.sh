@@ -1,9 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Builds the Arch Linux / CachyOS package, run from the source tree as root
-# in an Arch-based system, e.g. in a container:
+# Builds the Arch Linux / CachyOS / Manjaro package, run from the source
+# tree as root in an Arch-based system, e.g. in a container:
 #   podman run --rm -v "$PWD":/src -w /src archlinux:latest packaging/build-arch.sh
 #   podman run --rm -v "$PWD":/src -w /src cachyos/cachyos:latest packaging/build-arch.sh
+#   podman run --rm -v "$PWD":/src -w /src manjarolinux/base:latest packaging/build-arch.sh
 # XD_VERSION overrides pkgver (letters, digits, dots and underscores only).
 # The package lands in ./dist.
 set -eu
