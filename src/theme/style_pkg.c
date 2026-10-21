@@ -79,37 +79,35 @@ bool xd_pkgstyle_dwm_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_
     return true;
 }
 
-static int part_w(const xd_theme *t, const char *part, int fallback) {
-    int w, h;
-    return xd_pkg_part_size(t, WINDOW, part, "Active", &w, &h) ? w : fallback;
-}
-
 static int part_h(const xd_theme *t, const char *part, int fallback) {
     int w, h;
     return xd_pkg_part_size(t, WINDOW, part, "Active", &w, &h) ? h : fallback;
 }
 
-xd_insets xd_pkgstyle_frame_insets(const xd_theme *t, const xd_frame *f) {
-    int top = part_h(t, f->maximized ? "MaxCaption" : "Caption", xd_tpx(t, 30));
-    if (f->maximized)
-        return (xd_insets){0, top, 0, 0};
-    return (xd_insets){part_w(t, "FrameLeft", xd_tpx(t, 4)), top,
-                       part_w(t, "FrameRight", xd_tpx(t, 4)),
-                       part_h(t, "FrameBottom", xd_tpx(t, 4))};
+/* Windows sizes a frame from system metrics, not from the style's images
+ * (it stretches them to fit): borders of XP's sizing frame, 4 px, plus
+ * Vista's and 7's PaddedBorderWidth; the caption CaptionBarHeight + 1
+ * below the top border (30 for Luna, as XP's screenshots measure). A
+ * maximized window's borders are off the screen. */
+static int frame_border(const xd_theme *t) {
+    int padded = 0;
+    (void)xd_pkg_sys_int(t->pkg, "PaddedBorderWidth", &padded);
+    return xd_tpx(t, 4 + MAX(padded, 0));
 }
 
-/* A part's Offset, scaled: where it goes from the corner its OffsetType
- * names. */
-static bool offset(const xd_theme *t, const char *part, int *x, int *y, bool *right) {
-    int n[2];
-    const char *v = xd_pkg_prop(t->pkg, WINDOW, part, nullptr, "Offset");
-    if (v == nullptr || sscanf(v, "%d %d", &n[0], &n[1]) != 2)
-        return false;
-    const char *type = xd_pkg_prop(t->pkg, WINDOW, part, nullptr, "OffsetType");
-    *right = type != nullptr && g_ascii_strncasecmp(type, "TopRight", 8) == 0;
-    *x = (int)lround(n[0] * t->scale);
-    *y = (int)lround(n[1] * t->scale);
-    return true;
+static int caption_bar(const xd_theme *t) {
+    int cbh = 0;
+    if (xd_pkg_sys_int(t->pkg, "CaptionBarHeight", &cbh) && cbh > 0)
+        return xd_tpx(t, cbh + 1);
+    /* No metric: the caption image less the border. */
+    return MAX(part_h(t, "Caption", xd_tpx(t, 30)) - frame_border(t), xd_tpx(t, 8));
+}
+
+xd_insets xd_pkgstyle_frame_insets(const xd_theme *t, const xd_frame *f) {
+    if (f->maximized)
+        return (xd_insets){0, caption_bar(t), 0, 0};
+    int b = frame_border(t);
+    return (xd_insets){b, b + caption_bar(t), b, b};
 }
 
 static const char *button_part(xd_frame_part part, bool maximized) {
@@ -126,43 +124,23 @@ void xd_pkgstyle_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *
                               xd_frame_layout *l) {
     xd_insets in = xd_pkgstyle_frame_insets(t, f);
     l->caption = (xd_rect){outer.x, outer.y, outer.w, in.top};
-    /* Offsets are from the window's own corners; a maximized window's
-     * borders are pushed off the screen, as Windows does. */
-    int border = f->maximized ? part_w(t, "FrameLeft", xd_tpx(t, 4)) : 0;
-    int right = outer.x + outer.w + border, top = outer.y - border;
-    int bw = xd_tpx(t, 21), bh = bw;
+    /* Where Windows puts them, whatever a style's Offsets say (the WE
+     * styles' would put them outside the window): the style's own button
+     * size if it fits the bar (WE's 18x20), else square at the bar's
+     * height less 4; centred between the top border and the client area,
+     * 2 px in from the right border and 2 px apart. */
+    int border = f->maximized ? 0 : frame_border(t);
+    int bar = in.top - border;
+    int size = MAX(bar - xd_tpx(t, 5), xd_tpx(t, 8));
+    int bw = size, bh = size;
     int w, h;
-    if (xd_pkg_part_size(t, WINDOW, "CloseButton", "1", &w, &h)) {
+    if (xd_pkg_part_size(t, WINDOW, "CloseButton", "1", &w, &h) && h <= bar - xd_tpx(t, 2)) {
         bw = w;
         bh = h;
     }
-    /* Where Windows puts them: square buttons the caption bar's height
-     * less 4, centred in the bar below the frame's top edge, 2 px in from
-     * the right border and 2 px apart. A style's Offsets are used only
-     * where they make sense (Luna's agree with this; WE's don't). */
-    int bar = in.top - xd_tpx(t, 4);
-    int cbh = 0;
-    if (xd_pkg_sys_int(t->pkg, "CaptionBarHeight", &cbh) && cbh > 0)
-        bar = MIN(xd_tpx(t, cbh), in.top);
-    int frame_top = f->maximized ? 0 : in.top - bar;
-    int size = MAX(bar - xd_tpx(t, 4), xd_tpx(t, 8));
-    if (bh > size || bh <= 0) {
-        bw = bh = size;
-    }
-    int cx = -(f->maximized ? 0 : in.right) - xd_tpx(t, 2) - bw - border;
-    int cy = frame_top + (bar - bh) / 2 + border;
     int step = bw + xd_tpx(t, 2);
-    int ox, oy, mx, my;
-    bool o_right, m_right;
-    if (offset(t, "CloseButton", &ox, &oy, &o_right) && o_right && ox <= -bw && oy >= 0 &&
-        oy + bh <= in.top + border) {
-        cx = ox;
-        cy = oy;
-        if (offset(t, "MaxButton", &mx, &my, &m_right) && m_right && ox - mx >= bw &&
-            ox - mx <= 2 * bw)
-            step = ox - mx;
-    }
-    int bx = right + cx, by = MAX(top + cy, outer.y);
+    int right = outer.x + outer.w - border - xd_tpx(t, 2);
+    int bx = right - bw, by = outer.y + border + (bar - bh) / 2;
     static const struct {
         uint8_t flag;
         xd_frame_part part;
