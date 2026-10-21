@@ -40,18 +40,27 @@ void xd_theme_init(xd_theme *t, xd_visual_style style, const xd_scheme *scheme, 
     t->scale = scale;
     const char *glass = getenv("XD_GLASS");
     t->glass = glass != nullptr && strcmp(glass, "1") == 0;
+    xd_theme_attach_package(t);
 }
 
 xd_insets xd_theme_frame_insets(const xd_theme *t, const xd_frame *f) {
+    if (xd_pkgstyle_has_frame(t))
+        return xd_pkgstyle_frame_insets(t, f);
     return ops(t)->frame_insets(t, f);
 }
 void xd_theme_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
                            xd_frame_layout *out) {
     *out = (xd_frame_layout){0};
-    ops(t)->frame_layout(t, outer, f, out);
+    if (xd_pkgstyle_has_frame(t))
+        xd_pkgstyle_frame_layout(t, outer, f, out);
+    else
+        ops(t)->frame_layout(t, outer, f, out);
 }
 void xd_theme_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f) {
-    ops(t)->draw_frame(t, cr, outer, f);
+    if (xd_pkgstyle_has_frame(t))
+        xd_pkgstyle_draw_frame(t, cr, outer, f);
+    else
+        ops(t)->draw_frame(t, cr, outer, f);
 }
 
 bool xd_frame_part_is_button(xd_frame_part p) {
@@ -152,10 +161,14 @@ xd_glyph xd_glyph_for_part(xd_frame_part part, bool maximized) {
 xd_rgba xd_theme_dialog_color(const xd_theme *t) { return ops(t)->dialog_color(t); }
 void xd_theme_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                           const char *label) {
+    if (xd_pkgstyle_draw_button(t, cr, r, state, label))
+        return;
     ops(t)->draw_button(t, cr, r, state, label);
 }
 void xd_theme_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                             const char *label) {
+    if (xd_pkgstyle_draw_checkbox(t, cr, r, state, label))
+        return;
     ops(t)->draw_checkbox(t, cr, r, state, label);
 }
 int xd_theme_taskbar_height(const xd_theme *t) { return ops(t)->taskbar_height(t); }
@@ -483,6 +496,9 @@ xd_field_colors xd_theme_field_colors(const xd_theme *t) {
 }
 
 xd_rect xd_theme_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled) {
+    xd_rect inner;
+    if (xd_pkgstyle_draw_field(t, cr, r, disabled, &inner))
+        return inner;
     int px = xd_tpx(t, 1);
     xd_rgba fill = disabled ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_sys(t, XD_COLOR_WINDOW);
     if (!classic(t)) {
@@ -503,6 +519,8 @@ int xd_theme_dropdown_button_width(const xd_theme *t) {
 }
 
 void xd_theme_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (xd_pkgstyle_draw_dropdown_button(t, cr, r, state))
+        return;
     bool pressed = state & XD_STATE_PRESSED;
     bool disabled = state & XD_STATE_DISABLED;
     int px = xd_tpx(t, 1);
@@ -673,6 +691,8 @@ static void flat_radio(const xd_theme *t, cairo_t *cr, xd_rect b, uint8_t state)
 
 void xd_theme_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                          const char *label) {
+    if (xd_pkgstyle_draw_radio(t, cr, r, state, label))
+        return;
     /* The button sits where a check box's box does, so their labels line up. */
     int slot = xd_tpx(t, 13);
     bool disabled = state & XD_STATE_DISABLED;
@@ -715,6 +735,8 @@ void xd_theme_draw_label(const xd_theme *t, cairo_t *cr, xd_rect r, const char *
 
 void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                        const char *label) {
+    if (xd_pkgstyle_draw_tab(t, cr, r, state, label))
+        return;
     int px = xd_tpx(t, 1);
     bool selected = state & XD_STATE_CHECKED;
     xd_rect tab = selected ? r : xd_rect_inset4(r, 0, xd_tpx(t, 2), 0, 0);
@@ -772,12 +794,17 @@ void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
 }
 
 xd_rgba xd_theme_tab_page_color(const xd_theme *t) {
+    xd_rgba pkg_color;
+    if (xd_pkgstyle_tab_page_color(t, &pkg_color))
+        return pkg_color;
     if (watercolor(t))
         return xd_rgba_hex(WC_PAGE);
     return classic(t) ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_rgba_hex(0xFCFCFE);
 }
 
 void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (xd_pkgstyle_draw_tab_panel(t, cr, r))
+        return;
     int px = xd_tpx(t, 1);
     if (classic(t)) {
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
@@ -798,6 +825,8 @@ void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
 }
 
 void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label) {
+    if (xd_pkgstyle_draw_groupbox(t, cr, r, label))
+        return;
     int px = xd_tpx(t, 1);
     xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
                                classic(t) || watercolor(t) ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
@@ -907,6 +936,9 @@ void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int fir
                               int total) {
     int arrow = XD_MIN(r.w, r.h / 2);
     bool disabled = total <= page;
+    if (xd_pkgstyle_draw_vscrollbar(t, cr, r, xd_theme_vscrollbar_thumb(t, r, first, page, total),
+                                    disabled))
+        return;
     /* Track: Classic dithers ButtonHilight over Scrollbar; XP is flat. */
     if (classic(t)) {
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_SCROLLBAR));

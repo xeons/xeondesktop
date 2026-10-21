@@ -54,6 +54,37 @@ extern const xd_style_ops xd_style_luna;
 extern const xd_style_ops xd_style_whistler;
 extern const xd_style_ops xd_style_aero;
 
+/* pkg.c: sets t's package and image scaling to the active ones (and, with
+ * a package, its base style and its [SysMetrics] over the scheme). */
+void xd_theme_attach_package(xd_theme *t);
+
+/* style_pkg.c: a package's window frames (uxtheme's Window class), used
+ * when it has a caption. */
+bool xd_pkgstyle_has_frame(const xd_theme *t);
+xd_insets xd_pkgstyle_frame_insets(const xd_theme *t, const xd_frame *f);
+void xd_pkgstyle_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+                              xd_frame_layout *l);
+void xd_pkgstyle_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f);
+/* The controls a package styles (Button, Edit, ComboBox, ScrollBar, Tab):
+ * true when drawn, false to draw them as the style does. */
+bool xd_pkgstyle_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                             const char *label);
+bool xd_pkgstyle_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                               const char *label);
+bool xd_pkgstyle_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                            const char *label);
+bool xd_pkgstyle_tab_page_color(const xd_theme *t, xd_rgba *out);
+bool xd_pkgstyle_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label);
+bool xd_pkgstyle_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled,
+                            xd_rect *inner);
+bool xd_pkgstyle_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                      uint8_t state);
+bool xd_pkgstyle_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+                                 bool disabled);
+bool xd_pkgstyle_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                          const char *label);
+bool xd_pkgstyle_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+
 /* Helpers shared by the styles. */
 
 /* Classic glyphs (Marlett equivalents) drawn as pixel shapes, so the

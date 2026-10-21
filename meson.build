@@ -98,6 +98,9 @@ core_lib = static_library(
 )
 core_dep = declare_dependency(link_with: core_lib)
 
+# libarchive reads .xdtheme zips (theme packages); without it they must be
+# unpacked folders. It also makes Send To's Compressed (zipped) Folder.
+archive_dep = dependency('libarchive', required: false, include_type: 'system')
 theme_lib = static_library(
   'xdtheme',
   'src/theme/scheme.c',
@@ -110,7 +113,12 @@ theme_lib = static_library(
   'src/theme/luna.c',
   'src/theme/gtkcss.c',
   'src/theme/trayicons.c',
-  dependencies: [cairo_dep, pango_dep, glib_dep, m_dep],
+  'src/theme/pkg.c',
+  'src/theme/style_pkg.c',
+  'src/theme/scale.c',
+  c_args: ['-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0'),
+           '-DXD_THEME_DATADIR="' + get_option('prefix') / get_option('datadir') / 'xeondesktop"'],
+  dependencies: [cairo_dep, pango_dep, glib_dep, m_dep, archive_dep],
 )
 theme_dep = declare_dependency(
   link_with: theme_lib,
@@ -559,7 +567,6 @@ executable(
 # libarchive makes Send To's Compressed (zipped) Folder; without it the
 # item isn't offered. libsecret remembers encrypted drives' passphrases;
 # without it, they're asked for each time.
-archive_dep = dependency('libarchive', required: false, include_type: 'system')
 secret_dep = dependency('libsecret-1', required: false, include_type: 'system')
 folder_lib = static_library(
   'xdfolder',
@@ -1142,7 +1149,8 @@ install_data('data/pam.d/xeondesktop', install_dir: get_option('sysconfdir') / '
 install_data('data/ananicy/xeondesktop.rules',
              install_dir: get_option('sysconfdir') / 'ananicy.d' / 'xeondesktop')
 
-executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep])
+executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep],
+           c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"'])
 
 # The wallpapers, painted by tools/xd-wallpapers (run by hand; the pictures
 # are committed), where Display Properties' Background list finds them.

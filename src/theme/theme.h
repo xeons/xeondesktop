@@ -11,6 +11,7 @@
 #define XD_THEME_THEME_H
 
 #include "draw.h"
+#include "scale.h"
 
 typedef enum xd_visual_style {
     XD_STYLE_CLASSIC,
@@ -31,6 +32,12 @@ typedef struct xd_theme {
      * GPU, which sets XD_GLASS=1 for the session). Without it Aero is drawn
      * opaque, as Windows 7 Basic is without desktop composition. */
     bool glass;
+    /* A theme package (pkg.h) drawing what it styles, over the style;
+     * xd_theme_init() attaches the active one. Its images are scaled with
+     * `image_filter`, whole-number scales exactly when `integer_scaling`. */
+    const struct xd_pkg *pkg;
+    xd_image_filter image_filter;
+    bool integer_scaling;
 } xd_theme;
 
 void xd_theme_init(xd_theme *theme, xd_visual_style style, const xd_scheme *scheme,

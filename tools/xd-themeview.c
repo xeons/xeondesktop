@@ -6,6 +6,11 @@
  *   xd-themeview [--style classic|luna|whistler] [--scheme FILE]
  *                [--scale N] [--out FILE.png]
  *                [--element active-frame|inactive-frame|taskbar]
+ *                [--package DIR|FILE.xdtheme [--variant ID]]
+ *                [--filter nearest|integer|smooth|scale2x|...] [--integer 0|1]
+ *
+ * --package draws with a theme package (docs/THEMES.md) over its base
+ * style; --filter and --integer choose how its images are scaled.
  *
  * --element draws just one element, at the size it has in the Windows XP
  * reference screenshot tools/luna-measure.py reads, over magenta, for
@@ -14,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../src/theme/pkg.h"
 #include "../src/theme/theme.h"
 
 typedef struct options {
@@ -22,6 +28,10 @@ typedef struct options {
     double scale;
     const char *out;
     const char *element;
+    const char *package;
+    const char *variant;
+    xd_image_filter filter;
+    bool integer;
 } options;
 
 static void usage(FILE *f) {
@@ -57,6 +67,17 @@ static bool parse_args(int argc, char **argv, options *o) {
             o->element = val.ptr;
         } else if (xd_str_eq(arg, XD_STR("--out"))) {
             o->out = val.ptr;
+        } else if (xd_str_eq(arg, XD_STR("--package"))) {
+            o->package = val.ptr;
+        } else if (xd_str_eq(arg, XD_STR("--variant"))) {
+            o->variant = val.ptr;
+        } else if (xd_str_eq(arg, XD_STR("--filter"))) {
+            if (!xd_image_filter_from_name(val.ptr, &o->filter)) {
+                fprintf(stderr, "unknown filter: %s\n", val.ptr);
+                return false;
+            }
+        } else if (xd_str_eq(arg, XD_STR("--integer"))) {
+            o->integer = strcmp(val.ptr, "0") != 0;
         } else {
             fprintf(stderr, "unknown option: %s\n", arg.ptr);
             return false;
@@ -159,7 +180,11 @@ static cairo_surface_t *draw_element(const xd_theme *t, const char *name) {
 }
 
 int main(int argc, char **argv) {
-    options o = {.style = XD_STYLE_CLASSIC, .scale = 1.0, .out = "themeview.png"};
+    options o = {.style = XD_STYLE_CLASSIC,
+                 .scale = 1.0,
+                 .out = "themeview.png",
+                 .filter = XD_FILTER_SMOOTH,
+                 .integer = true};
     if (!parse_args(argc, argv, &o)) {
         usage(stderr);
         return EXIT_FAILURE;
@@ -175,6 +200,19 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         xd_strbuf_free(&err);
+    }
+
+    xd_pkg *pkg = nullptr;
+    if (o.package != nullptr) {
+        GError *error = nullptr;
+        pkg = xd_pkg_load(o.package, o.variant, XD_SOURCE_ROOT "/data/theme/uxtheme.ini",
+                          &error);
+        if (pkg == nullptr) {
+            fprintf(stderr, "%s\n", error->message);
+            g_error_free(error);
+            return EXIT_FAILURE;
+        }
+        xd_theme_use_package(pkg, o.filter, o.integer);
     }
 
     xd_theme theme;
@@ -220,7 +258,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "cannot write %s: %s\n", o.out, cairo_status_to_string(st));
         return EXIT_FAILURE;
     }
-    printf("wrote %s (%dx%d, %s, %s, scale %.2f)\n", o.out, width, height,
-           xd_visual_style_name(o.style), scheme.name, o.scale);
+    printf("wrote %s (%dx%d, %s, %s, scale %.2f%s%s)\n", o.out, width, height,
+           xd_visual_style_name(theme.style), scheme.name, o.scale, pkg ? ", package " : "",
+           pkg ? xd_pkg_name(pkg) : "");
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    xd_pkg_free(pkg);
     return EXIT_SUCCESS;
 }
