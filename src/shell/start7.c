@@ -23,6 +23,7 @@
 #include <sys/timerfd.h>
 #include <unistd.h>
 #include <gio/gdesktopappinfo.h>
+#include <pango/pango.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "../core/alloc.h"
@@ -1451,8 +1452,22 @@ static void draw_right_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp
             st.ellipsize = false;
         }
         st.underline = xp_underline(m, it->label, it->hit);
-        xd_draw_text(cr, D(xd_rect_inset4(r, 4 + icon + 6, 0, it->submenu ? 16 : 4, 0), s),
-                     it->label, &st);
+        xd_rect tr = D(xd_rect_inset4(r, 4 + icon + 6, 0, it->submenu ? 16 : 4, 0), s);
+        if (it->tall) {
+            /* Wrapped text is drawn from the top: its lines (one or two)
+             * centred on the icon, as XP has them. */
+            PangoLayout *l = xd_text_layout(cr, it->label, &st);
+            pango_layout_set_width(l, tr.w * PANGO_SCALE);
+            pango_layout_set_wrap(l, PANGO_WRAP_WORD_CHAR);
+            int lw = 0, lh = 0;
+            pango_layout_get_pixel_size(l, &lw, &lh);
+            g_object_unref(l);
+            if (lh < tr.h) {
+                tr.y += (tr.h - lh) / 2;
+                tr.h = lh;
+            }
+        }
+        xd_draw_text(cr, tr, it->label, &st);
         if (it->submenu)
             draw_triangle(cr, t, D((xd_rect){r.x + r.w - 14, r.y, 12, r.h}, s), c, false);
     }

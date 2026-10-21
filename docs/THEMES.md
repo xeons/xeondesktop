@@ -230,7 +230,9 @@ name (Windows' own `%SystemRoot%\Media` and `\Cursors` aren't there):
 ```xml
 <style>
   <!-- XP's [SysMetrics]: the colours, fonts and sizes every control uses
-       (and that GTK and Qt get). -->
+       (and that GTK and Qt get). MsgBoxFont is read but not used: dialogs
+       keep the dialog font (Tahoma 8), as Windows' do under 7's Segoe UI 9
+       and XP's Large Fonts. -->
   <sysmetrics>
     <color name="ActiveCaption" value="0 84 227"/>
     <color name="ButtonFace" value="236 233 216"/>

@@ -195,8 +195,12 @@ static const struct {
     xd_font_role role;
 } font_names[] = {
     {"captionfont", XD_FONT_CAPTION}, {"smallcaptionfont", XD_FONT_SMCAPTION},
-    {"menufont", XD_FONT_MENU},       {"msgboxfont", XD_FONT_MESSAGE},
-    {"statusfont", XD_FONT_TOOLTIP},  {"icontitlefont", XD_FONT_ICON},
+    {"menufont", XD_FONT_MENU},       {"statusfont", XD_FONT_TOOLTIP},
+    {"icontitlefont", XD_FONT_ICON},
+    /* Not MsgBoxFont: the message font is our dialogs' font, which
+     * Windows doesn't take from the style. Its dialogs stay in MS Shell
+     * Dlg (Tahoma 8) under 7's Segoe UI 9 and XP's Large Fonts, and are
+     * laid out for it. */
 };
 
 /* Windows' fonts become the free ones standing in for them (and the
