@@ -359,7 +359,9 @@ def xp_image(pkg, res, variant, ref, transparent):
 
     def make():
         pb = pixbuf_from_bmp_resource(data)
-        if transparent is not None and not pb.get_has_alpha():
+        if transparent is not None:
+            # The colour becomes clear whether or not the bitmap has alpha
+            # of its own (add_alpha keeps what alpha there is).
             pb = pb.add_alpha(True, *transparent)
         return pb
 
@@ -385,6 +387,23 @@ def import_xp(res, names, pkg):
         sname = themes.get(f"Size.{size}", "DisplayName", fallback=size).strip()
         style = Style(names)
         cp = ini(utf16(text))
+        # Properties by (class, part, state), lowercase, to look up what a
+        # section inherits from its class and the globals, as uxtheme does.
+        table = {}
+        for section in cp.sections():
+            m = SECTION.match(section)
+            if m:
+                key = tuple((x or "").strip().lower() for x in m.groups())
+                table.setdefault(key, {}).update({k.lower(): v.strip() for k, v in cp[section].items()})
+
+        def inherited(cls, part, state, prop):
+            c, p_, st = ((x or "").strip().lower() for x in (cls, part, state))
+            for key in ((c, p_, st), (c, p_, ""), (c, "", ""), (c.split("::")[-1], p_, ""),
+                        (c.split("::")[-1], "", ""), ("globals", "", "")):
+                if prop in table.get(key, {}):
+                    return table[key][prop]
+            return None
+
         for section in cp.sections():
             m = SECTION.match(section)
             if not m:
@@ -397,16 +416,27 @@ def import_xp(res, names, pkg):
                 continue
             if cls.lower() == "documentation":
                 continue
-            transparent_on = any(k.lower() == "transparent" and v.strip().lower() == "true" for k, v in props)
-            tcolor = next((parse_color(v) for k, v in props if k.lower() == "transparentcolor"), None)
-            glyph_on = any(k.lower() == "glyphtransparent" and v.strip().lower() == "true" for k, v in props)
-            gcolor = next((parse_color(v) for k, v in props if k.lower() == "glyphtransparentcolor"), None)
+            def flag(prop):
+                v = inherited(cls, part, state, prop)
+                return v is not None and v.lower() in ("true", "1")
+
+            def prop_color(prop):
+                v = inherited(cls, part, state, prop)
+                return parse_color(v) if v else None
+
+            transparent_on, tcolor = flag("transparent"), prop_color("transparentcolor")
+            glyph_on, gcolor = flag("glyphtransparent"), prop_color("glyphtransparentcolor")
+            # An image glyph without a GlyphImageFile has its sizes in
+            # ImageFile1..N (XP's caption buttons): glyph transparency.
+            glyph_sizes = (inherited(cls, part, state, "glyphtype") or "").lower() == "imageglyph" \
+                and inherited(cls, part, state, "glyphimagefile") is None
             out = []
             for k, v in props:
                 kl = k.lower()
                 v = v.strip()
                 if kl in IMAGE_PROPS or kl in GLYPH_PROPS:
-                    on, col = (glyph_on, gcolor) if kl in GLYPH_PROPS else (transparent_on, tcolor)
+                    as_glyph = kl in GLYPH_PROPS or (glyph_sizes and kl != "imagefile")
+                    on, col = (glyph_on, gcolor) if as_glyph else (transparent_on, tcolor)
                     path = xp_image(pkg, res, color, v, (col or (255, 0, 255)) if on else None)
                     if path is None:
                         print(f"xd-theme-import: {section}: no image {v}", file=sys.stderr)

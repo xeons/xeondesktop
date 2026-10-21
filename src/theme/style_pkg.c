@@ -260,16 +260,26 @@ bool xd_pkgstyle_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const 
         return false;
     int th = xd_tpx(t, 14);
     int top = r.y + th / 2;
+    xd_rgba fg = text_color(t, BUTTON, "GroupBox", 1, xd_sys(t, XD_COLOR_BUTTON_TEXT));
+    xd_text_style ts = xd_text(t, XD_FONT_MESSAGE, fg, XD_ALIGN_START);
+    bool has_label = label != nullptr && label[0] != '\0';
+    xd_rect gap = {0};
+    if (has_label)
+        gap = (xd_rect){r.x + xd_tpx(t, 7), r.y, xd_text_width(cr, label, &ts) + xd_tpx(t, 4), th};
+    /* The box is drawn around the label, which has no background of its
+     * own: whatever is behind the group shows through, as in Windows. */
+    cairo_save(cr);
+    if (has_label) {
+        cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+        cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+        cairo_rectangle(cr, gap.x, gap.y, gap.w, gap.h);
+        cairo_clip(cr);
+    }
     (void)xd_pkg_draw(t, cr, BUTTON, "GroupBox", "1",
                       (xd_rect){r.x, top, r.w, r.h - (top - r.y)});
-    if (label != nullptr && label[0] != '\0') {
-        xd_rgba fg = text_color(t, BUTTON, "GroupBox", 1, xd_sys(t, XD_COLOR_BUTTON_TEXT));
-        xd_text_style ts = xd_text(t, XD_FONT_MESSAGE, fg, XD_ALIGN_START);
-        int tw = xd_text_width(cr, label, &ts);
-        xd_rect gap = {r.x + xd_tpx(t, 7), r.y, tw + xd_tpx(t, 4), th};
-        xd_fill_rect(cr, gap, xd_theme_tab_page_color(t));
+    cairo_restore(cr);
+    if (has_label)
         xd_draw_text(cr, xd_rect_inset4(gap, xd_tpx(t, 2), 0, 0, 0), label, &ts);
-    }
     return true;
 }
 
