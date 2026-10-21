@@ -40,6 +40,7 @@ void xd_theme_init(xd_theme *t, xd_visual_style style, const xd_scheme *scheme, 
     t->scale = scale;
     const char *glass = getenv("XD_GLASS");
     t->glass = glass != nullptr && strcmp(glass, "1") == 0;
+    t->menu_look = XD_MENU_LOOK_NORMAL;
     xd_theme_attach_package(t);
 }
 
@@ -173,6 +174,8 @@ void xd_theme_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t s
 }
 int xd_theme_taskbar_height(const xd_theme *t) { return ops(t)->taskbar_height(t); }
 void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
+    if (xd_pkgstyle_draw_taskbar(t, cr, r, edge))
+        return;
     ops(t)->draw_taskbar(t, cr, r, edge);
 }
 
@@ -193,15 +196,21 @@ int xd_theme_start_button_width(const xd_theme *t, cairo_t *cr) {
     return ops(t)->start_button_width(t, cr);
 }
 void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (xd_pkgstyle_draw_start_button(t, cr, r, state))
+        return;
     ops(t)->draw_start_button(t, cr, r, state);
 }
 void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                const char *label, cairo_surface_t *icon) {
+    if (xd_pkgstyle_draw_task_button(t, cr, r, state, label, icon, 1))
+        return;
     ops(t)->draw_task_button(t, cr, r, state, label, icon);
 }
 
 void xd_theme_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                               const xd_app_button *b) {
+    if (xd_pkgstyle_draw_app_button(t, cr, r, state, b))
+        return;
     if (ops(t)->draw_app_button != nullptr)
         ops(t)->draw_app_button(t, cr, r, state, b);
     else
@@ -227,7 +236,21 @@ void xd_style_task_icon(const xd_theme *t, cairo_t *cr, cairo_surface_t *icon, i
                   xd_rgba_hex(0x404040));
 }
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock) {
+    xd_theme_draw_tray_on(t, cr, r, clock, XD_EDGE_BOTTOM);
+}
+
+void xd_theme_draw_tray_on(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock,
+                           xd_edge edge) {
+    if (xd_pkgstyle_draw_tray(t, cr, r, clock, edge))
+        return;
     ops(t)->draw_tray(t, cr, r, clock);
+}
+
+xd_rgba xd_theme_clock_color(const xd_theme *t) {
+    xd_rgba c;
+    if (xd_pkgstyle_clock_color(t, &c))
+        return c;
+    return t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_BUTTON_TEXT) : xd_rgba_hex(0xFFFFFF);
 }
 void xd_theme_tray_margins(const xd_theme *t, int *left, int *right) {
     /* What each style's draw_tray leaves around the clock. */
@@ -274,7 +297,7 @@ void xd_theme_menu_palette(const xd_theme *t, xd_menu_palette *out) {
 }
 
 void xd_theme_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r) {
-    if (xd_pkgstyle_draw_menu_frame(t, cr, r))
+    if (xd_pkgstyle_draw_start_menu_frame(t, cr, r) || xd_pkgstyle_draw_menu_frame(t, cr, r))
         return;
     xd_menu_palette p;
     ops(t)->menu_palette(t, &p);
@@ -320,7 +343,8 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
     bool hot = state & XD_STATE_HOT;
 
     xd_rgba text = p.text;
-    bool themed = xd_pkgstyle_draw_menu_item(t, cr, r, state, &text);
+    bool themed = xd_pkgstyle_draw_start_menu_item(t, cr, r, state, &text) ||
+                  xd_pkgstyle_draw_menu_item(t, cr, r, state, &text);
     if (themed) {
         /* The package's background and text colour. */
     } else if (hot) {
@@ -353,8 +377,9 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
         tr.w -= xd_text_width(cr, x->accel, &ac) + xd_tpx(t, 12);
     }
     xd_draw_text(cr, tr, label, &st);
-    if (submenu && !xd_pkgstyle_draw_menu_submenu(
-                       t, cr, (xd_rect){r.x + r.w - m.arrow_w, r.y, m.arrow_w, r.h}, disabled))
+    xd_rect arrow = {r.x + r.w - m.arrow_w, r.y, m.arrow_w, r.h};
+    if (submenu && !xd_pkgstyle_draw_start_menu_submenu(t, cr, arrow, state) &&
+        !xd_pkgstyle_draw_menu_submenu(t, cr, arrow, disabled))
         draw_submenu_arrow(t, cr, r, text);
     if (x != nullptr && (x->checked || x->glyph != XD_MENU_GLYPH_NONE)) {
         int box = xd_tpx(t, 16);
@@ -383,7 +408,8 @@ int xd_theme_menu_bold_text_width(const xd_theme *t, cairo_t *cr, const char *la
 }
 
 void xd_theme_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r) {
-    if (xd_pkgstyle_draw_menu_separator(t, cr, r))
+    if (xd_pkgstyle_draw_start_menu_separator(t, cr, r) ||
+        xd_pkgstyle_draw_menu_separator(t, cr, r))
         return;
     xd_menu_palette p;
     ops(t)->menu_palette(t, &p);
@@ -400,12 +426,13 @@ void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const
                                 const char *edition) {
     xd_menu_palette p;
     ops(t)->menu_palette(t, &p);
-    xd_fill_gradient(cr, r, p.banner_top, p.banner_bottom, false);
+    xd_font_spec bold = {.size_pt = 14, .bold = true};
+    snprintf(bold.family, sizeof(bold.family), "%s", XD_FONT_FAMILY_TAHOMA);
+    if (!xd_pkgstyle_draw_start_banner(t, cr, r, &p.banner_text, &bold))
+        xd_fill_gradient(cr, r, p.banner_top, p.banner_bottom, false);
 
     /* Rotate so text runs bottom to top, starting a few px above the
      * banner's foot. */
-    xd_font_spec bold = {.size_pt = 14, .bold = true};
-    snprintf(bold.family, sizeof(bold.family), "%s", XD_FONT_FAMILY_TAHOMA);
     xd_font_spec light = bold;
     light.bold = false;
     xd_text_style st = {.font = &bold,

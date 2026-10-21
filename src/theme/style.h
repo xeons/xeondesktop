@@ -122,6 +122,41 @@ bool xd_pkgstyle_draw_menubar(const xd_theme *t, cairo_t *cr, xd_rect r, bool ac
 bool xd_pkgstyle_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                    const char *label);
 
+/* The taskbar, thumbnails, jump lists and Start menus a package styles
+ * (style_pkg.c's own section): true when drawn, false to draw them as
+ * the style does. */
+bool xd_pkgstyle_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
+bool xd_pkgstyle_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+/* count > 1: a group's button. */
+bool xd_pkgstyle_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                  const char *label, cairo_surface_t *icon, int count);
+bool xd_pkgstyle_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                 const xd_app_button *b);
+bool xd_pkgstyle_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock,
+                           xd_edge edge);
+bool xd_pkgstyle_clock_color(const xd_theme *t, xd_rgba *out);
+bool xd_pkgstyle_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_pkgstyle_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+bool xd_pkgstyle_thumb_title_color(const xd_theme *t, xd_rgba *out);
+bool xd_pkgstyle_draw_thumb_close(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+bool xd_pkgstyle_draw_jumplist_frame(const xd_theme *t, cairo_t *cr, xd_rect r, int band_y);
+bool xd_pkgstyle_jumplist_header_color(const xd_theme *t, xd_rgba *out);
+/* An item's background when hot; `text` gets its colour. */
+bool xd_pkgstyle_draw_jumplist_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                    xd_rgba *text);
+bool xd_pkgstyle_draw_jumplist_pin(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+/* Menus of xd_theme.menu_look's Start menus: StartMenu::Toolbar and
+ * ::MenuBand (XP, 7), our ClassicStartMenu (Windows 2000). */
+bool xd_pkgstyle_draw_start_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_pkgstyle_draw_start_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                      xd_rgba *text);
+bool xd_pkgstyle_draw_start_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_pkgstyle_draw_start_menu_submenu(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                         uint8_t state);
+/* The banner's background; its text's colour and (bold) font. */
+bool xd_pkgstyle_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rgba *text,
+                                   xd_font_spec *font);
+
 /* theme.c: the style's menu colours. */
 void xd_theme_menu_palette(const xd_theme *t, xd_menu_palette *out);
 

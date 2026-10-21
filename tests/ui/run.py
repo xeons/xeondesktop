@@ -6438,6 +6438,89 @@ def theme_package(s):
             and buttons[2] <= cap[2], f"the push buttons are the package's ({n} pixels at {buttons})")  # fmt: skip
 
 
+# A package styling the XP taskbar (our own flat colours again): the bar,
+# the Start button's three states and the task buttons' six.
+PKG_BAR = (40, 170, 90)
+PKG_START = ((150, 20, 20), (170, 20, 20), (190, 20, 20))
+PKG_TASKS = [(20, 20, 100 + 20 * i) for i in range(6)]  # Normal ... HotChecked
+
+
+def write_taskbar_package(s):
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    root = os.path.join(s.base, "barpkg")
+    os.makedirs(os.path.join(root, "images"))
+    os.makedirs(os.path.join(root, "styles"))
+
+    def strip(name, w, frames):
+        """A vertical strip of solid frames, w x w each."""
+        pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, w, w * len(frames))
+        for i, rgb in enumerate(frames):
+            pb.new_subpixbuf(0, i * w, w, w).fill(
+                (rgb[0] << 24) | (rgb[1] << 16) | (rgb[2] << 8) | 0xFF)  # fmt: skip
+        pb.savev(os.path.join(root, "images", name), "png", [], [])
+
+    strip("bar.png", 4, [PKG_BAR])
+    strip("start.png", 8, PKG_START)
+    strip("task.png", 8, PKG_TASKS)
+    with open(os.path.join(root, "theme.xml"), "w") as f:
+        f.write('<xdtheme version="1" name="UI Bar Test" base="luna">\n'
+                '  <variant id="plain" name="Plain" size="normal" style="styles/plain.xml"/>\n'
+                "</xdtheme>\n")  # fmt: skip
+    with open(os.path.join(root, "styles", "plain.xml"), "w") as f:
+        f.write("""<style>
+  <class name="TaskBar">
+    <part name="BackgroundBottom" ImageFile="images/bar.png"/>
+  </class>
+  <class name="Start::Button">
+    <part ImageFile="images/start.png" ImageCount="3" ImageLayout="Vertical"
+          SizingMargins="0 0 0 0" TextColor="255 255 255"/>
+  </class>
+  <class name="TaskBand::Toolbar">
+    <part TextColor="255 255 255"/>
+    <part name="Button" ImageFile="images/task.png" ImageCount="6" ImageLayout="Vertical"/>
+  </class>
+</style>
+""")
+    os.environ["XD_THEME_PACKAGE"] = root
+    os.environ["XD_UXTHEME_NAMES"] = os.path.join(SOURCE_ROOT, "data", "theme", "uxtheme.ini")
+
+
+@scenario(desktop_ini=LUNA_INI, setup=write_taskbar_package)
+def theme_package_taskbar(s):
+    """With $XD_THEME_PACKAGE set, the XP taskbar, its Start button (and its
+    hot and pressed states) and the active window's task button come from
+    the package's images."""
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    shot = s.settle("bar")
+    n, bar = color_box(shot, PKG_BAR)
+    s.check(n > WIDTH * 10 and bar[0] <= 200 and bar[2] >= WIDTH - 200 and bar[3] == HEIGHT - 1,
+            f"the taskbar is the package's ({n} pixels at {bar})")  # fmt: skip
+    n, start = color_box(shot, PKG_START[0])
+    s.check(n > 40 * 10 and start[0] == 0 and start[3] == HEIGHT - 1,
+            f"the Start button is the package's ({n} pixels at {start})")  # fmt: skip
+    # The active window's button is Checked (5), not Normal (1).
+    n, task = color_box(shot, PKG_TASKS[4])
+    s.check(n > 60 * 10 and task[0] > start[2] and task[1] > HEIGHT - 40,
+            f"the active window's task button is the package's Checked one ({n} pixels at {task})")  # fmt: skip
+    s.check(color_box(shot, PKG_TASKS[0])[0] == 0, "no task button is drawn Normal")
+
+    # Hot, then pressed (its menu open).
+    s.inject("move", start[0] + 4, start[1] + 4, "sleep", 300)
+    hot = s.settle("start-hot")
+    s.check(color_box(hot, PKG_START[1])[0] > 40 * 10, "the hot Start button is the package's")
+    s.inject("click", "sleep", 500)
+    pressed = s.settle("start-pressed")
+    s.check(color_box(pressed, PKG_START[2])[0] > 40 * 10,
+            "the Start button is pressed while its menu is open")  # fmt: skip
+    s.inject("key", "Escape")
+    s.log("ok: the taskbar, Start button and task button are the package's")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))

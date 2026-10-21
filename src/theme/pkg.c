@@ -726,6 +726,10 @@ static bool has_in_class(const xd_pkg *p, const char *cls, const char *part) {
     return has;
 }
 
+bool xd_pkg_has_own(const xd_pkg *p, const char *cls, const char *part) {
+    return p != nullptr && has_in_class(p, cls, part);
+}
+
 /* In the classes xd_pkg_prop looks in: App::Class, Class, ClassStyle. */
 bool xd_pkg_has(const xd_pkg *p, const char *cls, const char *part) {
     if (p == nullptr)
@@ -870,6 +874,34 @@ bool xd_pkg_sys_font(const xd_pkg *p, const char *name, const char **face, int *
     *bold = n[1] != 0;
     *italic = n[2] != 0;
     return true;
+}
+
+bool xd_pkg_font(const xd_pkg *p, const char *cls, const char *part, const char *state,
+                 const char *prop, xd_font_spec *out) {
+    /* msstyles' LOGFONT as text: "Face, points[, Bold][, Italic]
+     * [, Underline][, Quality:ClearType]". */
+    const char *v = xd_pkg_prop(p, cls, part, state, prop);
+    if (v == nullptr)
+        return false;
+    char **fields = g_strsplit(v, ",", -1);
+    bool ok = fields[0] != nullptr && fields[1] != nullptr;
+    int n[1];
+    if (ok) {
+        g_strstrip(fields[0]);
+        ok = fields[0][0] != '\0' && numbers(fields[1], n, 1) == 1 && n[0] > 0;
+    }
+    if (ok) {
+        xd_font_spec f = {.size_pt = n[0]};
+        font_family(fields[0], f.family, sizeof(f.family));
+        for (size_t i = 2; fields[i] != nullptr; i++) {
+            const char *flag = g_strstrip(fields[i]);
+            f.bold = f.bold || g_ascii_strcasecmp(flag, "bold") == 0;
+            f.italic = f.italic || g_ascii_strcasecmp(flag, "italic") == 0;
+        }
+        *out = f;
+    }
+    g_strfreev(fields);
+    return ok;
 }
 
 /* ---- images ---------------------------------------------------------------------- */

@@ -38,6 +38,12 @@ typedef struct xd_theme {
     const struct xd_pkg *pkg;
     xd_image_filter image_filter;
     bool integer_scaling;
+    /* Whose menus the menu functions draw (xd_theme_init: ordinary ones). */
+    enum xd_menu_look : uint8_t {
+        XD_MENU_LOOK_NORMAL,
+        XD_MENU_LOOK_START,         /* the XP and 7 Start menus' cascades */
+        XD_MENU_LOOK_CLASSIC_START, /* the Windows 2000 Start menu and its cascades */
+    } menu_look;
 } xd_theme;
 
 void xd_theme_init(xd_theme *theme, xd_visual_style style, const xd_scheme *scheme,
@@ -67,6 +73,7 @@ typedef enum xd_widget_state : uint8_t {
     XD_STATE_DEFAULT = 1u << 4,
     XD_STATE_CHECKED = 1u << 5,
     XD_STATE_FLASH = 1u << 6, /* a task button asking for attention */
+    XD_STATE_VERTICAL = 1u << 7, /* a task button on a side taskbar */
 } xd_widget_state;
 
 /* Parts of a window frame, as returned by hit testing (WM_NCHITTEST). */
@@ -162,7 +169,20 @@ typedef struct xd_app_button {
     int windows;           /* 0: pinned, not running; 2 and more: stacked edges */
     double glow_x;         /* hovered: the pointer's x (device px); else < 0 */
     xd_rgba tint;          /* the icon's main colour, for the hover glow */
+    /* A program's progress (ITaskbarList3's), filling the button. */
+    enum xd_taskbar_progress : uint8_t {
+        XD_PROGRESS_NONE,
+        XD_PROGRESS_NORMAL,        /* green */
+        XD_PROGRESS_PAUSED,        /* yellow */
+        XD_PROGRESS_ERROR,         /* red */
+        XD_PROGRESS_INDETERMINATE, /* a green pulse sweeping across */
+    } progress;
+    double fraction; /* how far, 0..1; indeterminate: where the pulse is */
 } xd_app_button;
+/* The progress fill over a program's button `r`: from the theme package
+ * (TaskBand2's progress bars), else Windows 7's colours. */
+void xd_theme_draw_taskbar_progress(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                    enum xd_taskbar_progress kind, double fraction);
 void xd_theme_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                               const xd_app_button *b);
 /* Windows 7's taskbar thumbnails (Aero's taskbar only; device px): the
@@ -196,6 +216,80 @@ void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
 /* Notification area well at the right end of the taskbar: the clock is
  * drawn right-aligned inside the margins; tray icons go to its left. */
 void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
+
+/* ---- the taskbar from theme packages (style_pkg.c; device px) ----
+ * Each is drawn from the package where it styles the part, else as the
+ * style draws it (or, where they return false, as the caller does). */
+
+/* The well of a taskbar on `edge` (xd_theme_draw_tray: a bottom one's). */
+void xd_theme_draw_tray_on(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock,
+                           xd_edge edge);
+/* The clock's colour, where the caller draws it (a side taskbar's). */
+xd_rgba xd_theme_clock_color(const xd_theme *t);
+/* An unlocked taskbar's sizing bar along `r`'s edge facing the desktop:
+ * XP's packages have one; the built-in styles draw none. */
+void xd_theme_draw_taskbar_sizing_bar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
+/* XP's button for `count` windows of one program, grouped: the count
+ * apart from the name where the package styles it, else "3 Firefox". */
+void xd_theme_draw_task_group(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                              int count, const char *label, cairo_surface_t *icon);
+/* The chevron folding the tray's quiet icons (open: they show). state:
+ * _HOT, _PRESSED. False: the package has none, the caller draws its own. */
+bool xd_theme_draw_tray_chevron(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                bool open, bool vertical);
+/* Windows 7's Show desktop button at the end of the taskbar; false as
+ * above. */
+bool xd_theme_draw_show_desktop(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                bool vertical);
+/* A newly installed program's highlight in a Start menu (XP's
+ * NewAppButton); false: the caller fills its own colour. */
+bool xd_theme_draw_new_program(const xd_theme *t, cairo_t *cr, xd_rect r);
+
+/* ---- the XP and 7 Start menus from theme packages (style_pkg.c) ----
+ * XP's StartPanel parts, and 7's StartPanelPriv (StartPanel where it has
+ * none), by what they draw. */
+typedef enum xd_start_part : uint8_t {
+    XD_START_USER_PANE,           /* XP's header: the user's picture and name */
+    XD_START_USER_PICTURE,        /* the frame around the picture */
+    XD_START_PROG_LIST,           /* the program list (left) */
+    XD_START_PROG_SEPARATOR,
+    XD_START_PLACES_LIST,         /* the places (right) */
+    XD_START_PLACES_SEPARATOR,
+    XD_START_MORE_PROGRAMS,       /* "All Programs" */
+    XD_START_MORE_PROGRAMS_ARROW, /* its arrow (_HOT) */
+    XD_START_MORE_PROGRAMS_BACK,  /* 7's "Back" arrow (_HOT) */
+    XD_START_LOGOFF,              /* XP's footer */
+    XD_START_LOGOFF_BUTTONS,      /* XP: Log Off's icon, then Turn Off's (_HOT) */
+    XD_START_PROG_ITEM,           /* 7: a program's highlight (_HOT, _PRESSED) */
+    XD_START_PROG_ITEM_LEFT,      /* 7: ...a program with a jump list: its name */
+    XD_START_PROG_ITEM_SPLIT,     /* 7: ...and its ▸ */
+    XD_START_PLACES_ITEM,         /* 7: a place's highlight (_HOT, _PRESSED) */
+    XD_START_SHUTDOWN,            /* 7: Shut down (_HOT, _PRESSED) */
+    XD_START_SHUTDOWN_ARROW,      /* 7: its ▸ */
+    XD_START_PART_COUNT,
+} xd_start_part;
+/* Draws the part into r: false when the package doesn't style it. */
+bool xd_theme_draw_start_part(const xd_theme *t, cairo_t *cr, xd_start_part part, xd_rect r,
+                              uint8_t state);
+/* XP's footer icons: LogoffButtons is a strip of square icons, Log Off's
+ * key next to last and Turn Off's power button last. */
+bool xd_theme_draw_start_logoff_icon(const xd_theme *t, cairo_t *cr, xd_rect r, bool power,
+                                     uint8_t state);
+/* The part's image size at the theme's scale (true-size parts). */
+bool xd_theme_start_part_size(const xd_theme *t, xd_start_part part, uint8_t state, int *w,
+                              int *h);
+/* A part's colours (TextColor, CaptionText: a pinned program's second
+ * line, TextShadowColor) and font, from the package. */
+typedef enum xd_start_color : uint8_t {
+    XD_START_TEXT,
+    XD_START_SUBTEXT,
+    XD_START_SHADOW,
+} xd_start_color;
+bool xd_theme_start_part_color(const xd_theme *t, xd_start_part part, uint8_t state,
+                               xd_start_color which, xd_rgba *out);
+bool xd_theme_start_part_font(const xd_theme *t, xd_start_part part, xd_font_spec *out);
+/* Search results' group headings (7's StartMenu::ListView). */
+bool xd_theme_start_heading_color(const xd_theme *t, xd_rgba *out);
 
 /* Windows 7's glass colours, in Window Color and Appearance's order, as
  * 0xAARRGGBB (the alpha is the swatch's colour intensity). */

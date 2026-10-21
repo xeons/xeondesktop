@@ -84,7 +84,9 @@ loses nothing and anyone who has edited one already knows it:
   version, since the numbers changed between Vista and 7); the rest stay
   numbered. So far: DWMWindow's caption buttons, glows and glyphs (one per
   DPI: `CloseGlyph96` ... `CloseGlyph192`), its small close button and
-  the title's glow.
+  the title's glow; 7's taskbar buttons and progress bars (TaskBand2),
+  thumbnails (TaskbandExtendedUI), Start menu (StartPanelPriv, and
+  StartPanel's parts past 11). See "The taskbar and Start menus".
 - A property not found for a part in a state is looked up for the part,
   then the class, then (for `App::Class`) in `Class`, then in
   `ClassStyle` if the package has one (Vista and 7 keep their shared
@@ -92,8 +94,7 @@ loses nothing and anyone who has edited one already knows it:
 
 Our own additions, for what uxtheme never covered, are named the same
 way, with names no Windows style uses: `ClassicStartMenu` (the Windows
-2000 Start menu and its banner), `JumpList`, `TaskbarThumbnail`,
-`DesktopIcons` (icon text).
+2000 Start menu and its banner), `JumpList`, `DesktopIcons` (icon text).
 
 ## Layout
 
@@ -251,7 +252,7 @@ is a whole number" (on by default), saved in `desktop.ini`'s
 | Windows 2000 Start menu | `ClassicStartMenu` |
 | Explorer's task pane (XP) | `ExplorerBar` + `shell/NAME.xml` |
 | Explorer's navigation and command bars (7) | `Navigation`, `CommandModule`, `PreviewPane`, `ReadingPane` |
-| Jump lists, thumbnails | `JumpList`, `TaskbarThumbnail` |
+| Jump lists, thumbnails | `JumpList` (else 7's `StartPanelPriv` items), `TaskbandExtendedUI` |
 | GTK programs | generated from the above (CSS `border-image`) |
 
 ## GTK and Qt programs
@@ -295,6 +296,65 @@ throughout the CSS: the dialog face, window and text colours, selection,
 tooltips, menus (`MenuHilight` and `MenuBar` with `FlatMenus`), and the Qt
 palette written beside it. A widget the package doesn't style keeps the
 base style's generated CSS.
+
+## The taskbar and Start menus
+
+Drawn from the package where it styles the part, else as the base style
+draws it. With desktop composition (Vista's and 7's glass), a class's
+`...Composited::` variant is used where it has its own image.
+
+- **Taskbar**: `TaskBar` (7: `TaskBar2::TaskBar`) `BackgroundBottom`,
+  `Top`, `Left`, `Right` by the edge it's on, over the glass colour for
+  Vista and 7; `SizingBar...` along the edge facing the desktop while the
+  taskbar is unlocked.
+- **Start button**: XP's `Start::Button` (Normal, Hot, Pressed), with our
+  logo and "start" in its `Font`, `TextColor` and text shadow (XP's flag
+  is explorer.exe's, not the style's); Vista's orb, `StartMiddle::Button`.
+  7's orb isn't in its style: ours is drawn.
+- **Task buttons** (XP): `TaskBand::Toolbar` (`TaskBandVert::Toolbar` on
+  a side taskbar) `Button` in toolbar states (the active window's is
+  Checked); `TaskBand` `FlashButton` while one flashes, `GroupCount`'s
+  font and colour for a group's count.
+- **7's program buttons**: `TaskBand2` `AppButton` (frames 1-3 a
+  background window's Normal, Hot, Pressed; 4-6 the active one's; 7
+  flashing), `AppButtonStack` / `AppButtonStackLit` for a group's other
+  windows (frames for none, one, two), and the progress bars
+  `ProgressNormal`, `ProgressPaused`, `ProgressError`, `ProgressPulse`.
+- **Notification area**: `TrayNotifyHoriz::TrayNotify` (`...Vert::` on a
+  side taskbar) `Background`; `TrayNotify::Clock`'s `TextColor` and
+  `Font`; the chevron `TrayNotifyHoriz::Button` (`...HorizOpen::` while
+  the hidden icons show); 7's `ShowDesktop::Button`.
+- **Thumbnails** (7): `TaskbandExtendedUI` `ThumbnailBackground` over the
+  glass, `ThumbnailTile` (Hot 1, Pressed 2), `ThumbnailTitle`'s colour,
+  `ThumbnailClose` (Normal, Hot, Pressed).
+- **XP's Start menu**: `StartPanel` `UserPane` (and its `Font`,
+  `TextColor`, text shadow for the name), `UserPicture`, `ProgList`
+  (`TextColor`, `CaptionText` for a pinned program's second line),
+  `ProgListSeparator`, `PlacesList`, `PlacesListSeparator`,
+  `MorePrograms`, `MoreProgramsArrow`, `Logoff` (`TextColor`) and
+  `LogoffButtons` (a strip of square icons: Log Off's is the next to
+  last, Turn Off Computer's the last).
+- **7's Start menu**: `StartPanelPriv`'s, then `StartPanel`'s, parts of
+  the same names, and (deduced) `MoreProgramsArrowBack`, `ProgListItem`
+  (a program's highlight; with a jump list `ProgListItemLeft` and
+  `ProgListItemSplit`), `PlacesListItem`, `ShutdownButton`,
+  `ShutdownArrow`; search results' headings in `StartMenu::ListView`
+  `GroupHeader`'s `Heading1TextColor`.
+- **The Start menus' cascades** (All Programs, Recent Documents, Control
+  Panel): `StartMenu::Toolbar` (its background, `Button` Hot for the hot
+  item, the class's `TextColor` and Hot one), `StartMenu::MenuBand`
+  `Seperator` (XP's spelling; `Separator` too) and `NewAppButton` (a
+  newly installed program).
+- **The Windows 2000 Start menu**, `ClassicStartMenu`, ours: `Background`
+  (the menus), `Banner` (with its text's `TextColor` and `Font`), `Item`
+  (Normal, Hot, Disabled, DisabledHot, and their `TextColor`),
+  `Separator`, `SubmenuArrow` (Normal, Hot, Disabled). It styles the
+  Start menu and every menu cascading from it.
+- **Jump lists**, `JumpList`, ours: `Background`, `Band` (the bottom
+  band with the program's own items), `Header` (`TextColor`), `Item`
+  (Normal, Hot, Disabled, and their `TextColor`), `PinButton` (Normal,
+  Hot, Pressed). Without them, a hot item or pin is 7's Start menu's
+  `ProgListItem`, as 7 draws both with the same control.
 
 ## shell/NAME.xml
 

@@ -86,7 +86,9 @@ void xd_taskbar_reserve(xd_taskbar *bar, size_t n) {
 /* The notification area's chevron: "<<" shows folded icons, ">>" folds
  * them again. A flat toolbar button, as XP's. */
 static void draw_chevron(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                         bool expanded) {
+                         bool expanded, bool side) {
+    if (xd_theme_draw_tray_chevron(t, cr, r, state, expanded, side))
+        return;
     if (state & (XD_STATE_HOT | XD_STATE_PRESSED))
         xd_theme_draw_toolbar_button(t, cr, r, state);
     xd_rgba c = t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
@@ -417,11 +419,9 @@ static void layout_tray(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
         int clock_h = clock ? row_h * 2 / 3 : 0;
         int h = xd_tpx(t, 4) + icon_rows * pitch + clock_h + xd_tpx(t, 2);
         bar->tray_rect = (xd_rect){c.x, c.y + c.h - h, c.w, h};
-        xd_theme_draw_tray(t, cr, bar->tray_rect, "");
+        xd_theme_draw_tray_on(t, cr, bar->tray_rect, "", shell->settings.edge);
         if (clock) {
-            xd_rgba ink = t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
-                                                       : xd_rgba_hex(0xFFFFFF);
-            xd_text_style st = xd_text(t, XD_FONT_MENU, ink, XD_ALIGN_CENTER);
+            xd_text_style st = xd_text(t, XD_FONT_MENU, xd_theme_clock_color(t), XD_ALIGN_CENTER);
             xd_draw_text(cr,
                          (xd_rect){c.x, bar->tray_rect.y + bar->tray_rect.h - clock_h -
                                             xd_tpx(t, 2),
@@ -439,7 +439,8 @@ static void layout_tray(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
         if (clock && icons == 0)
             w = XD_MAX(xd_tpx(t, 60), w);
         bar->tray_rect = (xd_rect){c.x + c.w - w, c.y, w, c.h};
-        xd_theme_draw_tray(t, cr, bar->tray_rect, clock ? clock_lines : "");
+        xd_theme_draw_tray_on(t, cr, bar->tray_rect, clock ? clock_lines : "",
+                              shell->settings.edge);
         slots_origin = (xd_rect){bar->tray_rect.x + margin_l + chevron_w, c.y, pitch, row_h};
     }
     if (chevron_w > 0) {
@@ -447,7 +448,7 @@ static void layout_tray(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
                                       slots_origin.y + xd_tpx(t, 3), chevron_w,
                                       (side ? pitch : row_h) - xd_tpx(t, 6)};
         draw_chevron(t, cr, bar->tray_chevron, button_state(bar, XD_HIT_TRAY_CHEVRON),
-                     bar->tray_expanded);
+                     bar->tray_expanded, side);
     }
     for (size_t i = 0; i < icons; i++) {
         int col = (int)(i % (size_t)cols), row = (int)(i / (size_t)cols);
@@ -523,8 +524,7 @@ static void draw_task(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t e,
         xd_taskbar_tell_button(bar, tl, r);
     }
 
-    uint8_t state = button_state(bar, (int)i);
-    char *group_label = nullptr;
+    uint8_t state = button_state(bar, (int)i) | (side_bar(shell) ? XD_STATE_VERTICAL : 0);
     const char *label = tl->title != nullptr && tl->title[0] != '\0' ? tl->title
                         : tl->app_id != nullptr                      ? tl->app_id
                                                                       : "";
@@ -541,12 +541,7 @@ static void draw_task(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t e,
             state |= XD_STATE_CHECKED;
         else if (any_flash)
             state |= XD_STATE_FLASH;
-        xd_strbuf sb = {0};
-        xd_strbuf_appendf(&sb, "%zu %s", count,
-                          tl->app_name != nullptr ? tl->app_name : tl->app_id);
-        group_label = xd_str_dup_cstr(xd_strbuf_view(&sb));
-        xd_strbuf_free(&sb);
-        label = group_label;
+        label = tl->app_name != nullptr ? tl->app_name : tl->app_id;
     } else if (tl->activated && !tl->minimized) {
         state |= XD_STATE_CHECKED;
     } else if (tl->attention && tl->flashes % 2 == 0) {
@@ -557,10 +552,12 @@ static void draw_task(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, size_t e,
     const char *names[] = {tl->icon, tl->app_id, "application-x-executable"};
     cairo_surface_t *icon =
         xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), xd_tpx(t, 16));
-    xd_theme_draw_task_button(t, cr, r, state, label, icon);
-    if (count > 1)
+    if (count > 1) {
+        xd_theme_draw_task_group(t, cr, r, state, (int)count, label, icon);
         draw_group_arrow(t, cr, r, state);
-    xd_free(group_label);
+    } else {
+        xd_theme_draw_task_button(t, cr, r, state, label, icon);
+    }
 }
 
 /* Which page shows the active window, when it changed. */
@@ -719,6 +716,9 @@ static void layout_peek(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect
     }
     bar->peek_rect = r;
     bool hot = bar->hot == XD_HIT_PEEK;
+    uint8_t peek = (hot ? XD_STATE_HOT : 0) | (bar->pressed == XD_HIT_PEEK ? XD_STATE_PRESSED : 0);
+    if (xd_theme_draw_show_desktop(t, cr, r, peek, side))
+        return;
     if (hot || bar->pressed == XD_HIT_PEEK)
         xd_fill_rect(cr, r, xd_rgba_alpha(xd_rgba_hex(0xFFFFFF), bar->pressed == XD_HIT_PEEK ? 0.15
                                                                                          : 0.28));
@@ -740,6 +740,8 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, int
     xd_edge edge = shell->settings.edge;
     bool side = side_bar(shell);
     xd_theme_draw_taskbar(t, cr, (xd_rect){0, 0, dw, dh}, edge);
+    if (!shell->settings.locked)
+        xd_theme_draw_taskbar_sizing_bar(t, cr, (xd_rect){0, 0, dw, dh}, edge);
     xd_rect c = content_box(t, edge, dw, dh);
     layout_peek(bar, t, cr, &c, side);
     bool classic = t->style == XD_STYLE_CLASSIC;

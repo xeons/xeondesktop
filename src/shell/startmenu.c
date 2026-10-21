@@ -330,6 +330,7 @@ void xd_start_menu_refresh_documents(xd_shell *shell) {
     g_ptr_array_unref(names);
     xd_free_lines(paths, n);
     shell->start_model->items[shell->start_docs_index].submenu = m;
+    xd_menu_model_set_look(m, XD_MENU_LOOK_CLASSIC_START);
 }
 
 void xd_start_menu_build(xd_shell *shell) {
@@ -401,5 +402,6 @@ void xd_start_menu_build(xd_shell *shell) {
         xd_menu_add_keyed(tree, root, XD_MENU_ACTION, "Sh&ut Down...", "system-shutdown");
     shutdown->command = xd_shell_own_command(shell, "xd-shutdown", nullptr);
 
+    xd_menu_model_set_look(root, XD_MENU_LOOK_CLASSIC_START);
     shell->start_model = root;
 }

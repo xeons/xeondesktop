@@ -49,6 +49,14 @@ void xd_menu_tree_free(xd_menu_tree *tree) {
     *tree = (xd_menu_tree){0};
 }
 
+void xd_menu_model_set_look(xd_menu_model *model, uint8_t look) {
+    if (model == nullptr || model->look == look)
+        return;
+    model->look = look;
+    for (size_t i = 0; i < model->count; i++)
+        xd_menu_model_set_look(model->items[i].submenu, look);
+}
+
 xd_menu_model *xd_menu_model_new(xd_menu_tree *tree) {
     xd_menu_model *m = XD_ARENA_NEW(&tree->arena, xd_menu_model);
     if (tree->count == tree->cap) {
@@ -334,6 +342,7 @@ static void render(xd_menu *menu) {
     xd_theme_init(&t, shell->style, &shell->scheme, s);
     xd_menu_metrics mm = xd_theme_menu_metrics(&t);
     const xd_menu_model *m = menu->model;
+    t.menu_look = (enum xd_menu_look)m->look;
     bool cues = xd_menu_cues(shell);
     cairo_t *cr = cairo_create(buf->surface);
     if (m->jumplist) {
@@ -360,7 +369,7 @@ static void render(xd_menu *menu) {
             xd_theme_draw_menu_separator(&t, cr, r);
             continue;
         }
-        if (it->highlight && menu->hot != (int)i)
+        if (it->highlight && menu->hot != (int)i && !xd_theme_draw_new_program(&t, cr, r))
             xd_fill_rect(cr, r, xd_rgba_hex(XD_NEW_PROGRAM_COLOR));
         uint8_t state = 0;
         /* Only the item under the pointer: the one whose submenu is still

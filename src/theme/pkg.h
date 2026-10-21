@@ -38,6 +38,9 @@ const char *xd_pkg_prop(const xd_pkg *pkg, const char *cls, const char *part,
                         const char *state, const char *prop);
 /* Whether the package styles this part at all (any property). */
 bool xd_pkg_has(const xd_pkg *pkg, const char *cls, const char *part);
+/* Whether the class itself (not the Class an App::Class falls back to)
+ * styles the part: "Start::Button" without "Button"'s push buttons. */
+bool xd_pkg_has_own(const xd_pkg *pkg, const char *cls, const char *part);
 bool xd_pkg_int(const xd_pkg *pkg, const char *cls, const char *part, const char *state,
                 const char *prop, int *out);
 bool xd_pkg_bool(const xd_pkg *pkg, const char *cls, const char *part, const char *state,
@@ -55,6 +58,11 @@ bool xd_pkg_sys_int(const xd_pkg *pkg, const char *name, int *out);
 bool xd_pkg_sys_bool(const xd_pkg *pkg, const char *name, bool *out); /* "FlatMenus" */
 bool xd_pkg_sys_font(const xd_pkg *pkg, const char *name, const char **face, int *points,
                      bool *bold, bool *italic);
+/* A font property ("Font", "GlyphFont"...: "Tahoma, 8, Bold"), its face
+ * mapped to the free fonts standing in for Windows' as [SysMetrics]'
+ * are. */
+bool xd_pkg_font(const xd_pkg *pkg, const char *cls, const char *part, const char *state,
+                 const char *prop, xd_font_spec *out);
 
 /* ---- drawing, at the theme's scale with its image filter ---- */
 

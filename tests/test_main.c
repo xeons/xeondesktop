@@ -1652,6 +1652,245 @@ static int pkg_part_w(const xd_pkg *p, double scale, const char *part) {
     return w == h ? w : -1;
 }
 
+/* The taskbar, Start menus and their menus from a package (style_pkg.c's
+ * shell section): flat colours of our own, checked where nothing else is
+ * drawn (no logo or text). */
+static void make_shell_package(const char *root) {
+    char *styles = g_build_filename(root, "styles", nullptr);
+    char *images = g_build_filename(root, "images", nullptr);
+    CHECK(g_mkdir(styles, 0755) == 0 && g_mkdir(images, 0755) == 0);
+    g_free(styles);
+    g_free(images);
+    pkg_text(root, "theme.xml",
+             "<xdtheme version=\"1\" name=\"Shell Test\" base=\"luna\">\n"
+             "  <variant id=\"a\" name=\"A\" size=\"normal\" style=\"styles/a.xml\"/>\n"
+             "</xdtheme>\n");
+    pkg_text(
+        root, "styles/a.xml",
+        "<style>\n"
+        "  <class name=\"TaskBar\">\n"
+        "    <part name=\"BackgroundBottom\" ImageFile=\"images/bar.png\"/>\n"
+        "    <part name=\"SizingBarBottom\" ImageFile=\"images/sizing.png\" SizingType=\"Tile\"/>\n"
+        "  </class>\n"
+        "  <class name=\"Start::Button\">\n"
+        "    <part ImageFile=\"images/start.png\" ImageCount=\"3\" ImageLayout=\"Vertical\"\n"
+        "          Font=\"Tahoma, 8, Bold\" TextColor=\"1 2 3\"/>\n"
+        "  </class>\n"
+        "  <class name=\"Button\"><part name=\"PushButton\" ImageFile=\"images/bar.png\"/>\n"
+        "    <part ImageFile=\"images/bar.png\"/></class>\n"
+        "  <class name=\"TaskBand::Toolbar\">\n"
+        "    <part TextColor=\"255 255 255\"/>\n"
+        "    <part name=\"Button\" ImageFile=\"images/task.png\" ImageCount=\"6\"\n"
+        "          ImageLayout=\"Vertical\"/>\n"
+        "  </class>\n"
+        "  <class name=\"TaskBand\"><part name=\"FlashButton\" ImageFile=\"images/flash.png\"/>\n"
+        "  </class>\n"
+        "  <class name=\"TrayNotifyHoriz::TrayNotify\">\n"
+        "    <part name=\"Background\" ImageFile=\"images/tray.png\"/>\n"
+        "  </class>\n"
+        "  <class name=\"TrayNotify::Clock\"><part TextColor=\"10 20 30\"/></class>\n"
+        "  <class name=\"TrayNotifyHoriz::Button\">\n"
+        "    <part ImageFile=\"images/states.png\" ImageCount=\"3\" ImageLayout=\"Vertical\"\n"
+        "          SizingType=\"TrueSize\"/>\n"
+        "  </class>\n"
+        "  <class name=\"StartPanel\">\n"
+        "    <part name=\"ProgList\" ImageFile=\"images/prog.png\" TextColor=\"11 22 33\"\n"
+        "          CaptionText=\"44 55 66\"/>\n"
+        "    <part name=\"LogoffButtons\" ImageFile=\"images/logoff.png\" SizingType=\"TrueSize\"/>\n"
+        "  </class>\n"
+        "  <class name=\"StartMenu::Toolbar\">\n"
+        "    <part ImageFile=\"images/menu.png\" TextColor=\"0 0 0\"/>\n"
+        "    <part state=\"Hot\" TextColor=\"9 9 9\"/>\n"
+        "    <part name=\"Button\" ImageFile=\"images/states.png\" ImageCount=\"3\"\n"
+        "          ImageLayout=\"Vertical\"/>\n"
+        "  </class>\n"
+        "  <class name=\"StartMenu::MenuBand\">\n"
+        "    <part name=\"NewAppButton\" ImageFile=\"images/new.png\"/>\n"
+        "  </class>\n"
+        "  <class name=\"ClassicStartMenu\">\n"
+        "    <part name=\"Banner\" ImageFile=\"images/banner.png\" TextColor=\"1 1 1\"/>\n"
+        "    <part name=\"Item\" state=\"Hot\" ImageFile=\"images/item.png\"/>\n"
+        "  </class>\n"
+        "  <class name=\"TaskBand2\">\n"
+        "    <part name=\"AppButton\" ImageFile=\"images/app.png\" ImageCount=\"7\"\n"
+        "          ImageLayout=\"Vertical\"/>\n"
+        "    <part name=\"ProgressError\" ImageFile=\"images/red.png\"/>\n"
+        "  </class>\n"
+        "  <class name=\"JumpList\">\n"
+        "    <part name=\"Item\" state=\"Hot\" ImageFile=\"images/item.png\" TextColor=\"7 7 7\"/>\n"
+        "  </class>\n"
+        "</style>\n");
+    pkg_png_solid(root, "bar.png", 4, 4, 0x2040C0);
+    pkg_png_solid(root, "sizing.png", 4, 3, 0x00FF00);
+    uint32_t start[4 * 12], task[2 * 12], app[2 * 14], states[4 * 12];
+    for (int i = 0; i < 4 * 12; i++) {
+        start[i] = 0x100000u * (uint32_t)(i / 16 + 1);
+        states[i] = i < 16 ? 0x110000 : i < 32 ? 0x002200 : 0x000033;
+    }
+    for (int i = 0; i < 2 * 12; i++)
+        task[i] = 0x000010u * (uint32_t)(i / 4 + 1);
+    for (int i = 0; i < 2 * 14; i++)
+        app[i] = 0x001000u * (uint32_t)(i / 4 + 1);
+    pkg_png(root, "start.png", 4, 12, start);
+    pkg_png(root, "task.png", 2, 12, task);
+    pkg_png(root, "app.png", 2, 14, app);
+    pkg_png(root, "states.png", 4, 12, states);
+    pkg_png_solid(root, "flash.png", 2, 2, 0xFF8000);
+    pkg_png_solid(root, "tray.png", 2, 2, 0x0080FF);
+    pkg_png_solid(root, "prog.png", 2, 2, 0xEEEEEE);
+    uint32_t logoff[12 * 4];
+    for (int i = 0; i < 12 * 4; i++)
+        logoff[i] = 0x111111u * (uint32_t)(i % 12 / 4 + 1);
+    pkg_png(root, "logoff.png", 12, 4, logoff);
+    pkg_png_solid(root, "menu.png", 2, 2, 0xABCDEF);
+    pkg_png_solid(root, "new.png", 2, 2, 0xFEDCBA);
+    pkg_png_solid(root, "banner.png", 2, 2, 0x123456);
+    pkg_png_solid(root, "item.png", 2, 2, 0x654321);
+    pkg_png_solid(root, "red.png", 2, 2, 0xE00000);
+}
+
+static void test_theme_package_shell(void) {
+    const char *names = XD_SOURCE_ROOT "/data/theme/uxtheme.ini";
+    char *root = g_dir_make_tmp("xd-pkg-XXXXXX", nullptr);
+    make_shell_package(root);
+    GError *error = nullptr;
+    xd_pkg *p = xd_pkg_load(root, nullptr, names, &error);
+    CHECK(p != nullptr && error == nullptr);
+    if (p == nullptr) {
+        g_clear_error(&error);
+        rm_tree(root);
+        g_free(root);
+        return;
+    }
+
+    /* Font properties, and a class's own parts apart from its base's. */
+    xd_font_spec f = {0};
+    CHECK(xd_pkg_font(p, "Start::Button", nullptr, nullptr, "Font", &f) && f.size_pt == 8 &&
+          f.bold && !f.italic && strstr(f.family, "Tahoma") != nullptr);
+    CHECK(!xd_pkg_font(p, "StartPanel", "ProgList", nullptr, "TextColor", &f));
+    CHECK(xd_pkg_has_own(p, "Start::Button", nullptr) && !xd_pkg_has_own(p, "Dialog::Button", nullptr));
+    CHECK(xd_pkg_has(p, "Dialog::Button", "PushButton"));
+    /* Deduced and our own names resolve as uxtheme.ini lists them. */
+    CHECK(prop_is(p, "ClassicStartMenu", "3", "2", "ImageFile", "images/item.png"));
+
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_scheme sc;
+    xd_scheme_init_default(&sc);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
+    CHECK(t.style == XD_STYLE_LUNA && t.menu_look == XD_MENU_LOOK_NORMAL);
+    cairo_t *cr;
+    cairo_surface_t *s = pkg_canvas(60, 30, &cr);
+
+    /* The taskbar, and an unlocked one's sizing bar along its top. */
+    xd_theme_draw_taskbar(&t, cr, (xd_rect){0, 0, 60, 30}, XD_EDGE_BOTTOM);
+    CHECK(pixel(s, 5, 1) == 0x2040C0 && pixel(s, 59, 29) == 0x2040C0);
+    xd_theme_draw_taskbar_sizing_bar(&t, cr, (xd_rect){0, 0, 60, 30}, XD_EDGE_BOTTOM);
+    CHECK(pixel(s, 5, 0) == 0x00FF00 && pixel(s, 30, 2) == 0x00FF00 && pixel(s, 5, 3) == 0x2040C0);
+
+    /* The Start button's states: Normal, Hot, Pressed. */
+    static const struct {
+        uint8_t state;
+        uint32_t want;
+    } starts[] = {{0, 0x100000}, {XD_STATE_HOT, 0x200000}, {XD_STATE_PRESSED, 0x300000}};
+    for (size_t i = 0; i < G_N_ELEMENTS(starts); i++) {
+        xd_theme_draw_start_button(&t, cr, (xd_rect){0, 0, 60, 30}, starts[i].state);
+        CHECK(pixel(s, 1, 1) == starts[i].want);
+    }
+
+    /* Task buttons: toolbar states, Checked for the active window, the
+     * flashing one TaskBand's; a side taskbar's falls back to TaskBand's. */
+    static const struct {
+        uint8_t state;
+        uint32_t want;
+    } tasks[] = {
+        {0, 0x000010},
+        {XD_STATE_HOT, 0x000020},
+        {XD_STATE_CHECKED, 0x000050},
+        {XD_STATE_CHECKED | XD_STATE_HOT, 0x000060},
+        {XD_STATE_FLASH, 0xFF8000},
+        {XD_STATE_CHECKED | XD_STATE_FLASH, 0x000050},
+        {XD_STATE_VERTICAL, 0x000010},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(tasks); i++) {
+        xd_theme_draw_task_button(&t, cr, (xd_rect){0, 0, 60, 30}, tasks[i].state, "x", nullptr);
+        CHECK(pixel(s, 1, 1) == tasks[i].want && pixel(s, 58, 28) == tasks[i].want);
+    }
+    xd_theme_draw_task_group(&t, cr, (xd_rect){0, 0, 60, 30}, XD_STATE_CHECKED, 3, "x", nullptr);
+    CHECK(pixel(s, 1, 1) == 0x000050);
+
+    /* The tray, its clock's colour, its chevron (none for a side taskbar:
+     * Button's push button doesn't stand in for it). */
+    xd_theme_draw_tray(&t, cr, (xd_rect){0, 0, 60, 30}, "");
+    CHECK(pixel(s, 1, 1) == 0x0080FF);
+    xd_rgba ck = xd_theme_clock_color(&t);
+    CHECK(lround(ck.r * 255) == 10 && lround(ck.g * 255) == 20 && lround(ck.b * 255) == 30);
+    CHECK(xd_theme_draw_tray_chevron(&t, cr, (xd_rect){0, 0, 4, 4}, XD_STATE_HOT, false, false) &&
+          pixel(s, 1, 1) == 0x002200);
+    CHECK(!xd_theme_draw_tray_chevron(&t, cr, (xd_rect){0, 0, 4, 4}, 0, false, true));
+    CHECK(!xd_theme_draw_tray_chevron(&t, cr, (xd_rect){0, 0, 4, 4}, 0, true, false));
+    CHECK(!xd_theme_draw_show_desktop(&t, cr, (xd_rect){0, 0, 4, 4}, 0, false));
+
+    /* XP's Start panel: its parts, colours, and Log Off's and Turn Off's
+     * icons, the last two squares of LogoffButtons. */
+    CHECK(xd_theme_draw_start_part(&t, cr, XD_START_PROG_LIST, (xd_rect){0, 0, 60, 30}, 0) &&
+          pixel(s, 30, 15) == 0xEEEEEE);
+    CHECK(!xd_theme_draw_start_part(&t, cr, XD_START_USER_PANE, (xd_rect){0, 0, 60, 30}, 0));
+    xd_rgba c;
+    CHECK(xd_theme_start_part_color(&t, XD_START_PROG_LIST, 0, XD_START_TEXT, &c) &&
+          lround(c.b * 255) == 33);
+    CHECK(xd_theme_start_part_color(&t, XD_START_PROG_LIST, 0, XD_START_SUBTEXT, &c) &&
+          lround(c.r * 255) == 44);
+    CHECK(xd_theme_draw_start_logoff_icon(&t, cr, (xd_rect){0, 0, 8, 8}, false, 0) &&
+          pixel(s, 3, 3) == 0x222222 && pixel(s, 4, 4) == 0x222222);
+    CHECK(xd_theme_draw_start_logoff_icon(&t, cr, (xd_rect){0, 0, 8, 8}, true, 0) &&
+          pixel(s, 3, 3) == 0x333333 && pixel(s, 1, 1) == 0xEEEEEE);
+
+    /* Menus: ordinary ones as before; the Start menus' cascades in
+     * StartMenu::Toolbar, the Windows 2000 one in ClassicStartMenu. */
+    xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 60, 30});
+    CHECK(pixel(s, 30, 15) != 0xABCDEF);
+    t.menu_look = XD_MENU_LOOK_START;
+    xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 60, 30});
+    CHECK(pixel(s, 30, 15) == 0xABCDEF);
+    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
+    CHECK(pixel(s, 1, 1) == 0x002200);
+    CHECK(xd_theme_draw_new_program(&t, cr, (xd_rect){0, 0, 60, 30}) &&
+          pixel(s, 30, 15) == 0xFEDCBA);
+    t.menu_look = XD_MENU_LOOK_CLASSIC_START;
+    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
+    CHECK(pixel(s, 1, 1) == 0x654321);
+    xd_theme_draw_start_banner(&t, cr, (xd_rect){0, 0, 20, 30}, "", "");
+    CHECK(pixel(s, 1, 1) == 0x123456);
+    t.menu_look = XD_MENU_LOOK_NORMAL;
+
+    /* 7's program button (AppButton: active 4), the error progress over
+     * its left half. */
+    xd_app_button ab = {.windows = 1, .glow_x = -1, .progress = XD_PROGRESS_ERROR,
+                        .fraction = 0.5};
+    xd_theme_draw_app_button(&t, cr, (xd_rect){0, 0, 60, 30}, XD_STATE_CHECKED, &ab);
+    CHECK(pixel(s, 3, 15) == 0xE00000 && pixel(s, 50, 15) == 0x004000);
+    /* Jump list items: JumpList's hot item and its text colour. */
+    xd_theme_draw_jumplist_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", 30);
+    CHECK(pixel(s, 1, 1) == 0x654321);
+    cairo_destroy(cr);
+    cairo_surface_destroy(s);
+
+    /* Without a package: 7's own progress colours. */
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&t, XD_STYLE_AERO, &sc, 1.0);
+    s = pkg_canvas(20, 10, &cr);
+    xd_theme_draw_taskbar_progress(&t, cr, (xd_rect){0, 0, 20, 10}, XD_PROGRESS_NORMAL, 0.5);
+    uint32_t g = pixel(s, 2, 5);
+    CHECK(((g >> 8) & 0xFF) > ((g >> 16) & 0xFF) + 40 && pixel(s, 15, 5) == 0xFFFFFF);
+    cairo_destroy(cr);
+    cairo_surface_destroy(s);
+
+    xd_pkg_free(p);
+    rm_tree(root);
+    g_free(root);
+}
+
 static void test_theme_package(void) {
     const char *names = XD_SOURCE_ROOT "/data/theme/uxtheme.ini";
     char *root = g_dir_make_tmp("xd-pkg-XXXXXX", nullptr);
@@ -8383,6 +8622,7 @@ int main(void) {
     test_extract();
     test_image_scale();
     test_theme_package();
+    test_theme_package_shell();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

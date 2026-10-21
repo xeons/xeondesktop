@@ -322,6 +322,19 @@ static s7_palette palette(const xd_theme *t) {
     };
 }
 
+/* A theme package's colours for the parts it styles. */
+static void pkg_color(const xd_theme *t, xd_start_part part, xd_start_color which, xd_rgba *c) {
+    (void)xd_theme_start_part_color(t, part, 0, which, c);
+}
+
+static s7_palette palette_7(const xd_theme *t) {
+    s7_palette p = palette(t);
+    pkg_color(t, XD_START_PROG_LIST, XD_START_TEXT, &p.left_text);
+    pkg_color(t, XD_START_PROG_LIST, XD_START_TEXT, &p.left_hot_text);
+    pkg_color(t, XD_START_PLACES_LIST, XD_START_TEXT, &p.right_text);
+    return p;
+}
+
 /* ---- geometry (logical) ------------------------------------------------------------ */
 
 static xd_rect frame_rect(void) { return (xd_rect){0, S7_TOP, S7_W, S7_H - S7_TOP}; }
@@ -902,6 +915,21 @@ static void draw_hot(cairo_t *cr, const xd_theme *t, xd_rect r, const s7_palette
     cairo_stroke(cr);
 }
 
+/* A program's highlight: the package's, else ours. */
+static void draw_hot_item(cairo_t *cr, const xd_theme *t, xd_rect r, const s7_palette *p) {
+    if (!xd_theme_draw_start_part(t, cr, XD_START_PROG_ITEM, r, XD_STATE_HOT))
+        draw_hot(cr, t, r, p);
+}
+
+/* A separator line in r: the package's image, else a line of `c`. */
+static void draw_sep(cairo_t *cr, const xd_theme *t, xd_start_part part, xd_rect r, xd_rgba c) {
+    int w, h;
+    if (xd_theme_start_part_size(t, part, 0, &w, &h) &&
+        xd_theme_draw_start_part(t, cr, part, (xd_rect){r.x, r.y - h / 2, r.w, h}, 0))
+        return;
+    xd_fill_rect(cr, r, c);
+}
+
 static void draw_triangle(cairo_t *cr, const xd_theme *t, xd_rect r, xd_rgba c, bool left) {
     double w = xd_tpx(t, 4);
     double h = xd_tpx(t, 7);
@@ -934,23 +962,37 @@ static void draw_left(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pal
         xd_rect rr = {lr.x, y, lr.w, h};
         y += h;
         if (r->kind == ROW_SEP) {
-            xd_fill_rect(cr, D((xd_rect){rr.x + 8, rr.y + h / 2, rr.w - 16, 1}, s), p->separator);
+            draw_sep(cr, t, XD_START_PROG_SEPARATOR,
+                     D((xd_rect){rr.x + 8, rr.y + h / 2, rr.w - 16, 1}, s), p->separator);
             continue;
         }
         if (r->kind == ROW_HEADER) {
-            xd_text_style st = xd_text(t, XD_FONT_MENU, p->left_dim, XD_ALIGN_START);
+            xd_rgba heading = p->left_dim;
+            (void)xd_theme_start_heading_color(t, &heading);
+            xd_text_style st = xd_text(t, XD_FONT_MENU, heading, XD_ALIGN_START);
             xd_draw_text(cr, D(xd_rect_inset4(rr, 8, 0, 4, 0), s), r->label, &st);
             continue;
         }
         bool jump_open = m->sub_owner == OWNER_JUMP && m->jump_row == (int)i;
         bool hot = (int)i == m->hot_left || jump_open;
-        if (hot)
-            draw_hot(cr, t, D(rr, s), p);
         bool jump = r->jump && m->mode == MODE_HOME;
+        xd_rect jr = jump_arrow_rect(rr);
+        /* A split row's two halves, as the package draws them. */
+        bool split = hot && jump &&
+                     xd_theme_draw_start_part(t, cr, XD_START_PROG_ITEM_LEFT,
+                                              D((xd_rect){rr.x, rr.y, jr.x - rr.x, rr.h}, s),
+                                              XD_STATE_HOT);
+        if (hot && !split)
+            draw_hot_item(cr, t, D(rr, s), p);
+        if (split)
+            (void)xd_theme_draw_start_part(t, cr, XD_START_PROG_ITEM_SPLIT, D(jr, s),
+                                           (m->hot_arrow && (int)i == m->hot_left) || jump_open
+                                               ? XD_STATE_PRESSED
+                                               : XD_STATE_HOT);
         if (jump) {
             /* Windows 7's split row: the ▸ opens the jump list. */
-            xd_rect ar = jump_arrow_rect(rr);
-            if (hot) {
+            xd_rect ar = jr;
+            if (hot && !split) {
                 xd_fill_rect(cr, D((xd_rect){ar.x, ar.y + 4, 1, ar.h - 8}, s),
                              p->classic ? p->left_hot_text : p->left_hot_border);
                 if ((m->hot_arrow && (int)i == m->hot_left) || jump_open)
@@ -983,13 +1025,19 @@ static void draw_left(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pal
 
     /* Separator, then All Programs / Back. */
     xd_rect ar = all_rect(m);
-    xd_fill_rect(cr, D((xd_rect){ar.x + 8, ar.y - 4, ar.w - 16, 1}, s), p->separator);
+    draw_sep(cr, t, XD_START_PROG_SEPARATOR, D((xd_rect){ar.x + 8, ar.y - 4, ar.w - 16, 1}, s),
+             p->separator);
     if (m->mode != MODE_SEARCH) {
         bool hot = m->hot_right == HIT_ALL;
         if (hot)
-            draw_hot(cr, t, D(ar, s), p);
+            draw_hot_item(cr, t, D(ar, s), p);
         xd_rgba c = hot ? p->left_hot_text : p->left_text;
-        draw_triangle(cr, t, D((xd_rect){ar.x + 8, ar.y, 16, ar.h}, s), c, m->mode == MODE_ALL);
+        xd_rect tri = D((xd_rect){ar.x + 8, ar.y, 16, ar.h}, s);
+        if (!xd_theme_draw_start_part(t, cr,
+                                      m->mode == MODE_ALL ? XD_START_MORE_PROGRAMS_BACK
+                                                          : XD_START_MORE_PROGRAMS_ARROW,
+                                      tri, hot ? XD_STATE_HOT : 0))
+            draw_triangle(cr, t, tri, c, m->mode == MODE_ALL);
         xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
         bold.bold = true;
         xd_text_style st = xd_text(t, XD_FONT_MENU, c, XD_ALIGN_START);
@@ -1041,11 +1089,14 @@ static void draw_right(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pa
     for (int k = 0; k < R_COUNT; k++) {
         xd_rect r = right_item(k);
         if (k == R_SEP) {
-            xd_fill_rect(cr, D((xd_rect){r.x + 4, r.y + r.h / 2, r.w - 8, 1}, s), p->right_sep);
+            draw_sep(cr, t, XD_START_PLACES_SEPARATOR,
+                     D((xd_rect){r.x + 4, r.y + r.h / 2, r.w - 8, 1}, s), p->right_sep);
             continue;
         }
         bool hot = (m->hot_right == k || m->sub_owner == k) && !right_items[k].disabled;
-        if (hot) {
+        if (hot && xd_theme_draw_start_part(t, cr, XD_START_PLACES_ITEM, D(r, s), XD_STATE_HOT)) {
+            /* The package's highlight. */
+        } else if (hot) {
             if (p->classic || p->square)
                 xd_fill_rect(cr, D(r, s), p->right_hot);
             else {
@@ -1076,7 +1127,14 @@ static void draw_right(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pa
     uint8_t as = m->hot_right == HIT_SHUTDOWN_ARROW || m->sub_owner == HIT_SHUTDOWN_ARROW
                      ? XD_STATE_HOT
                      : 0;
-    if (p->classic) {
+    int sw, sh;
+    if (xd_theme_start_part_size(t, XD_START_SHUTDOWN, 0, &sw, &sh) &&
+        xd_theme_start_part_size(t, XD_START_SHUTDOWN_ARROW, 0, &sw, &sh)) {
+        (void)xd_theme_draw_start_part(t, cr, XD_START_SHUTDOWN, b, bs);
+        (void)xd_theme_draw_start_part(t, cr, XD_START_SHUTDOWN_ARROW, a, as);
+        xd_text_style st = xd_text(t, XD_FONT_MENU, p->right_text, XD_ALIGN_CENTER);
+        xd_draw_text(cr, b, "Shut Down", &st);
+    } else if (p->classic) {
         xd_theme_draw_button(t, cr, b, bs, "Shut Down");
         xd_theme_draw_button(t, cr, a, as, "");
         draw_triangle(cr, t, a, xd_sys(t, XD_COLOR_BUTTON_TEXT), false);
@@ -1211,6 +1269,16 @@ static xp_palette xp_colors(const xd_theme *t) {
     };
 }
 
+static xp_palette xp_colors_pkg(const xd_theme *t) {
+    xp_palette p = xp_colors(t);
+    pkg_color(t, XD_START_PROG_LIST, XD_START_TEXT, &p.left_text);
+    pkg_color(t, XD_START_PROG_LIST, XD_START_SUBTEXT, &p.left_sub);
+    pkg_color(t, XD_START_PLACES_LIST, XD_START_TEXT, &p.right_text);
+    pkg_color(t, XD_START_USER_PANE, XD_START_TEXT, &p.name);
+    pkg_color(t, XD_START_LOGOFF, XD_START_TEXT, &p.foot_text);
+    return p;
+}
+
 static void fill_gradient2(cairo_t *cr, xd_rect r, xd_rgba a, xd_rgba b, bool horizontal) {
     xd_fill_gradient(cr, r, a, b, horizontal);
 }
@@ -1290,7 +1358,8 @@ static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_
         xd_rect rr = {lr.x, y, lr.w, h};
         y += h;
         if (r->kind == ROW_SEP) {
-            xd_fill_rect(cr, D((xd_rect){rr.x + 6, rr.y + h / 2, rr.w - 12, 1}, s), p->left_sep);
+            draw_sep(cr, t, XD_START_PROG_SEPARATOR,
+                     D((xd_rect){rr.x + 6, rr.y + h / 2, rr.w - 12, 1}, s), p->left_sep);
             continue;
         }
         if (r->kind != ROW_APP)
@@ -1326,11 +1395,17 @@ static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_
 
     /* Separator, then All Programs (cascades). */
     xd_rect ar = all_rect(m);
-    xd_fill_rect(cr, D((xd_rect){ar.x + 6, ar.y - XP_SEP / 2 - 1, ar.w - 12, 1}, s), p->left_sep);
     bool hot = m->hot_right == HIT_ALL || m->sub_owner == HIT_ALL;
+    /* The package's All Programs pane: the list's foot, edge to edge. */
+    xd_rect pl = xp_left_panel(m);
+    int pane_y = ar.y - XP_SEP / 2;
+    (void)xd_theme_draw_start_part(t, cr, XD_START_MORE_PROGRAMS,
+                                   D((xd_rect){pl.x, pane_y, pl.w, pl.y + pl.h - pane_y}, s), 0);
+    draw_sep(cr, t, XD_START_PROG_SEPARATOR,
+             D((xd_rect){ar.x + 6, ar.y - XP_SEP / 2 - 1, ar.w - 12, 1}, s), p->left_sep);
     if (hot)
         xd_fill_rect(cr, D(ar, s), p->hot);
-    else if (new_programs(m))
+    else if (new_programs(m) && !xd_theme_draw_new_program(t, cr, D(ar, s)))
         xd_fill_rect(cr, D(ar, s), xd_rgba_hex(XD_NEW_PROGRAM_COLOR));
     xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
     bold.bold = true;
@@ -1344,7 +1419,10 @@ static void draw_left_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_
     xp_palette ap = *p;
     if (hot)
         ap.left_text = p->hot_text;
-    draw_xp_arrow(cr, t, D(arrow, s), &ap);
+    if (!xd_theme_draw_start_part(t, cr, XD_START_MORE_PROGRAMS_ARROW,
+                                  D((xd_rect){arrow.x - 4, ar.y, arrow.w + 8, ar.h}, s),
+                                  hot ? XD_STATE_HOT : 0))
+        draw_xp_arrow(cr, t, D(arrow, s), &ap);
 }
 
 static void draw_right_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp_palette *p) {
@@ -1353,7 +1431,8 @@ static void draw_right_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t, const xp
         const xp_item *it = &xp_items[i];
         xd_rect r = xp_item_rect(m, i);
         if (it->hit == R_SEP) {
-            xd_fill_rect(cr, D((xd_rect){r.x + 4, r.y + r.h / 2, r.w - 8, 1}, s), p->right_sep);
+            draw_sep(cr, t, XD_START_PLACES_SEPARATOR,
+                     D((xd_rect){r.x + 4, r.y + r.h / 2, r.w - 8, 1}, s), p->right_sep);
             continue;
         }
         bool hot = !it->disabled && (m->hot_right == it->hit || m->sub_owner == it->hit);
@@ -1439,7 +1518,9 @@ static void draw_foot_button(cairo_t *cr, const xd_theme *t, const xp_palette *p
         }
     }
     int is = 22;
-    draw_foot_icon(cr, t, D((xd_rect){r.x + 3, r.y + (r.h - is) / 2, is, is}, s), power);
+    xd_rect ir = D((xd_rect){r.x + 3, r.y + (r.h - is) / 2, is, is}, s);
+    if (!xd_theme_draw_start_logoff_icon(t, cr, ir, power, hot ? XD_STATE_HOT : 0))
+        draw_foot_icon(cr, t, ir, power);
     xd_text_style st = xd_text(t, XD_FONT_MENU, p->foot_text, XD_ALIGN_START);
     st.underline = underline;
     xd_draw_text(cr, D((xd_rect){r.x + 3 + is + 5, r.y, r.w - is - 10, r.h}, s), label, &st);
@@ -1447,7 +1528,7 @@ static void draw_foot_button(cairo_t *cr, const xd_theme *t, const xp_palette *p
 
 static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
     double s = t->scale;
-    xp_palette p = xp_colors(t);
+    xp_palette p = xp_colors_pkg(t);
     int head = xp_head(m), foot = xp_foot(m);
     xd_rect whole = D((xd_rect){0, 0, m->w, m->h}, s);
     xd_rect head_r = D((xd_rect){0, 0, m->w, head}, s);
@@ -1459,9 +1540,11 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
     xd_path_rounded(cr, whole.x, whole.y, whole.w, whole.h, rad, rad, 0, 0);
     cairo_clip(cr);
 
-    /* Header */
-    fill_gradient2(cr, head_r, p.head_a, p.head_b, p.head_horizontal);
-    if (p.whistler) {
+    /* Header: the package's UserPane, else the style's. */
+    bool pkg_head = xd_theme_draw_start_part(t, cr, XD_START_USER_PANE, head_r, 0);
+    if (!pkg_head)
+        fill_gradient2(cr, head_r, p.head_a, p.head_b, p.head_horizontal);
+    if (p.whistler && !pkg_head) {
         int mx = dev(m->w * 0.58, s);
         xd_fill_rect(cr, (xd_rect){mx, head_r.y, head_r.x + head_r.w - mx, head_r.h}, p.body);
         xd_theme_draw_whistler_mosaic(t, cr, head_r, mx);
@@ -1471,7 +1554,15 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
 
     /* Body: left list and right column */
     xd_rect left = D(xp_left_panel(m), s);
-    if (p.whistler) {
+    xd_rect right_col = D((xd_rect){XP_LEFT_W, head, m->w - XP_LEFT_W, m->body_h}, s);
+    /* A package's ProgList and PlacesList draw the columns, edges and all. */
+    bool pkg_body = xd_theme_start_part_size(t, XD_START_PROG_LIST, 0, &(int){0}, &(int){0});
+    if (pkg_body) {
+        xd_fill_rect(cr, body_r, p.left_bg);
+        if (!xd_theme_draw_start_part(t, cr, XD_START_PLACES_LIST, right_col, 0))
+            xd_fill_rect(cr, right_col, p.right_bg);
+        (void)xd_theme_draw_start_part(t, cr, XD_START_PROG_LIST, left, 0);
+    } else if (p.whistler) {
         xd_fill_rect(cr, body_r, p.body);
         xd_fill_rect(cr, left, p.left_bg);
         xd_draw_bevel(cr, left, XD_MAX(xd_tpx(t, 1), 1), p.panel_border, p.panel_border);
@@ -1484,11 +1575,13 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
     }
 
     /* Footer */
-    fill_gradient2(cr, foot_r, p.foot_a, p.foot_b, p.head_horizontal);
+    if (!xd_theme_draw_start_part(t, cr, XD_START_LOGOFF, foot_r, 0))
+        fill_gradient2(cr, foot_r, p.foot_a, p.foot_b, p.head_horizontal);
     cairo_restore(cr);
 
-    /* XP's orange line under the header, fading out at both ends. */
-    if (p.accent.a > 0) {
+    /* XP's orange line under the header, fading out at both ends (a
+     * package's columns have their own). */
+    if (p.accent.a > 0 && !pkg_body) {
         xd_rect line = D((xd_rect){0, head, m->w, 2}, s);
         cairo_pattern_t *g = cairo_pattern_create_linear(line.x, 0, line.x + line.w, 0);
         cairo_pattern_add_color_stop_rgba(g, 0, p.accent.r, p.accent.g, p.accent.b, 0);
@@ -1501,7 +1594,9 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
     }
 
     /* Frame */
-    if (p.classic) {
+    if (pkg_head && pkg_body) {
+        /* The package's images have their edges. */
+    } else if (p.classic) {
         xd_draw_bevel(cr, whole, XD_MAX(xd_tpx(t, 1), 1), xd_sys(t, XD_COLOR_BUTTON_LIGHT),
                       xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW));
     } else if (p.whistler) {
@@ -1519,14 +1614,18 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
     xd_font_spec name_font = {.family = XD_FONT_FAMILY_TREBUCHET,
                               .size_pt = p.whistler ? 9 : 13,
                               .bold = true};
+    (void)xd_theme_start_part_font(t, XD_START_USER_PANE, &name_font);
+    xd_rgba name_shadow = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.45);
+    bool pkg_shadow =
+        xd_theme_start_part_color(t, XD_START_USER_PANE, 0, XD_START_SHADOW, &name_shadow);
     xd_text_style ns = {
         .font = &name_font,
         .scale = s,
         .color = p.name,
         .align = XD_ALIGN_START,
         .ellipsize = true,
-        .shadow = !p.classic && !p.whistler,
-        .shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.45),
+        .shadow = pkg_shadow || (!p.classic && !p.whistler),
+        .shadow_color = name_shadow,
         .smoothing = t->scheme.font_smoothing,
     };
     if (p.whistler) {
@@ -1536,9 +1635,13 @@ static void render_xp(xd_start7 *m, cairo_t *cr, const xd_theme *t) {
         int bw = XD_MAX(xd_tpx(t, 2), 2);
         xd_rect outer = xd_rect_inset(pic, -bw, -bw);
         double prad = p.classic ? 0 : xd_tpx(t, 3);
-        xd_path_rounded(cr, outer.x, outer.y, outer.w, outer.h, prad, prad, prad, prad);
-        xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
-        cairo_fill(cr);
+        int fw = xd_tpx(t, 4);
+        if (!xd_theme_draw_start_part(t, cr, XD_START_USER_PICTURE, xd_rect_inset(pic, -fw, -fw),
+                                      0)) {
+            xd_path_rounded(cr, outer.x, outer.y, outer.w, outer.h, prad, prad, prad, prad);
+            xd_set_color(cr, xd_rgba_hex(0xFFFFFF));
+            cairo_fill(cr);
+        }
         if (m->picture != nullptr) {
             cairo_save(cr);
             cairo_rectangle(cr, pic.x, pic.y, pic.w, pic.h);
@@ -1565,7 +1668,7 @@ static void render_7(xd_start7 *m, cairo_t *cr, const xd_theme *tp) {
     xd_shell *shell = m->shell;
     double s = m->scale;
     xd_theme t = *tp;
-    s7_palette p = palette(&t);
+    s7_palette p = palette_7(&t);
     xd_rect fr = D(frame_rect(), s);
     xd_rect left = D((xd_rect){0, S7_TOP, S7_LEFT_W, S7_H - S7_TOP}, s);
     xd_rect right = D((xd_rect){S7_LEFT_W, S7_TOP, S7_W - S7_LEFT_W, S7_H - S7_TOP}, s);
@@ -1587,9 +1690,14 @@ static void render_7(xd_start7 *m, cairo_t *cr, const xd_theme *tp) {
         /* The whole panel behind the list, including the gap between the
          * list and the right column. */
         xd_fill_rect(cr, left, p.right_bg);
-        xd_fill_rect(cr, inset, p.left_bg);
-        xd_draw_bevel(cr, inset, XD_MAX(xd_tpx(&t, 1), 1), p.frame, p.frame);
-        xd_draw_bevel(cr, fr, XD_MAX(xd_tpx(&t, 1), 1), p.frame, p.frame);
+        /* A package's columns over the glass, else ours. */
+        bool places = xd_theme_draw_start_part(&t, cr, XD_START_PLACES_LIST, right, 0);
+        if (!xd_theme_draw_start_part(&t, cr, XD_START_PROG_LIST, inset, 0)) {
+            xd_fill_rect(cr, inset, p.left_bg);
+            xd_draw_bevel(cr, inset, XD_MAX(xd_tpx(&t, 1), 1), p.frame, p.frame);
+        }
+        if (!places)
+            xd_draw_bevel(cr, fr, XD_MAX(xd_tpx(&t, 1), 1), p.frame, p.frame);
     }
     draw_left(m, cr, &t, &p);
     draw_right(m, cr, &t, &p);
@@ -1597,8 +1705,13 @@ static void render_7(xd_start7 *m, cairo_t *cr, const xd_theme *tp) {
     /* User picture, overhanging the top edge. */
     xd_rect pic = D(picture_rect(), s);
     int bw = XD_MAX(xd_tpx(&t, 2), 2);
-    xd_fill_rect(cr, xd_rect_inset(pic, -bw, -bw), xd_rgba_hex(0xFFFFFF));
-    xd_draw_bevel(cr, xd_rect_inset(pic, -bw, -bw), 1, xd_rgba_hex(0xA0A0A0), xd_rgba_hex(0x606060));
+    int fw = xd_tpx(&t, 8);
+    if (!xd_theme_draw_start_part(&t, cr, XD_START_USER_PICTURE, xd_rect_inset(pic, -fw, -fw),
+                                  0)) {
+        xd_fill_rect(cr, xd_rect_inset(pic, -bw, -bw), xd_rgba_hex(0xFFFFFF));
+        xd_draw_bevel(cr, xd_rect_inset(pic, -bw, -bw), 1, xd_rgba_hex(0xA0A0A0),
+                      xd_rgba_hex(0x606060));
+    }
     if (m->picture != nullptr) {
         cairo_save(cr);
         cairo_rectangle(cr, pic.x, pic.y, pic.w, pic.h);
@@ -1837,6 +1950,9 @@ static void open_sub(xd_start7 *m, int owner) {
     } else {
         return;
     }
+    /* The Start menu's own cascades, as its menus (not a right-click's). */
+    if (owner == HIT_ALL || owner == R_RECENT || owner == R_CONTROL)
+        xd_menu_model_set_look(mm, XD_MENU_LOOK_START);
     m->sub = xd_menu_open_attached(shell, mm, m->xdg_surface, anchor, m->serial);
     m->sub_owner = owner;
     m->dirty = true;

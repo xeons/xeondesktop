@@ -79,6 +79,7 @@ struct xd_menu_model {
     bool jumplist;              /* Windows 7's jump list look (Aero's taskbar) */
     const char *banner_product; /* Windows 2000 side banner, or nullptr */
     const char *banner_edition;
+    uint8_t look; /* xd_theme's menu_look: a Start menu's (xd_menu_model_set_look) */
 };
 
 /* Owns every model and string of one menu hierarchy. */
@@ -91,6 +92,9 @@ typedef struct xd_menu_tree {
 void xd_menu_tree_init(xd_menu_tree *tree);
 void xd_menu_tree_free(xd_menu_tree *tree);
 xd_menu_model *xd_menu_model_new(xd_menu_tree *tree);
+/* Draws the model and its submenus as a Start menu's (enum xd_menu_look),
+ * in a theme package's Start menu classes. */
+void xd_menu_model_set_look(xd_menu_model *model, uint8_t look);
 /* Appends an item; strings are copied into the tree. Returns the item so
  * callers can set submenu/command/disabled. */
 xd_menu_item *xd_menu_add(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind kind,

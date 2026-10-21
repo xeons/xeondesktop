@@ -580,6 +580,9 @@ static void aero_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint
         }
         app_button_edges(t, cr, b, active ? 0.55 : hot ? 0.45 : 0.28);
     }
+    if (ab->progress != XD_PROGRESS_NONE)
+        xd_theme_draw_taskbar_progress(t, cr, xd_rect_inset(b, xd_tpx(t, 1), xd_tpx(t, 1)),
+                                       ab->progress, ab->fraction);
     if (ab->icon != nullptr) {
         double sx = 1, sy = 1;
         cairo_surface_get_device_scale(ab->icon, &sx, &sy);
@@ -702,6 +705,9 @@ void xd_theme_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
     cairo_paint(cr);
     cairo_pattern_destroy(p);
     cairo_restore(cr);
+    /* A package's frame over the glass (TaskbandExtendedUI's). */
+    if (xd_pkgstyle_draw_thumb_panel(t, cr, r))
+        return;
     cairo_set_line_width(cr, 1);
     xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
     cairo_set_source_rgba(cr, 0, 0, 0, 0.6);
@@ -713,6 +719,8 @@ void xd_theme_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
 }
 
 void xd_theme_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (xd_pkgstyle_draw_thumb_tile(t, cr, r, state))
+        return;
     bool hot = state & XD_STATE_HOT, pressed = state & XD_STATE_PRESSED;
     if (!hot && !pressed)
         return;
@@ -726,7 +734,9 @@ void xd_theme_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t
 }
 
 void xd_theme_draw_thumb_title(const xd_theme *t, cairo_t *cr, xd_rect r, const char *title) {
-    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_START);
+    xd_rgba fg = xd_rgba_hex(0xFFFFFF);
+    (void)xd_pkgstyle_thumb_title_color(t, &fg);
+    xd_text_style st = xd_text(t, XD_FONT_MENU, fg, XD_ALIGN_START);
     st.ellipsize = true;
     st.shadow = true;
     st.shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.8);
@@ -734,6 +744,8 @@ void xd_theme_draw_thumb_title(const xd_theme *t, cairo_t *cr, xd_rect r, const 
 }
 
 void xd_theme_draw_thumb_close(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (xd_pkgstyle_draw_thumb_close(t, cr, r, state))
+        return;
     bool hot = state & XD_STATE_HOT, pressed = state & XD_STATE_PRESSED;
     double rad = xd_tpx(t, 3);
     xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
@@ -755,6 +767,8 @@ void xd_theme_draw_thumb_close(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_
 }
 
 void xd_theme_draw_jumplist_frame(const xd_theme *t, cairo_t *cr, xd_rect r, int band_y) {
+    if (xd_pkgstyle_draw_jumplist_frame(t, cr, r, band_y))
+        return;
     xd_fill_rect(cr, r, xd_rgba_hex(0xFFFFFF));
     if (band_y < r.y + r.h) {
         xd_rect band = {r.x, band_y, r.w, r.y + r.h - band_y};
@@ -770,7 +784,9 @@ void xd_theme_draw_jumplist_frame(const xd_theme *t, cairo_t *cr, xd_rect r, int
 }
 
 void xd_theme_draw_jumplist_header(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label) {
-    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0x6D6D6D), XD_ALIGN_START);
+    xd_rgba fg = xd_rgba_hex(0x6D6D6D);
+    (void)xd_pkgstyle_jumplist_header_color(t, &fg);
+    xd_text_style st = xd_text(t, XD_FONT_MENU, fg, XD_ALIGN_START);
     st.ellipsize = true;
     xd_draw_text(cr, r, label, &st);
 }
@@ -795,10 +811,11 @@ static void hover_box(const xd_theme *t, cairo_t *cr, xd_rect r, bool strong) {
 void xd_theme_draw_jumplist_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                  const char *label, int text_x) {
     bool disabled = state & XD_STATE_DISABLED;
-    if ((state & XD_STATE_HOT) && !disabled)
+    xd_rgba fg = xd_rgba_hex(disabled ? 0x6D6D6D : 0x1E1E1E);
+    if (!xd_pkgstyle_draw_jumplist_item(t, cr, r, state, &fg) && (state & XD_STATE_HOT) &&
+        !disabled)
         hover_box(t, cr, r, false);
-    xd_text_style st =
-        xd_text(t, XD_FONT_MENU, xd_rgba_hex(disabled ? 0x6D6D6D : 0x1E1E1E), XD_ALIGN_START);
+    xd_text_style st = xd_text(t, XD_FONT_MENU, fg, XD_ALIGN_START);
     st.ellipsize = true;
     xd_draw_text(cr, (xd_rect){r.x + text_x, r.y, r.w - text_x - xd_tpx(t, 4), r.h}, label, &st);
 }
@@ -835,7 +852,8 @@ void xd_theme_draw_pushpin([[maybe_unused]] const xd_theme *t, cairo_t *cr, xd_r
 
 void xd_theme_draw_jumplist_pin(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                 bool pinned) {
-    if (state & (XD_STATE_HOT | XD_STATE_PRESSED))
+    if ((state & (XD_STATE_HOT | XD_STATE_PRESSED)) &&
+        !xd_pkgstyle_draw_jumplist_pin(t, cr, r, state))
         hover_box(t, cr, r, true);
     int g = xd_tpx(t, 16);
     xd_theme_draw_pushpin(t, cr, (xd_rect){r.x + (r.w - g) / 2, r.y + (r.h - g) / 2, g, g},

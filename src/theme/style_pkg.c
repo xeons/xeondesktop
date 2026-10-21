@@ -805,3 +805,645 @@ bool xd_pkgstyle_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, ui
     xd_draw_text(cr, r, label, &ts);
     return true;
 }
+
+/* ==== the taskbar, thumbnails, jump lists and Start menus =========================
+ * Explorer's classes, as XP's and 7's explorer.exe opens them. Vista's
+ * and 7's undocumented parts go by the names data/theme/uxtheme.ini
+ * deduces for them (xd-theme-import writes them into the package). */
+
+static bool seven(const xd_theme *t) { return t->style == XD_STYLE_AERO; }
+
+static void basic_str(char out[8], uint8_t state) {
+    state_str(out, (state & XD_STATE_PRESSED) ? 3 : (state & XD_STATE_HOT) ? 2 : 1);
+}
+
+/* The composited variant of an App::Class ("TaskBand2Composited::
+ * TaskBand2"), as Windows picks it with desktop composition on, where it
+ * has its own image for the part; else the plain class. A composited
+ * class without one would fall back to its base class's image (Button's
+ * push button), not the plain App::Class's. */
+static const char *pick(const xd_theme *t, const char *plain, const char *comp,
+                        const char *part) {
+    if (!t->glass || comp == nullptr || !xd_pkg_has_own(t->pkg, comp, part))
+        return plain;
+    const char *colon = strstr(comp, "::");
+    const char *own = xd_pkg_prop(t->pkg, comp, part, nullptr, "ImageFile");
+    const char *inherited =
+        colon != nullptr ? xd_pkg_prop(t->pkg, colon + 2, part, nullptr, "ImageFile") : nullptr;
+    return own != nullptr && own != inherited ? comp : plain;
+}
+
+/* Text with the part's TextShadowColor behind it, TextShadowOffset away
+ * (XP's "Continuous" shadow drawn as a plain one). */
+static void shadowed_text(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text,
+                          xd_text_style st, const char *cls, const char *part,
+                          const char *state) {
+    xd_rgba sc;
+    const char *type = xd_pkg_prop(t->pkg, cls, part, state, "TextShadowType");
+    if (type != nullptr && g_ascii_strcasecmp(type, "None") != 0 &&
+        xd_pkg_color(t->pkg, cls, part, state, "TextShadowColor", &sc)) {
+        int so[2] = {1, 1};
+        const char *sov = xd_pkg_prop(t->pkg, cls, part, state, "TextShadowOffset");
+        if (sov != nullptr)
+            (void)sscanf(sov, "%d %d", &so[0], &so[1]);
+        xd_text_style ss = st;
+        ss.color = sc;
+        ss.shadow = false;
+        xd_draw_text(cr,
+                     (xd_rect){r.x + (int)lround(so[0] * t->scale),
+                               r.y + (int)lround(so[1] * t->scale), r.w, r.h},
+                     text, &ss);
+    }
+    xd_draw_text(cr, r, text, &st);
+}
+
+/* ---- the taskbar ---- */
+
+static const char *edge_name(xd_edge edge) {
+    switch (edge) {
+    case XD_EDGE_TOP:
+        return "Top";
+    case XD_EDGE_LEFT:
+        return "Left";
+    case XD_EDGE_RIGHT:
+        return "Right";
+    case XD_EDGE_BOTTOM:
+        break;
+    }
+    return "Bottom";
+}
+
+/* The taskbar's class: 7's superbar is TaskBar2's (Vista's TaskBar where a
+ * package has none), with the glass their composited variants. */
+static const char *taskbar_class(const xd_theme *t, const char *part) {
+    if (!seven(t))
+        return "TaskBar";
+    if (xd_pkg_has_own(t->pkg, "TaskBar2::TaskBar", part))
+        return pick(t, "TaskBar2::TaskBar", "TaskBar2Composited::TaskBar", part);
+    return pick(t, "TaskBar", "TaskBarComposited::TaskBar", part);
+}
+
+bool xd_pkgstyle_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
+    if (t->pkg == nullptr)
+        return false;
+    char part[32];
+    g_snprintf(part, sizeof(part), "Background%s", edge_name(edge));
+    const char *cls = taskbar_class(t, part);
+    if (!xd_pkg_has_own(t->pkg, cls, part))
+        return false;
+    if (seven(t)) {
+        /* Vista's and 7's images are a sheen over the glass colour (or,
+         * without composition, opaque). */
+        xd_glass_colors g;
+        xd_theme_glass_colors(t, &g);
+        cairo_save(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        xd_fill_rect(cr, r, g.taskbar);
+        cairo_restore(cr);
+    }
+    (void)xd_pkg_draw(t, cr, cls, part, "1", r);
+    return true;
+}
+
+void xd_theme_draw_taskbar_sizing_bar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
+    if (t->pkg == nullptr)
+        return;
+    char part[32];
+    g_snprintf(part, sizeof(part), "SizingBar%s", edge_name(edge));
+    const char *cls = taskbar_class(t, part);
+    int w, h;
+    if (!xd_pkg_has_own(t->pkg, cls, part) || !xd_pkg_part_size(t, cls, part, "1", &w, &h))
+        return;
+    bool side = edge == XD_EDGE_LEFT || edge == XD_EDGE_RIGHT;
+    (void)xd_pkg_draw(t, cr, cls, part, "1", xd_style_rim_line(r, edge, 0, side ? w : h));
+}
+
+bool xd_pkgstyle_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (t->pkg == nullptr)
+        return false;
+    char st[8];
+    basic_str(st, state);
+    /* Vista's orb (7's is explorer.exe's own: ours stands in). */
+    if (seven(t) && xd_pkg_has_own(t->pkg, "StartMiddle::Button", nullptr))
+        return xd_pkg_draw(t, cr, "StartMiddle::Button", nullptr, st, r);
+    const char *const SB = "Start::Button";
+    if (!xd_pkg_has_own(t->pkg, SB, nullptr))
+        return false;
+    (void)xd_pkg_draw(t, cr, SB, nullptr, st, r);
+    /* XP's flag is explorer.exe's, not the style's: our logo, then
+     * "start" in the style's font and colours. */
+    xd_rect c = xd_pkg_content_rect(t, SB, nullptr, st, r);
+    int dy = (state & XD_STATE_PRESSED) ? xd_tpx(t, 1) : 0;
+    int icon = xd_tpx(t, 20);
+    int ix = r.x + xd_tpx(t, 8);
+    xd_draw_start_logo(cr, (xd_rect){ix, c.y + (c.h - icon) / 2 + dy, icon, icon});
+    xd_font_spec font = {.family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 13, .bold = true,
+                         .italic = true};
+    (void)xd_pkg_font(t->pkg, SB, nullptr, st, "Font", &font);
+    xd_text_style ts = xd_text(
+        t, XD_FONT_MENU, text_color_st(t, SB, nullptr, st, xd_rgba_hex(0xFFFFFF)), XD_ALIGN_START);
+    ts.font = &font;
+    int tx = ix + icon + xd_tpx(t, 5);
+    shadowed_text(t, cr, (xd_rect){tx, c.y + dy, r.x + r.w - tx, c.h}, "start", ts, SB, nullptr,
+                  st);
+    return true;
+}
+
+bool xd_pkgstyle_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                  const char *label, cairo_surface_t *icon, int count) {
+    if (t->pkg == nullptr)
+        return false;
+    const char *cls = (state & XD_STATE_VERTICAL) ? "TaskBandVert::Toolbar" : "TaskBand::Toolbar";
+    if (!xd_pkg_has_own(t->pkg, cls, "Button"))
+        cls = "TaskBand::Toolbar";
+    if (!xd_pkg_has_own(t->pkg, cls, "Button"))
+        return false;
+    /* Toolbar buttons' states: the active window's is Checked. */
+    char st[8];
+    state_str(st, toolbar_state(state));
+    bool flash = (state & XD_STATE_FLASH) && !(state & XD_STATE_CHECKED);
+    if (!flash || !xd_pkg_draw(t, cr, "TaskBand", "FlashButton", "1", r))
+        (void)xd_pkg_draw(t, cr, cls, "Button", st, r);
+    int isz = xd_tpx(t, 16);
+    int ix = r.x + xd_tpx(t, 10);
+    xd_style_task_icon(t, cr, icon, ix, r.y + (r.h - isz) / 2);
+    xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
+    (void)xd_pkg_font(t->pkg, cls, "Button", st, "Font", &font);
+    xd_text_style ts =
+        xd_text(t, XD_FONT_MENU, text_color_st(t, cls, "Button", st, xd_rgba_hex(0xFFFFFF)),
+                XD_ALIGN_START);
+    ts.font = &font;
+    int tx = ix + isz + xd_tpx(t, 4);
+    int end = r.x + r.w - xd_tpx(t, 6);
+    char *text = nullptr;
+    xd_font_spec cf = font;
+    if (count > 1 && xd_pkg_has(t->pkg, "TaskBand", "GroupCount")) {
+        /* The count in GroupCount's font and colour, then the name. */
+        char n[16];
+        g_snprintf(n, sizeof(n), "%d", count);
+        cf.bold = true;
+        (void)xd_pkg_font(t->pkg, "TaskBand", "GroupCount", nullptr, "Font", &cf);
+        xd_text_style cs = ts;
+        cs.font = &cf;
+        cs.color = text_color_st(t, "TaskBand", "GroupCount", nullptr, ts.color);
+        xd_draw_text(cr, (xd_rect){tx, r.y, end - tx, r.h}, n, &cs);
+        tx += xd_text_width(cr, n, &cs) + xd_tpx(t, 4);
+    } else if (count > 1) {
+        text = g_strdup_printf("%d %s", count, label);
+        label = text;
+    }
+    xd_draw_text(cr, (xd_rect){tx, r.y, end - tx, r.h}, label, &ts);
+    g_free(text);
+    return true;
+}
+
+void xd_theme_draw_task_group(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                              int count, const char *label, cairo_surface_t *icon) {
+    if (xd_pkgstyle_draw_task_button(t, cr, r, state, label, icon, count))
+        return;
+    char *text = g_strdup_printf("%d %s", count, label);
+    xd_theme_draw_task_button(t, cr, r, state, text, icon);
+    g_free(text);
+}
+
+/* 7's program buttons: TaskBand2's AppButton, its states Normal 1, Hot 2,
+ * Pressed 3 for a window in the background, 4-6 for the active one's,
+ * Flashing 7 (deduced); the edges of a group's windows stacked behind it
+ * to its right, 1-3 for none, one or two (AppButtonStack, Lit while
+ * active or hot). */
+static const char *const TB2 = "TaskBand2";
+
+bool xd_pkgstyle_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                 const xd_app_button *ab) {
+    if (t->pkg == nullptr || !xd_pkg_has_own(t->pkg, TB2, "AppButton"))
+        return false;
+    const char *comp = "TaskBand2Composited::TaskBand2";
+    bool active = state & XD_STATE_CHECKED, pressed = state & XD_STATE_PRESSED;
+    bool hot = state & XD_STATE_HOT, flash = (state & XD_STATE_FLASH) && !active;
+    int stack = CLAMP(ab->windows - 1, 0, 2);
+    xd_rect b = xd_rect_inset(r, xd_tpx(t, 1), xd_tpx(t, 1));
+    if (ab->windows > 0 || hot || pressed || flash) {
+        const char *edges = (active || hot) && xd_pkg_has_own(t->pkg, TB2, "AppButtonStackLit")
+                                ? "AppButtonStackLit"
+                                : "AppButtonStack";
+        if (stack > 0 && xd_pkg_has_own(t->pkg, TB2, edges)) {
+            b.w -= xd_tpx(t, stack == 1 ? 5 : 8);
+            char es[8];
+            state_str(es, stack + 1);
+            (void)xd_pkg_draw(t, cr, pick(t, TB2, comp, edges), edges, es,
+                              (xd_rect){b.x + b.w, b.y, xd_tpx(t, 8), b.h});
+        }
+        char st[8];
+        state_str(st, flash    ? 7
+                      : active ? (pressed ? 6 : hot ? 5 : 4)
+                               : (pressed ? 3 : hot ? 2 : 1));
+        (void)xd_pkg_draw(t, cr, pick(t, TB2, comp, "AppButton"), "AppButton", st, b);
+        if (hot && !flash && ab->glow_x >= 0) {
+            /* The icon's colour glowing up from under the pointer. */
+            cairo_save(cr);
+            cairo_rectangle(cr, b.x, b.y, b.w, b.h);
+            cairo_clip(cr);
+            double gx = CLAMP(ab->glow_x, b.x, b.x + b.w), gy = b.y + b.h;
+            cairo_pattern_t *g = cairo_pattern_create_radial(gx, gy, 0, gx, gy, b.w * 0.85);
+            cairo_pattern_add_color_stop_rgba(g, 0, ab->tint.r, ab->tint.g, ab->tint.b,
+                                              pressed ? 0.45 : 0.65);
+            cairo_pattern_add_color_stop_rgba(g, 1, ab->tint.r, ab->tint.g, ab->tint.b, 0);
+            cairo_set_source(cr, g);
+            cairo_paint(cr);
+            cairo_pattern_destroy(g);
+            cairo_restore(cr);
+        }
+    }
+    if (ab->progress != XD_PROGRESS_NONE)
+        xd_theme_draw_taskbar_progress(t, cr, b, ab->progress, ab->fraction);
+    if (ab->icon == nullptr)
+        return true;
+    double sx = 1, sy = 1;
+    cairo_surface_get_device_scale(ab->icon, &sx, &sy);
+    int iw = (int)(cairo_image_surface_get_width(ab->icon) / sx);
+    int ih = (int)(cairo_image_surface_get_height(ab->icon) / sy);
+    int ix = ab->label != nullptr ? b.x + xd_tpx(t, 6) : b.x + (b.w - iw) / 2;
+    cairo_set_source_surface(cr, ab->icon, ix, b.y + (b.h - ih) / 2);
+    cairo_paint(cr);
+    if (ab->label != nullptr) {
+        xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
+        (void)xd_pkg_font(t->pkg, TB2, nullptr, nullptr, "Font", &font);
+        xd_text_style ts =
+            xd_text(t, XD_FONT_MENU, text_color_st(t, TB2, nullptr, nullptr, xd_rgba_hex(0xFFFFFF)),
+                    XD_ALIGN_START);
+        ts.font = &font;
+        ts.shadow = true;
+        ts.shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.8);
+        int tx = ix + iw + xd_tpx(t, 6);
+        xd_draw_text(cr, (xd_rect){tx, b.y, b.x + b.w - tx - xd_tpx(t, 4), b.h}, ab->label, &ts);
+    }
+    return true;
+}
+
+void xd_theme_draw_taskbar_progress(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                    enum xd_taskbar_progress kind, double fraction) {
+    /* TaskBand2's bars (deduced); without them, 7's colours. */
+    static const struct {
+        const char *part;
+        uint32_t rgb;
+    } kinds[] = {
+        [XD_PROGRESS_NORMAL] = {"ProgressNormal", 0x06B025},
+        [XD_PROGRESS_PAUSED] = {"ProgressPaused", 0xFFC800},
+        [XD_PROGRESS_ERROR] = {"ProgressError", 0xDA2626},
+        [XD_PROGRESS_INDETERMINATE] = {"ProgressPulse", 0x06B025},
+    };
+    if (kind == XD_PROGRESS_NONE || (size_t)kind >= G_N_ELEMENTS(kinds) || r.w <= 0)
+        return;
+    fraction = CLAMP(fraction, 0.0, 1.0);
+    xd_rect f = {r.x, r.y, (int)lround(r.w * fraction), r.h};
+    if (kind == XD_PROGRESS_INDETERMINATE) {
+        /* A third of the button wide, sweeping in from the left. */
+        int pw = MAX(r.w / 3, 1);
+        f = (xd_rect){r.x - pw + (int)lround((r.w + pw) * fraction), r.y, pw, r.h};
+    }
+    if (f.w <= 0)
+        return;
+    cairo_save(cr);
+    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+    cairo_clip(cr);
+    if (t->pkg == nullptr || !xd_pkg_has_own(t->pkg, TB2, kinds[kind].part) ||
+        !xd_pkg_draw(t, cr, TB2, kinds[kind].part, "1", f)) {
+        xd_rgba c = xd_rgba_hex(kinds[kind].rgb);
+        xd_fill_gradient(cr, f, xd_rgba_alpha(c, 0.7), xd_rgba_alpha(c, 0.45), false);
+    }
+    cairo_restore(cr);
+}
+
+/* ---- the notification area ---- */
+
+bool xd_pkgstyle_clock_color(const xd_theme *t, xd_rgba *out) {
+    return t->pkg != nullptr && xd_pkg_has_own(t->pkg, "TrayNotify::Clock", nullptr) &&
+           xd_pkg_color(t->pkg, "TrayNotify::Clock", nullptr, nullptr, "TextColor", out);
+}
+
+bool xd_pkgstyle_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock,
+                           xd_edge edge) {
+    bool vert = edge == XD_EDGE_LEFT || edge == XD_EDGE_RIGHT;
+    const char *plain = vert ? "TrayNotifyVert::TrayNotify" : "TrayNotifyHoriz::TrayNotify";
+    if (t->pkg == nullptr || !xd_pkg_has_own(t->pkg, plain, "Background"))
+        return false;
+    const char *comp =
+        vert ? "TrayNotifyVertComposited::TrayNotify" : "TrayNotifyHorizComposited::TrayNotify";
+    (void)xd_pkg_draw(t, cr, pick(t, plain, comp, "Background"), "Background", "1", r);
+    if (clock == nullptr || clock[0] == '\0')
+        return true;
+    xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
+    (void)xd_pkg_font(t->pkg, "TrayNotify::Clock", nullptr, nullptr, "Font", &font);
+    xd_text_style ts = xd_text(t, XD_FONT_MENU, xd_theme_clock_color(t), XD_ALIGN_END);
+    ts.font = &font;
+    ts.lines = true; /* a tall taskbar's day and date under the time */
+    ts.shadow = seven(t);
+    ts.shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.8);
+    int ml, mr;
+    xd_theme_tray_margins(t, &ml, &mr);
+    xd_draw_text(cr, xd_rect_inset4(r, ml, 0, mr, 0), clock, &ts);
+    return true;
+}
+
+bool xd_theme_draw_tray_chevron(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                bool open, bool vertical) {
+    if (t->pkg == nullptr)
+        return false;
+    char plain[48], comp[64];
+    g_snprintf(plain, sizeof(plain), "TrayNotify%s%s::Button", vertical ? "Vert" : "Horiz",
+               open ? "Open" : "");
+    g_snprintf(comp, sizeof(comp), "TrayNotify%s%sComposited::Button",
+               vertical ? "Vert" : "Horiz", open ? "Open" : "");
+    if (!xd_pkg_has_own(t->pkg, plain, nullptr))
+        return false;
+    char st[8];
+    basic_str(st, state);
+    (void)xd_pkg_draw(t, cr, pick(t, plain, comp, nullptr), nullptr, st, r);
+    return true;
+}
+
+bool xd_theme_draw_show_desktop(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                bool vertical) {
+    const char *cls = vertical ? "VerticalShowDesktop::Button" : "ShowDesktop::Button";
+    if (t->pkg == nullptr || !xd_pkg_has_own(t->pkg, cls, nullptr))
+        return false;
+    char st[8];
+    basic_str(st, state);
+    (void)xd_pkg_draw(t, cr, cls, nullptr, st, r);
+    return true;
+}
+
+/* ---- 7's thumbnails: TaskbandExtendedUI (deduced names) ---- */
+
+static const char *const TEU = "TaskbandExtendedUI";
+
+bool xd_pkgstyle_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    return t->pkg != nullptr && xd_pkg_has_own(t->pkg, TEU, "ThumbnailBackground") &&
+           xd_pkg_draw(t, cr, TEU, "ThumbnailBackground", "1", r);
+}
+
+bool xd_pkgstyle_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (t->pkg == nullptr || !xd_pkg_has_own(t->pkg, TEU, "ThumbnailTile"))
+        return false;
+    /* Hot 1, Pressed 2 (deduced from the frames' look). */
+    if (state & (XD_STATE_HOT | XD_STATE_PRESSED))
+        (void)xd_pkg_draw(t, cr, TEU, "ThumbnailTile", (state & XD_STATE_PRESSED) ? "2" : "1",
+                          r);
+    return true;
+}
+
+bool xd_pkgstyle_thumb_title_color(const xd_theme *t, xd_rgba *out) {
+    return t->pkg != nullptr && xd_pkg_has_own(t->pkg, TEU, "ThumbnailTitle") &&
+           xd_pkg_color(t->pkg, TEU, "ThumbnailTitle", nullptr, "TextColor", out);
+}
+
+bool xd_pkgstyle_draw_thumb_close(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (t->pkg == nullptr || !xd_pkg_has_own(t->pkg, TEU, "ThumbnailClose"))
+        return false;
+    char st[8];
+    basic_str(st, state);
+    return xd_pkg_draw(t, cr, TEU, "ThumbnailClose", st, r);
+}
+
+/* ---- jump lists: our JumpList class, else 7's Start menu items ---- */
+
+static const char *const JL = "JumpList";
+
+bool xd_pkgstyle_draw_jumplist_frame(const xd_theme *t, cairo_t *cr, xd_rect r, int band_y) {
+    if (t->pkg == nullptr || !xd_pkg_has_own(t->pkg, JL, "Background"))
+        return false;
+    (void)xd_pkg_draw(t, cr, JL, "Background", "1", r);
+    if (band_y < r.y + r.h)
+        (void)xd_pkg_draw(t, cr, JL, "Band", "1", (xd_rect){r.x, band_y, r.w, r.y + r.h - band_y});
+    return true;
+}
+
+bool xd_pkgstyle_jumplist_header_color(const xd_theme *t, xd_rgba *out) {
+    return t->pkg != nullptr && xd_pkg_has_own(t->pkg, JL, "Header") &&
+           xd_pkg_color(t->pkg, JL, "Header", nullptr, "TextColor", out);
+}
+
+/* A hot jump list item or pin button: JumpList's, else what 7's Start menu
+ * highlights its programs with (its jump lists are the same control). */
+static bool jump_hot(const xd_theme *t, cairo_t *cr, const char *part, xd_rect r,
+                     bool pressed) {
+    if (xd_pkg_has_own(t->pkg, JL, part))
+        return xd_pkg_draw(t, cr, JL, part, pressed ? "3" : "2", r);
+    return xd_theme_draw_start_part(t, cr, XD_START_PROG_ITEM, r,
+                                    pressed ? XD_STATE_PRESSED : XD_STATE_HOT);
+}
+
+bool xd_pkgstyle_draw_jumplist_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                    xd_rgba *text) {
+    if (t->pkg == nullptr)
+        return false;
+    int w, h;
+    bool own = xd_pkg_has_own(t->pkg, JL, "Item");
+    if (!own && !xd_theme_start_part_size(t, XD_START_PROG_ITEM, XD_STATE_HOT, &w, &h))
+        return false;
+    bool disabled = state & XD_STATE_DISABLED;
+    bool hot = (state & XD_STATE_HOT) && !disabled;
+    if (hot)
+        (void)jump_hot(t, cr, "Item", r, false);
+    /* Item: Normal 1, Hot 2, Disabled 3. */
+    const char *st = disabled ? "3" : hot ? "2" : "1";
+    if (!own || !xd_pkg_color(t->pkg, JL, "Item", st, "TextColor", text))
+        *text = xd_rgba_hex(disabled ? 0x6D6D6D : 0x1E1E1E);
+    return true;
+}
+
+bool xd_pkgstyle_draw_jumplist_pin(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    return t->pkg != nullptr && jump_hot(t, cr, "PinButton", r, state & XD_STATE_PRESSED);
+}
+
+/* ---- the XP and 7 Start menus ---- */
+
+static const char *const start_names[XD_START_PART_COUNT] = {
+    [XD_START_USER_PANE] = "UserPane",
+    [XD_START_USER_PICTURE] = "UserPicture",
+    [XD_START_PROG_LIST] = "ProgList",
+    [XD_START_PROG_SEPARATOR] = "ProgListSeparator",
+    [XD_START_PLACES_LIST] = "PlacesList",
+    [XD_START_PLACES_SEPARATOR] = "PlacesListSeparator",
+    [XD_START_MORE_PROGRAMS] = "MorePrograms",
+    [XD_START_MORE_PROGRAMS_ARROW] = "MoreProgramsArrow",
+    [XD_START_MORE_PROGRAMS_BACK] = "MoreProgramsArrowBack",
+    [XD_START_LOGOFF] = "Logoff",
+    [XD_START_LOGOFF_BUTTONS] = "LogoffButtons",
+    [XD_START_PROG_ITEM] = "ProgListItem",
+    [XD_START_PROG_ITEM_LEFT] = "ProgListItemLeft",
+    [XD_START_PROG_ITEM_SPLIT] = "ProgListItemSplit",
+    [XD_START_PLACES_ITEM] = "PlacesListItem",
+    [XD_START_SHUTDOWN] = "ShutdownButton",
+    [XD_START_SHUTDOWN_ARROW] = "ShutdownArrow",
+};
+
+/* The class drawing a part: 7's StartPanelPriv, then StartPanel (XP's
+ * and Vista's); their composited variants with the glass. nullptr when
+ * the package has neither. */
+static const char *start_class(const xd_theme *t, xd_start_part part) {
+    if (t->pkg == nullptr || (unsigned)part >= XD_START_PART_COUNT)
+        return nullptr;
+    const char *name = start_names[part];
+    if (seven(t) && xd_pkg_has_own(t->pkg, "StartPanelPriv", name))
+        return pick(t, "StartPanelPriv", "StartPanelComposited::StartPanelPriv", name);
+    if (xd_pkg_has_own(t->pkg, "StartPanel", name))
+        return pick(t, "StartPanel", "StartPanelComposited::StartPanel", name);
+    return nullptr;
+}
+
+bool xd_theme_draw_start_part(const xd_theme *t, cairo_t *cr, xd_start_part part, xd_rect r,
+                              uint8_t state) {
+    const char *cls = start_class(t, part);
+    if (cls == nullptr)
+        return false;
+    char st[8];
+    basic_str(st, state);
+    return xd_pkg_draw(t, cr, cls, start_names[part], st, r);
+}
+
+bool xd_theme_start_part_size(const xd_theme *t, xd_start_part part, uint8_t state, int *w,
+                              int *h) {
+    const char *cls = start_class(t, part);
+    char st[8];
+    basic_str(st, state);
+    return cls != nullptr && xd_pkg_part_size(t, cls, start_names[part], st, w, h);
+}
+
+bool xd_theme_draw_start_logoff_icon(const xd_theme *t, cairo_t *cr, xd_rect r, bool power,
+                                     uint8_t state) {
+    const char *cls = start_class(t, XD_START_LOGOFF_BUTTONS);
+    char st[8];
+    basic_str(st, state);
+    int w, h;
+    if (cls == nullptr || !xd_pkg_part_size(t, cls, "LogoffButtons", st, &w, &h) || h <= 0)
+        return false;
+    int squares = MAX(w / h, 1);
+    int i = MAX(power ? squares - 1 : squares - 2, 0);
+    xd_rect icon = {r.x + (r.w - h) / 2, r.y + (r.h - h) / 2, h, h};
+    cairo_save(cr);
+    cairo_rectangle(cr, icon.x, icon.y, icon.w, icon.h);
+    cairo_clip(cr);
+    bool drew =
+        xd_pkg_draw(t, cr, cls, "LogoffButtons", st, (xd_rect){icon.x - i * h, icon.y, w, h});
+    cairo_restore(cr);
+    return drew;
+}
+
+bool xd_theme_start_part_color(const xd_theme *t, xd_start_part part, uint8_t state,
+                               xd_start_color which, xd_rgba *out) {
+    static const char *const props[] = {
+        [XD_START_TEXT] = "TextColor",
+        [XD_START_SUBTEXT] = "CaptionText",
+        [XD_START_SHADOW] = "TextShadowColor",
+    };
+    const char *cls = start_class(t, part);
+    if (cls == nullptr || (unsigned)which >= G_N_ELEMENTS(props))
+        return false;
+    char st[8];
+    basic_str(st, state);
+    return xd_pkg_color(t->pkg, cls, start_names[part], st, props[which], out);
+}
+
+bool xd_theme_start_part_font(const xd_theme *t, xd_start_part part, xd_font_spec *out) {
+    const char *cls = start_class(t, part);
+    return cls != nullptr && xd_pkg_font(t->pkg, cls, start_names[part], nullptr, "Font", out);
+}
+
+bool xd_theme_start_heading_color(const xd_theme *t, xd_rgba *out) {
+    return t->pkg != nullptr && xd_pkg_has_own(t->pkg, "StartMenu::ListView", "GroupHeader") &&
+           xd_pkg_color(t->pkg, "StartMenu::ListView", "GroupHeader", nullptr,
+                        "Heading1TextColor", out);
+}
+
+bool xd_theme_draw_new_program(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    return t->pkg != nullptr && xd_pkg_has_own(t->pkg, "StartMenu::MenuBand", "NewAppButton") &&
+           xd_pkg_draw(t, cr, "StartMenu::MenuBand", "NewAppButton", "1", r);
+}
+
+/* ---- the Start menus' cascades ----
+ * XP's and 7's: StartMenu::Toolbar's background and Button, ::MenuBand's
+ * separator ("Seperator", as XP spells it). The Windows 2000 Start menu:
+ * our ClassicStartMenu (Background, Banner, Item, Separator,
+ * SubmenuArrow; docs/THEMES.md). */
+
+static const char *const SMT = "StartMenu::Toolbar";
+static const char *const CSM = "ClassicStartMenu";
+
+static bool start_look(const xd_theme *t) {
+    return t->pkg != nullptr && t->menu_look == XD_MENU_LOOK_START;
+}
+
+static bool classic_look(const xd_theme *t) {
+    return t->pkg != nullptr && t->menu_look == XD_MENU_LOOK_CLASSIC_START;
+}
+
+bool xd_pkgstyle_draw_start_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (start_look(t) && xd_pkg_has_own(t->pkg, SMT, nullptr) &&
+        xd_pkg_prop(t->pkg, SMT, nullptr, nullptr, "ImageFile") != nullptr) {
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_MENU));
+        return xd_pkg_draw(t, cr, SMT, nullptr, "1", r);
+    }
+    if (classic_look(t) && xd_pkg_has_own(t->pkg, CSM, "Background")) {
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_MENU));
+        return xd_pkg_draw(t, cr, CSM, "Background", "1", r);
+    }
+    return false;
+}
+
+bool xd_pkgstyle_draw_start_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                      xd_rgba *text) {
+    bool hot = state & XD_STATE_HOT, disabled = state & XD_STATE_DISABLED;
+    if (start_look(t) && xd_pkg_has_own(t->pkg, SMT, "Button")) {
+        /* Toolbar buttons: Hot 2; the text Toolbar(Hot)'s. */
+        if (hot)
+            (void)xd_pkg_draw(t, cr, SMT, "Button", "2", r);
+        *text = disabled ? xd_sys(t, XD_COLOR_GRAY_TEXT)
+                         : text_color_st(t, SMT, nullptr, hot ? "2" : "1",
+                                         xd_sys(t, hot ? XD_COLOR_HILIGHT_TEXT
+                                                       : XD_COLOR_MENU_TEXT));
+        return true;
+    }
+    if (classic_look(t) && xd_pkg_has_own(t->pkg, CSM, "Item")) {
+        /* Normal 1, Hot 2, Disabled 3, DisabledHot 4, as Menu's PopupItem. */
+        char st[8];
+        state_str(st, disabled ? (hot ? 4 : 3) : (hot ? 2 : 1));
+        (void)xd_pkg_draw(t, cr, CSM, "Item", st, r);
+        *text = text_color_st(t, CSM, "Item", st,
+                              xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT
+                                        : hot    ? XD_COLOR_HILIGHT_TEXT
+                                                 : XD_COLOR_MENU_TEXT));
+        return true;
+    }
+    return false;
+}
+
+bool xd_pkgstyle_draw_start_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (start_look(t)) {
+        static const char *const parts[] = {"Seperator", "Separator"};
+        for (size_t i = 0; i < G_N_ELEMENTS(parts); i++)
+            if (xd_pkg_has_own(t->pkg, "StartMenu::MenuBand", parts[i]))
+                return xd_pkg_draw(t, cr, "StartMenu::MenuBand", parts[i], "1", r);
+    }
+    return classic_look(t) && xd_pkg_has_own(t->pkg, CSM, "Separator") &&
+           xd_pkg_draw(t, cr, CSM, "Separator", "1", r);
+}
+
+bool xd_pkgstyle_draw_start_menu_submenu(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                         uint8_t state) {
+    if (!classic_look(t) || !xd_pkg_has_own(t->pkg, CSM, "SubmenuArrow"))
+        return false;
+    /* Normal 1, Hot 2, Disabled 3. */
+    const char *st = (state & XD_STATE_DISABLED) ? "3" : (state & XD_STATE_HOT) ? "2" : "1";
+    return xd_pkg_draw(t, cr, CSM, "SubmenuArrow", st, r);
+}
+
+bool xd_pkgstyle_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rgba *text,
+                                   xd_font_spec *font) {
+    if (!classic_look(t) || !xd_pkg_has_own(t->pkg, CSM, "Banner"))
+        return false;
+    (void)xd_pkg_draw(t, cr, CSM, "Banner", "1", r);
+    (void)xd_pkg_color(t->pkg, CSM, "Banner", nullptr, "TextColor", text);
+    (void)xd_pkg_font(t->pkg, CSM, "Banner", nullptr, "Font", font);
+    return true;
+}
