@@ -279,6 +279,7 @@ typedef enum xd_start_part : uint8_t {
     XD_START_PLACES_ITEM,         /* 7: a place's highlight (_HOT, _PRESSED) */
     XD_START_SHUTDOWN,            /* 7: Shut down (_HOT, _PRESSED) */
     XD_START_SHUTDOWN_ARROW,      /* 7: its ▸ */
+    XD_START_OPEN_BOX,            /* 7: the search box's pane, under the list */
     XD_START_PART_COUNT,
 } xd_start_part;
 /* Draws the part into r: false when the package doesn't style it. */
@@ -291,6 +292,9 @@ bool xd_theme_draw_start_logoff_icon(const xd_theme *t, cairo_t *cr, xd_rect r, 
 /* The part's image size at the theme's scale (true-size parts). */
 bool xd_theme_start_part_size(const xd_theme *t, xd_start_part part, uint8_t state, int *w,
                               int *h);
+/* The part's ContentMargins, logical px: false when the package doesn't
+ * style it. */
+bool xd_theme_start_part_margins(const xd_theme *t, xd_start_part part, xd_insets *out);
 /* A part's colours (TextColor, CaptionText: a pinned program's second
  * line, TextShadowColor) and font, from the package. */
 typedef enum xd_start_color : uint8_t {

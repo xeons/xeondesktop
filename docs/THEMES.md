@@ -439,7 +439,10 @@ draws it. With desktop composition (Vista's and 7's glass), a class's
   the same names, and (deduced) `MoreProgramsArrowBack`, `ProgListItem`
   (a program's highlight; with a jump list `ProgListItemLeft` and
   `ProgListItemSplit`), `PlacesListItem`, `ShutdownButton`,
-  `LogoffSplitButtonDropdown` (its arrow); search results' headings in
+  `LogoffSplitButtonDropdown` (its arrow), `OpenBox` (the search box's
+  pane under the program list, its `ContentMargins` placing the box, as
+  Vista's part of that name; the list ends above it, its items within
+  `ProgList`'s `ContentMargins`); search results' headings in
   `StartMenu::ListView` `GroupHeader`'s `Heading1TextColor`.
 - **The Start menus' cascades** (All Programs, Recent Documents, Control
   Panel): `StartMenu::Toolbar` (its background, `Button` Hot for the hot

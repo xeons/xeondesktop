@@ -1453,6 +1453,7 @@ static const char *const start_names[XD_START_PART_COUNT] = {
     [XD_START_PLACES_ITEM] = "PlacesListItem",
     [XD_START_SHUTDOWN] = "ShutdownButton",
     [XD_START_SHUTDOWN_ARROW] = "LogoffSplitButtonDropdown",
+    [XD_START_OPEN_BOX] = "OpenBox",
 };
 
 /* The class drawing a part: 7's StartPanelPriv, then StartPanel (XP's
@@ -1485,6 +1486,15 @@ bool xd_theme_start_part_size(const xd_theme *t, xd_start_part part, uint8_t sta
     char st[8];
     basic_str(st, state);
     return cls != nullptr && xd_pkg_part_size(t, cls, start_names[part], st, w, h);
+}
+
+bool xd_theme_start_part_margins(const xd_theme *t, xd_start_part part, xd_insets *out) {
+    const char *cls = start_class(t, part);
+    if (cls == nullptr)
+        return false;
+    *out = (xd_insets){0};
+    (void)xd_pkg_margins(t->pkg, cls, start_names[part], nullptr, "ContentMargins", out);
+    return true;
 }
 
 bool xd_theme_draw_start_logoff_icon(const xd_theme *t, cairo_t *cr, xd_rect r, bool power,

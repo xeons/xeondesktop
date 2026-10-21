@@ -368,7 +368,31 @@ static xd_rect xp_logoff_rect(const xd_start7 *m) {
     xd_rect t = xp_turnoff_rect(m);
     return (xd_rect){t.x - 6 - 82, t.y, 82, t.h};
 }
-static xd_rect search_rect(void) {
+/* The white list's panel, logical px: inset in the left column. */
+static xd_rect list_panel_rect(void) {
+    return (xd_rect){S7_PAD - 2, S7_TOP + S7_PAD - 2, S7_LEFT_W - 2 * S7_PAD + 4,
+                     S7_H - S7_TOP - 2 * S7_PAD + 4};
+}
+/* A package's OpenBox: the search box's own pane at the panel's bottom,
+ * as tall as its ContentMargins around the box ({0} without one; the box
+ * then sits in the list). `cm` (may be nullptr) gets the margins. */
+static xd_rect open_box_rect(const xd_start7 *m, xd_insets *cm) {
+    xd_theme t;
+    xd_theme_init(&t, m->shell->style, &m->shell->scheme, 1.0);
+    xd_insets c;
+    if (m->xp || !xd_theme_start_part_margins(&t, XD_START_OPEN_BOX, &c))
+        return (xd_rect){0};
+    if (cm != nullptr)
+        *cm = c;
+    xd_rect p = list_panel_rect();
+    int h = c.top + S7_SEARCH_H + c.bottom;
+    return (xd_rect){p.x, p.y + p.h - h, p.w, h};
+}
+static xd_rect search_rect(const xd_start7 *m) {
+    xd_insets cm;
+    xd_rect ob = open_box_rect(m, &cm);
+    if (ob.w > 0)
+        return (xd_rect){ob.x + cm.left, ob.y + cm.top, ob.w - cm.left - cm.right, S7_SEARCH_H};
     return (xd_rect){S7_PAD + 4, S7_H - S7_PAD - S7_SEARCH_H - 4, S7_LEFT_W - 2 * S7_PAD - 8,
                      S7_SEARCH_H};
 }
@@ -377,7 +401,10 @@ static xd_rect all_rect(const xd_start7 *m) {
         xd_rect p = xp_left_panel(m);
         return (xd_rect){p.x + 2, p.y + p.h - XP_PAD - XP_ALL_H, p.w - 4, XP_ALL_H};
     }
-    xd_rect s = search_rect();
+    xd_rect ob = open_box_rect(m, nullptr);
+    if (ob.w > 0)
+        return (xd_rect){S7_PAD, ob.y - 2 - 28, S7_LEFT_W - 2 * S7_PAD, 28};
+    xd_rect s = search_rect(m);
     return (xd_rect){S7_PAD, s.y - 8 - 28, S7_LEFT_W - 2 * S7_PAD, 28};
 }
 static xd_rect list_rect(const xd_start7 *m) {
@@ -385,6 +412,17 @@ static xd_rect list_rect(const xd_start7 *m) {
     if (m->xp) {
         xd_rect p = xp_left_panel(m);
         return (xd_rect){p.x + 2, p.y + XP_PAD, p.w - 4, a.y - XP_SEP - (p.y + XP_PAD)};
+    }
+    /* A package's list: within its ProgList's ContentMargins, clear of
+     * the frame its image draws. */
+    xd_theme t;
+    xd_theme_init(&t, m->shell->style, &m->shell->scheme, 1.0);
+    xd_insets cm;
+    if (xd_theme_start_part_margins(&t, XD_START_PROG_LIST, &cm)) {
+        xd_rect p = list_panel_rect();
+        int x = XD_MAX(p.x + cm.left, S7_PAD), y = XD_MAX(p.y + cm.top, S7_TOP + S7_PAD);
+        int right = XD_MIN(p.x + p.w - cm.right, S7_LEFT_W - S7_PAD);
+        return (xd_rect){x, y, right - x, a.y - 6 - y};
     }
     return (xd_rect){S7_PAD, S7_TOP + S7_PAD, S7_LEFT_W - 2 * S7_PAD, a.y - 6 - (S7_TOP + S7_PAD)};
 }
@@ -1048,7 +1086,7 @@ static void draw_left(xd_start7 *m, cairo_t *cr, const xd_theme *t, const s7_pal
     }
 
     /* Search box: takes any typing. */
-    xd_rect sr = D(search_rect(), s);
+    xd_rect sr = D(search_rect(m), s);
     xd_rect inner = xd_theme_draw_field(t, cr, sr, false);
     xd_str q = xd_textedit_view(&m->search);
     int pad = xd_tpx(t, 4);
@@ -1699,15 +1737,20 @@ static void render_7(xd_start7 *m, cairo_t *cr, const xd_theme *tp) {
     } else {
         xd_fill_rect(cr, right, p.right_bg);
         /* The white list sits inset in the panel, as on Windows 7. */
-        xd_rect inset = D((xd_rect){S7_PAD - 2, S7_TOP + S7_PAD - 2, S7_LEFT_W - 2 * S7_PAD + 4,
-                                    S7_H - S7_TOP - 2 * S7_PAD + 4},
-                          s);
+        xd_rect inset = D(list_panel_rect(), s);
+        /* Windows 7's list stops above the search box's pane. */
+        xd_rect ob = open_box_rect(m, nullptr);
+        xd_rect list = inset;
+        if (ob.w > 0)
+            list.h = D(ob, s).y - list.y;
         /* The whole panel behind the list, including the gap between the
          * list and the right column. */
         xd_fill_rect(cr, left, p.right_bg);
         /* A package's columns over the glass, else ours. */
         bool places = xd_theme_draw_start_part(&t, cr, XD_START_PLACES_LIST, right, 0);
-        if (!xd_theme_draw_start_part(&t, cr, XD_START_PROG_LIST, inset, 0)) {
+        if (ob.w > 0)
+            (void)xd_theme_draw_start_part(&t, cr, XD_START_OPEN_BOX, D(ob, s), 0);
+        if (!xd_theme_draw_start_part(&t, cr, XD_START_PROG_LIST, list, 0)) {
             xd_fill_rect(cr, inset, p.left_bg);
             xd_draw_bevel(cr, inset, XD_MAX(xd_tpx(&t, 1), 1), p.frame, p.frame);
         }
