@@ -202,5 +202,65 @@ void xd_luna_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t stat
 void xd_luna_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                            const char *label);
 
+/* A stretchable part of a Windows visual style, as a few numbers measured
+ * by tools/controls-measure.py (luna_controls.h, aero_controls.h) and
+ * drawn procedurally: a rounded rectangle (corners rounded where two sides
+ * have lines) with up to four lines along each side, outermost first, each
+ * a colour or a gradient along the side, and a face that is a vertical
+ * gradient plus a horizontal one's variation about its middle. Positions
+ * are 0-255 of the face; colours are premultiplied 0xAARRGGBB. */
+typedef struct xd_stop {
+    uint8_t at;
+    uint32_t argb;
+} xd_stop;
+typedef struct xd_shape {
+    uint8_t w, h; /* its natural size */
+    uint8_t radius;
+    uint8_t lines[4]; /* left, top, right, bottom */
+    uint32_t edge[4][4][2]; /* per side and line: from its start to its end */
+    uint8_t nv, nh;
+    xd_stop v[6], hs[6];
+} xd_shape;
+/* An XP check box's or radio button's state, measured by the same tool:
+ * the border, the face's gradient along the diagonal (x + y, at 0-255 of
+ * the box; in a hot state the ring's), the colour inside a hot ring (or a
+ * disabled radio button's clear face), and the check mark's colour or the
+ * radio dot's light, middle and dark. */
+typedef struct xd_box_state {
+    uint32_t border;
+    uint32_t inner; /* premultiplied */
+    bool has_inner;
+    uint32_t mark[3];
+    uint8_t count;
+    xd_stop stops[8];
+} xd_box_state;
+/* luna.c: draws `p` into r (device px) at the theme's scale. */
+void xd_shape_draw(const xd_theme *t, cairo_t *cr, const xd_shape *p, xd_rect r);
+
+/* luna.c: Luna's controls, from luna_controls.h in the colour variant's
+ * own artwork (theme.c draws the other styles'). */
+/* A check box's or radio button's size in device px (XP's, per DPI). */
+int xd_luna_box_size(const xd_theme *t);
+void xd_luna_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect box, uint8_t state);
+void xd_luna_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_luna_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+                             bool disabled);
+void xd_luna_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect tab, uint8_t state);
+void xd_luna_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_luna_draw_groupbox_frame(const xd_theme *t, cairo_t *cr, xd_rect box);
+/* style_aero.c: Windows 7's controls, from aero_controls.h. */
+void xd_aero_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect box, uint8_t state);
+xd_rect xd_aero_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled);
+void xd_aero_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_aero_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+                             bool disabled);
+void xd_aero_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect tab, uint8_t state);
+void xd_aero_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_aero_draw_groupbox_frame(const xd_theme *t, cairo_t *cr, xd_rect box);
+/* Colours a variant's controls take beyond the scheme's. */
+/* A text field's border and disabled face. */
+void xd_luna_field_colors(const xd_theme *t, xd_rgba *border, xd_rgba *disabled);
+xd_rgba xd_luna_groupbox_text(const xd_theme *t);
+
 
 #endif

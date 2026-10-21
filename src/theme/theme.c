@@ -521,6 +521,10 @@ void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
 
 static bool classic(const xd_theme *t) { return t->style == XD_STYLE_CLASSIC; }
 static bool watercolor(const xd_theme *t) { return t->style == XD_STYLE_WHISTLER; }
+/* Luna and Aero draw their controls from measured artwork (luna.c,
+ * style_aero.c). */
+static bool luna(const xd_theme *t) { return t->style == XD_STYLE_LUNA; }
+static bool aero(const xd_theme *t) { return t->style == XD_STYLE_AERO; }
 
 /* XP's flat control border colour per style. */
 static xd_rgba flat_border(const xd_theme *t) {
@@ -546,6 +550,14 @@ xd_rect xd_theme_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disa
         return inner;
     int px = xd_tpx(t, 1);
     xd_rgba fill = disabled ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_sys(t, XD_COLOR_WINDOW);
+    if (aero(t))
+        return xd_aero_draw_field(t, cr, r, disabled);
+    if (luna(t)) {
+        xd_rgba border, off;
+        xd_luna_field_colors(t, &border, &off);
+        xd_fill_rect(cr, r, disabled ? off : xd_sys(t, XD_COLOR_WINDOW));
+        return xd_draw_bevel(cr, r, px, border, border);
+    }
     if (!classic(t)) {
         xd_fill_rect(cr, r, disabled ? xd_rgba_hex(WC_FACE) : xd_sys(t, XD_COLOR_WINDOW));
         return xd_draw_bevel(cr, r, px, flat_border(t), flat_border(t));
@@ -566,6 +578,14 @@ int xd_theme_dropdown_button_width(const xd_theme *t) {
 void xd_theme_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
     if (xd_pkgstyle_draw_dropdown_button(t, cr, r, state))
         return;
+    if (luna(t)) {
+        xd_luna_draw_dropdown_button(t, cr, r, state);
+        return;
+    }
+    if (aero(t)) {
+        xd_aero_draw_dropdown_button(t, cr, r, state);
+        return;
+    }
     bool pressed = state & XD_STATE_PRESSED;
     bool disabled = state & XD_STATE_DISABLED;
     int px = xd_tpx(t, 1);
@@ -695,6 +715,14 @@ static void classic_radio(const xd_theme *t, cairo_t *cr, xd_rect b, uint8_t sta
  * (XP's light-grey to white), its hover ring, and a dot in the check mark's
  * colour. */
 static void flat_radio(const xd_theme *t, cairo_t *cr, xd_rect b, uint8_t state) {
+    if (luna(t)) {
+        xd_luna_draw_radio(t, cr, b, state);
+        return;
+    }
+    if (aero(t)) {
+        xd_aero_draw_radio(t, cr, b, state);
+        return;
+    }
     xd_toolkit_colors c;
     xd_theme_toolkit_colors(t, &c);
     bool disabled = state & XD_STATE_DISABLED;
@@ -739,7 +767,7 @@ void xd_theme_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t stat
     if (xd_pkgstyle_draw_radio(t, cr, r, state, label))
         return;
     /* The button sits where a check box's box does, so their labels line up. */
-    int slot = xd_tpx(t, 13);
+    int slot = luna(t) ? xd_luna_box_size(t) : xd_tpx(t, 13);
     bool disabled = state & XD_STATE_DISABLED;
     if (classic(t)) {
         int box = xd_tpx(t, 12);
@@ -812,6 +840,10 @@ void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                        tab.h - xd_tpx(t, 8)},
                          xd_rgba_hex(0xFFFFFF));
         }
+    } else if (luna(t)) {
+        xd_luna_draw_tab(t, cr, tab, state);
+    } else if (aero(t)) {
+        xd_aero_draw_tab(t, cr, tab, state);
     } else {
         /* XP: white-to-beige tab, orange top line when hot or selected. */
         xd_rgba border = xd_rgba_hex(0x919B9C);
@@ -844,6 +876,8 @@ xd_rgba xd_theme_tab_page_color(const xd_theme *t) {
         return pkg_color;
     if (watercolor(t))
         return xd_rgba_hex(WC_PAGE);
+    if (aero(t))
+        return xd_rgba_hex(0xFFFFFF);
     return classic(t) ? xd_sys(t, XD_COLOR_BUTTON_FACE) : xd_rgba_hex(0xFCFCFE);
 }
 
@@ -864,6 +898,14 @@ void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
         xd_draw_bevel(cr, r, px, xd_rgba_hex(0xFFFFFF), xd_rgba_hex(WC_THUMB_BORDER));
         return;
     }
+    if (luna(t)) {
+        xd_luna_draw_tab_panel(t, cr, r);
+        return;
+    }
+    if (aero(t)) {
+        xd_aero_draw_tab_panel(t, cr, r);
+        return;
+    }
     xd_rgba border = xd_rgba_hex(0x919B9C);
     xd_fill_gradient(cr, r, xd_rgba_hex(0xFCFCFE), xd_rgba_hex(0xF4F3EE), false);
     xd_draw_bevel(cr, r, px, border, border);
@@ -875,6 +917,8 @@ void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const cha
     int px = xd_tpx(t, 1);
     xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
                                classic(t) || watercolor(t) ? xd_sys(t, XD_COLOR_BUTTON_TEXT)
+                               : luna(t)                   ? xd_luna_groupbox_text(t)
+                               : aero(t)                   ? xd_rgba_hex(0x000000)
                                                            : xd_rgba_hex(0x0046D5),
                                XD_ALIGN_START);
     int th = xd_tpx(t, 14);
@@ -889,6 +933,26 @@ void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const cha
     } else if (watercolor(t)) {
         xd_rgba border = xd_rgba_hex(WC_THUMB_BORDER);
         xd_draw_bevel(cr, box, px, border, border);
+    } else if (luna(t) || aero(t)) {
+        /* Around the label, which has no background of its own: what's
+         * behind the group shows through, as in XP and 7. */
+        cairo_save(cr);
+        if (label != nullptr && label[0] != '\0') {
+            int tw = xd_text_width(cr, label, &st);
+            cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
+            cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+            cairo_rectangle(cr, r.x + xd_tpx(t, 7), r.y, tw + xd_tpx(t, 4), th);
+            cairo_clip(cr);
+        }
+        if (luna(t))
+            xd_luna_draw_groupbox_frame(t, cr, box);
+        else
+            xd_aero_draw_groupbox_frame(t, cr, box);
+        cairo_restore(cr);
+        if (label != nullptr && label[0] != '\0')
+            xd_draw_text(cr, (xd_rect){r.x + xd_tpx(t, 9), r.y, r.w - xd_tpx(t, 9), th}, label,
+                         &st);
+        return;
     } else {
         xd_rgba border = xd_rgba_hex(0xD0D0BF);
         double rad = xd_tpx(t, 3);
@@ -984,6 +1048,16 @@ void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int fir
     if (xd_pkgstyle_draw_vscrollbar(t, cr, r, xd_theme_vscrollbar_thumb(t, r, first, page, total),
                                     disabled))
         return;
+    if (luna(t)) {
+        xd_luna_draw_vscrollbar(t, cr, r, xd_theme_vscrollbar_thumb(t, r, first, page, total),
+                                disabled);
+        return;
+    }
+    if (aero(t)) {
+        xd_aero_draw_vscrollbar(t, cr, r, xd_theme_vscrollbar_thumb(t, r, first, page, total),
+                                disabled);
+        return;
+    }
     /* Track: Classic dithers ButtonHilight over Scrollbar; XP is flat. */
     if (classic(t)) {
         xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_SCROLLBAR));

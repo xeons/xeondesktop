@@ -1160,6 +1160,10 @@ install_data('data/ananicy/xeondesktop.rules',
 
 executable('xd-themeview', 'tools/xd-themeview.c', dependencies: [theme_dep],
            c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"'])
+# Draws each part with a built-in style and with a theme package, and
+# scores their difference (matching our styles to the real ones).
+executable('xd-theme-compare', 'tools/xd-theme-compare.c', dependencies: [theme_dep, m_dep],
+           c_args: ['-DXD_SOURCE_ROOT="' + meson.project_source_root() + '"'])
 # Scales a PNG with every theme image filter, to compare them by eye.
 executable('xd-scale-demo', 'tools/xd-scale-demo.c', dependencies: [theme_dep])
 

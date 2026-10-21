@@ -8,6 +8,7 @@
 #include <math.h>
 #include <pango/pangocairo.h>
 
+#include "aero_controls.h"
 #include "style.h"
 
 /* Logical px at 96 dpi. */
@@ -223,56 +224,156 @@ static void gloss(cairo_t *cr, xd_rect r, xd_rgba top0, xd_rgba top1, xd_rgba bo
     cairo_pattern_destroy(p);
 }
 
-static void caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
-                           const xd_frame *f, bool first, bool last) {
-    if (xd_pkgstyle_dwm_button(t, cr, r, part, f, first,
-                               part == XD_PART_CLOSE && (f->buttons & ~XD_CAPBTN_CLOSE) == 0))
-        return;
-    bool hot = f->hot == part && f->pressed != part;
-    bool pressed = f->hot == part && f->pressed == part;
-    bool close = part == XD_PART_CLOSE;
-    double rad = xd_tpx(t, 4);
-    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, 0, 0, last ? rad : 0,
-                    first ? rad : 0);
-    if (close && (f->active || hot || pressed)) {
-        if (pressed)
-            gloss(cr, r, xd_rgba_hex(0xC8705E), xd_rgba_hex(0xA83A28), xd_rgba_hex(0x8C1C10),
-                  xd_rgba_hex(0xB0402C));
-        else if (hot)
-            gloss(cr, r, xd_rgba_hex(0xF4B0A0), xd_rgba_hex(0xE8604A), xd_rgba_hex(0xD8301A),
-                  xd_rgba_hex(0xF07A50));
-        else
-            gloss(cr, r, xd_rgba_hex(0xE8A898), xd_rgba_hex(0xD06C5C), xd_rgba_hex(0xC04232),
-                  xd_rgba_hex(0xD06450));
-    } else if (pressed) {
-        gloss(cr, r, (xd_rgba){0.55, 0.70, 0.85, 0.85}, (xd_rgba){0.25, 0.45, 0.65, 0.85},
-              (xd_rgba){0.10, 0.30, 0.50, 0.85}, (xd_rgba){0.20, 0.45, 0.65, 0.85});
-    } else if (hot) {
-        gloss(cr, r, (xd_rgba){0.85, 0.93, 1.0, 0.75}, (xd_rgba){0.60, 0.80, 0.97, 0.60},
-              (xd_rgba){0.40, 0.70, 0.95, 0.55}, (xd_rgba){0.62, 0.86, 1.0, 0.75});
-    } else {
-        double a = f->active ? 1.0 : 0.7;
-        gloss(cr, r, (xd_rgba){1, 1, 1, 0.48 * a}, (xd_rgba){1, 1, 1, 0.26 * a},
-              (xd_rgba){1, 1, 1, 0.10 * a}, (xd_rgba){1, 1, 1, 0.28 * a});
+/* ---- controls, from aero.msstyles' measured artwork --------------------------------- */
+
+/* Normal 0, hot 1, pressed 2, disabled 3: the images' first four states. */
+static int aero_state(uint8_t state) {
+    return (state & XD_STATE_DISABLED) ? 3
+           : (state & XD_STATE_PRESSED) ? 2
+           : (state & XD_STATE_HOT)     ? 1
+                                        : 0;
+}
+
+static void set_rgb(cairo_t *cr, uint32_t rgb, double alpha) {
+    cairo_set_source_rgba(cr, ((rgb >> 16) & 0xFF) / 255.0, ((rgb >> 8) & 0xFF) / 255.0,
+                          (rgb & 0xFF) / 255.0, alpha);
+}
+
+/* Windows 7's glyphs (caption buttons, arrows) are white or dark shapes
+ * with a soft outline: a shape of rectangles in a w x h box designed for
+ * 96 DPI, drawn at the monitor's resolution, centred in r. The outline
+ * reaches `ox` px to each side and `oy` above and below, its corners
+ * half covered. */
+typedef struct aero_rect {
+    int8_t x0, y0, x1, y1; /* inclusive */
+} aero_rect;
+
+typedef struct aero_glyph {
+    int w, h;
+    aero_rect r[12];
+    int count;
+} aero_glyph;
+
+static void draw_aero_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, const aero_glyph *g,
+                            uint32_t fill, uint32_t outline, double alpha, int ox, int oy) {
+    double k = t->scale;
+    int w = (int)lround(g->w * k), h = (int)lround(g->h * k);
+    int x0 = r.x + (r.w - w) / 2, y0 = r.y + (r.h - h) / 2;
+    int dx = (int)lround(ox * k), dy = (int)lround(oy * k);
+    cairo_surface_t *a8 = cairo_image_surface_create(CAIRO_FORMAT_A8, w, h);
+    cairo_t *m = cairo_create(a8);
+    for (int i = 0; i < g->count; i++) {
+        const aero_rect *q = &g->r[i];
+        int ax = (int)lround(q->x0 * k), ay = (int)lround(q->y0 * k);
+        int bx = (int)lround((q->x1 + 1) * k), by = (int)lround((q->y1 + 1) * k);
+        cairo_rectangle(m, ax, ay, bx - ax, by - ay);
     }
-    cairo_set_line_width(cr, 1);
-    cairo_set_source_rgba(cr, 0, 0, 0, f->active ? 0.55 : 0.35);
-    cairo_stroke(cr);
-    xd_path_rounded(cr, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, 0, 0, last ? rad - 1 : 0,
-                    first ? rad - 1 : 0);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.45);
-    cairo_stroke(cr);
-    /* The glyph: white over a dark outline. */
-    xd_glyph g = xd_glyph_for_part(part, f->maximized);
-    int gs = xd_tpx(t, close ? 13 : 11);
-    xd_rect gr = {r.x + (r.w - gs) / 2, r.y + (r.h - gs) / 2, gs, gs};
-    xd_rgba shade = xd_rgba_alpha(xd_rgba_hex(0x000000), f->active ? 0.55 : 0.3);
-    for (int dx = -1; dx <= 1; dx++)
-        for (int dy = -1; dy <= 1; dy++)
-            if (dx != 0 || dy != 0)
-                xd_draw_glyph(t, cr, (xd_rect){gr.x + dx, gr.y + dy, gr.w, gr.h}, g, shade,
-                              close ? 1.6 : 1.3);
-    xd_draw_glyph(t, cr, gr, g, xd_rgba_hex(0xFFFFFF), close ? 1.6 : 1.3);
+    cairo_fill(m);
+    cairo_destroy(m);
+    cairo_surface_flush(a8);
+    /* The outline: the shape spread out, the shape itself left clear. */
+    const uint8_t *d = cairo_image_surface_get_data(a8);
+    int stride = cairo_image_surface_get_stride(a8);
+    cairo_surface_t *ring = cairo_image_surface_create(CAIRO_FORMAT_A8, w, h);
+    cairo_surface_flush(ring);
+    uint8_t *o = cairo_image_surface_get_data(ring);
+    int ostride = cairo_image_surface_get_stride(ring);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (d[y * stride + x])
+                continue;
+            double cover = 0;
+            for (int j = -dy; j <= dy && cover < 1; j++) {
+                for (int i = -dx; i <= dx; i++) {
+                    int sx = x + i, sy = y + j;
+                    if (sx < 0 || sy < 0 || sx >= w || sy >= h || !d[sy * stride + sx])
+                        continue;
+                    bool corner = (i == -dx || i == dx) && (j == -dy || j == dy) && dy > 0;
+                    cover = fmax(cover, corner ? 0.5 : 1);
+                }
+            }
+            o[y * ostride + x] = (uint8_t)lround(cover * 255);
+        }
+    }
+    cairo_surface_mark_dirty(ring);
+    set_rgb(cr, outline, alpha);
+    cairo_mask_surface(cr, ring, x0, y0);
+    set_rgb(cr, fill, alpha);
+    cairo_mask_surface(cr, a8, x0, y0);
+    cairo_surface_destroy(ring);
+    cairo_surface_destroy(a8);
+}
+
+/* The caption glyphs, from Windows 7's (96 DPI): close, maximize,
+ * minimize, restore, help. */
+static const aero_glyph caption_glyphs[5] = {
+    {13, 14,
+     {{2, 3, 4, 3}, {8, 3, 10, 3}, {3, 4, 5, 4}, {7, 4, 9, 4}, {4, 5, 8, 5}, {5, 6, 7, 7},
+      {4, 8, 8, 8}, {3, 9, 5, 9}, {7, 9, 9, 9}, {2, 10, 4, 10}, {8, 10, 10, 10}},
+     11},
+    {16, 14, {{4, 3, 13, 4}, {4, 5, 5, 8}, {12, 5, 13, 8}, {4, 9, 13, 10}}, 4},
+    {14, 14, {{2, 8, 11, 10}}, 1},
+    {14, 14,
+     {{4, 2, 11, 2}, {11, 3, 11, 9}, {2, 4, 9, 5}, {2, 6, 3, 9}, {8, 6, 9, 9}, {2, 10, 9, 11}},
+     6},
+    {10, 14,
+     {{3, 2, 6, 2}, {2, 3, 7, 3}, {2, 4, 3, 4}, {6, 4, 7, 4}, {6, 5, 7, 5}, {5, 6, 7, 6},
+      {4, 7, 6, 7}, {4, 8, 5, 8}, {4, 10, 5, 11}},
+     9},
+};
+
+static int caption_glyph_index(xd_frame_part part, bool maximized) {
+    return part == XD_PART_CLOSE      ? 0
+           : part == XD_PART_MINIMIZE ? 2
+           : part == XD_PART_HELP     ? 4
+           : maximized                ? 3
+                                      : 1;
+}
+
+/* A shape at its natural size and the theme's scale, centred in r. */
+static xd_rect shape_centred(const xd_theme *t, const xd_shape *p, xd_rect r) {
+    int w = xd_tpx(t, p->w), h = xd_tpx(t, p->h);
+    return (xd_rect){r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h};
+}
+
+/* Windows 7's caption buttons: on glass, DWM's translucent ones (a glow
+ * around a hot one); in Basic, the Window class's. The glyph is white,
+ * outlined. */
+static void aero_caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
+                                const xd_frame *f, bool leftmost, bool alone) {
+    bool pressed = f->pressed == part && f->hot == part;
+    bool hot = f->hot == part && !pressed;
+    int n = pressed ? 2 : hot ? 1 : 0;
+    int g = caption_glyph_index(part, f->maximized);
+    bool close = part == XD_PART_CLOSE;
+    if (t->glass) {
+        const xd_shape *bg = close && alone ? (f->active ? aero_dwm_close_alone
+                                                         : aero_dwm_close_alone_inactive)
+                             : close        ? (f->active ? aero_dwm_close : aero_dwm_close_inactive)
+                             : leftmost     ? (f->active ? aero_dwm_min : aero_dwm_min_inactive)
+                                            : (f->active ? aero_dwm_max : aero_dwm_max_inactive);
+        if (hot) {
+            /* The glow around a hot button, at its own size. */
+            const xd_shape *glow = close ? aero_dwm_close_glow : aero_dwm_glow;
+            xd_shape_draw(t, cr, glow, shape_centred(t, glow, r));
+        }
+        xd_shape_draw(t, cr, &bg[n], r);
+        draw_aero_glyph(t, cr, r, &caption_glyphs[g], aero_dwm_glyph[g][n][0],
+                        aero_dwm_glyph[g][n][1], 1, 2, 1);
+        return;
+    }
+    int k = (f->active ? 0 : 4) + n;
+    xd_shape_draw(t, cr, close ? &aero_basic_close[k] : &aero_basic_button[k], r);
+    draw_aero_glyph(t, cr, r, &caption_glyphs[g], aero_basic_glyph[g][k][0],
+                    aero_basic_glyph[g][k][1], 1, 1, 1);
+}
+
+static void caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
+                           const xd_frame *f, bool first, [[maybe_unused]] bool last) {
+    bool alone = part == XD_PART_CLOSE && (f->buttons & ~XD_CAPBTN_CLOSE) == 0;
+    if (xd_pkgstyle_dwm_button(t, cr, r, part, f, first, alone))
+        return;
+    aero_caption_button(t, cr, r, part, f, first, alone);
 }
 
 static void aero_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f) {
@@ -297,25 +398,28 @@ static void aero_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const
         cairo_fill(cr);
         cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     }
+    /* Lines a logical pixel wide, so they scale with the frame. */
+    double px = xd_tpx(t, 1), half = px / 2;
     if (!f->maximized && client.w > 0 && client.h > 0) {
-        cairo_set_line_width(cr, 1);
-        cairo_rectangle(cr, client.x - 1.5, client.y - 1.5, client.w + 3, client.h + 3);
+        cairo_set_line_width(cr, px);
+        cairo_rectangle(cr, client.x - px - half, client.y - px - half, client.w + 3 * px,
+                        client.h + 3 * px);
         cairo_set_source_rgba(cr, 1, 1, 1, 0.45);
         cairo_stroke(cr);
-        cairo_rectangle(cr, client.x - 0.5, client.y - 0.5, client.w + 1, client.h + 1);
+        cairo_rectangle(cr, client.x - half, client.y - half, client.w + px, client.h + px);
         cairo_set_source_rgba(cr, 0, 0, 0, 0.45);
         cairo_stroke(cr);
     }
     cairo_restore(cr);
     if (!f->maximized) {
         /* The outline, and a highlight just inside it. */
-        cairo_set_line_width(cr, 1);
-        xd_path_rounded(cr, outer.x + 0.5, outer.y + 0.5, outer.w - 1, outer.h - 1, rad, rad,
+        cairo_set_line_width(cr, px);
+        xd_path_rounded(cr, outer.x + half, outer.y + half, outer.w - px, outer.h - px, rad, rad,
                         rad, rad);
         cairo_set_source_rgba(cr, 0, 0, 0, f->active ? 0.65 : 0.45);
         cairo_stroke(cr);
-        xd_path_rounded(cr, outer.x + 1.5, outer.y + 1.5, outer.w - 3, outer.h - 3, rad - 1,
-                        rad - 1, rad - 1, rad - 1);
+        xd_path_rounded(cr, outer.x + px + half, outer.y + px + half, outer.w - 3 * px,
+                        outer.h - 3 * px, rad - px, rad - px, rad - px, rad - px);
         cairo_set_source_rgba(cr, 1, 1, 1, f->active ? 0.55 : 0.4);
         cairo_stroke(cr);
     }
@@ -340,62 +444,184 @@ static xd_rgba aero_dialog_color([[maybe_unused]] const xd_theme *t) {
 static void aero_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                              const char *label) {
     bool disabled = state & XD_STATE_DISABLED;
-    bool pressed = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
-    bool hot = (state & XD_STATE_HOT) && !disabled;
-    bool def = (state & (XD_STATE_DEFAULT | XD_STATE_FOCUSED)) && !disabled;
-    double rad = xd_tpx(t, 3);
-    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
-    if (disabled)
-        gloss(cr, r, xd_rgba_hex(0xF4F4F4), xd_rgba_hex(0xF4F4F4), xd_rgba_hex(0xF4F4F4),
-              xd_rgba_hex(0xF4F4F4));
-    else if (pressed)
-        gloss(cr, r, xd_rgba_hex(0xE5F4FC), xd_rgba_hex(0xC4E5F6), xd_rgba_hex(0x98D1EF),
-              xd_rgba_hex(0x68B3DB));
-    else if (hot)
-        gloss(cr, r, xd_rgba_hex(0xEAF6FD), xd_rgba_hex(0xD9F0FC), xd_rgba_hex(0xBEE6FD),
-              xd_rgba_hex(0xA7D9F5));
-    else
-        gloss(cr, r, xd_rgba_hex(0xF2F2F2), xd_rgba_hex(0xEBEBEB), xd_rgba_hex(0xDDDDDD),
-              xd_rgba_hex(0xCFCFCF));
-    cairo_set_line_width(cr, 1);
-    xd_set_color(cr, xd_rgba_hex(disabled  ? 0xADB2B5
-                                 : pressed ? 0x2C628B
-                                 : hot     ? 0x3C7FB1
-                                 : def     ? 0x3399FF
-                                           : 0x707070));
-    cairo_stroke(cr);
-    xd_path_rounded(cr, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad - 1, rad - 1, rad - 1,
-                    rad - 1);
-    cairo_set_source_rgba(cr, 1, 1, 1, disabled ? 0.0 : 0.7);
-    cairo_stroke(cr);
+    /* Normal, hot, pressed, disabled, then a default (or focused) one's. */
+    int n = aero_state(state);
+    if (n == 0 && (state & (XD_STATE_DEFAULT | XD_STATE_FOCUSED)))
+        n = 4;
+    xd_shape_draw(t, cr, &aero_pushbutton[n], r);
     if (label != nullptr) {
         xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
                                    xd_rgba_hex(disabled ? 0x838383 : 0x000000), XD_ALIGN_CENTER);
         xd_draw_text(cr, r, label, &st);
     }
+    if (state & XD_STATE_FOCUSED)
+        xd_theme_draw_focus_rect(t, cr, xd_rect_inset(r, xd_tpx(t, 3), xd_tpx(t, 3)));
+}
+
+/* The tick: a dark stroke on a soft white halo. */
+static void draw_tick(cairo_t *cr, xd_rect b, uint32_t rgb) {
+    double k = b.w / 13.0;
+    cairo_save(cr);
+    cairo_translate(cr, b.x, b.y);
+    cairo_scale(cr, k, k);
+    cairo_move_to(cr, 3.0, 7.2);
+    cairo_line_to(cr, 5.3, 9.3);
+    cairo_line_to(cr, 9.4, 3.3);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+    cairo_set_line_width(cr, 3.6);
+    cairo_set_source_rgba(cr, 1, 1, 1, 0.75);
+    cairo_stroke_preserve(cr);
+    cairo_set_line_width(cr, 1.7);
+    set_rgb(cr, rgb, 1);
+    cairo_stroke(cr);
+    cairo_restore(cr);
 }
 
 static void aero_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                                const char *label) {
     bool disabled = state & XD_STATE_DISABLED;
-    bool hot = (state & XD_STATE_HOT) && !disabled;
+    int n = aero_state(state);
     int box = xd_tpx(t, 13);
     xd_rect b = {r.x, r.y + (r.h - box) / 2, box, box};
-    xd_fill_rect(cr, b, xd_rgba_hex(disabled ? 0xE6E6E6 : hot ? 0x3C7FB1 : 0x8E8F8F));
-    xd_rect inner = xd_rect_inset(b, 1, 1);
-    xd_fill_rect(cr, inner, xd_rgba_hex(0xF4F4F4));
-    xd_fill_gradient(cr, xd_rect_inset(inner, 1, 1),
-                     xd_rgba_hex(disabled ? 0xF0F0F0 : hot ? 0xDEF4FD : 0xD8D8D8),
-                     xd_rgba_hex(disabled ? 0xF0F0F0 : hot ? 0xB9E1F6 : 0xF5F5F5), false);
+    xd_shape_draw(t, cr, &aero_check[n], b);
     if (state & XD_STATE_CHECKED)
-        xd_draw_glyph(t, cr, xd_rect_inset(b, 2, 2), XD_GLYPH_CHECK,
-                      xd_rgba_hex(disabled ? 0x8F8F8F : 0x1F1F1F), 1.0);
+        draw_tick(cr, b, aero_tick[n]);
     if (label != nullptr) {
         xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
-                                   xd_rgba_hex(disabled ? 0x838383 : 0x000000), XD_ALIGN_START);
+                                   xd_rgba_hex(disabled ? 0x6D6D6D : 0x000000), XD_ALIGN_START);
         int tx = b.x + box + xd_tpx(t, 5);
-        xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx, r.h}, label, &st);
+        xd_rect text = {tx, r.y, r.x + r.w - tx, r.h};
+        xd_draw_text(cr, text, label, &st);
+        if (state & XD_STATE_FOCUSED) {
+            int w = XD_MIN(xd_text_width(cr, label, &st), text.w);
+            xd_theme_draw_focus_rect(t, cr,
+                                     (xd_rect){text.x - xd_tpx(t, 1), r.y + xd_tpx(t, 2),
+                                               w + xd_tpx(t, 3), r.h - xd_tpx(t, 4)});
+        }
     }
+}
+
+void xd_aero_draw_radio([[maybe_unused]] const xd_theme *t, cairo_t *cr, xd_rect b,
+                        uint8_t state) {
+    int n = aero_state(state) + ((state & XD_STATE_CHECKED) ? 4 : 0);
+    const uint32_t *c = aero_radio[n];
+    double s = b.w / 13.0;
+    cairo_save(cr);
+    cairo_translate(cr, b.x, b.y);
+    cairo_scale(cr, s, s);
+    double cx = 6.0, cy = 6.5;
+    /* The face: lit from the bottom right inside a light ring. */
+    cairo_pattern_t *face = cairo_pattern_create_linear(3, 3.5, 9, 9.5);
+    for (int i = 0; i < 2; i++)
+        cairo_pattern_add_color_stop_rgb(face, i, ((c[2 + i] >> 16) & 0xFF) / 255.0,
+                                         ((c[2 + i] >> 8) & 0xFF) / 255.0,
+                                         (c[2 + i] & 0xFF) / 255.0);
+    cairo_arc(cr, cx, cy, 5.5, 0, 2 * G_PI);
+    set_rgb(cr, c[1], 1);
+    cairo_fill(cr);
+    cairo_arc(cr, cx, cy, 4.0, 0, 2 * G_PI);
+    cairo_set_source(cr, face);
+    cairo_fill(cr);
+    cairo_pattern_destroy(face);
+    cairo_set_line_width(cr, 1);
+    cairo_arc(cr, cx, cy, 5.5, 0, 2 * G_PI);
+    set_rgb(cr, c[0], 1);
+    cairo_stroke(cr);
+    if (state & XD_STATE_CHECKED) {
+        /* A glassy ball in a dark rim, lit from the top left. */
+        cairo_arc(cr, cx, cy, 3.4, 0, 2 * G_PI);
+        set_rgb(cr, c[4], 1);
+        cairo_fill(cr);
+        cairo_pattern_t *ball = cairo_pattern_create_radial(cx - 0.9, cy - 1.3, 0, cx, cy, 2.6);
+        for (int i = 0; i < 3; i++)
+            cairo_pattern_add_color_stop_rgb(ball, i / 2.0, ((c[5 + i] >> 16) & 0xFF) / 255.0,
+                                             ((c[5 + i] >> 8) & 0xFF) / 255.0,
+                                             (c[5 + i] & 0xFF) / 255.0);
+        cairo_arc(cr, cx, cy, 2.6, 0, 2 * G_PI);
+        cairo_set_source(cr, ball);
+        cairo_fill(cr);
+        cairo_pattern_destroy(ball);
+    }
+    cairo_restore(cr);
+}
+
+xd_rect xd_aero_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled) {
+    xd_fill_rect(cr, r, xd_rgba_hex(disabled ? 0xF0F0F0 : 0xFFFFFF));
+    xd_shape_draw(t, cr, &aero_field[disabled ? 3 : 0], r);
+    return xd_rect_inset(r, xd_tpx(t, 1), xd_tpx(t, 1));
+}
+
+/* A small triangle pointing down (or up), centred in r. */
+static void aero_triangle(const xd_theme *t, cairo_t *cr, xd_rect r, bool up, uint32_t rgb,
+                          int width) {
+    double w = xd_tpx(t, width), h = xd_tpx(t, (width + 1) / 2);
+    double x = r.x + (r.w - w) / 2.0, y = r.y + (r.h - h) / 2.0;
+    double py = up ? y + h : y;
+    double ty = up ? y : y + h;
+    /* A faint white halo first, as Windows 7's arrows have. */
+    cairo_move_to(cr, x - xd_tpx(t, 1), py);
+    cairo_line_to(cr, x + w + xd_tpx(t, 1), py);
+    cairo_line_to(cr, x + w / 2, ty + (up ? -xd_tpx(t, 1) : xd_tpx(t, 1)));
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, 1, 1, 1, 0.36);
+    cairo_fill(cr);
+    cairo_move_to(cr, x, py);
+    cairo_line_to(cr, x + w, py);
+    cairo_line_to(cr, x + w / 2, ty);
+    cairo_close_path(cr);
+    set_rgb(cr, rgb, 1);
+    cairo_fill(cr);
+}
+
+void xd_aero_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    int n = aero_state(state);
+    xd_shape_draw(t, cr, &aero_dropdown[n], r);
+    aero_triangle(t, cr, r, false, aero_dropdown_glyph[n], 7);
+}
+
+void xd_aero_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+                             bool disabled) {
+    int n = disabled ? 3 : 0;
+    int arrow = XD_MIN(r.w, r.h / 2);
+    xd_rect up = {r.x, r.y, r.w, arrow};
+    xd_rect down = {r.x, r.y + r.h - arrow, r.w, arrow};
+    xd_shape_draw(t, cr, &aero_scrolltrack[n], r);
+    xd_shape_draw(t, cr, &aero_scrollarrow[n], up);
+    xd_shape_draw(t, cr, &aero_scrollarrow[4 + n], down);
+    aero_triangle(t, cr, up, true, aero_scrollarrow_glyph[n], 7);
+    aero_triangle(t, cr, down, false, aero_scrollarrow_glyph[4 + n], 7);
+    if (thumb.h <= 0 || disabled)
+        return;
+    xd_shape_draw(t, cr, &aero_scrollthumb[0], thumb);
+    /* The gripper: four dark lines over light ones, where there's room. */
+    int gw = xd_tpx(t, 7), line = xd_tpx(t, 1);
+    if (thumb.h < xd_tpx(t, 16))
+        return;
+    int gx = thumb.x + (thumb.w - gw) / 2, gy = thumb.y + (thumb.h - 7 * line) / 2;
+    for (int i = 0; i < 4; i++) {
+        xd_fill_rect(cr, (xd_rect){gx, gy + 2 * i * line, gw, line},
+                     xd_rgba_hex(aero_gripper[0]));
+        xd_fill_rect(cr, (xd_rect){gx + line, gy + (2 * i + 1) * line, gw, line},
+                     xd_rgba_hex(aero_gripper[1]));
+    }
+}
+
+void xd_aero_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect tab, uint8_t state) {
+    bool selected = state & XD_STATE_CHECKED;
+    int n = selected ? 2 : (state & XD_STATE_DISABLED) ? 3 : (state & XD_STATE_HOT) ? 1 : 0;
+    xd_shape_draw(t, cr, selected ? &aero_tabtop[n] : &aero_tab[n], tab);
+}
+
+/* A white page in a grey line (aero.msstyles' Tab Pane: 137 140 149). */
+void xd_aero_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    xd_fill_rect(cr, r, xd_rgba_hex(0xFFFFFF));
+    xd_rgba line = xd_rgba_hex(0x898C95);
+    xd_draw_bevel(cr, r, xd_tpx(t, 1), line, line);
+}
+
+void xd_aero_draw_groupbox_frame(const xd_theme *t, cairo_t *cr, xd_rect box) {
+    xd_shape_draw(t, cr, aero_groupbox, box);
 }
 
 /* ---- taskbar ----------------------------------------------------------------------- */
