@@ -21,12 +21,17 @@ and when to turn the monitors off.
 The visual style (Classic, Luna, Watercolor or Aero), colour scheme and
 font size, with a preview; Advanced Appearance, the scheme item by item;
 in Aero, Windows 7's window colours.
+The installed theme packages follow the styles, with their colours and
+sizes; Browse... installs a package (.xdtheme) or converts a Windows
+visual style (.msstyles or .theme) with
+.BR xd\-theme\-import .
 .TP
 .B Effects
 Menu and tooltip transitions, large icons, dragging windows as an
 outline, hiding underlined letters until Alt is pressed, and font
 smoothing: antialiasing, subpixel order and hinting, which a real session
-also gives other programs (GNOME's settings and GTK's settings.ini).
+also gives other programs (GNOME's settings and GTK's settings.ini);
+and how theme packages' images are scaled for high DPI.
 .TP
 .B Settings
 Each monitor's position, resolution, refresh rate, scale and orientation,
@@ -80,6 +85,12 @@ The monitors' settings.
 .TP
 .I /usr/share/xeondesktop/schemes/
 The colour schemes.
+.TP
+.I $XDG_DATA_HOME/xeondesktop/themes/
+.TQ
+.I /usr/share/xeondesktop/themes/
+Theme packages: folders or .xdtheme files. Browse... installs into the
+first.
 .SH SEE ALSO
 .BR xd\-compositor (1),
 .BR xd\-color (1),

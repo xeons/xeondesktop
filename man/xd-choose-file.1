@@ -4,7 +4,7 @@ xd\-choose\-file \- pick a file and print its path
 .SH SYNOPSIS
 .SY xd\-choose\-file
 .OP \-\-title text
-.RB [ \-\-images | \-\-programs ]
+.RB [ \-\-images | \-\-programs | \-\-styles ]
 .OP \-\-folder dir
 .YS
 .SH DESCRIPTION
@@ -27,9 +27,17 @@ Offer pictures first, then all files.
 Offer programs (executable files and desktop entries) first, then all
 files.
 .TP
+.B \-\-styles
+Offer visual styles first (Windows\(aq .msstyles and .theme files, and
+XeonDesktop theme packages, .xdtheme), then all files.
+.TP
 .BI \-\-folder " dir"
 Start in
 .IR dir .
+.SH ENVIRONMENT
+.TP
+.B XD_CHOOSE_FILE_ANSWER
+For tests: printed as the answer, without showing the dialog.
 .SH EXIT STATUS
 0 when a file was chosen, 1 when the dialog was cancelled.
 .SH SEE ALSO

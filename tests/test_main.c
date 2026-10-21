@@ -70,6 +70,7 @@
 #include "../src/settings/qtpalette.h"
 #include "../src/settings/settings.h"
 #include "../src/settings/sounds.h"
+#include "../src/settings/themepkg.h"
 #include "../src/settings/themes.h"
 /* For GSettings in memory, never the user's dconf. */
 #define G_SETTINGS_ENABLE_BACKEND
@@ -2142,6 +2143,216 @@ static void test_theme_settings(void) {
 /* Aero's Window Color and Appearance: the settings, and the glass they
  * give the frames, taskbar and Start menu. */
 static bool near0(double d) { return d < 1e-9 && d > -1e-9; }
+
+#if XD_HAVE_LIBARCHIVE
+/* A .xdtheme: a zip of `n` files. */
+static void write_zip(const char *file, const char *const (*items)[2], size_t n) {
+    struct archive *a = archive_write_new();
+    archive_write_set_format_zip(a);
+    CHECK(archive_write_open_filename(a, file) == ARCHIVE_OK);
+    for (size_t i = 0; i < n; i++) {
+        struct archive_entry *e = archive_entry_new();
+        archive_entry_set_pathname(e, items[i][0]);
+        archive_entry_set_filetype(e, AE_IFREG);
+        archive_entry_set_perm(e, 0644);
+        size_t len = strlen(items[i][1]);
+        archive_entry_set_size(e, (la_int64_t)len);
+        CHECK(archive_write_header(a, e) == ARCHIVE_OK);
+        CHECK(archive_write_data(a, items[i][1], len) == (la_ssize_t)len);
+        archive_entry_free(e);
+    }
+    CHECK(archive_write_close(a) == ARCHIVE_OK);
+    archive_write_free(a);
+}
+#endif
+
+static const xd_installed_package *package_at(GPtrArray *list, guint i) {
+    return i < list->len ? g_ptr_array_index(list, i) : nullptr;
+}
+
+static void test_theme_packages(void) {
+    /* [Appearance] ThemePackage, ThemeVariant, ImageScaling, IntegerScaling. */
+    xd_settings a;
+    xd_settings_defaults(&a);
+    CHECK(a.theme_package[0] == '\0' && a.theme_variant[0] == '\0');
+    CHECK(a.image_scaling == XD_FILTER_COUNT && a.integer_scaling);
+    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=Energy Blue\nThemeVariant=royale-normal\n"
+                             "ImageScaling=scale2x\nIntegerScaling=false\n"),
+                      &a);
+    CHECK(strcmp(a.theme_package, "Energy Blue") == 0);
+    CHECK(strcmp(a.theme_variant, "royale-normal") == 0);
+    CHECK(a.image_scaling == XD_FILTER_SCALE2X && !a.integer_scaling);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "ImageScaling=Scale2x\n") != nullptr);
+    xd_settings b;
+    xd_settings_parse(xd_strbuf_view(&text), &b);
+    CHECK(xd_settings_equal(&a, &b) && strcmp(b.theme_package, "Energy Blue") == 0 &&
+          b.image_scaling == XD_FILTER_SCALE2X && !b.integer_scaling);
+    xd_strbuf_free(&text);
+    /* A name, never a path; filters by name only (bad values keep their
+     * defaults); Automatic written so. */
+    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=../../etc\nThemeVariant=a/b\n"
+                             "ImageScaling=Bicubic\nIntegerScaling=maybe\n"),
+                      &a);
+    CHECK(a.theme_package[0] == '\0' && a.theme_variant[0] == '\0'); /* the defaults */
+    CHECK(a.image_scaling == XD_FILTER_COUNT && a.integer_scaling);
+    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=\nImageScaling=automatic\n"), &a);
+    CHECK(a.theme_package[0] == '\0' && a.image_scaling == XD_FILTER_COUNT);
+    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=.hidden\n"), &a);
+    CHECK(a.theme_package[0] == '\0');
+    xd_settings_serialize(&a, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "ImageScaling=Automatic\n") != nullptr);
+    xd_strbuf_free(&text);
+    CHECK(xd_settings_image_filter(&a, nullptr) == XD_FILTER_SMOOTH);
+    a.image_scaling = XD_FILTER_NEAREST;
+    CHECK(xd_settings_image_filter(&a, nullptr) == XD_FILTER_NEAREST);
+
+    /* Discovery, in two scratch directories as $XDG_DATA_HOME's and a
+     * system one's xeondesktop/themes. Our own little packages. */
+    char *root = g_dir_make_tmp("xd-pkgs-XXXXXX", nullptr);
+    CHECK(root != nullptr);
+    if (root == nullptr)
+        return;
+    static const char style[] =
+        "<style><sysmetrics><color name=\"ActiveCaption\" value=\"10 20 30\"/></sysmetrics>"
+        "<class name=\"Button\"><part name=\"PushButton\" TextColor=\"1 2 3\"/></class></style>";
+    put_file(root, "one/Alpha/theme.xml",
+             "<xdtheme version=\"1\" name=\"Zulu Style\" base=\"luna\">"
+             "<variant id=\"blue\" name=\"Blue\" size=\"Normal\" style=\"styles/blue.xml\"/>"
+             "<variant id=\"blue-large\" name=\"Blue\" size=\"Large Fonts\" style=\"styles/blue.xml\"/>"
+             "<variant id=\"green\" name=\"Green\" style=\"styles/blue.xml\"/>"
+             "<variant id=\"nostyle\" name=\"Nothing\"/>"
+             "<scaling filter=\"Integer\"/></xdtheme>");
+    put_file(root, "one/Alpha/styles/blue.xml", style);
+    /* No variant; no theme.xml; hidden: not packages. */
+    put_file(root, "one/Broken/theme.xml", "<xdtheme name=\"Broken\" base=\"classic\"/>");
+    put_file(root, "one/Empty/readme.txt", "");
+    put_file(root, "one/.Hidden/theme.xml",
+             "<xdtheme name=\"Hidden\"><variant id=\"a\" style=\"s.xml\"/></xdtheme>");
+    /* Named by its folder when theme.xml names it nothing. */
+    put_file(root, "two/Mike/theme.xml",
+             "<xdtheme base=\"aero\"><variant id=\"glass\" style=\"s.xml\"/></xdtheme>");
+    /* The first directory's wins: one's Alpha over two's. */
+    put_file(root, "two/Alpha/theme.xml",
+             "<xdtheme name=\"Other Alpha\"><variant id=\"x\" style=\"s.xml\"/></xdtheme>");
+#if XD_HAVE_LIBARCHIVE
+    /* A zip; and a folder that wins over a zip of its name. */
+    char *zip = g_build_filename(root, "one", "Bravo.xdtheme", nullptr);
+    static const char *const bravo[][2] = {
+        {"theme.xml", "<xdtheme name=\"Bravo\" base=\"whistler\">"
+                      "<variant id=\"v\" name=\"Plain\" size=\"Normal\" style=\"styles/v.xml\"/>"
+                      "</xdtheme>"},
+        {"styles/v.xml", style},
+    };
+    write_zip(zip, bravo, G_N_ELEMENTS(bravo));
+    g_free(zip);
+    zip = g_build_filename(root, "two", "Mike.xdtheme", nullptr);
+    write_zip(zip, bravo, G_N_ELEMENTS(bravo));
+    g_free(zip);
+    put_file(root, "one/Mike/theme.xml",
+             "<xdtheme name=\"Mike Folder\"><variant id=\"f\" style=\"s.xml\"/></xdtheme>");
+    put_file(root, "one/Junk.xdtheme", "not a zip");
+#endif
+    char *one = g_build_filename(root, "one", nullptr);
+    char *two = g_build_filename(root, "two", nullptr);
+    const char *dirs[] = {one, two, "/nonexistent", nullptr};
+    GPtrArray *list = xd_theme_packages_list(dirs);
+#if XD_HAVE_LIBARCHIVE
+    static const char *const want[] = {"Bravo", "Mike", "Alpha"}; /* Bravo, Mike Folder, Zulu Style */
+#else
+    static const char *const want[] = {"Mike", "Alpha"};
+#endif
+    CHECK(list->len == G_N_ELEMENTS(want));
+    for (guint i = 0; i < G_N_ELEMENTS(want); i++)
+        CHECK(package_at(list, i) && strcmp(package_at(list, i)->name, want[i]) == 0);
+    const xd_installed_package *alpha = package_at(list, G_N_ELEMENTS(want) - 1);
+    if (alpha != nullptr) {
+        CHECK(strcmp(alpha->info.name, "Zulu Style") == 0 && alpha->info.base == XD_STYLE_LUNA);
+        CHECK(alpha->info.has_filter && alpha->info.filter == XD_FILTER_INTEGER);
+        /* A variant without a style isn't one; a size defaults to Normal. */
+        CHECK(alpha->info.variant_count == 3);
+        CHECK(alpha->info.variant_count == 3 && strcmp(alpha->info.variants[1].id, "blue-large") == 0 &&
+              strcmp(alpha->info.variants[1].name, "Blue") == 0 &&
+              strcmp(alpha->info.variants[1].size, "Large Fonts") == 0 &&
+              strcmp(alpha->info.variants[2].size, "Normal") == 0);
+        CHECK(g_str_has_prefix(alpha->path, one));
+    }
+#if XD_HAVE_LIBARCHIVE
+    const xd_installed_package *mike = package_at(list, 1);
+    CHECK(mike && strcmp(mike->info.name, "Mike Folder") == 0 && !g_str_has_suffix(mike->path, ".xdtheme"));
+    const xd_installed_package *bravo_pkg = package_at(list, 0);
+    CHECK(bravo_pkg && bravo_pkg->info.base == XD_STYLE_WHISTLER &&
+          g_str_has_suffix(bravo_pkg->path, "Bravo.xdtheme") && bravo_pkg->info.variant_count == 1);
+#endif
+    g_ptr_array_unref(list);
+    char *found = xd_theme_package_find(dirs, "Alpha");
+    CHECK(found != nullptr && g_str_has_prefix(found, one));
+    g_free(found);
+    CHECK(xd_theme_package_find(dirs, "../one/Alpha") == nullptr);
+    CHECK(xd_theme_package_find(dirs, ".Hidden") == nullptr);
+    CHECK(xd_theme_package_find(dirs, "Nope") == nullptr);
+    char **search = xd_theme_package_dirs();
+    CHECK(g_strv_length(search) >= 2 && g_str_has_suffix(search[0], "/xeondesktop/themes"));
+    g_strfreev(search);
+
+    /* The active package, as $XD_THEME_PACKAGE overrides the settings. */
+    char *env = g_strdup(g_getenv("XD_THEME_PACKAGE"));
+    char *alpha_path = g_build_filename(one, "Alpha", nullptr);
+    g_setenv("XD_THEME_PACKAGE", alpha_path, TRUE);
+    xd_settings s;
+    xd_settings_defaults(&s);
+    xd_pkg *old = xd_settings_use_package(&s);
+    CHECK(old == nullptr);
+    xd_pkg_free(old);
+    const xd_pkg *active = xd_settings_active_package();
+    CHECK(active != nullptr && strcmp(xd_pkg_name(active), "Zulu Style") == 0 &&
+          strcmp(xd_pkg_variant(active), "blue") == 0);
+    /* Every theme draws with it: its base style, its [SysMetrics], and
+     * Automatic scaling is its own filter. */
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(t.pkg == active && t.style == XD_STYLE_LUNA && t.image_filter == XD_FILTER_INTEGER);
+    CHECK(t.scheme.colors[XD_COLOR_ACTIVE_TITLE].r == 10);
+    /* The same package again: kept. Another variant: loaded anew. */
+    old = xd_settings_use_package(&s);
+    CHECK(old == nullptr && xd_settings_active_package() == active);
+    snprintf(s.theme_variant, sizeof(s.theme_variant), "%s", "green");
+    s.image_scaling = XD_FILTER_SMOOTH; /* the user's choice wins */
+    old = xd_settings_use_package(&s);
+    CHECK(old == active);
+    xd_pkg_free(old);
+    active = xd_settings_active_package();
+    CHECK(active != nullptr && strcmp(xd_pkg_variant(active), "green") == 0);
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(t.pkg == active && t.image_filter == XD_FILTER_SMOOTH);
+    /* A preview with another package, or none, whatever is active. */
+    xd_theme_init_package(&t, XD_STYLE_AERO, &scheme, 1.0, nullptr, XD_FILTER_SMOOTH, true);
+    CHECK(t.pkg == nullptr && t.style == XD_STYLE_AERO &&
+          t.scheme.colors[XD_COLOR_ACTIVE_TITLE].r == scheme.colors[XD_COLOR_ACTIVE_TITLE].r);
+    /* Without the override, the settings' package: none, as named. */
+    g_unsetenv("XD_THEME_PACKAGE");
+    s.theme_variant[0] = '\0';
+    old = xd_settings_use_package(&s);
+    CHECK(old == active);
+    xd_pkg_free(old);
+    CHECK(xd_settings_active_package() == nullptr);
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(t.pkg == nullptr && t.style == XD_STYLE_CLASSIC);
+    /* Not installed: none either. */
+    snprintf(s.theme_package, sizeof(s.theme_package), "%s", "Not Installed Anywhere");
+    CHECK(xd_settings_use_package(&s) == nullptr && xd_settings_active_package() == nullptr);
+    if (env != nullptr)
+        g_setenv("XD_THEME_PACKAGE", env, TRUE);
+    g_free(env);
+    g_free(alpha_path);
+    g_free(one);
+    g_free(two);
+    rm_tree(root);
+    g_free(root);
+}
 
 static void test_glass_color(void) {
     xd_settings s;
@@ -8128,6 +8339,7 @@ int main(void) {
     test_cursor_themes();
     test_file_types_edit();
     test_theme_settings();
+    test_theme_packages();
     test_qt_style();
     test_qt_palette();
     test_fonts();

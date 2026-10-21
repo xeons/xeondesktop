@@ -18,6 +18,7 @@
 
 #include "../core/alloc.h"
 #include "../settings/soundplay.h"
+#include "../settings/themepkg.h"
 #include "../settings/themes.h"
 #include "../ui/image.h"
 #include "gpu.h"
@@ -691,6 +692,9 @@ static void apply_settings(xd_shell *shell, bool startup) {
         shell->style = shell->settings.style;
     if (shell->scheme_path == nullptr)
         xd_settings_scheme(&shell->settings, &shell->scheme);
+    /* A new theme package: freed once everything is re-themed below (what
+     * the shell keeps between draws are pixels, not themes). */
+    xd_pkg *old_pkg = xd_settings_use_package(&shell->settings);
     if (startup || strcmp(old_wallpaper, shell->settings.wallpaper) != 0)
         load_wallpaper(shell);
     shell->background_gen++; /* the colour or wallpaper mode may have changed */
@@ -711,8 +715,10 @@ static void apply_settings(xd_shell *shell, bool startup) {
     setenv("GTK_THEME", xd_settings_gtk_theme(&shell->settings), true);
     /* And Qt's style; Qt programs already running keep theirs. */
     xd_settings_qt_env(&shell->settings);
-    if (startup)
+    if (startup) {
+        xd_pkg_free(old_pkg);
         return;
+    }
     xd_tray_changed(shell); /* the volume and power icons may come or go */
     xd_deskicons_settings_changed(shell);
 
@@ -725,6 +731,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
         xd_taskbar_retheme(bar);
     }
+    xd_pkg_free(old_pkg);
 }
 
 /* XD_SHELL_OPEN_MENU="Programs/Accessories" opens the Start menu and that

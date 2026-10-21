@@ -648,7 +648,13 @@ def find_near(folder, windows_path):
 
 
 def import_style(msstyles, pkg, names):
-    res = Resources(msstyles)
+    # One line for Display Properties' message box, not a traceback.
+    try:
+        res = Resources(msstyles)
+    except pefile.PEFormatError:
+        sys.exit(f"xd-theme-import: {msstyles}: not a visual style")
+    except OSError as e:
+        sys.exit(f"xd-theme-import: {msstyles}: {e.strerror}")
     if res.get("TEXTFILE", "THEMES_INI") is not None:
         return import_xp(res, names, pkg)
     if res.get("VARIANT", "NORMAL") is not None:

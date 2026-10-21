@@ -1,8 +1,10 @@
 # Theme packages (.xdtheme)
 
-Status: the format and `xd-theme-import` exist; the theme engine doesn't
-draw packages yet (window frames and controls come first, then the
-taskbar and Start menus, then Explorer's panes).
+Status: the format and `xd-theme-import` exist; the theme engine draws
+window frames and the common controls from a package, and Display
+Properties chooses and imports packages (see "Choosing a package"). The
+rest of the controls, the taskbar and Start menus, and Explorer's panes
+are still drawn by the base style.
 
 A theme package styles the whole desktop: window frames and controls (and
 through the generated GTK theme, GTK programs), the taskbar, the Start
@@ -17,6 +19,47 @@ them into a package once (Display Properties runs it when one is chosen).
 The built-in styles (Classic, Luna, Whistler, Aero) stay drawn in code; a
 package draws only what it defines, and everything else falls back to the
 built-in style it names as its base.
+
+## Choosing a package
+
+Packages are found in `$XDG_DATA_HOME/xeondesktop/themes` (that is,
+`~/.local/share/xeondesktop/themes`), then in each `$XDG_DATA_DIRS`'
+`xeondesktop/themes` (`/usr/share/xeondesktop/themes`): the first
+directory holding a package of a name wins, and in it a folder `NAME/`
+wins over `NAME.xdtheme`.
+
+`desktop.ini`'s `[Appearance]` chooses one:
+
+```ini
+[Appearance]
+Style=luna              ; the package's base, which Display Properties sets with it
+ThemePackage=royale     ; the folder's name or the .xdtheme's stem; empty: none
+ThemeVariant=royale-normal  ; a variant's id; empty or unknown: the first
+ImageScaling=Automatic  ; or Nearest, Integer, Smooth, Scale2x, Scale3x, Scale4x,
+                        ; 2xSaI, Super2xSaI, SuperEagle
+IntegerScaling=true
+```
+
+Display Properties writes these: Appearance's "Windows and buttons" lists
+the built-in styles and then the installed packages by their names
+(theme.xml's), "Color scheme" the chosen package's colours and "Font
+size" the sizes its colour comes in, as XP's Appearance tab does for a
+visual style; the preview draws with the chosen package before Apply.
+Browse... beside "Windows and buttons" (XP had Browse... in the Themes
+tab's list) takes a `.msstyles` or a `.theme`, which `xd-theme-import`
+converts in the background into `~/.local/share/xeondesktop/themes/NAME.xdtheme`,
+or a `.xdtheme`, which is copied there; either is then chosen.
+
+The compositor, the shell, libxdui's programs and the lock screen load the
+chosen package and follow `desktop.ini` as it changes: a new package (or
+variant, or the same package rewritten) is loaded, everything is redrawn
+with it, and only then is the old one freed. While High Contrast is on no
+package is used (it isn't forgotten: it comes back with High Contrast
+off), as Windows turns visual styles off for it.
+
+For testing, `$XD_THEME_PACKAGE` (a path to a `.xdtheme` or folder) is
+used instead of the settings' package, with `$XD_THEME_VARIANT` and
+`$XD_IMAGE_FILTER`.
 
 ## Vocabulary
 

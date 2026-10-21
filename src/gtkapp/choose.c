@@ -3,7 +3,9 @@
  * none of their own. Prints the chosen path on stdout; exits 1 if the user
  * cancels.
  *
- *   xd-choose-file [--title TEXT] [--images | --programs] [--folder DIR]
+ *   xd-choose-file [--title TEXT] [--images | --programs | --styles] [--folder DIR]
+ *
+ * $XD_CHOOSE_FILE_ANSWER, for tests: the answer, printed without asking.
  */
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +21,7 @@ static gboolean is_program(const GtkFileFilterInfo *info, [[maybe_unused]] gpoin
 int main(int argc, char **argv) {
     const char *title = "Browse";
     const char *folder = nullptr;
-    bool images = false, programs = false;
+    bool images = false, programs = false, styles = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--title") == 0 && i + 1 < argc)
             title = argv[++i];
@@ -29,6 +31,13 @@ int main(int argc, char **argv) {
             images = true;
         else if (strcmp(argv[i], "--programs") == 0)
             programs = true;
+        else if (strcmp(argv[i], "--styles") == 0)
+            styles = true;
+    }
+    const char *answer = g_getenv("XD_CHOOSE_FILE_ANSWER");
+    if (answer != nullptr) {
+        printf("%s\n", answer);
+        return 0;
     }
     xd_gtk_app_preinit("org.xeondesktop.ChooseFile");
     gtk_init(&argc, &argv);
@@ -59,6 +68,20 @@ int main(int argc, char **argv) {
         gtk_file_chooser_add_filter(chooser, progs);
         GtkFileFilter *all = gtk_file_filter_new();
         gtk_file_filter_set_name(all, "All Files");
+        gtk_file_filter_add_pattern(all, "*");
+        gtk_file_chooser_add_filter(chooser, all);
+    }
+    if (styles) {
+        /* Display Properties' visual styles: Windows' (converted when
+         * chosen) and our own packages. */
+        GtkFileFilter *visual = gtk_file_filter_new();
+        gtk_file_filter_set_name(visual, "Visual Styles (*.msstyles;*.theme;*.xdtheme)");
+        gtk_file_filter_add_pattern(visual, "*.[Mm][Ss][Ss][Tt][Yy][Ll][Ee][Ss]");
+        gtk_file_filter_add_pattern(visual, "*.[Tt][Hh][Ee][Mm][Ee]");
+        gtk_file_filter_add_pattern(visual, "*.xdtheme");
+        gtk_file_chooser_add_filter(chooser, visual);
+        GtkFileFilter *all = gtk_file_filter_new();
+        gtk_file_filter_set_name(all, "All Files (*.*)");
         gtk_file_filter_add_pattern(all, "*");
         gtk_file_chooser_add_filter(chooser, all);
     }

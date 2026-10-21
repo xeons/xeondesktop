@@ -80,7 +80,39 @@ xd_rect xd_pkg_content_rect(const xd_theme *t, const char *cls, const char *part
                             const char *state, xd_rect r);
 
 /* The package every xd_theme_init() attaches (nullptr: none), and how
- * its images are scaled. The caller keeps `pkg` alive while it's set. */
+ * its images are scaled: `filter` as chosen (the caller resolves
+ * "Automatic" to the package's own, else Smooth), whole-number scales
+ * exactly with Smooth when `integer_scaling`. The caller keeps `pkg` alive
+ * while it's set, and while any theme initialized with it is in use. Once
+ * called, $XD_THEME_PACKAGE is no longer looked at: the caller chose. */
 void xd_theme_use_package(const xd_pkg *pkg, xd_image_filter filter, bool integer_scaling);
+/* xd_theme_init with `pkg` (nullptr: none) instead of the active package:
+ * Display Properties' preview of a package before it's applied. */
+void xd_theme_init_package(xd_theme *t, xd_visual_style style, const xd_scheme *scheme,
+                           double scale, const xd_pkg *pkg, xd_image_filter filter,
+                           bool integer_scaling);
+
+/* ---- what a package offers (pkginfo.c) ---- */
+
+typedef struct xd_pkg_variant_info {
+    char *id;
+    char *name; /* its colours, as "Color scheme" lists it */
+    char *size; /* as "Font size" lists it */
+} xd_pkg_variant_info;
+
+typedef struct xd_pkg_info {
+    char *name; /* theme.xml's; "" if it has none */
+    xd_visual_style base;
+    bool has_filter;
+    xd_image_filter filter;
+    size_t variant_count;
+    xd_pkg_variant_info *variants; /* in theme.xml's order: the first is the default */
+} xd_pkg_info;
+
+/* Reads only theme.xml of the package at `path` (a folder or .xdtheme),
+ * for lists of packages. False with `error` set if it isn't a package or
+ * has no variant. */
+bool xd_pkg_read_info(const char *path, xd_pkg_info *out, GError **error);
+void xd_pkg_info_clear(xd_pkg_info *info);
 
 #endif

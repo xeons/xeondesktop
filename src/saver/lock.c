@@ -44,6 +44,7 @@
 #include "../core/wlist.h"
 #include "../settings/login1.h"
 #include "../settings/settings.h"
+#include "../settings/themepkg.h"
 #include "../ui/icons.h"
 #include "../ui/protocols.h"
 #include "../ui/shm.h"
@@ -1344,6 +1345,7 @@ int main(int argc, char **argv) {
     a.exit_code = EXIT_SUCCESS;
     xd_settings_load(&a.settings);
     xd_settings_scheme(&a.settings, &a.scheme);
+    xd_pkg_free(xd_settings_use_package(&a.settings)); /* its unlock box, as the desktop's */
 
     bool saver = false;
     int lock_opt = -1; /* -1: from settings */

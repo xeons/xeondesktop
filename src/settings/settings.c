@@ -364,6 +364,8 @@ void xd_settings_defaults(xd_settings *s) {
         .style = XD_STYLE_CLASSIC,
         .glass_color = XD_GLASS_DEFAULT,
         .glass_transparency = true,
+        .image_scaling = XD_FILTER_COUNT,
+        .integer_scaling = true,
         .wallpaper_mode = XD_WALLPAPER_FILL,
         /* Windows 2000's icons but Internet Explorer; Align to Grid on. */
         .desktop_icons = {.documents = true, .computer = true, .network = true, .show = true,
@@ -493,6 +495,21 @@ static void parse_qt_style(xd_str v, char *dst, size_t cap) {
         ok = g_ascii_isalnum(v.ptr[i]) || memchr("-_.+", v.ptr[i], 4) != nullptr;
     if (ok)
         copy_into(dst, cap, v);
+}
+
+/* ImageScaling: "Automatic" or a filter's name (scale.h). */
+static void parse_image_scaling(xd_str v, xd_image_filter *out) {
+    if (xd_str_eq_nocase(v, XD_STR("Automatic"))) {
+        *out = XD_FILTER_COUNT;
+        return;
+    }
+    char name[32];
+    if (v.len >= sizeof(name))
+        return;
+    copy_into(name, sizeof(name), v);
+    xd_image_filter f;
+    if (xd_image_filter_from_name(name, &f))
+        *out = f;
 }
 
 static void parse_mouse(xd_mouse_settings *m, xd_str key, xd_str v) {
@@ -965,6 +982,14 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_theme_dir(v, s->gtk_theme, sizeof(s->gtk_theme));
         } else if (KEY("QtStyle")) {
             parse_qt_style(v, s->qt_style, sizeof(s->qt_style));
+        } else if (KEY("ThemePackage")) {
+            parse_theme_dir(v, s->theme_package, sizeof(s->theme_package));
+        } else if (KEY("ThemeVariant")) {
+            parse_theme_dir(v, s->theme_variant, sizeof(s->theme_variant));
+        } else if (KEY("ImageScaling")) {
+            parse_image_scaling(v, &s->image_scaling);
+        } else if (KEY("IntegerScaling")) {
+            parse_bool(v, &s->integer_scaling);
         }
     } else if (SEC("Desktop")) {
         if (KEY("Wallpaper")) {
@@ -1269,6 +1294,13 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_string(kf, "Appearance", "IconTheme", s->icon_theme);
     g_key_file_set_string(kf, "Appearance", "GtkTheme", s->gtk_theme);
     g_key_file_set_string(kf, "Appearance", "QtStyle", s->qt_style);
+    g_key_file_set_string(kf, "Appearance", "ThemePackage", s->theme_package);
+    g_key_file_set_string(kf, "Appearance", "ThemeVariant", s->theme_variant);
+    g_key_file_set_string(kf, "Appearance", "ImageScaling",
+                          s->image_scaling == XD_FILTER_COUNT
+                              ? "Automatic"
+                              : xd_image_filter_name(s->image_scaling));
+    g_key_file_set_boolean(kf, "Appearance", "IntegerScaling", s->integer_scaling);
     g_key_file_set_comment(kf, "Appearance", nullptr,
                            " XeonDesktop settings. Written by Display Properties; edits are\n"
                            " picked up immediately.",

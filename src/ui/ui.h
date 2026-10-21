@@ -112,8 +112,13 @@ void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t c
  * whether a monitor can do variable refresh rates). */
 void xd_ui_display_test(xd_ui *ui, const xd_display_setting *settings, size_t count,
                         xd_display_done_cb done, void *user);
-/* Re-themes every open window, e.g. after the user applied new settings. */
+/* Re-themes every open window, e.g. after the user applied new settings.
+ * (Windows also follow desktop.ini by themselves: its style, scheme and
+ * theme package.) */
 void xd_ui_set_theme(xd_ui *ui, xd_visual_style style, const xd_scheme *scheme);
+/* The pointer over our windows is the busy arrow ("working in background")
+ * while `busy`: work goes on, and the windows still answer. */
+void xd_ui_set_busy(xd_ui *ui, bool busy);
 
 /* A fixed-size dialog window; the compositor gives it a dialog frame. */
 xd_window *xd_window_create(xd_ui *ui, const char *title, const char *app_id, int width,

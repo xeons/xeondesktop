@@ -59,8 +59,14 @@ typedef struct pkg_cache {
 static const xd_pkg *active_pkg;
 static xd_image_filter active_filter = XD_FILTER_SMOOTH;
 static bool active_integer = true;
+/* The environment's package was looked at, or the program chose one. */
+static bool chosen;
+/* $XD_THEME_PACKAGE's, kept for the process's life even once replaced:
+ * whoever replaces it may not know it's still drawn with somewhere. */
+static xd_pkg *env_pkg;
 
 void xd_theme_use_package(const xd_pkg *pkg, xd_image_filter filter, bool integer_scaling) {
+    chosen = true;
     active_pkg = pkg;
     active_filter = filter;
     active_integer = integer_scaling;
@@ -85,40 +91,40 @@ static char *names_path(void) {
     return g_build_filename(XD_THEME_DATADIR, "theme", "uxtheme.ini", nullptr);
 }
 
-/* For trying a package before Display Properties can choose one:
+/* For programs that don't choose a package from the settings themselves
+ * (those that do take these as an override, settings/themepkg.c):
  * $XD_THEME_PACKAGE (a .xdtheme or folder), $XD_THEME_VARIANT (its id),
  * $XD_IMAGE_FILTER (a filter's name; "Automatic" or unset: the
  * package's own, else Smooth). Loaded once, on the first theme. */
 static void package_from_environment(void) {
-    static bool done;
-    if (done || active_pkg != nullptr)
+    if (chosen)
         return;
-    done = true;
+    chosen = true;
     const char *path = getenv("XD_THEME_PACKAGE");
     if (path == nullptr || *path == '\0')
         return;
     char *names = names_path();
     GError *error = nullptr;
-    xd_pkg *p = xd_pkg_load(path, getenv("XD_THEME_VARIANT"), names, &error);
+    env_pkg = xd_pkg_load(path, getenv("XD_THEME_VARIANT"), names, &error);
     g_free(names);
-    if (p == nullptr) {
+    if (env_pkg == nullptr) {
         fprintf(stderr, "XD_THEME_PACKAGE: %s\n", error->message);
         g_error_free(error);
         return;
     }
-    xd_image_filter f = XD_FILTER_SMOOTH;
+    xd_image_filter f;
     const char *fname = getenv("XD_IMAGE_FILTER");
-    if (fname != nullptr && !xd_image_filter_from_name(fname, &f))
-        f = XD_FILTER_SMOOTH;
-    xd_theme_use_package(p, f, true); /* kept for the process's life */
+    if (fname == nullptr || !xd_image_filter_from_name(fname, &f)) {
+        if (!xd_pkg_filter(env_pkg, &f))
+            f = XD_FILTER_SMOOTH;
+    }
+    xd_theme_use_package(env_pkg, f, true);
 }
 
-void xd_theme_attach_package(xd_theme *t) {
-    package_from_environment();
-    t->pkg = active_pkg;
-    t->image_filter = active_filter;
-    t->integer_scaling = active_integer;
-    const xd_pkg *p = active_pkg;
+static void set_package(xd_theme *t, const xd_pkg *p, xd_image_filter filter, bool integer) {
+    t->pkg = p;
+    t->image_filter = filter;
+    t->integer_scaling = integer;
     if (p == nullptr)
         return;
     /* What the package doesn't draw, its base style does, with its
@@ -133,6 +139,21 @@ void xd_theme_attach_package(xd_theme *t) {
     for (int i = 0; i < XD_FONT_COUNT; i++)
         if (p->font_mask & (1u << i))
             t->scheme.fonts[i] = p->fonts[i];
+}
+
+void xd_theme_attach_package(xd_theme *t) {
+    package_from_environment();
+    set_package(t, active_pkg, active_filter, active_integer);
+}
+
+void xd_theme_init_package(xd_theme *t, xd_visual_style style, const xd_scheme *scheme,
+                           double scale, const xd_pkg *pkg, xd_image_filter filter,
+                           bool integer_scaling) {
+    xd_theme_init(t, style, scheme, scale);
+    /* Without the active package's base style and [SysMetrics]. */
+    t->style = style;
+    t->scheme = *scheme;
+    set_package(t, pkg, filter, integer_scaling);
 }
 
 static size_t numbers(const char *v, int *out, size_t max);
@@ -903,11 +924,11 @@ static cairo_surface_t *image(const xd_pkg *p, const char *path) {
     return s;
 }
 
-/* The filter the theme's image settings and the package give. */
+/* The filter the theme's image settings give ("Automatic" is resolved to
+ * the package's own by whoever chose the package: a Smooth chosen by the
+ * user stays Smooth). */
 static xd_image_filter filter_for(const xd_theme *t, double factor) {
     xd_image_filter f = t->image_filter;
-    if (f == XD_FILTER_SMOOTH && t->pkg != nullptr)
-        (void)xd_pkg_filter(t->pkg, &f); /* "Automatic": the package's own */
     /* Whole-number scaling: smooth scaling at 200% would blur what can be
      * exact. */
     if (f == XD_FILTER_SMOOTH && t->integer_scaling && fabs(factor - round(factor)) < 1e-6 &&

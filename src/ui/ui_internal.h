@@ -203,6 +203,8 @@ struct xd_ui {
     struct wp_cursor_shape_device_v1 *cursor_shape;
     bool cursor_set;  /* shape sent since the last pointer enter */
     bool cursor_text; /* ...and it was the text beam */
+    bool cursor_busy; /* ...or the busy arrow */
+    bool busy;        /* xd_ui_set_busy: the arrow shows work going on */
     struct wl_data_device_manager *data_device_manager;
     struct zxdg_output_manager_v1 *xdg_output_manager;
     xd_ui_output *outputs;
@@ -226,6 +228,9 @@ struct xd_ui {
     int32_t repeat_rate, repeat_delay;
     int repeat_fd;
     uint32_t repeat_key;
+
+    /* desktop.ini, watched: windows follow the appearance as it changes. */
+    int settings_fd;
 
     struct wl_list windows;
     xd_window *pointer_window;

@@ -165,6 +165,9 @@ static void update_ftl_output(xd_view *view) {
 }
 
 void xd_view_retheme(xd_view *view) {
+    /* A hidden window's frame is drawn again when it maps: its old one is
+     * in the old look. */
+    view->drawn.title_dirty = true;
     if (!view->mapped)
         return;
     update_content_position(view);

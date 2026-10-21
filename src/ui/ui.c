@@ -12,6 +12,7 @@
 
 #include "../core/alloc.h"
 #include "../settings/settings.h"
+#include "../settings/themepkg.h"
 #include "ui_internal.h"
 
 static const char *const text_mimes[] = {"text/plain;charset=utf-8", "text/plain",
@@ -21,13 +22,24 @@ static const char *const text_mimes[] = {"text/plain;charset=utf-8", "text/plain
 
 /* Called on every motion: only a change of shape goes to the compositor. */
 void xd_ui_set_cursor_text(xd_ui *ui, bool text) {
-    if (ui->cursor_shape == nullptr || (ui->cursor_set && ui->cursor_text == text))
+    if (ui->cursor_shape == nullptr ||
+        (ui->cursor_set && ui->cursor_text == text && ui->cursor_busy == ui->busy))
         return;
+    /* Busy: Windows' "working in background" arrow, over text fields too. */
     wp_cursor_shape_device_v1_set_shape(ui->cursor_shape, ui->pointer_serial,
-                                        text ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT
-                                             : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+                                        ui->busy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS
+                                        : text   ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT
+                                                 : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
     ui->cursor_set = true;
     ui->cursor_text = text;
+    ui->cursor_busy = ui->busy;
+}
+
+void xd_ui_set_busy(xd_ui *ui, bool busy) {
+    ui->busy = busy;
+    /* Now, if the pointer is over one of our windows; else on its next enter. */
+    if (ui->cursor_set)
+        xd_ui_set_cursor_text(ui, ui->cursor_text);
 }
 
 static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
@@ -553,6 +565,23 @@ void xd_ui_set_theme(xd_ui *ui, xd_visual_style style, const xd_scheme *scheme) 
     }
 }
 
+/* desktop.ini was saved: the style, scheme and theme package as it now
+ * says (overriding --style and --scheme, as the shell does). */
+static void settings_changed(void *user) {
+    xd_ui *ui = user;
+    if (!xd_settings_watch_changed(ui->settings_fd))
+        return;
+    xd_settings settings;
+    xd_settings_load(&settings);
+    xd_scheme scheme;
+    xd_settings_scheme(&settings, &scheme);
+    /* Windows draw with a theme made afresh each time: none holds the old
+     * package once they're marked for redrawing. */
+    xd_pkg *old = xd_settings_use_package(&settings);
+    xd_ui_set_theme(ui, settings.style, &scheme);
+    xd_pkg_free(old);
+}
+
 /* ---- seat and globals --------------------------------------------------------- */
 
 static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
@@ -680,12 +709,16 @@ xd_ui *xd_ui_connect(int argc, char **argv) {
     xd_settings_load(&settings);
     ui->style = settings.style;
     xd_settings_scheme(&settings, &ui->scheme);
+    xd_pkg_free(xd_settings_use_package(&settings)); /* none before it */
     ui->repeat_rate = 30;
     ui->repeat_delay = 500;
     ui->repeat_fd = -1;
     wl_list_init(&ui->windows);
     wl_list_init(&ui->sources);
     wl_list_init(&ui->heads);
+    ui->settings_fd = xd_settings_watch();
+    if (ui->settings_fd >= 0)
+        xd_ui_add_fd(ui, ui->settings_fd, settings_changed, ui);
     signal(SIGPIPE, SIG_IGN);
 
     for (int i = 1; i + 1 < argc; i++) {
@@ -902,6 +935,8 @@ void xd_ui_destroy(xd_ui *ui) {
     xkb_context_unref(ui->xkb);
     if (ui->repeat_fd >= 0)
         close(ui->repeat_fd);
+    if (ui->settings_fd >= 0)
+        close(ui->settings_fd);
     if (ui->sources.next != nullptr) {
         XD_LIST_FOR_EACH_SAFE(src, tmp, &ui->sources, xd_ui_source, link) {
             free_source(src);

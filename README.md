@@ -234,14 +234,24 @@ tabs, and one for what only Linux has:
   size, colours and font (saved as `[CustomScheme]` over the scheme). In
   Aero, Advanced opens Window Color and Appearance: Windows 7's 16 glass
   colours, transparency, intensity and a colour mixer, with a link to
-  Advanced Appearance.
+  Advanced Appearance. Windows and buttons also lists the installed theme
+  packages ([docs/THEMES.md](docs/THEMES.md)), with their colours in Color
+  scheme and their sizes in Font size, as XP lists a visual style's; the
+  preview draws with the one chosen before Apply. Browse... installs a
+  `.xdtheme`, or converts a Windows visual style (a `.msstyles`, or a
+  `.theme` beside one) with `xd-theme-import` (python-pefile) in the
+  background into `~/.local/share/xeondesktop/themes`, and chooses it.
 - Effects: XP's Effects: fade or scroll menus and tooltips, large icons,
   "Show window contents while dragging" (off, a window is dragged as an
   outline) and hiding the underlined letters until Alt is pressed; and
   Font smoothing as FreeType does it, under GNOME's names: Antialiasing
   (None, Standard (grayscale), Subpixel (for LCD screens)), Subpixel order
   and Hinting. Other programs get them too: a real session writes them to
-  `org.gnome.desktop.interface` and GTK's `settings.ini`.
+  `org.gnome.desktop.interface` and GTK's `settings.ini`. Theme images:
+  how a theme package's pictures are scaled for high DPI (Automatic, the
+  package's own choice; Nearest, Integer, Smooth, or the pixel-art scalers
+  Scale2x, Scale3x, Scale4x, 2xSaI, Super2xSaI and SuperEagle), and exact
+  whole-number scaling at 200% and 300%.
 - Settings: as below, and Identify, which shows each monitor's number on
   it.
 - Linux: the icon theme and the GTK theme ("Program style"), our
@@ -446,6 +456,7 @@ its menu switches the layout for the session, as the switching keys do.
 | Variable              | Effect                                                   |
 |-----------------------|----------------------------------------------------------|
 | `XD_ICON_THEME`       | Icon theme while Display Properties' Icons is left at Default (default `breeze`, falls back to Adwaita, hicolor) |
+| `XD_THEME_PACKAGE`    | Draw with this theme package (a `.xdtheme` or folder) instead of Display Properties' choice (testing); `XD_THEME_VARIANT` picks its variant, `XD_IMAGE_FILTER` its image filter |
 | `XD_SOUND_TRACE`      | Write the sounds that would play to this file instead of playing them (tests) |
 | `XD_VM_GPU=1`         | Use the GPU renderer even on a virtual machine's GPU     |
 | `XD_HARDWARE_CURSORS=1` | Try the hardware cursor where the software one is used |

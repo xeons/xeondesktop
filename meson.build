@@ -115,6 +115,7 @@ theme_lib = static_library(
   'src/theme/gtkpkg.c',
   'src/theme/trayicons.c',
   'src/theme/pkg.c',
+  'src/theme/pkginfo.c',
   'src/theme/style_pkg.c',
   'src/theme/controls.c',
   'src/theme/scale.c',
@@ -139,6 +140,7 @@ settings_lib = static_library(
   'src/settings/sounds.c',
   'src/settings/inputmethod.c',
   'src/settings/nightlight.c',
+  'src/settings/themepkg.c',
   dependencies: [cairo_dep, pango_dep, glib_dep, json_glib_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],
 )
@@ -522,9 +524,10 @@ executable(
   'src/apps/desk_monitor.c',
   'src/apps/desk_nightlight.c',
   'src/apps/desk_saver.c',
+  'src/settings/soundplay.c',
   'src/settings/themes.c',
   apps_common,
-  dependencies: [ui_dep, saver_dep],
+  dependencies: [ui_dep, saver_dep, canberra_dep, gio_unix_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )

@@ -36,6 +36,7 @@
 #include "../settings/inputmethod.h"
 #include "../settings/settings.h"
 #include "../settings/soundplay.h"
+#include "../settings/themepkg.h"
 #include "appicons.h"
 #include "server.h"
 
@@ -509,6 +510,9 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
         xd_input_apply_access(server);
     }
     xd_settings_scheme(&settings, &server->config.scheme);
+    /* A new theme package (or none): everything below is drawn with it,
+     * and the frames hold only pixels, so the old one can go after. */
+    xd_pkg *old_pkg = xd_settings_use_package(&settings);
     xd_theme_init(&server->logical_theme, server->config.style, &server->config.scheme, 1.0);
     xd_gamma_apply_settings(server, &settings);
 
@@ -527,6 +531,7 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
         xd_view_refit_maximized(server, out);
     }
+    xd_pkg_free(old_pkg);
     wlr_log(WLR_INFO, "settings changed: %s style, %s", xd_visual_style_name(settings.style),
             server->config.scheme.name);
     return 0;
@@ -632,6 +637,7 @@ int main(int argc, char **argv) {
     server.config.access = settings.access;
     if (server.config.scheme_path == nullptr)
         xd_settings_scheme(&settings, &server.config.scheme);
+    xd_pkg_free(xd_settings_use_package(&settings)); /* none before it */
     xd_theme_init(&server.logical_theme, server.config.style, &server.config.scheme, 1.0);
 
     if (!server_init(&server)) {

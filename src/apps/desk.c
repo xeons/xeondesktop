@@ -18,11 +18,15 @@
 #include <unistd.h>
 
 #include <gio/gio.h>
+#include <gio/gunixinputstream.h>
+#include <glib/gstdio.h>
 #include <pango/pangocairo.h>
 
 #include "../core/alloc.h"
 #include "../saver/savers.h"
 #include "../settings/settings.h"
+#include "../settings/soundplay.h"
+#include "../settings/themepkg.h"
 #include "../settings/themes.h"
 #include "../ui/image.h"
 #include "../ui/ui.h"
@@ -33,6 +37,9 @@
 #include "desk_saver.h"
 
 enum { PAGE_BACKGROUND, PAGE_SCREENSAVER, PAGE_APPEARANCE, PAGE_EFFECTS, PAGE_SETTINGS, PAGE_LINUX };
+
+/* What xd-choose-file is choosing. */
+typedef enum chooser_kind { CHOOSE_WALLPAPER, CHOOSE_ICON, CHOOSE_STYLE } chooser_kind;
 
 /* One monitor in the Settings tab. */
 typedef struct disp_head {
@@ -61,10 +68,13 @@ typedef struct desk {
     char preview_path[1024];
     xd_widget *browse;
     xd_widget *customize;
-    int chooser_fd;
+    /* xd-choose-file, for Browse (a wallpaper or a visual style) and
+     * Change Icon. GLib reaps the programs we start (GSubprocess). */
+    GSubprocess *chooser;
+    int chooser_fd; /* its stdout, the chooser's stream's */
     xd_ui_source *chooser_src;
     xd_strbuf chooser_out;
-    bool choosing_icon; /* the chooser is Change Icon's, not Browse's */
+    chooser_kind choosing;
 
     /* Desktop Items (Customize Desktop...), edited apart from `pending`
      * until its OK. */
@@ -94,6 +104,25 @@ typedef struct desk {
 
     /* Appearance */
     xd_scheme_list schemes;
+    /* Installed theme packages (xd_installed_package), listed after the
+     * built-in styles in Windows and buttons; the pending one loaded for
+     * the preview, and what it was loaded from. */
+    GPtrArray *packages;
+    xd_pkg *preview_pkg;
+    char *preview_pkg_path;
+    char *preview_pkg_variant;
+    xd_widget *style_browse;
+    /* xd-theme-import converting a visual style, while it runs: into
+     * import_part, renamed to import_dest once it succeeded. */
+    GSubprocess *import;
+    int import_fd;
+    xd_ui_source *import_src;
+    xd_ui_source *import_wait;
+    xd_strbuf import_out;
+    char *import_source;
+    char *import_part;
+    char *import_dest;
+    char *import_name;
     xd_widget *style_combo;
     xd_widget *scheme_combo;
     xd_widget *font_combo;
@@ -122,6 +151,7 @@ typedef struct desk {
     xd_widget *antialias_combo; /* Font smoothing */
     xd_widget *subpixel_combo;
     xd_widget *hinting_combo;
+    xd_widget *scaling_combo; /* Scale theme images */
     xd_widget *large_icons;
     GPtrArray *icon_themes; /* xd_installed_theme, as the Icons list shows them */
     GPtrArray *gtk_themes;  /* ...and Program style's, after its first item */
@@ -183,11 +213,16 @@ static void on_page(xd_widget *w, void *user) {
     update_animation(d);
 }
 
-/* Pending appearance as a theme for previews. */
+/* Pending appearance as a theme for previews: with the pending theme
+ * package (loaded for it), not the one the desktop draws with now. None
+ * under High Contrast, as the desktop does. */
 static void pending_theme(const desk *d, double scale, xd_theme *t) {
     xd_scheme scheme;
     xd_settings_scheme(&d->pending, &scheme);
-    xd_theme_init(t, d->pending.style, &scheme, scale);
+    const xd_pkg *pkg = d->pending.access.high_contrast ? nullptr : d->preview_pkg;
+    xd_theme_init_package(t, d->pending.style, &scheme, scale, pkg,
+                          xd_settings_image_filter(&d->pending, pkg),
+                          d->pending.integer_scaling);
 }
 
 /* A Windows 2000-style monitor: beige body, dark screen bezel, stand.
@@ -386,6 +421,56 @@ static void choose_wallpaper(desk *d, const char *path) {
 
 static void items_chose_icon(desk *d, const char *path);
 static void items_update_buttons(desk *d);
+static void style_chosen(desk *d, const char *path);
+static void update_style_browse(desk *d);
+
+/* `program` beside this one (a build tree, or the install's bindir), else
+ * from PATH, with `args`. A GSubprocess, so that GLib reaps it. */
+static GSubprocess *spawn_own(const char *program, const char *const *args,
+                              GSubprocessFlags flags, GError **error) {
+    char *exe = nullptr;
+    char *self = g_file_read_link("/proc/self/exe", nullptr);
+    if (self != nullptr) {
+        char *dir = g_path_get_dirname(self);
+        exe = g_build_filename(dir, program, nullptr);
+        g_free(dir);
+        g_free(self);
+        if (!g_file_test(exe, G_FILE_TEST_IS_EXECUTABLE))
+            g_clear_pointer(&exe, g_free);
+    }
+    GPtrArray *argv = g_ptr_array_new();
+    g_ptr_array_add(argv, exe != nullptr ? exe : (char *)(uintptr_t)program);
+    for (size_t i = 0; args != nullptr && args[i] != nullptr; i++)
+        g_ptr_array_add(argv, (char *)(uintptr_t)args[i]);
+    g_ptr_array_add(argv, nullptr);
+    GSubprocess *sp =
+        g_subprocess_newv((const char *const *)(void *)argv->pdata, flags, error);
+    g_ptr_array_free(argv, TRUE);
+    g_free(exe);
+    return sp;
+}
+
+/* Starts it and forgets it. */
+static void launch_own(const char *program, const char *const *args) {
+    GError *error = nullptr;
+    GSubprocess *sp = spawn_own(program, args, G_SUBPROCESS_FLAGS_NONE, &error);
+    if (sp == nullptr) {
+        fprintf(stderr, "xd-desk: %s\n", error->message);
+        g_error_free(error);
+        return;
+    }
+    g_object_unref(sp);
+}
+
+/* The read end of a subprocess's stdout, to watch in libxdui's loop. */
+static int stdout_fd(GSubprocess *sp) {
+    return g_unix_input_stream_get_fd(G_UNIX_INPUT_STREAM(g_subprocess_get_stdout_pipe(sp)));
+}
+
+static void close_stdout(GSubprocess **sp) {
+    g_input_stream_close(g_subprocess_get_stdout_pipe(*sp), nullptr, nullptr);
+    g_clear_object(sp);
+}
 
 static void chooser_output(void *user) {
     desk *d = user;
@@ -400,34 +485,42 @@ static void chooser_output(void *user) {
     /* The chooser closed: its answer is complete. */
     xd_ui_remove_source(d->chooser_src);
     d->chooser_src = nullptr;
-    close(d->chooser_fd);
+    close_stdout(&d->chooser);
     d->chooser_fd = -1;
     xd_str path = xd_str_trim(xd_strbuf_view(&d->chooser_out));
+    xd_widget_set_enabled(d->browse, true);
+    update_style_browse(d);
     if (path.len > 0) {
         char *p = xd_str_dup_cstr(path);
-        if (!d->choosing_icon)
+        if (d->choosing == CHOOSE_WALLPAPER)
             choose_wallpaper(d, p);
+        else if (d->choosing == CHOOSE_STYLE)
+            style_chosen(d, p);
         else if (d->items != nullptr)
             items_chose_icon(d, p);
         xd_free(p);
     }
     xd_strbuf_clear(&d->chooser_out);
-    xd_widget_set_enabled(d->browse, true);
     if (d->items != nullptr)
         items_update_buttons(d);
 }
 
 /* Runs xd-choose-file; its answer comes to chooser_output. */
-static bool start_chooser(desk *d, const char *const *args, bool icon) {
+static bool start_chooser(desk *d, const char *const *args, chooser_kind what) {
     if (d->chooser_src != nullptr)
         return false;
-    int fd = -1;
-    if (xd_spawn_own("xd-choose-file", args, &fd) == 0)
+    GError *error = nullptr;
+    d->chooser = spawn_own("xd-choose-file", args, G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error);
+    if (d->chooser == nullptr) {
+        fprintf(stderr, "xd-desk: %s\n", error->message);
+        g_error_free(error);
         return false;
-    d->chooser_fd = fd;
-    d->chooser_src = xd_ui_add_fd(d->ui, fd, chooser_output, d);
-    d->choosing_icon = icon;
+    }
+    d->chooser_fd = stdout_fd(d->chooser);
+    d->chooser_src = xd_ui_add_fd(d->ui, d->chooser_fd, chooser_output, d);
+    d->choosing = what;
     xd_widget_set_enabled(d->browse, false);
+    update_style_browse(d);
     if (d->items != nullptr)
         items_update_buttons(d);
     return true;
@@ -440,7 +533,7 @@ static void on_browse([[maybe_unused]] xd_widget *w, void *user) {
     if (home != nullptr)
         snprintf(folder, sizeof(folder), "%s/Pictures", home);
     const char *args[] = {"--images", "--title", "Browse", "--folder", folder, nullptr};
-    start_chooser(d, args, false);
+    start_chooser(d, args, CHOOSE_WALLPAPER);
 }
 
 /* ---- Desktop Items --------------------------------------------------------------- */
@@ -548,7 +641,7 @@ static void on_change_icon([[maybe_unused]] xd_widget *w, void *user) {
     /* Windows lists the icons in a file; here any picture will do. */
     const char *args[] = {"--images", "--title", "Change Icon", "--folder", "/usr/share/icons",
                           nullptr};
-    start_chooser(d, args, true);
+    start_chooser(d, args, CHOOSE_ICON);
 }
 
 static void on_restore_icon([[maybe_unused]] xd_widget *w, void *user) {
@@ -831,7 +924,7 @@ static void on_saver_preview_button([[maybe_unused]] xd_widget *w, void *user) {
         return;
     /* Preview runs unprotected, like Windows' Preview button. */
     const char *args[] = {"--saver", id, "--no-lock", nullptr};
-    xd_spawn_own("xd-lock", args, nullptr);
+    launch_own("xd-lock", args);
 }
 
 static const char *minutes_label(int m, char *buf, size_t cap) {
@@ -1010,8 +1103,153 @@ static ptrdiff_t listed_scheme(const desk *d, int item) {
     return -1;
 }
 
+/* ---- theme packages: Windows and buttons, and their variants ------------------------- */
+
+/* The pending package, if it's installed. */
+static const xd_installed_package *pending_package(const desk *d) {
+    if (d->pending.theme_package[0] == '\0')
+        return nullptr;
+    for (guint i = 0; i < d->packages->len; i++) {
+        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
+        if (strcmp(p->name, d->pending.theme_package) == 0)
+            return p;
+    }
+    return nullptr;
+}
+
+/* Its pending variant: ThemeVariant's, else its first, the default. */
+static const xd_pkg_variant_info *pending_variant(const desk *d, const xd_installed_package *p) {
+    for (size_t i = 0; i < p->info.variant_count; i++) {
+        if (strcmp(p->info.variants[i].id, d->pending.theme_variant) == 0)
+            return &p->info.variants[i];
+    }
+    return &p->info.variants[0];
+}
+
+/* Loads the pending package for the preview, unless it has been. */
+static void update_preview_package(desk *d) {
+    const xd_installed_package *p = pending_package(d);
+    const char *path = p != nullptr ? p->path : nullptr;
+    const char *variant = p != nullptr ? pending_variant(d, p)->id : nullptr;
+    if (g_strcmp0(path, d->preview_pkg_path) == 0 &&
+        g_strcmp0(variant, d->preview_pkg_variant) == 0)
+        return;
+    g_clear_pointer(&d->preview_pkg, xd_pkg_free);
+    g_free(d->preview_pkg_path);
+    g_free(d->preview_pkg_variant);
+    d->preview_pkg_path = g_strdup(path);
+    d->preview_pkg_variant = g_strdup(variant);
+    if (p == nullptr)
+        return;
+    char *names = xd_theme_names_path();
+    GError *error = nullptr;
+    d->preview_pkg = xd_pkg_load(path, variant, names, &error);
+    g_free(names);
+    if (d->preview_pkg == nullptr) {
+        /* The preview shows its base style. */
+        fprintf(stderr, "xd-desk: %s\n", error->message);
+        g_error_free(error);
+    }
+}
+
+/* Its colours, as Color scheme lists them: each variant name once, in
+ * theme.xml's order. `out` holds variant_count. */
+static size_t package_colors(const xd_installed_package *p, const char **out) {
+    size_t n = 0;
+    for (size_t i = 0; i < p->info.variant_count; i++) {
+        bool seen = false;
+        for (size_t k = 0; k < n && !seen; k++)
+            seen = strcmp(out[k], p->info.variants[i].name) == 0;
+        if (!seen)
+            out[n++] = p->info.variants[i].name;
+    }
+    return n;
+}
+
+/* The sizes colour `color` comes in, as Font size lists them. */
+static size_t package_sizes(const xd_installed_package *p, const char *color, const char **out) {
+    size_t n = 0;
+    for (size_t i = 0; i < p->info.variant_count; i++) {
+        if (strcmp(p->info.variants[i].name, color) == 0)
+            out[n++] = p->info.variants[i].size;
+    }
+    return n;
+}
+
+/* Colour `color` in `size`, else in its first size. */
+static const xd_pkg_variant_info *find_variant(const xd_installed_package *p, const char *color,
+                                               const char *size) {
+    const xd_pkg_variant_info *any = nullptr;
+    for (size_t i = 0; i < p->info.variant_count; i++) {
+        const xd_pkg_variant_info *v = &p->info.variants[i];
+        if (strcmp(v->name, color) != 0)
+            continue;
+        if (strcmp(v->size, size) == 0)
+            return v;
+        if (any == nullptr)
+            any = v;
+    }
+    return any;
+}
+
+/* Chooses the variant; its size, if it's one of ours, sets the scheme's
+ * font size too, for what the package leaves to the scheme. */
+static void set_variant(desk *d, const xd_pkg_variant_info *v) {
+    snprintf(d->pending.theme_variant, sizeof(d->pending.theme_variant), "%s", v->id);
+    static const char *const sizes[] = {"Normal", "Large Fonts", "Extra Large Fonts"};
+    for (size_t i = 0; i < XD_ARRAY_LEN(sizes); i++) {
+        if (g_ascii_strcasecmp(v->size, sizes[i]) == 0 &&
+            (xd_font_size)i != d->pending.font_size) {
+            d->pending.font_size = (xd_font_size)i;
+            d->pending.custom_scheme = (xd_scheme_custom){0};
+        }
+    }
+}
+
+/* Windows and buttons: the built-in styles, then the installed packages
+ * by name. */
+static void fill_styles(desk *d) {
+    xd_widget_clear_items(d->style_combo);
+    for (int i = 0; i < XD_STYLE_COUNT; i++)
+        xd_widget_add_item(d->style_combo, xd_visual_style_name((xd_visual_style)i));
+    int current = (int)d->pending.style;
+    for (guint i = 0; i < d->packages->len; i++) {
+        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
+        const char *name = p->info.name[0] != '\0' ? p->info.name : p->name;
+        /* Told apart by their file names where they share a name with a
+         * built-in style (7's is "Aero" too) or another package. */
+        bool shared = false;
+        for (int k = 0; k < XD_STYLE_COUNT && !shared; k++)
+            shared = g_ascii_strcasecmp(name, xd_visual_style_name((xd_visual_style)k)) == 0;
+        for (guint k = 0; k < d->packages->len && !shared; k++) {
+            const xd_installed_package *o = g_ptr_array_index(d->packages, k);
+            shared = k != i && strcmp(name, o->info.name[0] != '\0' ? o->info.name : o->name) == 0;
+        }
+        char *label = shared ? g_strdup_printf("%s (%s)", name, p->name) : g_strdup(name);
+        xd_widget_add_item(d->style_combo, label);
+        g_free(label);
+        if (strcmp(p->name, d->pending.theme_package) == 0)
+            current = XD_STYLE_COUNT + (int)i;
+    }
+    xd_widget_select(d->style_combo, current);
+}
+
 static void fill_schemes(desk *d) {
     xd_widget_clear_items(d->scheme_combo);
+    const xd_installed_package *pkg = pending_package(d);
+    if (pkg != nullptr) {
+        /* A package's colours, as XP lists a visual style's. */
+        const char **colors = g_new(const char *, pkg->info.variant_count);
+        size_t n = package_colors(pkg, colors);
+        const char *current = pending_variant(d, pkg)->name;
+        for (size_t i = 0; i < n; i++) {
+            xd_widget_add_item(d->scheme_combo, colors[i]);
+            if (strcmp(colors[i], current) == 0)
+                xd_widget_select(d->scheme_combo, (int)i);
+        }
+        g_free(colors);
+        return;
+    }
     bool luna = d->pending.style == XD_STYLE_LUNA;
     if (!luna)
         xd_widget_add_item(d->scheme_combo, "Windows Standard (built in)");
@@ -1031,13 +1269,43 @@ static void fill_schemes(desk *d) {
     xd_widget_select(d->scheme_combo, current);
 }
 
-static void on_style(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
-    if (i < 0 || i >= XD_STYLE_COUNT || (xd_visual_style)i == d->pending.style)
+static const char *const font_sizes[] = {"Normal", "Large Fonts", "Extra Large Fonts"};
+
+static void fill_font_sizes(desk *d) {
+    xd_widget_clear_items(d->font_combo);
+    const xd_installed_package *pkg = pending_package(d);
+    if (pkg != nullptr) {
+        /* The sizes the package's colour comes in. */
+        const xd_pkg_variant_info *v = pending_variant(d, pkg);
+        const char **sizes = g_new(const char *, pkg->info.variant_count);
+        size_t n = package_sizes(pkg, v->name, sizes);
+        for (size_t i = 0; i < n; i++) {
+            xd_widget_add_item(d->font_combo, sizes[i]);
+            if (strcmp(sizes[i], v->size) == 0)
+                xd_widget_select(d->font_combo, (int)i);
+        }
+        g_free(sizes);
         return;
+    }
+    for (size_t i = 0; i < XD_ARRAY_LEN(font_sizes); i++)
+        xd_widget_add_item(d->font_combo, font_sizes[i]);
+    xd_widget_select(d->font_combo, (int)d->pending.font_size);
+}
+
+/* The look of the preview and the lists below Windows and buttons changed. */
+static void appearance_changed(desk *d) {
+    update_preview_package(d);
+    fill_schemes(d);
+    fill_font_sizes(d);
+    xd_widget_redraw(d->scheme_combo);
+    xd_widget_redraw(d->font_combo);
+    xd_widget_redraw(d->appearance_preview);
+    changed(d);
+}
+
+static void set_style(desk *d, xd_visual_style style) {
     bool was_luna = d->pending.style == XD_STYLE_LUNA;
-    d->pending.style = (xd_visual_style)i;
+    d->pending.style = style;
     /* Switching between Windows XP style and the others switches scheme
      * lists, and the scheme to the new list's first: Default (blue), or
      * Windows Standard. */
@@ -1048,11 +1316,33 @@ static void on_style(xd_widget *w, void *user) {
         if (d->pending.style == XD_STYLE_LUNA && first >= 0)
             snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s",
                      d->schemes.stems[first]);
-        fill_schemes(d);
-        xd_widget_redraw(d->scheme_combo);
     }
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+}
+
+static void on_style(xd_widget *w, void *user) {
+    desk *d = user;
+    int i = xd_widget_selected(w);
+    if (i < 0)
+        return;
+    if (i < XD_STYLE_COUNT) {
+        if (d->pending.theme_package[0] == '\0' && (xd_visual_style)i == d->pending.style)
+            return;
+        d->pending.theme_package[0] = '\0';
+        d->pending.theme_variant[0] = '\0';
+        set_style(d, (xd_visual_style)i);
+    } else {
+        if ((guint)(i - XD_STYLE_COUNT) >= d->packages->len)
+            return;
+        const xd_installed_package *p = g_ptr_array_index(d->packages, (guint)(i - XD_STYLE_COUNT));
+        if (strcmp(p->name, d->pending.theme_package) == 0)
+            return;
+        /* Its base style draws what it doesn't, and is what the desktop's
+         * own choices (the Start menu, the taskbar's) go by. */
+        snprintf(d->pending.theme_package, sizeof(d->pending.theme_package), "%s", p->name);
+        set_style(d, p->info.base);
+        set_variant(d, &p->info.variants[0]);
+    }
+    appearance_changed(d);
 }
 
 static void on_scheme(xd_widget *w, void *user) {
@@ -1060,6 +1350,16 @@ static void on_scheme(xd_widget *w, void *user) {
     int i = xd_widget_selected(w);
     if (i < 0)
         return;
+    const xd_installed_package *pkg = pending_package(d);
+    if (pkg != nullptr) {
+        const char **colors = g_new(const char *, pkg->info.variant_count);
+        size_t n = package_colors(pkg, colors);
+        if ((size_t)i < n)
+            set_variant(d, find_variant(pkg, colors[i], pending_variant(d, pkg)->size));
+        g_free(colors);
+        appearance_changed(d);
+        return;
+    }
     ptrdiff_t k = listed_scheme(d, i);
     /* A scheme sets every item, as in Windows: Advanced's changes go. */
     d->pending.custom_scheme = (xd_scheme_custom){0};
@@ -1074,6 +1374,17 @@ static void on_scheme(xd_widget *w, void *user) {
 static void on_font_size(xd_widget *w, void *user) {
     desk *d = user;
     int i = xd_widget_selected(w);
+    const xd_installed_package *pkg = pending_package(d);
+    if (pkg != nullptr) {
+        const char *color = pending_variant(d, pkg)->name;
+        const char **sizes = g_new(const char *, pkg->info.variant_count);
+        size_t n = package_sizes(pkg, color, sizes);
+        if (i >= 0 && (size_t)i < n)
+            set_variant(d, find_variant(pkg, color, sizes[i]));
+        g_free(sizes);
+        appearance_changed(d);
+        return;
+    }
     if (i >= 0 && i <= XD_FONT_EXTRA_LARGE && (xd_font_size)i != d->pending.font_size) {
         /* Windows' Large and Extra Large are schemes of their own. */
         d->pending.font_size = (xd_font_size)i;
@@ -1081,6 +1392,329 @@ static void on_font_size(xd_widget *w, void *user) {
     }
     xd_widget_redraw(d->appearance_preview);
     changed(d);
+}
+
+/* ---- Browse...: a visual style or a theme package ---------------------------------- */
+
+/* Windows' error box, owned by Display Properties. */
+static void message_ok(xd_widget *w, [[maybe_unused]] void *user) {
+    xd_window_close(xd_widget_window(w));
+}
+
+static void error_box(desk *d, const char *text) {
+    /* Lines the label wraps to, roughly (an 8pt font's average width). */
+    glong chars = g_utf8_strlen(text, -1);
+    int lines = 1 + (int)((double)chars * 5.4 / 312);
+    for (const char *c = text; *c != '\0'; c++)
+        lines += *c == '\n';
+    int text_h = XD_MAX(lines * 14, 32);
+    int h = 14 + text_h + 16 + 23 + 12;
+    xd_window *box = xd_window_create(d->ui, "Display Properties", "xd-desk", 380, h);
+    xd_image(box, (xd_rect){12, 14, 32, 32}, "dialog-error");
+    xd_label(box, (xd_rect){56, 14, 312, text_h}, text, XD_LABEL_WRAP);
+    xd_widget *ok = xd_button(box, (xd_rect){152, h - 12 - 23, 75, 23}, "OK", message_ok, nullptr);
+    xd_window_set_default(box, ok);
+    xd_window_set_cancel(box, ok);
+    xd_window_set_focus(box, ok);
+    xd_window_show(box);
+    xd_sound_play_event(XD_SOUND_CRITICAL_STOP);
+}
+
+static void update_style_browse(desk *d) {
+    if (d->style_browse != nullptr)
+        xd_widget_set_enabled(d->style_browse, d->chooser_src == nullptr && d->import == nullptr);
+}
+
+/* After installing package `name`: the list read again, and it chosen. */
+static void select_installed(desk *d, const char *name) {
+    char **dirs = xd_theme_package_dirs();
+    g_ptr_array_unref(d->packages);
+    d->packages = xd_theme_packages_list((const char *const *)dirs);
+    g_strfreev(dirs);
+    /* Read again even if it's the pending one: it may be a new version. */
+    g_clear_pointer(&d->preview_pkg_path, g_free);
+    if (strcmp(d->pending.theme_package, name) == 0)
+        d->pending.theme_package[0] = '\0';
+    fill_styles(d);
+    for (guint i = 0; i < d->packages->len; i++) {
+        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
+        if (strcmp(p->name, name) == 0) {
+            xd_widget_select(d->style_combo, XD_STYLE_COUNT + (int)i);
+            on_style(d->style_combo, d);
+        }
+    }
+    xd_widget_redraw(d->style_combo);
+    appearance_changed(d);
+}
+
+/* The name to install `stem` under in `dir`: the stem, unless a folder of
+ * that name is there (it would win over the zip): then "stem (2)"... */
+static char *install_name(const char *dir, const char *stem) {
+    const char *s = stem;
+    while (*s == '.')
+        s++;
+    char *name = g_strdup(*s != '\0' ? s : "Visual style");
+    for (int n = 2; n < 100; n++) {
+        char *folder = g_build_filename(dir, name, nullptr);
+        bool taken = g_file_test(folder, G_FILE_TEST_IS_DIR);
+        g_free(folder);
+        if (!taken)
+            break;
+        g_free(name);
+        name = g_strdup_printf("%s (%d)", *s != '\0' ? s : "Visual style", n);
+    }
+    return name;
+}
+
+/* A package chosen with Browse...: copied into the user's themes, unless
+ * it's already one of the installed ones. */
+static void install_package(desk *d, const char *path, const char *stem) {
+    GError *error = nullptr;
+    xd_pkg_info info;
+    if (!xd_pkg_read_info(path, &info, &error)) {
+        char *text = g_strdup_printf("\"%s\" is not a theme package.\n\n%s", stem,
+                                     error->message);
+        error_box(d, text);
+        g_free(text);
+        g_error_free(error);
+        return;
+    }
+    xd_pkg_info_clear(&info);
+    char **dirs = xd_theme_package_dirs();
+    char *found = xd_theme_package_find((const char *const *)dirs, stem);
+    g_strfreev(dirs);
+    char *real_found = found != nullptr ? realpath(found, nullptr) : nullptr;
+    char *real_path = realpath(path, nullptr);
+    bool installed = real_found != nullptr && real_path != nullptr &&
+                     strcmp(real_found, real_path) == 0;
+    free(real_found);
+    free(real_path);
+    g_free(found);
+    if (installed) {
+        select_installed(d, stem);
+        return;
+    }
+    char *dir = xd_theme_package_user_dir();
+    char *name = install_name(dir, stem);
+    char *file = g_strconcat(name, ".xdtheme", nullptr);
+    char *dest = g_build_filename(dir, file, nullptr);
+    char *part_file = g_strconcat(".", file, ".part", nullptr);
+    char *part = g_build_filename(dir, part_file, nullptr);
+    GFile *src = g_file_new_for_path(path);
+    GFile *tmp = g_file_new_for_path(part);
+    /* Into place in one step: the desktop may be reading the old one. */
+    bool ok = g_mkdir_with_parents(dir, 0755) == 0 &&
+              g_file_copy(src, tmp, G_FILE_COPY_OVERWRITE, nullptr, nullptr, nullptr, &error) &&
+              g_rename(part, dest) == 0;
+    if (ok) {
+        select_installed(d, name);
+    } else {
+        (void)g_remove(part);
+        char *text = g_strdup_printf("\"%s\" cannot be installed in %s.\n\n%s", stem, dir,
+                                     error != nullptr ? error->message : g_strerror(errno));
+        error_box(d, text);
+        g_free(text);
+    }
+    g_clear_error(&error);
+    g_object_unref(src);
+    g_object_unref(tmp);
+    g_free(part);
+    g_free(part_file);
+    g_free(dest);
+    g_free(file);
+    g_free(name);
+    g_free(dir);
+}
+
+/* xd-theme-import: beside this program (installed), in a source tree's
+ * tools/ (a build tree), else from PATH. */
+static char *importer_path(void) {
+    char *self = g_file_read_link("/proc/self/exe", nullptr);
+    if (self != nullptr) {
+        char *dir = g_path_get_dirname(self);
+        char *path = g_build_filename(dir, "xd-theme-import", nullptr);
+        g_free(dir);
+        g_free(self);
+        if (g_file_test(path, G_FILE_TEST_IS_EXECUTABLE))
+            return path;
+        g_free(path);
+    }
+    xd_strbuf data = {0};
+    if (xd_data_dir(&data)) {
+        char *path = g_build_filename(xd_strbuf_cstr(&data), "..", "tools", "xd-theme-import",
+                                      nullptr);
+        xd_strbuf_free(&data);
+        if (g_file_test(path, G_FILE_TEST_IS_EXECUTABLE))
+            return path;
+        g_free(path);
+    }
+    xd_strbuf_free(&data);
+    return g_strdup("xd-theme-import");
+}
+
+static void import_finished(desk *d, bool ok) {
+    xd_ui_set_busy(d->ui, false);
+    GError *error = nullptr;
+    xd_pkg_info info;
+    if (ok && xd_pkg_read_info(d->import_part, &info, &error)) {
+        xd_pkg_info_clear(&info);
+        ok = g_rename(d->import_part, d->import_dest) == 0;
+    } else {
+        ok = false;
+    }
+    if (ok) {
+        select_installed(d, d->import_name);
+    } else {
+        (void)g_remove(d->import_part);
+        /* xd-theme-import says why on its last line ("needs pefile..."). */
+        char **lines = g_strsplit(xd_strbuf_cstr(&d->import_out), "\n", -1);
+        const char *why = nullptr;
+        for (char **l = lines; *l != nullptr; l++) {
+            g_strstrip(*l);
+            if (**l != '\0')
+                why = *l;
+        }
+        if (why != nullptr && g_str_has_prefix(why, "xd-theme-import: "))
+            why += strlen("xd-theme-import: ");
+        /* The file's name is in the box already. */
+        size_t source_len = strlen(d->import_source);
+        if (why != nullptr && strncmp(why, d->import_source, source_len) == 0 &&
+            strncmp(why + source_len, ": ", 2) == 0)
+            why += source_len + 2;
+        if (why == nullptr)
+            why = error != nullptr ? error->message : "The conversion failed.";
+        char *base = g_path_get_basename(d->import_source);
+        /* As a sentence: "Not a visual style." */
+        char *reason = g_strdup(why);
+        reason[0] = g_ascii_toupper(reason[0]);
+        bool stop = g_str_has_suffix(reason, ".") || g_str_has_suffix(reason, ")");
+        /* "Not a visual style" would only say the first line again. */
+        bool same = g_ascii_strcasecmp(reason, "Not a visual style") == 0;
+        char *text = g_strdup_printf("\"%s\" cannot be used as a visual style.%s%s%s", base,
+                                     same ? "" : "\n\n", same ? "" : reason,
+                                     same || stop ? "" : ".");
+        error_box(d, text);
+        g_free(text);
+        g_free(reason);
+        g_free(base);
+        g_strfreev(lines);
+    }
+    g_clear_error(&error);
+    xd_strbuf_clear(&d->import_out);
+    g_clear_pointer(&d->import_source, g_free);
+    g_clear_pointer(&d->import_part, g_free);
+    g_clear_pointer(&d->import_dest, g_free);
+    g_clear_pointer(&d->import_name, g_free);
+    update_style_browse(d);
+}
+
+static void import_exited(GObject *source, GAsyncResult *res, gpointer user) {
+    desk *d = user;
+    GSubprocess *sp = G_SUBPROCESS(source);
+    bool ok = g_subprocess_wait_finish(sp, res, nullptr) && g_subprocess_get_successful(sp);
+    xd_ui_remove_source(d->import_wait);
+    d->import_wait = nullptr;
+    g_clear_object(&d->import);
+    import_finished(d, ok);
+}
+
+/* GLib's main context, for g_subprocess_wait_async's answer: libxdui's
+ * loop isn't GLib's. */
+static void import_pump([[maybe_unused]] void *user) {
+    for (int i = 0; i < 16 && g_main_context_iteration(nullptr, FALSE); i++) {
+    }
+}
+
+static void import_output(void *user) {
+    desk *d = user;
+    char buf[1024];
+    ssize_t n = read(d->import_fd, buf, sizeof(buf));
+    if (n > 0) {
+        xd_strbuf_append(&d->import_out, (xd_str){buf, (size_t)n});
+        return;
+    }
+    if (n < 0 && errno == EINTR)
+        return;
+    /* Its output is complete; it exits. */
+    xd_ui_remove_source(d->import_src);
+    d->import_src = nullptr;
+    g_input_stream_close(g_subprocess_get_stdout_pipe(d->import), nullptr, nullptr);
+    d->import_fd = -1;
+    g_subprocess_wait_async(d->import, nullptr, import_exited, d);
+    d->import_wait = xd_ui_add_timer(d->ui, 50, true, import_pump, d);
+}
+
+/* Converts a .msstyles or .theme with xd-theme-import, in the background,
+ * into the user's themes. */
+static void start_import(desk *d, const char *path, const char *stem) {
+    char *dir = xd_theme_package_user_dir();
+    if (g_mkdir_with_parents(dir, 0755) != 0) {
+        char *text = g_strdup_printf("Display Properties cannot create %s.\n\n%s", dir,
+                                     g_strerror(errno));
+        error_box(d, text);
+        g_free(text);
+        g_free(dir);
+        return;
+    }
+    d->import_name = install_name(dir, stem);
+    char *file = g_strconcat(d->import_name, ".xdtheme", nullptr);
+    char *part = g_strconcat(".", file, ".part", nullptr);
+    d->import_dest = g_build_filename(dir, file, nullptr);
+    d->import_part = g_build_filename(dir, part, nullptr);
+    d->import_source = g_strdup(path);
+    g_free(part);
+    g_free(file);
+    g_free(dir);
+    char *importer = importer_path();
+    const char *argv[] = {importer, path, d->import_part, nullptr};
+    GError *error = nullptr;
+    d->import = g_subprocess_newv(argv, G_SUBPROCESS_FLAGS_STDOUT_PIPE |
+                                            G_SUBPROCESS_FLAGS_STDERR_MERGE, &error);
+    g_free(importer);
+    if (d->import == nullptr) {
+        xd_strbuf_append(&d->import_out,
+                         xd_str_from_cstr("Display Properties cannot run xd-theme-import, "
+                                          "which converts Windows visual styles: "));
+        xd_strbuf_append(&d->import_out, xd_str_from_cstr(error->message));
+        g_error_free(error);
+        import_finished(d, false);
+        return;
+    }
+    d->import_fd = stdout_fd(d->import);
+    d->import_src = xd_ui_add_fd(d->ui, d->import_fd, import_output, d);
+    xd_ui_set_busy(d->ui, true);
+    update_style_browse(d);
+}
+
+/* What Browse... chose. */
+static void style_chosen(desk *d, const char *path) {
+    char *base = g_path_get_basename(path);
+    char *lower = g_ascii_strdown(base, -1);
+    char *dot = strrchr(base, '.');
+    char *stem = g_strndup(base, dot != nullptr && dot != base ? (gsize)(dot - base) : strlen(base));
+    if (g_str_has_suffix(lower, ".msstyles") || g_str_has_suffix(lower, ".theme")) {
+        start_import(d, path, stem);
+    } else if (g_str_has_suffix(lower, ".xdtheme")) {
+        install_package(d, path, stem);
+    } else {
+        char *text = g_strdup_printf("\"%s\" is not a visual style. Choose a Windows visual "
+                                     "style (.msstyles), a Windows theme (.theme) or a "
+                                     "XeonDesktop theme package (.xdtheme).",
+                                     base);
+        error_box(d, text);
+        g_free(text);
+    }
+    g_free(stem);
+    g_free(lower);
+    g_free(base);
+}
+
+static void on_style_browse([[maybe_unused]] xd_widget *w, void *user) {
+    desk *d = user;
+    const char *home = getenv("HOME");
+    const char *args[] = {"--styles", "--title", "Open Visual Style", "--folder",
+                          home != nullptr ? home : "/", nullptr};
+    start_chooser(d, args, CHOOSE_STYLE);
 }
 
 /* ---- Advanced Appearance ------------------------------------------------------------ */
@@ -1412,9 +2046,11 @@ static void build_appearance(desk *d) {
     xd_widget_set_page(xd_label(win, (xd_rect){20, 238, 200, 16}, "Windows and buttons:", 0), P);
     d->style_combo = xd_combo(win, (xd_rect){20, 256, 220, 21}, false, on_style, d);
     xd_widget_set_page(d->style_combo, P);
-    for (int i = 0; i < XD_STYLE_COUNT; i++)
-        xd_widget_add_item(d->style_combo, xd_visual_style_name((xd_visual_style)i));
-    xd_widget_select(d->style_combo, (int)d->pending.style);
+    char **dirs = xd_theme_package_dirs();
+    d->packages = xd_theme_packages_list((const char *const *)dirs);
+    g_strfreev(dirs);
+    fill_styles(d);
+    update_preview_package(d);
 
     xd_widget_set_page(xd_label(win, (xd_rect){20, 286, 200, 16}, "Color scheme:", 0), P);
     d->scheme_combo = xd_combo(win, (xd_rect){20, 304, 220, 21}, false, on_scheme, d);
@@ -1424,13 +2060,17 @@ static void build_appearance(desk *d) {
     xd_widget_set_page(xd_label(win, (xd_rect){20, 334, 200, 16}, "Font size:", 0), P);
     d->font_combo = xd_combo(win, (xd_rect){20, 352, 220, 21}, false, on_font_size, d);
     xd_widget_set_page(d->font_combo, P);
-    static const char *const sizes[] = {"Normal", "Large Fonts", "Extra Large Fonts"};
-    for (size_t i = 0; i < XD_ARRAY_LEN(sizes); i++)
-        xd_widget_add_item(d->font_combo, sizes[i]);
-    xd_widget_select(d->font_combo, (int)d->pending.font_size);
+    fill_font_sizes(d);
 
     d->advanced = xd_button(win, (xd_rect){298, 352, 86, 23}, "Advanced", on_advanced, d);
     xd_widget_set_page(d->advanced, P);
+    /* Beside Windows and buttons, as XP's Themes tab offers Browse... in
+     * its list: a Windows visual style (.msstyles, or a .theme naming
+     * one), converted into a theme package, or a package. Last in the tab
+     * order, after Advanced. */
+    d->style_browse =
+        xd_button(win, (xd_rect){298, 255, 86, 23}, "Browse...", on_style_browse, d);
+    xd_widget_set_page(d->style_browse, P);
 }
 
 /* ---- Effects ------------------------------------------------------------------------ */
@@ -1483,6 +2123,24 @@ static void on_large_icons(xd_widget *w, void *user) {
 static void on_full_drag(xd_widget *w, void *user) {
     desk *d = user;
     d->pending.full_window_drag = xd_checkbox_checked(w);
+    changed(d);
+}
+
+/* Scale theme images: Automatic, then the filters in scale.h's order. */
+static void on_scaling(xd_widget *w, void *user) {
+    desk *d = user;
+    int i = xd_widget_selected(w);
+    if (i < 0 || i > XD_FILTER_COUNT)
+        return;
+    d->pending.image_scaling = i == 0 ? XD_FILTER_COUNT : (xd_image_filter)(i - 1);
+    xd_widget_redraw(d->appearance_preview);
+    changed(d);
+}
+
+static void on_integer_scaling(xd_widget *w, void *user) {
+    desk *d = user;
+    d->pending.integer_scaling = xd_checkbox_checked(w);
+    xd_widget_redraw(d->appearance_preview);
     changed(d);
 }
 
@@ -1560,7 +2218,7 @@ static void on_night_light([[maybe_unused]] xd_widget *w, void *user) {
 }
 
 static void on_color_management([[maybe_unused]] xd_widget *w, [[maybe_unused]] void *user) {
-    xd_spawn_own("xd-color", (const char *const[]){nullptr}, nullptr);
+    launch_own("xd-color", nullptr);
 }
 
 static void build_themes(desk *d) {
@@ -1693,6 +2351,23 @@ static void build_effects(desk *d) {
         if (hinting_items[i] == fs->hinting)
             xd_widget_select(d->hinting_combo, (int)i);
     }
+
+    /* How a theme package's pictures are scaled up for high DPI
+     * (docs/THEMES.md): Windows only stretched them. */
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 334, 364, 66}, "Theme images"), P);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 357, 130, 16}, "Scale theme images:", 0), P);
+    d->scaling_combo = xd_combo(win, (xd_rect){164, 354, 208, 21}, false, on_scaling, d);
+    xd_widget_set_page(d->scaling_combo, P);
+    xd_widget_add_item(d->scaling_combo, "Automatic");
+    for (int f = 0; f < XD_FILTER_COUNT; f++)
+        xd_widget_add_item(d->scaling_combo, xd_image_filter_name((xd_image_filter)f));
+    xd_widget_select(d->scaling_combo, d->pending.image_scaling == XD_FILTER_COUNT
+                                           ? 0
+                                           : (int)d->pending.image_scaling + 1);
+    xd_widget_set_page(xd_checkbox(win, (xd_rect){32, 378, 340, 20},
+                                   "Use whole-number scaling when the scale is a whole number",
+                                   d->pending.integer_scaling, on_integer_scaling, d),
+                       P);
     build_themes(d);
 }
 
@@ -2634,8 +3309,8 @@ static void on_apply([[maybe_unused]] xd_widget *w, void *user) { apply(user); }
 
 int main(int argc, char **argv) {
     static desk d;
-    signal(SIGCHLD, SIG_IGN); /* Preview and Browse children */
     d.chooser_fd = -1;
+    d.import_fd = -1;
     d.ui = xd_ui_connect(argc, argv);
     if (d.ui == nullptr)
         return EXIT_FAILURE;
@@ -2683,8 +3358,23 @@ int main(int argc, char **argv) {
         cairo_surface_destroy(d.preview_image);
     if (d.preview_saver != nullptr)
         xd_saver_destroy(d.preview_saver);
-    if (d.chooser_fd >= 0)
-        close(d.chooser_fd);
+    if (d.chooser != nullptr)
+        close_stdout(&d.chooser);
+    if (d.import != nullptr) {
+        /* Closed mid-import: the half-written package goes. */
+        g_subprocess_force_exit(d.import);
+        close_stdout(&d.import);
+        (void)g_remove(d.import_part);
+    }
+    xd_strbuf_free(&d.import_out);
+    g_free(d.import_source);
+    g_free(d.import_part);
+    g_free(d.import_dest);
+    g_free(d.import_name);
+    g_ptr_array_unref(d.packages);
+    xd_pkg_free(d.preview_pkg);
+    g_free(d.preview_pkg_path);
+    g_free(d.preview_pkg_variant);
     xd_strbuf_free(&d.chooser_out);
     free_heads(d.heads, d.head_count);
     free_heads(d.saved_heads, d.saved_count);

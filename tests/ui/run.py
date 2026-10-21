@@ -1491,6 +1491,191 @@ def window_color(s):
     s.log("ok: GlassColor=0074B8FC, GlassTransparency=false (Sky at no intensity)")
 
 
+def write_strip(path, w, h, colours):
+    """A vertical image strip of solid frames (RGBA), as a package's PNG."""
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, w, h * len(colours))
+    for i, (r, g, b) in enumerate(colours):
+        pb.new_subpixbuf(0, i * h, w, h).fill((r << 24) | (g << 16) | (b << 8) | 0xFF)
+    pb.savev(path, "png", [], [])
+
+
+def write_test_package(folder, name, variants):
+    """A tiny theme package of our own: window captions and borders in one
+    solid colour per variant (active), grey (inactive). variants: (id,
+    colour name, (r, g, b))."""
+    os.makedirs(os.path.join(folder, "styles"), exist_ok=True)
+    os.makedirs(os.path.join(folder, "images"), exist_ok=True)
+    xml = [f'<xdtheme version="1" name="{name}" base="classic">']
+    for vid, label, rgb in variants:
+        write_strip(os.path.join(folder, "images", f"{vid}-caption.png"), 12, 26,
+                    [rgb, (128, 128, 128)])
+        write_strip(os.path.join(folder, "images", f"{vid}-side.png"), 4, 8,
+                    [rgb, (128, 128, 128)])
+        write_strip(os.path.join(folder, "images", f"{vid}-bottom.png"), 8, 4,
+                    [rgb, (128, 128, 128)])
+        strip = 'ImageCount="2" ImageLayout="Vertical" SizingMargins="2 2 2 2" SizingType="Stretch"'
+        with open(os.path.join(folder, "styles", f"{vid}.xml"), "w") as f:
+            f.write(
+                '<style><class name="Window">'
+                f'<part name="Caption" ImageFile="images/{vid}-caption.png" {strip}/>'
+                f'<part name="FrameLeft" ImageFile="images/{vid}-side.png" {strip}/>'
+                f'<part name="FrameRight" ImageFile="images/{vid}-side.png" {strip}/>'
+                f'<part name="FrameBottom" ImageFile="images/{vid}-bottom.png" {strip}/>'
+                "</class></style>"
+            )
+        xml.append(f'<variant id="{vid}" name="{label}" size="Normal" style="styles/{vid}.xml"/>')
+    xml.append("</xdtheme>")
+    with open(os.path.join(folder, "theme.xml"), "w") as f:
+        f.write("".join(xml))
+
+
+def theme_packages_setup(s):
+    write_test_package(os.path.join(s.data, "xeondesktop", "themes", "testpkg"), "Test Orange",
+                       [("orange", "Orange", (255, 128, 0)), ("lime", "Lime", (0, 255, 0))])
+
+
+def near(rgb, want, tolerance=12):
+    return max(abs(p - q) for p, q in zip(rgb, want)) <= tolerance
+
+
+@scenario(setup=theme_packages_setup)
+def theme_package(s):
+    """Display Properties lists an installed theme package in Windows and
+    buttons; choosing it shows it in the preview, and OK writes ThemePackage
+    and ThemeVariant: the compositor redraws an open window's frame in the
+    package's look. Browse... shows xd-theme-import's error for a file that
+    isn't a visual style, and installs and chooses a .xdtheme."""
+    empty = s.settle("desktop")
+    s.launch("xd-message", "Hello", "A window to watch.")
+    s.wait_window(title="Hello", state="activated")
+    hello = s.settle("hello")
+    box = hello.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, f"the window to watch is up at {box}")
+    # Its caption, left of the close button, below the frame's top edge.
+    cap = (box[0] + box[2] - 50, box[1] + 8)
+    s.check(not near(hello.pixel(*cap), (255, 128, 0)), f"its caption isn't orange yet "
+            f"{hello.pixel(*cap)}")
+
+    s.launch("xd-desk", "--page", "2")
+    s.wait_window(title="Display Properties", state="activated")
+    props = s.settle("appearance")
+    dp = props.changed_box(hello, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dp is not None, f"Display Properties is up at {dp}")
+    # The client area (404 x 448) from the bottom right of what changed;
+    # the preview is at 20, 40 (364 x 186).
+    cx, cy = dp[0] + dp[2] - 3 - 404, dp[1] + dp[3] - 3 - 448
+    preview = (cx + 30, cy + 50, 340, 160)
+    # Windows and buttons, then its last item: the package.
+    s.inject("key", "Tab", "sleep", 200, "key", "End", "sleep", 400)
+    chosen = s.settle("package-chosen")
+
+    def orange_share(shot, rect):
+        x0, y0, w, h = rect
+        n = hits = 0
+        for y in range(y0, y0 + h, 3):
+            for x in range(x0, x0 + w, 3):
+                n += 1
+                hits += near(shot.pixel(x, y), (255, 128, 0))
+        return hits / max(n, 1)
+
+    s.check(orange_share(chosen, preview) > 0.03,
+            f"the preview draws the package's orange captions ({orange_share(chosen, preview):.3f})")
+    # Color scheme lists the package's colours: Lime is its second.
+    # Its list by mouse: the arrow, then the second row (17px each, below
+    # the 21px box), then back to the first.
+    combo = (cx + 20, cy + 304)
+    s.inject("move", combo[0] + 210, combo[1] + 10, "click", "sleep", 400,
+             "move", combo[0] + 60, combo[1] + 21 + 17 + 8, "click", "sleep", 400)
+    lime = s.settle("lime")
+    s.check(lime.differs(chosen, preview) > 0.02 and orange_share(lime, preview) < 0.01,
+            "Color scheme's second colour, Lime, shows in the preview")
+    s.inject("move", combo[0] + 210, combo[1] + 10, "click", "sleep", 400,
+             "move", combo[0] + 60, combo[1] + 21 + 8, "click", "sleep", 400)
+    s.check(orange_share(s.settle("orange-again"), preview) > 0.03, "and Orange again")
+    s.inject("move", cx + 197, cy + 427, "click")  # OK: apply and close
+    s.wait_window(title="Display Properties", gone=True)
+
+    def written():
+        a = s.ini()["Appearance"]
+        return a.get("ThemePackage") == "testpkg" and a.get("ThemeVariant") == "orange"
+
+    s.wait(written, "desktop.ini to name the package")
+    s.log("ok: ThemePackage=testpkg, ThemeVariant=orange")
+
+    def frame_orange():
+        return near(s.shot("frame").pixel(*cap), (255, 128, 0))
+
+    s.wait(frame_orange, "the open window's caption to turn orange")
+    s.log("ok: the compositor drew the open window's frame from the package")
+
+    # Browse... (at 298, 255 in the client area, 86 x 23): a file that
+    # isn't a visual style.
+    bad = os.path.join(s.home, "Downloads", "broken.msstyles")
+    with open(bad, "wb") as f:
+        f.write(b"MZ but not really a visual style")
+    before = s.settle("before-second")
+    s.launch("xd-desk", "--page", "2", env={"XD_CHOOSE_FILE_ANSWER": bad})
+    s.wait_window(title="Display Properties", state="activated")
+    dp = s.settle("appearance-again").changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dp is not None, f"Display Properties is up again at {dp}")
+    cx, cy = dp[0] + dp[2] - 3 - 404, dp[1] + dp[3] - 3 - 448
+    s.inject("move", cx + 341, cy + 266, "click")
+
+    def error_box():
+        return len([w for w in s.windows() if w["title"] == "Display Properties"]) == 2
+
+    s.wait(error_box, "the error message box", timeout=40)
+    s.settle("import-error")
+    if importlib.util.find_spec("pefile") is None:
+        s.log("skip: python-pefile isn't installed, so the error is xd-theme-import's "
+              "\"needs pefile\": importing a .msstyles isn't tested")
+    else:
+        s.log("ok: xd-theme-import's error for a bad .msstyles is in a message box")
+    s.check(not any(n.endswith(".part") or n.startswith("broken")
+                    for n in os.listdir(os.path.join(s.data, "xeondesktop", "themes"))),
+            "nothing is left of the failed import")
+    s.inject("key", "Return")  # the box's OK
+    s.wait(lambda: not error_box(), "the message box to close")
+    s.inject("move", cx + 278, cy + 427, "click")  # Cancel
+    s.wait_window(title="Display Properties", gone=True)
+
+    # Browse...: a package (.xdtheme), installed and chosen.
+    import zipfile
+
+    src = os.path.join(s.base, "bluebox")
+    write_test_package(src, "Blue Box", [("blue", "Blue", (0, 0, 255))])
+    package = os.path.join(s.home, "Downloads", "bluebox.xdtheme")
+    with zipfile.ZipFile(package, "w") as z:
+        for folder, _, files in os.walk(src):
+            for name in files:
+                full = os.path.join(folder, name)
+                z.write(full, os.path.relpath(full, src))
+    before = s.settle("before-third")
+    s.launch("xd-desk", "--page", "2", env={"XD_CHOOSE_FILE_ANSWER": package})
+    s.wait_window(title="Display Properties", state="activated")
+    third = s.settle("appearance-third")
+    dp = third.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(dp is not None, f"Display Properties is up a third time at {dp}")
+    cx, cy = dp[0] + dp[2] - 3 - 404, dp[1] + dp[3] - 3 - 448
+    s.inject("move", cx + 341, cy + 266, "click", "sleep", 1000)
+    installed = os.path.join(s.data, "xeondesktop", "themes", "bluebox.xdtheme")
+    s.wait(lambda: os.path.exists(installed), "the package to be installed")
+    s.settle("installed")
+    s.inject("move", cx + 197, cy + 427, "click")  # OK
+    s.wait_window(title="Display Properties", gone=True)
+    s.wait(lambda: s.ini()["Appearance"].get("ThemePackage") == "bluebox",
+           "desktop.ini to name the installed package")
+    s.log("ok: Browse... installed bluebox.xdtheme and chose it")
+    s.wait(lambda: near(s.shot("blue-frame").pixel(*cap), (0, 0, 255)),
+           "the open window's caption to turn blue")
+    s.log("ok: and the frame changed again, the old package freed")
+
+
 @scenario()
 def desktop_menu(s):
     """A right-click on the desktop opens its menu; Esc closes it."""

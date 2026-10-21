@@ -388,6 +388,17 @@ typedef struct xd_settings {
     char icon_theme[64]; /* IconTheme: a freedesktop icon theme under icons/ */
     char gtk_theme[64];  /* GtkTheme: an installed GTK3 theme instead of ours */
     char qt_style[64];   /* QtStyle: a Qt widget style's key; "" = automatic */
+    /* A theme package drawing over the style (docs/THEMES.md, themepkg.h):
+     * ThemePackage, its name under xeondesktop/themes (a folder, or the
+     * stem of a .xdtheme; never a path; "" = none); ThemeVariant, its
+     * variant's id ("" or unknown = its first); ImageScaling, the filter
+     * its images are scaled with (XD_FILTER_COUNT: Automatic, the
+     * package's own, else Smooth); IntegerScaling, whole-number scales
+     * done exactly. */
+    char theme_package[128];
+    char theme_variant[64];
+    xd_image_filter image_scaling;
+    bool integer_scaling;
     /* [CustomScheme]: Advanced Appearance's changes to the scheme. Choosing
      * another scheme or font size drops them, as in Windows. */
     xd_scheme_custom custom_scheme;
