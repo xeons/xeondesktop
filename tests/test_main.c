@@ -86,6 +86,7 @@
 #include "../src/ui/textedit.h"
 #include "../src/users/accounts.h"
 #include "../src/users/users.h"
+#include "../src/theme/pkg.h"
 #include "../src/theme/theme.h"
 #include "../src/theme/scale.h"
 #include "../src/thumbnailer/thumbcache.h"
@@ -1423,6 +1424,470 @@ static void test_image_scale(void) {
 
 static const xd_installed_theme *theme_at(GPtrArray *list, guint i) {
     return i < list->len ? g_ptr_array_index(list, i) : nullptr;
+}
+
+/* ---- theme packages (src/theme/pkg.c, style_pkg.c, controls.c) ----
+ * A package made here, with images drawn here: never Microsoft's. */
+
+/* images/NAME: w x h opaque pixels (0xRRGGBB), row by row. */
+static void pkg_png(const char *root, const char *name, int w, int h, const uint32_t *px) {
+    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    cairo_surface_flush(s);
+    unsigned char *d = cairo_image_surface_get_data(s);
+    int stride = cairo_image_surface_get_stride(s);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            uint32_t v = 0xFF000000u | px[y * w + x];
+            memcpy(d + (size_t)y * (size_t)stride + (size_t)x * 4, &v, sizeof(v));
+        }
+    cairo_surface_mark_dirty(s);
+    char *path = g_build_filename(root, "images", name, nullptr);
+    CHECK(cairo_surface_write_to_png(s, path) == CAIRO_STATUS_SUCCESS);
+    g_free(path);
+    cairo_surface_destroy(s);
+}
+
+static void pkg_png_solid(const char *root, const char *name, int w, int h, uint32_t rgb) {
+    uint32_t *px = g_new(uint32_t, (gsize)(w * h));
+    for (int i = 0; i < w * h; i++)
+        px[i] = rgb;
+    pkg_png(root, name, w, h, px);
+    g_free(px);
+}
+
+static void pkg_text(const char *root, const char *name, const char *text) {
+    char *path = g_build_filename(root, name, nullptr);
+    CHECK(g_file_set_contents(path, text, -1, nullptr));
+    g_free(path);
+}
+
+static const char *const PKG_FILES[] = {
+    "theme.xml",         "styles/a.xml",     "styles/b.xml",      "images/grid.png",
+    "images/states.png", "images/small.png", "images/dpi13.png",  "images/dpi26.png",
+    "images/size8.png",  "images/size16.png", "images/glyph7.png", "images/glyph11.png",
+    "images/atlas.png",  "images/checker.png", "images/bar.png",   "images/chunk.png",
+    "images/hstrip.png",
+};
+
+static void make_test_package(const char *root) {
+    char *styles = g_build_filename(root, "styles", nullptr);
+    char *images = g_build_filename(root, "images", nullptr);
+    CHECK(g_mkdir(styles, 0755) == 0 && g_mkdir(images, 0755) == 0);
+    g_free(styles);
+    g_free(images);
+    pkg_text(root, "theme.xml",
+             "<xdtheme version=\"1\" name=\"Test Style\" base=\"whistler\">\n"
+             "  <variant id=\"a\" name=\"A\" size=\"normal\" style=\"styles/a.xml\"/>\n"
+             "  <variant id=\"b\" name=\"B\" size=\"normal\" style=\"styles/b.xml\"/>\n"
+             "  <scaling filter=\"Integer\"/>\n"
+             "</xdtheme>\n");
+    pkg_text(root, "styles/b.xml",
+             "<style><class name=\"Button\"><part name=\"PushButton\" Lvl=\"b\"/></class></style>");
+    pkg_text(
+        root, "styles/a.xml",
+        "<style>\n"
+        "  <sysmetrics>\n"
+        "    <color name=\"BtnFace\" value=\"1 2 3\"/>\n"
+        "    <color name=\"Window\" value=\"#102030\"/>\n"
+        "    <font name=\"CaptionFont\" face=\"Tahoma\" size=\"11\" bold=\"true\"/>\n"
+        "    <font name=\"MenuFont\" face=\"Comic Neue\" size=\"9\"/>\n"
+        "    <value name=\"CaptionBarHeight\" value=\"27\"/>\n"
+        "    <value name=\"ScrollbarWidth\" value=\"19\"/>\n"
+        "  </sysmetrics>\n"
+        "  <class name=\"globals\"><part Glob=\"g\"/></class>\n"
+        "  <class name=\"ButtonStyle\">\n"
+        "    <part Lvl=\"classstyle\"/>\n"
+        "    <part name=\"PushButton\" StyleProp=\"s\"/>\n"
+        "    <part name=\"UserButton\" StyleProp=\"u\"/>\n"
+        "  </class>\n"
+        "  <class name=\"Button\">\n"
+        "    <part Lvl=\"class\"/>\n"
+        "    <part name=\"PushButton\" Lvl=\"part\" PartOnly=\"p\" ImageFile=\"images/states.png\"\n"
+        "          ImageCount=\"3\" ImageLayout=\"Vertical\" SizingType=\"TrueSize\"/>\n"
+        "    <part name=\"PushButton\" state=\"Hot\" Lvl=\"state\"/>\n"
+        "    <part name=\"3\" Lvl=\"checkbox\"/>\n"
+        "  </class>\n"
+        "  <class name=\"Dialog::Button\"><part name=\"PushButton\" state=\"2\" Lvl=\"app\"/></class>\n"
+        "  <class name=\"Toolbar\"><part state=\"Hot\" TextColor=\"1 2 3\"/></class>\n"
+        "  <class name=\"Draw\">\n"
+        "    <part name=\"Grid\" ImageFile=\"images/grid.png\" SizingMargins=\"4 4 4 4\"/>\n"
+        "    <part name=\"Small\" ImageFile=\"images/small.png\" SizingType=\"TrueSize\"/>\n"
+        "    <part name=\"States\" ImageFile=\"images/states.png\" ImageCount=\"3\"\n"
+        "          ImageLayout=\"vertical\" SizingType=\"TrueSize\"/>\n"
+        "    <part name=\"Strip\" ImageFile=\"images/hstrip.png\" ImageCount=\"2\"\n"
+        "          SizingType=\"TrueSize\"/>\n"
+        "    <part name=\"Dpi\" ImageSelectType=\"Dpi\" SizingType=\"TrueSize\"\n"
+        "          ImageFile1=\"images/dpi13.png\" MinDpi1=\"96\"\n"
+        "          ImageFile2=\"images/dpi26.png\" MinDpi2=\"192\"/>\n"
+        "    <part name=\"BySize\" ImageSelectType=\"Size\" SizingType=\"TrueSize\"\n"
+        "          ImageFile1=\"images/size8.png\" MinSize1=\"8 8\"\n"
+        "          ImageFile2=\"images/size16.png\" MinSize2=\"16 16\"/>\n"
+        "    <part name=\"Glyph\" BgType=\"None\" GlyphType=\"ImageGlyph\"\n"
+        "          ImageFile1=\"images/glyph7.png\" ImageFile2=\"images/glyph11.png\"/>\n"
+        "    <part name=\"Border\" BgType=\"BorderFill\" BorderSize=\"2\" BorderColor=\"255 0 0\"\n"
+        "          FillColor=\"0 0 255\"/>\n"
+        "    <part name=\"Atlas\" AtlasImage=\"images/atlas.png\" AtlasRect=\"4 0 8 4\"\n"
+        "          SizingType=\"TrueSize\"/>\n"
+        "    <part name=\"Checker\" ImageFile=\"images/checker.png\" SizingType=\"TrueSize\"/>\n"
+        "    <part name=\"Outside\" ImageFile=\"../theme.xml\"/>\n"
+        "  </class>\n"
+        "  <class name=\"Progress\">\n"
+        "    <part ProgressChunkSize=\"4\" ProgressSpaceSize=\"2\"/>\n"
+        "    <part name=\"Bar\" ImageFile=\"images/bar.png\" SizingMargins=\"2 2 2 2\"/>\n"
+        "    <part name=\"Chunk\" ImageFile=\"images/chunk.png\"/>\n"
+        "  </class>\n"
+        "  <class name=\"Menu\">\n"
+        "    <part name=\"PopupItem\" ImageFile=\"images/states.png\" ImageCount=\"3\"\n"
+        "          ImageLayout=\"Vertical\"/>\n"
+        "  </class>\n"
+        "</style>\n");
+    /* A 12 px 9-grid: a colour per corner, the edges one, the middle one. */
+    uint32_t grid[12 * 12];
+    for (int y = 0; y < 12; y++)
+        for (int x = 0; x < 12; x++) {
+            int cx = x < 4 ? 0 : x < 8 ? 1 : 2, cy = y < 4 ? 0 : y < 8 ? 1 : 2;
+            static const uint32_t cells[3][3] = {{0xFF0000, 0x00FFFF, 0x00FF00},
+                                                 {0x00FFFF, 0x808080, 0x00FFFF},
+                                                 {0x0000FF, 0x00FFFF, 0xFFFF00}};
+            grid[y * 12 + x] = cells[cy][cx];
+        }
+    pkg_png(root, "grid.png", 12, 12, grid);
+    uint32_t states[4 * 12];
+    for (int i = 0; i < 4 * 12; i++)
+        states[i] = i < 16 ? 0x110000 : i < 32 ? 0x002200 : 0x000033;
+    pkg_png(root, "states.png", 4, 12, states);
+    uint32_t hstrip[8 * 4];
+    for (int i = 0; i < 8 * 4; i++)
+        hstrip[i] = i % 8 < 4 ? 0x0A0A0A : 0x0B0B0B;
+    pkg_png(root, "hstrip.png", 8, 4, hstrip);
+    pkg_png_solid(root, "small.png", 6, 4, 0xAA0000);
+    pkg_png_solid(root, "dpi13.png", 13, 13, 0x101010);
+    pkg_png_solid(root, "dpi26.png", 26, 26, 0x202020);
+    pkg_png_solid(root, "size8.png", 8, 8, 0x303030);
+    pkg_png_solid(root, "size16.png", 16, 16, 0x404040);
+    pkg_png_solid(root, "glyph7.png", 7, 7, 0x505050);
+    pkg_png_solid(root, "glyph11.png", 11, 11, 0x606060);
+    uint32_t atlas[12 * 4];
+    for (int i = 0; i < 12 * 4; i++)
+        atlas[i] = i % 12 < 4 ? 0x700000 : i % 12 < 8 ? 0x007000 : 0x000070;
+    pkg_png(root, "atlas.png", 12, 4, atlas);
+    const uint32_t checker[4] = {0x000000, 0xFFFFFF, 0xFFFFFF, 0x000000};
+    pkg_png(root, "checker.png", 2, 2, checker);
+    pkg_png_solid(root, "bar.png", 10, 10, 0xC0C0C0);
+    pkg_png_solid(root, "chunk.png", 1, 1, 0x00A000);
+}
+
+#if XD_HAVE_LIBARCHIVE
+static void zip_test_package(const char *root, const char *zip) {
+    struct archive *a = archive_write_new();
+    archive_write_set_format_zip(a);
+    CHECK(archive_write_open_filename(a, zip) == ARCHIVE_OK);
+    for (size_t i = 0; i < G_N_ELEMENTS(PKG_FILES); i++) {
+        char *path = g_build_filename(root, PKG_FILES[i], nullptr);
+        char *data = nullptr;
+        gsize len = 0;
+        CHECK(g_file_get_contents(path, &data, &len, nullptr));
+        struct archive_entry *e = archive_entry_new();
+        archive_entry_set_pathname(e, PKG_FILES[i]);
+        archive_entry_set_filetype(e, AE_IFREG);
+        archive_entry_set_perm(e, 0644);
+        archive_entry_set_size(e, (la_int64_t)len);
+        CHECK(archive_write_header(a, e) == ARCHIVE_OK);
+        CHECK(archive_write_data(a, data, len) == (la_ssize_t)len);
+        archive_entry_free(e);
+        g_free(data);
+        g_free(path);
+    }
+    CHECK(archive_write_close(a) == ARCHIVE_OK);
+    archive_write_free(a);
+}
+#endif
+
+static bool prop_is(const xd_pkg *p, const char *cls, const char *part, const char *state,
+                    const char *prop, const char *want) {
+    const char *v = xd_pkg_prop(p, cls, part, state, prop);
+    if (want == nullptr)
+        return v == nullptr;
+    return v != nullptr && strcmp(v, want) == 0;
+}
+
+/* A white canvas, w x h. */
+static cairo_surface_t *pkg_canvas(int w, int h, cairo_t **cr) {
+    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    *cr = cairo_create(s);
+    cairo_set_source_rgb(*cr, 1, 1, 1);
+    cairo_paint(*cr);
+    return s;
+}
+
+/* Draws part of class Draw in state at (0, 0, w, h) at `scale`, into a
+ * canvas of cw x ch. */
+static cairo_surface_t *pkg_render(const xd_pkg *p, double scale, const char *part,
+                                   const char *state, int w, int h, int cw, int ch) {
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_scheme sc;
+    xd_scheme_init_default(&sc);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, scale);
+    cairo_t *cr;
+    cairo_surface_t *s = pkg_canvas(cw, ch, &cr);
+    CHECK(xd_pkg_draw(&t, cr, "Draw", part, state, (xd_rect){0, 0, w, h}));
+    cairo_destroy(cr);
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    return s;
+}
+
+static int pkg_part_w(const xd_pkg *p, double scale, const char *part) {
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_scheme sc;
+    xd_scheme_init_default(&sc);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, scale);
+    int w = -1, h = -1;
+    CHECK(xd_pkg_part_size(&t, "Draw", part, "1", &w, &h));
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    return w == h ? w : -1;
+}
+
+static void test_theme_package(void) {
+    const char *names = XD_SOURCE_ROOT "/data/theme/uxtheme.ini";
+    char *root = g_dir_make_tmp("xd-pkg-XXXXXX", nullptr);
+    char *dir = g_build_filename(root, "test", nullptr);
+    CHECK(g_mkdir(dir, 0755) == 0);
+    make_test_package(dir);
+
+    /* The loader: a folder, its variants (the first unless one is
+     * named), and errors. */
+    GError *error = nullptr;
+    xd_pkg *p = xd_pkg_load(dir, nullptr, names, &error);
+    CHECK(p != nullptr && error == nullptr);
+    if (p == nullptr) {
+        g_clear_error(&error);
+        rm_tree(root);
+        g_free(dir);
+        g_free(root);
+        return;
+    }
+    CHECK(strcmp(xd_pkg_name(p), "Test Style") == 0 && strcmp(xd_pkg_variant(p), "a") == 0);
+    CHECK(xd_pkg_base(p) == XD_STYLE_WHISTLER);
+    xd_image_filter f = XD_FILTER_SMOOTH;
+    CHECK(xd_pkg_filter(p, &f) && f == XD_FILTER_INTEGER);
+    xd_pkg *pb = xd_pkg_load(dir, "b", names, nullptr);
+    CHECK(pb != nullptr && strcmp(xd_pkg_variant(pb), "b") == 0);
+    CHECK(pb != nullptr && prop_is(pb, "Button", "PushButton", nullptr, "Lvl", "b"));
+    xd_pkg_free(pb);
+    pb = xd_pkg_load(dir, "no-such-variant", names, nullptr);
+    CHECK(pb != nullptr && strcmp(xd_pkg_variant(pb), "a") == 0);
+    xd_pkg_free(pb);
+    char *missing = g_build_filename(root, "none", nullptr);
+    CHECK(xd_pkg_load(missing, nullptr, names, &error) == nullptr && error != nullptr);
+    g_clear_error(&error);
+    g_free(missing);
+#if XD_HAVE_LIBARCHIVE
+    char *zip = g_build_filename(root, "test.xdtheme", nullptr);
+    zip_test_package(dir, zip);
+    xd_pkg *pz = xd_pkg_load(zip, "b", names, &error);
+    CHECK(pz != nullptr && error == nullptr);
+    if (pz != nullptr) {
+        CHECK(strcmp(xd_pkg_name(pz), "Test Style") == 0 && strcmp(xd_pkg_variant(pz), "b") == 0);
+        xd_pkg_free(pz);
+    }
+    g_clear_error(&error);
+    pz = xd_pkg_load(zip, nullptr, names, nullptr);
+    CHECK(pz != nullptr);
+    if (pz != nullptr) {
+        /* Images come out of the zip too. */
+        cairo_surface_t *s = pkg_render(pz, 1, "Small", "1", 20, 20, 20, 20);
+        CHECK(pixel(s, 7, 8) == 0xAA0000);
+        cairo_surface_destroy(s);
+        xd_pkg_free(pz);
+    }
+    char *notzip = g_build_filename(dir, "theme.xml", nullptr);
+    CHECK(xd_pkg_load(notzip, nullptr, names, &error) == nullptr && error != nullptr);
+    g_clear_error(&error);
+    g_free(notzip);
+    g_free(zip);
+#endif
+
+    /* Lookups: part and state, part, class, Class for App::Class,
+     * ClassStyle, globals; names and numbers alike, any case. */
+    CHECK(prop_is(p, "Button", "PushButton", "Hot", "Lvl", "state"));
+    CHECK(prop_is(p, "button", "PUSHBUTTON", "hot", "lvl", "state"));
+    CHECK(prop_is(p, "Button", "1", "2", "Lvl", "state"));
+    CHECK(prop_is(p, "Button", "PushButton", "Pressed", "Lvl", "part"));
+    CHECK(prop_is(p, "Button", "PushButton", nullptr, "Lvl", "part"));
+    CHECK(prop_is(p, "Button", "CheckBox", "Hot", "Lvl", "checkbox"));
+    CHECK(prop_is(p, "Button", "RadioButton", nullptr, "Lvl", "class"));
+    CHECK(prop_is(p, "Dialog::Button", "PushButton", "Hot", "Lvl", "app"));
+    CHECK(prop_is(p, "Dialog::Button", "PushButton", "Normal", "Lvl", "part"));
+    CHECK(prop_is(p, "Dialog::Button", "PushButton", nullptr, "PartOnly", "p"));
+    CHECK(prop_is(p, "Dialog::Button", "GroupBox", nullptr, "Lvl", "class"));
+    CHECK(prop_is(p, "Button", "PushButton", nullptr, "StyleProp", "s"));
+    CHECK(prop_is(p, "Edit", "EditText", "Normal", "Glob", "g"));
+    CHECK(prop_is(p, "Button", nullptr, nullptr, "NoSuchProperty", nullptr));
+    /* A state on the class itself, Toolbar(Hot): Hot is 2 for all its parts. */
+    CHECK(prop_is(p, "Toolbar", nullptr, "2", "TextColor", "1 2 3"));
+    CHECK(prop_is(p, "Toolbar", "0", "HOT", "TextColor", "1 2 3"));
+    CHECK(prop_is(p, "Toolbar", nullptr, "Pressed", "TextColor", nullptr));
+    xd_rgba rgba;
+    CHECK(xd_pkg_color(p, "Toolbar", nullptr, "Hot", "TextColor", &rgba) &&
+          fabs(rgba.r - 1 / 255.0) < 1e-9 && fabs(rgba.b - 3 / 255.0) < 1e-9);
+    /* Which parts it styles, through the same classes. */
+    CHECK(xd_pkg_has(p, "Button", "PushButton") && xd_pkg_has(p, "Dialog::Button", "CheckBox"));
+    CHECK(xd_pkg_has(p, "Button", "UserButton")); /* in ButtonStyle */
+    CHECK(!xd_pkg_has(p, "Button", "GroupBox") && !xd_pkg_has(p, "Tab", "Pane"));
+
+    /* [SysMetrics] over the scheme, with the base style. */
+    xd_scheme sc;
+    xd_scheme_init_default(&sc);
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
+    CHECK(t.pkg == p && t.style == XD_STYLE_WHISTLER);
+    CHECK(rgb_is(t.scheme.colors[XD_COLOR_BUTTON_FACE], 1, 2, 3));
+    CHECK(rgb_is(t.scheme.colors[XD_COLOR_WINDOW], 0x10, 0x20, 0x30));
+    CHECK(rgb_is(t.scheme.colors[XD_COLOR_HILIGHT], sc.colors[XD_COLOR_HILIGHT].r,
+                 sc.colors[XD_COLOR_HILIGHT].g, sc.colors[XD_COLOR_HILIGHT].b));
+    CHECK(t.scheme.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
+    CHECK(t.scheme.metrics[XD_METRIC_SCROLL_WIDTH] == 19);
+    CHECK(t.scheme.metrics[XD_METRIC_MENU_HEIGHT] == sc.metrics[XD_METRIC_MENU_HEIGHT]);
+    const xd_font_spec *cap = &t.scheme.fonts[XD_FONT_CAPTION];
+    CHECK(strcmp(cap->family, XD_FONT_FAMILY_TAHOMA) == 0 && cap->size_pt == 11 && cap->bold);
+    const xd_font_spec *menu = &t.scheme.fonts[XD_FONT_MENU];
+    CHECK(g_str_has_prefix(menu->family, "Comic Neue") && menu->size_pt == 9 && !menu->bold);
+    CHECK(strcmp(t.scheme.fonts[XD_FONT_ICON].family, sc.fonts[XD_FONT_ICON].family) == 0);
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
+    CHECK(t.pkg == nullptr && t.style == XD_STYLE_CLASSIC);
+
+    /* 9-grid: corners as they are, edges and middle stretched. */
+    cairo_surface_t *s = pkg_render(p, 1, "Grid", "1", 40, 30, 42, 32);
+    CHECK(pixel(s, 0, 0) == 0xFF0000 && pixel(s, 3, 3) == 0xFF0000);
+    CHECK(pixel(s, 39, 0) == 0x00FF00 && pixel(s, 36, 3) == 0x00FF00);
+    CHECK(pixel(s, 0, 29) == 0x0000FF && pixel(s, 39, 29) == 0xFFFF00);
+    CHECK(pixel(s, 36, 26) == 0xFFFF00 && pixel(s, 35, 26) == 0x00FFFF);
+    CHECK(pixel(s, 4, 0) == 0x00FFFF && pixel(s, 20, 3) == 0x00FFFF && pixel(s, 0, 15) == 0x00FFFF);
+    CHECK(pixel(s, 4, 4) == 0x808080 && pixel(s, 20, 15) == 0x808080 && pixel(s, 35, 25) == 0x808080);
+    CHECK(pixel(s, 40, 0) == 0xFFFFFF && pixel(s, 0, 30) == 0xFFFFFF);
+    cairo_surface_destroy(s);
+
+    /* TrueSize: as it is, centred. */
+    s = pkg_render(p, 1, "Small", "1", 20, 20, 20, 20);
+    CHECK(pixel(s, 7, 8) == 0xAA0000 && pixel(s, 12, 11) == 0xAA0000);
+    CHECK(pixel(s, 6, 8) == 0xFFFFFF && pixel(s, 13, 8) == 0xFFFFFF);
+    CHECK(pixel(s, 7, 7) == 0xFFFFFF && pixel(s, 7, 12) == 0xFFFFFF);
+    cairo_surface_destroy(s);
+
+    /* A state's frame: number - 1; past the last, the last. */
+    static const struct {
+        const char *state;
+        uint32_t want;
+    } frames[] = {{"1", 0x110000}, {"2", 0x002200}, {"3", 0x000033}, {"9", 0x000033}};
+    for (size_t i = 0; i < G_N_ELEMENTS(frames); i++) {
+        s = pkg_render(p, 1, "States", frames[i].state, 4, 4, 4, 4);
+        CHECK(pixel(s, 0, 0) == frames[i].want && pixel(s, 3, 3) == frames[i].want);
+        cairo_surface_destroy(s);
+    }
+    /* Without an ImageLayout, frames are side by side, as uxtheme has them. */
+    s = pkg_render(p, 1, "Strip", "2", 4, 4, 4, 4);
+    CHECK(pixel(s, 0, 0) == 0x0B0B0B && pixel(s, 3, 3) == 0x0B0B0B);
+    cairo_surface_destroy(s);
+    s = pkg_render(p, 2, "Strip", "1", 8, 8, 8, 8);
+    CHECK(pixel(s, 0, 0) == 0x0A0A0A && pixel(s, 7, 7) == 0x0A0A0A);
+    cairo_surface_destroy(s);
+    /* By name: PushButton's Hot is 2, Pressed 3. */
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
+    cairo_t *cr;
+    s = pkg_canvas(4, 4, &cr);
+    CHECK(xd_pkg_draw(&t, cr, "Button", "PushButton", "Hot", (xd_rect){0, 0, 4, 4}));
+    CHECK(pixel(s, 1, 1) == 0x002200);
+    CHECK(xd_pkg_draw(&t, cr, "Button", "PushButton", "pressed", (xd_rect){0, 0, 4, 4}));
+    CHECK(pixel(s, 1, 1) == 0x000033);
+    /* Nothing outside the package, nor for parts it lacks. */
+    CHECK(!xd_pkg_draw(&t, cr, "Draw", "Outside", "1", (xd_rect){0, 0, 4, 4}));
+    CHECK(!xd_pkg_draw(&t, cr, "Draw", "NoSuchPart", "1", (xd_rect){0, 0, 4, 4}));
+    cairo_destroy(cr);
+    cairo_surface_destroy(s);
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+
+    /* ImageFileN by DPI: the one made for it unscaled, else the nearest
+     * below, scaled. */
+    CHECK(pkg_part_w(p, 1, "Dpi") == 13);
+    CHECK(pkg_part_w(p, 2, "Dpi") == 26);
+    CHECK(pkg_part_w(p, 1.5, "Dpi") == 20);
+    CHECK(pkg_part_w(p, 3, "Dpi") == 39);
+    s = pkg_render(p, 2, "Dpi", "1", 26, 26, 26, 26);
+    CHECK(pixel(s, 0, 0) == 0x202020 && pixel(s, 25, 25) == 0x202020);
+    cairo_surface_destroy(s);
+    /* ... and by size: the largest whose MinSize fits. */
+    s = pkg_render(p, 1, "BySize", "1", 10, 10, 20, 20);
+    CHECK(pixel(s, 5, 5) == 0x303030);
+    cairo_surface_destroy(s);
+    s = pkg_render(p, 1, "BySize", "1", 20, 20, 20, 20);
+    CHECK(pixel(s, 10, 10) == 0x404040 && pixel(s, 2, 2) == 0x404040 && pixel(s, 1, 1) == 0xFFFFFF);
+    cairo_surface_destroy(s);
+    /* Image glyphs: the largest that fits, centred. */
+    s = pkg_render(p, 1, "Glyph", "1", 10, 10, 14, 14);
+    CHECK(pixel(s, 1, 1) == 0x505050 && pixel(s, 7, 7) == 0x505050);
+    CHECK(pixel(s, 0, 0) == 0xFFFFFF && pixel(s, 8, 8) == 0xFFFFFF);
+    cairo_surface_destroy(s);
+    s = pkg_render(p, 1, "Glyph", "1", 14, 14, 14, 14);
+    CHECK(pixel(s, 1, 1) == 0x606060 && pixel(s, 11, 11) == 0x606060 && pixel(s, 12, 12) == 0xFFFFFF);
+    cairo_surface_destroy(s);
+
+    /* BorderFill, its border scaled. */
+    s = pkg_render(p, 1, "Border", "1", 10, 10, 10, 10);
+    CHECK(pixel(s, 0, 0) == 0xFF0000 && pixel(s, 1, 1) == 0xFF0000 && pixel(s, 9, 9) == 0xFF0000);
+    CHECK(pixel(s, 2, 2) == 0x0000FF && pixel(s, 7, 7) == 0x0000FF && pixel(s, 8, 5) == 0xFF0000);
+    cairo_surface_destroy(s);
+    s = pkg_render(p, 2, "Border", "1", 20, 20, 20, 20);
+    CHECK(pixel(s, 3, 3) == 0xFF0000 && pixel(s, 4, 4) == 0x0000FF && pixel(s, 16, 10) == 0xFF0000);
+    cairo_surface_destroy(s);
+
+    /* AtlasRect: a rectangle of a larger image. */
+    s = pkg_render(p, 1, "Atlas", "1", 4, 4, 4, 4);
+    CHECK(pixel(s, 0, 0) == 0x007000 && pixel(s, 3, 3) == 0x007000);
+    cairo_surface_destroy(s);
+
+    /* High DPI: at whole-number scales, each pixel an exact block. */
+    for (int k = 2; k <= 3; k++) {
+        s = pkg_render(p, k, "Checker", "1", 2 * k, 2 * k, 2 * k, 2 * k);
+        bool exact = true;
+        for (int y = 0; y < 2 * k; y++)
+            for (int x = 0; x < 2 * k; x++)
+                exact = exact && pixel(s, x, y) == ((x / k + y / k) % 2 ? 0xFFFFFFu : 0u);
+        CHECK(exact);
+        cairo_surface_destroy(s);
+    }
+
+    /* The controls drawn from it: progress chunks ProgressChunkSize wide,
+     * ProgressSpaceSize apart, inside the bar's SizingMargins; a menu's hot
+     * item from Menu's PopupItem, nothing behind a normal one. */
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
+    s = pkg_canvas(40, 10, &cr);
+    xd_theme_draw_progress(&t, cr, (xd_rect){0, 0, 40, 10}, 0.5);
+    CHECK(pixel(s, 1, 5) == 0xC0C0C0 && pixel(s, 2, 1) == 0xC0C0C0);
+    CHECK(pixel(s, 2, 2) == 0x00A000 && pixel(s, 5, 7) == 0x00A000);
+    CHECK(pixel(s, 6, 5) == 0xC0C0C0 && pixel(s, 7, 5) == 0xC0C0C0);
+    CHECK(pixel(s, 8, 5) == 0x00A000 && pixel(s, 17, 5) == 0x00A000);
+    CHECK(pixel(s, 18, 5) == 0xC0C0C0 && pixel(s, 20, 5) == 0xC0C0C0);
+    cairo_destroy(cr);
+    cairo_surface_destroy(s);
+    s = pkg_canvas(60, 44, &cr);
+    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
+    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 22, 60, 22}, 0, "", false, false);
+    CHECK(pixel(s, 30, 11) == 0x002200 && pixel(s, 0, 0) == 0x002200);
+    CHECK(pixel(s, 30, 33) == 0xFFFFFF);
+    cairo_destroy(cr);
+    cairo_surface_destroy(s);
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+
+    xd_pkg_free(p);
+    rm_tree(root);
+    g_free(dir);
+    g_free(root);
 }
 
 static void test_theme_settings(void) {
@@ -7507,6 +7972,7 @@ int main(void) {
     test_grab_keys();
     test_extract();
     test_image_scale();
+    test_theme_package();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

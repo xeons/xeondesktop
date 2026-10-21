@@ -6048,6 +6048,95 @@ def x11_keyboard_grab(s):
     s.log("ok: Ctrl+Alt+Delete still reached us")
 
 
+# A theme package written by the scenario (our own flat colours, never
+# anyone's art): caption, borders, close button and push buttons each in a
+# colour nothing else on the screen has.
+PKG_CAPTION = (200, 30, 160)
+PKG_BORDER = (30, 160, 200)
+PKG_CLOSE = (20, 200, 20)
+PKG_BUTTON = (30, 60, 230)
+
+
+def write_theme_package(s):
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    root = os.path.join(s.base, "testpkg")
+    os.makedirs(os.path.join(root, "images"))
+    os.makedirs(os.path.join(root, "styles"))
+
+    def png(name, w, h, rgb):
+        pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, w, h)
+        pb.fill((rgb[0] << 24) | (rgb[1] << 16) | (rgb[2] << 8) | 0xFF)
+        pb.savev(os.path.join(root, "images", name), "png", [], [])
+
+    png("caption.png", 8, 30, PKG_CAPTION)
+    png("border.png", 4, 4, PKG_BORDER)
+    png("close.png", 21, 21, PKG_CLOSE)
+    png("button.png", 10, 10, PKG_BUTTON)
+    with open(os.path.join(root, "theme.xml"), "w") as f:
+        f.write('<xdtheme version="1" name="UI Test" base="classic">\n'
+                '  <variant id="plain" name="Plain" size="normal" style="styles/plain.xml"/>\n'
+                "</xdtheme>\n")  # fmt: skip
+    with open(os.path.join(root, "styles", "plain.xml"), "w") as f:
+        f.write("""<style>
+  <class name="Window">
+    <part name="Caption" ImageFile="images/caption.png" SizingMargins="0 0 0 0"/>
+    <part name="FrameLeft" ImageFile="images/border.png"/>
+    <part name="FrameRight" ImageFile="images/border.png"/>
+    <part name="FrameBottom" ImageFile="images/border.png"/>
+    <part name="CloseButton" ImageFile="images/close.png" SizingType="TrueSize"/>
+  </class>
+  <class name="Button">
+    <part name="PushButton" ImageFile="images/button.png" SizingMargins="2 2 2 2"
+          ContentMargins="3 3 3 3" TextColor="255 255 255"/>
+  </class>
+</style>
+""")
+    os.environ["XD_THEME_PACKAGE"] = root
+    os.environ["XD_UXTHEME_NAMES"] = os.path.join(SOURCE_ROOT, "data", "theme", "uxtheme.ini")
+
+
+def color_box(shot, rgb):
+    """How many pixels are exactly rgb, and their bounding box (x0, y0, x1, y1)."""
+    n, x0, y0, x1, y1 = 0, shot.width, shot.height, -1, -1
+    want = bytes(rgb)
+    for y in range(shot.height):
+        row = y * shot.stride
+        for x in range(shot.width):
+            i = row + x * shot.channels
+            if shot.data[i : i + 3] == want:
+                n += 1
+                x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+    return n, (x0, y0, x1, y1)
+
+
+@scenario(setup=write_theme_package)
+def theme_package(s):
+    """With $XD_THEME_PACKAGE set, a window's frame and caption button
+    (drawn by the compositor) and its push buttons (libxdui) come from the
+    package's images."""
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    shot = s.settle("run")
+    n, cap = color_box(shot, PKG_CAPTION)
+    s.check(n > 200 * 20, f"the caption is the package's image ({n} pixels at {cap})")
+    s.check(cap[3] - cap[1] + 1 == 30, f"the caption is as tall as its image ({cap})")
+    n, border = color_box(shot, PKG_BORDER)
+    s.check(n > 2 * 4 * 100 and border[0] < cap[0] + 1 and border[3] > cap[3] + 50,
+            f"the borders are the package's ({n} pixels at {border})")  # fmt: skip
+    n, close = color_box(shot, PKG_CLOSE)
+    s.check(n == 21 * 21 and close[2] - close[0] == 20 and close[3] - close[1] == 20,
+            f"the close button is the package's 21x21 image ({n} pixels at {close})")  # fmt: skip
+    s.check(cap[0] <= close[0] and close[2] <= cap[2] + 8 and cap[1] <= close[1]
+            and close[3] <= cap[3], "the close button is on the caption")  # fmt: skip
+    n, buttons = color_box(shot, PKG_BUTTON)
+    s.check(n > 3 * 60 * 15 and buttons[1] > cap[3] and cap[0] <= buttons[0]
+            and buttons[2] <= cap[2], f"the push buttons are the package's ({n} pixels at {buttons})")  # fmt: skip
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--build-dir", default=os.path.join(SOURCE_ROOT, "build"))
