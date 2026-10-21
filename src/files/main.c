@@ -14,6 +14,7 @@
 #include "../settings/state.h"
 #include "drives.h"
 #include "encrypted.h"
+#include "extract.h"
 #include "favorites.h"
 #include "fileops.h"
 #include "folderview.h"
@@ -2740,6 +2741,65 @@ static GtkWidget *bold_item(explorer *e, GtkWidget *menu, const char *label, GCa
     return item;
 }
 
+/* The selected archives (extract.h), or nullptr. */
+static GList *selected_archives(explorer *e) {
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
+    GList *archives = nullptr;
+    for (GList *l = files; l != nullptr; l = l->next)
+        if (xd_is_archive(l->data))
+            archives = g_list_prepend(archives, g_object_ref(l->data));
+    g_list_free_full(files, g_object_unref);
+    return g_list_reverse(archives);
+}
+
+/* Extract Here, or each to a folder of its name, in the folder shown. */
+static void extract_selected(explorer *e, XdFileOpKind kind) {
+    GList *archives = selected_archives(e);
+    if (archives != nullptr)
+        xd_fileop_start_undoable(GTK_WINDOW(e->window), kind, archives, current_dir(e),
+                                 select_created, e);
+    g_list_free_full(archives, g_object_unref);
+}
+static void cb_extract_here([[maybe_unused]] GtkWidget *w, gpointer d) {
+    extract_selected(d, XD_FILEOP_EXTRACT_HERE);
+}
+static void cb_extract_folder([[maybe_unused]] GtkWidget *w, gpointer d) {
+    extract_selected(d, XD_FILEOP_EXTRACT_FOLDER);
+}
+
+/* "Extract Here" and "Extract to "name"" when archives are selected
+ * (libarchive's formats; "Extract Each to Its Own Folder" for several),
+ * as archivers add them to Explorer's menu. */
+static void add_extract_items(explorer *e, GtkWidget *menu) {
+    if (!xd_extract_available())
+        return;
+    GList *archives = selected_archives(e);
+    if (archives == nullptr)
+        return;
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+    menu_item(menu, "Extract _Here", G_CALLBACK(cb_extract_here), e, nullptr, 0, NO_MODS);
+    char *label;
+    if (archives->next == nullptr) {
+        char *base = g_file_get_basename(archives->data);
+        char *name = xd_archive_base_name(base);
+        char *shown = g_filename_display_name(name);
+        /* The name's own underscores aren't mnemonics. */
+        char **parts = g_strsplit(shown, "_", -1);
+        char *escaped = g_strjoinv("__", parts);
+        label = g_strdup_printf("E_xtract to \"%s\"", escaped);
+        g_free(escaped);
+        g_strfreev(parts);
+        g_free(shown);
+        g_free(name);
+        g_free(base);
+    } else {
+        label = g_strdup("E_xtract Each to Its Own Folder");
+    }
+    menu_item(menu, label, G_CALLBACK(cb_extract_folder), e, nullptr, 0, NO_MODS);
+    g_free(label);
+    g_list_free_full(archives, g_object_unref);
+}
+
 /* Windows 11's "Open in new tab", under Open, when a folder is
  * selected. */
 static void add_open_in_tab(explorer *e, GtkWidget *menu) {
@@ -2827,6 +2887,7 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
     } else if (selected) {
         bold_item(e, menu, "_Open", G_CALLBACK(cb_open_selected));
         add_open_in_tab(e, menu);
+        add_extract_items(e, menu);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         GtkWidget *send = gtk_menu_item_new_with_mnemonic("Se_nd To");
         GList *files = xd_folder_view_get_selected_files(view);

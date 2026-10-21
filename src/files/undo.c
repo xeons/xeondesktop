@@ -9,7 +9,7 @@
 
 enum { UNDO_MAX = 10 }; /* as many as Windows keeps */
 
-typedef enum { UNDO_RENAME, UNDO_MOVE, UNDO_COPY, UNDO_DELETE } undo_kind;
+typedef enum { UNDO_RENAME, UNDO_MOVE, UNDO_COPY, UNDO_EXTRACT, UNDO_DELETE } undo_kind;
 
 typedef struct undo_entry {
     undo_kind kind;
@@ -61,6 +61,10 @@ void xd_undo_add_fileop(XdFileOpKind kind, GList *from, GList *created) {
     case XD_FILEOP_MOVE:
         k = UNDO_MOVE;
         break;
+    case XD_FILEOP_EXTRACT_HERE:
+    case XD_FILEOP_EXTRACT_FOLDER:
+        k = UNDO_EXTRACT;
+        break;
     case XD_FILEOP_TRASH:
         k = UNDO_DELETE;
         break;
@@ -99,6 +103,8 @@ const char *xd_undo_label(void) {
         return "_Undo Move";
     case UNDO_COPY:
         return "_Undo Copy";
+    case UNDO_EXTRACT:
+        return "_Undo Extract";
     case UNDO_DELETE:
         return "_Undo Delete";
     }
@@ -177,7 +183,8 @@ void xd_undo(GtkWindow *parent, XdFileOpDone done, gpointer user) {
         undo_move(parent, u, done, user);
         break;
     case UNDO_COPY:
-        /* The copies go to the Recycle Bin, after the usual question;
+    case UNDO_EXTRACT:
+        /* The copies (or what was extracted) go to the Recycle Bin, after the usual question;
          * answered No, there's still that to undo. */
         if (!xd_fileop_start_checked(parent, XD_FILEOP_TRASH, u->to, nullptr, nullptr, nullptr)) {
             g_queue_push_head(&stack, u);

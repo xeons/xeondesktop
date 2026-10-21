@@ -1289,6 +1289,55 @@ def files_undo_copy_merge(s):
 
 
 @scenario()
+def files_extract(s):
+    """An archive's right-click menu: Extract Here puts what's in it beside
+    it (Undo Extract sends that to the Recycle Bin), and Extract to
+    "photos" makes a folder of the archive's name."""
+    import zipfile
+
+    if not os.path.exists(os.path.join(s.build, "xd-files")):
+        return
+    box = os.path.join(s.home, "Box")
+    os.makedirs(box)
+    with zipfile.ZipFile(os.path.join(box, "photos.zip"), "w") as z:
+        z.writestr("a.txt", "first")
+        z.writestr("sub/b.txt", "second")
+    empty = s.settle("desktop")
+    s.launch("xd-files", box)
+    s.wait_window(app_id=FILES, state="activated")
+    files_title(s, "Box", "Box to open")
+    s.inject("move", WIDTH - 24, HEIGHT - 80)
+    x, y, _, _ = s.settle("box").changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    item = (x + LETTERS[0], y + LETTERS[1])
+
+    s.inject("move", *item, "click", "sleep", 200, "click", "right", "sleep", 600)
+    s.settle("menu")
+    s.inject("key", "h")
+    a = os.path.join(box, "a.txt")
+    b = os.path.join(box, "sub", "b.txt")
+    s.wait(lambda: file_text(a) == "first" and file_text(b) == "second", "Extract Here")
+    s.log("ok: Extract Here put the archive's files beside it")
+    s.check(not any(n.startswith(".xd-extract") for n in os.listdir(box)),
+            "and left no working folder behind")  # fmt: skip
+
+    s.inject("sleep", 500, "key", "ctrl+z", "sleep", 1500, "key", "Return")
+    s.wait(lambda: not os.path.exists(a) and not os.path.exists(os.path.join(box, "sub")),
+           "Undo Extract")  # fmt: skip
+    s.log("ok: Undo Extract took them back")
+
+    s.inject("sleep", 500, "move", *item, "click", "sleep", 200, "click", "right", "sleep", 600)
+    s.settle("menu again")
+    s.inject("key", "x")
+    folder = os.path.join(box, "photos")
+    s.wait(lambda: file_text(os.path.join(folder, "a.txt")) == "first"
+           and file_text(os.path.join(folder, "sub", "b.txt")) == "second",
+           'Extract to "photos"')  # fmt: skip
+    s.log('ok: Extract to "photos" made the folder')
+    s.check(sorted(os.listdir(box)) == ["photos", "photos.zip"],
+            f"and nothing else ({sorted(os.listdir(box))})")  # fmt: skip
+
+
+@scenario()
 def folder_options_tabs(s):
     """Folder Options' "Open folders in new tabs instead of new windows":
     saved in [Folders], and with "Open each folder in its own window" a

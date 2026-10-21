@@ -4,9 +4,11 @@
  */
 #include "fileops.h"
 
+#include <errno.h>
 #include <math.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "extract.h"
 #include "folderview.h"
 #include "undo.h"
 
@@ -137,6 +139,9 @@ static const char *verb(const job *j) {
         return "move";
     case XD_FILEOP_LINK:
         return "create shortcut to";
+    case XD_FILEOP_EXTRACT_HERE:
+    case XD_FILEOP_EXTRACT_FOLDER:
+        return "extract";
     case XD_FILEOP_TRASH:
     case XD_FILEOP_DELETE:
         break;
@@ -444,7 +449,8 @@ static bool transfer(job *j, GFile *src, GFile *dst, bool undo) {
     gboolean src_dir = g_file_info_get_file_type(si) == G_FILE_TYPE_DIRECTORY;
     goffset size = g_file_info_get_size(si);
     guint64 bytes = !src_dir && size > 0 ? (guint64)size : 0;
-    bool move = j->kind == XD_FILEOP_MOVE;
+    /* What's extracted is moved out of the folder it was extracted to. */
+    bool move = j->kind != XD_FILEOP_COPY;
 
     bool overwrite = false, merge = false, replaced = false;
     GFileInfo *di = g_file_query_info(dst, INFO_ATTRS, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
@@ -493,7 +499,7 @@ static bool transfer(job *j, GFile *src, GFile *dst, bool undo) {
 
     /* Undo of a move puts it back where it came from; of a copy, sends the
      * copy to the Recycle Bin, which mustn't take a file's old place. */
-    bool listed = undo && !merge && (move || !replaced);
+    bool listed = undo && !merge && (j->kind == XD_FILEOP_MOVE || !replaced);
     GFileCopyFlags flags = (GFileCopyFlags)(G_FILE_COPY_NOFOLLOW_SYMLINKS |
                                             G_FILE_COPY_ALL_METADATA |
                                             (overwrite ? G_FILE_COPY_OVERWRITE : 0));
@@ -652,6 +658,141 @@ static void run_transfer(job *j) {
     g_ptr_array_unref(targets);
 }
 
+/* ---- worker: extracting --------------------------------------------------------- */
+
+static void extract_progress(guint64 read, gpointer data) {
+    job *j = data;
+    g_mutex_lock(&j->lock);
+    j->file_bytes = read;
+    g_mutex_unlock(&j->lock);
+}
+
+/* Whatever's left of the folder extracted to (what wasn't moved out:
+ * answered No, or stopped). */
+static void remove_tree(GFile *f) {
+    GFileEnumerator *en = g_file_enumerate_children(f, G_FILE_ATTRIBUTE_STANDARD_NAME,
+                                                    G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+                                                    nullptr, nullptr);
+    GFileInfo *info;
+    while (en != nullptr && (info = g_file_enumerator_next_file(en, nullptr, nullptr)) != nullptr) {
+        GFile *child = g_file_get_child(f, g_file_info_get_name(info));
+        remove_tree(child);
+        g_object_unref(child);
+        g_object_unref(info);
+    }
+    g_clear_object(&en);
+    g_file_delete(f, nullptr, nullptr);
+}
+
+/* Each archive is extracted into a hidden folder beside where it goes,
+ * on the same file system; what's in it is then moved into place as a
+ * move would (a rename each), asking about anything in the way. */
+static bool extract_one(job *j, GFile *src) {
+    char *archive = g_file_get_path(src);
+    char *dest = g_file_get_path(j->dest);
+    if (archive == nullptr || dest == nullptr) {
+        g_free(archive);
+        g_free(dest);
+        return report_error(j, src,
+                            g_error_new_literal(G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                                                "Only archives on this computer's drives can "
+                                                "be extracted."));
+    }
+    set_current(j, src, j->dest);
+    char *tmp = g_build_filename(dest, ".xd-extract-XXXXXX", nullptr);
+    g_free(dest);
+    if (g_mkdtemp(tmp) == nullptr) {
+        int e = errno;
+        g_free(archive);
+        g_free(tmp);
+        return report_error(j, src, g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                                        g_strerror(e)));
+    }
+    char *base = g_file_get_basename(src);
+    char *name = xd_archive_base_name(base);
+    g_free(base);
+    GError *err = nullptr;
+    bool go_on = true;
+    GFile *tmpf = g_file_new_for_path(tmp);
+    goffset size = 0;
+    GFileInfo *si = g_file_query_info(src, G_FILE_ATTRIBUTE_STANDARD_SIZE,
+                                      G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
+    if (si != nullptr) {
+        size = g_file_info_get_size(si);
+        g_object_unref(si);
+    }
+    if (!xd_extract_archive(archive, tmp, name, j->cancel, extract_progress, j, &err)) {
+        go_on = report_error(j, src, err);
+    } else {
+        add_done(j, size > 0 ? (guint64)size : 0, 1);
+        /* Moving out counts too. */
+        guint64 bytes = 0;
+        guint items = 0;
+        measure(j, tmpf, &bytes, &items);
+        g_mutex_lock(&j->lock);
+        j->total_bytes += bytes;
+        j->total_items += items;
+        g_mutex_unlock(&j->lock);
+        if (j->kind == XD_FILEOP_EXTRACT_FOLDER) {
+            GFile *dst = g_file_get_child(j->dest, name);
+            j->wrote = false;
+            go_on = transfer(j, tmpf, dst, true);
+            if (j->wrote)
+                created(j, dst);
+            g_object_unref(dst);
+        } else {
+            GFileEnumerator *en = g_file_enumerate_children(
+                tmpf, G_FILE_ATTRIBUTE_STANDARD_NAME, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+                j->cancel, &err);
+            if (en == nullptr)
+                go_on = report_error(j, src, err);
+            GFileInfo *info;
+            while (go_on && en != nullptr &&
+                   (info = g_file_enumerator_next_file(en, j->cancel, nullptr)) != nullptr) {
+                const char *child = g_file_info_get_name(info);
+                GFile *from = g_file_get_child(tmpf, child);
+                GFile *dst = g_file_get_child(j->dest, child);
+                j->wrote = false;
+                go_on = transfer(j, from, dst, true);
+                if (j->wrote)
+                    created(j, dst);
+                g_object_unref(from);
+                g_object_unref(dst);
+                g_object_unref(info);
+            }
+            g_clear_object(&en);
+        }
+    }
+    remove_tree(tmpf);
+    g_object_unref(tmpf);
+    g_free(name);
+    g_free(tmp);
+    g_free(archive);
+    return go_on;
+}
+
+static void run_extract(job *j) {
+    guint64 bytes = 0;
+    for (guint i = 0; i < j->sources->len; i++) {
+        GFileInfo *info = g_file_query_info(g_ptr_array_index(j->sources, i),
+                                            G_FILE_ATTRIBUTE_STANDARD_SIZE,
+                                            G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
+        if (info != nullptr) {
+            goffset size = g_file_info_get_size(info);
+            bytes += size > 0 ? (guint64)size : 0;
+            g_object_unref(info);
+        }
+    }
+    g_mutex_lock(&j->lock);
+    j->total_bytes = bytes;
+    j->total_items = j->sources->len;
+    j->scanning = FALSE;
+    g_mutex_unlock(&j->lock);
+    for (guint i = 0; i < j->sources->len; i++)
+        if (!extract_one(j, g_ptr_array_index(j->sources, i)))
+            break;
+}
+
 static void worker(GTask *task, [[maybe_unused]] gpointer source, gpointer data,
                    [[maybe_unused]] GCancellable *cancel) {
     job *j = data;
@@ -660,6 +801,10 @@ static void worker(GTask *task, [[maybe_unused]] gpointer source, gpointer data,
     case XD_FILEOP_MOVE:
     case XD_FILEOP_LINK:
         run_transfer(j);
+        break;
+    case XD_FILEOP_EXTRACT_HERE:
+    case XD_FILEOP_EXTRACT_FOLDER:
+        run_extract(j);
         break;
     case XD_FILEOP_TRASH:
         g_mutex_lock(&j->lock);
@@ -694,6 +839,9 @@ static const char *title_for(XdFileOpKind kind) {
         return "Moving...";
     case XD_FILEOP_LINK:
         return "Creating Shortcuts...";
+    case XD_FILEOP_EXTRACT_HERE:
+    case XD_FILEOP_EXTRACT_FOLDER:
+        return "Extracting...";
     case XD_FILEOP_TRASH:
     case XD_FILEOP_DELETE:
         break;

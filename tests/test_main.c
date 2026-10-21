@@ -41,6 +41,11 @@
 #include "../src/intl/intl.h"
 #include "../src/keyboard/layouts.h"
 #include "../src/mouse/cursors.h"
+#include "../src/files/extract.h"
+#if XD_HAVE_LIBARCHIVE
+#include <archive.h>
+#include <archive_entry.h>
+#endif
 #include "../src/files/cleanup.h"
 #include "../src/files/columns.h"
 #include "../src/files/favorites.h"
@@ -931,6 +936,184 @@ static void rm_tree(const char *path) {
         g_dir_close(d);
     }
     CHECK(g_rmdir(path) == 0);
+}
+
+#if XD_HAVE_LIBARCHIVE
+/* Writes a tar.gz of entries (path, type, mode, contents or link). */
+typedef struct tar_item {
+    const char *path;
+    mode_t type;
+    int perm;
+    const char *data; /* a symlink's or hard link's target */
+} tar_item;
+
+static void write_tar(const char *file, const tar_item *items, size_t n) {
+    struct archive *a = archive_write_new();
+    archive_write_add_filter_gzip(a);
+    archive_write_set_format_pax_restricted(a);
+    CHECK(archive_write_open_filename(a, file) == ARCHIVE_OK);
+    for (size_t i = 0; i < n; i++) {
+        struct archive_entry *e = archive_entry_new();
+        archive_entry_set_pathname(e, items[i].path);
+        archive_entry_set_perm(e, (mode_t)items[i].perm);
+        if (items[i].type == 0) { /* a hard link */
+            archive_entry_set_filetype(e, AE_IFREG);
+            archive_entry_set_hardlink(e, items[i].data);
+        } else {
+            archive_entry_set_filetype(e, items[i].type);
+        }
+        if (items[i].type == AE_IFLNK)
+            archive_entry_set_symlink(e, items[i].data);
+        size_t len = items[i].type == AE_IFREG && items[i].data != nullptr
+                         ? strlen(items[i].data)
+                         : 0;
+        archive_entry_set_size(e, (la_int64_t)len);
+        CHECK(archive_write_header(a, e) == ARCHIVE_OK);
+        if (len > 0)
+            CHECK(archive_write_data(a, items[i].data, len) == (la_ssize_t)len);
+        archive_entry_free(e);
+    }
+    CHECK(archive_write_close(a) == ARCHIVE_OK);
+    archive_write_free(a);
+}
+
+static char *read_text(const char *dir, const char *name) {
+    char *path = g_build_filename(dir, name, nullptr);
+    char *text = nullptr;
+    if (!g_file_get_contents(path, &text, nullptr, nullptr))
+        text = nullptr;
+    g_free(path);
+    return text;
+}
+#endif
+
+/* Extract Here / Extract to "name" (src/files/extract.c). */
+static void test_extract(void) {
+    char *n = xd_archive_base_name("photos.tar.gz");
+    CHECK(strcmp(n, "photos") == 0);
+    g_free(n);
+    const char *const names[][2] = {
+        {"photos.TGZ", "photos"},        {"photos.zip", "photos"},
+        {"notes.txt.gz", "notes.txt"},   {"old.Z", "old"},
+        {"site.tar.zst", "site"},        {"backup.7z", "backup"},
+        {"disk.iso", "disk"},            {"weird.foo", "weird"},
+        {"noext", "noext (extracted)"},  {"pkg-1.0.tar.xz", "pkg-1.0"},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(names); i++) {
+        char *got = xd_archive_base_name(names[i][0]);
+        if (strcmp(got, names[i][1]) != 0)
+            g_printerr("  %s: got \"%s\"\n", names[i][0], got);
+        CHECK(strcmp(got, names[i][1]) == 0);
+        g_free(got);
+    }
+    const char *const paths[][2] = {
+        {"a/b.txt", "a/b.txt"}, {"./a//b/", "a/b"}, {"/etc/passwd", "etc/passwd"},
+        {"../x", nullptr},      {"a/../../x", nullptr}, {".", nullptr},
+        {"", nullptr},          {"a/..b", "a/..b"},
+    };
+    for (size_t i = 0; i < G_N_ELEMENTS(paths); i++) {
+        char *got = xd_archive_safe_path(paths[i][0]);
+        CHECK(g_strcmp0(got, paths[i][1]) == 0);
+        g_free(got);
+    }
+    CHECK(xd_is_archive_type("application/zip") && xd_is_archive_type("application/x-compressed-tar"));
+    CHECK(xd_is_archive_type("application/x-zip-compressed")); /* an alias */
+    CHECK(!xd_is_archive_type("application/vnd.oasis.opendocument.text") &&
+          !xd_is_archive_type("text/plain") && !xd_is_archive_type(nullptr));
+
+#if XD_HAVE_LIBARCHIVE
+    char *root = g_dir_make_tmp("xd-extract-XXXXXX", nullptr);
+    char *into = g_build_filename(root, "into", nullptr);
+    char *outside = g_build_filename(root, "outside", nullptr);
+    CHECK(g_mkdir(into, 0755) == 0 && g_mkdir(outside, 0755) == 0);
+
+    /* What lands outside, a device-like entry and set-user-ID are left out. */
+    char *tar = g_build_filename(root, "t.tar.gz", nullptr);
+    const tar_item items[] = {
+        {"./dir", AE_IFDIR, 0755, nullptr},
+        {"dir/a.txt", AE_IFREG, 0644, "a"},
+        {"../evil.txt", AE_IFREG, 0644, "evil"},
+        {"/abs.txt", AE_IFREG, 0644, "abs"},
+        {"fifo", AE_IFIFO, 0644, nullptr},
+        {"suid", AE_IFREG, 04755, "s"},
+        {"hl", 0, 0644, "../outside/x"},
+        {"same", 0, 0644, "dir/a.txt"},
+        {"up", AE_IFLNK, 0777, "../outside"},
+    };
+    write_tar(tar, items, G_N_ELEMENTS(items));
+    GError *error = nullptr;
+    CHECK(xd_extract_archive(tar, into, "raw", nullptr, nullptr, nullptr, &error));
+    if (error != nullptr)
+        g_printerr("  %s\n", error->message);
+    g_clear_error(&error);
+    char *t = read_text(into, "dir/a.txt");
+    CHECK(g_strcmp0(t, "a") == 0);
+    g_free(t);
+    t = read_text(into, "abs.txt");
+    CHECK(g_strcmp0(t, "abs") == 0);
+    g_free(t);
+    t = read_text(into, "same");
+    CHECK(g_strcmp0(t, "a") == 0); /* a hard link inside */
+    g_free(t);
+    char *evil = g_build_filename(root, "evil.txt", nullptr);
+    char *fifo = g_build_filename(into, "fifo", nullptr);
+    char *hl = g_build_filename(into, "hl", nullptr);
+    char *suid = g_build_filename(into, "suid", nullptr);
+    struct stat st;
+    CHECK(!g_file_test(evil, G_FILE_TEST_EXISTS) && !g_file_test(fifo, G_FILE_TEST_EXISTS) &&
+          !g_file_test(hl, G_FILE_TEST_EXISTS));
+    CHECK(stat(suid, &st) == 0 && (st.st_mode & 07777) == 0755);
+
+    /* Nothing written through a link the archive made: "up/x.txt" after
+     * "up" -> ../outside stops the extraction. */
+    char *tar2 = g_build_filename(root, "t2.tar.gz", nullptr);
+    char *into2 = g_build_filename(root, "into2", nullptr);
+    CHECK(g_mkdir(into2, 0755) == 0);
+    const tar_item items2[] = {
+        {"up", AE_IFLNK, 0777, "../outside"},
+        {"up/x.txt", AE_IFREG, 0644, "x"},
+    };
+    write_tar(tar2, items2, G_N_ELEMENTS(items2));
+    CHECK(!xd_extract_archive(tar2, into2, "raw", nullptr, nullptr, nullptr, &error));
+    g_clear_error(&error);
+    char *x = g_build_filename(outside, "x.txt", nullptr);
+    CHECK(!g_file_test(x, G_FILE_TEST_EXISTS));
+
+    /* A gzipped file that's no archive: its contents, under the name. */
+    char *gz = g_build_filename(root, "notes.txt.gz", nullptr);
+    struct archive *a = archive_write_new();
+    archive_write_add_filter_gzip(a);
+    archive_write_set_format_raw(a);
+    CHECK(archive_write_open_filename(a, gz) == ARCHIVE_OK);
+    struct archive_entry *e = archive_entry_new();
+    archive_entry_set_filetype(e, AE_IFREG);
+    CHECK(archive_write_header(a, e) == ARCHIVE_OK);
+    CHECK(archive_write_data(a, "hello", 5) == 5);
+    archive_entry_free(e);
+    CHECK(archive_write_close(a) == ARCHIVE_OK);
+    archive_write_free(a);
+    char *into3 = g_build_filename(root, "into3", nullptr);
+    CHECK(g_mkdir(into3, 0755) == 0);
+    CHECK(xd_extract_archive(gz, into3, "notes.txt", nullptr, nullptr, nullptr, nullptr));
+    t = read_text(into3, "notes.txt");
+    CHECK(g_strcmp0(t, "hello") == 0);
+    g_free(t);
+
+    rm_tree(root);
+    g_free(into3);
+    g_free(gz);
+    g_free(x);
+    g_free(into2);
+    g_free(tar2);
+    g_free(suid);
+    g_free(hl);
+    g_free(fifo);
+    g_free(evil);
+    g_free(tar);
+    g_free(outside);
+    g_free(into);
+    g_free(root);
+#endif
 }
 
 static const xd_installed_theme *theme_at(GPtrArray *list, guint i) {
@@ -7017,6 +7200,7 @@ int main(void) {
     test_usershare();
     test_present();
     test_grab_keys();
+    test_extract();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

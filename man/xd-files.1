@@ -123,6 +123,13 @@ Thumbnails missing from the freedesktop.org cache are made by
 .BR xd\-thumbnailer (1).
 Favorites are GTK's bookmarks, shared with file choosers.
 .PP
+An archive's right-click menu has Extract Here and Extract to "name"
+(every format libarchive reads); what is extracted is moved into place as
+a move is, asking about anything in the way, and Edit > Undo takes it
+back.
+Entries that would land outside the folder, device files and
+set-user-ID bits are left out.
+.PP
 The options other than
 .B \-\-view
 do one thing without opening a folder window, and exit when it is done;

@@ -639,6 +639,12 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       Thunderbird/Evolution/KMail, My Documents, removable drives), a
       modifier pressed mid-drag applies at once. Untested: Mail Recipient,
       Send To a removable drive.
+- [x] Extract Here and Extract to "name" on archives' right-click menus
+      (libarchive's formats; "Extract Each to Its Own Folder" for
+      several), with the progress dialog, Confirm Replace questions and
+      Undo Extract. Entries outside the folder, device files and
+      set-user-ID bits are left out. Not done: password-protected
+      archives (they fail with libarchive's message).
 - [x] Favorites menu (GTK bookmarks, shared with file choosers), the Search
       button and F3 (xd-search in the current folder), "My Network Places"
       and GIO's names as titles.

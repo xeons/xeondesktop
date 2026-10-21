@@ -21,6 +21,10 @@ typedef enum {
     XD_FILEOP_LINK,   /* symbolic links ("Shortcut to ...") */
     XD_FILEOP_TRASH,  /* to the Recycle Bin */
     XD_FILEOP_DELETE, /* permanently */
+    /* Archives (extract.h), into the destination folder as they are, or
+     * each into a folder of its own name there. */
+    XD_FILEOP_EXTRACT_HERE,
+    XD_FILEOP_EXTRACT_FOLDER,
 } XdFileOpKind;
 
 /* Called on the main thread when the operation ends: `created` lists the
@@ -30,7 +34,7 @@ typedef enum {
 typedef void (*XdFileOpDone)(GList *created, gpointer user);
 
 /* Starts an operation on `sources` (GFile*; the list is copied).
- * `dest` is the destination folder for copy, move and link, and is
+ * `dest` is the destination folder for copy, move, link and extract, and is
  * ignored for trash and delete. Trash and delete ask for confirmation
  * first, as Windows does. */
 void xd_fileop_start(GtkWindow *parent, XdFileOpKind kind, GList *sources, GFile *dest,

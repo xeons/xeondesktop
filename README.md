@@ -345,7 +345,10 @@ decodes each file in a bubblewrap + seccomp sandbox (images with gdk-pixbuf,
 other types with installed .thumbnailer programs). Details columns resize,
 reorder and can be chosen from the header's menu; icons can be arranged
 freely (Auto Arrange off); Send To zips, copies or makes a desktop shortcut;
-Edit > Undo reverses the last renames, copies, moves and deletions.
+an archive's menu has Extract Here and Extract to "name" (any format
+libarchive reads: zip, 7z, rar, tar and its compressions, iso, cpio, deb,
+rpm, and single gzip/bzip2/xz/zstd files); Edit > Undo reverses the last
+renames, copies, moves, extractions and deletions.
 Favorites are GTK bookmarks, shared with file choosers; Search (and F3)
 opens Search for Files or Folders in the current folder. Properties has a
 Shortcut tab for launchers, picture dimensions, and XP's pie chart for
