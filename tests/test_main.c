@@ -87,6 +87,7 @@
 #include "../src/users/accounts.h"
 #include "../src/users/users.h"
 #include "../src/theme/theme.h"
+#include "../src/theme/scale.h"
 #include "../src/thumbnailer/thumbcache.h"
 #include "../src/wuaucpl/state.h"
 #include "../src/wuaucpl/updlib.h"
@@ -1114,6 +1115,310 @@ static void test_extract(void) {
     g_free(into);
     g_free(root);
 #endif
+}
+
+/* ---- Theme image scaling (src/theme/scale.c) ---- */
+
+/* An ARGB32 surface from w*h premultiplied pixels, row by row. */
+static cairo_surface_t *scale_test_surface(int w, int h, const uint32_t *px) {
+    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    cairo_surface_flush(s);
+    unsigned char *data = cairo_image_surface_get_data(s);
+    int stride = cairo_image_surface_get_stride(s);
+    for (int y = 0; y < h; y++)
+        memcpy(data + (size_t)y * (size_t)stride, px + (size_t)y * (size_t)w,
+               (size_t)w * sizeof(uint32_t));
+    cairo_surface_mark_dirty(s);
+    return s;
+}
+
+static uint32_t scale_test_px(cairo_surface_t *s, int x, int y) {
+    cairo_surface_flush(s);
+    const unsigned char *data = cairo_image_surface_get_data(s);
+    uint32_t v;
+    memcpy(&v, data + (size_t)y * (size_t)cairo_image_surface_get_stride(s) + (size_t)x * 4, 4);
+    return v;
+}
+
+/* Every pixel of `s` (w x h) equals `want`, row by row. */
+static bool scale_test_equals(cairo_surface_t *s, int w, int h, const uint32_t *want) {
+    if (!s || cairo_image_surface_get_width(s) != w || cairo_image_surface_get_height(s) != h)
+        return false;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (scale_test_px(s, x, y) != want[y * w + x])
+                return false;
+    return true;
+}
+
+static bool scale_test_same(cairo_surface_t *a, cairo_surface_t *b) {
+    int w = cairo_image_surface_get_width(a), h = cairo_image_surface_get_height(a);
+    if (w != cairo_image_surface_get_width(b) || h != cairo_image_surface_get_height(b))
+        return false;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (scale_test_px(a, x, y) != scale_test_px(b, x, y))
+                return false;
+    return true;
+}
+
+static void test_image_scale(void) {
+    constexpr uint32_t K = 0xff000000;
+    constexpr uint32_t W = 0xffffffff;
+    constexpr uint32_t R = 0xffff0000;
+    constexpr uint32_t B = 0xff0000ff;
+    constexpr uint32_t G = 0xff808080; /* K and W half and half */
+
+    /* Names round-trip, case-insensitively. */
+    for (int f = 0; f < XD_FILTER_COUNT; f++) {
+        xd_image_filter got = XD_FILTER_COUNT;
+        const char *name = xd_image_filter_name((xd_image_filter)f);
+        CHECK(name && xd_image_filter_from_name(name, &got) && got == (xd_image_filter)f);
+    }
+    xd_image_filter got = XD_FILTER_NEAREST;
+    CHECK(xd_image_filter_from_name("superEAGLE", &got) && got == XD_FILTER_SUPEREAGLE);
+    CHECK(xd_image_filter_from_name("2xsai", &got) && got == XD_FILTER_2XSAI);
+    CHECK(!xd_image_filter_from_name("Bicubic", &got));
+    CHECK(!xd_image_filter_from_name(nullptr, &got));
+    CHECK(xd_image_filter_name(XD_FILTER_COUNT) == nullptr);
+
+    /* Sizes: the source's times the scale, rounded, for every filter. */
+    {
+        uint32_t px[8 * 6];
+        for (int i = 0; i < 8 * 6; i++)
+            px[i] = (i * 7) % 3 == 0 ? R : (i % 5 == 0 ? 0 : B);
+        cairo_surface_t *src = scale_test_surface(8, 6, px);
+        const double scales[] = {0.5, 1.25, 1.5, 2, 3, 4};
+        for (int f = 0; f < XD_FILTER_COUNT; f++) {
+            for (size_t k = 0; k < G_N_ELEMENTS(scales); k++) {
+                cairo_surface_t *o = xd_image_scale(src, scales[k], (xd_image_filter)f);
+                CHECK(o && cairo_image_surface_get_format(o) == CAIRO_FORMAT_ARGB32);
+                double want_w = round(8 * scales[k]), want_h = round(6 * scales[k]);
+                CHECK(o && cairo_image_surface_get_width(o) == (int)want_w);
+                CHECK(o && cairo_image_surface_get_height(o) == (int)want_h);
+                if (o)
+                    cairo_surface_destroy(o);
+            }
+            /* A scale of 1 copies. */
+            cairo_surface_t *o = xd_image_scale(src, 1, (xd_image_filter)f);
+            CHECK(scale_test_equals(o, 8, 6, px));
+            if (o)
+                cairo_surface_destroy(o);
+        }
+        CHECK(xd_image_scale(src, 0, XD_FILTER_SMOOTH) == nullptr);
+        CHECK(xd_image_scale(src, -2, XD_FILTER_SMOOTH) == nullptr);
+        CHECK(xd_image_scale(src, 2, XD_FILTER_COUNT) == nullptr);
+        CHECK(xd_image_scale(nullptr, 2, XD_FILTER_SMOOTH) == nullptr);
+        cairo_surface_destroy(src);
+    }
+
+    /* NEAREST: a 2x2 checker; at 1.5 (3x3) each output pixel takes the
+     * source pixel under its centre (0.33, 1.0, 1.67 -> 0, 1, 1). */
+    {
+        const uint32_t px[] = {K, W, W, K};
+        cairo_surface_t *src = scale_test_surface(2, 2, px);
+        cairo_surface_t *o = xd_image_scale(src, 1.5, XD_FILTER_NEAREST);
+        const uint32_t want15[] = {K, W, W, W, K, K, W, K, K};
+        CHECK(scale_test_equals(o, 3, 3, want15));
+        cairo_surface_destroy(o);
+        o = xd_image_scale(src, 2, XD_FILTER_NEAREST);
+        const uint32_t want2[] = {K, K, W, W, K, K, W, W, W, W, K, K, W, W, K, K};
+        CHECK(scale_test_equals(o, 4, 4, want2));
+        cairo_surface_destroy(o);
+        /* And nearest stays nearest going down: 2x2 -> 1x1 takes (1,1). */
+        o = xd_image_scale(src, 0.5, XD_FILTER_NEAREST);
+        const uint32_t want05[] = {K};
+        CHECK(scale_test_equals(o, 1, 1, want05));
+        cairo_surface_destroy(o);
+        cairo_surface_destroy(src);
+    }
+
+    /* INTEGER at 2 and 3: exact blocks of a 3x3 of distinct colours. */
+    {
+        uint32_t px[9];
+        for (uint32_t i = 0; i < 9; i++)
+            px[i] = 0xff000000 | (i * 0x1d0b07);
+        cairo_surface_t *src = scale_test_surface(3, 3, px);
+        for (int n = 2; n <= 3; n++) {
+            cairo_surface_t *o = xd_image_scale(src, n, XD_FILTER_INTEGER);
+            bool ok = o && cairo_image_surface_get_width(o) == 3 * n &&
+                      cairo_image_surface_get_height(o) == 3 * n;
+            for (int y = 0; ok && y < 3 * n; y++)
+                for (int x = 0; x < 3 * n; x++)
+                    ok = ok && scale_test_px(o, x, y) == px[(y / n) * 3 + x / n];
+            CHECK(ok);
+            cairo_surface_destroy(o);
+        }
+        cairo_surface_destroy(src);
+    }
+
+    /* A diagonal edge, black below-left of it:
+     *     K W W
+     *     K K W
+     *     K K K                                                           */
+    const uint32_t tri[] = {K, W, W, K, K, W, K, K, K};
+    cairo_surface_t *tri_src = scale_test_surface(3, 3, tri);
+
+    /* Scale2x: where a pixel's two outer neighbours agree (and the other
+     * two don't continue the edge), its quarter between them takes their
+     * colour. W at (1,0) has K left and below: its bottom-left quarter,
+     * output (2,1), turns K; K at (1,1) has W above and right: its
+     * top-right quarter, (3,2), turns W. Same for (2,1) -> (4,3) K, and
+     * K at (2,2), whose D == F, stays whole. */
+    {
+        cairo_surface_t *o = xd_image_scale(tri_src, 2, XD_FILTER_SCALE2X);
+        const uint32_t want[] = {
+            K, K, W, W, W, W, //
+            K, K, K, W, W, W, //
+            K, K, K, W, W, W, //
+            K, K, K, K, K, W, //
+            K, K, K, K, K, K, //
+            K, K, K, K, K, K, //
+        };
+        CHECK(scale_test_equals(o, 6, 6, want));
+        cairo_surface_destroy(o);
+    }
+    /* Scale3x: W at (1,0) (A=K B=W C=W / D=K E=W F=W / G=K H=K I=W):
+     * corner 6 (D == H) and edge 3 (D == H, E != A) become K, the rest W:
+     *     W W W
+     *     K W W
+     *     K W W                                                           */
+    {
+        cairo_surface_t *o = xd_image_scale(tri_src, 3, XD_FILTER_SCALE3X);
+        const uint32_t block[] = {W, W, W, K, W, W, K, W, W};
+        bool ok = o && cairo_image_surface_get_width(o) == 9;
+        for (int k = 0; ok && k < 9; k++)
+            ok = scale_test_px(o, 3 + k % 3, k / 3) == block[k];
+        /* (0,0) K and (2,0) W are inside flat areas: unchanged blocks. */
+        for (int k = 0; ok && k < 9; k++)
+            ok = scale_test_px(o, k % 3, k / 3) == K && scale_test_px(o, 6 + k % 3, k / 3) == W;
+        CHECK(ok);
+        cairo_surface_destroy(o);
+    }
+
+    /* The SaI family: deterministic, and not nearest on the diagonal.
+     * Hand-checked pixels, with the 4x4 neighbourhood named
+     *     i e f j / g a b k / h c d l / m n o p
+     * around the square whose top-left is a:
+     *
+     * 2xSaI, a = (1,0) = W: b = W, c = K, d = W; e = W, l = W, g = K, o = K.
+     *   a == d and b != c: a diagonal of a's colour. The right point is a
+     *   (a == e and b == l); the point below is neither of its exceptions
+     *   (a != g; a != h), so it's the half blend of a and c: output (2,1)
+     *   = G, where nearest gives W.
+     * Super2xSaI, square (1,0): a = W, b = W, c = K, d = W, g = K, h = K.
+     *   a == d, b != c: the right column is a, so output (3,2) (bottom
+     *   right of the square, rows 1-2) is W, where nearest gives K.
+     * SuperEagle, square (1,0), same pixels, o = K: a == d, b != c, so
+     *   corner c (output (3,2)) is cut by the diagonal; neither g nor o
+     *   continues it (g != a, o != d), so it's half d, half c: G.        */
+    {
+        const struct {
+            xd_image_filter f;
+            int x, y;
+            uint32_t want;
+        } sai[] = {
+            {XD_FILTER_2XSAI, 2, 1, G},
+            {XD_FILTER_SUPER2XSAI, 3, 2, W},
+            {XD_FILTER_SUPEREAGLE, 3, 2, G},
+        };
+        cairo_surface_t *near = xd_image_scale(tri_src, 2, XD_FILTER_NEAREST);
+        for (size_t k = 0; k < G_N_ELEMENTS(sai); k++) {
+            cairo_surface_t *o1 = xd_image_scale(tri_src, 2, sai[k].f);
+            cairo_surface_t *o2 = xd_image_scale(tri_src, 2, sai[k].f);
+            CHECK(o1 && o2 && scale_test_same(o1, o2));
+            CHECK(o1 && !scale_test_same(o1, near));
+            CHECK(o1 && scale_test_px(o1, sai[k].x, sai[k].y) == sai[k].want);
+            CHECK(scale_test_px(near, sai[k].x, sai[k].y) != sai[k].want);
+            cairo_surface_destroy(o1);
+            cairo_surface_destroy(o2);
+        }
+        cairo_surface_destroy(near);
+    }
+    cairo_surface_destroy(tri_src);
+
+    /* Transparency: half-transparent red with transparent holes and
+     * surroundings. No pixel-art filter (nor the smooth ones) may invent
+     * another colour, push alpha above the inputs' 0x80, or let colour
+     * exceed alpha. */
+    {
+        constexpr uint32_t r = 0x80800000;
+        const uint32_t px[] = {
+            0, 0, 0, 0, 0, //
+            0, r, r, r, 0, //
+            0, r, 0, r, 0, //
+            0, r, r, 0, 0, //
+            0, 0, 0, 0, 0, //
+        };
+        cairo_surface_t *src = scale_test_surface(5, 5, px);
+        const double scales[] = {1.5, 2, 3, 4};
+        for (int f = 0; f < XD_FILTER_COUNT; f++) {
+            for (size_t k = 0; k < G_N_ELEMENTS(scales); k++) {
+                cairo_surface_t *o = xd_image_scale(src, scales[k], (xd_image_filter)f);
+                bool ok = o != nullptr;
+                int w = o ? cairo_image_surface_get_width(o) : 0;
+                int h = o ? cairo_image_surface_get_height(o) : 0;
+                for (int y = 0; ok && y < h; y++) {
+                    for (int x = 0; ok && x < w; x++) {
+                        uint32_t v = scale_test_px(o, x, y);
+                        uint32_t a = v >> 24, red = (v >> 16) & 0xff;
+                        ok = a <= 0x80 && red <= a && (v & 0xffff) == 0;
+                    }
+                }
+                CHECK(ok);
+                if (o)
+                    cairo_surface_destroy(o);
+            }
+        }
+        cairo_surface_destroy(src);
+    }
+
+    /* scale_frames: two very different frames keep their own colours,
+     * however the filter reads its neighbours. */
+    {
+        uint32_t px[4 * 8];
+        for (int i = 0; i < 4 * 8; i++)
+            px[i] = i < 16 ? R : B;
+        cairo_surface_t *vsrc = scale_test_surface(4, 8, px);
+        uint32_t hpx[8 * 4];
+        for (int i = 0; i < 8 * 4; i++)
+            hpx[i] = i % 8 < 4 ? R : B;
+        cairo_surface_t *hsrc = scale_test_surface(8, 4, hpx);
+        const double scales[] = {1.25, 1.5, 2, 3};
+        for (int f = 0; f < XD_FILTER_COUNT; f++) {
+            for (size_t k = 0; k < G_N_ELEMENTS(scales); k++) {
+                double side = round(4 * scales[k]);
+                int n = (int)side;
+                cairo_surface_t *o =
+                    xd_image_scale_frames(vsrc, 2, true, scales[k], (xd_image_filter)f);
+                bool ok = o && cairo_image_surface_get_width(o) == n &&
+                          cairo_image_surface_get_height(o) == 2 * n;
+                for (int y = 0; ok && y < 2 * n; y++)
+                    for (int x = 0; ok && x < n; x++)
+                        ok = scale_test_px(o, x, y) == (y < n ? R : B);
+                CHECK(ok);
+                if (o)
+                    cairo_surface_destroy(o);
+                o = xd_image_scale_frames(hsrc, 2, false, scales[k], (xd_image_filter)f);
+                ok = o && cairo_image_surface_get_width(o) == 2 * n &&
+                     cairo_image_surface_get_height(o) == n;
+                for (int y = 0; ok && y < n; y++)
+                    for (int x = 0; ok && x < 2 * n; x++)
+                        ok = scale_test_px(o, x, y) == (x < n ? R : B);
+                CHECK(ok);
+                if (o)
+                    cairo_surface_destroy(o);
+            }
+        }
+        /* Whereas scaling the strip whole blends across the seam. */
+        cairo_surface_t *o = xd_image_scale(vsrc, 1.5, XD_FILTER_SMOOTH);
+        CHECK(o && scale_test_px(o, 0, 5) != R && scale_test_px(o, 0, 5) != B);
+        cairo_surface_destroy(o);
+        /* A strip that doesn't divide into the frames is refused. */
+        CHECK(xd_image_scale_frames(vsrc, 3, true, 2, XD_FILTER_NEAREST) == nullptr);
+        cairo_surface_destroy(hsrc);
+        cairo_surface_destroy(vsrc);
+    }
 }
 
 static const xd_installed_theme *theme_at(GPtrArray *list, guint i) {
@@ -7201,6 +7506,7 @@ int main(void) {
     test_present();
     test_grab_keys();
     test_extract();
+    test_image_scale();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

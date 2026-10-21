@@ -39,13 +39,23 @@ bool xd_image_filter_from_name(const char *name, xd_image_filter *out);
  * but NEAREST scales down smoothly.
  *
  * The pixel-art filters compare whole pixels, alpha included, so a
- * transparent edge is treated as its own colour and doesn't bleed. */
+ * transparent edge is treated as its own colour and doesn't bleed. They
+ * blend in premultiplied ARGB, all four channels alike, and read
+ * neighbours past the image's edge as the nearest edge pixel. Smooth
+ * reductions average the area each output pixel covers.
+ *
+ * Returns nullptr if `src` isn't an image surface, `scale` isn't a
+ * positive number, `filter` isn't one of the above, or a size would pass
+ * cairo's limit of 32767 pixels a side. Another image format than ARGB32
+ * is converted first. */
 cairo_surface_t *xd_image_scale(cairo_surface_t *src, double scale, xd_image_filter filter);
 
 /* Scales a strip of `count` equal frames (laid out vertically or
  * horizontally) frame by frame and puts them back together, so no filter
  * reads across a frame's edge into the next one. Each frame's size is
- * scaled as xd_image_scale() scales a whole image. */
+ * scaled as xd_image_scale() scales a whole image. Returns nullptr as
+ * xd_image_scale() does, and if the strip doesn't divide into `count`
+ * equal frames. */
 cairo_surface_t *xd_image_scale_frames(cairo_surface_t *src, int count, bool vertical,
                                        double scale, xd_image_filter filter);
 
