@@ -1544,7 +1544,7 @@ def near(rgb, want, tolerance=12):
 
 
 @scenario(setup=theme_packages_setup)
-def theme_package(s):
+def display_theme_package(s):
     """Display Properties lists an installed theme package in Windows and
     buttons; choosing it shows it in the preview, and OK writes ThemePackage
     and ThemeVariant: the compositor redraws an open window's frame in the
