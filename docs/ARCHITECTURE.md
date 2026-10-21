@@ -78,7 +78,10 @@ whenever the appearance changes; our GTK apps reload it at once, others get
 it through `GTK_THEME`. The same generator writes a Qt palette
 (`QT_GUI_GTK_JSON`) so that Qt 5 and 6 programs, which the session points
 at Qt's own GTK platform theme (`QT_QPA_PLATFORMTHEME=gtk3`), follow too,
-with Qt's Windows style for Classic and Fusion otherwise. The user can pick
+with Qt's Windows style for Classic and Fusion otherwise. With a theme
+package, the theme draws GTK widgets with the package's own images,
+rendered into PNGs beside the CSS and stretched by GTK as border images
+(docs/THEMES.md, "GTK and Qt programs"). The user can pick
 any installed GTK theme, Qt style and icon theme instead in Display
 Properties; variables the user sets themselves are left alone. GTK4 and
 libadwaita are avoided because libadwaita ignores themes.

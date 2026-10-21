@@ -4,6 +4,8 @@
 
 #include "qtpalette.h"
 
+#include "../theme/gtkpkg.h"
+
 /* One palette role's colours in Qt's terms: the active and inactive
  * colour, and the disabled one. */
 typedef struct qt_role {
@@ -59,6 +61,7 @@ static void add_palette(JsonBuilder *b, const char *name, const qt_role *roles, 
 void xd_qt_palette_json(const xd_theme *t, xd_strbuf *out) {
     xd_toolkit_colors c;
     xd_theme_toolkit_colors(t, &c);
+    xd_gtk_pkg_toolkit_colors(t, &c); /* a theme package's colours, as GTK's */
     xd_rgba face = c.face.a > 0 ? c.face : c.bg;
     /* The 3D edges from the scheme, as Windows draws classic controls in
      * every style: Qt's Windows style uses them for its bevels, Fusion

@@ -810,6 +810,14 @@ bool xd_pkg_sys_int(const xd_pkg *p, const char *name, int *out) {
     return true;
 }
 
+bool xd_pkg_sys_bool(const xd_pkg *p, const char *name, bool *out) {
+    const char *v = sys(p, "value", name);
+    if (v == nullptr)
+        return false;
+    *out = g_ascii_strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0;
+    return true;
+}
+
 bool xd_pkg_sys_font(const xd_pkg *p, const char *name, const char **face, int *points,
                      bool *bold, bool *italic) {
     const char *v = sys(p, "font", name);
@@ -1214,45 +1222,68 @@ static void border_fill(const xd_theme *t, cairo_t *cr, const char *cls, const c
     }
 }
 
-bool xd_pkg_draw(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                 const char *state, xd_rect r) {
+bool xd_pkg_draw_background(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                            const char *state, xd_rect r) {
     const xd_pkg *p = t->pkg;
     if (p == nullptr || r.w <= 0 || r.h <= 0 || !xd_pkg_has(p, cls, part))
         return false;
     bool glyph_only = false;
     (void)xd_pkg_bool(p, cls, part, state, "GlyphOnly", &glyph_only);
-    bool drew = false;
-    if (!glyph_only) {
-        if (enum_is(p, cls, part, state, "BgType", "BorderFill")) {
-            border_fill(t, cr, cls, part, state, r);
-            drew = true;
-        } else if (!enum_is(p, cls, part, state, "BgType", "None")) {
-            part_image im;
-            if (part_image_for(t, cls, part, state, r, false, &im)) {
-                if (enum_is(p, cls, part, state, "SizingType", "TrueSize")) {
-                    true_size(t, cr, &im, cls, part, state, r);
-                } else {
-                    xd_insets m = {0};
-                    (void)xd_pkg_margins(p, cls, part, state, "SizingMargins", &m);
-                    bool border_only = false;
-                    (void)xd_pkg_bool(p, cls, part, state, "BorderOnly", &border_only);
-                    nine_grid(cr, &im, m, r,
-                              enum_is(p, cls, part, state, "SizingType", "Tile"), border_only);
-                }
-                drew = true;
-            }
-        }
+    if (glyph_only || enum_is(p, cls, part, state, "BgType", "None"))
+        return false;
+    if (enum_is(p, cls, part, state, "BgType", "BorderFill")) {
+        border_fill(t, cr, cls, part, state, r);
+        return true;
     }
-    /* An image glyph: centred in the content area, as it is. */
-    if (enum_is(p, cls, part, state, "GlyphType", "ImageGlyph")) {
-        part_image g;
-        xd_rect c = xd_pkg_content_rect(t, cls, part, state, r);
-        if (part_image_for(t, cls, part, state, c, true, &g)) {
-            true_size(t, cr, &g, cls, part, state, c);
-            drew = true;
-        }
+    part_image im;
+    if (!part_image_for(t, cls, part, state, r, false, &im))
+        return false;
+    if (enum_is(p, cls, part, state, "SizingType", "TrueSize")) {
+        true_size(t, cr, &im, cls, part, state, r);
+    } else {
+        xd_insets m = {0};
+        (void)xd_pkg_margins(p, cls, part, state, "SizingMargins", &m);
+        bool border_only = false;
+        (void)xd_pkg_bool(p, cls, part, state, "BorderOnly", &border_only);
+        nine_grid(cr, &im, m, r, enum_is(p, cls, part, state, "SizingType", "Tile"),
+                  border_only);
     }
-    return drew;
+    return true;
+}
+
+/* An image glyph: centred in the content area, as it is. */
+bool xd_pkg_draw_glyph(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                       const char *state, xd_rect r) {
+    const xd_pkg *p = t->pkg;
+    if (p == nullptr || r.w <= 0 || r.h <= 0 || !xd_pkg_has(p, cls, part) ||
+        !enum_is(p, cls, part, state, "GlyphType", "ImageGlyph"))
+        return false;
+    part_image g;
+    xd_rect c = xd_pkg_content_rect(t, cls, part, state, r);
+    if (!part_image_for(t, cls, part, state, c, true, &g))
+        return false;
+    true_size(t, cr, &g, cls, part, state, c);
+    return true;
+}
+
+bool xd_pkg_draw(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                 const char *state, xd_rect r) {
+    bool bg = xd_pkg_draw_background(t, cr, cls, part, state, r);
+    bool glyph = xd_pkg_draw_glyph(t, cr, cls, part, state, r);
+    return bg || glyph;
+}
+
+bool xd_pkg_glyph_size(const xd_theme *t, const char *cls, const char *part, const char *state,
+                       int *w, int *h) {
+    if (t->pkg == nullptr || !xd_pkg_has(t->pkg, cls, part) ||
+        !enum_is(t->pkg, cls, part, state, "GlyphType", "ImageGlyph"))
+        return false;
+    part_image g;
+    if (!part_image_for(t, cls, part, state, (xd_rect){0, 0, 1 << 16, 1 << 16}, true, &g))
+        return false;
+    *w = g.fw;
+    *h = g.fh;
+    return true;
 }
 
 bool xd_pkg_part_size(const xd_theme *t, const char *cls, const char *part, const char *state,

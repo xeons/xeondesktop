@@ -3300,6 +3300,122 @@ def gtk_combo_list(s):
     s.check(white > total // 2, "a white list box, not a menu")
 
 
+# A push button and a checked check box; the check box has the focus, so
+# the button is drawn in its normal state.
+GTK_BUTTON_CHECK = r"""
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+w = Gtk.Window(title="Package test")
+w.set_default_size(240, 120)
+box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=16)
+button = Gtk.Button(label="Push")
+box.pack_start(button, False, False, 0)
+check = Gtk.CheckButton(label="Checked")
+check.set_active(True)
+box.pack_start(check, False, False, 0)
+w.add(box)
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+check.grab_focus()
+Gtk.main()
+"""
+
+# The tiny theme package's colours: the button's edge and its five states'
+# fills, the check box's twelve states, the dialog face.
+PKG_EDGE = (0x20, 0x30, 0x60)
+PKG_BUTTON = [(0x40, 0xC0, 0x40), (0x40, 0x40, 0xC0), (0xC0, 0x40, 0x40), (0x80, 0x80, 0x80),
+              (0xC0, 0xC0, 0x40)]  # fmt: skip
+PKG_CHECK = [(0x10 * (i + 1), 0x10, 0xF0 - 0x10 * i) for i in range(12)]
+PKG_FACE = (200, 100, 50)
+
+
+def write_tiny_package(s):
+    """setup: a theme package of our own (theme.xml, a style, images drawn
+    here), used by the session through XD_THEME_PACKAGE."""
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    root = os.path.join(s.base, "tiny-package")
+    os.makedirs(os.path.join(root, "styles"))
+    os.makedirs(os.path.join(root, "images"))
+    with open(os.path.join(root, "theme.xml"), "w") as f:
+        f.write('<xdtheme version="1" name="Tiny" base="luna">\n'
+                '  <variant id="v" name="V" size="Normal" style="styles/v.xml"/>\n</xdtheme>\n')  # fmt: skip
+    with open(os.path.join(root, "styles", "v.xml"), "w") as f:
+        f.write(
+            "<style>\n  <sysmetrics>\n"
+            f'    <color name="BtnFace" value="{" ".join(map(str, PKG_FACE))}"/>\n'
+            "  </sysmetrics>\n  <class name=\"Button\">\n"
+            '    <part name="PushButton" BgType="ImageFile" ImageFile="images/button.png"'
+            ' ImageCount="5" SizingMargins="4 4 4 4" ContentMargins="3 3 3 3"'
+            ' SizingType="Stretch" TextColor="0 0 0"/>\n'
+            '    <part name="CheckBox" BgType="ImageFile" ImageFile="images/check.png"'
+            ' ImageCount="12" SizingType="TrueSize"/>\n'
+            "  </class>\n</style>\n"
+        )
+
+    def strip(name, size, fills, border):
+        pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, size, size * len(fills))
+        for i, fill in enumerate(fills):
+            frame = pb.new_subpixbuf(0, i * size, size, size)
+            frame.fill(int.from_bytes(bytes(PKG_EDGE) + b"\xff", "big"))
+            inner = frame.new_subpixbuf(border, border, size - 2 * border, size - 2 * border)
+            inner.fill(int.from_bytes(bytes(fill) + b"\xff", "big"))
+        pb.savev(os.path.join(root, "images", name), "png", [], [])
+
+    strip("button.png", 12, PKG_BUTTON, 2)
+    strip("check.png", 13, PKG_CHECK, 1)
+    os.environ["XD_THEME_PACKAGE"] = root
+
+
+@scenario(LUNA_INI, setup=write_tiny_package)
+def gtk_theme_package(s):
+    """With a theme package, GTK 3 programs (through GTK_THEME) draw their
+    widgets with its images: a push button's edges and middle from its
+    PushButton image, a checked check box from its CheckBox image's Checked
+    frame, the window in its [SysMetrics] button face."""
+    if not have_gtk3(s):
+        return
+    gtk3 = os.path.join(s.data, "themes", "XeonDesktop", "gtk-3.0")
+    with open(os.path.join(gtk3, "gtk.css")) as f:
+        css = f.read()
+    s.check("assets/pkg/button-pushbutton-1-b.png" in css and "4 4 4 4 stretch" in css,
+            "the generated CSS cuts the package's button image at its margins")  # fmt: skip
+    s.check(os.path.exists(os.path.join(gtk3, "assets", "pkg", "button-checkbox-5-w@2.png")),
+            "and its images are written beside it, at 2x too")  # fmt: skip
+    script = os.path.join(s.base, "package.py")
+    with open(script, "w") as f:
+        f.write(GTK_BUTTON_CHECK)
+    empty = s.settle("desktop")
+    s.launch(sys.executable, script, env={"GTK_THEME": "XeonDesktop", "GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="Package test", state="activated")
+    shot = s.settle("window")
+    win = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(win is not None, "the window is drawn")
+    x0, y0, w, h = win
+
+    def count(colour):
+        return sum(1 for y in range(y0, y0 + h) for x in range(x0, x0 + w)
+                   if shot.pixel(x, y) == colour)  # fmt: skip
+
+    face = count(PKG_FACE)
+    s.check(face > w * h // 4, f"the window is the package's button face ({face} pixels)")
+    # The button: 4-pixel corners and edges of the image, its normal fill
+    # stretched across the middle (at least a 60x10 label's worth).
+    fill = count(PKG_BUTTON[0])
+    s.check(fill > 60 * 10, f"the button's middle is its Normal frame's ({fill} pixels)")
+    s.check(not any(count(c) for c in PKG_BUTTON[1:]), "and no other state's")
+    edge = count(PKG_EDGE)
+    s.check(edge > 2 * (60 + 15), f"with the image's edges around it ({edge} pixels)")
+    # The check box: the CheckedNormal frame (5th), 11x11 inside its edge.
+    checked = count(PKG_CHECK[4])
+    s.check(checked == 11 * 11, f"the check box is its Checked frame ({checked} pixels)")
+    s.check(count(PKG_CHECK[0]) == 0, "not the Unchecked one")
+
+
 @scenario(LUNA_INI)
 def xp_start_letters_and_drag(s):
     """The XP Start menu: a letter picks an item (U: Turn Off Computer, as

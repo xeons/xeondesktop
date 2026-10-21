@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "gtktheme.h"
+#include "../theme/gtkpkg.h"
 #include "qtpalette.h"
 
 static char *theme_dir(void) {
@@ -51,6 +52,23 @@ static const struct {
     {"button-disabled", XD_STATE_DISABLED},
 };
 
+/* NAME.png at 1x, NAME@2.png at 2x, in `dir`. */
+static bool write_png(cairo_surface_t *surf, const char *dir, const char *name, int scale,
+                      xd_strbuf *err) {
+    char *file = scale == 1 ? g_strdup_printf("%s.png", name) : g_strdup_printf("%s@2.png", name);
+    char *path = g_build_filename(dir, file, nullptr);
+    char *tmp = g_strdup_printf("%s.tmp", path);
+    /* Written aside and renamed, like the CSS. */
+    bool ok = cairo_surface_write_to_png(surf, tmp) == CAIRO_STATUS_SUCCESS &&
+              g_rename(tmp, path) == 0;
+    if (!ok && err != nullptr)
+        xd_strbuf_appendf(err, "cannot write %s", path);
+    g_free(tmp);
+    g_free(path);
+    g_free(file);
+    return ok;
+}
+
 static bool write_button_png(xd_visual_style style, const xd_scheme *scheme, const char *dir,
                              const char *name, uint8_t state, int scale, xd_strbuf *err) {
     xd_theme t;
@@ -61,18 +79,50 @@ static bool write_button_png(xd_visual_style style, const xd_scheme *scheme, con
     cairo_t *cr = cairo_create(surf);
     xd_theme_draw_button(&t, cr, (xd_rect){0, 0, w, h}, state, "");
     cairo_destroy(cr);
-    char *file = scale == 1 ? g_strdup_printf("%s.png", name) : g_strdup_printf("%s@2.png", name);
-    char *path = g_build_filename(dir, file, nullptr);
-    char *tmp = g_strdup_printf("%s.tmp", path);
-    /* Written aside and renamed, like the CSS. */
-    bool ok = cairo_surface_write_to_png(surf, tmp) == CAIRO_STATUS_SUCCESS &&
-              g_rename(tmp, path) == 0;
-    if (!ok && err != nullptr)
-        xd_strbuf_appendf(err, "cannot write %s", path);
+    bool ok = write_png(surf, dir, name, scale, err);
     cairo_surface_destroy(surf);
-    g_free(tmp);
-    g_free(path);
-    g_free(file);
+    return ok;
+}
+
+/* Emptied first: another package's images are stale. An image the package
+ * can't draw is left out (GTK then draws nothing there). */
+bool xd_gtk_theme_package_images(xd_visual_style style, const xd_scheme *scheme,
+                                 const char *gtk3, xd_strbuf *err) {
+    xd_theme base;
+    xd_theme_init(&base, style, scheme, 1.0);
+    const xd_theme *t = &base;
+    char *dir = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, nullptr);
+    GDir *d = g_dir_open(dir, 0, nullptr);
+    if (d != nullptr) {
+        for (const char *f; (f = g_dir_read_name(d)) != nullptr;)
+            if (g_str_has_suffix(f, ".png")) {
+                char *path = g_build_filename(dir, f, nullptr);
+                (void)g_unlink(path);
+                g_free(path);
+            }
+        g_dir_close(d);
+    }
+    bool ok = true;
+    if (t->pkg != nullptr) {
+        ok = g_mkdir_with_parents(dir, 0755) == 0;
+        if (!ok && err != nullptr)
+            xd_strbuf_appendf(err, "cannot create %s", dir);
+        GArray *images = xd_gtk_pkg_images(t);
+        for (int scale = 1; ok && scale <= 2; scale++) {
+            xd_theme ts;
+            xd_theme_init(&ts, style, scheme, scale);
+            for (guint i = 0; ok && i < images->len; i++) {
+                const xd_gtk_pkg_image *img = &g_array_index(images, xd_gtk_pkg_image, i);
+                cairo_surface_t *surf = xd_gtk_pkg_image_draw(&ts, img);
+                if (surf == nullptr)
+                    continue;
+                ok = write_png(surf, dir, img->name, scale, err);
+                cairo_surface_destroy(surf);
+            }
+        }
+        g_array_unref(images);
+    }
+    g_free(dir);
     return ok;
 }
 
@@ -166,6 +216,8 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, bool *
                                       button_images[i].state, scale, err);
         }
         g_free(assets_dir);
+        if (ok)
+            ok = xd_gtk_theme_package_images(style, scheme, gtk3, err);
         /* Qt programs read theirs at start, like the CSS. */
         if (ok) {
             xd_strbuf json = {0};

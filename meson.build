@@ -112,6 +112,7 @@ theme_lib = static_library(
   'src/theme/style_whistler.c',
   'src/theme/luna.c',
   'src/theme/gtkcss.c',
+  'src/theme/gtkpkg.c',
   'src/theme/trayicons.c',
   'src/theme/pkg.c',
   'src/theme/style_pkg.c',

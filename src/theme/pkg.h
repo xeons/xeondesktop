@@ -52,6 +52,7 @@ bool xd_pkg_margins(const xd_pkg *pkg, const char *cls, const char *part, const 
  * ("CaptionBarHeight"), fonts ("CaptionFont": face, points, bold). */
 bool xd_pkg_sys_color(const xd_pkg *pkg, const char *name, xd_rgba *out);
 bool xd_pkg_sys_int(const xd_pkg *pkg, const char *name, int *out);
+bool xd_pkg_sys_bool(const xd_pkg *pkg, const char *name, bool *out); /* "FlatMenus" */
 bool xd_pkg_sys_font(const xd_pkg *pkg, const char *name, const char **face, int *points,
                      bool *bold, bool *italic);
 
@@ -62,6 +63,14 @@ bool xd_pkg_sys_font(const xd_pkg *pkg, const char *name, const char **face, int
  * doesn't style the part. */
 bool xd_pkg_draw(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
                  const char *state, xd_rect r);
+/* Its two halves: the background alone, and the image glyph alone. */
+bool xd_pkg_draw_background(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                            const char *state, xd_rect r);
+bool xd_pkg_draw_glyph(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                       const char *state, xd_rect r);
+/* The size of the part's largest image glyph at the theme's scale. */
+bool xd_pkg_glyph_size(const xd_theme *t, const char *cls, const char *part,
+                       const char *state, int *w, int *h);
 /* The size of one state's image at the theme's scale (TrueSize parts:
  * check boxes, caption buttons): false when the part has no image. */
 bool xd_pkg_part_size(const xd_theme *t, const char *cls, const char *part,

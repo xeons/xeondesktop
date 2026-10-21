@@ -211,6 +211,48 @@ is a whole number" (on by default), saved in `desktop.ini`'s
 | Jump lists, thumbnails | `JumpList`, `TaskbarThumbnail` |
 | GTK programs | generated from the above (CSS `border-image`) |
 
+## GTK and Qt programs
+
+The generated GTK 3 theme (`~/.local/share/themes/XeonDesktop`) draws GTK
+widgets with the package's images, as the XP-styled GTK themes of old did
+(src/theme/gtkpkg.c):
+
+- Each part and state a widget needs is drawn once by the renderer above,
+  at its image's own size, into `gtk-3.0/assets/pkg/NAME.png` and
+  `NAME@2.png` (at 200%, with the image filter and DPI-specific images, as
+  on screen).
+- Stretched parts become a CSS `border-image` cut at the part's
+  `SizingMargins` (`repeat` for `Tile`), so GTK keeps the corners and
+  stretches the edges as uxtheme does. GTK never fills a border image's
+  middle, so the middle is the image's inside as the background. The CSS
+  border (where the content starts) is the `SizingMargins` along a
+  widget's flexible side and the `ContentMargins` across it (a 23-pixel
+  button around 9-pixel margins).
+- `TrueSize` parts are shown at their size: check boxes and radio buttons
+  as GTK's icon, scroll arrows and slider thumbs as backgrounds.
+- `BorderFill` parts become a CSS border and fill.
+
+| GTK widget | Parts |
+|---|---|
+| Push buttons (normal, hot, pressed, disabled, default/focused) | `Button` `PushButton` |
+| Check boxes, radio buttons (all 12 and 8 states) | `Button` `CheckBox`, `RadioButton` |
+| Group boxes (`GtkFrame`) | `Button` `GroupBox` |
+| Entries, spin buttons' fields | `Edit` `EditText` |
+| Combo boxes | `ComboBox`, its `DropDownButton` with its glyph |
+| Scroll bars | `ScrollBar` `ArrowBtn`, `ThumbBtn*` with `Gripper*`, `UpperTrack*` |
+| Notebooks (tabs on top) | `Tab` `TabItem` (`TabItemLeftEdge` first, `TopTabItem` selected), `Pane`, `Body` |
+| Progress bars | `Progress` `Bar`, `Chunk` (`ProgressChunkSize`, `ProgressSpaceSize`) |
+| Scales | `TrackBar` `Track`, `Thumb` (`ThumbBottom`/`ThumbTop` with marks on one side) |
+| Spin buttons | `Spin` `Up`, `Down` with their glyphs |
+| Tree view headers | `Header` `HeaderItem` |
+| Tooltips | `Tooltip` `Standard` |
+
+Its `[SysMetrics]` colours (and the menu font) replace the base style's
+throughout the CSS: the dialog face, window and text colours, selection,
+tooltips, menus (`MenuHilight` and `MenuBar` with `FlatMenus`), and the Qt
+palette written beside it. A widget the package doesn't style keeps the
+base style's generated CSS.
+
 ## shell/NAME.xml
 
 Explorer's panes beyond what the msstyles classes give: XP's task pane

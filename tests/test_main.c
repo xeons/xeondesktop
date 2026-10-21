@@ -88,6 +88,8 @@
 #include "../src/users/users.h"
 #include "../src/theme/pkg.h"
 #include "../src/theme/theme.h"
+#include "../src/theme/gtkpkg.h"
+#include "../src/theme/pkg.h"
 #include "../src/theme/scale.h"
 #include "../src/thumbnailer/thumbcache.h"
 #include "../src/wuaucpl/state.h"
@@ -7887,6 +7889,201 @@ static void test_present(void) {
     CHECK(c.set_vrr && !c.vrr);
 }
 
+/* A theme package's strip of `count` square frames of `size`, each a
+ * `border`-pixel edge of `edge` around the frame's own fill. */
+static void write_strip(const char *path, int size, int count, int border, uint32_t edge,
+                        const uint32_t *fills) {
+    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size * count);
+    cairo_t *cr = cairo_create(s);
+    for (int i = 0; i < count; i++) {
+        xd_fill_rect(cr, (xd_rect){0, i * size, size, size}, xd_rgba_hex(edge));
+        xd_fill_rect(cr, (xd_rect){border, i * size + border, size - 2 * border, size - 2 * border},
+                     xd_rgba_hex(fills[i]));
+    }
+    cairo_destroy(cr);
+    CHECK(cairo_surface_write_to_png(s, path) == CAIRO_STATUS_SUCCESS);
+    cairo_surface_destroy(s);
+}
+
+static uint32_t png_pixel(const char *path, int x, int y, int *w, int *h) {
+    cairo_surface_t *s = cairo_image_surface_create_from_png(path);
+    uint32_t px = 0;
+    *w = *h = 0;
+    if (cairo_surface_status(s) == CAIRO_STATUS_SUCCESS) {
+        *w = cairo_image_surface_get_width(s);
+        *h = cairo_image_surface_get_height(s);
+        cairo_surface_flush(s);
+        const uint8_t *d = cairo_image_surface_get_data(s);
+        if (x < *w && y < *h)
+            px = *(const uint32_t *)(const void *)(d + y * cairo_image_surface_get_stride(s) +
+                                                   x * 4) & 0xFFFFFFu;
+    }
+    cairo_surface_destroy(s);
+    return px;
+}
+
+/* GTK drawn with a theme package: a tiny one made here (a push button with
+ * 3-pixel sizing margins, a TrueSize check box, a button face colour),
+ * its parts as border images and icons in the CSS, their images written
+ * at 1x and 2x, what it leaves out (scroll bars) the base style's, and
+ * its colours in the Qt palette. */
+static void test_gtk_package(void) {
+    char *dir = g_dir_make_tmp("xd-gtkpkg-XXXXXX", nullptr);
+    char *pkgdir = g_build_filename(dir, "pkg", nullptr);
+    char *images = g_build_filename(pkgdir, "images", nullptr);
+    char *styles = g_build_filename(pkgdir, "styles", nullptr);
+    CHECK(g_mkdir_with_parents(images, 0700) == 0 && g_mkdir_with_parents(styles, 0700) == 0);
+    char *p = g_build_filename(pkgdir, "theme.xml", nullptr);
+    CHECK(g_file_set_contents(p,
+                              "<xdtheme version=\"1\" name=\"Tiny\" base=\"luna\">\n"
+                              "  <variant id=\"v\" name=\"V\" size=\"Normal\" style=\"styles/v.xml\"/>\n"
+                              "</xdtheme>\n",
+                              -1, nullptr));
+    g_free(p);
+    p = g_build_filename(styles, "v.xml", nullptr);
+    CHECK(g_file_set_contents(
+        p,
+        "<style>\n  <sysmetrics>\n    <color name=\"BtnFace\" value=\"200 100 50\"/>\n"
+        "  </sysmetrics>\n  <class name=\"Button\">\n"
+        "    <part name=\"PushButton\" BgType=\"ImageFile\" ImageFile=\"images/button.png\"\n"
+        "          ImageCount=\"5\" ImageLayout=\"Vertical\" SizingMargins=\"3 3 3 3\"\n"
+        "          ContentMargins=\"2 2 2 2\" SizingType=\"Stretch\" TextColor=\"0 0 0\"/>\n"
+        "    <part name=\"PushButton\" state=\"Disabled\" TextColor=\"128 128 128\"/>\n"
+        "    <part name=\"CheckBox\" BgType=\"ImageFile\" ImageFile=\"images/check.png\"\n"
+        "          ImageCount=\"12\" SizingType=\"TrueSize\"/>\n"
+        "  </class>\n</style>\n",
+        -1, nullptr));
+    g_free(p);
+    static const uint32_t button_fills[5] = {0x40C040, 0x4040C0, 0xC04040, 0x808080, 0xC0C040};
+    uint32_t check_fills[12];
+    for (int i = 0; i < 12; i++)
+        check_fills[i] = 0x101010u * (uint32_t)(i + 1);
+    p = g_build_filename(images, "button.png", nullptr);
+    write_strip(p, 10, 5, 3, 0x203060, button_fills);
+    g_free(p);
+    p = g_build_filename(images, "check.png", nullptr);
+    write_strip(p, 13, 12, 1, 0x000000, check_fills);
+    g_free(p);
+
+    GError *error = nullptr;
+    xd_pkg *pkg = xd_pkg_load(pkgdir, nullptr, XD_SOURCE_ROOT "/data/theme/uxtheme.ini", &error);
+    CHECK(pkg != nullptr);
+    if (pkg == nullptr) {
+        fprintf(stderr, "%s\n", error->message);
+        g_error_free(error);
+        rm_tree(dir);
+        g_free(styles);
+        g_free(images);
+        g_free(pkgdir);
+        g_free(dir);
+        return;
+    }
+    xd_theme_use_package(pkg, XD_FILTER_NEAREST, true);
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(t.pkg == pkg && t.style == XD_STYLE_LUNA);
+
+    xd_strbuf css = {0};
+    xd_theme_gtk_css(&t, &css);
+    const char *text = xd_strbuf_cstr(&css);
+    /* The button: its image cut at its margins, the middle inside the
+     * content margins (exact across), each state its own frame. */
+    CHECK(strstr(text, "border-image: -gtk-scaled(url(\"assets/pkg/button-pushbutton-1-b.png\"), "
+                       "url(\"assets/pkg/button-pushbutton-1-b@2.png\")) 3 3 3 3 stretch;") !=
+          nullptr);
+    CHECK(strstr(text, "assets/pkg/button-pushbutton-2-b.png") != nullptr); /* hot */
+    CHECK(strstr(text, "assets/pkg/button-pushbutton-5-b.png") != nullptr); /* default */
+    CHECK(strstr(text, "border-width: 2px 3px 2px 3px;") != nullptr);
+    CHECK(strstr(text, "#808080") != nullptr); /* the disabled text colour */
+    /* The check box as GTK's icon, at its size. */
+    CHECK(strstr(text, "checkbutton check:checked {\n  -gtk-icon-source: "
+                       "-gtk-scaled(url(\"assets/pkg/button-checkbox-5-w.png\")") != nullptr);
+    CHECK(strstr(text, "min-width: 13px;") != nullptr);
+    /* The package's button face, as GTK's background. */
+    CHECK(strstr(text, "@define-color theme_bg_color #c86432;") != nullptr);
+    /* Scroll bars it doesn't style: Luna's, as generated without it. */
+    CHECK(strstr(text, "assets/pkg/scrollbar") == nullptr);
+    CHECK(strstr(text, "scrollbar slider, scrollbar button {") != nullptr);
+
+    /* The images it names, at 1x and 2x. */
+    char *gtk3 = g_build_filename(dir, "gtk-3.0", nullptr);
+    CHECK(g_mkdir_with_parents(gtk3, 0700) == 0);
+    xd_strbuf err = {0};
+    CHECK(xd_gtk_theme_package_images(XD_STYLE_CLASSIC, &scheme, gtk3, &err));
+    GArray *list = xd_gtk_pkg_images(&t);
+    CHECK(list->len > 10);
+    for (guint i = 0; i < list->len; i++) {
+        const xd_gtk_pkg_image *img = &g_array_index(list, xd_gtk_pkg_image, i);
+        for (int scale = 1; scale <= 2; scale++) {
+            char *name = g_strdup_printf("%s%s.png", img->name, scale == 1 ? "" : "@2");
+            char *path = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, name, nullptr);
+            int w, h;
+            (void)png_pixel(path, 0, 0, &w, &h);
+            CHECK(w == img->w * scale && h == img->h * scale);
+            g_free(path);
+            g_free(name);
+        }
+    }
+    g_array_unref(list);
+    int w, h;
+    char *hot = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-pushbutton-2-b.png", nullptr);
+    CHECK(png_pixel(hot, 0, 0, &w, &h) == 0x203060 && w == 10 && h == 10);
+    CHECK(png_pixel(hot, 5, 5, &w, &h) == 0x4040C0);
+    g_free(hot);
+    hot = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-pushbutton-2-b@2.png", nullptr);
+    CHECK(png_pixel(hot, 5, 0, &w, &h) == 0x203060 && png_pixel(hot, 10, 10, &w, &h) == 0x4040C0);
+    g_free(hot);
+    char *checked = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-checkbox-5-w.png", nullptr);
+    CHECK(png_pixel(checked, 6, 6, &w, &h) == check_fills[4] && w == 13 && h == 13);
+    g_free(checked);
+
+    /* All of it parses, images and all, read from beside gtk.css. */
+    char *css_path = g_build_filename(gtk3, "gtk.css", nullptr);
+    CHECK(g_file_set_contents(css_path, css.data, (gssize)css.len, nullptr));
+    GtkCssProvider *provider = gtk_css_provider_new();
+    g_signal_connect(provider, "parsing-error", G_CALLBACK(on_css_error), nullptr);
+    css_errors = 0;
+    CHECK(gtk_css_provider_load_from_path(provider, css_path, nullptr));
+    CHECK(css_errors == 0);
+    g_object_unref(provider);
+    g_free(css_path);
+
+    /* Qt: the same colours. */
+    xd_strbuf json = {0};
+    xd_qt_palette_json(&t, &json);
+    JsonParser *parser = json_parser_new();
+    CHECK(json_parser_load_from_data(parser, xd_strbuf_cstr(&json), (gssize)json.len, nullptr));
+    JsonNode *root = json_parser_get_root(parser);
+    char *c = root != nullptr ? qt_palette_color(root, "SystemPalette", "Window") : nullptr;
+    CHECK(g_strcmp0(c, "#c86432") == 0);
+    g_free(c);
+    g_object_unref(parser);
+    xd_strbuf_free(&json);
+
+    /* Without a package: none of it, and the images go. */
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
+    xd_strbuf_clear(&css);
+    xd_theme_gtk_css(&t, &css);
+    CHECK(strstr(xd_strbuf_cstr(&css), "assets/pkg/") == nullptr);
+    CHECK(xd_gtk_theme_package_images(XD_STYLE_LUNA, &scheme, gtk3, &err));
+    char *gone = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-pushbutton-1-b.png", nullptr);
+    CHECK(!g_file_test(gone, G_FILE_TEST_EXISTS));
+    g_free(gone);
+
+    xd_pkg_free(pkg);
+    xd_strbuf_free(&err);
+    xd_strbuf_free(&css);
+    rm_tree(dir);
+    g_free(gtk3);
+    g_free(styles);
+    g_free(images);
+    g_free(pkgdir);
+    g_free(dir);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -7918,6 +8115,7 @@ int main(void) {
     test_power_schemes();
     test_sound_scheme();
     test_gtk_css();
+    test_gtk_package();
     test_passwd();
     test_intl();
     test_intl_custom();

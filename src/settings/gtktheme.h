@@ -19,6 +19,11 @@
  * problem in *err on failure. */
 [[nodiscard]] bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme,
                                         bool *changed, xd_strbuf *err);
+/* The active theme package's images for the CSS (../theme/gtkpkg.h), at
+ * 1x and 2x, under `gtk3` (a gtk-3.0 folder); none without a package.
+ * Part of xd_gtk_theme_install. */
+[[nodiscard]] bool xd_gtk_theme_package_images(xd_visual_style style, const xd_scheme *scheme,
+                                               const char *gtk3, xd_strbuf *err);
 /* Path of the installed gtk.css (whether or not it exists yet). */
 void xd_gtk_theme_css_path(xd_strbuf *out);
 /* Path of the Qt palette written with it (see qtpalette.h). g_free it. */
