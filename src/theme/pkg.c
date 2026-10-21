@@ -453,6 +453,7 @@ typedef struct parse_ctx {
     xd_pkg *pkg;
     const char *want_variant;
     char *style_path; /* theme.xml: the chosen variant's style */
+    char *shell_path; /* and its Explorer panes (shell/NAME.xml), if any */
     char *cls;        /* style: the class being read */
 } parse_ctx;
 
@@ -485,8 +486,10 @@ static void theme_start(G_GNUC_UNUSED GMarkupParseContext *mc, const char *eleme
             if (c->style_path != nullptr && !wanted)
                 return;
             g_free(c->style_path);
+            g_free(c->shell_path);
             g_free(c->pkg->variant);
             c->style_path = g_strdup(style);
+            c->shell_path = g_strdup(attr(names, values, "shell"));
             c->pkg->variant = g_strdup(id);
             if (wanted)
                 c->want_variant = nullptr; /* found: keep it */
@@ -625,7 +628,15 @@ xd_pkg *xd_pkg_load(const char *path, const char *variant, const char *names_pat
     }
     if (ok)
         ok = parse(p, c.style_path, &style_parser, &c, error);
+    /* Explorer's panes: classes and parts as in the style, over it (XP's
+     * shellstyle.dll is what its task pane is drawn from). */
+    if (ok && c.shell_path != nullptr) {
+        g_free(c.cls);
+        c.cls = nullptr;
+        ok = parse(p, c.shell_path, &style_parser, &c, error);
+    }
     g_free(c.style_path);
+    g_free(c.shell_path);
     g_free(c.cls);
     if (!ok) {
         xd_pkg_free(p);
@@ -812,6 +823,39 @@ bool xd_pkg_margins(const xd_pkg *p, const char *cls, const char *part, const ch
     return true;
 }
 
+/* A FONT value as msstyles write them: "Tahoma, 8, Bold, Underline,
+ * Quality:ClearType" (face, points, then flags in any order). */
+bool xd_pkg_font(const xd_pkg *p, const char *cls, const char *part, const char *state,
+                 const char *prop, xd_font_spec *out, bool *underline) {
+    const char *v = xd_pkg_prop(p, cls, part, state, prop);
+    if (v == nullptr)
+        return false;
+    char **fields = g_strsplit(v, ",", -1);
+    bool ok = fields[0] != nullptr && fields[1] != nullptr;
+    if (ok) {
+        xd_font_spec f = {.size_pt = g_ascii_strtod(g_strstrip(fields[1]), nullptr)};
+        font_family(g_strstrip(fields[0]), f.family, sizeof(f.family));
+        bool under = false;
+        for (size_t i = 2; fields[i] != nullptr; i++) {
+            const char *flag = g_strstrip(fields[i]);
+            if (g_ascii_strcasecmp(flag, "bold") == 0)
+                f.bold = true;
+            else if (g_ascii_strcasecmp(flag, "italic") == 0)
+                f.italic = true;
+            else if (g_ascii_strcasecmp(flag, "underline") == 0)
+                under = true;
+        }
+        ok = f.size_pt > 0;
+        if (ok) {
+            *out = f;
+            if (underline != nullptr)
+                *underline = under;
+        }
+    }
+    g_strfreev(fields);
+    return ok;
+}
+
 static const char *sys(const xd_pkg *p, const char *kind, const char *name) {
     if (p == nullptr)
         return nullptr;
@@ -874,34 +918,6 @@ bool xd_pkg_sys_font(const xd_pkg *p, const char *name, const char **face, int *
     *bold = n[1] != 0;
     *italic = n[2] != 0;
     return true;
-}
-
-bool xd_pkg_font(const xd_pkg *p, const char *cls, const char *part, const char *state,
-                 const char *prop, xd_font_spec *out) {
-    /* msstyles' LOGFONT as text: "Face, points[, Bold][, Italic]
-     * [, Underline][, Quality:ClearType]". */
-    const char *v = xd_pkg_prop(p, cls, part, state, prop);
-    if (v == nullptr)
-        return false;
-    char **fields = g_strsplit(v, ",", -1);
-    bool ok = fields[0] != nullptr && fields[1] != nullptr;
-    int n[1];
-    if (ok) {
-        g_strstrip(fields[0]);
-        ok = fields[0][0] != '\0' && numbers(fields[1], n, 1) == 1 && n[0] > 0;
-    }
-    if (ok) {
-        xd_font_spec f = {.size_pt = n[0]};
-        font_family(fields[0], f.family, sizeof(f.family));
-        for (size_t i = 2; fields[i] != nullptr; i++) {
-            const char *flag = g_strstrip(fields[i]);
-            f.bold = f.bold || g_ascii_strcasecmp(flag, "bold") == 0;
-            f.italic = f.italic || g_ascii_strcasecmp(flag, "italic") == 0;
-        }
-        *out = f;
-    }
-    g_strfreev(fields);
-    return ok;
 }
 
 /* ---- images ---------------------------------------------------------------------- */

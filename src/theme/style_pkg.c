@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "panes.h"
 #include "pkg.h"
 #include "style.h"
 
@@ -806,7 +807,9 @@ bool xd_pkgstyle_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, ui
     return true;
 }
 
-/* ==== the taskbar, thumbnails, jump lists and Start menus =========================
+/* ==== the taskbar, thumbnails, jump lists and Start menus ==================
+}
+
  * Explorer's classes, as XP's and 7's explorer.exe opens them. Vista's
  * and 7's undocumented parts go by the names data/theme/uxtheme.ini
  * deduces for them (xd-theme-import writes them into the package). */
@@ -939,7 +942,7 @@ bool xd_pkgstyle_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, ui
     xd_draw_start_logo(cr, (xd_rect){ix, c.y + (c.h - icon) / 2 + dy, icon, icon});
     xd_font_spec font = {.family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 13, .bold = true,
                          .italic = true};
-    (void)xd_pkg_font(t->pkg, SB, nullptr, st, "Font", &font);
+    (void)xd_pkg_font(t->pkg, SB, nullptr, st, "Font", &font, nullptr);
     xd_text_style ts = xd_text(
         t, XD_FONT_MENU, text_color_st(t, SB, nullptr, st, xd_rgba_hex(0xFFFFFF)), XD_ALIGN_START);
     ts.font = &font;
@@ -968,7 +971,7 @@ bool xd_pkgstyle_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
     int ix = r.x + xd_tpx(t, 10);
     xd_style_task_icon(t, cr, icon, ix, r.y + (r.h - isz) / 2);
     xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
-    (void)xd_pkg_font(t->pkg, cls, "Button", st, "Font", &font);
+    (void)xd_pkg_font(t->pkg, cls, "Button", st, "Font", &font, nullptr);
     xd_text_style ts =
         xd_text(t, XD_FONT_MENU, text_color_st(t, cls, "Button", st, xd_rgba_hex(0xFFFFFF)),
                 XD_ALIGN_START);
@@ -982,7 +985,7 @@ bool xd_pkgstyle_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uin
         char n[16];
         g_snprintf(n, sizeof(n), "%d", count);
         cf.bold = true;
-        (void)xd_pkg_font(t->pkg, "TaskBand", "GroupCount", nullptr, "Font", &cf);
+        (void)xd_pkg_font(t->pkg, "TaskBand", "GroupCount", nullptr, "Font", &cf, nullptr);
         xd_text_style cs = ts;
         cs.font = &cf;
         cs.color = text_color_st(t, "TaskBand", "GroupCount", nullptr, ts.color);
@@ -1067,7 +1070,7 @@ bool xd_pkgstyle_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint
     cairo_paint(cr);
     if (ab->label != nullptr) {
         xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
-        (void)xd_pkg_font(t->pkg, TB2, nullptr, nullptr, "Font", &font);
+        (void)xd_pkg_font(t->pkg, TB2, nullptr, nullptr, "Font", &font, nullptr);
         xd_text_style ts =
             xd_text(t, XD_FONT_MENU, text_color_st(t, TB2, nullptr, nullptr, xd_rgba_hex(0xFFFFFF)),
                     XD_ALIGN_START);
@@ -1133,7 +1136,7 @@ bool xd_pkgstyle_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char
     if (clock == nullptr || clock[0] == '\0')
         return true;
     xd_font_spec font = t->scheme.fonts[XD_FONT_MENU];
-    (void)xd_pkg_font(t->pkg, "TrayNotify::Clock", nullptr, nullptr, "Font", &font);
+    (void)xd_pkg_font(t->pkg, "TrayNotify::Clock", nullptr, nullptr, "Font", &font, nullptr);
     xd_text_style ts = xd_text(t, XD_FONT_MENU, xd_theme_clock_color(t), XD_ALIGN_END);
     ts.font = &font;
     ts.lines = true; /* a tall taskbar's day and date under the time */
@@ -1347,7 +1350,7 @@ bool xd_theme_start_part_color(const xd_theme *t, xd_start_part part, uint8_t st
 
 bool xd_theme_start_part_font(const xd_theme *t, xd_start_part part, xd_font_spec *out) {
     const char *cls = start_class(t, part);
-    return cls != nullptr && xd_pkg_font(t->pkg, cls, start_names[part], nullptr, "Font", out);
+    return cls != nullptr && xd_pkg_font(t->pkg, cls, start_names[part], nullptr, "Font", out, nullptr);
 }
 
 bool xd_theme_start_heading_color(const xd_theme *t, xd_rgba *out) {
@@ -1444,6 +1447,271 @@ bool xd_pkgstyle_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, xd
         return false;
     (void)xd_pkg_draw(t, cr, CSM, "Banner", "1", r);
     (void)xd_pkg_color(t->pkg, CSM, "Banner", nullptr, "TextColor", text);
-    (void)xd_pkg_font(t->pkg, CSM, "Banner", nullptr, "Font", font);
+    (void)xd_pkg_font(t->pkg, CSM, "Banner", nullptr, "Font", font, nullptr);
     return true;
+}
+
+/* ---- Explorer's panes ------------------------------------------------------------ *
+ * XP's task pane from ExplorerBar (with what an import of shellstyle.dll
+ * adds: shell/NAME.xml), and Vista's and 7's command bar, address box,
+ * tree items and details pane. See panes.h; panes.c draws without a
+ * package. */
+
+static const char *const EXPLORERBAR = "ExplorerBar";
+
+bool xd_pkgstyle_has_taskpane(const xd_theme *t) {
+    return t->pkg != nullptr && xd_pkg_has(t->pkg, EXPLORERBAR, "NormalGroupHead");
+}
+
+static int scaled_px(const xd_theme *t, int v) { return (int)lround(v * t->scale); }
+
+static xd_insets scaled_insets(const xd_theme *t, xd_insets m) {
+    return (xd_insets){scaled_px(t, m.left), scaled_px(t, m.top), scaled_px(t, m.right),
+                       scaled_px(t, m.bottom)};
+}
+
+/* A BorderFill as DirectUI draws its boxes: a fill or a gradient, and a
+ * border whose sides may differ (BorderThickness, our own: uxtheme's
+ * BorderSize is the same all round). Anything else, as uxtheme draws it. */
+static bool draw_box(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+                     const char *state, xd_rect r) {
+    const xd_pkg *p = t->pkg;
+    const char *bg = xd_pkg_prop(p, cls, part, state, "BgType");
+    if (bg == nullptr || g_ascii_strcasecmp(bg, "BorderFill") != 0)
+        return xd_pkg_draw(t, cr, cls, part, state, r);
+    xd_rgba fill, g1, g2;
+    const char *type = xd_pkg_prop(p, cls, part, state, "FillType");
+    bool gradient = type != nullptr && g_ascii_strcasecmp(type, "Solid") != 0 &&
+                    xd_pkg_color(p, cls, part, state, "GradientColor1", &g1) &&
+                    xd_pkg_color(p, cls, part, state, "GradientColor2", &g2);
+    if (gradient)
+        xd_fill_gradient(cr, r, g1, g2, g_ascii_strcasecmp(type, "HorzGradient") == 0);
+    else if (xd_pkg_color(p, cls, part, state, "FillColor", &fill))
+        xd_fill_rect(cr, r, fill);
+    xd_rgba bc;
+    if (!xd_pkg_color(p, cls, part, state, "BorderColor", &bc))
+        return true;
+    xd_insets b;
+    int size = 0;
+    if (xd_pkg_margins(p, cls, part, state, "BorderThickness", &b)) {
+        b = scaled_insets(t, b);
+    } else if (xd_pkg_int(p, cls, part, state, "BorderSize", &size) && size > 0) {
+        int px = xd_tpx(t, size);
+        b = (xd_insets){px, px, px, px};
+    } else {
+        return true;
+    }
+    if (b.left > 0)
+        xd_fill_rect(cr, (xd_rect){r.x, r.y, b.left, r.h}, bc);
+    if (b.right > 0)
+        xd_fill_rect(cr, (xd_rect){r.x + r.w - b.right, r.y, b.right, r.h}, bc);
+    if (b.top > 0)
+        xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w, b.top}, bc);
+    if (b.bottom > 0)
+        xd_fill_rect(cr, (xd_rect){r.x, r.y + r.h - b.bottom, r.w, b.bottom}, bc);
+    return true;
+}
+
+static void group_part(char *out, size_t cap, bool special, const char *what) {
+    g_snprintf(out, cap, "%sGroup%s", special ? "Special" : "Normal", what);
+}
+
+static int font_px(const xd_theme *t, const xd_font_spec *f) {
+    /* A line of text: the font's em at 96 DPI and its leading. */
+    double px = ceil(f->size_pt * 96.0 / 72.0 * 1.2 * t->scale);
+    return (int)px;
+}
+
+void xd_pkgstyle_taskpane_style(const xd_theme *t, xd_taskpane_style *s) {
+    const xd_pkg *p = t->pkg;
+    if (!xd_pkgstyle_has_taskpane(t))
+        return;
+    xd_insets m;
+    int n;
+    if (xd_pkg_margins(p, EXPLORERBAR, nullptr, nullptr, "ContentMargins", &m))
+        s->padding = scaled_insets(t, m);
+    if (xd_pkg_int(p, EXPLORERBAR, nullptr, nullptr, "GroupSpacing", &n))
+        s->group_spacing = scaled_px(t, n);
+    for (int sp = 0; sp < 2; sp++) {
+        char head[40], body[40];
+        group_part(head, sizeof(head), sp, "Head");
+        group_part(body, sizeof(body), sp, "Background");
+        if (xd_pkg_margins(p, EXPLORERBAR, body, nullptr, "ContentMargins", &m))
+            s->body[sp] = scaled_insets(t, m);
+        if (xd_pkg_int(p, EXPLORERBAR, body, nullptr, "LinkSpacing", &n))
+            s->link_spacing[sp] = scaled_px(t, n);
+        if (xd_pkg_int(p, EXPLORERBAR, body, nullptr, "IconSpacing", &n))
+            s->icon_gap[sp] = scaled_px(t, n);
+        (void)xd_pkg_font(p, EXPLORERBAR, head, nullptr, "Font", &s->header_font[sp], nullptr);
+        for (int hot = 0; hot < 2; hot++) {
+            const char *st = hot ? "Hot" : nullptr;
+            (void)xd_pkg_color(p, EXPLORERBAR, head, st, "TextColor", &s->header_color[sp][hot]);
+            (void)xd_pkg_color(p, EXPLORERBAR, body, st, "TextColor", &s->link_color[sp][hot]);
+            (void)xd_pkg_font(p, EXPLORERBAR, body, st, "Font", &s->link_font[sp][hot],
+                              &s->link_underline[sp][hot]);
+        }
+    }
+    /* The title bar: as tall as its image, its arrow or its title with
+     * its margins, whichever is taller. */
+    int h = 0, w, ih;
+    if (xd_pkg_part_size(t, EXPLORERBAR, "NormalGroupHead", nullptr, &w, &ih))
+        h = ih;
+    xd_insets hm = {0};
+    if (xd_pkg_margins(p, EXPLORERBAR, "NormalGroupHead", nullptr, "ContentMargins", &hm))
+        hm = scaled_insets(t, hm);
+    int vm = hm.top + hm.bottom;
+    if (xd_pkg_part_size(t, EXPLORERBAR, "NormalGroupExpand", "1", &w, &ih))
+        h = MAX(h, ih + vm);
+    h = MAX(h, font_px(t, &s->header_font[0]) + vm);
+    if (h > 0)
+        s->header_height = h;
+    (void)xd_pkg_font(p, "TaskPane", "Details", nullptr, "Font", &s->details_font, nullptr);
+    (void)xd_pkg_font(p, "TaskPane", "DetailsName", nullptr, "Font", &s->details_name_font,
+                      nullptr);
+    (void)xd_pkg_color(p, "TaskPane", "Details", nullptr, "TextColor", &s->details_color);
+    if (xd_pkg_int(p, "TaskPane", "Details", nullptr, "LinkSpacing", &n))
+        s->details_spacing = scaled_px(t, n);
+}
+
+bool xd_pkgstyle_draw_taskpane(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    return xd_pkgstyle_has_taskpane(t) && draw_box(t, cr, EXPLORERBAR, nullptr, nullptr, r);
+}
+
+bool xd_pkgstyle_draw_taskpane_header(const xd_theme *t, cairo_t *cr, const xd_taskpane_style *s,
+                                      xd_rect r, bool special, bool expanded, uint8_t state,
+                                      const char *title) {
+    if (!xd_pkgstyle_has_taskpane(t))
+        return false;
+    char head[40], arrow[40];
+    group_part(head, sizeof(head), special, "Head");
+    group_part(arrow, sizeof(arrow), special, expanded ? "Collapse" : "Expand");
+    (void)draw_box(t, cr, EXPLORERBAR, head, nullptr, r);
+    xd_rect c = xd_pkg_content_rect(t, EXPLORERBAR, head, nullptr, r);
+    bool hot = state & (XD_STATE_HOT | XD_STATE_PRESSED);
+    const char *st = (state & XD_STATE_PRESSED) ? "3" : hot ? "2" : "1";
+    int aw = 0, ah = 0;
+    if (xd_pkg_part_size(t, EXPLORERBAR, arrow, st, &aw, &ah)) {
+        /* Right-aligned in the content, or where an Offset from the top
+         * right corner puts it (7's): its left edge or its right edge. */
+        xd_rect a = {c.x + c.w - aw, c.y + (c.h - ah) / 2, aw, ah};
+        int off[2];
+        const char *v = xd_pkg_prop(t->pkg, EXPLORERBAR, arrow, st, "Offset");
+        if (v != nullptr && sscanf(v, "%d %d", &off[0], &off[1]) == 2) {
+            int ox = scaled_px(t, off[0]);
+            a.x = r.x + r.w + ox - (ox > -aw ? aw : 0);
+            a.y = r.y + scaled_px(t, off[1]);
+        }
+        (void)xd_pkg_draw(t, cr, EXPLORERBAR, arrow, st, a);
+        c.w = a.x - c.x - xd_tpx(t, 2);
+    }
+    if (title != nullptr && c.w > 0) {
+        xd_text_style ts = xd_text(t, XD_FONT_MESSAGE, s->header_color[special][hot],
+                                   XD_ALIGN_START);
+        ts.font = &s->header_font[special];
+        xd_draw_text(cr, c, title, &ts);
+    }
+    if (state & XD_STATE_FOCUSED)
+        xd_theme_draw_focus_rect(t, cr, xd_rect_inset(c, 0, xd_tpx(t, 2)));
+    return true;
+}
+
+bool xd_pkgstyle_draw_taskpane_body(const xd_theme *t, cairo_t *cr, xd_rect r, bool special) {
+    if (!xd_pkgstyle_has_taskpane(t))
+        return false;
+    char body[40];
+    group_part(body, sizeof(body), special, "Background");
+    (void)draw_box(t, cr, EXPLORERBAR, body, nullptr, r);
+    return true;
+}
+
+/* Vista's and 7's parts: the class, the part (named in uxtheme.ini's
+ * [Deduced ...] sections) and the state's number. */
+static bool explorer_part(const xd_theme *t, xd_explorer_part part, uint8_t state,
+                          const char **cls, const char **name, char st[8]) {
+    int n = 1;
+    switch (part) {
+    case XD_EXPLORER_COMMAND_BAR:
+        *cls = "CommandModule";
+        *name = "ModuleBackground";
+        break;
+    case XD_EXPLORER_COMMAND_BUTTON:
+        /* Normal 1, Hot 2, Pressed 3, KeyFocused 4, NearHot 5 (a checked
+         * button), Disabled 6 (7's). */
+        *cls = "CommandModule";
+        *name = "TaskButton";
+        n = (state & XD_STATE_DISABLED)  ? 6
+            : (state & XD_STATE_PRESSED) ? 3
+            : (state & XD_STATE_HOT)     ? 2
+            : (state & XD_STATE_CHECKED) ? 5
+            : (state & XD_STATE_FOCUSED) ? 4
+                                         : 1;
+        break;
+    case XD_EXPLORER_ADDRESS_BOX:
+        /* Normal, Hot, Disabled, Focused. */
+        *cls = "AB::AddressBand";
+        *name = "Background";
+        n = (state & XD_STATE_DISABLED)  ? 3
+            : (state & XD_STATE_FOCUSED) ? 4
+            : (state & XD_STATE_HOT)     ? 2
+                                         : 1;
+        break;
+    case XD_EXPLORER_TREE_ITEM:
+        /* Normal, Hot, Selected, Disabled, SelectedNotFocus, HotSelected. */
+        *cls = "Explorer::TreeView";
+        *name = "TreeItem";
+        n = (state & XD_STATE_DISABLED) ? 4
+            : (state & XD_STATE_CHECKED)
+                ? ((state & XD_STATE_HOT) ? 6 : (state & XD_STATE_FOCUSED) ? 3 : 5)
+            : (state & XD_STATE_HOT) ? 2
+                                     : 1;
+        break;
+    case XD_EXPLORER_DETAILS_PANE:
+        /* Horizontal (under the view), Vertical (beside it). */
+        *cls = "PreviewPane";
+        *name = "PreviewBackground";
+        break;
+    default:
+        return false;
+    }
+    g_snprintf(st, 8, "%d", n);
+    return t->pkg != nullptr && xd_pkg_has(t->pkg, *cls, *name);
+}
+
+bool xd_pkgstyle_draw_explorer_part(const xd_theme *t, cairo_t *cr, xd_explorer_part part,
+                                    uint8_t state, xd_rect r) {
+    const char *cls, *name;
+    char st[8];
+    if (!explorer_part(t, part, state, &cls, &name, st))
+        return false;
+    if (part == XD_EXPLORER_COMMAND_BAR) {
+        /* 7's bar: a gradient under a translucent sheen (Vista's sheen is
+         * the whole bar). */
+        xd_rgba g[3];
+        if (xd_pkg_color(t->pkg, cls, "ModuleGradient", nullptr, "GradientColor1", &g[0]) &&
+            xd_pkg_color(t->pkg, cls, "ModuleGradient", nullptr, "GradientColor2", &g[1]) &&
+            xd_pkg_color(t->pkg, cls, "ModuleGradient", nullptr, "GradientColor3", &g[2])) {
+            static const double stops[] = {0.0, 0.5, 1.0};
+            xd_fill_vstops(cr, r, stops, g, 3);
+        }
+    }
+    /* A button or tree row at rest (or a button disabled: 7 has no image
+     * for it, only a text colour) shows what's behind it. */
+    if ((part == XD_EXPLORER_COMMAND_BUTTON || part == XD_EXPLORER_TREE_ITEM) &&
+        (strcmp(st, "1") == 0 || (part == XD_EXPLORER_COMMAND_BUTTON && strcmp(st, "6") == 0)))
+        return true;
+    (void)xd_pkg_draw(t, cr, cls, name, st, r);
+    return true;
+}
+
+bool xd_pkgstyle_explorer_text_color(const xd_theme *t, xd_explorer_part part, uint8_t state,
+                                     xd_rgba *out) {
+    const char *cls, *name;
+    char st[8];
+    if (!explorer_part(t, part, state, &cls, &name, st))
+        return false;
+    if (part == XD_EXPLORER_COMMAND_BAR)
+        return xd_pkg_color(t->pkg, cls, "TaskButton", "1", "TextColor", out);
+    if (part == XD_EXPLORER_DETAILS_PANE)
+        return xd_pkg_color(t->pkg, cls, "MetadataLabel", nullptr, "TextColor", out);
+    return xd_pkg_color(t->pkg, cls, name, st, "TextColor", out);
 }

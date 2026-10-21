@@ -614,6 +614,491 @@ def import_vista(res, names, pkg, mui):
                    "color_key": "NormalColor", "size_key": "NormalSize"}]
 
 
+# ---- Windows XP's shellstyle.dll: DirectUI stylesheets --------------------------------------
+#
+# XP's Explorer draws its task pane (and the "blockade" over system folders)
+# with DirectUI, styled by stylesheets in shellstyle.dll's UIFILE resources:
+#
+#     <style resid=sectionss>
+#     button [id=atom(header)][mousefocused]
+#     {
+#     background: rcbmp(112,6,#FF00FF,0,0,1,0);
+#     padding: rect(10rp,0rp,1rp,0rp);
+#     fontsize: rcint(15)pt;
+#     }
+#     </style>
+#
+# CSS-like, but not CSS (no library reads it, and a CSS parser would choke on
+# the unquoted <style> tags and the function syntax), so this is a small
+# tokenizer and parser for exactly what XP's stylesheets contain: <style
+# resid=NAME> blocks of rules; a rule is an element type with [name] or
+# [name=value] conditions, then { property: value; ... }; a value is
+# numbers (with a unit: rp, pt), names, #RRGGBB, function calls (rgb(),
+# rcint(), rect()...) and "|" between flags. Anything else is an error.
+
+
+class DuiError(ValueError):
+    pass
+
+
+DUI_TOKEN = re.compile(r"""
+    (?P<space>\s+)
+  | (?P<open><\s*style\s+resid\s*=\s*"?(?P<resid>\w+)"?\s*>)
+  | (?P<close><\s*/\s*style\s*>)
+  | (?P<number>-?\d+(?:\.\d+)?)(?P<unit>[A-Za-z]+)?
+  | (?P<hash>\#[0-9A-Fa-f]{6}\b)
+  | (?P<ident>[A-Za-z_][A-Za-z0-9_]*)
+  | (?P<punct>[{}\[\]():;,=|])
+""", re.X)
+
+
+def dui_tokens(text):
+    """(kind, value, start, end) for each token: open (the resid), close,
+    number ((value, unit or None)), hash, ident, punct."""
+    pos = 0
+    while pos < len(text):
+        m = DUI_TOKEN.match(text, pos)
+        if m is None:
+            line = text.count("\n", 0, pos) + 1
+            raise DuiError(f"line {line}: unexpected {text[pos:pos + 12]!r}")
+        kind = m.lastgroup
+        if kind == "unit" or kind == "resid":
+            kind = "number" if m.group("number") is not None else "open"
+        if kind == "number":
+            n = m.group("number")
+            value = (float(n) if "." in n else int(n), m.group("unit"))
+        elif kind == "open":
+            value = m.group("resid")
+        else:
+            value = m.group(kind)
+        if kind != "space":
+            yield kind, value, m.start(), m.end()
+        pos = m.end()
+
+
+class DuiRule:
+    """One rule: element type, conditions (name -> value or None), and
+    declarations (property -> value, a list of terms). A term is
+    ("num", n, unit), ("ident", name), ("hash", "#RRGGBB"), ("op", "|") or
+    ("call", name, [arguments, each a list of terms], unit)."""
+
+    def __init__(self, element, conds, decls):
+        self.element, self.conds, self.decls = element, conds, decls
+
+
+class DuiParser:
+    def __init__(self, text):
+        self.toks = list(dui_tokens(text))
+        self.i = 0
+        self.text = text
+
+    def error(self, what):
+        pos = self.toks[self.i][2] if self.i < len(self.toks) else len(self.text)
+        raise DuiError(f"line {self.text.count(chr(10), 0, pos) + 1}: {what}")
+
+    def peek(self):
+        return self.toks[self.i] if self.i < len(self.toks) else (None, None, 0, 0)
+
+    def take(self, kind=None, value=None):
+        tok = self.peek()
+        if tok[0] is None or (kind and tok[0] != kind) or (value and tok[1] != value):
+            self.error(f"expected {value or kind}, found {tok[1]!r}")
+        self.i += 1
+        return tok
+
+    def sheets(self):
+        """{resid: [DuiRule]}, rules in order."""
+        out = {}
+        while self.peek()[0] is not None:
+            resid = self.take("open")[1]
+            rules = out.setdefault(resid, [])
+            while self.peek()[0] != "close":
+                rules.append(self.rule())
+            self.take("close")
+        return out
+
+    def rule(self):
+        element = self.take("ident")[1]
+        conds = {}
+        while self.peek()[1] == "[":
+            self.take("punct", "[")
+            name = self.take("ident")[1].lower()
+            value = None
+            if self.peek()[1] == "=":
+                self.take("punct", "=")
+                value = self.value(stop=("]",))
+            conds[name] = value
+            self.take("punct", "]")
+        self.take("punct", "{")
+        decls = {}
+        while self.peek()[1] != "}":
+            prop = self.take("ident")[1].lower()
+            self.take("punct", ":")
+            decls[prop] = self.value(stop=(";", "}"))
+            if self.peek()[1] == ";":
+                self.take("punct", ";")
+        self.take("punct", "}")
+        return DuiRule(element.lower(), conds, decls)
+
+    def value(self, stop):
+        terms = []
+        while self.peek()[1] not in stop:
+            kind, v, _start, end = self.take()
+            if kind == "number":
+                terms.append(("num", v[0], v[1]))
+            elif kind == "hash":
+                terms.append(("hash", v))
+            elif kind == "punct" and v == "|":
+                terms.append(("op", v))
+            elif kind == "ident" and self.peek()[1] == "(":
+                self.take("punct", "(")
+                args = []
+                while self.peek()[1] != ")":
+                    args.append(self.value(stop=(",", ")")))
+                    if self.peek()[1] == ",":
+                        self.take("punct", ",")
+                close = self.take("punct", ")")
+                # A unit straight after the call: rcint(15)pt.
+                unit = None
+                nxt = self.peek()
+                if nxt[0] == "ident" and nxt[2] == close[3] and nxt[1] in ("pt", "rp", "px"):
+                    unit = self.take()[1]
+                terms.append(("call", v.lower(), args, unit))
+            elif kind == "ident":
+                terms.append(("ident", v.lower()))
+            else:
+                self.error(f"unexpected {v!r} in a value")
+        return terms
+
+
+def parse_dui(text):
+    return DuiParser(text).sheets()
+
+
+DUI_COLORS = {"white": (255, 255, 255), "black": (0, 0, 0)}
+
+
+class DuiValues:
+    """Reads a stylesheet's values, resolving rcstr()/rcint() through the
+    DLL's string table."""
+
+    def __init__(self, sheets, string):
+        self.sheets, self.string = sheets, string
+
+    def rules(self, resid, element, id=None, flags=()):
+        """The declarations of the rules for element with exactly that id
+        and those flags, merged in order."""
+        out = {}
+        for r in self.sheets.get(resid, []):
+            if r.element != element:
+                continue
+            rid = r.conds.get("id")
+            rid = rid[0][2][0][0][1] if rid and rid[0][0] == "call" and rid[0][1] == "atom" else None
+            others = {k for k in r.conds if k != "id"}
+            if rid == (id.lower() if id else None) and others == set(flags):
+                out.update(r.decls)
+        return out
+
+    def number(self, terms):
+        if len(terms) != 1:
+            return None
+        t = terms[0]
+        if t[0] == "num":
+            return t[1]
+        if t[0] == "call" and t[1] == "rcint" and len(t[2]) == 1:
+            n = self.number(t[2][0])
+            s = self.string(int(n)) if n is not None else None
+            return int(s, 0) if s and re.fullmatch(r"\s*-?(0x[0-9a-fA-F]+|\d+)\s*", s) else None
+        return None
+
+    def text(self, terms):
+        if len(terms) == 1 and terms[0][0] == "call" and terms[0][1] == "rcstr":
+            n = self.number(terms[0][2][0])
+            return self.string(int(n)) if n is not None else None
+        if len(terms) == 1 and terms[0][0] == "ident":
+            return terms[0][1]
+        return None
+
+    def color(self, terms):
+        """(r, g, b, a), a 0 (clear) to 255, or None."""
+        if len(terms) != 1:
+            return None
+        t = terms[0]
+        if t[0] == "ident" and t[1] in DUI_COLORS:
+            return DUI_COLORS[t[1]] + (255,)
+        if t[0] == "hash":
+            v = int(t[1][1:], 16)
+            return (v >> 16, (v >> 8) & 255, v & 255, 255)
+        if t[0] == "call" and t[1] in ("rgb", "argb"):
+            n = [self.number(a) for a in t[2]]
+            if None in n or len(n) != (3 if t[1] == "rgb" else 4):
+                return None
+            return tuple(n) + (255,) if t[1] == "rgb" else tuple(n[1:]) + (n[0],)
+        return None
+
+    def gradient(self, terms):
+        """(from, to, vertical): DirectUI's gradients ignore their colours'
+        alpha (XP writes them argb(0,...))."""
+        if len(terms) == 1 and terms[0][0] == "call" and terms[0][1] == "gradient":
+            args = terms[0][2]
+            if len(args) == 3:
+                a, b, mode = self.color(args[0]), self.color(args[1]), self.number(args[2])
+                if a and b and mode is not None:
+                    return a[:3], b[:3], mode == 1
+        return None
+
+    def rect(self, terms):
+        """rect(left, top, right, bottom)."""
+        if len(terms) == 1 and terms[0][0] == "call" and terms[0][1] == "rect":
+            n = [self.number(a) for a in terms[0][2]]
+            if len(n) == 4 and None not in n:
+                return tuple(int(x) for x in n)
+        return None
+
+    def bitmap(self, terms):
+        """rcbmp(id, mode, transparent colour, ...): (id, (r, g, b) or None).
+        Only a #RRGGBB third argument is a colour; the arrows' 255 is
+        immaterial, as their bitmaps carry alpha."""
+        if len(terms) == 1 and terms[0][0] == "call" and terms[0][1] == "rcbmp":
+            args = terms[0][2]
+            n = self.number(args[0]) if args else None
+            if n is None:
+                return None
+            trans = self.color(args[2]) if len(args) > 2 and args[2][:1] and args[2][0][0] == "hash" else None
+            return int(n), (trans[:3] if trans else None)
+        return None
+
+
+def margins(rect):
+    """DirectUI's rect(left, top, right, bottom) as uxtheme's MARGINS."""
+    l, t, r, b = rect
+    return f"{l} {r} {t} {b}"
+
+
+def rgb(c):
+    return "%d %d %d" % tuple(c[:3])
+
+
+def shellstyle_xml(dll, pkg, color):
+    """shell/NAME.xml for one colour scheme from its shellstyle.dll (see
+    docs/THEMES.md, "shell/NAME.xml"); the bitmaps it uses become PNGs."""
+    res = Resources(dll)
+    text = []
+    for (kind, _name), data in sorted(res.res.items(), key=lambda kv: str(kv[0][1])):
+        if kind == "UIFILE":
+            text.append(utf16(data) if data[1:2] == b"\0" else data.decode("cp1252"))
+
+    def image(ref):
+        rid, trans = ref
+        data = res.get(2, rid)  # RT_BITMAP
+        if data is None:
+            return None
+
+        def make():
+            pb = pixbuf_from_bmp_resource(data)
+            return pb.add_alpha(True, *trans) if trans else pb
+
+        return pkg.image(("SHELL", dll, rid), f"images/shell/{slug(color)}/{rid}.png", make)
+
+    return xml_bytes(shell_root(DuiValues(parse_dui("\n".join(text)), res.string), image))
+
+
+def shell_root(v, bitmap):
+    """The <shell> element from XP's stylesheets (DuiValues); bitmap((id,
+    transparent colour)) makes a bitmap a package image and returns its
+    path."""
+    root = ET.Element("shell")
+    classes = {}
+
+    def part(cls, name, state=None, **props):
+        if cls not in classes:
+            classes[cls] = ET.SubElement(root, "class", name=cls)
+        attrs = {}
+        if name:
+            attrs["name"] = name
+        if state:
+            attrs["state"] = state
+        attrs.update({k: str(x) for k, x in props.items() if x is not None})
+        if len(attrs) > (1 if name else 0) + (1 if state else 0):
+            ET.SubElement(classes[cls], "part", attrs)
+
+    def image(ref):
+        return bitmap(ref) if ref is not None else None
+
+    def font(decls, base=None, bold=None, underline=False):
+        face = v.text(decls["fontface"]) if "fontface" in decls else (base or {}).get("face")
+        size = v.number(decls["fontsize"]) if "fontsize" in decls else (base or {}).get("size")
+        if face is None or size is None:
+            return None
+        weight = v.number(decls["fontweight"]) if "fontweight" in decls else None
+        out = f"{face}, {size}"
+        if bold or (bold is None and weight is not None and weight >= 600):
+            out += ", Bold"
+        if underline:
+            out += ", Underline"
+        return out
+
+    def hot_underline(decls):
+        return bool(decls.get("fontstyle")) and v.text(decls["fontstyle"]) == "underline"
+
+    def border_fill(decls, background=None):
+        fill = v.color(decls["background"]) if "background" in decls else None
+        if (fill is None or fill[3] == 0) and background is not None:
+            fill = background
+        out = {"BgType": "BorderFill"}
+        if fill is not None and fill[3] != 0:
+            out.update(FillType="Solid", FillColor=rgb(fill))
+        border = v.rect(decls["borderthickness"]) if "borderthickness" in decls else None
+        bcolor = v.color(decls["bordercolor"]) if "bordercolor" in decls else None
+        if border and bcolor and any(border):
+            out.update(BorderColor=rgb(bcolor), BorderThickness=margins(border), BorderSize=max(border))
+        else:
+            out["BorderSize"] = 0
+        pad = v.rect(decls["padding"]) if "padding" in decls else (0, 0, 0, 0)
+        if pad and border:
+            out["ContentMargins"] = margins(tuple(p + q for p, q in zip(pad, border)))
+        return out
+
+    # The pane: "taskpane"'s section list.
+    pane = v.rules("taskpane", "element", "sectionlist")
+    if pane:
+        props = border_fill(pane)
+        grad = v.gradient(pane.get("background", []))
+        if grad:
+            a, b, vertical = grad
+            props.update(FillType="VertGradient" if vertical else "HorzGradient",
+                         GradientColor1=rgb(a), GradientColor2=rgb(b))
+        normal = v.rules("sectionss", "expando")
+        m = v.rect(normal.get("margin", [])) or (0, 0, 0, 0)
+        props["GroupSpacing"] = max(m[1], m[3])
+        part("ExplorerBar", None, **props)
+
+    # The groups: "sectionss" (normal) and "mainsectionss" (special: My
+    # Computer's System Tasks, Control Panel's), their tasks in
+    # "sectiontaskss" and "mainsectiontaskss".
+    for kind, sheet, tasks in (("Normal", "sectionss", "sectiontaskss"),
+                               ("Special", "mainsectionss", "mainsectiontaskss")):
+        expando = v.rules(sheet, "expando")
+        base_font = {"face": v.text(expando["fontface"]) if "fontface" in expando else None,
+                     "size": v.number(expando["fontsize"]) if "fontsize" in expando else None}
+        header = v.rules(sheet, "button", "header") or v.rules(sheet, "button")
+        title_hot = v.rules(sheet, "element", "title", ("mousefocused",))
+        head = {}
+        bmp = image(v.bitmap(header.get("background", [])))
+        border = v.rect(header.get("borderthickness", [])) or (0, 0, 0, 0)
+        pad = v.rect(header.get("padding", [])) or (0, 0, 0, 0)
+        if bmp:
+            # A nine-grid bitmap: DirectUI stretches it by the element's
+            # border thickness.
+            head.update(BgType="ImageFile", ImageFile=bmp, SizingType="Stretch",
+                        SizingMargins=margins(border))
+        fg = v.color(header.get("foreground", []))
+        part("ExplorerBar", f"{kind}GroupHead", **head,
+             ContentMargins=margins(tuple(p + q for p, q in zip(pad, border))),
+             Font=font(header, base_font), TextColor=rgb(fg) if fg else None)
+        hot = v.color(title_hot.get("foreground", []))
+        part("ExplorerBar", f"{kind}GroupHead", "Hot", TextColor=rgb(hot) if hot else None)
+        # The arrow: "selected" is an expanded group, which shows Collapse.
+        for name, flags in (("Expand", ()), ("Collapse", ("selected",))):
+            normal = image(v.bitmap(v.rules(sheet, "element", "arrow", flags).get("content", [])))
+            hot_img = image(v.bitmap(v.rules(sheet, "element", "arrow",
+                                             flags + ("mousefocused",)).get("content", [])))
+            # One image a state; placed inside the title bar's border and
+            # padding, from its top right corner (as msstyles' Offsets are).
+            for state, img in (("Normal", normal), ("Hot", hot_img or normal),
+                               ("Pressed", hot_img or normal)):
+                if img:
+                    part("ExplorerBar", f"{kind}Group{name}", state, BgType="ImageFile",
+                         ImageFile=img, ImageCount=1, SizingType="TrueSize",
+                         OffsetType="TopRight", Offset=f"{-(border[2] + pad[2])} {border[1]}")
+        # The body: the task list (the special group's shows its watermark
+        # element's background).
+        tasklist = v.rules(sheet, "tasklist", "tasklist")
+        watermark = v.color(v.rules(sheet, "element", "watermark").get("background", []))
+        body = border_fill(tasklist, watermark)
+        links = v.rules(tasks, "button")
+        link_title = v.rules(tasks, "element", "title")
+        link_hot = v.rules(tasks, "element", "title", ("mousefocused",))
+        # Each task (an "actiontask" or "destinationtask") has its margin.
+        lm = (v.rect(v.rules(tasks, "actiontask").get("margin", []))
+              or v.rect(links.get("margin", [])) or (0, 0, 0, 0))
+        tp = v.rect(link_title.get("padding", [])) or (0, 0, 0, 0)
+        lfg = v.color(links.get("foreground", []))
+        part("ExplorerBar", f"{kind}GroupBackground", **body, Font=font(links, base_font, bold=False),
+             TextColor=rgb(lfg) if lfg else None, LinkSpacing=lm[1], IconSpacing=tp[0])
+        lhot = v.color(link_hot.get("foreground", []))
+        underline = hot_underline(v.rules(tasks, "button", None, ("mousefocused",)))
+        part("ExplorerBar", f"{kind}GroupBackground", "Hot", TextColor=rgb(lhot) if lhot else None,
+             Font=font(links, base_font, bold=False, underline=True) if underline else None)
+        if kind == "Normal":
+            normal_font = base_font
+
+    # The Details group's text ("NameSpaceItemInfoList").
+    info = v.rules("NameSpaceItemInfoList", "namespaceiteminfo")
+    name = v.rules("NameSpaceItemInfoList", "namespaceiteminfo", "InfoName")
+    im = v.rect(info.get("margin", [])) or (0, 0, 0, 0)
+    part("TaskPane", "Details", Font=font(info, normal_font, bold=False), LinkSpacing=im[1])
+    part("TaskPane", "DetailsName", Font=font(name, normal_font))
+
+    # The blockade over system folders ("These files are hidden."), in "main".
+    blockade = v.rules("main", "element", "blockade")
+    if blockade:
+        part("Blockade", "Background", **border_fill(blockade))
+        grad = v.gradient(v.rules("main", "element", "blockadeaccent").get("background", []))
+        if grad:
+            a, b, vertical = grad
+            part("Blockade", "Accent", BgType="BorderFill", BorderSize=0,
+                 FillType="VertGradient" if vertical else "HorzGradient",
+                 GradientColor1=rgb(a), GradientColor2=rgb(b))
+        for pname, eid in (("Title", "blockadetitle"), ("Message", "blockademessage"),
+                           ("Link", "blockadecleartext")):
+            d = v.rules("main", "element", eid)
+            fg = v.color(d.get("foreground", []))
+            pad = v.rect(d.get("padding", []))
+            part("Blockade", pname, Font=font(d), TextColor=rgb(fg) if fg else None,
+                 ContentMargins=margins(pad) if pad else None)
+        if hot_underline(v.rules("main", "element", "blockadecleartext", ("mousefocused",))):
+            part("Blockade", "Link", "Hot", Font=font(v.rules("main", "element", "blockadecleartext"),
+                                                      underline=True))
+    return root
+
+
+def find_shellstyle(msstyles, color):
+    """Shell/COLOR/shellstyle.dll beside the style, as XP finds it for the
+    colour scheme (any case: Royale's folders are lower case)."""
+    path = os.path.dirname(os.path.abspath(msstyles))
+    for want in ("shell", color, "shellstyle.dll"):
+        try:
+            names = os.listdir(path)
+        except OSError:
+            return None
+        match = [n for n in names if n.lower() == want.lower()]
+        if not match:
+            return None
+        path = os.path.join(path, match[0])
+    return path if os.path.isfile(path) else None
+
+
+def import_shell(msstyles, pkg, variants):
+    """Adds shell/COLOR.xml for each XP colour scheme with a shellstyle.dll,
+    and names it in the variants."""
+    done = {}
+    for v in variants:
+        color = v["color_key"]
+        if color not in done:
+            dll = find_shellstyle(msstyles, color)
+            done[color] = None
+            if dll:
+                path = f"shell/{slug(color)}.xml"
+                try:
+                    pkg.add(path, shellstyle_xml(dll, pkg, color))
+                    done[color] = path
+                except (DuiError, pefile.PEFormatError) as e:
+                    print(f"xd-theme-import: {dll}: {e}", file=sys.stderr)
+        if done[color]:
+            v["shell"] = done[color]
+
+
 # ---- .theme files ---------------------------------------------------------------------------
 
 
@@ -704,6 +1189,8 @@ def main():
         if not msstyles:
             sys.exit(f"xd-theme-import: {args.source}: its visual style isn't beside it")
     info, variants = import_style(msstyles, pkg, names)
+    if info["base"] == "luna":
+        import_shell(msstyles, pkg, variants)
     named = info["name"] if info["name"] != "Imported style" else None
     theme.set("name", display or named or os.path.splitext(os.path.basename(args.output))[0])
     theme.set("base", info["base"])
@@ -715,7 +1202,10 @@ def main():
     variants.sort(key=lambda v: (v["color_key"].lower() != (default_color or v["color_key"]).lower(),
                                  v["size_key"].lower() != (default_size or "normalsize").lower()))
     for v in variants:
-        ET.SubElement(theme, "variant", id=v["id"], name=v["name"], size=v["size"], style=v["style"])
+        attrs = {"id": v["id"], "name": v["name"], "size": v["size"], "style": v["style"]}
+        if v.get("shell"):
+            attrs["shell"] = v["shell"]
+        ET.SubElement(theme, "variant", attrs)
     for tag, attrs in extras:
         ET.SubElement(theme, tag, attrs)
     pkg.add("theme.xml", xml_bytes(theme))

@@ -1241,6 +1241,99 @@ def files_tab_history(s):
     s.settle("history")
 
 
+def write_png(path, w, h, rgb):
+    """A plain w x h PNG of one colour."""
+    import gi
+
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, w, h)
+    pb.fill((rgb << 8) | 0xFF)
+    pb.savev(path, "png", [], [])
+
+
+# The Folders button, from the window's top left corner (Classic).
+FOLDERS_BUTTON = (246, 72)
+
+
+def share_like(shot, rect, rgb, step=2, tolerance=6):
+    """The share (0..1) of sampled pixels in rect that are rgb."""
+    x0, y0, w, h = rect
+    total = hits = 0
+    for y in range(y0, y0 + h, step):
+        for x in range(x0, x0 + w, step):
+            total += 1
+            if max(abs(p - q) for p, q in zip(shot.pixel(x, y), rgb)) <= tolerance:
+                hits += 1
+    return hits / max(total, 1)
+
+
+@scenario()
+def files_task_pane(s):
+    """XP's task pane in the Folders bar's place, drawn from a theme
+    package's shell/NAME.xml (one made here, with plain colours): the
+    pane's background, the groups' title bars (an image) and their Expand
+    and Collapse buttons, and the groups' bodies; a title bar folds its
+    group away."""
+    pkg = os.path.join(s.home, "Test.xdtheme.d")
+    os.makedirs(os.path.join(pkg, "styles"), exist_ok=True)
+    os.makedirs(os.path.join(pkg, "shell"), exist_ok=True)
+    with open(os.path.join(pkg, "theme.xml"), "w") as f:
+        f.write('<xdtheme version="1" name="Test" base="classic">'
+                '<variant id="plain" name="Plain" size="Normal" style="styles/plain.xml"'
+                ' shell="shell/plain.xml"/></xdtheme>')
+    with open(os.path.join(pkg, "styles", "plain.xml"), "w") as f:
+        f.write("<style/>")
+    pane, head, arrow, body = (0xC0, 0x80, 0x40), 0x2040A0, 0x40A020, (0xE0, 0xF0, 0xD0)
+    write_png(os.path.join(pkg, "images", "head.png"), 40, 21, head)
+    write_png(os.path.join(pkg, "images", "arrow.png"), 21, 23, arrow)
+    with open(os.path.join(pkg, "shell", "plain.xml"), "w") as f:
+        f.write('<shell><class name="ExplorerBar">'
+                '<part BgType="BorderFill" FillType="Solid" FillColor="%d %d %d"'
+                ' ContentMargins="12 12 12 12" GroupSpacing="15"/>'
+                '<part name="NormalGroupHead" BgType="ImageFile" ImageFile="images/head.png"'
+                ' SizingType="Stretch" ContentMargins="12 3 2 0" Font="Tahoma, 8, Bold"'
+                ' TextColor="255 255 255"/>'
+                '<part name="NormalGroupExpand" BgType="ImageFile" ImageFile="images/arrow.png"'
+                ' ImageCount="1" SizingType="TrueSize"/>'
+                '<part name="NormalGroupCollapse" BgType="ImageFile" ImageFile="images/arrow.png"'
+                ' ImageCount="1" SizingType="TrueSize"/>'
+                '<part name="NormalGroupBackground" BgType="BorderFill" FillType="Solid"'
+                ' FillColor="%d %d %d" ContentMargins="13 13 10 11" TextColor="0 0 255"'
+                ' LinkSpacing="4" IconSpacing="6"/>'
+                '</class></shell>' % (pane + body))
+    empty = s.settle("desktop")
+    s.launch("xd-files", os.path.join(s.home, "Documents"), env={"XD_THEME_PACKAGE": pkg})
+    s.wait_window(app_id=FILES, state="activated")
+    files_title(s, "Documents", "Documents to open")
+    s.inject("move", WIDTH - 24, HEIGHT - 80)
+    shot = s.settle("documents")
+    x, y, _, _ = shot.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+    left = (x + 8, y + 140, 190, 300)  # where the Folders bar is
+    s.check(share_like(shot, left, pane) < 0.05, "the Folders bar shows at first")
+    s.inject("move", x + FOLDERS_BUTTON[0], y + FOLDERS_BUTTON[1], "click", "sleep", 300,
+             "move", WIDTH - 24, HEIGHT - 80)
+    tasks = s.settle("task pane")
+    s.check(share_like(tasks, left, pane) > 0.2, "Folders off: the task pane, its background the package's")
+    s.check(share_like(tasks, left, (0x20, 0x40, 0xA0)) > 0.02, "the groups' title bars, the package's image")
+    s.check(share_like(tasks, left, (0x40, 0xA0, 0x20)) > 0.005, "their Expand and Collapse buttons")
+    s.check(share_like(tasks, left, body) > 0.05, "the groups' bodies, the package's colour")
+    # Folding File and Folder Tasks: its body goes, the pane shows instead.
+    before = share_like(tasks, left, body)
+    bx, by, bw, bh = left
+    title = None
+    for yy in range(by, by + bh, 2):
+        if share_like(tasks, (bx, yy, bw, 1), (0x20, 0x40, 0xA0), step=1) > 0.5:
+            title = yy
+            break
+    s.check(title is not None, "the first group's title bar is found")
+    s.inject("move", bx + 60, title + 4, "click", "sleep", 300, "move", WIDTH - 24, HEIGHT - 80)
+    folded = s.settle("folded")
+    s.check(share_like(folded, left, body) < before - 0.01, "a click on the title bar folds the group")
+
+
 @scenario()
 def files_undo_copy_merge(s):
     """Undo Copy after a copy that merged into a folder and replaced a file

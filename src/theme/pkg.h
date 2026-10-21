@@ -51,6 +51,11 @@ bool xd_pkg_color(const xd_pkg *pkg, const char *cls, const char *part, const ch
 bool xd_pkg_margins(const xd_pkg *pkg, const char *cls, const char *part, const char *state,
                     const char *prop, xd_insets *out);
 
+/* A FONT ("Tahoma, 8, Bold"): its face as the free font standing in for
+ * it, points, bold and italic; `underline` (may be nullptr) for the flag. */
+bool xd_pkg_font(const xd_pkg *pkg, const char *cls, const char *part, const char *state,
+                 const char *prop, xd_font_spec *out, bool *underline);
+
 /* [SysMetrics]: colours by registry name ("ActiveCaption"), sizes
  * ("CaptionBarHeight"), fonts ("CaptionFont": face, points, bold). */
 bool xd_pkg_sys_color(const xd_pkg *pkg, const char *name, xd_rgba *out);
@@ -58,11 +63,6 @@ bool xd_pkg_sys_int(const xd_pkg *pkg, const char *name, int *out);
 bool xd_pkg_sys_bool(const xd_pkg *pkg, const char *name, bool *out); /* "FlatMenus" */
 bool xd_pkg_sys_font(const xd_pkg *pkg, const char *name, const char **face, int *points,
                      bool *bold, bool *italic);
-/* A font property ("Font", "GlyphFont"...: "Tahoma, 8, Bold"), its face
- * mapped to the free fonts standing in for Windows' as [SysMetrics]'
- * are. */
-bool xd_pkg_font(const xd_pkg *pkg, const char *cls, const char *part, const char *state,
-                 const char *prop, xd_font_spec *out);
 
 /* ---- drawing, at the theme's scale with its image filter ---- */
 

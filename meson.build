@@ -118,6 +118,7 @@ theme_lib = static_library(
   'src/theme/pkginfo.c',
   'src/theme/style_pkg.c',
   'src/theme/controls.c',
+  'src/theme/panes.c',
   'src/theme/scale.c',
   c_args: ['-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0'),
            '-DXD_THEME_DATADIR="' + get_option('prefix') / get_option('datadir') / 'xeondesktop"'],
@@ -575,6 +576,7 @@ executable(
 secret_dep = dependency('libsecret-1', required: false, include_type: 'system')
 folder_lib = static_library(
   'xdfolder',
+  'src/files/chrome.c',
   'src/files/cleanup.c',
   'src/files/control.c',
   'src/files/drives.c',
@@ -591,6 +593,7 @@ folder_lib = static_library(
   'src/files/places.c',
   'src/files/properties.c',
   'src/files/sendto.c',
+  'src/files/taskpane.c',
   'src/files/udisks.c',
   'src/files/undo.c',
   'src/files/usershare.c',
@@ -1292,6 +1295,8 @@ test(
 # A failed scenario's screenshots and log go to meson-logs/ui.
 python3 = find_program('python3', required: false)
 if python3.found()
+  # xd-theme-import's reading of XP's shellstyle.dll stylesheets.
+  test('theme-import', python3, args: [files('tests/test_theme_import.py')])
   ui_runner = files('tests/ui/run.py')
   ui_scenarios = run_command(python3, ui_runner, '--names', check: true).stdout().split()
   foreach name : ui_scenarios

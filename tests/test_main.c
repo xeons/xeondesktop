@@ -92,6 +92,8 @@
 #include "../src/theme/gtkpkg.h"
 #include "../src/theme/pkg.h"
 #include "../src/theme/scale.h"
+#include "../src/theme/panes.h"
+#include "../src/theme/pkg.h"
 #include "../src/thumbnailer/thumbcache.h"
 #include "../src/wuaucpl/state.h"
 #include "../src/wuaucpl/updlib.h"
@@ -1765,9 +1767,9 @@ static void test_theme_package_shell(void) {
 
     /* Font properties, and a class's own parts apart from its base's. */
     xd_font_spec f = {0};
-    CHECK(xd_pkg_font(p, "Start::Button", nullptr, nullptr, "Font", &f) && f.size_pt == 8 &&
+    CHECK(xd_pkg_font(p, "Start::Button", nullptr, nullptr, "Font", &f, nullptr) && f.size_pt == 8 &&
           f.bold && !f.italic && strstr(f.family, "Tahoma") != nullptr);
-    CHECK(!xd_pkg_font(p, "StartPanel", "ProgList", nullptr, "TextColor", &f));
+    CHECK(!xd_pkg_font(p, "StartPanel", "ProgList", nullptr, "TextColor", &f, nullptr));
     CHECK(xd_pkg_has_own(p, "Start::Button", nullptr) && !xd_pkg_has_own(p, "Dialog::Button", nullptr));
     CHECK(xd_pkg_has(p, "Dialog::Button", "PushButton"));
     /* Deduced and our own names resolve as uxtheme.ini lists them. */
@@ -8534,6 +8536,162 @@ static void test_gtk_package(void) {
     g_free(dir);
 }
 
+/* ---- Explorer's panes from a theme package (shell/NAME.xml) ---- */
+
+static void pane_file(const char *root, const char *rel, const char *text) {
+    char *path = g_build_filename(root, rel, nullptr);
+    char *dir = g_path_get_dirname(path);
+    g_mkdir_with_parents(dir, 0700);
+    CHECK(g_file_set_contents(path, text, -1, nullptr));
+    g_free(dir);
+    g_free(path);
+}
+
+static void pane_png(const char *root, const char *rel, int w, int h, uint32_t rgb) {
+    char *path = g_build_filename(root, rel, nullptr);
+    char *dir = g_path_get_dirname(path);
+    g_mkdir_with_parents(dir, 0700);
+    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    cairo_t *cr = cairo_create(s);
+    xd_fill_rect(cr, (xd_rect){0, 0, w, h}, xd_rgba_hex(rgb));
+    cairo_destroy(cr);
+    CHECK(cairo_surface_write_to_png(s, path) == CAIRO_STATUS_SUCCESS);
+    cairo_surface_destroy(s);
+    g_free(dir);
+    g_free(path);
+}
+
+static uint32_t rgba_to_hex(xd_rgba c) {
+    return (uint32_t)lround(c.r * 255) << 16 | (uint32_t)lround(c.g * 255) << 8 |
+           (uint32_t)lround(c.b * 255);
+}
+
+static void test_explorer_panes(void) {
+    char *root = g_dir_make_tmp("xd-panes-XXXXXX", nullptr);
+    char *names = g_build_filename(XD_SOURCE_ROOT, "data", "theme", "uxtheme.ini", nullptr);
+    pane_file(root, "theme.xml",
+              "<xdtheme version=\"1\" name=\"Test\" base=\"luna\">"
+              "<variant id=\"blue\" name=\"Blue\" size=\"Normal\" style=\"styles/blue.xml\""
+              " shell=\"shell/blue.xml\"/>"
+              "<variant id=\"bare\" name=\"Bare\" size=\"Normal\" style=\"styles/blue.xml\"/>"
+              "<variant id=\"lost\" name=\"Lost\" size=\"Normal\" style=\"styles/blue.xml\""
+              " shell=\"shell/missing.xml\"/></xdtheme>");
+    /* The style's own ExplorerBar (as luna.msstyles has, for IE's bars):
+     * the shell's parts win where they say otherwise. */
+    pane_file(root, "styles/blue.xml",
+              "<style><class name=\"ExplorerBar\">"
+              "<part name=\"NormalGroupHead\" TextColor=\"1 2 3\" Font=\"Arial, 9\"/>"
+              "<part name=\"NormalGroupExpand\" ImageCount=\"3\" TextColor=\"7 8 9\"/>"
+              "</class></style>");
+    pane_file(root, "shell/blue.xml",
+              "<shell><class name=\"ExplorerBar\">"
+              "<part BgType=\"BorderFill\" FillType=\"VertGradient\" GradientColor1=\"10 20 30\""
+              " GradientColor2=\"10 20 30\" BorderColor=\"255 255 255\" BorderThickness=\"1 0 0 1\""
+              " ContentMargins=\"13 12 12 13\" GroupSpacing=\"15\"/>"
+              "<part name=\"NormalGroupHead\" BgType=\"ImageFile\" ImageFile=\"images/head.png\""
+              " SizingType=\"Stretch\" SizingMargins=\"2 2 2 0\" ContentMargins=\"12 3 2 0\""
+              " Font=\"Tahoma, 8, Bold\" TextColor=\"33 93 198\"/>"
+              "<part name=\"NormalGroupHead\" state=\"Hot\" TextColor=\"66 142 255\"/>"
+              "<part name=\"NormalGroupExpand\" state=\"Normal\" BgType=\"ImageFile\""
+              " ImageFile=\"images/arrow.png\" ImageCount=\"1\" SizingType=\"TrueSize\""
+              " OffsetType=\"TopRight\" Offset=\"-3 2\"/>"
+              "<part name=\"NormalGroupBackground\" BgType=\"BorderFill\" FillType=\"Solid\""
+              " FillColor=\"214 223 247\" BorderColor=\"255 255 255\" BorderThickness=\"1 1 0 1\""
+              " ContentMargins=\"13 13 10 11\" Font=\"Tahoma, 8\" TextColor=\"33 93 198\""
+              " LinkSpacing=\"4\" IconSpacing=\"6\"/>"
+              "<part name=\"NormalGroupBackground\" state=\"Hot\" Font=\"Tahoma, 8, Underline\"/>"
+              "</class><class name=\"TaskPane\"><part name=\"Details\" LinkSpacing=\"5\"/>"
+              "</class></shell>");
+    pane_png(root, "images/head.png", 186, 21, 0x112233);
+    pane_png(root, "images/arrow.png", 21, 23, 0x445566);
+
+    GError *err = nullptr;
+    xd_pkg *p = xd_pkg_load(root, "blue", names, &err);
+    CHECK(p != nullptr);
+    if (p == nullptr) {
+        g_clear_error(&err);
+        g_free(names);
+        g_free(root);
+        return;
+    }
+    xd_rgba c;
+    CHECK(xd_pkg_color(p, "ExplorerBar", "NormalGroupHead", nullptr, "TextColor", &c) &&
+          rgba_to_hex(c) == 0x215DC6);
+    CHECK(xd_pkg_color(p, "ExplorerBar", "NormalGroupHead", "Hot", "TextColor", &c) &&
+          rgba_to_hex(c) == 0x428EFF);
+    /* What the shell doesn't say, the style's part still does. */
+    CHECK(xd_pkg_color(p, "ExplorerBar", "NormalGroupExpand", "Normal", "TextColor", &c) &&
+          rgba_to_hex(c) == 0x070809);
+    xd_font_spec f;
+    bool under = true;
+    CHECK(xd_pkg_font(p, "ExplorerBar", "NormalGroupHead", nullptr, "Font", &f, &under));
+    CHECK(fabs(f.size_pt - 8) < 1e-9 && f.bold && !f.italic && !under &&
+          strstr(f.family, "Tahoma") != nullptr);
+    CHECK(xd_pkg_font(p, "ExplorerBar", "NormalGroupBackground", "Hot", "Font", &f, &under) &&
+          under && !f.bold);
+
+    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    xd_theme t;
+    xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
+    xd_taskpane_style st;
+    xd_theme_taskpane_style(&t, &st);
+    CHECK(st.padding.left == 13 && st.padding.top == 12 && st.padding.bottom == 13);
+    CHECK(st.group_spacing == 15);
+    /* The title bar: the arrow (23) and the margin above it (2). */
+    CHECK(st.header_height == 25);
+    CHECK(st.body[0].left == 13 && st.body[0].top == 10 && st.body[0].bottom == 11);
+    CHECK(st.link_spacing[0] == 4 && st.icon_gap[0] == 6 && st.details_spacing == 5);
+    CHECK(!st.link_underline[0][0] && st.link_underline[0][1]);
+    CHECK(rgba_to_hex(st.header_color[0][1]) == 0x428EFF);
+
+    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 220, 100);
+    cairo_t *cr = cairo_create(s);
+    xd_theme_draw_taskpane(&t, cr, (xd_rect){0, 0, 220, 100});
+    xd_theme_draw_taskpane_header(&t, cr, &st, (xd_rect){12, 12, 186, st.header_height}, false,
+                                  false, XD_STATE_NORMAL, nullptr);
+    xd_theme_draw_taskpane_body(&t, cr, (xd_rect){12, 37, 186, 40}, false);
+    cairo_destroy(cr);
+    CHECK(near(pixel(s, 100, 5), 0x0A141E, 2));  /* the pane */
+    CHECK(near(pixel(s, 0, 50), 0xFFFFFF, 0));   /* its left border */
+    CHECK(near(pixel(s, 219, 50), 0x0A141E, 2)); /* none on the right */
+    CHECK(near(pixel(s, 60, 24), 0x112233, 2));  /* the title bar's image */
+    /* The arrow 3 px in from the title bar's right, 2 px down. */
+    CHECK(near(pixel(s, 12 + 186 - 3 - 10, 12 + 2 + 11), 0x445566, 2));
+    CHECK(near(pixel(s, 12 + 186 - 2, 12 + 2 + 11), 0x112233, 2));
+    CHECK(near(pixel(s, 100, 50), 0xD6DFF7, 0)); /* the body */
+    CHECK(near(pixel(s, 12, 50), 0xFFFFFF, 0));  /* its left border */
+    CHECK(near(pixel(s, 100, 37), 0xD6DFF7, 0)); /* none on top */
+    CHECK(near(pixel(s, 100, 76), 0xFFFFFF, 0)); /* its bottom border */
+    cairo_surface_destroy(s);
+
+    /* Vista's and 7's parts: not in this package, so not drawn. */
+    s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 4, 4);
+    cr = cairo_create(s);
+    CHECK(!xd_theme_draw_explorer_part(&t, cr, XD_EXPLORER_COMMAND_BAR, 0, (xd_rect){0, 0, 4, 4}));
+    cairo_destroy(cr);
+    cairo_surface_destroy(s);
+    xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
+    xd_pkg_free(p);
+
+    /* No shell: nothing of the task pane's in the package. */
+    p = xd_pkg_load(root, "bare", names, &err);
+    CHECK(p != nullptr &&
+          xd_pkg_prop(p, "ExplorerBar", nullptr, nullptr, "GroupSpacing") == nullptr);
+    xd_pkg_free(p);
+    /* A shell named but missing: the package doesn't load. */
+    p = xd_pkg_load(root, "lost", names, &err);
+    CHECK(p == nullptr && err != nullptr);
+    g_clear_error(&err);
+
+    const char *cmd[] = {"rm", "-rf", root, nullptr};
+    g_spawn_sync(nullptr, (char **)(uintptr_t)cmd, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr,
+                 nullptr, nullptr, nullptr, nullptr);
+    g_free(names);
+    g_free(root);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -8623,6 +8781,7 @@ int main(void) {
     test_image_scale();
     test_theme_package();
     test_theme_package_shell();
+    test_explorer_panes();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

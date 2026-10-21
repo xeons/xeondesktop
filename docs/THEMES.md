@@ -87,6 +87,10 @@ loses nothing and anyone who has edited one already knows it:
   the title's glow; 7's taskbar buttons and progress bars (TaskBand2),
   thumbnails (TaskbandExtendedUI), Start menu (StartPanelPriv, and
   StartPanel's parts past 11). See "The taskbar and Start menus".
+  Explorer's panes: Explorer's `CommandModule`, `PreviewPane`, `InfoBar`
+  and `SearchHome` (named as Vista's own `shellstyle.dll` stylesheet names
+  them: `CMOD_TASKBUTTON` is `TaskButton`), `ReadingPane`, and the one
+  part of `AddressBand`, `BreadcrumbBar` and `SearchBox` (`Background`).
 - A property not found for a part in a state is looked up for the part,
   then the class, then (for `App::Class`) in `Class`, then in
   `ClassStyle` if the package has one (Vista and 7 keep their shared
@@ -185,7 +189,8 @@ As uxtheme's DrawThemeBackground and DrawThemeText do:
 - An `AtlasRect` takes the part's image from a rectangle of one larger
   image (Windows 7's DWM frame).
 - Images are straight-alpha PNG: an import bakes `TransparentColor`
-  (magenta) and XP's premultiplied 32-bit bitmaps into alpha.
+  (magenta) and XP's premultiplied 32-bit bitmaps into alpha, and makes
+  Vista's and 7's PNGs, which hold premultiplied colour, straight.
 
 ## Scaling images for high DPI
 
@@ -251,7 +256,7 @@ is a whole number" (on by default), saved in `desktop.ini`'s
 | XP and 7 Start menus | `StartPanel`, `StartPanelPriv`, `StartMenu::*` |
 | Windows 2000 Start menu | `ClassicStartMenu` |
 | Explorer's task pane (XP) | `ExplorerBar` + `shell/NAME.xml` |
-| Explorer's navigation and command bars (7) | `Navigation`, `CommandModule`, `PreviewPane`, `ReadingPane` |
+| Explorer's command bar, address box, tree and details pane (Vista, 7) | `CommandModule`, `AB::AddressBand`, `Explorer::TreeView`, `PreviewPane` |
 | Jump lists, thumbnails | `JumpList` (else 7's `StartPanelPriv` items), `TaskbandExtendedUI` |
 | GTK programs | generated from the above (CSS `border-image`) |
 
@@ -358,7 +363,84 @@ draws it. With desktop composition (Vista's and 7's glass), a class's
 
 ## shell/NAME.xml
 
-Explorer's panes beyond what the msstyles classes give: XP's task pane
-(header and group colours, fonts, the "blockade" banners) from
-`shellstyle.dll`'s stylesheet, as properties on `ExplorerBar` parts and
-our own element names. To be specified with the Explorer phase.
+Explorer's panes beyond what the msstyles classes give. A variant names it
+with `shell="shell/NAME.xml"` (several variants may share one: XP's are per
+colour scheme, not per size). It has the style's form, `<class>` and
+`<part>` elements under a `<shell>` root, and is read after the style: its
+properties override the style's where both have one (luna.msstyles has an
+`ExplorerBar` of its own, for Internet Explorer's bars), and lookups fall
+back as in the style.
+
+XP's Explorer draws its task pane with DirectUI, from stylesheets in
+`shellstyle.dll` (`Shell\<ColorScheme>\shellstyle.dll` beside the
+msstyles: `Shell\NormalColor`, `Shell\Metallic`, `Shell\HomeStead`, and
+Royale's `shell\royale`). `xd-theme-import` reads that DLL for each colour
+scheme and writes what the task pane needs here; the bitmaps it uses become
+PNGs (`images/shell/SCHEME/ID.png`, the magenta made clear). The stylesheet
+format has no library: the importer has a small tokenizer and parser for
+what XP's stylesheets contain.
+
+The task pane, on uxtheme's `ExplorerBar` (its parts' meanings are
+uxtheme's, so a Vista or 7 package's own `ExplorerBar` draws the pane too):
+
+| Where | Properties |
+|---|---|
+| `ExplorerBar` (the class): the pane | `BgType BorderFill`, `FillType` `VertGradient` with `GradientColor1`/`2` or `Solid` with `FillColor`, `BorderColor`, `BorderThickness`, `ContentMargins` (around the groups), `GroupSpacing` |
+| `NormalGroupHead`, `SpecialGroupHead`: a group's title bar | `ImageFile` (stretched with `SizingMargins`), `ContentMargins` (the title's), `Font`, `TextColor`; state `Hot`: `TextColor` |
+| `NormalGroupExpand`, `NormalGroupCollapse` (and Special): the title bar's button | `ImageFile` per state (`Normal`, `Hot`, `Pressed`) or a strip with `ImageCount`; `Offset` from the title bar's top right (`OffsetType TopRight`; the button's right edge, or its left edge when that's further out than its width) |
+| `NormalGroupBackground`, `SpecialGroupBackground`: a group's body | `BgType BorderFill` with `FillColor`, `BorderColor`, `BorderThickness`, or an image; `ContentMargins` (around its tasks); the tasks' `Font` and `TextColor`, and in state `Hot` theirs as the pointer is over one (XP underlines them: `Font="Tahoma, 8, Underline"`); `LinkSpacing` (above each task), `IconSpacing` (between a task's icon and its text) |
+
+The special group is XP's darker one (My Computer's System Tasks, Control
+Panel's). Our own names, which no Windows style uses:
+
+- Properties: `BorderThickness` (a border's widths, `left right top
+  bottom` as MARGINS: DirectUI's boxes have borders on some sides only;
+  uxtheme's `BorderSize` is the same all round), `GroupSpacing`,
+  `LinkSpacing`, `IconSpacing` (lengths at 96 DPI).
+- `TaskPane` / `Details`: the Details group's lines (`Font`, `TextColor`,
+  `LinkSpacing` above each); `TaskPane` / `DetailsName`: its first line,
+  the item's name (`Font`).
+- `Blockade`: XP's banner over system folders ("These files are hidden."):
+  `Background` (a `BorderFill`), `Accent` (its gradient strip), `Title`,
+  `Message` and `Link` (`Font`, `TextColor`, `ContentMargins`; `Link` in
+  state `Hot`). Imported; nothing draws it yet.
+
+```xml
+<shell>
+  <class name="ExplorerBar">
+    <part BgType="BorderFill" FillType="VertGradient" GradientColor1="123 162 231"
+          GradientColor2="99 117 214" BorderColor="255 255 255" BorderThickness="1 0 0 1"
+          ContentMargins="13 12 12 13" GroupSpacing="15"/>
+    <part name="NormalGroupHead" BgType="ImageFile" ImageFile="images/shell/normalcolor/112.png"
+          SizingType="Stretch" SizingMargins="2 2 2 0" ContentMargins="12 3 2 0"
+          Font="Tahoma, 8, Bold" TextColor="33 93 198"/>
+    <part name="NormalGroupHead" state="Hot" TextColor="66 142 255"/>
+    <part name="NormalGroupExpand" state="Normal" BgType="ImageFile" ImageCount="1"
+          ImageFile="images/shell/normalcolor/102.png" SizingType="TrueSize"
+          OffsetType="TopRight" Offset="-3 2"/>
+    <part name="NormalGroupBackground" BgType="BorderFill" FillType="Solid"
+          FillColor="214 223 247" BorderColor="255 255 255" BorderThickness="1 1 0 1"
+          ContentMargins="13 13 10 11" Font="Tahoma, 8" TextColor="33 93 198"
+          LinkSpacing="4" IconSpacing="6"/>
+    <part name="NormalGroupBackground" state="Hot" TextColor="66 142 255"
+          Font="Tahoma, 8, Underline"/>
+  </class>
+  <class name="TaskPane">
+    <part name="Details" Font="Tahoma, 8" LinkSpacing="5"/>
+    <part name="DetailsName" Font="Tahoma, 8, Bold"/>
+  </class>
+</shell>
+```
+
+Without a package, the task pane is laid out with XP's lengths and drawn in
+code: Luna's colour schemes in XP's own colours, other styles in their
+scheme's.
+
+Vista's and 7's Explorer need no shell file: their panes are msstyles
+classes. Where a package has them, xd-files (XP's layout) draws its toolbar
+as 7's command bar (`CommandModule`: `ModuleGradient` under
+`ModuleBackground`, `TaskButton` for a button under the pointer, pressed
+or checked), its address box as `AB::AddressBand`'s `Background`, its
+Folders tree's rows as `Explorer::TreeView`'s `TreeItem` (whole rows, as
+7's navigation pane) and its status bar as `PreviewPane`'s
+`PreviewBackground` (7's details pane, which has its place).

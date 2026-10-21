@@ -12,6 +12,7 @@
 #include "../gtkapp/gtkapp.h"
 #include "../settings/settings.h"
 #include "../settings/state.h"
+#include "chrome.h"
 #include "drives.h"
 #include "encrypted.h"
 #include "extract.h"
@@ -23,6 +24,7 @@
 #include "places.h"
 #include "properties.h"
 #include "sendto.h"
+#include "taskpane.h"
 #include "undo.h"
 
 enum { COL_NAME, COL_ICON, COL_FILE, COL_LOADED, COL_COUNT };
@@ -79,6 +81,7 @@ struct explorer {
     GtkWidget *tree;
     GtkTreeStore *store;
     GtkWidget *tree_pane;
+    GtkWidget *tasks; /* XP's task pane, in the Folders bar's place when it's off */
     GtkWidget *status;
     GtkWidget *status_size;
     GtkWidget *slider;
@@ -102,6 +105,8 @@ struct explorer {
     GPtrArray *trash_only;
     gboolean syncing; /* updating widgets programmatically */
 };
+
+static void update_tasks(explorer *e);
 
 static XdPlace tab_place(tab *t) { return xd_place_of(xd_folder_view_get_location(t->view)); }
 
@@ -176,6 +181,7 @@ static void update_status(explorer *e) {
                      : xd_format_size(xd_folder_view_get_size(view, sel > 0));
     gtk_label_set_text(GTK_LABEL(e->status_size), size);
     g_free(size);
+    update_tasks(e);
 }
 
 static const char *control_switch_label(void) {
@@ -1296,9 +1302,13 @@ static void on_slider(GtkRange *range, gpointer data) {
     xd_folder_view_set_thumbnail_size(e->cur->view, (int)px);
 }
 
+/* Folders: the Folders bar, or XP's task pane in its place. */
 static void on_folders_toggle(GtkToggleToolButton *b, gpointer data) {
     explorer *e = data;
-    gtk_widget_set_visible(e->tree_pane, gtk_toggle_tool_button_get_active(b));
+    gboolean folders = gtk_toggle_tool_button_get_active(b);
+    gtk_widget_set_visible(e->tree_pane, folders);
+    gtk_widget_set_visible(e->tasks, !folders);
+    update_tasks(e);
 }
 
 /* Show Hidden Files is Folder Options' setting: every window follows. */
@@ -2422,6 +2432,239 @@ static void cb_new_folder([[maybe_unused]] GtkWidget *w, gpointer d) { new_item(
 static void cb_new_text([[maybe_unused]] GtkWidget *w, gpointer d) { new_item(d, FALSE); }
 static void cb_shortcut([[maybe_unused]] GtkWidget *w, gpointer d) { create_shortcut(d); }
 
+/* ---- XP's task pane ------------------------------------------------------------------ */
+
+typedef struct task_place {
+    explorer *e;
+    GFile *where;
+} task_place;
+
+static void free_task_place(gpointer data) {
+    task_place *tp = data;
+    g_object_unref(tp->where);
+    g_free(tp);
+}
+
+static void task_go([[maybe_unused]] GtkWidget *pane, gpointer data) {
+    task_place *tp = data;
+    navigate(tp->e->cur, tp->where, TRUE);
+}
+
+typedef struct task_program {
+    explorer *e;
+    char *argv[3];
+} task_program;
+
+static void free_task_program(gpointer data) {
+    task_program *tp = data;
+    g_free(tp->argv[0]);
+    g_free(tp->argv[1]);
+    g_free(tp);
+}
+
+static void task_run([[maybe_unused]] GtkWidget *pane, gpointer data) {
+    task_program *tp = data;
+    GError *err = nullptr;
+    if (!g_spawn_async(nullptr, tp->argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr,
+                       &err)) {
+        xd_message_box(GTK_WINDOW(tp->e->window), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       err->message);
+        g_error_free(err);
+    }
+}
+
+static void add_program_task(explorer *e, int g, const char *icon, const char *label,
+                             const char *program, const char *arg) {
+    task_program *tp = g_new0(task_program, 1);
+    tp->e = e;
+    tp->argv[0] = g_strdup(program);
+    tp->argv[1] = g_strdup(arg);
+    xd_task_pane_task(e->tasks, g, icon, label, task_run, tp, free_task_program);
+}
+
+/* A place in Other Places (takes `where`). */
+static void add_place_task(explorer *e, int g, const char *icon, const char *label,
+                           GFile *where) {
+    task_place *tp = g_new0(task_place, 1);
+    tp->e = e;
+    tp->where = where;
+    xd_task_pane_task(e->tasks, g, icon, label, task_go, tp, free_task_place);
+}
+
+static void add_task(explorer *e, int g, const char *icon, const char *label, XdTaskFunc func) {
+    xd_task_pane_task(e->tasks, g, icon, label, func, e, nullptr);
+}
+
+/* Other Places: the folder above (a drive's is My Computer), then the
+ * usual places, less the one shown. */
+static void add_other_places(explorer *e, GFile *here, XdPlace place) {
+    int g = xd_task_pane_group(e->tasks, "Other Places", FALSE, FALSE);
+    if (place == XD_PLACE_FOLDER && !xd_place_is_drive_root(here)) {
+        GFile *parent = g_file_get_parent(here);
+        if (parent != nullptr) {
+            char *name = g_file_get_basename(parent);
+            const char *home = g_get_home_dir();
+            char *path = g_file_get_path(parent);
+            gboolean is_home = path != nullptr && g_strcmp0(path, home) == 0;
+            add_place_task(e, g, is_home ? "user-home" : "folder",
+                           g_strcmp0(name, "/") == 0 ? "File System" : name, parent);
+            g_free(path);
+            g_free(name);
+        }
+    }
+    const char *docs = g_get_user_special_dir(G_USER_DIRECTORY_DOCUMENTS);
+    GFile *docs_file = docs != nullptr ? g_file_new_for_path(docs) : nullptr;
+    if (docs_file != nullptr && !g_file_equal(docs_file, here))
+        add_place_task(e, g, "folder-documents", "My Documents", g_object_ref(docs_file));
+    g_clear_object(&docs_file);
+    if (place != XD_PLACE_COMPUTER)
+        add_place_task(e, g, "computer", "My Computer", xd_place_computer());
+    if (place == XD_PLACE_COMPUTER || place == XD_PLACE_NETWORK)
+        add_place_task(e, g, "preferences-system", "Control Panel", xd_place_control());
+    if (place != XD_PLACE_NETWORK)
+        add_place_task(e, g, "network-workgroup", "My Network Places",
+                       g_file_new_for_uri(XD_NETWORK_URI));
+}
+
+/* Details: the selected item's (or the folder's) name, type, date and
+ * size, as XP lists them. */
+static void add_details(explorer *e, GFile *here, guint selected) {
+    int g = xd_task_pane_group(e->tasks, "Details", FALSE, TRUE);
+    if (selected > 1) {
+        char *text = g_strdup_printf("%u items selected.", selected);
+        xd_task_pane_line(e->tasks, g, text, FALSE);
+        g_free(text);
+        return;
+    }
+    GFile *file = nullptr;
+    if (selected == 1) {
+        GList *sel = xd_folder_view_get_selected_files(e->cur->view);
+        if (sel != nullptr)
+            file = g_object_ref(sel->data);
+        g_list_free_full(sel, g_object_unref);
+    }
+    if (file == nullptr) {
+        const char *title = xd_place_title(here);
+        if (title != nullptr) {
+            xd_task_pane_line(e->tasks, g, title, TRUE);
+            xd_task_pane_line(e->tasks, g, "System Folder", FALSE);
+            return;
+        }
+        file = g_object_ref(here);
+    }
+    /* Only local files are asked about here: a network one could block. */
+    GFileInfo *info =
+        g_file_is_native(file)
+            ? g_file_query_info(file,
+                                G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
+                                G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE ","
+                                G_FILE_ATTRIBUTE_STANDARD_TYPE ","
+                                G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED,
+                                G_FILE_QUERY_INFO_NONE, nullptr, nullptr)
+            : nullptr;
+    if (info == nullptr) {
+        char *name = g_file_get_parse_name(file);
+        xd_task_pane_line(e->tasks, g, name, TRUE);
+        g_free(name);
+        g_object_unref(file);
+        return;
+    }
+    xd_task_pane_line(e->tasks, g, g_file_info_get_display_name(info), TRUE);
+    gboolean dir = g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY;
+    const char *type = g_file_info_get_content_type(info);
+    char *desc = dir ? g_strdup("File Folder")
+                     : type != nullptr ? g_content_type_get_description(type) : g_strdup("File");
+    xd_task_pane_line(e->tasks, g, desc, FALSE);
+    g_free(desc);
+    GDateTime *when = g_file_info_get_modification_date_time(info);
+    if (when != nullptr) {
+        GDateTime *local = g_date_time_to_local(when);
+        char *date = g_date_time_format(local, "Date Modified: %A, %B %-d, %Y, %-I:%M %p");
+        xd_task_pane_line(e->tasks, g, date, FALSE);
+        g_free(date);
+        g_date_time_unref(local);
+        g_date_time_unref(when);
+    }
+    if (!dir) {
+        char *size = xd_format_size((guint64)g_file_info_get_size(info));
+        char *line = g_strdup_printf("Size: %s", size);
+        xd_task_pane_line(e->tasks, g, line, FALSE);
+        g_free(line);
+        g_free(size);
+    }
+    g_object_unref(info);
+    g_object_unref(file);
+}
+
+/* The pane's groups for the folder shown and its selection: XP's, less
+ * the tasks we have nothing for (publishing to the Web, e-mailing). */
+static void update_tasks(explorer *e) {
+    if (e->tasks == nullptr || !gtk_widget_get_visible(e->tasks))
+        return;
+    GFile *here = xd_folder_view_get_location(e->cur->view);
+    if (here == nullptr)
+        return;
+    XdPlace place = xd_place_of(here);
+    guint selected = xd_folder_view_get_selected_count(e->cur->view);
+    xd_task_pane_begin(e->tasks);
+    if (place == XD_PLACE_COMPUTER) {
+        int g = xd_task_pane_group(e->tasks, "System Tasks", TRUE, FALSE);
+        add_program_task(e, g, "dialog-information", "View system information", "xd-sysdm",
+                         nullptr);
+        add_program_task(e, g, "system-software-install", "Add or remove programs",
+                         "xd-appwiz", nullptr);
+        add_place_task(e, g, "preferences-system", "Change a setting", xd_place_control());
+    } else if (place == XD_PLACE_CONTROL) {
+        int g = xd_task_pane_group(e->tasks, "Control Panel", TRUE, FALSE);
+        add_task(e, g, "preferences-system", control_switch_label(), cb_control_switch);
+    } else if (place == XD_PLACE_TRASH) {
+        int g = xd_task_pane_group(e->tasks, "Recycle Bin Tasks", FALSE, FALSE);
+        add_task(e, g, "user-trash", "Empty the Recycle Bin", cb_empty_trash);
+        if (selected > 0)
+            add_task(e, g, "edit-undo",
+                     selected == 1 ? "Restore this item" : "Restore the selected items",
+                     cb_restore);
+    } else if (place == XD_PLACE_NETWORK) {
+        int g = xd_task_pane_group(e->tasks, "Network Tasks", FALSE, FALSE);
+        add_place_task(e, g, "folder-remote", "Add a network place",
+                       g_file_new_for_uri(XD_ADD_NETWORK_PLACE_URI));
+        add_program_task(e, g, "network-wired", "View network connections", "xd-netconn",
+                         nullptr);
+        add_task(e, g, "folder-remote", "Map a network drive", cb_map_drive);
+    } else {
+        int g = xd_task_pane_group(e->tasks, "File and Folder Tasks", FALSE, FALSE);
+        if (selected == 0) {
+            add_task(e, g, "folder-new", "Make a new folder", cb_new_folder);
+        } else {
+            gboolean folder = FALSE;
+            if (selected == 1) {
+                GList *sel = xd_folder_view_get_selected_files(e->cur->view);
+                folder = sel != nullptr &&
+                         g_file_query_file_type(sel->data, G_FILE_QUERY_INFO_NONE, nullptr) ==
+                             G_FILE_TYPE_DIRECTORY;
+                g_list_free_full(sel, g_object_unref);
+            }
+            const char *what = selected > 1 ? "the selected items"
+                               : folder     ? "this folder"
+                                            : "this file";
+            char label[64];
+            if (selected == 1) {
+                g_snprintf(label, sizeof(label), "Rename %s", what);
+                add_task(e, g, "edit-rename", label, cb_rename);
+            }
+            g_snprintf(label, sizeof(label), "Move %s", what);
+            add_task(e, g, "edit-cut", label, cb_move_to);
+            g_snprintf(label, sizeof(label), "Copy %s", what);
+            add_task(e, g, "edit-copy", label, cb_copy_to);
+            g_snprintf(label, sizeof(label), "Delete %s", what);
+            add_task(e, g, "edit-delete", label, cb_delete);
+        }
+    }
+    add_other_places(e, here, place);
+    add_details(e, here, selected);
+    xd_task_pane_end(e->tasks);
+}
+
 /* The view's keys for files: Delete (Shift: permanently), F2, Ctrl+X/C/V. */
 static gboolean file_key(explorer *e, GdkEventKey *ev) {
     gboolean ctrl = (ev->state & GDK_CONTROL_MASK) != 0;
@@ -3359,8 +3602,10 @@ static gboolean on_settings_changed(int fd, [[maybe_unused]] GIOCondition cond, 
     load_options();
     for (GList *l = gtk_application_get_windows(app); l != nullptr; l = l->next) {
         explorer *e = g_object_get_data(G_OBJECT(l->data), "xd-explorer");
-        if (e != nullptr)
+        if (e != nullptr) {
             apply_options(e);
+            xd_task_pane_reload_theme(e->tasks); /* the appearance may have changed */
+        }
     }
     return G_SOURCE_CONTINUE;
 }
@@ -3459,7 +3704,13 @@ static explorer *open_window(GtkApplication *app, GFile *dir) {
     gtk_box_pack_start(GTK_BOX(left), tree_scroll, TRUE, TRUE, 0);
     gtk_widget_set_size_request(left, 200, -1);
     e->tree_pane = left;
-    gtk_paned_pack1(GTK_PANED(paned), left, FALSE, FALSE);
+    GtkWidget *side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_pack_start(GTK_BOX(side), left, TRUE, TRUE, 0);
+    e->tasks = xd_task_pane_new();
+    gtk_widget_set_size_request(e->tasks, 200, -1);
+    gtk_widget_set_no_show_all(e->tasks, TRUE); /* shown when Folders is off */
+    gtk_box_pack_start(GTK_BOX(side), e->tasks, TRUE, TRUE, 0);
+    gtk_paned_pack1(GTK_PANED(paned), side, FALSE, FALSE);
 
     /* The tabs, over the folder they show; the Folders tree beside them
      * is the window's, following the tab in front. */
@@ -3491,6 +3742,8 @@ static explorer *open_window(GtkApplication *app, GFile *dir) {
     gtk_box_pack_end(GTK_BOX(vbox), sbar, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(vbox), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
                      FALSE, 0);
+    /* Vista's and 7's look for these, where the theme package has it. */
+    xd_explorer_chrome_attach(toolbar, e->address, e->tree, sbar);
 
     gtk_widget_show_all(e->window);
     add_tab(e, dir, TRUE);
