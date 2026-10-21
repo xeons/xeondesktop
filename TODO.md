@@ -571,16 +571,22 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Image scaling for high DPI: Nearest, Integer, Smooth, Scale2x/3x/4x,
       2xSaI, Super2xSaI, SuperEagle (our own, from the published
       descriptions), whole-number scaling, per frame so states don't bleed.
-- [ ] Choosing a package: [Appearance] ThemePackage, ThemeVariant,
+- [x] Choosing a package: [Appearance] ThemePackage, ThemeVariant,
       ImageScaling, IntegerScaling in desktop.ini (instead of today's
       $XD_THEME_PACKAGE, $XD_THEME_VARIANT, $XD_IMAGE_FILTER), packages in
       ~/.local/share/xeondesktop/themes and the system's share folder, the
       compositor, shell and apps following changes live. Display Properties:
       packages in "Windows and buttons", their variants in "Color scheme"
       and "Font size", Browse... to import a .msstyles or .theme (running
-      xd-theme-import), "Scale theme images" in Effects.
-- [ ] GTK and Qt programs: the generated GTK theme drawn from the package
+      xd-theme-import), "Scale theme images" in Effects. Done; no package
+      while High Contrast is on. Not done: the desktop's background colour
+      from a package; re-importing under the same name reloads only on the
+      next desktop.ini change.
+- [x] GTK and Qt programs: the generated GTK theme drawn from the package
       (CSS border-image with its images), the Qt palette from its colours.
+      Not right yet: scroll thumb grippers and some glyphs can sit half a
+      pixel off (CSS centring), GTK's spin buttons sit side by side, only
+      tabs on top are styled.
 - [x] The rest of the controls: horizontal scroll bars and size boxes,
       progress bars, sliders, spin buttons, list view headers, tree view
       glyphs, toolbars and rebars, status bars, tooltips, Vista/7 menus
@@ -590,22 +596,35 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       status bar and menu bar have no caller outside xd-themeview yet.
 - [x] Vista's and 7's images are premultiplied: xd-theme-import makes
       them straight (through cairo), or translucent parts came out dark.
-- [ ] Vista and 7 frames: DWMWindow's parts named (deduced), the glass
-      frame and caption buttons drawn from its atlas, Basic from Window.
-- [ ] Taskbar and Start menus from packages: TaskBar, TaskBand,
+- [~] Vista and 7 frames: DWMWindow's caption buttons, glows and glyphs
+      named (deduced) and drawn with the glass; Basic from Window. Its
+      frame edge pieces and glass reflections are still numbered and Aero's
+      own are drawn. The glass path is untested on a GPU.
+- [x] Taskbar and Start menus from packages: TaskBar, TaskBand,
       TaskBand2 (7's buttons and progress colours), TrayNotify*, the
       clock, Start button, XP's StartPanel, 7's StartPanelPriv, and our
-      ClassicStartMenu for the Windows 2000 one.
-- [ ] Explorer's panes: XP's task pane (ExplorerBar, and shellstyle.dll's
+      ClassicStartMenu for the Windows 2000 one (and our JumpList). Not
+      done: nothing feeds the taskbar progress bars yet (Unity's
+      LauncherEntry over D-Bus could), the group menu isn't styled
+      (FlashButtonGroupMenu).
+- [x] Explorer's panes: XP's task pane (ExplorerBar, and shellstyle.dll's
       stylesheet imported as shell/VARIANT.xml), 7's Navigation,
       CommandModule, PreviewPane, ReadingPane, the address and search bars.
+      xd-files has a task pane now (in place of the Folders tree when
+      Folders is off). Not done: keyboard navigation in the pane, the
+      "blockade" banners, 7's Navigation back/forward buttons.
+- [ ] Folder Options' "Show common tasks in folders" / "Use Windows classic
+      folders": a setting, the task pane by default as in XP.
 - [ ] Proper names for the undocumented shell classes' parts, deduced
       from their images and use, marked as deduced in uxtheme.ini:
       AddressBand, AltTab, BreadcrumbBar, CommandModule, DragDrop,
       DWMWindow, InfoBar, ItemsView, MonthCal, Navigation, PreviewPane,
       SearchBox, SearchHome, StartPanelPriv, TaskBand2,
       TaskbandExtendedUI, TrayNotifyFlyout, TryHarder and the rest the
-      importer leaves numbered.
+      importer leaves numbered. Named so far (docs/THEMES.md): DWMWindow's
+      buttons and glyphs, the parts of TaskBand2, TaskbandExtendedUI,
+      StartPanel, StartPanelPriv, CommandModule, PreviewPane, ReadingPane,
+      InfoBar and SearchHome that we draw.
 - [ ] What a .theme brings besides the style: its sounds and cursors (when
       beside it) imported and applied, its wallpaper applied.
 - [ ] Our built-in styles matched to the real ones: render each part from
