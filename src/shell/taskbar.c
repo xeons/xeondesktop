@@ -623,8 +623,11 @@ static void layout_tasks(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rec
     bool side = side_bar(shell);
     bool classic = t->style == XD_STYLE_CLASSIC;
     int gap = xd_tpx(t, XD_TASK_GAP);
-    int th = classic ? row_h : row_h - xd_tpx(t, 5);
-    int toff = classic ? 0 : xd_tpx(t, 3);
+    /* A theme package's buttons fill the row (their images carry the
+     * margins); the built-in XP styles' sit 3 px down, 5 px shorter. */
+    bool fill = classic || xd_theme_task_buttons_fill_row(t);
+    int th = fill ? row_h : row_h - xd_tpx(t, 5);
+    int toff = fill ? 0 : xd_tpx(t, 3);
     int arrows_w = xd_theme_dropdown_button_width(t);
 
     if (side) {

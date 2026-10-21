@@ -1006,6 +1006,20 @@ void xd_theme_draw_taskbar_sizing_bar(const xd_theme *t, cairo_t *cr, xd_rect r,
     (void)xd_pkg_draw(t, cr, cls, part, "1", xd_style_rim_line(r, edge, 0, side ? w : h));
 }
 
+/* An XP style's taskbar height: Windows sizes the task band from its
+ * buttons, a 16 px icon within their ContentMargins, plus 6 (Luna's 4 and
+ * 4 make XP's 30 px; the WE styles' 2 and 2 their 26). 0 where the
+ * package has no task buttons (or is Vista's or 7's: their taskbar is
+ * explorer's own size). */
+int xd_pkgstyle_taskbar_height(const xd_theme *t) {
+    if (t->pkg == nullptr || seven(t) || !xd_pkg_has_own(t->pkg, "TaskBand::Toolbar", "Button"))
+        return 0;
+    xd_insets m;
+    if (!xd_pkg_margins(t->pkg, "TaskBand::Toolbar", "Button", nullptr, "ContentMargins", &m))
+        return 0;
+    return xd_tpx(t, 16 + MAX(m.top, 0) + MAX(m.bottom, 0) + 6);
+}
+
 /* A Start button image drawn at its size (TrueSize: the WE styles') is
  * the button's width; 0 for the style's own (Luna stretches its image to
  * fit "start"). */

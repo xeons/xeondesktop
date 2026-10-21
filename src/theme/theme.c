@@ -172,7 +172,11 @@ void xd_theme_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t s
         return;
     ops(t)->draw_checkbox(t, cr, r, state, label);
 }
-int xd_theme_taskbar_height(const xd_theme *t) { return ops(t)->taskbar_height(t); }
+int xd_theme_taskbar_height(const xd_theme *t) {
+    int h = xd_pkgstyle_taskbar_height(t);
+    return h > 0 ? h : ops(t)->taskbar_height(t);
+}
+bool xd_theme_task_buttons_fill_row(const xd_theme *t) { return xd_pkgstyle_taskbar_height(t) > 0; }
 void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
     if (xd_pkgstyle_draw_taskbar(t, cr, r, edge))
         return;

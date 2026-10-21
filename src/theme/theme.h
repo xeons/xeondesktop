@@ -153,6 +153,10 @@ typedef enum xd_edge : uint8_t { XD_EDGE_BOTTOM, XD_EDGE_TOP, XD_EDGE_LEFT, XD_E
 
 /* One row's height (also a side taskbar's start button height). */
 int xd_theme_taskbar_height(const xd_theme *t);
+/* Whether task buttons fill the taskbar's row: a theme package's do (their
+ * images carry their own margins, transparent in Luna's), the built-in
+ * styles draw theirs inset. */
+bool xd_theme_task_buttons_fill_row(const xd_theme *t);
 /* The background of a taskbar on `edge`, of any size: its light rim
  * faces the desktop. */
 void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
