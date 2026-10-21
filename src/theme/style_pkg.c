@@ -12,8 +12,70 @@
 
 static const char *const WINDOW = "Window";
 
+/* Vista's and 7's glass frame (DWMWindow): with the compositor's glass,
+ * Aero's frame with the package's caption buttons; without it, the
+ * package's Window parts (Windows' Basic look), as Windows falls back. */
+static bool dwm_frame(const xd_theme *t) {
+    return t->glass && t->pkg != nullptr && xd_pkg_has(t->pkg, "DWMWindow", "CloseButton");
+}
+
 bool xd_pkgstyle_has_frame(const xd_theme *t) {
-    return t->pkg != nullptr && xd_pkg_has(t->pkg, WINDOW, "Caption");
+    return t->pkg != nullptr && xd_pkg_has(t->pkg, WINDOW, "Caption") && !dwm_frame(t);
+}
+
+/* A DWMWindow glyph: the one drawn for the nearest DPI at or below the
+ * monitor's, at its own size, centred in `r`. */
+static void dwm_glyph(const xd_theme *t, cairo_t *cr, const char *glyph, const char *state,
+                      xd_rect r) {
+    static const int dpis[] = {192, 144, 120, 96};
+    double dpi = 96.0 * t->scale;
+    for (size_t i = 0; i < XD_ARRAY_LEN(dpis); i++) {
+        char part[32];
+        g_snprintf(part, sizeof(part), "%s%d", glyph, dpis[i]);
+        if ((dpis[i] > dpi + 0.5 && dpis[i] != 96) || !xd_pkg_has(t->pkg, "DWMWindow", part))
+            continue;
+        /* Drawn for dpis[i]: scaled only by what the monitor adds. */
+        xd_theme at = *t;
+        at.scale = MAX(dpi / dpis[i], 0.5);
+        int w, h;
+        if (!xd_pkg_part_size(&at, "DWMWindow", part, state, &w, &h))
+            return;
+        (void)xd_pkg_draw(&at, cr, "DWMWindow", part, state,
+                          (xd_rect){r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h});
+        return;
+    }
+}
+
+bool xd_pkgstyle_dwm_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
+                            const xd_frame *f, bool leftmost, bool alone) {
+    if (!dwm_frame(t))
+        return false;
+    bool close = part == XD_PART_CLOSE;
+    const char *base = close ? (alone ? "CloseButtonAlone" : "CloseButton")
+                             : (leftmost ? "MinButton" : "MaxButton");
+    char bg[40];
+    g_snprintf(bg, sizeof(bg), "%s%s", base, f->active ? "" : "Inactive");
+    if (!xd_pkg_has(t->pkg, "DWMWindow", bg))
+        g_strlcpy(bg, base, sizeof(bg));
+    bool pressed = f->pressed == part && f->hot == part;
+    bool hot = f->hot == part && !pressed;
+    const char *state = pressed ? "3" : hot ? "2" : "1";
+    if (hot) {
+        /* The glow around a hot button, larger than it, centred on it. */
+        const char *glow = close ? "CloseGlow" : "ButtonGlow";
+        int w, h;
+        if (xd_pkg_part_size(t, "DWMWindow", glow, "1", &w, &h))
+            (void)xd_pkg_draw(t, cr, "DWMWindow", glow, "1",
+                              (xd_rect){r.x + (r.w - w) / 2, r.y + (r.h - h) / 2, w, h});
+    }
+    (void)xd_pkg_draw(t, cr, "DWMWindow", bg, state, r);
+    const char *glyph = close                      ? "CloseGlyph"
+                        : part == XD_PART_HELP     ? "HelpGlyph"
+                        : part == XD_PART_MINIMIZE ? "MinGlyph"
+                        : f->maximized             ? "RestoreGlyph"
+                                                   : "MaxGlyph";
+    dwm_glyph(t, cr, glyph, state, r);
+    return true;
 }
 
 static int part_w(const xd_theme *t, const char *part, int fallback) {

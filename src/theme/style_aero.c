@@ -225,6 +225,9 @@ static void gloss(cairo_t *cr, xd_rect r, xd_rgba top0, xd_rgba top1, xd_rgba bo
 
 static void caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
                            const xd_frame *f, bool first, bool last) {
+    if (xd_pkgstyle_dwm_button(t, cr, r, part, f, first,
+                               part == XD_PART_CLOSE && (f->buttons & ~XD_CAPBTN_CLOSE) == 0))
+        return;
     bool hot = f->hot == part && f->pressed != part;
     bool pressed = f->hot == part && f->pressed == part;
     bool close = part == XD_PART_CLOSE;

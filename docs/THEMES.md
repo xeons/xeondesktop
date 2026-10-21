@@ -35,6 +35,13 @@ loses nothing and anyone who has edited one already knows it:
   `BgType`, `ImageFile`, `ImageCount`, `ImageLayout`, `SizingMargins`,
   `SizingType`, `ContentMargins`, `TextColor`, `GlyphImageFile`...
 - Classes, parts, states and properties are matched case-insensitively.
+- Parts Microsoft never documented (Vista's and 7's shell classes) are
+  named where their images and use make them clear, in
+  data/theme/uxtheme.ini's `[Deduced Class Version]` sections (per Windows
+  version, since the numbers changed between Vista and 7); the rest stay
+  numbered. So far: DWMWindow's caption buttons, glows and glyphs (one per
+  DPI: `CloseGlyph96` ... `CloseGlyph192`), its small close button and
+  the title's glow.
 - A property not found for a part in a state is looked up for the part,
   then the class, then (for `App::Class`) in `Class`, then in
   `ClassStyle` if the package has one (Vista and 7 keep their shared

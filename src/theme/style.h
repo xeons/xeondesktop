@@ -61,6 +61,10 @@ void xd_theme_attach_package(xd_theme *t);
 /* style_pkg.c: a package's window frames (uxtheme's Window class), used
  * when it has a caption. */
 bool xd_pkgstyle_has_frame(const xd_theme *t);
+/* Aero's caption button from a Vista/7 package's DWMWindow parts, when it
+ * has them and the glass is on: false to draw Aero's own. */
+bool xd_pkgstyle_dwm_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
+                            const xd_frame *f, bool leftmost, bool alone);
 xd_insets xd_pkgstyle_frame_insets(const xd_theme *t, const xd_frame *f);
 void xd_pkgstyle_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
                               xd_frame_layout *l);

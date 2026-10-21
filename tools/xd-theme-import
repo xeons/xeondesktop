@@ -67,8 +67,15 @@ class Names:
             self.prop_name[name.lower()] = name
         self.enums = {}
         self.parts, self.states = {}, {}
+        # "[Deduced Class Version]": names for an undocumented class's parts
+        # in a style of that Windows version ("6.1").
+        self.deduced = {}
         for sec in cp.sections():
             kind, _, what = sec.partition(" ")
+            if kind == "Deduced":
+                cls, _, version = what.partition(" ")
+                self.deduced[(cls.lower(), version)] = {int(v): k for k, v in cp[sec].items()}
+                continue
             if kind not in ("Enum", "Parts", "States"):
                 continue
             values = {k: int(v) for k, v in cp[sec].items()}
@@ -83,11 +90,11 @@ class Names:
     def base(cls):
         return cls.split("::")[-1].lower()
 
-    def part_name(self, cls, number):
+    def part_name(self, cls, number, version=None):
         for name, n in self.parts.get(self.base(cls), {}).items():
             if n == number:
                 return name
-        return str(number)
+        return self.deduced.get((self.base(cls), version), {}).get(number, str(number))
 
     def state_name(self, cls, part, number):
         for name, n in self.states.get(f"{self.base(cls)}.{part.lower()}", {}).items():
@@ -500,6 +507,8 @@ def font_value(text):
 
 def import_vista(res, names, pkg, mui):
     cmap = class_map(res.get("CMAP", "CMAP"))
+    fixed = getattr(res.pe, "VS_FIXEDFILEINFO", None)
+    version = f"{fixed[0].FileVersionMS >> 16}.{fixed[0].FileVersionMS & 0xFFFF}" if fixed else None
     style = Style(names)
     info = {"base": "aero", "name": "Imported style", "author": "", "description": ""}
     groups = {}
@@ -569,7 +578,7 @@ def import_vista(res, names, pkg, mui):
             order.append(key)
         groups[key].append((prop, value))
     for cls, part, state in order:
-        pname = names.part_name(cls, part) if part else None
+        pname = names.part_name(cls, part, version) if part else None
         sname = names.state_name(cls, pname, state) if part and state else (str(state) if state else None)
         style.part(cls, pname, sname, groups[(cls, part, state)])
     path = "styles/normal.xml"
