@@ -338,6 +338,48 @@ void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int fir
 /* Thumb rectangle of a vertical scroll bar, for hit testing. */
 xd_rect xd_theme_vscrollbar_thumb(const xd_theme *t, xd_rect r, int first, int page, int total);
 
+/* ---- more controls (controls.c; device px) ----
+ * Each is drawn from the theme package where it styles the control, else
+ * as the style draws it. */
+
+/* Horizontal scroll bar, and its thumb: the vertical one along x. */
+void xd_theme_draw_hscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int first, int page,
+                              int total);
+xd_rect xd_theme_hscrollbar_thumb(const xd_theme *t, xd_rect r, int first, int page, int total);
+/* The size box where two scroll bars meet: a resize grip in its corner. */
+void xd_theme_draw_sizebox(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* Progress bar, `fraction` (0..1) done. */
+void xd_theme_draw_progress(const xd_theme *t, cairo_t *cr, xd_rect r, double fraction);
+/* Slider (trackbar): the channel, and the thumb pointing down at its
+ * ticks. state: XD_STATE_HOT, _PRESSED, _FOCUSED, _DISABLED. */
+void xd_theme_draw_trackbar(const xd_theme *t, cairo_t *cr, xd_rect channel, xd_rect thumb,
+                            uint8_t state);
+xd_rgba xd_theme_trackbar_tics_color(const xd_theme *t, bool disabled);
+/* One button of a spin (up-down) control. state: _HOT, _PRESSED, _DISABLED. */
+void xd_theme_draw_spin_button(const xd_theme *t, cairo_t *cr, xd_rect r, bool up,
+                               uint8_t state);
+/* A list view's column header. state: _HOT, _PRESSED. */
+void xd_theme_draw_header_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                               const char *label);
+/* A tree view's expand box: a plus when closed, a minus when open. */
+void xd_theme_draw_tree_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, bool open);
+/* A status bar with one pane of `text` (nullptr: none) and, with `grip`,
+ * the size grip at its right end. */
+void xd_theme_draw_statusbar(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text,
+                             bool grip);
+/* A tooltip filling r, its text 4 logical px in from the sides. */
+void xd_theme_draw_tooltip(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text);
+/* A program's toolbar band (rebar), with the gripper at its left end. */
+void xd_theme_draw_rebar(const xd_theme *t, cairo_t *cr, xd_rect r, bool gripper);
+/* A button on a program's toolbar; the caller draws its icon. state: _HOT,
+ * _PRESSED, _CHECKED, _DISABLED. */
+void xd_theme_draw_tool_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                               const char *label);
+/* A menu bar, and one of its items. state: _HOT, _PRESSED, _DISABLED. */
+void xd_theme_draw_menubar(const xd_theme *t, cairo_t *cr, xd_rect r, bool active);
+void xd_theme_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                const char *label);
+
 /* Colours a widget toolkit needs to match the active style (used to
  * generate the GTK3 theme). Classic fills the 3D colours from the scheme;
  * the flat styles fill the gradient/border colours. */

@@ -88,6 +88,42 @@ bool xd_pkgstyle_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_r
 bool xd_pkgstyle_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
                           const char *label);
 bool xd_pkgstyle_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* The rest (ScrollBar, Progress, TrackBar, Spin, Header, TreeView, Status,
+ * Tooltip, Rebar, Toolbar, TaskBar::Toolbar and ::Rebar, and Vista's and
+ * 7's Menu): true when drawn, as above. */
+bool xd_pkgstyle_draw_hscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+                                 bool disabled);
+bool xd_pkgstyle_draw_sizebox(const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_pkgstyle_draw_progress(const xd_theme *t, cairo_t *cr, xd_rect r, double fraction);
+bool xd_pkgstyle_draw_trackbar(const xd_theme *t, cairo_t *cr, xd_rect channel, xd_rect thumb,
+                               uint8_t state);
+bool xd_pkgstyle_trackbar_tics_color(const xd_theme *t, xd_rgba *out);
+bool xd_pkgstyle_draw_spin(const xd_theme *t, cairo_t *cr, xd_rect r, bool up, uint8_t state);
+bool xd_pkgstyle_draw_header_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                  const char *label);
+bool xd_pkgstyle_draw_tree_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, bool open);
+bool xd_pkgstyle_draw_statusbar(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text,
+                                bool grip);
+bool xd_pkgstyle_draw_tooltip(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text);
+bool xd_pkgstyle_draw_rebar(const xd_theme *t, cairo_t *cr, xd_rect r, bool gripper);
+bool xd_pkgstyle_draw_tool_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                  const char *label);
+bool xd_pkgstyle_draw_taskbar_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                             uint8_t state);
+bool xd_pkgstyle_draw_taskbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_pkgstyle_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r);
+/* An item's background; `text` gets its text colour. */
+bool xd_pkgstyle_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                xd_rgba *text);
+bool xd_pkgstyle_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_pkgstyle_draw_menu_submenu(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled);
+bool xd_pkgstyle_draw_menu_check(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled);
+bool xd_pkgstyle_draw_menubar(const xd_theme *t, cairo_t *cr, xd_rect r, bool active);
+bool xd_pkgstyle_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                   const char *label);
+
+/* theme.c: the style's menu colours. */
+void xd_theme_menu_palette(const xd_theme *t, xd_menu_palette *out);
 
 /* Helpers shared by the styles. */
 

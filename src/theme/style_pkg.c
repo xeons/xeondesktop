@@ -384,32 +384,54 @@ bool xd_pkgstyle_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r,
     return xd_pkg_draw(t, cr, "ComboBox", "DropDownButton", st, r);
 }
 
-bool xd_pkgstyle_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
-                                 bool disabled) {
+/* A scroll bar along `r`: arrows at its ends, the track either side of the
+ * thumb, the thumb and its gripper. */
+static bool scrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb, bool disabled,
+                      bool vertical) {
     const char *const SB = "ScrollBar";
     if (t->pkg == nullptr || !xd_pkg_has(t->pkg, SB, "ArrowBtn"))
         return false;
-    int arrow = MIN(r.w, r.h / 2);
-    xd_rect up = {r.x, r.y, r.w, arrow};
-    xd_rect down = {r.x, r.y + r.h - arrow, r.w, arrow};
+    int len = vertical ? r.h : r.w, across = vertical ? r.w : r.h;
+    int arrow = MIN(across, len / 2);
+    /* [a, b) along the bar, as a rectangle across it. */
+#define SPAN(a, b)                                                                             \
+    (vertical ? (xd_rect){r.x, (a), r.w, (b) - (a)} : (xd_rect){(a), r.y, (b) - (a), r.h})
+    int lo = (vertical ? r.y : r.x), hi = lo + len;
+    xd_rect first = SPAN(lo, lo + arrow), last = SPAN(hi - arrow, hi);
+    int tlo = vertical ? thumb.y : thumb.x, tlen = vertical ? thumb.h : thumb.w;
+    const char *upper = vertical ? "UpperTrackVert" : "UpperTrackHorz";
+    const char *lower = vertical ? "LowerTrackVert" : "LowerTrackHorz";
     const char *track_state = disabled ? "4" : "1";
-    if (thumb.h > 0) {
-        (void)xd_pkg_draw(t, cr, SB, "UpperTrackVert", track_state,
-                          (xd_rect){r.x, up.y + up.h, r.w, thumb.y - (up.y + up.h)});
-        (void)xd_pkg_draw(t, cr, SB, "LowerTrackVert", track_state,
-                          (xd_rect){r.x, thumb.y + thumb.h, r.w, down.y - (thumb.y + thumb.h)});
+    if (tlen > 0) {
+        (void)xd_pkg_draw(t, cr, SB, upper, track_state, SPAN(lo + arrow, tlo));
+        (void)xd_pkg_draw(t, cr, SB, lower, track_state, SPAN(tlo + tlen, hi - arrow));
     } else {
-        (void)xd_pkg_draw(t, cr, SB, "UpperTrackVert", track_state,
-                          (xd_rect){r.x, up.y + up.h, r.w, down.y - (up.y + up.h)});
+        (void)xd_pkg_draw(t, cr, SB, upper, track_state, SPAN(lo + arrow, hi - arrow));
     }
-    /* ArrowBtn: Up 1-4, Down 5-8 (Normal, Hot, Pressed, Disabled). */
-    (void)xd_pkg_draw(t, cr, SB, "ArrowBtn", disabled ? "4" : "1", up);
-    (void)xd_pkg_draw(t, cr, SB, "ArrowBtn", disabled ? "8" : "5", down);
-    if (thumb.h > 0) {
-        (void)xd_pkg_draw(t, cr, SB, "ThumbBtnVert", "1", thumb);
-        (void)xd_pkg_draw(t, cr, SB, "GripperVert", "1", thumb);
+#undef SPAN
+    /* ArrowBtn: Up 1-4, Down 5-8, Left 9-12, Right 13-16 (Normal, Hot,
+     * Pressed, Disabled). */
+    int base = vertical ? 1 : 9;
+    char st[8];
+    state_str(st, base + (disabled ? 3 : 0));
+    (void)xd_pkg_draw(t, cr, SB, "ArrowBtn", st, first);
+    state_str(st, base + 4 + (disabled ? 3 : 0));
+    (void)xd_pkg_draw(t, cr, SB, "ArrowBtn", st, last);
+    if (tlen > 0) {
+        (void)xd_pkg_draw(t, cr, SB, vertical ? "ThumbBtnVert" : "ThumbBtnHorz", "1", thumb);
+        (void)xd_pkg_draw(t, cr, SB, vertical ? "GripperVert" : "GripperHorz", "1", thumb);
     }
     return true;
+}
+
+bool xd_pkgstyle_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+                                 bool disabled) {
+    return scrollbar(t, cr, r, thumb, disabled, true);
+}
+
+bool xd_pkgstyle_draw_hscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+                                 bool disabled) {
+    return scrollbar(t, cr, r, thumb, disabled, false);
 }
 
 bool xd_pkgstyle_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
@@ -445,5 +467,341 @@ bool xd_pkgstyle_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
     if (xd_pkg_has(t->pkg, "Tab", "Body"))
         (void)xd_pkg_draw(t, cr, "Tab", "Body", "1",
                           xd_rect_inset(r, xd_tpx(t, 1), xd_tpx(t, 1)));
+    return true;
+}
+
+/* ---- the rest of the controls ---------------------------------------------------- */
+
+static bool has(const xd_theme *t, const char *cls, const char *part) {
+    return t->pkg != nullptr && xd_pkg_has(t->pkg, cls, part);
+}
+
+static xd_rgba text_color_st(const xd_theme *t, const char *cls, const char *part,
+                             const char *st, xd_rgba fallback) {
+    xd_rgba c = fallback;
+    (void)xd_pkg_color(t->pkg, cls, part, st, "TextColor", &c);
+    return c;
+}
+
+/* The background's content rectangle as uxtheme's
+ * GetThemeBackgroundContentRect gives it: ContentMargins, or for an image
+ * its SizingMargins, or for a border and fill its BorderSize. */
+static xd_rect content_or_sizing(const xd_theme *t, const char *cls, const char *part,
+                                 const char *st, xd_rect r) {
+    xd_insets m;
+    if (xd_pkg_margins(t->pkg, cls, part, st, "ContentMargins", &m))
+        return xd_pkg_content_rect(t, cls, part, st, r);
+    const char *bg = xd_pkg_prop(t->pkg, cls, part, st, "BgType");
+    if (bg != nullptr && g_ascii_strcasecmp(bg, "BorderFill") == 0) {
+        int b = 1;
+        (void)xd_pkg_int(t->pkg, cls, part, st, "BorderSize", &b);
+        m = (xd_insets){b, b, b, b};
+    } else if (!xd_pkg_margins(t->pkg, cls, part, st, "SizingMargins", &m)) {
+        return r;
+    }
+    int l = xd_tpx(t, m.left), rr = xd_tpx(t, m.right);
+    int top = xd_tpx(t, m.top), b = xd_tpx(t, m.bottom);
+    xd_rect c = {r.x + l, r.y + top, r.w - l - rr, r.h - top - b};
+    return c.w > 0 && c.h > 0 ? c : r;
+}
+
+bool xd_pkgstyle_draw_sizebox(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (!has(t, "ScrollBar", "Sizebox"))
+        return false;
+    if (!xd_pkg_draw(t, cr, "ScrollBar", "SizeboxBkgnd", "1", r))
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
+    (void)xd_pkg_draw(t, cr, "ScrollBar", "Sizebox", "RightAlign", r);
+    return true;
+}
+
+bool xd_pkgstyle_draw_progress(const xd_theme *t, cairo_t *cr, xd_rect r, double fraction) {
+    const char *const P = "Progress";
+    if (!has(t, P, "Bar"))
+        return false;
+    (void)xd_pkg_draw(t, cr, P, "Bar", "1", r);
+    xd_rect c = content_or_sizing(t, P, "Bar", "1", r);
+    int done = (int)lround(c.w * CLAMP(fraction, 0.0, 1.0));
+    if (done <= 0)
+        return true;
+    /* Vista and 7 fill continuously; XP draws ProgressChunkSize chunks
+     * ProgressSpaceSize apart, as comctl32 does. */
+    if (has(t, P, "Fill")) {
+        (void)xd_pkg_draw(t, cr, P, "Fill", "Normal", (xd_rect){c.x, c.y, done, c.h});
+        return true;
+    }
+    int chunk = 6, space = 2;
+    (void)xd_pkg_int(t->pkg, P, "Chunk", nullptr, "ProgressChunkSize", &chunk);
+    (void)xd_pkg_int(t->pkg, P, "Chunk", nullptr, "ProgressSpaceSize", &space);
+    chunk = MAX(xd_tpx(t, MAX(chunk, 1)), 1);
+    space = xd_tpx(t, MAX(space, 0));
+    cairo_save(cr);
+    cairo_rectangle(cr, c.x, c.y, c.w, c.h);
+    cairo_clip(cr);
+    for (int x = c.x; x < c.x + done; x += chunk + space)
+        (void)xd_pkg_draw(t, cr, P, "Chunk", "1", (xd_rect){x, c.y, chunk, c.h});
+    cairo_restore(cr);
+    return true;
+}
+
+bool xd_pkgstyle_draw_trackbar(const xd_theme *t, cairo_t *cr, xd_rect channel, xd_rect thumb,
+                               uint8_t state) {
+    const char *const TB = "TrackBar";
+    if (!has(t, TB, "Track"))
+        return false;
+    (void)xd_pkg_draw(t, cr, TB, "Track", "1", channel);
+    /* Normal 1, Hot 2, Pressed 3, Focused 4, Disabled 5. */
+    int n = (state & XD_STATE_DISABLED) ? 5
+            : (state & XD_STATE_PRESSED) ? 3
+            : (state & XD_STATE_HOT)     ? 2
+            : (state & XD_STATE_FOCUSED) ? 4
+                                         : 1;
+    char st[8];
+    state_str(st, n);
+    /* The thumb points down at the ticks below it. */
+    (void)xd_pkg_draw(t, cr, TB, has(t, TB, "ThumbBottom") ? "ThumbBottom" : "Thumb", st, thumb);
+    return true;
+}
+
+bool xd_pkgstyle_trackbar_tics_color(const xd_theme *t, xd_rgba *out) {
+    return t->pkg != nullptr && xd_pkg_color(t->pkg, "TrackBar", "Tics", "1", "Color", out);
+}
+
+bool xd_pkgstyle_draw_spin(const xd_theme *t, cairo_t *cr, xd_rect r, bool up, uint8_t state) {
+    const char *part = up ? "Up" : "Down";
+    if (!has(t, "Spin", part))
+        return false;
+    char st[8];
+    state_str(st, basic_state(state));
+    (void)xd_pkg_draw(t, cr, "Spin", part, st, r);
+    return true;
+}
+
+bool xd_pkgstyle_draw_header_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                  const char *label) {
+    const char *const H = "Header";
+    if (!has(t, H, "HeaderItem"))
+        return false;
+    /* Normal 1, Hot 2, Pressed 3. */
+    int n = (state & XD_STATE_PRESSED) ? 3 : (state & XD_STATE_HOT) ? 2 : 1;
+    char st[8];
+    state_str(st, n);
+    (void)xd_pkg_draw(t, cr, H, "HeaderItem", st, r);
+    if (label == nullptr)
+        return true;
+    xd_rgba fg = text_color_st(t, H, "HeaderItem", st, xd_sys(t, XD_COLOR_BUTTON_TEXT));
+    xd_text_style ts = xd_text(t, XD_FONT_MESSAGE, fg, XD_ALIGN_START);
+    xd_rect c = xd_pkg_content_rect(t, H, "HeaderItem", st, r);
+    xd_draw_text(cr, xd_rect_inset4(c, xd_tpx(t, 6), 0, xd_tpx(t, 6), 0), label, &ts);
+    return true;
+}
+
+bool xd_pkgstyle_draw_tree_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, bool open) {
+    if (!has(t, "TreeView", "Glyph"))
+        return false;
+    (void)xd_pkg_draw(t, cr, "TreeView", "Glyph", open ? "Opened" : "Closed", r);
+    return true;
+}
+
+bool xd_pkgstyle_draw_statusbar(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text,
+                                bool grip) {
+    const char *const S = "Status";
+    if (!has(t, S, "Pane"))
+        return false;
+    if (!xd_pkg_draw(t, cr, S, nullptr, nullptr, r))
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
+    int gw = 0, gh = 0;
+    if (grip && !xd_pkg_part_size(t, S, "Gripper", "1", &gw, &gh))
+        grip = false;
+    xd_rect pane = {r.x, r.y + xd_tpx(t, 2), r.w - (grip ? gw : 0), r.h - xd_tpx(t, 2)};
+    (void)xd_pkg_draw(t, cr, S, "Pane", "1", pane);
+    if (grip)
+        (void)xd_pkg_draw(t, cr, S, "Gripper", "1",
+                          (xd_rect){r.x + r.w - gw, r.y + r.h - gh, gw, gh});
+    if (text != nullptr) {
+        xd_rgba fg = text_color_st(t, S, "Pane", "1", xd_sys(t, XD_COLOR_BUTTON_TEXT));
+        xd_text_style ts = xd_text(t, XD_FONT_TOOLTIP, fg, XD_ALIGN_START);
+        xd_draw_text(cr, xd_rect_inset4(pane, xd_tpx(t, 4), 0, xd_tpx(t, 4), 0), text, &ts);
+    }
+    return true;
+}
+
+bool xd_pkgstyle_draw_tooltip(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text) {
+    const char *const TT = "Tooltip";
+    if (!has(t, TT, "Standard"))
+        return false;
+    /* Its own shape: rounded corners show what's behind. */
+    cairo_save(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
+    cairo_fill(cr);
+    cairo_restore(cr);
+    (void)xd_pkg_draw(t, cr, TT, "Standard", "Normal", r);
+    xd_rgba fg = text_color_st(t, TT, "Standard", "Normal", xd_sys(t, XD_COLOR_INFO_TEXT));
+    xd_text_style ts = xd_text(t, XD_FONT_TOOLTIP, fg, XD_ALIGN_START);
+    xd_draw_text(cr, xd_rect_inset(r, xd_tpx(t, 4), 0), text, &ts);
+    return true;
+}
+
+bool xd_pkgstyle_draw_rebar(const xd_theme *t, cairo_t *cr, xd_rect r, bool gripper) {
+    const char *const RB = "Rebar";
+    if (!has(t, RB, "Band") && !has(t, RB, "Gripper"))
+        return false;
+    if (!xd_pkg_draw(t, cr, RB, nullptr, nullptr, r))
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_BUTTON_FACE));
+    (void)xd_pkg_draw(t, cr, RB, "Band", "1", r);
+    if (gripper) {
+        int gw = xd_tpx(t, 3), gh;
+        (void)xd_pkg_part_size(t, RB, "Gripper", "1", &gw, &gh);
+        (void)xd_pkg_draw(t, cr, RB, "Gripper", "1",
+                          (xd_rect){r.x + xd_tpx(t, 2), r.y + xd_tpx(t, 2), gw,
+                                    r.h - xd_tpx(t, 4)});
+    }
+    return true;
+}
+
+/* Toolbar buttons: Normal 1, Hot 2, Pressed 3, Disabled 4, Checked 5,
+ * HotChecked 6. */
+static int toolbar_state(uint8_t state) {
+    if (state & XD_STATE_DISABLED)
+        return 4;
+    if (state & XD_STATE_PRESSED)
+        return 3;
+    if (state & XD_STATE_CHECKED)
+        return (state & XD_STATE_HOT) ? 6 : 5;
+    return (state & XD_STATE_HOT) ? 2 : 1;
+}
+
+bool xd_pkgstyle_draw_tool_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                  const char *label) {
+    const char *const TB = "Toolbar";
+    if (!has(t, TB, "Button"))
+        return false;
+    char st[8];
+    state_str(st, toolbar_state(state));
+    (void)xd_pkg_draw(t, cr, TB, "Button", st, r);
+    if (label != nullptr) {
+        xd_rgba fg = text_color_st(t, TB, "Button", st,
+                                   xd_sys(t, (state & XD_STATE_DISABLED) ? XD_COLOR_GRAY_TEXT
+                                                                         : XD_COLOR_BUTTON_TEXT));
+        xd_text_style ts = xd_text(t, XD_FONT_MESSAGE, fg, XD_ALIGN_CENTER);
+        xd_draw_text(cr, xd_pkg_content_rect(t, TB, "Button", st, r), label, &ts);
+    }
+    return true;
+}
+
+/* The taskbar's toolbars (Quick Launch) and their grips: the TaskBar
+ * application's classes, as Explorer opens them. */
+bool xd_pkgstyle_draw_taskbar_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r,
+                                             uint8_t state) {
+    if (!has(t, "TaskBar::Toolbar", "Button"))
+        return false;
+    char st[8];
+    state_str(st, toolbar_state(state));
+    (void)xd_pkg_draw(t, cr, "TaskBar::Toolbar", "Button", st, r);
+    return true;
+}
+
+bool xd_pkgstyle_draw_taskbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (!has(t, "TaskBar::Rebar", "Gripper"))
+        return false;
+    (void)xd_pkg_draw(t, cr, "TaskBar::Rebar", "Gripper", "1", r);
+    return true;
+}
+
+/* ---- Vista and 7 menus (Menu's Popup and Bar parts) ----
+ * XP's styles have none of these (its menus are flat, in [SysMetrics]'s
+ * colours): they keep the style's drawing. */
+
+static const char *const MENU = "Menu";
+
+static bool menu_themed(const xd_theme *t) { return has(t, MENU, "PopupItem"); }
+
+bool xd_pkgstyle_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (!menu_themed(t))
+        return false;
+    if (!xd_pkg_draw(t, cr, MENU, "PopupBackground", "1", r))
+        xd_fill_rect(cr, r, xd_sys(t, XD_COLOR_MENU));
+    (void)xd_pkg_draw(t, cr, MENU, "PopupBorders", "1", r);
+    /* 7's gutter, just left of the items' text. */
+    int gw, gh;
+    xd_menu_metrics m = xd_theme_menu_metrics(t);
+    if (xd_pkg_part_size(t, MENU, "PopupGutter", "1", &gw, &gh))
+        (void)xd_pkg_draw(t, cr, MENU, "PopupGutter", "1",
+                          (xd_rect){r.x + m.border + m.text_x - xd_tpx(t, 5), r.y + m.border, gw,
+                                    r.h - 2 * m.border});
+    return true;
+}
+
+bool xd_pkgstyle_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                xd_rgba *text) {
+    if (!menu_themed(t))
+        return false;
+    /* Normal 1, Hot 2, Disabled 3, DisabledHot 4. */
+    bool hot = state & XD_STATE_HOT, disabled = state & XD_STATE_DISABLED;
+    int n = disabled ? (hot ? 4 : 3) : (hot ? 2 : 1);
+    char st[8];
+    state_str(st, n);
+    if (hot)
+        (void)xd_pkg_draw(t, cr, MENU, "PopupItem", st, r);
+    *text = text_color_st(t, MENU, "PopupItem", st,
+                          xd_sys(t, disabled ? XD_COLOR_GRAY_TEXT : XD_COLOR_MENU_TEXT));
+    return true;
+}
+
+bool xd_pkgstyle_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (!menu_themed(t) || !has(t, MENU, "PopupSeparator"))
+        return false;
+    int w, h = xd_tpx(t, 3);
+    (void)xd_pkg_part_size(t, MENU, "PopupSeparator", "1", &w, &h);
+    xd_menu_metrics m = xd_theme_menu_metrics(t);
+    /* Right of the gutter, as 7 draws it. */
+    int x = r.x + m.text_x - xd_tpx(t, 3);
+    (void)xd_pkg_draw(t, cr, MENU, "PopupSeparator", "1",
+                      (xd_rect){x, r.y + (r.h - h) / 2, r.x + r.w - x, h});
+    return true;
+}
+
+bool xd_pkgstyle_draw_menu_submenu(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled) {
+    if (!menu_themed(t) || !has(t, MENU, "PopupSubmenu"))
+        return false;
+    (void)xd_pkg_draw(t, cr, MENU, "PopupSubmenu", disabled ? "2" : "1", r);
+    return true;
+}
+
+bool xd_pkgstyle_draw_menu_check(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled) {
+    if (!menu_themed(t) || !has(t, MENU, "PopupCheck"))
+        return false;
+    /* PopupCheckBackground: Disabled 1, Normal 2. PopupCheck:
+     * CheckMarkNormal 1, CheckMarkDisabled 2. */
+    (void)xd_pkg_draw(t, cr, MENU, "PopupCheckBackground", disabled ? "1" : "2", r);
+    (void)xd_pkg_draw(t, cr, MENU, "PopupCheck", disabled ? "2" : "1", r);
+    return true;
+}
+
+bool xd_pkgstyle_draw_menubar(const xd_theme *t, cairo_t *cr, xd_rect r, bool active) {
+    if (!has(t, MENU, "BarBackground"))
+        return false;
+    (void)xd_pkg_draw(t, cr, MENU, "BarBackground", active ? "Active" : "Inactive", r);
+    return true;
+}
+
+bool xd_pkgstyle_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+                                   const char *label) {
+    if (!has(t, MENU, "BarItem"))
+        return false;
+    /* Normal 1, Hot 2, Pushed 3, Disabled 4, DisabledHot 5,
+     * DisabledPushed 6; Normal and Disabled have no background. */
+    int n = (state & XD_STATE_PRESSED) ? 3 : (state & XD_STATE_HOT) ? 2 : 1;
+    if (state & XD_STATE_DISABLED)
+        n += 3;
+    char st[8];
+    state_str(st, n);
+    if (n != 1 && n != 4)
+        (void)xd_pkg_draw(t, cr, MENU, "BarItem", st, r);
+    xd_rgba fg = text_color_st(t, MENU, "BarItem", st,
+                               xd_sys(t, (state & XD_STATE_DISABLED) ? XD_COLOR_GRAY_TEXT
+                                                                     : XD_COLOR_MENU_TEXT));
+    xd_text_style ts = xd_text(t, XD_FONT_MENU, fg, XD_ALIGN_CENTER);
+    xd_draw_text(cr, r, label, &ts);
     return true;
 }

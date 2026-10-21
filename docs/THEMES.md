@@ -129,7 +129,8 @@ As uxtheme's DrawThemeBackground and DrawThemeText do:
   border and fill from `BorderSize`, `BorderColor`, `FillColor`,
   gradients), `None`.
 - The image for a state is frame `state - 1` of `ImageCount`, laid out
-  `Vertical` or `Horizontal`; `ImageFile1..5` with `MinDpi1..5` /
+  `Vertical` or `Horizontal` (uxtheme's default: XP's size grips name
+  none; an `AtlasRect`'s frames are stacked); `ImageFile1..5` with `MinDpi1..5` /
   `MinSize1..5` choose by DPI or size (`ImageSelectType`).
 - `SizingMargins` and `SizingType` (`Stretch`, `Tile`, `TrueSize` with
   `TrueSizeStretchMark` and `UniformSizing`); `BorderOnly`; `MirrorImage`.

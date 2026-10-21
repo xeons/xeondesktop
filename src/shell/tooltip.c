@@ -47,13 +47,7 @@ static void render(xd_tooltip *tip) {
         return;
     xd_theme t = theme_at(shell, tip->scale);
     cairo_t *cr = cairo_create(buf->surface);
-    xd_rect all = {0, 0, dw, dh};
-    xd_fill_rect(cr, all, xd_sys(&t, XD_COLOR_INFO_WINDOW));
-    int px = xd_tpx(&t, 1);
-    xd_rgba edge = xd_sys(&t, XD_COLOR_INFO_TEXT);
-    xd_draw_bevel(cr, all, px, edge, edge);
-    xd_text_style st = text_style(&t);
-    xd_draw_text(cr, xd_rect_inset(all, xd_tpx(&t, PAD_X), 0), tip->text, &st);
+    xd_theme_draw_tooltip(&t, cr, (xd_rect){0, 0, dw, dh}, tip->text);
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
     wl_surface_attach(tip->surface, buf->buffer, 0, 0);

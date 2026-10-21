@@ -177,44 +177,20 @@ static xd_rect slider_thumb(const xd_widget *w) {
     return (xd_rect){cx - SLIDER_THUMB_W / 2, w->r.y + SLIDER_PAD, SLIDER_THUMB_W, SLIDER_THUMB_H};
 }
 
-/* A down-pointing trackbar thumb in device pixels. */
-static void slider_thumb_path(cairo_t *cr, xd_rect r, double inset) {
-    double tip = r.w / 2.0;
-    double body = r.h - tip;
-    cairo_new_path(cr);
-    cairo_move_to(cr, r.x + inset, r.y + inset);
-    cairo_line_to(cr, r.x + r.w - inset, r.y + inset);
-    cairo_line_to(cr, r.x + r.w - inset, r.y + body);
-    cairo_line_to(cr, r.x + r.w / 2.0, r.y + r.h - inset);
-    cairo_line_to(cr, r.x + inset, r.y + body);
-    cairo_close_path(cr);
-}
-
-static void set_rgba(cairo_t *cr, xd_rgba c) { cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a); }
-
 static void draw_slider(const xd_theme *t, cairo_t *cr, const xd_widget *w, bool focused) {
     double s = t->scale;
-    xd_toolkit_colors c;
-    xd_theme_toolkit_colors(t, &c);
     int px = xd_tpx(t, 1);
 
-    /* Channel: a sunken groove the thumb rides along. */
+    /* Channel: a groove the thumb rides along. */
     xd_rect thumb_l = slider_thumb(w);
     int cy = thumb_l.y + 8;
     xd_rect channel = to_device((xd_rect){slider_x0(w) - 2, cy, slider_x1(w) - slider_x0(w) + 5, 4},
                                 s);
-    if (c.classic) {
-        xd_rect in = xd_draw_bevel(cr, channel, px, c.shadow, c.hilight);
-        xd_draw_bevel(cr, in, px, c.dkshadow, c.light);
-    } else {
-        xd_fill_rect(cr, channel, c.track);
-        xd_draw_bevel(cr, channel, px, c.field_border, c.field_border);
-    }
 
     /* Ticks under the thumb, one per step when they fit. */
     int steps = w->smax - w->smin;
     if (steps > 0 && steps <= 40) {
-        xd_rgba tick = w->enabled ? c.fg : c.disabled;
+        xd_rgba tick = xd_theme_trackbar_tics_color(t, !w->enabled);
         for (int v = w->smin; v <= w->smax; v++) {
             double x = slider_pos(w, v);
             xd_rect tr = to_device((xd_rect){(int)lround(x), thumb_l.y + SLIDER_THUMB_H + 2, 1, 3},
@@ -224,48 +200,14 @@ static void draw_slider(const xd_theme *t, cairo_t *cr, const xd_widget *w, bool
         }
     }
 
-    xd_rect thumb = to_device(thumb_l, s);
-    slider_thumb_path(cr, thumb, 0);
-    if (c.classic) {
-        set_rgba(cr, c.face);
-        cairo_fill(cr);
-        /* Light top and left, dark right and point. */
-        double h = px / 2.0;
-        double body = thumb.h - thumb.w / 2.0;
-        cairo_set_line_width(cr, px);
-        set_rgba(cr, c.hilight);
-        cairo_move_to(cr, thumb.x + h, thumb.y + body);
-        cairo_line_to(cr, thumb.x + h, thumb.y + h);
-        cairo_line_to(cr, thumb.x + thumb.w - px, thumb.y + h);
-        cairo_stroke(cr);
-        set_rgba(cr, c.dkshadow);
-        cairo_move_to(cr, thumb.x + thumb.w - h, thumb.y);
-        cairo_line_to(cr, thumb.x + thumb.w - h, thumb.y + body);
-        cairo_line_to(cr, thumb.x + thumb.w / 2.0, thumb.y + thumb.h - h);
-        cairo_stroke(cr);
-        set_rgba(cr, c.shadow);
-        cairo_move_to(cr, thumb.x + thumb.w - px - h, thumb.y + px);
-        cairo_line_to(cr, thumb.x + thumb.w - px - h, thumb.y + body - px / 2.0);
-        cairo_line_to(cr, thumb.x + thumb.w / 2.0, thumb.y + thumb.h - px - h);
-        cairo_stroke(cr);
-        set_rgba(cr, c.hilight);
-        cairo_move_to(cr, thumb.x + h, thumb.y + body);
-        cairo_line_to(cr, thumb.x + thumb.w / 2.0, thumb.y + thumb.h - h);
-        cairo_stroke(cr);
-    } else {
-        cairo_pattern_t *g = cairo_pattern_create_linear(0, thumb.y, 0, thumb.y + thumb.h);
-        xd_rgba top = w->enabled ? c.thumb_top : c.face;
-        xd_rgba bottom = w->enabled ? c.thumb_bottom : c.face;
-        cairo_pattern_add_color_stop_rgba(g, 0, top.r, top.g, top.b, top.a);
-        cairo_pattern_add_color_stop_rgba(g, 1, bottom.r, bottom.g, bottom.b, bottom.a);
-        cairo_set_source(cr, g);
-        cairo_fill_preserve(cr);
-        cairo_pattern_destroy(g);
-        set_rgba(cr, w->enabled ? c.button_border : c.disabled);
-        cairo_set_line_width(cr, px);
-        slider_thumb_path(cr, thumb, px / 2.0);
-        cairo_stroke(cr);
-    }
+    uint8_t state = w->enabled ? 0 : XD_STATE_DISABLED;
+    if (focused)
+        state |= XD_STATE_FOCUSED;
+    if (w->win->hot == w)
+        state |= XD_STATE_HOT;
+    if (w->win->pressed == w)
+        state |= XD_STATE_PRESSED;
+    xd_theme_draw_trackbar(t, cr, channel, to_device(thumb_l, s), state);
     if (focused)
         xd_theme_draw_focus_rect(t, cr, to_device(w->r, s));
 }
@@ -1061,12 +1003,7 @@ void xd_tooltip_render(xd_tooltip *tip) {
     xd_theme t;
     xd_theme_init(&t, ui->style, &ui->scheme, s);
     cairo_t *cr = cairo_create(buf->surface);
-    xd_rect all = {0, 0, dw, dh};
-    xd_fill_rect(cr, all, xd_sys(&t, XD_COLOR_INFO_WINDOW));
-    xd_rgba edge = xd_sys(&t, XD_COLOR_INFO_TEXT);
-    xd_draw_bevel(cr, all, xd_tpx(&t, 1), edge, edge);
-    xd_text_style st = tip_text_style(&t);
-    xd_draw_text(cr, xd_rect_inset(all, xd_tpx(&t, TIP_PAD_X), 0), tip->text, &st);
+    xd_theme_draw_tooltip(&t, cr, (xd_rect){0, 0, dw, dh}, tip->text);
     cairo_destroy(cr);
     cairo_surface_flush(buf->surface);
 

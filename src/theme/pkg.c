@@ -315,6 +315,12 @@ static char *state_key(const xd_pkg *p, const char *cls, const char *pkey, const
         char *key = g_strdup_printf("%s.%s.%s", base, pname, name);
         n = g_hash_table_lookup(p->state_numbers, key);
         g_free(key);
+        if (n == nullptr) {
+            /* Vista's HeaderStyle has more of Header's states. */
+            key = g_strdup_printf("%sstyle.%s.%s", base, pname, name);
+            n = g_hash_table_lookup(p->state_numbers, key);
+            g_free(key);
+        }
     }
     if (n == nullptr) {
         /* A state on the class itself ("Toolbar(Hot)"), or on a part whose
@@ -688,9 +694,7 @@ const char *xd_pkg_prop(const xd_pkg *p, const char *cls, const char *part,
     return v;
 }
 
-bool xd_pkg_has(const xd_pkg *p, const char *cls, const char *part) {
-    if (p == nullptr)
-        return false;
+static bool has_in_class(const xd_pkg *p, const char *cls, const char *part) {
     char *lc = lower(cls);
     char *pk = part_key(p, cls, part);
     char *key = g_strdup_printf("%s\x1f%s", lc, pk);
@@ -698,6 +702,22 @@ bool xd_pkg_has(const xd_pkg *p, const char *cls, const char *part) {
     g_free(key);
     g_free(pk);
     g_free(lc);
+    return has;
+}
+
+/* In the classes xd_pkg_prop looks in: App::Class, Class, ClassStyle. */
+bool xd_pkg_has(const xd_pkg *p, const char *cls, const char *part) {
+    if (p == nullptr)
+        return false;
+    if (has_in_class(p, cls, part))
+        return true;
+    const char *colon = strstr(cls, "::");
+    const char *base = colon != nullptr ? colon + 2 : cls;
+    if (colon != nullptr && has_in_class(p, base, part))
+        return true;
+    char *style = g_strdup_printf("%sStyle", base);
+    bool has = has_in_class(p, style, part);
+    g_free(style);
     return has;
 }
 
@@ -1042,7 +1062,11 @@ static bool part_image_for(const xd_theme *t, const char *cls, const char *part,
     }
     if (file == nullptr)
         return false;
-    bool vertical = !enum_is(p, cls, part, state, "ImageLayout", "Horizontal");
+    /* Without an ImageLayout, uxtheme lays frames out side by side (XP's
+     * size grips: two 16 px frames in a 32 x 17 image); DWM's atlas
+     * rectangles stack them. */
+    const char *layout = xd_pkg_prop(p, cls, part, state, "ImageLayout");
+    bool vertical = layout != nullptr ? g_ascii_strcasecmp(layout, "Horizontal") != 0 : has_atlas;
     double factor = target_dpi / drawn_dpi;
     /* Within a few percent of drawn: as drawn (no blur for a 25 px check
      * box drawn at 185 DPI shown at 192). */

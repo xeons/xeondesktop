@@ -115,6 +115,7 @@ theme_lib = static_library(
   'src/theme/trayicons.c',
   'src/theme/pkg.c',
   'src/theme/style_pkg.c',
+  'src/theme/controls.c',
   'src/theme/scale.c',
   c_args: ['-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0'),
            '-DXD_THEME_DATADIR="' + get_option('prefix') / get_option('datadir') / 'xeondesktop"'],

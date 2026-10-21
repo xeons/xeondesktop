@@ -269,7 +269,13 @@ xd_menu_metrics xd_theme_menu_metrics(const xd_theme *t) {
     };
 }
 
+void xd_theme_menu_palette(const xd_theme *t, xd_menu_palette *out) {
+    ops(t)->menu_palette(t, out);
+}
+
 void xd_theme_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (xd_pkgstyle_draw_menu_frame(t, cr, r))
+        return;
     xd_menu_palette p;
     ops(t)->menu_palette(t, &p);
     xd_fill_rect(cr, r, p.background);
@@ -314,7 +320,10 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
     bool hot = state & XD_STATE_HOT;
 
     xd_rgba text = p.text;
-    if (hot) {
+    bool themed = xd_pkgstyle_draw_menu_item(t, cr, r, state, &text);
+    if (themed) {
+        /* The package's background and text colour. */
+    } else if (hot) {
         xd_fill_rect(cr, r, p.hilight);
         if (p.hilight_border.a > 0)
             xd_draw_bevel(cr, r, xd_tpx(t, 1), p.hilight_border, p.hilight_border);
@@ -325,7 +334,7 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
 
     int tx = r.x + (large ? m.large_text_x : m.text_x);
     xd_rect tr = {tx, r.y, r.x + r.w - tx - m.arrow_w, r.h};
-    if (disabled && !hot && p.disabled_emboss.a > 0) {
+    if (disabled && !hot && !themed && p.disabled_emboss.a > 0) {
         int px = xd_tpx(t, 1);
         xd_text_style emboss = xd_text(t, XD_FONT_MENU, p.disabled_emboss, XD_ALIGN_START);
         emboss.underline = x != nullptr ? x->underline : nullptr;
@@ -344,7 +353,8 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
         tr.w -= xd_text_width(cr, x->accel, &ac) + xd_tpx(t, 12);
     }
     xd_draw_text(cr, tr, label, &st);
-    if (submenu)
+    if (submenu && !xd_pkgstyle_draw_menu_submenu(
+                       t, cr, (xd_rect){r.x + r.w - m.arrow_w, r.y, m.arrow_w, r.h}, disabled))
         draw_submenu_arrow(t, cr, r, text);
     if (x != nullptr && (x->checked || x->glyph != XD_MENU_GLYPH_NONE)) {
         int box = xd_tpx(t, 16);
@@ -355,6 +365,8 @@ void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8
             [XD_MENU_GLYPH_MAXIMIZE] = XD_GLYPH_MAXIMIZE,
             [XD_MENU_GLYPH_CLOSE] = XD_GLYPH_CLOSE,
         };
+        if (x->checked && xd_pkgstyle_draw_menu_check(t, cr, ic, disabled))
+            return;
         xd_glyph g = x->checked ? XD_GLYPH_CHECK : map[x->glyph];
         /* Window glyphs are drawn small, as in a window menu. */
         xd_rect gr = x->checked ? ic : xd_rect_inset(ic, xd_tpx(t, 3), xd_tpx(t, 3));
@@ -371,6 +383,8 @@ int xd_theme_menu_bold_text_width(const xd_theme *t, cairo_t *cr, const char *la
 }
 
 void xd_theme_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (xd_pkgstyle_draw_menu_separator(t, cr, r))
+        return;
     xd_menu_palette p;
     ops(t)->menu_palette(t, &p);
     int px = xd_tpx(t, 1);
@@ -429,6 +443,8 @@ int xd_theme_toolbar_grip_width(const xd_theme *t) {
 }
 
 void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r) {
+    if (xd_pkgstyle_draw_taskbar_grip(t, cr, r))
+        return;
     int px = xd_tpx(t, 1);
     if (t->style == XD_STYLE_CLASSIC) {
         /* Windows 2000: a thin raised bar, inset from top and bottom. */
@@ -447,6 +463,8 @@ void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r) {
 }
 
 void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+    if (xd_pkgstyle_draw_taskbar_toolbar_button(t, cr, r, state))
+        return;
     bool hot = state & XD_STATE_HOT;
     bool pressed = state & XD_STATE_PRESSED;
     if (!hot && !pressed)
