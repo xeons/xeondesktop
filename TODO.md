@@ -555,6 +555,62 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [ ] Tahoma at 8pt on XP is crisp bitmaps; DejaVu is drawn from hinted
       outlines.
 
+### Theme packages and Windows visual styles (docs/THEMES.md)
+
+- [x] The .xdtheme format (zip or folder: theme.xml, styles/VARIANT.xml in
+      uxtheme's classes, parts, states and properties, PNG images) and
+      xd-theme-import converting XP, Vista and 7 .msstyles and .theme
+      files (python-pefile). data/theme/uxtheme.ini: uxtheme's documented
+      names. Tried on Luna, Royale, the five WE styles, Vista's and 7's Aero.
+- [x] The renderer (src/theme/pkg.c): lookups with uxtheme's fallbacks,
+      DrawThemeBackground's image strips, 9-grid, TrueSize, ImageFileN by
+      DPI or size, image glyphs, BorderFill, atlas rectangles; the
+      package's [SysMetrics] over the scheme; window frames and caption
+      buttons; push, check and radio buttons, group boxes, text fields,
+      drop-down buttons, vertical scroll bars, tabs.
+- [x] Image scaling for high DPI: Nearest, Integer, Smooth, Scale2x/3x/4x,
+      2xSaI, Super2xSaI, SuperEagle (our own, from the published
+      descriptions), whole-number scaling, per frame so states don't bleed.
+- [ ] Choosing a package: [Appearance] ThemePackage, ThemeVariant,
+      ImageScaling, IntegerScaling in desktop.ini (instead of today's
+      $XD_THEME_PACKAGE, $XD_THEME_VARIANT, $XD_IMAGE_FILTER), packages in
+      ~/.local/share/xeondesktop/themes and the system's share folder, the
+      compositor, shell and apps following changes live. Display Properties:
+      packages in "Windows and buttons", their variants in "Color scheme"
+      and "Font size", Browse... to import a .msstyles or .theme (running
+      xd-theme-import), "Scale theme images" in Effects.
+- [ ] GTK and Qt programs: the generated GTK theme drawn from the package
+      (CSS border-image with its images), the Qt palette from its colours.
+- [ ] The rest of the controls: horizontal scroll bars and size boxes,
+      progress bars, sliders, spin buttons, list view headers, tree view
+      glyphs, toolbars and rebars, status bars, tooltips, Vista/7 menus
+      (Menu), tool windows' small captions, MDI buttons.
+- [ ] Vista and 7 frames: DWMWindow's parts named (deduced), the glass
+      frame and caption buttons drawn from its atlas, Basic from Window.
+- [ ] Taskbar and Start menus from packages: TaskBar, TaskBand,
+      TaskBand2 (7's buttons and progress colours), TrayNotify*, the
+      clock, Start button, XP's StartPanel, 7's StartPanelPriv, and our
+      ClassicStartMenu for the Windows 2000 one.
+- [ ] Explorer's panes: XP's task pane (ExplorerBar, and shellstyle.dll's
+      stylesheet imported as shell/VARIANT.xml), 7's Navigation,
+      CommandModule, PreviewPane, ReadingPane, the address and search bars.
+- [ ] Proper names for the undocumented shell classes' parts, deduced
+      from their images and use, marked as deduced in uxtheme.ini:
+      AddressBand, AltTab, BreadcrumbBar, CommandModule, DragDrop,
+      DWMWindow, InfoBar, ItemsView, MonthCal, Navigation, PreviewPane,
+      SearchBox, SearchHome, StartPanelPriv, TaskBand2,
+      TaskbandExtendedUI, TrayNotifyFlyout, TryHarder and the rest the
+      importer leaves numbered.
+- [ ] What a .theme brings besides the style: its sounds and cursors (when
+      beside it) imported and applied, its wallpaper applied.
+- [ ] Our built-in styles matched to the real ones: render each part from
+      the imported packages and from our code, pixel-diff them, and fix
+      Luna (Blue, Silver, Olive Green), Energy Blue (Royale), Aero (7) and
+      their DPI sizes.
+- [ ] Tests: unit tests of the loader and renderer with a package made in
+      the test (our own images), and a UI scenario drawing frames and
+      controls from one.
+
 ## Dialogs and libxdui
 
 - [ ] libxdui's own text boxes (Run...) don't use text-input-v3 yet (the
