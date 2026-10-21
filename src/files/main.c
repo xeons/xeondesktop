@@ -2,8 +2,9 @@
  * xd-files: the file manager, modelled on Windows XP's Explorer windows.
  *
  * GTK3 window: menu bar, toolbar (Back, Forward, Up, Folders, Views),
- * address bar, the Folders tree on the left, XdFolderView on the right and
- * a status bar with the thumbnail size slider.
+ * address bar, XP's task pane or the Folders tree on the left (show_side),
+ * XdFolderView on the right and a status bar with the thumbnail size
+ * slider.
  */
 #include <glib-unix.h>
 #include <gtk/gtk.h>
@@ -82,11 +83,13 @@ struct explorer {
     GtkTreeStore *store;
     GtkWidget *tree_pane;
     GtkWidget *tasks; /* XP's task pane, in the Folders bar's place when it's off */
+    GtkWidget *side;  /* the Folders bar or the task pane: hidden with neither */
     GtkWidget *status;
     GtkWidget *status_size;
     GtkWidget *slider;
     GtkWidget *back_button, *forward_button, *up_button;
     GtkWidget *folders_toggle;
+    GtkWidget *folders_item; /* View > Explorer Bar > Folders */
     GtkWidget *view_items[XD_VIEW_COUNT];
     GtkWidget *arrange_item; /* View > Arrange Icons By */
     /* Control Panel: View's Switch to Classic/Category View. */
@@ -128,6 +131,7 @@ static gboolean view_given;               /* --view given: Folder Options' defau
 /* Folder Options ([Folders] in desktop.ini), followed live. */
 static xd_folder_settings options;
 static gboolean properties_only;          /* --properties: just the dialog */
+static gboolean explore_option;           /* --explore: with the Folders bar, as XP's Explore */
 /* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to,
  * --map-drive, --disconnect-drive: one job for the desktop (the shell
  * isn't a GTK program), then exit. */
@@ -1046,7 +1050,7 @@ static void go_home(tab *t) {
 }
 
 static GFile *current_dir(explorer *e);
-static explorer *open_window(GtkApplication *app, GFile *dir);
+static explorer *open_window(GtkApplication *app, GFile *dir, gboolean explore);
 
 /* Opens a Control Panel applet (its desktop file). FALSE if `file` isn't
  * one. */
@@ -1077,7 +1081,7 @@ static void open_elsewhere(explorer *e, GFile *location) {
     if (options.new_tabs)
         add_tab(e, location, TRUE);
     else
-        open_window(gtk_window_get_application(GTK_WINDOW(e->window)), location);
+        open_window(gtk_window_get_application(GTK_WINDOW(e->window)), location, FALSE);
 }
 
 static void open_in_new_window(GFile *location, gpointer data) { open_elsewhere(data, location); }
@@ -1302,13 +1306,31 @@ static void on_slider(GtkRange *range, gpointer data) {
     xd_folder_view_set_thumbnail_size(e->cur->view, (int)px);
 }
 
-/* Folders: the Folders bar, or XP's task pane in its place. */
-static void on_folders_toggle(GtkToggleToolButton *b, gpointer data) {
-    explorer *e = data;
-    gboolean folders = gtk_toggle_tool_button_get_active(b);
+/* The left pane: the Folders bar, or XP's task pane in its place
+ * (Folder Options' "Show common tasks in folders"), or with "Use Windows
+ * classic folders" nothing, the view taking the whole width. */
+static void show_side(explorer *e) {
+    gboolean folders =
+        gtk_toggle_tool_button_get_active(GTK_TOGGLE_TOOL_BUTTON(e->folders_toggle));
     gtk_widget_set_visible(e->tree_pane, folders);
-    gtk_widget_set_visible(e->tasks, !folders);
-    update_tasks(e);
+    gtk_widget_set_visible(e->tasks, !folders && options.common_tasks);
+    gtk_widget_set_visible(e->side, folders || options.common_tasks);
+    e->syncing = TRUE;
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(e->folders_item), folders);
+    e->syncing = FALSE;
+}
+
+static void on_folders_toggle([[maybe_unused]] GtkToggleToolButton *b, gpointer data) {
+    show_side(data);
+    update_tasks(data);
+}
+
+/* View > Explorer Bar > Folders: the Folders button's twin. */
+static void on_folders_item(GtkCheckMenuItem *item, gpointer data) {
+    explorer *e = data;
+    if (!e->syncing)
+        gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(e->folders_toggle),
+                                          gtk_check_menu_item_get_active(item));
 }
 
 /* Show Hidden Files is Folder Options' setting: every window follows. */
@@ -2862,6 +2884,17 @@ static GtkWidget *build_menus(explorer *e, GtkAccelGroup *accel) {
     menu_item(edit, "_Invert Selection", G_CALLBACK(cb_invert), e, nullptr, 0, NO_MODS);
 
     GtkWidget *view = submenu(bar, "_View");
+    /* At the top, as XP's. Its other Explorer bars (Search, Favorites,
+     * Media, History) are elsewhere here: Search is its own window,
+     * Favorites a menu. */
+    GtkWidget *bars = gtk_menu_new();
+    GtkWidget *bars_item = gtk_menu_item_new_with_mnemonic("_Explorer Bar");
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(bars_item), bars);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view), bars_item);
+    e->folders_item = gtk_check_menu_item_new_with_mnemonic("F_olders");
+    g_signal_connect(e->folders_item, "toggled", G_CALLBACK(on_folders_item), e);
+    gtk_menu_shell_append(GTK_MENU_SHELL(bars), e->folders_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(view), gtk_separator_menu_item_new());
     GSList *group = nullptr;
     for (int i = 0; i < XD_VIEW_COUNT; i++) {
         GtkWidget *radio = gtk_radio_menu_item_new_with_mnemonic(group, view_names[i]);
@@ -3580,6 +3613,8 @@ static void apply_options(explorer *e) {
     e->syncing = TRUE;
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(e->hidden_item), options.show_hidden);
     e->syncing = FALSE;
+    show_side(e); /* Show common tasks in folders, or classic folders */
+    update_tasks(e);
     update_chrome(e);
 }
 
@@ -3610,7 +3645,7 @@ static gboolean on_settings_changed(int fd, [[maybe_unused]] GIOCondition cond, 
     return G_SOURCE_CONTINUE;
 }
 
-static explorer *open_window(GtkApplication *app, GFile *dir) {
+static explorer *open_window(GtkApplication *app, GFile *dir, gboolean explore) {
     explorer *e = g_new0(explorer, 1);
     e->closed = g_ptr_array_new_with_free_func(g_free);
     e->need_selection = g_ptr_array_new();
@@ -3643,7 +3678,9 @@ static explorer *open_window(GtkApplication *app, GFile *dir) {
     gtk_tool_button_set_label(GTK_TOOL_BUTTON(folders), "Folders");
     gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(folders), "folder");
     gtk_tool_item_set_is_important(folders, TRUE);
-    gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(folders), TRUE);
+    /* On only to explore: XP opens a folder with the task pane on the
+     * left, or with classic folders nothing (show_side). */
+    gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(folders), explore);
     g_signal_connect(folders, "toggled", G_CALLBACK(on_folders_toggle), e);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), folders, -1);
     e->folders_toggle = GTK_WIDGET(folders);
@@ -3705,6 +3742,7 @@ static explorer *open_window(GtkApplication *app, GFile *dir) {
     gtk_widget_set_size_request(left, 200, -1);
     e->tree_pane = left;
     GtkWidget *side = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    e->side = side;
     gtk_box_pack_start(GTK_BOX(side), left, TRUE, TRUE, 0);
     e->tasks = xd_task_pane_new();
     gtk_widget_set_size_request(e->tasks, 200, -1);
@@ -3818,7 +3856,7 @@ static void rename_dialog(GFile *file) {
 }
 
 /* The desktop's Map Network Drive: the new drive opens in a window. */
-static void open_mapped(GFile *location, gpointer app) { open_window(app, location); }
+static void open_mapped(GFile *location, gpointer app) { open_window(app, location, FALSE); }
 
 static void run_job(GtkApplication *app, GFile **files, gint n) {
     GList *list = nullptr;
@@ -3871,8 +3909,10 @@ static void on_activate(GtkApplication *app, [[maybe_unused]] gpointer data) {
     }
     if (properties_only)
         return; /* --properties without files: nothing to show */
+    /* XP's Windows Explorer (explorer.exe on its own) opens with the
+     * Folders bar; a folder opened from somewhere has the task pane. */
     GFile *home = g_file_new_for_path(g_get_home_dir());
-    open_window(app, home);
+    open_window(app, home, TRUE);
     g_object_unref(home);
 }
 
@@ -3896,13 +3936,13 @@ static void on_open(GtkApplication *app, GFile **files, gint n, [[maybe_unused]]
     /* Folders in tabs instead of windows: one window with a tab each,
      * the first in front. */
     if (options.new_tabs && n > 1) {
-        explorer *e = open_window(app, files[0]);
+        explorer *e = open_window(app, files[0], explore_option);
         for (gint i = 1; i < n; i++)
             add_tab(e, files[i], FALSE);
         return;
     }
     for (gint i = 0; i < n; i++)
-        open_window(app, files[i]);
+        open_window(app, files[i], explore_option);
 }
 
 /* --view=thumbnails|tiles|icons|list|details */
@@ -3911,6 +3951,8 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
     const char *view = nullptr;
     if (g_variant_dict_contains(opts, "properties"))
         properties_only = TRUE;
+    if (g_variant_dict_contains(opts, "explore"))
+        explore_option = TRUE;
     if (g_variant_dict_contains(opts, "trash"))
         job = JOB_TRASH;
     if (g_variant_dict_contains(opts, "delete"))
@@ -3998,6 +4040,8 @@ int main(int argc, char **argv) {
     g_application_add_main_option(G_APPLICATION(app), "view", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_STRING, "Thumbnails, Tiles, Icons, List or Details",
                                   "VIEW");
+    g_application_add_main_option(G_APPLICATION(app), "explore", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE, "Open FILE... with the Folders bar", nullptr);
     g_application_add_main_option(G_APPLICATION(app), "properties", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE, "Show the Properties of FILE... and exit",
                                   nullptr);

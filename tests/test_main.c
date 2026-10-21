@@ -3707,6 +3707,10 @@ static void test_folder_options(void) {
     CHECK(a.folders.full_path_address && !a.folders.full_path_title && a.folders.remember_views);
     /* Tabs instead of windows is off unless chosen: XP's behaviour. */
     CHECK(!a.folders.new_tabs);
+    /* Show common tasks in folders: XP's default. */
+    CHECK(a.folders.common_tasks);
+    xd_settings_parse(XD_STR("[Folders]\nCommonTasks=false\n"), &a);
+    CHECK(!a.folders.common_tasks && a.folders.remember_views);
     xd_settings_parse(XD_STR("[Folders]\nNewWindow=true\nNewTabs=true\nSingleClick=1\n"
                              "ShowHidden=true\nHideExtensions=true\nFullPathAddress=false\n"
                              "FullPathTitle=true\nRememberViews=false\nDefaultView=Details\n"),
@@ -3715,11 +3719,14 @@ static void test_folder_options(void) {
           a.folders.show_hidden);
     CHECK(a.folders.hide_extensions && !a.folders.full_path_address && a.folders.full_path_title);
     CHECK(!a.folders.remember_views && strcmp(a.folders.default_view, "details") == 0);
+    CHECK(a.folders.common_tasks); /* not in the text: the default */
+    a.folders.common_tasks = false;
     xd_strbuf text = {0};
     xd_settings_serialize(&a, &text);
     xd_settings b;
     xd_settings_parse(xd_strbuf_view(&text), &b);
     CHECK(xd_settings_equal(&a, &b) && strcmp(b.folders.default_view, "details") == 0);
+    CHECK(!b.folders.common_tasks); /* saved as CommonTasks=false */
     xd_strbuf_free(&text);
     /* An unknown view keeps the default. */
     xd_settings_parse(XD_STR("[Folders]\nDefaultView=../x\n"), &a);

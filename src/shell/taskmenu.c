@@ -400,19 +400,18 @@ static xd_menu_model *window_menu(xd_shell *shell, xd_menu_tree *tree, xd_toplev
 }
 
 /* The Start menu's own folders: the user's application shortcuts, and
- * everyone's. Open and Explore both show them in xd-files, which always
- * has its Folders pane available. */
+ * everyone's. Open and Explore both show them in xd-files, Explore with
+ * the Folders bar. */
+#define START_USER_DIR "\"${XDG_DATA_HOME:-$HOME/.local/share}/applications\""
+#define START_ALL_DIR "/usr/share/applications"
 static xd_menu_model *start_button_menu(xd_shell *shell, xd_menu_tree *tree) {
     xd_menu_model *m = xd_menu_model_new(tree);
-    static const char user_dir[] =
-        "\"${XDG_DATA_HOME:-$HOME/.local/share}/applications\"";
-    static const char all_dir[] = "/usr/share/applications";
     xd_menu_item *it = add(tree, m, "&Open", nullptr, nullptr);
-    it->command = xd_shell_own_command(shell, "xd-files", user_dir);
+    it->command = xd_shell_own_command(shell, "xd-files", START_USER_DIR);
     it->disabled = false;
     it->bold = true;
     it = add(tree, m, "&Explore", nullptr, nullptr);
-    it->command = xd_shell_own_command(shell, "xd-files", user_dir);
+    it->command = xd_shell_own_command(shell, "xd-files", "--explore " START_USER_DIR);
     it->disabled = false;
     add(tree, m, "Searc&h...", nullptr, nullptr);
     separator(tree, m);
@@ -421,10 +420,10 @@ static xd_menu_model *start_button_menu(xd_shell *shell, xd_menu_tree *tree) {
     it->disabled = false;
     separator(tree, m);
     it = add(tree, m, "O&pen All Users", nullptr, nullptr);
-    it->command = xd_shell_own_command(shell, "xd-files", all_dir);
+    it->command = xd_shell_own_command(shell, "xd-files", START_ALL_DIR);
     it->disabled = false;
     it = add(tree, m, "E&xplore All Users", nullptr, nullptr);
-    it->command = xd_shell_own_command(shell, "xd-files", all_dir);
+    it->command = xd_shell_own_command(shell, "xd-files", "--explore " START_ALL_DIR);
     it->disabled = false;
     return m;
 }

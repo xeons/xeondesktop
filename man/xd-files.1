@@ -1,8 +1,9 @@
-.TH XD\-FILES 1 2026-10-18 XeonDesktop "XeonDesktop Manual"
+.TH XD\-FILES 1 2026-10-20 XeonDesktop "XeonDesktop Manual"
 .SH NAME
 xd\-files \- the XeonDesktop file manager
 .SH SYNOPSIS
 .SY xd\-files
+.OP \-\-explore
 .OP \-\-view view
 .RI [ folder ...]
 .YS
@@ -39,10 +40,21 @@ It opens each
 (a path or URI) in a window of its own, or the home folder.
 Each window is a process of its own.
 .PP
-With the Folders button off, XP's task pane takes the Folders tree's
-place: the folder's tasks (Make a new folder; Rename, Move, Copy or Delete
-the selection; My Computer's System Tasks), Other Places and Details, each
-group folded away by a click on its title. A theme package draws it as the
+As in XP, a folder window opens with XP's task pane on the left, and
+the Folders button (or View \(-> Explorer Bar \(-> Folders) puts the
+Folders tree in its place; turned off, the task pane is back.
+Started without a
+.IR folder ,
+as XP's Windows Explorer, or with
+.BR \-\-explore ,
+as its Explore, the window opens with the Folders tree instead.
+With Folder Options' \(lqUse Windows classic folders\(rq there is no task
+pane: with Folders off, the view has the whole width.
+Open windows follow that setting at once.
+.PP
+The task pane holds the folder's tasks (Make a new folder; Rename, Move,
+Copy or Delete the selection; My Computer's System Tasks), Other Places
+and Details, each group folded away by a click on its title. A theme package draws it as the
 Windows style it was imported from does, and draws the toolbar, address
 box, tree and status bar as Windows Vista's and 7's Explorer where it
 comes from one.
@@ -139,10 +151,16 @@ Entries that would land outside the folder, device files and
 set-user-ID bits are left out.
 .PP
 The options other than
-.B \-\-view
+.BR \-\-explore " and " \-\-view
 do one thing without opening a folder window, and exit when it is done;
 the desktop's icons use them.
 .SH OPTIONS
+.TP
+.B \-\-explore
+Open the
+.IR folder s
+with the Folders tree showing, as XP's Explore does, rather than the
+task pane.
 .TP
 .BI \-\-view= view
 Open in the view

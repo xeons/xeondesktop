@@ -1282,11 +1282,12 @@ def files_title(s, title, what):
     s.wait(lambda: [w["title"] for w in files_windows(s)] == [title], what)
 
 
-def open_documents(s):
+def open_documents(s, explore=False):
     """xd-files on Documents (Letters, then Notes.txt), the pointer out of
-    the way; returns the window's top left corner and its screenshot."""
+    the way, explored (with the Folders tree) if asked; returns the
+    window's top left corner and its screenshot."""
     empty = s.settle("desktop")
-    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    s.launch("xd-files", *(["--explore"] if explore else []), os.path.join(s.home, "Documents"))
     s.wait_window(app_id=FILES, state="activated")
     files_title(s, "Documents", "Documents to open")
     s.inject("move", WIDTH - 24, HEIGHT - 80)
@@ -1340,7 +1341,7 @@ def files_tab_middle_click(s):
     """The middle button opens a folder in a new tab behind the one shown,
     from the view and from the Folders tree; Ctrl+Tab and Ctrl+9 go to
     them."""
-    x, y, one = open_documents(s)
+    x, y, one = open_documents(s, explore=True)  # the tree's Home below
     s.inject("move", x + LETTERS[0], y + LETTERS[1], "click", "middle")
     s.wait(lambda: s.shot("middle").differs(one, strip_rect(x, y)) > 0.1, "a second tab")
     s.check([w["title"] for w in files_windows(s)] == ["Documents"],
@@ -1446,7 +1447,9 @@ def files_task_pane(s):
                 ' LinkSpacing="4" IconSpacing="6"/>'
                 '</class></shell>' % (pane + body))
     empty = s.settle("desktop")
-    s.launch("xd-files", os.path.join(s.home, "Documents"), env={"XD_THEME_PACKAGE": pkg})
+    # Explored: the Folders tree first, the task pane with Folders off.
+    s.launch("xd-files", "--explore", os.path.join(s.home, "Documents"),
+             env={"XD_THEME_PACKAGE": pkg})
     s.wait_window(app_id=FILES, state="activated")
     files_title(s, "Documents", "Documents to open")
     s.inject("move", WIDTH - 24, HEIGHT - 80)
@@ -1599,6 +1602,57 @@ def folder_options_tabs(s):
 
 
 @scenario()
+def folder_options_common_tasks(s):
+    """Folder Options' "Show common tasks in folders", XP's default: a
+    folder window opens with the task pane on the left, the Folders button
+    puts the Folders tree in its place and takes it away again; "Use
+    Windows classic folders", saved as CommonTasks=false, takes the task
+    pane out of the open window, the view then the whole width, and
+    View > Explorer Bar > Folders shows the tree as the button does."""
+    x, y, tasks = open_documents(s)
+    left = (x + 8, y + 140, 190, 300)  # the task pane or the Folders tree
+    away = (WIDTH - 24, HEIGHT - 80)
+    s.inject("move", x + FOLDERS_BUTTON[0], y + FOLDERS_BUTTON[1], "click", "sleep", 300,
+             "move", *away)
+    tree = s.settle("folders")
+    s.check(tree.differs(tasks, left) > 0.05, "the Folders button put the tree in the pane's place")
+    s.inject("move", x + FOLDERS_BUTTON[0], y + FOLDERS_BUTTON[1], "click", "sleep", 300,
+             "move", *away)
+    back = s.settle("folders off")
+    s.check(back.differs(tasks, left) < 0.02, "Folders off: the task pane is back")
+    s.log("ok: the task pane at first, the Folders tree in its place and back")
+    s.launch("xd-folders")
+    s.wait_window(title="Folder Options", state="activated")
+    # Below the folder window's caption, which goes inactive.
+    below = (0, y + 40, WIDTH, HEIGHT - 80 - y)
+    fx, fy, fw, fh = s.settle("folder options").changed_box(back, below)
+    s.inject("key", "alt+l", "sleep", 300)
+    s.settle("classic ticked")
+    s.inject("move", fx + fw - 208, fy + fh - 21, "click")
+    s.wait(lambda: s.ini().has_section("Folders")
+           and s.ini()["Folders"].get("CommonTasks") == "false", "CommonTasks=false saved")  # fmt: skip
+    s.log("ok: CommonTasks=false saved in [Folders]")
+    s.wait_window(title="Folder Options", gone=True)
+    s.inject("move", *away)
+    s.wait(lambda: s.shot("classic").differs(tasks, left) > 0.05, "the task pane to go")
+    classic = s.settle("classic folders")
+    # Letters, the first item, now at the window's left edge.
+    icon = (x + 30, y + 125, 60, 60)
+    s.check(classic.differs(tasks, icon) > 0.05 and classic.differs(tree, icon) > 0.05,
+            "the view took the pane's place")
+    s.inject("key", "alt+v", "sleep", 300, "key", "e", "sleep", 300, "key", "o", "sleep", 300)
+    s.check(s.settle("classic, folders").differs(tree, left) < 0.02,
+            "View > Explorer Bar > Folders still shows the tree")
+    s.inject("move", x + FOLDERS_BUTTON[0], y + FOLDERS_BUTTON[1], "click", "sleep", 300,
+             "move", *away)
+    s.check(s.settle("classic, folders off").differs(classic, left) < 0.02,
+            "and Folders off, the whole width again")
+    s.inject("move", x + LETTERS[0] - 210, y + LETTERS[1], "click", "sleep", 100, "click")
+    files_title(s, "Letters", "Letters, at the left edge, to open")
+    s.log("ok: classic folders: no task pane, the view the whole width")
+
+
+@scenario()
 def move_after_left_resize(s):
     """A window resized from its left edge and then moved stays where it's
     dropped when it next redraws (the resize's anchor used to pull it back
@@ -1637,7 +1691,9 @@ def outline_drag(s):
     only a checkered outline; the window stays put until the button is let
     go, and then jumps to where the outline was."""
     empty = s.settle("desktop")
-    s.launch("xd-files", os.path.join(s.home, "Documents"))
+    # With the Folders tree (white), not the task pane (a gradient, which
+    # the outline's inverted pixels don't make black and white).
+    s.launch("xd-files", "--explore", os.path.join(s.home, "Documents"))
     s.wait_window(app_id="org.xeondesktop.Files", state="activated")
     area = (0, 0, WIDTH, HEIGHT - 40)  # above the taskbar
     before = s.settle("explorer")

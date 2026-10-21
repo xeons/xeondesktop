@@ -3,9 +3,9 @@
  * in desktop.ini, which xd-files follows live; file associations are
  * GIO's (mimeapps.list).
  *
- *   General     open folders in the same or their own window (or a new
- *               tab, xd-files' own); single- or double-click to open (XP's
- *               task pane has no counterpart)
+ *   General     XP's task pane in folders or classic folders; open
+ *               folders in the same or their own window (or a new tab,
+ *               xd-files' own); single- or double-click to open
  *   View        Apply to All Folders / Reset All Folders, and the
  *               advanced settings tree
  *   File Types  shared-mime-info's types by extension, and the program
@@ -53,7 +53,8 @@ typedef struct props {
     const char *current_view; /* --view, canonical name, or nullptr */
     bool updating;
     /* General */
-    GtkWidget *same_window, *own_window, *new_tabs, *single_click, *double_click;
+    GtkWidget *common_tasks, *classic, *same_window, *own_window, *new_tabs, *single_click,
+        *double_click;
     /* View */
     GtkTreeStore *adv;
     GtkWidget *adv_view;
@@ -100,6 +101,8 @@ static void on_toggle_changed([[maybe_unused]] GtkToggleButton *b, gpointer data
 
 static void show_general(props *p, const xd_folder_settings *f) {
     p->updating = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(f->common_tasks ? p->common_tasks : p->classic),
+                                 TRUE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(f->new_window ? p->own_window : p->same_window),
                                  TRUE);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->new_tabs), f->new_tabs);
@@ -131,12 +134,10 @@ static GtkWidget *general_page(props *p) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
 
-    /* XP's task pane: xd-files has none, so classic folders it is. */
+    /* XP's task pane in xd-files' windows where the Folders bar isn't. */
     GtkWidget *tasks = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    GtkWidget *common = radio(tasks, nullptr, "Show common _tasks in folders", nullptr);
-    GtkWidget *classic = radio(tasks, common, "Use Windows c_lassic folders", nullptr);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(classic), TRUE);
-    gtk_widget_set_sensitive(tasks, FALSE);
+    p->common_tasks = radio(tasks, nullptr, "Show common _tasks in folders", p);
+    p->classic = radio(tasks, p->common_tasks, "Use Windows c_lassic folders", p);
     gtk_box_pack_start(GTK_BOX(page), picture_frame("Tasks", "folder", tasks), FALSE, FALSE, 0);
 
     GtkWidget *browse = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -949,6 +950,7 @@ static bool apply(props *p) {
     xd_settings s;
     xd_settings_load(&s);
     xd_folder_settings *f = &s.folders;
+    f->common_tasks = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->common_tasks));
     f->new_window = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->own_window));
     f->new_tabs = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->new_tabs));
     f->single_click = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->single_click));

@@ -145,6 +145,8 @@ typedef struct xd_folder_settings {
     bool full_path_address; /* the full path in the address bar */
     bool full_path_title;   /* the full path in the title bar */
     bool remember_views;    /* remember each folder's view settings */
+    bool common_tasks;      /* XP's task pane where the Folders bar isn't; false = Windows
+                               classic folders, the view the whole width */
     char default_view[16];  /* "Apply to All Folders": thumbnails, tiles, icons, list or
                                details; "" = the file manager's own default */
 } xd_folder_settings;

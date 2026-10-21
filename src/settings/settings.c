@@ -420,7 +420,7 @@ void xd_settings_defaults(xd_settings *s) {
                         .on_minute = 21 * 60, .off_minute = 7 * 60, .auto_location = true},
         /* XP's, except extensions, which stay visible: renaming edits the
          * whole name. */
-        .folders = {.full_path_address = true, .remember_views = true},
+        .folders = {.full_path_address = true, .remember_views = true, .common_tasks = true},
     };
     xd_saver_settings_defaults(&s->savers);
 }
@@ -1201,6 +1201,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str v) {
             parse_bool(v, &f->full_path_title);
         else if (KEY("RememberViews"))
             parse_bool(v, &f->remember_views);
+        else if (KEY("CommonTasks"))
+            parse_bool(v, &f->common_tasks);
         else if (KEY("DefaultView")) {
             int i = index_of(view_names, XD_ARRAY_LEN(view_names), v);
             if (i >= 0 || v.len == 0)
@@ -1424,6 +1426,7 @@ static GKeyFile *to_keyfile(const xd_settings *s) {
     g_key_file_set_boolean(kf, "Folders", "FullPathAddress", f->full_path_address);
     g_key_file_set_boolean(kf, "Folders", "FullPathTitle", f->full_path_title);
     g_key_file_set_boolean(kf, "Folders", "RememberViews", f->remember_views);
+    g_key_file_set_boolean(kf, "Folders", "CommonTasks", f->common_tasks);
     g_key_file_set_string(kf, "Folders", "DefaultView", f->default_view);
     g_key_file_set_integer(kf, "Keyboard", "CursorBlinkMs", s->keyboard.cursor_blink_ms);
     g_key_file_set_string(kf, "Keyboard", "InputMethod", s->keyboard.input_method);
