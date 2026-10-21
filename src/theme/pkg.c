@@ -922,8 +922,10 @@ static cairo_surface_t *strip(const xd_theme *t, const char *path, const int *at
             s = fabs(factor - 1.0) < 1e-6 && cut == nullptr
                     ? cairo_surface_reference(src)
                     : xd_image_scale_frames(src, count, vertical, factor, f);
-            g_hash_table_insert(p->cache->scaled, key, s);
-            key = nullptr;
+            if (s != nullptr) { /* nullptr: too big, or frames that don't divide */
+                g_hash_table_insert(p->cache->scaled, key, s);
+                key = nullptr;
+            }
         }
         if (cut != nullptr)
             cairo_surface_destroy(cut);
