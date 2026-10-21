@@ -368,8 +368,21 @@ static xd_rect xp_logoff_rect(const xd_start7 *m) {
     xd_rect t = xp_turnoff_rect(m);
     return (xd_rect){t.x - 6 - 82, t.y, 82, t.h};
 }
-/* The white list's panel, logical px: inset in the left column. */
-static xd_rect list_panel_rect(void) {
+/* Whether the theme package draws 7's program list (its image carries
+ * its own frame and rounded corners, the glass showing round them). */
+static bool pkg_list(const xd_start7 *m, xd_insets *cm) {
+    xd_theme t;
+    xd_theme_init(&t, m->shell->style, &m->shell->scheme, 1.0);
+    xd_insets c;
+    if (cm == nullptr)
+        cm = &c;
+    return !m->xp && xd_theme_start_part_margins(&t, XD_START_PROG_LIST, cm);
+}
+/* The white list's panel, logical px: inset in the left column, or a
+ * package's, the whole column, as Windows 7 draws ProgList. */
+static xd_rect list_panel_rect(const xd_start7 *m) {
+    if (pkg_list(m, nullptr))
+        return (xd_rect){0, S7_TOP, S7_LEFT_W, S7_H - S7_TOP};
     return (xd_rect){S7_PAD - 2, S7_TOP + S7_PAD - 2, S7_LEFT_W - 2 * S7_PAD + 4,
                      S7_H - S7_TOP - 2 * S7_PAD + 4};
 }
@@ -384,7 +397,7 @@ static xd_rect open_box_rect(const xd_start7 *m, xd_insets *cm) {
         return (xd_rect){0};
     if (cm != nullptr)
         *cm = c;
-    xd_rect p = list_panel_rect();
+    xd_rect p = list_panel_rect(m);
     int h = c.top + S7_SEARCH_H + c.bottom;
     return (xd_rect){p.x, p.y + p.h - h, p.w, h};
 }
@@ -415,11 +428,9 @@ static xd_rect list_rect(const xd_start7 *m) {
     }
     /* A package's list: within its ProgList's ContentMargins, clear of
      * the frame its image draws. */
-    xd_theme t;
-    xd_theme_init(&t, m->shell->style, &m->shell->scheme, 1.0);
     xd_insets cm;
-    if (xd_theme_start_part_margins(&t, XD_START_PROG_LIST, &cm)) {
-        xd_rect p = list_panel_rect();
+    if (pkg_list(m, &cm)) {
+        xd_rect p = list_panel_rect(m);
         int x = XD_MAX(p.x + cm.left, S7_PAD), y = XD_MAX(p.y + cm.top, S7_TOP + S7_PAD);
         int right = XD_MIN(p.x + p.w - cm.right, S7_LEFT_W - S7_PAD);
         return (xd_rect){x, y, right - x, a.y - 6 - y};
@@ -1735,18 +1746,21 @@ static void render_7(xd_start7 *m, cairo_t *cr, const xd_theme *tp) {
                                    left.h - 2 * mm.border},
                      p.left_bg);
     } else {
-        xd_fill_rect(cr, right, p.right_bg);
         /* The white list sits inset in the panel, as on Windows 7. */
-        xd_rect inset = D(list_panel_rect(), s);
+        xd_rect inset = D(list_panel_rect(m), s);
         /* Windows 7's list stops above the search box's pane. */
         xd_rect ob = open_box_rect(m, nullptr);
         xd_rect list = inset;
         if (ob.w > 0)
             list.h = D(ob, s).y - list.y;
-        /* The whole panel behind the list, including the gap between the
-         * list and the right column. */
-        xd_fill_rect(cr, left, p.right_bg);
-        /* A package's columns over the glass, else ours. */
+        /* A package's columns over the glass, their images shaping the
+         * menu (its rounded corners, the band round the list); else ours,
+         * the whole panel behind the list included. */
+        xd_insets unused;
+        if (!xd_theme_start_part_margins(&t, XD_START_PLACES_LIST, &unused))
+            xd_fill_rect(cr, right, p.right_bg);
+        if (!pkg_list(m, nullptr))
+            xd_fill_rect(cr, left, p.right_bg);
         bool places = xd_theme_draw_start_part(&t, cr, XD_START_PLACES_LIST, right, 0);
         if (ob.w > 0)
             (void)xd_theme_draw_start_part(&t, cr, XD_START_OPEN_BOX, D(ob, s), 0);
