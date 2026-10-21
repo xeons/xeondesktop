@@ -83,6 +83,7 @@
 #include "../src/taskmgr/netstat.h"
 #include "../src/timedate/ntp.h"
 #include "../src/shell/jumplist.h"
+#include "../src/shell/launcher.h"
 #include "../src/shell/recent.h"
 #include "../src/ui/textedit.h"
 #include "../src/users/accounts.h"
@@ -5779,6 +5780,63 @@ static void test_appwiz(void) {
 
 /* Windows 7's taskbar: its buttons setting, jump lists' recent files for
  * one program, and moving pinned programs. */
+/* Unity's LauncherEntry: app URIs, Update's properties (each changing only
+ * what it names), and which taskbar buttons a program's state is for. */
+static void test_launcher_entry(void) {
+    char *id = xd_launcher_desktop_id("application://firefox.desktop");
+    CHECK(id != nullptr && strcmp(id, "firefox.desktop") == 0);
+    g_free(id);
+    id = xd_launcher_desktop_id("application://org.kde.dolphin");
+    CHECK(id != nullptr && strcmp(id, "org.kde.dolphin.desktop") == 0);
+    g_free(id);
+    CHECK(xd_launcher_desktop_id("file:///usr/share/applications/firefox.desktop") == nullptr);
+    CHECK(xd_launcher_desktop_id("application://") == nullptr);
+    CHECK(xd_launcher_desktop_id(nullptr) == nullptr);
+
+    xd_launcher_state st = {0};
+    GVariant *v = g_variant_ref_sink(
+        g_variant_new_parsed("{'progress': <0.5>, 'progress-visible': <true>, 'count': <int64 3>, "
+                             "'count-visible': <true>, 'urgent': <true>}"));
+    CHECK(xd_launcher_apply(&st, v));
+    CHECK(st.progress == 0.5 && st.progress_visible && st.count == 3 && st.count_visible &&
+          st.urgent);
+    CHECK(!xd_launcher_apply(&st, v)); /* nothing new */
+    g_variant_unref(v);
+    /* Only what it names; out of range clamps; wrong types are ignored. */
+    v = g_variant_ref_sink(g_variant_new_parsed(
+        "{'progress': <1.5>, 'urgent': <'yes'>, 'count': <int32 7>, 'other': <1>}"));
+    CHECK(xd_launcher_apply(&st, v));
+    CHECK(st.progress == 1.0 && st.progress_visible && st.count == 7 && st.urgent);
+    g_variant_unref(v);
+    v = g_variant_ref_sink(g_variant_new_parsed(
+        "{'progress': <-1.0>, 'progress-visible': <false>, 'count': <'9'>, 'urgent': <false>}"));
+    CHECK(xd_launcher_apply(&st, v));
+    CHECK(st.progress == 0 && !st.progress_visible && st.count == 7 && !st.urgent);
+    g_variant_unref(v);
+    v = g_variant_ref_sink(g_variant_new_parsed("{'progress': <1>}"));
+    CHECK(!xd_launcher_apply(&st, v)); /* progress is a double */
+    g_variant_unref(v);
+    v = g_variant_ref_sink(g_variant_new_parsed("('notadict', 1)"));
+    CHECK(!xd_launcher_apply(&st, v));
+    g_variant_unref(v);
+
+    CHECK(xd_launcher_key_is("firefox.desktop", "firefox.desktop"));
+    CHECK(xd_launcher_key_is("firefox.desktop", "app:firefox"));
+    CHECK(!xd_launcher_key_is("firefox.desktop", "app:firefox-esr"));
+    CHECK(!xd_launcher_key_is("firefox.desktop", "app:firefo"));
+    CHECK(!xd_launcher_key_is("firefox.desktop", "thunderbird.desktop"));
+    CHECK(!xd_launcher_key_is("firefox.desktop", "win:12"));
+    CHECK(!xd_launcher_key_is("x", "app:"));
+
+    char buf[8];
+    xd_launcher_count_text(3, buf, sizeof(buf));
+    CHECK(strcmp(buf, "3") == 0);
+    xd_launcher_count_text(99, buf, sizeof(buf));
+    CHECK(strcmp(buf, "99") == 0);
+    xd_launcher_count_text(1000, buf, sizeof(buf));
+    CHECK(strcmp(buf, "99+") == 0);
+}
+
 static void test_superbar(void) {
     xd_settings a;
     xd_settings_defaults(&a);
@@ -8755,6 +8813,7 @@ int main(void) {
     test_flatpak_perms();
     test_updates();
     test_superbar();
+    test_launcher_entry();
     test_printers();
     test_scanners();
     test_schedtasks();

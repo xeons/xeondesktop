@@ -19,6 +19,13 @@
  *
  * Hovering a running program's button shows its windows' thumbnails
  * (thumbs.c).
+ *
+ * Programs' progress (a green bar filling the button, as 7's
+ * SetProgressValue) and counts come from Unity's LauncherEntry
+ * (launcher.c). 7 had no count badges; programs drew their counts as an
+ * overlay icon (SetOverlayIcon: Messenger's, Outlook's), so a count is
+ * that overlay, a red badge at the icon's bottom right corner. Urgency
+ * flashes the program's windows' buttons, as FlashWindow does.
  */
 #include <gio/gdesktopappinfo.h>
 #include <glib/gstdio.h>
@@ -29,6 +36,7 @@
 
 #include "../core/alloc.h"
 #include "jumplist.h"
+#include "launcher.h"
 #include "recent.h"
 #include "shell.h"
 
@@ -60,6 +68,7 @@ struct xd_superbar {
     /* The open jump list's button, to build it again after a pin. */
     char *jl_key;
     uint64_t jl_window; /* a window's own button: its id; else 0 */
+    xd_launcher *launcher; /* programs' progress, counts and urgency */
 };
 
 /* ---- programs and pins --------------------------------------------------------- */
@@ -195,6 +204,39 @@ static void save_pins(xd_superbar *sb) {
     g_string_free(text, TRUE);
 }
 
+/* ---- LauncherEntry ------------------------------------------------------------------ */
+
+static void launcher_changed(void *data, const char *id, const xd_launcher_state *was,
+                             const xd_launcher_state *now) {
+    xd_shell *shell = data;
+    if (now->urgent != was->urgent) {
+        XD_LIST_FOR_EACH(tl, &shell->toplevels, xd_toplevel, link) {
+            char *key = window_key(tl);
+            if (xd_launcher_key_is(id, key)) {
+                if (now->urgent) {
+                    xd_toplevel_attention(shell, tl->handle);
+                } else {
+                    tl->attention = false;
+                    tl->flashes = 0;
+                }
+            }
+            g_free(key);
+        }
+    }
+    xd_taskbars_mark_dirty(shell);
+}
+
+void xd_superbar_windows_changed(xd_shell *shell) {
+    if (shell->superbar == nullptr)
+        return;
+    GHashTable *open = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    XD_LIST_FOR_EACH(tl, &shell->toplevels, xd_toplevel, link) {
+        g_hash_table_add(open, window_key(tl));
+    }
+    xd_launcher_sweep(shell->superbar->launcher, open);
+    g_hash_table_destroy(open);
+}
+
 void xd_superbar_init(xd_shell *shell) {
     xd_superbar *sb = XD_NEW(xd_superbar);
     sb->pins = g_ptr_array_new_with_free_func(g_free);
@@ -205,6 +247,7 @@ void xd_superbar_init(xd_shell *shell) {
     char *jl = jl_pins_path();
     g_key_file_load_from_file(sb->jl_pins, jl, G_KEY_FILE_KEEP_COMMENTS, nullptr);
     g_free(jl);
+    sb->launcher = xd_launcher_new(launcher_changed, shell);
     shell->superbar = sb;
     load_pins(sb);
 }
@@ -222,6 +265,7 @@ void xd_superbar_finish(xd_shell *shell) {
         g_bookmark_file_free(sb->recent);
     g_key_file_free(sb->jl_pins);
     g_free(sb->jl_key);
+    xd_launcher_free(sb->launcher);
     xd_free(sb);
     shell->superbar = nullptr;
 }
@@ -386,6 +430,7 @@ static void programs_build(xd_shell *shell, programs *ps) {
         if (!running)
             g_ptr_array_remove_index(sb->order, i);
     }
+    xd_superbar_windows_changed(shell);
     if (ps->count > pinned + 1)
         g_sort_array(ps->items + pinned, ps->count - pinned, sizeof(*ps->items), by_order, sb);
 }
@@ -541,6 +586,41 @@ static xd_rgba icon_tint(cairo_surface_t *icon) {
     return (xd_rgba){r / top, g / top, b / top, 1};
 }
 
+/* The icon with a program's count over its bottom right corner, where 7
+ * put an overlay icon: a red badge, white-edged, half the icon high and
+ * as wide as its digits need. Returns a new surface. */
+static cairo_surface_t *with_count(const xd_theme *t, cairo_surface_t *icon, int64_t count) {
+    int w = cairo_image_surface_get_width(icon), h = cairo_image_surface_get_height(icon);
+    cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+    cairo_t *cr = cairo_create(out);
+    cairo_set_source_surface(cr, icon, 0, 0);
+    cairo_paint(cr);
+
+    char text[8];
+    xd_launcher_count_text(count, text, sizeof(text));
+    xd_font_spec bold = t->scheme.fonts[XD_FONT_MENU];
+    bold.bold = true;
+    int bh = XD_MAX(h / 2, 8);
+    bold.size_pt = 7.0 * bh / xd_tpx(t, 16);
+    xd_text_style st = xd_text(t, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_CENTER);
+    st.font = &bold;
+    int bw = XD_MIN(w, XD_MAX(bh, xd_text_width(cr, text, &st) + bh / 2));
+    double x = w - bw + 0.5, y = h - bh + 0.5, r = (bh - 1) / 2.0;
+    xd_path_rounded(cr, x, y, bw - 1, bh - 1, r, r, r, r);
+    cairo_pattern_t *g = cairo_pattern_create_linear(0, y, 0, y + bh);
+    cairo_pattern_add_color_stop_rgb(g, 0, 0.93, 0.33, 0.30);
+    cairo_pattern_add_color_stop_rgb(g, 1, 0.75, 0.10, 0.09);
+    cairo_set_source(cr, g);
+    cairo_fill_preserve(cr);
+    cairo_pattern_destroy(g);
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_set_line_width(cr, 1);
+    cairo_stroke(cr);
+    xd_draw_text(cr, (xd_rect){w - bw, h - bh, bw, bh}, text, &st);
+    cairo_destroy(cr);
+    return out;
+}
+
 static bool window_lit(const xd_toplevel *tl) { return tl->activated && !tl->minimized; }
 static bool window_flashing(const xd_toplevel *tl) {
     return tl->attention && tl->flashes % 2 == 0;
@@ -589,16 +669,25 @@ static void draw_item(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, const pro
                            "application-x-executable"};
     cairo_surface_t *icon = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names),
                                              xd_tpx(t, it->labelled ? LABEL_ICON : APP_ICON));
+    const xd_launcher_state *ls = xd_launcher_lookup(shell->superbar->launcher, p->key);
+    cairo_surface_t *badged = icon != nullptr && ls != nullptr && ls->count_visible &&
+                                      ls->count > 0
+                                  ? with_count(t, icon, ls->count)
+                                  : nullptr;
     xd_app_button ab = {
-        .icon = icon,
+        .icon = badged != nullptr ? badged : icon,
         .label = !it->labelled            ? nullptr
                  : it->window != nullptr ? window_title(it->window)
                                          : program_name(p),
         .windows = (int)windows,
         .glow_x = (state & XD_STATE_HOT) ? bar->pointer_x * bar->scale : -1,
         .tint = icon_tint(icon),
+        .progress = ls != nullptr && ls->progress_visible ? XD_PROGRESS_NORMAL : XD_PROGRESS_NONE,
+        .fraction = ls != nullptr ? ls->progress : 0,
     };
     xd_theme_draw_app_button(t, cr, it->r, state, &ab);
+    if (badged != nullptr)
+        cairo_surface_destroy(badged);
 }
 
 void xd_superbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect band, int rows,

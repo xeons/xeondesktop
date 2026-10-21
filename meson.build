@@ -1113,6 +1113,7 @@ executable(
   'src/shell/superbar.c',
   'src/shell/thumbs.c',
   'src/shell/mpris.c',
+  'src/shell/launcher.c',
   'src/shell/jumplist.c',
   'src/shell/sleep.c',
   'src/shell/buttons.c',
@@ -1223,6 +1224,7 @@ executable(
 test_exe = executable(
   'xd-tests',
   'tests/test_main.c',
+  'src/shell/launcher.c',
   'src/shell/apps.c',
   'src/shell/gpu.c',
   'src/shell/jumplist.c',

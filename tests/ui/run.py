@@ -1027,6 +1027,147 @@ def superbar_media_buttons(s):
     s.check(s.window(title="Documents") is not None, "the window is still there")
 
 
+# A program sending Unity's LauncherEntry updates for Explorer: each line
+# on stdin is the a{sv} of one Update (GVariant text); it answers "sent".
+LAUNCHER_SENDER = r"""
+import sys
+import gi
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib
+
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+for line in sys.stdin:
+    props = GLib.Variant.parse(GLib.VariantType("a{sv}"), line.strip(), None, None)
+    bus.emit_signal(None, "/com/canonical/unity/launcherentry/xdtest",
+                    "com.canonical.Unity.LauncherEntry", "Update",
+                    GLib.Variant.new_tuple(GLib.Variant("s", "application://org.xeondesktop.Files.desktop"),
+                                           props))
+    bus.flush_sync(None)
+    print("sent", flush=True)
+"""
+
+
+def launcher_sender(s):
+    """Starts LAUNCHER_SENDER; returns a function sending one Update."""
+    p = subprocess.Popen([sys.executable, "-c", LAUNCHER_SENDER], stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, text=True, preexec_fn=die_with_parent)
+    s.children.append(p)
+
+    def send(props):
+        p.stdin.write(props + "\n")
+        p.stdin.flush()
+        if p.stdout.readline().strip() != "sent":
+            raise Failure("the LauncherEntry sender died")
+
+    return p, send
+
+
+def green_share(shot, rect):
+    """The share of rect's pixels that are clearly green (the progress)."""
+    x0, y0, w, h = rect
+    total = hits = 0
+    for y in range(y0, y0 + h):
+        for x in range(x0, x0 + w):
+            r, g, b = shot.pixel(x, y)
+            total += 1
+            if g > r + 30 and g > b + 15:
+                hits += 1
+    return hits / max(total, 1)
+
+
+@scenario(AERO_INI)
+def superbar_launcher_entry(s):
+    """Aero: a program's LauncherEntry progress fills its button green (none
+    at 0%, half at 50%, all at 100%) and goes when hidden, when the sender
+    leaves the bus and when its last window closes; its count is a badge
+    over the icon; urgent flashes the button."""
+    cx, cy = files_button(s)
+    lit = s.settle("lit")
+    bar = (0, HEIGHT - 40, WIDTH, 40)
+    # The button: Windows 7's 58px wide one, centred on cx.
+    x0, x1 = cx - 27, cx + 27
+    # Strips either side of the icon, clear of the corners.
+    left = (x0 + 3, HEIGHT - 30, 7, 20)
+    right = (x1 - 10, HEIGHT - 30, 7, 20)
+    sender, send = launcher_sender(s)
+
+    send("{'progress': <0.0>, 'progress-visible': <true>}")
+    zero = s.settle("progress-0")
+    s.check(green_share(zero, (x0, HEIGHT - 38, x1 - x0, 36)) < 0.02,
+            "no progress shows at 0%")  # fmt: skip
+    send("{'progress': <0.5>}")
+    half = s.settle("progress-50")
+    gl, gr = green_share(half, left), green_share(half, right)
+    s.check(gl > 0.8 and gr < 0.1, f"50% fills the left half green ({gl:.2f}, {gr:.2f})")
+    s.log("ok: 50% progress fills half the button")
+    send("{'progress': <1.0>}")
+    full = s.settle("progress-100")
+    gl, gr = green_share(full, left), green_share(full, right)
+    s.check(gl > 0.8 and gr > 0.8, f"100% fills the button green ({gl:.2f}, {gr:.2f})")
+    s.log("ok: 100% progress fills the button")
+    send("{'progress-visible': <false>}")
+    hidden = s.settle("progress-hidden")
+    s.check(hidden.differs(lit, bar, step=1) == 0, "the progress goes when hidden")
+    s.log("ok: progress-visible false hides it")
+
+    # The count: a red badge at the icon's bottom right corner.
+    send("{'count': <int64 3>, 'count-visible': <true>}")
+    badge = s.settle("count")
+    corner = (cx, HEIGHT - 20, 16, 16)
+    reds = share_like(badge, corner, (0xD0, 0x30, 0x2C), step=1, tolerance=40)
+    s.check(reds > 0.2 and badge.differs(lit, corner, step=1) > 0.3,
+            f"the count is a red badge over the icon ({reds:.2f})")  # fmt: skip
+    s.check(badge.differs(lit, (x0, HEIGHT - 38, cx - x0, 36), step=1) == 0,
+            "the badge is only at the corner")  # fmt: skip
+    s.log("ok: the count shows as a badge")
+    send("{'count-visible': <false>}")
+    s.check(s.settle("count-hidden").differs(lit, bar, step=1) == 0, "the badge goes when hidden")
+
+    # Urgent, with another window active: the button flashes, then stays
+    # lit until urgent ends.
+    s.launch("xd-run")
+    s.wait_window(title="Run", state="activated")
+    s.inject("move", WIDTH // 2, HEIGHT // 2)
+    calm = s.settle("other-active")
+    send("{'urgent': <true>}")
+    looks = set()
+    for i in range(8):
+        shot = s.shot(f"urgent-{i}")
+        looks.add(shot.differs(calm, (x0, HEIGHT - 38, x1 - x0, 36), step=2) > 0.2)
+        time.sleep(0.25)
+    s.check(looks == {True, False}, f"urgent flashes the button ({looks})")
+    s.log("ok: urgent flashes the button")
+    send("{'urgent': <false>}")
+    s.check(s.settle("not-urgent").differs(calm, bar, step=1) == 0,
+            "the button stops flashing when urgent ends")  # fmt: skip
+    s.log("ok: urgent false stops it")
+
+    # The sender leaving the bus takes its progress with it.
+    send("{'progress': <0.5>, 'progress-visible': <true>}")
+    s.check(green_share(s.settle("progress-again"), left) > 0.8, "progress shows again")
+    sender.stdin.close()
+    sender.wait(timeout=10)
+    gone = s.settle("sender-gone")
+    s.check(gone.differs(calm, bar, step=1) == 0, "the progress goes with its sender")
+    s.log("ok: the sender's leaving clears it")
+
+    # And the last window's closing (Files stays pinned).
+    sender, send = launcher_sender(s)
+    send("{'progress': <0.5>, 'progress-visible': <true>}")
+    s.check(green_share(s.settle("progress-third"), left) > 0.8, "progress shows a third time")
+    s.inject("key", "Escape")
+    s.wait_window(title="Run", gone=True)
+    s.wait_window(title="Documents", state="activated")
+    s.inject("key", "alt+F4")
+    s.wait_window(title="Documents", gone=True)
+    closed = s.settle("closed")
+    s.check(green_share(closed, (x0, HEIGHT - 38, x1 - x0, 36)) < 0.02,
+            "the progress goes when the last window closes")  # fmt: skip
+    s.log("ok: closing the last window clears it")
+    sender.stdin.close()
+    sender.wait(timeout=10)
+
+
 @scenario()
 def file_manager(s):
     """Explorer: File > New > Folder, rename in place, Delete to the Recycle

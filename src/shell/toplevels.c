@@ -76,6 +76,7 @@ static void handle_state(void *data, [[maybe_unused]] struct zwlr_foreign_toplev
 
 static void handle_done(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h) {
     xd_toplevel *t = data;
+    xd_superbar_windows_changed(t->shell);
     xd_taskbars_mark_dirty(t->shell);
 }
 
@@ -100,6 +101,7 @@ static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *h)
     g_free(t->app_name);
     g_free(t->desktop_id);
     g_free(t->identifier);
+    xd_superbar_windows_changed(t->shell);
     xd_taskbars_mark_dirty(t->shell);
     xd_free(t);
 }

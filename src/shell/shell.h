@@ -665,6 +665,9 @@ void xd_taskbar_draw_page_arrows(xd_taskbar *bar, const xd_theme *t, cairo_t *cr
 /* superbar.c: Windows 7's taskbar buttons (Aero) and jump lists. */
 void xd_superbar_init(xd_shell *shell);
 void xd_superbar_finish(xd_shell *shell);
+/* Windows came, went or changed program: forgets the progress and counts
+ * (LauncherEntry) of programs whose last window closed. */
+void xd_superbar_windows_changed(xd_shell *shell);
 /* Lays out and draws the buttons in `band` (device px). */
 void xd_superbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect band, int rows,
                         int row_h);
