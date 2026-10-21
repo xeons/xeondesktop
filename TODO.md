@@ -596,10 +596,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       status bar and menu bar have no caller outside xd-themeview yet.
 - [x] Vista's and 7's images are premultiplied: xd-theme-import makes
       them straight (through cairo), or translucent parts came out dark.
-- [~] Vista and 7 frames: DWMWindow's caption buttons, glows and glyphs
-      named (deduced) and drawn with the glass; Basic from Window. Its
-      frame edge pieces and glass reflections are still numbered and Aero's
-      own are drawn. The glass path is untested on a GPU.
+- [~] Vista and 7 frames: DWMWindow's caption buttons, glows, glyphs,
+      frame edges and glass reflections named (deduced) and drawn with the
+      glass; Basic from Window; frames sized from the metrics, as Windows
+      does. The DWM shadow pieces aren't used (the compositor draws its
+      own). The glass path is untested on a GPU.
 - [x] Taskbar and Start menus from packages: TaskBar, TaskBand,
       TaskBand2 (7's buttons and progress colours), TrayNotify*, the
       clock, Start button, XP's StartPanel, 7's StartPanelPriv, and our
@@ -621,7 +622,7 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       View > Explorer Bar > Folders, the tree for xd-files with no folder
       or --explore (XP's Windows Explorer and Explore). Not done: XP's
       other Explorer bars (Search, Favorites, Media, History).
-- [ ] Proper names for the undocumented shell classes' parts, deduced
+- [x] Proper names for the undocumented shell classes' parts, deduced
       from their images and use, marked as deduced in uxtheme.ini:
       AddressBand, AltTab, BreadcrumbBar, CommandModule, DragDrop,
       DWMWindow, InfoBar, ItemsView, MonthCal, Navigation, PreviewPane,
@@ -630,13 +631,35 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       importer leaves numbered. Named so far (docs/THEMES.md): DWMWindow's
       buttons and glyphs, the parts of TaskBand2, TaskbandExtendedUI,
       StartPanel, StartPanelPriv, CommandModule, PreviewPane, ReadingPane,
-      InfoBar and SearchHome that we draw.
-- [ ] What a .theme brings besides the style: its sounds and cursors (when
-      beside it) imported and applied, its wallpaper applied.
-- [ ] Our built-in styles matched to the real ones: render each part from
+      InfoBar and SearchHome that we draw, AltTab, TextGlow, ProperTree,
+      TrayNotifyFlyout, HelpSearchBox; and the classes Wine documents
+      (Link, EmptyMarkup, Static, MonthCal) in the regular sections. Left
+      numbered, with reasons in uxtheme.ini: DWM's other edge sets and
+      animations, ItemsView, TryHarder, DropListControl, SearchEditBox,
+      QueryBuilder.
+- [x] Alt+Tab's window (there was none: Alt+Tab only raised windows):
+      Windows 2000/XP's box in every style, 7's from a package's AltTab.
+      Not done: hover (HotItem), 7's live thumbnails in it.
+- [ ] 7's clock calendar flyout (MonthCal) and the tray's overflow flyout
+      (TrayNotifyFlyout): the shell has neither yet.
+- [~] What a .theme brings besides the style: Display Properties' Themes
+      tab (XP's first tab: Windows XP, Windows Classic, packages bringing
+      more than a style; Save As..., Delete, Browse...) applies the style,
+      wallpaper, sound scheme and pointers together; xd-theme-import
+      brings a .theme's sounds and pointers when they sit beside it.
+      Pointers need win2xcur (python-win2xcur, AUR, or pip) and are
+      untested; a .theme without a visual style (Windows Classic.theme)
+      can't be imported yet; 7's named system sound schemes are ignored.
+- [~] Our built-in styles matched to the real ones: render each part from
       the imported packages and from our code, pixel-diff them, and fix
       Luna (Blue, Silver, Olive Green), Energy Blue (Royale), Aero (7) and
-      their DPI sizes.
+      their DPI sizes. Done with tools/xd-theme-compare and measured numbers only
+      (controls-measure.py: sizes, radii, edge colours, a few gradient
+      stops; no pixels): Luna's four variants' controls and caption
+      buttons, 7's controls. Left: XP's caption buttons' diagonal shading
+      and 7's glass glow (two-dimensional, not in our measured shapes),
+      Luna's Large and Extra Large Fonts sizes, Whistler and Classic at
+      high DPI.
 - [x] Tests: unit tests of the loader and renderer with a package made in
       the test (our own images), and a UI scenario (theme_package) drawing
       frames and controls from one.

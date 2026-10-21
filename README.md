@@ -125,6 +125,9 @@ Touchscreens and drawing tablets work in programs that read them, and as
 the mouse everywhere else (our window frames, the taskbar, older programs);
 touchpad gestures go to the program under the pointer.
 
+Alt+Tab shows Windows 2000/XP's box of the open windows (Windows 7's, with
+a Vista or 7 theme package).
+
 Programs' progress, unread counts and urgency (Unity's LauncherEntry:
 Firefox, Thunderbird, Chromium, KDE programs) show on Windows 7's taskbar
 buttons.
@@ -217,10 +220,14 @@ under `[Taskbar]` in `desktop.ini`.
 
 ### Display Properties
 
-`xd-desk` (Start > Settings > Control Panel > Display) has Windows 2000's
+`xd-desk` (Start > Settings > Control Panel > Display) has Windows XP's
 tabs, and one for what only Linux has:
 
-- Background: the wallpaper (from the usual folders or Browse...) and how
+- Themes (first, as in XP): a theme sets the visual style, wallpaper, sound
+  scheme and mouse pointers together: Windows XP, Windows Classic, and
+  theme packages that bring them, with a sample, Save As..., Delete and
+  Browse... for Windows `.theme` files (pointers need `win2xcur`).
+- Desktop: the wallpaper (from the usual folders or Browse...) and how
   it's placed. Five come with XeonDesktop (in `/usr/share/wallpapers/xeondesktop`):
   Watercolor Blue, a large version of Watercolor's caption mosaic, and Rolling
   Hills, Olive Meadow, Silver Mist and Energy for the XP colours. All are
