@@ -125,6 +125,10 @@ Touchscreens and drawing tablets work in programs that read them, and as
 the mouse everywhere else (our window frames, the taskbar, older programs);
 touchpad gestures go to the program under the pointer.
 
+Programs' progress, unread counts and urgency (Unity's LauncherEntry:
+Firefox, Thunderbird, Chromium, KDE programs) show on Windows 7's taskbar
+buttons.
+
 For games: explicit sync (linux-drm-syncobj, on any GPU whose driver has
 timelines), variable refresh rate for full-screen windows (Display
 Properties > Settings > Advanced > Monitor), tearing for games with vsync
@@ -374,6 +378,12 @@ attributes (`chattr` flags) under Advanced, and a Permissions tab for owner,
 group, read/write/execute and the special bits, optionally applied to
 everything inside a folder. `xd-files --properties FILE...` shows just the
 dialog.
+
+Folder windows open with XP's task pane on the left (Folder Options' "Show
+common tasks in folders", the default); the Folders button or View >
+Explorer Bar > Folders shows the tree instead, and "Use Windows classic
+folders" drops the pane. `xd-files` with no folder, or `--explore`, opens
+with the Folders tree, as XP's Windows Explorer and Explore do.
 
 Tabs, as Windows 11's Explorer has them: Ctrl+T opens one (My Computer),
 a middle click or "Open in new tab" opens a folder in one, Ctrl+W closes

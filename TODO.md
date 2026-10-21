@@ -604,17 +604,23 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       TaskBand2 (7's buttons and progress colours), TrayNotify*, the
       clock, Start button, XP's StartPanel, 7's StartPanelPriv, and our
       ClassicStartMenu for the Windows 2000 one (and our JumpList). Not
-      done: nothing feeds the taskbar progress bars yet (Unity's
-      LauncherEntry over D-Bus could), the group menu isn't styled
-      (FlashButtonGroupMenu).
+      done: the group menu isn't styled (FlashButtonGroupMenu).
+- [x] Programs' progress, counts and urgency on the taskbar, from Unity's
+      LauncherEntry over D-Bus (Firefox, Thunderbird, Chromium, KDE): 7's
+      green bar, a count badge on the icon, urgent flashing (on every
+      taskbar). Not done: LauncherEntry's Query after a shell restart;
+      progress is per program, not per window.
 - [x] Explorer's panes: XP's task pane (ExplorerBar, and shellstyle.dll's
       stylesheet imported as shell/VARIANT.xml), 7's Navigation,
       CommandModule, PreviewPane, ReadingPane, the address and search bars.
       xd-files has a task pane now (in place of the Folders tree when
       Folders is off). Not done: keyboard navigation in the pane, the
       "blockade" banners, 7's Navigation back/forward buttons.
-- [ ] Folder Options' "Show common tasks in folders" / "Use Windows classic
-      folders": a setting, the task pane by default as in XP.
+- [x] Folder Options' "Show common tasks in folders" / "Use Windows classic
+      folders" ([Folders] CommonTasks): the task pane by default as in XP,
+      View > Explorer Bar > Folders, the tree for xd-files with no folder
+      or --explore (XP's Windows Explorer and Explore). Not done: XP's
+      other Explorer bars (Search, Favorites, Media, History).
 - [ ] Proper names for the undocumented shell classes' parts, deduced
       from their images and use, marked as deduced in uxtheme.ini:
       AddressBand, AltTab, BreadcrumbBar, CommandModule, DragDrop,
