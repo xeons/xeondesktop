@@ -51,7 +51,7 @@ char *xd_tasks_new_base(const char *name);
  * (startup and logon timers start with the manager or session: started
  * now, they'd run at once). Files are written even when the manager
  * can't be reached; the error says so. */
-bool xd_tasks_save(GDBusConnection *bus, const char *base, const xd_task *t, bool enabled,
+bool xd_tasks_save(GDBusConnection *bus, const char *base, const xd_task *task, bool enabled,
                    GError **error);
 
 /* Run (start the service now) and End Task (stop it). */

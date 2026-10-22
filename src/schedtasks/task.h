@@ -36,22 +36,22 @@ typedef struct xd_schedule {
 
 /* Whether the fields make sense for the kind (some day picked, a real
  * date, ...). CUSTOM is never valid: it can't be written. */
-bool xd_schedule_valid(const xd_schedule *s);
+bool xd_schedule_valid(const xd_schedule *schedule);
 
 /* The OnCalendar= value, in systemd's normalised form (what
  * `systemd-analyze calendar` prints and the timer's TimersCalendar
  * property gives back): "*-*-* 09:00:00", "Mon,Wed..Fri *-*-* 09:00:00",
  * "*-01,04-15 09:00:00", "*-*~01 09:00:00", "2026-10-20 09:00:00".
  * nullptr for STARTUP, LOGON and invalid schedules. Free with g_free. */
-char *xd_schedule_calendar(const xd_schedule *s);
+char *xd_schedule_calendar(const xd_schedule *schedule);
 
 /* The reverse, for the forms above; false for anything else (the caller
  * shows those as CUSTOM). */
-bool xd_schedule_from_calendar(const char *spec, xd_schedule *s);
+bool xd_schedule_from_calendar(const char *spec, xd_schedule *schedule);
 
 /* XP's Schedule column: "At 9:00 AM every day", "Run at user logon"...
  * Free with g_free. */
-char *xd_schedule_describe(const xd_schedule *s);
+char *xd_schedule_describe(const xd_schedule *schedule);
 
 /* "9:00 AM", as XP's English Schedule column writes times. */
 char *xd_schedule_time_text(int hour, int minute);
@@ -93,7 +93,7 @@ char **xd_task_argv_from_exec(const char *exec);
 
 /* The .service and .timer files' text; nullptr when the task can't be
  * written (bad name, no program, invalid schedule). Free with g_free. */
-char *xd_task_service_text(const xd_task *t);
-char *xd_task_timer_text(const xd_task *t);
+char *xd_task_service_text(const xd_task *task);
+char *xd_task_timer_text(const xd_task *task);
 
 #endif

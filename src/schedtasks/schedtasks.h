@@ -52,12 +52,12 @@ typedef struct sched_editor {
 
 /* With `with_kind`, a "Schedule Task:" choice heads it, as XP's Schedule
  * tab; the wizard picks the kind on a page of its own instead. */
-GtkWidget *sched_editor_new(sched_editor *e, bool with_kind, void (*changed)(void *),
+GtkWidget *sched_editor_new(sched_editor *editor, bool with_kind, void (*changed)(void *),
                             void *data);
 /* `custom` is the timer's own expression, shown for CUSTOM. */
-void sched_editor_set(sched_editor *e, const xd_schedule *s, const char *custom);
-void sched_editor_set_kind(sched_editor *e, xd_sched_kind kind);
-void sched_editor_get(const sched_editor *e, xd_schedule *s);
+void sched_editor_set(sched_editor *editor, const xd_schedule *schedule, const char *custom);
+void sched_editor_set_kind(sched_editor *editor, xd_sched_kind kind);
+void sched_editor_get(const sched_editor *editor, xd_schedule *schedule);
 
 /* ---- the windows ------------------------------------------------------------------ */
 

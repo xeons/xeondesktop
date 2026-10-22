@@ -52,10 +52,10 @@ static GVariant *manager_call(GDBusConnection *bus, const char *method, GVariant
 
 static bool manager_do(GDBusConnection *bus, const char *method, GVariant *args,
                        GError **error) {
-    GVariant *r = manager_call(bus, method, args, nullptr, error);
-    if (r != nullptr)
-        g_variant_unref(r);
-    return r != nullptr;
+    GVariant *variant = manager_call(bus, method, args, nullptr, error);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return variant != nullptr;
 }
 
 /* For steps that may fail harmlessly (stopping what isn't loaded). */
@@ -70,16 +70,16 @@ static GVariant *unit_files(const char *unit) {
 
 /* A unit's properties on one interface (a{sv}); nullptr when unknown. */
 static GVariant *unit_props(GDBusConnection *bus, const char *unit, const char *iface) {
-    GVariant *r = manager_call(bus, "LoadUnit", g_variant_new("(s)", unit), "(o)", nullptr);
-    if (r == nullptr)
+    GVariant *variant = manager_call(bus, "LoadUnit", g_variant_new("(s)", unit), "(o)", nullptr);
+    if (variant == nullptr)
         return nullptr;
     const char *path = nullptr;
-    g_variant_get(r, "(&o)", &path);
+    g_variant_get(variant, "(&o)", &path);
     GVariant *all = g_dbus_connection_call_sync(
         bus, SYSTEMD, path, "org.freedesktop.DBus.Properties", "GetAll",
         g_variant_new("(s)", iface), G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE,
         TIMEOUT_MS, nullptr, nullptr);
-    g_variant_unref(r);
+    g_variant_unref(variant);
     if (all == nullptr)
         return nullptr;
     GVariant *dict = g_variant_get_child_value(all, 0);
@@ -88,15 +88,16 @@ static GVariant *unit_props(GDBusConnection *bus, const char *unit, const char *
 }
 
 static char *prop_str(GVariant *dict, const char *name) {
-    const char *s = nullptr;
-    return dict != nullptr && g_variant_lookup(dict, name, "&s", &s) ? g_strdup(s) : nullptr;
+    const char *value = nullptr;
+    return dict != nullptr && g_variant_lookup(dict, name, "&s", &value) ? g_strdup(value)
+                                                                         : nullptr;
 }
 
 static guint64 prop_u64(GVariant *dict, const char *name) {
-    guint64 v = 0;
-    if (dict == nullptr || !g_variant_lookup(dict, name, "t", &v))
+    guint64 value = 0;
+    if (dict == nullptr || !g_variant_lookup(dict, name, "t", &value))
         return 0;
-    return v;
+    return value;
 }
 
 /* ---- listing -------------------------------------------------------------------------- */
@@ -226,25 +227,27 @@ static xd_task_info *info_new(const char *base, bool ours) {
     return info;
 }
 
-static int compare_info(gconstpointer a, gconstpointer b) {
-    const xd_task_info *x = *(xd_task_info *const *)a, *y = *(xd_task_info *const *)b;
-    int c = g_utf8_collate(x->name, y->name);
-    return c != 0 ? c : strcmp(x->base, y->base);
+static int compare_info(gconstpointer left, gconstpointer right) {
+    const xd_task_info *left_info = *(xd_task_info *const *)left,
+                       *right_info = *(xd_task_info *const *)right;
+    int order = g_utf8_collate(left_info->name, right_info->name);
+    return order != 0 ? order : strcmp(left_info->base, right_info->base);
 }
 
 GPtrArray *xd_tasks_list(GDBusConnection *bus, bool others) {
     GPtrArray *list = g_ptr_array_new_with_free_func((GDestroyNotify)xd_task_info_free);
     char *dir = xd_tasks_unit_dir();
-    GDir *d = g_dir_open(dir, 0, nullptr);
-    for (const char *f; d != nullptr && (f = g_dir_read_name(d)) != nullptr;) {
-        if (!g_str_has_prefix(f, PREFIX) || !g_str_has_suffix(f, ".timer"))
+    GDir *unit_dir = g_dir_open(dir, 0, nullptr);
+    for (const char *file_name;
+         unit_dir != nullptr && (file_name = g_dir_read_name(unit_dir)) != nullptr;) {
+        if (!g_str_has_prefix(file_name, PREFIX) || !g_str_has_suffix(file_name, ".timer"))
             continue;
-        char *base = g_strndup(f, strlen(f) - strlen(".timer"));
+        char *base = g_strndup(file_name, strlen(file_name) - strlen(".timer"));
         g_ptr_array_add(list, info_new(base, true));
         g_free(base);
     }
-    if (d != nullptr)
-        g_dir_close(d);
+    if (unit_dir != nullptr)
+        g_dir_close(unit_dir);
     g_free(dir);
 
     GVariant *units = others ? manager_call(bus, "ListUnitsByPatterns",
@@ -289,11 +292,11 @@ char *xd_tasks_new_base(const char *name) {
     char *dir = xd_tasks_unit_dir();
     char *stem = xd_task_unit_base(name);
     char *base = g_strdup(stem);
-    for (int n = 2; unit_file_exists(dir, base, ".timer") ||
-                    unit_file_exists(dir, base, ".service");
-         n++) {
+    for (int count = 2;
+         unit_file_exists(dir, base, ".timer") || unit_file_exists(dir, base, ".service");
+         count++) {
         g_free(base);
-        base = g_strdup_printf("%s-%d", stem, n);
+        base = g_strdup_printf("%s-%d", stem, count);
     }
     g_free(stem);
     g_free(dir);
@@ -315,10 +318,10 @@ static bool on_calendar(xd_sched_kind kind) {
     return kind != XD_SCHED_STARTUP && kind != XD_SCHED_LOGON;
 }
 
-bool xd_tasks_save(GDBusConnection *bus, const char *base, const xd_task *t, bool enabled,
+bool xd_tasks_save(GDBusConnection *bus, const char *base, const xd_task *task, bool enabled,
                    GError **error) {
-    char *service = xd_task_service_text(t);
-    char *timer = xd_task_timer_text(t);
+    char *service = xd_task_service_text(task);
+    char *timer = xd_task_timer_text(task);
     if (service == nullptr || timer == nullptr || !g_str_has_prefix(base, PREFIX)) {
         g_free(service);
         g_free(timer);
@@ -330,7 +333,7 @@ bool xd_tasks_save(GDBusConnection *bus, const char *base, const xd_task *t, boo
     /* The old timer goes first: a startup or logon timer started now would
      * run the task at once, and its [Install] target may have changed. */
     if (bus != nullptr) {
-        if (!enabled || !on_calendar(t->sched.kind))
+        if (!enabled || !on_calendar(task->sched.kind))
             manager_try(bus, "StopUnit", g_variant_new("(ss)", timer_unit, "replace"));
         manager_try(bus, "DisableUnitFiles", g_variant_new("(@asb)", unit_files(timer_unit),
                                                            FALSE));
@@ -344,13 +347,13 @@ bool xd_tasks_save(GDBusConnection *bus, const char *base, const xd_task *t, boo
          write_unit(dir, base, ".timer", timer, error);
     ok = ok && manager_do(bus, "Reload", nullptr, error);
     if (ok && enabled) {
-        GVariant *r = manager_call(bus, "EnableUnitFiles",
-                                   g_variant_new("(@asbb)", unit_files(timer_unit), FALSE, FALSE),
-                                   "(ba(sss))", error);
-        ok = r != nullptr;
-        if (r != nullptr)
-            g_variant_unref(r);
-        if (ok && on_calendar(t->sched.kind))
+        GVariant *variant = manager_call(
+            bus, "EnableUnitFiles", g_variant_new("(@asbb)", unit_files(timer_unit), FALSE, FALSE),
+            "(ba(sss))", error);
+        ok = variant != nullptr;
+        if (variant != nullptr)
+            g_variant_unref(variant);
+        if (ok && on_calendar(task->sched.kind))
             ok = manager_do(bus, "RestartUnit", g_variant_new("(ss)", timer_unit, "replace"),
                             error);
     }
