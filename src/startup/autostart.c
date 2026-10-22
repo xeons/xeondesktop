@@ -41,12 +41,12 @@ static GKeyFile *load(const char *path, GError **error) {
 
 static bool key_bool(GKeyFile *kf, const char *key, bool fallback) {
     GError *error = nullptr;
-    bool v = g_key_file_get_boolean(kf, GROUP, key, &error);
+    bool value = g_key_file_get_boolean(kf, GROUP, key, &error);
     if (error != nullptr) {
         g_error_free(error);
         return fallback;
     }
-    return v;
+    return value;
 }
 
 /* Starts at log on, by the file that counts: not Hidden, and not turned
@@ -67,25 +67,25 @@ static char *find_in(const char *const *dirs, const char *file) {
 }
 
 static void add_names(const char *dir, GPtrArray *names, GHashTable *seen) {
-    GDir *d = dir != nullptr ? g_dir_open(dir, 0, nullptr) : nullptr;
-    if (d == nullptr)
+    GDir *directory = dir != nullptr ? g_dir_open(dir, 0, nullptr) : nullptr;
+    if (directory == nullptr)
         return;
     const char *name;
-    while ((name = g_dir_read_name(d)) != nullptr) {
+    while ((name = g_dir_read_name(directory)) != nullptr) {
         if (!g_str_has_suffix(name, ".desktop") || g_hash_table_contains(seen, name))
             continue;
         char *copy = g_strdup(name);
         g_hash_table_add(seen, copy);
         g_ptr_array_add(names, copy);
     }
-    g_dir_close(d);
+    g_dir_close(directory);
 }
 
-static int by_name(gconstpointer a, gconstpointer b) {
-    const xd_autostart *x = *(const xd_autostart *const *)a;
-    const xd_autostart *y = *(const xd_autostart *const *)b;
-    int c = g_utf8_collate(x->name, y->name);
-    return c != 0 ? c : strcmp(x->file, y->file);
+static int by_name(gconstpointer left, gconstpointer right) {
+    const xd_autostart *left_item = *(const xd_autostart *const *)left;
+    const xd_autostart *right_item = *(const xd_autostart *const *)right;
+    int order = g_utf8_collate(left_item->name, right_item->name);
+    return order != 0 ? order : strcmp(left_item->file, right_item->file);
 }
 
 /* One entry, or nullptr when it doesn't apply here. */
@@ -152,9 +152,9 @@ GPtrArray *xd_autostart_list(const char *user_dir, const char *const *system_dir
 
 /* errno, as GLib's own file functions report it. Returns false. */
 static bool errno_error(GError **error, const char *path) {
-    int e = errno;
-    GFileError code = g_file_error_from_errno(e);
-    g_set_error(error, G_FILE_ERROR, (int)code, "%s: %s", path, g_strerror(e));
+    int error_number = errno;
+    GFileError code = g_file_error_from_errno(error_number);
+    g_set_error(error, G_FILE_ERROR, (int)code, "%s: %s", path, g_strerror(error_number));
     return false;
 }
 
@@ -228,13 +228,15 @@ bool xd_autostart_set_enabled(const xd_autostart *item, const char *user_dir, bo
 
 /* A desktop file name from a program's: letters, digits, '.', '-', '_'. */
 static char *file_name_for(const char *base) {
-    GString *s = g_string_new(nullptr);
-    for (const char *p = base; *p != '\0'; p++)
-        g_string_append_c(s, g_ascii_isalnum(*p) || *p == '.' || *p == '-' || *p == '_' ? *p
-                                                                                         : '-');
-    if (s->len == 0)
-        g_string_append(s, "program");
-    return g_string_free(s, FALSE);
+    GString *file_name = g_string_new(nullptr);
+    for (const char *position = base; *position != '\0'; position++)
+        g_string_append_c(file_name, g_ascii_isalnum(*position) || *position == '.' ||
+                                             *position == '-' || *position == '_'
+                                         ? *position
+                                         : '-');
+    if (file_name->len == 0)
+        g_string_append(file_name, "program");
+    return g_string_free(file_name, FALSE);
 }
 
 char *xd_autostart_add_app(const char *user_dir, GDesktopAppInfo *app, GError **error) {
@@ -263,30 +265,32 @@ char *xd_autostart_add_app(const char *user_dir, GDesktopAppInfo *app, GError **
 }
 
 /* Inside an Exec value's double quotes, these take a backslash. */
-static bool exec_escaped(char c) { return c == '"' || c == '`' || c == '$' || c == '\\'; }
+static bool exec_escaped(char character) {
+    return character == '"' || character == '`' || character == '$' || character == '\\';
+}
 
 char *xd_exec_quote(const char *const *argv) {
     /* The spec's reserved characters: an argument with any is quoted. */
     static const char reserved[] = " \t\n\"'\\><~|&;$*?#()`";
-    GString *s = g_string_new(nullptr);
+    GString *quoted = g_string_new(nullptr);
     for (size_t i = 0; argv != nullptr && argv[i] != nullptr; i++) {
-        const char *a = argv[i];
+        const char *argument = argv[i];
         if (i > 0)
-            g_string_append_c(s, ' ');
-        bool quote = a[0] == '\0' || strpbrk(a, reserved) != nullptr;
+            g_string_append_c(quoted, ' ');
+        bool quote = argument[0] == '\0' || strpbrk(argument, reserved) != nullptr;
         if (quote)
-            g_string_append_c(s, '"');
-        for (const char *p = a; *p != '\0'; p++) {
-            if (*p == '%')
-                g_string_append_c(s, '%'); /* a literal percent sign */
-            else if (quote && exec_escaped(*p))
-                g_string_append_c(s, '\\');
-            g_string_append_c(s, *p);
+            g_string_append_c(quoted, '"');
+        for (const char *position = argument; *position != '\0'; position++) {
+            if (*position == '%')
+                g_string_append_c(quoted, '%'); /* a literal percent sign */
+            else if (quote && exec_escaped(*position))
+                g_string_append_c(quoted, '\\');
+            g_string_append_c(quoted, *position);
         }
         if (quote)
-            g_string_append_c(s, '"');
+            g_string_append_c(quoted, '"');
     }
-    return g_string_free(s, FALSE);
+    return g_string_free(quoted, FALSE);
 }
 
 char *xd_autostart_add_command(const char *user_dir, const char *command, GError **error) {
@@ -300,9 +304,9 @@ char *xd_autostart_add_command(const char *user_dir, const char *command, GError
     char *stem = file_name_for(base);
     /* foo.desktop, else foo-2.desktop, ...: never over another entry. */
     char *file = nullptr;
-    for (int n = 1; file == nullptr; n++) {
-        char *candidate = n == 1 ? g_strconcat(stem, ".desktop", nullptr)
-                                 : g_strdup_printf("%s-%d.desktop", stem, n);
+    for (int count = 1; file == nullptr; count++) {
+        char *candidate = count == 1 ? g_strconcat(stem, ".desktop", nullptr)
+                                     : g_strdup_printf("%s-%d.desktop", stem, count);
         char *path = g_build_filename(user_dir, candidate, nullptr);
         if (g_file_test(path, G_FILE_TEST_EXISTS))
             g_free(candidate);

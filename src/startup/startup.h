@@ -72,7 +72,7 @@ typedef struct xd_user_service {
     bool global;       /* enabled for every user (/etc/systemd/user): not yours to change */
 } xd_user_service;
 
-void xd_user_service_free(xd_user_service *s);
+void xd_user_service_free(xd_user_service *user_service);
 
 /* Whether a unit enabled through these links starts with the session:
  * one is in default.target's, graphical-session.target's or
