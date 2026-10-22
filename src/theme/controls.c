@@ -14,6 +14,12 @@ static bool classic(const xd_theme *theme) { return theme->style == XD_STYLE_CLA
 
 static xd_rgba face(const xd_theme *theme) { return xd_sys(theme, XD_COLOR_BUTTON_FACE); }
 
+/* One of XP's own control colours, as Luna's variant draws it (Dark's
+ * dark). */
+static xd_rgba xp(const xd_theme *theme, uint32_t rgb) {
+    return xd_rgba_hex(xd_luna_control_rgb(theme, rgb));
+}
+
 /* A raised (or, pressed, sunken) classic button edge around r, filled
  * with ButtonFace; the inside. */
 static xd_rect classic_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool pressed) {
@@ -123,8 +129,8 @@ void xd_theme_draw_progress(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
         space = 2 * px;
     } else {
         /* XP: a white well with a grey border, green chunks. */
-        xd_fill_rect(cairo, rect, xd_rgba_hex(0xFFFFFF));
-        xd_rgba border = xd_rgba_hex(0x686868);
+        xd_fill_rect(cairo, rect, xp(theme, 0xFFFFFF));
+        xd_rgba border = xp(theme, 0x686868);
         in = xd_rect_inset(xd_draw_bevel(cairo, rect, px, border, border), 2 * px, 2 * px);
         chunk_color = xd_rgba_hex(0x2ED331);
         chunk = xd_tpx(theme, 6);
@@ -253,9 +259,9 @@ void xd_theme_draw_spin_button(const xd_theme *theme, cairo_t *cairo, xd_rect re
     xd_path_rounded(cairo, button.x, button.y, button.w, button.h, rad, rad, rad, rad);
     cairo_save(cairo);
     cairo_clip(cairo);
-    xd_fill_gradient(cairo, button, xd_rgba_hex(top), xd_rgba_hex(bottom), false);
+    xd_fill_gradient(cairo, button, xp(theme, top), xp(theme, bottom), false);
     cairo_restore(cairo);
-    triangle(theme, cairo, button, up, xd_rgba_hex(disabled ? 0xC9C7BA : 0x4D6185));
+    triangle(theme, cairo, button, up, xp(theme, disabled ? 0xC9C7BA : 0x4D6185));
 }
 
 /* ---- column headers and tree glyphs ------------------------------------------------- */
@@ -274,20 +280,20 @@ void xd_theme_draw_header_item(const xd_theme *theme, cairo_t *cairo, xd_rect re
     } else {
         /* XP: white to beige, three shaded lines along the bottom (orange
          * when hot), a divider at the right. */
-        xd_fill_gradient(cairo, rect, xd_rgba_hex(pressed ? 0xDEDFD8 : 0xFFFFFF),
-                         xd_rgba_hex(pressed ? 0xDEDFD8 : 0xEBEADB), false);
+        xd_fill_gradient(cairo, rect, xp(theme, pressed ? 0xDEDFD8 : 0xFFFFFF),
+                         xp(theme, pressed ? 0xDEDFD8 : 0xEBEADB), false);
         bool hot = (state & XD_STATE_HOT) && !pressed;
         static const uint32_t bottom[2][3] = {{0xE2DECD, 0xD6D2C2, 0xCBC7B8},
                                               {0xF9B119, 0xF8A90E, 0xFFC83C}};
         for (int i = 0; i < 3; i++)
             xd_fill_rect(cairo, (xd_rect){rect.x, rect.y + rect.h - (3 - i) * px, rect.w, px},
-                         xd_rgba_hex(bottom[hot][i]));
+                         xp(theme, bottom[hot][i]));
         int inset = xd_tpx(theme, 3);
         xd_fill_rect(cairo,
                      (xd_rect){rect.x + rect.w - 2 * px, rect.y + inset, px, rect.h - 2 * inset},
-                     xd_rgba_hex(0xACA899));
+                     xp(theme, 0xACA899));
         xd_fill_rect(cairo, (xd_rect){rect.x + rect.w - px, rect.y + inset, px, rect.h - 2 * inset},
-                     xd_rgba_hex(0xFFFFFF));
+                     xp(theme, 0xFFFFFF));
     }
     if (label != nullptr) {
         xd_text_style st =
@@ -303,7 +309,7 @@ void xd_theme_draw_tree_glyph(const xd_theme *theme, cairo_t *cairo, xd_rect rec
     int px = xd_tpx(theme, 1), box_size = xd_tpx(theme, 9);
     xd_rect box = {rect.x + (rect.w - box_size) / 2, rect.y + (rect.h - box_size) / 2, box_size,
                    box_size};
-    xd_rgba border = classic(theme) ? xd_sys(theme, XD_COLOR_BUTTON_SHADOW) : xd_rgba_hex(0x919B9C);
+    xd_rgba border = classic(theme) ? xd_sys(theme, XD_COLOR_BUTTON_SHADOW) : xp(theme, 0x919B9C);
     xd_fill_rect(cairo, box, xd_sys(theme, XD_COLOR_WINDOW));
     xd_draw_bevel(cairo, box, px, border, border);
     xd_rgba sign = xd_sys(theme, XD_COLOR_WINDOW_TEXT);

@@ -347,9 +347,9 @@ static void test_shipped_schemes(void) {
         g_dir_close(folder_handle);
     g_hash_table_destroy(names);
     xd_strbuf_free(&dir);
-    /* XP's 22 classic schemes, Windows XP style's three colours and
-     * Royale's Energy Blue. */
-    CHECK(count == 26);
+    /* XP's 22 classic schemes, Windows XP style's three colours,
+     * Royale's Energy Blue and our Dark. */
+    CHECK(count == 27);
 
     /* Spot checks against the reference (Windows XP's registry values). */
     static const struct {
@@ -394,6 +394,8 @@ static void test_shipped_schemes(void) {
          .color = XD_COLOR_BUTTON_FACE, .r = 224, .g = 223, .b = 227, .luna = XD_LUNA_SILVER},
         {.stem = "luna-energyblue", .name = "Energy Blue",
          .color = XD_COLOR_BUTTON_FACE, .r = 235, .g = 233, .b = 237, .luna = XD_LUNA_ENERGY},
+        {.stem = "luna-dark", .name = "Dark",
+         .color = XD_COLOR_WINDOW, .r = 30, .g = 30, .b = 32, .luna = XD_LUNA_DARK},
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(want); i++) {
         xd_scheme scheme;
@@ -522,6 +524,35 @@ static void test_luna_variants(void) {
           !sc.accent);
     xd_theme_draw_taskbar(&st, scr, (xd_rect){0, 60, 300, 30}, XD_EDGE_BOTTOM);
     CHECK(near(pixel(ss, 150, 61), 0x99C6F1, 0));
+
+    /* Dark, ours: Blue's caption in charcoal with a little blue left,
+     * XP's red Close and green Start kept, a dark push button with a
+     * light outline, dark Start menu lists without the orange line. */
+    xd_scheme dk;
+    CHECK(load_shipped_scheme("luna-dark", &dk));
+    xd_theme_init(&st, XD_STYLE_LUNA, &dk, 1.0);
+    sf.active = true;
+    xd_theme_draw_frame(&st, scr, (xd_rect){0, 0, 300, 60}, &sf);
+    uint32_t caption = pixel(ss, 150, 8);
+    CHECK(near(caption, 0x1E2D47, 2));
+    xd_frame_layout dark_layout;
+    xd_theme_frame_layout(&st, (xd_rect){0, 0, 300, 60}, &sf, &dark_layout);
+    uint32_t close_face =
+        pixel(ss, dark_layout.button_rects[0].x + 3, dark_layout.button_rects[0].y + 10);
+    CHECK(((close_face >> 16) & 0xFF) > ((close_face >> 8) & 0xFF) + 64);
+    xd_theme_draw_start_button(&st, scr, (xd_rect){0, 60, 99, 30}, 0);
+    green = pixel(ss, 4, 75);
+    CHECK(((green >> 8) & 0xFF) > ((green >> 16) & 0xFF) + 40);
+    xd_theme_draw_button(&st, scr, (xd_rect){150, 60, 75, 23}, 0, "");
+    uint32_t button_face = pixel(ss, 187, 71), button_edge = pixel(ss, 150, 71);
+    CHECK((button_face & 0xFF) < 80 && (button_edge & 0xFF) > 150);
+    xd_theme_luna_start_colors(&st, &sc);
+    CHECK(sc.left_bg == 0x26272B && sc.left_text == 0xF0F0F0 && !sc.accent);
+    xd_strbuf dark_css = {0};
+    xd_theme_gtk_css(&st, &dark_css);
+    CHECK(strstr(xd_strbuf_cstr(&dark_css), "@define-color theme_base_color #1e1e20;") != nullptr);
+    CHECK(strstr(xd_strbuf_cstr(&dark_css), "@define-color theme_text_color #e6e6e6;") != nullptr);
+    xd_strbuf_free(&dark_css);
     cairo_destroy(scr);
     cairo_surface_destroy(ss);
 
@@ -542,6 +573,8 @@ static void test_luna_variants(void) {
     CHECK(parsed.luna_color == XD_LUNA_OLIVE);
     CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=EnergyBlue\n"), &parsed, nullptr));
     CHECK(parsed.luna_color == XD_LUNA_ENERGY);
+    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=Dark\n"), &parsed, nullptr));
+    CHECK(parsed.luna_color == XD_LUNA_DARK);
     CHECK(!xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=Green\n"), &parsed, nullptr));
     CHECK(parsed.luna_color == XD_LUNA_NONE);
 }
@@ -3507,7 +3540,7 @@ static void test_gtk_css(void) {
     g_type_ensure(GTK_TYPE_SCROLLBAR);
     static const char *const schemes[] = {"",           "windows-classic", "high-contrast-black",
                                           "high-contrast-white", "luna-olive", "luna-silver",
-                                          "luna-energyblue"};
+                                          "luna-energyblue", "luna-dark"};
     for (int style = 0; style < XD_STYLE_COUNT; style++) {
         for (size_t k = 0; k < XD_ARRAY_LEN(schemes); k++) {
             xd_scheme scheme;

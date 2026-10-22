@@ -211,11 +211,37 @@ int xd_desk_icon_px(const xd_settings *settings) {
     return settings->large_icons ? 48 : 32;
 }
 
+/* Whether an icon theme is installed (its index.theme in a data dir). */
+static bool icon_theme_installed(const char *name) {
+    g_autofree char *user = g_build_filename(g_get_user_data_dir(), "icons", name,
+                                             "index.theme", nullptr);
+    if (g_file_test(user, G_FILE_TEST_EXISTS))
+        return true;
+    for (const char *const *dir = g_get_system_data_dirs(); *dir != nullptr; dir++) {
+        g_autofree char *path = g_build_filename(*dir, "icons", name, "index.theme", nullptr);
+        if (g_file_test(path, G_FILE_TEST_EXISTS))
+            return true;
+    }
+    return false;
+}
+
+/* Whether the colour scheme's windows are dark (Luna's Dark, High
+ * Contrast Black): Breeze's dark glyphs would vanish on them. */
+static bool scheme_dark(const xd_settings *settings) {
+    xd_scheme scheme;
+    xd_settings_scheme(settings, &scheme);
+    xd_rgb window = scheme.colors[XD_COLOR_WINDOW];
+    return 0.299 * window.r + 0.587 * window.g + 0.114 * window.b < 96;
+}
+
 const char *xd_settings_icon_theme(const xd_settings *settings) {
     if (settings->icon_theme[0] != '\0')
         return settings->icon_theme;
     const char *env = getenv("XD_ICON_THEME");
-    return env != nullptr && env[0] != '\0' ? env : "breeze";
+    if (env != nullptr && env[0] != '\0')
+        return env;
+    /* Breeze, or on a dark scheme Breeze Dark (light glyphs), if it's there. */
+    return scheme_dark(settings) && icon_theme_installed("breeze-dark") ? "breeze-dark" : "breeze";
 }
 
 const char *xd_settings_gtk_theme(const xd_settings *settings) {

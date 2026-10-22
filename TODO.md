@@ -618,6 +618,16 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       pre-release build (2485); Silver's frames are fitted from a 3px
       dialog frame; Energy Blue's Start menu reference is a 256-colour
       image. Blue is unchanged (pixel-compared before and after).
+- [~] Luna Dark, ours (no XP reference): Blue's measured frame, taskbar,
+      caption buttons and Start menu header recoloured to charcoal (a
+      tint keeping their relief and a little of their blue), its controls
+      turned over in brightness (dark faces, light outlines, XP's orange
+      hot rings and tab bands in blue), dark scheme colours
+      (luna-dark.ini) for window contents, menus, GTK and Qt; Breeze Dark
+      icons by default on any dark scheme. Not yet: our own dark
+      wallpaper, the window icons' generic stand-in (white), checking
+      every GTK widget the generated theme draws, Explorer's toolbar
+      glyphs in icon themes without a dark variant.
 - [~] Aero (Windows 7), style_aero.c: translucent sky-blue glass frames
       with a sheen and faint streaks, rounded corners, the dark outline
       and light inner edge, the grouped caption strip with a red Close,

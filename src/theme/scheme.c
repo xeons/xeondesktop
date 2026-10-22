@@ -216,6 +216,7 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
                 [XD_LUNA_OLIVE] = "HomeStead",
                 [XD_LUNA_SILVER] = "Metallic",
                 [XD_LUNA_ENERGY] = "EnergyBlue",
+                [XD_LUNA_DARK] = "Dark",
             };
             for (size_t i = XD_LUNA_BLUE; i < XD_ARRAY_LEN(variants); i++) {
                 if (xd_str_eq_nocase(value, xd_str_from_cstr(variants[i]))) {
@@ -223,7 +224,7 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
                     return true;
                 }
             }
-            return reject(ctx, section, key, "expected NormalColor, HomeStead, Metallic or EnergyBlue");
+            return reject(ctx, section, key, "expected NormalColor, HomeStead, Metallic, EnergyBlue or Dark");
         }
         return reject(ctx, section, key, "unknown key");
     }

@@ -153,6 +153,7 @@ typedef enum xd_luna_color : uint8_t {
     XD_LUNA_OLIVE,    /* "HomeStead": Olive Green */
     XD_LUNA_SILVER,   /* "Metallic": Silver */
     XD_LUNA_ENERGY,   /* "EnergyBlue": Energy Blue (Royale) */
+    XD_LUNA_DARK,     /* "Dark": ours, not XP's: Blue's artwork in charcoal */
 } xd_luna_color;
 
 typedef struct xd_scheme {

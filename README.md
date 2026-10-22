@@ -284,7 +284,10 @@ tabs, and one for what only Linux has:
 - Appearance: style, colour scheme and font size, with a live preview: all
   22 of XP's classic colour schemes, and for the XP style Default (blue),
   Olive Green, Silver and Energy Blue (Royale), each measured from a
-  screenshot of the real thing. Advanced opens Windows XP's Advanced
+  screenshot of the real thing, and Dark, our own: Blue's frames, taskbar
+  and controls redrawn in charcoal with its blue kept for selections and
+  highlights, dark window contents (the GTK and Qt themes too), and Breeze
+  Dark's icons when no icon theme is chosen. Advanced opens Windows XP's Advanced
   Appearance: click a part of the preview or pick an item, and set its
   size, colours and font (saved as `[CustomScheme]` over the scheme). In
   Aero, Advanced opens Window Color and Appearance: Windows 7's 16 glass

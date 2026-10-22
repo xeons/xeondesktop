@@ -44,12 +44,18 @@ typedef struct modern_palette {
 
 static const modern_palette *pal(const xd_theme *theme);
 
-/* Olive Green, Silver and Energy Blue: the dialog, menu and selection colours are the
+/* Olive Green, Silver, Energy Blue and Dark: the dialog, menu and selection colours are the
  * variant's system colours, which its scheme file carries; Blue keeps the
  * palette (the same values, as measured). */
 static bool variant(const xd_theme *theme) {
     return theme->scheme.luna_color == XD_LUNA_OLIVE ||
-           theme->scheme.luna_color == XD_LUNA_SILVER || theme->scheme.luna_color == XD_LUNA_ENERGY;
+           theme->scheme.luna_color == XD_LUNA_SILVER ||
+           theme->scheme.luna_color == XD_LUNA_ENERGY || theme->scheme.luna_color == XD_LUNA_DARK;
+}
+
+/* One of Blue's control colours in the theme's variant (Dark's dark). */
+static xd_rgba control(const xd_theme *theme, uint32_t rgb) {
+    return xd_rgba_hex(xd_luna_control_rgb(theme, rgb));
 }
 
 /* A palette colour (Blue's) in the theme's colour variant. */
@@ -204,6 +210,30 @@ static void modern_toolkit_colors(const xd_theme *theme, xd_toolkit_colors *tool
         toolkit_colors->menu_hot_fg = xd_sys(theme, XD_COLOR_HILIGHT_TEXT);
         toolkit_colors->menubar_bg = xd_sys(theme, XD_COLOR_MENU_BAR);
         toolkit_colors->title_fg = xd_sys(theme, XD_COLOR_TITLE_TEXT);
+    }
+    if (theme->scheme.luna_color == XD_LUNA_DARK) {
+        /* Everything Blue keeps white or black, from the scheme; the
+         * controls' own colours as Dark draws them. */
+        toolkit_colors->fg = xd_sys(theme, XD_COLOR_BUTTON_TEXT);
+        toolkit_colors->base = xd_sys(theme, XD_COLOR_WINDOW);
+        toolkit_colors->text = xd_sys(theme, XD_COLOR_WINDOW_TEXT);
+        toolkit_colors->tooltip_bg = xd_sys(theme, XD_COLOR_INFO_WINDOW);
+        toolkit_colors->tooltip_fg = xd_sys(theme, XD_COLOR_INFO_TEXT);
+        xd_rgba disabled_field;
+        xd_luna_field_colors(theme, &toolkit_colors->field_border, &disabled_field);
+        toolkit_colors->button_top = control(theme, modern->button_face.rgb[0]);
+        toolkit_colors->button_bottom =
+            control(theme, modern->button_face.rgb[modern->button_face.n - 1]);
+        toolkit_colors->button_border = control(theme, modern->button_outline);
+        toolkit_colors->button_hot = control(theme, modern->button_hot);
+        toolkit_colors->button_focus = control(theme, modern->button_focus);
+        toolkit_colors->check_border = control(theme, modern->check_border);
+        toolkit_colors->check_mark = control(theme, modern->check_mark);
+        toolkit_colors->thumb_top = control(theme, 0xC8D6FB);
+        toolkit_colors->thumb_bottom = control(theme, 0xB0C8F8);
+        toolkit_colors->track = control(theme, 0xF3F1EC);
+        toolkit_colors->tab_border = control(theme, 0x919B9C);
+        toolkit_colors->tab_hot = control(theme, 0xFFC83C);
     }
 }
 

@@ -214,6 +214,9 @@ xd_glyph xd_glyph_for_part(xd_frame_part part, bool maximized);
 /* luna.c: one of Blue's colours (0xRRGGBB) in the theme's Luna colour
  * variant, recoloured as the frame is (unchanged for Blue). */
 uint32_t xd_luna_variant_rgb(const xd_theme *theme, bool active, uint32_t rgb);
+/* A colour of Blue's controls (a button's face, a check box's border...)
+ * in the theme's variant: Dark's turned dark; the others as they are. */
+uint32_t xd_luna_control_rgb(const xd_theme *theme, uint32_t rgb);
 /* luna.c: Luna's frame, caption buttons and taskbar, from measured colours. */
 xd_insets xd_luna_frame_insets(const xd_theme *theme, const xd_frame *frame);
 void xd_luna_frame_layout(const xd_theme *theme, xd_rect outer, const xd_frame *frame,

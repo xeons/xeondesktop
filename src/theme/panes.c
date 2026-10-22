@@ -38,6 +38,9 @@ static const struct {
      {0xF0F1F5, 0xF0F1F5}, 0x3F3D3D, 0x7E7C7C, 0xE6E6E6},
     {XD_LUNA_OLIVE, {0xCCD9AD, 0xA5BD84}, {0xFFFCEC, 0xE0E7B8}, {0x778C40, 0x96A867},
      {0xF6F6EC, 0xF6F6EC}, 0x56662D, 0x72921D, 0xE0E7B8},
+    /* Dark, ours: Blue's pane in charcoal, the special group in its blue. */
+    {XD_LUNA_DARK, {0x2B3240, 0x232833}, {0x3A4250, 0x2E3542}, {0x1F4E9A, 0x2E64C0},
+     {0x262B33, 0x2B313B}, 0xBFD3F5, 0x7FB2FF, 0xBFD8FF},
 };
 
 static void make_palette(const xd_theme *theme, palette *pane_colors) {
@@ -61,7 +64,10 @@ static void make_palette(const xd_theme *theme, palette *pane_colors) {
                          {xd_rgba_hex(0xFFFFFF), xd_rgba_hex(luna_panes[i].special_hot)}},
                 .link = xd_rgba_hex(luna_panes[i].text),
                 .link_hot = xd_rgba_hex(luna_panes[i].hot),
-                .arrow_face = {xd_rgba_hex(0xFFFFFF), xd_rgba_hex(luna_panes[i].special_head[1])},
+                /* A white circle, but on Dark's dark headers their colour. */
+                .arrow_face = {xd_rgba_hex(variant == XD_LUNA_DARK ? luna_panes[i].normal_head[0]
+                                                                    : 0xFFFFFF),
+                               xd_rgba_hex(luna_panes[i].special_head[1])},
                 .arrow_mark = {xd_rgba_hex(luna_panes[i].text), xd_rgba_hex(0xFFFFFF)},
             };
             return;

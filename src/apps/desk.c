@@ -1387,19 +1387,20 @@ static void fill_schemes(desk *properties) {
     if (!luna)
         xd_widget_add_item(properties->scheme_combo, "Windows Standard (built in)");
     int count = luna ? 0 : 1;
-    int current = 0;
+    int exact = -1, blue = -1;
     for (size_t i = 0; i < properties->schemes.count; i++) {
         if (!scheme_listed(properties, i))
             continue;
         xd_widget_add_item(properties->scheme_combo, properties->schemes.names[i]);
-        /* A classic scheme left under Windows XP style shows as Default
-         * (blue), which is what its frames look like. */
-        if (strcmp(properties->schemes.stems[i], properties->pending.scheme) == 0 ||
-            (luna && current == 0 && scheme_luna_color(properties, i) == XD_LUNA_BLUE))
-            current = count;
+        if (strcmp(properties->schemes.stems[i], properties->pending.scheme) == 0)
+            exact = count;
+        else if (luna && scheme_luna_color(properties, i) == XD_LUNA_BLUE)
+            blue = count;
         count++;
     }
-    xd_widget_select(properties->scheme_combo, current);
+    /* A classic scheme left under Windows XP style shows as Default
+     * (blue), which is what its frames look like. */
+    xd_widget_select(properties->scheme_combo, exact >= 0 ? exact : blue >= 0 ? blue : 0);
 }
 
 static const char *const font_sizes[] = {"Normal", "Large Fonts", "Extra Large Fonts"};
@@ -1436,19 +1437,20 @@ static void appearance_changed(desk *properties) {
     changed(properties);
 }
 
+static const char *luna_blue_scheme(const desk *properties);
+
 static void set_style(desk *properties, xd_visual_style style) {
     bool was_luna = properties->pending.style == XD_STYLE_LUNA;
     properties->pending.style = style;
     /* Switching between Windows XP style and the others switches scheme
-     * lists, and the scheme to the new list's first: Default (blue), or
-     * Windows Standard. */
+     * lists, and the scheme to XP's first: Default (blue) (not the list's
+     * first by name: Dark), or Windows Standard. */
     if (was_luna != (properties->pending.style == XD_STYLE_LUNA)) {
         properties->pending.scheme[0] = '\0';
         properties->pending.custom_scheme = (xd_scheme_custom){0};
-        ptrdiff_t first = listed_scheme(properties, 0);
-        if (properties->pending.style == XD_STYLE_LUNA && first >= 0)
+        if (properties->pending.style == XD_STYLE_LUNA)
             snprintf(properties->pending.scheme, sizeof(properties->pending.scheme), "%s",
-                     properties->schemes.stems[first]);
+                     luna_blue_scheme(properties));
     }
 }
 
