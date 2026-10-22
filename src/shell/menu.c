@@ -882,6 +882,9 @@ static void run_files(xd_shell *shell, const char *option, const char *path) {
     g_free(exe);
 }
 
+/* Desktop (create shortcut) links to the program's launcher, as the
+ * Files' Send To does (a copy wouldn't be trusted to run); My Documents
+ * gets a copy. */
 static void send_to(xd_shell *shell, const xd_app *app, GUserDirectory which,
                     const char *fallback) {
     const char *file = program_file(app);
@@ -889,7 +892,8 @@ static void send_to(xd_shell *shell, const xd_app *app, GUserDirectory which,
         return;
     const char *dir = g_get_user_special_dir(which);
     char *own = dir == nullptr ? g_build_filename(g_get_home_dir(), fallback, nullptr) : nullptr;
-    char *option = g_strconcat("--copy-to=", dir != nullptr ? dir : own, nullptr);
+    const char *job = which == G_USER_DIRECTORY_DESKTOP ? "--link-to=" : "--copy-to=";
+    char *option = g_strconcat(job, dir != nullptr ? dir : own, nullptr);
     run_files(shell, option, file);
     g_free(option);
     g_free(own);

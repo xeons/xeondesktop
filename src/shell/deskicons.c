@@ -974,15 +974,17 @@ void xd_shell_open_uri(xd_shell *shell, const char *uri) {
         if (app == nullptr || !xd_app_launch_info(app, nullptr))
             fprintf(stderr, "xd-shell: cannot start %s\n", path);
         g_clear_object(&app);
+    } else if (ctype != nullptr && g_content_type_is_a(ctype, "application/x-desktop") &&
+               path != nullptr) {
+        /* One not trusted: Files asks first, showing what it runs. */
+        GPtrArray *args = g_ptr_array_new();
+        g_ptr_array_add(args, path);
+        run_files(shell, "--launch", args);
+        g_ptr_array_unref(args);
     } else {
-        /* A document: the program its type opens with (a launcher not to
-         * be run is text, to read). */
-        bool untrusted_launcher =
-            ctype != nullptr && g_content_type_is_a(ctype, "application/x-desktop");
-        GAppInfo *handler = untrusted_launcher
-                                ? g_app_info_get_default_for_type("text/plain", FALSE)
-                            : ctype != nullptr ? g_app_info_get_default_for_type(ctype, FALSE)
-                                               : nullptr;
+        /* A document: the program its type opens with. */
+        GAppInfo *handler =
+            ctype != nullptr ? g_app_info_get_default_for_type(ctype, FALSE) : nullptr;
         if (handler != nullptr && G_IS_DESKTOP_APP_INFO(handler)) {
             GList uris = {.data = (gpointer)(uintptr_t)uri};
             if (!xd_app_launch_info(G_DESKTOP_APP_INFO(handler), &uris))

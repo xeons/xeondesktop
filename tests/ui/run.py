@@ -4224,9 +4224,40 @@ def xp_start_send_to(s):
     s.inject("key", "ctrl+Escape", "sleep", 600)
     s.settle("menu")
     s.inject("move", 90, 352, "click", "right", "sleep", 600, "key", "n", "sleep", 600, "key", "d")
-    shortcut = os.path.join(s.home, "Desktop", "org.xeondesktop.Files.desktop")
+    shortcut = os.path.join(s.home, "Desktop", "Shortcut to org.xeondesktop.Files.desktop")
     s.wait(lambda: os.path.exists(shortcut), "the program's shortcut on the desktop")
     s.log("ok: Send To > Desktop (create shortcut) put it there")
+    # A link to the installed launcher, which the desktop trusts to run
+    # (a copy wouldn't be).
+    s.check(os.path.islink(shortcut), "the shortcut is a link to the program's launcher")
+
+
+@scenario(LUNA_INI)
+def desktop_untrusted_shortcut(s):
+    """A launcher on the desktop that's neither an installed program's nor
+    executable (as a downloaded one): opening it asks first, showing what
+    it runs, and Trust and Launch makes it executable and starts it. Then
+    it runs without asking."""
+    marker = os.path.join(s.base, "launched")
+    shortcut = os.path.join(s.home, "Desktop", "zz-shortcut.desktop")
+    with open(shortcut, "w") as f:
+        f.write(f"[Desktop Entry]\nType=Application\nName=Zz Program\nExec=touch {marker}\n")
+    os.chmod(shortcut, 0o644)
+    s.settle("desktop")
+    s.inject("move", WIDTH // 2, HEIGHT // 2, "click", "sleep", 300, "type", "zz", "key", "Return")
+    s.wait_window(title="Untrusted Shortcut", state="activated")
+    s.check(not os.path.exists(marker), "nothing ran before asking")
+    s.log("ok: the untrusted shortcut asked first")
+    s.inject("key", "alt+t")
+    s.wait(lambda: os.path.exists(marker), "Trust and Launch to run it")
+    s.check(os.stat(shortcut).st_mode & 0o100, "trusting made it executable")
+    s.log("ok: Trust and Launch marked it trusted and ran it")
+    os.remove(marker)
+    s.wait_window(title="Untrusted Shortcut", gone=True)
+    s.inject("move", WIDTH // 2, HEIGHT // 2, "click", "sleep", 300, "type", "zz", "key", "Return")
+    s.wait(lambda: os.path.exists(marker), "the trusted shortcut to run")
+    s.check(s.window(title="Untrusted Shortcut") is None, "a trusted one runs without asking")
+    s.log("ok: once trusted, it runs straight away")
 
 
 @scenario(LUNA_INI)

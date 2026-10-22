@@ -39,6 +39,14 @@ char *xd_launcher_write(const char *path, const XdLauncher *launcher, const char
  * that would install it, Exec and all. */
 gboolean xd_launcher_is_installed(const char *path);
 
+/* Whether a launcher may run its program, as GNOME and KDE decide it: an
+ * installed program's (or a link to one), the user's own in
+ * ~/.local/share/applications, or one its owner made executable. Any
+ * other is a file like a download, its Name and Icon not to be believed. */
+gboolean xd_launcher_is_trusted(const char *path);
+/* Marks the launcher trusted: executable by its owner (the user). */
+gboolean xd_launcher_set_trusted(const char *path, GError **err);
+
 G_END_DECLS
 
 #endif

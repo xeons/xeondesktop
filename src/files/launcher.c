@@ -3,7 +3,13 @@
  */
 #include "launcher.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <gio/gio.h>
 #include <glib/gstdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define GROUP G_KEY_FILE_DESKTOP_GROUP
@@ -91,6 +97,41 @@ gboolean xd_launcher_is_installed(const char *path) {
     return found;
 }
 
+gboolean xd_launcher_is_trusted(const char *path) {
+    char *real = realpath(path, nullptr);
+    if (real == nullptr)
+        return FALSE;
+    char *dir = g_path_get_dirname(real);
+    char *own = g_build_filename(g_get_user_data_dir(), "applications", nullptr);
+    gboolean trusted = strcmp(dir, own) == 0 || xd_launcher_is_installed(real);
+    g_free(own);
+    struct stat st;
+    if (!trusted && stat(real, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == getuid() &&
+        (st.st_mode & S_IXUSR))
+        trusted = TRUE;
+    g_free(dir);
+    free(real);
+    return trusted;
+}
+
+gboolean xd_launcher_set_trusted(const char *path, GError **err) {
+    /* Not through a symbolic link: only the user's own file. */
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    struct stat st;
+    int saved = 0;
+    if (fd < 0 || fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != getuid() ||
+        fchmod(fd, (st.st_mode & 07777) | S_IXUSR) != 0)
+        saved = errno != 0 ? errno : EPERM;
+    if (fd >= 0)
+        close(fd);
+    if (saved != 0) {
+        GFileError code = g_file_error_from_errno(saved);
+        g_set_error(err, G_FILE_ERROR, (gint)code, "%s: %s", path, g_strerror(saved));
+        return FALSE;
+    }
+    return TRUE;
+}
+
 char *xd_launcher_write(const char *path, const XdLauncher *launcher, const char *user_dir,
                         GError **err) {
     GKeyFile *kf = load(path, err);
@@ -132,8 +173,18 @@ char *xd_launcher_write(const char *path, const XdLauncher *launcher, const char
         dest = g_build_filename(user_dir, base, nullptr);
         g_free(base);
     }
-    if (!g_key_file_save_to_file(kf, dest, err))
+    /* Rewritten in place, it keeps its permissions (a trusted launcher's
+     * execute bit); a new copy is the user's own, trusted by its folder. */
+    struct stat st;
+    int mode = dest != nullptr && strcmp(dest, path) == 0 && stat(dest, &st) == 0
+                   ? (int)(st.st_mode & 0777)
+                   : 0644;
+    gsize length = 0;
+    char *data = g_key_file_to_data(kf, &length, nullptr);
+    if (!g_file_set_contents_full(dest, data, (gssize)length, G_FILE_SET_CONTENTS_CONSISTENT, mode,
+                                  err))
         g_clear_pointer(&dest, g_free);
+    g_free(data);
     g_key_file_unref(kf);
     return dest;
 }

@@ -7176,6 +7176,21 @@ static void test_launcher_fields(void) {
     char *again = xd_launcher_write(path, &launcher, user, nullptr);
     CHECK(g_strcmp0(again, path) == 0);
     g_free(again);
+    /* Not trusted to run until made executable, which rewriting keeps;
+     * never through a symbolic link. */
+    CHECK(!xd_launcher_is_trusted(path));
+    CHECK(xd_launcher_set_trusted(path, nullptr) && xd_launcher_is_trusted(path));
+    again = xd_launcher_write(path, &launcher, user, nullptr);
+    struct stat st;
+    CHECK(g_strcmp0(again, path) == 0 && stat(path, &st) == 0 && (st.st_mode & S_IXUSR));
+    g_free(again);
+    char *alias = g_build_filename(sys, "alias.desktop", nullptr);
+    CHECK(symlink(path, alias) == 0);
+    GError *err = nullptr;
+    CHECK(!xd_launcher_set_trusted(alias, &err) && err != nullptr);
+    g_clear_error(&err);
+    CHECK(g_remove(alias) == 0);
+    g_free(alias);
     xd_launcher_clear(&launcher);
 
     char *dir_entry = g_build_filename(sys, "folder.desktop", nullptr);

@@ -19,6 +19,7 @@
 #include "extract.h"
 #include "favorites.h"
 #include "fileops.h"
+#include "launcher.h"
 #include "folderview.h"
 #include "netdrives.h"
 #include "netui.h"
@@ -135,7 +136,7 @@ static xd_folder_settings options;
 static gboolean properties_only;          /* --properties: just the dialog */
 static gboolean explore_option;           /* --explore: with the Folders bar, as XP's Explore */
 /* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to,
- * --map-drive, --disconnect-drive: one job for the desktop (the shell
+ * --link-to, --launch, --map-drive, --disconnect-drive: one job for the desktop (the shell
  * isn't a GTK program), then exit. */
 typedef enum {
     JOB_NONE,
@@ -145,11 +146,13 @@ typedef enum {
     JOB_EMPTY_TRASH,
     JOB_COPY,
     JOB_MOVE,
+    JOB_LINK,
+    JOB_LAUNCH,
     JOB_MAP_DRIVE,
     JOB_DISCONNECT_DRIVE
 } cli_job;
 static cli_job job;
-static char *job_dest; /* --copy-to / --move-to */
+static char *job_dest; /* --copy-to / --move-to / --link-to */
 
 /* ---- status and chrome --------------------------------------------------------- */
 
@@ -1106,6 +1109,71 @@ static void open_elsewhere(explorer *browser, GFile *location) {
 
 static void open_in_new_window(GFile *location, gpointer data) { open_elsewhere(data, location); }
 
+/* Runs a launcher (.desktop file) shortcut's program. One not trusted
+ * (not an installed program's, nor made executable: say, downloaded) is
+ * asked about first, showing what it would run, as GNOME's "Allow
+ * Launching": trusting it makes it executable. FALSE if `file` isn't a
+ * launcher. */
+static gboolean open_launcher(GtkWindow *parent, GFile *file) {
+    char *path = g_file_get_path(file);
+    GFileInfo *info = path != nullptr ? g_file_query_info(file,
+                                                          G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+                                                          G_FILE_QUERY_INFO_NONE, nullptr, nullptr)
+                                      : nullptr;
+    const char *content_type = info != nullptr ? g_file_info_get_content_type(info) : nullptr;
+    if (content_type == nullptr || !g_content_type_is_a(content_type, "application/x-desktop")) {
+        g_clear_object(&info);
+        g_free(path);
+        return FALSE;
+    }
+    g_object_unref(info);
+    GDesktopAppInfo *app = g_desktop_app_info_new_from_filename(path);
+    if (app == nullptr) {
+        char *msg = g_strdup_printf("Cannot open %s: it isn't a shortcut to a program.", path);
+        xd_message_box(parent, "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+        g_free(msg);
+        g_free(path);
+        return TRUE;
+    }
+    gboolean run = xd_launcher_is_trusted(path);
+    if (!run) {
+        const char *command = g_app_info_get_commandline(G_APP_INFO(app));
+        char *msg = g_strdup_printf(
+            "The shortcut \"%s\" hasn't been marked as trusted, so it may not be what its name "
+            "and icon say. It runs:\n\n%s\n\nIf you know where it came from, Trust and Launch "
+            "marks it trusted and starts it.",
+            g_app_info_get_name(G_APP_INFO(app)), command != nullptr ? command : "");
+        static const char *const labels[] = {"_Trust and Launch", "Cancel"};
+        int pick = xd_message_box_choose(parent, "Untrusted Shortcut", XD_MB_WARNING, msg, labels,
+                                         2, 1, 1);
+        g_free(msg);
+        GError *err = nullptr;
+        if (pick == 0 && !xd_launcher_set_trusted(path, &err)) {
+            char *failed = g_strdup_printf("Cannot mark the shortcut trusted: %s", err->message);
+            xd_message_box(parent, "Untrusted Shortcut", XD_MB_ERROR, XD_MB_OK, FALSE, failed);
+            g_free(failed);
+            g_error_free(err);
+        } else {
+            run = pick == 0;
+        }
+    }
+    if (run) {
+        GdkAppLaunchContext *ctx = gdk_display_get_app_launch_context(gdk_display_get_default());
+        GError *err = nullptr;
+        if (!g_app_info_launch(G_APP_INFO(app), nullptr, G_APP_LAUNCH_CONTEXT(ctx), &err)) {
+            char *msg = g_strdup_printf("Cannot start %s: %s",
+                                        g_app_info_get_name(G_APP_INFO(app)), err->message);
+            xd_message_box(parent, "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+            g_free(msg);
+            g_error_free(err);
+        }
+        g_object_unref(ctx);
+    }
+    g_object_unref(app);
+    g_free(path);
+    return TRUE;
+}
+
 /* Windows 2000's Add Network Place item: the wizard. */
 static gboolean add_network_place_item(explorer *browser, GFile *file) {
     char *uri = g_file_get_uri(file);
@@ -1137,6 +1205,8 @@ static void activate_item(tab *folder_tab, GFile *file, gboolean is_dir) {
         return;
     }
     if (here == XD_PLACE_CONTROL && launch_applet(browser, file))
+        return;
+    if (open_launcher(GTK_WINDOW(browser->window), file))
         return;
     /* Open with the file type's default application. */
     char *uri = g_file_get_uri(file);
@@ -3998,17 +4068,26 @@ static void run_job(GtkApplication *app, GFile **files, gint count) {
         xd_trash_empty(nullptr, job_done, app);
         break;
     case JOB_COPY:
-    case JOB_MOVE: {
-        /* The desktop's Paste: the "Copying..." dialog and its questions. */
+    case JOB_MOVE:
+    case JOB_LINK: {
+        /* The desktop's Paste: the "Copying..." dialog and its questions.
+         * Links: the Start menu's Send To > Desktop (create shortcut). */
         if (list == nullptr || job_dest == nullptr)
             break;
         GFile *dest = g_file_new_for_commandline_arg(job_dest);
         g_application_hold(G_APPLICATION(app));
-        xd_fileop_start(nullptr, job == JOB_COPY ? XD_FILEOP_COPY : XD_FILEOP_MOVE, list, dest,
-                        job == JOB_MOVE ? job_moved : job_done, app);
+        XdFileOpKind kind = job == JOB_COPY   ? XD_FILEOP_COPY
+                            : job == JOB_MOVE ? XD_FILEOP_MOVE
+                                              : XD_FILEOP_LINK;
+        xd_fileop_start(nullptr, kind, list, dest, job == JOB_MOVE ? job_moved : job_done, app);
         g_object_unref(dest);
         break;
     }
+    case JOB_LAUNCH:
+        /* The desktop's shortcuts the shell doesn't trust. */
+        if (count > 0)
+            open_launcher(nullptr, files[0]);
+        break;
     case JOB_MAP_DRIVE:
         xd_net_map_drive(nullptr, G_APPLICATION(app), nullptr, open_mapped, app);
         break;
@@ -4094,6 +4173,13 @@ static gint on_options([[maybe_unused]] GApplication *app, GVariantDict *opts,
         g_free(job_dest);
         job_dest = g_strdup(dest);
     }
+    if (g_variant_dict_lookup(opts, "link-to", "^&ay", &dest)) {
+        job = JOB_LINK;
+        g_free(job_dest);
+        job_dest = g_strdup(dest);
+    }
+    if (g_variant_dict_contains(opts, "launch"))
+        job = JOB_LAUNCH;
     if (g_variant_dict_lookup(opts, "view", "&s", &view)) {
         for (int i = 0; i < XD_VIEW_COUNT; i++) {
             if (g_ascii_strcasecmp(view, view_names[i]) == 0) {
@@ -4181,6 +4267,13 @@ int main(int argc, char **argv) {
                                   G_OPTION_ARG_FILENAME, "Copy FILE... into DIR and exit", "DIR");
     g_application_add_main_option(G_APPLICATION(app), "move-to", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_FILENAME, "Move FILE... into DIR and exit", "DIR");
+    g_application_add_main_option(G_APPLICATION(app), "link-to", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_FILENAME, "Make shortcuts to FILE... in DIR and exit",
+                                  "DIR");
+    g_application_add_main_option(G_APPLICATION(app), "launch", 0, G_OPTION_FLAG_NONE,
+                                  G_OPTION_ARG_NONE,
+                                  "Run the shortcut FILE (asking first if it isn't trusted)",
+                                  nullptr);
     g_application_add_main_option(G_APPLICATION(app), "map-drive", 0, G_OPTION_FLAG_NONE,
                                   G_OPTION_ARG_NONE, "Map Network Drive", nullptr);
     g_application_add_main_option(G_APPLICATION(app), "disconnect-drive", 0, G_OPTION_FLAG_NONE,
