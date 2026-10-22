@@ -88,23 +88,23 @@ static const char *const log_names[XD_LOG_COUNT] = {
 };
 
 static void event_free(gpointer data) {
-    event *e = data;
-    g_free(e->source);
-    g_free(e->category);
-    g_free(e->event_id);
-    g_free(e->user);
-    g_free(e->computer);
-    g_free(e->message);
-    g_free(e->cursor);
-    g_free(e);
+    event *record = data;
+    g_free(record->source);
+    g_free(record->category);
+    g_free(record->event_id);
+    g_free(record->user);
+    g_free(record->computer);
+    g_free(record->message);
+    g_free(record->cursor);
+    g_free(record);
 }
 
-static void filter_reset(filter *f) {
-    g_clear_pointer(&f->source, g_free);
-    g_clear_pointer(&f->user, g_free);
+static void filter_reset(filter *event_filter) {
+    g_clear_pointer(&event_filter->source, g_free);
+    g_clear_pointer(&event_filter->user, g_free);
     for (int i = 0; i < XD_EVENT_TYPE_COUNT; i++)
-        f->types[i] = true;
-    f->since = f->until = 0;
+        event_filter->types[i] = true;
+    event_filter->since = event_filter->until = 0;
 }
 
 static void filter_copy(filter *dst, const filter *src) {
@@ -113,20 +113,21 @@ static void filter_copy(filter *dst, const filter *src) {
     dst->user = g_strdup(src->user);
 }
 
-static bool filter_active(const filter *f) {
+static bool filter_active(const filter *event_filter) {
     for (int i = 0; i < XD_EVENT_TYPE_COUNT; i++)
-        if (!f->types[i])
+        if (!event_filter->types[i])
             return true;
-    return f->source != nullptr || f->user != nullptr || f->since != 0 || f->until != 0;
+    return event_filter->source != nullptr || event_filter->user != nullptr ||
+           event_filter->since != 0 || event_filter->until != 0;
 }
 
 /* ---- reading the journal (in a thread) ---------------------------------------------- */
 
 /* A field's value, or nullptr. */
-static char *field(sd_journal *j, const char *name) {
+static char *field(sd_journal *journal, const char *name) {
     const void *data = nullptr;
     size_t len = 0;
-    if (sd_journal_get_data(j, name, &data, &len) < 0)
+    if (sd_journal_get_data(journal, name, &data, &len) < 0)
         return nullptr;
     size_t prefix = strlen(name) + 1; /* "NAME=" */
     if (len < prefix)
@@ -134,13 +135,13 @@ static char *field(sd_journal *j, const char *name) {
     return g_utf8_make_valid((const char *)data + prefix, (gssize)(len - prefix));
 }
 
-static long field_long(sd_journal *j, const char *name) {
-    char *v = field(j, name);
-    gint64 n = -1;
-    if (v == nullptr || !g_ascii_string_to_signed(v, 10, 0, G_MAXINT32, &n, nullptr))
-        n = -1;
-    g_free(v);
-    return (long)n;
+static long field_long(sd_journal *journal, const char *name) {
+    char *value = field(journal, name);
+    gint64 number = -1;
+    if (value == nullptr || !g_ascii_string_to_signed(value, 10, 0, G_MAXINT32, &number, nullptr))
+        number = -1;
+    g_free(value);
+    return (long)number;
 }
 
 static char *user_name(GHashTable *cache, long uid) {
@@ -160,107 +161,110 @@ static char *user_name(GHashTable *cache, long uid) {
 
 /* Security has its own matches, so its few events don't need the whole
  * journal read; Application is your own uid's. */
-static void add_matches(sd_journal *j, xd_event_log log) {
+static void add_matches(sd_journal *journal, xd_event_log log) {
     if (log == XD_LOG_SECURITY) {
-        sd_journal_add_match(j, "SYSLOG_FACILITY=4", 0);
-        sd_journal_add_disjunction(j);
-        sd_journal_add_match(j, "SYSLOG_FACILITY=10", 0);
-        sd_journal_add_disjunction(j);
-        sd_journal_add_match(j, "SYSLOG_FACILITY=13", 0);
-        sd_journal_add_disjunction(j);
-        sd_journal_add_match(j, "_TRANSPORT=audit", 0);
+        sd_journal_add_match(journal, "SYSLOG_FACILITY=4", 0);
+        sd_journal_add_disjunction(journal);
+        sd_journal_add_match(journal, "SYSLOG_FACILITY=10", 0);
+        sd_journal_add_disjunction(journal);
+        sd_journal_add_match(journal, "SYSLOG_FACILITY=13", 0);
+        sd_journal_add_disjunction(journal);
+        sd_journal_add_match(journal, "_TRANSPORT=audit", 0);
         for (const char *const *id = xd_security_identifiers; *id != nullptr; id++) {
-            sd_journal_add_disjunction(j);
-            char *m = g_strdup_printf("SYSLOG_IDENTIFIER=%s", *id);
-            sd_journal_add_match(j, m, 0);
-            g_free(m);
+            sd_journal_add_disjunction(journal);
+            char *match = g_strdup_printf("SYSLOG_IDENTIFIER=%s", *id);
+            sd_journal_add_match(journal, match, 0);
+            g_free(match);
         }
     } else if (log == XD_LOG_APPLICATION) {
-        char *m = g_strdup_printf("_UID=%u", (unsigned)getuid());
-        sd_journal_add_match(j, m, 0);
-        g_free(m);
+        char *match = g_strdup_printf("_UID=%u", (unsigned)getuid());
+        sd_journal_add_match(journal, match, 0);
+        g_free(match);
     }
 }
 
 /* Whether the system's journal has anything we can read. */
 static bool system_readable(void) {
-    sd_journal *j = nullptr;
-    if (sd_journal_open(&j, SD_JOURNAL_LOCAL_ONLY | SD_JOURNAL_SYSTEM) < 0)
+    sd_journal *journal = nullptr;
+    if (sd_journal_open(&journal, SD_JOURNAL_LOCAL_ONLY | SD_JOURNAL_SYSTEM) < 0)
         return false;
-    bool ok = sd_journal_seek_head(j) >= 0 && sd_journal_next(j) > 0;
-    sd_journal_close(j);
+    bool ok = sd_journal_seek_head(journal) >= 0 && sd_journal_next(journal) > 0;
+    sd_journal_close(journal);
     return ok;
 }
 
 static void load_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
                         GCancellable *cancel) {
-    load *l = data;
-    l->events = g_ptr_array_new_with_free_func(event_free);
-    sd_journal *j = nullptr;
-    int r = sd_journal_open(&j, SD_JOURNAL_LOCAL_ONLY);
-    if (r < 0) {
-        l->error = g_strdup_printf("The journal could not be opened: %s", g_strerror(-r));
+    load *log_load = data;
+    log_load->events = g_ptr_array_new_with_free_func(event_free);
+    sd_journal *journal = nullptr;
+    int status = sd_journal_open(&journal, SD_JOURNAL_LOCAL_ONLY);
+    if (status < 0) {
+        log_load->error =
+            g_strdup_printf("The journal could not be opened: %s", g_strerror(-status));
         g_task_return_boolean(task, TRUE);
         return;
     }
-    l->system_unreadable = !system_readable();
-    add_matches(j, l->log);
-    if (l->f.until != 0)
-        sd_journal_seek_realtime_usec(j, l->f.until);
+    log_load->system_unreadable = !system_readable();
+    add_matches(journal, log_load->log);
+    if (log_load->f.until != 0)
+        sd_journal_seek_realtime_usec(journal, log_load->f.until);
     else
-        sd_journal_seek_tail(j);
+        sd_journal_seek_tail(journal);
     GHashTable *users = g_hash_table_new_full(g_direct_hash, g_direct_equal, nullptr, g_free);
     guint scanned = 0;
-    while (sd_journal_previous(j) > 0) {
-        if (++scanned > SCAN_MAX || l->events->len >= MAX_EVENTS) {
-            l->truncated = true;
+    while (sd_journal_previous(journal) > 0) {
+        if (++scanned > SCAN_MAX || log_load->events->len >= MAX_EVENTS) {
+            log_load->truncated = true;
             break;
         }
         if ((scanned & 1023) == 0 && g_cancellable_is_cancelled(cancel))
             break;
         guint64 usec = 0;
-        sd_journal_get_realtime_usec(j, &usec);
-        if (l->f.until != 0 && usec > l->f.until)
+        sd_journal_get_realtime_usec(journal, &usec);
+        if (log_load->f.until != 0 && usec > log_load->f.until)
             continue;
-        if (l->f.since != 0 && usec < l->f.since)
+        if (log_load->f.since != 0 && usec < log_load->f.since)
             break;
-        char *ident = field(j, "SYSLOG_IDENTIFIER");
-        char *transport = field(j, "_TRANSPORT");
-        char *user_unit = field(j, "_SYSTEMD_USER_UNIT");
-        long uid = field_long(j, "_UID");
-        xd_event_log log = xd_event_log_of((int)field_long(j, "SYSLOG_FACILITY"), ident,
+        char *ident = field(journal, "SYSLOG_IDENTIFIER");
+        char *transport = field(journal, "_TRANSPORT");
+        char *user_unit = field(journal, "_SYSTEMD_USER_UNIT");
+        long uid = field_long(journal, "_UID");
+        xd_event_log log = xd_event_log_of((int)field_long(journal, "SYSLOG_FACILITY"), ident,
                                            transport, user_unit != nullptr, uid);
-        xd_event_type type = log == l->log
-                                 ? xd_event_type_of((int)field_long(j, "PRIORITY"), log)
+        xd_event_type type = log == log_load->log
+                                 ? xd_event_type_of((int)field_long(journal, "PRIORITY"), log)
                                  : XD_EVENT_INFORMATION;
         char *source = nullptr;
-        if (log == l->log && l->f.types[type]) {
-            source = ident != nullptr ? g_strdup(ident) : field(j, "_COMM");
+        if (log == log_load->log && log_load->f.types[type]) {
+            source = ident != nullptr ? g_strdup(ident) : field(journal, "_COMM");
             if (source == nullptr)
                 source = g_strdup(g_strcmp0(transport, "kernel") == 0 ? "kernel" : "Unknown");
         }
         char *user = source != nullptr ? user_name(users, uid) : nullptr;
-        if (source != nullptr && (l->f.source == nullptr || strcmp(source, l->f.source) == 0) &&
-            (l->f.user == nullptr || strcmp(user, l->f.user) == 0)) {
-            event *e = g_new0(event, 1);
-            e->usec = usec;
-            e->type = type;
-            e->source = g_steal_pointer(&source);
-            e->user = g_steal_pointer(&user);
-            e->category = user_unit != nullptr ? g_strdup(user_unit) : field(j, "_SYSTEMD_UNIT");
-            if (e->category == nullptr)
-                e->category = g_strdup("None");
-            char *id = field(j, "MESSAGE_ID");
+        if (source != nullptr &&
+            (log_load->f.source == nullptr || strcmp(source, log_load->f.source) == 0) &&
+            (log_load->f.user == nullptr || strcmp(user, log_load->f.user) == 0)) {
+            event *record = g_new0(event, 1);
+            record->usec = usec;
+            record->type = type;
+            record->source = g_steal_pointer(&source);
+            record->user = g_steal_pointer(&user);
+            record->category =
+                user_unit != nullptr ? g_strdup(user_unit) : field(journal, "_SYSTEMD_UNIT");
+            if (record->category == nullptr)
+                record->category = g_strdup("None");
+            char *id = field(journal, "MESSAGE_ID");
             if (id != nullptr) {
-                e->event_id = id;
+                record->event_id = id;
             } else {
-                long prio = field_long(j, "PRIORITY");
-                e->event_id = g_strdup_printf("%ld", prio >= 0 ? prio : 6);
+                long prio = field_long(journal, "PRIORITY");
+                record->event_id = g_strdup_printf("%ld", prio >= 0 ? prio : 6);
             }
-            e->computer = field(j, "_HOSTNAME");
-            e->message = field(j, "MESSAGE");
-            sd_journal_get_cursor(j, &e->cursor);
-            g_ptr_array_add(l->events, e);
+            record->computer = field(journal, "_HOSTNAME");
+            record->message = field(journal, "MESSAGE");
+            sd_journal_get_cursor(journal, &record->cursor);
+            g_ptr_array_add(log_load->events, record);
         }
         g_free(source);
         g_free(user);
@@ -269,242 +273,256 @@ static void load_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer dat
         g_free(user_unit);
     }
     g_hash_table_unref(users);
-    sd_journal_close(j);
+    sd_journal_close(journal);
     g_task_return_boolean(task, TRUE);
 }
 
 static void load_free(gpointer data) {
-    load *l = data;
-    if (l->events != nullptr)
-        g_ptr_array_unref(l->events);
-    g_free(l->f.source);
-    g_free(l->f.user);
-    g_free(l->error);
-    g_free(l);
+    load *log_load = data;
+    if (log_load->events != nullptr)
+        g_ptr_array_unref(log_load->events);
+    g_free(log_load->f.source);
+    g_free(log_load->f.user);
+    g_free(log_load->error);
+    g_free(log_load);
 }
 
 /* ---- the list ------------------------------------------------------------------------ */
 
-static void props_show(eventvwr *v);
+static void props_show(eventvwr *event_viewer);
 
-static char *grouped(guint n) {
-    char *plain = g_strdup_printf("%u", n);
-    GString *s = g_string_new(nullptr);
+static char *grouped(guint number) {
+    char *plain = g_strdup_printf("%u", number);
+    GString *string = g_string_new(nullptr);
     size_t len = strlen(plain);
     for (size_t i = 0; i < len; i++) {
         if (i > 0 && (len - i) % 3 == 0)
-            g_string_append_c(s, ',');
-        g_string_append_c(s, plain[i]);
+            g_string_append_c(string, ',');
+        g_string_append_c(string, plain[i]);
     }
     g_free(plain);
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
 static void loaded([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
-    eventvwr *v = data;
+    eventvwr *event_viewer = data;
     GTask *task = G_TASK(res);
-    load *l = g_task_get_task_data(task);
+    load *log_load = g_task_get_task_data(task);
     /* A refresh replaced it. */
     if (g_task_had_error(task) || g_cancellable_is_cancelled(g_task_get_cancellable(task)))
         return;
-    g_clear_object(&v->loading);
-    if (v->events != nullptr)
-        g_ptr_array_unref(v->events);
-    v->events = g_ptr_array_ref(l->events);
-    gtk_list_store_clear(v->store);
-    for (guint i = 0; i < v->events->len; i++) {
-        event *e = g_ptr_array_index(v->events, i);
-        GDateTime *dt = g_date_time_new_from_unix_local_usec((gint64)e->usec);
+    g_clear_object(&event_viewer->loading);
+    if (event_viewer->events != nullptr)
+        g_ptr_array_unref(event_viewer->events);
+    event_viewer->events = g_ptr_array_ref(log_load->events);
+    gtk_list_store_clear(event_viewer->store);
+    for (guint i = 0; i < event_viewer->events->len; i++) {
+        event *record = g_ptr_array_index(event_viewer->events, i);
+        GDateTime *dt = g_date_time_new_from_unix_local_usec((gint64)record->usec);
         char *date = dt != nullptr ? g_date_time_format(dt, "%x") : g_strdup("");
         char *time = dt != nullptr ? g_date_time_format(dt, "%X") : g_strdup("");
         /* MESSAGE_IDs are 128-bit; the list shows their start. */
-        char *id = strlen(e->event_id) > 8 ? g_strndup(e->event_id, 8) : g_strdup(e->event_id);
+        char *id = strlen(record->event_id) > 8 ? g_strndup(record->event_id, 8)
+                                                : g_strdup(record->event_id);
         gtk_list_store_insert_with_values(
-            v->store, nullptr, -1, COL_ICON, xd_event_type_icon(e->type), COL_TYPE,
-            xd_event_type_label(e->type), COL_DATE, date, COL_TIME, time, COL_SOURCE, e->source,
-            COL_CATEGORY, e->category, COL_EVENT, id, COL_USER, e->user, COL_COMPUTER,
-            e->computer != nullptr ? e->computer : "", COL_USEC, (gint64)e->usec, COL_INDEX,
-            (int)i, -1);
+            event_viewer->store, nullptr, -1, COL_ICON, xd_event_type_icon(record->type), COL_TYPE,
+            xd_event_type_label(record->type), COL_DATE, date, COL_TIME, time, COL_SOURCE,
+            record->source, COL_CATEGORY, record->category, COL_EVENT, id, COL_USER, record->user,
+            COL_COMPUTER, record->computer != nullptr ? record->computer : "", COL_USEC,
+            (gint64)record->usec, COL_INDEX, (int)i, -1);
         g_free(id);
         g_free(date);
         g_free(time);
         if (dt != nullptr)
             g_date_time_unref(dt);
     }
-    char *n = grouped(v->events->len);
-    char *title = g_strdup_printf("<b>%s</b>   %s event%s%s", log_names[v->log], n,
-                                  v->events->len == 1 ? "" : "s",
-                                  filter_active(&v->filters[v->log]) ? " (filtered)" : "");
-    gtk_label_set_markup(GTK_LABEL(v->title), title);
+    char *count_text = grouped(event_viewer->events->len);
+    char *title = g_strdup_printf(
+        "<b>%s</b>   %s event%s%s", log_names[event_viewer->log], count_text,
+        event_viewer->events->len == 1 ? "" : "s",
+        filter_active(&event_viewer->filters[event_viewer->log]) ? " (filtered)" : "");
+    gtk_label_set_markup(GTK_LABEL(event_viewer->title), title);
     g_free(title);
-    char *status = l->error != nullptr ? g_strdup(l->error)
-                   : l->truncated      ? g_strdup_printf("Showing the newest %s events.", n)
-                                       : g_strdup("");
-    gtk_label_set_text(GTK_LABEL(v->status), status);
+    char *status = log_load->error != nullptr ? g_strdup(log_load->error)
+                   : log_load->truncated
+                       ? g_strdup_printf("Showing the newest %s events.", count_text)
+                       : g_strdup("");
+    gtk_label_set_text(GTK_LABEL(event_viewer->status), status);
     g_free(status);
-    g_free(n);
-    gtk_widget_set_visible(v->note, l->system_unreadable && v->log != XD_LOG_APPLICATION);
+    g_free(count_text);
+    gtk_widget_set_visible(event_viewer->note,
+                           log_load->system_unreadable && event_viewer->log != XD_LOG_APPLICATION);
     GtkTreePath *first = gtk_tree_path_new_first();
-    gtk_tree_view_set_cursor(GTK_TREE_VIEW(v->view), first, nullptr, FALSE);
+    gtk_tree_view_set_cursor(GTK_TREE_VIEW(event_viewer->view), first, nullptr, FALSE);
     gtk_tree_path_free(first);
-    gdk_window_set_cursor(gtk_widget_get_window(v->window), nullptr);
+    gdk_window_set_cursor(gtk_widget_get_window(event_viewer->window), nullptr);
 }
 
-static void refresh(eventvwr *v) {
-    if (v->loading != nullptr) {
-        g_cancellable_cancel(v->loading);
-        g_clear_object(&v->loading);
+static void refresh(eventvwr *event_viewer) {
+    if (event_viewer->loading != nullptr) {
+        g_cancellable_cancel(event_viewer->loading);
+        g_clear_object(&event_viewer->loading);
     }
-    v->loading = g_cancellable_new();
-    load *l = g_new0(load, 1);
-    l->log = v->log;
-    filter_copy(&l->f, &v->filters[v->log]);
-    GTask *task = g_task_new(nullptr, v->loading, loaded, v);
-    g_task_set_task_data(task, l, load_free);
+    event_viewer->loading = g_cancellable_new();
+    load *log_load = g_new0(load, 1);
+    log_load->log = event_viewer->log;
+    filter_copy(&log_load->f, &event_viewer->filters[event_viewer->log]);
+    GTask *task = g_task_new(nullptr, event_viewer->loading, loaded, event_viewer);
+    g_task_set_task_data(task, log_load, load_free);
     g_task_run_in_thread(task, load_thread);
     g_object_unref(task);
-    char *title = g_strdup_printf("<b>%s</b>   reading the journal...", log_names[v->log]);
-    gtk_label_set_markup(GTK_LABEL(v->title), title);
+    char *title =
+        g_strdup_printf("<b>%s</b>   reading the journal...", log_names[event_viewer->log]);
+    gtk_label_set_markup(GTK_LABEL(event_viewer->title), title);
     g_free(title);
-    GdkWindow *w = gtk_widget_get_window(v->window);
-    if (w != nullptr) {
-        GdkCursor *busy = gdk_cursor_new_from_name(gdk_window_get_display(w), "progress");
-        gdk_window_set_cursor(w, busy);
+    GdkWindow *gdk_window = gtk_widget_get_window(event_viewer->window);
+    if (gdk_window != nullptr) {
+        GdkCursor *busy = gdk_cursor_new_from_name(gdk_window_get_display(gdk_window), "progress");
+        gdk_window_set_cursor(gdk_window, busy);
         g_clear_object(&busy);
     }
 }
 
-static event *selected_event(eventvwr *v, GtkTreeIter *it_out) {
-    GtkTreeModel *m = nullptr;
+static event *selected_event(eventvwr *event_viewer, GtkTreeIter *it_out) {
+    GtkTreeModel *model = nullptr;
     GtkTreeIter it;
-    if (!gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(v->view)), &m,
-                                         &it))
+    if (!gtk_tree_selection_get_selected(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(event_viewer->view)), &model, &it))
         return nullptr;
     int index = -1;
-    gtk_tree_model_get(m, &it, COL_INDEX, &index, -1);
+    gtk_tree_model_get(model, &it, COL_INDEX, &index, -1);
     if (it_out != nullptr)
         *it_out = it;
-    return v->events != nullptr && index >= 0 && (guint)index < v->events->len
-               ? g_ptr_array_index(v->events, (guint)index)
+    return event_viewer->events != nullptr && index >= 0 && (guint)index < event_viewer->events->len
+               ? g_ptr_array_index(event_viewer->events, (guint)index)
                : nullptr;
 }
 
 /* ---- Event Properties ------------------------------------------------------------------ */
 
 /* Every field of the entry, as the Data box shows it. */
-static bool seek_entry(sd_journal *j, const char *cursor) {
-    return sd_journal_seek_cursor(j, cursor) >= 0 && sd_journal_next(j) > 0 &&
-           sd_journal_test_cursor(j, cursor) > 0;
+static bool seek_entry(sd_journal *journal, const char *cursor) {
+    return sd_journal_seek_cursor(journal, cursor) >= 0 && sd_journal_next(journal) > 0 &&
+           sd_journal_test_cursor(journal, cursor) > 0;
 }
 
-static char *all_fields(eventvwr *v, const char *cursor) {
+static char *all_fields(eventvwr *event_viewer, const char *cursor) {
     if (cursor == nullptr)
         return g_strdup("");
-    if (v->p_journal == nullptr && sd_journal_open(&v->p_journal, SD_JOURNAL_LOCAL_ONLY) < 0)
-        v->p_journal = nullptr;
-    sd_journal *j = v->p_journal;
-    if (j != nullptr && !seek_entry(j, cursor)) {
+    if (event_viewer->p_journal == nullptr &&
+        sd_journal_open(&event_viewer->p_journal, SD_JOURNAL_LOCAL_ONLY) < 0)
+        event_viewer->p_journal = nullptr;
+    sd_journal *journal = event_viewer->p_journal;
+    if (journal != nullptr && !seek_entry(journal, cursor)) {
         /* In a journal file newer than the handle, maybe: once more,
          * freshly opened. */
-        sd_journal_close(j);
-        if (sd_journal_open(&v->p_journal, SD_JOURNAL_LOCAL_ONLY) < 0)
-            v->p_journal = nullptr;
-        j = v->p_journal;
-        if (j != nullptr && !seek_entry(j, cursor))
-            j = nullptr;
+        sd_journal_close(journal);
+        if (sd_journal_open(&event_viewer->p_journal, SD_JOURNAL_LOCAL_ONLY) < 0)
+            event_viewer->p_journal = nullptr;
+        journal = event_viewer->p_journal;
+        if (journal != nullptr && !seek_entry(journal, cursor))
+            journal = nullptr;
     }
-    GString *s = g_string_new(nullptr);
-    if (j != nullptr) {
+    GString *string = g_string_new(nullptr);
+    if (journal != nullptr) {
         const void *data = nullptr;
         size_t len = 0;
-        SD_JOURNAL_FOREACH_DATA(j, data, len) {
+        SD_JOURNAL_FOREACH_DATA(journal, data, len) {
             char *line = g_utf8_make_valid(data, (gssize)len);
-            g_string_append(s, line);
-            g_string_append_c(s, '\n');
+            g_string_append(string, line);
+            g_string_append_c(string, '\n');
             g_free(line);
         }
     }
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
-static void props_fill(eventvwr *v) {
-    event *e = selected_event(v, nullptr);
-    if (e == nullptr || v->props == nullptr)
+static void props_fill(eventvwr *event_viewer) {
+    event *record = selected_event(event_viewer, nullptr);
+    if (record == nullptr || event_viewer->props == nullptr)
         return;
-    GDateTime *dt = g_date_time_new_from_unix_local_usec((gint64)e->usec);
+    GDateTime *dt = g_date_time_new_from_unix_local_usec((gint64)record->usec);
     char *date = dt != nullptr ? g_date_time_format(dt, "%x") : g_strdup("");
     char *time = dt != nullptr ? g_date_time_format(dt, "%X") : g_strdup("");
-    gtk_label_set_text(GTK_LABEL(v->p_date), date);
-    gtk_label_set_text(GTK_LABEL(v->p_time), time);
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_date), date);
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_time), time);
     g_free(date);
     g_free(time);
     if (dt != nullptr)
         g_date_time_unref(dt);
-    gtk_label_set_text(GTK_LABEL(v->p_type), xd_event_type_label(e->type));
-    gtk_label_set_text(GTK_LABEL(v->p_user), e->user);
-    gtk_label_set_text(GTK_LABEL(v->p_computer), e->computer != nullptr ? e->computer : "");
-    gtk_label_set_text(GTK_LABEL(v->p_source), e->source);
-    gtk_label_set_text(GTK_LABEL(v->p_category), e->category);
-    gtk_label_set_text(GTK_LABEL(v->p_id), e->event_id);
-    gtk_text_buffer_set_text(v->p_desc, e->message != nullptr ? e->message : "", -1);
-    char *fields = all_fields(v, e->cursor);
-    gtk_text_buffer_set_text(v->p_data, fields, -1);
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_type), xd_event_type_label(record->type));
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_user), record->user);
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_computer),
+                       record->computer != nullptr ? record->computer : "");
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_source), record->source);
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_category), record->category);
+    gtk_label_set_text(GTK_LABEL(event_viewer->p_id), record->event_id);
+    gtk_text_buffer_set_text(event_viewer->p_desc,
+                             record->message != nullptr ? record->message : "", -1);
+    char *fields = all_fields(event_viewer, record->cursor);
+    gtk_text_buffer_set_text(event_viewer->p_data, fields, -1);
     g_free(fields);
 }
 
 /* Up and Down: the event above or below in the list. */
-static void props_move(eventvwr *v, bool up) {
+static void props_move(eventvwr *event_viewer, bool up) {
     GtkTreeIter it;
-    if (selected_event(v, &it) == nullptr)
+    if (selected_event(event_viewer, &it) == nullptr)
         return;
-    GtkTreeModel *m = GTK_TREE_MODEL(v->store);
-    bool ok = up ? gtk_tree_model_iter_previous(m, &it) : gtk_tree_model_iter_next(m, &it);
+    GtkTreeModel *model = GTK_TREE_MODEL(event_viewer->store);
+    bool ok = up ? gtk_tree_model_iter_previous(model, &it) : gtk_tree_model_iter_next(model, &it);
     if (!ok) {
         /* XP asked "Do you want to continue from the beginning?" */
-        if (xd_message_box(GTK_WINDOW(v->props), "Event Viewer", XD_MB_QUESTION, XD_MB_YES_NO,
-                           FALSE,
+        if (xd_message_box(GTK_WINDOW(event_viewer->props), "Event Viewer", XD_MB_QUESTION,
+                           XD_MB_YES_NO, FALSE,
                            up ? "You have reached the beginning of the event log. Do you want "
                                 "to continue from the end?"
                               : "You have reached the end of the event log. Do you want to "
                                 "continue from the beginning?") != GTK_RESPONSE_YES)
             return;
-        int n = gtk_tree_model_iter_n_children(m, nullptr);
-        if (n == 0 || !gtk_tree_model_iter_nth_child(m, &it, nullptr, up ? n - 1 : 0))
+        int count = gtk_tree_model_iter_n_children(model, nullptr);
+        if (count == 0 || !gtk_tree_model_iter_nth_child(model, &it, nullptr, up ? count - 1 : 0))
             return;
     }
-    GtkTreePath *p = gtk_tree_model_get_path(m, &it);
-    gtk_tree_view_set_cursor(GTK_TREE_VIEW(v->view), p, nullptr, FALSE);
-    gtk_tree_path_free(p);
-    props_fill(v);
+    GtkTreePath *path = gtk_tree_model_get_path(model, &it);
+    gtk_tree_view_set_cursor(GTK_TREE_VIEW(event_viewer->view), path, nullptr, FALSE);
+    gtk_tree_path_free(path);
+    props_fill(event_viewer);
 }
 
-static void on_up([[maybe_unused]] GtkButton *b, gpointer v) { props_move(v, true); }
-static void on_down([[maybe_unused]] GtkButton *b, gpointer v) { props_move(v, false); }
+static void on_up([[maybe_unused]] GtkButton *button, gpointer user_data) {
+    props_move(user_data, true);
+}
+static void on_down([[maybe_unused]] GtkButton *button, gpointer user_data) {
+    props_move(user_data, false);
+}
 
-static void on_copy([[maybe_unused]] GtkButton *b, gpointer data) {
-    eventvwr *v = data;
-    event *e = selected_event(v, nullptr);
-    if (e == nullptr)
+static void on_copy([[maybe_unused]] GtkButton *button, gpointer data) {
+    eventvwr *event_viewer = data;
+    event *record = selected_event(event_viewer, nullptr);
+    if (record == nullptr)
         return;
-    GString *s = g_string_new(nullptr);
-    g_string_append_printf(s, "Event Type:\t%s\nEvent Source:\t%s\nEvent Category:\t%s\n"
-                              "Event ID:\t%s\nDate:\t\t%s\nTime:\t\t%s\nUser:\t\t%s\n"
-                              "Computer:\t%s\nDescription:\n%s\n",
-                           xd_event_type_label(e->type), e->source, e->category, e->event_id,
-                           gtk_label_get_text(GTK_LABEL(v->p_date)),
-                           gtk_label_get_text(GTK_LABEL(v->p_time)), e->user,
-                           e->computer != nullptr ? e->computer : "",
-                           e->message != nullptr ? e->message : "");
-    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), s->str, (gint)s->len);
-    g_string_free(s, TRUE);
+    GString *string = g_string_new(nullptr);
+    g_string_append_printf(string,
+                           "Event Type:\t%s\nEvent Source:\t%s\nEvent Category:\t%s\n"
+                           "Event ID:\t%s\nDate:\t\t%s\nTime:\t\t%s\nUser:\t\t%s\n"
+                           "Computer:\t%s\nDescription:\n%s\n",
+                           xd_event_type_label(record->type), record->source, record->category,
+                           record->event_id, gtk_label_get_text(GTK_LABEL(event_viewer->p_date)),
+                           gtk_label_get_text(GTK_LABEL(event_viewer->p_time)), record->user,
+                           record->computer != nullptr ? record->computer : "",
+                           record->message != nullptr ? record->message : "");
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), string->str,
+                           (gint)string->len);
+    g_string_free(string, TRUE);
 }
 
-static void on_props_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
-    eventvwr *v = data;
-    v->props = nullptr;
-    if (v->p_journal != nullptr)
-        sd_journal_close(v->p_journal);
-    v->p_journal = nullptr;
+static void on_props_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    eventvwr *event_viewer = data;
+    event_viewer->props = nullptr;
+    if (event_viewer->p_journal != nullptr)
+        sd_journal_close(event_viewer->p_journal);
+    event_viewer->p_journal = nullptr;
 }
 
 static GtkWidget *value_label(GtkWidget **out) {
@@ -518,9 +536,9 @@ static GtkWidget *value_label(GtkWidget **out) {
 }
 
 static GtkWidget *key_label(const char *text) {
-    GtkWidget *l = gtk_label_new_with_mnemonic(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    return l;
+    GtkWidget *widget = gtk_label_new_with_mnemonic(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    return widget;
 }
 
 static GtkWidget *text_box(GtkTextBuffer **buf, bool mono, int height) {
@@ -538,78 +556,79 @@ static GtkWidget *text_box(GtkTextBuffer **buf, bool mono, int height) {
 }
 
 static GtkWidget *icon_button(const char *icon, const char *tip, GCallback cb, gpointer data) {
-    GtkWidget *b = gtk_button_new_from_icon_name(icon, GTK_ICON_SIZE_BUTTON);
-    gtk_widget_set_tooltip_text(b, tip);
-    g_signal_connect(b, "clicked", cb, data);
-    return b;
+    GtkWidget *widget = gtk_button_new_from_icon_name(icon, GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(widget, tip);
+    g_signal_connect(widget, "clicked", cb, data);
+    return widget;
 }
 
-static void props_open(eventvwr *v) {
-    if (selected_event(v, nullptr) == nullptr)
+static void props_open(eventvwr *event_viewer) {
+    if (selected_event(event_viewer, nullptr) == nullptr)
         return;
-    if (v->props != nullptr) {
-        props_fill(v);
-        gtk_window_present(GTK_WINDOW(v->props));
+    if (event_viewer->props != nullptr) {
+        props_fill(event_viewer);
+        gtk_window_present(GTK_WINDOW(event_viewer->props));
         return;
     }
-    v->props = gtk_dialog_new_with_buttons("Event Properties", GTK_WINDOW(v->window),
-                                           GTK_DIALOG_DESTROY_WITH_PARENT, "OK", GTK_RESPONSE_OK,
-                                           nullptr);
-    gtk_window_set_default_size(GTK_WINDOW(v->props), 440, 500);
-    g_signal_connect(v->props, "response", G_CALLBACK(gtk_widget_destroy), nullptr);
-    g_signal_connect(v->props, "destroy", G_CALLBACK(on_props_destroy), v);
+    event_viewer->props =
+        gtk_dialog_new_with_buttons("Event Properties", GTK_WINDOW(event_viewer->window),
+                                    GTK_DIALOG_DESTROY_WITH_PARENT, "OK", GTK_RESPONSE_OK, nullptr);
+    gtk_window_set_default_size(GTK_WINDOW(event_viewer->props), 440, 500);
+    g_signal_connect(event_viewer->props, "response", G_CALLBACK(gtk_widget_destroy), nullptr);
+    g_signal_connect(event_viewer->props, "destroy", G_CALLBACK(on_props_destroy), event_viewer);
     GtkWidget *nb = gtk_notebook_new();
     gtk_container_set_border_width(GTK_CONTAINER(nb), 6);
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
 
     GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    GtkWidget *g = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(g), 4);
-    gtk_grid_set_column_spacing(GTK_GRID(g), 8);
-    gtk_widget_set_hexpand(g, TRUE);
+    GtkWidget *widget = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(widget), 4);
+    gtk_grid_set_column_spacing(GTK_GRID(widget), 8);
+    gtk_widget_set_hexpand(widget, TRUE);
     struct {
         const char *key;
         GtkWidget **value;
         int col, row;
     } rows[] = {
-        {"Date:", &v->p_date, 0, 0},       {"Source:", &v->p_source, 2, 0},
-        {"Time:", &v->p_time, 0, 1},       {"Category:", &v->p_category, 2, 1},
-        {"Type:", &v->p_type, 0, 2},       {"Event ID:", &v->p_id, 2, 2},
-        {"User:", &v->p_user, 0, 3},       {"Computer:", &v->p_computer, 0, 4},
+        {"Date:", &event_viewer->p_date, 0, 0}, {"Source:", &event_viewer->p_source, 2, 0},
+        {"Time:", &event_viewer->p_time, 0, 1}, {"Category:", &event_viewer->p_category, 2, 1},
+        {"Type:", &event_viewer->p_type, 0, 2}, {"Event ID:", &event_viewer->p_id, 2, 2},
+        {"User:", &event_viewer->p_user, 0, 3}, {"Computer:", &event_viewer->p_computer, 0, 4},
     };
     for (size_t i = 0; i < G_N_ELEMENTS(rows); i++) {
-        gtk_grid_attach(GTK_GRID(g), key_label(rows[i].key), rows[i].col, rows[i].row, 1, 1);
-        gtk_grid_attach(GTK_GRID(g), value_label(rows[i].value), rows[i].col + 1, rows[i].row,
+        gtk_grid_attach(GTK_GRID(widget), key_label(rows[i].key), rows[i].col, rows[i].row, 1, 1);
+        gtk_grid_attach(GTK_GRID(widget), value_label(rows[i].value), rows[i].col + 1, rows[i].row,
                         rows[i].row >= 3 ? 3 : 1, 1);
     }
-    gtk_widget_set_size_request(v->p_id, 90, -1);
-    gtk_box_pack_start(GTK_BOX(top), g, TRUE, TRUE, 0);
+    gtk_widget_set_size_request(event_viewer->p_id, 90, -1);
+    gtk_box_pack_start(GTK_BOX(top), widget, TRUE, TRUE, 0);
     GtkWidget *arrows = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_box_pack_start(GTK_BOX(arrows), icon_button("go-up", "Previous event", G_CALLBACK(on_up),
-                                                    v),
+    gtk_box_pack_start(GTK_BOX(arrows),
+                       icon_button("go-up", "Previous event", G_CALLBACK(on_up), event_viewer),
                        FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(arrows), icon_button("go-down", "Next event",
-                                                    G_CALLBACK(on_down), v),
+    gtk_box_pack_start(GTK_BOX(arrows),
+                       icon_button("go-down", "Next event", G_CALLBACK(on_down), event_viewer),
                        FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(arrows), icon_button("edit-copy", "Copy to the clipboard",
-                                                    G_CALLBACK(on_copy), v),
-                       FALSE, FALSE, 0);
+    gtk_box_pack_start(
+        GTK_BOX(arrows),
+        icon_button("edit-copy", "Copy to the clipboard", G_CALLBACK(on_copy), event_viewer), FALSE,
+        FALSE, 0);
     gtk_box_pack_start(GTK_BOX(top), arrows, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), top, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(page), key_label("_Description:"), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(page), text_box(&v->p_desc, false, 120), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(page), text_box(&event_viewer->p_desc, false, 120), TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(page), key_label("D_ata (the journal's fields):"), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(page), text_box(&v->p_data, true, 120), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(page), text_box(&event_viewer->p_data, true, 120), TRUE, TRUE, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), page, gtk_label_new("Event"));
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(v->props))), nb, TRUE,
-                       TRUE, 0);
-    props_fill(v);
-    gtk_widget_show_all(v->props);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(event_viewer->props))), nb,
+                       TRUE, TRUE, 0);
+    props_fill(event_viewer);
+    gtk_widget_show_all(event_viewer->props);
 }
 
-static void props_show(eventvwr *v) { props_open(v); }
+static void props_show(eventvwr *event_viewer) { props_open(event_viewer); }
 
 /* ---- Filter ---------------------------------------------------------------------------- */
 
@@ -623,15 +642,14 @@ typedef struct filter_dlg {
  * 2026-10-17, 10/17/2026, ...); 0 if it doesn't parse. `end` takes the
  * day's last moment. */
 static guint64 parse_day(const char *text, bool end) {
-    GDate d;
-    g_date_clear(&d, 1);
-    g_date_set_parse(&d, text);
-    if (!g_date_valid(&d))
+    GDate date;
+    g_date_clear(&date, 1);
+    g_date_set_parse(&date, text);
+    if (!g_date_valid(&date))
         return 0;
-    GDateMonth month = g_date_get_month(&d);
-    GDateTime *dt = g_date_time_new_local(g_date_get_year(&d), (int)month,
-                                          g_date_get_day(&d), end ? 23 : 0, end ? 59 : 0,
-                                          end ? 59.999999 : 0);
+    GDateMonth month = g_date_get_month(&date);
+    GDateTime *dt = g_date_time_new_local(g_date_get_year(&date), (int)month, g_date_get_day(&date),
+                                          end ? 23 : 0, end ? 59 : 0, end ? 59.999999 : 0);
     if (dt == nullptr)
         return 0;
     guint64 usec = (guint64)g_date_time_to_unix_usec(dt);
@@ -642,47 +660,49 @@ static guint64 parse_day(const char *text, bool end) {
 static char *day_text(guint64 usec) {
     GDateTime *dt = usec != 0 ? g_date_time_new_from_unix_local_usec((gint64)usec)
                               : g_date_time_new_now_local();
-    char *s = g_date_time_format(dt, "%Y-%m-%d");
+    char *day = g_date_time_format(dt, "%Y-%m-%d");
     g_date_time_unref(dt);
-    return s;
+    return day;
 }
 
-static void on_kind_changed(GtkComboBox *c, gpointer entry) {
-    gtk_widget_set_sensitive(entry, gtk_combo_box_get_active(c) == 1);
+static void on_kind_changed(GtkComboBox *combo, gpointer entry) {
+    gtk_widget_set_sensitive(entry, gtk_combo_box_get_active(combo) == 1);
 }
 
-static void filter_dlg_show(filter_dlg *d, const filter *f) {
+static void filter_dlg_show(filter_dlg *controls, const filter *event_filter) {
     for (int i = 0; i < XD_EVENT_TYPE_COUNT; i++)
-        if (d->types[i] != nullptr)
-            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->types[i]), f->types[i]);
-    gtk_entry_set_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(d->source))),
-                       f->source != nullptr ? f->source : "");
-    gtk_entry_set_text(GTK_ENTRY(d->user), f->user != nullptr ? f->user : "");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(d->from_kind), f->since != 0);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(d->to_kind), f->until != 0);
-    char *from = day_text(f->since), *to = day_text(f->until);
-    gtk_entry_set_text(GTK_ENTRY(d->from), from);
-    gtk_entry_set_text(GTK_ENTRY(d->to), to);
+        if (controls->types[i] != nullptr)
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(controls->types[i]),
+                                         event_filter->types[i]);
+    gtk_entry_set_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(controls->source))),
+                       event_filter->source != nullptr ? event_filter->source : "");
+    gtk_entry_set_text(GTK_ENTRY(controls->user),
+                       event_filter->user != nullptr ? event_filter->user : "");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(controls->from_kind), event_filter->since != 0);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(controls->to_kind), event_filter->until != 0);
+    char *from = day_text(event_filter->since), *to = day_text(event_filter->until);
+    gtk_entry_set_text(GTK_ENTRY(controls->from), from);
+    gtk_entry_set_text(GTK_ENTRY(controls->to), to);
     g_free(from);
     g_free(to);
-    gtk_widget_set_sensitive(d->from, f->since != 0);
-    gtk_widget_set_sensitive(d->to, f->until != 0);
+    gtk_widget_set_sensitive(controls->from, event_filter->since != 0);
+    gtk_widget_set_sensitive(controls->to, event_filter->until != 0);
 }
 
 static GtkWidget *kind_combo(const char *all, GtkWidget *entry) {
-    GtkWidget *c = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(c), all);
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(c), "Events On");
-    g_signal_connect(c, "changed", G_CALLBACK(on_kind_changed), entry);
-    return c;
+    GtkWidget *widget = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(widget), all);
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(widget), "Events On");
+    g_signal_connect(widget, "changed", G_CALLBACK(on_kind_changed), entry);
+    return widget;
 }
 
-static void filter_dialog(eventvwr *v) {
-    filter_dlg d = {.v = v};
-    char *title = g_strdup_printf("%s Properties - Filter", log_names[v->log]);
-    GtkWidget *dlg = gtk_dialog_new_with_buttons(title, GTK_WINDOW(v->window), GTK_DIALOG_MODAL,
-                                                 "_Restore Defaults", 1, "OK", GTK_RESPONSE_OK,
-                                                 "Cancel", GTK_RESPONSE_CANCEL, nullptr);
+static void filter_dialog(eventvwr *event_viewer) {
+    filter_dlg controls = {.v = event_viewer};
+    char *title = g_strdup_printf("%s Properties - Filter", log_names[event_viewer->log]);
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(
+        title, GTK_WINDOW(event_viewer->window), GTK_DIALOG_MODAL, "_Restore Defaults", 1, "OK",
+        GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL, nullptr);
     g_free(title);
     gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_OK);
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
@@ -695,84 +715,88 @@ static void filter_dialog(eventvwr *v) {
     static const xd_event_type order[] = {XD_EVENT_INFORMATION, XD_EVENT_WARNING,
                                           XD_EVENT_ERROR, XD_EVENT_AUDIT_SUCCESS,
                                           XD_EVENT_AUDIT_FAILURE};
-    bool security = v->log == XD_LOG_SECURITY;
+    bool security = event_viewer->log == XD_LOG_SECURITY;
     for (size_t i = 0; i < G_N_ELEMENTS(order); i++) {
-        xd_event_type t = order[i];
-        bool audit = t == XD_EVENT_AUDIT_SUCCESS || t == XD_EVENT_AUDIT_FAILURE;
-        d.types[t] = gtk_check_button_new_with_label(xd_event_type_label(t));
+        xd_event_type event_type = order[i];
+        bool audit = event_type == XD_EVENT_AUDIT_SUCCESS || event_type == XD_EVENT_AUDIT_FAILURE;
+        controls.types[event_type] =
+            gtk_check_button_new_with_label(xd_event_type_label(event_type));
         /* Each log has only its own kinds of event. */
-        gtk_widget_set_sensitive(d.types[t], audit == security);
-        gtk_grid_attach(GTK_GRID(types), d.types[t], i < 3 ? 0 : 1, (int)(i < 3 ? i : i - 3), 1,
-                        1);
+        gtk_widget_set_sensitive(controls.types[event_type], audit == security);
+        gtk_grid_attach(GTK_GRID(types), controls.types[event_type], i < 3 ? 0 : 1,
+                        (int)(i < 3 ? i : i - 3), 1, 1);
     }
     GtkWidget *tf = gtk_frame_new("Event types");
     gtk_container_set_border_width(GTK_CONTAINER(types), 8);
     gtk_container_add(GTK_CONTAINER(tf), types);
     gtk_box_pack_start(GTK_BOX(page), tf, FALSE, FALSE, 0);
 
-    GtkWidget *g = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(g), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(g), 8);
-    d.source = gtk_combo_box_text_new_with_entry();
+    GtkWidget *widget = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(widget), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(widget), 8);
+    controls.source = gtk_combo_box_text_new_with_entry();
     /* The sources in the list now. */
     GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
     GPtrArray *sources = g_ptr_array_new();
-    for (guint i = 0; v->events != nullptr && i < v->events->len; i++) {
-        event *e = g_ptr_array_index(v->events, i);
-        if (g_hash_table_add(seen, e->source))
-            g_ptr_array_add(sources, e->source);
+    for (guint i = 0; event_viewer->events != nullptr && i < event_viewer->events->len; i++) {
+        event *record = g_ptr_array_index(event_viewer->events, i);
+        if (g_hash_table_add(seen, record->source))
+            g_ptr_array_add(sources, record->source);
     }
     g_ptr_array_sort_values(sources, (GCompareFunc)g_utf8_collate);
     for (guint i = 0; i < sources->len; i++)
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(d.source), g_ptr_array_index(sources, i));
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(controls.source),
+                                       g_ptr_array_index(sources, i));
     g_ptr_array_unref(sources);
     g_hash_table_unref(seen);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(d.source))), "(All)");
-    d.user = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(d.user), "(All)");
-    gtk_grid_attach(GTK_GRID(g), key_label("Event _source:"), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), d.source, 1, 0, 2, 1);
-    gtk_grid_attach(GTK_GRID(g), key_label("Us_er:"), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), d.user, 1, 1, 2, 1);
-    d.from = gtk_entry_new();
-    d.to = gtk_entry_new();
-    gtk_entry_set_width_chars(GTK_ENTRY(d.from), 12);
-    gtk_entry_set_width_chars(GTK_ENTRY(d.to), 12);
-    d.from_kind = kind_combo("First Event", d.from);
-    d.to_kind = kind_combo("Last Event", d.to);
-    gtk_grid_attach(GTK_GRID(g), key_label("_From:"), 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), d.from_kind, 1, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), d.from, 2, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), key_label("_To:"), 0, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), d.to_kind, 1, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), d.to, 2, 3, 1, 1);
-    gtk_box_pack_start(GTK_BOX(page), g, FALSE, FALSE, 0);
+    gtk_entry_set_placeholder_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(controls.source))), "(All)");
+    controls.user = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(controls.user), "(All)");
+    gtk_grid_attach(GTK_GRID(widget), key_label("Event _source:"), 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), controls.source, 1, 0, 2, 1);
+    gtk_grid_attach(GTK_GRID(widget), key_label("Us_er:"), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), controls.user, 1, 1, 2, 1);
+    controls.from = gtk_entry_new();
+    controls.to = gtk_entry_new();
+    gtk_entry_set_width_chars(GTK_ENTRY(controls.from), 12);
+    gtk_entry_set_width_chars(GTK_ENTRY(controls.to), 12);
+    controls.from_kind = kind_combo("First Event", controls.from);
+    controls.to_kind = kind_combo("Last Event", controls.to);
+    gtk_grid_attach(GTK_GRID(widget), key_label("_From:"), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), controls.from_kind, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), controls.from, 2, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), key_label("_To:"), 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), controls.to_kind, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), controls.to, 2, 3, 1, 1);
+    gtk_box_pack_start(GTK_BOX(page), widget, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), page, TRUE, TRUE,
                        0);
-    filter_dlg_show(&d, &v->filters[v->log]);
+    filter_dlg_show(&controls, &event_viewer->filters[event_viewer->log]);
     gtk_widget_show_all(dlg);
 
-    int r;
-    while ((r = gtk_dialog_run(GTK_DIALOG(dlg))) == 1) {
+    int response;
+    while ((response = gtk_dialog_run(GTK_DIALOG(dlg))) == 1) {
         filter defaults = {0};
         filter_reset(&defaults);
-        filter_dlg_show(&d, &defaults);
+        filter_dlg_show(&controls, &defaults);
     }
-    if (r == GTK_RESPONSE_OK) {
-        filter *f = &v->filters[v->log];
-        filter_reset(f);
+    if (response == GTK_RESPONSE_OK) {
+        filter *event_filter = &event_viewer->filters[event_viewer->log];
+        filter_reset(event_filter);
         for (int i = 0; i < XD_EVENT_TYPE_COUNT; i++)
-            f->types[i] = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(d.types[i])) ||
-                          !gtk_widget_get_sensitive(d.types[i]);
-        const char *src = gtk_entry_get_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(d.source))));
-        const char *user = gtk_entry_get_text(GTK_ENTRY(d.user));
-        f->source = src[0] != '\0' ? g_strstrip(g_strdup(src)) : nullptr;
-        f->user = user[0] != '\0' ? g_strstrip(g_strdup(user)) : nullptr;
-        if (gtk_combo_box_get_active(GTK_COMBO_BOX(d.from_kind)) == 1)
-            f->since = parse_day(gtk_entry_get_text(GTK_ENTRY(d.from)), false);
-        if (gtk_combo_box_get_active(GTK_COMBO_BOX(d.to_kind)) == 1)
-            f->until = parse_day(gtk_entry_get_text(GTK_ENTRY(d.to)), true);
-        refresh(v);
+            event_filter->types[i] =
+                gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(controls.types[i])) ||
+                !gtk_widget_get_sensitive(controls.types[i]);
+        const char *src =
+            gtk_entry_get_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(controls.source))));
+        const char *user = gtk_entry_get_text(GTK_ENTRY(controls.user));
+        event_filter->source = src[0] != '\0' ? g_strstrip(g_strdup(src)) : nullptr;
+        event_filter->user = user[0] != '\0' ? g_strstrip(g_strdup(user)) : nullptr;
+        if (gtk_combo_box_get_active(GTK_COMBO_BOX(controls.from_kind)) == 1)
+            event_filter->since = parse_day(gtk_entry_get_text(GTK_ENTRY(controls.from)), false);
+        if (gtk_combo_box_get_active(GTK_COMBO_BOX(controls.to_kind)) == 1)
+            event_filter->until = parse_day(gtk_entry_get_text(GTK_ENTRY(controls.to)), true);
+        refresh(event_viewer);
     }
     gtk_widget_destroy(dlg);
 }
@@ -780,63 +804,69 @@ static void filter_dialog(eventvwr *v) {
 /* ---- the window -------------------------------------------------------------------------- */
 
 static void on_tree_changed(GtkTreeSelection *sel, gpointer data) {
-    eventvwr *v = data;
-    GtkTreeModel *m = nullptr;
+    eventvwr *event_viewer = data;
+    GtkTreeModel *model = nullptr;
     GtkTreeIter it;
-    if (!gtk_tree_selection_get_selected(sel, &m, &it))
+    if (!gtk_tree_selection_get_selected(sel, &model, &it))
         return;
     int log = -1;
-    gtk_tree_model_get(m, &it, 2, &log, -1);
+    gtk_tree_model_get(model, &it, 2, &log, -1);
     if (log < 0 || log >= XD_LOG_COUNT)
         return;
-    v->log = (xd_event_log)log;
-    refresh(v);
+    event_viewer->log = (xd_event_log)log;
+    refresh(event_viewer);
 }
 
-static void on_row_activated([[maybe_unused]] GtkTreeView *tv, [[maybe_unused]] GtkTreePath *p,
-                             [[maybe_unused]] GtkTreeViewColumn *c, gpointer v) {
-    props_show(v);
+static void on_row_activated([[maybe_unused]] GtkTreeView *tv, [[maybe_unused]] GtkTreePath *path,
+                             [[maybe_unused]] GtkTreeViewColumn *column, gpointer user_data) {
+    props_show(user_data);
 }
 
-static void on_refresh([[maybe_unused]] GtkWidget *w, gpointer v) { refresh(v); }
-static void on_properties([[maybe_unused]] GtkWidget *w, gpointer v) { props_show(v); }
-static void on_filter([[maybe_unused]] GtkWidget *w, gpointer v) { filter_dialog(v); }
-
-static void on_all_records([[maybe_unused]] GtkWidget *w, gpointer data) {
-    eventvwr *v = data;
-    filter_reset(&v->filters[v->log]);
-    refresh(v);
+static void on_refresh([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    refresh(user_data);
+}
+static void on_properties([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    props_show(user_data);
+}
+static void on_filter([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    filter_dialog(user_data);
 }
 
-static void on_exit([[maybe_unused]] GtkWidget *w, gpointer data) {
-    eventvwr *v = data;
-    gtk_widget_destroy(v->window);
+static void on_all_records([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    eventvwr *event_viewer = data;
+    filter_reset(&event_viewer->filters[event_viewer->log]);
+    refresh(event_viewer);
+}
+
+static void on_exit([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    eventvwr *event_viewer = data;
+    gtk_widget_destroy(event_viewer->window);
 }
 
 static GtkWidget *menu_item(GtkWidget *menu, const char *text, GCallback cb, gpointer data) {
-    GtkWidget *i = gtk_menu_item_new_with_mnemonic(text);
+    GtkWidget *widget = gtk_menu_item_new_with_mnemonic(text);
     if (cb != nullptr)
-        g_signal_connect(i, "activate", cb, data);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), i);
-    return i;
+        g_signal_connect(widget, "activate", cb, data);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), widget);
+    return widget;
 }
 
-static GtkWidget *view_menu(eventvwr *v) {
-    GtkWidget *m = gtk_menu_new();
-    menu_item(m, "_All Records", G_CALLBACK(on_all_records), v);
-    menu_item(m, "_Filter...", G_CALLBACK(on_filter), v);
-    return m;
+static GtkWidget *view_menu(eventvwr *event_viewer) {
+    GtkWidget *widget = gtk_menu_new();
+    menu_item(widget, "_All Records", G_CALLBACK(on_all_records), event_viewer);
+    menu_item(widget, "_Filter...", G_CALLBACK(on_filter), event_viewer);
+    return widget;
 }
 
-static GtkWidget *action_menu(eventvwr *v) {
-    GtkWidget *m = gtk_menu_new();
-    menu_item(m, "_Refresh", G_CALLBACK(on_refresh), v);
-    gtk_menu_shell_append(GTK_MENU_SHELL(m), gtk_separator_menu_item_new());
-    menu_item(m, "_Filter...", G_CALLBACK(on_filter), v);
-    menu_item(m, "_All Records", G_CALLBACK(on_all_records), v);
-    gtk_menu_shell_append(GTK_MENU_SHELL(m), gtk_separator_menu_item_new());
-    menu_item(m, "P_roperties", G_CALLBACK(on_properties), v);
-    return m;
+static GtkWidget *action_menu(eventvwr *event_viewer) {
+    GtkWidget *widget = gtk_menu_new();
+    menu_item(widget, "_Refresh", G_CALLBACK(on_refresh), event_viewer);
+    gtk_menu_shell_append(GTK_MENU_SHELL(widget), gtk_separator_menu_item_new());
+    menu_item(widget, "_Filter...", G_CALLBACK(on_filter), event_viewer);
+    menu_item(widget, "_All Records", G_CALLBACK(on_all_records), event_viewer);
+    gtk_menu_shell_append(GTK_MENU_SHELL(widget), gtk_separator_menu_item_new());
+    menu_item(widget, "P_roperties", G_CALLBACK(on_properties), event_viewer);
+    return widget;
 }
 
 /* GTK deactivates a menu before running the chosen item, so destroying it
@@ -850,26 +880,26 @@ static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer dat
     g_idle_add(destroy_menu_idle, menu);
 }
 
-static gboolean on_button_press(GtkWidget *w, GdkEventButton *ev, gpointer data) {
+static gboolean on_button_press(GtkWidget *widget, GdkEventButton *ev, gpointer data) {
     if (ev->type != GDK_BUTTON_PRESS || ev->button != GDK_BUTTON_SECONDARY)
         return FALSE;
     GtkTreePath *path = nullptr;
-    if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(w), (int)ev->x, (int)ev->y, &path, nullptr,
+    if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), (int)ev->x, (int)ev->y, &path, nullptr,
                                       nullptr, nullptr)) {
-        gtk_tree_view_set_cursor(GTK_TREE_VIEW(w), path, nullptr, FALSE);
+        gtk_tree_view_set_cursor(GTK_TREE_VIEW(widget), path, nullptr, FALSE);
         gtk_tree_path_free(path);
     }
     GtkWidget *menu = action_menu(data);
-    gtk_menu_attach_to_widget(GTK_MENU(menu), w, nullptr);
+    gtk_menu_attach_to_widget(GTK_MENU(menu), widget, nullptr);
     g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)ev);
     return TRUE;
 }
 
-static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
+static gboolean on_key(GtkWidget *widget, GdkEventKey *ev, gpointer data) {
     if (ev->keyval == GDK_KEY_F5) {
-        on_refresh(w, data);
+        on_refresh(widget, data);
         return TRUE;
     }
     return FALSE;
@@ -877,15 +907,15 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
 
 static GtkToolItem *tool(GtkWidget *bar, const char *icon, const char *tip, GCallback cb,
                          gpointer data) {
-    GtkToolItem *t = gtk_tool_button_new(nullptr, tip);
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(t), icon);
-    gtk_widget_set_tooltip_text(GTK_WIDGET(t), tip);
-    g_signal_connect(t, "clicked", cb, data);
-    gtk_toolbar_insert(GTK_TOOLBAR(bar), t, -1);
-    return t;
+    GtkToolItem *tool_item = gtk_tool_button_new(nullptr, tip);
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(tool_item), icon);
+    gtk_widget_set_tooltip_text(GTK_WIDGET(tool_item), tip);
+    g_signal_connect(tool_item, "clicked", cb, data);
+    gtk_toolbar_insert(GTK_TOOLBAR(bar), tool_item, -1);
+    return tool_item;
 }
 
-static GtkWidget *log_tree(eventvwr *v) {
+static GtkWidget *log_tree(eventvwr *event_viewer) {
     GtkTreeStore *ts = gtk_tree_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
     GtkTreeIter root;
     gtk_tree_store_insert_with_values(ts, &root, nullptr, -1, 0, "utilities-log-viewer", 1,
@@ -895,9 +925,9 @@ static GtkWidget *log_tree(eventvwr *v) {
                                           i == XD_LOG_SECURITY ? "security-high"
                                                                : "text-x-generic",
                                           1, log_names[i], 2, i, -1);
-    v->tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(ts));
+    event_viewer->tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(ts));
     g_object_unref(ts);
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(v->tree), FALSE);
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(event_viewer->tree), FALSE);
     GtkTreeViewColumn *col = gtk_tree_view_column_new();
     GtkCellRenderer *icon = gtk_cell_renderer_pixbuf_new();
     gtk_tree_view_column_pack_start(col, icon, FALSE);
@@ -905,24 +935,24 @@ static GtkWidget *log_tree(eventvwr *v) {
     GtkCellRenderer *text = gtk_cell_renderer_text_new();
     gtk_tree_view_column_pack_start(col, text, TRUE);
     gtk_tree_view_column_add_attribute(col, text, "text", 1);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(v->tree), col);
-    gtk_tree_view_expand_all(GTK_TREE_VIEW(v->tree));
+    gtk_tree_view_append_column(GTK_TREE_VIEW(event_viewer->tree), col);
+    gtk_tree_view_expand_all(GTK_TREE_VIEW(event_viewer->tree));
     GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(sc), v->tree);
+    gtk_container_add(GTK_CONTAINER(sc), event_viewer->tree);
     gtk_widget_set_size_request(sc, 170, -1);
     return sc;
 }
 
-static GtkWidget *event_list(eventvwr *v) {
-    v->store = gtk_list_store_new(NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT64, G_TYPE_INT);
-    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(v->store), COL_USEC,
+static GtkWidget *event_list(eventvwr *event_viewer) {
+    event_viewer->store = gtk_list_store_new(
+        NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+        G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT64, G_TYPE_INT);
+    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(event_viewer->store), COL_USEC,
                                          GTK_SORT_DESCENDING);
-    v->view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(v->store));
-    g_object_unref(v->store);
-    gtk_tree_view_set_fixed_height_mode(GTK_TREE_VIEW(v->view), TRUE);
+    event_viewer->view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(event_viewer->store));
+    g_object_unref(event_viewer->store);
+    gtk_tree_view_set_fixed_height_mode(GTK_TREE_VIEW(event_viewer->view), TRUE);
     static const struct {
         const char *title;
         int col, sort, width;
@@ -948,96 +978,99 @@ static GtkWidget *event_list(eventvwr *v) {
         gtk_tree_view_column_set_fixed_width(col, cols[i].width);
         gtk_tree_view_column_set_resizable(col, TRUE);
         gtk_tree_view_column_set_sort_column_id(col, cols[i].sort);
-        gtk_tree_view_append_column(GTK_TREE_VIEW(v->view), col);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(event_viewer->view), col);
     }
-    g_signal_connect(v->view, "row-activated", G_CALLBACK(on_row_activated), v);
-    g_signal_connect(v->view, "button-press-event", G_CALLBACK(on_button_press), v);
+    g_signal_connect(event_viewer->view, "row-activated", G_CALLBACK(on_row_activated),
+                     event_viewer);
+    g_signal_connect(event_viewer->view, "button-press-event", G_CALLBACK(on_button_press),
+                     event_viewer);
     GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(sc), v->view);
+    gtk_container_add(GTK_CONTAINER(sc), event_viewer->view);
     return sc;
 }
 
-static void build(eventvwr *v) {
-    v->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(v->window), "Event Viewer");
-    gtk_window_set_icon_name(GTK_WINDOW(v->window), "utilities-log-viewer");
-    gtk_window_set_default_size(GTK_WINDOW(v->window), 960, 580);
-    g_signal_connect(v->window, "key-press-event", G_CALLBACK(on_key), v);
-    g_signal_connect(v->window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+static void build(eventvwr *event_viewer) {
+    event_viewer->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(event_viewer->window), "Event Viewer");
+    gtk_window_set_icon_name(GTK_WINDOW(event_viewer->window), "utilities-log-viewer");
+    gtk_window_set_default_size(GTK_WINDOW(event_viewer->window), 960, 580);
+    g_signal_connect(event_viewer->window, "key-press-event", G_CALLBACK(on_key), event_viewer);
+    g_signal_connect(event_viewer->window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(v->window), vbox);
+    gtk_container_add(GTK_CONTAINER(event_viewer->window), vbox);
 
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = menu_item(bar, "_File", nullptr, nullptr);
     GtkWidget *fm = gtk_menu_new();
-    menu_item(fm, "E_xit", G_CALLBACK(on_exit), v);
+    menu_item(fm, "E_xit", G_CALLBACK(on_exit), event_viewer);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), fm);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item(bar, "_Action", nullptr, nullptr)),
-                              action_menu(v));
+                              action_menu(event_viewer));
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item(bar, "_View", nullptr, nullptr)),
-                              view_menu(v));
+                              view_menu(event_viewer));
     gtk_box_pack_start(GTK_BOX(vbox), bar, FALSE, FALSE, 0);
     GtkWidget *tb = gtk_toolbar_new();
     gtk_toolbar_set_style(GTK_TOOLBAR(tb), GTK_TOOLBAR_ICONS);
     gtk_toolbar_set_icon_size(GTK_TOOLBAR(tb), GTK_ICON_SIZE_SMALL_TOOLBAR);
-    tool(tb, "document-properties", "Properties", G_CALLBACK(on_properties), v);
-    tool(tb, "view-refresh", "Refresh", G_CALLBACK(on_refresh), v);
-    tool(tb, "view-filter", "Filter", G_CALLBACK(on_filter), v);
+    tool(tb, "document-properties", "Properties", G_CALLBACK(on_properties), event_viewer);
+    tool(tb, "view-refresh", "Refresh", G_CALLBACK(on_refresh), event_viewer);
+    tool(tb, "view-filter", "Filter", G_CALLBACK(on_filter), event_viewer);
     gtk_box_pack_start(GTK_BOX(vbox), tb, FALSE, FALSE, 0);
 
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_paned_pack1(GTK_PANED(paned), log_tree(v), FALSE, FALSE);
+    gtk_paned_pack1(GTK_PANED(paned), log_tree(event_viewer), FALSE, FALSE);
     GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    v->title = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(v->title), 0);
-    gtk_widget_set_margin_start(v->title, 6);
-    gtk_widget_set_margin_top(v->title, 4);
-    gtk_widget_set_margin_bottom(v->title, 4);
-    gtk_box_pack_start(GTK_BOX(right), v->title, FALSE, FALSE, 0);
+    event_viewer->title = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(event_viewer->title), 0);
+    gtk_widget_set_margin_start(event_viewer->title, 6);
+    gtk_widget_set_margin_top(event_viewer->title, 4);
+    gtk_widget_set_margin_bottom(event_viewer->title, 4);
+    gtk_box_pack_start(GTK_BOX(right), event_viewer->title, FALSE, FALSE, 0);
     /* No access to the system's journal: say why some events are missing. */
-    v->note = gtk_info_bar_new();
-    gtk_info_bar_set_message_type(GTK_INFO_BAR(v->note), GTK_MESSAGE_WARNING);
+    event_viewer->note = gtk_info_bar_new();
+    gtk_info_bar_set_message_type(GTK_INFO_BAR(event_viewer->note), GTK_MESSAGE_WARNING);
     GtkWidget *note = gtk_label_new("Only your own events can be read. To see the system's, "
                                     "your account must be in the systemd-journal group (or "
                                     "wheel or adm).");
     gtk_label_set_line_wrap(GTK_LABEL(note), TRUE);
     gtk_label_set_xalign(GTK_LABEL(note), 0);
-    gtk_container_add(GTK_CONTAINER(gtk_info_bar_get_content_area(GTK_INFO_BAR(v->note))), note);
-    gtk_widget_set_no_show_all(v->note, TRUE);
+    gtk_container_add(
+        GTK_CONTAINER(gtk_info_bar_get_content_area(GTK_INFO_BAR(event_viewer->note))), note);
+    gtk_widget_set_no_show_all(event_viewer->note, TRUE);
     gtk_widget_show(note);
-    gtk_box_pack_start(GTK_BOX(right), v->note, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(right), event_list(v), TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(right), event_viewer->note, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(right), event_list(event_viewer), TRUE, TRUE, 0);
     gtk_paned_pack2(GTK_PANED(paned), right, TRUE, FALSE);
     gtk_box_pack_start(GTK_BOX(vbox), paned, TRUE, TRUE, 0);
-    v->status = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(v->status), 0);
-    gtk_widget_set_margin_start(v->status, 6);
-    gtk_widget_set_margin_top(v->status, 2);
-    gtk_widget_set_margin_bottom(v->status, 2);
-    gtk_box_pack_start(GTK_BOX(vbox), v->status, FALSE, FALSE, 0);
+    event_viewer->status = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(event_viewer->status), 0);
+    gtk_widget_set_margin_start(event_viewer->status, 6);
+    gtk_widget_set_margin_top(event_viewer->status, 2);
+    gtk_widget_set_margin_bottom(event_viewer->status, 2);
+    gtk_box_pack_start(GTK_BOX(vbox), event_viewer->status, FALSE, FALSE, 0);
 }
 
 int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.EventViewer");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
-    static eventvwr v;
+    static eventvwr event_viewer;
     for (int i = 0; i < XD_LOG_COUNT; i++)
-        filter_reset(&v.filters[i]);
-    v.log = XD_LOG_SYSTEM;
+        filter_reset(&event_viewer.filters[i]);
+    event_viewer.log = XD_LOG_SYSTEM;
     for (int i = 1; i < argc; i++)
-        for (int l = 0; l < XD_LOG_COUNT; l++)
-            if (g_ascii_strcasecmp(argv[i], log_names[l]) == 0)
-                v.log = (xd_event_log)l;
-    build(&v);
-    gtk_widget_show_all(v.window);
+        for (int log_index = 0; log_index < XD_LOG_COUNT; log_index++)
+            if (g_ascii_strcasecmp(argv[i], log_names[log_index]) == 0)
+                event_viewer.log = (xd_event_log)log_index;
+    build(&event_viewer);
+    gtk_widget_show_all(event_viewer.window);
     /* Selecting the log loads it. */
-    GtkTreePath *p = gtk_tree_path_new_from_indices(0, (int)v.log, -1);
-    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(v.tree)), "changed",
-                     G_CALLBACK(on_tree_changed), &v);
-    gtk_tree_view_set_cursor(GTK_TREE_VIEW(v.tree), p, nullptr, FALSE);
-    gtk_tree_path_free(p);
+    GtkTreePath *path = gtk_tree_path_new_from_indices(0, (int)event_viewer.log, -1);
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(event_viewer.tree)), "changed",
+                     G_CALLBACK(on_tree_changed), &event_viewer);
+    gtk_tree_view_set_cursor(GTK_TREE_VIEW(event_viewer.tree), path, nullptr, FALSE);
+    gtk_tree_path_free(path);
     gtk_main();
     return EXIT_SUCCESS;
 }

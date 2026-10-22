@@ -75,8 +75,8 @@ typedef enum xd_event_type : uint8_t {
  * Warnings, the rest Information. The Security log has audits instead:
  * a warning or worse is a Failure Audit. */
 xd_event_type xd_event_type_of(int priority, xd_event_log log);
-const char *xd_event_type_label(xd_event_type t);
-const char *xd_event_type_icon(xd_event_type t);
+const char *xd_event_type_label(xd_event_type event_type);
+const char *xd_event_type_icon(xd_event_type event_type);
 
 /* ---- Disk Management (UDisks2) ---- */
 
@@ -119,11 +119,11 @@ typedef struct xd_disk_segment {
  * containers themselves), with the gaps between them as unallocated or
  * free space. Overlaps and space past the disk's end are clipped. Free
  * with g_array_unref. */
-GArray *xd_disk_segments(guint64 disk_size, const xd_disk_part *parts, size_t n);
+GArray *xd_disk_segments(guint64 disk_size, const xd_disk_part *parts, size_t count);
 
 /* The disk map's block widths: proportional to `sizes`, each at least
  * `min` pixels, `total` in all (when there's room). */
-void xd_disk_block_widths(const guint64 *sizes, size_t n, int total, int min, int *out);
+void xd_disk_block_widths(const guint64 *sizes, size_t count, int total, int min, int *out);
 
 /* ---- Disk Management: partitioning ---- */
 
@@ -203,7 +203,7 @@ typedef struct xd_volume_use {
 /* Why `action` can't be done to the volume, as Windows greys it for the
  * system and boot volumes, or nullptr if it can. When it can but only
  * unmounted, *need_unmount is set (Disk Management unmounts it first). */
-const char *xd_volume_lock_reason(const xd_volume_use *u, xd_disk_action action,
+const char *xd_volume_lock_reason(const xd_volume_use *volume_use, xd_disk_action action,
                                   bool *need_unmount);
 
 /* The Status column: "Healthy (System)", "Healthy (Boot)", "Healthy

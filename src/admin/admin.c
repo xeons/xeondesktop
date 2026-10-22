@@ -66,21 +66,21 @@ const char *xd_unit_logon_label(const char *user, bool user_manager, const char 
 }
 
 char *xd_unit_command_line(const char *const *argv) {
-    GString *s = g_string_new(nullptr);
+    GString *command_line = g_string_new(nullptr);
     for (size_t i = 0; argv != nullptr && argv[i] != nullptr; i++) {
         if (i > 0)
-            g_string_append_c(s, ' ');
-        const char *a = argv[i];
-        bool plain = a[0] != '\0' && strpbrk(a, " \t\n'\"\\$`") == nullptr;
+            g_string_append_c(command_line, ' ');
+        const char *argument = argv[i];
+        bool plain = argument[0] != '\0' && strpbrk(argument, " \t\n'\"\\$`") == nullptr;
         if (plain) {
-            g_string_append(s, a);
+            g_string_append(command_line, argument);
         } else {
-            char *q = g_shell_quote(a);
-            g_string_append(s, q);
-            g_free(q);
+            char *quoted = g_shell_quote(argument);
+            g_string_append(command_line, quoted);
+            g_free(quoted);
         }
     }
-    return g_string_free(s, FALSE);
+    return g_string_free(command_line, FALSE);
 }
 
 /* ---- Event Viewer -------------------------------------------------------------------- */
@@ -118,7 +118,7 @@ xd_event_type xd_event_type_of(int priority, xd_event_log log) {
     return priority == 4 ? XD_EVENT_WARNING : XD_EVENT_INFORMATION;
 }
 
-const char *xd_event_type_label(xd_event_type t) {
+const char *xd_event_type_label(xd_event_type event_type) {
     static const char *const labels[XD_EVENT_TYPE_COUNT] = {
         [XD_EVENT_ERROR] = "Error",
         [XD_EVENT_WARNING] = "Warning",
@@ -126,10 +126,10 @@ const char *xd_event_type_label(xd_event_type t) {
         [XD_EVENT_AUDIT_SUCCESS] = "Success Audit",
         [XD_EVENT_AUDIT_FAILURE] = "Failure Audit",
     };
-    return t < XD_EVENT_TYPE_COUNT ? labels[t] : "";
+    return event_type < XD_EVENT_TYPE_COUNT ? labels[event_type] : "";
 }
 
-const char *xd_event_type_icon(xd_event_type t) {
+const char *xd_event_type_icon(xd_event_type event_type) {
     /* XP's key for a success audit, padlock for a failure. */
     static const char *const icons[XD_EVENT_TYPE_COUNT] = {
         [XD_EVENT_ERROR] = "dialog-error",
@@ -138,7 +138,7 @@ const char *xd_event_type_icon(xd_event_type t) {
         [XD_EVENT_AUDIT_SUCCESS] = "dialog-password",
         [XD_EVENT_AUDIT_FAILURE] = "system-lock-screen",
     };
-    return t < XD_EVENT_TYPE_COUNT ? icons[t] : "dialog-information";
+    return event_type < XD_EVENT_TYPE_COUNT ? icons[event_type] : "dialog-information";
 }
 
 /* ---- Disk Management ------------------------------------------------------------------ */
@@ -188,28 +188,29 @@ guint xd_disk_percent_free(guint64 free, guint64 size) {
     return (guint)(pct + 0.5L);
 }
 
-static int compare_parts(gconstpointer a, gconstpointer b) {
-    const xd_disk_part *x = a, *y = b;
-    if (x->offset != y->offset)
-        return x->offset < y->offset ? -1 : 1;
+static int compare_parts(gconstpointer left, gconstpointer right) {
+    const xd_disk_part *left_part = left, *right_part = right;
+    if (left_part->offset != right_part->offset)
+        return left_part->offset < right_part->offset ? -1 : 1;
     /* A container before what it holds. */
-    return (int)y->container - (int)x->container;
+    return (int)right_part->container - (int)left_part->container;
 }
 
 static void add_segment(GArray *out, guint64 offset, guint64 size, int index,
                         xd_segment_kind kind, bool logical) {
-    xd_disk_segment s = {
+    xd_disk_segment disk_segment = {
         .offset = offset, .size = size, .index = index, .kind = kind, .logical = logical};
-    g_array_append_val(out, s);
+    g_array_append_val(out, disk_segment);
 }
 
 /* The gap [from, to) as unallocated or (inside a container) free space,
  * split where it crosses a container's edge. */
-static void add_gap(GArray *out, guint64 from, guint64 to, const xd_disk_part *parts, size_t n) {
+static void add_gap(GArray *out, guint64 from, guint64 to, const xd_disk_part *parts,
+                    size_t count) {
     while (from < to) {
         guint64 end = to;
         bool inside = false;
-        for (size_t i = 0; i < n; i++) {
+        for (size_t i = 0; i < count; i++) {
             if (!parts[i].container)
                 continue;
             guint64 cs = parts[i].offset, ce = parts[i].offset + parts[i].size;
@@ -227,85 +228,85 @@ static void add_gap(GArray *out, guint64 from, guint64 to, const xd_disk_part *p
     }
 }
 
-GArray *xd_disk_segments(guint64 disk_size, const xd_disk_part *parts, size_t n) {
+GArray *xd_disk_segments(guint64 disk_size, const xd_disk_part *parts, size_t count) {
     GArray *out = g_array_new(FALSE, TRUE, sizeof(xd_disk_segment));
-    xd_disk_part *sorted = n > 0 ? g_memdup2(parts, n * sizeof(*parts)) : nullptr;
-    if (n > 0)
-        qsort(sorted, n, sizeof(*sorted), compare_parts);
+    xd_disk_part *sorted = count > 0 ? g_memdup2(parts, count * sizeof(*parts)) : nullptr;
+    if (count > 0)
+        qsort(sorted, count, sizeof(*sorted), compare_parts);
     guint64 cursor = 0;
-    for (size_t i = 0; i < n; i++) {
-        const xd_disk_part *p = &sorted[i];
-        if (p->container)
+    for (size_t i = 0; i < count; i++) {
+        const xd_disk_part *part = &sorted[i];
+        if (part->container)
             continue;
-        guint64 start = (p->offset > cursor ? p->offset : cursor);
-        guint64 end = p->offset + p->size;
+        guint64 start = (part->offset > cursor ? part->offset : cursor);
+        guint64 end = part->offset + part->size;
         if (end > disk_size)
             end = disk_size;
         if (start >= end)
             continue; /* overlapped, or past the end */
-        add_gap(out, cursor, start, sorted, n);
+        add_gap(out, cursor, start, sorted, count);
         bool logical = false;
-        for (size_t k = 0; k < n; k++)
+        for (size_t k = 0; k < count; k++)
             if (sorted[k].container && start >= sorted[k].offset &&
                 start < sorted[k].offset + sorted[k].size)
                 logical = true;
-        add_segment(out, start, end - start, p->index, XD_SEGMENT_PARTITION, logical);
+        add_segment(out, start, end - start, part->index, XD_SEGMENT_PARTITION, logical);
         cursor = end;
     }
-    add_gap(out, cursor, disk_size, sorted, n);
+    add_gap(out, cursor, disk_size, sorted, count);
     g_free(sorted);
     return out;
 }
 
-void xd_disk_block_widths(const guint64 *sizes, size_t n, int total, int min, int *out) {
-    if (n == 0)
+void xd_disk_block_widths(const guint64 *sizes, size_t count, int total, int min, int *out) {
+    if (count == 0)
         return;
-    int spare = total - (int)n * min;
+    int spare = total - (int)count * min;
     if (spare <= 0) {
-        for (size_t i = 0; i < n; i++)
+        for (size_t i = 0; i < count; i++)
             out[i] = min;
         return;
     }
     long double sum = 0;
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; i < count; i++)
         sum += (long double)sizes[i];
     int given = 0;
-    for (size_t i = 0; i < n; i++) {
-        int extra = sum > 0 ? (int)((long double)spare * (long double)sizes[i] / sum)
-                            : spare / (int)n;
+    for (size_t i = 0; i < count; i++) {
+        int extra =
+            sum > 0 ? (int)((long double)spare * (long double)sizes[i] / sum) : spare / (int)count;
         out[i] = min + extra;
         given += out[i];
     }
     /* Rounding's leftovers go to the last block. */
-    out[n - 1] += total - given;
+    out[count - 1] += total - given;
 }
 
 /* ---- partitioning ---------------------------------------------------------------------- */
 
 guint64 xd_disk_align_up(guint64 bytes) {
-    guint64 r = bytes % XD_MIB;
-    return r == 0 ? bytes : bytes + (XD_MIB - r);
+    guint64 remainder = bytes % XD_MIB;
+    return remainder == 0 ? bytes : bytes + (XD_MIB - remainder);
 }
 
 guint64 xd_disk_align_down(guint64 bytes) { return bytes - bytes % XD_MIB; }
 
 xd_new_part_kinds xd_disk_new_part_kinds(const char *table_type, xd_segment_kind kind,
                                          guint n_primary, bool has_extended) {
-    xd_new_part_kinds k = {0};
+    xd_new_part_kinds new_part_kinds = {0};
     if (kind == XD_SEGMENT_PARTITION)
-        return k;
+        return new_part_kinds;
     if (g_strcmp0(table_type, "dos") != 0) {
         /* GPT: 128 entries; more is never the limit in practice. */
-        k.primary = kind == XD_SEGMENT_UNALLOCATED && n_primary < 128;
-        return k;
+        new_part_kinds.primary = kind == XD_SEGMENT_UNALLOCATED && n_primary < 128;
+        return new_part_kinds;
     }
     if (kind == XD_SEGMENT_FREE) {
-        k.logical = true;
-        return k;
+        new_part_kinds.logical = true;
+        return new_part_kinds;
     }
-    k.primary = n_primary < 4;
-    k.extended = n_primary < 4 && !has_extended;
-    return k;
+    new_part_kinds.primary = n_primary < 4;
+    new_part_kinds.extended = n_primary < 4 && !has_extended;
+    return new_part_kinds;
 }
 
 bool xd_disk_new_part_range(guint64 seg_offset, guint64 seg_size, guint64 disk_size,
@@ -327,19 +328,20 @@ bool xd_disk_new_part_range(guint64 seg_offset, guint64 seg_size, guint64 disk_s
 guint64 xd_disk_grow_max(const GArray *segments, guint i, guint64 disk_size) {
     if (segments == nullptr || i >= segments->len)
         return 0;
-    const xd_disk_segment *s = &g_array_index(segments, xd_disk_segment, i);
-    guint64 end = s->offset + s->size;
+    const xd_disk_segment *disk_segment = &g_array_index(segments, xd_disk_segment, i);
+    guint64 end = disk_segment->offset + disk_segment->size;
     if (i + 1 < segments->len) {
         const xd_disk_segment *next = &g_array_index(segments, xd_disk_segment, i + 1);
-        bool free_for_it = s->logical ? next->kind == XD_SEGMENT_FREE
-                                      : next->kind == XD_SEGMENT_UNALLOCATED;
+        bool free_for_it = disk_segment->logical ? next->kind == XD_SEGMENT_FREE
+                                                 : next->kind == XD_SEGMENT_UNALLOCATED;
         if (free_for_it && next->offset == end)
             end = next->offset + next->size;
     }
     guint64 last = disk_size > XD_MIB ? disk_size - XD_MIB : 0;
     guint64 limit = xd_disk_align_down(end < last ? end : last);
     /* Never less than it is: alignment mustn't shrink it. */
-    return limit > s->offset + s->size ? limit - s->offset : s->size;
+    return limit > disk_segment->offset + disk_segment->size ? limit - disk_segment->offset
+                                                             : disk_segment->size;
 }
 
 guint64 xd_disk_shrink_min(guint64 used, guint64 size) {
@@ -383,61 +385,62 @@ static const char *system_mount(const char *const *mounts) {
     return nullptr;
 }
 
-const char *xd_volume_lock_reason(const xd_volume_use *u, xd_disk_action action,
+const char *xd_volume_lock_reason(const xd_volume_use *volume_use, xd_disk_action action,
                                   bool *need_unmount) {
     *need_unmount = false;
     bool destroys = action == XD_ACTION_DELETE || action == XD_ACTION_FORMAT;
     bool resizes = action == XD_ACTION_SHRINK || action == XD_ACTION_EXTEND;
-    const char *type = u->id_type != nullptr ? u->id_type : "";
-    if (u->container) {
+    const char *type = volume_use->id_type != nullptr ? volume_use->id_type : "";
+    if (volume_use->container) {
         if (action == XD_ACTION_DELETE)
-            return u->has_logical ? "Delete the logical drives in the extended partition first."
-                                  : nullptr;
+            return volume_use->has_logical
+                       ? "Delete the logical drives in the extended partition first."
+                       : nullptr;
         return "An extended partition only holds logical drives.";
     }
     if ((destroys || resizes) && strcmp(type, "LVM2_member") == 0)
         return "This partition is part of an LVM volume group. Use the LVM tools for it.";
     if ((destroys || resizes) && strcmp(type, "linux_raid_member") == 0)
         return "This partition is part of a RAID array. Use mdadm for it.";
-    if ((destroys || resizes) && u->unlocked)
+    if ((destroys || resizes) && volume_use->unlocked)
         return "This encrypted volume is unlocked. Lock it first.";
     if (resizes && strcmp(type, "crypto_LUKS") == 0)
         return "Encrypted volumes can't be resized here.";
-    if ((destroys || resizes) && u->swap_active)
+    if ((destroys || resizes) && volume_use->swap_active)
         return "This is a page file (swap) in use. Turn it off first.";
     if (action == XD_ACTION_LABEL &&
         (type[0] == '\0' || strcmp(type, "swap") == 0 || strcmp(type, "crypto_LUKS") == 0))
         return "This volume has no file system with a label.";
-    const char *sys = system_mount(u->mounts);
+    const char *sys = system_mount(volume_use->mounts);
     if (sys != nullptr && (destroys || action == XD_ACTION_SHRINK))
         return "This is a system volume, in use by the running system. It can't be deleted, "
                "formatted or shrunk.";
-    if (destroys && any_mount(u->mounts))
+    if (destroys && any_mount(volume_use->mounts))
         *need_unmount = true;
     return nullptr;
 }
 
 char *xd_volume_status(const char *const *mounts, bool swap_active, bool esp, bool active) {
     const char *what[8];
-    size_t n = 0;
-    for (size_t i = 0; mounts != nullptr && mounts[i] != nullptr && n < 2; i++) {
+    size_t count = 0;
+    for (size_t i = 0; mounts != nullptr && mounts[i] != nullptr && count < 2; i++) {
         if (strcmp(mounts[i], "/") == 0)
-            what[n++] = "System";
+            what[count++] = "System";
         else if (strcmp(mounts[i], "/boot") == 0)
-            what[n++] = "Boot";
+            what[count++] = "Boot";
     }
     if (esp)
-        what[n++] = "EFI System Partition";
+        what[count++] = "EFI System Partition";
     if (swap_active)
-        what[n++] = "Page File";
+        what[count++] = "Page File";
     if (active)
-        what[n++] = "Active";
-    GString *s = g_string_new("Healthy");
-    for (size_t i = 0; i < n; i++)
-        g_string_append_printf(s, "%s%s", i == 0 ? " (" : ", ", what[i]);
-    if (n > 0)
-        g_string_append_c(s, ')');
-    return g_string_free(s, FALSE);
+        what[count++] = "Active";
+    GString *status = g_string_new("Healthy");
+    for (size_t i = 0; i < count; i++)
+        g_string_append_printf(status, "%s%s", i == 0 ? " (" : ", ", what[i]);
+    if (count > 0)
+        g_string_append_c(status, ')');
+    return g_string_free(status, FALSE);
 }
 
 const xd_part_type xd_part_types[] = {
@@ -506,13 +509,13 @@ const char *xd_fstab_dir_problem(const char *dir) {
         return "Type the folder to mount the volume in.";
     if (dir[0] != '/')
         return "The folder must be a full path, starting with /.";
-    for (const char *c = dir; *c != '\0'; c++)
-        if (g_ascii_iscntrl(*c))
+    for (const char *character = dir; *character != '\0'; character++)
+        if (g_ascii_iscntrl(*character))
             return "The folder's name can't have tabs or line breaks in it.";
     char **parts = g_strsplit(dir, "/", -1);
     bool dots = false;
-    for (char **p = parts; *p != nullptr; p++)
-        dots |= strcmp(*p, ".") == 0 || strcmp(*p, "..") == 0;
+    for (char **part = parts; *part != nullptr; part++)
+        dots |= strcmp(*part, ".") == 0 || strcmp(*part, "..") == 0;
     g_strfreev(parts);
     if (dots)
         return "The folder must be a full path without . or .. in it.";
@@ -525,8 +528,8 @@ const char *xd_fstab_dir_problem(const char *dir) {
                "as one in /mnt.";
     static const char *const below[] = {"/proc", "/sys", "/dev", "/etc", "/usr", "/boot", nullptr};
     for (size_t i = 0; below[i] != nullptr; i++) {
-        size_t n = strlen(below[i]);
-        if (strncmp(dir, below[i], n) == 0 && (dir[n] == '\0' || dir[n] == '/'))
+        size_t count = strlen(below[i]);
+        if (strncmp(dir, below[i], count) == 0 && (dir[count] == '\0' || dir[count] == '/'))
             return "The running system keeps that folder for itself. Choose an empty folder of "
                    "your own, such as one in /mnt.";
     }
@@ -541,14 +544,16 @@ char *xd_fstab_suggest_dir(const char *label, const char *device) {
     }
     if (name == nullptr || name[0] == '\0')
         name = "volume";
-    GString *s = g_string_new("/mnt/");
-    for (const char *c = name; *c != '\0'; c++)
-        g_string_append_c(s, g_ascii_isalnum(*c) || *c == '.' || *c == '_' || *c == '-' ? *c
-                                                                                       : '_');
+    GString *path = g_string_new("/mnt/");
+    for (const char *character = name; *character != '\0'; character++)
+        g_string_append_c(path, g_ascii_isalnum(*character) || *character == '.' ||
+                                        *character == '_' || *character == '-'
+                                    ? *character
+                                    : '_');
     /* "." or ".." alone isn't a folder's name. */
-    if (strcmp(s->str, "/mnt/.") == 0 || strcmp(s->str, "/mnt/..") == 0)
-        g_string_assign(s, "/mnt/volume");
-    return g_string_free(s, FALSE);
+    if (strcmp(path->str, "/mnt/.") == 0 || strcmp(path->str, "/mnt/..") == 0)
+        g_string_assign(path, "/mnt/volume");
+    return g_string_free(path, FALSE);
 }
 
 char *xd_fstab_default_options(const char *id_type, guint uid, guint gid) {

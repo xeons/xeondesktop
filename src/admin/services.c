@@ -69,55 +69,58 @@ typedef struct job {
 
 /* ---- the list ---------------------------------------------------------------------- */
 
-static manager *current(services *s) {
-    return &s->mgr[gtk_notebook_get_current_page(GTK_NOTEBOOK(s->notebook)) == 1 ? 1 : 0];
+static manager *current(services *console) {
+    return &console
+                ->mgr[gtk_notebook_get_current_page(GTK_NOTEBOOK(console->notebook)) == 1 ? 1 : 0];
 }
 
-static GtkTreeIter *row(manager *m, const char *id) { return g_hash_table_lookup(m->rows, id); }
+static GtkTreeIter *row(manager *unit_manager, const char *id) {
+    return g_hash_table_lookup(unit_manager->rows, id);
+}
 
-static GtkTreeIter *add_row(manager *m, const char *id) {
-    GtkTreeIter *it = row(m, id);
+static GtkTreeIter *add_row(manager *unit_manager, const char *id) {
+    GtkTreeIter *it = row(unit_manager, id);
     if (it != nullptr)
         return it;
     GtkTreeIter iter;
     char *name = xd_unit_display_name(id);
-    gtk_list_store_insert_with_values(m->store, &iter, -1, COL_ICON, "system-run", COL_ID, id,
-                                      COL_NAME, name, COL_DESC, "", COL_STATUS, "", COL_STARTUP,
-                                      "", COL_LOGON, "", -1);
+    gtk_list_store_insert_with_values(unit_manager->store, &iter, -1, COL_ICON, "system-run",
+                                      COL_ID, id, COL_NAME, name, COL_DESC, "", COL_STATUS, "",
+                                      COL_STARTUP, "", COL_LOGON, "", -1);
     g_free(name);
     it = g_memdup2(&iter, sizeof(iter));
-    g_hash_table_insert(m->rows, g_strdup(id), it);
+    g_hash_table_insert(unit_manager->rows, g_strdup(id), it);
     return it;
 }
 
-static void set_active(manager *m, GtkTreeIter *it, const char *active) {
-    gtk_list_store_set(m->store, it, COL_ACTIVE, active, COL_STATUS, xd_unit_status_label(active),
-                       -1);
+static void set_active(manager *unit_manager, GtkTreeIter *it, const char *active) {
+    gtk_list_store_set(unit_manager->store, it, COL_ACTIVE, active, COL_STATUS,
+                       xd_unit_status_label(active), -1);
 }
 
-static void set_file_state(manager *m, GtkTreeIter *it, const char *state) {
+static void set_file_state(manager *unit_manager, GtkTreeIter *it, const char *state) {
     char *label = xd_unit_startup_label(state);
-    gtk_list_store_set(m->store, it, COL_FILE, state, COL_STARTUP, label, -1);
+    gtk_list_store_set(unit_manager->store, it, COL_FILE, state, COL_STARTUP, label, -1);
     g_free(label);
 }
 
-static void set_logon(manager *m, GtkTreeIter *it, const char *user) {
-    gtk_list_store_set(m->store, it, COL_LOGON,
-                       xd_unit_logon_label(user, m->user, g_get_user_name()), -1);
+static void set_logon(manager *unit_manager, GtkTreeIter *it, const char *user) {
+    gtk_list_store_set(unit_manager->store, it, COL_LOGON,
+                       xd_unit_logon_label(user, unit_manager->user, g_get_user_name()), -1);
 }
 
 /* The selected row's unit id and ActiveState, or false. */
-static bool selected(services *s, manager **m_out, char **id, char **active) {
-    manager *m = current(s);
+static bool selected(services *console, manager **m_out, char **id, char **active) {
+    manager *unit_manager = current(console);
     GtkTreeModel *model = nullptr;
     GtkTreeIter it;
-    if (m->view == nullptr ||
-        !gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(m->view)),
-                                         &model, &it))
+    if (unit_manager->view == nullptr ||
+        !gtk_tree_selection_get_selected(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(unit_manager->view)), &model, &it))
         return false;
     gtk_tree_model_get(model, &it, COL_ID, id, COL_ACTIVE, active, -1);
     if (m_out != nullptr)
-        *m_out = m;
+        *m_out = unit_manager;
     return true;
 }
 
@@ -127,53 +130,53 @@ static bool busy(const char *active) {
 }
 
 /* The actions and the extended view follow the selection. */
-static void update_actions(services *s) {
+static void update_actions(services *console) {
     char *id = nullptr, *active = nullptr, *desc = nullptr;
-    manager *m = nullptr;
-    bool have = selected(s, &m, &id, &active);
+    manager *unit_manager = nullptr;
+    bool have = selected(console, &unit_manager, &id, &active);
     bool started = have && xd_unit_is_started(active);
     bool idle = have && !busy(active);
-    gtk_widget_set_sensitive(s->tb_start, idle && !started);
-    gtk_widget_set_sensitive(s->mi_start, idle && !started);
-    gtk_widget_set_sensitive(s->tb_stop, idle && started);
-    gtk_widget_set_sensitive(s->mi_stop, idle && started);
-    gtk_widget_set_sensitive(s->tb_restart, idle && started);
-    gtk_widget_set_sensitive(s->mi_restart, idle && started);
-    gtk_widget_set_sensitive(s->tb_props, have);
-    gtk_widget_set_sensitive(s->mi_props, have);
-    gtk_widget_set_visible(s->ext_start, have && !started);
-    gtk_widget_set_visible(s->ext_stop, started);
-    gtk_widget_set_visible(s->ext_restart, started);
+    gtk_widget_set_sensitive(console->tb_start, idle && !started);
+    gtk_widget_set_sensitive(console->mi_start, idle && !started);
+    gtk_widget_set_sensitive(console->tb_stop, idle && started);
+    gtk_widget_set_sensitive(console->mi_stop, idle && started);
+    gtk_widget_set_sensitive(console->tb_restart, idle && started);
+    gtk_widget_set_sensitive(console->mi_restart, idle && started);
+    gtk_widget_set_sensitive(console->tb_props, have);
+    gtk_widget_set_sensitive(console->mi_props, have);
+    gtk_widget_set_visible(console->ext_start, have && !started);
+    gtk_widget_set_visible(console->ext_stop, started);
+    gtk_widget_set_visible(console->ext_restart, started);
     if (have) {
-        GtkTreeIter *it = row(m, id);
+        GtkTreeIter *it = row(unit_manager, id);
         if (it != nullptr)
-            gtk_tree_model_get(GTK_TREE_MODEL(m->store), it, COL_DESC, &desc, -1);
+            gtk_tree_model_get(GTK_TREE_MODEL(unit_manager->store), it, COL_DESC, &desc, -1);
         char *name = xd_unit_display_name(id);
         char *markup = g_markup_printf_escaped("<b>%s</b>", name);
-        gtk_label_set_markup(GTK_LABEL(s->ext_name), markup);
+        gtk_label_set_markup(GTK_LABEL(console->ext_name), markup);
         g_free(markup);
         g_free(name);
         char *text = desc != nullptr && desc[0] != '\0'
                          ? g_strdup_printf("Description:\n%s", desc)
                          : g_strdup("");
-        gtk_label_set_text(GTK_LABEL(s->ext_desc), text);
+        gtk_label_set_text(GTK_LABEL(console->ext_desc), text);
         g_free(text);
     } else {
-        gtk_label_set_text(GTK_LABEL(s->ext_name), "Select an item to view its description.");
-        gtk_label_set_text(GTK_LABEL(s->ext_desc), "");
+        gtk_label_set_text(GTK_LABEL(console->ext_name), "Select an item to view its description.");
+        gtk_label_set_text(GTK_LABEL(console->ext_desc), "");
     }
     g_free(id);
     g_free(active);
     g_free(desc);
 }
 
-static void show_status(services *s) {
-    manager *m = current(s);
-    char *text = m->error != nullptr
-                     ? g_strdup(m->error)
-                     : g_strdup_printf("%u service%s", g_hash_table_size(m->rows),
-                                       g_hash_table_size(m->rows) == 1 ? "" : "s");
-    gtk_label_set_text(GTK_LABEL(s->status), text);
+static void show_status(services *console) {
+    manager *unit_manager = current(console);
+    char *text = unit_manager->error != nullptr
+                     ? g_strdup(unit_manager->error)
+                     : g_strdup_printf("%u service%s", g_hash_table_size(unit_manager->rows),
+                                       g_hash_table_size(unit_manager->rows) == 1 ? "" : "s");
+    gtk_label_set_text(GTK_LABEL(console->status), text);
     g_free(text);
 }
 
@@ -188,100 +191,102 @@ typedef struct pending {
     bool file_state; /* fetching UnitFileState rather than User */
 } pending;
 
-static pending *pending_new(manager *m, const char *id) {
-    pending *p = g_new0(pending, 1);
-    p->m = m;
-    p->generation = m->generation;
-    p->id = g_strdup(id);
-    return p;
+static pending *pending_new(manager *unit_manager, const char *id) {
+    pending *query = g_new0(pending, 1);
+    query->m = unit_manager;
+    query->generation = unit_manager->generation;
+    query->id = g_strdup(id);
+    return query;
 }
 
-static void pending_free(pending *p) {
-    g_free(p->id);
-    g_free(p);
+static void pending_free(pending *query) {
+    g_free(query->id);
+    g_free(query);
 }
 
-static bool stale(pending *p) { return p->generation != p->m->generation; }
+static bool stale(pending *query) { return query->generation != query->m->generation; }
 
 static void got_prop(GObject *src, GAsyncResult *res, gpointer data) {
-    pending *p = data;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
-    GtkTreeIter *it = r != nullptr && !stale(p) ? row(p->m, p->id) : nullptr;
+    pending *query = data;
+    GVariant *response = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    GtkTreeIter *it = response != nullptr && !stale(query) ? row(query->m, query->id) : nullptr;
     if (it != nullptr) {
-        GVariant *v = nullptr;
-        g_variant_get(r, "(v)", &v);
-        if (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)) {
-            const char *value = g_variant_get_string(v, nullptr);
-            if (p->file_state) {
+        GVariant *variant = nullptr;
+        g_variant_get(response, "(v)", &variant);
+        if (g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING)) {
+            const char *value = g_variant_get_string(variant, nullptr);
+            if (query->file_state) {
                 /* Instances ("getty@tty1") aren't in ListUnitFiles. */
                 char *known = nullptr;
-                gtk_tree_model_get(GTK_TREE_MODEL(p->m->store), it, COL_FILE, &known, -1);
+                gtk_tree_model_get(GTK_TREE_MODEL(query->m->store), it, COL_FILE, &known, -1);
                 if (known == nullptr)
-                    set_file_state(p->m, it, value);
+                    set_file_state(query->m, it, value);
                 g_free(known);
             } else {
-                set_logon(p->m, it, value);
+                set_logon(query->m, it, value);
             }
         }
-        g_variant_unref(v);
+        g_variant_unref(variant);
     }
-    if (r != nullptr)
-        g_variant_unref(r);
-    pending_free(p);
+    if (response != nullptr)
+        g_variant_unref(response);
+    pending_free(query);
 }
 
 /* Log On As (the service's User=) and, for loaded units, the startup
  * type when no unit file listed it. */
-static void fetch_user(manager *m, const char *id, const char *path) {
-    g_dbus_connection_call(m->bus, SD_NAME, path, "org.freedesktop.DBus.Properties", "Get",
-                           g_variant_new("(ss)", SD_SERVICE, "User"), G_VARIANT_TYPE("(v)"),
-                           G_DBUS_CALL_FLAGS_NONE, -1, nullptr, got_prop, pending_new(m, id));
+static void fetch_user(manager *unit_manager, const char *id, const char *path) {
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, path, "org.freedesktop.DBus.Properties",
+                           "Get", g_variant_new("(ss)", SD_SERVICE, "User"), G_VARIANT_TYPE("(v)"),
+                           G_DBUS_CALL_FLAGS_NONE, -1, nullptr, got_prop,
+                           pending_new(unit_manager, id));
 }
 
-static void fetch_file_state(manager *m, const char *id, const char *path) {
-    pending *p = pending_new(m, id);
-    p->file_state = true;
-    g_dbus_connection_call(m->bus, SD_NAME, path, "org.freedesktop.DBus.Properties", "Get",
-                           g_variant_new("(ss)", SD_UNIT, "UnitFileState"), G_VARIANT_TYPE("(v)"),
-                           G_DBUS_CALL_FLAGS_NONE, -1, nullptr, got_prop, p);
+static void fetch_file_state(manager *unit_manager, const char *id, const char *path) {
+    pending *query = pending_new(unit_manager, id);
+    query->file_state = true;
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, path, "org.freedesktop.DBus.Properties",
+                           "Get", g_variant_new("(ss)", SD_UNIT, "UnitFileState"),
+                           G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, got_prop,
+                           query);
 }
 
 /* A unit that isn't loaded: its description and state. */
 static void got_unit_props(GObject *src, GAsyncResult *res, gpointer data) {
-    pending *p = data;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
-    GtkTreeIter *it = stale(p) ? nullptr : row(p->m, p->id);
-    if (r != nullptr && it != nullptr) {
-        GVariant *props = g_variant_get_child_value(r, 0);
+    pending *query = data;
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    GtkTreeIter *it = stale(query) ? nullptr : row(query->m, query->id);
+    if (variant != nullptr && it != nullptr) {
+        GVariant *props = g_variant_get_child_value(variant, 0);
         const char *desc = nullptr, *active = nullptr;
         if (g_variant_lookup(props, "Description", "&s", &desc))
-            gtk_list_store_set(p->m->store, it, COL_DESC, desc, -1);
+            gtk_list_store_set(query->m->store, it, COL_DESC, desc, -1);
         if (g_variant_lookup(props, "ActiveState", "&s", &active))
-            set_active(p->m, it, active);
+            set_active(query->m, it, active);
         g_variant_unref(props);
     }
-    if (r != nullptr)
-        g_variant_unref(r);
-    pending_free(p);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    pending_free(query);
 }
 
 static void got_loaded(GObject *src, GAsyncResult *res, gpointer data) {
-    pending *p = data;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
-    GtkTreeIter *it = stale(p) ? nullptr : row(p->m, p->id);
-    if (r != nullptr && it != nullptr) {
+    pending *query = data;
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    GtkTreeIter *it = stale(query) ? nullptr : row(query->m, query->id);
+    if (variant != nullptr && it != nullptr) {
         const char *path = nullptr;
-        g_variant_get(r, "(&o)", &path);
-        gtk_list_store_set(p->m->store, it, COL_PATH, path, -1);
-        g_dbus_connection_call(p->m->bus, SD_NAME, path, "org.freedesktop.DBus.Properties",
-                               "GetAll", g_variant_new("(s)", SD_UNIT),
-                               G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
-                               got_unit_props, pending_new(p->m, p->id));
-        fetch_user(p->m, p->id, path);
+        g_variant_get(variant, "(&o)", &path);
+        gtk_list_store_set(query->m->store, it, COL_PATH, path, -1);
+        g_dbus_connection_call(query->m->bus, SD_NAME, path, "org.freedesktop.DBus.Properties",
+                               "GetAll", g_variant_new("(s)", SD_UNIT), G_VARIANT_TYPE("(a{sv})"),
+                               G_DBUS_CALL_FLAGS_NONE, -1, nullptr, got_unit_props,
+                               pending_new(query->m, query->id));
+        fetch_user(query->m, query->id, path);
     }
-    if (r != nullptr)
-        g_variant_unref(r);
-    pending_free(p);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    pending_free(query);
 }
 
 static bool is_service(const char *id) {
@@ -291,141 +296,143 @@ static bool is_service(const char *id) {
 }
 
 static void got_unit_files(GObject *src, GAsyncResult *res, gpointer data) {
-    pending *p = data;
+    pending *query = data;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr) {
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant == nullptr) {
         g_printerr("xd-services: ListUnitFiles: %s\n", error->message);
         g_error_free(error);
-    } else if (!stale(p)) {
+    } else if (!stale(query)) {
         GVariantIter *iter = nullptr;
         const char *file = nullptr, *state = nullptr;
-        g_variant_get(r, "(a(ss))", &iter);
+        g_variant_get(variant, "(a(ss))", &iter);
         while (g_variant_iter_next(iter, "(&s&s)", &file, &state)) {
             char *id = g_path_get_basename(file);
             if (is_service(id)) {
-                bool known = row(p->m, id) != nullptr;
-                GtkTreeIter *it = add_row(p->m, id);
-                set_file_state(p->m, it, state);
+                bool known = row(query->m, id) != nullptr;
+                GtkTreeIter *it = add_row(query->m, id);
+                set_file_state(query->m, it, state);
                 if (!known) {
                     /* Not loaded: load it for its description. */
-                    set_active(p->m, it, "inactive");
-                    set_logon(p->m, it, nullptr);
-                    g_dbus_connection_call(p->m->bus, SD_NAME, SD_PATH, SD_MANAGER, "LoadUnit",
+                    set_active(query->m, it, "inactive");
+                    set_logon(query->m, it, nullptr);
+                    g_dbus_connection_call(query->m->bus, SD_NAME, SD_PATH, SD_MANAGER, "LoadUnit",
                                            g_variant_new("(s)", id), G_VARIANT_TYPE("(o)"),
                                            G_DBUS_CALL_FLAGS_NONE, -1, nullptr, got_loaded,
-                                           pending_new(p->m, id));
+                                           pending_new(query->m, id));
                 }
             }
             g_free(id);
         }
         g_variant_iter_free(iter);
-        show_status(p->m->app);
+        show_status(query->m->app);
     }
-    if (r != nullptr)
-        g_variant_unref(r);
-    pending_free(p);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    pending_free(query);
 }
 
 static void got_units(GObject *src, GAsyncResult *res, gpointer data) {
-    pending *p = data;
-    manager *m = p->m;
+    pending *query = data;
+    manager *unit_manager = query->m;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr) {
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant == nullptr) {
         g_dbus_error_strip_remote_error(error);
-        if (!stale(p)) {
-            g_free(m->error);
-            m->error = g_strdup_printf("The %s service manager can't be reached: %s",
-                                       m->user ? "user" : "system", error->message);
-            show_status(m->app);
+        if (!stale(query)) {
+            g_free(unit_manager->error);
+            unit_manager->error =
+                g_strdup_printf("The %s service manager can't be reached: %s",
+                                unit_manager->user ? "user" : "system", error->message);
+            show_status(unit_manager->app);
         }
         g_error_free(error);
-        pending_free(p);
+        pending_free(query);
         return;
     }
-    if (!stale(p)) {
+    if (!stale(query)) {
         GVariantIter *iter = nullptr;
         const char *id, *desc, *load, *active, *sub, *following, *path, *jtype, *jpath;
         guint32 job_id;
-        g_variant_get(r, "(a(ssssssouso))", &iter);
+        g_variant_get(variant, "(a(ssssssouso))", &iter);
         while (g_variant_iter_next(iter, "(&s&s&s&s&s&s&ou&s&o)", &id, &desc, &load, &active,
                                    &sub, &following, &path, &job_id, &jtype, &jpath)) {
             if (!is_service(id) || strcmp(load, "not-found") == 0)
                 continue;
-            GtkTreeIter *it = add_row(m, id);
-            gtk_list_store_set(m->store, it, COL_DESC, desc, COL_PATH, path, -1);
-            set_active(m, it, active);
-            set_logon(m, it, nullptr);
-            fetch_user(m, id, path);
+            GtkTreeIter *it = add_row(unit_manager, id);
+            gtk_list_store_set(unit_manager->store, it, COL_DESC, desc, COL_PATH, path, -1);
+            set_active(unit_manager, it, active);
+            set_logon(unit_manager, it, nullptr);
+            fetch_user(unit_manager, id, path);
             if (strchr(id, '@') != nullptr)
-                fetch_file_state(m, id, path);
+                fetch_file_state(unit_manager, id, path);
         }
         g_variant_iter_free(iter);
         /* The installed unit files: their startup types, and the services
          * that aren't loaded. */
-        g_dbus_connection_call(m->bus, SD_NAME, SD_PATH, SD_MANAGER, "ListUnitFiles", nullptr,
-                               G_VARIANT_TYPE("(a(ss))"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
-                               got_unit_files, pending_new(m, nullptr));
-        show_status(m->app);
+        g_dbus_connection_call(unit_manager->bus, SD_NAME, SD_PATH, SD_MANAGER, "ListUnitFiles",
+                               nullptr, G_VARIANT_TYPE("(a(ss))"), G_DBUS_CALL_FLAGS_NONE, -1,
+                               nullptr, got_unit_files, pending_new(unit_manager, nullptr));
+        show_status(unit_manager->app);
     }
-    g_variant_unref(r);
-    pending_free(p);
+    g_variant_unref(variant);
+    pending_free(query);
 }
 
-static void refresh(manager *m) {
-    m->generation++;
-    if (m->bus == nullptr)
+static void refresh(manager *unit_manager) {
+    unit_manager->generation++;
+    if (unit_manager->bus == nullptr)
         return;
-    g_clear_pointer(&m->error, g_free);
+    g_clear_pointer(&unit_manager->error, g_free);
     /* Keep the selection across the reload. */
     char *keep = nullptr;
     GtkTreeModel *model = nullptr;
     GtkTreeIter it;
-    if (gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(m->view)),
-                                        &model, &it))
+    if (gtk_tree_selection_get_selected(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(unit_manager->view)), &model, &it))
         gtk_tree_model_get(model, &it, COL_ID, &keep, -1);
-    g_hash_table_remove_all(m->rows);
-    gtk_list_store_clear(m->store);
+    g_hash_table_remove_all(unit_manager->rows);
+    gtk_list_store_clear(unit_manager->store);
     if (keep != nullptr) {
         /* Selected again when it comes back. */
-        g_object_set_data_full(G_OBJECT(m->view), "keep", keep, g_free);
+        g_object_set_data_full(G_OBJECT(unit_manager->view), "keep", keep, g_free);
     }
-    g_dbus_connection_call(m->bus, SD_NAME, SD_PATH, SD_MANAGER, "ListUnits", nullptr,
-                           G_VARIANT_TYPE("(a(ssssssouso))"), G_DBUS_CALL_FLAGS_NONE, -1,
-                           nullptr, got_units, pending_new(m, nullptr));
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, SD_PATH, SD_MANAGER, "ListUnits", nullptr,
+                           G_VARIANT_TYPE("(a(ssssssouso))"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
+                           got_units, pending_new(unit_manager, nullptr));
 }
 
 /* Reselects the unit selected before a refresh once its row is back. */
-static void on_row_inserted([[maybe_unused]] GtkTreeModel *model, [[maybe_unused]] GtkTreePath *p,
-                            GtkTreeIter *it, gpointer data) {
-    manager *m = data;
-    const char *keep = g_object_get_data(G_OBJECT(m->view), "keep");
+static void on_row_inserted([[maybe_unused]] GtkTreeModel *model,
+                            [[maybe_unused]] GtkTreePath *path, GtkTreeIter *it, gpointer data) {
+    manager *unit_manager = data;
+    const char *keep = g_object_get_data(G_OBJECT(unit_manager->view), "keep");
     if (keep == nullptr)
         return;
     char *id = nullptr;
-    gtk_tree_model_get(GTK_TREE_MODEL(m->store), it, COL_ID, &id, -1);
+    gtk_tree_model_get(GTK_TREE_MODEL(unit_manager->store), it, COL_ID, &id, -1);
     /* The id is set in the same call that inserts the row. */
     if (g_strcmp0(id, keep) == 0) {
-        gtk_tree_selection_select_iter(gtk_tree_view_get_selection(GTK_TREE_VIEW(m->view)), it);
-        g_object_set_data(G_OBJECT(m->view), "keep", nullptr);
+        gtk_tree_selection_select_iter(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(unit_manager->view)), it);
+        g_object_set_data(G_OBJECT(unit_manager->view), "keep", nullptr);
     }
     g_free(id);
 }
 
 /* ---- live changes -------------------------------------------------------------------- */
 
-static void dialogs_update(manager *m, const char *id);
+static void dialogs_update(manager *unit_manager, const char *id);
 
-static const char *id_for_path(manager *m, const char *path, GtkTreeIter **it_out) {
+static const char *id_for_path(manager *unit_manager, const char *path, GtkTreeIter **it_out) {
     GHashTableIter hi;
     gpointer key, value;
-    g_hash_table_iter_init(&hi, m->rows);
+    g_hash_table_iter_init(&hi, unit_manager->rows);
     while (g_hash_table_iter_next(&hi, &key, &value)) {
-        char *p = nullptr;
-        gtk_tree_model_get(GTK_TREE_MODEL(m->store), value, COL_PATH, &p, -1);
-        bool match = g_strcmp0(p, path) == 0;
-        g_free(p);
+        char *row_path = nullptr;
+        gtk_tree_model_get(GTK_TREE_MODEL(unit_manager->store), value, COL_PATH, &row_path, -1);
+        bool match = g_strcmp0(row_path, path) == 0;
+        g_free(row_path);
         if (match) {
             *it_out = value;
             return key;
@@ -434,251 +441,255 @@ static const char *id_for_path(manager *m, const char *path, GtkTreeIter **it_ou
     return nullptr;
 }
 
-static void on_props_changed([[maybe_unused]] GDBusConnection *c,
+static void on_props_changed([[maybe_unused]] GDBusConnection *connection,
                              [[maybe_unused]] const char *sender, const char *path,
                              [[maybe_unused]] const char *iface,
-                             [[maybe_unused]] const char *signal, GVariant *params,
-                             gpointer data) {
-    manager *m = data;
+                             [[maybe_unused]] const char *signal, GVariant *params, gpointer data) {
+    manager *unit_manager = data;
     const char *interface = nullptr;
     GVariant *changed = nullptr;
     g_variant_get(params, "(&s@a{sv}@as)", &interface, &changed, nullptr);
     const char *active = nullptr;
     if (strcmp(interface, SD_UNIT) == 0 && g_variant_lookup(changed, "ActiveState", "&s", &active)) {
         GtkTreeIter *it = nullptr;
-        const char *id = id_for_path(m, path, &it);
+        const char *id = id_for_path(unit_manager, path, &it);
         if (id != nullptr) {
-            set_active(m, it, active);
-            dialogs_update(m, id);
-            update_actions(m->app);
+            set_active(unit_manager, it, active);
+            dialogs_update(unit_manager, id);
+            update_actions(unit_manager->app);
         }
     }
     g_variant_unref(changed);
 }
 
-static void on_unit_files_changed([[maybe_unused]] GDBusConnection *c,
+static void on_unit_files_changed([[maybe_unused]] GDBusConnection *connection,
                                   [[maybe_unused]] const char *sender,
                                   [[maybe_unused]] const char *path,
                                   [[maybe_unused]] const char *iface,
                                   [[maybe_unused]] const char *signal,
                                   [[maybe_unused]] GVariant *params, gpointer data) {
-    manager *m = data;
-    g_dbus_connection_call(m->bus, SD_NAME, SD_PATH, SD_MANAGER, "ListUnitFiles", nullptr,
-                           G_VARIANT_TYPE("(a(ss))"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
-                           got_unit_files, pending_new(m, nullptr));
+    manager *unit_manager = data;
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, SD_PATH, SD_MANAGER, "ListUnitFiles",
+                           nullptr, G_VARIANT_TYPE("(a(ss))"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
+                           got_unit_files, pending_new(unit_manager, nullptr));
 }
 
-static void job_finished(job *j, const char *result);
+static void job_finished(job *service_job, const char *result);
 
 static GList *jobs; /* jobs waiting for JobRemoved */
 
-static void on_job_removed([[maybe_unused]] GDBusConnection *c,
-                           [[maybe_unused]] const char *sender,
-                           [[maybe_unused]] const char *path,
-                           [[maybe_unused]] const char *iface,
-                           [[maybe_unused]] const char *signal, GVariant *params, gpointer data) {
-    manager *m = data;
+static void on_job_removed([[maybe_unused]] GDBusConnection *connection,
+                           [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                           [[maybe_unused]] const char *iface, [[maybe_unused]] const char *signal,
+                           GVariant *params, gpointer data) {
+    manager *unit_manager = data;
     guint32 id = 0;
     const char *jpath = nullptr, *unit = nullptr, *result = nullptr;
     g_variant_get(params, "(u&o&s&s)", &id, &jpath, &unit, &result);
-    for (GList *l = jobs; l != nullptr; l = l->next) {
-        job *j = l->data;
-        if (j->m == m && g_strcmp0(j->path, jpath) == 0) {
-            job_finished(j, result);
+    for (GList *list = jobs; list != nullptr; list = list->next) {
+        job *service_job = list->data;
+        if (service_job->m == unit_manager && g_strcmp0(service_job->path, jpath) == 0) {
+            job_finished(service_job, result);
             return;
         }
     }
     /* Ours, perhaps, before its reply: kept until the reply comes. */
     if (jobs != nullptr)
-        g_hash_table_insert(m->done, g_strdup(jpath), g_strdup(result));
+        g_hash_table_insert(unit_manager->done, g_strdup(jpath), g_strdup(result));
 }
 
-static void manager_connect(manager *m, GBusType type) {
+static void manager_connect(manager *unit_manager, GBusType type) {
     GError *error = nullptr;
-    m->bus = g_bus_get_sync(type, nullptr, &error);
-    if (m->bus == nullptr) {
-        m->error = g_strdup_printf("The %s service manager can't be reached: %s",
-                                   m->user ? "user" : "system", error->message);
+    unit_manager->bus = g_bus_get_sync(type, nullptr, &error);
+    if (unit_manager->bus == nullptr) {
+        unit_manager->error =
+            g_strdup_printf("The %s service manager can't be reached: %s",
+                            unit_manager->user ? "user" : "system", error->message);
         g_error_free(error);
         return;
     }
-    g_dbus_connection_signal_subscribe(m->bus, SD_NAME, "org.freedesktop.DBus.Properties",
-                                       "PropertiesChanged", nullptr, nullptr,
-                                       G_DBUS_SIGNAL_FLAGS_NONE, on_props_changed, m, nullptr);
-    g_dbus_connection_signal_subscribe(m->bus, SD_NAME, SD_MANAGER, "UnitFilesChanged", SD_PATH,
-                                       nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_unit_files_changed,
-                                       m, nullptr);
-    g_dbus_connection_signal_subscribe(m->bus, SD_NAME, SD_MANAGER, "JobRemoved", SD_PATH,
-                                       nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_job_removed, m,
-                                       nullptr);
+    g_dbus_connection_signal_subscribe(
+        unit_manager->bus, SD_NAME, "org.freedesktop.DBus.Properties", "PropertiesChanged", nullptr,
+        nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_props_changed, unit_manager, nullptr);
+    g_dbus_connection_signal_subscribe(unit_manager->bus, SD_NAME, SD_MANAGER, "UnitFilesChanged",
+                                       SD_PATH, nullptr, G_DBUS_SIGNAL_FLAGS_NONE,
+                                       on_unit_files_changed, unit_manager, nullptr);
+    g_dbus_connection_signal_subscribe(unit_manager->bus, SD_NAME, SD_MANAGER, "JobRemoved",
+                                       SD_PATH, nullptr, G_DBUS_SIGNAL_FLAGS_NONE, on_job_removed,
+                                       unit_manager, nullptr);
     /* systemd only sends its signals while someone has subscribed. */
-    g_dbus_connection_call(m->bus, SD_NAME, SD_PATH, SD_MANAGER, "Subscribe", nullptr, nullptr,
-                           G_DBUS_CALL_FLAGS_NONE, -1, nullptr, nullptr, nullptr);
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, SD_PATH, SD_MANAGER, "Subscribe", nullptr,
+                           nullptr, G_DBUS_CALL_FLAGS_NONE, -1, nullptr, nullptr, nullptr);
 }
 
 /* ---- starting and stopping ----------------------------------------------------------- */
 
-static GtkWindow *active_window(services *s) {
-    for (GList *l = gtk_window_list_toplevels(); l != nullptr; l = g_list_delete_link(l, l)) {
-        if (gtk_window_is_active(l->data)) {
-            GtkWindow *w = l->data;
-            g_list_free(l);
-            return w;
+static GtkWindow *active_window(services *console) {
+    for (GList *list = gtk_window_list_toplevels(); list != nullptr;
+         list = g_list_delete_link(list, list)) {
+        if (gtk_window_is_active(list->data)) {
+            GtkWindow *active_toplevel = list->data;
+            g_list_free(list);
+            return active_toplevel;
         }
     }
-    return GTK_WINDOW(s->window);
+    return GTK_WINDOW(console->window);
 }
 
-static void job_free(job *j) {
-    jobs = g_list_remove(jobs, j);
-    if (j->dialog != nullptr)
-        gtk_widget_destroy(j->dialog); /* on_job_dialog_destroy stops the pulse */
-    g_free(j->id);
-    g_free(j->verb);
-    g_free(j->path);
-    g_free(j);
+static void job_free(job *service_job) {
+    jobs = g_list_remove(jobs, service_job);
+    if (service_job->dialog != nullptr)
+        gtk_widget_destroy(service_job->dialog); /* on_job_dialog_destroy stops the pulse */
+    g_free(service_job->id);
+    g_free(service_job->verb);
+    g_free(service_job->path);
+    g_free(service_job);
 }
 
-static void job_finished(job *j, const char *result) {
-    services *s = j->m->app;
-    manager *m = j->m;
-    char *id = g_strdup(j->id), *verb = g_strdup(j->verb);
-    job_free(j);
+static void job_finished(job *service_job, const char *result) {
+    services *console = service_job->m->app;
+    manager *unit_manager = service_job->m;
+    char *id = g_strdup(service_job->id), *verb = g_strdup(service_job->verb);
+    job_free(service_job);
     if (jobs == nullptr)
-        g_hash_table_remove_all(m->done);
+        g_hash_table_remove_all(unit_manager->done);
     if (g_strcmp0(result, "done") != 0) {
         char *name = xd_unit_display_name(id);
         char *text = g_strdup_printf(
             "Could not %s the %s service on Local Computer.\n\nThe job ended with \"%s\". See "
             "the System log in Event Viewer for details.",
             verb, name, result != nullptr ? result : "failed");
-        xd_message_box(active_window(s), "Services", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+        xd_message_box(active_window(console), "Services", XD_MB_ERROR, XD_MB_OK, FALSE, text);
         g_free(text);
         g_free(name);
     }
     g_free(id);
     g_free(verb);
-    update_actions(s);
+    update_actions(console);
 }
 
 static gboolean pulse(gpointer data) {
-    job *j = data;
-    gtk_progress_bar_pulse(GTK_PROGRESS_BAR(j->bar));
+    job *service_job = data;
+    gtk_progress_bar_pulse(GTK_PROGRESS_BAR(service_job->bar));
     return G_SOURCE_CONTINUE;
 }
 
-static void on_job_dialog_response(GtkDialog *d, [[maybe_unused]] int response,
+static void on_job_dialog_response(GtkDialog *gtk_dialog, [[maybe_unused]] int response,
                                    [[maybe_unused]] gpointer data) {
     /* Closing the box doesn't cancel the job; it runs on. */
-    gtk_widget_destroy(GTK_WIDGET(d));
+    gtk_widget_destroy(GTK_WIDGET(gtk_dialog));
 }
 
 /* Closed, or gone with the Properties box it was over: the progress bar
  * is gone too, so stop pulsing it. */
-static void on_job_dialog_destroy([[maybe_unused]] GtkWidget *d, gpointer data) {
-    job *j = data;
-    j->dialog = nullptr;
-    j->bar = nullptr;
-    if (j->pulse != 0) {
-        g_source_remove(j->pulse);
-        j->pulse = 0;
+static void on_job_dialog_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    job *service_job = data;
+    service_job->dialog = nullptr;
+    service_job->bar = nullptr;
+    if (service_job->pulse != 0) {
+        g_source_remove(service_job->pulse);
+        service_job->pulse = 0;
     }
 }
 
 /* XP's progress box: "Windows is attempting to start the following
  * service on Local Computer..." */
-static void job_dialog(job *j, const char *ing) {
-    services *s = j->m->app;
-    j->dialog = gtk_dialog_new_with_buttons("Service Control", active_window(s),
-                                            GTK_DIALOG_DESTROY_WITH_PARENT, "_Close",
-                                            GTK_RESPONSE_CLOSE, nullptr);
-    gtk_window_set_resizable(GTK_WINDOW(j->dialog), FALSE);
+static void job_dialog(job *service_job, const char *ing) {
+    services *console = service_job->m->app;
+    service_job->dialog = gtk_dialog_new_with_buttons("Service Control", active_window(console),
+                                                      GTK_DIALOG_DESTROY_WITH_PARENT, "_Close",
+                                                      GTK_RESPONSE_CLOSE, nullptr);
+    gtk_window_set_resizable(GTK_WINDOW(service_job->dialog), FALSE);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(box), 12);
     char *text = g_strdup_printf("XeonDesktop is attempting to %s the following service on "
                                  "Local Computer...",
                                  ing);
-    GtkWidget *l = gtk_label_new(text);
+    GtkWidget *attempt_label = gtk_label_new(text);
     g_free(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_box_pack_start(GTK_BOX(box), l, FALSE, FALSE, 0);
-    char *name = xd_unit_display_name(j->id);
-    GtkWidget *n = gtk_label_new(name);
+    gtk_label_set_xalign(GTK_LABEL(attempt_label), 0);
+    gtk_box_pack_start(GTK_BOX(box), attempt_label, FALSE, FALSE, 0);
+    char *name = xd_unit_display_name(service_job->id);
+    GtkWidget *service_label = gtk_label_new(name);
     g_free(name);
-    gtk_label_set_xalign(GTK_LABEL(n), 0);
-    gtk_box_pack_start(GTK_BOX(box), n, FALSE, FALSE, 0);
-    j->bar = gtk_progress_bar_new();
-    gtk_widget_set_size_request(j->bar, 320, -1);
-    gtk_box_pack_start(GTK_BOX(box), j->bar, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(j->dialog))), box);
-    g_signal_connect(j->dialog, "response", G_CALLBACK(on_job_dialog_response), j);
-    g_signal_connect(j->dialog, "destroy", G_CALLBACK(on_job_dialog_destroy), j);
-    j->pulse = g_timeout_add(100, pulse, j);
-    gtk_widget_show_all(j->dialog);
+    gtk_label_set_xalign(GTK_LABEL(service_label), 0);
+    gtk_box_pack_start(GTK_BOX(box), service_label, FALSE, FALSE, 0);
+    service_job->bar = gtk_progress_bar_new();
+    gtk_widget_set_size_request(service_job->bar, 320, -1);
+    gtk_box_pack_start(GTK_BOX(box), service_job->bar, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(service_job->dialog))),
+                      box);
+    g_signal_connect(service_job->dialog, "response", G_CALLBACK(on_job_dialog_response),
+                     service_job);
+    g_signal_connect(service_job->dialog, "destroy", G_CALLBACK(on_job_dialog_destroy),
+                     service_job);
+    service_job->pulse = g_timeout_add(100, pulse, service_job);
+    gtk_widget_show_all(service_job->dialog);
 }
 
 static void got_job(GObject *src, GAsyncResult *res, gpointer data) {
-    job *j = data;
+    job *service_job = data;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr) {
-        services *s = j->m->app;
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant == nullptr) {
+        services *console = service_job->m->app;
         g_dbus_error_strip_remote_error(error);
-        char *name = xd_unit_display_name(j->id);
+        char *name = xd_unit_display_name(service_job->id);
         char *text = g_strdup_printf("Could not %s the %s service on Local Computer.\n\n%s",
-                                     j->verb, name, error->message);
-        job_free(j);
-        xd_message_box(active_window(s), "Services", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+                                     service_job->verb, name, error->message);
+        job_free(service_job);
+        xd_message_box(active_window(console), "Services", XD_MB_ERROR, XD_MB_OK, FALSE, text);
         g_free(text);
         g_free(name);
         g_error_free(error);
         return;
     }
-    g_variant_get(r, "(o)", &j->path);
-    g_variant_unref(r);
+    g_variant_get(variant, "(o)", &service_job->path);
+    g_variant_unref(variant);
     char *result = nullptr;
-    if (g_hash_table_steal_extended(j->m->done, j->path, nullptr, (gpointer *)&result)) {
-        job_finished(j, result);
+    if (g_hash_table_steal_extended(service_job->m->done, service_job->path, nullptr,
+                                    (gpointer *)&result)) {
+        job_finished(service_job, result);
         g_free(result);
     }
 }
 
 /* StartUnit, StopUnit or RestartUnit, then wait for its job. */
-static void unit_job(manager *m, const char *id, const char *method, const char *verb,
+static void unit_job(manager *unit_manager, const char *id, const char *method, const char *verb,
                      const char *ing) {
-    if (m->bus == nullptr)
+    if (unit_manager->bus == nullptr)
         return;
-    job *j = g_new0(job, 1);
-    j->m = m;
-    j->id = g_strdup(id);
-    j->verb = g_strdup(verb);
-    jobs = g_list_prepend(jobs, j);
-    job_dialog(j, ing);
+    job *service_job = g_new0(job, 1);
+    service_job->m = unit_manager;
+    service_job->id = g_strdup(id);
+    service_job->verb = g_strdup(verb);
+    jobs = g_list_prepend(jobs, service_job);
+    job_dialog(service_job, ing);
     /* No timeout: polkit's password box may be up for a while. */
-    g_dbus_connection_call(m->bus, SD_NAME, SD_PATH, SD_MANAGER, method,
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, SD_PATH, SD_MANAGER, method,
                            g_variant_new("(ss)", id, "replace"), G_VARIANT_TYPE("(o)"),
                            G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
-                           got_job, j);
+                           got_job, service_job);
 }
 
-static void action_on_selected(services *s, const char *method, const char *verb,
+static void action_on_selected(services *console, const char *method, const char *verb,
                                const char *ing) {
-    manager *m = nullptr;
+    manager *unit_manager = nullptr;
     char *id = nullptr, *active = nullptr;
-    if (selected(s, &m, &id, &active))
-        unit_job(m, id, method, verb, ing);
+    if (selected(console, &unit_manager, &id, &active))
+        unit_job(unit_manager, id, method, verb, ing);
     g_free(id);
     g_free(active);
 }
 
-static void on_start([[maybe_unused]] GtkWidget *w, gpointer s) {
-    action_on_selected(s, "StartUnit", "start", "start");
+static void on_start([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    action_on_selected(user_data, "StartUnit", "start", "start");
 }
-static void on_stop([[maybe_unused]] GtkWidget *w, gpointer s) {
-    action_on_selected(s, "StopUnit", "stop", "stop");
+static void on_stop([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    action_on_selected(user_data, "StopUnit", "stop", "stop");
 }
-static void on_restart([[maybe_unused]] GtkWidget *w, gpointer s) {
-    action_on_selected(s, "RestartUnit", "restart", "restart");
+static void on_restart([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    action_on_selected(user_data, "RestartUnit", "restart", "restart");
 }
 
 /* ---- Properties ------------------------------------------------------------------------ */
@@ -701,87 +712,87 @@ typedef struct unit_call {
     GVariant *args;
 } unit_call;
 
-static void get_all(manager *m, const char *path, const char *iface, GAsyncReadyCallback done,
-                    gpointer data) {
-    g_dbus_connection_call(m->bus, SD_NAME, path, "org.freedesktop.DBus.Properties", "GetAll",
-                           g_variant_new("(s)", iface), G_VARIANT_TYPE("(a{sv})"),
+static void get_all(manager *unit_manager, const char *path, const char *iface,
+                    GAsyncReadyCallback done, gpointer data) {
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, path, "org.freedesktop.DBus.Properties",
+                           "GetAll", g_variant_new("(s)", iface), G_VARIANT_TYPE("(a{sv})"),
                            G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, done, data);
 }
 
 /* GetAll's dictionary, or nullptr. */
 static GVariant *get_all_finish(GObject *src, GAsyncResult *res) {
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
-    if (r == nullptr)
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    if (variant == nullptr)
         return nullptr;
-    GVariant *dict = g_variant_get_child_value(r, 0);
-    g_variant_unref(r);
+    GVariant *dict = g_variant_get_child_value(variant, 0);
+    g_variant_unref(variant);
     return dict;
 }
 
 static char *lookup_string(GVariant *dict, const char *key) {
-    const char *v = nullptr;
-    return dict != nullptr && g_variant_lookup(dict, key, "&s", &v) ? g_strdup(v) : nullptr;
+    const char *value = nullptr;
+    return dict != nullptr && g_variant_lookup(dict, key, "&s", &value) ? g_strdup(value) : nullptr;
 }
 
 static char **lookup_strv(GVariant *dict, const char *key) {
-    char **v = nullptr;
-    if (dict == nullptr || !g_variant_lookup(dict, key, "^as", &v))
+    char **values = nullptr;
+    if (dict == nullptr || !g_variant_lookup(dict, key, "^as", &values))
         return nullptr;
-    return v;
+    return values;
 }
 
-static void show_props_status(props *p) {
-    GtkTreeIter *it = row(p->m, p->id);
+static void show_props_status(props *properties) {
+    GtkTreeIter *it = row(properties->m, properties->id);
     char *active = nullptr;
     if (it != nullptr)
-        gtk_tree_model_get(GTK_TREE_MODEL(p->m->store), it, COL_ACTIVE, &active, -1);
+        gtk_tree_model_get(GTK_TREE_MODEL(properties->m->store), it, COL_ACTIVE, &active, -1);
     bool started = xd_unit_is_started(active);
     const char *label = xd_unit_status_label(active);
-    gtk_label_set_text(GTK_LABEL(p->status), label[0] != '\0' ? label : "Stopped");
-    gtk_widget_set_sensitive(p->start, !started && !busy(active));
-    gtk_widget_set_sensitive(p->stop, started && !busy(active));
+    gtk_label_set_text(GTK_LABEL(properties->status), label[0] != '\0' ? label : "Stopped");
+    gtk_widget_set_sensitive(properties->start, !started && !busy(active));
+    gtk_widget_set_sensitive(properties->stop, started && !busy(active));
     g_free(active);
 }
 
-static void dialogs_update(manager *m, const char *id) {
-    for (GList *l = m->dialogs; l != nullptr; l = l->next) {
-        props *p = l->data;
-        if (strcmp(p->id, id) == 0)
-            show_props_status(p);
+static void dialogs_update(manager *unit_manager, const char *id) {
+    for (GList *list = unit_manager->dialogs; list != nullptr; list = list->next) {
+        props *properties = list->data;
+        if (strcmp(properties->id, id) == 0)
+            show_props_status(properties);
     }
 }
 
-static void on_props_start([[maybe_unused]] GtkButton *b, gpointer data) {
-    props *p = data;
-    unit_job(p->m, p->id, "StartUnit", "start", "start");
+static void on_props_start([[maybe_unused]] GtkButton *button, gpointer data) {
+    props *properties = data;
+    unit_job(properties->m, properties->id, "StartUnit", "start", "start");
 }
 
-static void on_props_stop([[maybe_unused]] GtkButton *b, gpointer data) {
-    props *p = data;
-    unit_job(p->m, p->id, "StopUnit", "stop", "stop");
+static void on_props_stop([[maybe_unused]] GtkButton *button, gpointer data) {
+    props *properties = data;
+    unit_job(properties->m, properties->id, "StopUnit", "stop", "stop");
 }
 
-static void on_startup_changed([[maybe_unused]] GtkComboBox *c, gpointer data) {
-    props *p = data;
-    if (!p->updating)
-        gtk_widget_set_sensitive(p->apply, TRUE);
+static void on_startup_changed([[maybe_unused]] GtkComboBox *combo, gpointer data) {
+    props *properties = data;
+    if (!properties->updating)
+        gtk_widget_set_sensitive(properties->apply, TRUE);
 }
 
 static void unit_call_free(gpointer data) {
-    unit_call *c = data;
-    g_free(c->method);
-    g_free(c->rtype);
-    if (c->args != nullptr)
-        g_variant_unref(c->args);
-    g_free(c);
+    unit_call *call = data;
+    g_free(call->method);
+    g_free(call->rtype);
+    if (call->args != nullptr)
+        g_variant_unref(call->args);
+    g_free(call);
 }
 
-static void add_call(props *p, const char *method, GVariant *args, const char *rtype) {
-    unit_call *c = g_new0(unit_call, 1);
-    c->method = g_strdup(method);
-    c->rtype = g_strdup(rtype);
-    c->args = args != nullptr ? g_variant_ref_sink(args) : nullptr;
-    g_queue_push_tail(&p->calls, c);
+static void add_call(props *properties, const char *method, GVariant *args, const char *rtype) {
+    unit_call *call = g_new0(unit_call, 1);
+    call->method = g_strdup(method);
+    call->rtype = g_strdup(rtype);
+    call->args = args != nullptr ? g_variant_ref_sink(args) : nullptr;
+    g_queue_push_tail(&properties->calls, call);
 }
 
 static GVariant *one_unit(const char *id) {
@@ -789,142 +800,145 @@ static GVariant *one_unit(const char *id) {
     return g_variant_new_strv(ids, -1);
 }
 
-static void apply_next(props *p);
+static void apply_next(props *properties);
 
 /* Stops applying, after the last call or a failed one. */
-static void apply_end(props *p, bool ok) {
-    g_queue_clear_full(&p->calls, unit_call_free);
-    gtk_widget_set_sensitive(p->startup, TRUE);
+static void apply_end(props *properties, bool ok) {
+    g_queue_clear_full(&properties->calls, unit_call_free);
+    gtk_widget_set_sensitive(properties->startup, TRUE);
     if (ok) {
         static const char *const states[] = {"enabled", "disabled", "masked"};
-        g_free(p->file_state);
-        p->file_state = g_strdup(states[p->choice]);
-        GtkTreeIter *it = row(p->m, p->id);
+        g_free(properties->file_state);
+        properties->file_state = g_strdup(states[properties->choice]);
+        GtkTreeIter *it = row(properties->m, properties->id);
         if (it != nullptr)
-            set_file_state(p->m, it, p->file_state);
+            set_file_state(properties->m, it, properties->file_state);
     }
-    gtk_widget_set_sensitive(p->apply, !ok);
-    p->choice = -1;
-    if (ok && p->close_after)
-        gtk_widget_destroy(p->dialog);
+    gtk_widget_set_sensitive(properties->apply, !ok);
+    properties->choice = -1;
+    if (ok && properties->close_after)
+        gtk_widget_destroy(properties->dialog);
 }
 
 static void unit_call_done(GObject *src, GAsyncResult *res, gpointer data) {
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
         g_error_free(error); /* the box is gone, and `data` with it */
         return;
     }
-    props *p = data;
-    if (r == nullptr) {
+    props *properties = data;
+    if (variant == nullptr) {
         g_dbus_error_strip_remote_error(error);
         char *text = g_strdup_printf("The startup type of the %s service could not be "
                                      "changed.\n\n%s",
-                                     p->id, error->message);
+                                     properties->id, error->message);
         g_error_free(error);
-        apply_end(p, false);
-        xd_message_box(GTK_WINDOW(p->dialog), "Services", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+        apply_end(properties, false);
+        xd_message_box(GTK_WINDOW(properties->dialog), "Services", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       text);
         g_free(text);
         return;
     }
-    if (g_variant_is_of_type(r, G_VARIANT_TYPE("(ba(sss))"))) {
+    if (g_variant_is_of_type(variant, G_VARIANT_TYPE("(ba(sss))"))) {
         gboolean install_info = TRUE;
-        g_variant_get(r, "(ba(sss))", &install_info, nullptr);
+        g_variant_get(variant, "(ba(sss))", &install_info, nullptr);
         if (!install_info)
-            xd_message_box(GTK_WINDOW(p->dialog), "Services", XD_MB_WARNING, XD_MB_OK, FALSE,
+            xd_message_box(GTK_WINDOW(properties->dialog), "Services", XD_MB_WARNING, XD_MB_OK,
+                           FALSE,
                            "This service's unit file has no [Install] section, so it can't "
                            "be started automatically. It runs when another service or "
                            "program needs it.");
     }
-    g_variant_unref(r);
-    apply_next(p);
+    g_variant_unref(variant);
+    apply_next(properties);
 }
 
-static void apply_next(props *p) {
-    unit_call *c = g_queue_pop_head(&p->calls);
-    if (c == nullptr) {
-        apply_end(p, true);
+static void apply_next(props *properties) {
+    unit_call *call = g_queue_pop_head(&properties->calls);
+    if (call == nullptr) {
+        apply_end(properties, true);
         return;
     }
     /* No timeout, and not waiting for it: polkit's password box may be up
      * for a while, and the window must keep working meanwhile. */
-    g_dbus_connection_call(p->m->bus, SD_NAME, SD_PATH, SD_MANAGER, c->method, c->args,
-                           c->rtype != nullptr ? G_VARIANT_TYPE(c->rtype) : nullptr,
-                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, p->cancel,
-                           unit_call_done, p);
-    unit_call_free(c);
+    g_dbus_connection_call(properties->m->bus, SD_NAME, SD_PATH, SD_MANAGER, call->method,
+                           call->args,
+                           call->rtype != nullptr ? G_VARIANT_TYPE(call->rtype) : nullptr,
+                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT,
+                           properties->cancel, unit_call_done, properties);
+    unit_call_free(call);
 }
 
 /* Starts applying the startup type chosen; false when there's nothing to
  * apply. */
-static bool apply_startup(props *p) {
-    int choice = gtk_combo_box_get_active(GTK_COMBO_BOX(p->startup));
-    xd_unit_startup was = xd_unit_startup_of(p->file_state);
-    if (choice < 0 || choice == (int)was || !gtk_widget_get_sensitive(p->startup))
+static bool apply_startup(props *properties) {
+    int choice = gtk_combo_box_get_active(GTK_COMBO_BOX(properties->startup));
+    xd_unit_startup was = xd_unit_startup_of(properties->file_state);
+    if (choice < 0 || choice == (int)was || !gtk_widget_get_sensitive(properties->startup))
         return false;
     if (was == XD_STARTUP_MASKED)
-        add_call(p, "UnmaskUnitFiles", g_variant_new("(@asb)", one_unit(p->id), FALSE),
-                 "(a(sss))");
+        add_call(properties, "UnmaskUnitFiles",
+                 g_variant_new("(@asb)", one_unit(properties->id), FALSE), "(a(sss))");
     if (choice == XD_STARTUP_ENABLED)
-        add_call(p, "EnableUnitFiles", g_variant_new("(@asbb)", one_unit(p->id), FALSE, FALSE),
-                 "(ba(sss))");
+        add_call(properties, "EnableUnitFiles",
+                 g_variant_new("(@asbb)", one_unit(properties->id), FALSE, FALSE), "(ba(sss))");
     else if (choice == XD_STARTUP_DISABLED && was != XD_STARTUP_MASKED)
-        add_call(p, "DisableUnitFiles", g_variant_new("(@asb)", one_unit(p->id), FALSE),
-                 "(a(sss))");
+        add_call(properties, "DisableUnitFiles",
+                 g_variant_new("(@asb)", one_unit(properties->id), FALSE), "(a(sss))");
     else if (choice == XD_STARTUP_MASKED)
-        add_call(p, "MaskUnitFiles", g_variant_new("(@asbb)", one_unit(p->id), FALSE, FALSE),
-                 "(a(sss))");
+        add_call(properties, "MaskUnitFiles",
+                 g_variant_new("(@asbb)", one_unit(properties->id), FALSE, FALSE), "(a(sss))");
     /* systemd reads the changed links on its next reload. */
-    add_call(p, "Reload", nullptr, nullptr);
-    p->choice = choice;
-    gtk_widget_set_sensitive(p->startup, FALSE);
-    gtk_widget_set_sensitive(p->apply, FALSE);
-    apply_next(p);
+    add_call(properties, "Reload", nullptr, nullptr);
+    properties->choice = choice;
+    gtk_widget_set_sensitive(properties->startup, FALSE);
+    gtk_widget_set_sensitive(properties->apply, FALSE);
+    apply_next(properties);
     return true;
 }
 
-static void on_props_response(GtkDialog *d, int response, gpointer data) {
-    props *p = data;
+static void on_props_response(GtkDialog *gtk_dialog, int response, gpointer data) {
+    props *properties = data;
     bool apply = response == GTK_RESPONSE_APPLY || response == GTK_RESPONSE_OK;
-    if (apply && p->choice >= 0) {
+    if (apply && properties->choice >= 0) {
         /* Still applying: OK closes once it's done. */
-        p->close_after |= response == GTK_RESPONSE_OK;
+        properties->close_after |= response == GTK_RESPONSE_OK;
         return;
     }
     if (apply) {
-        p->close_after = response == GTK_RESPONSE_OK;
-        if (apply_startup(p) || response == GTK_RESPONSE_APPLY)
+        properties->close_after = response == GTK_RESPONSE_OK;
+        if (apply_startup(properties) || response == GTK_RESPONSE_APPLY)
             return;
     }
-    gtk_widget_destroy(GTK_WIDGET(d));
+    gtk_widget_destroy(GTK_WIDGET(gtk_dialog));
 }
 
-static void on_props_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
-    props *p = data;
-    /* A unit file call still running can't reach `p` now. */
-    g_cancellable_cancel(p->cancel);
-    g_object_unref(p->cancel);
-    g_queue_clear_full(&p->calls, unit_call_free);
-    p->m->dialogs = g_list_remove(p->m->dialogs, p);
-    g_free(p->id);
-    g_free(p->path);
-    g_free(p->file_state);
-    g_free(p);
+static void on_props_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    props *properties = data;
+    /* A unit file call still running can't reach `properties` now. */
+    g_cancellable_cancel(properties->cancel);
+    g_object_unref(properties->cancel);
+    g_queue_clear_full(&properties->calls, unit_call_free);
+    properties->m->dialogs = g_list_remove(properties->m->dialogs, properties);
+    g_free(properties->id);
+    g_free(properties->path);
+    g_free(properties->file_state);
+    g_free(properties);
 }
 
 static GtkWidget *label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    return l;
+    GtkWidget *widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    return widget;
 }
 
 static GtkWidget *readonly_entry(const char *text) {
-    GtkWidget *e = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(e), text != nullptr ? text : "");
-    gtk_editable_set_editable(GTK_EDITABLE(e), FALSE);
-    gtk_widget_set_hexpand(e, TRUE);
-    return e;
+    GtkWidget *widget = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(widget), text != nullptr ? text : "");
+    gtk_editable_set_editable(GTK_EDITABLE(widget), FALSE);
+    gtk_widget_set_hexpand(widget, TRUE);
+    return widget;
 }
 
 static GtkWidget *scrolled(GtkWidget *child, int height) {
@@ -965,34 +979,34 @@ static char *exec_start(GVariant *service) {
     return out;
 }
 
-static GtkWidget *general_page(props *p, GVariant *unit, GVariant *service) {
+static GtkWidget *general_page(props *properties, GVariant *unit, GVariant *service) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 12);
-    GtkWidget *g = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(g), 8);
-    gtk_grid_set_column_spacing(GTK_GRID(g), 12);
-    int r = 0;
-    gtk_grid_attach(GTK_GRID(g), label("Service name:"), 0, r, 1, 1);
-    gtk_grid_attach(GTK_GRID(g), label(p->id), 1, r++, 1, 1);
-    char *name = xd_unit_display_name(p->id);
-    gtk_grid_attach(GTK_GRID(g), label("Display name:"), 0, r, 1, 1);
+    GtkWidget *widget = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(widget), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(widget), 12);
+    int grid_row = 0;
+    gtk_grid_attach(GTK_GRID(widget), label("Service name:"), 0, grid_row, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), label(properties->id), 1, grid_row++, 1, 1);
+    char *name = xd_unit_display_name(properties->id);
+    gtk_grid_attach(GTK_GRID(widget), label("Display name:"), 0, grid_row, 1, 1);
     GtkWidget *display = readonly_entry(name);
     gtk_widget_set_sensitive(display, FALSE);
-    gtk_grid_attach(GTK_GRID(g), display, 1, r++, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), display, 1, grid_row++, 1, 1);
     g_free(name);
 
     char *desc = lookup_string(unit, "Description");
     GtkWidget *dl = label("Description:");
     gtk_widget_set_valign(dl, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(g), dl, 0, r, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), dl, 0, grid_row, 1, 1);
     GtkWidget *tv = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_WORD);
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv)),
                              desc != nullptr ? desc : "", -1);
-    gtk_grid_attach(GTK_GRID(g), scrolled(tv, 48), 1, r++, 1, 1);
+    gtk_grid_attach(GTK_GRID(widget), scrolled(tv, 48), 1, grid_row++, 1, 1);
     g_free(desc);
-    gtk_box_pack_start(GTK_BOX(page), g, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), widget, FALSE, FALSE, 0);
 
     GtkWidget *pl = label("Path to executable:");
     gtk_box_pack_start(GTK_BOX(page), pl, FALSE, FALSE, 0);
@@ -1009,49 +1023,50 @@ static GtkWidget *general_page(props *p, GVariant *unit, GVariant *service) {
 
     GtkWidget *st = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_box_pack_start(GTK_BOX(st), label("Startup type:"), FALSE, FALSE, 0);
-    p->startup = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->startup), "Enabled");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->startup), "Disabled");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->startup), "Masked");
-    xd_unit_startup start = xd_unit_startup_of(p->file_state);
+    properties->startup = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(properties->startup), "Enabled");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(properties->startup), "Disabled");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(properties->startup), "Masked");
+    xd_unit_startup start = xd_unit_startup_of(properties->file_state);
     if (start == XD_STARTUP_OTHER) {
         /* static, generated, ...: the unit file decides, nothing to set. */
-        char *l = xd_unit_startup_label(p->file_state);
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(p->startup), l[0] != '\0' ? l : "Unknown");
-        g_free(l);
-        gtk_combo_box_set_active(GTK_COMBO_BOX(p->startup), 3);
-        gtk_widget_set_sensitive(p->startup, FALSE);
+        char *startup_label = xd_unit_startup_label(properties->file_state);
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(properties->startup),
+                                       startup_label[0] != '\0' ? startup_label : "Unknown");
+        g_free(startup_label);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(properties->startup), 3);
+        gtk_widget_set_sensitive(properties->startup, FALSE);
     } else {
-        gtk_combo_box_set_active(GTK_COMBO_BOX(p->startup), start);
+        gtk_combo_box_set_active(GTK_COMBO_BOX(properties->startup), start);
     }
-    g_signal_connect(p->startup, "changed", G_CALLBACK(on_startup_changed), p);
-    gtk_box_pack_start(GTK_BOX(st), p->startup, TRUE, TRUE, 0);
+    g_signal_connect(properties->startup, "changed", G_CALLBACK(on_startup_changed), properties);
+    gtk_box_pack_start(GTK_BOX(st), properties->startup, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(page), st, FALSE, FALSE, 4);
     gtk_box_pack_start(GTK_BOX(page), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE,
                        4);
 
     GtkWidget *sr = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_box_pack_start(GTK_BOX(sr), label("Service status:"), FALSE, FALSE, 0);
-    p->status = label("");
-    gtk_box_pack_start(GTK_BOX(sr), p->status, FALSE, FALSE, 0);
+    properties->status = label("");
+    gtk_box_pack_start(GTK_BOX(sr), properties->status, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), sr, FALSE, FALSE, 0);
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_box_set_homogeneous(GTK_BOX(buttons), TRUE);
-    p->start = gtk_button_new_with_mnemonic("_Start");
-    p->stop = gtk_button_new_with_mnemonic("S_top");
+    properties->start = gtk_button_new_with_mnemonic("_Start");
+    properties->stop = gtk_button_new_with_mnemonic("S_top");
     GtkWidget *pause = gtk_button_new_with_mnemonic("_Pause");
     GtkWidget *resume = gtk_button_new_with_mnemonic("_Resume");
     /* systemd services can't be paused. */
     gtk_widget_set_sensitive(pause, FALSE);
     gtk_widget_set_sensitive(resume, FALSE);
-    g_signal_connect(p->start, "clicked", G_CALLBACK(on_props_start), p);
-    g_signal_connect(p->stop, "clicked", G_CALLBACK(on_props_stop), p);
-    gtk_box_pack_start(GTK_BOX(buttons), p->start, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(buttons), p->stop, TRUE, TRUE, 0);
+    g_signal_connect(properties->start, "clicked", G_CALLBACK(on_props_start), properties);
+    g_signal_connect(properties->stop, "clicked", G_CALLBACK(on_props_stop), properties);
+    gtk_box_pack_start(GTK_BOX(buttons), properties->start, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons), properties->stop, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(buttons), pause, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(buttons), resume, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(page), buttons, FALSE, FALSE, 0);
-    if (p->m->user)
+    if (properties->m->user)
         gtk_box_pack_start(GTK_BOX(page),
                            label("This service runs in your own service manager."), FALSE,
                            FALSE, 4);
@@ -1060,9 +1075,9 @@ static GtkWidget *general_page(props *p, GVariant *unit, GVariant *service) {
 
 /* A tree of dependency kinds ("Requires", ...), each with its units. */
 static GtkWidget *dep_tree(GVariant *unit, const char *const *keys, const char *const *titles,
-                           size_t n) {
+                           size_t count) {
     GtkTreeStore *ts = gtk_tree_store_new(2, G_TYPE_STRING, G_TYPE_STRING);
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         char **list = lookup_strv(unit, keys[i]);
         if (list == nullptr || list[0] == nullptr) {
             g_strfreev(list);
@@ -1070,8 +1085,9 @@ static GtkWidget *dep_tree(GVariant *unit, const char *const *keys, const char *
         }
         GtkTreeIter parent;
         gtk_tree_store_insert_with_values(ts, &parent, nullptr, -1, 0, "folder", 1, titles[i], -1);
-        for (char **u = list; *u != nullptr; u++)
-            gtk_tree_store_insert_with_values(ts, nullptr, &parent, -1, 0, "system-run", 1, *u, -1);
+        for (char **dependency = list; *dependency != nullptr; dependency++)
+            gtk_tree_store_insert_with_values(ts, nullptr, &parent, -1, 0, "system-run", 1,
+                                              *dependency, -1);
         g_strfreev(list);
     }
     GtkWidget *tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(ts));
@@ -1089,10 +1105,10 @@ static GtkWidget *dep_tree(GVariant *unit, const char *const *keys, const char *
     return scrolled(tv, 120);
 }
 
-static GtkWidget *dependencies_page(props *p, GVariant *unit) {
+static GtkWidget *dependencies_page(props *properties, GVariant *unit) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(page), 12);
-    char *name = xd_unit_display_name(p->id);
+    char *name = xd_unit_display_name(properties->id);
     char *text = g_strdup_printf("Some services depend on other services, system drivers or "
                                  "load order groups. If a system component is stopped, or is "
                                  "not running properly, dependent services can be affected.");
@@ -1119,9 +1135,9 @@ static GtkWidget *dependencies_page(props *p, GVariant *unit) {
 }
 
 /* The Properties box already open for `id`, brought to the front. */
-static bool present_properties(manager *m, const char *id) {
-    for (GList *l = m->dialogs; l != nullptr; l = l->next) {
-        props *open = l->data;
+static bool present_properties(manager *unit_manager, const char *id) {
+    for (GList *list = unit_manager->dialogs; list != nullptr; list = list->next) {
+        props *open = list->data;
         if (strcmp(open->id, id) == 0) {
             gtk_window_present(GTK_WINDOW(open->dialog));
             return true;
@@ -1130,51 +1146,52 @@ static bool present_properties(manager *m, const char *id) {
     return false;
 }
 
-static void open_properties(manager *m, const char *id, const char *path, GVariant *unit,
+static void open_properties(manager *unit_manager, const char *id, const char *path, GVariant *unit,
                             GVariant *service) {
     /* Asked for twice while the unit loaded. */
-    if (present_properties(m, id))
+    if (present_properties(unit_manager, id))
         return;
-    services *s = m->app;
-    props *p = g_new0(props, 1);
-    p->m = m;
-    p->id = g_strdup(id);
-    g_queue_init(&p->calls);
-    p->choice = -1;
-    p->cancel = g_cancellable_new();
-    p->path = g_strdup(path);
-    p->file_state = lookup_string(unit, "UnitFileState");
-    m->dialogs = g_list_prepend(m->dialogs, p);
+    services *console = unit_manager->app;
+    props *properties = g_new0(props, 1);
+    properties->m = unit_manager;
+    properties->id = g_strdup(id);
+    g_queue_init(&properties->calls);
+    properties->choice = -1;
+    properties->cancel = g_cancellable_new();
+    properties->path = g_strdup(path);
+    properties->file_state = lookup_string(unit, "UnitFileState");
+    unit_manager->dialogs = g_list_prepend(unit_manager->dialogs, properties);
 
     char *name = xd_unit_display_name(id);
-    char *title = g_strdup_printf("%s Properties (%s)", name, m->user ? "Your Services" :
-                                                                       "Local Computer");
-    p->dialog = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(p->dialog), title);
-    gtk_window_set_transient_for(GTK_WINDOW(p->dialog), GTK_WINDOW(s->window));
-    gtk_window_set_icon_name(GTK_WINDOW(p->dialog), "system-run");
-    gtk_window_set_resizable(GTK_WINDOW(p->dialog), FALSE);
+    char *title = g_strdup_printf("%s Properties (%s)", name,
+                                  unit_manager->user ? "Your Services" : "Local Computer");
+    properties->dialog = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(properties->dialog), title);
+    gtk_window_set_transient_for(GTK_WINDOW(properties->dialog), GTK_WINDOW(console->window));
+    gtk_window_set_icon_name(GTK_WINDOW(properties->dialog), "system-run");
+    gtk_window_set_resizable(GTK_WINDOW(properties->dialog), FALSE);
     g_free(title);
     g_free(name);
-    gtk_dialog_add_button(GTK_DIALOG(p->dialog), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(p->dialog), "Cancel", GTK_RESPONSE_CANCEL);
-    p->apply = gtk_dialog_add_button(GTK_DIALOG(p->dialog), "_Apply", GTK_RESPONSE_APPLY);
-    gtk_widget_set_sensitive(p->apply, FALSE);
-    gtk_dialog_set_default_response(GTK_DIALOG(p->dialog), GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(properties->dialog), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(properties->dialog), "Cancel", GTK_RESPONSE_CANCEL);
+    properties->apply =
+        gtk_dialog_add_button(GTK_DIALOG(properties->dialog), "_Apply", GTK_RESPONSE_APPLY);
+    gtk_widget_set_sensitive(properties->apply, FALSE);
+    gtk_dialog_set_default_response(GTK_DIALOG(properties->dialog), GTK_RESPONSE_OK);
 
     GtkWidget *nb = gtk_notebook_new();
     gtk_container_set_border_width(GTK_CONTAINER(nb), 6);
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), general_page(p, unit, service),
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), general_page(properties, unit, service),
                              gtk_label_new_with_mnemonic("_General"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), dependencies_page(p, unit),
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), dependencies_page(properties, unit),
                              gtk_label_new_with_mnemonic("_Dependencies"));
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(p->dialog))), nb, TRUE,
-                       TRUE, 0);
-    xd_gtk_notebook_ctrl_tab(p->dialog, GTK_NOTEBOOK(nb));
-    show_props_status(p);
-    g_signal_connect(p->dialog, "response", G_CALLBACK(on_props_response), p);
-    g_signal_connect(p->dialog, "destroy", G_CALLBACK(on_props_destroy), p);
-    gtk_widget_show_all(p->dialog);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(properties->dialog))), nb,
+                       TRUE, TRUE, 0);
+    xd_gtk_notebook_ctrl_tab(properties->dialog, GTK_NOTEBOOK(nb));
+    show_props_status(properties);
+    g_signal_connect(properties->dialog, "response", G_CALLBACK(on_props_response), properties);
+    g_signal_connect(properties->dialog, "destroy", G_CALLBACK(on_props_destroy), properties);
+    gtk_widget_show_all(properties->dialog);
 }
 
 /* The unit, loaded and read by asynchronous calls before its box opens:
@@ -1185,85 +1202,86 @@ typedef struct props_load {
     GVariant *unit;
 } props_load;
 
-static void props_load_free(props_load *l) {
-    g_free(l->id);
-    g_free(l->path);
-    if (l->unit != nullptr)
-        g_variant_unref(l->unit);
-    g_free(l);
+static void props_load_free(props_load *loading) {
+    g_free(loading->id);
+    g_free(loading->path);
+    if (loading->unit != nullptr)
+        g_variant_unref(loading->unit);
+    g_free(loading);
 }
 
 static void on_service_read(GObject *src, GAsyncResult *res, gpointer data) {
-    props_load *l = data;
+    props_load *loading = data;
     GVariant *service = get_all_finish(src, res);
-    open_properties(l->m, l->id, l->path, l->unit, service);
+    open_properties(loading->m, loading->id, loading->path, loading->unit, service);
     if (service != nullptr)
         g_variant_unref(service);
-    props_load_free(l);
+    props_load_free(loading);
 }
 
 static void on_unit_read(GObject *src, GAsyncResult *res, gpointer data) {
-    props_load *l = data;
-    l->unit = get_all_finish(src, res);
-    get_all(l->m, l->path, SD_SERVICE, on_service_read, l);
+    props_load *loading = data;
+    loading->unit = get_all_finish(src, res);
+    get_all(loading->m, loading->path, SD_SERVICE, on_service_read, loading);
 }
 
 static void on_unit_loaded(GObject *src, GAsyncResult *res, gpointer data) {
-    props_load *l = data;
+    props_load *loading = data;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr) {
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant == nullptr) {
         g_dbus_error_strip_remote_error(error);
-        xd_message_box(GTK_WINDOW(l->m->app->window), "Services", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       error->message);
+        xd_message_box(GTK_WINDOW(loading->m->app->window), "Services", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, error->message);
         g_error_free(error);
-        props_load_free(l);
+        props_load_free(loading);
         return;
     }
-    g_variant_get(r, "(o)", &l->path);
-    g_variant_unref(r);
-    get_all(l->m, l->path, SD_UNIT, on_unit_read, l);
+    g_variant_get(variant, "(o)", &loading->path);
+    g_variant_unref(variant);
+    get_all(loading->m, loading->path, SD_UNIT, on_unit_read, loading);
 }
 
-static void properties(manager *m, const char *id) {
-    if (present_properties(m, id))
+static void properties(manager *unit_manager, const char *id) {
+    if (present_properties(unit_manager, id))
         return;
-    props_load *l = g_new0(props_load, 1);
-    l->m = m;
-    l->id = g_strdup(id);
-    g_dbus_connection_call(m->bus, SD_NAME, SD_PATH, SD_MANAGER, "LoadUnit",
-                           g_variant_new("(s)", id), G_VARIANT_TYPE("(o)"),
-                           G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, on_unit_loaded, l);
+    props_load *loading = g_new0(props_load, 1);
+    loading->m = unit_manager;
+    loading->id = g_strdup(id);
+    g_dbus_connection_call(unit_manager->bus, SD_NAME, SD_PATH, SD_MANAGER, "LoadUnit",
+                           g_variant_new("(s)", id), G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE,
+                           5000, nullptr, on_unit_loaded, loading);
 }
 
-static void on_properties([[maybe_unused]] GtkWidget *w, gpointer data) {
-    services *s = data;
-    manager *m = nullptr;
+static void on_properties([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    services *console = data;
+    manager *unit_manager = nullptr;
     char *id = nullptr, *active = nullptr;
-    if (selected(s, &m, &id, &active))
-        properties(m, id);
+    if (selected(console, &unit_manager, &id, &active))
+        properties(unit_manager, id);
     g_free(id);
     g_free(active);
 }
 
-static void on_row_activated([[maybe_unused]] GtkTreeView *v, [[maybe_unused]] GtkTreePath *p,
-                             [[maybe_unused]] GtkTreeViewColumn *c, gpointer data) {
+static void on_row_activated([[maybe_unused]] GtkTreeView *tree_view,
+                             [[maybe_unused]] GtkTreePath *path,
+                             [[maybe_unused]] GtkTreeViewColumn *column, gpointer data) {
     on_properties(nullptr, data);
 }
 
-static void on_refresh([[maybe_unused]] GtkWidget *w, gpointer data) {
-    services *s = data;
-    refresh(current(s));
+static void on_refresh([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    services *console = data;
+    refresh(current(console));
 }
 
 /* ---- the window ------------------------------------------------------------------------ */
 
 static GtkWidget *menu_item(GtkWidget *menu, const char *text, GCallback cb, gpointer data) {
-    GtkWidget *i = gtk_menu_item_new_with_mnemonic(text);
+    GtkWidget *widget = gtk_menu_item_new_with_mnemonic(text);
     if (cb != nullptr)
-        g_signal_connect(i, "activate", cb, data);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), i);
-    return i;
+        g_signal_connect(widget, "activate", cb, data);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), widget);
+    return widget;
 }
 
 static void separator(GtkWidget *menu) {
@@ -1272,29 +1290,29 @@ static void separator(GtkWidget *menu) {
 
 /* Start, Stop, Pause, Resume, Restart: in the Action menu and the
  * context menu. */
-static GtkWidget *action_menu(services *s, bool keep) {
-    GtkWidget *m = gtk_menu_new();
-    GtkWidget *start = menu_item(m, "_Start", G_CALLBACK(on_start), s);
-    GtkWidget *stop = menu_item(m, "St_op", G_CALLBACK(on_stop), s);
-    GtkWidget *pause = menu_item(m, "_Pause", nullptr, nullptr);
-    GtkWidget *resume = menu_item(m, "Resu_me", nullptr, nullptr);
-    GtkWidget *restart = menu_item(m, "Restar_t", G_CALLBACK(on_restart), s);
+static GtkWidget *action_menu(services *console, bool keep) {
+    GtkWidget *widget = gtk_menu_new();
+    GtkWidget *start = menu_item(widget, "_Start", G_CALLBACK(on_start), console);
+    GtkWidget *stop = menu_item(widget, "St_op", G_CALLBACK(on_stop), console);
+    GtkWidget *pause = menu_item(widget, "_Pause", nullptr, nullptr);
+    GtkWidget *resume = menu_item(widget, "Resu_me", nullptr, nullptr);
+    GtkWidget *restart = menu_item(widget, "Restar_t", G_CALLBACK(on_restart), console);
     gtk_widget_set_sensitive(pause, FALSE);
     gtk_widget_set_sensitive(resume, FALSE);
-    separator(m);
-    menu_item(m, "Re_fresh", G_CALLBACK(on_refresh), s);
-    separator(m);
-    GtkWidget *prop = menu_item(m, "P_roperties", G_CALLBACK(on_properties), s);
+    separator(widget);
+    menu_item(widget, "Re_fresh", G_CALLBACK(on_refresh), console);
+    separator(widget);
+    GtkWidget *prop = menu_item(widget, "P_roperties", G_CALLBACK(on_properties), console);
     if (keep) {
-        s->mi_start = start;
-        s->mi_stop = stop;
-        s->mi_pause = pause;
-        s->mi_resume = resume;
-        s->mi_restart = restart;
-        s->mi_props = prop;
+        console->mi_start = start;
+        console->mi_stop = stop;
+        console->mi_pause = pause;
+        console->mi_resume = resume;
+        console->mi_restart = restart;
+        console->mi_props = prop;
     } else {
         char *id = nullptr, *active = nullptr;
-        bool have = selected(s, nullptr, &id, &active);
+        bool have = selected(console, nullptr, &id, &active);
         bool started = have && xd_unit_is_started(active);
         bool idle = have && !busy(active);
         gtk_widget_set_sensitive(start, idle && !started);
@@ -1304,7 +1322,7 @@ static GtkWidget *action_menu(services *s, bool keep) {
         g_free(id);
         g_free(active);
     }
-    return m;
+    return widget;
 }
 
 /* GTK deactivates a menu before running the chosen item, so destroying it
@@ -1319,7 +1337,7 @@ static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer dat
 }
 
 static gboolean on_button_press(GtkWidget *view, GdkEventButton *ev, gpointer data) {
-    services *s = data;
+    services *console = data;
     if (ev->type != GDK_BUTTON_PRESS || ev->button != GDK_BUTTON_SECONDARY)
         return FALSE;
     GtkTreePath *path = nullptr;
@@ -1328,7 +1346,7 @@ static gboolean on_button_press(GtkWidget *view, GdkEventButton *ev, gpointer da
         gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(view)), path);
         gtk_tree_path_free(path);
     }
-    GtkWidget *menu = action_menu(s, false);
+    GtkWidget *menu = action_menu(console, false);
     gtk_menu_attach_to_widget(GTK_MENU(menu), view, nullptr);
     g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
@@ -1341,22 +1359,23 @@ static void on_selection_changed([[maybe_unused]] GtkTreeSelection *sel, gpointe
 }
 
 static void on_switch_page([[maybe_unused]] GtkNotebook *nb, [[maybe_unused]] GtkWidget *page,
-                           [[maybe_unused]] guint n, gpointer data) {
-    services *s = data;
+                           [[maybe_unused]] guint page_number, gpointer data) {
+    services *console = data;
     /* After the switch: "switch-page" runs before the page changes. */
-    g_idle_add_once((GSourceOnceFunc)(void (*)(void))update_actions, s);
-    g_idle_add_once((GSourceOnceFunc)(void (*)(void))show_status, s);
+    g_idle_add_once((GSourceOnceFunc)(void (*)(void))update_actions, console);
+    g_idle_add_once((GSourceOnceFunc)(void (*)(void))show_status, console);
 }
 
-static GtkWidget *list_view(services *s, manager *m) {
-    m->store = gtk_list_store_new(NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
-    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(m->store), COL_NAME,
+static GtkWidget *list_view(services *console, manager *unit_manager) {
+    unit_manager->store = gtk_list_store_new(
+        NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+        G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(unit_manager->store), COL_NAME,
                                          GTK_SORT_ASCENDING);
-    m->view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(m->store));
-    g_object_unref(m->store);
-    g_signal_connect(m->store, "row-inserted", G_CALLBACK(on_row_inserted), m);
+    unit_manager->view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(unit_manager->store));
+    g_object_unref(unit_manager->store);
+    g_signal_connect(unit_manager->store, "row-inserted", G_CALLBACK(on_row_inserted),
+                     unit_manager);
     static const struct {
         const char *title;
         int col, width;
@@ -1381,125 +1400,127 @@ static GtkWidget *list_view(services *s, manager *m) {
         gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
         gtk_tree_view_column_set_fixed_width(col, cols[i].width);
         gtk_tree_view_column_set_sort_column_id(col, cols[i].col);
-        gtk_tree_view_append_column(GTK_TREE_VIEW(m->view), col);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(unit_manager->view), col);
     }
-    gtk_tree_view_set_search_column(GTK_TREE_VIEW(m->view), COL_NAME);
-    g_signal_connect(m->view, "row-activated", G_CALLBACK(on_row_activated), s);
-    g_signal_connect(m->view, "button-press-event", G_CALLBACK(on_button_press), s);
-    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(m->view)), "changed",
-                     G_CALLBACK(on_selection_changed), s);
+    gtk_tree_view_set_search_column(GTK_TREE_VIEW(unit_manager->view), COL_NAME);
+    g_signal_connect(unit_manager->view, "row-activated", G_CALLBACK(on_row_activated), console);
+    g_signal_connect(unit_manager->view, "button-press-event", G_CALLBACK(on_button_press),
+                     console);
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(unit_manager->view)), "changed",
+                     G_CALLBACK(on_selection_changed), console);
     GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(sc), m->view);
+    gtk_container_add(GTK_CONTAINER(sc), unit_manager->view);
     return sc;
 }
 
 static GtkToolItem *tool(GtkWidget *bar, const char *icon, const char *tip, GCallback cb,
                          gpointer data) {
-    GtkToolItem *t = gtk_tool_button_new(nullptr, tip);
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(t), icon);
-    gtk_widget_set_tooltip_text(GTK_WIDGET(t), tip);
+    GtkToolItem *tool_item = gtk_tool_button_new(nullptr, tip);
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(tool_item), icon);
+    gtk_widget_set_tooltip_text(GTK_WIDGET(tool_item), tip);
     if (cb != nullptr)
-        g_signal_connect(t, "clicked", cb, data);
-    gtk_toolbar_insert(GTK_TOOLBAR(bar), t, -1);
-    return t;
+        g_signal_connect(tool_item, "clicked", cb, data);
+    gtk_toolbar_insert(GTK_TOOLBAR(bar), tool_item, -1);
+    return tool_item;
 }
 
 static GtkWidget *link_button(const char *text, GCallback cb, gpointer data) {
-    GtkWidget *b = gtk_button_new_with_label(text);
-    gtk_button_set_relief(GTK_BUTTON(b), GTK_RELIEF_NONE);
-    gtk_widget_set_halign(b, GTK_ALIGN_START);
-    GtkWidget *l = gtk_bin_get_child(GTK_BIN(b));
+    GtkWidget *button = gtk_button_new_with_label(text);
+    gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+    gtk_widget_set_halign(button, GTK_ALIGN_START);
+    GtkWidget *child_label = gtk_bin_get_child(GTK_BIN(button));
     char *markup = g_markup_printf_escaped("<span foreground=\"#0000ff\" underline=\"single\">%s"
                                            "</span>",
                                            text);
-    gtk_label_set_markup(GTK_LABEL(l), markup);
+    gtk_label_set_markup(GTK_LABEL(child_label), markup);
     g_free(markup);
-    g_signal_connect(b, "clicked", cb, data);
-    return b;
+    g_signal_connect(button, "clicked", cb, data);
+    return button;
 }
 
 /* The extended view's left panel: the selected service, links to start
  * or stop it, and its description. */
-static GtkWidget *extended_panel(services *s) {
+static GtkWidget *extended_panel(services *console) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(box), 10);
     gtk_widget_set_size_request(box, 190, -1);
-    s->ext_name = label("");
-    gtk_label_set_line_wrap(GTK_LABEL(s->ext_name), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(s->ext_name), 22);
-    gtk_box_pack_start(GTK_BOX(box), s->ext_name, FALSE, FALSE, 0);
-    s->ext_start = link_button("Start the service", G_CALLBACK(on_start), s);
-    s->ext_stop = link_button("Stop the service", G_CALLBACK(on_stop), s);
-    s->ext_restart = link_button("Restart the service", G_CALLBACK(on_restart), s);
-    gtk_box_pack_start(GTK_BOX(box), s->ext_start, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), s->ext_stop, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), s->ext_restart, FALSE, FALSE, 0);
-    s->ext_desc = label("");
-    gtk_label_set_line_wrap(GTK_LABEL(s->ext_desc), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(s->ext_desc), 22);
-    gtk_widget_set_margin_top(s->ext_desc, 10);
-    gtk_box_pack_start(GTK_BOX(box), s->ext_desc, FALSE, FALSE, 0);
-    gtk_widget_set_no_show_all(s->ext_start, TRUE);
-    gtk_widget_set_no_show_all(s->ext_stop, TRUE);
-    gtk_widget_set_no_show_all(s->ext_restart, TRUE);
+    console->ext_name = label("");
+    gtk_label_set_line_wrap(GTK_LABEL(console->ext_name), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(console->ext_name), 22);
+    gtk_box_pack_start(GTK_BOX(box), console->ext_name, FALSE, FALSE, 0);
+    console->ext_start = link_button("Start the service", G_CALLBACK(on_start), console);
+    console->ext_stop = link_button("Stop the service", G_CALLBACK(on_stop), console);
+    console->ext_restart = link_button("Restart the service", G_CALLBACK(on_restart), console);
+    gtk_box_pack_start(GTK_BOX(box), console->ext_start, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), console->ext_stop, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), console->ext_restart, FALSE, FALSE, 0);
+    console->ext_desc = label("");
+    gtk_label_set_line_wrap(GTK_LABEL(console->ext_desc), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(console->ext_desc), 22);
+    gtk_widget_set_margin_top(console->ext_desc, 10);
+    gtk_box_pack_start(GTK_BOX(box), console->ext_desc, FALSE, FALSE, 0);
+    gtk_widget_set_no_show_all(console->ext_start, TRUE);
+    gtk_widget_set_no_show_all(console->ext_stop, TRUE);
+    gtk_widget_set_no_show_all(console->ext_restart, TRUE);
     return box;
 }
 
-static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
+static gboolean on_key(GtkWidget *widget, GdkEventKey *ev, gpointer data) {
     if (ev->keyval == GDK_KEY_F5) {
-        on_refresh(w, data);
+        on_refresh(widget, data);
         return TRUE;
     }
     if (ev->keyval == GDK_KEY_Return && (ev->state & GDK_MOD1_MASK)) {
-        on_properties(w, data);
+        on_properties(widget, data);
         return TRUE;
     }
     return FALSE;
 }
 
-static void on_exit([[maybe_unused]] GtkWidget *w, gpointer data) {
-    services *s = data;
-    gtk_widget_destroy(s->window);
+static void on_exit([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    services *console = data;
+    gtk_widget_destroy(console->window);
 }
 
-static void build(services *s) {
-    s->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(s->window), "Services");
-    gtk_window_set_icon_name(GTK_WINDOW(s->window), "system-run");
-    gtk_window_set_default_size(GTK_WINDOW(s->window), 900, 560);
-    g_signal_connect(s->window, "key-press-event", G_CALLBACK(on_key), s);
+static void build(services *console) {
+    console->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(console->window), "Services");
+    gtk_window_set_icon_name(GTK_WINDOW(console->window), "system-run");
+    gtk_window_set_default_size(GTK_WINDOW(console->window), 900, 560);
+    g_signal_connect(console->window, "key-press-event", G_CALLBACK(on_key), console);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(s->window), vbox);
+    gtk_container_add(GTK_CONTAINER(console->window), vbox);
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = menu_item(bar, "_File", nullptr, nullptr);
     GtkWidget *fm = gtk_menu_new();
-    menu_item(fm, "E_xit", G_CALLBACK(on_exit), s);
+    menu_item(fm, "E_xit", G_CALLBACK(on_exit), console);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), fm);
     GtkWidget *action = menu_item(bar, "_Action", nullptr, nullptr);
-    gtk_menu_item_set_submenu(GTK_MENU_ITEM(action), action_menu(s, true));
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(action), action_menu(console, true));
     GtkWidget *view = menu_item(bar, "_View", nullptr, nullptr);
     GtkWidget *vm = gtk_menu_new();
-    menu_item(vm, "_Refresh", G_CALLBACK(on_refresh), s);
+    menu_item(vm, "_Refresh", G_CALLBACK(on_refresh), console);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(view), vm);
     gtk_box_pack_start(GTK_BOX(vbox), bar, FALSE, FALSE, 0);
 
     GtkWidget *tb = gtk_toolbar_new();
     gtk_toolbar_set_style(GTK_TOOLBAR(tb), GTK_TOOLBAR_ICONS);
     gtk_toolbar_set_icon_size(GTK_TOOLBAR(tb), GTK_ICON_SIZE_SMALL_TOOLBAR);
-    s->tb_props = GTK_WIDGET(tool(tb, "document-properties", "Properties",
-                                  G_CALLBACK(on_properties), s));
-    tool(tb, "view-refresh", "Refresh", G_CALLBACK(on_refresh), s);
+    console->tb_props = GTK_WIDGET(
+        tool(tb, "document-properties", "Properties", G_CALLBACK(on_properties), console));
+    tool(tb, "view-refresh", "Refresh", G_CALLBACK(on_refresh), console);
     gtk_toolbar_insert(GTK_TOOLBAR(tb), gtk_separator_tool_item_new(), -1);
-    s->tb_start = GTK_WIDGET(tool(tb, "media-playback-start", "Start Service",
-                                  G_CALLBACK(on_start), s));
-    s->tb_stop = GTK_WIDGET(tool(tb, "media-playback-stop", "Stop Service", G_CALLBACK(on_stop),
-                                 s));
-    s->tb_pause = GTK_WIDGET(tool(tb, "media-playback-pause", "Pause Service", nullptr, nullptr));
-    gtk_widget_set_sensitive(s->tb_pause, FALSE);
-    s->tb_restart = GTK_WIDGET(tool(tb, "view-refresh-symbolic", "Restart Service",
-                                    G_CALLBACK(on_restart), s));
+    console->tb_start = GTK_WIDGET(
+        tool(tb, "media-playback-start", "Start Service", G_CALLBACK(on_start), console));
+    console->tb_stop =
+        GTK_WIDGET(tool(tb, "media-playback-stop", "Stop Service", G_CALLBACK(on_stop), console));
+    console->tb_pause =
+        GTK_WIDGET(tool(tb, "media-playback-pause", "Pause Service", nullptr, nullptr));
+    gtk_widget_set_sensitive(console->tb_pause, FALSE);
+    console->tb_restart = GTK_WIDGET(
+        tool(tb, "view-refresh-symbolic", "Restart Service", G_CALLBACK(on_restart), console));
     gtk_box_pack_start(GTK_BOX(vbox), tb, FALSE, FALSE, 0);
 
     /* "Services (Local)", as the console's banner. */
@@ -1514,48 +1535,48 @@ static void build(services *s) {
     gtk_box_pack_start(GTK_BOX(vbox), banner, FALSE, FALSE, 0);
 
     GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_box_pack_start(GTK_BOX(hbox), extended_panel(s), FALSE, FALSE, 0);
-    s->notebook = gtk_notebook_new();
-    gtk_notebook_set_tab_pos(GTK_NOTEBOOK(s->notebook), GTK_POS_BOTTOM);
+    gtk_box_pack_start(GTK_BOX(hbox), extended_panel(console), FALSE, FALSE, 0);
+    console->notebook = gtk_notebook_new();
+    gtk_notebook_set_tab_pos(GTK_NOTEBOOK(console->notebook), GTK_POS_BOTTOM);
     for (int i = 0; i < 2; i++) {
-        manager *m = &s->mgr[i];
-        gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), list_view(s, m),
+        manager *unit_manager = &console->mgr[i];
+        gtk_notebook_append_page(GTK_NOTEBOOK(console->notebook), list_view(console, unit_manager),
                                  gtk_label_new_with_mnemonic(i == 0 ? "S_ystem" : "_User"));
     }
-    g_signal_connect(s->notebook, "switch-page", G_CALLBACK(on_switch_page), s);
-    gtk_box_pack_start(GTK_BOX(hbox), s->notebook, TRUE, TRUE, 0);
+    g_signal_connect(console->notebook, "switch-page", G_CALLBACK(on_switch_page), console);
+    gtk_box_pack_start(GTK_BOX(hbox), console->notebook, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), hbox, TRUE, TRUE, 0);
 
-    s->status = label("");
-    gtk_widget_set_margin_start(s->status, 6);
-    gtk_widget_set_margin_top(s->status, 2);
-    gtk_widget_set_margin_bottom(s->status, 2);
-    gtk_box_pack_start(GTK_BOX(vbox), s->status, FALSE, FALSE, 0);
-    g_signal_connect(s->window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    console->status = label("");
+    gtk_widget_set_margin_start(console->status, 6);
+    gtk_widget_set_margin_top(console->status, 2);
+    gtk_widget_set_margin_bottom(console->status, 2);
+    gtk_box_pack_start(GTK_BOX(vbox), console->status, FALSE, FALSE, 0);
+    g_signal_connect(console->window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
 }
 
 int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.Services");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
-    static services s;
-    build(&s);
+    static services console;
+    build(&console);
     for (int i = 0; i < 2; i++) {
-        manager *m = &s.mgr[i];
-        m->app = &s;
-        m->user = i == 1;
-        m->rows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-        m->done = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-        manager_connect(m, m->user ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM);
-        refresh(m);
+        manager *unit_manager = &console.mgr[i];
+        unit_manager->app = &console;
+        unit_manager->user = i == 1;
+        unit_manager->rows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+        unit_manager->done = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+        manager_connect(unit_manager, unit_manager->user ? G_BUS_TYPE_SESSION : G_BUS_TYPE_SYSTEM);
+        refresh(unit_manager);
     }
     /* xd-services --user opens on the User tab. */
     for (int i = 1; i < argc; i++)
         if (strcmp(argv[i], "--user") == 0)
-            gtk_notebook_set_current_page(GTK_NOTEBOOK(s.notebook), 1);
-    gtk_widget_show_all(s.window);
-    update_actions(&s);
-    show_status(&s);
+            gtk_notebook_set_current_page(GTK_NOTEBOOK(console.notebook), 1);
+    gtk_widget_show_all(console.window);
+    update_actions(&console);
+    show_status(&console);
     gtk_main();
     return EXIT_SUCCESS;
 }

@@ -144,56 +144,58 @@ static const struct {
 
 /* ---- reading UDisks2 ---------------------------------------------------------------- */
 
-static GDBusProxy *iface(GDBusObject *o, const char *name) {
-    return o != nullptr ? G_DBUS_PROXY(g_dbus_object_get_interface(o, name)) : nullptr;
+static GDBusProxy *iface(GDBusObject *dbus_object, const char *name) {
+    return dbus_object != nullptr ? G_DBUS_PROXY(g_dbus_object_get_interface(dbus_object, name))
+                                  : nullptr;
 }
 
-static GVariant *prop(GDBusProxy *p, const char *name) {
-    return p != nullptr ? g_dbus_proxy_get_cached_property(p, name) : nullptr;
+static GVariant *prop(GDBusProxy *proxy, const char *name) {
+    return proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
 }
 
-static char *prop_str(GDBusProxy *p, const char *name) {
-    GVariant *v = prop(p, name);
-    char *s = nullptr;
-    if (v != nullptr && (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING) ||
-                         g_variant_is_of_type(v, G_VARIANT_TYPE_OBJECT_PATH)))
-        s = g_variant_dup_string(v, nullptr);
-    else if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BYTESTRING))
-        s = g_variant_dup_bytestring(v, nullptr);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return s != nullptr ? s : g_strdup("");
+static char *prop_str(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = prop(proxy, name);
+    char *text = nullptr;
+    if (variant != nullptr && (g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING) ||
+                               g_variant_is_of_type(variant, G_VARIANT_TYPE_OBJECT_PATH)))
+        text = g_variant_dup_string(variant, nullptr);
+    else if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BYTESTRING))
+        text = g_variant_dup_bytestring(variant, nullptr);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return text != nullptr ? text : g_strdup("");
 }
 
-static guint64 prop_u64(GDBusProxy *p, const char *name) {
-    GVariant *v = prop(p, name);
-    guint64 n = 0;
-    if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_UINT64))
-        n = g_variant_get_uint64(v);
-    else if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_UINT32))
-        n = g_variant_get_uint32(v);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return n;
+static guint64 prop_u64(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = prop(proxy, name);
+    guint64 value = 0;
+    if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_UINT64))
+        value = g_variant_get_uint64(variant);
+    else if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_UINT32))
+        value = g_variant_get_uint32(variant);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
-static bool prop_bool(GDBusProxy *p, const char *name) {
-    GVariant *v = prop(p, name);
-    bool b = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BOOLEAN) &&
-             g_variant_get_boolean(v);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return b;
+static bool prop_bool(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = prop(proxy, name);
+    bool value = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BOOLEAN) &&
+                 g_variant_get_boolean(variant);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 /* MountPoints (aay) as strings. */
-static char **prop_bytestrings(GDBusProxy *p, const char *name) {
-    GVariant *v = prop(p, name);
-    char **out = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BYTESTRING_ARRAY)
-                     ? g_variant_dup_bytestring_array(v, nullptr)
-                     : nullptr;
-    if (v != nullptr)
-        g_variant_unref(v);
+static char **prop_bytestrings(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = prop(proxy, name);
+    char **out =
+        variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BYTESTRING_ARRAY)
+            ? g_variant_dup_bytestring_array(variant, nullptr)
+            : nullptr;
+    if (variant != nullptr)
+        g_variant_unref(variant);
     return out != nullptr ? out : g_new0(char *, 1);
 }
 
@@ -202,11 +204,11 @@ static char **prop_bytestrings(GDBusProxy *p, const char *name) {
  * back. */
 static char **fstab_dirs(GDBusProxy *block, GPtrArray *items) {
     GPtrArray *dirs = g_ptr_array_new();
-    GVariant *v = prop(block, "Configuration");
-    if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE("a(sa{sv})"))) {
+    GVariant *variant = prop(block, "Configuration");
+    if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE("a(sa{sv})"))) {
         GVariantIter it;
         GVariant *entry = nullptr;
-        g_variant_iter_init(&it, v);
+        g_variant_iter_init(&it, variant);
         while ((entry = g_variant_iter_next_value(&it)) != nullptr) {
             const char *kind = nullptr;
             GVariant *details = nullptr;
@@ -223,278 +225,287 @@ static char **fstab_dirs(GDBusProxy *block, GPtrArray *items) {
             g_variant_unref(entry);
         }
     }
-    if (v != nullptr)
-        g_variant_unref(v);
+    if (variant != nullptr)
+        g_variant_unref(variant);
     g_ptr_array_add(dirs, nullptr);
     return (char **)g_ptr_array_free(dirs, FALSE);
 }
 
 /* An encrypted volume's own block (not its cleartext's): its LUKS UUID
  * and /etc/crypttab entries. */
-static void read_crypt(volume *v, GDBusObject *o) {
-    GDBusProxy *enc = iface(o, UD_ENC);
-    GDBusProxy *b = iface(o, UD_BLOCK);
-    v->encrypted = enc != nullptr;
-    g_free(v->luks_uuid);
-    v->luks_uuid = prop_str(b, "IdUUID");
-    if (v->crypttab_items != nullptr)
-        g_ptr_array_unref(v->crypttab_items);
-    v->crypttab_items = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
-    GVariant *c = prop(b, "Configuration");
-    if (c != nullptr && g_variant_is_of_type(c, G_VARIANT_TYPE("a(sa{sv})"))) {
+static void read_crypt(volume *volume_info, GDBusObject *dbus_object) {
+    GDBusProxy *enc = iface(dbus_object, UD_ENC);
+    GDBusProxy *proxy = iface(dbus_object, UD_BLOCK);
+    volume_info->encrypted = enc != nullptr;
+    g_free(volume_info->luks_uuid);
+    volume_info->luks_uuid = prop_str(proxy, "IdUUID");
+    if (volume_info->crypttab_items != nullptr)
+        g_ptr_array_unref(volume_info->crypttab_items);
+    volume_info->crypttab_items = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
+    GVariant *variant = prop(proxy, "Configuration");
+    if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE("a(sa{sv})"))) {
         GVariantIter it;
         GVariant *entry = nullptr;
-        g_variant_iter_init(&it, c);
+        g_variant_iter_init(&it, variant);
         while ((entry = g_variant_iter_next_value(&it)) != nullptr) {
             const char *kind = nullptr;
             g_variant_get(entry, "(&s@a{sv})", &kind, nullptr);
             if (strcmp(kind, "crypttab") == 0)
-                g_ptr_array_add(v->crypttab_items, g_variant_ref(entry));
+                g_ptr_array_add(volume_info->crypttab_items, g_variant_ref(entry));
             g_variant_unref(entry);
         }
     }
-    if (c != nullptr)
-        g_variant_unref(c);
+    if (variant != nullptr)
+        g_variant_unref(variant);
     g_clear_object(&enc);
-    g_clear_object(&b);
+    g_clear_object(&proxy);
 }
 
 static void volume_free(gpointer data) {
-    volume *v = data;
-    g_free(v->path);
-    g_free(v->fs_path);
-    g_free(v->device);
-    g_free(v->label);
-    g_free(v->id_type);
-    g_free(v->id_version);
-    g_free(v->id_usage);
-    g_strfreev(v->mounts);
-    g_strfreev(v->fstab);
-    if (v->fstab_items != nullptr)
-        g_ptr_array_unref(v->fstab_items);
-    g_free(v->uuid);
-    g_free(v->luks_uuid);
-    g_free(v->fs_type);
-    if (v->crypttab_items != nullptr)
-        g_ptr_array_unref(v->crypttab_items);
-    g_free(v->ptype);
-    g_free(v);
+    volume *volume_info = data;
+    g_free(volume_info->path);
+    g_free(volume_info->fs_path);
+    g_free(volume_info->device);
+    g_free(volume_info->label);
+    g_free(volume_info->id_type);
+    g_free(volume_info->id_version);
+    g_free(volume_info->id_usage);
+    g_strfreev(volume_info->mounts);
+    g_strfreev(volume_info->fstab);
+    if (volume_info->fstab_items != nullptr)
+        g_ptr_array_unref(volume_info->fstab_items);
+    g_free(volume_info->uuid);
+    g_free(volume_info->luks_uuid);
+    g_free(volume_info->fs_type);
+    if (volume_info->crypttab_items != nullptr)
+        g_ptr_array_unref(volume_info->crypttab_items);
+    g_free(volume_info->ptype);
+    g_free(volume_info);
 }
 
 static void disk_free(gpointer data) {
-    disk *d = data;
-    g_free(d->drive_path);
-    g_free(d->block_path);
-    g_free(d->device);
-    g_free(d->model);
-    g_free(d->serial);
-    g_free(d->bus);
-    g_free(d->table);
-    g_ptr_array_unref(d->vols);
-    if (d->segments != nullptr)
-        g_array_unref(d->segments);
-    g_free(d);
+    disk *disk_info = data;
+    g_free(disk_info->drive_path);
+    g_free(disk_info->block_path);
+    g_free(disk_info->device);
+    g_free(disk_info->model);
+    g_free(disk_info->serial);
+    g_free(disk_info->bus);
+    g_free(disk_info->table);
+    g_ptr_array_unref(disk_info->vols);
+    if (disk_info->segments != nullptr)
+        g_array_unref(disk_info->segments);
+    g_free(disk_info);
 }
 
-static bool mounted(const volume *v) { return v->mounts != nullptr && v->mounts[0] != nullptr; }
+static bool mounted(const volume *volume_info) {
+    return volume_info->mounts != nullptr && volume_info->mounts[0] != nullptr;
+}
 
 /* The block's filesystem details, from `fs` (itself or its cleartext). */
-static void read_fs(volume *v, GDBusObject *fs_obj) {
-    GDBusProxy *b = iface(fs_obj, UD_BLOCK);
-    GDBusProxy *f = iface(fs_obj, UD_FS);
-    GDBusProxy *s = iface(fs_obj, UD_SWAP);
-    g_free(v->label);
-    g_free(v->id_version);
-    g_free(v->id_usage);
-    v->label = prop_str(b, "IdLabel");
-    v->id_version = prop_str(b, "IdVersion");
-    v->id_usage = prop_str(b, "IdUsage");
-    g_free(v->fs_type);
-    v->fs_type = prop_str(b, "IdType");
-    if (!v->unlocked) {
-        g_free(v->id_type);
-        v->id_type = prop_str(b, "IdType");
+static void read_fs(volume *volume_info, GDBusObject *fs_obj) {
+    GDBusProxy *block_proxy = iface(fs_obj, UD_BLOCK);
+    GDBusProxy *fs_proxy = iface(fs_obj, UD_FS);
+    GDBusProxy *swap_proxy = iface(fs_obj, UD_SWAP);
+    g_free(volume_info->label);
+    g_free(volume_info->id_version);
+    g_free(volume_info->id_usage);
+    volume_info->label = prop_str(block_proxy, "IdLabel");
+    volume_info->id_version = prop_str(block_proxy, "IdVersion");
+    volume_info->id_usage = prop_str(block_proxy, "IdUsage");
+    g_free(volume_info->fs_type);
+    volume_info->fs_type = prop_str(block_proxy, "IdType");
+    if (!volume_info->unlocked) {
+        g_free(volume_info->id_type);
+        volume_info->id_type = prop_str(block_proxy, "IdType");
     }
-    g_strfreev(v->mounts);
-    v->mounts = f != nullptr ? prop_bytestrings(f, "MountPoints") : g_new0(char *, 1);
-    g_strfreev(v->fstab);
-    if (v->fstab_items != nullptr)
-        g_ptr_array_unref(v->fstab_items);
-    v->fstab_items = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
-    v->fstab = fstab_dirs(b, v->fstab_items);
-    g_free(v->uuid);
-    v->uuid = prop_str(b, "IdUUID");
-    v->has_fs = f != nullptr;
-    v->swap_active = s != nullptr && prop_bool(s, "Active");
-    g_free(v->fs_path);
-    v->fs_path = g_strdup(g_dbus_object_get_object_path(fs_obj));
+    g_strfreev(volume_info->mounts);
+    volume_info->mounts =
+        fs_proxy != nullptr ? prop_bytestrings(fs_proxy, "MountPoints") : g_new0(char *, 1);
+    g_strfreev(volume_info->fstab);
+    if (volume_info->fstab_items != nullptr)
+        g_ptr_array_unref(volume_info->fstab_items);
+    volume_info->fstab_items = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
+    volume_info->fstab = fstab_dirs(block_proxy, volume_info->fstab_items);
+    g_free(volume_info->uuid);
+    volume_info->uuid = prop_str(block_proxy, "IdUUID");
+    volume_info->has_fs = fs_proxy != nullptr;
+    volume_info->swap_active = swap_proxy != nullptr && prop_bool(swap_proxy, "Active");
+    g_free(volume_info->fs_path);
+    volume_info->fs_path = g_strdup(g_dbus_object_get_object_path(fs_obj));
     struct statvfs st;
-    if (mounted(v) && statvfs(v->mounts[0], &st) == 0) {
-        v->fs_total = (guint64)st.f_blocks * st.f_frsize;
-        v->fs_free = (guint64)st.f_bavail * st.f_frsize;
+    if (mounted(volume_info) && statvfs(volume_info->mounts[0], &st) == 0) {
+        volume_info->fs_total = (guint64)st.f_blocks * st.f_frsize;
+        volume_info->fs_free = (guint64)st.f_bavail * st.f_frsize;
     }
-    g_clear_object(&b);
-    g_clear_object(&f);
-    g_clear_object(&s);
+    g_clear_object(&block_proxy);
+    g_clear_object(&fs_proxy);
+    g_clear_object(&swap_proxy);
 }
 
-static int compare_disks(gconstpointer a, gconstpointer b) {
-    const disk *x = a, *y = b; /* g_ptr_array_sort_values passes the elements */
-    if (x->optical != y->optical)
-        return x->optical ? 1 : -1;
-    return x->number - y->number;
+static int compare_disks(gconstpointer left, gconstpointer right) {
+    const disk *left_disk = left,
+               *right_disk = right; /* g_ptr_array_sort_values passes the elements */
+    if (left_disk->optical != right_disk->optical)
+        return left_disk->optical ? 1 : -1;
+    return left_disk->number - right_disk->number;
 }
 
-static int compare_vols(gconstpointer a, gconstpointer b) {
-    const volume *x = a, *y = b;
-    return x->offset < y->offset ? -1 : x->offset > y->offset ? 1 : 0;
+static int compare_vols(gconstpointer left, gconstpointer right) {
+    const volume *left_volume = left, *right_volume = right;
+    return left_volume->offset < right_volume->offset   ? -1
+           : left_volume->offset > right_volume->offset ? 1
+                                                        : 0;
 }
 
-static int compare_keys(gconstpointer a, gconstpointer b, gpointer keys) {
-    return g_strcmp0(g_hash_table_lookup(keys, *(disk *const *)a),
-                     g_hash_table_lookup(keys, *(disk *const *)b));
+static int compare_keys(gconstpointer left, gconstpointer right, gpointer keys) {
+    return g_strcmp0(g_hash_table_lookup(keys, *(disk *const *)left),
+                     g_hash_table_lookup(keys, *(disk *const *)right));
 }
 
-static void layout_disk(disk *d) {
-    xd_disk_part *parts = g_new0(xd_disk_part, d->vols->len + 1);
-    for (guint i = 0; i < d->vols->len; i++) {
-        volume *v = g_ptr_array_index(d->vols, i);
-        parts[i] = (xd_disk_part){
-            .offset = v->offset, .size = v->size, .index = (int)i, .container = v->container};
+static void layout_disk(disk *disk_info) {
+    xd_disk_part *parts = g_new0(xd_disk_part, disk_info->vols->len + 1);
+    for (guint i = 0; i < disk_info->vols->len; i++) {
+        volume *volume_info = g_ptr_array_index(disk_info->vols, i);
+        parts[i] = (xd_disk_part){.offset = volume_info->offset,
+                                  .size = volume_info->size,
+                                  .index = (int)i,
+                                  .container = volume_info->container};
     }
-    if (d->segments != nullptr)
-        g_array_unref(d->segments);
-    d->segments = xd_disk_segments(d->size, parts, d->vols->len);
+    if (disk_info->segments != nullptr)
+        g_array_unref(disk_info->segments);
+    disk_info->segments = xd_disk_segments(disk_info->size, parts, disk_info->vols->len);
     g_free(parts);
 }
 
 /* Everything from UDisks2's objects. */
-static GPtrArray *read_disks(dm *m) {
+static GPtrArray *read_disks(dm *disk_manager) {
     GPtrArray *disks = g_ptr_array_new_with_free_func(disk_free);
-    if (m->om == nullptr)
+    if (disk_manager->om == nullptr)
         return disks;
-    GList *objects = g_dbus_object_manager_get_objects(m->om);
+    GList *objects = g_dbus_object_manager_get_objects(disk_manager->om);
     GHashTable *by_block = g_hash_table_new(g_str_hash, g_str_equal); /* block path -> disk */
     GHashTable *keys = g_hash_table_new_full(g_direct_hash, g_direct_equal, nullptr, g_free);
     /* Drives, and the block of each (the one that isn't a partition). */
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *drive = iface(l->data, UD_DRIVE);
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *drive = iface(list->data, UD_DRIVE);
         if (drive == nullptr)
             continue;
-        disk *d = g_new0(disk, 1);
-        d->drive_path = g_strdup(g_dbus_object_get_object_path(l->data));
-        d->model = prop_str(drive, "Model");
+        disk *disk_info = g_new0(disk, 1);
+        disk_info->drive_path = g_strdup(g_dbus_object_get_object_path(list->data));
+        disk_info->model = prop_str(drive, "Model");
         char *vendor = prop_str(drive, "Vendor");
         if (vendor[0] != '\0') {
-            char *full = g_strdup_printf("%s %s", vendor, d->model);
-            g_free(d->model);
-            d->model = full;
+            char *full = g_strdup_printf("%s %s", vendor, disk_info->model);
+            g_free(disk_info->model);
+            disk_info->model = full;
         }
         g_free(vendor);
-        d->serial = prop_str(drive, "Serial");
-        d->bus = prop_str(drive, "ConnectionBus");
-        d->size = prop_u64(drive, "Size");
-        d->removable = prop_bool(drive, "Removable") || prop_bool(drive, "MediaRemovable");
-        d->ejectable = prop_bool(drive, "Ejectable");
-        d->optical = prop_bool(drive, "Optical") ||
-                     g_str_has_prefix(d->model, "DVD") || g_str_has_prefix(d->model, "CD");
-        d->media = prop_bool(drive, "MediaAvailable");
-        d->vols = g_ptr_array_new_with_free_func(volume_free);
-        g_hash_table_insert(keys, d, prop_str(drive, "SortKey"));
-        g_ptr_array_add(disks, d);
+        disk_info->serial = prop_str(drive, "Serial");
+        disk_info->bus = prop_str(drive, "ConnectionBus");
+        disk_info->size = prop_u64(drive, "Size");
+        disk_info->removable = prop_bool(drive, "Removable") || prop_bool(drive, "MediaRemovable");
+        disk_info->ejectable = prop_bool(drive, "Ejectable");
+        disk_info->optical = prop_bool(drive, "Optical") ||
+                             g_str_has_prefix(disk_info->model, "DVD") ||
+                             g_str_has_prefix(disk_info->model, "CD");
+        disk_info->media = prop_bool(drive, "MediaAvailable");
+        disk_info->vols = g_ptr_array_new_with_free_func(volume_free);
+        g_hash_table_insert(keys, disk_info, prop_str(drive, "SortKey"));
+        g_ptr_array_add(disks, disk_info);
         g_object_unref(drive);
     }
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *b = iface(l->data, UD_BLOCK);
-        GDBusProxy *part = iface(l->data, UD_PART);
-        if (b != nullptr && part == nullptr) {
-            char *drive = prop_str(b, "Drive");
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *proxy = iface(list->data, UD_BLOCK);
+        GDBusProxy *part = iface(list->data, UD_PART);
+        if (proxy != nullptr && part == nullptr) {
+            char *drive = prop_str(proxy, "Drive");
             for (guint i = 0; i < disks->len; i++) {
-                disk *d = g_ptr_array_index(disks, i);
-                if (d->block_path != nullptr || strcmp(d->drive_path, drive) != 0)
+                disk *disk_info = g_ptr_array_index(disks, i);
+                if (disk_info->block_path != nullptr || strcmp(disk_info->drive_path, drive) != 0)
                     continue;
                 /* Not an unlocked volume's cleartext, which has the drive too. */
-                char *backing = prop_str(b, "CryptoBackingDevice");
+                char *backing = prop_str(proxy, "CryptoBackingDevice");
                 bool cleartext = backing[0] != '\0' && strcmp(backing, "/") != 0;
                 g_free(backing);
                 if (!cleartext) {
-                    d->block_path = g_strdup(g_dbus_object_get_object_path(l->data));
-                    d->device = prop_str(b, "PreferredDevice");
-                    guint64 size = prop_u64(b, "Size");
+                    disk_info->block_path = g_strdup(g_dbus_object_get_object_path(list->data));
+                    disk_info->device = prop_str(proxy, "PreferredDevice");
+                    guint64 size = prop_u64(proxy, "Size");
                     if (size > 0)
-                        d->size = size;
-                    GDBusProxy *table = iface(l->data, UD_TABLE);
-                    d->table = table != nullptr ? prop_str(table, "Type") : nullptr;
+                        disk_info->size = size;
+                    GDBusProxy *table = iface(list->data, UD_TABLE);
+                    disk_info->table = table != nullptr ? prop_str(table, "Type") : nullptr;
                     g_clear_object(&table);
-                    g_hash_table_insert(by_block, d->block_path, d);
+                    g_hash_table_insert(by_block, disk_info->block_path, disk_info);
                     /* A filesystem on the whole disk: a USB "superfloppy" or a CD. */
-                    char *usage = prop_str(b, "IdUsage");
-                    if (d->table == nullptr && usage[0] != '\0') {
-                        volume *v = g_new0(volume, 1);
-                        v->d = d;
-                        v->path = g_strdup(d->block_path);
-                        v->device = g_strdup(d->device);
-                        v->size = d->size;
-                        v->whole_disk = true;
-                        v->id_type = prop_str(b, "IdType");
-                        read_fs(v, l->data);
-                        read_crypt(v, l->data);
-                        g_ptr_array_add(d->vols, v);
+                    char *usage = prop_str(proxy, "IdUsage");
+                    if (disk_info->table == nullptr && usage[0] != '\0') {
+                        volume *volume_info = g_new0(volume, 1);
+                        volume_info->d = disk_info;
+                        volume_info->path = g_strdup(disk_info->block_path);
+                        volume_info->device = g_strdup(disk_info->device);
+                        volume_info->size = disk_info->size;
+                        volume_info->whole_disk = true;
+                        volume_info->id_type = prop_str(proxy, "IdType");
+                        read_fs(volume_info, list->data);
+                        read_crypt(volume_info, list->data);
+                        g_ptr_array_add(disk_info->vols, volume_info);
                     }
                     g_free(usage);
                 }
             }
             g_free(drive);
         }
-        g_clear_object(&b);
+        g_clear_object(&proxy);
         g_clear_object(&part);
     }
     /* Partitions, by their table. */
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *part = iface(l->data, UD_PART);
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *part = iface(list->data, UD_PART);
         if (part == nullptr)
             continue;
         char *table = prop_str(part, "Table");
-        disk *d = g_hash_table_lookup(by_block, table);
+        disk *disk_info = g_hash_table_lookup(by_block, table);
         g_free(table);
-        if (d != nullptr) {
-            GDBusProxy *b = iface(l->data, UD_BLOCK);
-            volume *v = g_new0(volume, 1);
-            v->d = d;
-            v->path = g_strdup(g_dbus_object_get_object_path(l->data));
-            v->device = prop_str(b, "PreferredDevice");
-            v->partition = true;
-            v->offset = prop_u64(part, "Offset");
-            v->size = prop_u64(part, "Size");
-            v->flags = prop_u64(part, "Flags");
-            v->number = (guint)prop_u64(part, "Number");
-            v->ptype = prop_str(part, "Type");
-            v->container = prop_bool(part, "IsContainer");
-            v->contained = prop_bool(part, "IsContained");
-            v->id_type = prop_str(b, "IdType");
-            read_fs(v, l->data);
-            read_crypt(v, l->data);
-            g_ptr_array_add(d->vols, v);
-            g_clear_object(&b);
+        if (disk_info != nullptr) {
+            GDBusProxy *proxy = iface(list->data, UD_BLOCK);
+            volume *volume_info = g_new0(volume, 1);
+            volume_info->d = disk_info;
+            volume_info->path = g_strdup(g_dbus_object_get_object_path(list->data));
+            volume_info->device = prop_str(proxy, "PreferredDevice");
+            volume_info->partition = true;
+            volume_info->offset = prop_u64(part, "Offset");
+            volume_info->size = prop_u64(part, "Size");
+            volume_info->flags = prop_u64(part, "Flags");
+            volume_info->number = (guint)prop_u64(part, "Number");
+            volume_info->ptype = prop_str(part, "Type");
+            volume_info->container = prop_bool(part, "IsContainer");
+            volume_info->contained = prop_bool(part, "IsContained");
+            volume_info->id_type = prop_str(proxy, "IdType");
+            read_fs(volume_info, list->data);
+            read_crypt(volume_info, list->data);
+            g_ptr_array_add(disk_info->vols, volume_info);
+            g_clear_object(&proxy);
         }
         g_object_unref(part);
     }
     /* Unlocked encrypted volumes: show what's inside. */
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *b = iface(l->data, UD_BLOCK);
-        char *backing = b != nullptr ? prop_str(b, "CryptoBackingDevice") : g_strdup("/");
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *proxy = iface(list->data, UD_BLOCK);
+        char *backing = proxy != nullptr ? prop_str(proxy, "CryptoBackingDevice") : g_strdup("/");
         for (guint i = 0; strcmp(backing, "/") != 0 && i < disks->len; i++) {
-            disk *d = g_ptr_array_index(disks, i);
-            for (guint k = 0; k < d->vols->len; k++) {
-                volume *v = g_ptr_array_index(d->vols, k);
-                if (strcmp(v->path, backing) == 0) {
-                    v->unlocked = true;
-                    read_fs(v, l->data);
+            disk *disk_info = g_ptr_array_index(disks, i);
+            for (guint k = 0; k < disk_info->vols->len; k++) {
+                volume *volume_info = g_ptr_array_index(disk_info->vols, k);
+                if (strcmp(volume_info->path, backing) == 0) {
+                    volume_info->unlocked = true;
+                    read_fs(volume_info, list->data);
                 }
             }
         }
         g_free(backing);
-        g_clear_object(&b);
+        g_clear_object(&proxy);
     }
     g_list_free_full(objects, g_object_unref);
     g_hash_table_unref(by_block);
@@ -503,17 +514,17 @@ static GPtrArray *read_disks(dm *m) {
     g_ptr_array_sort_with_data(disks, compare_keys, keys);
     int n_disk = 0, n_cd = 0;
     for (guint i = 0; i < disks->len; i++) {
-        disk *d = g_ptr_array_index(disks, i);
-        d->number = d->optical ? n_cd++ : n_disk++;
-        g_ptr_array_sort_values(d->vols, compare_vols);
-        for (guint k = 0; k < d->vols->len; k++) {
-            volume *v = g_ptr_array_index(d->vols, k);
-            for (char **mp = v->mounts; mp != nullptr && *mp != nullptr; mp++)
+        disk *disk_info = g_ptr_array_index(disks, i);
+        disk_info->number = disk_info->optical ? n_cd++ : n_disk++;
+        g_ptr_array_sort_values(disk_info->vols, compare_vols);
+        for (guint k = 0; k < disk_info->vols->len; k++) {
+            volume *volume_info = g_ptr_array_index(disk_info->vols, k);
+            for (char **mp = volume_info->mounts; mp != nullptr && *mp != nullptr; mp++)
                 if (xd_mount_is_system(*mp))
-                    d->system = true;
-            d->system |= v->swap_active;
+                    disk_info->system = true;
+            disk_info->system |= volume_info->swap_active;
         }
-        layout_disk(d);
+        layout_disk(disk_info);
     }
     g_hash_table_unref(keys);
     g_ptr_array_sort_values(disks, compare_disks);
@@ -527,132 +538,141 @@ static const char *dev_name(const char *device) {
     return slash != nullptr ? slash + 1 : (device != nullptr ? device : "");
 }
 
-static char *disk_name(const disk *d) {
-    return g_strdup_printf("%s %d", d->optical ? "CD-ROM" : "Disk", d->number);
+static char *disk_name(const disk *disk_info) {
+    return g_strdup_printf("%s %d", disk_info->optical ? "CD-ROM" : "Disk", disk_info->number);
 }
 
 /* "Data (/run/media/me/Data)", "(sdb1)": the Volume column. */
-static char *volume_name(const volume *v) {
-    const char *where = mounted(v) ? v->mounts[0] : dev_name(v->device);
-    return v->label != nullptr && v->label[0] != '\0'
-               ? g_strdup_printf("%s (%s)", v->label, where)
+static char *volume_name(const volume *volume_info) {
+    const char *where =
+        mounted(volume_info) ? volume_info->mounts[0] : dev_name(volume_info->device);
+    return volume_info->label != nullptr && volume_info->label[0] != '\0'
+               ? g_strdup_printf("%s (%s)", volume_info->label, where)
                : g_strdup_printf("(%s)", where);
 }
 
-static char *volume_fs(const volume *v) {
-    char *fs = xd_disk_fs_label(v->unlocked ? v->fs_type : v->id_type, v->id_version);
-    if (v->unlocked && v->has_fs) {
+static char *volume_fs(const volume *volume_info) {
+    char *fs = xd_disk_fs_label(volume_info->unlocked ? volume_info->fs_type : volume_info->id_type,
+                                volume_info->id_version);
+    if (volume_info->unlocked && volume_info->has_fs) {
         /* What's inside, read into fs_type, id_version and label by
          * read_fs. */
         char *out = g_strdup_printf("%s (encrypted)", fs);
         g_free(fs);
         return out;
     }
-    if (fs[0] == '\0' && v->partition && !v->container) {
+    if (fs[0] == '\0' && volume_info->partition && !volume_info->container) {
         g_free(fs);
         return g_strdup("RAW");
     }
     return fs;
 }
 
-static bool volume_active(const volume *v) {
-    return g_strcmp0(v->d->table, "dos") == 0 && (v->flags & DOS_ACTIVE) != 0;
+static bool volume_active(const volume *volume_info) {
+    return g_strcmp0(volume_info->d->table, "dos") == 0 && (volume_info->flags & DOS_ACTIVE) != 0;
 }
 
-static char *volume_status(const volume *v) {
-    return xd_volume_status((const char *const *)v->mounts, v->swap_active,
-                            xd_part_type_is_esp(v->ptype), volume_active(v));
+static char *volume_status(const volume *volume_info) {
+    return xd_volume_status((const char *const *)volume_info->mounts, volume_info->swap_active,
+                            xd_part_type_is_esp(volume_info->ptype), volume_active(volume_info));
 }
 
 /* "Disk 1 Partition 2 (sdb2), 2.00 GB NTFS "Data"", for confirmations. */
-static char *volume_description(const volume *v) {
-    char *dn = disk_name(v->d);
-    char *size = xd_disk_size_text(v->size);
-    char *fs = volume_fs(v);
-    GString *s = g_string_new(dn);
-    if (v->partition)
-        g_string_append_printf(s, " Partition %u", v->number);
-    g_string_append_printf(s, " (%s), %s", dev_name(v->device), size);
-    if (v->container)
-        g_string_append(s, " extended partition");
+static char *volume_description(const volume *volume_info) {
+    char *dn = disk_name(volume_info->d);
+    char *size = xd_disk_size_text(volume_info->size);
+    char *fs = volume_fs(volume_info);
+    GString *string = g_string_new(dn);
+    if (volume_info->partition)
+        g_string_append_printf(string, " Partition %u", volume_info->number);
+    g_string_append_printf(string, " (%s), %s", dev_name(volume_info->device), size);
+    if (volume_info->container)
+        g_string_append(string, " extended partition");
     else if (fs[0] != '\0')
-        g_string_append_printf(s, " %s", fs);
-    if (v->label != nullptr && v->label[0] != '\0')
-        g_string_append_printf(s, " \"%s\"", v->label);
+        g_string_append_printf(string, " %s", fs);
+    if (volume_info->label != nullptr && volume_info->label[0] != '\0')
+        g_string_append_printf(string, " \"%s\"", volume_info->label);
     g_free(dn);
     g_free(size);
     g_free(fs);
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
 /* ---- selection ---------------------------------------------------------------------- */
 
-static volume *seg_volume(const disk *d, int seg) {
-    if (d == nullptr || seg < 0 || (guint)seg >= d->segments->len)
+static volume *seg_volume(const disk *disk_info, int seg) {
+    if (disk_info == nullptr || seg < 0 || (guint)seg >= disk_info->segments->len)
         return nullptr;
-    const xd_disk_segment *s = &g_array_index(d->segments, xd_disk_segment, seg);
-    return s->index >= 0 ? g_ptr_array_index(d->vols, (guint)s->index) : nullptr;
+    const xd_disk_segment *disk_segment = &g_array_index(disk_info->segments, xd_disk_segment, seg);
+    return disk_segment->index >= 0 ? g_ptr_array_index(disk_info->vols, (guint)disk_segment->index)
+                                    : nullptr;
 }
 
-static const xd_disk_segment *sel_segment(dm *m) {
-    if (m->sel.d == nullptr || m->sel.seg < 0 || (guint)m->sel.seg >= m->sel.d->segments->len)
+static const xd_disk_segment *sel_segment(dm *disk_manager) {
+    if (disk_manager->sel.d == nullptr || disk_manager->sel.seg < 0 ||
+        (guint)disk_manager->sel.seg >= disk_manager->sel.d->segments->len)
         return nullptr;
-    return &g_array_index(m->sel.d->segments, xd_disk_segment, (guint)m->sel.seg);
+    return &g_array_index(disk_manager->sel.d->segments, xd_disk_segment,
+                          (guint)disk_manager->sel.seg);
 }
 
-static volume *sel_volume(dm *m) { return seg_volume(m->sel.d, m->sel.seg); }
+static volume *sel_volume(dm *disk_manager) {
+    return seg_volume(disk_manager->sel.d, disk_manager->sel.seg);
+}
 
 /* The extended partition of the selected disk, if it has one. */
-static volume *extended_of(const disk *d) {
-    for (guint i = 0; d != nullptr && i < d->vols->len; i++) {
-        volume *v = g_ptr_array_index(d->vols, i);
-        if (v->container)
-            return v;
+static volume *extended_of(const disk *disk_info) {
+    for (guint i = 0; disk_info != nullptr && i < disk_info->vols->len; i++) {
+        volume *volume_info = g_ptr_array_index(disk_info->vols, i);
+        if (volume_info->container)
+            return volume_info;
     }
     return nullptr;
 }
 
-static void show_selection_status(dm *m);
-static void fill_action_menu(dm *m);
+static void show_selection_status(dm *disk_manager);
+static void fill_action_menu(dm *disk_manager);
 
-static void select_volume_row(dm *m) {
-    volume *v = sel_volume(m);
-    GtkTreeSelection *ts = gtk_tree_view_get_selection(GTK_TREE_VIEW(m->list));
-    m->updating = true;
+static void select_volume_row(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
+    GtkTreeSelection *ts = gtk_tree_view_get_selection(GTK_TREE_VIEW(disk_manager->list));
+    disk_manager->updating = true;
     gtk_tree_selection_unselect_all(ts);
     GtkTreeIter it;
-    bool ok = v != nullptr && gtk_tree_model_get_iter_first(GTK_TREE_MODEL(m->store), &it);
+    bool ok = volume_info != nullptr &&
+              gtk_tree_model_get_iter_first(GTK_TREE_MODEL(disk_manager->store), &it);
     while (ok) {
         volume *rv = nullptr;
-        gtk_tree_model_get(GTK_TREE_MODEL(m->store), &it, COL_VOL, &rv, -1);
-        if (rv == v) {
+        gtk_tree_model_get(GTK_TREE_MODEL(disk_manager->store), &it, COL_VOL, &rv, -1);
+        if (rv == volume_info) {
             gtk_tree_selection_select_iter(ts, &it);
             break;
         }
-        ok = gtk_tree_model_iter_next(GTK_TREE_MODEL(m->store), &it);
+        ok = gtk_tree_model_iter_next(GTK_TREE_MODEL(disk_manager->store), &it);
     }
-    m->updating = false;
+    disk_manager->updating = false;
 }
 
-/* Redraws disk `d`'s row of the map. */
-static void queue_draw_disk(dm *m, const disk *d) {
-    for (guint i = 0; d != nullptr && i < m->disks->len; i++)
-        if (g_ptr_array_index(m->disks, i) == d)
-            gtk_widget_queue_draw_area(m->map, 0, MARGIN + (int)i * (ROW_H + ROW_GAP),
-                                       gtk_widget_get_allocated_width(m->map), ROW_H + 1);
+/* Redraws disk `disk_info`'s row of the map. */
+static void queue_draw_disk(dm *disk_manager, const disk *disk_info) {
+    for (guint i = 0; disk_info != nullptr && i < disk_manager->disks->len; i++)
+        if (g_ptr_array_index(disk_manager->disks, i) == disk_info)
+            gtk_widget_queue_draw_area(disk_manager->map, 0, MARGIN + (int)i * (ROW_H + ROW_GAP),
+                                       gtk_widget_get_allocated_width(disk_manager->map),
+                                       ROW_H + 1);
 }
 
 /* Moves the selection, redrawing only the rows it leaves and enters. */
-static void move_selection(dm *m, disk *d, int seg) {
-    queue_draw_disk(m, m->sel.d);
-    m->sel = (selection){.d = d, .seg = seg};
-    queue_draw_disk(m, d);
+static void move_selection(dm *disk_manager, disk *disk_info, int seg) {
+    queue_draw_disk(disk_manager, disk_manager->sel.d);
+    disk_manager->sel = (selection){.d = disk_info, .seg = seg};
+    queue_draw_disk(disk_manager, disk_info);
 }
 
-static void set_selection(dm *m, disk *d, int seg) {
-    move_selection(m, d, seg);
-    select_volume_row(m);
-    show_selection_status(m);
+static void set_selection(dm *disk_manager, disk *disk_info, int seg) {
+    move_selection(disk_manager, disk_info, seg);
+    select_volume_row(disk_manager);
+    show_selection_status(disk_manager);
 }
 
 /* ---- capabilities ----------------------------------------------------------------- */
@@ -672,121 +692,124 @@ typedef struct capability_ask {
 } capability_ask;
 
 static void on_capability(GObject *src, GAsyncResult *res, gpointer data) {
-    capability_ask *a = data;
-    dm *m = a->m;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
-    if (r == nullptr) {
+    capability_ask *query = data;
+    dm *disk_manager = query->m;
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    if (variant == nullptr) {
         /* No answer: asked again at the next refresh. */
-        g_hash_table_remove(m->asked, a->key);
-    } else if (a->format) {
+        g_hash_table_remove(disk_manager->asked, query->key);
+    } else if (query->format) {
         gboolean available = FALSE;
-        g_variant_get(r, "((b&s))", &available, nullptr);
-        g_hash_table_insert(m->can_format, g_strdup(a->type), g_strdup(available ? "yes" : "no"));
+        g_variant_get(variant, "((b&s))", &available, nullptr);
+        g_hash_table_insert(disk_manager->can_format, g_strdup(query->type),
+                            g_strdup(available ? "yes" : "no"));
     } else {
         gboolean available = FALSE;
         guint64 flags = 0;
-        g_variant_get(r, "((bt&s))", &available, &flags, nullptr);
+        g_variant_get(variant, "((bt&s))", &available, &flags, nullptr);
         guint64 modes = available ? flags : 0;
-        g_hash_table_insert(m->resize, g_strdup(a->type), GSIZE_TO_POINTER((gsize)modes + 1));
-        fill_action_menu(m);
+        g_hash_table_insert(disk_manager->resize, g_strdup(query->type),
+                            GSIZE_TO_POINTER((gsize)modes + 1));
+        fill_action_menu(disk_manager);
     }
-    if (r != nullptr)
-        g_variant_unref(r);
-    g_free(a->key);
-    g_free(a->type);
-    g_free(a);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    g_free(query->key);
+    g_free(query->type);
+    g_free(query);
 }
 
-static void ask_capability(dm *m, const char *type, bool format) {
-    if (m->bus == nullptr || type == nullptr || type[0] == '\0')
+static void ask_capability(dm *disk_manager, const char *type, bool format) {
+    if (disk_manager->bus == nullptr || type == nullptr || type[0] == '\0')
         return;
     char *key = g_strconcat(format ? "format:" : "resize:", type, nullptr);
     /* The set takes key either way. */
-    if (!g_hash_table_add(m->asked, key))
+    if (!g_hash_table_add(disk_manager->asked, key))
         return;
-    capability_ask *a = g_new0(capability_ask, 1);
-    a->m = m;
-    a->key = g_strdup(key);
-    a->type = g_strdup(type);
-    a->format = format;
-    g_dbus_connection_call(m->bus, UD, UD_PATH "/Manager", UD_MANAGER,
+    capability_ask *query = g_new0(capability_ask, 1);
+    query->m = disk_manager;
+    query->key = g_strdup(key);
+    query->type = g_strdup(type);
+    query->format = format;
+    g_dbus_connection_call(disk_manager->bus, UD, UD_PATH "/Manager", UD_MANAGER,
                            format ? "CanFormat" : "CanResize", g_variant_new("(s)", type),
                            G_VARIANT_TYPE(format ? "((bs))" : "((bts))"), G_DBUS_CALL_FLAGS_NONE,
-                           -1, nullptr, on_capability, a);
+                           -1, nullptr, on_capability, query);
 }
 
-static void ask_capabilities(dm *m) {
+static void ask_capabilities(dm *disk_manager) {
     for (size_t i = 0; i < G_N_ELEMENTS(formats); i++)
-        ask_capability(m, formats[i].type, true);
-    for (guint i = 0; i < m->disks->len; i++) {
-        const disk *d = g_ptr_array_index(m->disks, i);
-        for (guint k = 0; k < d->vols->len; k++) {
-            const volume *v = g_ptr_array_index(d->vols, k);
-            if (v->has_fs)
-                ask_capability(m, v->id_type, false);
+        ask_capability(disk_manager, formats[i].type, true);
+    for (guint i = 0; i < disk_manager->disks->len; i++) {
+        const disk *disk_info = g_ptr_array_index(disk_manager->disks, i);
+        for (guint k = 0; k < disk_info->vols->len; k++) {
+            const volume *volume_info = g_ptr_array_index(disk_info->vols, k);
+            if (volume_info->has_fs)
+                ask_capability(disk_manager, volume_info->id_type, false);
         }
     }
 }
 
-static bool can_format(dm *m, const char *type) {
-    return g_strcmp0(g_hash_table_lookup(m->can_format, type), "yes") == 0;
+static bool can_format(dm *disk_manager, const char *type) {
+    return g_strcmp0(g_hash_table_lookup(disk_manager->can_format, type), "yes") == 0;
 }
 
 /* CanResize's modes for a filesystem type, 0 if it can't (or isn't known
  * yet). */
-static guint64 resize_modes(dm *m, const char *type) {
-    gpointer known = g_hash_table_lookup(m->resize, type);
+static guint64 resize_modes(dm *disk_manager, const char *type) {
+    gpointer known = g_hash_table_lookup(disk_manager->resize, type);
     return known != nullptr ? GPOINTER_TO_SIZE(known) - 1 : 0;
 }
 
 /* ---- what can be done ---------------------------------------------------------------- */
 
-static xd_volume_use volume_use(const volume *v) {
+static xd_volume_use volume_use(const volume *volume_info) {
     bool logicals = false;
-    for (guint i = 0; v->container && i < v->d->vols->len; i++)
-        logicals |= ((volume *)g_ptr_array_index(v->d->vols, i))->contained;
+    for (guint i = 0; volume_info->container && i < volume_info->d->vols->len; i++)
+        logicals |= ((volume *)g_ptr_array_index(volume_info->d->vols, i))->contained;
     return (xd_volume_use){
-        .mounts = (const char *const *)v->mounts,
-        .swap_active = v->swap_active,
-        .unlocked = v->unlocked,
-        .container = v->container,
+        .mounts = (const char *const *)volume_info->mounts,
+        .swap_active = volume_info->swap_active,
+        .unlocked = volume_info->unlocked,
+        .container = volume_info->container,
         .has_logical = logicals,
-        .id_type = v->id_type,
+        .id_type = volume_info->id_type,
     };
 }
 
 /* Why `action` can't be done to the selected volume, or nullptr. */
-static const char *action_reason(dm *m, volume *v, xd_disk_action action, bool *unmount) {
+static const char *action_reason(dm *disk_manager, volume *volume_info, xd_disk_action action,
+                                 bool *unmount) {
     *unmount = false;
-    if (m->busy)
+    if (disk_manager->busy)
         return "Disk Management is busy with another operation.";
-    if (v == nullptr)
+    if (volume_info == nullptr)
         return "Select a volume first.";
-    if (v->whole_disk && (action == XD_ACTION_DELETE || action == XD_ACTION_SHRINK ||
-                          action == XD_ACTION_EXTEND || action == XD_ACTION_SET_TYPE ||
-                          action == XD_ACTION_SET_ACTIVE))
+    if (volume_info->whole_disk &&
+        (action == XD_ACTION_DELETE || action == XD_ACTION_SHRINK || action == XD_ACTION_EXTEND ||
+         action == XD_ACTION_SET_TYPE || action == XD_ACTION_SET_ACTIVE))
         return "This volume fills the whole disk, without a partition table.";
-    if (v->d->optical && action != XD_ACTION_LABEL)
+    if (volume_info->d->optical && action != XD_ACTION_LABEL)
         return "CDs and DVDs can't be changed here.";
-    xd_volume_use u = volume_use(v);
-    const char *why = xd_volume_lock_reason(&u, action, unmount);
+    xd_volume_use usage = volume_use(volume_info);
+    const char *why = xd_volume_lock_reason(&usage, action, unmount);
     if (why != nullptr)
         return why;
     if (action == XD_ACTION_SET_ACTIVE) {
-        if (g_strcmp0(v->d->table, "dos") != 0)
+        if (g_strcmp0(volume_info->d->table, "dos") != 0)
             return "Only MBR disks have an active partition; GPT disks start from the EFI "
                    "System Partition.";
-        if (v->contained)
+        if (volume_info->contained)
             return "Only a primary partition can be active.";
-        if (volume_active(v))
+        if (volume_active(volume_info))
             return "This partition is already active.";
     }
     if (action == XD_ACTION_SHRINK || action == XD_ACTION_EXTEND) {
         bool shrink = action == XD_ACTION_SHRINK;
-        if (!v->has_fs || v->unlocked)
+        if (!volume_info->has_fs || volume_info->unlocked)
             return "Only a partition holding a file system can be resized.";
-        guint64 modes = resize_modes(m, v->id_type);
-        xd_resize_how how = xd_disk_resize_how(modes, shrink, mounted(v));
+        guint64 modes = resize_modes(disk_manager, volume_info->id_type);
+        xd_resize_how how = xd_disk_resize_how(modes, shrink, mounted(volume_info));
         switch (how) {
         case XD_RESIZE_NO:
             return shrink ? "This file system can't be shrunk."
@@ -794,7 +817,7 @@ static const char *action_reason(dm *m, volume *v, xd_disk_action action, bool *
         case XD_RESIZE_NEED_MOUNT:
             return "This file system can only be resized while it's mounted. Mount it first.";
         case XD_RESIZE_NEED_UNMOUNT:
-            for (char **mp = v->mounts; *mp != nullptr; mp++)
+            for (char **mp = volume_info->mounts; *mp != nullptr; mp++)
                 if (xd_mount_is_system(*mp))
                     return "This file system can only be resized unmounted, and the running "
                            "system needs it mounted.";
@@ -805,14 +828,17 @@ static const char *action_reason(dm *m, volume *v, xd_disk_action action, bool *
         }
         if (!shrink) {
             guint seg = 0;
-            for (guint i = 0; i < v->d->segments->len; i++)
-                if (seg_volume(v->d, (int)i) == v)
+            for (guint i = 0; i < volume_info->d->segments->len; i++)
+                if (seg_volume(volume_info->d, (int)i) == volume_info)
                     seg = i;
-            if (xd_disk_grow_max(v->d->segments, seg, v->d->size) <= v->size)
+            if (xd_disk_grow_max(volume_info->d->segments, seg, volume_info->d->size) <=
+                volume_info->size)
                 return "There's no free space right after this partition to extend it into.";
-        } else if (xd_disk_shrink_min(v->fs_total > 0 ? v->fs_total - v->fs_free : 0, v->size) +
+        } else if (xd_disk_shrink_min(
+                       volume_info->fs_total > 0 ? volume_info->fs_total - volume_info->fs_free : 0,
+                       volume_info->size) +
                        XD_MIB >
-                   v->size) {
+                   volume_info->size) {
             return "This volume is too full to shrink.";
         }
     }
@@ -835,110 +861,112 @@ typedef struct op {
     char *created; /* CreatePartition's result */
 } op;
 
-static void refresh(dm *m);
+static void refresh(dm *disk_manager);
 
-static op *op_new(dm *m, const char *title) {
-    op *o = g_new0(op, 1);
-    o->m = m;
-    o->title = g_strdup(title);
-    g_queue_init(&o->steps);
-    return o;
+static op *op_new(dm *disk_manager, const char *title) {
+    op *operation = g_new0(op, 1);
+    operation->m = disk_manager;
+    operation->title = g_strdup(title);
+    g_queue_init(&operation->steps);
+    return operation;
 }
 
-static void op_add(op *o, const char *path, const char *iface, const char *method,
+static void op_add(op *operation, const char *path, const char *iface, const char *method,
                    GVariant *args) {
-    step *s = g_new0(step, 1);
-    s->path = g_strdup(path);
-    s->iface = g_strdup(iface);
-    s->method = g_strdup(method);
-    s->args = g_variant_ref_sink(args);
-    g_queue_push_tail(&o->steps, s);
+    step *operation_step = g_new0(step, 1);
+    operation_step->path = g_strdup(path);
+    operation_step->iface = g_strdup(iface);
+    operation_step->method = g_strdup(method);
+    operation_step->args = g_variant_ref_sink(args);
+    g_queue_push_tail(&operation->steps, operation_step);
 }
 
 static void step_free(gpointer data) {
-    step *s = data;
-    g_free(s->path);
-    g_free(s->iface);
-    g_free(s->method);
-    g_variant_unref(s->args);
-    g_free(s);
+    step *operation_step = data;
+    g_free(operation_step->path);
+    g_free(operation_step->iface);
+    g_free(operation_step->method);
+    g_variant_unref(operation_step->args);
+    g_free(operation_step);
 }
 
-static void op_free(op *o) {
-    g_queue_clear_full(&o->steps, step_free);
-    g_free(o->title);
-    g_free(o->created);
-    g_free(o);
+static void op_free(op *operation) {
+    g_queue_clear_full(&operation->steps, step_free);
+    g_free(operation->title);
+    g_free(operation->created);
+    g_free(operation);
 }
 
 static GVariant *no_options(void) { return g_variant_new("a{sv}", nullptr); }
 
-static void set_busy(dm *m, const char *what) {
-    m->busy = what != nullptr;
-    GdkWindow *w = gtk_widget_get_window(m->window);
-    if (w != nullptr) {
-        GdkCursor *c = what != nullptr ? gdk_cursor_new_from_name(gdk_window_get_display(w),
-                                                                  "progress")
-                                       : nullptr;
-        gdk_window_set_cursor(w, c);
-        g_clear_object(&c);
+static void set_busy(dm *disk_manager, const char *what) {
+    disk_manager->busy = what != nullptr;
+    GdkWindow *gdk_window = gtk_widget_get_window(disk_manager->window);
+    if (gdk_window != nullptr) {
+        GdkCursor *cursor =
+            what != nullptr
+                ? gdk_cursor_new_from_name(gdk_window_get_display(gdk_window), "progress")
+                : nullptr;
+        gdk_window_set_cursor(gdk_window, cursor);
+        g_clear_object(&cursor);
     }
     if (what != nullptr) {
-        gtk_label_set_text(GTK_LABEL(m->status), what);
-        fill_action_menu(m);
+        gtk_label_set_text(GTK_LABEL(disk_manager->status), what);
+        fill_action_menu(disk_manager);
     } else {
-        show_selection_status(m);
+        show_selection_status(disk_manager);
     }
 }
 
-static void op_next(op *o);
+static void op_next(op *operation);
 
 static void step_done(GObject *src, GAsyncResult *res, gpointer data) {
-    op *o = data;
-    dm *m = o->m;
+    op *operation = data;
+    dm *disk_manager = operation->m;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr) {
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant == nullptr) {
         g_dbus_error_strip_remote_error(error);
         char *text = g_strdup_printf("Disk Management could not complete the operation.\n\n%s",
                                      error->message);
-        set_busy(m, nullptr);
-        xd_message_box(GTK_WINDOW(m->window), "Disk Management", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       text);
+        set_busy(disk_manager, nullptr);
+        xd_message_box(GTK_WINDOW(disk_manager->window), "Disk Management", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, text);
         g_free(text);
         g_error_free(error);
-        op_free(o);
-        refresh(m);
+        op_free(operation);
+        refresh(disk_manager);
         return;
     }
-    if (g_variant_is_of_type(r, G_VARIANT_TYPE("(o)"))) {
-        g_free(o->created);
-        g_variant_get(r, "(o)", &o->created);
+    if (g_variant_is_of_type(variant, G_VARIANT_TYPE("(o)"))) {
+        g_free(operation->created);
+        g_variant_get(variant, "(o)", &operation->created);
     }
-    g_variant_unref(r);
-    op_next(o);
+    g_variant_unref(variant);
+    op_next(operation);
 }
 
-static void op_next(op *o) {
-    dm *m = o->m;
-    step *s = g_queue_pop_head(&o->steps);
-    if (s == nullptr) {
-        set_busy(m, nullptr);
-        op_free(o);
-        refresh(m);
+static void op_next(op *operation) {
+    dm *disk_manager = operation->m;
+    step *operation_step = g_queue_pop_head(&operation->steps);
+    if (operation_step == nullptr) {
+        set_busy(disk_manager, nullptr);
+        op_free(operation);
+        refresh(disk_manager);
         return;
     }
-    const char *path = s->path != nullptr ? s->path : o->created;
+    const char *path = operation_step->path != nullptr ? operation_step->path : operation->created;
     if (path == nullptr) {
-        step_free(s);
-        op_next(o);
+        step_free(operation_step);
+        op_next(operation);
         return;
     }
     /* The new partition encrypted: its file system is in the cleartext
      * device UDisks2 left unlocked. */
     g_autofree char *cleartext = nullptr;
-    if (s->path == nullptr && strcmp(s->iface, UD_FS) == 0 && m->om != nullptr) {
-        GDBusInterface *enc = g_dbus_object_manager_get_interface(m->om, path, UD_ENC);
+    if (operation_step->path == nullptr && strcmp(operation_step->iface, UD_FS) == 0 &&
+        disk_manager->om != nullptr) {
+        GDBusInterface *enc = g_dbus_object_manager_get_interface(disk_manager->om, path, UD_ENC);
         if (enc != nullptr) {
             cleartext = prop_str(G_DBUS_PROXY(enc), "CleartextDevice");
             if (strcmp(cleartext, "/") != 0 && cleartext[0] != '\0')
@@ -947,85 +975,88 @@ static void op_next(op *o) {
         }
     }
     /* No timeout: polkit's password box, and formatting, take a while. */
-    g_dbus_connection_call(m->bus, UD, path, s->iface, s->method, s->args, nullptr,
+    g_dbus_connection_call(disk_manager->bus, UD, path, operation_step->iface,
+                           operation_step->method, operation_step->args, nullptr,
                            G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
-                           step_done, o);
-    step_free(s);
+                           step_done, operation);
+    step_free(operation_step);
 }
 
-static void op_run(op *o) {
-    set_busy(o->m, o->title);
-    op_next(o);
+static void op_run(op *operation) {
+    set_busy(operation->m, operation->title);
+    op_next(operation);
 }
 
-static void op_unmount(op *o, const volume *v) {
-    if (mounted(v))
-        op_add(o, v->fs_path, UD_FS, "Unmount", g_variant_new("(@a{sv})", no_options()));
+static void op_unmount(op *operation, const volume *volume_info) {
+    if (mounted(volume_info))
+        op_add(operation, volume_info->fs_path, UD_FS, "Unmount",
+               g_variant_new("(@a{sv})", no_options()));
 }
 
-static bool confirm(dm *m, const char *title, const char *text) {
-    return xd_message_box(GTK_WINDOW(m->window), title, XD_MB_WARNING, XD_MB_YES_NO, TRUE,
-                          text) == GTK_RESPONSE_YES;
+static bool confirm(dm *disk_manager, const char *title, const char *text) {
+    return xd_message_box(GTK_WINDOW(disk_manager->window), title, XD_MB_WARNING, XD_MB_YES_NO,
+                          TRUE, text) == GTK_RESPONSE_YES;
 }
 
 /* ---- small dialogs ---------------------------------------------------------------- */
 
-static GtkWidget *dialog_new(dm *m, const char *title, GtkWidget **content) {
-    GtkWidget *d = gtk_dialog_new_with_buttons(title, GTK_WINDOW(m->window), GTK_DIALOG_MODAL,
-                                               "OK", GTK_RESPONSE_OK, "Cancel",
-                                               GTK_RESPONSE_CANCEL, nullptr);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+static GtkWidget *dialog_new(dm *disk_manager, const char *title, GtkWidget **content) {
+    GtkWidget *widget =
+        gtk_dialog_new_with_buttons(title, GTK_WINDOW(disk_manager->window), GTK_DIALOG_MODAL, "OK",
+                                    GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL, nullptr);
+    gtk_dialog_set_default_response(GTK_DIALOG(widget), GTK_RESPONSE_OK);
+    gtk_window_set_resizable(GTK_WINDOW(widget), FALSE);
     *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(*content), 12);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), *content, TRUE, TRUE,
-                       0);
-    return d;
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(widget))), *content, TRUE,
+                       TRUE, 0);
+    return widget;
 }
 
 static GtkWidget *wrap_label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 56);
-    return l;
+    GtkWidget *widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(widget), 56);
+    return widget;
 }
 
 static GtkWidget *grid_new(void) {
-    GtkWidget *g = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(g), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(g), 12);
-    return g;
+    GtkWidget *widget = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(widget), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(widget), 12);
+    return widget;
 }
 
-static void grid_row(GtkWidget *g, int row, const char *key, GtkWidget *value) {
-    GtkWidget *k = gtk_label_new_with_mnemonic(key);
-    gtk_label_set_xalign(GTK_LABEL(k), 0);
+static void grid_row(GtkWidget *grid, int row, const char *key, GtkWidget *value) {
+    GtkWidget *key_label = gtk_label_new_with_mnemonic(key);
+    gtk_label_set_xalign(GTK_LABEL(key_label), 0);
     if (GTK_IS_LABEL(value) == FALSE)
-        gtk_label_set_mnemonic_widget(GTK_LABEL(k), value);
-    gtk_grid_attach(GTK_GRID(g), k, 0, row, 1, 1);
+        gtk_label_set_mnemonic_widget(GTK_LABEL(key_label), value);
+    gtk_grid_attach(GTK_GRID(grid), key_label, 0, row, 1, 1);
     gtk_widget_set_hexpand(value, TRUE);
-    gtk_grid_attach(GTK_GRID(g), value, 1, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), value, 1, row, 1, 1);
 }
 
 static GtkWidget *value_label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_selectable(GTK_LABEL(l), TRUE);
-    gtk_widget_set_can_focus(l, FALSE);
-    return l;
+    GtkWidget *widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_selectable(GTK_LABEL(widget), TRUE);
+    gtk_widget_set_can_focus(widget, FALSE);
+    return widget;
 }
 
 /* The filesystems UDisks2 can make here, as a combo (ids are types). */
-static GtkWidget *fs_combo(dm *m, const char *preferred) {
-    GtkWidget *c = gtk_combo_box_text_new();
+static GtkWidget *fs_combo(dm *disk_manager, const char *preferred) {
+    GtkWidget *widget = gtk_combo_box_text_new();
     for (size_t i = 0; i < G_N_ELEMENTS(formats); i++)
-        if (can_format(m, formats[i].type))
-            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(c), formats[i].type, formats[i].label);
-    if (preferred == nullptr || !gtk_combo_box_set_active_id(GTK_COMBO_BOX(c), preferred))
-        if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(c), "ext4"))
-            gtk_combo_box_set_active(GTK_COMBO_BOX(c), 0);
-    return c;
+        if (can_format(disk_manager, formats[i].type))
+            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(widget), formats[i].type,
+                                      formats[i].label);
+    if (preferred == nullptr || !gtk_combo_box_set_active_id(GTK_COMBO_BOX(widget), preferred))
+        if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(widget), "ext4"))
+            gtk_combo_box_set_active(GTK_COMBO_BOX(widget), 0);
+    return widget;
 }
 
 /* XP's format options: the file system, its allocation unit size, a
@@ -1040,15 +1071,15 @@ typedef struct format_opts {
 
 /* The disk's logical sector size from sysfs (UDisks2 doesn't say), 512
  * when it can't be read. */
-static guint sector_size_of(const disk *d) {
+static guint sector_size_of(const disk *disk_info) {
     char *path = g_strdup_printf("/sys/class/block/%s/queue/logical_block_size",
-                                 dev_name(d->device));
+                                 dev_name(disk_info->device));
     char *text = nullptr;
     guint size = 512;
     if (g_file_get_contents(path, &text, nullptr, nullptr)) {
-        guint64 n = g_ascii_strtoull(text, nullptr, 10);
-        if (n >= 512 && n <= 65536)
-            size = (guint)n;
+        guint64 bytes = g_ascii_strtoull(text, nullptr, 10);
+        if (bytes >= 512 && bytes <= 65536)
+            size = (guint)bytes;
     }
     g_free(text);
     g_free(path);
@@ -1057,158 +1088,166 @@ static guint sector_size_of(const disk *d) {
 
 /* UDisks2 2.10 added Format's "mkfs-args", which the allocation unit
  * size goes through. */
-static bool udisks_has_mkfs_args(dm *m) {
-    if (m->version == nullptr && m->om != nullptr) {
-        GDBusInterface *i =
-            g_dbus_object_manager_get_interface(m->om, UD_PATH "/Manager", UD_MANAGER);
-        if (i != nullptr) {
-            m->version = prop_str(G_DBUS_PROXY(i), "Version");
-            g_object_unref(i);
+static bool udisks_has_mkfs_args(dm *disk_manager) {
+    if (disk_manager->version == nullptr && disk_manager->om != nullptr) {
+        GDBusInterface *dbus_interface =
+            g_dbus_object_manager_get_interface(disk_manager->om, UD_PATH "/Manager", UD_MANAGER);
+        if (dbus_interface != nullptr) {
+            disk_manager->version = prop_str(G_DBUS_PROXY(dbus_interface), "Version");
+            g_object_unref(dbus_interface);
         }
     }
-    return xd_udisks_version_at_least(m->version, 2, 10);
+    return xd_udisks_version_at_least(disk_manager->version, 2, 10);
 }
 
 /* The allocation unit sizes the chosen file system can be made with:
  * Default only (greyed) when it, mkfs or UDisks2 can't choose. */
-static void fill_units(format_opts *f) {
-    const char *type = gtk_combo_box_get_active_id(GTK_COMBO_BOX(f->fs));
-    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(f->unit));
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(f->unit), "0", "Default");
+static void fill_units(format_opts *format_settings) {
+    const char *type = gtk_combo_box_get_active_id(GTK_COMBO_BOX(format_settings->fs));
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(format_settings->unit));
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(format_settings->unit), "0", "Default");
     const guint *sizes = xd_format_unit_sizes(type);
-    bool supported = sizes != nullptr && udisks_has_mkfs_args(f->m);
-    int n = 0;
+    bool supported = sizes != nullptr && udisks_has_mkfs_args(format_settings->m);
+    int count = 0;
     for (size_t i = 0; supported && sizes[i] != 0; i++) {
-        char **args = xd_format_unit_args(type, sizes[i], f->sector_size);
+        char **args = xd_format_unit_args(type, sizes[i], format_settings->sector_size);
         if (args == nullptr)
             continue;
         g_strfreev(args);
         char *id = g_strdup_printf("%u", sizes[i]), *label = xd_format_unit_label(sizes[i]);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(f->unit), id, label);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(format_settings->unit), id, label);
         g_free(id);
         g_free(label);
-        n++;
+        count++;
     }
-    gtk_combo_box_set_active_id(GTK_COMBO_BOX(f->unit), "0");
-    gtk_widget_set_sensitive(f->unit, n > 0 && gtk_widget_get_sensitive(f->fs));
-    gtk_widget_set_tooltip_text(f->unit,
-                                n > 0                ? nullptr
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(format_settings->unit), "0");
+    gtk_widget_set_sensitive(format_settings->unit,
+                             count > 0 && gtk_widget_get_sensitive(format_settings->fs));
+    gtk_widget_set_tooltip_text(format_settings->unit,
+                                count > 0          ? nullptr
                                 : sizes == nullptr ? "This file system is made with its default "
                                                      "size only."
                                                    : "This version of UDisks2 can't choose the "
                                                      "size (2.10 and later can).");
 }
 
-static void on_fs_changed([[maybe_unused]] GtkComboBox *c, gpointer data) { fill_units(data); }
+static void on_fs_changed([[maybe_unused]] GtkComboBox *combo, gpointer data) { fill_units(data); }
 
 /* The File system and Allocation unit size rows, from `row` on. */
-static void format_fs_rows(format_opts *f, dm *m, const disk *d, GtkWidget *grid, int row,
-                           const char *preferred) {
-    f->m = m;
-    f->sector_size = sector_size_of(d);
-    f->fs = fs_combo(m, preferred);
-    grid_row(grid, row, "File s_ystem:", f->fs);
-    f->unit = gtk_combo_box_text_new();
-    grid_row(grid, row + 1, "_Allocation unit size:", f->unit);
-    fill_units(f);
-    g_signal_connect(f->fs, "changed", G_CALLBACK(on_fs_changed), f);
+static void format_fs_rows(format_opts *format_settings, dm *disk_manager, const disk *disk_info,
+                           GtkWidget *grid, int row, const char *preferred) {
+    format_settings->m = disk_manager;
+    format_settings->sector_size = sector_size_of(disk_info);
+    format_settings->fs = fs_combo(disk_manager, preferred);
+    grid_row(grid, row, "File s_ystem:", format_settings->fs);
+    format_settings->unit = gtk_combo_box_text_new();
+    grid_row(grid, row + 1, "_Allocation unit size:", format_settings->unit);
+    fill_units(format_settings);
+    g_signal_connect(format_settings->fs, "changed", G_CALLBACK(on_fs_changed), format_settings);
 }
 
 /* The encryption UDisks2 makes (Manager.DefaultEncryptionType, else
  * the first of SupportedEncryptionTypes: "luks2"), or nullptr when it
  * can't encrypt. */
-static const char *encryption_type(dm *m) {
-    if (!m->luks_read && m->om != nullptr) {
-        m->luks_read = true;
-        GDBusInterface *i =
-            g_dbus_object_manager_get_interface(m->om, UD_PATH "/Manager", UD_MANAGER);
-        GVariant *types = i != nullptr ? prop(G_DBUS_PROXY(i), "SupportedEncryptionTypes")
-                                       : nullptr;
-        g_autofree char *def = i != nullptr ? prop_str(G_DBUS_PROXY(i), "DefaultEncryptionType")
-                                            : nullptr;
+static const char *encryption_type(dm *disk_manager) {
+    if (!disk_manager->luks_read && disk_manager->om != nullptr) {
+        disk_manager->luks_read = true;
+        GDBusInterface *dbus_interface =
+            g_dbus_object_manager_get_interface(disk_manager->om, UD_PATH "/Manager", UD_MANAGER);
+        GVariant *types = dbus_interface != nullptr
+                              ? prop(G_DBUS_PROXY(dbus_interface), "SupportedEncryptionTypes")
+                              : nullptr;
+        g_autofree char *def = dbus_interface != nullptr
+                                   ? prop_str(G_DBUS_PROXY(dbus_interface), "DefaultEncryptionType")
+                                   : nullptr;
         if (types != nullptr && g_variant_is_of_type(types, G_VARIANT_TYPE_STRING_ARRAY)) {
             g_autofree const char **all = g_variant_get_strv(types, nullptr);
             if (def != nullptr && g_strv_contains(all, def))
-                m->luks_type = g_strdup(def);
+                disk_manager->luks_type = g_strdup(def);
             else if (all[0] != nullptr)
-                m->luks_type = g_strdup(all[0]);
+                disk_manager->luks_type = g_strdup(all[0]);
         }
         if (types != nullptr)
             g_variant_unref(types);
-        g_clear_object(&i);
+        g_clear_object(&dbus_interface);
     }
-    return m->luks_type;
+    return disk_manager->luks_type;
 }
 
-static void on_encrypt_toggled(GtkToggleButton *b, gpointer data) {
-    format_opts *f = data;
-    gtk_widget_set_sensitive(f->encrypt_rows, gtk_toggle_button_get_active(b) &&
-                                                  gtk_widget_get_sensitive(GTK_WIDGET(b)));
+static void on_encrypt_toggled(GtkToggleButton *toggle, gpointer data) {
+    format_opts *format_settings = data;
+    gtk_widget_set_sensitive(format_settings->encrypt_rows,
+                             gtk_toggle_button_get_active(toggle) &&
+                                 gtk_widget_get_sensitive(GTK_WIDGET(toggle)));
 }
 
-static void format_checks(format_opts *f, GtkWidget *box) {
-    f->quick = gtk_check_button_new_with_mnemonic("Perform a _quick format");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(f->quick), TRUE);
-    gtk_widget_set_tooltip_text(f->quick, "Unticked, the whole volume is overwritten with zeros "
-                                          "before it's formatted, which can take a long time.");
-    f->compress = gtk_check_button_new_with_mnemonic("_Enable file and folder compression");
-    gtk_widget_set_sensitive(f->compress, FALSE);
-    gtk_box_pack_start(GTK_BOX(box), f->quick, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), f->compress, FALSE, FALSE, 0);
+static void format_checks(format_opts *format_settings, GtkWidget *box) {
+    format_settings->quick = gtk_check_button_new_with_mnemonic("Perform a _quick format");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(format_settings->quick), TRUE);
+    gtk_widget_set_tooltip_text(format_settings->quick,
+                                "Unticked, the whole volume is overwritten with zeros "
+                                "before it's formatted, which can take a long time.");
+    format_settings->compress =
+        gtk_check_button_new_with_mnemonic("_Enable file and folder compression");
+    gtk_widget_set_sensitive(format_settings->compress, FALSE);
+    gtk_box_pack_start(GTK_BOX(box), format_settings->quick, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), format_settings->compress, FALSE, FALSE, 0);
     /* Linux's counterpart of BitLocker, which XP didn't have: the volume
      * is LUKS, with the file system inside, unlocked by the passphrase. */
-    f->encrypt = gtk_check_button_new_with_mnemonic("Encrypt this volume (_LUKS)");
-    const char *luks = encryption_type(f->m);
-    gtk_widget_set_sensitive(f->encrypt, luks != nullptr);
-    gtk_widget_set_tooltip_text(f->encrypt, luks != nullptr
-                                                ? "What's on the volume can only be read with "
+    format_settings->encrypt = gtk_check_button_new_with_mnemonic("Encrypt this volume (_LUKS)");
+    const char *luks = encryption_type(format_settings->m);
+    gtk_widget_set_sensitive(format_settings->encrypt, luks != nullptr);
+    gtk_widget_set_tooltip_text(format_settings->encrypt,
+                                luks != nullptr ? "What's on the volume can only be read with "
                                                   "the passphrase. Don't lose it: nobody can "
                                                   "get the files back without it."
                                                 : "UDisks2 can't make encrypted volumes here "
                                                   "(cryptsetup is missing).");
-    gtk_box_pack_start(GTK_BOX(box), f->encrypt, FALSE, FALSE, 0);
-    f->encrypt_rows = grid_new();
-    gtk_widget_set_margin_start(f->encrypt_rows, 24);
-    f->pass = gtk_entry_new();
-    f->confirm = gtk_entry_new();
-    GtkWidget *entries[] = {f->pass, f->confirm};
+    gtk_box_pack_start(GTK_BOX(box), format_settings->encrypt, FALSE, FALSE, 0);
+    format_settings->encrypt_rows = grid_new();
+    gtk_widget_set_margin_start(format_settings->encrypt_rows, 24);
+    format_settings->pass = gtk_entry_new();
+    format_settings->confirm = gtk_entry_new();
+    GtkWidget *entries[] = {format_settings->pass, format_settings->confirm};
     for (int i = 0; i < 2; i++) {
         gtk_entry_set_visibility(GTK_ENTRY(entries[i]), FALSE);
         gtk_entry_set_input_purpose(GTK_ENTRY(entries[i]), GTK_INPUT_PURPOSE_PASSWORD);
         gtk_entry_set_activates_default(GTK_ENTRY(entries[i]), TRUE);
     }
-    grid_row(f->encrypt_rows, 0, "Pa_ssphrase:", f->pass);
-    grid_row(f->encrypt_rows, 1, "Confi_rm passphrase:", f->confirm);
-    gtk_widget_set_sensitive(f->encrypt_rows, FALSE);
-    gtk_box_pack_start(GTK_BOX(box), f->encrypt_rows, FALSE, FALSE, 0);
-    g_signal_connect(f->encrypt, "toggled", G_CALLBACK(on_encrypt_toggled), f);
+    grid_row(format_settings->encrypt_rows, 0, "Pa_ssphrase:", format_settings->pass);
+    grid_row(format_settings->encrypt_rows, 1, "Confi_rm passphrase:", format_settings->confirm);
+    gtk_widget_set_sensitive(format_settings->encrypt_rows, FALSE);
+    gtk_box_pack_start(GTK_BOX(box), format_settings->encrypt_rows, FALSE, FALSE, 0);
+    g_signal_connect(format_settings->encrypt, "toggled", G_CALLBACK(on_encrypt_toggled),
+                     format_settings);
 }
 
-static bool format_encrypt(const format_opts *f) {
-    return gtk_widget_get_sensitive(f->encrypt) &&
-           gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(f->encrypt));
+static bool format_encrypt(const format_opts *format_settings) {
+    return gtk_widget_get_sensitive(format_settings->encrypt) &&
+           gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(format_settings->encrypt));
 }
 
 /* Why the passphrases typed can't encrypt the volume, or nullptr (also
  * when it isn't to be encrypted). */
-static const char *format_encrypt_problem(const format_opts *f) {
-    return format_encrypt(f) ? xd_luks_passphrase_problem(gtk_entry_get_text(GTK_ENTRY(f->pass)),
-                                                          gtk_entry_get_text(GTK_ENTRY(f->confirm)))
-                             : nullptr;
+static const char *format_encrypt_problem(const format_opts *format_settings) {
+    return format_encrypt(format_settings)
+               ? xd_luks_passphrase_problem(gtk_entry_get_text(GTK_ENTRY(format_settings->pass)),
+                                            gtk_entry_get_text(GTK_ENTRY(format_settings->confirm)))
+               : nullptr;
 }
 
 /* Empties the passphrase entries, so the passphrase isn't left in them. */
-static void format_forget_passphrase(const format_opts *f) {
-    gtk_entry_set_text(GTK_ENTRY(f->pass), "");
-    gtk_entry_set_text(GTK_ENTRY(f->confirm), "");
+static void format_forget_passphrase(const format_opts *format_settings) {
+    gtk_entry_set_text(GTK_ENTRY(format_settings->pass), "");
+    gtk_entry_set_text(GTK_ENTRY(format_settings->confirm), "");
 }
 
-static bool format_quick(const format_opts *f) {
-    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(f->quick));
+static bool format_quick(const format_opts *format_settings) {
+    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(format_settings->quick));
 }
 
-static guint format_unit(const format_opts *f) {
-    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(f->unit));
+static guint format_unit(const format_opts *format_settings) {
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(format_settings->unit));
     return id != nullptr ? (guint)g_ascii_strtoull(id, nullptr, 10) : 0;
 }
 
@@ -1227,52 +1266,56 @@ static const char FULL_FORMAT_NOTE[] =
  * "encrypt.passphrase" and "encrypt.type" (`luks`, nullptr for none). */
 static GVariant *format_options(const char *label, const char *type, bool quick, guint unit,
                                 guint sector_size, const char *passphrase, const char *luks) {
-    GVariantBuilder b;
-    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
     if (label != nullptr && label[0] != '\0')
-        g_variant_builder_add(&b, "{sv}", "label", g_variant_new_string(label));
+        g_variant_builder_add(&builder, "{sv}", "label", g_variant_new_string(label));
     /* Removes the old filesystem's /etc/fstab and crypttab entries. */
-    g_variant_builder_add(&b, "{sv}", "tear-down", g_variant_new_boolean(TRUE));
-    g_variant_builder_add(&b, "{sv}", "update-partition-type", g_variant_new_boolean(TRUE));
+    g_variant_builder_add(&builder, "{sv}", "tear-down", g_variant_new_boolean(TRUE));
+    g_variant_builder_add(&builder, "{sv}", "update-partition-type", g_variant_new_boolean(TRUE));
     if (!quick)
-        g_variant_builder_add(&b, "{sv}", "erase", g_variant_new_string("zero"));
+        g_variant_builder_add(&builder, "{sv}", "erase", g_variant_new_string("zero"));
     char **args = unit != 0 ? xd_format_unit_args(type, unit, sector_size) : nullptr;
     if (args != nullptr)
-        g_variant_builder_add(&b, "{sv}", "mkfs-args",
+        g_variant_builder_add(&builder, "{sv}", "mkfs-args",
                               g_variant_new_strv((const char *const *)args, -1));
     g_strfreev(args);
     if (passphrase != nullptr && luks != nullptr) {
-        g_variant_builder_add(&b, "{sv}", "encrypt.passphrase", g_variant_new_string(passphrase));
-        g_variant_builder_add(&b, "{sv}", "encrypt.type", g_variant_new_string(luks));
+        g_variant_builder_add(&builder, "{sv}", "encrypt.passphrase",
+                              g_variant_new_string(passphrase));
+        g_variant_builder_add(&builder, "{sv}", "encrypt.type", g_variant_new_string(luks));
     }
-    return g_variant_builder_end(&b);
+    return g_variant_builder_end(&builder);
 }
 
 /* The options as the dialog has them; `type` is the file system's. */
-static GVariant *format_opts_variant(const format_opts *f, const char *type, const char *label) {
-    bool encrypt = format_encrypt(f);
-    return format_options(label, type, format_quick(f), format_unit(f), f->sector_size,
-                          encrypt ? gtk_entry_get_text(GTK_ENTRY(f->pass)) : nullptr,
-                          encrypt ? encryption_type(f->m) : nullptr);
+static GVariant *format_opts_variant(const format_opts *format_settings, const char *type,
+                                     const char *label) {
+    bool encrypt = format_encrypt(format_settings);
+    return format_options(label, type, format_quick(format_settings), format_unit(format_settings),
+                          format_settings->sector_size,
+                          encrypt ? gtk_entry_get_text(GTK_ENTRY(format_settings->pass)) : nullptr,
+                          encrypt ? encryption_type(format_settings->m) : nullptr);
 }
 
 /* ---- Initialize Disk -------------------------------------------------------------- */
 
-static bool disk_uninitialized(const disk *d) {
-    return d != nullptr && !d->optical && d->media && d->table == nullptr && d->vols->len == 0 &&
-           d->block_path != nullptr;
+static bool disk_uninitialized(const disk *disk_info) {
+    return disk_info != nullptr && !disk_info->optical && disk_info->media &&
+           disk_info->table == nullptr && disk_info->vols->len == 0 &&
+           disk_info->block_path != nullptr;
 }
 
-static void initialize_disk(dm *m) {
-    disk *d = m->sel.d;
-    if (!disk_uninitialized(d) || m->busy)
+static void initialize_disk(dm *disk_manager) {
+    disk *disk_info = disk_manager->sel.d;
+    if (!disk_uninitialized(disk_info) || disk_manager->busy)
         return;
     GtkWidget *box = nullptr;
-    GtkWidget *dlg = dialog_new(m, "Initialize Disk", &box);
-    char *dn = disk_name(d), *size = xd_disk_size_text(d->size);
+    GtkWidget *dlg = dialog_new(disk_manager, "Initialize Disk", &box);
+    char *dn = disk_name(disk_info), *size = xd_disk_size_text(disk_info->size);
     char *text = g_strdup_printf("You must initialize a disk before Disk Management can use "
                                  "it.\n\n%s (%s, %s, %s)",
-                                 dn, dev_name(d->device), size, d->model);
+                                 dn, dev_name(disk_info->device), size, disk_info->model);
     gtk_box_pack_start(GTK_BOX(box), wrap_label(text), FALSE, FALSE, 0);
     g_free(text);
     GtkWidget *frame = gtk_frame_new("Use the following partition style");
@@ -1293,20 +1336,20 @@ static void initialize_disk(dm *m) {
                        FALSE, FALSE, 0);
     gtk_widget_show_all(dlg);
     bool use_gpt = false;
-    int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    int response = gtk_dialog_run(GTK_DIALOG(dlg));
     use_gpt = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(gpt));
     gtk_widget_destroy(dlg);
-    if (r == GTK_RESPONSE_OK) {
+    if (response == GTK_RESPONSE_OK) {
         text = g_strdup_printf("%s (%s, %s) will get a new, empty %s partition table. Anything "
                                "on the disk that Disk Management can't see will be lost.\n\nDo "
                                "you want to continue?",
-                               dn, dev_name(d->device), size, use_gpt ? "GPT" : "MBR");
-        if (confirm(m, "Initialize Disk", text)) {
+                               dn, dev_name(disk_info->device), size, use_gpt ? "GPT" : "MBR");
+        if (confirm(disk_manager, "Initialize Disk", text)) {
             char *title = g_strdup_printf("Initializing %s...", dn);
-            op *o = op_new(m, title);
-            op_add(o, d->block_path, UD_BLOCK, "Format",
+            op *operation = op_new(disk_manager, title);
+            op_add(operation, disk_info->block_path, UD_BLOCK, "Format",
                    g_variant_new("(s@a{sv})", use_gpt ? "gpt" : "dos", no_options()));
-            op_run(o);
+            op_run(operation);
             g_free(title);
         }
         g_free(text);
@@ -1328,199 +1371,216 @@ typedef struct wizard {
     format_opts fo;
 } wizard;
 
-static bool wizard_extended(wizard *w) {
-    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->extended));
+static bool wizard_extended(wizard *partition_wizard) {
+    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(partition_wizard->extended));
 }
 
 static gint wizard_forward(gint current, gpointer data) {
-    wizard *w = data;
+    wizard *partition_wizard = data;
     /* An extended partition has no filesystem: skip Format. */
-    if (current == 2 && wizard_extended(w))
+    if (current == 2 && wizard_extended(partition_wizard))
         return 4;
     return current + 1;
 }
 
-static void wizard_summary(wizard *w) {
-    GString *s = g_string_new("You have selected the following settings:\n\n");
-    const char *kind = wizard_extended(w)                                         ? "Extended"
-                       : gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->logical)) ? "Logical drive"
-                                                                                   : "Primary";
-    char *dn = disk_name(w->d);
-    g_string_append_printf(s, "Partition type: %s\nSelected disk: %s (%s)\n", kind, dn,
-                           dev_name(w->d->device));
+static void wizard_summary(wizard *partition_wizard) {
+    GString *string = g_string_new("You have selected the following settings:\n\n");
+    const char *kind = wizard_extended(partition_wizard) ? "Extended"
+                       : gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(partition_wizard->logical))
+                           ? "Logical drive"
+                           : "Primary";
+    char *dn = disk_name(partition_wizard->d);
+    g_string_append_printf(string, "Partition type: %s\nSelected disk: %s (%s)\n", kind, dn,
+                           dev_name(partition_wizard->d->device));
     g_free(dn);
-    guint64 size = (guint64)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w->size)) * XD_MIB;
+    guint64 size =
+        (guint64)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(partition_wizard->size)) * XD_MIB;
     char *st = xd_disk_size_text(size);
-    g_string_append_printf(s, "Partition size: %s\n", st);
+    g_string_append_printf(string, "Partition size: %s\n", st);
     g_free(st);
-    if (!wizard_extended(w)) {
-        bool fmt = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->do_format));
-        char *fs = fmt ? gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(w->fo.fs)) : nullptr;
-        char *unit = fmt ? gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(w->fo.unit))
-                         : nullptr;
-        g_string_append_printf(s, "File system: %s\n", fs != nullptr ? fs : "None");
+    if (!wizard_extended(partition_wizard)) {
+        bool fmt = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(partition_wizard->do_format));
+        char *fs =
+            fmt ? gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(partition_wizard->fo.fs))
+                : nullptr;
+        char *unit =
+            fmt ? gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(partition_wizard->fo.unit))
+                : nullptr;
+        g_string_append_printf(string, "File system: %s\n", fs != nullptr ? fs : "None");
         if (fmt)
-            g_string_append_printf(s,
+            g_string_append_printf(string,
                                    "Allocation unit size: %s\nVolume label: %s\nQuick format: "
                                    "%s\n",
                                    unit != nullptr ? unit : "Default",
-                                   gtk_entry_get_text(GTK_ENTRY(w->label)),
-                                   format_quick(&w->fo) ? "Yes" : "No");
-        bool encrypt = fmt && format_encrypt(&w->fo);
-        char *luks = encrypt ? g_ascii_strup(encryption_type(w->m), -1) : nullptr;
+                                   gtk_entry_get_text(GTK_ENTRY(partition_wizard->label)),
+                                   format_quick(&partition_wizard->fo) ? "Yes" : "No");
+        bool encrypt = fmt && format_encrypt(&partition_wizard->fo);
+        char *luks = encrypt ? g_ascii_strup(encryption_type(partition_wizard->m), -1) : nullptr;
         if (fmt)
-            g_string_append_printf(s, "Encryption: %s\n", encrypt ? luks : "None");
+            g_string_append_printf(string, "Encryption: %s\n", encrypt ? luks : "None");
         g_free(luks);
         g_string_append_printf(
-            s, "Mount it: %s\n",
-            fmt && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->mount)) ? "Yes" : "No");
-        if (fmt && !format_quick(&w->fo))
-            g_string_append_printf(s, "\n%s\n", FULL_FORMAT_NOTE);
+            string, "Mount it: %s\n",
+            fmt && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(partition_wizard->mount)) ? "Yes"
+                                                                                            : "No");
+        if (fmt && !format_quick(&partition_wizard->fo))
+            g_string_append_printf(string, "\n%s\n", FULL_FORMAT_NOTE);
         if (encrypt)
-            g_string_append_printf(s, "\n%s\n", ENCRYPT_NOTE);
+            g_string_append_printf(string, "\n%s\n", ENCRYPT_NOTE);
         g_free(fs);
         g_free(unit);
     }
-    g_string_append(s, "\nTo close this wizard and create the partition, click Apply.");
-    gtk_label_set_text(GTK_LABEL(w->summary), s->str);
-    g_string_free(s, TRUE);
+    g_string_append(string, "\nTo close this wizard and create the partition, click Apply.");
+    gtk_label_set_text(GTK_LABEL(partition_wizard->summary), string->str);
+    g_string_free(string, TRUE);
 }
 
-static void on_wizard_prepare(GtkAssistant *a, GtkWidget *page, gpointer data) {
-    wizard *w = data;
-    if (page == gtk_assistant_get_nth_page(a, 4))
-        wizard_summary(w);
+static void on_wizard_prepare(GtkAssistant *assistant, GtkWidget *page, gpointer data) {
+    wizard *partition_wizard = data;
+    if (page == gtk_assistant_get_nth_page(assistant, 4))
+        wizard_summary(partition_wizard);
 }
 
 /* Next only once an encrypted volume's passphrase is typed twice alike;
  * the hint says why not. */
-static void update_format_page(wizard *w) {
-    const char *why = format_encrypt_problem(&w->fo);
-    gtk_assistant_set_page_complete(GTK_ASSISTANT(w->assistant), w->fmt_page, why == nullptr);
-    gtk_label_set_text(GTK_LABEL(w->fmt_hint), why != nullptr ? why : "");
+static void update_format_page(wizard *partition_wizard) {
+    const char *why = format_encrypt_problem(&partition_wizard->fo);
+    gtk_assistant_set_page_complete(GTK_ASSISTANT(partition_wizard->assistant),
+                                    partition_wizard->fmt_page, why == nullptr);
+    gtk_label_set_text(GTK_LABEL(partition_wizard->fmt_hint), why != nullptr ? why : "");
 }
 
-static void on_format_toggled(GtkToggleButton *b, gpointer data) {
-    wizard *w = data;
-    bool on = gtk_toggle_button_get_active(b);
-    gtk_widget_set_sensitive(w->fo.fs, on);
-    gtk_widget_set_sensitive(w->label, on);
-    gtk_widget_set_sensitive(w->mount, on);
-    gtk_widget_set_sensitive(w->fo.quick, on);
-    gtk_widget_set_sensitive(w->fo.encrypt, on && encryption_type(w->m) != nullptr);
-    on_encrypt_toggled(GTK_TOGGLE_BUTTON(w->fo.encrypt), &w->fo);
+static void on_format_toggled(GtkToggleButton *toggle, gpointer data) {
+    wizard *partition_wizard = data;
+    bool on = gtk_toggle_button_get_active(toggle);
+    gtk_widget_set_sensitive(partition_wizard->fo.fs, on);
+    gtk_widget_set_sensitive(partition_wizard->label, on);
+    gtk_widget_set_sensitive(partition_wizard->mount, on);
+    gtk_widget_set_sensitive(partition_wizard->fo.quick, on);
+    gtk_widget_set_sensitive(partition_wizard->fo.encrypt,
+                             on && encryption_type(partition_wizard->m) != nullptr);
+    on_encrypt_toggled(GTK_TOGGLE_BUTTON(partition_wizard->fo.encrypt), &partition_wizard->fo);
     /* Back on, only where the file system can choose. */
-    fill_units(&w->fo);
-    update_format_page(w);
+    fill_units(&partition_wizard->fo);
+    update_format_page(partition_wizard);
 }
 
-static void on_wizard_apply([[maybe_unused]] GtkAssistant *a, gpointer data) {
-    wizard *w = data;
-    dm *m = w->m;
-    guint64 size = (guint64)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w->size)) * XD_MIB;
-    if (size > w->max_size)
-        size = w->max_size;
-    bool extended = wizard_extended(w);
-    bool logical = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->logical));
-    bool fmt = !extended && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->do_format));
+static void on_wizard_apply([[maybe_unused]] GtkAssistant *assistant, gpointer data) {
+    wizard *partition_wizard = data;
+    dm *disk_manager = partition_wizard->m;
+    guint64 size =
+        (guint64)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(partition_wizard->size)) * XD_MIB;
+    if (size > partition_wizard->max_size)
+        size = partition_wizard->max_size;
+    bool extended = wizard_extended(partition_wizard);
+    bool logical = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(partition_wizard->logical));
+    bool fmt =
+        !extended && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(partition_wizard->do_format));
     GVariantBuilder ob;
     g_variant_builder_init(&ob, G_VARIANT_TYPE("a{sv}"));
-    if (g_strcmp0(w->d->table, "dos") == 0)
+    if (g_strcmp0(partition_wizard->d->table, "dos") == 0)
         g_variant_builder_add(&ob, "{sv}", "partition-type",
                               g_variant_new_string(extended ? "extended"
                                                    : logical ? "logical"
                                                              : "primary"));
     GVariant *opts = g_variant_builder_end(&ob);
-    char *dn = disk_name(w->d);
+    char *dn = disk_name(partition_wizard->d);
     char *title = g_strdup_printf("Creating a partition on %s...", dn);
-    op *o = op_new(m, title);
+    op *operation = op_new(disk_manager, title);
     if (fmt) {
-        const char *type = gtk_combo_box_get_active_id(GTK_COMBO_BOX(w->fo.fs));
+        const char *type = gtk_combo_box_get_active_id(GTK_COMBO_BOX(partition_wizard->fo.fs));
         if (type == nullptr)
             type = "ext4";
-        op_add(o, w->d->block_path, UD_TABLE, "CreatePartitionAndFormat",
-               g_variant_new("(ttss@a{sv}s@a{sv})", w->offset, size, "", "", opts, type,
-                             format_opts_variant(&w->fo, type,
-                                                 gtk_entry_get_text(GTK_ENTRY(w->label)))));
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->mount)))
-            op_add(o, nullptr, UD_FS, "Mount", g_variant_new("(@a{sv})", no_options()));
+        op_add(operation, partition_wizard->d->block_path, UD_TABLE, "CreatePartitionAndFormat",
+               g_variant_new(
+                   "(ttss@a{sv}s@a{sv})", partition_wizard->offset, size, "", "", opts, type,
+                   format_opts_variant(&partition_wizard->fo, type,
+                                       gtk_entry_get_text(GTK_ENTRY(partition_wizard->label)))));
+        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(partition_wizard->mount)))
+            op_add(operation, nullptr, UD_FS, "Mount", g_variant_new("(@a{sv})", no_options()));
     } else {
-        op_add(o, w->d->block_path, UD_TABLE, "CreatePartition",
-               g_variant_new("(ttss@a{sv})", w->offset, size, "", "", opts));
+        op_add(operation, partition_wizard->d->block_path, UD_TABLE, "CreatePartition",
+               g_variant_new("(ttss@a{sv})", partition_wizard->offset, size, "", "", opts));
     }
     g_free(title);
     g_free(dn);
-    format_forget_passphrase(&w->fo);
+    format_forget_passphrase(&partition_wizard->fo);
     /* GtkAssistant emits "close" after this, which destroys it. */
-    op_run(o);
+    op_run(operation);
 }
 
-static void on_wizard_close(GtkAssistant *a, [[maybe_unused]] gpointer data) {
-    gtk_widget_destroy(GTK_WIDGET(a));
+static void on_wizard_close(GtkAssistant *assistant, [[maybe_unused]] gpointer data) {
+    gtk_widget_destroy(GTK_WIDGET(assistant));
 }
 
-static void on_wizard_destroy([[maybe_unused]] GtkWidget *a, gpointer data) {
-    wizard *w = data;
-    g_ptr_array_unref(w->disks);
-    g_free(w);
+static void on_wizard_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    wizard *partition_wizard = data;
+    g_ptr_array_unref(partition_wizard->disks);
+    g_free(partition_wizard);
 }
 
-static GtkWidget *wizard_page(wizard *w, const char *title, GtkAssistantPageType type,
-                              GtkWidget *body) {
+static GtkWidget *wizard_page(wizard *partition_wizard, const char *title,
+                              GtkAssistantPageType type, GtkWidget *body) {
     /* Each page in a box, its contents at the top. */
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_set_border_width(GTK_CONTAINER(page), 12);
     gtk_box_pack_start(GTK_BOX(page), body, FALSE, FALSE, 0);
-    gtk_assistant_append_page(GTK_ASSISTANT(w->assistant), page);
-    gtk_assistant_set_page_title(GTK_ASSISTANT(w->assistant), page, title);
-    gtk_assistant_set_page_type(GTK_ASSISTANT(w->assistant), page, type);
-    gtk_assistant_set_page_complete(GTK_ASSISTANT(w->assistant), page, TRUE);
+    gtk_assistant_append_page(GTK_ASSISTANT(partition_wizard->assistant), page);
+    gtk_assistant_set_page_title(GTK_ASSISTANT(partition_wizard->assistant), page, title);
+    gtk_assistant_set_page_type(GTK_ASSISTANT(partition_wizard->assistant), page, type);
+    gtk_assistant_set_page_complete(GTK_ASSISTANT(partition_wizard->assistant), page, TRUE);
     return page;
 }
 
 /* XP's wizards have no list of steps down the side: hide GtkAssistant's
  * (its internal child with the "sidebar" style class). */
-static void hide_sidebar(GtkWidget *w, [[maybe_unused]] gpointer data) {
-    if (gtk_style_context_has_class(gtk_widget_get_style_context(w), "sidebar")) {
+static void hide_sidebar(GtkWidget *widget, [[maybe_unused]] gpointer data) {
+    if (gtk_style_context_has_class(gtk_widget_get_style_context(widget), "sidebar")) {
         /* GtkAssistant shows it again on each page. */
-        g_signal_connect_after(w, "show", G_CALLBACK(gtk_widget_hide), nullptr);
-        gtk_widget_hide(w);
+        g_signal_connect_after(widget, "show", G_CALLBACK(gtk_widget_hide), nullptr);
+        gtk_widget_hide(widget);
         return;
     }
-    if (GTK_IS_CONTAINER(w))
-        gtk_container_forall(GTK_CONTAINER(w), hide_sidebar, nullptr);
+    if (GTK_IS_CONTAINER(widget))
+        gtk_container_forall(GTK_CONTAINER(widget), hide_sidebar, nullptr);
 }
 
-static void new_partition(dm *m) {
-    const xd_disk_segment *s = sel_segment(m);
-    disk *d = m->sel.d;
-    if (s == nullptr || s->kind == XD_SEGMENT_PARTITION || m->busy || d->table == nullptr)
+static void new_partition(dm *disk_manager) {
+    const xd_disk_segment *disk_segment = sel_segment(disk_manager);
+    disk *disk_info = disk_manager->sel.d;
+    if (disk_segment == nullptr || disk_segment->kind == XD_SEGMENT_PARTITION ||
+        disk_manager->busy || disk_info->table == nullptr)
         return;
     guint n_primary = 0;
-    for (guint i = 0; i < d->vols->len; i++)
-        n_primary += !((volume *)g_ptr_array_index(d->vols, i))->contained;
-    wizard *w = g_new0(wizard, 1);
-    w->m = m;
-    w->d = d;
-    w->kinds = xd_disk_new_part_kinds(d->table, s->kind, n_primary, extended_of(d) != nullptr);
-    if (!xd_disk_new_part_range(s->offset, s->size, d->size, s->kind == XD_SEGMENT_FREE,
-                                &w->offset, &w->max_size) ||
-        !(w->kinds.primary || w->kinds.extended || w->kinds.logical)) {
-        g_free(w);
-        xd_message_box(GTK_WINDOW(m->window), "Disk Management", XD_MB_INFO, XD_MB_OK, FALSE,
+    for (guint i = 0; i < disk_info->vols->len; i++)
+        n_primary += !((volume *)g_ptr_array_index(disk_info->vols, i))->contained;
+    wizard *partition_wizard = g_new0(wizard, 1);
+    partition_wizard->m = disk_manager;
+    partition_wizard->d = disk_info;
+    partition_wizard->kinds = xd_disk_new_part_kinds(disk_info->table, disk_segment->kind,
+                                                     n_primary, extended_of(disk_info) != nullptr);
+    if (!xd_disk_new_part_range(disk_segment->offset, disk_segment->size, disk_info->size,
+                                disk_segment->kind == XD_SEGMENT_FREE, &partition_wizard->offset,
+                                &partition_wizard->max_size) ||
+        !(partition_wizard->kinds.primary || partition_wizard->kinds.extended ||
+          partition_wizard->kinds.logical)) {
+        g_free(partition_wizard);
+        xd_message_box(GTK_WINDOW(disk_manager->window), "Disk Management", XD_MB_INFO, XD_MB_OK,
+                       FALSE,
                        "No new partition can be made here: an MBR disk has room for four "
                        "primary partitions (or three and an extended one), and the space must "
                        "be at least 1 MB.");
         return;
     }
-    w->disks = g_ptr_array_ref(m->disks);
-    w->assistant = gtk_assistant_new();
-    gtk_window_set_title(GTK_WINDOW(w->assistant), "New Partition Wizard");
-    gtk_window_set_transient_for(GTK_WINDOW(w->assistant), GTK_WINDOW(m->window));
-    gtk_window_set_modal(GTK_WINDOW(w->assistant), TRUE);
-    gtk_window_set_default_size(GTK_WINDOW(w->assistant), 520, 380);
+    partition_wizard->disks = g_ptr_array_ref(disk_manager->disks);
+    partition_wizard->assistant = gtk_assistant_new();
+    gtk_window_set_title(GTK_WINDOW(partition_wizard->assistant), "New Partition Wizard");
+    gtk_window_set_transient_for(GTK_WINDOW(partition_wizard->assistant),
+                                 GTK_WINDOW(disk_manager->window));
+    gtk_window_set_modal(GTK_WINDOW(partition_wizard->assistant), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(partition_wizard->assistant), 520, 380);
 
-    wizard_page(w, "Welcome to the New Partition Wizard", GTK_ASSISTANT_PAGE_INTRO,
+    wizard_page(partition_wizard, "Welcome to the New Partition Wizard", GTK_ASSISTANT_PAGE_INTRO,
                 wrap_label("This wizard helps you create a partition on a basic disk.\n\nA "
                            "basic disk holds primary partitions and, on an MBR disk, an "
                            "extended partition with logical drives in it. Each partition can "
@@ -1529,148 +1589,172 @@ static void new_partition(dm *m) {
     GtkWidget *types = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_box_pack_start(GTK_BOX(types), wrap_label("Select the partition you want to create:"),
                        FALSE, FALSE, 0);
-    w->primary = gtk_radio_button_new_with_mnemonic(nullptr, "_Primary partition");
-    w->extended = gtk_radio_button_new_with_mnemonic_from_widget(GTK_RADIO_BUTTON(w->primary),
-                                                                 "_Extended partition");
-    w->logical = gtk_radio_button_new_with_mnemonic_from_widget(GTK_RADIO_BUTTON(w->primary),
-                                                                "_Logical drive");
-    gtk_widget_set_sensitive(w->primary, w->kinds.primary);
-    gtk_widget_set_sensitive(w->extended, w->kinds.extended);
-    gtk_widget_set_sensitive(w->logical, w->kinds.logical);
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->kinds.primary ? w->primary : w->logical),
+    partition_wizard->primary = gtk_radio_button_new_with_mnemonic(nullptr, "_Primary partition");
+    partition_wizard->extended = gtk_radio_button_new_with_mnemonic_from_widget(
+        GTK_RADIO_BUTTON(partition_wizard->primary), "_Extended partition");
+    partition_wizard->logical = gtk_radio_button_new_with_mnemonic_from_widget(
+        GTK_RADIO_BUTTON(partition_wizard->primary), "_Logical drive");
+    gtk_widget_set_sensitive(partition_wizard->primary, partition_wizard->kinds.primary);
+    gtk_widget_set_sensitive(partition_wizard->extended, partition_wizard->kinds.extended);
+    gtk_widget_set_sensitive(partition_wizard->logical, partition_wizard->kinds.logical);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(partition_wizard->kinds.primary
+                                                       ? partition_wizard->primary
+                                                       : partition_wizard->logical),
                                  TRUE);
-    gtk_box_pack_start(GTK_BOX(types), w->primary, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(types), w->extended, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(types), w->logical, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(types), partition_wizard->primary, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(types), partition_wizard->extended, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(types), partition_wizard->logical, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(types),
-                       wrap_label(g_strcmp0(d->table, "dos") == 0
+                       wrap_label(g_strcmp0(disk_info->table, "dos") == 0
                                       ? "A primary partition is a volume you create using free "
                                         "space on a basic disk. An MBR disk has up to four, or "
                                         "three and an extended partition, which holds any "
                                         "number of logical drives."
                                       : "A GPT disk has only primary partitions, up to 128."),
                        FALSE, FALSE, 8);
-    wizard_page(w, "Select Partition Type", GTK_ASSISTANT_PAGE_CONTENT, types);
+    wizard_page(partition_wizard, "Select Partition Type", GTK_ASSISTANT_PAGE_CONTENT, types);
 
     GtkWidget *sizes = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    GtkWidget *g = grid_new();
-    guint64 max_mb = w->max_size / XD_MIB;
+    GtkWidget *widget = grid_new();
+    guint64 max_mb = partition_wizard->max_size / XD_MIB;
     char *max_text = g_strdup_printf("%" G_GUINT64_FORMAT, max_mb);
-    grid_row(g, 0, "Maximum disk space in MB:", value_label(max_text));
+    grid_row(widget, 0, "Maximum disk space in MB:", value_label(max_text));
     g_free(max_text);
-    grid_row(g, 1, "Minimum disk space in MB:", value_label("1"));
-    w->size = gtk_spin_button_new_with_range(1, (double)max_mb, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(w->size), (double)max_mb);
-    grid_row(g, 2, "Partition _size in MB:", w->size);
+    grid_row(widget, 1, "Minimum disk space in MB:", value_label("1"));
+    partition_wizard->size = gtk_spin_button_new_with_range(1, (double)max_mb, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(partition_wizard->size), (double)max_mb);
+    grid_row(widget, 2, "Partition _size in MB:", partition_wizard->size);
     gtk_box_pack_start(GTK_BOX(sizes), wrap_label("Choose a partition size between the "
                                                   "maximum and minimum sizes."),
                        FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(sizes), g, FALSE, FALSE, 0);
-    wizard_page(w, "Specify Partition Size", GTK_ASSISTANT_PAGE_CONTENT, sizes);
+    gtk_box_pack_start(GTK_BOX(sizes), widget, FALSE, FALSE, 0);
+    wizard_page(partition_wizard, "Specify Partition Size", GTK_ASSISTANT_PAGE_CONTENT, sizes);
 
     GtkWidget *fmt = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_box_pack_start(GTK_BOX(fmt), wrap_label("To store data on this partition, you must "
                                                 "format it first."),
                        FALSE, FALSE, 0);
-    w->no_format = gtk_radio_button_new_with_mnemonic(nullptr, "_Do not format this partition");
-    w->do_format = gtk_radio_button_new_with_mnemonic_from_widget(
-        GTK_RADIO_BUTTON(w->no_format), "_Format this partition with the following settings:");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->do_format), TRUE);
-    gtk_box_pack_start(GTK_BOX(fmt), w->no_format, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(fmt), w->do_format, FALSE, FALSE, 0);
+    partition_wizard->no_format =
+        gtk_radio_button_new_with_mnemonic(nullptr, "_Do not format this partition");
+    partition_wizard->do_format = gtk_radio_button_new_with_mnemonic_from_widget(
+        GTK_RADIO_BUTTON(partition_wizard->no_format),
+        "_Format this partition with the following settings:");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(partition_wizard->do_format), TRUE);
+    gtk_box_pack_start(GTK_BOX(fmt), partition_wizard->no_format, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(fmt), partition_wizard->do_format, FALSE, FALSE, 0);
     GtkWidget *fg = grid_new();
     gtk_widget_set_margin_start(fg, 24);
     /* XP's order: File system, Allocation unit size, Volume label. */
-    format_fs_rows(&w->fo, m, d, fg, 0, "ext4");
-    w->label = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(w->label), "New Volume");
-    grid_row(fg, 2, "_Volume label:", w->label);
+    format_fs_rows(&partition_wizard->fo, disk_manager, disk_info, fg, 0, "ext4");
+    partition_wizard->label = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(partition_wizard->label), "New Volume");
+    grid_row(fg, 2, "_Volume label:", partition_wizard->label);
     gtk_box_pack_start(GTK_BOX(fmt), fg, FALSE, FALSE, 0);
     GtkWidget *opts = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_widget_set_margin_start(opts, 24);
-    format_checks(&w->fo, opts);
-    w->mount = gtk_check_button_new_with_mnemonic("_Mount it when it's formatted");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->mount), TRUE);
-    gtk_box_pack_start(GTK_BOX(opts), w->mount, FALSE, FALSE, 0);
-    w->fmt_hint = wrap_label("");
-    gtk_box_pack_start(GTK_BOX(opts), w->fmt_hint, FALSE, FALSE, 0);
+    format_checks(&partition_wizard->fo, opts);
+    partition_wizard->mount = gtk_check_button_new_with_mnemonic("_Mount it when it's formatted");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(partition_wizard->mount), TRUE);
+    gtk_box_pack_start(GTK_BOX(opts), partition_wizard->mount, FALSE, FALSE, 0);
+    partition_wizard->fmt_hint = wrap_label("");
+    gtk_box_pack_start(GTK_BOX(opts), partition_wizard->fmt_hint, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(fmt), opts, FALSE, FALSE, 0);
-    g_signal_connect(w->do_format, "toggled", G_CALLBACK(on_format_toggled), w);
-    g_signal_connect_swapped(w->fo.encrypt, "toggled", G_CALLBACK(update_format_page), w);
-    g_signal_connect_swapped(w->fo.pass, "changed", G_CALLBACK(update_format_page), w);
-    g_signal_connect_swapped(w->fo.confirm, "changed", G_CALLBACK(update_format_page), w);
-    w->fmt_page = wizard_page(w, "Format Partition", GTK_ASSISTANT_PAGE_CONTENT, fmt);
+    g_signal_connect(partition_wizard->do_format, "toggled", G_CALLBACK(on_format_toggled),
+                     partition_wizard);
+    g_signal_connect_swapped(partition_wizard->fo.encrypt, "toggled",
+                             G_CALLBACK(update_format_page), partition_wizard);
+    g_signal_connect_swapped(partition_wizard->fo.pass, "changed", G_CALLBACK(update_format_page),
+                             partition_wizard);
+    g_signal_connect_swapped(partition_wizard->fo.confirm, "changed",
+                             G_CALLBACK(update_format_page), partition_wizard);
+    partition_wizard->fmt_page =
+        wizard_page(partition_wizard, "Format Partition", GTK_ASSISTANT_PAGE_CONTENT, fmt);
 
-    w->summary = wrap_label("");
-    wizard_page(w, "Completing the New Partition Wizard", GTK_ASSISTANT_PAGE_CONFIRM, w->summary);
+    partition_wizard->summary = wrap_label("");
+    wizard_page(partition_wizard, "Completing the New Partition Wizard", GTK_ASSISTANT_PAGE_CONFIRM,
+                partition_wizard->summary);
 
-    gtk_assistant_set_forward_page_func(GTK_ASSISTANT(w->assistant), wizard_forward, w, nullptr);
-    g_signal_connect(w->assistant, "prepare", G_CALLBACK(on_wizard_prepare), w);
-    g_signal_connect(w->assistant, "apply", G_CALLBACK(on_wizard_apply), w);
-    g_signal_connect(w->assistant, "cancel", G_CALLBACK(on_wizard_close), w);
-    g_signal_connect(w->assistant, "close", G_CALLBACK(on_wizard_close), w);
-    g_signal_connect(w->assistant, "destroy", G_CALLBACK(on_wizard_destroy), w);
-    gtk_container_forall(GTK_CONTAINER(w->assistant), hide_sidebar, nullptr);
-    gtk_widget_show_all(w->assistant);
+    gtk_assistant_set_forward_page_func(GTK_ASSISTANT(partition_wizard->assistant), wizard_forward,
+                                        partition_wizard, nullptr);
+    g_signal_connect(partition_wizard->assistant, "prepare", G_CALLBACK(on_wizard_prepare),
+                     partition_wizard);
+    g_signal_connect(partition_wizard->assistant, "apply", G_CALLBACK(on_wizard_apply),
+                     partition_wizard);
+    g_signal_connect(partition_wizard->assistant, "cancel", G_CALLBACK(on_wizard_close),
+                     partition_wizard);
+    g_signal_connect(partition_wizard->assistant, "close", G_CALLBACK(on_wizard_close),
+                     partition_wizard);
+    g_signal_connect(partition_wizard->assistant, "destroy", G_CALLBACK(on_wizard_destroy),
+                     partition_wizard);
+    gtk_container_forall(GTK_CONTAINER(partition_wizard->assistant), hide_sidebar, nullptr);
+    gtk_widget_show_all(partition_wizard->assistant);
 }
 
 /* ---- Delete, Format ---------------------------------------------------------------- */
 
-static void delete_volume(dm *m, volume *v) {
+static void delete_volume(dm *disk_manager, volume *volume_info) {
     bool unmount = false;
-    if (action_reason(m, v, XD_ACTION_DELETE, &unmount) != nullptr)
+    if (action_reason(disk_manager, volume_info, XD_ACTION_DELETE, &unmount) != nullptr)
         return;
-    char *desc = volume_description(v);
+    char *desc = volume_description(volume_info);
     char *text = g_strdup_printf("%s\n\nAll data on the partition will be lost.%s Are you sure "
                                  "you want to delete it?",
                                  desc, unmount ? " It will be unmounted first." : "");
-    if (confirm(m, v->container ? "Delete Extended Partition" : "Delete Partition", text)) {
-        char *title = g_strdup_printf("Deleting %s...", dev_name(v->device));
-        op *o = op_new(m, title);
+    if (confirm(disk_manager,
+                volume_info->container ? "Delete Extended Partition" : "Delete Partition", text)) {
+        char *title = g_strdup_printf("Deleting %s...", dev_name(volume_info->device));
+        op *operation = op_new(disk_manager, title);
         if (unmount)
-            op_unmount(o, v);
-        GVariantBuilder b;
-        g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
-        g_variant_builder_add(&b, "{sv}", "tear-down", g_variant_new_boolean(TRUE));
-        op_add(o, v->path, UD_PART, "Delete", g_variant_new("(@a{sv})", g_variant_builder_end(&b)));
-        op_run(o);
+            op_unmount(operation, volume_info);
+        GVariantBuilder builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+        g_variant_builder_add(&builder, "{sv}", "tear-down", g_variant_new_boolean(TRUE));
+        op_add(operation, volume_info->path, UD_PART, "Delete",
+               g_variant_new("(@a{sv})", g_variant_builder_end(&builder)));
+        op_run(operation);
         g_free(title);
     }
     g_free(text);
     g_free(desc);
 }
 
-static void delete_partition(dm *m) { delete_volume(m, sel_volume(m)); }
+static void delete_partition(dm *disk_manager) {
+    delete_volume(disk_manager, sel_volume(disk_manager));
+}
 
 /* The extended partition has no block of its own in the map: it's
  * deleted from its free space. */
-static void delete_extended(dm *m) { delete_volume(m, extended_of(m->sel.d)); }
+static void delete_extended(dm *disk_manager) {
+    delete_volume(disk_manager, extended_of(disk_manager->sel.d));
+}
 
-static void format_volume(dm *m) {
-    volume *v = sel_volume(m);
+static void format_volume(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
     bool unmount = false;
-    if (action_reason(m, v, XD_ACTION_FORMAT, &unmount) != nullptr)
+    if (action_reason(disk_manager, volume_info, XD_ACTION_FORMAT, &unmount) != nullptr)
         return;
-    char *dn = volume_name(v);
+    char *dn = volume_name(volume_info);
     char *title = g_strdup_printf("Format %s", dn);
     GtkWidget *box = nullptr;
-    GtkWidget *dlg = dialog_new(m, title, &box);
+    GtkWidget *dlg = dialog_new(disk_manager, title, &box);
     g_free(title);
-    GtkWidget *g = grid_new();
+    GtkWidget *widget = grid_new();
     GtkWidget *label = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(label), v->label != nullptr && v->label[0] != '\0'
-                                             ? v->label
-                                             : "New Volume");
+    gtk_entry_set_text(GTK_ENTRY(label),
+                       volume_info->label != nullptr && volume_info->label[0] != '\0'
+                           ? volume_info->label
+                           : "New Volume");
     gtk_entry_set_activates_default(GTK_ENTRY(label), TRUE);
-    grid_row(g, 0, "_Volume label:", label);
+    grid_row(widget, 0, "_Volume label:", label);
     format_opts fo = {};
-    format_fs_rows(&fo, m, v->d, g, 1, v->has_fs ? v->id_type : "ext4");
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+    format_fs_rows(&fo, disk_manager, volume_info->d, widget, 1,
+                   volume_info->has_fs ? volume_info->id_type : "ext4");
+    gtk_box_pack_start(GTK_BOX(box), widget, FALSE, FALSE, 0);
     format_checks(&fo, box);
     gtk_widget_show_all(dlg);
-    int r = 0;
+    int response = 0;
     const char *bad = nullptr;
-    while ((r = gtk_dialog_run(GTK_DIALOG(dlg))) == GTK_RESPONSE_OK &&
+    while ((response = gtk_dialog_run(GTK_DIALOG(dlg))) == GTK_RESPONSE_OK &&
            (bad = format_encrypt_problem(&fo)) != nullptr) {
         xd_message_box(GTK_WINDOW(dlg), "Format", XD_MB_ERROR, XD_MB_OK, FALSE, bad);
         format_forget_passphrase(&fo);
@@ -1684,24 +1768,25 @@ static void format_volume(dm *m) {
                                      : nullptr;
     format_forget_passphrase(&fo);
     gtk_widget_destroy(dlg);
-    if (r == GTK_RESPONSE_OK && type != nullptr) {
-        char *desc = volume_description(v);
+    if (response == GTK_RESPONSE_OK && type != nullptr) {
+        char *desc = volume_description(volume_info);
         char *text = g_strdup_printf("%s\n\nFormatting this volume will erase all data on it.%s "
                                      "Back up any data you want to keep before formatting.%s%s%s"
                                      "\n\nDo you want to continue?",
                                      desc, unmount ? " It will be unmounted first." : "",
                                      quick ? "" : "\n\n", quick ? "" : FULL_FORMAT_NOTE,
                                      encrypt ? "\n\n" ENCRYPT_NOTE : "");
-        if (confirm(m, "Format", text)) {
+        if (confirm(disk_manager, "Format", text)) {
             char *busy = g_strdup_printf(quick ? "Formatting %s..."
                                                : "Formatting %s (a full format: this can take a "
                                                  "long time)...",
-                                         dev_name(v->device));
-            op *o = op_new(m, busy);
+                                         dev_name(volume_info->device));
+            op *operation = op_new(disk_manager, busy);
             if (unmount)
-                op_unmount(o, v);
-            op_add(o, v->path, UD_BLOCK, "Format", g_variant_new("(s@a{sv})", type, opts));
-            op_run(o);
+                op_unmount(operation, volume_info);
+            op_add(operation, volume_info->path, UD_BLOCK, "Format",
+                   g_variant_new("(s@a{sv})", type, opts));
+            op_run(operation);
             g_free(busy);
         }
         g_free(text);
@@ -1716,44 +1801,49 @@ static void format_volume(dm *m) {
 
 /* ---- Extend, Shrink -------------------------------------------------------------------- */
 
-static guint seg_index_of(const volume *v) {
-    for (guint i = 0; i < v->d->segments->len; i++)
-        if (seg_volume(v->d, (int)i) == v)
+static guint seg_index_of(const volume *volume_info) {
+    for (guint i = 0; i < volume_info->d->segments->len; i++)
+        if (seg_volume(volume_info->d, (int)i) == volume_info)
             return i;
     return 0;
 }
 
-static void resize_volume(dm *m, bool shrink) {
-    volume *v = sel_volume(m);
+static void resize_volume(dm *disk_manager, bool shrink) {
+    volume *volume_info = sel_volume(disk_manager);
     bool unmount = false;
-    if (action_reason(m, v, shrink ? XD_ACTION_SHRINK : XD_ACTION_EXTEND, &unmount) != nullptr)
+    if (action_reason(disk_manager, volume_info, shrink ? XD_ACTION_SHRINK : XD_ACTION_EXTEND,
+                      &unmount) != nullptr)
         return;
-    guint64 used = v->fs_total > 0 ? v->fs_total - v->fs_free : 0;
-    guint64 min = shrink ? xd_disk_shrink_min(used, v->size) : v->size;
-    guint64 max = shrink ? v->size : xd_disk_grow_max(v->d->segments, seg_index_of(v), v->d->size);
-    guint64 room_mb = (shrink ? v->size - min : max - v->size) / XD_MIB;
-    char *dn = volume_name(v);
+    guint64 used = volume_info->fs_total > 0 ? volume_info->fs_total - volume_info->fs_free : 0;
+    guint64 min = shrink ? xd_disk_shrink_min(used, volume_info->size) : volume_info->size;
+    guint64 max = shrink ? volume_info->size
+                         : xd_disk_grow_max(volume_info->d->segments, seg_index_of(volume_info),
+                                            volume_info->d->size);
+    guint64 room_mb = (shrink ? volume_info->size - min : max - volume_info->size) / XD_MIB;
+    char *dn = volume_name(volume_info);
     char *title = g_strdup_printf("%s %s", shrink ? "Shrink" : "Extend", dn);
     GtkWidget *box = nullptr;
-    GtkWidget *dlg = dialog_new(m, title, &box);
+    GtkWidget *dlg = dialog_new(disk_manager, title, &box);
     g_free(title);
-    GtkWidget *g = grid_new();
-    char *t = g_strdup_printf("%" G_GUINT64_FORMAT, v->size / XD_MIB);
-    grid_row(g, 0, shrink ? "Total size before shrink in MB:" : "Total volume size in MB:",
-             value_label(t));
-    g_free(t);
-    t = g_strdup_printf("%" G_GUINT64_FORMAT, room_mb);
-    grid_row(g, 1, shrink ? "Size of available shrink space in MB:" : "Maximum available space in MB:",
-             value_label(t));
-    g_free(t);
+    GtkWidget *widget = grid_new();
+    char *size_text = g_strdup_printf("%" G_GUINT64_FORMAT, volume_info->size / XD_MIB);
+    grid_row(widget, 0, shrink ? "Total size before shrink in MB:" : "Total volume size in MB:",
+             value_label(size_text));
+    g_free(size_text);
+    size_text = g_strdup_printf("%" G_GUINT64_FORMAT, room_mb);
+    grid_row(widget, 1,
+             shrink ? "Size of available shrink space in MB:" : "Maximum available space in MB:",
+             value_label(size_text));
+    g_free(size_text);
     GtkWidget *amount = gtk_spin_button_new_with_range(1, (double)room_mb, 1);
     /* Not knowing how full it is, start at half the room rather than all. */
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(amount),
                               (double)(shrink && used == 0 ? XD_MAX(room_mb / 2, 1) : room_mb));
-    grid_row(g, 2, shrink ? "Enter the amount of space to _shrink in MB:"
-                          : "Select the amount of _space in MB:",
+    grid_row(widget, 2,
+             shrink ? "Enter the amount of space to _shrink in MB:"
+                    : "Select the amount of _space in MB:",
              amount);
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), widget, FALSE, FALSE, 0);
     if (shrink)
         gtk_box_pack_start(GTK_BOX(box),
                            wrap_label(used > 0 ? "The volume can't be shrunk below what it holds, "
@@ -1768,44 +1858,47 @@ static void resize_volume(dm *m, bool shrink) {
                                       "be unmounted first."),
                            FALSE, FALSE, 0);
     gtk_widget_show_all(dlg);
-    int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    int response = gtk_dialog_run(GTK_DIALOG(dlg));
     guint64 change = (guint64)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(amount)) * XD_MIB;
     gtk_widget_destroy(dlg);
-    if (r != GTK_RESPONSE_OK || change == 0) {
+    if (response != GTK_RESPONSE_OK || change == 0) {
         g_free(dn);
         return;
     }
-    guint64 target = shrink ? v->size - change : v->size + change;
+    guint64 target = shrink ? volume_info->size - change : volume_info->size + change;
     if (target < min)
         target = min;
     if (target > max)
         target = max;
     target = shrink ? xd_disk_align_up(target) : xd_disk_align_down(target);
-    char *from = xd_disk_size_text(v->size), *to = xd_disk_size_text(target);
-    char *desc = volume_description(v);
+    char *from = xd_disk_size_text(volume_info->size), *to = xd_disk_size_text(target);
+    char *desc = volume_description(volume_info);
     char *text = g_strdup_printf("%s\n\n%s it from %s to %s?%s%s", desc,
                                  shrink ? "Shrink" : "Extend", from, to,
                                  shrink ? " If shrinking fails partway, data can be lost: back "
                                           "up first."
                                         : "",
                                  unmount ? " It will be unmounted first." : "");
-    if (confirm(m, shrink ? "Shrink Volume" : "Extend Volume", text)) {
+    if (confirm(disk_manager, shrink ? "Shrink Volume" : "Extend Volume", text)) {
         char *busy = g_strdup_printf("%s %s...", shrink ? "Shrinking" : "Extending",
-                                     dev_name(v->device));
-        op *o = op_new(m, busy);
+                                     dev_name(volume_info->device));
+        op *operation = op_new(disk_manager, busy);
         if (unmount)
-            op_unmount(o, v);
+            op_unmount(operation, volume_info);
         /* Shrinking: the filesystem first, then its partition. Growing:
          * the partition first, then the filesystem to fill it. */
         if (shrink) {
-            op_add(o, v->fs_path, UD_FS, "Resize", g_variant_new("(t@a{sv})", target, no_options()));
-            op_add(o, v->path, UD_PART, "Resize", g_variant_new("(t@a{sv})", target, no_options()));
+            op_add(operation, volume_info->fs_path, UD_FS, "Resize",
+                   g_variant_new("(t@a{sv})", target, no_options()));
+            op_add(operation, volume_info->path, UD_PART, "Resize",
+                   g_variant_new("(t@a{sv})", target, no_options()));
         } else {
-            op_add(o, v->path, UD_PART, "Resize", g_variant_new("(t@a{sv})", target, no_options()));
-            op_add(o, v->fs_path, UD_FS, "Resize",
+            op_add(operation, volume_info->path, UD_PART, "Resize",
+                   g_variant_new("(t@a{sv})", target, no_options()));
+            op_add(operation, volume_info->fs_path, UD_FS, "Resize",
                    g_variant_new("(t@a{sv})", (guint64)0, no_options()));
         }
-        op_run(o);
+        op_run(operation);
         g_free(busy);
     }
     g_free(text);
@@ -1817,54 +1910,57 @@ static void resize_volume(dm *m, bool shrink) {
 
 /* ---- Label, Active, Type, mount points ---------------------------------------------------- */
 
-static void change_label(dm *m) {
-    volume *v = sel_volume(m);
+static void change_label(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
     bool unmount = false;
-    if (action_reason(m, v, XD_ACTION_LABEL, &unmount) != nullptr || !v->has_fs)
+    if (action_reason(disk_manager, volume_info, XD_ACTION_LABEL, &unmount) != nullptr ||
+        !volume_info->has_fs)
         return;
     GtkWidget *box = nullptr;
-    GtkWidget *dlg = dialog_new(m, "Change Volume Label", &box);
-    char *desc = volume_description(v);
+    GtkWidget *dlg = dialog_new(disk_manager, "Change Volume Label", &box);
+    char *desc = volume_description(volume_info);
     gtk_box_pack_start(GTK_BOX(box), wrap_label(desc), FALSE, FALSE, 0);
     g_free(desc);
-    GtkWidget *g = grid_new();
-    GtkWidget *e = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(e), v->label != nullptr ? v->label : "");
-    gtk_entry_set_activates_default(GTK_ENTRY(e), TRUE);
-    grid_row(g, 0, "_Volume label:", e);
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+    GtkWidget *grid = grid_new();
+    GtkWidget *label_entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(label_entry),
+                       volume_info->label != nullptr ? volume_info->label : "");
+    gtk_entry_set_activates_default(GTK_ENTRY(label_entry), TRUE);
+    grid_row(grid, 0, "_Volume label:", label_entry);
+    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
     gtk_widget_show_all(dlg);
     if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
-        op *o = op_new(m, "Changing the volume label...");
-        op_add(o, v->fs_path, UD_FS, "SetLabel",
-               g_variant_new("(s@a{sv})", gtk_entry_get_text(GTK_ENTRY(e)), no_options()));
-        op_run(o);
+        op *operation = op_new(disk_manager, "Changing the volume label...");
+        op_add(
+            operation, volume_info->fs_path, UD_FS, "SetLabel",
+            g_variant_new("(s@a{sv})", gtk_entry_get_text(GTK_ENTRY(label_entry)), no_options()));
+        op_run(operation);
     }
     gtk_widget_destroy(dlg);
 }
 
-static void mark_active(dm *m) {
-    volume *v = sel_volume(m);
+static void mark_active(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
     bool unmount = false;
-    if (action_reason(m, v, XD_ACTION_SET_ACTIVE, &unmount) != nullptr)
+    if (action_reason(disk_manager, volume_info, XD_ACTION_SET_ACTIVE, &unmount) != nullptr)
         return;
-    char *desc = volume_description(v);
+    char *desc = volume_description(volume_info);
     char *text = g_strdup_printf("%s\n\nThe computer starts from the active partition. It "
                                  "won't start from this one unless it holds a boot loader.\n\n"
                                  "Do you want to mark it as active?",
                                  desc);
-    if (confirm(m, "Mark Partition as Active", text)) {
-        op *o = op_new(m, "Marking the partition as active...");
+    if (confirm(disk_manager, "Mark Partition as Active", text)) {
+        op *operation = op_new(disk_manager, "Marking the partition as active...");
         /* Only one partition of a disk is active. */
-        for (guint i = 0; i < v->d->vols->len; i++) {
-            volume *other = g_ptr_array_index(v->d->vols, i);
-            if (other != v && (other->flags & DOS_ACTIVE) != 0)
-                op_add(o, other->path, UD_PART, "SetFlags",
+        for (guint i = 0; i < volume_info->d->vols->len; i++) {
+            volume *other = g_ptr_array_index(volume_info->d->vols, i);
+            if (other != volume_info && (other->flags & DOS_ACTIVE) != 0)
+                op_add(operation, other->path, UD_PART, "SetFlags",
                        g_variant_new("(t@a{sv})", other->flags & ~DOS_ACTIVE, no_options()));
         }
-        op_add(o, v->path, UD_PART, "SetFlags",
-               g_variant_new("(t@a{sv})", v->flags | DOS_ACTIVE, no_options()));
-        op_run(o);
+        op_add(operation, volume_info->path, UD_PART, "SetFlags",
+               g_variant_new("(t@a{sv})", volume_info->flags | DOS_ACTIVE, no_options()));
+        op_run(operation);
     }
     g_free(text);
     g_free(desc);
@@ -1878,31 +1974,31 @@ static bool valid_type(const char *table, const char *id) {
     return g_uuid_string_is_valid(id);
 }
 
-static void change_type(dm *m) {
-    volume *v = sel_volume(m);
+static void change_type(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
     bool unmount = false;
-    if (action_reason(m, v, XD_ACTION_SET_TYPE, &unmount) != nullptr)
+    if (action_reason(disk_manager, volume_info, XD_ACTION_SET_TYPE, &unmount) != nullptr)
         return;
     GtkWidget *box = nullptr;
-    GtkWidget *dlg = dialog_new(m, "Change Partition Type", &box);
-    char *desc = volume_description(v);
+    GtkWidget *dlg = dialog_new(disk_manager, "Change Partition Type", &box);
+    char *desc = volume_description(volume_info);
     gtk_box_pack_start(GTK_BOX(box), wrap_label(desc), FALSE, FALSE, 0);
     g_free(desc);
     GtkWidget *combo = gtk_combo_box_text_new_with_entry();
     for (size_t i = 0; i < xd_part_type_count; i++) {
-        if (strcmp(xd_part_types[i].table, v->d->table) != 0 ||
+        if (strcmp(xd_part_types[i].table, volume_info->d->table) != 0 ||
             g_str_has_prefix(xd_part_types[i].name, "Extended"))
             continue;
         gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(combo), xd_part_types[i].id,
                                   xd_part_types[i].name);
     }
-    if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), v->ptype))
-        gtk_entry_set_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(combo))), v->ptype);
-    GtkWidget *g = grid_new();
-    grid_row(g, 0, "Partition _type:", combo);
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+    if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), volume_info->ptype))
+        gtk_entry_set_text(GTK_ENTRY(gtk_bin_get_child(GTK_BIN(combo))), volume_info->ptype);
+    GtkWidget *widget = grid_new();
+    grid_row(widget, 0, "Partition _type:", combo);
+    gtk_box_pack_start(GTK_BOX(box), widget, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box),
-                       wrap_label(strcmp(v->d->table, "dos") == 0
+                       wrap_label(strcmp(volume_info->d->table, "dos") == 0
                                       ? "Choose a type, or type its number (0x83)."
                                       : "Choose a type, or type its GUID."),
                        FALSE, FALSE, 0);
@@ -1913,22 +2009,22 @@ static void change_type(dm *m) {
             GTK_BIN(combo))))));
         /* Typing over the name of a listed type picks that type. */
         for (size_t i = 0; id == nullptr && i < xd_part_type_count; i++)
-            if (strcmp(xd_part_types[i].table, v->d->table) == 0 &&
+            if (strcmp(xd_part_types[i].table, volume_info->d->table) == 0 &&
                 g_ascii_strcasecmp(xd_part_types[i].name, typed) == 0)
                 id = xd_part_types[i].id;
         char *new_type = g_ascii_strdown(id != nullptr ? id : typed, -1);
         g_free(typed);
-        if (!valid_type(v->d->table, new_type)) {
+        if (!valid_type(volume_info->d->table, new_type)) {
             xd_message_box(GTK_WINDOW(dlg), "Change Partition Type", XD_MB_ERROR, XD_MB_OK, FALSE,
                            "That isn't a partition type.");
             g_free(new_type);
             continue;
         }
-        if (g_ascii_strcasecmp(new_type, v->ptype) != 0) {
-            op *o = op_new(m, "Changing the partition type...");
-            op_add(o, v->path, UD_PART, "SetType",
+        if (g_ascii_strcasecmp(new_type, volume_info->ptype) != 0) {
+            op *operation = op_new(disk_manager, "Changing the partition type...");
+            op_add(operation, volume_info->path, UD_PART, "SetType",
                    g_variant_new("(s@a{sv})", new_type, no_options()));
-            op_run(o);
+            op_run(operation);
         }
         g_free(new_type);
         break;
@@ -1936,15 +2032,15 @@ static void change_type(dm *m) {
     gtk_widget_destroy(dlg);
 }
 
-static void mount_volume(dm *m, volume *v, bool mount) {
-    if (v == nullptr || !v->has_fs || m->busy)
+static void mount_volume(dm *disk_manager, volume *volume_info, bool mount) {
+    if (volume_info == nullptr || !volume_info->has_fs || disk_manager->busy)
         return;
     char *title = g_strdup_printf("%s %s...", mount ? "Mounting" : "Unmounting",
-                                  dev_name(v->device));
-    op *o = op_new(m, title);
-    op_add(o, v->fs_path, UD_FS, mount ? "Mount" : "Unmount",
+                                  dev_name(volume_info->device));
+    op *operation = op_new(disk_manager, title);
+    op_add(operation, volume_info->fs_path, UD_FS, mount ? "Mount" : "Unmount",
            g_variant_new("(@a{sv})", no_options()));
-    op_run(o);
+    op_run(operation);
     g_free(title);
 }
 
@@ -1952,12 +2048,14 @@ static void mount_volume(dm *m, volume *v, bool mount) {
 
 /* What the passphrase boxes call the volume: its label, else its device
  * ("sde1"). */
-static const char *crypt_name(const volume *v) {
-    return v->label != nullptr && v->label[0] != '\0' ? v->label : dev_name(v->device);
+static const char *crypt_name(const volume *volume_info) {
+    return volume_info->label != nullptr && volume_info->label[0] != '\0'
+               ? volume_info->label
+               : dev_name(volume_info->device);
 }
 
-static bool needed_by_system(const volume *v) {
-    for (char **mp = v->mounts; mp != nullptr && *mp != nullptr; mp++)
+static bool needed_by_system(const volume *volume_info) {
+    for (char **mp = volume_info->mounts; mp != nullptr && *mp != nullptr; mp++)
         if (xd_mount_is_system(*mp))
             return true;
     return false;
@@ -1965,18 +2063,19 @@ static bool needed_by_system(const volume *v) {
 
 /* Why Unlock (`unlock`), Lock or Change Passphrase (`change`) can't be
  * done to the volume, or nullptr. */
-static const char *crypt_reason(dm *m, const volume *v, bool unlock, bool change) {
-    if (m->busy)
+static const char *crypt_reason(dm *disk_manager, const volume *volume_info, bool unlock,
+                                bool change) {
+    if (disk_manager->busy)
         return "Disk Management is busy with another operation.";
-    if (v == nullptr || !v->encrypted)
+    if (volume_info == nullptr || !volume_info->encrypted)
         return "This volume isn't encrypted.";
     if (change)
         return nullptr;
     if (unlock)
-        return v->unlocked ? "It's unlocked already." : nullptr;
-    if (!v->unlocked)
+        return volume_info->unlocked ? "It's unlocked already." : nullptr;
+    if (!volume_info->unlocked)
         return "It's locked already.";
-    return needed_by_system(v) ? "The running system needs this volume." : nullptr;
+    return needed_by_system(volume_info) ? "The running system needs this volume." : nullptr;
 }
 
 /* An Unlock or ChangePassphrase on its way; the volume may be gone when
@@ -1986,27 +2085,27 @@ typedef struct crypt_req {
     char *path, *name;
 } crypt_req;
 
-static crypt_req *crypt_req_new(dm *m, const volume *v) {
-    crypt_req *c = g_new0(crypt_req, 1);
-    c->m = m;
-    c->path = g_strdup(v->path);
-    c->name = g_strdup(crypt_name(v));
-    return c;
+static crypt_req *crypt_req_new(dm *disk_manager, const volume *volume_info) {
+    crypt_req *crypt_request = g_new0(crypt_req, 1);
+    crypt_request->m = disk_manager;
+    crypt_request->path = g_strdup(volume_info->path);
+    crypt_request->name = g_strdup(crypt_name(volume_info));
+    return crypt_request;
 }
 
-static void crypt_req_free(crypt_req *c) {
-    g_free(c->path);
-    g_free(c->name);
-    g_free(c);
+static void crypt_req_free(crypt_req *crypt_request) {
+    g_free(crypt_request->path);
+    g_free(crypt_request->name);
+    g_free(crypt_request);
 }
 
 /* The call's error, or nullptr (then *wrong says whether the passphrase
  * was wrong; a cancelled polkit box is no error). */
 static GError *crypt_finish(GObject *src, GAsyncResult *res, bool *wrong, bool *dismissed) {
     GError *err = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
-    if (r != nullptr)
-        g_variant_unref(r);
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+    if (variant != nullptr)
+        g_variant_unref(variant);
     *wrong = *dismissed = false;
     if (err != nullptr) {
         char *name = g_dbus_error_get_remote_error(err);
@@ -2018,104 +2117,106 @@ static GError *crypt_finish(GObject *src, GAsyncResult *res, bool *wrong, bool *
     return err;
 }
 
-static void ask_unlock(dm *m, const char *path, const char *name, bool retry);
+static void ask_unlock(dm *disk_manager, const char *path, const char *name, bool retry);
 
 static void on_unlocked(GObject *src, GAsyncResult *res, gpointer data) {
-    crypt_req *c = data;
-    dm *m = c->m;
+    crypt_req *crypt_request = data;
+    dm *disk_manager = crypt_request->m;
     bool wrong = false, dismissed = false;
     GError *err = crypt_finish(src, res, &wrong, &dismissed);
-    set_busy(m, nullptr);
+    set_busy(disk_manager, nullptr);
     if (err != nullptr && wrong) {
-        ask_unlock(m, c->path, c->name, true);
+        ask_unlock(disk_manager, crypt_request->path, crypt_request->name, true);
     } else if (err != nullptr && !dismissed) {
-        char *text = g_strdup_printf("%s could not be unlocked.\n\n%s", c->name, err->message);
-        xd_message_box(GTK_WINDOW(m->window), "Disk Management", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       text);
+        char *text =
+            g_strdup_printf("%s could not be unlocked.\n\n%s", crypt_request->name, err->message);
+        xd_message_box(GTK_WINDOW(disk_manager->window), "Disk Management", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, text);
         g_free(text);
     }
     g_clear_error(&err);
-    crypt_req_free(c);
-    refresh(m);
+    crypt_req_free(crypt_request);
+    refresh(disk_manager);
 }
 
 /* The passphrase box (again, saying so, after a wrong one), then
  * Unlock. */
-static void ask_unlock(dm *m, const char *path, const char *name, bool retry) {
-    char *pass = xd_luks_ask_passphrase(GTK_WINDOW(m->window), name, retry, nullptr);
+static void ask_unlock(dm *disk_manager, const char *path, const char *name, bool retry) {
+    char *pass = xd_luks_ask_passphrase(GTK_WINDOW(disk_manager->window), name, retry, nullptr);
     if (pass == nullptr)
         return;
-    crypt_req *c = g_new0(crypt_req, 1);
-    c->m = m;
-    c->path = g_strdup(path);
-    c->name = g_strdup(name);
+    crypt_req *crypt_request = g_new0(crypt_req, 1);
+    crypt_request->m = disk_manager;
+    crypt_request->path = g_strdup(path);
+    crypt_request->name = g_strdup(name);
     char *busy = g_strdup_printf("Unlocking %s...", name);
-    set_busy(m, busy);
+    set_busy(disk_manager, busy);
     g_free(busy);
-    g_dbus_connection_call(m->bus, UD, path, UD_ENC, "Unlock",
+    g_dbus_connection_call(disk_manager->bus, UD, path, UD_ENC, "Unlock",
                            g_variant_new("(sa{sv})", pass, nullptr), G_VARIANT_TYPE("(o)"),
                            G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
-                           on_unlocked, c);
+                           on_unlocked, crypt_request);
     xd_luks_passphrase_free(pass);
 }
 
-static void unlock_volume(dm *m) {
-    volume *v = sel_volume(m);
-    if (crypt_reason(m, v, true, false) == nullptr)
-        ask_unlock(m, v->path, crypt_name(v), false);
+static void unlock_volume(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
+    if (crypt_reason(disk_manager, volume_info, true, false) == nullptr)
+        ask_unlock(disk_manager, volume_info->path, crypt_name(volume_info), false);
 }
 
 /* Lock: what's inside is unmounted first. */
-static void lock_volume(dm *m) {
-    volume *v = sel_volume(m);
-    if (crypt_reason(m, v, false, false) != nullptr)
+static void lock_volume(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
+    if (crypt_reason(disk_manager, volume_info, false, false) != nullptr)
         return;
-    char *title = g_strdup_printf("Locking %s...", crypt_name(v));
-    op *o = op_new(m, title);
-    op_unmount(o, v);
-    op_add(o, v->path, UD_ENC, "Lock", g_variant_new("(@a{sv})", no_options()));
-    op_run(o);
+    char *title = g_strdup_printf("Locking %s...", crypt_name(volume_info));
+    op *operation = op_new(disk_manager, title);
+    op_unmount(operation, volume_info);
+    op_add(operation, volume_info->path, UD_ENC, "Lock", g_variant_new("(@a{sv})", no_options()));
+    op_run(operation);
     g_free(title);
 }
 
 static void on_passphrase_changed(GObject *src, GAsyncResult *res, gpointer data) {
-    crypt_req *c = data;
-    dm *m = c->m;
+    crypt_req *crypt_request = data;
+    dm *disk_manager = crypt_request->m;
     bool wrong = false, dismissed = false;
     GError *err = crypt_finish(src, res, &wrong, &dismissed);
-    set_busy(m, nullptr);
+    set_busy(disk_manager, nullptr);
     if (err == nullptr) {
-        xd_message_box(GTK_WINDOW(m->window), "Change Passphrase", XD_MB_INFO, XD_MB_OK, FALSE,
-                       "The passphrase has been changed.");
+        xd_message_box(GTK_WINDOW(disk_manager->window), "Change Passphrase", XD_MB_INFO, XD_MB_OK,
+                       FALSE, "The passphrase has been changed.");
     } else if (!dismissed) {
         char *text = wrong ? g_strdup("The old passphrase you typed is incorrect. The "
                                       "passphrase has not been changed.")
                            : g_strdup_printf("The passphrase could not be changed.\n\n%s",
                                              err->message);
-        xd_message_box(GTK_WINDOW(m->window), "Change Passphrase", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       text);
+        xd_message_box(GTK_WINDOW(disk_manager->window), "Change Passphrase", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, text);
         g_free(text);
     }
     g_clear_error(&err);
-    crypt_req_free(c);
-    refresh(m);
+    crypt_req_free(crypt_request);
+    refresh(disk_manager);
 }
 
-static void change_passphrase(dm *m) {
-    volume *v = sel_volume(m);
-    if (crypt_reason(m, v, false, true) != nullptr)
+static void change_passphrase(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
+    if (crypt_reason(disk_manager, volume_info, false, true) != nullptr)
         return;
     char *old = nullptr, *new_passphrase = nullptr;
-    if (!xd_luks_ask_change(GTK_WINDOW(m->window), crypt_name(v), &old, &new_passphrase))
+    if (!xd_luks_ask_change(GTK_WINDOW(disk_manager->window), crypt_name(volume_info), &old,
+                            &new_passphrase))
         return;
-    crypt_req *c = crypt_req_new(m, v);
-    char *busy = g_strdup_printf("Changing the passphrase of %s...", c->name);
-    set_busy(m, busy);
+    crypt_req *crypt_request = crypt_req_new(disk_manager, volume_info);
+    char *busy = g_strdup_printf("Changing the passphrase of %s...", crypt_request->name);
+    set_busy(disk_manager, busy);
     g_free(busy);
-    g_dbus_connection_call(m->bus, UD, c->path, UD_ENC, "ChangePassphrase",
+    g_dbus_connection_call(disk_manager->bus, UD, crypt_request->path, UD_ENC, "ChangePassphrase",
                            g_variant_new("(ssa{sv})", old, new_passphrase, nullptr), nullptr,
                            G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, nullptr,
-                           on_passphrase_changed, c);
+                           on_passphrase_changed, crypt_request);
     xd_luks_passphrase_free(old);
     xd_luks_passphrase_free(new_passphrase);
 }
@@ -2123,31 +2224,32 @@ static void change_passphrase(dm *m) {
 /* ---- startup mount points (/etc/fstab, written by UDisks2) ------------------------------ */
 
 /* Whether the running system mounts the volume, now or at startup. */
-static bool volume_is_system(const volume *v) {
-    for (char **mp = v->mounts; mp != nullptr && *mp != nullptr; mp++)
+static bool volume_is_system(const volume *volume_info) {
+    for (char **mp = volume_info->mounts; mp != nullptr && *mp != nullptr; mp++)
         if (xd_mount_is_system(*mp))
             return true;
-    for (char **f = v->fstab; f != nullptr && *f != nullptr; f++)
-        if (xd_mount_is_system(*f))
+    for (char **fstab_point = volume_info->fstab; fstab_point != nullptr && *fstab_point != nullptr;
+         fstab_point++)
+        if (xd_mount_is_system(*fstab_point))
             return true;
     return false;
 }
 
 /* Why the volume's startup mount points can't be changed, or nullptr. */
-static const char *startup_reason(dm *m, const volume *v) {
-    if (m->busy)
+static const char *startup_reason(dm *disk_manager, const volume *volume_info) {
+    if (disk_manager->busy)
         return "Disk Management is busy with another operation.";
-    if (v->encrypted && !v->unlocked)
+    if (volume_info->encrypted && !volume_info->unlocked)
         return "Unlock the volume first: the file system inside, which is what's mounted, "
                "can only be seen unlocked.";
-    if (!v->has_fs)
+    if (!volume_info->has_fs)
         return "There's no file system to mount.";
-    if (v->d->optical)
+    if (volume_info->d->optical)
         return "CDs and DVDs are mounted when they're inserted.";
-    if (volume_is_system(v))
+    if (volume_is_system(volume_info))
         return "The running system mounts this volume itself: its /etc/fstab entry can't be "
                "changed here.";
-    if (v->uuid == nullptr || v->uuid[0] == '\0')
+    if (volume_info->uuid == nullptr || volume_info->uuid[0] == '\0')
         return "This volume has no UUID to find it by when the computer starts.";
     return nullptr;
 }
@@ -2156,33 +2258,33 @@ static const char *startup_reason(dm *m, const volume *v) {
  * a number. */
 static char *item_str(GVariant *item, const char *key) {
     GVariant *details = g_variant_get_child_value(item, 1);
-    GVariant *v = g_variant_lookup_value(details, key, G_VARIANT_TYPE_BYTESTRING);
-    char *s = v != nullptr ? g_variant_dup_bytestring(v, nullptr) : g_strdup("");
-    if (v != nullptr)
-        g_variant_unref(v);
+    GVariant *variant = g_variant_lookup_value(details, key, G_VARIANT_TYPE_BYTESTRING);
+    char *text = variant != nullptr ? g_variant_dup_bytestring(variant, nullptr) : g_strdup("");
+    if (variant != nullptr)
+        g_variant_unref(variant);
     g_variant_unref(details);
-    return s;
+    return text;
 }
 
 static gint32 item_int(GVariant *item, const char *key) {
     GVariant *details = g_variant_get_child_value(item, 1);
-    gint32 n = 0;
-    g_variant_lookup(details, key, "i", &n);
+    gint32 value = 0;
+    g_variant_lookup(details, key, "i", &value);
     g_variant_unref(details);
-    return n;
+    return value;
 }
 
 static GVariant *fstab_item(const char *fsname, const char *dir, const char *type,
                             const char *opts, gint32 freq, gint32 passno) {
-    GVariantBuilder b;
-    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
-    g_variant_builder_add(&b, "{sv}", "fsname", g_variant_new_bytestring(fsname));
-    g_variant_builder_add(&b, "{sv}", "dir", g_variant_new_bytestring(dir));
-    g_variant_builder_add(&b, "{sv}", "type", g_variant_new_bytestring(type));
-    g_variant_builder_add(&b, "{sv}", "opts", g_variant_new_bytestring(opts));
-    g_variant_builder_add(&b, "{sv}", "freq", g_variant_new_int32(freq));
-    g_variant_builder_add(&b, "{sv}", "passno", g_variant_new_int32(passno));
-    return g_variant_new("(s@a{sv})", "fstab", g_variant_builder_end(&b));
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&builder, "{sv}", "fsname", g_variant_new_bytestring(fsname));
+    g_variant_builder_add(&builder, "{sv}", "dir", g_variant_new_bytestring(dir));
+    g_variant_builder_add(&builder, "{sv}", "type", g_variant_new_bytestring(type));
+    g_variant_builder_add(&builder, "{sv}", "opts", g_variant_new_bytestring(opts));
+    g_variant_builder_add(&builder, "{sv}", "freq", g_variant_new_int32(freq));
+    g_variant_builder_add(&builder, "{sv}", "passno", g_variant_new_int32(passno));
+    return g_variant_new("(s@a{sv})", "fstab", g_variant_builder_end(&builder));
 }
 
 /* The file system type for /etc/fstab: blkid's, except that NTFS goes to
@@ -2195,25 +2297,26 @@ static const char *fstab_type(const char *id_type) {
     return id_type != nullptr && id_type[0] != '\0' ? id_type : "auto";
 }
 
-/* The volume other than `v` mounted at `dir` at startup, or nullptr. */
-static volume *startup_owner(dm *m, const volume *v, const char *dir) {
-    for (guint i = 0; i < m->disks->len; i++) {
-        disk *d = g_ptr_array_index(m->disks, i);
-        for (guint k = 0; k < d->vols->len; k++) {
-            volume *o = g_ptr_array_index(d->vols, k);
-            if (o != v && o->fstab != nullptr && g_strv_contains((const char *const *)o->fstab, dir))
-                return o;
+/* The volume other than `volume_info` mounted at `dir` at startup, or nullptr. */
+static volume *startup_owner(dm *disk_manager, const volume *volume_info, const char *dir) {
+    for (guint i = 0; i < disk_manager->disks->len; i++) {
+        disk *disk_info = g_ptr_array_index(disk_manager->disks, i);
+        for (guint k = 0; k < disk_info->vols->len; k++) {
+            volume *owner = g_ptr_array_index(disk_info->vols, k);
+            if (owner != volume_info && owner->fstab != nullptr &&
+                g_strv_contains((const char *const *)owner->fstab, dir))
+                return owner;
         }
     }
     return nullptr;
 }
 
 /* Why the folder `dir` (cleaned) can't take the volume, or nullptr. */
-static char *startup_dir_problem(dm *m, const volume *v, const char *dir) {
+static char *startup_dir_problem(dm *disk_manager, const volume *volume_info, const char *dir) {
     const char *why = xd_fstab_dir_problem(dir);
     if (why != nullptr)
         return g_strdup(why);
-    volume *other = startup_owner(m, v, dir);
+    volume *other = startup_owner(disk_manager, volume_info, dir);
     if (other != nullptr) {
         char *name = volume_name(other);
         char *text = g_strdup_printf("%s is mounted in %s when the computer starts. Choose "
@@ -2226,7 +2329,8 @@ static char *startup_dir_problem(dm *m, const volume *v, const char *dir) {
         return g_strdup_printf("%s is a file, not a folder.", dir);
     /* As Windows mounts only in an empty folder: what's in it would be
      * hidden while the volume is mounted over it. */
-    bool here = v->mounts != nullptr && g_strv_contains((const char *const *)v->mounts, dir);
+    bool here = volume_info->mounts != nullptr &&
+                g_strv_contains((const char *const *)volume_info->mounts, dir);
     GError *error = nullptr;
     GDir *gd = here ? nullptr : g_dir_open(dir, 0, &error);
     /* A folder that's there but can't be read may hold anything: not
@@ -2249,8 +2353,8 @@ static char *startup_dir_problem(dm *m, const volume *v, const char *dir) {
     return nullptr;
 }
 
-static void on_browse_folder(GtkButton *b, gpointer entry) {
-    GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(b));
+static void on_browse_folder(GtkButton *button, gpointer entry) {
+    GtkWidget *top = gtk_widget_get_toplevel(GTK_WIDGET(button));
     GtkWidget *fc = gtk_file_chooser_dialog_new("Browse for Empty Folder", GTK_WINDOW(top),
                                                 GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "Cancel",
                                                 GTK_RESPONSE_CANCEL, "OK", GTK_RESPONSE_ACCEPT,
@@ -2279,25 +2383,27 @@ typedef struct crypt_startup {
     char *passphrase; /* for the key file; free with xd_luks_passphrase_free */
 } crypt_startup;
 
-static void on_keyfile_toggled(GtkToggleButton *b, gpointer data) {
-    crypt_startup *c = data;
-    bool on = gtk_toggle_button_get_active(b);
-    gtk_widget_set_sensitive(c->pass, on);
-    gtk_widget_set_sensitive(c->confirm, on);
+static void on_keyfile_toggled(GtkToggleButton *toggle, gpointer data) {
+    crypt_startup *startup_unlock = data;
+    bool on = gtk_toggle_button_get_active(toggle);
+    gtk_widget_set_sensitive(startup_unlock->pass, on);
+    gtk_widget_set_sensitive(startup_unlock->confirm, on);
 }
 
 /* The "Unlocking at startup" group of the Add box. */
-static void crypt_startup_rows(crypt_startup *c, const volume *v, GtkWidget *box) {
+static void crypt_startup_rows(crypt_startup *startup_unlock, const volume *volume_info,
+                               GtkWidget *box) {
     GtkWidget *frame = gtk_frame_new("Unlocking at startup");
     GtkWidget *fb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(fb), 8);
-    c->ask = gtk_radio_button_new_with_mnemonic(nullptr, "As_k for the passphrase when the "
-                                                         "computer starts");
-    c->keyfile = gtk_radio_button_new_with_mnemonic_from_widget(
-        GTK_RADIO_BUTTON(c->ask), "Unlock it with a key _file kept on this computer");
-    gtk_box_pack_start(GTK_BOX(fb), c->ask, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(fb), c->keyfile, FALSE, FALSE, 0);
-    char *name = xd_crypttab_name(v->luks_uuid);
+    startup_unlock->ask =
+        gtk_radio_button_new_with_mnemonic(nullptr, "As_k for the passphrase when the "
+                                                    "computer starts");
+    startup_unlock->keyfile = gtk_radio_button_new_with_mnemonic_from_widget(
+        GTK_RADIO_BUTTON(startup_unlock->ask), "Unlock it with a key _file kept on this computer");
+    gtk_box_pack_start(GTK_BOX(fb), startup_unlock->ask, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(fb), startup_unlock->keyfile, FALSE, FALSE, 0);
+    char *name = xd_crypttab_name(volume_info->luks_uuid);
     char *path = xd_crypttab_key_path(name);
     char *warning = g_strdup_printf(
         "A key file (%s) holds the passphrase itself. Only administrators can read it, but "
@@ -2305,27 +2411,28 @@ static void crypt_startup_rows(crypt_startup *c, const volume *v, GtkWidget *box
         "encrypted as well, this volume's encryption then no longer protects it from someone "
         "who takes the computer.",
         path);
-    GtkWidget *w = wrap_label(warning);
-    gtk_widget_set_margin_start(w, 24);
-    gtk_box_pack_start(GTK_BOX(fb), w, FALSE, FALSE, 0);
+    GtkWidget *warning_label = wrap_label(warning);
+    gtk_widget_set_margin_start(warning_label, 24);
+    gtk_box_pack_start(GTK_BOX(fb), warning_label, FALSE, FALSE, 0);
     g_free(warning);
     g_free(path);
     g_free(name);
-    GtkWidget *g = grid_new();
-    gtk_widget_set_margin_start(g, 24);
-    c->pass = gtk_entry_new();
-    c->confirm = gtk_entry_new();
-    GtkWidget *entries[] = {c->pass, c->confirm};
+    GtkWidget *grid = grid_new();
+    gtk_widget_set_margin_start(grid, 24);
+    startup_unlock->pass = gtk_entry_new();
+    startup_unlock->confirm = gtk_entry_new();
+    GtkWidget *entries[] = {startup_unlock->pass, startup_unlock->confirm};
     for (int i = 0; i < 2; i++) {
         gtk_entry_set_visibility(GTK_ENTRY(entries[i]), FALSE);
         gtk_entry_set_input_purpose(GTK_ENTRY(entries[i]), GTK_INPUT_PURPOSE_PASSWORD);
         gtk_entry_set_activates_default(GTK_ENTRY(entries[i]), TRUE);
         gtk_widget_set_sensitive(entries[i], FALSE);
     }
-    grid_row(g, 0, "Pa_ssphrase:", c->pass);
-    grid_row(g, 1, "_Confirm passphrase:", c->confirm);
-    gtk_box_pack_start(GTK_BOX(fb), g, FALSE, FALSE, 0);
-    g_signal_connect(c->keyfile, "toggled", G_CALLBACK(on_keyfile_toggled), c);
+    grid_row(grid, 0, "Pa_ssphrase:", startup_unlock->pass);
+    grid_row(grid, 1, "_Confirm passphrase:", startup_unlock->confirm);
+    gtk_box_pack_start(GTK_BOX(fb), grid, FALSE, FALSE, 0);
+    g_signal_connect(startup_unlock->keyfile, "toggled", G_CALLBACK(on_keyfile_toggled),
+                     startup_unlock);
     gtk_container_add(GTK_CONTAINER(frame), fb);
     gtk_box_pack_start(GTK_BOX(box), frame, FALSE, FALSE, 0);
 }
@@ -2334,11 +2441,12 @@ static void crypt_startup_rows(crypt_startup *c, const volume *v, GtkWidget *box
  * is mounted at startup, and with `crypt` (an encrypted volume without
  * an /etc/crypttab entry yet) how it's unlocked. False when cancelled;
  * else *dir and *opts are set (free them), and crypt's choice. */
-static bool startup_dialog(dm *m, const volume *v, const char *title, const char *dir0,
-                           const char *opts0, char **dir, char **opts, crypt_startup *crypt) {
+static bool startup_dialog(dm *disk_manager, const volume *volume_info, const char *title,
+                           const char *dir0, const char *opts0, char **dir, char **opts,
+                           crypt_startup *crypt) {
     GtkWidget *box = nullptr;
-    GtkWidget *dlg = dialog_new(m, title, &box);
-    char *desc = volume_description(v);
+    GtkWidget *dlg = dialog_new(disk_manager, title, &box);
+    char *desc = volume_description(volume_info);
     gtk_box_pack_start(GTK_BOX(box), wrap_label(desc), FALSE, FALSE, 0);
     g_free(desc);
     GtkWidget *where = gtk_label_new_with_mnemonic(
@@ -2356,12 +2464,12 @@ static bool startup_dialog(dm *m, const volume *v, const char *title, const char
     gtk_box_pack_start(GTK_BOX(row), entry, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(row), browse, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
-    GtkWidget *g = grid_new();
+    GtkWidget *widget = grid_new();
     GtkWidget *options = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(options), opts0);
     gtk_entry_set_activates_default(GTK_ENTRY(options), TRUE);
-    grid_row(g, 0, "Mount _options:", options);
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+    grid_row(widget, 0, "Mount _options:", options);
+    gtk_box_pack_start(GTK_BOX(box), widget, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box),
                        wrap_label("nofail: the computer still starts when the disk isn't there. "
                                   "x-mount.mkdir: the folder is made if it doesn't exist. "
@@ -2369,14 +2477,15 @@ static bool startup_dialog(dm *m, const volume *v, const char *title, const char
                                   "owners (FAT, exFAT, NTFS)."),
                        FALSE, FALSE, 0);
     if (crypt != nullptr)
-        crypt_startup_rows(crypt, v, box);
+        crypt_startup_rows(crypt, volume_info, box);
     gtk_widget_show_all(dlg);
     bool ok = false;
     while (!ok && gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
-        char *d = xd_fstab_dir_clean(gtk_entry_get_text(GTK_ENTRY(entry)));
-        char *o = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(options))));
-        char *why = startup_dir_problem(m, v, d);
-        if (why == nullptr && (o[0] == '\0' || strpbrk(o, " \t\n") != nullptr))
+        char *directory = xd_fstab_dir_clean(gtk_entry_get_text(GTK_ENTRY(entry)));
+        char *mount_options = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(options))));
+        char *why = startup_dir_problem(disk_manager, volume_info, directory);
+        if (why == nullptr &&
+            (mount_options[0] == '\0' || strpbrk(mount_options, " \t\n") != nullptr))
             why = g_strdup("Type the mount options separated by commas, without spaces (or "
                            "\"defaults\").");
         bool keyfile =
@@ -2390,12 +2499,12 @@ static bool startup_dialog(dm *m, const volume *v, const char *title, const char
         if (why != nullptr) {
             xd_message_box(GTK_WINDOW(dlg), title, XD_MB_ERROR, XD_MB_OK, FALSE, why);
             g_free(why);
-            g_free(d);
-            g_free(o);
+            g_free(directory);
+            g_free(mount_options);
             continue;
         }
-        *dir = d;
-        *opts = o;
+        *dir = directory;
+        *opts = mount_options;
         if (crypt != nullptr) {
             crypt->use_keyfile = keyfile;
             crypt->passphrase = keyfile ? g_strdup(gtk_entry_get_text(GTK_ENTRY(crypt->pass)))
@@ -2419,75 +2528,81 @@ static bool startup_dialog(dm *m, const volume *v, const char *title, const char
  * only in /etc/luks-keys); without one, both are empty (UDisks2 wants
  * them there) and the passphrase is asked for at startup, as GNOME Disks
  * does it. */
-static GVariant *crypttab_item(const volume *v, const crypt_startup *c) {
-    char *name = xd_crypttab_name(v->luks_uuid);
-    char *device = g_strdup_printf("UUID=%s", v->luks_uuid);
-    char *key = c->use_keyfile ? xd_crypttab_key_path(name) : g_strdup("");
-    GVariantBuilder b;
-    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
-    g_variant_builder_add(&b, "{sv}", "name", g_variant_new_bytestring(name));
-    g_variant_builder_add(&b, "{sv}", "device", g_variant_new_bytestring(device));
-    g_variant_builder_add(&b, "{sv}", "passphrase-path", g_variant_new_bytestring(key));
-    g_variant_builder_add(&b, "{sv}", "passphrase-contents",
-                          g_variant_new_bytestring(c->use_keyfile ? c->passphrase : ""));
-    g_variant_builder_add(&b, "{sv}", "options", g_variant_new_bytestring("nofail"));
+static GVariant *crypttab_item(const volume *volume_info, const crypt_startup *startup_unlock) {
+    char *name = xd_crypttab_name(volume_info->luks_uuid);
+    char *device = g_strdup_printf("UUID=%s", volume_info->luks_uuid);
+    char *key = startup_unlock->use_keyfile ? xd_crypttab_key_path(name) : g_strdup("");
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&builder, "{sv}", "name", g_variant_new_bytestring(name));
+    g_variant_builder_add(&builder, "{sv}", "device", g_variant_new_bytestring(device));
+    g_variant_builder_add(&builder, "{sv}", "passphrase-path", g_variant_new_bytestring(key));
+    g_variant_builder_add(
+        &builder, "{sv}", "passphrase-contents",
+        g_variant_new_bytestring(startup_unlock->use_keyfile ? startup_unlock->passphrase : ""));
+    g_variant_builder_add(&builder, "{sv}", "options", g_variant_new_bytestring("nofail"));
     g_free(name);
     g_free(device);
     g_free(key);
-    return g_variant_new("(s@a{sv})", "crypttab", g_variant_builder_end(&b));
+    return g_variant_new("(s@a{sv})", "crypttab", g_variant_builder_end(&builder));
 }
 
 /* Mounts the volume at its new startup mount point now, as Windows'
  * new drive letter works straight away: UDisks2 mounts a volume in
  * /etc/fstab where the entry says. One mounted elsewhere is moved if the
  * user agrees. */
-static void startup_mount_now(dm *m, op *o, const volume *v, const char *dir) {
-    if (!mounted(v)) {
-        op_add(o, v->fs_path, UD_FS, "Mount", g_variant_new("(@a{sv})", no_options()));
+static void startup_mount_now(dm *disk_manager, op *operation, const volume *volume_info,
+                              const char *dir) {
+    if (!mounted(volume_info)) {
+        op_add(operation, volume_info->fs_path, UD_FS, "Mount",
+               g_variant_new("(@a{sv})", no_options()));
         return;
     }
-    if (g_strv_contains((const char *const *)v->mounts, dir))
+    if (g_strv_contains((const char *const *)volume_info->mounts, dir))
         return;
-    char *name = volume_name(v);
+    char *name = volume_name(volume_info);
     char *text = g_strdup_printf("%s is mounted in %s now. Do you want to move it to %s now?\n\n"
                                  "Programs using files on it might not run correctly. If you "
                                  "choose No, it moves the next time the computer starts.",
-                                 name, v->mounts[0], dir);
-    if (xd_message_box(GTK_WINDOW(m->window), "Disk Management", XD_MB_QUESTION, XD_MB_YES_NO,
-                       FALSE, text) == GTK_RESPONSE_YES) {
-        op_unmount(o, v);
-        op_add(o, v->fs_path, UD_FS, "Mount", g_variant_new("(@a{sv})", no_options()));
+                                 name, volume_info->mounts[0], dir);
+    if (xd_message_box(GTK_WINDOW(disk_manager->window), "Disk Management", XD_MB_QUESTION,
+                       XD_MB_YES_NO, FALSE, text) == GTK_RESPONSE_YES) {
+        op_unmount(operation, volume_info);
+        op_add(operation, volume_info->fs_path, UD_FS, "Mount",
+               g_variant_new("(@a{sv})", no_options()));
     }
     g_free(text);
     g_free(name);
 }
 
-static void add_startup(dm *m, volume *v) {
-    if (startup_reason(m, v) != nullptr)
+static void add_startup(dm *disk_manager, volume *volume_info) {
+    if (startup_reason(disk_manager, volume_info) != nullptr)
         return;
-    char *suggested = xd_fstab_suggest_dir(v->label, v->device);
-    char *defaults = xd_fstab_default_options(v->fs_type, (guint)getuid(), (guint)getgid());
+    char *suggested = xd_fstab_suggest_dir(volume_info->label, volume_info->device);
+    char *defaults =
+        xd_fstab_default_options(volume_info->fs_type, (guint)getuid(), (guint)getgid());
     char *dir = nullptr, *opts = nullptr;
     /* An encrypted volume is unlocked first, by its /etc/crypttab entry
      * (one already there is kept). */
-    bool needs_crypttab = v->unlocked && v->crypttab_items != nullptr &&
-                          v->crypttab_items->len == 0;
+    bool needs_crypttab = volume_info->unlocked && volume_info->crypttab_items != nullptr &&
+                          volume_info->crypttab_items->len == 0;
     crypt_startup crypt = {};
-    if (startup_dialog(m, v, "Add Startup Mount Point", suggested, defaults, &dir, &opts,
-                       needs_crypttab ? &crypt : nullptr)) {
-        char *fsname = g_strdup_printf("UUID=%s", v->uuid);
-        op *o = op_new(m, "Adding the startup mount point...");
+    if (startup_dialog(disk_manager, volume_info, "Add Startup Mount Point", suggested, defaults,
+                       &dir, &opts, needs_crypttab ? &crypt : nullptr)) {
+        char *fsname = g_strdup_printf("UUID=%s", volume_info->uuid);
+        op *operation = op_new(disk_manager, "Adding the startup mount point...");
         if (needs_crypttab)
-            op_add(o, v->path, UD_BLOCK, "AddConfigurationItem",
-                   g_variant_new("(@(sa{sv})@a{sv})", crypttab_item(v, &crypt), no_options()));
+            op_add(operation, volume_info->path, UD_BLOCK, "AddConfigurationItem",
+                   g_variant_new("(@(sa{sv})@a{sv})", crypttab_item(volume_info, &crypt),
+                                 no_options()));
         /* freq 0, passno 0: no dump, and no fsck holding up the start
          * (as GNOME Disks adds them). */
-        op_add(o, v->fs_path, UD_BLOCK, "AddConfigurationItem",
+        op_add(operation, volume_info->fs_path, UD_BLOCK, "AddConfigurationItem",
                g_variant_new("(@(sa{sv})@a{sv})",
-                             fstab_item(fsname, dir, fstab_type(v->fs_type), opts, 0, 0),
+                             fstab_item(fsname, dir, fstab_type(volume_info->fs_type), opts, 0, 0),
                              no_options()));
-        startup_mount_now(m, o, v, dir);
-        op_run(o);
+        startup_mount_now(disk_manager, operation, volume_info, dir);
+        op_run(operation);
         g_free(fsname);
     }
     xd_luks_passphrase_free(crypt.passphrase);
@@ -2497,24 +2612,26 @@ static void add_startup(dm *m, volume *v) {
     g_free(defaults);
 }
 
-static void change_startup(dm *m, volume *v, guint index) {
-    if (startup_reason(m, v) != nullptr || index >= v->fstab_items->len)
+static void change_startup(dm *disk_manager, volume *volume_info, guint index) {
+    if (startup_reason(disk_manager, volume_info) != nullptr ||
+        index >= volume_info->fstab_items->len)
         return;
-    GVariant *old = g_ptr_array_index(v->fstab_items, index);
+    GVariant *old = g_ptr_array_index(volume_info->fstab_items, index);
     char *dir0 = item_str(old, "dir"), *opts0 = item_str(old, "opts");
     char *dir = nullptr, *opts = nullptr;
-    if (startup_dialog(m, v, "Change Startup Mount Point", dir0, opts0, &dir, &opts, nullptr) &&
+    if (startup_dialog(disk_manager, volume_info, "Change Startup Mount Point", dir0, opts0, &dir,
+                       &opts, nullptr) &&
         (strcmp(dir, dir0) != 0 || strcmp(opts, opts0) != 0)) {
         /* The rest of the entry stays as it was. */
         char *fsname = item_str(old, "fsname"), *type = item_str(old, "type");
-        op *o = op_new(m, "Changing the startup mount point...");
-        op_add(o, v->fs_path, UD_BLOCK, "UpdateConfigurationItem",
+        op *operation = op_new(disk_manager, "Changing the startup mount point...");
+        op_add(operation, volume_info->fs_path, UD_BLOCK, "UpdateConfigurationItem",
                g_variant_new("(@(sa{sv})@(sa{sv})@a{sv})", old,
                              fstab_item(fsname, dir, type, opts, item_int(old, "freq"),
                                         item_int(old, "passno")),
                              no_options()));
-        startup_mount_now(m, o, v, dir);
-        op_run(o);
+        startup_mount_now(disk_manager, operation, volume_info, dir);
+        op_run(operation);
         g_free(fsname);
         g_free(type);
     }
@@ -2524,16 +2641,17 @@ static void change_startup(dm *m, volume *v, guint index) {
     g_free(opts0);
 }
 
-static void remove_startup(dm *m, volume *v, guint index) {
-    if (startup_reason(m, v) != nullptr || index >= v->fstab_items->len)
+static void remove_startup(dm *disk_manager, volume *volume_info, guint index) {
+    if (startup_reason(disk_manager, volume_info) != nullptr ||
+        index >= volume_info->fstab_items->len)
         return;
-    GVariant *old = g_ptr_array_index(v->fstab_items, index);
+    GVariant *old = g_ptr_array_index(volume_info->fstab_items, index);
     char *dir = item_str(old, "dir");
-    char *name = volume_name(v);
+    char *name = volume_name(volume_info);
     /* With its last startup mount point, an encrypted volume needn't be
      * unlocked at startup either. */
-    bool crypttab = v->fstab_items->len == 1 && v->crypttab_items != nullptr &&
-                    v->crypttab_items->len > 0;
+    bool crypttab = volume_info->fstab_items->len == 1 && volume_info->crypttab_items != nullptr &&
+                    volume_info->crypttab_items->len > 0;
     char *text = g_strdup_printf("%s won't be mounted in %s when the computer starts.%s It "
                                  "stays mounted until you unmount it.\n\nDo you want to remove "
                                  "this startup mount point?",
@@ -2541,15 +2659,15 @@ static void remove_startup(dm *m, volume *v, guint index) {
                                  crypttab ? " Nor will it be unlocked: its /etc/crypttab entry "
                                             "goes too, and its key file if it has one."
                                           : "");
-    if (confirm(m, "Remove Startup Mount Point", text)) {
-        op *o = op_new(m, "Removing the startup mount point...");
-        op_add(o, v->fs_path, UD_BLOCK, "RemoveConfigurationItem",
+    if (confirm(disk_manager, "Remove Startup Mount Point", text)) {
+        op *operation = op_new(disk_manager, "Removing the startup mount point...");
+        op_add(operation, volume_info->fs_path, UD_BLOCK, "RemoveConfigurationItem",
                g_variant_new("(@(sa{sv})@a{sv})", old, no_options()));
-        for (guint i = 0; crypttab && i < v->crypttab_items->len; i++)
-            op_add(o, v->path, UD_BLOCK, "RemoveConfigurationItem",
-                   g_variant_new("(@(sa{sv})@a{sv})", g_ptr_array_index(v->crypttab_items, i),
-                                 no_options()));
-        op_run(o);
+        for (guint i = 0; crypttab && i < volume_info->crypttab_items->len; i++)
+            op_add(operation, volume_info->path, UD_BLOCK, "RemoveConfigurationItem",
+                   g_variant_new("(@(sa{sv})@a{sv})",
+                                 g_ptr_array_index(volume_info->crypttab_items, i), no_options()));
+        op_run(operation);
     }
     g_free(text);
     g_free(name);
@@ -2559,17 +2677,17 @@ static void remove_startup(dm *m, volume *v, guint index) {
 /* The Change Mount Point dialog's responses beyond Mount and Unmount. */
 enum { MP_MOUNT = 1, MP_UNMOUNT, MP_ADD, MP_CHANGE, MP_REMOVE };
 
-static void on_startup_button(GtkButton *b, gpointer dlg) {
+static void on_startup_button(GtkButton *button, gpointer dlg) {
     gtk_dialog_response(GTK_DIALOG(dlg),
-                        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "response")));
+                        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "response")));
 }
 
 static void on_startup_selection(GtkTreeSelection *ts, gpointer buttons) {
     bool any = gtk_tree_selection_count_selected_rows(ts) > 0;
-    GtkWidget **b = buttons;
-    bool allowed = g_object_get_data(G_OBJECT(b[0]), "allowed") != nullptr;
-    gtk_widget_set_sensitive(b[0], any && allowed);
-    gtk_widget_set_sensitive(b[1], any && allowed);
+    GtkWidget **widget = buttons;
+    bool allowed = g_object_get_data(G_OBJECT(widget[0]), "allowed") != nullptr;
+    gtk_widget_set_sensitive(widget[0], any && allowed);
+    gtk_widget_set_sensitive(widget[1], any && allowed);
 }
 
 static GtkWidget *path_list(GtkListStore *ls, GtkWidget **view) {
@@ -2591,16 +2709,16 @@ static GtkWidget *path_list(GtkListStore *ls, GtkWidget **view) {
 /* XP's Change Drive Letter and Paths: where the volume is mounted now,
  * and where it's mounted when the computer starts (/etc/fstab), with
  * Add, Change and Remove for those. */
-static void mount_points(dm *m) {
-    volume *v = sel_volume(m);
-    if (v == nullptr || !v->has_fs || m->busy)
+static void mount_points(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
+    if (volume_info == nullptr || !volume_info->has_fs || disk_manager->busy)
         return;
-    char *dn = volume_name(v);
+    char *dn = volume_name(volume_info);
     char *title = g_strdup_printf("Change Mount Point for %s", dn);
     g_free(dn);
-    GtkWidget *dlg = gtk_dialog_new_with_buttons(title, GTK_WINDOW(m->window), GTK_DIALOG_MODAL,
-                                                 "_Mount", MP_MOUNT, "_Unmount", MP_UNMOUNT,
-                                                 "Close", GTK_RESPONSE_CLOSE, nullptr);
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(title, GTK_WINDOW(disk_manager->window),
+                                                 GTK_DIALOG_MODAL, "_Mount", MP_MOUNT, "_Unmount",
+                                                 MP_UNMOUNT, "Close", GTK_RESPONSE_CLOSE, nullptr);
     g_free(title);
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -2608,12 +2726,12 @@ static void mount_points(dm *m) {
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), wrap_label("This volume is mounted at:"), FALSE, FALSE, 0);
     GtkListStore *ls = gtk_list_store_new(1, G_TYPE_STRING);
-    for (char **mp = v->mounts; *mp != nullptr; mp++)
+    for (char **mp = volume_info->mounts; *mp != nullptr; mp++)
         gtk_list_store_insert_with_values(ls, nullptr, -1, 0, *mp, -1);
     gtk_box_pack_start(GTK_BOX(box), path_list(ls, nullptr), FALSE, FALSE, 0);
-    if (!mounted(v))
+    if (!mounted(volume_info))
         gtk_box_pack_start(GTK_BOX(box),
-                           wrap_label(v->fstab[0] != nullptr
+                           wrap_label(volume_info->fstab[0] != nullptr
                                           ? "It isn't mounted. Mount puts it in its startup "
                                             "mount point."
                                           : "It isn't mounted. Mount puts it in /run/media."),
@@ -2623,8 +2741,8 @@ static void mount_points(dm *m) {
     gtk_box_pack_start(GTK_BOX(box), wrap_label("Mount this volume when the computer starts at:"),
                        FALSE, FALSE, 6);
     ls = gtk_list_store_new(1, G_TYPE_STRING);
-    for (char **f = v->fstab; *f != nullptr; f++)
-        gtk_list_store_insert_with_values(ls, nullptr, -1, 0, *f, -1);
+    for (char **fstab_point = volume_info->fstab; *fstab_point != nullptr; fstab_point++)
+        gtk_list_store_insert_with_values(ls, nullptr, -1, 0, *fstab_point, -1);
     GtkWidget *startup = nullptr;
     gtk_box_pack_start(GTK_BOX(box), path_list(ls, &startup), FALSE, FALSE, 0);
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -2632,17 +2750,18 @@ static void mount_points(dm *m) {
         const char *label;
         int response;
     } bs[] = {{"_Add...", MP_ADD}, {"C_hange...", MP_CHANGE}, {"_Remove", MP_REMOVE}};
-    GtkWidget *b[3];
+    GtkWidget *widget[3];
     for (size_t i = 0; i < G_N_ELEMENTS(bs); i++) {
-        b[i] = gtk_button_new_with_mnemonic(bs[i].label);
-        g_object_set_data(G_OBJECT(b[i]), "response", GINT_TO_POINTER(bs[i].response));
-        g_signal_connect(b[i], "clicked", G_CALLBACK(on_startup_button), dlg);
-        gtk_box_pack_start(GTK_BOX(buttons), b[i], FALSE, FALSE, 0);
+        widget[i] = gtk_button_new_with_mnemonic(bs[i].label);
+        g_object_set_data(G_OBJECT(widget[i]), "response", GINT_TO_POINTER(bs[i].response));
+        g_signal_connect(widget[i], "clicked", G_CALLBACK(on_startup_button), dlg);
+        gtk_box_pack_start(GTK_BOX(buttons), widget[i], FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(box), buttons, FALSE, FALSE, 0);
     /* An encrypted volume's /etc/crypttab entry: how it's unlocked. */
-    for (guint i = 0; v->crypttab_items != nullptr && i < v->crypttab_items->len; i++) {
-        char *key = item_str(g_ptr_array_index(v->crypttab_items, i), "passphrase-path");
+    for (guint i = 0;
+         volume_info->crypttab_items != nullptr && i < volume_info->crypttab_items->len; i++) {
+        char *key = item_str(g_ptr_array_index(volume_info->crypttab_items, i), "passphrase-path");
         bool asks = key[0] == '\0' || strcmp(key, "none") == 0 || strcmp(key, "-") == 0;
         char *how = asks ? g_strdup("/etc/crypttab unlocks it when the computer starts, asking "
                                     "for its passphrase.")
@@ -2653,18 +2772,18 @@ static void mount_points(dm *m) {
         g_free(how);
         g_free(key);
     }
-    const char *why = startup_reason(m, v);
+    const char *why = startup_reason(disk_manager, volume_info);
     /* One startup mount point is enough; more can be in /etc/fstab
      * already, and are shown, changed and removed here. */
-    bool has_one = v->fstab[0] != nullptr;
-    gtk_widget_set_sensitive(b[0], why == nullptr && !has_one);
-    gtk_widget_set_tooltip_text(b[0], why != nullptr ? why
-                                      : has_one     ? "It has a startup mount point: change that "
-                                                      "one instead."
-                                                    : nullptr);
-    GtkWidget *change_remove[2] = {b[1], b[2]};
+    bool has_one = volume_info->fstab[0] != nullptr;
+    gtk_widget_set_sensitive(widget[0], why == nullptr && !has_one);
+    gtk_widget_set_tooltip_text(widget[0], why != nullptr ? why
+                                           : has_one ? "It has a startup mount point: change that "
+                                                       "one instead."
+                                                     : nullptr);
+    GtkWidget *change_remove[2] = {widget[1], widget[2]};
     if (why == nullptr)
-        g_object_set_data(G_OBJECT(b[1]), "allowed", GINT_TO_POINTER(1));
+        g_object_set_data(G_OBJECT(widget[1]), "allowed", GINT_TO_POINTER(1));
     GtkTreeSelection *ts = gtk_tree_view_get_selection(GTK_TREE_VIEW(startup));
     gulong selection_handler =
         g_signal_connect(ts, "changed", G_CALLBACK(on_startup_selection), change_remove);
@@ -2675,175 +2794,183 @@ static void mount_points(dm *m) {
     if (why != nullptr)
         gtk_box_pack_start(GTK_BOX(box), wrap_label(why), FALSE, FALSE, 0);
 
-    gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), MP_MOUNT, !mounted(v));
+    gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), MP_MOUNT, !mounted(volume_info));
     gtk_dialog_set_response_sensitive(GTK_DIALOG(dlg), MP_UNMOUNT,
-                                      mounted(v) && !volume_is_system(v));
+                                      mounted(volume_info) && !volume_is_system(volume_info));
     gtk_widget_show_all(dlg);
-    int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    int response_id = gtk_dialog_run(GTK_DIALOG(dlg));
     /* Which startup mount point Change and Remove are for. */
     guint index = 0;
     GtkTreeModel *model = nullptr;
     GtkTreeIter it;
     if (gtk_tree_selection_get_selected(ts, &model, &it)) {
-        GtkTreePath *p = gtk_tree_model_get_path(model, &it);
-        index = (guint)gtk_tree_path_get_indices(p)[0];
-        gtk_tree_path_free(p);
+        GtkTreePath *path = gtk_tree_model_get_path(model, &it);
+        index = (guint)gtk_tree_path_get_indices(path)[0];
+        gtk_tree_path_free(path);
     }
     g_signal_handler_disconnect(ts, selection_handler);
     gtk_widget_destroy(dlg);
-    switch (r) {
+    switch (response_id) {
     case MP_MOUNT:
     case MP_UNMOUNT:
-        mount_volume(m, v, r == MP_MOUNT);
+        mount_volume(disk_manager, volume_info, response_id == MP_MOUNT);
         break;
     case MP_ADD:
-        add_startup(m, v);
+        add_startup(disk_manager, volume_info);
         break;
     case MP_CHANGE:
-        change_startup(m, v, index);
+        change_startup(disk_manager, volume_info, index);
         break;
     case MP_REMOVE:
-        remove_startup(m, v, index);
+        remove_startup(disk_manager, volume_info, index);
         break;
     default:
         break;
     }
 }
 
-static void explore(dm *m) {
-    volume *v = sel_volume(m);
-    if (v == nullptr || !mounted(v))
+static void explore(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
+    if (volume_info == nullptr || !mounted(volume_info))
         return;
-    const char *argv[] = {"xd-files", v->mounts[0], nullptr};
+    const char *argv[] = {"xd-files", volume_info->mounts[0], nullptr};
     GError *error = nullptr;
     if (!g_spawn_async(nullptr, (char **)(void *)argv, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
                        nullptr, nullptr, &error)) {
-        xd_message_box(GTK_WINDOW(m->window), "Disk Management", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       error->message);
+        xd_message_box(GTK_WINDOW(disk_manager->window), "Disk Management", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, error->message);
         g_error_free(error);
     }
 }
 
-static void eject(dm *m) {
-    disk *d = m->sel.d;
-    if (d == nullptr || !d->ejectable || m->busy || d->system)
+static void eject(dm *disk_manager) {
+    disk *disk_info = disk_manager->sel.d;
+    if (disk_info == nullptr || !disk_info->ejectable || disk_manager->busy || disk_info->system)
         return;
-    char *dn = disk_name(d);
+    char *dn = disk_name(disk_info);
     char *title = g_strdup_printf("Ejecting %s...", dn);
-    op *o = op_new(m, title);
-    for (guint i = 0; i < d->vols->len; i++)
-        op_unmount(o, g_ptr_array_index(d->vols, i));
-    op_add(o, d->drive_path, UD_DRIVE, "Eject", g_variant_new("(@a{sv})", no_options()));
-    op_run(o);
+    op *operation = op_new(disk_manager, title);
+    for (guint i = 0; i < disk_info->vols->len; i++)
+        op_unmount(operation, g_ptr_array_index(disk_info->vols, i));
+    op_add(operation, disk_info->drive_path, UD_DRIVE, "Eject",
+           g_variant_new("(@a{sv})", no_options()));
+    op_run(operation);
     g_free(title);
     g_free(dn);
 }
 
 /* ---- Properties ---------------------------------------------------------------------- */
 
-static gboolean draw_pie(GtkWidget *w, cairo_t *cr, gpointer data) {
-    const volume *v = data;
-    double width = gtk_widget_get_allocated_width(w), height = gtk_widget_get_allocated_height(w);
+static gboolean draw_pie(GtkWidget *widget, cairo_t *cairo, gpointer data) {
+    const volume *volume_info = data;
+    double width = gtk_widget_get_allocated_width(widget),
+           height = gtk_widget_get_allocated_height(widget);
     double rx = width / 2 - 4, ry = height / 2 - 10, cx = width / 2, cy = height / 2 - 6;
-    double used = v->fs_total > 0 ? (double)(v->fs_total - v->fs_free) / (double)v->fs_total : 0;
+    double used =
+        volume_info->fs_total > 0
+            ? (double)(volume_info->fs_total - volume_info->fs_free) / (double)volume_info->fs_total
+            : 0;
     /* XP's 3D pie: blue used space, magenta free space. */
     for (int layer = 8; layer >= 0; layer--) {
         bool top = layer == 0;
-        cairo_save(cr);
-        cairo_translate(cr, cx, cy + layer);
-        cairo_scale(cr, rx, ry);
-        cairo_move_to(cr, 0, 0);
-        cairo_arc(cr, 0, 0, 1, -XD_PI / 2, -XD_PI / 2 + used * 2 * XD_PI);
-        cairo_close_path(cr);
-        cairo_restore(cr);
-        cairo_set_source_rgb(cr, 0.0, 0.0, top ? 1.0 : 0.6);
-        cairo_fill(cr);
-        cairo_save(cr);
-        cairo_translate(cr, cx, cy + layer);
-        cairo_scale(cr, rx, ry);
-        cairo_move_to(cr, 0, 0);
-        cairo_arc(cr, 0, 0, 1, -XD_PI / 2 + used * 2 * XD_PI, 3 * XD_PI / 2);
-        cairo_close_path(cr);
-        cairo_restore(cr);
-        cairo_set_source_rgb(cr, top ? 1.0 : 0.6, 0.0, top ? 1.0 : 0.6);
-        cairo_fill(cr);
+        cairo_save(cairo);
+        cairo_translate(cairo, cx, cy + layer);
+        cairo_scale(cairo, rx, ry);
+        cairo_move_to(cairo, 0, 0);
+        cairo_arc(cairo, 0, 0, 1, -XD_PI / 2, -XD_PI / 2 + used * 2 * XD_PI);
+        cairo_close_path(cairo);
+        cairo_restore(cairo);
+        cairo_set_source_rgb(cairo, 0.0, 0.0, top ? 1.0 : 0.6);
+        cairo_fill(cairo);
+        cairo_save(cairo);
+        cairo_translate(cairo, cx, cy + layer);
+        cairo_scale(cairo, rx, ry);
+        cairo_move_to(cairo, 0, 0);
+        cairo_arc(cairo, 0, 0, 1, -XD_PI / 2 + used * 2 * XD_PI, 3 * XD_PI / 2);
+        cairo_close_path(cairo);
+        cairo_restore(cairo);
+        cairo_set_source_rgb(cairo, top ? 1.0 : 0.6, 0.0, top ? 1.0 : 0.6);
+        cairo_fill(cairo);
     }
     return FALSE;
 }
 
-static GtkWidget *swatch(double r, double g, double b) {
-    GtkWidget *a = gtk_drawing_area_new();
-    gtk_widget_set_size_request(a, 14, 14);
-    double *c = g_new(double, 3);
-    c[0] = r;
-    c[1] = g;
-    c[2] = b;
-    g_object_set_data_full(G_OBJECT(a), "rgb", c, g_free);
-    return a;
+static GtkWidget *swatch(double red, double green, double blue) {
+    GtkWidget *widget = gtk_drawing_area_new();
+    gtk_widget_set_size_request(widget, 14, 14);
+    double *color = g_new(double, 3);
+    color[0] = red;
+    color[1] = green;
+    color[2] = blue;
+    g_object_set_data_full(G_OBJECT(widget), "rgb", color, g_free);
+    return widget;
 }
 
-static gboolean draw_swatch(GtkWidget *w, cairo_t *cr, [[maybe_unused]] gpointer data) {
-    const double *c = g_object_get_data(G_OBJECT(w), "rgb");
-    cairo_rectangle(cr, 0.5, 0.5, gtk_widget_get_allocated_width(w) - 1,
-                    gtk_widget_get_allocated_height(w) - 1);
-    cairo_set_source_rgb(cr, c[0], c[1], c[2]);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgb(cr, 0, 0, 0);
-    cairo_set_line_width(cr, 1);
-    cairo_stroke(cr);
+static gboolean draw_swatch(GtkWidget *widget, cairo_t *cairo, [[maybe_unused]] gpointer data) {
+    const double *color = g_object_get_data(G_OBJECT(widget), "rgb");
+    cairo_rectangle(cairo, 0.5, 0.5, gtk_widget_get_allocated_width(widget) - 1,
+                    gtk_widget_get_allocated_height(widget) - 1);
+    cairo_set_source_rgb(cairo, color[0], color[1], color[2]);
+    cairo_fill_preserve(cairo);
+    cairo_set_source_rgb(cairo, 0, 0, 0);
+    cairo_set_line_width(cairo, 1);
+    cairo_stroke(cairo);
     return FALSE;
 }
 
-static char *bytes_text(guint64 n) {
-    char *plain = g_strdup_printf("%" G_GUINT64_FORMAT, n);
-    GString *s = g_string_new(nullptr);
+static char *bytes_text(guint64 bytes) {
+    char *plain = g_strdup_printf("%" G_GUINT64_FORMAT, bytes);
+    GString *string = g_string_new(nullptr);
     size_t len = strlen(plain);
     for (size_t i = 0; i < len; i++) {
         if (i > 0 && (len - i) % 3 == 0)
-            g_string_append_c(s, ',');
-        g_string_append_c(s, plain[i]);
+            g_string_append_c(string, ',');
+        g_string_append_c(string, plain[i]);
     }
     g_free(plain);
-    char *human = xd_disk_size_text(n);
-    g_string_append_printf(s, " bytes    %s", human);
+    char *human = xd_disk_size_text(bytes);
+    g_string_append_printf(string, " bytes    %s", human);
     g_free(human);
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
-static GtkWidget *hardware_page(const disk *d) {
-    GtkWidget *g = grid_new();
-    gtk_container_set_border_width(GTK_CONTAINER(g), 12);
+static GtkWidget *hardware_page(const disk *disk_info) {
+    GtkWidget *widget = grid_new();
+    gtk_container_set_border_width(GTK_CONTAINER(widget), 12);
     int row = 0;
-    char *dn = disk_name(d);
-    grid_row(g, row++, "Disk:", value_label(dn));
+    char *dn = disk_name(disk_info);
+    grid_row(widget, row++, "Disk:", value_label(dn));
     g_free(dn);
-    grid_row(g, row++, "Model:", value_label(d->model));
-    grid_row(g, row++, "Serial number:", value_label(d->serial[0] != '\0' ? d->serial : "None"));
-    grid_row(g, row++, "Connection:", value_label(d->bus[0] != '\0' ? d->bus : "Internal"));
-    grid_row(g, row++, "Device:", value_label(d->device != nullptr ? d->device : ""));
-    grid_row(g, row++, "Removable:", value_label(d->removable ? "Yes" : "No"));
-    grid_row(g, row++, "Partition style:",
-             value_label(d->table == nullptr                  ? "Not initialized"
-                         : strcmp(d->table, "dos") == 0 ? "Master Boot Record (MBR)"
-                         : strcmp(d->table, "gpt") == 0 ? "GUID Partition Table (GPT)"
-                                                        : d->table));
-    char *size = d->media ? xd_disk_size_text(d->size) : g_strdup("No media");
-    grid_row(g, row++, "Capacity:", value_label(size));
+    grid_row(widget, row++, "Model:", value_label(disk_info->model));
+    grid_row(widget, row++, "Serial number:",
+             value_label(disk_info->serial[0] != '\0' ? disk_info->serial : "None"));
+    grid_row(widget, row++,
+             "Connection:", value_label(disk_info->bus[0] != '\0' ? disk_info->bus : "Internal"));
+    grid_row(widget, row++,
+             "Device:", value_label(disk_info->device != nullptr ? disk_info->device : ""));
+    grid_row(widget, row++, "Removable:", value_label(disk_info->removable ? "Yes" : "No"));
+    grid_row(widget, row++, "Partition style:",
+             value_label(disk_info->table == nullptr            ? "Not initialized"
+                         : strcmp(disk_info->table, "dos") == 0 ? "Master Boot Record (MBR)"
+                         : strcmp(disk_info->table, "gpt") == 0 ? "GUID Partition Table (GPT)"
+                                                                : disk_info->table));
+    char *size = disk_info->media ? xd_disk_size_text(disk_info->size) : g_strdup("No media");
+    grid_row(widget, row++, "Capacity:", value_label(size));
     g_free(size);
-    return g;
+    return widget;
 }
 
 static void on_props_response(GtkDialog *dlg, int response, gpointer data) {
-    dm *m = data;
+    dm *disk_manager = data;
     GtkWidget *entry = g_object_get_data(G_OBJECT(dlg), "label");
     const char *path = g_object_get_data(G_OBJECT(dlg), "fs-path");
     const char *old = g_object_get_data(G_OBJECT(dlg), "old-label");
     if ((response == GTK_RESPONSE_OK || response == GTK_RESPONSE_APPLY) && entry != nullptr &&
-        g_strcmp0(gtk_entry_get_text(GTK_ENTRY(entry)), old) != 0 && !m->busy) {
-        op *o = op_new(m, "Changing the volume label...");
-        op_add(o, path, UD_FS, "SetLabel",
+        g_strcmp0(gtk_entry_get_text(GTK_ENTRY(entry)), old) != 0 && !disk_manager->busy) {
+        op *operation = op_new(disk_manager, "Changing the volume label...");
+        op_add(operation, path, UD_FS, "SetLabel",
                g_variant_new("(s@a{sv})", gtk_entry_get_text(GTK_ENTRY(entry)), no_options()));
-        op_run(o);
+        op_run(operation);
         g_object_set_data_full(G_OBJECT(dlg), "old-label",
                                g_strdup(gtk_entry_get_text(GTK_ENTRY(entry))), g_free);
     }
@@ -2851,63 +2978,71 @@ static void on_props_response(GtkDialog *dlg, int response, gpointer data) {
         gtk_widget_destroy(GTK_WIDGET(dlg));
 }
 
-static void properties(dm *m) {
-    volume *v = sel_volume(m);
-    disk *d = m->sel.d;
-    if (d == nullptr)
+static void properties(dm *disk_manager) {
+    volume *volume_info = sel_volume(disk_manager);
+    disk *disk_info = disk_manager->sel.d;
+    if (disk_info == nullptr)
         return;
-    char *title = v != nullptr ? volume_name(v) : disk_name(d);
+    char *title = volume_info != nullptr ? volume_name(volume_info) : disk_name(disk_info);
     char *full = g_strdup_printf("%s Properties", title);
-    GtkWidget *dlg = gtk_dialog_new_with_buttons(full, GTK_WINDOW(m->window),
-                                                 GTK_DIALOG_DESTROY_WITH_PARENT, "OK",
-                                                 GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL,
-                                                 nullptr);
+    GtkWidget *dlg = gtk_dialog_new_with_buttons(
+        full, GTK_WINDOW(disk_manager->window), GTK_DIALOG_DESTROY_WITH_PARENT, "OK",
+        GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL, nullptr);
     g_free(full);
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
     GtkWidget *nb = gtk_notebook_new();
     gtk_container_set_border_width(GTK_CONTAINER(nb), 6);
-    if (v != nullptr) {
+    if (volume_info != nullptr) {
         GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
         gtk_container_set_border_width(GTK_CONTAINER(page), 12);
         GtkWidget *head = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
         gtk_box_pack_start(GTK_BOX(head),
-                           gtk_image_new_from_icon_name(d->removable ? "drive-removable-media"
-                                                                     : "drive-harddisk",
-                                                        GTK_ICON_SIZE_DND),
+                           gtk_image_new_from_icon_name(
+                               disk_info->removable ? "drive-removable-media" : "drive-harddisk",
+                               GTK_ICON_SIZE_DND),
                            FALSE, FALSE, 0);
         GtkWidget *label = gtk_entry_new();
-        gtk_entry_set_text(GTK_ENTRY(label), v->label != nullptr ? v->label : "");
+        gtk_entry_set_text(GTK_ENTRY(label),
+                           volume_info->label != nullptr ? volume_info->label : "");
         bool unused = false;
-        gtk_widget_set_sensitive(label, v->has_fs && !m->busy &&
-                                            action_reason(m, v, XD_ACTION_LABEL, &unused) == nullptr);
+        gtk_widget_set_sensitive(label, volume_info->has_fs && !disk_manager->busy &&
+                                            action_reason(disk_manager, volume_info,
+                                                          XD_ACTION_LABEL, &unused) == nullptr);
         gtk_box_pack_start(GTK_BOX(head), label, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(page), head, FALSE, FALSE, 0);
         g_object_set_data(G_OBJECT(dlg), "label", label);
-        g_object_set_data_full(G_OBJECT(dlg), "fs-path", g_strdup(v->fs_path), g_free);
-        g_object_set_data_full(G_OBJECT(dlg), "old-label", g_strdup(v->label), g_free);
+        g_object_set_data_full(G_OBJECT(dlg), "fs-path", g_strdup(volume_info->fs_path), g_free);
+        g_object_set_data_full(G_OBJECT(dlg), "old-label", g_strdup(volume_info->label), g_free);
         gtk_box_pack_start(GTK_BOX(page), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
                            FALSE, 0);
-        GtkWidget *g = grid_new();
+        GtkWidget *grid = grid_new();
         int row = 0;
-        char *fs = volume_fs(v);
-        grid_row(g, row++, "Type:", value_label(d->removable ? "Removable Disk" : "Local Disk"));
-        grid_row(g, row++, "File system:", value_label(fs[0] != '\0' ? fs : "None"));
+        char *fs = volume_fs(volume_info);
+        grid_row(grid, row++,
+                 "Type:", value_label(disk_info->removable ? "Removable Disk" : "Local Disk"));
+        grid_row(grid, row++, "File system:", value_label(fs[0] != '\0' ? fs : "None"));
         g_free(fs);
-        grid_row(g, row++, "Device:", value_label(v->device));
-        if (v->partition) {
-            const char *tn = xd_part_type_name(d->table, v->ptype);
-            char *pt = tn != nullptr ? g_strdup_printf("%s (%s)", tn, v->ptype) : g_strdup(v->ptype);
-            grid_row(g, row++, "Partition type:", value_label(pt));
+        grid_row(grid, row++, "Device:", value_label(volume_info->device));
+        if (volume_info->partition) {
+            const char *tn = xd_part_type_name(disk_info->table, volume_info->ptype);
+            char *pt = tn != nullptr ? g_strdup_printf("%s (%s)", tn, volume_info->ptype)
+                                     : g_strdup(volume_info->ptype);
+            grid_row(grid, row++, "Partition type:", value_label(pt));
             g_free(pt);
         }
-        grid_row(g, row++, "Mounted at:", value_label(mounted(v) ? v->mounts[0] : "Not mounted"));
-        gtk_box_pack_start(GTK_BOX(page), g, FALSE, FALSE, 0);
+        grid_row(grid, row++, "Mounted at:",
+                 value_label(mounted(volume_info) ? volume_info->mounts[0] : "Not mounted"));
+        gtk_box_pack_start(GTK_BOX(page), grid, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(page), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
                            FALSE, 0);
         GtkWidget *sg = grid_new();
-        char *used = v->fs_total > 0 ? bytes_text(v->fs_total - v->fs_free) : g_strdup("Unknown");
-        char *fr = v->fs_total > 0 ? bytes_text(v->fs_free) : g_strdup("Unknown");
-        char *cap = bytes_text(v->fs_total > 0 ? v->fs_total : v->size);
+        char *used = volume_info->fs_total > 0
+                         ? bytes_text(volume_info->fs_total - volume_info->fs_free)
+                         : g_strdup("Unknown");
+        char *fr =
+            volume_info->fs_total > 0 ? bytes_text(volume_info->fs_free) : g_strdup("Unknown");
+        char *cap =
+            bytes_text(volume_info->fs_total > 0 ? volume_info->fs_total : volume_info->size);
         const struct {
             const char *key;
             char *value;
@@ -2918,27 +3053,28 @@ static void properties(dm *m) {
             {"Free space:", fr, true, {1, 0, 1}},
             {"Capacity:", cap, false, {0, 0, 0}},
         };
-        for (int r = 0; r < 3; r++) {
-            if (rows[r].swatch) {
-                GtkWidget *sw = swatch(rows[r].c.r, rows[r].c.g, rows[r].c.b);
+        for (int row_index = 0; row_index < 3; row_index++) {
+            if (rows[row_index].swatch) {
+                GtkWidget *sw =
+                    swatch(rows[row_index].c.r, rows[row_index].c.g, rows[row_index].c.b);
                 g_signal_connect(sw, "draw", G_CALLBACK(draw_swatch), nullptr);
-                gtk_grid_attach(GTK_GRID(sg), sw, 0, r, 1, 1);
+                gtk_grid_attach(GTK_GRID(sg), sw, 0, row_index, 1, 1);
             }
-            GtkWidget *k = gtk_label_new(rows[r].key);
-            gtk_label_set_xalign(GTK_LABEL(k), 0);
-            gtk_grid_attach(GTK_GRID(sg), k, 1, r, 1, 1);
-            gtk_grid_attach(GTK_GRID(sg), value_label(rows[r].value), 2, r, 1, 1);
-            g_free(rows[r].value);
+            GtkWidget *key_label = gtk_label_new(rows[row_index].key);
+            gtk_label_set_xalign(GTK_LABEL(key_label), 0);
+            gtk_grid_attach(GTK_GRID(sg), key_label, 1, row_index, 1, 1);
+            gtk_grid_attach(GTK_GRID(sg), value_label(rows[row_index].value), 2, row_index, 1, 1);
+            g_free(rows[row_index].value);
         }
         gtk_box_pack_start(GTK_BOX(page), sg, FALSE, FALSE, 0);
-        if (v->fs_total > 0) {
-            /* The pie draws `v`, which a refresh would free. */
-            g_object_set_data_full(G_OBJECT(dlg), "disks", g_ptr_array_ref(m->disks),
+        if (volume_info->fs_total > 0) {
+            /* The pie draws `volume_info`, which a refresh would free. */
+            g_object_set_data_full(G_OBJECT(dlg), "disks", g_ptr_array_ref(disk_manager->disks),
                                    (GDestroyNotify)g_ptr_array_unref);
             GtkWidget *pie = gtk_drawing_area_new();
             gtk_widget_set_size_request(pie, 160, 90);
             gtk_widget_set_halign(pie, GTK_ALIGN_CENTER);
-            g_signal_connect(pie, "draw", G_CALLBACK(draw_pie), v);
+            g_signal_connect(pie, "draw", G_CALLBACK(draw_pie), volume_info);
             gtk_box_pack_start(GTK_BOX(page), pie, FALSE, FALSE, 0);
         } else {
             gtk_box_pack_start(GTK_BOX(page),
@@ -2947,10 +3083,10 @@ static void properties(dm *m) {
         }
         gtk_notebook_append_page(GTK_NOTEBOOK(nb), page, gtk_label_new("General"));
     }
-    gtk_notebook_append_page(GTK_NOTEBOOK(nb), hardware_page(d),
-                             gtk_label_new(v != nullptr ? "Hardware" : "General"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), hardware_page(disk_info),
+                             gtk_label_new(volume_info != nullptr ? "Hardware" : "General"));
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), nb, TRUE, TRUE, 0);
-    g_signal_connect(dlg, "response", G_CALLBACK(on_props_response), m);
+    g_signal_connect(dlg, "response", G_CALLBACK(on_props_response), disk_manager);
     xd_gtk_notebook_ctrl_tab(dlg, GTK_NOTEBOOK(nb));
     gtk_widget_show_all(dlg);
     g_free(title);
@@ -2958,7 +3094,7 @@ static void properties(dm *m) {
 
 /* ---- menus ---------------------------------------------------------------------------- */
 
-typedef void (*action_fn)(dm *m);
+typedef void (*action_fn)(dm *disk_manager);
 
 typedef struct action_box {
     action_fn fn;
@@ -2967,134 +3103,156 @@ typedef struct action_box {
 /* Runs an action. Its dialogs run nested main loops, where a refresh can
  * replace m->disks: the volumes and disks it holds stay alive until it's
  * done. */
-static void run_action(dm *m, action_fn fn) {
-    GPtrArray *held = g_ptr_array_ref(m->disks);
-    fn(m);
+static void run_action(dm *disk_manager, action_fn fn) {
+    GPtrArray *held = g_ptr_array_ref(disk_manager->disks);
+    fn(disk_manager);
     g_ptr_array_unref(held);
 }
 
-static void on_action(GtkMenuItem *i, gpointer data) {
-    const action_box *a = g_object_get_data(G_OBJECT(i), "fn");
-    if (a != nullptr && a->fn != nullptr)
-        run_action(data, a->fn);
+static void on_action(GtkMenuItem *menu_item, gpointer data) {
+    const action_box *boxed_action = g_object_get_data(G_OBJECT(menu_item), "fn");
+    if (boxed_action != nullptr && boxed_action->fn != nullptr)
+        run_action(data, boxed_action->fn);
 }
 
 /* An item, greyed with the reason as its tooltip when it can't be done. */
-static GtkWidget *item(GtkWidget *menu, const char *label, action_fn fn, dm *m,
+static GtkWidget *item(GtkWidget *menu, const char *label, action_fn fn, dm *disk_manager,
                        const char *reason) {
-    GtkWidget *i = gtk_menu_item_new_with_mnemonic(label);
-    action_box *a = g_new(action_box, 1);
-    a->fn = fn;
-    g_object_set_data_full(G_OBJECT(i), "fn", a, g_free);
-    g_signal_connect(i, "activate", G_CALLBACK(on_action), m);
+    GtkWidget *widget = gtk_menu_item_new_with_mnemonic(label);
+    action_box *boxed_action = g_new(action_box, 1);
+    boxed_action->fn = fn;
+    g_object_set_data_full(G_OBJECT(widget), "fn", boxed_action, g_free);
+    g_signal_connect(widget, "activate", G_CALLBACK(on_action), disk_manager);
     if (reason != nullptr) {
-        gtk_widget_set_sensitive(i, FALSE);
-        gtk_widget_set_tooltip_text(i, reason);
+        gtk_widget_set_sensitive(widget, FALSE);
+        gtk_widget_set_tooltip_text(widget, reason);
     }
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), i);
-    return i;
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), widget);
+    return widget;
 }
 
 static void separator(GtkWidget *menu) {
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 }
 
-static void do_explore(dm *m) { explore(m); }
-static void do_mount(dm *m) { mount_volume(m, sel_volume(m), true); }
-static void do_unmount(dm *m) { mount_volume(m, sel_volume(m), false); }
-static void do_extend(dm *m) { resize_volume(m, false); }
-static void do_shrink(dm *m) { resize_volume(m, true); }
+static void do_explore(dm *disk_manager) { explore(disk_manager); }
+static void do_mount(dm *disk_manager) {
+    mount_volume(disk_manager, sel_volume(disk_manager), true);
+}
+static void do_unmount(dm *disk_manager) {
+    mount_volume(disk_manager, sel_volume(disk_manager), false);
+}
+static void do_extend(dm *disk_manager) { resize_volume(disk_manager, false); }
+static void do_shrink(dm *disk_manager) { resize_volume(disk_manager, true); }
 
-static const char *volume_reason(dm *m, xd_disk_action a) {
+static const char *volume_reason(dm *disk_manager, xd_disk_action disk_action) {
     bool unmount = false;
-    return action_reason(m, sel_volume(m), a, &unmount);
+    return action_reason(disk_manager, sel_volume(disk_manager), disk_action, &unmount);
 }
 
 /* The menu for what's selected: a volume, free space or a disk. */
 /* Fills `menu` with what can be done to the selection. */
-static void fill_selection_menu(dm *m, GtkWidget *menu) {
-    const xd_disk_segment *s = sel_segment(m);
-    volume *v = sel_volume(m);
-    disk *d = m->sel.d;
-    const char *busy = m->busy ? "Disk Management is busy with another operation." : nullptr;
-    if (d == nullptr) {
-        item(menu, "Select a disk or volume", nullptr, m, "Nothing is selected.");
+static void fill_selection_menu(dm *disk_manager, GtkWidget *menu) {
+    const xd_disk_segment *disk_segment = sel_segment(disk_manager);
+    volume *volume_info = sel_volume(disk_manager);
+    disk *disk_info = disk_manager->sel.d;
+    const char *busy =
+        disk_manager->busy ? "Disk Management is busy with another operation." : nullptr;
+    if (disk_info == nullptr) {
+        item(menu, "Select a disk or volume", nullptr, disk_manager, "Nothing is selected.");
         return;
     }
-    if (s == nullptr) {
-        item(menu, "_Initialize Disk...", initialize_disk, m,
-             busy                       ? busy
-             : disk_uninitialized(d)    ? nullptr
-             : d->optical || !d->media ? "There's no disk to initialize."
-                                       : "The disk is already initialized.");
-        item(menu, "_Eject", eject, m,
-             busy           ? busy
-             : !d->ejectable ? "This disk can't be ejected."
-             : d->system    ? "The running system is on this disk."
-                            : nullptr);
+    if (disk_segment == nullptr) {
+        item(menu, "_Initialize Disk...", initialize_disk, disk_manager,
+             busy                                      ? busy
+             : disk_uninitialized(disk_info)           ? nullptr
+             : disk_info->optical || !disk_info->media ? "There's no disk to initialize."
+                                                       : "The disk is already initialized.");
+        item(menu, "_Eject", eject, disk_manager,
+             busy                    ? busy
+             : !disk_info->ejectable ? "This disk can't be ejected."
+             : disk_info->system     ? "The running system is on this disk."
+                                     : nullptr);
         separator(menu);
-        item(menu, "P_roperties", properties, m, nullptr);
+        item(menu, "P_roperties", properties, disk_manager, nullptr);
         return;
     }
-    if (v == nullptr) {
-        item(menu, "_New Partition...", new_partition, m,
-             busy                   ? busy
-             : d->table == nullptr ? "Initialize the disk first: right-click it on the left."
-                                   : nullptr);
-        if (s->logical) {
+    if (volume_info == nullptr) {
+        item(menu, "_New Partition...", new_partition, disk_manager,
+             busy ? busy
+             : disk_info->table == nullptr
+                 ? "Initialize the disk first: right-click it on the left."
+                 : nullptr);
+        if (disk_segment->logical) {
             bool unmount = false;
-            item(menu, "_Delete Extended Partition...", delete_extended, m,
-                 action_reason(m, extended_of(d), XD_ACTION_DELETE, &unmount));
+            item(menu, "_Delete Extended Partition...", delete_extended, disk_manager,
+                 action_reason(disk_manager, extended_of(disk_info), XD_ACTION_DELETE, &unmount));
         }
-        if (d->table == nullptr)
-            item(menu, "_Initialize Disk...", initialize_disk, m,
-                 busy ? busy : disk_uninitialized(d) ? nullptr : "There's no disk to initialize.");
+        if (disk_info->table == nullptr)
+            item(menu, "_Initialize Disk...", initialize_disk, disk_manager,
+                 busy                            ? busy
+                 : disk_uninitialized(disk_info) ? nullptr
+                                                 : "There's no disk to initialize.");
         separator(menu);
-        item(menu, "P_roperties", properties, m, nullptr);
+        item(menu, "P_roperties", properties, disk_manager, nullptr);
         return;
     }
-    if (!v->container) {
-        item(menu, "_Open", do_explore, m, mounted(v) ? nullptr : "The volume isn't mounted.");
-        item(menu, "E_xplore", do_explore, m, mounted(v) ? nullptr : "The volume isn't mounted.");
+    if (!volume_info->container) {
+        item(menu, "_Open", do_explore, disk_manager,
+             mounted(volume_info) ? nullptr : "The volume isn't mounted.");
+        item(menu, "E_xplore", do_explore, disk_manager,
+             mounted(volume_info) ? nullptr : "The volume isn't mounted.");
         separator(menu);
-        item(menu, "_Mount", do_mount, m,
-             busy ? busy : !v->has_fs ? "There's no file system to mount."
-                         : mounted(v) ? "It's mounted already." : nullptr);
+        item(menu, "_Mount", do_mount, disk_manager,
+             busy                   ? busy
+             : !volume_info->has_fs ? "There's no file system to mount."
+             : mounted(volume_info) ? "It's mounted already."
+                                    : nullptr);
         bool system = false;
-        for (char **mp = v->mounts; mp != nullptr && *mp != nullptr; mp++)
+        for (char **mp = volume_info->mounts; mp != nullptr && *mp != nullptr; mp++)
             system |= xd_mount_is_system(*mp);
-        item(menu, "_Unmount", do_unmount, m,
-             busy ? busy : !mounted(v) ? "It isn't mounted."
-                         : system ? "The running system needs this volume." : nullptr);
-        item(menu, "Change Mount _Point...", mount_points, m,
-             busy         ? busy
-             : v->has_fs  ? nullptr
-             : v->encrypted ? "Unlock the volume first: what's mounted is the file system "
-                              "inside."
-                            : "There's no file system to mount.");
-        if (v->encrypted) {
+        item(menu, "_Unmount", do_unmount, disk_manager,
+             busy                    ? busy
+             : !mounted(volume_info) ? "It isn't mounted."
+             : system                ? "The running system needs this volume."
+                                     : nullptr);
+        item(menu, "Change Mount _Point...", mount_points, disk_manager,
+             busy                  ? busy
+             : volume_info->has_fs ? nullptr
+             : volume_info->encrypted
+                 ? "Unlock the volume first: what's mounted is the file system "
+                   "inside."
+                 : "There's no file system to mount.");
+        if (volume_info->encrypted) {
             separator(menu);
-            if (v->unlocked)
-                item(menu, "Loc_k", lock_volume, m, crypt_reason(m, v, false, false));
+            if (volume_info->unlocked)
+                item(menu, "Loc_k", lock_volume, disk_manager,
+                     crypt_reason(disk_manager, volume_info, false, false));
             else
-                item(menu, "Unloc_k...", unlock_volume, m, crypt_reason(m, v, true, false));
-            item(menu, "Change Pa_ssphrase...", change_passphrase, m,
-                 crypt_reason(m, v, false, true));
+                item(menu, "Unloc_k...", unlock_volume, disk_manager,
+                     crypt_reason(disk_manager, volume_info, true, false));
+            item(menu, "Change Pa_ssphrase...", change_passphrase, disk_manager,
+                 crypt_reason(disk_manager, volume_info, false, true));
         }
-        item(menu, "Mark Partition as _Active", mark_active, m,
-             volume_reason(m, XD_ACTION_SET_ACTIVE));
+        item(menu, "Mark Partition as _Active", mark_active, disk_manager,
+             volume_reason(disk_manager, XD_ACTION_SET_ACTIVE));
         separator(menu);
-        item(menu, "_Format...", format_volume, m, volume_reason(m, XD_ACTION_FORMAT));
-        item(menu, "Change _Label...", change_label, m, volume_reason(m, XD_ACTION_LABEL));
-        item(menu, "Exte_nd Volume...", do_extend, m, volume_reason(m, XD_ACTION_EXTEND));
-        item(menu, "S_hrink Volume...", do_shrink, m, volume_reason(m, XD_ACTION_SHRINK));
-        item(menu, "Change Partition _Type...", change_type, m,
-             volume_reason(m, XD_ACTION_SET_TYPE));
+        item(menu, "_Format...", format_volume, disk_manager,
+             volume_reason(disk_manager, XD_ACTION_FORMAT));
+        item(menu, "Change _Label...", change_label, disk_manager,
+             volume_reason(disk_manager, XD_ACTION_LABEL));
+        item(menu, "Exte_nd Volume...", do_extend, disk_manager,
+             volume_reason(disk_manager, XD_ACTION_EXTEND));
+        item(menu, "S_hrink Volume...", do_shrink, disk_manager,
+             volume_reason(disk_manager, XD_ACTION_SHRINK));
+        item(menu, "Change Partition _Type...", change_type, disk_manager,
+             volume_reason(disk_manager, XD_ACTION_SET_TYPE));
         separator(menu);
     }
-    item(menu, "_Delete Partition...", delete_partition, m, volume_reason(m, XD_ACTION_DELETE));
+    item(menu, "_Delete Partition...", delete_partition, disk_manager,
+         volume_reason(disk_manager, XD_ACTION_DELETE));
     separator(menu);
-    item(menu, "P_roperties", properties, m, nullptr);
+    item(menu, "P_roperties", properties, disk_manager, nullptr);
 }
 
 /* GTK deactivates a menu before running the chosen item, so destroying it
@@ -3110,9 +3268,10 @@ static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer dat
 
 /* The context menu for the selection, at the pointer (or, from the
  * keyboard, over `attach`). */
-static void popup_selection_menu(dm *m, GtkWidget *attach, GdkEvent *ev, bool at_pointer) {
+static void popup_selection_menu(dm *disk_manager, GtkWidget *attach, GdkEvent *ev,
+                                 bool at_pointer) {
     GtkWidget *menu = gtk_menu_new();
-    fill_selection_menu(m, menu);
+    fill_selection_menu(disk_manager, menu);
     gtk_menu_attach_to_widget(GTK_MENU(menu), attach, nullptr);
     g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
@@ -3125,28 +3284,34 @@ static void popup_selection_menu(dm *m, GtkWidget *attach, GdkEvent *ev, bool at
 
 /* ---- the volume list ------------------------------------------------------------------ */
 
-static void fill_list(dm *m) {
-    m->updating = true;
-    gtk_list_store_clear(m->store);
-    for (guint i = 0; i < m->disks->len; i++) {
-        disk *d = g_ptr_array_index(m->disks, i);
-        for (guint k = 0; d->media && k < d->vols->len; k++) {
-            volume *v = g_ptr_array_index(d->vols, k);
-            if (v->container)
+static void fill_list(dm *disk_manager) {
+    disk_manager->updating = true;
+    gtk_list_store_clear(disk_manager->store);
+    for (guint i = 0; i < disk_manager->disks->len; i++) {
+        disk *disk_info = g_ptr_array_index(disk_manager->disks, i);
+        for (guint k = 0; disk_info->media && k < disk_info->vols->len; k++) {
+            volume *volume_info = g_ptr_array_index(disk_info->vols, k);
+            if (volume_info->container)
                 continue;
-            char *name = volume_name(v), *fs = volume_fs(v), *status = volume_status(v);
-            char *cap = xd_disk_size_text(v->size);
-            char *free_text = v->fs_total > 0 ? xd_disk_size_text(v->fs_free) : g_strdup("");
-            guint pct = v->fs_total > 0 ? xd_disk_percent_free(v->fs_free, v->fs_total) : 0;
-            char *pct_text = v->fs_total > 0 ? g_strdup_printf("%u %%", pct) : g_strdup("");
+            char *name = volume_name(volume_info), *fs = volume_fs(volume_info),
+                 *status = volume_status(volume_info);
+            char *cap = xd_disk_size_text(volume_info->size);
+            char *free_text =
+                volume_info->fs_total > 0 ? xd_disk_size_text(volume_info->fs_free) : g_strdup("");
+            guint pct = volume_info->fs_total > 0
+                            ? xd_disk_percent_free(volume_info->fs_free, volume_info->fs_total)
+                            : 0;
+            char *pct_text =
+                volume_info->fs_total > 0 ? g_strdup_printf("%u %%", pct) : g_strdup("");
             gtk_list_store_insert_with_values(
-                m->store, nullptr, -1, COL_ICON,
-                d->optical ? "drive-optical" : d->removable ? "drive-removable-media"
-                                                            : "drive-harddisk",
-                COL_VOLUME, name, COL_LAYOUT, v->whole_disk ? "Simple" : "Partition", COL_TYPE,
-                "Basic", COL_FS, fs, COL_STATUS, status, COL_CAPACITY, cap, COL_FREE, free_text,
-                COL_PCT, pct_text, COL_SIZE, v->size, COL_FREE_SIZE, v->fs_free, COL_PCT_NUM, pct,
-                COL_VOL, v, -1);
+                disk_manager->store, nullptr, -1, COL_ICON,
+                disk_info->optical     ? "drive-optical"
+                : disk_info->removable ? "drive-removable-media"
+                                       : "drive-harddisk",
+                COL_VOLUME, name, COL_LAYOUT, volume_info->whole_disk ? "Simple" : "Partition",
+                COL_TYPE, "Basic", COL_FS, fs, COL_STATUS, status, COL_CAPACITY, cap, COL_FREE,
+                free_text, COL_PCT, pct_text, COL_SIZE, volume_info->size, COL_FREE_SIZE,
+                volume_info->fs_free, COL_PCT_NUM, pct, COL_VOL, volume_info, -1);
             g_free(name);
             g_free(fs);
             g_free(status);
@@ -3155,40 +3320,40 @@ static void fill_list(dm *m) {
             g_free(pct_text);
         }
     }
-    m->updating = false;
+    disk_manager->updating = false;
 }
 
 static void on_list_selection(GtkTreeSelection *ts, gpointer data) {
-    dm *m = data;
-    if (m->updating)
+    dm *disk_manager = data;
+    if (disk_manager->updating)
         return;
     GtkTreeModel *model = nullptr;
     GtkTreeIter it;
     if (!gtk_tree_selection_get_selected(ts, &model, &it))
         return;
-    volume *v = nullptr;
-    gtk_tree_model_get(model, &it, COL_VOL, &v, -1);
-    if (v == nullptr)
+    volume *volume_info = nullptr;
+    gtk_tree_model_get(model, &it, COL_VOL, &volume_info, -1);
+    if (volume_info == nullptr)
         return;
-    move_selection(m, v->d, (int)seg_index_of(v));
-    show_selection_status(m);
+    move_selection(disk_manager, volume_info->d, (int)seg_index_of(volume_info));
+    show_selection_status(disk_manager);
 }
 
-static gboolean on_list_button(GtkWidget *w, GdkEventButton *ev, gpointer data) {
-    dm *m = data;
+static gboolean on_list_button(GtkWidget *widget, GdkEventButton *ev, gpointer data) {
+    dm *disk_manager = data;
     if (ev->type == GDK_2BUTTON_PRESS && ev->button == GDK_BUTTON_PRIMARY) {
-        explore(m);
+        explore(disk_manager);
         return FALSE;
     }
     if (ev->type != GDK_BUTTON_PRESS || ev->button != GDK_BUTTON_SECONDARY)
         return FALSE;
     GtkTreePath *path = nullptr;
-    if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(w), (int)ev->x, (int)ev->y, &path, nullptr,
+    if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), (int)ev->x, (int)ev->y, &path, nullptr,
                                       nullptr, nullptr)) {
-        gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(w)), path);
+        gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(widget)), path);
         gtk_tree_path_free(path);
     }
-    popup_selection_menu(m, w, (GdkEvent *)ev, true);
+    popup_selection_menu(disk_manager, widget, (GdkEvent *)ev, true);
     return TRUE;
 }
 
@@ -3201,10 +3366,10 @@ static const rgb C_EXTENDED = {0.0, 0.6, 0.0};
 static const rgb C_FREE = {0.55, 0.9, 0.55};
 static const rgb C_UNALLOCATED = {0.0, 0.0, 0.0};
 
-static rgb segment_colour(const xd_disk_segment *s) {
-    switch (s->kind) {
+static rgb segment_colour(const xd_disk_segment *disk_segment) {
+    switch (disk_segment->kind) {
     case XD_SEGMENT_PARTITION:
-        return s->logical ? C_LOGICAL : C_PRIMARY;
+        return disk_segment->logical ? C_LOGICAL : C_PRIMARY;
     case XD_SEGMENT_FREE:
         return C_FREE;
     case XD_SEGMENT_UNALLOCATED:
@@ -3213,18 +3378,18 @@ static rgb segment_colour(const xd_disk_segment *s) {
     return C_UNALLOCATED;
 }
 
-/* The x and width of each block of disk `d`'s row, `width` wide. */
-static int *block_xs(const disk *d, int width, int **widths_out) {
-    guint n = d->segments->len;
-    guint64 *sizes = g_new0(guint64, n + 1);
-    for (guint i = 0; i < n; i++)
-        sizes[i] = g_array_index(d->segments, xd_disk_segment, i).size;
-    int *widths = g_new0(int, n + 1);
+/* The x and width of each block of disk `disk_info`'s row, `width` wide. */
+static int *block_xs(const disk *disk_info, int width, int **widths_out) {
+    guint count = disk_info->segments->len;
+    guint64 *sizes = g_new0(guint64, count + 1);
+    for (guint i = 0; i < count; i++)
+        sizes[i] = g_array_index(disk_info->segments, xd_disk_segment, i).size;
+    int *widths = g_new0(int, count + 1);
     int avail = width - HEADER_W - 2 * MARGIN;
-    xd_disk_block_widths(sizes, n, avail, MIN_BLOCK, widths);
-    int *xs = g_new0(int, n + 1);
+    xd_disk_block_widths(sizes, count, avail, MIN_BLOCK, widths);
+    int *xs = g_new0(int, count + 1);
     int x = MARGIN + HEADER_W;
-    for (guint i = 0; i < n; i++) {
+    for (guint i = 0; i < count; i++) {
         xs[i] = x;
         x += widths[i];
     }
@@ -3233,40 +3398,41 @@ static int *block_xs(const disk *d, int width, int **widths_out) {
     return xs;
 }
 
-static void text_lines(cairo_t *cr, GtkWidget *w, double x, double y, double width,
+static void text_lines(cairo_t *cairo, GtkWidget *widget, double x, double y, double width,
                        const char *markup) {
-    PangoLayout *pl = gtk_widget_create_pango_layout(w, nullptr);
+    PangoLayout *pl = gtk_widget_create_pango_layout(widget, nullptr);
     pango_layout_set_markup(pl, markup, -1);
     pango_layout_set_width(pl, (int)(width * PANGO_SCALE));
     pango_layout_set_ellipsize(pl, PANGO_ELLIPSIZE_END);
-    cairo_move_to(cr, x, y);
-    pango_cairo_show_layout(cr, pl);
+    cairo_move_to(cairo, x, y);
+    pango_cairo_show_layout(cairo, pl);
     g_object_unref(pl);
 }
 
 /* XP marks the selection with diagonal hatching. */
-static void hatch(cairo_t *cr, double x, double y, double w, double h) {
-    cairo_save(cr);
-    cairo_rectangle(cr, x, y, w, h);
-    cairo_clip(cr);
-    cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 0.45);
-    cairo_set_line_width(cr, 1);
-    for (double d = -h; d < w; d += 5) {
-        cairo_move_to(cr, x + d, y + h);
-        cairo_line_to(cr, x + d + h, y);
+static void hatch(cairo_t *cairo, double x, double y, double width, double height) {
+    cairo_save(cairo);
+    cairo_rectangle(cairo, x, y, width, height);
+    cairo_clip(cairo);
+    cairo_set_source_rgba(cairo, 0.3, 0.3, 0.3, 0.45);
+    cairo_set_line_width(cairo, 1);
+    for (double offset = -height; offset < width; offset += 5) {
+        cairo_move_to(cairo, x + offset, y + height);
+        cairo_line_to(cairo, x + offset + height, y);
     }
-    cairo_stroke(cr);
-    cairo_restore(cr);
+    cairo_stroke(cairo);
+    cairo_restore(cairo);
 }
 
-static char *segment_markup(const xd_disk_segment *s, const volume *v) {
-    char *size = xd_disk_size_text(s->size);
+static char *segment_markup(const xd_disk_segment *disk_segment, const volume *volume_info) {
+    char *size = xd_disk_size_text(disk_segment->size);
     char *out;
-    if (v == nullptr) {
-        out = g_markup_printf_escaped("%s\n%s", size,
-                                      s->kind == XD_SEGMENT_FREE ? "Free space" : "Unallocated");
+    if (volume_info == nullptr) {
+        out = g_markup_printf_escaped(
+            "%s\n%s", size, disk_segment->kind == XD_SEGMENT_FREE ? "Free space" : "Unallocated");
     } else {
-        char *name = volume_name(v), *fs = volume_fs(v), *status = volume_status(v);
+        char *name = volume_name(volume_info), *fs = volume_fs(volume_info),
+             *status = volume_status(volume_info);
         out = g_markup_printf_escaped("<b>%s</b>\n%s %s\n%s", name, size, fs, status);
         g_free(name);
         g_free(fs);
@@ -3276,96 +3442,99 @@ static char *segment_markup(const xd_disk_segment *s, const volume *v) {
     return out;
 }
 
-static gboolean draw_map(GtkWidget *w, cairo_t *cr, gpointer data) {
-    dm *m = data;
-    int width = gtk_widget_get_allocated_width(w);
-    cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_paint(cr);
-    cairo_set_line_width(cr, 1);
+static gboolean draw_map(GtkWidget *widget, cairo_t *cairo, gpointer data) {
+    dm *disk_manager = data;
+    int width = gtk_widget_get_allocated_width(widget);
+    cairo_set_source_rgb(cairo, 1, 1, 1);
+    cairo_paint(cairo);
+    cairo_set_line_width(cairo, 1);
     /* Only the rows in the area being redrawn: a selection change redraws
      * one or two, and scrolling only what comes into view. */
-    GdkRectangle clip = {0, 0, width, gtk_widget_get_allocated_height(w)};
-    gdk_cairo_get_clip_rectangle(cr, &clip);
-    for (guint i = 0; i < m->disks->len; i++) {
-        disk *d = g_ptr_array_index(m->disks, i);
+    GdkRectangle clip = {0, 0, width, gtk_widget_get_allocated_height(widget)};
+    gdk_cairo_get_clip_rectangle(cairo, &clip);
+    for (guint i = 0; i < disk_manager->disks->len; i++) {
+        disk *disk_info = g_ptr_array_index(disk_manager->disks, i);
         double y = MARGIN + i * (ROW_H + ROW_GAP);
         if (y + ROW_H < clip.y || y > clip.y + clip.height)
             continue;
         /* The disk's header, on the left. */
-        cairo_rectangle(cr, MARGIN + 0.5, y + 0.5, HEADER_W - 3, ROW_H - 1);
-        cairo_set_source_rgb(cr, 0.93, 0.92, 0.87);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-        cairo_stroke(cr);
-        if (m->sel.d == d && m->sel.seg < 0)
-            hatch(cr, MARGIN + 1, y + 1, HEADER_W - 4, ROW_H - 2);
-        char *dn = disk_name(d);
-        char *size = d->media ? xd_disk_size_text(d->size) : g_strdup("");
-        const char *kind = d->optical      ? "DVD"
-                           : d->removable  ? "Removable"
-                           : "Basic";
-        const char *state = !d->media              ? "No Media"
-                            : disk_uninitialized(d) ? "Not Initialized"
-                                                    : "Online";
+        cairo_rectangle(cairo, MARGIN + 0.5, y + 0.5, HEADER_W - 3, ROW_H - 1);
+        cairo_set_source_rgb(cairo, 0.93, 0.92, 0.87);
+        cairo_fill_preserve(cairo);
+        cairo_set_source_rgb(cairo, 0.5, 0.5, 0.5);
+        cairo_stroke(cairo);
+        if (disk_manager->sel.d == disk_info && disk_manager->sel.seg < 0)
+            hatch(cairo, MARGIN + 1, y + 1, HEADER_W - 4, ROW_H - 2);
+        char *dn = disk_name(disk_info);
+        char *size = disk_info->media ? xd_disk_size_text(disk_info->size) : g_strdup("");
+        const char *kind = disk_info->optical     ? "DVD"
+                           : disk_info->removable ? "Removable"
+                                                  : "Basic";
+        const char *state = !disk_info->media               ? "No Media"
+                            : disk_uninitialized(disk_info) ? "Not Initialized"
+                                                            : "Online";
         char *markup = g_markup_printf_escaped("<b>%s</b>\n%s\n%s\n%s", dn, kind, size, state);
         GtkIconTheme *theme = gtk_icon_theme_get_default();
         GdkPixbuf *icon = gtk_icon_theme_load_icon(theme,
-                                                   d->optical ? "drive-optical"
-                                                   : d->removable ? "drive-removable-media"
-                                                                  : "drive-harddisk",
+                                                   disk_info->optical     ? "drive-optical"
+                                                   : disk_info->removable ? "drive-removable-media"
+                                                                          : "drive-harddisk",
                                                    16, GTK_ICON_LOOKUP_FORCE_SIZE, nullptr);
         if (icon != nullptr) {
-            gdk_cairo_set_source_pixbuf(cr, icon, MARGIN + 4, y + 4);
-            cairo_paint(cr);
+            gdk_cairo_set_source_pixbuf(cairo, icon, MARGIN + 4, y + 4);
+            cairo_paint(cairo);
             g_object_unref(icon);
         }
-        cairo_set_source_rgb(cr, 0, 0, 0);
-        text_lines(cr, w, MARGIN + 24, y + 3, HEADER_W - 28, markup);
+        cairo_set_source_rgb(cairo, 0, 0, 0);
+        text_lines(cairo, widget, MARGIN + 24, y + 3, HEADER_W - 28, markup);
         g_free(markup);
         g_free(dn);
         g_free(size);
-        if (!d->media)
+        if (!disk_info->media)
             continue;
         int *widths = nullptr;
-        int *xs = block_xs(d, width, &widths);
-        for (guint k = 0; k < d->segments->len; k++) {
-            const xd_disk_segment *s = &g_array_index(d->segments, xd_disk_segment, k);
-            volume *v = seg_volume(d, (int)k);
+        int *xs = block_xs(disk_info, width, &widths);
+        for (guint k = 0; k < disk_info->segments->len; k++) {
+            const xd_disk_segment *disk_segment =
+                &g_array_index(disk_info->segments, xd_disk_segment, k);
+            volume *volume_info = seg_volume(disk_info, (int)k);
             double x = xs[k], bw = widths[k];
-            rgb c = segment_colour(s);
+            rgb color = segment_colour(disk_segment);
             /* The extended partition: one green frame around its logical
              * drives and free space. */
-            bool first = k == 0 || !g_array_index(d->segments, xd_disk_segment, k - 1).logical;
-            if (s->logical && first) {
+            bool first =
+                k == 0 || !g_array_index(disk_info->segments, xd_disk_segment, k - 1).logical;
+            if (disk_segment->logical && first) {
                 guint last = k;
-                while (last + 1 < d->segments->len &&
-                       g_array_index(d->segments, xd_disk_segment, last + 1).logical)
+                while (last + 1 < disk_info->segments->len &&
+                       g_array_index(disk_info->segments, xd_disk_segment, last + 1).logical)
                     last++;
-                cairo_rectangle(cr, x + 1.5, y + 1.5, xs[last] + widths[last] - x - 3, ROW_H - 3);
-                cairo_set_source_rgb(cr, C_EXTENDED.r, C_EXTENDED.g, C_EXTENDED.b);
-                cairo_set_line_width(cr, 3);
-                cairo_stroke(cr);
-                cairo_set_line_width(cr, 1);
+                cairo_rectangle(cairo, x + 1.5, y + 1.5, xs[last] + widths[last] - x - 3,
+                                ROW_H - 3);
+                cairo_set_source_rgb(cairo, C_EXTENDED.r, C_EXTENDED.g, C_EXTENDED.b);
+                cairo_set_line_width(cairo, 3);
+                cairo_stroke(cairo);
+                cairo_set_line_width(cairo, 1);
             }
-            double inset = s->logical ? 3 : 0;
+            double inset = disk_segment->logical ? 3 : 0;
             double bx = x + inset, by = y + inset, bww = bw - 2 * inset - 2, bh = ROW_H - 2 * inset;
-            cairo_rectangle(cr, bx + 0.5, by + 0.5, bww - 1, bh - 1);
-            cairo_set_source_rgb(cr, 1, 1, 1);
-            cairo_fill_preserve(cr);
-            cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
-            cairo_stroke(cr);
-            cairo_rectangle(cr, bx + 1, by + 1, bww - 2, BAND);
-            cairo_set_source_rgb(cr, c.r, c.g, c.b);
-            cairo_fill(cr);
-            if (m->sel.d == d && m->sel.seg == (int)k)
-                hatch(cr, bx + 1, by + BAND + 1, bww - 2, bh - BAND - 2);
-            char *text = segment_markup(s, v);
-            cairo_set_source_rgb(cr, 0, 0, 0);
-            cairo_save(cr);
-            cairo_rectangle(cr, bx + 2, by + BAND + 1, bww - 4, bh - BAND - 2);
-            cairo_clip(cr);
-            text_lines(cr, w, bx + 4, by + BAND + 3, bww - 8, text);
-            cairo_restore(cr);
+            cairo_rectangle(cairo, bx + 0.5, by + 0.5, bww - 1, bh - 1);
+            cairo_set_source_rgb(cairo, 1, 1, 1);
+            cairo_fill_preserve(cairo);
+            cairo_set_source_rgb(cairo, 0.5, 0.5, 0.5);
+            cairo_stroke(cairo);
+            cairo_rectangle(cairo, bx + 1, by + 1, bww - 2, BAND);
+            cairo_set_source_rgb(cairo, color.r, color.g, color.b);
+            cairo_fill(cairo);
+            if (disk_manager->sel.d == disk_info && disk_manager->sel.seg == (int)k)
+                hatch(cairo, bx + 1, by + BAND + 1, bww - 2, bh - BAND - 2);
+            char *text = segment_markup(disk_segment, volume_info);
+            cairo_set_source_rgb(cairo, 0, 0, 0);
+            cairo_save(cairo);
+            cairo_rectangle(cairo, bx + 2, by + BAND + 1, bww - 4, bh - BAND - 2);
+            cairo_clip(cairo);
+            text_lines(cairo, widget, bx + 4, by + BAND + 3, bww - 8, text);
+            cairo_restore(cairo);
             g_free(text);
         }
         g_free(xs);
@@ -3375,25 +3544,25 @@ static gboolean draw_map(GtkWidget *w, cairo_t *cr, gpointer data) {
 }
 
 /* Which disk and block is at (x, y). */
-static bool map_hit(dm *m, double x, double y, selection *out) {
-    int width = gtk_widget_get_allocated_width(m->map);
-    for (guint i = 0; i < m->disks->len; i++) {
-        disk *d = g_ptr_array_index(m->disks, i);
+static bool map_hit(dm *disk_manager, double x, double y, selection *out) {
+    int width = gtk_widget_get_allocated_width(disk_manager->map);
+    for (guint i = 0; i < disk_manager->disks->len; i++) {
+        disk *disk_info = g_ptr_array_index(disk_manager->disks, i);
         double top = MARGIN + i * (ROW_H + ROW_GAP);
         if (y < top || y > top + ROW_H)
             continue;
         if (x >= MARGIN && x < MARGIN + HEADER_W) {
-            *out = (selection){.d = d, .seg = -1};
+            *out = (selection){.d = disk_info, .seg = -1};
             return true;
         }
-        if (!d->media)
+        if (!disk_info->media)
             return false;
         int *widths = nullptr;
-        int *xs = block_xs(d, width, &widths);
+        int *xs = block_xs(disk_info, width, &widths);
         bool hit = false;
-        for (guint k = 0; k < d->segments->len && !hit; k++) {
+        for (guint k = 0; k < disk_info->segments->len && !hit; k++) {
             if (x >= xs[k] && x < xs[k] + widths[k]) {
-                *out = (selection){.d = d, .seg = (int)k};
+                *out = (selection){.d = disk_info, .seg = (int)k};
                 hit = true;
             }
         }
@@ -3404,98 +3573,100 @@ static bool map_hit(dm *m, double x, double y, selection *out) {
     return false;
 }
 
-static gboolean on_map_button(GtkWidget *w, GdkEventButton *ev, gpointer data) {
-    dm *m = data;
+static gboolean on_map_button(GtkWidget *widget, GdkEventButton *ev, gpointer data) {
+    dm *disk_manager = data;
     selection hit;
     if (ev->type != GDK_BUTTON_PRESS && ev->type != GDK_2BUTTON_PRESS)
         return FALSE;
-    gtk_widget_grab_focus(w);
-    if (!map_hit(m, ev->x, ev->y, &hit))
+    gtk_widget_grab_focus(widget);
+    if (!map_hit(disk_manager, ev->x, ev->y, &hit))
         return FALSE;
-    set_selection(m, hit.d, hit.seg);
+    set_selection(disk_manager, hit.d, hit.seg);
     if (ev->type == GDK_2BUTTON_PRESS && ev->button == GDK_BUTTON_PRIMARY) {
-        if (sel_volume(m) != nullptr && mounted(sel_volume(m)))
-            explore(m);
+        if (sel_volume(disk_manager) != nullptr && mounted(sel_volume(disk_manager)))
+            explore(disk_manager);
         else
-            properties(m);
+            properties(disk_manager);
         return TRUE;
     }
     if (ev->button == GDK_BUTTON_SECONDARY) {
-        popup_selection_menu(m, w, (GdkEvent *)ev, true);
+        popup_selection_menu(disk_manager, widget, (GdkEvent *)ev, true);
     }
     return TRUE;
 }
 
-static void resize_map(dm *m) {
-    int rows = (int)m->disks->len;
-    gtk_widget_set_size_request(m->map, 560, 2 * MARGIN + rows * (ROW_H + ROW_GAP));
+static void resize_map(dm *disk_manager) {
+    int rows = (int)disk_manager->disks->len;
+    gtk_widget_set_size_request(disk_manager->map, 560, 2 * MARGIN + rows * (ROW_H + ROW_GAP));
 }
 
 /* ---- refreshing ---------------------------------------------------------------------- */
 
 /* The status bar, and the Action menu, for the selection. */
-static void show_selection_status(dm *m) {
-    fill_action_menu(m);
-    if (m->busy)
+static void show_selection_status(dm *disk_manager) {
+    fill_action_menu(disk_manager);
+    if (disk_manager->busy)
         return;
-    volume *v = sel_volume(m);
+    volume *volume_info = sel_volume(disk_manager);
     const char *text = "";
     char *owned = nullptr;
-    if (v != nullptr) {
+    if (volume_info != nullptr) {
         bool unmount = false;
-        xd_volume_use u = volume_use(v);
-        const char *why = xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount);
-        if (why != nullptr && v->container == false)
+        xd_volume_use usage = volume_use(volume_info);
+        const char *why = xd_volume_lock_reason(&usage, XD_ACTION_FORMAT, &unmount);
+        if (why != nullptr && volume_info->container == false)
             text = why;
-    } else if (sel_segment(m) != nullptr) {
+    } else if (sel_segment(disk_manager) != nullptr) {
         text = "Right-click the free space and choose New Partition to make a volume.";
-    } else if (m->sel.d != nullptr && disk_uninitialized(m->sel.d)) {
-        owned = disk_name(m->sel.d);
-        char *t = g_strdup_printf("%s isn't initialized: right-click it and choose Initialize "
-                                  "Disk.",
-                                  owned);
+    } else if (disk_manager->sel.d != nullptr && disk_uninitialized(disk_manager->sel.d)) {
+        owned = disk_name(disk_manager->sel.d);
+        char *message =
+            g_strdup_printf("%s isn't initialized: right-click it and choose Initialize "
+                            "Disk.",
+                            owned);
         g_free(owned);
-        owned = t;
+        owned = message;
         text = owned;
     }
-    gtk_label_set_text(GTK_LABEL(m->status), text);
+    gtk_label_set_text(GTK_LABEL(disk_manager->status), text);
     g_free(owned);
 }
 
 /* Keeps the selection across a refresh: the same volume, or the free
  * block at the same place on the same disk. */
-static void refresh(dm *m) {
-    char *disk_key = m->sel.d != nullptr ? g_strdup(m->sel.d->drive_path) : nullptr;
-    volume *v = sel_volume(m);
-    char *vol_key = v != nullptr ? g_strdup(v->path) : nullptr;
-    const xd_disk_segment *s = sel_segment(m);
-    guint64 offset = s != nullptr ? s->offset : 0;
-    int seg = m->sel.seg;
-    GPtrArray *old = m->disks;
-    m->disks = read_disks(m);
-    ask_capabilities(m);
-    m->sel = (selection){.d = nullptr, .seg = -1};
-    for (guint i = 0; disk_key != nullptr && i < m->disks->len; i++) {
-        disk *d = g_ptr_array_index(m->disks, i);
-        if (strcmp(d->drive_path, disk_key) != 0)
+static void refresh(dm *disk_manager) {
+    char *disk_key =
+        disk_manager->sel.d != nullptr ? g_strdup(disk_manager->sel.d->drive_path) : nullptr;
+    volume *volume_info = sel_volume(disk_manager);
+    char *vol_key = volume_info != nullptr ? g_strdup(volume_info->path) : nullptr;
+    const xd_disk_segment *disk_segment = sel_segment(disk_manager);
+    guint64 offset = disk_segment != nullptr ? disk_segment->offset : 0;
+    int seg = disk_manager->sel.seg;
+    GPtrArray *old = disk_manager->disks;
+    disk_manager->disks = read_disks(disk_manager);
+    ask_capabilities(disk_manager);
+    disk_manager->sel = (selection){.d = nullptr, .seg = -1};
+    for (guint i = 0; disk_key != nullptr && i < disk_manager->disks->len; i++) {
+        disk *disk_info = g_ptr_array_index(disk_manager->disks, i);
+        if (strcmp(disk_info->drive_path, disk_key) != 0)
             continue;
-        m->sel = (selection){.d = d, .seg = -1};
-        for (guint k = 0; seg >= 0 && k < d->segments->len; k++) {
-            volume *nv = seg_volume(d, (int)k);
-            const xd_disk_segment *ns = &g_array_index(d->segments, xd_disk_segment, k);
+        disk_manager->sel = (selection){.d = disk_info, .seg = -1};
+        for (guint k = 0; seg >= 0 && k < disk_info->segments->len; k++) {
+            volume *nv = seg_volume(disk_info, (int)k);
+            const xd_disk_segment *ns = &g_array_index(disk_info->segments, xd_disk_segment, k);
             if ((vol_key != nullptr && nv != nullptr && strcmp(nv->path, vol_key) == 0) ||
                 (vol_key == nullptr && nv == nullptr && ns->offset <= offset &&
                  offset < ns->offset + ns->size))
-                m->sel.seg = (int)k;
+                disk_manager->sel.seg = (int)k;
         }
-        if (seg >= 0 && m->sel.seg < 0)
-            m->sel.d = nullptr;
+        if (seg >= 0 && disk_manager->sel.seg < 0)
+            disk_manager->sel.d = nullptr;
     }
-    fill_list(m);
-    select_volume_row(m);
-    resize_map(m);
-    gtk_widget_queue_draw(m->map);
-    show_selection_status(m);
+    fill_list(disk_manager);
+    select_volume_row(disk_manager);
+    resize_map(disk_manager);
+    gtk_widget_queue_draw(disk_manager->map);
+    show_selection_status(disk_manager);
     if (old != nullptr)
         g_ptr_array_unref(old);
     g_free(disk_key);
@@ -3503,52 +3674,55 @@ static void refresh(dm *m) {
 }
 
 static gboolean refresh_later(gpointer data) {
-    dm *m = data;
-    m->refresh_source = 0;
+    dm *disk_manager = data;
+    disk_manager->refresh_source = 0;
     /* An operation refreshes when it's done. */
-    if (!m->busy)
-        refresh(m);
+    if (!disk_manager->busy)
+        refresh(disk_manager);
     return G_SOURCE_REMOVE;
 }
 
-static void queue_refresh(dm *m) {
-    if (m->refresh_source == 0)
-        m->refresh_source = g_timeout_add(250, refresh_later, m);
+static void queue_refresh(dm *disk_manager) {
+    if (disk_manager->refresh_source == 0)
+        disk_manager->refresh_source = g_timeout_add(250, refresh_later, disk_manager);
 }
 
 /* Only drives and block devices are shown. Jobs, whose progress changes
  * many times a second while one runs, and RAID arrays' sync progress
  * would otherwise reread everything over and over. */
-static void queue_refresh_for(dm *m, GDBusObject *o) {
-    const char *path = g_dbus_object_get_object_path(o);
+static void queue_refresh_for(dm *disk_manager, GDBusObject *dbus_object) {
+    const char *path = g_dbus_object_get_object_path(dbus_object);
     if (g_str_has_prefix(path, UD_PATH "/drives/") ||
         g_str_has_prefix(path, UD_PATH "/block_devices/"))
-        queue_refresh(m);
+        queue_refresh(disk_manager);
 }
 
-static void on_om_changed([[maybe_unused]] GDBusObjectManager *om, GDBusObject *o,
+static void on_om_changed([[maybe_unused]] GDBusObjectManager *om, GDBusObject *dbus_object,
                           gpointer data) {
-    queue_refresh_for(data, o);
+    queue_refresh_for(data, dbus_object);
 }
 
-static void on_om_iface_changed([[maybe_unused]] GDBusObjectManager *om, GDBusObject *o,
-                                [[maybe_unused]] GDBusInterface *i, gpointer data) {
-    queue_refresh_for(data, o);
+static void on_om_iface_changed([[maybe_unused]] GDBusObjectManager *om, GDBusObject *dbus_object,
+                                [[maybe_unused]] GDBusInterface *dbus_interface, gpointer data) {
+    queue_refresh_for(data, dbus_object);
 }
 
-static void on_om_props([[maybe_unused]] GDBusObjectManagerClient *om, GDBusObjectProxy *o,
-                        [[maybe_unused]] GDBusProxy *p, [[maybe_unused]] GVariant *changed,
+static void on_om_props([[maybe_unused]] GDBusObjectManagerClient *om,
+                        GDBusObjectProxy *dbus_object_proxy, [[maybe_unused]] GDBusProxy *proxy,
+                        [[maybe_unused]] GVariant *changed,
                         [[maybe_unused]] const char *const *invalidated, gpointer data) {
-    queue_refresh_for(data, G_DBUS_OBJECT(o));
+    queue_refresh_for(data, G_DBUS_OBJECT(dbus_object_proxy));
 }
 
 /* ---- the window ---------------------------------------------------------------------- */
 
-static void on_refresh([[maybe_unused]] GtkWidget *w, gpointer m) { refresh(m); }
+static void on_refresh([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
+    refresh(user_data);
+}
 
-static void on_exit([[maybe_unused]] GtkWidget *w, gpointer data) {
-    dm *m = data;
-    gtk_widget_destroy(m->window);
+static void on_exit([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    dm *disk_manager = data;
+    gtk_widget_destroy(disk_manager->window);
 }
 
 /* The Action menu follows the selection, refilled whenever it (or what's
@@ -3556,74 +3730,74 @@ static void on_exit([[maybe_unused]] GtkWidget *w, gpointer data) {
  * "activate" handlers run, so filling it as it opened showed it empty, or
  * as it was for the last selection. Replacing the submenu instead left
  * GTK grabbing input for a menu that never showed. */
-static void fill_action_menu(dm *m) {
-    GtkWidget *menu = m->action_menu;
+static void fill_action_menu(dm *disk_manager) {
+    GtkWidget *menu = disk_manager->action_menu;
     if (menu == nullptr)
         return;
     if (gtk_widget_get_mapped(menu)) {
         /* Open: once it has closed, and the chosen item has run. */
-        m->action_stale = true;
+        disk_manager->action_stale = true;
         return;
     }
-    m->action_stale = false;
+    disk_manager->action_stale = false;
     GList *old = gtk_container_get_children(GTK_CONTAINER(menu));
-    for (GList *l = old; l != nullptr; l = l->next)
-        gtk_widget_destroy(l->data);
+    for (GList *list = old; list != nullptr; list = list->next)
+        gtk_widget_destroy(list->data);
     g_list_free(old);
-    fill_selection_menu(m, menu);
+    fill_selection_menu(disk_manager, menu);
     separator(menu);
-    GtkWidget *r = gtk_menu_item_new_with_mnemonic("Re_fresh");
-    g_signal_connect(r, "activate", G_CALLBACK(on_refresh), m);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), r);
+    GtkWidget *widget = gtk_menu_item_new_with_mnemonic("Re_fresh");
+    g_signal_connect(widget, "activate", G_CALLBACK(on_refresh), disk_manager);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), widget);
     gtk_widget_show_all(menu);
 }
 
 static gboolean refill_action_menu(gpointer data) {
-    dm *m = data;
-    if (m->action_stale)
-        fill_action_menu(m);
+    dm *disk_manager = data;
+    if (disk_manager->action_stale)
+        fill_action_menu(disk_manager);
     return G_SOURCE_REMOVE;
 }
 
 static void on_action_menu_closed([[maybe_unused]] GtkMenuShell *menu, gpointer data) {
-    dm *m = data;
-    if (m->action_stale)
-        g_idle_add(refill_action_menu, m);
+    dm *disk_manager = data;
+    if (disk_manager->action_stale)
+        g_idle_add(refill_action_menu, disk_manager);
 }
 
-static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer data) {
-    dm *m = data;
+static gboolean on_key(GtkWidget *widget, GdkEventKey *ev, gpointer data) {
+    dm *disk_manager = data;
     if (ev->keyval == GDK_KEY_F5) {
-        on_refresh(w, m);
+        on_refresh(widget, disk_manager);
         return TRUE;
     }
-    if (ev->keyval == GDK_KEY_Delete && sel_volume(m) != nullptr) {
-        run_action(m, delete_partition);
+    if (ev->keyval == GDK_KEY_Delete && sel_volume(disk_manager) != nullptr) {
+        run_action(disk_manager, delete_partition);
         return TRUE;
     }
     if (ev->keyval == GDK_KEY_Menu || (ev->keyval == GDK_KEY_F10 && (ev->state & GDK_SHIFT_MASK))) {
-        popup_selection_menu(m, m->map, (GdkEvent *)ev, false);
+        popup_selection_menu(disk_manager, disk_manager->map, (GdkEvent *)ev, false);
         return TRUE;
     }
     return FALSE;
 }
 
-static GtkWidget *legend_item(rgb c, const char *text) {
+static GtkWidget *legend_item(rgb color, const char *text) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    GtkWidget *sw = swatch(c.r, c.g, c.b);
+    GtkWidget *sw = swatch(color.r, color.g, color.b);
     g_signal_connect(sw, "draw", G_CALLBACK(draw_swatch), nullptr);
     gtk_box_pack_start(GTK_BOX(box), sw, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), gtk_label_new(text), FALSE, FALSE, 0);
     return box;
 }
 
-static GtkWidget *volume_list(dm *m) {
-    m->store = gtk_list_store_new(NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT64, G_TYPE_UINT64,
-                                  G_TYPE_UINT, G_TYPE_POINTER);
-    m->list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(m->store));
-    g_object_unref(m->store);
+static GtkWidget *volume_list(dm *disk_manager) {
+    disk_manager->store = gtk_list_store_new(
+        NCOLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+        G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT64, G_TYPE_UINT64,
+        G_TYPE_UINT, G_TYPE_POINTER);
+    disk_manager->list = gtk_tree_view_new_with_model(GTK_TREE_MODEL(disk_manager->store));
+    g_object_unref(disk_manager->store);
     static const struct {
         const char *title;
         int col, sort, width;
@@ -3651,54 +3825,57 @@ static GtkWidget *volume_list(dm *m) {
         gtk_tree_view_column_set_fixed_width(col, cols[i].width);
         gtk_tree_view_column_set_resizable(col, TRUE);
         gtk_tree_view_column_set_sort_column_id(col, cols[i].sort);
-        gtk_tree_view_append_column(GTK_TREE_VIEW(m->list), col);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(disk_manager->list), col);
     }
-    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(m->list)), "changed",
-                     G_CALLBACK(on_list_selection), m);
-    g_signal_connect(m->list, "button-press-event", G_CALLBACK(on_list_button), m);
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(disk_manager->list)), "changed",
+                     G_CALLBACK(on_list_selection), disk_manager);
+    g_signal_connect(disk_manager->list, "button-press-event", G_CALLBACK(on_list_button),
+                     disk_manager);
     GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(sc), m->list);
+    gtk_container_add(GTK_CONTAINER(sc), disk_manager->list);
     return sc;
 }
 
-static void build(dm *m) {
-    m->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(m->window), "Disk Management");
-    gtk_window_set_icon_name(GTK_WINDOW(m->window), "drive-harddisk");
-    gtk_window_set_default_size(GTK_WINDOW(m->window), 900, 620);
-    g_signal_connect(m->window, "key-press-event", G_CALLBACK(on_key), m);
-    g_signal_connect(m->window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+static void build(dm *disk_manager) {
+    disk_manager->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(disk_manager->window), "Disk Management");
+    gtk_window_set_icon_name(GTK_WINDOW(disk_manager->window), "drive-harddisk");
+    gtk_window_set_default_size(GTK_WINDOW(disk_manager->window), 900, 620);
+    g_signal_connect(disk_manager->window, "key-press-event", G_CALLBACK(on_key), disk_manager);
+    g_signal_connect(disk_manager->window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(m->window), vbox);
+    gtk_container_add(GTK_CONTAINER(disk_manager->window), vbox);
 
     GtkWidget *bar = gtk_menu_bar_new();
     GtkWidget *file = gtk_menu_item_new_with_mnemonic("_File");
     GtkWidget *fm = gtk_menu_new();
     GtkWidget *exit_item = gtk_menu_item_new_with_mnemonic("E_xit");
-    g_signal_connect(exit_item, "activate", G_CALLBACK(on_exit), m);
+    g_signal_connect(exit_item, "activate", G_CALLBACK(on_exit), disk_manager);
     gtk_menu_shell_append(GTK_MENU_SHELL(fm), exit_item);
     gtk_menu_item_set_submenu(GTK_MENU_ITEM(file), fm);
     gtk_menu_shell_append(GTK_MENU_SHELL(bar), file);
     GtkWidget *action = gtk_menu_item_new_with_mnemonic("_Action");
-    m->action_menu = gtk_menu_new();
-    gtk_menu_item_set_submenu(GTK_MENU_ITEM(action), m->action_menu);
-    g_signal_connect(m->action_menu, "deactivate", G_CALLBACK(on_action_menu_closed), m);
+    disk_manager->action_menu = gtk_menu_new();
+    gtk_menu_item_set_submenu(GTK_MENU_ITEM(action), disk_manager->action_menu);
+    g_signal_connect(disk_manager->action_menu, "deactivate", G_CALLBACK(on_action_menu_closed),
+                     disk_manager);
     gtk_menu_shell_append(GTK_MENU_SHELL(bar), action);
     gtk_box_pack_start(GTK_BOX(vbox), bar, FALSE, FALSE, 0);
 
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
-    gtk_paned_pack1(GTK_PANED(paned), volume_list(m), TRUE, FALSE);
-    m->map = gtk_drawing_area_new();
-    gtk_widget_set_can_focus(m->map, TRUE);
-    gtk_widget_add_events(m->map, GDK_BUTTON_PRESS_MASK);
-    g_signal_connect(m->map, "draw", G_CALLBACK(draw_map), m);
-    g_signal_connect(m->map, "button-press-event", G_CALLBACK(on_map_button), m);
+    gtk_paned_pack1(GTK_PANED(paned), volume_list(disk_manager), TRUE, FALSE);
+    disk_manager->map = gtk_drawing_area_new();
+    gtk_widget_set_can_focus(disk_manager->map, TRUE);
+    gtk_widget_add_events(disk_manager->map, GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(disk_manager->map, "draw", G_CALLBACK(draw_map), disk_manager);
+    g_signal_connect(disk_manager->map, "button-press-event", G_CALLBACK(on_map_button),
+                     disk_manager);
     GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_AUTOMATIC,
                                    GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(sc), m->map);
+    gtk_container_add(GTK_CONTAINER(sc), disk_manager->map);
     gtk_paned_pack2(GTK_PANED(paned), sc, TRUE, FALSE);
     gtk_paned_set_position(GTK_PANED(paned), 180);
     gtk_box_pack_start(GTK_BOX(vbox), paned, TRUE, TRUE, 0);
@@ -3713,49 +3890,54 @@ static void build(dm *m) {
     gtk_box_pack_start(GTK_BOX(legend), legend_item(C_FREE, "Free space"), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(legend), legend_item(C_LOGICAL, "Logical drive"), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(vbox), legend, FALSE, FALSE, 0);
-    m->status = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(m->status), 0);
-    gtk_label_set_ellipsize(GTK_LABEL(m->status), PANGO_ELLIPSIZE_END);
-    gtk_widget_set_margin_start(m->status, 6);
-    gtk_widget_set_margin_bottom(m->status, 2);
-    gtk_box_pack_start(GTK_BOX(vbox), m->status, FALSE, FALSE, 0);
+    disk_manager->status = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(disk_manager->status), 0);
+    gtk_label_set_ellipsize(GTK_LABEL(disk_manager->status), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_margin_start(disk_manager->status, 6);
+    gtk_widget_set_margin_bottom(disk_manager->status, 2);
+    gtk_box_pack_start(GTK_BOX(vbox), disk_manager->status, FALSE, FALSE, 0);
 }
 
 int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.DiskManagement");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
-    static dm m;
-    m.sel.seg = -1;
-    m.can_format = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    m.resize = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    m.asked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    build(&m);
+    static dm disk_manager;
+    disk_manager.sel.seg = -1;
+    disk_manager.can_format = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    disk_manager.resize = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    disk_manager.asked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    build(&disk_manager);
     GError *error = nullptr;
-    m.bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
-    if (m.bus != nullptr)
-        m.om = g_dbus_object_manager_client_new_sync(
-            m.bus, G_DBUS_OBJECT_MANAGER_CLIENT_FLAGS_NONE, UD, UD_PATH, nullptr, nullptr,
-            nullptr, nullptr, &error);
-    if (m.om == nullptr || g_dbus_object_manager_client_get_name_owner(
-                               G_DBUS_OBJECT_MANAGER_CLIENT(m.om)) == nullptr) {
+    disk_manager.bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
+    if (disk_manager.bus != nullptr)
+        disk_manager.om = g_dbus_object_manager_client_new_sync(
+            disk_manager.bus, G_DBUS_OBJECT_MANAGER_CLIENT_FLAGS_NONE, UD, UD_PATH, nullptr,
+            nullptr, nullptr, nullptr, &error);
+    if (disk_manager.om == nullptr ||
+        g_dbus_object_manager_client_get_name_owner(
+            G_DBUS_OBJECT_MANAGER_CLIENT(disk_manager.om)) == nullptr) {
         char *text = g_strdup_printf("UDisks2 isn't running, so the disks can't be read.%s%s",
                                      error != nullptr ? "\n\n" : "",
                                      error != nullptr ? error->message : "");
         g_clear_error(&error);
-        gtk_widget_show_all(m.window);
-        xd_message_box(GTK_WINDOW(m.window), "Disk Management", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       text);
+        gtk_widget_show_all(disk_manager.window);
+        xd_message_box(GTK_WINDOW(disk_manager.window), "Disk Management", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, text);
         g_free(text);
     } else {
-        g_signal_connect(m.om, "object-added", G_CALLBACK(on_om_changed), &m);
-        g_signal_connect(m.om, "object-removed", G_CALLBACK(on_om_changed), &m);
-        g_signal_connect(m.om, "interface-added", G_CALLBACK(on_om_iface_changed), &m);
-        g_signal_connect(m.om, "interface-removed", G_CALLBACK(on_om_iface_changed), &m);
-        g_signal_connect(m.om, "interface-proxy-properties-changed", G_CALLBACK(on_om_props), &m);
+        g_signal_connect(disk_manager.om, "object-added", G_CALLBACK(on_om_changed), &disk_manager);
+        g_signal_connect(disk_manager.om, "object-removed", G_CALLBACK(on_om_changed),
+                         &disk_manager);
+        g_signal_connect(disk_manager.om, "interface-added", G_CALLBACK(on_om_iface_changed),
+                         &disk_manager);
+        g_signal_connect(disk_manager.om, "interface-removed", G_CALLBACK(on_om_iface_changed),
+                         &disk_manager);
+        g_signal_connect(disk_manager.om, "interface-proxy-properties-changed",
+                         G_CALLBACK(on_om_props), &disk_manager);
     }
-    refresh(&m);
-    gtk_widget_show_all(m.window);
+    refresh(&disk_manager);
+    gtk_widget_show_all(disk_manager.window);
     gtk_main();
     return EXIT_SUCCESS;
 }
