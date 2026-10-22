@@ -1467,13 +1467,17 @@ def files_task_pane(s):
     # Folding File and Folder Tasks: its body goes, the pane shows instead.
     before = share_like(tasks, left, body)
     bx, by, bw, bh = left
-    title = None
-    for yy in range(by, by + bh, 2):
-        if share_like(tasks, (bx, yy, bw, 1), (0x20, 0x40, 0xA0), step=1) > 0.5:
-            title = yy
+    # The rows of the first title bar in the rect, clicked in their middle:
+    # the rect may start partway down one.
+    title_rows = []
+    for row in range(by, by + bh):
+        if share_like(tasks, (bx, row, bw, 1), (0x20, 0x40, 0xA0), step=1) > 0.5:
+            title_rows.append(row)
+        elif title_rows:
             break
-    s.check(title is not None, "the first group's title bar is found")
-    s.inject("move", bx + 60, title + 4, "click", "sleep", 300, "move", WIDTH - 24, HEIGHT - 80)
+    s.check(len(title_rows) > 0, "the first group's title bar is found")
+    title = (title_rows[0] + title_rows[-1]) // 2
+    s.inject("move", bx + 60, title, "click", "sleep", 300, "move", WIDTH - 24, HEIGHT - 80)
     folded = s.settle("folded")
     s.check(share_like(folded, left, body) < before - 0.01, "a click on the title bar folds the group")
 
@@ -1762,6 +1766,9 @@ def window_color(s):
     # Esc is Cancel: nothing changes.
     s.inject("key", "Escape")
     s.wait_window(title="Window Color and Appearance", gone=True)
+    # Keys before Display Properties has the keyboard again are lost, and
+    # Return would then be its OK.
+    s.wait_window(title="Display Properties", state="activated")
     s.inject("key", "Tab", "key", "Tab", "key", "Tab", "key", "Tab", "sleep", 200, "key", "Return")
     s.wait_window(title="Window Color and Appearance", state="activated")
     # Focus starts on Enable transparency: off; then the intensity to its
