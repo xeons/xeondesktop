@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Snipping Tool
+Comment=Capture all or part of the screen, then mark it up, save or copy it
+Exec=xd-snip
+Icon=applets-screenshooter
+Terminal=false
+Categories=Utility;Graphics;GTK;
+Keywords=screenshot;screen capture;snip;print screen;
+StartupWMClass=org.xeondesktop.SnippingTool

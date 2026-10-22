@@ -1,0 +1,72 @@
+.TH XD\-SNIP 1 2026-10-22 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-snip \- Snipping Tool
+.SH SYNOPSIS
+.SY xd\-snip
+.OP \-\-new\fR[=\fIKIND\fR]
+.YS
+.SY xd\-snip
+.B \-\-copy\-screen
+|
+.B \-\-copy\-window
+|
+.B \-\-copy\-stdin
+.YS
+.SH DESCRIPTION
+.B xd\-snip
+is the Windows 7 Snipping Tool, with Windows 10's Delay.
+New (or the kind chosen from its arrow) freezes the screen under a white
+wash; then
+.TP
+.B Free-form Snip
+draw around what to take; outside the line comes out white.
+.TP
+.B Rectangular Snip
+drag out a rectangle.
+.TP
+.B Window Snip
+click a window (or the desktop, for its monitor).
+.TP
+.B Full-screen Snip
+takes the whole desktop at once.
+.PP
+Esc cancels.
+The snip opens in the Mark-up window, to draw on with a pen (red, blue or
+black), the highlighter, or the eraser (which takes away whole strokes),
+then Save As (PNG, JPEG or BMP) or Copy.
+Options keeps whether snips are copied to the clipboard at once, whether
+to ask to save, the white wash, and the selection ink's colour, in
+.IR ~/.config/xeondesktop/snip.ini .
+.PP
+The screen comes from the compositor's wlr-screencopy, where the windows
+are from XeonDesktop's xd-window-rectangles-v1 (without it, Window Snip
+offers only whole monitors), and the clipboard from ext-data-control:
+a copied snip stays on the clipboard after the Snipping Tool closes.
+.SH OPTIONS
+.TP
+.BR \-\-new\fR[=\fIKIND\fR]
+Start a snip at once (Win+Shift+S), and quit if it's cancelled.
+.I KIND
+is
+.BR free-form ,
+.BR rectangle ,
+.B window
+or
+.BR full-screen ;
+without it, the kind last chosen.
+.TP
+.B \-\-copy\-screen
+Copy the whole desktop to the clipboard, without a window (Print Screen).
+.TP
+.B \-\-copy\-window
+Copy the active window to the clipboard (Alt+Print Screen).
+.TP
+.B \-\-copy\-stdin
+Copy a PNG read from standard input to the clipboard.
+.PP
+The
+.B \-\-copy
+forms stay running, serving the clipboard, until another program takes it.
+.SH SEE ALSO
+.BR xd\-compositor (1),
+.BR xd\-shell (1)

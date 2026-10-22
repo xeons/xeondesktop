@@ -85,6 +85,7 @@
 #include "../src/timedate/ntp.h"
 #include "../src/shell/calendar.h"
 #include "../src/shell/notices.h"
+#include "../src/snip/snipping.h"
 #include "../src/shell/jumplist.h"
 #include "../src/shell/launcher.h"
 #include "../src/shell/recent.h"
@@ -6201,6 +6202,133 @@ static GVariant *notify_call(const char *summary, const char *body, uint32_t rep
 
 /* Notifications: what's kept of a Notify call, replacing, the history's
  * limit and file, and markup taken out. */
+/* The colour of a pixel of an RGB24 picture, as 0xRRGGBB. */
+static uint32_t snip_pixel(cairo_surface_t *image, int x, int y) {
+    cairo_surface_flush(image);
+    const unsigned char *data = cairo_image_surface_get_data(image);
+    int stride = cairo_image_surface_get_stride(image);
+    return *(const uint32_t *)(const void *)(data + (size_t)y * (size_t)stride + (size_t)x * 4) &
+           0xffffffu;
+}
+
+static void test_snipping(void) {
+    xd_snip_mode mode = XD_SNIP_FREE_FORM;
+    CHECK(xd_snip_mode_parse("window", &mode) && mode == XD_SNIP_WINDOW);
+    CHECK(!xd_snip_mode_parse("lasso", &mode) && mode == XD_SNIP_WINDOW);
+    CHECK(strcmp(xd_snip_mode_name(XD_SNIP_FULL_SCREEN), "full-screen") == 0);
+
+    xd_snip_box box = xd_snip_box_from_corners((xd_snip_point){30, 40}, (xd_snip_point){10, 5});
+    CHECK(box.x == 10 && box.y == 5 && box.width == 20 && box.height == 35);
+    CHECK(xd_snip_box_is_selection(box));
+    CHECK(!xd_snip_box_is_selection(
+        xd_snip_box_from_corners((xd_snip_point){3, 3}, (xd_snip_point){4, 40})));
+    const xd_snip_point line[] = {{5, 9}, {2, 4}, {8, 1}};
+    box = xd_snip_box_around(line, 3);
+    CHECK(box.x == 2 && box.y == 1 && box.width == 6 && box.height == 8);
+
+    /* Frontmost first: the dialog over the big window wins. */
+    const xd_snip_window windows[] = {
+        {.x = 50, .y = 50, .width = 20, .height = 20, .activated = true},
+        {.x = 0, .y = 0, .width = 100, .height = 100},
+    };
+    CHECK(xd_snip_window_at(windows, 2, 55, 55) == 0);
+    CHECK(xd_snip_window_at(windows, 2, 10, 10) == 1);
+    CHECK(xd_snip_window_at(windows, 2, 100, 10) == -1); /* right edge is outside */
+    CHECK(xd_snip_window_active(windows, 2) == 0);
+    CHECK(xd_snip_window_active(&windows[1], 1) == -1);
+
+    /* A 2x-scale desktop of 50x40 logical px whose top left is at
+     * (-50, 0): left half blue, right half green. */
+    xd_snip_screen *screen = g_new0(xd_snip_screen, 1);
+    screen->origin_x = -50;
+    screen->scale = 2;
+    screen->image = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 100, 80);
+    cairo_t *cairo = cairo_create(screen->image);
+    cairo_set_source_rgb(cairo, 0, 0, 1);
+    cairo_rectangle(cairo, 0, 0, 50, 80);
+    cairo_fill(cairo);
+    cairo_set_source_rgb(cairo, 0, 1, 0);
+    cairo_rectangle(cairo, 50, 0, 50, 80);
+    cairo_fill(cairo);
+    cairo_destroy(cairo);
+
+    cairo_rectangle_int_t pixels;
+    CHECK(xd_snip_screen_pixels(screen, (xd_snip_box){-40, 5, 10, 10}, &pixels));
+    CHECK(pixels.x == 20 && pixels.y == 10 && pixels.width == 20 && pixels.height == 20);
+    /* Partly off the desktop: cut to it. */
+    CHECK(xd_snip_screen_pixels(screen, (xd_snip_box){-60, -10, 20, 20}, &pixels));
+    CHECK(pixels.x == 0 && pixels.y == 0 && pixels.width == 20 && pixels.height == 20);
+    CHECK(!xd_snip_screen_pixels(screen, (xd_snip_box){10, 0, 5, 5}, &pixels));
+
+    /* Across the middle, with a 2 px red edge (4 pixels at 2x). */
+    const double red[3] = {1, 0, 0};
+    cairo_surface_t *snip =
+        xd_snip_screen_cut(screen, (xd_snip_box){-35, 0, 20, 20}, nullptr, 0, red);
+    CHECK(snip != nullptr && cairo_image_surface_get_width(snip) == 40 &&
+          cairo_image_surface_get_height(snip) == 40);
+    CHECK(snip_pixel(snip, 10, 20) == 0x0000ff && snip_pixel(snip, 30, 20) == 0x00ff00);
+    CHECK(snip_pixel(snip, 1, 20) == 0xff0000 && snip_pixel(snip, 20, 38) == 0xff0000);
+    cairo_surface_destroy(snip);
+    /* Free-form: a triangle; outside it is white, and no ink. */
+    const xd_snip_point triangle[] = {{-50, 0}, {-30, 0}, {-50, 20}};
+    snip = xd_snip_screen_cut(screen, xd_snip_box_around(triangle, 3), triangle, 3, nullptr);
+    CHECK(snip != nullptr && cairo_image_surface_get_width(snip) == 40);
+    CHECK(snip_pixel(snip, 4, 4) == 0x0000ff && snip_pixel(snip, 36, 36) == 0xffffff);
+    cairo_surface_destroy(snip);
+    xd_snip_screen_free(screen);
+
+    /* Ink: the eraser takes whole strokes, only those it touches. */
+    xd_ink ink;
+    xd_ink_init(&ink);
+    const double black[3] = {0, 0, 0};
+    xd_ink_stroke *stroke = xd_ink_begin(&ink, XD_INK_PEN, black, 2, (xd_snip_point){0, 0});
+    xd_ink_extend(stroke, (xd_snip_point){100, 0});
+    xd_ink_begin(&ink, XD_INK_HIGHLIGHTER, (const double[3]){1, 1, 0}, 10, (xd_snip_point){50, 50});
+    CHECK(!xd_ink_erase_at(&ink, (xd_snip_point){50, 20}, 4));
+    CHECK(xd_ink_erase_at(&ink, (xd_snip_point){50, 4}, 4) && ink.strokes->len == 1);
+    /* The highlighter multiplies: yellow over blue is black, over white yellow. */
+    cairo_surface_t *canvas = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 100, 100);
+    cairo = cairo_create(canvas);
+    cairo_set_source_rgb(cairo, 1, 1, 1);
+    cairo_paint(cairo);
+    cairo_set_source_rgb(cairo, 0, 0, 1);
+    cairo_rectangle(cairo, 0, 0, 50, 100);
+    cairo_fill(cairo);
+    xd_ink_stroke *mark =
+        xd_ink_begin(&ink, XD_INK_HIGHLIGHTER, (const double[3]){1, 1, 0}, 10, (xd_snip_point){20, 80});
+    xd_ink_extend(mark, (xd_snip_point){80, 80});
+    xd_ink_draw(&ink, cairo);
+    cairo_destroy(cairo);
+    CHECK(snip_pixel(canvas, 30, 80) == 0x000000 && snip_pixel(canvas, 70, 80) == 0xffff00);
+    CHECK(snip_pixel(canvas, 70, 60) == 0xffffff);
+    cairo_surface_destroy(canvas);
+    xd_ink_clear(&ink);
+    CHECK(ink.strokes->len == 0);
+    xd_ink_finish(&ink);
+
+    /* Options: Windows 7's defaults, and back from the file. */
+    xd_snip_options options;
+    xd_snip_options_init(&options);
+    CHECK(options.mode == XD_SNIP_RECTANGLE && options.always_copy && options.ink[0] == 1);
+    options.mode = XD_SNIP_FREE_FORM;
+    options.delay_seconds = 3;
+    options.show_overlay = false;
+    options.ink[0] = 0;
+    options.ink[2] = 1;
+    GKeyFile *file = g_key_file_new();
+    xd_snip_options_save_data(&options, file);
+    xd_snip_options loaded;
+    xd_snip_options_init(&loaded);
+    xd_snip_options_load_data(&loaded, file);
+    CHECK(loaded.mode == XD_SNIP_FREE_FORM && loaded.delay_seconds == 3 && !loaded.show_overlay);
+    CHECK(loaded.ink[0] == 0 && loaded.ink[2] == 1 && loaded.prompt_to_save);
+    g_key_file_set_string(file, "Snipping Tool", "InkColor", "red");
+    g_key_file_set_integer(file, "Snipping Tool", "Delay", 60);
+    xd_snip_options_load_data(&loaded, file);
+    CHECK(loaded.delay_seconds == 5 && loaded.ink[2] == 1);
+    g_key_file_free(file);
+}
+
 static void test_notices(void) {
     char *plain = xd_notice_plain_text("<b>Bold</b> &amp; <a href='https://x'>link</a>"
                                        "<img src='a.png' alt=' [pic]'/>");
@@ -9548,6 +9676,7 @@ int main(void) {
     test_superbar();
     test_calendar();
     test_notices();
+    test_snipping();
     test_launcher_entry();
     test_printers();
     test_scanners();

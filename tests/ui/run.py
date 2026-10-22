@@ -4396,6 +4396,90 @@ def desktop_untrusted_shortcut(s):
     s.log("ok: once trusted, it runs straight away")
 
 
+def clipboard_picture(s, label):
+    """The clipboard's PNG (read with xd-paste) as a Shot, or None."""
+    r = subprocess.run([s.tool("xd-paste"), "image/png"], stdout=subprocess.PIPE, timeout=10)
+    if r.returncode != 0 or not r.stdout.startswith(b"\x89PNG"):
+        return None
+    path = os.path.join(s.base, "shots", f"clipboard-{label}.png")
+    with open(path, "wb") as f:
+        f.write(r.stdout)
+    return Shot(path)
+
+
+def wait_washed(s, desktop, point):
+    """Waits for the Snipping Tool's white wash over the frozen screen."""
+    def washed():
+        before, now = desktop.pixel(*point), s.shot("washed").pixel(*point)
+        return sum(now) > sum(before) + 60
+
+    s.wait(washed, "the Snipping Tool's overlay")
+
+
+@scenario()
+def snipping_tool(s):
+    """The Snipping Tool: a rectangular snip of the desktop (red selection
+    ink at its edge) opens in the Mark-up window and is on the clipboard,
+    and stays there once the Snipping Tool has closed; a window snip takes
+    the window clicked; Esc cancels; Print Screen copies the screen."""
+    desktop = s.settle("desktop")
+    snip = s.launch(s.tool("xd-snip"), "--new=rectangle")
+    wait_washed(s, desktop, (400, 300))
+    s.inject("move", 100, 100, "down", "move", 200, 160, "move", 300, 250, "up")
+    s.wait_window(app_id="org.xeondesktop.SnippingTool", state="activated")
+    picture = s.wait(lambda: clipboard_picture(s, "rectangle"), "the snip on the clipboard")
+    s.check((picture.width, picture.height) == (200, 150), f"a 200x150 snip ({picture.width}x{picture.height})")
+    s.check(near(picture.pixel(100, 75), desktop.pixel(200, 175)), "the snip is the desktop there")
+    s.check(near(picture.pixel(0, 75), (255, 0, 0)), f"red selection ink at its edge ({picture.pixel(0, 75)})")
+    s.log("ok: a rectangular snip, in the Mark-up window and on the clipboard")
+    # Closing asks to save it first (a dialog: no taskbar button, so seen
+    # on the screen); No closes, and the snip stays copied.
+    editor = s.settle("mark-up")
+    s.inject("key", "alt+F4")
+    wait_change(s, editor, (0, 0, WIDTH, HEIGHT - 40), "the question about saving", "question")
+    s.inject("key", "alt+n")
+    s.wait(lambda: snip.poll() is not None, "the Snipping Tool to close")
+    s.check(clipboard_picture(s, "after") is not None, "the snip outlives the Snipping Tool")
+    s.log("ok: closed without saving; the snip is still on the clipboard")
+
+    # Window snip: the toolbar window of another Snipping Tool.
+    toolbar = s.launch(s.tool("xd-snip"))
+    s.wait_window(title="Snipping Tool", state="activated")
+    _, box = wait_change(s, desktop, (0, 0, WIDTH, HEIGHT - 40), "the toolbar window", "toolbar")
+    window_snip = s.launch(s.tool("xd-snip"), "--new=window")
+    wait_washed(s, desktop, (WIDTH - 50, 50))
+    s.inject("move", box[0] + box[2] // 2, box[1] + box[3] // 2, "click")
+    def window_copied():
+        shot = clipboard_picture(s, "window")
+        return shot if shot is not None and (shot.width, shot.height) != (200, 150) else None
+    picture = s.wait(window_copied, "the window snip on the clipboard")
+    s.check(abs(picture.width - box[2]) <= 3 and abs(picture.height - box[3]) <= 3,
+            f"the window snip is the window ({picture.width}x{picture.height}, window {box})")
+    s.log("ok: a window snip takes the window clicked")
+    editor = s.settle("window-mark-up")
+    s.inject("key", "alt+F4")
+    wait_change(s, editor, (0, 0, WIDTH, HEIGHT - 40), "the question about saving", "question")
+    s.inject("key", "alt+n")
+    s.wait(lambda: window_snip.poll() is not None, "the second Snipping Tool to close")
+
+    # Esc cancels, and with --new nothing stays.
+    cancelled = s.launch(s.tool("xd-snip"), "--new=free-form")
+    wait_washed(s, desktop, (WIDTH - 50, 50))
+    s.inject("key", "Escape")
+    s.wait(lambda: cancelled.poll() is not None, "Esc to cancel the snip")
+    s.log("ok: Esc cancels")
+    toolbar.terminate()
+
+    # Print Screen: the whole screen to the clipboard, no window.
+    s.inject("key", "Print")
+    def screen_copied():
+        shot = clipboard_picture(s, "screen")
+        return shot if shot is not None and shot.width == WIDTH else None
+    picture = s.wait(screen_copied, "Print Screen to copy the screen")
+    s.check(picture.height == HEIGHT, f"the whole screen ({picture.width}x{picture.height})")
+    s.log("ok: Print Screen copies the screen")
+
+
 @scenario(LUNA_INI)
 def xp_new_programs_balloon(s):
     """A program installed while the session runs: XP's "New programs

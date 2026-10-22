@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="xd_window_rectangles_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT
+  </copyright>
+  <description summary="XeonDesktop: where the windows are on the screen">
+    For the Snipping Tool's Window Snip and Alt+Print Screen: the outer
+    rectangle (frame included) of every window on the screen, front to
+    back, in the desktop's logical coordinates. Offered to every program
+    that may capture the screen (no sandboxed one): a program that can
+    capture the screen can see the windows anyway.
+  </description>
+
+  <interface name="xd_window_rectangles_manager_v1" version="1">
+    <request name="get_rectangles">
+      <description summary="the windows as they are now">
+        Sends the rectangles of the windows on the screen now (not
+        minimized), then done. The list isn't updated afterwards.
+      </description>
+      <arg name="id" type="new_id" interface="xd_window_rectangles_v1"/>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+  </interface>
+
+  <interface name="xd_window_rectangles_v1" version="1">
+    <enum name="flags" bitfield="true">
+      <entry name="activated" value="1" summary="the window with the keyboard focus"/>
+    </enum>
+
+    <event name="window">
+      <description summary="one window, frontmost first"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="flags" type="uint" enum="flags"/>
+    </event>
+
+    <event name="done">
+      <description summary="every window was sent"/>
+    </event>
+
+    <request name="destroy" type="destructor"/>
+  </interface>
+</protocol>

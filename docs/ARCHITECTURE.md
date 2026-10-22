@@ -39,6 +39,7 @@ they die.
 | `xd-run`, `xd-shutdown`, `xd-endtask`, `xd-message` | libxdui | Run, Shut Down / Log Off, End Program, message boxes for programs without dialogs of their own. |
 | `xd-security` | GTK3 | Windows Security (Ctrl+Alt+Delete) and Change Password. |
 | `xd-polkit` | GTK3 | The polkit authentication agent. |
+| `xd-snip` | GTK3 | The Snipping Tool (its overlay through gtk-layer-shell), and Print Screen's clipboard copies. |
 | `xd-search`, `xd-help`, `xd-defaults` | GTK3 | Search for Files or Folders, Help and Support, Set Program Access and Defaults. |
 | `xd-control` | none | Opens `control:` in `xd-files`, or one applet (`xd-control desk`). |
 | `xd-access`, `xd-mouse`, `xd-keyboard`, `xd-sound`, `xd-power`, `xd-timedate`, `xd-intl`, `xd-folders`, `xd-fonts`, `xd-users`, `xd-sysdm`, `xd-netconn`, `xd-bluetooth`, `xd-joy`, `xd-printers`, `xd-scanners`, `xd-appwiz`, `xd-schedtasks`, `xd-eventvwr`, ... | GTK3 | Control Panel applets and Administrative Tools, one program each. |
@@ -46,7 +47,8 @@ they die.
 Development tools: `xd-themeview` (renders theme previews to PNG),
 `xd-inject` (virtual pointer and keyboard, touch, pen and touchpad
 gestures for UI tests), `xd-test-input` (a window that logs the input
-reaching it), `xd-windows` (lists windows for UI tests), `tools/luna-measure.py` (measures Luna
+reaching it), `xd-windows` (lists windows for UI tests), `xd-paste` (reads the
+clipboard for UI tests), `tools/luna-measure.py` (measures Luna
 artwork from reference screenshots into colour tables).
 
 ### Libraries (static, linked into the programs)
@@ -129,6 +131,9 @@ and xdg-shell, they use:
   and `ext-foreign-toplevel-list-v1`, also offered to the shell alone:
   Windows 7's taskbar thumbnails, captured into shared memory at thumbnail
   size;
+- `wlr-screencopy` and `xd-window-rectangles-v1`, our protocol saying
+  where the windows are, front to back (the Snipping Tool's Window Snip
+  and Alt+Print Screen), for every program that isn't sandboxed;
 - `zwp_tablet_manager_v2` (drawing tablets' pens and pads) and
   `zwp_pointer_gestures_v1` (touchpad swipes, pinches and holds) for
   every program;

@@ -243,6 +243,22 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         xd_spawn(server, server->config.terminal);
         return true;
     }
+    /* Print Screen copies the screen to the clipboard and Alt+Print
+     * Screen the active window (Alt makes it Sys_Req), as in Windows;
+     * Win+Shift+S starts a snip, as in Windows 10. */
+    if (!ctrl && !logo && (sym == XKB_KEY_Print || sym == XKB_KEY_Sys_Req)) {
+        bool window = alt || sym == XKB_KEY_Sys_Req;
+        char *argv[] = {(char *)(uintptr_t)server->config.snip,
+                        (char *)(uintptr_t)(window ? "--copy-window" : "--copy-screen"), nullptr};
+        xd_spawn_argv(argv);
+        return true;
+    }
+    if (logo && shift && !ctrl && !alt && (sym == XKB_KEY_s || sym == XKB_KEY_S)) {
+        char *argv[] = {(char *)(uintptr_t)server->config.snip, (char *)(uintptr_t)"--new",
+                        nullptr};
+        xd_spawn_argv(argv);
+        return true;
+    }
     /* Ctrl+Esc: the Start menu, as in Windows. */
     if (ctrl && !alt && !shift && sym == XKB_KEY_Escape) {
         xd_start_menu_toggle(server);

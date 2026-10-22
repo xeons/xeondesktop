@@ -22,6 +22,7 @@ depends=(
   'ttf-opensans'            # Open Sans for Segoe UI (Aero)
   'glib2'
   'gtk3'
+  'gtk-layer-shell'  # the Snipping Tool's overlay
   'gdk-pixbuf2'
   'procps-ng'
   'systemd-libs'

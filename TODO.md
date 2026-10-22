@@ -555,13 +555,22 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       program raised by an action may not get focus), keyboard access to
       the history's rows. Untested with real programs (Firefox, Thunderbird,
       chat clients, the portal's Notification backend).
-- [ ] Snipping Tool (xd-snip): Windows 7's, through the compositor's
-      capture (screencopy): free-form, rectangular, window and full-screen
-      snips, a delay, then a markup window (pen, highlighter, eraser),
-      Copy, Save As (PNG/JPEG), Print Screen bindings. Screen recording:
-      the same capture (or the ScreenCast portal) into PipeWire and
-      GStreamer (WebM/MP4), with the microphone or the computer's sound,
-      started from the Snipping Tool and stopped from a tray icon.
+- [~] Snipping Tool (xd-snip): Windows 7's, through wlr-screencopy:
+      free-form, rectangular, window (xd-window-rectangles-v1) and
+      full-screen snips over the frozen, washed screen (gtk-layer-shell),
+      Windows 10's Delay, the Mark-up window (red/blue/black pen,
+      highlighter, whole-stroke eraser), Save As (PNG/JPEG/BMP), Copy (on
+      the clipboard through ext-data-control, so it outlives the program),
+      Options (snip.ini); Print Screen, Alt+Print Screen and Win+Shift+S.
+      Unit tests (selection, cutting, ink, options) and a UI scenario
+      (snipping_tool). Not yet: rotated monitors (screencopy's buffer
+      isn't turned upright), Send To (e-mail), a custom pen, Undo, the
+      window under a menu or tooltip, layer surfaces (the taskbar) as
+      Window Snip targets, keyboard selection, Windows 7's scissors cursor.
+- [ ] Screen recording: the Snipping Tool's capture (or the ScreenCast
+      portal) into PipeWire and GStreamer (WebM/MP4), with the microphone
+      or the computer's sound, started from the Snipping Tool and stopped
+      from a tray icon.
 
 ## Theme engine
 

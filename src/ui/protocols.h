@@ -9,6 +9,7 @@
 #pragma GCC system_header
 
 #include "cursor-shape-v1-client-protocol.h"
+#include "ext-data-control-v1-client-protocol.h"
 #include "ext-foreign-toplevel-list-v1-client-protocol.h"
 #include "ext-idle-notify-v1-client-protocol.h"
 #include "ext-image-capture-source-v1-client-protocol.h"
@@ -28,11 +29,13 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "wlr-output-management-unstable-v1-client-protocol.h"
 #include "wlr-output-power-management-unstable-v1-client-protocol.h"
+#include "wlr-screencopy-unstable-v1-client-protocol.h"
 #include "xdg-activation-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include "xd-test-input-v1-client-protocol.h"
 #include "xwayland-keyboard-grab-unstable-v1-client-protocol.h"
 #include "xd-window-arranger-v1-client-protocol.h"
+#include "xd-window-rectangles-v1-client-protocol.h"
 
 #endif

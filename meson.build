@@ -212,6 +212,9 @@ client_protocol_xml = {
   'input-method-unstable-v2': files('protocols/input-method-unstable-v2.xml'),
   'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
   'xd-test-input-v1': files('protocols/xd-test-input-v1.xml'),
+  'xd-window-rectangles-v1': files('protocols/xd-window-rectangles-v1.xml'),
+  'wlr-screencopy-unstable-v1': files('protocols/wlr-screencopy-unstable-v1.xml'),
+  'ext-data-control-v1': wp_dir / 'staging/ext-data-control/ext-data-control-v1.xml',
   'pointer-gestures-unstable-v1':
     wp_dir / 'unstable/pointer-gestures/pointer-gestures-unstable-v1.xml',
   'ext-idle-notify-v1': wp_dir / 'staging/ext-idle-notify/ext-idle-notify-v1.xml',
@@ -275,6 +278,19 @@ arranger_server_src = [
     'xd-window-arranger-v1-server-code',
     input: arranger_xml,
     output: 'xd-window-arranger-v1-server-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  ),
+  # The Snipping Tool's Window Snip (rectangles.c).
+  custom_target(
+    'xd-window-rectangles-v1-server-header',
+    input: 'protocols/xd-window-rectangles-v1.xml',
+    output: 'xd-window-rectangles-v1-protocol.h',
+    command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+  ),
+  custom_target(
+    'xd-window-rectangles-v1-server-code',
+    input: 'protocols/xd-window-rectangles-v1.xml',
+    output: 'xd-window-rectangles-v1-server-protocol.c',
     command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
   ),
   # The UI tests' touchscreen, tablet and touchpad (testinput.c).
@@ -358,6 +374,7 @@ compositor_src = files(
   'src/compositor/appicons.c',
   'src/compositor/arrange.c',
   'src/compositor/capture.c',
+  'src/compositor/rectangles.c',
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
   'src/compositor/trust.c',
@@ -628,6 +645,7 @@ gtkapp_lib = static_library(
 install_data(
   'data/applications/org.xeondesktop.Files.desktop',
   'data/applications/org.xeondesktop.TaskManager.desktop',
+  'data/applications/org.xeondesktop.SnippingTool.desktop',
   'data/applications/org.xeondesktop.SystemProperties.desktop',
   'data/applications/org.xeondesktop.DateTime.desktop',
   'data/applications/org.xeondesktop.Display.desktop',
@@ -699,6 +717,23 @@ executable(
   'src/files/main.c',
   link_with: [folder_lib, gtkapp_lib, rename_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, m_dep],
+  install: true,
+)
+
+# The Snipping Tool: its overlay is a layer-shell surface, which GTK 3
+# makes through gtk-layer-shell.
+gtk_layer_shell_dep = dependency('gtk-layer-shell-0', include_type: 'system')
+executable(
+  'xd-snip',
+  'src/snip/main.c',
+  'src/snip/capture.c',
+  'src/snip/overlay.c',
+  'src/snip/editor.c',
+  'src/snip/snipping.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, gtk_layer_shell_dep, gdk_pixbuf_dep,
+                 gio_unix_dep, client_protocol_dep, m_dep],
+  c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
 
@@ -1237,6 +1272,13 @@ executable(
   dependencies: [client_protocol_dep],
 )
 
+# Reads a session's clipboard (ext-data-control), for the UI tests.
+executable(
+  'xd-paste',
+  'tools/xd-paste.c',
+  dependencies: [client_protocol_dep],
+)
+
 # Lists a session's windows (title, app id, state), for the UI tests.
 executable(
   'xd-windows',
@@ -1297,6 +1339,7 @@ test_exe = executable(
   'src/keys/sshkeys.c',
   'src/keys/gpgkeys.c',
   'src/files/extract.c',
+  'src/snip/snipping.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,
@@ -1406,7 +1449,7 @@ install_man(
   'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mouse.1',
   'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1', 'man/xd-privacy.1',
   'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1', 'man/xd-search.1',
-  'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1',
+  'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1', 'man/xd-snip.1',
   'man/xd-sound.1', 'man/xd-sysdm.1', 'man/xd-taskbar.1', 'man/xd-taskmgr.1',
   'man/xd-thumbnailer.1', 'man/xd-timedate.1', 'man/xd-users.1', 'man/xd-wifi-key.1',
   'man/xd-wuaucpl.1',

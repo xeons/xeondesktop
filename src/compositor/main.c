@@ -300,6 +300,7 @@ static bool server_init(xd_server *server) {
     xd_trust_init(server);
     xd_arrange_init(server);
     xd_capture_init(server);
+    xd_rectangles_init(server);
     xd_protocols_init(server);
     xd_gamma_init(server);
     xd_present_init(server);
@@ -627,6 +628,8 @@ int main(int argc, char **argv) {
     server.config.polkit = own_program("xd-polkit", polkit_path, sizeof(polkit_path));
     static char endtask_path[4096];
     server.config.endtask = own_program("xd-endtask", endtask_path, sizeof(endtask_path));
+    static char snip_path[4096];
+    server.config.snip = own_program("xd-snip", snip_path, sizeof(snip_path));
     static char access_path[4096];
     server.config.accessibility = own_program("xd-access", access_path, sizeof(access_path));
     xd_scheme_init_default(&server.config.scheme);

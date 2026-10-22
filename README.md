@@ -30,7 +30,8 @@ pinned copy is built from `subprojects/` and linked in statically, needing
 libseat, libdisplay-info, hwdata and libgbm; SceneFX, for Aero's blurred
 glass, always is), wayland and
 wayland-protocols, xkbcommon and xkbregistry, xcb and xcb-icccm, libdrm,
-libinput, cairo, pango, fontconfig, GLib/GIO, GTK 3, gdk-pixbuf, json-glib,
+libinput, cairo, pango, fontconfig, GLib/GIO, GTK 3, gtk-layer-shell
+(the Snipping Tool), gdk-pixbuf, json-glib,
 procps-ng's libproc2 (Task Manager), PAM and libxcrypt (Lock Computer, User
 Accounts), libudev and libevdev (Device Manager, Game Controllers),
 polkit's agent library, libpulse and libcanberra (volume, sounds), libnm
@@ -108,6 +109,9 @@ instead, which is faster there.
 | Ctrl+Alt+Delete     | Windows Security (Classic style) or Task Manager (XP styles) |
 | Ctrl+Shift+Esc      | Task Manager                                    |
 | Win+L               | Lock Computer                                   |
+| Print Screen        | Copy the screen to the clipboard                |
+| Alt+Print Screen    | Copy the active window to the clipboard         |
+| Win+Shift+S         | Snipping Tool: a new snip                       |
 | Ctrl+Alt+Backspace  | Quit the compositor                             |
 | Ctrl+Alt+F1..F12    | Switch virtual terminal                         |
 | Ctrl+Alt (alone)    | Release a mouse or keyboard a program captured  |
@@ -457,6 +461,22 @@ reclaimable and unreclaimable slab). Memory can be shown in KB, MB or GB.
 Networking graphs each adapter; Users lists the logind sessions (Logoff,
 Disconnect).
 Process data comes from procps-ng's `libproc2`.
+
+### Snipping Tool
+
+`xd-snip` (Accessories) is Windows 7's Snipping Tool, with Windows 10's
+Delay. New freezes the screen under a white wash: draw around a free-form
+snip, drag out a rectangle, click a window (Window Snip) or take the whole
+desktop (Full-screen Snip); Esc cancels. The snip opens in the Mark-up
+window, to draw on with a red, blue or black pen and the highlighter (the
+eraser takes whole strokes away), then Save As (PNG, JPEG, BMP) or Copy.
+Snips are copied to the clipboard as they're taken (Options), and stay
+there after the Snipping Tool closes. Print Screen and Alt+Print Screen
+copy the screen or the active window, as in Windows; Win+Shift+S starts a
+snip. It captures through wlr-screencopy, learns where the windows are
+from our `xd-window-rectangles-v1`, and uses ext-data-control for the
+clipboard, so it also works under other wlroots compositors (Window Snip
+then offers whole monitors). Rotated monitors aren't turned upright yet.
 
 ### GTK theme
 

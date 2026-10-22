@@ -269,6 +269,7 @@ typedef struct xd_config {
     const char *taskmgr;     /* Task Manager executable (Ctrl+Shift+Esc) */
     const char *security;    /* Windows Security (Ctrl+Alt+Delete, Classic style) */
     const char *locker;      /* Lock Computer (Win+L; restarted if a locker dies) */
+    const char *snip;        /* Snipping Tool (Print Screen, Win+Shift+S) */
     const char *polkit;      /* the session's polkit authentication agent */
     const char *endtask;     /* "End Program" for windows that don't respond */
     const char *accessibility; /* xd-access, asking to keep a feature a shortcut turned on */
@@ -881,6 +882,9 @@ void xd_present_frame(xd_output *out, struct wlr_output_state *state);
 bool xd_present_vrr_reported(const xd_output *out);
 /* ...and a client set it to `on`. */
 void xd_present_vrr_set(xd_output *out, bool on);
+
+/* rectangles.c: where the windows are, for the Snipping Tool. */
+void xd_rectangles_init(xd_server *server);
 
 /* capture.c: window pictures for the shell's taskbar thumbnails. */
 void xd_capture_init(xd_server *server);
