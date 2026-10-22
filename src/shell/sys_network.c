@@ -53,62 +53,63 @@ typedef struct ap_choice {
 
 /* ---- reading properties ----------------------------------------------------- */
 
-static GDBusProxy *proxy_for(network *n, const char *path, const char *iface) {
-    if (n->objects == nullptr || path == nullptr || strcmp(path, "/") == 0)
+static GDBusProxy *proxy_for(network *network_icon, const char *path, const char *iface) {
+    if (network_icon->objects == nullptr || path == nullptr || strcmp(path, "/") == 0)
         return nullptr;
-    GDBusInterface *i = g_dbus_object_manager_get_interface(n->objects, path, iface);
-    return i != nullptr ? G_DBUS_PROXY(i) : nullptr;
+    GDBusInterface *dbus_interface =
+        g_dbus_object_manager_get_interface(network_icon->objects, path, iface);
+    return dbus_interface != nullptr ? G_DBUS_PROXY(dbus_interface) : nullptr;
 }
 
-static GVariant *prop(GDBusProxy *p, const char *name) {
-    return p != nullptr ? g_dbus_proxy_get_cached_property(p, name) : nullptr;
+static GVariant *prop(GDBusProxy *proxy, const char *name) {
+    return proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
 }
 
-static unsigned prop_u(GDBusProxy *p, const char *name) {
-    GVariant *v = prop(p, name);
-    unsigned u = 0;
-    if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_UINT32))
-        u = g_variant_get_uint32(v);
-    else if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BYTE))
-        u = g_variant_get_byte(v);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return u;
+static unsigned prop_u(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = prop(proxy, name);
+    unsigned value = 0;
+    if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_UINT32))
+        value = g_variant_get_uint32(variant);
+    else if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BYTE))
+        value = g_variant_get_byte(variant);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
-static bool prop_b(GDBusProxy *p, const char *name) {
-    GVariant *v = prop(p, name);
-    bool b = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BOOLEAN) &&
-             g_variant_get_boolean(v);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return b;
+static bool prop_b(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = prop(proxy, name);
+    bool value = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BOOLEAN) &&
+                 g_variant_get_boolean(variant);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
-static char *prop_s(GDBusProxy *p, const char *name) {
-    GVariant *v = prop(p, name);
-    char *s = nullptr;
-    if (v != nullptr && (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING) ||
-                         g_variant_is_of_type(v, G_VARIANT_TYPE_OBJECT_PATH)))
-        s = g_variant_dup_string(v, nullptr);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return s;
+static char *prop_s(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = prop(proxy, name);
+    char *value = nullptr;
+    if (variant != nullptr && (g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING) ||
+                               g_variant_is_of_type(variant, G_VARIANT_TYPE_OBJECT_PATH)))
+        value = g_variant_dup_string(variant, nullptr);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 /* An SSID (bytes) as text; nullptr for hidden networks. */
 static char *ap_ssid(GDBusProxy *ap) {
-    GVariant *v = prop(ap, "Ssid");
-    char *s = nullptr;
-    if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BYTESTRING)) {
+    GVariant *variant = prop(ap, "Ssid");
+    char *ssid = nullptr;
+    if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BYTESTRING)) {
         gsize len = 0;
-        const char *bytes = g_variant_get_fixed_array(v, &len, 1);
+        const char *bytes = g_variant_get_fixed_array(variant, &len, 1);
         if (len > 0)
-            s = g_utf8_make_valid(bytes, (gssize)len);
+            ssid = g_utf8_make_valid(bytes, (gssize)len);
     }
-    if (v != nullptr)
-        g_variant_unref(v);
-    return s;
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return ssid;
 }
 
 static const char *signal_icon(unsigned strength) {
@@ -121,30 +122,30 @@ static const char *signal_icon(unsigned strength) {
 
 /* The primary connection: its active-connection proxy, type and, for
  * Wi-Fi, the access point. Caller unrefs. */
-static GDBusProxy *primary(network *n, char **type, GDBusProxy **ap) {
+static GDBusProxy *primary(network *network_icon, char **type, GDBusProxy **ap) {
     *type = nullptr;
     *ap = nullptr;
-    char *path = prop_s(n->nm, "PrimaryConnection");
-    GDBusProxy *active = proxy_for(n, path, IFACE_ACTIVE);
+    char *path = prop_s(network_icon->nm, "PrimaryConnection");
+    GDBusProxy *active = proxy_for(network_icon, path, IFACE_ACTIVE);
     g_free(path);
     if (active == nullptr) {
         /* None yet (still connecting): the default active connection, or
          * the first one. */
-        GVariant *all = prop(n->nm, "ActiveConnections");
+        GVariant *all = prop(network_icon->nm, "ActiveConnections");
         if (all != nullptr && g_variant_is_of_type(all, G_VARIANT_TYPE("ao"))) {
             GVariantIter iter;
-            const char *p;
+            const char *active_path;
             g_variant_iter_init(&iter, all);
-            while (g_variant_iter_next(&iter, "&o", &p)) {
-                GDBusProxy *c = proxy_for(n, p, IFACE_ACTIVE);
-                if (c == nullptr)
+            while (g_variant_iter_next(&iter, "&o", &active_path)) {
+                GDBusProxy *proxy = proxy_for(network_icon, active_path, IFACE_ACTIVE);
+                if (proxy == nullptr)
                     continue;
-                if (active == nullptr || prop_b(c, "Default")) {
+                if (active == nullptr || prop_b(proxy, "Default")) {
                     if (active != nullptr)
                         g_object_unref(active);
-                    active = c;
+                    active = proxy;
                 } else {
-                    g_object_unref(c);
+                    g_object_unref(proxy);
                 }
             }
         }
@@ -155,34 +156,35 @@ static GDBusProxy *primary(network *n, char **type, GDBusProxy **ap) {
         return nullptr;
     *type = prop_s(active, "Type");
     char *specific = prop_s(active, "SpecificObject");
-    *ap = proxy_for(n, specific, IFACE_AP);
+    *ap = proxy_for(network_icon, specific, IFACE_AP);
     g_free(specific);
     return active;
 }
 
-static void update(network *n) {
-    network was = *n;
-    char *owner = n->objects != nullptr ? g_dbus_object_manager_client_get_name_owner(
-                                              G_DBUS_OBJECT_MANAGER_CLIENT(n->objects))
-                                        : nullptr;
-    n->running = owner != nullptr;
+static void update(network *network_icon) {
+    network was = *network_icon;
+    char *owner = network_icon->objects != nullptr
+                      ? g_dbus_object_manager_client_get_name_owner(
+                            G_DBUS_OBJECT_MANAGER_CLIENT(network_icon->objects))
+                      : nullptr;
+    network_icon->running = owner != nullptr;
     g_free(owner);
-    unsigned state = prop_u(n->nm, "State");
+    unsigned state = prop_u(network_icon->nm, "State");
     char *type = nullptr;
     GDBusProxy *ap = nullptr;
-    GDBusProxy *active = primary(n, &type, &ap);
+    GDBusProxy *active = primary(network_icon, &type, &ap);
     bool wifi = type != nullptr && strstr(type, "wireless") != nullptr;
     const char *icon;
-    n->wifi = wifi;
-    n->connected = state >= NM_CONNECTED_GLOBAL - 20 && active != nullptr;
-    n->strength = wifi ? prop_u(ap, "Strength") : 0;
+    network_icon->wifi = wifi;
+    network_icon->connected = state >= NM_CONNECTED_GLOBAL - 20 && active != nullptr;
+    network_icon->strength = wifi ? prop_u(ap, "Strength") : 0;
     if (state >= NM_CONNECTED_GLOBAL - 20 && active != nullptr)
         icon = wifi ? signal_icon(prop_u(ap, "Strength")) : "network-wired";
     else if (state >= NM_CONNECTING && state < NM_CONNECTED_GLOBAL - 20)
         icon = wifi ? "network-wireless-acquiring" : "network-wired-acquiring";
     else
         icon = "network-offline";
-    g_strlcpy(n->icon, icon, sizeof(n->icon));
+    g_strlcpy(network_icon->icon, icon, sizeof(network_icon->icon));
     g_free(type);
     if (ap != nullptr)
         g_object_unref(ap);
@@ -190,25 +192,28 @@ static void update(network *n) {
         g_object_unref(active);
     /* Any property of any of NetworkManager's objects lands here (access
      * points' signals on every scan): redraw only when the icon changed. */
-    if (n->running != was.running || n->nm != was.nm || n->wifi != was.wifi ||
-        n->connected != was.connected || (n->strength + 19) / 20 != (was.strength + 19) / 20 ||
-        strcmp(n->icon, was.icon) != 0)
-        xd_tray_changed(n->shell);
+    if (network_icon->running != was.running || network_icon->nm != was.nm ||
+        network_icon->wifi != was.wifi || network_icon->connected != was.connected ||
+        (network_icon->strength + 19) / 20 != (was.strength + 19) / 20 ||
+        strcmp(network_icon->icon, was.icon) != 0)
+        xd_tray_changed(network_icon->shell);
 }
 
 /* ---- the icon ------------------------------------------------------------------ */
 
 static const char *icon(void *data) {
-    network *n = data;
-    return n->running && n->nm != nullptr && n->icon[0] != '\0' ? n->icon : nullptr;
+    network *network_icon = data;
+    return network_icon->running && network_icon->nm != nullptr && network_icon->icon[0] != '\0'
+               ? network_icon->icon
+               : nullptr;
 }
 
 static char *tooltip(void *data) {
-    network *n = data;
-    unsigned state = prop_u(n->nm, "State");
+    network *network_icon = data;
+    unsigned state = prop_u(network_icon->nm, "State");
     char *type = nullptr;
     GDBusProxy *ap = nullptr;
-    GDBusProxy *active = primary(n, &type, &ap);
+    GDBusProxy *active = primary(network_icon, &type, &ap);
     char *text;
     if (active != nullptr && state >= NM_CONNECTING) {
         char *id = prop_s(active, "Id");
@@ -238,31 +243,32 @@ static char *tooltip(void *data) {
 
 static void call_done(GObject *src, GAsyncResult *res, [[maybe_unused]] gpointer data) {
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r != nullptr) {
-        g_variant_unref(r);
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant != nullptr) {
+        g_variant_unref(variant);
     } else {
         fprintf(stderr, "xd-shell: network: %s\n", error->message);
         g_error_free(error);
     }
 }
 
-static void nm_call(network *n, const char *path, const char *iface, const char *method,
+static void nm_call(network *network_icon, const char *path, const char *iface, const char *method,
                     GVariant *args) {
-    GDBusConnection *bus = g_dbus_proxy_get_connection(n->nm);
-    g_dbus_connection_call(bus, NM, path, iface, method, args, nullptr, G_DBUS_CALL_FLAGS_NONE,
-                           -1, n->cancel, call_done, n);
+    GDBusConnection *bus = g_dbus_proxy_get_connection(network_icon->nm);
+    g_dbus_connection_call(bus, NM, path, iface, method, args, nullptr, G_DBUS_CALL_FLAGS_NONE, -1,
+                           network_icon->cancel, call_done, network_icon);
 }
 
 /* {"802-11-wireless-security": {...}} for a key, as NetworkManager wants
  * it for AddAndActivateConnection (it fills in the SSID from the AP). */
-static GVariant *security_settings(const ap_choice *c, const char *key) {
+static GVariant *security_settings(const ap_choice *picked_network, const char *key) {
     GVariantBuilder conn, sec;
     g_variant_builder_init(&conn, G_VARIANT_TYPE("a{sa{sv}}"));
     if (key != nullptr) {
         g_variant_builder_init(&sec, G_VARIANT_TYPE("a{sv}"));
-        bool sae_only = (c->rsn & KEY_MGMT_SAE) && !(c->rsn & KEY_MGMT_PSK);
-        if (c->wpa == 0 && c->rsn == 0) {
+        bool sae_only =
+            (picked_network->rsn & KEY_MGMT_SAE) && !(picked_network->rsn & KEY_MGMT_PSK);
+        if (picked_network->wpa == 0 && picked_network->rsn == 0) {
             /* WEP */
             g_variant_builder_add(&sec, "{sv}", "key-mgmt", g_variant_new_string("none"));
             g_variant_builder_add(&sec, "{sv}", "wep-key0", g_variant_new_string(key));
@@ -278,10 +284,10 @@ static GVariant *security_settings(const ap_choice *c, const char *key) {
     return g_variant_builder_end(&conn);
 }
 
-static void add_and_activate(const ap_choice *c, const char *key) {
-    nm_call(c->net, NM_PATH, NM, "AddAndActivateConnection",
-            g_variant_new("(@a{sa{sv}}oo)", security_settings(c, key), c->device_path,
-                          c->ap_path));
+static void add_and_activate(const ap_choice *picked_network, const char *key) {
+    nm_call(picked_network->net, NM_PATH, NM, "AddAndActivateConnection",
+            g_variant_new("(@a{sa{sv}}oo)", security_settings(picked_network, key),
+                          picked_network->device_path, picked_network->ap_path));
 }
 
 typedef struct key_prompt {
@@ -289,20 +295,21 @@ typedef struct key_prompt {
     char *ssid, *ap_path, *device_path;
 } key_prompt;
 
-static key_prompt *copy_choice(const ap_choice *c) {
-    key_prompt *k = g_new0(key_prompt, 1);
-    k->choice = *c;
-    k->choice.ssid = k->ssid = g_strdup(c->ssid);
-    k->choice.ap_path = k->ap_path = g_strdup(c->ap_path);
-    k->choice.device_path = k->device_path = g_strdup(c->device_path);
-    return k;
+static key_prompt *copy_choice(const ap_choice *picked_network) {
+    key_prompt *key_request = g_new0(key_prompt, 1);
+    key_request->choice = *picked_network;
+    key_request->choice.ssid = key_request->ssid = g_strdup(picked_network->ssid);
+    key_request->choice.ap_path = key_request->ap_path = g_strdup(picked_network->ap_path);
+    key_request->choice.device_path = key_request->device_path =
+        g_strdup(picked_network->device_path);
+    return key_request;
 }
 
-static void key_prompt_free(key_prompt *k) {
-    g_free(k->ssid);
-    g_free(k->ap_path);
-    g_free(k->device_path);
-    g_free(k);
+static void key_prompt_free(key_prompt *key_request) {
+    g_free(key_request->ssid);
+    g_free(key_request->ap_path);
+    g_free(key_request->device_path);
+    g_free(key_request);
 }
 
 /* The helper's output, read until it closes stdout (the shell ignores
@@ -317,35 +324,35 @@ typedef struct key_reader {
 } key_reader;
 
 static gboolean read_key(int fd, [[maybe_unused]] GIOCondition cond, gpointer data) {
-    key_reader *r = data;
+    key_reader *reader = data;
     char buf[256];
-    ssize_t n = read(fd, buf, sizeof(buf));
+    ssize_t bytes_read = read(fd, buf, sizeof(buf));
     /* No key is longer than 64 characters (WPA's in hex): anything much
      * longer isn't one, and isn't kept. */
-    bool too_long = n > 0 && r->out->len + (size_t)n > KEY_MAX;
-    if (n > 0 && !too_long) {
-        g_string_append_len(r->out, buf, n);
+    bool too_long = bytes_read > 0 && reader->out->len + (size_t)bytes_read > KEY_MAX;
+    if (bytes_read > 0 && !too_long) {
+        g_string_append_len(reader->out, buf, bytes_read);
         explicit_bzero(buf, sizeof(buf));
         return G_SOURCE_CONTINUE;
     }
     explicit_bzero(buf, sizeof(buf));
-    if (n < 0 && errno == EINTR)
+    if (bytes_read < 0 && errno == EINTR)
         return G_SOURCE_CONTINUE;
-    g_strchomp(r->out->str);
-    if (!too_long && r->out->str[0] != '\0')
-        add_and_activate(&r->k->choice, r->out->str);
-    explicit_bzero(r->out->str, r->out->allocated_len);
-    g_string_free(r->out, TRUE);
-    close(r->fd);
-    key_prompt_free(r->k);
-    g_free(r);
+    g_strchomp(reader->out->str);
+    if (!too_long && reader->out->str[0] != '\0')
+        add_and_activate(&reader->k->choice, reader->out->str);
+    explicit_bzero(reader->out->str, reader->out->allocated_len);
+    g_string_free(reader->out, TRUE);
+    close(reader->fd);
+    key_prompt_free(reader->k);
+    g_free(reader);
     return G_SOURCE_REMOVE;
 }
 
-/* Asks for the network key with xd-wifi-key, which prints it. Takes `k`. */
-static void ask_key(key_prompt *k) {
+/* Asks for the network key with xd-wifi-key, which prints it. Takes `key_request`. */
+static void ask_key(key_prompt *key_request) {
     char *prog = xd_shell_own_program("xd-wifi-key");
-    char *argv[] = {prog, k->ssid, nullptr};
+    char *argv[] = {prog, key_request->ssid, nullptr};
     int out = -1;
     GError *error = nullptr;
     if (!g_spawn_async_with_pipes(nullptr, argv, nullptr, G_SPAWN_DEFAULT, nullptr, nullptr,
@@ -353,15 +360,15 @@ static void ask_key(key_prompt *k) {
         fprintf(stderr, "xd-shell: network: %s\n", error->message);
         g_error_free(error);
         g_free(prog);
-        key_prompt_free(k);
+        key_prompt_free(key_request);
         return;
     }
     g_free(prog);
-    key_reader *r = g_new0(key_reader, 1);
-    r->k = k;
-    r->out = g_string_new(nullptr);
-    r->fd = out;
-    g_unix_fd_add(out, (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR), read_key, r);
+    key_reader *reader = g_new0(key_reader, 1);
+    reader->k = key_request;
+    reader->out = g_string_new(nullptr);
+    reader->fd = out;
+    g_unix_fd_add(out, (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR), read_key, reader);
 }
 
 typedef struct find_saved {
@@ -370,100 +377,105 @@ typedef struct find_saved {
     gsize next;
 } find_saved;
 
-static void check_next_saved(find_saved *f);
+static void check_next_saved(find_saved *saved_search);
 
 static void got_settings(GObject *src, GAsyncResult *res, gpointer data) {
-    find_saved *f = data;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    find_saved *saved_search = data;
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
     bool match = false;
-    if (r != nullptr) {
-        GVariant *settings = g_variant_get_child_value(r, 0);
+    if (variant != nullptr) {
+        GVariant *settings = g_variant_get_child_value(variant, 0);
         GVariant *wifi = g_variant_lookup_value(settings, "802-11-wireless", nullptr);
         GVariant *ssid = wifi != nullptr ? g_variant_lookup_value(wifi, "ssid", nullptr) : nullptr;
         if (ssid != nullptr && g_variant_is_of_type(ssid, G_VARIANT_TYPE_BYTESTRING)) {
             gsize len = 0;
             const char *bytes = g_variant_get_fixed_array(ssid, &len, 1);
-            match = len == strlen(f->k->ssid) && memcmp(bytes, f->k->ssid, len) == 0;
+            match = len == strlen(saved_search->k->ssid) &&
+                    memcmp(bytes, saved_search->k->ssid, len) == 0;
         }
         if (ssid != nullptr)
             g_variant_unref(ssid);
         if (wifi != nullptr)
             g_variant_unref(wifi);
         g_variant_unref(settings);
-        g_variant_unref(r);
+        g_variant_unref(variant);
     }
     if (match) {
         /* A saved connection: NetworkManager has (or asks for) its key. */
         const char *path = nullptr;
-        g_variant_get_child(f->paths, f->next - 1, "&o", &path);
-        nm_call(f->k->choice.net, NM_PATH, NM, "ActivateConnection",
-                g_variant_new("(ooo)", path, f->k->device_path, f->k->ap_path));
-        g_variant_unref(f->paths);
-        key_prompt_free(f->k);
-        g_free(f);
+        g_variant_get_child(saved_search->paths, saved_search->next - 1, "&o", &path);
+        nm_call(
+            saved_search->k->choice.net, NM_PATH, NM, "ActivateConnection",
+            g_variant_new("(ooo)", path, saved_search->k->device_path, saved_search->k->ap_path));
+        g_variant_unref(saved_search->paths);
+        key_prompt_free(saved_search->k);
+        g_free(saved_search);
         return;
     }
-    check_next_saved(f);
+    check_next_saved(saved_search);
 }
 
-static void check_next_saved(find_saved *f) {
-    network *n = f->k->choice.net;
-    if (f->next >= g_variant_n_children(f->paths)) {
+static void check_next_saved(find_saved *saved_search) {
+    network *network_icon = saved_search->k->choice.net;
+    if (saved_search->next >= g_variant_n_children(saved_search->paths)) {
         /* Not saved: open networks connect, secured ones need the key;
          * 802.1X (enterprise) networks need the full editor. */
-        const ap_choice *c = &f->k->choice;
-        g_variant_unref(f->paths);
-        if ((c->wpa | c->rsn) & KEY_MGMT_8021X) {
-            xd_shell_launch(n->shell, "nm-connection-editor");
-            key_prompt_free(f->k);
-        } else if ((c->flags & AP_PRIVACY) || c->wpa != 0 || c->rsn != 0) {
-            ask_key(f->k);
+        const ap_choice *picked_network = &saved_search->k->choice;
+        g_variant_unref(saved_search->paths);
+        if ((picked_network->wpa | picked_network->rsn) & KEY_MGMT_8021X) {
+            xd_shell_launch(network_icon->shell, "nm-connection-editor");
+            key_prompt_free(saved_search->k);
+        } else if ((picked_network->flags & AP_PRIVACY) || picked_network->wpa != 0 ||
+                   picked_network->rsn != 0) {
+            ask_key(saved_search->k);
         } else {
-            add_and_activate(c, nullptr);
-            key_prompt_free(f->k);
+            add_and_activate(picked_network, nullptr);
+            key_prompt_free(saved_search->k);
         }
-        g_free(f);
+        g_free(saved_search);
         return;
     }
     const char *path = nullptr;
-    g_variant_get_child(f->paths, f->next++, "&o", &path);
-    g_dbus_connection_call(g_dbus_proxy_get_connection(n->nm), NM, path,
+    g_variant_get_child(saved_search->paths, saved_search->next++, "&o", &path);
+    g_dbus_connection_call(g_dbus_proxy_get_connection(network_icon->nm), NM, path,
                            "org.freedesktop.NetworkManager.Settings.Connection", "GetSettings",
                            nullptr, G_VARIANT_TYPE("(a{sa{sv}})"), G_DBUS_CALL_FLAGS_NONE, -1,
-                           n->cancel, got_settings, f);
+                           network_icon->cancel, got_settings, saved_search);
 }
 
 static void got_connections(GObject *src, GAsyncResult *res, gpointer data) {
-    key_prompt *k = data;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
-    find_saved *f = g_new0(find_saved, 1);
-    f->k = k;
-    f->paths = r != nullptr
-                   ? g_variant_get_child_value(r, 0)
-                   : g_variant_ref_sink(g_variant_new_array(G_VARIANT_TYPE_OBJECT_PATH, nullptr, 0));
-    if (r != nullptr)
-        g_variant_unref(r);
-    check_next_saved(f);
+    key_prompt *key_request = data;
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    find_saved *saved_search = g_new0(find_saved, 1);
+    saved_search->k = key_request;
+    saved_search->paths =
+        variant != nullptr
+            ? g_variant_get_child_value(variant, 0)
+            : g_variant_ref_sink(g_variant_new_array(G_VARIANT_TYPE_OBJECT_PATH, nullptr, 0));
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    check_next_saved(saved_search);
 }
 
-static void act_connect(xd_shell *shell, void *d) {
+static void act_connect(xd_shell *shell, void *data) {
     (void)shell;
-    const ap_choice *c = d;
-    key_prompt *k = copy_choice(c);
-    g_dbus_connection_call(g_dbus_proxy_get_connection(c->net->nm), NM, NM_SETTINGS_PATH,
-                           "org.freedesktop.NetworkManager.Settings", "ListConnections",
-                           nullptr, G_VARIANT_TYPE("(ao)"), G_DBUS_CALL_FLAGS_NONE, -1,
-                           c->net->cancel, got_connections, k);
+    const ap_choice *picked_network = data;
+    key_prompt *key_request = copy_choice(picked_network);
+    g_dbus_connection_call(g_dbus_proxy_get_connection(picked_network->net->nm), NM,
+                           NM_SETTINGS_PATH, "org.freedesktop.NetworkManager.Settings",
+                           "ListConnections", nullptr, G_VARIANT_TYPE("(ao)"),
+                           G_DBUS_CALL_FLAGS_NONE, -1, picked_network->net->cancel, got_connections,
+                           key_request);
 }
 
-static void act_disconnect(xd_shell *shell, void *d) {
+static void act_disconnect(xd_shell *shell, void *data) {
     (void)shell;
-    network *n = d;
+    network *network_icon = data;
     char *type = nullptr;
     GDBusProxy *ap = nullptr;
-    GDBusProxy *active = primary(n, &type, &ap);
+    GDBusProxy *active = primary(network_icon, &type, &ap);
     if (active != nullptr)
-        nm_call(n, NM_PATH, NM, "DeactivateConnection",
+        nm_call(network_icon, NM_PATH, NM, "DeactivateConnection",
                 g_variant_new("(o)", g_dbus_proxy_get_object_path(active)));
     g_free(type);
     if (ap != nullptr)
@@ -472,27 +484,30 @@ static void act_disconnect(xd_shell *shell, void *d) {
         g_object_unref(active);
 }
 
-static void act_wifi_toggle(xd_shell *shell, void *d) {
+static void act_wifi_toggle(xd_shell *shell, void *data) {
     (void)shell;
-    network *n = d;
-    bool on = prop_b(n->nm, "WirelessEnabled");
-    nm_call(n, NM_PATH, "org.freedesktop.DBus.Properties", "Set",
+    network *network_icon = data;
+    bool on = prop_b(network_icon->nm, "WirelessEnabled");
+    nm_call(network_icon, NM_PATH, "org.freedesktop.DBus.Properties", "Set",
             g_variant_new("(ssv)", NM, "WirelessEnabled", g_variant_new_boolean(!on)));
 }
 
-static void act_status(xd_shell *shell, [[maybe_unused]] void *d) {
+static void act_status(xd_shell *shell, [[maybe_unused]] void *data) {
     xd_shell_launch(shell, xd_shell_own_command(shell, "xd-netconn", "--status"));
 }
 
-static void act_connections(xd_shell *shell, [[maybe_unused]] void *d) {
+static void act_connections(xd_shell *shell, [[maybe_unused]] void *data) {
     xd_shell_launch(shell, xd_shell_own_command(shell, "xd-netconn", nullptr));
 }
 
-static bool have_wifi(network *n) {
+static bool have_wifi(network *network_icon) {
     bool any = false;
-    GList *objs = n->objects != nullptr ? g_dbus_object_manager_get_objects(n->objects) : nullptr;
-    for (GList *o = objs; o != nullptr && !any; o = o->next) {
-        GDBusProxy *wifi = proxy_for(n, g_dbus_object_get_object_path(o->data), IFACE_WIRELESS);
+    GList *objs = network_icon->objects != nullptr
+                      ? g_dbus_object_manager_get_objects(network_icon->objects)
+                      : nullptr;
+    for (GList *list = objs; list != nullptr && !any; list = list->next) {
+        GDBusProxy *wifi =
+            proxy_for(network_icon, g_dbus_object_get_object_path(list->data), IFACE_WIRELESS);
         any = wifi != nullptr;
         if (wifi != nullptr)
             g_object_unref(wifi);
@@ -505,15 +520,16 @@ static bool have_wifi(network *n) {
  * Network Connection's). Not connected, there's no Status to show: the
  * networks in range, or Network Connections. */
 static void open_status(void *data) {
-    network *n = data;
-    if (n->nm == nullptr)
+    network *network_icon = data;
+    if (network_icon->nm == nullptr)
         return;
-    if (n->connected)
-        act_status(n->shell, n);
-    else if (have_wifi(n))
-        xd_shell_launch(n->shell, xd_shell_own_command(n->shell, "xd-netconn", "--wireless"));
+    if (network_icon->connected)
+        act_status(network_icon->shell, network_icon);
+    else if (have_wifi(network_icon))
+        xd_shell_launch(network_icon->shell,
+                        xd_shell_own_command(network_icon->shell, "xd-netconn", "--wireless"));
     else
-        act_connections(n->shell, n);
+        act_connections(network_icon->shell, network_icon);
 }
 
 /* ---- the menu ------------------------------------------------------------------- */
@@ -525,32 +541,32 @@ typedef struct listed {
     bool current;
 } listed;
 
-static int by_strength(gconstpointer a, gconstpointer b) {
-    const listed *x = *(listed *const *)a, *y = *(listed *const *)b;
-    return (int)y->strength - (int)x->strength;
+static int by_strength(gconstpointer left, gconstpointer right) {
+    const listed *left_network = *(listed *const *)left, *right_network = *(listed *const *)right;
+    return (int)right_network->strength - (int)left_network->strength;
 }
 
-static void listed_free(gpointer p) {
-    listed *l = p;
-    g_free(l->ssid);
-    g_free(l->ap_path);
-    g_free(l->device_path);
-    g_free(l);
+static void listed_free(gpointer user_data) {
+    listed *listed_network = user_data;
+    g_free(listed_network->ssid);
+    g_free(listed_network->ap_path);
+    g_free(listed_network->device_path);
+    g_free(listed_network);
 }
 
 /* The networks in range, strongest first, one entry per SSID. */
-static GPtrArray *networks_in_range(network *n, bool rescan, const char *current_ap) {
+static GPtrArray *networks_in_range(network *network_icon, bool rescan, const char *current_ap) {
     GPtrArray *out = g_ptr_array_new_with_free_func(listed_free);
-    GList *objs = g_dbus_object_manager_get_objects(n->objects);
-    for (GList *o = objs; o != nullptr; o = o->next) {
-        const char *dev_path = g_dbus_object_get_object_path(o->data);
-        GDBusProxy *wifi = proxy_for(n, dev_path, IFACE_WIRELESS);
+    GList *objs = g_dbus_object_manager_get_objects(network_icon->objects);
+    for (GList *list = objs; list != nullptr; list = list->next) {
+        const char *dev_path = g_dbus_object_get_object_path(list->data);
+        GDBusProxy *wifi = proxy_for(network_icon, dev_path, IFACE_WIRELESS);
         if (wifi == nullptr)
             continue;
         if (rescan)
-            nm_call(n, dev_path, IFACE_WIRELESS, "RequestScan",
-                    g_variant_new("(@a{sv})", g_variant_new_array(G_VARIANT_TYPE("{sv}"),
-                                                                    nullptr, 0)));
+            nm_call(
+                network_icon, dev_path, IFACE_WIRELESS, "RequestScan",
+                g_variant_new("(@a{sv})", g_variant_new_array(G_VARIANT_TYPE("{sv}"), nullptr, 0)));
         char *active_ap = prop_s(wifi, "ActiveAccessPoint");
         GVariant *aps = prop(wifi, "AccessPoints");
         GVariantIter iter;
@@ -558,20 +574,21 @@ static GPtrArray *networks_in_range(network *n, bool rescan, const char *current
         if (aps != nullptr && g_variant_is_of_type(aps, G_VARIANT_TYPE("ao"))) {
             g_variant_iter_init(&iter, aps);
             while (g_variant_iter_next(&iter, "&o", &ap_path)) {
-                GDBusProxy *ap = proxy_for(n, ap_path, IFACE_AP);
+                GDBusProxy *ap = proxy_for(network_icon, ap_path, IFACE_AP);
                 char *ssid = ap_ssid(ap);
                 if (ssid != nullptr) {
-                    listed *l = g_new0(listed, 1);
-                    l->ssid = ssid;
-                    l->ap_path = g_strdup(ap_path);
-                    l->device_path = g_strdup(dev_path);
-                    l->strength = prop_u(ap, "Strength");
-                    l->flags = prop_u(ap, "Flags");
-                    l->wpa = prop_u(ap, "WpaFlags");
-                    l->rsn = prop_u(ap, "RsnFlags");
-                    l->current = (active_ap != nullptr && strcmp(active_ap, ap_path) == 0) ||
-                                 (current_ap != nullptr && strcmp(current_ap, ap_path) == 0);
-                    g_ptr_array_add(out, l);
+                    listed *listed_network = g_new0(listed, 1);
+                    listed_network->ssid = ssid;
+                    listed_network->ap_path = g_strdup(ap_path);
+                    listed_network->device_path = g_strdup(dev_path);
+                    listed_network->strength = prop_u(ap, "Strength");
+                    listed_network->flags = prop_u(ap, "Flags");
+                    listed_network->wpa = prop_u(ap, "WpaFlags");
+                    listed_network->rsn = prop_u(ap, "RsnFlags");
+                    listed_network->current =
+                        (active_ap != nullptr && strcmp(active_ap, ap_path) == 0) ||
+                        (current_ap != nullptr && strcmp(current_ap, ap_path) == 0);
+                    g_ptr_array_add(out, listed_network);
                 }
                 if (ap != nullptr)
                     g_object_unref(ap);
@@ -586,11 +603,11 @@ static GPtrArray *networks_in_range(network *n, bool rescan, const char *current
     g_ptr_array_sort(out, by_strength);
     /* One per SSID: the strongest (or the one we're on). */
     for (guint i = 0; i < out->len; i++) {
-        listed *a = g_ptr_array_index(out, i);
+        listed *kept = g_ptr_array_index(out, i);
         for (guint j = i + 1; j < out->len;) {
-            listed *b = g_ptr_array_index(out, j);
-            if (strcmp(a->ssid, b->ssid) == 0) {
-                a->current = a->current || b->current;
+            listed *duplicate = g_ptr_array_index(out, j);
+            if (strcmp(kept->ssid, duplicate->ssid) == 0) {
+                kept->current = kept->current || duplicate->current;
                 g_ptr_array_remove_index(out, j);
             } else {
                 j++;
@@ -600,134 +617,148 @@ static GPtrArray *networks_in_range(network *n, bool rescan, const char *current
     return out;
 }
 
-static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
-    network *n = data;
+static void menu(void *data, xd_menu_tree *tree, xd_menu_model *menu_model) {
+    network *network_icon = data;
     char *type = nullptr;
     GDBusProxy *ap = nullptr;
-    GDBusProxy *active = primary(n, &type, &ap);
-    GPtrArray *nets =
-        networks_in_range(n, true, ap != nullptr ? g_dbus_proxy_get_object_path(ap) : nullptr);
+    GDBusProxy *active = primary(network_icon, &type, &ap);
+    GPtrArray *nets = networks_in_range(network_icon, true,
+                                        ap != nullptr ? g_dbus_proxy_get_object_path(ap) : nullptr);
     for (guint i = 0; i < nets->len && i < 15; i++) {
-        listed *l = g_ptr_array_index(nets, i);
-        ap_choice *c = xd_arena_alloc(&tree->arena, sizeof(*c), alignof(ap_choice));
-        *c = (ap_choice){
-            .net = n,
-            .ssid = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(l->ssid)),
-            .ap_path = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(l->ap_path)),
-            .device_path = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(l->device_path)),
-            .wpa = l->wpa,
-            .rsn = l->rsn,
-            .flags = l->flags,
+        listed *listed_network = g_ptr_array_index(nets, i);
+        ap_choice *picked_network =
+            xd_arena_alloc(&tree->arena, sizeof(*picked_network), alignof(ap_choice));
+        *picked_network = (ap_choice){
+            .net = network_icon,
+            .ssid = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(listed_network->ssid)),
+            .ap_path = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(listed_network->ap_path)),
+            .device_path =
+                xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(listed_network->device_path)),
+            .wpa = listed_network->wpa,
+            .rsn = listed_network->rsn,
+            .flags = listed_network->flags,
         };
-        xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, l->ssid, signal_icon(l->strength));
+        xd_menu_item *it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, listed_network->ssid,
+                                       signal_icon(listed_network->strength));
         it->action = act_connect;
-        it->action_data = c;
-        it->bold = l->current;
-        bool secured = (l->flags & AP_PRIVACY) || l->wpa != 0 || l->rsn != 0;
+        it->action_data = picked_network;
+        it->bold = listed_network->current;
+        bool secured = (listed_network->flags & AP_PRIVACY) || listed_network->wpa != 0 ||
+                       listed_network->rsn != 0;
         char accel[32];
-        g_snprintf(accel, sizeof(accel), "%s%u%%", secured ? "Secured  " : "", l->strength);
+        g_snprintf(accel, sizeof(accel), "%s%u%%", secured ? "Secured  " : "",
+                   listed_network->strength);
         it->accel = xd_str_arena_cstr(&tree->arena, xd_str_from_cstr(accel));
     }
     bool any_wifi = nets->len > 0;
     g_ptr_array_free(nets, TRUE);
     if (any_wifi)
-        xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
-    xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, "Disconnect", nullptr);
+        xd_menu_add(tree, menu_model, XD_MENU_SEPARATOR, nullptr, nullptr);
+    xd_menu_item *it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Disconnect", nullptr);
     it->action = act_disconnect;
-    it->action_data = n;
+    it->action_data = network_icon;
     it->disabled = active == nullptr;
     g_free(type);
     if (ap != nullptr)
         g_object_unref(ap);
     if (active != nullptr)
         g_object_unref(active);
-    if (prop_b(n->nm, "WirelessHardwareEnabled")) {
-        it = xd_menu_add(tree, m, XD_MENU_ACTION, "Wireless Networking", nullptr);
+    if (prop_b(network_icon->nm, "WirelessHardwareEnabled")) {
+        it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Wireless Networking", nullptr);
         it->action = act_wifi_toggle;
-        it->action_data = n;
-        it->checked = prop_b(n->nm, "WirelessEnabled");
+        it->action_data = network_icon;
+        it->checked = prop_b(network_icon->nm, "WirelessEnabled");
     }
-    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
-    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Status", nullptr);
+    xd_menu_add(tree, menu_model, XD_MENU_SEPARATOR, nullptr, nullptr);
+    it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Status", nullptr);
     it->action = act_status;
-    it->disabled = !n->connected;
-    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Open Network Connections", nullptr);
+    it->disabled = !network_icon->connected;
+    it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Open Network Connections", nullptr);
     it->action = act_connections;
 }
 
 /* ---- setup ------------------------------------------------------------------------ */
 
 /* One handler per signal: their argument lists differ. */
-static void manager_props_changed([[maybe_unused]] GDBusProxy *p, [[maybe_unused]] GVariant *c,
+static void manager_props_changed([[maybe_unused]] GDBusProxy *proxy,
+                                  [[maybe_unused]] GVariant *variant,
                                   [[maybe_unused]] const char *const *inv, gpointer data) {
     update(data);
 }
 
-static void object_props_changed([[maybe_unused]] GDBusObjectManagerClient *m,
-                                 [[maybe_unused]] GDBusObjectProxy *o,
-                                 [[maybe_unused]] GDBusProxy *i, [[maybe_unused]] GVariant *c,
+static void object_props_changed([[maybe_unused]] GDBusObjectManagerClient *object_manager,
+                                 [[maybe_unused]] GDBusObjectProxy *dbus_object_proxy,
+                                 [[maybe_unused]] GDBusProxy *proxy,
+                                 [[maybe_unused]] GVariant *variant,
                                  [[maybe_unused]] const char *const *inv, gpointer data) {
     update(data);
 }
 
-static void object_added_removed([[maybe_unused]] GDBusObjectManager *m,
-                                 [[maybe_unused]] GDBusObject *o, gpointer data) {
+static void object_added_removed([[maybe_unused]] GDBusObjectManager *dbus_object_manager,
+                                 [[maybe_unused]] GDBusObject *dbus_object, gpointer data) {
     update(data);
 }
 
-static void owner_changed([[maybe_unused]] GObject *o, [[maybe_unused]] GParamSpec *ps,
+static void owner_changed([[maybe_unused]] GObject *object, [[maybe_unused]] GParamSpec *ps,
                           gpointer data) {
     update(data);
 }
 
 static void got_manager([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
-    GDBusProxy *p = g_dbus_proxy_new_for_bus_finish(res, nullptr);
-    if (p == nullptr)
+    GDBusProxy *proxy = g_dbus_proxy_new_for_bus_finish(res, nullptr);
+    if (proxy == nullptr)
         return;
-    network *n = data;
-    n->nm = p;
-    g_signal_connect(p, "g-properties-changed", G_CALLBACK(manager_props_changed), n);
-    update(n);
+    network *network_icon = data;
+    network_icon->nm = proxy;
+    g_signal_connect(proxy, "g-properties-changed", G_CALLBACK(manager_props_changed),
+                     network_icon);
+    update(network_icon);
 }
 
 static void got_objects([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
-    GDBusObjectManager *m = g_dbus_object_manager_client_new_for_bus_finish(res, nullptr);
-    if (m == nullptr)
+    GDBusObjectManager *dbus_object_manager =
+        g_dbus_object_manager_client_new_for_bus_finish(res, nullptr);
+    if (dbus_object_manager == nullptr)
         return; /* no NetworkManager: no network icon */
-    network *n = data;
-    n->objects = m;
-    g_signal_connect(m, "interface-proxy-properties-changed", G_CALLBACK(object_props_changed), n);
-    g_signal_connect(m, "object-added", G_CALLBACK(object_added_removed), n);
-    g_signal_connect(m, "object-removed", G_CALLBACK(object_added_removed), n);
+    network *network_icon = data;
+    network_icon->objects = dbus_object_manager;
+    g_signal_connect(dbus_object_manager, "interface-proxy-properties-changed",
+                     G_CALLBACK(object_props_changed), network_icon);
+    g_signal_connect(dbus_object_manager, "object-added", G_CALLBACK(object_added_removed),
+                     network_icon);
+    g_signal_connect(dbus_object_manager, "object-removed", G_CALLBACK(object_added_removed),
+                     network_icon);
     /* NetworkManager starting or stopping. */
-    g_signal_connect(m, "notify::name-owner", G_CALLBACK(owner_changed), n);
+    g_signal_connect(dbus_object_manager, "notify::name-owner", G_CALLBACK(owner_changed),
+                     network_icon);
     g_dbus_proxy_new_for_bus(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, NM, NM_PATH, NM,
-                             n->cancel, got_manager, n);
+                             network_icon->cancel, got_manager, network_icon);
 }
 
 static void destroy(void *data) {
-    network *n = data;
-    g_cancellable_cancel(n->cancel);
-    g_object_unref(n->cancel);
-    if (n->nm != nullptr) {
-        g_signal_handlers_disconnect_by_data(n->nm, n);
-        g_object_unref(n->nm);
+    network *network_icon = data;
+    g_cancellable_cancel(network_icon->cancel);
+    g_object_unref(network_icon->cancel);
+    if (network_icon->nm != nullptr) {
+        g_signal_handlers_disconnect_by_data(network_icon->nm, network_icon);
+        g_object_unref(network_icon->nm);
     }
-    if (n->objects != nullptr) {
-        g_signal_handlers_disconnect_by_data(n->objects, n);
-        g_object_unref(n->objects);
+    if (network_icon->objects != nullptr) {
+        g_signal_handlers_disconnect_by_data(network_icon->objects, network_icon);
+        g_object_unref(network_icon->objects);
     }
-    g_free(n);
+    g_free(network_icon);
 }
 
-static void draw(void *data, const xd_theme *t, cairo_t *cr, xd_rect r) {
-    network *n = data;
-    if (n->wifi)
-        xd_theme_draw_tray_icon(t, cr, r, XD_TRAY_ICON_WIRELESS, (int)(n->strength + 19) / 20,
-                                n->connected ? 0 : XD_TRAY_ICON_OFF);
+static void draw(void *data, const xd_theme *theme, cairo_t *cairo, xd_rect rect) {
+    network *network_icon = data;
+    if (network_icon->wifi)
+        xd_theme_draw_tray_icon(theme, cairo, rect, XD_TRAY_ICON_WIRELESS,
+                                (int)(network_icon->strength + 19) / 20,
+                                network_icon->connected ? 0 : XD_TRAY_ICON_OFF);
     else
-        xd_theme_draw_tray_icon(t, cr, r, XD_TRAY_ICON_WIRED, 0,
-                                n->connected ? 0 : XD_TRAY_ICON_OFF);
+        xd_theme_draw_tray_icon(theme, cairo, rect, XD_TRAY_ICON_WIRED, 0,
+                                network_icon->connected ? 0 : XD_TRAY_ICON_OFF);
 }
 
 static const xd_sysicon_ops ops = {
@@ -740,12 +771,11 @@ static const xd_sysicon_ops ops = {
 };
 
 void xd_sys_network_init(xd_shell *shell) {
-    network *n = g_new0(network, 1);
-    n->shell = shell;
-    n->cancel = g_cancellable_new();
-    xd_tray_add_sysicon(shell, "network", &ops, n);
-    g_dbus_object_manager_client_new_for_bus(G_BUS_TYPE_SYSTEM,
-                                             G_DBUS_OBJECT_MANAGER_CLIENT_FLAGS_NONE, NM,
-                                             "/org/freedesktop", nullptr, nullptr, nullptr,
-                                             n->cancel, got_objects, n);
+    network *network_icon = g_new0(network, 1);
+    network_icon->shell = shell;
+    network_icon->cancel = g_cancellable_new();
+    xd_tray_add_sysicon(shell, "network", &ops, network_icon);
+    g_dbus_object_manager_client_new_for_bus(
+        G_BUS_TYPE_SYSTEM, G_DBUS_OBJECT_MANAGER_CLIENT_FLAGS_NONE, NM, "/org/freedesktop", nullptr,
+        nullptr, nullptr, network_icon->cancel, got_objects, network_icon);
 }

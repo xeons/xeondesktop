@@ -410,7 +410,7 @@ typedef struct xd_sysicon_ops {
     void (*open)(void *data);
     void (*scroll)(void *data, double delta); /* wheel steps, + is down */
     /* Draws the icon into r (device px); nullptr: the `icon` theme icon. */
-    void (*draw)(void *data, const xd_theme *t, cairo_t *cr, xd_rect r);
+    void (*draw)(void *data, const xd_theme *theme, cairo_t *cairo, xd_rect rect);
     void (*destroy)(void *data);
 } xd_sysicon_ops;
 
@@ -430,7 +430,7 @@ bool xd_tray_item_folded(const xd_shell *shell, const xd_tray_item *item);
 /* The id [Notifications] rules use: Id, or our applet's name. */
 const char *xd_tray_item_id(const xd_tray_item *item);
 /* Draws the item's icon if it draws its own (our applets); else false. */
-bool xd_tray_item_draw(xd_tray_item *item, const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_tray_item_draw(xd_tray_item *item, const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 void xd_tray_item_scroll(xd_shell *shell, xd_tray_item *item, double delta);
 /* Adds one of our applets (after xd_tray_init); `name` keys it. */
 void xd_tray_add_sysicon(xd_shell *shell, const char *name, const xd_sysicon_ops *ops,
@@ -555,7 +555,7 @@ void xd_langbar_set_active(xd_shell *shell, uint32_t index);
 /* Lays it out at the end of `room` (device px: a row's right end, or the
  * bottom of a side taskbar's column), draws it and sets bar->lang_rect;
  * returns the room left before it. */
-xd_rect xd_langbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect room,
+xd_rect xd_langbar_layout(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, xd_rect room,
                           bool side, int row_h);
 /* A click on it (on release): the layouts' menu, or its own menu. */
 void xd_langbar_click(xd_taskbar *bar, uint32_t button, uint32_t serial);
@@ -622,9 +622,9 @@ void xd_volume_flyout_dismiss(xd_shell *shell);
 typedef struct xd_deskicons xd_deskicons;
 void xd_deskicons_init(xd_shell *shell);
 void xd_deskicons_finish(xd_shell *shell);
-void xd_deskicons_draw(xd_shell *shell, xd_desktop *d, cairo_t *cr);
-void xd_deskicons_motion(xd_shell *shell, xd_desktop *d, double x, double y);
-void xd_deskicons_button(xd_shell *shell, xd_desktop *d, uint32_t button, bool pressed,
+void xd_deskicons_draw(xd_shell *shell, xd_desktop *desktop, cairo_t *cairo);
+void xd_deskicons_motion(xd_shell *shell, xd_desktop *desktop, double x, double y);
+void xd_deskicons_button(xd_shell *shell, xd_desktop *desktop, uint32_t button, bool pressed,
                          uint32_t time, uint32_t serial);
 /* Redraws them (the taskbar moved, the theme changed). */
 void xd_deskicons_relayout(xd_shell *shell);
@@ -639,9 +639,10 @@ void xd_deskicons_clipboard_lost(xd_shell *shell);
  * the folder it would go into; x < 0 ends the highlight. `own`: the
  * desktop's own icons. */
 typedef enum { XD_DROP_NONE, XD_DROP_HERE, XD_DROP_FOLDER, XD_DROP_TRASH } xd_drop_kind;
-xd_drop_kind xd_deskicons_drag_over(xd_shell *shell, xd_desktop *d, double x, double y, bool own);
+xd_drop_kind xd_deskicons_drag_over(xd_shell *shell, xd_desktop *desktop, double x, double y,
+                                    bool own);
 /* Files dropped at (x, y); `uris` nullptr for the desktop's own icons. */
-void xd_deskicons_drop(xd_shell *shell, xd_desktop *d, char **uris, double x, double y,
+void xd_deskicons_drop(xd_shell *shell, xd_desktop *desktop, char **uris, double x, double y,
                        bool move);
 /* Our drag ended (dropped anywhere, or cancelled). */
 void xd_deskicons_drag_ended(xd_shell *shell);
@@ -653,14 +654,14 @@ void xd_shell_open_uri(xd_shell *shell, const char *uri);
 /* desktop.c */
 xd_desktop *xd_desktop_for_surface(xd_shell *shell, struct wl_surface *surface);
 xd_desktop *xd_desktop_create(xd_shell *shell, struct wl_output *output);
-void xd_desktop_destroy(xd_desktop *d);
-void xd_desktop_render(xd_desktop *d);
+void xd_desktop_destroy(xd_desktop *desktop);
+void xd_desktop_render(xd_desktop *desktop);
 
 /* taskbar.c, for superbar.c: room for n buttons; the minimize animation's
  * target; the page arrows (in page_up_rect and page_down_rect). */
-void xd_taskbar_reserve(xd_taskbar *bar, size_t n);
-void xd_taskbar_tell_button(xd_taskbar *bar, xd_toplevel *tl, xd_rect r);
-void xd_taskbar_draw_page_arrows(xd_taskbar *bar, const xd_theme *t, cairo_t *cr);
+void xd_taskbar_reserve(xd_taskbar *bar, size_t count);
+void xd_taskbar_tell_button(xd_taskbar *bar, xd_toplevel *tl, xd_rect rect);
+void xd_taskbar_draw_page_arrows(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo);
 
 /* superbar.c: Windows 7's taskbar buttons (Aero) and jump lists. */
 void xd_superbar_init(xd_shell *shell);
@@ -669,8 +670,8 @@ void xd_superbar_finish(xd_shell *shell);
  * (LauncherEntry) of programs whose last window closed. */
 void xd_superbar_windows_changed(xd_shell *shell);
 /* Lays out and draws the buttons in `band` (device px). */
-void xd_superbar_layout(xd_taskbar *bar, const xd_theme *t, cairo_t *cr, xd_rect band, int rows,
-                        int row_h);
+void xd_superbar_layout(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, xd_rect band,
+                        int rows, int row_h);
 bool xd_superbar_is_button(const xd_taskbar *bar, int hit);
 /* A left or middle click on button `hit`. */
 void xd_superbar_click(xd_taskbar *bar, int hit, uint32_t button);
@@ -774,7 +775,7 @@ void xd_start_menu_refresh_documents(xd_shell *shell);
 
 /* toplevels.c */
 void xd_toplevels_init(xd_shell *shell);
-void xd_toplevel_click(xd_toplevel *t);
+void xd_toplevel_click(xd_toplevel *toplevel);
 /* Show Desktop: minimize everything, or restore what it minimized. */
 void xd_show_desktop_toggle(xd_shell *shell);
 

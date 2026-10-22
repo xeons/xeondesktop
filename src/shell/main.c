@@ -51,8 +51,8 @@ static bool update_clock(xd_shell *shell) {
      * has no AM/PM. */
     char ampm[8];
     size_t has_ampm = strftime(ampm, sizeof(ampm), "%p", &tm);
-    size_t n = strftime(buf, sizeof(buf), has_ampm > 0 ? "%I:%M %p" : "%H:%M", &tm);
-    if (n == 0)
+    size_t count = strftime(buf, sizeof(buf), has_ampm > 0 ? "%I:%M %p" : "%H:%M", &tm);
+    if (count == 0)
         return false;
     /* "07:08 PM" -> "7:08 PM" */
     const char *text = (has_ampm > 0 && buf[0] == '0') ? buf + 1 : buf;
@@ -91,7 +91,7 @@ xd_taskbar *xd_taskbar_for_surface(xd_shell *shell, struct wl_surface *surface) 
     return nullptr;
 }
 
-static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
+static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *pointer, uint32_t serial,
                           struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
     xd_shell *shell = data;
     shell->pointer_bar = xd_taskbar_for_surface(shell, surface);
@@ -128,7 +128,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
         xd_balloon_pointer_motion(shell, lx, ly);
 }
 
-static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *pointer,
                           [[maybe_unused]] uint32_t serial,
                           [[maybe_unused]] struct wl_surface *surface) {
     xd_shell *shell = data;
@@ -149,7 +149,7 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
     shell->pointer_desktop = nullptr;
 }
 
-static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *pointer,
                            [[maybe_unused]] uint32_t time, wl_fixed_t x, wl_fixed_t y) {
     xd_shell *shell = data;
     double lx = wl_fixed_to_double(x);
@@ -173,7 +173,7 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_balloon_pointer_motion(shell, lx, ly);
 }
 
-static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
+static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *pointer, uint32_t serial,
                            uint32_t time, uint32_t button, uint32_t state) {
     xd_shell *shell = data;
     bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
@@ -211,7 +211,7 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
         xd_deskicons_button(shell, shell->pointer_desktop, button, pressed, time, serial);
 }
 
-static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *pointer,
                          [[maybe_unused]] uint32_t time, uint32_t axis, wl_fixed_t value) {
     xd_shell *shell = data;
     if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_start7) {
@@ -236,14 +236,16 @@ static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
         }
     }
 }
-static void pointer_frame([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p) {}
+static void pointer_frame([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct wl_pointer *pointer) {}
 static void pointer_axis_source([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct wl_pointer *p,
+                                [[maybe_unused]] struct wl_pointer *pointer,
                                 [[maybe_unused]] uint32_t source) {}
-static void pointer_axis_stop([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_axis_stop([[maybe_unused]] void *data,
+                              [[maybe_unused]] struct wl_pointer *pointer,
                               [[maybe_unused]] uint32_t time, [[maybe_unused]] uint32_t axis) {}
 static void pointer_axis_discrete([[maybe_unused]] void *data,
-                                  [[maybe_unused]] struct wl_pointer *p,
+                                  [[maybe_unused]] struct wl_pointer *pointer,
                                   [[maybe_unused]] uint32_t axis,
                                   [[maybe_unused]] int32_t discrete) {}
 
@@ -261,8 +263,8 @@ static const struct wl_pointer_listener pointer_listener = {
 
 /* ---- keyboard (menu navigation) --------------------------------------------- */
 
-static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t format,
-                            int32_t fd, uint32_t size) {
+static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
+                            uint32_t format, int32_t fd, uint32_t size) {
     xd_shell *shell = data;
     if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 || size == 0 || size > (16u << 20)) {
         close(fd);
@@ -301,8 +303,9 @@ static void repeat_stop(xd_shell *shell) {
     repeat_arm(shell, 0, 0);
 }
 
-static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
-                           struct wl_surface *surface, [[maybe_unused]] struct wl_array *keys) {
+static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
+                           uint32_t serial, struct wl_surface *surface,
+                           [[maybe_unused]] struct wl_array *keys) {
     xd_shell *shell = data;
     shell->kb_surface = surface;
     shell->kb_serial = serial;
@@ -310,7 +313,7 @@ static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k, u
     xd_shellbus_keyboard_entered(shell, surface, serial);
 }
 
-static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *k,
+static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
                            [[maybe_unused]] uint32_t serial, struct wl_surface *surface) {
     xd_shell *shell = data;
     repeat_stop(shell);
@@ -354,7 +357,7 @@ static void handle_key(xd_shell *shell, uint32_t key, uint32_t serial) {
     xd_menu_key(shell, sym);
 }
 
-static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
+static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *keyboard, uint32_t serial,
                          [[maybe_unused]] uint32_t time, uint32_t key, uint32_t state) {
     xd_shell *shell = data;
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -381,7 +384,7 @@ static void repeat_fired(xd_shell *shell) {
         handle_key(shell, shell->repeat_key - 1, shell->repeat_serial);
 }
 
-static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *k,
+static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
                                [[maybe_unused]] uint32_t serial, uint32_t depressed,
                                uint32_t latched, uint32_t locked, uint32_t group) {
     xd_shell *shell = data;
@@ -389,8 +392,8 @@ static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *
         xkb_state_update_mask(shell->xkb_state, depressed, latched, locked, 0, 0, group);
 }
 
-static void keyboard_repeat_info(void *data, [[maybe_unused]] struct wl_keyboard *k, int32_t rate,
-                                 int32_t delay) {
+static void keyboard_repeat_info(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
+                                 int32_t rate, int32_t delay) {
     xd_shell *shell = data;
     shell->repeat_rate = XD_CLAMP(rate, 0, 1000);
     shell->repeat_delay = XD_CLAMP(delay, 1, 10000);
@@ -567,12 +570,12 @@ static char *activation_token(xd_shell *shell) {
 }
 
 int xd_shell_screen_height(const xd_shell *shell) {
-    int h = 0;
+    int height = 0;
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
         if (bar->desktop != nullptr && bar->desktop->configured)
-            h = XD_MAX(h, bar->desktop->height);
+            height = XD_MAX(height, bar->desktop->height);
     }
-    return h > 0 ? h : 768;
+    return height > 0 ? height : 768;
 }
 
 pid_t xd_shell_launch(xd_shell *shell, const char *command) {
@@ -644,15 +647,15 @@ static void load_wallpaper(xd_shell *shell) {
  * Plasma does with its own. Not in a nested or test session, whose
  * GSettings are the host desktop's, nor under another compositor, whose
  * desktop they belong to. GTK_THEME covers the GTK theme. */
-static void export_icon_theme(const xd_shell *shell, const xd_settings *s) {
+static void export_icon_theme(const xd_shell *shell, const xd_settings *settings) {
     const char *nested = getenv("XEONDESKTOP_NESTED");
     if (shell->standalone || nested == nullptr || strcmp(nested, "0") != 0)
         return;
-    const char *theme = xd_settings_icon_theme(s);
+    const char *theme = xd_settings_icon_theme(settings);
     char **dirs = xd_icon_theme_dirs();
     bool installed = false;
-    for (char **d = dirs; *d != nullptr && !installed; d++) {
-        char *index = g_build_filename(*d, theme, "index.theme", nullptr);
+    for (char **dir = dirs; *dir != nullptr && !installed; dir++) {
+        char *index = g_build_filename(*dir, theme, "index.theme", nullptr);
         installed = g_file_test(index, G_FILE_TEST_IS_REGULAR);
         g_free(index);
     }
@@ -703,13 +706,13 @@ static void apply_settings(xd_shell *shell, bool startup) {
     xd_buttons_update(shell);
     /* Programs started from the shell get Mouse Properties' cursors (the
      * compositor sets these too, but only for what it starts). */
-    const xd_mouse_settings *m = &shell->settings.mouse;
-    if (m->cursor_theme[0] != '\0')
-        setenv("XCURSOR_THEME", m->cursor_theme, true);
+    const xd_mouse_settings *mouse = &shell->settings.mouse;
+    if (mouse->cursor_theme[0] != '\0')
+        setenv("XCURSOR_THEME", mouse->cursor_theme, true);
     else
         unsetenv("XCURSOR_THEME");
     char cursor_size[16];
-    snprintf(cursor_size, sizeof(cursor_size), "%d", m->cursor_size);
+    snprintf(cursor_size, sizeof(cursor_size), "%d", mouse->cursor_size);
     setenv("XCURSOR_SIZE", cursor_size, true);
     /* And Display Properties' GTK theme, as the compositor gives it. */
     setenv("GTK_THEME", xd_settings_gtk_theme(&shell->settings), true);
@@ -778,14 +781,15 @@ static void debug_open_menu(xd_shell *shell) {
 
 /* ---- main loop ------------------------------------------------------------------- */
 
-static void usage(FILE *f) {
-    fprintf(f, "usage: xd-shell [--style classic|luna|whistler] [--scheme FILE] [--taskbar-only]\n"
-               "       xd-shell --toggle-start-menu\n"
-               "\n"
-               "  --taskbar-only       taskbars, Start menu and notification area, no desktop\n"
-               "                       (wallpaper, icons): for another compositor's session\n"
-               "  --toggle-start-menu  open or close the running shell's Start menu (for a\n"
-               "                       compositor's key binding)\n");
+static void usage(FILE *file) {
+    fprintf(file,
+            "usage: xd-shell [--style classic|luna|whistler] [--scheme FILE] [--taskbar-only]\n"
+            "       xd-shell --toggle-start-menu\n"
+            "\n"
+            "  --taskbar-only       taskbars, Start menu and notification area, no desktop\n"
+            "                       (wallpaper, icons): for another compositor's session\n"
+            "  --toggle-start-menu  open or close the running shell's Start menu (for a\n"
+            "                       compositor's key binding)\n");
 }
 
 static bool parse_args(int argc, char **argv, xd_shell *shell) {
@@ -858,7 +862,7 @@ static int display_lost(struct wl_display *display) {
 enum { OWN_FDS = 10 };
 
 static int run(xd_shell *shell, int timer_fd, int signal_fd) {
-    struct wl_display *d = shell->display;
+    struct wl_display *display = shell->display;
     GMainContext *ctx = g_main_context_default();
     if (!g_main_context_acquire(ctx))
         return EXIT_FAILURE;
@@ -875,10 +879,10 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         xd_balloon_render_dirty(shell);
         xd_thumbs_render_dirty(shell);
         xd_volume_flyout_render_dirty(shell);
-        while (wl_display_prepare_read(d) != 0)
-            wl_display_dispatch_pending(d);
-        if (!flush_display(d)) {
-            wl_display_cancel_read(d);
+        while (wl_display_prepare_read(display) != 0)
+            wl_display_dispatch_pending(display);
+        if (!flush_display(display)) {
+            wl_display_cancel_read(display);
             return EXIT_FAILURE;
         }
 
@@ -893,11 +897,16 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         if (fds == nullptr)
             fds = xd_realloc_array(fds, OWN_FDS, sizeof(*fds));
         const int own[OWN_FDS] = {
-            wl_display_get_fd(d),          timer_fd,
-            signal_fd,                     shell->menu_timer_fd,
-            shell->settings_fd,            shell->quicklaunch.watch_fd,
-            shell->flash_timer_fd,         shell->tooltip_timer_fd,
-            shell->autohide_timer_fd,      shell->repeat_timer_fd,
+            wl_display_get_fd(display),
+            timer_fd,
+            signal_fd,
+            shell->menu_timer_fd,
+            shell->settings_fd,
+            shell->quicklaunch.watch_fd,
+            shell->flash_timer_fd,
+            shell->tooltip_timer_fd,
+            shell->autohide_timer_fd,
+            shell->repeat_timer_fd,
         };
         for (int i = 0; i < OWN_FDS; i++)
             fds[i] = (struct pollfd){.fd = own[i], .events = POLLIN};
@@ -908,23 +917,23 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
             gfds[i].revents = (gushort)(pr > 0 ? fds[OWN_FDS + i].revents : 0);
         gboolean glib_ready = g_main_context_check(ctx, prio, gfds, ng);
         if (pr < 0) {
-            wl_display_cancel_read(d);
+            wl_display_cancel_read(display);
             if (errno == EINTR)
                 continue;
             rc = EXIT_FAILURE;
             break;
         }
         if (fds[0].revents & POLLIN) {
-            if (wl_display_read_events(d) < 0) {
-                rc = display_lost(d);
+            if (wl_display_read_events(display) < 0) {
+                rc = display_lost(display);
                 break;
             }
         } else {
-            wl_display_cancel_read(d);
+            wl_display_cancel_read(display);
         }
         /* POLLHUP: the compositor went away. */
-        if ((fds[0].revents & (POLLERR | POLLHUP)) || wl_display_dispatch_pending(d) < 0) {
-            rc = display_lost(d);
+        if ((fds[0].revents & (POLLERR | POLLHUP)) || wl_display_dispatch_pending(display) < 0) {
+            rc = display_lost(display);
             break;
         }
         /* GLib's callbacks (D-Bus, pipes) run once the Wayland read is
@@ -1097,15 +1106,15 @@ int main(int argc, char **argv) {
     XD_LIST_FOR_EACH_SAFE(bar, tmp, &shell.taskbars, xd_taskbar, link) {
         xd_taskbar_destroy(bar);
     }
-    XD_LIST_FOR_EACH_SAFE(t, tmp, &shell.toplevels, xd_toplevel, link) {
-        zwlr_foreign_toplevel_handle_v1_destroy(t->handle);
-        XD_FREE(&t->title);
-        XD_FREE(&t->app_id);
-        g_free(t->icon);
-        g_free(t->app_name);
-        g_free(t->desktop_id);
-        wl_list_remove(&t->link);
-        xd_free(t);
+    XD_LIST_FOR_EACH_SAFE(toplevel, tmp, &shell.toplevels, xd_toplevel, link) {
+        zwlr_foreign_toplevel_handle_v1_destroy(toplevel->handle);
+        XD_FREE(&toplevel->title);
+        XD_FREE(&toplevel->app_id);
+        g_free(toplevel->icon);
+        g_free(toplevel->app_name);
+        g_free(toplevel->desktop_id);
+        wl_list_remove(&toplevel->link);
+        xd_free(toplevel);
     }
     xd_shellbus_finish(&shell);
     xd_tray_finish(&shell);

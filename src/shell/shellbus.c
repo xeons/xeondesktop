@@ -81,9 +81,9 @@ void xd_shell_toggle_start_menu(xd_shell *shell) {
     /* The first monitor's taskbar: there's no telling which monitor the
      * key was pressed on. */
     xd_taskbar *bar = nullptr;
-    XD_LIST_FOR_EACH(b, &shell->taskbars, xd_taskbar, link) {
-        if (b->surface != nullptr && b->configured) {
-            bar = b;
+    XD_LIST_FOR_EACH(candidate, &shell->taskbars, xd_taskbar, link) {
+        if (candidate->surface != nullptr && candidate->configured) {
+            bar = candidate;
             break;
         }
     }
@@ -113,22 +113,23 @@ void xd_shellbus_taskbar_gone(xd_shell *shell, xd_taskbar *bar) {
 /* Display Properties' Identify: (output name, monitor number) pairs. */
 static void identify(xd_shell *shell, GVariant *params) {
     GVariant *list = g_variant_get_child_value(params, 0);
-    size_t n = XD_MIN(g_variant_n_children(list), (size_t)32);
+    size_t count = XD_MIN(g_variant_n_children(list), (size_t)32);
     const char *names[32];
     unsigned numbers[32];
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         guint32 number = 0;
         g_variant_get_child(list, i, "(&su)", &names[i], &number);
         numbers[i] = number;
     }
-    xd_identify_show(shell, names, numbers, n);
+    xd_identify_show(shell, names, numbers, count);
     g_variant_unref(list);
 }
 
-static void method_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                        [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                        const char *method, [[maybe_unused]] GVariant *params,
-                        GDBusMethodInvocation *inv, gpointer data) {
+static void method_call([[maybe_unused]] GDBusConnection *connection,
+                        [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                        [[maybe_unused]] const char *iface, const char *method,
+                        [[maybe_unused]] GVariant *params, GDBusMethodInvocation *inv,
+                        gpointer data) {
     xd_shellbus *sb = data;
     if (g_strcmp0(method, "ToggleStartMenu") == 0) {
         xd_shell_toggle_start_menu(sb->shell);

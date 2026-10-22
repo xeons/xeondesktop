@@ -65,67 +65,68 @@ static bool allowed(const xd_shell *shell) {
     return bus != nullptr && strstr(bus, "/run/dbus/system_bus_socket") == nullptr;
 }
 
-static void drop(xd_buttons *b) {
-    if (b->fd >= 0)
-        close(b->fd);
-    b->fd = -1;
-    b->held[0] = '\0';
+static void drop(xd_buttons *buttons) {
+    if (buttons->fd >= 0)
+        close(buttons->fd);
+    buttons->fd = -1;
+    buttons->held[0] = '\0';
 }
 
-static void request(xd_buttons *b);
+static void request(xd_buttons *buttons);
 
 static void inhibited(GObject *src, GAsyncResult *res, gpointer data) {
     GUnixFDList *fds = nullptr;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(src), &fds,
-                                                                  res, &error);
-    if (r == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    GVariant *variant =
+        g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(src), &fds, res, &error);
+    if (variant == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
         g_error_free(error); /* the shell is exiting: b is gone */
         return;
     }
-    xd_buttons *b = data;
-    b->inhibiting = false;
-    if (r == nullptr) {
+    xd_buttons *buttons = data;
+    buttons->inhibiting = false;
+    if (variant == nullptr) {
         /* logind keeps them: its own settings act. */
         fprintf(stderr, "xd-shell: cannot take over the power buttons: %s\n", error->message);
         g_error_free(error);
         return;
     }
     gint32 index = -1;
-    g_variant_get(r, "(h)", &index);
-    g_variant_unref(r);
+    g_variant_get(variant, "(h)", &index);
+    g_variant_unref(variant);
     int fd = fds != nullptr ? g_unix_fd_list_get(fds, index, nullptr) : -1;
     g_clear_object(&fds);
     if (fd < 0)
         return;
     /* The new one first, then the old one goes: no moment without. */
-    int old = b->fd;
-    b->fd = fd;
-    g_strlcpy(b->held, b->asked, sizeof(b->held));
+    int old = buttons->fd;
+    buttons->fd = fd;
+    g_strlcpy(buttons->held, buttons->asked, sizeof(buttons->held));
     if (old >= 0)
         close(old);
-    request(b); /* the settings may have changed meanwhile */
+    request(buttons); /* the settings may have changed meanwhile */
 }
 
 /* Holds an inhibitor for what the settings set, if it isn't held. */
-static void request(xd_buttons *b) {
-    if (b->bus == nullptr || b->inhibiting)
+static void request(xd_buttons *buttons) {
+    if (buttons->bus == nullptr || buttons->inhibiting)
         return;
     char what[WHAT_MAX];
-    xd_power_buttons_inhibit_what(&b->shell->settings, what, sizeof(what));
-    if (strcmp(what, b->held) == 0)
+    xd_power_buttons_inhibit_what(&buttons->shell->settings, what, sizeof(what));
+    if (strcmp(what, buttons->held) == 0)
         return;
     if (what[0] == '\0') {
-        drop(b); /* all logind's again */
+        drop(buttons); /* all logind's again */
         return;
     }
-    b->inhibiting = true;
-    g_strlcpy(b->asked, what, sizeof(b->asked));
+    buttons->inhibiting = true;
+    g_strlcpy(buttons->asked, what, sizeof(buttons->asked));
     g_dbus_connection_call_with_unix_fd_list(
-        b->bus, LOGIN1, LOGIN1_PATH, LOGIN1_MANAGER, "Inhibit",
+        buttons->bus, LOGIN1, LOGIN1_PATH, LOGIN1_MANAGER, "Inhibit",
         g_variant_new("(ssss)", what, "XeonDesktop",
                       "Power Options handles the lid and the power buttons", "block"),
-        G_VARIANT_TYPE("(h)"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, b->cancel, inhibited, b);
+        G_VARIANT_TYPE("(h)"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, buttons->cancel, inhibited,
+        buttons);
 }
 
 void xd_buttons_update(xd_shell *shell) {
@@ -143,33 +144,33 @@ static void got_bus([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer d
         g_error_free(error);
         return;
     }
-    xd_buttons *b = data;
-    b->bus = bus;
-    request(b);
+    xd_buttons *buttons = data;
+    buttons->bus = bus;
+    request(buttons);
 }
 
 void xd_buttons_init(xd_shell *shell) {
     if (!allowed(shell))
         return;
-    xd_buttons *b = g_new0(xd_buttons, 1);
-    b->shell = shell;
-    b->fd = -1;
-    b->cancel = g_cancellable_new();
-    shell->buttons = b;
-    g_bus_get(G_BUS_TYPE_SYSTEM, b->cancel, got_bus, b);
+    xd_buttons *buttons = g_new0(xd_buttons, 1);
+    buttons->shell = shell;
+    buttons->fd = -1;
+    buttons->cancel = g_cancellable_new();
+    shell->buttons = buttons;
+    g_bus_get(G_BUS_TYPE_SYSTEM, buttons->cancel, got_bus, buttons);
 }
 
 void xd_buttons_finish(xd_shell *shell) {
-    xd_buttons *b = shell->buttons;
-    if (b == nullptr)
+    xd_buttons *buttons = shell->buttons;
+    if (buttons == nullptr)
         return;
     shell->buttons = nullptr;
-    g_cancellable_cancel(b->cancel);
-    g_object_unref(b->cancel);
-    drop(b);
-    if (b->bus != nullptr)
-        g_object_unref(b->bus);
-    g_free(b);
+    g_cancellable_cancel(buttons->cancel);
+    g_object_unref(buttons->cancel);
+    drop(buttons);
+    if (buttons->bus != nullptr)
+        g_object_unref(buttons->bus);
+    g_free(buttons);
 }
 
 static void act(xd_shell *shell, xd_button_action action) {
@@ -198,39 +199,41 @@ static void act(xd_shell *shell, xd_button_action action) {
 
 static void got_docked(GObject *src, GAsyncResult *res, gpointer data) {
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    GVariant *response = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (response == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
         g_error_free(error);
         return;
     }
-    xd_buttons *b = data;
+    xd_buttons *buttons = data;
     bool docked;
-    if (r != nullptr) {
-        GVariant *v = nullptr;
-        g_variant_get(r, "(v)", &v);
-        docked = g_variant_is_of_type(v, G_VARIANT_TYPE_BOOLEAN) && g_variant_get_boolean(v);
-        g_variant_unref(v);
-        g_variant_unref(r);
+    if (response != nullptr) {
+        GVariant *value = nullptr;
+        g_variant_get(response, "(v)", &value);
+        docked =
+            g_variant_is_of_type(value, G_VARIANT_TYPE_BOOLEAN) && g_variant_get_boolean(value);
+        g_variant_unref(value);
+        g_variant_unref(response);
     } else {
         /* A logind without it: another monitor is what we can tell. */
         g_error_free(error);
-        docked = wl_list_length(&b->shell->taskbars) > 1;
+        docked = wl_list_length(&buttons->shell->taskbars) > 1;
     }
-    act(b->shell, xd_power_button_action(&b->shell->settings, XD_BUTTON_LID, docked));
+    act(buttons->shell, xd_power_button_action(&buttons->shell->settings, XD_BUTTON_LID, docked));
 }
 
 void xd_buttons_event(xd_shell *shell, xd_power_button button) {
-    xd_buttons *b = shell->buttons;
+    xd_buttons *buttons = shell->buttons;
     /* Without our inhibitor for it, logind has acted already. */
-    if (b == nullptr || b->fd < 0 || strstr(b->held, handles[button]) == nullptr ||
+    if (buttons == nullptr || buttons->fd < 0 ||
+        strstr(buttons->held, handles[button]) == nullptr ||
         shell->settings.power_buttons[button] == XD_BUTTON_LOGIND)
         return;
     if (button != XD_BUTTON_LID) {
         act(shell, xd_power_button_action(&shell->settings, button, false));
         return;
     }
-    g_dbus_connection_call(b->bus, LOGIN1, LOGIN1_PATH, "org.freedesktop.DBus.Properties", "Get",
-                           g_variant_new("(ss)", LOGIN1_MANAGER, "Docked"),
-                           G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, -1, b->cancel,
-                           got_docked, b);
+    g_dbus_connection_call(buttons->bus, LOGIN1, LOGIN1_PATH, "org.freedesktop.DBus.Properties",
+                           "Get", g_variant_new("(ss)", LOGIN1_MANAGER, "Docked"),
+                           G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, -1, buttons->cancel,
+                           got_docked, buttons);
 }

@@ -49,11 +49,11 @@ typedef void (*xd_launcher_changed_fn)(void *data, const char *id, const xd_laun
 
 /* Starts listening on the session bus (nothing happens without one). */
 xd_launcher *xd_launcher_new(xd_launcher_changed_fn changed, void *data);
-void xd_launcher_free(xd_launcher *l);
+void xd_launcher_free(xd_launcher *launcher);
 /* The state of the program with taskbar key `key`; nullptr if it has none. */
-const xd_launcher_state *xd_launcher_lookup(const xd_launcher *l, const char *key);
+const xd_launcher_state *xd_launcher_lookup(const xd_launcher *launcher, const char *key);
 /* `open` holds the taskbar keys of the programs with windows now:
  * programs that had a window and have none any more are forgotten. */
-void xd_launcher_sweep(xd_launcher *l, GHashTable *open);
+void xd_launcher_sweep(xd_launcher *launcher, GHashTable *open);
 
 #endif

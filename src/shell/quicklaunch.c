@@ -45,15 +45,15 @@ static bool mkdirs(xd_strbuf *path) {
 }
 
 /* Links `prefix-id` in the folder to the first installed entry in ids. */
-static void link_first(const char *dir, const char *prefix, const char *const *ids, size_t n) {
+static void link_first(const char *dir, const char *prefix, const char *const *ids, size_t count) {
     static const char *const app_dirs[] = {"/usr/local/share/applications",
                                            "/usr/share/applications"};
     xd_strbuf src = {0};
     xd_strbuf dst = {0};
-    for (size_t i = 0; i < n; i++) {
-        for (size_t d = 0; d < XD_ARRAY_LEN(app_dirs); d++) {
+    for (size_t i = 0; i < count; i++) {
+        for (size_t dir_index = 0; dir_index < XD_ARRAY_LEN(app_dirs); dir_index++) {
             xd_strbuf_clear(&src);
-            xd_strbuf_appendf(&src, "%s/%s", app_dirs[d], ids[i]);
+            xd_strbuf_appendf(&src, "%s/%s", app_dirs[dir_index], ids[i]);
             if (access(xd_strbuf_cstr(&src), R_OK) != 0)
                 continue;
             xd_strbuf_clear(&dst);
@@ -77,12 +77,12 @@ static void create_defaults(xd_strbuf *dir) {
         return;
     xd_strbuf path = {0};
     xd_strbuf_appendf(&path, "%s/10-show-desktop.desktop", xd_strbuf_cstr(dir));
-    FILE *f = fopen(xd_strbuf_cstr(&path), "w");
-    if (f != nullptr) {
+    FILE *file = fopen(xd_strbuf_cstr(&path), "w");
+    if (file != nullptr) {
         fputs("[Desktop Entry]\nType=Application\nName=Show Desktop\nIcon=user-desktop\n"
               "Exec=true\nX-XeonDesktop-Action=show-desktop\n",
-              f);
-        fclose(f);
+              file);
+        fclose(file);
     }
     xd_strbuf_free(&path);
     static const char *const browsers[] = {"firefox.desktop", "org.mozilla.firefox.desktop",
@@ -95,8 +95,8 @@ static void create_defaults(xd_strbuf *dir) {
     link_first(xd_strbuf_cstr(dir), "30", terminals, XD_ARRAY_LEN(terminals));
 }
 
-static int compare_names(const void *a, const void *b) {
-    return strcmp(*(char *const *)a, *(char *const *)b);
+static int compare_names(const void *left, const void *right) {
+    return strcmp(*(char *const *)left, *(char *const *)right);
 }
 
 static void release_items(xd_quicklaunch *ql) {
@@ -117,34 +117,34 @@ void xd_quicklaunch_reload(xd_shell *shell) {
 
     xd_strbuf dir = {0};
     quicklaunch_dir(&dir);
-    DIR *d = opendir(xd_strbuf_cstr(&dir));
-    if (d == nullptr) {
+    DIR *directory = opendir(xd_strbuf_cstr(&dir));
+    if (directory == nullptr) {
         xd_strbuf_free(&dir);
         return;
     }
     char **names = nullptr;
-    size_t n = 0;
+    size_t count = 0;
     size_t cap = 0;
     struct dirent *de;
-    while ((de = readdir(d)) != nullptr) {
+    while ((de = readdir(directory)) != nullptr) {
         xd_str name = xd_str_from_cstr(de->d_name);
         if (name.len < 9 || name.ptr[0] == '.' ||
             !xd_str_eq(xd_str_sub(name, name.len - 8, 8), XD_STR(".desktop")))
             continue;
-        if (n == cap) {
+        if (count == cap) {
             cap = cap == 0 ? 16 : cap * 2;
             names = xd_realloc_array(names, cap, sizeof(*names));
         }
-        names[n++] = xd_str_dup_cstr(name);
+        names[count++] = xd_str_dup_cstr(name);
     }
-    closedir(d);
-    if (n > 1)
-        qsort(names, n, sizeof(*names), compare_names);
+    closedir(directory);
+    if (count > 1)
+        qsort(names, count, sizeof(*names), compare_names);
 
-    ql->items = xd_alloc_array(XD_MAX(n, 1), sizeof(*ql->items));
-    ql->files = xd_alloc_array(XD_MAX(n, 1), sizeof(*ql->files));
+    ql->items = xd_alloc_array(XD_MAX(count, 1), sizeof(*ql->items));
+    ql->files = xd_alloc_array(XD_MAX(count, 1), sizeof(*ql->files));
     xd_strbuf path = {0};
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         xd_strbuf_clear(&path);
         xd_strbuf_appendf(&path, "%s/%s", xd_strbuf_cstr(&dir), names[i]);
         xd_app app;
@@ -228,17 +228,17 @@ void xd_quicklaunch_activate(xd_shell *shell, size_t index) {
 /* A file name without its order prefix: "20-firefox.desktop" ->
  * "firefox.desktop". */
 static const char *stem(const char *file) {
-    const char *p = file;
-    while (*p >= '0' && *p <= '9')
-        p++;
-    return p != file && *p == '-' ? p + 1 : file;
+    const char *rest = file;
+    while (*rest >= '0' && *rest <= '9')
+        rest++;
+    return rest != file && *rest == '-' ? rest + 1 : file;
 }
 
 /* Renames the folder's shortcuts to "10-", "20-", ... in `order` (file
  * names; nullptr entries skipped). Two passes, so no name is clobbered. */
-static void renumber(const char *dir, const char *const *order, size_t n) {
-    char **temps = xd_alloc_array(XD_MAX(n, 1), sizeof(*temps));
-    for (size_t i = 0; i < n; i++) {
+static void renumber(const char *dir, const char *const *order, size_t count) {
+    char **temps = xd_alloc_array(XD_MAX(count, 1), sizeof(*temps));
+    for (size_t i = 0; i < count; i++) {
         temps[i] = nullptr;
         if (order[i] == nullptr)
             continue;
@@ -251,7 +251,7 @@ static void renumber(const char *dir, const char *const *order, size_t n) {
         g_free(from);
     }
     size_t k = 0;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         if (temps[i] == nullptr)
             continue;
         char *to = g_strdup_printf("%s/%02zu-%s", dir, ++k * 10, stem(order[i]));
@@ -268,16 +268,16 @@ void xd_quicklaunch_move(xd_shell *shell, size_t from, size_t to) {
     if (from >= ql->count || to > ql->count || to == from || to == from + 1)
         return;
     const char **order = xd_alloc_array(ql->count, sizeof(*order));
-    size_t n = 0;
+    size_t count = 0;
     for (size_t i = 0; i <= ql->count; i++) {
         if (i == to)
-            order[n++] = ql->files[from];
+            order[count++] = ql->files[from];
         if (i < ql->count && i != from)
-            order[n++] = ql->files[i];
+            order[count++] = ql->files[i];
     }
     xd_strbuf dir = {0};
     quicklaunch_dir(&dir);
-    renumber(xd_strbuf_cstr(&dir), order, n);
+    renumber(xd_strbuf_cstr(&dir), order, count);
     xd_strbuf_free(&dir);
     xd_free(order);
 }
@@ -285,10 +285,10 @@ void xd_quicklaunch_move(xd_shell *shell, size_t from, size_t to) {
 /* A launcher for something that isn't an application: opens it with its
  * default program, with its type's icon. */
 static bool write_launcher(const char *path, const char *target) {
-    GFile *f = g_file_new_for_path(target);
-    GFileInfo *info = g_file_query_info(f, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
-                                           G_FILE_ATTRIBUTE_STANDARD_ICON,
-                                        G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
+    GFile *file = g_file_new_for_path(target);
+    GFileInfo *info = g_file_query_info(
+        file, G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_ICON,
+        G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
     char *name = g_path_get_basename(target);
     char *icon = nullptr;
     if (info != nullptr) {
@@ -302,7 +302,7 @@ static bool write_launcher(const char *path, const char *target) {
         }
         g_object_unref(info);
     }
-    g_object_unref(f);
+    g_object_unref(file);
     GKeyFile *kf = g_key_file_new();
     char *quoted = g_shell_quote(target);
     char *exec = g_strdup_printf("xdg-open %s", quoted);
@@ -340,14 +340,14 @@ bool xd_quicklaunch_add(xd_shell *shell, size_t at, const char *target) {
         /* Put it where it was dropped. */
         at = XD_MIN(at, ql->count);
         const char **order = xd_alloc_array(ql->count + 1, sizeof(*order));
-        size_t n = 0;
+        size_t count = 0;
         for (size_t i = 0; i <= ql->count; i++) {
             if (i == at)
-                order[n++] = file;
+                order[count++] = file;
             if (i < ql->count)
-                order[n++] = ql->files[i];
+                order[count++] = ql->files[i];
         }
-        renumber(xd_strbuf_cstr(&dir), order, n);
+        renumber(xd_strbuf_cstr(&dir), order, count);
         xd_free(order);
     } else {
         fprintf(stderr, "xd-shell: quick launch: cannot add %s\n", target);

@@ -128,28 +128,29 @@ struct xd_thumbs {
 
 /* ---- ext-foreign-toplevel-list ---------------------------------------------------- */
 
-static void handle_closed(void *data, struct ext_foreign_toplevel_handle_v1 *h) {
-    ext_handle *e = data;
-    wl_list_remove(&e->link);
-    ext_foreign_toplevel_handle_v1_destroy(h);
-    g_free(e->identifier);
-    g_free(e);
+static void handle_closed(void *data, struct ext_foreign_toplevel_handle_v1 *toplevel_handle) {
+    ext_handle *list_handle = data;
+    wl_list_remove(&list_handle->link);
+    ext_foreign_toplevel_handle_v1_destroy(toplevel_handle);
+    g_free(list_handle->identifier);
+    g_free(list_handle);
 }
 
 static void handle_done([[maybe_unused]] void *data,
-                        [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *h) {}
+                        [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *toplevel_handle) {}
 static void handle_title([[maybe_unused]] void *data,
-                         [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *h,
+                         [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *toplevel_handle,
                          [[maybe_unused]] const char *title) {}
 static void handle_app_id([[maybe_unused]] void *data,
-                          [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *h,
+                          [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *toplevel_handle,
                           [[maybe_unused]] const char *app_id) {}
 
-static void handle_identifier(void *data, [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *h,
-                              const char *identifier) {
-    ext_handle *e = data;
-    g_free(e->identifier);
-    e->identifier = g_strdup(identifier);
+static void handle_identifier(
+    void *data, [[maybe_unused]] struct ext_foreign_toplevel_handle_v1 *toplevel_handle,
+    const char *identifier) {
+    ext_handle *list_handle = data;
+    g_free(list_handle->identifier);
+    list_handle->identifier = g_strdup(identifier);
 }
 
 static const struct ext_foreign_toplevel_handle_v1_listener handle_listener = {
@@ -160,18 +161,19 @@ static const struct ext_foreign_toplevel_handle_v1_listener handle_listener = {
     .identifier = handle_identifier,
 };
 
-static void list_toplevel(void *data, [[maybe_unused]] struct ext_foreign_toplevel_list_v1 *l,
-                          struct ext_foreign_toplevel_handle_v1 *h) {
+static void list_toplevel(void *data,
+                          [[maybe_unused]] struct ext_foreign_toplevel_list_v1 *toplevel_list,
+                          struct ext_foreign_toplevel_handle_v1 *toplevel_handle) {
     xd_thumbs *th = data;
-    ext_handle *e = g_new0(ext_handle, 1);
-    e->handle = h;
-    wl_list_insert(&th->handles, &e->link);
-    ext_foreign_toplevel_handle_v1_add_listener(h, &handle_listener, e);
+    ext_handle *list_handle = g_new0(ext_handle, 1);
+    list_handle->handle = toplevel_handle;
+    wl_list_insert(&th->handles, &list_handle->link);
+    ext_foreign_toplevel_handle_v1_add_listener(toplevel_handle, &handle_listener, list_handle);
 }
 
-static void list_finished(void *data, struct ext_foreign_toplevel_list_v1 *l) {
+static void list_finished(void *data, struct ext_foreign_toplevel_list_v1 *toplevel_list) {
     xd_thumbs *th = data;
-    ext_foreign_toplevel_list_v1_destroy(l);
+    ext_foreign_toplevel_list_v1_destroy(toplevel_list);
     th->list = nullptr;
 }
 
@@ -183,9 +185,9 @@ static const struct ext_foreign_toplevel_list_v1_listener list_listener = {
 static ext_handle *handle_for(xd_thumbs *th, const char *identifier) {
     if (identifier == nullptr)
         return nullptr;
-    XD_LIST_FOR_EACH(e, &th->handles, ext_handle, link) {
-        if (e->identifier != nullptr && strcmp(e->identifier, identifier) == 0)
-            return e;
+    XD_LIST_FOR_EACH(list_handle, &th->handles, ext_handle, link) {
+        if (list_handle->identifier != nullptr && strcmp(list_handle->identifier, identifier) == 0)
+            return list_handle;
     }
     return nullptr;
 }
@@ -242,83 +244,86 @@ static xd_toplevel *toplevel_by_id(xd_shell *shell, uint64_t id) {
 
 /* ---- capturing ---------------------------------------------------------------------- */
 
-static void capture(thumb *t);
+static void capture(thumb *thumbnail);
 
-static void stop_capture(thumb *t) {
-    if (t->frame != nullptr)
-        ext_image_copy_capture_frame_v1_destroy(t->frame);
-    if (t->session != nullptr)
-        ext_image_copy_capture_session_v1_destroy(t->session);
-    if (t->source != nullptr)
-        ext_image_capture_source_v1_destroy(t->source);
-    t->frame = nullptr;
-    t->session = nullptr;
-    t->source = nullptr;
+static void stop_capture(thumb *thumbnail) {
+    if (thumbnail->frame != nullptr)
+        ext_image_copy_capture_frame_v1_destroy(thumbnail->frame);
+    if (thumbnail->session != nullptr)
+        ext_image_copy_capture_session_v1_destroy(thumbnail->session);
+    if (thumbnail->source != nullptr)
+        ext_image_capture_source_v1_destroy(thumbnail->source);
+    thumbnail->frame = nullptr;
+    thumbnail->session = nullptr;
+    thumbnail->source = nullptr;
 }
 
 static gboolean capture_again(gpointer data) {
-    thumb *t = data;
-    t->again = 0;
-    capture(t);
+    thumb *thumbnail = data;
+    thumbnail->again = 0;
+    capture(thumbnail);
     return G_SOURCE_REMOVE;
 }
 
-static void later(thumb *t, int ms) {
-    if (t->again == 0)
-        t->again = g_timeout_add((guint)ms, capture_again, t);
+static void later(thumb *thumbnail, int ms) {
+    if (thumbnail->again == 0)
+        thumbnail->again = g_timeout_add((guint)ms, capture_again, thumbnail);
 }
 
 static void frame_transform([[maybe_unused]] void *data,
-                            [[maybe_unused]] struct ext_image_copy_capture_frame_v1 *f,
+                            [[maybe_unused]] struct ext_image_copy_capture_frame_v1 *copy_frame,
                             [[maybe_unused]] uint32_t transform) {}
 static void frame_damage([[maybe_unused]] void *data,
-                         [[maybe_unused]] struct ext_image_copy_capture_frame_v1 *f,
+                         [[maybe_unused]] struct ext_image_copy_capture_frame_v1 *copy_frame,
                          [[maybe_unused]] int32_t x, [[maybe_unused]] int32_t y,
-                         [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+                         [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height) {}
 static void frame_time([[maybe_unused]] void *data,
-                       [[maybe_unused]] struct ext_image_copy_capture_frame_v1 *f,
+                       [[maybe_unused]] struct ext_image_copy_capture_frame_v1 *copy_frame,
                        [[maybe_unused]] uint32_t hi, [[maybe_unused]] uint32_t lo,
                        [[maybe_unused]] uint32_t nsec) {}
 
 /* The picture is in the buffer: kept, and the next one asked for soon
  * (the compositor sends it when the window next changes). */
-static void frame_ready(void *data, struct ext_image_copy_capture_frame_v1 *f) {
-    thumb *t = data;
-    ext_image_copy_capture_frame_v1_destroy(f);
-    t->frame = nullptr;
-    xd_shm_buffer *buf = &t->ring.slots[0];
+static void frame_ready(void *data, struct ext_image_copy_capture_frame_v1 *copy_frame) {
+    thumb *thumbnail = data;
+    ext_image_copy_capture_frame_v1_destroy(copy_frame);
+    thumbnail->frame = nullptr;
+    xd_shm_buffer *buf = &thumbnail->ring.slots[0];
     if (buf->surface != nullptr) {
         cairo_surface_mark_dirty(buf->surface);
-        if (t->pic == nullptr || cairo_image_surface_get_width(t->pic) != buf->width ||
-            cairo_image_surface_get_height(t->pic) != buf->height) {
-            if (t->pic != nullptr)
-                cairo_surface_destroy(t->pic);
-            t->pic = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, buf->width, buf->height);
+        if (thumbnail->pic == nullptr ||
+            cairo_image_surface_get_width(thumbnail->pic) != buf->width ||
+            cairo_image_surface_get_height(thumbnail->pic) != buf->height) {
+            if (thumbnail->pic != nullptr)
+                cairo_surface_destroy(thumbnail->pic);
+            thumbnail->pic =
+                cairo_image_surface_create(CAIRO_FORMAT_ARGB32, buf->width, buf->height);
         }
-        cairo_t *cr = cairo_create(t->pic);
-        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-        cairo_set_source_surface(cr, buf->surface, 0, 0);
-        cairo_paint(cr);
-        cairo_destroy(cr);
-        t->th->dirty = true;
+        cairo_t *cairo = cairo_create(thumbnail->pic);
+        cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+        cairo_set_source_surface(cairo, buf->surface, 0, 0);
+        cairo_paint(cairo);
+        cairo_destroy(cairo);
+        thumbnail->th->dirty = true;
     }
-    later(t, RECAPTURE_MS);
+    later(thumbnail, RECAPTURE_MS);
 }
 
-static void frame_failed(void *data, struct ext_image_copy_capture_frame_v1 *f, uint32_t reason) {
-    thumb *t = data;
-    ext_image_copy_capture_frame_v1_destroy(f);
-    t->frame = nullptr;
+static void frame_failed(void *data, struct ext_image_copy_capture_frame_v1 *copy_frame,
+                         uint32_t reason) {
+    thumb *thumbnail = data;
+    ext_image_copy_capture_frame_v1_destroy(copy_frame);
+    thumbnail->frame = nullptr;
     switch (reason) {
     case EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_STOPPED:
-        t->stopped = true;
-        stop_capture(t);
+        thumbnail->stopped = true;
+        stop_capture(thumbnail);
         break;
     case EXT_IMAGE_COPY_CAPTURE_FRAME_V1_FAILURE_REASON_BUFFER_CONSTRAINTS:
-        capture(t); /* the window's new size came before this */
+        capture(thumbnail); /* the window's new size came before this */
         break;
     default:
-        later(t, RETRY_MS);
+        later(thumbnail, RETRY_MS);
         break;
     }
 }
@@ -331,56 +336,61 @@ static const struct ext_image_copy_capture_frame_v1_listener frame_listener = {
     .failed = frame_failed,
 };
 
-static void capture(thumb *t) {
-    xd_shell *shell = t->th->shell;
-    if (t->stopped || t->session == nullptr || t->frame != nullptr || !t->argb ||
-        t->want_w <= 0 || t->want_h <= 0)
+static void capture(thumb *thumbnail) {
+    xd_shell *shell = thumbnail->th->shell;
+    if (thumbnail->stopped || thumbnail->session == nullptr || thumbnail->frame != nullptr ||
+        !thumbnail->argb || thumbnail->want_w <= 0 || thumbnail->want_h <= 0)
         return;
-    xd_shm_buffer *buf = xd_shm_ring_acquire(&t->ring, shell->shm, t->want_w, t->want_h);
+    xd_shm_buffer *buf =
+        xd_shm_ring_acquire(&thumbnail->ring, shell->shm, thumbnail->want_w, thumbnail->want_h);
     if (buf == nullptr)
         return;
-    t->frame = ext_image_copy_capture_session_v1_create_frame(t->session);
-    ext_image_copy_capture_frame_v1_add_listener(t->frame, &frame_listener, t);
-    ext_image_copy_capture_frame_v1_attach_buffer(t->frame, buf->buffer);
-    ext_image_copy_capture_frame_v1_damage_buffer(t->frame, 0, 0, t->want_w, t->want_h);
-    ext_image_copy_capture_frame_v1_capture(t->frame);
+    thumbnail->frame = ext_image_copy_capture_session_v1_create_frame(thumbnail->session);
+    ext_image_copy_capture_frame_v1_add_listener(thumbnail->frame, &frame_listener, thumbnail);
+    ext_image_copy_capture_frame_v1_attach_buffer(thumbnail->frame, buf->buffer);
+    ext_image_copy_capture_frame_v1_damage_buffer(thumbnail->frame, 0, 0, thumbnail->want_w,
+                                                  thumbnail->want_h);
+    ext_image_copy_capture_frame_v1_capture(thumbnail->frame);
 }
 
-static void session_size(void *data, [[maybe_unused]] struct ext_image_copy_capture_session_v1 *s,
-                         uint32_t w, uint32_t h) {
-    thumb *t = data;
-    t->want_w = (int)XD_MIN(w, 4096u);
-    t->want_h = (int)XD_MIN(h, 4096u);
-    t->argb = false;
+static void session_size(void *data,
+                         [[maybe_unused]] struct ext_image_copy_capture_session_v1 *capture_session,
+                         uint32_t width, uint32_t height) {
+    thumb *thumbnail = data;
+    thumbnail->want_w = (int)XD_MIN(width, 4096u);
+    thumbnail->want_h = (int)XD_MIN(height, 4096u);
+    thumbnail->argb = false;
 }
 
-static void session_shm_format(void *data,
-                               [[maybe_unused]] struct ext_image_copy_capture_session_v1 *s,
-                               uint32_t format) {
-    thumb *t = data;
+static void session_shm_format(
+    void *data, [[maybe_unused]] struct ext_image_copy_capture_session_v1 *capture_session,
+    uint32_t format) {
+    thumb *thumbnail = data;
     if (format == WL_SHM_FORMAT_ARGB8888)
-        t->argb = true;
+        thumbnail->argb = true;
 }
 
-static void session_dmabuf_device([[maybe_unused]] void *data,
-                                  [[maybe_unused]] struct ext_image_copy_capture_session_v1 *s,
-                                  [[maybe_unused]] struct wl_array *device) {}
-static void session_dmabuf_format([[maybe_unused]] void *data,
-                                  [[maybe_unused]] struct ext_image_copy_capture_session_v1 *s,
-                                  [[maybe_unused]] uint32_t format,
-                                  [[maybe_unused]] struct wl_array *modifiers) {}
+static void session_dmabuf_device(
+    [[maybe_unused]] void *data,
+    [[maybe_unused]] struct ext_image_copy_capture_session_v1 *capture_session,
+    [[maybe_unused]] struct wl_array *device) {}
+static void session_dmabuf_format(
+    [[maybe_unused]] void *data,
+    [[maybe_unused]] struct ext_image_copy_capture_session_v1 *capture_session,
+    [[maybe_unused]] uint32_t format, [[maybe_unused]] struct wl_array *modifiers) {}
 
-static void session_done(void *data, [[maybe_unused]] struct ext_image_copy_capture_session_v1 *s) {
-    thumb *t = data;
-    if (t->again == 0)
-        capture(t);
+static void session_done(
+    void *data, [[maybe_unused]] struct ext_image_copy_capture_session_v1 *capture_session) {
+    thumb *thumbnail = data;
+    if (thumbnail->again == 0)
+        capture(thumbnail);
 }
 
-static void session_stopped(void *data,
-                            [[maybe_unused]] struct ext_image_copy_capture_session_v1 *s) {
-    thumb *t = data;
-    t->stopped = true;
-    stop_capture(t);
+static void session_stopped(
+    void *data, [[maybe_unused]] struct ext_image_copy_capture_session_v1 *capture_session) {
+    thumb *thumbnail = data;
+    thumbnail->stopped = true;
+    stop_capture(thumbnail);
 }
 
 static const struct ext_image_copy_capture_session_v1_listener session_listener = {
@@ -393,27 +403,29 @@ static const struct ext_image_copy_capture_session_v1_listener session_listener 
 };
 
 static thumb *thumb_new(xd_thumbs *th, xd_toplevel *tl) {
-    thumb *t = XD_NEW(thumb);
-    t->th = th;
-    t->window_id = tl->id;
-    ext_handle *e = can_capture(th->shell) ? handle_for(th, tl->identifier) : nullptr;
-    if (e != nullptr) {
-        t->source = ext_foreign_toplevel_image_capture_source_manager_v1_create_source(
-            th->sources, e->handle);
-        t->session = ext_image_copy_capture_manager_v1_create_session(th->copier, t->source, 0);
-        ext_image_copy_capture_session_v1_add_listener(t->session, &session_listener, t);
+    thumb *thumbnail = XD_NEW(thumb);
+    thumbnail->th = th;
+    thumbnail->window_id = tl->id;
+    ext_handle *list_handle = can_capture(th->shell) ? handle_for(th, tl->identifier) : nullptr;
+    if (list_handle != nullptr) {
+        thumbnail->source = ext_foreign_toplevel_image_capture_source_manager_v1_create_source(
+            th->sources, list_handle->handle);
+        thumbnail->session =
+            ext_image_copy_capture_manager_v1_create_session(th->copier, thumbnail->source, 0);
+        ext_image_copy_capture_session_v1_add_listener(thumbnail->session, &session_listener,
+                                                       thumbnail);
     }
-    return t;
+    return thumbnail;
 }
 
-static void thumb_free(thumb *t) {
-    if (t->again != 0)
-        g_source_remove(t->again);
-    stop_capture(t);
-    xd_shm_ring_finish(&t->ring);
-    if (t->pic != nullptr)
-        cairo_surface_destroy(t->pic);
-    xd_free(t);
+static void thumb_free(thumb *thumbnail) {
+    if (thumbnail->again != 0)
+        g_source_remove(thumbnail->again);
+    stop_capture(thumbnail);
+    xd_shm_ring_finish(&thumbnail->ring);
+    if (thumbnail->pic != nullptr)
+        cairo_surface_destroy(thumbnail->pic);
+    xd_free(thumbnail);
 }
 
 /* ---- layout ------------------------------------------------------------------------- */
@@ -466,18 +478,18 @@ static void find_player(xd_thumbs *th) {
 }
 
 static void measure(xd_thumbs *th) {
-    size_t n = XD_MAX(th->count, 1);
+    size_t count = XD_MAX(th->count, 1);
     th->side = th->shell->settings.edge == XD_EDGE_LEFT ||
                th->shell->settings.edge == XD_EDGE_RIGHT;
     find_player(th);
-    int tiles = (int)n * (th->side ? tile_h(th) : TILE_W) + ((int)n - 1) * GAP + 2 * PAD;
+    int tiles = (int)count * (th->side ? tile_h(th) : TILE_W) + ((int)count - 1) * GAP + 2 * PAD;
     th->titles = !can_capture(th->shell) ||
                  tiles > (th->side ? room_down(th->bar) : room_across(th->bar));
     if (th->titles) {
         g_free(th->player);
         th->player = nullptr;
         th->width = LIST_W;
-        th->height = 2 * PAD + (int)n * ROW_H;
+        th->height = 2 * PAD + (int)count * ROW_H;
     } else if (th->side) {
         th->width = 2 * PAD + TILE_W;
         th->height = tiles;
@@ -489,11 +501,11 @@ static void measure(xd_thumbs *th) {
 
 /* ---- drawing ------------------------------------------------------------------------ */
 
-static int dev(double v, double s) { return (int)lround(v * s); }
+static int dev(double value, double scale) { return (int)lround(value * scale); }
 
-static xd_rect to_device(xd_rect r, double s) {
-    int x = dev(r.x, s), y = dev(r.y, s);
-    return (xd_rect){x, y, dev(r.x + r.w, s) - x, dev(r.y + r.h, s) - y};
+static xd_rect to_device(xd_rect rect, double scale) {
+    int x = dev(rect.x, scale), y = dev(rect.y, scale);
+    return (xd_rect){x, y, dev(rect.x + rect.w, scale) - x, dev(rect.y + rect.h, scale) - y};
 }
 
 static cairo_surface_t *window_icon(xd_shell *shell, const xd_toplevel *tl, int px) {
@@ -501,11 +513,11 @@ static cairo_surface_t *window_icon(xd_shell *shell, const xd_toplevel *tl, int 
     return xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), px);
 }
 
-static void paint_icon(cairo_t *cr, cairo_surface_t *icon, int x, int y) {
+static void paint_icon(cairo_t *cairo, cairo_surface_t *icon, int x, int y) {
     if (icon == nullptr)
         return;
-    cairo_set_source_surface(cr, icon, x, y);
-    cairo_paint(cr);
+    cairo_set_source_surface(cairo, icon, x, y);
+    cairo_paint(cairo);
 }
 
 static const char *title_of(const xd_toplevel *tl) {
@@ -517,120 +529,120 @@ static const char *title_of(const xd_toplevel *tl) {
 /* A media button's symbol, white as on Windows Media Player's: skip back
  * (a bar and two triangles), play (a triangle) or pause (two bars), skip
  * forward. */
-static void draw_media_glyph(cairo_t *cr, xd_rect r, int k, bool playing, double s,
+static void draw_media_glyph(cairo_t *cairo, xd_rect rect, int k, bool playing, double scale,
                              bool enabled) {
-    double cx = r.x + r.w / 2.0, cy = r.y + r.h / 2.0;
-    double h = 10 * s, w = 7 * s;
-    cairo_save(cr);
-    cairo_new_path(cr);
+    double cx = rect.x + rect.w / 2.0, cy = rect.y + rect.h / 2.0;
+    double height = 10 * scale, width = 7 * scale;
+    cairo_save(cairo);
+    cairo_new_path(cairo);
     if (k == 1 && playing) {
-        double bw = 3 * s, gap = 3 * s;
-        cairo_rectangle(cr, cx - gap / 2 - bw, cy - h / 2, bw, h);
-        cairo_rectangle(cr, cx + gap / 2, cy - h / 2, bw, h);
+        double bw = 3 * scale, gap = 3 * scale;
+        cairo_rectangle(cairo, cx - gap / 2 - bw, cy - height / 2, bw, height);
+        cairo_rectangle(cairo, cx + gap / 2, cy - height / 2, bw, height);
     } else if (k == 1) {
-        cairo_move_to(cr, cx - w / 2, cy - h / 2);
-        cairo_line_to(cr, cx + w / 2 + s, cy);
-        cairo_line_to(cr, cx - w / 2, cy + h / 2);
-        cairo_close_path(cr);
+        cairo_move_to(cairo, cx - width / 2, cy - height / 2);
+        cairo_line_to(cairo, cx + width / 2 + scale, cy);
+        cairo_line_to(cairo, cx - width / 2, cy + height / 2);
+        cairo_close_path(cairo);
     } else {
         /* Two triangles and a bar, pointing the way it skips. */
-        double dir = k == 2 ? 1 : -1, tw = 5 * s, bar = 2 * s;
+        double dir = k == 2 ? 1 : -1, tw = 5 * scale, bar = 2 * scale;
         double x0 = cx - dir * (tw + bar / 2);
         for (int j = 0; j < 2; j++) {
             double bx = x0 + dir * j * tw;
-            cairo_move_to(cr, bx, cy - h / 2);
-            cairo_line_to(cr, bx + dir * tw, cy);
-            cairo_line_to(cr, bx, cy + h / 2);
-            cairo_close_path(cr);
+            cairo_move_to(cairo, bx, cy - height / 2);
+            cairo_line_to(cairo, bx + dir * tw, cy);
+            cairo_line_to(cairo, bx, cy + height / 2);
+            cairo_close_path(cairo);
         }
         double barx = x0 + dir * 2 * tw;
-        cairo_rectangle(cr, k == 2 ? barx : barx - bar, cy - h / 2, bar, h);
+        cairo_rectangle(cairo, k == 2 ? barx : barx - bar, cy - height / 2, bar, height);
     }
-    cairo_set_source_rgba(cr, 0, 0, 0, enabled ? 0.55 : 0.25);
-    cairo_set_line_width(cr, 1.5 * s);
-    cairo_stroke_preserve(cr);
-    cairo_set_source_rgba(cr, 1, 1, 1, enabled ? 1.0 : 0.4);
-    cairo_fill(cr);
-    cairo_restore(cr);
+    cairo_set_source_rgba(cairo, 0, 0, 0, enabled ? 0.55 : 0.25);
+    cairo_set_line_width(cairo, 1.5 * scale);
+    cairo_stroke_preserve(cairo);
+    cairo_set_source_rgba(cairo, 1, 1, 1, enabled ? 1.0 : 0.4);
+    cairo_fill(cairo);
+    cairo_restore(cairo);
 }
 
 static bool button_enabled(const xd_mpris_state *st, int k) {
     return k == 0 ? st->can_previous : k == 1 ? st->can_play_pause : st->can_next;
 }
 
-static void draw_toolbar(xd_thumbs *th, const xd_theme *t, cairo_t *cr, xd_rect tile) {
+static void draw_toolbar(xd_thumbs *th, const xd_theme *theme, cairo_t *cairo, xd_rect tile) {
     xd_mpris_state st;
     if (!xd_mpris_state_of(th->mpris, th->player, &st))
         return;
     for (int k = 0; k < TBTN_COUNT; k++) {
-        xd_rect r = to_device(button_of(tile, k), th->scale);
+        xd_rect rect = to_device(button_of(tile, k), th->scale);
         bool enabled = button_enabled(&st, k);
         uint8_t state = 0;
         if (enabled && th->hot_button == k)
             state |= XD_STATE_HOT;
         if (enabled && th->hot_button == k && th->pressed_button == k)
             state |= XD_STATE_PRESSED;
-        xd_theme_draw_thumb_tile(t, cr, r, state);
-        draw_media_glyph(cr, r, k, st.playing, th->scale, enabled);
+        xd_theme_draw_thumb_tile(theme, cairo, rect, state);
+        draw_media_glyph(cairo, rect, k, st.playing, th->scale, enabled);
     }
 }
 
-static void draw_tile(xd_thumbs *th, const xd_theme *t, cairo_t *cr, size_t i) {
+static void draw_tile(xd_thumbs *th, const xd_theme *theme, cairo_t *cairo, size_t i) {
     xd_shell *shell = th->shell;
-    double s = th->scale;
+    double scale = th->scale;
     xd_toplevel *tl = toplevel_by_id(shell, th->items[i]->window_id);
     if (tl == nullptr)
         return;
     xd_rect lr = tile_rect(th, i);
-    xd_rect r = to_device(lr, s);
+    xd_rect rect = to_device(lr, scale);
     bool hot = th->hot == (int)i;
     uint8_t state = 0;
     if (hot)
         state |= XD_STATE_HOT;
     if (hot && th->pressed == (int)i && !th->pressed_close)
         state |= XD_STATE_PRESSED;
-    xd_theme_draw_thumb_tile(t, cr, r, state);
-    int icon = xd_tpx(t, 16);
-    int title_h = dev(th->titles ? ROW_H : TITLE_H, s);
-    paint_icon(cr, window_icon(shell, tl, icon), r.x + xd_tpx(t, 8), r.y + (title_h - icon) / 2);
-    int tx = r.x + xd_tpx(t, 8) + icon + xd_tpx(t, 6);
-    int tr = hot && !th->titles ? to_device(close_rect(lr), s).x - xd_tpx(t, 4)
-                              : r.x + r.w - xd_tpx(t, 6);
-    xd_theme_draw_thumb_title(t, cr, (xd_rect){tx, r.y, tr - tx, title_h}, title_of(tl));
+    xd_theme_draw_thumb_tile(theme, cairo, rect, state);
+    int icon = xd_tpx(theme, 16);
+    int title_h = dev(th->titles ? ROW_H : TITLE_H, scale);
+    paint_icon(cairo, window_icon(shell, tl, icon), rect.x + xd_tpx(theme, 8),
+               rect.y + (title_h - icon) / 2);
+    int tx = rect.x + xd_tpx(theme, 8) + icon + xd_tpx(theme, 6);
+    int tr = hot && !th->titles ? to_device(close_rect(lr), scale).x - xd_tpx(theme, 4)
+                                : rect.x + rect.w - xd_tpx(theme, 6);
+    xd_theme_draw_thumb_title(theme, cairo, (xd_rect){tx, rect.y, tr - tx, title_h}, title_of(tl));
     if (th->titles)
         return;
     if (hot) {
         uint8_t cs = th->hot_close ? XD_STATE_HOT : 0;
         if (th->hot_close && th->pressed == (int)i && th->pressed_close)
             cs |= XD_STATE_PRESSED;
-        xd_theme_draw_thumb_close(t, cr, to_device(close_rect(lr), s), cs);
+        xd_theme_draw_thumb_close(theme, cairo, to_device(close_rect(lr), scale), cs);
     }
     /* The picture, fitted to the box below the title, keeping its shape. */
-    xd_rect box = to_device((xd_rect){lr.x + (TILE_W - IMG_W) / 2, lr.y + TITLE_H + 4, IMG_W,
-                                      IMG_H},
-                            s);
+    xd_rect box =
+        to_device((xd_rect){lr.x + (TILE_W - IMG_W) / 2, lr.y + TITLE_H + 4, IMG_W, IMG_H}, scale);
     if (th->player != nullptr)
-        draw_toolbar(th, t, cr, lr);
+        draw_toolbar(th, theme, cairo, lr);
     cairo_surface_t *pic = th->items[i]->pic;
     if (pic == nullptr) {
         /* Nothing yet (or no capture): its icon, large. */
-        int big = xd_tpx(t, 48);
-        paint_icon(cr, window_icon(shell, tl, big), box.x + (box.w - big) / 2,
+        int big = xd_tpx(theme, 48);
+        paint_icon(cairo, window_icon(shell, tl, big), box.x + (box.w - big) / 2,
                    box.y + (box.h - big) / 2);
         return;
     }
     double pw = cairo_image_surface_get_width(pic), ph = cairo_image_surface_get_height(pic);
     double k = fmin(box.w / pw, box.h / ph);
-    double w = pw * k, h = ph * k;
-    cairo_save(cr);
-    cairo_translate(cr, box.x + (box.w - w) / 2, box.y + (box.h - h) / 2);
-    cairo_rectangle(cr, 0, 0, w, h);
-    cairo_clip(cr);
-    cairo_scale(cr, k, k);
-    cairo_set_source_surface(cr, pic, 0, 0);
-    cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
-    cairo_paint(cr);
-    cairo_restore(cr);
+    double width = pw * k, height = ph * k;
+    cairo_save(cairo);
+    cairo_translate(cairo, box.x + (box.w - width) / 2, box.y + (box.h - height) / 2);
+    cairo_rectangle(cairo, 0, 0, width, height);
+    cairo_clip(cairo);
+    cairo_scale(cairo, k, k);
+    cairo_set_source_surface(cairo, pic, 0, 0);
+    cairo_pattern_set_filter(cairo_get_source(cairo), CAIRO_FILTER_GOOD);
+    cairo_paint(cairo);
+    cairo_restore(cairo);
 }
 
 static void render(xd_thumbs *th) {
@@ -640,13 +652,13 @@ static void render(xd_thumbs *th) {
     xd_shm_buffer *buf = xd_shm_ring_acquire(&th->ring, shell->shm, dw, dh);
     if (buf == nullptr)
         return;
-    xd_theme t;
-    xd_theme_init(&t, shell->style, &shell->scheme, th->scale);
-    cairo_t *cr = cairo_create(buf->surface);
-    xd_theme_draw_thumb_panel(&t, cr, (xd_rect){0, 0, dw, dh});
+    xd_theme theme;
+    xd_theme_init(&theme, shell->style, &shell->scheme, th->scale);
+    cairo_t *cairo = cairo_create(buf->surface);
+    xd_theme_draw_thumb_panel(&theme, cairo, (xd_rect){0, 0, dw, dh});
     for (size_t i = 0; i < th->count; i++)
-        draw_tile(th, &t, cr, i);
-    cairo_destroy(cr);
+        draw_tile(th, &theme, cairo, i);
+    cairo_destroy(cairo);
     cairo_surface_flush(buf->surface);
     wl_surface_attach(th->surface, buf->buffer, 0, 0);
     wl_surface_damage_buffer(th->surface, 0, 0, dw, dh);
@@ -665,9 +677,9 @@ void xd_thumbs_render_dirty(xd_shell *shell) {
 
 /* ---- the popup ---------------------------------------------------------------------- */
 
-static void xdg_surface_configure(void *data, struct xdg_surface *s, uint32_t serial) {
+static void xdg_surface_configure(void *data, struct xdg_surface *surface, uint32_t serial) {
     xd_thumbs *th = data;
-    xdg_surface_ack_configure(s, serial);
+    xdg_surface_ack_configure(surface, serial);
     th->configured = true;
     th->dirty = true;
 }
@@ -676,15 +688,16 @@ static const struct xdg_surface_listener xdg_surface_listener = {
     .configure = xdg_surface_configure,
 };
 
-static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *p,
+static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *popup,
                             [[maybe_unused]] int32_t x, [[maybe_unused]] int32_t y,
-                            [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+                            [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height) {}
 
-static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *p) {
+static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *popup) {
     xd_thumbs_close(((xd_thumbs *)data)->shell);
 }
 
-static void popup_repositioned([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *p,
+static void popup_repositioned([[maybe_unused]] void *data,
+                               [[maybe_unused]] struct xdg_popup *popup,
                                [[maybe_unused]] uint32_t token) {}
 
 static const struct xdg_popup_listener popup_listener = {
@@ -693,7 +706,8 @@ static const struct xdg_popup_listener popup_listener = {
     .repositioned = popup_repositioned,
 };
 
-static void preferred_scale(void *data, [[maybe_unused]] struct wp_fractional_scale_v1 *f,
+static void preferred_scale(void *data,
+                            [[maybe_unused]] struct wp_fractional_scale_v1 *fractional_scale,
                             uint32_t scale_120) {
     xd_thumbs *th = data;
     double scale = scale_120 / 120.0;
@@ -746,11 +760,11 @@ static bool button_rect(xd_thumbs *th, xd_rect *out) {
 static void create_surface(xd_thumbs *th) {
     xd_shell *shell = th->shell;
     xd_taskbar *bar = th->bar;
-    xd_rect r;
-    if (!button_rect(th, &r))
+    xd_rect button;
+    if (!button_rect(th, &button))
         return;
-    xd_rect a = {(int)(r.x / bar->scale), (int)(r.y / bar->scale), (int)(r.w / bar->scale),
-                 (int)(r.h / bar->scale)};
+    xd_rect logical_button = {(int)(button.x / bar->scale), (int)(button.y / bar->scale),
+                              (int)(button.w / bar->scale), (int)(button.h / bar->scale)};
     th->scale = bar->scale;
     th->surface = wl_compositor_create_surface(shell->compositor);
     if (shell->fractional_manager != nullptr && shell->viewporter != nullptr) {
@@ -766,7 +780,8 @@ static void create_surface(xd_thumbs *th) {
     xdg_surface_add_listener(th->xdg_surface, &xdg_surface_listener, th);
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
     xdg_positioner_set_size(pos, th->width, th->height);
-    xdg_positioner_set_anchor_rect(pos, a.x, a.y, XD_MAX(a.w, 1), XD_MAX(a.h, 1));
+    xdg_positioner_set_anchor_rect(pos, logical_button.x, logical_button.y,
+                                   XD_MAX(logical_button.w, 1), XD_MAX(logical_button.h, 1));
     uint32_t anchor = XDG_POSITIONER_ANCHOR_TOP, gravity = XDG_POSITIONER_GRAVITY_TOP;
     uint32_t adjust = XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |
                       XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y;
@@ -859,10 +874,10 @@ void xd_thumbs_close(xd_shell *shell) {
  * ones still there are kept. Returns false if there are none left. */
 static bool sync_windows(xd_thumbs *th) {
     xd_toplevel *wins[64];
-    size_t n = xd_superbar_windows(th->shell, th->key, th->window_id, wins, XD_ARRAY_LEN(wins));
-    thumb **items = xd_alloc_array(XD_MAX(n, 1), sizeof(*items));
-    bool same = n == th->count;
-    for (size_t i = 0; i < n; i++) {
+    size_t count = xd_superbar_windows(th->shell, th->key, th->window_id, wins, XD_ARRAY_LEN(wins));
+    thumb **items = xd_alloc_array(XD_MAX(count, 1), sizeof(*items));
+    bool same = count == th->count;
+    for (size_t i = 0; i < count; i++) {
         items[i] = nullptr;
         for (size_t k = 0; k < th->count; k++) {
             if (th->items[k] != nullptr && th->items[k]->window_id == wins[i]->id) {
@@ -882,12 +897,12 @@ static bool sync_windows(xd_thumbs *th) {
     }
     xd_free(th->items);
     th->items = items;
-    th->count = n;
+    th->count = count;
     if (!same) {
         th->hot = th->pressed = -1;
         th->hot_close = false;
     }
-    return n > 0;
+    return count > 0;
 }
 
 static void players_changed(void *data) { xd_thumbs_refresh(((xd_thumbs *)data)->shell); }
@@ -922,10 +937,10 @@ void xd_thumbs_refresh(xd_shell *shell) {
         xd_thumbs_close(shell);
         return;
     }
-    int w = th->width, h = th->height;
+    int width = th->width, height = th->height;
     measure(th);
     th->dirty = true;
-    if (w != th->width || h != th->height) {
+    if (width != th->width || height != th->height) {
         /* Another size: a new popup, placed again over the button. */
         destroy_surface(th);
         create_surface(th);
@@ -964,10 +979,11 @@ void xd_thumbs_hover(xd_taskbar *bar, int hit) {
     uint64_t wid = 0;
     const char *key = xd_superbar_key(bar, hit, &wid);
     xd_toplevel *wins[2];
-    size_t n = key != nullptr ? xd_superbar_windows(shell, key, wid, wins, XD_ARRAY_LEN(wins)) : 0;
+    size_t count =
+        key != nullptr ? xd_superbar_windows(shell, key, wid, wins, XD_ARRAY_LEN(wins)) : 0;
     bool busy = shell->start_menu != nullptr || shell->start7 != nullptr ||
                 bar->drag_key != nullptr || bar->pressed != XD_HIT_NONE;
-    if (key == nullptr || busy || !xd_thumbs_cover(shell, n)) {
+    if (key == nullptr || busy || !xd_thumbs_cover(shell, count)) {
         stop_timer(&th->show_timer);
         if (busy && th->open)
             xd_thumbs_close(shell);
@@ -1008,8 +1024,8 @@ bool xd_thumbs_owns(xd_shell *shell, struct wl_surface *surface) {
     return th != nullptr && th->open && surface != nullptr && th->surface == surface;
 }
 
-static bool inside(xd_rect r, double x, double y) {
-    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+static bool inside(xd_rect rect, double x, double y) {
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
 
 void xd_thumbs_pointer_motion(xd_shell *shell, double x, double y) {
@@ -1020,12 +1036,12 @@ void xd_thumbs_pointer_motion(xd_shell *shell, double x, double y) {
     int hot = -1, hot_button = -1;
     bool close = false;
     for (size_t i = 0; i < th->count; i++) {
-        xd_rect r = tile_rect(th, i);
-        if (inside(r, x, y)) {
+        xd_rect rect = tile_rect(th, i);
+        if (inside(rect, x, y)) {
             hot = (int)i;
-            close = !th->titles && inside(close_rect(r), x, y);
+            close = !th->titles && inside(close_rect(rect), x, y);
             for (int k = 0; th->player != nullptr && k < TBTN_COUNT; k++) {
-                if (inside(button_of(r, k), x, y))
+                if (inside(button_of(rect, k), x, y))
                     hot_button = k;
             }
         }
@@ -1128,11 +1144,11 @@ void xd_thumbs_finish(xd_shell *shell) {
         return;
     xd_thumbs_close(shell);
     stop_timer(&th->peek_timer);
-    XD_LIST_FOR_EACH_SAFE(e, tmp, &th->handles, ext_handle, link) {
-        wl_list_remove(&e->link);
-        ext_foreign_toplevel_handle_v1_destroy(e->handle);
-        g_free(e->identifier);
-        g_free(e);
+    XD_LIST_FOR_EACH_SAFE(list_handle, tmp, &th->handles, ext_handle, link) {
+        wl_list_remove(&list_handle->link);
+        ext_foreign_toplevel_handle_v1_destroy(list_handle->handle);
+        g_free(list_handle->identifier);
+        g_free(list_handle);
     }
     if (th->list != nullptr)
         ext_foreign_toplevel_list_v1_destroy(th->list);

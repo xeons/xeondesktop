@@ -21,14 +21,14 @@ typedef struct indicator {
 } indicator;
 
 static bool shown(const indicator *in) {
-    const xd_access_settings *a = &in->shell->settings.access;
+    const xd_access_settings *access_settings = &in->shell->settings.access;
     switch (in->what) {
     case STICKY:
-        return a->sticky_keys && a->sticky_indicator;
+        return access_settings->sticky_keys && access_settings->sticky_indicator;
     case FILTER:
-        return a->filter_keys && a->filter_indicator;
+        return access_settings->filter_keys && access_settings->filter_indicator;
     case MOUSE:
-        return a->mouse_keys && a->mouse_keys_indicator;
+        return access_settings->mouse_keys && access_settings->mouse_keys_indicator;
     }
     return false;
 }
@@ -59,8 +59,9 @@ static void activate(void *data, [[maybe_unused]] xd_taskbar *bar, [[maybe_unuse
     open_options(in->shell, in);
 }
 
-static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
-    xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, "Accessibility Options", nullptr);
+static void menu(void *data, xd_menu_tree *tree, xd_menu_model *menu_model) {
+    xd_menu_item *it =
+        xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Accessibility Options", nullptr);
     it->action = open_options;
     it->action_data = data;
     it->bold = true;
@@ -68,61 +69,61 @@ static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
 
 /* A rounded box, filled white and outlined black (the icons are drawn
  * in black and white, as XP's were). */
-static void key_cap(cairo_t *cr, double x, double y, double w, double h, double line) {
-    double r = h / 5;
-    cairo_new_sub_path(cr);
-    cairo_arc(cr, x + w - r, y + r, r, -M_PI / 2, 0);
-    cairo_arc(cr, x + w - r, y + h - r, r, 0, M_PI / 2);
-    cairo_arc(cr, x + r, y + h - r, r, M_PI / 2, M_PI);
-    cairo_arc(cr, x + r, y + r, r, M_PI, 3 * M_PI / 2);
-    cairo_close_path(cr);
-    cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgb(cr, 0, 0, 0);
-    cairo_set_line_width(cr, line);
-    cairo_stroke(cr);
+static void key_cap(cairo_t *cairo, double x, double y, double width, double height, double line) {
+    double radius = height / 5;
+    cairo_new_sub_path(cairo);
+    cairo_arc(cairo, x + width - radius, y + radius, radius, -M_PI / 2, 0);
+    cairo_arc(cairo, x + width - radius, y + height - radius, radius, 0, M_PI / 2);
+    cairo_arc(cairo, x + radius, y + height - radius, radius, M_PI / 2, M_PI);
+    cairo_arc(cairo, x + radius, y + radius, radius, M_PI, 3 * M_PI / 2);
+    cairo_close_path(cairo);
+    cairo_set_source_rgb(cairo, 1, 1, 1);
+    cairo_fill_preserve(cairo);
+    cairo_set_source_rgb(cairo, 0, 0, 0);
+    cairo_set_line_width(cairo, line);
+    cairo_stroke(cairo);
 }
 
-static void draw(void *data, [[maybe_unused]] const xd_theme *t, cairo_t *cr, xd_rect r) {
+static void draw(void *data, [[maybe_unused]] const xd_theme *theme, cairo_t *cairo, xd_rect rect) {
     indicator *in = data;
-    double u = r.w / 16.0; /* drawn on a 16-unit grid */
-    double line = fmax(1.0, u);
-    cairo_save(cr);
-    cairo_translate(cr, r.x, r.y);
+    double unit = rect.w / 16.0; /* drawn on a 16-unit grid */
+    double line = fmax(1.0, unit);
+    cairo_save(cairo);
+    cairo_translate(cairo, rect.x, rect.y);
     switch (in->what) {
     case STICKY:
         /* Shift over Ctrl and Alt. */
-        key_cap(cr, 1.5 * u, 1.5 * u, 13 * u, 6 * u, line);
-        key_cap(cr, 1.5 * u, 8.5 * u, 6 * u, 6 * u, line);
-        key_cap(cr, 8.5 * u, 8.5 * u, 6 * u, 6 * u, line);
+        key_cap(cairo, 1.5 * unit, 1.5 * unit, 13 * unit, 6 * unit, line);
+        key_cap(cairo, 1.5 * unit, 8.5 * unit, 6 * unit, 6 * unit, line);
+        key_cap(cairo, 8.5 * unit, 8.5 * unit, 6 * unit, 6 * unit, line);
         break;
     case FILTER:
         /* A stopwatch. */
-        cairo_set_line_width(cr, line);
-        cairo_arc(cr, 8 * u, 9.5 * u, 5.5 * u, 0, 2 * M_PI);
-        cairo_set_source_rgb(cr, 1, 1, 1);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0, 0, 0);
-        cairo_stroke(cr);
-        cairo_rectangle(cr, 6.5 * u, 1 * u, 3 * u, 2 * u);
-        cairo_fill(cr);
-        cairo_move_to(cr, 8 * u, 9.5 * u);
-        cairo_line_to(cr, 8 * u, 5.5 * u);
-        cairo_move_to(cr, 8 * u, 9.5 * u);
-        cairo_line_to(cr, 10.5 * u, 11 * u);
-        cairo_stroke(cr);
+        cairo_set_line_width(cairo, line);
+        cairo_arc(cairo, 8 * unit, 9.5 * unit, 5.5 * unit, 0, 2 * M_PI);
+        cairo_set_source_rgb(cairo, 1, 1, 1);
+        cairo_fill_preserve(cairo);
+        cairo_set_source_rgb(cairo, 0, 0, 0);
+        cairo_stroke(cairo);
+        cairo_rectangle(cairo, 6.5 * unit, 1 * unit, 3 * unit, 2 * unit);
+        cairo_fill(cairo);
+        cairo_move_to(cairo, 8 * unit, 9.5 * unit);
+        cairo_line_to(cairo, 8 * unit, 5.5 * unit);
+        cairo_move_to(cairo, 8 * unit, 9.5 * unit);
+        cairo_line_to(cairo, 10.5 * unit, 11 * unit);
+        cairo_stroke(cairo);
         break;
     case MOUSE:
         /* A mouse: its body, and the line between its buttons. */
-        key_cap(cr, 3.5 * u, 1.5 * u, 9 * u, 13 * u, line);
-        cairo_move_to(cr, 3.5 * u, 6.5 * u);
-        cairo_line_to(cr, 12.5 * u, 6.5 * u);
-        cairo_move_to(cr, 8 * u, 1.5 * u);
-        cairo_line_to(cr, 8 * u, 6.5 * u);
-        cairo_stroke(cr);
+        key_cap(cairo, 3.5 * unit, 1.5 * unit, 9 * unit, 13 * unit, line);
+        cairo_move_to(cairo, 3.5 * unit, 6.5 * unit);
+        cairo_line_to(cairo, 12.5 * unit, 6.5 * unit);
+        cairo_move_to(cairo, 8 * unit, 1.5 * unit);
+        cairo_line_to(cairo, 8 * unit, 6.5 * unit);
+        cairo_stroke(cairo);
         break;
     }
-    cairo_restore(cr);
+    cairo_restore(cairo);
 }
 
 static void destroy(void *data) { g_free(data); }

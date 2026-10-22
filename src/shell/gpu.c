@@ -15,11 +15,11 @@ void xd_gpu_list_parse(GVariant *gpus, xd_gpu_list *out) {
     *out = (xd_gpu_list){0};
     if (gpus == nullptr || !g_variant_is_of_type(gpus, G_VARIANT_TYPE("aa{sv}")))
         return;
-    size_t n = g_variant_n_children(gpus);
-    out->items = g_new0(xd_gpu, n > 0 ? n : 1);
-    for (size_t i = 0; i < n; i++) {
+    size_t count = g_variant_n_children(gpus);
+    out->items = g_new0(xd_gpu, count > 0 ? count : 1);
+    for (size_t i = 0; i < count; i++) {
         GVariant *dict = g_variant_get_child_value(gpus, i);
-        xd_gpu *g = &out->items[out->count];
+        xd_gpu *gpu = &out->items[out->count];
         const char *name = nullptr;
         if (!g_variant_lookup(dict, "Name", "&s", &name))
             name = nullptr;
@@ -35,9 +35,9 @@ void xd_gpu_list_parse(GVariant *gpus, xd_gpu_list *out) {
             g_free(env[len - 1]);
             env[len - 1] = nullptr;
         }
-        g->name = g_strdup(name != nullptr && name[0] != '\0' ? name : "Graphics card");
-        g->env = env != nullptr ? env : g_new0(char *, 1);
-        g->is_default = is_default;
+        gpu->name = g_strdup(name != nullptr && name[0] != '\0' ? name : "Graphics card");
+        gpu->env = env != nullptr ? env : g_new0(char *, 1);
+        gpu->is_default = is_default;
         out->count++;
         g_variant_unref(dict);
     }
@@ -90,12 +90,12 @@ xd_gpu_pref xd_gpu_pref_get(const char *file, const char *app_id) {
     GKeyFile *kf = g_key_file_new();
     xd_gpu_pref pref = XD_GPU_PREF_AUTO;
     if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, nullptr)) {
-        char *v = g_key_file_get_string(kf, PREFS_GROUP, app_id, nullptr);
-        if (v != nullptr && g_ascii_strcasecmp(v, "dedicated") == 0)
+        char *value = g_key_file_get_string(kf, PREFS_GROUP, app_id, nullptr);
+        if (value != nullptr && g_ascii_strcasecmp(value, "dedicated") == 0)
             pref = XD_GPU_PREF_OTHER;
-        else if (v != nullptr && g_ascii_strcasecmp(v, "default") == 0)
+        else if (value != nullptr && g_ascii_strcasecmp(value, "default") == 0)
             pref = XD_GPU_PREF_DEFAULT;
-        g_free(v);
+        g_free(value);
     }
     g_key_file_free(kf);
     g_free(path);

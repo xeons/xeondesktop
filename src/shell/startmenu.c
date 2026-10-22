@@ -13,13 +13,13 @@
 #include "shell.h"
 
 /* Appends s to a shell command line as one single-quoted word. */
-static void append_quoted(xd_strbuf *cmd, const char *s) {
+static void append_quoted(xd_strbuf *cmd, const char *word) {
     xd_strbuf_append_char(cmd, '\'');
-    for (; *s != '\0'; s++) {
-        if (*s == '\'')
+    for (; *word != '\0'; word++) {
+        if (*word == '\'')
             xd_strbuf_append(cmd, XD_STR("'\\''"));
         else
-            xd_strbuf_append_char(cmd, *s);
+            xd_strbuf_append_char(cmd, *word);
     }
     xd_strbuf_append_char(cmd, '\'');
 }
@@ -48,10 +48,10 @@ bool xd_shell_have_program(const char *program) {
 const char *xd_shell_own_command(xd_shell *shell, const char *program, const char *extra) {
     xd_strbuf cmd = {0};
     char self[4096];
-    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    ssize_t length = readlink("/proc/self/exe", self, sizeof(self) - 1);
     bool local = false;
-    if (n > 0) {
-        self[n] = '\0';
+    if (length > 0) {
+        self[length] = '\0';
         char *slash = strrchr(self, '/');
         if (slash != nullptr) {
             slash[1] = '\0';
@@ -83,13 +83,13 @@ const char *xd_shell_own_command(xd_shell *shell, const char *program, const cha
     if (shell->own_commands == nullptr)
         shell->own_commands = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     const char *text = xd_strbuf_cstr(&cmd);
-    char *s = g_hash_table_lookup(shell->own_commands, text);
-    if (s == nullptr) {
-        s = g_strdup(text);
-        g_hash_table_add(shell->own_commands, s);
+    char *command = g_hash_table_lookup(shell->own_commands, text);
+    if (command == nullptr) {
+        command = g_strdup(text);
+        g_hash_table_add(shell->own_commands, command);
     }
     xd_strbuf_free(&cmd);
-    return s;
+    return command;
 }
 
 /* Programs: one submenu per folder, apps sorted by name inside. */
@@ -99,18 +99,18 @@ xd_menu_model *xd_start_programs_model(xd_shell *shell, xd_menu_tree *tree, bool
 
     for (size_t i = 0; i < apps->count;) {
         const char *folder = apps->items[i].folder;
-        xd_menu_item *f = xd_menu_add(tree, programs, XD_MENU_SUBMENU, folder,
-                                      apps->items[i].folder_icon);
-        f->fallback_icon = "folder";
-        f->submenu = xd_menu_model_new(tree);
+        xd_menu_item *folder_item =
+            xd_menu_add(tree, programs, XD_MENU_SUBMENU, folder, apps->items[i].folder_icon);
+        folder_item->fallback_icon = "folder";
+        folder_item->submenu = xd_menu_model_new(tree);
         for (; i < apps->count && strcmp(apps->items[i].folder, folder) == 0; i++) {
             const xd_app *app = &apps->items[i];
             xd_menu_item *it =
-                xd_menu_add(tree, f->submenu, XD_MENU_ACTION, app->name, app->icon);
+                xd_menu_add(tree, folder_item->submenu, XD_MENU_ACTION, app->name, app->icon);
             it->app = app;
             /* A new program, and the folder on the way to it, are lit. */
             it->highlight = highlight_new && xd_start_menu_is_new(shell, app->id);
-            f->highlight = f->highlight || it->highlight;
+            folder_item->highlight = folder_item->highlight || it->highlight;
         }
     }
     if (programs->count == 0)
@@ -128,11 +128,11 @@ static constexpr size_t SEEN_MAX = 8192;
 
 size_t xd_start_menu_note_programs(xd_shell *shell) {
     char **lines = nullptr;
-    size_t n = 0;
-    xd_state_read_lines("start-seen", &lines, &n, SEEN_MAX);
-    bool first_run = n == 0;
+    size_t count = 0;
+    xd_state_read_lines("start-seen", &lines, &count, SEEN_MAX);
+    bool first_run = count == 0;
     GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal); /* id -> line */
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         char *tab = strchr(lines[i], '\t');
         if (tab != nullptr)
             g_hash_table_insert(seen, tab + 1, lines[i]);
@@ -145,11 +145,11 @@ size_t xd_start_menu_note_programs(xd_shell *shell) {
      * new again. */
     const xd_app_list *apps = &shell->apps;
     char **out = xd_alloc_array(XD_MAX(apps->count, 1), sizeof(char *));
-    size_t m = 0;
-    bool changed = apps->count != n;
+    size_t line_count = 0;
+    bool changed = apps->count != count;
     size_t unseen = 0;
     long long now = (long long)(g_get_real_time() / G_USEC_PER_SEC);
-    for (size_t i = 0; i < apps->count && m < SEEN_MAX; i++) {
+    for (size_t i = 0; i < apps->count && line_count < SEEN_MAX; i++) {
         const char *id = apps->items[i].id;
         const char *line = g_hash_table_lookup(seen, id);
         long long when = line != nullptr ? strtoll(line, nullptr, 10) : first_run ? 0 : now;
@@ -160,14 +160,14 @@ size_t xd_start_menu_note_programs(xd_shell *shell) {
             g_hash_table_add(shell->new_apps, g_strdup(id));
         xd_strbuf entry = {0};
         xd_strbuf_appendf(&entry, "%lld\t%s", when, id);
-        out[m++] = xd_str_dup_cstr(xd_strbuf_view(&entry));
+        out[line_count++] = xd_str_dup_cstr(xd_strbuf_view(&entry));
         xd_strbuf_free(&entry);
     }
-    if (changed && !xd_state_write_lines("start-seen", out, m))
+    if (changed && !xd_state_write_lines("start-seen", out, line_count))
         fprintf(stderr, "xd-shell: cannot save the programs seen\n");
-    xd_free_lines(out, m);
+    xd_free_lines(out, line_count);
     g_hash_table_unref(seen);
-    xd_free_lines(lines, n);
+    xd_free_lines(lines, count);
     return unseen;
 }
 
@@ -178,10 +178,10 @@ bool xd_start_menu_is_new(const xd_shell *shell, const char *id) {
 
 void xd_start_menu_program_opened(const char *id) {
     char **lines = nullptr;
-    size_t n = 0;
-    xd_state_read_lines("start-seen", &lines, &n, SEEN_MAX);
+    size_t count = 0;
+    xd_state_read_lines("start-seen", &lines, &count, SEEN_MAX);
     bool changed = false;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         char *tab = strchr(lines[i], '\t');
         if (tab == nullptr || strcmp(tab + 1, id) != 0 || strtoll(lines[i], nullptr, 10) == 0)
             continue;
@@ -192,9 +192,9 @@ void xd_start_menu_program_opened(const char *id) {
         xd_strbuf_free(&entry);
         changed = true;
     }
-    if (changed && !xd_state_write_lines("start-seen", lines, n))
+    if (changed && !xd_state_write_lines("start-seen", lines, count))
         fprintf(stderr, "xd-shell: cannot save the programs seen\n");
-    xd_free_lines(lines, n);
+    xd_free_lines(lines, count);
 }
 
 static void reload_if_stale(xd_shell *shell) {
@@ -259,17 +259,17 @@ void xd_start_menu_unwatch_programs(xd_shell *shell) {
 }
 
 xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree) {
-    xd_menu_model *m = xd_menu_model_new(tree);
+    xd_menu_model *menu_model = xd_menu_model_new(tree);
     const xd_app_list *applets = &shell->control_apps;
     for (size_t i = 0; i < applets->count; i++) {
         const xd_app *app = &applets->items[i];
-        xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, app->name, app->icon);
+        xd_menu_item *it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, app->name, app->icon);
         it->fallback_icon = "preferences-system";
         it->app = app;
     }
-    if (m->count == 0)
-        xd_menu_add(tree, m, XD_MENU_ACTION, "(Empty)", nullptr)->disabled = true;
-    return m;
+    if (menu_model->count == 0)
+        xd_menu_add(tree, menu_model, XD_MENU_ACTION, "(Empty)", nullptr)->disabled = true;
+    return menu_model;
 }
 
 static void open_recent(xd_shell *shell, void *data) { xd_shell_open_uri(shell, data); }
@@ -282,19 +282,20 @@ void xd_start_menu_refresh_documents(xd_shell *shell) {
     xd_menu_tree *tree = &shell->docs_tree;
     xd_menu_tree_free(tree);
     xd_menu_tree_init(tree);
-    xd_menu_model *m = xd_menu_model_new(tree);
-    xd_menu_item *mydocs = xd_menu_add(tree, m, XD_MENU_ACTION, "My Documents", "folder-documents");
+    xd_menu_model *menu_model = xd_menu_model_new(tree);
+    xd_menu_item *mydocs =
+        xd_menu_add(tree, menu_model, XD_MENU_ACTION, "My Documents", "folder-documents");
     mydocs->command = xd_shell_own_command(
         shell, "xd-files", "\"$(xdg-user-dir DOCUMENTS 2>/dev/null || echo \"$HOME/Documents\")\"");
-    xd_menu_item *home = xd_menu_add(tree, m, XD_MENU_ACTION, "Home Folder", "user-home");
+    xd_menu_item *home = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Home Folder", "user-home");
     home->command = xd_shell_own_command(shell, "xd-files", "\"$HOME\"");
-    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+    xd_menu_add(tree, menu_model, XD_MENU_SEPARATOR, nullptr, nullptr);
 
     char **paths = nullptr;
-    size_t n = 0;
-    xd_recent_load(&paths, &n, 15);
+    size_t count = 0;
+    xd_recent_load(&paths, &count, 15);
     GPtrArray *names = g_ptr_array_new();
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; i < count; i++)
         g_ptr_array_add(names, paths[i]);
     g_ptr_array_sort_values(names, (GCompareFunc)g_utf8_collate);
     for (guint i = 0; i < names->len; i++) {
@@ -307,7 +308,7 @@ void xd_start_menu_refresh_documents(xd_shell *shell) {
         const char *specific = gicon != nullptr && G_IS_THEMED_ICON(gicon)
                                    ? g_themed_icon_get_names(G_THEMED_ICON(gicon))[0]
                                    : nullptr;
-        xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, label,
+        xd_menu_item *it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, label,
                                        specific != nullptr ? specific : icon);
         it->fallback_icon = icon != nullptr ? xd_str_arena_cstr(&tree->arena,
                                                                 xd_str_from_cstr(icon))
@@ -326,11 +327,11 @@ void xd_start_menu_refresh_documents(xd_shell *shell) {
         g_free(base);
     }
     if (names->len == 0)
-        xd_menu_add(tree, m, XD_MENU_ACTION, "(Empty)", nullptr)->disabled = true;
+        xd_menu_add(tree, menu_model, XD_MENU_ACTION, "(Empty)", nullptr)->disabled = true;
     g_ptr_array_unref(names);
-    xd_free_lines(paths, n);
-    shell->start_model->items[shell->start_docs_index].submenu = m;
-    xd_menu_model_set_look(m, XD_MENU_LOOK_CLASSIC_START);
+    xd_free_lines(paths, count);
+    shell->start_model->items[shell->start_docs_index].submenu = menu_model;
+    xd_menu_model_set_look(menu_model, XD_MENU_LOOK_CLASSIC_START);
 }
 
 void xd_start_menu_build(xd_shell *shell) {
@@ -387,10 +388,10 @@ void xd_start_menu_build(xd_shell *shell) {
     const char *user = getenv("USER");
     xd_strbuf logoff = {0};
     xd_strbuf_append(&logoff, XD_STR("&Log Off "));
-    for (const char *c = user != nullptr ? user : ""; *c != '\0'; c++) {
-        if (*c == '&')
+    for (const char *character = user != nullptr ? user : ""; *character != '\0'; character++) {
+        if (*character == '&')
             xd_strbuf_append_char(&logoff, '&'); /* the name's own, as it is */
-        xd_strbuf_append_char(&logoff, *c);
+        xd_strbuf_append_char(&logoff, *character);
     }
     xd_strbuf_append(&logoff, XD_STR("..."));
     xd_menu_item *logoff_item =

@@ -45,8 +45,8 @@ static bool list_contains(const char *list, const char *item) {
     return false;
 }
 
-static const char *arena_copy(xd_arena *arena, const char *s) {
-    return s != nullptr ? xd_str_arena_cstr(arena, xd_str_from_cstr(s)) : nullptr;
+static const char *arena_copy(xd_arena *arena, const char *text) {
+    return text != nullptr ? xd_str_arena_cstr(arena, xd_str_from_cstr(text)) : nullptr;
 }
 
 /* Fills `out` from a GDesktopAppInfo, taking a reference. */
@@ -93,11 +93,11 @@ static void fill(GDesktopAppInfo *info, xd_arena *arena, xd_app *out) {
     g_free(icon);
 }
 
-static int compare_apps(const void *a, const void *b) {
-    const xd_app *x = a;
-    const xd_app *y = b;
-    int c = g_utf8_collate(x->folder, y->folder);
-    return c != 0 ? c : g_utf8_collate(x->name, y->name);
+static int compare_apps(const void *left, const void *right) {
+    const xd_app *left_app = left;
+    const xd_app *right_app = right;
+    int order = g_utf8_collate(left_app->folder, right_app->folder);
+    return order != 0 ? order : g_utf8_collate(left_app->name, right_app->name);
 }
 
 void xd_apps_load(xd_app_list *list) {
@@ -106,14 +106,14 @@ void xd_apps_load(xd_app_list *list) {
     /* All installed apps, with user entries overriding system ones, and
      * Hidden/TryExec handled by GIO. */
     GList *all = g_app_info_get_all();
-    for (GList *l = all; l != nullptr; l = l->next) {
-        if (!G_IS_DESKTOP_APP_INFO(l->data) || !g_app_info_should_show(l->data))
+    for (GList *node = all; node != nullptr; node = node->next) {
+        if (!G_IS_DESKTOP_APP_INFO(node->data) || !g_app_info_should_show(node->data))
             continue;
         if (list->count == list->cap) {
             list->cap = list->cap == 0 ? 64 : list->cap * 2;
             list->items = xd_realloc_array(list->items, list->cap, sizeof(*list->items));
         }
-        fill(G_DESKTOP_APP_INFO(l->data), &list->arena, &list->items[list->count++]);
+        fill(G_DESKTOP_APP_INFO(node->data), &list->arena, &list->items[list->count++]);
     }
     g_list_free_full(all, g_object_unref);
     if (list->count > 1)
@@ -124,12 +124,12 @@ void xd_apps_load_control_panel(xd_app_list *list) {
     *list = (xd_app_list){0};
     xd_arena_init(&list->arena, 4 * 1024);
     GList *applets = xd_control_applets(); /* by name */
-    for (GList *l = applets; l != nullptr; l = l->next) {
+    for (GList *node = applets; node != nullptr; node = node->next) {
         if (list->count == list->cap) {
             list->cap = list->cap == 0 ? 16 : list->cap * 2;
             list->items = xd_realloc_array(list->items, list->cap, sizeof(*list->items));
         }
-        fill(l->data, &list->arena, &list->items[list->count++]);
+        fill(node->data, &list->arena, &list->items[list->count++]);
     }
     g_list_free_full(applets, g_object_unref);
 }

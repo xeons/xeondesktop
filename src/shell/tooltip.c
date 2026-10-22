@@ -29,26 +29,26 @@ struct xd_tooltip {
 };
 
 static xd_theme theme_at(const xd_shell *shell, double scale) {
-    xd_theme t;
-    xd_theme_init(&t, shell->style, &shell->scheme, scale);
-    return t;
+    xd_theme theme;
+    xd_theme_init(&theme, shell->style, &shell->scheme, scale);
+    return theme;
 }
 
-static xd_text_style text_style(const xd_theme *t) {
-    return xd_text(t, XD_FONT_TOOLTIP, xd_sys(t, XD_COLOR_INFO_TEXT), XD_ALIGN_START);
+static xd_text_style text_style(const xd_theme *theme) {
+    return xd_text(theme, XD_FONT_TOOLTIP, xd_sys(theme, XD_COLOR_INFO_TEXT), XD_ALIGN_START);
 }
 
 static void render(xd_tooltip *tip) {
     xd_shell *shell = tip->shell;
-    double w = ceil(tip->width * tip->scale), h = ceil(tip->height * tip->scale);
-    int dw = (int)w, dh = (int)h;
+    double width = ceil(tip->width * tip->scale), height = ceil(tip->height * tip->scale);
+    int dw = (int)width, dh = (int)height;
     xd_shm_buffer *buf = xd_shm_ring_acquire(&tip->ring, shell->shm, dw, dh);
     if (buf == nullptr)
         return;
-    xd_theme t = theme_at(shell, tip->scale);
-    cairo_t *cr = cairo_create(buf->surface);
-    xd_theme_draw_tooltip(&t, cr, (xd_rect){0, 0, dw, dh}, tip->text);
-    cairo_destroy(cr);
+    xd_theme theme = theme_at(shell, tip->scale);
+    cairo_t *cairo = cairo_create(buf->surface);
+    xd_theme_draw_tooltip(&theme, cairo, (xd_rect){0, 0, dw, dh}, tip->text);
+    cairo_destroy(cairo);
     cairo_surface_flush(buf->surface);
     wl_surface_attach(tip->surface, buf->buffer, 0, 0);
     wl_surface_damage_buffer(tip->surface, 0, 0, dw, dh);
@@ -61,9 +61,9 @@ static void render(xd_tooltip *tip) {
     tip->dirty = false;
 }
 
-static void xdg_surface_configure(void *data, struct xdg_surface *s, uint32_t serial) {
+static void xdg_surface_configure(void *data, struct xdg_surface *surface, uint32_t serial) {
     xd_tooltip *tip = data;
-    xdg_surface_ack_configure(s, serial);
+    xdg_surface_ack_configure(surface, serial);
     tip->configured = true;
     tip->dirty = true;
 }
@@ -72,16 +72,16 @@ static const struct xdg_surface_listener xdg_surface_listener = {
     .configure = xdg_surface_configure,
 };
 
-static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *p,
+static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *popup,
                             [[maybe_unused]] int32_t x, [[maybe_unused]] int32_t y,
-                            [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+                            [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height) {}
 
-static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *p) {
+static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *popup) {
     xd_tooltip_hide(((xd_tooltip *)data)->shell);
 }
 
 static void popup_repositioned([[maybe_unused]] void *data,
-                               [[maybe_unused]] struct xdg_popup *p,
+                               [[maybe_unused]] struct xdg_popup *popup,
                                [[maybe_unused]] uint32_t token) {}
 
 static const struct xdg_popup_listener popup_listener = {
@@ -119,10 +119,10 @@ void xd_tooltip_show(xd_shell *shell, struct zwlr_layer_surface_v1 *layer, xd_re
     /* Size in logical px, measured at scale 1. */
     xd_theme t1 = theme_at(shell, 1.0);
     cairo_surface_t *probe = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *cr = cairo_create(probe);
+    cairo_t *cairo = cairo_create(probe);
     xd_text_style st = text_style(&t1);
-    int text_w = xd_text_width(cr, text, &st);
-    cairo_destroy(cr);
+    int text_w = xd_text_width(cairo, text, &st);
+    cairo_destroy(cairo);
     cairo_surface_destroy(probe);
     tip->width = text_w + 2 * PAD_X + 2;
     tip->height = xd_metric_px(&t1, XD_METRIC_MENU_HEIGHT) + 1; /* 19px, as XP's */

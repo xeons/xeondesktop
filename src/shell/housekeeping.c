@@ -51,38 +51,39 @@ typedef struct job {
     char **roots; /* "/" and every mounted drive's root */
 } job;
 
-static void job_free(gpointer p) {
-    job *j = p;
-    g_strfreev(j->roots);
-    g_free(j);
+static void job_free(gpointer user_data) {
+    job *purge_job = user_data;
+    g_strfreev(purge_job->roots);
+    g_free(purge_job);
 }
 
 static void schedule(guint seconds);
 
 static void purge_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
                          GCancellable *cancel) {
-    const job *j = data;
+    const job *purge_job = data;
     uid_t uid = getuid();
     gint64 now = g_get_real_time();
     char *tmp = g_canonicalize_filename(g_get_tmp_dir(), nullptr);
     const char *temps[] = {tmp, nullptr};
     guint trashed = 0, temps_gone = 0;
-    for (char **root = j->roots; *root != nullptr && !g_cancellable_is_cancelled(cancel);
+    for (char **root = purge_job->roots; *root != nullptr && !g_cancellable_is_cancelled(cancel);
          root++) {
         XdCleanupPlaces *places =
-            xd_cleanup_places_new(*root, (const char *const *)j->roots, g_get_user_data_dir(),
-                                  nullptr, temps, uid);
-        GPtrArray *cats = xd_cleanup_scan_old(places, uid, now, j->age, j->trash, j->temp, cancel);
+            xd_cleanup_places_new(*root, (const char *const *)purge_job->roots,
+                                  g_get_user_data_dir(), nullptr, temps, uid);
+        GPtrArray *cats = xd_cleanup_scan_old(places, uid, now, purge_job->age, purge_job->trash,
+                                              purge_job->temp, cancel);
         for (guint i = 0; i < cats->len; i++) {
-            const XdCleanupCategory *c = g_ptr_array_index(cats, i);
+            const XdCleanupCategory *cleanup_category = g_ptr_array_index(cats, i);
             GError *error = nullptr;
-            if (!xd_cleanup_delete(c, uid, now, cancel, &error)) {
+            if (!xd_cleanup_delete(cleanup_category, uid, now, cancel, &error)) {
                 fprintf(stderr, "xd-shell: housekeeping: %s\n", error->message);
                 g_error_free(error);
             }
-            for (guint k = 0; k < c->items->len; k++) {
-                const char *item = g_ptr_array_index(c->items, k);
-                if (c->kind == XD_CLEANUP_TEMP)
+            for (guint k = 0; k < cleanup_category->items->len; k++) {
+                const char *item = g_ptr_array_index(cleanup_category->items, k);
+                if (cleanup_category->kind == XD_CLEANUP_TEMP)
                     temps_gone++;
                 else if (g_str_has_suffix(item, ".trashinfo"))
                     trashed++;
@@ -115,8 +116,8 @@ static char **drive_roots(void) {
     g_ptr_array_add(roots, g_strdup("/"));
     GVolumeMonitor *monitor = g_volume_monitor_get();
     GList *mounts = g_volume_monitor_get_mounts(monitor);
-    for (GList *l = mounts; l != nullptr; l = l->next) {
-        GFile *top = g_mount_get_root(l->data);
+    for (GList *list = mounts; list != nullptr; list = list->next) {
+        GFile *top = g_mount_get_root(list->data);
         char *path = g_file_get_path(top);
         if (path != nullptr && strcmp(path, "/") != 0 &&
             !g_ptr_array_find_with_equal_func(roots, path, g_str_equal, nullptr))
@@ -137,19 +138,19 @@ static gboolean run_purge([[maybe_unused]] gpointer data) {
         hk.again = true;
         return G_SOURCE_REMOVE;
     }
-    job *j = g_new0(job, 1);
-    j->trash = g_settings_get_boolean(hk.settings, "remove-old-trash-files");
-    j->temp = g_settings_get_boolean(hk.settings, "remove-old-temp-files");
-    j->age = (gint64)g_settings_get_uint(hk.settings, "old-files-age") * G_TIME_SPAN_DAY;
-    if (!j->trash && !j->temp) {
-        g_free(j);
+    job *purge_job = g_new0(job, 1);
+    purge_job->trash = g_settings_get_boolean(hk.settings, "remove-old-trash-files");
+    purge_job->temp = g_settings_get_boolean(hk.settings, "remove-old-temp-files");
+    purge_job->age = (gint64)g_settings_get_uint(hk.settings, "old-files-age") * G_TIME_SPAN_DAY;
+    if (!purge_job->trash && !purge_job->temp) {
+        g_free(purge_job);
         schedule(INTERVAL_S);
         return G_SOURCE_REMOVE;
     }
-    j->roots = drive_roots();
+    purge_job->roots = drive_roots();
     hk.running = true;
     GTask *task = g_task_new(nullptr, hk.cancel, purged, nullptr);
-    g_task_set_task_data(task, j, job_free);
+    g_task_set_task_data(task, purge_job, job_free);
     g_task_run_in_thread(task, purge_thread);
     g_object_unref(task);
     return G_SOURCE_REMOVE;
@@ -161,7 +162,7 @@ static void schedule(guint seconds) {
     hk.timer = g_timeout_add_seconds(seconds, run_purge, nullptr);
 }
 
-static void on_changed([[maybe_unused]] GSettings *s, const char *key,
+static void on_changed([[maybe_unused]] GSettings *gsettings, const char *key,
                        [[maybe_unused]] gpointer data) {
     if (strcmp(key, "remove-old-trash-files") == 0 || strcmp(key, "remove-old-temp-files") == 0 ||
         strcmp(key, "old-files-age") == 0) {

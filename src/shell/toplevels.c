@@ -14,100 +14,105 @@ static void replace_string(char **dst, const char *src) {
     *dst = xd_str_dup_cstr(xd_str_from_cstr(src));
 }
 
-static void handle_title(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+static void handle_title(void *data,
+                         [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                          const char *title) {
-    xd_toplevel *t = data;
-    replace_string(&t->title, title);
+    xd_toplevel *toplevel = data;
+    replace_string(&toplevel->title, title);
 }
 
 static void handle_app_id(void *data,
-                          [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+                          [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                           const char *app_id) {
-    xd_toplevel *t = data;
-    if (t->app_id != nullptr && strcmp(t->app_id, app_id) == 0)
+    xd_toplevel *toplevel = data;
+    if (toplevel->app_id != nullptr && strcmp(toplevel->app_id, app_id) == 0)
         return;
-    replace_string(&t->app_id, app_id);
-    g_free(t->icon);
-    g_free(t->app_name);
-    g_free(t->desktop_id);
-    xd_app_for_window_id(app_id, &t->desktop_id, &t->icon, &t->app_name);
+    replace_string(&toplevel->app_id, app_id);
+    g_free(toplevel->icon);
+    g_free(toplevel->app_name);
+    g_free(toplevel->desktop_id);
+    xd_app_for_window_id(app_id, &toplevel->desktop_id, &toplevel->icon, &toplevel->app_name);
 }
 
 /* Like XP, every taskbar shows every window, so outputs are ignored for
  * now. "Show windows only on the taskbar where they're open" (Windows 8+)
  * will use these. */
-static void handle_output_enter([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
-                                [[maybe_unused]] struct wl_output *output) {}
+static void handle_output_enter(
+    [[maybe_unused]] void *data,
+    [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
+    [[maybe_unused]] struct wl_output *output) {}
 
-static void handle_output_leave([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
-                                [[maybe_unused]] struct wl_output *output) {}
+static void handle_output_leave(
+    [[maybe_unused]] void *data,
+    [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
+    [[maybe_unused]] struct wl_output *output) {}
 
-static void handle_state(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+static void handle_state(void *data,
+                         [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                          struct wl_array *state) {
-    xd_toplevel *t = data;
-    t->activated = false;
-    t->minimized = false;
-    t->maximized = false;
-    const uint32_t *v = state->data;
-    size_t n = state->size / sizeof(uint32_t);
-    for (size_t i = 0; i < n; i++) {
-        switch (v[i]) {
+    xd_toplevel *toplevel = data;
+    toplevel->activated = false;
+    toplevel->minimized = false;
+    toplevel->maximized = false;
+    const uint32_t *states = state->data;
+    size_t count = state->size / sizeof(uint32_t);
+    for (size_t i = 0; i < count; i++) {
+        switch (states[i]) {
         case ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED:
-            t->activated = true;
+            toplevel->activated = true;
             break;
         case ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MINIMIZED:
-            t->minimized = true;
+            toplevel->minimized = true;
             break;
         case ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MAXIMIZED:
-            t->maximized = true;
+            toplevel->maximized = true;
             break;
         default:
             break;
         }
     }
-    if (t->activated) {
-        t->attention = false;
-        t->flashes = 0;
-        t->active_seq = ++t->shell->active_seq;
+    if (toplevel->activated) {
+        toplevel->attention = false;
+        toplevel->flashes = 0;
+        toplevel->active_seq = ++toplevel->shell->active_seq;
     }
 }
 
-static void handle_done(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h) {
-    xd_toplevel *t = data;
-    xd_superbar_windows_changed(t->shell);
-    xd_taskbars_mark_dirty(t->shell);
+static void handle_done(void *data,
+                        [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle) {
+    xd_toplevel *toplevel = data;
+    xd_superbar_windows_changed(toplevel->shell);
+    xd_taskbars_mark_dirty(toplevel->shell);
 }
 
-static void forget_hidden(xd_shell *shell, xd_toplevel *t) {
+static void forget_hidden(xd_shell *shell, xd_toplevel *toplevel) {
     for (size_t i = 0; i < shell->desktop_hidden_n; i++) {
-        if (shell->desktop_hidden[i] == t) {
+        if (shell->desktop_hidden[i] == toplevel) {
             shell->desktop_hidden[i] = shell->desktop_hidden[--shell->desktop_hidden_n];
             return;
         }
     }
 }
 
-static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *h) {
-    xd_toplevel *t = data;
-    forget_hidden(t->shell, t);
-    xd_taskbars_forget(t->shell, t);
-    wl_list_remove(&t->link);
-    zwlr_foreign_toplevel_handle_v1_destroy(h);
-    XD_FREE(&t->title);
-    XD_FREE(&t->app_id);
-    g_free(t->icon);
-    g_free(t->app_name);
-    g_free(t->desktop_id);
-    g_free(t->identifier);
-    xd_superbar_windows_changed(t->shell);
-    xd_taskbars_mark_dirty(t->shell);
-    xd_free(t);
+static void handle_closed(void *data, struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle) {
+    xd_toplevel *toplevel = data;
+    forget_hidden(toplevel->shell, toplevel);
+    xd_taskbars_forget(toplevel->shell, toplevel);
+    wl_list_remove(&toplevel->link);
+    zwlr_foreign_toplevel_handle_v1_destroy(toplevel_handle);
+    XD_FREE(&toplevel->title);
+    XD_FREE(&toplevel->app_id);
+    g_free(toplevel->icon);
+    g_free(toplevel->app_name);
+    g_free(toplevel->desktop_id);
+    g_free(toplevel->identifier);
+    xd_superbar_windows_changed(toplevel->shell);
+    xd_taskbars_mark_dirty(toplevel->shell);
+    xd_free(toplevel);
 }
 
 static void handle_parent([[maybe_unused]] void *data,
-                          [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+                          [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                           [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *parent) {}
 
 static const struct zwlr_foreign_toplevel_handle_v1_listener handle_listener = {
@@ -125,12 +130,12 @@ static void handle_toplevel(void *data,
                             [[maybe_unused]] struct zwlr_foreign_toplevel_manager_v1 *manager,
                             struct zwlr_foreign_toplevel_handle_v1 *handle) {
     xd_shell *shell = data;
-    xd_toplevel *t = XD_NEW(xd_toplevel);
-    t->shell = shell;
-    t->handle = handle;
-    t->id = ++shell->next_toplevel_id;
-    wl_list_insert(shell->toplevels.prev, &t->link);
-    zwlr_foreign_toplevel_handle_v1_add_listener(handle, &handle_listener, t);
+    xd_toplevel *toplevel = XD_NEW(xd_toplevel);
+    toplevel->shell = shell;
+    toplevel->handle = handle;
+    toplevel->id = ++shell->next_toplevel_id;
+    wl_list_insert(shell->toplevels.prev, &toplevel->link);
+    zwlr_foreign_toplevel_handle_v1_add_listener(handle, &handle_listener, toplevel);
     /* Which window it is to the capture protocols, for its thumbnail. */
     if (shell->arranger != nullptr && xd_window_arranger_v1_get_version(shell->arranger) >=
                                           XD_WINDOW_ARRANGER_V1_IDENTIFY_SINCE_VERSION)
@@ -168,10 +173,10 @@ static void arm_flash_timer(xd_shell *shell, bool on) {
 }
 
 void xd_toplevel_attention(xd_shell *shell, struct zwlr_foreign_toplevel_handle_v1 *handle) {
-    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
-        if (t->handle == handle && !t->activated) {
-            t->attention = true;
-            t->flashes = FLASH_HALF_CYCLES;
+    XD_LIST_FOR_EACH(toplevel, &shell->toplevels, xd_toplevel, link) {
+        if (toplevel->handle == handle && !toplevel->activated) {
+            toplevel->attention = true;
+            toplevel->flashes = FLASH_HALF_CYCLES;
             arm_flash_timer(shell, true);
             xd_taskbars_mark_dirty(shell);
         }
@@ -180,10 +185,10 @@ void xd_toplevel_attention(xd_shell *shell, struct zwlr_foreign_toplevel_handle_
 
 void xd_toplevels_flash_tick(xd_shell *shell) {
     bool more = false;
-    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
-        if (t->attention && t->flashes > 0) {
-            t->flashes--;
-            more = more || t->flashes > 0;
+    XD_LIST_FOR_EACH(toplevel, &shell->toplevels, xd_toplevel, link) {
+        if (toplevel->attention && toplevel->flashes > 0) {
+            toplevel->flashes--;
+            more = more || toplevel->flashes > 0;
             xd_taskbars_mark_dirty(shell);
         }
     }
@@ -193,8 +198,8 @@ void xd_toplevels_flash_tick(xd_shell *shell) {
 
 void xd_show_desktop_toggle(xd_shell *shell) {
     bool any_visible = false;
-    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
-        any_visible = any_visible || !t->minimized;
+    XD_LIST_FOR_EACH(toplevel, &shell->toplevels, xd_toplevel, link) {
+        any_visible = any_visible || !toplevel->minimized;
     }
     /* Second click with nothing shown since: bring back what we hid. */
     if (!any_visible && shell->desktop_hidden_n > 0) {
@@ -204,28 +209,28 @@ void xd_show_desktop_toggle(xd_shell *shell) {
         return;
     }
     shell->desktop_hidden_n = 0;
-    XD_LIST_FOR_EACH(t, &shell->toplevels, xd_toplevel, link) {
-        if (t->minimized)
+    XD_LIST_FOR_EACH(toplevel, &shell->toplevels, xd_toplevel, link) {
+        if (toplevel->minimized)
             continue;
         if (shell->desktop_hidden_n == shell->desktop_hidden_cap) {
             shell->desktop_hidden_cap = shell->desktop_hidden_cap == 0 ? 8 : shell->desktop_hidden_cap * 2;
             shell->desktop_hidden = xd_realloc_array(shell->desktop_hidden, shell->desktop_hidden_cap,
                                                      sizeof(*shell->desktop_hidden));
         }
-        shell->desktop_hidden[shell->desktop_hidden_n++] = t;
-        zwlr_foreign_toplevel_handle_v1_set_minimized(t->handle);
+        shell->desktop_hidden[shell->desktop_hidden_n++] = toplevel;
+        zwlr_foreign_toplevel_handle_v1_set_minimized(toplevel->handle);
     }
 }
 
 /* Windows' rule: clicking the button of the active window minimizes it;
  * clicking any other button brings that window forward. */
-void xd_toplevel_click(xd_toplevel *t) {
-    if (t->activated && !t->minimized) {
-        zwlr_foreign_toplevel_handle_v1_set_minimized(t->handle);
+void xd_toplevel_click(xd_toplevel *toplevel) {
+    if (toplevel->activated && !toplevel->minimized) {
+        zwlr_foreign_toplevel_handle_v1_set_minimized(toplevel->handle);
         return;
     }
-    if (t->minimized)
-        zwlr_foreign_toplevel_handle_v1_unset_minimized(t->handle);
-    if (t->shell->seat != nullptr)
-        zwlr_foreign_toplevel_handle_v1_activate(t->handle, t->shell->seat);
+    if (toplevel->minimized)
+        zwlr_foreign_toplevel_handle_v1_unset_minimized(toplevel->handle);
+    if (toplevel->shell->seat != nullptr)
+        zwlr_foreign_toplevel_handle_v1_activate(toplevel->handle, toplevel->shell->seat);
 }

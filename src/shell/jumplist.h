@@ -30,7 +30,7 @@ bool xd_jumplist_forget(GBookmarkFile *recent, const char *uri, const char *desk
 
 /* Moves item `from` of `items` (n long) to index `to`, shifting the ones
  * between; false if either is out of range or they're the same. */
-bool xd_jumplist_move(void **items, size_t n, size_t from, size_t to);
+bool xd_jumplist_move(void **items, size_t count, size_t from, size_t to);
 
 /* The URIs pinned to a program's jump list, in the order pinned: its
  * group's Pinned list in `kf` (a group per desktop file id). g_strfreev
@@ -53,7 +53,7 @@ void xd_jumplist_drop_pinned(char **uris, char *const *pinned);
  * more windows (combining one window saves nothing) not combined yet.
  * Returns its index, or SIZE_MAX when none is left. */
 size_t xd_jumplist_combine_next(const size_t *windows, const uint64_t *last_used,
-                                const bool *combined, size_t n);
+                                const bool *combined, size_t count);
 
 /* Whether an MPRIS media player is the program's: its DesktopEntry (or,
  * without one, the name after org.mpris.MediaPlayer2.) is the program's

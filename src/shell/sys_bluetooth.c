@@ -27,27 +27,29 @@ typedef struct device_choice {
     bool connected;
 } device_choice;
 
-static GVariant *prop(GDBusInterface *i, const char *name) {
-    return i != nullptr ? g_dbus_proxy_get_cached_property(G_DBUS_PROXY(i), name) : nullptr;
+static GVariant *prop(GDBusInterface *dbus_interface, const char *name) {
+    return dbus_interface != nullptr
+               ? g_dbus_proxy_get_cached_property(G_DBUS_PROXY(dbus_interface), name)
+               : nullptr;
 }
 
-static bool prop_b(GDBusInterface *i, const char *name) {
-    GVariant *v = prop(i, name);
-    bool b = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BOOLEAN) &&
-             g_variant_get_boolean(v);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return b;
+static bool prop_b(GDBusInterface *dbus_interface, const char *name) {
+    GVariant *variant = prop(dbus_interface, name);
+    bool value = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BOOLEAN) &&
+                 g_variant_get_boolean(variant);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
-static char *prop_s(GDBusInterface *i, const char *name) {
-    GVariant *v = prop(i, name);
-    char *s = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)
-                  ? g_variant_dup_string(v, nullptr)
-                  : nullptr;
-    if (v != nullptr)
-        g_variant_unref(v);
-    return s;
+static char *prop_s(GDBusInterface *dbus_interface, const char *name) {
+    GVariant *variant = prop(dbus_interface, name);
+    char *value = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING)
+                      ? g_variant_dup_string(variant, nullptr)
+                      : nullptr;
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 /* The first adapter (most machines have one); caller unrefs. */
@@ -56,55 +58,55 @@ static GDBusInterface *adapter(bluetooth *bt) {
         return nullptr;
     GList *objs = g_dbus_object_manager_get_objects(bt->objects);
     GDBusInterface *found = nullptr;
-    for (GList *o = objs; o != nullptr && found == nullptr; o = o->next)
-        found = g_dbus_object_get_interface(o->data, IFACE_ADAPTER);
+    for (GList *list = objs; list != nullptr && found == nullptr; list = list->next)
+        found = g_dbus_object_get_interface(list->data, IFACE_ADAPTER);
     g_list_free_full(objs, g_object_unref);
     return found;
 }
 
 static int connected_count(bluetooth *bt) {
-    int n = 0;
+    int count = 0;
     GList *objs = g_dbus_object_manager_get_objects(bt->objects);
-    for (GList *o = objs; o != nullptr; o = o->next) {
-        GDBusInterface *d = g_dbus_object_get_interface(o->data, IFACE_DEVICE);
-        if (d != nullptr) {
-            n += prop_b(d, "Connected");
-            g_object_unref(d);
+    for (GList *list = objs; list != nullptr; list = list->next) {
+        GDBusInterface *dbus_interface = g_dbus_object_get_interface(list->data, IFACE_DEVICE);
+        if (dbus_interface != nullptr) {
+            count += prop_b(dbus_interface, "Connected");
+            g_object_unref(dbus_interface);
         }
     }
     g_list_free_full(objs, g_object_unref);
-    return n;
+    return count;
 }
 
 static const char *icon(void *data) {
     bluetooth *bt = data;
-    GDBusInterface *a = adapter(bt);
-    if (a == nullptr || !bt->shell->settings.bluetooth_icon)
+    GDBusInterface *dbus_interface = adapter(bt);
+    if (dbus_interface == nullptr || !bt->shell->settings.bluetooth_icon)
         return nullptr; /* no adapter, or turned off: no icon */
-    bool on = prop_b(a, "Powered");
-    g_object_unref(a);
+    bool on = prop_b(dbus_interface, "Powered");
+    g_object_unref(dbus_interface);
     return on ? "bluetooth-active" : "bluetooth-disabled";
 }
 
 static char *tooltip(void *data) {
     bluetooth *bt = data;
-    GDBusInterface *a = adapter(bt);
-    bool on = a != nullptr && prop_b(a, "Powered");
-    if (a != nullptr)
-        g_object_unref(a);
+    GDBusInterface *dbus_interface = adapter(bt);
+    bool on = dbus_interface != nullptr && prop_b(dbus_interface, "Powered");
+    if (dbus_interface != nullptr)
+        g_object_unref(dbus_interface);
     if (!on)
         return g_strdup("Bluetooth is off");
-    int n = connected_count(bt);
-    return n == 0   ? g_strdup("Bluetooth: no devices connected")
-           : n == 1 ? g_strdup("Bluetooth: 1 device connected")
-                    : g_strdup_printf("Bluetooth: %d devices connected", n);
+    int count = connected_count(bt);
+    return count == 0   ? g_strdup("Bluetooth: no devices connected")
+           : count == 1 ? g_strdup("Bluetooth: 1 device connected")
+                        : g_strdup_printf("Bluetooth: %d devices connected", count);
 }
 
 static void call_done(GObject *src, GAsyncResult *res, [[maybe_unused]] gpointer data) {
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r != nullptr) {
-        g_variant_unref(r);
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant != nullptr) {
+        g_variant_unref(variant);
     } else {
         fprintf(stderr, "xd-shell: bluetooth: %s\n", error->message);
         g_error_free(error);
@@ -115,28 +117,29 @@ static GDBusConnection *bus_of(bluetooth *bt) {
     return g_dbus_object_manager_client_get_connection(G_DBUS_OBJECT_MANAGER_CLIENT(bt->objects));
 }
 
-static void act_power(xd_shell *shell, void *d) {
+static void act_power(xd_shell *shell, void *data) {
     (void)shell;
-    bluetooth *bt = d;
-    GDBusInterface *a = adapter(bt);
-    if (a == nullptr)
+    bluetooth *bt = data;
+    GDBusInterface *dbus_interface = adapter(bt);
+    if (dbus_interface == nullptr)
         return;
-    bool on = prop_b(a, "Powered");
-    const char *path = g_dbus_proxy_get_object_path(G_DBUS_PROXY(a));
+    bool on = prop_b(dbus_interface, "Powered");
+    const char *path = g_dbus_proxy_get_object_path(G_DBUS_PROXY(dbus_interface));
     g_dbus_connection_call(bus_of(bt), BLUEZ, path, "org.freedesktop.DBus.Properties", "Set",
                            g_variant_new("(ssv)", IFACE_ADAPTER, "Powered",
                                          g_variant_new_boolean(!on)),
                            nullptr, G_DBUS_CALL_FLAGS_NONE, -1, bt->cancel, call_done, bt);
-    g_object_unref(a);
+    g_object_unref(dbus_interface);
 }
 
-static void act_device(xd_shell *shell, void *d) {
+static void act_device(xd_shell *shell, void *data) {
     (void)shell;
-    const device_choice *c = d;
+    const device_choice *device_item = data;
     /* Connecting can take a while (and BlueZ may ask the device to pair). */
-    g_dbus_connection_call(bus_of(c->bt), BLUEZ, c->path, IFACE_DEVICE,
-                           c->connected ? "Disconnect" : "Connect", nullptr, nullptr,
-                           G_DBUS_CALL_FLAGS_NONE, 60000, c->bt->cancel, call_done, c->bt);
+    g_dbus_connection_call(bus_of(device_item->bt), BLUEZ, device_item->path, IFACE_DEVICE,
+                           device_item->connected ? "Disconnect" : "Connect", nullptr, nullptr,
+                           G_DBUS_CALL_FLAGS_NONE, 60000, device_item->bt->cancel, call_done,
+                           device_item->bt);
 }
 
 /* XP's items for Bluetooth Devices. */
@@ -148,25 +151,25 @@ static const struct {
     {"Open Bluetooth Settings", "xd-bluetooth --options"},
 };
 
-static void act_devices(xd_shell *shell, void *d) {
-    xd_shell_launch(shell, devices_items[GPOINTER_TO_SIZE(d)].command);
+static void act_devices(xd_shell *shell, void *data) {
+    xd_shell_launch(shell, devices_items[GPOINTER_TO_SIZE(data)].command);
 }
 
 /* XP's Remove Bluetooth Icon: what Options' check box turns back on. */
-static void act_remove_icon(xd_shell *shell, [[maybe_unused]] void *d) {
+static void act_remove_icon(xd_shell *shell, [[maybe_unused]] void *data) {
     shell->settings.bluetooth_icon = false;
     if (!xd_settings_save(&shell->settings))
         fprintf(stderr, "xd-shell: cannot save settings\n");
     xd_tray_changed(shell);
 }
 
-static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
+static void menu(void *data, xd_menu_tree *tree, xd_menu_model *menu_model) {
     bluetooth *bt = data;
-    GDBusInterface *a = adapter(bt);
-    bool on = a != nullptr && prop_b(a, "Powered");
-    if (a != nullptr)
-        g_object_unref(a);
-    xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION,
+    GDBusInterface *dbus_interface = adapter(bt);
+    bool on = dbus_interface != nullptr && prop_b(dbus_interface, "Powered");
+    if (dbus_interface != nullptr)
+        g_object_unref(dbus_interface);
+    xd_menu_item *it = xd_menu_add(tree, menu_model, XD_MENU_ACTION,
                                    on ? "Turn Bluetooth Off" : "Turn Bluetooth On", nullptr);
     it->action = act_power;
     it->action_data = bt;
@@ -174,26 +177,26 @@ static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
         /* Paired devices: a check mark on connected ones; clicking toggles. */
         bool any = false;
         GList *objs = g_dbus_object_manager_get_objects(bt->objects);
-        for (GList *o = objs; o != nullptr; o = o->next) {
-            GDBusInterface *dev = g_dbus_object_get_interface(o->data, IFACE_DEVICE);
+        for (GList *list = objs; list != nullptr; list = list->next) {
+            GDBusInterface *dev = g_dbus_object_get_interface(list->data, IFACE_DEVICE);
             if (dev == nullptr)
                 continue;
             if (prop_b(dev, "Paired")) {
                 if (!any)
-                    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+                    xd_menu_add(tree, menu_model, XD_MENU_SEPARATOR, nullptr, nullptr);
                 any = true;
                 char *name = prop_s(dev, "Alias");
                 char *dev_icon = prop_s(dev, "Icon");
-                device_choice *c = XD_ARENA_NEW(&tree->arena, device_choice);
-                c->bt = bt;
-                c->path = xd_str_arena_cstr(
-                    &tree->arena, xd_str_from_cstr(g_dbus_object_get_object_path(o->data)));
-                c->connected = prop_b(dev, "Connected");
-                it = xd_menu_add(tree, m, XD_MENU_ACTION, name != nullptr ? name : "Device",
-                                 dev_icon);
+                device_choice *device_item = XD_ARENA_NEW(&tree->arena, device_choice);
+                device_item->bt = bt;
+                device_item->path = xd_str_arena_cstr(
+                    &tree->arena, xd_str_from_cstr(g_dbus_object_get_object_path(list->data)));
+                device_item->connected = prop_b(dev, "Connected");
+                it = xd_menu_add(tree, menu_model, XD_MENU_ACTION,
+                                 name != nullptr ? name : "Device", dev_icon);
                 it->action = act_device;
-                it->action_data = c;
-                it->checked = c->connected;
+                it->action_data = device_item;
+                it->checked = device_item->connected;
                 g_free(name);
                 g_free(dev_icon);
             }
@@ -201,53 +204,55 @@ static void menu(void *data, xd_menu_tree *tree, xd_menu_model *m) {
         }
         g_list_free_full(objs, g_object_unref);
     }
-    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+    xd_menu_add(tree, menu_model, XD_MENU_SEPARATOR, nullptr, nullptr);
     bool have = xd_shell_have_program("xd-bluetooth");
     for (size_t i = 0; i < XD_ARRAY_LEN(devices_items); i++) {
-        it = xd_menu_add(tree, m, XD_MENU_ACTION, devices_items[i].label, nullptr);
+        it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, devices_items[i].label, nullptr);
         it->action = act_devices;
         it->action_data = GSIZE_TO_POINTER(i);
         it->disabled = !have || (i == 0 && !on); /* adding needs the radio on */
     }
-    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
-    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Remove Bluetooth Icon", nullptr);
+    xd_menu_add(tree, menu_model, XD_MENU_SEPARATOR, nullptr, nullptr);
+    it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Remove Bluetooth Icon", nullptr);
     it->action = act_remove_icon;
 }
 
 /* Every property of every device lands here (their signal strength while
  * discovering): redraw only when the adapter came, went or switched. */
 static void changed(bluetooth *bt) {
-    GDBusInterface *a = adapter(bt);
-    int shown = a == nullptr ? -1 : prop_b(a, "Powered");
-    if (a != nullptr)
-        g_object_unref(a);
+    GDBusInterface *dbus_interface = adapter(bt);
+    int shown = dbus_interface == nullptr ? -1 : prop_b(dbus_interface, "Powered");
+    if (dbus_interface != nullptr)
+        g_object_unref(dbus_interface);
     if (shown == bt->shown)
         return;
     bt->shown = shown;
     xd_tray_changed(bt->shell);
 }
 
-static void props_changed([[maybe_unused]] GDBusObjectManagerClient *m,
-                          [[maybe_unused]] GDBusObjectProxy *o, [[maybe_unused]] GDBusProxy *i,
-                          [[maybe_unused]] GVariant *c, [[maybe_unused]] const char *const *inv,
-                          gpointer data) {
+static void props_changed([[maybe_unused]] GDBusObjectManagerClient *object_manager,
+                          [[maybe_unused]] GDBusObjectProxy *dbus_object_proxy,
+                          [[maybe_unused]] GDBusProxy *proxy, [[maybe_unused]] GVariant *variant,
+                          [[maybe_unused]] const char *const *inv, gpointer data) {
     changed(data);
 }
 
-static void added_removed([[maybe_unused]] GDBusObjectManager *m, [[maybe_unused]] GDBusObject *o,
-                          gpointer data) {
+static void added_removed([[maybe_unused]] GDBusObjectManager *dbus_object_manager,
+                          [[maybe_unused]] GDBusObject *dbus_object, gpointer data) {
     changed(data);
 }
 
 static void got_objects([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
-    GDBusObjectManager *m = g_dbus_object_manager_client_new_for_bus_finish(res, nullptr);
-    if (m == nullptr)
+    GDBusObjectManager *dbus_object_manager =
+        g_dbus_object_manager_client_new_for_bus_finish(res, nullptr);
+    if (dbus_object_manager == nullptr)
         return; /* no BlueZ */
     bluetooth *bt = data;
-    bt->objects = m;
-    g_signal_connect(m, "interface-proxy-properties-changed", G_CALLBACK(props_changed), bt);
-    g_signal_connect(m, "object-added", G_CALLBACK(added_removed), bt);
-    g_signal_connect(m, "object-removed", G_CALLBACK(added_removed), bt);
+    bt->objects = dbus_object_manager;
+    g_signal_connect(dbus_object_manager, "interface-proxy-properties-changed",
+                     G_CALLBACK(props_changed), bt);
+    g_signal_connect(dbus_object_manager, "object-added", G_CALLBACK(added_removed), bt);
+    g_signal_connect(dbus_object_manager, "object-removed", G_CALLBACK(added_removed), bt);
     changed(bt);
 }
 
@@ -262,13 +267,14 @@ static void destroy(void *data) {
     g_free(bt);
 }
 
-static void draw(void *data, const xd_theme *t, cairo_t *cr, xd_rect r) {
+static void draw(void *data, const xd_theme *theme, cairo_t *cairo, xd_rect rect) {
     bluetooth *bt = data;
-    GDBusInterface *a = adapter(bt);
-    bool on = a != nullptr && prop_b(a, "Powered");
-    if (a != nullptr)
-        g_object_unref(a);
-    xd_theme_draw_tray_icon(t, cr, r, XD_TRAY_ICON_BLUETOOTH, 0, on ? 0 : XD_TRAY_ICON_OFF);
+    GDBusInterface *dbus_interface = adapter(bt);
+    bool on = dbus_interface != nullptr && prop_b(dbus_interface, "Powered");
+    if (dbus_interface != nullptr)
+        g_object_unref(dbus_interface);
+    xd_theme_draw_tray_icon(theme, cairo, rect, XD_TRAY_ICON_BLUETOOTH, 0,
+                            on ? 0 : XD_TRAY_ICON_OFF);
 }
 
 static const xd_sysicon_ops ops = {

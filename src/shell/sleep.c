@@ -60,22 +60,22 @@ static bool wants_lock(const xd_sleep *sl) { return sl->shell->settings.resume_p
 static void inhibited(GObject *src, GAsyncResult *res, gpointer data) {
     GUnixFDList *fds = nullptr;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(src), &fds,
-                                                                  res, &error);
-    if (r == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    GVariant *variant =
+        g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(src), &fds, res, &error);
+    if (variant == nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
         g_error_free(error); /* the shell is exiting: sl is gone */
         return;
     }
     xd_sleep *sl = data;
     sl->inhibiting = false;
-    if (r == nullptr) {
+    if (variant == nullptr) {
         fprintf(stderr, "xd-shell: cannot delay sleep to lock the screen: %s\n", error->message);
         g_error_free(error);
         return;
     }
     gint32 index = -1;
-    g_variant_get(r, "(h)", &index);
-    g_variant_unref(r);
+    g_variant_get(variant, "(h)", &index);
+    g_variant_unref(variant);
     int fd = fds != nullptr ? g_unix_fd_list_get(fds, index, nullptr) : -1;
     g_clear_object(&fds);
     if (fd < 0)
@@ -211,9 +211,9 @@ void xd_sleep_finish(xd_shell *shell) {
 static void slept(GObject *src, GAsyncResult *res, gpointer data) {
     const char *method = data;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r != nullptr) {
-        g_variant_unref(r);
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant != nullptr) {
+        g_variant_unref(variant);
     } else {
         if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
             fprintf(stderr, "xd-shell: %s: %s\n", method, error->message);

@@ -13,10 +13,10 @@ typedef struct entry {
     gint64 when; /* unix seconds of last modification of the bookmark */
 } entry;
 
-static int newest_first(const void *a, const void *b) {
-    const entry *x = a;
-    const entry *y = b;
-    return (x->when < y->when) - (x->when > y->when);
+static int newest_first(const void *left, const void *right) {
+    const entry *left_file = left;
+    const entry *right_file = right;
+    return (left_file->when < right_file->when) - (left_file->when > right_file->when);
 }
 
 void xd_recent_privacy(bool *remember, int *max_age_days) {
@@ -29,10 +29,10 @@ void xd_recent_privacy(bool *remember, int *max_age_days) {
         return;
     if (g_settings_schema_has_key(schema, "remember-recent-files") &&
         g_settings_schema_has_key(schema, "recent-files-max-age")) {
-        GSettings *s = g_settings_new_full(schema, nullptr, nullptr);
-        *remember = g_settings_get_boolean(s, "remember-recent-files");
-        *max_age_days = g_settings_get_int(s, "recent-files-max-age");
-        g_object_unref(s);
+        GSettings *gsettings = g_settings_new_full(schema, nullptr, nullptr);
+        *remember = g_settings_get_boolean(gsettings, "remember-recent-files");
+        *max_age_days = g_settings_get_int(gsettings, "recent-files-max-age");
+        g_object_unref(gsettings);
     }
     g_settings_schema_unref(schema);
 }
@@ -65,11 +65,11 @@ void xd_recent_load(char ***paths, size_t *count, size_t max) {
         return;
     }
 
-    gsize n = 0;
-    gchar **uris = g_bookmark_file_get_uris(bf, &n);
-    entry *list = xd_alloc_array(XD_MAX(n, 1), sizeof(*list));
-    size_t m = 0;
-    for (gsize i = 0; i < n; i++) {
+    gsize uri_count = 0;
+    gchar **uris = g_bookmark_file_get_uris(bf, &uri_count);
+    entry *list = xd_alloc_array(XD_MAX(uri_count, 1), sizeof(*list));
+    size_t kept = 0;
+    for (gsize i = 0; i < uri_count; i++) {
         GDateTime *dt = g_bookmark_file_get_modified_date_time(bf, uris[i], nullptr);
         gint64 when = dt != nullptr ? g_date_time_to_unix(dt) : 0;
         if (!xd_recent_shown(remember, max_age, when, now))
@@ -81,14 +81,14 @@ void xd_recent_load(char ***paths, size_t *count, size_t max) {
             g_free(path);
             continue;
         }
-        list[m].path = xd_str_dup_cstr(xd_str_from_cstr(path));
-        list[m].when = when;
-        m++;
+        list[kept].path = xd_str_dup_cstr(xd_str_from_cstr(path));
+        list[kept].when = when;
+        kept++;
         g_free(path);
     }
-    if (m > 1)
-        qsort(list, m, sizeof(*list), newest_first);
-    for (size_t i = 0; i < m; i++) {
+    if (kept > 1)
+        qsort(list, kept, sizeof(*list), newest_first);
+    for (size_t i = 0; i < kept; i++) {
         if (*count < max)
             (*paths)[(*count)++] = list[i].path;
         else

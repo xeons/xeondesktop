@@ -30,15 +30,16 @@ static int timeout_ms(int minutes) {
 static bool saver_running(xd_shell *shell) {
     if (shell->saver_pidfd < 0)
         return false;
-    struct pollfd p = {.fd = shell->saver_pidfd, .events = POLLIN};
-    if (poll(&p, 1, 0) == 0)
+    struct pollfd pidfd_poll = {.fd = shell->saver_pidfd, .events = POLLIN};
+    if (poll(&pidfd_poll, 1, 0) == 0)
         return true;
     close(shell->saver_pidfd); /* readable: it exited */
     shell->saver_pidfd = -1;
     return false;
 }
 
-static void saver_idled(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+static void saver_idled(void *data,
+                        [[maybe_unused]] struct ext_idle_notification_v1 *notification) {
     xd_shell *shell = data;
     if (saver_running(shell))
         return;
@@ -48,7 +49,7 @@ static void saver_idled(void *data, [[maybe_unused]] struct ext_idle_notificatio
 }
 
 static void saver_resumed([[maybe_unused]] void *data,
-                          [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+                          [[maybe_unused]] struct ext_idle_notification_v1 *notification) {
     /* The saver ends itself on input. */
 }
 
@@ -59,10 +60,12 @@ static const struct ext_idle_notification_v1_listener saver_listener = {
 
 /* ---- monitor power ------------------------------------------------------------ */
 
-static void power_mode([[maybe_unused]] void *data, [[maybe_unused]] struct zwlr_output_power_v1 *p,
+static void power_mode([[maybe_unused]] void *data,
+                       [[maybe_unused]] struct zwlr_output_power_v1 *output_power,
                        [[maybe_unused]] uint32_t mode) {}
 
-static void power_failed([[maybe_unused]] void *data, [[maybe_unused]] struct zwlr_output_power_v1 *p) {}
+static void power_failed([[maybe_unused]] void *data,
+                         [[maybe_unused]] struct zwlr_output_power_v1 *output_power) {}
 
 static const struct zwlr_output_power_v1_listener power_listener = {
     .mode = power_mode,
@@ -73,22 +76,24 @@ static void set_monitors(xd_shell *shell, bool on) {
     if (shell->power_manager == nullptr)
         return;
     XD_LIST_FOR_EACH(bar, &shell->taskbars, xd_taskbar, link) {
-        struct zwlr_output_power_v1 *p =
+        struct zwlr_output_power_v1 *output_power =
             zwlr_output_power_manager_v1_get_output_power(shell->power_manager, bar->output);
-        zwlr_output_power_v1_add_listener(p, &power_listener, shell);
-        zwlr_output_power_v1_set_mode(p, on ? ZWLR_OUTPUT_POWER_V1_MODE_ON
-                                            : ZWLR_OUTPUT_POWER_V1_MODE_OFF);
+        zwlr_output_power_v1_add_listener(output_power, &power_listener, shell);
+        zwlr_output_power_v1_set_mode(output_power, on ? ZWLR_OUTPUT_POWER_V1_MODE_ON
+                                                       : ZWLR_OUTPUT_POWER_V1_MODE_OFF);
         /* The mode sticks after the object goes. */
-        zwlr_output_power_v1_destroy(p);
+        zwlr_output_power_v1_destroy(output_power);
     }
     shell->monitors_off = !on;
 }
 
-static void monitor_idled(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+static void monitor_idled(void *data,
+                          [[maybe_unused]] struct ext_idle_notification_v1 *notification) {
     set_monitors(data, false);
 }
 
-static void monitor_resumed(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+static void monitor_resumed(void *data,
+                            [[maybe_unused]] struct ext_idle_notification_v1 *notification) {
     xd_shell *shell = data;
     if (shell->monitors_off)
         set_monitors(shell, true);
@@ -101,16 +106,18 @@ static const struct ext_idle_notification_v1_listener monitor_listener = {
 
 /* ---- standby and hibernation ----------------------------------------------------- */
 
-static void standby_idled(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+static void standby_idled(void *data,
+                          [[maybe_unused]] struct ext_idle_notification_v1 *notification) {
     xd_sleep_now(data, false);
 }
 
-static void hibernate_idled(void *data, [[maybe_unused]] struct ext_idle_notification_v1 *n) {
+static void hibernate_idled(void *data,
+                            [[maybe_unused]] struct ext_idle_notification_v1 *notification) {
     xd_sleep_now(data, true);
 }
 
 static void sleep_resumed([[maybe_unused]] void *data,
-                          [[maybe_unused]] struct ext_idle_notification_v1 *n) {}
+                          [[maybe_unused]] struct ext_idle_notification_v1 *notification) {}
 
 static const struct ext_idle_notification_v1_listener standby_listener = {
     .idled = standby_idled,
@@ -146,13 +153,13 @@ void xd_idle_update(xd_shell *shell) {
     drop_note(&shell->hibernate_note);
     if (shell->idle_notifier == nullptr || shell->seat == nullptr)
         return;
-    const xd_settings *s = &shell->settings;
-    if (xd_saver_find(s->screensaver) != nullptr && s->screensaver_wait > 0)
-        shell->saver_note = add_note(shell, s->screensaver_wait, &saver_listener);
+    const xd_settings *settings = &shell->settings;
+    if (xd_saver_find(settings->screensaver) != nullptr && settings->screensaver_wait > 0)
+        shell->saver_note = add_note(shell, settings->screensaver_wait, &saver_listener);
     /* Power Options' "Plugged in" or "Running on batteries" column. */
-    int monitor = shell->on_battery ? s->monitor_off_battery : s->monitor_off;
-    int standby = shell->on_battery ? s->standby_battery : s->standby;
-    int hibernate = shell->on_battery ? s->hibernate_battery : s->hibernate;
+    int monitor = shell->on_battery ? settings->monitor_off_battery : settings->monitor_off;
+    int standby = shell->on_battery ? settings->standby_battery : settings->standby;
+    int hibernate = shell->on_battery ? settings->hibernate_battery : settings->hibernate;
     if (monitor > 0)
         shell->monitor_note = add_note(shell, monitor, &monitor_listener);
     else if (shell->monitors_off)

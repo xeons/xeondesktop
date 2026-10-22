@@ -48,8 +48,8 @@ struct xd_tray_item {
  * XD_TRAY_INACTIVE_SECONDS shortens it for testing. */
 static int64_t inactive_ms(void) {
     const char *test = getenv("XD_TRAY_INACTIVE_SECONDS");
-    gint64 s = test != nullptr ? g_ascii_strtoll(test, nullptr, 10) : 0;
-    return s > 0 ? s * 1000 : 3 * 60 * 1000;
+    gint64 seconds = test != nullptr ? g_ascii_strtoll(test, nullptr, 10) : 0;
+    return seconds > 0 ? seconds * 1000 : 3 * 60 * 1000;
 }
 
 static int64_t now_ms(void) { return g_get_monotonic_time() / 1000; }
@@ -141,52 +141,54 @@ static xd_tray_item *find_item(xd_tray *tray, const char *key) {
 
 /* IconPixmap: ARGB32 images in network byte order, several sizes. Keeps the
  * one nearest 32px (crisp at 16px and on HiDPI). */
-static cairo_surface_t *pixmap_from_variant(GVariant *v) {
-    if (v == nullptr || !g_variant_is_of_type(v, G_VARIANT_TYPE("a(iiay)")))
+static cairo_surface_t *pixmap_from_variant(GVariant *variant) {
+    if (variant == nullptr || !g_variant_is_of_type(variant, G_VARIANT_TYPE("a(iiay)")))
         return nullptr;
     GVariantIter iter;
-    g_variant_iter_init(&iter, v);
-    gint32 w, h;
+    g_variant_iter_init(&iter, variant);
+    gint32 width, height;
     GVariant *bytes;
     gint32 best_w = 0, best_h = 0;
     GVariant *best = nullptr;
-    while (g_variant_iter_next(&iter, "(ii@ay)", &w, &h, &bytes)) {
+    while (g_variant_iter_next(&iter, "(ii@ay)", &width, &height, &bytes)) {
         gsize len = g_variant_get_size(bytes);
-        bool ok = w > 0 && h > 0 && w <= 512 && h <= 512 && len == (gsize)w * (gsize)h * 4;
-        if (ok && (best == nullptr || abs(w - 32) < abs(best_w - 32))) {
+        bool ok = width > 0 && height > 0 && width <= 512 && height <= 512 &&
+                  len == (gsize)width * (gsize)height * 4;
+        if (ok && (best == nullptr || abs(width - 32) < abs(best_w - 32))) {
             if (best != nullptr)
                 g_variant_unref(best);
             best = bytes;
-            best_w = w;
-            best_h = h;
+            best_w = width;
+            best_h = height;
         } else {
             g_variant_unref(bytes);
         }
     }
     if (best == nullptr)
         return nullptr;
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, best_w, best_h);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, best_w, best_h);
     const guint8 *src = g_variant_get_data(best);
-    cairo_surface_flush(s);
-    unsigned char *dst = cairo_image_surface_get_data(s);
-    int stride = cairo_image_surface_get_stride(s);
+    cairo_surface_flush(surface);
+    unsigned char *dst = cairo_image_surface_get_data(surface);
+    int stride = cairo_image_surface_get_stride(surface);
     for (int y = 0; y < best_h; y++) {
         uint32_t *row = (uint32_t *)(void *)(dst + (size_t)y * (size_t)stride);
         for (int x = 0; x < best_w; x++) {
-            const guint8 *p = src + ((size_t)y * (size_t)best_w + (size_t)x) * 4;
-            uint32_t a = p[0], r = p[1] * a / 255, g = p[2] * a / 255, b = p[3] * a / 255;
-            row[x] = a << 24 | r << 16 | g << 8 | b; /* premultiplied, native order */
+            const guint8 *pixel = src + ((size_t)y * (size_t)best_w + (size_t)x) * 4;
+            uint32_t alpha = pixel[0], red = pixel[1] * alpha / 255, green = pixel[2] * alpha / 255,
+                     blue = pixel[3] * alpha / 255;
+            row[x] = alpha << 24 | red << 16 | green << 8 | blue; /* premultiplied, native order */
         }
     }
-    cairo_surface_mark_dirty(s);
+    cairo_surface_mark_dirty(surface);
     g_variant_unref(best);
-    return s;
+    return surface;
 }
 
 static char *dup_string(GVariant *props, const char *key) {
-    const char *s = nullptr;
-    if (g_variant_lookup(props, key, "&s", &s) && s[0] != '\0')
-        return g_strdup(s);
+    const char *value = nullptr;
+    if (g_variant_lookup(props, key, "&s", &value) && value[0] != '\0')
+        return g_strdup(value);
     return nullptr;
 }
 
@@ -224,12 +226,12 @@ static void got_properties(GObject *src, GAsyncResult *res, gpointer data) {
     GVariant *tip = g_variant_lookup_value(props, "ToolTip", G_VARIANT_TYPE("(sa(iiay)ss)"));
     char *tooltip = nullptr;
     if (tip != nullptr) {
-        const char *t = nullptr, *d = nullptr;
-        g_variant_get(tip, "(&s@a(iiay)&s&s)", nullptr, nullptr, &t, &d);
-        if (t != nullptr && t[0] != '\0')
-            tooltip = g_strdup(t);
-        else if (d != nullptr && d[0] != '\0')
-            tooltip = g_strdup(d);
+        const char *title = nullptr, *description = nullptr;
+        g_variant_get(tip, "(&s@a(iiay)&s&s)", nullptr, nullptr, &title, &description);
+        if (title != nullptr && title[0] != '\0')
+            tooltip = g_strdup(title);
+        else if (description != nullptr && description[0] != '\0')
+            tooltip = g_strdup(description);
         g_variant_unref(tip);
     }
     set_string(&it->tooltip, tooltip);
@@ -262,9 +264,10 @@ static void refresh(xd_tray_item *it) {
                            got_properties, it);
 }
 
-static void item_signal([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                        [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                        const char *signal, [[maybe_unused]] GVariant *params, gpointer data) {
+static void item_signal([[maybe_unused]] GDBusConnection *connection,
+                        [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                        [[maybe_unused]] const char *iface, const char *signal,
+                        [[maybe_unused]] GVariant *params, gpointer data) {
     /* NewIcon, NewTitle, NewStatus, NewToolTip, NewAttentionIcon, ...:
      * read everything again (it's small). */
     if (g_str_has_prefix(signal, "New"))
@@ -273,8 +276,8 @@ static void item_signal([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] co
 
 static void remove_item(xd_tray *tray, const char *key);
 
-static void item_vanished([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *name,
-                          gpointer data) {
+static void item_vanished([[maybe_unused]] GDBusConnection *connection,
+                          [[maybe_unused]] const char *name, gpointer data) {
     xd_tray_item *it = data;
     remove_item(it->tray, it->key);
 }
@@ -353,7 +356,7 @@ static const char watcher_xml[] =
     "<signal name='StatusNotifierHostRegistered'/>"
     "</interface></node>";
 
-static void watcher_call([[maybe_unused]] GDBusConnection *c, const char *sender,
+static void watcher_call([[maybe_unused]] GDBusConnection *connection, const char *sender,
                          [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
                          const char *method, GVariant *params, GDBusMethodInvocation *inv,
                          gpointer data) {
@@ -366,20 +369,20 @@ static void watcher_call([[maybe_unused]] GDBusConnection *c, const char *sender
     g_dbus_method_invocation_return_value(inv, nullptr);
 }
 
-static GVariant *watcher_get([[maybe_unused]] GDBusConnection *c,
-                             [[maybe_unused]] const char *sender,
-                             [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                             const char *prop, [[maybe_unused]] GError **error, gpointer data) {
+static GVariant *watcher_get([[maybe_unused]] GDBusConnection *connection,
+                             [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                             [[maybe_unused]] const char *iface, const char *prop,
+                             [[maybe_unused]] GError **error, gpointer data) {
     xd_tray *tray = data;
     if (strcmp(prop, "RegisteredStatusNotifierItems") == 0) {
-        GVariantBuilder b;
-        g_variant_builder_init(&b, G_VARIANT_TYPE("as"));
+        GVariantBuilder builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
         for (guint i = 0; i < tray->items->len; i++) {
             const xd_tray_item *it = g_ptr_array_index(tray->items, i);
             if (it->ops == nullptr)
-                g_variant_builder_add(&b, "s", it->key);
+                g_variant_builder_add(&builder, "s", it->key);
         }
-        return g_variant_builder_end(&b);
+        return g_variant_builder_end(&builder);
     }
     if (strcmp(prop, "IsStatusNotifierHostRegistered") == 0)
         return g_variant_new_boolean(TRUE);
@@ -395,9 +398,10 @@ static const GDBusInterfaceVTable watcher_vtable = {
 
 /* ---- using another desktop's watcher -------------------------------------- */
 
-static void ext_signal([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                       [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                       const char *signal, GVariant *params, gpointer data) {
+static void ext_signal([[maybe_unused]] GDBusConnection *connection,
+                       [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                       [[maybe_unused]] const char *iface, const char *signal, GVariant *params,
+                       gpointer data) {
     xd_tray *tray = data;
     const char *service = nullptr;
     if (!g_variant_is_of_type(params, G_VARIANT_TYPE("(s)")))
@@ -423,16 +427,16 @@ static void got_ext_items(GObject *src, GAsyncResult *res, gpointer data) {
     if (reply == nullptr)
         return;
     xd_tray *tray = data;
-    GVariant *v = nullptr;
-    g_variant_get(reply, "(v)", &v);
-    if (g_variant_is_of_type(v, G_VARIANT_TYPE("as"))) {
+    GVariant *variant = nullptr;
+    g_variant_get(reply, "(v)", &variant);
+    if (g_variant_is_of_type(variant, G_VARIANT_TYPE("as"))) {
         GVariantIter iter;
-        const char *s;
-        g_variant_iter_init(&iter, v);
-        while (g_variant_iter_next(&iter, "&s", &s))
-            add_item(tray, s, nullptr);
+        const char *item_name;
+        g_variant_iter_init(&iter, variant);
+        while (g_variant_iter_next(&iter, "&s", &item_name))
+            add_item(tray, item_name, nullptr);
     }
-    g_variant_unref(v);
+    g_variant_unref(variant);
     g_variant_unref(reply);
 }
 
@@ -455,16 +459,16 @@ static void use_external_watcher(xd_tray *tray) {
                            got_ext_items, tray);
 }
 
-static void watcher_acquired([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *n,
-                             gpointer data) {
+static void watcher_acquired([[maybe_unused]] GDBusConnection *connection,
+                             [[maybe_unused]] const char *name, gpointer data) {
     xd_tray *tray = data;
     tray->is_watcher = true;
     g_dbus_connection_emit_signal(tray->bus, nullptr, WATCHER_PATH, WATCHER_NAME,
                                   "StatusNotifierHostRegistered", nullptr, nullptr);
 }
 
-static void watcher_lost([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *n,
-                         gpointer data) {
+static void watcher_lost([[maybe_unused]] GDBusConnection *connection,
+                         [[maybe_unused]] const char *name, gpointer data) {
     xd_tray *tray = data;
     if (tray->bus == nullptr)
         return;
@@ -500,15 +504,15 @@ void xd_tray_init(xd_shell *shell) {
     tray->cancel = g_cancellable_new();
     tray->seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     char **lines = nullptr;
-    size_t n = 0;
-    xd_state_read_lines("tray-icons", &lines, &n, XD_TRAY_RULES_MAX * 2);
-    for (size_t i = 0; i < n; i++) {
+    size_t count = 0;
+    xd_state_read_lines("tray-icons", &lines, &count, XD_TRAY_RULES_MAX * 2);
+    for (size_t i = 0; i < count; i++) {
         char *tab = strchr(lines[i], '\t');
         if (tab != nullptr && tab != lines[i])
             g_hash_table_replace(tray->seen, g_strndup(lines[i], (gsize)(tab - lines[i])),
                                  g_strdup(tab + 1));
     }
-    xd_free_lines(lines, n);
+    xd_free_lines(lines, count);
     shell->tray = tray;
     g_bus_get(G_BUS_TYPE_SESSION, tray->cancel, got_bus, tray);
 }
@@ -559,10 +563,10 @@ static bool visible(const xd_tray_item *it) {
 size_t xd_tray_count(const xd_shell *shell) {
     if (shell->tray == nullptr)
         return 0;
-    size_t n = 0;
+    size_t count = 0;
     for (guint i = 0; i < shell->tray->items->len; i++)
-        n += visible(g_ptr_array_index(shell->tray->items, i));
-    return n;
+        count += visible(g_ptr_array_index(shell->tray->items, i));
+    return count;
 }
 
 /* Programs' icons first, then ours next to the clock, as in Windows. */
@@ -615,13 +619,13 @@ static void remember(xd_tray *tray, const xd_tray_item *it) {
     if (changed) {
         g_hash_table_replace(tray->seen, g_strdup(id), g_strdup(name));
         GHashTableIter iter;
-        gpointer k, v;
-        size_t n = g_hash_table_size(tray->seen), i = 0;
-        char **lines = g_new0(char *, n + 1);
+        gpointer key, value;
+        size_t count = g_hash_table_size(tray->seen), i = 0;
+        char **lines = g_new0(char *, count + 1);
         g_hash_table_iter_init(&iter, tray->seen);
-        while (g_hash_table_iter_next(&iter, &k, &v))
-            lines[i++] = g_strdup_printf("%s\t%s", (const char *)k, (const char *)v);
-        if (!xd_state_write_lines("tray-icons", lines, n))
+        while (g_hash_table_iter_next(&iter, &key, &value))
+            lines[i++] = g_strdup_printf("%s\t%s", (const char *)key, (const char *)value);
+        if (!xd_state_write_lines("tray-icons", lines, count))
             fprintf(stderr, "xd-shell: cannot save the notification area's icons\n");
         g_strfreev(lines);
     }
@@ -655,10 +659,10 @@ char *xd_tray_item_tooltip(const xd_tray_item *it) {
     return g_strdup(it->tooltip != nullptr ? it->tooltip : it->title);
 }
 
-bool xd_tray_item_draw(xd_tray_item *it, const xd_theme *t, cairo_t *cr, xd_rect r) {
+bool xd_tray_item_draw(xd_tray_item *it, const xd_theme *theme, cairo_t *cairo, xd_rect rect) {
     if (it->ops == nullptr || it->ops->draw == nullptr)
         return false;
-    it->ops->draw(it->data, t, cr, r);
+    it->ops->draw(it->data, theme, cairo, rect);
     return true;
 }
 
@@ -672,38 +676,39 @@ static cairo_surface_t *named_icon(xd_shell *shell, const xd_tray_item *it, cons
                                    int px) {
     if (name == nullptr)
         return nullptr;
-    cairo_surface_t *s = xd_icons_get(shell->icons, name, px);
-    if (s != nullptr || it->theme_path == nullptr)
-        return s;
+    cairo_surface_t *surface = xd_icons_get(shell->icons, name, px);
+    if (surface != nullptr || it->theme_path == nullptr)
+        return surface;
     /* IconThemePath: the program's own icons. */
     static const char *const exts[] = {".png", ".svg"};
-    for (size_t i = 0; i < XD_ARRAY_LEN(exts) && s == nullptr; i++) {
+    for (size_t i = 0; i < XD_ARRAY_LEN(exts) && surface == nullptr; i++) {
         char *path = g_strconcat(it->theme_path, "/", name, exts[i], nullptr);
         if (g_file_test(path, G_FILE_TEST_EXISTS))
-            s = xd_icons_get(shell->icons, path, px);
+            surface = xd_icons_get(shell->icons, path, px);
         g_free(path);
     }
-    return s;
+    return surface;
 }
 
 cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *it, int px) {
     if (it->ops != nullptr) {
         const char *name = it->ops->icon(it->data);
-        cairo_surface_t *s = name != nullptr ? xd_icons_get(shell->icons, name, px) : nullptr;
+        cairo_surface_t *surface = name != nullptr ? xd_icons_get(shell->icons, name, px) : nullptr;
         /* Themes often have only the -symbolic variant. */
-        if (s == nullptr && name != nullptr) {
+        if (surface == nullptr && name != nullptr) {
             char *sym = g_strconcat(name, "-symbolic", nullptr);
-            s = xd_icons_get(shell->icons, sym, px);
+            surface = xd_icons_get(shell->icons, sym, px);
             g_free(sym);
         }
-        return s;
+        return surface;
     }
     bool attention = it->status != nullptr && strcmp(it->status, "NeedsAttention") == 0;
-    cairo_surface_t *s = attention ? named_icon(shell, it, it->attention_icon_name, px) : nullptr;
-    if (s == nullptr)
-        s = named_icon(shell, it, it->icon_name, px);
-    if (s != nullptr)
-        return s;
+    cairo_surface_t *surface =
+        attention ? named_icon(shell, it, it->attention_icon_name, px) : nullptr;
+    if (surface == nullptr)
+        surface = named_icon(shell, it, it->icon_name, px);
+    if (surface != nullptr)
+        return surface;
     cairo_surface_t *pix = attention && it->attention_pixmap != nullptr ? it->attention_pixmap
                                                                          : it->pixmap;
     if (pix == nullptr)
@@ -712,13 +717,14 @@ cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *it, int px) {
         if (it->scaled != nullptr)
             cairo_surface_destroy(it->scaled);
         it->scaled = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, px, px);
-        cairo_t *cr = cairo_create(it->scaled);
-        int w = cairo_image_surface_get_width(pix), h = cairo_image_surface_get_height(pix);
-        cairo_scale(cr, px / (double)w, px / (double)h);
-        cairo_set_source_surface(cr, pix, 0, 0);
-        cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
-        cairo_paint(cr);
-        cairo_destroy(cr);
+        cairo_t *cairo = cairo_create(it->scaled);
+        int width = cairo_image_surface_get_width(pix),
+            height = cairo_image_surface_get_height(pix);
+        cairo_scale(cairo, px / (double)width, px / (double)height);
+        cairo_set_source_surface(cairo, pix, 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cairo), CAIRO_FILTER_GOOD);
+        cairo_paint(cairo);
+        cairo_destroy(cairo);
         it->scaled_px = px;
     }
     return it->scaled;
@@ -730,18 +736,18 @@ cairo_surface_t *xd_tray_item_icon(xd_shell *shell, xd_tray_item *it, int px) {
  * Written as Windows writes it for xd_menu_add_keyed: "&" for the key,
  * "&&" for a real '&'. */
 static char *menu_label(const char *label) {
-    GString *s = g_string_new(nullptr);
-    for (const char *p = label; *p != '\0'; p++) {
-        if (*p == '_' && p[1] == '_')
-            g_string_append_c(s, *p++);
-        else if (*p == '_')
-            g_string_append_c(s, '&');
-        else if (*p == '&')
-            g_string_append(s, "&&");
+    GString *string = g_string_new(nullptr);
+    for (const char *cursor = label; *cursor != '\0'; cursor++) {
+        if (*cursor == '_' && cursor[1] == '_')
+            g_string_append_c(string, *cursor++);
+        else if (*cursor == '_')
+            g_string_append_c(string, '&');
+        else if (*cursor == '&')
+            g_string_append(string, "&&");
         else
-            g_string_append_c(s, *p);
+            g_string_append_c(string, *cursor);
     }
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
 static void menu_event(xd_shell *shell, void *data) {
@@ -759,7 +765,7 @@ static void menu_event(xd_shell *shell, void *data) {
 }
 
 static xd_menu_model *build_menu(xd_menu_tree *tree, GVariant *node, int depth) {
-    xd_menu_model *m = xd_menu_model_new(tree);
+    xd_menu_model *menu_model = xd_menu_model_new(tree);
     GVariant *children = g_variant_get_child_value(node, 2);
     GVariantIter iter;
     g_variant_iter_init(&iter, children);
@@ -787,15 +793,15 @@ static xd_menu_model *build_menu(xd_menu_tree *tree, GVariant *node, int depth) 
         if (visible_prop) {
             if (type != nullptr && strcmp(type, "separator") == 0) {
                 if (!last_separator)
-                    xd_menu_add(tree, m, XD_MENU_SEPARATOR, nullptr, nullptr);
+                    xd_menu_add(tree, menu_model, XD_MENU_SEPARATOR, nullptr, nullptr);
                 last_separator = true;
             } else {
                 char *text = menu_label(label != nullptr ? label : "");
                 bool sub = depth < 8 && (has_kids || (display != nullptr &&
                                                       strcmp(display, "submenu") == 0));
                 xd_menu_item *item =
-                    xd_menu_add_keyed(tree, m, sub ? XD_MENU_SUBMENU : XD_MENU_ACTION, text,
-                                      icon != nullptr && icon[0] != '\0' ? icon : nullptr);
+                    xd_menu_add_keyed(tree, menu_model, sub ? XD_MENU_SUBMENU : XD_MENU_ACTION,
+                                      text, icon != nullptr && icon[0] != '\0' ? icon : nullptr);
                 g_free(text);
                 if (sub) {
                     item->submenu = build_menu(tree, boxed, depth + 1);
@@ -812,7 +818,7 @@ static xd_menu_model *build_menu(xd_menu_tree *tree, GVariant *node, int depth) 
         g_variant_unref(boxed);
     }
     g_variant_unref(children);
-    return m;
+    return menu_model;
 }
 
 /* Opens a built menu (in shell->context_tree) above a tray icon. */
@@ -829,9 +835,9 @@ static void open_model(xd_shell *shell, xd_taskbar *bar, xd_rect anchor, uint32_
 }
 
 static bool bar_alive(xd_shell *shell, const xd_taskbar *bar) {
-    XD_LIST_FOR_EACH(b, &shell->taskbars, xd_taskbar, link) {
-        if (b == bar)
-            return b->configured;
+    XD_LIST_FOR_EACH(candidate, &shell->taskbars, xd_taskbar, link) {
+        if (candidate == bar)
+            return candidate->configured;
     }
     return false;
 }
@@ -889,7 +895,7 @@ typedef struct activate_ctx {
 } activate_ctx;
 
 static void activated(GObject *src, GAsyncResult *res, gpointer data) {
-    activate_ctx *a = data;
+    activate_ctx *activation = data;
     GError *error = nullptr;
     GVariant *reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
     if (reply != nullptr) {
@@ -898,13 +904,14 @@ static void activated(GObject *src, GAsyncResult *res, gpointer data) {
         /* No Activate (many libappindicator items): their menu instead. */
         xd_tray_item *it = g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
                                ? nullptr
-                               : find_item(a->tray, a->key);
+                               : find_item(activation->tray, activation->key);
         if (it != nullptr && it->menu != nullptr)
-            show_menu(a->tray, it, a->bar, a->anchor, a->serial);
+            show_menu(activation->tray, it, activation->bar, activation->anchor,
+                      activation->serial);
         g_error_free(error);
     }
-    g_free(a->key);
-    g_free(a);
+    g_free(activation->key);
+    g_free(activation);
 }
 
 void xd_tray_item_click(xd_shell *shell, xd_tray_item *it, uint32_t button, xd_taskbar *bar,
@@ -934,9 +941,9 @@ void xd_tray_item_click(xd_shell *shell, xd_tray_item *it, uint32_t button, xd_t
             xd_menu_close_all(shell);
             xd_menu_tree_free(&shell->context_tree);
             xd_menu_tree_init(&shell->context_tree);
-            xd_menu_model *m = xd_menu_model_new(&shell->context_tree);
-            it->ops->menu(it->data, &shell->context_tree, m);
-            open_model(shell, bar, anchor, serial, m);
+            xd_menu_model *menu_model = xd_menu_model_new(&shell->context_tree);
+            it->ops->menu(it->data, &shell->context_tree, menu_model);
+            open_model(shell, bar, anchor, serial, menu_model);
         }
         return;
     }
@@ -952,13 +959,13 @@ void xd_tray_item_click(xd_shell *shell, xd_tray_item *it, uint32_t button, xd_t
     const char *method = right                               ? "ContextMenu"
                          : button == XD_TRAY_BUTTON_MIDDLE ? "SecondaryActivate"
                                                             : "Activate";
-    activate_ctx *a = g_new0(activate_ctx, 1);
-    a->tray = tray;
-    a->key = g_strdup(it->key);
-    a->bar = bar;
-    a->anchor = anchor;
-    a->serial = serial;
+    activate_ctx *activation = g_new0(activate_ctx, 1);
+    activation->tray = tray;
+    activation->key = g_strdup(it->key);
+    activation->bar = bar;
+    activation->anchor = anchor;
+    activation->serial = serial;
     g_dbus_connection_call(tray->bus, it->bus, it->path, ITEM_IFACE, method,
                            g_variant_new("(ii)", 0, 0), nullptr, G_DBUS_CALL_FLAGS_NONE, 5000,
-                           it->cancel, activated, a);
+                           it->cancel, activated, activation);
 }

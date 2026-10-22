@@ -58,13 +58,13 @@ void xd_menu_model_set_look(xd_menu_model *model, uint8_t look) {
 }
 
 xd_menu_model *xd_menu_model_new(xd_menu_tree *tree) {
-    xd_menu_model *m = XD_ARENA_NEW(&tree->arena, xd_menu_model);
+    xd_menu_model *menu_model = XD_ARENA_NEW(&tree->arena, xd_menu_model);
     if (tree->count == tree->cap) {
         tree->cap = tree->cap == 0 ? 16 : tree->cap * 2;
         tree->models = xd_realloc_array(tree->models, tree->cap, sizeof(*tree->models));
     }
-    tree->models[tree->count++] = m;
-    return m;
+    tree->models[tree->count++] = menu_model;
+    return menu_model;
 }
 
 xd_menu_item *xd_menu_add(xd_menu_tree *tree, xd_menu_model *model, xd_menu_kind kind,
@@ -92,9 +92,9 @@ xd_menu_item *xd_menu_add_keyed(xd_menu_tree *tree, xd_menu_model *model, xd_men
     g_free(text);
     if (key >= 0) {
         it->key = it->label + key;
-        gunichar c = g_utf8_get_char_validated(it->key, -1);
-        if (c != (gunichar)-1 && c != (gunichar)-2)
-            it->mnemonic = g_unichar_tolower(c);
+        gunichar letter = g_utf8_get_char_validated(it->key, -1);
+        if (letter != (gunichar)-1 && letter != (gunichar)-2)
+            it->mnemonic = g_unichar_tolower(letter);
         else
             it->key = nullptr;
     }
@@ -111,10 +111,10 @@ void xd_menu_show_cues(xd_shell *shell) {
     if (shell->menu_cues)
         return;
     shell->menu_cues = true;
-    for (xd_menu *m = shell->start_menu; m != nullptr; m = m->child)
-        m->dirty = true;
-    for (xd_menu *m = xd_start7_submenu(shell); m != nullptr; m = m->child)
-        m->dirty = true;
+    for (xd_menu *menu = shell->start_menu; menu != nullptr; menu = menu->child)
+        menu->dirty = true;
+    for (xd_menu *menu = xd_start7_submenu(shell); menu != nullptr; menu = menu->child)
+        menu->dirty = true;
     xd_start7_redraw(shell);
 }
 
@@ -123,33 +123,33 @@ void xd_menu_show_cues(xd_shell *shell) {
 /* A jump list: one column, sections under their headers, then the band
  * (from the separator on). */
 static void layout_jumplist(xd_menu *menu, int text_w) {
-    const xd_menu_model *m = menu->model;
-    size_t n = XD_MAX(m->count, 1);
-    menu->item_y = xd_alloc_array(n, sizeof(int));
-    menu->item_h = xd_alloc_array(n, sizeof(int));
-    menu->item_xs = xd_alloc_array(n, sizeof(int));
+    const xd_menu_model *menu_model = menu->model;
+    size_t count = XD_MAX(menu_model->count, 1);
+    menu->item_y = xd_alloc_array(count, sizeof(int));
+    menu->item_h = xd_alloc_array(count, sizeof(int));
+    menu->item_xs = xd_alloc_array(count, sizeof(int));
     menu->width = XD_CLAMP(JL_TEXT_X + text_w + JL_PIN_W + 2 * JL_INSET + 12, JL_MIN_W, JL_MAX_W);
     menu->item_x = JL_INSET;
     menu->item_w = menu->width - 2 * JL_INSET;
     menu->band_y = -1;
     int y = 1 + JL_PAD;
     bool any = false;
-    for (size_t i = 0; i < m->count; i++) {
-        const xd_menu_item *it = &m->items[i];
-        int h = JL_ITEM_H;
+    for (size_t i = 0; i < menu_model->count; i++) {
+        const xd_menu_item *it = &menu_model->items[i];
+        int height = JL_ITEM_H;
         if (it->kind == XD_MENU_SEPARATOR) {
             menu->band_y = any ? y + JL_PAD : 0;
             y = menu->band_y + JL_PAD;
-            h = 0;
+            height = 0;
         } else if (it->kind == XD_MENU_HEADER) {
             if (any)
                 y += JL_PAD;
-            h = JL_HEADER_H;
+            height = JL_HEADER_H;
         }
         menu->item_xs[i] = JL_INSET;
         menu->item_y[i] = y;
-        menu->item_h[i] = h;
-        y += h;
+        menu->item_h[i] = height;
+        y += height;
         any = true;
     }
     menu->height = y + JL_PAD + 1;
@@ -159,40 +159,40 @@ static void layout_jumplist(xd_menu *menu, int text_w) {
 
 /* Sizes the menu in logical units from a scale-1 theme. */
 static void layout(xd_menu *menu) {
-    const xd_menu_model *m = menu->model;
-    xd_theme t;
-    xd_theme_init(&t, menu->shell->style, &menu->shell->scheme, 1.0);
-    xd_menu_metrics mm = xd_theme_menu_metrics(&t);
+    const xd_menu_model *menu_model = menu->model;
+    xd_theme theme;
+    xd_theme_init(&theme, menu->shell->style, &menu->shell->scheme, 1.0);
+    xd_menu_metrics mm = xd_theme_menu_metrics(&theme);
 
     cairo_surface_t *scratch = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *cr = cairo_create(scratch);
+    cairo_t *cairo = cairo_create(scratch);
     int text_w = 0;
-    for (size_t i = 0; i < m->count; i++) {
-        const xd_menu_item *it = &m->items[i];
+    for (size_t i = 0; i < menu_model->count; i++) {
+        const xd_menu_item *it = &menu_model->items[i];
         if (it->kind == XD_MENU_SEPARATOR)
             continue;
-        int w = it->bold || it->kind == XD_MENU_HEADER
-                    ? xd_theme_menu_bold_text_width(&t, cr, it->label)
-                         : xd_theme_menu_text_width(&t, cr, it->label);
+        int width = it->bold || it->kind == XD_MENU_HEADER
+                        ? xd_theme_menu_bold_text_width(&theme, cairo, it->label)
+                        : xd_theme_menu_text_width(&theme, cairo, it->label);
         if (it->accel != nullptr)
-            w += xd_theme_menu_text_width(&t, cr, it->accel) + 24;
-        text_w = XD_MAX(text_w, w);
+            width += xd_theme_menu_text_width(&theme, cairo, it->accel) + 24;
+        text_w = XD_MAX(text_w, width);
     }
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_destroy(scratch);
-    if (m->jumplist) {
+    if (menu_model->jumplist) {
         layout_jumplist(menu, text_w);
         return;
     }
 
-    int banner = m->banner_product != nullptr ? mm.banner_w : 0;
-    int text_x = m->large ? mm.large_text_x : mm.text_x;
+    int banner = menu_model->banner_product != nullptr ? mm.banner_w : 0;
+    int text_x = menu_model->large ? mm.large_text_x : mm.text_x;
     /* Slack so hinting at other scales doesn't ellipsize labels. */
     int item_w = XD_MAX(text_x + text_w + mm.arrow_w + 12, XD_MENU_MIN_W);
 
-    menu->item_y = xd_alloc_array(XD_MAX(m->count, 1), sizeof(int));
-    menu->item_h = xd_alloc_array(XD_MAX(m->count, 1), sizeof(int));
-    menu->item_xs = xd_alloc_array(XD_MAX(m->count, 1), sizeof(int));
+    menu->item_y = xd_alloc_array(XD_MAX(menu_model->count, 1), sizeof(int));
+    menu->item_h = xd_alloc_array(XD_MAX(menu_model->count, 1), sizeof(int));
+    menu->item_xs = xd_alloc_array(XD_MAX(menu_model->count, 1), sizeof(int));
     menu->item_x = mm.border + banner;
     menu->item_w = item_w;
     /* A menu taller than the screen continues in another column, as
@@ -202,19 +202,19 @@ static void layout(xd_menu *menu) {
     int y = mm.border;
     int tallest = 0;
     int columns = 1;
-    for (size_t i = 0; i < m->count; i++) {
-        int h = m->items[i].kind == XD_MENU_SEPARATOR ? mm.separator_h
-                : m->large                            ? mm.large_item_h
-                                                      : mm.item_h;
-        if (y + h > mm.border + max_h && y > mm.border) {
+    for (size_t i = 0; i < menu_model->count; i++) {
+        int height = menu_model->items[i].kind == XD_MENU_SEPARATOR ? mm.separator_h
+                     : menu_model->large                            ? mm.large_item_h
+                                                                    : mm.item_h;
+        if (y + height > mm.border + max_h && y > mm.border) {
             x += item_w;
             y = mm.border;
             columns++;
         }
         menu->item_xs[i] = x;
         menu->item_y[i] = y;
-        menu->item_h[i] = h;
-        y += h;
+        menu->item_h[i] = height;
+        y += height;
         tallest = XD_MAX(tallest, y);
     }
     menu->width = mm.border * 2 + banner + item_w * columns;
@@ -230,8 +230,8 @@ static xd_rect pin_rect(const xd_menu *menu, int i) {
 static bool on_pin(const xd_menu *menu, int i, double x, double y) {
     if (!menu->model->jumplist || i < 0 || menu->model->items[i].pin == nullptr)
         return false;
-    xd_rect r = pin_rect(menu, i);
-    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+    xd_rect rect = pin_rect(menu, i);
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
 
 static int item_at(const xd_menu *menu, double x, double y) {
@@ -258,20 +258,20 @@ static int item_at(const xd_menu *menu, double x, double y) {
 /* ---- rendering ---------------------------------------------------------------- */
 
 static int dev(double logical, double scale) {
-    double v = round(logical * scale);
-    XD_ASSERT(v > -65536.0 && v < 65536.0);
-    return (int)v;
+    double rounded = round(logical * scale);
+    XD_ASSERT(rounded > -65536.0 && rounded < 65536.0);
+    return (int)rounded;
 }
 
 /* Logical rect -> device rect with shared edges, so adjacent items tile
  * without gaps at fractional scales. */
-static xd_rect to_device(int x, int y, int w, int h, double s) {
-    int x0 = dev(x, s);
-    int y0 = dev(y, s);
-    return (xd_rect){x0, y0, dev(x + w, s) - x0, dev(y + h, s) - y0};
+static xd_rect to_device(int x, int y, int width, int height, double scale) {
+    int x0 = dev(x, scale);
+    int y0 = dev(y, scale);
+    return (xd_rect){x0, y0, dev(x + width, scale) - x0, dev(y + height, scale) - y0};
 }
 
-static void draw_icon(xd_shell *shell, cairo_t *cr, const xd_menu_item *it, xd_rect r,
+static void draw_icon(xd_shell *shell, cairo_t *cairo, const xd_menu_item *it, xd_rect rect,
                       bool disabled) {
     /* Items without any icon (taskbar and window menus) leave the column
      * empty, or to their check mark or glyph. */
@@ -279,49 +279,50 @@ static void draw_icon(xd_shell *shell, cairo_t *cr, const xd_menu_item *it, xd_r
         it->checked || it->glyph != XD_MENU_GLYPH_NONE)
         return;
     const char *names[] = {it->icon, it->fallback_icon, "application-x-executable"};
-    cairo_surface_t *icon = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), r.w);
+    cairo_surface_t *icon = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), rect.w);
     if (icon == nullptr)
         return;
-    cairo_save(cr);
-    cairo_set_source_surface(cr, icon, r.x, r.y);
-    cairo_paint_with_alpha(cr, disabled ? 0.45 : 1.0);
-    cairo_restore(cr);
+    cairo_save(cairo);
+    cairo_set_source_surface(cairo, icon, rect.x, rect.y);
+    cairo_paint_with_alpha(cairo, disabled ? 0.45 : 1.0);
+    cairo_restore(cairo);
 }
 
-static void render_jumplist(xd_menu *menu, const xd_theme *t, cairo_t *cr, int dw, int dh) {
+static void render_jumplist(xd_menu *menu, const xd_theme *theme, cairo_t *cairo, int dw, int dh) {
     xd_shell *shell = menu->shell;
-    const xd_menu_model *m = menu->model;
-    double s = menu->scale;
-    xd_theme_draw_jumplist_frame(t, cr, (xd_rect){0, 0, dw, dh}, dev(menu->band_y, s));
-    int icon = xd_tpx(t, 16);
-    for (size_t i = 0; i < m->count; i++) {
-        const xd_menu_item *it = &m->items[i];
+    const xd_menu_model *menu_model = menu->model;
+    double scale = menu->scale;
+    xd_theme_draw_jumplist_frame(theme, cairo, (xd_rect){0, 0, dw, dh}, dev(menu->band_y, scale));
+    int icon = xd_tpx(theme, 16);
+    for (size_t i = 0; i < menu_model->count; i++) {
+        const xd_menu_item *it = &menu_model->items[i];
         if (it->kind == XD_MENU_SEPARATOR)
             continue;
-        xd_rect r = to_device(menu->item_xs[i], menu->item_y[i], menu->item_w, menu->item_h[i], s);
+        xd_rect rect =
+            to_device(menu->item_xs[i], menu->item_y[i], menu->item_w, menu->item_h[i], scale);
         if (it->kind == XD_MENU_HEADER) {
-            int hx = dev(JL_HEADER_X - JL_INSET, s);
-            xd_theme_draw_jumplist_header(t, cr, (xd_rect){r.x + hx, r.y, r.w - hx, r.h},
-                                          it->label);
+            int hx = dev(JL_HEADER_X - JL_INSET, scale);
+            xd_theme_draw_jumplist_header(
+                theme, cairo, (xd_rect){rect.x + hx, rect.y, rect.w - hx, rect.h}, it->label);
             continue;
         }
         bool hot = menu->hot == (int)i;
         uint8_t state = (uint8_t)((hot ? XD_STATE_HOT : 0) | (it->disabled ? XD_STATE_DISABLED : 0));
-        xd_rect text_r = r;
+        xd_rect text_r = rect;
         if (it->pin != nullptr)
-            text_r.w -= dev(JL_PIN_W, s);
-        xd_theme_draw_jumplist_item(t, cr, text_r, state, it->label, dev(JL_TEXT_X, s));
-        xd_rect ir = {r.x + dev(JL_ICON_X, s), r.y + (r.h - icon) / 2, icon, icon};
+            text_r.w -= dev(JL_PIN_W, scale);
+        xd_theme_draw_jumplist_item(theme, cairo, text_r, state, it->label, dev(JL_TEXT_X, scale));
+        xd_rect ir = {rect.x + dev(JL_ICON_X, scale), rect.y + (rect.h - icon) / 2, icon, icon};
         if (it->pushpin != 0)
-            xd_theme_draw_pushpin(t, cr, ir, it->pushpin == 2);
+            xd_theme_draw_pushpin(theme, cairo, ir, it->pushpin == 2);
         else
-            draw_icon(shell, cr, it, ir, it->disabled);
+            draw_icon(shell, cairo, it, ir, it->disabled);
         if (hot && it->pin != nullptr) {
             xd_rect pr = pin_rect(menu, (int)i);
             uint8_t ps = menu->hot_pin ? XD_STATE_HOT : 0;
             if (menu->hot_pin && menu->pressed == (int)i)
                 ps |= XD_STATE_PRESSED;
-            xd_theme_draw_jumplist_pin(t, cr, to_device(pr.x, pr.y, pr.w, pr.h, s), ps,
+            xd_theme_draw_jumplist_pin(theme, cairo, to_device(pr.x, pr.y, pr.w, pr.h, scale), ps,
                                        it->pinned);
         }
     }
@@ -329,48 +330,50 @@ static void render_jumplist(xd_menu *menu, const xd_theme *t, cairo_t *cr, int d
 
 static void render(xd_menu *menu) {
     xd_shell *shell = menu->shell;
-    double s = menu->scale;
-    int dw = dev(menu->width, s);
-    int dh = dev(menu->height, s);
+    double scale = menu->scale;
+    int dw = dev(menu->width, scale);
+    int dh = dev(menu->height, scale);
     if (dw <= 0 || dh <= 0)
         return;
     xd_shm_buffer *buf = xd_shm_ring_acquire(&menu->ring, shell->shm, dw, dh);
     if (buf == nullptr)
         return;
 
-    xd_theme t;
-    xd_theme_init(&t, shell->style, &shell->scheme, s);
-    xd_menu_metrics mm = xd_theme_menu_metrics(&t);
-    const xd_menu_model *m = menu->model;
-    t.menu_look = (enum xd_menu_look)m->look;
+    xd_theme theme;
+    xd_theme_init(&theme, shell->style, &shell->scheme, scale);
+    xd_menu_metrics mm = xd_theme_menu_metrics(&theme);
+    const xd_menu_model *menu_model = menu->model;
+    theme.menu_look = (enum xd_menu_look)menu_model->look;
     bool cues = xd_menu_cues(shell);
-    cairo_t *cr = cairo_create(buf->surface);
-    if (m->jumplist) {
-        render_jumplist(menu, &t, cr, dw, dh);
-        cairo_destroy(cr);
+    cairo_t *cairo = cairo_create(buf->surface);
+    if (menu_model->jumplist) {
+        render_jumplist(menu, &theme, cairo, dw, dh);
+        cairo_destroy(cairo);
         goto commit;
     }
-    xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, dw, dh});
+    xd_theme_draw_menu_frame(&theme, cairo, (xd_rect){0, 0, dw, dh});
 
-    if (m->banner_product != nullptr) {
+    if (menu_model->banner_product != nullptr) {
         xd_theme t1;
         xd_theme_init(&t1, shell->style, &shell->scheme, 1.0);
         xd_menu_metrics m1 = xd_theme_menu_metrics(&t1);
-        xd_rect banner = to_device(m1.border, m1.border, m1.banner_w,
-                                   menu->height - 2 * m1.border, s);
-        xd_theme_draw_start_banner(&t, cr, banner, m->banner_product,
-                                   m->banner_edition != nullptr ? m->banner_edition : "");
+        xd_rect banner =
+            to_device(m1.border, m1.border, m1.banner_w, menu->height - 2 * m1.border, scale);
+        xd_theme_draw_start_banner(
+            &theme, cairo, banner, menu_model->banner_product,
+            menu_model->banner_edition != nullptr ? menu_model->banner_edition : "");
     }
 
-    for (size_t i = 0; i < m->count; i++) {
-        const xd_menu_item *it = &m->items[i];
-        xd_rect r = to_device(menu->item_xs[i], menu->item_y[i], menu->item_w, menu->item_h[i], s);
+    for (size_t i = 0; i < menu_model->count; i++) {
+        const xd_menu_item *it = &menu_model->items[i];
+        xd_rect rect =
+            to_device(menu->item_xs[i], menu->item_y[i], menu->item_w, menu->item_h[i], scale);
         if (it->kind == XD_MENU_SEPARATOR) {
-            xd_theme_draw_menu_separator(&t, cr, r);
+            xd_theme_draw_menu_separator(&theme, cairo, rect);
             continue;
         }
-        if (it->highlight && menu->hot != (int)i && !xd_theme_draw_new_program(&t, cr, r))
-            xd_fill_rect(cr, r, xd_rgba_hex(XD_NEW_PROGRAM_COLOR));
+        if (it->highlight && menu->hot != (int)i && !xd_theme_draw_new_program(&theme, cairo, rect))
+            xd_fill_rect(cairo, rect, xd_rgba_hex(XD_NEW_PROGRAM_COLOR));
         uint8_t state = 0;
         /* Only the item under the pointer: the one whose submenu is still
          * open (it closes after the hover delay) loses its highlight at
@@ -386,13 +389,14 @@ static void render(xd_menu *menu) {
                                       .glyph = it->glyph,
                                       .accel = it->accel,
                                       .underline = cues ? it->key : nullptr};
-        xd_theme_draw_menu_item_ex(&t, cr, r, state, it->label, it->kind == XD_MENU_SUBMENU,
-                                   m->large, &extras);
-        int icon = m->large ? mm.large_icon : mm.icon;
-        draw_icon(shell, cr, it, (xd_rect){r.x + mm.icon_x, r.y + (r.h - icon) / 2, icon, icon},
+        xd_theme_draw_menu_item_ex(&theme, cairo, rect, state, it->label,
+                                   it->kind == XD_MENU_SUBMENU, menu_model->large, &extras);
+        int icon = menu_model->large ? mm.large_icon : mm.icon;
+        draw_icon(shell, cairo, it,
+                  (xd_rect){rect.x + mm.icon_x, rect.y + (rect.h - icon) / 2, icon, icon},
                   it->disabled);
     }
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
 commit:
     cairo_surface_flush(buf->surface);
 
@@ -407,13 +411,13 @@ commit:
 }
 
 void xd_menus_render_dirty(xd_shell *shell) {
-    for (xd_menu *m = shell->start_menu; m != nullptr; m = m->child) {
-        if (m->dirty && m->configured)
-            render(m);
+    for (xd_menu *menu = shell->start_menu; menu != nullptr; menu = menu->child) {
+        if (menu->dirty && menu->configured)
+            render(menu);
     }
-    for (xd_menu *m = xd_start7_submenu(shell); m != nullptr; m = m->child) {
-        if (m->dirty && m->configured)
-            render(m);
+    for (xd_menu *menu = xd_start7_submenu(shell); menu != nullptr; menu = menu->child) {
+        if (menu->dirty && menu->configured)
+            render(menu);
     }
 }
 
@@ -433,18 +437,18 @@ static const struct xdg_surface_listener xdg_surface_listener = {
     .configure = xdg_surface_configure,
 };
 
-static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *p,
+static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *popup,
                             [[maybe_unused]] int32_t x, [[maybe_unused]] int32_t y,
-                            [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+                            [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height) {}
 
-static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *p) {
+static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *popup) {
     /* The compositor dismissed the menu (click outside). */
     xd_menu *menu = data;
     xd_menu_close_all(menu->shell);
 }
 
 static void popup_repositioned([[maybe_unused]] void *data,
-                               [[maybe_unused]] struct xdg_popup *p,
+                               [[maybe_unused]] struct xdg_popup *popup,
                                [[maybe_unused]] uint32_t token) {}
 
 static const struct xdg_popup_listener popup_listener = {
@@ -453,7 +457,8 @@ static const struct xdg_popup_listener popup_listener = {
     .repositioned = popup_repositioned,
 };
 
-static void preferred_scale(void *data, [[maybe_unused]] struct wp_fractional_scale_v1 *f,
+static void preferred_scale(void *data,
+                            [[maybe_unused]] struct wp_fractional_scale_v1 *fractional_scale,
                             uint32_t scale_120) {
     xd_menu *menu = data;
     double scale = scale_120 / 120.0;
@@ -575,9 +580,9 @@ xd_menu *xd_menu_open_child(xd_menu *menu, int index) {
 
     /* Opens to the right of the item, overlapping the parent's border as
      * Windows does; flips left at the screen edge. */
-    xd_theme t;
-    xd_theme_init(&t, shell->style, &shell->scheme, 1.0);
-    int border = xd_theme_menu_metrics(&t).border;
+    xd_theme theme;
+    xd_theme_init(&theme, shell->style, &shell->scheme, 1.0);
+    int border = xd_theme_menu_metrics(&theme).border;
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
     xdg_positioner_set_size(pos, child->width, child->height);
     xdg_positioner_set_anchor_rect(pos, menu->item_xs[index], menu->item_y[index], menu->item_w,
@@ -695,13 +700,13 @@ void xd_menu_close_all(xd_shell *shell) {
 }
 
 xd_menu *xd_menu_for_surface(xd_shell *shell, struct wl_surface *surface) {
-    for (xd_menu *m = shell->start_menu; m != nullptr; m = m->child) {
-        if (m->surface == surface)
-            return m;
+    for (xd_menu *menu = shell->start_menu; menu != nullptr; menu = menu->child) {
+        if (menu->surface == surface)
+            return menu;
     }
-    for (xd_menu *m = xd_start7_submenu(shell); m != nullptr; m = m->child) {
-        if (m->surface == surface)
-            return m;
+    for (xd_menu *menu = xd_start7_submenu(shell); menu != nullptr; menu = menu->child) {
+        if (menu->surface == surface)
+            return menu;
     }
     return nullptr;
 }
@@ -959,18 +964,18 @@ void xd_menu_add_gpu_items(xd_menu_tree *tree, xd_menu_model *model, const xd_ap
     for (size_t i = 0; i < gpus->count; i++)
         others += gpus->items[i].is_default ? 0 : 1;
     for (size_t i = 0; i < gpus->count && i < XD_ARRAY_LEN(ctx_gpu); i++) {
-        const xd_gpu *g = &gpus->items[i];
+        const xd_gpu *gpu = &gpus->items[i];
         /* Offered: the cards it doesn't start on by itself. */
-        if (g->is_default != other)
+        if (gpu->is_default != other)
             continue;
-        char *label = g->is_default    ? g_strdup("Run with integrated graphics card")
-                      : others == 1    ? g_strdup("Run with dedicated graphics card")
-                                       : g_strdup_printf("Run with %s", g->name);
+        char *label = gpu->is_default ? g_strdup("Run with integrated graphics card")
+                      : others == 1   ? g_strdup("Run with dedicated graphics card")
+                                      : g_strdup_printf("Run with %s", gpu->name);
         xd_menu_item *it = xd_menu_add(tree, model, XD_MENU_ACTION, label, nullptr);
         it->action = ctx_gpu[i];
         it->action_data = data;
         g_free(label);
-        if (g->is_default)
+        if (gpu->is_default)
             break; /* one default card */
     }
     xd_menu_item *it = xd_menu_add(tree, model, XD_MENU_ACTION,
@@ -1105,12 +1110,12 @@ void xd_menu_pointer_button(xd_menu *menu, uint32_t button, bool pressed) {
 }
 
 static int step(const xd_menu *menu, int from, int dir) {
-    int n = (int)menu->model->count;
-    if (n == 0)
+    int count = (int)menu->model->count;
+    if (count == 0)
         return -1;
     int i = from;
-    for (int tries = 0; tries < n; tries++) {
-        i = i < 0 ? (dir > 0 ? 0 : n - 1) : (i + dir + n) % n;
+    for (int tries = 0; tries < count; tries++) {
+        i = i < 0 ? (dir > 0 ? 0 : count - 1) : (i + dir + count) % count;
         if (menu->model->items[i].kind != XD_MENU_SEPARATOR &&
             menu->model->items[i].kind != XD_MENU_HEADER)
             return i;
@@ -1122,22 +1127,23 @@ static int step(const xd_menu *menu, int from, int dir) {
 static uint32_t item_letter(const xd_menu_item *it) {
     if (it->mnemonic != 0)
         return it->mnemonic;
-    gunichar c = g_utf8_get_char_validated(it->label, -1);
-    return c == (gunichar)-1 || c == (gunichar)-2 ? 0 : g_unichar_tolower(c);
+    gunichar letter = g_utf8_get_char_validated(it->label, -1);
+    return letter == (gunichar)-1 || letter == (gunichar)-2 ? 0 : g_unichar_tolower(letter);
 }
 
 /* Typing a letter: the items it picks (mnemonics first, as Windows' own
  * menus do when some items have one), counted in *count; returns the next
  * after the highlighted one, round from the top. */
 static int letter_next(const xd_menu *menu, uint32_t ch, int *count) {
-    const xd_menu_model *m = menu->model;
+    const xd_menu_model *menu_model = menu->model;
     bool explicit = false;
-    for (size_t i = 0; i < m->count; i++)
-        explicit = explicit || (m->items[i].mnemonic == ch && !m->items[i].disabled);
+    for (size_t i = 0; i < menu_model->count; i++)
+        explicit =
+            explicit || (menu_model->items[i].mnemonic == ch && !menu_model->items[i].disabled);
     *count = 0;
     int first = -1, next = -1;
-    for (size_t i = 0; i < m->count; i++) {
-        const xd_menu_item *it = &m->items[i];
+    for (size_t i = 0; i < menu_model->count; i++) {
+        const xd_menu_item *it = &menu_model->items[i];
         if (it->kind == XD_MENU_SEPARATOR || it->kind == XD_MENU_HEADER || it->disabled ||
             (explicit ? it->mnemonic != ch : item_letter(it) != ch))
             continue;

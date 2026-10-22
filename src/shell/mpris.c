@@ -26,8 +26,8 @@ struct xd_mpris {
     GPtrArray *players; /* player * (owned) */
 };
 
-static void player_free(gpointer p) {
-    player *pl = p;
+static void player_free(gpointer user_data) {
+    player *pl = user_data;
     g_cancellable_cancel(pl->cancel);
     g_object_unref(pl->cancel);
     if (pl->root != nullptr) {
@@ -166,22 +166,22 @@ void xd_mpris_free(xd_mpris *mp) {
 }
 
 static char *string_prop(GDBusProxy *proxy, const char *prop) {
-    GVariant *v = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, prop) : nullptr;
-    char *s = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)
-                  ? g_variant_dup_string(v, nullptr)
-                  : nullptr;
-    if (v != nullptr)
-        g_variant_unref(v);
-    return s;
+    GVariant *variant = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, prop) : nullptr;
+    char *text = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING)
+                     ? g_variant_dup_string(variant, nullptr)
+                     : nullptr;
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return text;
 }
 
 static bool bool_prop(GDBusProxy *proxy, const char *prop) {
-    GVariant *v = g_dbus_proxy_get_cached_property(proxy, prop);
-    bool b = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BOOLEAN) &&
-             g_variant_get_boolean(v);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return b;
+    GVariant *variant = g_dbus_proxy_get_cached_property(proxy, prop);
+    bool value = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BOOLEAN) &&
+                 g_variant_get_boolean(variant);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 const char *xd_mpris_player_of(xd_mpris *mp, const char *desktop_id, const char *app_id) {

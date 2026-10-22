@@ -48,9 +48,9 @@ typedef struct used {
     gint64 when;
 } used;
 
-static int newest_first(gconstpointer a, gconstpointer b) {
-    const used *x = a, *y = b;
-    return (x->when < y->when) - (x->when > y->when);
+static int newest_first(gconstpointer left, gconstpointer right) {
+    const used *left_use = left, *right_use = right;
+    return (left_use->when < right_use->when) - (left_use->when > right_use->when);
 }
 
 char **xd_jumplist_recent(GBookmarkFile *recent, const char *desktop_id, const char *executable,
@@ -63,19 +63,19 @@ char **xd_jumplist_recent(GBookmarkFile *recent, const char *desktop_id, const c
     char *stem = nullptr, *exe_base = nullptr;
     program_names(desktop_id, executable, &stem, &exe_base);
     GArray *found = g_array_new(FALSE, FALSE, sizeof(used));
-    gsize n = 0;
-    char **uris = g_bookmark_file_get_uris(recent, &n);
-    for (gsize i = 0; i < n; i++) {
+    gsize count = 0;
+    char **uris = g_bookmark_file_get_uris(recent, &count);
+    for (gsize i = 0; i < count; i++) {
         gsize napps = 0;
         char **apps = g_bookmark_file_get_applications(recent, uris[i], &napps, nullptr);
         gint64 when = -1;
-        for (gsize a = 0; apps != nullptr && a < napps; a++) {
+        for (gsize app_index = 0; apps != nullptr && app_index < napps; app_index++) {
             char *exec = nullptr;
             GDateTime *stamp = nullptr;
-            if (!g_bookmark_file_get_application_info(recent, uris[i], apps[a], &exec, nullptr,
-                                                      &stamp, nullptr))
+            if (!g_bookmark_file_get_application_info(recent, uris[i], apps[app_index], &exec,
+                                                      nullptr, &stamp, nullptr))
                 continue;
-            if (names_program(apps[a], exec, stem, exe_base))
+            if (names_program(apps[app_index], exec, stem, exe_base))
                 when = MAX(when, stamp != nullptr ? g_date_time_to_unix(stamp) : 0);
             g_free(exec);
         }
@@ -92,11 +92,11 @@ char **xd_jumplist_recent(GBookmarkFile *recent, const char *desktop_id, const c
     g_strfreev(uris);
     g_array_sort(found, newest_first);
     for (guint i = 0; i < found->len; i++) {
-        used *u = &g_array_index(found, used, i);
+        used *recent_use = &g_array_index(found, used, i);
         if (out->len < max)
-            g_ptr_array_add(out, u->uri);
+            g_ptr_array_add(out, recent_use->uri);
         else
-            g_free(u->uri);
+            g_free(recent_use->uri);
     }
     g_array_free(found, TRUE);
     g_free(exe_base);
@@ -114,13 +114,13 @@ bool xd_jumplist_forget(GBookmarkFile *recent, const char *uri, const char *desk
     gsize napps = 0;
     char **apps = g_bookmark_file_get_applications(recent, uri, &napps, nullptr);
     bool changed = false;
-    for (gsize a = 0; apps != nullptr && a < napps; a++) {
+    for (gsize app_index = 0; apps != nullptr && app_index < napps; app_index++) {
         char *exec = nullptr;
-        if (!g_bookmark_file_get_application_info(recent, uri, apps[a], &exec, nullptr, nullptr,
-                                                  nullptr))
+        if (!g_bookmark_file_get_application_info(recent, uri, apps[app_index], &exec, nullptr,
+                                                  nullptr, nullptr))
             continue;
-        if (names_program(apps[a], exec, stem, exe_base) &&
-            g_bookmark_file_remove_application(recent, uri, apps[a], nullptr))
+        if (names_program(apps[app_index], exec, stem, exe_base) &&
+            g_bookmark_file_remove_application(recent, uri, apps[app_index], nullptr))
             changed = true;
         g_free(exec);
     }
@@ -130,8 +130,8 @@ bool xd_jumplist_forget(GBookmarkFile *recent, const char *uri, const char *desk
     return changed;
 }
 
-bool xd_jumplist_move(void **items, size_t n, size_t from, size_t to) {
-    if (from >= n || to >= n || from == to)
+bool xd_jumplist_move(void **items, size_t count, size_t from, size_t to) {
+    if (from >= count || to >= count || from == to)
         return false;
     void *moving = items[from];
     if (from < to)
@@ -155,13 +155,13 @@ bool xd_jumplist_set_pinned(GKeyFile *kf, const char *desktop_id, const char *ur
     char **list = xd_jumplist_pinned(kf, desktop_id);
     GPtrArray *out = g_ptr_array_new();
     bool found = false;
-    for (char **u = list; *u != nullptr; u++) {
-        if (strcmp(*u, uri) == 0) {
+    for (char **pinned_uri = list; *pinned_uri != nullptr; pinned_uri++) {
+        if (strcmp(*pinned_uri, uri) == 0) {
             found = true;
             if (!pin)
                 continue;
         }
-        g_ptr_array_add(out, *u);
+        g_ptr_array_add(out, *pinned_uri);
     }
     bool changed = pin != found;
     if (pin && !found)
@@ -179,16 +179,16 @@ bool xd_jumplist_set_pinned(GKeyFile *kf, const char *desktop_id, const char *ur
 bool xd_jumplist_move_pinned(GKeyFile *kf, const char *desktop_id, const char *uri,
                              const char *onto) {
     char **list = xd_jumplist_pinned(kf, desktop_id);
-    size_t n = g_strv_length(list), from = SIZE_MAX, to = SIZE_MAX;
-    for (size_t i = 0; i < n; i++) {
+    size_t count = g_strv_length(list), from = SIZE_MAX, to = SIZE_MAX;
+    for (size_t i = 0; i < count; i++) {
         if (strcmp(list[i], uri) == 0)
             from = i;
         if (strcmp(list[i], onto) == 0)
             to = i;
     }
-    bool moved = xd_jumplist_move((void **)list, n, from, to);
+    bool moved = xd_jumplist_move((void **)list, count, from, to);
     if (moved)
-        g_key_file_set_string_list(kf, desktop_id, PINNED_KEY, (const char *const *)list, n);
+        g_key_file_set_string_list(kf, desktop_id, PINNED_KEY, (const char *const *)list, count);
     g_strfreev(list);
     return moved;
 }
@@ -197,8 +197,8 @@ void xd_jumplist_drop_pinned(char **uris, char *const *pinned) {
     size_t k = 0;
     for (size_t i = 0; uris[i] != nullptr; i++) {
         bool is_pinned = false;
-        for (char *const *p = pinned; *p != nullptr && !is_pinned; p++)
-            is_pinned = strcmp(uris[i], *p) == 0;
+        for (char *const *pinned_uri = pinned; *pinned_uri != nullptr && !is_pinned; pinned_uri++)
+            is_pinned = strcmp(uris[i], *pinned_uri) == 0;
         if (is_pinned)
             g_free(uris[i]);
         else
@@ -209,9 +209,9 @@ void xd_jumplist_drop_pinned(char **uris, char *const *pinned) {
 }
 
 size_t xd_jumplist_combine_next(const size_t *windows, const uint64_t *last_used,
-                                const bool *combined, size_t n) {
+                                const bool *combined, size_t count) {
     size_t best = SIZE_MAX;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         if (combined[i] || windows[i] < 2)
             continue;
         if (best == SIZE_MAX || last_used[i] < last_used[best])

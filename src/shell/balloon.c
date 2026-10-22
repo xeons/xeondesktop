@@ -74,179 +74,180 @@ static unsigned pending;
 static int retries;
 static owned waiting;
 
-static void content_clear(owned *c) {
-    g_free(c->item);
-    g_free(c->icon);
-    g_free(c->title);
-    g_free(c->text);
-    *c = (owned){0};
+static void content_clear(owned *tip) {
+    g_free(tip->item);
+    g_free(tip->icon);
+    g_free(tip->title);
+    g_free(tip->text);
+    *tip = (owned){0};
 }
 
-static owned content_copy(const content *c) {
-    return (owned){g_strdup(c->item), g_strdup(c->icon), g_strdup(c->title), g_strdup(c->text),
-                   c->clicked, c->data};
+static owned content_copy(const content *tip) {
+    return (owned){g_strdup(tip->item), g_strdup(tip->icon), g_strdup(tip->title),
+                   g_strdup(tip->text), tip->clicked,        tip->data};
 }
 
-static content content_view(const owned *c) {
-    return (content){c->item, c->icon, c->title, c->text, c->clicked, c->data};
+static content content_view(const owned *tip) {
+    return (content){tip->item, tip->icon, tip->title, tip->text, tip->clicked, tip->data};
 }
 
 static xd_theme theme_at(const xd_shell *shell, double scale) {
-    xd_theme t;
-    xd_theme_init(&t, shell->style, &shell->scheme, scale);
-    return t;
+    xd_theme theme;
+    xd_theme_init(&theme, shell->style, &shell->scheme, scale);
+    return theme;
 }
 
 /* The stem's upright edge (tip) and its slanted end (base), logical. */
-static void stem_x(const xd_balloon *b, double *tip, double *base) {
-    *tip = b->right ? b->width - STEM_X : STEM_X;
-    *base = b->right ? *tip - STEM_W : *tip + STEM_W;
+static void stem_x(const xd_balloon *balloon, double *tip, double *base) {
+    *tip = balloon->right ? balloon->width - STEM_X : STEM_X;
+    *base = balloon->right ? *tip - STEM_W : *tip + STEM_W;
 }
 
 /* The outline: a rounded box with the stem on the side facing what it
  * points at (device px). */
-static void outline(cairo_t *cr, const xd_balloon *b, double s) {
-    double w = b->width * s, h = b->height * s;
-    double stem = STEM_H * s, r = RADIUS * s;
-    double top = b->down ? stem : 0, bottom = b->down ? h : h - stem;
+static void outline(cairo_t *cairo, const xd_balloon *balloon, double scale) {
+    double width = balloon->width * scale, height = balloon->height * scale;
+    double stem = STEM_H * scale, radius = RADIUS * scale;
+    double top = balloon->down ? stem : 0, bottom = balloon->down ? height : height - stem;
     double tip, base;
-    stem_x(b, &tip, &base);
-    tip *= s;
-    base *= s;
-    double inset = 0.5 * XD_MAX(round(s), 1);
+    stem_x(balloon, &tip, &base);
+    tip *= scale;
+    base *= scale;
+    double inset = 0.5 * XD_MAX(round(scale), 1);
     top += inset;
     bottom -= inset;
-    double left = inset, right = w - inset;
+    double left = inset, right = width - inset;
     /* Clockwise from the top left: along the top left to right, the
      * bottom right to left; the stem's two ends in that order. */
     double first = XD_MIN(tip, base), second = XD_MAX(tip, base);
-    cairo_new_path(cr);
-    cairo_move_to(cr, left + r, top);
-    if (b->down) {
-        cairo_line_to(cr, first, top);
-        cairo_line_to(cr, tip, inset);
-        cairo_line_to(cr, second, top);
+    cairo_new_path(cairo);
+    cairo_move_to(cairo, left + radius, top);
+    if (balloon->down) {
+        cairo_line_to(cairo, first, top);
+        cairo_line_to(cairo, tip, inset);
+        cairo_line_to(cairo, second, top);
     }
-    cairo_arc(cr, right - r, top + r, r, -XD_PI / 2, 0);
-    cairo_arc(cr, right - r, bottom - r, r, 0, XD_PI / 2);
-    if (!b->down) {
-        cairo_line_to(cr, second, bottom);
-        cairo_line_to(cr, tip, h - inset);
-        cairo_line_to(cr, first, bottom);
+    cairo_arc(cairo, right - radius, top + radius, radius, -XD_PI / 2, 0);
+    cairo_arc(cairo, right - radius, bottom - radius, radius, 0, XD_PI / 2);
+    if (!balloon->down) {
+        cairo_line_to(cairo, second, bottom);
+        cairo_line_to(cairo, tip, height - inset);
+        cairo_line_to(cairo, first, bottom);
     }
-    cairo_arc(cr, left + r, bottom - r, r, XD_PI / 2, XD_PI);
-    cairo_arc(cr, left + r, top + r, r, XD_PI, 3 * XD_PI / 2);
-    cairo_close_path(cr);
+    cairo_arc(cairo, left + radius, bottom - radius, radius, XD_PI / 2, XD_PI);
+    cairo_arc(cairo, left + radius, top + radius, radius, XD_PI, 3 * XD_PI / 2);
+    cairo_close_path(cairo);
 }
 
 /* The close box's centre (logical, surface-local). */
-static void close_box(const xd_balloon *b, double *cx, double *cy) {
-    int top = b->down ? STEM_H : 0;
-    *cx = b->width - PAD + 4 - CLOSE / 2.0;
+static void close_box(const xd_balloon *balloon, double *cx, double *cy) {
+    int top = balloon->down ? STEM_H : 0;
+    *cx = balloon->width - PAD + 4 - CLOSE / 2.0;
     *cy = top + PAD + TEXT_H / 2.0;
 }
 
-static void render(xd_balloon *b) {
-    xd_shell *shell = b->shell;
-    double fw = ceil(b->width * b->scale), fh = ceil(b->height * b->scale);
+static void render(xd_balloon *balloon) {
+    xd_shell *shell = balloon->shell;
+    double fw = ceil(balloon->width * balloon->scale), fh = ceil(balloon->height * balloon->scale);
     int dw = (int)fw, dh = (int)fh;
-    xd_shm_buffer *buf = xd_shm_ring_acquire(&b->ring, shell->shm, dw, dh);
+    xd_shm_buffer *buf = xd_shm_ring_acquire(&balloon->ring, shell->shm, dw, dh);
     if (buf == nullptr)
         return;
-    xd_theme t = theme_at(shell, b->scale);
-    double s = b->scale;
-    cairo_t *cr = cairo_create(buf->surface);
-    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
-    cairo_paint(cr);
-    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    xd_theme theme = theme_at(shell, balloon->scale);
+    double scale = balloon->scale;
+    cairo_t *cairo = cairo_create(buf->surface);
+    cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cairo);
+    cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
 
-    outline(cr, b, s);
-    xd_set_color(cr, xd_sys(&t, XD_COLOR_INFO_WINDOW));
-    cairo_fill_preserve(cr);
-    cairo_set_line_width(cr, XD_MAX(round(s), 1));
-    xd_set_color(cr, xd_sys(&t, XD_COLOR_INFO_TEXT));
-    cairo_stroke(cr);
+    outline(cairo, balloon, scale);
+    xd_set_color(cairo, xd_sys(&theme, XD_COLOR_INFO_WINDOW));
+    cairo_fill_preserve(cairo);
+    cairo_set_line_width(cairo, XD_MAX(round(scale), 1));
+    xd_set_color(cairo, xd_sys(&theme, XD_COLOR_INFO_TEXT));
+    cairo_stroke(cairo);
 
-    int top = b->down ? STEM_H : 0;
-    xd_rgba ink = xd_sys(&t, XD_COLOR_INFO_TEXT);
-    xd_text_style st = xd_text(&t, XD_FONT_TOOLTIP, ink, XD_ALIGN_START);
-    int text_w = b->width - 2 * PAD - CLOSE - 4;
-    if (b->c.title != nullptr) {
+    int top = balloon->down ? STEM_H : 0;
+    xd_rgba ink = xd_sys(&theme, XD_COLOR_INFO_TEXT);
+    xd_text_style st = xd_text(&theme, XD_FONT_TOOLTIP, ink, XD_ALIGN_START);
+    int text_w = balloon->width - 2 * PAD - CLOSE - 4;
+    if (balloon->c.title != nullptr) {
         /* XP's: the icon, the title in bold beside it, the text under. */
         int x = PAD;
-        cairo_surface_t *icon = b->c.icon != nullptr
-                                    ? xd_icons_get(shell->icons, b->c.icon, xd_px(s, ICON))
-                                    : nullptr;
+        cairo_surface_t *icon =
+            balloon->c.icon != nullptr
+                ? xd_icons_get(shell->icons, balloon->c.icon, xd_px(scale, ICON))
+                : nullptr;
         if (icon != nullptr) {
-            cairo_set_source_surface(cr, icon, xd_px(s, PAD),
-                                     xd_px(s, top + PAD + (TEXT_H - ICON) / 2));
-            cairo_paint(cr);
+            cairo_set_source_surface(cairo, icon, xd_px(scale, PAD),
+                                     xd_px(scale, top + PAD + (TEXT_H - ICON) / 2));
+            cairo_paint(cairo);
             x += ICON + 6;
         }
         xd_font_spec bold = *st.font;
         bold.bold = true;
         xd_text_style bst = st;
         bst.font = &bold;
-        xd_draw_text(cr,
-                     (xd_rect){xd_px(s, x), xd_px(s, top + PAD), xd_px(s, text_w - (x - PAD)),
-                               xd_px(s, TEXT_H)},
-                     b->c.title, &bst);
-        xd_draw_text(cr,
-                     (xd_rect){xd_px(s, PAD), xd_px(s, top + PAD + TEXT_H + GAP),
-                               xd_px(s, b->width - 2 * PAD), xd_px(s, TEXT_H)},
-                     b->c.text, &st);
+        xd_draw_text(cairo,
+                     (xd_rect){xd_px(scale, x), xd_px(scale, top + PAD),
+                               xd_px(scale, text_w - (x - PAD)), xd_px(scale, TEXT_H)},
+                     balloon->c.title, &bst);
+        xd_draw_text(cairo,
+                     (xd_rect){xd_px(scale, PAD), xd_px(scale, top + PAD + TEXT_H + GAP),
+                               xd_px(scale, balloon->width - 2 * PAD), xd_px(scale, TEXT_H)},
+                     balloon->c.text, &st);
     } else {
-        xd_draw_text(cr,
-                     (xd_rect){xd_px(s, PAD), xd_px(s, top + PAD), xd_px(s, text_w),
-                               xd_px(s, TEXT_H)},
-                     b->c.text, &st);
+        xd_draw_text(cairo,
+                     (xd_rect){xd_px(scale, PAD), xd_px(scale, top + PAD), xd_px(scale, text_w),
+                               xd_px(scale, TEXT_H)},
+                     balloon->c.text, &st);
     }
     /* The close box's cross, top right. */
     double cx, cy;
-    close_box(b, &cx, &cy);
-    cx *= s;
-    cy *= s;
-    double arm = 3.5 * s;
-    xd_set_color(cr, ink);
-    cairo_set_line_width(cr, XD_MAX(round(1.5 * s), 1));
-    cairo_move_to(cr, cx - arm, cy - arm);
-    cairo_line_to(cr, cx + arm, cy + arm);
-    cairo_move_to(cr, cx + arm, cy - arm);
-    cairo_line_to(cr, cx - arm, cy + arm);
-    cairo_stroke(cr);
+    close_box(balloon, &cx, &cy);
+    cx *= scale;
+    cy *= scale;
+    double arm = 3.5 * scale;
+    xd_set_color(cairo, ink);
+    cairo_set_line_width(cairo, XD_MAX(round(1.5 * scale), 1));
+    cairo_move_to(cairo, cx - arm, cy - arm);
+    cairo_line_to(cairo, cx + arm, cy + arm);
+    cairo_move_to(cairo, cx + arm, cy - arm);
+    cairo_line_to(cairo, cx - arm, cy + arm);
+    cairo_stroke(cairo);
 
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_flush(buf->surface);
-    wl_surface_attach(b->surface, buf->buffer, 0, 0);
-    wl_surface_damage_buffer(b->surface, 0, 0, dw, dh);
-    if (b->viewport != nullptr)
-        wp_viewport_set_destination(b->viewport, b->width, b->height);
-    wl_surface_commit(b->surface);
+    wl_surface_attach(balloon->surface, buf->buffer, 0, 0);
+    wl_surface_damage_buffer(balloon->surface, 0, 0, dw, dh);
+    if (balloon->viewport != nullptr)
+        wp_viewport_set_destination(balloon->viewport, balloon->width, balloon->height);
+    wl_surface_commit(balloon->surface);
     buf->busy = true;
-    b->dirty = false;
+    balloon->dirty = false;
 }
 
-static void xdg_surface_configure(void *data, struct xdg_surface *s, uint32_t serial) {
-    xd_balloon *b = data;
-    xdg_surface_ack_configure(s, serial);
-    b->configured = true;
-    b->dirty = true;
+static void xdg_surface_configure(void *data, struct xdg_surface *surface, uint32_t serial) {
+    xd_balloon *balloon = data;
+    xdg_surface_ack_configure(surface, serial);
+    balloon->configured = true;
+    balloon->dirty = true;
 }
 
 static const struct xdg_surface_listener xdg_surface_listener = {
     .configure = xdg_surface_configure,
 };
 
-static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *p,
+static void popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *popup,
                             [[maybe_unused]] int32_t x, [[maybe_unused]] int32_t y,
-                            [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+                            [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height) {}
 
-static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *p) {
+static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *popup) {
     xd_balloon_hide(((xd_balloon *)data)->shell);
 }
 
 static void popup_repositioned([[maybe_unused]] void *data,
-                               [[maybe_unused]] struct xdg_popup *p,
+                               [[maybe_unused]] struct xdg_popup *popup,
                                [[maybe_unused]] uint32_t token) {}
 
 static const struct xdg_popup_listener popup_listener = {
@@ -269,21 +270,21 @@ void xd_balloon_hide(xd_shell *shell) {
         pending = 0;
         content_clear(&waiting);
     }
-    xd_balloon *b = shell->balloon;
-    if (b == nullptr)
+    xd_balloon *balloon = shell->balloon;
+    if (balloon == nullptr)
         return;
     shell->balloon = nullptr;
     shell->pointer_balloon = false;
-    if (b->timeout != 0)
-        g_source_remove(b->timeout);
-    xdg_popup_destroy(b->popup);
-    xdg_surface_destroy(b->xdg_surface);
-    if (b->viewport != nullptr)
-        wp_viewport_destroy(b->viewport);
-    wl_surface_destroy(b->surface);
-    xd_shm_ring_finish(&b->ring);
-    content_clear(&b->c);
-    xd_free(b);
+    if (balloon->timeout != 0)
+        g_source_remove(balloon->timeout);
+    xdg_popup_destroy(balloon->popup);
+    xdg_surface_destroy(balloon->xdg_surface);
+    if (balloon->viewport != nullptr)
+        wp_viewport_destroy(balloon->viewport);
+    wl_surface_destroy(balloon->surface);
+    xd_shm_ring_finish(&balloon->ring);
+    content_clear(&balloon->c);
+    xd_free(balloon);
 }
 
 /* Where a notification area icon is on `bar` (device px), or the
@@ -307,28 +308,29 @@ static bool tray_anchor(xd_taskbar *bar, const char *item, xd_rect *out) {
 
 /* Shows it on the primary taskbar; false if there's no taskbar to show
  * it on yet. */
-static bool show(xd_shell *shell, const content *c) {
-    xd_taskbar *bar = nullptr, *b;
-    xd_rect r = {0};
-    wl_list_for_each(b, &shell->taskbars, link) {
-        if (!b->configured || b->layer == nullptr)
+static bool show(xd_shell *shell, const content *tip) {
+    xd_taskbar *bar = nullptr, *candidate;
+    xd_rect rect = {0};
+    wl_list_for_each(candidate, &shell->taskbars, link) {
+        if (!candidate->configured || candidate->layer == nullptr)
             continue;
-        if (c->item != nullptr ? tray_anchor(b, c->item, &r) : b->start_rect.w > 0) {
-            bar = b;
+        if (tip->item != nullptr ? tray_anchor(candidate, tip->item, &rect)
+                                 : candidate->start_rect.w > 0) {
+            bar = candidate;
             break;
         }
     }
     if (bar == nullptr || shell->wm_base == nullptr)
         return false;
-    if (c->item == nullptr)
-        r = bar->start_rect;
+    if (tip->item == nullptr)
+        rect = bar->start_rect;
     xd_balloon_hide(shell);
     xd_balloon *bl = XD_NEW(xd_balloon);
     bl->shell = shell;
-    bl->c = content_copy(c);
+    bl->c = content_copy(tip);
     bl->scale = bar->scale;
     bl->down = shell->settings.edge != XD_EDGE_BOTTOM;
-    if (c->item != nullptr) {
+    if (tip->item != nullptr) {
         /* The notification area is at the right end (or the bottom of a
          * side taskbar, where the balloon goes up). */
         bl->down = shell->settings.edge == XD_EDGE_TOP;
@@ -337,22 +339,23 @@ static bool show(xd_shell *shell, const content *c) {
 
     xd_theme t1 = theme_at(shell, 1.0);
     cairo_surface_t *probe = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *cr = cairo_create(probe);
+    cairo_t *cairo = cairo_create(probe);
     xd_text_style st = xd_text(&t1, XD_FONT_TOOLTIP, xd_rgba_hex(0), XD_ALIGN_START);
-    int text_w = xd_text_width(cr, c->text, &st);
-    if (c->title != nullptr) {
+    int text_w = xd_text_width(cairo, tip->text, &st);
+    if (tip->title != nullptr) {
         xd_font_spec bold = *st.font;
         bold.bold = true;
         xd_text_style bst = st;
         bst.font = &bold;
-        int title_w = (c->icon != nullptr ? ICON + 6 : 0) + xd_text_width(cr, c->title, &bst);
+        int title_w =
+            (tip->icon != nullptr ? ICON + 6 : 0) + xd_text_width(cairo, tip->title, &bst);
         bl->width = PAD + XD_MAX(title_w + 4 + CLOSE, text_w) + PAD;
         bl->height = PAD + TEXT_H + GAP + TEXT_H + PAD + STEM_H;
     } else {
         bl->width = PAD + text_w + 4 + CLOSE + PAD;
         bl->height = PAD + TEXT_H + PAD + STEM_H;
     }
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_destroy(probe);
 
     bl->surface = wl_compositor_create_surface(shell->compositor);
@@ -365,8 +368,8 @@ static bool show(xd_shell *shell, const content *c) {
 
     /* The stem's tip on the middle of the edge facing the screen
      * (logical, taskbar-local). */
-    int tip_x = (int)((r.x + r.w / 2.0) / bar->scale);
-    int edge_y = (int)((bl->down ? r.y + r.h : r.y) / bar->scale);
+    int tip_x = (int)((rect.x + rect.w / 2.0) / bar->scale);
+    int edge_y = (int)((bl->down ? rect.y + rect.h : rect.y) / bar->scale);
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(shell->wm_base);
     xdg_positioner_set_size(pos, bl->width, bl->height);
     xdg_positioner_set_anchor_rect(pos, tip_x, edge_y, 1, 1);
@@ -395,30 +398,30 @@ static gboolean retry(gpointer data) {
     xd_shell *shell = data;
     /* Taken out first: show() hides any other balloon, and with it what
      * waits here. */
-    owned c = waiting;
+    owned kept = waiting;
     waiting = (owned){0};
     unsigned self = pending;
     pending = 0;
-    content v = content_view(&c);
-    bool start_open = c.item == nullptr && (shell->start_menu != nullptr ||
-                                            shell->start7 != nullptr);
-    if (start_open || show(shell, &v) || --retries <= 0) {
-        content_clear(&c);
+    content tip = content_view(&kept);
+    bool start_open =
+        kept.item == nullptr && (shell->start_menu != nullptr || shell->start7 != nullptr);
+    if (start_open || show(shell, &tip) || --retries <= 0) {
+        content_clear(&kept);
         return G_SOURCE_REMOVE;
     }
-    waiting = c;
+    waiting = kept;
     pending = self;
     return G_SOURCE_CONTINUE;
 }
 
-static void show_or_wait(xd_shell *shell, const content *c) {
-    if (show(shell, c))
+static void show_or_wait(xd_shell *shell, const content *tip) {
+    if (show(shell, tip))
         return;
     if (pending != 0) {
         g_source_remove(pending);
         content_clear(&waiting);
     }
-    waiting = content_copy(c);
+    waiting = content_copy(tip);
     retries = RETRIES;
     pending = g_timeout_add_seconds(RETRY_SECONDS, retry, shell);
 }
@@ -432,15 +435,15 @@ void xd_balloon_new_programs(xd_shell *shell) {
         return;
     if (pending != 0 && waiting.item == nullptr)
         return;
-    content c = {.text = TEXT};
-    show_or_wait(shell, &c);
+    content tip = {.text = TEXT};
+    show_or_wait(shell, &tip);
 }
 
 void xd_balloon_tray(xd_shell *shell, const char *item, const char *icon, const char *title,
                      const char *text, void (*clicked)(xd_shell *shell, void *data),
                      void *data) {
-    content c = {item, icon, title, text, clicked, data};
-    show_or_wait(shell, &c);
+    content tip = {item, icon, title, text, clicked, data};
+    show_or_wait(shell, &tip);
 }
 
 void xd_balloon_hide_tray(xd_shell *shell, const char *item) {
@@ -462,23 +465,24 @@ void xd_balloon_pointer_motion(xd_shell *shell, double x, double y) {
 }
 
 void xd_balloon_button(xd_shell *shell, bool pressed) {
-    xd_balloon *b = shell->balloon;
-    if (pressed || b == nullptr)
+    xd_balloon *balloon = shell->balloon;
+    if (pressed || balloon == nullptr)
         return;
     /* The close box only closes it; anywhere else does what the icon
      * would, as in XP. */
     double cx, cy;
-    close_box(b, &cx, &cy);
-    bool on_close = fabs(b->px - cx) <= CLOSE / 2.0 + 2 && fabs(b->py - cy) <= CLOSE / 2.0 + 2;
-    void (*clicked)(xd_shell *, void *) = on_close ? nullptr : b->c.clicked;
-    void *data = b->c.data;
+    close_box(balloon, &cx, &cy);
+    bool on_close =
+        fabs(balloon->px - cx) <= CLOSE / 2.0 + 2 && fabs(balloon->py - cy) <= CLOSE / 2.0 + 2;
+    void (*clicked)(xd_shell *, void *) = on_close ? nullptr : balloon->c.clicked;
+    void *data = balloon->c.data;
     xd_balloon_hide(shell);
     if (clicked != nullptr)
         clicked(shell, data);
 }
 
 void xd_balloon_render_dirty(xd_shell *shell) {
-    xd_balloon *b = shell->balloon;
-    if (b != nullptr && b->configured && b->dirty)
-        render(b);
+    xd_balloon *balloon = shell->balloon;
+    if (balloon != nullptr && balloon->configured && balloon->dirty)
+        render(balloon);
 }

@@ -35,10 +35,12 @@ typedef struct updates {
     unsigned tick;
 } updates;
 
-static int waiting(const updates *u) { return u->st.software + u->st.firmware; }
+static int waiting(const updates *auto_updates) {
+    return auto_updates->st.software + auto_updates->st.firmware;
+}
 
-static bool turned_off(const updates *u) {
-    return u->shell->settings.updates.mode == XD_UPDATES_OFF;
+static bool turned_off(const updates *auto_updates) {
+    return auto_updates->shell->settings.updates.mode == XD_UPDATES_OFF;
 }
 
 static void open_page(xd_shell *shell, const char *page) {
@@ -53,45 +55,45 @@ static void settings_page(xd_shell *shell, [[maybe_unused]] void *data) {
     open_page(shell, "--page 0");
 }
 
-static void balloon(updates *u) {
+static void balloon(updates *auto_updates) {
     /* XP's words: "ready" once downloaded. */
-    bool ready = u->st.downloaded || u->st.software == 0;
-    xd_balloon_tray(u->shell, ITEM,
-                    u->st.important > 0 ? "software-update-urgent" : "software-update-available",
-                    ready ? "Updates are ready for your computer"
-                          : "Updates are available for your computer",
-                    ready ? "Click here to install these updates."
-                          : "Click here to review and install these updates.",
-                    review, nullptr);
+    bool ready = auto_updates->st.downloaded || auto_updates->st.software == 0;
+    xd_balloon_tray(
+        auto_updates->shell, ITEM,
+        auto_updates->st.important > 0 ? "software-update-urgent" : "software-update-available",
+        ready ? "Updates are ready for your computer" : "Updates are available for your computer",
+        ready ? "Click here to install these updates."
+              : "Click here to review and install these updates.",
+        review, nullptr);
 }
 
-static void load(updates *u, bool startup) {
-    xd_updates_state old = u->st;
-    if (!xd_updates_state_read(u->path, &u->st)) {
-        u->st = (xd_updates_state){0};
-        xd_tray_changed(u->shell);
+static void load(updates *auto_updates, bool startup) {
+    xd_updates_state old = auto_updates->st;
+    if (!xd_updates_state_read(auto_updates->path, &auto_updates->st)) {
+        auto_updates->st = (xd_updates_state){0};
+        xd_tray_changed(auto_updates->shell);
         return;
     }
-    u->loaded = true;
-    if (u->st.checked != old.checked)
-        u->started = 0; /* the check we started (or another) has ended */
-    xd_tray_changed(u->shell);
-    if (waiting(u) == 0 || turned_off(u)) {
-        xd_balloon_hide_tray(u->shell, ITEM);
-        u->shown[0] = '\0';
+    auto_updates->loaded = true;
+    if (auto_updates->st.checked != old.checked)
+        auto_updates->started = 0; /* the check we started (or another) has ended */
+    xd_tray_changed(auto_updates->shell);
+    if (waiting(auto_updates) == 0 || turned_off(auto_updates)) {
+        xd_balloon_hide_tray(auto_updates->shell, ITEM);
+        auto_updates->shown[0] = '\0';
         return;
     }
     /* At logon while updates wait, and when a check finds a new set; not
      * when the applet merely recounts them. */
-    bool fresh = startup || (u->st.checked > old.checked &&
-                             strcmp(u->st.signature, u->shown) != 0);
+    bool fresh = startup || (auto_updates->st.checked > old.checked &&
+                             strcmp(auto_updates->st.signature, auto_updates->shown) != 0);
     if (fresh) {
-        memcpy(u->shown, u->st.signature, sizeof(u->shown));
-        balloon(u);
+        memcpy(auto_updates->shown, auto_updates->st.signature, sizeof(auto_updates->shown));
+        balloon(auto_updates);
     }
 }
 
-static void on_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GFile *file,
+static void on_changed([[maybe_unused]] GFileMonitor *file_monitor, [[maybe_unused]] GFile *file,
                        [[maybe_unused]] GFile *other, GFileMonitorEvent event, gpointer data) {
     if (event == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || event == G_FILE_MONITOR_EVENT_CREATED ||
         event == G_FILE_MONITOR_EVENT_MOVED_IN || event == G_FILE_MONITOR_EVENT_RENAMED ||
@@ -109,43 +111,43 @@ static bool may_check(void) {
 }
 
 static gboolean on_tick(gpointer data) {
-    updates *u = data;
-    xd_shell *shell = u->shell;
+    updates *auto_updates = data;
+    xd_shell *shell = auto_updates->shell;
     int64_t now = g_get_real_time() / G_USEC_PER_SEC;
     int64_t mono = g_get_monotonic_time() / G_USEC_PER_SEC;
-    if (u->started != 0 && mono - u->started > GIVE_UP)
-        u->started = 0;
-    if (turned_off(u) || u->started != 0)
+    if (auto_updates->started != 0 && mono - auto_updates->started > GIVE_UP)
+        auto_updates->started = 0;
+    if (turned_off(auto_updates) || auto_updates->started != 0)
         return G_SOURCE_CONTINUE;
     GTimeZone *tz = g_time_zone_new_local();
-    int64_t due = xd_updates_next_check(&shell->settings.updates, u->st.checked, tz);
+    int64_t due = xd_updates_next_check(&shell->settings.updates, auto_updates->st.checked, tz);
     g_time_zone_unref(tz);
     if (now >= due) {
-        u->started = mono;
+        auto_updates->started = mono;
         xd_shell_launch(shell, xd_shell_own_command(shell, "xd-wuaucpl", "--check"));
     }
     return G_SOURCE_CONTINUE;
 }
 
 static gboolean first_tick(gpointer data) {
-    updates *u = data;
-    on_tick(u);
-    u->tick = g_timeout_add_seconds(TICK_SECONDS, on_tick, u);
+    updates *auto_updates = data;
+    on_tick(auto_updates);
+    auto_updates->tick = g_timeout_add_seconds(TICK_SECONDS, on_tick, auto_updates);
     return G_SOURCE_REMOVE;
 }
 
 /* ---- the icon ---------------------------------------------------------------------- */
 
 static const char *icon(void *data) {
-    updates *u = data;
-    if (waiting(u) == 0 || turned_off(u))
+    updates *auto_updates = data;
+    if (waiting(auto_updates) == 0 || turned_off(auto_updates))
         return nullptr;
-    return u->st.important > 0 ? "software-update-urgent" : "software-update-available";
+    return auto_updates->st.important > 0 ? "software-update-urgent" : "software-update-available";
 }
 
 static char *tooltip(void *data) {
-    updates *u = data;
-    return g_strdup(u->st.downloaded || u->st.software == 0
+    updates *auto_updates = data;
+    return g_strdup(auto_updates->st.downloaded || auto_updates->st.software == 0
                         ? "Updates are ready for your computer. Click here to install them."
                         : "Updates are available for your computer. Click here to review "
                           "them.");
@@ -153,34 +155,34 @@ static char *tooltip(void *data) {
 
 static void activate(void *data, [[maybe_unused]] xd_taskbar *bar, [[maybe_unused]] xd_rect anchor,
                      [[maybe_unused]] uint32_t serial) {
-    updates *u = data;
-    xd_balloon_hide_tray(u->shell, ITEM);
-    review(u->shell, nullptr);
+    updates *auto_updates = data;
+    xd_balloon_hide_tray(auto_updates->shell, ITEM);
+    review(auto_updates->shell, nullptr);
 }
 
 static void open_updates(void *data) {
-    updates *u = data;
-    review(u->shell, nullptr);
+    updates *auto_updates = data;
+    review(auto_updates->shell, nullptr);
 }
 
-static void menu([[maybe_unused]] void *data, xd_menu_tree *tree, xd_menu_model *m) {
-    xd_menu_item *it = xd_menu_add(tree, m, XD_MENU_ACTION, "&Review Updates", nullptr);
+static void menu([[maybe_unused]] void *data, xd_menu_tree *tree, xd_menu_model *menu_model) {
+    xd_menu_item *it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "&Review Updates", nullptr);
     it->action = review;
     it->bold = true;
-    it = xd_menu_add(tree, m, XD_MENU_ACTION, "Automatic Updates &Settings", nullptr);
+    it = xd_menu_add(tree, menu_model, XD_MENU_ACTION, "Automatic Updates &Settings", nullptr);
     it->action = settings_page;
 }
 
 static void destroy(void *data) {
-    updates *u = data;
-    if (u->tick != 0)
-        g_source_remove(u->tick);
-    if (u->monitor != nullptr) {
-        g_signal_handlers_disconnect_by_data(u->monitor, u);
-        g_object_unref(u->monitor);
+    updates *auto_updates = data;
+    if (auto_updates->tick != 0)
+        g_source_remove(auto_updates->tick);
+    if (auto_updates->monitor != nullptr) {
+        g_signal_handlers_disconnect_by_data(auto_updates->monitor, auto_updates);
+        g_object_unref(auto_updates->monitor);
     }
-    g_free(u->path);
-    g_free(u);
+    g_free(auto_updates->path);
+    g_free(auto_updates);
 }
 
 static const xd_sysicon_ops ops = {
@@ -200,20 +202,20 @@ void xd_sys_updates_init(xd_shell *shell) {
         if (!found)
             return;
     }
-    updates *u = g_new0(updates, 1);
-    u->shell = shell;
-    u->path = xd_updates_state_path();
-    GFile *file = g_file_new_for_path(u->path);
-    u->monitor = g_file_monitor_file(file, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+    updates *auto_updates = g_new0(updates, 1);
+    auto_updates->shell = shell;
+    auto_updates->path = xd_updates_state_path();
+    GFile *file = g_file_new_for_path(auto_updates->path);
+    auto_updates->monitor = g_file_monitor_file(file, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
     g_object_unref(file);
-    if (u->monitor != nullptr)
-        g_signal_connect(u->monitor, "changed", G_CALLBACK(on_changed), u);
-    xd_tray_add_sysicon(shell, ITEM, &ops, u);
-    load(u, true);
+    if (auto_updates->monitor != nullptr)
+        g_signal_connect(auto_updates->monitor, "changed", G_CALLBACK(on_changed), auto_updates);
+    xd_tray_add_sysicon(shell, ITEM, &ops, auto_updates);
+    load(auto_updates, true);
     if (!may_check())
         return;
     const char *test = getenv("XD_UPDATES_DELAY");
     int64_t delay = test != nullptr ? g_ascii_strtoll(test, nullptr, 10) : FIRST_DELAY;
     delay = XD_CLAMP(delay, 1, FIRST_DELAY);
-    u->tick = g_timeout_add_seconds((unsigned)delay, first_tick, u);
+    auto_updates->tick = g_timeout_add_seconds((unsigned)delay, first_tick, auto_updates);
 }
