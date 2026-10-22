@@ -490,6 +490,18 @@ or the shortcut again, stops it, and a notification offers to open the
 file. It needs GStreamer's gst-plugins-good, x264 (gst-plugins-ugly) or
 OpenH264, and for sound gst-libav or fdk-aac.
 
+### Minefield
+
+`xd-mines` (Games) is Windows XP's mine-clearing game under a name of its
+own, drawn as XP drew it whatever the theme: the red LED mine counter,
+the face button and the timer over a grey board. Left click opens a
+square, right click flags it (then "?", with Game > Marks), and both
+buttons or the middle one on a number open its neighbours once its flags
+are placed; the first square opened is never a mine. Beginner,
+Intermediate, Expert and Custom, with Best Times, in
+`~/.config/xeondesktop/mines.ini`. Solitaire and FreeCell come from
+AisleRiot (`aisleriot`), suggested by the packages.
+
 ### GTK theme
 
 GTK3 apps match the desktop. The compositor generates a GTK3 theme named

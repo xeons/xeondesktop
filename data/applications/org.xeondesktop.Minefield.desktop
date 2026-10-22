@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Minefield
+Comment=Find the mines hidden in a field without setting one off
+Exec=xd-mines
+Icon=applications-games
+Terminal=false
+Categories=Game;LogicGame;GTK;
+Keywords=minesweeper;mines;puzzle;
+StartupWMClass=org.xeondesktop.Minefield

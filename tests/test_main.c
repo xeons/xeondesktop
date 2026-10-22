@@ -87,6 +87,7 @@
 #include "../src/shell/notices.h"
 #include <wayland-client-protocol.h>
 
+#include "../src/mines/minefield.h"
 #include "../src/snip/recording.h"
 #include "../src/snip/snipping.h"
 #include "../src/shell/jumplist.h"
@@ -6332,6 +6333,114 @@ static void test_snipping(void) {
     g_key_file_free(file);
 }
 
+/* A field with mines exactly where `rows` has '*' (row by row), laid
+ * by hand instead of at random, already playing. */
+static void minefield_from(xd_minefield *field, const char *const *rows, int width, int height) {
+    int mines = 0;
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++)
+            mines += rows[y][x] == '*' ? 1 : 0;
+    }
+    xd_minefield_init(field, width, height, mines);
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++)
+            xd_minefield_cell(field, x, y)->mine = rows[y][x] == '*';
+    }
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int around = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    const xd_mines_cell *near = xd_minefield_cell(field, x + dx, y + dy);
+                    around += near != nullptr && near->mine ? 1 : 0;
+                }
+            }
+            xd_minefield_cell(field, x, y)->neighbors = (uint8_t)around;
+        }
+    }
+    field->state = XD_MINES_PLAYING;
+}
+
+static void test_minefield(void) {
+    int width, height, mines;
+    xd_mines_level_size(XD_MINES_EXPERT, &width, &height, &mines);
+    CHECK(width == 30 && height == 16 && mines == 99);
+    xd_mines_level level = XD_MINES_BEGINNER;
+    CHECK(xd_mines_level_parse("intermediate", &level) && level == XD_MINES_INTERMEDIATE);
+    width = 50;
+    height = 2;
+    mines = 900;
+    xd_mines_clamp_custom(&width, &height, &mines);
+    CHECK(width == 30 && height == 9 && mines == 29 * 8);
+
+    /* The first square opened is never a mine, whatever the seed; the
+     * mines are all laid, and the numbers count them. */
+    GRand *rand = g_rand_new_with_seed(1);
+    for (int round = 0; round < 50; round++) {
+        xd_minefield field;
+        xd_minefield_init(&field, 9, 9, 60);
+        CHECK(field.state == XD_MINES_READY);
+        xd_minefield_open(&field, 4, 4, rand);
+        CHECK(!xd_minefield_cell(&field, 4, 4)->mine && field.state != XD_MINES_LOST);
+        int laid = 0;
+        for (int i = 0; i < 81; i++)
+            laid += field.cells[i].mine ? 1 : 0;
+        CHECK(laid == 60);
+        xd_minefield_finish(&field);
+    }
+    g_rand_free(rand);
+
+    /* Beginner's 9 x 9 with its 10 mines: a wall of them down the middle
+     * column, and one in the top left corner. */
+    static const char *const walled[] = {
+        "*...*....", "....*....", "....*....", "....*....", "....*....",
+        "....*....", "....*....", "....*....", "....*....",
+    };
+    xd_minefield field;
+    minefield_from(&field, walled, 9, 9);
+    CHECK(field.mines == 10 && xd_minefield_cell(&field, 1, 1)->neighbors == 1);
+    /* An empty square opens its whole area, to the numbers at its edge:
+     * the right of the wall, not the left. */
+    CHECK(xd_minefield_open(&field, 8, 0, nullptr) == 36 && field.state == XD_MINES_PLAYING);
+    CHECK(xd_minefield_cell(&field, 5, 4)->mark == XD_MINES_OPEN);
+    CHECK(xd_minefield_cell(&field, 1, 1)->mark == XD_MINES_COVERED);
+    /* Flags: counted, kept from opening, ? after with marks on. */
+    xd_minefield_cycle_mark(&field, 0, 0, true);
+    CHECK(xd_minefield_cell(&field, 0, 0)->mark == XD_MINES_FLAGGED &&
+          xd_minefield_mines_left(&field) == 9);
+    CHECK(xd_minefield_open(&field, 0, 0, nullptr) == 0);
+    xd_minefield_cycle_mark(&field, 0, 0, true);
+    CHECK(xd_minefield_cell(&field, 0, 0)->mark == XD_MINES_QUESTIONED &&
+          xd_minefield_mines_left(&field) == 10);
+    xd_minefield_cycle_mark(&field, 0, 0, true);
+    CHECK(xd_minefield_cell(&field, 0, 0)->mark == XD_MINES_COVERED);
+    xd_minefield_cycle_mark(&field, 0, 0, false);
+    xd_minefield_cycle_mark(&field, 0, 0, false); /* no ? without marks */
+    CHECK(xd_minefield_cell(&field, 0, 0)->mark == XD_MINES_COVERED);
+
+    /* Chording: the 1 at (1,1), its mine flagged, opens the rest around
+     * it; not before the flag is there. */
+    CHECK(xd_minefield_open(&field, 1, 1, nullptr) == 1);
+    CHECK(xd_minefield_chord(&field, 1, 1) == 0);
+    xd_minefield_cycle_mark(&field, 0, 0, false);
+    /* Its empty neighbour opens the rest of the left side, the last of
+     * the safe squares: that wins, and flags every mine. */
+    CHECK(xd_minefield_chord(&field, 1, 1) > 0);
+    CHECK(xd_minefield_cell(&field, 2, 2)->mark == XD_MINES_OPEN);
+    CHECK(field.state == XD_MINES_WON && xd_minefield_mines_left(&field) == 0);
+    CHECK(xd_minefield_cell(&field, 4, 4)->mark == XD_MINES_FLAGGED);
+    xd_minefield_finish(&field);
+
+    /* A wrong flag, chorded: the mine it should have been on goes off. */
+    minefield_from(&field, walled, 9, 9);
+    xd_minefield_open(&field, 1, 1, nullptr);
+    xd_minefield_cycle_mark(&field, 1, 0, false);
+    CHECK(xd_minefield_chord(&field, 1, 1) > 0);
+    CHECK(field.state == XD_MINES_LOST && field.exploded == 0);
+    CHECK(xd_minefield_open(&field, 2, 2, nullptr) == 0); /* over: nothing more */
+    xd_minefield_finish(&field);
+}
+
 static void test_recording(void) {
     GDateTime *time = g_date_time_new_local(2026, 10, 22, 15, 37, 4);
     char *name = xd_record_file_name(time);
@@ -9729,6 +9838,7 @@ int main(void) {
     test_notices();
     test_snipping();
     test_recording();
+    test_minefield();
     test_launcher_entry();
     test_printers();
     test_scanners();

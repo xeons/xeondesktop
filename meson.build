@@ -646,6 +646,7 @@ install_data(
   'data/applications/org.xeondesktop.Files.desktop',
   'data/applications/org.xeondesktop.TaskManager.desktop',
   'data/applications/org.xeondesktop.SnippingTool.desktop',
+  'data/applications/org.xeondesktop.Minefield.desktop',
   'data/applications/org.xeondesktop.SystemProperties.desktop',
   'data/applications/org.xeondesktop.DateTime.desktop',
   'data/applications/org.xeondesktop.Display.desktop',
@@ -739,6 +740,16 @@ executable(
   dependencies: [core_dep, settings_dep, gtk_dep, gtk_layer_shell_dep, gdk_pixbuf_dep,
                  gio_unix_dep, client_protocol_dep, m_dep, gstreamer_dep, gstreamer_app_dep],
   c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+# Minefield, Windows XP's mine-clearing game.
+executable(
+  'xd-mines',
+  'src/mines/main.c',
+  'src/mines/minefield.c',
+  link_with: [gtkapp_lib],
+  dependencies: [core_dep, settings_dep, gtk_dep, m_dep],
   install: true,
 )
 
@@ -1346,6 +1357,7 @@ test_exe = executable(
   'src/files/extract.c',
   'src/snip/snipping.c',
   'src/snip/recording.c',
+  'src/mines/minefield.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,
@@ -1452,7 +1464,7 @@ install_man(
   'man/xd-flatpak.1',
   'man/xd-folders.1', 'man/xd-fonts.1', 'man/xd-help.1', 'man/xd-intl.1', 'man/xd-joy.1',
   'man/xd-keys.1',
-  'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mouse.1',
+  'man/xd-keyboard.1', 'man/xd-lock.1', 'man/xd-message.1', 'man/xd-mines.1', 'man/xd-mouse.1',
   'man/xd-netconn.1', 'man/xd-polkit.1', 'man/xd-power.1', 'man/xd-printers.1', 'man/xd-privacy.1',
   'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1', 'man/xd-search.1',
   'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1', 'man/xd-snip.1',

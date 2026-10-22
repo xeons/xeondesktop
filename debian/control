@@ -114,6 +114,8 @@ Recommends:
  openssh-client,
  gnupg,
  gnome-keyring,
+ aisleriot,
+ pinball,
 Suggests:
  oxygen-icon-theme,
  papirus-icon-theme,

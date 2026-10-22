@@ -4540,6 +4540,51 @@ def screen_recording(s):
     s.log("ok: stopping took the frame away")
 
 
+@scenario()
+def minefield(s):
+    """Minefield: left click opens a square, right click flags one (red
+    in it), and F2 starts again, every square raised once more."""
+    desktop = s.settle("desktop")
+    s.launch(s.tool("xd-mines"), "--seed", "7")
+    s.wait_window(title="Minefield", state="activated")
+    start, box = wait_change(s, desktop, (0, 0, WIDTH, HEIGHT - 40), "Minefield's window", "window")
+    # The board's sunken edge is white along its bottom and right (the
+    # window's frame isn't): the squares, 16 px, end where it starts.
+    white = (255, 255, 255)
+    middle_x = box[0] + box[2] // 2
+    edge_y = next(y for y in range(box[1] + box[3], box[1], -1)
+                  if near(start.pixel(middle_x, y), white, 8))
+    while near(start.pixel(middle_x, edge_y - 1), white, 8):
+        edge_y -= 1
+    row_y = edge_y - 16 * 4 - 8  # the middle row's middle
+    edge_x = next(x for x in range(box[0] + box[2], box[0], -1)
+                  if near(start.pixel(x, row_y), white, 8))
+    while near(start.pixel(edge_x - 1, row_y), white, 8):
+        edge_x -= 1
+    centre_x = edge_x - 16 * 4 - 8  # the middle column's middle
+
+    def raised(shot, x, y):
+        """A covered square: white along its top left edge."""
+        return near(shot.pixel(x - 6, y - 7), (255, 255, 255), 30)
+
+    def red_in(shot, x, y):
+        return any(near(shot.pixel(x + dx, y + dy), (255, 0, 0), 40)
+                   for dx in range(-5, 6) for dy in range(-6, 3))
+
+    s.check(raised(start, centre_x, row_y), "the squares start covered")
+    s.inject("move", centre_x, row_y, "click")
+    s.wait(lambda: not raised(s.shot("opened"), centre_x, row_y), "the square to open")
+    s.log("ok: a click opened the square")
+    flag_x = centre_x - 16 * 4  # the left column, far from the opened area
+    s.inject("move", flag_x, row_y, "click", "right")
+    s.wait(lambda: red_in(s.shot("flagged"), flag_x, row_y), "a red flag")
+    s.log("ok: a right click flagged a square")
+    s.inject("key", "F2")
+    s.wait(lambda: (lambda shot: raised(shot, centre_x, row_y) and not red_in(shot, flag_x, row_y))(
+        s.shot("new-game")), "a new game")
+    s.log("ok: F2 started a new game")
+
+
 @scenario(LUNA_INI)
 def xp_new_programs_balloon(s):
     """A program installed while the session runs: XP's "New programs

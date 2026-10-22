@@ -1,0 +1,34 @@
+.TH XD\-MINES 1 2026-10-22 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-mines \- Minefield
+.SH SYNOPSIS
+.SY xd\-mines
+.OP \-\-seed N
+.YS
+.SH DESCRIPTION
+.B xd\-mines
+is Minefield, Windows XP's mine-clearing game, drawn as XP drew it
+whatever the theme.
+Left click opens a square: a number says how many mines touch it, and a
+square with none opens the empty area around it.
+Right click flags a square, then (with Game > Marks) marks it with a
+question mark.
+Both buttons, or the middle one, on a number whose flags are all placed
+open its other neighbours.
+The first square opened is never a mine.
+Opening every square without a mine wins; the face button (or F2) starts
+a new game.
+.PP
+Game > Beginner (9 by 9, 10 mines), Intermediate (16 by 16, 40), Expert
+(30 by 16, 99) or Custom (up to 30 by 24), and Best Times, the fastest
+win at each level.
+They're kept in
+.IR ~/.config/xeondesktop/mines.ini .
+.SH OPTIONS
+.TP
+.B \-\-seed N
+Lay the mines from seed
+.I N
+(the same each time), for tests.
+.SH SEE ALSO
+.BR xd\-shell (1)

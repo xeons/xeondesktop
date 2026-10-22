@@ -102,6 +102,7 @@ optdepends=(
   'python-pefile: importing Windows visual styles (xd-theme-import)'
   'python-gobject: importing Windows visual styles (xd-theme-import)'
   'python-cairo: importing Windows Vista and 7 visual styles (xd-theme-import)'
+  'aisleriot: Solitaire and FreeCell (Start > Programs > Games)'
 )
 backup=('etc/pam.d/xeondesktop')
 source=("$pkgname-$pkgver.tar.gz")

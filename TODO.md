@@ -567,6 +567,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       isn't turned upright), Send To (e-mail), a custom pen, Undo, the
       window under a menu or tooltip, layer surfaces (the taskbar) as
       Window Snip targets, keyboard selection, Windows 7's scissors cursor.
+- [~] Minefield (xd-mines): Windows XP's mine-clearing game, drawn in
+      cairo (no bitmaps): LED counter and timer, the face, Beginner,
+      Intermediate, Expert, Custom, Marks (?), chording, a safe first
+      square, Best Times. Unit tests (the game) and a UI scenario
+      (minefield). Not yet: sounds, Color off (black and white), the
+      keyboard, an icon of its own (it borrows applications-games), our own
+      Solitaire, FreeCell and Pinball.
 - [~] Screen recording (xd-snip): an area of one monitor (Record, or
       Win+Shift+R, as Windows 11's Snipping Tool) or the active window
       (Win+Alt+R, as the Game Bar), wlr-screencopy with the pointer at 30
