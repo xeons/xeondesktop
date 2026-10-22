@@ -60,49 +60,50 @@ static void log_line(const char *fmt, ...) {
 
 static mock_printer *add_printer(const char *name, const char *uri, const char *info,
                                  const char *location, const char *model) {
-    mock_printer *p = g_new0(mock_printer, 1);
-    p->name = g_strdup(name);
-    p->uri = g_strdup(uri);
-    p->info = g_strdup(info);
-    p->location = g_strdup(location);
-    p->model = g_strdup(model);
-    g_ptr_array_add(printers, p);
-    return p;
+    mock_printer *printer = g_new0(mock_printer, 1);
+    printer->name = g_strdup(name);
+    printer->uri = g_strdup(uri);
+    printer->info = g_strdup(info);
+    printer->location = g_strdup(location);
+    printer->model = g_strdup(model);
+    g_ptr_array_add(printers, printer);
+    return printer;
 }
 
 static mock_printer *find_printer(ipp_t *req) {
-    ipp_attribute_t *a = ippFindAttribute(req, "printer-uri", IPP_TAG_URI);
-    const char *uri = a != nullptr ? ippGetString(a, 0, nullptr) : nullptr;
+    ipp_attribute_t *ipp_attribute = ippFindAttribute(req, "printer-uri", IPP_TAG_URI);
+    const char *uri = ipp_attribute != nullptr ? ippGetString(ipp_attribute, 0, nullptr) : nullptr;
     const char *at = uri != nullptr ? strstr(uri, "/printers/") : nullptr;
     if (at == nullptr)
         return nullptr;
     at += strlen("/printers/");
     for (guint i = 0; i < printers->len; i++) {
-        mock_printer *p = g_ptr_array_index(printers, i);
-        if (strcmp(p->name, at) == 0)
-            return p;
+        mock_printer *printer = g_ptr_array_index(printers, i);
+        if (strcmp(printer->name, at) == 0)
+            return printer;
     }
     return nullptr;
 }
 
-static void describe(ipp_t *resp, const mock_printer *p) {
+static void describe(ipp_t *resp, const mock_printer *printer) {
     char uri[HTTP_MAX_URI];
-    httpAssembleURIf(HTTP_URI_CODING_ALL, uri, (int)sizeof(uri), "ipp", nullptr, "localhost",
-                     631, "/printers/%s", p->name);
-    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_NAME, "printer-name", nullptr, p->name);
+    httpAssembleURIf(HTTP_URI_CODING_ALL, uri, (int)sizeof(uri), "ipp", nullptr, "localhost", 631,
+                     "/printers/%s", printer->name);
+    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_NAME, "printer-name", nullptr, printer->name);
     ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_URI, "printer-uri-supported", nullptr, uri);
-    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_URI, "device-uri", nullptr, p->uri);
-    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_TEXT, "printer-info", nullptr, p->info);
-    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_TEXT, "printer-location", nullptr, p->location);
+    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_URI, "device-uri", nullptr, printer->uri);
+    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_TEXT, "printer-info", nullptr, printer->info);
+    ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_TEXT, "printer-location", nullptr,
+                 printer->location);
     ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_TEXT, "printer-make-and-model", nullptr,
-                 p->model);
+                 printer->model);
     ippAddInteger(resp, IPP_TAG_PRINTER, IPP_TAG_ENUM, "printer-state",
-                  p->paused ? IPP_PSTATE_STOPPED : IPP_PSTATE_IDLE);
+                  printer->paused ? IPP_PSTATE_STOPPED : IPP_PSTATE_IDLE);
     ippAddString(resp, IPP_TAG_PRINTER, IPP_TAG_KEYWORD, "printer-state-reasons", nullptr,
-                 p->paused ? "paused" : "none");
+                 printer->paused ? "paused" : "none");
     ippAddInteger(resp, IPP_TAG_PRINTER, IPP_TAG_ENUM, "printer-type", CUPS_PRINTER_LOCAL);
     ippAddBoolean(resp, IPP_TAG_PRINTER, "printer-is-accepting-jobs", 1);
-    ippAddBoolean(resp, IPP_TAG_PRINTER, "printer-is-shared", (char)p->shared);
+    ippAddBoolean(resp, IPP_TAG_PRINTER, "printer-is-shared", (char)printer->shared);
     ippAddBoolean(resp, IPP_TAG_PRINTER, "server-is-sharing-printers", (char)sharing);
     static const char *const media[] = {"iso_a4_210x297mm", "na_letter_8.5x11in"};
     ippAddStrings(resp, IPP_TAG_PRINTER, IPP_TAG_KEYWORD, "media-supported", 2, nullptr, media);
@@ -137,27 +138,28 @@ static void get_devices(ipp_t *resp) {
 }
 
 static void add_modify(ipp_t *req, ipp_t *resp) {
-    mock_printer *p = find_printer(req);
-    if (p == nullptr) {
+    mock_printer *printer = find_printer(req);
+    if (printer == nullptr) {
         ippSetStatusCode(resp, IPP_STATUS_ERROR_NOT_FOUND);
         return;
     }
-    for (ipp_attribute_t *a = ippFirstAttribute(req); a != nullptr; a = ippNextAttribute(req)) {
-        const char *n = ippGetName(a);
-        if (n == nullptr || ippGetGroupTag(a) != IPP_TAG_PRINTER)
+    for (ipp_attribute_t *ipp_attribute = ippFirstAttribute(req); ipp_attribute != nullptr;
+         ipp_attribute = ippNextAttribute(req)) {
+        const char *attribute_name = ippGetName(ipp_attribute);
+        if (attribute_name == nullptr || ippGetGroupTag(ipp_attribute) != IPP_TAG_PRINTER)
             continue;
         char value[1024];
-        ippAttributeString(a, value, sizeof(value));
-        log_line("add-modify %s %s=%s", p->name, n, value);
-        char **field = strcmp(n, "device-uri") == 0         ? &p->uri
-                       : strcmp(n, "printer-info") == 0     ? &p->info
-                       : strcmp(n, "printer-location") == 0 ? &p->location
-                                                            : nullptr;
+        ippAttributeString(ipp_attribute, value, sizeof(value));
+        log_line("add-modify %s %s=%s", printer->name, attribute_name, value);
+        char **field = strcmp(attribute_name, "device-uri") == 0         ? &printer->uri
+                       : strcmp(attribute_name, "printer-info") == 0     ? &printer->info
+                       : strcmp(attribute_name, "printer-location") == 0 ? &printer->location
+                                                                         : nullptr;
         if (field != nullptr) {
             g_free(*field);
-            *field = g_strdup(ippGetString(a, 0, nullptr));
-        } else if (strcmp(n, "printer-is-shared") == 0) {
-            p->shared = ippGetBoolean(a, 0) != 0;
+            *field = g_strdup(ippGetString(ipp_attribute, 0, nullptr));
+        } else if (strcmp(attribute_name, "printer-is-shared") == 0) {
+            printer->shared = ippGetBoolean(ipp_attribute, 0) != 0;
         }
     }
 }
@@ -173,9 +175,9 @@ static ipp_t *process(ipp_t *req) {
             describe(resp, g_ptr_array_index(printers, i));
         }
     } else if (op == IPP_OP_GET_PRINTER_ATTRIBUTES) {
-        const mock_printer *p = find_printer(req);
-        if (p != nullptr)
-            describe(resp, p);
+        const mock_printer *printer = find_printer(req);
+        if (printer != nullptr)
+            describe(resp, printer);
         else
             ippSetStatusCode(resp, IPP_STATUS_ERROR_NOT_FOUND);
     } else if (op == IPP_OP_CUPS_GET_DEFAULT) {
@@ -188,10 +190,10 @@ static ipp_t *process(ipp_t *req) {
     } else if (op == IPP_OP_CUPS_ADD_MODIFY_PRINTER) {
         add_modify(req, resp);
     } else if (op == IPP_OP_PAUSE_PRINTER || op == IPP_OP_RESUME_PRINTER) {
-        mock_printer *p = find_printer(req);
-        if (p != nullptr) {
-            p->paused = op == IPP_OP_PAUSE_PRINTER;
-            log_line("%s %s", p->paused ? "pause" : "resume", p->name);
+        mock_printer *printer = find_printer(req);
+        if (printer != nullptr) {
+            printer->paused = op == IPP_OP_PAUSE_PRINTER;
+            log_line("%s %s", printer->paused ? "pause" : "resume", printer->name);
         } else {
             ippSetStatusCode(resp, IPP_STATUS_ERROR_NOT_FOUND);
         }
@@ -250,9 +252,10 @@ static bool serve_one(http_t *http) {
         }
         /* "Basic " and base64 of user:password: who, and whether a
          * password came. */
-        gsize n = 0;
-        guchar *raw = g_str_has_prefix(auth, "Basic ") ? g_base64_decode(auth + 6, &n) : nullptr;
-        char *pair = g_strndup((const char *)raw, n);
+        gsize count = 0;
+        guchar *raw =
+            g_str_has_prefix(auth, "Basic ") ? g_base64_decode(auth + 6, &count) : nullptr;
+        char *pair = g_strndup((const char *)raw, count);
         char *colon = strchr(pair, ':');
         if (colon != nullptr)
             *colon = '\0';
@@ -266,9 +269,9 @@ static bool serve_one(http_t *http) {
         return false;
     if (state == HTTP_STATE_POST) {
         ipp_t *req = ippNew();
-        ipp_state_t s;
-        while ((s = ippRead(http, req)) != IPP_STATE_DATA) {
-            if (s == IPP_STATE_ERROR) {
+        ipp_state_t ipp_state;
+        while ((ipp_state = ippRead(http, req)) != IPP_STATE_DATA) {
+            if (ipp_state == IPP_STATE_ERROR) {
                 ippDelete(req);
                 return false;
             }
@@ -290,9 +293,9 @@ static bool serve_one(http_t *http) {
     if (state == HTTP_STATE_PUT && strcmp(resource, "/admin/conf/cupsd.conf") == 0) {
         GString *body = g_string_new(nullptr);
         char buf[4096];
-        ssize_t n;
-        while ((n = httpRead2(http, buf, sizeof(buf))) > 0)
-            g_string_append_len(body, buf, n);
+        ssize_t bytes_read;
+        while ((bytes_read = httpRead2(http, buf, sizeof(buf))) > 0)
+            g_string_append_len(body, buf, bytes_read);
         g_mutex_lock(&lock);
         g_free(conf);
         conf = g_string_free(body, FALSE);
@@ -300,10 +303,10 @@ static bool serve_one(http_t *http) {
         sharing = strstr(conf, "\nBrowsing On") != nullptr ||
                   strstr(conf, "\nBrowsing Yes") != nullptr;
         gchar **lines = g_strsplit(conf, "\n", -1);
-        for (gchar **l = lines; *l != nullptr; l++) {
-            if (g_str_has_prefix(*l, "Brows") || g_str_has_prefix(*l, "Port") ||
-                g_str_has_prefix(*l, "Listen"))
-                log_line("cupsd.conf %s", *l);
+        for (gchar **line = lines; *line != nullptr; line++) {
+            if (g_str_has_prefix(*line, "Brows") || g_str_has_prefix(*line, "Port") ||
+                g_str_has_prefix(*line, "Listen"))
+                log_line("cupsd.conf %s", *line);
         }
         g_strfreev(lines);
         g_mutex_unlock(&lock);

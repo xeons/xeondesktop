@@ -119,18 +119,18 @@ static void test_str(void) {
     CHECK(xd_str_eq(xd_str_sub(XD_STR("abc"), 1, 99), XD_STR("bc")));
     CHECK(xd_str_eq(xd_str_sub(XD_STR("abc"), 99, 1), XD_STR("")));
 
-    int64_t v = 0;
-    CHECK(xd_str_parse_i64(XD_STR(" 255 "), 0, 255, &v) && v == 255);
-    CHECK(!xd_str_parse_i64(XD_STR("256"), 0, 255, &v));
-    CHECK(!xd_str_parse_i64(XD_STR("12x"), 0, 255, &v));
-    CHECK(!xd_str_parse_i64(XD_STR("-"), -10, 10, &v));
-    CHECK(xd_str_parse_i64(XD_STR("-9223372036854775808"), INT64_MIN, INT64_MAX, &v) &&
-          v == INT64_MIN);
-    CHECK(!xd_str_parse_i64(XD_STR("9223372036854775808"), INT64_MIN, INT64_MAX, &v));
+    int64_t value = 0;
+    CHECK(xd_str_parse_i64(XD_STR(" 255 "), 0, 255, &value) && value == 255);
+    CHECK(!xd_str_parse_i64(XD_STR("256"), 0, 255, &value));
+    CHECK(!xd_str_parse_i64(XD_STR("12x"), 0, 255, &value));
+    CHECK(!xd_str_parse_i64(XD_STR("-"), -10, 10, &value));
+    CHECK(xd_str_parse_i64(XD_STR("-9223372036854775808"), INT64_MIN, INT64_MAX, &value) &&
+          value == INT64_MIN);
+    CHECK(!xd_str_parse_i64(XD_STR("9223372036854775808"), INT64_MIN, INT64_MAX, &value));
 
-    double d = 0;
-    CHECK(xd_str_parse_double(XD_STR("1.25"), &d) && d > 1.249 && d < 1.251);
-    CHECK(!xd_str_parse_double(XD_STR("1.25x"), &d));
+    double number = 0;
+    CHECK(xd_str_parse_double(XD_STR("1.25"), &number) && number > 1.249 && number < 1.251);
+    CHECK(!xd_str_parse_double(XD_STR("1.25x"), &number));
 
     xd_strbuf sb = {0};
     xd_strbuf_append(&sb, XD_STR("ab"));
@@ -144,38 +144,39 @@ static void test_str(void) {
 }
 
 static void test_arena(void) {
-    xd_arena a;
-    xd_arena_init(&a, 256);
-    int *ints = XD_ARENA_ARRAY(&a, int, 10);
+    xd_arena arena;
+    xd_arena_init(&arena, 256);
+    int *ints = XD_ARENA_ARRAY(&arena, int, 10);
     for (int i = 0; i < 10; i++)
         CHECK(ints[i] == 0);
-    double *dbl = XD_ARENA_NEW(&a, double);
+    double *dbl = XD_ARENA_NEW(&arena, double);
     CHECK(((uintptr_t)dbl % alignof(double)) == 0);
     /* Larger than a block: must get its own block. */
-    char *big = xd_arena_alloc(&a, 10000, 1);
+    char *big = xd_arena_alloc(&arena, 10000, 1);
     big[9999] = 'x';
-    char *s = xd_str_arena_cstr(&a, XD_STR("hello"));
-    CHECK(strcmp(s, "hello") == 0);
-    xd_arena_destroy(&a);
-    CHECK(a.head == nullptr);
+    char *text = xd_str_arena_cstr(&arena, XD_STR("hello"));
+    CHECK(strcmp(text, "hello") == 0);
+    xd_arena_destroy(&arena);
+    CHECK(arena.head == nullptr);
 }
 
 static void test_scheme(void) {
-    xd_scheme s;
+    xd_scheme scheme;
     xd_strbuf err = {0};
 
     CHECK(xd_scheme_parse(XD_STR("[Scheme]\nName=Test\n[Colors]\nActiveTitle=1 2 3\n"
                                  "Background = 4,5,6\n[Metrics]\nCaptionHeight=25\n"
                                  "[Fonts]\nCaptionFont=Arial, 10, bold, italic\n"),
-                          &s, &err));
-    CHECK(strcmp(s.name, "Test") == 0);
-    CHECK(s.colors[XD_COLOR_ACTIVE_TITLE].r == 1 && s.colors[XD_COLOR_ACTIVE_TITLE].b == 3);
-    CHECK(s.colors[XD_COLOR_BACKGROUND].g == 5);
-    CHECK(s.metrics[XD_METRIC_CAPTION_HEIGHT] == 25);
-    CHECK(strcmp(s.fonts[XD_FONT_CAPTION].family, "Arial") == 0);
-    CHECK(s.fonts[XD_FONT_CAPTION].bold && s.fonts[XD_FONT_CAPTION].italic);
+                          &scheme, &err));
+    CHECK(strcmp(scheme.name, "Test") == 0);
+    CHECK(scheme.colors[XD_COLOR_ACTIVE_TITLE].r == 1 &&
+          scheme.colors[XD_COLOR_ACTIVE_TITLE].b == 3);
+    CHECK(scheme.colors[XD_COLOR_BACKGROUND].g == 5);
+    CHECK(scheme.metrics[XD_METRIC_CAPTION_HEIGHT] == 25);
+    CHECK(strcmp(scheme.fonts[XD_FONT_CAPTION].family, "Arial") == 0);
+    CHECK(scheme.fonts[XD_FONT_CAPTION].bold && scheme.fonts[XD_FONT_CAPTION].italic);
     /* Unlisted colours keep the Windows Standard defaults. */
-    CHECK(s.colors[XD_COLOR_BUTTON_FACE].r == 212);
+    CHECK(scheme.colors[XD_COLOR_BUTTON_FACE].r == 212);
 
     static const char *const bad[] = {
         "[Colors]\nActiveTitle=1 2\n",       "[Colors]\nActiveTitle=1 2 3 4\n",
@@ -185,19 +186,19 @@ static void test_scheme(void) {
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(bad); i++) {
         xd_strbuf_clear(&err);
-        CHECK(!xd_scheme_parse(xd_str_from_cstr(bad[i]), &s, &err));
+        CHECK(!xd_scheme_parse(xd_str_from_cstr(bad[i]), &scheme, &err));
         CHECK(err.len > 0);
         /* A failed parse leaves the defaults in place. */
-        CHECK(strcmp(s.name, "Windows Standard") == 0);
+        CHECK(strcmp(scheme.name, "Windows Standard") == 0);
     }
     xd_strbuf_free(&err);
 }
 
-static bool load_shipped_scheme(const char *stem, xd_scheme *s) {
+static bool load_shipped_scheme(const char *stem, xd_scheme *scheme) {
     xd_strbuf path = {0};
     xd_strbuf_appendf(&path, "%s/data/schemes/%s.ini", XD_SOURCE_ROOT, stem);
     xd_strbuf err = {0};
-    bool ok = xd_scheme_load(xd_strbuf_cstr(&path), s, &err);
+    bool ok = xd_scheme_load(xd_strbuf_cstr(&path), scheme, &err);
     if (!ok)
         fprintf(stderr, "%s: %s\n", stem, xd_strbuf_cstr(&err));
     xd_strbuf_free(&err);
@@ -205,8 +206,8 @@ static bool load_shipped_scheme(const char *stem, xd_scheme *s) {
     return ok;
 }
 
-static bool rgb_is(xd_rgb c, uint8_t r, uint8_t g, uint8_t b) {
-    return c.r == r && c.g == g && c.b == b;
+static bool rgb_is(xd_rgb color, uint8_t red, uint8_t green, uint8_t blue) {
+    return color.r == red && color.g == green && color.b == blue;
 }
 
 static void collect_custom(void *user, const char *key, const char *value) {
@@ -217,24 +218,24 @@ static void collect_custom(void *user, const char *key, const char *value) {
  * same way, laid over a scheme, and carried in desktop.ini's
  * [CustomScheme] through a dialog's merge. */
 static void test_scheme_custom(void) {
-    xd_scheme_custom c = {0};
-    CHECK(xd_scheme_custom_set(&c, XD_STR("ActiveTitle"), XD_STR("128 0 0")));
-    CHECK(xd_scheme_custom_set(&c, XD_STR("captionheight"), XD_STR("25")));
-    CHECK(xd_scheme_custom_set(&c, XD_STR("MenuFont"),
+    xd_scheme_custom custom = {0};
+    CHECK(xd_scheme_custom_set(&custom, XD_STR("ActiveTitle"), XD_STR("128 0 0")));
+    CHECK(xd_scheme_custom_set(&custom, XD_STR("captionheight"), XD_STR("25")));
+    CHECK(xd_scheme_custom_set(&custom, XD_STR("MenuFont"),
                                XD_STR("DejaVu Serif, Bitstream, 12.5, italic")));
-    CHECK(xd_scheme_custom_set(&c, XD_STR("SmCaptionFont"), XD_STR("Arial, 7, bold")));
-    CHECK(xd_scheme_custom_set(&c, XD_STR("IconVerticalSpacing"), XD_STR("90")));
+    CHECK(xd_scheme_custom_set(&custom, XD_STR("SmCaptionFont"), XD_STR("Arial, 7, bold")));
+    CHECK(xd_scheme_custom_set(&custom, XD_STR("IconVerticalSpacing"), XD_STR("90")));
     /* Bad keys and values change nothing. */
-    xd_scheme_custom before = c;
-    CHECK(!xd_scheme_custom_set(&c, XD_STR("Bogus"), XD_STR("1")));
-    CHECK(!xd_scheme_custom_set(&c, XD_STR("Window"), XD_STR("1 2")));
-    CHECK(!xd_scheme_custom_set(&c, XD_STR("BorderWidth"), XD_STR("-3")));
-    CHECK(!xd_scheme_custom_set(&c, XD_STR("CaptionFont"), XD_STR("Arial")));
-    CHECK(memcmp(&before, &c, sizeof(c)) == 0);
-    CHECK(c.color_mask == 1u << XD_COLOR_ACTIVE_TITLE);
+    xd_scheme_custom before = custom;
+    CHECK(!xd_scheme_custom_set(&custom, XD_STR("Bogus"), XD_STR("1")));
+    CHECK(!xd_scheme_custom_set(&custom, XD_STR("Window"), XD_STR("1 2")));
+    CHECK(!xd_scheme_custom_set(&custom, XD_STR("BorderWidth"), XD_STR("-3")));
+    CHECK(!xd_scheme_custom_set(&custom, XD_STR("CaptionFont"), XD_STR("Arial")));
+    CHECK(memcmp(&before, &custom, sizeof(custom)) == 0);
+    CHECK(custom.color_mask == 1u << XD_COLOR_ACTIVE_TITLE);
 
     xd_strbuf out = {0};
-    xd_scheme_custom_foreach(&c, collect_custom, &out);
+    xd_scheme_custom_foreach(&custom, collect_custom, &out);
     CHECK(strcmp(xd_strbuf_cstr(&out),
                  "ActiveTitle=128 0 0\nCaptionHeight=25\nIconVerticalSpacing=90\n"
                  "MenuFont=DejaVu Serif, Bitstream, 12.5, italic\n"
@@ -242,59 +243,63 @@ static void test_scheme_custom(void) {
     xd_strbuf_free(&out);
 
     /* Laid over Windows Standard: only what was set changes. */
-    xd_scheme s;
-    xd_scheme_init_default(&s);
-    xd_scheme_apply_custom(&s, &c);
-    CHECK(rgb_is(s.colors[XD_COLOR_ACTIVE_TITLE], 128, 0, 0));
-    CHECK(rgb_is(s.colors[XD_COLOR_BUTTON_FACE], 212, 208, 200));
-    CHECK(s.metrics[XD_METRIC_CAPTION_HEIGHT] == 25 && s.metrics[XD_METRIC_BORDER_WIDTH] == 1);
-    CHECK(strcmp(s.fonts[XD_FONT_MENU].family, "DejaVu Serif, Bitstream") == 0);
-    CHECK(s.fonts[XD_FONT_MENU].size_pt == 12.5 && s.fonts[XD_FONT_MENU].italic &&
-          !s.fonts[XD_FONT_MENU].bold);
-    CHECK(s.fonts[XD_FONT_SMCAPTION].bold && s.fonts[XD_FONT_SMCAPTION].size_pt == 7);
+    xd_scheme scheme;
+    xd_scheme_init_default(&scheme);
+    xd_scheme_apply_custom(&scheme, &custom);
+    CHECK(rgb_is(scheme.colors[XD_COLOR_ACTIVE_TITLE], 128, 0, 0));
+    CHECK(rgb_is(scheme.colors[XD_COLOR_BUTTON_FACE], 212, 208, 200));
+    CHECK(scheme.metrics[XD_METRIC_CAPTION_HEIGHT] == 25 &&
+          scheme.metrics[XD_METRIC_BORDER_WIDTH] == 1);
+    CHECK(strcmp(scheme.fonts[XD_FONT_MENU].family, "DejaVu Serif, Bitstream") == 0);
+    CHECK(scheme.fonts[XD_FONT_MENU].size_pt == 12.5 && scheme.fonts[XD_FONT_MENU].italic &&
+          !scheme.fonts[XD_FONT_MENU].bold);
+    CHECK(scheme.fonts[XD_FONT_SMCAPTION].bold && scheme.fonts[XD_FONT_SMCAPTION].size_pt == 7);
 
     /* Trimming drops what the scheme has anyway. */
-    xd_scheme_custom t = c;
-    CHECK(xd_scheme_custom_set(&t, XD_STR("Background"), XD_STR("58 110 165")));
-    CHECK(xd_scheme_custom_set(&t, XD_STR("MessageFont"), XD_STR(XD_FONT_FAMILY_TAHOMA ", 8")));
+    xd_scheme_custom changed = custom;
+    CHECK(xd_scheme_custom_set(&changed, XD_STR("Background"), XD_STR("58 110 165")));
+    CHECK(
+        xd_scheme_custom_set(&changed, XD_STR("MessageFont"), XD_STR(XD_FONT_FAMILY_TAHOMA ", 8")));
     xd_scheme std;
     xd_scheme_init_default(&std);
-    xd_scheme_custom_trim(&t, &std);
-    CHECK(t.color_mask == c.color_mask && t.metric_mask == c.metric_mask &&
-          t.font_mask == c.font_mask);
+    xd_scheme_custom_trim(&changed, &std);
+    CHECK(changed.color_mask == custom.color_mask && changed.metric_mask == custom.metric_mask &&
+          changed.font_mask == custom.font_mask);
 
     /* In desktop.ini, and back. */
-    xd_settings a, b;
-    xd_settings_defaults(&a);
-    a.custom_scheme = c;
+    xd_settings original, parsed;
+    xd_settings_defaults(&original);
+    original.custom_scheme = custom;
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "[CustomScheme]\nActiveTitle=128 0 0\n") != nullptr);
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b));
-    CHECK(b.custom_scheme.font_mask == c.font_mask &&
-          b.custom_scheme.fonts[XD_FONT_MENU].size_pt == 12.5);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed));
+    CHECK(parsed.custom_scheme.font_mask == custom.font_mask &&
+          parsed.custom_scheme.fonts[XD_FONT_MENU].size_pt == 12.5);
     xd_strbuf_free(&text);
     /* A bad value is left out, the rest kept. */
-    xd_settings_parse(XD_STR("[CustomScheme]\nWindow=1 2 3\nMenu=oops\nCaptionHeight=x\n"), &b);
-    CHECK(b.custom_scheme.color_mask == 1u << XD_COLOR_WINDOW && b.custom_scheme.metric_mask == 0);
+    xd_settings_parse(XD_STR("[CustomScheme]\nWindow=1 2 3\nMenu=oops\nCaptionHeight=x\n"),
+                      &parsed);
+    CHECK(parsed.custom_scheme.color_mask == 1u << XD_COLOR_WINDOW &&
+          parsed.custom_scheme.metric_mask == 0);
 
     /* The scheme the settings select: the changes go over the font size
      * (as they were made, at that size), not under High Contrast. */
-    a.font_size = XD_FONT_LARGE;
-    xd_settings_scheme(&a, &s);
-    CHECK(s.metrics[XD_METRIC_CAPTION_HEIGHT] == 25);
-    CHECK(s.metrics[XD_METRIC_MENU_HEIGHT] == 23); /* 18 x 1.25, not changed */
-    CHECK(rgb_is(s.colors[XD_COLOR_ACTIVE_TITLE], 128, 0, 0));
-    a.access.high_contrast = true;
-    xd_settings_scheme(&a, &s);
-    CHECK(rgb_is(s.colors[XD_COLOR_ACTIVE_TITLE], 10, 36, 106));
+    original.font_size = XD_FONT_LARGE;
+    xd_settings_scheme(&original, &scheme);
+    CHECK(scheme.metrics[XD_METRIC_CAPTION_HEIGHT] == 25);
+    CHECK(scheme.metrics[XD_METRIC_MENU_HEIGHT] == 23); /* 18 x 1.25, not changed */
+    CHECK(rgb_is(scheme.colors[XD_COLOR_ACTIVE_TITLE], 128, 0, 0));
+    original.access.high_contrast = true;
+    xd_settings_scheme(&original, &scheme);
+    CHECK(rgb_is(scheme.colors[XD_COLOR_ACTIVE_TITLE], 10, 36, 106));
 
     /* Apply carries them over another program's save, key by key; one
      * dropped since is removed. */
     xd_settings base, pending, now;
     xd_settings_defaults(&base);
-    base.custom_scheme = c;
+    base.custom_scheme = custom;
     pending = base;
     pending.custom_scheme.color_mask = 0; /* ActiveTitle back to the scheme's */
     CHECK(xd_scheme_custom_set(&pending.custom_scheme, XD_STR("Window"), XD_STR("1 2 3")));
@@ -303,12 +308,12 @@ static void test_scheme_custom(void) {
     xd_settings_merge(&base, &pending, &now);
     CHECK(now.style == XD_STYLE_WHISTLER);
     CHECK(now.custom_scheme.color_mask == 1u << XD_COLOR_WINDOW);
-    CHECK(now.custom_scheme.metric_mask == c.metric_mask);
+    CHECK(now.custom_scheme.metric_mask == custom.metric_mask);
 
     /* A font's text reads back as itself, its size whatever the locale. */
-    xd_font_spec f = {.family = "A, B", .size_pt = 9.5, .bold = true, .italic = true};
+    xd_font_spec font = {.family = "A, B", .size_pt = 9.5, .bold = true, .italic = true};
     char buf[256];
-    xd_font_spec_format(&f, buf, sizeof(buf));
+    xd_font_spec_format(&font, buf, sizeof(buf));
     CHECK(strcmp(buf, "A, B, 9.5, bold, italic") == 0);
 }
 
@@ -316,23 +321,23 @@ static void test_shipped_schemes(void) {
     /* Every shipped scheme parses and has its own name. */
     xd_strbuf dir = {0};
     xd_strbuf_appendf(&dir, "%s/data/schemes", XD_SOURCE_ROOT);
-    GDir *d = g_dir_open(xd_strbuf_cstr(&dir), 0, nullptr);
-    CHECK(d != nullptr);
+    GDir *folder_handle = g_dir_open(xd_strbuf_cstr(&dir), 0, nullptr);
+    CHECK(folder_handle != nullptr);
     GHashTable *names = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     size_t count = 0;
     const char *file;
-    while (d != nullptr && (file = g_dir_read_name(d)) != nullptr) {
+    while (folder_handle != nullptr && (file = g_dir_read_name(folder_handle)) != nullptr) {
         if (!g_str_has_suffix(file, ".ini"))
             continue;
         char *stem = g_strndup(file, strlen(file) - 4);
-        xd_scheme s;
-        CHECK(load_shipped_scheme(stem, &s));
-        CHECK(g_hash_table_add(names, g_strdup(s.name)));
+        xd_scheme scheme;
+        CHECK(load_shipped_scheme(stem, &scheme));
+        CHECK(g_hash_table_add(names, g_strdup(scheme.name)));
         g_free(stem);
         count++;
     }
-    if (d != nullptr)
-        g_dir_close(d);
+    if (folder_handle != nullptr)
+        g_dir_close(folder_handle);
     g_hash_table_destroy(names);
     xd_strbuf_free(&dir);
     /* XP's 22 classic schemes, Windows XP style's three colours and
@@ -384,19 +389,19 @@ static void test_shipped_schemes(void) {
          .color = XD_COLOR_BUTTON_FACE, .r = 235, .g = 233, .b = 237, .luna = XD_LUNA_ENERGY},
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(want); i++) {
-        xd_scheme s;
-        CHECK(load_shipped_scheme(want[i].stem, &s));
-        CHECK(strcmp(s.name, want[i].name) == 0);
-        CHECK(rgb_is(s.colors[want[i].color], want[i].r, want[i].g, want[i].b));
-        CHECK(s.luna_color == want[i].luna);
-        CHECK(s.high_contrast == want[i].high_contrast);
+        xd_scheme scheme;
+        CHECK(load_shipped_scheme(want[i].stem, &scheme));
+        CHECK(strcmp(scheme.name, want[i].name) == 0);
+        CHECK(rgb_is(scheme.colors[want[i].color], want[i].r, want[i].g, want[i].b));
+        CHECK(scheme.luna_color == want[i].luna);
+        CHECK(scheme.high_contrast == want[i].high_contrast);
     }
 }
 
-static uint32_t pixel(cairo_surface_t *s, int x, int y) {
-    cairo_surface_flush(s);
-    int stride = cairo_image_surface_get_stride(s);
-    const unsigned char *data = cairo_image_surface_get_data(s);
+static uint32_t pixel(cairo_surface_t *surface, int x, int y) {
+    cairo_surface_flush(surface);
+    int stride = cairo_image_surface_get_stride(surface);
+    const unsigned char *data = cairo_image_surface_get_data(surface);
     uint32_t px;
     memcpy(&px, data + (size_t)y * (size_t)stride + (size_t)x * 4, sizeof(px));
     return px & 0xFFFFFF;
@@ -404,9 +409,9 @@ static uint32_t pixel(cairo_surface_t *s, int x, int y) {
 
 static bool near(uint32_t got, uint32_t want, int tol) {
     for (int shift = 0; shift <= 16; shift += 8) {
-        int a = (int)((got >> shift) & 0xFF);
-        int b = (int)((want >> shift) & 0xFF);
-        if (a - b > tol || b - a > tol)
+        int got_channel = (int)((got >> shift) & 0xFF);
+        int want_channel = (int)((want >> shift) & 0xFF);
+        if (got_channel - want_channel > tol || want_channel - got_channel > tol)
             return false;
     }
     return true;
@@ -428,25 +433,27 @@ static void test_luna_variants(void) {
     for (size_t i = 0; i < XD_ARRAY_LEN(variants); i++) {
         xd_scheme scheme;
         CHECK(load_shipped_scheme(variants[i].stem, &scheme));
-        xd_theme t;
-        xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
+        xd_theme theme;
+        xd_theme_init(&theme, XD_STYLE_LUNA, &scheme, 1.0);
         cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 300, 200);
-        cairo_t *cr = cairo_create(surf);
-        xd_frame f = {.title = "", .active = true, .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MINIMIZE};
+        cairo_t *cairo = cairo_create(surf);
+        xd_frame frame = {
+            .title = "", .active = true, .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MINIMIZE};
         xd_rect outer = {0, 0, 300, 200};
-        xd_theme_draw_frame(&t, cr, outer, &f);
+        xd_theme_draw_frame(&theme, cairo, outer, &frame);
         /* Row 8 of the measured caption is ActiveTitle. */
         CHECK(near(pixel(surf, 200, 8), variants[i].caption, 0));
-        xd_frame_layout l;
-        xd_theme_frame_layout(&t, outer, &f, &l);
-        for (size_t b = 0; b < l.button_count; b++) {
-            uint32_t px = pixel(surf, l.button_rects[b].x + 3, l.button_rects[b].y + 10);
-            if (l.button_parts[b] == XD_PART_CLOSE)
+        xd_frame_layout frame_layout;
+        xd_theme_frame_layout(&theme, outer, &frame, &frame_layout);
+        for (size_t button = 0; button < frame_layout.button_count; button++) {
+            uint32_t px = pixel(surf, frame_layout.button_rects[button].x + 3,
+                                frame_layout.button_rects[button].y + 10);
+            if (frame_layout.button_parts[button] == XD_PART_CLOSE)
                 close[i] = px;
             else
                 minimize[i] = px;
         }
-        cairo_destroy(cr);
+        cairo_destroy(cairo);
         cairo_surface_destroy(surf);
     }
     CHECK(minimize[1] != minimize[0] && minimize[2] != minimize[0] && minimize[3] != minimize[0]);
@@ -514,22 +521,22 @@ static void test_luna_variants(void) {
     /* The GTK theme follows the variant's selection colour. */
     xd_scheme olive;
     CHECK(load_shipped_scheme("luna-olive", &olive));
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_LUNA, &olive, 1.0);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_LUNA, &olive, 1.0);
     xd_strbuf css = {0};
-    xd_theme_gtk_css(&t, &css);
+    xd_theme_gtk_css(&theme, &css);
     CHECK(strstr(xd_strbuf_cstr(&css), "@define-color theme_selected_bg_color #93a070;") !=
           nullptr);
     xd_strbuf_free(&css);
 
     /* A bad LunaColor is refused. */
-    xd_scheme s;
-    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=homestead\n"), &s, nullptr));
-    CHECK(s.luna_color == XD_LUNA_OLIVE);
-    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=EnergyBlue\n"), &s, nullptr));
-    CHECK(s.luna_color == XD_LUNA_ENERGY);
-    CHECK(!xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=Green\n"), &s, nullptr));
-    CHECK(s.luna_color == XD_LUNA_NONE);
+    xd_scheme parsed;
+    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=homestead\n"), &parsed, nullptr));
+    CHECK(parsed.luna_color == XD_LUNA_OLIVE);
+    CHECK(xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=EnergyBlue\n"), &parsed, nullptr));
+    CHECK(parsed.luna_color == XD_LUNA_ENERGY);
+    CHECK(!xd_scheme_parse(XD_STR("[Scheme]\nLunaColor=Green\n"), &parsed, nullptr));
+    CHECK(parsed.luna_color == XD_LUNA_NONE);
 }
 
 static void test_render(void) {
@@ -539,42 +546,44 @@ static void test_render(void) {
 
     for (size_t si = 0; si < XD_STYLE_COUNT; si++) {
         for (size_t k = 0; k < XD_ARRAY_LEN(scales); k++) {
-            xd_theme t;
-            xd_theme_init(&t, (xd_visual_style)si, &scheme, scales[k]);
-            int w = xd_tpx(&t, 300);
-            int h = xd_tpx(&t, 200);
-            cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-            cairo_t *cr = cairo_create(surf);
-            xd_frame f = {.title = "Test", .active = true, .buttons = 0x0F};
-            xd_theme_draw_frame(&t, cr, (xd_rect){0, 0, w, h}, &f);
-            xd_theme_draw_button(&t, cr, (xd_rect){10, 100, 80, 24}, XD_STATE_FOCUSED, "OK");
-            xd_theme_draw_checkbox(&t, cr, (xd_rect){10, 130, 200, 20}, XD_STATE_CHECKED, "x");
-            xd_theme_draw_taskbar(&t, cr, (xd_rect){0, h - 30, w, 30}, XD_EDGE_BOTTOM);
-            CHECK(cairo_status(cr) == CAIRO_STATUS_SUCCESS);
+            xd_theme theme;
+            xd_theme_init(&theme, (xd_visual_style)si, &scheme, scales[k]);
+            int width = xd_tpx(&theme, 300);
+            int height = xd_tpx(&theme, 200);
+            cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+            cairo_t *cairo = cairo_create(surf);
+            xd_frame frame = {.title = "Test", .active = true, .buttons = 0x0F};
+            xd_theme_draw_frame(&theme, cairo, (xd_rect){0, 0, width, height}, &frame);
+            xd_theme_draw_button(&theme, cairo, (xd_rect){10, 100, 80, 24}, XD_STATE_FOCUSED, "OK");
+            xd_theme_draw_checkbox(&theme, cairo, (xd_rect){10, 130, 200, 20}, XD_STATE_CHECKED,
+                                   "x");
+            xd_theme_draw_taskbar(&theme, cairo, (xd_rect){0, height - 30, width, 30},
+                                  XD_EDGE_BOTTOM);
+            CHECK(cairo_status(cairo) == CAIRO_STATUS_SUCCESS);
 
             /* Frame insets grow with the scale factor. */
-            xd_insets in = xd_theme_frame_insets(&t, &f);
+            xd_insets in = xd_theme_frame_insets(&theme, &frame);
             CHECK(in.top >= (int)(18 * scales[k]));
-            cairo_destroy(cr);
+            cairo_destroy(cairo);
             cairo_surface_destroy(surf);
         }
     }
 
     /* Classic at 1x: the outer frame pixel is ButtonLight, the next one
      * in is ButtonHilight (white), matching Win2000's EDGE_RAISED. */
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &scheme, 1.0);
     cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 100, 100);
-    cairo_t *cr = cairo_create(surf);
-    xd_frame f = {.title = "", .active = true, .buttons = 0};
-    xd_theme_draw_frame(&t, cr, (xd_rect){0, 0, 100, 100}, &f);
+    cairo_t *cairo = cairo_create(surf);
+    xd_frame frame = {.title = "", .active = true, .buttons = 0};
+    xd_theme_draw_frame(&theme, cairo, (xd_rect){0, 0, 100, 100}, &frame);
     CHECK(pixel(surf, 50, 0) == 0xD4D0C8);
     CHECK(pixel(surf, 50, 1) == 0xFFFFFF);
     CHECK(pixel(surf, 50, 99) == 0x404040);
     CHECK(pixel(surf, 50, 98) == 0x808080);
     /* Caption starts at 4px and is ActiveTitle on the left. */
     CHECK(near(pixel(surf, 4, 10), 0x0A246A, 3));
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_destroy(surf);
 }
 
@@ -584,40 +593,41 @@ static void test_hit(void) {
     static const double scales[] = {1.0, 1.25, 2.0};
     for (size_t si = 0; si < XD_STYLE_COUNT; si++) {
         for (size_t k = 0; k < XD_ARRAY_LEN(scales); k++) {
-            xd_theme t;
-            xd_theme_init(&t, (xd_visual_style)si, &scheme, scales[k]);
-            xd_rect outer = {10, 20, xd_tpx(&t, 300), xd_tpx(&t, 200)};
-            xd_frame f = {.title = "x", .active = true, .buttons = 0x07};
-            xd_insets in = xd_theme_frame_insets(&t, &f);
+            xd_theme theme;
+            xd_theme_init(&theme, (xd_visual_style)si, &scheme, scales[k]);
+            xd_rect outer = {10, 20, xd_tpx(&theme, 300), xd_tpx(&theme, 200)};
+            xd_frame frame = {.title = "x", .active = true, .buttons = 0x07};
+            xd_insets in = xd_theme_frame_insets(&theme, &frame);
 
-            CHECK(xd_theme_frame_hit(&t, outer, &f, 0, 0) == XD_PART_NONE);
-            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w / 2,
+            CHECK(xd_theme_frame_hit(&theme, outer, &frame, 0, 0) == XD_PART_NONE);
+            CHECK(xd_theme_frame_hit(&theme, outer, &frame, outer.x + outer.w / 2,
                                      outer.y + outer.h / 2) == XD_PART_CLIENT);
-            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x, outer.y) == XD_PART_TOP_LEFT);
-            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w - 1,
+            CHECK(xd_theme_frame_hit(&theme, outer, &frame, outer.x, outer.y) == XD_PART_TOP_LEFT);
+            CHECK(xd_theme_frame_hit(&theme, outer, &frame, outer.x + outer.w - 1,
                                      outer.y + outer.h - 1) == XD_PART_BOTTOM_RIGHT);
-            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w / 2,
+            CHECK(xd_theme_frame_hit(&theme, outer, &frame, outer.x + outer.w / 2,
                                      outer.y + outer.h - 1) == XD_PART_BOTTOM);
-            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x, outer.y + outer.h / 2) ==
+            CHECK(xd_theme_frame_hit(&theme, outer, &frame, outer.x, outer.y + outer.h / 2) ==
                   XD_PART_LEFT);
-            CHECK(xd_theme_frame_hit(&t, outer, &f, outer.x + outer.w / 2,
-                                     outer.y + in.top / 2 + xd_tpx(&t, 2)) == XD_PART_CAPTION);
+            CHECK(xd_theme_frame_hit(&theme, outer, &frame, outer.x + outer.w / 2,
+                                     outer.y + in.top / 2 + xd_tpx(&theme, 2)) == XD_PART_CAPTION);
 
             /* Every laid-out button hit-tests to itself at its centre. */
-            xd_frame_layout l;
-            xd_theme_frame_layout(&t, outer, &f, &l);
-            CHECK(l.button_count == 3);
-            for (size_t i = 0; i < l.button_count; i++) {
-                xd_rect b = l.button_rects[i];
-                CHECK(xd_theme_frame_hit(&t, outer, &f, b.x + b.w / 2, b.y + b.h / 2) ==
-                      l.button_parts[i]);
+            xd_frame_layout frame_layout;
+            xd_theme_frame_layout(&theme, outer, &frame, &frame_layout);
+            CHECK(frame_layout.button_count == 3);
+            for (size_t i = 0; i < frame_layout.button_count; i++) {
+                xd_rect rect = frame_layout.button_rects[i];
+                CHECK(xd_theme_frame_hit(&theme, outer, &frame, rect.x + rect.w / 2,
+                                         rect.y + rect.h / 2) == frame_layout.button_parts[i]);
                 /* Buttons sit inside the caption band. */
-                CHECK(b.y >= outer.y && b.y + b.h <= outer.y + in.top);
+                CHECK(rect.y >= outer.y && rect.y + rect.h <= outer.y + in.top);
             }
 
             /* Maximized frames have no resize borders. */
-            f.maximized = true;
-            CHECK(!xd_frame_part_is_border(xd_theme_frame_hit(&t, outer, &f, outer.x, outer.y)));
+            frame.maximized = true;
+            CHECK(!xd_frame_part_is_border(
+                xd_theme_frame_hit(&theme, outer, &frame, outer.x, outer.y)));
         }
     }
 }
@@ -627,10 +637,10 @@ static bool load_entry(const char *dir, const char *name, const char *text, xd_a
                        xd_app *out) {
     xd_strbuf path = {0};
     xd_strbuf_appendf(&path, "%s/%s", dir, name);
-    FILE *f = fopen(xd_strbuf_cstr(&path), "w");
-    bool ok = f != nullptr && fputs(text, f) >= 0;
-    if (f != nullptr)
-        fclose(f);
+    FILE *file = fopen(xd_strbuf_cstr(&path), "w");
+    bool ok = file != nullptr && fputs(text, file) >= 0;
+    if (file != nullptr)
+        fclose(file);
     ok = ok && xd_app_from_file(xd_strbuf_cstr(&path), arena, out);
     xd_strbuf_free(&path);
     return ok;
@@ -699,13 +709,13 @@ static void test_apps(void) {
 
     static const char *const files[] = {"ed.desktop", "m.desktop", "h.desktop", "o.desktop",
                                         "x.desktop",  "t.desktop", "bad.desktop", "s.desktop"};
-    xd_strbuf p = {0};
+    xd_strbuf buffer = {0};
     for (size_t i = 0; i < XD_ARRAY_LEN(files); i++) {
-        xd_strbuf_clear(&p);
-        xd_strbuf_appendf(&p, "%s/%s", dir, files[i]);
-        unlink(xd_strbuf_cstr(&p));
+        xd_strbuf_clear(&buffer);
+        xd_strbuf_appendf(&buffer, "%s/%s", dir, files[i]);
+        unlink(xd_strbuf_cstr(&buffer));
     }
-    xd_strbuf_free(&p);
+    xd_strbuf_free(&buffer);
     rmdir(dir);
     xd_arena_destroy(&arena);
 }
@@ -714,21 +724,24 @@ static void test_menus(void) {
     xd_scheme scheme;
     xd_scheme_init_default(&scheme);
     for (size_t si = 0; si < XD_STYLE_COUNT; si++) {
-        xd_theme t;
-        xd_theme_init(&t, (xd_visual_style)si, &scheme, 1.5);
-        xd_menu_metrics m = xd_theme_menu_metrics(&t);
-        CHECK(m.large_icon == 48 && m.icon == 24 && m.item_h > m.icon);
+        xd_theme theme;
+        xd_theme_init(&theme, (xd_visual_style)si, &scheme, 1.5);
+        xd_menu_metrics menu_metrics = xd_theme_menu_metrics(&theme);
+        CHECK(menu_metrics.large_icon == 48 && menu_metrics.icon == 24 &&
+              menu_metrics.item_h > menu_metrics.icon);
         cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 300, 300);
-        cairo_t *cr = cairo_create(surf);
-        xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 300, 300});
-        xd_theme_draw_start_banner(&t, cr, (xd_rect){4, 4, m.banner_w, 290}, "Xeon", "Pro");
-        xd_theme_draw_menu_item(&t, cr, (xd_rect){30, 4, 260, m.item_h}, XD_STATE_HOT, "A",
-                                true, false);
-        xd_theme_draw_menu_item(&t, cr, (xd_rect){30, 40, 260, m.item_h}, XD_STATE_DISABLED,
-                                "B", false, true);
-        xd_theme_draw_menu_separator(&t, cr, (xd_rect){30, 90, 260, m.separator_h});
-        CHECK(cairo_status(cr) == CAIRO_STATUS_SUCCESS);
-        cairo_destroy(cr);
+        cairo_t *cairo = cairo_create(surf);
+        xd_theme_draw_menu_frame(&theme, cairo, (xd_rect){0, 0, 300, 300});
+        xd_theme_draw_start_banner(&theme, cairo, (xd_rect){4, 4, menu_metrics.banner_w, 290},
+                                   "Xeon", "Pro");
+        xd_theme_draw_menu_item(&theme, cairo, (xd_rect){30, 4, 260, menu_metrics.item_h},
+                                XD_STATE_HOT, "A", true, false);
+        xd_theme_draw_menu_item(&theme, cairo, (xd_rect){30, 40, 260, menu_metrics.item_h},
+                                XD_STATE_DISABLED, "B", false, true);
+        xd_theme_draw_menu_separator(&theme, cairo,
+                                     (xd_rect){30, 90, 260, menu_metrics.separator_h});
+        CHECK(cairo_status(cairo) == CAIRO_STATUS_SUCCESS);
+        cairo_destroy(cairo);
         cairo_surface_destroy(surf);
     }
 }
@@ -756,28 +769,30 @@ static void test_access_keys(void) {
     /* The underline shows under the letter, and only there. */
     xd_scheme scheme;
     xd_scheme_init_default(&scheme);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
-    xd_menu_metrics m = xd_theme_menu_metrics(&t);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &scheme, 1.0);
+    xd_menu_metrics menu_metrics = xd_theme_menu_metrics(&theme);
     cairo_surface_t *surf[2];
     static const char label[] = "Minimize";
-    for (int u = 0; u < 2; u++) {
-        surf[u] = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 160, m.item_h);
-        cairo_t *cr = cairo_create(surf[u]);
-        xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 160, m.item_h});
-        xd_menu_item_extras x = {.underline = u == 1 ? label + 2 : nullptr};
-        xd_theme_draw_menu_item_ex(&t, cr, (xd_rect){0, 0, 160, m.item_h}, 0, label, false,
-                                   false, &x);
-        cairo_destroy(cr);
-        cairo_surface_flush(surf[u]);
+    for (int underlined = 0; underlined < 2; underlined++) {
+        surf[underlined] =
+            cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 160, menu_metrics.item_h);
+        cairo_t *cairo = cairo_create(surf[underlined]);
+        xd_theme_draw_menu_frame(&theme, cairo, (xd_rect){0, 0, 160, menu_metrics.item_h});
+        xd_menu_item_extras menu_item_extras = {.underline = underlined == 1 ? label + 2 : nullptr};
+        xd_theme_draw_menu_item_ex(&theme, cairo, (xd_rect){0, 0, 160, menu_metrics.item_h}, 0,
+                                   label, false, false, &menu_item_extras);
+        cairo_destroy(cairo);
+        cairo_surface_flush(surf[underlined]);
     }
     int stride = cairo_image_surface_get_stride(surf[0]);
-    const uint8_t *a = cairo_image_surface_get_data(surf[0]);
-    const uint8_t *b = cairo_image_surface_get_data(surf[1]);
+    const uint8_t *plain_data = cairo_image_surface_get_data(surf[0]);
+    const uint8_t *underlined_data = cairo_image_surface_get_data(surf[1]);
     int changed = 0, left = 160, right = -1;
-    for (int y = 0; y < m.item_h; y++) {
+    for (int y = 0; y < menu_metrics.item_h; y++) {
         for (int x = 0; x < 160; x++) {
-            if (memcmp(a + y * stride + x * 4, b + y * stride + x * 4, 4) != 0) {
+            if (memcmp(plain_data + y * stride + x * 4, underlined_data + y * stride + x * 4, 4) !=
+                0) {
                 changed++;
                 left = XD_MIN(left, x);
                 right = XD_MAX(right, x);
@@ -785,13 +800,13 @@ static void test_access_keys(void) {
         }
     }
     /* A short line under the "n", right of the text's start. */
-    CHECK(changed > 0 && right - left < 12 && left > m.text_x);
+    CHECK(changed > 0 && right - left < 12 && left > menu_metrics.text_x);
     cairo_surface_destroy(surf[0]);
     cairo_surface_destroy(surf[1]);
 }
 
-static bool text_is(const xd_textedit *e, const char *want) {
-    return xd_str_eq(xd_textedit_view(e), xd_str_from_cstr(want));
+static bool text_is(const xd_textedit *edit, const char *want) {
+    return xd_str_eq(xd_textedit_view(edit), xd_str_from_cstr(want));
 }
 
 static void test_textedit(void) {
@@ -805,117 +820,123 @@ static void test_textedit(void) {
     CHECK(xd_utf8_sequence_len((const unsigned char *)"\xC3", 1) == 0);        /* truncated */
     CHECK(xd_utf8_sequence_len((const unsigned char *)"\x80", 1) == 0);
 
-    xd_textedit e = {0};
-    xd_textedit_set(&e, XD_STR("hello"));
-    CHECK(text_is(&e, "hello") && xd_textedit_has_selection(&e));
-    xd_textedit_insert(&e, XD_STR("x")); /* typing replaces the selection */
-    CHECK(text_is(&e, "x") && e.cursor == 1);
+    xd_textedit edit = {0};
+    xd_textedit_set(&edit, XD_STR("hello"));
+    CHECK(text_is(&edit, "hello") && xd_textedit_has_selection(&edit));
+    xd_textedit_insert(&edit, XD_STR("x")); /* typing replaces the selection */
+    CHECK(text_is(&edit, "x") && edit.cursor == 1);
 
     /* Control characters and invalid bytes are dropped. */
-    xd_textedit_insert(&e, XD_STR("a\tb\n\x01\xFF\xC3\xA9"));
-    CHECK(text_is(&e, "xab\xC3\xA9"));
+    xd_textedit_insert(&edit, XD_STR("a\tb\n\x01\xFF\xC3\xA9"));
+    CHECK(text_is(&edit, "xab\xC3\xA9"));
     /* Backspace removes a whole character, not a byte. */
-    xd_textedit_backspace(&e, false);
-    CHECK(text_is(&e, "xab"));
+    xd_textedit_backspace(&edit, false);
+    CHECK(text_is(&edit, "xab"));
 
     /* Cursor never lands inside a character. */
-    xd_textedit_set(&e, XD_STR("\xE2\x82\xAC" "1"));
-    xd_textedit_set_cursor(&e, 2, false);
-    CHECK(e.cursor == 0);
-    xd_textedit_move(&e, XD_MOTION_RIGHT, false);
-    CHECK(e.cursor == 3);
-    xd_textedit_delete(&e, false);
-    CHECK(text_is(&e, "\xE2\x82\xAC"));
+    xd_textedit_set(&edit, XD_STR("\xE2\x82\xAC"
+                                  "1"));
+    xd_textedit_set_cursor(&edit, 2, false);
+    CHECK(edit.cursor == 0);
+    xd_textedit_move(&edit, XD_MOTION_RIGHT, false);
+    CHECK(edit.cursor == 3);
+    xd_textedit_delete(&edit, false);
+    CHECK(text_is(&edit, "\xE2\x82\xAC"));
 
     /* Selection, word motion, word delete. */
-    xd_textedit_set(&e, XD_STR("ls -la /tmp"));
-    xd_textedit_move(&e, XD_MOTION_END, false);
-    xd_textedit_move(&e, XD_MOTION_WORD_LEFT, true);
-    CHECK(xd_str_eq(xd_textedit_selected(&e), XD_STR("tmp")));
-    xd_textedit_move(&e, XD_MOTION_LEFT, false); /* collapses to the left edge */
-    CHECK(e.cursor == 8 && !xd_textedit_has_selection(&e));
-    xd_textedit_move(&e, XD_MOTION_HOME, false);
-    xd_textedit_move(&e, XD_MOTION_WORD_RIGHT, false);
-    CHECK(e.cursor == 4);
-    xd_textedit_move(&e, XD_MOTION_END, false);
-    xd_textedit_backspace(&e, true);
-    CHECK(text_is(&e, "ls -la /"));
-    xd_textedit_move(&e, XD_MOTION_HOME, false);
-    xd_textedit_delete(&e, true);
-    CHECK(text_is(&e, "la /"));
+    xd_textedit_set(&edit, XD_STR("ls -la /tmp"));
+    xd_textedit_move(&edit, XD_MOTION_END, false);
+    xd_textedit_move(&edit, XD_MOTION_WORD_LEFT, true);
+    CHECK(xd_str_eq(xd_textedit_selected(&edit), XD_STR("tmp")));
+    xd_textedit_move(&edit, XD_MOTION_LEFT, false); /* collapses to the left edge */
+    CHECK(edit.cursor == 8 && !xd_textedit_has_selection(&edit));
+    xd_textedit_move(&edit, XD_MOTION_HOME, false);
+    xd_textedit_move(&edit, XD_MOTION_WORD_RIGHT, false);
+    CHECK(edit.cursor == 4);
+    xd_textedit_move(&edit, XD_MOTION_END, false);
+    xd_textedit_backspace(&edit, true);
+    CHECK(text_is(&edit, "ls -la /"));
+    xd_textedit_move(&edit, XD_MOTION_HOME, false);
+    xd_textedit_delete(&edit, true);
+    CHECK(text_is(&edit, "la /"));
 
     /* Insertion in the middle; max length cut on a character boundary. */
-    xd_textedit_set(&e, XD_STR("ac"));
-    xd_textedit_set_cursor(&e, 1, false);
-    xd_textedit_insert(&e, XD_STR("b"));
-    CHECK(text_is(&e, "abc") && e.cursor == 2);
-    e.max_len = 5;
-    xd_textedit_move(&e, XD_MOTION_END, false);
-    xd_textedit_insert(&e, XD_STR("\xC3\xA9\xC3\xA9")); /* 4 bytes, room for 2 */
-    CHECK(text_is(&e, "abc\xC3\xA9"));
-    xd_textedit_free(&e);
+    xd_textedit_set(&edit, XD_STR("ac"));
+    xd_textedit_set_cursor(&edit, 1, false);
+    xd_textedit_insert(&edit, XD_STR("b"));
+    CHECK(text_is(&edit, "abc") && edit.cursor == 2);
+    edit.max_len = 5;
+    xd_textedit_move(&edit, XD_MOTION_END, false);
+    xd_textedit_insert(&edit, XD_STR("\xC3\xA9\xC3\xA9")); /* 4 bytes, room for 2 */
+    CHECK(text_is(&edit, "abc\xC3\xA9"));
+    xd_textedit_free(&edit);
 }
 
 static void test_runcmd(void) {
     const char *path = "/usr/bin:/bin";
-    xd_run_target t = xd_run_classify(XD_STR("   "), path, "/home/u");
-    CHECK(t.kind == XD_RUN_EMPTY);
-    xd_run_target_free(&t);
+    xd_run_target run_target = xd_run_classify(XD_STR("   "), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_EMPTY);
+    xd_run_target_free(&run_target);
 
-    t = xd_run_classify(XD_STR("https://example.com/x"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_OPEN);
-    xd_run_target_free(&t);
-    t = xd_run_classify(XD_STR("www.example.com"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_OPEN);
-    xd_run_target_free(&t);
-    t = xd_run_classify(XD_STR("mailto:a@b.c"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_OPEN);
-    xd_run_target_free(&t);
+    run_target = xd_run_classify(XD_STR("https://example.com/x"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_OPEN);
+    xd_run_target_free(&run_target);
+    run_target = xd_run_classify(XD_STR("www.example.com"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_OPEN);
+    xd_run_target_free(&run_target);
+    run_target = xd_run_classify(XD_STR("mailto:a@b.c"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_OPEN);
+    xd_run_target_free(&run_target);
 
-    t = xd_run_classify(XD_STR("/tmp"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_OPEN && strcmp(xd_strbuf_cstr(&t.target), "/tmp") == 0);
-    xd_run_target_free(&t);
-    t = xd_run_classify(XD_STR("~"), path, "/tmp");
-    CHECK(t.kind == XD_RUN_OPEN && strcmp(xd_strbuf_cstr(&t.target), "/tmp") == 0);
-    xd_run_target_free(&t);
-    t = xd_run_classify(XD_STR("/bin/sh"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_EXEC);
-    xd_run_target_free(&t);
+    run_target = xd_run_classify(XD_STR("/tmp"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_OPEN &&
+          strcmp(xd_strbuf_cstr(&run_target.target), "/tmp") == 0);
+    xd_run_target_free(&run_target);
+    run_target = xd_run_classify(XD_STR("~"), path, "/tmp");
+    CHECK(run_target.kind == XD_RUN_OPEN &&
+          strcmp(xd_strbuf_cstr(&run_target.target), "/tmp") == 0);
+    xd_run_target_free(&run_target);
+    run_target = xd_run_classify(XD_STR("/bin/sh"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_EXEC);
+    xd_run_target_free(&run_target);
 
-    t = xd_run_classify(XD_STR("sh -c 'echo hi'"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_SHELL &&
-          strcmp(xd_strbuf_cstr(&t.target), "sh -c 'echo hi'") == 0);
-    xd_run_target_free(&t);
-    t = xd_run_classify(XD_STR("/bin/sh -c true"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_SHELL);
-    xd_run_target_free(&t);
+    run_target = xd_run_classify(XD_STR("sh -c 'echo hi'"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_SHELL &&
+          strcmp(xd_strbuf_cstr(&run_target.target), "sh -c 'echo hi'") == 0);
+    xd_run_target_free(&run_target);
+    run_target = xd_run_classify(XD_STR("/bin/sh -c true"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_SHELL);
+    xd_run_target_free(&run_target);
 
-    t = xd_run_classify(XD_STR("no-such-program-xd --x"), path, "/home/u");
-    CHECK(t.kind == XD_RUN_NOT_FOUND &&
-          strcmp(xd_strbuf_cstr(&t.target), "no-such-program-xd") == 0);
-    xd_run_target_free(&t);
+    run_target = xd_run_classify(XD_STR("no-such-program-xd --x"), path, "/home/u");
+    CHECK(run_target.kind == XD_RUN_NOT_FOUND &&
+          strcmp(xd_strbuf_cstr(&run_target.target), "no-such-program-xd") == 0);
+    xd_run_target_free(&run_target);
     /* "sh" isn't found in an empty PATH: nothing runs from the cwd. */
-    t = xd_run_classify(XD_STR("sh"), "", "/home/u");
-    CHECK(t.kind == XD_RUN_NOT_FOUND);
-    xd_run_target_free(&t);
+    run_target = xd_run_classify(XD_STR("sh"), "", "/home/u");
+    CHECK(run_target.kind == XD_RUN_NOT_FOUND);
+    xd_run_target_free(&run_target);
 }
 
 static void test_tray_rules(void) {
-    xd_settings a;
+    xd_settings original;
     xd_settings_parse(XD_STR("[Notifications]\nnm-applet=hide\nsteam=show\nbad=whatever\n"
                              "quiet=auto\n"),
-                      &a);
-    CHECK(xd_settings_tray_rule(&a, "nm-applet") == XD_TRAY_ALWAYS_HIDE);
-    CHECK(xd_settings_tray_rule(&a, "steam") == XD_TRAY_ALWAYS_SHOW);
-    CHECK(xd_settings_tray_rule(&a, "bad") == XD_TRAY_AUTO);
-    CHECK(xd_settings_tray_rule(&a, "quiet") == XD_TRAY_AUTO && a.tray_rule_count == 2);
-    xd_settings_set_tray_rule(&a, "steam", XD_TRAY_AUTO);
-    CHECK(xd_settings_tray_rule(&a, "steam") == XD_TRAY_AUTO && a.tray_rule_count == 1);
+                      &original);
+    CHECK(xd_settings_tray_rule(&original, "nm-applet") == XD_TRAY_ALWAYS_HIDE);
+    CHECK(xd_settings_tray_rule(&original, "steam") == XD_TRAY_ALWAYS_SHOW);
+    CHECK(xd_settings_tray_rule(&original, "bad") == XD_TRAY_AUTO);
+    CHECK(xd_settings_tray_rule(&original, "quiet") == XD_TRAY_AUTO &&
+          original.tray_rule_count == 2);
+    xd_settings_set_tray_rule(&original, "steam", XD_TRAY_AUTO);
+    CHECK(xd_settings_tray_rule(&original, "steam") == XD_TRAY_AUTO &&
+          original.tray_rule_count == 1);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && xd_settings_tray_rule(&b, "nm-applet") == XD_TRAY_ALWAYS_HIDE);
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          xd_settings_tray_rule(&parsed, "nm-applet") == XD_TRAY_ALWAYS_HIDE);
     xd_strbuf_free(&text);
 }
 
@@ -930,11 +951,11 @@ static void put_file(const char *root, const char *rel, const char *text) {
 }
 
 static void rm_tree(const char *path) {
-    GDir *d = g_dir_open(path, 0, nullptr);
-    if (d != nullptr) {
-        const char *e;
-        while ((e = g_dir_read_name(d)) != nullptr) {
-            char *child = g_build_filename(path, e, nullptr);
+    GDir *folder_handle = g_dir_open(path, 0, nullptr);
+    if (folder_handle != nullptr) {
+        const char *file_name;
+        while ((file_name = g_dir_read_name(folder_handle)) != nullptr) {
+            char *child = g_build_filename(path, file_name, nullptr);
             if (g_file_test(child, G_FILE_TEST_IS_DIR) &&
                 !g_file_test(child, G_FILE_TEST_IS_SYMLINK))
                 rm_tree(child);
@@ -942,7 +963,7 @@ static void rm_tree(const char *path) {
                 CHECK(g_remove(child) == 0);
             g_free(child);
         }
-        g_dir_close(d);
+        g_dir_close(folder_handle);
     }
     CHECK(g_rmdir(path) == 0);
 }
@@ -956,34 +977,34 @@ typedef struct tar_item {
     const char *data; /* a symlink's or hard link's target */
 } tar_item;
 
-static void write_tar(const char *file, const tar_item *items, size_t n) {
-    struct archive *a = archive_write_new();
-    archive_write_add_filter_gzip(a);
-    archive_write_set_format_pax_restricted(a);
-    CHECK(archive_write_open_filename(a, file) == ARCHIVE_OK);
-    for (size_t i = 0; i < n; i++) {
-        struct archive_entry *e = archive_entry_new();
-        archive_entry_set_pathname(e, items[i].path);
-        archive_entry_set_perm(e, (mode_t)items[i].perm);
+static void write_tar(const char *file, const tar_item *items, size_t count) {
+    struct archive *writer = archive_write_new();
+    archive_write_add_filter_gzip(writer);
+    archive_write_set_format_pax_restricted(writer);
+    CHECK(archive_write_open_filename(writer, file) == ARCHIVE_OK);
+    for (size_t i = 0; i < count; i++) {
+        struct archive_entry *member = archive_entry_new();
+        archive_entry_set_pathname(member, items[i].path);
+        archive_entry_set_perm(member, (mode_t)items[i].perm);
         if (items[i].type == 0) { /* a hard link */
-            archive_entry_set_filetype(e, AE_IFREG);
-            archive_entry_set_hardlink(e, items[i].data);
+            archive_entry_set_filetype(member, AE_IFREG);
+            archive_entry_set_hardlink(member, items[i].data);
         } else {
-            archive_entry_set_filetype(e, items[i].type);
+            archive_entry_set_filetype(member, items[i].type);
         }
         if (items[i].type == AE_IFLNK)
-            archive_entry_set_symlink(e, items[i].data);
+            archive_entry_set_symlink(member, items[i].data);
         size_t len = items[i].type == AE_IFREG && items[i].data != nullptr
                          ? strlen(items[i].data)
                          : 0;
-        archive_entry_set_size(e, (la_int64_t)len);
-        CHECK(archive_write_header(a, e) == ARCHIVE_OK);
+        archive_entry_set_size(member, (la_int64_t)len);
+        CHECK(archive_write_header(writer, member) == ARCHIVE_OK);
         if (len > 0)
-            CHECK(archive_write_data(a, items[i].data, len) == (la_ssize_t)len);
-        archive_entry_free(e);
+            CHECK(archive_write_data(writer, items[i].data, len) == (la_ssize_t)len);
+        archive_entry_free(member);
     }
-    CHECK(archive_write_close(a) == ARCHIVE_OK);
-    archive_write_free(a);
+    CHECK(archive_write_close(writer) == ARCHIVE_OK);
+    archive_write_free(writer);
 }
 
 static char *read_text(const char *dir, const char *name) {
@@ -998,9 +1019,9 @@ static char *read_text(const char *dir, const char *name) {
 
 /* Extract Here / Extract to "name" (src/files/extract.c). */
 static void test_extract(void) {
-    char *n = xd_archive_base_name("photos.tar.gz");
-    CHECK(strcmp(n, "photos") == 0);
-    g_free(n);
+    char *base_name = xd_archive_base_name("photos.tar.gz");
+    CHECK(strcmp(base_name, "photos") == 0);
+    g_free(base_name);
     const char *const names[][2] = {
         {"photos.TGZ", "photos"},        {"photos.zip", "photos"},
         {"notes.txt.gz", "notes.txt"},   {"old.Z", "old"},
@@ -1055,15 +1076,15 @@ static void test_extract(void) {
     if (error != nullptr)
         g_printerr("  %s\n", error->message);
     g_clear_error(&error);
-    char *t = read_text(into, "dir/a.txt");
-    CHECK(g_strcmp0(t, "a") == 0);
-    g_free(t);
-    t = read_text(into, "abs.txt");
-    CHECK(g_strcmp0(t, "abs") == 0);
-    g_free(t);
-    t = read_text(into, "same");
-    CHECK(g_strcmp0(t, "a") == 0); /* a hard link inside */
-    g_free(t);
+    char *text = read_text(into, "dir/a.txt");
+    CHECK(g_strcmp0(text, "a") == 0);
+    g_free(text);
+    text = read_text(into, "abs.txt");
+    CHECK(g_strcmp0(text, "abs") == 0);
+    g_free(text);
+    text = read_text(into, "same");
+    CHECK(g_strcmp0(text, "a") == 0); /* a hard link inside */
+    g_free(text);
     char *evil = g_build_filename(root, "evil.txt", nullptr);
     char *fifo = g_build_filename(into, "fifo", nullptr);
     char *hl = g_build_filename(into, "hl", nullptr);
@@ -1085,33 +1106,33 @@ static void test_extract(void) {
     write_tar(tar2, items2, G_N_ELEMENTS(items2));
     CHECK(!xd_extract_archive(tar2, into2, "raw", nullptr, nullptr, nullptr, &error));
     g_clear_error(&error);
-    char *x = g_build_filename(outside, "x.txt", nullptr);
-    CHECK(!g_file_test(x, G_FILE_TEST_EXISTS));
+    char *escaped_path = g_build_filename(outside, "x.txt", nullptr);
+    CHECK(!g_file_test(escaped_path, G_FILE_TEST_EXISTS));
 
     /* A gzipped file that's no archive: its contents, under the name. */
     char *gz = g_build_filename(root, "notes.txt.gz", nullptr);
-    struct archive *a = archive_write_new();
-    archive_write_add_filter_gzip(a);
-    archive_write_set_format_raw(a);
-    CHECK(archive_write_open_filename(a, gz) == ARCHIVE_OK);
-    struct archive_entry *e = archive_entry_new();
-    archive_entry_set_filetype(e, AE_IFREG);
-    CHECK(archive_write_header(a, e) == ARCHIVE_OK);
-    CHECK(archive_write_data(a, "hello", 5) == 5);
-    archive_entry_free(e);
-    CHECK(archive_write_close(a) == ARCHIVE_OK);
-    archive_write_free(a);
+    struct archive *writer = archive_write_new();
+    archive_write_add_filter_gzip(writer);
+    archive_write_set_format_raw(writer);
+    CHECK(archive_write_open_filename(writer, gz) == ARCHIVE_OK);
+    struct archive_entry *member = archive_entry_new();
+    archive_entry_set_filetype(member, AE_IFREG);
+    CHECK(archive_write_header(writer, member) == ARCHIVE_OK);
+    CHECK(archive_write_data(writer, "hello", 5) == 5);
+    archive_entry_free(member);
+    CHECK(archive_write_close(writer) == ARCHIVE_OK);
+    archive_write_free(writer);
     char *into3 = g_build_filename(root, "into3", nullptr);
     CHECK(g_mkdir(into3, 0755) == 0);
     CHECK(xd_extract_archive(gz, into3, "notes.txt", nullptr, nullptr, nullptr, nullptr));
-    t = read_text(into3, "notes.txt");
-    CHECK(g_strcmp0(t, "hello") == 0);
-    g_free(t);
+    text = read_text(into3, "notes.txt");
+    CHECK(g_strcmp0(text, "hello") == 0);
+    g_free(text);
 
     rm_tree(root);
     g_free(into3);
     g_free(gz);
-    g_free(x);
+    g_free(escaped_path);
     g_free(into2);
     g_free(tar2);
     g_free(suid);
@@ -1128,60 +1149,65 @@ static void test_extract(void) {
 /* ---- Theme image scaling (src/theme/scale.c) ---- */
 
 /* An ARGB32 surface from w*h premultiplied pixels, row by row. */
-static cairo_surface_t *scale_test_surface(int w, int h, const uint32_t *px) {
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_surface_flush(s);
-    unsigned char *data = cairo_image_surface_get_data(s);
-    int stride = cairo_image_surface_get_stride(s);
-    for (int y = 0; y < h; y++)
-        memcpy(data + (size_t)y * (size_t)stride, px + (size_t)y * (size_t)w,
-               (size_t)w * sizeof(uint32_t));
-    cairo_surface_mark_dirty(s);
-    return s;
+static cairo_surface_t *scale_test_surface(int width, int height, const uint32_t *px) {
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_surface_flush(surface);
+    unsigned char *data = cairo_image_surface_get_data(surface);
+    int stride = cairo_image_surface_get_stride(surface);
+    for (int y = 0; y < height; y++)
+        memcpy(data + (size_t)y * (size_t)stride, px + (size_t)y * (size_t)width,
+               (size_t)width * sizeof(uint32_t));
+    cairo_surface_mark_dirty(surface);
+    return surface;
 }
 
-static uint32_t scale_test_px(cairo_surface_t *s, int x, int y) {
-    cairo_surface_flush(s);
-    const unsigned char *data = cairo_image_surface_get_data(s);
-    uint32_t v;
-    memcpy(&v, data + (size_t)y * (size_t)cairo_image_surface_get_stride(s) + (size_t)x * 4, 4);
-    return v;
+static uint32_t scale_test_px(cairo_surface_t *surface, int x, int y) {
+    cairo_surface_flush(surface);
+    const unsigned char *data = cairo_image_surface_get_data(surface);
+    uint32_t value;
+    memcpy(&value,
+           data + (size_t)y * (size_t)cairo_image_surface_get_stride(surface) + (size_t)x * 4, 4);
+    return value;
 }
 
-/* Every pixel of `s` (w x h) equals `want`, row by row. */
-static bool scale_test_equals(cairo_surface_t *s, int w, int h, const uint32_t *want) {
-    if (!s || cairo_image_surface_get_width(s) != w || cairo_image_surface_get_height(s) != h)
+/* Every pixel of `surface` (w x h) equals `want`, row by row. */
+static bool scale_test_equals(cairo_surface_t *surface, int width, int height,
+                              const uint32_t *want) {
+    if (!surface || cairo_image_surface_get_width(surface) != width ||
+        cairo_image_surface_get_height(surface) != height)
         return false;
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++)
-            if (scale_test_px(s, x, y) != want[y * w + x])
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            if (scale_test_px(surface, x, y) != want[y * width + x])
                 return false;
     return true;
 }
 
-static bool scale_test_same(cairo_surface_t *a, cairo_surface_t *b) {
-    int w = cairo_image_surface_get_width(a), h = cairo_image_surface_get_height(a);
-    if (w != cairo_image_surface_get_width(b) || h != cairo_image_surface_get_height(b))
+static bool scale_test_same(cairo_surface_t *left, cairo_surface_t *right) {
+    int width = cairo_image_surface_get_width(left), height = cairo_image_surface_get_height(left);
+    if (width != cairo_image_surface_get_width(right) ||
+        height != cairo_image_surface_get_height(right))
         return false;
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++)
-            if (scale_test_px(a, x, y) != scale_test_px(b, x, y))
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            if (scale_test_px(left, x, y) != scale_test_px(right, x, y))
                 return false;
     return true;
 }
 
 static void test_image_scale(void) {
-    constexpr uint32_t K = 0xff000000;
-    constexpr uint32_t W = 0xffffffff;
-    constexpr uint32_t R = 0xffff0000;
-    constexpr uint32_t B = 0xff0000ff;
-    constexpr uint32_t G = 0xff808080; /* K and W half and half */
+    constexpr uint32_t black = 0xff000000;
+    constexpr uint32_t white = 0xffffffff;
+    constexpr uint32_t pure_red = 0xffff0000;
+    constexpr uint32_t blue = 0xff0000ff;
+    constexpr uint32_t gray = 0xff808080; /* K and W half and half */
 
     /* Names round-trip, case-insensitively. */
-    for (int f = 0; f < XD_FILTER_COUNT; f++) {
+    for (int filter_index = 0; filter_index < XD_FILTER_COUNT; filter_index++) {
         xd_image_filter got = XD_FILTER_COUNT;
-        const char *name = xd_image_filter_name((xd_image_filter)f);
-        CHECK(name && xd_image_filter_from_name(name, &got) && got == (xd_image_filter)f);
+        const char *name = xd_image_filter_name((xd_image_filter)filter_index);
+        CHECK(name && xd_image_filter_from_name(name, &got) &&
+              got == (xd_image_filter)filter_index);
     }
     xd_image_filter got = XD_FILTER_NEAREST;
     CHECK(xd_image_filter_from_name("superEAGLE", &got) && got == XD_FILTER_SUPEREAGLE);
@@ -1194,24 +1220,25 @@ static void test_image_scale(void) {
     {
         uint32_t px[8 * 6];
         for (int i = 0; i < 8 * 6; i++)
-            px[i] = (i * 7) % 3 == 0 ? R : (i % 5 == 0 ? 0 : B);
+            px[i] = (i * 7) % 3 == 0 ? pure_red : (i % 5 == 0 ? 0 : blue);
         cairo_surface_t *src = scale_test_surface(8, 6, px);
         const double scales[] = {0.5, 1.25, 1.5, 2, 3, 4};
-        for (int f = 0; f < XD_FILTER_COUNT; f++) {
+        for (int filter_index = 0; filter_index < XD_FILTER_COUNT; filter_index++) {
             for (size_t k = 0; k < G_N_ELEMENTS(scales); k++) {
-                cairo_surface_t *o = xd_image_scale(src, scales[k], (xd_image_filter)f);
-                CHECK(o && cairo_image_surface_get_format(o) == CAIRO_FORMAT_ARGB32);
+                cairo_surface_t *surface =
+                    xd_image_scale(src, scales[k], (xd_image_filter)filter_index);
+                CHECK(surface && cairo_image_surface_get_format(surface) == CAIRO_FORMAT_ARGB32);
                 double want_w = round(8 * scales[k]), want_h = round(6 * scales[k]);
-                CHECK(o && cairo_image_surface_get_width(o) == (int)want_w);
-                CHECK(o && cairo_image_surface_get_height(o) == (int)want_h);
-                if (o)
-                    cairo_surface_destroy(o);
+                CHECK(surface && cairo_image_surface_get_width(surface) == (int)want_w);
+                CHECK(surface && cairo_image_surface_get_height(surface) == (int)want_h);
+                if (surface)
+                    cairo_surface_destroy(surface);
             }
             /* A scale of 1 copies. */
-            cairo_surface_t *o = xd_image_scale(src, 1, (xd_image_filter)f);
-            CHECK(scale_test_equals(o, 8, 6, px));
-            if (o)
-                cairo_surface_destroy(o);
+            cairo_surface_t *surface = xd_image_scale(src, 1, (xd_image_filter)filter_index);
+            CHECK(scale_test_equals(surface, 8, 6, px));
+            if (surface)
+                cairo_surface_destroy(surface);
         }
         CHECK(xd_image_scale(src, 0, XD_FILTER_SMOOTH) == nullptr);
         CHECK(xd_image_scale(src, -2, XD_FILTER_SMOOTH) == nullptr);
@@ -1223,21 +1250,22 @@ static void test_image_scale(void) {
     /* NEAREST: a 2x2 checker; at 1.5 (3x3) each output pixel takes the
      * source pixel under its centre (0.33, 1.0, 1.67 -> 0, 1, 1). */
     {
-        const uint32_t px[] = {K, W, W, K};
+        const uint32_t px[] = {black, white, white, black};
         cairo_surface_t *src = scale_test_surface(2, 2, px);
-        cairo_surface_t *o = xd_image_scale(src, 1.5, XD_FILTER_NEAREST);
-        const uint32_t want15[] = {K, W, W, W, K, K, W, K, K};
-        CHECK(scale_test_equals(o, 3, 3, want15));
-        cairo_surface_destroy(o);
-        o = xd_image_scale(src, 2, XD_FILTER_NEAREST);
-        const uint32_t want2[] = {K, K, W, W, K, K, W, W, W, W, K, K, W, W, K, K};
-        CHECK(scale_test_equals(o, 4, 4, want2));
-        cairo_surface_destroy(o);
+        cairo_surface_t *surface = xd_image_scale(src, 1.5, XD_FILTER_NEAREST);
+        const uint32_t want15[] = {black, white, white, white, black, black, white, black, black};
+        CHECK(scale_test_equals(surface, 3, 3, want15));
+        cairo_surface_destroy(surface);
+        surface = xd_image_scale(src, 2, XD_FILTER_NEAREST);
+        const uint32_t want2[] = {black, black, white, white, black, black, white, white,
+                                  white, white, black, black, white, white, black, black};
+        CHECK(scale_test_equals(surface, 4, 4, want2));
+        cairo_surface_destroy(surface);
         /* And nearest stays nearest going down: 2x2 -> 1x1 takes (1,1). */
-        o = xd_image_scale(src, 0.5, XD_FILTER_NEAREST);
-        const uint32_t want05[] = {K};
-        CHECK(scale_test_equals(o, 1, 1, want05));
-        cairo_surface_destroy(o);
+        surface = xd_image_scale(src, 0.5, XD_FILTER_NEAREST);
+        const uint32_t want05[] = {black};
+        CHECK(scale_test_equals(surface, 1, 1, want05));
+        cairo_surface_destroy(surface);
         cairo_surface_destroy(src);
     }
 
@@ -1247,15 +1275,15 @@ static void test_image_scale(void) {
         for (uint32_t i = 0; i < 9; i++)
             px[i] = 0xff000000 | (i * 0x1d0b07);
         cairo_surface_t *src = scale_test_surface(3, 3, px);
-        for (int n = 2; n <= 3; n++) {
-            cairo_surface_t *o = xd_image_scale(src, n, XD_FILTER_INTEGER);
-            bool ok = o && cairo_image_surface_get_width(o) == 3 * n &&
-                      cairo_image_surface_get_height(o) == 3 * n;
-            for (int y = 0; ok && y < 3 * n; y++)
-                for (int x = 0; x < 3 * n; x++)
-                    ok = ok && scale_test_px(o, x, y) == px[(y / n) * 3 + x / n];
+        for (int count = 2; count <= 3; count++) {
+            cairo_surface_t *surface = xd_image_scale(src, count, XD_FILTER_INTEGER);
+            bool ok = surface && cairo_image_surface_get_width(surface) == 3 * count &&
+                      cairo_image_surface_get_height(surface) == 3 * count;
+            for (int y = 0; ok && y < 3 * count; y++)
+                for (int x = 0; x < 3 * count; x++)
+                    ok = ok && scale_test_px(surface, x, y) == px[(y / count) * 3 + x / count];
             CHECK(ok);
-            cairo_surface_destroy(o);
+            cairo_surface_destroy(surface);
         }
         cairo_surface_destroy(src);
     }
@@ -1264,7 +1292,7 @@ static void test_image_scale(void) {
      *     K W W
      *     K K W
      *     K K K                                                           */
-    const uint32_t tri[] = {K, W, W, K, K, W, K, K, K};
+    const uint32_t tri[] = {black, white, white, black, black, white, black, black, black};
     cairo_surface_t *tri_src = scale_test_surface(3, 3, tri);
 
     /* Scale2x: where a pixel's two outer neighbours agree (and the other
@@ -1274,17 +1302,17 @@ static void test_image_scale(void) {
      * top-right quarter, (3,2), turns W. Same for (2,1) -> (4,3) K, and
      * K at (2,2), whose D == F, stays whole. */
     {
-        cairo_surface_t *o = xd_image_scale(tri_src, 2, XD_FILTER_SCALE2X);
+        cairo_surface_t *surface = xd_image_scale(tri_src, 2, XD_FILTER_SCALE2X);
         const uint32_t want[] = {
-            K, K, W, W, W, W, //
-            K, K, K, W, W, W, //
-            K, K, K, W, W, W, //
-            K, K, K, K, K, W, //
-            K, K, K, K, K, K, //
-            K, K, K, K, K, K, //
+            black, black, white, white, white, white, //
+            black, black, black, white, white, white, //
+            black, black, black, white, white, white, //
+            black, black, black, black, black, white, //
+            black, black, black, black, black, black, //
+            black, black, black, black, black, black, //
         };
-        CHECK(scale_test_equals(o, 6, 6, want));
-        cairo_surface_destroy(o);
+        CHECK(scale_test_equals(surface, 6, 6, want));
+        cairo_surface_destroy(surface);
     }
     /* Scale3x: W at (1,0) (A=K B=W C=W / D=K E=W F=W / G=K H=K I=W):
      * corner 6 (D == H) and edge 3 (D == H, E != A) become K, the rest W:
@@ -1292,16 +1320,17 @@ static void test_image_scale(void) {
      *     K W W
      *     K W W                                                           */
     {
-        cairo_surface_t *o = xd_image_scale(tri_src, 3, XD_FILTER_SCALE3X);
-        const uint32_t block[] = {W, W, W, K, W, W, K, W, W};
-        bool ok = o && cairo_image_surface_get_width(o) == 9;
+        cairo_surface_t *surface = xd_image_scale(tri_src, 3, XD_FILTER_SCALE3X);
+        const uint32_t block[] = {white, white, white, black, white, white, black, white, white};
+        bool ok = surface && cairo_image_surface_get_width(surface) == 9;
         for (int k = 0; ok && k < 9; k++)
-            ok = scale_test_px(o, 3 + k % 3, k / 3) == block[k];
+            ok = scale_test_px(surface, 3 + k % 3, k / 3) == block[k];
         /* (0,0) K and (2,0) W are inside flat areas: unchanged blocks. */
         for (int k = 0; ok && k < 9; k++)
-            ok = scale_test_px(o, k % 3, k / 3) == K && scale_test_px(o, 6 + k % 3, k / 3) == W;
+            ok = scale_test_px(surface, k % 3, k / 3) == black &&
+                 scale_test_px(surface, 6 + k % 3, k / 3) == white;
         CHECK(ok);
-        cairo_surface_destroy(o);
+        cairo_surface_destroy(surface);
     }
 
     /* The SaI family: deterministic, and not nearest on the diagonal.
@@ -1326,9 +1355,9 @@ static void test_image_scale(void) {
             int x, y;
             uint32_t want;
         } sai[] = {
-            {XD_FILTER_2XSAI, 2, 1, G},
-            {XD_FILTER_SUPER2XSAI, 3, 2, W},
-            {XD_FILTER_SUPEREAGLE, 3, 2, G},
+            {XD_FILTER_2XSAI, 2, 1, gray},
+            {XD_FILTER_SUPER2XSAI, 3, 2, white},
+            {XD_FILTER_SUPEREAGLE, 3, 2, gray},
         };
         cairo_surface_t *near = xd_image_scale(tri_src, 2, XD_FILTER_NEAREST);
         for (size_t k = 0; k < G_N_ELEMENTS(sai); k++) {
@@ -1350,32 +1379,33 @@ static void test_image_scale(void) {
      * another colour, push alpha above the inputs' 0x80, or let colour
      * exceed alpha. */
     {
-        constexpr uint32_t r = 0x80800000;
+        constexpr uint32_t half_red = 0x80800000;
         const uint32_t px[] = {
-            0, 0, 0, 0, 0, //
-            0, r, r, r, 0, //
-            0, r, 0, r, 0, //
-            0, r, r, 0, 0, //
-            0, 0, 0, 0, 0, //
+            0, 0,        0,        0,        0, //
+            0, half_red, half_red, half_red, 0, //
+            0, half_red, 0,        half_red, 0, //
+            0, half_red, half_red, 0,        0, //
+            0, 0,        0,        0,        0, //
         };
         cairo_surface_t *src = scale_test_surface(5, 5, px);
         const double scales[] = {1.5, 2, 3, 4};
-        for (int f = 0; f < XD_FILTER_COUNT; f++) {
+        for (int filter_index = 0; filter_index < XD_FILTER_COUNT; filter_index++) {
             for (size_t k = 0; k < G_N_ELEMENTS(scales); k++) {
-                cairo_surface_t *o = xd_image_scale(src, scales[k], (xd_image_filter)f);
-                bool ok = o != nullptr;
-                int w = o ? cairo_image_surface_get_width(o) : 0;
-                int h = o ? cairo_image_surface_get_height(o) : 0;
-                for (int y = 0; ok && y < h; y++) {
-                    for (int x = 0; ok && x < w; x++) {
-                        uint32_t v = scale_test_px(o, x, y);
-                        uint32_t a = v >> 24, red = (v >> 16) & 0xff;
-                        ok = a <= 0x80 && red <= a && (v & 0xffff) == 0;
+                cairo_surface_t *surface =
+                    xd_image_scale(src, scales[k], (xd_image_filter)filter_index);
+                bool ok = surface != nullptr;
+                int width = surface ? cairo_image_surface_get_width(surface) : 0;
+                int height = surface ? cairo_image_surface_get_height(surface) : 0;
+                for (int y = 0; ok && y < height; y++) {
+                    for (int x = 0; ok && x < width; x++) {
+                        uint32_t value = scale_test_px(surface, x, y);
+                        uint32_t alpha = value >> 24, red = (value >> 16) & 0xff;
+                        ok = alpha <= 0x80 && red <= alpha && (value & 0xffff) == 0;
                     }
                 }
                 CHECK(ok);
-                if (o)
-                    cairo_surface_destroy(o);
+                if (surface)
+                    cairo_surface_destroy(surface);
             }
         }
         cairo_surface_destroy(src);
@@ -1386,42 +1416,44 @@ static void test_image_scale(void) {
     {
         uint32_t px[4 * 8];
         for (int i = 0; i < 4 * 8; i++)
-            px[i] = i < 16 ? R : B;
+            px[i] = i < 16 ? pure_red : blue;
         cairo_surface_t *vsrc = scale_test_surface(4, 8, px);
         uint32_t hpx[8 * 4];
         for (int i = 0; i < 8 * 4; i++)
-            hpx[i] = i % 8 < 4 ? R : B;
+            hpx[i] = i % 8 < 4 ? pure_red : blue;
         cairo_surface_t *hsrc = scale_test_surface(8, 4, hpx);
         const double scales[] = {1.25, 1.5, 2, 3};
-        for (int f = 0; f < XD_FILTER_COUNT; f++) {
+        for (int filter_index = 0; filter_index < XD_FILTER_COUNT; filter_index++) {
             for (size_t k = 0; k < G_N_ELEMENTS(scales); k++) {
                 double side = round(4 * scales[k]);
-                int n = (int)side;
-                cairo_surface_t *o =
-                    xd_image_scale_frames(vsrc, 2, true, scales[k], (xd_image_filter)f);
-                bool ok = o && cairo_image_surface_get_width(o) == n &&
-                          cairo_image_surface_get_height(o) == 2 * n;
-                for (int y = 0; ok && y < 2 * n; y++)
-                    for (int x = 0; ok && x < n; x++)
-                        ok = scale_test_px(o, x, y) == (y < n ? R : B);
+                int count = (int)side;
+                cairo_surface_t *surface =
+                    xd_image_scale_frames(vsrc, 2, true, scales[k], (xd_image_filter)filter_index);
+                bool ok = surface && cairo_image_surface_get_width(surface) == count &&
+                          cairo_image_surface_get_height(surface) == 2 * count;
+                for (int y = 0; ok && y < 2 * count; y++)
+                    for (int x = 0; ok && x < count; x++)
+                        ok = scale_test_px(surface, x, y) == (y < count ? pure_red : blue);
                 CHECK(ok);
-                if (o)
-                    cairo_surface_destroy(o);
-                o = xd_image_scale_frames(hsrc, 2, false, scales[k], (xd_image_filter)f);
-                ok = o && cairo_image_surface_get_width(o) == 2 * n &&
-                     cairo_image_surface_get_height(o) == n;
-                for (int y = 0; ok && y < n; y++)
-                    for (int x = 0; ok && x < 2 * n; x++)
-                        ok = scale_test_px(o, x, y) == (x < n ? R : B);
+                if (surface)
+                    cairo_surface_destroy(surface);
+                surface =
+                    xd_image_scale_frames(hsrc, 2, false, scales[k], (xd_image_filter)filter_index);
+                ok = surface && cairo_image_surface_get_width(surface) == 2 * count &&
+                     cairo_image_surface_get_height(surface) == count;
+                for (int y = 0; ok && y < count; y++)
+                    for (int x = 0; ok && x < 2 * count; x++)
+                        ok = scale_test_px(surface, x, y) == (x < count ? pure_red : blue);
                 CHECK(ok);
-                if (o)
-                    cairo_surface_destroy(o);
+                if (surface)
+                    cairo_surface_destroy(surface);
             }
         }
         /* Whereas scaling the strip whole blends across the seam. */
-        cairo_surface_t *o = xd_image_scale(vsrc, 1.5, XD_FILTER_SMOOTH);
-        CHECK(o && scale_test_px(o, 0, 5) != R && scale_test_px(o, 0, 5) != B);
-        cairo_surface_destroy(o);
+        cairo_surface_t *surface = xd_image_scale(vsrc, 1.5, XD_FILTER_SMOOTH);
+        CHECK(surface && scale_test_px(surface, 0, 5) != pure_red &&
+              scale_test_px(surface, 0, 5) != blue);
+        cairo_surface_destroy(surface);
         /* A strip that doesn't divide into the frames is refused. */
         CHECK(xd_image_scale_frames(vsrc, 3, true, 2, XD_FILTER_NEAREST) == nullptr);
         cairo_surface_destroy(hsrc);
@@ -1437,28 +1469,28 @@ static const xd_installed_theme *theme_at(GPtrArray *list, guint i) {
  * A package made here, with images drawn here: never Microsoft's. */
 
 /* images/NAME: w x h opaque pixels (0xRRGGBB), row by row. */
-static void pkg_png(const char *root, const char *name, int w, int h, const uint32_t *px) {
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_surface_flush(s);
-    unsigned char *d = cairo_image_surface_get_data(s);
-    int stride = cairo_image_surface_get_stride(s);
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++) {
-            uint32_t v = 0xFF000000u | px[y * w + x];
-            memcpy(d + (size_t)y * (size_t)stride + (size_t)x * 4, &v, sizeof(v));
+static void pkg_png(const char *root, const char *name, int width, int height, const uint32_t *px) {
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_surface_flush(surface);
+    unsigned char *data = cairo_image_surface_get_data(surface);
+    int stride = cairo_image_surface_get_stride(surface);
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++) {
+            uint32_t value = 0xFF000000u | px[y * width + x];
+            memcpy(data + (size_t)y * (size_t)stride + (size_t)x * 4, &value, sizeof(value));
         }
-    cairo_surface_mark_dirty(s);
+    cairo_surface_mark_dirty(surface);
     char *path = g_build_filename(root, "images", name, nullptr);
-    CHECK(cairo_surface_write_to_png(s, path) == CAIRO_STATUS_SUCCESS);
+    CHECK(cairo_surface_write_to_png(surface, path) == CAIRO_STATUS_SUCCESS);
     g_free(path);
-    cairo_surface_destroy(s);
+    cairo_surface_destroy(surface);
 }
 
-static void pkg_png_solid(const char *root, const char *name, int w, int h, uint32_t rgb) {
-    uint32_t *px = g_new(uint32_t, (gsize)(w * h));
-    for (int i = 0; i < w * h; i++)
+static void pkg_png_solid(const char *root, const char *name, int width, int height, uint32_t rgb) {
+    uint32_t *px = g_new(uint32_t, (gsize)(width * height));
+    for (int i = 0; i < width * height; i++)
         px[i] = rgb;
-    pkg_png(root, name, w, h, px);
+    pkg_png(root, name, width, height, px);
     g_free(px);
 }
 
@@ -1586,74 +1618,74 @@ static void make_test_package(const char *root) {
 
 #if XD_HAVE_LIBARCHIVE
 static void zip_test_package(const char *root, const char *zip) {
-    struct archive *a = archive_write_new();
-    archive_write_set_format_zip(a);
-    CHECK(archive_write_open_filename(a, zip) == ARCHIVE_OK);
+    struct archive *writer = archive_write_new();
+    archive_write_set_format_zip(writer);
+    CHECK(archive_write_open_filename(writer, zip) == ARCHIVE_OK);
     for (size_t i = 0; i < G_N_ELEMENTS(PKG_FILES); i++) {
         char *path = g_build_filename(root, PKG_FILES[i], nullptr);
         char *data = nullptr;
         gsize len = 0;
         CHECK(g_file_get_contents(path, &data, &len, nullptr));
-        struct archive_entry *e = archive_entry_new();
-        archive_entry_set_pathname(e, PKG_FILES[i]);
-        archive_entry_set_filetype(e, AE_IFREG);
-        archive_entry_set_perm(e, 0644);
-        archive_entry_set_size(e, (la_int64_t)len);
-        CHECK(archive_write_header(a, e) == ARCHIVE_OK);
-        CHECK(archive_write_data(a, data, len) == (la_ssize_t)len);
-        archive_entry_free(e);
+        struct archive_entry *member = archive_entry_new();
+        archive_entry_set_pathname(member, PKG_FILES[i]);
+        archive_entry_set_filetype(member, AE_IFREG);
+        archive_entry_set_perm(member, 0644);
+        archive_entry_set_size(member, (la_int64_t)len);
+        CHECK(archive_write_header(writer, member) == ARCHIVE_OK);
+        CHECK(archive_write_data(writer, data, len) == (la_ssize_t)len);
+        archive_entry_free(member);
         g_free(data);
         g_free(path);
     }
-    CHECK(archive_write_close(a) == ARCHIVE_OK);
-    archive_write_free(a);
+    CHECK(archive_write_close(writer) == ARCHIVE_OK);
+    archive_write_free(writer);
 }
 #endif
 
-static bool prop_is(const xd_pkg *p, const char *cls, const char *part, const char *state,
+static bool prop_is(const xd_pkg *package, const char *cls, const char *part, const char *state,
                     const char *prop, const char *want) {
-    const char *v = xd_pkg_prop(p, cls, part, state, prop);
+    const char *value = xd_pkg_prop(package, cls, part, state, prop);
     if (want == nullptr)
-        return v == nullptr;
-    return v != nullptr && strcmp(v, want) == 0;
+        return value == nullptr;
+    return value != nullptr && strcmp(value, want) == 0;
 }
 
 /* A white canvas, w x h. */
-static cairo_surface_t *pkg_canvas(int w, int h, cairo_t **cr) {
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    *cr = cairo_create(s);
-    cairo_set_source_rgb(*cr, 1, 1, 1);
-    cairo_paint(*cr);
-    return s;
+static cairo_surface_t *pkg_canvas(int width, int height, cairo_t **cairo) {
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    *cairo = cairo_create(surface);
+    cairo_set_source_rgb(*cairo, 1, 1, 1);
+    cairo_paint(*cairo);
+    return surface;
 }
 
 /* Draws part of class Draw in state at (0, 0, w, h) at `scale`, into a
  * canvas of cw x ch. */
-static cairo_surface_t *pkg_render(const xd_pkg *p, double scale, const char *part,
-                                   const char *state, int w, int h, int cw, int ch) {
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+static cairo_surface_t *pkg_render(const xd_pkg *package, double scale, const char *part,
+                                   const char *state, int width, int height, int cw, int ch) {
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
     xd_scheme sc;
     xd_scheme_init_default(&sc);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, scale);
-    cairo_t *cr;
-    cairo_surface_t *s = pkg_canvas(cw, ch, &cr);
-    CHECK(xd_pkg_draw(&t, cr, "Draw", part, state, (xd_rect){0, 0, w, h}));
-    cairo_destroy(cr);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, scale);
+    cairo_t *cairo;
+    cairo_surface_t *surface = pkg_canvas(cw, ch, &cairo);
+    CHECK(xd_pkg_draw(&theme, cairo, "Draw", part, state, (xd_rect){0, 0, width, height}));
+    cairo_destroy(cairo);
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-    return s;
+    return surface;
 }
 
-static int pkg_part_w(const xd_pkg *p, double scale, const char *part) {
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+static int pkg_part_w(const xd_pkg *package, double scale, const char *part) {
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
     xd_scheme sc;
     xd_scheme_init_default(&sc);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, scale);
-    int w = -1, h = -1;
-    CHECK(xd_pkg_part_size(&t, "Draw", part, "1", &w, &h));
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, scale);
+    int width = -1, height = -1;
+    CHECK(xd_pkg_part_size(&theme, "Draw", part, "1", &width, &height));
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-    return w == h ? w : -1;
+    return width == height ? width : -1;
 }
 
 /* The taskbar, Start menus and their menus from a package (style_pkg.c's
@@ -1758,9 +1790,9 @@ static void test_theme_package_shell(void) {
     char *root = g_dir_make_tmp("xd-pkg-XXXXXX", nullptr);
     make_shell_package(root);
     GError *error = nullptr;
-    xd_pkg *p = xd_pkg_load(root, nullptr, names, &error);
-    CHECK(p != nullptr && error == nullptr);
-    if (p == nullptr) {
+    xd_pkg *package = xd_pkg_load(root, nullptr, names, &error);
+    CHECK(package != nullptr && error == nullptr);
+    if (package == nullptr) {
         g_clear_error(&error);
         rm_tree(root);
         g_free(root);
@@ -1768,29 +1800,32 @@ static void test_theme_package_shell(void) {
     }
 
     /* Font properties, and a class's own parts apart from its base's. */
-    xd_font_spec f = {0};
-    CHECK(xd_pkg_font(p, "Start::Button", nullptr, nullptr, "Font", &f, nullptr) && f.size_pt == 8 &&
-          f.bold && !f.italic && strstr(f.family, "Tahoma") != nullptr);
-    CHECK(!xd_pkg_font(p, "StartPanel", "ProgList", nullptr, "TextColor", &f, nullptr));
-    CHECK(xd_pkg_has_own(p, "Start::Button", nullptr) && !xd_pkg_has_own(p, "Dialog::Button", nullptr));
-    CHECK(xd_pkg_has(p, "Dialog::Button", "PushButton"));
+    xd_font_spec font = {0};
+    CHECK(xd_pkg_font(package, "Start::Button", nullptr, nullptr, "Font", &font, nullptr) &&
+          font.size_pt == 8 && font.bold && !font.italic &&
+          strstr(font.family, "Tahoma") != nullptr);
+    CHECK(!xd_pkg_font(package, "StartPanel", "ProgList", nullptr, "TextColor", &font, nullptr));
+    CHECK(xd_pkg_has_own(package, "Start::Button", nullptr) &&
+          !xd_pkg_has_own(package, "Dialog::Button", nullptr));
+    CHECK(xd_pkg_has(package, "Dialog::Button", "PushButton"));
     /* Deduced and our own names resolve as uxtheme.ini lists them. */
-    CHECK(prop_is(p, "ClassicStartMenu", "3", "2", "ImageFile", "images/item.png"));
+    CHECK(prop_is(package, "ClassicStartMenu", "3", "2", "ImageFile", "images/item.png"));
 
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
     xd_scheme sc;
     xd_scheme_init_default(&sc);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
-    CHECK(t.style == XD_STYLE_LUNA && t.menu_look == XD_MENU_LOOK_NORMAL);
-    cairo_t *cr;
-    cairo_surface_t *s = pkg_canvas(60, 30, &cr);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, 1.0);
+    CHECK(theme.style == XD_STYLE_LUNA && theme.menu_look == XD_MENU_LOOK_NORMAL);
+    cairo_t *cairo;
+    cairo_surface_t *surface = pkg_canvas(60, 30, &cairo);
 
     /* The taskbar, and an unlocked one's sizing bar along its top. */
-    xd_theme_draw_taskbar(&t, cr, (xd_rect){0, 0, 60, 30}, XD_EDGE_BOTTOM);
-    CHECK(pixel(s, 5, 1) == 0x2040C0 && pixel(s, 59, 29) == 0x2040C0);
-    xd_theme_draw_taskbar_sizing_bar(&t, cr, (xd_rect){0, 0, 60, 30}, XD_EDGE_BOTTOM);
-    CHECK(pixel(s, 5, 0) == 0x00FF00 && pixel(s, 30, 2) == 0x00FF00 && pixel(s, 5, 3) == 0x2040C0);
+    xd_theme_draw_taskbar(&theme, cairo, (xd_rect){0, 0, 60, 30}, XD_EDGE_BOTTOM);
+    CHECK(pixel(surface, 5, 1) == 0x2040C0 && pixel(surface, 59, 29) == 0x2040C0);
+    xd_theme_draw_taskbar_sizing_bar(&theme, cairo, (xd_rect){0, 0, 60, 30}, XD_EDGE_BOTTOM);
+    CHECK(pixel(surface, 5, 0) == 0x00FF00 && pixel(surface, 30, 2) == 0x00FF00 &&
+          pixel(surface, 5, 3) == 0x2040C0);
 
     /* The Start button's states: Normal, Hot, Pressed. */
     static const struct {
@@ -1798,8 +1833,8 @@ static void test_theme_package_shell(void) {
         uint32_t want;
     } starts[] = {{0, 0x100000}, {XD_STATE_HOT, 0x200000}, {XD_STATE_PRESSED, 0x300000}};
     for (size_t i = 0; i < G_N_ELEMENTS(starts); i++) {
-        xd_theme_draw_start_button(&t, cr, (xd_rect){0, 0, 60, 30}, starts[i].state);
-        CHECK(pixel(s, 1, 1) == starts[i].want);
+        xd_theme_draw_start_button(&theme, cairo, (xd_rect){0, 0, 60, 30}, starts[i].state);
+        CHECK(pixel(surface, 1, 1) == starts[i].want);
     }
 
     /* Task buttons: toolbar states, Checked for the active window, the
@@ -1817,80 +1852,84 @@ static void test_theme_package_shell(void) {
         {XD_STATE_VERTICAL, 0x000010},
     };
     for (size_t i = 0; i < G_N_ELEMENTS(tasks); i++) {
-        xd_theme_draw_task_button(&t, cr, (xd_rect){0, 0, 60, 30}, tasks[i].state, "x", nullptr);
-        CHECK(pixel(s, 1, 1) == tasks[i].want && pixel(s, 58, 28) == tasks[i].want);
+        xd_theme_draw_task_button(&theme, cairo, (xd_rect){0, 0, 60, 30}, tasks[i].state, "x",
+                                  nullptr);
+        CHECK(pixel(surface, 1, 1) == tasks[i].want && pixel(surface, 58, 28) == tasks[i].want);
     }
-    xd_theme_draw_task_group(&t, cr, (xd_rect){0, 0, 60, 30}, XD_STATE_CHECKED, 3, "x", nullptr);
-    CHECK(pixel(s, 1, 1) == 0x000050);
+    xd_theme_draw_task_group(&theme, cairo, (xd_rect){0, 0, 60, 30}, XD_STATE_CHECKED, 3, "x",
+                             nullptr);
+    CHECK(pixel(surface, 1, 1) == 0x000050);
 
     /* The tray, its clock's colour, its chevron (none for a side taskbar:
      * Button's push button doesn't stand in for it). */
-    xd_theme_draw_tray(&t, cr, (xd_rect){0, 0, 60, 30}, "");
-    CHECK(pixel(s, 1, 1) == 0x0080FF);
-    xd_rgba ck = xd_theme_clock_color(&t);
+    xd_theme_draw_tray(&theme, cairo, (xd_rect){0, 0, 60, 30}, "");
+    CHECK(pixel(surface, 1, 1) == 0x0080FF);
+    xd_rgba ck = xd_theme_clock_color(&theme);
     CHECK(lround(ck.r * 255) == 10 && lround(ck.g * 255) == 20 && lround(ck.b * 255) == 30);
-    CHECK(xd_theme_draw_tray_chevron(&t, cr, (xd_rect){0, 0, 4, 4}, XD_STATE_HOT, false, false) &&
-          pixel(s, 1, 1) == 0x002200);
-    CHECK(!xd_theme_draw_tray_chevron(&t, cr, (xd_rect){0, 0, 4, 4}, 0, false, true));
-    CHECK(!xd_theme_draw_tray_chevron(&t, cr, (xd_rect){0, 0, 4, 4}, 0, true, false));
-    CHECK(!xd_theme_draw_show_desktop(&t, cr, (xd_rect){0, 0, 4, 4}, 0, false));
+    CHECK(xd_theme_draw_tray_chevron(&theme, cairo, (xd_rect){0, 0, 4, 4}, XD_STATE_HOT, false,
+                                     false) &&
+          pixel(surface, 1, 1) == 0x002200);
+    CHECK(!xd_theme_draw_tray_chevron(&theme, cairo, (xd_rect){0, 0, 4, 4}, 0, false, true));
+    CHECK(!xd_theme_draw_tray_chevron(&theme, cairo, (xd_rect){0, 0, 4, 4}, 0, true, false));
+    CHECK(!xd_theme_draw_show_desktop(&theme, cairo, (xd_rect){0, 0, 4, 4}, 0, false));
 
     /* XP's Start panel: its parts, colours, and Log Off's and Turn Off's
      * icons, the last two squares of LogoffButtons. */
-    CHECK(xd_theme_draw_start_part(&t, cr, XD_START_PROG_LIST, (xd_rect){0, 0, 60, 30}, 0) &&
-          pixel(s, 30, 15) == 0xEEEEEE);
-    CHECK(!xd_theme_draw_start_part(&t, cr, XD_START_USER_PANE, (xd_rect){0, 0, 60, 30}, 0));
-    xd_rgba c;
-    CHECK(xd_theme_start_part_color(&t, XD_START_PROG_LIST, 0, XD_START_TEXT, &c) &&
-          lround(c.b * 255) == 33);
-    CHECK(xd_theme_start_part_color(&t, XD_START_PROG_LIST, 0, XD_START_SUBTEXT, &c) &&
-          lround(c.r * 255) == 44);
-    CHECK(xd_theme_draw_start_logoff_icon(&t, cr, (xd_rect){0, 0, 8, 8}, false, 0) &&
-          pixel(s, 3, 3) == 0x222222 && pixel(s, 4, 4) == 0x222222);
-    CHECK(xd_theme_draw_start_logoff_icon(&t, cr, (xd_rect){0, 0, 8, 8}, true, 0) &&
-          pixel(s, 3, 3) == 0x333333 && pixel(s, 1, 1) == 0xEEEEEE);
+    CHECK(xd_theme_draw_start_part(&theme, cairo, XD_START_PROG_LIST, (xd_rect){0, 0, 60, 30}, 0) &&
+          pixel(surface, 30, 15) == 0xEEEEEE);
+    CHECK(!xd_theme_draw_start_part(&theme, cairo, XD_START_USER_PANE, (xd_rect){0, 0, 60, 30}, 0));
+    xd_rgba color;
+    CHECK(xd_theme_start_part_color(&theme, XD_START_PROG_LIST, 0, XD_START_TEXT, &color) &&
+          lround(color.b * 255) == 33);
+    CHECK(xd_theme_start_part_color(&theme, XD_START_PROG_LIST, 0, XD_START_SUBTEXT, &color) &&
+          lround(color.r * 255) == 44);
+    CHECK(xd_theme_draw_start_logoff_icon(&theme, cairo, (xd_rect){0, 0, 8, 8}, false, 0) &&
+          pixel(surface, 3, 3) == 0x222222 && pixel(surface, 4, 4) == 0x222222);
+    CHECK(xd_theme_draw_start_logoff_icon(&theme, cairo, (xd_rect){0, 0, 8, 8}, true, 0) &&
+          pixel(surface, 3, 3) == 0x333333 && pixel(surface, 1, 1) == 0xEEEEEE);
 
     /* Menus: ordinary ones as before; the Start menus' cascades in
      * StartMenu::Toolbar, the Windows 2000 one in ClassicStartMenu. */
-    xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 60, 30});
-    CHECK(pixel(s, 30, 15) != 0xABCDEF);
-    t.menu_look = XD_MENU_LOOK_START;
-    xd_theme_draw_menu_frame(&t, cr, (xd_rect){0, 0, 60, 30});
-    CHECK(pixel(s, 30, 15) == 0xABCDEF);
-    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
-    CHECK(pixel(s, 1, 1) == 0x002200);
-    CHECK(xd_theme_draw_new_program(&t, cr, (xd_rect){0, 0, 60, 30}) &&
-          pixel(s, 30, 15) == 0xFEDCBA);
-    t.menu_look = XD_MENU_LOOK_CLASSIC_START;
-    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
-    CHECK(pixel(s, 1, 1) == 0x654321);
-    xd_theme_draw_start_banner(&t, cr, (xd_rect){0, 0, 20, 30}, "", "");
-    CHECK(pixel(s, 1, 1) == 0x123456);
-    t.menu_look = XD_MENU_LOOK_NORMAL;
+    xd_theme_draw_menu_frame(&theme, cairo, (xd_rect){0, 0, 60, 30});
+    CHECK(pixel(surface, 30, 15) != 0xABCDEF);
+    theme.menu_look = XD_MENU_LOOK_START;
+    xd_theme_draw_menu_frame(&theme, cairo, (xd_rect){0, 0, 60, 30});
+    CHECK(pixel(surface, 30, 15) == 0xABCDEF);
+    xd_theme_draw_menu_item(&theme, cairo, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
+    CHECK(pixel(surface, 1, 1) == 0x002200);
+    CHECK(xd_theme_draw_new_program(&theme, cairo, (xd_rect){0, 0, 60, 30}) &&
+          pixel(surface, 30, 15) == 0xFEDCBA);
+    theme.menu_look = XD_MENU_LOOK_CLASSIC_START;
+    xd_theme_draw_menu_item(&theme, cairo, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
+    CHECK(pixel(surface, 1, 1) == 0x654321);
+    xd_theme_draw_start_banner(&theme, cairo, (xd_rect){0, 0, 20, 30}, "", "");
+    CHECK(pixel(surface, 1, 1) == 0x123456);
+    theme.menu_look = XD_MENU_LOOK_NORMAL;
 
     /* 7's program button (AppButton: active 4), the error progress over
      * its left half. */
     xd_app_button ab = {.windows = 1, .glow_x = -1, .progress = XD_PROGRESS_ERROR,
                         .fraction = 0.5};
-    xd_theme_draw_app_button(&t, cr, (xd_rect){0, 0, 60, 30}, XD_STATE_CHECKED, &ab);
-    CHECK(pixel(s, 3, 15) == 0xE00000 && pixel(s, 50, 15) == 0x004000);
+    xd_theme_draw_app_button(&theme, cairo, (xd_rect){0, 0, 60, 30}, XD_STATE_CHECKED, &ab);
+    CHECK(pixel(surface, 3, 15) == 0xE00000 && pixel(surface, 50, 15) == 0x004000);
     /* Jump list items: JumpList's hot item and its text colour. */
-    xd_theme_draw_jumplist_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", 30);
-    CHECK(pixel(s, 1, 1) == 0x654321);
-    cairo_destroy(cr);
-    cairo_surface_destroy(s);
+    xd_theme_draw_jumplist_item(&theme, cairo, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", 30);
+    CHECK(pixel(surface, 1, 1) == 0x654321);
+    cairo_destroy(cairo);
+    cairo_surface_destroy(surface);
 
     /* Without a package: 7's own progress colours. */
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-    xd_theme_init(&t, XD_STYLE_AERO, &sc, 1.0);
-    s = pkg_canvas(20, 10, &cr);
-    xd_theme_draw_taskbar_progress(&t, cr, (xd_rect){0, 0, 20, 10}, XD_PROGRESS_NORMAL, 0.5);
-    uint32_t g = pixel(s, 2, 5);
-    CHECK(((g >> 8) & 0xFF) > ((g >> 16) & 0xFF) + 40 && pixel(s, 15, 5) == 0xFFFFFF);
-    cairo_destroy(cr);
-    cairo_surface_destroy(s);
+    xd_theme_init(&theme, XD_STYLE_AERO, &sc, 1.0);
+    surface = pkg_canvas(20, 10, &cairo);
+    xd_theme_draw_taskbar_progress(&theme, cairo, (xd_rect){0, 0, 20, 10}, XD_PROGRESS_NORMAL, 0.5);
+    uint32_t bar_pixel = pixel(surface, 2, 5);
+    CHECK(((bar_pixel >> 8) & 0xFF) > ((bar_pixel >> 16) & 0xFF) + 40 &&
+          pixel(surface, 15, 5) == 0xFFFFFF);
+    cairo_destroy(cairo);
+    cairo_surface_destroy(surface);
 
-    xd_pkg_free(p);
+    xd_pkg_free(package);
     rm_tree(root);
     g_free(root);
 }
@@ -1905,19 +1944,20 @@ static void test_theme_package(void) {
     /* The loader: a folder, its variants (the first unless one is
      * named), and errors. */
     GError *error = nullptr;
-    xd_pkg *p = xd_pkg_load(dir, nullptr, names, &error);
-    CHECK(p != nullptr && error == nullptr);
-    if (p == nullptr) {
+    xd_pkg *package = xd_pkg_load(dir, nullptr, names, &error);
+    CHECK(package != nullptr && error == nullptr);
+    if (package == nullptr) {
         g_clear_error(&error);
         rm_tree(root);
         g_free(dir);
         g_free(root);
         return;
     }
-    CHECK(strcmp(xd_pkg_name(p), "Test Style") == 0 && strcmp(xd_pkg_variant(p), "a") == 0);
-    CHECK(xd_pkg_base(p) == XD_STYLE_WHISTLER);
-    xd_image_filter f = XD_FILTER_SMOOTH;
-    CHECK(xd_pkg_filter(p, &f) && f == XD_FILTER_INTEGER);
+    CHECK(strcmp(xd_pkg_name(package), "Test Style") == 0 &&
+          strcmp(xd_pkg_variant(package), "a") == 0);
+    CHECK(xd_pkg_base(package) == XD_STYLE_WHISTLER);
+    xd_image_filter image_filter = XD_FILTER_SMOOTH;
+    CHECK(xd_pkg_filter(package, &image_filter) && image_filter == XD_FILTER_INTEGER);
     xd_pkg *pb = xd_pkg_load(dir, "b", names, nullptr);
     CHECK(pb != nullptr && strcmp(xd_pkg_variant(pb), "b") == 0);
     CHECK(pb != nullptr && prop_is(pb, "Button", "PushButton", nullptr, "Lvl", "b"));
@@ -1943,9 +1983,9 @@ static void test_theme_package(void) {
     CHECK(pz != nullptr);
     if (pz != nullptr) {
         /* Images come out of the zip too. */
-        cairo_surface_t *s = pkg_render(pz, 1, "Small", "1", 20, 20, 20, 20);
-        CHECK(pixel(s, 7, 8) == 0xAA0000);
-        cairo_surface_destroy(s);
+        cairo_surface_t *surface = pkg_render(pz, 1, "Small", "1", 20, 20, 20, 20);
+        CHECK(pixel(surface, 7, 8) == 0xAA0000);
+        cairo_surface_destroy(surface);
         xd_pkg_free(pz);
     }
     char *notzip = g_build_filename(dir, "theme.xml", nullptr);
@@ -1957,72 +1997,75 @@ static void test_theme_package(void) {
 
     /* Lookups: part and state, part, class, Class for App::Class,
      * ClassStyle, globals; names and numbers alike, any case. */
-    CHECK(prop_is(p, "Button", "PushButton", "Hot", "Lvl", "state"));
-    CHECK(prop_is(p, "button", "PUSHBUTTON", "hot", "lvl", "state"));
-    CHECK(prop_is(p, "Button", "1", "2", "Lvl", "state"));
-    CHECK(prop_is(p, "Button", "PushButton", "Pressed", "Lvl", "part"));
-    CHECK(prop_is(p, "Button", "PushButton", nullptr, "Lvl", "part"));
-    CHECK(prop_is(p, "Button", "CheckBox", "Hot", "Lvl", "checkbox"));
-    CHECK(prop_is(p, "Button", "RadioButton", nullptr, "Lvl", "class"));
-    CHECK(prop_is(p, "Dialog::Button", "PushButton", "Hot", "Lvl", "app"));
-    CHECK(prop_is(p, "Dialog::Button", "PushButton", "Normal", "Lvl", "part"));
-    CHECK(prop_is(p, "Dialog::Button", "PushButton", nullptr, "PartOnly", "p"));
-    CHECK(prop_is(p, "Dialog::Button", "GroupBox", nullptr, "Lvl", "class"));
-    CHECK(prop_is(p, "Button", "PushButton", nullptr, "StyleProp", "s"));
-    CHECK(prop_is(p, "Edit", "EditText", "Normal", "Glob", "g"));
-    CHECK(prop_is(p, "Button", nullptr, nullptr, "NoSuchProperty", nullptr));
+    CHECK(prop_is(package, "Button", "PushButton", "Hot", "Lvl", "state"));
+    CHECK(prop_is(package, "button", "PUSHBUTTON", "hot", "lvl", "state"));
+    CHECK(prop_is(package, "Button", "1", "2", "Lvl", "state"));
+    CHECK(prop_is(package, "Button", "PushButton", "Pressed", "Lvl", "part"));
+    CHECK(prop_is(package, "Button", "PushButton", nullptr, "Lvl", "part"));
+    CHECK(prop_is(package, "Button", "CheckBox", "Hot", "Lvl", "checkbox"));
+    CHECK(prop_is(package, "Button", "RadioButton", nullptr, "Lvl", "class"));
+    CHECK(prop_is(package, "Dialog::Button", "PushButton", "Hot", "Lvl", "app"));
+    CHECK(prop_is(package, "Dialog::Button", "PushButton", "Normal", "Lvl", "part"));
+    CHECK(prop_is(package, "Dialog::Button", "PushButton", nullptr, "PartOnly", "p"));
+    CHECK(prop_is(package, "Dialog::Button", "GroupBox", nullptr, "Lvl", "class"));
+    CHECK(prop_is(package, "Button", "PushButton", nullptr, "StyleProp", "s"));
+    CHECK(prop_is(package, "Edit", "EditText", "Normal", "Glob", "g"));
+    CHECK(prop_is(package, "Button", nullptr, nullptr, "NoSuchProperty", nullptr));
     /* A state on the class itself, Toolbar(Hot): Hot is 2 for all its parts. */
-    CHECK(prop_is(p, "Toolbar", nullptr, "2", "TextColor", "1 2 3"));
-    CHECK(prop_is(p, "Toolbar", "0", "HOT", "TextColor", "1 2 3"));
-    CHECK(prop_is(p, "Toolbar", nullptr, "Pressed", "TextColor", nullptr));
+    CHECK(prop_is(package, "Toolbar", nullptr, "2", "TextColor", "1 2 3"));
+    CHECK(prop_is(package, "Toolbar", "0", "HOT", "TextColor", "1 2 3"));
+    CHECK(prop_is(package, "Toolbar", nullptr, "Pressed", "TextColor", nullptr));
     xd_rgba rgba;
-    CHECK(xd_pkg_color(p, "Toolbar", nullptr, "Hot", "TextColor", &rgba) &&
+    CHECK(xd_pkg_color(package, "Toolbar", nullptr, "Hot", "TextColor", &rgba) &&
           fabs(rgba.r - 1 / 255.0) < 1e-9 && fabs(rgba.b - 3 / 255.0) < 1e-9);
     /* Which parts it styles, through the same classes. */
-    CHECK(xd_pkg_has(p, "Button", "PushButton") && xd_pkg_has(p, "Dialog::Button", "CheckBox"));
-    CHECK(xd_pkg_has(p, "Button", "UserButton")); /* in ButtonStyle */
-    CHECK(!xd_pkg_has(p, "Button", "GroupBox") && !xd_pkg_has(p, "Tab", "Pane"));
+    CHECK(xd_pkg_has(package, "Button", "PushButton") &&
+          xd_pkg_has(package, "Dialog::Button", "CheckBox"));
+    CHECK(xd_pkg_has(package, "Button", "UserButton")); /* in ButtonStyle */
+    CHECK(!xd_pkg_has(package, "Button", "GroupBox") && !xd_pkg_has(package, "Tab", "Pane"));
 
     /* [SysMetrics] over the scheme, with the base style. */
     xd_scheme sc;
     xd_scheme_init_default(&sc);
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
-    CHECK(t.pkg == p && t.style == XD_STYLE_WHISTLER);
-    CHECK(rgb_is(t.scheme.colors[XD_COLOR_BUTTON_FACE], 1, 2, 3));
-    CHECK(rgb_is(t.scheme.colors[XD_COLOR_WINDOW], 0x10, 0x20, 0x30));
-    CHECK(rgb_is(t.scheme.colors[XD_COLOR_HILIGHT], sc.colors[XD_COLOR_HILIGHT].r,
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, 1.0);
+    CHECK(theme.pkg == package && theme.style == XD_STYLE_WHISTLER);
+    CHECK(rgb_is(theme.scheme.colors[XD_COLOR_BUTTON_FACE], 1, 2, 3));
+    CHECK(rgb_is(theme.scheme.colors[XD_COLOR_WINDOW], 0x10, 0x20, 0x30));
+    CHECK(rgb_is(theme.scheme.colors[XD_COLOR_HILIGHT], sc.colors[XD_COLOR_HILIGHT].r,
                  sc.colors[XD_COLOR_HILIGHT].g, sc.colors[XD_COLOR_HILIGHT].b));
-    CHECK(t.scheme.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
-    CHECK(t.scheme.metrics[XD_METRIC_SCROLL_WIDTH] == 19);
-    CHECK(t.scheme.metrics[XD_METRIC_MENU_HEIGHT] == sc.metrics[XD_METRIC_MENU_HEIGHT]);
-    const xd_font_spec *cap = &t.scheme.fonts[XD_FONT_CAPTION];
+    CHECK(theme.scheme.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
+    CHECK(theme.scheme.metrics[XD_METRIC_SCROLL_WIDTH] == 19);
+    CHECK(theme.scheme.metrics[XD_METRIC_MENU_HEIGHT] == sc.metrics[XD_METRIC_MENU_HEIGHT]);
+    const xd_font_spec *cap = &theme.scheme.fonts[XD_FONT_CAPTION];
     CHECK(strcmp(cap->family, XD_FONT_FAMILY_TAHOMA) == 0 && cap->size_pt == 11 && cap->bold);
-    const xd_font_spec *menu = &t.scheme.fonts[XD_FONT_MENU];
+    const xd_font_spec *menu = &theme.scheme.fonts[XD_FONT_MENU];
     CHECK(g_str_has_prefix(menu->family, "Comic Neue") && menu->size_pt == 9 && !menu->bold);
-    CHECK(strcmp(t.scheme.fonts[XD_FONT_ICON].family, sc.fonts[XD_FONT_ICON].family) == 0);
+    CHECK(strcmp(theme.scheme.fonts[XD_FONT_ICON].family, sc.fonts[XD_FONT_ICON].family) == 0);
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
-    CHECK(t.pkg == nullptr && t.style == XD_STYLE_CLASSIC);
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, 1.0);
+    CHECK(theme.pkg == nullptr && theme.style == XD_STYLE_CLASSIC);
 
     /* 9-grid: corners as they are, edges and middle stretched. */
-    cairo_surface_t *s = pkg_render(p, 1, "Grid", "1", 40, 30, 42, 32);
-    CHECK(pixel(s, 0, 0) == 0xFF0000 && pixel(s, 3, 3) == 0xFF0000);
-    CHECK(pixel(s, 39, 0) == 0x00FF00 && pixel(s, 36, 3) == 0x00FF00);
-    CHECK(pixel(s, 0, 29) == 0x0000FF && pixel(s, 39, 29) == 0xFFFF00);
-    CHECK(pixel(s, 36, 26) == 0xFFFF00 && pixel(s, 35, 26) == 0x00FFFF);
-    CHECK(pixel(s, 4, 0) == 0x00FFFF && pixel(s, 20, 3) == 0x00FFFF && pixel(s, 0, 15) == 0x00FFFF);
-    CHECK(pixel(s, 4, 4) == 0x808080 && pixel(s, 20, 15) == 0x808080 && pixel(s, 35, 25) == 0x808080);
-    CHECK(pixel(s, 40, 0) == 0xFFFFFF && pixel(s, 0, 30) == 0xFFFFFF);
-    cairo_surface_destroy(s);
+    cairo_surface_t *surface = pkg_render(package, 1, "Grid", "1", 40, 30, 42, 32);
+    CHECK(pixel(surface, 0, 0) == 0xFF0000 && pixel(surface, 3, 3) == 0xFF0000);
+    CHECK(pixel(surface, 39, 0) == 0x00FF00 && pixel(surface, 36, 3) == 0x00FF00);
+    CHECK(pixel(surface, 0, 29) == 0x0000FF && pixel(surface, 39, 29) == 0xFFFF00);
+    CHECK(pixel(surface, 36, 26) == 0xFFFF00 && pixel(surface, 35, 26) == 0x00FFFF);
+    CHECK(pixel(surface, 4, 0) == 0x00FFFF && pixel(surface, 20, 3) == 0x00FFFF &&
+          pixel(surface, 0, 15) == 0x00FFFF);
+    CHECK(pixel(surface, 4, 4) == 0x808080 && pixel(surface, 20, 15) == 0x808080 &&
+          pixel(surface, 35, 25) == 0x808080);
+    CHECK(pixel(surface, 40, 0) == 0xFFFFFF && pixel(surface, 0, 30) == 0xFFFFFF);
+    cairo_surface_destroy(surface);
 
     /* TrueSize: as it is, centred. */
-    s = pkg_render(p, 1, "Small", "1", 20, 20, 20, 20);
-    CHECK(pixel(s, 7, 8) == 0xAA0000 && pixel(s, 12, 11) == 0xAA0000);
-    CHECK(pixel(s, 6, 8) == 0xFFFFFF && pixel(s, 13, 8) == 0xFFFFFF);
-    CHECK(pixel(s, 7, 7) == 0xFFFFFF && pixel(s, 7, 12) == 0xFFFFFF);
-    cairo_surface_destroy(s);
+    surface = pkg_render(package, 1, "Small", "1", 20, 20, 20, 20);
+    CHECK(pixel(surface, 7, 8) == 0xAA0000 && pixel(surface, 12, 11) == 0xAA0000);
+    CHECK(pixel(surface, 6, 8) == 0xFFFFFF && pixel(surface, 13, 8) == 0xFFFFFF);
+    CHECK(pixel(surface, 7, 7) == 0xFFFFFF && pixel(surface, 7, 12) == 0xFFFFFF);
+    cairo_surface_destroy(surface);
 
     /* A state's frame: number - 1; past the last, the last. */
     static const struct {
@@ -2030,107 +2073,112 @@ static void test_theme_package(void) {
         uint32_t want;
     } frames[] = {{"1", 0x110000}, {"2", 0x002200}, {"3", 0x000033}, {"9", 0x000033}};
     for (size_t i = 0; i < G_N_ELEMENTS(frames); i++) {
-        s = pkg_render(p, 1, "States", frames[i].state, 4, 4, 4, 4);
-        CHECK(pixel(s, 0, 0) == frames[i].want && pixel(s, 3, 3) == frames[i].want);
-        cairo_surface_destroy(s);
+        surface = pkg_render(package, 1, "States", frames[i].state, 4, 4, 4, 4);
+        CHECK(pixel(surface, 0, 0) == frames[i].want && pixel(surface, 3, 3) == frames[i].want);
+        cairo_surface_destroy(surface);
     }
     /* Without an ImageLayout, frames are side by side, as uxtheme has them. */
-    s = pkg_render(p, 1, "Strip", "2", 4, 4, 4, 4);
-    CHECK(pixel(s, 0, 0) == 0x0B0B0B && pixel(s, 3, 3) == 0x0B0B0B);
-    cairo_surface_destroy(s);
-    s = pkg_render(p, 2, "Strip", "1", 8, 8, 8, 8);
-    CHECK(pixel(s, 0, 0) == 0x0A0A0A && pixel(s, 7, 7) == 0x0A0A0A);
-    cairo_surface_destroy(s);
+    surface = pkg_render(package, 1, "Strip", "2", 4, 4, 4, 4);
+    CHECK(pixel(surface, 0, 0) == 0x0B0B0B && pixel(surface, 3, 3) == 0x0B0B0B);
+    cairo_surface_destroy(surface);
+    surface = pkg_render(package, 2, "Strip", "1", 8, 8, 8, 8);
+    CHECK(pixel(surface, 0, 0) == 0x0A0A0A && pixel(surface, 7, 7) == 0x0A0A0A);
+    cairo_surface_destroy(surface);
     /* By name: PushButton's Hot is 2, Pressed 3. */
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
-    cairo_t *cr;
-    s = pkg_canvas(4, 4, &cr);
-    CHECK(xd_pkg_draw(&t, cr, "Button", "PushButton", "Hot", (xd_rect){0, 0, 4, 4}));
-    CHECK(pixel(s, 1, 1) == 0x002200);
-    CHECK(xd_pkg_draw(&t, cr, "Button", "PushButton", "pressed", (xd_rect){0, 0, 4, 4}));
-    CHECK(pixel(s, 1, 1) == 0x000033);
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, 1.0);
+    cairo_t *cairo;
+    surface = pkg_canvas(4, 4, &cairo);
+    CHECK(xd_pkg_draw(&theme, cairo, "Button", "PushButton", "Hot", (xd_rect){0, 0, 4, 4}));
+    CHECK(pixel(surface, 1, 1) == 0x002200);
+    CHECK(xd_pkg_draw(&theme, cairo, "Button", "PushButton", "pressed", (xd_rect){0, 0, 4, 4}));
+    CHECK(pixel(surface, 1, 1) == 0x000033);
     /* Nothing outside the package, nor for parts it lacks. */
-    CHECK(!xd_pkg_draw(&t, cr, "Draw", "Outside", "1", (xd_rect){0, 0, 4, 4}));
-    CHECK(!xd_pkg_draw(&t, cr, "Draw", "NoSuchPart", "1", (xd_rect){0, 0, 4, 4}));
-    cairo_destroy(cr);
-    cairo_surface_destroy(s);
+    CHECK(!xd_pkg_draw(&theme, cairo, "Draw", "Outside", "1", (xd_rect){0, 0, 4, 4}));
+    CHECK(!xd_pkg_draw(&theme, cairo, "Draw", "NoSuchPart", "1", (xd_rect){0, 0, 4, 4}));
+    cairo_destroy(cairo);
+    cairo_surface_destroy(surface);
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
 
     /* ImageFileN by DPI: the one made for it unscaled, else the nearest
      * below, scaled. */
-    CHECK(pkg_part_w(p, 1, "Dpi") == 13);
-    CHECK(pkg_part_w(p, 2, "Dpi") == 26);
-    CHECK(pkg_part_w(p, 1.5, "Dpi") == 20);
-    CHECK(pkg_part_w(p, 3, "Dpi") == 39);
-    s = pkg_render(p, 2, "Dpi", "1", 26, 26, 26, 26);
-    CHECK(pixel(s, 0, 0) == 0x202020 && pixel(s, 25, 25) == 0x202020);
-    cairo_surface_destroy(s);
+    CHECK(pkg_part_w(package, 1, "Dpi") == 13);
+    CHECK(pkg_part_w(package, 2, "Dpi") == 26);
+    CHECK(pkg_part_w(package, 1.5, "Dpi") == 20);
+    CHECK(pkg_part_w(package, 3, "Dpi") == 39);
+    surface = pkg_render(package, 2, "Dpi", "1", 26, 26, 26, 26);
+    CHECK(pixel(surface, 0, 0) == 0x202020 && pixel(surface, 25, 25) == 0x202020);
+    cairo_surface_destroy(surface);
     /* ... and by size: the largest whose MinSize fits. */
-    s = pkg_render(p, 1, "BySize", "1", 10, 10, 20, 20);
-    CHECK(pixel(s, 5, 5) == 0x303030);
-    cairo_surface_destroy(s);
-    s = pkg_render(p, 1, "BySize", "1", 20, 20, 20, 20);
-    CHECK(pixel(s, 10, 10) == 0x404040 && pixel(s, 2, 2) == 0x404040 && pixel(s, 1, 1) == 0xFFFFFF);
-    cairo_surface_destroy(s);
+    surface = pkg_render(package, 1, "BySize", "1", 10, 10, 20, 20);
+    CHECK(pixel(surface, 5, 5) == 0x303030);
+    cairo_surface_destroy(surface);
+    surface = pkg_render(package, 1, "BySize", "1", 20, 20, 20, 20);
+    CHECK(pixel(surface, 10, 10) == 0x404040 && pixel(surface, 2, 2) == 0x404040 &&
+          pixel(surface, 1, 1) == 0xFFFFFF);
+    cairo_surface_destroy(surface);
     /* Image glyphs: the largest that fits, centred. */
-    s = pkg_render(p, 1, "Glyph", "1", 10, 10, 14, 14);
-    CHECK(pixel(s, 1, 1) == 0x505050 && pixel(s, 7, 7) == 0x505050);
-    CHECK(pixel(s, 0, 0) == 0xFFFFFF && pixel(s, 8, 8) == 0xFFFFFF);
-    cairo_surface_destroy(s);
-    s = pkg_render(p, 1, "Glyph", "1", 14, 14, 14, 14);
-    CHECK(pixel(s, 1, 1) == 0x606060 && pixel(s, 11, 11) == 0x606060 && pixel(s, 12, 12) == 0xFFFFFF);
-    cairo_surface_destroy(s);
+    surface = pkg_render(package, 1, "Glyph", "1", 10, 10, 14, 14);
+    CHECK(pixel(surface, 1, 1) == 0x505050 && pixel(surface, 7, 7) == 0x505050);
+    CHECK(pixel(surface, 0, 0) == 0xFFFFFF && pixel(surface, 8, 8) == 0xFFFFFF);
+    cairo_surface_destroy(surface);
+    surface = pkg_render(package, 1, "Glyph", "1", 14, 14, 14, 14);
+    CHECK(pixel(surface, 1, 1) == 0x606060 && pixel(surface, 11, 11) == 0x606060 &&
+          pixel(surface, 12, 12) == 0xFFFFFF);
+    cairo_surface_destroy(surface);
 
     /* BorderFill, its border scaled. */
-    s = pkg_render(p, 1, "Border", "1", 10, 10, 10, 10);
-    CHECK(pixel(s, 0, 0) == 0xFF0000 && pixel(s, 1, 1) == 0xFF0000 && pixel(s, 9, 9) == 0xFF0000);
-    CHECK(pixel(s, 2, 2) == 0x0000FF && pixel(s, 7, 7) == 0x0000FF && pixel(s, 8, 5) == 0xFF0000);
-    cairo_surface_destroy(s);
-    s = pkg_render(p, 2, "Border", "1", 20, 20, 20, 20);
-    CHECK(pixel(s, 3, 3) == 0xFF0000 && pixel(s, 4, 4) == 0x0000FF && pixel(s, 16, 10) == 0xFF0000);
-    cairo_surface_destroy(s);
+    surface = pkg_render(package, 1, "Border", "1", 10, 10, 10, 10);
+    CHECK(pixel(surface, 0, 0) == 0xFF0000 && pixel(surface, 1, 1) == 0xFF0000 &&
+          pixel(surface, 9, 9) == 0xFF0000);
+    CHECK(pixel(surface, 2, 2) == 0x0000FF && pixel(surface, 7, 7) == 0x0000FF &&
+          pixel(surface, 8, 5) == 0xFF0000);
+    cairo_surface_destroy(surface);
+    surface = pkg_render(package, 2, "Border", "1", 20, 20, 20, 20);
+    CHECK(pixel(surface, 3, 3) == 0xFF0000 && pixel(surface, 4, 4) == 0x0000FF &&
+          pixel(surface, 16, 10) == 0xFF0000);
+    cairo_surface_destroy(surface);
 
     /* AtlasRect: a rectangle of a larger image. */
-    s = pkg_render(p, 1, "Atlas", "1", 4, 4, 4, 4);
-    CHECK(pixel(s, 0, 0) == 0x007000 && pixel(s, 3, 3) == 0x007000);
-    cairo_surface_destroy(s);
+    surface = pkg_render(package, 1, "Atlas", "1", 4, 4, 4, 4);
+    CHECK(pixel(surface, 0, 0) == 0x007000 && pixel(surface, 3, 3) == 0x007000);
+    cairo_surface_destroy(surface);
 
     /* High DPI: at whole-number scales, each pixel an exact block. */
     for (int k = 2; k <= 3; k++) {
-        s = pkg_render(p, k, "Checker", "1", 2 * k, 2 * k, 2 * k, 2 * k);
+        surface = pkg_render(package, k, "Checker", "1", 2 * k, 2 * k, 2 * k, 2 * k);
         bool exact = true;
         for (int y = 0; y < 2 * k; y++)
             for (int x = 0; x < 2 * k; x++)
-                exact = exact && pixel(s, x, y) == ((x / k + y / k) % 2 ? 0xFFFFFFu : 0u);
+                exact = exact && pixel(surface, x, y) == ((x / k + y / k) % 2 ? 0xFFFFFFu : 0u);
         CHECK(exact);
-        cairo_surface_destroy(s);
+        cairo_surface_destroy(surface);
     }
 
     /* The controls drawn from it: progress chunks ProgressChunkSize wide,
      * ProgressSpaceSize apart, inside the bar's SizingMargins; a menu's hot
      * item from Menu's PopupItem, nothing behind a normal one. */
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
-    s = pkg_canvas(40, 10, &cr);
-    xd_theme_draw_progress(&t, cr, (xd_rect){0, 0, 40, 10}, 0.5);
-    CHECK(pixel(s, 1, 5) == 0xC0C0C0 && pixel(s, 2, 1) == 0xC0C0C0);
-    CHECK(pixel(s, 2, 2) == 0x00A000 && pixel(s, 5, 7) == 0x00A000);
-    CHECK(pixel(s, 6, 5) == 0xC0C0C0 && pixel(s, 7, 5) == 0xC0C0C0);
-    CHECK(pixel(s, 8, 5) == 0x00A000 && pixel(s, 17, 5) == 0x00A000);
-    CHECK(pixel(s, 18, 5) == 0xC0C0C0 && pixel(s, 20, 5) == 0xC0C0C0);
-    cairo_destroy(cr);
-    cairo_surface_destroy(s);
-    s = pkg_canvas(60, 44, &cr);
-    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
-    xd_theme_draw_menu_item(&t, cr, (xd_rect){0, 22, 60, 22}, 0, "", false, false);
-    CHECK(pixel(s, 30, 11) == 0x002200 && pixel(s, 0, 0) == 0x002200);
-    CHECK(pixel(s, 30, 33) == 0xFFFFFF);
-    cairo_destroy(cr);
-    cairo_surface_destroy(s);
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, 1.0);
+    surface = pkg_canvas(40, 10, &cairo);
+    xd_theme_draw_progress(&theme, cairo, (xd_rect){0, 0, 40, 10}, 0.5);
+    CHECK(pixel(surface, 1, 5) == 0xC0C0C0 && pixel(surface, 2, 1) == 0xC0C0C0);
+    CHECK(pixel(surface, 2, 2) == 0x00A000 && pixel(surface, 5, 7) == 0x00A000);
+    CHECK(pixel(surface, 6, 5) == 0xC0C0C0 && pixel(surface, 7, 5) == 0xC0C0C0);
+    CHECK(pixel(surface, 8, 5) == 0x00A000 && pixel(surface, 17, 5) == 0x00A000);
+    CHECK(pixel(surface, 18, 5) == 0xC0C0C0 && pixel(surface, 20, 5) == 0xC0C0C0);
+    cairo_destroy(cairo);
+    cairo_surface_destroy(surface);
+    surface = pkg_canvas(60, 44, &cairo);
+    xd_theme_draw_menu_item(&theme, cairo, (xd_rect){0, 0, 60, 22}, XD_STATE_HOT, "", false, false);
+    xd_theme_draw_menu_item(&theme, cairo, (xd_rect){0, 22, 60, 22}, 0, "", false, false);
+    CHECK(pixel(surface, 30, 11) == 0x002200 && pixel(surface, 0, 0) == 0x002200);
+    CHECK(pixel(surface, 30, 33) == 0xFFFFFF);
+    cairo_destroy(cairo);
+    cairo_surface_destroy(surface);
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
 
-    xd_pkg_free(p);
+    xd_pkg_free(package);
     rm_tree(root);
     g_free(dir);
     g_free(root);
@@ -2138,34 +2186,36 @@ static void test_theme_package(void) {
 
 static void test_theme_settings(void) {
     /* [Appearance] IconTheme and GtkTheme: directory names, "" = default. */
-    xd_settings a;
-    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=oxygen\nGtkTheme=Adwaita:dark\n"), &a);
-    CHECK(strcmp(a.icon_theme, "oxygen") == 0 && strcmp(a.gtk_theme, "Adwaita:dark") == 0);
-    CHECK(strcmp(xd_settings_icon_theme(&a), "oxygen") == 0);
-    CHECK(strcmp(xd_settings_gtk_theme(&a), "Adwaita:dark") == 0);
+    xd_settings original;
+    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=oxygen\nGtkTheme=Adwaita:dark\n"), &original);
+    CHECK(strcmp(original.icon_theme, "oxygen") == 0 &&
+          strcmp(original.gtk_theme, "Adwaita:dark") == 0);
+    CHECK(strcmp(xd_settings_icon_theme(&original), "oxygen") == 0);
+    CHECK(strcmp(xd_settings_gtk_theme(&original), "Adwaita:dark") == 0);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && strcmp(b.icon_theme, "oxygen") == 0);
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) && strcmp(parsed.icon_theme, "oxygen") == 0);
     xd_strbuf_free(&text);
     /* No paths, nothing hidden, nothing too long. */
-    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=../../etc\nGtkTheme=.hidden\n"), &a);
-    CHECK(a.icon_theme[0] == '\0' && a.gtk_theme[0] == '\0');
-    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"),
-                      &a);
-    CHECK(a.icon_theme[0] == '\0');
+    xd_settings_parse(XD_STR("[Appearance]\nIconTheme=../../etc\nGtkTheme=.hidden\n"), &original);
+    CHECK(original.icon_theme[0] == '\0' && original.gtk_theme[0] == '\0');
+    xd_settings_parse(
+        XD_STR("[Appearance]\nIconTheme=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+               "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"),
+        &original);
+    CHECK(original.icon_theme[0] == '\0');
     /* Unset: ours, and $XD_ICON_THEME before breeze. */
-    xd_settings_defaults(&a);
-    CHECK(strcmp(xd_settings_gtk_theme(&a), "XeonDesktop") == 0);
+    xd_settings_defaults(&original);
+    CHECK(strcmp(xd_settings_gtk_theme(&original), "XeonDesktop") == 0);
     char *env = g_strdup(g_getenv("XD_ICON_THEME"));
     g_unsetenv("XD_ICON_THEME");
-    CHECK(strcmp(xd_settings_icon_theme(&a), "breeze") == 0);
+    CHECK(strcmp(xd_settings_icon_theme(&original), "breeze") == 0);
     g_setenv("XD_ICON_THEME", "Adwaita", TRUE);
-    CHECK(strcmp(xd_settings_icon_theme(&a), "Adwaita") == 0);
-    snprintf(a.icon_theme, sizeof(a.icon_theme), "%s", "oxygen");
-    CHECK(strcmp(xd_settings_icon_theme(&a), "oxygen") == 0); /* the setting wins */
+    CHECK(strcmp(xd_settings_icon_theme(&original), "Adwaita") == 0);
+    snprintf(original.icon_theme, sizeof(original.icon_theme), "%s", "oxygen");
+    CHECK(strcmp(xd_settings_icon_theme(&original), "oxygen") == 0); /* the setting wins */
     if (env != nullptr)
         g_setenv("XD_ICON_THEME", env, TRUE);
     else
@@ -2260,33 +2310,33 @@ static void test_theme_settings(void) {
     char *ini4 = g_build_filename(config, "gtk-4.0", "settings.ini", nullptr);
     GKeyFile *kf = g_key_file_new();
     CHECK(g_key_file_load_from_file(kf, ini3, G_KEY_FILE_KEEP_COMMENTS, nullptr));
-    char *v = g_key_file_get_string(kf, "Settings", "gtk-theme-name", nullptr);
-    CHECK(g_strcmp0(v, "Zap") == 0);
-    g_free(v);
-    v = g_key_file_get_string(kf, "Settings", "gtk-icon-theme-name", nullptr);
-    CHECK(g_strcmp0(v, "zed") == 0);
-    g_free(v);
-    v = g_key_file_get_string(kf, "Settings", "gtk-font-name", nullptr);
-    CHECK(g_strcmp0(v, "Sans 10") == 0);
-    g_free(v);
-    v = g_key_file_get_comment(kf, nullptr, nullptr, nullptr);
-    CHECK(v != nullptr && strstr(v, "mine") != nullptr);
-    g_free(v);
+    char *value = g_key_file_get_string(kf, "Settings", "gtk-theme-name", nullptr);
+    CHECK(g_strcmp0(value, "Zap") == 0);
+    g_free(value);
+    value = g_key_file_get_string(kf, "Settings", "gtk-icon-theme-name", nullptr);
+    CHECK(g_strcmp0(value, "zed") == 0);
+    g_free(value);
+    value = g_key_file_get_string(kf, "Settings", "gtk-font-name", nullptr);
+    CHECK(g_strcmp0(value, "Sans 10") == 0);
+    g_free(value);
+    value = g_key_file_get_comment(kf, nullptr, nullptr, nullptr);
+    CHECK(value != nullptr && strstr(value, "mine") != nullptr);
+    g_free(value);
     g_key_file_free(kf);
     /* Ours: GTK4 has no such theme, so its file loses the key. */
     xd_gtk_settings_export(config, backend, "XeonDesktop", nullptr);
     kf = g_key_file_new();
     CHECK(g_key_file_load_from_file(kf, ini4, G_KEY_FILE_NONE, nullptr));
     CHECK(!g_key_file_has_key(kf, "Settings", "gtk-theme-name", nullptr));
-    v = g_key_file_get_string(kf, "Settings", "gtk-icon-theme-name", nullptr);
-    CHECK(g_strcmp0(v, "zed") == 0);
-    g_free(v);
+    value = g_key_file_get_string(kf, "Settings", "gtk-icon-theme-name", nullptr);
+    CHECK(g_strcmp0(value, "zed") == 0);
+    g_free(value);
     g_key_file_free(kf);
     kf = g_key_file_new();
     CHECK(g_key_file_load_from_file(kf, ini3, G_KEY_FILE_NONE, nullptr));
-    v = g_key_file_get_string(kf, "Settings", "gtk-theme-name", nullptr);
-    CHECK(g_strcmp0(v, "XeonDesktop") == 0);
-    g_free(v);
+    value = g_key_file_get_string(kf, "Settings", "gtk-theme-name", nullptr);
+    CHECK(g_strcmp0(value, "XeonDesktop") == 0);
+    g_free(value);
     g_key_file_free(kf);
     /* GSettings, where the schema is installed (in memory here). */
     GSettingsSchemaSource *src = g_settings_schema_source_get_default();
@@ -2294,38 +2344,38 @@ static void test_theme_settings(void) {
         src != nullptr ? g_settings_schema_source_lookup(src, "org.gnome.desktop.interface", TRUE)
                        : nullptr;
     if (schema != nullptr) {
-        GSettings *s = g_settings_new_full(schema, backend, nullptr);
-        v = g_settings_get_string(s, "gtk-theme");
-        CHECK(strcmp(v, "XeonDesktop") == 0);
-        g_free(v);
-        v = g_settings_get_string(s, "icon-theme");
-        CHECK(strcmp(v, "zed") == 0);
-        g_free(v);
+        GSettings *gsettings = g_settings_new_full(schema, backend, nullptr);
+        value = g_settings_get_string(gsettings, "gtk-theme");
+        CHECK(strcmp(value, "XeonDesktop") == 0);
+        g_free(value);
+        value = g_settings_get_string(gsettings, "icon-theme");
+        CHECK(strcmp(value, "zed") == 0);
+        g_free(value);
         /* After a rewrite, ours switches between its two names (GTK only
          * reloads a theme when the name changes)... */
         CHECK(xd_gtk_theme_nudge(backend));
-        v = g_settings_get_string(s, "gtk-theme");
-        CHECK(strcmp(v, XD_GTK_THEME_ALT_NAME) == 0);
-        g_free(v);
+        value = g_settings_get_string(gsettings, "gtk-theme");
+        CHECK(strcmp(value, XD_GTK_THEME_ALT_NAME) == 0);
+        g_free(value);
         CHECK(xd_gtk_theme_nudge(backend));
-        v = g_settings_get_string(s, "gtk-theme");
-        CHECK(strcmp(v, XD_GTK_THEME_NAME) == 0);
-        g_free(v);
+        value = g_settings_get_string(gsettings, "gtk-theme");
+        CHECK(strcmp(value, XD_GTK_THEME_NAME) == 0);
+        g_free(value);
         /* ...but another theme set there stays. */
-        g_settings_set_string(s, "gtk-theme", "Zap");
+        g_settings_set_string(gsettings, "gtk-theme", "Zap");
         CHECK(!xd_gtk_theme_nudge(backend));
-        v = g_settings_get_string(s, "gtk-theme");
-        CHECK(strcmp(v, "Zap") == 0);
-        g_free(v);
-        g_object_unref(s);
+        value = g_settings_get_string(gsettings, "gtk-theme");
+        CHECK(strcmp(value, "Zap") == 0);
+        g_free(value);
+        g_object_unref(gsettings);
         /* Nothing set at all: ours goes in. */
         GSettingsBackend *fresh = g_memory_settings_backend_new();
         CHECK(xd_gtk_theme_nudge(fresh));
-        s = g_settings_new_full(schema, fresh, nullptr);
-        v = g_settings_get_string(s, "gtk-theme");
-        CHECK(strcmp(v, XD_GTK_THEME_NAME) == 0);
-        g_free(v);
-        g_object_unref(s);
+        gsettings = g_settings_new_full(schema, fresh, nullptr);
+        value = g_settings_get_string(gsettings, "gtk-theme");
+        CHECK(strcmp(value, XD_GTK_THEME_NAME) == 0);
+        g_free(value);
+        g_object_unref(gsettings);
         g_object_unref(fresh);
         g_settings_schema_unref(schema);
     }
@@ -2334,21 +2384,21 @@ static void test_theme_settings(void) {
     xd_font_settings_export(config, backend, &fs);
     kf = g_key_file_new();
     CHECK(g_key_file_load_from_file(kf, ini3, G_KEY_FILE_NONE, nullptr));
-    v = g_key_file_get_string(kf, "Settings", "gtk-xft-rgba", nullptr);
-    CHECK(g_strcmp0(v, "bgr") == 0);
-    g_free(v);
-    v = g_key_file_get_string(kf, "Settings", "gtk-xft-hintstyle", nullptr);
-    CHECK(g_strcmp0(v, "hintmedium") == 0);
-    g_free(v);
+    value = g_key_file_get_string(kf, "Settings", "gtk-xft-rgba", nullptr);
+    CHECK(g_strcmp0(value, "bgr") == 0);
+    g_free(value);
+    value = g_key_file_get_string(kf, "Settings", "gtk-xft-hintstyle", nullptr);
+    CHECK(g_strcmp0(value, "hintmedium") == 0);
+    g_free(value);
     CHECK(g_key_file_get_integer(kf, "Settings", "gtk-xft-antialias", nullptr) == 1);
     g_key_file_free(kf);
     fs = (xd_font_smoothing){XD_SMOOTH_NONE, XD_SUBPIXEL_BGR, XD_HINT_NONE};
     xd_font_settings_export(config, backend, &fs);
     kf = g_key_file_new();
     CHECK(g_key_file_load_from_file(kf, ini4, G_KEY_FILE_NONE, nullptr));
-    v = g_key_file_get_string(kf, "Settings", "gtk-xft-rgba", nullptr);
-    CHECK(g_strcmp0(v, "none") == 0);
-    g_free(v);
+    value = g_key_file_get_string(kf, "Settings", "gtk-xft-rgba", nullptr);
+    CHECK(g_strcmp0(value, "none") == 0);
+    g_free(value);
     CHECK(g_key_file_get_integer(kf, "Settings", "gtk-xft-antialias", nullptr) == 0);
     CHECK(g_key_file_get_integer(kf, "Settings", "gtk-xft-hinting", nullptr) == 0);
     g_key_file_free(kf);
@@ -2356,17 +2406,17 @@ static void test_theme_settings(void) {
                  ? g_settings_schema_source_lookup(src, "org.gnome.desktop.interface", TRUE)
                  : nullptr;
     if (schema != nullptr && g_settings_schema_has_key(schema, "font-antialiasing")) {
-        GSettings *s = g_settings_new_full(schema, backend, nullptr);
-        v = g_settings_get_string(s, "font-antialiasing");
-        CHECK(strcmp(v, "none") == 0);
-        g_free(v);
-        v = g_settings_get_string(s, "font-hinting");
-        CHECK(strcmp(v, "none") == 0);
-        g_free(v);
-        v = g_settings_get_string(s, "font-rgba-order");
-        CHECK(strcmp(v, "bgr") == 0);
-        g_free(v);
-        g_object_unref(s);
+        GSettings *gsettings = g_settings_new_full(schema, backend, nullptr);
+        value = g_settings_get_string(gsettings, "font-antialiasing");
+        CHECK(strcmp(value, "none") == 0);
+        g_free(value);
+        value = g_settings_get_string(gsettings, "font-hinting");
+        CHECK(strcmp(value, "none") == 0);
+        g_free(value);
+        value = g_settings_get_string(gsettings, "font-rgba-order");
+        CHECK(strcmp(value, "bgr") == 0);
+        g_free(value);
+        g_object_unref(gsettings);
     }
     if (schema != nullptr)
         g_settings_schema_unref(schema);
@@ -2385,27 +2435,27 @@ static void test_theme_settings(void) {
 
 /* Aero's Window Color and Appearance: the settings, and the glass they
  * give the frames, taskbar and Start menu. */
-static bool near0(double d) { return d < 1e-9 && d > -1e-9; }
+static bool near0(double value) { return value < 1e-9 && value > -1e-9; }
 
 #if XD_HAVE_LIBARCHIVE
-/* A .xdtheme: a zip of `n` files. */
-static void write_zip(const char *file, const char *const (*items)[2], size_t n) {
-    struct archive *a = archive_write_new();
-    archive_write_set_format_zip(a);
-    CHECK(archive_write_open_filename(a, file) == ARCHIVE_OK);
-    for (size_t i = 0; i < n; i++) {
-        struct archive_entry *e = archive_entry_new();
-        archive_entry_set_pathname(e, items[i][0]);
-        archive_entry_set_filetype(e, AE_IFREG);
-        archive_entry_set_perm(e, 0644);
+/* A .xdtheme: a zip of `count` files. */
+static void write_zip(const char *file, const char *const (*items)[2], size_t count) {
+    struct archive *writer = archive_write_new();
+    archive_write_set_format_zip(writer);
+    CHECK(archive_write_open_filename(writer, file) == ARCHIVE_OK);
+    for (size_t i = 0; i < count; i++) {
+        struct archive_entry *member = archive_entry_new();
+        archive_entry_set_pathname(member, items[i][0]);
+        archive_entry_set_filetype(member, AE_IFREG);
+        archive_entry_set_perm(member, 0644);
         size_t len = strlen(items[i][1]);
-        archive_entry_set_size(e, (la_int64_t)len);
-        CHECK(archive_write_header(a, e) == ARCHIVE_OK);
-        CHECK(archive_write_data(a, items[i][1], len) == (la_ssize_t)len);
-        archive_entry_free(e);
+        archive_entry_set_size(member, (la_int64_t)len);
+        CHECK(archive_write_header(writer, member) == ARCHIVE_OK);
+        CHECK(archive_write_data(writer, items[i][1], len) == (la_ssize_t)len);
+        archive_entry_free(member);
     }
-    CHECK(archive_write_close(a) == ARCHIVE_OK);
-    archive_write_free(a);
+    CHECK(archive_write_close(writer) == ARCHIVE_OK);
+    archive_write_free(writer);
 }
 #endif
 
@@ -2415,41 +2465,43 @@ static const xd_installed_package *package_at(GPtrArray *list, guint i) {
 
 static void test_theme_packages(void) {
     /* [Appearance] ThemePackage, ThemeVariant, ImageScaling, IntegerScaling. */
-    xd_settings a;
-    xd_settings_defaults(&a);
-    CHECK(a.theme_package[0] == '\0' && a.theme_variant[0] == '\0');
-    CHECK(a.image_scaling == XD_FILTER_COUNT && a.integer_scaling);
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(original.theme_package[0] == '\0' && original.theme_variant[0] == '\0');
+    CHECK(original.image_scaling == XD_FILTER_COUNT && original.integer_scaling);
     xd_settings_parse(XD_STR("[Appearance]\nThemePackage=Energy Blue\nThemeVariant=royale-normal\n"
                              "ImageScaling=scale2x\nIntegerScaling=false\n"),
-                      &a);
-    CHECK(strcmp(a.theme_package, "Energy Blue") == 0);
-    CHECK(strcmp(a.theme_variant, "royale-normal") == 0);
-    CHECK(a.image_scaling == XD_FILTER_SCALE2X && !a.integer_scaling);
+                      &original);
+    CHECK(strcmp(original.theme_package, "Energy Blue") == 0);
+    CHECK(strcmp(original.theme_variant, "royale-normal") == 0);
+    CHECK(original.image_scaling == XD_FILTER_SCALE2X && !original.integer_scaling);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "ImageScaling=Scale2x\n") != nullptr);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && strcmp(b.theme_package, "Energy Blue") == 0 &&
-          b.image_scaling == XD_FILTER_SCALE2X && !b.integer_scaling);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          strcmp(parsed.theme_package, "Energy Blue") == 0 &&
+          parsed.image_scaling == XD_FILTER_SCALE2X && !parsed.integer_scaling);
     xd_strbuf_free(&text);
     /* A name, never a path; filters by name only (bad values keep their
      * defaults); Automatic written so. */
     xd_settings_parse(XD_STR("[Appearance]\nThemePackage=../../etc\nThemeVariant=a/b\n"
                              "ImageScaling=Bicubic\nIntegerScaling=maybe\n"),
-                      &a);
-    CHECK(a.theme_package[0] == '\0' && a.theme_variant[0] == '\0'); /* the defaults */
-    CHECK(a.image_scaling == XD_FILTER_COUNT && a.integer_scaling);
-    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=\nImageScaling=automatic\n"), &a);
-    CHECK(a.theme_package[0] == '\0' && a.image_scaling == XD_FILTER_COUNT);
-    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=.hidden\n"), &a);
-    CHECK(a.theme_package[0] == '\0');
-    xd_settings_serialize(&a, &text);
+                      &original);
+    CHECK(original.theme_package[0] == '\0' &&
+          original.theme_variant[0] == '\0'); /* the defaults */
+    CHECK(original.image_scaling == XD_FILTER_COUNT && original.integer_scaling);
+    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=\nImageScaling=automatic\n"), &original);
+    CHECK(original.theme_package[0] == '\0' && original.image_scaling == XD_FILTER_COUNT);
+    xd_settings_parse(XD_STR("[Appearance]\nThemePackage=.hidden\n"), &original);
+    CHECK(original.theme_package[0] == '\0');
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "ImageScaling=Automatic\n") != nullptr);
     xd_strbuf_free(&text);
-    CHECK(xd_settings_image_filter(&a, nullptr) == XD_FILTER_SMOOTH);
-    a.image_scaling = XD_FILTER_NEAREST;
-    CHECK(xd_settings_image_filter(&a, nullptr) == XD_FILTER_NEAREST);
+    CHECK(xd_settings_image_filter(&original, nullptr) == XD_FILTER_SMOOTH);
+    original.image_scaling = XD_FILTER_NEAREST;
+    CHECK(xd_settings_image_filter(&original, nullptr) == XD_FILTER_NEAREST);
 
     /* Discovery, in two scratch directories as $XDG_DATA_HOME's and a
      * system one's xeondesktop/themes. Our own little packages. */
@@ -2543,9 +2595,9 @@ static void test_theme_packages(void) {
     char *env = g_strdup(g_getenv("XD_THEME_PACKAGE"));
     char *alpha_path = g_build_filename(one, "Alpha", nullptr);
     g_setenv("XD_THEME_PACKAGE", alpha_path, TRUE);
-    xd_settings s;
-    xd_settings_defaults(&s);
-    xd_pkg *old = xd_settings_use_package(&s);
+    xd_settings plain;
+    xd_settings_defaults(&plain);
+    xd_pkg *old = xd_settings_use_package(&plain);
     CHECK(old == nullptr);
     xd_pkg_free(old);
     const xd_pkg *active = xd_settings_active_package();
@@ -2555,38 +2607,39 @@ static void test_theme_packages(void) {
      * Automatic scaling is its own filter. */
     xd_scheme scheme;
     xd_scheme_init_default(&scheme);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
-    CHECK(t.pkg == active && t.style == XD_STYLE_LUNA && t.image_filter == XD_FILTER_INTEGER);
-    CHECK(t.scheme.colors[XD_COLOR_ACTIVE_TITLE].r == 10);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(theme.pkg == active && theme.style == XD_STYLE_LUNA &&
+          theme.image_filter == XD_FILTER_INTEGER);
+    CHECK(theme.scheme.colors[XD_COLOR_ACTIVE_TITLE].r == 10);
     /* The same package again: kept. Another variant: loaded anew. */
-    old = xd_settings_use_package(&s);
+    old = xd_settings_use_package(&plain);
     CHECK(old == nullptr && xd_settings_active_package() == active);
-    snprintf(s.theme_variant, sizeof(s.theme_variant), "%s", "green");
-    s.image_scaling = XD_FILTER_SMOOTH; /* the user's choice wins */
-    old = xd_settings_use_package(&s);
+    snprintf(plain.theme_variant, sizeof(plain.theme_variant), "%s", "green");
+    plain.image_scaling = XD_FILTER_SMOOTH; /* the user's choice wins */
+    old = xd_settings_use_package(&plain);
     CHECK(old == active);
     xd_pkg_free(old);
     active = xd_settings_active_package();
     CHECK(active != nullptr && strcmp(xd_pkg_variant(active), "green") == 0);
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
-    CHECK(t.pkg == active && t.image_filter == XD_FILTER_SMOOTH);
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(theme.pkg == active && theme.image_filter == XD_FILTER_SMOOTH);
     /* A preview with another package, or none, whatever is active. */
-    xd_theme_init_package(&t, XD_STYLE_AERO, &scheme, 1.0, nullptr, XD_FILTER_SMOOTH, true);
-    CHECK(t.pkg == nullptr && t.style == XD_STYLE_AERO &&
-          t.scheme.colors[XD_COLOR_ACTIVE_TITLE].r == scheme.colors[XD_COLOR_ACTIVE_TITLE].r);
+    xd_theme_init_package(&theme, XD_STYLE_AERO, &scheme, 1.0, nullptr, XD_FILTER_SMOOTH, true);
+    CHECK(theme.pkg == nullptr && theme.style == XD_STYLE_AERO &&
+          theme.scheme.colors[XD_COLOR_ACTIVE_TITLE].r == scheme.colors[XD_COLOR_ACTIVE_TITLE].r);
     /* Without the override, the settings' package: none, as named. */
     g_unsetenv("XD_THEME_PACKAGE");
-    s.theme_variant[0] = '\0';
-    old = xd_settings_use_package(&s);
+    plain.theme_variant[0] = '\0';
+    old = xd_settings_use_package(&plain);
     CHECK(old == active);
     xd_pkg_free(old);
     CHECK(xd_settings_active_package() == nullptr);
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
-    CHECK(t.pkg == nullptr && t.style == XD_STYLE_CLASSIC);
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(theme.pkg == nullptr && theme.style == XD_STYLE_CLASSIC);
     /* Not installed: none either. */
-    snprintf(s.theme_package, sizeof(s.theme_package), "%s", "Not Installed Anywhere");
-    CHECK(xd_settings_use_package(&s) == nullptr && xd_settings_active_package() == nullptr);
+    snprintf(plain.theme_package, sizeof(plain.theme_package), "%s", "Not Installed Anywhere");
+    CHECK(xd_settings_use_package(&plain) == nullptr && xd_settings_active_package() == nullptr);
     if (env != nullptr)
         g_setenv("XD_THEME_PACKAGE", env, TRUE);
     g_free(env);
@@ -2634,27 +2687,27 @@ static void test_theme_sets(void) {
     CHECK(!xd_theme_set_has_extras(&plain->info) && xd_theme_set_has_extras(&sky->info));
     CHECK(strcmp(sky->info.wallpaper_style, "tile") == 0);
 
-    xd_settings s;
-    xd_settings_defaults(&s);
-    snprintf(s.theme_package, sizeof(s.theme_package), "Sky");
+    xd_settings original;
+    xd_settings_defaults(&original);
+    snprintf(original.theme_package, sizeof(original.theme_package), "Sky");
     xd_sound_scheme sounds;
     xd_sound_scheme_init(&sounds, XD_SOUNDS_NONE);
     bool sounds_set = false;
     GError *error = nullptr;
     /* Worked out without unpacking: nothing written. */
-    xd_settings probe = s;
+    xd_settings probe = original;
     CHECK(xd_theme_set_extras(sky, data, false, &probe, &sounds, &sounds_set, &error));
     CHECK(!g_file_test(data, G_FILE_TEST_EXISTS));
-    CHECK(xd_theme_set_extras(sky, data, true, &s, &sounds, &sounds_set, &error));
+    CHECK(xd_theme_set_extras(sky, data, true, &original, &sounds, &sounds_set, &error));
     CHECK(error == nullptr && sounds_set);
     char *files = g_build_filename(data, "xeondesktop", "theme-files", "Sky", nullptr);
     char *wall = g_build_filename(files, "wallpaper", "sky.png", nullptr);
     char *hi = g_build_filename(files, "sounds", "hi.wav", nullptr);
     char *cur = g_build_filename(data, "icons", "xdtheme-Sky", "cursors", "left_ptr", nullptr);
     char *index = g_build_filename(data, "icons", "xdtheme-Sky", "index.theme", nullptr);
-    CHECK(strcmp(s.wallpaper, wall) == 0 && s.wallpaper_mode == XD_WALLPAPER_TILE);
+    CHECK(strcmp(original.wallpaper, wall) == 0 && original.wallpaper_mode == XD_WALLPAPER_TILE);
     CHECK(strcmp(probe.wallpaper, wall) == 0);
-    CHECK(strcmp(s.mouse.cursor_theme, "xdtheme-Sky") == 0);
+    CHECK(strcmp(original.mouse.cursor_theme, "xdtheme-Sky") == 0);
     CHECK(g_file_test(wall, G_FILE_TEST_IS_REGULAR) && g_file_test(hi, G_FILE_TEST_IS_REGULAR));
     CHECK(g_file_test(cur, G_FILE_TEST_IS_REGULAR) && g_file_test(index, G_FILE_TEST_IS_REGULAR));
     /* Its sounds, its silences and theme names; a bad value keeps the
@@ -2664,15 +2717,15 @@ static void test_theme_sets(void) {
     CHECK(strcmp(sounds.sounds[XD_SOUND_QUESTION], "dialog-question") == 0);
     CHECK(strcmp(sounds.sounds[XD_SOUND_MINIMIZE], "") == 0); /* Windows Default's */
     CHECK(strcmp(sounds.sounds[XD_SOUND_EXCLAMATION], "dialog-warning") == 0);
-    CHECK(xd_theme_set_matches(sky, data, &s, &sounds));
-    xd_settings changed = s;
+    CHECK(xd_theme_set_matches(sky, data, &original, &sounds));
+    xd_settings changed = original;
     changed.wallpaper_mode = XD_WALLPAPER_CENTER;
     CHECK(!xd_theme_set_matches(sky, data, &changed, &sounds));
-    changed = s;
+    changed = original;
     changed.mouse.cursor_theme[0] = '\0';
     CHECK(!xd_theme_set_matches(sky, data, &changed, &sounds));
     CHECK(xd_sound_scheme_set(&sounds, XD_SOUND_MAXIMIZE, "bell"));
-    CHECK(!xd_theme_set_matches(sky, data, &s, &sounds));
+    CHECK(!xd_theme_set_matches(sky, data, &original, &sounds));
     CHECK(xd_sound_scheme_set(&sounds, XD_SOUND_MAXIMIZE, ""));
     char name[64];
     CHECK(!xd_theme_set_cursor_theme("a-name-far-too-long-for-a-cursor-theme-directory-name-of-sixty-four",
@@ -2684,7 +2737,7 @@ static void test_theme_sets(void) {
     char *saved = g_build_filename(pkgs, "Mine.xdtheme", nullptr);
     char *icons = g_build_filename(data, "icons", nullptr);
     const char *icon_dirs[] = {icons, nullptr};
-    CHECK(xd_theme_set_save(saved, "Mine", &s, &sounds, sky->path, "v", icon_dirs, &error));
+    CHECK(xd_theme_set_save(saved, "Mine", &original, &sounds, sky->path, "v", icon_dirs, &error));
     CHECK(error == nullptr);
     g_clear_error(&error);
     GBytes *xml = xd_pkg_read_member(saved, "theme.xml", nullptr);
@@ -2704,17 +2757,17 @@ static void test_theme_sets(void) {
         CHECK(g_strcmp0(mine->info.wallpaper, "wallpaper/sky.png") == 0 &&
               g_strcmp0(mine->info.wallpaper_style, "tile") == 0 &&
               g_strcmp0(mine->info.cursors, "cursors") == 0);
-        xd_settings t = s;
+        xd_settings modified = original;
         xd_sound_scheme other;
         xd_sound_scheme_init(&other, XD_SOUNDS_NONE);
-        snprintf(t.theme_package, sizeof(t.theme_package), "Mine");
-        CHECK(xd_theme_set_extras(mine, data, true, &t, &other, &sounds_set, nullptr));
+        snprintf(modified.theme_package, sizeof(modified.theme_package), "Mine");
+        CHECK(xd_theme_set_extras(mine, data, true, &modified, &other, &sounds_set, nullptr));
         char *hi2 = g_build_filename(data, "xeondesktop", "theme-files", "Mine", "sounds",
                                      "hi.wav", nullptr);
         CHECK(strcmp(other.sounds[XD_SOUND_LOGON], hi2) == 0 &&
               g_file_test(hi2, G_FILE_TEST_IS_REGULAR));
-        CHECK(strcmp(t.mouse.cursor_theme, "xdtheme-Mine") == 0);
-        CHECK(xd_theme_set_matches(mine, data, &t, &other));
+        CHECK(strcmp(modified.mouse.cursor_theme, "xdtheme-Mine") == 0);
+        CHECK(xd_theme_set_matches(mine, data, &modified, &other));
         g_free(hi2);
         xd_sound_scheme_free(&other);
     }
@@ -2744,20 +2797,21 @@ static void test_theme_sets(void) {
 }
 
 static void test_glass_color(void) {
-    xd_settings s;
-    xd_settings_defaults(&s);
-    CHECK(s.glass_color == XD_GLASS_DEFAULT && s.glass_transparency);
-    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=a8ce0f0f\nGlassTransparency=false\n"), &s);
-    CHECK(s.glass_color == 0xA8CE0F0Fu && !s.glass_transparency);
+    xd_settings settings;
+    xd_settings_defaults(&settings);
+    CHECK(settings.glass_color == XD_GLASS_DEFAULT && settings.glass_transparency);
+    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=a8ce0f0f\nGlassTransparency=false\n"),
+                      &settings);
+    CHECK(settings.glass_color == 0xA8CE0F0Fu && !settings.glass_transparency);
     /* Not 8 hex digits: ignored. */
-    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=0xA8CE0F\n"), &s);
-    CHECK(s.glass_color == XD_GLASS_DEFAULT);
-    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=-1234567\n"), &s);
-    CHECK(s.glass_color == XD_GLASS_DEFAULT);
-    s.glass_color = 0x54FCFCFCu;
-    s.glass_transparency = false;
+    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=0xA8CE0F\n"), &settings);
+    CHECK(settings.glass_color == XD_GLASS_DEFAULT);
+    xd_settings_parse(XD_STR("[Appearance]\nGlassColor=-1234567\n"), &settings);
+    CHECK(settings.glass_color == XD_GLASS_DEFAULT);
+    settings.glass_color = 0x54FCFCFCu;
+    settings.glass_transparency = false;
     xd_strbuf text = {0};
-    xd_settings_serialize(&s, &text);
+    xd_settings_serialize(&settings, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "GlassColor=54FCFCFC") != nullptr);
     xd_settings back;
     xd_settings_parse(xd_strbuf_view(&text), &back);
@@ -2770,10 +2824,10 @@ static void test_glass_color(void) {
     /* HSV round trip, greys included. */
     static const uint32_t rgbs[] = {0x74B8FC, 0xCE0F0F, 0x555555, 0x14A600, 0xFF0099, 0};
     for (size_t i = 0; i < XD_ARRAY_LEN(rgbs); i++) {
-        xd_rgba c = xd_rgba_hex(rgbs[i]);
-        xd_rgba back_c = xd_rgba_from_hsv(xd_rgba_to_hsv(c), 0.5);
-        CHECK(near0(back_c.r - c.r) && near0(back_c.g - c.g) &&
-              near0(back_c.b - c.b) && back_c.a == 0.5);
+        xd_rgba color = xd_rgba_hex(rgbs[i]);
+        xd_rgba back_c = xd_rgba_from_hsv(xd_rgba_to_hsv(color), 0.5);
+        CHECK(near0(back_c.r - color.r) && near0(back_c.g - color.g) && near0(back_c.b - color.b) &&
+              back_c.a == 0.5);
     }
     CHECK(near0(xd_rgba_to_hsv(xd_rgba_hex(0x0000FF)).h - 240));
 
@@ -2785,46 +2839,47 @@ static void test_glass_color(void) {
     /* Opaque glass: the colour in light grey by its intensity. */
     xd_scheme_init_default(&scheme);
     scheme.glass_color = 0x80FF0000u;
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_AERO, &scheme, 1.0);
-    t.glass = false;
-    xd_glass_colors g;
-    xd_theme_glass_colors(&t, &g);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_AERO, &scheme, 1.0);
+    theme.glass = false;
+    xd_glass_colors glass;
+    xd_theme_glass_colors(&theme, &glass);
     double k = 0x80 / 255.0, grey = 0xEB / 255.0;
-    CHECK(!g.translucent && g.frame.a == 1.0 && near0(g.frame.r - (grey + (1 - grey) * k)) &&
-          near0(g.frame.g - grey * (1 - k)));
+    CHECK(!glass.translucent && glass.frame.a == 1.0 &&
+          near0(glass.frame.r - (grey + (1 - grey) * k)) && near0(glass.frame.g - grey * (1 - k)));
     /* Translucent with blur and transparency on: more intensity, more colour. */
-    t.glass = true;
-    xd_theme_glass_colors(&t, &g);
-    CHECK(g.translucent && g.frame.a < 1.0 && g.frame.r == 1.0 && g.frame.g == 0.0);
-    double low = g.frame.a;
-    t.scheme.glass_color = 0xC0FF0000u;
-    xd_theme_glass_colors(&t, &g);
-    CHECK(g.frame.a > low && g.taskbar.a > 0 && g.taskbar.r > g.taskbar.g);
+    theme.glass = true;
+    xd_theme_glass_colors(&theme, &glass);
+    CHECK(glass.translucent && glass.frame.a < 1.0 && glass.frame.r == 1.0 && glass.frame.g == 0.0);
+    double low = glass.frame.a;
+    theme.scheme.glass_color = 0xC0FF0000u;
+    xd_theme_glass_colors(&theme, &glass);
+    CHECK(glass.frame.a > low && glass.taskbar.a > 0 && glass.taskbar.r > glass.taskbar.g);
     /* Transparency off: opaque even with blur. */
-    t.scheme.glass_opaque = true;
-    xd_theme_glass_colors(&t, &g);
-    CHECK(!g.translucent && g.frame.a == 1.0 && g.taskbar.a == 1.0 && g.menu.a == 1.0);
+    theme.scheme.glass_opaque = true;
+    xd_theme_glass_colors(&theme, &glass);
+    CHECK(!glass.translucent && glass.frame.a == 1.0 && glass.taskbar.a == 1.0 &&
+          glass.menu.a == 1.0);
 
     /* The GTK theme's title bars follow the colour. */
     xd_strbuf sky = {0}, ruby = {0};
     xd_scheme_init_default(&scheme);
-    xd_theme_init(&t, XD_STYLE_AERO, &scheme, 1.0);
-    xd_theme_gtk_css(&t, &sky);
-    t.scheme.glass_color = 0xA8CE0F0Fu;
-    xd_theme_gtk_css(&t, &ruby);
+    xd_theme_init(&theme, XD_STYLE_AERO, &scheme, 1.0);
+    xd_theme_gtk_css(&theme, &sky);
+    theme.scheme.glass_color = 0xA8CE0F0Fu;
+    xd_theme_gtk_css(&theme, &ruby);
     CHECK(!xd_str_eq(xd_strbuf_view(&sky), xd_strbuf_view(&ruby)));
     xd_toolkit_colors tc;
-    xd_theme_toolkit_colors(&t, &tc);
+    xd_theme_toolkit_colors(&theme, &tc);
     CHECK(tc.title_bg.r > tc.title_bg.g + 0.4 && tc.title_bg2.r > tc.title_bg2.b);
     xd_strbuf_free(&sky);
     xd_strbuf_free(&ruby);
 }
 
 static void test_settings(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
-    CHECK(a.style == XD_STYLE_CLASSIC && a.wallpaper_mode == XD_WALLPAPER_FILL);
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(original.style == XD_STYLE_CLASSIC && original.wallpaper_mode == XD_WALLPAPER_FILL);
 
     xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nScheme=windows-classic\n"
                              "FontSize=large\nFontSmoothing=cleartype\nFuture=ignored\n"
@@ -2832,64 +2887,70 @@ static void test_settings(void) {
                              "[Effects]\nLargeIcons=true\nMenuTransition=Scroll\n"
                              "FullWindowDrag=false\n[ScreenSaver]\nWait=7\n"
                              "[SomethingNew]\nKey=v\n"),
-                      &a);
-    CHECK(a.style == XD_STYLE_LUNA && strcmp(a.scheme, "windows-classic") == 0);
+                      &original);
+    CHECK(original.style == XD_STYLE_LUNA && strcmp(original.scheme, "windows-classic") == 0);
     /* An older file's Windows name for subpixel smoothing still reads. */
-    CHECK(a.font_size == XD_FONT_LARGE && a.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL);
-    CHECK(a.font_smoothing.order == XD_SUBPIXEL_RGB && a.font_smoothing.hinting == XD_HINT_SLIGHT);
-    CHECK(strcmp(a.wallpaper, "/w/p.jpg") == 0 && a.wallpaper_mode == XD_WALLPAPER_TILE);
-    CHECK(a.large_icons && a.screensaver_wait == 7);
-    CHECK(a.menu_transition == XD_TRANSITION_SCROLL && !a.full_window_drag);
+    CHECK(original.font_size == XD_FONT_LARGE &&
+          original.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL);
+    CHECK(original.font_smoothing.order == XD_SUBPIXEL_RGB &&
+          original.font_smoothing.hinting == XD_HINT_SLIGHT);
+    CHECK(strcmp(original.wallpaper, "/w/p.jpg") == 0 &&
+          original.wallpaper_mode == XD_WALLPAPER_TILE);
+    CHECK(original.large_icons && original.screensaver_wait == 7);
+    CHECK(original.menu_transition == XD_TRANSITION_SCROLL && !original.full_window_drag);
 
     /* Serialize -> parse round trip. */
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b));
-    b.large_icons = false;
-    CHECK(!xd_settings_equal(&a, &b));
-    b.large_icons = true;
-    b.menu_transition = XD_TRANSITION_FADE;
-    CHECK(!xd_settings_equal(&a, &b));
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed));
+    parsed.large_icons = false;
+    CHECK(!xd_settings_equal(&original, &parsed));
+    parsed.large_icons = true;
+    parsed.menu_transition = XD_TRANSITION_FADE;
+    CHECK(!xd_settings_equal(&original, &parsed));
     xd_strbuf_free(&text);
 
     /* Font smoothing's three keys, written with their own names. */
-    a.font_smoothing = (xd_font_smoothing){XD_SMOOTH_SUBPIXEL, XD_SUBPIXEL_VBGR, XD_HINT_FULL};
-    xd_settings_serialize(&a, &text);
+    original.font_smoothing =
+        (xd_font_smoothing){XD_SMOOTH_SUBPIXEL, XD_SUBPIXEL_VBGR, XD_HINT_FULL};
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "FontSmoothing=subpixel") != nullptr);
     CHECK(strstr(xd_strbuf_cstr(&text), "FontSubpixelOrder=vbgr") != nullptr);
     CHECK(strstr(xd_strbuf_cstr(&text), "FontHinting=full") != nullptr);
     CHECK(strstr(xd_strbuf_cstr(&text), "cleartype") == nullptr);
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(b.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL &&
-          b.font_smoothing.order == XD_SUBPIXEL_VBGR && b.font_smoothing.hinting == XD_HINT_FULL);
-    b.font_smoothing.hinting = XD_HINT_NONE;
-    CHECK(!xd_settings_equal(&a, &b));
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(parsed.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL &&
+          parsed.font_smoothing.order == XD_SUBPIXEL_VBGR &&
+          parsed.font_smoothing.hinting == XD_HINT_FULL);
+    parsed.font_smoothing.hinting = XD_HINT_NONE;
+    CHECK(!xd_settings_equal(&original, &parsed));
     xd_strbuf_free(&text);
-    xd_settings_parse(XD_STR("[Appearance]\nFontSmoothing=standard\nFontHinting=bogus\n"), &b);
-    CHECK(b.font_smoothing.antialias == XD_SMOOTH_GRAYSCALE &&
-          b.font_smoothing.hinting == XD_HINT_SLIGHT);
+    xd_settings_parse(XD_STR("[Appearance]\nFontSmoothing=standard\nFontHinting=bogus\n"), &parsed);
+    CHECK(parsed.font_smoothing.antialias == XD_SMOOTH_GRAYSCALE &&
+          parsed.font_smoothing.hinting == XD_HINT_SLIGHT);
 
     /* Bad values keep defaults; a scheme can't be a path. */
     xd_settings_parse(XD_STR("[Appearance]\nStyle=bogus\nScheme=../../etc/x\n"
                              "[Desktop]\nWallpaper=relative.jpg\nWallpaperMode=x\n"
                              "[Effects]\nMenuTransition=wipe\n[ScreenSaver]\nWait=0\n"),
-                      &a);
-    CHECK(a.style == XD_STYLE_CLASSIC && a.scheme[0] == '\0' && a.wallpaper[0] == '\0');
-    CHECK(a.menu_transition == XD_TRANSITION_FADE && a.full_window_drag);
-    CHECK(a.wallpaper_mode == XD_WALLPAPER_FILL && a.screensaver_wait == 15);
+                      &original);
+    CHECK(original.style == XD_STYLE_CLASSIC && original.scheme[0] == '\0' &&
+          original.wallpaper[0] == '\0');
+    CHECK(original.menu_transition == XD_TRANSITION_FADE && original.full_window_drag);
+    CHECK(original.wallpaper_mode == XD_WALLPAPER_FILL && original.screensaver_wait == 15);
     /* A syntax error leaves everything at defaults. */
-    xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nbroken line\n"), &a);
-    CHECK(a.style == XD_STYLE_CLASSIC);
+    xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nbroken line\n"), &original);
+    CHECK(original.style == XD_STYLE_CLASSIC);
 
     /* Font size scales fonts and caption metrics. */
-    xd_settings_defaults(&a);
+    xd_settings_defaults(&original);
     xd_scheme normal;
-    xd_settings_scheme(&a, &normal);
-    a.font_size = XD_FONT_EXTRA_LARGE;
+    xd_settings_scheme(&original, &normal);
+    original.font_size = XD_FONT_EXTRA_LARGE;
     xd_scheme xl;
-    xd_settings_scheme(&a, &xl);
+    xd_settings_scheme(&original, &xl);
     CHECK(xl.fonts[XD_FONT_CAPTION].size_pt > normal.fonts[XD_FONT_CAPTION].size_pt * 1.4);
     CHECK(xl.metrics[XD_METRIC_CAPTION_HEIGHT] == 27);
 
@@ -2909,27 +2970,30 @@ static void test_settings(void) {
     CHECK(!now.show_clock && xd_settings_tray_rule(&now, "nm-applet") == XD_TRAY_AUTO);
 
     /* Customize Start Menu and Quick Launch's View menu. */
-    xd_settings_defaults(&a);
-    CHECK(a.start_large_icons && a.start_programs == 6 && a.start_highlight_new);
-    CHECK(!a.quick_large && !a.quick_show_text && !a.quick_show_title);
+    xd_settings_defaults(&original);
+    CHECK(original.start_large_icons && original.start_programs == 6 &&
+          original.start_highlight_new);
+    CHECK(!original.quick_large && !original.quick_show_text && !original.quick_show_title);
     xd_settings_parse(XD_STR("[StartMenu]\nLargeIcons=false\nPrograms=12\n"
                              "HighlightNewPrograms=false\n[Taskbar]\nQuickLaunchLargeIcons=true\n"
                              "QuickLaunchShowText=true\nQuickLaunchShowTitle=true\n"),
-                      &a);
-    CHECK(!a.start_large_icons && a.start_programs == 12 && !a.start_highlight_new);
-    CHECK(a.quick_large && a.quick_show_text && a.quick_show_title);
-    xd_settings_serialize(&a, &text);
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && b.start_programs == 12 && b.quick_show_title);
+                      &original);
+    CHECK(!original.start_large_icons && original.start_programs == 12 &&
+          !original.start_highlight_new);
+    CHECK(original.quick_large && original.quick_show_text && original.quick_show_title);
+    xd_settings_serialize(&original, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) && parsed.start_programs == 12 &&
+          parsed.quick_show_title);
     xd_strbuf_free(&text);
-    xd_settings_parse(XD_STR("[StartMenu]\nPrograms=31\n"), &a);
-    CHECK(a.start_programs == 6);
+    xd_settings_parse(XD_STR("[StartMenu]\nPrograms=31\n"), &original);
+    CHECK(original.start_programs == 6);
 }
 
 static void test_saver_settings(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
-    const xd_saver_settings *sv = &a.savers;
+    xd_settings original;
+    xd_settings_defaults(&original);
+    const xd_saver_settings *sv = &original.savers;
     CHECK(strcmp(sv->marquee.text, "XeonDesktop") == 0 && sv->marquee.random_position);
     CHECK(sv->starfield.density == 200 && sv->mystify.clear_screen && sv->beziers.curves == 1);
     CHECK(!sv->pipes.multiple && sv->pipes.joints == XD_PIPES_MIXED);
@@ -2946,7 +3010,7 @@ static void test_saver_settings(void) {
                              "[ScreenSaver.Pipes]\nPipes=multiple\nJoints=cycle\n"
                              "[screensaver.text3d]\nDisplay=time\nText=Hi\nRotation=wobble\n"
                              "Speed=3\nSize=9\nSurface=solid\nColor=0 128 128\n"),
-                      &a);
+                      &original);
     CHECK(strcmp(sv->marquee.text, "Gone fishing") == 0 &&
           strcmp(sv->marquee.font.family, "DejaVu Serif") == 0);
     CHECK(sv->marquee.font.size_pt == 36 && sv->marquee.font.bold && !sv->marquee.font.italic);
@@ -2967,10 +3031,11 @@ static void test_saver_settings(void) {
 
     /* Serialize -> parse round trip. */
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && memcmp(&a.savers, &b.savers, sizeof(a.savers)) == 0);
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          memcmp(&original.savers, &parsed.savers, sizeof(original.savers)) == 0);
     xd_strbuf_free(&text);
 
     /* Out of range or malformed values keep the defaults. */
@@ -2981,126 +3046,128 @@ static void test_saver_settings(void) {
                              "[ScreenSaver.Beziers]\nCurves=0\nLines=51\n"
                              "[ScreenSaver.Pipes]\nJoints=bogus\nPipes=many\n"
                              "[ScreenSaver.Text3D]\nRotation=tumble\nSize=-1\n"),
-                      &a);
+                      &original);
     xd_saver_settings def;
     xd_saver_settings_defaults(&def);
-    CHECK(memcmp(&a.savers, &def, sizeof(def)) == 0);
+    CHECK(memcmp(&original.savers, &def, sizeof(def)) == 0);
 }
 
 /* Renders `frames` frames of a saver from `seed` into a small image. */
-static cairo_surface_t *saver_frames(const char *id, const xd_saver_settings *o, uint64_t seed,
-                                     int frames, double dt) {
+static cairo_surface_t *saver_frames(const char *id, const xd_saver_settings *saver_settings,
+                                     uint64_t seed, int frames, double dt) {
     cairo_surface_t *img = cairo_image_surface_create(CAIRO_FORMAT_RGB24, 160, 120);
-    cairo_t *cr = cairo_create(img);
-    xd_saver *sv = xd_saver_create_seeded(id, o, 160, 120, 0.5, seed);
+    cairo_t *cairo = cairo_create(img);
+    xd_saver *sv = xd_saver_create_seeded(id, saver_settings, 160, 120, 0.5, seed);
     for (int i = 0; i < frames; i++)
-        xd_saver_frame(sv, cr, dt);
+        xd_saver_frame(sv, cairo, dt);
     xd_saver_destroy(sv);
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_flush(img);
     return img;
 }
 
-static bool same_pixels(cairo_surface_t *a, cairo_surface_t *b) {
-    size_t n = (size_t)cairo_image_surface_get_stride(a) * (size_t)cairo_image_surface_get_height(a);
-    return memcmp(cairo_image_surface_get_data(a), cairo_image_surface_get_data(b), n) == 0;
+static bool same_pixels(cairo_surface_t *left, cairo_surface_t *right) {
+    size_t count =
+        (size_t)cairo_image_surface_get_stride(left) * (size_t)cairo_image_surface_get_height(left);
+    return memcmp(cairo_image_surface_get_data(left), cairo_image_surface_get_data(right), count) ==
+           0;
 }
 
 static void test_savers(void) {
     const xd_saver_info *list = nullptr;
-    size_t n = xd_savers(&list);
-    CHECK(n == 8 && strcmp(list[0].name, "3D Pipes") == 0 && strcmp(list[1].id, "text3d") == 0);
+    size_t count = xd_savers(&list);
+    CHECK(count == 8 && strcmp(list[0].name, "3D Pipes") == 0 && strcmp(list[1].id, "text3d") == 0);
     CHECK(xd_saver_find("pipes") != nullptr && xd_saver_find("nope") == nullptr);
     CHECK(!xd_saver_animated("blank") && !xd_saver_has_settings("blank"));
     CHECK(xd_saver_has_settings("marquee") && xd_saver_create("nope", nullptr, 10, 10, 1) == nullptr);
 
     xd_settings st;
     xd_settings_defaults(&st);
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         const char *id = list[i].id;
         /* The same seed and frame times give the same picture... */
-        cairo_surface_t *a = saver_frames(id, &st.savers, 7, 40, 1.0 / 30);
-        cairo_surface_t *b = saver_frames(id, &st.savers, 7, 40, 1.0 / 30);
-        bool same = same_pixels(a, b);
+        cairo_surface_t *first = saver_frames(id, &st.savers, 7, 40, 1.0 / 30);
+        cairo_surface_t *second = saver_frames(id, &st.savers, 7, 40, 1.0 / 30);
+        bool same = same_pixels(first, second);
         CHECK(same);
         if (!same)
             fprintf(stderr, "  saver %s isn't deterministic\n", id);
         /* ...and the picture moves on (Blank Screen's stays black). */
-        cairo_surface_t *c = saver_frames(id, &st.savers, 7, 41, 1.0 / 30);
-        bool moved = !same_pixels(a, c);
+        cairo_surface_t *later = saver_frames(id, &st.savers, 7, 41, 1.0 / 30);
+        bool moved = !same_pixels(first, later);
         CHECK(moved == xd_saver_animated(id));
         if (moved != xd_saver_animated(id))
             fprintf(stderr, "  saver %s: moved %d\n", id, moved);
-        cairo_surface_destroy(a);
-        cairo_surface_destroy(b);
-        cairo_surface_destroy(c);
+        cairo_surface_destroy(first);
+        cairo_surface_destroy(second);
+        cairo_surface_destroy(later);
     }
     /* Where the random numbers show, another seed is another picture. */
     static const char *const random_ones[] = {"pipes", "beziers", "mystify", "starfield", "flying"};
     for (size_t i = 0; i < XD_ARRAY_LEN(random_ones); i++) {
-        cairo_surface_t *a = saver_frames(random_ones[i], &st.savers, 7, 20, 1.0 / 30);
-        cairo_surface_t *b = saver_frames(random_ones[i], &st.savers, 8, 20, 1.0 / 30);
-        CHECK(!same_pixels(a, b));
-        cairo_surface_destroy(a);
-        cairo_surface_destroy(b);
+        cairo_surface_t *first = saver_frames(random_ones[i], &st.savers, 7, 20, 1.0 / 30);
+        cairo_surface_t *second = saver_frames(random_ones[i], &st.savers, 8, 20, 1.0 / 30);
+        CHECK(!same_pixels(first, second));
+        cairo_surface_destroy(first);
+        cairo_surface_destroy(second);
     }
 
     /* Every option draws: 3D Pipes filling the screen several times over,
      * Mystify keeping its trails, 3D Text in each rotation and surface. */
-    xd_saver_settings o = st.savers;
-    o.pipes.multiple = true;
-    o.pipes.joints = XD_PIPES_CYCLE;
-    cairo_surface_destroy(saver_frames("pipes", &o, 3, 600, 0.25));
-    o.mystify.clear_screen = false;
-    o.mystify.shapes[0].two_colors = true;
-    cairo_surface_t *m1 = saver_frames("mystify", &o, 3, 30, 1.0 / 30);
-    cairo_surface_t *m2 = saver_frames("mystify", &o, 3, 34, 1.0 / 30);
+    xd_saver_settings saver_settings = st.savers;
+    saver_settings.pipes.multiple = true;
+    saver_settings.pipes.joints = XD_PIPES_CYCLE;
+    cairo_surface_destroy(saver_frames("pipes", &saver_settings, 3, 600, 0.25));
+    saver_settings.mystify.clear_screen = false;
+    saver_settings.mystify.shapes[0].two_colors = true;
+    cairo_surface_t *m1 = saver_frames("mystify", &saver_settings, 3, 30, 1.0 / 30);
+    cairo_surface_t *m2 = saver_frames("mystify", &saver_settings, 3, 34, 1.0 / 30);
     CHECK(!same_pixels(m1, m2));
     cairo_surface_destroy(m1);
     cairo_surface_destroy(m2);
-    for (int r = 0; r < XD_TEXT3D_ROTATION_COUNT; r++) {
-        o.text3d.rotation = (xd_text3d_rotation)r;
-        o.text3d.surface = r % 2 == 0 ? XD_TEXT3D_SOLID : XD_TEXT3D_REFLECTION;
-        cairo_surface_t *a = saver_frames("text3d", &o, 5, 15, 0.1);
-        cairo_surface_t *b = saver_frames("text3d", &o, 5, 15, 0.1);
-        CHECK(same_pixels(a, b));
-        cairo_surface_destroy(a);
-        cairo_surface_destroy(b);
+    for (int rotation = 0; rotation < XD_TEXT3D_ROTATION_COUNT; rotation++) {
+        saver_settings.text3d.rotation = (xd_text3d_rotation)rotation;
+        saver_settings.text3d.surface = rotation % 2 == 0 ? XD_TEXT3D_SOLID : XD_TEXT3D_REFLECTION;
+        cairo_surface_t *first = saver_frames("text3d", &saver_settings, 5, 15, 0.1);
+        cairo_surface_t *second = saver_frames("text3d", &saver_settings, 5, 15, 0.1);
+        CHECK(same_pixels(first, second));
+        cairo_surface_destroy(first);
+        cairo_surface_destroy(second);
     }
-    o.text3d.show_time = true;
-    cairo_surface_destroy(saver_frames("text3d", &o, 5, 3, 0.1));
-    o.marquee.text[0] = '\0';
-    cairo_surface_destroy(saver_frames("marquee", &o, 5, 3, 0.1));
+    saver_settings.text3d.show_time = true;
+    cairo_surface_destroy(saver_frames("text3d", &saver_settings, 5, 3, 0.1));
+    saver_settings.marquee.text[0] = '\0';
+    cairo_surface_destroy(saver_frames("marquee", &saver_settings, 5, 3, 0.1));
 }
 
 static void test_desktop_icon_settings(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
-    const xd_desktop_icon_settings *di = &a.desktop_icons;
+    xd_settings original;
+    xd_settings_defaults(&original);
+    const xd_desktop_icon_settings *di = &original.desktop_icons;
     CHECK(di->documents && di->computer && di->network && !di->browser && di->show);
-    CHECK(!di->auto_arrange && di->align_to_grid && xd_desk_icon_px(&a) == 32);
+    CHECK(!di->auto_arrange && di->align_to_grid && xd_desk_icon_px(&original) == 32);
     /* XP's "Use large icons" makes the (medium) desktop icons 48. */
-    a.large_icons = true;
-    CHECK(xd_desk_icon_px(&a) == 48);
-    a.desktop_icons.size = XD_DESK_ICONS_SMALL;
-    CHECK(xd_desk_icon_px(&a) == 16);
+    original.large_icons = true;
+    CHECK(xd_desk_icon_px(&original) == 48);
+    original.desktop_icons.size = XD_DESK_ICONS_SMALL;
+    CHECK(xd_desk_icon_px(&original) == 16);
 
     xd_settings_parse(XD_STR("[DesktopIcons]\nMyComputer=false\nWebBrowser=true\n"
                              "AutoArrange=true\nAlignToGrid=false\nSize=large\nShow=false\n"
                              "MyComputerIcon=/i/pc.png\nRecycleBinFullIcon=relative.png\n"),
-                      &a);
+                      &original);
     CHECK(!di->computer && di->browser && di->auto_arrange && !di->align_to_grid && !di->show);
-    CHECK(di->size == XD_DESK_ICONS_LARGE && xd_desk_icon_px(&a) == 48);
+    CHECK(di->size == XD_DESK_ICONS_LARGE && xd_desk_icon_px(&original) == 48);
     CHECK(strcmp(di->icons[XD_DESK_ICON_COMPUTER], "/i/pc.png") == 0);
     CHECK(di->icons[XD_DESK_ICON_TRASH_FULL][0] == '\0'); /* only absolute paths */
     CHECK(strcmp(xd_desk_icon_default(XD_DESK_ICON_TRASH_EMPTY), "user-trash") == 0);
 
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && b.desktop_icons.auto_arrange &&
-          strcmp(b.desktop_icons.icons[XD_DESK_ICON_COMPUTER], "/i/pc.png") == 0);
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) && parsed.desktop_icons.auto_arrange &&
+          strcmp(parsed.desktop_icons.icons[XD_DESK_ICON_COMPUTER], "/i/pc.png") == 0);
     xd_strbuf_free(&text);
 
     /* Desktop Items' Apply keeps an Auto Arrange the shell saved since. */
@@ -3115,87 +3182,92 @@ static void test_desktop_icon_settings(void) {
 }
 
 static void test_power_settings(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
+    xd_settings original;
+    xd_settings_defaults(&original);
     /* XP's defaults: the volume and power icons shown, a password on resume. */
-    CHECK(a.volume_icon && a.battery_icon && a.resume_password);
-    CHECK(a.power_scheme == XD_POWER_HOME && a.standby == 0 && a.hibernate == 0);
+    CHECK(original.volume_icon && original.battery_icon && original.resume_password);
+    CHECK(original.power_scheme == XD_POWER_HOME && original.standby == 0 &&
+          original.hibernate == 0);
     xd_settings_parse(XD_STR("[Sound]\nVolumeIcon=false\n"
                              "[Power]\nScheme=portable\nStandby=20\nHibernate=180\n"
                              "AlwaysShowIcon=false\nPasswordOnResume=false\n"),
-                      &a);
-    CHECK(!a.volume_icon && a.power_scheme == XD_POWER_PORTABLE);
-    CHECK(a.standby == 20 && a.hibernate == 180 && !a.battery_icon && !a.resume_password);
-    CHECK(strcmp(xd_power_scheme_name(a.power_scheme), "portable") == 0);
+                      &original);
+    CHECK(!original.volume_icon && original.power_scheme == XD_POWER_PORTABLE);
+    CHECK(original.standby == 20 && original.hibernate == 180 && !original.battery_icon &&
+          !original.resume_password);
+    CHECK(strcmp(xd_power_scheme_name(original.power_scheme), "portable") == 0);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && b.standby == 20 && !b.volume_icon);
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) && parsed.standby == 20 && !parsed.volume_icon);
     xd_strbuf_free(&text);
     /* The battery column and a scheme of the user's own. */
     xd_settings_parse(XD_STR("[Power]\nMonitorOffOnBattery=5\nStandbyOnBattery=10\n"
                              "HibernateOnBattery=45\nCustomScheme=My Lab\n"),
-                      &a);
-    CHECK(a.monitor_off_battery == 5 && a.standby_battery == 10 && a.hibernate_battery == 45);
-    CHECK(strcmp(a.power_scheme_custom, "My Lab") == 0 && a.standby == 0);
-    xd_settings_serialize(&a, &text);
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && b.hibernate_battery == 45);
-    CHECK(strcmp(b.power_scheme_custom, "My Lab") == 0);
+                      &original);
+    CHECK(original.monitor_off_battery == 5 && original.standby_battery == 10 &&
+          original.hibernate_battery == 45);
+    CHECK(strcmp(original.power_scheme_custom, "My Lab") == 0 && original.standby == 0);
+    xd_settings_serialize(&original, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) && parsed.hibernate_battery == 45);
+    CHECK(strcmp(parsed.power_scheme_custom, "My Lab") == 0);
     xd_strbuf_free(&text);
     /* Out of range or unknown: the defaults stay. */
-    xd_settings_parse(XD_STR("[Power]\nScheme=turbo\nStandby=-5\nHibernate=99999\n"), &a);
-    CHECK(a.power_scheme == XD_POWER_HOME && a.standby == 0 && a.hibernate == 0);
+    xd_settings_parse(XD_STR("[Power]\nScheme=turbo\nStandby=-5\nHibernate=99999\n"), &original);
+    CHECK(original.power_scheme == XD_POWER_HOME && original.standby == 0 &&
+          original.hibernate == 0);
 }
 
 /* Power Options' Power buttons: [Power] LidAction and the buttons' keys,
  * what the shell inhibits in logind, and what it does. */
 static void test_power_buttons(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
+    xd_settings original;
+    xd_settings_defaults(&original);
     char what[128];
     /* Unset: logind acts, nothing is inhibited or written. */
-    for (size_t b = 0; b < XD_POWER_BUTTON_COUNT; b++)
-        CHECK(a.power_buttons[b] == XD_BUTTON_LOGIND);
-    xd_power_buttons_inhibit_what(&a, what, sizeof(what));
+    for (size_t button = 0; button < XD_POWER_BUTTON_COUNT; button++)
+        CHECK(original.power_buttons[button] == XD_BUTTON_LOGIND);
+    xd_power_buttons_inhibit_what(&original, what, sizeof(what));
     CHECK(what[0] == '\0');
-    CHECK(xd_power_button_action(&a, XD_BUTTON_POWER, false) == XD_BUTTON_NOTHING);
+    CHECK(xd_power_button_action(&original, XD_BUTTON_POWER, false) == XD_BUTTON_NOTHING);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "LidAction") == nullptr);
     CHECK(strstr(xd_strbuf_cstr(&text), "ButtonAction") == nullptr);
     xd_strbuf_free(&text);
 
     xd_settings_parse(XD_STR("[Power]\nLidAction=lock\nPowerButtonAction=ask\n"
                              "SleepButtonAction=reboot\n"),
-                      &a);
-    CHECK(a.power_buttons[XD_BUTTON_LID] == XD_BUTTON_LOCK);
-    CHECK(a.power_buttons[XD_BUTTON_POWER] == XD_BUTTON_ASK);
-    CHECK(a.power_buttons[XD_BUTTON_SLEEP] == XD_BUTTON_LOGIND); /* unknown: unset */
-    xd_power_buttons_inhibit_what(&a, what, sizeof(what));
+                      &original);
+    CHECK(original.power_buttons[XD_BUTTON_LID] == XD_BUTTON_LOCK);
+    CHECK(original.power_buttons[XD_BUTTON_POWER] == XD_BUTTON_ASK);
+    CHECK(original.power_buttons[XD_BUTTON_SLEEP] == XD_BUTTON_LOGIND); /* unknown: unset */
+    xd_power_buttons_inhibit_what(&original, what, sizeof(what));
     CHECK(strcmp(what, "handle-lid-switch:handle-power-key") == 0);
-    xd_settings_serialize(&a, &text);
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "PowerButtonAction=ask") != nullptr);
     CHECK(strstr(xd_strbuf_cstr(&text), "SleepButtonAction") == nullptr);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && b.power_buttons[XD_BUTTON_LID] == XD_BUTTON_LOCK);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          parsed.power_buttons[XD_BUTTON_LID] == XD_BUTTON_LOCK);
     xd_strbuf_free(&text);
 
     /* The sleep button is logind's suspend and hibernate keys. */
-    a.power_buttons[XD_BUTTON_SLEEP] = XD_BUTTON_HIBERNATE;
-    xd_power_buttons_inhibit_what(&a, what, sizeof(what));
+    original.power_buttons[XD_BUTTON_SLEEP] = XD_BUTTON_HIBERNATE;
+    xd_power_buttons_inhibit_what(&original, what, sizeof(what));
     CHECK(strcmp(what, "handle-lid-switch:handle-power-key:handle-suspend-key:"
                        "handle-hibernate-key") == 0);
-    CHECK(xd_power_button_action(&a, XD_BUTTON_SLEEP, true) == XD_BUTTON_HIBERNATE);
+    CHECK(xd_power_button_action(&original, XD_BUTTON_SLEEP, true) == XD_BUTTON_HIBERNATE);
     /* Docked or with another monitor, closing the lid does nothing, as
      * logind's HandleLidSwitchDocked=ignore; the lid never asks. */
-    CHECK(xd_power_button_action(&a, XD_BUTTON_LID, false) == XD_BUTTON_LOCK);
-    CHECK(xd_power_button_action(&a, XD_BUTTON_LID, true) == XD_BUTTON_NOTHING);
-    a.power_buttons[XD_BUTTON_LID] = XD_BUTTON_ASK;
-    CHECK(xd_power_button_action(&a, XD_BUTTON_LID, false) == XD_BUTTON_NOTHING);
-    CHECK(xd_power_button_action(&a, XD_BUTTON_POWER, true) == XD_BUTTON_ASK);
+    CHECK(xd_power_button_action(&original, XD_BUTTON_LID, false) == XD_BUTTON_LOCK);
+    CHECK(xd_power_button_action(&original, XD_BUTTON_LID, true) == XD_BUTTON_NOTHING);
+    original.power_buttons[XD_BUTTON_LID] = XD_BUTTON_ASK;
+    CHECK(xd_power_button_action(&original, XD_BUTTON_LID, false) == XD_BUTTON_NOTHING);
+    CHECK(xd_power_button_action(&original, XD_BUTTON_POWER, true) == XD_BUTTON_ASK);
 
     /* Names, and logind's values in Power Options' terms. */
     xd_button_action act;
@@ -3210,7 +3282,7 @@ static void test_power_buttons(void) {
 
     /* Set back to logind's while another applet saved meanwhile: merging
      * removes the key. */
-    xd_settings base = a, pending = a, now;
+    xd_settings base = original, pending = original, now;
     xd_settings_defaults(&now);
     now.power_buttons[XD_BUTTON_POWER] = XD_BUTTON_ASK;
     pending.power_buttons[XD_BUTTON_POWER] = XD_BUTTON_LOGIND;
@@ -3220,81 +3292,83 @@ static void test_power_buttons(void) {
 
 /* Power Options' Alarms: the keys, and when each alarm goes off. */
 static void test_battery_alarms(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
+    xd_settings original;
+    xd_settings_defaults(&original);
     /* XP's levels, sound and message on, no action. */
-    CHECK(a.low_alarm.on && a.low_alarm.percent == 10 && a.low_alarm.sound &&
-          a.low_alarm.message && a.low_alarm.action == XD_ALARM_NOTHING);
-    CHECK(a.critical_alarm.on && a.critical_alarm.percent == 3 &&
-          a.critical_alarm.action == XD_ALARM_NOTHING);
+    CHECK(original.low_alarm.on && original.low_alarm.percent == 10 && original.low_alarm.sound &&
+          original.low_alarm.message && original.low_alarm.action == XD_ALARM_NOTHING);
+    CHECK(original.critical_alarm.on && original.critical_alarm.percent == 3 &&
+          original.critical_alarm.action == XD_ALARM_NOTHING);
     xd_settings_parse(XD_STR("[Power]\nLowAlarmLevel=25\nLowAlarmSound=false\n"
                              "CriticalAlarmAction=hibernate\nCriticalAlarmMessage=false\n"
                              "LowAlarmAction=reboot\nCriticalAlarmLevel=101\n"),
-                      &a);
-    CHECK(a.low_alarm.percent == 25 && !a.low_alarm.sound && a.low_alarm.message);
+                      &original);
+    CHECK(original.low_alarm.percent == 25 && !original.low_alarm.sound &&
+          original.low_alarm.message);
     /* An unknown action and a level out of range: the defaults. */
-    CHECK(a.low_alarm.action == XD_ALARM_NOTHING && a.critical_alarm.percent == 3);
-    CHECK(a.critical_alarm.action == XD_ALARM_HIBERNATE && !a.critical_alarm.message);
+    CHECK(original.low_alarm.action == XD_ALARM_NOTHING && original.critical_alarm.percent == 3);
+    CHECK(original.critical_alarm.action == XD_ALARM_HIBERNATE && !original.critical_alarm.message);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "CriticalAlarmAction=hibernate") != nullptr);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && b.low_alarm.percent == 25);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) && parsed.low_alarm.percent == 25);
     xd_strbuf_free(&text);
 
     /* Discharging from 30%: low at 25, critical at 3, each once. */
     xd_alarm_done done = {0};
-    CHECK(xd_battery_alarm_check(&a, &done, 30, true) == XD_ALARM_FIRED_NONE);
-    CHECK(xd_battery_alarm_check(&a, &done, 25, true) == XD_ALARM_FIRED_LOW);
-    CHECK(xd_battery_alarm_check(&a, &done, 20, true) == XD_ALARM_FIRED_NONE);
-    CHECK(xd_battery_alarm_check(&a, &done, 3, true) == XD_ALARM_FIRED_CRITICAL);
-    CHECK(xd_battery_alarm_check(&a, &done, 1, true) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&original, &done, 30, true) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&original, &done, 25, true) == XD_ALARM_FIRED_LOW);
+    CHECK(xd_battery_alarm_check(&original, &done, 20, true) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&original, &done, 3, true) == XD_ALARM_FIRED_CRITICAL);
+    CHECK(xd_battery_alarm_check(&original, &done, 1, true) == XD_ALARM_FIRED_NONE);
     /* Plugged in, then unplugged again lower down: they start over, and a
      * fall straight past both is only the critical one. */
-    CHECK(xd_battery_alarm_check(&a, &done, 2, false) == XD_ALARM_FIRED_NONE);
-    CHECK(xd_battery_alarm_check(&a, &done, 2, true) == XD_ALARM_FIRED_CRITICAL);
-    CHECK(xd_battery_alarm_check(&a, &done, 2, true) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&original, &done, 2, false) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&original, &done, 2, true) == XD_ALARM_FIRED_CRITICAL);
+    CHECK(xd_battery_alarm_check(&original, &done, 2, true) == XD_ALARM_FIRED_NONE);
     /* An alarm turned off never goes off. */
-    a.critical_alarm.on = false;
+    original.critical_alarm.on = false;
     done = (xd_alarm_done){0};
-    CHECK(xd_battery_alarm_check(&a, &done, 2, true) == XD_ALARM_FIRED_LOW);
-    CHECK(xd_battery_alarm_check(&a, &done, 1, true) == XD_ALARM_FIRED_NONE);
+    CHECK(xd_battery_alarm_check(&original, &done, 2, true) == XD_ALARM_FIRED_LOW);
+    CHECK(xd_battery_alarm_check(&original, &done, 1, true) == XD_ALARM_FIRED_NONE);
 }
 
 /* Accessibility Options' Sound tab, status indicators and reset. */
 static void test_access_extra_settings(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
-    const xd_access_settings *ac = &a.access;
+    xd_settings original;
+    xd_settings_defaults(&original);
+    const xd_access_settings *ac = &original.access;
     CHECK(ac->sticky_indicator && ac->filter_indicator && ac->mouse_keys_indicator);
     CHECK(!ac->sound_sentry && ac->sound_sentry_effect == XD_SENTRY_WINDOW && !ac->show_sounds);
     CHECK(!ac->auto_reset && ac->auto_reset_minutes == XD_AUTO_RESET_MIN);
     xd_settings_parse(XD_STR("[Accessibility]\nSoundSentry=true\nSoundSentryEffect=desktop\n"
                              "ShowSounds=true\nMouseKeysIndicator=false\nAutoReset=true\n"
                              "AutoResetMinutes=20\n"),
-                      &a);
+                      &original);
     CHECK(ac->sound_sentry && ac->sound_sentry_effect == XD_SENTRY_DESKTOP && ac->show_sounds);
     CHECK(!ac->mouse_keys_indicator && ac->auto_reset && ac->auto_reset_minutes == 20);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && b.access.sound_sentry_effect == XD_SENTRY_DESKTOP);
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          parsed.access.sound_sentry_effect == XD_SENTRY_DESKTOP);
     xd_strbuf_free(&text);
     /* An unknown effect and minutes out of range: the defaults. */
     xd_settings_parse(XD_STR("[Accessibility]\nSoundSentryEffect=strobe\nAutoResetMinutes=2\n"),
-                      &a);
+                      &original);
     CHECK(ac->sound_sentry_effect == XD_SENTRY_WINDOW && ac->auto_reset_minutes == 5);
 }
 
 static void test_power_schemes(void) {
     /* No file: XP's six, with both columns. */
-    GPtrArray *s = xd_power_schemes_load("/nonexistent/power-schemes.ini");
-    CHECK(s->len == XD_POWER_SCHEME_COUNT);
-    xd_power_scheme_def *d = xd_power_schemes_find(s, "Portable/Laptop");
-    CHECK(d != nullptr && d->builtin == XD_POWER_PORTABLE && d->ac.hibernate == 180 &&
-          d->dc.monitor == 5);
+    GPtrArray *array = xd_power_schemes_load("/nonexistent/power-schemes.ini");
+    CHECK(array->len == XD_POWER_SCHEME_COUNT);
+    xd_power_scheme_def *power_scheme_def = xd_power_schemes_find(array, "Portable/Laptop");
+    CHECK(power_scheme_def != nullptr && power_scheme_def->builtin == XD_POWER_PORTABLE &&
+          power_scheme_def->ac.hibernate == 180 && power_scheme_def->dc.monitor == 5);
     CHECK(strcmp(xd_power_builtin_label(XD_POWER_MAX_BATTERY), "Max Battery") == 0);
     CHECK(xd_power_scheme_name_valid("My Lab") && !xd_power_scheme_name_valid("") &&
           !xd_power_scheme_name_valid("a[b]") && !xd_power_scheme_name_valid(" pad") &&
@@ -3302,28 +3376,33 @@ static void test_power_schemes(void) {
 
     /* A changed built-in one, a deleted one and one of the user's own
      * come back as saved. */
-    d->ac.monitor = 3;
-    g_ptr_array_remove(s, xd_power_schemes_find(s, "Max Battery"));
-    d = xd_power_schemes_put(s, "My Lab", (xd_power_timers){10, 30, 0},
-                             (xd_power_timers){2, 5, 60});
-    CHECK(d->builtin == -1 && s->len == XD_POWER_SCHEME_COUNT);
+    power_scheme_def->ac.monitor = 3;
+    g_ptr_array_remove(array, xd_power_schemes_find(array, "Max Battery"));
+    power_scheme_def = xd_power_schemes_put(array, "My Lab", (xd_power_timers){10, 30, 0},
+                                            (xd_power_timers){2, 5, 60});
+    CHECK(power_scheme_def->builtin == -1 && array->len == XD_POWER_SCHEME_COUNT);
     char *dir = g_dir_make_tmp("xd-power-XXXXXX", nullptr);
     char *path = g_build_filename(dir, "xeondesktop", "power-schemes.ini", nullptr);
-    CHECK(xd_power_schemes_save(path, s, nullptr));
-    g_ptr_array_unref(s);
-    s = xd_power_schemes_load(path);
-    CHECK(s->len == XD_POWER_SCHEME_COUNT && xd_power_schemes_find(s, "Max Battery") == nullptr);
-    d = xd_power_schemes_find(s, "Portable/Laptop");
-    CHECK(d != nullptr && d->ac.monitor == 3 && d->ac.standby == 20);
-    d = g_ptr_array_index(s, s->len - 1);
-    CHECK(strcmp(d->name, "My Lab") == 0 && d->ac.standby == 30 && d->dc.hibernate == 60);
+    CHECK(xd_power_schemes_save(path, array, nullptr));
+    g_ptr_array_unref(array);
+    array = xd_power_schemes_load(path);
+    CHECK(array->len == XD_POWER_SCHEME_COUNT &&
+          xd_power_schemes_find(array, "Max Battery") == nullptr);
+    power_scheme_def = xd_power_schemes_find(array, "Portable/Laptop");
+    CHECK(power_scheme_def != nullptr && power_scheme_def->ac.monitor == 3 &&
+          power_scheme_def->ac.standby == 20);
+    power_scheme_def = g_ptr_array_index(array, array->len - 1);
+    CHECK(strcmp(power_scheme_def->name, "My Lab") == 0 && power_scheme_def->ac.standby == 30 &&
+          power_scheme_def->dc.hibernate == 60);
     /* Saving over a name replaces its timers; a deleted built-in one can
      * be saved again. */
-    xd_power_schemes_put(s, "My Lab", (xd_power_timers){1, 2, 3}, (xd_power_timers){4, 5, 6});
-    d = xd_power_schemes_put(s, "Max Battery", (xd_power_timers){0}, (xd_power_timers){0});
-    CHECK(d->builtin == XD_POWER_MAX_BATTERY && s->len == XD_POWER_SCHEME_COUNT + 1);
-    CHECK(xd_power_schemes_find(s, "My Lab")->dc.monitor == 4);
-    g_ptr_array_unref(s);
+    xd_power_schemes_put(array, "My Lab", (xd_power_timers){1, 2, 3}, (xd_power_timers){4, 5, 6});
+    power_scheme_def =
+        xd_power_schemes_put(array, "Max Battery", (xd_power_timers){0}, (xd_power_timers){0});
+    CHECK(power_scheme_def->builtin == XD_POWER_MAX_BATTERY &&
+          array->len == XD_POWER_SCHEME_COUNT + 1);
+    CHECK(xd_power_schemes_find(array, "My Lab")->dc.monitor == 4);
+    g_ptr_array_unref(array);
     g_remove(path);
     char *sub = g_path_get_dirname(path);
     g_rmdir(sub);
@@ -3334,60 +3413,64 @@ static void test_power_schemes(void) {
 }
 
 static void test_sound_scheme(void) {
-    xd_sound_scheme s;
-    xd_sound_scheme_init(&s, XD_SOUNDS_DEFAULT);
-    CHECK(!xd_sound_scheme_modified(&s));
-    CHECK(strcmp(s.sounds[XD_SOUND_CRITICAL_STOP], "dialog-error") == 0);
-    CHECK(xd_sound_kind_of(s.sounds[XD_SOUND_LOGON]) == XD_SOUND_THEMED);
-    CHECK(xd_sound_kind_of(s.sounds[XD_SOUND_MAXIMIZE]) == XD_SOUND_NONE);
+    xd_sound_scheme original;
+    xd_sound_scheme_init(&original, XD_SOUNDS_DEFAULT);
+    CHECK(!xd_sound_scheme_modified(&original));
+    CHECK(strcmp(original.sounds[XD_SOUND_CRITICAL_STOP], "dialog-error") == 0);
+    CHECK(xd_sound_kind_of(original.sounds[XD_SOUND_LOGON]) == XD_SOUND_THEMED);
+    CHECK(xd_sound_kind_of(original.sounds[XD_SOUND_MAXIMIZE]) == XD_SOUND_NONE);
     CHECK(strcmp(xd_sound_event_get(XD_SOUND_DEFAULT_BEEP)->label, "Default Beep") == 0);
     /* Paths must be absolute; theme names plain. */
-    CHECK(xd_sound_scheme_set(&s, XD_SOUND_LOGON, "/usr/share/sounds/x.wav"));
-    CHECK(xd_sound_kind_of(s.sounds[XD_SOUND_LOGON]) == XD_SOUND_FILE);
-    CHECK(!xd_sound_scheme_set(&s, XD_SOUND_LOGON, "../x.wav"));
-    CHECK(!xd_sound_scheme_set(&s, XD_SOUND_LOGON, "a b"));
-    CHECK(xd_sound_scheme_set(&s, XD_SOUND_MAXIMIZE, "window-maximized"));
-    CHECK(xd_sound_scheme_set(&s, XD_SOUND_ASTERISK, ""));
-    CHECK(xd_sound_scheme_modified(&s));
+    CHECK(xd_sound_scheme_set(&original, XD_SOUND_LOGON, "/usr/share/sounds/x.wav"));
+    CHECK(xd_sound_kind_of(original.sounds[XD_SOUND_LOGON]) == XD_SOUND_FILE);
+    CHECK(!xd_sound_scheme_set(&original, XD_SOUND_LOGON, "../x.wav"));
+    CHECK(!xd_sound_scheme_set(&original, XD_SOUND_LOGON, "a b"));
+    CHECK(xd_sound_scheme_set(&original, XD_SOUND_MAXIMIZE, "window-maximized"));
+    CHECK(xd_sound_scheme_set(&original, XD_SOUND_ASTERISK, ""));
+    CHECK(xd_sound_scheme_modified(&original));
 
     /* Round trip. */
     xd_strbuf text = {0};
-    xd_sound_scheme_serialize(&s, &text);
-    xd_sound_scheme t;
-    xd_sound_scheme_parse(xd_strbuf_view(&text), &t);
+    xd_sound_scheme_serialize(&original, &text);
+    xd_sound_scheme parsed;
+    xd_sound_scheme_parse(xd_strbuf_view(&text), &parsed);
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++)
-        CHECK(strcmp(s.sounds[i], t.sounds[i]) == 0);
-    xd_sound_scheme_free(&t);
+        CHECK(strcmp(original.sounds[i], parsed.sounds[i]) == 0);
+    xd_sound_scheme_free(&parsed);
     xd_strbuf_free(&text);
-    xd_sound_scheme_free(&s);
+    xd_sound_scheme_free(&original);
 
     /* No Sounds, with one event set; bad values keep the scheme's. */
     xd_sound_scheme_parse(XD_STR("[Sounds]\nScheme=none\n[Events]\nWindowsLogon=service-login\n"
                                  "CriticalStop=relative/path.wav\nUnknown=bell\n"),
-                          &s);
-    CHECK(s.base == XD_SOUNDS_NONE && strcmp(s.sounds[XD_SOUND_LOGON], "service-login") == 0);
-    CHECK(s.sounds[XD_SOUND_CRITICAL_STOP][0] == '\0' && xd_sound_scheme_modified(&s));
-    xd_sound_scheme_free(&s);
+                          &original);
+    CHECK(original.base == XD_SOUNDS_NONE &&
+          strcmp(original.sounds[XD_SOUND_LOGON], "service-login") == 0);
+    CHECK(original.sounds[XD_SOUND_CRITICAL_STOP][0] == '\0' &&
+          xd_sound_scheme_modified(&original));
+    xd_sound_scheme_free(&original);
     /* A broken file: Windows Default. */
-    xd_sound_scheme_parse(XD_STR("[Sounds\nScheme=none\n"), &s);
-    CHECK(s.base == XD_SOUNDS_DEFAULT && !xd_sound_scheme_modified(&s));
-    xd_sound_scheme_free(&s);
+    xd_sound_scheme_parse(XD_STR("[Sounds\nScheme=none\n"), &original);
+    CHECK(original.base == XD_SOUNDS_DEFAULT && !xd_sound_scheme_modified(&original));
+    xd_sound_scheme_free(&original);
 
     /* The accessibility tones: 16-bit mono WAVs, the RIFF sizes right,
      * quiet, and silent at both ends (no click). */
     for (int tone = 0; tone < XD_TONE_COUNT; tone++) {
         GBytes *wav = xd_sound_tone_wav((xd_sound_tone)tone);
         gsize len = 0;
-        const uint8_t *d = g_bytes_get_data(wav, &len);
-        CHECK(len > 44 && memcmp(d, "RIFF", 4) == 0 && memcmp(d + 8, "WAVEfmt ", 8) == 0);
-        uint32_t riff = d[4] | (uint32_t)d[5] << 8 | (uint32_t)d[6] << 16 | (uint32_t)d[7] << 24;
-        uint32_t data = d[40] | (uint32_t)d[41] << 8 | (uint32_t)d[42] << 16 | (uint32_t)d[43] << 24;
-        CHECK(riff == len - 8 && data == len - 44 && d[22] == 1 && d[34] == 16);
+        const uint8_t *bytes = g_bytes_get_data(wav, &len);
+        CHECK(len > 44 && memcmp(bytes, "RIFF", 4) == 0 && memcmp(bytes + 8, "WAVEfmt ", 8) == 0);
+        uint32_t riff = bytes[4] | (uint32_t)bytes[5] << 8 | (uint32_t)bytes[6] << 16 |
+                        (uint32_t)bytes[7] << 24;
+        uint32_t data = bytes[40] | (uint32_t)bytes[41] << 8 | (uint32_t)bytes[42] << 16 |
+                        (uint32_t)bytes[43] << 24;
+        CHECK(riff == len - 8 && data == len - 44 && bytes[22] == 1 && bytes[34] == 16);
         int peak = 0;
         for (gsize i = 44; i + 1 < len; i += 2)
-            peak = MAX(peak, abs((int16_t)(d[i] | d[i + 1] << 8)));
+            peak = MAX(peak, abs((int16_t)(bytes[i] | bytes[i + 1] << 8)));
         CHECK(peak > 1000 && peak <= INT16_MAX / 3 + 1);
-        CHECK(d[44] == 0 && d[45] == 0);
+        CHECK(bytes[44] == 0 && bytes[45] == 0);
         CHECK(xd_sound_tone_name((xd_sound_tone)tone)[0] != '\0');
         g_bytes_unref(wav);
     }
@@ -3395,8 +3478,9 @@ static void test_sound_scheme(void) {
 
 static int css_errors;
 
-static void on_css_error([[maybe_unused]] GtkCssProvider *p, [[maybe_unused]] GtkCssSection *s,
-                         const GError *err, [[maybe_unused]] gpointer data) {
+static void on_css_error([[maybe_unused]] GtkCssProvider *provider,
+                         [[maybe_unused]] GtkCssSection *css_section, const GError *err,
+                         [[maybe_unused]] gpointer data) {
     css_errors++;
     fprintf(stderr, "gtk css: %s\n", err->message);
 }
@@ -3418,17 +3502,17 @@ static void test_gtk_css(void) {
                 CHECK(xd_scheme_load(xd_strbuf_cstr(&path), &scheme, nullptr));
                 xd_strbuf_free(&path);
             }
-            xd_theme t;
-            xd_theme_init(&t, (xd_visual_style)style, &scheme, 1.0);
+            xd_theme theme;
+            xd_theme_init(&theme, (xd_visual_style)style, &scheme, 1.0);
             xd_strbuf css = {0};
-            xd_theme_gtk_css(&t, &css);
+            xd_theme_gtk_css(&theme, &css);
             CHECK(strstr(xd_strbuf_cstr(&css), "@define-color theme_selected_bg_color") != nullptr);
-            GtkCssProvider *p = gtk_css_provider_new();
-            g_signal_connect(p, "parsing-error", G_CALLBACK(on_css_error), nullptr);
+            GtkCssProvider *provider = gtk_css_provider_new();
+            g_signal_connect(provider, "parsing-error", G_CALLBACK(on_css_error), nullptr);
             css_errors = 0;
-            CHECK(gtk_css_provider_load_from_data(p, css.data, (gssize)css.len, nullptr));
+            CHECK(gtk_css_provider_load_from_data(provider, css.data, (gssize)css.len, nullptr));
             CHECK(css_errors == 0);
-            g_object_unref(p);
+            g_object_unref(provider);
             xd_strbuf_free(&css);
         }
     }
@@ -3446,42 +3530,44 @@ static void test_px(void) {
 
 /* Drives tests/passwd/fake-passwd to the end. */
 static xd_passwd_result run_passwd(const char *old_pw, const char *new_pw, char **message) {
-    xd_passwd *p = xd_passwd_start(XD_SOURCE_ROOT "/tests/passwd/fake-passwd", old_pw, new_pw,
-                                   nullptr);
-    if (p == nullptr)
+    xd_passwd *passwd =
+        xd_passwd_start(XD_SOURCE_ROOT "/tests/passwd/fake-passwd", old_pw, new_pw, nullptr);
+    if (passwd == nullptr)
         return XD_PASSWD_FAILED;
-    xd_passwd_result r = XD_PASSWD_RUNNING;
-    for (int i = 0; i < 200 && r == XD_PASSWD_RUNNING; i++) {
-        struct pollfd pfd = {.fd = xd_passwd_fd(p), .events = POLLIN};
+    xd_passwd_result passwd_result = XD_PASSWD_RUNNING;
+    for (int i = 0; i < 200 && passwd_result == XD_PASSWD_RUNNING; i++) {
+        struct pollfd pfd = {.fd = xd_passwd_fd(passwd), .events = POLLIN};
         if (poll(&pfd, 1, 5000) <= 0)
             break;
-        r = xd_passwd_step(p);
+        passwd_result = xd_passwd_step(passwd);
     }
-    *message = g_strdup(xd_passwd_message(p));
-    xd_passwd_free(p);
-    return r;
+    *message = g_strdup(xd_passwd_message(passwd));
+    xd_passwd_free(passwd);
+    return passwd_result;
 }
 
 static void test_passwd(void) {
-    char *m = nullptr;
-    CHECK(run_passwd("old secret", "new secret", &m) == XD_PASSWD_OK);
-    g_free(m);
-    CHECK(run_passwd("wrong", "new secret", &m) == XD_PASSWD_WRONG_OLD);
-    CHECK(m != nullptr && strstr(m, "password unchanged") != nullptr);
-    g_free(m);
-    CHECK(run_passwd("old secret", "short", &m) == XD_PASSWD_REJECTED);
-    CHECK(m != nullptr && strcmp(m, "BAD PASSWORD: The password is shorter than 8 characters") == 0);
-    g_free(m);
+    char *message = nullptr;
+    CHECK(run_passwd("old secret", "new secret", &message) == XD_PASSWD_OK);
+    g_free(message);
+    CHECK(run_passwd("wrong", "new secret", &message) == XD_PASSWD_WRONG_OLD);
+    CHECK(message != nullptr && strstr(message, "password unchanged") != nullptr);
+    g_free(message);
+    CHECK(run_passwd("old secret", "short", &message) == XD_PASSWD_REJECTED);
+    CHECK(message != nullptr &&
+          strcmp(message, "BAD PASSWORD: The password is shorter than 8 characters") == 0);
+    g_free(message);
     /* Nothing typed may come back as a message. */
-    CHECK(run_passwd("old secret", "short", &m) == XD_PASSWD_REJECTED && strstr(m, "short\n") == nullptr);
-    g_free(m);
+    CHECK(run_passwd("old secret", "short", &message) == XD_PASSWD_REJECTED &&
+          strstr(message, "short\n") == nullptr);
+    g_free(message);
 }
 
-static void check_text(char *s, const char *want) {
-    if (strcmp(s, want) != 0)
-        g_printerr("  got \"%s\", want \"%s\"\n", s, want);
-    CHECK(strcmp(s, want) == 0);
-    g_free(s);
+static void check_text(char *text, const char *want) {
+    if (strcmp(text, want) != 0)
+        g_printerr("  got \"%s\", want \"%s\"\n", text, want);
+    CHECK(strcmp(text, want) == 0);
+    g_free(text);
 }
 
 /* Regional and Language Options' Customize. */
@@ -3515,53 +3601,53 @@ static void test_intl_custom(void) {
     check_text(xd_intl_grouping_text("\3\377"), "3;-1"); /* CHAR_MAX where char is unsigned */
 
     /* Samples from the effective settings. */
-    xd_intl_custom e;
-    xd_intl_custom_init(&e);
-    e.decimal = g_strdup(",");
-    e.thousands = g_strdup(".");
-    e.grouping = g_strdup("3;3");
-    e.currency = g_strdup("€");
-    e.mon_decimal = g_strdup(",");
-    e.mon_thousands = g_strdup(".");
-    e.mon_grouping = g_strdup("3");
-    e.frac_digits = 2;
-    e.positive_format = 3;
-    e.negative_format = 8;
-    check_text(xd_intl_number_sample(&e, false), "123.456.789,00");
-    check_text(xd_intl_number_sample(&e, true), "-123.456.789,00");
-    check_text(xd_intl_currency_sample(&e, false), "123.456.789,00 €");
-    check_text(xd_intl_currency_sample(&e, true), "-123.456.789,00 €");
-    e.negative_format = 0;
-    e.frac_digits = 0;
-    check_text(xd_intl_currency_sample(&e, true), "(€123.456.789)");
-    e.time_format = g_strdup("HH.mm");
-    e.am = g_strdup("vorm.");
-    e.pm = g_strdup("nachm.");
-    e.date_format = g_strdup("dd/MM/yyyy");
+    xd_intl_custom edited;
+    xd_intl_custom_init(&edited);
+    edited.decimal = g_strdup(",");
+    edited.thousands = g_strdup(".");
+    edited.grouping = g_strdup("3;3");
+    edited.currency = g_strdup("€");
+    edited.mon_decimal = g_strdup(",");
+    edited.mon_thousands = g_strdup(".");
+    edited.mon_grouping = g_strdup("3");
+    edited.frac_digits = 2;
+    edited.positive_format = 3;
+    edited.negative_format = 8;
+    check_text(xd_intl_number_sample(&edited, false), "123.456.789,00");
+    check_text(xd_intl_number_sample(&edited, true), "-123.456.789,00");
+    check_text(xd_intl_currency_sample(&edited, false), "123.456.789,00 €");
+    check_text(xd_intl_currency_sample(&edited, true), "-123.456.789,00 €");
+    edited.negative_format = 0;
+    edited.frac_digits = 0;
+    check_text(xd_intl_currency_sample(&edited, true), "(€123.456.789)");
+    edited.time_format = g_strdup("HH.mm");
+    edited.am = g_strdup("vorm.");
+    edited.pm = g_strdup("nachm.");
+    edited.date_format = g_strdup("dd/MM/yyyy");
     /* 2001-02-03 04:05:06 local time */
     struct tm tm = {.tm_year = 101, .tm_mon = 1, .tm_mday = 3, .tm_hour = 4, .tm_min = 5,
                     .tm_sec = 6, .tm_isdst = -1};
     time_t when = mktime(&tm);
-    check_text(xd_intl_time_sample("C.UTF-8", &e, when), "04.05");
-    g_free(e.time_format);
-    e.time_format = g_strdup("h:mm tt");
-    check_text(xd_intl_time_sample("C.UTF-8", &e, when), "4:05 vorm.");
-    check_text(xd_intl_date_sample("C.UTF-8", &e, when, false), "03/02/2001");
+    check_text(xd_intl_time_sample("C.UTF-8", &edited, when), "04.05");
+    g_free(edited.time_format);
+    edited.time_format = g_strdup("h:mm tt");
+    check_text(xd_intl_time_sample("C.UTF-8", &edited, when), "4:05 vorm.");
+    check_text(xd_intl_date_sample("C.UTF-8", &edited, when, false), "03/02/2001");
 
     /* formats.ini keeps only what was changed. */
     char *dir = g_dir_make_tmp("xd-custom-XXXXXX", nullptr);
     char *path = g_build_filename(dir, "formats.ini", nullptr);
-    xd_intl_custom c;
-    xd_intl_custom_init(&c);
-    CHECK(xd_intl_custom_empty(&c));
-    CHECK(xd_intl_custom_save(path, "C.UTF-8", &c, nullptr) &&
+    xd_intl_custom blank;
+    xd_intl_custom_init(&blank);
+    CHECK(xd_intl_custom_empty(&blank));
+    CHECK(xd_intl_custom_save(path, "C.UTF-8", &blank, nullptr) &&
           !g_file_test(path, G_FILE_TEST_EXISTS));
-    c.thousands = g_strdup(" ");
-    c.grouping = g_strdup("3;2");
-    c.negative_format = 12;
-    c.time_format = g_strdup("HH:mm");
-    CHECK(!xd_intl_custom_empty(&c));
-    CHECK(xd_intl_custom_save(path, "C.UTF-8", &c, nullptr));
+    blank.thousands = g_strdup(" ");
+    blank.grouping = g_strdup("3;2");
+    blank.negative_format = 12;
+    blank.time_format = g_strdup("HH:mm");
+    CHECK(!xd_intl_custom_empty(&blank));
+    CHECK(xd_intl_custom_save(path, "C.UTF-8", &blank, nullptr));
     xd_intl_custom back;
     char *locale = nullptr;
     xd_intl_custom_load(path, &locale, &back);
@@ -3616,7 +3702,7 @@ static void test_intl_custom(void) {
               from.measurement == 2 && strcmp(from.time_format, "hh:mm:ss tt") == 0 &&
               g_str_has_prefix(from.date_format, "MM/dd/yy") && from.negative_format == 1);
         xd_intl_custom_clear(&from);
-        char *source = xd_intl_custom_source("en_US.UTF-8", &c);
+        char *source = xd_intl_custom_source("en_US.UTF-8", &blank);
         CHECK(source != nullptr && strstr(source, "LC_NUMERIC\ndecimal_point") != nullptr &&
               strstr(source, "grouping 3;2\n") != nullptr &&
               strstr(source, "LC_PAPER\ncopy") != nullptr);
@@ -3655,8 +3741,8 @@ static void test_intl_custom(void) {
     if (en != (locale_t)0)
         freelocale(en);
     g_free(localedef);
-    xd_intl_custom_clear(&c);
-    xd_intl_custom_clear(&e);
+    xd_intl_custom_clear(&blank);
+    xd_intl_custom_clear(&edited);
     g_rmdir(dir);
     g_free(path);
     g_free(dir);
@@ -3683,30 +3769,30 @@ static void test_intl(void) {
     CHECK(g_strv_length(set) == 1 && xd_intl_lang((const char *const *)set) != nullptr);
     g_strfreev(set);
 
-    char *s = xd_intl_first("us,de");
-    CHECK(strcmp(s, "us") == 0);
-    g_free(s);
-    s = xd_intl_first(nullptr);
-    CHECK(strcmp(s, "") == 0);
-    g_free(s);
-    s = xd_intl_replace_first("us,de", "fr");
-    CHECK(strcmp(s, "fr,de") == 0);
-    g_free(s);
-    s = xd_intl_replace_first(",nodeadkeys", "dvorak");
-    CHECK(strcmp(s, "dvorak,nodeadkeys") == 0);
-    g_free(s);
-    s = xd_intl_replace_first("", "fr");
-    CHECK(strcmp(s, "fr") == 0);
-    g_free(s);
+    char *first = xd_intl_first("us,de");
+    CHECK(strcmp(first, "us") == 0);
+    g_free(first);
+    first = xd_intl_first(nullptr);
+    CHECK(strcmp(first, "") == 0);
+    g_free(first);
+    first = xd_intl_replace_first("us,de", "fr");
+    CHECK(strcmp(first, "fr,de") == 0);
+    g_free(first);
+    first = xd_intl_replace_first(",nodeadkeys", "dvorak");
+    CHECK(strcmp(first, "dvorak,nodeadkeys") == 0);
+    g_free(first);
+    first = xd_intl_replace_first("", "fr");
+    CHECK(strcmp(first, "fr") == 0);
+    g_free(first);
 
     /* The formats file round trip, and removing it. */
     char *dir = g_dir_make_tmp("xd-intl-XXXXXX", nullptr);
     char *path = g_build_filename(dir, "environment.d", "60-xeondesktop-locale.conf", nullptr);
     CHECK(xd_intl_read_formats(path) == nullptr);
     CHECK(xd_intl_write_formats(path, "C.UTF-8", nullptr));
-    s = xd_intl_read_formats(path);
-    CHECK(s != nullptr && strcmp(s, "C.UTF-8") == 0);
-    g_free(s);
+    first = xd_intl_read_formats(path);
+    CHECK(first != nullptr && strcmp(first, "C.UTF-8") == 0);
+    g_free(first);
     char *text = nullptr;
     CHECK(g_file_get_contents(path, &text, nullptr, nullptr) &&
           strstr(text, "\nLC_NUMERIC=C.UTF-8\n") != nullptr &&
@@ -3730,12 +3816,12 @@ static void test_intl(void) {
     g_remove(supported);
     g_free(supported);
 
-    s = xd_intl_display_name("C.UTF-8");
-    CHECK(strcmp(s, "C.UTF-8") == 0);
-    g_free(s);
-    s = xd_intl_display_name("xx_XX.UTF-8");
-    CHECK(strcmp(s, "xx_XX.UTF-8") == 0);
-    g_free(s);
+    first = xd_intl_display_name("C.UTF-8");
+    CHECK(strcmp(first, "C.UTF-8") == 0);
+    g_free(first);
+    first = xd_intl_display_name("xx_XX.UTF-8");
+    CHECK(strcmp(first, "xx_XX.UTF-8") == 0);
+    g_free(first);
 
     xd_intl_samples smp;
     CHECK(xd_intl_samples_get("C.UTF-8", 0, &smp));
@@ -3755,23 +3841,23 @@ static void test_intl(void) {
 /* The note under automatic logon names the display manager and says
  * whether it follows AccountsService's setting. */
 static void test_autologin_note(void) {
-    char *n = xd_accounts_autologin_note("gdm.service");
-    CHECK(strstr(n, "GDM") != nullptr && strstr(n, "follows this setting") != nullptr);
-    g_free(n);
-    n = xd_accounts_autologin_note("gdm3.service"); /* Debian's */
-    CHECK(strstr(n, "GDM") != nullptr && strstr(n, "follows") != nullptr);
-    g_free(n);
-    n = xd_accounts_autologin_note("sddm.service");
-    CHECK(strstr(n, "SDDM") != nullptr && strstr(n, "no effect") != nullptr &&
-          strstr(n, "GDM") == nullptr);
-    g_free(n);
-    n = xd_accounts_autologin_note("lightdm.service");
-    CHECK(strstr(n, "LightDM, which keeps its own") != nullptr);
-    g_free(n);
+    char *note = xd_accounts_autologin_note("gdm.service");
+    CHECK(strstr(note, "GDM") != nullptr && strstr(note, "follows this setting") != nullptr);
+    g_free(note);
+    note = xd_accounts_autologin_note("gdm3.service"); /* Debian's */
+    CHECK(strstr(note, "GDM") != nullptr && strstr(note, "follows") != nullptr);
+    g_free(note);
+    note = xd_accounts_autologin_note("sddm.service");
+    CHECK(strstr(note, "SDDM") != nullptr && strstr(note, "no effect") != nullptr &&
+          strstr(note, "GDM") == nullptr);
+    g_free(note);
+    note = xd_accounts_autologin_note("lightdm.service");
+    CHECK(strstr(note, "LightDM, which keeps its own") != nullptr);
+    g_free(note);
     /* Unknown: named, with what's known in general. */
-    n = xd_accounts_autologin_note("mydm.service");
-    CHECK(strstr(n, "is mydm.") != nullptr && strstr(n, "as GDM does") != nullptr);
-    g_free(n);
+    note = xd_accounts_autologin_note("mydm.service");
+    CHECK(strstr(note, "is mydm.") != nullptr && strstr(note, "as GDM does") != nullptr);
+    g_free(note);
     char *none = xd_accounts_autologin_note(nullptr);
     char *empty = xd_accounts_autologin_note("");
     CHECK(strcmp(none, empty) == 0 && strstr(none, "SDDM and LightDM keep their own") != nullptr);
@@ -3788,15 +3874,15 @@ static void test_users(void) {
     CHECK(xd_users_valid_name("abcdefghijklmnopqrstuvwxyzabcdef") &&
           !xd_users_valid_name("abcdefghijklmnopqrstuvwxyzabcdefg"));
 
-    char *s = xd_users_suggest_name("Robert Smith");
-    CHECK(strcmp(s, "robertsmith") == 0);
-    g_free(s);
-    s = xd_users_suggest_name("2nd O'Brien 3");
-    CHECK(strcmp(s, "ndobrien3") == 0 && xd_users_valid_name(s));
-    g_free(s);
-    s = xd_users_suggest_name("\u4e2d\u6587");
-    CHECK(s != nullptr && !xd_users_valid_name(s)); /* nothing usable: "" or "??" dropped */
-    g_free(s);
+    char *name = xd_users_suggest_name("Robert Smith");
+    CHECK(strcmp(name, "robertsmith") == 0);
+    g_free(name);
+    name = xd_users_suggest_name("2nd O'Brien 3");
+    CHECK(strcmp(name, "ndobrien3") == 0 && xd_users_valid_name(name));
+    g_free(name);
+    name = xd_users_suggest_name("\u4e2d\u6587");
+    CHECK(name != nullptr && !xd_users_valid_name(name)); /* nothing usable: "" or "??" dropped */
+    g_free(name);
 
     /* A hash crypt() accepts for the password and nothing else. */
     char *hash = xd_users_hash_password("s3cret pw");
@@ -3848,36 +3934,41 @@ static void test_users(void) {
 /* Folder Options: [Folders] in desktop.ini, xd-files' hidden
  * extensions, and the File Types tab's extensions. */
 static void test_folder_options(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
-    CHECK(!a.folders.new_window && !a.folders.single_click && !a.folders.show_hidden);
-    CHECK(a.folders.full_path_address && !a.folders.full_path_title && a.folders.remember_views);
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(!original.folders.new_window && !original.folders.single_click &&
+          !original.folders.show_hidden);
+    CHECK(original.folders.full_path_address && !original.folders.full_path_title &&
+          original.folders.remember_views);
     /* Tabs instead of windows is off unless chosen: XP's behaviour. */
-    CHECK(!a.folders.new_tabs);
+    CHECK(!original.folders.new_tabs);
     /* Show common tasks in folders: XP's default. */
-    CHECK(a.folders.common_tasks);
-    xd_settings_parse(XD_STR("[Folders]\nCommonTasks=false\n"), &a);
-    CHECK(!a.folders.common_tasks && a.folders.remember_views);
+    CHECK(original.folders.common_tasks);
+    xd_settings_parse(XD_STR("[Folders]\nCommonTasks=false\n"), &original);
+    CHECK(!original.folders.common_tasks && original.folders.remember_views);
     xd_settings_parse(XD_STR("[Folders]\nNewWindow=true\nNewTabs=true\nSingleClick=1\n"
                              "ShowHidden=true\nHideExtensions=true\nFullPathAddress=false\n"
                              "FullPathTitle=true\nRememberViews=false\nDefaultView=Details\n"),
-                      &a);
-    CHECK(a.folders.new_window && a.folders.new_tabs && a.folders.single_click &&
-          a.folders.show_hidden);
-    CHECK(a.folders.hide_extensions && !a.folders.full_path_address && a.folders.full_path_title);
-    CHECK(!a.folders.remember_views && strcmp(a.folders.default_view, "details") == 0);
-    CHECK(a.folders.common_tasks); /* not in the text: the default */
-    a.folders.common_tasks = false;
+                      &original);
+    CHECK(original.folders.new_window && original.folders.new_tabs &&
+          original.folders.single_click && original.folders.show_hidden);
+    CHECK(original.folders.hide_extensions && !original.folders.full_path_address &&
+          original.folders.full_path_title);
+    CHECK(!original.folders.remember_views &&
+          strcmp(original.folders.default_view, "details") == 0);
+    CHECK(original.folders.common_tasks); /* not in the text: the default */
+    original.folders.common_tasks = false;
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && strcmp(b.folders.default_view, "details") == 0);
-    CHECK(!b.folders.common_tasks); /* saved as CommonTasks=false */
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          strcmp(parsed.folders.default_view, "details") == 0);
+    CHECK(!parsed.folders.common_tasks); /* saved as CommonTasks=false */
     xd_strbuf_free(&text);
     /* An unknown view keeps the default. */
-    xd_settings_parse(XD_STR("[Folders]\nDefaultView=../x\n"), &a);
-    CHECK(a.folders.default_view[0] == '\0');
+    xd_settings_parse(XD_STR("[Folders]\nDefaultView=../x\n"), &original);
+    CHECK(original.folders.default_view[0] == '\0');
 
     CHECK(xd_name_base_len("photo.jpg") == 5);
     CHECK(xd_name_base_len("archive.tar.gz") == 11);
@@ -3960,8 +4051,9 @@ static void test_file_types_edit(void) {
                       "</mime-type></mime-info>";
     CHECK(xd_mime_package_parse(xml, -1, "text/x-test", &pkg));
     CHECK(strcmp(pkg.comment, "Test & file") == 0 && pkg.delete_all && pkg.globs->len == 1);
-    const xd_mime_glob *g = g_ptr_array_index(pkg.globs, 0);
-    CHECK(strcmp(g->pattern, "*.TST") == 0 && g->weight == 60 && g->case_sensitive);
+    const xd_mime_glob *mime_glob = g_ptr_array_index(pkg.globs, 0);
+    CHECK(strcmp(mime_glob->pattern, "*.TST") == 0 && mime_glob->weight == 60 &&
+          mime_glob->case_sensitive);
     char *out = xd_mime_package_to_xml(&pkg);
     xd_mime_package_clear(&pkg);
     CHECK(xd_mime_package_parse(out, -1, "text/x-test", &pkg));
@@ -4051,15 +4143,15 @@ static void test_fonts(void) {
     CHECK(xd_font_format_label("Unknown", "/f/a") == nullptr);
     CHECK(xd_font_format_label(nullptr, "/f/a") == nullptr);
 
-    char *n = xd_font_display_name("DejaVu Sans Bold", "DejaVu Sans", "Bold", "TrueType");
-    CHECK(strcmp(n, "DejaVu Sans Bold (TrueType)") == 0);
-    g_free(n);
-    n = xd_font_display_name(nullptr, "Foo", "Regular", "OpenType");
-    CHECK(strcmp(n, "Foo (OpenType)") == 0);
-    g_free(n);
-    n = xd_font_display_name("", "Foo", "Italic", nullptr);
-    CHECK(strcmp(n, "Foo Italic") == 0);
-    g_free(n);
+    char *name = xd_font_display_name("DejaVu Sans Bold", "DejaVu Sans", "Bold", "TrueType");
+    CHECK(strcmp(name, "DejaVu Sans Bold (TrueType)") == 0);
+    g_free(name);
+    name = xd_font_display_name(nullptr, "Foo", "Regular", "OpenType");
+    CHECK(strcmp(name, "Foo (OpenType)") == 0);
+    g_free(name);
+    name = xd_font_display_name("", "Foo", "Italic", nullptr);
+    CHECK(strcmp(name, "Foo Italic") == 0);
+    g_free(name);
 
     CHECK(xd_path_in_dir("/home/u/.local/share/fonts/a.ttf", "/home/u/.local/share/fonts"));
     CHECK(xd_path_in_dir("/home/u/.local/share/fonts/sub/a.ttf", "/home/u/.local/share/fonts/"));
@@ -4079,143 +4171,164 @@ static void test_fonts(void) {
     xd_fonts_mark_primary(list, G_N_ELEMENTS(list));
     CHECK(!bold.primary && !italic.primary && regular.primary && only.primary);
 
-    char *v = xd_font_version_text(0x00025eb8); /* 2.37 */
-    CHECK(strcmp(v, "Version 2.37") == 0);
-    g_free(v);
-    v = xd_font_version_text(0x0001ffff); /* rounds up to 2.00 */
-    CHECK(strcmp(v, "Version 2.00") == 0);
-    g_free(v);
-    v = xd_font_version_text(0);
-    CHECK(v[0] == '\0');
-    g_free(v);
+    char *version = xd_font_version_text(0x00025eb8); /* 2.37 */
+    CHECK(strcmp(version, "Version 2.37") == 0);
+    g_free(version);
+    version = xd_font_version_text(0x0001ffff); /* rounds up to 2.00 */
+    CHECK(strcmp(version, "Version 2.00") == 0);
+    g_free(version);
+    version = xd_font_version_text(0);
+    CHECK(version[0] == '\0');
+    g_free(version);
 }
 
 /* [Mouse], [Accessibility] and the [Keyboard] keys the applets add. */
 static void test_input_settings(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
-    CHECK(!a.mouse.left_handed && a.mouse.acceleration && a.mouse.double_click_ms == 500);
-    CHECK(a.mouse.wheel_lines == 3 && a.mouse.cursor_size == 24 && a.mouse.cursor_theme[0] == 0);
-    CHECK(a.keyboard.cursor_blink_ms == 530 && !a.access.sticky_keys && a.access.sticky_lock);
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(!original.mouse.left_handed && original.mouse.acceleration &&
+          original.mouse.double_click_ms == 500);
+    CHECK(original.mouse.wheel_lines == 3 && original.mouse.cursor_size == 24 &&
+          original.mouse.cursor_theme[0] == 0);
+    CHECK(original.keyboard.cursor_blink_ms == 530 && !original.access.sticky_keys &&
+          original.access.sticky_lock);
 
     xd_settings_parse(XD_STR("[Mouse]\nLeftHanded=true\nSpeed=-4\nAcceleration=false\n"
                              "DoubleClickMs=350\nWheelLines=6\nCursorTheme=Breeze_Light\n"
                              "CursorSize=48\n[Keyboard]\nCursorBlinkMs=0\n"
                              "[Accessibility]\nStickyKeys=true\nStickyKeysLock=false\n"
                              "BounceKeys=true\nBounceMs=700\n"),
-                      &a);
-    CHECK(a.mouse.left_handed && a.mouse.speed == -4 && !a.mouse.acceleration);
-    CHECK(a.mouse.double_click_ms == 350 && a.mouse.wheel_lines == 6 && a.mouse.cursor_size == 48);
-    CHECK(strcmp(a.mouse.cursor_theme, "Breeze_Light") == 0 && a.keyboard.cursor_blink_ms == 0);
-    CHECK(a.access.sticky_keys && !a.access.sticky_lock && a.access.filter_keys &&
-          a.access.bounce_ms == 700);
+                      &original);
+    CHECK(original.mouse.left_handed && original.mouse.speed == -4 && !original.mouse.acceleration);
+    CHECK(original.mouse.double_click_ms == 350 && original.mouse.wheel_lines == 6 &&
+          original.mouse.cursor_size == 48);
+    CHECK(strcmp(original.mouse.cursor_theme, "Breeze_Light") == 0 &&
+          original.keyboard.cursor_blink_ms == 0);
+    CHECK(original.access.sticky_keys && !original.access.sticky_lock &&
+          original.access.filter_keys && original.access.bounce_ms == 700);
 
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && memcmp(&a.mouse, &b.mouse, sizeof(a.mouse)) == 0);
-    CHECK(memcmp(&a.access, &b.access, sizeof(a.access)) == 0);
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) &&
+          memcmp(&original.mouse, &parsed.mouse, sizeof(original.mouse)) == 0);
+    CHECK(memcmp(&original.access, &parsed.access, sizeof(original.access)) == 0);
     xd_strbuf_free(&text);
 
     /* Out of range keeps the default; a theme can't be a path. */
     xd_settings_parse(XD_STR("[Mouse]\nSpeed=11\nDoubleClickMs=50\nWheelLines=0\n"
                              "CursorTheme=../x\nCursorSize=4\n[Accessibility]\nBounceMs=5\n"),
-                      &a);
-    CHECK(a.mouse.speed == 0 && a.mouse.double_click_ms == 500 && a.mouse.wheel_lines == 3);
-    CHECK(a.mouse.cursor_theme[0] == 0 && a.mouse.cursor_size == 24 && a.access.bounce_ms == 500);
-    xd_settings_parse(XD_STR("[Mouse]\nCursorTheme=.hidden\n"), &a);
-    CHECK(a.mouse.cursor_theme[0] == 0);
+                      &original);
+    CHECK(original.mouse.speed == 0 && original.mouse.double_click_ms == 500 &&
+          original.mouse.wheel_lines == 3);
+    CHECK(original.mouse.cursor_theme[0] == 0 && original.mouse.cursor_size == 24 &&
+          original.access.bounce_ms == 500);
+    xd_settings_parse(XD_STR("[Mouse]\nCursorTheme=.hidden\n"), &original);
+    CHECK(original.mouse.cursor_theme[0] == 0);
 
     /* XP's defaults: off, but every shortcut on, with its warning. */
-    xd_settings_defaults(&a);
-    CHECK(!a.access.filter_keys && !a.access.toggle_keys && !a.access.mouse_keys);
-    CHECK(a.access.sticky_shortcut && a.access.filter_shortcut && a.access.toggle_shortcut);
-    CHECK(a.access.mouse_keys_shortcut && a.access.warn && a.access.sound_on_off);
-    CHECK(a.access.slow_keys && a.access.slow_ms == 1000 && !a.mouse.click_lock);
-    CHECK(a.mouse.click_lock_ms == 1200 && a.access.mouse_keys_numlock);
+    xd_settings_defaults(&original);
+    CHECK(!original.access.filter_keys && !original.access.toggle_keys &&
+          !original.access.mouse_keys);
+    CHECK(original.access.sticky_shortcut && original.access.filter_shortcut &&
+          original.access.toggle_shortcut);
+    CHECK(original.access.mouse_keys_shortcut && original.access.warn &&
+          original.access.sound_on_off);
+    CHECK(original.access.slow_keys && original.access.slow_ms == 1000 &&
+          !original.mouse.click_lock);
+    CHECK(original.mouse.click_lock_ms == 1200 && original.access.mouse_keys_numlock);
     xd_settings_parse(XD_STR("[Mouse]\nClickLock=true\nClickLockMs=800\n[Accessibility]\n"
                              "FilterKeys=true\nSlowKeys=false\nSlowKeysMs=300\n"
                              "FilterKeysNoRepeat=true\nToggleKeys=true\nToggleKeysShortcut=0\n"
                              "MouseKeys=true\nMouseKeysSpeed=200\nMouseKeysAccelMs=1500\n"
                              "MouseKeysNumLock=false\nWarnOnShortcut=false\n"
                              "StickyKeysTwoKeysOff=false\n"),
-                      &a);
-    CHECK(a.mouse.click_lock && a.mouse.click_lock_ms == 800);
-    CHECK(a.access.filter_keys && !a.access.slow_keys && a.access.slow_ms == 300);
-    CHECK(a.access.filter_no_repeat && a.access.toggle_keys && !a.access.toggle_shortcut);
-    CHECK(a.access.mouse_keys && a.access.mouse_keys_speed == 200);
-    CHECK(a.access.mouse_keys_accel_ms == 1500 && !a.access.mouse_keys_numlock);
-    CHECK(!a.access.warn && !a.access.sticky_two_keys_off && a.access.sticky_sound);
-    xd_settings_serialize(&a, &text);
-    xd_settings_parse(xd_strbuf_view(&text), &b);
+                      &original);
+    CHECK(original.mouse.click_lock && original.mouse.click_lock_ms == 800);
+    CHECK(original.access.filter_keys && !original.access.slow_keys &&
+          original.access.slow_ms == 300);
+    CHECK(original.access.filter_no_repeat && original.access.toggle_keys &&
+          !original.access.toggle_shortcut);
+    CHECK(original.access.mouse_keys && original.access.mouse_keys_speed == 200);
+    CHECK(original.access.mouse_keys_accel_ms == 1500 && !original.access.mouse_keys_numlock);
+    CHECK(!original.access.warn && !original.access.sticky_two_keys_off &&
+          original.access.sticky_sound);
+    xd_settings_serialize(&original, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
     xd_strbuf_free(&text);
-    CHECK(memcmp(&a.access, &b.access, sizeof(a.access)) == 0);
-    CHECK(memcmp(&a.mouse, &b.mouse, sizeof(a.mouse)) == 0);
+    CHECK(memcmp(&original.access, &parsed.access, sizeof(original.access)) == 0);
+    CHECK(memcmp(&original.mouse, &parsed.mouse, sizeof(original.mouse)) == 0);
     /* Out of range keeps the default. */
     xd_settings_parse(XD_STR("[Mouse]\nClickLockMs=50\n[Accessibility]\nMouseKeysSpeed=9000\n"),
-                      &a);
-    CHECK(a.mouse.click_lock_ms == 1200 && a.access.mouse_keys_speed == 80);
+                      &original);
+    CHECK(original.mouse.click_lock_ms == 1200 && original.access.mouse_keys_speed == 80);
 
     /* High Contrast switches to Classic and back to what was there. */
-    xd_settings_defaults(&a);
-    a.style = XD_STYLE_LUNA;
-    g_strlcpy(a.scheme, "windows-standard", sizeof(a.scheme));
-    xd_settings_set_high_contrast(&a, true, "high-contrast-black");
-    CHECK(a.access.high_contrast && a.style == XD_STYLE_CLASSIC);
-    CHECK(strcmp(a.scheme, "high-contrast-black") == 0);
+    xd_settings_defaults(&original);
+    original.style = XD_STYLE_LUNA;
+    g_strlcpy(original.scheme, "windows-standard", sizeof(original.scheme));
+    xd_settings_set_high_contrast(&original, true, "high-contrast-black");
+    CHECK(original.access.high_contrast && original.style == XD_STYLE_CLASSIC);
+    CHECK(strcmp(original.scheme, "high-contrast-black") == 0);
     /* Another high-contrast scheme keeps the look to go back to. */
-    xd_settings_set_high_contrast(&a, true, "high-contrast-white");
-    CHECK(strcmp(a.scheme, "high-contrast-white") == 0 && a.access.saved_style == XD_STYLE_LUNA);
-    xd_settings_serialize(&a, &text);
-    xd_settings_parse(xd_strbuf_view(&text), &b);
+    xd_settings_set_high_contrast(&original, true, "high-contrast-white");
+    CHECK(strcmp(original.scheme, "high-contrast-white") == 0 &&
+          original.access.saved_style == XD_STYLE_LUNA);
+    xd_settings_serialize(&original, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
     xd_strbuf_free(&text);
-    CHECK(b.access.high_contrast && strcmp(b.access.saved_scheme, "windows-standard") == 0);
-    xd_settings_set_high_contrast(&b, false, "");
-    CHECK(!b.access.high_contrast && b.style == XD_STYLE_LUNA);
-    CHECK(strcmp(b.scheme, "windows-standard") == 0);
+    CHECK(parsed.access.high_contrast &&
+          strcmp(parsed.access.saved_scheme, "windows-standard") == 0);
+    xd_settings_set_high_contrast(&parsed, false, "");
+    CHECK(!parsed.access.high_contrast && parsed.style == XD_STYLE_LUNA);
+    CHECK(strcmp(parsed.scheme, "windows-standard") == 0);
     /* Off when it's already off changes nothing. */
-    xd_settings_set_high_contrast(&b, false, "");
-    CHECK(b.style == XD_STYLE_LUNA && strcmp(b.scheme, "windows-standard") == 0);
+    xd_settings_set_high_contrast(&parsed, false, "");
+    CHECK(parsed.style == XD_STYLE_LUNA && strcmp(parsed.scheme, "windows-standard") == 0);
 }
 
 static void test_kbd_layouts(void) {
-    xd_kbd_layout l[XD_KBD_LAYOUTS_MAX];
-    CHECK(xd_kbd_layouts_parse("", "", l) == 0);
-    CHECK(xd_kbd_layouts_parse("us,de", ",nodeadkeys", l) == 2);
-    CHECK(strcmp(l[0].name, "us") == 0 && l[0].variant[0] == 0);
-    CHECK(strcmp(l[1].name, "de") == 0 && strcmp(l[1].variant, "nodeadkeys") == 0);
+    xd_kbd_layout kbd_layout[XD_KBD_LAYOUTS_MAX];
+    CHECK(xd_kbd_layouts_parse("", "", kbd_layout) == 0);
+    CHECK(xd_kbd_layouts_parse("us,de", ",nodeadkeys", kbd_layout) == 2);
+    CHECK(strcmp(kbd_layout[0].name, "us") == 0 && kbd_layout[0].variant[0] == 0);
+    CHECK(strcmp(kbd_layout[1].name, "de") == 0 &&
+          strcmp(kbd_layout[1].variant, "nodeadkeys") == 0);
     /* Fewer variants than layouts; at most four layouts. */
-    CHECK(xd_kbd_layouts_parse("us, fr ,ru,de,gb", "dvorak", l) == 4);
-    CHECK(strcmp(l[0].variant, "dvorak") == 0 && strcmp(l[1].name, "fr") == 0 &&
-          l[1].variant[0] == 0 && strcmp(l[3].name, "de") == 0);
+    CHECK(xd_kbd_layouts_parse("us, fr ,ru,de,gb", "dvorak", kbd_layout) == 4);
+    CHECK(strcmp(kbd_layout[0].variant, "dvorak") == 0 && strcmp(kbd_layout[1].name, "fr") == 0 &&
+          kbd_layout[1].variant[0] == 0 && strcmp(kbd_layout[3].name, "de") == 0);
 
     char layouts[64], variants[64];
-    CHECK(xd_kbd_layouts_format(l, 2, layouts, sizeof(layouts), variants, sizeof(variants)));
+    CHECK(
+        xd_kbd_layouts_format(kbd_layout, 2, layouts, sizeof(layouts), variants, sizeof(variants)));
     CHECK(strcmp(layouts, "us,fr") == 0 && strcmp(variants, "dvorak,") == 0);
-    xd_kbd_layouts_parse("us,de", "", l);
-    CHECK(xd_kbd_layouts_format(l, 2, layouts, sizeof(layouts), variants, sizeof(variants)));
+    xd_kbd_layouts_parse("us,de", "", kbd_layout);
+    CHECK(
+        xd_kbd_layouts_format(kbd_layout, 2, layouts, sizeof(layouts), variants, sizeof(variants)));
     CHECK(strcmp(layouts, "us,de") == 0 && variants[0] == 0);
-    CHECK(!xd_kbd_layouts_format(l, 2, layouts, 4, variants, sizeof(variants)) && layouts[0] == 0);
+    CHECK(!xd_kbd_layouts_format(kbd_layout, 2, layouts, 4, variants, sizeof(variants)) &&
+          layouts[0] == 0);
 
-    char *o = xd_kbd_option_in_group("caps:ctrl_modifier,grp:alt_shift_toggle", "grp");
-    CHECK(o != nullptr && strcmp(o, "grp:alt_shift_toggle") == 0);
-    g_free(o);
+    char *option = xd_kbd_option_in_group("caps:ctrl_modifier,grp:alt_shift_toggle", "grp");
+    CHECK(option != nullptr && strcmp(option, "grp:alt_shift_toggle") == 0);
+    g_free(option);
     /* "grp_led:" is another group. */
     CHECK(xd_kbd_option_in_group("grp_led:scroll", "grp") == nullptr);
-    o = xd_kbd_option_set("caps:ctrl_modifier", "compose:ralt", true);
-    CHECK(strcmp(o, "caps:ctrl_modifier,compose:ralt") == 0);
-    char *o2 = xd_kbd_option_set(o, "compose:ralt", true); /* never twice */
+    option = xd_kbd_option_set("caps:ctrl_modifier", "compose:ralt", true);
+    CHECK(strcmp(option, "caps:ctrl_modifier,compose:ralt") == 0);
+    char *o2 = xd_kbd_option_set(option, "compose:ralt", true); /* never twice */
     CHECK(strcmp(o2, "caps:ctrl_modifier,compose:ralt") == 0);
-    g_free(o);
-    o = xd_kbd_option_set(o2, "caps:ctrl_modifier", false);
-    CHECK(strcmp(o, "compose:ralt") == 0);
+    g_free(option);
+    option = xd_kbd_option_set(o2, "caps:ctrl_modifier", false);
+    CHECK(strcmp(option, "compose:ralt") == 0);
     g_free(o2);
-    g_free(o);
-    o = xd_kbd_options_clear_group("grp:win_space_toggle,grp_led:scroll,,grp:alt_caps_toggle",
-                                   "grp");
-    CHECK(strcmp(o, "grp_led:scroll") == 0);
-    g_free(o);
+    g_free(option);
+    option = xd_kbd_options_clear_group("grp:win_space_toggle,grp_led:scroll,,grp:alt_caps_toggle",
+                                        "grp");
+    CHECK(strcmp(option, "grp_led:scroll") == 0);
+    g_free(option);
 }
 
 /* Restores an environment variable a test changed. */
@@ -4229,16 +4342,16 @@ static void env_restore(const char *var, char *saved) {
 
 static void test_qt_style(void) {
     /* [Appearance] QtStyle: a style key, "" = automatic. */
-    xd_settings a;
-    xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nQtStyle=kvantum-dark\n"), &a);
-    CHECK(strcmp(a.qt_style, "kvantum-dark") == 0);
-    CHECK(strcmp(xd_settings_qt_style(&a), "kvantum-dark") == 0);
+    xd_settings original;
+    xd_settings_parse(XD_STR("[Appearance]\nStyle=luna\nQtStyle=kvantum-dark\n"), &original);
+    CHECK(strcmp(original.qt_style, "kvantum-dark") == 0);
+    CHECK(strcmp(xd_settings_qt_style(&original), "kvantum-dark") == 0);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
+    xd_settings_serialize(&original, &text);
     CHECK(strstr(xd_strbuf_cstr(&text), "QtStyle=kvantum-dark") != nullptr);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(xd_settings_equal(&a, &b) && strcmp(b.qt_style, "kvantum-dark") == 0);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed) && strcmp(parsed.qt_style, "kvantum-dark") == 0);
     xd_strbuf_free(&text);
     /* It goes into the environment: no spaces, paths or shell syntax. */
     static const char *const bad[] = {
@@ -4246,17 +4359,17 @@ static void test_qt_style(void) {
         "[Appearance]\nQtStyle=a;b\n",
         "[Appearance]\nQtStyle=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"};
     for (size_t i = 0; i < G_N_ELEMENTS(bad); i++) {
-        xd_settings_parse(xd_str_from_cstr(bad[i]), &a);
-        CHECK(a.qt_style[0] == '\0');
+        xd_settings_parse(xd_str_from_cstr(bad[i]), &original);
+        CHECK(original.qt_style[0] == '\0');
     }
     /* Automatic: 2000's bevels for Classic, Fusion for the rest. */
-    xd_settings_defaults(&a);
-    CHECK(a.qt_style[0] == '\0');
-    CHECK(strcmp(xd_settings_qt_style(&a), "Windows") == 0);
+    xd_settings_defaults(&original);
+    CHECK(original.qt_style[0] == '\0');
+    CHECK(strcmp(xd_settings_qt_style(&original), "Windows") == 0);
     static const xd_visual_style fusion[] = {XD_STYLE_LUNA, XD_STYLE_WHISTLER, XD_STYLE_AERO};
     for (size_t i = 0; i < G_N_ELEMENTS(fusion); i++) {
-        a.style = fusion[i];
-        CHECK(strcmp(xd_settings_qt_style(&a), "Fusion") == 0);
+        original.style = fusion[i];
+        CHECK(strcmp(xd_settings_qt_style(&original), "Fusion") == 0);
     }
     CHECK(strcmp(xd_qt_style_auto(XD_STYLE_CLASSIC), "Windows") == 0);
 
@@ -4272,36 +4385,36 @@ static void test_qt_style(void) {
         saved[i] = g_strdup(g_getenv(vars[i]));
         g_unsetenv(vars[i]);
     }
-    xd_settings_defaults(&a);
-    CHECK(xd_settings_qt_env(&a));
+    xd_settings_defaults(&original);
+    CHECK(xd_settings_qt_env(&original));
     CHECK(g_strcmp0(g_getenv("QT_QPA_PLATFORMTHEME"), "gtk3") == 0);
     CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "Windows") == 0);
     CHECK(xd_qt_env_ours("QT_QPA_PLATFORMTHEME") && xd_qt_env_ours("QT_STYLE_OVERRIDE"));
     /* Our palette with our GTK theme, none with another. */
     CHECK(g_str_has_suffix(g_getenv("QT_GUI_GTK_JSON"), "/XeonDesktop/" XD_QT_PALETTE_FILE));
-    CHECK(!xd_settings_qt_env(&a)); /* nothing new */
-    snprintf(a.gtk_theme, sizeof(a.gtk_theme), "%s", "Adwaita");
-    CHECK(xd_settings_qt_env(&a));
+    CHECK(!xd_settings_qt_env(&original)); /* nothing new */
+    snprintf(original.gtk_theme, sizeof(original.gtk_theme), "%s", "Adwaita");
+    CHECK(xd_settings_qt_env(&original));
     CHECK(g_strcmp0(g_getenv("QT_GUI_GTK_JSON"), "") == 0 && xd_qt_env_ours("QT_GUI_GTK_JSON"));
-    a.gtk_theme[0] = '\0';
-    a.style = XD_STYLE_AERO; /* a child of ours, after a change */
-    CHECK(xd_settings_qt_env(&a));
+    original.gtk_theme[0] = '\0';
+    original.style = XD_STYLE_AERO; /* a child of ours, after a change */
+    CHECK(xd_settings_qt_env(&original));
     CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "Fusion") == 0);
     /* The user's own (qt6ct, Kvantum), set before the desktop started... */
     for (size_t i = 0; i < G_N_ELEMENTS(vars); i++)
         g_unsetenv(vars[i]);
     g_setenv("QT_QPA_PLATFORMTHEME", "qt6ct", TRUE);
     g_setenv("QT_STYLE_OVERRIDE", "kvantum", TRUE);
-    xd_settings_qt_env(&a); /* only adds our palette file, which they ignore */
-    CHECK(!xd_settings_qt_env(&a));
+    xd_settings_qt_env(&original); /* only adds our palette file, which they ignore */
+    CHECK(!xd_settings_qt_env(&original));
     CHECK(g_strcmp0(g_getenv("QT_QPA_PLATFORMTHEME"), "qt6ct") == 0);
     CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "kvantum") == 0);
     CHECK(!xd_qt_env_ours("QT_STYLE_OVERRIDE"));
     /* ...or over ours, for one program started from a terminal. */
     g_unsetenv("QT_STYLE_OVERRIDE");
-    CHECK(xd_settings_qt_env(&a) && xd_qt_env_ours("QT_STYLE_OVERRIDE"));
+    CHECK(xd_settings_qt_env(&original) && xd_qt_env_ours("QT_STYLE_OVERRIDE"));
     g_setenv("QT_STYLE_OVERRIDE", "Breeze", TRUE);
-    CHECK(!xd_settings_qt_env(&a));
+    CHECK(!xd_settings_qt_env(&original));
     CHECK(g_strcmp0(g_getenv("QT_STYLE_OVERRIDE"), "Breeze") == 0);
     for (size_t i = 0; i < G_N_ELEMENTS(vars); i++)
         env_restore(vars[i], saved[i]);
@@ -4339,25 +4452,27 @@ static void test_qt_style(void) {
     g_free(root);
     /* Only directories that exist, each once. */
     char **found = xd_qt_plugin_dirs();
-    for (char **d = found; *d != nullptr; d++) {
-        CHECK(g_file_test(*d, G_FILE_TEST_IS_DIR));
-        for (char **e = d + 1; *e != nullptr; e++)
-            CHECK(strcmp(*d, *e) != 0);
+    for (char **dir = found; *dir != nullptr; dir++) {
+        CHECK(g_file_test(*dir, G_FILE_TEST_IS_DIR));
+        for (char **later_dir = dir + 1; *later_dir != nullptr; later_dir++)
+            CHECK(strcmp(*dir, *later_dir) != 0);
     }
     g_strfreev(found);
 }
 
 /* The colour Qt's palette file gives `role` in its active group. */
 static char *qt_palette_color(JsonNode *root, const char *palette, const char *role) {
-    JsonObject *o = json_object_get_object_member(json_node_get_object(root), "QtGtk3Palettes");
-    o = o != nullptr ? json_object_get_object_member(o, palette) : nullptr;
-    JsonArray *entries = o != nullptr ? json_object_get_array_member(o, role) : nullptr;
+    JsonObject *palettes =
+        json_object_get_object_member(json_node_get_object(root), "QtGtk3Palettes");
+    palettes = palettes != nullptr ? json_object_get_object_member(palettes, palette) : nullptr;
+    JsonArray *entries =
+        palettes != nullptr ? json_object_get_array_member(palettes, role) : nullptr;
     for (guint i = 0; entries != nullptr && i < json_array_get_length(entries); i++) {
-        JsonObject *e = json_array_get_object_element(entries, i);
-        if (strcmp(json_object_get_string_member(e, "ColorGroup"), "Active") != 0 ||
-            strcmp(json_object_get_string_member(e, "SourceType"), "Fixed") != 0)
+        JsonObject *entry_object = json_array_get_object_element(entries, i);
+        if (strcmp(json_object_get_string_member(entry_object, "ColorGroup"), "Active") != 0 ||
+            strcmp(json_object_get_string_member(entry_object, "SourceType"), "Fixed") != 0)
             continue;
-        JsonObject *data = json_object_get_object_member(e, "SourceData");
+        JsonObject *data = json_object_get_object_member(entry_object, "SourceData");
         JsonObject *brush = json_object_get_object_member(data, "FixedBrush");
         return g_strdup(json_object_get_string_member(brush, "Color"));
     }
@@ -4369,10 +4484,10 @@ static void test_qt_palette(void) {
      * own mapping makes fields grey and works bevels out from the face). */
     xd_scheme scheme;
     xd_scheme_init_default(&scheme);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &scheme, 1.0);
     xd_strbuf json = {0};
-    xd_qt_palette_json(&t, &json);
+    xd_qt_palette_json(&theme, &json);
     JsonParser *parser = json_parser_new();
     CHECK(json_parser_load_from_data(parser, xd_strbuf_cstr(&json), (gssize)json.len, nullptr));
     JsonNode *root = json_parser_get_root(parser);
@@ -4385,23 +4500,23 @@ static void test_qt_palette(void) {
         {"MenuPalette", "Window", "#d4d0c8"},
     };
     for (size_t i = 0; root != nullptr && i < G_N_ELEMENTS(want); i++) {
-        char *c = qt_palette_color(root, want[i].palette, want[i].role);
-        CHECK(g_strcmp0(c, want[i].color) == 0);
-        g_free(c);
+        char *got_color = qt_palette_color(root, want[i].palette, want[i].role);
+        CHECK(g_strcmp0(got_color, want[i].color) == 0);
+        g_free(got_color);
     }
     g_object_unref(parser);
     /* Luna: XP's white menus and its selection blue. */
-    xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
-    xd_qt_palette_json(&t, &json);
+    xd_theme_init(&theme, XD_STYLE_LUNA, &scheme, 1.0);
+    xd_qt_palette_json(&theme, &json);
     parser = json_parser_new();
     CHECK(json_parser_load_from_data(parser, xd_strbuf_cstr(&json), (gssize)json.len, nullptr));
     root = json_parser_get_root(parser);
-    char *c = root != nullptr ? qt_palette_color(root, "MenuPalette", "Window") : nullptr;
-    CHECK(g_strcmp0(c, "#ffffff") == 0);
-    g_free(c);
-    c = root != nullptr ? qt_palette_color(root, "SystemPalette", "Highlight") : nullptr;
-    CHECK(g_strcmp0(c, "#316ac5") == 0);
-    g_free(c);
+    char *got_color = root != nullptr ? qt_palette_color(root, "MenuPalette", "Window") : nullptr;
+    CHECK(g_strcmp0(got_color, "#ffffff") == 0);
+    g_free(got_color);
+    got_color = root != nullptr ? qt_palette_color(root, "SystemPalette", "Highlight") : nullptr;
+    CHECK(g_strcmp0(got_color, "#316ac5") == 0);
+    g_free(got_color);
     g_object_unref(parser);
     xd_strbuf_free(&json);
 }
@@ -4411,19 +4526,20 @@ static void test_cursor_themes(void) {
     CHECK(root != nullptr);
     if (root == nullptr)
         return;
-    char *a = g_build_filename(root, "a", nullptr), *b = g_build_filename(root, "b", nullptr);
+    char *first_root = g_build_filename(root, "a", nullptr),
+         *second_root = g_build_filename(root, "b", nullptr);
     /* a: "Zed" (with cursors) and "plain" (an icon theme, no cursors);
      * b: another "Zed" (hidden by a's), "Alpha", "default". */
     static const char *const made[] = {"a/Zed/cursors", "a/plain/48x48", "b/Zed/cursors",
                                        "b/Alpha/cursors", "b/default/cursors"};
     for (size_t i = 0; i < G_N_ELEMENTS(made); i++) {
-        char *d = g_build_filename(root, made[i], nullptr);
-        g_mkdir_with_parents(d, 0700);
-        g_free(d);
+        char *made_dir = g_build_filename(root, made[i], nullptr);
+        g_mkdir_with_parents(made_dir, 0700);
+        g_free(made_dir);
     }
-    char *index = g_build_filename(a, "Zed", "index.theme", nullptr);
+    char *index = g_build_filename(first_root, "Zed", "index.theme", nullptr);
     CHECK(g_file_set_contents(index, "[Icon Theme]\nName=Zed Cursors\n", -1, nullptr));
-    const char *dirs[] = {a, b, "/nonexistent", nullptr};
+    const char *dirs[] = {first_root, second_root, "/nonexistent", nullptr};
     GPtrArray *list = xd_cursor_themes_list(dirs);
     CHECK(list->len == 2);
     if (list->len == 2) {
@@ -4450,8 +4566,8 @@ static void test_cursor_themes(void) {
     }
     CHECK(g_rmdir(root) == 0);
     g_free(index);
-    g_free(a);
-    g_free(b);
+    g_free(first_root);
+    g_free(second_root);
     g_free(root);
 }
 
@@ -4479,8 +4595,8 @@ static void check_systemd_calendar(const char *spec) {
 }
 
 /* A schedule's OnCalendar=, what systemd makes of it, and back. */
-static void check_calendar(const xd_schedule *s, const char *want) {
-    char *cal = xd_schedule_calendar(s);
+static void check_calendar(const xd_schedule *schedule, const char *want) {
+    char *cal = xd_schedule_calendar(schedule);
     CHECK(cal != nullptr && strcmp(cal, want) == 0);
     if (cal != nullptr && strcmp(cal, want) != 0)
         fprintf(stderr, "  calendar: got '%s', want '%s'\n", cal, want);
@@ -4493,8 +4609,8 @@ static void check_calendar(const xd_schedule *s, const char *want) {
     g_free(cal);
 }
 
-static void check_describe(const xd_schedule *s, const char *want) {
-    char *text = xd_schedule_describe(s);
+static void check_describe(const xd_schedule *schedule, const char *want) {
+    char *text = xd_schedule_describe(schedule);
     CHECK(strcmp(text, want) == 0);
     if (strcmp(text, want) != 0)
         fprintf(stderr, "  describe: got '%s', want '%s'\n", text, want);
@@ -4578,9 +4694,9 @@ static void test_schedtasks(void) {
         "*-*~02 09:00:00",        "*-*-32 09:00:00",     "Mon,Tue,Wed *-*-* 09:00:00",
     };
     for (size_t i = 0; i < G_N_ELEMENTS(foreign); i++) {
-        xd_schedule s;
-        bool ok = xd_schedule_from_calendar(foreign[i], &s);
-        CHECK(!ok && s.kind == XD_SCHED_CUSTOM);
+        xd_schedule schedule;
+        bool ok = xd_schedule_from_calendar(foreign[i], &schedule);
+        CHECK(!ok && schedule.kind == XD_SCHED_CUSTOM);
         if (ok)
             fprintf(stderr, "  read '%s' as ours\n", foreign[i]);
     }
@@ -4634,9 +4750,12 @@ static void test_schedtasks(void) {
     CHECK(xd_task_argv_from_exec(nullptr) == nullptr);
 
     const char *run[] = {"/usr/bin/backup", "--to", "/mnt/My Disk", nullptr};
-    xd_task t = {.name = "Back up 100%", .argv = run, .workdir = "/home/u",
-                 .sched = daily, .max_run_sec = 72 * 3600};
-    check_str(xd_task_service_text(&t),
+    xd_task task = {.name = "Back up 100%",
+                    .argv = run,
+                    .workdir = "/home/u",
+                    .sched = daily,
+                    .max_run_sec = 72 * 3600};
+    check_str(xd_task_service_text(&task),
               "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
               "[Unit]\n"
               "Description=Back up 100%%\n"
@@ -4646,7 +4765,7 @@ static void test_schedtasks(void) {
               "ExecStart=\"/usr/bin/backup\" \"--to\" \"/mnt/My Disk\"\n"
               "WorkingDirectory=/home/u\n"
               "RuntimeMaxSec=259200\n");
-    check_str(xd_task_timer_text(&t),
+    check_str(xd_task_timer_text(&task),
               "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
               "[Unit]\n"
               "Description=Back up 100%%\n"
@@ -4656,8 +4775,8 @@ static void test_schedtasks(void) {
               "\n"
               "[Install]\n"
               "WantedBy=timers.target\n");
-    t = (xd_task){.name = " Hello ", .argv = run, .sched = startup};
-    check_str(xd_task_service_text(&t),
+    task = (xd_task){.name = " Hello ", .argv = run, .sched = startup};
+    check_str(xd_task_service_text(&task),
               "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
               "[Unit]\n"
               "Description=Hello\n"
@@ -4665,7 +4784,7 @@ static void test_schedtasks(void) {
               "[Service]\n"
               "Type=exec\n"
               "ExecStart=\"/usr/bin/backup\" \"--to\" \"/mnt/My Disk\"\n");
-    check_str(xd_task_timer_text(&t),
+    check_str(xd_task_timer_text(&task),
               "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
               "[Unit]\n"
               "Description=Hello\n"
@@ -4675,8 +4794,8 @@ static void test_schedtasks(void) {
               "\n"
               "[Install]\n"
               "WantedBy=timers.target\n");
-    t.sched = logon;
-    check_str(xd_task_timer_text(&t),
+    task.sched = logon;
+    check_str(xd_task_timer_text(&task),
               "# A scheduled task, written by Scheduled Tasks (xd-schedtasks).\n"
               "[Unit]\n"
               "Description=Hello\n"
@@ -4689,23 +4808,23 @@ static void test_schedtasks(void) {
               "[Install]\n"
               "WantedBy=graphical-session.target\n");
     /* Nothing is written for what can't be. */
-    t.name = "a/b";
-    CHECK(xd_task_service_text(&t) == nullptr && xd_task_timer_text(&t) == nullptr);
-    t.name = "ok";
-    t.workdir = "relative";
-    CHECK(xd_task_service_text(&t) == nullptr);
-    t.workdir = nullptr;
-    t.sched = weekly; /* no days */
-    CHECK(xd_task_timer_text(&t) == nullptr);
-    t.sched.kind = XD_SCHED_CUSTOM;
-    CHECK(xd_task_timer_text(&t) == nullptr);
-    t.sched = daily;
-    t.argv = empty;
-    CHECK(xd_task_service_text(&t) == nullptr);
+    task.name = "a/b";
+    CHECK(xd_task_service_text(&task) == nullptr && xd_task_timer_text(&task) == nullptr);
+    task.name = "ok";
+    task.workdir = "relative";
+    CHECK(xd_task_service_text(&task) == nullptr);
+    task.workdir = nullptr;
+    task.sched = weekly; /* no days */
+    CHECK(xd_task_timer_text(&task) == nullptr);
+    task.sched.kind = XD_SCHED_CUSTOM;
+    CHECK(xd_task_timer_text(&task) == nullptr);
+    task.sched = daily;
+    task.argv = empty;
+    CHECK(xd_task_service_text(&task) == nullptr);
 }
 
-static bool type_is(xd_bt_type t, const char *icon, const char *name) {
-    return g_strcmp0(t.icon, icon) == 0 && g_strcmp0(t.name, name) == 0;
+static bool type_is(xd_bt_type bt_type, const char *icon, const char *name) {
+    return g_strcmp0(bt_type.icon, icon) == 0 && g_strcmp0(bt_type.name, name) == 0;
 }
 
 static void test_bluetooth_info(void) {
@@ -4754,7 +4873,9 @@ static void test_bluetooth_info(void) {
     CHECK(xd_bt_version_name(99) == nullptr);
 }
 
-static bool close_to(double a, double b) { return a - b < 1e-3 && b - a < 1e-3; }
+static bool close_to(double left, double right) {
+    return left - right < 1e-3 && right - left < 1e-3;
+}
 
 static void test_joystick(void) {
     CHECK(close_to(xd_joy_axis_centered(-32768, -32768, 32767), -1));
@@ -4791,78 +4912,82 @@ static void test_joystick(void) {
      * keyboard keys left out. */
     const unsigned codes[] = {BTN_TRIGGER_HAPPY1, BTN_0, KEY_A, BTN_EAST, BTN_SOUTH};
     unsigned out[XD_ARRAY_LEN(codes)];
-    size_t n = xd_joy_button_order(codes, XD_ARRAY_LEN(codes), out);
-    CHECK(n == 4);
+    size_t count = xd_joy_button_order(codes, XD_ARRAY_LEN(codes), out);
+    CHECK(count == 4);
     CHECK(out[0] == BTN_SOUTH && out[1] == BTN_EAST && out[2] == BTN_TRIGGER_HAPPY1 &&
           out[3] == BTN_0);
     CHECK(xd_joy_button_order(codes, 0, out) == 0);
 }
 
 static void test_bluetooth_settings(void) {
-    xd_settings s;
-    xd_settings_defaults(&s);
-    CHECK(s.bluetooth_icon);
-    xd_settings_parse(XD_STR("[Bluetooth]\nShowIcon=false\n"), &s);
-    CHECK(!s.bluetooth_icon);
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(original.bluetooth_icon);
+    xd_settings_parse(XD_STR("[Bluetooth]\nShowIcon=false\n"), &original);
+    CHECK(!original.bluetooth_icon);
     xd_strbuf out = {0};
-    xd_settings_serialize(&s, &out);
-    xd_settings t;
-    xd_settings_parse(xd_strbuf_view(&out), &t);
-    CHECK(!t.bluetooth_icon);
+    xd_settings_serialize(&original, &out);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&out), &parsed);
+    CHECK(!parsed.bluetooth_icon);
     xd_strbuf_free(&out);
 }
 
 /* [NightLight] and [ColorProfiles]: parsing, bad values, round trip, and
  * two programs' changes merging. */
 static void test_nightlight_settings(void) {
-    xd_settings s;
-    xd_settings_defaults(&s);
-    CHECK(!s.night_light.enabled);
-    CHECK(s.night_light.schedule == XD_NIGHTLIGHT_SUNSET);
-    CHECK(!s.night_light.has_location);
-    xd_settings_parse(XD_STR("[NightLight]\nEnabled=true\nSchedule=manual\nTemperature=2500\n"
-                             "TurnOn=20:30\nTurnOff=06:15\nLatitude=51.5074\nLongitude=-0.1278\n"
-                             "AutomaticLocation=false\n"
-                             "[ColorProfiles]\nDell Inc. U2415 7MT0=/home/u/.local/share/icc/d.icc\n"
-                             "HEADLESS-1=relative.icc\n"),
-                      &s);
-    const xd_nightlight_settings *n = &s.night_light;
-    CHECK(n->enabled && n->schedule == XD_NIGHTLIGHT_MANUAL && n->temperature == 2500);
-    CHECK(n->on_minute == 20 * 60 + 30 && n->off_minute == 6 * 60 + 15);
-    CHECK(n->has_location && fabs(n->latitude - 51.5074) < 1e-9 &&
-          fabs(n->longitude + 0.1278) < 1e-9);
-    CHECK(!n->auto_location);
-    CHECK(s.color_profile_count == 1);
-    CHECK(g_strcmp0(xd_settings_color_profile(&s, "Dell Inc. U2415 7MT0"),
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(!original.night_light.enabled);
+    CHECK(original.night_light.schedule == XD_NIGHTLIGHT_SUNSET);
+    CHECK(!original.night_light.has_location);
+    xd_settings_parse(
+        XD_STR("[NightLight]\nEnabled=true\nSchedule=manual\nTemperature=2500\n"
+               "TurnOn=20:30\nTurnOff=06:15\nLatitude=51.5074\nLongitude=-0.1278\n"
+               "AutomaticLocation=false\n"
+               "[ColorProfiles]\nDell Inc. U2415 7MT0=/home/u/.local/share/icc/d.icc\n"
+               "HEADLESS-1=relative.icc\n"),
+        &original);
+    const xd_nightlight_settings *nightlight_settings = &original.night_light;
+    CHECK(nightlight_settings->enabled && nightlight_settings->schedule == XD_NIGHTLIGHT_MANUAL &&
+          nightlight_settings->temperature == 2500);
+    CHECK(nightlight_settings->on_minute == 20 * 60 + 30 &&
+          nightlight_settings->off_minute == 6 * 60 + 15);
+    CHECK(nightlight_settings->has_location &&
+          fabs(nightlight_settings->latitude - 51.5074) < 1e-9 &&
+          fabs(nightlight_settings->longitude + 0.1278) < 1e-9);
+    CHECK(!nightlight_settings->auto_location);
+    CHECK(original.color_profile_count == 1);
+    CHECK(g_strcmp0(xd_settings_color_profile(&original, "Dell Inc. U2415 7MT0"),
                     "/home/u/.local/share/icc/d.icc") == 0);
-    CHECK(xd_settings_color_profile(&s, "HEADLESS-1") == nullptr);
+    CHECK(xd_settings_color_profile(&original, "HEADLESS-1") == nullptr);
 
     /* Round trip, and a locale with a decimal comma doesn't matter. */
     xd_strbuf out = {0};
-    xd_settings_serialize(&s, &out);
+    xd_settings_serialize(&original, &out);
     CHECK(strstr(xd_strbuf_cstr(&out), "Latitude=51.5074") != nullptr);
     CHECK(strstr(xd_strbuf_cstr(&out), "TurnOff=06:15") != nullptr);
-    xd_settings t;
-    xd_settings_parse(xd_strbuf_view(&out), &t);
-    CHECK(xd_settings_equal(&s, &t));
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&out), &parsed);
+    CHECK(xd_settings_equal(&original, &parsed));
     xd_strbuf_free(&out);
 
     /* Out of range or malformed: the value before stays. */
     xd_settings_parse(XD_STR("[NightLight]\nTemperature=99999\nTurnOn=25:00\nTurnOff=7\n"
                              "Latitude=91\nLongitude=abc\nSchedule=sometimes\n"),
-                      &t);
-    CHECK(t.night_light.temperature == 3400 && t.night_light.on_minute == 21 * 60 &&
-          t.night_light.off_minute == 7 * 60 && !t.night_light.has_location &&
-          t.night_light.schedule == XD_NIGHTLIGHT_SUNSET);
+                      &parsed);
+    CHECK(parsed.night_light.temperature == 3400 && parsed.night_light.on_minute == 21 * 60 &&
+          parsed.night_light.off_minute == 7 * 60 && !parsed.night_light.has_location &&
+          parsed.night_light.schedule == XD_NIGHTLIGHT_SUNSET);
 
     /* Keys GKeyFile can't hold, relative paths, and removal. */
-    CHECK(!xd_settings_set_color_profile(&t, "A=B", "/x.icc"));
-    CHECK(!xd_settings_set_color_profile(&t, "[A]", "/x.icc"));
-    CHECK(!xd_settings_set_color_profile(&t, "A", "x.icc"));
-    CHECK(xd_settings_set_color_profile(&t, "A", "/x.icc"));
-    CHECK(xd_settings_set_color_profile(&t, "A", "/y.icc"));
-    CHECK(t.color_profile_count == 1 && strcmp(t.color_profiles[0].path, "/y.icc") == 0);
-    CHECK(xd_settings_set_color_profile(&t, "A", nullptr) && t.color_profile_count == 0);
+    CHECK(!xd_settings_set_color_profile(&parsed, "A=B", "/x.icc"));
+    CHECK(!xd_settings_set_color_profile(&parsed, "[A]", "/x.icc"));
+    CHECK(!xd_settings_set_color_profile(&parsed, "A", "x.icc"));
+    CHECK(xd_settings_set_color_profile(&parsed, "A", "/x.icc"));
+    CHECK(xd_settings_set_color_profile(&parsed, "A", "/y.icc"));
+    CHECK(parsed.color_profile_count == 1 && strcmp(parsed.color_profiles[0].path, "/y.icc") == 0);
+    CHECK(xd_settings_set_color_profile(&parsed, "A", nullptr) && parsed.color_profile_count == 0);
 
     /* Color Management sets a profile while Display Properties turns night
      * light on: both survive. */
@@ -4941,9 +5066,9 @@ static void test_nightlight_math(void) {
     double last = xd_nightlight_fraction(0, 1260, 420, 30);
     bool smooth = true;
     for (int i = 1; i <= 2880; i++) {
-        double f = xd_nightlight_fraction(i / 2.0, 1260, 420, 30);
-        smooth = smooth && fabs(f - last) <= 0.5 / 30 + 1e-9;
-        last = f;
+        double fraction = xd_nightlight_fraction(i / 2.0, 1260, 420, 30);
+        smooth = smooth && fabs(fraction - last) <= 0.5 / 30 + 1e-9;
+        last = fraction;
     }
     CHECK(smooth);
 
@@ -4995,16 +5120,17 @@ static void test_nightlight_math(void) {
     g_free(saved_tz);
 
     /* Ramps: identity, scaled, and calibration first. */
-    uint16_t r[4], g[4], b[4];
-    xd_gamma_ramp_fill(r, g, b, 4, (double[3]){1, 1, 1}, nullptr);
-    CHECK(r[0] == 0 && r[1] == 21845 && r[2] == 43690 && r[3] == 65535 && g[3] == 65535);
-    xd_gamma_ramp_fill(r, g, b, 4, (double[3]){1, 0.5, 0}, nullptr);
-    CHECK(r[3] == 65535 && g[1] == 10923 && g[3] == 32768 && b[3] == 0);
+    uint16_t red[4], green[4], blue[4];
+    xd_gamma_ramp_fill(red, green, blue, 4, (double[3]){1, 1, 1}, nullptr);
+    CHECK(red[0] == 0 && red[1] == 21845 && red[2] == 43690 && red[3] == 65535 &&
+          green[3] == 65535);
+    xd_gamma_ramp_fill(red, green, blue, 4, (double[3]){1, 0.5, 0}, nullptr);
+    CHECK(red[3] == 65535 && green[1] == 10923 && green[3] == 32768 && blue[3] == 0);
     const float calibration[12] = {0, 0.5f, 0.5f, 1, 0, 0, 0, 0.8f, 0, 0.25f, 0.5f, 2};
-    xd_gamma_ramp_fill(r, g, b, 4, (double[3]){1, 0.5, 1}, calibration);
-    CHECK(r[1] == 32768 && r[2] == 32768 && r[3] == 65535);
-    CHECK(g[2] == 0 && g[3] == 26214); /* 0.8 x 0.5 */
-    CHECK(b[3] == 65535);              /* clamped */
+    xd_gamma_ramp_fill(red, green, blue, 4, (double[3]){1, 0.5, 1}, calibration);
+    CHECK(red[1] == 32768 && red[2] == 32768 && red[3] == 65535);
+    CHECK(green[2] == 0 && green[3] == 26214); /* 0.8 x 0.5 */
+    CHECK(blue[3] == 65535); /* clamped */
 }
 
 /* A monitor profile's calibration curves (vcgt), through Little CMS. */
@@ -5015,15 +5141,15 @@ static void test_vcgt(void) {
     char *dir = g_dir_make_tmp("xd-vcgt-XXXXXX", nullptr);
     char *with = g_build_filename(dir, "calibrated.icc", nullptr);
     char *without = g_build_filename(dir, "plain.icc", nullptr);
-    cmsHPROFILE p = cmsCreate_sRGBProfile();
-    CHECK(cmsSaveProfileToFile(p, without));
+    cmsHPROFILE cms_hprofile = cmsCreate_sRGBProfile();
+    CHECK(cmsSaveProfileToFile(cms_hprofile, without));
     cmsToneCurve *red = cmsBuildGamma(nullptr, 2.0);
     cmsToneCurve *green = cmsBuildGamma(nullptr, 1.0);
     cmsToneCurve *blue = cmsBuildGamma(nullptr, 0.5);
     cmsToneCurve *curves[3] = {red, green, blue};
-    CHECK(cmsWriteTag(p, cmsSigVcgtTag, curves));
-    CHECK(cmsSaveProfileToFile(p, with));
-    cmsCloseProfile(p);
+    CHECK(cmsWriteTag(cms_hprofile, cmsSigVcgtTag, curves));
+    CHECK(cmsSaveProfileToFile(cms_hprofile, with));
+    cmsCloseProfile(cms_hprofile);
     cmsFreeToneCurve(red);
     cmsFreeToneCurve(green);
     cmsFreeToneCurve(blue);
@@ -5141,48 +5267,55 @@ static void test_netconn(void) {
     CHECK(strcmp(xd_nc_group_title(XD_NC_VPN), "Virtual Private Network") == 0);
 
     /* An adapter: connected, cable out, disabled (by hand, unmanaged, radio off). */
-    xd_nc_state s = {.has_device = true, .device_state = 100, .managed = true, .autoconnect = true,
-                     .carrier_known = true, .carrier = true, .connectivity = 4};
-    CHECK(strcmp(xd_nc_status_text(&s), "Connected") == 0 && xd_nc_state_connected(&s) &&
-          !xd_nc_state_disabled(&s));
-    s.connectivity = 3;
-    CHECK(strcmp(xd_nc_status_text(&s), "Limited or no connectivity") == 0);
-    s.connectivity = 0; /* not checked: connected */
-    CHECK(strcmp(xd_nc_status_text(&s), "Connected") == 0);
-    s.device_state = 20;
-    s.carrier = false;
-    CHECK(strcmp(xd_nc_status_text(&s), "Network cable unplugged") == 0 &&
-          !xd_nc_state_connected(&s));
-    s.carrier_known = false; /* Wi-Fi, say */
-    CHECK(strcmp(xd_nc_status_text(&s), "Not connected") == 0);
-    s.device_state = 30;
-    CHECK(strcmp(xd_nc_status_text(&s), "Not connected") == 0 && !xd_nc_state_disabled(&s));
-    s.autoconnect = false;
-    CHECK(strcmp(xd_nc_status_text(&s), "Disabled") == 0 && xd_nc_state_disabled(&s));
-    s.autoconnect = true;
-    s.radio_off = true;
-    CHECK(strcmp(xd_nc_status_text(&s), "Disabled") == 0);
-    s.radio_off = false;
-    s.managed = false;
-    s.device_state = 10;
-    CHECK(strcmp(xd_nc_status_text(&s), "Disabled") == 0);
-    s.managed = true;
-    s.device_state = 70;
-    CHECK(strcmp(xd_nc_status_text(&s), "Acquiring network address") == 0);
-    s.device_state = 60;
-    CHECK(strcmp(xd_nc_status_text(&s), "Authenticating") == 0);
+    xd_nc_state connection = {.has_device = true,
+                              .device_state = 100,
+                              .managed = true,
+                              .autoconnect = true,
+                              .carrier_known = true,
+                              .carrier = true,
+                              .connectivity = 4};
+    CHECK(strcmp(xd_nc_status_text(&connection), "Connected") == 0 &&
+          xd_nc_state_connected(&connection) && !xd_nc_state_disabled(&connection));
+    connection.connectivity = 3;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Limited or no connectivity") == 0);
+    connection.connectivity = 0; /* not checked: connected */
+    CHECK(strcmp(xd_nc_status_text(&connection), "Connected") == 0);
+    connection.device_state = 20;
+    connection.carrier = false;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Network cable unplugged") == 0 &&
+          !xd_nc_state_connected(&connection));
+    connection.carrier_known = false; /* Wi-Fi, say */
+    CHECK(strcmp(xd_nc_status_text(&connection), "Not connected") == 0);
+    connection.device_state = 30;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Not connected") == 0 &&
+          !xd_nc_state_disabled(&connection));
+    connection.autoconnect = false;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Disabled") == 0 &&
+          xd_nc_state_disabled(&connection));
+    connection.autoconnect = true;
+    connection.radio_off = true;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Disabled") == 0);
+    connection.radio_off = false;
+    connection.managed = false;
+    connection.device_state = 10;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Disabled") == 0);
+    connection.managed = true;
+    connection.device_state = 70;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Acquiring network address") == 0);
+    connection.device_state = 60;
+    CHECK(strcmp(xd_nc_status_text(&connection), "Authenticating") == 0);
     /* A VPN goes by its active connection. */
-    xd_nc_state v = {.active_state = 0};
-    CHECK(strcmp(xd_nc_status_text(&v), "Disconnected") == 0 && !xd_nc_state_disabled(&v));
-    v.active_state = 2;
-    CHECK(strcmp(xd_nc_status_text(&v), "Connected") == 0 && xd_nc_state_connected(&v));
+    xd_nc_state vpn = {.active_state = 0};
+    CHECK(strcmp(xd_nc_status_text(&vpn), "Disconnected") == 0 && !xd_nc_state_disabled(&vpn));
+    vpn.active_state = 2;
+    CHECK(strcmp(xd_nc_status_text(&vpn), "Connected") == 0 && xd_nc_state_connected(&vpn));
 
-    char *t = xd_nc_numbered_name("Local Area Connection", 1);
-    CHECK(strcmp(t, "Local Area Connection") == 0);
-    g_free(t);
-    t = xd_nc_numbered_name("Local Area Connection", 3);
-    CHECK(strcmp(t, "Local Area Connection 3") == 0);
-    g_free(t);
+    char *name = xd_nc_numbered_name("Local Area Connection", 1);
+    CHECK(strcmp(name, "Local Area Connection") == 0);
+    g_free(name);
+    name = xd_nc_numbered_name("Local Area Connection", 3);
+    CHECK(strcmp(name, "Local Area Connection 3") == 0);
+    g_free(name);
 
     static const struct {
         guint64 n;
@@ -5196,12 +5329,12 @@ static void test_netconn(void) {
         {1234567, "14 days 06:56:07", "1,234,567"},
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(nums); i++) {
-        t = xd_nc_format_duration(nums[i].n);
-        CHECK(strcmp(t, nums[i].duration) == 0);
-        g_free(t);
-        t = xd_nc_format_count(nums[i].n);
-        CHECK(strcmp(t, nums[i].count) == 0);
-        g_free(t);
+        name = xd_nc_format_duration(nums[i].n);
+        CHECK(strcmp(name, nums[i].duration) == 0);
+        g_free(name);
+        name = xd_nc_format_count(nums[i].n);
+        CHECK(strcmp(name, nums[i].count) == 0);
+        g_free(name);
     }
     static const struct {
         guint64 kbps;
@@ -5209,9 +5342,9 @@ static void test_netconn(void) {
     } speeds[] = {{1000000, "1.0 Gbps"}, {2500000, "2.5 Gbps"}, {100000, "100.0 Mbps"},
                   {54000, "54.0 Mbps"},  {866700, "866.7 Mbps"}, {56, "56.0 Kbps"}};
     for (size_t i = 0; i < XD_ARRAY_LEN(speeds); i++) {
-        t = xd_nc_format_speed(speeds[i].kbps);
-        CHECK(strcmp(t, speeds[i].text) == 0);
-        g_free(t);
+        name = xd_nc_format_speed(speeds[i].kbps);
+        CHECK(strcmp(name, speeds[i].text) == 0);
+        g_free(name);
     }
 
     unsigned prefix = 99;
@@ -5221,54 +5354,59 @@ static void test_netconn(void) {
     CHECK(xd_nc_netmask_to_prefix("255.255.255.255", &prefix) && prefix == 32);
     CHECK(!xd_nc_netmask_to_prefix("255.0.255.0", &prefix) && !xd_nc_netmask_to_prefix("", &prefix) &&
           !xd_nc_netmask_to_prefix("255.255.255", &prefix) && !xd_nc_netmask_to_prefix("::", &prefix));
-    for (unsigned p = 0; p <= 32; p++) {
-        t = xd_nc_prefix_to_netmask(p);
+    for (unsigned prefix_length = 0; prefix_length <= 32; prefix_length++) {
+        name = xd_nc_prefix_to_netmask(prefix_length);
         unsigned back = 99;
-        CHECK(xd_nc_netmask_to_prefix(t, &back) && back == p);
-        g_free(t);
+        CHECK(xd_nc_netmask_to_prefix(name, &back) && back == prefix_length);
+        g_free(name);
     }
-    t = xd_nc_prefix_to_netmask(22);
-    CHECK(strcmp(t, "255.255.252.0") == 0);
-    g_free(t);
+    name = xd_nc_prefix_to_netmask(22);
+    CHECK(strcmp(name, "255.255.252.0") == 0);
+    g_free(name);
     CHECK(xd_nc_valid_ipv4("10.0.0.1") && !xd_nc_valid_ipv4("10.0.0") && !xd_nc_valid_ipv4("fe80::1") &&
           !xd_nc_valid_ipv4("300.1.1.1") && !xd_nc_valid_ipv4(nullptr));
     CHECK(xd_nc_default_prefix("10.1.2.3") == 8 && xd_nc_default_prefix("172.16.0.5") == 16 &&
           xd_nc_default_prefix("192.168.1.20") == 24 && xd_nc_default_prefix("224.0.0.1") == 0 &&
           xd_nc_default_prefix("x") == 0);
 
-    xd_nc_ipv4_form f = {.manual_ip = true, .manual_dns = true, .address = "192.168.1.20",
-                         .netmask = "255.255.255.0", .gateway = "192.168.1.1", .dns1 = "1.1.1.1",
-                         .dns2 = ""};
-    CHECK(xd_nc_check_ipv4_form(&f) == nullptr);
-    f.gateway = "";
-    CHECK(xd_nc_check_ipv4_form(&f) == nullptr); /* no gateway is fine */
-    f.gateway = "192.168.2.1";
-    CHECK(xd_nc_check_ipv4_form(&f) != nullptr); /* another subnet */
-    f.gateway = "192.168.1.1";
-    f.address = "";
-    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
-    f.address = "192.168.1.0"; /* the network's own address */
-    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
-    f.address = "192.168.1.255";
-    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
-    f.address = "127.0.0.5";
-    f.netmask = "255.0.0.0";
-    f.gateway = "";
-    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
-    f.address = "192.168.1.20";
-    f.netmask = "255.0.255.0";
-    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
-    f.netmask = "255.255.255.0";
-    f.dns2 = "dns.example";
-    CHECK(xd_nc_check_ipv4_form(&f) != nullptr);
+    xd_nc_ipv4_form manual_form = {.manual_ip = true,
+                                   .manual_dns = true,
+                                   .address = "192.168.1.20",
+                                   .netmask = "255.255.255.0",
+                                   .gateway = "192.168.1.1",
+                                   .dns1 = "1.1.1.1",
+                                   .dns2 = ""};
+    CHECK(xd_nc_check_ipv4_form(&manual_form) == nullptr);
+    manual_form.gateway = "";
+    CHECK(xd_nc_check_ipv4_form(&manual_form) == nullptr); /* no gateway is fine */
+    manual_form.gateway = "192.168.2.1";
+    CHECK(xd_nc_check_ipv4_form(&manual_form) != nullptr); /* another subnet */
+    manual_form.gateway = "192.168.1.1";
+    manual_form.address = "";
+    CHECK(xd_nc_check_ipv4_form(&manual_form) != nullptr);
+    manual_form.address = "192.168.1.0"; /* the network's own address */
+    CHECK(xd_nc_check_ipv4_form(&manual_form) != nullptr);
+    manual_form.address = "192.168.1.255";
+    CHECK(xd_nc_check_ipv4_form(&manual_form) != nullptr);
+    manual_form.address = "127.0.0.5";
+    manual_form.netmask = "255.0.0.0";
+    manual_form.gateway = "";
+    CHECK(xd_nc_check_ipv4_form(&manual_form) != nullptr);
+    manual_form.address = "192.168.1.20";
+    manual_form.netmask = "255.0.255.0";
+    CHECK(xd_nc_check_ipv4_form(&manual_form) != nullptr);
+    manual_form.netmask = "255.255.255.0";
+    manual_form.dns2 = "dns.example";
+    CHECK(xd_nc_check_ipv4_form(&manual_form) != nullptr);
     /* Automatic: the blanks don't matter. */
-    xd_nc_ipv4_form a = {.address = "", .netmask = "", .gateway = "", .dns1 = "", .dns2 = ""};
-    CHECK(xd_nc_check_ipv4_form(&a) == nullptr);
-    a.manual_dns = true;
-    a.dns1 = "8.8.8.8";
-    CHECK(xd_nc_check_ipv4_form(&a) == nullptr);
-    a.dns1 = "8.8.8";
-    CHECK(xd_nc_check_ipv4_form(&a) != nullptr);
+    xd_nc_ipv4_form automatic_form = {
+        .address = "", .netmask = "", .gateway = "", .dns1 = "", .dns2 = ""};
+    CHECK(xd_nc_check_ipv4_form(&automatic_form) == nullptr);
+    automatic_form.manual_dns = true;
+    automatic_form.dns1 = "8.8.8.8";
+    CHECK(xd_nc_check_ipv4_form(&automatic_form) == nullptr);
+    automatic_form.dns1 = "8.8.8";
+    CHECK(xd_nc_check_ipv4_form(&automatic_form) != nullptr);
 
     CHECK(strcmp(xd_nc_vpn_host_key("org.freedesktop.NetworkManager.openvpn"), "remote") == 0);
     CHECK(strcmp(xd_nc_vpn_host_key("org.freedesktop.NetworkManager.vpnc"), "IPSec gateway") == 0);
@@ -5290,15 +5428,15 @@ static void test_netconn(void) {
 }
 
 static void test_admin_services(void) {
-    char *l = xd_unit_startup_label("enabled");
-    CHECK(strcmp(l, "Enabled") == 0);
-    g_free(l);
-    l = xd_unit_startup_label("masked-runtime");
-    CHECK(strcmp(l, "Masked (runtime)") == 0);
-    g_free(l);
-    l = xd_unit_startup_label(nullptr);
-    CHECK(strcmp(l, "") == 0);
-    g_free(l);
+    char *label = xd_unit_startup_label("enabled");
+    CHECK(strcmp(label, "Enabled") == 0);
+    g_free(label);
+    label = xd_unit_startup_label("masked-runtime");
+    CHECK(strcmp(label, "Masked (runtime)") == 0);
+    g_free(label);
+    label = xd_unit_startup_label(nullptr);
+    CHECK(strcmp(label, "") == 0);
+    g_free(label);
     CHECK(xd_unit_startup_of("enabled") == XD_STARTUP_ENABLED);
     CHECK(xd_unit_startup_of("disabled") == XD_STARTUP_DISABLED);
     CHECK(xd_unit_startup_of("masked") == XD_STARTUP_MASKED);
@@ -5312,15 +5450,15 @@ static void test_admin_services(void) {
     CHECK(xd_unit_is_started("active") && xd_unit_is_started("activating"));
     CHECK(!xd_unit_is_started("inactive") && !xd_unit_is_started("failed"));
 
-    char *n = xd_unit_display_name("sshd.service");
-    CHECK(strcmp(n, "sshd") == 0);
-    g_free(n);
-    n = xd_unit_display_name("user@1000.service");
-    CHECK(strcmp(n, "user@1000") == 0);
-    g_free(n);
-    n = xd_unit_display_name("noext");
-    CHECK(strcmp(n, "noext") == 0);
-    g_free(n);
+    char *name = xd_unit_display_name("sshd.service");
+    CHECK(strcmp(name, "sshd") == 0);
+    g_free(name);
+    name = xd_unit_display_name("user@1000.service");
+    CHECK(strcmp(name, "user@1000") == 0);
+    g_free(name);
+    name = xd_unit_display_name("noext");
+    CHECK(strcmp(name, "noext") == 0);
+    g_free(name);
 
     CHECK(strcmp(xd_unit_logon_label("http", false, "me"), "http") == 0);
     CHECK(strcmp(xd_unit_logon_label("", false, "me"), "Local System") == 0);
@@ -5356,33 +5494,33 @@ static void test_admin_events(void) {
 }
 
 static void test_admin_disks(void) {
-    char *t = xd_disk_size_text(250059350016ULL);
-    CHECK(strcmp(t, "232.88 GB") == 0);
-    g_free(t);
-    t = xd_disk_size_text(512 * XD_MIB);
-    CHECK(strcmp(t, "512 MB") == 0);
-    g_free(t);
-    t = xd_disk_size_text(4096);
-    CHECK(strcmp(t, "4 KB") == 0);
-    g_free(t);
-    t = xd_disk_size_text(2ULL * 1024 * 1024 * XD_MIB);
-    CHECK(strcmp(t, "2.00 TB") == 0);
-    g_free(t);
-    t = xd_disk_fs_label("vfat", "FAT32");
-    CHECK(strcmp(t, "FAT32") == 0);
-    g_free(t);
-    t = xd_disk_fs_label("vfat", "FAT16");
-    CHECK(strcmp(t, "FAT") == 0);
-    g_free(t);
-    t = xd_disk_fs_label("iso9660", nullptr);
-    CHECK(strcmp(t, "CDFS") == 0);
-    g_free(t);
-    t = xd_disk_fs_label("ext4", "1.0");
-    CHECK(strcmp(t, "ext4") == 0);
-    g_free(t);
-    t = xd_disk_fs_label("", nullptr);
-    CHECK(strcmp(t, "") == 0);
-    g_free(t);
+    char *text = xd_disk_size_text(250059350016ULL);
+    CHECK(strcmp(text, "232.88 GB") == 0);
+    g_free(text);
+    text = xd_disk_size_text(512 * XD_MIB);
+    CHECK(strcmp(text, "512 MB") == 0);
+    g_free(text);
+    text = xd_disk_size_text(4096);
+    CHECK(strcmp(text, "4 KB") == 0);
+    g_free(text);
+    text = xd_disk_size_text(2ULL * 1024 * 1024 * XD_MIB);
+    CHECK(strcmp(text, "2.00 TB") == 0);
+    g_free(text);
+    text = xd_disk_fs_label("vfat", "FAT32");
+    CHECK(strcmp(text, "FAT32") == 0);
+    g_free(text);
+    text = xd_disk_fs_label("vfat", "FAT16");
+    CHECK(strcmp(text, "FAT") == 0);
+    g_free(text);
+    text = xd_disk_fs_label("iso9660", nullptr);
+    CHECK(strcmp(text, "CDFS") == 0);
+    g_free(text);
+    text = xd_disk_fs_label("ext4", "1.0");
+    CHECK(strcmp(text, "ext4") == 0);
+    g_free(text);
+    text = xd_disk_fs_label("", nullptr);
+    CHECK(strcmp(text, "") == 0);
+    g_free(text);
     CHECK(xd_disk_percent_free(45, 100) == 45);
     CHECK(xd_disk_percent_free(1, 3) == 33 && xd_disk_percent_free(2, 3) == 67);
     CHECK(xd_disk_percent_free(5, 0) == 0 && xd_disk_percent_free(7, 5) == 100);
@@ -5392,65 +5530,72 @@ static void test_admin_disks(void) {
 
     /* An 8 GiB MBR disk: a 2 GiB primary partition, a 4 GiB extended
      * one holding a 1 GiB logical drive, and 2 GiB never used. */
-    const guint64 G = 1024 * XD_MIB;
+    const guint64 gib = 1024 * XD_MIB;
     const xd_disk_part parts[] = {
-        {.offset = 2 * G + XD_MIB, .size = 4 * G, .index = 1, .container = true},
-        {.offset = XD_MIB, .size = 2 * G, .index = 0},
-        {.offset = 2 * G + 2 * XD_MIB, .size = G, .index = 2},
+        {.offset = 2 * gib + XD_MIB, .size = 4 * gib, .index = 1, .container = true},
+        {.offset = XD_MIB, .size = 2 * gib, .index = 0},
+        {.offset = 2 * gib + 2 * XD_MIB, .size = gib, .index = 2},
     };
-    GArray *segs = xd_disk_segments(8 * G, parts, G_N_ELEMENTS(parts));
+    GArray *segs = xd_disk_segments(8 * gib, parts, G_N_ELEMENTS(parts));
     CHECK(segs->len == 4);
     if (segs->len == 4) {
-        const xd_disk_segment *s = &g_array_index(segs, xd_disk_segment, 0);
-        CHECK(s[0].kind == XD_SEGMENT_PARTITION && s[0].index == 0 && !s[0].logical);
-        CHECK(s[1].kind == XD_SEGMENT_PARTITION && s[1].index == 2 && s[1].logical);
-        CHECK(s[2].kind == XD_SEGMENT_FREE && s[2].logical && s[2].offset == 3 * G + 2 * XD_MIB &&
-              s[2].size == 3 * G - XD_MIB);
-        CHECK(s[3].kind == XD_SEGMENT_UNALLOCATED && s[3].offset == 6 * G + XD_MIB &&
-              s[3].size == 2 * G - XD_MIB);
+        const xd_disk_segment *disk_segment = &g_array_index(segs, xd_disk_segment, 0);
+        CHECK(disk_segment[0].kind == XD_SEGMENT_PARTITION && disk_segment[0].index == 0 &&
+              !disk_segment[0].logical);
+        CHECK(disk_segment[1].kind == XD_SEGMENT_PARTITION && disk_segment[1].index == 2 &&
+              disk_segment[1].logical);
+        CHECK(disk_segment[2].kind == XD_SEGMENT_FREE && disk_segment[2].logical &&
+              disk_segment[2].offset == 3 * gib + 2 * XD_MIB &&
+              disk_segment[2].size == 3 * gib - XD_MIB);
+        CHECK(disk_segment[3].kind == XD_SEGMENT_UNALLOCATED &&
+              disk_segment[3].offset == 6 * gib + XD_MIB &&
+              disk_segment[3].size == 2 * gib - XD_MIB);
         /* The logical drive grows into the extended partition's free
          * space; the primary one has a neighbour. */
-        CHECK(xd_disk_grow_max(segs, 1, 8 * G) == 4 * G - XD_MIB);
-        CHECK(xd_disk_grow_max(segs, 0, 8 * G) == 2 * G);
+        CHECK(xd_disk_grow_max(segs, 1, 8 * gib) == 4 * gib - XD_MIB);
+        CHECK(xd_disk_grow_max(segs, 0, 8 * gib) == 2 * gib);
         guint64 off = 0, max = 0;
-        CHECK(xd_disk_new_part_range(s[2].offset, s[2].size, 8 * G, true, &off, &max));
-        CHECK(off == 3 * G + 3 * XD_MIB && max == 3 * G - 2 * XD_MIB);
-        CHECK(xd_disk_new_part_range(s[3].offset, s[3].size, 8 * G, false, &off, &max));
-        CHECK(off == 6 * G + XD_MIB && max == 2 * G - 2 * XD_MIB);
+        CHECK(xd_disk_new_part_range(disk_segment[2].offset, disk_segment[2].size, 8 * gib, true,
+                                     &off, &max));
+        CHECK(off == 3 * gib + 3 * XD_MIB && max == 3 * gib - 2 * XD_MIB);
+        CHECK(xd_disk_new_part_range(disk_segment[3].offset, disk_segment[3].size, 8 * gib, false,
+                                     &off, &max));
+        CHECK(off == 6 * gib + XD_MIB && max == 2 * gib - 2 * XD_MIB);
     }
     g_array_unref(segs);
     /* An empty disk is one unallocated block; overlaps are clipped. */
-    segs = xd_disk_segments(4 * G, nullptr, 0);
+    segs = xd_disk_segments(4 * gib, nullptr, 0);
     CHECK(segs->len == 1 &&
           g_array_index(segs, xd_disk_segment, 0).kind == XD_SEGMENT_UNALLOCATED);
     g_array_unref(segs);
-    const xd_disk_part overlap[] = {{.offset = XD_MIB, .size = 2 * G, .index = 0},
-                                    {.offset = G, .size = 4 * G, .index = 1}};
-    segs = xd_disk_segments(4 * G, overlap, 2);
-    CHECK(segs->len == 2 && g_array_index(segs, xd_disk_segment, 1).offset == 2 * G + XD_MIB &&
-          g_array_index(segs, xd_disk_segment, 1).size == 2 * G - XD_MIB);
+    const xd_disk_part overlap[] = {{.offset = XD_MIB, .size = 2 * gib, .index = 0},
+                                    {.offset = gib, .size = 4 * gib, .index = 1}};
+    segs = xd_disk_segments(4 * gib, overlap, 2);
+    CHECK(segs->len == 2 && g_array_index(segs, xd_disk_segment, 1).offset == 2 * gib + XD_MIB &&
+          g_array_index(segs, xd_disk_segment, 1).size == 2 * gib - XD_MIB);
     g_array_unref(segs);
     guint64 off = 0, max = 0;
-    CHECK(xd_disk_new_part_range(0, 4 * G, 4 * G, false, &off, &max) && off == XD_MIB &&
-          max == 4 * G - 2 * XD_MIB);
-    CHECK(!xd_disk_new_part_range(XD_MIB, XD_MIB / 2, 4 * G, false, &off, &max));
+    CHECK(xd_disk_new_part_range(0, 4 * gib, 4 * gib, false, &off, &max) && off == XD_MIB &&
+          max == 4 * gib - 2 * XD_MIB);
+    CHECK(!xd_disk_new_part_range(XD_MIB, XD_MIB / 2, 4 * gib, false, &off, &max));
 
-    xd_new_part_kinds k = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 2, true);
-    CHECK(k.primary && !k.extended && !k.logical);
-    k = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 1, false);
-    CHECK(k.primary && k.extended && !k.logical);
-    k = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 4, false);
-    CHECK(!k.primary && !k.extended && !k.logical);
-    k = xd_disk_new_part_kinds("dos", XD_SEGMENT_FREE, 4, true);
-    CHECK(!k.primary && !k.extended && k.logical);
-    k = xd_disk_new_part_kinds("gpt", XD_SEGMENT_UNALLOCATED, 10, false);
-    CHECK(k.primary && !k.extended && !k.logical);
-    k = xd_disk_new_part_kinds("gpt", XD_SEGMENT_PARTITION, 1, false);
-    CHECK(!k.primary);
+    xd_new_part_kinds new_part_kinds =
+        xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 2, true);
+    CHECK(new_part_kinds.primary && !new_part_kinds.extended && !new_part_kinds.logical);
+    new_part_kinds = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 1, false);
+    CHECK(new_part_kinds.primary && new_part_kinds.extended && !new_part_kinds.logical);
+    new_part_kinds = xd_disk_new_part_kinds("dos", XD_SEGMENT_UNALLOCATED, 4, false);
+    CHECK(!new_part_kinds.primary && !new_part_kinds.extended && !new_part_kinds.logical);
+    new_part_kinds = xd_disk_new_part_kinds("dos", XD_SEGMENT_FREE, 4, true);
+    CHECK(!new_part_kinds.primary && !new_part_kinds.extended && new_part_kinds.logical);
+    new_part_kinds = xd_disk_new_part_kinds("gpt", XD_SEGMENT_UNALLOCATED, 10, false);
+    CHECK(new_part_kinds.primary && !new_part_kinds.extended && !new_part_kinds.logical);
+    new_part_kinds = xd_disk_new_part_kinds("gpt", XD_SEGMENT_PARTITION, 1, false);
+    CHECK(!new_part_kinds.primary);
 
-    CHECK(xd_disk_shrink_min(0, 10 * G) == 32 * XD_MIB);
-    CHECK(xd_disk_shrink_min(G, 10 * G) == G + 103 * XD_MIB);
-    CHECK(xd_disk_shrink_min(10 * XD_MIB, 10 * G) == 74 * XD_MIB);
+    CHECK(xd_disk_shrink_min(0, 10 * gib) == 32 * XD_MIB);
+    CHECK(xd_disk_shrink_min(gib, 10 * gib) == gib + 103 * XD_MIB);
+    CHECK(xd_disk_shrink_min(10 * XD_MIB, 10 * gib) == 74 * XD_MIB);
     CHECK(xd_disk_shrink_min(10 * XD_MIB, 20 * XD_MIB) == 20 * XD_MIB);
 
     const guint64 ext4 = XD_RESIZE_OFFLINE_SHRINK | XD_RESIZE_OFFLINE_GROW | XD_RESIZE_ONLINE_GROW;
@@ -5466,32 +5611,32 @@ static void test_admin_disks(void) {
     CHECK(!xd_mount_is_system("/run/media/me/USB") && !xd_mount_is_system(nullptr));
     bool unmount = false;
     const char *root[] = {"/", nullptr}, *media[] = {"/run/media/me/Data", nullptr};
-    xd_volume_use u = {.mounts = root, .id_type = "ext4"};
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) != nullptr);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_SHRINK, &unmount) != nullptr);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_EXTEND, &unmount) == nullptr && !unmount);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_LABEL, &unmount) == nullptr);
-    u.mounts = media;
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) == nullptr && unmount);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_SET_TYPE, &unmount) == nullptr && !unmount);
-    u = (xd_volume_use){.id_type = "swap", .swap_active = true};
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_LABEL, &unmount) != nullptr);
-    u.swap_active = false;
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) == nullptr && !unmount);
-    u = (xd_volume_use){.container = true, .has_logical = true};
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) != nullptr);
-    u.has_logical = false;
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) == nullptr);
-    u = (xd_volume_use){.id_type = "LVM2_member"};
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_FORMAT, &unmount) != nullptr);
-    u = (xd_volume_use){.id_type = "crypto_LUKS", .unlocked = true};
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) != nullptr);
-    u.unlocked = false;
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_DELETE, &unmount) == nullptr);
-    CHECK(xd_volume_lock_reason(&u, XD_ACTION_EXTEND, &unmount) != nullptr);
+    xd_volume_use volume_use = {.mounts = root, .id_type = "ext4"};
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_FORMAT, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_DELETE, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_SHRINK, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_EXTEND, &unmount) == nullptr && !unmount);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_LABEL, &unmount) == nullptr);
+    volume_use.mounts = media;
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_FORMAT, &unmount) == nullptr && unmount);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_SET_TYPE, &unmount) == nullptr && !unmount);
+    volume_use = (xd_volume_use){.id_type = "swap", .swap_active = true};
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_DELETE, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_LABEL, &unmount) != nullptr);
+    volume_use.swap_active = false;
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_DELETE, &unmount) == nullptr && !unmount);
+    volume_use = (xd_volume_use){.container = true, .has_logical = true};
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_DELETE, &unmount) != nullptr);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_FORMAT, &unmount) != nullptr);
+    volume_use.has_logical = false;
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_DELETE, &unmount) == nullptr);
+    volume_use = (xd_volume_use){.id_type = "LVM2_member"};
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_FORMAT, &unmount) != nullptr);
+    volume_use = (xd_volume_use){.id_type = "crypto_LUKS", .unlocked = true};
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_DELETE, &unmount) != nullptr);
+    volume_use.unlocked = false;
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_DELETE, &unmount) == nullptr);
+    CHECK(xd_volume_lock_reason(&volume_use, XD_ACTION_EXTEND, &unmount) != nullptr);
 
     char *st = xd_volume_status(root, false, false, false);
     CHECK(strcmp(st, "Healthy (System)") == 0);
@@ -5513,11 +5658,12 @@ static void test_admin_disks(void) {
     CHECK(xd_part_type_is_esp("0xef") && !xd_part_type_is_esp("0x83"));
 
     const guint64 sizes[] = {1, 1, 2};
-    int w[3] = {0};
-    xd_disk_block_widths(sizes, 3, 400, 50, w);
-    CHECK(w[0] + w[1] + w[2] == 400 && w[0] >= 50 && w[2] > w[0] && w[0] == w[1]);
-    xd_disk_block_widths(sizes, 3, 100, 50, w);
-    CHECK(w[0] == 50 && w[1] == 50 && w[2] == 50);
+    int widths[3] = {0};
+    xd_disk_block_widths(sizes, 3, 400, 50, widths);
+    CHECK(widths[0] + widths[1] + widths[2] == 400 && widths[0] >= 50 && widths[2] > widths[0] &&
+          widths[0] == widths[1]);
+    xd_disk_block_widths(sizes, 3, 100, 50, widths);
+    CHECK(widths[0] == 50 && widths[1] == 50 && widths[2] == 50);
 
     /* Startup mount points and format options. */
     CHECK(xd_udisks_version_at_least("2.11.0", 2, 10) && xd_udisks_version_at_least("3", 2, 10));
@@ -5582,73 +5728,77 @@ static void test_admin_disks(void) {
 /* Flatpak permissions: merging layers as flatpak does (checked against
  * `flatpak info --show-permissions`), and the user override written in
  * `flatpak override --user`'s format. */
-static void fp_merge(xd_fp_perms *p, const char *text) {
+static void fp_merge(xd_fp_perms *permissions, const char *text) {
     GKeyFile *kf = g_key_file_new();
     CHECK(g_key_file_load_from_data(kf, text, (gsize)-1, G_KEY_FILE_NONE, nullptr));
-    xd_fp_perms_merge(p, kf);
+    xd_fp_perms_merge(permissions, kf);
     g_key_file_free(kf);
 }
 
 static void test_flatpak_perms(void) {
-    xd_fp_perms *p = xd_fp_perms_new();
-    fp_merge(p, "[Context]\nsockets=x11;if:x11:!has-wayland;pulseaudio;\n"
-                "devices=dri;\nfilesystems=xdg-download:ro;home/Games:create;/srv//data/;\n"
-                "persistent=.hello;\nunset-environment=GONE;\n"
-                "[Session Bus Policy]\norg.freedesktop.Notifications=talk\n"
-                "[Environment]\nHELLO_MODE=fast\nGONE=\n");
+    xd_fp_perms *permissions = xd_fp_perms_new();
+    fp_merge(permissions,
+             "[Context]\nsockets=x11;if:x11:!has-wayland;pulseaudio;\n"
+             "devices=dri;\nfilesystems=xdg-download:ro;home/Games:create;/srv//data/;\n"
+             "persistent=.hello;\nunset-environment=GONE;\n"
+             "[Session Bus Policy]\norg.freedesktop.Notifications=talk\n"
+             "[Environment]\nHELLO_MODE=fast\nGONE=\n");
     /* A plain "x11" beside conditions is for older Flatpaks. */
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "x11") == XD_FP_CONDITIONAL);
-    const GPtrArray *conds = xd_fp_perms_conditions(p, XD_FP_SOCKETS, "x11");
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "x11") == XD_FP_CONDITIONAL);
+    const GPtrArray *conds = xd_fp_perms_conditions(permissions, XD_FP_SOCKETS, "x11");
     CHECK(conds != nullptr && conds->len == 1 &&
           strcmp(g_ptr_array_index(conds, 0), "!has-wayland") == 0);
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "pulseaudio") == XD_FP_ON);
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "cups") == XD_FP_UNSET);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "pulseaudio") == XD_FP_ON);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "cups") == XD_FP_UNSET);
     bool found;
-    CHECK(xd_fp_perms_filesystem(p, "xdg-download", &found) == XD_FP_FS_RO && found);
-    CHECK(xd_fp_perms_filesystem(p, "~/Games", &found) == XD_FP_FS_CREATE && found);
-    CHECK(xd_fp_perms_filesystem(p, "/srv/data", &found) == XD_FP_FS_RW && found);
-    xd_fp_perms_filesystem(p, "home", &found);
+    CHECK(xd_fp_perms_filesystem(permissions, "xdg-download", &found) == XD_FP_FS_RO && found);
+    CHECK(xd_fp_perms_filesystem(permissions, "~/Games", &found) == XD_FP_FS_CREATE && found);
+    CHECK(xd_fp_perms_filesystem(permissions, "/srv/data", &found) == XD_FP_FS_RW && found);
+    xd_fp_perms_filesystem(permissions, "home", &found);
     CHECK(!found);
-    CHECK(g_strcmp0(xd_fp_perms_env(p, "HELLO_MODE", &found), "fast") == 0 && found);
-    CHECK(xd_fp_perms_env(p, "GONE", &found) == nullptr && found);
-    xd_fp_perms_env(p, "OTHER", &found);
+    CHECK(g_strcmp0(xd_fp_perms_env(permissions, "HELLO_MODE", &found), "fast") == 0 && found);
+    CHECK(xd_fp_perms_env(permissions, "GONE", &found) == nullptr && found);
+    xd_fp_perms_env(permissions, "OTHER", &found);
     CHECK(!found);
-    CHECK(g_strcmp0(xd_fp_perms_bus(p, XD_FP_SESSION_BUS, "org.freedesktop.Notifications"),
-                    "talk") == 0);
-    CHECK(xd_fp_perms_bus(p, XD_FP_SYSTEM_BUS, "org.freedesktop.Notifications") == nullptr);
+    CHECK(
+        g_strcmp0(xd_fp_perms_bus(permissions, XD_FP_SESSION_BUS, "org.freedesktop.Notifications"),
+                  "talk") == 0);
+    CHECK(xd_fp_perms_bus(permissions, XD_FP_SYSTEM_BUS, "org.freedesktop.Notifications") ==
+          nullptr);
 
     /* A layer above changes only what it mentions; "!x" also ends a lower
      * layer's conditions; a reset drops the filesystems below. */
-    xd_fp_perms *base = xd_fp_perms_copy(p);
-    fp_merge(p, "[Context]\nsockets=!x11;cups;!pulseaudio;newsock;\n"
-                "filesystems=!host:reset;!host;home:ro;\npersistent=.more;\n"
-                "[System Bus Policy]\norg.bluez=talk\n"
-                "[Session Bus Policy]\norg.freedesktop.Notifications=none\n");
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "x11") == XD_FP_OFF);
-    CHECK(xd_fp_perms_conditions(p, XD_FP_SOCKETS, "x11") == nullptr);
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "cups") == XD_FP_ON);
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "pulseaudio") == XD_FP_OFF);
-    CHECK(xd_fp_perms_state(p, XD_FP_DEVICES, "dri") == XD_FP_ON);
-    GPtrArray *other = xd_fp_perms_other_names(p, XD_FP_SOCKETS);
+    xd_fp_perms *base = xd_fp_perms_copy(permissions);
+    fp_merge(permissions, "[Context]\nsockets=!x11;cups;!pulseaudio;newsock;\n"
+                          "filesystems=!host:reset;!host;home:ro;\npersistent=.more;\n"
+                          "[System Bus Policy]\norg.bluez=talk\n"
+                          "[Session Bus Policy]\norg.freedesktop.Notifications=none\n");
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "x11") == XD_FP_OFF);
+    CHECK(xd_fp_perms_conditions(permissions, XD_FP_SOCKETS, "x11") == nullptr);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "cups") == XD_FP_ON);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "pulseaudio") == XD_FP_OFF);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_DEVICES, "dri") == XD_FP_ON);
+    GPtrArray *other = xd_fp_perms_other_names(permissions, XD_FP_SOCKETS);
     CHECK(other->len == 1 && strcmp(g_ptr_array_index(other, 0), "newsock") == 0);
     g_ptr_array_unref(other);
-    GPtrArray *fs = xd_fp_perms_filesystems(p);
+    GPtrArray *fs = xd_fp_perms_filesystems(permissions);
     CHECK(fs->len == 2 && strcmp(g_ptr_array_index(fs, 0), "home") == 0 &&
           strcmp(g_ptr_array_index(fs, 1), "host") == 0);
     g_ptr_array_unref(fs);
-    CHECK(xd_fp_perms_filesystem(p, "~", &found) == XD_FP_FS_RO && found);
-    CHECK(xd_fp_perms_filesystem(p, "host", &found) == XD_FP_FS_NONE && found);
-    GPtrArray *dirs = xd_fp_perms_persistent(p);
+    CHECK(xd_fp_perms_filesystem(permissions, "~", &found) == XD_FP_FS_RO && found);
+    CHECK(xd_fp_perms_filesystem(permissions, "host", &found) == XD_FP_FS_NONE && found);
+    GPtrArray *dirs = xd_fp_perms_persistent(permissions);
     CHECK(dirs->len == 2);
     g_ptr_array_unref(dirs);
-    CHECK(g_strcmp0(xd_fp_perms_bus(p, XD_FP_SESSION_BUS, "org.freedesktop.Notifications"),
-                    "none") == 0);
-    CHECK(g_strcmp0(xd_fp_perms_bus(p, XD_FP_SYSTEM_BUS, "org.bluez"), "talk") == 0);
+    CHECK(
+        g_strcmp0(xd_fp_perms_bus(permissions, XD_FP_SESSION_BUS, "org.freedesktop.Notifications"),
+                  "none") == 0);
+    CHECK(g_strcmp0(xd_fp_perms_bus(permissions, XD_FP_SYSTEM_BUS, "org.bluez"), "talk") == 0);
     /* The copy kept what was there before. */
     CHECK(xd_fp_perms_state(base, XD_FP_SOCKETS, "x11") == XD_FP_CONDITIONAL);
     CHECK(xd_fp_perms_filesystem(base, "xdg-download", &found) == XD_FP_FS_RO && found);
     xd_fp_perms_free(base);
-    xd_fp_perms_free(p);
+    xd_fp_perms_free(permissions);
 
     /* Names. */
     xd_fp_fs_mode mode;
@@ -5732,14 +5882,15 @@ static void test_flatpak_perms(void) {
 
     /* Read back as the top layer. */
     ov = xd_fp_override_load(path, nullptr);
-    p = xd_fp_perms_new();
-    fp_merge(p, "[Context]\nshared=network;\nsockets=wayland;\n[Environment]\nHELLO_MODE=fast\n");
-    xd_fp_perms_merge(p, ov);
-    CHECK(xd_fp_perms_state(p, XD_FP_SHARED, "network") == XD_FP_OFF);
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "wayland") == XD_FP_OFF);
-    CHECK(xd_fp_perms_state(p, XD_FP_SOCKETS, "x11") == XD_FP_ON);
-    CHECK(xd_fp_perms_env(p, "HELLO_MODE", &found) == nullptr && found);
-    xd_fp_perms_free(p);
+    permissions = xd_fp_perms_new();
+    fp_merge(permissions,
+             "[Context]\nshared=network;\nsockets=wayland;\n[Environment]\nHELLO_MODE=fast\n");
+    xd_fp_perms_merge(permissions, ov);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SHARED, "network") == XD_FP_OFF);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "wayland") == XD_FP_OFF);
+    CHECK(xd_fp_perms_state(permissions, XD_FP_SOCKETS, "x11") == XD_FP_ON);
+    CHECK(xd_fp_perms_env(permissions, "HELLO_MODE", &found) == nullptr && found);
+    xd_fp_perms_free(permissions);
 
     /* Taking everything back out leaves no file, as `--reset` does. */
     xd_fp_override_set_env(ov, "HELLO_MODE", nullptr, true);
@@ -5748,8 +5899,8 @@ static void test_flatpak_perms(void) {
     xd_fp_override_set_bus(ov, XD_FP_SESSION_BUS, "org.freedesktop.Notifications", nullptr);
     xd_fp_override_set_bus(ov, XD_FP_SYSTEM_BUS, "org.bluez", nullptr);
     xd_fp_override_set_persistent(ov, ".foo", false);
-    for (const char *const *n = xd_fp_list_names(XD_FP_SOCKETS); *n != nullptr; n++)
-        xd_fp_override_set_state(ov, XD_FP_SOCKETS, *n, XD_FP_UNSET);
+    for (const char *const *name = xd_fp_list_names(XD_FP_SOCKETS); *name != nullptr; name++)
+        xd_fp_override_set_state(ov, XD_FP_SOCKETS, *name, XD_FP_UNSET);
     xd_fp_override_set_state(ov, XD_FP_SHARED, "ipc", XD_FP_UNSET);
     xd_fp_override_set_state(ov, XD_FP_SHARED, "network", XD_FP_UNSET);
     CHECK(xd_fp_override_save(ov, path, nullptr));
@@ -5810,39 +5961,40 @@ static void test_appwiz(void) {
     g_hash_table_unref(launched);
 
     /* Sizes as XP wrote them. */
-    char *s = xd_appwiz_format_size(23477862);
-    CHECK(strcmp(s, "22.39MB") == 0);
-    g_free(s);
-    s = xd_appwiz_format_size(100);
-    CHECK(strcmp(s, "0.01MB") == 0);
-    g_free(s);
-    s = xd_appwiz_format_size(1288490189);
-    CHECK(strcmp(s, "1.20GB") == 0);
-    g_free(s);
-    s = xd_appwiz_format_date(0);
-    CHECK(strcmp(s, "") == 0);
-    g_free(s);
-    s = xd_appwiz_format_date(1160000000);
-    CHECK(strstr(s, "06") != nullptr);
-    g_free(s);
+    char *text = xd_appwiz_format_size(23477862);
+    CHECK(strcmp(text, "22.39MB") == 0);
+    g_free(text);
+    text = xd_appwiz_format_size(100);
+    CHECK(strcmp(text, "0.01MB") == 0);
+    g_free(text);
+    text = xd_appwiz_format_size(1288490189);
+    CHECK(strcmp(text, "1.20GB") == 0);
+    g_free(text);
+    text = xd_appwiz_format_date(0);
+    CHECK(strcmp(text, "") == 0);
+    g_free(text);
+    text = xd_appwiz_format_date(1160000000);
+    CHECK(strstr(text, "06") != nullptr);
+    g_free(text);
 
     /* Sort orders. */
-    xd_appwiz_key a = {"Alpha", 100, 1, 50, "pacman (extra)"},
-                  b = {"beta", 300, 1, 0, "Flatpak (flathub, system)"},
-                  c = {"Gamma", 0, 9, 70, nullptr}, d = {"delta", 100, 0, 50, "pacman (extra)"};
-    CHECK(xd_appwiz_compare(&a, &b, XD_SORT_NAME) < 0);
-    CHECK(xd_appwiz_compare(&b, &c, XD_SORT_NAME) < 0); /* case doesn't matter */
-    CHECK(xd_appwiz_compare(&b, &a, XD_SORT_SIZE) < 0); /* largest first */
-    CHECK(xd_appwiz_compare(&a, &c, XD_SORT_SIZE) < 0); /* unknown last */
-    CHECK(xd_appwiz_compare(&a, &d, XD_SORT_SIZE) < 0); /* ties by name */
-    CHECK(xd_appwiz_compare(&c, &a, XD_SORT_FREQUENCY) < 0);
-    CHECK(xd_appwiz_compare(&a, &b, XD_SORT_FREQUENCY) < 0);
-    CHECK(xd_appwiz_compare(&c, &a, XD_SORT_DATE) < 0);  /* most recent first */
-    CHECK(xd_appwiz_compare(&d, &b, XD_SORT_DATE) < 0);  /* never used last */
-    CHECK(xd_appwiz_compare(&a, &a, XD_SORT_DATE) == 0);
-    CHECK(xd_appwiz_compare(&b, &a, XD_SORT_SOURCE) < 0); /* by source */
-    CHECK(xd_appwiz_compare(&a, &d, XD_SORT_SOURCE) < 0); /* then by name */
-    CHECK(xd_appwiz_compare(&d, &c, XD_SORT_SOURCE) < 0); /* not known last */
+    xd_appwiz_key alpha = {"Alpha", 100, 1, 50, "pacman (extra)"},
+                  beta = {"beta", 300, 1, 0, "Flatpak (flathub, system)"},
+                  gamma = {"Gamma", 0, 9, 70, nullptr},
+                  delta = {"delta", 100, 0, 50, "pacman (extra)"};
+    CHECK(xd_appwiz_compare(&alpha, &beta, XD_SORT_NAME) < 0);
+    CHECK(xd_appwiz_compare(&beta, &gamma, XD_SORT_NAME) < 0); /* case doesn't matter */
+    CHECK(xd_appwiz_compare(&beta, &alpha, XD_SORT_SIZE) < 0); /* largest first */
+    CHECK(xd_appwiz_compare(&alpha, &gamma, XD_SORT_SIZE) < 0); /* unknown last */
+    CHECK(xd_appwiz_compare(&alpha, &delta, XD_SORT_SIZE) < 0); /* ties by name */
+    CHECK(xd_appwiz_compare(&gamma, &alpha, XD_SORT_FREQUENCY) < 0);
+    CHECK(xd_appwiz_compare(&alpha, &beta, XD_SORT_FREQUENCY) < 0);
+    CHECK(xd_appwiz_compare(&gamma, &alpha, XD_SORT_DATE) < 0); /* most recent first */
+    CHECK(xd_appwiz_compare(&delta, &beta, XD_SORT_DATE) < 0); /* never used last */
+    CHECK(xd_appwiz_compare(&alpha, &alpha, XD_SORT_DATE) == 0);
+    CHECK(xd_appwiz_compare(&beta, &alpha, XD_SORT_SOURCE) < 0); /* by source */
+    CHECK(xd_appwiz_compare(&alpha, &delta, XD_SORT_SOURCE) < 0); /* then by name */
+    CHECK(xd_appwiz_compare(&delta, &gamma, XD_SORT_SOURCE) < 0); /* not known last */
 
     /* Where a program came from. */
     CHECK(strcmp(xd_appwiz_package_manager("alpm"), "pacman") == 0);
@@ -5948,31 +6100,31 @@ static void test_launcher_entry(void) {
     CHECK(xd_launcher_desktop_id(nullptr) == nullptr);
 
     xd_launcher_state st = {0};
-    GVariant *v = g_variant_ref_sink(
+    GVariant *variant = g_variant_ref_sink(
         g_variant_new_parsed("{'progress': <0.5>, 'progress-visible': <true>, 'count': <int64 3>, "
                              "'count-visible': <true>, 'urgent': <true>}"));
-    CHECK(xd_launcher_apply(&st, v));
+    CHECK(xd_launcher_apply(&st, variant));
     CHECK(st.progress == 0.5 && st.progress_visible && st.count == 3 && st.count_visible &&
           st.urgent);
-    CHECK(!xd_launcher_apply(&st, v)); /* nothing new */
-    g_variant_unref(v);
+    CHECK(!xd_launcher_apply(&st, variant)); /* nothing new */
+    g_variant_unref(variant);
     /* Only what it names; out of range clamps; wrong types are ignored. */
-    v = g_variant_ref_sink(g_variant_new_parsed(
+    variant = g_variant_ref_sink(g_variant_new_parsed(
         "{'progress': <1.5>, 'urgent': <'yes'>, 'count': <int32 7>, 'other': <1>}"));
-    CHECK(xd_launcher_apply(&st, v));
+    CHECK(xd_launcher_apply(&st, variant));
     CHECK(st.progress == 1.0 && st.progress_visible && st.count == 7 && st.urgent);
-    g_variant_unref(v);
-    v = g_variant_ref_sink(g_variant_new_parsed(
+    g_variant_unref(variant);
+    variant = g_variant_ref_sink(g_variant_new_parsed(
         "{'progress': <-1.0>, 'progress-visible': <false>, 'count': <'9'>, 'urgent': <false>}"));
-    CHECK(xd_launcher_apply(&st, v));
+    CHECK(xd_launcher_apply(&st, variant));
     CHECK(st.progress == 0 && !st.progress_visible && st.count == 7 && !st.urgent);
-    g_variant_unref(v);
-    v = g_variant_ref_sink(g_variant_new_parsed("{'progress': <1>}"));
-    CHECK(!xd_launcher_apply(&st, v)); /* progress is a double */
-    g_variant_unref(v);
-    v = g_variant_ref_sink(g_variant_new_parsed("('notadict', 1)"));
-    CHECK(!xd_launcher_apply(&st, v));
-    g_variant_unref(v);
+    g_variant_unref(variant);
+    variant = g_variant_ref_sink(g_variant_new_parsed("{'progress': <1>}"));
+    CHECK(!xd_launcher_apply(&st, variant)); /* progress is a double */
+    g_variant_unref(variant);
+    variant = g_variant_ref_sink(g_variant_new_parsed("('notadict', 1)"));
+    CHECK(!xd_launcher_apply(&st, variant));
+    g_variant_unref(variant);
 
     CHECK(xd_launcher_key_is("firefox.desktop", "firefox.desktop"));
     CHECK(xd_launcher_key_is("firefox.desktop", "app:firefox"));
@@ -5992,19 +6144,19 @@ static void test_launcher_entry(void) {
 }
 
 static void test_superbar(void) {
-    xd_settings a;
-    xd_settings_defaults(&a);
-    CHECK(a.buttons == XD_BUTTONS_ALWAYS_COMBINE); /* Windows 7's default */
-    xd_settings_parse(XD_STR("[Taskbar]\nButtons=whenfull\n"), &a);
-    CHECK(a.buttons == XD_BUTTONS_WHEN_FULL);
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(original.buttons == XD_BUTTONS_ALWAYS_COMBINE); /* Windows 7's default */
+    xd_settings_parse(XD_STR("[Taskbar]\nButtons=whenfull\n"), &original);
+    CHECK(original.buttons == XD_BUTTONS_WHEN_FULL);
     xd_strbuf text = {0};
-    xd_settings_serialize(&a, &text);
-    xd_settings b;
-    xd_settings_parse(xd_strbuf_view(&text), &b);
-    CHECK(b.buttons == XD_BUTTONS_WHEN_FULL && xd_settings_equal(&a, &b));
+    xd_settings_serialize(&original, &text);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(parsed.buttons == XD_BUTTONS_WHEN_FULL && xd_settings_equal(&original, &parsed));
     xd_strbuf_free(&text);
-    xd_settings_parse(XD_STR("[Taskbar]\nButtons=sometimes\n"), &a);
-    CHECK(a.buttons == XD_BUTTONS_ALWAYS_COMBINE);
+    xd_settings_parse(XD_STR("[Taskbar]\nButtons=sometimes\n"), &original);
+    CHECK(original.buttons == XD_BUTTONS_ALWAYS_COMBINE);
 
     /* Recent files: the program's own, still there, the latest first. */
     char *dir = g_dir_make_tmp("xd-jump-XXXXXX", nullptr);
@@ -6179,21 +6331,21 @@ static void test_printers(void) {
         {1023 * 1024, "0.99 MB"}, {1440000, "1.37 MB"}, {5ULL << 40, "5.00 TB"},
     };
     for (size_t i = 0; i < G_N_ELEMENTS(sizes); i++) {
-        char *s = xd_print_size_text(sizes[i].bytes);
-        CHECK(strcmp(s, sizes[i].text) == 0);
-        if (strcmp(s, sizes[i].text) != 0)
-            fprintf(stderr, "  size %" G_GUINT64_FORMAT ": %s\n", sizes[i].bytes, s);
-        g_free(s);
+        char *size_text = xd_print_size_text(sizes[i].bytes);
+        CHECK(strcmp(size_text, sizes[i].text) == 0);
+        if (strcmp(size_text, sizes[i].text) != 0)
+            fprintf(stderr, "  size %" G_GUINT64_FORMAT ": %s\n", sizes[i].bytes, size_text);
+        g_free(size_text);
     }
-    char *p = xd_print_pages_text(0, 0, false);
-    CHECK(strcmp(p, "N/A") == 0);
-    g_free(p);
-    p = xd_print_pages_text(2, 5, true);
-    CHECK(strcmp(p, "2/5") == 0);
-    g_free(p);
-    p = xd_print_pages_text(0, 5, false);
-    CHECK(strcmp(p, "5") == 0);
-    g_free(p);
+    char *pages_text = xd_print_pages_text(0, 0, false);
+    CHECK(strcmp(pages_text, "N/A") == 0);
+    g_free(pages_text);
+    pages_text = xd_print_pages_text(2, 5, true);
+    CHECK(strcmp(pages_text, "2/5") == 0);
+    g_free(pages_text);
+    pages_text = xd_print_pages_text(0, 5, false);
+    CHECK(strcmp(pages_text, "5") == 0);
+    g_free(pages_text);
 
     static const char *const ports[][2] = {
         {"socket://192.168.1.5:9100", "IP_192.168.1.5"},
@@ -6206,11 +6358,11 @@ static void test_printers(void) {
         {"file:/dev/null", "/dev/null"},
     };
     for (size_t i = 0; i < G_N_ELEMENTS(ports); i++) {
-        char *s = xd_printer_port_text(ports[i][0]);
-        CHECK(strcmp(s, ports[i][1]) == 0);
-        if (strcmp(s, ports[i][1]) != 0)
-            fprintf(stderr, "  port %s: %s\n", ports[i][0], s);
-        g_free(s);
+        char *port_text = xd_printer_port_text(ports[i][0]);
+        CHECK(strcmp(port_text, ports[i][1]) == 0);
+        if (strcmp(port_text, ports[i][1]) != 0)
+            fprintf(stderr, "  port %s: %s\n", ports[i][0], port_text);
+        g_free(port_text);
     }
     CHECK(strcmp(xd_printer_port_description("socket://h"), "Standard TCP/IP Port") == 0);
     CHECK(strcmp(xd_printer_port_description("usb://HP/x"), "USB Port") == 0);
@@ -6222,28 +6374,28 @@ static void test_printers(void) {
     CHECK(!xd_printer_name_valid("Office Laser"));
     CHECK(!xd_printer_name_valid("a/b"));
     CHECK(!xd_printer_name_valid(""));
-    char *n = xd_printer_name_suggest("HP LaserJet 4 (Room #2)");
-    CHECK(strcmp(n, "HP_LaserJet_4_(Room_2)") == 0);
-    CHECK(xd_printer_name_valid(n));
-    g_free(n);
-    n = xd_printer_name_suggest("  ");
-    CHECK(strcmp(n, "Printer") == 0);
-    g_free(n);
+    char *name = xd_printer_name_suggest("HP LaserJet 4 (Room #2)");
+    CHECK(strcmp(name, "HP_LaserJet_4_(Room_2)") == 0);
+    CHECK(xd_printer_name_valid(name));
+    g_free(name);
+    name = xd_printer_name_suggest("  ");
+    CHECK(strcmp(name, "Printer") == 0);
+    g_free(name);
     char long_name[300];
     memset(long_name, 'x', sizeof(long_name) - 1);
     long_name[sizeof(long_name) - 1] = '\0';
-    n = xd_printer_name_suggest(long_name);
-    CHECK(strlen(n) == 127 && xd_printer_name_valid(n));
-    g_free(n);
+    name = xd_printer_name_suggest(long_name);
+    CHECK(strlen(name) == 127 && xd_printer_name_valid(name));
+    g_free(name);
 
     CHECK(strcmp(xd_print_orientation_label(4), "Landscape") == 0);
     CHECK(xd_print_orientation_label(7) == nullptr);
     CHECK(strcmp(xd_print_sides_label("two-sided-long-edge"), "Flip on Long Edge") == 0);
     CHECK(strcmp(xd_print_color_label("monochrome"), "Black & White") == 0);
     CHECK(strcmp(xd_print_quality_label(5), "Best") == 0);
-    char *k = xd_print_keyword_label("stationery-heavyweight");
-    CHECK(strcmp(k, "Stationery heavyweight") == 0);
-    g_free(k);
+    char *label = xd_print_keyword_label("stationery-heavyweight");
+    CHECK(strcmp(label, "Stationery heavyweight") == 0);
+    g_free(label);
 
     /* The Ports tab's typed URIs, and Add Port's start for a kind of port. */
     CHECK(xd_printer_device_uri_complete("socket://192.168.1.5:9100"));
@@ -6255,38 +6407,41 @@ static void test_printers(void) {
     CHECK(!xd_printer_device_uri_complete("ipp://"));
     CHECK(!xd_printer_device_uri_complete(""));
     CHECK(!xd_printer_device_uri_complete(nullptr));
-    k = xd_printer_device_uri_start("socket");
-    CHECK(strcmp(k, "socket://") == 0);
-    g_free(k);
-    k = xd_printer_device_uri_start("usb://HP/x");
-    CHECK(strcmp(k, "usb://HP/x") == 0);
-    g_free(k);
+    label = xd_printer_device_uri_start("socket");
+    CHECK(strcmp(label, "socket://") == 0);
+    g_free(label);
+    label = xd_printer_device_uri_start("usb://HP/x");
+    CHECK(strcmp(label, "usb://HP/x") == 0);
+    g_free(label);
 
     /* Properties' Apply: one CUPS-Add-Modify-Printer with what changed. */
-    xd_printer_changes c = {.info = "Hall", .device_uri = "socket://10.0.0.9", .shared = 1};
-    ipp_t *req = xd_printer_modify_request("Office_Laser", &c);
+    xd_printer_changes printer_changes = {
+        .info = "Hall", .device_uri = "socket://10.0.0.9", .shared = 1};
+    ipp_t *req = xd_printer_modify_request("Office_Laser", &printer_changes);
     CHECK(ippGetOperation(req) == IPP_OP_CUPS_ADD_MODIFY_PRINTER);
-    ipp_attribute_t *a = ippFindAttribute(req, "printer-uri", IPP_TAG_URI);
-    CHECK(a != nullptr && g_str_has_suffix(ippGetString(a, 0, nullptr), "/printers/Office_Laser"));
-    a = ippFindAttribute(req, "device-uri", IPP_TAG_URI);
-    CHECK(a != nullptr && ippGetGroupTag(a) == IPP_TAG_PRINTER &&
-          strcmp(ippGetString(a, 0, nullptr), "socket://10.0.0.9") == 0);
-    a = ippFindAttribute(req, "printer-is-shared", IPP_TAG_BOOLEAN);
-    CHECK(a != nullptr && ippGetGroupTag(a) == IPP_TAG_PRINTER && ippGetBoolean(a, 0));
-    a = ippFindAttribute(req, "printer-info", IPP_TAG_TEXT);
-    CHECK(a != nullptr && strcmp(ippGetString(a, 0, nullptr), "Hall") == 0);
+    ipp_attribute_t *ipp_attribute = ippFindAttribute(req, "printer-uri", IPP_TAG_URI);
+    CHECK(ipp_attribute != nullptr &&
+          g_str_has_suffix(ippGetString(ipp_attribute, 0, nullptr), "/printers/Office_Laser"));
+    ipp_attribute = ippFindAttribute(req, "device-uri", IPP_TAG_URI);
+    CHECK(ipp_attribute != nullptr && ippGetGroupTag(ipp_attribute) == IPP_TAG_PRINTER &&
+          strcmp(ippGetString(ipp_attribute, 0, nullptr), "socket://10.0.0.9") == 0);
+    ipp_attribute = ippFindAttribute(req, "printer-is-shared", IPP_TAG_BOOLEAN);
+    CHECK(ipp_attribute != nullptr && ippGetGroupTag(ipp_attribute) == IPP_TAG_PRINTER &&
+          ippGetBoolean(ipp_attribute, 0));
+    ipp_attribute = ippFindAttribute(req, "printer-info", IPP_TAG_TEXT);
+    CHECK(ipp_attribute != nullptr && strcmp(ippGetString(ipp_attribute, 0, nullptr), "Hall") == 0);
     CHECK(ippFindAttribute(req, "printer-location", IPP_TAG_ZERO) == nullptr);
     ippDelete(req);
     /* Unchanged port and sharing: neither is sent. */
-    c = (xd_printer_changes){.info = "", .location = "", .shared = -1};
-    req = xd_printer_modify_request("Office_Laser", &c);
+    printer_changes = (xd_printer_changes){.info = "", .location = "", .shared = -1};
+    req = xd_printer_modify_request("Office_Laser", &printer_changes);
     CHECK(ippFindAttribute(req, "device-uri", IPP_TAG_ZERO) == nullptr);
     CHECK(ippFindAttribute(req, "printer-is-shared", IPP_TAG_ZERO) == nullptr);
-    c.shared = 0;
+    printer_changes.shared = 0;
     ippDelete(req);
-    req = xd_printer_modify_request("Office_Laser", &c);
-    a = ippFindAttribute(req, "printer-is-shared", IPP_TAG_BOOLEAN);
-    CHECK(a != nullptr && !ippGetBoolean(a, 0));
+    req = xd_printer_modify_request("Office_Laser", &printer_changes);
+    ipp_attribute = ippFindAttribute(req, "printer-is-shared", IPP_TAG_BOOLEAN);
+    CHECK(ipp_attribute != nullptr && !ippGetBoolean(ipp_attribute, 0));
     ippDelete(req);
 }
 
@@ -6307,30 +6462,32 @@ static void test_scanners(void) {
     const char *only_color[] = {"Color"};
     CHECK(xd_scan_mode_for(XD_PICTURE_GRAY, only_color, 1, &one_bit) == nullptr);
 
-    GArray *r = g_array_new(FALSE, FALSE, sizeof(int));
-    xd_scan_resolutions_in_range(1, 1200, r);
-    CHECK(r->len == 7 && g_array_index(r, int, 0) == 75 && g_array_index(r, int, 6) == 1200);
-    g_array_set_size(r, 0);
-    xd_scan_resolutions_in_range(110, 140, r);
-    CHECK(r->len == 2 && g_array_index(r, int, 0) == 110 && g_array_index(r, int, 1) == 140);
-    g_array_unref(r);
+    GArray *array = g_array_new(FALSE, FALSE, sizeof(int));
+    xd_scan_resolutions_in_range(1, 1200, array);
+    CHECK(array->len == 7 && g_array_index(array, int, 0) == 75 &&
+          g_array_index(array, int, 6) == 1200);
+    g_array_set_size(array, 0);
+    xd_scan_resolutions_in_range(110, 140, array);
+    CHECK(array->len == 2 && g_array_index(array, int, 0) == 110 &&
+          g_array_index(array, int, 1) == 140);
+    g_array_unref(array);
     CHECK(xd_scan_preview_dpi(1, 1200) == 50);
     CHECK(xd_scan_preview_dpi(75, 600) == 75);
 
     CHECK(xd_scan_name_valid("Picture"));
     CHECK(!xd_scan_name_valid("a/b") && !xd_scan_name_valid("..") && !xd_scan_name_valid(""));
     char *dir = g_dir_make_tmp("xd-scan-XXXXXX", nullptr);
-    char *f = xd_scan_next_file(dir, "Picture", "png");
+    char *file_path = xd_scan_next_file(dir, "Picture", "png");
     char *want = g_build_filename(dir, "Picture 001.png", nullptr);
-    CHECK(strcmp(f, want) == 0);
-    CHECK(g_file_set_contents(f, "", 0, nullptr));
+    CHECK(strcmp(file_path, want) == 0);
+    CHECK(g_file_set_contents(file_path, "", 0, nullptr));
     char *f2 = xd_scan_next_file(dir, "Picture", "png");
     CHECK(g_str_has_suffix(f2, "Picture 002.png"));
-    CHECK(g_remove(f) == 0);
+    CHECK(g_remove(file_path) == 0);
     CHECK(g_rmdir(dir) == 0);
     g_free(f2);
     g_free(want);
-    g_free(f);
+    g_free(file_path);
     g_free(dir);
 
     guint8 rgb[3 * 9];
@@ -6397,14 +6554,15 @@ static void test_taskmgr_netstat(void) {
     GArray *ifs = xd_netifs_read(root);
     CHECK(ifs->len == 5);
     if (ifs->len == 5) {
-        const xd_netif *n = (const xd_netif *)(const void *)ifs->data;
-        CHECK(strcmp(n[0].name, "br0") == 0 && n[0].state == XD_NETIF_NON_OPERATIONAL);
-        CHECK(strcmp(n[1].name, "eth0") == 0 && n[1].state == XD_NETIF_OPERATIONAL &&
-              n[1].speed_mbps == 1000 && n[1].rx_bytes == 1000000 && n[1].tx_bytes == 250000);
-        CHECK(strcmp(n[2].name, "eth1") == 0 && n[2].state == XD_NETIF_DISCONNECTED &&
-              n[2].speed_mbps == 0);
-        CHECK(strcmp(n[3].name, "vpn0") == 0 && n[3].state == XD_NETIF_OPERATIONAL);
-        CHECK(strcmp(n[4].name, "wlan0") == 0 && n[4].speed_mbps == 0);
+        const xd_netif *netif = (const xd_netif *)(const void *)ifs->data;
+        CHECK(strcmp(netif[0].name, "br0") == 0 && netif[0].state == XD_NETIF_NON_OPERATIONAL);
+        CHECK(strcmp(netif[1].name, "eth0") == 0 && netif[1].state == XD_NETIF_OPERATIONAL &&
+              netif[1].speed_mbps == 1000 && netif[1].rx_bytes == 1000000 &&
+              netif[1].tx_bytes == 250000);
+        CHECK(strcmp(netif[2].name, "eth1") == 0 && netif[2].state == XD_NETIF_DISCONNECTED &&
+              netif[2].speed_mbps == 0);
+        CHECK(strcmp(netif[3].name, "vpn0") == 0 && netif[3].state == XD_NETIF_OPERATIONAL);
+        CHECK(strcmp(netif[4].name, "wlan0") == 0 && netif[4].speed_mbps == 0);
     }
     xd_netifs_free(ifs);
     rm_tree(root);
@@ -6424,9 +6582,9 @@ static void test_taskmgr_netstat(void) {
     } speeds[] = {{0, ""}, {10, "10 Mbps"}, {100, "100 Mbps"}, {1000, "1 Gbps"},
                   {2500, "2.5 Gbps"}, {10000, "10 Gbps"}};
     for (size_t i = 0; i < G_N_ELEMENTS(speeds); i++) {
-        char *t = xd_netif_speed_text(speeds[i].mbps);
-        CHECK(strcmp(t, speeds[i].text) == 0);
-        g_free(t);
+        char *speed_text = xd_netif_speed_text(speeds[i].mbps);
+        CHECK(strcmp(speed_text, speeds[i].text) == 0);
+        g_free(speed_text);
     }
     /* 12.5 MB in 1 s on 100 Mb/s is all of it; 125 kB is 1 %. */
     CHECK(xd_netif_utilization(12500000, 1.0, 100) == 1.0);
@@ -6440,9 +6598,9 @@ static void test_taskmgr_netstat(void) {
     } utils[] = {{0, "0 %"}, {0.00001, "0 %"}, {0.0012, "0.12 %"}, {0.015, "1.5 %"},
                  {0.37, "37 %"}, {1.0, "100 %"}};
     for (size_t i = 0; i < G_N_ELEMENTS(utils); i++) {
-        char *t = xd_netif_utilization_text(utils[i].share);
-        CHECK(strcmp(t, utils[i].text) == 0);
-        g_free(t);
+        char *utilization_text = xd_netif_utilization_text(utils[i].share);
+        CHECK(strcmp(utilization_text, utils[i].text) == 0);
+        g_free(utilization_text);
     }
 
     CHECK(xd_status_peak_kb("Name:\tbash\nVmPeak:\t  20000 kB\nVmHWM:\t    5120 kB\n"
@@ -6456,9 +6614,9 @@ static void test_taskmgr_netstat(void) {
 
 static const xd_autostart *autostart_at(GPtrArray *list, const char *file) {
     for (guint i = 0; i < list->len; i++) {
-        const xd_autostart *a = g_ptr_array_index(list, i);
-        if (strcmp(a->file, file) == 0)
-            return a;
+        const xd_autostart *autostart = g_ptr_array_index(list, i);
+        if (strcmp(autostart->file, file) == 0)
+            return autostart;
     }
     return nullptr;
 }
@@ -6476,12 +6634,12 @@ static void test_startup_programs(void) {
     if (root == nullptr)
         return;
     const char *app = "[Desktop Entry]\nType=Application\nExec=true\n";
-    char *t;
+    char *contents;
 #define PUT(rel, extra)                                                                            \
     do {                                                                                           \
-        t = g_strconcat(app, extra, nullptr);                                                      \
-        put_file(root, rel, t);                                                                    \
-        g_free(t);                                                                                 \
+        contents = g_strconcat(app, extra, nullptr);                                               \
+        put_file(root, rel, contents);                                                             \
+        g_free(contents);                                                                          \
     } while (0)
     PUT("sys1/a.desktop", "Name=Alpha\nIcon=alpha\n");
     PUT("sys2/a.desktop", "Name=Shadowed\n"); /* sys1's comes first */
@@ -6508,9 +6666,10 @@ static void test_startup_programs(void) {
     const char *order[] = {"Alpha", "Hid", "Mine", "Off", "Us"};
     for (guint i = 0; i < list->len && i < G_N_ELEMENTS(order); i++)
         CHECK(strcmp(((const xd_autostart *)g_ptr_array_index(list, i))->name, order[i]) == 0);
-    const xd_autostart *a = autostart_at(list, "a.desktop");
-    CHECK(a != nullptr && a->enabled && !a->user_only && strcmp(a->icon, "alpha") == 0 &&
-          strcmp(a->location, sys1) == 0 && strcmp(a->command, "true") == 0);
+    const xd_autostart *autostart = autostart_at(list, "a.desktop");
+    CHECK(autostart != nullptr && autostart->enabled && !autostart->user_only &&
+          strcmp(autostart->icon, "alpha") == 0 && strcmp(autostart->location, sys1) == 0 &&
+          strcmp(autostart->command, "true") == 0);
     const xd_autostart *hid = autostart_at(list, "hid.desktop");
     CHECK(hid != nullptr && !hid->enabled && !hid->user_only && strcmp(hid->location, sys2) == 0);
     const xd_autostart *mine = autostart_at(list, "mine.desktop");
@@ -6522,9 +6681,9 @@ static void test_startup_programs(void) {
     /* Off: your copy with Hidden=true; on again: the copy goes. */
     GError *err = nullptr;
     char *ua = g_build_filename(user, "a.desktop", nullptr);
-    CHECK(a != nullptr && xd_autostart_set_enabled(a, user, false, &err));
+    CHECK(autostart != nullptr && xd_autostart_set_enabled(autostart, user, false, &err));
     CHECK(file_has(ua, "Hidden=true") && file_has(ua, "Name=Alpha"));
-    CHECK(a != nullptr && xd_autostart_set_enabled(a, user, true, &err));
+    CHECK(autostart != nullptr && xd_autostart_set_enabled(autostart, user, true, &err));
     CHECK(!g_file_test(ua, G_FILE_TEST_EXISTS));
     /* The hiding copy of Hid goes too; GNOME's switch is turned on in a copy. */
     char *uh = g_build_filename(user, "hid.desktop", nullptr);
@@ -6649,13 +6808,13 @@ static void test_startup_services(void) {
 }
 
 static void test_gpu(void) {
-    GVariant *v = g_variant_ref_sink(g_variant_new_parsed(
+    GVariant *variant = g_variant_ref_sink(g_variant_new_parsed(
         "[{'Name': <'Intel UHD'>, 'Environment': <['DRI_PRIME', '0']>, 'Default': <true>},"
         " {'Name': <'NVIDIA'>, 'Environment': <['DRI_PRIME', '1', 'ODD']>, 'Default': <false>},"
         " {'Default': <false>}]"));
     xd_gpu_list gpus;
-    xd_gpu_list_parse(v, &gpus);
-    g_variant_unref(v);
+    xd_gpu_list_parse(variant, &gpus);
+    g_variant_unref(variant);
     CHECK(gpus.count == 3);
     CHECK(xd_gpu_list_default(&gpus) == 0 && xd_gpu_list_other(&gpus) == 1);
     if (gpus.count == 3) {
@@ -6698,27 +6857,27 @@ static void test_gpu(void) {
 }
 
 static void test_search_match(void) {
-    xd_search_name n;
-    xd_search_name_init(&n, "  ");
-    CHECK(xd_search_name_matches(&n, "anything"));
-    xd_search_name_clear(&n);
-    xd_search_name_init(&n, "Report");
-    CHECK(xd_search_name_matches(&n, "Annual report 2026.odt"));
-    CHECK(xd_search_name_matches(&n, "REPORT"));
-    CHECK(!xd_search_name_matches(&n, "Repo.txt"));
-    xd_search_name_clear(&n);
-    xd_search_name_init(&n, "*.TXT");
-    CHECK(xd_search_name_matches(&n, "notes.txt"));
-    CHECK(!xd_search_name_matches(&n, "notes.txt.bak"));
-    xd_search_name_clear(&n);
-    xd_search_name_init(&n, "l?tter*");
-    CHECK(xd_search_name_matches(&n, "Letter.txt"));
-    CHECK(!xd_search_name_matches(&n, "a Letter.txt"));
-    xd_search_name_clear(&n);
-    xd_search_name_init(&n, "\u00FCn\u00EF");
-    CHECK(xd_search_name_matches(&n, "\u00DCN\u00CFCODE"));
-    xd_search_name_clear(&n);
-    CHECK(n.part == nullptr && n.glob == nullptr);
+    xd_search_name search_name;
+    xd_search_name_init(&search_name, "  ");
+    CHECK(xd_search_name_matches(&search_name, "anything"));
+    xd_search_name_clear(&search_name);
+    xd_search_name_init(&search_name, "Report");
+    CHECK(xd_search_name_matches(&search_name, "Annual report 2026.odt"));
+    CHECK(xd_search_name_matches(&search_name, "REPORT"));
+    CHECK(!xd_search_name_matches(&search_name, "Repo.txt"));
+    xd_search_name_clear(&search_name);
+    xd_search_name_init(&search_name, "*.TXT");
+    CHECK(xd_search_name_matches(&search_name, "notes.txt"));
+    CHECK(!xd_search_name_matches(&search_name, "notes.txt.bak"));
+    xd_search_name_clear(&search_name);
+    xd_search_name_init(&search_name, "l?tter*");
+    CHECK(xd_search_name_matches(&search_name, "Letter.txt"));
+    CHECK(!xd_search_name_matches(&search_name, "a Letter.txt"));
+    xd_search_name_clear(&search_name);
+    xd_search_name_init(&search_name, "\u00FCn\u00EF");
+    CHECK(xd_search_name_matches(&search_name, "\u00DCN\u00CFCODE"));
+    xd_search_name_clear(&search_name);
+    CHECK(search_name.part == nullptr && search_name.glob == nullptr);
 
     static const char data[] = "Dear Sir,\nShopping\0list";
     CHECK(xd_search_text_in(data, sizeof(data) - 1, "dear sir"));
@@ -6732,16 +6891,16 @@ static void test_search_match(void) {
  * the PNG's Thumb:: metadata, and failure markers. */
 static void test_thumbnail_cache(void) {
     /* The spec's own example. */
-    char *p = xd_thumb_path("/c", "file:///home/jens/photos/me.png", XD_THUMB_NORMAL);
-    CHECK(strcmp(p, "/c/normal/c6ee772d9e49320e97ec29a7eb5b1697.png") == 0);
-    g_free(p);
-    p = xd_thumb_path("/c", "file:///home/jens/photos/me.png", XD_THUMB_XXLARGE);
-    CHECK(strcmp(p, "/c/xx-large/c6ee772d9e49320e97ec29a7eb5b1697.png") == 0);
-    g_free(p);
-    p = xd_thumb_fail_path("/c", "file:///home/jens/photos/me.png");
-    CHECK(strcmp(p, "/c/fail/xd-thumbnailer-" XD_VERSION "/c6ee772d9e49320e97ec29a7eb5b1697.png") ==
-          0);
-    g_free(p);
+    char *path = xd_thumb_path("/c", "file:///home/jens/photos/me.png", XD_THUMB_NORMAL);
+    CHECK(strcmp(path, "/c/normal/c6ee772d9e49320e97ec29a7eb5b1697.png") == 0);
+    g_free(path);
+    path = xd_thumb_path("/c", "file:///home/jens/photos/me.png", XD_THUMB_XXLARGE);
+    CHECK(strcmp(path, "/c/xx-large/c6ee772d9e49320e97ec29a7eb5b1697.png") == 0);
+    g_free(path);
+    path = xd_thumb_fail_path("/c", "file:///home/jens/photos/me.png");
+    CHECK(strcmp(path, "/c/fail/xd-thumbnailer-" XD_VERSION
+                       "/c6ee772d9e49320e97ec29a7eb5b1697.png") == 0);
+    g_free(path);
     CHECK(xd_thumb_size_for(48) == XD_THUMB_NORMAL && xd_thumb_size_for(128) == XD_THUMB_NORMAL);
     CHECK(xd_thumb_size_for(129) == XD_THUMB_LARGE && xd_thumb_size_for(248) == XD_THUMB_LARGE);
     CHECK(xd_thumb_size_for(600) == XD_THUMB_XXLARGE && xd_thumb_size_for(5000) == XD_THUMB_XXLARGE);
@@ -6817,26 +6976,26 @@ static void test_favorites(void) {
                                 "sftp://example.org/srv/data\n"
                                 "smb://server/\n";
     CHECK(g_file_set_contents(path, start, -1, nullptr));
-    GPtrArray *f = xd_favorites_load(path);
-    CHECK(f->len == 3);
-    if (f->len == 3) {
-        XdFavorite *a = g_ptr_array_index(f, 0), *b = g_ptr_array_index(f, 1),
-                   *c = g_ptr_array_index(f, 2);
-        CHECK(strcmp(a->uri, "file:///home/me/My%20Work") == 0);
-        CHECK(g_strcmp0(a->label, "Work stuff") == 0);
-        CHECK(b->label == nullptr);
-        char *name = xd_favorite_name(b);
+    GPtrArray *array = xd_favorites_load(path);
+    CHECK(array->len == 3);
+    if (array->len == 3) {
+        XdFavorite *first = g_ptr_array_index(array, 0), *second = g_ptr_array_index(array, 1),
+                   *third = g_ptr_array_index(array, 2);
+        CHECK(strcmp(first->uri, "file:///home/me/My%20Work") == 0);
+        CHECK(g_strcmp0(first->label, "Work stuff") == 0);
+        CHECK(second->label == nullptr);
+        char *name = xd_favorite_name(second);
         CHECK(strcmp(name, "data") == 0);
         g_free(name);
-        name = xd_favorite_name(c);
+        name = xd_favorite_name(third);
         CHECK(strcmp(name, "server") == 0);
         g_free(name);
-        g_clear_pointer(&a->label, g_free);
-        name = xd_favorite_name(a);
+        g_clear_pointer(&first->label, g_free);
+        name = xd_favorite_name(first);
         CHECK(strcmp(name, "My Work") == 0);
         g_free(name);
     }
-    g_ptr_array_unref(f);
+    g_ptr_array_unref(array);
 
     CHECK(xd_favorites_add(path, "file:///tmp", "Scratch", nullptr));
     CHECK(xd_favorites_add(path, "sftp://example.org/srv/data", "Data\nServer", nullptr));
@@ -6874,24 +7033,25 @@ static void test_launcher_fields(void) {
                                 "Comment[xx_YY]=Other\nIcon=accessories-text-editor\n"
                                 "Path=/srv\n\n[Desktop Action new]\nName=New\nExec=editor -n\n";
     CHECK(g_file_set_contents(path, entry, -1, nullptr));
-    XdLauncher l;
-    CHECK(xd_launcher_read(path, &l, nullptr));
-    CHECK(g_strcmp0(l.target, "editor %F") == 0 && g_strcmp0(l.start_in, "/srv") == 0);
-    CHECK(g_strcmp0(l.comment, "Edits text") == 0 && !l.is_link);
-    CHECK(g_strcmp0(l.icon, "accessories-text-editor") == 0);
-    g_free(l.target);
-    l.target = g_strdup("editor --new-window %F");
-    g_free(l.start_in);
-    l.start_in = g_strdup("");
-    g_free(l.comment);
-    l.comment = g_strdup("Writes notes");
+    XdLauncher launcher;
+    CHECK(xd_launcher_read(path, &launcher, nullptr));
+    CHECK(g_strcmp0(launcher.target, "editor %F") == 0 &&
+          g_strcmp0(launcher.start_in, "/srv") == 0);
+    CHECK(g_strcmp0(launcher.comment, "Edits text") == 0 && !launcher.is_link);
+    CHECK(g_strcmp0(launcher.icon, "accessories-text-editor") == 0);
+    g_free(launcher.target);
+    launcher.target = g_strdup("editor --new-window %F");
+    g_free(launcher.start_in);
+    launcher.start_in = g_strdup("");
+    g_free(launcher.comment);
+    launcher.comment = g_strdup("Writes notes");
     /* Read-only (a system launcher): the change goes to a user copy. Not
      * as root (package builds in containers), which writes anyway. */
     CHECK(g_chmod(sys, 0555) == 0);
     bool read_only = access(sys, W_OK) != 0;
     if (!read_only)
         g_printerr("test_launcher_fields: running as root, skipped the read-only launcher\n");
-    char *written = read_only ? xd_launcher_write(path, &l, user, nullptr) : nullptr;
+    char *written = read_only ? xd_launcher_write(path, &launcher, user, nullptr) : nullptr;
     char *want = g_build_filename(user, "editor.desktop", nullptr);
     if (read_only) {
         CHECK(g_strcmp0(written, want) == 0);
@@ -6919,21 +7079,21 @@ static void test_launcher_fields(void) {
     }
     /* Writable: in place. */
     CHECK(g_chmod(sys, 0755) == 0);
-    char *again = xd_launcher_write(path, &l, user, nullptr);
+    char *again = xd_launcher_write(path, &launcher, user, nullptr);
     CHECK(g_strcmp0(again, path) == 0);
     g_free(again);
-    xd_launcher_clear(&l);
+    xd_launcher_clear(&launcher);
 
     char *dir_entry = g_build_filename(sys, "folder.desktop", nullptr);
     CHECK(g_file_set_contents(dir_entry, "[Desktop Entry]\nType=Directory\nName=X\n", -1,
                               nullptr));
-    CHECK(!xd_launcher_read(dir_entry, &l, nullptr));
+    CHECK(!xd_launcher_read(dir_entry, &launcher, nullptr));
     char *link = g_build_filename(sys, "site.desktop", nullptr);
     CHECK(g_file_set_contents(link, "[Desktop Entry]\nType=Link\nName=Site\nURL=https://a.b/\n",
                               -1, nullptr));
-    CHECK(xd_launcher_read(link, &l, nullptr) && l.is_link &&
-          g_strcmp0(l.target, "https://a.b/") == 0);
-    xd_launcher_clear(&l);
+    CHECK(xd_launcher_read(link, &launcher, nullptr) && launcher.is_link &&
+          g_strcmp0(launcher.target, "https://a.b/") == 0);
+    xd_launcher_clear(&launcher);
 
     CHECK(g_remove(link) == 0 && g_remove(dir_entry) == 0 && g_remove(path) == 0);
     if (read_only) {
@@ -6954,18 +7114,20 @@ static void test_launcher_fields(void) {
 
 /* Disk Cleanup on a scratch drive: which places are the drive's, what
  * each category finds, and that deleting takes exactly that. */
-static gboolean cleanup_has(const XdCleanupCategory *c, const char *root, const char *rel) {
+static gboolean cleanup_has(const XdCleanupCategory *cleanup_category, const char *root,
+                            const char *rel) {
     char *path = g_build_filename(root, rel, nullptr);
-    gboolean has = g_ptr_array_find_with_equal_func(c->items, path, g_str_equal, nullptr);
+    gboolean has =
+        g_ptr_array_find_with_equal_func(cleanup_category->items, path, g_str_equal, nullptr);
     g_free(path);
     return has;
 }
 
 static const XdCleanupCategory *cleanup_find(GPtrArray *cats, XdCleanupKind kind) {
     for (guint i = 0; i < cats->len; i++) {
-        const XdCleanupCategory *c = g_ptr_array_index(cats, i);
-        if (c->kind == kind)
-            return c;
+        const XdCleanupCategory *cleanup_category = g_ptr_array_index(cats, i);
+        if (cleanup_category->kind == kind)
+            return cleanup_category;
     }
     return nullptr;
 }
@@ -6980,8 +7142,8 @@ static gboolean exists_at(const char *root, const char *rel) {
 
 static void set_times_at(const char *root, const char *rel, gint64 seconds) {
     char *path = g_build_filename(root, rel, nullptr);
-    struct timespec t[2] = {{.tv_sec = (time_t)seconds}, {.tv_sec = (time_t)seconds}};
-    CHECK(utimensat(AT_FDCWD, path, t, AT_SYMLINK_NOFOLLOW) == 0);
+    struct timespec time[2] = {{.tv_sec = (time_t)seconds}, {.tv_sec = (time_t)seconds}};
+    CHECK(utimensat(AT_FDCWD, path, time, AT_SYMLINK_NOFOLLOW) == 0);
     g_free(path);
 }
 
@@ -6991,39 +7153,39 @@ static void test_luks(void) {
     /* gvfs's and GNOME Disks' schema, so remembered passphrases are shared. */
     CHECK(strcmp(XD_LUKS_SECRET_SCHEMA, "org.gnome.GVfs.Luks.Password") == 0);
     CHECK(strcmp(XD_LUKS_SECRET_ATTRIBUTE, "gvfs-luks-uuid") == 0);
-    char *s = xd_luks_secret_label("Private");
-    CHECK(strcmp(s, "Encryption passphrase for Private") == 0);
-    g_free(s);
+    char *label = xd_luks_secret_label("Private");
+    CHECK(strcmp(label, "Encryption passphrase for Private") == 0);
+    g_free(label);
 
-    s = xd_luks_item_uri("1234-ab cd");
-    CHECK(strcmp(s, "computer:///encrypted/1234-ab%20cd") == 0);
-    char *uuid = xd_luks_item_uuid(s);
+    label = xd_luks_item_uri("1234-ab cd");
+    CHECK(strcmp(label, "computer:///encrypted/1234-ab%20cd") == 0);
+    char *uuid = xd_luks_item_uuid(label);
     CHECK(uuid != nullptr && strcmp(uuid, "1234-ab cd") == 0);
     g_free(uuid);
-    g_free(s);
+    g_free(label);
     CHECK(xd_luks_item_uuid("computer:///encrypted/") == nullptr);
     CHECK(xd_luks_item_uuid("computer:///volume/abc") == nullptr);
     CHECK(xd_luks_item_uuid("computer:///encrypted/a%2Fb") == nullptr); /* no slashes in it */
     CHECK(xd_luks_item_uuid(nullptr) == nullptr);
 
-    s = xd_luks_volume_name("Private", "Header", "7.45 GB");
-    CHECK(strcmp(s, "Private") == 0);
-    g_free(s);
-    s = xd_luks_volume_name("", "Header", "7.45 GB");
-    CHECK(strcmp(s, "Header") == 0);
-    g_free(s);
-    s = xd_luks_volume_name("", "", "7.45 GB");
-    CHECK(strcmp(s, "7.45 GB Encrypted Volume") == 0);
-    g_free(s);
-    s = xd_luks_volume_name(nullptr, nullptr, nullptr);
-    CHECK(strcmp(s, "Encrypted Volume") == 0);
-    g_free(s);
-    s = xd_luks_version_label("2");
-    CHECK(strcmp(s, "LUKS2") == 0);
-    g_free(s);
-    s = xd_luks_version_label("");
-    CHECK(strcmp(s, "LUKS") == 0);
-    g_free(s);
+    label = xd_luks_volume_name("Private", "Header", "7.45 GB");
+    CHECK(strcmp(label, "Private") == 0);
+    g_free(label);
+    label = xd_luks_volume_name("", "Header", "7.45 GB");
+    CHECK(strcmp(label, "Header") == 0);
+    g_free(label);
+    label = xd_luks_volume_name("", "", "7.45 GB");
+    CHECK(strcmp(label, "7.45 GB Encrypted Volume") == 0);
+    g_free(label);
+    label = xd_luks_volume_name(nullptr, nullptr, nullptr);
+    CHECK(strcmp(label, "Encrypted Volume") == 0);
+    g_free(label);
+    label = xd_luks_version_label("2");
+    CHECK(strcmp(label, "LUKS2") == 0);
+    g_free(label);
+    label = xd_luks_version_label("");
+    CHECK(strcmp(label, "LUKS") == 0);
+    g_free(label);
 
     CHECK(xd_luks_passphrase_problem("a b", "a b") == nullptr);
     CHECK(xd_luks_passphrase_problem("", "") != nullptr);
@@ -7043,12 +7205,12 @@ static void test_luks(void) {
                                     "Operation not permitted"));
     CHECK(!xd_luks_wrong_passphrase(nullptr, nullptr));
 
-    s = xd_crypttab_name("uuid-1");
-    CHECK(strcmp(s, "luks-uuid-1") == 0);
-    char *key = xd_crypttab_key_path(s);
+    label = xd_crypttab_name("uuid-1");
+    CHECK(strcmp(label, "luks-uuid-1") == 0);
+    char *key = xd_crypttab_key_path(label);
     CHECK(strcmp(key, "/etc/luks-keys/luks-uuid-1") == 0);
     g_free(key);
-    g_free(s);
+    g_free(label);
 
     char *pass = g_strdup("secret");
     xd_luks_passphrase_free(pass);
@@ -7056,21 +7218,21 @@ static void test_luks(void) {
 }
 
 static void test_disk_cleanup(void) {
-    char *k = xd_cleanup_format_kb(0);
-    CHECK(g_str_equal(k, "0 KB"));
-    g_free(k);
-    k = xd_cleanup_format_kb(1);
-    CHECK(g_str_equal(k, "1 KB"));
-    g_free(k);
-    k = xd_cleanup_format_kb(1025);
-    CHECK(g_str_equal(k, "2 KB"));
-    g_free(k);
-    k = xd_cleanup_format_kb(12345678);
-    CHECK(g_str_equal(k, "12,057 KB"));
-    g_free(k);
-    k = xd_cleanup_format_kb(1024ULL * 1000000);
-    CHECK(g_str_equal(k, "1,000,000 KB"));
-    g_free(k);
+    char *text = xd_cleanup_format_kb(0);
+    CHECK(g_str_equal(text, "0 KB"));
+    g_free(text);
+    text = xd_cleanup_format_kb(1);
+    CHECK(g_str_equal(text, "1 KB"));
+    g_free(text);
+    text = xd_cleanup_format_kb(1025);
+    CHECK(g_str_equal(text, "2 KB"));
+    g_free(text);
+    text = xd_cleanup_format_kb(12345678);
+    CHECK(g_str_equal(text, "12,057 KB"));
+    g_free(text);
+    text = xd_cleanup_format_kb(1024ULL * 1000000);
+    CHECK(g_str_equal(text, "1,000,000 KB"));
+    g_free(text);
 
     char *root = g_dir_make_tmp("xd-cleanup-XXXXXX", nullptr);
     CHECK(root != nullptr);
@@ -7124,13 +7286,16 @@ static void test_disk_cleanup(void) {
 
     const char *roots[] = {drive, usb, nullptr};
     const char *temps[] = {tmp, "/nonexistent-xd-tmp", nullptr};
-    XdCleanupPlaces *p = xd_cleanup_places_new(drive, roots, data, cache, temps, uid);
-    CHECK(g_strv_length(p->trashes) == 1 && g_str_has_suffix(p->trashes[0], "share/Trash"));
-    CHECK(p->thumbnails != nullptr && g_str_has_suffix(p->thumbnails, ".cache/thumbnails"));
-    CHECK(g_strv_length(p->browser_caches) == 2 &&
-          g_str_has_suffix(p->browser_caches[0], "chromium/Default/Cache") &&
-          g_str_has_suffix(p->browser_caches[1], "firefox/abc.default/cache2"));
-    CHECK(g_strv_length(p->temp_dirs) == 1 && g_str_equal(p->temp_dirs[0], tmp));
+    XdCleanupPlaces *cleanup_places = xd_cleanup_places_new(drive, roots, data, cache, temps, uid);
+    CHECK(g_strv_length(cleanup_places->trashes) == 1 &&
+          g_str_has_suffix(cleanup_places->trashes[0], "share/Trash"));
+    CHECK(cleanup_places->thumbnails != nullptr &&
+          g_str_has_suffix(cleanup_places->thumbnails, ".cache/thumbnails"));
+    CHECK(g_strv_length(cleanup_places->browser_caches) == 2 &&
+          g_str_has_suffix(cleanup_places->browser_caches[0], "chromium/Default/Cache") &&
+          g_str_has_suffix(cleanup_places->browser_caches[1], "firefox/abc.default/cache2"));
+    CHECK(g_strv_length(cleanup_places->temp_dirs) == 1 &&
+          g_str_equal(cleanup_places->temp_dirs[0], tmp));
 
     /* The USB drive has only its own trash. */
     XdCleanupPlaces *pu = xd_cleanup_places_new(usb, roots, data, cache, temps, uid);
@@ -7144,7 +7309,7 @@ static void test_disk_cleanup(void) {
     CHECK(ut != nullptr && ut->items->len == 1 && ut->size > 0);
 
     gint scanning = -1;
-    GPtrArray *cats = xd_cleanup_scan(p, uid, now, nullptr, &scanning);
+    GPtrArray *cats = xd_cleanup_scan(cleanup_places, uid, now, nullptr, &scanning);
     CHECK(cats->len == 4 && scanning == XD_CLEANUP_THUMBNAILS);
     const XdCleanupCategory *web = cleanup_find(cats, XD_CLEANUP_INTERNET);
     const XdCleanupCategory *trash = cleanup_find(cats, XD_CLEANUP_TRASH);
@@ -7204,7 +7369,7 @@ static void test_disk_cleanup(void) {
 
     g_ptr_array_unref(cats);
     g_ptr_array_unref(ucats);
-    xd_cleanup_places_free(p);
+    xd_cleanup_places_free(cleanup_places);
     xd_cleanup_places_free(pu);
     rm_tree(root);
     g_free(link);
@@ -7282,20 +7447,23 @@ static void put_trashinfo(const char *root, const char *name, gint64 when) {
     g_free(rel);
 }
 
-static gboolean cleanup_items_has(const XdCleanupCategory *c, const char *root, const char *rel) {
+static gboolean cleanup_items_has(const XdCleanupCategory *cleanup_category, const char *root,
+                                  const char *rel) {
     char *path = g_build_filename(root, rel, nullptr);
-    gboolean found = g_ptr_array_find_with_equal_func(c->items, path, g_str_equal, nullptr);
+    gboolean found =
+        g_ptr_array_find_with_equal_func(cleanup_category->items, path, g_str_equal, nullptr);
     g_free(path);
     return found;
 }
 
 static void test_privacy(void) {
     /* Recent documents: as GTK, -1 keeps them for ever and 0 not at all. */
-    gint64 day = 24 * 60 * 60, t = 1800000000;
-    CHECK(xd_recent_shown(true, -1, 0, t));
-    CHECK(!xd_recent_shown(false, -1, t, t));
-    CHECK(!xd_recent_shown(true, 0, t, t));
-    CHECK(xd_recent_shown(true, 7, t - 7 * day, t) && !xd_recent_shown(true, 7, t - 8 * day, t));
+    gint64 day = 24 * 60 * 60, timestamp = 1800000000;
+    CHECK(xd_recent_shown(true, -1, 0, timestamp));
+    CHECK(!xd_recent_shown(false, -1, timestamp, timestamp));
+    CHECK(!xd_recent_shown(true, 0, timestamp, timestamp));
+    CHECK(xd_recent_shown(true, 7, timestamp - 7 * day, timestamp) &&
+          !xd_recent_shown(true, 7, timestamp - 8 * day, timestamp));
 
     /* Portal permissions: yes/no, location's accuracy and its time kept. */
     const XdPermKind *loc = &xd_perm_kinds[0], *camera = nullptr;
@@ -7312,18 +7480,19 @@ static void test_privacy(void) {
     CHECK(!xd_perm_allowed(camera, (const char *const[]){nullptr}));
     CHECK(xd_perm_allowed(loc, (const char *const[]){"CITY", "1800000000", nullptr}));
     CHECK(!xd_perm_allowed(loc, (const char *const[]){"NONE", "1800000000", nullptr}));
-    char **v = xd_perm_values_set(loc, (const char *const[]){"EXACT", "1800000000", nullptr},
-                                  FALSE);
-    CHECK(g_strv_length(v) == 2 && g_str_equal(v[0], "NONE") && g_str_equal(v[1], "1800000000"));
+    char **values =
+        xd_perm_values_set(loc, (const char *const[]){"EXACT", "1800000000", nullptr}, FALSE);
+    CHECK(g_strv_length(values) == 2 && g_str_equal(values[0], "NONE") &&
+          g_str_equal(values[1], "1800000000"));
     char maps[] = "org.example.Maps", host[] = "";
-    XdPermEntry e = {.kind = loc, .app = maps, .values = v};
-    CHECK(xd_perm_last_used(&e) == 1800000000);
-    g_strfreev(v);
-    v = xd_perm_values_set(camera, nullptr, TRUE);
-    CHECK(g_strv_length(v) == 1 && g_str_equal(v[0], "yes"));
-    e = (XdPermEntry){.kind = camera, .app = host, .values = v};
-    CHECK(xd_perm_last_used(&e) == -1);
-    g_strfreev(v);
+    XdPermEntry perm_entry = {.kind = loc, .app = maps, .values = values};
+    CHECK(xd_perm_last_used(&perm_entry) == 1800000000);
+    g_strfreev(values);
+    values = xd_perm_values_set(camera, nullptr, TRUE);
+    CHECK(g_strv_length(values) == 1 && g_str_equal(values[0], "yes"));
+    perm_entry = (XdPermEntry){.kind = camera, .app = host, .values = values};
+    CHECK(xd_perm_last_used(&perm_entry) == -1);
+    g_strfreev(values);
 
     /* Housekeeping: a month's Recycle Bin items by their deletion date,
      * and temporary files untouched as long. "Now" is 40 days on (a
@@ -7354,13 +7523,13 @@ static void test_privacy(void) {
 
     const char *roots[] = {"/", nullptr};
     const char *temps[] = {tmp, nullptr};
-    XdCleanupPlaces *p = xd_cleanup_places_new("/", roots, data, nullptr, temps, uid);
-    GPtrArray *only_trash = xd_cleanup_scan_old(p, uid, now, 30 * day * G_USEC_PER_SEC, TRUE,
-                                                FALSE, nullptr);
+    XdCleanupPlaces *cleanup_places = xd_cleanup_places_new("/", roots, data, nullptr, temps, uid);
+    GPtrArray *only_trash = xd_cleanup_scan_old(cleanup_places, uid, now, 30 * day * G_USEC_PER_SEC,
+                                                TRUE, FALSE, nullptr);
     CHECK(only_trash->len == 1);
     g_ptr_array_unref(only_trash);
-    GPtrArray *cats = xd_cleanup_scan_old(p, uid, now, 30 * day * G_USEC_PER_SEC, TRUE, TRUE,
-                                          nullptr);
+    GPtrArray *cats = xd_cleanup_scan_old(cleanup_places, uid, now, 30 * day * G_USEC_PER_SEC, TRUE,
+                                          TRUE, nullptr);
     const XdCleanupCategory *trash = cleanup_find(cats, XD_CLEANUP_TRASH);
     const XdCleanupCategory *temp = cleanup_find(cats, XD_CLEANUP_TEMP);
     CHECK(trash != nullptr && trash->items->len == 5 &&
@@ -7383,7 +7552,7 @@ static void test_privacy(void) {
           exists_at(data, "Trash/files/nodate.txt") && exists_at(data, "Trash/files/noinfo.txt"));
     CHECK(!exists_at(tmp, "old.txt") && exists_at(tmp, "recent.txt"));
     g_ptr_array_unref(cats);
-    xd_cleanup_places_free(p);
+    xd_cleanup_places_free(cleanup_places);
     rm_tree(root);
     g_free(tmp);
     g_free(data);
@@ -7393,13 +7562,13 @@ static void test_privacy(void) {
 /* Input methods: [Keyboard] InputMethod, the variables programs get, the
  * frameworks' own autostart entries, the candidate window's place. */
 static void test_input_method(void) {
-    xd_settings s;
-    xd_settings_defaults(&s);
-    CHECK(s.keyboard.input_method[0] == '\0');
-    xd_settings_parse(XD_STR("[Keyboard]\nInputMethod=ibus\n"), &s);
-    CHECK(xd_im_from_name(s.keyboard.input_method) == XD_IM_IBUS);
+    xd_settings settings;
+    xd_settings_defaults(&settings);
+    CHECK(settings.keyboard.input_method[0] == '\0');
+    xd_settings_parse(XD_STR("[Keyboard]\nInputMethod=ibus\n"), &settings);
+    CHECK(xd_im_from_name(settings.keyboard.input_method) == XD_IM_IBUS);
     xd_strbuf out = {0};
-    xd_settings_serialize(&s, &out);
+    xd_settings_serialize(&settings, &out);
     CHECK(strstr(xd_strbuf_cstr(&out), "InputMethod=ibus") != nullptr);
     xd_strbuf_free(&out);
     CHECK(xd_im_from_name("fcitx5") == XD_IM_FCITX5);
@@ -7456,57 +7625,57 @@ static void test_input_method(void) {
     g_mkdir_with_parents(sys1, 0700);
     g_mkdir_with_parents(sys2, 0700);
     g_mkdir_with_parents(user, 0700);
-    char *f = g_build_filename(sys1, "org.fcitx.Fcitx5.desktop", nullptr);
-    CHECK(g_file_set_contents(f,
+    char *file_path = g_build_filename(sys1, "org.fcitx.Fcitx5.desktop", nullptr);
+    CHECK(g_file_set_contents(file_path,
                               "[Desktop Entry]\nType=Application\nName=Fcitx 5\n"
                               "Exec=/usr/bin/fcitx5 -d\nNotShowIn=Weston;\n",
                               -1, nullptr));
-    g_free(f);
+    g_free(file_path);
     /* A later directory's entry of the same name doesn't count. */
-    f = g_build_filename(sys2, "org.fcitx.Fcitx5.desktop", nullptr);
-    CHECK(g_file_set_contents(f, "[Desktop Entry]\nType=Application\nName=Other\nExec=true\n",
-                              -1, nullptr));
-    g_free(f);
-    f = g_build_filename(sys1, "ibus.desktop", nullptr);
-    CHECK(g_file_set_contents(f,
+    file_path = g_build_filename(sys2, "org.fcitx.Fcitx5.desktop", nullptr);
+    CHECK(g_file_set_contents(
+        file_path, "[Desktop Entry]\nType=Application\nName=Other\nExec=true\n", -1, nullptr));
+    g_free(file_path);
+    file_path = g_build_filename(sys1, "ibus.desktop", nullptr);
+    CHECK(g_file_set_contents(file_path,
                               "[Desktop Entry]\nType=Application\nName=IBus\n"
                               "Exec=ibus start --type wayland\n",
                               -1, nullptr));
-    g_free(f);
-    f = g_build_filename(sys1, "other.desktop", nullptr);
-    CHECK(g_file_set_contents(f, "[Desktop Entry]\nType=Application\nName=Other\nExec=foo\n",
-                              -1, nullptr));
-    g_free(f);
+    g_free(file_path);
+    file_path = g_build_filename(sys1, "other.desktop", nullptr);
+    CHECK(g_file_set_contents(
+        file_path, "[Desktop Entry]\nType=Application\nName=Other\nExec=foo\n", -1, nullptr));
+    g_free(file_path);
     /* The user's own copy of IBus's is theirs. */
-    f = g_build_filename(user, "ibus.desktop", nullptr);
-    CHECK(g_file_set_contents(f, "[Desktop Entry]\nType=Application\nName=Mine\nExec=ibus\n",
-                              -1, nullptr));
-    g_free(f);
+    file_path = g_build_filename(user, "ibus.desktop", nullptr);
+    CHECK(g_file_set_contents(
+        file_path, "[Desktop Entry]\nType=Application\nName=Mine\nExec=ibus\n", -1, nullptr));
+    g_free(file_path);
     const char *dirs[] = {sys1, sys2, nullptr};
     CHECK(xd_im_autostart_override(dirs, user, nullptr));
     CHECK(xd_im_autostart_override(dirs, user, nullptr)); /* again: ours, rewritten */
     GKeyFile *kf = g_key_file_new();
-    f = g_build_filename(user, "org.fcitx.Fcitx5.desktop", nullptr);
-    CHECK(g_key_file_load_from_file(kf, f, G_KEY_FILE_NONE, nullptr));
+    file_path = g_build_filename(user, "org.fcitx.Fcitx5.desktop", nullptr);
+    CHECK(g_key_file_load_from_file(kf, file_path, G_KEY_FILE_NONE, nullptr));
     char *not_in = g_key_file_get_string(kf, "Desktop Entry", "NotShowIn", nullptr);
     CHECK(not_in != nullptr && strcmp(not_in, "Weston;XeonDesktop;") == 0);
     char *exec = g_key_file_get_string(kf, "Desktop Entry", "Exec", nullptr);
     CHECK(exec != nullptr && strcmp(exec, "/usr/bin/fcitx5 -d") == 0);
     g_free(not_in);
     g_free(exec);
-    g_free(f);
+    g_free(file_path);
     g_key_file_free(kf);
     kf = g_key_file_new();
-    f = g_build_filename(user, "ibus.desktop", nullptr);
-    CHECK(g_key_file_load_from_file(kf, f, G_KEY_FILE_NONE, nullptr));
+    file_path = g_build_filename(user, "ibus.desktop", nullptr);
+    CHECK(g_key_file_load_from_file(kf, file_path, G_KEY_FILE_NONE, nullptr));
     char *name = g_key_file_get_string(kf, "Desktop Entry", "Name", nullptr);
     CHECK(name != nullptr && strcmp(name, "Mine") == 0);
     g_free(name);
-    g_free(f);
+    g_free(file_path);
     g_key_file_free(kf);
-    f = g_build_filename(user, "other.desktop", nullptr);
-    CHECK(!g_file_test(f, G_FILE_TEST_EXISTS));
-    g_free(f);
+    file_path = g_build_filename(user, "other.desktop", nullptr);
+    CHECK(!g_file_test(file_path, G_FILE_TEST_EXISTS));
+    g_free(file_path);
     rm_tree(root);
     g_free(sys1);
     g_free(sys2);
@@ -7516,23 +7685,24 @@ static void test_input_method(void) {
     /* The candidate window: under the caret; above it at the bottom of
      * the screen; moved left at the right edge, never past the left. */
     xd_ime_rect screen = {1024, 0, 800, 600}; /* a second monitor */
-    xd_ime_rect r = xd_ime_popup_place((xd_ime_rect){1100, 100, 1, 16}, 120, 30, screen);
-    CHECK(r.x == 1100 && r.y == 116 && r.width == 120 && r.height == 30);
-    r = xd_ime_popup_place((xd_ime_rect){1100, 570, 1, 16}, 120, 30, screen);
-    CHECK(r.x == 1100 && r.y == 540);
-    r = xd_ime_popup_place((xd_ime_rect){1800, 100, 1, 16}, 120, 30, screen);
-    CHECK(r.x == 1824 - 120 && r.y == 116);
-    r = xd_ime_popup_place((xd_ime_rect){1030, 100, 1, 16}, 900, 30, screen);
-    CHECK(r.x == 1024);
+    xd_ime_rect ime_rect = xd_ime_popup_place((xd_ime_rect){1100, 100, 1, 16}, 120, 30, screen);
+    CHECK(ime_rect.x == 1100 && ime_rect.y == 116 && ime_rect.width == 120 &&
+          ime_rect.height == 30);
+    ime_rect = xd_ime_popup_place((xd_ime_rect){1100, 570, 1, 16}, 120, 30, screen);
+    CHECK(ime_rect.x == 1100 && ime_rect.y == 540);
+    ime_rect = xd_ime_popup_place((xd_ime_rect){1800, 100, 1, 16}, 120, 30, screen);
+    CHECK(ime_rect.x == 1824 - 120 && ime_rect.y == 116);
+    ime_rect = xd_ime_popup_place((xd_ime_rect){1030, 100, 1, 16}, 900, 30, screen);
+    CHECK(ime_rect.x == 1024);
     /* Too tall for either side: stays below. */
-    r = xd_ime_popup_place((xd_ime_rect){1100, 10, 1, 16}, 120, 590, screen);
-    CHECK(r.y == 26);
+    ime_rect = xd_ime_popup_place((xd_ime_rect){1100, 10, 1, 16}, 120, 590, screen);
+    CHECK(ime_rect.y == 26);
 }
 
 /* A program taking the shortcuts (constraints.c): which keys stay ours, and
  * Ctrl+Alt on its own giving the mouse and keyboard back. */
-static bool chord(xd_release_chord *c, uint32_t sym, bool pressed) {
-    return xd_release_chord_key(c, &sym, 1, pressed);
+static bool chord(xd_release_chord *release_chord, uint32_t sym, bool pressed) {
+    return xd_release_chord_key(release_chord, &sym, 1, pressed);
 }
 
 static void test_grab_keys(void) {
@@ -7560,34 +7730,34 @@ static void test_grab_keys(void) {
     CHECK(!xd_grab_key_kept((xd_grab_mods){.logo = true, .ctrl = true}, XKB_KEY_l));
 
     /* Ctrl, Alt, let go: fires once, on the first release, either order. */
-    xd_release_chord c = {0};
-    CHECK(!chord(&c, XKB_KEY_Control_L, true));
-    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
-    CHECK(chord(&c, XKB_KEY_Alt_L, false));
-    CHECK(!chord(&c, XKB_KEY_Control_L, false));
-    CHECK(!chord(&c, XKB_KEY_Alt_R, true));
-    CHECK(!chord(&c, XKB_KEY_Control_R, true));
-    CHECK(chord(&c, XKB_KEY_Control_R, false));
-    CHECK(!chord(&c, XKB_KEY_Alt_R, false));
+    xd_release_chord release_chord = {0};
+    CHECK(!chord(&release_chord, XKB_KEY_Control_L, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_L, true));
+    CHECK(chord(&release_chord, XKB_KEY_Alt_L, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Control_L, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_R, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Control_R, true));
+    CHECK(chord(&release_chord, XKB_KEY_Control_R, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_R, false));
     /* Ctrl+Alt+Delete, Ctrl+Alt+T: a chord of their own. */
-    CHECK(!chord(&c, XKB_KEY_Control_L, true));
-    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
-    CHECK(!chord(&c, XKB_KEY_Delete, true));
-    CHECK(!chord(&c, XKB_KEY_Delete, false));
-    CHECK(!chord(&c, XKB_KEY_Alt_L, false));
-    CHECK(!chord(&c, XKB_KEY_Control_L, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Control_L, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_L, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Delete, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Delete, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_L, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Control_L, false));
     /* Ctrl alone, Alt+Tab: nothing. */
-    CHECK(!chord(&c, XKB_KEY_Control_L, true));
-    CHECK(!chord(&c, XKB_KEY_Control_L, false));
-    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
-    CHECK(!chord(&c, XKB_KEY_Tab, true));
-    CHECK(!chord(&c, XKB_KEY_Tab, false));
-    CHECK(!chord(&c, XKB_KEY_Alt_L, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Control_L, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Control_L, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_L, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Tab, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Tab, false));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_L, false));
     /* A key held from before (a game's W) doesn't spoil a fresh chord. */
-    CHECK(!chord(&c, XKB_KEY_w, true));
-    CHECK(!chord(&c, XKB_KEY_Control_L, true));
-    CHECK(!chord(&c, XKB_KEY_Alt_L, true));
-    CHECK(chord(&c, XKB_KEY_Control_L, false));
+    CHECK(!chord(&release_chord, XKB_KEY_w, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Control_L, true));
+    CHECK(!chord(&release_chord, XKB_KEY_Alt_L, true));
+    CHECK(chord(&release_chord, XKB_KEY_Control_L, false));
 }
 
 /* Passwords and Keys: texts and parsing, then OpenSSH's tools and GnuPG on
@@ -7647,13 +7817,13 @@ static void test_keys_texts(void) {
     CHECK(!xd_ssh_valid_key_name("authorized_keys"));
     CHECK(!xd_ssh_valid_key_name("config"));
 
-    char *e = xd_ssh_error_text("Load key \"/home/u/.ssh/id\": incorrect passphrase supplied "
-                                "to decrypt private key\n");
-    CHECK(g_str_equal(e, "Incorrect passphrase supplied to decrypt private key."));
-    g_free(e);
-    e = xd_ssh_error_text("\n  \n");
-    CHECK(g_str_equal(e, "The program failed without saying why."));
-    g_free(e);
+    char *message = xd_ssh_error_text("Load key \"/home/u/.ssh/id\": incorrect passphrase supplied "
+                                      "to decrypt private key\n");
+    CHECK(g_str_equal(message, "Incorrect passphrase supplied to decrypt private key."));
+    g_free(message);
+    message = xd_ssh_error_text("\n  \n");
+    CHECK(g_str_equal(message, "The program failed without saying why."));
+    g_free(message);
 
     char **argv = xd_ssh_keygen_argv("rsa", 4096, "me@here", "/x/id_rsa", true);
     const char *want[] = {"ssh-keygen", "-q", "-t", "rsa", "-b", "4096", "-C", "me@here",
@@ -7691,17 +7861,18 @@ static void stop_scratch_gpg(const char *home) {
     GDir *proc = g_dir_open("/proc", 0, nullptr);
     char *arg = g_strdup_printf("--homedir%c%s", '\0', home);
     size_t arg_len = strlen("--homedir") + 1 + strlen(home);
-    for (const char *e; proc != nullptr && (e = g_dir_read_name(proc)) != nullptr;) {
-        if (!g_ascii_isdigit(e[0]))
+    for (const char *entry_name;
+         proc != nullptr && (entry_name = g_dir_read_name(proc)) != nullptr;) {
+        if (!g_ascii_isdigit(entry_name[0]))
             continue;
-        char *path = g_strdup_printf("/proc/%s/cmdline", e);
+        char *path = g_strdup_printf("/proc/%s/cmdline", entry_name);
         char *cmd = nullptr;
         gsize len = 0;
         if (g_file_get_contents(path, &cmd, &len, nullptr) &&
             memmem(cmd, len, arg, arg_len) != nullptr) {
-            pid_t pid = (pid_t)atoi(e);
+            pid_t pid = (pid_t)atoi(entry_name);
             struct stat st;
-            char *dir = g_strdup_printf("/proc/%s", e);
+            char *dir = g_strdup_printf("/proc/%s", entry_name);
             if (pid > 1 && stat(dir, &st) == 0 && st.st_uid == getuid())
                 kill(pid, SIGTERM);
             g_free(dir);
@@ -7767,12 +7938,12 @@ static void test_keys_ssh(void) {
     GPtrArray *keys = xd_ssh_list_keys(dir);
     CHECK(keys->len == 1);
     if (keys->len == 1) {
-        const xd_ssh_key *k = keys->pdata[0];
-        CHECK(g_str_equal(k->name, "id_ed25519"));
-        CHECK(g_str_equal(k->type, "ED25519") && k->bits == 256);
-        CHECK(g_str_equal(k->comment, "test key"));
-        CHECK(g_str_has_prefix(k->fingerprint, "SHA256:"));
-        CHECK(k->has_private && k->encrypted);
+        const xd_ssh_key *ssh_key = keys->pdata[0];
+        CHECK(g_str_equal(ssh_key->name, "id_ed25519"));
+        CHECK(g_str_equal(ssh_key->type, "ED25519") && ssh_key->bits == 256);
+        CHECK(g_str_equal(ssh_key->comment, "test key"));
+        CHECK(g_str_has_prefix(ssh_key->fingerprint, "SHA256:"));
+        CHECK(ssh_key->has_private && ssh_key->encrypted);
     }
 
     /* A wrong old passphrase is refused, and says so. */
@@ -7889,15 +8060,15 @@ static void test_keys_gpg(void) {
     CHECK(g_file_set_contents(conf, "disable-scdaemon\n", -1, nullptr));
     g_free(conf);
     GError *error = nullptr;
-    xd_gpg *g = xd_gpg_new(home, no_passphrase, nullptr, &error);
-    CHECK(g != nullptr);
+    xd_gpg *keyring = xd_gpg_new(home, no_passphrase, nullptr, &error);
+    CHECK(keyring != nullptr);
     g_clear_error(&error);
-    if (g == nullptr) {
+    if (keyring == nullptr) {
         rm_tree(home);
         g_free(home);
         return;
     }
-    GPtrArray *keys = xd_gpg_list(g, &error);
+    GPtrArray *keys = xd_gpg_list(keyring, &error);
     CHECK(keys != nullptr && keys->len == 0);
     if (keys != nullptr)
         g_ptr_array_unref(keys);
@@ -7905,38 +8076,38 @@ static void test_keys_gpg(void) {
 
     char *uid = xd_gpg_user_id("Test User", "test@example.com", "unit test");
     char *fpr = nullptr;
-    CHECK(xd_gpg_create(g, uid, "", 0, &fpr, &error));
+    CHECK(xd_gpg_create(keyring, uid, "", 0, &fpr, &error));
     g_clear_error(&error);
     g_free(uid);
     CHECK(fpr != nullptr && strlen(fpr) == 40);
-    keys = xd_gpg_list(g, &error);
+    keys = xd_gpg_list(keyring, &error);
     CHECK(keys != nullptr && keys->len == 1);
     if (keys != nullptr && keys->len == 1) {
-        const xd_gpg_key *k = keys->pdata[0];
-        CHECK(g_str_equal(k->name, "Test User"));
-        CHECK(g_str_equal(k->email, "test@example.com"));
-        CHECK(g_str_equal(k->comment, "unit test"));
-        CHECK(g_strcmp0(k->fingerprint, fpr) == 0);
-        CHECK(g_str_has_suffix(fpr, k->key_id));
-        CHECK(k->secret && k->expires == 0 && k->created > 0);
-        CHECK(k->validity == 5); /* our own: ultimate */
-        CHECK(g_strcmp0(k->algorithm, "ed25519") == 0);
-        CHECK(k->subkeys == 2);  /* and Curve25519 for encryption */
+        const xd_gpg_key *gpg_key = keys->pdata[0];
+        CHECK(g_str_equal(gpg_key->name, "Test User"));
+        CHECK(g_str_equal(gpg_key->email, "test@example.com"));
+        CHECK(g_str_equal(gpg_key->comment, "unit test"));
+        CHECK(g_strcmp0(gpg_key->fingerprint, fpr) == 0);
+        CHECK(g_str_has_suffix(fpr, gpg_key->key_id));
+        CHECK(gpg_key->secret && gpg_key->expires == 0 && gpg_key->created > 0);
+        CHECK(gpg_key->validity == 5); /* our own: ultimate */
+        CHECK(g_strcmp0(gpg_key->algorithm, "ed25519") == 0);
+        CHECK(gpg_key->subkeys == 2); /* and Curve25519 for encryption */
     }
     if (keys != nullptr)
         g_ptr_array_unref(keys);
 
     /* A year from now; the key has no passphrase, so nothing is asked. */
-    CHECK(xd_gpg_set_expiry(g, fpr, 365ULL * 86400, &error));
+    CHECK(xd_gpg_set_expiry(keyring, fpr, 365ULL * 86400, &error));
     g_clear_error(&error);
-    keys = xd_gpg_list(g, &error);
+    keys = xd_gpg_list(keyring, &error);
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
     CHECK(keys != nullptr && keys->len == 1 &&
           ((xd_gpg_key *)keys->pdata[0])->expires > now + 364 * 86400);
     if (keys != nullptr)
         g_ptr_array_unref(keys);
 
-    char *armour = xd_gpg_export(g, fpr, &error);
+    char *armour = xd_gpg_export(keyring, fpr, &error);
     CHECK(armour != nullptr && strstr(armour, "BEGIN PGP PUBLIC KEY BLOCK") != nullptr &&
           strstr(armour, "PRIVATE") == nullptr);
     g_clear_error(&error);
@@ -7944,36 +8115,36 @@ static void test_keys_gpg(void) {
     CHECK(armour != nullptr && g_file_set_contents(file, armour, -1, nullptr));
     g_free(armour);
 
-    CHECK(xd_gpg_delete(g, fpr, &error));
+    CHECK(xd_gpg_delete(keyring, fpr, &error));
     g_clear_error(&error);
-    keys = xd_gpg_list(g, &error);
+    keys = xd_gpg_list(keyring, &error);
     CHECK(keys != nullptr && keys->len == 0);
     if (keys != nullptr)
         g_ptr_array_unref(keys);
 
     /* Back as a public key alone. */
     int imported = 0, unchanged = 0;
-    CHECK(xd_gpg_import_file(g, file, &imported, &unchanged, &error));
+    CHECK(xd_gpg_import_file(keyring, file, &imported, &unchanged, &error));
     g_clear_error(&error);
     CHECK(imported == 1 && unchanged == 0);
-    CHECK(xd_gpg_import_file(g, file, &imported, &unchanged, &error));
+    CHECK(xd_gpg_import_file(keyring, file, &imported, &unchanged, &error));
     g_clear_error(&error);
     CHECK(imported == 0 && unchanged == 1);
-    keys = xd_gpg_list(g, &error);
+    keys = xd_gpg_list(keyring, &error);
     CHECK(keys != nullptr && keys->len == 1 && !((xd_gpg_key *)keys->pdata[0])->secret);
     if (keys != nullptr)
         g_ptr_array_unref(keys);
     /* Expiry needs the secret key. */
-    CHECK(!xd_gpg_set_expiry(g, fpr, 0, &error));
+    CHECK(!xd_gpg_set_expiry(keyring, fpr, 0, &error));
     g_clear_error(&error);
     /* Not a key file. */
     CHECK(g_file_set_contents(file, "hello\n", -1, nullptr));
-    CHECK(!xd_gpg_import_file(g, file, &imported, &unchanged, &error));
+    CHECK(!xd_gpg_import_file(keyring, file, &imported, &unchanged, &error));
     CHECK(error != nullptr);
     g_clear_error(&error);
     g_free(file);
     g_free(fpr);
-    xd_gpg_free(g);
+    xd_gpg_free(keyring);
     stop_scratch_gpg(home);
     rm_tree(home);
     g_free(home);
@@ -8028,33 +8199,33 @@ static void test_network_drives(void) {
     CHECK(!xd_net_same_uri("smb://a/share", "smb://b/share"));
     CHECK(!xd_net_same_uri("smb://a/share", "nfs://a/share"));
 
-    char *s = xd_net_display_path("smb://server/my%20share/sub");
-    CHECK(strcmp(s, "\\\\server\\my share\\sub") == 0);
-    g_free(s);
-    s = xd_net_display_path("smb://server/");
-    CHECK(strcmp(s, "\\\\server") == 0);
-    g_free(s);
-    s = xd_net_display_path("nfs://nas/export%20x");
-    CHECK(strcmp(s, "nfs://nas/export x") == 0);
-    g_free(s);
-    s = xd_net_drive_name("smb://server/my%20share");
-    CHECK(strcmp(s, "my share on 'server'") == 0);
-    g_free(s);
-    s = xd_net_drive_name("smb://server/");
-    CHECK(strcmp(s, "server") == 0);
-    g_free(s);
-    s = xd_net_drive_name("localtest:///etc");
-    CHECK(strcmp(s, "etc") == 0);
-    g_free(s);
-    s = xd_net_host("nfs://nas.local/export");
-    CHECK(g_strcmp0(s, "nas.local") == 0);
-    g_free(s);
-    s = xd_net_unsupported_text("smb://server/share");
-    CHECK(strstr(s, "gvfs-smb") != nullptr);
-    g_free(s);
-    s = xd_net_unsupported_text("nfs://server/path");
-    CHECK(strstr(s, "gvfs-nfs") != nullptr);
-    g_free(s);
+    char *display_path = xd_net_display_path("smb://server/my%20share/sub");
+    CHECK(strcmp(display_path, "\\\\server\\my share\\sub") == 0);
+    g_free(display_path);
+    display_path = xd_net_display_path("smb://server/");
+    CHECK(strcmp(display_path, "\\\\server") == 0);
+    g_free(display_path);
+    display_path = xd_net_display_path("nfs://nas/export%20x");
+    CHECK(strcmp(display_path, "nfs://nas/export x") == 0);
+    g_free(display_path);
+    display_path = xd_net_drive_name("smb://server/my%20share");
+    CHECK(strcmp(display_path, "my share on 'server'") == 0);
+    g_free(display_path);
+    display_path = xd_net_drive_name("smb://server/");
+    CHECK(strcmp(display_path, "server") == 0);
+    g_free(display_path);
+    display_path = xd_net_drive_name("localtest:///etc");
+    CHECK(strcmp(display_path, "etc") == 0);
+    g_free(display_path);
+    display_path = xd_net_host("nfs://nas.local/export");
+    CHECK(g_strcmp0(display_path, "nas.local") == 0);
+    g_free(display_path);
+    display_path = xd_net_unsupported_text("smb://server/share");
+    CHECK(strstr(display_path, "gvfs-smb") != nullptr);
+    g_free(display_path);
+    display_path = xd_net_unsupported_text("nfs://server/path");
+    CHECK(strstr(display_path, "gvfs-nfs") != nullptr);
+    g_free(display_path);
 
     /* The list: drives and places, unknown groups kept. */
     char *dir = g_dir_make_tmp("xd-network-XXXXXX", nullptr);
@@ -8076,11 +8247,11 @@ static void test_network_drives(void) {
     GPtrArray *drives = xd_net_drives_load(path);
     CHECK(drives->len == 2);
     if (drives->len == 2) {
-        XdNetDrive *a = g_ptr_array_index(drives, 0), *b = g_ptr_array_index(drives, 1);
-        CHECK(strcmp(a->uri, "smb://SERVER/share/") == 0 && a->reconnect &&
-              g_strcmp0(a->user, "alice") == 0);
-        CHECK(strcmp(b->uri, "nfs://nas/export") == 0 && !b->reconnect &&
-              g_strcmp0(b->user, "OFFICE\\bob") == 0);
+        XdNetDrive *first = g_ptr_array_index(drives, 0), *second = g_ptr_array_index(drives, 1);
+        CHECK(strcmp(first->uri, "smb://SERVER/share/") == 0 && first->reconnect &&
+              g_strcmp0(first->user, "alice") == 0);
+        CHECK(strcmp(second->uri, "nfs://nas/export") == 0 && !second->reconnect &&
+              g_strcmp0(second->user, "OFFICE\\bob") == 0);
     }
     g_ptr_array_unref(drives);
     GPtrArray *places = xd_net_places_load(path);
@@ -8320,29 +8491,33 @@ static void test_usershare(void) {
 
 /* Automatic Updates: [Updates], the schedule, the state the shell watches,
  * importance, and reading what fwupd says. */
-static int64_t utc_at(int y, int mo, int d, int h, int mi) {
-    GDateTime *t = g_date_time_new_utc(y, mo, d, h, mi, 0);
-    int64_t s = g_date_time_to_unix(t);
-    g_date_time_unref(t);
-    return s;
+static int64_t utc_at(int y, int mo, int day, int hour, int mi) {
+    GDateTime *date_time = g_date_time_new_utc(y, mo, day, hour, mi, 0);
+    int64_t seconds = g_date_time_to_unix(date_time);
+    g_date_time_unref(date_time);
+    return seconds;
 }
 
 static void test_updates(void) {
-    xd_settings s;
-    xd_settings_defaults(&s);
-    CHECK(s.updates.mode == XD_UPDATES_DOWNLOAD && s.updates.day == 0 && s.updates.hour == 3);
-    xd_settings_parse(XD_STR("[Updates]\nMode=notify\nDay=friday\nHour=22\n"), &s);
-    CHECK(s.updates.mode == XD_UPDATES_NOTIFY && s.updates.day == 6 && s.updates.hour == 22);
-    xd_settings_parse(XD_STR("[Updates]\nMode=always\nDay=someday\nHour=24\n"), &s);
-    CHECK(s.updates.mode == XD_UPDATES_DOWNLOAD && s.updates.day == 0 && s.updates.hour == 3);
-    s.updates = (xd_update_settings){.mode = XD_UPDATES_OFF, .day = 7, .hour = 0};
+    xd_settings original;
+    xd_settings_defaults(&original);
+    CHECK(original.updates.mode == XD_UPDATES_DOWNLOAD && original.updates.day == 0 &&
+          original.updates.hour == 3);
+    xd_settings_parse(XD_STR("[Updates]\nMode=notify\nDay=friday\nHour=22\n"), &original);
+    CHECK(original.updates.mode == XD_UPDATES_NOTIFY && original.updates.day == 6 &&
+          original.updates.hour == 22);
+    xd_settings_parse(XD_STR("[Updates]\nMode=always\nDay=someday\nHour=24\n"), &original);
+    CHECK(original.updates.mode == XD_UPDATES_DOWNLOAD && original.updates.day == 0 &&
+          original.updates.hour == 3);
+    original.updates = (xd_update_settings){.mode = XD_UPDATES_OFF, .day = 7, .hour = 0};
     xd_strbuf out = {0};
-    xd_settings_serialize(&s, &out);
+    xd_settings_serialize(&original, &out);
     CHECK(strstr(xd_strbuf_cstr(&out), "Mode=off") != nullptr);
     CHECK(strstr(xd_strbuf_cstr(&out), "Day=saturday") != nullptr);
-    xd_settings t;
-    xd_settings_parse(xd_strbuf_view(&out), &t);
-    CHECK(t.updates.mode == XD_UPDATES_OFF && t.updates.day == 7 && t.updates.hour == 0);
+    xd_settings parsed;
+    xd_settings_parse(xd_strbuf_view(&out), &parsed);
+    CHECK(parsed.updates.mode == XD_UPDATES_OFF && parsed.updates.day == 7 &&
+          parsed.updates.hour == 0);
     xd_strbuf_free(&out);
     CHECK(strcmp(xd_updates_mode_name(XD_UPDATES_NOTIFY), "notify") == 0);
 
@@ -8380,22 +8555,22 @@ static void test_updates(void) {
     CHECK(!xd_updates_state_read(path, &st) && st.checked == 0);
     const char *ids[] = {"b;2;x86_64;extra", "a;1;x86_64;core"};
     const char *rev[] = {ids[1], ids[0]};
-    xd_updates_state w = {.checked = 1760000000, .software = 5, .firmware = 1, .important = 2,
-                          .downloaded = true};
-    xd_updates_signature(ids, 2, w.signature);
+    xd_updates_state updates_state = {
+        .checked = 1760000000, .software = 5, .firmware = 1, .important = 2, .downloaded = true};
+    xd_updates_signature(ids, 2, updates_state.signature);
     char sig2[41];
     xd_updates_signature(rev, 2, sig2);
-    CHECK(strlen(w.signature) == 40 && strcmp(w.signature, sig2) == 0);
+    CHECK(strlen(updates_state.signature) == 40 && strcmp(updates_state.signature, sig2) == 0);
     xd_updates_signature(ids, 1, sig2);
-    CHECK(strcmp(w.signature, sig2) != 0);
+    CHECK(strcmp(updates_state.signature, sig2) != 0);
     xd_updates_signature(ids, 0, sig2);
     CHECK(sig2[0] == '\0');
-    g_strlcpy(w.error, "Listing the updates: no network", sizeof(w.error));
-    CHECK(xd_updates_state_write(path, &w));
+    g_strlcpy(updates_state.error, "Listing the updates: no network", sizeof(updates_state.error));
+    CHECK(xd_updates_state_write(path, &updates_state));
     CHECK(xd_updates_state_read(path, &st));
     CHECK(st.checked == 1760000000 && st.software == 5 && st.firmware == 1 && st.important == 2);
-    CHECK(st.downloaded && !st.metered && strcmp(st.signature, w.signature) == 0);
-    CHECK(strcmp(st.error, w.error) == 0);
+    CHECK(st.downloaded && !st.metered && strcmp(st.signature, updates_state.signature) == 0);
+    CHECK(strcmp(st.error, updates_state.error) == 0);
     CHECK(g_file_set_contents(path, "[Updates]\nSoftware=-4\nSignature=../../x\n", -1, nullptr));
     CHECK(xd_updates_state_read(path, &st) && st.software == 0 && st.signature[0] == '\0');
     g_unlink(path);
@@ -8481,8 +8656,8 @@ static void test_present(void) {
     CHECK(xd_vrr_mode_parse("false") == XD_VRR_OFF);
     CHECK(xd_vrr_mode_parse("sometimes") == XD_VRR_OFF);
     CHECK(xd_vrr_mode_parse(nullptr) == XD_VRR_OFF);
-    for (int m = XD_VRR_OFF; m <= XD_VRR_ALWAYS; m++)
-        CHECK(xd_vrr_mode_parse(xd_vrr_mode_name((xd_vrr_mode)m)) == m);
+    for (int mode = XD_VRR_OFF; mode <= XD_VRR_ALWAYS; mode++)
+        CHECK(xd_vrr_mode_parse(xd_vrr_mode_name((xd_vrr_mode)mode)) == mode);
 
     /* monitors.ini: kept with the rest; off when it isn't there. */
     char *dir = g_dir_make_tmp("xd-monitors-XXXXXX", nullptr);
@@ -8511,78 +8686,81 @@ static void test_present(void) {
     /* Off: never on, and a game may tear when it's alone on the monitor. */
     xd_present_state game = {.vrr = XD_VRR_OFF, .fullscreen = true, .scanout = true,
                              .async_hint = true};
-    xd_present_choice c = xd_present_choose(game);
-    CHECK(!c.set_vrr && c.tearing);
+    xd_present_choice present_choice = xd_present_choose(game);
+    CHECK(!present_choice.set_vrr && present_choice.tearing);
     /* Only when it asked, and only when nothing is drawn over it. */
-    xd_present_state s = game;
-    s.async_hint = false;
-    CHECK(!xd_present_choose(s).tearing);
-    s = game;
-    s.scanout = false;
-    CHECK(!xd_present_choose(s).tearing);
-    s = game;
-    s.locked = true;
-    CHECK(!xd_present_choose(s).tearing);
+    xd_present_state present_state = game;
+    present_state.async_hint = false;
+    CHECK(!xd_present_choose(present_state).tearing);
+    present_state = game;
+    present_state.scanout = false;
+    CHECK(!xd_present_choose(present_state).tearing);
+    present_state = game;
+    present_state.locked = true;
+    CHECK(!xd_present_choose(present_state).tearing);
     /* On (full-screen windows): turned on when a game is in front, not
      * tearing in that same commit; on the desktop, turned off again. */
-    s = game;
-    s.vrr = XD_VRR_FULLSCREEN;
-    c = xd_present_choose(s);
-    CHECK(c.set_vrr && c.vrr && !c.tearing);
-    s.vrr_on = true;
-    c = xd_present_choose(s);
-    CHECK(!c.set_vrr && c.tearing);
-    s.fullscreen = false;
-    c = xd_present_choose(s);
-    CHECK(c.set_vrr && !c.vrr && !c.tearing);
-    s.vrr_on = false;
-    CHECK(!xd_present_choose(s).set_vrr);
+    present_state = game;
+    present_state.vrr = XD_VRR_FULLSCREEN;
+    present_choice = xd_present_choose(present_state);
+    CHECK(present_choice.set_vrr && present_choice.vrr && !present_choice.tearing);
+    present_state.vrr_on = true;
+    present_choice = xd_present_choose(present_state);
+    CHECK(!present_choice.set_vrr && present_choice.tearing);
+    present_state.fullscreen = false;
+    present_choice = xd_present_choose(present_state);
+    CHECK(present_choice.set_vrr && !present_choice.vrr && !present_choice.tearing);
+    present_state.vrr_on = false;
+    CHECK(!xd_present_choose(present_state).set_vrr);
     /* A monitor that refused it isn't asked again. */
-    s = game;
-    s.vrr = XD_VRR_FULLSCREEN;
-    s.vrr_rejected = true;
-    c = xd_present_choose(s);
-    CHECK(!c.set_vrr && c.tearing);
+    present_state = game;
+    present_state.vrr = XD_VRR_FULLSCREEN;
+    present_state.vrr_rejected = true;
+    present_choice = xd_present_choose(present_state);
+    CHECK(!present_choice.set_vrr && present_choice.tearing);
     /* Always: on the desktop too, and the lock screen. */
     xd_present_state desk = {.vrr = XD_VRR_ALWAYS, .locked = true};
-    c = xd_present_choose(desk);
-    CHECK(c.set_vrr && c.vrr && !c.tearing);
+    present_choice = xd_present_choose(desk);
+    CHECK(present_choice.set_vrr && present_choice.vrr && !present_choice.tearing);
     /* Turned off in the setting while on: off. */
     xd_present_state off = {.vrr = XD_VRR_OFF, .vrr_on = true, .fullscreen = true};
-    c = xd_present_choose(off);
-    CHECK(c.set_vrr && !c.vrr);
+    present_choice = xd_present_choose(off);
+    CHECK(present_choice.set_vrr && !present_choice.vrr);
 }
 
 /* A theme package's strip of `count` square frames of `size`, each a
  * `border`-pixel edge of `edge` around the frame's own fill. */
 static void write_strip(const char *path, int size, int count, int border, uint32_t edge,
                         const uint32_t *fills) {
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size * count);
-    cairo_t *cr = cairo_create(s);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size * count);
+    cairo_t *cairo = cairo_create(surface);
     for (int i = 0; i < count; i++) {
-        xd_fill_rect(cr, (xd_rect){0, i * size, size, size}, xd_rgba_hex(edge));
-        xd_fill_rect(cr, (xd_rect){border, i * size + border, size - 2 * border, size - 2 * border},
+        xd_fill_rect(cairo, (xd_rect){0, i * size, size, size}, xd_rgba_hex(edge));
+        xd_fill_rect(cairo,
+                     (xd_rect){border, i * size + border, size - 2 * border, size - 2 * border},
                      xd_rgba_hex(fills[i]));
     }
-    cairo_destroy(cr);
-    CHECK(cairo_surface_write_to_png(s, path) == CAIRO_STATUS_SUCCESS);
-    cairo_surface_destroy(s);
+    cairo_destroy(cairo);
+    CHECK(cairo_surface_write_to_png(surface, path) == CAIRO_STATUS_SUCCESS);
+    cairo_surface_destroy(surface);
 }
 
-static uint32_t png_pixel(const char *path, int x, int y, int *w, int *h) {
-    cairo_surface_t *s = cairo_image_surface_create_from_png(path);
+static uint32_t png_pixel(const char *path, int x, int y, int *width, int *height) {
+    cairo_surface_t *surface = cairo_image_surface_create_from_png(path);
     uint32_t px = 0;
-    *w = *h = 0;
-    if (cairo_surface_status(s) == CAIRO_STATUS_SUCCESS) {
-        *w = cairo_image_surface_get_width(s);
-        *h = cairo_image_surface_get_height(s);
-        cairo_surface_flush(s);
-        const uint8_t *d = cairo_image_surface_get_data(s);
-        if (x < *w && y < *h)
-            px = *(const uint32_t *)(const void *)(d + y * cairo_image_surface_get_stride(s) +
-                                                   x * 4) & 0xFFFFFFu;
+    *width = *height = 0;
+    if (cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
+        *width = cairo_image_surface_get_width(surface);
+        *height = cairo_image_surface_get_height(surface);
+        cairo_surface_flush(surface);
+        const uint8_t *data = cairo_image_surface_get_data(surface);
+        if (x < *width && y < *height)
+            px = *(const uint32_t *)(const void *)(data +
+                                                   y * cairo_image_surface_get_stride(surface) +
+                                                   x * 4) &
+                 0xFFFFFFu;
     }
-    cairo_surface_destroy(s);
+    cairo_surface_destroy(surface);
     return px;
 }
 
@@ -8597,16 +8775,17 @@ static void test_gtk_package(void) {
     char *images = g_build_filename(pkgdir, "images", nullptr);
     char *styles = g_build_filename(pkgdir, "styles", nullptr);
     CHECK(g_mkdir_with_parents(images, 0700) == 0 && g_mkdir_with_parents(styles, 0700) == 0);
-    char *p = g_build_filename(pkgdir, "theme.xml", nullptr);
-    CHECK(g_file_set_contents(p,
-                              "<xdtheme version=\"1\" name=\"Tiny\" base=\"luna\">\n"
-                              "  <variant id=\"v\" name=\"V\" size=\"Normal\" style=\"styles/v.xml\"/>\n"
-                              "</xdtheme>\n",
-                              -1, nullptr));
-    g_free(p);
-    p = g_build_filename(styles, "v.xml", nullptr);
+    char *xml_path = g_build_filename(pkgdir, "theme.xml", nullptr);
     CHECK(g_file_set_contents(
-        p,
+        xml_path,
+        "<xdtheme version=\"1\" name=\"Tiny\" base=\"luna\">\n"
+        "  <variant id=\"v\" name=\"V\" size=\"Normal\" style=\"styles/v.xml\"/>\n"
+        "</xdtheme>\n",
+        -1, nullptr));
+    g_free(xml_path);
+    xml_path = g_build_filename(styles, "v.xml", nullptr);
+    CHECK(g_file_set_contents(
+        xml_path,
         "<style>\n  <sysmetrics>\n    <color name=\"BtnFace\" value=\"200 100 50\"/>\n"
         "  </sysmetrics>\n  <class name=\"Button\">\n"
         "    <part name=\"PushButton\" BgType=\"ImageFile\" ImageFile=\"images/button.png\"\n"
@@ -8617,17 +8796,17 @@ static void test_gtk_package(void) {
         "          ImageCount=\"12\" ImageLayout=\"Vertical\" SizingType=\"TrueSize\"/>\n"
         "  </class>\n</style>\n",
         -1, nullptr));
-    g_free(p);
+    g_free(xml_path);
     static const uint32_t button_fills[5] = {0x40C040, 0x4040C0, 0xC04040, 0x808080, 0xC0C040};
     uint32_t check_fills[12];
     for (int i = 0; i < 12; i++)
         check_fills[i] = 0x101010u * (uint32_t)(i + 1);
-    p = g_build_filename(images, "button.png", nullptr);
-    write_strip(p, 10, 5, 3, 0x203060, button_fills);
-    g_free(p);
-    p = g_build_filename(images, "check.png", nullptr);
-    write_strip(p, 13, 12, 1, 0x000000, check_fills);
-    g_free(p);
+    xml_path = g_build_filename(images, "button.png", nullptr);
+    write_strip(xml_path, 10, 5, 3, 0x203060, button_fills);
+    g_free(xml_path);
+    xml_path = g_build_filename(images, "check.png", nullptr);
+    write_strip(xml_path, 13, 12, 1, 0x000000, check_fills);
+    g_free(xml_path);
 
     GError *error = nullptr;
     xd_pkg *pkg = xd_pkg_load(pkgdir, nullptr, XD_SOURCE_ROOT "/data/theme/uxtheme.ini", &error);
@@ -8645,12 +8824,12 @@ static void test_gtk_package(void) {
     xd_theme_use_package(pkg, XD_FILTER_NEAREST, true);
     xd_scheme scheme;
     xd_scheme_init_default(&scheme);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &scheme, 1.0);
-    CHECK(t.pkg == pkg && t.style == XD_STYLE_LUNA);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &scheme, 1.0);
+    CHECK(theme.pkg == pkg && theme.style == XD_STYLE_LUNA);
 
     xd_strbuf css = {0};
-    xd_theme_gtk_css(&t, &css);
+    xd_theme_gtk_css(&theme, &css);
     const char *text = xd_strbuf_cstr(&css);
     /* The button: its image cut at its margins, the middle inside the
      * content margins (exact across), each state its own frame. */
@@ -8676,31 +8855,33 @@ static void test_gtk_package(void) {
     CHECK(g_mkdir_with_parents(gtk3, 0700) == 0);
     xd_strbuf err = {0};
     CHECK(xd_gtk_theme_package_images(XD_STYLE_CLASSIC, &scheme, gtk3, &err));
-    GArray *list = xd_gtk_pkg_images(&t);
+    GArray *list = xd_gtk_pkg_images(&theme);
     CHECK(list->len > 10);
     for (guint i = 0; i < list->len; i++) {
         const xd_gtk_pkg_image *img = &g_array_index(list, xd_gtk_pkg_image, i);
         for (int scale = 1; scale <= 2; scale++) {
             char *name = g_strdup_printf("%s%s.png", img->name, scale == 1 ? "" : "@2");
             char *path = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, name, nullptr);
-            int w, h;
-            (void)png_pixel(path, 0, 0, &w, &h);
-            CHECK(w == img->w * scale && h == img->h * scale);
+            int width, height;
+            (void)png_pixel(path, 0, 0, &width, &height);
+            CHECK(width == img->w * scale && height == img->h * scale);
             g_free(path);
             g_free(name);
         }
     }
     g_array_unref(list);
-    int w, h;
+    int width, height;
     char *hot = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-pushbutton-2-b.png", nullptr);
-    CHECK(png_pixel(hot, 0, 0, &w, &h) == 0x203060 && w == 10 && h == 10);
-    CHECK(png_pixel(hot, 5, 5, &w, &h) == 0x4040C0);
+    CHECK(png_pixel(hot, 0, 0, &width, &height) == 0x203060 && width == 10 && height == 10);
+    CHECK(png_pixel(hot, 5, 5, &width, &height) == 0x4040C0);
     g_free(hot);
     hot = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-pushbutton-2-b@2.png", nullptr);
-    CHECK(png_pixel(hot, 5, 0, &w, &h) == 0x203060 && png_pixel(hot, 10, 10, &w, &h) == 0x4040C0);
+    CHECK(png_pixel(hot, 5, 0, &width, &height) == 0x203060 &&
+          png_pixel(hot, 10, 10, &width, &height) == 0x4040C0);
     g_free(hot);
     char *checked = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-checkbox-5-w.png", nullptr);
-    CHECK(png_pixel(checked, 6, 6, &w, &h) == check_fills[4] && w == 13 && h == 13);
+    CHECK(png_pixel(checked, 6, 6, &width, &height) == check_fills[4] && width == 13 &&
+          height == 13);
     g_free(checked);
 
     /* All of it parses, images and all, read from beside gtk.css. */
@@ -8716,21 +8897,21 @@ static void test_gtk_package(void) {
 
     /* Qt: the same colours. */
     xd_strbuf json = {0};
-    xd_qt_palette_json(&t, &json);
+    xd_qt_palette_json(&theme, &json);
     JsonParser *parser = json_parser_new();
     CHECK(json_parser_load_from_data(parser, xd_strbuf_cstr(&json), (gssize)json.len, nullptr));
     JsonNode *root = json_parser_get_root(parser);
-    char *c = root != nullptr ? qt_palette_color(root, "SystemPalette", "Window") : nullptr;
-    CHECK(g_strcmp0(c, "#c86432") == 0);
-    g_free(c);
+    char *color = root != nullptr ? qt_palette_color(root, "SystemPalette", "Window") : nullptr;
+    CHECK(g_strcmp0(color, "#c86432") == 0);
+    g_free(color);
     g_object_unref(parser);
     xd_strbuf_free(&json);
 
     /* Without a package: none of it, and the images go. */
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-    xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
+    xd_theme_init(&theme, XD_STYLE_LUNA, &scheme, 1.0);
     xd_strbuf_clear(&css);
-    xd_theme_gtk_css(&t, &css);
+    xd_theme_gtk_css(&theme, &css);
     CHECK(strstr(xd_strbuf_cstr(&css), "assets/pkg/") == nullptr);
     CHECK(xd_gtk_theme_package_images(XD_STYLE_LUNA, &scheme, gtk3, &err));
     char *gone = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, "button-pushbutton-1-b.png", nullptr);
@@ -8759,57 +8940,57 @@ static void pane_file(const char *root, const char *rel, const char *text) {
     g_free(path);
 }
 
-static void pane_png(const char *root, const char *rel, int w, int h, uint32_t rgb) {
+static void pane_png(const char *root, const char *rel, int width, int height, uint32_t rgb) {
     char *path = g_build_filename(root, rel, nullptr);
     char *dir = g_path_get_dirname(path);
     g_mkdir_with_parents(dir, 0700);
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_t *cr = cairo_create(s);
-    xd_fill_rect(cr, (xd_rect){0, 0, w, h}, xd_rgba_hex(rgb));
-    cairo_destroy(cr);
-    CHECK(cairo_surface_write_to_png(s, path) == CAIRO_STATUS_SUCCESS);
-    cairo_surface_destroy(s);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t *cairo = cairo_create(surface);
+    xd_fill_rect(cairo, (xd_rect){0, 0, width, height}, xd_rgba_hex(rgb));
+    cairo_destroy(cairo);
+    CHECK(cairo_surface_write_to_png(surface, path) == CAIRO_STATUS_SUCCESS);
+    cairo_surface_destroy(surface);
     g_free(dir);
     g_free(path);
 }
 
-static uint32_t rgba_to_hex(xd_rgba c) {
-    return (uint32_t)lround(c.r * 255) << 16 | (uint32_t)lround(c.g * 255) << 8 |
-           (uint32_t)lround(c.b * 255);
+static uint32_t rgba_to_hex(xd_rgba color) {
+    return (uint32_t)lround(color.r * 255) << 16 | (uint32_t)lround(color.g * 255) << 8 |
+           (uint32_t)lround(color.b * 255);
 }
 
 /* A w x (h * frames) strip of frames, each pixel `color(frame, x, y)`. */
-static void pkg_png_frames(const char *root, const char *name, int w, int h, int frames,
+static void pkg_png_frames(const char *root, const char *name, int width, int height, int frames,
                            uint32_t (*color)(int frame, int x, int y)) {
-    uint32_t *px = g_new(uint32_t, (gsize)(w * h * frames));
-    for (int f = 0; f < frames; f++)
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-                px[(f * h + y) * w + x] = color(f, x, y);
-    pkg_png(root, name, w, h * frames, px);
+    uint32_t *px = g_new(uint32_t, (gsize)(width * height * frames));
+    for (int frame_index = 0; frame_index < frames; frame_index++)
+        for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                px[(frame_index * height + y) * width + x] = color(frame_index, x, y);
+    pkg_png(root, name, width, height * frames, px);
     g_free(px);
 }
 
 /* DWMWindow's edge pieces, as 7's are laid out (uxtheme.ini): the outer
  * edge's columns, the client edge's light and dark lines, glass between;
  * the inactive frame all one grey but its client edge's light line. */
-static uint32_t dwm_left(int f, int x, [[maybe_unused]] int y) {
-    if (f == 1)
+static uint32_t dwm_left(int frame, int x, [[maybe_unused]] int y) {
+    if (frame == 1)
         return x == 8 ? 0x00AA01 : 0x444444;
     return x < 3 ? 0x110000 : x == 8 ? 0x00AA00 : x > 8 ? 0x0000AA : 0x777777;
 }
-static uint32_t dwm_right(int f, int x, [[maybe_unused]] int y) {
-    if (f == 1)
+static uint32_t dwm_right(int frame, int x, [[maybe_unused]] int y) {
+    if (frame == 1)
         return 0x444444;
     return x < 2 ? 0x0000BB : x == 2 ? 0x00BB00 : x > 7 ? 0x220000 : 0x777777;
 }
-static uint32_t dwm_top(int f, [[maybe_unused]] int x, int y) {
-    if (f == 1)
+static uint32_t dwm_top(int frame, [[maybe_unused]] int x, int y) {
+    if (frame == 1)
         return 0x444444;
     return y == 24 ? 0xCC0000 : y > 24 ? 0x660000 : 0x777777;
 }
-static uint32_t dwm_bottom(int f, [[maybe_unused]] int x, int y) {
-    if (f == 1)
+static uint32_t dwm_bottom(int frame, [[maybe_unused]] int x, int y) {
+    if (frame == 1)
         return 0x444444;
     return y < 2 ? 0x000066 : y == 2 ? 0x0000CC : 0x333333;
 }
@@ -8865,87 +9046,89 @@ static void test_theme_package_dwm(void) {
     pkg_png_solid(root, "box.png", 4, 4, 0x204060);
     pkg_png_solid(root, "selected.png", 4, 4, 0x60C020);
     GError *error = nullptr;
-    xd_pkg *p = xd_pkg_load(root, nullptr, names, &error);
-    CHECK(p != nullptr && error == nullptr);
-    if (p == nullptr) {
+    xd_pkg *package = xd_pkg_load(root, nullptr, names, &error);
+    CHECK(package != nullptr && error == nullptr);
+    if (package == nullptr) {
         g_clear_error(&error);
         rm_tree(root);
         g_free(root);
         return;
     }
     /* Documented in vssym32.h: stored by number, found by name or number. */
-    CHECK(prop_is(p, "MonthCal", "6", nullptr, "TextColor", "0 102 204"));
-    CHECK(prop_is(p, "StartPanel", "19", nullptr, "TextColor", "1 1 1"));
+    CHECK(prop_is(package, "MonthCal", "6", nullptr, "TextColor", "0 102 204"));
+    CHECK(prop_is(package, "StartPanel", "19", nullptr, "TextColor", "1 1 1"));
 
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
     xd_scheme sc;
     xd_scheme_init_default(&sc);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_AERO, &sc, 1.0);
-    t.glass = true;
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_AERO, &sc, 1.0);
+    theme.glass = true;
     /* 200 x 100: Aero's 8 px border and 30 px top, so the client area is
      * 8, 30, 184 x 62. */
     for (int active = 1; active >= 0; active--) {
-        cairo_t *cr;
-        cairo_surface_t *s = pkg_canvas(200, 100, &cr);
-        xd_frame f = {.title = "", .active = active, .buttons = XD_CAPBTN_CLOSE};
-        xd_theme_draw_frame(&t, cr, (xd_rect){0, 0, 200, 100}, &f);
-        cairo_destroy(cr);
+        cairo_t *cairo;
+        cairo_surface_t *surface = pkg_canvas(200, 100, &cairo);
+        xd_frame frame = {.title = "", .active = active, .buttons = XD_CAPBTN_CLOSE};
+        xd_theme_draw_frame(&theme, cairo, (xd_rect){0, 0, 200, 100}, &frame);
+        cairo_destroy(cairo);
         if (active) {
             /* The client edge: light then dark lines just outside it. */
-            CHECK(pixel(s, 6, 60) == 0x00AA00 && pixel(s, 7, 60) == 0x0000AA);
-            CHECK(pixel(s, 192, 60) == 0x0000BB && pixel(s, 193, 60) == 0x00BB00);
-            CHECK(pixel(s, 100, 28) == 0xCC0000 && pixel(s, 100, 29) == 0x660000);
-            CHECK(pixel(s, 100, 92) == 0x000066 && pixel(s, 100, 93) == 0x0000CC);
+            CHECK(pixel(surface, 6, 60) == 0x00AA00 && pixel(surface, 7, 60) == 0x0000AA);
+            CHECK(pixel(surface, 192, 60) == 0x0000BB && pixel(surface, 193, 60) == 0x00BB00);
+            CHECK(pixel(surface, 100, 28) == 0xCC0000 && pixel(surface, 100, 29) == 0x660000);
+            CHECK(pixel(surface, 100, 92) == 0x000066 && pixel(surface, 100, 93) == 0x0000CC);
             /* The outer edge, on the window's own edges. */
-            CHECK(pixel(s, 0, 60) == 0x110000 && pixel(s, 199, 60) == 0x220000);
-            CHECK(pixel(s, 100, 3) == 0x777777 && pixel(s, 100, 98) == 0x333333);
+            CHECK(pixel(surface, 0, 60) == 0x110000 && pixel(surface, 199, 60) == 0x220000);
+            CHECK(pixel(surface, 100, 3) == 0x777777 && pixel(surface, 100, 98) == 0x333333);
             /* The streaks over the glass, at Opacity 100. */
-            CHECK(pixel(s, 4, 50) == 0xABCDEF);
+            CHECK(pixel(surface, 4, 50) == 0xABCDEF);
         } else {
-            CHECK(pixel(s, 6, 60) == 0x00AA01 && pixel(s, 100, 3) == 0x444444);
+            CHECK(pixel(surface, 6, 60) == 0x00AA01 && pixel(surface, 100, 3) == 0x444444);
             /* Opacity 0: no streaks. */
-            CHECK(pixel(s, 4, 50) != 0xABCDEF);
+            CHECK(pixel(surface, 4, 50) != 0xABCDEF);
         }
-        cairo_surface_destroy(s);
+        cairo_surface_destroy(surface);
     }
 
     /* Alt+Tab: the box, the selected window's frame (the second of
      * three), the title above the icons. */
-    int w = 0, h = 0;
-    xd_theme_switcher_size(&t, 3, &w, &h);
-    CHECK(w == 2 * 12 + 5 * 52 && h == 2 * 12 + 52 + 6 + 24);
-    cairo_t *cr;
-    cairo_surface_t *s = pkg_canvas(w, h, &cr);
+    int width = 0, height = 0;
+    xd_theme_switcher_size(&theme, 3, &width, &height);
+    CHECK(width == 2 * 12 + 5 * 52 && height == 2 * 12 + 52 + 6 + 24);
+    cairo_t *cairo;
+    cairo_surface_t *surface = pkg_canvas(width, height, &cairo);
     cairo_surface_t *icons[3] = {nullptr, nullptr, nullptr};
-    xd_theme_draw_switcher(&t, cr, (xd_rect){0, 0, w, h}, icons, 3, 1, "Notepad");
-    cairo_destroy(cr);
+    xd_theme_draw_switcher(&theme, cairo, (xd_rect){0, 0, width, height}, icons, 3, 1, "Notepad");
+    cairo_destroy(cairo);
     int y = 12 + 24 + 6 + 2; /* inside the icons' row, above the icon */
-    CHECK(pixel(s, 1, 1) == 0x204060 && pixel(s, w - 2, h - 2) == 0x204060);
-    CHECK(pixel(s, w / 2, y) == 0x60C020); /* the middle one is selected */
-    CHECK(pixel(s, w / 2 - 52, y) == 0x204060 && pixel(s, w / 2 + 52, y) == 0x204060);
-    cairo_surface_destroy(s);
+    CHECK(pixel(surface, 1, 1) == 0x204060 && pixel(surface, width - 2, height - 2) == 0x204060);
+    CHECK(pixel(surface, width / 2, y) == 0x60C020); /* the middle one is selected */
+    CHECK(pixel(surface, width / 2 - 52, y) == 0x204060 &&
+          pixel(surface, width / 2 + 52, y) == 0x204060);
+    cairo_surface_destroy(surface);
 
     /* Without the package: Windows 2000's and XP's box, the selection a
      * square in the selection colour round the icon, the title below. */
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-    xd_theme_init(&t, XD_STYLE_CLASSIC, &sc, 1.0);
-    xd_theme_switcher_size(&t, 3, &w, &h);
-    CHECK(w == 2 * 10 + 5 * 43 && h == 2 * 10 + 43 + 8 + 24);
-    s = pkg_canvas(w, h, &cr);
-    xd_theme_draw_switcher(&t, cr, (xd_rect){0, 0, w, h}, icons, 3, 1, "Notepad");
-    cairo_destroy(cr);
+    xd_theme_init(&theme, XD_STYLE_CLASSIC, &sc, 1.0);
+    xd_theme_switcher_size(&theme, 3, &width, &height);
+    CHECK(width == 2 * 10 + 5 * 43 && height == 2 * 10 + 43 + 8 + 24);
+    surface = pkg_canvas(width, height, &cairo);
+    xd_theme_draw_switcher(&theme, cairo, (xd_rect){0, 0, width, height}, icons, 3, 1, "Notepad");
+    cairo_destroy(cairo);
     uint32_t face = (uint32_t)sc.colors[XD_COLOR_BUTTON_FACE].r << 16 |
                     (uint32_t)sc.colors[XD_COLOR_BUTTON_FACE].g << 8 |
                     sc.colors[XD_COLOR_BUTTON_FACE].b;
     uint32_t hilight = (uint32_t)sc.colors[XD_COLOR_HILIGHT].r << 16 |
                        (uint32_t)sc.colors[XD_COLOR_HILIGHT].g << 8 | sc.colors[XD_COLOR_HILIGHT].b;
     int sq = (43 - 40) / 2; /* the square: the 32 px icon and 4 px round it */
-    CHECK(pixel(s, 5, 5) == face);
-    CHECK(pixel(s, w / 2, 10 + sq) == hilight && pixel(s, w / 2 - 43, 10 + sq) == face);
-    cairo_surface_destroy(s);
+    CHECK(pixel(surface, 5, 5) == face);
+    CHECK(pixel(surface, width / 2, 10 + sq) == hilight &&
+          pixel(surface, width / 2 - 43, 10 + sq) == face);
+    cairo_surface_destroy(surface);
 
-    xd_pkg_free(p);
+    xd_pkg_free(package);
     rm_tree(root);
     g_free(root);
 }
@@ -8990,37 +9173,39 @@ static void test_explorer_panes(void) {
     pane_png(root, "images/arrow.png", 21, 23, 0x445566);
 
     GError *err = nullptr;
-    xd_pkg *p = xd_pkg_load(root, "blue", names, &err);
-    CHECK(p != nullptr);
-    if (p == nullptr) {
+    xd_pkg *package = xd_pkg_load(root, "blue", names, &err);
+    CHECK(package != nullptr);
+    if (package == nullptr) {
         g_clear_error(&err);
         g_free(names);
         g_free(root);
         return;
     }
-    xd_rgba c;
-    CHECK(xd_pkg_color(p, "ExplorerBar", "NormalGroupHead", nullptr, "TextColor", &c) &&
-          rgba_to_hex(c) == 0x215DC6);
-    CHECK(xd_pkg_color(p, "ExplorerBar", "NormalGroupHead", "Hot", "TextColor", &c) &&
-          rgba_to_hex(c) == 0x428EFF);
+    xd_rgba color;
+    CHECK(xd_pkg_color(package, "ExplorerBar", "NormalGroupHead", nullptr, "TextColor", &color) &&
+          rgba_to_hex(color) == 0x215DC6);
+    CHECK(xd_pkg_color(package, "ExplorerBar", "NormalGroupHead", "Hot", "TextColor", &color) &&
+          rgba_to_hex(color) == 0x428EFF);
     /* What the shell doesn't say, the style's part still does. */
-    CHECK(xd_pkg_color(p, "ExplorerBar", "NormalGroupExpand", "Normal", "TextColor", &c) &&
-          rgba_to_hex(c) == 0x070809);
-    xd_font_spec f;
+    CHECK(
+        xd_pkg_color(package, "ExplorerBar", "NormalGroupExpand", "Normal", "TextColor", &color) &&
+        rgba_to_hex(color) == 0x070809);
+    xd_font_spec font;
     bool under = true;
-    CHECK(xd_pkg_font(p, "ExplorerBar", "NormalGroupHead", nullptr, "Font", &f, &under));
-    CHECK(fabs(f.size_pt - 8) < 1e-9 && f.bold && !f.italic && !under &&
-          strstr(f.family, "Tahoma") != nullptr);
-    CHECK(xd_pkg_font(p, "ExplorerBar", "NormalGroupBackground", "Hot", "Font", &f, &under) &&
-          under && !f.bold);
+    CHECK(xd_pkg_font(package, "ExplorerBar", "NormalGroupHead", nullptr, "Font", &font, &under));
+    CHECK(fabs(font.size_pt - 8) < 1e-9 && font.bold && !font.italic && !under &&
+          strstr(font.family, "Tahoma") != nullptr);
+    CHECK(xd_pkg_font(package, "ExplorerBar", "NormalGroupBackground", "Hot", "Font", &font,
+                      &under) &&
+          under && !font.bold);
 
-    xd_theme_use_package(p, XD_FILTER_SMOOTH, true);
+    xd_theme_use_package(package, XD_FILTER_SMOOTH, true);
     xd_scheme scheme;
     xd_scheme_init_default(&scheme);
-    xd_theme t;
-    xd_theme_init(&t, XD_STYLE_LUNA, &scheme, 1.0);
+    xd_theme theme;
+    xd_theme_init(&theme, XD_STYLE_LUNA, &scheme, 1.0);
     xd_taskpane_style st;
-    xd_theme_taskpane_style(&t, &st);
+    xd_theme_taskpane_style(&theme, &st);
     CHECK(st.padding.left == 13 && st.padding.top == 12 && st.padding.bottom == 13);
     CHECK(st.group_spacing == 15);
     /* The title bar: the arrow (23) and the margin above it (2). */
@@ -9030,43 +9215,44 @@ static void test_explorer_panes(void) {
     CHECK(!st.link_underline[0][0] && st.link_underline[0][1]);
     CHECK(rgba_to_hex(st.header_color[0][1]) == 0x428EFF);
 
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 220, 100);
-    cairo_t *cr = cairo_create(s);
-    xd_theme_draw_taskpane(&t, cr, (xd_rect){0, 0, 220, 100});
-    xd_theme_draw_taskpane_header(&t, cr, &st, (xd_rect){12, 12, 186, st.header_height}, false,
-                                  false, XD_STATE_NORMAL, nullptr);
-    xd_theme_draw_taskpane_body(&t, cr, (xd_rect){12, 37, 186, 40}, false);
-    cairo_destroy(cr);
-    CHECK(near(pixel(s, 100, 5), 0x0A141E, 2));  /* the pane */
-    CHECK(near(pixel(s, 0, 50), 0xFFFFFF, 0));   /* its left border */
-    CHECK(near(pixel(s, 219, 50), 0x0A141E, 2)); /* none on the right */
-    CHECK(near(pixel(s, 60, 24), 0x112233, 2));  /* the title bar's image */
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 220, 100);
+    cairo_t *cairo = cairo_create(surface);
+    xd_theme_draw_taskpane(&theme, cairo, (xd_rect){0, 0, 220, 100});
+    xd_theme_draw_taskpane_header(&theme, cairo, &st, (xd_rect){12, 12, 186, st.header_height},
+                                  false, false, XD_STATE_NORMAL, nullptr);
+    xd_theme_draw_taskpane_body(&theme, cairo, (xd_rect){12, 37, 186, 40}, false);
+    cairo_destroy(cairo);
+    CHECK(near(pixel(surface, 100, 5), 0x0A141E, 2)); /* the pane */
+    CHECK(near(pixel(surface, 0, 50), 0xFFFFFF, 0)); /* its left border */
+    CHECK(near(pixel(surface, 219, 50), 0x0A141E, 2)); /* none on the right */
+    CHECK(near(pixel(surface, 60, 24), 0x112233, 2)); /* the title bar's image */
     /* The arrow 3 px in from the title bar's right, 2 px down. */
-    CHECK(near(pixel(s, 12 + 186 - 3 - 10, 12 + 2 + 11), 0x445566, 2));
-    CHECK(near(pixel(s, 12 + 186 - 2, 12 + 2 + 11), 0x112233, 2));
-    CHECK(near(pixel(s, 100, 50), 0xD6DFF7, 0)); /* the body */
-    CHECK(near(pixel(s, 12, 50), 0xFFFFFF, 0));  /* its left border */
-    CHECK(near(pixel(s, 100, 37), 0xD6DFF7, 0)); /* none on top */
-    CHECK(near(pixel(s, 100, 76), 0xFFFFFF, 0)); /* its bottom border */
-    cairo_surface_destroy(s);
+    CHECK(near(pixel(surface, 12 + 186 - 3 - 10, 12 + 2 + 11), 0x445566, 2));
+    CHECK(near(pixel(surface, 12 + 186 - 2, 12 + 2 + 11), 0x112233, 2));
+    CHECK(near(pixel(surface, 100, 50), 0xD6DFF7, 0)); /* the body */
+    CHECK(near(pixel(surface, 12, 50), 0xFFFFFF, 0)); /* its left border */
+    CHECK(near(pixel(surface, 100, 37), 0xD6DFF7, 0)); /* none on top */
+    CHECK(near(pixel(surface, 100, 76), 0xFFFFFF, 0)); /* its bottom border */
+    cairo_surface_destroy(surface);
 
     /* Vista's and 7's parts: not in this package, so not drawn. */
-    s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 4, 4);
-    cr = cairo_create(s);
-    CHECK(!xd_theme_draw_explorer_part(&t, cr, XD_EXPLORER_COMMAND_BAR, 0, (xd_rect){0, 0, 4, 4}));
-    cairo_destroy(cr);
-    cairo_surface_destroy(s);
+    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 4, 4);
+    cairo = cairo_create(surface);
+    CHECK(!xd_theme_draw_explorer_part(&theme, cairo, XD_EXPLORER_COMMAND_BAR, 0,
+                                       (xd_rect){0, 0, 4, 4}));
+    cairo_destroy(cairo);
+    cairo_surface_destroy(surface);
     xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-    xd_pkg_free(p);
+    xd_pkg_free(package);
 
     /* No shell: nothing of the task pane's in the package. */
-    p = xd_pkg_load(root, "bare", names, &err);
-    CHECK(p != nullptr &&
-          xd_pkg_prop(p, "ExplorerBar", nullptr, nullptr, "GroupSpacing") == nullptr);
-    xd_pkg_free(p);
+    package = xd_pkg_load(root, "bare", names, &err);
+    CHECK(package != nullptr &&
+          xd_pkg_prop(package, "ExplorerBar", nullptr, nullptr, "GroupSpacing") == nullptr);
+    xd_pkg_free(package);
     /* A shell named but missing: the package doesn't load. */
-    p = xd_pkg_load(root, "lost", names, &err);
-    CHECK(p == nullptr && err != nullptr);
+    package = xd_pkg_load(root, "lost", names, &err);
+    CHECK(package == nullptr && err != nullptr);
     g_clear_error(&err);
 
     const char *cmd[] = {"rm", "-rf", root, nullptr};
