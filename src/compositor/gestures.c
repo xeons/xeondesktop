@@ -117,7 +117,8 @@ static void desktop_swipe_update(xd_gestures *gestures, double dx, double dy) {
             gestures->desktop = gestures->swipe_y > 0 ? DESKTOP_SWIPE_DOWN : DESKTOP_SWIPE_UP;
         }
     }
-    if (gestures->desktop != DESKTOP_SWIPE_WINDOWS)
+    /* Locked meanwhile: no Alt+Tab window (it's drawn above the lock). */
+    if (gestures->desktop != DESKTOP_SWIPE_WINDOWS || gestures->server->locked)
         return;
     /* A step for each stretch, either way, the first at once. */
     if (gestures->stepped_x == 0 && gestures->server->cycle_view == nullptr) {
@@ -137,7 +138,7 @@ static void desktop_swipe_end(xd_gestures *gestures, bool cancelled) {
     desktop_swipe swipe = gestures->desktop;
     gestures->desktop = DESKTOP_SWIPE_NONE;
     if (swipe == DESKTOP_SWIPE_WINDOWS) {
-        if (cancelled)
+        if (cancelled || server->locked)
             xd_input_cycle_cancel(server);
         else
             xd_input_cycle_finish(server);
