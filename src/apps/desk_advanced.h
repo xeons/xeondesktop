@@ -18,6 +18,6 @@ typedef void (*advanced_done)(const xd_scheme_custom *custom, void *user);
  * size and its [CustomScheme]). */
 advanced *advanced_open(xd_ui *ui, const xd_settings *pending, advanced_done done, void *user);
 /* Closes it as Cancel does (done runs). */
-void advanced_cancel(advanced *a);
+void advanced_cancel(advanced *appearance);
 
 #endif

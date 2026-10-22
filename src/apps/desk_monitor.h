@@ -22,7 +22,7 @@ typedef enum monitor_result : uint8_t {
     MONITOR_CANCEL, /* closed with Cancel (props is nullptr) */
 } monitor_result;
 
-typedef void (*monitor_done)(monitor_result r, const monitor_props *props, void *user);
+typedef void (*monitor_done)(monitor_result outcome, const monitor_props *props, void *user);
 
 /* `rates` are the refresh rate combo's items; vrr_capable says whether the
  * monitor can do variable refresh rates at all (else the box is grey). */
@@ -30,6 +30,6 @@ monitor_dialog *monitor_dialog_open(xd_ui *ui, const char *monitor, const char *
                                     size_t rate_count, monitor_props current, bool vrr_capable,
                                     monitor_done done, void *user);
 /* Closes it as Cancel does (done runs). */
-void monitor_dialog_cancel(monitor_dialog *m);
+void monitor_dialog_cancel(monitor_dialog *refresh_dialog);
 
 #endif

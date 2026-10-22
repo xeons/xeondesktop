@@ -19,29 +19,29 @@ static constexpr double CHAR_W = 5.2; /* an 8pt sans-serif's average, for wrappi
 static int wrapped_lines(const char *text) {
     int lines = 1;
     double x = 0;
-    const char *p = text;
-    while (*p != '\0') {
-        if (*p == '\n') {
+    const char *cursor = text;
+    while (*cursor != '\0') {
+        if (*cursor == '\n') {
             lines++;
             x = 0;
-            p++;
+            cursor++;
             continue;
         }
-        size_t word = strcspn(p, " \n");
-        double w = (double)word * CHAR_W;
-        if (x > 0 && x + w > TEXT_W) {
+        size_t word = strcspn(cursor, " \n");
+        double width = (double)word * CHAR_W;
+        if (x > 0 && x + width > TEXT_W) {
             lines++;
             x = 0;
         }
-        x += w + CHAR_W;
-        p += word;
-        if (*p == ' ')
-            p++;
+        x += width + CHAR_W;
+        cursor += word;
+        if (*cursor == ' ')
+            cursor++;
     }
     return lines;
 }
 
-static void on_ok([[maybe_unused]] xd_widget *w, void *user) { xd_window_close(user); }
+static void on_ok([[maybe_unused]] xd_widget *widget, void *user) { xd_window_close(user); }
 
 int main(int argc, char **argv) {
     const char *icon = "dialog-information";
@@ -74,12 +74,13 @@ int main(int argc, char **argv) {
     /* A little spare: the estimate may be short. */
     int text_h = wrapped_lines(text) * LINE_H + LINE_H / 2;
     int body_h = text_h > 32 ? text_h : 32;
-    int h = 14 + body_h + 16 + 23 + 12;
-    int w = 56 + TEXT_W + 14;
-    xd_window *win = xd_window_create(ui, title, "xd-message", w, h);
+    int height = 14 + body_h + 16 + 23 + 12;
+    int width = 56 + TEXT_W + 14;
+    xd_window *win = xd_window_create(ui, title, "xd-message", width, height);
     xd_image(win, (xd_rect){12, 14, 32, 32}, icon);
     xd_label(win, (xd_rect){56, body_h > 32 ? 14 : 22, TEXT_W, text_h}, text, XD_LABEL_WRAP);
-    xd_widget *ok = xd_button(win, (xd_rect){(w - 75) / 2, h - 12 - 23, 75, 23}, "OK", on_ok, win);
+    xd_widget *ok =
+        xd_button(win, (xd_rect){(width - 75) / 2, height - 12 - 23, 75, 23}, "OK", on_ok, win);
     xd_window_set_default(win, ok);
     xd_window_set_cancel(win, ok);
     xd_window_set_focus(win, ok);

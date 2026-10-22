@@ -22,7 +22,7 @@ typedef struct xd_run_target {
 /* Classifies `input`. `path_env` is the PATH to search (nullptr = $PATH),
  * `home` replaces a leading ~. */
 xd_run_target xd_run_classify(xd_str input, const char *path_env, const char *home);
-void xd_run_target_free(xd_run_target *t);
+void xd_run_target_free(xd_run_target *run_target);
 
 /* Windows' App Paths: a program known by its Windows name ("msconfig",
  * "msconfig.exe", any case), from the installed desktop entries'

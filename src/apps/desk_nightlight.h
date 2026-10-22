@@ -13,11 +13,11 @@ typedef struct nightlight_dialog nightlight_dialog;
 
 /* Runs once the dialog has closed: OK with the settings it ended with,
  * Cancel with nullptr. */
-typedef void (*nightlight_done)(const xd_nightlight_settings *s, void *user);
+typedef void (*nightlight_done)(const xd_nightlight_settings *nightlight_settings, void *user);
 
 nightlight_dialog *nightlight_dialog_open(xd_ui *ui, const xd_nightlight_settings *current,
                                           nightlight_done done, void *user);
 /* Closes it as Cancel does (done runs). */
-void nightlight_dialog_cancel(nightlight_dialog *n);
+void nightlight_dialog_cancel(nightlight_dialog *night_light);
 
 #endif

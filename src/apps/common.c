@@ -36,9 +36,9 @@ pid_t xd_spawn_own(const char *program, const char *const *args, int *out_fd) {
     char self[4096];
     xd_strbuf path = {0};
     xd_strbuf_append(&path, xd_str_from_cstr(program));
-    ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
-    if (n > 0) {
-        self[n] = '\0';
+    ssize_t length = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (length > 0) {
+        self[length] = '\0';
         char *slash = strrchr(self, '/');
         if (slash != nullptr) {
             slash[1] = '\0';

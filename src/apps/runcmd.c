@@ -7,27 +7,30 @@
 
 #include "runcmd.h"
 
-static bool looks_like_url(xd_str s) {
+static bool looks_like_url(xd_str text) {
     size_t colon;
-    if (xd_str_find_char(s, ':', &colon) && colon > 0) {
+    if (xd_str_find_char(text, ':', &colon) && colon > 0) {
         /* scheme: letters, digits, + - . and starting with a letter */
-        bool scheme = (s.ptr[0] >= 'a' && s.ptr[0] <= 'z') || (s.ptr[0] >= 'A' && s.ptr[0] <= 'Z');
+        bool scheme = (text.ptr[0] >= 'a' && text.ptr[0] <= 'z') ||
+                      (text.ptr[0] >= 'A' && text.ptr[0] <= 'Z');
         for (size_t i = 1; i < colon && scheme; i++) {
-            char c = s.ptr[i];
-            scheme = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                     c == '+' || c == '-' || c == '.';
+            char character = text.ptr[i];
+            scheme = (character >= 'a' && character <= 'z') ||
+                     (character >= 'A' && character <= 'Z') ||
+                     (character >= '0' && character <= '9') || character == '+' ||
+                     character == '-' || character == '.';
         }
-        xd_str rest = xd_str_sub(s, colon, s.len);
+        xd_str rest = xd_str_sub(text, colon, text.len);
         if (scheme && (xd_str_starts_with(rest, XD_STR("://")) ||
-                       xd_str_eq_nocase(xd_str_sub(s, 0, colon), XD_STR("mailto"))))
+                       xd_str_eq_nocase(xd_str_sub(text, 0, colon), XD_STR("mailto"))))
             return true;
     }
-    return xd_str_starts_with(s, XD_STR("www."));
+    return xd_str_starts_with(text, XD_STR("www."));
 }
 
-static bool is_path_like(xd_str s) {
-    return xd_str_starts_with(s, XD_STR("/")) || xd_str_starts_with(s, XD_STR("~")) ||
-           xd_str_starts_with(s, XD_STR("./")) || xd_str_starts_with(s, XD_STR("../"));
+static bool is_path_like(xd_str text) {
+    return xd_str_starts_with(text, XD_STR("/")) || xd_str_starts_with(text, XD_STR("~")) ||
+           xd_str_starts_with(text, XD_STR("./")) || xd_str_starts_with(text, XD_STR("../"));
 }
 
 /* Is `name` an executable file somewhere in path_env? */
@@ -55,88 +58,88 @@ static bool in_path(xd_str name, const char *path_env) {
 }
 
 xd_run_target xd_run_classify(xd_str input, const char *path_env, const char *home) {
-    xd_run_target t = {.kind = XD_RUN_EMPTY};
-    xd_str s = xd_str_trim(input);
-    if (s.len == 0)
-        return t;
+    xd_run_target run_target = {.kind = XD_RUN_EMPTY};
+    xd_str trimmed = xd_str_trim(input);
+    if (trimmed.len == 0)
+        return run_target;
     if (path_env == nullptr)
         path_env = getenv("PATH");
     if (path_env == nullptr)
         path_env = "/usr/local/bin:/usr/bin:/bin";
 
-    if (looks_like_url(s)) {
-        t.kind = XD_RUN_OPEN;
-        xd_strbuf_append(&t.target, s);
-        return t;
+    if (looks_like_url(trimmed)) {
+        run_target.kind = XD_RUN_OPEN;
+        xd_strbuf_append(&run_target.target, trimmed);
+        return run_target;
     }
 
-    if (is_path_like(s)) {
-        if (s.ptr[0] == '~') {
-            xd_strbuf_append(&t.target, xd_str_from_cstr(home != nullptr ? home : ""));
-            xd_strbuf_append(&t.target, xd_str_sub(s, 1, s.len));
+    if (is_path_like(trimmed)) {
+        if (trimmed.ptr[0] == '~') {
+            xd_strbuf_append(&run_target.target, xd_str_from_cstr(home != nullptr ? home : ""));
+            xd_strbuf_append(&run_target.target, xd_str_sub(trimmed, 1, trimmed.len));
         } else {
-            xd_strbuf_append(&t.target, s);
+            xd_strbuf_append(&run_target.target, trimmed);
         }
         struct stat st;
-        const char *p = xd_strbuf_cstr(&t.target);
-        if (stat(p, &st) == 0) {
-            bool exec = S_ISREG(st.st_mode) && access(p, X_OK) == 0;
-            t.kind = exec ? XD_RUN_EXEC : XD_RUN_OPEN;
-            return t;
+        const char *target_path = xd_strbuf_cstr(&run_target.target);
+        if (stat(target_path, &st) == 0) {
+            bool exec = S_ISREG(st.st_mode) && access(target_path, X_OK) == 0;
+            run_target.kind = exec ? XD_RUN_EXEC : XD_RUN_OPEN;
+            return run_target;
         }
         /* A path with arguments ("/usr/bin/foo --bar") falls through to
          * the command-line check below. */
-        xd_strbuf_clear(&t.target);
+        xd_strbuf_clear(&run_target.target);
     }
 
     /* Command line: the first word must be a program. */
-    size_t sp = s.len;
-    for (size_t i = 0; i < s.len; i++) {
-        if (s.ptr[i] == ' ' || s.ptr[i] == '\t') {
+    size_t sp = trimmed.len;
+    for (size_t i = 0; i < trimmed.len; i++) {
+        if (trimmed.ptr[i] == ' ' || trimmed.ptr[i] == '\t') {
             sp = i;
             break;
         }
     }
-    xd_str word = xd_str_sub(s, 0, sp);
+    xd_str word = xd_str_sub(trimmed, 0, sp);
     bool found;
     if (xd_str_find_char(word, '/', &(size_t){0})) {
-        xd_strbuf p = {0};
-        xd_strbuf_append(&p, word);
-        found = access(xd_strbuf_cstr(&p), X_OK) == 0;
-        xd_strbuf_free(&p);
+        xd_strbuf program_path = {0};
+        xd_strbuf_append(&program_path, word);
+        found = access(xd_strbuf_cstr(&program_path), X_OK) == 0;
+        xd_strbuf_free(&program_path);
     } else {
         found = in_path(word, path_env);
     }
     if (found) {
-        t.kind = XD_RUN_SHELL;
-        xd_strbuf_append(&t.target, s);
+        run_target.kind = XD_RUN_SHELL;
+        xd_strbuf_append(&run_target.target, trimmed);
     } else {
-        t.kind = XD_RUN_NOT_FOUND;
-        xd_strbuf_append(&t.target, word);
+        run_target.kind = XD_RUN_NOT_FOUND;
+        xd_strbuf_append(&run_target.target, word);
     }
-    return t;
+    return run_target;
 }
 
-void xd_run_target_free(xd_run_target *t) { xd_strbuf_free(&t->target); }
+void xd_run_target_free(xd_run_target *run_target) { xd_strbuf_free(&run_target->target); }
 
 char *xd_run_app_path(xd_str input) {
-    xd_str s = xd_str_trim(input);
-    if (s.len == 0 || xd_str_find_char(s, ' ', &(size_t){0}) ||
-        xd_str_find_char(s, '/', &(size_t){0}))
+    xd_str trimmed = xd_str_trim(input);
+    if (trimmed.len == 0 || xd_str_find_char(trimmed, ' ', &(size_t){0}) ||
+        xd_str_find_char(trimmed, '/', &(size_t){0}))
         return nullptr;
-    char *name = g_strndup(s.ptr, s.len);
-    if (s.len > 4 && g_ascii_strcasecmp(name + s.len - 4, ".exe") == 0)
-        name[s.len - 4] = '\0';
+    char *name = g_strndup(trimmed.ptr, trimmed.len);
+    if (trimmed.len > 4 && g_ascii_strcasecmp(name + trimmed.len - 4, ".exe") == 0)
+        name[trimmed.len - 4] = '\0';
     char *found = nullptr;
     GList *all = g_app_info_get_all(); /* NoDisplay ones too: the tools are */
-    for (GList *l = all; l != nullptr && found == nullptr; l = l->next) {
-        if (!G_IS_DESKTOP_APP_INFO(l->data))
+    for (GList *list = all; list != nullptr && found == nullptr; list = list->next) {
+        if (!G_IS_DESKTOP_APP_INFO(list->data))
             continue;
-        char **names = g_desktop_app_info_get_string_list(l->data, "X-XeonDesktop-AppPath",
-                                                          nullptr);
+        char **names =
+            g_desktop_app_info_get_string_list(list->data, "X-XeonDesktop-AppPath", nullptr);
         for (size_t i = 0; names != nullptr && names[i] != nullptr && found == nullptr; i++) {
             if (g_ascii_strcasecmp(names[i], name) == 0)
-                found = g_strdup(g_app_info_get_id(l->data));
+                found = g_strdup(g_app_info_get_id(list->data));
         }
         g_strfreev(names);
     }

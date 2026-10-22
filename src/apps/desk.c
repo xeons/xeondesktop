@@ -241,11 +241,11 @@ typedef struct desk {
 
 /* ---- helpers --------------------------------------------------------------------- */
 
-static bool sounds_equal(const xd_sound_scheme *a, const xd_sound_scheme *b) {
-    if (a->base != b->base)
+static bool sounds_equal(const xd_sound_scheme *left, const xd_sound_scheme *right) {
+    if (left->base != right->base)
         return false;
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++) {
-        if (g_strcmp0(a->sounds[i], b->sounds[i]) != 0)
+        if (g_strcmp0(left->sounds[i], right->sounds[i]) != 0)
             return false;
     }
     return true;
@@ -258,48 +258,50 @@ static void copy_sounds(xd_sound_scheme *to, const xd_sound_scheme *from) {
         (void)xd_sound_scheme_set(to, (xd_sound_event)i, from->sounds[i]);
 }
 
-static void changed(desk *d) {
-    xd_widget_set_enabled(d->apply, d->display_dirty ||
-                                        !xd_settings_equal(&d->saved, &d->pending) ||
-                                        !sounds_equal(&d->saved_sounds, &d->pending_sounds));
-    xd_widget_redraw(d->apply);
+static void changed(desk *properties) {
+    xd_widget_set_enabled(
+        properties->apply,
+        properties->display_dirty || !xd_settings_equal(&properties->saved, &properties->pending) ||
+            !sounds_equal(&properties->saved_sounds, &properties->pending_sounds));
+    xd_widget_redraw(properties->apply);
 }
 
-static void update_animation(desk *d);
-static void fill_theme_list(desk *d);
+static void update_animation(desk *properties);
+static void fill_theme_list(desk *properties);
 
-static void on_page(xd_widget *w, void *user) {
-    desk *d = user;
-    d->page = xd_widget_selected(w);
-    update_animation(d);
+static void on_page(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->page = xd_widget_selected(widget);
+    update_animation(properties);
     /* What the other tabs changed shows as the theme "(Modified)". */
-    if (d->page == PAGE_THEMES && d->theme_combo != nullptr) {
-        fill_theme_list(d);
-        xd_widget_redraw(d->theme_combo);
-        xd_widget_redraw(d->theme_preview);
+    if (properties->page == PAGE_THEMES && properties->theme_combo != nullptr) {
+        fill_theme_list(properties);
+        xd_widget_redraw(properties->theme_combo);
+        xd_widget_redraw(properties->theme_preview);
     }
 }
 
 /* Pending appearance as a theme for previews: with the pending theme
  * package (loaded for it), not the one the desktop draws with now. None
  * under High Contrast, as the desktop does. */
-static void pending_theme(const desk *d, double scale, xd_theme *t) {
+static void pending_theme(const desk *properties, double scale, xd_theme *theme) {
     xd_scheme scheme;
-    xd_settings_scheme(&d->pending, &scheme);
-    const xd_pkg *pkg = d->pending.access.high_contrast ? nullptr : d->preview_pkg;
-    xd_theme_init_package(t, d->pending.style, &scheme, scale, pkg,
-                          xd_settings_image_filter(&d->pending, pkg),
-                          d->pending.integer_scaling);
+    xd_settings_scheme(&properties->pending, &scheme);
+    const xd_pkg *pkg =
+        properties->pending.access.high_contrast ? nullptr : properties->preview_pkg;
+    xd_theme_init_package(theme, properties->pending.style, &scheme, scale, pkg,
+                          xd_settings_image_filter(&properties->pending, pkg),
+                          properties->pending.integer_scaling);
 }
 
 /* A Windows 2000-style monitor: beige body, dark screen bezel, stand.
  * Returns the screen rect for the caller to fill. */
-static xd_rect draw_monitor(cairo_t *cr, xd_rect r, const xd_theme *t, double aspect) {
-    int px = xd_tpx(t, 1);
-    int stand_h = xd_tpx(t, 18);
-    xd_rect body = {r.x, r.y, r.w, r.h - stand_h};
+static xd_rect draw_monitor(cairo_t *cairo, xd_rect rect, const xd_theme *theme, double aspect) {
+    int px = xd_tpx(theme, 1);
+    int stand_h = xd_tpx(theme, 18);
+    xd_rect body = {rect.x, rect.y, rect.w, rect.h - stand_h};
     /* Keep the screen's aspect ratio: shrink the body to fit. */
-    int bezel = xd_tpx(t, 10);
+    int bezel = xd_tpx(theme, 10);
     int sw = body.w - 2 * bezel;
     int sh = (int)lround(sw / aspect);
     if (sh > body.h - 2 * bezel) {
@@ -308,7 +310,7 @@ static xd_rect draw_monitor(cairo_t *cr, xd_rect r, const xd_theme *t, double as
     }
     body.w = sw + 2 * bezel;
     body.h = sh + 2 * bezel;
-    body.x = r.x + (r.w - body.w) / 2;
+    body.x = rect.x + (rect.w - body.w) / 2;
 
     xd_rgba face = xd_rgba_hex(0xD4D0C8);
     xd_rgba light = xd_rgba_hex(0xFFFFFF);
@@ -318,27 +320,28 @@ static xd_rect draw_monitor(cairo_t *cr, xd_rect r, const xd_theme *t, double as
     int neck_w = body.w / 5;
     xd_rect neck = {body.x + (body.w - neck_w) / 2, body.y + body.h, neck_w, stand_h / 2};
     xd_rect foot = {body.x + body.w / 4, neck.y + neck.h, body.w / 2, stand_h / 2};
-    xd_fill_rect(cr, neck, face);
-    xd_draw_bevel(cr, neck, px, light, dark);
-    xd_fill_rect(cr, foot, face);
-    xd_draw_bevel(cr, foot, px, light, dark);
+    xd_fill_rect(cairo, neck, face);
+    xd_draw_bevel(cairo, neck, px, light, dark);
+    xd_fill_rect(cairo, foot, face);
+    xd_draw_bevel(cairo, foot, px, light, dark);
 
-    xd_fill_rect(cr, body, face);
-    xd_rect in = xd_draw_bevel(cr, body, px, light, dark);
-    xd_draw_bevel(cr, in, px, face, shadow);
+    xd_fill_rect(cairo, body, face);
+    xd_rect in = xd_draw_bevel(cairo, body, px, light, dark);
+    xd_draw_bevel(cairo, in, px, face, shadow);
     xd_rect screen = {body.x + bezel, body.y + bezel, sw, sh};
-    xd_draw_bevel(cr, xd_rect_inset(screen, -px, -px), px, shadow, light);
+    xd_draw_bevel(cairo, xd_rect_inset(screen, -px, -px), px, shadow, light);
     /* Power light. */
-    xd_fill_rect(cr, (xd_rect){body.x + body.w - bezel - xd_tpx(t, 4), body.y + body.h - bezel / 2 - px,
-                               xd_tpx(t, 3), xd_tpx(t, 2)},
+    xd_fill_rect(cairo,
+                 (xd_rect){body.x + body.w - bezel - xd_tpx(theme, 4),
+                           body.y + body.h - bezel / 2 - px, xd_tpx(theme, 3), xd_tpx(theme, 2)},
                  xd_rgba_hex(0x30C030));
     return screen;
 }
 
-static double primary_aspect(desk *d) {
+static double primary_aspect(desk *properties) {
     const xd_output_info *outs = nullptr;
-    size_t n = xd_ui_outputs(d->ui, &outs);
-    if (n > 0 && outs[0].logical_w > 0 && outs[0].logical_h > 0)
+    size_t count = xd_ui_outputs(properties->ui, &outs);
+    if (count > 0 && outs[0].logical_w > 0 && outs[0].logical_h > 0)
         return (double)outs[0].logical_w / outs[0].logical_h;
     return 4.0 / 3.0;
 }
@@ -348,27 +351,30 @@ static double primary_aspect(desk *d) {
 static bool is_image(xd_str name) {
     static const char *const exts[] = {".jpg", ".jpeg", ".png", ".webp", ".bmp"};
     for (size_t i = 0; i < XD_ARRAY_LEN(exts); i++) {
-        xd_str e = xd_str_from_cstr(exts[i]);
-        if (name.len > e.len && xd_str_eq_nocase(xd_str_sub(name, name.len - e.len, e.len), e))
+        xd_str extension = xd_str_from_cstr(exts[i]);
+        if (name.len > extension.len &&
+            xd_str_eq_nocase(xd_str_sub(name, name.len - extension.len, extension.len), extension))
             return true;
     }
     return false;
 }
 
-static void add_wallpaper(desk *d, const char *path) {
-    for (size_t i = 1; i < d->wallpaper_count; i++) {
-        if (strcmp(d->wallpapers[i], path) == 0)
+static void add_wallpaper(desk *properties, const char *path) {
+    for (size_t i = 1; i < properties->wallpaper_count; i++) {
+        if (strcmp(properties->wallpapers[i], path) == 0)
             return;
     }
-    if (d->wallpaper_count == d->wallpaper_cap) {
-        d->wallpaper_cap = d->wallpaper_cap == 0 ? 64 : d->wallpaper_cap * 2;
-        d->wallpapers = xd_realloc_array(d->wallpapers, d->wallpaper_cap, sizeof(char *));
+    if (properties->wallpaper_count == properties->wallpaper_cap) {
+        properties->wallpaper_cap =
+            properties->wallpaper_cap == 0 ? 64 : properties->wallpaper_cap * 2;
+        properties->wallpapers =
+            xd_realloc_array(properties->wallpapers, properties->wallpaper_cap, sizeof(char *));
     }
-    d->wallpapers[d->wallpaper_count++] = xd_str_dup_cstr(xd_str_from_cstr(path));
+    properties->wallpapers[properties->wallpaper_count++] = xd_str_dup_cstr(xd_str_from_cstr(path));
 }
 
 /* Scans a wallpaper directory (two levels: themes keep images in subdirs). */
-static void scan_wallpapers(desk *d, const char *dir, int depth) {
+static void scan_wallpapers(desk *properties, const char *dir, int depth) {
     DIR *dh = opendir(dir);
     if (dh == nullptr)
         return;
@@ -384,9 +390,9 @@ static void scan_wallpapers(desk *d, const char *dir, int depth) {
         if (stat(xd_strbuf_cstr(&path), &st) != 0)
             continue;
         if (S_ISDIR(st.st_mode) && depth < 2)
-            scan_wallpapers(d, xd_strbuf_cstr(&path), depth + 1);
+            scan_wallpapers(properties, xd_strbuf_cstr(&path), depth + 1);
         else if (S_ISREG(st.st_mode) && is_image(name))
-            add_wallpaper(d, xd_strbuf_cstr(&path));
+            add_wallpaper(properties, xd_strbuf_cstr(&path));
     }
     xd_strbuf_free(&path);
     closedir(dh);
@@ -397,106 +403,112 @@ static const char *base_name(const char *path) {
     return slash != nullptr ? slash + 1 : path;
 }
 
-static int compare_wallpapers(const void *a, const void *b) {
-    return strcoll(base_name(*(char *const *)a), base_name(*(char *const *)b));
+static int compare_wallpapers(const void *left, const void *right) {
+    return strcoll(base_name(*(char *const *)left), base_name(*(char *const *)right));
 }
 
-static void load_wallpapers(desk *d) {
-    add_wallpaper(d, ""); /* (None) */
+static void load_wallpapers(desk *properties) {
+    add_wallpaper(properties, ""); /* (None) */
     static const char *const dirs[] = {"/usr/share/backgrounds", "/usr/share/wallpapers",
                                        "/usr/local/share/backgrounds"};
     for (size_t i = 0; i < XD_ARRAY_LEN(dirs); i++)
-        scan_wallpapers(d, dirs[i], 0);
+        scan_wallpapers(properties, dirs[i], 0);
     const char *home = getenv("HOME");
     if (home != nullptr) {
-        xd_strbuf p = {0};
-        xd_strbuf_appendf(&p, "%s/Pictures/Wallpapers", home);
-        scan_wallpapers(d, xd_strbuf_cstr(&p), 1);
-        xd_strbuf_free(&p);
+        xd_strbuf folder_path = {0};
+        xd_strbuf_appendf(&folder_path, "%s/Pictures/Wallpapers", home);
+        scan_wallpapers(properties, xd_strbuf_cstr(&folder_path), 1);
+        xd_strbuf_free(&folder_path);
     }
     /* Keep the current one listed even if it lives elsewhere. */
-    if (d->pending.wallpaper[0] != '\0')
-        add_wallpaper(d, d->pending.wallpaper);
-    if (d->wallpaper_count > 2)
-        qsort(d->wallpapers + 1, d->wallpaper_count - 1, sizeof(char *), compare_wallpapers);
+    if (properties->pending.wallpaper[0] != '\0')
+        add_wallpaper(properties, properties->pending.wallpaper);
+    if (properties->wallpaper_count > 2)
+        qsort(properties->wallpapers + 1, properties->wallpaper_count - 1, sizeof(char *),
+              compare_wallpapers);
 }
 
 /* The pending wallpaper over the desktop colour, as the desktop paints
  * it, into `screen` (the Background and Themes tabs' previews). */
-static void paint_pending_desktop(desk *d, cairo_t *cr, xd_rect screen, const xd_theme *pt) {
-    xd_fill_rect(cr, screen, xd_sys(pt, XD_COLOR_BACKGROUND));
-    if (strcmp(d->preview_path, d->pending.wallpaper) != 0) {
-        if (d->preview_image != nullptr)
-            cairo_surface_destroy(d->preview_image);
-        d->preview_image = d->pending.wallpaper[0] != '\0'
-                               ? xd_image_load(d->pending.wallpaper, 480, 360)
-                               : nullptr;
+static void paint_pending_desktop(desk *properties, cairo_t *cairo, xd_rect screen,
+                                  const xd_theme *pt) {
+    xd_fill_rect(cairo, screen, xd_sys(pt, XD_COLOR_BACKGROUND));
+    if (strcmp(properties->preview_path, properties->pending.wallpaper) != 0) {
+        if (properties->preview_image != nullptr)
+            cairo_surface_destroy(properties->preview_image);
+        properties->preview_image = properties->pending.wallpaper[0] != '\0'
+                                        ? xd_image_load(properties->pending.wallpaper, 480, 360)
+                                        : nullptr;
         int full_h;
-        if (!xd_image_size(d->pending.wallpaper, &d->preview_full_w, &full_h))
-            d->preview_full_w = 0;
-        snprintf(d->preview_path, sizeof(d->preview_path), "%s", d->pending.wallpaper);
+        if (!xd_image_size(properties->pending.wallpaper, &properties->preview_full_w, &full_h))
+            properties->preview_full_w = 0;
+        snprintf(properties->preview_path, sizeof(properties->preview_path), "%s",
+                 properties->pending.wallpaper);
     }
     /* Center and Tile show the picture at its real size relative to the
      * screen; the preview copy was loaded smaller, so scale it back up. */
     const xd_output_info *outs = nullptr;
     double scale = 0.25;
-    if (xd_ui_outputs(d->ui, &outs) > 0 && outs[0].mode_w > 0)
+    if (xd_ui_outputs(properties->ui, &outs) > 0 && outs[0].mode_w > 0)
         scale = (double)screen.w / outs[0].mode_w;
-    if (d->preview_image != nullptr && d->preview_full_w > 0)
-        scale *= (double)d->preview_full_w / cairo_image_surface_get_width(d->preview_image);
-    xd_image_paint_wallpaper(cr, d->preview_image, screen, d->pending.wallpaper_mode, scale);
+    if (properties->preview_image != nullptr && properties->preview_full_w > 0)
+        scale *= (double)properties->preview_full_w /
+                 cairo_image_surface_get_width(properties->preview_image);
+    xd_image_paint_wallpaper(cairo, properties->preview_image, screen,
+                             properties->pending.wallpaper_mode, scale);
 }
 
-static void draw_bg_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t, void *user) {
-    (void)w;
-    desk *d = user;
-    xd_rect screen = draw_monitor(cr, r, t, primary_aspect(d));
+static void draw_bg_preview(xd_widget *widget, cairo_t *cairo, xd_rect rect, const xd_theme *theme,
+                            void *user) {
+    (void)widget;
+    desk *properties = user;
+    xd_rect screen = draw_monitor(cairo, rect, theme, primary_aspect(properties));
     xd_theme pt;
-    pending_theme(d, t->scale, &pt);
-    paint_pending_desktop(d, cr, screen, &pt);
+    pending_theme(properties, theme->scale, &pt);
+    paint_pending_desktop(properties, cairo, screen, &pt);
 }
 
-static void on_wallpaper(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
-    if (i < 0 || (size_t)i >= d->wallpaper_count)
+static void on_wallpaper(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
+    if (i < 0 || (size_t)i >= properties->wallpaper_count)
         return;
-    snprintf(d->pending.wallpaper, sizeof(d->pending.wallpaper), "%s", d->wallpapers[i]);
-    xd_widget_redraw(d->bg_preview);
-    changed(d);
+    snprintf(properties->pending.wallpaper, sizeof(properties->pending.wallpaper), "%s",
+             properties->wallpapers[i]);
+    xd_widget_redraw(properties->bg_preview);
+    changed(properties);
 }
 
-static void on_wallpaper_mode(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
+static void on_wallpaper_mode(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
     if (i >= 0 && i < XD_WALLPAPER_MODE_COUNT)
-        d->pending.wallpaper_mode = (xd_wallpaper_mode)i;
-    xd_widget_redraw(d->bg_preview);
-    changed(d);
+        properties->pending.wallpaper_mode = (xd_wallpaper_mode)i;
+    xd_widget_redraw(properties->bg_preview);
+    changed(properties);
 }
-
 
 /* Selects a picture by path, adding it to the list if it's new. */
-static void choose_wallpaper(desk *d, const char *path) {
-    size_t before = d->wallpaper_count;
-    add_wallpaper(d, path);
-    if (d->wallpaper_count > before)
-        xd_widget_add_item(d->wallpaper_list, base_name(path));
-    for (size_t i = 0; i < d->wallpaper_count; i++) {
-        if (strcmp(d->wallpapers[i], path) == 0)
-            xd_widget_select(d->wallpaper_list, (int)i);
+static void choose_wallpaper(desk *properties, const char *path) {
+    size_t before = properties->wallpaper_count;
+    add_wallpaper(properties, path);
+    if (properties->wallpaper_count > before)
+        xd_widget_add_item(properties->wallpaper_list, base_name(path));
+    for (size_t i = 0; i < properties->wallpaper_count; i++) {
+        if (strcmp(properties->wallpapers[i], path) == 0)
+            xd_widget_select(properties->wallpaper_list, (int)i);
     }
-    snprintf(d->pending.wallpaper, sizeof(d->pending.wallpaper), "%s", path);
-    xd_widget_redraw(d->bg_preview);
-    changed(d);
+    snprintf(properties->pending.wallpaper, sizeof(properties->pending.wallpaper), "%s", path);
+    xd_widget_redraw(properties->bg_preview);
+    changed(properties);
 }
 
-static void items_chose_icon(desk *d, const char *path);
-static void items_update_buttons(desk *d);
-static void style_chosen(desk *d, const char *path);
-static void update_style_browse(desk *d);
-static void theme_save_to(desk *d, const char *path);
-static void update_theme_buttons(desk *d);
+static void items_chose_icon(desk *properties, const char *path);
+static void items_update_buttons(desk *properties);
+static void style_chosen(desk *properties, const char *path);
+static void update_style_browse(desk *properties);
+static void theme_save_to(desk *properties, const char *path);
+static void update_theme_buttons(desk *properties);
 
 /* `program` beside this one (a build tree, or the install's bindir), else
  * from PATH, with `args`. A GSubprocess, so that GLib reaps it. */
@@ -547,85 +559,86 @@ static void close_stdout(GSubprocess **sp) {
 }
 
 static void chooser_output(void *user) {
-    desk *d = user;
+    desk *properties = user;
     char buf[1024];
-    ssize_t n = read(d->chooser_fd, buf, sizeof(buf));
-    if (n > 0) {
-        xd_strbuf_append(&d->chooser_out, (xd_str){buf, (size_t)n});
+    ssize_t bytes_read = read(properties->chooser_fd, buf, sizeof(buf));
+    if (bytes_read > 0) {
+        xd_strbuf_append(&properties->chooser_out, (xd_str){buf, (size_t)bytes_read});
         return;
     }
-    if (n < 0 && errno == EINTR)
+    if (bytes_read < 0 && errno == EINTR)
         return;
     /* The chooser closed: its answer is complete. */
-    xd_ui_remove_source(d->chooser_src);
-    d->chooser_src = nullptr;
-    close_stdout(&d->chooser);
-    d->chooser_fd = -1;
-    xd_str path = xd_str_trim(xd_strbuf_view(&d->chooser_out));
-    xd_widget_set_enabled(d->browse, true);
-    update_style_browse(d);
+    xd_ui_remove_source(properties->chooser_src);
+    properties->chooser_src = nullptr;
+    close_stdout(&properties->chooser);
+    properties->chooser_fd = -1;
+    xd_str path = xd_str_trim(xd_strbuf_view(&properties->chooser_out));
+    xd_widget_set_enabled(properties->browse, true);
+    update_style_browse(properties);
     if (path.len > 0) {
-        char *p = xd_str_dup_cstr(path);
-        if (d->choosing == CHOOSE_WALLPAPER) {
-            choose_wallpaper(d, p);
-        } else if (d->choosing == CHOOSE_STYLE) {
-            style_chosen(d, p);
-        } else if (d->choosing == CHOOSE_THEME) {
+        char *chosen_path = xd_str_dup_cstr(path);
+        if (properties->choosing == CHOOSE_WALLPAPER) {
+            choose_wallpaper(properties, chosen_path);
+        } else if (properties->choosing == CHOOSE_STYLE) {
+            style_chosen(properties, chosen_path);
+        } else if (properties->choosing == CHOOSE_THEME) {
             /* Chosen as a theme once it's installed (select_installed). */
-            d->theme_import = true;
-            style_chosen(d, p);
+            properties->theme_import = true;
+            style_chosen(properties, chosen_path);
             /* Unless an import goes on in the background, it's done (or
              * failed with a message). */
-            if (d->import == nullptr)
-                d->theme_import = false;
-        } else if (d->choosing == CHOOSE_THEME_SAVE) {
-            theme_save_to(d, p);
-        } else if (d->items != nullptr) {
-            items_chose_icon(d, p);
+            if (properties->import == nullptr)
+                properties->theme_import = false;
+        } else if (properties->choosing == CHOOSE_THEME_SAVE) {
+            theme_save_to(properties, chosen_path);
+        } else if (properties->items != nullptr) {
+            items_chose_icon(properties, chosen_path);
         }
-        xd_free(p);
+        xd_free(chosen_path);
     }
     /* The Themes list leaves Browse... for what it shows now. */
-    if (d->choosing == CHOOSE_THEME || d->choosing == CHOOSE_THEME_SAVE) {
-        fill_theme_list(d);
-        xd_widget_redraw(d->theme_combo);
+    if (properties->choosing == CHOOSE_THEME || properties->choosing == CHOOSE_THEME_SAVE) {
+        fill_theme_list(properties);
+        xd_widget_redraw(properties->theme_combo);
     }
-    update_theme_buttons(d);
-    xd_strbuf_clear(&d->chooser_out);
-    if (d->items != nullptr)
-        items_update_buttons(d);
+    update_theme_buttons(properties);
+    xd_strbuf_clear(&properties->chooser_out);
+    if (properties->items != nullptr)
+        items_update_buttons(properties);
 }
 
 /* Runs xd-choose-file; its answer comes to chooser_output. */
-static bool start_chooser(desk *d, const char *const *args, chooser_kind what) {
-    if (d->chooser_src != nullptr)
+static bool start_chooser(desk *properties, const char *const *args, chooser_kind what) {
+    if (properties->chooser_src != nullptr)
         return false;
     GError *error = nullptr;
-    d->chooser = spawn_own("xd-choose-file", args, G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error);
-    if (d->chooser == nullptr) {
+    properties->chooser = spawn_own("xd-choose-file", args, G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error);
+    if (properties->chooser == nullptr) {
         fprintf(stderr, "xd-desk: %s\n", error->message);
         g_error_free(error);
         return false;
     }
-    d->chooser_fd = stdout_fd(d->chooser);
-    d->chooser_src = xd_ui_add_fd(d->ui, d->chooser_fd, chooser_output, d);
-    d->choosing = what;
-    xd_widget_set_enabled(d->browse, false);
-    update_style_browse(d);
-    update_theme_buttons(d);
-    if (d->items != nullptr)
-        items_update_buttons(d);
+    properties->chooser_fd = stdout_fd(properties->chooser);
+    properties->chooser_src =
+        xd_ui_add_fd(properties->ui, properties->chooser_fd, chooser_output, properties);
+    properties->choosing = what;
+    xd_widget_set_enabled(properties->browse, false);
+    update_style_browse(properties);
+    update_theme_buttons(properties);
+    if (properties->items != nullptr)
+        items_update_buttons(properties);
     return true;
 }
 
-static void on_browse([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
+static void on_browse([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
     char folder[1024] = "/usr/share/backgrounds";
     const char *home = getenv("HOME");
     if (home != nullptr)
         snprintf(folder, sizeof(folder), "%s/Pictures", home);
     const char *args[] = {"--images", "--title", "Browse", "--folder", folder, nullptr};
-    start_chooser(d, args, CHOOSE_WALLPAPER);
+    start_chooser(properties, args, CHOOSE_WALLPAPER);
 }
 
 /* ---- Desktop Items --------------------------------------------------------------- */
@@ -653,153 +666,156 @@ static bool network_available(void) {
     return schemes != nullptr && g_strv_contains(schemes, "network");
 }
 
-static void items_update_buttons(desk *d) {
-    bool custom = d->items_edit.icons[d->items_sel][0] != '\0';
-    xd_widget_set_enabled(d->change_icon, d->chooser_src == nullptr);
-    xd_widget_set_enabled(d->restore_icon, custom);
+static void items_update_buttons(desk *properties) {
+    bool custom = properties->items_edit.icons[properties->items_sel][0] != '\0';
+    xd_widget_set_enabled(properties->change_icon, properties->chooser_src == nullptr);
+    xd_widget_set_enabled(properties->restore_icon, custom);
 }
 
-static void items_chose_icon(desk *d, const char *path) {
-    char(*slot)[sizeof(d->items_edit.icons[0])] = &d->items_edit.icons[d->items_sel];
+static void items_chose_icon(desk *properties, const char *path) {
+    char (*slot)[sizeof(properties->items_edit.icons[0])] =
+        &properties->items_edit.icons[properties->items_sel];
     if (path[0] == '/' && strlen(path) < sizeof(*slot))
         snprintf(*slot, sizeof(*slot), "%s", path);
-    xd_widget_redraw(d->items_list);
-    items_update_buttons(d);
+    xd_widget_redraw(properties->items_list);
+    items_update_buttons(properties);
 }
 
 /* The icons in a row, as XP's list view: each picture over its name, the
  * selected one highlighted. */
-static void draw_items_list([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
-                            const xd_theme *t, void *user) {
-    desk *d = user;
-    xd_rect in = xd_theme_draw_field(t, cr, r, false);
-    xd_field_colors fc = xd_theme_field_colors(t);
+static void draw_items_list([[maybe_unused]] xd_widget *widget, cairo_t *cairo, xd_rect bounds,
+                            const xd_theme *theme, void *user) {
+    desk *properties = user;
+    xd_rect in = xd_theme_draw_field(theme, cairo, bounds, false);
+    xd_field_colors fc = xd_theme_field_colors(theme);
     int cell = in.w / XD_DESK_ICON_COUNT;
-    int px = xd_tpx(t, 32);
+    int px = xd_tpx(theme, 32);
     for (int i = 0; i < XD_DESK_ICON_COUNT; i++) {
-        xd_rect c = {in.x + i * cell, in.y, cell, in.h};
+        xd_rect cell_rect = {in.x + i * cell, in.y, cell, in.h};
         const char *names[2];
-        size_t n = 0;
-        if (d->items_edit.icons[i][0] != '\0')
-            names[n++] = d->items_edit.icons[i];
-        names[n++] = xd_desk_icon_default((xd_desk_icon)i);
-        cairo_surface_t *img = xd_icons_get_any(xd_ui_icons(d->ui), names, n, px);
-        int ix = c.x + (cell - px) / 2, iy = c.y + xd_tpx(t, 6);
-        bool sel = i == d->items_sel;
+        size_t count = 0;
+        if (properties->items_edit.icons[i][0] != '\0')
+            names[count++] = properties->items_edit.icons[i];
+        names[count++] = xd_desk_icon_default((xd_desk_icon)i);
+        cairo_surface_t *img = xd_icons_get_any(xd_ui_icons(properties->ui), names, count, px);
+        int ix = cell_rect.x + (cell - px) / 2, iy = cell_rect.y + xd_tpx(theme, 6);
+        bool sel = i == properties->items_sel;
         if (img != nullptr) {
-            cairo_set_source_surface(cr, img, ix, iy);
-            cairo_paint(cr);
+            cairo_set_source_surface(cairo, img, ix, iy);
+            cairo_paint(cairo);
             if (sel) {
-                cairo_set_source_rgba(cr, fc.selection.r, fc.selection.g, fc.selection.b, 0.5);
-                cairo_mask_surface(cr, img, ix, iy);
+                cairo_set_source_rgba(cairo, fc.selection.r, fc.selection.g, fc.selection.b, 0.5);
+                cairo_mask_surface(cairo, img, ix, iy);
             }
         }
-        xd_text_style st = xd_text(t, XD_FONT_ICON, sel ? fc.selection_text : fc.text,
-                                   XD_ALIGN_CENTER);
-        PangoLayout *l = xd_text_layout(cr, item_labels[i], &st);
-        int text_w = cell - xd_tpx(t, 4);
-        pango_layout_set_width(l, text_w * PANGO_SCALE);
-        pango_layout_set_alignment(l, PANGO_ALIGN_CENTER);
-        pango_layout_set_wrap(l, PANGO_WRAP_WORD_CHAR);
+        xd_text_style st =
+            xd_text(theme, XD_FONT_ICON, sel ? fc.selection_text : fc.text, XD_ALIGN_CENTER);
+        PangoLayout *layout = xd_text_layout(cairo, item_labels[i], &st);
+        int text_w = cell - xd_tpx(theme, 4);
+        pango_layout_set_width(layout, text_w * PANGO_SCALE);
+        pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+        pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
         PangoRectangle ink, logical;
-        pango_layout_get_pixel_extents(l, &ink, &logical);
-        int tx = c.x + xd_tpx(t, 2), ty = iy + px + xd_tpx(t, 4);
+        pango_layout_get_pixel_extents(layout, &ink, &logical);
+        int tx = cell_rect.x + xd_tpx(theme, 2), ty = iy + px + xd_tpx(theme, 4);
         if (sel) {
-            xd_fill_rect(cr,
-                         (xd_rect){tx + logical.x - xd_tpx(t, 1), ty, logical.width + xd_tpx(t, 2),
-                                   logical.height},
+            xd_fill_rect(cairo,
+                         (xd_rect){tx + logical.x - xd_tpx(theme, 1), ty,
+                                   logical.width + xd_tpx(theme, 2), logical.height},
                          fc.selection);
         }
-        cairo_set_source_rgba(cr, st.color.r, st.color.g, st.color.b, st.color.a);
-        cairo_move_to(cr, tx, ty);
-        pango_cairo_show_layout(cr, l);
-        g_object_unref(l);
+        cairo_set_source_rgba(cairo, st.color.r, st.color.g, st.color.b, st.color.a);
+        cairo_move_to(cairo, tx, ty);
+        pango_cairo_show_layout(cairo, layout);
+        g_object_unref(layout);
     }
 }
 
-static void on_items_pointer(xd_widget *w, xd_pointer_event ev, double x,
+static void on_items_pointer(xd_widget *widget, xd_pointer_event ev, double x,
                              [[maybe_unused]] double y, void *user) {
-    desk *d = user;
+    desk *properties = user;
     if (ev != XD_POINTER_PRESS)
         return;
-    double f = floor(x / (ITEMS_LIST_W / (double)XD_DESK_ICON_COUNT));
-    d->items_sel = XD_CLAMP((int)f, 0, XD_DESK_ICON_COUNT - 1);
-    xd_widget_redraw(w);
-    items_update_buttons(d);
+    double column = floor(x / (ITEMS_LIST_W / (double)XD_DESK_ICON_COUNT));
+    properties->items_sel = XD_CLAMP((int)column, 0, XD_DESK_ICON_COUNT - 1);
+    xd_widget_redraw(widget);
+    items_update_buttons(properties);
 }
 
-static void on_change_icon([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
+static void on_change_icon([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
     /* Windows lists the icons in a file; here any picture will do. */
     const char *args[] = {"--images", "--title", "Change Icon", "--folder", "/usr/share/icons",
                           nullptr};
-    start_chooser(d, args, CHOOSE_ICON);
+    start_chooser(properties, args, CHOOSE_ICON);
 }
 
-static void on_restore_icon([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    d->items_edit.icons[d->items_sel][0] = '\0';
-    xd_widget_redraw(d->items_list);
-    items_update_buttons(d);
+static void on_restore_icon([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->items_edit.icons[properties->items_sel][0] = '\0';
+    xd_widget_redraw(properties->items_list);
+    items_update_buttons(properties);
 }
 
-static void items_close(desk *d) {
-    if (d->items == nullptr)
+static void items_close(desk *properties) {
+    if (properties->items == nullptr)
         return;
-    xd_window *items = d->items;
-    d->items = nullptr;
+    xd_window *items = properties->items;
+    properties->items = nullptr;
     xd_window_close(items);
-    xd_widget_set_enabled(d->customize, true);
+    xd_widget_set_enabled(properties->customize, true);
 }
 
-static void on_items_ok([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    xd_desktop_icon_settings *e = &d->items_edit;
-    e->documents = xd_checkbox_checked(d->items_checks[0]);
-    e->computer = xd_checkbox_checked(d->items_checks[1]);
-    e->network = xd_checkbox_checked(d->items_checks[2]);
-    e->browser = xd_checkbox_checked(d->items_checks[3]);
-    d->pending.desktop_icons = *e;
-    items_close(d);
-    changed(d);
+static void on_items_ok([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    xd_desktop_icon_settings *desktop_icon_settings = &properties->items_edit;
+    desktop_icon_settings->documents = xd_checkbox_checked(properties->items_checks[0]);
+    desktop_icon_settings->computer = xd_checkbox_checked(properties->items_checks[1]);
+    desktop_icon_settings->network = xd_checkbox_checked(properties->items_checks[2]);
+    desktop_icon_settings->browser = xd_checkbox_checked(properties->items_checks[3]);
+    properties->pending.desktop_icons = *desktop_icon_settings;
+    items_close(properties);
+    changed(properties);
 }
 
-static void on_items_cancel([[maybe_unused]] xd_widget *w, void *user) { items_close(user); }
+static void on_items_cancel([[maybe_unused]] xd_widget *widget, void *user) { items_close(user); }
 
-static void on_customize([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    if (d->items != nullptr)
+static void on_customize([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    if (properties->items != nullptr)
         return;
-    d->items_edit = d->pending.desktop_icons;
-    d->items_sel = XD_DESK_ICON_COMPUTER;
-    xd_window *win = d->items = xd_window_create(d->ui, "Desktop Items", "xd-desk", 362, 404);
+    properties->items_edit = properties->pending.desktop_icons;
+    properties->items_sel = XD_DESK_ICON_COMPUTER;
+    xd_window *win = properties->items =
+        xd_window_create(properties->ui, "Desktop Items", "xd-desk", 362, 404);
     static const char *const tabs[] = {"General"};
     xd_tabs(win, (xd_rect){7, 7, 348, 358}, tabs, XD_ARRAY_LEN(tabs), nullptr, nullptr);
 
     xd_groupbox(win, (xd_rect){17, 35, 328, 210}, "Desktop icons");
-    const xd_desktop_icon_settings *e = &d->items_edit;
-    d->items_checks[0] =
-        xd_checkbox(win, (xd_rect){29, 55, 145, 18}, "My Documents", e->documents, nullptr, d);
-    d->items_checks[1] =
-        xd_checkbox(win, (xd_rect){29, 75, 145, 18}, "My Computer", e->computer, nullptr, d);
-    d->items_checks[2] = xd_checkbox(win, (xd_rect){180, 55, 155, 18}, "My Network Places",
-                                     e->network, nullptr, d);
-    xd_widget_set_enabled(d->items_checks[2], network_available());
+    const xd_desktop_icon_settings *desktop_icon_settings = &properties->items_edit;
+    properties->items_checks[0] =
+        xd_checkbox(win, (xd_rect){29, 55, 145, 18}, "My Documents",
+                    desktop_icon_settings->documents, nullptr, properties);
+    properties->items_checks[1] = xd_checkbox(win, (xd_rect){29, 75, 145, 18}, "My Computer",
+                                              desktop_icon_settings->computer, nullptr, properties);
+    properties->items_checks[2] = xd_checkbox(win, (xd_rect){180, 55, 155, 18}, "My Network Places",
+                                              desktop_icon_settings->network, nullptr, properties);
+    xd_widget_set_enabled(properties->items_checks[2], network_available());
     /* XP's Internet Explorer: here the default web browser, by its name. */
     GAppInfo *browser = g_app_info_get_default_for_uri_scheme("http");
-    d->items_checks[3] =
+    properties->items_checks[3] =
         xd_checkbox(win, (xd_rect){180, 75, 155, 18},
                     browser != nullptr ? g_app_info_get_name(browser) : "Web Browser",
-                    e->browser, nullptr, d);
-    xd_widget_set_enabled(d->items_checks[3], browser != nullptr);
+                    desktop_icon_settings->browser, nullptr, properties);
+    xd_widget_set_enabled(properties->items_checks[3], browser != nullptr);
     g_clear_object(&browser);
-    d->items_list = xd_custom(win, (xd_rect){29, 101, ITEMS_LIST_W, ITEMS_LIST_H},
-                              draw_items_list, d);
-    xd_custom_set_pointer(d->items_list, on_items_pointer);
-    d->change_icon =
-        xd_button(win, (xd_rect){157, 209, 85, 23}, "Change Icon...", on_change_icon, d);
-    d->restore_icon =
-        xd_button(win, (xd_rect){248, 209, 85, 23}, "Restore Default", on_restore_icon, d);
+    properties->items_list =
+        xd_custom(win, (xd_rect){29, 101, ITEMS_LIST_W, ITEMS_LIST_H}, draw_items_list, properties);
+    xd_custom_set_pointer(properties->items_list, on_items_pointer);
+    properties->change_icon =
+        xd_button(win, (xd_rect){157, 209, 85, 23}, "Change Icon...", on_change_icon, properties);
+    properties->restore_icon =
+        xd_button(win, (xd_rect){248, 209, 85, 23}, "Restore Default", on_restore_icon, properties);
 
     xd_groupbox(win, (xd_rect){17, 253, 328, 102}, "Desktop cleanup");
     xd_label(win, (xd_rect){29, 273, 304, 16},
@@ -812,48 +828,54 @@ static void on_customize([[maybe_unused]] xd_widget *w, void *user) {
         xd_button(win, (xd_rect){219, 323, 114, 23}, "Clean Desktop Now", nullptr, nullptr),
         false);
 
-    xd_widget *ok = xd_button(win, (xd_rect){199, 373, 75, 23}, "OK", on_items_ok, d);
-    xd_widget *cancel = xd_button(win, (xd_rect){280, 373, 75, 23}, "Cancel", on_items_cancel, d);
+    xd_widget *ok = xd_button(win, (xd_rect){199, 373, 75, 23}, "OK", on_items_ok, properties);
+    xd_widget *cancel =
+        xd_button(win, (xd_rect){280, 373, 75, 23}, "Cancel", on_items_cancel, properties);
     xd_window_set_default(win, ok);
     xd_window_set_cancel(win, cancel);
-    xd_window_set_focus(win, d->items_checks[0]);
-    items_update_buttons(d);
-    xd_widget_set_enabled(d->customize, false);
+    xd_window_set_focus(win, properties->items_checks[0]);
+    items_update_buttons(properties);
+    xd_widget_set_enabled(properties->customize, false);
     xd_window_show(win);
 }
 
-static void build_background(desk *d) {
-    xd_window *win = d->win;
-    d->bg_preview = xd_custom(win, (xd_rect){105, 42, 194, 166}, draw_bg_preview, d);
-    xd_widget_set_page(d->bg_preview, PAGE_BACKGROUND);
+static void build_background(desk *properties) {
+    xd_window *win = properties->win;
+    properties->bg_preview =
+        xd_custom(win, (xd_rect){105, 42, 194, 166}, draw_bg_preview, properties);
+    xd_widget_set_page(properties->bg_preview, PAGE_BACKGROUND);
     xd_widget_set_page(xd_label(win, (xd_rect){20, 218, 360, 16},
                                 "Select a picture to use as wallpaper:", 0),
                        PAGE_BACKGROUND);
-    d->wallpaper_list = xd_listbox(win, (xd_rect){20, 236, 268, 132}, on_wallpaper, d);
-    xd_widget_set_page(d->wallpaper_list, PAGE_BACKGROUND);
+    properties->wallpaper_list =
+        xd_listbox(win, (xd_rect){20, 236, 268, 132}, on_wallpaper, properties);
+    xd_widget_set_page(properties->wallpaper_list, PAGE_BACKGROUND);
     int current = 0;
-    for (size_t i = 0; i < d->wallpaper_count; i++) {
-        const char *p = d->wallpapers[i];
-        xd_widget_add_item(d->wallpaper_list, p[0] == '\0' ? "(None)" : base_name(p));
-        if (strcmp(p, d->pending.wallpaper) == 0)
+    for (size_t i = 0; i < properties->wallpaper_count; i++) {
+        const char *wallpaper = properties->wallpapers[i];
+        xd_widget_add_item(properties->wallpaper_list,
+                           wallpaper[0] == '\0' ? "(None)" : base_name(wallpaper));
+        if (strcmp(wallpaper, properties->pending.wallpaper) == 0)
             current = (int)i;
     }
-    xd_widget_select(d->wallpaper_list, current);
+    xd_widget_select(properties->wallpaper_list, current);
 
-    d->browse = xd_button(win, (xd_rect){298, 236, 86, 23}, "Browse...", on_browse, d);
-    xd_widget_set_page(d->browse, PAGE_BACKGROUND);
+    properties->browse =
+        xd_button(win, (xd_rect){298, 236, 86, 23}, "Browse...", on_browse, properties);
+    xd_widget_set_page(properties->browse, PAGE_BACKGROUND);
     xd_widget_set_page(xd_label(win, (xd_rect){298, 330, 86, 16}, "Picture Display:", 0),
                        PAGE_BACKGROUND);
-    d->wallpaper_mode = xd_combo(win, (xd_rect){298, 348, 86, 21}, false, on_wallpaper_mode, d);
-    xd_widget_set_page(d->wallpaper_mode, PAGE_BACKGROUND);
+    properties->wallpaper_mode =
+        xd_combo(win, (xd_rect){298, 348, 86, 21}, false, on_wallpaper_mode, properties);
+    xd_widget_set_page(properties->wallpaper_mode, PAGE_BACKGROUND);
     static const char *const modes[] = {"Center", "Tile", "Stretch", "Fill", "Fit"};
     for (size_t i = 0; i < XD_ARRAY_LEN(modes); i++)
-        xd_widget_add_item(d->wallpaper_mode, modes[i]);
-    xd_widget_select(d->wallpaper_mode, (int)d->pending.wallpaper_mode);
+        xd_widget_add_item(properties->wallpaper_mode, modes[i]);
+    xd_widget_select(properties->wallpaper_mode, (int)properties->pending.wallpaper_mode);
     /* XP's Desktop tab: under the list. */
-    d->customize = xd_button(win, (xd_rect){20, 376, 120, 23}, "Customize Desktop...",
-                             on_customize, d);
-    xd_widget_set_page(d->customize, PAGE_BACKGROUND);
+    properties->customize = xd_button(win, (xd_rect){20, 376, 120, 23}, "Customize Desktop...",
+                                      on_customize, properties);
+    xd_widget_set_page(properties->customize, PAGE_BACKGROUND);
 }
 
 /* ---- running helpers ---------------------------------------------------------- */
@@ -873,145 +895,152 @@ static double seconds_since(struct timespec *last) {
 
 /* ---- Screen Saver ------------------------------------------------------------------ */
 
-static const char *pending_saver(const desk *d) {
-    return xd_saver_find(d->pending.screensaver) != nullptr ? d->pending.screensaver : "";
+static const char *pending_saver(const desk *properties) {
+    return xd_saver_find(properties->pending.screensaver) != nullptr
+               ? properties->pending.screensaver
+               : "";
 }
 
-static void draw_saver_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t,
-                               void *user) {
-    (void)w;
-    desk *d = user;
-    xd_rect screen = draw_monitor(cr, r, t, primary_aspect(d));
-    const char *id = pending_saver(d);
+static void draw_saver_preview(xd_widget *widget, cairo_t *cairo, xd_rect rect,
+                               const xd_theme *theme, void *user) {
+    (void)widget;
+    desk *properties = user;
+    xd_rect screen = draw_monitor(cairo, rect, theme, primary_aspect(properties));
+    const char *id = pending_saver(properties);
     if (id[0] == '\0') {
         /* (None): the desktop as it is. */
         xd_theme pt;
-        pending_theme(d, t->scale, &pt);
-        xd_fill_rect(cr, screen, xd_sys(&pt, XD_COLOR_BACKGROUND));
+        pending_theme(properties, theme->scale, &pt);
+        xd_fill_rect(cairo, screen, xd_sys(&pt, XD_COLOR_BACKGROUND));
         return;
     }
-    if (d->preview_saver == nullptr || strcmp(d->preview_saver_id, id) != 0 ||
-        d->preview_saver_w != screen.w || d->preview_saver_h != screen.h) {
-        if (d->preview_saver != nullptr)
-            xd_saver_destroy(d->preview_saver);
+    if (properties->preview_saver == nullptr || strcmp(properties->preview_saver_id, id) != 0 ||
+        properties->preview_saver_w != screen.w || properties->preview_saver_h != screen.h) {
+        if (properties->preview_saver != nullptr)
+            xd_saver_destroy(properties->preview_saver);
         /* A miniature: sized as if the real screen were shrunk to fit. */
-        double scale = fmax(0.2, t->scale * screen.w / 1024.0);
-        d->preview_saver = xd_saver_create(id, &d->pending.savers, screen.w, screen.h, scale);
-        snprintf(d->preview_saver_id, sizeof(d->preview_saver_id), "%s", id);
-        d->preview_saver_w = screen.w;
-        d->preview_saver_h = screen.h;
-        d->preview_last = (struct timespec){0};
+        double scale = fmax(0.2, theme->scale * screen.w / 1024.0);
+        properties->preview_saver =
+            xd_saver_create(id, &properties->pending.savers, screen.w, screen.h, scale);
+        snprintf(properties->preview_saver_id, sizeof(properties->preview_saver_id), "%s", id);
+        properties->preview_saver_w = screen.w;
+        properties->preview_saver_h = screen.h;
+        properties->preview_last = (struct timespec){0};
     }
-    if (d->preview_saver == nullptr)
+    if (properties->preview_saver == nullptr)
         return;
-    cairo_save(cr);
-    cairo_rectangle(cr, screen.x, screen.y, screen.w, screen.h);
-    cairo_clip(cr);
-    cairo_translate(cr, screen.x, screen.y);
-    xd_saver_frame(d->preview_saver, cr, seconds_since(&d->preview_last));
-    cairo_restore(cr);
+    cairo_save(cairo);
+    cairo_rectangle(cairo, screen.x, screen.y, screen.w, screen.h);
+    cairo_clip(cairo);
+    cairo_translate(cairo, screen.x, screen.y);
+    xd_saver_frame(properties->preview_saver, cairo, seconds_since(&properties->preview_last));
+    cairo_restore(cairo);
 }
 
 static void animate(void *user) {
-    desk *d = user;
-    xd_widget_redraw(d->saver_preview);
+    desk *properties = user;
+    xd_widget_redraw(properties->saver_preview);
 }
 
 /* The preview runs only while its page shows. */
-static void update_animation(desk *d) {
-    bool want = d->page == PAGE_SCREENSAVER && xd_saver_animated(pending_saver(d));
-    if (want && d->anim == nullptr)
-        d->anim = xd_ui_add_timer(d->ui, 50, true, animate, d);
-    else if (!want && d->anim != nullptr) {
-        xd_ui_remove_source(d->anim);
-        d->anim = nullptr;
+static void update_animation(desk *properties) {
+    bool want =
+        properties->page == PAGE_SCREENSAVER && xd_saver_animated(pending_saver(properties));
+    if (want && properties->anim == nullptr)
+        properties->anim = xd_ui_add_timer(properties->ui, 50, true, animate, properties);
+    else if (!want && properties->anim != nullptr) {
+        xd_ui_remove_source(properties->anim);
+        properties->anim = nullptr;
     }
 }
 
 static const int wait_minutes[] = {1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60, 90, 120, 180, 240};
 static const int monitor_minutes[] = {0, 1, 2, 3, 5, 10, 15, 20, 25, 30, 45, 60, 120, 180, 240, 300};
 
-static void saver_controls(desk *d) {
-    bool on = pending_saver(d)[0] != '\0';
-    xd_widget_set_enabled(d->saver_settings_btn,
-                          d->saver_setup == nullptr && xd_saver_has_settings(pending_saver(d)));
-    xd_widget_set_enabled(d->saver_preview_btn, on);
-    xd_widget_set_enabled(d->saver_password, on);
-    xd_widget_set_enabled(d->saver_wait, on);
+static void saver_controls(desk *properties) {
+    bool on = pending_saver(properties)[0] != '\0';
+    xd_widget_set_enabled(properties->saver_settings_btn,
+                          properties->saver_setup == nullptr &&
+                              xd_saver_has_settings(pending_saver(properties)));
+    xd_widget_set_enabled(properties->saver_preview_btn, on);
+    xd_widget_set_enabled(properties->saver_password, on);
+    xd_widget_set_enabled(properties->saver_wait, on);
 }
 
-static void on_saver(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
+static void on_saver(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
     const xd_saver_info *savers = nullptr;
-    size_t n = xd_savers(&savers);
-    if (i <= 0 || (size_t)(i - 1) >= n)
-        d->pending.screensaver[0] = '\0';
+    size_t count = xd_savers(&savers);
+    if (i <= 0 || (size_t)(i - 1) >= count)
+        properties->pending.screensaver[0] = '\0';
     else
-        snprintf(d->pending.screensaver, sizeof(d->pending.screensaver), "%s", savers[i - 1].id);
-    saver_controls(d);
-    update_animation(d);
-    xd_widget_redraw(d->saver_preview);
-    changed(d);
+        snprintf(properties->pending.screensaver, sizeof(properties->pending.screensaver), "%s",
+                 savers[i - 1].id);
+    saver_controls(properties);
+    update_animation(properties);
+    xd_widget_redraw(properties->saver_preview);
+    changed(properties);
 }
 
-static void on_saver_password(xd_widget *w, void *user) {
-    desk *d = user;
-    d->pending.screensaver_password = xd_checkbox_checked(w);
-    changed(d);
+static void on_saver_password(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->pending.screensaver_password = xd_checkbox_checked(widget);
+    changed(properties);
 }
 
-static void on_saver_wait(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
-    if (i >= 0 && (size_t)i < d->wait_count)
-        d->pending.screensaver_wait = d->wait_values[i];
-    changed(d);
+static void on_saver_wait(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
+    if (i >= 0 && (size_t)i < properties->wait_count)
+        properties->pending.screensaver_wait = properties->wait_values[i];
+    changed(properties);
 }
 
-static void on_monitor_off(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
+static void on_monitor_off(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
     if (i >= 0 && (size_t)i < XD_ARRAY_LEN(monitor_minutes))
-        d->pending.monitor_off = monitor_minutes[i];
-    changed(d);
+        properties->pending.monitor_off = monitor_minutes[i];
+    changed(properties);
 }
 
 /* Like Windows' savers, whose Settings wrote their own registry keys on
  * OK: saved at once, apart from the rest of Display Properties. */
 static void on_saver_setup_done(const xd_saver_settings *sv, void *user) {
-    desk *d = user;
-    d->saver_setup = nullptr;
+    desk *properties = user;
+    properties->saver_setup = nullptr;
     if (sv != nullptr) {
         xd_settings now;
         xd_settings_load(&now);
         now.savers = *sv;
         if (!xd_settings_save(&now))
             fprintf(stderr, "xd-desk: cannot write settings\n");
-        d->saved.savers = d->pending.savers = *sv;
+        properties->saved.savers = properties->pending.savers = *sv;
         /* The preview starts again with them. */
-        if (d->preview_saver != nullptr)
-            xd_saver_destroy(d->preview_saver);
-        d->preview_saver = nullptr;
-        xd_widget_redraw(d->saver_preview);
+        if (properties->preview_saver != nullptr)
+            xd_saver_destroy(properties->preview_saver);
+        properties->preview_saver = nullptr;
+        xd_widget_redraw(properties->saver_preview);
     }
-    saver_controls(d);
-    xd_window_set_focus(d->win, d->saver_settings_btn);
-    changed(d);
+    saver_controls(properties);
+    xd_window_set_focus(properties->win, properties->saver_settings_btn);
+    changed(properties);
 }
 
-static void on_saver_settings([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    if (d->saver_setup != nullptr)
+static void on_saver_settings([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    if (properties->saver_setup != nullptr)
         return;
-    d->saver_setup = saver_setup_open(d->ui, pending_saver(d), &d->pending.savers,
-                                      on_saver_setup_done, d);
-    saver_controls(d);
+    properties->saver_setup =
+        saver_setup_open(properties->ui, pending_saver(properties), &properties->pending.savers,
+                         on_saver_setup_done, properties);
+    saver_controls(properties);
 }
 
-static void on_saver_preview_button([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    const char *id = pending_saver(d);
+static void on_saver_preview_button([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    const char *id = pending_saver(properties);
     if (id[0] == '\0')
         return;
     /* Preview runs unprotected, like Windows' Preview button. */
@@ -1019,134 +1048,140 @@ static void on_saver_preview_button([[maybe_unused]] xd_widget *w, void *user) {
     launch_own("xd-lock", args);
 }
 
-static const char *minutes_label(int m, char *buf, size_t cap) {
-    if (m == 0)
+static const char *minutes_label(int delay_minutes, char *buf, size_t cap) {
+    if (delay_minutes == 0)
         snprintf(buf, cap, "Never");
-    else if (m < 60)
-        snprintf(buf, cap, "After %d min%s", m, m == 1 ? "" : "s");
+    else if (delay_minutes < 60)
+        snprintf(buf, cap, "After %d min%s", delay_minutes, delay_minutes == 1 ? "" : "s");
     else
-        snprintf(buf, cap, "After %d hour%s", m / 60, m == 60 ? "" : "s");
+        snprintf(buf, cap, "After %d hour%s", delay_minutes / 60, delay_minutes == 60 ? "" : "s");
     return buf;
 }
 
-static void build_screensaver(desk *d) {
-    xd_window *win = d->win;
-    const int P = PAGE_SCREENSAVER;
-    d->saver_preview = xd_custom(win, (xd_rect){105, 42, 194, 166}, draw_saver_preview, d);
-    xd_widget_set_page(d->saver_preview, P);
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 216, 364, 92}, "Screen Saver"), P);
-    d->saver_combo = xd_combo(win, (xd_rect){32, 238, 170, 21}, false, on_saver, d);
-    xd_widget_set_page(d->saver_combo, P);
-    xd_widget_add_item(d->saver_combo, "(None)");
+static void build_screensaver(desk *properties) {
+    xd_window *win = properties->win;
+    const int page = PAGE_SCREENSAVER;
+    properties->saver_preview =
+        xd_custom(win, (xd_rect){105, 42, 194, 166}, draw_saver_preview, properties);
+    xd_widget_set_page(properties->saver_preview, page);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 216, 364, 92}, "Screen Saver"), page);
+    properties->saver_combo =
+        xd_combo(win, (xd_rect){32, 238, 170, 21}, false, on_saver, properties);
+    xd_widget_set_page(properties->saver_combo, page);
+    xd_widget_add_item(properties->saver_combo, "(None)");
     const xd_saver_info *savers = nullptr;
-    size_t n = xd_savers(&savers);
+    size_t count = xd_savers(&savers);
     int current = 0;
-    for (size_t i = 0; i < n; i++) {
-        xd_widget_add_item(d->saver_combo, savers[i].name);
-        if (strcmp(savers[i].id, d->pending.screensaver) == 0)
+    for (size_t i = 0; i < count; i++) {
+        xd_widget_add_item(properties->saver_combo, savers[i].name);
+        if (strcmp(savers[i].id, properties->pending.screensaver) == 0)
             current = (int)i + 1;
     }
-    xd_widget_select(d->saver_combo, current);
+    xd_widget_select(properties->saver_combo, current);
 
-    d->saver_settings_btn =
-        xd_button(win, (xd_rect){210, 237, 80, 23}, "Settings", on_saver_settings, d);
-    xd_widget_set_page(d->saver_settings_btn, P);
-    d->saver_preview_btn =
-        xd_button(win, (xd_rect){296, 237, 80, 23}, "Preview", on_saver_preview_button, d);
-    xd_widget_set_page(d->saver_preview_btn, P);
-    d->saver_password = xd_checkbox(win, (xd_rect){32, 272, 150, 20}, "Password protected",
-                                    d->pending.screensaver_password, on_saver_password, d);
-    xd_widget_set_page(d->saver_password, P);
+    properties->saver_settings_btn =
+        xd_button(win, (xd_rect){210, 237, 80, 23}, "Settings", on_saver_settings, properties);
+    xd_widget_set_page(properties->saver_settings_btn, page);
+    properties->saver_preview_btn =
+        xd_button(win, (xd_rect){296, 237, 80, 23}, "Preview", on_saver_preview_button, properties);
+    xd_widget_set_page(properties->saver_preview_btn, page);
+    properties->saver_password =
+        xd_checkbox(win, (xd_rect){32, 272, 150, 20}, "Password protected",
+                    properties->pending.screensaver_password, on_saver_password, properties);
+    xd_widget_set_page(properties->saver_password, page);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){202, 274, 32, 16}, "Wait:", 0), P);
-    d->saver_wait = xd_combo(win, (xd_rect){236, 271, 82, 21}, false, on_saver_wait, d);
-    xd_widget_set_page(d->saver_wait, P);
+    xd_widget_set_page(xd_label(win, (xd_rect){202, 274, 32, 16}, "Wait:", 0), page);
+    properties->saver_wait =
+        xd_combo(win, (xd_rect){236, 271, 82, 21}, false, on_saver_wait, properties);
+    xd_widget_set_page(properties->saver_wait, page);
     /* The usual choices, plus whatever desktop.ini has. */
-    d->wait_count = 0;
+    properties->wait_count = 0;
     bool listed = false;
     for (size_t i = 0; i < XD_ARRAY_LEN(wait_minutes); i++) {
-        if (!listed && wait_minutes[i] > d->pending.screensaver_wait) {
-            d->wait_values[d->wait_count++] = d->pending.screensaver_wait;
+        if (!listed && wait_minutes[i] > properties->pending.screensaver_wait) {
+            properties->wait_values[properties->wait_count++] =
+                properties->pending.screensaver_wait;
             listed = true;
         }
-        if (wait_minutes[i] == d->pending.screensaver_wait)
+        if (wait_minutes[i] == properties->pending.screensaver_wait)
             listed = true;
-        d->wait_values[d->wait_count++] = wait_minutes[i];
+        properties->wait_values[properties->wait_count++] = wait_minutes[i];
     }
     if (!listed)
-        d->wait_values[d->wait_count++] = d->pending.screensaver_wait;
+        properties->wait_values[properties->wait_count++] = properties->pending.screensaver_wait;
     int wait_sel = 0;
-    for (size_t i = 0; i < d->wait_count; i++) {
+    for (size_t i = 0; i < properties->wait_count; i++) {
         char buf[16];
-        snprintf(buf, sizeof(buf), "%d", d->wait_values[i]);
-        xd_widget_add_item(d->saver_wait, buf);
-        if (d->wait_values[i] == d->pending.screensaver_wait)
+        snprintf(buf, sizeof(buf), "%d", properties->wait_values[i]);
+        xd_widget_add_item(properties->saver_wait, buf);
+        if (properties->wait_values[i] == properties->pending.screensaver_wait)
             wait_sel = (int)i;
     }
-    xd_widget_select(d->saver_wait, wait_sel);
-    xd_widget_set_page(xd_label(win, (xd_rect){324, 274, 56, 16}, "minutes", 0), P);
+    xd_widget_select(properties->saver_wait, wait_sel);
+    xd_widget_set_page(xd_label(win, (xd_rect){324, 274, 56, 16}, "minutes", 0), page);
 
     xd_widget_set_page(
-        xd_groupbox(win, (xd_rect){20, 316, 364, 64}, "Energy saving features of monitor"), P);
+        xd_groupbox(win, (xd_rect){20, 316, 364, 64}, "Energy saving features of monitor"), page);
     xd_widget_set_page(
-        xd_image(win, (xd_rect){32, 338, 32, 32}, "preferences-system-power-management"), P);
-    xd_widget_set_page(xd_label(win, (xd_rect){74, 342, 110, 16}, "Turn off monitor:", 0), P);
-    xd_widget *monitor = xd_combo(win, (xd_rect){186, 339, 150, 21}, false, on_monitor_off, d);
-    xd_widget_set_page(monitor, P);
+        xd_image(win, (xd_rect){32, 338, 32, 32}, "preferences-system-power-management"), page);
+    xd_widget_set_page(xd_label(win, (xd_rect){74, 342, 110, 16}, "Turn off monitor:", 0), page);
+    xd_widget *monitor =
+        xd_combo(win, (xd_rect){186, 339, 150, 21}, false, on_monitor_off, properties);
+    xd_widget_set_page(monitor, page);
     int mon_sel = 0;
     int best = INT32_MAX;
     for (size_t i = 0; i < XD_ARRAY_LEN(monitor_minutes); i++) {
         char buf[32];
         xd_widget_add_item(monitor, minutes_label(monitor_minutes[i], buf, sizeof(buf)));
-        int diff = abs(monitor_minutes[i] - d->pending.monitor_off);
+        int diff = abs(monitor_minutes[i] - properties->pending.monitor_off);
         if (diff < best) {
             best = diff;
             mon_sel = (int)i;
         }
     }
     xd_widget_select(monitor, mon_sel);
-    saver_controls(d);
+    saver_controls(properties);
 }
 
 /* ---- Appearance ---------------------------------------------------------------- */
 
-static void draw_appearance_preview(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t,
-                                    void *user) {
-    (void)w;
-    desk *d = user;
+static void draw_appearance_preview(xd_widget *widget, cairo_t *cairo, xd_rect rect,
+                                    const xd_theme *theme, void *user) {
+    (void)widget;
+    desk *properties = user;
     xd_theme pt;
-    pending_theme(d, t->scale, &pt);
-    int px = xd_tpx(t, 1);
+    pending_theme(properties, theme->scale, &pt);
+    int px = xd_tpx(theme, 1);
 
     /* Sunken well like Windows' preview box. */
-    xd_rect well = xd_theme_draw_field(t, cr, r, false);
-    xd_fill_rect(cr, well, xd_sys(&pt, XD_COLOR_BACKGROUND));
+    xd_rect well = xd_theme_draw_field(theme, cairo, rect, false);
+    xd_fill_rect(cairo, well, xd_sys(&pt, XD_COLOR_BACKGROUND));
 
     /* Inactive window behind, active window in front, message box on top. */
     xd_frame inactive = {.title = "Inactive Window",
                          .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE};
-    xd_rect r1 = {well.x + xd_tpx(t, 10), well.y + xd_tpx(t, 8), well.w - xd_tpx(t, 60),
-                  xd_tpx(t, 90)};
-    xd_theme_draw_frame(&pt, cr, r1, &inactive);
+    xd_rect r1 = {well.x + xd_tpx(theme, 10), well.y + xd_tpx(theme, 8), well.w - xd_tpx(theme, 60),
+                  xd_tpx(theme, 90)};
+    xd_theme_draw_frame(&pt, cairo, r1, &inactive);
     xd_insets in1 = xd_theme_frame_insets(&pt, &inactive);
-    xd_fill_rect(cr, xd_rect_inset4(r1, in1.left, in1.top, in1.right, in1.bottom),
+    xd_fill_rect(cairo, xd_rect_inset4(r1, in1.left, in1.top, in1.right, in1.bottom),
                  xd_theme_dialog_color(&pt));
 
     xd_frame active = {.title = "Active Window",
                        .active = true,
                        .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE};
-    xd_rect r2 = {well.x + xd_tpx(t, 24), well.y + xd_tpx(t, 36), well.w - xd_tpx(t, 48),
-                  well.h - xd_tpx(t, 44)};
-    xd_theme_draw_frame(&pt, cr, r2, &active);
+    xd_rect r2 = {well.x + xd_tpx(theme, 24), well.y + xd_tpx(theme, 36),
+                  well.w - xd_tpx(theme, 48), well.h - xd_tpx(theme, 44)};
+    xd_theme_draw_frame(&pt, cairo, r2, &active);
     xd_insets in2 = xd_theme_frame_insets(&pt, &active);
     xd_rect client = xd_rect_inset4(r2, in2.left, in2.top, in2.right, in2.bottom);
-    xd_fill_rect(cr, client, xd_theme_dialog_color(&pt));
+    xd_fill_rect(cairo, client, xd_theme_dialog_color(&pt));
     xd_rect text_area = xd_rect_inset(client, xd_tpx(&pt, 6), xd_tpx(&pt, 6));
     xd_rect field = {text_area.x, text_area.y, text_area.w / 2, xd_tpx(&pt, 40)};
-    xd_rect field_in = xd_theme_draw_field(&pt, cr, field, false);
+    xd_rect field_in = xd_theme_draw_field(&pt, cairo, field, false);
     xd_text_style st = xd_text(&pt, XD_FONT_MESSAGE, xd_sys(&pt, XD_COLOR_WINDOW_TEXT),
                                XD_ALIGN_START);
-    xd_draw_text(cr, xd_rect_inset4(field_in, xd_tpx(&pt, 3), 0, 0, 0), "Window Text", &st);
+    xd_draw_text(cairo, xd_rect_inset4(field_in, xd_tpx(&pt, 3), 0, 0, 0), "Window Text", &st);
 
     xd_frame box = {.title = "Message Box", .active = true, .dialog = true,
                     .buttons = XD_CAPBTN_CLOSE};
@@ -1155,23 +1190,24 @@ static void draw_appearance_preview(xd_widget *w, cairo_t *cr, xd_rect r, const 
     int bh = ib.top + ib.bottom + xd_tpx(&pt, 52);
     xd_rect r3 = {client.x + client.w - bw - xd_tpx(&pt, 8),
                   XD_MIN(client.y + xd_tpx(&pt, 8), well.y + well.h - bh - px), bw, bh};
-    xd_theme_draw_frame(&pt, cr, r3, &box);
+    xd_theme_draw_frame(&pt, cairo, r3, &box);
     xd_rect bc = xd_rect_inset4(r3, ib.left, ib.top, ib.right, ib.bottom);
-    xd_fill_rect(cr, bc, xd_theme_dialog_color(&pt));
-    xd_draw_text(cr, (xd_rect){bc.x + xd_tpx(&pt, 8), bc.y + xd_tpx(&pt, 4), bc.w, xd_tpx(&pt, 16)},
+    xd_fill_rect(cairo, bc, xd_theme_dialog_color(&pt));
+    xd_draw_text(cairo,
+                 (xd_rect){bc.x + xd_tpx(&pt, 8), bc.y + xd_tpx(&pt, 4), bc.w, xd_tpx(&pt, 16)},
                  "Message Text", &st);
     int okw = xd_tpx(&pt, 60);
-    xd_theme_draw_button(&pt, cr,
-                         (xd_rect){bc.x + (bc.w - okw) / 2, bc.y + xd_tpx(&pt, 24), okw,
-                                   xd_tpx(&pt, 22)},
-                         XD_STATE_DEFAULT, "OK");
+    xd_theme_draw_button(
+        &pt, cairo,
+        (xd_rect){bc.x + (bc.w - okw) / 2, bc.y + xd_tpx(&pt, 24), okw, xd_tpx(&pt, 22)},
+        XD_STATE_DEFAULT, "OK");
 }
 
 /* Which Windows XP style colour variant installed scheme `i` is, if any. */
-static xd_luna_color scheme_luna_color(const desk *d, size_t i) {
+static xd_luna_color scheme_luna_color(const desk *properties, size_t i) {
     xd_settings probe;
     xd_settings_defaults(&probe);
-    snprintf(probe.scheme, sizeof(probe.scheme), "%s", d->schemes.stems[i]);
+    snprintf(probe.scheme, sizeof(probe.scheme), "%s", properties->schemes.stems[i]);
     xd_scheme scheme;
     xd_settings_scheme(&probe, &scheme);
     return scheme.luna_color;
@@ -1180,16 +1216,17 @@ static xd_luna_color scheme_luna_color(const desk *d, size_t i) {
 /* As in XP, the Color scheme list holds the colour variants of Windows XP
  * style (Default (blue), Olive Green, Silver) or, for the other styles, the
  * classic schemes after the built-in Windows Standard. */
-static bool scheme_listed(const desk *d, size_t i) {
-    return (scheme_luna_color(d, i) != XD_LUNA_NONE) == (d->pending.style == XD_STYLE_LUNA);
+static bool scheme_listed(const desk *properties, size_t i) {
+    return (scheme_luna_color(properties, i) != XD_LUNA_NONE) ==
+           (properties->pending.style == XD_STYLE_LUNA);
 }
 
 /* The installed scheme shown as combo item `item`, or -1 for the built-in
  * Windows Standard. */
-static ptrdiff_t listed_scheme(const desk *d, int item) {
-    int n = d->pending.style == XD_STYLE_LUNA ? 0 : 1;
-    for (size_t i = 0; i < d->schemes.count; i++) {
-        if (scheme_listed(d, i) && n++ == item)
+static ptrdiff_t listed_scheme(const desk *properties, int item) {
+    int count = properties->pending.style == XD_STYLE_LUNA ? 0 : 1;
+    for (size_t i = 0; i < properties->schemes.count; i++) {
+        if (scheme_listed(properties, i) && count++ == item)
             return (ptrdiff_t)i;
     }
     return -1;
@@ -1198,46 +1235,47 @@ static ptrdiff_t listed_scheme(const desk *d, int item) {
 /* ---- theme packages: Windows and buttons, and their variants ------------------------- */
 
 /* The pending package, if it's installed. */
-static const xd_installed_package *pending_package(const desk *d) {
-    if (d->pending.theme_package[0] == '\0')
+static const xd_installed_package *pending_package(const desk *properties) {
+    if (properties->pending.theme_package[0] == '\0')
         return nullptr;
-    for (guint i = 0; i < d->packages->len; i++) {
-        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
-        if (strcmp(p->name, d->pending.theme_package) == 0)
-            return p;
+    for (guint i = 0; i < properties->packages->len; i++) {
+        const xd_installed_package *package = g_ptr_array_index(properties->packages, i);
+        if (strcmp(package->name, properties->pending.theme_package) == 0)
+            return package;
     }
     return nullptr;
 }
 
 /* Its pending variant: ThemeVariant's, else its first, the default. */
-static const xd_pkg_variant_info *pending_variant(const desk *d, const xd_installed_package *p) {
-    for (size_t i = 0; i < p->info.variant_count; i++) {
-        if (strcmp(p->info.variants[i].id, d->pending.theme_variant) == 0)
-            return &p->info.variants[i];
+static const xd_pkg_variant_info *pending_variant(const desk *properties,
+                                                  const xd_installed_package *package) {
+    for (size_t i = 0; i < package->info.variant_count; i++) {
+        if (strcmp(package->info.variants[i].id, properties->pending.theme_variant) == 0)
+            return &package->info.variants[i];
     }
-    return &p->info.variants[0];
+    return &package->info.variants[0];
 }
 
 /* Loads the pending package for the preview, unless it has been. */
-static void update_preview_package(desk *d) {
-    const xd_installed_package *p = pending_package(d);
-    const char *path = p != nullptr ? p->path : nullptr;
-    const char *variant = p != nullptr ? pending_variant(d, p)->id : nullptr;
-    if (g_strcmp0(path, d->preview_pkg_path) == 0 &&
-        g_strcmp0(variant, d->preview_pkg_variant) == 0)
+static void update_preview_package(desk *properties) {
+    const xd_installed_package *package = pending_package(properties);
+    const char *path = package != nullptr ? package->path : nullptr;
+    const char *variant = package != nullptr ? pending_variant(properties, package)->id : nullptr;
+    if (g_strcmp0(path, properties->preview_pkg_path) == 0 &&
+        g_strcmp0(variant, properties->preview_pkg_variant) == 0)
         return;
-    g_clear_pointer(&d->preview_pkg, xd_pkg_free);
-    g_free(d->preview_pkg_path);
-    g_free(d->preview_pkg_variant);
-    d->preview_pkg_path = g_strdup(path);
-    d->preview_pkg_variant = g_strdup(variant);
-    if (p == nullptr)
+    g_clear_pointer(&properties->preview_pkg, xd_pkg_free);
+    g_free(properties->preview_pkg_path);
+    g_free(properties->preview_pkg_variant);
+    properties->preview_pkg_path = g_strdup(path);
+    properties->preview_pkg_variant = g_strdup(variant);
+    if (package == nullptr)
         return;
     char *names = xd_theme_names_path();
     GError *error = nullptr;
-    d->preview_pkg = xd_pkg_load(path, variant, names, &error);
+    properties->preview_pkg = xd_pkg_load(path, variant, names, &error);
     g_free(names);
-    if (d->preview_pkg == nullptr) {
+    if (properties->preview_pkg == nullptr) {
         /* The preview shows its base style. */
         fprintf(stderr, "xd-desk: %s\n", error->message);
         g_error_free(error);
@@ -1246,265 +1284,274 @@ static void update_preview_package(desk *d) {
 
 /* Its colours, as Color scheme lists them: each variant name once, in
  * theme.xml's order. `out` holds variant_count. */
-static size_t package_colors(const xd_installed_package *p, const char **out) {
-    size_t n = 0;
-    for (size_t i = 0; i < p->info.variant_count; i++) {
+static size_t package_colors(const xd_installed_package *package, const char **out) {
+    size_t count = 0;
+    for (size_t i = 0; i < package->info.variant_count; i++) {
         bool seen = false;
-        for (size_t k = 0; k < n && !seen; k++)
-            seen = strcmp(out[k], p->info.variants[i].name) == 0;
+        for (size_t k = 0; k < count && !seen; k++)
+            seen = strcmp(out[k], package->info.variants[i].name) == 0;
         if (!seen)
-            out[n++] = p->info.variants[i].name;
+            out[count++] = package->info.variants[i].name;
     }
-    return n;
+    return count;
 }
 
 /* The sizes colour `color` comes in, as Font size lists them. */
-static size_t package_sizes(const xd_installed_package *p, const char *color, const char **out) {
-    size_t n = 0;
-    for (size_t i = 0; i < p->info.variant_count; i++) {
-        if (strcmp(p->info.variants[i].name, color) == 0)
-            out[n++] = p->info.variants[i].size;
+static size_t package_sizes(const xd_installed_package *package, const char *color,
+                            const char **out) {
+    size_t count = 0;
+    for (size_t i = 0; i < package->info.variant_count; i++) {
+        if (strcmp(package->info.variants[i].name, color) == 0)
+            out[count++] = package->info.variants[i].size;
     }
-    return n;
+    return count;
 }
 
 /* Colour `color` in `size`, else in its first size. */
-static const xd_pkg_variant_info *find_variant(const xd_installed_package *p, const char *color,
-                                               const char *size) {
+static const xd_pkg_variant_info *find_variant(const xd_installed_package *package,
+                                               const char *color, const char *size) {
     const xd_pkg_variant_info *any = nullptr;
-    for (size_t i = 0; i < p->info.variant_count; i++) {
-        const xd_pkg_variant_info *v = &p->info.variants[i];
-        if (strcmp(v->name, color) != 0)
+    for (size_t i = 0; i < package->info.variant_count; i++) {
+        const xd_pkg_variant_info *variant = &package->info.variants[i];
+        if (strcmp(variant->name, color) != 0)
             continue;
-        if (strcmp(v->size, size) == 0)
-            return v;
+        if (strcmp(variant->size, size) == 0)
+            return variant;
         if (any == nullptr)
-            any = v;
+            any = variant;
     }
     return any;
 }
 
 /* Chooses the variant; its size, if it's one of ours, sets the scheme's
  * font size too, for what the package leaves to the scheme. */
-static void set_variant(desk *d, const xd_pkg_variant_info *v) {
-    snprintf(d->pending.theme_variant, sizeof(d->pending.theme_variant), "%s", v->id);
+static void set_variant(desk *properties, const xd_pkg_variant_info *variant) {
+    snprintf(properties->pending.theme_variant, sizeof(properties->pending.theme_variant), "%s",
+             variant->id);
     static const char *const sizes[] = {"Normal", "Large Fonts", "Extra Large Fonts"};
     for (size_t i = 0; i < XD_ARRAY_LEN(sizes); i++) {
-        if (g_ascii_strcasecmp(v->size, sizes[i]) == 0 &&
-            (xd_font_size)i != d->pending.font_size) {
-            d->pending.font_size = (xd_font_size)i;
-            d->pending.custom_scheme = (xd_scheme_custom){0};
+        if (g_ascii_strcasecmp(variant->size, sizes[i]) == 0 &&
+            (xd_font_size)i != properties->pending.font_size) {
+            properties->pending.font_size = (xd_font_size)i;
+            properties->pending.custom_scheme = (xd_scheme_custom){0};
         }
     }
 }
 
 /* Windows and buttons: the built-in styles, then the installed packages
  * by name. */
-static void fill_styles(desk *d) {
-    xd_widget_clear_items(d->style_combo);
+static void fill_styles(desk *properties) {
+    xd_widget_clear_items(properties->style_combo);
     for (int i = 0; i < XD_STYLE_COUNT; i++)
-        xd_widget_add_item(d->style_combo, xd_visual_style_name((xd_visual_style)i));
-    int current = (int)d->pending.style;
-    for (guint i = 0; i < d->packages->len; i++) {
-        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
-        const char *name = p->info.name[0] != '\0' ? p->info.name : p->name;
+        xd_widget_add_item(properties->style_combo, xd_visual_style_name((xd_visual_style)i));
+    int current = (int)properties->pending.style;
+    for (guint i = 0; i < properties->packages->len; i++) {
+        const xd_installed_package *package = g_ptr_array_index(properties->packages, i);
+        const char *name = package->info.name[0] != '\0' ? package->info.name : package->name;
         /* Told apart by their file names where they share a name with a
          * built-in style (7's is "Aero" too) or another package. */
         bool shared = false;
         for (int k = 0; k < XD_STYLE_COUNT && !shared; k++)
             shared = g_ascii_strcasecmp(name, xd_visual_style_name((xd_visual_style)k)) == 0;
-        for (guint k = 0; k < d->packages->len && !shared; k++) {
-            const xd_installed_package *o = g_ptr_array_index(d->packages, k);
-            shared = k != i && strcmp(name, o->info.name[0] != '\0' ? o->info.name : o->name) == 0;
+        for (guint k = 0; k < properties->packages->len && !shared; k++) {
+            const xd_installed_package *other = g_ptr_array_index(properties->packages, k);
+            shared = k != i && strcmp(name, other->info.name[0] != '\0' ? other->info.name
+                                                                        : other->name) == 0;
         }
-        char *label = shared ? g_strdup_printf("%s (%s)", name, p->name) : g_strdup(name);
-        xd_widget_add_item(d->style_combo, label);
+        char *label = shared ? g_strdup_printf("%s (%s)", name, package->name) : g_strdup(name);
+        xd_widget_add_item(properties->style_combo, label);
         g_free(label);
-        if (strcmp(p->name, d->pending.theme_package) == 0)
+        if (strcmp(package->name, properties->pending.theme_package) == 0)
             current = XD_STYLE_COUNT + (int)i;
     }
-    xd_widget_select(d->style_combo, current);
+    xd_widget_select(properties->style_combo, current);
 }
 
-static void fill_schemes(desk *d) {
-    xd_widget_clear_items(d->scheme_combo);
-    const xd_installed_package *pkg = pending_package(d);
+static void fill_schemes(desk *properties) {
+    xd_widget_clear_items(properties->scheme_combo);
+    const xd_installed_package *pkg = pending_package(properties);
     if (pkg != nullptr) {
         /* A package's colours, as XP lists a visual style's. */
         const char **colors = g_new(const char *, pkg->info.variant_count);
-        size_t n = package_colors(pkg, colors);
-        const char *current = pending_variant(d, pkg)->name;
-        for (size_t i = 0; i < n; i++) {
-            xd_widget_add_item(d->scheme_combo, colors[i]);
+        size_t count = package_colors(pkg, colors);
+        const char *current = pending_variant(properties, pkg)->name;
+        for (size_t i = 0; i < count; i++) {
+            xd_widget_add_item(properties->scheme_combo, colors[i]);
             if (strcmp(colors[i], current) == 0)
-                xd_widget_select(d->scheme_combo, (int)i);
+                xd_widget_select(properties->scheme_combo, (int)i);
         }
         g_free(colors);
         return;
     }
-    bool luna = d->pending.style == XD_STYLE_LUNA;
+    bool luna = properties->pending.style == XD_STYLE_LUNA;
     if (!luna)
-        xd_widget_add_item(d->scheme_combo, "Windows Standard (built in)");
-    int n = luna ? 0 : 1;
+        xd_widget_add_item(properties->scheme_combo, "Windows Standard (built in)");
+    int count = luna ? 0 : 1;
     int current = 0;
-    for (size_t i = 0; i < d->schemes.count; i++) {
-        if (!scheme_listed(d, i))
+    for (size_t i = 0; i < properties->schemes.count; i++) {
+        if (!scheme_listed(properties, i))
             continue;
-        xd_widget_add_item(d->scheme_combo, d->schemes.names[i]);
+        xd_widget_add_item(properties->scheme_combo, properties->schemes.names[i]);
         /* A classic scheme left under Windows XP style shows as Default
          * (blue), which is what its frames look like. */
-        if (strcmp(d->schemes.stems[i], d->pending.scheme) == 0 ||
-            (luna && current == 0 && scheme_luna_color(d, i) == XD_LUNA_BLUE))
-            current = n;
-        n++;
+        if (strcmp(properties->schemes.stems[i], properties->pending.scheme) == 0 ||
+            (luna && current == 0 && scheme_luna_color(properties, i) == XD_LUNA_BLUE))
+            current = count;
+        count++;
     }
-    xd_widget_select(d->scheme_combo, current);
+    xd_widget_select(properties->scheme_combo, current);
 }
 
 static const char *const font_sizes[] = {"Normal", "Large Fonts", "Extra Large Fonts"};
 
-static void fill_font_sizes(desk *d) {
-    xd_widget_clear_items(d->font_combo);
-    const xd_installed_package *pkg = pending_package(d);
+static void fill_font_sizes(desk *properties) {
+    xd_widget_clear_items(properties->font_combo);
+    const xd_installed_package *pkg = pending_package(properties);
     if (pkg != nullptr) {
         /* The sizes the package's colour comes in. */
-        const xd_pkg_variant_info *v = pending_variant(d, pkg);
+        const xd_pkg_variant_info *variant = pending_variant(properties, pkg);
         const char **sizes = g_new(const char *, pkg->info.variant_count);
-        size_t n = package_sizes(pkg, v->name, sizes);
-        for (size_t i = 0; i < n; i++) {
-            xd_widget_add_item(d->font_combo, sizes[i]);
-            if (strcmp(sizes[i], v->size) == 0)
-                xd_widget_select(d->font_combo, (int)i);
+        size_t count = package_sizes(pkg, variant->name, sizes);
+        for (size_t i = 0; i < count; i++) {
+            xd_widget_add_item(properties->font_combo, sizes[i]);
+            if (strcmp(sizes[i], variant->size) == 0)
+                xd_widget_select(properties->font_combo, (int)i);
         }
         g_free(sizes);
         return;
     }
     for (size_t i = 0; i < XD_ARRAY_LEN(font_sizes); i++)
-        xd_widget_add_item(d->font_combo, font_sizes[i]);
-    xd_widget_select(d->font_combo, (int)d->pending.font_size);
+        xd_widget_add_item(properties->font_combo, font_sizes[i]);
+    xd_widget_select(properties->font_combo, (int)properties->pending.font_size);
 }
 
 /* The look of the preview and the lists below Windows and buttons changed. */
-static void appearance_changed(desk *d) {
-    update_preview_package(d);
-    fill_schemes(d);
-    fill_font_sizes(d);
-    xd_widget_redraw(d->scheme_combo);
-    xd_widget_redraw(d->font_combo);
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+static void appearance_changed(desk *properties) {
+    update_preview_package(properties);
+    fill_schemes(properties);
+    fill_font_sizes(properties);
+    xd_widget_redraw(properties->scheme_combo);
+    xd_widget_redraw(properties->font_combo);
+    xd_widget_redraw(properties->appearance_preview);
+    changed(properties);
 }
 
-static void set_style(desk *d, xd_visual_style style) {
-    bool was_luna = d->pending.style == XD_STYLE_LUNA;
-    d->pending.style = style;
+static void set_style(desk *properties, xd_visual_style style) {
+    bool was_luna = properties->pending.style == XD_STYLE_LUNA;
+    properties->pending.style = style;
     /* Switching between Windows XP style and the others switches scheme
      * lists, and the scheme to the new list's first: Default (blue), or
      * Windows Standard. */
-    if (was_luna != (d->pending.style == XD_STYLE_LUNA)) {
-        d->pending.scheme[0] = '\0';
-        d->pending.custom_scheme = (xd_scheme_custom){0};
-        ptrdiff_t first = listed_scheme(d, 0);
-        if (d->pending.style == XD_STYLE_LUNA && first >= 0)
-            snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s",
-                     d->schemes.stems[first]);
+    if (was_luna != (properties->pending.style == XD_STYLE_LUNA)) {
+        properties->pending.scheme[0] = '\0';
+        properties->pending.custom_scheme = (xd_scheme_custom){0};
+        ptrdiff_t first = listed_scheme(properties, 0);
+        if (properties->pending.style == XD_STYLE_LUNA && first >= 0)
+            snprintf(properties->pending.scheme, sizeof(properties->pending.scheme), "%s",
+                     properties->schemes.stems[first]);
     }
 }
 
-static void on_style(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
+static void on_style(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
     if (i < 0)
         return;
     if (i < XD_STYLE_COUNT) {
-        if (d->pending.theme_package[0] == '\0' && (xd_visual_style)i == d->pending.style)
+        if (properties->pending.theme_package[0] == '\0' &&
+            (xd_visual_style)i == properties->pending.style)
             return;
-        d->pending.theme_package[0] = '\0';
-        d->pending.theme_variant[0] = '\0';
-        set_style(d, (xd_visual_style)i);
+        properties->pending.theme_package[0] = '\0';
+        properties->pending.theme_variant[0] = '\0';
+        set_style(properties, (xd_visual_style)i);
     } else {
-        if ((guint)(i - XD_STYLE_COUNT) >= d->packages->len)
+        if ((guint)(i - XD_STYLE_COUNT) >= properties->packages->len)
             return;
-        const xd_installed_package *p = g_ptr_array_index(d->packages, (guint)(i - XD_STYLE_COUNT));
-        if (strcmp(p->name, d->pending.theme_package) == 0)
+        const xd_installed_package *package =
+            g_ptr_array_index(properties->packages, (guint)(i - XD_STYLE_COUNT));
+        if (strcmp(package->name, properties->pending.theme_package) == 0)
             return;
         /* Its base style draws what it doesn't, and is what the desktop's
          * own choices (the Start menu, the taskbar's) go by. */
-        snprintf(d->pending.theme_package, sizeof(d->pending.theme_package), "%s", p->name);
-        set_style(d, p->info.base);
-        set_variant(d, &p->info.variants[0]);
+        snprintf(properties->pending.theme_package, sizeof(properties->pending.theme_package), "%s",
+                 package->name);
+        set_style(properties, package->info.base);
+        set_variant(properties, &package->info.variants[0]);
     }
-    appearance_changed(d);
+    appearance_changed(properties);
 }
 
-static void on_scheme(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
+static void on_scheme(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
     if (i < 0)
         return;
-    const xd_installed_package *pkg = pending_package(d);
+    const xd_installed_package *pkg = pending_package(properties);
     if (pkg != nullptr) {
         const char **colors = g_new(const char *, pkg->info.variant_count);
-        size_t n = package_colors(pkg, colors);
-        if ((size_t)i < n)
-            set_variant(d, find_variant(pkg, colors[i], pending_variant(d, pkg)->size));
+        size_t count = package_colors(pkg, colors);
+        if ((size_t)i < count)
+            set_variant(properties,
+                        find_variant(pkg, colors[i], pending_variant(properties, pkg)->size));
         g_free(colors);
-        appearance_changed(d);
+        appearance_changed(properties);
         return;
     }
-    ptrdiff_t k = listed_scheme(d, i);
+    ptrdiff_t k = listed_scheme(properties, i);
     /* A scheme sets every item, as in Windows: Advanced's changes go. */
-    d->pending.custom_scheme = (xd_scheme_custom){0};
+    properties->pending.custom_scheme = (xd_scheme_custom){0};
     if (k < 0)
-        d->pending.scheme[0] = '\0';
+        properties->pending.scheme[0] = '\0';
     else
-        snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s", d->schemes.stems[k]);
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+        snprintf(properties->pending.scheme, sizeof(properties->pending.scheme), "%s",
+                 properties->schemes.stems[k]);
+    xd_widget_redraw(properties->appearance_preview);
+    changed(properties);
 }
 
-static void on_font_size(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
-    const xd_installed_package *pkg = pending_package(d);
+static void on_font_size(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
+    const xd_installed_package *pkg = pending_package(properties);
     if (pkg != nullptr) {
-        const char *color = pending_variant(d, pkg)->name;
+        const char *color = pending_variant(properties, pkg)->name;
         const char **sizes = g_new(const char *, pkg->info.variant_count);
-        size_t n = package_sizes(pkg, color, sizes);
-        if (i >= 0 && (size_t)i < n)
-            set_variant(d, find_variant(pkg, color, sizes[i]));
+        size_t count = package_sizes(pkg, color, sizes);
+        if (i >= 0 && (size_t)i < count)
+            set_variant(properties, find_variant(pkg, color, sizes[i]));
         g_free(sizes);
-        appearance_changed(d);
+        appearance_changed(properties);
         return;
     }
-    if (i >= 0 && i <= XD_FONT_EXTRA_LARGE && (xd_font_size)i != d->pending.font_size) {
+    if (i >= 0 && i <= XD_FONT_EXTRA_LARGE && (xd_font_size)i != properties->pending.font_size) {
         /* Windows' Large and Extra Large are schemes of their own. */
-        d->pending.font_size = (xd_font_size)i;
-        d->pending.custom_scheme = (xd_scheme_custom){0};
+        properties->pending.font_size = (xd_font_size)i;
+        properties->pending.custom_scheme = (xd_scheme_custom){0};
     }
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+    xd_widget_redraw(properties->appearance_preview);
+    changed(properties);
 }
 
 /* ---- Browse...: a visual style or a theme package ---------------------------------- */
 
 /* Windows' error box, owned by Display Properties. */
-static void message_ok(xd_widget *w, [[maybe_unused]] void *user) {
-    xd_window_close(xd_widget_window(w));
+static void message_ok(xd_widget *widget, [[maybe_unused]] void *user) {
+    xd_window_close(xd_widget_window(widget));
 }
 
-static void error_box(desk *d, const char *text) {
+static void error_box(desk *properties, const char *text) {
     /* Lines the label wraps to, roughly (an 8pt font's average width). */
     glong chars = g_utf8_strlen(text, -1);
     int lines = 1 + (int)((double)chars * 5.4 / 312);
-    for (const char *c = text; *c != '\0'; c++)
-        lines += *c == '\n';
+    for (const char *cursor = text; *cursor != '\0'; cursor++)
+        lines += *cursor == '\n';
     int text_h = XD_MAX(lines * 14, 32);
-    int h = 14 + text_h + 16 + 23 + 12;
-    xd_window *box = xd_window_create(d->ui, "Display Properties", "xd-desk", 380, h);
+    int height = 14 + text_h + 16 + 23 + 12;
+    xd_window *box = xd_window_create(properties->ui, "Display Properties", "xd-desk", 380, height);
     xd_image(box, (xd_rect){12, 14, 32, 32}, "dialog-error");
     xd_label(box, (xd_rect){56, 14, 312, text_h}, text, XD_LABEL_WRAP);
-    xd_widget *ok = xd_button(box, (xd_rect){152, h - 12 - 23, 75, 23}, "OK", message_ok, nullptr);
+    xd_widget *ok =
+        xd_button(box, (xd_rect){152, height - 12 - 23, 75, 23}, "OK", message_ok, nullptr);
     xd_window_set_default(box, ok);
     xd_window_set_cancel(box, ok);
     xd_window_set_focus(box, ok);
@@ -1512,72 +1559,73 @@ static void error_box(desk *d, const char *text) {
     xd_sound_play_event(XD_SOUND_CRITICAL_STOP);
 }
 
-static void update_style_browse(desk *d) {
-    if (d->style_browse != nullptr)
-        xd_widget_set_enabled(d->style_browse, d->chooser_src == nullptr && d->import == nullptr);
-    update_theme_buttons(d);
+static void update_style_browse(desk *properties) {
+    if (properties->style_browse != nullptr)
+        xd_widget_set_enabled(properties->style_browse,
+                              properties->chooser_src == nullptr && properties->import == nullptr);
+    update_theme_buttons(properties);
 }
 
-static void theme_choose_installed(desk *d, const char *name);
+static void theme_choose_installed(desk *properties, const char *name);
 
 /* After installing package `name`: the list read again, and it chosen. */
-static void select_installed(desk *d, const char *name) {
+static void select_installed(desk *properties, const char *name) {
     char **dirs = xd_theme_package_dirs();
-    g_ptr_array_unref(d->packages);
-    d->packages = xd_theme_packages_list((const char *const *)dirs);
+    g_ptr_array_unref(properties->packages);
+    properties->packages = xd_theme_packages_list((const char *const *)dirs);
     g_strfreev(dirs);
     /* Read again even if it's the pending one: it may be a new version. */
-    g_clear_pointer(&d->preview_pkg_path, g_free);
-    if (strcmp(d->pending.theme_package, name) == 0)
-        d->pending.theme_package[0] = '\0';
-    fill_styles(d);
-    for (guint i = 0; i < d->packages->len; i++) {
-        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
-        if (strcmp(p->name, name) == 0) {
-            xd_widget_select(d->style_combo, XD_STYLE_COUNT + (int)i);
-            on_style(d->style_combo, d);
+    g_clear_pointer(&properties->preview_pkg_path, g_free);
+    if (strcmp(properties->pending.theme_package, name) == 0)
+        properties->pending.theme_package[0] = '\0';
+    fill_styles(properties);
+    for (guint i = 0; i < properties->packages->len; i++) {
+        const xd_installed_package *package = g_ptr_array_index(properties->packages, i);
+        if (strcmp(package->name, name) == 0) {
+            xd_widget_select(properties->style_combo, XD_STYLE_COUNT + (int)i);
+            on_style(properties->style_combo, properties);
         }
     }
-    xd_widget_redraw(d->style_combo);
-    appearance_changed(d);
-    if (d->theme_import) {
+    xd_widget_redraw(properties->style_combo);
+    appearance_changed(properties);
+    if (properties->theme_import) {
         /* Browse... in the Themes tab: chosen as a theme, with its
          * wallpaper, sounds and cursors. */
-        d->theme_import = false;
-        theme_choose_installed(d, name);
+        properties->theme_import = false;
+        theme_choose_installed(properties, name);
     }
-    fill_theme_list(d);
-    xd_widget_redraw(d->theme_combo);
+    fill_theme_list(properties);
+    xd_widget_redraw(properties->theme_combo);
 }
 
 /* The name to install `stem` under in `dir`: the stem, unless a folder of
  * that name is there (it would win over the zip): then "stem (2)"... */
 static char *install_name(const char *dir, const char *stem) {
-    const char *s = stem;
-    while (*s == '.')
-        s++;
-    char *name = g_strdup(*s != '\0' ? s : "Visual style");
-    for (int n = 2; n < 100; n++) {
+    const char *trimmed = stem;
+    while (*trimmed == '.')
+        trimmed++;
+    char *name = g_strdup(*trimmed != '\0' ? trimmed : "Visual style");
+    for (int count = 2; count < 100; count++) {
         char *folder = g_build_filename(dir, name, nullptr);
         bool taken = g_file_test(folder, G_FILE_TEST_IS_DIR);
         g_free(folder);
         if (!taken)
             break;
         g_free(name);
-        name = g_strdup_printf("%s (%d)", *s != '\0' ? s : "Visual style", n);
+        name = g_strdup_printf("%s (%d)", *trimmed != '\0' ? trimmed : "Visual style", count);
     }
     return name;
 }
 
 /* A package chosen with Browse...: copied into the user's themes, unless
  * it's already one of the installed ones. */
-static void install_package(desk *d, const char *path, const char *stem) {
+static void install_package(desk *properties, const char *path, const char *stem) {
     GError *error = nullptr;
     xd_pkg_info info;
     if (!xd_pkg_read_info(path, &info, &error)) {
         char *text = g_strdup_printf("\"%s\" is not a theme package.\n\n%s", stem,
                                      error->message);
-        error_box(d, text);
+        error_box(properties, text);
         g_free(text);
         g_error_free(error);
         return;
@@ -1594,7 +1642,7 @@ static void install_package(desk *d, const char *path, const char *stem) {
     free(real_path);
     g_free(found);
     if (installed) {
-        select_installed(d, stem);
+        select_installed(properties, stem);
         return;
     }
     char *dir = xd_theme_package_user_dir();
@@ -1610,12 +1658,12 @@ static void install_package(desk *d, const char *path, const char *stem) {
               g_file_copy(src, tmp, G_FILE_COPY_OVERWRITE, nullptr, nullptr, nullptr, &error) &&
               g_rename(part, dest) == 0;
     if (ok) {
-        select_installed(d, name);
+        select_installed(properties, name);
     } else {
         (void)g_remove(part);
         char *text = g_strdup_printf("\"%s\" cannot be installed in %s.\n\n%s", stem, dir,
                                      error != nullptr ? error->message : g_strerror(errno));
-        error_box(d, text);
+        error_box(properties, text);
         g_free(text);
     }
     g_clear_error(&error);
@@ -1655,39 +1703,39 @@ static char *importer_path(void) {
     return g_strdup("xd-theme-import");
 }
 
-static void import_finished(desk *d, bool ok) {
-    xd_ui_set_busy(d->ui, false);
+static void import_finished(desk *properties, bool ok) {
+    xd_ui_set_busy(properties->ui, false);
     GError *error = nullptr;
     xd_pkg_info info;
-    if (ok && xd_pkg_read_info(d->import_part, &info, &error)) {
+    if (ok && xd_pkg_read_info(properties->import_part, &info, &error)) {
         xd_pkg_info_clear(&info);
-        ok = g_rename(d->import_part, d->import_dest) == 0;
+        ok = g_rename(properties->import_part, properties->import_dest) == 0;
     } else {
         ok = false;
     }
     if (ok) {
-        select_installed(d, d->import_name);
+        select_installed(properties, properties->import_name);
     } else {
-        d->theme_import = false;
-        (void)g_remove(d->import_part);
+        properties->theme_import = false;
+        (void)g_remove(properties->import_part);
         /* xd-theme-import says why on its last line ("needs pefile..."). */
-        char **lines = g_strsplit(xd_strbuf_cstr(&d->import_out), "\n", -1);
+        char **lines = g_strsplit(xd_strbuf_cstr(&properties->import_out), "\n", -1);
         const char *why = nullptr;
-        for (char **l = lines; *l != nullptr; l++) {
-            g_strstrip(*l);
-            if (**l != '\0')
-                why = *l;
+        for (char **line = lines; *line != nullptr; line++) {
+            g_strstrip(*line);
+            if (**line != '\0')
+                why = *line;
         }
         if (why != nullptr && g_str_has_prefix(why, "xd-theme-import: "))
             why += strlen("xd-theme-import: ");
         /* The file's name is in the box already. */
-        size_t source_len = strlen(d->import_source);
-        if (why != nullptr && strncmp(why, d->import_source, source_len) == 0 &&
+        size_t source_len = strlen(properties->import_source);
+        if (why != nullptr && strncmp(why, properties->import_source, source_len) == 0 &&
             strncmp(why + source_len, ": ", 2) == 0)
             why += source_len + 2;
         if (why == nullptr)
             why = error != nullptr ? error->message : "The conversion failed.";
-        char *base = g_path_get_basename(d->import_source);
+        char *base = g_path_get_basename(properties->import_source);
         /* As a sentence: "Not a visual style." */
         char *reason = g_strdup(why);
         reason[0] = g_ascii_toupper(reason[0]);
@@ -1697,29 +1745,29 @@ static void import_finished(desk *d, bool ok) {
         char *text = g_strdup_printf("\"%s\" cannot be used as a visual style.%s%s%s", base,
                                      same ? "" : "\n\n", same ? "" : reason,
                                      same || stop ? "" : ".");
-        error_box(d, text);
+        error_box(properties, text);
         g_free(text);
         g_free(reason);
         g_free(base);
         g_strfreev(lines);
     }
     g_clear_error(&error);
-    xd_strbuf_clear(&d->import_out);
-    g_clear_pointer(&d->import_source, g_free);
-    g_clear_pointer(&d->import_part, g_free);
-    g_clear_pointer(&d->import_dest, g_free);
-    g_clear_pointer(&d->import_name, g_free);
-    update_style_browse(d);
+    xd_strbuf_clear(&properties->import_out);
+    g_clear_pointer(&properties->import_source, g_free);
+    g_clear_pointer(&properties->import_part, g_free);
+    g_clear_pointer(&properties->import_dest, g_free);
+    g_clear_pointer(&properties->import_name, g_free);
+    update_style_browse(properties);
 }
 
 static void import_exited(GObject *source, GAsyncResult *res, gpointer user) {
-    desk *d = user;
+    desk *properties = user;
     GSubprocess *sp = G_SUBPROCESS(source);
     bool ok = g_subprocess_wait_finish(sp, res, nullptr) && g_subprocess_get_successful(sp);
-    xd_ui_remove_source(d->import_wait);
-    d->import_wait = nullptr;
-    g_clear_object(&d->import);
-    import_finished(d, ok);
+    xd_ui_remove_source(properties->import_wait);
+    properties->import_wait = nullptr;
+    g_clear_object(&properties->import);
+    import_finished(properties, ok);
 }
 
 /* GLib's main context, for g_subprocess_wait_async's answer: libxdui's
@@ -1730,82 +1778,83 @@ static void import_pump([[maybe_unused]] void *user) {
 }
 
 static void import_output(void *user) {
-    desk *d = user;
+    desk *properties = user;
     char buf[1024];
-    ssize_t n = read(d->import_fd, buf, sizeof(buf));
-    if (n > 0) {
-        xd_strbuf_append(&d->import_out, (xd_str){buf, (size_t)n});
+    ssize_t bytes_read = read(properties->import_fd, buf, sizeof(buf));
+    if (bytes_read > 0) {
+        xd_strbuf_append(&properties->import_out, (xd_str){buf, (size_t)bytes_read});
         return;
     }
-    if (n < 0 && errno == EINTR)
+    if (bytes_read < 0 && errno == EINTR)
         return;
     /* Its output is complete; it exits. */
-    xd_ui_remove_source(d->import_src);
-    d->import_src = nullptr;
-    g_input_stream_close(g_subprocess_get_stdout_pipe(d->import), nullptr, nullptr);
-    d->import_fd = -1;
-    g_subprocess_wait_async(d->import, nullptr, import_exited, d);
-    d->import_wait = xd_ui_add_timer(d->ui, 50, true, import_pump, d);
+    xd_ui_remove_source(properties->import_src);
+    properties->import_src = nullptr;
+    g_input_stream_close(g_subprocess_get_stdout_pipe(properties->import), nullptr, nullptr);
+    properties->import_fd = -1;
+    g_subprocess_wait_async(properties->import, nullptr, import_exited, properties);
+    properties->import_wait = xd_ui_add_timer(properties->ui, 50, true, import_pump, properties);
 }
 
 /* Converts a .msstyles or .theme with xd-theme-import, in the background,
  * into the user's themes. */
-static void start_import(desk *d, const char *path, const char *stem) {
+static void start_import(desk *properties, const char *path, const char *stem) {
     char *dir = xd_theme_package_user_dir();
     if (g_mkdir_with_parents(dir, 0755) != 0) {
         char *text = g_strdup_printf("Display Properties cannot create %s.\n\n%s", dir,
                                      g_strerror(errno));
-        error_box(d, text);
+        error_box(properties, text);
         g_free(text);
         g_free(dir);
         return;
     }
-    d->import_name = install_name(dir, stem);
-    char *file = g_strconcat(d->import_name, ".xdtheme", nullptr);
+    properties->import_name = install_name(dir, stem);
+    char *file = g_strconcat(properties->import_name, ".xdtheme", nullptr);
     char *part = g_strconcat(".", file, ".part", nullptr);
-    d->import_dest = g_build_filename(dir, file, nullptr);
-    d->import_part = g_build_filename(dir, part, nullptr);
-    d->import_source = g_strdup(path);
+    properties->import_dest = g_build_filename(dir, file, nullptr);
+    properties->import_part = g_build_filename(dir, part, nullptr);
+    properties->import_source = g_strdup(path);
     g_free(part);
     g_free(file);
     g_free(dir);
     char *importer = importer_path();
-    const char *argv[] = {importer, path, d->import_part, nullptr};
+    const char *argv[] = {importer, path, properties->import_part, nullptr};
     GError *error = nullptr;
-    d->import = g_subprocess_newv(argv, G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-                                            G_SUBPROCESS_FLAGS_STDERR_MERGE, &error);
+    properties->import = g_subprocess_newv(
+        argv, G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_MERGE, &error);
     g_free(importer);
-    if (d->import == nullptr) {
-        xd_strbuf_append(&d->import_out,
+    if (properties->import == nullptr) {
+        xd_strbuf_append(&properties->import_out,
                          xd_str_from_cstr("Display Properties cannot run xd-theme-import, "
                                           "which converts Windows visual styles: "));
-        xd_strbuf_append(&d->import_out, xd_str_from_cstr(error->message));
+        xd_strbuf_append(&properties->import_out, xd_str_from_cstr(error->message));
         g_error_free(error);
-        import_finished(d, false);
+        import_finished(properties, false);
         return;
     }
-    d->import_fd = stdout_fd(d->import);
-    d->import_src = xd_ui_add_fd(d->ui, d->import_fd, import_output, d);
-    xd_ui_set_busy(d->ui, true);
-    update_style_browse(d);
+    properties->import_fd = stdout_fd(properties->import);
+    properties->import_src =
+        xd_ui_add_fd(properties->ui, properties->import_fd, import_output, properties);
+    xd_ui_set_busy(properties->ui, true);
+    update_style_browse(properties);
 }
 
 /* What Browse... chose. */
-static void style_chosen(desk *d, const char *path) {
+static void style_chosen(desk *properties, const char *path) {
     char *base = g_path_get_basename(path);
     char *lower = g_ascii_strdown(base, -1);
     char *dot = strrchr(base, '.');
     char *stem = g_strndup(base, dot != nullptr && dot != base ? (gsize)(dot - base) : strlen(base));
     if (g_str_has_suffix(lower, ".msstyles") || g_str_has_suffix(lower, ".theme")) {
-        start_import(d, path, stem);
+        start_import(properties, path, stem);
     } else if (g_str_has_suffix(lower, ".xdtheme")) {
-        install_package(d, path, stem);
+        install_package(properties, path, stem);
     } else {
         char *text = g_strdup_printf("\"%s\" is not a visual style. Choose a Windows visual "
                                      "style (.msstyles), a Windows theme (.theme) or a "
                                      "XeonDesktop theme package (.xdtheme).",
                                      base);
-        error_box(d, text);
+        error_box(properties, text);
         g_free(text);
     }
     g_free(stem);
@@ -1813,12 +1862,12 @@ static void style_chosen(desk *d, const char *path) {
     g_free(base);
 }
 
-static void on_style_browse([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
+static void on_style_browse([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
     const char *home = getenv("HOME");
     const char *args[] = {"--styles", "--title", "Open Visual Style", "--folder",
                           home != nullptr ? home : "/", nullptr};
-    start_chooser(d, args, CHOOSE_STYLE);
+    start_chooser(properties, args, CHOOSE_STYLE);
 }
 
 /* ---- Themes ---------------------------------------------------------------------- */
@@ -1848,205 +1897,214 @@ static void xp_wallpaper(char *out, size_t cap) {
 }
 
 /* The installed scheme that is Windows XP style's Default (blue). */
-static const char *luna_blue_scheme(const desk *d) {
-    for (size_t i = 0; i < d->schemes.count; i++) {
-        if (scheme_luna_color(d, i) == XD_LUNA_BLUE)
-            return d->schemes.stems[i];
+static const char *luna_blue_scheme(const desk *properties) {
+    for (size_t i = 0; i < properties->schemes.count; i++) {
+        if (scheme_luna_color(properties, i) == XD_LUNA_BLUE)
+            return properties->schemes.stems[i];
     }
     return "";
 }
 
-static bool builtin_matches(const desk *d, theme_kind kind) {
-    const xd_settings *s = &d->pending;
-    if (s->theme_package[0] != '\0' || s->font_size != XD_FONT_NORMAL ||
-        s->custom_scheme.color_mask != 0 || s->custom_scheme.metric_mask != 0 ||
-        s->custom_scheme.font_mask != 0 || s->mouse.cursor_theme[0] != '\0')
+static bool builtin_matches(const desk *properties, theme_kind kind) {
+    const xd_settings *settings = &properties->pending;
+    if (settings->theme_package[0] != '\0' || settings->font_size != XD_FONT_NORMAL ||
+        settings->custom_scheme.color_mask != 0 || settings->custom_scheme.metric_mask != 0 ||
+        settings->custom_scheme.font_mask != 0 || settings->mouse.cursor_theme[0] != '\0')
         return false;
     if (kind == THEME_CLASSIC)
-        return s->style == XD_STYLE_CLASSIC && s->scheme[0] == '\0' && s->wallpaper[0] == '\0';
-    char wallpaper[sizeof(s->wallpaper)];
+        return settings->style == XD_STYLE_CLASSIC && settings->scheme[0] == '\0' &&
+               settings->wallpaper[0] == '\0';
+    char wallpaper[sizeof(settings->wallpaper)];
     xp_wallpaper(wallpaper, sizeof(wallpaper));
-    return s->style == XD_STYLE_LUNA && strcmp(s->scheme, luna_blue_scheme(d)) == 0 &&
-           strcmp(s->wallpaper, wallpaper) == 0 &&
-           (wallpaper[0] == '\0' || s->wallpaper_mode == XD_WALLPAPER_STRETCH);
+    return settings->style == XD_STYLE_LUNA &&
+           strcmp(settings->scheme, luna_blue_scheme(properties)) == 0 &&
+           strcmp(settings->wallpaper, wallpaper) == 0 &&
+           (wallpaper[0] == '\0' || settings->wallpaper_mode == XD_WALLPAPER_STRETCH);
 }
 
-static const char *package_label(const xd_installed_package *p) {
-    return p->info.name[0] != '\0' ? p->info.name : p->name;
+static const char *package_label(const xd_installed_package *package) {
+    return package->info.name[0] != '\0' ? package->info.name : package->name;
 }
 
-static const xd_installed_package *theme_package_at(const desk *d, const theme_item *it) {
-    return it->kind == THEME_PACKAGE && it->package < d->packages->len
-               ? g_ptr_array_index(d->packages, it->package)
+static const xd_installed_package *theme_package_at(const desk *properties, const theme_item *it) {
+    return it->kind == THEME_PACKAGE && it->package < properties->packages->len
+               ? g_ptr_array_index(properties->packages, it->package)
                : nullptr;
 }
 
-static const theme_item *selected_theme(const desk *d) {
-    int i = d->theme_combo != nullptr ? xd_widget_selected(d->theme_combo) : -1;
-    return i >= 0 && (guint)i < d->theme_items->len
-               ? &g_array_index(d->theme_items, theme_item, (guint)i)
+static const theme_item *selected_theme(const desk *properties) {
+    int i = properties->theme_combo != nullptr ? xd_widget_selected(properties->theme_combo) : -1;
+    return i >= 0 && (guint)i < properties->theme_items->len
+               ? &g_array_index(properties->theme_items, theme_item, (guint)i)
                : nullptr;
 }
 
 /* Delete: a package of the user's own (a .xdtheme in their themes, which
  * Browse... and Save As... put there), not the one applied. */
-static bool theme_deletable(const desk *d, const xd_installed_package *p) {
-    if (p == nullptr || !g_str_has_suffix(p->path, ".xdtheme") ||
-        strcmp(p->name, d->saved.theme_package) == 0)
+static bool theme_deletable(const desk *properties, const xd_installed_package *package) {
+    if (package == nullptr || !g_str_has_suffix(package->path, ".xdtheme") ||
+        strcmp(package->name, properties->saved.theme_package) == 0)
         return false;
     char *dir = xd_theme_package_user_dir();
-    char *parent = g_path_get_dirname(p->path);
+    char *parent = g_path_get_dirname(package->path);
     bool own = strcmp(dir, parent) == 0;
     g_free(parent);
     g_free(dir);
     return own;
 }
 
-static void update_theme_buttons(desk *d) {
-    if (d->theme_combo == nullptr)
+static void update_theme_buttons(desk *properties) {
+    if (properties->theme_combo == nullptr)
         return;
-    bool idle = d->chooser_src == nullptr && d->import == nullptr;
-    const theme_item *it = selected_theme(d);
-    xd_widget_set_enabled(d->theme_save, idle);
-    xd_widget_set_enabled(d->theme_delete,
-                          idle && it != nullptr && theme_deletable(d, theme_package_at(d, it)));
-    xd_widget_set_enabled(d->theme_combo, idle);
-    xd_widget_redraw(d->theme_save);
-    xd_widget_redraw(d->theme_delete);
+    bool idle = properties->chooser_src == nullptr && properties->import == nullptr;
+    const theme_item *it = selected_theme(properties);
+    xd_widget_set_enabled(properties->theme_save, idle);
+    xd_widget_set_enabled(properties->theme_delete,
+                          idle && it != nullptr &&
+                              theme_deletable(properties, theme_package_at(properties, it)));
+    xd_widget_set_enabled(properties->theme_combo, idle);
+    xd_widget_redraw(properties->theme_save);
+    xd_widget_redraw(properties->theme_delete);
 }
 
-static void add_theme_item(desk *d, const char *label, theme_kind kind, guint package) {
+static void add_theme_item(desk *properties, const char *label, theme_kind kind, guint package) {
     theme_item it = {.kind = kind, .package = package};
-    g_array_append_val(d->theme_items, it);
-    xd_widget_add_item(d->theme_combo, label);
+    g_array_append_val(properties->theme_items, it);
+    xd_widget_add_item(properties->theme_combo, label);
 }
 
 /* The list, with the theme the pending settings are selected; when they
  * are none of them, first "My Current Theme", or the theme they started
  * from "(Modified)", as XP shows them. */
-static void fill_theme_list(desk *d) {
-    if (d->theme_combo == nullptr)
+static void fill_theme_list(desk *properties) {
+    if (properties->theme_combo == nullptr)
         return;
-    xd_widget_clear_items(d->theme_combo);
-    g_array_set_size(d->theme_items, 0);
+    xd_widget_clear_items(properties->theme_combo);
+    g_array_set_size(properties->theme_items, 0);
     int current = -1;
     const xd_installed_package *base = nullptr;
-    for (guint i = 0; i < d->packages->len && current < 0; i++) {
-        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
-        if (!xd_theme_set_has_extras(&p->info))
+    for (guint i = 0; i < properties->packages->len && current < 0; i++) {
+        const xd_installed_package *package = g_ptr_array_index(properties->packages, i);
+        if (!xd_theme_set_has_extras(&package->info))
             continue;
-        if (strcmp(p->name, d->pending.theme_package) == 0)
-            base = p;
-        if (xd_theme_set_matches(p, nullptr, &d->pending, &d->pending_sounds))
+        if (strcmp(package->name, properties->pending.theme_package) == 0)
+            base = package;
+        if (xd_theme_set_matches(package, nullptr, &properties->pending,
+                                 &properties->pending_sounds))
             current = (int)i;
     }
-    bool xp = builtin_matches(d, THEME_XP), classic = builtin_matches(d, THEME_CLASSIC);
+    bool xp = builtin_matches(properties, THEME_XP),
+         classic = builtin_matches(properties, THEME_CLASSIC);
     if (current < 0 && !xp && !classic) {
         char *label = nullptr;
         if (base != nullptr)
             label = g_strdup_printf("%s (Modified)", package_label(base));
-        else if (d->pending.theme_package[0] == '\0' && d->pending.style == XD_STYLE_LUNA)
+        else if (properties->pending.theme_package[0] == '\0' &&
+                 properties->pending.style == XD_STYLE_LUNA)
             label = g_strdup("Windows XP (Modified)");
-        else if (d->pending.theme_package[0] == '\0' && d->pending.style == XD_STYLE_CLASSIC)
+        else if (properties->pending.theme_package[0] == '\0' &&
+                 properties->pending.style == XD_STYLE_CLASSIC)
             label = g_strdup("Windows Classic (Modified)");
         else
             label = g_strdup("My Current Theme");
-        add_theme_item(d, label, THEME_CURRENT, 0);
+        add_theme_item(properties, label, THEME_CURRENT, 0);
         g_free(label);
     }
     int select = 0;
     if (xp)
-        select = (int)d->theme_items->len;
-    add_theme_item(d, "Windows XP", THEME_XP, 0);
+        select = (int)properties->theme_items->len;
+    add_theme_item(properties, "Windows XP", THEME_XP, 0);
     if (classic)
-        select = (int)d->theme_items->len;
-    add_theme_item(d, "Windows Classic", THEME_CLASSIC, 0);
-    for (guint i = 0; i < d->packages->len; i++) {
-        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
-        if (!xd_theme_set_has_extras(&p->info))
+        select = (int)properties->theme_items->len;
+    add_theme_item(properties, "Windows Classic", THEME_CLASSIC, 0);
+    for (guint i = 0; i < properties->packages->len; i++) {
+        const xd_installed_package *package = g_ptr_array_index(properties->packages, i);
+        if (!xd_theme_set_has_extras(&package->info))
             continue;
         if ((int)i == current)
-            select = (int)d->theme_items->len;
-        add_theme_item(d, package_label(p), THEME_PACKAGE, i);
+            select = (int)properties->theme_items->len;
+        add_theme_item(properties, package_label(package), THEME_PACKAGE, i);
     }
-    add_theme_item(d, "Browse...", THEME_BROWSE, 0);
-    xd_widget_select(d->theme_combo, select);
-    update_theme_buttons(d);
+    add_theme_item(properties, "Browse...", THEME_BROWSE, 0);
+    xd_widget_select(properties->theme_combo, select);
+    update_theme_buttons(properties);
 }
 
 /* After a theme changed `pending`: the other tabs show its choices. */
-static void theme_applied(desk *d) {
-    if (d->pending.wallpaper[0] != '\0') {
-        char *path = g_strdup(d->pending.wallpaper); /* choose_wallpaper writes it there */
-        choose_wallpaper(d, path);
+static void theme_applied(desk *properties) {
+    if (properties->pending.wallpaper[0] != '\0') {
+        char *path = g_strdup(properties->pending.wallpaper); /* choose_wallpaper writes it there */
+        choose_wallpaper(properties, path);
         g_free(path);
     } else {
-        xd_widget_select(d->wallpaper_list, 0);
-        xd_widget_redraw(d->bg_preview);
+        xd_widget_select(properties->wallpaper_list, 0);
+        xd_widget_redraw(properties->bg_preview);
     }
-    xd_widget_select(d->wallpaper_mode, (int)d->pending.wallpaper_mode);
-    fill_styles(d);
-    xd_widget_redraw(d->style_combo);
-    appearance_changed(d);
-    fill_theme_list(d);
-    xd_widget_redraw(d->theme_combo);
-    xd_widget_redraw(d->theme_preview);
-    changed(d);
+    xd_widget_select(properties->wallpaper_mode, (int)properties->pending.wallpaper_mode);
+    fill_styles(properties);
+    xd_widget_redraw(properties->style_combo);
+    appearance_changed(properties);
+    fill_theme_list(properties);
+    xd_widget_redraw(properties->theme_combo);
+    xd_widget_redraw(properties->theme_preview);
+    changed(properties);
 }
 
-static void choose_builtin(desk *d, theme_kind kind) {
+static void choose_builtin(desk *properties, theme_kind kind) {
     bool xp = kind == THEME_XP;
-    d->pending.theme_package[0] = '\0';
-    d->pending.theme_variant[0] = '\0';
-    set_style(d, xp ? XD_STYLE_LUNA : XD_STYLE_CLASSIC);
-    snprintf(d->pending.scheme, sizeof(d->pending.scheme), "%s", xp ? luna_blue_scheme(d) : "");
-    d->pending.font_size = XD_FONT_NORMAL;
-    d->pending.custom_scheme = (xd_scheme_custom){0};
+    properties->pending.theme_package[0] = '\0';
+    properties->pending.theme_variant[0] = '\0';
+    set_style(properties, xp ? XD_STYLE_LUNA : XD_STYLE_CLASSIC);
+    snprintf(properties->pending.scheme, sizeof(properties->pending.scheme), "%s",
+             xp ? luna_blue_scheme(properties) : "");
+    properties->pending.font_size = XD_FONT_NORMAL;
+    properties->pending.custom_scheme = (xd_scheme_custom){0};
     /* XP's Windows XP.theme: Bliss, stretched; Windows Classic.theme: no
      * wallpaper. Both: Windows' own pointers, and the sounds as they are. */
     if (xp)
-        xp_wallpaper(d->pending.wallpaper, sizeof(d->pending.wallpaper));
+        xp_wallpaper(properties->pending.wallpaper, sizeof(properties->pending.wallpaper));
     else
-        d->pending.wallpaper[0] = '\0';
-    d->pending.wallpaper_mode = XD_WALLPAPER_STRETCH;
-    d->pending.mouse.cursor_theme[0] = '\0';
-    theme_applied(d);
+        properties->pending.wallpaper[0] = '\0';
+    properties->pending.wallpaper_mode = XD_WALLPAPER_STRETCH;
+    properties->pending.mouse.cursor_theme[0] = '\0';
+    theme_applied(properties);
 }
 
 /* A package as a theme: its style and first variant as Appearance's
  * Windows and buttons chooses them, then what it brings besides, its
  * files unpacked for the settings to point at. */
-static void choose_package_theme(desk *d, const xd_installed_package *p) {
-    xd_settings before = d->pending;
-    snprintf(d->pending.theme_package, sizeof(d->pending.theme_package), "%s", p->name);
-    set_style(d, p->info.base);
-    set_variant(d, &p->info.variants[0]);
+static void choose_package_theme(desk *properties, const xd_installed_package *package) {
+    xd_settings before = properties->pending;
+    snprintf(properties->pending.theme_package, sizeof(properties->pending.theme_package), "%s",
+             package->name);
+    set_style(properties, package->info.base);
+    set_variant(properties, &package->info.variants[0]);
     GError *error = nullptr;
     bool sounds_set = false;
-    if (!xd_theme_set_extras(p, nullptr, true, &d->pending, &d->pending_sounds, &sounds_set,
-                             &error)) {
-        d->pending = before;
-        char *text = g_strdup_printf("The theme \"%s\" cannot be used.\n\n%s", package_label(p),
-                                     error->message);
-        error_box(d, text);
+    if (!xd_theme_set_extras(package, nullptr, true, &properties->pending,
+                             &properties->pending_sounds, &sounds_set, &error)) {
+        properties->pending = before;
+        char *text = g_strdup_printf("The theme \"%s\" cannot be used.\n\n%s",
+                                     package_label(package), error->message);
+        error_box(properties, text);
         g_free(text);
         g_error_free(error);
     }
-    theme_applied(d);
+    theme_applied(properties);
 }
 
-static void theme_choose_installed(desk *d, const char *name) {
-    for (guint i = 0; i < d->packages->len; i++) {
-        const xd_installed_package *p = g_ptr_array_index(d->packages, i);
-        if (strcmp(p->name, name) == 0)
-            choose_package_theme(d, p);
+static void theme_choose_installed(desk *properties, const char *name) {
+    for (guint i = 0; i < properties->packages->len; i++) {
+        const xd_installed_package *package = g_ptr_array_index(properties->packages, i);
+        if (strcmp(package->name, name) == 0)
+            choose_package_theme(properties, package);
     }
 }
 
-static void on_theme(xd_widget *w, void *user) {
-    desk *d = user;
-    (void)w;
-    const theme_item *it = selected_theme(d);
+static void on_theme(xd_widget *widget, void *user) {
+    desk *properties = user;
+    (void)widget;
+    const theme_item *it = selected_theme(properties);
     if (it == nullptr)
         return;
     switch (it->kind) {
@@ -2054,10 +2112,10 @@ static void on_theme(xd_widget *w, void *user) {
         break;
     case THEME_XP:
     case THEME_CLASSIC:
-        choose_builtin(d, it->kind);
+        choose_builtin(properties, it->kind);
         break;
     case THEME_PACKAGE:
-        choose_package_theme(d, theme_package_at(d, it));
+        choose_package_theme(properties, theme_package_at(properties, it));
         break;
     case THEME_BROWSE: {
         /* As Appearance's Browse...: a Windows theme (.theme) is
@@ -2065,53 +2123,53 @@ static void on_theme(xd_widget *w, void *user) {
         const char *home = getenv("HOME");
         const char *args[] = {"--themes", "--title", "Open Theme", "--folder",
                               home != nullptr ? home : "/", nullptr};
-        if (!start_chooser(d, args, CHOOSE_THEME)) {
-            fill_theme_list(d);
-            xd_widget_redraw(d->theme_combo);
+        if (!start_chooser(properties, args, CHOOSE_THEME)) {
+            fill_theme_list(properties);
+            xd_widget_redraw(properties->theme_combo);
         }
         break;
     }
     }
 }
 
-static void on_theme_save([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
+static void on_theme_save([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
     char *dir = xd_theme_package_user_dir();
     (void)g_mkdir_with_parents(dir, 0755);
     const char *args[] = {"--themes", "--title", "Save As", "--folder", dir,
                           "--save", "My Theme.xdtheme", nullptr};
-    start_chooser(d, args, CHOOSE_THEME_SAVE);
+    start_chooser(properties, args, CHOOSE_THEME_SAVE);
     g_free(dir);
 }
 
 /* Save As...'s answer: the pending look written as a package; saved
  * among the user's themes, it's listed and chosen. */
-static void theme_save_to(desk *d, const char *chosen) {
+static void theme_save_to(desk *properties, const char *chosen) {
     char *path = g_str_has_suffix(chosen, ".xdtheme") ? g_strdup(chosen)
                                                       : g_strconcat(chosen, ".xdtheme", nullptr);
     char *base = g_path_get_basename(path);
     char *stem = g_strndup(base, strlen(base) - strlen(".xdtheme"));
-    const xd_installed_package *pkg = pending_package(d);
+    const xd_installed_package *pkg = pending_package(properties);
     GError *error = nullptr;
     if (stem[0] == '\0' || stem[0] == '.') {
         char *text = g_strdup_printf("\"%s\" is not a name a theme can be saved as.", base);
-        error_box(d, text);
+        error_box(properties, text);
         g_free(text);
-    } else if (!xd_theme_set_save(path, stem, &d->pending, &d->pending_sounds,
+    } else if (!xd_theme_set_save(path, stem, &properties->pending, &properties->pending_sounds,
                                   pkg != nullptr ? pkg->path : nullptr,
-                                  pkg != nullptr ? pending_variant(d, pkg)->id : nullptr, nullptr,
-                                  &error)) {
+                                  pkg != nullptr ? pending_variant(properties, pkg)->id : nullptr,
+                                  nullptr, &error)) {
         char *text = g_strdup_printf("The theme cannot be saved as \"%s\".\n\n%s", base,
                                      error->message);
-        error_box(d, text);
+        error_box(properties, text);
         g_free(text);
         g_error_free(error);
     } else {
         char *dir = xd_theme_package_user_dir();
         char *parent = g_path_get_dirname(path);
         if (strcmp(dir, parent) == 0) {
-            d->theme_import = true;
-            select_installed(d, stem);
+            properties->theme_import = true;
+            select_installed(properties, stem);
         }
         g_free(parent);
         g_free(dir);
@@ -2122,76 +2180,78 @@ static void theme_save_to(desk *d, const char *chosen) {
 }
 
 /* Delete: the package to the Trash. */
-static void on_theme_delete([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    const theme_item *it = selected_theme(d);
-    const xd_installed_package *p = it != nullptr ? theme_package_at(d, it) : nullptr;
-    if (!theme_deletable(d, p))
+static void on_theme_delete([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    const theme_item *it = selected_theme(properties);
+    const xd_installed_package *package =
+        it != nullptr ? theme_package_at(properties, it) : nullptr;
+    if (!theme_deletable(properties, package))
         return;
-    GFile *f = g_file_new_for_path(p->path);
+    GFile *file = g_file_new_for_path(package->path);
     GError *error = nullptr;
-    if (!g_file_trash(f, nullptr, &error)) {
+    if (!g_file_trash(file, nullptr, &error)) {
         char *text = g_strdup_printf("The theme \"%s\" cannot be deleted.\n\n%s",
-                                     package_label(p), error->message);
-        error_box(d, text);
+                                     package_label(package), error->message);
+        error_box(properties, text);
         g_free(text);
         g_error_free(error);
     }
-    g_object_unref(f);
-    bool pending = strcmp(p->name, d->pending.theme_package) == 0;
+    g_object_unref(file);
+    bool pending = strcmp(package->name, properties->pending.theme_package) == 0;
     char **dirs = xd_theme_package_dirs();
-    g_ptr_array_unref(d->packages);
-    d->packages = xd_theme_packages_list((const char *const *)dirs);
+    g_ptr_array_unref(properties->packages);
+    properties->packages = xd_theme_packages_list((const char *const *)dirs);
     g_strfreev(dirs);
     /* Chosen but not applied: back to what is. */
     if (pending) {
-        d->pending.theme_package[0] = '\0';
-        set_style(d, d->saved.style);
+        properties->pending.theme_package[0] = '\0';
+        set_style(properties, properties->saved.style);
     }
-    g_clear_pointer(&d->preview_pkg_path, g_free);
-    fill_styles(d);
-    appearance_changed(d);
-    fill_theme_list(d);
-    xd_widget_redraw(d->theme_combo);
-    xd_widget_redraw(d->theme_preview);
+    g_clear_pointer(&properties->preview_pkg_path, g_free);
+    fill_styles(properties);
+    appearance_changed(properties);
+    fill_theme_list(properties);
+    xd_widget_redraw(properties->theme_combo);
+    xd_widget_redraw(properties->theme_preview);
 }
 
 /* Sample: the desktop as the theme makes it: its wallpaper, icons and a
  * window in its style. */
-static void draw_theme_preview([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
-                               const xd_theme *t, void *user) {
-    desk *d = user;
+static void draw_theme_preview([[maybe_unused]] xd_widget *widget, cairo_t *cairo, xd_rect rect,
+                               const xd_theme *theme, void *user) {
+    desk *properties = user;
     xd_theme pt;
-    pending_theme(d, t->scale, &pt);
-    xd_rect well = xd_theme_draw_field(t, cr, r, false);
-    cairo_save(cr);
-    cairo_rectangle(cr, well.x, well.y, well.w, well.h);
-    cairo_clip(cr);
-    paint_pending_desktop(d, cr, well, &pt);
+    pending_theme(properties, theme->scale, &pt);
+    xd_rect well = xd_theme_draw_field(theme, cairo, rect, false);
+    cairo_save(cairo);
+    cairo_rectangle(cairo, well.x, well.y, well.w, well.h);
+    cairo_clip(cairo);
+    paint_pending_desktop(properties, cairo, well, &pt);
 
     /* My Computer and the Recycle Bin, down the left as on the desktop. */
-    int px = xd_tpx(t, 32);
+    int px = xd_tpx(theme, 32);
     static const xd_desk_icon icons[] = {XD_DESK_ICON_COMPUTER, XD_DESK_ICON_TRASH_EMPTY};
     static const char *const labels[] = {"My Computer", "Recycle Bin"};
     for (size_t i = 0; i < XD_ARRAY_LEN(icons); i++) {
         const char *names[2];
-        size_t n = 0;
-        if (d->pending.desktop_icons.icons[icons[i]][0] != '\0')
-            names[n++] = d->pending.desktop_icons.icons[icons[i]];
-        names[n++] = xd_desk_icon_default(icons[i]);
-        int cell = xd_tpx(t, 70);
-        int ix = well.x + xd_tpx(t, 8) + (cell - px) / 2;
-        int iy = well.y + xd_tpx(t, 8) + (int)i * xd_tpx(t, 64);
-        cairo_surface_t *img = xd_icons_get_any(xd_ui_icons(d->ui), names, n, px);
+        size_t count = 0;
+        if (properties->pending.desktop_icons.icons[icons[i]][0] != '\0')
+            names[count++] = properties->pending.desktop_icons.icons[icons[i]];
+        names[count++] = xd_desk_icon_default(icons[i]);
+        int cell = xd_tpx(theme, 70);
+        int ix = well.x + xd_tpx(theme, 8) + (cell - px) / 2;
+        int iy = well.y + xd_tpx(theme, 8) + (int)i * xd_tpx(theme, 64);
+        cairo_surface_t *img = xd_icons_get_any(xd_ui_icons(properties->ui), names, count, px);
         if (img != nullptr) {
-            cairo_set_source_surface(cr, img, ix, iy);
-            cairo_paint(cr);
+            cairo_set_source_surface(cairo, img, ix, iy);
+            cairo_paint(cairo);
         }
         xd_text_style st = xd_text(&pt, XD_FONT_ICON, xd_rgba_hex(0xFFFFFF), XD_ALIGN_CENTER);
         st.shadow = true;
         st.shadow_color = xd_rgba_hex(0x000000);
-        xd_draw_text(cr, (xd_rect){well.x + xd_tpx(t, 8), iy + px + xd_tpx(t, 2), cell,
-                                   xd_tpx(t, 16)},
+        xd_draw_text(cairo,
+                     (xd_rect){well.x + xd_tpx(theme, 8), iy + px + xd_tpx(theme, 2), cell,
+                               xd_tpx(theme, 16)},
                      labels[i], &st);
     }
 
@@ -2199,74 +2259,79 @@ static void draw_theme_preview([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_re
     xd_frame active = {.title = "Active Window",
                        .active = true,
                        .buttons = XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE | XD_CAPBTN_MINIMIZE};
-    xd_rect win = {well.x + xd_tpx(t, 96), well.y + xd_tpx(t, 24), well.w - xd_tpx(t, 120),
-                   well.h - xd_tpx(t, 60)};
-    xd_theme_draw_frame(&pt, cr, win, &active);
+    xd_rect win = {well.x + xd_tpx(theme, 96), well.y + xd_tpx(theme, 24),
+                   well.w - xd_tpx(theme, 120), well.h - xd_tpx(theme, 60)};
+    xd_theme_draw_frame(&pt, cairo, win, &active);
     xd_insets in = xd_theme_frame_insets(&pt, &active);
     xd_rect client = xd_rect_inset4(win, in.left, in.top, in.right, in.bottom);
-    xd_fill_rect(cr, client, xd_theme_dialog_color(&pt));
+    xd_fill_rect(cairo, client, xd_theme_dialog_color(&pt));
     xd_rect field = xd_rect_inset(client, xd_tpx(&pt, 8), xd_tpx(&pt, 8));
-    xd_rect field_in = xd_theme_draw_field(&pt, cr, field, false);
+    xd_rect field_in = xd_theme_draw_field(&pt, cairo, field, false);
     xd_text_style st = xd_text(&pt, XD_FONT_MESSAGE, xd_sys(&pt, XD_COLOR_WINDOW_TEXT),
                                XD_ALIGN_START);
-    xd_draw_text(cr,
+    xd_draw_text(cairo,
                  (xd_rect){field_in.x + xd_tpx(&pt, 4), field_in.y + xd_tpx(&pt, 2),
                            field_in.w - xd_tpx(&pt, 8), xd_tpx(&pt, 16)},
                  "Window Text", &st);
-    cairo_restore(cr);
+    cairo_restore(cairo);
 }
 
-static void build_theme_tab(desk *d) {
-    xd_window *win = d->win;
-    const int P = PAGE_THEMES;
-    d->theme_items = g_array_new(FALSE, TRUE, sizeof(theme_item));
+static void build_theme_tab(desk *properties) {
+    xd_window *win = properties->win;
+    const int page = PAGE_THEMES;
+    properties->theme_items = g_array_new(FALSE, TRUE, sizeof(theme_item));
     xd_widget_set_page(xd_label(win, (xd_rect){20, 40, 364, 30},
                                 "A theme is a background plus a set of sounds, icons, and other "
                                 "elements to help you personalize your computer with one click.",
                                 XD_LABEL_WRAP),
-                       P);
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 80, 200, 16}, "Theme:", 0), P);
-    d->theme_combo = xd_combo(win, (xd_rect){20, 98, 206, 21}, false, on_theme, d);
-    xd_widget_set_page(d->theme_combo, P);
-    d->theme_save = xd_button(win, (xd_rect){232, 97, 75, 23}, "Save As...", on_theme_save, d);
-    xd_widget_set_page(d->theme_save, P);
-    d->theme_delete = xd_button(win, (xd_rect){309, 97, 75, 23}, "Delete", on_theme_delete, d);
-    xd_widget_set_page(d->theme_delete, P);
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 130, 200, 16}, "Sample:", 0), P);
-    d->theme_preview = xd_custom(win, (xd_rect){20, 148, 364, 244}, draw_theme_preview, d);
-    xd_widget_set_page(d->theme_preview, P);
-    fill_theme_list(d);
+                       page);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 80, 200, 16}, "Theme:", 0), page);
+    properties->theme_combo =
+        xd_combo(win, (xd_rect){20, 98, 206, 21}, false, on_theme, properties);
+    xd_widget_set_page(properties->theme_combo, page);
+    properties->theme_save =
+        xd_button(win, (xd_rect){232, 97, 75, 23}, "Save As...", on_theme_save, properties);
+    xd_widget_set_page(properties->theme_save, page);
+    properties->theme_delete =
+        xd_button(win, (xd_rect){309, 97, 75, 23}, "Delete", on_theme_delete, properties);
+    xd_widget_set_page(properties->theme_delete, page);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 130, 200, 16}, "Sample:", 0), page);
+    properties->theme_preview =
+        xd_custom(win, (xd_rect){20, 148, 364, 244}, draw_theme_preview, properties);
+    xd_widget_set_page(properties->theme_preview, page);
+    fill_theme_list(properties);
 }
 
 /* ---- Advanced Appearance ------------------------------------------------------------ */
 
 static void on_advanced_done(const xd_scheme_custom *custom, void *user) {
-    desk *d = user;
-    d->adv = nullptr;
-    xd_widget_set_enabled(d->advanced, d->color == nullptr);
+    desk *properties = user;
+    properties->adv = nullptr;
+    xd_widget_set_enabled(properties->advanced, properties->color == nullptr);
     if (custom == nullptr)
         return;
-    d->pending.custom_scheme = *custom;
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+    properties->pending.custom_scheme = *custom;
+    xd_widget_redraw(properties->appearance_preview);
+    changed(properties);
 }
 
-static void open_advanced(desk *d) {
-    if (d->adv != nullptr)
+static void open_advanced(desk *properties) {
+    if (properties->adv != nullptr)
         return;
-    d->adv = advanced_open(d->ui, &d->pending, on_advanced_done, d);
-    xd_widget_set_enabled(d->advanced, false);
+    properties->adv =
+        advanced_open(properties->ui, &properties->pending, on_advanced_done, properties);
+    xd_widget_set_enabled(properties->advanced, false);
 }
 
 /* Windows 7's "Advanced appearance settings..." link, at the bottom of
  * Window Color and Appearance. */
-static void draw_advanced_link([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
-                               const xd_theme *t, [[maybe_unused]] void *user) {
-    xd_text_style st = xd_text(t, XD_FONT_MESSAGE, xd_rgba_hex(0x0066CC), XD_ALIGN_START);
-    xd_draw_text(cr, r, "Advanced appearance settings...", &st);
+static void draw_advanced_link([[maybe_unused]] xd_widget *widget, cairo_t *cairo, xd_rect rect,
+                               const xd_theme *theme, [[maybe_unused]] void *user) {
+    xd_text_style st = xd_text(theme, XD_FONT_MESSAGE, xd_rgba_hex(0x0066CC), XD_ALIGN_START);
+    xd_draw_text(cairo, rect, "Advanced appearance settings...", &st);
 }
 
-static void on_advanced_link([[maybe_unused]] xd_widget *w, xd_pointer_event ev,
+static void on_advanced_link([[maybe_unused]] xd_widget *widget, xd_pointer_event ev,
                              [[maybe_unused]] double x, [[maybe_unused]] double y, void *user) {
     if (ev == XD_POINTER_RELEASE)
         open_advanced(user);
@@ -2285,313 +2350,322 @@ static constexpr int COLOR_H = 414;
 static uint32_t glass_rgb(uint32_t argb) { return argb & 0xFFFFFFu; }
 
 /* The swatch with the pending colour, or -1 (a colour mixed by hand). */
-static int current_swatch(const desk *d) {
+static int current_swatch(const desk *properties) {
     for (int i = 0; i < XD_GLASS_SWATCH_COUNT; i++) {
-        if (glass_rgb(xd_glass_swatches[i].argb) == glass_rgb(d->pending.glass_color))
+        if (glass_rgb(xd_glass_swatches[i].argb) == glass_rgb(properties->pending.glass_color))
             return i;
     }
     return -1;
 }
 
-static void color_changed(desk *d) {
-    int i = current_swatch(d);
+static void color_changed(desk *properties) {
+    int i = current_swatch(properties);
     char text[64];
     snprintf(text, sizeof(text), "Current color: %s", i >= 0 ? xd_glass_swatches[i].name : "Custom");
-    xd_widget_set_text(d->color_name, text);
-    xd_widget_redraw(d->swatches);
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+    xd_widget_set_text(properties->color_name, text);
+    xd_widget_redraw(properties->swatches);
+    xd_widget_redraw(properties->appearance_preview);
+    changed(properties);
 }
 
 /* A swatch: the colour under a glassy sheen, as Windows 7 draws them. */
-static void draw_swatch(const xd_theme *t, cairo_t *cr, xd_rect r, uint32_t argb) {
-    double rad = xd_tpx(t, 3);
-    xd_rgba c = xd_rgba_hex(glass_rgb(argb));
-    xd_path_rounded(cr, r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, rad, rad, rad, rad);
-    xd_set_color(cr, c);
-    cairo_fill_preserve(cr);
-    cairo_pattern_t *p = cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
-    cairo_pattern_add_color_stop_rgba(p, 0, 1, 1, 1, 0.55);
-    cairo_pattern_add_color_stop_rgba(p, 0.48, 1, 1, 1, 0.2);
-    cairo_pattern_add_color_stop_rgba(p, 0.48, 1, 1, 1, 0.0);
-    cairo_pattern_add_color_stop_rgba(p, 1, 1, 1, 1, 0.12);
-    cairo_set_source(cr, p);
-    cairo_fill_preserve(cr);
-    cairo_pattern_destroy(p);
-    cairo_set_line_width(cr, 1);
-    cairo_set_source_rgba(cr, 0, 0, 0, 0.45);
-    cairo_stroke(cr);
-    xd_path_rounded(cr, r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3, rad - 1, rad - 1, rad - 1,
-                    rad - 1);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.6);
-    cairo_stroke(cr);
+static void draw_swatch(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint32_t argb) {
+    double rad = xd_tpx(theme, 3);
+    xd_rgba color = xd_rgba_hex(glass_rgb(argb));
+    xd_path_rounded(cairo, rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1, rad, rad, rad, rad);
+    xd_set_color(cairo, color);
+    cairo_fill_preserve(cairo);
+    cairo_pattern_t *pattern = cairo_pattern_create_linear(0, rect.y, 0, rect.y + rect.h);
+    cairo_pattern_add_color_stop_rgba(pattern, 0, 1, 1, 1, 0.55);
+    cairo_pattern_add_color_stop_rgba(pattern, 0.48, 1, 1, 1, 0.2);
+    cairo_pattern_add_color_stop_rgba(pattern, 0.48, 1, 1, 1, 0.0);
+    cairo_pattern_add_color_stop_rgba(pattern, 1, 1, 1, 1, 0.12);
+    cairo_set_source(cairo, pattern);
+    cairo_fill_preserve(cairo);
+    cairo_pattern_destroy(pattern);
+    cairo_set_line_width(cairo, 1);
+    cairo_set_source_rgba(cairo, 0, 0, 0, 0.45);
+    cairo_stroke(cairo);
+    xd_path_rounded(cairo, rect.x + 1.5, rect.y + 1.5, rect.w - 3, rect.h - 3, rad - 1, rad - 1,
+                    rad - 1, rad - 1);
+    cairo_set_source_rgba(cairo, 1, 1, 1, 0.6);
+    cairo_stroke(cairo);
 }
 
-static void draw_swatches([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
-                          const xd_theme *t, void *user) {
-    desk *d = user;
-    int sel = current_swatch(d);
-    int pitch = xd_tpx(t, SWATCH_PITCH), margin = xd_tpx(t, SWATCH_MARGIN);
+static void draw_swatches([[maybe_unused]] xd_widget *widget, cairo_t *cairo, xd_rect bounds,
+                          const xd_theme *theme, void *user) {
+    desk *properties = user;
+    int sel = current_swatch(properties);
+    int pitch = xd_tpx(theme, SWATCH_PITCH), margin = xd_tpx(theme, SWATCH_MARGIN);
     for (int i = 0; i < XD_GLASS_SWATCH_COUNT; i++) {
-        xd_rect cell = {r.x + (i % SWATCH_COLUMNS) * pitch, r.y + (i / SWATCH_COLUMNS) * pitch,
-                        pitch, pitch};
+        xd_rect cell = {bounds.x + (i % SWATCH_COLUMNS) * pitch,
+                        bounds.y + (i / SWATCH_COLUMNS) * pitch, pitch, pitch};
         if (i == sel) {
             /* Selected: the light-blue highlight of Windows 7's lists. */
-            double rad = xd_tpx(t, 3);
-            xd_rect h = xd_rect_inset(cell, xd_tpx(t, 1), xd_tpx(t, 1));
-            xd_path_rounded(cr, h.x + 0.5, h.y + 0.5, h.w - 1, h.h - 1, rad, rad, rad, rad);
-            xd_set_color(cr, xd_rgba_hex(0xDCEBFC));
-            cairo_fill_preserve(cr);
-            cairo_set_line_width(cr, 1);
-            xd_set_color(cr, xd_rgba_hex(0x7DA2CE));
-            cairo_stroke(cr);
+            double rad = xd_tpx(theme, 3);
+            xd_rect highlight = xd_rect_inset(cell, xd_tpx(theme, 1), xd_tpx(theme, 1));
+            xd_path_rounded(cairo, highlight.x + 0.5, highlight.y + 0.5, highlight.w - 1,
+                            highlight.h - 1, rad, rad, rad, rad);
+            xd_set_color(cairo, xd_rgba_hex(0xDCEBFC));
+            cairo_fill_preserve(cairo);
+            cairo_set_line_width(cairo, 1);
+            xd_set_color(cairo, xd_rgba_hex(0x7DA2CE));
+            cairo_stroke(cairo);
         }
-        draw_swatch(t, cr, xd_rect_inset(cell, margin, margin), xd_glass_swatches[i].argb);
+        draw_swatch(theme, cairo, xd_rect_inset(cell, margin, margin), xd_glass_swatches[i].argb);
     }
 }
 
-static void mixer_from_color(desk *d) {
-    d->mixer = xd_rgba_to_hsv(xd_rgba_hex(glass_rgb(d->pending.glass_color)));
-    xd_slider_set(d->mixer_widgets[1], 0, 359, (int)lround(d->mixer.h) % 360);
-    xd_slider_set(d->mixer_widgets[4], 0, 100, (int)lround(d->mixer.s * 100));
-    xd_slider_set(d->mixer_widgets[7], 0, 100, (int)lround(d->mixer.v * 100));
-    for (size_t i = 2; i < XD_ARRAY_LEN(d->mixer_widgets); i += 3)
-        xd_widget_redraw(d->mixer_widgets[i]);
+static void mixer_from_color(desk *properties) {
+    properties->mixer = xd_rgba_to_hsv(xd_rgba_hex(glass_rgb(properties->pending.glass_color)));
+    xd_slider_set(properties->mixer_widgets[1], 0, 359, (int)lround(properties->mixer.h) % 360);
+    xd_slider_set(properties->mixer_widgets[4], 0, 100, (int)lround(properties->mixer.s * 100));
+    xd_slider_set(properties->mixer_widgets[7], 0, 100, (int)lround(properties->mixer.v * 100));
+    for (size_t i = 2; i < XD_ARRAY_LEN(properties->mixer_widgets); i += 3)
+        xd_widget_redraw(properties->mixer_widgets[i]);
 }
 
 /* Choosing a swatch takes its colour and its intensity, as in Windows 7. */
-static void on_swatch_pointer(xd_widget *w, xd_pointer_event ev, double x, double y,
+static void on_swatch_pointer(xd_widget *widget, xd_pointer_event ev, double x, double y,
                               void *user) {
-    desk *d = user;
+    desk *properties = user;
     if (ev != XD_POINTER_PRESS || x < 0 || y < 0)
         return;
     int col = (int)(x / SWATCH_PITCH), row = (int)(y / SWATCH_PITCH);
     int i = row * SWATCH_COLUMNS + col;
     if (col >= SWATCH_COLUMNS || i >= XD_GLASS_SWATCH_COUNT)
         return;
-    d->pending.glass_color = xd_glass_swatches[i].argb;
-    xd_slider_set(d->intensity, 0, 255, (int)(d->pending.glass_color >> 24));
-    mixer_from_color(d);
-    xd_widget_redraw(w);
-    color_changed(d);
+    properties->pending.glass_color = xd_glass_swatches[i].argb;
+    xd_slider_set(properties->intensity, 0, 255, (int)(properties->pending.glass_color >> 24));
+    mixer_from_color(properties);
+    xd_widget_redraw(widget);
+    color_changed(properties);
 }
 
-static void on_transparency(xd_widget *w, void *user) {
-    desk *d = user;
-    d->pending.glass_transparency = xd_checkbox_checked(w);
-    color_changed(d);
+static void on_transparency(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->pending.glass_transparency = xd_checkbox_checked(widget);
+    color_changed(properties);
 }
 
-static void on_intensity(xd_widget *w, void *user) {
-    desk *d = user;
-    uint32_t a = (uint32_t)XD_CLAMP(xd_slider_value(w), 0, 255);
-    d->pending.glass_color = (a << 24) | glass_rgb(d->pending.glass_color);
-    color_changed(d);
+static void on_intensity(xd_widget *widget, void *user) {
+    desk *properties = user;
+    uint32_t alpha = (uint32_t)XD_CLAMP(xd_slider_value(widget), 0, 255);
+    properties->pending.glass_color = (alpha << 24) | glass_rgb(properties->pending.glass_color);
+    color_changed(properties);
 }
 
-static void on_mixer([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    d->mixer = (xd_hsv){xd_slider_value(d->mixer_widgets[1]),
-                        xd_slider_value(d->mixer_widgets[4]) / 100.0,
-                        xd_slider_value(d->mixer_widgets[7]) / 100.0};
-    xd_rgba c = xd_rgba_from_hsv(d->mixer, 1.0);
-    uint32_t rgb = ((uint32_t)lround(c.r * 255) << 16) | ((uint32_t)lround(c.g * 255) << 8) |
-                   (uint32_t)lround(c.b * 255);
-    d->pending.glass_color = (d->pending.glass_color & 0xFF000000u) | rgb;
+static void on_mixer([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->mixer = (xd_hsv){xd_slider_value(properties->mixer_widgets[1]),
+                                 xd_slider_value(properties->mixer_widgets[4]) / 100.0,
+                                 xd_slider_value(properties->mixer_widgets[7]) / 100.0};
+    xd_rgba color = xd_rgba_from_hsv(properties->mixer, 1.0);
+    uint32_t rgb = ((uint32_t)lround(color.r * 255) << 16) |
+                   ((uint32_t)lround(color.g * 255) << 8) | (uint32_t)lround(color.b * 255);
+    properties->pending.glass_color = (properties->pending.glass_color & 0xFF000000u) | rgb;
     /* The other sliders' gradients run through the new colour. */
-    for (size_t i = 2; i < XD_ARRAY_LEN(d->mixer_widgets); i += 3)
-        xd_widget_redraw(d->mixer_widgets[i]);
-    color_changed(d);
+    for (size_t i = 2; i < XD_ARRAY_LEN(properties->mixer_widgets); i += 3)
+        xd_widget_redraw(properties->mixer_widgets[i]);
+    color_changed(properties);
 }
 
 /* Under each mixer slider, the colours it runs through. */
-static void draw_mixer_gradient(xd_widget *w, cairo_t *cr, xd_rect r,
-                                [[maybe_unused]] const xd_theme *t, void *user) {
-    desk *d = user;
+static void draw_mixer_gradient(xd_widget *widget, cairo_t *cairo, xd_rect rect,
+                                [[maybe_unused]] const xd_theme *theme, void *user) {
+    desk *properties = user;
     int which = 0;
-    while (which < 3 && d->mixer_widgets[which * 3 + 2] != w)
+    while (which < 3 && properties->mixer_widgets[which * 3 + 2] != widget)
         which++;
-    cairo_pattern_t *p = cairo_pattern_create_linear(r.x, 0, r.x + r.w, 0);
+    cairo_pattern_t *pattern = cairo_pattern_create_linear(rect.x, 0, rect.x + rect.w, 0);
     for (int k = 0; k <= 12; k++) {
-        double f = k / 12.0;
-        xd_hsv hsv = d->mixer;
+        double fraction = k / 12.0;
+        xd_hsv hsv = properties->mixer;
         if (which == 0)
-            hsv = (xd_hsv){f * 360, 1, 1};
+            hsv = (xd_hsv){fraction * 360, 1, 1};
         else if (which == 1)
-            hsv.s = f;
+            hsv.s = fraction;
         else
-            hsv.v = f;
-        xd_rgba c = xd_rgba_from_hsv(hsv, 1);
-        cairo_pattern_add_color_stop_rgb(p, f, c.r, c.g, c.b);
+            hsv.v = fraction;
+        xd_rgba color = xd_rgba_from_hsv(hsv, 1);
+        cairo_pattern_add_color_stop_rgb(pattern, fraction, color.r, color.g, color.b);
     }
-    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-    cairo_set_source(cr, p);
-    cairo_fill(cr);
-    cairo_pattern_destroy(p);
+    cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+    cairo_set_source(cairo, pattern);
+    cairo_fill(cairo);
+    cairo_pattern_destroy(pattern);
 }
 
-static void show_mixer(desk *d, bool shown) {
-    d->mixer_shown = shown;
-    for (size_t i = 0; i < XD_ARRAY_LEN(d->mixer_widgets); i++)
-        xd_widget_set_visible(d->mixer_widgets[i], shown);
-    xd_widget_redraw(d->mixer_toggle);
+static void show_mixer(desk *properties, bool shown) {
+    properties->mixer_shown = shown;
+    for (size_t i = 0; i < XD_ARRAY_LEN(properties->mixer_widgets); i++)
+        xd_widget_set_visible(properties->mixer_widgets[i], shown);
+    xd_widget_redraw(properties->mixer_toggle);
 }
 
 /* Windows 7's expander: a round button with a chevron, and its label. */
-static void draw_mixer_toggle([[maybe_unused]] xd_widget *w, cairo_t *cr, xd_rect r,
-                              const xd_theme *t, void *user) {
-    desk *d = user;
-    double rad = xd_tpx(t, 8);
-    double cx = r.x + rad, cy = r.y + r.h / 2.0;
-    cairo_arc(cr, cx, cy, rad - 0.5, 0, 2 * G_PI);
-    cairo_pattern_t *p = cairo_pattern_create_linear(0, cy - rad, 0, cy + rad);
-    cairo_pattern_add_color_stop_rgb(p, 0, 1, 1, 1);
-    cairo_pattern_add_color_stop_rgb(p, 1, 0.86, 0.88, 0.91);
-    cairo_set_source(cr, p);
-    cairo_fill_preserve(cr);
-    cairo_pattern_destroy(p);
-    cairo_set_line_width(cr, 1);
-    xd_set_color(cr, xd_rgba_hex(0x8E9AAC));
-    cairo_stroke(cr);
+static void draw_mixer_toggle([[maybe_unused]] xd_widget *widget, cairo_t *cairo, xd_rect rect,
+                              const xd_theme *theme, void *user) {
+    desk *properties = user;
+    double rad = xd_tpx(theme, 8);
+    double cx = rect.x + rad, cy = rect.y + rect.h / 2.0;
+    cairo_arc(cairo, cx, cy, rad - 0.5, 0, 2 * G_PI);
+    cairo_pattern_t *pattern = cairo_pattern_create_linear(0, cy - rad, 0, cy + rad);
+    cairo_pattern_add_color_stop_rgb(pattern, 0, 1, 1, 1);
+    cairo_pattern_add_color_stop_rgb(pattern, 1, 0.86, 0.88, 0.91);
+    cairo_set_source(cairo, pattern);
+    cairo_fill_preserve(cairo);
+    cairo_pattern_destroy(pattern);
+    cairo_set_line_width(cairo, 1);
+    xd_set_color(cairo, xd_rgba_hex(0x8E9AAC));
+    cairo_stroke(cairo);
     /* Down to show, up to hide. */
-    double a = rad * 0.4, dir = d->mixer_shown ? -1 : 1;
-    cairo_move_to(cr, cx - a, cy - dir * a / 2);
-    cairo_line_to(cr, cx, cy + dir * a / 2);
-    cairo_line_to(cr, cx + a, cy - dir * a / 2);
-    cairo_set_line_width(cr, xd_tpx(t, 1) * 1.5);
-    xd_set_color(cr, xd_rgba_hex(0x404A5A));
-    cairo_stroke(cr);
-    xd_text_style st = xd_text(t, XD_FONT_MESSAGE, xd_rgba_hex(0x000000), XD_ALIGN_START);
-    int tx = r.x + (int)(2 * rad) + xd_tpx(t, 6);
-    xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx, r.h},
-                 d->mixer_shown ? "Hide color mixer" : "Show color mixer", &st);
+    double half_width = rad * 0.4, dir = properties->mixer_shown ? -1 : 1;
+    cairo_move_to(cairo, cx - half_width, cy - dir * half_width / 2);
+    cairo_line_to(cairo, cx, cy + dir * half_width / 2);
+    cairo_line_to(cairo, cx + half_width, cy - dir * half_width / 2);
+    cairo_set_line_width(cairo, xd_tpx(theme, 1) * 1.5);
+    xd_set_color(cairo, xd_rgba_hex(0x404A5A));
+    cairo_stroke(cairo);
+    xd_text_style st = xd_text(theme, XD_FONT_MESSAGE, xd_rgba_hex(0x000000), XD_ALIGN_START);
+    int tx = rect.x + (int)(2 * rad) + xd_tpx(theme, 6);
+    xd_draw_text(cairo, (xd_rect){tx, rect.y, rect.x + rect.w - tx, rect.h},
+                 properties->mixer_shown ? "Hide color mixer" : "Show color mixer", &st);
 }
 
-static void on_mixer_toggle([[maybe_unused]] xd_widget *w, xd_pointer_event ev,
+static void on_mixer_toggle([[maybe_unused]] xd_widget *widget, xd_pointer_event ev,
                             [[maybe_unused]] double x, [[maybe_unused]] double y, void *user) {
     if (ev == XD_POINTER_PRESS)
         show_mixer(user, !((desk *)user)->mixer_shown);
 }
 
-static void color_close(desk *d) {
-    if (d->color == nullptr)
+static void color_close(desk *properties) {
+    if (properties->color == nullptr)
         return;
-    xd_window *color = d->color;
-    d->color = nullptr;
+    xd_window *color = properties->color;
+    properties->color = nullptr;
     xd_window_close(color);
-    xd_widget_set_enabled(d->advanced, d->adv == nullptr);
+    xd_widget_set_enabled(properties->advanced, properties->adv == nullptr);
 }
 
-static void on_color_save([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    color_close(d);
-    changed(d);
+static void on_color_save([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    color_close(properties);
+    changed(properties);
 }
 
-static void on_color_cancel([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    d->pending.glass_color = d->color_was;
-    d->pending.glass_transparency = d->transparency_was;
-    xd_widget_redraw(d->appearance_preview);
-    color_close(d);
-    changed(d);
+static void on_color_cancel([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->pending.glass_color = properties->color_was;
+    properties->pending.glass_transparency = properties->transparency_was;
+    xd_widget_redraw(properties->appearance_preview);
+    color_close(properties);
+    changed(properties);
 }
 
-static void on_window_color([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    if (d->color != nullptr)
+static void on_window_color([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    if (properties->color != nullptr)
         return;
-    d->color_was = d->pending.glass_color;
-    d->transparency_was = d->pending.glass_transparency;
-    xd_window *win = d->color =
-        xd_window_create(d->ui, "Window Color and Appearance", "xd-desk", COLOR_W, COLOR_H);
+    properties->color_was = properties->pending.glass_color;
+    properties->transparency_was = properties->pending.glass_transparency;
+    xd_window *win = properties->color = xd_window_create(
+        properties->ui, "Window Color and Appearance", "xd-desk", COLOR_W, COLOR_H);
     xd_label(win, (xd_rect){20, 14, 416, 18},
              "Change the color of your window borders, Start menu, and taskbar", XD_LABEL_BOLD);
-    d->swatches = xd_custom(win,
-                            (xd_rect){20, 42, SWATCH_COLUMNS * SWATCH_PITCH,
-                                      (XD_GLASS_SWATCH_COUNT / SWATCH_COLUMNS) * SWATCH_PITCH},
-                            draw_swatches, d);
-    xd_custom_set_pointer(d->swatches, on_swatch_pointer);
-    d->color_name = xd_label(win, (xd_rect){24, 154, 300, 16}, "", 0);
-    d->transparency = xd_checkbox(win, (xd_rect){24, 178, 300, 18}, "Enable transparency",
-                                  d->pending.glass_transparency, on_transparency, d);
+    properties->swatches =
+        xd_custom(win,
+                  (xd_rect){20, 42, SWATCH_COLUMNS * SWATCH_PITCH,
+                            (XD_GLASS_SWATCH_COUNT / SWATCH_COLUMNS) * SWATCH_PITCH},
+                  draw_swatches, properties);
+    xd_custom_set_pointer(properties->swatches, on_swatch_pointer);
+    properties->color_name = xd_label(win, (xd_rect){24, 154, 300, 16}, "", 0);
+    properties->transparency =
+        xd_checkbox(win, (xd_rect){24, 178, 300, 18}, "Enable transparency",
+                    properties->pending.glass_transparency, on_transparency, properties);
     xd_label(win, (xd_rect){24, 208, 100, 16}, "Color intensity:", 0);
-    d->intensity = xd_slider(win, (xd_rect){124, 202, 300, 26}, 0, 255,
-                             (int)(d->pending.glass_color >> 24), on_intensity, d);
-    d->mixer_toggle = xd_custom(win, (xd_rect){24, 238, 200, 20}, draw_mixer_toggle, d);
-    xd_custom_set_pointer(d->mixer_toggle, on_mixer_toggle);
+    properties->intensity =
+        xd_slider(win, (xd_rect){124, 202, 300, 26}, 0, 255,
+                  (int)(properties->pending.glass_color >> 24), on_intensity, properties);
+    properties->mixer_toggle =
+        xd_custom(win, (xd_rect){24, 238, 200, 20}, draw_mixer_toggle, properties);
+    xd_custom_set_pointer(properties->mixer_toggle, on_mixer_toggle);
     static const char *const names[] = {"Hue:", "Saturation:", "Brightness:"};
     for (int i = 0; i < 3; i++) {
         int y = 264 + i * 32;
-        d->mixer_widgets[i * 3] = xd_label(win, (xd_rect){44, y + 6, 76, 16}, names[i], 0);
-        d->mixer_widgets[i * 3 + 1] =
-            xd_slider(win, (xd_rect){124, y, 300, 26}, 0, i == 0 ? 359 : 100, 0, on_mixer, d);
-        d->mixer_widgets[i * 3 + 2] =
-            xd_custom(win, (xd_rect){130, y + 26, 288, 4}, draw_mixer_gradient, d);
+        properties->mixer_widgets[i * 3] = xd_label(win, (xd_rect){44, y + 6, 76, 16}, names[i], 0);
+        properties->mixer_widgets[i * 3 + 1] = xd_slider(
+            win, (xd_rect){124, y, 300, 26}, 0, i == 0 ? 359 : 100, 0, on_mixer, properties);
+        properties->mixer_widgets[i * 3 + 2] =
+            xd_custom(win, (xd_rect){130, y + 26, 288, 4}, draw_mixer_gradient, properties);
     }
-    mixer_from_color(d);
-    show_mixer(d, false);
-    color_changed(d);
+    mixer_from_color(properties);
+    show_mixer(properties, false);
+    color_changed(properties);
 
-    xd_widget *save =
-        xd_button(win, (xd_rect){COLOR_W - 200, COLOR_H - 34, 100, 23}, "Save changes",
-                  on_color_save, d);
+    xd_widget *save = xd_button(win, (xd_rect){COLOR_W - 200, COLOR_H - 34, 100, 23},
+                                "Save changes", on_color_save, properties);
     xd_widget *cancel = xd_button(win, (xd_rect){COLOR_W - 92, COLOR_H - 34, 75, 23}, "Cancel",
-                                  on_color_cancel, d);
+                                  on_color_cancel, properties);
     xd_window_set_default(win, save);
     xd_window_set_cancel(win, cancel);
-    xd_widget *link = xd_custom(win, (xd_rect){20, COLOR_H - 30, 200, 16}, draw_advanced_link, d);
+    xd_widget *link =
+        xd_custom(win, (xd_rect){20, COLOR_H - 30, 200, 16}, draw_advanced_link, properties);
     xd_custom_set_pointer(link, on_advanced_link);
-    xd_window_set_focus(win, d->transparency);
-    xd_widget_set_enabled(d->advanced, false);
+    xd_window_set_focus(win, properties->transparency);
+    xd_widget_set_enabled(properties->advanced, false);
     xd_window_show(win);
 }
 
 /* XP's Advanced opens the editor; in Aero, Windows 7's Window Color and
  * Appearance, which links to it. */
-static void on_advanced([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    if (d->pending.style == XD_STYLE_AERO)
-        on_window_color(w, d);
+static void on_advanced([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    if (properties->pending.style == XD_STYLE_AERO)
+        on_window_color(widget, properties);
     else
-        open_advanced(d);
+        open_advanced(properties);
 }
 
-static void build_appearance(desk *d) {
-    xd_window *win = d->win;
-    const int P = PAGE_APPEARANCE;
-    d->appearance_preview =
-        xd_custom(win, (xd_rect){20, 40, 364, 186}, draw_appearance_preview, d);
-    xd_widget_set_page(d->appearance_preview, P);
+static void build_appearance(desk *properties) {
+    xd_window *win = properties->win;
+    const int page = PAGE_APPEARANCE;
+    properties->appearance_preview =
+        xd_custom(win, (xd_rect){20, 40, 364, 186}, draw_appearance_preview, properties);
+    xd_widget_set_page(properties->appearance_preview, page);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 238, 200, 16}, "Windows and buttons:", 0), P);
-    d->style_combo = xd_combo(win, (xd_rect){20, 256, 220, 21}, false, on_style, d);
-    xd_widget_set_page(d->style_combo, P);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 238, 200, 16}, "Windows and buttons:", 0), page);
+    properties->style_combo =
+        xd_combo(win, (xd_rect){20, 256, 220, 21}, false, on_style, properties);
+    xd_widget_set_page(properties->style_combo, page);
     char **dirs = xd_theme_package_dirs();
-    d->packages = xd_theme_packages_list((const char *const *)dirs);
+    properties->packages = xd_theme_packages_list((const char *const *)dirs);
     g_strfreev(dirs);
-    fill_styles(d);
-    update_preview_package(d);
+    fill_styles(properties);
+    update_preview_package(properties);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 286, 200, 16}, "Color scheme:", 0), P);
-    d->scheme_combo = xd_combo(win, (xd_rect){20, 304, 220, 21}, false, on_scheme, d);
-    xd_widget_set_page(d->scheme_combo, P);
-    fill_schemes(d);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 286, 200, 16}, "Color scheme:", 0), page);
+    properties->scheme_combo =
+        xd_combo(win, (xd_rect){20, 304, 220, 21}, false, on_scheme, properties);
+    xd_widget_set_page(properties->scheme_combo, page);
+    fill_schemes(properties);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 334, 200, 16}, "Font size:", 0), P);
-    d->font_combo = xd_combo(win, (xd_rect){20, 352, 220, 21}, false, on_font_size, d);
-    xd_widget_set_page(d->font_combo, P);
-    fill_font_sizes(d);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 334, 200, 16}, "Font size:", 0), page);
+    properties->font_combo =
+        xd_combo(win, (xd_rect){20, 352, 220, 21}, false, on_font_size, properties);
+    xd_widget_set_page(properties->font_combo, page);
+    fill_font_sizes(properties);
 
-    d->advanced = xd_button(win, (xd_rect){298, 352, 86, 23}, "Advanced", on_advanced, d);
-    xd_widget_set_page(d->advanced, P);
+    properties->advanced =
+        xd_button(win, (xd_rect){298, 352, 86, 23}, "Advanced", on_advanced, properties);
+    xd_widget_set_page(properties->advanced, page);
     /* Beside Windows and buttons, as XP's Themes tab offers Browse... in
      * its list: a Windows visual style (.msstyles, or a .theme naming
      * one), converted into a theme package, or a package. Last in the tab
      * order, after Advanced. */
-    d->style_browse =
-        xd_button(win, (xd_rect){298, 255, 86, 23}, "Browse...", on_style_browse, d);
-    xd_widget_set_page(d->style_browse, P);
+    properties->style_browse =
+        xd_button(win, (xd_rect){298, 255, 86, 23}, "Browse...", on_style_browse, properties);
+    xd_widget_set_page(properties->style_browse, page);
 }
 
 /* ---- Effects ------------------------------------------------------------------------ */
@@ -2607,68 +2681,69 @@ static const xd_font_hinting hinting_items[] = {XD_HINT_NONE, XD_HINT_SLIGHT, XD
                                                 XD_HINT_FULL};
 static const char *const hinting_labels[] = {"None", "Slight", "Medium", "Full"};
 
-static void on_smoothing([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    int aa = xd_widget_selected(d->antialias_combo);
-    int hint = xd_widget_selected(d->hinting_combo);
-    int order = xd_widget_selected(d->subpixel_combo);
+static void on_smoothing([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    int aa = xd_widget_selected(properties->antialias_combo);
+    int hint = xd_widget_selected(properties->hinting_combo);
+    int order = xd_widget_selected(properties->subpixel_combo);
     if (aa >= 0 && (size_t)aa < XD_ARRAY_LEN(antialias_items))
-        d->pending.font_smoothing.antialias = antialias_items[aa];
+        properties->pending.font_smoothing.antialias = antialias_items[aa];
     if (hint >= 0 && (size_t)hint < XD_ARRAY_LEN(hinting_items))
-        d->pending.font_smoothing.hinting = hinting_items[hint];
+        properties->pending.font_smoothing.hinting = hinting_items[hint];
     if (order >= 0 && (size_t)order < XD_ARRAY_LEN(subpixel_labels))
-        d->pending.font_smoothing.order = (xd_subpixel_order)order;
+        properties->pending.font_smoothing.order = (xd_subpixel_order)order;
     /* The order only matters to subpixel smoothing. */
-    xd_widget_set_enabled(d->subpixel_combo,
-                          d->pending.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL);
-    changed(d);
+    xd_widget_set_enabled(properties->subpixel_combo,
+                          properties->pending.font_smoothing.antialias == XD_SMOOTH_SUBPIXEL);
+    changed(properties);
 }
 
-static void on_transition(xd_widget *w, void *user) {
-    (void)w;
-    desk *d = user;
-    bool on = xd_checkbox_checked(d->transition_check);
-    xd_widget_set_enabled(d->transition_combo, on);
-    d->pending.menu_transitions = on;
-    d->pending.menu_transition =
-        xd_widget_selected(d->transition_combo) == 1 ? XD_TRANSITION_SCROLL : XD_TRANSITION_FADE;
-    changed(d);
+static void on_transition(xd_widget *widget, void *user) {
+    (void)widget;
+    desk *properties = user;
+    bool on = xd_checkbox_checked(properties->transition_check);
+    xd_widget_set_enabled(properties->transition_combo, on);
+    properties->pending.menu_transitions = on;
+    properties->pending.menu_transition = xd_widget_selected(properties->transition_combo) == 1
+                                              ? XD_TRANSITION_SCROLL
+                                              : XD_TRANSITION_FADE;
+    changed(properties);
 }
 
-static void on_large_icons(xd_widget *w, void *user) {
-    desk *d = user;
-    d->pending.large_icons = xd_checkbox_checked(w);
-    changed(d);
+static void on_large_icons(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->pending.large_icons = xd_checkbox_checked(widget);
+    changed(properties);
 }
 
-static void on_full_drag(xd_widget *w, void *user) {
-    desk *d = user;
-    d->pending.full_window_drag = xd_checkbox_checked(w);
-    changed(d);
+static void on_full_drag(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->pending.full_window_drag = xd_checkbox_checked(widget);
+    changed(properties);
 }
 
 /* Scale theme images: Automatic, then the filters in scale.h's order. */
-static void on_scaling(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
+static void on_scaling(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
     if (i < 0 || i > XD_FILTER_COUNT)
         return;
-    d->pending.image_scaling = i == 0 ? XD_FILTER_COUNT : (xd_image_filter)(i - 1);
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+    properties->pending.image_scaling = i == 0 ? XD_FILTER_COUNT : (xd_image_filter)(i - 1);
+    xd_widget_redraw(properties->appearance_preview);
+    changed(properties);
 }
 
-static void on_integer_scaling(xd_widget *w, void *user) {
-    desk *d = user;
-    d->pending.integer_scaling = xd_checkbox_checked(w);
-    xd_widget_redraw(d->appearance_preview);
-    changed(d);
+static void on_integer_scaling(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->pending.integer_scaling = xd_checkbox_checked(widget);
+    xd_widget_redraw(properties->appearance_preview);
+    changed(properties);
 }
 
-static void on_keyboard_cues(xd_widget *w, void *user) {
-    desk *d = user;
-    d->pending.hide_keyboard_cues = xd_checkbox_checked(w);
-    changed(d);
+static void on_keyboard_cues(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->pending.hide_keyboard_cues = xd_checkbox_checked(widget);
+    changed(properties);
 }
 
 /* The Linux tab: the freedesktop icon theme everything draws from, the GTK
@@ -2681,25 +2756,25 @@ static const char *theme_dir_at(GPtrArray *list, int item) {
     return ((xd_installed_theme *)g_ptr_array_index(list, (guint)item - 1))->dir;
 }
 
-static void on_icon_theme(xd_widget *w, void *user) {
-    desk *d = user;
-    snprintf(d->pending.icon_theme, sizeof(d->pending.icon_theme), "%s",
-             theme_dir_at(d->icon_themes, xd_widget_selected(w)));
-    changed(d);
+static void on_icon_theme(xd_widget *widget, void *user) {
+    desk *properties = user;
+    snprintf(properties->pending.icon_theme, sizeof(properties->pending.icon_theme), "%s",
+             theme_dir_at(properties->icon_themes, xd_widget_selected(widget)));
+    changed(properties);
 }
 
-static void on_gtk_theme(xd_widget *w, void *user) {
-    desk *d = user;
-    snprintf(d->pending.gtk_theme, sizeof(d->pending.gtk_theme), "%s",
-             theme_dir_at(d->gtk_themes, xd_widget_selected(w)));
-    changed(d);
+static void on_gtk_theme(xd_widget *widget, void *user) {
+    desk *properties = user;
+    snprintf(properties->pending.gtk_theme, sizeof(properties->pending.gtk_theme), "%s",
+             theme_dir_at(properties->gtk_themes, xd_widget_selected(widget)));
+    changed(properties);
 }
 
-static void on_qt_style(xd_widget *w, void *user) {
-    desk *d = user;
-    snprintf(d->pending.qt_style, sizeof(d->pending.qt_style), "%s",
-             theme_dir_at(d->qt_styles, xd_widget_selected(w)));
-    changed(d);
+static void on_qt_style(xd_widget *widget, void *user) {
+    desk *properties = user;
+    snprintf(properties->pending.qt_style, sizeof(properties->pending.qt_style), "%s",
+             theme_dir_at(properties->qt_styles, xd_widget_selected(widget)));
+    changed(properties);
 }
 
 /* Fills a theme list after its default item and selects `dir` ("" = the
@@ -2712,10 +2787,10 @@ static void fill_themes(xd_widget *combo, GPtrArray *list, const char *dir) {
             sel = (int)i + 1;
     }
     if (dir[0] != '\0' && sel == 0) {
-        xd_installed_theme *t = g_new0(xd_installed_theme, 1);
-        t->dir = g_strdup(dir);
-        t->name = g_strdup(dir);
-        g_ptr_array_add(list, t);
+        xd_installed_theme *installed_theme = g_new0(xd_installed_theme, 1);
+        installed_theme->dir = g_strdup(dir);
+        installed_theme->name = g_strdup(dir);
+        g_ptr_array_add(list, installed_theme);
         sel = (int)list->len;
     }
     for (guint i = 0; i < list->len; i++)
@@ -2723,173 +2798,184 @@ static void fill_themes(xd_widget *combo, GPtrArray *list, const char *dir) {
     xd_widget_select(combo, sel);
 }
 
-static void on_night_light_done(const xd_nightlight_settings *s, void *user) {
-    desk *d = user;
-    d->night = nullptr;
-    if (s != nullptr)
-        d->pending.night_light = *s;
-    changed(d);
+static void on_night_light_done(const xd_nightlight_settings *nightlight_settings, void *user) {
+    desk *properties = user;
+    properties->night = nullptr;
+    if (nightlight_settings != nullptr)
+        properties->pending.night_light = *nightlight_settings;
+    changed(properties);
 }
 
-static void on_night_light([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    if (d->night == nullptr)
-        d->night =
-            nightlight_dialog_open(d->ui, &d->pending.night_light, on_night_light_done, d);
+static void on_night_light([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    if (properties->night == nullptr)
+        properties->night = nightlight_dialog_open(properties->ui, &properties->pending.night_light,
+                                                   on_night_light_done, properties);
 }
 
-static void on_color_management([[maybe_unused]] xd_widget *w, [[maybe_unused]] void *user) {
+static void on_color_management([[maybe_unused]] xd_widget *widget, [[maybe_unused]] void *user) {
     launch_own("xd-color", nullptr);
 }
 
-static void build_themes(desk *d) {
-    xd_window *win = d->win;
-    const int P = PAGE_LINUX;
+static void build_themes(desk *properties) {
+    xd_window *win = properties->win;
+    const int page = PAGE_LINUX;
     char **dirs = xd_icon_theme_dirs();
-    d->icon_themes = xd_icon_themes_list((const char *const *)dirs);
+    properties->icon_themes = xd_icon_themes_list((const char *const *)dirs);
     g_strfreev(dirs);
     dirs = xd_gtk_theme_dirs();
-    d->gtk_themes = xd_gtk_themes_list((const char *const *)dirs);
+    properties->gtk_themes = xd_gtk_themes_list((const char *const *)dirs);
     g_strfreev(dirs);
     dirs = xd_qt_plugin_dirs();
-    d->qt_styles = xd_qt_styles_list((const char *const *)dirs);
+    properties->qt_styles = xd_qt_styles_list((const char *const *)dirs);
     g_strfreev(dirs);
 
     xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 116}, "Icons and program style"),
-                       P);
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 65, 130, 16}, "Icons:", 0), P);
-    d->icon_combo = xd_combo(win, (xd_rect){164, 62, 208, 21}, false, on_icon_theme, d);
-    xd_widget_set_page(d->icon_combo, P);
+                       page);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 65, 130, 16}, "Icons:", 0), page);
+    properties->icon_combo =
+        xd_combo(win, (xd_rect){164, 62, 208, 21}, false, on_icon_theme, properties);
+    xd_widget_set_page(properties->icon_combo, page);
     /* The default ($XD_ICON_THEME, else Breeze), as the list names it. */
-    xd_settings def = d->pending;
+    xd_settings def = properties->pending;
     def.icon_theme[0] = '\0';
     const char *def_dir = xd_settings_icon_theme(&def);
     const char *def_name = def_dir;
-    for (guint i = 0; i < d->icon_themes->len; i++) {
-        const xd_installed_theme *t = g_ptr_array_index(d->icon_themes, i);
-        if (strcmp(t->dir, def_dir) == 0)
-            def_name = t->name;
+    for (guint i = 0; i < properties->icon_themes->len; i++) {
+        const xd_installed_theme *installed_theme = g_ptr_array_index(properties->icon_themes, i);
+        if (strcmp(installed_theme->dir, def_dir) == 0)
+            def_name = installed_theme->name;
     }
     char *label = g_strdup_printf("Default (%s)", def_name);
-    xd_widget_add_item(d->icon_combo, label);
+    xd_widget_add_item(properties->icon_combo, label);
     g_free(label);
-    fill_themes(d->icon_combo, d->icon_themes, d->pending.icon_theme);
+    fill_themes(properties->icon_combo, properties->icon_themes, properties->pending.icon_theme);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 95, 130, 16}, "Program style (GTK):", 0), P);
-    d->gtk_combo = xd_combo(win, (xd_rect){164, 92, 208, 21}, false, on_gtk_theme, d);
-    xd_widget_set_page(d->gtk_combo, P);
-    xd_widget_add_item(d->gtk_combo, "XeonDesktop (matches the style)");
-    fill_themes(d->gtk_combo, d->gtk_themes, d->pending.gtk_theme);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 95, 130, 16}, "Program style (GTK):", 0), page);
+    properties->gtk_combo =
+        xd_combo(win, (xd_rect){164, 92, 208, 21}, false, on_gtk_theme, properties);
+    xd_widget_set_page(properties->gtk_combo, page);
+    xd_widget_add_item(properties->gtk_combo, "XeonDesktop (matches the style)");
+    fill_themes(properties->gtk_combo, properties->gtk_themes, properties->pending.gtk_theme);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 125, 130, 16}, "Program style (Qt):", 0), P);
-    d->qt_combo = xd_combo(win, (xd_rect){164, 122, 208, 21}, false, on_qt_style, d);
-    xd_widget_set_page(d->qt_combo, P);
-    xd_widget_add_item(d->qt_combo, "Automatic (matches the style)");
-    fill_themes(d->qt_combo, d->qt_styles, d->pending.qt_style);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 125, 130, 16}, "Program style (Qt):", 0), page);
+    properties->qt_combo =
+        xd_combo(win, (xd_rect){164, 122, 208, 21}, false, on_qt_style, properties);
+    xd_widget_set_page(properties->qt_combo, page);
+    xd_widget_add_item(properties->qt_combo, "Automatic (matches the style)");
+    fill_themes(properties->qt_combo, properties->qt_styles, properties->pending.qt_style);
     xd_widget_set_page(xd_label(win, (xd_rect){20, 166, 364, 28},
                                 "Qt programs that are already running keep their style until "
                                 "they are started again.",
                                 XD_LABEL_WRAP),
-                       P);
+                       page);
 
     /* Colour: the night light (desk_nightlight.c) and colord's profiles
      * (xd-color), which XP kept in Settings > Advanced > Color Management. */
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 204, 364, 92}, "Color"), P);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 204, 364, 92}, "Color"), page);
     xd_widget_set_page(xd_label(win, (xd_rect){32, 224, 340, 28},
                                 "Warmer colors at night, and the color profiles of monitors, "
                                 "printers and scanners.",
                                 XD_LABEL_WRAP),
-                       P);
-    xd_widget_set_page(xd_button(win, (xd_rect){32, 260, 110, 23}, "Night Light...",
-                                 on_night_light, d),
-                       P);
+                       page);
+    xd_widget_set_page(
+        xd_button(win, (xd_rect){32, 260, 110, 23}, "Night Light...", on_night_light, properties),
+        page);
     xd_widget_set_page(xd_button(win, (xd_rect){150, 260, 130, 23}, "Color Management...",
-                                 on_color_management, d),
-                       P);
+                                 on_color_management, properties),
+                       page);
 }
 
-static void build_effects(desk *d) {
-    xd_window *win = d->win;
-    const int P = PAGE_EFFECTS;
+static void build_effects(desk *properties) {
+    xd_window *win = properties->win;
+    const int page = PAGE_EFFECTS;
     /* XP's Effects dialog, its combo boxes under the boxes they belong to. */
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 166}, "Visual effects"), P);
-    d->transition_check =
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 40, 364, 166}, "Visual effects"), page);
+    properties->transition_check =
         xd_checkbox(win, (xd_rect){32, 62, 340, 20},
                     "Use the following transition effect for menus and tooltips:",
-                    d->pending.menu_transitions, on_transition, d);
-    xd_widget_set_page(d->transition_check, P);
-    d->transition_combo = xd_combo(win, (xd_rect){52, 84, 150, 21}, false, on_transition, d);
-    xd_widget_set_page(d->transition_combo, P);
-    xd_widget_add_item(d->transition_combo, "Fade Effect");
-    xd_widget_add_item(d->transition_combo, "Scroll Effect");
-    xd_widget_select(d->transition_combo,
-                     d->pending.menu_transition == XD_TRANSITION_SCROLL ? 1 : 0);
-    xd_widget_set_enabled(d->transition_combo, d->pending.menu_transitions);
+                    properties->pending.menu_transitions, on_transition, properties);
+    xd_widget_set_page(properties->transition_check, page);
+    properties->transition_combo =
+        xd_combo(win, (xd_rect){52, 84, 150, 21}, false, on_transition, properties);
+    xd_widget_set_page(properties->transition_combo, page);
+    xd_widget_add_item(properties->transition_combo, "Fade Effect");
+    xd_widget_add_item(properties->transition_combo, "Scroll Effect");
+    xd_widget_select(properties->transition_combo,
+                     properties->pending.menu_transition == XD_TRANSITION_SCROLL ? 1 : 0);
+    xd_widget_set_enabled(properties->transition_combo, properties->pending.menu_transitions);
 
     /* XP's Shell Icon Size: the desktop's icons and the XP Start menu's
      * program list. */
-    d->large_icons = xd_checkbox(win, (xd_rect){32, 112, 340, 20}, "Use large icons",
-                                 d->pending.large_icons, on_large_icons, d);
-    xd_widget_set_page(d->large_icons, P);
+    properties->large_icons =
+        xd_checkbox(win, (xd_rect){32, 112, 340, 20}, "Use large icons",
+                    properties->pending.large_icons, on_large_icons, properties);
+    xd_widget_set_page(properties->large_icons, page);
     /* Off: moving or sizing a window drags its outline (the compositor's). */
     xd_widget_set_page(xd_checkbox(win, (xd_rect){32, 136, 340, 20},
                                    "Show window contents while dragging",
-                                   d->pending.full_window_drag, on_full_drag, d),
-                       P);
+                                   properties->pending.full_window_drag, on_full_drag, properties),
+                       page);
     /* Check boxes draw one line: XP's wrapped label goes on in a label. */
-    xd_widget_set_page(
-        xd_checkbox(win, (xd_rect){32, 160, 340, 20},
-                    "Hide underlined letters for keyboard navigation until I press",
-                    d->pending.hide_keyboard_cues, on_keyboard_cues, d),
-        P);
-    xd_widget_set_page(xd_label(win, (xd_rect){50, 178, 322, 16}, "the Alt key", 0), P);
+    xd_widget_set_page(xd_checkbox(win, (xd_rect){32, 160, 340, 20},
+                                   "Hide underlined letters for keyboard navigation until I press",
+                                   properties->pending.hide_keyboard_cues, on_keyboard_cues,
+                                   properties),
+                       page);
+    xd_widget_set_page(xd_label(win, (xd_rect){50, 178, 322, 16}, "the Alt key", 0), page);
 
     /* Windows had one choice here ("Smooth edges of screen fonts"); these
      * are FreeType's, as fontconfig and cairo take them, and go to other
      * programs too (GNOME's settings and GTK's settings.ini). */
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 214, 364, 112}, "Font smoothing"), P);
-    const xd_font_smoothing *fs = &d->pending.font_smoothing;
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 239, 130, 16}, "Antialiasing:", 0), P);
-    d->antialias_combo = xd_combo(win, (xd_rect){164, 236, 208, 21}, false, on_smoothing, d);
-    xd_widget_set_page(d->antialias_combo, P);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 214, 364, 112}, "Font smoothing"), page);
+    const xd_font_smoothing *fs = &properties->pending.font_smoothing;
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 239, 130, 16}, "Antialiasing:", 0), page);
+    properties->antialias_combo =
+        xd_combo(win, (xd_rect){164, 236, 208, 21}, false, on_smoothing, properties);
+    xd_widget_set_page(properties->antialias_combo, page);
     for (size_t i = 0; i < XD_ARRAY_LEN(antialias_labels); i++) {
-        xd_widget_add_item(d->antialias_combo, antialias_labels[i]);
+        xd_widget_add_item(properties->antialias_combo, antialias_labels[i]);
         if (antialias_items[i] == fs->antialias)
-            xd_widget_select(d->antialias_combo, (int)i);
+            xd_widget_select(properties->antialias_combo, (int)i);
     }
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 269, 130, 16}, "Subpixel order:", 0), P);
-    d->subpixel_combo = xd_combo(win, (xd_rect){164, 266, 208, 21}, false, on_smoothing, d);
-    xd_widget_set_page(d->subpixel_combo, P);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 269, 130, 16}, "Subpixel order:", 0), page);
+    properties->subpixel_combo =
+        xd_combo(win, (xd_rect){164, 266, 208, 21}, false, on_smoothing, properties);
+    xd_widget_set_page(properties->subpixel_combo, page);
     for (size_t i = 0; i < XD_ARRAY_LEN(subpixel_labels); i++)
-        xd_widget_add_item(d->subpixel_combo, subpixel_labels[i]);
-    xd_widget_select(d->subpixel_combo, (int)fs->order);
-    xd_widget_set_enabled(d->subpixel_combo, fs->antialias == XD_SMOOTH_SUBPIXEL);
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 299, 130, 16}, "Hinting:", 0), P);
-    d->hinting_combo = xd_combo(win, (xd_rect){164, 296, 208, 21}, false, on_smoothing, d);
-    xd_widget_set_page(d->hinting_combo, P);
+        xd_widget_add_item(properties->subpixel_combo, subpixel_labels[i]);
+    xd_widget_select(properties->subpixel_combo, (int)fs->order);
+    xd_widget_set_enabled(properties->subpixel_combo, fs->antialias == XD_SMOOTH_SUBPIXEL);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 299, 130, 16}, "Hinting:", 0), page);
+    properties->hinting_combo =
+        xd_combo(win, (xd_rect){164, 296, 208, 21}, false, on_smoothing, properties);
+    xd_widget_set_page(properties->hinting_combo, page);
     for (size_t i = 0; i < XD_ARRAY_LEN(hinting_labels); i++) {
-        xd_widget_add_item(d->hinting_combo, hinting_labels[i]);
+        xd_widget_add_item(properties->hinting_combo, hinting_labels[i]);
         if (hinting_items[i] == fs->hinting)
-            xd_widget_select(d->hinting_combo, (int)i);
+            xd_widget_select(properties->hinting_combo, (int)i);
     }
 
     /* How a theme package's pictures are scaled up for high DPI
      * (docs/THEMES.md): Windows only stretched them. */
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 334, 364, 66}, "Theme images"), P);
-    xd_widget_set_page(xd_label(win, (xd_rect){32, 357, 130, 16}, "Scale theme images:", 0), P);
-    d->scaling_combo = xd_combo(win, (xd_rect){164, 354, 208, 21}, false, on_scaling, d);
-    xd_widget_set_page(d->scaling_combo, P);
-    xd_widget_add_item(d->scaling_combo, "Automatic");
-    for (int f = 0; f < XD_FILTER_COUNT; f++)
-        xd_widget_add_item(d->scaling_combo, xd_image_filter_name((xd_image_filter)f));
-    xd_widget_select(d->scaling_combo, d->pending.image_scaling == XD_FILTER_COUNT
-                                           ? 0
-                                           : (int)d->pending.image_scaling + 1);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 334, 364, 66}, "Theme images"), page);
+    xd_widget_set_page(xd_label(win, (xd_rect){32, 357, 130, 16}, "Scale theme images:", 0), page);
+    properties->scaling_combo =
+        xd_combo(win, (xd_rect){164, 354, 208, 21}, false, on_scaling, properties);
+    xd_widget_set_page(properties->scaling_combo, page);
+    xd_widget_add_item(properties->scaling_combo, "Automatic");
+    for (int filter_index = 0; filter_index < XD_FILTER_COUNT; filter_index++)
+        xd_widget_add_item(properties->scaling_combo,
+                           xd_image_filter_name((xd_image_filter)filter_index));
+    xd_widget_select(properties->scaling_combo, properties->pending.image_scaling == XD_FILTER_COUNT
+                                                    ? 0
+                                                    : (int)properties->pending.image_scaling + 1);
     xd_widget_set_page(xd_checkbox(win, (xd_rect){32, 378, 340, 20},
                                    "Use whole-number scaling when the scale is a whole number",
-                                   d->pending.integer_scaling, on_integer_scaling, d),
-                       P);
-    build_themes(d);
+                                   properties->pending.integer_scaling, on_integer_scaling,
+                                   properties),
+                       page);
+    build_themes(properties);
 }
 
 /* ---- Settings ------------------------------------------------------------------ */
@@ -2915,143 +3001,148 @@ static disp_head *copy_heads(const disp_head *src, size_t count) {
 }
 
 /* Reads the compositor's current configuration into d->heads. */
-static void load_heads(desk *d) {
-    free_heads(d->heads, d->head_count);
-    d->heads = nullptr;
-    d->head_count = 0;
+static void load_heads(desk *properties) {
+    free_heads(properties->heads, properties->head_count);
+    properties->heads = nullptr;
+    properties->head_count = 0;
     const xd_display_head *heads = nullptr;
-    size_t n = 0;
-    if (!xd_ui_display_heads(d->ui, &heads, &n))
+    size_t count = 0;
+    if (!xd_ui_display_heads(properties->ui, &heads, &count))
         return;
-    d->heads = xd_alloc_array(XD_MAX(n, 1), sizeof(*d->heads));
-    for (size_t i = 0; i < n; i++) {
-        const xd_display_head *h = &heads[i];
-        disp_head *dh = &d->heads[i];
+    properties->heads = xd_alloc_array(XD_MAX(count, 1), sizeof(*properties->heads));
+    for (size_t i = 0; i < count; i++) {
+        const xd_display_head *display_head = &heads[i];
+        disp_head *dh = &properties->heads[i];
         *dh = (disp_head){0};
-        snprintf(dh->set.name, sizeof(dh->set.name), "%s", h->name);
-        snprintf(dh->description, sizeof(dh->description), "%s", h->description);
-        dh->set.enabled = h->enabled;
-        dh->set.x = h->x;
-        dh->set.y = h->y;
-        dh->set.scale = h->scale > 0 ? h->scale : 1.0;
-        dh->set.transform = h->transform;
-        dh->set.adaptive_sync = h->adaptive_sync;
-        dh->mode_count = h->mode_count;
-        dh->modes = xd_alloc_array(XD_MAX(h->mode_count, 1), sizeof(*dh->modes));
-        memcpy(dh->modes, h->modes, h->mode_count * sizeof(*h->modes));
-        dh->set.mode = h->mode;
+        snprintf(dh->set.name, sizeof(dh->set.name), "%s", display_head->name);
+        snprintf(dh->description, sizeof(dh->description), "%s", display_head->description);
+        dh->set.enabled = display_head->enabled;
+        dh->set.x = display_head->x;
+        dh->set.y = display_head->y;
+        dh->set.scale = display_head->scale > 0 ? display_head->scale : 1.0;
+        dh->set.transform = display_head->transform;
+        dh->set.adaptive_sync = display_head->adaptive_sync;
+        dh->mode_count = display_head->mode_count;
+        dh->modes = xd_alloc_array(XD_MAX(display_head->mode_count, 1), sizeof(*dh->modes));
+        memcpy(dh->modes, display_head->modes,
+               display_head->mode_count * sizeof(*display_head->modes));
+        dh->set.mode = display_head->mode;
         if (dh->set.mode < 0) {
             /* Off (or a custom mode): offer the preferred one. */
             dh->set.mode = 0;
-            for (size_t m = 0; m < h->mode_count; m++) {
-                if (h->modes[m].preferred)
-                    dh->set.mode = (int)m;
+            for (size_t mode_index = 0; mode_index < display_head->mode_count; mode_index++) {
+                if (display_head->modes[mode_index].preferred)
+                    dh->set.mode = (int)mode_index;
             }
         }
     }
-    d->head_count = n;
+    properties->head_count = count;
 }
 
-static disp_head *sel_head(desk *d) {
-    if (d->sel < 0 || (size_t)d->sel >= d->head_count)
+static disp_head *sel_head(desk *properties) {
+    if (properties->sel < 0 || (size_t)properties->sel >= properties->head_count)
         return nullptr;
-    return &d->heads[d->sel];
+    return &properties->heads[properties->sel];
 }
 
-static const xd_display_mode *head_mode(const disp_head *h) {
-    if (h->set.mode < 0 || (size_t)h->set.mode >= h->mode_count)
+static const xd_display_mode *head_mode(const disp_head *head) {
+    if (head->set.mode < 0 || (size_t)head->set.mode >= head->mode_count)
         return nullptr;
-    return &h->modes[h->set.mode];
+    return &head->modes[head->set.mode];
 }
 
 /* Size on the desktop, in logical units. */
-static void head_size(const disp_head *h, int *w, int *hh) {
-    const xd_display_mode *m = head_mode(h);
-    int pw = m != nullptr ? m->width : 1024;
-    int ph = m != nullptr ? m->height : 768;
-    if (h->set.transform == XD_TRANSFORM_90 || h->set.transform == XD_TRANSFORM_270) {
+static void head_size(const disp_head *head, int *width, int *hh) {
+    const xd_display_mode *display_mode = head_mode(head);
+    int pw = display_mode != nullptr ? display_mode->width : 1024;
+    int ph = display_mode != nullptr ? display_mode->height : 768;
+    if (head->set.transform == XD_TRANSFORM_90 || head->set.transform == XD_TRANSFORM_270) {
         int tmp = pw;
         pw = ph;
         ph = tmp;
     }
-    double s = h->set.scale > 0 ? h->set.scale : 1.0;
-    *w = (int)lround(pw / s);
-    *hh = (int)lround(ph / s);
+    double scale = head->set.scale > 0 ? head->set.scale : 1.0;
+    *width = (int)lround(pw / scale);
+    *hh = (int)lround(ph / scale);
 }
 
-static bool heads_equal(const disp_head *a, const disp_head *b, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        const xd_display_setting *x = &a[i].set;
-        const xd_display_setting *y = &b[i].set;
-        if (x->enabled != y->enabled || (x->enabled && (x->mode != y->mode || x->x != y->x ||
-                                                        x->y != y->y || x->scale != y->scale ||
-                                                        x->transform != y->transform ||
-                                                        x->adaptive_sync != y->adaptive_sync)))
+static bool heads_equal(const disp_head *left, const disp_head *right, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        const xd_display_setting *left_setting = &left[i].set;
+        const xd_display_setting *right_setting = &right[i].set;
+        if (left_setting->enabled != right_setting->enabled ||
+            (left_setting->enabled &&
+             (left_setting->mode != right_setting->mode || left_setting->x != right_setting->x ||
+              left_setting->y != right_setting->y || left_setting->scale != right_setting->scale ||
+              left_setting->transform != right_setting->transform ||
+              left_setting->adaptive_sync != right_setting->adaptive_sync)))
             return false;
     }
     return true;
 }
 
-static void display_changed(desk *d) {
-    d->display_dirty = d->saved_count != d->head_count ||
-                       !heads_equal(d->heads, d->saved_heads, d->head_count);
-    xd_widget_redraw(d->monitors);
-    changed(d);
+static void display_changed(desk *properties) {
+    properties->display_dirty =
+        properties->saved_count != properties->head_count ||
+        !heads_equal(properties->heads, properties->saved_heads, properties->head_count);
+    xd_widget_redraw(properties->monitors);
+    changed(properties);
 }
 
 /* Moves the layout so it starts at (0, 0), as the compositor would. */
-static void normalize(desk *d) {
+static void normalize(desk *properties) {
     int minx = INT32_MAX;
     int miny = INT32_MAX;
-    for (size_t i = 0; i < d->head_count; i++) {
-        if (!d->heads[i].set.enabled)
+    for (size_t i = 0; i < properties->head_count; i++) {
+        if (!properties->heads[i].set.enabled)
             continue;
-        minx = XD_MIN(minx, d->heads[i].set.x);
-        miny = XD_MIN(miny, d->heads[i].set.y);
+        minx = XD_MIN(minx, properties->heads[i].set.x);
+        miny = XD_MIN(miny, properties->heads[i].set.y);
     }
     if (minx == INT32_MAX)
         return;
-    for (size_t i = 0; i < d->head_count; i++) {
-        d->heads[i].set.x -= minx;
-        d->heads[i].set.y -= miny;
+    for (size_t i = 0; i < properties->head_count; i++) {
+        properties->heads[i].set.x -= minx;
+        properties->heads[i].set.y -= miny;
     }
 }
 
 /* After a monitor changes size, monitors beyond its right or bottom edge
  * follow it so the desktop stays joined up. */
-static void reflow(desk *d, size_t changed_i, int old_w, int old_h) {
-    disp_head *c = &d->heads[changed_i];
-    int w;
-    int h;
-    head_size(c, &w, &h);
-    int right = c->set.x + old_w;
-    int bottom = c->set.y + old_h;
-    for (size_t i = 0; i < d->head_count; i++) {
-        disp_head *o = &d->heads[i];
-        if (i == changed_i || !o->set.enabled)
+static void reflow(desk *properties, size_t changed_i, int old_w, int old_h) {
+    disp_head *resized = &properties->heads[changed_i];
+    int width;
+    int height;
+    head_size(resized, &width, &height);
+    int right = resized->set.x + old_w;
+    int bottom = resized->set.y + old_h;
+    for (size_t i = 0; i < properties->head_count; i++) {
+        disp_head *other = &properties->heads[i];
+        if (i == changed_i || !other->set.enabled)
             continue;
-        if (o->set.x >= right)
-            o->set.x += w - old_w;
-        if (o->set.y >= bottom)
-            o->set.y += h - old_h;
+        if (other->set.x >= right)
+            other->set.x += width - old_w;
+        if (other->set.y >= bottom)
+            other->set.y += height - old_h;
     }
-    normalize(d);
+    normalize(properties);
 }
 
 /* Distinct resolutions of a head, smallest first. */
-static size_t resolutions(const disp_head *h, int *ws, int *hs, size_t cap) {
-    size_t n = 0;
-    for (size_t m = 0; m < h->mode_count; m++) {
+static size_t resolutions(const disp_head *head, int *ws, int *hs, size_t cap) {
+    size_t count = 0;
+    for (size_t mode_index = 0; mode_index < head->mode_count; mode_index++) {
         bool seen = false;
-        for (size_t j = 0; j < n; j++)
-            seen = seen || (ws[j] == h->modes[m].width && hs[j] == h->modes[m].height);
-        if (!seen && n < cap) {
-            ws[n] = h->modes[m].width;
-            hs[n] = h->modes[m].height;
-            n++;
+        for (size_t j = 0; j < count; j++)
+            seen = seen || (ws[j] == head->modes[mode_index].width &&
+                            hs[j] == head->modes[mode_index].height);
+        if (!seen && count < cap) {
+            ws[count] = head->modes[mode_index].width;
+            hs[count] = head->modes[mode_index].height;
+            count++;
         }
     }
-    for (size_t i = 1; i < n; i++) {
+    for (size_t i = 1; i < count; i++) {
         for (size_t j = i; j > 0 && (long)ws[j] * hs[j] < (long)ws[j - 1] * hs[j - 1]; j--) {
             int tw = ws[j];
             int th = hs[j];
@@ -3061,120 +3152,120 @@ static size_t resolutions(const disp_head *h, int *ws, int *hs, size_t cap) {
             hs[j - 1] = th;
         }
     }
-    return n;
+    return count;
 }
 
-static void show_head(desk *d);
+static void show_head(desk *properties);
 
-static void set_mode_keeping_layout(desk *d, int mode) {
-    disp_head *h = sel_head(d);
-    if (h == nullptr || mode < 0 || (size_t)mode >= h->mode_count || mode == h->set.mode)
+static void set_mode_keeping_layout(desk *properties, int mode) {
+    disp_head *head = sel_head(properties);
+    if (head == nullptr || mode < 0 || (size_t)mode >= head->mode_count || mode == head->set.mode)
         return;
     int ow;
     int oh;
-    head_size(h, &ow, &oh);
-    h->set.mode = mode;
-    reflow(d, (size_t)d->sel, ow, oh);
+    head_size(head, &ow, &oh);
+    head->set.mode = mode;
+    reflow(properties, (size_t)properties->sel, ow, oh);
 }
 
-static void on_resolution(xd_widget *w, void *user) {
-    desk *d = user;
-    disp_head *h = sel_head(d);
-    if (h == nullptr)
+static void on_resolution(xd_widget *widget, void *user) {
+    desk *properties = user;
+    disp_head *head = sel_head(properties);
+    if (head == nullptr)
         return;
     int ws[128];
     int hs[128];
-    size_t n = resolutions(h, ws, hs, XD_ARRAY_LEN(ws));
-    int i = xd_slider_value(w);
-    if (i < 0 || (size_t)i >= n)
+    size_t count = resolutions(head, ws, hs, XD_ARRAY_LEN(ws));
+    int i = xd_slider_value(widget);
+    if (i < 0 || (size_t)i >= count)
         return;
     /* That size at the refresh rate closest to the current one. */
-    const xd_display_mode *cur = head_mode(h);
+    const xd_display_mode *cur = head_mode(head);
     int want = cur != nullptr ? cur->refresh_mhz : 60000;
     int best = -1;
-    for (size_t m = 0; m < h->mode_count; m++) {
-        if (h->modes[m].width != ws[i] || h->modes[m].height != hs[i])
+    for (size_t mode_index = 0; mode_index < head->mode_count; mode_index++) {
+        if (head->modes[mode_index].width != ws[i] || head->modes[mode_index].height != hs[i])
             continue;
-        if (best < 0 ||
-            abs(h->modes[m].refresh_mhz - want) < abs(h->modes[best].refresh_mhz - want))
-            best = (int)m;
+        if (best < 0 || abs(head->modes[mode_index].refresh_mhz - want) <
+                            abs(head->modes[best].refresh_mhz - want))
+            best = (int)mode_index;
     }
-    set_mode_keeping_layout(d, best);
-    show_head(d);
-    display_changed(d);
+    set_mode_keeping_layout(properties, best);
+    show_head(properties);
+    display_changed(properties);
 }
 
-static void on_refresh(xd_widget *w, void *user) {
-    desk *d = user;
-    int i = xd_widget_selected(w);
-    if (i >= 0 && (size_t)i < d->refresh_count)
-        set_mode_keeping_layout(d, d->refresh_modes[i]);
-    display_changed(d);
+static void on_refresh(xd_widget *widget, void *user) {
+    desk *properties = user;
+    int i = xd_widget_selected(widget);
+    if (i >= 0 && (size_t)i < properties->refresh_count)
+        set_mode_keeping_layout(properties, properties->refresh_modes[i]);
+    display_changed(properties);
 }
 
-static void on_scale(xd_widget *w, void *user) {
-    desk *d = user;
-    disp_head *h = sel_head(d);
-    int i = xd_widget_selected(w);
-    if (h == nullptr || i < 0 || (size_t)i >= XD_ARRAY_LEN(scales))
+static void on_scale(xd_widget *widget, void *user) {
+    desk *properties = user;
+    disp_head *head = sel_head(properties);
+    int i = xd_widget_selected(widget);
+    if (head == nullptr || i < 0 || (size_t)i >= XD_ARRAY_LEN(scales))
         return;
     int ow;
     int oh;
-    head_size(h, &ow, &oh);
-    h->set.scale = scales[i];
-    reflow(d, (size_t)d->sel, ow, oh);
-    display_changed(d);
+    head_size(head, &ow, &oh);
+    head->set.scale = scales[i];
+    reflow(properties, (size_t)properties->sel, ow, oh);
+    display_changed(properties);
 }
 
-static void on_orientation(xd_widget *w, void *user) {
-    desk *d = user;
-    disp_head *h = sel_head(d);
-    int i = xd_widget_selected(w);
-    if (h == nullptr || i < 0 || i > 3)
+static void on_orientation(xd_widget *widget, void *user) {
+    desk *properties = user;
+    disp_head *head = sel_head(properties);
+    int i = xd_widget_selected(widget);
+    if (head == nullptr || i < 0 || i > 3)
         return;
     int ow;
     int oh;
-    head_size(h, &ow, &oh);
-    h->set.transform = (xd_display_transform)i;
-    reflow(d, (size_t)d->sel, ow, oh);
-    display_changed(d);
+    head_size(head, &ow, &oh);
+    head->set.transform = (xd_display_transform)i;
+    reflow(properties, (size_t)properties->sel, ow, oh);
+    display_changed(properties);
 }
 
-static size_t enabled_count(const desk *d) {
-    size_t n = 0;
-    for (size_t i = 0; i < d->head_count; i++)
-        n += d->heads[i].set.enabled ? 1 : 0;
-    return n;
+static size_t enabled_count(const desk *properties) {
+    size_t count = 0;
+    for (size_t i = 0; i < properties->head_count; i++)
+        count += properties->heads[i].set.enabled ? 1 : 0;
+    return count;
 }
 
-static void on_extend(xd_widget *w, void *user) {
-    desk *d = user;
-    disp_head *h = sel_head(d);
-    if (h == nullptr)
+static void on_extend(xd_widget *widget, void *user) {
+    desk *properties = user;
+    disp_head *head = sel_head(properties);
+    if (head == nullptr)
         return;
-    bool on = xd_checkbox_checked(w);
-    if (!on && enabled_count(d) <= 1) {
-        xd_checkbox_set(w, true); /* the last monitor stays on */
+    bool on = xd_checkbox_checked(widget);
+    if (!on && enabled_count(properties) <= 1) {
+        xd_checkbox_set(widget, true); /* the last monitor stays on */
         return;
     }
-    if (on && !h->set.enabled) {
+    if (on && !head->set.enabled) {
         /* Joins the desktop on the right. */
         int right = 0;
-        for (size_t i = 0; i < d->head_count; i++) {
-            if (!d->heads[i].set.enabled)
+        for (size_t i = 0; i < properties->head_count; i++) {
+            if (!properties->heads[i].set.enabled)
                 continue;
             int hw;
             int hh;
-            head_size(&d->heads[i], &hw, &hh);
-            right = XD_MAX(right, d->heads[i].set.x + hw);
+            head_size(&properties->heads[i], &hw, &hh);
+            right = XD_MAX(right, properties->heads[i].set.x + hw);
         }
-        h->set.x = right;
-        h->set.y = 0;
+        head->set.x = right;
+        head->set.y = 0;
     }
-    h->set.enabled = on;
-    normalize(d);
-    show_head(d);
-    display_changed(d);
+    head->set.enabled = on;
+    normalize(properties);
+    show_head(properties);
+    display_changed(properties);
 }
 
 /* "60 Hertz", as XP's refresh rates. */
@@ -3186,70 +3277,74 @@ static void format_rate(int mhz, char *buf, size_t cap) {
 }
 
 /* Fills the controls from the selected monitor. */
-static void show_head(desk *d) {
-    disp_head *h = sel_head(d);
-    bool have = h != nullptr;
-    xd_widget *controls[] = {d->res_slider,   d->scale_combo,  d->refresh_combo,
-                             d->orient_combo, d->extend_check, d->display_advanced};
+static void show_head(desk *properties) {
+    disp_head *head = sel_head(properties);
+    bool have = head != nullptr;
+    xd_widget *controls[] = {properties->res_slider,    properties->scale_combo,
+                             properties->refresh_combo, properties->orient_combo,
+                             properties->extend_check,  properties->display_advanced};
     for (size_t i = 0; i < XD_ARRAY_LEN(controls); i++)
-        xd_widget_set_enabled(controls[i], have && (h->set.enabled || controls[i] == d->extend_check));
+        xd_widget_set_enabled(
+            controls[i], have && (head->set.enabled || controls[i] == properties->extend_check));
     if (!have) {
-        xd_widget_set_text(d->res_label, "");
+        xd_widget_set_text(properties->res_label, "");
         return;
     }
     int ws[128];
     int hs[128];
-    size_t n = resolutions(h, ws, hs, XD_ARRAY_LEN(ws));
-    const xd_display_mode *cur = head_mode(h);
+    size_t count = resolutions(head, ws, hs, XD_ARRAY_LEN(ws));
+    const xd_display_mode *cur = head_mode(head);
     int idx = 0;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         if (cur != nullptr && ws[i] == cur->width && hs[i] == cur->height)
             idx = (int)i;
     }
-    xd_slider_set(d->res_slider, 0, XD_MAX((int)n - 1, 0), idx);
+    xd_slider_set(properties->res_slider, 0, XD_MAX((int)count - 1, 0), idx);
     char buf[128];
     if (cur != nullptr)
         snprintf(buf, sizeof(buf), "%d by %d pixels", cur->width, cur->height);
     else
         snprintf(buf, sizeof(buf), "Unknown");
-    xd_widget_set_text(d->res_label, buf);
+    xd_widget_set_text(properties->res_label, buf);
 
     /* Refresh rates of this resolution, fastest first. */
-    xd_widget_clear_items(d->refresh_combo);
-    d->refresh_count = 0;
-    for (size_t m = 0; m < h->mode_count && d->refresh_count < XD_ARRAY_LEN(d->refresh_modes);
-         m++) {
-        if (cur == nullptr || h->modes[m].width != cur->width ||
-            h->modes[m].height != cur->height)
+    xd_widget_clear_items(properties->refresh_combo);
+    properties->refresh_count = 0;
+    for (size_t mode_index = 0; mode_index < head->mode_count &&
+                                properties->refresh_count < XD_ARRAY_LEN(properties->refresh_modes);
+         mode_index++) {
+        if (cur == nullptr || head->modes[mode_index].width != cur->width ||
+            head->modes[mode_index].height != cur->height)
             continue;
-        size_t at = d->refresh_count++;
-        while (at > 0 &&
-               h->modes[d->refresh_modes[at - 1]].refresh_mhz < h->modes[m].refresh_mhz) {
-            d->refresh_modes[at] = d->refresh_modes[at - 1];
+        size_t at = properties->refresh_count++;
+        while (at > 0 && head->modes[properties->refresh_modes[at - 1]].refresh_mhz <
+                             head->modes[mode_index].refresh_mhz) {
+            properties->refresh_modes[at] = properties->refresh_modes[at - 1];
             at--;
         }
-        d->refresh_modes[at] = (int)m;
+        properties->refresh_modes[at] = (int)mode_index;
     }
     int rsel = 0;
-    for (size_t i = 0; i < d->refresh_count; i++) {
-        format_rate(h->modes[d->refresh_modes[i]].refresh_mhz, buf, sizeof(buf));
-        xd_widget_add_item(d->refresh_combo, buf);
-        if (d->refresh_modes[i] == h->set.mode)
+    for (size_t i = 0; i < properties->refresh_count; i++) {
+        format_rate(head->modes[properties->refresh_modes[i]].refresh_mhz, buf, sizeof(buf));
+        xd_widget_add_item(properties->refresh_combo, buf);
+        if (properties->refresh_modes[i] == head->set.mode)
             rsel = (int)i;
     }
-    if (d->refresh_count == 0)
-        xd_widget_add_item(d->refresh_combo, "Default");
-    xd_widget_select(d->refresh_combo, rsel);
+    if (properties->refresh_count == 0)
+        xd_widget_add_item(properties->refresh_combo, "Default");
+    xd_widget_select(properties->refresh_combo, rsel);
 
     int ssel = 0;
     for (size_t i = 0; i < XD_ARRAY_LEN(scales); i++) {
-        if (fabs(scales[i] - h->set.scale) < fabs(scales[ssel] - h->set.scale))
+        if (fabs(scales[i] - head->set.scale) < fabs(scales[ssel] - head->set.scale))
             ssel = (int)i;
     }
-    xd_widget_select(d->scale_combo, ssel);
-    xd_widget_select(d->orient_combo, (int)h->set.transform);
-    xd_checkbox_set(d->extend_check, h->set.enabled);
-    xd_widget_set_enabled(d->extend_check, !h->set.enabled || enabled_count(d) > 1);
+    xd_widget_select(properties->scale_combo, ssel);
+    xd_widget_select(properties->orient_combo, (int)head->set.transform);
+    xd_checkbox_set(properties->extend_check, head->set.enabled);
+    xd_widget_set_enabled(properties->extend_check,
+                          !head->set.enabled || enabled_count(properties) > 1);
 }
 
 /* The monitor map: desktop layout fitted into the widget (logical units). */
@@ -3258,41 +3353,42 @@ typedef struct map_geom {
     int minx, miny;
 } map_geom;
 
-static xd_rect head_map_rect(const desk *d, size_t i, const map_geom *g, int *disabled_x) {
-    const disp_head *h = &d->heads[i];
-    int w;
+static xd_rect head_map_rect(const desk *properties, size_t i, const map_geom *geometry,
+                             int *disabled_x) {
+    const disp_head *head = &properties->heads[i];
+    int width;
     int hh;
-    head_size(h, &w, &hh);
-    int x = h->set.x;
-    int y = h->set.y;
-    if (!h->set.enabled) {
+    head_size(head, &width, &hh);
+    int x = head->set.x;
+    int y = head->set.y;
+    if (!head->set.enabled) {
         /* Off monitors sit beside the desktop, greyed. */
         x = *disabled_x;
         y = 0;
-        *disabled_x += w + 200;
+        *disabled_x += width + 200;
     }
-    return (xd_rect){(int)lround(g->ox + (x - g->minx) * g->s),
-                     (int)lround(g->oy + (y - g->miny) * g->s), (int)lround(w * g->s),
-                     (int)lround(hh * g->s)};
+    return (xd_rect){(int)lround(geometry->ox + (x - geometry->minx) * geometry->s),
+                     (int)lround(geometry->oy + (y - geometry->miny) * geometry->s),
+                     (int)lround(width * geometry->s), (int)lround(hh * geometry->s)};
 }
 
-static map_geom map_geometry(const desk *d, int width, int height, int *first_disabled_x) {
-    map_geom g = {.s = 1};
+static map_geom map_geometry(const desk *properties, int width, int height, int *first_disabled_x) {
+    map_geom geometry = {.s = 1};
     int minx = INT32_MAX;
     int miny = INT32_MAX;
     int maxx = INT32_MIN;
     int maxy = INT32_MIN;
-    for (size_t i = 0; i < d->head_count; i++) {
-        const disp_head *h = &d->heads[i];
-        if (!h->set.enabled)
+    for (size_t i = 0; i < properties->head_count; i++) {
+        const disp_head *head = &properties->heads[i];
+        if (!head->set.enabled)
             continue;
-        int w;
+        int head_width;
         int hh;
-        head_size(h, &w, &hh);
-        minx = XD_MIN(minx, h->set.x);
-        miny = XD_MIN(miny, h->set.y);
-        maxx = XD_MAX(maxx, h->set.x + w);
-        maxy = XD_MAX(maxy, h->set.y + hh);
+        head_size(head, &head_width, &hh);
+        minx = XD_MIN(minx, head->set.x);
+        miny = XD_MIN(miny, head->set.y);
+        maxx = XD_MAX(maxx, head->set.x + head_width);
+        maxy = XD_MAX(maxy, head->set.y + hh);
     }
     if (minx == INT32_MAX) {
         minx = 0;
@@ -3302,271 +3398,286 @@ static map_geom map_geometry(const desk *d, int width, int height, int *first_di
     }
     *first_disabled_x = maxx + 200;
     int extra = maxx;
-    for (size_t i = 0; i < d->head_count; i++) {
-        if (d->heads[i].set.enabled)
+    for (size_t i = 0; i < properties->head_count; i++) {
+        if (properties->heads[i].set.enabled)
             continue;
-        int w;
+        int head_width;
         int hh;
-        head_size(&d->heads[i], &w, &hh);
-        extra += 200 + w;
+        head_size(&properties->heads[i], &head_width, &hh);
+        extra += 200 + head_width;
         maxy = XD_MAX(maxy, miny + hh);
     }
     maxx = extra;
     double span_w = XD_MAX(maxx - minx, 1);
     double span_h = XD_MAX(maxy - miny, 1);
-    g.s = fmin((width - 20) / span_w, (height - 20) / span_h);
-    g.ox = (width - span_w * g.s) / 2;
-    g.oy = (height - span_h * g.s) / 2;
-    g.minx = minx;
-    g.miny = miny;
-    return g;
+    geometry.s = fmin((width - 20) / span_w, (height - 20) / span_h);
+    geometry.ox = (width - span_w * geometry.s) / 2;
+    geometry.oy = (height - span_h * geometry.s) / 2;
+    geometry.minx = minx;
+    geometry.miny = miny;
+    return geometry;
 }
 
-static void draw_monitors(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t, void *user) {
-    (void)w;
-    desk *d = user;
-    xd_fill_rect(cr, r, xd_theme_tab_page_color(t));
-    if (d->head_count == 0)
+static void draw_monitors(xd_widget *widget, cairo_t *cairo, xd_rect bounds, const xd_theme *theme,
+                          void *user) {
+    (void)widget;
+    desk *properties = user;
+    xd_fill_rect(cairo, bounds, xd_theme_tab_page_color(theme));
+    if (properties->head_count == 0)
         return;
     int disabled_x = 0;
-    map_geom g = map_geometry(d, d->monitors_rect.w, d->monitors_rect.h, &disabled_x);
-    xd_font_spec big = t->scheme.fonts[XD_FONT_CAPTION];
+    map_geom geometry = map_geometry(properties, properties->monitors_rect.w,
+                                     properties->monitors_rect.h, &disabled_x);
+    xd_font_spec big = theme->scheme.fonts[XD_FONT_CAPTION];
     big.size_pt *= 2.2;
-    double s = t->scale;
+    double scale = theme->scale;
     for (size_t pass = 0; pass < 2; pass++) {
         int dx = disabled_x;
-        for (size_t i = 0; i < d->head_count; i++) {
+        for (size_t i = 0; i < properties->head_count; i++) {
             /* The selected monitor last, on top while dragged. */
-            bool selected = (int)i == d->sel;
-            xd_rect m = head_map_rect(d, i, &g, &dx);
+            bool selected = (int)i == properties->sel;
+            xd_rect head_rect = head_map_rect(properties, i, &geometry, &dx);
             if (selected != (pass == 1))
                 continue;
-            if (selected && d->dragging) {
-                m.x += (int)lround(d->drag_dx);
-                m.y += (int)lround(d->drag_dy);
+            if (selected && properties->dragging) {
+                head_rect.x += (int)lround(properties->drag_dx);
+                head_rect.y += (int)lround(properties->drag_dy);
             }
-            xd_rect dm = {r.x + (int)lround(m.x * s), r.y + (int)lround(m.y * s),
-                          (int)lround(m.w * s), (int)lround(m.h * s)};
-            bool on = d->heads[i].set.enabled;
-            xd_fill_rect(cr, dm, on ? xd_rgba_hex(0x3A6EA5) : xd_rgba_hex(0xA0A0A0));
-            xd_draw_bevel(cr, dm, xd_tpx(t, selected ? 2 : 1),
+            xd_rect dm = {bounds.x + (int)lround(head_rect.x * scale),
+                          bounds.y + (int)lround(head_rect.y * scale),
+                          (int)lround(head_rect.w * scale), (int)lround(head_rect.h * scale)};
+            bool on = properties->heads[i].set.enabled;
+            xd_fill_rect(cairo, dm, on ? xd_rgba_hex(0x3A6EA5) : xd_rgba_hex(0xA0A0A0));
+            xd_draw_bevel(cairo, dm, xd_tpx(theme, selected ? 2 : 1),
                           selected ? xd_rgba_hex(0x000000) : xd_rgba_hex(0xFFFFFF),
                           xd_rgba_hex(0x000000));
             char num[24];
             snprintf(num, sizeof(num), "%zu", i + 1);
-            xd_text_style st = xd_text(t, XD_FONT_CAPTION,
-                                       on ? xd_rgba_hex(0xFFFFFF) : xd_rgba_hex(0x606060),
-                                       XD_ALIGN_CENTER);
+            xd_text_style st =
+                xd_text(theme, XD_FONT_CAPTION, on ? xd_rgba_hex(0xFFFFFF) : xd_rgba_hex(0x606060),
+                        XD_ALIGN_CENTER);
             st.font = &big;
-            xd_draw_text(cr, dm, num, &st);
+            xd_draw_text(cairo, dm, num, &st);
         }
     }
 }
 
 /* Places a dragged monitor against the nearest edge of another, as
  * Windows does: monitors always touch. */
-static void snap(desk *d, size_t moved, int x, int y) {
-    disp_head *m = &d->heads[moved];
+static void snap(desk *properties, size_t moved, int x, int y) {
+    disp_head *moved_head = &properties->heads[moved];
     int mw;
     int mh;
-    head_size(m, &mw, &mh);
+    head_size(moved_head, &mw, &mh);
     long best = LONG_MAX;
     int bx = x;
     int by = y;
-    for (size_t i = 0; i < d->head_count; i++) {
-        const disp_head *o = &d->heads[i];
-        if (i == moved || !o->set.enabled)
+    for (size_t i = 0; i < properties->head_count; i++) {
+        const disp_head *other = &properties->heads[i];
+        if (i == moved || !other->set.enabled)
             continue;
         int ow;
         int oh;
-        head_size(o, &ow, &oh);
-        int cy = XD_CLAMP(y, o->set.y - mh + 1, o->set.y + oh - 1);
-        int cx = XD_CLAMP(x, o->set.x - mw + 1, o->set.x + ow - 1);
+        head_size(other, &ow, &oh);
+        int cy = XD_CLAMP(y, other->set.y - mh + 1, other->set.y + oh - 1);
+        int cx = XD_CLAMP(x, other->set.x - mw + 1, other->set.x + ow - 1);
         /* Line edges up when they're close. */
-        if (abs(cy - o->set.y) < 64)
-            cy = o->set.y;
-        if (abs(cx - o->set.x) < 64)
-            cx = o->set.x;
-        int cand[4][2] = {{o->set.x + ow, cy}, {o->set.x - mw, cy}, {cx, o->set.y + oh},
-                          {cx, o->set.y - mh}};
-        for (size_t c = 0; c < 4; c++) {
-            long dx = cand[c][0] - x;
-            long dy = cand[c][1] - y;
+        if (abs(cy - other->set.y) < 64)
+            cy = other->set.y;
+        if (abs(cx - other->set.x) < 64)
+            cx = other->set.x;
+        int cand[4][2] = {{other->set.x + ow, cy},
+                          {other->set.x - mw, cy},
+                          {cx, other->set.y + oh},
+                          {cx, other->set.y - mh}};
+        for (size_t candidate = 0; candidate < 4; candidate++) {
+            long dx = cand[candidate][0] - x;
+            long dy = cand[candidate][1] - y;
             long dist = dx * dx + dy * dy;
             if (dist < best) {
                 best = dist;
-                bx = cand[c][0];
-                by = cand[c][1];
+                bx = cand[candidate][0];
+                by = cand[candidate][1];
             }
         }
     }
-    m->set.x = bx;
-    m->set.y = by;
-    normalize(d);
+    moved_head->set.x = bx;
+    moved_head->set.y = by;
+    normalize(properties);
 }
 
-static void on_monitors_pointer([[maybe_unused]] xd_widget *w, xd_pointer_event ev, double x,
+static void on_monitors_pointer([[maybe_unused]] xd_widget *widget, xd_pointer_event ev, double x,
                                 double y, void *user) {
-    desk *d = user;
+    desk *properties = user;
     int disabled_x = 0;
-    map_geom g = map_geometry(d, d->monitors_rect.w, d->monitors_rect.h, &disabled_x);
+    map_geom geometry = map_geometry(properties, properties->monitors_rect.w,
+                                     properties->monitors_rect.h, &disabled_x);
     if (ev == XD_POINTER_PRESS) {
         int dx = disabled_x;
-        for (size_t i = 0; i < d->head_count; i++) {
-            xd_rect m = head_map_rect(d, i, &g, &dx);
-            if (x >= m.x && y >= m.y && x < m.x + m.w && y < m.y + m.h) {
-                d->sel = (int)i;
-                xd_widget_select(d->display_combo, d->sel);
-                show_head(d);
-                d->dragging = d->heads[i].set.enabled && enabled_count(d) > 1;
-                d->drag_x0 = x;
-                d->drag_y0 = y;
-                d->drag_dx = d->drag_dy = 0;
+        for (size_t i = 0; i < properties->head_count; i++) {
+            xd_rect rect = head_map_rect(properties, i, &geometry, &dx);
+            if (x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h) {
+                properties->sel = (int)i;
+                xd_widget_select(properties->display_combo, properties->sel);
+                show_head(properties);
+                properties->dragging =
+                    properties->heads[i].set.enabled && enabled_count(properties) > 1;
+                properties->drag_x0 = x;
+                properties->drag_y0 = y;
+                properties->drag_dx = properties->drag_dy = 0;
             }
         }
-        xd_widget_redraw(d->monitors);
+        xd_widget_redraw(properties->monitors);
         return;
     }
-    if (!d->dragging)
+    if (!properties->dragging)
         return;
-    d->drag_dx = x - d->drag_x0;
-    d->drag_dy = y - d->drag_y0;
+    properties->drag_dx = x - properties->drag_x0;
+    properties->drag_dy = y - properties->drag_y0;
     if (ev == XD_POINTER_RELEASE) {
-        d->dragging = false;
-        disp_head *h = sel_head(d);
-        if (h != nullptr && (fabs(d->drag_dx) > 2 || fabs(d->drag_dy) > 2)) {
-            int nx = h->set.x + (int)lround(d->drag_dx / g.s);
-            int ny = h->set.y + (int)lround(d->drag_dy / g.s);
-            snap(d, (size_t)d->sel, nx, ny);
-            display_changed(d);
+        properties->dragging = false;
+        disp_head *head = sel_head(properties);
+        if (head != nullptr && (fabs(properties->drag_dx) > 2 || fabs(properties->drag_dy) > 2)) {
+            int nx = head->set.x + (int)lround(properties->drag_dx / geometry.s);
+            int ny = head->set.y + (int)lround(properties->drag_dy / geometry.s);
+            snap(properties, (size_t)properties->sel, nx, ny);
+            display_changed(properties);
         }
     }
-    xd_widget_redraw(d->monitors);
+    xd_widget_redraw(properties->monitors);
 }
 
-static void on_display(xd_widget *w, void *user) {
-    desk *d = user;
-    d->sel = xd_widget_selected(w);
-    show_head(d);
-    xd_widget_redraw(d->monitors);
+static void on_display(xd_widget *widget, void *user) {
+    desk *properties = user;
+    properties->sel = xd_widget_selected(widget);
+    show_head(properties);
+    xd_widget_redraw(properties->monitors);
 }
 
-static void fill_display_combo(desk *d) {
-    xd_widget_clear_items(d->display_combo);
-    for (size_t i = 0; i < d->head_count; i++) {
+static void fill_display_combo(desk *properties) {
+    xd_widget_clear_items(properties->display_combo);
+    for (size_t i = 0; i < properties->head_count; i++) {
         char buf[256];
         snprintf(buf, sizeof(buf), "%zu. %s on %s", i + 1,
-                 d->heads[i].description[0] != '\0' ? d->heads[i].description : "Monitor",
-                 d->heads[i].set.name);
-        xd_widget_add_item(d->display_combo, buf);
+                 properties->heads[i].description[0] != '\0' ? properties->heads[i].description
+                                                             : "Monitor",
+                 properties->heads[i].set.name);
+        xd_widget_add_item(properties->display_combo, buf);
     }
-    if (d->sel < 0 || (size_t)d->sel >= d->head_count)
-        d->sel = d->head_count > 0 ? 0 : -1;
-    xd_widget_select(d->display_combo, d->sel);
+    if (properties->sel < 0 || (size_t)properties->sel >= properties->head_count)
+        properties->sel = properties->head_count > 0 ? 0 : -1;
+    xd_widget_select(properties->display_combo, properties->sel);
 }
 
 /* The compositor reported a new configuration (ours applied, a monitor
  * plugged in, or another program's change). */
 static void on_display_change(void *user) {
-    desk *d = user;
-    if (d->display_dirty || d->confirm != nullptr)
+    desk *properties = user;
+    if (properties->display_dirty || properties->confirm != nullptr)
         return; /* keep the user's unapplied changes */
-    load_heads(d);
-    if (d->saved_heads == nullptr || d->saved_count != d->head_count) {
-        free_heads(d->saved_heads, d->saved_count);
-        d->saved_heads = copy_heads(d->heads, d->head_count);
-        d->saved_count = d->head_count;
+    load_heads(properties);
+    if (properties->saved_heads == nullptr || properties->saved_count != properties->head_count) {
+        free_heads(properties->saved_heads, properties->saved_count);
+        properties->saved_heads = copy_heads(properties->heads, properties->head_count);
+        properties->saved_count = properties->head_count;
     }
-    fill_display_combo(d);
-    show_head(d);
-    xd_widget_redraw(d->monitors);
+    fill_display_combo(properties);
+    show_head(properties);
+    xd_widget_redraw(properties->monitors);
 }
 
 /* ---- Advanced (the monitor's properties) ---------------------------------------- */
 
-static bool apply(desk *d);
+static bool apply(desk *properties);
 
-static void on_monitor_done(monitor_result r, const monitor_props *p, void *user) {
-    desk *d = user;
-    if (r != MONITOR_APPLY)
-        d->monitor = nullptr;
-    if (p == nullptr)
+static void on_monitor_done(monitor_result outcome, const monitor_props *monitor_settings,
+                            void *user) {
+    desk *properties = user;
+    if (outcome != MONITOR_APPLY)
+        properties->monitor = nullptr;
+    if (monitor_settings == nullptr)
         return;
     /* The monitor it was opened for, wherever the selection is now. */
-    int was = d->sel;
-    for (size_t i = 0; i < d->head_count; i++) {
-        if (strcmp(d->heads[i].set.name, d->monitor_name) == 0)
-            d->sel = (int)i;
+    int was = properties->sel;
+    for (size_t i = 0; i < properties->head_count; i++) {
+        if (strcmp(properties->heads[i].set.name, properties->monitor_name) == 0)
+            properties->sel = (int)i;
     }
-    disp_head *h = sel_head(d);
-    if (h != nullptr && strcmp(h->set.name, d->monitor_name) == 0) {
-        if (p->rate >= 0 && (size_t)p->rate < d->monitor_mode_count)
-            set_mode_keeping_layout(d, d->monitor_modes[p->rate]);
-        h->set.adaptive_sync = p->vrr;
+    disp_head *head = sel_head(properties);
+    if (head != nullptr && strcmp(head->set.name, properties->monitor_name) == 0) {
+        if (monitor_settings->rate >= 0 &&
+            (size_t)monitor_settings->rate < properties->monitor_mode_count)
+            set_mode_keeping_layout(properties, properties->monitor_modes[monitor_settings->rate]);
+        head->set.adaptive_sync = monitor_settings->vrr;
     }
-    d->sel = was;
-    show_head(d);
-    display_changed(d);
-    if (r == MONITOR_APPLY)
-        apply(d);
+    properties->sel = was;
+    show_head(properties);
+    display_changed(properties);
+    if (outcome == MONITOR_APPLY)
+        apply(properties);
 }
 
 /* The compositor answered whether the monitor could have a variable
  * refresh rate: now the dialog can show it. */
 static void on_vrr_probed(bool ok, void *user) {
-    desk *d = user;
-    d->monitor_probing = false;
-    disp_head *h = sel_head(d);
-    if (h == nullptr || strcmp(h->set.name, d->monitor_name) != 0 || d->monitor != nullptr)
+    desk *properties = user;
+    properties->monitor_probing = false;
+    disp_head *head = sel_head(properties);
+    if (head == nullptr || strcmp(head->set.name, properties->monitor_name) != 0 ||
+        properties->monitor != nullptr)
         return;
-    const char *rates[XD_ARRAY_LEN(d->refresh_modes)];
-    char labels[XD_ARRAY_LEN(d->refresh_modes)][32];
-    monitor_props props = {.vrr = h->set.adaptive_sync};
-    d->monitor_mode_count = d->refresh_count;
-    for (size_t i = 0; i < d->refresh_count; i++) {
-        d->monitor_modes[i] = d->refresh_modes[i];
-        format_rate(h->modes[d->refresh_modes[i]].refresh_mhz, labels[i], sizeof(labels[i]));
+    const char *rates[XD_ARRAY_LEN(properties->refresh_modes)];
+    char labels[XD_ARRAY_LEN(properties->refresh_modes)][32];
+    monitor_props props = {.vrr = head->set.adaptive_sync};
+    properties->monitor_mode_count = properties->refresh_count;
+    for (size_t i = 0; i < properties->refresh_count; i++) {
+        properties->monitor_modes[i] = properties->refresh_modes[i];
+        format_rate(head->modes[properties->refresh_modes[i]].refresh_mhz, labels[i],
+                    sizeof(labels[i]));
         rates[i] = labels[i];
-        if (d->refresh_modes[i] == h->set.mode)
+        if (properties->refresh_modes[i] == head->set.mode)
             props.rate = (int)i;
     }
-    if (d->refresh_count == 0) {
+    if (properties->refresh_count == 0) {
         rates[0] = "Default";
-        d->monitor_mode_count = 0;
+        properties->monitor_mode_count = 0;
     }
-    d->monitor = monitor_dialog_open(d->ui, h->description[0] != '\0' ? h->description : "Monitor",
-                                     rates, XD_MAX(d->refresh_count, 1), props,
-                                     ok || h->set.adaptive_sync, on_monitor_done, d);
+    properties->monitor = monitor_dialog_open(
+        properties->ui, head->description[0] != '\0' ? head->description : "Monitor", rates,
+        XD_MAX(properties->refresh_count, 1), props, ok || head->set.adaptive_sync, on_monitor_done,
+        properties);
 }
 
 /* Advanced: first asks the compositor (a test configuration, changing
  * nothing) whether this monitor would take a variable refresh rate. */
-static void on_display_advanced([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    disp_head *h = sel_head(d);
-    if (h == nullptr || !h->set.enabled || d->monitor != nullptr || d->monitor_probing)
+static void on_display_advanced([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    disp_head *head = sel_head(properties);
+    if (head == nullptr || !head->set.enabled || properties->monitor != nullptr ||
+        properties->monitor_probing)
         return;
-    snprintf(d->monitor_name, sizeof(d->monitor_name), "%s", h->set.name);
-    xd_display_setting *sets = xd_alloc_array(XD_MAX(d->head_count, 1), sizeof(*sets));
-    for (size_t i = 0; i < d->head_count; i++)
-        sets[i] = d->heads[i].set;
-    sets[d->sel].adaptive_sync = true;
-    d->monitor_probing = true;
-    xd_ui_display_test(d->ui, sets, d->head_count, on_vrr_probed, d);
+    snprintf(properties->monitor_name, sizeof(properties->monitor_name), "%s", head->set.name);
+    xd_display_setting *sets = xd_alloc_array(XD_MAX(properties->head_count, 1), sizeof(*sets));
+    for (size_t i = 0; i < properties->head_count; i++)
+        sets[i] = properties->heads[i].set;
+    sets[properties->sel].adaptive_sync = true;
+    properties->monitor_probing = true;
+    xd_ui_display_test(properties->ui, sets, properties->head_count, on_vrr_probed, properties);
     xd_free(sets);
 }
 
 /* Identify: the shell shows each monitor's number on that monitor, as
  * this tab numbers them (monitors that are off show nothing). */
-static void on_identify([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    GVariantBuilder b;
-    g_variant_builder_init(&b, G_VARIANT_TYPE("a(su)"));
-    for (size_t i = 0; i < d->head_count; i++) {
-        if (d->heads[i].set.enabled)
-            g_variant_builder_add(&b, "(su)", d->heads[i].set.name, (guint32)(i + 1));
+static void on_identify([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a(su)"));
+    for (size_t i = 0; i < properties->head_count; i++) {
+        if (properties->heads[i].set.enabled)
+            g_variant_builder_add(&builder, "(su)", properties->heads[i].set.name,
+                                  (guint32)(i + 1));
     }
-    GVariant *args = g_variant_new("(a(su))", &b);
+    GVariant *args = g_variant_new("(a(su))", &builder);
     GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
     if (bus == nullptr) {
         g_variant_unref(g_variant_ref_sink(args));
@@ -3582,147 +3693,158 @@ static void on_identify([[maybe_unused]] xd_widget *w, void *user) {
     g_object_unref(bus);
 }
 
-static void build_settings(desk *d) {
-    xd_window *win = d->win;
-    const int P = PAGE_SETTINGS;
+static void build_settings(desk *properties) {
+    xd_window *win = properties->win;
+    const int page = PAGE_SETTINGS;
     xd_widget_set_page(xd_label(win, (xd_rect){20, 40, 364, 28},
                                 "Drag the monitor icons to match the physical arrangement of your "
                                 "monitors.",
                                 XD_LABEL_WRAP),
-                       P);
-    d->monitors_rect = (xd_rect){20, 70, 364, 112};
-    d->monitors = xd_custom(win, d->monitors_rect, draw_monitors, d);
-    xd_custom_set_pointer(d->monitors, on_monitors_pointer);
-    xd_widget_set_page(d->monitors, P);
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 192, 50, 16}, "Display:", 0), P);
-    d->display_combo = xd_combo(win, (xd_rect){72, 189, 312, 21}, false, on_display, d);
-    xd_widget_set_page(d->display_combo, P);
+                       page);
+    properties->monitors_rect = (xd_rect){20, 70, 364, 112};
+    properties->monitors = xd_custom(win, properties->monitors_rect, draw_monitors, properties);
+    xd_custom_set_pointer(properties->monitors, on_monitors_pointer);
+    xd_widget_set_page(properties->monitors, page);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 192, 50, 16}, "Display:", 0), page);
+    properties->display_combo =
+        xd_combo(win, (xd_rect){72, 189, 312, 21}, false, on_display, properties);
+    xd_widget_set_page(properties->display_combo, page);
 
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 218, 176, 82}, "Screen area"), P);
-    xd_widget_set_page(xd_label(win, (xd_rect){30, 240, 30, 16}, "Less", 0), P);
-    xd_widget_set_page(xd_label(win, (xd_rect){156, 240, 32, 16}, "More", 0), P);
-    d->res_slider = xd_slider(win, (xd_rect){58, 236, 98, 30}, 0, 0, 0, on_resolution, d);
-    xd_widget_set_page(d->res_slider, P);
-    d->res_label = xd_label(win, (xd_rect){30, 274, 158, 16}, "", 0);
-    xd_widget_set_page(d->res_label, P);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){20, 218, 176, 82}, "Screen area"), page);
+    xd_widget_set_page(xd_label(win, (xd_rect){30, 240, 30, 16}, "Less", 0), page);
+    xd_widget_set_page(xd_label(win, (xd_rect){156, 240, 32, 16}, "More", 0), page);
+    properties->res_slider =
+        xd_slider(win, (xd_rect){58, 236, 98, 30}, 0, 0, 0, on_resolution, properties);
+    xd_widget_set_page(properties->res_slider, page);
+    properties->res_label = xd_label(win, (xd_rect){30, 274, 158, 16}, "", 0);
+    xd_widget_set_page(properties->res_label, page);
 
-    xd_widget_set_page(xd_groupbox(win, (xd_rect){206, 218, 178, 82}, "Scale"), P);
-    d->scale_combo = xd_combo(win, (xd_rect){218, 240, 154, 21}, false, on_scale, d);
-    xd_widget_set_page(d->scale_combo, P);
+    xd_widget_set_page(xd_groupbox(win, (xd_rect){206, 218, 178, 82}, "Scale"), page);
+    properties->scale_combo =
+        xd_combo(win, (xd_rect){218, 240, 154, 21}, false, on_scale, properties);
+    xd_widget_set_page(properties->scale_combo, page);
     for (size_t i = 0; i < XD_ARRAY_LEN(scales); i++) {
         char buf[48];
         snprintf(buf, sizeof(buf), "%d%%%s", (int)lround(scales[i] * 100),
                  i == 0 ? " (normal size)" : "");
-        xd_widget_add_item(d->scale_combo, buf);
+        xd_widget_add_item(properties->scale_combo, buf);
     }
-    xd_widget_set_page(
-        xd_label(win, (xd_rect){218, 266, 160, 30}, "Makes text and windows larger.",
-                 XD_LABEL_WRAP | XD_LABEL_DIM),
-        P);
+    xd_widget_set_page(xd_label(win, (xd_rect){218, 266, 160, 30}, "Makes text and windows larger.",
+                                XD_LABEL_WRAP | XD_LABEL_DIM),
+                       page);
 
-    xd_widget_set_page(xd_label(win, (xd_rect){20, 312, 80, 16}, "Refresh rate:", 0), P);
-    d->refresh_combo = xd_combo(win, (xd_rect){104, 309, 92, 21}, false, on_refresh, d);
-    xd_widget_set_page(d->refresh_combo, P);
-    xd_widget_set_page(xd_label(win, (xd_rect){206, 312, 72, 16}, "Orientation:", 0), P);
-    d->orient_combo = xd_combo(win, (xd_rect){280, 309, 104, 21}, false, on_orientation, d);
-    xd_widget_set_page(d->orient_combo, P);
+    xd_widget_set_page(xd_label(win, (xd_rect){20, 312, 80, 16}, "Refresh rate:", 0), page);
+    properties->refresh_combo =
+        xd_combo(win, (xd_rect){104, 309, 92, 21}, false, on_refresh, properties);
+    xd_widget_set_page(properties->refresh_combo, page);
+    xd_widget_set_page(xd_label(win, (xd_rect){206, 312, 72, 16}, "Orientation:", 0), page);
+    properties->orient_combo =
+        xd_combo(win, (xd_rect){280, 309, 104, 21}, false, on_orientation, properties);
+    xd_widget_set_page(properties->orient_combo, page);
     for (size_t i = 0; i < XD_ARRAY_LEN(orientations); i++)
-        xd_widget_add_item(d->orient_combo, orientations[i]);
+        xd_widget_add_item(properties->orient_combo, orientations[i]);
 
-    d->extend_check = xd_checkbox(win, (xd_rect){20, 340, 280, 20},
-                                  "Extend my desktop onto this monitor.", true, on_extend, d);
-    xd_widget_set_page(d->extend_check, P);
+    properties->extend_check =
+        xd_checkbox(win, (xd_rect){20, 340, 280, 20}, "Extend my desktop onto this monitor.", true,
+                    on_extend, properties);
+    xd_widget_set_page(properties->extend_check, page);
     /* Windows 2000's row of buttons (Troubleshoot... has nothing to run). */
-    xd_widget *identify = xd_button(win, (xd_rect){228, 368, 75, 23}, "Identify", on_identify, d);
-    xd_widget_set_page(identify, P);
-    d->display_advanced =
-        xd_button(win, (xd_rect){309, 368, 75, 23}, "Advanced", on_display_advanced, d);
-    xd_widget_set_page(d->display_advanced, P);
-    d->display_note = xd_label(win, (xd_rect){20, 364, 200, 36}, "", XD_LABEL_WRAP | XD_LABEL_DIM);
-    xd_widget_set_page(d->display_note, P);
+    xd_widget *identify =
+        xd_button(win, (xd_rect){228, 368, 75, 23}, "Identify", on_identify, properties);
+    xd_widget_set_page(identify, page);
+    properties->display_advanced =
+        xd_button(win, (xd_rect){309, 368, 75, 23}, "Advanced", on_display_advanced, properties);
+    xd_widget_set_page(properties->display_advanced, page);
+    properties->display_note =
+        xd_label(win, (xd_rect){20, 364, 200, 36}, "", XD_LABEL_WRAP | XD_LABEL_DIM);
+    xd_widget_set_page(properties->display_note, page);
 
-    xd_ui_on_display_change(d->ui, on_display_change, d);
-    d->sel = 0;
-    on_display_change(d);
-    if (d->head_count == 0) {
-        xd_widget_set_text(d->display_note,
+    xd_ui_on_display_change(properties->ui, on_display_change, properties);
+    properties->sel = 0;
+    on_display_change(properties);
+    if (properties->head_count == 0) {
+        xd_widget_set_text(properties->display_note,
                            "This compositor doesn't let programs change display settings.");
-        xd_widget_set_enabled(d->display_combo, false);
+        xd_widget_set_enabled(properties->display_combo, false);
         xd_widget_set_enabled(identify, false);
     }
 }
 
 /* ---- Monitor Settings confirmation -------------------------------------------- */
 
-static void apply_display(desk *d, const disp_head *heads, size_t count, bool confirm);
+static void apply_display(desk *properties, const disp_head *heads, size_t count, bool confirm);
 
-static void confirm_close(desk *d) {
-    if (d->confirm_timer != nullptr) {
-        xd_ui_remove_source(d->confirm_timer);
-        d->confirm_timer = nullptr;
+static void confirm_close(desk *properties) {
+    if (properties->confirm_timer != nullptr) {
+        xd_ui_remove_source(properties->confirm_timer);
+        properties->confirm_timer = nullptr;
     }
-    if (d->confirm != nullptr) {
-        xd_window *c = d->confirm;
-        d->confirm = nullptr;
-        xd_window_close(c);
+    if (properties->confirm != nullptr) {
+        xd_window *confirm_window = properties->confirm;
+        properties->confirm = nullptr;
+        xd_window_close(confirm_window);
     }
 }
 
-static void confirm_keep([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    free_heads(d->saved_heads, d->saved_count);
-    d->saved_heads = copy_heads(d->heads, d->head_count);
-    d->saved_count = d->head_count;
-    d->display_dirty = false;
-    confirm_close(d);
-    changed(d);
-    if (d->close_after_apply)
-        xd_window_close(d->win);
+static void confirm_keep([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    free_heads(properties->saved_heads, properties->saved_count);
+    properties->saved_heads = copy_heads(properties->heads, properties->head_count);
+    properties->saved_count = properties->head_count;
+    properties->display_dirty = false;
+    confirm_close(properties);
+    changed(properties);
+    if (properties->close_after_apply)
+        xd_window_close(properties->win);
 }
 
-static void confirm_revert([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    confirm_close(d);
-    d->close_after_apply = false;
+static void confirm_revert([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    confirm_close(properties);
+    properties->close_after_apply = false;
     /* Back to how it was; the change event then reloads the controls. */
-    free_heads(d->heads, d->head_count);
-    d->heads = copy_heads(d->saved_heads, d->saved_count);
-    d->head_count = d->saved_count;
-    d->display_dirty = false;
-    apply_display(d, d->saved_heads, d->saved_count, false);
-    show_head(d);
-    changed(d);
+    free_heads(properties->heads, properties->head_count);
+    properties->heads = copy_heads(properties->saved_heads, properties->saved_count);
+    properties->head_count = properties->saved_count;
+    properties->display_dirty = false;
+    apply_display(properties, properties->saved_heads, properties->saved_count, false);
+    show_head(properties);
+    changed(properties);
 }
 
 static void confirm_tick(void *user) {
-    desk *d = user;
-    if (--d->confirm_left <= 0) {
-        confirm_revert(nullptr, d); /* also removes this timer */
+    desk *properties = user;
+    if (--properties->confirm_left <= 0) {
+        confirm_revert(nullptr, properties); /* also removes this timer */
         return;
     }
     char buf[96];
     snprintf(buf, sizeof(buf), "Reverting to the previous settings in %d second%s.",
-             d->confirm_left, d->confirm_left == 1 ? "" : "s");
-    xd_widget_set_text(d->confirm_label, buf);
+             properties->confirm_left, properties->confirm_left == 1 ? "" : "s");
+    xd_widget_set_text(properties->confirm_label, buf);
 }
 
-static void confirm_open(desk *d) {
-    d->confirm = xd_window_create(d->ui, "Monitor Settings", "xd-desk", 330, 124);
-    xd_image(d->confirm, (xd_rect){14, 14, 32, 32}, "dialog-question");
-    xd_label(d->confirm, (xd_rect){58, 14, 260, 32},
+static void confirm_open(desk *properties) {
+    properties->confirm = xd_window_create(properties->ui, "Monitor Settings", "xd-desk", 330, 124);
+    xd_image(properties->confirm, (xd_rect){14, 14, 32, 32}, "dialog-question");
+    xd_label(properties->confirm, (xd_rect){58, 14, 260, 32},
              "Your desktop has been reconfigured. Do you want to keep these settings?",
              XD_LABEL_WRAP);
-    d->confirm_left = 15;
-    d->confirm_label = xd_label(d->confirm, (xd_rect){58, 52, 260, 16},
-                                "Reverting to the previous settings in 15 seconds.", XD_LABEL_DIM);
-    xd_widget *yes = xd_button(d->confirm, (xd_rect){84, 86, 75, 23}, "Yes", confirm_keep, d);
-    xd_widget *no = xd_button(d->confirm, (xd_rect){171, 86, 75, 23}, "No", confirm_revert, d);
-    xd_window_set_default(d->confirm, yes);
-    xd_window_set_cancel(d->confirm, no);
-    xd_window_set_focus(d->confirm, yes);
-    xd_window_show(d->confirm);
+    properties->confirm_left = 15;
+    properties->confirm_label =
+        xd_label(properties->confirm, (xd_rect){58, 52, 260, 16},
+                 "Reverting to the previous settings in 15 seconds.", XD_LABEL_DIM);
+    xd_widget *yes =
+        xd_button(properties->confirm, (xd_rect){84, 86, 75, 23}, "Yes", confirm_keep, properties);
+    xd_widget *no = xd_button(properties->confirm, (xd_rect){171, 86, 75, 23}, "No", confirm_revert,
+                              properties);
+    xd_window_set_default(properties->confirm, yes);
+    xd_window_set_cancel(properties->confirm, no);
+    xd_window_set_focus(properties->confirm, yes);
+    xd_window_show(properties->confirm);
     /* Removed by confirm_close (or the last tick). */
-    d->confirm_timer = xd_ui_add_timer(d->ui, 1000, true, confirm_tick, d);
+    properties->confirm_timer =
+        xd_ui_add_timer(properties->ui, 1000, true, confirm_tick, properties);
 }
 
 typedef struct apply_ctx {
@@ -3732,51 +3854,51 @@ typedef struct apply_ctx {
 
 static void on_display_applied(bool ok, void *user) {
     apply_ctx *ctx = user;
-    desk *d = ctx->d;
+    desk *properties = ctx->d;
     bool confirm = ctx->confirm;
     xd_free(ctx);
     if (!ok) {
-        xd_widget_set_text(d->display_note,
+        xd_widget_set_text(properties->display_note,
                            "The display settings couldn't be applied. The monitor may not "
                            "support them.");
-        d->close_after_apply = false;
+        properties->close_after_apply = false;
         return;
     }
-    xd_widget_set_text(d->display_note, "");
+    xd_widget_set_text(properties->display_note, "");
     if (confirm)
-        confirm_open(d);
+        confirm_open(properties);
 }
 
-static void apply_display(desk *d, const disp_head *heads, size_t count, bool confirm) {
+static void apply_display(desk *properties, const disp_head *heads, size_t count, bool confirm) {
     xd_display_setting *sets = xd_alloc_array(XD_MAX(count, 1), sizeof(*sets));
     for (size_t i = 0; i < count; i++)
         sets[i] = heads[i].set;
     apply_ctx *ctx = XD_NEW(apply_ctx);
-    ctx->d = d;
+    ctx->d = properties;
     ctx->confirm = confirm;
-    xd_ui_display_apply(d->ui, sets, count, on_display_applied, ctx);
+    xd_ui_display_apply(properties->ui, sets, count, on_display_applied, ctx);
     xd_free(sets);
 }
 
 /* ---- buttons ------------------------------------------------------------------- */
 
-static bool apply(desk *d) {
-    if (d->display_dirty && d->confirm == nullptr)
-        apply_display(d, d->heads, d->head_count, true);
-    if (!sounds_equal(&d->saved_sounds, &d->pending_sounds)) {
+static bool apply(desk *properties) {
+    if (properties->display_dirty && properties->confirm == nullptr)
+        apply_display(properties, properties->heads, properties->head_count, true);
+    if (!sounds_equal(&properties->saved_sounds, &properties->pending_sounds)) {
         /* A theme's sounds: sounds.ini, as Sounds and Audio Devices
          * writes it. */
-        if (!xd_sound_scheme_save(&d->pending_sounds))
+        if (!xd_sound_scheme_save(&properties->pending_sounds))
             return false;
-        copy_sounds(&d->saved_sounds, &d->pending_sounds);
-        changed(d);
+        copy_sounds(&properties->saved_sounds, &properties->pending_sounds);
+        changed(properties);
     }
-    if (xd_settings_equal(&d->saved, &d->pending))
+    if (xd_settings_equal(&properties->saved, &properties->pending))
         return true;
     /* Only what changed here: another program may have saved since. */
     xd_settings now;
     xd_settings_load(&now);
-    xd_settings_merge(&d->saved, &d->pending, &now);
+    xd_settings_merge(&properties->saved, &properties->pending, &now);
     if (!xd_settings_save(&now)) {
         fprintf(stderr, "xd-desk: cannot write settings\n");
         return false;
@@ -3786,141 +3908,145 @@ static bool apply(desk *d) {
      * D-Bus or a terminal starts, GTK4's). Only when changed here, so that
      * themes set with those tools aren't overwritten behind the user's
      * back. */
-    bool gtk = strcmp(d->saved.gtk_theme, d->pending.gtk_theme) != 0;
-    bool icons = strcmp(d->saved.icon_theme, d->pending.icon_theme) != 0;
+    bool gtk = strcmp(properties->saved.gtk_theme, properties->pending.gtk_theme) != 0;
+    bool icons = strcmp(properties->saved.icon_theme, properties->pending.icon_theme) != 0;
     if (gtk || icons)
         xd_gtk_settings_export(g_get_user_config_dir(), nullptr,
                                gtk ? xd_settings_gtk_theme(&now) : nullptr,
                                icons ? xd_settings_icon_theme(&now) : nullptr);
-    d->saved = d->pending = now;
+    properties->saved = properties->pending = now;
     /* Re-theme this dialog too, as Windows does after Apply. */
     xd_scheme scheme;
-    xd_settings_scheme(&d->pending, &scheme);
-    xd_ui_set_theme(d->ui, d->pending.style, &scheme);
-    changed(d);
+    xd_settings_scheme(&properties->pending, &scheme);
+    xd_ui_set_theme(properties->ui, properties->pending.style, &scheme);
+    changed(properties);
     return true;
 }
 
-static void on_ok([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    if (d->confirm != nullptr || d->items != nullptr || d->color != nullptr ||
-        d->saver_setup != nullptr || d->adv != nullptr || d->night != nullptr ||
-        d->monitor != nullptr || d->monitor_probing)
+static void on_ok([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    if (properties->confirm != nullptr || properties->items != nullptr ||
+        properties->color != nullptr || properties->saver_setup != nullptr ||
+        properties->adv != nullptr || properties->night != nullptr ||
+        properties->monitor != nullptr || properties->monitor_probing)
         return; /* answer Monitor Settings, Desktop Items, Window Color, a saver's
                  * Settings, Advanced Appearance, Night Light or the monitor's
                  * properties first */
-    if (d->display_dirty) {
+    if (properties->display_dirty) {
         /* Closes once the new display settings are kept. */
-        d->close_after_apply = true;
-        apply(d);
+        properties->close_after_apply = true;
+        apply(properties);
         return;
     }
-    if (apply(d))
-        xd_window_close(d->win);
+    if (apply(properties))
+        xd_window_close(properties->win);
 }
 
-static void on_cancel([[maybe_unused]] xd_widget *w, void *user) {
-    desk *d = user;
-    items_close(d);
-    if (d->adv != nullptr)
-        advanced_cancel(d->adv);
-    color_close(d);
-    if (d->saver_setup != nullptr)
-        saver_setup_cancel(d->saver_setup);
-    if (d->night != nullptr)
-        nightlight_dialog_cancel(d->night);
-    if (d->monitor != nullptr)
-        monitor_dialog_cancel(d->monitor);
-    xd_window_close(d->win);
+static void on_cancel([[maybe_unused]] xd_widget *widget, void *user) {
+    desk *properties = user;
+    items_close(properties);
+    if (properties->adv != nullptr)
+        advanced_cancel(properties->adv);
+    color_close(properties);
+    if (properties->saver_setup != nullptr)
+        saver_setup_cancel(properties->saver_setup);
+    if (properties->night != nullptr)
+        nightlight_dialog_cancel(properties->night);
+    if (properties->monitor != nullptr)
+        monitor_dialog_cancel(properties->monitor);
+    xd_window_close(properties->win);
 }
 
-static void on_apply([[maybe_unused]] xd_widget *w, void *user) { apply(user); }
+static void on_apply([[maybe_unused]] xd_widget *widget, void *user) { apply(user); }
 
 int main(int argc, char **argv) {
-    static desk d;
-    d.chooser_fd = -1;
-    d.import_fd = -1;
-    d.ui = xd_ui_connect(argc, argv);
-    if (d.ui == nullptr)
+    static desk properties;
+    properties.chooser_fd = -1;
+    properties.import_fd = -1;
+    properties.ui = xd_ui_connect(argc, argv);
+    if (properties.ui == nullptr)
         return EXIT_FAILURE;
-    xd_settings_load(&d.saved);
-    d.pending = d.saved;
-    xd_sound_scheme_load(&d.saved_sounds);
-    xd_sound_scheme_init(&d.pending_sounds, XD_SOUNDS_DEFAULT);
-    copy_sounds(&d.pending_sounds, &d.saved_sounds);
-    xd_scheme_list_load(&d.schemes);
-    load_wallpapers(&d);
+    xd_settings_load(&properties.saved);
+    properties.pending = properties.saved;
+    xd_sound_scheme_load(&properties.saved_sounds);
+    xd_sound_scheme_init(&properties.pending_sounds, XD_SOUNDS_DEFAULT);
+    copy_sounds(&properties.pending_sounds, &properties.saved_sounds);
+    xd_scheme_list_load(&properties.schemes);
+    load_wallpapers(&properties);
 
     int page = PAGE_THEMES; /* XP's desk.cpl opens on Themes */
     for (int i = 1; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--page") == 0) {
-            int64_t v;
-            if (xd_str_parse_i64(xd_str_from_cstr(argv[i + 1]), 0, PAGE_LINUX, &v))
-                page = (int)v;
+            int64_t parsed;
+            if (xd_str_parse_i64(xd_str_from_cstr(argv[i + 1]), 0, PAGE_LINUX, &parsed))
+                page = (int)parsed;
         }
     }
 
-    d.win = xd_window_create(d.ui, "Display Properties", "xd-desk", 404, 448);
+    properties.win = xd_window_create(properties.ui, "Display Properties", "xd-desk", 404, 448);
     /* XP's tabs (Windows 2000's Background is its Desktop), 2000's Effects, and
      * one for what only Linux has. */
     static const char *const tabs[] = {"Themes",  "Desktop",  "Screen Saver", "Appearance",
                                        "Effects", "Settings", "Linux"};
-    xd_widget *tab = xd_tabs(d.win, (xd_rect){7, 7, 390, 401}, tabs, XD_ARRAY_LEN(tabs),
-                             on_page, &d);
-    build_background(&d);
-    build_screensaver(&d);
-    build_appearance(&d);
-    build_theme_tab(&d);
-    build_effects(&d);
-    build_settings(&d);
+    xd_widget *tab = xd_tabs(properties.win, (xd_rect){7, 7, 390, 401}, tabs, XD_ARRAY_LEN(tabs),
+                             on_page, &properties);
+    build_background(&properties);
+    build_screensaver(&properties);
+    build_appearance(&properties);
+    build_theme_tab(&properties);
+    build_effects(&properties);
+    build_settings(&properties);
     xd_widget_select(tab, page);
-    d.page = page;
-    update_animation(&d);
+    properties.page = page;
+    update_animation(&properties);
 
-    xd_widget *ok = xd_button(d.win, (xd_rect){160, 416, 75, 23}, "OK", on_ok, &d);
-    xd_widget *cancel = xd_button(d.win, (xd_rect){241, 416, 75, 23}, "Cancel", on_cancel, &d);
-    d.apply = xd_button(d.win, (xd_rect){322, 416, 75, 23}, "Apply", on_apply, &d);
-    xd_window_set_default(d.win, ok);
-    xd_window_set_cancel(d.win, cancel);
-    xd_window_set_focus(d.win, tab);
-    changed(&d);
-    xd_window_show(d.win);
+    xd_widget *ok =
+        xd_button(properties.win, (xd_rect){160, 416, 75, 23}, "OK", on_ok, &properties);
+    xd_widget *cancel =
+        xd_button(properties.win, (xd_rect){241, 416, 75, 23}, "Cancel", on_cancel, &properties);
+    properties.apply =
+        xd_button(properties.win, (xd_rect){322, 416, 75, 23}, "Apply", on_apply, &properties);
+    xd_window_set_default(properties.win, ok);
+    xd_window_set_cancel(properties.win, cancel);
+    xd_window_set_focus(properties.win, tab);
+    changed(&properties);
+    xd_window_show(properties.win);
 
-    xd_ui_run(d.ui);
-    xd_ui_destroy(d.ui);
-    if (d.preview_image != nullptr)
-        cairo_surface_destroy(d.preview_image);
-    if (d.preview_saver != nullptr)
-        xd_saver_destroy(d.preview_saver);
-    if (d.chooser != nullptr)
-        close_stdout(&d.chooser);
-    if (d.import != nullptr) {
+    xd_ui_run(properties.ui);
+    xd_ui_destroy(properties.ui);
+    if (properties.preview_image != nullptr)
+        cairo_surface_destroy(properties.preview_image);
+    if (properties.preview_saver != nullptr)
+        xd_saver_destroy(properties.preview_saver);
+    if (properties.chooser != nullptr)
+        close_stdout(&properties.chooser);
+    if (properties.import != nullptr) {
         /* Closed mid-import: the half-written package goes. */
-        g_subprocess_force_exit(d.import);
-        close_stdout(&d.import);
-        (void)g_remove(d.import_part);
+        g_subprocess_force_exit(properties.import);
+        close_stdout(&properties.import);
+        (void)g_remove(properties.import_part);
     }
-    xd_strbuf_free(&d.import_out);
-    g_free(d.import_source);
-    g_free(d.import_part);
-    g_free(d.import_dest);
-    g_free(d.import_name);
-    g_ptr_array_unref(d.packages);
-    g_array_unref(d.theme_items);
-    xd_sound_scheme_free(&d.saved_sounds);
-    xd_sound_scheme_free(&d.pending_sounds);
-    xd_pkg_free(d.preview_pkg);
-    g_free(d.preview_pkg_path);
-    g_free(d.preview_pkg_variant);
-    xd_strbuf_free(&d.chooser_out);
-    free_heads(d.heads, d.head_count);
-    free_heads(d.saved_heads, d.saved_count);
-    for (size_t i = 0; i < d.wallpaper_count; i++)
-        xd_free(d.wallpapers[i]);
-    xd_free(d.wallpapers);
-    xd_scheme_list_free(&d.schemes);
-    g_ptr_array_unref(d.icon_themes);
-    g_ptr_array_unref(d.gtk_themes);
-    g_ptr_array_unref(d.qt_styles);
+    xd_strbuf_free(&properties.import_out);
+    g_free(properties.import_source);
+    g_free(properties.import_part);
+    g_free(properties.import_dest);
+    g_free(properties.import_name);
+    g_ptr_array_unref(properties.packages);
+    g_array_unref(properties.theme_items);
+    xd_sound_scheme_free(&properties.saved_sounds);
+    xd_sound_scheme_free(&properties.pending_sounds);
+    xd_pkg_free(properties.preview_pkg);
+    g_free(properties.preview_pkg_path);
+    g_free(properties.preview_pkg_variant);
+    xd_strbuf_free(&properties.chooser_out);
+    free_heads(properties.heads, properties.head_count);
+    free_heads(properties.saved_heads, properties.saved_count);
+    for (size_t i = 0; i < properties.wallpaper_count; i++)
+        xd_free(properties.wallpapers[i]);
+    xd_free(properties.wallpapers);
+    xd_scheme_list_free(&properties.schemes);
+    g_ptr_array_unref(properties.icon_themes);
+    g_ptr_array_unref(properties.gtk_themes);
+    g_ptr_array_unref(properties.qt_styles);
     return EXIT_SUCCESS;
 }
