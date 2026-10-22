@@ -45,7 +45,11 @@ int main(int argc, char **argv) {
     }
     const char *ssid = argv[1];
     xd_gtk_app_preinit("org.xeondesktop.WifiKey");
-    gtk_init(&argc, &argv);
+    /* GTK sees only our name: the network's (anyone's to choose) could be
+     * "--gtk-module=..." to its option parser. */
+    int gtk_argc = 1;
+    char **gtk_argv = argv;
+    gtk_init(&gtk_argc, &gtk_argv);
     xd_gtk_app_follow_theme();
 
     prompt wifi_prompt = {0};

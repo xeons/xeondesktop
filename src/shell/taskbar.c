@@ -1618,6 +1618,7 @@ static void surface_destroy(xd_taskbar *bar) {
         shell->pointer_bar = nullptr; /* no leave will come */
     set_peek(bar, false);              /* ...to end a peek either */
     xd_thumbs_bar_gone(shell, bar);
+    xd_dnd_bar_gone(shell, bar);
     xd_tooltip_hide(shell);
     if (bar->layer != nullptr)
         zwlr_layer_surface_v1_destroy(bar->layer);

@@ -121,6 +121,15 @@ static void forget_drag(xd_dnd *dnd) {
     dnd->uris = false;
 }
 
+void xd_dnd_bar_gone(xd_shell *shell, xd_taskbar *bar) {
+    xd_dnd *dnd = shell->dnd;
+    if (dnd != nullptr && dnd->bar == bar) {
+        /* Its monitor went mid-drag: nothing more to tell it. */
+        stop_hover(dnd);
+        dnd->bar = nullptr;
+    }
+}
+
 static gboolean hover_activate(gpointer data) {
     xd_dnd *dnd = data;
     dnd->hover_timer = 0;
@@ -454,6 +463,78 @@ static char *clip_text(char *const *uris, bool cut, bool gnome) {
     return g_string_free(string, FALSE);
 }
 
+/* ---- sending what's cut, copied or dragged ---------------------------------------- */
+
+/* Text going to a program's pipe, as the pipe takes it: never waiting on
+ * it (a program that doesn't read, or shrank its pipe, would hold the
+ * shell up), and given up after a few seconds. */
+typedef struct sending {
+    int fd;
+    char *text;
+    size_t len, off;
+    guint watch, timeout;
+} sending;
+
+static void sending_end(sending *out) {
+    if (out->watch != 0)
+        g_source_remove(out->watch);
+    if (out->timeout != 0)
+        g_source_remove(out->timeout);
+    close(out->fd);
+    g_free(out->text);
+    g_free(out);
+}
+
+/* True while there's more to write. */
+static bool sending_write(sending *out) {
+    while (out->off < out->len) {
+        ssize_t written = write(out->fd, out->text + out->off, out->len - out->off);
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written < 0 && errno == EAGAIN)
+            return true;
+        if (written <= 0)
+            return false;
+        out->off += (size_t)written;
+    }
+    return false;
+}
+
+static gboolean sending_ready([[maybe_unused]] gint fd, [[maybe_unused]] GIOCondition condition,
+                              gpointer data) {
+    sending *out = data;
+    if (sending_write(out))
+        return G_SOURCE_CONTINUE;
+    out->watch = 0;
+    sending_end(out);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean sending_gave_up(gpointer data) {
+    sending *out = data;
+    out->timeout = 0;
+    sending_end(out);
+    return G_SOURCE_REMOVE;
+}
+
+/* Takes `fd` and `text`. */
+static void send_text(int fd, char *text) {
+    sending *out = g_new0(sending, 1);
+    out->fd = fd;
+    out->text = text;
+    out->len = strlen(text);
+    int flags = fcntl(fd, F_GETFL);
+    if (flags >= 0)
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    if (!sending_write(out)) {
+        sending_end(out);
+        return;
+    }
+    out->watch =
+        g_unix_fd_add(fd, (GIOCondition)(G_IO_OUT | G_IO_ERR | G_IO_HUP), sending_ready, out);
+    out->timeout = g_timeout_add_seconds(5, sending_gave_up, out);
+}
+
 static void source_target([[maybe_unused]] void *data,
                           [[maybe_unused]] struct wl_data_source *data_source,
                           [[maybe_unused]] const char *mime) {}
@@ -462,21 +543,8 @@ static void source_send(void *data, [[maybe_unused]] struct wl_data_source *data
                         const char *mime, int32_t fd) {
     xd_dnd *dnd = data;
     if (dnd->source_uris != nullptr) {
-        char *text = clip_text(dnd->source_uris, dnd->source_cut, strcmp(mime, GNOME_FILES) == 0);
-        /* A short list: written at once (blocking), as other clients do. */
-        int flags = fcntl(fd, F_GETFL);
-        if (flags >= 0)
-            fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-        size_t len = strlen(text), off = 0;
-        while (off < len) {
-            ssize_t written = write(fd, text + off, len - off);
-            if (written < 0 && errno == EINTR)
-                continue;
-            if (written <= 0)
-                break;
-            off += (size_t)written;
-        }
-        g_free(text);
+        send_text(fd, clip_text(dnd->source_uris, dnd->source_cut, strcmp(mime, GNOME_FILES) == 0));
+        return;
     }
     close(fd);
 }
@@ -642,20 +710,8 @@ static void drag_send(void *data, [[maybe_unused]] struct wl_data_source *data_s
                       const char *mime, int32_t fd) {
     xd_dnd *dnd = data;
     if (dnd->drag_uris != nullptr && strcmp(mime, URI_LIST) == 0) {
-        char *text = clip_text(dnd->drag_uris, false, false);
-        int flags = fcntl(fd, F_GETFL);
-        if (flags >= 0)
-            fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-        size_t len = strlen(text), off = 0;
-        while (off < len) {
-            ssize_t written = write(fd, text + off, len - off);
-            if (written < 0 && errno == EINTR)
-                continue;
-            if (written <= 0)
-                break;
-            off += (size_t)written;
-        }
-        g_free(text);
+        send_text(fd, clip_text(dnd->drag_uris, false, false));
+        return;
     }
     close(fd);
 }

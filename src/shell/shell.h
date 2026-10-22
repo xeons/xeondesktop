@@ -728,6 +728,8 @@ void xd_thumbs_close(xd_shell *shell);
 /* Windows came or went or changed: open thumbnails follow. */
 void xd_thumbs_refresh(xd_shell *shell);
 void xd_thumbs_bar_gone(xd_shell *shell, xd_taskbar *bar);
+/* dnd.c: a taskbar going away (its monitor unplugged) mid-drag. */
+void xd_dnd_bar_gone(xd_shell *shell, xd_taskbar *bar);
 bool xd_thumbs_owns(xd_shell *shell, struct wl_surface *surface);
 void xd_thumbs_pointer_motion(xd_shell *shell, double x, double y);
 void xd_thumbs_pointer_leave(xd_shell *shell);

@@ -25,6 +25,8 @@
 #include <pango/pangocairo.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
 #include "../core/alloc.h"
@@ -178,6 +180,34 @@ static void icon_free(gpointer user_data) {
     xd_free(ic);
 }
 
+/* Whether a launcher (.desktop file) on the desktop may run its program,
+ * as GNOME and KDE decide it: an installed program's (what the desktop's
+ * shortcuts to Start menu programs link to), or one its owner made
+ * executable. Else it's a downloaded file like any other, its Name and
+ * Icon (an "invoice.pdf") not to be believed. */
+static bool trusted_launcher(const char *path) {
+    char *real = realpath(path, nullptr);
+    if (real == nullptr)
+        return false;
+    char *dir = g_path_get_dirname(real);
+    bool trusted = false;
+    char *own = g_build_filename(g_get_user_data_dir(), "applications", nullptr);
+    trusted = strcmp(dir, own) == 0;
+    g_free(own);
+    for (const char *const *data = g_get_system_data_dirs(); *data != nullptr && !trusted; data++) {
+        char *apps = g_build_filename(*data, "applications", nullptr);
+        trusted = strcmp(dir, apps) == 0;
+        g_free(apps);
+    }
+    struct stat st;
+    if (!trusted && stat(real, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == getuid() &&
+        (st.st_mode & S_IXUSR))
+        trusted = true;
+    g_free(dir);
+    free(real);
+    return trusted;
+}
+
 static void set_icon_names(icon *ic, GIcon *gicon, const char *fallback) {
     size_t count = 0;
     if (gicon != nullptr && G_IS_THEMED_ICON(gicon)) {
@@ -267,8 +297,9 @@ static icon *file_icon(GFile *dir, GFileInfo *info) {
     const char *ctype = g_file_info_get_content_type(info);
     ic->sort_type = g_strdup(ctype != nullptr ? ctype : "");
     /* A launcher shows its program's name and icon, as a .lnk does. */
-    GDesktopAppInfo *app = ctype != nullptr && g_content_type_is_a(ctype, "application/x-desktop") &&
-                                   ic->path != nullptr
+    GDesktopAppInfo *app = ctype != nullptr &&
+                                   g_content_type_is_a(ctype, "application/x-desktop") &&
+                                   ic->path != nullptr && trusted_launcher(ic->path)
                                ? g_desktop_app_info_new_from_filename(ic->path)
                                : nullptr;
     if (app != nullptr) {
@@ -908,6 +939,9 @@ static void run_files(xd_shell *shell, const char *option, GPtrArray *args) {
     g_free(quoted);
     if (option != nullptr)
         g_string_append_printf(cmd, " %s", option);
+    /* Files after "--": a pasted or dropped "URI" could be an option. */
+    if (args != nullptr && args->len > 0)
+        g_string_append(cmd, " --");
     for (guint i = 0; args != nullptr && i < args->len; i++) {
         quoted = g_shell_quote(g_ptr_array_index(args, i));
         g_string_append_printf(cmd, " %s", quoted);
@@ -934,16 +968,21 @@ void xd_shell_open_uri(xd_shell *shell, const char *uri) {
         run_files(shell, nullptr, args);
         g_ptr_array_unref(args);
     } else if (ctype != nullptr && g_content_type_is_a(ctype, "application/x-desktop") &&
-               path != nullptr) {
+               path != nullptr && trusted_launcher(path)) {
         /* A launcher runs its program. */
         GDesktopAppInfo *app = g_desktop_app_info_new_from_filename(path);
         if (app == nullptr || !xd_app_launch_info(app, nullptr))
             fprintf(stderr, "xd-shell: cannot start %s\n", path);
         g_clear_object(&app);
     } else {
-        /* A document: the program its type opens with. */
-        GAppInfo *handler = ctype != nullptr ? g_app_info_get_default_for_type(ctype, FALSE)
-                                             : nullptr;
+        /* A document: the program its type opens with (a launcher not to
+         * be run is text, to read). */
+        bool untrusted_launcher =
+            ctype != nullptr && g_content_type_is_a(ctype, "application/x-desktop");
+        GAppInfo *handler = untrusted_launcher
+                                ? g_app_info_get_default_for_type("text/plain", FALSE)
+                            : ctype != nullptr ? g_app_info_get_default_for_type(ctype, FALSE)
+                                               : nullptr;
         if (handler != nullptr && G_IS_DESKTOP_APP_INFO(handler)) {
             GList uris = {.data = (gpointer)(uintptr_t)uri};
             if (!xd_app_launch_info(G_DESKTOP_APP_INFO(handler), &uris))

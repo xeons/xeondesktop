@@ -772,6 +772,12 @@ static xd_menu_model *build_menu(xd_menu_tree *tree, GVariant *node, int depth) 
     GVariant *boxed;
     bool last_separator = true; /* no separator first */
     while (g_variant_iter_next(&iter, "v", &boxed)) {
+        /* The program's own layout: each item checked (D-Bus checks only
+         * the outer type; a variant may hold anything). */
+        if (!g_variant_is_of_type(boxed, G_VARIANT_TYPE("(ia{sv}av)"))) {
+            g_variant_unref(boxed);
+            continue;
+        }
         gint32 id = 0;
         GVariant *props = nullptr;
         g_variant_get(boxed, "(i@a{sv}@av)", &id, &props, nullptr);

@@ -4,6 +4,10 @@
  * PNG/SVG via gdk-pixbuf. Only the icon theme is used; GTK isn't
  * initialized and no GTK widgets are created.
  */
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <gtk/gtk.h>
 
 #include "../core/alloc.h"
@@ -66,11 +70,44 @@ void xd_icons_destroy(xd_icons *ic) {
     xd_free(ic);
 }
 
+/* An icon named by its file (a desktop entry's Icon=/path, a tray icon's
+ * IconName or a window's app id may be one): only a regular file, read
+ * without waiting (a FIFO would hold the shell up for ever), and not a
+ * huge one. */
+static GdkPixbuf *load_file(const char *path, int px) {
+    enum { MAX_BYTES = 8 * 1024 * 1024 };
+    int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0)
+        return nullptr;
+    struct stat st;
+    GdkPixbuf *pb = nullptr;
+    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0 && st.st_size <= MAX_BYTES) {
+        gsize size = (gsize)st.st_size;
+        guchar *data = g_malloc(size);
+        gsize got = 0;
+        while (got < size) {
+            ssize_t count = read(fd, data + got, size - got);
+            if (count <= 0)
+                break;
+            got += (gsize)count;
+        }
+        if (got == size) {
+            GInputStream *stream = g_memory_input_stream_new_from_data(data, (gssize)size, g_free);
+            data = nullptr;
+            pb = gdk_pixbuf_new_from_stream_at_scale(stream, px, px, TRUE, nullptr, nullptr);
+            g_object_unref(stream);
+        }
+        g_free(data);
+    }
+    close(fd);
+    return pb;
+}
+
 static cairo_surface_t *load(xd_icons *ic, const char *name, int px) {
     GdkPixbuf *pb = nullptr;
     if (name[0] == '/') {
         /* Desktop entries may name an icon file directly. */
-        pb = gdk_pixbuf_new_from_file_at_size(name, px, px, nullptr);
+        pb = load_file(name, px);
     } else {
         GtkIconInfo *info = gtk_icon_theme_lookup_icon_for_scale(ic->theme, name, px, 1,
                                                                  GTK_ICON_LOOKUP_FORCE_SIZE);
