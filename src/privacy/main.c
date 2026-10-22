@@ -65,9 +65,9 @@ typedef struct props {
     bool geoclue_installed;
 } props;
 
-static void changed(props *p) {
-    if (!p->updating)
-        gtk_widget_set_sensitive(p->apply, TRUE);
+static void changed(props *properties) {
+    if (!properties->updating)
+        gtk_widget_set_sensitive(properties->apply, TRUE);
 }
 
 static GSettings *settings_for(const char *id, const char *const *keys) {
@@ -77,26 +77,26 @@ static GSettings *settings_for(const char *id, const char *const *keys) {
     if (schema == nullptr)
         return nullptr;
     bool all = true;
-    for (const char *const *k = keys; *k != nullptr; k++)
-        all = all && g_settings_schema_has_key(schema, *k);
-    GSettings *s = all ? g_settings_new_full(schema, nullptr, nullptr) : nullptr;
+    for (const char *const *key = keys; *key != nullptr; key++)
+        all = all && g_settings_schema_has_key(schema, *key);
+    GSettings *settings = all ? g_settings_new_full(schema, nullptr, nullptr) : nullptr;
     g_settings_schema_unref(schema);
-    return s;
+    return settings;
 }
 
 static GtkWidget *frame(const char *title, GtkWidget *child) {
-    GtkWidget *f = gtk_frame_new(title);
+    GtkWidget *frame_widget = gtk_frame_new(title);
     gtk_container_set_border_width(GTK_CONTAINER(child), 8);
-    gtk_container_add(GTK_CONTAINER(f), child);
-    return f;
+    gtk_container_add(GTK_CONTAINER(frame_widget), child);
+    return frame_widget;
 }
 
 static GtkWidget *label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 56);
-    return l;
+    GtkWidget *label_widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(label_widget), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(label_widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(label_widget), 56);
+    return label_widget;
 }
 
 static GtkWidget *icon_row(const char *icon, GtkWidget *text) {
@@ -108,83 +108,86 @@ static GtkWidget *icon_row(const char *icon, GtkWidget *text) {
     return row;
 }
 
-static GtkWidget *button(const char *text, GCallback cb, props *p) {
-    GtkWidget *b = gtk_button_new_with_mnemonic(text);
-    gtk_widget_set_size_request(b, 75, -1);
-    g_signal_connect_swapped(b, "clicked", cb, p);
-    return b;
+static GtkWidget *button(const char *text, GCallback cb, props *properties) {
+    GtkWidget *button_widget = gtk_button_new_with_mnemonic(text);
+    gtk_widget_set_size_request(button_widget, 75, -1);
+    g_signal_connect_swapped(button_widget, "clicked", cb, properties);
+    return button_widget;
 }
 
-static void error_box(props *p, const char *what, const GError *error) {
+static void error_box(props *properties, const char *what, const GError *error) {
     char *text = g_strdup_printf("%s\n\n%s", what, error->message);
-    xd_message_box(GTK_WINDOW(p->window), "Privacy", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+    xd_message_box(GTK_WINDOW(properties->window), "Privacy", XD_MB_ERROR, XD_MB_OK, FALSE, text);
     g_free(text);
 }
 
 /* ---- General ------------------------------------------------------------------- */
 
-static void general_sensitivity(props *p) {
-    bool remember = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->remember));
-    gtk_widget_set_sensitive(p->remember, p->privacy != nullptr);
-    gtk_widget_set_sensitive(p->keep, p->privacy != nullptr && remember);
-    gtk_widget_set_sensitive(p->trash, p->privacy != nullptr);
-    gtk_widget_set_sensitive(p->temp, p->privacy != nullptr);
-    gtk_widget_set_sensitive(p->age, p->privacy != nullptr &&
-                                         (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->trash)) ||
-                                          gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->temp))));
+static void general_sensitivity(props *properties) {
+    bool remember = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->remember));
+    gtk_widget_set_sensitive(properties->remember, properties->privacy != nullptr);
+    gtk_widget_set_sensitive(properties->keep, properties->privacy != nullptr && remember);
+    gtk_widget_set_sensitive(properties->trash, properties->privacy != nullptr);
+    gtk_widget_set_sensitive(properties->temp, properties->privacy != nullptr);
+    gtk_widget_set_sensitive(
+        properties->age, properties->privacy != nullptr &&
+                             (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->trash)) ||
+                              gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->temp))));
 }
 
-static void on_general(props *p) {
-    general_sensitivity(p);
-    changed(p);
+static void on_general(props *properties) {
+    general_sensitivity(properties);
+    changed(properties);
 }
 
 /* Shows the settings; a "keep" value of GNOME's own that isn't one of
  * ours gets an entry of its own. */
-static void show_general(props *p) {
-    p->updating = true;
-    if (p->privacy != nullptr) {
-        int days = g_settings_get_int(p->privacy, "recent-files-max-age");
+static void show_general(props *properties) {
+    properties->updating = true;
+    if (properties->privacy != nullptr) {
+        int days = g_settings_get_int(properties->privacy, "recent-files-max-age");
         char id[16];
         g_snprintf(id, sizeof id, "%d", days);
-        if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->keep), id)) {
+        if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(properties->keep), id)) {
             char *text = g_strdup_printf("%d days", days);
-            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->keep), id, text);
+            gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(properties->keep), id, text);
             g_free(text);
-            gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->keep), id);
+            gtk_combo_box_set_active_id(GTK_COMBO_BOX(properties->keep), id);
         }
         gtk_toggle_button_set_active(
-            GTK_TOGGLE_BUTTON(p->remember),
-            g_settings_get_boolean(p->privacy, "remember-recent-files") && days != 0);
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->trash),
-                                     g_settings_get_boolean(p->privacy, "remove-old-trash-files"));
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->temp),
-                                     g_settings_get_boolean(p->privacy, "remove-old-temp-files"));
-        gtk_spin_button_set_value(GTK_SPIN_BUTTON(p->age),
-                                  g_settings_get_uint(p->privacy, "old-files-age"));
+            GTK_TOGGLE_BUTTON(properties->remember),
+            g_settings_get_boolean(properties->privacy, "remember-recent-files") && days != 0);
+        gtk_toggle_button_set_active(
+            GTK_TOGGLE_BUTTON(properties->trash),
+            g_settings_get_boolean(properties->privacy, "remove-old-trash-files"));
+        gtk_toggle_button_set_active(
+            GTK_TOGGLE_BUTTON(properties->temp),
+            g_settings_get_boolean(properties->privacy, "remove-old-temp-files"));
+        gtk_spin_button_set_value(GTK_SPIN_BUTTON(properties->age),
+                                  g_settings_get_uint(properties->privacy, "old-files-age"));
     } else {
-        gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->keep), "-1");
-        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->remember), TRUE);
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(properties->keep), "-1");
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(properties->remember), TRUE);
     }
-    general_sensitivity(p);
-    p->updating = false;
+    general_sensitivity(properties);
+    properties->updating = false;
 }
 
 /* XP's Clear List: at once, not on OK. The list is rewritten empty
  * through GBookmarkFile; GTK programs see the file change and reload. */
-static void on_clear(props *p) {
+static void on_clear(props *properties) {
     char *path = g_build_filename(g_get_user_data_dir(), "recently-used.xbel", nullptr);
     GBookmarkFile *bf = g_bookmark_file_new();
     GError *error = nullptr;
     if (g_file_test(path, G_FILE_TEST_EXISTS) && !g_bookmark_file_to_file(bf, path, &error)) {
-        error_box(p, "The list of recent documents could not be cleared.", error);
+        error_box(properties, "The list of recent documents could not be cleared.", error);
         g_error_free(error);
     }
     g_bookmark_file_free(bf);
     g_free(path);
 }
 
-static GtkWidget *general_page(props *p) {
+static GtkWidget *general_page(props *properties) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
 
@@ -195,26 +198,27 @@ static GtkWidget *general_page(props *p) {
                  label("This list provides quick access to the documents you opened most "
                        "recently. Clearing this list does not delete the documents.")),
         FALSE, FALSE, 0);
-    p->remember = gtk_check_button_new_with_mnemonic("_List my most recently opened documents");
-    gtk_box_pack_start(GTK_BOX(recent), p->remember, FALSE, FALSE, 0);
+    properties->remember =
+        gtk_check_button_new_with_mnemonic("_List my most recently opened documents");
+    gtk_box_pack_start(GTK_BOX(recent), properties->remember, FALSE, FALSE, 0);
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget *keep_label = gtk_label_new_with_mnemonic("_Keep the list for:");
-    p->keep = gtk_combo_box_text_new();
+    properties->keep = gtk_combo_box_text_new();
     for (size_t i = 0; i < G_N_ELEMENTS(keep_days); i++) {
         char id[16];
         g_snprintf(id, sizeof id, "%d", keep_days[i]);
         char *text = keep_days[i] < 0    ? g_strdup("Until I clear it")
                      : keep_days[i] == 1 ? g_strdup("1 day")
                                          : g_strdup_printf("%d days", keep_days[i]);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->keep), id, text);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(properties->keep), id, text);
         g_free(text);
     }
-    gtk_label_set_mnemonic_widget(GTK_LABEL(keep_label), p->keep);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(keep_label), properties->keep);
     gtk_widget_set_margin_start(keep_label, 20);
     gtk_box_pack_start(GTK_BOX(row), keep_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(row), p->keep, FALSE, FALSE, 0);
-    p->clear = button("_Clear List", G_CALLBACK(on_clear), p);
-    gtk_box_pack_end(GTK_BOX(row), p->clear, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), properties->keep, FALSE, FALSE, 0);
+    properties->clear = button("_Clear List", G_CALLBACK(on_clear), properties);
+    gtk_box_pack_end(GTK_BOX(row), properties->clear, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(recent), row, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), frame("Recent documents", recent), FALSE, FALSE, 0);
 
@@ -225,29 +229,29 @@ static GtkWidget *general_page(props *p) {
                                       "leave temporary files behind, until they're removed. "
                                       "XeonDesktop can remove old ones once a day.")),
                        FALSE, FALSE, 0);
-    p->trash = gtk_check_button_new_with_mnemonic("_Empty old items from the Recycle Bin");
-    p->temp = gtk_check_button_new_with_mnemonic("_Delete old temporary files");
-    gtk_box_pack_start(GTK_BOX(old), p->trash, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(old), p->temp, FALSE, FALSE, 0);
+    properties->trash = gtk_check_button_new_with_mnemonic("_Empty old items from the Recycle Bin");
+    properties->temp = gtk_check_button_new_with_mnemonic("_Delete old temporary files");
+    gtk_box_pack_start(GTK_BOX(old), properties->trash, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(old), properties->temp, FALSE, FALSE, 0);
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget *age_label = gtk_label_new_with_mnemonic("Older _than:");
-    p->age = gtk_spin_button_new_with_range(1, 365, 1);
-    gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(p->age), TRUE);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(age_label), p->age);
+    properties->age = gtk_spin_button_new_with_range(1, 365, 1);
+    gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(properties->age), TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(age_label), properties->age);
     gtk_widget_set_margin_start(age_label, 20);
     gtk_box_pack_start(GTK_BOX(row), age_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(row), p->age, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), properties->age, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(row), gtk_label_new("days"), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(old), row, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), frame("Recycle Bin and temporary files", old), FALSE, FALSE,
                        0);
 
-    show_general(p);
-    g_signal_connect_swapped(p->remember, "toggled", G_CALLBACK(on_general), p);
-    g_signal_connect_swapped(p->keep, "changed", G_CALLBACK(on_general), p);
-    g_signal_connect_swapped(p->trash, "toggled", G_CALLBACK(on_general), p);
-    g_signal_connect_swapped(p->temp, "toggled", G_CALLBACK(on_general), p);
-    g_signal_connect_swapped(p->age, "value-changed", G_CALLBACK(on_general), p);
+    show_general(properties);
+    g_signal_connect_swapped(properties->remember, "toggled", G_CALLBACK(on_general), properties);
+    g_signal_connect_swapped(properties->keep, "changed", G_CALLBACK(on_general), properties);
+    g_signal_connect_swapped(properties->trash, "toggled", G_CALLBACK(on_general), properties);
+    g_signal_connect_swapped(properties->temp, "toggled", G_CALLBACK(on_general), properties);
+    g_signal_connect_swapped(properties->age, "value-changed", G_CALLBACK(on_general), properties);
     return page;
 }
 
@@ -266,8 +270,8 @@ static char *app_name(const char *app, GIcon **icon) {
     char *name;
     if (info != nullptr) {
         name = g_strdup(g_app_info_get_display_name(G_APP_INFO(info)));
-        GIcon *i = g_app_info_get_icon(G_APP_INFO(info));
-        *icon = i != nullptr ? g_object_ref(i) : nullptr;
+        GIcon *app_icon = g_app_info_get_icon(G_APP_INFO(info));
+        *icon = app_icon != nullptr ? g_object_ref(app_icon) : nullptr;
         g_object_unref(info);
     } else {
         name = g_strdup(app);
@@ -277,22 +281,25 @@ static char *app_name(const char *app, GIcon **icon) {
     return name;
 }
 
-static const char *access_text(const XdPermEntry *e) {
-    if (e->values != nullptr && e->values[0] != nullptr && strcmp(e->values[0], "ask") == 0)
+static const char *access_text(const XdPermEntry *perm_entry) {
+    if (perm_entry->values != nullptr && perm_entry->values[0] != nullptr &&
+        strcmp(perm_entry->values[0], "ask") == 0)
         return "Ask";
-    return xd_perm_allowed(e->kind, (const char *const *)e->values) ? "Allowed" : "Denied";
+    return xd_perm_allowed(perm_entry->kind, (const char *const *)perm_entry->values) ? "Allowed"
+                                                                                      : "Denied";
 }
 
 /* The entry a list row stands for, or nullptr (a program's row). */
-static const XdPermEntry *row_entry(props *p, GtkTreeModel *model, GtkTreeIter *it, int col) {
+static const XdPermEntry *row_entry(props *properties, GtkTreeModel *model, GtkTreeIter *it,
+                                    int col) {
     int i = -1;
     gtk_tree_model_get(model, it, col, &i, -1);
-    return p->entries != nullptr && i >= 0 && (guint)i < p->entries->len
-               ? g_ptr_array_index(p->entries, i)
+    return properties->entries != nullptr && i >= 0 && (guint)i < properties->entries->len
+               ? g_ptr_array_index(properties->entries, i)
                : nullptr;
 }
 
-static const XdPermEntry *selected(props *p, GtkWidget *view, int col, char **app) {
+static const XdPermEntry *selected(props *properties, GtkWidget *view, int col, char **app) {
     GtkTreeModel *model;
     GtkTreeIter it;
     if (app != nullptr)
@@ -302,52 +309,55 @@ static const XdPermEntry *selected(props *p, GtkWidget *view, int col, char **ap
         return nullptr;
     if (app != nullptr && col == P_ENTRY)
         gtk_tree_model_get(model, &it, P_APP, app, -1);
-    return row_entry(p, model, &it, col);
+    return row_entry(properties, model, &it, col);
 }
 
-static void loc_buttons(props *p) {
-    const XdPermEntry *e = selected(p, p->loc_view, L_ENTRY, nullptr);
-    bool allowed = e != nullptr && xd_perm_allowed(e->kind, (const char *const *)e->values);
-    gtk_widget_set_sensitive(p->loc_allow, e != nullptr && !allowed);
-    gtk_widget_set_sensitive(p->loc_deny, e != nullptr && allowed);
-    gtk_widget_set_sensitive(p->loc_remove, e != nullptr);
+static void loc_buttons(props *properties) {
+    const XdPermEntry *perm_entry = selected(properties, properties->loc_view, L_ENTRY, nullptr);
+    bool allowed = perm_entry != nullptr &&
+                   xd_perm_allowed(perm_entry->kind, (const char *const *)perm_entry->values);
+    gtk_widget_set_sensitive(properties->loc_allow, perm_entry != nullptr && !allowed);
+    gtk_widget_set_sensitive(properties->loc_deny, perm_entry != nullptr && allowed);
+    gtk_widget_set_sensitive(properties->loc_remove, perm_entry != nullptr);
 }
 
-static void perm_buttons(props *p) {
+static void perm_buttons(props *properties) {
     char *app = nullptr;
-    const XdPermEntry *e = selected(p, p->perm_view, P_ENTRY, &app);
-    bool allowed = e != nullptr && xd_perm_allowed(e->kind, (const char *const *)e->values);
-    gtk_widget_set_sensitive(p->perm_allow, e != nullptr && !allowed);
-    gtk_widget_set_sensitive(p->perm_deny, e != nullptr && allowed);
+    const XdPermEntry *perm_entry = selected(properties, properties->perm_view, P_ENTRY, &app);
+    bool allowed = perm_entry != nullptr &&
+                   xd_perm_allowed(perm_entry->kind, (const char *const *)perm_entry->values);
+    gtk_widget_set_sensitive(properties->perm_allow, perm_entry != nullptr && !allowed);
+    gtk_widget_set_sensitive(properties->perm_deny, perm_entry != nullptr && allowed);
     /* A program's row: Remove forgets all its answers. */
-    gtk_widget_set_sensitive(p->perm_remove, e != nullptr || app != nullptr);
+    gtk_widget_set_sensitive(properties->perm_remove, perm_entry != nullptr || app != nullptr);
     g_free(app);
 }
 
 /* Selects the row for (app, kind) again after the lists are refilled;
  * kind nullptr for a program's row. */
-static void reselect(GtkWidget *view, int entry_col, int app_col, props *p, const char *app,
-                     const XdPermKind *kind) {
+static void reselect(GtkWidget *view, int entry_col, int app_col, props *properties,
+                     const char *app, const XdPermKind *kind) {
     GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(view));
     GtkTreeIter top, child;
     for (bool ok = gtk_tree_model_get_iter_first(model, &top); ok;
          ok = gtk_tree_model_iter_next(model, &top)) {
-        const XdPermEntry *e = row_entry(p, model, &top, entry_col);
+        const XdPermEntry *perm_entry = row_entry(properties, model, &top, entry_col);
         char *top_app = nullptr;
         if (app_col >= 0)
             gtk_tree_model_get(model, &top, app_col, &top_app, -1);
-        bool same_app = top_app != nullptr ? strcmp(top_app, app) == 0
-                                           : e != nullptr && strcmp(e->app, app) == 0;
+        bool same_app = top_app != nullptr
+                            ? strcmp(top_app, app) == 0
+                            : perm_entry != nullptr && strcmp(perm_entry->app, app) == 0;
         g_free(top_app);
         if (!same_app)
             continue;
         GtkTreeIter *hit = nullptr;
-        if (kind == nullptr || (e != nullptr && e->kind == kind)) {
+        if (kind == nullptr || (perm_entry != nullptr && perm_entry->kind == kind)) {
             hit = &top;
         } else {
-            for (bool c = gtk_tree_model_iter_children(model, &child, &top); c && hit == nullptr;
-                 c = gtk_tree_model_iter_next(model, &child)) {
-                const XdPermEntry *ce = row_entry(p, model, &child, entry_col);
+            for (bool has_child = gtk_tree_model_iter_children(model, &child, &top);
+                 has_child && hit == nullptr; has_child = gtk_tree_model_iter_next(model, &child)) {
+                const XdPermEntry *ce = row_entry(properties, model, &child, entry_col);
                 if (ce != nullptr && ce->kind == kind)
                     hit = &child;
             }
@@ -363,131 +373,140 @@ static void reselect(GtkWidget *view, int entry_col, int app_col, props *p, cons
 }
 
 /* Shows `entries` (taken) instead of what was listed before. */
-static void fill_lists(props *p, GPtrArray *entries) {
+static void fill_lists(props *properties, GPtrArray *entries) {
     /* What was selected, to select it again. */
     char *loc_app = nullptr, *perm_app = nullptr;
-    const XdPermEntry *le = selected(p, p->loc_view, L_ENTRY, nullptr);
-    const XdPermEntry *pe = selected(p, p->perm_view, P_ENTRY, &perm_app);
+    const XdPermEntry *le = selected(properties, properties->loc_view, L_ENTRY, nullptr);
+    const XdPermEntry *pe = selected(properties, properties->perm_view, P_ENTRY, &perm_app);
     loc_app = le != nullptr ? g_strdup(le->app) : nullptr;
     const XdPermKind *perm_kind = pe != nullptr ? pe->kind : nullptr;
     if (pe != nullptr && perm_app == nullptr)
         perm_app = g_strdup(pe->app);
 
     /* The rows hold indices into the old list until they're gone. */
-    gtk_list_store_clear(p->loc_list);
-    gtk_tree_store_clear(p->perm_tree);
-    if (p->entries != nullptr)
-        g_ptr_array_unref(p->entries);
-    p->entries = entries;
-    if (p->entries != nullptr) {
+    gtk_list_store_clear(properties->loc_list);
+    gtk_tree_store_clear(properties->perm_tree);
+    if (properties->entries != nullptr)
+        g_ptr_array_unref(properties->entries);
+    properties->entries = entries;
+    if (properties->entries != nullptr) {
         GtkTreeIter app_row;
         const char *last_app = nullptr;
-        for (guint i = 0; i < p->entries->len; i++) {
-            const XdPermEntry *e = g_ptr_array_index(p->entries, i);
+        for (guint i = 0; i < properties->entries->len; i++) {
+            const XdPermEntry *perm_entry = g_ptr_array_index(properties->entries, i);
             GIcon *icon;
-            char *name = app_name(e->app, &icon);
-            if (e->kind == &xd_perm_kinds[0]) {
-                gint64 used = xd_perm_last_used(e);
+            char *name = app_name(perm_entry->app, &icon);
+            if (perm_entry->kind == &xd_perm_kinds[0]) {
+                gint64 used = xd_perm_last_used(perm_entry);
                 GDateTime *dt = used > 0 ? g_date_time_new_from_unix_local(used) : nullptr;
                 char *when = dt != nullptr ? g_date_time_format(dt, "%x %X") : g_strdup("");
                 if (dt != nullptr)
                     g_date_time_unref(dt);
-                gtk_list_store_insert_with_values(p->loc_list, nullptr, -1, L_ICON, icon, L_NAME,
-                                                  name, L_ACCESS, access_text(e), L_USED, when,
-                                                  L_ENTRY, (int)i, -1);
+                gtk_list_store_insert_with_values(properties->loc_list, nullptr, -1, L_ICON, icon,
+                                                  L_NAME, name, L_ACCESS, access_text(perm_entry),
+                                                  L_USED, when, L_ENTRY, (int)i, -1);
                 g_free(when);
             }
-            if (last_app == nullptr || strcmp(last_app, e->app) != 0) {
-                gtk_tree_store_insert_with_values(p->perm_tree, &app_row, nullptr, -1, P_ICON,
-                                                  icon, P_NAME, name, P_ACCESS, "", P_ENTRY, -1,
-                                                  P_APP, e->app, -1);
-                last_app = e->app;
+            if (last_app == nullptr || strcmp(last_app, perm_entry->app) != 0) {
+                gtk_tree_store_insert_with_values(properties->perm_tree, &app_row, nullptr, -1,
+                                                  P_ICON, icon, P_NAME, name, P_ACCESS, "", P_ENTRY,
+                                                  -1, P_APP, perm_entry->app, -1);
+                last_app = perm_entry->app;
             }
-            gtk_tree_store_insert_with_values(p->perm_tree, nullptr, &app_row, -1, P_NAME,
-                                              e->kind->label, P_ACCESS, access_text(e), P_ENTRY,
-                                              (int)i, -1);
+            gtk_tree_store_insert_with_values(properties->perm_tree, nullptr, &app_row, -1, P_NAME,
+                                              perm_entry->kind->label, P_ACCESS,
+                                              access_text(perm_entry), P_ENTRY, (int)i, -1);
             g_object_unref(icon);
             g_free(name);
         }
     }
-    gtk_tree_view_expand_all(GTK_TREE_VIEW(p->perm_view));
+    gtk_tree_view_expand_all(GTK_TREE_VIEW(properties->perm_view));
     if (loc_app != nullptr)
-        reselect(p->loc_view, L_ENTRY, -1, p, loc_app, &xd_perm_kinds[0]);
+        reselect(properties->loc_view, L_ENTRY, -1, properties, loc_app, &xd_perm_kinds[0]);
     if (perm_app != nullptr)
-        reselect(p->perm_view, P_ENTRY, P_APP, p, perm_app, perm_kind);
+        reselect(properties->perm_view, P_ENTRY, P_APP, properties, perm_app, perm_kind);
     g_free(loc_app);
     g_free(perm_app);
 
-    gtk_label_set_text(GTK_LABEL(p->perm_note),
-                       p->entries == nullptr
+    gtk_label_set_text(GTK_LABEL(properties->perm_note),
+                       properties->entries == nullptr
                            ? "The portal permission store (xdg-desktop-portal) can't be reached."
-                       : p->entries->len == 0 ? "No program has asked for any of these yet."
-                                              : "");
-    gtk_widget_set_visible(p->perm_note, p->entries == nullptr || p->entries->len == 0);
-    loc_buttons(p);
-    perm_buttons(p);
+                       : properties->entries->len == 0
+                           ? "No program has asked for any of these yet."
+                           : "");
+    gtk_widget_set_visible(properties->perm_note,
+                           properties->entries == nullptr || properties->entries->len == 0);
+    loc_buttons(properties);
+    perm_buttons(properties);
 }
 
-static void refresh(props *p) {
+static void refresh(props *properties) {
     GError *error = nullptr;
-    GPtrArray *entries = p->bus != nullptr ? xd_perm_list(p->bus, nullptr, &error) : nullptr;
+    GPtrArray *entries =
+        properties->bus != nullptr ? xd_perm_list(properties->bus, nullptr, &error) : nullptr;
     if (error != nullptr) {
         g_printerr("xd-privacy: %s\n", error->message);
         g_error_free(error);
     }
-    fill_lists(p, entries);
+    fill_lists(properties, entries);
 }
 
-static void store_changed([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                          [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                          [[maybe_unused]] const char *signal, [[maybe_unused]] GVariant *params,
-                          gpointer data) {
+static void store_changed([[maybe_unused]] GDBusConnection *connection,
+                          [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                          [[maybe_unused]] const char *iface, [[maybe_unused]] const char *signal,
+                          [[maybe_unused]] GVariant *params, gpointer data) {
     refresh(data);
 }
 
-static void set_entry(props *p, const XdPermEntry *e, bool allow) {
-    if (e == nullptr)
+static void set_entry(props *properties, const XdPermEntry *perm_entry, bool allow) {
+    if (perm_entry == nullptr)
         return;
     GError *error = nullptr;
-    if (!xd_perm_set(p->bus, e, allow, nullptr, &error)) {
-        error_box(p, "The permission could not be changed.", error);
+    if (!xd_perm_set(properties->bus, perm_entry, allow, nullptr, &error)) {
+        error_box(properties, "The permission could not be changed.", error);
         g_error_free(error);
     }
-    refresh(p);
+    refresh(properties);
 }
 
-static void remove_entries(props *p, const XdPermEntry *e, const char *app) {
+static void remove_entries(props *properties, const XdPermEntry *perm_entry, const char *app) {
     GError *error = nullptr;
-    for (guint i = 0; p->entries != nullptr && i < p->entries->len && error == nullptr; i++) {
-        const XdPermEntry *x = g_ptr_array_index(p->entries, i);
-        if (x == e || (e == nullptr && app != nullptr && strcmp(x->app, app) == 0))
-            xd_perm_remove(p->bus, x, nullptr, &error);
+    for (guint i = 0;
+         properties->entries != nullptr && i < properties->entries->len && error == nullptr; i++) {
+        const XdPermEntry *listed_entry = g_ptr_array_index(properties->entries, i);
+        if (listed_entry == perm_entry ||
+            (perm_entry == nullptr && app != nullptr && strcmp(listed_entry->app, app) == 0))
+            xd_perm_remove(properties->bus, listed_entry, nullptr, &error);
     }
     if (error != nullptr) {
-        error_box(p, "The permission could not be removed.", error);
+        error_box(properties, "The permission could not be removed.", error);
         g_error_free(error);
     }
-    refresh(p);
+    refresh(properties);
 }
 
-static void on_loc_allow(props *p) { set_entry(p, selected(p, p->loc_view, L_ENTRY, nullptr), true); }
-static void on_loc_deny(props *p) { set_entry(p, selected(p, p->loc_view, L_ENTRY, nullptr), false); }
-static void on_loc_remove(props *p) {
-    const XdPermEntry *e = selected(p, p->loc_view, L_ENTRY, nullptr);
-    if (e != nullptr)
-        remove_entries(p, e, nullptr);
+static void on_loc_allow(props *properties) {
+    set_entry(properties, selected(properties, properties->loc_view, L_ENTRY, nullptr), true);
 }
-static void on_perm_allow(props *p) {
-    set_entry(p, selected(p, p->perm_view, P_ENTRY, nullptr), true);
+static void on_loc_deny(props *properties) {
+    set_entry(properties, selected(properties, properties->loc_view, L_ENTRY, nullptr), false);
 }
-static void on_perm_deny(props *p) {
-    set_entry(p, selected(p, p->perm_view, P_ENTRY, nullptr), false);
+static void on_loc_remove(props *properties) {
+    const XdPermEntry *perm_entry = selected(properties, properties->loc_view, L_ENTRY, nullptr);
+    if (perm_entry != nullptr)
+        remove_entries(properties, perm_entry, nullptr);
 }
-static void on_perm_remove(props *p) {
+static void on_perm_allow(props *properties) {
+    set_entry(properties, selected(properties, properties->perm_view, P_ENTRY, nullptr), true);
+}
+static void on_perm_deny(props *properties) {
+    set_entry(properties, selected(properties, properties->perm_view, P_ENTRY, nullptr), false);
+}
+static void on_perm_remove(props *properties) {
     char *app = nullptr;
-    const XdPermEntry *e = selected(p, p->perm_view, P_ENTRY, &app);
-    if (e != nullptr || app != nullptr)
-        remove_entries(p, e, app);
+    const XdPermEntry *perm_entry = selected(properties, properties->perm_view, P_ENTRY, &app);
+    if (perm_entry != nullptr || app != nullptr)
+        remove_entries(properties, perm_entry, app);
     g_free(app);
 }
 
@@ -503,43 +522,44 @@ static GtkWidget *scrolled(GtkWidget *view, int height) {
 
 /* A column with the program's icon before its name. */
 static void name_column(GtkWidget *view, int icon_col, int name_col) {
-    GtkTreeViewColumn *c = gtk_tree_view_column_new();
-    gtk_tree_view_column_set_title(c, "Program");
+    GtkTreeViewColumn *column = gtk_tree_view_column_new();
+    gtk_tree_view_column_set_title(column, "Program");
     GtkCellRenderer *ir = gtk_cell_renderer_pixbuf_new();
-    gtk_tree_view_column_pack_start(c, ir, FALSE);
-    gtk_tree_view_column_add_attribute(c, ir, "gicon", icon_col);
+    gtk_tree_view_column_pack_start(column, ir, FALSE);
+    gtk_tree_view_column_add_attribute(column, ir, "gicon", icon_col);
     GtkCellRenderer *tr = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(c, tr, TRUE);
-    gtk_tree_view_column_add_attribute(c, tr, "text", name_col);
-    gtk_tree_view_column_set_expand(c, TRUE);
-    gtk_tree_view_column_set_resizable(c, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view), c);
+    gtk_tree_view_column_pack_start(column, tr, TRUE);
+    gtk_tree_view_column_add_attribute(column, tr, "text", name_col);
+    gtk_tree_view_column_set_expand(column, TRUE);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view), column);
 }
 
 static void text_column(GtkWidget *view, const char *title, int col) {
-    GtkTreeViewColumn *c = gtk_tree_view_column_new_with_attributes(
+    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes(
         title, gtk_cell_renderer_text_new(), "text", col, nullptr);
-    gtk_tree_view_column_set_resizable(c, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view), c);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view), column);
 }
 
-static GtkWidget *button_row(GtkWidget *a, GtkWidget *b, GtkWidget *c) {
+static GtkWidget *button_row(GtkWidget *first, GtkWidget *second, GtkWidget *third) {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_pack_end(GTK_BOX(row), c, FALSE, FALSE, 0);
-    gtk_box_pack_end(GTK_BOX(row), b, FALSE, FALSE, 0);
-    gtk_box_pack_end(GTK_BOX(row), a, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(row), third, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(row), second, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(row), first, FALSE, FALSE, 0);
     return row;
 }
 
 /* ---- Location ------------------------------------------------------------------- */
 
-static void show_geoclue(props *p) {
-    bool on = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->loc_enabled));
+static void show_geoclue(props *properties) {
+    bool on = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->loc_enabled));
     const char *text;
-    GVariant *in_use = p->geoclue != nullptr && g_dbus_proxy_get_name_owner(p->geoclue) != nullptr
-                           ? g_dbus_proxy_get_cached_property(p->geoclue, "InUse")
+    GVariant *in_use = properties->geoclue != nullptr &&
+                               g_dbus_proxy_get_name_owner(properties->geoclue) != nullptr
+                           ? g_dbus_proxy_get_cached_property(properties->geoclue, "InUse")
                            : nullptr;
-    if (!p->geoclue_installed)
+    if (!properties->geoclue_installed)
         text = "GeoClue, the service that finds where you are, isn't installed, so programs "
                "can't use your location.";
     else if (!on)
@@ -550,67 +570,68 @@ static void show_geoclue(props *p) {
         text = "No program is using your location now.";
     if (in_use != nullptr)
         g_variant_unref(in_use);
-    gtk_label_set_text(GTK_LABEL(p->loc_status), text);
+    gtk_label_set_text(GTK_LABEL(properties->loc_status), text);
 }
 
-static void geoclue_props([[maybe_unused]] GDBusProxy *proxy, [[maybe_unused]] GVariant *c,
+static void geoclue_props([[maybe_unused]] GDBusProxy *proxy,
+                          [[maybe_unused]] GVariant *changed_properties,
                           [[maybe_unused]] const char *const *inv, gpointer data) {
     show_geoclue(data);
 }
 
 static void geoclue_proxy_ready([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
-    props *p = data;
+    props *properties = data;
     GDBusProxy *proxy = g_dbus_proxy_new_finish(res, nullptr);
     if (proxy == nullptr)
         return;
-    g_clear_object(&p->geoclue);
-    p->geoclue = proxy;
-    g_signal_connect(proxy, "g-properties-changed", G_CALLBACK(geoclue_props), p);
-    show_geoclue(p);
+    g_clear_object(&properties->geoclue);
+    properties->geoclue = proxy;
+    g_signal_connect(proxy, "g-properties-changed", G_CALLBACK(geoclue_props), properties);
+    show_geoclue(properties);
 }
 
-static void geoclue_appeared(GDBusConnection *c, [[maybe_unused]] const char *name,
+static void geoclue_appeared(GDBusConnection *connection, [[maybe_unused]] const char *name,
                              [[maybe_unused]] const char *owner, gpointer data) {
-    props *p = data;
-    p->geoclue_installed = true;
+    props *properties = data;
+    properties->geoclue_installed = true;
     /* Never started for us: only read while it runs anyway. */
-    g_dbus_proxy_new(c, G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START, nullptr, GEOCLUE, GEOCLUE_PATH,
-                     GEOCLUE_MANAGER, nullptr, geoclue_proxy_ready, p);
+    g_dbus_proxy_new(connection, G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START, nullptr, GEOCLUE,
+                     GEOCLUE_PATH, GEOCLUE_MANAGER, nullptr, geoclue_proxy_ready, properties);
 }
 
-static void geoclue_vanished([[maybe_unused]] GDBusConnection *c,
+static void geoclue_vanished([[maybe_unused]] GDBusConnection *connection,
                              [[maybe_unused]] const char *name, gpointer data) {
-    props *p = data;
-    g_clear_object(&p->geoclue);
-    show_geoclue(p);
+    props *properties = data;
+    g_clear_object(&properties->geoclue);
+    show_geoclue(properties);
 }
 
 /* Whether GeoClue is installed: running, or startable on demand. */
 static bool geoclue_activatable(GDBusConnection *system) {
-    GVariant *r = g_dbus_connection_call_sync(
+    GVariant *response = g_dbus_connection_call_sync(
         system, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
         "ListActivatableNames", nullptr, G_VARIANT_TYPE("(as)"), G_DBUS_CALL_FLAGS_NONE, 5000,
         nullptr, nullptr);
-    if (r == nullptr)
+    if (response == nullptr)
         return false;
     const char **names = nullptr;
-    g_variant_get(r, "(^a&s)", &names);
+    g_variant_get(response, "(^a&s)", &names);
     bool found = names != nullptr && g_strv_contains(names, GEOCLUE);
     g_free(names);
-    g_variant_unref(r);
+    g_variant_unref(response);
     return found;
 }
 
-static void on_loc_enabled(props *p) {
-    show_geoclue(p);
-    changed(p);
+static void on_loc_enabled(props *properties) {
+    show_geoclue(properties);
+    changed(properties);
 }
 
-static void on_loc_selection([[maybe_unused]] GtkTreeSelection *s, gpointer data) {
+static void on_loc_selection([[maybe_unused]] GtkTreeSelection *tree_selection, gpointer data) {
     loc_buttons(data);
 }
 
-static GtkWidget *location_page(props *p) {
+static GtkWidget *location_page(props *properties) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
     gtk_box_pack_start(GTK_BOX(page),
@@ -618,49 +639,53 @@ static GtkWidget *location_page(props *p) {
                                 label("Programs can ask where you are, to show a map or the "
                                       "local weather. Each one asks you first.")),
                        FALSE, FALSE, 0);
-    p->loc_enabled = gtk_check_button_new_with_mnemonic("Allow programs to _use my location");
-    gtk_box_pack_start(GTK_BOX(page), p->loc_enabled, FALSE, FALSE, 0);
-    p->loc_status = label("");
-    gtk_widget_set_margin_start(p->loc_status, 20);
-    gtk_box_pack_start(GTK_BOX(page), p->loc_status, FALSE, FALSE, 0);
+    properties->loc_enabled =
+        gtk_check_button_new_with_mnemonic("Allow programs to _use my location");
+    gtk_box_pack_start(GTK_BOX(page), properties->loc_enabled, FALSE, FALSE, 0);
+    properties->loc_status = label("");
+    gtk_widget_set_margin_start(properties->loc_status, 20);
+    gtk_box_pack_start(GTK_BOX(page), properties->loc_status, FALSE, FALSE, 0);
 
     GtkWidget *asked = gtk_label_new_with_mnemonic("Programs that have as_ked for your location:");
     gtk_label_set_xalign(GTK_LABEL(asked), 0);
     gtk_box_pack_start(GTK_BOX(page), asked, FALSE, FALSE, 4);
-    p->loc_list = gtk_list_store_new(L_COLS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING,
-                                     G_TYPE_STRING, G_TYPE_INT);
-    p->loc_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(p->loc_list));
-    g_object_unref(p->loc_list);
-    name_column(p->loc_view, L_ICON, L_NAME);
-    text_column(p->loc_view, "Access", L_ACCESS);
-    text_column(p->loc_view, "Last Used", L_USED);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(asked), p->loc_view);
-    gtk_box_pack_start(GTK_BOX(page), scrolled(p->loc_view, 130), TRUE, TRUE, 0);
-    p->loc_allow = button("A_llow", G_CALLBACK(on_loc_allow), p);
-    p->loc_deny = button("_Deny", G_CALLBACK(on_loc_deny), p);
-    p->loc_remove = button("_Remove", G_CALLBACK(on_loc_remove), p);
-    gtk_box_pack_start(GTK_BOX(page), button_row(p->loc_allow, p->loc_deny, p->loc_remove), FALSE,
-                       FALSE, 0);
+    properties->loc_list = gtk_list_store_new(L_COLS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING,
+                                              G_TYPE_STRING, G_TYPE_INT);
+    properties->loc_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(properties->loc_list));
+    g_object_unref(properties->loc_list);
+    name_column(properties->loc_view, L_ICON, L_NAME);
+    text_column(properties->loc_view, "Access", L_ACCESS);
+    text_column(properties->loc_view, "Last Used", L_USED);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(asked), properties->loc_view);
+    gtk_box_pack_start(GTK_BOX(page), scrolled(properties->loc_view, 130), TRUE, TRUE, 0);
+    properties->loc_allow = button("A_llow", G_CALLBACK(on_loc_allow), properties);
+    properties->loc_deny = button("_Deny", G_CALLBACK(on_loc_deny), properties);
+    properties->loc_remove = button("_Remove", G_CALLBACK(on_loc_remove), properties);
+    gtk_box_pack_start(
+        GTK_BOX(page),
+        button_row(properties->loc_allow, properties->loc_deny, properties->loc_remove), FALSE,
+        FALSE, 0);
 
-    p->updating = true;
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->loc_enabled),
-                                 p->location != nullptr &&
-                                     g_settings_get_boolean(p->location, "enabled"));
-    gtk_widget_set_sensitive(p->loc_enabled, p->location != nullptr);
-    p->updating = false;
-    g_signal_connect_swapped(p->loc_enabled, "toggled", G_CALLBACK(on_loc_enabled), p);
-    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(p->loc_view)), "changed",
-                     G_CALLBACK(on_loc_selection), p);
+    properties->updating = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(properties->loc_enabled),
+                                 properties->location != nullptr &&
+                                     g_settings_get_boolean(properties->location, "enabled"));
+    gtk_widget_set_sensitive(properties->loc_enabled, properties->location != nullptr);
+    properties->updating = false;
+    g_signal_connect_swapped(properties->loc_enabled, "toggled", G_CALLBACK(on_loc_enabled),
+                             properties);
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(properties->loc_view)), "changed",
+                     G_CALLBACK(on_loc_selection), properties);
     return page;
 }
 
 /* ---- Program Permissions -------------------------------------------------------- */
 
-static void on_perm_selection([[maybe_unused]] GtkTreeSelection *s, gpointer data) {
+static void on_perm_selection([[maybe_unused]] GtkTreeSelection *tree_selection, gpointer data) {
     perm_buttons(data);
 }
 
-static GtkWidget *permissions_page(props *p) {
+static GtkWidget *permissions_page(props *properties) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
     gtk_box_pack_start(GTK_BOX(page),
@@ -674,59 +699,64 @@ static GtkWidget *permissions_page(props *p) {
     GtkWidget *answers = gtk_label_new_with_mnemonic("Your a_nswers:");
     gtk_label_set_xalign(GTK_LABEL(answers), 0);
     gtk_box_pack_start(GTK_BOX(page), answers, FALSE, FALSE, 4);
-    p->perm_tree = gtk_tree_store_new(P_COLS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING,
-                                      G_TYPE_INT, G_TYPE_STRING);
-    p->perm_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(p->perm_tree));
-    g_object_unref(p->perm_tree);
-    name_column(p->perm_view, P_ICON, P_NAME);
-    text_column(p->perm_view, "Access", P_ACCESS);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(answers), p->perm_view);
-    gtk_box_pack_start(GTK_BOX(page), scrolled(p->perm_view, 170), TRUE, TRUE, 0);
-    p->perm_note = label("");
-    gtk_widget_set_no_show_all(p->perm_note, TRUE);
-    gtk_box_pack_start(GTK_BOX(page), p->perm_note, FALSE, FALSE, 0);
-    p->perm_allow = button("A_llow", G_CALLBACK(on_perm_allow), p);
-    p->perm_deny = button("_Deny", G_CALLBACK(on_perm_deny), p);
-    p->perm_remove = button("_Remove", G_CALLBACK(on_perm_remove), p);
-    gtk_box_pack_start(GTK_BOX(page), button_row(p->perm_allow, p->perm_deny, p->perm_remove),
-                       FALSE, FALSE, 0);
-    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(p->perm_view)), "changed",
-                     G_CALLBACK(on_perm_selection), p);
+    properties->perm_tree = gtk_tree_store_new(P_COLS, G_TYPE_ICON, G_TYPE_STRING, G_TYPE_STRING,
+                                               G_TYPE_INT, G_TYPE_STRING);
+    properties->perm_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(properties->perm_tree));
+    g_object_unref(properties->perm_tree);
+    name_column(properties->perm_view, P_ICON, P_NAME);
+    text_column(properties->perm_view, "Access", P_ACCESS);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(answers), properties->perm_view);
+    gtk_box_pack_start(GTK_BOX(page), scrolled(properties->perm_view, 170), TRUE, TRUE, 0);
+    properties->perm_note = label("");
+    gtk_widget_set_no_show_all(properties->perm_note, TRUE);
+    gtk_box_pack_start(GTK_BOX(page), properties->perm_note, FALSE, FALSE, 0);
+    properties->perm_allow = button("A_llow", G_CALLBACK(on_perm_allow), properties);
+    properties->perm_deny = button("_Deny", G_CALLBACK(on_perm_deny), properties);
+    properties->perm_remove = button("_Remove", G_CALLBACK(on_perm_remove), properties);
+    gtk_box_pack_start(
+        GTK_BOX(page),
+        button_row(properties->perm_allow, properties->perm_deny, properties->perm_remove), FALSE,
+        FALSE, 0);
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(properties->perm_view)), "changed",
+                     G_CALLBACK(on_perm_selection), properties);
     return page;
 }
 
 /* ---- applying ------------------------------------------------------------------- */
 
-static void apply(props *p) {
-    if (p->privacy != nullptr) {
-        const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->keep));
-        g_settings_set_boolean(p->privacy, "remember-recent-files",
-                               gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->remember)));
+static void apply(props *properties) {
+    if (properties->privacy != nullptr) {
+        const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(properties->keep));
+        g_settings_set_boolean(
+            properties->privacy, "remember-recent-files",
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->remember)));
         if (id != nullptr)
-            g_settings_set_int(p->privacy, "recent-files-max-age", atoi(id));
-        g_settings_set_boolean(p->privacy, "remove-old-trash-files",
-                               gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->trash)));
-        g_settings_set_boolean(p->privacy, "remove-old-temp-files",
-                               gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->temp)));
-        g_settings_set_uint(p->privacy, "old-files-age",
-                            (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(p->age)));
+            g_settings_set_int(properties->privacy, "recent-files-max-age", atoi(id));
+        g_settings_set_boolean(properties->privacy, "remove-old-trash-files",
+                               gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->trash)));
+        g_settings_set_boolean(properties->privacy, "remove-old-temp-files",
+                               gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->temp)));
+        g_settings_set_uint(
+            properties->privacy, "old-files-age",
+            (guint)gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(properties->age)));
     }
-    if (p->location != nullptr)
-        g_settings_set_boolean(p->location, "enabled",
-                               gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->loc_enabled)));
+    if (properties->location != nullptr)
+        g_settings_set_boolean(
+            properties->location, "enabled",
+            gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->loc_enabled)));
     g_settings_sync();
-    gtk_widget_set_sensitive(p->apply, FALSE);
+    gtk_widget_set_sensitive(properties->apply, FALSE);
 }
 
-static void on_response(GtkDialog *d, int response, gpointer data) {
-    props *p = data;
+static void on_response(GtkDialog *gtk_dialog, int response, gpointer data) {
+    props *properties = data;
     if (response == GTK_RESPONSE_APPLY) {
-        apply(p);
+        apply(properties);
         return;
     }
-    if (response == GTK_RESPONSE_OK && gtk_widget_get_sensitive(p->apply))
-        apply(p);
-    gtk_widget_destroy(GTK_WIDGET(d));
+    if (response == GTK_RESPONSE_OK && gtk_widget_get_sensitive(properties->apply))
+        apply(properties);
+    gtk_widget_destroy(GTK_WIDGET(gtk_dialog));
 }
 
 int main(int argc, char **argv) {
@@ -738,74 +768,73 @@ int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.Privacy");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
-    static props p;
-    p.privacy = settings_for(PRIVACY_SCHEMA,
-                             (const char *const[]){"remember-recent-files", "recent-files-max-age",
-                                                   "remove-old-trash-files",
-                                                   "remove-old-temp-files", "old-files-age",
-                                                   nullptr});
-    p.location = settings_for(LOCATION_SCHEMA, (const char *const[]){"enabled", nullptr});
+    static props properties;
+    properties.privacy = settings_for(
+        PRIVACY_SCHEMA, (const char *const[]){"remember-recent-files", "recent-files-max-age",
+                                              "remove-old-trash-files", "remove-old-temp-files",
+                                              "old-files-age", nullptr});
+    properties.location = settings_for(LOCATION_SCHEMA, (const char *const[]){"enabled", nullptr});
 
-    p.window = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(p.window), "Privacy Properties");
-    gtk_window_set_icon_name(GTK_WINDOW(p.window), "preferences-security");
-    gtk_window_set_resizable(GTK_WINDOW(p.window), FALSE);
-    gtk_dialog_add_button(GTK_DIALOG(p.window), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(p.window), "Cancel", GTK_RESPONSE_CANCEL);
-    p.apply = gtk_dialog_add_button(GTK_DIALOG(p.window), "_Apply", GTK_RESPONSE_APPLY);
-    gtk_widget_set_sensitive(p.apply, FALSE);
-    gtk_dialog_set_default_response(GTK_DIALOG(p.window), GTK_RESPONSE_OK);
+    properties.window = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(properties.window), "Privacy Properties");
+    gtk_window_set_icon_name(GTK_WINDOW(properties.window), "preferences-security");
+    gtk_window_set_resizable(GTK_WINDOW(properties.window), FALSE);
+    gtk_dialog_add_button(GTK_DIALOG(properties.window), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(properties.window), "Cancel", GTK_RESPONSE_CANCEL);
+    properties.apply =
+        gtk_dialog_add_button(GTK_DIALOG(properties.window), "_Apply", GTK_RESPONSE_APPLY);
+    gtk_widget_set_sensitive(properties.apply, FALSE);
+    gtk_dialog_set_default_response(GTK_DIALOG(properties.window), GTK_RESPONSE_OK);
 
     GtkWidget *tabs = gtk_notebook_new();
     gtk_container_set_border_width(GTK_CONTAINER(tabs), 6);
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), general_page(&p),
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), general_page(&properties),
                              gtk_label_new_with_mnemonic("_General"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), location_page(&p),
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), location_page(&properties),
                              gtk_label_new_with_mnemonic("L_ocation"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), permissions_page(&p),
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), permissions_page(&properties),
                              gtk_label_new_with_mnemonic("Program _Permissions"));
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(p.window))), tabs, TRUE,
-                       TRUE, 0);
-    xd_gtk_notebook_ctrl_tab(p.window, GTK_NOTEBOOK(tabs));
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(properties.window))), tabs,
+                       TRUE, TRUE, 0);
+    xd_gtk_notebook_ctrl_tab(properties.window, GTK_NOTEBOOK(tabs));
 
     GError *error = nullptr;
-    p.bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
-    if (p.bus == nullptr) {
+    properties.bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
+    if (properties.bus == nullptr) {
         g_printerr("xd-privacy: %s\n", error->message);
         g_clear_error(&error);
     } else {
-        p.store_sub = g_dbus_connection_signal_subscribe(
-            p.bus, STORE, STORE, "Changed", STORE_PATH, nullptr, G_DBUS_SIGNAL_FLAGS_NONE,
-            store_changed, &p, nullptr);
+        properties.store_sub = g_dbus_connection_signal_subscribe(
+            properties.bus, STORE, STORE, "Changed", STORE_PATH, nullptr, G_DBUS_SIGNAL_FLAGS_NONE,
+            store_changed, &properties, nullptr);
     }
-    p.system = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, nullptr);
-    if (p.system != nullptr) {
-        p.geoclue_installed = geoclue_activatable(p.system);
-        p.geoclue_watch = g_bus_watch_name_on_connection(p.system, GEOCLUE,
-                                                         G_BUS_NAME_WATCHER_FLAGS_NONE,
-                                                         geoclue_appeared, geoclue_vanished, &p,
-                                                         nullptr);
+    properties.system = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, nullptr);
+    if (properties.system != nullptr) {
+        properties.geoclue_installed = geoclue_activatable(properties.system);
+        properties.geoclue_watch = g_bus_watch_name_on_connection(
+            properties.system, GEOCLUE, G_BUS_NAME_WATCHER_FLAGS_NONE, geoclue_appeared,
+            geoclue_vanished, &properties, nullptr);
     }
-    show_geoclue(&p);
-    refresh(&p);
+    show_geoclue(&properties);
+    refresh(&properties);
 
-    g_signal_connect(p.window, "response", G_CALLBACK(on_response), &p);
-    g_signal_connect(p.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
-    gtk_widget_show_all(p.window);
+    g_signal_connect(properties.window, "response", G_CALLBACK(on_response), &properties);
+    g_signal_connect(properties.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    gtk_widget_show_all(properties.window);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs),
                                   XD_CLAMP(page, 0, gtk_notebook_get_n_pages(GTK_NOTEBOOK(tabs)) - 1));
     gtk_main();
 
-    if (p.store_sub != 0)
-        g_dbus_connection_signal_unsubscribe(p.bus, p.store_sub);
-    if (p.geoclue_watch != 0)
-        g_bus_unwatch_name(p.geoclue_watch);
-    g_clear_object(&p.geoclue);
-    g_clear_object(&p.system);
-    g_clear_object(&p.bus);
-    if (p.entries != nullptr)
-        g_ptr_array_unref(p.entries);
-    g_clear_object(&p.privacy);
-    g_clear_object(&p.location);
+    if (properties.store_sub != 0)
+        g_dbus_connection_signal_unsubscribe(properties.bus, properties.store_sub);
+    if (properties.geoclue_watch != 0)
+        g_bus_unwatch_name(properties.geoclue_watch);
+    g_clear_object(&properties.geoclue);
+    g_clear_object(&properties.system);
+    g_clear_object(&properties.bus);
+    if (properties.entries != nullptr)
+        g_ptr_array_unref(properties.entries);
+    g_clear_object(&properties.privacy);
+    g_clear_object(&properties.location);
     return EXIT_SUCCESS;
 }

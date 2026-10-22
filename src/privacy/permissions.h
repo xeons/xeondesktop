@@ -41,7 +41,7 @@ gboolean xd_perm_allowed(const XdPermKind *kind, const char *const *values);
 char **xd_perm_values_set(const XdPermKind *kind, const char *const *values, gboolean allow);
 
 /* When location was last used, from its values (Unix seconds), or -1. */
-gint64 xd_perm_last_used(const XdPermEntry *e);
+gint64 xd_perm_last_used(const XdPermEntry *perm_entry);
 
 /* Every program's answers in the store on `bus`, sorted by app id, then
  * in xd_perm_kinds' order. Tables the store doesn't have yet are empty,
@@ -50,11 +50,11 @@ gint64 xd_perm_last_used(const XdPermEntry *e);
 GPtrArray *xd_perm_list(GDBusConnection *bus, GCancellable *cancel, GError **error);
 
 /* Changes an answer to yes or no. */
-gboolean xd_perm_set(GDBusConnection *bus, const XdPermEntry *e, gboolean allow,
+gboolean xd_perm_set(GDBusConnection *bus, const XdPermEntry *perm_entry, gboolean allow,
                      GCancellable *cancel, GError **error);
 
 /* Forgets an answer: the program asks again next time. */
-gboolean xd_perm_remove(GDBusConnection *bus, const XdPermEntry *e, GCancellable *cancel,
+gboolean xd_perm_remove(GDBusConnection *bus, const XdPermEntry *perm_entry, GCancellable *cancel,
                         GError **error);
 
 G_END_DECLS

@@ -43,26 +43,29 @@ char **xd_perm_values_set(const XdPermKind *kind, const char *const *values, gbo
     return (char **)g_ptr_array_free(out, FALSE);
 }
 
-gint64 xd_perm_last_used(const XdPermEntry *e) {
-    if (strcmp(e->kind->table, "location") != 0 || e->values == nullptr ||
-        e->values[0] == nullptr || e->values[1] == nullptr)
+gint64 xd_perm_last_used(const XdPermEntry *perm_entry) {
+    if (strcmp(perm_entry->kind->table, "location") != 0 || perm_entry->values == nullptr ||
+        perm_entry->values[0] == nullptr || perm_entry->values[1] == nullptr)
         return -1;
     char *end = nullptr;
-    gint64 t = g_ascii_strtoll(e->values[1], &end, 10);
-    return end != e->values[1] && *end == '\0' && t > 0 ? t : -1;
+    gint64 timestamp = g_ascii_strtoll(perm_entry->values[1], &end, 10);
+    return end != perm_entry->values[1] && *end == '\0' && timestamp > 0 ? timestamp : -1;
 }
 
-static void entry_free(gpointer p) {
-    XdPermEntry *e = p;
-    g_free(e->app);
-    g_strfreev(e->values);
-    g_free(e);
+static void entry_free(gpointer data) {
+    XdPermEntry *perm_entry = data;
+    g_free(perm_entry->app);
+    g_strfreev(perm_entry->values);
+    g_free(perm_entry);
 }
 
-static gint by_app(gconstpointer a, gconstpointer b) {
-    const XdPermEntry *x = *(XdPermEntry *const *)a, *y = *(XdPermEntry *const *)b;
-    int c = strcmp(x->app, y->app);
-    return c != 0 ? c : (x->kind > y->kind) - (x->kind < y->kind);
+static gint by_app(gconstpointer left, gconstpointer right) {
+    const XdPermEntry *left_entry = *(XdPermEntry *const *)left,
+                      *right_entry = *(XdPermEntry *const *)right;
+    int order = strcmp(left_entry->app, right_entry->app);
+    return order != 0
+               ? order
+               : (left_entry->kind > right_entry->kind) - (left_entry->kind < right_entry->kind);
 }
 
 /* The store says a table or id it doesn't have yet is "not found". */
@@ -79,20 +82,21 @@ GPtrArray *xd_perm_list(GDBusConnection *bus, GCancellable *cancel, GError **err
     GPtrArray *out = g_ptr_array_new_with_free_func(entry_free);
     for (size_t k = 0; k < xd_perm_kind_count; k++) {
         const XdPermKind *kind = &xd_perm_kinds[k];
-        GError *e = nullptr;
-        GVariant *r = g_dbus_connection_call_sync(
+        GError *lookup_error = nullptr;
+        GVariant *response = g_dbus_connection_call_sync(
             bus, STORE, STORE_PATH, STORE, "Lookup", g_variant_new("(ss)", kind->table, kind->id),
-            G_VARIANT_TYPE("(a{sas}v)"), G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, &e);
-        if (r == nullptr) {
-            if (not_found(e)) {
-                g_error_free(e);
+            G_VARIANT_TYPE("(a{sas}v)"), G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel,
+            &lookup_error);
+        if (response == nullptr) {
+            if (not_found(lookup_error)) {
+                g_error_free(lookup_error);
                 continue;
             }
-            g_propagate_error(error, e);
+            g_propagate_error(error, lookup_error);
             g_ptr_array_unref(out);
             return nullptr;
         }
-        GVariant *perms = g_variant_get_child_value(r, 0);
+        GVariant *perms = g_variant_get_child_value(response, 0);
         GVariantIter it;
         g_variant_iter_init(&it, perms);
         const char *app;
@@ -106,70 +110,74 @@ GPtrArray *xd_perm_list(GDBusConnection *bus, GCancellable *cancel, GError **err
             g_variant_unref(values);
         }
         g_variant_unref(perms);
-        g_variant_unref(r);
+        g_variant_unref(response);
     }
     g_ptr_array_sort(out, by_app);
     return out;
 }
 
-gboolean xd_perm_set(GDBusConnection *bus, const XdPermEntry *e, gboolean allow,
+gboolean xd_perm_set(GDBusConnection *bus, const XdPermEntry *perm_entry, gboolean allow,
                      GCancellable *cancel, GError **error) {
-    char **values = xd_perm_values_set(e->kind, (const char *const *)e->values, allow);
-    GVariant *r = g_dbus_connection_call_sync(
+    char **values =
+        xd_perm_values_set(perm_entry->kind, (const char *const *)perm_entry->values, allow);
+    GVariant *response = g_dbus_connection_call_sync(
         bus, STORE, STORE_PATH, STORE, "SetPermission",
-        g_variant_new("(sbss^as)", e->kind->table, TRUE, e->kind->id, e->app, values), nullptr,
-        G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, error);
+        g_variant_new("(sbss^as)", perm_entry->kind->table, TRUE, perm_entry->kind->id,
+                      perm_entry->app, values),
+        nullptr, G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, error);
     g_strfreev(values);
-    if (r == nullptr)
+    if (response == nullptr)
         return FALSE;
-    g_variant_unref(r);
+    g_variant_unref(response);
     return TRUE;
 }
 
 /* Without DeletePermission (stores before version 2): the id's whole
  * table entry again, less this program. */
-static gboolean remove_by_set(GDBusConnection *bus, const XdPermEntry *e, GCancellable *cancel,
-                              GError **error) {
-    GVariant *r = g_dbus_connection_call_sync(
-        bus, STORE, STORE_PATH, STORE, "Lookup", g_variant_new("(ss)", e->kind->table, e->kind->id),
+static gboolean remove_by_set(GDBusConnection *bus, const XdPermEntry *perm_entry,
+                              GCancellable *cancel, GError **error) {
+    GVariant *lookup_reply = g_dbus_connection_call_sync(
+        bus, STORE, STORE_PATH, STORE, "Lookup",
+        g_variant_new("(ss)", perm_entry->kind->table, perm_entry->kind->id),
         G_VARIANT_TYPE("(a{sas}v)"), G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, error);
-    if (r == nullptr)
+    if (lookup_reply == nullptr)
         return FALSE;
-    GVariant *perms = g_variant_get_child_value(r, 0);
-    GVariant *data = g_variant_get_child_value(r, 1);
-    GVariantBuilder b;
-    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sas}"));
+    GVariant *perms = g_variant_get_child_value(lookup_reply, 0);
+    GVariant *data = g_variant_get_child_value(lookup_reply, 1);
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sas}"));
     GVariantIter it;
     g_variant_iter_init(&it, perms);
     const char *app;
     GVariant *values;
     while (g_variant_iter_next(&it, "{&s@as}", &app, &values)) {
-        if (strcmp(app, e->app) != 0)
-            g_variant_builder_add(&b, "{s@as}", app, values);
+        if (strcmp(app, perm_entry->app) != 0)
+            g_variant_builder_add(&builder, "{s@as}", app, values);
         g_variant_unref(values);
     }
-    GVariant *s = g_dbus_connection_call_sync(
+    GVariant *set_reply = g_dbus_connection_call_sync(
         bus, STORE, STORE_PATH, STORE, "Set",
-        g_variant_new("(sbsa{sas}@v)", e->kind->table, TRUE, e->kind->id, &b, data), nullptr,
-        G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, error);
+        g_variant_new("(sbsa{sas}@v)", perm_entry->kind->table, TRUE, perm_entry->kind->id,
+                      &builder, data),
+        nullptr, G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, error);
     g_variant_unref(data);
     g_variant_unref(perms);
-    g_variant_unref(r);
-    if (s == nullptr)
+    g_variant_unref(lookup_reply);
+    if (set_reply == nullptr)
         return FALSE;
-    g_variant_unref(s);
+    g_variant_unref(set_reply);
     return TRUE;
 }
 
-gboolean xd_perm_remove(GDBusConnection *bus, const XdPermEntry *e, GCancellable *cancel,
+gboolean xd_perm_remove(GDBusConnection *bus, const XdPermEntry *perm_entry, GCancellable *cancel,
                         GError **error) {
     GError *err = nullptr;
-    GVariant *r = g_dbus_connection_call_sync(
+    GVariant *response = g_dbus_connection_call_sync(
         bus, STORE, STORE_PATH, STORE, "DeletePermission",
-        g_variant_new("(sss)", e->kind->table, e->kind->id, e->app), nullptr,
-        G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, &err);
-    if (r != nullptr) {
-        g_variant_unref(r);
+        g_variant_new("(sss)", perm_entry->kind->table, perm_entry->kind->id, perm_entry->app),
+        nullptr, G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, &err);
+    if (response != nullptr) {
+        g_variant_unref(response);
         return TRUE;
     }
     if (!g_error_matches(err, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD)) {
@@ -177,5 +185,5 @@ gboolean xd_perm_remove(GDBusConnection *bus, const XdPermEntry *e, GCancellable
         return FALSE;
     }
     g_error_free(err);
-    return remove_by_set(bus, e, cancel, error);
+    return remove_by_set(bus, perm_entry, cancel, error);
 }
