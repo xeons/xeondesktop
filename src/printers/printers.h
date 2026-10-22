@@ -46,7 +46,7 @@ void xd_printer_do_delete(GtkWindow *parent, const char *name);
  * printer, XP's check mark on the default one, a pause sign on a paused
  * one, greyed when offline. For cell renderers' "surface" and
  * gtk_image_new_from_surface. */
-cairo_surface_t *xd_printer_icon(const xd_printer *p, int size, int scale);
+cairo_surface_t *xd_printer_icon(const xd_printer *printer_info, int size, int scale);
 
 /* Periodic refresh of the open windows, in milliseconds. */
 static constexpr guint XD_PRINTERS_POLL_MS = 2500;

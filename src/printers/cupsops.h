@@ -59,7 +59,7 @@ GQuark xd_cups_error_quark(void);
 GPtrArray *xd_printers_list(GError **error);
 /* One printer, or nullptr. Free with xd_printer_free. */
 xd_printer *xd_printer_get(const char *name, GError **error);
-void xd_printer_free(xd_printer *p);
+void xd_printer_free(xd_printer *printer);
 /* Whether a printer or class has this name (false if the scheduler can't
  * be reached). */
 bool xd_printer_exists(const char *name);
@@ -118,9 +118,9 @@ bool xd_print_job_do(const char *printer, int job, xd_job_op op, GError **error)
 /* Per-user options (Printing Preferences), as lpoptions keeps them. The
  * value or nullptr; g_free it. */
 char *xd_printer_user_option(const char *name, const char *option);
-/* Sets per-user options, `n` names and values; a nullptr value removes
+/* Sets per-user options, `value_count` names and values; a nullptr value removes
  * the option (the printer's default applies again). */
 bool xd_printer_set_user_options(const char *name, const char *const *names,
-                                 const char *const *values, size_t n, GError **error);
+                                 const char *const *values, size_t value_count, GError **error);
 
 #endif

@@ -18,14 +18,14 @@ static GArray *watchers;
 void xd_printers_watch(xd_printers_watch_fn fn, gpointer data) {
     if (watchers == nullptr)
         watchers = g_array_new(FALSE, FALSE, sizeof(watcher));
-    watcher w = {fn, data};
-    g_array_append_val(watchers, w);
+    watcher subscriber = {fn, data};
+    g_array_append_val(watchers, subscriber);
 }
 
 void xd_printers_unwatch(xd_printers_watch_fn fn, gpointer data) {
     for (guint i = 0; watchers != nullptr && i < watchers->len; i++) {
-        watcher *w = &g_array_index(watchers, watcher, i);
-        if (w->fn == fn && w->data == data) {
+        watcher *subscriber = &g_array_index(watchers, watcher, i);
+        if (subscriber->fn == fn && subscriber->data == data) {
             g_array_remove_index(watchers, i);
             return;
         }
@@ -38,8 +38,8 @@ void xd_printers_changed(void) {
         return;
     GArray *copy = g_array_copy(watchers);
     for (guint i = 0; i < copy->len; i++) {
-        watcher *w = &g_array_index(copy, watcher, i);
-        w->fn(w->data);
+        watcher *subscriber = &g_array_index(copy, watcher, i);
+        subscriber->fn(subscriber->data);
     }
     g_array_unref(copy);
 }
@@ -56,7 +56,7 @@ void xd_printers_hold_end(void) {
         gtk_main_quit();
 }
 
-static void on_held_destroy([[maybe_unused]] GtkWidget *w, [[maybe_unused]] gpointer data) {
+static void on_held_destroy([[maybe_unused]] GtkWidget *widget, [[maybe_unused]] gpointer data) {
     xd_printers_hold_end();
 }
 
@@ -98,7 +98,7 @@ static void change_free(gpointer data) {
 }
 
 static void change_thread(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
-                          [[maybe_unused]] GCancellable *c) {
+                          [[maybe_unused]] GCancellable *cancellable) {
     change *ch = data;
     /* cupsd may want a printer administrator's password. */
     xd_cups_auth_worker_begin();
@@ -145,16 +145,16 @@ typedef struct named {
 } named;
 
 static named *named_new(const char *name, bool flag) {
-    named *n = g_new0(named, 1);
-    n->name = g_strdup(name);
-    n->flag = flag;
-    return n;
+    named *target = g_new0(named, 1);
+    target->name = g_strdup(name);
+    target->flag = flag;
+    return target;
 }
 
 static void named_free(gpointer data) {
-    named *n = data;
-    g_free(n->name);
-    g_free(n);
+    named *target = data;
+    g_free(target->name);
+    g_free(target);
 }
 
 static bool set_default(gpointer data, GError **error) {
@@ -162,8 +162,8 @@ static bool set_default(gpointer data, GError **error) {
 }
 
 static bool pause_printer(gpointer data, GError **error) {
-    const named *n = data;
-    return xd_printer_pause(n->name, n->flag, error);
+    const named *target = data;
+    return xd_printer_pause(target->name, target->flag, error);
 }
 
 static bool cancel_all(gpointer data, GError **error) {
@@ -184,18 +184,19 @@ void xd_printer_do_pause(GtkWindow *parent, const char *name, bool paused,
 }
 
 void xd_printer_do_cancel_all(GtkWindow *parent, const char *name) {
-    char *q = g_strdup_printf("Are you sure you want to cancel all documents for %s?", name);
-    int r = xd_message_box(parent, name, XD_MB_QUESTION, XD_MB_YES_NO, TRUE, q);
-    g_free(q);
-    if (r == GTK_RESPONSE_YES)
+    char *question_text =
+        g_strdup_printf("Are you sure you want to cancel all documents for %s?", name);
+    int response = xd_message_box(parent, name, XD_MB_QUESTION, XD_MB_YES_NO, TRUE, question_text);
+    g_free(question_text);
+    if (response == GTK_RESPONSE_YES)
         xd_printers_run(parent, cancel_all, named_new(name, false), named_free, nullptr, nullptr);
 }
 
 void xd_printer_do_delete(GtkWindow *parent, const char *name) {
-    char *q = g_strdup_printf("Are you sure you want to delete the printer %s?", name);
-    int r = xd_message_box(parent, TITLE, XD_MB_QUESTION, XD_MB_YES_NO, TRUE, q);
-    g_free(q);
-    if (r == GTK_RESPONSE_YES)
+    char *question_text = g_strdup_printf("Are you sure you want to delete the printer %s?", name);
+    int response = xd_message_box(parent, TITLE, XD_MB_QUESTION, XD_MB_YES_NO, TRUE, question_text);
+    g_free(question_text);
+    if (response == GTK_RESPONSE_YES)
         xd_printers_run(parent, delete_printer, named_new(name, false), named_free, nullptr,
                         nullptr);
 }
@@ -213,15 +214,15 @@ static GdkPixbuf *load_icon(const char **names, int px) {
     return pix;
 }
 
-static void paint(cairo_t *cr, GdkPixbuf *pix, double x, double y, double alpha) {
+static void paint(cairo_t *cairo, GdkPixbuf *pix, double x, double y, double alpha) {
     if (pix == nullptr)
         return;
-    gdk_cairo_set_source_pixbuf(cr, pix, x, y);
-    cairo_paint_with_alpha(cr, alpha);
+    gdk_cairo_set_source_pixbuf(cairo, pix, x, y);
+    cairo_paint_with_alpha(cairo, alpha);
     g_object_unref(pix);
 }
 
-cairo_surface_t *xd_printer_icon(const xd_printer *p, int size, int scale) {
+cairo_surface_t *xd_printer_icon(const xd_printer *printer_info, int size, int scale) {
     static const char *printer[] = {"printer", "printer-laser", nullptr};
     static const char *fax[] = {"printer-fax", "printer", nullptr};
     static const char *network[] = {"printer-network", "printer", nullptr};
@@ -231,23 +232,24 @@ cairo_surface_t *xd_printer_icon(const xd_printer *p, int size, int scale) {
     static const char *error_icons[] = {"emblem-error", "dialog-error", nullptr};
 
     int px = size * scale;
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, px, px);
-    cairo_t *cr = cairo_create(s);
-    const char *status = xd_printer_status_text(p->state, p->reasons, p->accepting);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, px, px);
+    cairo_t *cairo = cairo_create(surface);
+    const char *status =
+        xd_printer_status_text(printer_info->state, printer_info->reasons, printer_info->accepting);
     bool offline = strcmp(status, "Offline") == 0;
-    const char **base = p->fax                                   ? fax
-                              : xd_printer_uri_is_network(p->device_uri) ? network
-                                                                       : printer;
-    paint(cr, load_icon(base, px), 0, 0, offline ? 0.45 : 1.0);
+    const char **base = printer_info->fax                                     ? fax
+                        : xd_printer_uri_is_network(printer_info->device_uri) ? network
+                                                                              : printer;
+    paint(cairo, load_icon(base, px), 0, 0, offline ? 0.45 : 1.0);
     /* The emblems: about a third of the icon, at least 8 pixels. */
     int ep = MAX(8, size * 3 / 8) * scale;
-    if (p->is_default)
-        paint(cr, load_icon(check_icons, ep), 0, 0, 1.0);
-    if (xd_printer_is_paused(p->state, p->reasons))
-        paint(cr, load_icon(pause_icons, ep), px - ep, px - ep, 1.0);
+    if (printer_info->is_default)
+        paint(cairo, load_icon(check_icons, ep), 0, 0, 1.0);
+    if (xd_printer_is_paused(printer_info->state, printer_info->reasons))
+        paint(cairo, load_icon(pause_icons, ep), px - ep, px - ep, 1.0);
     else if (strcmp(status, "Error") == 0)
-        paint(cr, load_icon(error_icons, ep), px - ep, px - ep, 1.0);
-    cairo_destroy(cr);
-    cairo_surface_set_device_scale(s, scale, scale);
-    return s;
+        paint(cairo, load_icon(error_icons, ep), px - ep, px - ep, 1.0);
+    cairo_destroy(cairo);
+    cairo_surface_set_device_scale(surface, scale, scale);
+    return surface;
 }

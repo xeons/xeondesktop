@@ -14,22 +14,22 @@ enum { J_PENDING = 3, J_HELD, J_PROCESSING, J_STOPPED, J_CANCELED, J_ABORTED, J_
 static bool has_reason(const char *reasons, const char *reason) {
     if (reasons == nullptr)
         return false;
-    size_t n = strlen(reason);
-    const char *p = reasons;
-    while (*p != '\0') {
-        while (*p == ',' || *p == ' ')
-            p++;
-        const char *end = strchr(p, ',');
-        size_t len = end != nullptr ? (size_t)(end - p) : strlen(p);
-        if (len >= n && strncmp(p, reason, n) == 0) {
-            const char *rest = p + n;
-            size_t left = len - n;
+    size_t count = strlen(reason);
+    const char *cursor = reasons;
+    while (*cursor != '\0') {
+        while (*cursor == ',' || *cursor == ' ')
+            cursor++;
+        const char *end = strchr(cursor, ',');
+        size_t len = end != nullptr ? (size_t)(end - cursor) : strlen(cursor);
+        if (len >= count && strncmp(cursor, reason, count) == 0) {
+            const char *rest = cursor + count;
+            size_t left = len - count;
             if (left == 0 || (left == 6 && strncmp(rest, "-error", 6) == 0) ||
                 (left == 8 && strncmp(rest, "-warning", 8) == 0) ||
                 (left == 7 && strncmp(rest, "-report", 7) == 0))
                 return true;
         }
-        p += len;
+        cursor += len;
     }
     return false;
 }
@@ -38,8 +38,9 @@ static bool has_reason(const char *reasons, const char *reason) {
 static bool has_error(const char *reasons) {
     if (reasons == nullptr)
         return false;
-    for (const char *p = strstr(reasons, "-error"); p != nullptr; p = strstr(p + 1, "-error")) {
-        if (p[6] == '\0' || p[6] == ',')
+    for (const char *match = strstr(reasons, "-error"); match != nullptr;
+         match = strstr(match + 1, "-error")) {
+        if (match[6] == '\0' || match[6] == ',')
             return true;
     }
     return false;
@@ -107,19 +108,19 @@ char *xd_print_size_text(guint64 bytes) {
     /* Hundredths of the unit, rounded down; the next unit from 1000 on,
      * so there are never more than three digits. */
     guint64 div = 1024;
-    size_t u = 0;
-    while (u + 1 < G_N_ELEMENTS(units) && bytes / div >= 1000) {
+    size_t unit = 0;
+    while (unit + 1 < G_N_ELEMENTS(units) && bytes / div >= 1000) {
         div *= 1024;
-        u++;
+        unit++;
     }
-    guint64 h = bytes / div * 100 + bytes % div * 100 / div;
-    if (h < 1000)
-        return g_strdup_printf("%" G_GUINT64_FORMAT ".%02" G_GUINT64_FORMAT " %s", h / 100,
-                               h % 100, units[u]);
-    if (h < 10000)
-        return g_strdup_printf("%" G_GUINT64_FORMAT ".%" G_GUINT64_FORMAT " %s", h / 100,
-                               h / 10 % 10, units[u]);
-    return g_strdup_printf("%" G_GUINT64_FORMAT " %s", h / 100, units[u]);
+    guint64 hundredths = bytes / div * 100 + bytes % div * 100 / div;
+    if (hundredths < 1000)
+        return g_strdup_printf("%" G_GUINT64_FORMAT ".%02" G_GUINT64_FORMAT " %s", hundredths / 100,
+                               hundredths % 100, units[unit]);
+    if (hundredths < 10000)
+        return g_strdup_printf("%" G_GUINT64_FORMAT ".%" G_GUINT64_FORMAT " %s", hundredths / 100,
+                               hundredths / 10 % 10, units[unit]);
+    return g_strdup_printf("%" G_GUINT64_FORMAT " %s", hundredths / 100, units[unit]);
 }
 
 char *xd_print_pages_text(int done, int total, bool printing) {
@@ -136,39 +137,41 @@ typedef struct uri_parts {
     int port;
 } uri_parts;
 
-static bool split_uri(const char *uri, uri_parts *u) {
+static bool split_uri(const char *uri, uri_parts *components) {
     if (uri == nullptr)
         return false;
-    http_uri_status_t s = httpSeparateURI(HTTP_URI_CODING_ALL, uri, u->scheme, sizeof(u->scheme),
-                                          u->user, sizeof(u->user), u->host, sizeof(u->host),
-                                          &u->port, u->resource, sizeof(u->resource));
-    return s >= HTTP_URI_STATUS_OK;
+    http_uri_status_t http_uri_status = httpSeparateURI(
+        HTTP_URI_CODING_ALL, uri, components->scheme, sizeof(components->scheme), components->user,
+        sizeof(components->user), components->host, sizeof(components->host), &components->port,
+        components->resource, sizeof(components->resource));
+    return http_uri_status >= HTTP_URI_STATUS_OK;
 }
 
 static const char *const network_schemes[] = {"ipp", "ipps", "http", "https", "socket",
                                               "lpd", "dnssd", "smb", "beh"};
 
 bool xd_printer_uri_is_network(const char *device_uri) {
-    uri_parts u;
-    if (!split_uri(device_uri, &u))
+    uri_parts components;
+    if (!split_uri(device_uri, &components))
         return false;
     for (size_t i = 0; i < G_N_ELEMENTS(network_schemes); i++) {
-        if (strcmp(u.scheme, network_schemes[i]) == 0)
+        if (strcmp(components.scheme, network_schemes[i]) == 0)
             return true;
     }
     return false;
 }
 
 bool xd_printer_device_uri_complete(const char *device_uri) {
-    uri_parts u;
+    uri_parts components;
     if (device_uri == nullptr || strchr(device_uri, ':') == nullptr ||
-        !split_uri(device_uri, &u) || u.scheme[0] == '\0')
+        !split_uri(device_uri, &components) || components.scheme[0] == '\0')
         return false;
     for (size_t i = 0; i < G_N_ELEMENTS(network_schemes); i++) {
-        if (strcmp(u.scheme, network_schemes[i]) == 0)
-            return u.host[0] != '\0';
+        if (strcmp(components.scheme, network_schemes[i]) == 0)
+            return components.host[0] != '\0';
     }
-    return u.host[0] != '\0' || (u.resource[0] != '\0' && strcmp(u.resource, "/") != 0);
+    return components.host[0] != '\0' ||
+           (components.resource[0] != '\0' && strcmp(components.resource, "/") != 0);
 }
 
 char *xd_printer_device_uri_start(const char *device_uri) {
@@ -181,46 +184,47 @@ char *xd_printer_device_uri_start(const char *device_uri) {
 
 /* "/dev/lp0" to 0, "/dev/ttyS1" to 1: the number at the end of a device. */
 static int device_number(const char *path) {
-    size_t n = strlen(path);
-    while (n > 0 && g_ascii_isdigit(path[n - 1]))
-        n--;
-    return path[n] != '\0' ? atoi(path + n) : 0;
+    size_t count = strlen(path);
+    while (count > 0 && g_ascii_isdigit(path[count - 1]))
+        count--;
+    return path[count] != '\0' ? atoi(path + count) : 0;
 }
 
 char *xd_printer_port_text(const char *device_uri) {
     if (device_uri == nullptr || device_uri[0] == '\0')
         return g_strdup("");
-    uri_parts u;
-    if (!split_uri(device_uri, &u))
+    uri_parts components;
+    if (!split_uri(device_uri, &components))
         return g_strdup(device_uri);
-    if (strcmp(u.scheme, "dnssd") == 0) {
+    if (strcmp(components.scheme, "dnssd") == 0) {
         /* "Office Laser._ipp._tcp.local": the service's name. */
-        char *dot = strstr(u.host, "._");
+        char *dot = strstr(components.host, "._");
         if (dot != nullptr)
             *dot = '\0';
-        return g_strdup(u.host);
+        return g_strdup(components.host);
     }
-    if (strcmp(u.scheme, "smb") == 0) {
+    if (strcmp(components.scheme, "smb") == 0) {
         /* Windows' own way of writing a shared printer. */
-        const char *share = u.resource[0] == '/' ? u.resource + 1 : u.resource;
-        return g_strdup_printf("\\\\%s\\%s", u.host, share);
+        const char *share =
+            components.resource[0] == '/' ? components.resource + 1 : components.resource;
+        return g_strdup_printf("\\\\%s\\%s", components.host, share);
     }
     for (size_t i = 0; i < G_N_ELEMENTS(network_schemes); i++) {
-        if (strcmp(u.scheme, network_schemes[i]) == 0)
-            return g_strdup_printf("IP_%s", u.host);
+        if (strcmp(components.scheme, network_schemes[i]) == 0)
+            return g_strdup_printf("IP_%s", components.host);
     }
-    if (strcmp(u.scheme, "usb") == 0 || strcmp(u.scheme, "hp") == 0)
+    if (strcmp(components.scheme, "usb") == 0 || strcmp(components.scheme, "hp") == 0)
         return g_strdup("USB");
-    if (strcmp(u.scheme, "parallel") == 0)
-        return g_strdup_printf("LPT%d:", device_number(u.resource) + 1);
-    if (strcmp(u.scheme, "serial") == 0) {
-        char *q = strchr(u.resource, '?');
-        if (q != nullptr)
-            *q = '\0';
-        return g_strdup_printf("COM%d:", device_number(u.resource) + 1);
+    if (strcmp(components.scheme, "parallel") == 0)
+        return g_strdup_printf("LPT%d:", device_number(components.resource) + 1);
+    if (strcmp(components.scheme, "serial") == 0) {
+        char *query = strchr(components.resource, '?');
+        if (query != nullptr)
+            *query = '\0';
+        return g_strdup_printf("COM%d:", device_number(components.resource) + 1);
     }
-    if (strcmp(u.scheme, "file") == 0)
-        return g_strdup(u.resource);
+    if (strcmp(components.scheme, "file") == 0)
+        return g_strdup(components.resource);
     return g_strdup(device_uri);
 }
 
@@ -240,26 +244,26 @@ const char *xd_printer_port_description(const char *device_uri) {
         {"serial", "Serial Port"},
         {"file", "Print to File"},
     };
-    uri_parts u;
-    if (!split_uri(device_uri, &u))
+    uri_parts components;
+    if (!split_uri(device_uri, &components))
         return "Local Port";
     for (size_t i = 0; i < G_N_ELEMENTS(kinds); i++) {
-        if (strcmp(u.scheme, kinds[i][0]) == 0)
+        if (strcmp(components.scheme, kinds[i][0]) == 0)
             return kinds[i][1];
     }
     return "Local Port";
 }
 
-static bool name_char_ok(char c) {
-    unsigned char b = (unsigned char)c;
-    return b > ' ' && b != 0x7f && strchr("/\\#?'\"", c) == nullptr;
+static bool name_char_ok(char character) {
+    unsigned char byte = (unsigned char)character;
+    return byte > ' ' && byte != 0x7f && strchr("/\\#?'\"", character) == nullptr;
 }
 
 bool xd_printer_name_valid(const char *name) {
-    size_t n = name != nullptr ? strlen(name) : 0;
-    if (n == 0 || n > 127 || !g_utf8_validate(name, -1, nullptr))
+    size_t count = name != nullptr ? strlen(name) : 0;
+    if (count == 0 || count > 127 || !g_utf8_validate(name, -1, nullptr))
         return false;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < count; i++) {
         if (!name_char_ok(name[i]))
             return false;
     }
@@ -267,25 +271,25 @@ bool xd_printer_name_valid(const char *name) {
 }
 
 char *xd_printer_name_suggest(const char *text) {
-    GString *s = g_string_new(nullptr);
+    GString *string = g_string_new(nullptr);
     char *valid = g_utf8_make_valid(text != nullptr ? text : "", -1);
-    for (const char *p = valid; *p != '\0'; p++) {
-        if (name_char_ok(*p))
-            g_string_append_c(s, *p);
-        else if (s->len > 0 && s->str[s->len - 1] != '_')
-            g_string_append_c(s, '_');
+    for (const char *cursor = valid; *cursor != '\0'; cursor++) {
+        if (name_char_ok(*cursor))
+            g_string_append_c(string, *cursor);
+        else if (string->len > 0 && string->str[string->len - 1] != '_')
+            g_string_append_c(string, '_');
     }
     g_free(valid);
-    while (s->len > 0 && s->str[s->len - 1] == '_')
-        g_string_truncate(s, s->len - 1);
-    if (s->len > 127) {
+    while (string->len > 0 && string->str[string->len - 1] == '_')
+        g_string_truncate(string, string->len - 1);
+    if (string->len > 127) {
         /* Not in the middle of a character. */
-        const char *end = g_utf8_find_prev_char(s->str, s->str + 128);
-        g_string_truncate(s, end != nullptr ? (gsize)(end - s->str) : 127);
+        const char *end = g_utf8_find_prev_char(string->str, string->str + 128);
+        g_string_truncate(string, end != nullptr ? (gsize)(end - string->str) : 127);
     }
-    if (s->len == 0)
-        g_string_assign(s, "Printer");
-    return g_string_free(s, FALSE);
+    if (string->len == 0)
+        g_string_assign(string, "Printer");
+    return g_string_free(string, FALSE);
 }
 
 const char *xd_print_orientation_label(int orientation_requested) {
@@ -341,12 +345,12 @@ const char *xd_print_quality_label(int print_quality) {
 }
 
 char *xd_print_keyword_label(const char *keyword) {
-    char *s = g_strdup(keyword != nullptr ? keyword : "");
-    for (char *c = s; *c != '\0'; c++) {
-        if (*c == '-' || *c == '_')
-            *c = ' ';
+    char *label = g_strdup(keyword != nullptr ? keyword : "");
+    for (char *cursor = label; *cursor != '\0'; cursor++) {
+        if (*cursor == '-' || *cursor == '_')
+            *cursor = ' ';
     }
-    if (s[0] != '\0')
-        s[0] = g_ascii_toupper(s[0]);
-    return s;
+    if (label[0] != '\0')
+        label[0] = g_ascii_toupper(label[0]);
+    return label;
 }

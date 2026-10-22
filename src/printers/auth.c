@@ -10,19 +10,19 @@ static constexpr int MAX_TRIES = 3;
 static GtkWindow *active_window(void) {
     GList *all = gtk_window_list_toplevels();
     GtkWindow *found = nullptr;
-    for (GList *l = all; l != nullptr && found == nullptr; l = l->next) {
-        if (gtk_window_is_active(l->data))
-            found = l->data;
+    for (GList *list = all; list != nullptr && found == nullptr; list = list->next) {
+        if (gtk_window_is_active(list->data))
+            found = list->data;
     }
     g_list_free(all);
     return found;
 }
 
 static GtkWidget *grid_label(const char *mnemonic, GtkWidget *target) {
-    GtkWidget *l = gtk_label_new_with_mnemonic(mnemonic);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), target);
-    return l;
+    GtkWidget *widget = gtk_label_new_with_mnemonic(mnemonic);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(widget), target);
+    return widget;
 }
 
 /* The server's name for the box. A local socket's "host" is its path:
@@ -114,14 +114,14 @@ typedef struct question {
 } question;
 
 static gboolean answer(gpointer data) {
-    question *q = data;
-    bool ok =
-        password_box(q->server, q->retry, q->user, sizeof(q->user), q->pass, sizeof(q->pass));
-    g_mutex_lock(&q->lock);
-    q->ok = ok;
-    q->done = true;
-    g_cond_signal(&q->answered);
-    g_mutex_unlock(&q->lock);
+    question *asked = data;
+    bool ok = password_box(asked->server, asked->retry, asked->user, sizeof(asked->user),
+                           asked->pass, sizeof(asked->pass));
+    g_mutex_lock(&asked->lock);
+    asked->ok = ok;
+    asked->done = true;
+    g_cond_signal(&asked->answered);
+    g_mutex_unlock(&asked->lock);
     return G_SOURCE_REMOVE;
 }
 
@@ -137,28 +137,28 @@ static const char *ask_from_worker([[maybe_unused]] const char *prompt, http_t *
     explicit_bzero(worker_password, sizeof(worker_password));
     if (++worker_tries > MAX_TRIES)
         return nullptr;
-    question q = {.retry = worker_tries > 1};
-    g_mutex_init(&q.lock);
-    g_cond_init(&q.answered);
-    server_name(http, q.server, sizeof(q.server));
-    g_strlcpy(q.user, cupsUser(), sizeof(q.user));
-    g_main_context_invoke(nullptr, answer, &q);
-    g_mutex_lock(&q.lock);
-    while (!q.done)
-        g_cond_wait(&q.answered, &q.lock);
-    g_mutex_unlock(&q.lock);
-    g_mutex_clear(&q.lock);
-    g_cond_clear(&q.answered);
+    question asked = {.retry = worker_tries > 1};
+    g_mutex_init(&asked.lock);
+    g_cond_init(&asked.answered);
+    server_name(http, asked.server, sizeof(asked.server));
+    g_strlcpy(asked.user, cupsUser(), sizeof(asked.user));
+    g_main_context_invoke(nullptr, answer, &asked);
+    g_mutex_lock(&asked.lock);
+    while (!asked.done)
+        g_cond_wait(&asked.answered, &asked.lock);
+    g_mutex_unlock(&asked.lock);
+    g_mutex_clear(&asked.lock);
+    g_cond_clear(&asked.answered);
     const char *result = nullptr;
-    if (q.ok) {
-        if (q.user[0] != '\0')
-            cupsSetUser(q.user);
-        g_strlcpy(worker_password, q.pass, sizeof(worker_password));
+    if (asked.ok) {
+        if (asked.user[0] != '\0')
+            cupsSetUser(asked.user);
+        g_strlcpy(worker_password, asked.pass, sizeof(worker_password));
         result = worker_password;
     } else {
         worker_tries = MAX_TRIES;
     }
-    explicit_bzero(q.pass, sizeof(q.pass));
+    explicit_bzero(asked.pass, sizeof(asked.pass));
     return result;
 }
 
