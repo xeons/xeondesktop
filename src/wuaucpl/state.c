@@ -8,8 +8,9 @@
 
 static constexpr char GROUP[] = "Updates";
 
-int64_t xd_updates_next_check(const xd_update_settings *u, int64_t last, GTimeZone *tz) {
-    if (u->mode == XD_UPDATES_OFF)
+int64_t xd_updates_next_check(const xd_update_settings *update_settings, int64_t last,
+                              GTimeZone *tz) {
+    if (update_settings->mode == XD_UPDATES_OFF)
         return INT64_MAX;
     if (last <= 0)
         return 0;
@@ -20,7 +21,9 @@ int64_t xd_updates_next_check(const xd_update_settings *u, int64_t last, GTimeZo
     if (at == nullptr)
         return 0;
     /* GLib counts Monday as 1 and Sunday as 7; Day counts Sunday as 1. */
-    int want = u->day == 0 ? 0 : u->day == 1 ? 7 : u->day - 1;
+    int want = update_settings->day == 0   ? 0
+               : update_settings->day == 1 ? 7
+                                           : update_settings->day - 1;
     int64_t due = last + 24 * 3600;
     GDateTime *midnight = g_date_time_new(tz, g_date_time_get_year(at),
                                           g_date_time_get_month(at),
@@ -29,9 +32,9 @@ int64_t xd_updates_next_check(const xd_update_settings *u, int64_t last, GTimeZo
      * week) with it; a week and a day covers every case. */
     for (int i = 0; midnight != nullptr && i <= 8; i++) {
         GDateTime *day = g_date_time_add_days(midnight, i);
-        GDateTime *slot = g_date_time_new(tz, g_date_time_get_year(day),
-                                          g_date_time_get_month(day),
-                                          g_date_time_get_day_of_month(day), u->hour, 0, 0);
+        GDateTime *slot =
+            g_date_time_new(tz, g_date_time_get_year(day), g_date_time_get_month(day),
+                            g_date_time_get_day_of_month(day), update_settings->hour, 0, 0);
         bool found = slot != nullptr && g_date_time_to_unix(slot) > last &&
                      (want == 0 || g_date_time_get_day_of_week(slot) == want);
         if (found)
@@ -57,8 +60,8 @@ char *xd_updates_state_path(void) {
 }
 
 static int get_count(GKeyFile *kf, const char *key) {
-    int n = g_key_file_get_integer(kf, GROUP, key, nullptr);
-    return XD_CLAMP(n, 0, 1000000);
+    int count = g_key_file_get_integer(kf, GROUP, key, nullptr);
+    return XD_CLAMP(count, 0, 1000000);
 }
 
 bool xd_updates_state_read(const char *path, xd_updates_state *st) {
@@ -108,8 +111,8 @@ bool xd_updates_state_write(const char *path, const xd_updates_state *st) {
     return ok;
 }
 
-static int compare_ids(const void *a, const void *b) {
-    return strcmp(*(const char *const *)a, *(const char *const *)b);
+static int compare_ids(const void *left, const void *right) {
+    return strcmp(*(const char *const *)left, *(const char *const *)right);
 }
 
 void xd_updates_signature(const char *const *ids, size_t count, char out[41]) {

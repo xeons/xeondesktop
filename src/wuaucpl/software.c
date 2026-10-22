@@ -41,14 +41,14 @@ typedef struct fp_update {
     char *installation, *ref, *name, *version, *origin;
 } fp_update;
 
-static void fp_update_free(gpointer p) {
-    fp_update *u = p;
-    g_free(u->installation);
-    g_free(u->ref);
-    g_free(u->name);
-    g_free(u->version);
-    g_free(u->origin);
-    g_free(u);
+static void fp_update_free(gpointer user_data) {
+    fp_update *flatpak_update = user_data;
+    g_free(flatpak_update->installation);
+    g_free(flatpak_update->ref);
+    g_free(flatpak_update->name);
+    g_free(flatpak_update->version);
+    g_free(flatpak_update->origin);
+    g_free(flatpak_update);
 }
 
 static FlatpakInstallation *open_installation(const char *id, GCancellable *cancel,
@@ -87,17 +87,18 @@ static GPtrArray *flatpak_updates(GCancellable *cancel) {
         GPtrArray *refs = flatpak_installation_list_installed_refs_for_update(inst, cancel,
                                                                               nullptr);
         for (guint j = 0; refs != nullptr && j < refs->len; j++) {
-            FlatpakInstalledRef *r = g_ptr_array_index(refs, j);
-            FlatpakRef *ref = FLATPAK_REF(r);
-            fp_update *u = g_new0(fp_update, 1);
-            u->installation = g_strdup(installation_id(inst));
-            u->ref = flatpak_ref_format_ref(ref);
-            const char *name = flatpak_installed_ref_get_appdata_name(r);
-            u->name = g_strdup(name != nullptr ? name : flatpak_ref_get_name(ref));
-            const char *version = flatpak_installed_ref_get_appdata_version(r);
-            u->version = g_strdup(version != nullptr ? version : flatpak_ref_get_branch(ref));
-            u->origin = g_strdup(flatpak_installed_ref_get_origin(r));
-            g_ptr_array_add(out, u);
+            FlatpakInstalledRef *installed = g_ptr_array_index(refs, j);
+            FlatpakRef *ref = FLATPAK_REF(installed);
+            fp_update *flatpak_update = g_new0(fp_update, 1);
+            flatpak_update->installation = g_strdup(installation_id(inst));
+            flatpak_update->ref = flatpak_ref_format_ref(ref);
+            const char *name = flatpak_installed_ref_get_appdata_name(installed);
+            flatpak_update->name = g_strdup(name != nullptr ? name : flatpak_ref_get_name(ref));
+            const char *version = flatpak_installed_ref_get_appdata_version(installed);
+            flatpak_update->version =
+                g_strdup(version != nullptr ? version : flatpak_ref_get_branch(ref));
+            flatpak_update->origin = g_strdup(flatpak_installed_ref_get_origin(installed));
+            g_ptr_array_add(out, flatpak_update);
         }
         if (refs != nullptr)
             g_ptr_array_unref(refs);
@@ -113,142 +114,146 @@ typedef struct sw_ctx {
     unsigned generation;
 } sw_ctx;
 
-static sw_ctx *ctx_new(wuau *w) {
-    sw_ctx *c = g_new0(sw_ctx, 1);
-    *c = (sw_ctx){w, w->sw_generation};
-    return c;
+static sw_ctx *ctx_new(wuau *applet) {
+    sw_ctx *software_call = g_new0(sw_ctx, 1);
+    *software_call = (sw_ctx){applet, applet->sw_generation};
+    return software_call;
 }
 
 /* A reply for the list as it is now; frees the context if not. */
-static bool current(sw_ctx *c) {
-    bool ok = c->generation == c->w->sw_generation && !g_cancellable_is_cancelled(c->w->quit);
+static bool current(sw_ctx *software_call) {
+    bool ok = software_call->generation == software_call->w->sw_generation &&
+              !g_cancellable_is_cancelled(software_call->w->quit);
     if (!ok)
-        g_free(c);
+        g_free(software_call);
     return ok;
 }
 
-static void set_status(wuau *w, const char *text) {
-    gtk_label_set_text(GTK_LABEL(w->sw_status), text);
+static void set_status(wuau *applet, const char *text) {
+    gtk_label_set_text(GTK_LABEL(applet->sw_status), text);
 }
 
-static bool any_selected(wuau *w) {
+static bool any_selected(wuau *applet) {
     GtkTreeIter it;
-    GtkTreeModel *m = GTK_TREE_MODEL(w->sw_store);
-    for (bool ok = gtk_tree_model_get_iter_first(m, &it); ok; ok = gtk_tree_model_iter_next(m, &it)) {
+    GtkTreeModel *model = GTK_TREE_MODEL(applet->sw_store);
+    for (bool ok = gtk_tree_model_get_iter_first(model, &it); ok;
+         ok = gtk_tree_model_iter_next(model, &it)) {
         gboolean on = FALSE;
-        gtk_tree_model_get(m, &it, COL_SELECTED, &on, -1);
+        gtk_tree_model_get(model, &it, COL_SELECTED, &on, -1);
         if (on)
             return true;
     }
     return false;
 }
 
-static void sync_buttons(wuau *w) {
-    gtk_widget_set_sensitive(w->sw_install, !w->busy && w->sw_pending == 0 && any_selected(w));
-    gtk_widget_set_sensitive(w->sw_check, !w->busy && w->sw_pending == 0);
+static void sync_buttons(wuau *applet) {
+    gtk_widget_set_sensitive(applet->sw_install,
+                             !applet->busy && applet->sw_pending == 0 && any_selected(applet));
+    gtk_widget_set_sensitive(applet->sw_check, !applet->busy && applet->sw_pending == 0);
 }
 
-int xd_wuau_software_count(wuau *w, int *important, GPtrArray *ids) {
-    int n = 0;
+int xd_wuau_software_count(wuau *applet, int *important, GPtrArray *ids) {
+    int count = 0;
     GtkTreeIter it;
-    GtkTreeModel *m = GTK_TREE_MODEL(w->sw_store);
-    for (bool ok = gtk_tree_model_get_iter_first(m, &it); ok; ok = gtk_tree_model_iter_next(m, &it)) {
+    GtkTreeModel *model = GTK_TREE_MODEL(applet->sw_store);
+    for (bool ok = gtk_tree_model_get_iter_first(model, &it); ok;
+         ok = gtk_tree_model_iter_next(model, &it)) {
         int rank = 0;
         char *id = nullptr;
-        gtk_tree_model_get(m, &it, COL_RANK, &rank, COL_ID, &id, -1);
-        n++;
+        gtk_tree_model_get(model, &it, COL_RANK, &rank, COL_ID, &id, -1);
+        count++;
         if (xd_update_rank_important((xd_update_rank)rank))
             ++*important;
         g_ptr_array_add(ids, id);
     }
-    return n;
+    return count;
 }
 
-static void show_count(wuau *w) {
+static void show_count(wuau *applet) {
     int important = 0;
     GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
-    int n = xd_wuau_software_count(w, &important, ids);
+    int count = xd_wuau_software_count(applet, &important, ids);
     g_ptr_array_free(ids, TRUE);
     char *text;
-    if (n == 0)
+    if (count == 0)
         text = g_strdup("Your computer is up to date: there are no updates for its programs.");
     else if (important > 0)
         text = g_strdup_printf("%d %s available for your computer, %d of them important. "
                                "Check the updates you want, then click Install.",
-                               n, n == 1 ? "update is" : "updates are", important);
+                               count, count == 1 ? "update is" : "updates are", important);
     else
         text = g_strdup_printf("%d %s available for your computer. Check the updates you want, "
                                "then click Install.",
-                               n, n == 1 ? "update is" : "updates are");
-    set_status(w, text);
+                               count, count == 1 ? "update is" : "updates are");
+    set_status(applet, text);
     g_free(text);
 }
 
-static void query_done(wuau *w, bool failed) {
-    w->sw_failed = w->sw_failed || failed;
-    if (--w->sw_pending > 0)
+static void query_done(wuau *applet, bool failed) {
+    applet->sw_failed = applet->sw_failed || failed;
+    if (--applet->sw_pending > 0)
         return;
-    bool checked = w->sw_refresh;
-    w->sw_refresh = false;
+    bool checked = applet->sw_refresh;
+    applet->sw_refresh = false;
     /* Without PackageKit's answer the count would be wrong: the shell
      * keeps what the last check found. */
-    if (!w->sw_failed) {
-        show_count(w);
-        xd_wuau_save_state(w, checked);
+    if (!applet->sw_failed) {
+        show_count(applet);
+        xd_wuau_save_state(applet, checked);
     }
-    sync_buttons(w);
+    sync_buttons(applet);
 }
 
 /* Fills the details below the list from the selected row. */
-static void show_details(wuau *w) {
-    GtkTreeModel *m;
+static void show_details(wuau *applet) {
+    GtkTreeModel *model;
     GtkTreeIter it;
-    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(w->sw_view));
-    if (!gtk_tree_selection_get_selected(sel, &m, &it)) {
-        gtk_label_set_text(GTK_LABEL(w->sw_details), "Select an update to see its details.");
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(applet->sw_view));
+    if (!gtk_tree_selection_get_selected(sel, &model, &it)) {
+        gtk_label_set_text(GTK_LABEL(applet->sw_details), "Select an update to see its details.");
         return;
     }
     char *name = nullptr, *version = nullptr, *old = nullptr, *summary = nullptr;
     char *detail = nullptr, *importance = nullptr, *source = nullptr;
     unsigned restart = 0;
-    gtk_tree_model_get(m, &it, COL_NAME, &name, COL_VERSION, &version, COL_OLD, &old,
+    gtk_tree_model_get(model, &it, COL_NAME, &name, COL_VERSION, &version, COL_OLD, &old,
                        COL_SUMMARY, &summary, COL_DETAIL, &detail, COL_IMPORTANCE, &importance,
                        COL_SOURCE, &source, COL_RESTART, &restart, -1);
-    GString *s = g_string_new(nullptr);
+    GString *string = g_string_new(nullptr);
     char *line = g_markup_printf_escaped("<b>%s</b>", name);
-    g_string_append(s, line);
+    g_string_append(string, line);
     g_free(line);
     if (summary != nullptr && summary[0] != '\0') {
         line = g_markup_printf_escaped(": %s", summary);
-        g_string_append(s, line);
+        g_string_append(string, line);
         g_free(line);
     }
     line = old != nullptr && old[0] != '\0'
                ? g_markup_printf_escaped("\nVersion %s replaces %s.", version, old)
                : g_markup_printf_escaped("\nVersion %s.", version);
-    g_string_append(s, line);
+    g_string_append(string, line);
     g_free(line);
     if (importance != nullptr && importance[0] != '\0') {
         line = g_markup_printf_escaped(" Importance: %s.", importance);
-        g_string_append(s, line);
+        g_string_append(string, line);
         g_free(line);
     }
     line = g_markup_printf_escaped(" From %s.", source);
-    g_string_append(s, line);
+    g_string_append(string, line);
     g_free(line);
     if (detail != nullptr && detail[0] != '\0') {
         line = g_markup_printf_escaped("\n\n%s", detail);
-        g_string_append(s, line);
+        g_string_append(string, line);
         g_free(line);
     }
     const char *hint = xd_update_restart_text((PkRestartEnum)restart);
     if (hint != nullptr) {
         line = g_markup_printf_escaped("\n\n%s", hint);
-        g_string_append(s, line);
+        g_string_append(string, line);
         g_free(line);
     }
-    gtk_label_set_markup(GTK_LABEL(w->sw_details), s->str);
-    g_string_free(s, TRUE);
+    gtk_label_set_markup(GTK_LABEL(applet->sw_details), string->str);
+    g_string_free(string, TRUE);
     g_free(name);
     g_free(version);
     g_free(old);
@@ -258,11 +263,12 @@ static void show_details(wuau *w) {
     g_free(source);
 }
 
-static bool find_row(wuau *w, const char *id, GtkTreeIter *out) {
-    GtkTreeModel *m = GTK_TREE_MODEL(w->sw_store);
-    for (bool ok = gtk_tree_model_get_iter_first(m, out); ok; ok = gtk_tree_model_iter_next(m, out)) {
+static bool find_row(wuau *applet, const char *id, GtkTreeIter *out) {
+    GtkTreeModel *model = GTK_TREE_MODEL(applet->sw_store);
+    for (bool ok = gtk_tree_model_get_iter_first(model, out); ok;
+         ok = gtk_tree_model_iter_next(model, out)) {
         char *row = nullptr;
-        gtk_tree_model_get(m, out, COL_ID, &row, -1);
+        gtk_tree_model_get(model, out, COL_ID, &row, -1);
         bool same = g_strcmp0(row, id) == 0;
         g_free(row);
         if (same)
@@ -272,93 +278,96 @@ static bool find_row(wuau *w, const char *id, GtkTreeIter *out) {
 }
 
 static void on_details(GObject *src, GAsyncResult *res, gpointer data) {
-    sw_ctx *c = data;
-    PkResults *r = pk_client_generic_finish(PK_CLIENT(src), res, nullptr);
-    if (!current(c)) {
-        g_clear_object(&r);
+    sw_ctx *software_call = data;
+    PkResults *results = pk_client_generic_finish(PK_CLIENT(src), res, nullptr);
+    if (!current(software_call)) {
+        g_clear_object(&results);
         return;
     }
-    wuau *w = c->w;
-    g_free(c);
-    GPtrArray *details = r != nullptr ? pk_results_get_update_detail_array(r) : nullptr;
+    wuau *applet = software_call->w;
+    g_free(software_call);
+    GPtrArray *details = results != nullptr ? pk_results_get_update_detail_array(results) : nullptr;
     for (guint i = 0; details != nullptr && i < details->len; i++) {
-        PkUpdateDetail *d = g_ptr_array_index(details, i);
+        PkUpdateDetail *detail = g_ptr_array_index(details, i);
         GtkTreeIter it;
-        if (!find_row(w, pk_update_detail_get_package_id(d), &it))
+        if (!find_row(applet, pk_update_detail_get_package_id(detail), &it))
             continue;
-        GString *text = g_string_new(pk_update_detail_get_update_text(d));
+        GString *text = g_string_new(pk_update_detail_get_update_text(detail));
         g_strstrip(text->str);
         text->len = strlen(text->str);
-        char **cves = pk_update_detail_get_cve_urls(d);
-        for (char **u = cves; u != nullptr && *u != nullptr; u++)
-            g_string_append_printf(text, "%sSecurity issue: %s", text->len > 0 ? "\n" : "", *u);
+        char **cves = pk_update_detail_get_cve_urls(detail);
+        for (char **cve_url = cves; cve_url != nullptr && *cve_url != nullptr; cve_url++)
+            g_string_append_printf(text, "%sSecurity issue: %s", text->len > 0 ? "\n" : "",
+                                   *cve_url);
         char *old = nullptr;
-        char **replaces = pk_update_detail_get_updates(d);
+        char **replaces = pk_update_detail_get_updates(detail);
         if (replaces != nullptr && replaces[0] != nullptr)
             xd_appwiz_split_package_id(replaces[0], nullptr, &old, nullptr);
-        PkRestartEnum restart = pk_update_detail_get_restart(d);
-        gtk_list_store_set(w->sw_store, &it, COL_DETAIL, text->str, COL_RESTART,
+        PkRestartEnum restart = pk_update_detail_get_restart(detail);
+        gtk_list_store_set(applet->sw_store, &it, COL_DETAIL, text->str, COL_RESTART,
                            (unsigned)restart, COL_OLD, old, -1);
         g_free(old);
         g_string_free(text, TRUE);
     }
     if (details != nullptr)
         g_ptr_array_unref(details);
-    g_clear_object(&r);
-    show_details(w);
-    query_done(w, false);
+    g_clear_object(&results);
+    show_details(applet);
+    query_done(applet, false);
 }
 
 static void on_updates(GObject *src, GAsyncResult *res, gpointer data) {
-    sw_ctx *c = data;
+    sw_ctx *software_call = data;
     GError *error = nullptr;
-    PkResults *r = pk_client_generic_finish(PK_CLIENT(src), res, &error);
-    if (!current(c)) {
+    PkResults *results = pk_client_generic_finish(PK_CLIENT(src), res, &error);
+    if (!current(software_call)) {
         g_clear_error(&error);
-        g_clear_object(&r);
+        g_clear_object(&results);
         return;
     }
-    wuau *w = c->w;
-    PkError *pe = r != nullptr ? pk_results_get_error_code(r) : nullptr;
+    wuau *applet = software_call->w;
+    PkError *pe = results != nullptr ? pk_results_get_error_code(results) : nullptr;
     if (error != nullptr || pe != nullptr) {
-        g_free(c);
+        g_free(software_call);
         char *text = g_strdup_printf("PackageKit couldn't list the updates: %s",
                                      error != nullptr ? error->message
                                                       : pk_error_get_details(pe));
-        set_status(w, text);
+        set_status(applet, text);
         g_free(text);
         g_clear_error(&error);
         g_clear_object(&pe);
-        g_clear_object(&r);
-        query_done(w, true);
+        g_clear_object(&results);
+        query_done(applet, true);
         return;
     }
-    GPtrArray *pkgs = pk_results_get_package_array(r);
+    GPtrArray *pkgs = pk_results_get_package_array(results);
     char **ids = g_new0(char *, pkgs->len + 1);
     for (guint i = 0; i < pkgs->len; i++) {
-        PkPackage *p = g_ptr_array_index(pkgs, i);
-        xd_update_rank rank = xd_update_rank_of_package(pk_package_get_info(p),
-                                                        pk_package_get_update_severity(p));
-        char *source = xd_appwiz_package_source(w->backend, pk_package_get_id(p));
+        PkPackage *package = g_ptr_array_index(pkgs, i);
+        xd_update_rank rank = xd_update_rank_of_package(pk_package_get_info(package),
+                                                        pk_package_get_update_severity(package));
+        char *source = xd_appwiz_package_source(applet->backend, pk_package_get_id(package));
         gtk_list_store_insert_with_values(
-            w->sw_store, nullptr, -1, COL_SELECTED, TRUE, COL_NAME, pk_package_get_name(p),
-            COL_VERSION, pk_package_get_version(p), COL_IMPORTANCE, xd_update_rank_name(rank),
-            COL_SOURCE, source, COL_KIND, KIND_PACKAGE, COL_ID, pk_package_get_id(p), COL_RANK,
-            (int)rank, COL_SUMMARY, pk_package_get_summary(p), -1);
+            applet->sw_store, nullptr, -1, COL_SELECTED, TRUE, COL_NAME,
+            pk_package_get_name(package), COL_VERSION, pk_package_get_version(package),
+            COL_IMPORTANCE, xd_update_rank_name(rank), COL_SOURCE, source, COL_KIND, KIND_PACKAGE,
+            COL_ID, pk_package_get_id(package), COL_RANK, (int)rank, COL_SUMMARY,
+            pk_package_get_summary(package), -1);
         g_free(source);
-        ids[i] = g_strdup(pk_package_get_id(p));
+        ids[i] = g_strdup(pk_package_get_id(package));
     }
     g_ptr_array_unref(pkgs);
-    g_clear_object(&r);
+    g_clear_object(&results);
     if (ids[0] != nullptr) {
         /* What each fixes and whether it needs a restart. */
-        w->sw_pending++;
-        pk_client_get_update_detail_async(w->pk, ids, w->quit, nullptr, nullptr, on_details, c);
+        applet->sw_pending++;
+        pk_client_get_update_detail_async(applet->pk, ids, applet->quit, nullptr, nullptr,
+                                          on_details, software_call);
     } else {
-        g_free(c);
+        g_free(software_call);
     }
     g_strfreev(ids);
-    query_done(w, false);
+    query_done(applet, false);
 }
 
 static void fp_list_thread(GTask *task, [[maybe_unused]] gpointer src,
@@ -367,113 +376,118 @@ static void fp_list_thread(GTask *task, [[maybe_unused]] gpointer src,
 }
 
 static void on_flatpaks([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
-    sw_ctx *c = data;
+    sw_ctx *software_call = data;
     GPtrArray *list = g_task_propagate_pointer(G_TASK(res), nullptr);
-    if (!current(c)) {
+    if (!current(software_call)) {
         if (list != nullptr)
             g_ptr_array_unref(list);
         return;
     }
-    wuau *w = c->w;
-    g_free(c);
+    wuau *applet = software_call->w;
+    g_free(software_call);
     for (guint i = 0; list != nullptr && i < list->len; i++) {
-        fp_update *u = g_ptr_array_index(list, i);
-        char *source = xd_appwiz_flatpak_source(
-            u->origin, strcmp(u->installation, "default") == 0 ? "system" : u->installation);
+        fp_update *flatpak_update = g_ptr_array_index(list, i);
+        char *source = xd_appwiz_flatpak_source(flatpak_update->origin,
+                                                strcmp(flatpak_update->installation, "default") == 0
+                                                    ? "system"
+                                                    : flatpak_update->installation);
         gtk_list_store_insert_with_values(
-            w->sw_store, nullptr, -1, COL_SELECTED, TRUE, COL_NAME, u->name, COL_VERSION,
-            u->version, COL_IMPORTANCE, "", COL_SOURCE, source, COL_KIND, KIND_FLATPAK, COL_ID,
-            u->ref, COL_INSTALLATION, u->installation, COL_RANK, (int)XD_RANK_UNKNOWN,
-            COL_SUMMARY, "", -1);
+            applet->sw_store, nullptr, -1, COL_SELECTED, TRUE, COL_NAME, flatpak_update->name,
+            COL_VERSION, flatpak_update->version, COL_IMPORTANCE, "", COL_SOURCE, source, COL_KIND,
+            KIND_FLATPAK, COL_ID, flatpak_update->ref, COL_INSTALLATION,
+            flatpak_update->installation, COL_RANK, (int)XD_RANK_UNKNOWN, COL_SUMMARY, "", -1);
         g_free(source);
     }
     if (list != nullptr)
         g_ptr_array_unref(list);
-    query_done(w, false);
+    query_done(applet, false);
 }
 
-static void list(wuau *w) {
-    w->sw_pending += 2;
-    pk_client_get_updates_async(w->pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), w->quit, nullptr,
-                                nullptr, on_updates, ctx_new(w));
-    GTask *task = g_task_new(nullptr, w->quit, on_flatpaks, ctx_new(w));
+static void list(wuau *applet) {
+    applet->sw_pending += 2;
+    pk_client_get_updates_async(applet->pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), applet->quit,
+                                nullptr, nullptr, on_updates, ctx_new(applet));
+    GTask *task = g_task_new(nullptr, applet->quit, on_flatpaks, ctx_new(applet));
     g_task_run_in_thread(task, fp_list_thread);
     g_object_unref(task);
 }
 
 static void on_refreshed(GObject *src, GAsyncResult *res, gpointer data) {
-    sw_ctx *c = data;
+    sw_ctx *software_call = data;
     GError *error = nullptr;
-    PkResults *r = pk_client_generic_finish(PK_CLIENT(src), res, &error);
-    if (!current(c)) {
+    PkResults *results = pk_client_generic_finish(PK_CLIENT(src), res, &error);
+    if (!current(software_call)) {
         g_clear_error(&error);
-        g_clear_object(&r);
+        g_clear_object(&results);
         return;
     }
-    wuau *w = c->w;
-    g_free(c);
-    PkError *pe = r != nullptr ? pk_results_get_error_code(r) : nullptr;
+    wuau *applet = software_call->w;
+    g_free(software_call);
+    PkError *pe = results != nullptr ? pk_results_get_error_code(results) : nullptr;
     if (error != nullptr || pe != nullptr) {
         /* Still list what the old lists know. */
-        xd_wuau_error(w, "The list of updates could not be refreshed.",
+        xd_wuau_error(applet, "The list of updates could not be refreshed.",
                       error != nullptr ? error->message : pk_error_get_details(pe));
-        w->sw_refresh = false;
+        applet->sw_refresh = false;
     }
     g_clear_error(&error);
     g_clear_object(&pe);
-    g_clear_object(&r);
-    list(w);
-    query_done(w, false);
+    g_clear_object(&results);
+    list(applet);
+    query_done(applet, false);
 }
 
-void xd_wuau_software_load(wuau *w) {
-    w->sw_generation++;
-    w->sw_pending = 0;
-    w->sw_failed = false;
-    gtk_list_store_clear(w->sw_store);
-    set_status(w, w->sw_refresh ? "Checking for updates..." : "Looking for updates...");
-    if (w->sw_refresh) {
-        w->sw_pending++;
-        pk_client_refresh_cache_async(w->pk_task, FALSE, w->quit, nullptr, nullptr, on_refreshed,
-                                      ctx_new(w));
+void xd_wuau_software_load(wuau *applet) {
+    applet->sw_generation++;
+    applet->sw_pending = 0;
+    applet->sw_failed = false;
+    gtk_list_store_clear(applet->sw_store);
+    set_status(applet, applet->sw_refresh ? "Checking for updates..." : "Looking for updates...");
+    if (applet->sw_refresh) {
+        applet->sw_pending++;
+        pk_client_refresh_cache_async(applet->pk_task, FALSE, applet->quit, nullptr, nullptr,
+                                      on_refreshed, ctx_new(applet));
     } else {
-        list(w);
+        list(applet);
     }
-    sync_buttons(w);
+    sync_buttons(applet);
 }
 
-static void on_check([[maybe_unused]] GtkButton *b, gpointer data) {
-    wuau *w = data;
-    w->sw_refresh = true;
-    xd_wuau_software_load(w);
+static void on_check([[maybe_unused]] GtkButton *button, gpointer data) {
+    wuau *applet = data;
+    applet->sw_refresh = true;
+    xd_wuau_software_load(applet);
 }
 
-static void on_toggled([[maybe_unused]] GtkCellRendererToggle *r, char *path, gpointer data) {
-    wuau *w = data;
+static void on_toggled([[maybe_unused]] GtkCellRendererToggle *renderer, char *path,
+                       gpointer data) {
+    wuau *applet = data;
     GtkTreeIter it;
-    if (w->busy || !gtk_tree_model_get_iter_from_string(GTK_TREE_MODEL(w->sw_store), &it, path))
+    if (applet->busy ||
+        !gtk_tree_model_get_iter_from_string(GTK_TREE_MODEL(applet->sw_store), &it, path))
         return;
     gboolean on = FALSE;
-    gtk_tree_model_get(GTK_TREE_MODEL(w->sw_store), &it, COL_SELECTED, &on, -1);
-    gtk_list_store_set(w->sw_store, &it, COL_SELECTED, !on, -1);
-    sync_buttons(w);
+    gtk_tree_model_get(GTK_TREE_MODEL(applet->sw_store), &it, COL_SELECTED, &on, -1);
+    gtk_list_store_set(applet->sw_store, &it, COL_SELECTED, !on, -1);
+    sync_buttons(applet);
 }
 
-static void on_selection([[maybe_unused]] GtkTreeSelection *s, gpointer data) {
+static void on_selection([[maybe_unused]] GtkTreeSelection *tree_selection, gpointer data) {
     show_details(data);
 }
 
 /* Most important first, then by name. */
-static int compare_rows(GtkTreeModel *m, GtkTreeIter *a, GtkTreeIter *b,
+static int compare_rows(GtkTreeModel *model, GtkTreeIter *left, GtkTreeIter *right,
                         [[maybe_unused]] gpointer data) {
     int ra = 0, rb = 0;
     char *na = nullptr, *nb = nullptr;
-    gtk_tree_model_get(m, a, COL_RANK, &ra, COL_NAME, &na, -1);
-    gtk_tree_model_get(m, b, COL_RANK, &rb, COL_NAME, &nb, -1);
-    int r = ra != rb ? rb - ra : g_utf8_collate(na != nullptr ? na : "", nb != nullptr ? nb : "");
+    gtk_tree_model_get(model, left, COL_RANK, &ra, COL_NAME, &na, -1);
+    gtk_tree_model_get(model, right, COL_RANK, &rb, COL_NAME, &nb, -1);
+    int order =
+        ra != rb ? rb - ra : g_utf8_collate(na != nullptr ? na : "", nb != nullptr ? nb : "");
     g_free(na);
     g_free(nb);
-    return r;
+    return order;
 }
 
 /* ---- installing -------------------------------------------------------------------- */
@@ -502,8 +516,8 @@ static const char *const status_texts[PK_STATUS_ENUM_LAST] = {
     [PK_STATUS_ENUM_RUN_HOOK] = "Running setup steps...",
 };
 
-static const char *status_text(PkStatusEnum s) {
-    return (unsigned)s < XD_ARRAY_LEN(status_texts) ? status_texts[s] : nullptr;
+static const char *status_text(PkStatusEnum status) {
+    return (unsigned)status < XD_ARRAY_LEN(status_texts) ? status_texts[status] : nullptr;
 }
 
 static void on_pk_progress(PkProgress *progress, PkProgressType type, gpointer data) {
@@ -516,11 +530,11 @@ static void on_pk_progress(PkProgress *progress, PkProgressType type, gpointer d
         if (text != nullptr)
             xd_wuau_progress_set(in->progress, -2, text);
     } else if (type == PK_PROGRESS_TYPE_PACKAGE) {
-        PkPackage *p = pk_progress_get_package(progress);
-        if (p != nullptr && pk_package_get_info(p) == PK_INFO_ENUM_UPDATING) {
-            char *s = g_strdup_printf("Installing %s...", pk_package_get_name(p));
-            xd_wuau_progress_set(in->progress, -2, s);
-            g_free(s);
+        PkPackage *package = pk_progress_get_package(progress);
+        if (package != nullptr && pk_package_get_info(package) == PK_INFO_ENUM_UPDATING) {
+            char *installing = g_strdup_printf("Installing %s...", pk_package_get_name(package));
+            xd_wuau_progress_set(in->progress, -2, installing);
+            g_free(installing);
         }
     } else if (type == PK_PROGRESS_TYPE_ALLOW_CANCEL) {
         xd_wuau_progress_cancellable(in->progress, pk_progress_get_allow_cancel(progress));
@@ -528,9 +542,9 @@ static void on_pk_progress(PkProgress *progress, PkProgressType type, gpointer d
 }
 
 static void install_finish(install *in) {
-    wuau *w = in->w;
+    wuau *applet = in->w;
     xd_wuau_progress_free(in->progress);
-    w->busy = false;
+    applet->busy = false;
     bool cancelled = g_cancellable_is_cancelled(in->cancel);
     PkRestartEnum restart = in->restart;
     bool ok = !in->failed && !cancelled;
@@ -538,17 +552,17 @@ static void install_finish(install *in) {
     g_ptr_array_unref(in->flatpaks);
     g_object_unref(in->cancel);
     g_free(in);
-    xd_wuau_software_load(w);
+    xd_wuau_software_load(applet);
     if (!ok)
         return;
     if (xd_update_restart_system(restart))
-        xd_wuau_ask_restart(w, "Updating your computer is almost complete.");
+        xd_wuau_ask_restart(applet, "Updating your computer is almost complete.");
     else if (restart == PK_RESTART_ENUM_SESSION || restart == PK_RESTART_ENUM_SECURITY_SESSION)
-        xd_message_box(GTK_WINDOW(w->window), XD_WUAU_TITLE, XD_MB_INFO, XD_MB_OK, FALSE,
+        xd_message_box(GTK_WINDOW(applet->window), XD_WUAU_TITLE, XD_MB_INFO, XD_MB_OK, FALSE,
                        "The updates were installed. Log off and log on again for them to take "
                        "effect.");
     else
-        xd_message_box(GTK_WINDOW(w->window), XD_WUAU_TITLE, XD_MB_INFO, XD_MB_OK, FALSE,
+        xd_message_box(GTK_WINDOW(applet->window), XD_WUAU_TITLE, XD_MB_INFO, XD_MB_OK, FALSE,
                        "The updates were installed successfully.");
 }
 
@@ -559,19 +573,20 @@ typedef struct fp_status {
 } fp_status;
 
 static gboolean fp_show(gpointer data) {
-    fp_status *s = data;
-    xd_wuau_progress_set(s->in->progress, s->percent >= 0 ? s->percent / 100.0 : -1.0, s->text);
-    g_free(s->text);
-    g_free(s);
+    fp_status *status = data;
+    xd_wuau_progress_set(status->in->progress,
+                         status->percent >= 0 ? status->percent / 100.0 : -1.0, status->text);
+    g_free(status->text);
+    g_free(status);
     return G_SOURCE_REMOVE;
 }
 
 /* From the transaction's thread; ahead of the task's completion, which
  * frees the install. */
 static void fp_post(install *in, const char *text, int percent) {
-    fp_status *s = g_new0(fp_status, 1);
-    *s = (fp_status){in, g_strdup(text), percent};
-    g_main_context_invoke_full(nullptr, G_PRIORITY_HIGH, fp_show, s, nullptr);
+    fp_status *status = g_new0(fp_status, 1);
+    *status = (fp_status){in, g_strdup(text), percent};
+    g_main_context_invoke_full(nullptr, G_PRIORITY_HIGH, fp_show, status, nullptr);
 }
 
 static void on_fp_changed(FlatpakTransactionProgress *progress, gpointer data) {
@@ -581,15 +596,15 @@ static void on_fp_changed(FlatpakTransactionProgress *progress, gpointer data) {
                 : flatpak_transaction_progress_get_progress(progress));
 }
 
-static void on_fp_operation([[maybe_unused]] FlatpakTransaction *t,
+static void on_fp_operation([[maybe_unused]] FlatpakTransaction *transaction,
                             FlatpakTransactionOperation *op, FlatpakTransactionProgress *progress,
                             gpointer data) {
     FlatpakRef *ref = flatpak_ref_parse(flatpak_transaction_operation_get_ref(op), nullptr);
-    char *s = g_strdup_printf("Installing %s...", ref != nullptr
-                                                      ? flatpak_ref_get_name(ref)
-                                                      : flatpak_transaction_operation_get_ref(op));
-    fp_post(data, s, -1);
-    g_free(s);
+    char *text = g_strdup_printf("Installing %s...",
+                                 ref != nullptr ? flatpak_ref_get_name(ref)
+                                                : flatpak_transaction_operation_get_ref(op));
+    fp_post(data, text, -1);
+    g_free(text);
     g_clear_object(&ref);
     flatpak_transaction_progress_set_update_frequency(progress, 200);
     g_signal_connect(progress, "changed", G_CALLBACK(on_fp_changed), data);
@@ -612,20 +627,23 @@ static bool run_flatpak_updates(GPtrArray *refs, bool download_only, bool intera
         }
         /* The scheduled download mustn't ask anyone anything. */
         flatpak_installation_set_no_interaction(inst, !interactive);
-        FlatpakTransaction *t = flatpak_transaction_new_for_installation(inst, cancel, error);
-        ok = t != nullptr;
+        FlatpakTransaction *transaction =
+            flatpak_transaction_new_for_installation(inst, cancel, error);
+        ok = transaction != nullptr;
         if (ok) {
-            flatpak_transaction_set_no_deploy(t, download_only);
+            flatpak_transaction_set_no_deploy(transaction, download_only);
             if (progress_data != nullptr)
-                g_signal_connect(t, "new-operation", G_CALLBACK(on_fp_operation), progress_data);
+                g_signal_connect(transaction, "new-operation", G_CALLBACK(on_fp_operation),
+                                 progress_data);
             for (guint j = i; ok && j < refs->len; j++) {
-                fp_update *u = g_ptr_array_index(refs, j);
-                if (strcmp(u->installation, first->installation) == 0)
-                    ok = flatpak_transaction_add_update(t, u->ref, nullptr, nullptr, error);
+                fp_update *flatpak_update = g_ptr_array_index(refs, j);
+                if (strcmp(flatpak_update->installation, first->installation) == 0)
+                    ok = flatpak_transaction_add_update(transaction, flatpak_update->ref, nullptr,
+                                                        nullptr, error);
             }
-            ok = ok && flatpak_transaction_run(t, cancel, error);
+            ok = ok && flatpak_transaction_run(transaction, cancel, error);
         }
-        g_clear_object(&t);
+        g_clear_object(&transaction);
         g_object_unref(inst);
     }
     g_hash_table_unref(done);
@@ -677,12 +695,14 @@ typedef struct pk_reply {
  * transaction's Finished signal and again on Destroy if a nested main
  * loop (an error box) lets that through first. */
 static gboolean pk_updated_later(gpointer data) {
-    pk_reply *r = data;
-    install *in = r->in;
-    PkError *pe = r->results != nullptr ? pk_results_get_error_code(r->results) : nullptr;
-    if (r->results != nullptr)
-        in->restart = pk_results_get_require_restart_worst(r->results);
-    if (r->error != nullptr || pe != nullptr) {
+    pk_reply *packagekit_reply = data;
+    install *in = packagekit_reply->in;
+    PkError *pe = packagekit_reply->results != nullptr
+                      ? pk_results_get_error_code(packagekit_reply->results)
+                      : nullptr;
+    if (packagekit_reply->results != nullptr)
+        in->restart = pk_results_get_require_restart_worst(packagekit_reply->results);
+    if (packagekit_reply->error != nullptr || pe != nullptr) {
         in->failed = true;
         bool cancelled = g_cancellable_is_cancelled(in->cancel) ||
                          (pe != nullptr &&
@@ -692,13 +712,14 @@ static gboolean pk_updated_later(gpointer data) {
             xd_wuau_error(in->w,
                           denied ? "You don't have permission to install updates on this computer."
                                  : "The updates could not be installed.",
-                          r->error != nullptr ? r->error->message : pk_error_get_details(pe));
+                          packagekit_reply->error != nullptr ? packagekit_reply->error->message
+                                                             : pk_error_get_details(pe));
         }
     }
     g_clear_object(&pe);
-    g_clear_error(&r->error);
-    g_clear_object(&r->results);
-    g_free(r);
+    g_clear_error(&packagekit_reply->error);
+    g_clear_object(&packagekit_reply->results);
+    g_free(packagekit_reply);
     if (in->failed) {
         install_finish(in);
         return G_SOURCE_REMOVE;
@@ -708,29 +729,31 @@ static gboolean pk_updated_later(gpointer data) {
 }
 
 static void on_pk_updated(GObject *src, GAsyncResult *res, gpointer data) {
-    pk_reply *r = g_new0(pk_reply, 1);
-    r->in = data;
-    r->results = pk_client_generic_finish(PK_CLIENT(src), res, &r->error);
-    g_idle_add(pk_updated_later, r);
+    pk_reply *packagekit_reply = g_new0(pk_reply, 1);
+    packagekit_reply->in = data;
+    packagekit_reply->results =
+        pk_client_generic_finish(PK_CLIENT(src), res, &packagekit_reply->error);
+    g_idle_add(pk_updated_later, packagekit_reply);
 }
 
-static void on_install([[maybe_unused]] GtkButton *b, gpointer data) {
-    wuau *w = data;
-    if (w->busy)
+static void on_install([[maybe_unused]] GtkButton *button, gpointer data) {
+    wuau *applet = data;
+    if (applet->busy)
         return;
     install *in = g_new0(install, 1);
-    in->w = w;
+    in->w = applet;
     in->cancel = g_cancellable_new();
     in->flatpaks = g_ptr_array_new_with_free_func(fp_update_free);
     GPtrArray *ids = g_ptr_array_new();
     GtkTreeIter it;
-    GtkTreeModel *m = GTK_TREE_MODEL(w->sw_store);
-    for (bool ok = gtk_tree_model_get_iter_first(m, &it); ok; ok = gtk_tree_model_iter_next(m, &it)) {
+    GtkTreeModel *model = GTK_TREE_MODEL(applet->sw_store);
+    for (bool ok = gtk_tree_model_get_iter_first(model, &it); ok;
+         ok = gtk_tree_model_iter_next(model, &it)) {
         gboolean on = FALSE;
         int kind = 0;
         unsigned restart = 0;
         char *id = nullptr, *inst = nullptr, *name = nullptr;
-        gtk_tree_model_get(m, &it, COL_SELECTED, &on, COL_KIND, &kind, COL_ID, &id,
+        gtk_tree_model_get(model, &it, COL_SELECTED, &on, COL_KIND, &kind, COL_ID, &id,
                            COL_INSTALLATION, &inst, COL_NAME, &name, COL_RESTART, &restart, -1);
         if (on && kind == KIND_PACKAGE) {
             g_ptr_array_add(ids, id);
@@ -739,12 +762,12 @@ static void on_install([[maybe_unused]] GtkButton *b, gpointer data) {
             if (restart > (unsigned)in->restart && restart != PK_RESTART_ENUM_UNKNOWN)
                 in->restart = (PkRestartEnum)restart;
         } else if (on) {
-            fp_update *u = g_new0(fp_update, 1);
-            u->installation = inst;
-            u->ref = id;
-            u->name = name;
+            fp_update *flatpak_update = g_new0(fp_update, 1);
+            flatpak_update->installation = inst;
+            flatpak_update->ref = id;
+            flatpak_update->name = name;
             inst = id = name = nullptr;
-            g_ptr_array_add(in->flatpaks, u);
+            g_ptr_array_add(in->flatpaks, flatpak_update);
         }
         g_free(id);
         g_free(inst);
@@ -752,91 +775,91 @@ static void on_install([[maybe_unused]] GtkButton *b, gpointer data) {
     }
     g_ptr_array_add(ids, nullptr);
     in->pk_ids = (char **)g_ptr_array_free(ids, FALSE);
-    w->busy = true;
-    sync_buttons(w);
-    in->progress = xd_wuau_progress_new(w, "Please wait while the updates are installed.",
-                                        in->cancel);
+    applet->busy = true;
+    sync_buttons(applet);
+    in->progress =
+        xd_wuau_progress_new(applet, "Please wait while the updates are installed.", in->cancel);
     if (in->pk_ids[0] == nullptr) {
         install_flatpaks(in);
         return;
     }
-    pk_client_update_packages_async(w->pk_task,
+    pk_client_update_packages_async(applet->pk_task,
                                     pk_bitfield_value(PK_TRANSACTION_FLAG_ENUM_ONLY_TRUSTED),
                                     in->pk_ids, in->cancel, on_pk_progress, in, on_pk_updated, in);
 }
 
 /* ---- the page ------------------------------------------------------------------------ */
 
-static void text_column(wuau *w, const char *title, int col, bool expand) {
-    GtkCellRenderer *r = gtk_cell_renderer_text_new();
+static void text_column(wuau *applet, const char *title, int col, bool expand) {
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
     if (expand)
-        g_object_set(r, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
-    GtkTreeViewColumn *c = gtk_tree_view_column_new_with_attributes(title, r, "text", col,
-                                                                    nullptr);
-    gtk_tree_view_column_set_resizable(c, TRUE);
-    gtk_tree_view_column_set_expand(c, expand);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(w->sw_view), c);
+        g_object_set(renderer, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
+    GtkTreeViewColumn *column =
+        gtk_tree_view_column_new_with_attributes(title, renderer, "text", col, nullptr);
+    gtk_tree_view_column_set_resizable(column, TRUE);
+    gtk_tree_view_column_set_expand(column, expand);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(applet->sw_view), column);
 }
 
-GtkWidget *xd_wuau_software_page(wuau *w) {
+GtkWidget *xd_wuau_software_page(wuau *applet) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
-    w->sw_status = xd_wuau_label("");
-    gtk_box_pack_start(GTK_BOX(page), w->sw_status, FALSE, FALSE, 0);
+    applet->sw_status = xd_wuau_label("");
+    gtk_box_pack_start(GTK_BOX(page), applet->sw_status, FALSE, FALSE, 0);
 
-    w->sw_store = gtk_list_store_new(COL_COUNT, G_TYPE_BOOLEAN, G_TYPE_STRING, G_TYPE_STRING,
-                                     G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING,
-                                     G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING,
-                                     G_TYPE_UINT, G_TYPE_STRING);
-    gtk_tree_sortable_set_default_sort_func(GTK_TREE_SORTABLE(w->sw_store), compare_rows,
+    applet->sw_store =
+        gtk_list_store_new(COL_COUNT, G_TYPE_BOOLEAN, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+                           G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT,
+                           G_TYPE_STRING, G_TYPE_STRING, G_TYPE_UINT, G_TYPE_STRING);
+    gtk_tree_sortable_set_default_sort_func(GTK_TREE_SORTABLE(applet->sw_store), compare_rows,
                                             nullptr, nullptr);
-    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(w->sw_store),
+    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(applet->sw_store),
                                          GTK_TREE_SORTABLE_DEFAULT_SORT_COLUMN_ID,
                                          GTK_SORT_ASCENDING);
-    w->sw_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(w->sw_store));
+    applet->sw_view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(applet->sw_store));
     GtkCellRenderer *toggle = gtk_cell_renderer_toggle_new();
-    g_signal_connect(toggle, "toggled", G_CALLBACK(on_toggled), w);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(w->sw_view),
-                                gtk_tree_view_column_new_with_attributes(
-                                    "", toggle, "active", COL_SELECTED, nullptr));
-    text_column(w, "Name", COL_NAME, true);
-    text_column(w, "Version", COL_VERSION, false);
-    text_column(w, "Importance", COL_IMPORTANCE, false);
-    text_column(w, "Source", COL_SOURCE, false);
-    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(w->sw_view));
-    g_signal_connect(sel, "changed", G_CALLBACK(on_selection), w);
+    g_signal_connect(toggle, "toggled", G_CALLBACK(on_toggled), applet);
+    gtk_tree_view_append_column(
+        GTK_TREE_VIEW(applet->sw_view),
+        gtk_tree_view_column_new_with_attributes("", toggle, "active", COL_SELECTED, nullptr));
+    text_column(applet, "Name", COL_NAME, true);
+    text_column(applet, "Version", COL_VERSION, false);
+    text_column(applet, "Importance", COL_IMPORTANCE, false);
+    text_column(applet, "Source", COL_SOURCE, false);
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(applet->sw_view));
+    g_signal_connect(sel, "changed", G_CALLBACK(on_selection), applet);
     GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_AUTOMATIC,
                                    GTK_POLICY_AUTOMATIC);
     gtk_widget_set_size_request(scroll, -1, 170);
-    gtk_container_add(GTK_CONTAINER(scroll), w->sw_view);
+    gtk_container_add(GTK_CONTAINER(scroll), applet->sw_view);
     gtk_box_pack_start(GTK_BOX(page), scroll, TRUE, TRUE, 0);
 
-    w->sw_details = xd_wuau_label("Select an update to see its details.");
-    gtk_label_set_selectable(GTK_LABEL(w->sw_details), TRUE);
-    gtk_label_set_yalign(GTK_LABEL(w->sw_details), 0);
+    applet->sw_details = xd_wuau_label("Select an update to see its details.");
+    gtk_label_set_selectable(GTK_LABEL(applet->sw_details), TRUE);
+    gtk_label_set_yalign(GTK_LABEL(applet->sw_details), 0);
     GtkWidget *details_scroll = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(details_scroll), GTK_POLICY_NEVER,
                                    GTK_POLICY_AUTOMATIC);
     gtk_widget_set_size_request(details_scroll, -1, 90);
-    gtk_container_add(GTK_CONTAINER(details_scroll), w->sw_details);
+    gtk_container_add(GTK_CONTAINER(details_scroll), applet->sw_details);
     gtk_box_pack_start(GTK_BOX(page), xd_wuau_frame("Details", details_scroll), FALSE, FALSE, 0);
 
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    w->sw_check = gtk_button_new_with_mnemonic("_Check for Updates");
-    g_signal_connect(w->sw_check, "clicked", G_CALLBACK(on_check), w);
-    gtk_box_pack_start(GTK_BOX(buttons), w->sw_check, FALSE, FALSE, 0);
-    w->sw_install = gtk_button_new_with_mnemonic("_Install");
-    gtk_widget_set_size_request(w->sw_install, 80, -1);
-    g_signal_connect(w->sw_install, "clicked", G_CALLBACK(on_install), w);
-    gtk_box_pack_end(GTK_BOX(buttons), w->sw_install, FALSE, FALSE, 0);
+    applet->sw_check = gtk_button_new_with_mnemonic("_Check for Updates");
+    g_signal_connect(applet->sw_check, "clicked", G_CALLBACK(on_check), applet);
+    gtk_box_pack_start(GTK_BOX(buttons), applet->sw_check, FALSE, FALSE, 0);
+    applet->sw_install = gtk_button_new_with_mnemonic("_Install");
+    gtk_widget_set_size_request(applet->sw_install, 80, -1);
+    g_signal_connect(applet->sw_install, "clicked", G_CALLBACK(on_install), applet);
+    gtk_box_pack_end(GTK_BOX(buttons), applet->sw_install, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), buttons, FALSE, FALSE, 0);
-    sync_buttons(w);
+    sync_buttons(applet);
     return page;
 }
 
-void xd_wuau_software_finish(wuau *w) { g_clear_object(&w->sw_store); }
+void xd_wuau_software_finish(wuau *applet) { g_clear_object(&applet->sw_store); }
 
 /* ---- the scheduled check (no window) ----------------------------------------------- */
 
@@ -844,25 +867,26 @@ void xd_wuau_software_finish(wuau *w) { g_clear_object(&w->sw_store); }
 static bool metered(GDBusConnection *bus) {
     if (bus == nullptr)
         return false;
-    GVariant *r = g_dbus_connection_call_sync(
+    GVariant *metered_reply = g_dbus_connection_call_sync(
         bus, "org.freedesktop.NetworkManager", "/org/freedesktop/NetworkManager",
         "org.freedesktop.DBus.Properties", "Get",
-        g_variant_new("(ss)", "org.freedesktop.NetworkManager", "Metered"),
-        G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, nullptr, nullptr);
-    if (r == nullptr)
+        g_variant_new("(ss)", "org.freedesktop.NetworkManager", "Metered"), G_VARIANT_TYPE("(v)"),
+        G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, nullptr, nullptr);
+    if (metered_reply == nullptr)
         return false;
-    GVariant *v = nullptr;
-    g_variant_get(r, "(v)", &v);
-    unsigned m = g_variant_is_of_type(v, G_VARIANT_TYPE_UINT32) ? g_variant_get_uint32(v) : 0;
-    g_variant_unref(v);
-    g_variant_unref(r);
-    return m == 1 || m == 3;
+    GVariant *value = nullptr;
+    g_variant_get(metered_reply, "(v)", &value);
+    unsigned metered_state =
+        g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32) ? g_variant_get_uint32(value) : 0;
+    g_variant_unref(value);
+    g_variant_unref(metered_reply);
+    return metered_state == 1 || metered_state == 3;
 }
 
-static void note_error(xd_updates_state *st, const char *what, GError *error, PkResults *r) {
+static void note_error(xd_updates_state *st, const char *what, GError *error, PkResults *results) {
     if (st->error[0] != '\0')
         return;
-    PkError *pe = r != nullptr ? pk_results_get_error_code(r) : nullptr;
+    PkError *pe = results != nullptr ? pk_results_get_error_code(results) : nullptr;
     const char *why = error != nullptr ? error->message
                       : pe != nullptr  ? pk_error_get_details(pe)
                                        : nullptr;
@@ -871,13 +895,13 @@ static void note_error(xd_updates_state *st, const char *what, GError *error, Pk
     g_clear_object(&pe);
 }
 
-static bool pk_ok(GError *error, PkResults *r) {
-    if (error != nullptr || r == nullptr)
+static bool pk_ok(GError *error, PkResults *results) {
+    if (error != nullptr || results == nullptr)
         return false;
-    PkError *pe = pk_results_get_error_code(r);
+    PkError *pe = pk_results_get_error_code(results);
     bool failed = pe != nullptr;
     g_clear_object(&pe);
-    return !failed && pk_results_get_exit_code(r) == PK_EXIT_ENUM_SUCCESS;
+    return !failed && pk_results_get_exit_code(results) == PK_EXIT_ENUM_SUCCESS;
 }
 
 int xd_wuau_check(void) {
@@ -891,8 +915,8 @@ int xd_wuau_check(void) {
             close(lock);
         return EXIT_SUCCESS;
     }
-    xd_settings s;
-    xd_settings_load(&s);
+    xd_settings settings;
+    xd_settings_load(&settings);
     xd_updates_state st = {0};
     GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
 
@@ -901,35 +925,36 @@ int xd_wuau_check(void) {
     pk_client_set_interactive(pk, FALSE);
     pk_client_set_background(pk, TRUE);
     GError *error = nullptr;
-    PkResults *r = pk_client_refresh_cache(pk, FALSE, nullptr, nullptr, nullptr, &error);
-    if (!pk_ok(error, r))
-        note_error(&st, "Refreshing the list of updates", error, r);
+    PkResults *results = pk_client_refresh_cache(pk, FALSE, nullptr, nullptr, nullptr, &error);
+    if (!pk_ok(error, results))
+        note_error(&st, "Refreshing the list of updates", error, results);
     g_clear_error(&error);
-    g_clear_object(&r);
+    g_clear_object(&results);
     GPtrArray *pk_ids = g_ptr_array_new_with_free_func(g_free);
-    r = pk_client_get_updates(pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), nullptr, nullptr,
-                              nullptr, &error);
-    if (pk_ok(error, r)) {
-        GPtrArray *pkgs = pk_results_get_package_array(r);
+    results = pk_client_get_updates(pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), nullptr, nullptr,
+                                    nullptr, &error);
+    if (pk_ok(error, results)) {
+        GPtrArray *pkgs = pk_results_get_package_array(results);
         for (guint i = 0; i < pkgs->len; i++) {
-            PkPackage *p = g_ptr_array_index(pkgs, i);
+            PkPackage *package = g_ptr_array_index(pkgs, i);
             if (xd_update_rank_important(xd_update_rank_of_package(
-                    pk_package_get_info(p), pk_package_get_update_severity(p))))
+                    pk_package_get_info(package), pk_package_get_update_severity(package))))
                 st.important++;
-            g_ptr_array_add(pk_ids, g_strdup(pk_package_get_id(p)));
-            g_ptr_array_add(ids, g_strdup(pk_package_get_id(p)));
+            g_ptr_array_add(pk_ids, g_strdup(pk_package_get_id(package)));
+            g_ptr_array_add(ids, g_strdup(pk_package_get_id(package)));
         }
         g_ptr_array_unref(pkgs);
     } else {
-        note_error(&st, "Listing the updates", error, r);
+        note_error(&st, "Listing the updates", error, results);
     }
     g_clear_error(&error);
-    g_clear_object(&r);
+    g_clear_object(&results);
 
     GPtrArray *flatpaks = flatpak_updates(nullptr);
     for (guint i = 0; i < flatpaks->len; i++) {
-        fp_update *u = g_ptr_array_index(flatpaks, i);
-        g_ptr_array_add(ids, g_strdup_printf("%s/%s", u->installation, u->ref));
+        fp_update *flatpak_update = g_ptr_array_index(flatpaks, i);
+        g_ptr_array_add(
+            ids, g_strdup_printf("%s/%s", flatpak_update->installation, flatpak_update->ref));
     }
     st.software = (int)(pk_ids->len + flatpaks->len);
 
@@ -939,7 +964,7 @@ int xd_wuau_check(void) {
 
     /* Download what there is, never install it; not on a metered
      * connection (the user may pay by the megabyte). */
-    if (s.updates.mode == XD_UPDATES_DOWNLOAD && st.software > 0) {
+    if (settings.updates.mode == XD_UPDATES_DOWNLOAD && st.software > 0) {
         st.metered = metered(bus);
         if (!st.metered) {
             bool ok = true;
@@ -948,13 +973,13 @@ int xd_wuau_check(void) {
                 PkBitfield flags = pk_bitfield_from_enums(PK_TRANSACTION_FLAG_ENUM_ONLY_TRUSTED,
                                                           PK_TRANSACTION_FLAG_ENUM_ONLY_DOWNLOAD,
                                                           -1);
-                r = pk_client_update_packages(pk, flags, (char **)pk_ids->pdata, nullptr, nullptr,
-                                              nullptr, &error);
-                ok = pk_ok(error, r);
+                results = pk_client_update_packages(pk, flags, (char **)pk_ids->pdata, nullptr,
+                                                    nullptr, nullptr, &error);
+                ok = pk_ok(error, results);
                 if (!ok)
-                    note_error(&st, "Downloading the updates", error, r);
+                    note_error(&st, "Downloading the updates", error, results);
                 g_clear_error(&error);
-                g_clear_object(&r);
+                g_clear_object(&results);
             }
             if (flatpaks->len > 0 &&
                 !run_flatpak_updates(flatpaks, true, false, nullptr, nullptr, &error)) {

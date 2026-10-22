@@ -22,8 +22,8 @@ static xd_update_rank rank_of_info(PkInfoEnum info) {
 xd_update_rank xd_update_rank_of_package(PkInfoEnum info, PkInfoEnum severity) {
     /* The severity, where the backend gives one, says how urgent; the
      * info says what kind (a security fix stays one even if low). */
-    xd_update_rank a = rank_of_info(info), b = rank_of_info(severity);
-    return a > b ? a : b;
+    xd_update_rank info_rank = rank_of_info(info), severity_rank = rank_of_info(severity);
+    return info_rank > severity_rank ? info_rank : severity_rank;
 }
 
 xd_update_rank xd_update_rank_of_urgency(unsigned urgency) {
@@ -73,55 +73,55 @@ typedef struct markup {
     bool space; /* white space seen since the last character */
 } markup;
 
-static void md_start(GMarkupParseContext *c, const char *name, const char **attr_names,
+static void md_start(GMarkupParseContext *context, const char *name, const char **attr_names,
                      const char **attr_values, gpointer data, GError **error) {
-    (void)c;
+    (void)context;
     (void)attr_names;
     (void)attr_values;
     (void)error;
-    markup *m = data;
+    markup *converter = data;
     if (strcmp(name, "p") == 0 || strcmp(name, "ul") == 0 || strcmp(name, "ol") == 0) {
-        m->fresh = true;
-        m->sep = 2;
+        converter->fresh = true;
+        converter->sep = 2;
     } else if (strcmp(name, "li") == 0) {
-        m->fresh = true;
-        m->item = true;
-        m->sep = XD_MAX(m->sep, 1);
+        converter->fresh = true;
+        converter->item = true;
+        converter->sep = XD_MAX(converter->sep, 1);
     }
 }
 
-static void md_end(GMarkupParseContext *c, const char *name, gpointer data, GError **error) {
-    (void)c;
+static void md_end(GMarkupParseContext *context, const char *name, gpointer data, GError **error) {
+    (void)context;
     (void)error;
-    markup *m = data;
+    markup *converter = data;
     if (strcmp(name, "p") == 0 || strcmp(name, "li") == 0 || strcmp(name, "ul") == 0 ||
         strcmp(name, "ol") == 0)
-        m->fresh = true;
+        converter->fresh = true;
 }
 
-static void md_text(GMarkupParseContext *c, const char *text, gsize len, gpointer data,
+static void md_text(GMarkupParseContext *context, const char *text, gsize len, gpointer data,
                     GError **error) {
-    (void)c;
+    (void)context;
     (void)error;
-    markup *m = data;
+    markup *converter = data;
     for (gsize i = 0; i < len; i++) {
         char ch = text[i];
         if (g_ascii_isspace(ch)) {
-            m->space = true;
+            converter->space = true;
             continue;
         }
-        if (m->fresh) {
-            if (m->out->len > 0)
-                g_string_append(m->out, m->sep >= 2 ? "\n\n" : "\n");
-            if (m->item)
-                g_string_append(m->out, "• ");
-            m->fresh = m->item = m->space = false;
-            m->sep = 0;
-        } else if (m->space) {
-            g_string_append_c(m->out, ' ');
-            m->space = false;
+        if (converter->fresh) {
+            if (converter->out->len > 0)
+                g_string_append(converter->out, converter->sep >= 2 ? "\n\n" : "\n");
+            if (converter->item)
+                g_string_append(converter->out, "• ");
+            converter->fresh = converter->item = converter->space = false;
+            converter->sep = 0;
+        } else if (converter->space) {
+            g_string_append_c(converter->out, ' ');
+            converter->space = false;
         }
-        g_string_append_c(m->out, ch);
+        g_string_append_c(converter->out, ch);
     }
 }
 
@@ -133,25 +133,25 @@ char *xd_fwupd_markup_to_text(const char *text) {
         .end_element = md_end,
         .text = md_text,
     };
-    markup m = {.out = g_string_new(nullptr), .fresh = true};
+    markup converter = {.out = g_string_new(nullptr), .fresh = true};
     /* Release notes are a run of blocks; one root makes them a document. */
     char *doc = g_strconcat("<description>", text, "</description>", nullptr);
-    GMarkupParseContext *ctx = g_markup_parse_context_new(&parser, 0, &m, nullptr);
+    GMarkupParseContext *ctx = g_markup_parse_context_new(&parser, 0, &converter, nullptr);
     bool ok = g_markup_parse_context_parse(ctx, doc, -1, nullptr) &&
               g_markup_parse_context_end_parse(ctx, nullptr);
     g_markup_parse_context_free(ctx);
     g_free(doc);
-    if (!ok && m.out->len == 0) {
-        g_string_free(m.out, TRUE);
+    if (!ok && converter.out->len == 0) {
+        g_string_free(converter.out, TRUE);
         return nullptr;
     }
-    return g_string_free(m.out, FALSE);
+    return g_string_free(converter.out, FALSE);
 }
 
 /* ---- fwupd: downloads ------------------------------------------------------------- */
 
-static bool all_hex(const char *s, size_t n) {
-    return strlen(s) == n && strspn(s, "0123456789abcdefABCDEF") == n;
+static bool all_hex(const char *text, size_t length) {
+    return strlen(text) == length && strspn(text, "0123456789abcdefABCDEF") == length;
 }
 
 bool xd_fwupd_checksum_ok(const char *checksums, GBytes *data) {
@@ -161,19 +161,19 @@ bool xd_fwupd_checksum_ok(const char *checksums, GBytes *data) {
     GChecksumType type = G_CHECKSUM_SHA1;
     size_t hex = 40;
     bool any = false;
-    for (char **s = sums; *s != nullptr; s++) {
-        g_strstrip(*s);
-        if (all_hex(*s, 64)) {
+    for (char **sum = sums; *sum != nullptr; sum++) {
+        g_strstrip(*sum);
+        if (all_hex(*sum, 64)) {
             type = G_CHECKSUM_SHA256;
             hex = 64;
         }
-        any = any || all_hex(*s, 40) || all_hex(*s, 64);
+        any = any || all_hex(*sum, 40) || all_hex(*sum, 64);
     }
     bool ok = false;
     if (any) {
         char *got = g_compute_checksum_for_bytes(type, data);
-        for (char **s = sums; *s != nullptr && !ok; s++)
-            ok = all_hex(*s, hex) && g_ascii_strcasecmp(*s, got) == 0;
+        for (char **sum = sums; *sum != nullptr && !ok; sum++)
+            ok = all_hex(*sum, hex) && g_ascii_strcasecmp(*sum, got) == 0;
         g_free(got);
     }
     g_strfreev(sums);
@@ -186,9 +186,10 @@ static bool usable(const char *uri) {
 }
 
 const char *xd_fwupd_pick_location(const char *const *locations, const char *uri) {
-    for (const char *const *l = locations; l != nullptr && *l != nullptr; l++) {
-        if (usable(*l))
-            return *l;
+    for (const char *const *location = locations; location != nullptr && *location != nullptr;
+         location++) {
+        if (usable(*location))
+            return *location;
     }
     return usable(uri) ? uri : nullptr;
 }
@@ -199,13 +200,13 @@ int xd_fwupd_hsi_level(const char *hsi, bool *runtime_issue) {
     *runtime_issue = false;
     if (hsi == nullptr || !g_str_has_prefix(hsi, "HSI:"))
         return -1;
-    const char *p = hsi + strlen("HSI:");
-    if (!g_ascii_isdigit(*p))
+    const char *cursor = hsi + strlen("HSI:");
+    if (!g_ascii_isdigit(*cursor))
         return -1;
     int level = 0;
-    while (g_ascii_isdigit(*p) && level < 100)
-        level = level * 10 + (*p++ - '0');
-    *runtime_issue = *p == '!';
+    while (g_ascii_isdigit(*cursor) && level < 100)
+        level = level * 10 + (*cursor++ - '0');
+    *runtime_issue = *cursor == '!';
     return level;
 }
 

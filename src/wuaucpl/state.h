@@ -31,7 +31,8 @@ typedef struct xd_updates_state {
  * at hour:00) after `last`, the last check. A check missed while the
  * computer was off is then due at once, as XP caught up at the next
  * start. 0 (now) if there never was one; INT64_MAX when turned off. */
-int64_t xd_updates_next_check(const xd_update_settings *u, int64_t last, GTimeZone *tz);
+int64_t xd_updates_next_check(const xd_update_settings *update_settings, int64_t last,
+                              GTimeZone *tz);
 
 /* $XDG_STATE_HOME/xeondesktop/updates.ini. g_free it. */
 char *xd_updates_state_path(void);

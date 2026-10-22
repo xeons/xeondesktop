@@ -57,36 +57,36 @@ typedef struct wuau {
 /* main.c */
 GtkWidget *xd_wuau_label(const char *text);
 GtkWidget *xd_wuau_frame(const char *title, GtkWidget *child);
-void xd_wuau_error(wuau *w, const char *what, const char *detail);
+void xd_wuau_error(wuau *applet, const char *what, const char *detail);
 /* Records what's waiting for the shell's icon (after a list changed).
  * checked: a refresh just happened, so it counts as a check. */
-void xd_wuau_save_state(wuau *w, bool checked);
+void xd_wuau_save_state(wuau *applet, bool checked);
 /* Asks to restart (an update needs it); Restart Now runs xd-shutdown. */
-void xd_wuau_ask_restart(wuau *w, const char *why);
+void xd_wuau_ask_restart(wuau *applet, const char *why);
 
 /* A modal progress window for installs. */
 typedef struct xd_wuau_progress xd_wuau_progress;
-xd_wuau_progress *xd_wuau_progress_new(wuau *w, const char *text, GCancellable *cancel);
+xd_wuau_progress *xd_wuau_progress_new(wuau *applet, const char *text, GCancellable *cancel);
 /* fraction -1: moving back and forth; -2: as it is (only the status). */
-void xd_wuau_progress_set(xd_wuau_progress *p, double fraction, const char *status);
-void xd_wuau_progress_cancellable(xd_wuau_progress *p, bool can);
-void xd_wuau_progress_free(xd_wuau_progress *p);
+void xd_wuau_progress_set(xd_wuau_progress *progress, double fraction, const char *status);
+void xd_wuau_progress_cancellable(xd_wuau_progress *progress, bool can);
+void xd_wuau_progress_free(xd_wuau_progress *progress);
 
 /* software.c: the Software Updates tab */
-GtkWidget *xd_wuau_software_page(wuau *w);
-void xd_wuau_software_load(wuau *w);
+GtkWidget *xd_wuau_software_page(wuau *applet);
+void xd_wuau_software_load(wuau *applet);
 /* What's listed: updates, how many important, and their ids. */
-int xd_wuau_software_count(wuau *w, int *important, GPtrArray *ids);
-void xd_wuau_software_finish(wuau *w);
+int xd_wuau_software_count(wuau *applet, int *important, GPtrArray *ids);
+void xd_wuau_software_finish(wuau *applet);
 /* `xd-wuaucpl --check` (no window): refresh, count, maybe download. */
 int xd_wuau_check(void);
 
 /* firmware.c: the Firmware and Device Security tabs */
-GtkWidget *xd_wuau_firmware_page(wuau *w);
-GtkWidget *xd_wuau_security_page(wuau *w);
-void xd_wuau_firmware_load(wuau *w);
-void xd_wuau_firmware_ids(wuau *w, int *important, GPtrArray *ids);
-void xd_wuau_firmware_finish(wuau *w);
+GtkWidget *xd_wuau_firmware_page(wuau *applet);
+GtkWidget *xd_wuau_security_page(wuau *applet);
+void xd_wuau_firmware_load(wuau *applet);
+void xd_wuau_firmware_ids(wuau *applet, int *important, GPtrArray *ids);
+void xd_wuau_firmware_finish(wuau *applet);
 /* For --check: devices with firmware updates (-1 without fwupd); adds
  * the release ids to `ids`, the important ones to *important. */
 int xd_wuau_firmware_check(GDBusConnection *bus, int *important, GPtrArray *ids);
