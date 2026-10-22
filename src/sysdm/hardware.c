@@ -72,49 +72,50 @@ typedef struct devmgr {
 
 /* ---- naming ------------------------------------------------------------------- */
 
-static const char *prop(struct udev_device *d, const char *key) {
-    const char *v = udev_device_get_property_value(d, key);
-    return v != nullptr && v[0] != '\0' ? v : nullptr;
+static const char *prop(struct udev_device *device, const char *key) {
+    const char *value = udev_device_get_property_value(device, key);
+    return value != nullptr && value[0] != '\0' ? value : nullptr;
 }
 
 /* Looks up a property on the device or its ancestors. */
-static const char *prop_up(struct udev_device *d, const char *key) {
-    for (struct udev_device *p = d; p != nullptr; p = udev_device_get_parent(p)) {
-        const char *v = prop(p, key);
-        if (v != nullptr)
-            return v;
+static const char *prop_up(struct udev_device *device, const char *key) {
+    for (struct udev_device *ancestor = device; ancestor != nullptr;
+         ancestor = udev_device_get_parent(ancestor)) {
+        const char *value = prop(ancestor, key);
+        if (value != nullptr)
+            return value;
     }
     return nullptr;
 }
 
-static char *clean(const char *s) {
-    char *out = g_strdup(s);
+static char *clean(const char *text) {
+    char *out = g_strdup(text);
     g_strdelimit(out, "_", ' ');
     return g_strstrip(out);
 }
 
 /* "Vendor Model" from the hardware database, else what the device says. */
-static char *pci_usb_name(struct udev_device *d) {
-    const char *vendor = prop(d, "ID_VENDOR_FROM_DATABASE");
-    const char *model = prop(d, "ID_MODEL_FROM_DATABASE");
+static char *pci_usb_name(struct udev_device *device) {
+    const char *vendor = prop(device, "ID_VENDOR_FROM_DATABASE");
+    const char *model = prop(device, "ID_MODEL_FROM_DATABASE");
     if (model != nullptr)
         return vendor != nullptr ? g_strdup_printf("%s %s", vendor, model) : g_strdup(model);
-    const char *product = udev_device_get_sysattr_value(d, "product");
-    const char *manu = udev_device_get_sysattr_value(d, "manufacturer");
+    const char *product = udev_device_get_sysattr_value(device, "product");
+    const char *manu = udev_device_get_sysattr_value(device, "manufacturer");
     if (product != nullptr)
         return manu != nullptr ? g_strdup_printf("%s %s", manu, product) : g_strdup(product);
     return nullptr;
 }
 
-static unsigned pci_class(struct udev_device *d) {
-    const char *c = udev_device_get_sysattr_value(d, "class");
-    return c != nullptr ? (unsigned)strtoul(c, nullptr, 16) : 0;
+static unsigned pci_class(struct udev_device *device) {
+    const char *class_text = udev_device_get_sysattr_value(device, "class");
+    return class_text != nullptr ? (unsigned)strtoul(class_text, nullptr, 16) : 0;
 }
 
 /* Where a PCI or USB device sits, as Windows' "Location". */
-static char *location(struct udev_device *d) {
-    const char *sub = udev_device_get_subsystem(d);
-    const char *sys = udev_device_get_sysname(d);
+static char *location(struct udev_device *device) {
+    const char *sub = udev_device_get_subsystem(device);
+    const char *sys = udev_device_get_sysname(device);
     if (sub == nullptr)
         return g_strdup("Unknown");
     if (strcmp(sub, "pci") == 0) {
@@ -122,13 +123,14 @@ static char *location(struct udev_device *d) {
         if (sscanf(sys, "%x:%x:%x.%x", &dom, &bus, &dev, &fn) == 4)
             return g_strdup_printf("PCI bus %u, device %u, function %u", bus, dev, fn);
     }
-    for (struct udev_device *p = d; p != nullptr; p = udev_device_get_parent(p)) {
-        const char *ps = udev_device_get_subsystem(p);
+    for (struct udev_device *ancestor = device; ancestor != nullptr;
+         ancestor = udev_device_get_parent(ancestor)) {
+        const char *ps = udev_device_get_subsystem(ancestor);
         if (ps != nullptr && strcmp(ps, "usb") == 0 &&
-            g_strcmp0(udev_device_get_devtype(p), "usb_device") == 0)
-            return g_strdup_printf("USB port %s", udev_device_get_sysname(p));
-        if (ps != nullptr && strcmp(ps, "pci") == 0 && p != d) {
-            char *parent = location(p);
+            g_strcmp0(udev_device_get_devtype(ancestor), "usb_device") == 0)
+            return g_strdup_printf("USB port %s", udev_device_get_sysname(ancestor));
+        if (ps != nullptr && strcmp(ps, "pci") == 0 && ancestor != device) {
+            char *parent = location(ancestor);
             char *out = g_strdup_printf("On %s", parent);
             g_free(parent);
             return out;
@@ -145,162 +147,167 @@ typedef struct found {
     gboolean hidden; /* shown only with View > Show hidden devices */
 } found;
 
-static gboolean classify_pci(struct udev_device *d, found *f) {
-    unsigned cls = pci_class(d) >> 8; /* class and subclass */
+static gboolean classify_pci(struct udev_device *device, found *classification) {
+    unsigned cls = pci_class(device) >> 8; /* class and subclass */
     unsigned base = cls >> 8;
-    f->name = pci_usb_name(d);
+    classification->name = pci_usb_name(device);
     switch (base) {
     case 0x01:
-        f->c = cls == 0x0101 || cls == 0x0106 ? CAT_IDE : CAT_STORAGE;
+        classification->c = cls == 0x0101 || cls == 0x0106 ? CAT_IDE : CAT_STORAGE;
         break;
     case 0x02:
-        f->c = CAT_NETWORK;
+        classification->c = CAT_NETWORK;
         break;
     case 0x03:
-        f->c = CAT_DISPLAY;
+        classification->c = CAT_DISPLAY;
         break;
     case 0x04:
-        f->c = CAT_SOUND;
+        classification->c = CAT_SOUND;
         break;
     case 0x0C:
-        f->c = cls == 0x0C03 ? CAT_USB : CAT_SYSTEM;
+        classification->c = cls == 0x0C03 ? CAT_USB : CAT_SYSTEM;
         break;
     case 0x05:
     case 0x06:
     case 0x08:
     case 0x11:
-        f->c = CAT_SYSTEM;
+        classification->c = CAT_SYSTEM;
         break;
     default:
-        f->c = CAT_OTHER;
+        classification->c = CAT_OTHER;
         break;
     }
     return TRUE;
 }
 
-static gboolean classify(struct udev_device *d, found *f) {
-    const char *sub = udev_device_get_subsystem(d);
-    const char *sys = udev_device_get_sysname(d);
-    const char *type = udev_device_get_devtype(d);
-    *f = (found){.c = CAT_OTHER};
+static gboolean classify(struct udev_device *device, found *classification) {
+    const char *sub = udev_device_get_subsystem(device);
+    const char *sys = udev_device_get_sysname(device);
+    const char *type = udev_device_get_devtype(device);
+    *classification = (found){.c = CAT_OTHER};
     if (sub == nullptr || sys == nullptr)
         return FALSE;
     if (strcmp(sub, "pci") == 0)
-        return classify_pci(d, f);
+        return classify_pci(device, classification);
     if (strcmp(sub, "usb") == 0) {
         /* Only hubs; other USB devices show up as what they are. */
-        const char *dc = udev_device_get_sysattr_value(d, "bDeviceClass");
+        const char *dc = udev_device_get_sysattr_value(device, "bDeviceClass");
         if (g_strcmp0(type, "usb_device") != 0 || dc == nullptr || strcmp(dc, "09") != 0)
             return FALSE;
-        f->c = CAT_USB;
-        struct udev_device *parent = udev_device_get_parent(d);
+        classification->c = CAT_USB;
+        struct udev_device *parent = udev_device_get_parent(device);
         const char *parent_sub = parent != nullptr ? udev_device_get_subsystem(parent) : nullptr;
-        f->name = g_strdup(g_strcmp0(parent_sub, "usb") == 0 ? "Generic USB Hub"
-                                                              : "USB Root Hub");
+        classification->name =
+            g_strdup(g_strcmp0(parent_sub, "usb") == 0 ? "Generic USB Hub" : "USB Root Hub");
         return TRUE;
     }
     if (strcmp(sub, "block") == 0 && g_strcmp0(type, "disk") == 0) {
         gboolean virt = g_str_has_prefix(sys, "loop") || g_str_has_prefix(sys, "ram") ||
                         g_str_has_prefix(sys, "zram") || g_str_has_prefix(sys, "dm-") ||
                         g_str_has_prefix(sys, "md");
-        f->hidden = virt;
-        f->c = prop(d, "ID_CDROM") != nullptr ? CAT_OPTICAL : CAT_DISKS;
-        const char *model = prop(d, "ID_MODEL");
-        const char *attr = udev_device_get_sysattr_value(d, "device/model");
+        classification->hidden = virt;
+        classification->c = prop(device, "ID_CDROM") != nullptr ? CAT_OPTICAL : CAT_DISKS;
+        const char *model = prop(device, "ID_MODEL");
+        const char *attr = udev_device_get_sysattr_value(device, "device/model");
         if (model != nullptr)
-            f->name = clean(model);
+            classification->name = clean(model);
         else if (attr != nullptr)
-            f->name = clean(attr);
+            classification->name = clean(attr);
         else if (g_str_has_prefix(sys, "zram"))
-            f->name = g_strdup_printf("Compressed RAM disk (%s)", sys);
+            classification->name = g_strdup_printf("Compressed RAM disk (%s)", sys);
         else
-            f->name = g_strdup_printf("%s (%s)", virt ? "Virtual disk" : "Disk drive", sys);
+            classification->name =
+                g_strdup_printf("%s (%s)", virt ? "Virtual disk" : "Disk drive", sys);
         return TRUE;
     }
     if (strcmp(sub, "input") == 0 && g_str_has_prefix(sys, "input")) {
-        const char *name = udev_device_get_sysattr_value(d, "name");
-        if (prop(d, "ID_INPUT_KEYBOARD") != nullptr)
-            f->c = CAT_KEYBOARDS;
-        else if (prop(d, "ID_INPUT_MOUSE") != nullptr || prop(d, "ID_INPUT_TOUCHPAD") != nullptr ||
-                 prop(d, "ID_INPUT_TABLET") != nullptr)
-            f->c = CAT_MICE;
+        const char *name = udev_device_get_sysattr_value(device, "name");
+        if (prop(device, "ID_INPUT_KEYBOARD") != nullptr)
+            classification->c = CAT_KEYBOARDS;
+        else if (prop(device, "ID_INPUT_MOUSE") != nullptr ||
+                 prop(device, "ID_INPUT_TOUCHPAD") != nullptr ||
+                 prop(device, "ID_INPUT_TABLET") != nullptr)
+            classification->c = CAT_MICE;
         else
-            f->c = CAT_HID;
+            classification->c = CAT_HID;
         /* Virtual and built-in buttons (power, lid) are "hidden". */
-        f->hidden = f->c == CAT_HID || prop_up(d, "ID_BUS") == nullptr;
-        f->name = g_strdup(name != nullptr ? name : sys);
+        classification->hidden =
+            classification->c == CAT_HID || prop_up(device, "ID_BUS") == nullptr;
+        classification->name = g_strdup(name != nullptr ? name : sys);
         return TRUE;
     }
     if (strcmp(sub, "net") == 0) {
-        gboolean physical = udev_device_get_parent(d) != nullptr &&
-                            udev_device_get_subsystem(udev_device_get_parent(d)) != nullptr;
-        f->hidden = !physical;
-        f->c = CAT_NETWORK;
-        const char *model = prop(d, "ID_MODEL_FROM_DATABASE");
-        f->name = model != nullptr ? g_strdup_printf("%s (%s)", model, sys)
-                                   : g_strdup_printf("%s (%s)", physical ? "Network adapter"
-                                                                         : "Virtual adapter",
-                                                     sys);
+        gboolean physical = udev_device_get_parent(device) != nullptr &&
+                            udev_device_get_subsystem(udev_device_get_parent(device)) != nullptr;
+        classification->hidden = !physical;
+        classification->c = CAT_NETWORK;
+        const char *model = prop(device, "ID_MODEL_FROM_DATABASE");
+        classification->name =
+            model != nullptr
+                ? g_strdup_printf("%s (%s)", model, sys)
+                : g_strdup_printf("%s (%s)", physical ? "Network adapter" : "Virtual adapter", sys);
         /* The PCI function is already listed; its interface is the same
          * device, so keep only virtual interfaces here. */
         return !physical;
     }
     if (strcmp(sub, "sound") == 0 && g_str_has_prefix(sys, "card")) {
-        struct udev_device *parent = udev_device_get_parent(d);
+        struct udev_device *parent = udev_device_get_parent(device);
         const char *psub = parent != nullptr ? udev_device_get_subsystem(parent) : nullptr;
         if (g_strcmp0(psub, "pci") == 0)
             return FALSE; /* the PCI device is listed */
-        f->c = CAT_SOUND;
-        const char *id = udev_device_get_sysattr_value(d, "id");
+        classification->c = CAT_SOUND;
+        const char *id = udev_device_get_sysattr_value(device, "id");
         char *name = parent != nullptr ? pci_usb_name(parent) : nullptr;
         if (name == nullptr && parent != nullptr && udev_device_get_parent(parent) != nullptr)
             name = pci_usb_name(udev_device_get_parent(parent));
-        f->name = name != nullptr ? name : g_strdup(id != nullptr ? id : sys);
+        classification->name = name != nullptr ? name : g_strdup(id != nullptr ? id : sys);
         return TRUE;
     }
     if (strcmp(sub, "power_supply") == 0) {
-        const char *t = udev_device_get_sysattr_value(d, "type");
-        if (g_strcmp0(t, "Battery") == 0) {
-            const char *model = udev_device_get_sysattr_value(d, "model_name");
-            f->c = CAT_BATTERIES;
-            f->name = g_strdup_printf("%s (%s)", model != nullptr ? model : "Battery", sys);
+        const char *supply_type = udev_device_get_sysattr_value(device, "type");
+        if (g_strcmp0(supply_type, "Battery") == 0) {
+            const char *model = udev_device_get_sysattr_value(device, "model_name");
+            classification->c = CAT_BATTERIES;
+            classification->name =
+                g_strdup_printf("%s (%s)", model != nullptr ? model : "Battery", sys);
             return TRUE;
         }
-        if (g_strcmp0(t, "Mains") == 0) {
-            f->c = CAT_BATTERIES;
-            f->name = g_strdup("AC Adapter");
+        if (g_strcmp0(supply_type, "Mains") == 0) {
+            classification->c = CAT_BATTERIES;
+            classification->name = g_strdup("AC Adapter");
             return TRUE;
         }
         return FALSE;
     }
     if (strcmp(sub, "bluetooth") == 0 && g_str_has_prefix(sys, "hci") && strchr(sys, ':') == nullptr) {
-        f->c = CAT_BLUETOOTH;
-        char *parent = udev_device_get_parent(d) != nullptr
-                           ? pci_usb_name(udev_device_get_parent(d))
+        classification->c = CAT_BLUETOOTH;
+        char *parent = udev_device_get_parent(device) != nullptr
+                           ? pci_usb_name(udev_device_get_parent(device))
                            : nullptr;
-        f->name = parent != nullptr ? parent : g_strdup_printf("Bluetooth radio (%s)", sys);
+        classification->name =
+            parent != nullptr ? parent : g_strdup_printf("Bluetooth radio (%s)", sys);
         return TRUE;
     }
     if (strcmp(sub, "video4linux") == 0) {
-        const char *idx = udev_device_get_sysattr_value(d, "index");
+        const char *idx = udev_device_get_sysattr_value(device, "index");
         if (idx != nullptr && strcmp(idx, "0") != 0)
             return FALSE; /* one entry per camera */
-        const char *name = udev_device_get_sysattr_value(d, "name");
-        f->c = CAT_IMAGING;
-        f->name = g_strdup(name != nullptr ? name : sys);
+        const char *name = udev_device_get_sysattr_value(device, "name");
+        classification->c = CAT_IMAGING;
+        classification->name = g_strdup(name != nullptr ? name : sys);
         return TRUE;
     }
     if (strcmp(sub, "drm") == 0 && strchr(sys, '-') != nullptr) {
-        const char *status = udev_device_get_sysattr_value(d, "status");
+        const char *status = udev_device_get_sysattr_value(device, "status");
         if (g_strcmp0(status, "connected") != 0)
             return FALSE;
-        f->c = CAT_MONITORS;
+        classification->c = CAT_MONITORS;
         const char *conn = strchr(sys, '-') + 1;
-        f->name = g_strdup_printf("Monitor on %s", conn);
+        classification->name = g_strdup_printf("Monitor on %s", conn);
         return TRUE;
     }
     if (strcmp(sub, "cpu") == 0 && g_str_has_prefix(sys, "cpu")) {
-        f->c = CAT_PROCESSORS;
+        classification->c = CAT_PROCESSORS;
         return TRUE; /* named from /proc/cpuinfo by the caller */
     }
     return FALSE;
@@ -314,9 +321,9 @@ static char *cpu_model(void) {
         return g_strdup("Processor");
     char *model = nullptr;
     char **lines = g_strsplit(text, "\n", -1);
-    for (char **l = lines; *l != nullptr && model == nullptr; l++) {
-        if (g_str_has_prefix(*l, "model name")) {
-            char *colon = strchr(*l, ':');
+    for (char **line = lines; *line != nullptr && model == nullptr; line++) {
+        if (g_str_has_prefix(*line, "model name")) {
+            char *colon = strchr(*line, ':');
             if (colon != nullptr)
                 model = g_strdup(g_strstrip(colon + 1));
         }
@@ -326,16 +333,17 @@ static char *cpu_model(void) {
     return model != nullptr ? model : g_strdup("Processor");
 }
 
-static int compare_rows(GtkTreeModel *m, GtkTreeIter *a, GtkTreeIter *b,
+static int compare_rows(GtkTreeModel *model, GtkTreeIter *left, GtkTreeIter *right,
                         [[maybe_unused]] gpointer data) {
-    char *x = nullptr;
-    char *y = nullptr;
-    gtk_tree_model_get(m, a, DM_NAME, &x, -1);
-    gtk_tree_model_get(m, b, DM_NAME, &y, -1);
-    int r = g_utf8_collate(x != nullptr ? x : "", y != nullptr ? y : "");
-    g_free(x);
-    g_free(y);
-    return r;
+    char *left_name = nullptr;
+    char *right_name = nullptr;
+    gtk_tree_model_get(model, left, DM_NAME, &left_name, -1);
+    gtk_tree_model_get(model, right, DM_NAME, &right_name, -1);
+    int order = g_utf8_collate(left_name != nullptr ? left_name : "",
+                               right_name != nullptr ? right_name : "");
+    g_free(left_name);
+    g_free(right_name);
+    return order;
 }
 
 static void fill(devmgr *dm) {
@@ -362,12 +370,13 @@ static void fill(devmgr *dm) {
     /* The Computer category has one entry: the machine itself, named the
      * way Windows XP names it ("ACPI x64-based PC"). */
     {
-        struct utsname u;
-        uname(&u);
-        const char *arch = strcmp(u.machine, "x86_64") == 0 ? "x64"
-                           : g_str_has_prefix(u.machine, "i") && strstr(u.machine, "86") != nullptr
+        struct utsname system_info;
+        uname(&system_info);
+        const char *arch = strcmp(system_info.machine, "x86_64") == 0 ? "x64"
+                           : g_str_has_prefix(system_info.machine, "i") &&
+                                   strstr(system_info.machine, "86") != nullptr
                                ? "x86"
-                               : u.machine;
+                               : system_info.machine;
         gboolean acpi = g_file_test("/sys/firmware/acpi", G_FILE_TEST_IS_DIR);
         char *name = g_strdup_printf("%s%s-based PC", acpi ? "ACPI " : "", arch);
         gtk_tree_store_append(dm->store, &parents[CAT_COMPUTER], &root);
@@ -381,30 +390,32 @@ static void fill(devmgr *dm) {
         g_free(name);
     }
 
-    struct udev_list_entry *e;
-    udev_list_entry_foreach(e, udev_enumerate_get_list_entry(en)) {
-        const char *path = udev_list_entry_get_name(e);
-        struct udev_device *d = udev_device_new_from_syspath(udev, path);
-        if (d == nullptr)
+    struct udev_list_entry *list_entry;
+    udev_list_entry_foreach(list_entry, udev_enumerate_get_list_entry(en)) {
+        const char *path = udev_list_entry_get_name(list_entry);
+        struct udev_device *device = udev_device_new_from_syspath(udev, path);
+        if (device == nullptr)
             continue;
-        found f;
-        if (classify(d, &f) && (!f.hidden || dm->show_hidden)) {
-            if (!have[f.c]) {
-                gtk_tree_store_append(dm->store, &parents[f.c], &root);
-                gtk_tree_store_set(dm->store, &parents[f.c], DM_ICON, cats[f.c].icon, DM_NAME,
-                                   cats[f.c].name, DM_CAT, (int)f.c, -1);
-                have[f.c] = TRUE;
+        found classification;
+        if (classify(device, &classification) && (!classification.hidden || dm->show_hidden)) {
+            if (!have[classification.c]) {
+                gtk_tree_store_append(dm->store, &parents[classification.c], &root);
+                gtk_tree_store_set(dm->store, &parents[classification.c], DM_ICON,
+                                   cats[classification.c].icon, DM_NAME,
+                                   cats[classification.c].name, DM_CAT, (int)classification.c, -1);
+                have[classification.c] = TRUE;
             }
             GtkTreeIter it;
-            gtk_tree_store_append(dm->store, &it, &parents[f.c]);
-            gtk_tree_store_set(dm->store, &it, DM_ICON, cats[f.c].icon, DM_NAME,
-                               f.name != nullptr ? f.name
-                               : f.c == CAT_PROCESSORS ? cpu
-                                                       : udev_device_get_sysname(d),
-                               DM_SYSPATH, path, DM_CAT, (int)f.c, -1);
+            gtk_tree_store_append(dm->store, &it, &parents[classification.c]);
+            gtk_tree_store_set(dm->store, &it, DM_ICON, cats[classification.c].icon, DM_NAME,
+                               classification.name != nullptr ? classification.name
+                               : classification.c == CAT_PROCESSORS
+                                   ? cpu
+                                   : udev_device_get_sysname(device),
+                               DM_SYSPATH, path, DM_CAT, (int)classification.c, -1);
         }
-        g_free(f.name);
-        udev_device_unref(d);
+        g_free(classification.name);
+        udev_device_unref(device);
     }
     g_free(cpu);
     udev_enumerate_unref(en);
@@ -424,25 +435,25 @@ static void fill(devmgr *dm) {
 /* ---- device properties -------------------------------------------------------------- */
 
 static GtkWidget *kv_grid(void) {
-    GtkWidget *g = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(g), 6);
-    gtk_grid_set_column_spacing(GTK_GRID(g), 12);
-    return g;
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    return grid;
 }
 
 static void kv(GtkWidget *grid, int *row, const char *key, const char *value) {
     gtk_grid_attach(GTK_GRID(grid), sysdm_label(key), 0, *row, 1, 1);
-    GtkWidget *v = sysdm_label(value != nullptr ? value : "Not available");
-    gtk_label_set_selectable(GTK_LABEL(v), TRUE);
-    gtk_widget_set_can_focus(v, FALSE);
-    gtk_widget_set_hexpand(v, TRUE);
-    gtk_grid_attach(GTK_GRID(grid), v, 1, (*row)++, 1, 1);
+    GtkWidget *value_label = sysdm_label(value != nullptr ? value : "Not available");
+    gtk_label_set_selectable(GTK_LABEL(value_label), TRUE);
+    gtk_widget_set_can_focus(value_label, FALSE);
+    gtk_widget_set_hexpand(value_label, TRUE);
+    gtk_grid_attach(GTK_GRID(grid), value_label, 1, (*row)++, 1, 1);
 }
 
 static char *link_name(const char *syspath, const char *link) {
-    char *p = g_build_filename(syspath, link, nullptr);
-    char *target = g_file_read_link(p, nullptr);
-    g_free(p);
+    char *link_path = g_build_filename(syspath, link, nullptr);
+    char *target = g_file_read_link(link_path, nullptr);
+    g_free(link_path);
     if (target == nullptr)
         return nullptr;
     char *base = g_path_get_basename(target);
@@ -450,16 +461,16 @@ static char *link_name(const char *syspath, const char *link) {
     return base;
 }
 
-static void device_properties(devmgr *dm, const char *syspath, const char *name, int c) {
+static void device_properties(devmgr *dm, const char *syspath, const char *name, int category) {
     /* Over Device Manager, which outlives the System Properties window
      * that opened it. */
     sysdm over = {.window = dm->window};
     char *title = g_strdup_printf("%s Properties", name);
-    GtkWidget *box = sysdm_dialog(&over, title, cats[c].icon, FALSE, nullptr);
+    GtkWidget *box = sysdm_dialog(&over, title, cats[category].icon, FALSE, nullptr);
     g_free(title);
-    GtkWidget *d = gtk_widget_get_toplevel(box);
-    gtk_window_set_resizable(GTK_WINDOW(d), TRUE);
-    gtk_window_set_default_size(GTK_WINDOW(d), 420, 440);
+    GtkWidget *toplevel = gtk_widget_get_toplevel(box);
+    gtk_window_set_resizable(GTK_WINDOW(toplevel), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(toplevel), 420, 440);
 
     struct udev *udev = udev_new();
     struct udev_device *dev = udev_device_new_from_syspath(udev, syspath);
@@ -470,34 +481,36 @@ static void device_properties(devmgr *dm, const char *syspath, const char *name,
     GtkWidget *gen = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(gen), 12);
     GtkWidget *head = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    gtk_box_pack_start(GTK_BOX(head), gtk_image_new_from_icon_name(cats[c].icon, GTK_ICON_SIZE_DND),
-                       FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(head),
+                       gtk_image_new_from_icon_name(cats[category].icon, GTK_ICON_SIZE_DND), FALSE,
+                       FALSE, 0);
     gtk_box_pack_start(GTK_BOX(head), sysdm_label(name), TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(gen), head, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(gen), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 0);
-    GtkWidget *g = kv_grid();
+    GtkWidget *grid = kv_grid();
     int row = 0;
-    kv(g, &row, "Device type:", cats[c].name);
+    kv(grid, &row, "Device type:", cats[category].name);
     const char *vendor = dev != nullptr ? prop_up(dev, "ID_VENDOR_FROM_DATABASE") : nullptr;
     if (vendor == nullptr && dev != nullptr)
         vendor = prop_up(dev, "ID_VENDOR");
     char *vendor_clean = vendor != nullptr ? clean(vendor) : nullptr;
-    kv(g, &row, "Manufacturer:", vendor_clean);
+    kv(grid, &row, "Manufacturer:", vendor_clean);
     g_free(vendor_clean);
     char *loc = dev != nullptr ? location(dev) : g_strdup("Not available");
-    kv(g, &row, "Location:", loc);
+    kv(grid, &row, "Location:", loc);
     g_free(loc);
-    gtk_box_pack_start(GTK_BOX(gen), g, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(gen), grid, FALSE, FALSE, 0);
     const char *driver = dev != nullptr ? udev_device_get_driver(dev) : nullptr;
     if (driver == nullptr && dev != nullptr && udev_device_get_parent(dev) != nullptr)
         driver = udev_device_get_driver(udev_device_get_parent(dev));
-    GtkWidget *status = sysdm_label(
-        dev == nullptr ? "This device is no longer present."
-        : driver != nullptr || c == CAT_PROCESSORS || c == CAT_COMPUTER || c == CAT_MONITORS ||
-                c == CAT_DISKS || c == CAT_OPTICAL || c == CAT_BATTERIES || c == CAT_KEYBOARDS ||
-                c == CAT_MICE || c == CAT_HID
-            ? "This device is working properly."
-            : "No driver is loaded for this device.");
+    GtkWidget *status =
+        sysdm_label(dev == nullptr ? "This device is no longer present."
+                    : driver != nullptr || category == CAT_PROCESSORS || category == CAT_COMPUTER ||
+                            category == CAT_MONITORS || category == CAT_DISKS ||
+                            category == CAT_OPTICAL || category == CAT_BATTERIES ||
+                            category == CAT_KEYBOARDS || category == CAT_MICE || category == CAT_HID
+                        ? "This device is working properly."
+                        : "No driver is loaded for this device.");
     gtk_box_pack_start(GTK_BOX(gen), sysdm_group("Device status", status), FALSE, FALSE, 0);
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), gen, gtk_label_new("General"));
 
@@ -526,12 +539,12 @@ static void device_properties(devmgr *dm, const char *syspath, const char *name,
     /* Details: every udev property, Linux's equivalent of Windows' list. */
     GtkListStore *ls = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_STRING);
     if (dev != nullptr) {
-        struct udev_list_entry *e;
-        udev_list_entry_foreach(e, udev_device_get_properties_list_entry(dev)) {
+        struct udev_list_entry *list_entry;
+        udev_list_entry_foreach(list_entry, udev_device_get_properties_list_entry(dev)) {
             GtkTreeIter it;
             gtk_list_store_append(ls, &it);
-            gtk_list_store_set(ls, &it, 0, udev_list_entry_get_name(e), 1,
-                               udev_list_entry_get_value(e), -1);
+            gtk_list_store_set(ls, &it, 0, udev_list_entry_get_name(list_entry), 1,
+                               udev_list_entry_get_value(list_entry), -1);
         }
     }
     GtkWidget *tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(ls));
@@ -552,23 +565,23 @@ static void device_properties(devmgr *dm, const char *syspath, const char *name,
     if (dev != nullptr)
         udev_device_unref(dev);
     udev_unref(udev);
-    gtk_widget_show_all(d);
+    gtk_widget_show_all(toplevel);
 }
 
 static void open_selected(devmgr *dm) {
-    GtkTreeModel *m = nullptr;
+    GtkTreeModel *model = nullptr;
     GtkTreeIter it;
-    if (!gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(dm->view)), &m,
-                                         &it))
+    if (!gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(dm->view)),
+                                         &model, &it))
         return;
     char *path = nullptr;
     char *name = nullptr;
-    int c = -1;
-    gtk_tree_model_get(m, &it, DM_SYSPATH, &path, DM_NAME, &name, DM_CAT, &c, -1);
-    if (path != nullptr && c >= 0)
-        device_properties(dm, path, name, c);
+    int category = -1;
+    gtk_tree_model_get(model, &it, DM_SYSPATH, &path, DM_NAME, &name, DM_CAT, &category, -1);
+    if (path != nullptr && category >= 0)
+        device_properties(dm, path, name, category);
     else {
-        GtkTreePath *tp = gtk_tree_model_get_path(m, &it);
+        GtkTreePath *tp = gtk_tree_model_get_path(model, &it);
         if (gtk_tree_view_row_expanded(GTK_TREE_VIEW(dm->view), tp))
             gtk_tree_view_collapse_row(GTK_TREE_VIEW(dm->view), tp);
         else
@@ -579,41 +592,42 @@ static void open_selected(devmgr *dm) {
     g_free(name);
 }
 
-static void on_row_activated([[maybe_unused]] GtkTreeView *v, [[maybe_unused]] GtkTreePath *p,
-                             [[maybe_unused]] GtkTreeViewColumn *c, gpointer data) {
+static void on_row_activated([[maybe_unused]] GtkTreeView *tree_view,
+                             [[maybe_unused]] GtkTreePath *path,
+                             [[maybe_unused]] GtkTreeViewColumn *column, gpointer data) {
     open_selected(data);
 }
 
-static void on_menu_properties([[maybe_unused]] GtkMenuItem *i, gpointer data) {
+static void on_menu_properties([[maybe_unused]] GtkMenuItem *menu_item, gpointer data) {
     open_selected(data);
 }
 
-static void on_menu_scan([[maybe_unused]] GtkMenuItem *i, gpointer data) { fill(data); }
+static void on_menu_scan([[maybe_unused]] GtkMenuItem *menu_item, gpointer data) { fill(data); }
 
-static void on_menu_hidden(GtkCheckMenuItem *i, gpointer data) {
+static void on_menu_hidden(GtkCheckMenuItem *menu_item, gpointer data) {
     devmgr *dm = data;
-    dm->show_hidden = gtk_check_menu_item_get_active(i);
+    dm->show_hidden = gtk_check_menu_item_get_active(menu_item);
     fill(dm);
 }
 
-static void on_menu_close([[maybe_unused]] GtkMenuItem *i, gpointer data) {
+static void on_menu_close([[maybe_unused]] GtkMenuItem *menu_item, gpointer data) {
     devmgr *dm = data;
     gtk_widget_destroy(dm->window);
 }
 
-static void on_devmgr_destroy([[maybe_unused]] GtkWidget *w, gpointer data) { g_free(data); }
+static void on_devmgr_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) { g_free(data); }
 
 static GtkWidget *menu_item(GtkWidget *menu, const char *label, GCallback cb, gpointer data) {
-    GtkWidget *i = gtk_menu_item_new_with_mnemonic(label);
-    g_signal_connect(i, "activate", cb, data);
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu), i);
-    return i;
+    GtkWidget *widget = gtk_menu_item_new_with_mnemonic(label);
+    g_signal_connect(widget, "activate", cb, data);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), widget);
+    return widget;
 }
 
-void sysdm_device_manager(sysdm *s) {
+void sysdm_device_manager(sysdm *properties) {
     devmgr *dm = g_new0(devmgr, 1);
     dm->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_application(GTK_WINDOW(dm->window), s->app);
+    gtk_window_set_application(GTK_WINDOW(dm->window), properties->app);
     gtk_window_set_title(GTK_WINDOW(dm->window), "Device Manager");
     gtk_window_set_icon_name(GTK_WINDOW(dm->window), "computer");
     gtk_window_set_default_size(GTK_WINDOW(dm->window), 480, 520);
@@ -663,13 +677,14 @@ void sysdm_device_manager(sysdm *s) {
 
 /* ---- Kernel Modules ------------------------------------------------------------------ */
 
-static void on_modules([[maybe_unused]] GtkButton *b, gpointer data) {
-    sysdm *s = data;
-    GtkWidget *d = nullptr;
-    GtkWidget *box = sysdm_dialog(s, "Kernel Modules", "application-x-sharedlib", FALSE, nullptr);
-    d = gtk_widget_get_toplevel(box);
-    gtk_window_set_resizable(GTK_WINDOW(d), TRUE);
-    gtk_window_set_default_size(GTK_WINDOW(d), 440, 460);
+static void on_modules([[maybe_unused]] GtkButton *button, gpointer data) {
+    sysdm *properties = data;
+    GtkWidget *widget = nullptr;
+    GtkWidget *box =
+        sysdm_dialog(properties, "Kernel Modules", "application-x-sharedlib", FALSE, nullptr);
+    widget = gtk_widget_get_toplevel(box);
+    gtk_window_set_resizable(GTK_WINDOW(widget), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(widget), 440, 460);
     gtk_box_pack_start(GTK_BOX(box),
                        sysdm_label("Linux finds drivers for your hardware by itself and loads them "
                                    "as kernel modules. These modules are loaded now:"),
@@ -678,18 +693,19 @@ static void on_modules([[maybe_unused]] GtkButton *b, gpointer data) {
     char *text = nullptr;
     if (g_file_get_contents("/proc/modules", &text, nullptr, nullptr)) {
         char **lines = g_strsplit(text, "\n", -1);
-        for (char **l = lines; *l != nullptr; l++) {
-            char **f = g_strsplit(*l, " ", 6);
-            if (g_strv_length(f) >= 4) {
-                char *users = g_strdup(strcmp(f[3], "-") == 0 ? "" : f[3]);
+        for (char **line = lines; *line != nullptr; line++) {
+            char **fields = g_strsplit(*line, " ", 6);
+            if (g_strv_length(fields) >= 4) {
+                char *users = g_strdup(strcmp(fields[3], "-") == 0 ? "" : fields[3]);
                 g_strdelimit(users, ",", ' ');
                 GtkTreeIter it;
                 gtk_list_store_append(ls, &it);
-                gtk_list_store_set(ls, &it, 0, f[0], 1, g_ascii_strtoull(f[1], nullptr, 10) / 1024,
-                                   2, g_strstrip(users), -1);
+                gtk_list_store_set(ls, &it, 0, fields[0], 1,
+                                   g_ascii_strtoull(fields[1], nullptr, 10) / 1024, 2,
+                                   g_strstrip(users), -1);
                 g_free(users);
             }
-            g_strfreev(f);
+            g_strfreev(fields);
         }
         g_strfreev(lines);
         g_free(text);
@@ -709,7 +725,7 @@ static void on_modules([[maybe_unused]] GtkButton *b, gpointer data) {
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
     gtk_container_add(GTK_CONTAINER(sc), tv);
     gtk_box_pack_start(GTK_BOX(box), sc, TRUE, TRUE, 0);
-    gtk_widget_show_all(d);
+    gtk_widget_show_all(widget);
 }
 
 /* ---- Driver Signing -------------------------------------------------------------------- */
@@ -725,14 +741,15 @@ static GBytes *efi_var(const char *name) {
         g_free(data);
         return nullptr;
     }
-    GBytes *b = g_bytes_new(data + 4, len - 4);
+    GBytes *bytes = g_bytes_new(data + 4, len - 4);
     g_free(data);
-    return b;
+    return bytes;
 }
 
-static void on_signing([[maybe_unused]] GtkButton *b, gpointer data) {
-    sysdm *s = data;
-    GtkWidget *box = sysdm_dialog(s, "Driver Signing Options", "security-high", FALSE, nullptr);
+static void on_signing([[maybe_unused]] GtkButton *button, gpointer data) {
+    sysdm *properties = data;
+    GtkWidget *box =
+        sysdm_dialog(properties, "Driver Signing Options", "security-high", FALSE, nullptr);
     gtk_box_pack_start(GTK_BOX(box),
                        sysdm_label("Linux can check that kernel modules (drivers) are signed by "
                                    "your distribution. These settings come from the firmware and "
@@ -775,9 +792,9 @@ static void on_signing([[maybe_unused]] GtkButton *b, gpointer data) {
                                    radios),
                        FALSE, FALSE, 0);
 
-    GtkWidget *g = kv_grid();
+    GtkWidget *widget = kv_grid();
     int row = 0;
-    kv(g, &row, "Secure Boot:", secure);
+    kv(widget, &row, "Secure Boot:", secure);
     char *lock = nullptr;
     if (lockdown != nullptr) {
         /* "[none] integrity confidentiality": the bracketed one is active. */
@@ -786,21 +803,21 @@ static void on_signing([[maybe_unused]] GtkButton *b, gpointer data) {
         if (close != nullptr)
             lock = g_strndup(open + 1, (gsize)(close - open - 1));
     }
-    kv(g, &row, "Kernel lockdown:", lock != nullptr ? lock : "Unknown");
-    GString *t = g_string_new(nullptr);
+    kv(widget, &row, "Kernel lockdown:", lock != nullptr ? lock : "Unknown");
+    GString *string = g_string_new(nullptr);
     if (tainted == 0)
-        g_string_append(t, "No");
+        g_string_append(string, "No");
     if (tainted & 1)
-        g_string_append(t, "Proprietary module loaded. ");
+        g_string_append(string, "Proprietary module loaded. ");
     if (tainted & (1u << 12))
-        g_string_append(t, "Out-of-tree module loaded. ");
+        g_string_append(string, "Out-of-tree module loaded. ");
     if (tainted & (1u << 13))
-        g_string_append(t, "Unsigned module loaded. ");
-    if (tainted != 0 && t->len == 0)
-        g_string_append_printf(t, "Yes (flags %" G_GUINT64_FORMAT ")", tainted);
-    kv(g, &row, "Kernel tainted:", g_strstrip(t->str));
-    gtk_box_pack_start(GTK_BOX(box), sysdm_group("Status", g), FALSE, FALSE, 0);
-    g_string_free(t, TRUE);
+        g_string_append(string, "Unsigned module loaded. ");
+    if (tainted != 0 && string->len == 0)
+        g_string_append_printf(string, "Yes (flags %" G_GUINT64_FORMAT ")", tainted);
+    kv(widget, &row, "Kernel tainted:", g_strstrip(string->str));
+    gtk_box_pack_start(GTK_BOX(box), sysdm_group("Status", widget), FALSE, FALSE, 0);
+    g_string_free(string, TRUE);
     g_free(lock);
     g_free(enforce);
     g_free(lockdown);
@@ -819,49 +836,51 @@ typedef struct power_dlg {
     gboolean busy; /* setting the profile */
 } power_dlg;
 
-static void power_close(power_dlg *p) {
-    gtk_widget_destroy(p->dialog);
-    g_slist_free(p->radios);
-    g_object_unref(p->proxy);
-    g_free(p);
+static void power_close(power_dlg *power_dialog) {
+    gtk_widget_destroy(power_dialog->dialog);
+    g_slist_free(power_dialog->radios);
+    g_object_unref(power_dialog->proxy);
+    g_free(power_dialog);
 }
 
 static void power_set(GObject *src, GAsyncResult *res, gpointer data) {
-    power_dlg *p = data;
+    power_dlg *power_dialog = data;
     GError *err = nullptr;
-    GVariant *r = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &err);
-    p->busy = FALSE;
-    gtk_widget_set_sensitive(p->dialog, TRUE);
-    if (r == nullptr) {
+    GVariant *variant = g_dbus_proxy_call_finish(G_DBUS_PROXY(src), res, &err);
+    power_dialog->busy = FALSE;
+    gtk_widget_set_sensitive(power_dialog->dialog, TRUE);
+    if (variant == nullptr) {
         g_dbus_error_strip_remote_error(err);
-        xd_message_box(GTK_WINDOW(p->dialog), "Power Profiles", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       err->message);
+        xd_message_box(GTK_WINDOW(power_dialog->dialog), "Power Profiles", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, err->message);
         g_error_free(err);
         return;
     }
-    g_variant_unref(r);
-    power_close(p);
+    g_variant_unref(variant);
+    power_close(power_dialog);
 }
 
-static void on_power_response([[maybe_unused]] GtkDialog *d, int response, gpointer data) {
-    power_dlg *p = data;
-    if (p->busy)
+static void on_power_response([[maybe_unused]] GtkDialog *gtk_dialog, int response, gpointer data) {
+    power_dlg *power_dialog = data;
+    if (power_dialog->busy)
         return; /* closes once the profile is set */
-    for (GSList *l = p->radios; response == GTK_RESPONSE_OK && l != nullptr; l = l->next) {
-        if (!gtk_toggle_button_get_active(l->data))
+    for (GSList *list = power_dialog->radios; response == GTK_RESPONSE_OK && list != nullptr;
+         list = list->next) {
+        if (!gtk_toggle_button_get_active(list->data))
             continue;
-        const char *profile = g_object_get_data(l->data, "profile");
+        const char *profile = g_object_get_data(list->data, "profile");
         /* Not waiting for it: polkit may ask for a password. */
-        p->busy = TRUE;
-        gtk_widget_set_sensitive(p->dialog, FALSE);
-        g_dbus_proxy_call(p->proxy, "org.freedesktop.DBus.Properties.Set",
-                          g_variant_new("(ssv)", g_dbus_proxy_get_interface_name(p->proxy),
+        power_dialog->busy = TRUE;
+        gtk_widget_set_sensitive(power_dialog->dialog, FALSE);
+        g_dbus_proxy_call(power_dialog->proxy, "org.freedesktop.DBus.Properties.Set",
+                          g_variant_new("(ssv)",
+                                        g_dbus_proxy_get_interface_name(power_dialog->proxy),
                                         "ActiveProfile", g_variant_new_string(profile)),
                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, 120000, nullptr,
-                          power_set, p);
+                          power_set, power_dialog);
         return;
     }
-    power_close(p);
+    power_close(power_dialog);
 }
 
 static const char *profile_label(const char *id) {
@@ -874,8 +893,8 @@ static const char *profile_label(const char *id) {
     return id;
 }
 
-static void on_power(GtkButton *b, gpointer data) {
-    sysdm *s = data;
+static void on_power(GtkButton *button, gpointer data) {
+    sysdm *properties = data;
     GDBusProxy *proxy = g_dbus_proxy_new_for_bus_sync(
         G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, "org.freedesktop.UPower.PowerProfiles",
         "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles", nullptr,
@@ -884,19 +903,21 @@ static void on_power(GtkButton *b, gpointer data) {
                                           : nullptr;
     if (profiles == nullptr) {
         g_clear_object(&proxy);
-        xd_message_box(GTK_WINDOW(s->window), "Power Profiles", XD_MB_INFO, XD_MB_OK, FALSE,
+        xd_message_box(GTK_WINDOW(properties->window), "Power Profiles", XD_MB_INFO, XD_MB_OK,
+                       FALSE,
                        "Power profiles aren't available. Install and start "
                        "power-profiles-daemon (or tuned-ppd) to use them.");
-        gtk_widget_set_sensitive(GTK_WIDGET(b), FALSE);
+        gtk_widget_set_sensitive(GTK_WIDGET(button), FALSE);
         return;
     }
     GVariant *active_v = g_dbus_proxy_get_cached_property(proxy, "ActiveProfile");
     const char *active = active_v != nullptr ? g_variant_get_string(active_v, nullptr) : "";
 
-    power_dlg *p = g_new0(power_dlg, 1);
-    p->proxy = proxy;
-    GtkWidget *box = sysdm_dialog(s, "Power Profiles", "preferences-system-power-management", TRUE,
-                                  &p->dialog);
+    power_dlg *power_dialog = g_new0(power_dlg, 1);
+    power_dialog->proxy = proxy;
+    GtkWidget *box =
+        sysdm_dialog(properties, "Power Profiles", "preferences-system-power-management", TRUE,
+                     &power_dialog->dialog);
     gtk_box_pack_start(GTK_BOX(box),
                        sysdm_label("Power profiles trade speed against power use and heat. "
                                    "Choose how this computer should run:"),
@@ -909,22 +930,22 @@ static void on_power(GtkButton *b, gpointer data) {
     while ((dict = g_variant_iter_next_value(&it)) != nullptr) {
         const char *id = nullptr;
         if (g_variant_lookup(dict, "Profile", "&s", &id)) {
-            GtkWidget *r = first == nullptr
-                               ? gtk_radio_button_new_with_label(nullptr, profile_label(id))
-                               : gtk_radio_button_new_with_label_from_widget(
-                                     GTK_RADIO_BUTTON(first), profile_label(id));
+            GtkWidget *radio = first == nullptr
+                                   ? gtk_radio_button_new_with_label(nullptr, profile_label(id))
+                                   : gtk_radio_button_new_with_label_from_widget(
+                                         GTK_RADIO_BUTTON(first), profile_label(id));
             if (first == nullptr)
-                first = r;
-            g_object_set_data_full(G_OBJECT(r), "profile", g_strdup(id), g_free);
-            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(r), strcmp(id, active) == 0);
-            gtk_box_pack_start(GTK_BOX(radios), r, FALSE, FALSE, 0);
-            p->radios = g_slist_append(p->radios, r);
+                first = radio;
+            g_object_set_data_full(G_OBJECT(radio), "profile", g_strdup(id), g_free);
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio), strcmp(id, active) == 0);
+            gtk_box_pack_start(GTK_BOX(radios), radio, FALSE, FALSE, 0);
+            power_dialog->radios = g_slist_append(power_dialog->radios, radio);
         }
         g_variant_unref(dict);
     }
     gtk_box_pack_start(GTK_BOX(box), sysdm_group("Power profile", radios), FALSE, FALSE, 0);
-    g_signal_connect(p->dialog, "response", G_CALLBACK(on_power_response), p);
-    gtk_widget_show_all(p->dialog);
+    g_signal_connect(power_dialog->dialog, "response", G_CALLBACK(on_power_response), power_dialog);
+    gtk_widget_show_all(power_dialog->dialog);
     g_variant_unref(profiles);
     if (active_v != nullptr)
         g_variant_unref(active_v);
@@ -932,40 +953,41 @@ static void on_power(GtkButton *b, gpointer data) {
 
 /* ---- the tab ------------------------------------------------------------------------- */
 
-static void on_devmgr([[maybe_unused]] GtkButton *b, gpointer data) { sysdm_device_manager(data); }
+static void on_devmgr([[maybe_unused]] GtkButton *button, gpointer data) {
+    sysdm_device_manager(data);
+}
 
-GtkWidget *sysdm_hardware_page(sysdm *s) {
+GtkWidget *sysdm_hardware_page(sysdm *properties) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 12);
     gtk_box_pack_start(
         GTK_BOX(page),
-        sysdm_group_with_icon("Drivers", "application-x-sharedlib",
-                              "Linux finds and loads the drivers your hardware needs by itself. "
-                              "Kernel Modules lists the drivers loaded now.",
-                              sysdm_button_row(sysdm_button("_Kernel Modules...",
-                                                            G_CALLBACK(on_modules), s),
-                                               nullptr)),
+        sysdm_group_with_icon(
+            "Drivers", "application-x-sharedlib",
+            "Linux finds and loads the drivers your hardware needs by itself. "
+            "Kernel Modules lists the drivers loaded now.",
+            sysdm_button_row(sysdm_button("_Kernel Modules...", G_CALLBACK(on_modules), properties),
+                             nullptr)),
         FALSE, FALSE, 0);
     gtk_box_pack_start(
         GTK_BOX(page),
-        sysdm_group_with_icon("Device Manager", "computer",
-                              "The Device Manager lists all the hardware devices installed on "
-                              "your computer. Use the Device Manager to see the properties of "
-                              "any device.",
-                              sysdm_button_row(sysdm_button("_Driver Signing...",
-                                                            G_CALLBACK(on_signing), s),
-                                               sysdm_button("D_evice Manager...",
-                                                            G_CALLBACK(on_devmgr), s),
-                                               nullptr)),
+        sysdm_group_with_icon(
+            "Device Manager", "computer",
+            "The Device Manager lists all the hardware devices installed on "
+            "your computer. Use the Device Manager to see the properties of "
+            "any device.",
+            sysdm_button_row(sysdm_button("_Driver Signing...", G_CALLBACK(on_signing), properties),
+                             sysdm_button("D_evice Manager...", G_CALLBACK(on_devmgr), properties),
+                             nullptr)),
         FALSE, FALSE, 0);
     gtk_box_pack_start(
         GTK_BOX(page),
-        sysdm_group_with_icon("Power Profiles", "preferences-system-power-management",
-                              "Power profiles set how fast this computer runs against how much "
-                              "power it uses.",
-                              sysdm_button_row(sysdm_button("_Power Profiles...",
-                                                            G_CALLBACK(on_power), s),
-                                               nullptr)),
+        sysdm_group_with_icon(
+            "Power Profiles", "preferences-system-power-management",
+            "Power profiles set how fast this computer runs against how much "
+            "power it uses.",
+            sysdm_button_row(sysdm_button("_Power Profiles...", G_CALLBACK(on_power), properties),
+                             nullptr)),
         FALSE, FALSE, 0);
     return page;
 }

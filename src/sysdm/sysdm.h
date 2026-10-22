@@ -47,10 +47,10 @@ GtkWidget *sysdm_button_row(GtkWidget *first, ...) G_GNUC_NULL_TERMINATED;
 GtkWidget *sysdm_button(const char *label, GCallback cb, gpointer data);
 /* A fixed-size dialog over the System Properties window, with OK (and
  * Cancel if `cancel`). Returns the content box. */
-GtkWidget *sysdm_dialog(sysdm *s, const char *title, const char *icon, gboolean cancel,
+GtkWidget *sysdm_dialog(sysdm *properties, const char *title, const char *icon, gboolean cancel,
                         GtkWidget **dialog_out);
 /* "1,234,567" */
-char *sysdm_grouped(guint64 v);
+char *sysdm_grouped(guint64 value);
 /* Reads a small text file; nullptr if it can't. Trailing newline removed. */
 char *sysdm_read_line(const char *path);
 /* An error box: `what` failed (a system service's D-Bus call), why, and
@@ -58,9 +58,9 @@ char *sysdm_read_line(const char *path);
 void sysdm_call_failed(GtkWindow *parent, const char *what, GError *err);
 
 /* ---- tabs ---- */
-GtkWidget *sysdm_hardware_page(sysdm *s);
-GtkWidget *sysdm_advanced_page(sysdm *s);
+GtkWidget *sysdm_hardware_page(sysdm *properties);
+GtkWidget *sysdm_advanced_page(sysdm *properties);
 /* The Device Manager window (also `xd-sysdm --devmgr`). */
-void sysdm_device_manager(sysdm *s);
+void sysdm_device_manager(sysdm *properties);
 
 #endif
