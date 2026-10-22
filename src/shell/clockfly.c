@@ -483,6 +483,7 @@ void xd_clock_flyout_toggle(xd_taskbar *bar, xd_rect anchor, uint32_t serial) {
     xd_shell *shell = bar->shell;
     xd_menu_close_all(shell);
     xd_volume_flyout_dismiss(shell);
+    xd_notify_flyout_dismiss(shell);
     /* A second click on the clock closes it: the press already did. */
     if (the_flyout != nullptr) {
         close_flyout(the_flyout);

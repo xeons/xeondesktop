@@ -1028,6 +1028,142 @@ GLib.MainLoop().run()
 """
 
 
+# A program sending one notification (org.freedesktop.Notifications'
+# Notify): argv log, summary, body, expire_timeout, then action key and
+# label pairs. It writes "id N", then the signals it hears of it, a line
+# each ("ActionInvoked N key", "NotificationClosed N reason"), and ends
+# once it's closed; with "--once" for the actions, at once (notify-send).
+NOTIFY_CLIENT = r"""
+import sys
+import gi
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib
+
+log, summary, body, expire = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+actions = sys.argv[5:]
+once = actions == ["--once"]
+if once:
+    actions = []
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+loop = GLib.MainLoop()
+mine = {}
+
+def write(line):
+    with open(log, "a") as f:
+        f.write(line + "\n")
+
+def on_signal(conn, sender, path, iface, name, params):
+    values = params.unpack()
+    if values[0] != mine.get("id"):
+        return
+    write(name + " " + " ".join(str(v) for v in values))
+    if name == "NotificationClosed":
+        loop.quit()
+
+for name in ("ActionInvoked", "NotificationClosed"):
+    bus.signal_subscribe(None, "org.freedesktop.Notifications", name,
+                         "/org/freedesktop/Notifications", None, 0, on_signal)
+reply = bus.call_sync("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                      "org.freedesktop.Notifications", "Notify",
+                      GLib.Variant("(susssasa{sv}i)", ("Backup", 0, "dialog-information",
+                                   summary, body, actions,
+                                   {"desktop-entry": GLib.Variant("s", "org.xeondesktop.Files")},
+                                   expire)),
+                      GLib.VariantType("(u)"), 0, 5000, None)
+mine["id"] = reply.unpack()[0]
+write("id " + str(mine["id"]))
+if once:
+    sys.exit(0)
+GLib.timeout_add_seconds(60, loop.quit)
+loop.run()
+"""
+
+
+def notified(log):
+    """The notification client's log lines."""
+    return open(log).read().split("\n")[:-1] if os.path.exists(log) else []
+
+
+@scenario(LUNA_INI)
+def notification_balloons(s):
+    """Programs' notifications as XP's balloons from the notification
+    area: a click on one tells its program (its default action) and puts
+    it away; one that times out tells its program it expired and stays in
+    the history, which the notifications' icon opens; with Do Not Disturb
+    on, they go straight to the history, unseen."""
+    before = s.settle("desktop")
+    above_tray = (WIDTH - 420, HEIGHT - 330, 420, 300)
+    first = os.path.join(s.base, "first")
+    s.launch(sys.executable, "-c", NOTIFY_CLIENT, first, "Backup finished",
+             "All your files were copied to the <b>backup</b> drive.", "-1", "default", "Open")
+    shot, box = wait_change(s, before, above_tray, "the notification's balloon", "balloon")
+    s.check(box is not None and box[0] + box[2] > WIDTH - 60 and box[1] + box[3] >= HEIGHT - 40,
+            f"a balloon pointing into the notification area ({box})")  # fmt: skip
+    s.log("ok: the notification showed as a balloon")
+    # The stem's tip, over the notifications' icon.
+    icon_x, icon_y = box[0] + box[2] - 16, HEIGHT - 14
+    s.inject("move", box[0] + box[2] // 2, box[1] + 36, "sleep", 300, "click")
+    s.wait(lambda: notified(first)[1:] == ["ActionInvoked 1 default", "NotificationClosed 1 2"],
+           "the click to reach the program (default action, then closed)")  # fmt: skip
+    s.wait(lambda: s.shot("gone").differs(before, above_tray) < 0.01, "the balloon to go")
+    s.log("ok: a click told the program and put the balloon away")
+
+    second = os.path.join(s.base, "second")
+    s.launch(sys.executable, "-c", NOTIFY_CLIENT, second, "Download complete",
+             "report.pdf", "1000")
+    wait_change(s, before, above_tray, "the second balloon", "second")
+    s.inject("move", WIDTH // 2, HEIGHT // 2)
+    s.wait(lambda: notified(second)[1:] == ["NotificationClosed 2 1"],
+           "the program to hear it expired", timeout=15)  # fmt: skip
+    s.wait(lambda: s.shot("expired").differs(before, (WIDTH - 420, HEIGHT - 330, 420, 290)) < 0.01,
+           "the second balloon to go")  # fmt: skip
+    s.log("ok: a balloon timed out as its program asked")
+
+    closed = s.settle("closed")
+    s.inject("move", icon_x, icon_y, "click")
+    history_area = (WIDTH - 420, HEIGHT - 480, 420, 450)
+    history, panel = wait_change(s, closed, history_area, "the history", "history")
+    s.check(panel is not None and panel[3] >= 400, f"the history opened ({panel})")
+    s.log("ok: the notifications' icon opened the history")
+    s.inject("key", "Escape")
+    s.wait(lambda: s.shot("history-closed").differs(closed, history_area) < 0.01,
+           "Esc to close the history")  # fmt: skip
+
+    with open(os.path.join(s.config, "desktop.ini"), "a") as f:
+        f.write("\n[Taskbar]\nDoNotDisturb=true\n")
+    time.sleep(1.5)
+    quiet = s.settle("quiet")
+    third = os.path.join(s.base, "third")
+    s.launch(sys.executable, "-c", NOTIFY_CLIENT, third, "Quiet one", "Not now", "-1")
+    s.wait(lambda: notified(third)[:1] == ["id 3"], "the third notification to be taken")
+    time.sleep(2)
+    s.check(s.shot("unseen").differs(quiet, above_tray) < 0.01,
+            "Do Not Disturb: no balloon")  # fmt: skip
+    kept = os.path.join(os.environ["XDG_STATE_HOME"], "xeondesktop", "notifications.ini")
+
+    def kept_unread():
+        if not os.path.exists(kept):
+            return False
+        c = configparser.ConfigParser(interpolation=None)
+        c.read(kept)
+        return any(c[g].get("Summary") == "Quiet one" and c[g].get("Unread") == "true"
+                   for g in c.sections())
+
+    s.wait(kept_unread, "the quiet one in the history, unread")
+    s.log("ok: with Do Not Disturb on, it went to the history unseen")
+
+    # Do Not Disturb off; a program that's gone by the time it shows.
+    with open(os.path.join(s.config, "desktop.ini"), "w") as f:
+        f.write(LUNA_INI)
+    time.sleep(1.5)
+    loud = s.settle("loud")
+    fourth = os.path.join(s.base, "fourth")
+    s.launch(sys.executable, "-c", NOTIFY_CLIENT, fourth, "Sent and gone", "Like notify-send",
+             "-1", "--once")
+    wait_change(s, loud, above_tray, "the balloon of a program that's gone", "gone-program")
+    s.log("ok: a program that left at once still got its balloon")
+
+
 @scenario(AERO_INI)
 def superbar_media_buttons(s):
     """Aero: a media player (MPRIS) of a program with one window puts

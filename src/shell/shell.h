@@ -17,6 +17,7 @@
 #include "apps.h"
 #include "../ui/icons.h"
 #include "menu.h"
+#include "notices.h"
 #include "../ui/protocols.h"
 
 typedef struct xd_shell xd_shell;
@@ -31,6 +32,7 @@ typedef struct xd_primary xd_primary;
 typedef struct xd_langbar xd_langbar;
 typedef struct xd_account xd_account;
 typedef struct xd_shellbus xd_shellbus;
+typedef struct xd_notifyd xd_notifyd;
 typedef struct xd_superbar xd_superbar;
 typedef struct xd_thumbs xd_thumbs;
 typedef struct xd_identify xd_identify;
@@ -58,6 +60,7 @@ typedef struct xd_toplevel {
     bool activated;
     bool minimized;
     bool maximized;
+    bool fullscreen;
     /* Asked for attention: the button flashes `flashes` more half-cycles
      * (lit on even counts), then stays lit until the window is activated. */
     bool attention;
@@ -278,6 +281,7 @@ struct xd_shell {
     bool pointer_start7;    /* pointer is over start7 */
     bool pointer_flyout;         /* pointer is over the volume flyout */
     bool pointer_clock; /* pointer is over the clock flyout */
+    bool pointer_notify; /* pointer is over the notification history */
     bool eat_release; /* the press closed a menu: its release goes nowhere */
     xd_desktop *pointer_desktop; /* a desktop under the pointer */
     struct xd_deskicons *deskicons;
@@ -316,6 +320,7 @@ struct xd_shell {
      * connected to). */
     bool standalone;
     xd_shellbus *shellbus; /* org.xeondesktop.Shell (shellbus.c) */
+    xd_notifyd *notifyd;   /* org.freedesktop.Notifications (notifyd.c) */
 
     xd_quicklaunch quicklaunch;
     /* Windows minimized by Show Desktop, restored by the next click. */
@@ -502,8 +507,38 @@ void xd_balloon_tray(xd_shell *shell, const char *item, const char *icon, const 
                      void *data);
 /* Hides `item`'s balloon, if it's showing or waiting to. */
 void xd_balloon_hide_tray(xd_shell *shell, const char *item);
-/* The pointer over the balloon (surface-local logical). */
+/* The pointer over the balloon (surface-local logical), or gone from it:
+ * it doesn't time out while the pointer is over it. */
 void xd_balloon_pointer_motion(xd_shell *shell, double x, double y);
+void xd_balloon_pointer_leave(xd_shell *shell);
+/* How a notification's balloon went. */
+typedef enum xd_balloon_end : uint8_t {
+    XD_BALLOON_TIMED_OUT,
+    XD_BALLOON_CLOSED,  /* its close box */
+    XD_BALLOON_CLICKED, /* anywhere else on it */
+    XD_BALLOON_ACTION,  /* one of its links */
+    XD_BALLOON_HIDDEN,  /* put away: another balloon, the Start menu, no taskbar */
+} xd_balloon_end;
+/* A program's notification as a balloon pointing at the notification
+ * area icon `item`: `icon` (or `image`, at the left) and a bold `title`,
+ * the `text` wrapped under, the `buttons`' labels as links under that.
+ * It goes after `seconds` (0: not by itself); then, or when it's clicked
+ * or put away, `ended` is called (once), with the link's index for
+ * XD_BALLOON_ACTION. It replaces any other balloon. */
+typedef struct xd_balloon_notice {
+    const char *item;
+    const char *icon;
+    cairo_surface_t *image; /* referenced while shown */
+    const char *title, *text;
+    const char *const *buttons;
+    size_t button_count;
+    unsigned seconds;
+    void (*ended)(xd_shell *shell, xd_balloon_end end, size_t button, void *data);
+    void *data;
+} xd_balloon_notice;
+void xd_balloon_notify(xd_shell *shell, const xd_balloon_notice *notice);
+/* A balloon is showing, or waiting for a taskbar to show on. */
+bool xd_balloon_busy(const xd_shell *shell);
 /* startmenu.c: Control Panel's applets, by name (all three Start menus). */
 xd_menu_model *xd_start_control_model(xd_shell *shell, xd_menu_tree *tree);
 
@@ -637,6 +672,40 @@ void xd_clock_flyout_button(xd_shell *shell, uint32_t button, bool pressed, doub
 bool xd_clock_flyout_key(xd_shell *shell, uint32_t sym);
 void xd_clock_flyout_dismiss(xd_shell *shell);
 void xd_clock_flyout_render_dirty(xd_shell *shell);
+
+/* notifyd.c: programs' notifications (org.freedesktop.Notifications), as
+ * balloons from a notification area icon of their own, and the history
+ * of the ones missed. */
+void xd_notifyd_init(xd_shell *shell);
+void xd_notifyd_finish(xd_shell *shell);
+/* A balloon went: a notification waiting may show now. */
+void xd_notifyd_balloon_gone(xd_shell *shell);
+/* The history, newest first. */
+size_t xd_notifyd_count(const xd_shell *shell);
+const xd_notice *xd_notifyd_get(const xd_shell *shell, size_t index);
+/* Clicked in the history: its program told (or opened); then it's gone. */
+void xd_notifyd_activate(xd_shell *shell, uint32_t id);
+/* Put away (its program told). */
+void xd_notifyd_dismiss(xd_shell *shell, uint32_t id);
+void xd_notifyd_dismiss_all(xd_shell *shell);
+/* The history seen: none unread. */
+void xd_notifyd_mark_read(xd_shell *shell);
+void xd_notifyd_set_do_not_disturb(xd_shell *shell, bool on);
+
+/* notifyfly.c: the notification history, from its notification area
+ * icon: the notifications kept, newest first, with Clear all and Do Not
+ * Disturb. Its keys and wheel while open. */
+void xd_notify_flyout_toggle(xd_taskbar *bar, xd_rect anchor, uint32_t serial);
+bool xd_notify_flyout_owns(xd_shell *shell, struct wl_surface *surface);
+void xd_notify_flyout_motion(xd_shell *shell, double x, double y);
+void xd_notify_flyout_leave(xd_shell *shell);
+void xd_notify_flyout_button(xd_shell *shell, uint32_t button, bool pressed, double x, double y);
+void xd_notify_flyout_axis(xd_shell *shell, double delta);
+bool xd_notify_flyout_key(xd_shell *shell, uint32_t sym);
+void xd_notify_flyout_dismiss(xd_shell *shell);
+/* The notifications changed: it shows them anew. */
+void xd_notify_flyout_changed(xd_shell *shell);
+void xd_notify_flyout_render_dirty(xd_shell *shell);
 
 /* deskicons.c: the desktop's icons, on the first monitor's desktop. */
 typedef struct xd_deskicons xd_deskicons;

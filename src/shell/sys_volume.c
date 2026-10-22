@@ -360,6 +360,7 @@ static void flyout_open(volume *volume_icon, xd_taskbar *bar, xd_rect anchor, ui
     xd_shell *shell = volume_icon->shell;
     xd_menu_close_all(shell);
     xd_clock_flyout_dismiss(shell);
+    xd_notify_flyout_dismiss(shell);
     /* A second click on the icon closes it: the press already did. */
     if (volume_icon->fly != nullptr) {
         flyout_close(volume_icon);

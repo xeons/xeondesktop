@@ -84,6 +84,7 @@
 #include "../src/taskmgr/netstat.h"
 #include "../src/timedate/ntp.h"
 #include "../src/shell/calendar.h"
+#include "../src/shell/notices.h"
 #include "../src/shell/jumplist.h"
 #include "../src/shell/launcher.h"
 #include "../src/shell/recent.h"
@@ -6190,6 +6191,116 @@ static void test_launcher_entry(void) {
 /* The clock flyout's calendar: a month's page from either first weekday,
  * always with some of the month before; days and months moved, a month's
  * end kept within the shorter month. */
+/* A Notify call's parameters, as a program sends them. */
+static GVariant *notify_call(const char *summary, const char *body, uint32_t replaces_id,
+                             GVariant *hints) {
+    static const char *const actions[] = {"default", "Open", "reply", "Reply", "odd"};
+    return g_variant_ref_sink(g_variant_new("(susss^as@a{sv}i)", "Mail", replaces_id, "mail-unread",
+                                            summary, body, actions, hints, -1));
+}
+
+/* Notifications: what's kept of a Notify call, replacing, the history's
+ * limit and file, and markup taken out. */
+static void test_notices(void) {
+    char *plain = xd_notice_plain_text("<b>Bold</b> &amp; <a href='https://x'>link</a>"
+                                       "<img src='a.png' alt=' [pic]'/>");
+    CHECK(g_strcmp0(plain, "Bold & link [pic]") == 0);
+    g_free(plain);
+    plain = xd_notice_plain_text("Tom & Jerry <3");
+    CHECK(g_strcmp0(plain, "Tom & Jerry <3") == 0); /* not markup: as it is */
+    g_free(plain);
+
+    /* A 2x1 RGBA picture: opaque red, half-transparent white. */
+    static const uint8_t pixels[] = {255, 0, 0, 255, 255, 255, 255, 128};
+    GVariant *image = g_variant_new("(iiibii@ay)", 2, 1, 8, TRUE, 8, 4,
+                                    g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, pixels,
+                                                              sizeof(pixels), 1));
+    GVariantBuilder hints;
+    g_variant_builder_init(&hints, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&hints, "{sv}", "urgency", g_variant_new_byte(2));
+    g_variant_builder_add(&hints, "{sv}", "desktop-entry", g_variant_new_string("org.example.Mail"));
+    g_variant_builder_add(&hints, "{sv}", "image-data", image);
+    GVariant *call = notify_call("New mail", "From <i>Ann</i>", 0, g_variant_builder_end(&hints));
+    uint32_t replaces = 99;
+    xd_notice *notice = xd_notice_parse(call, ":1.5", &replaces, nullptr);
+    g_variant_unref(call);
+    CHECK(notice != nullptr && replaces == 0);
+    CHECK(g_strcmp0(notice->summary, "New mail") == 0 && g_strcmp0(notice->body, "From Ann") == 0);
+    CHECK(notice->urgency == XD_NOTICE_CRITICAL && g_strcmp0(notice->icon, "mail-unread") == 0);
+    CHECK(g_strcmp0(notice->desktop_entry, "org.example.Mail.desktop") == 0);
+    /* "default" is a click on it; the dangling "odd" is dropped. */
+    CHECK(xd_notice_button_count(notice) == 1 &&
+          g_strcmp0(xd_notice_button_key(notice, 0), "reply") == 0);
+    CHECK(g_strcmp0(xd_notice_action_label(notice, "default"), "Open") == 0);
+    CHECK(notice->image != nullptr && cairo_image_surface_get_width(notice->image) == 2);
+    if (notice->image != nullptr) {
+        const uint32_t *argb = (const uint32_t *)(const void *)cairo_image_surface_get_data(
+            notice->image);
+        CHECK(argb[0] == 0xFFFF0000u && argb[1] == 0x80808080u); /* premultiplied */
+    }
+
+    /* Nonsense: the wrong signature, a picture whose rows don't fit. */
+    GVariant *wrong = g_variant_ref_sink(g_variant_new("(s)", "x"));
+    GError *error = nullptr;
+    CHECK(xd_notice_parse(wrong, ":1.5", &replaces, &error) == nullptr && error != nullptr);
+    g_clear_error(&error);
+    g_variant_unref(wrong);
+    g_variant_builder_init(&hints, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&hints, "{sv}", "image-data",
+                          g_variant_new("(iiibii@ay)", 64, 64, 256, TRUE, 8, 4,
+                                        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, pixels,
+                                                                  sizeof(pixels), 1)));
+    call = notify_call("Short picture", "", 0, g_variant_builder_end(&hints));
+    xd_notice *short_picture = xd_notice_parse(call, ":1.5", &replaces, nullptr);
+    g_variant_unref(call);
+    CHECK(short_picture != nullptr && short_picture->image == nullptr);
+
+    xd_notices store;
+    xd_notices_init(&store);
+    bool replaced = true;
+    xd_notice *kept = xd_notices_add(&store, notice, 0, &replaced);
+    CHECK(!replaced && kept->id == 1);
+    xd_notices_add(&store, short_picture, 0, &replaced);
+    CHECK(short_picture->id == 2);
+    /* Its own program replaces it, in place and newest; another can't. */
+    call = notify_call("Two new mails", "", 1, g_variant_new("a{sv}", nullptr));
+    xd_notice *update = xd_notice_parse(call, ":1.5", &replaces, nullptr);
+    g_variant_unref(call);
+    CHECK(update != nullptr && replaces == 1);
+    xd_notices_add(&store, update, replaces, &replaced);
+    CHECK(replaced && update->id == 1 && store.list->len == 2);
+    CHECK(g_ptr_array_index(store.list, 1) == update);
+    call = notify_call("Not yours", "", 1, g_variant_new("a{sv}", nullptr));
+    xd_notice *other = xd_notice_parse(call, ":1.9", &replaces, nullptr);
+    g_variant_unref(call);
+    xd_notices_add(&store, other, replaces, &replaced);
+    CHECK(!replaced && other->id == 3 && store.list->len == 3);
+    other->transient = true;
+    update->unread = true;
+    CHECK(xd_notices_unread(&store) == 1);
+
+    /* The history's file: not the transient one; the rest as closed. */
+    char *data = xd_notices_save_data(&store);
+    xd_notices loaded;
+    xd_notices_init(&loaded);
+    xd_notices_load_data(&loaded, data);
+    g_free(data);
+    CHECK(loaded.list->len == 2);
+    const xd_notice *first = g_ptr_array_index(loaded.list, 1);
+    CHECK(g_strcmp0(first->summary, "Two new mails") == 0 && first->unread && first->closed);
+    CHECK(first->sender == nullptr && first->actions[0] == nullptr && first->image == nullptr);
+    xd_notices_load_data(&loaded, "not a key file [");
+    CHECK(loaded.list->len == 2);
+    xd_notices_finish(&loaded);
+
+    /* The oldest go past the limit, but not the one kept back. */
+    GArray *gone = xd_notices_trim(&store, 1, 2);
+    CHECK(gone->len == 2 && store.list->len == 1 && xd_notices_find(&store, 2) != nullptr);
+    g_array_unref(gone);
+    CHECK(xd_notices_remove(&store, 2) && !xd_notices_remove(&store, 2));
+    xd_notices_finish(&store);
+}
+
 static void test_calendar(void) {
     CHECK(xd_calendar_weekday((xd_day){2026, 10, 21}) == 3); /* a Wednesday */
     CHECK(xd_calendar_weekday((xd_day){2026, 2, 1}) == 0); /* a Sunday */
@@ -9436,6 +9547,7 @@ int main(void) {
     test_updates();
     test_superbar();
     test_calendar();
+    test_notices();
     test_launcher_entry();
     test_printers();
     test_scanners();

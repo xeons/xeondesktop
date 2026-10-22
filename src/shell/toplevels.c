@@ -54,6 +54,7 @@ static void handle_state(void *data,
     toplevel->activated = false;
     toplevel->minimized = false;
     toplevel->maximized = false;
+    toplevel->fullscreen = false;
     const uint32_t *states = state->data;
     size_t count = state->size / sizeof(uint32_t);
     for (size_t i = 0; i < count; i++) {
@@ -66,6 +67,9 @@ static void handle_state(void *data,
             break;
         case ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MAXIMIZED:
             toplevel->maximized = true;
+            break;
+        case ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_FULLSCREEN:
+            toplevel->fullscreen = true;
             break;
         default:
             break;

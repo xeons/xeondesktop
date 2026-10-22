@@ -229,6 +229,23 @@ volume, network, Bluetooth and battery icons; inactive icons fold behind a
 chevron as in XP (Customize... in Taskbar Properties). Old XEmbed tray icons
 don't exist on Wayland.
 
+### Notifications
+
+XeonDesktop is the session's notification server
+(`org.freedesktop.Notifications`). Programs' notifications show as XP's
+balloons from a bell icon in the notification area, one at a time: the icon
+or picture, the title in bold, a few lines of text, and the program's
+actions as links. A click on the balloon does what the program offers for
+it (or opens the program); the close box puts it away. A balloon stays while
+the pointer is over it, and urgent ones stay until they're closed.
+
+Notifications that went unclicked, or came while a full-screen window was in
+front or Do Not Disturb was on, wait in the history: click the bell to see
+them, newest first, with Clear all and Do Not Disturb at the bottom (also on
+the bell's right-click menu, and `DoNotDisturb=` under `[Taskbar]` in
+`desktop.ini`). The history is kept across logons. Another notification
+server (mako, dunst) running in the session is replaced.
+
 ### Quick Launch
 
 The icons next to Start are the shortcuts in

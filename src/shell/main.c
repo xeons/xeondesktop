@@ -99,6 +99,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *pointe
     shell->pointer_start7 = xd_start7_owns(shell, surface);
     shell->pointer_flyout = xd_volume_flyout_owns(shell, surface);
     shell->pointer_clock = xd_clock_flyout_owns(shell, surface);
+    shell->pointer_notify = xd_notify_flyout_owns(shell, surface);
     shell->pointer_desktop = xd_desktop_for_surface(shell, surface);
     shell->pointer_thumbs = xd_thumbs_owns(shell, surface);
     shell->pointer_balloon = xd_balloon_owns(shell, surface);
@@ -117,12 +118,14 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *pointe
         xd_menu_pointer_motion(shell->pointer_menu, lx, ly);
     if (shell->pointer_start7)
         xd_start7_pointer_motion(shell, lx, ly);
-    if (shell->pointer_flyout || shell->pointer_clock) {
+    if (shell->pointer_flyout || shell->pointer_clock || shell->pointer_notify) {
         shell->flyout_x = lx;
         shell->flyout_y = ly;
     }
     if (shell->pointer_clock)
         xd_clock_flyout_motion(shell, lx, ly);
+    if (shell->pointer_notify)
+        xd_notify_flyout_motion(shell, lx, ly);
     if (shell->pointer_desktop != nullptr)
         xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
     if (shell->pointer_thumbs)
@@ -145,7 +148,12 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *pointe
         xd_thumbs_pointer_leave(shell);
     if (shell->pointer_clock)
         xd_clock_flyout_leave(shell);
+    if (shell->pointer_notify)
+        xd_notify_flyout_leave(shell);
+    if (shell->pointer_balloon)
+        xd_balloon_pointer_leave(shell);
     shell->pointer_clock = false;
+    shell->pointer_notify = false;
     shell->pointer_thumbs = false;
     shell->pointer_balloon = false;
     shell->pointer_bar = nullptr;
@@ -176,6 +184,11 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *point
         shell->flyout_y = ly;
         xd_clock_flyout_motion(shell, lx, ly);
     }
+    if (shell->pointer_notify) {
+        shell->flyout_x = lx;
+        shell->flyout_y = ly;
+        xd_notify_flyout_motion(shell, lx, ly);
+    }
     if (shell->pointer_desktop != nullptr)
         xd_deskicons_motion(shell, shell->pointer_desktop, lx, ly);
     if (shell->pointer_thumbs)
@@ -196,6 +209,8 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *point
         xd_volume_flyout_dismiss(shell);
     if (pressed && !shell->pointer_clock)
         xd_clock_flyout_dismiss(shell);
+    if (pressed && !shell->pointer_notify)
+        xd_notify_flyout_dismiss(shell);
     /* Nor menus for clicks on the desktop: a click there closes the Start
      * menu or a context menu, and (as in Windows) does nothing else. */
     if (pressed && shell->pointer_desktop != nullptr &&
@@ -216,6 +231,8 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *point
         xd_volume_flyout_button(shell, button, pressed, shell->flyout_x, shell->flyout_y);
     else if (shell->pointer_clock)
         xd_clock_flyout_button(shell, button, pressed, shell->flyout_x, shell->flyout_y);
+    else if (shell->pointer_notify)
+        xd_notify_flyout_button(shell, button, pressed, shell->flyout_x, shell->flyout_y);
     else if (shell->pointer_menu != nullptr)
         xd_menu_pointer_button(shell->pointer_menu, button, pressed);
     else if (shell->pointer_start7)
@@ -231,6 +248,8 @@ static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *pointer
     xd_shell *shell = data;
     if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_start7) {
         xd_start7_pointer_axis(shell, wl_fixed_to_double(value));
+    } else if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_notify) {
+        xd_notify_flyout_axis(shell, wl_fixed_to_double(value));
     } else if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL && shell->pointer_bar != nullptr) {
         /* The wheel pages through task buttons; one notch (10) a page,
          * touchpads' small steps added up. */
@@ -354,7 +373,8 @@ static void handle_key(xd_shell *shell, uint32_t key, uint32_t serial) {
         xd_start7_key(shell, sym, utf8, ctrl_alt);
         return;
     }
-    if (xd_volume_flyout_key(shell, sym) || xd_clock_flyout_key(shell, sym))
+    if (xd_volume_flyout_key(shell, sym) || xd_clock_flyout_key(shell, sym) ||
+        xd_notify_flyout_key(shell, sym))
         return;
     /* An open menu first: its popup's keys arrive at the surface it hangs
      * off, and the desktop's right-click menu hangs off the desktop. */
@@ -895,6 +915,7 @@ static int run(xd_shell *shell, int timer_fd, int signal_fd) {
         xd_thumbs_render_dirty(shell);
         xd_volume_flyout_render_dirty(shell);
         xd_clock_flyout_render_dirty(shell);
+        xd_notify_flyout_render_dirty(shell);
         while (wl_display_prepare_read(display) != 0)
             wl_display_dispatch_pending(display);
         if (!flush_display(display)) {
@@ -1092,6 +1113,7 @@ int main(int argc, char **argv) {
     xd_sys_battery_init(&shell);
     xd_sys_access_init(&shell);
     xd_sys_updates_init(&shell);
+    xd_notifyd_init(&shell);
     xd_sleep_init(&shell);
     xd_buttons_init(&shell);
     xd_account_init(&shell);
@@ -1116,6 +1138,9 @@ int main(int argc, char **argv) {
 
     xd_menu_close_all(&shell);
     xd_identify_hide(&shell);
+    xd_notify_flyout_dismiss(&shell);
+    xd_balloon_hide(&shell);
+    xd_notifyd_finish(&shell);
 
     xd_primary_finish(&shell);
     xd_langbar_finish(&shell);

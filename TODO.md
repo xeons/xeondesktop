@@ -543,6 +543,25 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [?] Quick Launch buttons launching apps; Show Desktop's second click
       restoring windows.
 - [?] Wallpaper modes other than Fill (Center, Tile, Stretch, Fit).
+- [~] Notifications (notifyd.c, notifyfly.c): our own
+      org.freedesktop.Notifications server, as XP's balloons from a bell
+      in the notification area, queued one at a time, with actions (as
+      links), urgency, replaces_id, icons and pictures, the scheme's
+      Notification sound. History of the missed ones (kept across logons)
+      from the bell, with Clear all and Do Not Disturb; full-screen
+      windows hold balloons back. Tested headless (Luna). Not done:
+      Windows 7's own balloon look (Aero draws XP's), the sound-name and
+      sound-file hints (the scheme's sound plays), ActivationToken (so a
+      program raised by an action may not get focus), keyboard access to
+      the history's rows. Untested with real programs (Firefox, Thunderbird,
+      chat clients, the portal's Notification backend).
+- [ ] Snipping Tool (xd-snip): Windows 7's, through the compositor's
+      capture (screencopy): free-form, rectangular, window and full-screen
+      snips, a delay, then a markup window (pen, highlighter, eraser),
+      Copy, Save As (PNG/JPEG), Print Screen bindings. Screen recording:
+      the same capture (or the ScreenCast portal) into PipeWire and
+      GStreamer (WebM/MP4), with the microphone or the computer's sound,
+      started from the Snipping Tool and stopped from a tray icon.
 
 ## Theme engine
 
@@ -874,6 +893,11 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [?] Folders tree clicks, address bar typing, the Views menu, the
       thumbnail slider, Details header sorting, Show Hidden Files, opening
       files with the default app, live updates, very large folders.
+- [ ] Previous Versions: a Properties tab and "Restore previous
+      versions" for files and folders, when the file system keeps
+      snapshots: Snapper on btrfs (`.snapshots/N/snapshot`), Timeshift's
+      btrfs or rsync snapshots, ZFS (`.zfs/snapshot`); each version's
+      date with Open, Copy... and Restore. Not shown where there are none.
 
 ## GTK3 theme
 
@@ -940,6 +964,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       every real login, which other desktops sharing that key also see.
       Our GTK apps unset GTK_THEME, so programs started from xd-files fall
       back to the GSettings GTK theme.
+- [ ] Our own file dialogs: an xdg-desktop-portal FileChooser backend
+      (xdg-desktop-portal-xeondesktop) with XP's and 7's Open and Save As
+      dialogs, from xd-files' folder view (Places bar, Look in, file
+      types), used by Flatpaks, GTK4, Firefox and Chromium, and Qt with
+      QT_QPA_PLATFORMTHEME=xdgdesktopportal; GTK3 programs with
+      GtkFileChooserNative through GTK_USE_PORTAL=1. Plain
+      GtkFileChooserDialog stays GTK's (themed).
+- [ ] GTK4/libadwaita: a generated ~/.config/gtk-4.0/gtk.css from the
+      theme package (colours, fonts, buttons, as far as libadwaita lets
+      it), written only while ours is in use.
+- [ ] Qt: a generated Kvantum theme (SVG) from the theme package, so Qt
+      programs get Luna's and Aero's gradients and Qt 5 a palette.
 
 ## Task Manager (xd-taskmgr)
 

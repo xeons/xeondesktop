@@ -834,6 +834,7 @@ static void open_model(xd_shell *shell, xd_taskbar *bar, xd_rect anchor, uint32_
         return;
     xd_volume_flyout_dismiss(shell);
     xd_clock_flyout_dismiss(shell);
+    xd_notify_flyout_dismiss(shell);
     xd_taskbar_take_keyboard(bar);
     shell->context_menu = true;
     xd_menu_open_root_bar(shell, model, bar, anchor, serial);
