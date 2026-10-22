@@ -67,28 +67,28 @@ struct bt_request {
 };
 
 /* Dialogs go over the wizard, else the property sheet if it's up. */
-static GtkWindow *parent_window(bt_app *a) {
-    GtkWindow *w = bt_wizard_window(a);
-    if (w == nullptr && a->window != nullptr && gtk_widget_get_visible(a->window))
-        w = GTK_WINDOW(a->window);
-    return w;
+static GtkWindow *parent_window(bt_app *state) {
+    GtkWindow *parent = bt_wizard_window(state);
+    if (parent == nullptr && state->window != nullptr && gtk_widget_get_visible(state->window))
+        parent = GTK_WINDOW(state->window);
+    return parent;
 }
 
-static void on_button(GtkButton *b, gpointer dialog) {
+static void on_button(GtkButton *button, gpointer dialog) {
     gtk_dialog_response(GTK_DIALOG(dialog),
-                        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "response")));
+                        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "response")));
 }
 
 /* A message box that doesn't block: the Bluetooth icon, `markup` and
  * `extra` (may be nullptr) over a centred row of buttons whose responses
  * are their indexes. The first button is the default. */
-static GtkWidget *agent_dialog(bt_app *a, const char *markup, GtkWidget *extra,
-                               const char *const *labels, int n, GtkWidget **first) {
+static GtkWidget *agent_dialog(bt_app *state, const char *markup, GtkWidget *extra,
+                               const char *const *labels, int label_count, GtkWidget **first) {
     GtkWidget *dlg = gtk_dialog_new();
     gtk_window_set_title(GTK_WINDOW(dlg), BT_TITLE);
     gtk_window_set_icon_name(GTK_WINDOW(dlg), "bluetooth");
     gtk_window_set_resizable(GTK_WINDOW(dlg), FALSE);
-    GtkWindow *parent = parent_window(a);
+    GtkWindow *parent = parent_window(state);
     if (parent != nullptr)
         gtk_window_set_transient_for(GTK_WINDOW(dlg), parent);
     /* It comes unasked (a device wants to pair): keep it in sight. */
@@ -116,15 +116,15 @@ static GtkWidget *agent_dialog(bt_app *a, const char *markup, GtkWidget *extra,
 
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(row, GTK_ALIGN_CENTER);
-    for (int i = 0; i < n; i++) {
-        GtkWidget *b = gtk_button_new_with_mnemonic(labels[i]);
-        gtk_widget_set_size_request(b, 75, -1);
-        gtk_widget_set_can_default(b, TRUE);
-        g_object_set_data(G_OBJECT(b), "response", GINT_TO_POINTER(i));
-        g_signal_connect(b, "clicked", G_CALLBACK(on_button), dlg);
-        gtk_box_pack_start(GTK_BOX(row), b, FALSE, FALSE, 0);
+    for (int i = 0; i < label_count; i++) {
+        GtkWidget *button = gtk_button_new_with_mnemonic(labels[i]);
+        gtk_widget_set_size_request(button, 75, -1);
+        gtk_widget_set_can_default(button, TRUE);
+        g_object_set_data(G_OBJECT(button), "response", GINT_TO_POINTER(i));
+        g_signal_connect(button, "clicked", G_CALLBACK(on_button), dlg);
+        gtk_box_pack_start(GTK_BOX(row), button, FALSE, FALSE, 0);
         if (i == 0 && first != nullptr)
-            *first = b;
+            *first = button;
     }
     gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box);
@@ -132,8 +132,8 @@ static GtkWidget *agent_dialog(bt_app *a, const char *markup, GtkWidget *extra,
     return dlg;
 }
 
-static char *device_name(bt_app *a, const char *path) {
-    GDBusInterface *dev = bt_interface(a, path, IFACE_DEVICE);
+static char *device_name(bt_app *state, const char *path) {
+    GDBusInterface *dev = bt_interface(state, path, IFACE_DEVICE);
     char *name = dev != nullptr ? bt_device_name(dev) : g_strdup("A Bluetooth device");
     if (dev != nullptr)
         g_object_unref(dev);
@@ -144,116 +144,121 @@ static char *device_name(bt_app *a, const char *path) {
 
 /* Ends the pending question: answers BlueZ with `error` (or the dialog's
  * answer when nullptr) and closes the dialog. */
-static void finish(bt_request *r, const char *error) {
-    bt_app *a = r->app;
-    if (a->request == r)
-        a->request = nullptr;
+static void finish(bt_request *agent_request, const char *error) {
+    bt_app *state = agent_request->app;
+    if (state->request == agent_request)
+        state->request = nullptr;
     if (error != nullptr) {
-        g_dbus_method_invocation_return_dbus_error(r->inv, error, "Not accepted");
-    } else if (r->kind == REQ_PIN) {
+        g_dbus_method_invocation_return_dbus_error(agent_request->inv, error, "Not accepted");
+    } else if (agent_request->kind == REQ_PIN) {
         g_dbus_method_invocation_return_value(
-            r->inv, g_variant_new("(s)", gtk_entry_get_text(GTK_ENTRY(r->entry))));
-    } else if (r->kind == REQ_PASSKEY) {
-        guint64 n = 0;
-        g_ascii_string_to_unsigned(gtk_entry_get_text(GTK_ENTRY(r->entry)), 10, 0, 999999, &n,
-                                   nullptr);
-        g_dbus_method_invocation_return_value(r->inv, g_variant_new("(u)", (uint32_t)n));
+            agent_request->inv,
+            g_variant_new("(s)", gtk_entry_get_text(GTK_ENTRY(agent_request->entry))));
+    } else if (agent_request->kind == REQ_PASSKEY) {
+        guint64 passkey = 0;
+        g_ascii_string_to_unsigned(gtk_entry_get_text(GTK_ENTRY(agent_request->entry)), 10, 0,
+                                   999999, &passkey, nullptr);
+        g_dbus_method_invocation_return_value(agent_request->inv,
+                                              g_variant_new("(u)", (uint32_t)passkey));
     } else {
-        g_dbus_method_invocation_return_value(r->inv, nullptr);
+        g_dbus_method_invocation_return_value(agent_request->inv, nullptr);
     }
-    g_signal_handlers_disconnect_by_data(r->dialog, r);
-    gtk_widget_destroy(r->dialog);
-    g_free(r);
+    g_signal_handlers_disconnect_by_data(agent_request->dialog, agent_request);
+    gtk_widget_destroy(agent_request->dialog);
+    g_free(agent_request);
 }
 
-static void on_answer([[maybe_unused]] GtkDialog *d, int response, gpointer data) {
+static void on_answer([[maybe_unused]] GtkDialog *dialog_widget, int response, gpointer data) {
     /* Button 0 is OK or Yes; anything else (Escape, closing) says no. */
     finish(data, response == 0 ? nullptr : ERROR_REJECTED);
 }
 
 /* OK only for a valid answer: a PIN of 1 to 16 characters, a passkey of
  * up to six digits. */
-static void on_entry_changed(GtkEditable *e, gpointer data) {
-    bt_request *r = data;
-    const char *text = gtk_entry_get_text(GTK_ENTRY(e));
+static void on_entry_changed(GtkEditable *editable, gpointer data) {
+    bt_request *agent_request = data;
+    const char *text = gtk_entry_get_text(GTK_ENTRY(editable));
     bool ok = text[0] != '\0';
-    if (r->kind == REQ_PASSKEY)
+    if (agent_request->kind == REQ_PASSKEY)
         ok = ok && g_ascii_string_to_unsigned(text, 10, 0, 999999, nullptr, nullptr);
-    gtk_widget_set_sensitive(r->ok, ok);
+    gtk_widget_set_sensitive(agent_request->ok, ok);
 }
 
-static void on_entry_activate([[maybe_unused]] GtkEntry *e, gpointer data) {
-    bt_request *r = data;
-    if (gtk_widget_get_sensitive(r->ok))
-        finish(r, nullptr);
+static void on_entry_activate([[maybe_unused]] GtkEntry *entry_widget, gpointer data) {
+    bt_request *agent_request = data;
+    if (gtk_widget_get_sensitive(agent_request->ok))
+        finish(agent_request, nullptr);
 }
 
 /* Asks; BlueZ's call stays pending until the user answers. */
-static void ask(bt_app *a, GDBusMethodInvocation *inv, request_kind kind, const char *markup) {
-    if (a->request != nullptr)
-        finish(a->request, ERROR_CANCELED); /* BlueZ asks one thing at a time */
-    bt_request *r = g_new0(bt_request, 1);
-    r->app = a;
-    r->inv = inv;
-    r->kind = kind;
+static void ask(bt_app *state, GDBusMethodInvocation *inv, request_kind kind, const char *markup) {
+    if (state->request != nullptr)
+        finish(state->request, ERROR_CANCELED); /* BlueZ asks one thing at a time */
+    bt_request *agent_request = g_new0(bt_request, 1);
+    agent_request->app = state;
+    agent_request->inv = inv;
+    agent_request->kind = kind;
     static const char *const ok_cancel[] = {"OK", "Cancel"};
     static const char *const yes_no[] = {"_Yes", "_No"};
     if (kind == REQ_CONFIRM) {
-        r->dialog = agent_dialog(a, markup, nullptr, yes_no, 2, &r->ok);
+        agent_request->dialog = agent_dialog(state, markup, nullptr, yes_no, 2, &agent_request->ok);
     } else {
         GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         GtkWidget *label = gtk_label_new_with_mnemonic("_Passkey:");
-        r->entry = gtk_entry_new();
-        gtk_entry_set_max_length(GTK_ENTRY(r->entry), kind == REQ_PASSKEY ? 6 : 16);
-        gtk_entry_set_input_purpose(GTK_ENTRY(r->entry), kind == REQ_PASSKEY
-                                                             ? GTK_INPUT_PURPOSE_DIGITS
-                                                             : GTK_INPUT_PURPOSE_FREE_FORM);
-        gtk_label_set_mnemonic_widget(GTK_LABEL(label), r->entry);
+        agent_request->entry = gtk_entry_new();
+        gtk_entry_set_max_length(GTK_ENTRY(agent_request->entry), kind == REQ_PASSKEY ? 6 : 16);
+        gtk_entry_set_input_purpose(GTK_ENTRY(agent_request->entry),
+                                    kind == REQ_PASSKEY ? GTK_INPUT_PURPOSE_DIGITS
+                                                        : GTK_INPUT_PURPOSE_FREE_FORM);
+        gtk_label_set_mnemonic_widget(GTK_LABEL(label), agent_request->entry);
         gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
-        gtk_box_pack_start(GTK_BOX(row), r->entry, TRUE, TRUE, 0);
-        r->dialog = agent_dialog(a, markup, row, ok_cancel, 2, &r->ok);
-        gtk_widget_set_sensitive(r->ok, FALSE);
-        g_signal_connect(r->entry, "changed", G_CALLBACK(on_entry_changed), r);
-        g_signal_connect(r->entry, "activate", G_CALLBACK(on_entry_activate), r);
-        gtk_widget_grab_focus(r->entry);
+        gtk_box_pack_start(GTK_BOX(row), agent_request->entry, TRUE, TRUE, 0);
+        agent_request->dialog = agent_dialog(state, markup, row, ok_cancel, 2, &agent_request->ok);
+        gtk_widget_set_sensitive(agent_request->ok, FALSE);
+        g_signal_connect(agent_request->entry, "changed", G_CALLBACK(on_entry_changed),
+                         agent_request);
+        g_signal_connect(agent_request->entry, "activate", G_CALLBACK(on_entry_activate),
+                         agent_request);
+        gtk_widget_grab_focus(agent_request->entry);
     }
     if (kind == REQ_CONFIRM) {
-        gtk_widget_grab_default(r->ok);
-        gtk_widget_grab_focus(r->ok);
+        gtk_widget_grab_default(agent_request->ok);
+        gtk_widget_grab_focus(agent_request->ok);
     }
-    g_signal_connect(r->dialog, "response", G_CALLBACK(on_answer), r);
-    a->request = r;
+    g_signal_connect(agent_request->dialog, "response", G_CALLBACK(on_answer), agent_request);
+    state->request = agent_request;
 }
 
 /* ---- shown passkeys ----------------------------------------------------------- */
 
-static void close_display(bt_app *a) {
-    if (a->display != nullptr)
-        gtk_widget_destroy(a->display);
+static void close_display(bt_app *state) {
+    if (state->display != nullptr)
+        gtk_widget_destroy(state->display);
 }
 
-void bt_agent_pairing_done(bt_app *a) { close_display(a); }
+void bt_agent_pairing_done(bt_app *state) { close_display(state); }
 
 static void cancel_done(GObject *src, GAsyncResult *res, [[maybe_unused]] gpointer data) {
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
-    if (r != nullptr)
-        g_variant_unref(r);
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, nullptr);
+    if (variant != nullptr)
+        g_variant_unref(variant);
 }
 
-static void on_display_response(GtkDialog *d, [[maybe_unused]] int response, gpointer data) {
-    bt_app *a = data;
+static void on_display_response(GtkDialog *dialog_widget, [[maybe_unused]] int response,
+                                gpointer data) {
+    bt_app *state = data;
     /* Cancel: stop the pairing that's waiting for the passkey. */
-    const char *path = g_object_get_data(G_OBJECT(d), "device");
-    if (path != nullptr && a->bus != nullptr)
-        g_dbus_connection_call(a->bus, BLUEZ, path, IFACE_DEVICE, "CancelPairing", nullptr, nullptr,
-                               G_DBUS_CALL_FLAGS_NONE, -1, nullptr, cancel_done, nullptr);
-    gtk_widget_destroy(GTK_WIDGET(d));
+    const char *path = g_object_get_data(G_OBJECT(dialog_widget), "device");
+    if (path != nullptr && state->bus != nullptr)
+        g_dbus_connection_call(state->bus, BLUEZ, path, IFACE_DEVICE, "CancelPairing", nullptr,
+                               nullptr, G_DBUS_CALL_FLAGS_NONE, -1, nullptr, cancel_done, nullptr);
+    gtk_widget_destroy(GTK_WIDGET(dialog_widget));
 }
 
 /* `code`: what to type on the device; `typed`: how many digits it says
  * have been typed (DisplayPasskey's "entered"), or -1. */
-static void display(bt_app *a, const char *path, const char *code, int typed) {
-    char *name = device_name(a, path);
+static void display(bt_app *state, const char *path, const char *code, int typed) {
+    char *name = device_name(state, path);
     char *progress = typed > 0 ? g_strdup_printf("\n\n%d of %zu digits typed.", typed, strlen(code))
                                : g_strdup("");
     char *markup = g_markup_printf_escaped(
@@ -262,20 +267,21 @@ static void display(bt_app *a, const char *path, const char *code, int typed) {
         name, code, progress);
     /* A keyboard says so for each digit typed: the box shown already is
      * updated rather than replaced (which would take the focus each time). */
-    if (a->display != nullptr &&
-        g_strcmp0(g_object_get_data(G_OBJECT(a->display), "device"), path) == 0) {
-        gtk_label_set_markup(GTK_LABEL(g_object_get_data(G_OBJECT(a->display), "label")), markup);
+    if (state->display != nullptr &&
+        g_strcmp0(g_object_get_data(G_OBJECT(state->display), "device"), path) == 0) {
+        gtk_label_set_markup(GTK_LABEL(g_object_get_data(G_OBJECT(state->display), "label")),
+                             markup);
         g_free(markup);
         g_free(progress);
         g_free(name);
         return;
     }
-    close_display(a);
+    close_display(state);
     static const char *const cancel[] = {"Cancel"};
-    a->display = agent_dialog(a, markup, nullptr, cancel, 1, nullptr);
-    g_object_set_data_full(G_OBJECT(a->display), "device", g_strdup(path), g_free);
-    g_object_add_weak_pointer(G_OBJECT(a->display), (gpointer *)&a->display);
-    g_signal_connect(a->display, "response", G_CALLBACK(on_display_response), a);
+    state->display = agent_dialog(state, markup, nullptr, cancel, 1, nullptr);
+    g_object_set_data_full(G_OBJECT(state->display), "device", g_strdup(path), g_free);
+    g_object_add_weak_pointer(G_OBJECT(state->display), (gpointer *)&state->display);
+    g_signal_connect(state->display, "response", G_CALLBACK(on_display_response), state);
     g_free(markup);
     g_free(progress);
     g_free(name);
@@ -284,18 +290,19 @@ static void display(bt_app *a, const char *path, const char *code, int typed) {
 /* ---- the D-Bus object -------------------------------------------------------------- */
 
 /* The wizard's passkey, when it's pairing `path`. */
-static const char *wizard_pin(bt_app *a, const char *path) {
-    return a->pin != nullptr && g_strcmp0(path, a->pairing_path) == 0 ? a->pin : nullptr;
+static const char *wizard_pin(bt_app *state, const char *path) {
+    return state->pin != nullptr && g_strcmp0(path, state->pairing_path) == 0 ? state->pin
+                                                                              : nullptr;
 }
 
-static void on_call([[maybe_unused]] GDBusConnection *c, const char *sender,
+static void on_call([[maybe_unused]] GDBusConnection *connection, const char *sender,
                     [[maybe_unused]] const char *object, [[maybe_unused]] const char *iface,
                     const char *method, GVariant *params, GDBusMethodInvocation *inv,
                     gpointer data) {
-    bt_app *a = data;
+    bt_app *state = data;
     /* Only bluetoothd may ask us for passkeys. */
     char *owner =
-        g_dbus_object_manager_client_get_name_owner(G_DBUS_OBJECT_MANAGER_CLIENT(a->objects));
+        g_dbus_object_manager_client_get_name_owner(G_DBUS_OBJECT_MANAGER_CLIENT(state->objects));
     bool from_bluez = owner != nullptr && g_strcmp0(sender, owner) == 0;
     g_free(owner);
     if (!from_bluez) {
@@ -305,19 +312,19 @@ static void on_call([[maybe_unused]] GDBusConnection *c, const char *sender,
     const char *path = nullptr;
     if (g_variant_n_children(params) > 0)
         g_variant_get_child(params, 0, "&o", &path);
-    char *name = path != nullptr ? device_name(a, path) : nullptr;
+    char *name = path != nullptr ? device_name(state, path) : nullptr;
     char *markup = nullptr;
 
     if (strcmp(method, "Release") == 0) {
-        a->agent_registered = false;
+        state->agent_registered = false;
         g_dbus_method_invocation_return_value(inv, nullptr);
     } else if (strcmp(method, "Cancel") == 0) {
-        if (a->request != nullptr)
-            finish(a->request, ERROR_CANCELED);
-        close_display(a);
+        if (state->request != nullptr)
+            finish(state->request, ERROR_CANCELED);
+        close_display(state);
         g_dbus_method_invocation_return_value(inv, nullptr);
     } else if (strcmp(method, "RequestPinCode") == 0) {
-        const char *pin = wizard_pin(a, path);
+        const char *pin = wizard_pin(state, path);
         if (pin != nullptr) {
             g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", pin));
         } else {
@@ -326,22 +333,22 @@ static void on_call([[maybe_unused]] GDBusConnection *c, const char *sender,
                 "it in the device's documentation, or choose your own and type it on the "
                 "device too.",
                 name);
-            ask(a, inv, REQ_PIN, markup);
+            ask(state, inv, REQ_PIN, markup);
         }
     } else if (strcmp(method, "RequestPasskey") == 0) {
-        const char *pin = wizard_pin(a, path);
-        guint64 n = 0;
-        if (pin != nullptr && g_ascii_string_to_unsigned(pin, 10, 0, 999999, &n, nullptr)) {
-            g_dbus_method_invocation_return_value(inv, g_variant_new("(u)", (uint32_t)n));
+        const char *pin = wizard_pin(state, path);
+        guint64 number = 0;
+        if (pin != nullptr && g_ascii_string_to_unsigned(pin, 10, 0, 999999, &number, nullptr)) {
+            g_dbus_method_invocation_return_value(inv, g_variant_new("(u)", (uint32_t)number));
         } else {
             markup = g_markup_printf_escaped(
                 "<b>%s</b> needs a passkey.\n\nType the number the device shows.", name);
-            ask(a, inv, REQ_PASSKEY, markup);
+            ask(state, inv, REQ_PASSKEY, markup);
         }
     } else if (strcmp(method, "DisplayPinCode") == 0) {
         const char *pin = nullptr;
         g_variant_get(params, "(&o&s)", nullptr, &pin);
-        display(a, path, pin, -1);
+        display(state, path, pin, -1);
         g_dbus_method_invocation_return_value(inv, nullptr);
     } else if (strcmp(method, "DisplayPasskey") == 0) {
         uint32_t passkey = 0;
@@ -349,7 +356,7 @@ static void on_call([[maybe_unused]] GDBusConnection *c, const char *sender,
         g_variant_get(params, "(&ouq)", nullptr, &passkey, &entered);
         char code[8];
         g_snprintf(code, sizeof(code), "%06u", passkey);
-        display(a, path, code, entered);
+        display(state, path, code, entered);
         g_dbus_method_invocation_return_value(inv, nullptr);
     } else if (strcmp(method, "RequestConfirmation") == 0) {
         uint32_t passkey = 0;
@@ -358,11 +365,11 @@ static void on_call([[maybe_unused]] GDBusConnection *c, const char *sender,
             "Does <b>%s</b> show this passkey?\n\n<span size='xx-large' "
             "weight='bold'>%06u</span>\n\nClick Yes only if the numbers match.",
             name, passkey);
-        ask(a, inv, REQ_CONFIRM, markup);
+        ask(state, inv, REQ_CONFIRM, markup);
     } else if (strcmp(method, "RequestAuthorization") == 0) {
         markup = g_markup_printf_escaped(
             "<b>%s</b> wants to pair with this computer.\n\nDo you want to allow this?", name);
-        ask(a, inv, REQ_CONFIRM, markup);
+        ask(state, inv, REQ_CONFIRM, markup);
     } else if (strcmp(method, "AuthorizeService") == 0) {
         const char *uuid = nullptr;
         g_variant_get(params, "(&o&s)", nullptr, &uuid);
@@ -371,7 +378,7 @@ static void on_call([[maybe_unused]] GDBusConnection *c, const char *sender,
             "<b>%s</b> wants to use this computer's <b>%s</b> service.\n\nDo you want to "
             "allow this?",
             name, service != nullptr ? service : uuid);
-        ask(a, inv, REQ_CONFIRM, markup);
+        ask(state, inv, REQ_CONFIRM, markup);
     } else {
         g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.UnknownMethod",
                                                    method);
@@ -383,42 +390,43 @@ static void on_call([[maybe_unused]] GDBusConnection *c, const char *sender,
 static const GDBusInterfaceVTable vtable = {.method_call = on_call};
 
 static void register_done(GObject *src, GAsyncResult *res, gpointer data) {
-    bt_app *a = data;
+    bt_app *state = data;
     GError *error = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
-    if (r == nullptr) {
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (variant == nullptr) {
         g_printerr("xd-bluetooth: can't be the pairing agent: %s\n", error->message);
         g_error_free(error);
         return;
     }
-    g_variant_unref(r);
-    a->agent_registered = true;
+    g_variant_unref(variant);
+    state->agent_registered = true;
     /* Ours while Bluetooth Devices is open, as the device being added
      * may ask the default agent. */
-    g_dbus_connection_call(a->bus, BLUEZ, "/org/bluez", "org.bluez.AgentManager1",
+    g_dbus_connection_call(state->bus, BLUEZ, "/org/bluez", "org.bluez.AgentManager1",
                            "RequestDefaultAgent", g_variant_new("(o)", AGENT_PATH), nullptr,
                            G_DBUS_CALL_FLAGS_NONE, -1, nullptr, cancel_done, nullptr);
 }
 
-static void register_agent(bt_app *a) {
+static void register_agent(bt_app *state) {
     char *owner =
-        g_dbus_object_manager_client_get_name_owner(G_DBUS_OBJECT_MANAGER_CLIENT(a->objects));
+        g_dbus_object_manager_client_get_name_owner(G_DBUS_OBJECT_MANAGER_CLIENT(state->objects));
     if (owner != nullptr)
-        g_dbus_connection_call(a->bus, BLUEZ, "/org/bluez", "org.bluez.AgentManager1",
+        g_dbus_connection_call(state->bus, BLUEZ, "/org/bluez", "org.bluez.AgentManager1",
                                "RegisterAgent",
                                g_variant_new("(os)", AGENT_PATH, "KeyboardDisplay"), nullptr,
-                               G_DBUS_CALL_FLAGS_NONE, -1, nullptr, register_done, a);
+                               G_DBUS_CALL_FLAGS_NONE, -1, nullptr, register_done, state);
     else
-        a->agent_registered = false;
+        state->agent_registered = false;
     g_free(owner);
 }
 
 /* bluetoothd (re)started: it forgot us. */
-static void on_owner([[maybe_unused]] GObject *m, [[maybe_unused]] GParamSpec *ps, gpointer data) {
+static void on_owner([[maybe_unused]] GObject *object, [[maybe_unused]] GParamSpec *ps,
+                     gpointer data) {
     register_agent(data);
 }
 
-void bt_agent_start(bt_app *a) {
+void bt_agent_start(bt_app *state) {
     GError *error = nullptr;
     GDBusNodeInfo *info = g_dbus_node_info_new_for_xml(agent_xml, &error);
     if (info == nullptr) {
@@ -426,32 +434,32 @@ void bt_agent_start(bt_app *a) {
         g_error_free(error);
         return;
     }
-    a->agent_id = g_dbus_connection_register_object(a->bus, AGENT_PATH, info->interfaces[0],
-                                                    &vtable, a, nullptr, &error);
+    state->agent_id = g_dbus_connection_register_object(state->bus, AGENT_PATH, info->interfaces[0],
+                                                        &vtable, state, nullptr, &error);
     g_dbus_node_info_unref(info);
-    if (a->agent_id == 0) {
+    if (state->agent_id == 0) {
         g_printerr("xd-bluetooth: %s\n", error->message);
         g_error_free(error);
         return;
     }
-    g_signal_connect(a->objects, "notify::name-owner", G_CALLBACK(on_owner), a);
-    register_agent(a);
+    g_signal_connect(state->objects, "notify::name-owner", G_CALLBACK(on_owner), state);
+    register_agent(state);
 }
 
-void bt_agent_stop(bt_app *a) {
-    if (a->request != nullptr)
-        finish(a->request, ERROR_CANCELED);
-    close_display(a);
-    if (a->agent_registered) {
-        GVariant *r =
-            g_dbus_connection_call_sync(a->bus, BLUEZ, "/org/bluez", "org.bluez.AgentManager1",
+void bt_agent_stop(bt_app *state) {
+    if (state->request != nullptr)
+        finish(state->request, ERROR_CANCELED);
+    close_display(state);
+    if (state->agent_registered) {
+        GVariant *variant =
+            g_dbus_connection_call_sync(state->bus, BLUEZ, "/org/bluez", "org.bluez.AgentManager1",
                                         "UnregisterAgent", g_variant_new("(o)", AGENT_PATH),
                                         nullptr, G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, nullptr);
-        if (r != nullptr)
-            g_variant_unref(r);
-        a->agent_registered = false;
+        if (variant != nullptr)
+            g_variant_unref(variant);
+        state->agent_registered = false;
     }
-    if (a->agent_id != 0)
-        g_dbus_connection_unregister_object(a->bus, a->agent_id);
-    a->agent_id = 0;
+    if (state->agent_id != 0)
+        g_dbus_connection_unregister_object(state->bus, state->agent_id);
+    state->agent_id = 0;
 }

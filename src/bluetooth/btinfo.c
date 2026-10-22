@@ -303,8 +303,8 @@ static const service services[] = {
 };
 
 static int by_id(const void *key, const void *elem) {
-    unsigned a = *(const uint16_t *)key, b = ((const service *)elem)->id;
-    return a < b ? -1 : a > b ? 1 : 0;
+    unsigned wanted_id = *(const uint16_t *)key, service_id = ((const service *)elem)->id;
+    return wanted_id < service_id ? -1 : wanted_id > service_id ? 1 : 0;
 }
 
 const char *xd_bt_uuid_name(const char *uuid) {
@@ -316,8 +316,9 @@ const char *xd_bt_uuid_name(const char *uuid) {
     uint16_t id = 0;
     for (size_t i = 4; i < 8; i++)
         id = (uint16_t)((unsigned)id << 4 | (unsigned)g_ascii_xdigit_value(uuid[i]));
-    const service *s = bsearch(&id, services, XD_ARRAY_LEN(services), sizeof(services[0]), by_id);
-    return s != nullptr ? s->name : nullptr;
+    const service *match =
+        bsearch(&id, services, XD_ARRAY_LEN(services), sizeof(services[0]), by_id);
+    return match != nullptr ? match->name : nullptr;
 }
 
 const char *xd_bt_version_name(int hci_version) {

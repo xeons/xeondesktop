@@ -50,40 +50,40 @@ typedef struct bt_app {
 /* ---- main.c: BlueZ helpers --------------------------------------------- */
 
 /* The first adapter (most machines have one); caller unrefs. */
-GDBusInterface *bt_adapter(bt_app *a);
+GDBusInterface *bt_adapter(bt_app *state);
 /* The interface of the object at `path`; caller unrefs. */
-GDBusInterface *bt_interface(bt_app *a, const char *path, const char *iface);
+GDBusInterface *bt_interface(bt_app *state, const char *path, const char *iface);
 /* Cached properties; missing or mistyped ones read as false / nullptr / 0. */
-bool bt_prop_b(GDBusInterface *i, const char *name);
-char *bt_prop_s(GDBusInterface *i, const char *name); /* strings and paths; g_free */
-uint32_t bt_prop_u(GDBusInterface *i, const char *name);
+bool bt_prop_b(GDBusInterface *dbus_interface, const char *name);
+char *bt_prop_s(GDBusInterface *dbus_interface, const char *name); /* strings and paths; g_free */
+uint32_t bt_prop_u(GDBusInterface *dbus_interface, const char *name);
 /* Alias, else Address; g_free. */
 char *bt_device_name(GDBusInterface *dev);
 /* Its kind and icon from Class, Appearance or Icon. */
 xd_bt_type bt_device_type(GDBusInterface *dev);
 /* Sets a property; errors are shown over `parent`. */
-void bt_set_prop(bt_app *a, GtkWindow *parent, const char *path, const char *iface,
+void bt_set_prop(bt_app *state, GtkWindow *parent, const char *path, const char *iface,
                  const char *name, GVariant *value);
 void bt_error(GtkWindow *parent, const char *what, const GError *error);
 
 /* ---- devprops.c -------------------------------------------------------- */
 
-void bt_device_properties(bt_app *a, const char *path);
+void bt_device_properties(bt_app *state, const char *path);
 
 /* ---- wizard.c ---------------------------------------------------------- */
 
 /* Opens the Add Bluetooth Device Wizard (or raises the open one). */
-void bt_wizard_open(bt_app *a);
+void bt_wizard_open(bt_app *state);
 /* The wizard's window, nullptr when it's closed. */
-GtkWindow *bt_wizard_window(bt_app *a);
+GtkWindow *bt_wizard_window(bt_app *state);
 
 /* ---- agent.c ----------------------------------------------------------- */
 
 /* Registers org.bluez.Agent1 when BlueZ is there (and again whenever it
  * restarts); unregisters at exit. */
-void bt_agent_start(bt_app *a);
-void bt_agent_stop(bt_app *a);
+void bt_agent_start(bt_app *state);
+void bt_agent_stop(bt_app *state);
 /* Closes a passkey shown for the device, once pairing is over. */
-void bt_agent_pairing_done(bt_app *a);
+void bt_agent_pairing_done(bt_app *state);
 
 #endif
