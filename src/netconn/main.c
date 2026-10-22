@@ -51,40 +51,40 @@ static const char css[] =
 
 /* ---- helpers ----------------------------------------------------------------------- */
 
-static void add_class(GtkWidget *w, const char *class) {
-    gtk_style_context_add_class(gtk_widget_get_style_context(w), class);
+static void add_class(GtkWidget *widget, const char *class) {
+    gtk_style_context_add_class(gtk_widget_get_style_context(widget), class);
 }
 
 static GtkWidget *label(const char *text, const char *class) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
+    GtkWidget *widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
     if (class != nullptr)
-        add_class(l, class);
-    return l;
+        add_class(widget, class);
+    return widget;
 }
 
-static void clear_container(GtkWidget *c) {
-    GList *kids = gtk_container_get_children(GTK_CONTAINER(c));
-    for (GList *k = kids; k != nullptr; k = k->next)
-        gtk_widget_destroy(k->data);
+static void clear_container(GtkWidget *container) {
+    GList *kids = gtk_container_get_children(GTK_CONTAINER(container));
+    for (GList *child = kids; child != nullptr; child = child->next)
+        gtk_widget_destroy(child->data);
     g_list_free(kids);
 }
 
 GtkWindow *nc_parent(nc_app *app) { return GTK_WINDOW(app->window); }
 
 void nc_error(GtkWindow *parent, const char *what, const GError *error) {
-    char *s;
+    char *text;
     if (error != nullptr) {
         /* Without the D-Bus error name GIO puts in front. */
-        GError *e = g_error_copy(error);
-        g_dbus_error_strip_remote_error(e);
-        s = g_strdup_printf("%s\n\n%s", what, e->message);
-        g_error_free(e);
+        GError *stripped = g_error_copy(error);
+        g_dbus_error_strip_remote_error(stripped);
+        text = g_strdup_printf("%s\n\n%s", what, stripped->message);
+        g_error_free(stripped);
     } else {
-        s = g_strdup(what);
+        text = g_strdup(what);
     }
-    xd_message_box(parent, TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, s);
-    g_free(s);
+    xd_message_box(parent, TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, text);
+    g_free(text);
 }
 
 static void maybe_quit(nc_app *app) {
@@ -92,7 +92,7 @@ static void maybe_quit(nc_app *app) {
         gtk_main_quit();
 }
 
-static void on_tracked_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
+static void on_tracked_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
     nc_app *app = data;
     app->dialogs--;
     maybe_quit(app);
@@ -126,12 +126,12 @@ char *nc_own_program(const char *name) {
 
 bool nc_spawn(GtkWindow *parent, const char *const *argv) {
     char *prog = nc_own_program(argv[0]);
-    GStrvBuilder *b = g_strv_builder_new();
-    g_strv_builder_add(b, prog);
+    GStrvBuilder *builder = g_strv_builder_new();
+    g_strv_builder_add(builder, prog);
     for (size_t i = 1; argv[i] != nullptr; i++)
-        g_strv_builder_add(b, argv[i]);
-    char **args = g_strv_builder_end(b);
-    g_strv_builder_unref(b);
+        g_strv_builder_add(builder, argv[i]);
+    char **args = g_strv_builder_end(builder);
+    g_strv_builder_unref(builder);
     GError *error = nullptr;
     bool ok = g_spawn_async(nullptr, args, nullptr, G_SPAWN_SEARCH_PATH, nullptr, nullptr, nullptr,
                             &error);
@@ -147,9 +147,9 @@ bool nc_spawn(GtkWindow *parent, const char *const *argv) {
 }
 
 bool nc_have_editor(void) {
-    char *p = g_find_program_in_path("nm-connection-editor");
-    g_free(p);
-    return p != nullptr;
+    char *path = g_find_program_in_path("nm-connection-editor");
+    g_free(path);
+    return path != nullptr;
 }
 
 void nc_run_editor(GtkWindow *parent, const char *uuid) {
@@ -160,8 +160,8 @@ void nc_run_editor(GtkWindow *parent, const char *uuid) {
 
 /* ---- the items ------------------------------------------------------------------- */
 
-static void item_free(gpointer p) {
-    nc_item *it = p;
+static void item_free(gpointer item_data) {
+    nc_item *it = item_data;
     g_free(it->key);
     g_free(it->name);
     g_free(it->status);
@@ -204,41 +204,41 @@ static const struct {
 
 /* Profiles NetworkManager made up for something it doesn't manage
  * (loopback, docker's bridges): not the user's connections. */
-static bool generated(NMRemoteConnection *c) {
-    NMSettingsConnectionFlags f = nm_remote_connection_get_flags(c);
-    return (f & (NM_SETTINGS_CONNECTION_FLAG_NM_GENERATED | NM_SETTINGS_CONNECTION_FLAG_EXTERNAL)) !=
-           0;
+static bool generated(NMRemoteConnection *connection) {
+    NMSettingsConnectionFlags flags = nm_remote_connection_get_flags(connection);
+    return (flags &
+            (NM_SETTINGS_CONNECTION_FLAG_NM_GENERATED | NM_SETTINGS_CONNECTION_FLAG_EXTERNAL)) != 0;
 }
 
-static guint64 last_used(NMRemoteConnection *c) {
-    NMSettingConnection *s = nm_connection_get_setting_connection(NM_CONNECTION(c));
-    return s != nullptr ? nm_setting_connection_get_timestamp(s) : 0;
+static guint64 last_used(NMRemoteConnection *connection) {
+    NMSettingConnection *setting = nm_connection_get_setting_connection(NM_CONNECTION(connection));
+    return setting != nullptr ? nm_setting_connection_get_timestamp(setting) : 0;
 }
 
 /* The connection an adapter stands for: the active one, else the one
  * NetworkManager would pick (the most recently used it can take). */
 static NMRemoteConnection *device_connection(NMDevice *dev, NMActiveConnection *active) {
     if (active != nullptr) {
-        NMRemoteConnection *c = nm_active_connection_get_connection(active);
-        if (c != nullptr)
-            return c;
+        NMRemoteConnection *connection = nm_active_connection_get_connection(active);
+        if (connection != nullptr)
+            return connection;
     }
     if (NM_IS_DEVICE_WIFI(dev))
         return nullptr; /* the saved networks are its preferred list */
     const GPtrArray *avail = nm_device_get_available_connections(dev);
     NMRemoteConnection *best = nullptr;
     for (guint i = 0; avail != nullptr && i < avail->len; i++) {
-        NMRemoteConnection *c = g_ptr_array_index(avail, i);
-        if (!generated(c) && (best == nullptr || last_used(c) > last_used(best)))
-            best = c;
+        NMRemoteConnection *connection = g_ptr_array_index(avail, i);
+        if (!generated(connection) && (best == nullptr || last_used(connection) > last_used(best)))
+            best = connection;
     }
     return best;
 }
 
 static const char *kind_setting(NMDevice *dev, bool *always) {
-    NMDeviceType t = nm_device_get_device_type(dev);
+    NMDeviceType device_type = nm_device_get_device_type(dev);
     for (size_t i = 0; i < XD_ARRAY_LEN(device_kinds); i++) {
-        if (device_kinds[i].type == t) {
+        if (device_kinds[i].type == device_type) {
             *always = device_kinds[i].always;
             return device_kinds[i].setting;
         }
@@ -246,8 +246,8 @@ static const char *kind_setting(NMDevice *dev, bool *always) {
     return nullptr;
 }
 
-static const char *icon_for(xd_nc_group g, bool connected, const nc_item *it) {
-    switch (g) {
+static const char *icon_for(xd_nc_group connection_group, bool connected, const nc_item *it) {
+    switch (connection_group) {
     case XD_NC_WIRELESS:
         return connected || it->disabled ? "network-wireless" : "network-wireless-disconnected";
     case XD_NC_VPN:
@@ -305,8 +305,8 @@ static nc_item *device_item(nc_app *app, NMDevice *dev, const char *setting, con
     it->device = g_object_ref(dev);
     NMActiveConnection *active = nm_device_get_active_connection(dev);
     it->active = active != nullptr ? g_object_ref(active) : nullptr;
-    NMRemoteConnection *c = device_connection(dev, active);
-    it->conn = c != nullptr ? g_object_ref(c) : nullptr;
+    NMRemoteConnection *connection = device_connection(dev, active);
+    it->conn = connection != nullptr ? g_object_ref(connection) : nullptr;
     if (it->group == XD_NC_WIRELESS)
         it->name = xd_nc_numbered_name("Wireless Network Connection", number);
     else if (it->conn != nullptr)
@@ -334,22 +334,22 @@ static nc_item *device_item(nc_app *app, NMDevice *dev, const char *setting, con
     return it;
 }
 
-static NMActiveConnection *find_active(nc_app *app, NMRemoteConnection *c) {
+static NMActiveConnection *find_active(nc_app *app, NMRemoteConnection *connection) {
     const GPtrArray *all = nm_client_get_active_connections(app->client);
     for (guint i = 0; all != nullptr && i < all->len; i++) {
-        NMActiveConnection *a = g_ptr_array_index(all, i);
-        if (nm_active_connection_get_connection(a) == c)
-            return a;
+        NMActiveConnection *active_connection = g_ptr_array_index(all, i);
+        if (nm_active_connection_get_connection(active_connection) == connection)
+            return active_connection;
     }
     return nullptr;
 }
 
-static char *vpn_device_name(NMConnection *c) {
-    NMSettingVpn *vpn = nm_connection_get_setting_vpn(c);
+static char *vpn_device_name(NMConnection *connection) {
+    NMSettingVpn *vpn = nm_connection_get_setting_vpn(connection);
     const char *service = vpn != nullptr ? nm_setting_vpn_get_service_type(vpn) : nullptr;
     if (service == nullptr)
-        return g_strdup(nm_connection_get_interface_name(c) != nullptr
-                            ? nm_connection_get_interface_name(c)
+        return g_strdup(nm_connection_get_interface_name(connection) != nullptr
+                            ? nm_connection_get_interface_name(connection)
                             : "");
     /* As XP's "WAN Miniport (PPTP)". */
     const char *dot = strrchr(service, '.');
@@ -358,18 +358,18 @@ static char *vpn_device_name(NMConnection *c) {
         g_free(plugin);
         plugin = g_strdup("OpenVPN");
     }
-    char *s = g_strdup_printf("WAN Miniport (%s)", plugin);
+    char *name = g_strdup_printf("WAN Miniport (%s)", plugin);
     g_free(plugin);
-    return s;
+    return name;
 }
 
-static nc_item *connection_item(nc_app *app, NMRemoteConnection *c, xd_nc_group group) {
-    NMConnection *nc = NM_CONNECTION(c);
+static nc_item *connection_item(nc_app *app, NMRemoteConnection *connection, xd_nc_group group) {
+    NMConnection *nc = NM_CONNECTION(connection);
     nc_item *it = g_new0(nc_item, 1);
     it->key = g_strdup_printf("con:%s", nm_connection_get_uuid(nc));
     it->group = group;
-    it->conn = g_object_ref(c);
-    NMActiveConnection *active = find_active(app, c);
+    it->conn = g_object_ref(connection);
+    NMActiveConnection *active = find_active(app, connection);
     it->active = active != nullptr ? g_object_ref(active) : nullptr;
     it->name = g_strdup(nm_connection_get_id(nc));
     if (group == XD_NC_VPN || group == XD_NC_BROADBAND)
@@ -385,11 +385,11 @@ static nc_item *connection_item(nc_app *app, NMRemoteConnection *c, xd_nc_group 
     return it;
 }
 
-static int compare_items(gconstpointer a, gconstpointer b) {
-    const nc_item *x = *(nc_item *const *)a, *y = *(nc_item *const *)b;
-    if (x->group != y->group)
-        return (int)x->group - (int)y->group;
-    return g_utf8_collate(x->name, y->name);
+static int compare_items(gconstpointer left, gconstpointer right) {
+    const nc_item *left_item = *(nc_item *const *)left, *right_item = *(nc_item *const *)right;
+    if (left_item->group != right_item->group)
+        return (int)left_item->group - (int)right_item->group;
+    return g_utf8_collate(left_item->name, right_item->name);
 }
 
 static void build_items(nc_app *app) {
@@ -406,9 +406,9 @@ static void build_items(nc_app *app) {
         if (kind_setting(dev, &always) == nullptr)
             continue;
         if (!always) {
-            NMActiveConnection *a = nm_device_get_active_connection(dev);
-            NMRemoteConnection *c = device_connection(dev, a);
-            if (c == nullptr || generated(c))
+            NMActiveConnection *active_connection = nm_device_get_active_connection(dev);
+            NMRemoteConnection *connection = device_connection(dev, active_connection);
+            if (connection == nullptr || generated(connection))
                 continue;
         }
         g_ptr_array_add(shown, dev);
@@ -421,9 +421,9 @@ static void build_items(nc_app *app) {
         NMDevice *dev = g_ptr_array_index(shown, i);
         bool always;
         const char *setting = kind_setting(dev, &always);
-        xd_nc_group g = xd_nc_group_for_type(setting);
+        xd_nc_group connection_group = xd_nc_group_for_type(setting);
         nc_item *it = device_item(app, dev, setting, names != nullptr ? names[i] : nullptr,
-                                  ++counts[g]);
+                                  ++counts[connection_group]);
         if (it->conn != nullptr)
             g_hash_table_add(used, it->conn);
         g_ptr_array_add(app->items, it);
@@ -436,16 +436,17 @@ static void build_items(nc_app *app) {
      * networks are the wireless adapter's preferred networks instead. */
     const GPtrArray *conns = nm_client_get_connections(app->client);
     for (guint i = 0; conns != nullptr && i < conns->len; i++) {
-        NMRemoteConnection *c = g_ptr_array_index(conns, i);
-        NMConnection *nc = NM_CONNECTION(c);
-        NMSettingConnection *s = nm_connection_get_setting_connection(nc);
-        if (g_hash_table_contains(used, c) || generated(c) || s == nullptr ||
-            nm_setting_connection_get_controller(s) != nullptr)
+        NMRemoteConnection *connection = g_ptr_array_index(conns, i);
+        NMConnection *nc = NM_CONNECTION(connection);
+        NMSettingConnection *connection_setting = nm_connection_get_setting_connection(nc);
+        if (g_hash_table_contains(used, connection) || generated(connection) ||
+            connection_setting == nullptr ||
+            nm_setting_connection_get_controller(connection_setting) != nullptr)
             continue;
-        xd_nc_group g = xd_nc_group_for_type(nm_connection_get_connection_type(nc));
-        if (g == XD_NC_WIRELESS || g == XD_NC_OTHER)
+        xd_nc_group connection_group = xd_nc_group_for_type(nm_connection_get_connection_type(nc));
+        if (connection_group == XD_NC_WIRELESS || connection_group == XD_NC_OTHER)
             continue;
-        g_ptr_array_add(app->items, connection_item(app, c, g));
+        g_ptr_array_add(app->items, connection_item(app, connection, connection_group));
     }
     g_hash_table_destroy(used);
 
@@ -468,26 +469,27 @@ typedef struct pending {
 } pending;
 
 static pending *pending_new(nc_app *app, const char *what) {
-    pending *p = g_new0(pending, 1);
-    p->app = app;
-    p->what = g_strdup(what);
+    pending *pending_action = g_new0(pending, 1);
+    pending_action->app = app;
+    pending_action->what = g_strdup(what);
     nc_hold(app);
-    return p;
+    return pending_action;
 }
 
-static void pending_fail(pending *p, GError *error) {
+static void pending_fail(pending *pending_action, GError *error) {
     if (error != nullptr && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-        nc_error(nc_parent(p->app), p->what, error);
+        nc_error(nc_parent(pending_action->app), pending_action->what, error);
     g_clear_error(&error);
-    nc_release(p->app);
-    g_free(p->what);
-    g_free(p);
+    nc_release(pending_action->app);
+    g_free(pending_action->what);
+    g_free(pending_action);
 }
 
 static void activated(GObject *src, GAsyncResult *res, gpointer data) {
     GError *error = nullptr;
-    NMActiveConnection *a = nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
-    g_clear_object(&a);
+    NMActiveConnection *active_connection =
+        nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
+    g_clear_object(&active_connection);
     pending_fail(data, error);
 }
 
@@ -575,27 +577,28 @@ typedef struct repair {
 } repair;
 
 static void repaired(GObject *src, GAsyncResult *res, gpointer data) {
-    repair *r = data;
+    repair *repair_job = data;
     GError *error = nullptr;
-    NMActiveConnection *a = nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
-    g_clear_object(&a);
+    NMActiveConnection *active_connection =
+        nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
+    g_clear_object(&active_connection);
     char *what = g_strdup_printf("The problem could not be repaired because the "
                                  "following action cannot be completed:\n\nRenewing your IP "
                                  "address for %s.",
-                                 r->name);
+                                 repair_job->name);
     if (error != nullptr) {
-        nc_error(nc_parent(r->app), what, error);
+        nc_error(nc_parent(repair_job->app), what, error);
         g_error_free(error);
     } else {
         char *done = g_strdup_printf("The problem has been repaired.\n\n%s is connecting again.",
-                                     r->name);
-        xd_message_box(nc_parent(r->app), "Repair", XD_MB_INFO, XD_MB_OK, FALSE, done);
+                                     repair_job->name);
+        xd_message_box(nc_parent(repair_job->app), "Repair", XD_MB_INFO, XD_MB_OK, FALSE, done);
         g_free(done);
     }
     g_free(what);
-    nc_release(r->app);
-    g_free(r->name);
-    g_free(r);
+    nc_release(repair_job->app);
+    g_free(repair_job->name);
+    g_free(repair_job);
 }
 
 /* XP renewed the DHCP lease and flushed caches; NetworkManager does
@@ -604,12 +607,12 @@ void nc_repair(nc_app *app, const char *key) {
     nc_item *it = nc_find(app, key);
     if (it == nullptr || it->conn == nullptr || !it->connected)
         return;
-    repair *r = g_new0(repair, 1);
-    r->app = app;
+    repair *repair_job = g_new0(repair, 1);
+    repair_job->app = app;
     nc_hold(app);
-    r->name = g_strdup(it->name);
+    repair_job->name = g_strdup(it->name);
     nm_client_activate_connection_async(app->client, NM_CONNECTION(it->conn), it->device, nullptr,
-                                        nullptr, repaired, r);
+                                        nullptr, repaired, repair_job);
 }
 
 static void deleted(GObject *src, GAsyncResult *res, gpointer data) {
@@ -622,11 +625,12 @@ static void do_delete(nc_app *app, const char *key) {
     nc_item *it = nc_find(app, key);
     if (it == nullptr || it->conn == nullptr || it->device != nullptr)
         return;
-    char *q = g_strdup_printf("Are you sure you want to delete the '%s' connection?", it->name);
-    int r = xd_message_box(nc_parent(app), "Confirm Connection Delete", XD_MB_QUESTION,
-                           XD_MB_YES_NO, TRUE, q);
-    g_free(q);
-    if (r != GTK_RESPONSE_YES)
+    char *question_text =
+        g_strdup_printf("Are you sure you want to delete the '%s' connection?", it->name);
+    int response = xd_message_box(nc_parent(app), "Confirm Connection Delete", XD_MB_QUESTION,
+                                  XD_MB_YES_NO, TRUE, question_text);
+    g_free(question_text);
+    if (response != GTK_RESPONSE_YES)
         return;
     it = nc_find(app, key); /* the box ran the main loop */
     if (it == nullptr || it->conn == nullptr)
@@ -638,9 +642,10 @@ static void do_delete(nc_app *app, const char *key) {
 
 static void committed(GObject *src, GAsyncResult *res, gpointer data) {
     GError *error = nullptr;
-    GVariant *r = nm_remote_connection_update2_finish(NM_REMOTE_CONNECTION(src), res, &error);
-    if (r != nullptr)
-        g_variant_unref(r);
+    GVariant *update_result =
+        nm_remote_connection_update2_finish(NM_REMOTE_CONNECTION(src), res, &error);
+    if (update_result != nullptr)
+        g_variant_unref(update_result);
     pending_fail(data, error);
 }
 
@@ -653,36 +658,37 @@ void nc_commit(nc_app *app, NMRemoteConnection *remote, NMConnection *changed, c
 
 static void added(GObject *src, GAsyncResult *res, gpointer data) {
     GError *error = nullptr;
-    NMRemoteConnection *c = nm_client_add_connection_finish(NM_CLIENT(src), res, &error);
-    g_clear_object(&c);
+    NMRemoteConnection *connection = nm_client_add_connection_finish(NM_CLIENT(src), res, &error);
+    g_clear_object(&connection);
     pending_fail(data, error);
 }
 
-void nc_add(nc_app *app, NMConnection *c, const char *what) {
-    nm_client_add_connection_async(app->client, c, TRUE, nullptr, added, pending_new(app, what));
+void nc_add(nc_app *app, NMConnection *connection, const char *what) {
+    nm_client_add_connection_async(app->client, connection, TRUE, nullptr, added,
+                                   pending_new(app, what));
 }
 
 static bool can_rename(const nc_item *it) {
     return it->conn != nullptr && it->group != XD_NC_WIRELESS && it->group != XD_NC_WIZARD;
 }
 
-static void on_rename_changed(GtkEditable *e, gpointer data) {
-    char *t = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(e))));
-    gtk_widget_set_sensitive(data, t[0] != '\0');
-    g_free(t);
+static void on_rename_changed(GtkEditable *editable, gpointer data) {
+    char *text = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(editable))));
+    gtk_widget_set_sensitive(data, text[0] != '\0');
+    g_free(text);
 }
 
 static void do_rename(nc_app *app, const char *key) {
     nc_item *it = nc_find(app, key);
     if (it == nullptr || !can_rename(it))
         return;
-    GtkWidget *d = gtk_dialog_new_with_buttons("Rename", nc_parent(app),
-                                               (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
-                                               nullptr, nullptr);
-    GtkWidget *ok = gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
+    GtkWidget *rename_dialog = gtk_dialog_new_with_buttons(
+        "Rename", nc_parent(app),
+        (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT), nullptr, nullptr);
+    GtkWidget *ok = gtk_dialog_add_button(GTK_DIALOG(rename_dialog), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(rename_dialog), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(rename_dialog), GTK_RESPONSE_OK);
+    gtk_window_set_resizable(GTK_WINDOW(rename_dialog), FALSE);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(box), 12);
     GtkWidget *entry = gtk_entry_new();
@@ -690,30 +696,31 @@ static void do_rename(nc_app *app, const char *key) {
     gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
     gtk_entry_set_width_chars(GTK_ENTRY(entry), 36);
     g_signal_connect(entry, "changed", G_CALLBACK(on_rename_changed), ok);
-    GtkWidget *l = gtk_label_new_with_mnemonic("_Connection name:");
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), entry);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_box_pack_start(GTK_BOX(box), l, FALSE, FALSE, 0);
+    GtkWidget *label_widget = gtk_label_new_with_mnemonic("_Connection name:");
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label_widget), entry);
+    gtk_label_set_xalign(GTK_LABEL(label_widget), 0);
+    gtk_box_pack_start(GTK_BOX(box), label_widget, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), box, TRUE, TRUE, 0);
-    gtk_widget_show_all(d);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(rename_dialog))), box, TRUE,
+                       TRUE, 0);
+    gtk_widget_show_all(rename_dialog);
     /* Closing the window destroys the box too: keep it until we're done. */
-    g_object_ref(d);
-    char *name = gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK
+    g_object_ref(rename_dialog);
+    char *name = gtk_dialog_run(GTK_DIALOG(rename_dialog)) == GTK_RESPONSE_OK
                      ? g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(entry))))
                      : nullptr;
-    gtk_widget_destroy(d);
-    g_object_unref(d);
+    gtk_widget_destroy(rename_dialog);
+    g_object_unref(rename_dialog);
     it = nc_find(app, key);
     if (it != nullptr && it->conn != nullptr && name != nullptr && name[0] != '\0' &&
         strcmp(name, it->name) != 0) {
-        NMConnection *c = nm_simple_connection_new_clone(NM_CONNECTION(it->conn));
-        g_object_set(nm_connection_get_setting_connection(c), NM_SETTING_CONNECTION_ID, name,
+        NMConnection *renamed = nm_simple_connection_new_clone(NM_CONNECTION(it->conn));
+        g_object_set(nm_connection_get_setting_connection(renamed), NM_SETTING_CONNECTION_ID, name,
                      nullptr);
         char *what = g_strdup_printf("Could not rename %s.", it->name);
-        nc_commit(app, it->conn, c, what);
+        nc_commit(app, it->conn, renamed, what);
         g_free(what);
-        g_object_unref(c);
+        g_object_unref(renamed);
     }
     g_free(name);
 }
@@ -744,23 +751,23 @@ typedef struct action_ref {
     char *key;
 } action_ref;
 
-static void action_ref_free(gpointer p) {
-    action_ref *r = p;
-    g_free(r->key);
-    g_free(r);
+static void action_ref_free(gpointer action_data) {
+    action_ref *bound_action = action_data;
+    g_free(bound_action->key);
+    g_free(bound_action);
 }
 
-static void set_action(GtkWidget *w, key_action fn, const char *key) {
-    action_ref *r = g_new0(action_ref, 1);
-    r->fn = fn;
-    r->key = g_strdup(key);
-    g_object_set_data_full(G_OBJECT(w), "action", r, action_ref_free);
+static void set_action(GtkWidget *widget, key_action fn, const char *key) {
+    action_ref *bound_action = g_new0(action_ref, 1);
+    bound_action->fn = fn;
+    bound_action->key = g_strdup(key);
+    g_object_set_data_full(G_OBJECT(widget), "action", bound_action, action_ref_free);
 }
 
-static void run_action(GtkWidget *w, nc_app *app) {
-    action_ref *r = g_object_get_data(G_OBJECT(w), "action");
-    if (r != nullptr && r->fn != nullptr)
-        r->fn(app, r->key);
+static void run_action(GtkWidget *widget, nc_app *app) {
+    action_ref *bound_action = g_object_get_data(G_OBJECT(widget), "action");
+    if (bound_action != nullptr && bound_action->fn != nullptr)
+        bound_action->fn(app, bound_action->key);
 }
 
 static void on_menu_action(GtkMenuItem *mi, gpointer data) { run_action(GTK_WIDGET(mi), data); }
@@ -769,10 +776,10 @@ static GtkWidget *menu_add(nc_app *app, GtkWidget *menu, const char *text, key_a
                            const char *key, bool sensitive, bool bold) {
     GtkWidget *mi = gtk_menu_item_new_with_mnemonic(text);
     if (bold) {
-        GtkWidget *l = gtk_bin_get_child(GTK_BIN(mi));
-        char *m = g_markup_printf_escaped("<b>%s</b>", text);
-        gtk_label_set_markup_with_mnemonic(GTK_LABEL(l), m);
-        g_free(m);
+        GtkWidget *label_widget = gtk_bin_get_child(GTK_BIN(mi));
+        char *bold_markup = g_markup_printf_escaped("<b>%s</b>", text);
+        gtk_label_set_markup_with_mnemonic(GTK_LABEL(label_widget), bold_markup);
+        g_free(bold_markup);
     }
     set_action(mi, fn, key);
     g_signal_connect(mi, "activate", G_CALLBACK(on_menu_action), app);
@@ -800,44 +807,44 @@ static void act_properties(nc_app *app, const char *key) { nc_properties_show(ap
 static void fill_actions(nc_app *app, GtkWidget *menu, nc_item *it) {
     if (it == nullptr)
         return;
-    const char *k = it->key;
+    const char *key = it->key;
     if (it->group == XD_NC_WIZARD) {
-        menu_add(app, menu, "_Open", act_wizard, k, true, true);
+        menu_add(app, menu, "_Open", act_wizard, key, true, true);
         return;
     }
     bool wifi = it->device != nullptr && NM_IS_DEVICE_WIFI(it->device);
     bool def_status = it->connected && !it->disabled;
     if (it->device != nullptr) {
         if (it->disabled)
-            menu_add(app, menu, "En_able", nc_enable, k, true, true);
+            menu_add(app, menu, "En_able", nc_enable, key, true, true);
         else
-            menu_add(app, menu, "Disa_ble", nc_disable, k, true, false);
+            menu_add(app, menu, "Disa_ble", nc_disable, key, true, false);
         if (wifi)
-            menu_add(app, menu, "View Available _Wireless Networks", act_wireless, k,
+            menu_add(app, menu, "View Available _Wireless Networks", act_wireless, key,
                      !it->disabled, !it->connected && !it->disabled);
     } else if (it->connected || it->state.active_state == NM_ACTIVE_CONNECTION_STATE_ACTIVATING) {
-        menu_add(app, menu, "Dis_connect", nc_disconnect, k, true, false);
+        menu_add(app, menu, "Dis_connect", nc_disconnect, key, true, false);
     } else {
-        menu_add(app, menu, "C_onnect", nc_connect, k, true, true);
+        menu_add(app, menu, "C_onnect", nc_connect, key, true, true);
     }
-    menu_add(app, menu, "Stat_us", act_status, k, it->connected, def_status);
-    menu_add(app, menu, "Re_pair", nc_repair, k, it->connected && it->conn != nullptr, false);
+    menu_add(app, menu, "Stat_us", act_status, key, it->connected, def_status);
+    menu_add(app, menu, "Re_pair", nc_repair, key, it->connected && it->conn != nullptr, false);
     menu_separator(menu);
-    menu_add(app, menu, "_Delete", do_delete, k, it->conn != nullptr && it->device == nullptr,
+    menu_add(app, menu, "_Delete", do_delete, key, it->conn != nullptr && it->device == nullptr,
              false);
-    menu_add(app, menu, "Rena_me", do_rename, k, can_rename(it), false);
-    menu_add(app, menu, "P_roperties", act_properties, k, true,
+    menu_add(app, menu, "Rena_me", do_rename, key, can_rename(it), false);
+    menu_add(app, menu, "P_roperties", act_properties, key, true,
              it->device != nullptr && !it->connected && !it->disabled && !wifi);
 }
 
-static gboolean destroy_now(gpointer w) {
-    gtk_widget_destroy(w);
+static gboolean destroy_now(gpointer menu) {
+    gtk_widget_destroy(menu);
     return G_SOURCE_REMOVE;
 }
 
 /* The item's "activate" comes after the menu's "deactivate". */
-static void destroy_later(GtkWidget *w, [[maybe_unused]] gpointer data) {
-    g_idle_add(destroy_now, w);
+static void destroy_later(GtkWidget *menu, [[maybe_unused]] gpointer data) {
+    g_idle_add(destroy_now, menu);
 }
 
 static void popup_menu(GtkWidget *menu, GdkEvent *event) {
@@ -856,7 +863,7 @@ static void on_view_toggled(GtkCheckMenuItem *mi, gpointer data) {
         show_view(app, GTK_WIDGET(mi) == app->details_item);
 }
 
-static void on_refresh([[maybe_unused]] GtkWidget *w, gpointer data) { rebuild_now(data); }
+static void on_refresh([[maybe_unused]] GtkWidget *widget, gpointer data) { rebuild_now(data); }
 
 static void background_menu(nc_app *app, GdkEvent *event) {
     GtkWidget *menu = gtk_menu_new();
@@ -907,26 +914,26 @@ static GtkWidget *pane_box(const char *title) {
     return box;
 }
 
-static void on_task(GtkButton *b, gpointer data) { run_action(GTK_WIDGET(b), data); }
+static void on_task(GtkButton *button, gpointer data) { run_action(GTK_WIDGET(button), data); }
 
 static void pane_task(nc_app *app, GtkWidget *box, const char *icon, const char *text,
                       key_action fn, const char *key) {
-    GtkWidget *b = gtk_button_new();
-    add_class(b, "xd-nc-link");
-    gtk_button_set_relief(GTK_BUTTON(b), GTK_RELIEF_NONE);
+    GtkWidget *task_button = gtk_button_new();
+    add_class(task_button, "xd-nc-link");
+    gtk_button_set_relief(GTK_BUTTON(task_button), GTK_RELIEF_NONE);
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_box_pack_start(GTK_BOX(row), gtk_image_new_from_icon_name(icon, GTK_ICON_SIZE_MENU), FALSE,
                        FALSE, 0);
-    GtkWidget *l = label(text, nullptr);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 22);
-    gtk_box_pack_start(GTK_BOX(row), l, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(b), row);
-    gtk_widget_set_halign(b, GTK_ALIGN_START);
-    gtk_widget_set_margin_start(b, 6);
-    set_action(b, fn, key);
-    g_signal_connect(b, "clicked", G_CALLBACK(on_task), app);
-    gtk_box_pack_start(GTK_BOX(box), b, FALSE, FALSE, 0);
+    GtkWidget *label_widget = label(text, nullptr);
+    gtk_label_set_line_wrap(GTK_LABEL(label_widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(label_widget), 22);
+    gtk_box_pack_start(GTK_BOX(row), label_widget, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(task_button), row);
+    gtk_widget_set_halign(task_button, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(task_button, 6);
+    set_action(task_button, fn, key);
+    g_signal_connect(task_button, "clicked", G_CALLBACK(on_task), app);
+    gtk_box_pack_start(GTK_BOX(box), task_button, FALSE, FALSE, 0);
 }
 
 static void act_control_panel(nc_app *app, [[maybe_unused]] const char *key) {
@@ -935,13 +942,13 @@ static void act_control_panel(nc_app *app, [[maybe_unused]] const char *key) {
 }
 
 static void details_line(GtkWidget *box, const char *text, bool bold) {
-    GtkWidget *l = label("", nullptr);
-    char *m = g_markup_printf_escaped(bold ? "<b>%s</b>" : "%s", text);
-    gtk_label_set_markup(GTK_LABEL(l), m);
-    g_free(m);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 24);
-    gtk_box_pack_start(GTK_BOX(box), l, FALSE, FALSE, 0);
+    GtkWidget *label_widget = label("", nullptr);
+    char *line_markup = g_markup_printf_escaped(bold ? "<b>%s</b>" : "%s", text);
+    gtk_label_set_markup(GTK_LABEL(label_widget), line_markup);
+    g_free(line_markup);
+    gtk_label_set_line_wrap(GTK_LABEL(label_widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(label_widget), 24);
+    gtk_box_pack_start(GTK_BOX(box), label_widget, FALSE, FALSE, 0);
 }
 
 static void build_pane(nc_app *app) {
@@ -952,31 +959,31 @@ static void build_pane(nc_app *app) {
     if (running)
         pane_task(app, tasks, "list-add", "Create a new connection", act_wizard, nullptr);
     if (it != nullptr && it->group != XD_NC_WIZARD) {
-        const char *k = it->key;
+        const char *key = it->key;
         bool wifi = it->device != nullptr && NM_IS_DEVICE_WIFI(it->device);
         if (wifi && !it->disabled)
             pane_task(app, tasks, "network-wireless", "View available wireless networks",
-                      act_wireless, k);
+                      act_wireless, key);
         if (it->device != nullptr && it->disabled)
             pane_task(app, tasks, "media-playback-start", "Enable this network device", nc_enable,
-                      k);
+                      key);
         else if (it->device != nullptr)
-            pane_task(app, tasks, "process-stop", "Disable this network device", nc_disable, k);
+            pane_task(app, tasks, "process-stop", "Disable this network device", nc_disable, key);
         else if (it->connected)
-            pane_task(app, tasks, "process-stop", "Disconnect this connection", nc_disconnect, k);
+            pane_task(app, tasks, "process-stop", "Disconnect this connection", nc_disconnect, key);
         else
-            pane_task(app, tasks, "media-playback-start", "Start this connection", nc_connect, k);
+            pane_task(app, tasks, "media-playback-start", "Start this connection", nc_connect, key);
         if (it->connected && it->conn != nullptr)
-            pane_task(app, tasks, "view-refresh", "Repair this connection", nc_repair, k);
+            pane_task(app, tasks, "view-refresh", "Repair this connection", nc_repair, key);
         if (can_rename(it))
-            pane_task(app, tasks, "edit-rename", "Rename this connection", do_rename, k);
+            pane_task(app, tasks, "edit-rename", "Rename this connection", do_rename, key);
         if (it->connected)
             pane_task(app, tasks, "dialog-information", "View status of this connection",
-                      act_status, k);
+                      act_status, key);
         if (it->conn != nullptr && it->device == nullptr)
-            pane_task(app, tasks, "edit-delete", "Delete this connection", do_delete, k);
+            pane_task(app, tasks, "edit-delete", "Delete this connection", do_delete, key);
         pane_task(app, tasks, "document-properties", "Change settings of this connection",
-                  act_properties, k);
+                  act_properties, key);
     }
     gtk_box_pack_start(GTK_BOX(app->pane), tasks, FALSE, FALSE, 0);
 
@@ -1007,12 +1014,12 @@ static void build_pane(nc_app *app) {
             nc_ipv4_info info;
             nc_ipv4_info_get(it->device, it->active, &info);
             if (info.address[0] != '\0') {
-                char *s = g_strdup_printf("IP Address: %s", info.address);
-                details_line(inner, s, false);
-                g_free(s);
-                s = g_strdup_printf("Subnet Mask: %s", info.netmask);
-                details_line(inner, s, false);
-                g_free(s);
+                char *text = g_strdup_printf("IP Address: %s", info.address);
+                details_line(inner, text, false);
+                g_free(text);
+                text = g_strdup_printf("Subnet Mask: %s", info.netmask);
+                details_line(inner, text, false);
+                g_free(text);
                 details_line(inner, info.dhcp ? "Assigned by DHCP" : "Manually Configured",
                              false);
             }
@@ -1056,9 +1063,9 @@ static void on_tile_selected(GtkFlowBox *box, gpointer data) {
     /* One selection across the groups. */
     app->selecting = true;
     GList *boxes = gtk_container_get_children(GTK_CONTAINER(app->groups));
-    for (GList *b = boxes; b != nullptr; b = b->next) {
-        if (GTK_IS_FLOW_BOX(b->data) && b->data != box)
-            gtk_flow_box_unselect_all(b->data);
+    for (GList *child = boxes; child != nullptr; child = child->next) {
+        if (GTK_IS_FLOW_BOX(child->data) && child->data != box)
+            gtk_flow_box_unselect_all(child->data);
     }
     g_list_free(boxes);
     app->selecting = false;
@@ -1072,30 +1079,31 @@ static void on_tile_activated([[maybe_unused]] GtkFlowBox *box, GtkFlowBoxChild 
         default_action(data, it);
 }
 
-static gboolean on_tile_button(GtkWidget *w, GdkEventButton *e, gpointer data) {
+static gboolean on_tile_button(GtkWidget *widget, GdkEventButton *button_event, gpointer data) {
     nc_app *app = data;
-    if (e->type != GDK_BUTTON_PRESS || e->button != GDK_BUTTON_SECONDARY)
+    if (button_event->type != GDK_BUTTON_PRESS || button_event->button != GDK_BUTTON_SECONDARY)
         return FALSE;
-    GtkFlowBoxChild *child = gtk_flow_box_get_child_at_pos(GTK_FLOW_BOX(w), (int)e->x, (int)e->y);
+    GtkFlowBoxChild *child = gtk_flow_box_get_child_at_pos(
+        GTK_FLOW_BOX(widget), (int)button_event->x, (int)button_event->y);
     if (child == nullptr) {
-        background_menu(app, (GdkEvent *)e);
+        background_menu(app, (GdkEvent *)button_event);
         return TRUE;
     }
-    gtk_flow_box_select_child(GTK_FLOW_BOX(w), child);
+    gtk_flow_box_select_child(GTK_FLOW_BOX(widget), child);
     gtk_widget_grab_focus(GTK_WIDGET(child));
     nc_item *it = nc_find(app, g_object_get_data(G_OBJECT(child), "key"));
     GtkWidget *menu = gtk_menu_new();
     fill_actions(app, menu, it);
-    popup_menu(menu, (GdkEvent *)e);
+    popup_menu(menu, (GdkEvent *)button_event);
     return TRUE;
 }
 
-static gboolean on_background_button([[maybe_unused]] GtkWidget *w, GdkEventButton *e,
-                                     gpointer data) {
-    if (e->type != GDK_BUTTON_PRESS)
+static gboolean on_background_button([[maybe_unused]] GtkWidget *widget,
+                                     GdkEventButton *button_event, gpointer data) {
+    if (button_event->type != GDK_BUTTON_PRESS)
         return FALSE;
-    if (e->button == GDK_BUTTON_SECONDARY)
-        background_menu(data, (GdkEvent *)e);
+    if (button_event->button == GDK_BUTTON_SECONDARY)
+        background_menu(data, (GdkEvent *)button_event);
     return TRUE;
 }
 
@@ -1114,10 +1122,10 @@ static GtkWidget *tile(const nc_item *it) {
     for (size_t i = 0; i < XD_ARRAY_LEN(lines); i++) {
         if (lines[i][0] == '\0')
             continue;
-        GtkWidget *l = label(lines[i], i > 0 ? "xd-nc-dim" : nullptr);
-        gtk_label_set_ellipsize(GTK_LABEL(l), PANGO_ELLIPSIZE_END);
-        gtk_label_set_max_width_chars(GTK_LABEL(l), 28);
-        gtk_box_pack_start(GTK_BOX(col), l, FALSE, FALSE, 0);
+        GtkWidget *label_widget = label(lines[i], i > 0 ? "xd-nc-dim" : nullptr);
+        gtk_label_set_ellipsize(GTK_LABEL(label_widget), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars(GTK_LABEL(label_widget), 28);
+        gtk_box_pack_start(GTK_BOX(col), label_widget, FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(row), col, TRUE, TRUE, 0);
     GtkWidget *child = gtk_flow_box_child_new();
@@ -1137,12 +1145,13 @@ static void build_tiles(nc_app *app) {
     xd_nc_group group = XD_NC_GROUP_COUNT;
     GtkFlowBoxChild *selected = nullptr;
     if (app->items->len == 0) {
-        GtkWidget *l = label(app->client == nullptr || !nm_client_get_nm_running(app->client)
-                                 ? "NetworkManager is not running, so there are no network "
-                                   "connections to show."
-                                 : "There are no network connections.",
-                             "xd-nc-dim");
-        gtk_box_pack_start(GTK_BOX(app->groups), l, FALSE, FALSE, 0);
+        GtkWidget *label_widget =
+            label(app->client == nullptr || !nm_client_get_nm_running(app->client)
+                      ? "NetworkManager is not running, so there are no network "
+                        "connections to show."
+                      : "There are no network connections.",
+                  "xd-nc-dim");
+        gtk_box_pack_start(GTK_BOX(app->groups), label_widget, FALSE, FALSE, 0);
     }
     for (guint i = 0; i < app->items->len; i++) {
         nc_item *it = g_ptr_array_index(app->items, i);
@@ -1226,23 +1235,23 @@ static void on_row_activated([[maybe_unused]] GtkTreeView *tv, GtkTreePath *path
         default_action(app, it);
 }
 
-static gboolean on_list_button(GtkWidget *w, GdkEventButton *e, gpointer data) {
+static gboolean on_list_button(GtkWidget *widget, GdkEventButton *button_event, gpointer data) {
     nc_app *app = data;
-    if (e->type != GDK_BUTTON_PRESS || e->button != GDK_BUTTON_SECONDARY)
+    if (button_event->type != GDK_BUTTON_PRESS || button_event->button != GDK_BUTTON_SECONDARY)
         return FALSE;
     GtkTreePath *path = nullptr;
-    if (!gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(w), (int)e->x, (int)e->y, &path, nullptr,
-                                       nullptr, nullptr)) {
-        background_menu(app, (GdkEvent *)e);
+    if (!gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), (int)button_event->x,
+                                       (int)button_event->y, &path, nullptr, nullptr, nullptr)) {
+        background_menu(app, (GdkEvent *)button_event);
         return TRUE;
     }
-    gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(w)), path);
+    gtk_tree_selection_select_path(gtk_tree_view_get_selection(GTK_TREE_VIEW(widget)), path);
     char *key = row_key(app, path);
     gtk_tree_path_free(path);
     GtkWidget *menu = gtk_menu_new();
     fill_actions(app, menu, nc_find(app, key));
     g_free(key);
-    popup_menu(menu, (GdkEvent *)e);
+    popup_menu(menu, (GdkEvent *)button_event);
     return TRUE;
 }
 
@@ -1254,13 +1263,13 @@ static GtkWidget *make_list(nc_app *app) {
     GtkTreeViewColumn *col = gtk_tree_view_column_new();
     gtk_tree_view_column_set_title(col, "Name");
     gtk_tree_view_column_set_resizable(col, TRUE);
-    GtkCellRenderer *r = gtk_cell_renderer_pixbuf_new();
-    gtk_tree_view_column_pack_start(col, r, FALSE);
-    gtk_tree_view_column_set_attributes(col, r, "gicon", COL_ICON, "sensitive", COL_SENSITIVE,
-                                        nullptr);
-    r = gtk_cell_renderer_text_new();
-    gtk_tree_view_column_pack_start(col, r, TRUE);
-    gtk_tree_view_column_set_attributes(col, r, "text", COL_NAME, nullptr);
+    GtkCellRenderer *renderer = gtk_cell_renderer_pixbuf_new();
+    gtk_tree_view_column_pack_start(col, renderer, FALSE);
+    gtk_tree_view_column_set_attributes(col, renderer, "gicon", COL_ICON, "sensitive",
+                                        COL_SENSITIVE, nullptr);
+    renderer = gtk_cell_renderer_text_new();
+    gtk_tree_view_column_pack_start(col, renderer, TRUE);
+    gtk_tree_view_column_set_attributes(col, renderer, "text", COL_NAME, nullptr);
     gtk_tree_view_append_column(GTK_TREE_VIEW(app->tree), col);
     static const struct {
         const char *title;
@@ -1319,16 +1328,16 @@ static void changed(nc_app *app) {
         app->rebuild_idle = g_timeout_add(100, rebuild_idle, app);
 }
 
-static void on_object_changed([[maybe_unused]] GObject *o, [[maybe_unused]] GParamSpec *ps,
+static void on_object_changed([[maybe_unused]] GObject *object, [[maybe_unused]] GParamSpec *ps,
                               gpointer data) {
     changed(data);
 }
 
-static void on_conn_changed([[maybe_unused]] NMRemoteConnection *c, gpointer data) {
+static void on_conn_changed([[maybe_unused]] NMRemoteConnection *connection, gpointer data) {
     changed(data);
 }
 
-static void on_client_object([[maybe_unused]] NMClient *c, GObject *object, gpointer data);
+static void on_client_object([[maybe_unused]] NMClient *client, GObject *object, gpointer data);
 
 static void watch(nc_app *app, GObject *object) {
     g_signal_handlers_disconnect_by_data(object, app);
@@ -1337,25 +1346,25 @@ static void watch(nc_app *app, GObject *object) {
         g_signal_connect(object, "changed", G_CALLBACK(on_conn_changed), app);
 }
 
-static void on_client_object([[maybe_unused]] NMClient *c, GObject *object, gpointer data) {
+static void on_client_object([[maybe_unused]] NMClient *client, GObject *object, gpointer data) {
     nc_app *app = data;
     watch(app, object);
     changed(app);
 }
 
 static void watch_all(nc_app *app) {
-    NMClient *c = app->client;
-    g_signal_connect(c, "notify", G_CALLBACK(on_object_changed), app);
+    NMClient *client = app->client;
+    g_signal_connect(client, "notify", G_CALLBACK(on_object_changed), app);
     static const char *const added[] = {"device-added",        "device-removed",
                                         "connection-added",    "connection-removed",
                                         "active-connection-added", "active-connection-removed"};
     for (size_t i = 0; i < XD_ARRAY_LEN(added); i++)
-        g_signal_connect(c, added[i], G_CALLBACK(on_client_object), app);
-    const GPtrArray *lists[] = {nm_client_get_devices(c), nm_client_get_connections(c),
-                                nm_client_get_active_connections(c)};
-    for (size_t l = 0; l < XD_ARRAY_LEN(lists); l++) {
-        for (guint i = 0; lists[l] != nullptr && i < lists[l]->len; i++)
-            watch(app, g_ptr_array_index(lists[l], i));
+        g_signal_connect(client, added[i], G_CALLBACK(on_client_object), app);
+    const GPtrArray *lists[] = {nm_client_get_devices(client), nm_client_get_connections(client),
+                                nm_client_get_active_connections(client)};
+    for (size_t list_index = 0; list_index < XD_ARRAY_LEN(lists); list_index++) {
+        for (guint i = 0; lists[list_index] != nullptr && i < lists[list_index]->len; i++)
+            watch(app, g_ptr_array_index(lists[list_index], i));
     }
 }
 
@@ -1369,17 +1378,17 @@ static GtkWidget *menu_bar_menu(GtkWidget *bar, const char *title) {
     return menu;
 }
 
-static void on_editor(GtkWidget *w, [[maybe_unused]] gpointer data) {
-    nc_run_editor(GTK_WINDOW(gtk_widget_get_toplevel(w)), nullptr);
+static void on_editor(GtkWidget *widget, [[maybe_unused]] gpointer data) {
+    nc_run_editor(GTK_WINDOW(gtk_widget_get_toplevel(widget)), nullptr);
 }
 
-static void on_about([[maybe_unused]] GtkWidget *w, gpointer data) {
+static void on_about([[maybe_unused]] GtkWidget *widget, gpointer data) {
     nc_app *app = data;
     const char *version = app->client != nullptr ? nm_client_get_version(app->client) : nullptr;
-    char *s = g_strdup_printf("Network Connections\nXeonDesktop\n\nNetworkManager %s",
-                              version != nullptr ? version : "is not running");
-    xd_message_box(nc_parent(app), "About Network Connections", XD_MB_INFO, XD_MB_OK, FALSE, s);
-    g_free(s);
+    char *text = g_strdup_printf("Network Connections\nXeonDesktop\n\nNetworkManager %s",
+                                 version != nullptr ? version : "is not running");
+    xd_message_box(nc_parent(app), "About Network Connections", XD_MB_INFO, XD_MB_OK, FALSE, text);
+    g_free(text);
 }
 
 static GtkWidget *menu_bar(nc_app *app, GtkAccelGroup *accel) {
@@ -1414,23 +1423,23 @@ static GtkWidget *menu_bar(nc_app *app, GtkAccelGroup *accel) {
     return bar;
 }
 
-static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
+static gboolean on_key(GtkWidget *widget, GdkEventKey *key_event, gpointer data) {
     nc_app *app = data;
-    if (GTK_IS_ENTRY(gtk_window_get_focus(GTK_WINDOW(w))) || app->selected == nullptr)
+    if (GTK_IS_ENTRY(gtk_window_get_focus(GTK_WINDOW(widget))) || app->selected == nullptr)
         return FALSE;
     /* Explorer's keys for the selected item. Rename and Delete ask first,
      * and the selection may change or go meanwhile: they get a copy. */
-    if (e->keyval == GDK_KEY_F2 || e->keyval == GDK_KEY_Delete) {
+    if (key_event->keyval == GDK_KEY_F2 || key_event->keyval == GDK_KEY_Delete) {
         char *key = g_strdup(app->selected);
-        if (e->keyval == GDK_KEY_F2)
+        if (key_event->keyval == GDK_KEY_F2)
             do_rename(app, key);
         else
             do_delete(app, key);
         g_free(key);
         return TRUE;
     }
-    if ((e->keyval == GDK_KEY_Return || e->keyval == GDK_KEY_KP_Enter) &&
-        (e->state & GDK_MOD1_MASK)) {
+    if ((key_event->keyval == GDK_KEY_Return || key_event->keyval == GDK_KEY_KP_Enter) &&
+        (key_event->state & GDK_MOD1_MASK)) {
         nc_properties_show(app, app->selected);
         return TRUE;
     }
@@ -1442,7 +1451,7 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
  * still pending (maybe_quit), as with a dialog alone. Nothing may reach
  * the window's widgets meanwhile: a change from NetworkManager only
  * rebuilds the items. */
-static void on_window_destroy(GtkWidget *w, gpointer data) {
+static void on_window_destroy(GtkWidget *widget, gpointer data) {
     nc_app *app = data;
     app->window = nullptr;
     app->stack = app->groups = app->tree = app->pane = nullptr;
@@ -1450,11 +1459,11 @@ static void on_window_destroy(GtkWidget *w, gpointer data) {
     app->store = nullptr;
     /* Referenced: destroying one may take others with it. */
     GList *all = gtk_window_list_toplevels();
-    for (GList *l = all; l != nullptr; l = l->next)
-        g_object_ref(l->data);
-    for (GList *l = all; l != nullptr; l = l->next) {
-        if (gtk_window_get_transient_for(l->data) == GTK_WINDOW(w))
-            gtk_widget_destroy(l->data);
+    for (GList *link = all; link != nullptr; link = link->next)
+        g_object_ref(link->data);
+    for (GList *link = all; link != nullptr; link = link->next) {
+        if (gtk_window_get_transient_for(link->data) == GTK_WINDOW(widget))
+            gtk_widget_destroy(link->data);
     }
     g_list_free_full(all, g_object_unref);
     maybe_quit(app);

@@ -64,7 +64,7 @@ void nc_repair(nc_app *app, const char *key);
 /* Saves `changed` as the connection's settings / adds a connection;
  * `what` heads the error message. */
 void nc_commit(nc_app *app, NMRemoteConnection *remote, NMConnection *changed, const char *what);
-void nc_add(nc_app *app, NMConnection *c, const char *what);
+void nc_add(nc_app *app, NMConnection *connection, const char *what);
 /* The path of one of our programs (next to us, else on PATH) or another. */
 char *nc_own_program(const char *name);
 /* Launches one of those. */

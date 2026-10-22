@@ -34,8 +34,8 @@ enum {
     KEY_MGMT_EAP_SUITE_B = 0x2000,
 };
 
-const char *xd_nc_group_title(xd_nc_group g) {
-    switch (g) {
+const char *xd_nc_group_title(xd_nc_group connection_group) {
+    switch (connection_group) {
     case XD_NC_LAN:
         return "LAN or High-Speed Internet";
     case XD_NC_WIRELESS:
@@ -74,25 +74,25 @@ xd_nc_group xd_nc_group_for_type(const char *type) {
     return XD_NC_OTHER;
 }
 
-bool xd_nc_state_disabled(const xd_nc_state *s) {
-    if (!s->has_device)
+bool xd_nc_state_disabled(const xd_nc_state *state) {
+    if (!state->has_device)
         return false;
-    if (!s->managed || s->device_state == DEV_UNMANAGED || s->radio_off)
+    if (!state->managed || state->device_state == DEV_UNMANAGED || state->radio_off)
         return true;
     /* NetworkManager stops connecting a device by itself once it's been
      * disconnected by hand: that is XP's Disable. */
-    return s->device_state == DEV_DISCONNECTED && !s->autoconnect;
+    return state->device_state == DEV_DISCONNECTED && !state->autoconnect;
 }
 
-bool xd_nc_state_connected(const xd_nc_state *s) {
-    if (!s->has_device)
-        return s->active_state == ACTIVE_ACTIVATED;
-    return s->managed && s->device_state == DEV_ACTIVATED;
+bool xd_nc_state_connected(const xd_nc_state *state) {
+    if (!state->has_device)
+        return state->active_state == ACTIVE_ACTIVATED;
+    return state->managed && state->device_state == DEV_ACTIVATED;
 }
 
-const char *xd_nc_status_text(const xd_nc_state *s) {
-    if (!s->has_device) {
-        switch (s->active_state) {
+const char *xd_nc_status_text(const xd_nc_state *state) {
+    if (!state->has_device) {
+        switch (state->active_state) {
         case ACTIVE_ACTIVATING:
             return "Connecting";
         case ACTIVE_ACTIVATED:
@@ -103,12 +103,12 @@ const char *xd_nc_status_text(const xd_nc_state *s) {
             return "Disconnected";
         }
     }
-    if (xd_nc_state_disabled(s))
+    if (xd_nc_state_disabled(state))
         return "Disabled";
-    if (s->carrier_known && !s->carrier &&
-        (s->device_state == DEV_UNAVAILABLE || s->device_state == DEV_DISCONNECTED))
+    if (state->carrier_known && !state->carrier &&
+        (state->device_state == DEV_UNAVAILABLE || state->device_state == DEV_DISCONNECTED))
         return "Network cable unplugged";
-    switch (s->device_state) {
+    switch (state->device_state) {
     case DEV_UNAVAILABLE:
         return "Not connected";
     case DEV_PREPARE:
@@ -121,7 +121,8 @@ const char *xd_nc_status_text(const xd_nc_state *s) {
     case DEV_SECONDARIES:
         return "Acquiring network address";
     case DEV_ACTIVATED:
-        return s->connectivity >= CONNECTIVITY_NONE && s->connectivity <= CONNECTIVITY_LIMITED
+        return state->connectivity >= CONNECTIVITY_NONE &&
+                       state->connectivity <= CONNECTIVITY_LIMITED
                    ? "Limited or no connectivity"
                    : "Connected";
     case DEV_DEACTIVATING:
@@ -133,20 +134,20 @@ const char *xd_nc_status_text(const xd_nc_state *s) {
     }
 }
 
-char *xd_nc_numbered_name(const char *base, unsigned n) {
-    return n <= 1 ? g_strdup(base) : g_strdup_printf("%s %u", base, n);
+char *xd_nc_numbered_name(const char *base, unsigned number) {
+    return number <= 1 ? g_strdup(base) : g_strdup_printf("%s %u", base, number);
 }
 
 /* ---- the Status dialog's numbers ----------------------------------------------- */
 
 char *xd_nc_format_duration(guint64 seconds) {
     guint64 days = seconds / 86400;
-    unsigned h = (unsigned)(seconds / 3600 % 24), m = (unsigned)(seconds / 60 % 60),
-             s = (unsigned)(seconds % 60);
+    unsigned hour_part = (unsigned)(seconds / 3600 % 24),
+             minute_part = (unsigned)(seconds / 60 % 60), second_part = (unsigned)(seconds % 60);
     if (days == 0)
-        return g_strdup_printf("%02u:%02u:%02u", h, m, s);
-    return g_strdup_printf("%" G_GUINT64_FORMAT " day%s %02u:%02u:%02u", days,
-                           days == 1 ? "" : "s", h, m, s);
+        return g_strdup_printf("%02u:%02u:%02u", hour_part, minute_part, second_part);
+    return g_strdup_printf("%" G_GUINT64_FORMAT " day%s %02u:%02u:%02u", days, days == 1 ? "" : "s",
+                           hour_part, minute_part, second_part);
 }
 
 char *xd_nc_format_speed(guint64 kbps) {
@@ -160,9 +161,9 @@ char *xd_nc_format_speed(guint64 kbps) {
     return g_strdup_printf("%" G_GUINT64_FORMAT ".0 Kbps", kbps);
 }
 
-char *xd_nc_format_count(guint64 n) {
+char *xd_nc_format_count(guint64 count) {
     char digits[32];
-    g_snprintf(digits, sizeof(digits), "%" G_GUINT64_FORMAT, n);
+    g_snprintf(digits, sizeof(digits), "%" G_GUINT64_FORMAT, count);
     size_t len = strlen(digits);
     GString *out = g_string_sized_new(len + len / 3);
     for (size_t i = 0; i < len; i++) {
@@ -177,64 +178,66 @@ char *xd_nc_format_count(guint64 n) {
 
 /* A dotted quad as a number (host order); false if it isn't one. GIO
  * parses it (inet_pton rules: four decimal parts). */
-static bool parse_ipv4(const char *s, guint32 *out) {
-    if (s == nullptr || s[0] == '\0')
+static bool parse_ipv4(const char *text, guint32 *out) {
+    if (text == nullptr || text[0] == '\0')
         return false;
-    GInetAddress *a = g_inet_address_new_from_string(s);
-    if (a == nullptr)
+    GInetAddress *address = g_inet_address_new_from_string(text);
+    if (address == nullptr)
         return false;
-    bool ok = g_inet_address_get_family(a) == G_SOCKET_FAMILY_IPV4;
+    bool ok = g_inet_address_get_family(address) == G_SOCKET_FAMILY_IPV4;
     if (ok) {
-        const guint8 *b = g_inet_address_to_bytes(a);
-        *out = (guint32)b[0] << 24 | (guint32)b[1] << 16 | (guint32)b[2] << 8 | b[3];
+        const guint8 *bytes = g_inet_address_to_bytes(address);
+        *out =
+            (guint32)bytes[0] << 24 | (guint32)bytes[1] << 16 | (guint32)bytes[2] << 8 | bytes[3];
     }
-    g_object_unref(a);
+    g_object_unref(address);
     return ok;
 }
 
-bool xd_nc_valid_ipv4(const char *s) {
-    guint32 v;
-    return parse_ipv4(s, &v);
+bool xd_nc_valid_ipv4(const char *text) {
+    guint32 parsed;
+    return parse_ipv4(text, &parsed);
 }
 
 bool xd_nc_netmask_to_prefix(const char *mask, unsigned *prefix) {
-    guint32 m;
-    if (!parse_ipv4(mask, &m))
+    guint32 mask_bits;
+    if (!parse_ipv4(mask, &mask_bits))
         return false;
     /* Ones, then only zeros. */
-    guint32 inverted = ~m;
+    guint32 inverted = ~mask_bits;
     if ((inverted & (inverted + 1)) != 0)
         return false;
-    *prefix = stdc_count_ones_ui(m);
+    *prefix = stdc_count_ones_ui(mask_bits);
     return true;
 }
 
 char *xd_nc_prefix_to_netmask(unsigned prefix) {
-    guint32 m = prefix == 0 ? 0 : prefix >= 32 ? 0xffffffffu : ~((1u << (32 - prefix)) - 1);
-    return g_strdup_printf("%u.%u.%u.%u", m >> 24, m >> 16 & 0xff, m >> 8 & 0xff, m & 0xff);
+    guint32 mask_bits = prefix == 0 ? 0 : prefix >= 32 ? 0xffffffffu : ~((1u << (32 - prefix)) - 1);
+    return g_strdup_printf("%u.%u.%u.%u", mask_bits >> 24, mask_bits >> 16 & 0xff,
+                           mask_bits >> 8 & 0xff, mask_bits & 0xff);
 }
 
 unsigned xd_nc_default_prefix(const char *ip) {
-    guint32 a;
-    if (!parse_ipv4(ip, &a))
+    guint32 address;
+    if (!parse_ipv4(ip, &address))
         return 0;
-    unsigned first = a >> 24;
+    unsigned first = address >> 24;
     return first < 128 ? 8 : first < 192 ? 16 : first < 224 ? 24 : 0;
 }
 
-static bool blank(const char *s) { return s == nullptr || s[0] == '\0'; }
+static bool blank(const char *text) { return text == nullptr || text[0] == '\0'; }
 
-const char *xd_nc_check_ipv4_form(const xd_nc_ipv4_form *f) {
-    guint32 ip = 0, gw = 0, v = 0;
+const char *xd_nc_check_ipv4_form(const xd_nc_ipv4_form *form) {
+    guint32 ip = 0, gw = 0, dns = 0;
     unsigned prefix = 0;
-    if (f->manual_ip) {
-        if (blank(f->address))
+    if (form->manual_ip) {
+        if (blank(form->address))
             return "You must type an IP address.";
-        if (!parse_ipv4(f->address, &ip))
+        if (!parse_ipv4(form->address, &ip))
             return "The IP address you typed is not valid.";
-        if (blank(f->netmask))
+        if (blank(form->netmask))
             return "You must type a subnet mask.";
-        if (!xd_nc_netmask_to_prefix(f->netmask, &prefix) || prefix == 0)
+        if (!xd_nc_netmask_to_prefix(form->netmask, &prefix) || prefix == 0)
             return "The subnet mask you typed is not valid.";
         guint32 host = prefix >= 32 ? 0 : ~0u >> prefix;
         if (prefix < 31 && ((ip & host) == 0 || (ip & host) == host))
@@ -242,8 +245,8 @@ const char *xd_nc_check_ipv4_form(const xd_nc_ipv4_form *f) {
                    "in the host address portion of the IP address are set to 0 or 1.";
         if (ip >> 24 == 0 || ip >> 24 == 127 || ip >> 24 >= 224)
             return "The IP address you typed can't be used by a network adapter.";
-        if (!blank(f->gateway)) {
-            if (!parse_ipv4(f->gateway, &gw))
+        if (!blank(form->gateway)) {
+            if (!parse_ipv4(form->gateway, &gw))
                 return "The default gateway you typed is not valid.";
             guint32 net = prefix >= 32 ? ~0u : ~(~0u >> prefix);
             if ((gw & net) != (ip & net))
@@ -251,10 +254,10 @@ const char *xd_nc_check_ipv4_form(const xd_nc_ipv4_form *f) {
                        "is defined by the IP address and subnet mask.";
         }
     }
-    if (f->manual_ip || f->manual_dns) {
-        if (!blank(f->dns1) && !parse_ipv4(f->dns1, &v))
+    if (form->manual_ip || form->manual_dns) {
+        if (!blank(form->dns1) && !parse_ipv4(form->dns1, &dns))
             return "The preferred DNS server you typed is not valid.";
-        if (!blank(f->dns2) && !parse_ipv4(f->dns2, &v))
+        if (!blank(form->dns2) && !parse_ipv4(form->dns2, &dns))
             return "The alternate DNS server you typed is not valid.";
     }
     return nullptr;
@@ -294,9 +297,9 @@ const char *xd_nc_wifi_key_mgmt(unsigned flags, unsigned wpa_flags, unsigned rsn
     return nullptr;
 }
 
-static bool all_hex(const char *s) {
-    for (; *s != '\0'; s++) {
-        if (!g_ascii_isxdigit(*s))
+static bool all_hex(const char *text) {
+    for (; *text != '\0'; text++) {
+        if (!g_ascii_isxdigit(*text))
             return false;
     }
     return true;
@@ -305,14 +308,14 @@ static bool all_hex(const char *s) {
 bool xd_nc_valid_wifi_key(const char *key_mgmt, const char *key) {
     if (key == nullptr)
         return false;
-    size_t n = strlen(key);
+    size_t length = strlen(key);
     if (g_strcmp0(key_mgmt, "none") == 0)
-        return n == 5 || n == 13 || ((n == 10 || n == 26) && all_hex(key));
+        return length == 5 || length == 13 || ((length == 10 || length == 26) && all_hex(key));
     if (g_strcmp0(key_mgmt, "wpa-psk") == 0)
-        return (n >= 8 && n <= 63) || (n == 64 && all_hex(key));
+        return (length >= 8 && length <= 63) || (length == 64 && all_hex(key));
     if (g_strcmp0(key_mgmt, "sae") == 0)
-        return n >= 8 && n <= 63;
-    return n == 0;
+        return length >= 8 && length <= 63;
+    return length == 0;
 }
 
 const char *xd_nc_signal_words(unsigned strength) {

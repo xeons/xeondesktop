@@ -17,38 +17,39 @@
 #include "app.h"
 
 /* Buttons that only act (Next, Connect) answer GTK_RESPONSE_NONE. */
-static void on_response(GtkDialog *d, int response, [[maybe_unused]] gpointer data) {
+static void on_response(GtkDialog *dialog_widget, int response, [[maybe_unused]] gpointer data) {
     if (response != GTK_RESPONSE_NONE)
-        gtk_widget_destroy(GTK_WIDGET(d));
+        gtk_widget_destroy(GTK_WIDGET(dialog_widget));
 }
 
 typedef enum text_style { PLAIN, BOLD, HEADING, TITLE } text_style;
 
 static GtkWidget *label(const char *text, text_style style) {
-    GtkWidget *l = gtk_label_new(nullptr);
-    char *m = nullptr;
+    GtkWidget *label_widget = gtk_label_new(nullptr);
+    char *label_markup = nullptr;
     switch (style) {
     case BOLD:
-        m = g_markup_printf_escaped("<b>%s</b>", text);
+        label_markup = g_markup_printf_escaped("<b>%s</b>", text);
         break;
     case HEADING:
-        m = g_markup_printf_escaped("<span size='large' weight='bold'>%s</span>", text);
+        label_markup = g_markup_printf_escaped("<span size='large' weight='bold'>%s</span>", text);
         break;
     case TITLE:
-        m = g_markup_printf_escaped("<span size='x-large' weight='bold'>%s</span>", text);
+        label_markup =
+            g_markup_printf_escaped("<span size='x-large' weight='bold'>%s</span>", text);
         break;
     case PLAIN:
         break;
     }
-    if (m != nullptr)
-        gtk_label_set_markup(GTK_LABEL(l), m);
+    if (label_markup != nullptr)
+        gtk_label_set_markup(GTK_LABEL(label_widget), label_markup);
     else
-        gtk_label_set_text_with_mnemonic(GTK_LABEL(l), text);
-    g_free(m);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 56);
-    return l;
+        gtk_label_set_text_with_mnemonic(GTK_LABEL(label_widget), text);
+    g_free(label_markup);
+    gtk_label_set_xalign(GTK_LABEL(label_widget), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(label_widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(label_widget), 56);
+    return label_widget;
 }
 
 /* ---- adding, then connecting -------------------------------------------------------- */
@@ -62,8 +63,9 @@ typedef struct add_job {
 static void activated(GObject *src, GAsyncResult *res, gpointer data) {
     nc_app *app = data;
     GError *error = nullptr;
-    NMActiveConnection *a = nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
-    g_clear_object(&a);
+    NMActiveConnection *active_connection =
+        nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
+    g_clear_object(&active_connection);
     if (error != nullptr) {
         nc_error(nc_parent(app), "The connection was created, but could not connect.", error);
         g_error_free(error);
@@ -75,8 +77,9 @@ static void activated(GObject *src, GAsyncResult *res, gpointer data) {
 static void saved_activated(GObject *src, GAsyncResult *res, gpointer data) {
     nc_app *app = data;
     GError *error = nullptr;
-    NMActiveConnection *a = nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
-    g_clear_object(&a);
+    NMActiveConnection *active_connection =
+        nm_client_activate_connection_finish(NM_CLIENT(src), res, &error);
+    g_clear_object(&active_connection);
     if (error != nullptr) {
         nc_error(nc_parent(app), "Could not connect to the wireless network.", error);
         g_error_free(error);
@@ -85,21 +88,22 @@ static void saved_activated(GObject *src, GAsyncResult *res, gpointer data) {
 }
 
 static void added(GObject *src, GAsyncResult *res, gpointer data) {
-    add_job *j = data;
+    add_job *add_request = data;
     GError *error = nullptr;
-    NMRemoteConnection *c = nm_client_add_connection_finish(NM_CLIENT(src), res, &error);
-    if (c == nullptr) {
-        nc_error(nc_parent(j->app), "The connection could not be created.", error);
+    NMRemoteConnection *connection = nm_client_add_connection_finish(NM_CLIENT(src), res, &error);
+    if (connection == nullptr) {
+        nc_error(nc_parent(add_request->app), "The connection could not be created.", error);
         g_error_free(error);
-    } else if (j->connect) {
-        nc_hold(j->app);
-        nm_client_activate_connection_async(j->app->client, NM_CONNECTION(c), j->device, nullptr,
-                                            nullptr, activated, j->app);
+    } else if (add_request->connect) {
+        nc_hold(add_request->app);
+        nm_client_activate_connection_async(add_request->app->client, NM_CONNECTION(connection),
+                                            add_request->device, nullptr, nullptr, activated,
+                                            add_request->app);
     }
-    nc_release(j->app);
-    g_clear_object(&c);
-    g_clear_object(&j->device);
-    g_free(j);
+    nc_release(add_request->app);
+    g_clear_object(&connection);
+    g_clear_object(&add_request->device);
+    g_free(add_request);
 }
 
 /* ---- the wizard ---------------------------------------------------------------------- */
@@ -132,16 +136,16 @@ typedef struct wizard {
     const char *page;
 } wizard;
 
-static kind chosen(wizard *w) {
+static kind chosen(wizard *connection_wizard) {
     for (int i = 0; i < 3; i++) {
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->kind[i])))
+        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(connection_wizard->kind[i])))
             return (kind)i;
     }
     return KIND_WIRED;
 }
 
-static const char *detail_page(wizard *w) {
-    switch (chosen(w)) {
+static const char *detail_page(wizard *connection_wizard) {
+    switch (chosen(connection_wizard)) {
     case KIND_WIFI:
         return "wifi";
     case KIND_VPN:
@@ -152,191 +156,198 @@ static const char *detail_page(wizard *w) {
     return "wired";
 }
 
-static const char *security_key_mgmt(wizard *w) {
-    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(w->security));
+static const char *security_key_mgmt(wizard *connection_wizard) {
+    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(connection_wizard->security));
     return i >= 0 && (size_t)i < XD_ARRAY_LEN(securities) ? securities[i].key_mgmt : nullptr;
 }
 
-static NMVpnPluginInfo *chosen_plugin(wizard *w) {
-    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(w->vpn_type));
-    return i >= 0 ? g_slist_nth_data(w->plugins, (guint)i) : nullptr;
+static NMVpnPluginInfo *chosen_plugin(wizard *connection_wizard) {
+    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(connection_wizard->vpn_type));
+    return i >= 0 ? g_slist_nth_data(connection_wizard->plugins, (guint)i) : nullptr;
 }
 
-static const char *text(GtkWidget *e) { return gtk_entry_get_text(GTK_ENTRY(e)); }
+static const char *text(GtkWidget *field) { return gtk_entry_get_text(GTK_ENTRY(field)); }
 
-static bool blank(GtkWidget *e) {
-    char *t = g_strstrip(g_strdup(text(e)));
-    bool b = t[0] == '\0';
-    g_free(t);
-    return b;
+static bool blank(GtkWidget *field) {
+    char *stripped = g_strstrip(g_strdup(text(field)));
+    bool is_blank = stripped[0] == '\0';
+    g_free(stripped);
+    return is_blank;
 }
 
 /* Whether the current page is filled in enough for Next. */
-static bool page_ok(wizard *w) {
-    if (strcmp(w->page, "wired") == 0)
-        return !blank(w->wired_name);
-    if (strcmp(w->page, "wifi") == 0) {
-        size_t n = strlen(text(w->ssid));
-        const char *km = security_key_mgmt(w);
-        if (n == 0 || n > 32)
+static bool page_ok(wizard *connection_wizard) {
+    if (strcmp(connection_wizard->page, "wired") == 0)
+        return !blank(connection_wizard->wired_name);
+    if (strcmp(connection_wizard->page, "wifi") == 0) {
+        size_t length = strlen(text(connection_wizard->ssid));
+        const char *km = security_key_mgmt(connection_wizard);
+        if (length == 0 || length > 32)
             return false;
         if (km == nullptr)
             return true;
-        return xd_nc_valid_wifi_key(km, text(w->key)) && strcmp(text(w->key), text(w->confirm)) == 0;
+        return xd_nc_valid_wifi_key(km, text(connection_wizard->key)) &&
+               strcmp(text(connection_wizard->key), text(connection_wizard->confirm)) == 0;
     }
-    if (strcmp(w->page, "vpn") == 0)
-        return !blank(w->vpn_name) && chosen_plugin(w) != nullptr;
+    if (strcmp(connection_wizard->page, "vpn") == 0)
+        return !blank(connection_wizard->vpn_name) && chosen_plugin(connection_wizard) != nullptr;
     return true;
 }
 
-static void show_page(wizard *w, const char *page) {
-    w->page = page;
-    gtk_stack_set_visible_child_name(GTK_STACK(w->stack), page);
+static void show_page(wizard *connection_wizard, const char *page) {
+    connection_wizard->page = page;
+    gtk_stack_set_visible_child_name(GTK_STACK(connection_wizard->stack), page);
     bool last = strcmp(page, "finish") == 0;
-    gtk_widget_set_sensitive(w->back, strcmp(page, "welcome") != 0);
-    gtk_widget_set_visible(w->next, !last);
-    gtk_widget_set_visible(w->finish, last);
-    gtk_widget_set_sensitive(w->next, page_ok(w));
-    gtk_widget_grab_default(last ? w->finish : w->next);
+    gtk_widget_set_sensitive(connection_wizard->back, strcmp(page, "welcome") != 0);
+    gtk_widget_set_visible(connection_wizard->next, !last);
+    gtk_widget_set_visible(connection_wizard->finish, last);
+    gtk_widget_set_sensitive(connection_wizard->next, page_ok(connection_wizard));
+    gtk_widget_grab_default(last ? connection_wizard->finish : connection_wizard->next);
 }
 
-static void on_input([[maybe_unused]] GtkWidget *x, gpointer data) {
-    wizard *w = data;
-    if (w->page == nullptr)
+static void on_input([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    wizard *connection_wizard = data;
+    if (connection_wizard->page == nullptr)
         return; /* still being built */
-    bool keyed = security_key_mgmt(w) != nullptr;
-    gtk_widget_set_sensitive(w->key, keyed);
-    gtk_widget_set_sensitive(w->confirm, keyed);
-    NMVpnPluginInfo *pi = chosen_plugin(w);
-    gtk_widget_set_sensitive(
-        w->vpn_host, pi != nullptr && xd_nc_vpn_host_key(nm_vpn_plugin_info_get_service(pi)) != nullptr);
-    gtk_widget_set_sensitive(w->next, page_ok(w));
+    bool keyed = security_key_mgmt(connection_wizard) != nullptr;
+    gtk_widget_set_sensitive(connection_wizard->key, keyed);
+    gtk_widget_set_sensitive(connection_wizard->confirm, keyed);
+    NMVpnPluginInfo *pi = chosen_plugin(connection_wizard);
+    gtk_widget_set_sensitive(connection_wizard->vpn_host,
+                             pi != nullptr &&
+                                 xd_nc_vpn_host_key(nm_vpn_plugin_info_get_service(pi)) != nullptr);
+    gtk_widget_set_sensitive(connection_wizard->next, page_ok(connection_wizard));
 }
 
-static char *connection_name(wizard *w) {
-    switch (chosen(w)) {
+static char *connection_name(wizard *connection_wizard) {
+    switch (chosen(connection_wizard)) {
     case KIND_WIFI:
-        return g_strdup(text(w->ssid));
+        return g_strdup(text(connection_wizard->ssid));
     case KIND_VPN:
-        return g_strstrip(g_strdup(text(w->vpn_name)));
+        return g_strstrip(g_strdup(text(connection_wizard->vpn_name)));
     case KIND_WIRED:
         break;
     }
-    return g_strstrip(g_strdup(text(w->wired_name)));
+    return g_strstrip(g_strdup(text(connection_wizard->wired_name)));
 }
 
-static void on_next([[maybe_unused]] GtkButton *b, gpointer data) {
-    wizard *w = data;
-    if (!page_ok(w))
+static void on_next([[maybe_unused]] GtkButton *button, gpointer data) {
+    wizard *connection_wizard = data;
+    if (!page_ok(connection_wizard))
         return;
-    if (strcmp(w->page, "welcome") == 0) {
-        show_page(w, "type");
-    } else if (strcmp(w->page, "type") == 0) {
-        show_page(w, detail_page(w));
+    if (strcmp(connection_wizard->page, "welcome") == 0) {
+        show_page(connection_wizard, "type");
+    } else if (strcmp(connection_wizard->page, "type") == 0) {
+        show_page(connection_wizard, detail_page(connection_wizard));
     } else {
-        char *name = connection_name(w);
-        char *m = g_markup_printf_escaped(
+        char *name = connection_name(connection_wizard);
+        char *summary_markup = g_markup_printf_escaped(
             "You have successfully completed the steps needed to create the following "
             "connection:\n\n<b>%s</b>\n\nThe connection will be saved in Network Connections.",
             name);
-        gtk_label_set_markup(GTK_LABEL(w->summary), m);
-        g_free(m);
+        gtk_label_set_markup(GTK_LABEL(connection_wizard->summary), summary_markup);
+        g_free(summary_markup);
         g_free(name);
-        show_page(w, "finish");
+        show_page(connection_wizard, "finish");
     }
 }
 
-static void on_back([[maybe_unused]] GtkButton *b, gpointer data) {
-    wizard *w = data;
-    if (strcmp(w->page, "finish") == 0)
-        show_page(w, detail_page(w));
-    else if (strcmp(w->page, "type") == 0)
-        show_page(w, "welcome");
+static void on_back([[maybe_unused]] GtkButton *button, gpointer data) {
+    wizard *connection_wizard = data;
+    if (strcmp(connection_wizard->page, "finish") == 0)
+        show_page(connection_wizard, detail_page(connection_wizard));
+    else if (strcmp(connection_wizard->page, "type") == 0)
+        show_page(connection_wizard, "welcome");
     else
-        show_page(w, "type");
+        show_page(connection_wizard, "type");
 }
 
-static NMConnection *build(wizard *w, NMDevice **device) {
+static NMConnection *build(wizard *connection_wizard, NMDevice **device) {
     *device = nullptr;
-    kind k = chosen(w);
-    NMConnection *c = nm_simple_connection_new();
-    NMSetting *s = nm_setting_connection_new();
+    kind chosen_kind = chosen(connection_wizard);
+    NMConnection *connection = nm_simple_connection_new();
+    NMSetting *setting = nm_setting_connection_new();
     char *uuid = nm_utils_uuid_generate();
-    char *name = connection_name(w);
-    g_object_set(s, NM_SETTING_CONNECTION_ID, name, NM_SETTING_CONNECTION_UUID, uuid,
-                 NM_SETTING_CONNECTION_AUTOCONNECT, k != KIND_VPN, nullptr);
+    char *name = connection_name(connection_wizard);
+    g_object_set(setting, NM_SETTING_CONNECTION_ID, name, NM_SETTING_CONNECTION_UUID, uuid,
+                 NM_SETTING_CONNECTION_AUTOCONNECT, chosen_kind != KIND_VPN, nullptr);
     g_free(name);
     g_free(uuid);
-    nm_connection_add_setting(c, s);
-    if (k == KIND_WIRED) {
-        g_object_set(s, NM_SETTING_CONNECTION_TYPE, NM_SETTING_WIRED_SETTING_NAME, nullptr);
-        const char *iface = gtk_combo_box_get_active_id(GTK_COMBO_BOX(w->wired_device));
+    nm_connection_add_setting(connection, setting);
+    if (chosen_kind == KIND_WIRED) {
+        g_object_set(setting, NM_SETTING_CONNECTION_TYPE, NM_SETTING_WIRED_SETTING_NAME, nullptr);
+        const char *iface =
+            gtk_combo_box_get_active_id(GTK_COMBO_BOX(connection_wizard->wired_device));
         if (iface != nullptr && iface[0] != '\0') {
-            g_object_set(s, NM_SETTING_CONNECTION_INTERFACE_NAME, iface, nullptr);
-            *device = nm_client_get_device_by_iface(w->app->client, iface);
+            g_object_set(setting, NM_SETTING_CONNECTION_INTERFACE_NAME, iface, nullptr);
+            *device = nm_client_get_device_by_iface(connection_wizard->app->client, iface);
         }
-        nm_connection_add_setting(c, nm_setting_wired_new());
-    } else if (k == KIND_WIFI) {
-        g_object_set(s, NM_SETTING_CONNECTION_TYPE, NM_SETTING_WIRELESS_SETTING_NAME, nullptr);
+        nm_connection_add_setting(connection, nm_setting_wired_new());
+    } else if (chosen_kind == KIND_WIFI) {
+        g_object_set(setting, NM_SETTING_CONNECTION_TYPE, NM_SETTING_WIRELESS_SETTING_NAME,
+                     nullptr);
         NMSetting *wifi = nm_setting_wireless_new();
-        const char *ssid = text(w->ssid);
+        const char *ssid = text(connection_wizard->ssid);
         GBytes *bytes = g_bytes_new(ssid, strlen(ssid));
         g_object_set(wifi, NM_SETTING_WIRELESS_SSID, bytes, NM_SETTING_WIRELESS_MODE,
                      NM_SETTING_WIRELESS_MODE_INFRA, nullptr);
         g_bytes_unref(bytes);
-        nm_connection_add_setting(c, wifi);
-        const char *km = security_key_mgmt(w);
+        nm_connection_add_setting(connection, wifi);
+        const char *km = security_key_mgmt(connection_wizard);
         if (km != nullptr) {
             NMSetting *sec = nm_setting_wireless_security_new();
             g_object_set(sec, NM_SETTING_WIRELESS_SECURITY_KEY_MGMT, km, nullptr);
             if (strcmp(km, "none") == 0)
-                g_object_set(sec, NM_SETTING_WIRELESS_SECURITY_WEP_KEY0, text(w->key),
-                             NM_SETTING_WIRELESS_SECURITY_WEP_KEY_TYPE, NM_WEP_KEY_TYPE_KEY,
-                             nullptr);
+                g_object_set(
+                    sec, NM_SETTING_WIRELESS_SECURITY_WEP_KEY0, text(connection_wizard->key),
+                    NM_SETTING_WIRELESS_SECURITY_WEP_KEY_TYPE, NM_WEP_KEY_TYPE_KEY, nullptr);
             else
-                g_object_set(sec, NM_SETTING_WIRELESS_SECURITY_PSK, text(w->key), nullptr);
-            nm_connection_add_setting(c, sec);
+                g_object_set(sec, NM_SETTING_WIRELESS_SECURITY_PSK, text(connection_wizard->key),
+                             nullptr);
+            nm_connection_add_setting(connection, sec);
         }
     } else {
-        g_object_set(s, NM_SETTING_CONNECTION_TYPE, NM_SETTING_VPN_SETTING_NAME, nullptr);
-        NMVpnPluginInfo *pi = chosen_plugin(w);
+        g_object_set(setting, NM_SETTING_CONNECTION_TYPE, NM_SETTING_VPN_SETTING_NAME, nullptr);
+        NMVpnPluginInfo *pi = chosen_plugin(connection_wizard);
         const char *service = nm_vpn_plugin_info_get_service(pi);
         NMSettingVpn *vpn = NM_SETTING_VPN(nm_setting_vpn_new());
         g_object_set(vpn, NM_SETTING_VPN_SERVICE_TYPE, service, nullptr);
         const char *host_key = xd_nc_vpn_host_key(service);
-        char *host = g_strstrip(g_strdup(text(w->vpn_host)));
+        char *host = g_strstrip(g_strdup(text(connection_wizard->vpn_host)));
         if (host_key != nullptr && host[0] != '\0')
             nm_setting_vpn_add_data_item(vpn, host_key, host);
         g_free(host);
-        nm_connection_add_setting(c, NM_SETTING(vpn));
+        nm_connection_add_setting(connection, NM_SETTING(vpn));
     }
-    s = nm_setting_ip4_config_new();
-    g_object_set(s, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_AUTO, nullptr);
-    nm_connection_add_setting(c, s);
-    s = nm_setting_ip6_config_new();
-    g_object_set(s, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP6_CONFIG_METHOD_AUTO, nullptr);
-    nm_connection_add_setting(c, s);
-    return c;
+    setting = nm_setting_ip4_config_new();
+    g_object_set(setting, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_AUTO, nullptr);
+    nm_connection_add_setting(connection, setting);
+    setting = nm_setting_ip6_config_new();
+    g_object_set(setting, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP6_CONFIG_METHOD_AUTO, nullptr);
+    nm_connection_add_setting(connection, setting);
+    return connection;
 }
 
-static void on_finish([[maybe_unused]] GtkButton *b, gpointer data) {
-    wizard *w = data;
+static void on_finish([[maybe_unused]] GtkButton *button, gpointer data) {
+    wizard *connection_wizard = data;
     NMDevice *device = nullptr;
-    NMConnection *c = build(w, &device);
-    add_job *j = g_new0(add_job, 1);
-    j->app = w->app;
-    j->device = device != nullptr ? g_object_ref(device) : nullptr;
-    j->connect = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w->connect_now));
-    nc_hold(w->app);
-    nm_client_add_connection_async(w->app->client, c, TRUE, nullptr, added, j);
-    g_object_unref(c);
-    gtk_widget_destroy(w->dialog);
+    NMConnection *connection = build(connection_wizard, &device);
+    add_job *add_request = g_new0(add_job, 1);
+    add_request->app = connection_wizard->app;
+    add_request->device = device != nullptr ? g_object_ref(device) : nullptr;
+    add_request->connect =
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(connection_wizard->connect_now));
+    nc_hold(connection_wizard->app);
+    nm_client_add_connection_async(connection_wizard->app->client, connection, TRUE, nullptr, added,
+                                   add_request);
+    g_object_unref(connection);
+    gtk_widget_destroy(connection_wizard->dialog);
 }
 
-static void on_wizard_destroy([[maybe_unused]] GtkWidget *x, gpointer data) {
-    wizard *w = data;
-    g_slist_free_full(w->plugins, g_object_unref);
-    g_free(w);
+static void on_wizard_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    wizard *connection_wizard = data;
+    g_slist_free_full(connection_wizard->plugins, g_object_unref);
+    g_free(connection_wizard);
 }
 
 static GtkWidget *page_box(const char *title, const char *subtitle) {
@@ -344,9 +355,9 @@ static GtkWidget *page_box(const char *title, const char *subtitle) {
     gtk_container_set_border_width(GTK_CONTAINER(box), 16);
     gtk_box_pack_start(GTK_BOX(box), label(title, BOLD), FALSE, FALSE, 0);
     if (subtitle != nullptr) {
-        GtkWidget *s = label(subtitle, PLAIN);
-        gtk_widget_set_margin_start(s, 14);
-        gtk_box_pack_start(GTK_BOX(box), s, FALSE, FALSE, 0);
+        GtkWidget *subtitle_label = label(subtitle, PLAIN);
+        gtk_widget_set_margin_start(subtitle_label, 14);
+        gtk_box_pack_start(GTK_BOX(box), subtitle_label, FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE,
                        0);
@@ -354,31 +365,31 @@ static GtkWidget *page_box(const char *title, const char *subtitle) {
 }
 
 static GtkWidget *form_entry(GtkWidget *grid, int y, const char *name, GtkWidget *field) {
-    GtkWidget *l = label(name, PLAIN);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), field);
-    gtk_grid_attach(GTK_GRID(grid), l, 0, y, 1, 1);
+    GtkWidget *label_widget = label(name, PLAIN);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label_widget), field);
+    gtk_grid_attach(GTK_GRID(grid), label_widget, 0, y, 1, 1);
     gtk_widget_set_hexpand(field, TRUE);
     gtk_grid_attach(GTK_GRID(grid), field, 1, y, 1, 1);
     return field;
 }
 
-static GtkWidget *entry(wizard *w, bool secret) {
-    GtkWidget *e = gtk_entry_new();
-    gtk_entry_set_activates_default(GTK_ENTRY(e), TRUE);
+static GtkWidget *entry(wizard *connection_wizard, bool secret) {
+    GtkWidget *entry_widget = gtk_entry_new();
+    gtk_entry_set_activates_default(GTK_ENTRY(entry_widget), TRUE);
     if (secret) {
-        gtk_entry_set_visibility(GTK_ENTRY(e), FALSE);
-        gtk_entry_set_input_purpose(GTK_ENTRY(e), GTK_INPUT_PURPOSE_PASSWORD);
+        gtk_entry_set_visibility(GTK_ENTRY(entry_widget), FALSE);
+        gtk_entry_set_input_purpose(GTK_ENTRY(entry_widget), GTK_INPUT_PURPOSE_PASSWORD);
     }
-    g_signal_connect(e, "changed", G_CALLBACK(on_input), w);
-    return e;
+    g_signal_connect(entry_widget, "changed", G_CALLBACK(on_input), connection_wizard);
+    return entry_widget;
 }
 
 static GtkWidget *form(void) {
-    GtkWidget *g = gtk_grid_new();
-    gtk_grid_set_row_spacing(GTK_GRID(g), 8);
-    gtk_grid_set_column_spacing(GTK_GRID(g), 12);
-    gtk_widget_set_margin_start(g, 14);
-    return g;
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
+    gtk_widget_set_margin_start(grid, 14);
+    return grid;
 }
 
 static GtkWidget *welcome_page(void) {
@@ -407,7 +418,7 @@ static GtkWidget *welcome_page(void) {
     return box;
 }
 
-static GtkWidget *type_page(wizard *w) {
+static GtkWidget *type_page(wizard *connection_wizard) {
     GtkWidget *box = page_box("Network Connection Type", "What do you want to do?");
     static const char *const kinds[][2] = {
         {"Connect to a _wired network",
@@ -418,92 +429,104 @@ static GtkWidget *type_page(wizard *w) {
          "Connect to a business network using a virtual private network (VPN) connection."},
     };
     for (int i = 0; i < 3; i++) {
-        w->kind[i] = i == 0 ? gtk_radio_button_new_with_mnemonic(nullptr, kinds[i][0])
-                            : gtk_radio_button_new_with_mnemonic_from_widget(
-                                  GTK_RADIO_BUTTON(w->kind[0]), kinds[i][0]);
-        gtk_box_pack_start(GTK_BOX(box), w->kind[i], FALSE, FALSE, 0);
-        GtkWidget *d = label(kinds[i][1], PLAIN);
-        gtk_widget_set_margin_start(d, 26);
-        gtk_box_pack_start(GTK_BOX(box), d, FALSE, FALSE, 0);
+        connection_wizard->kind[i] =
+            i == 0 ? gtk_radio_button_new_with_mnemonic(nullptr, kinds[i][0])
+                   : gtk_radio_button_new_with_mnemonic_from_widget(
+                         GTK_RADIO_BUTTON(connection_wizard->kind[0]), kinds[i][0]);
+        gtk_box_pack_start(GTK_BOX(box), connection_wizard->kind[i], FALSE, FALSE, 0);
+        GtkWidget *description = label(kinds[i][1], PLAIN);
+        gtk_widget_set_margin_start(description, 26);
+        gtk_box_pack_start(GTK_BOX(box), description, FALSE, FALSE, 0);
     }
     return box;
 }
 
-static GtkWidget *wired_page(wizard *w) {
+static GtkWidget *wired_page(wizard *connection_wizard) {
     GtkWidget *box = page_box("Wired Connection", "Name the connection and pick the adapter it uses.");
-    GtkWidget *g = form();
-    w->wired_name = form_entry(g, 0, "Connection _name:", entry(w, false));
+    GtkWidget *grid = form();
+    connection_wizard->wired_name =
+        form_entry(grid, 0, "Connection _name:", entry(connection_wizard, false));
     /* "Local Area Connection N", the next free number. */
-    unsigned n = 1;
-    for (char *name = xd_nc_numbered_name("Local Area Connection", n);;
-         name = xd_nc_numbered_name("Local Area Connection", ++n)) {
+    unsigned number = 1;
+    for (char *name = xd_nc_numbered_name("Local Area Connection", number);;
+         name = xd_nc_numbered_name("Local Area Connection", ++number)) {
         bool taken = false;
-        const GPtrArray *all = nm_client_get_connections(w->app->client);
+        const GPtrArray *all = nm_client_get_connections(connection_wizard->app->client);
         for (guint i = 0; all != nullptr && i < all->len && !taken; i++)
             taken = strcmp(nm_connection_get_id(g_ptr_array_index(all, i)), name) == 0;
         if (!taken) {
-            gtk_entry_set_text(GTK_ENTRY(w->wired_name), name);
+            gtk_entry_set_text(GTK_ENTRY(connection_wizard->wired_name), name);
             g_free(name);
             break;
         }
         g_free(name);
     }
-    w->wired_device = gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(w->wired_device), "", "Any wired adapter");
-    const GPtrArray *devs = nm_client_get_devices(w->app->client);
+    connection_wizard->wired_device = gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(connection_wizard->wired_device), "",
+                              "Any wired adapter");
+    const GPtrArray *devs = nm_client_get_devices(connection_wizard->app->client);
     for (guint i = 0; devs != nullptr && i < devs->len; i++) {
-        NMDevice *d = g_ptr_array_index(devs, i);
-        if (!NM_IS_DEVICE_ETHERNET(d))
+        NMDevice *device = g_ptr_array_index(devs, i);
+        if (!NM_IS_DEVICE_ETHERNET(device))
             continue;
-        const char *desc = nm_device_get_description(d);
-        const char *iface = nm_device_get_iface(d);
-        char *t = desc != nullptr && strcmp(desc, iface) != 0
-                      ? g_strdup_printf("%s (%s)", desc, iface)
-                      : g_strdup(iface);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(w->wired_device), nm_device_get_iface(d), t);
-        g_free(t);
+        const char *desc = nm_device_get_description(device);
+        const char *iface = nm_device_get_iface(device);
+        char *text = desc != nullptr && strcmp(desc, iface) != 0
+                         ? g_strdup_printf("%s (%s)", desc, iface)
+                         : g_strdup(iface);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(connection_wizard->wired_device),
+                                  nm_device_get_iface(device), text);
+        g_free(text);
     }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(w->wired_device), 0);
-    form_entry(g, 1, "Connect _using:", w->wired_device);
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(connection_wizard->wired_device), 0);
+    form_entry(grid, 1, "Connect _using:", connection_wizard->wired_device);
+    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
     return box;
 }
 
-static GtkWidget *wifi_page(wizard *w) {
+static GtkWidget *wifi_page(wizard *connection_wizard) {
     GtkWidget *box = page_box("Wireless Network",
                               "Type the network's name and how it is secured. To pick a network "
                               "in range instead, use View Available Wireless Networks.");
-    GtkWidget *g = form();
-    w->ssid = form_entry(g, 0, "Network _name (SSID):", entry(w, false));
-    gtk_entry_set_max_length(GTK_ENTRY(w->ssid), 32);
-    w->security = gtk_combo_box_text_new();
+    GtkWidget *grid = form();
+    connection_wizard->ssid =
+        form_entry(grid, 0, "Network _name (SSID):", entry(connection_wizard, false));
+    gtk_entry_set_max_length(GTK_ENTRY(connection_wizard->ssid), 32);
+    connection_wizard->security = gtk_combo_box_text_new();
     for (size_t i = 0; i < XD_ARRAY_LEN(securities); i++)
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(w->security), securities[i].label);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(w->security), 0);
-    g_signal_connect(w->security, "changed", G_CALLBACK(on_input), w);
-    form_entry(g, 1, "_Security:", w->security);
-    w->key = form_entry(g, 2, "Network _key:", entry(w, true));
-    w->confirm = form_entry(g, 3, "C_onfirm network key:", entry(w, true));
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(connection_wizard->security),
+                                       securities[i].label);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(connection_wizard->security), 0);
+    g_signal_connect(connection_wizard->security, "changed", G_CALLBACK(on_input),
+                     connection_wizard);
+    form_entry(grid, 1, "_Security:", connection_wizard->security);
+    connection_wizard->key = form_entry(grid, 2, "Network _key:", entry(connection_wizard, true));
+    connection_wizard->confirm =
+        form_entry(grid, 3, "C_onfirm network key:", entry(connection_wizard, true));
+    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
     return box;
 }
 
-static GtkWidget *vpn_page(wizard *w) {
+static GtkWidget *vpn_page(wizard *connection_wizard) {
     GtkWidget *box = page_box("VPN Connection",
                               "Name the connection, pick the kind of VPN and type its server.");
-    GtkWidget *g = form();
-    w->vpn_name = form_entry(g, 0, "Company N_ame:", entry(w, false));
-    w->vpn_type = gtk_combo_box_text_new();
-    w->plugins = nm_vpn_plugin_info_list_load();
-    for (GSList *l = w->plugins; l != nullptr; l = l->next)
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(w->vpn_type),
-                                       nm_vpn_plugin_info_get_name(l->data));
-    gtk_combo_box_set_active(GTK_COMBO_BOX(w->vpn_type), w->plugins != nullptr ? 0 : -1);
-    g_signal_connect(w->vpn_type, "changed", G_CALLBACK(on_input), w);
-    form_entry(g, 1, "VPN _type:", w->vpn_type);
-    w->vpn_host = form_entry(g, 2, "_Host name or IP address:", entry(w, false));
-    gtk_box_pack_start(GTK_BOX(box), g, FALSE, FALSE, 0);
-    if (w->plugins == nullptr)
+    GtkWidget *grid = form();
+    connection_wizard->vpn_name =
+        form_entry(grid, 0, "Company N_ame:", entry(connection_wizard, false));
+    connection_wizard->vpn_type = gtk_combo_box_text_new();
+    connection_wizard->plugins = nm_vpn_plugin_info_list_load();
+    for (GSList *link = connection_wizard->plugins; link != nullptr; link = link->next)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(connection_wizard->vpn_type),
+                                       nm_vpn_plugin_info_get_name(link->data));
+    gtk_combo_box_set_active(GTK_COMBO_BOX(connection_wizard->vpn_type),
+                             connection_wizard->plugins != nullptr ? 0 : -1);
+    g_signal_connect(connection_wizard->vpn_type, "changed", G_CALLBACK(on_input),
+                     connection_wizard);
+    form_entry(grid, 1, "VPN _type:", connection_wizard->vpn_type);
+    connection_wizard->vpn_host =
+        form_entry(grid, 2, "_Host name or IP address:", entry(connection_wizard, false));
+    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
+    if (connection_wizard->plugins == nullptr)
         gtk_box_pack_start(GTK_BOX(box),
                            label("No VPN plugins for NetworkManager are installed. Install one "
                                  "(such as NetworkManager-openvpn) to create a VPN connection.",
@@ -512,18 +535,18 @@ static GtkWidget *vpn_page(wizard *w) {
     return box;
 }
 
-static GtkWidget *finish_page(wizard *w) {
+static GtkWidget *finish_page(wizard *connection_wizard) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_container_set_border_width(GTK_CONTAINER(box), 16);
     gtk_box_pack_start(GTK_BOX(box),
                        label("Completing the New Connection Wizard",
                              TITLE),
                        FALSE, FALSE, 0);
-    w->summary = label("", PLAIN);
-    gtk_box_pack_start(GTK_BOX(box), w->summary, FALSE, FALSE, 0);
-    w->connect_now = gtk_check_button_new_with_mnemonic("_Connect now");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w->connect_now), TRUE);
-    gtk_box_pack_start(GTK_BOX(box), w->connect_now, FALSE, FALSE, 0);
+    connection_wizard->summary = label("", PLAIN);
+    gtk_box_pack_start(GTK_BOX(box), connection_wizard->summary, FALSE, FALSE, 0);
+    connection_wizard->connect_now = gtk_check_button_new_with_mnemonic("_Connect now");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(connection_wizard->connect_now), TRUE);
+    gtk_box_pack_start(GTK_BOX(box), connection_wizard->connect_now, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(box), label("To create the connection and close this wizard, click "
                                          "Finish.",
                                          PLAIN),
@@ -534,42 +557,49 @@ static GtkWidget *finish_page(wizard *w) {
 void nc_wizard_show(nc_app *app) {
     if (app->client == nullptr || !nm_client_get_nm_running(app->client))
         return;
-    wizard *w = g_new0(wizard, 1);
-    w->app = app;
-    w->dialog = gtk_dialog_new();
-    nc_track(app, w->dialog);
-    gtk_window_set_title(GTK_WINDOW(w->dialog), "New Connection Wizard");
-    gtk_window_set_icon_name(GTK_WINDOW(w->dialog), "tools-wizard");
-    gtk_window_set_resizable(GTK_WINDOW(w->dialog), FALSE);
+    wizard *connection_wizard = g_new0(wizard, 1);
+    connection_wizard->app = app;
+    connection_wizard->dialog = gtk_dialog_new();
+    nc_track(app, connection_wizard->dialog);
+    gtk_window_set_title(GTK_WINDOW(connection_wizard->dialog), "New Connection Wizard");
+    gtk_window_set_icon_name(GTK_WINDOW(connection_wizard->dialog), "tools-wizard");
+    gtk_window_set_resizable(GTK_WINDOW(connection_wizard->dialog), FALSE);
     if (nc_parent(app) != nullptr)
-        gtk_window_set_transient_for(GTK_WINDOW(w->dialog), nc_parent(app));
-    w->back = gtk_dialog_add_button(GTK_DIALOG(w->dialog), "< _Back", GTK_RESPONSE_NONE);
-    w->next = gtk_dialog_add_button(GTK_DIALOG(w->dialog), "_Next >", GTK_RESPONSE_NONE);
-    w->finish = gtk_dialog_add_button(GTK_DIALOG(w->dialog), "Finish", GTK_RESPONSE_NONE);
-    gtk_dialog_add_button(GTK_DIALOG(w->dialog), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_widget_set_can_default(w->next, TRUE);
-    gtk_widget_set_can_default(w->finish, TRUE);
-    g_signal_connect(w->back, "clicked", G_CALLBACK(on_back), w);
-    g_signal_connect(w->next, "clicked", G_CALLBACK(on_next), w);
-    g_signal_connect(w->finish, "clicked", G_CALLBACK(on_finish), w);
-    g_signal_connect(w->dialog, "response", G_CALLBACK(on_response), nullptr);
-    g_signal_connect(w->dialog, "destroy", G_CALLBACK(on_wizard_destroy), w);
+        gtk_window_set_transient_for(GTK_WINDOW(connection_wizard->dialog), nc_parent(app));
+    connection_wizard->back =
+        gtk_dialog_add_button(GTK_DIALOG(connection_wizard->dialog), "< _Back", GTK_RESPONSE_NONE);
+    connection_wizard->next =
+        gtk_dialog_add_button(GTK_DIALOG(connection_wizard->dialog), "_Next >", GTK_RESPONSE_NONE);
+    connection_wizard->finish =
+        gtk_dialog_add_button(GTK_DIALOG(connection_wizard->dialog), "Finish", GTK_RESPONSE_NONE);
+    gtk_dialog_add_button(GTK_DIALOG(connection_wizard->dialog), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_widget_set_can_default(connection_wizard->next, TRUE);
+    gtk_widget_set_can_default(connection_wizard->finish, TRUE);
+    g_signal_connect(connection_wizard->back, "clicked", G_CALLBACK(on_back), connection_wizard);
+    g_signal_connect(connection_wizard->next, "clicked", G_CALLBACK(on_next), connection_wizard);
+    g_signal_connect(connection_wizard->finish, "clicked", G_CALLBACK(on_finish),
+                     connection_wizard);
+    g_signal_connect(connection_wizard->dialog, "response", G_CALLBACK(on_response), nullptr);
+    g_signal_connect(connection_wizard->dialog, "destroy", G_CALLBACK(on_wizard_destroy),
+                     connection_wizard);
 
-    w->stack = gtk_stack_new();
-    gtk_widget_set_size_request(w->stack, 500, 320);
-    gtk_stack_add_named(GTK_STACK(w->stack), welcome_page(), "welcome");
-    gtk_stack_add_named(GTK_STACK(w->stack), type_page(w), "type");
-    gtk_stack_add_named(GTK_STACK(w->stack), wired_page(w), "wired");
-    gtk_stack_add_named(GTK_STACK(w->stack), wifi_page(w), "wifi");
-    gtk_stack_add_named(GTK_STACK(w->stack), vpn_page(w), "vpn");
-    gtk_stack_add_named(GTK_STACK(w->stack), finish_page(w), "finish");
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(w->dialog));
-    gtk_box_pack_start(GTK_BOX(content), w->stack, TRUE, TRUE, 0);
+    connection_wizard->stack = gtk_stack_new();
+    gtk_widget_set_size_request(connection_wizard->stack, 500, 320);
+    gtk_stack_add_named(GTK_STACK(connection_wizard->stack), welcome_page(), "welcome");
+    gtk_stack_add_named(GTK_STACK(connection_wizard->stack), type_page(connection_wizard), "type");
+    gtk_stack_add_named(GTK_STACK(connection_wizard->stack), wired_page(connection_wizard),
+                        "wired");
+    gtk_stack_add_named(GTK_STACK(connection_wizard->stack), wifi_page(connection_wizard), "wifi");
+    gtk_stack_add_named(GTK_STACK(connection_wizard->stack), vpn_page(connection_wizard), "vpn");
+    gtk_stack_add_named(GTK_STACK(connection_wizard->stack), finish_page(connection_wizard),
+                        "finish");
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(connection_wizard->dialog));
+    gtk_box_pack_start(GTK_BOX(content), connection_wizard->stack, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(content), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE,
                        FALSE, 0);
-    gtk_widget_show_all(w->dialog);
-    show_page(w, "welcome");
-    on_input(nullptr, w);
+    gtk_widget_show_all(connection_wizard->dialog);
+    show_page(connection_wizard, "welcome");
+    on_input(nullptr, connection_wizard);
 }
 
 /* ---- View Available Wireless Networks ---------------------------------------------------- */
@@ -592,9 +622,9 @@ static const char *signal_icon(unsigned strength) {
 }
 
 static char *ap_ssid(NMAccessPoint *ap) {
-    GBytes *b = nm_access_point_get_ssid(ap);
-    return b != nullptr && g_bytes_get_size(b) > 0
-               ? nm_utils_ssid_to_utf8(g_bytes_get_data(b, nullptr), g_bytes_get_size(b))
+    GBytes *bytes = nm_access_point_get_ssid(ap);
+    return bytes != nullptr && g_bytes_get_size(bytes) > 0
+               ? nm_utils_ssid_to_utf8(g_bytes_get_data(bytes, nullptr), g_bytes_get_size(bytes))
                : nullptr;
 }
 
@@ -622,18 +652,20 @@ static char *connected_ssid(NMDevice *device) {
     NMAccessPoint *ap = nm_device_wifi_get_active_access_point(NM_DEVICE_WIFI(device));
     char *ssid = ap != nullptr ? ap_ssid(ap) : nullptr;
     NMActiveConnection *active = nm_device_get_active_connection(device);
-    NMRemoteConnection *c = active != nullptr ? nm_active_connection_get_connection(active) : nullptr;
-    NMSettingWireless *s = c != nullptr ? nm_connection_get_setting_wireless(NM_CONNECTION(c))
-                                        : nullptr;
-    GBytes *b = s != nullptr ? nm_setting_wireless_get_ssid(s) : nullptr;
-    if (ssid == nullptr && b != nullptr)
-        ssid = nm_utils_ssid_to_utf8(g_bytes_get_data(b, nullptr), g_bytes_get_size(b));
+    NMRemoteConnection *connection =
+        active != nullptr ? nm_active_connection_get_connection(active) : nullptr;
+    NMSettingWireless *setting = connection != nullptr
+                                     ? nm_connection_get_setting_wireless(NM_CONNECTION(connection))
+                                     : nullptr;
+    GBytes *bytes = setting != nullptr ? nm_setting_wireless_get_ssid(setting) : nullptr;
+    if (ssid == nullptr && bytes != nullptr)
+        ssid = nm_utils_ssid_to_utf8(g_bytes_get_data(bytes, nullptr), g_bytes_get_size(bytes));
     return ssid;
 }
 
 /* A saved connection for the network, if any. */
-static NMRemoteConnection *saved_for(chooser *c, NMAccessPoint *ap) {
-    const GPtrArray *all = nm_client_get_connections(c->app->client);
+static NMRemoteConnection *saved_for(chooser *network_chooser, NMAccessPoint *ap) {
+    const GPtrArray *all = nm_client_get_connections(network_chooser->app->client);
     GPtrArray *mine = g_ptr_array_new();
     for (guint i = 0; all != nullptr && i < all->len; i++) {
         NMConnection *conn = g_ptr_array_index(all, i);
@@ -641,24 +673,24 @@ static NMRemoteConnection *saved_for(chooser *c, NMAccessPoint *ap) {
             g_ptr_array_add(mine, conn);
     }
     GPtrArray *match = nm_access_point_filter_connections(ap, mine);
-    NMRemoteConnection *r = match != nullptr && match->len > 0 ? g_ptr_array_index(match, 0)
-                                                               : nullptr;
+    NMRemoteConnection *saved =
+        match != nullptr && match->len > 0 ? g_ptr_array_index(match, 0) : nullptr;
     if (match != nullptr)
         g_ptr_array_unref(match);
     g_ptr_array_unref(mine);
-    return r;
+    return saved;
 }
 
-static void fill_networks(chooser *c) {
+static void fill_networks(chooser *network_chooser) {
     char *keep = nullptr;
     GtkTreeModel *model;
     GtkTreeIter iter;
-    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(c->view));
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(network_chooser->view));
     if (gtk_tree_selection_get_selected(sel, &model, &iter))
         gtk_tree_model_get(model, &iter, NET_AP, &keep, -1);
-    gtk_list_store_clear(c->store);
-    NMDeviceWifi *wifi = NM_DEVICE_WIFI(c->device);
-    char *active_ssid = connected_ssid(c->device);
+    gtk_list_store_clear(network_chooser->store);
+    NMDeviceWifi *wifi = NM_DEVICE_WIFI(network_chooser->device);
+    char *active_ssid = connected_ssid(network_chooser->device);
     const GPtrArray *aps = nm_device_wifi_get_access_points(wifi);
     /* One row per network: its strongest access point. */
     GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
@@ -686,17 +718,17 @@ static void fill_networks(chooser *c) {
         if (ssid == nullptr)
             continue; /* not kept above; the SSID can change in between */
         bool current = active_ssid != nullptr && strcmp(ssid, active_ssid) == 0;
-        bool saved = saved_for(c, ap) != nullptr;
+        bool saved = saved_for(network_chooser, ap) != nullptr;
         unsigned strength = nm_access_point_get_strength(ap);
         char *markup = g_markup_printf_escaped(
             "<b>%s</b>%s\n<small>%s</small>", ssid,
             current ? "  —  Connected" : saved ? "  —  Automatic" : "",
             security_text(ap));
         char *signal = g_strdup_printf("%s (%u%%)", xd_nc_signal_words(strength), strength);
-        gtk_list_store_insert_with_values(c->store, &iter, -1, NET_ICON, signal_icon(strength),
-                                          NET_TEXT, markup, NET_SIGNAL, signal, NET_AP,
-                                          nm_object_get_path(NM_OBJECT(ap)), NET_STRENGTH,
-                                          strength, NET_CURRENT, current, -1);
+        gtk_list_store_insert_with_values(network_chooser->store, &iter, -1, NET_ICON,
+                                          signal_icon(strength), NET_TEXT, markup, NET_SIGNAL,
+                                          signal, NET_AP, nm_object_get_path(NM_OBJECT(ap)),
+                                          NET_STRENGTH, strength, NET_CURRENT, current, -1);
         if (keep != nullptr && strcmp(keep, nm_object_get_path(NM_OBJECT(ap))) == 0)
             gtk_tree_selection_select_iter(sel, &iter);
         g_free(signal);
@@ -709,17 +741,18 @@ static void fill_networks(chooser *c) {
     g_free(keep);
 }
 
-static NMAccessPoint *selected_ap(chooser *c, bool *current) {
+static NMAccessPoint *selected_ap(chooser *network_chooser, bool *current) {
     GtkTreeModel *model;
     GtkTreeIter iter;
     char *path = nullptr;
     gboolean cur = FALSE;
-    if (!gtk_tree_selection_get_selected(gtk_tree_view_get_selection(GTK_TREE_VIEW(c->view)),
-                                         &model, &iter))
+    if (!gtk_tree_selection_get_selected(
+            gtk_tree_view_get_selection(GTK_TREE_VIEW(network_chooser->view)), &model, &iter))
         return nullptr;
     gtk_tree_model_get(model, &iter, NET_AP, &path, NET_CURRENT, &cur, -1);
     NMAccessPoint *found = nullptr;
-    const GPtrArray *aps = nm_device_wifi_get_access_points(NM_DEVICE_WIFI(c->device));
+    const GPtrArray *aps =
+        nm_device_wifi_get_access_points(NM_DEVICE_WIFI(network_chooser->device));
     for (guint i = 0; aps != nullptr && i < aps->len && found == nullptr; i++) {
         if (strcmp(nm_object_get_path(NM_OBJECT(g_ptr_array_index(aps, i))), path) == 0)
             found = g_ptr_array_index(aps, i);
@@ -730,15 +763,16 @@ static NMAccessPoint *selected_ap(chooser *c, bool *current) {
     return found;
 }
 
-static void on_network_selected([[maybe_unused]] GtkTreeSelection *s, gpointer data) {
-    chooser *c = data;
+static void on_network_selected([[maybe_unused]] GtkTreeSelection *tree_selection, gpointer data) {
+    chooser *network_chooser = data;
     bool current = false;
-    NMAccessPoint *ap = selected_ap(c, &current);
-    gtk_button_set_label(GTK_BUTTON(c->connect), current ? "_Disconnect" : "C_onnect");
-    gtk_widget_set_sensitive(c->connect, ap != nullptr);
+    NMAccessPoint *ap = selected_ap(network_chooser, &current);
+    gtk_button_set_label(GTK_BUTTON(network_chooser->connect),
+                         current ? "_Disconnect" : "C_onnect");
+    gtk_widget_set_sensitive(network_chooser->connect, ap != nullptr);
 }
 
-static void on_aps_changed([[maybe_unused]] GObject *o, [[maybe_unused]] GParamSpec *ps,
+static void on_aps_changed([[maybe_unused]] GObject *object, [[maybe_unused]] GParamSpec *ps,
                            gpointer data) {
     fill_networks(data);
     on_network_selected(nullptr, data);
@@ -750,19 +784,19 @@ typedef struct key_job {
     char *ap_path, *key_mgmt;
 } key_job;
 
-static void key_job_free(key_job *k) {
-    g_clear_object(&k->device);
-    g_free(k->ap_path);
-    g_free(k->key_mgmt);
-    g_free(k);
+static void key_job_free(key_job *key_request) {
+    g_clear_object(&key_request->device);
+    g_free(key_request->ap_path);
+    g_free(key_request->key_mgmt);
+    g_free(key_request);
 }
 
 static void joined(GObject *src, GAsyncResult *res, gpointer data) {
     nc_app *app = data;
     GError *error = nullptr;
-    NMActiveConnection *a = nm_client_add_and_activate_connection_finish(NM_CLIENT(src), res,
-                                                                         &error);
-    g_clear_object(&a);
+    NMActiveConnection *nmactive_connection =
+        nm_client_add_and_activate_connection_finish(NM_CLIENT(src), res, &error);
+    g_clear_object(&nmactive_connection);
     if (error != nullptr) {
         nc_error(nc_parent(app), "Could not connect to the wireless network.", error);
         g_error_free(error);
@@ -775,7 +809,7 @@ static void joined(GObject *src, GAsyncResult *res, gpointer data) {
 static NMConnection *partial(const char *key_mgmt, const char *key) {
     if (key_mgmt == nullptr)
         return nullptr;
-    NMConnection *c = nm_simple_connection_new();
+    NMConnection *connection = nm_simple_connection_new();
     NMSetting *sec = nm_setting_wireless_security_new();
     g_object_set(sec, NM_SETTING_WIRELESS_SECURITY_KEY_MGMT, key_mgmt, nullptr);
     if (strcmp(key_mgmt, "none") == 0)
@@ -783,21 +817,21 @@ static NMConnection *partial(const char *key_mgmt, const char *key) {
                      NM_SETTING_WIRELESS_SECURITY_WEP_KEY_TYPE, NM_WEP_KEY_TYPE_KEY, nullptr);
     else
         g_object_set(sec, NM_SETTING_WIRELESS_SECURITY_PSK, key, nullptr);
-    nm_connection_add_setting(c, sec);
-    return c;
+    nm_connection_add_setting(connection, sec);
+    return connection;
 }
 
 static void join(nc_app *app, NMDevice *device, const char *ap_path, const char *key_mgmt,
                  const char *key) {
-    NMConnection *c = partial(key_mgmt, key);
+    NMConnection *connection = partial(key_mgmt, key);
     nc_hold(app);
-    nm_client_add_and_activate_connection_async(app->client, c, device, ap_path, nullptr, joined,
-                                                app);
-    g_clear_object(&c);
+    nm_client_add_and_activate_connection_async(app->client, connection, device, ap_path, nullptr,
+                                                joined, app);
+    g_clear_object(&connection);
 }
 
 static void got_key(GObject *src, GAsyncResult *res, gpointer data) {
-    key_job *k = data;
+    key_job *key_request = data;
     char *out = nullptr;
     GError *error = nullptr;
     /* No output means Cancel (its exit status may be a sanitizer's). */
@@ -805,85 +839,91 @@ static void got_key(GObject *src, GAsyncResult *res, gpointer data) {
         out != nullptr) {
         g_strchomp(out);
         if (out[0] != '\0')
-            join(k->app, k->device, k->ap_path, k->key_mgmt, out);
+            join(key_request->app, key_request->device, key_request->ap_path, key_request->key_mgmt,
+                 out);
     }
     if (out != nullptr) {
         explicit_bzero(out, strlen(out));
         g_free(out);
     }
     g_clear_error(&error);
-    nc_release(k->app);
-    key_job_free(k);
+    nc_release(key_request->app);
+    key_job_free(key_request);
 }
 
 /* Asks for the key with xd-wifi-key, which prints it (as the shell's
  * network icon does). */
-static void ask_key(chooser *c, NMAccessPoint *ap, const char *ssid, const char *key_mgmt) {
+static void ask_key(chooser *network_chooser, NMAccessPoint *ap, const char *ssid,
+                    const char *key_mgmt) {
     char *prog = nc_own_program("xd-wifi-key");
     GError *error = nullptr;
-    GSubprocess *p = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error, prog, ssid,
-                                      nullptr);
+    GSubprocess *process =
+        g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE, &error, prog, ssid, nullptr);
     g_free(prog);
-    if (p == nullptr) {
-        nc_error(GTK_WINDOW(c->dialog), "The network key prompt could not be started.", error);
+    if (process == nullptr) {
+        nc_error(GTK_WINDOW(network_chooser->dialog),
+                 "The network key prompt could not be started.", error);
         g_error_free(error);
         return;
     }
-    key_job *k = g_new0(key_job, 1);
-    k->app = c->app;
-    nc_hold(c->app);
-    k->device = g_object_ref(c->device);
-    k->ap_path = g_strdup(nm_object_get_path(NM_OBJECT(ap)));
-    k->key_mgmt = g_strdup(key_mgmt);
-    g_subprocess_communicate_utf8_async(p, nullptr, nullptr, got_key, k);
-    g_object_unref(p);
+    key_job *key_request = g_new0(key_job, 1);
+    key_request->app = network_chooser->app;
+    nc_hold(network_chooser->app);
+    key_request->device = g_object_ref(network_chooser->device);
+    key_request->ap_path = g_strdup(nm_object_get_path(NM_OBJECT(ap)));
+    key_request->key_mgmt = g_strdup(key_mgmt);
+    g_subprocess_communicate_utf8_async(process, nullptr, nullptr, got_key, key_request);
+    g_object_unref(process);
 }
 
-static void on_connect([[maybe_unused]] GtkButton *b, gpointer data) {
-    chooser *c = data;
+static void on_connect([[maybe_unused]] GtkButton *button, gpointer data) {
+    chooser *network_chooser = data;
     bool current = false;
-    NMAccessPoint *ap = selected_ap(c, &current);
+    NMAccessPoint *ap = selected_ap(network_chooser, &current);
     if (ap == nullptr)
         return;
     if (current) {
-        char *key = g_strdup_printf("dev:%s", nm_object_get_path(NM_OBJECT(c->device)));
-        nc_disable(c->app, key);
+        char *key =
+            g_strdup_printf("dev:%s", nm_object_get_path(NM_OBJECT(network_chooser->device)));
+        nc_disable(network_chooser->app, key);
         g_free(key);
         return;
     }
     const char *ap_path = nm_object_get_path(NM_OBJECT(ap));
-    NMRemoteConnection *saved = saved_for(c, ap);
+    NMRemoteConnection *saved = saved_for(network_chooser, ap);
     if (saved != nullptr) {
-        nc_hold(c->app);
-        nm_client_activate_connection_async(c->app->client, NM_CONNECTION(saved), c->device,
-                                            ap_path, nullptr, saved_activated, c->app);
+        nc_hold(network_chooser->app);
+        nm_client_activate_connection_async(network_chooser->app->client, NM_CONNECTION(saved),
+                                            network_chooser->device, ap_path, nullptr,
+                                            saved_activated, network_chooser->app);
         return;
     }
     const char *km = xd_nc_wifi_key_mgmt(nm_access_point_get_flags(ap),
                                          nm_access_point_get_wpa_flags(ap),
                                          nm_access_point_get_rsn_flags(ap));
     if (km == nullptr) {
-        join(c->app, c->device, ap_path, nullptr, nullptr);
+        join(network_chooser->app, network_chooser->device, ap_path, nullptr, nullptr);
     } else if (strcmp(km, "wpa-eap") == 0) {
         /* 802.1X needs certificates and more: NetworkManager's editor. */
         if (nc_have_editor())
-            nc_run_editor(GTK_WINDOW(c->dialog), nullptr);
+            nc_run_editor(GTK_WINDOW(network_chooser->dialog), nullptr);
         else
-            xd_message_box(GTK_WINDOW(c->dialog), "Wireless Network Connection", XD_MB_INFO,
-                           XD_MB_OK, FALSE,
+            xd_message_box(GTK_WINDOW(network_chooser->dialog), "Wireless Network Connection",
+                           XD_MB_INFO, XD_MB_OK, FALSE,
                            "This network uses 802.1X authentication. Set it up with "
                            "NetworkManager's connection editor (nm-connection-editor).");
     } else {
         char *ssid = ap_ssid(ap);
-        ask_key(c, ap, ssid != nullptr ? ssid : "", km);
+        ask_key(network_chooser, ap, ssid != nullptr ? ssid : "", km);
         g_free(ssid);
     }
 }
 
-static void on_refresh([[maybe_unused]] GtkButton *b, gpointer data) {
-    chooser *c = data;
-    nm_device_wifi_request_scan_async(NM_DEVICE_WIFI(c->device), nullptr, nullptr, nullptr);
-    fill_networks(c);
+static void on_refresh([[maybe_unused]] GtkButton *button, gpointer data) {
+    chooser *network_chooser = data;
+    nm_device_wifi_request_scan_async(NM_DEVICE_WIFI(network_chooser->device), nullptr, nullptr,
+                                      nullptr);
+    fill_networks(network_chooser);
 }
 
 static void on_network_activated([[maybe_unused]] GtkTreeView *tv,
@@ -892,34 +932,36 @@ static void on_network_activated([[maybe_unused]] GtkTreeView *tv,
     on_connect(nullptr, data);
 }
 
-static void on_chooser_destroy([[maybe_unused]] GtkWidget *x, gpointer data) {
-    chooser *c = data;
-    g_signal_handlers_disconnect_by_data(c->device, c);
-    g_object_unref(c->device);
-    g_free(c);
+static void on_chooser_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    chooser *network_chooser = data;
+    g_signal_handlers_disconnect_by_data(network_chooser->device, network_chooser);
+    g_object_unref(network_chooser->device);
+    g_free(network_chooser);
 }
 
 void nc_wireless_show(nc_app *app, NMDevice *device) {
     if (device == nullptr || !NM_IS_DEVICE_WIFI(device))
         return;
-    chooser *c = g_new0(chooser, 1);
-    c->app = app;
-    c->device = g_object_ref(device);
-    c->dialog = gtk_dialog_new();
-    nc_track(app, c->dialog);
-    gtk_window_set_title(GTK_WINDOW(c->dialog), "Wireless Network Connection");
-    gtk_window_set_icon_name(GTK_WINDOW(c->dialog), "network-wireless");
-    gtk_window_set_default_size(GTK_WINDOW(c->dialog), 520, 420);
+    chooser *network_chooser = g_new0(chooser, 1);
+    network_chooser->app = app;
+    network_chooser->device = g_object_ref(device);
+    network_chooser->dialog = gtk_dialog_new();
+    nc_track(app, network_chooser->dialog);
+    gtk_window_set_title(GTK_WINDOW(network_chooser->dialog), "Wireless Network Connection");
+    gtk_window_set_icon_name(GTK_WINDOW(network_chooser->dialog), "network-wireless");
+    gtk_window_set_default_size(GTK_WINDOW(network_chooser->dialog), 520, 420);
     if (nc_parent(app) != nullptr)
-        gtk_window_set_transient_for(GTK_WINDOW(c->dialog), nc_parent(app));
-    GtkWidget *refresh = gtk_dialog_add_button(GTK_DIALOG(c->dialog), "_Refresh network list",
-                                               GTK_RESPONSE_NONE);
-    c->connect = gtk_dialog_add_button(GTK_DIALOG(c->dialog), "C_onnect", GTK_RESPONSE_NONE);
-    gtk_dialog_add_button(GTK_DIALOG(c->dialog), "_Close", GTK_RESPONSE_CLOSE);
-    g_signal_connect(refresh, "clicked", G_CALLBACK(on_refresh), c);
-    g_signal_connect(c->connect, "clicked", G_CALLBACK(on_connect), c);
-    g_signal_connect(c->dialog, "response", G_CALLBACK(on_response), nullptr);
-    g_signal_connect(c->dialog, "destroy", G_CALLBACK(on_chooser_destroy), c);
+        gtk_window_set_transient_for(GTK_WINDOW(network_chooser->dialog), nc_parent(app));
+    GtkWidget *refresh = gtk_dialog_add_button(GTK_DIALOG(network_chooser->dialog),
+                                               "_Refresh network list", GTK_RESPONSE_NONE);
+    network_chooser->connect =
+        gtk_dialog_add_button(GTK_DIALOG(network_chooser->dialog), "C_onnect", GTK_RESPONSE_NONE);
+    gtk_dialog_add_button(GTK_DIALOG(network_chooser->dialog), "_Close", GTK_RESPONSE_CLOSE);
+    g_signal_connect(refresh, "clicked", G_CALLBACK(on_refresh), network_chooser);
+    g_signal_connect(network_chooser->connect, "clicked", G_CALLBACK(on_connect), network_chooser);
+    g_signal_connect(network_chooser->dialog, "response", G_CALLBACK(on_response), nullptr);
+    g_signal_connect(network_chooser->dialog, "destroy", G_CALLBACK(on_chooser_destroy),
+                     network_chooser);
 
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(box), 12);
@@ -931,39 +973,45 @@ void nc_wireless_show(nc_app *app, NMDevice *device) {
                              "in range or to get more information.",
                              PLAIN),
                        FALSE, FALSE, 0);
-    c->store = gtk_list_store_new(NET_COLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_UINT, G_TYPE_BOOLEAN);
-    GtkTreeSortable *sort = GTK_TREE_SORTABLE(c->store);
+    network_chooser->store =
+        gtk_list_store_new(NET_COLS, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+                           G_TYPE_UINT, G_TYPE_BOOLEAN);
+    GtkTreeSortable *sort = GTK_TREE_SORTABLE(network_chooser->store);
     gtk_tree_sortable_set_sort_column_id(sort, NET_STRENGTH, GTK_SORT_DESCENDING);
-    c->view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(c->store));
-    g_object_unref(c->store);
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(c->view), FALSE);
-    GtkCellRenderer *r = gtk_cell_renderer_pixbuf_new();
-    g_object_set(r, "stock-size", GTK_ICON_SIZE_DND, nullptr);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(c->view), gtk_tree_view_column_new_with_attributes(
-                                                            "", r, "icon-name", NET_ICON, nullptr));
+    network_chooser->view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(network_chooser->store));
+    g_object_unref(network_chooser->store);
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(network_chooser->view), FALSE);
+    GtkCellRenderer *renderer = gtk_cell_renderer_pixbuf_new();
+    g_object_set(renderer, "stock-size", GTK_ICON_SIZE_DND, nullptr);
+    gtk_tree_view_append_column(
+        GTK_TREE_VIEW(network_chooser->view),
+        gtk_tree_view_column_new_with_attributes("", renderer, "icon-name", NET_ICON, nullptr));
     GtkTreeViewColumn *col = gtk_tree_view_column_new_with_attributes(
         "Network", gtk_cell_renderer_text_new(), "markup", NET_TEXT, nullptr);
     gtk_tree_view_column_set_expand(col, TRUE);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(c->view), col);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(c->view),
-                                gtk_tree_view_column_new_with_attributes(
-                                    "Signal", gtk_cell_renderer_text_new(), "text", NET_SIGNAL,
-                                    nullptr));
-    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(c->view)), "changed",
-                     G_CALLBACK(on_network_selected), c);
-    g_signal_connect(c->view, "row-activated", G_CALLBACK(on_network_activated), c);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(network_chooser->view), col);
+    gtk_tree_view_append_column(
+        GTK_TREE_VIEW(network_chooser->view),
+        gtk_tree_view_column_new_with_attributes("Signal", gtk_cell_renderer_text_new(), "text",
+                                                 NET_SIGNAL, nullptr));
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(network_chooser->view)), "changed",
+                     G_CALLBACK(on_network_selected), network_chooser);
+    g_signal_connect(network_chooser->view, "row-activated", G_CALLBACK(on_network_activated),
+                     network_chooser);
     GtkWidget *sw = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sw), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(sw), c->view);
+    gtk_container_add(GTK_CONTAINER(sw), network_chooser->view);
     gtk_box_pack_start(GTK_BOX(box), sw, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(c->dialog))), box, TRUE,
-                       TRUE, 0);
-    g_signal_connect(c->device, "notify::access-points", G_CALLBACK(on_aps_changed), c);
-    g_signal_connect(c->device, "notify::active-access-point", G_CALLBACK(on_aps_changed), c);
-    g_signal_connect(c->device, "notify::state", G_CALLBACK(on_aps_changed), c);
-    fill_networks(c);
-    on_network_selected(nullptr, c);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(network_chooser->dialog))),
+                       box, TRUE, TRUE, 0);
+    g_signal_connect(network_chooser->device, "notify::access-points", G_CALLBACK(on_aps_changed),
+                     network_chooser);
+    g_signal_connect(network_chooser->device, "notify::active-access-point",
+                     G_CALLBACK(on_aps_changed), network_chooser);
+    g_signal_connect(network_chooser->device, "notify::state", G_CALLBACK(on_aps_changed),
+                     network_chooser);
+    fill_networks(network_chooser);
+    on_network_selected(nullptr, network_chooser);
     nm_device_wifi_request_scan_async(NM_DEVICE_WIFI(device), nullptr, nullptr, nullptr);
-    gtk_widget_show_all(c->dialog);
+    gtk_widget_show_all(network_chooser->dialog);
 }
