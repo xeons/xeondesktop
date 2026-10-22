@@ -29,16 +29,17 @@ bool xd_saver_has_settings(const char *id);
 typedef struct xd_saver xd_saver;
 
 /* An animation for an area of w x h device pixels, with the saver's
- * settings from `o` (nullptr: the defaults); scale sizes lines and text
+ * settings from `saver_settings` (nullptr: the defaults); scale sizes lines and text
  * (1.0 at 96 DPI). nullptr if id is unknown. */
-[[nodiscard]] xd_saver *xd_saver_create(const char *id, const xd_saver_settings *o, int w, int h,
-                                        double scale);
+[[nodiscard]] xd_saver *xd_saver_create(const char *id, const xd_saver_settings *saver_settings,
+                                        int width, int height, double scale);
 /* The same, with its random numbers from `seed`: the same seed and the
  * same frame times draw the same pictures. */
-[[nodiscard]] xd_saver *xd_saver_create_seeded(const char *id, const xd_saver_settings *o, int w,
-                                               int h, double scale, uint64_t seed);
+[[nodiscard]] xd_saver *xd_saver_create_seeded(const char *id,
+                                               const xd_saver_settings *saver_settings, int width,
+                                               int height, double scale, uint64_t seed);
 /* Advances by dt seconds and paints the whole area at (0, 0). */
-void xd_saver_frame(xd_saver *s, cairo_t *cr, double dt);
-void xd_saver_destroy(xd_saver *s);
+void xd_saver_frame(xd_saver *saver, cairo_t *cairo, double dt);
+void xd_saver_destroy(xd_saver *saver);
 
 #endif

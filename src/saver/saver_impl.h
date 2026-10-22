@@ -25,14 +25,16 @@ static inline double xd_saver_between(uint64_t *state, double lo, double hi) {
 
 /* 3D Pipes (pipes.c). `rng` is the saver's and outlives it. */
 typedef struct saver_pipes saver_pipes;
-saver_pipes *saver_pipes_create(const xd_saver_settings *o, int w, int h, uint64_t *rng);
-void saver_pipes_frame(saver_pipes *p, cairo_t *cr, double dt);
-void saver_pipes_destroy(saver_pipes *p);
+saver_pipes *saver_pipes_create(const xd_saver_settings *saver_settings, int width, int height,
+                                uint64_t *rng);
+void saver_pipes_frame(saver_pipes *pipes, cairo_t *cairo, double dt);
+void saver_pipes_destroy(saver_pipes *pipes);
 
 /* 3D Text (text3d.c). */
 typedef struct saver_text3d saver_text3d;
-saver_text3d *saver_text3d_create(const xd_saver_settings *o, int w, int h, uint64_t *rng);
-void saver_text3d_frame(saver_text3d *t, cairo_t *cr, double dt);
-void saver_text3d_destroy(saver_text3d *t);
+saver_text3d *saver_text3d_create(const xd_saver_settings *saver_settings, int width, int height,
+                                  uint64_t *rng);
+void saver_text3d_frame(saver_text3d *text3d, cairo_t *cairo, double dt);
+void saver_text3d_destroy(saver_text3d *text3d);
 
 #endif
