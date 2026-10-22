@@ -17,16 +17,16 @@ static void invalid(GError **err, const char *text) {
 
 /* The path without trailing slashes ("/" for none). */
 static char *trim_path(const char *path) {
-    char *p = g_strdup(path != nullptr && path[0] != '\0' ? path : "/");
-    size_t n = strlen(p);
-    while (n > 1 && p[n - 1] == '/')
-        p[--n] = '\0';
-    if (p[0] != '/') {
-        char *rooted = g_strconcat("/", p, nullptr);
-        g_free(p);
-        p = rooted;
+    char *trimmed = g_strdup(path != nullptr && path[0] != '\0' ? path : "/");
+    size_t count = strlen(trimmed);
+    while (count > 1 && trimmed[count - 1] == '/')
+        trimmed[--count] = '\0';
+    if (trimmed[0] != '/') {
+        char *rooted = g_strconcat("/", trimmed, nullptr);
+        g_free(trimmed);
+        trimmed = rooted;
     }
-    return p;
+    return trimmed;
 }
 
 /* Rebuilt from its (unescaped) parts, so equal folders read the same. */
@@ -64,13 +64,13 @@ static gboolean local_scheme(const char *scheme) {
 
 char *xd_net_parse_folder(const char *text, gboolean need_share, GError **err) {
     g_return_val_if_fail(text != nullptr, nullptr);
-    char *t = g_strstrip(g_strdup(text));
+    char *trimmed = g_strstrip(g_strdup(text));
     char *out = nullptr;
-    if (t[0] == '\\' && t[1] == '\\') {
+    if (trimmed[0] == '\\' && trimmed[1] == '\\') {
         /* \\server\share\dir: Windows' own way to write a share. Forward
          * slashes work there too. */
-        g_strdelimit(t, "/", '\\');
-        char **parts = g_strsplit(t + 2, "\\", -1);
+        g_strdelimit(trimmed, "/", '\\');
+        char **parts = g_strsplit(trimmed + 2, "\\", -1);
         GString *path = g_string_new(nullptr);
         for (guint i = 1; parts[0] != nullptr && parts[i] != nullptr; i++) {
             if (parts[i][0] == '\0')
@@ -84,23 +84,23 @@ char *xd_net_parse_folder(const char *text, gboolean need_share, GError **err) {
             out = join("smb", nullptr, host, -1, path->str);
         g_string_free(path, TRUE);
         g_strfreev(parts);
-    } else if (g_uri_peek_scheme(t) != nullptr) {
-        GUri *u = g_uri_parse(t, G_URI_FLAGS_PARSE_RELAXED, nullptr);
-        const char *scheme = u != nullptr ? g_uri_get_scheme(u) : nullptr;
-        const char *host = u != nullptr ? g_uri_get_host(u) : nullptr;
+    } else if (g_uri_peek_scheme(trimmed) != nullptr) {
+        GUri *uri = g_uri_parse(trimmed, G_URI_FLAGS_PARSE_RELAXED, nullptr);
+        const char *scheme = uri != nullptr ? g_uri_get_scheme(uri) : nullptr;
+        const char *host = uri != nullptr ? g_uri_get_host(uri) : nullptr;
         gboolean has_host = host != nullptr && host[0] != '\0';
         if (scheme != nullptr && !local_scheme(scheme) && (has_host || !needs_host(scheme))) {
-            char *path = trim_path(g_uri_get_path(u));
+            char *path = trim_path(g_uri_get_path(uri));
             if (!need_share || strcmp(path, "/") != 0)
-                out = join(scheme, g_uri_get_userinfo(u), has_host ? host : "",
-                           g_uri_get_port(u), path);
+                out = join(scheme, g_uri_get_userinfo(uri), has_host ? host : "",
+                           g_uri_get_port(uri), path);
             g_free(path);
         }
-        g_clear_pointer(&u, g_uri_unref);
+        g_clear_pointer(&uri, g_uri_unref);
     }
     if (out == nullptr)
-        invalid(err, t);
-    g_free(t);
+        invalid(err, trimmed);
+    g_free(trimmed);
     return out;
 }
 
@@ -109,29 +109,29 @@ typedef struct parts {
     char *scheme, *host, *path;
 } parts;
 
-static void parts_clear(parts *p) {
-    g_free(p->scheme);
-    g_free(p->host);
-    g_free(p->path);
+static void parts_clear(parts *split_uri) {
+    g_free(split_uri->scheme);
+    g_free(split_uri->host);
+    g_free(split_uri->path);
 }
 
 /* FALSE (and nothing to clear) if it doesn't parse. */
 static gboolean split(const char *uri, parts *out) {
-    GUri *u = uri != nullptr ? g_uri_parse(uri, G_URI_FLAGS_PARSE_RELAXED, nullptr) : nullptr;
-    if (u == nullptr)
+    GUri *parsed = uri != nullptr ? g_uri_parse(uri, G_URI_FLAGS_PARSE_RELAXED, nullptr) : nullptr;
+    if (parsed == nullptr)
         return FALSE;
-    out->scheme = g_ascii_strdown(g_uri_get_scheme(u), -1);
-    out->host = g_strdup(g_uri_get_host(u) != nullptr ? g_uri_get_host(u) : "");
-    out->path = trim_path(g_uri_get_path(u));
-    g_uri_unref(u);
+    out->scheme = g_ascii_strdown(g_uri_get_scheme(parsed), -1);
+    out->host = g_strdup(g_uri_get_host(parsed) != nullptr ? g_uri_get_host(parsed) : "");
+    out->path = trim_path(g_uri_get_path(parsed));
+    g_uri_unref(parsed);
     return TRUE;
 }
 
-gboolean xd_net_same_uri(const char *a, const char *b) {
+gboolean xd_net_same_uri(const char *left, const char *right) {
     parts pa, pb;
-    if (!split(a, &pa))
+    if (!split(left, &pa))
         return FALSE;
-    if (!split(b, &pb)) {
+    if (!split(right, &pb)) {
         parts_clear(&pa);
         return FALSE;
     }
@@ -153,43 +153,45 @@ gboolean xd_net_same_uri(const char *a, const char *b) {
 }
 
 char *xd_net_display_path(const char *uri) {
-    parts p;
-    if (!split(uri, &p))
+    parts split_uri;
+    if (!split(uri, &split_uri))
         return g_strdup(uri != nullptr ? uri : "");
     char *out;
-    if (strcmp(p.scheme, "smb") == 0) {
-        g_strdelimit(p.path, "/", '\\');
-        out = strcmp(p.path, "\\") == 0 ? g_strconcat("\\\\", p.host, nullptr)
-                                        : g_strconcat("\\\\", p.host, p.path, nullptr);
+    if (strcmp(split_uri.scheme, "smb") == 0) {
+        g_strdelimit(split_uri.path, "/", '\\');
+        out = strcmp(split_uri.path, "\\") == 0
+                  ? g_strconcat("\\\\", split_uri.host, nullptr)
+                  : g_strconcat("\\\\", split_uri.host, split_uri.path, nullptr);
     } else {
         out = g_uri_unescape_string(uri, nullptr);
         if (out == nullptr)
             out = g_strdup(uri);
     }
-    parts_clear(&p);
+    parts_clear(&split_uri);
     return out;
 }
 
 char *xd_net_drive_name(const char *uri) {
-    parts p;
-    if (!split(uri, &p))
+    parts split_uri;
+    if (!split(uri, &split_uri))
         return g_strdup(uri != nullptr ? uri : "");
-    const char *last = strrchr(p.path, '/');
-    last = last != nullptr ? last + 1 : p.path;
-    char *out = last[0] != '\0' && p.host[0] != '\0' ? g_strdup_printf("%s on '%s'", last, p.host)
-                : last[0] != '\0'                      ? g_strdup(last)
-                : p.host[0] != '\0'                    ? g_strdup(p.host)
-                                                       : g_strdup(uri);
-    parts_clear(&p);
+    const char *last = strrchr(split_uri.path, '/');
+    last = last != nullptr ? last + 1 : split_uri.path;
+    char *out = last[0] != '\0' && split_uri.host[0] != '\0'
+                    ? g_strdup_printf("%s on '%s'", last, split_uri.host)
+                : last[0] != '\0'           ? g_strdup(last)
+                : split_uri.host[0] != '\0' ? g_strdup(split_uri.host)
+                                            : g_strdup(uri);
+    parts_clear(&split_uri);
     return out;
 }
 
 char *xd_net_host(const char *uri) {
-    parts p;
-    if (!split(uri, &p))
+    parts split_uri;
+    if (!split(uri, &split_uri))
         return nullptr;
-    char *host = p.host[0] != '\0' ? g_strdup(p.host) : nullptr;
-    parts_clear(&p);
+    char *host = split_uri.host[0] != '\0' ? g_strdup(split_uri.host) : nullptr;
+    parts_clear(&split_uri);
     return host;
 }
 
@@ -249,13 +251,13 @@ static gboolean save(GKeyFile *kf, const char *path, GError **err) {
 static char *find_group(GKeyFile *kf, const char *prefix, const char *uri) {
     char **groups = g_key_file_get_groups(kf, nullptr);
     char *found = nullptr;
-    for (char **g = groups; found == nullptr && *g != nullptr; g++) {
-        if (!g_str_has_prefix(*g, prefix))
+    for (char **group_name = groups; found == nullptr && *group_name != nullptr; group_name++) {
+        if (!g_str_has_prefix(*group_name, prefix))
             continue;
-        char *u = g_key_file_get_string(kf, *g, "URI", nullptr);
-        if (u != nullptr && xd_net_same_uri(u, uri))
-            found = g_strdup(*g);
-        g_free(u);
+        char *group_uri = g_key_file_get_string(kf, *group_name, "URI", nullptr);
+        if (group_uri != nullptr && xd_net_same_uri(group_uri, uri))
+            found = g_strdup(*group_name);
+        g_free(group_uri);
     }
     g_strfreev(groups);
     return found;
@@ -265,25 +267,26 @@ static char *find_group(GKeyFile *kf, const char *prefix, const char *uri) {
 static char *new_group(GKeyFile *kf, const char *prefix) {
     char **groups = g_key_file_get_groups(kf, nullptr);
     guint64 top = 0;
-    for (char **g = groups; *g != nullptr; g++) {
-        guint64 n = 0;
-        if (g_str_has_prefix(*g, prefix) &&
-            g_ascii_string_to_unsigned(*g + strlen(prefix), 10, 1, G_MAXUINT32, &n, nullptr))
-            top = MAX(top, n);
+    for (char **group_name = groups; *group_name != nullptr; group_name++) {
+        guint64 number = 0;
+        if (g_str_has_prefix(*group_name, prefix) &&
+            g_ascii_string_to_unsigned(*group_name + strlen(prefix), 10, 1, G_MAXUINT32, &number,
+                                       nullptr))
+            top = MAX(top, number);
     }
     g_strfreev(groups);
     return g_strdup_printf("%s%" G_GUINT64_FORMAT, prefix, top + 1);
 }
 
-static void drive_free(gpointer p) {
-    XdNetDrive *d = p;
-    g_free(d->uri);
-    g_free(d->user);
-    g_free(d);
+static void drive_free(gpointer user_data) {
+    XdNetDrive *net_drive = user_data;
+    g_free(net_drive->uri);
+    g_free(net_drive->user);
+    g_free(net_drive);
 }
 
-static void place_free(gpointer p) {
-    XdNetPlace *pl = p;
+static void place_free(gpointer user_data) {
+    XdNetPlace *pl = user_data;
     g_free(pl->uri);
     g_free(pl->name);
     g_free(pl);
@@ -293,21 +296,21 @@ GPtrArray *xd_net_drives_load(const char *path) {
     GPtrArray *out = g_ptr_array_new_with_free_func(drive_free);
     GKeyFile *kf = load(path);
     char **groups = g_key_file_get_groups(kf, nullptr);
-    for (char **g = groups; *g != nullptr; g++) {
-        if (!g_str_has_prefix(*g, DRIVE_PREFIX))
+    for (char **group_name = groups; *group_name != nullptr; group_name++) {
+        if (!g_str_has_prefix(*group_name, DRIVE_PREFIX))
             continue;
-        char *uri = g_key_file_get_string(kf, *g, "URI", nullptr);
+        char *uri = g_key_file_get_string(kf, *group_name, "URI", nullptr);
         if (uri == nullptr || uri[0] == '\0') {
             g_free(uri);
             continue;
         }
-        XdNetDrive *d = g_new0(XdNetDrive, 1);
-        d->uri = uri;
-        d->user = g_key_file_get_string(kf, *g, "User", nullptr);
-        if (d->user != nullptr && d->user[0] == '\0')
-            g_clear_pointer(&d->user, g_free);
-        d->reconnect = g_key_file_get_boolean(kf, *g, "Reconnect", nullptr);
-        g_ptr_array_add(out, d);
+        XdNetDrive *net_drive = g_new0(XdNetDrive, 1);
+        net_drive->uri = uri;
+        net_drive->user = g_key_file_get_string(kf, *group_name, "User", nullptr);
+        if (net_drive->user != nullptr && net_drive->user[0] == '\0')
+            g_clear_pointer(&net_drive->user, g_free);
+        net_drive->reconnect = g_key_file_get_boolean(kf, *group_name, "Reconnect", nullptr);
+        g_ptr_array_add(out, net_drive);
     }
     g_strfreev(groups);
     g_key_file_free(kf);
@@ -318,17 +321,17 @@ GPtrArray *xd_net_places_load(const char *path) {
     GPtrArray *out = g_ptr_array_new_with_free_func(place_free);
     GKeyFile *kf = load(path);
     char **groups = g_key_file_get_groups(kf, nullptr);
-    for (char **g = groups; *g != nullptr; g++) {
-        if (!g_str_has_prefix(*g, PLACE_PREFIX))
+    for (char **group_name = groups; *group_name != nullptr; group_name++) {
+        if (!g_str_has_prefix(*group_name, PLACE_PREFIX))
             continue;
-        char *uri = g_key_file_get_string(kf, *g, "URI", nullptr);
+        char *uri = g_key_file_get_string(kf, *group_name, "URI", nullptr);
         if (uri == nullptr || uri[0] == '\0') {
             g_free(uri);
             continue;
         }
         XdNetPlace *pl = g_new0(XdNetPlace, 1);
         pl->uri = uri;
-        pl->name = g_key_file_get_string(kf, *g, "Name", nullptr);
+        pl->name = g_key_file_get_string(kf, *group_name, "Name", nullptr);
         if (pl->name == nullptr || pl->name[0] == '\0') {
             g_free(pl->name);
             pl->name = xd_net_drive_name(uri);
@@ -398,10 +401,10 @@ gboolean xd_net_forget_session_drives(const char *path, GError **err) {
     GKeyFile *kf = load(path);
     char **groups = g_key_file_get_groups(kf, nullptr);
     gboolean changed = FALSE;
-    for (char **g = groups; *g != nullptr; g++) {
-        if (g_str_has_prefix(*g, DRIVE_PREFIX) &&
-            !g_key_file_get_boolean(kf, *g, "Reconnect", nullptr)) {
-            g_key_file_remove_group(kf, *g, nullptr);
+    for (char **group_name = groups; *group_name != nullptr; group_name++) {
+        if (g_str_has_prefix(*group_name, DRIVE_PREFIX) &&
+            !g_key_file_get_boolean(kf, *group_name, "Reconnect", nullptr)) {
+            g_key_file_remove_group(kf, *group_name, nullptr);
             changed = TRUE;
         }
     }
@@ -415,19 +418,19 @@ gboolean xd_net_forget_session_drives(const char *path, GError **err) {
 
 void xd_net_login_reply(GMountOperation *op, GAskPasswordFlags flags, const char *user,
                         const char *password, gboolean remember) {
-    const char *u = user != nullptr ? user : "";
-    if (u[0] == '\0' && (flags & G_ASK_PASSWORD_ANONYMOUS_SUPPORTED)) {
+    const char *user_name = user != nullptr ? user : "";
+    if (user_name[0] == '\0' && (flags & G_ASK_PASSWORD_ANONYMOUS_SUPPORTED)) {
         g_mount_operation_set_anonymous(op, TRUE);
     } else {
         g_mount_operation_set_anonymous(op, FALSE);
-        const char *slash = strchr(u, '\\');
+        const char *slash = strchr(user_name, '\\');
         if (slash != nullptr && (flags & G_ASK_PASSWORD_NEED_DOMAIN)) {
-            char *domain = g_strndup(u, (gsize)(slash - u));
+            char *domain = g_strndup(user_name, (gsize)(slash - user_name));
             g_mount_operation_set_domain(op, domain);
             g_free(domain);
-            u = slash + 1;
+            user_name = slash + 1;
         }
-        g_mount_operation_set_username(op, u);
+        g_mount_operation_set_username(op, user_name);
         g_mount_operation_set_password(op, password != nullptr ? password : "");
     }
     g_mount_operation_set_password_save(op, remember && (flags & G_ASK_PASSWORD_SAVING_SUPPORTED)
@@ -436,10 +439,10 @@ void xd_net_login_reply(GMountOperation *op, GAskPasswordFlags flags, const char
     g_mount_operation_reply(op, G_MOUNT_OPERATION_HANDLED);
 }
 
-static void free_secret(gpointer p) {
-    if (p != nullptr)
-        memset(p, 0, strlen(p));
-    g_free(p);
+static void free_secret(gpointer user_data) {
+    if (user_data != nullptr)
+        memset(user_data, 0, strlen(user_data));
+    g_free(user_data);
 }
 
 void xd_net_operation_preset(GMountOperation *op, const char *user, const char *password) {
@@ -546,26 +549,27 @@ void xd_net_reconnect_all(const char *path, guint timeout_s,
     job->pending = 1; /* until all are started */
     GPtrArray *drives = xd_net_drives_load(path);
     for (guint i = 0; i < drives->len; i++) {
-        XdNetDrive *d = g_ptr_array_index(drives, i);
-        char *scheme = g_uri_parse_scheme(d->uri);
+        XdNetDrive *net_drive = g_ptr_array_index(drives, i);
+        char *scheme = g_uri_parse_scheme(net_drive->uri);
         gboolean supported = scheme != nullptr && xd_net_scheme_supported(scheme);
         g_free(scheme);
         if (!supported) {
-            g_printerr("xd-files: could not reconnect %s: GIO can't open it here\n", d->uri);
+            g_printerr("xd-files: could not reconnect %s: GIO can't open it here\n",
+                       net_drive->uri);
             job->failed++;
             continue;
         }
         reconnect_one *one = g_new0(reconnect_one, 1);
         one->job = job;
-        one->uri = g_strdup(d->uri);
+        one->uri = g_strdup(net_drive->uri);
         one->cancel = g_cancellable_new();
         one->timeout = g_timeout_add_seconds(timeout_s, reconnect_timeout, one);
         job->pending++;
-        GFile *f = g_file_new_for_uri(d->uri);
+        GFile *file = g_file_new_for_uri(net_drive->uri);
         GMountOperation *op = xd_net_quiet_operation_new();
-        g_file_mount_enclosing_volume(f, G_MOUNT_MOUNT_NONE, op, one->cancel, reconnected, one);
+        g_file_mount_enclosing_volume(file, G_MOUNT_MOUNT_NONE, op, one->cancel, reconnected, one);
         g_object_unref(op);
-        g_object_unref(f);
+        g_object_unref(file);
     }
     g_ptr_array_unref(drives);
     job_step(job);

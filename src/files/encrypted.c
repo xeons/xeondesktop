@@ -23,9 +23,9 @@
 #define UD_ERROR "org.freedesktop.UDisks2.Error."
 
 /* The drive's name, as My Computer shows it. */
-static char *crypt_name(const XdUdisksCrypt *c) {
-    char *size = xd_format_drive_size(c->size);
-    char *name = xd_luks_volume_name(c->inner_label, c->label, size);
+static char *crypt_name(const XdUdisksCrypt *udisks_crypt) {
+    char *size = xd_format_drive_size(udisks_crypt->size);
+    char *name = xd_luks_volume_name(udisks_crypt->inner_label, udisks_crypt->label, size);
     g_free(size);
     return name;
 }
@@ -154,66 +154,69 @@ typedef struct open_job {
     gpointer data;
 } open_job;
 
-static void job_free(open_job *j) {
-    if (j->parent != nullptr)
-        g_object_remove_weak_pointer(G_OBJECT(j->parent), (gpointer *)&j->parent);
-    g_free(j->object);
-    g_free(j->uuid);
-    g_free(j->name);
-    xd_luks_passphrase_free(j->passphrase);
-    g_free(j);
+static void job_free(open_job *unlock_request) {
+    if (unlock_request->parent != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(unlock_request->parent),
+                                     (gpointer *)&unlock_request->parent);
+    g_free(unlock_request->object);
+    g_free(unlock_request->uuid);
+    g_free(unlock_request->name);
+    xd_luks_passphrase_free(unlock_request->passphrase);
+    g_free(unlock_request);
 }
 
-static void job_error(open_job *j, const char *text) {
-    if (j->parent != nullptr) {
-        char *msg = g_strdup_printf("%s is not accessible.\n\n%s", j->name, text);
-        xd_message_box(GTK_WINDOW(j->parent), "Files", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+static void job_error(open_job *unlock_request, const char *text) {
+    if (unlock_request->parent != nullptr) {
+        char *msg = g_strdup_printf("%s is not accessible.\n\n%s", unlock_request->name, text);
+        xd_message_box(GTK_WINDOW(unlock_request->parent), "Files", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       msg);
         g_free(msg);
     }
-    job_free(j);
+    job_free(unlock_request);
 }
 
-static void ask(open_job *j);
+static void ask(open_job *unlock_request);
 
 static void mounted(GObject *src, GAsyncResult *res, gpointer data) {
     (void)src;
-    open_job *j = data;
+    open_job *unlock_request = data;
     char *dbus_error = nullptr;
     GError *err = nullptr;
-    GVariant *r = xd_udisks_call_finish(res, &dbus_error, &err);
+    GVariant *variant = xd_udisks_call_finish(res, &dbus_error, &err);
     char *point = nullptr;
-    if (r != nullptr) {
-        g_variant_get(r, "(s)", &point);
-        g_variant_unref(r);
+    if (variant != nullptr) {
+        g_variant_get(variant, "(s)", &point);
+        g_variant_unref(variant);
     } else if (g_strcmp0(dbus_error, UD_ERROR "AlreadyMounted") == 0) {
-        g_autoptr(XdUdisksCrypt) c = nullptr;
-        g_autofree char *uri = xd_luks_item_uri(j->uuid);
+        g_autoptr(XdUdisksCrypt) crypt = nullptr;
+        g_autofree char *uri = xd_luks_item_uri(unlock_request->uuid);
         GFile *item = g_file_new_for_uri(uri);
-        c = xd_udisks_crypt_for(item);
+        crypt = xd_udisks_crypt_for(item);
         g_object_unref(item);
-        point = c != nullptr ? g_strdup(c->mount_point) : nullptr;
+        point = crypt != nullptr ? g_strdup(crypt->mount_point) : nullptr;
     }
     if (point != nullptr) {
-        if (j->parent != nullptr) {
+        if (unlock_request->parent != nullptr) {
             GFile *root = g_file_new_for_path(point);
-            j->opened(root, j->data);
+            unlock_request->opened(root, unlock_request->data);
             g_object_unref(root);
         }
         g_free(point);
-        job_free(j);
+        job_free(unlock_request);
     } else if (dismissed(dbus_error)) {
-        job_free(j);
+        job_free(unlock_request);
     } else {
-        job_error(j, err != nullptr ? err->message : "It holds no file system that can be "
-                                                     "opened.");
+        job_error(unlock_request, err != nullptr ? err->message
+                                                 : "It holds no file system that can be "
+                                                   "opened.");
     }
     g_clear_error(&err);
     g_free(dbus_error);
 }
 
-static void mount_cleartext(open_job *j, const char *cleartext) {
+static void mount_cleartext(open_job *unlock_request, const char *cleartext) {
     xd_udisks_call(cleartext, XD_UDISKS_FILESYSTEM, "Mount", g_variant_new("(a{sv})", nullptr),
-                   nullptr, mounted, j);
+                   nullptr, mounted, unlock_request);
 }
 
 static void remembered(GObject *src, GAsyncResult *res, gpointer data) {
@@ -247,120 +250,124 @@ static void remember(GtkWidget *parent, const char *uuid, const char *name,
 
 static void unlocked(GObject *src, GAsyncResult *res, gpointer data) {
     (void)src;
-    open_job *j = data;
+    open_job *unlock_request = data;
     char *dbus_error = nullptr;
     GError *err = nullptr;
-    GVariant *r = xd_udisks_call_finish(res, &dbus_error, &err);
-    if (r != nullptr) {
+    GVariant *variant = xd_udisks_call_finish(res, &dbus_error, &err);
+    if (variant != nullptr) {
         char *cleartext = nullptr;
-        g_variant_get(r, "(o)", &cleartext);
-        g_variant_unref(r);
-        if (j->remember && !j->from_keyring)
-            remember(j->parent, j->uuid, j->name, j->passphrase);
-        g_clear_pointer(&j->passphrase, xd_luks_passphrase_free);
-        if (j->parent != nullptr)
-            mount_cleartext(j, cleartext);
+        g_variant_get(variant, "(o)", &cleartext);
+        g_variant_unref(variant);
+        if (unlock_request->remember && !unlock_request->from_keyring)
+            remember(unlock_request->parent, unlock_request->uuid, unlock_request->name,
+                     unlock_request->passphrase);
+        g_clear_pointer(&unlock_request->passphrase, xd_luks_passphrase_free);
+        if (unlock_request->parent != nullptr)
+            mount_cleartext(unlock_request, cleartext);
         else
-            job_free(j);
+            job_free(unlock_request);
         g_free(cleartext);
     } else if (xd_luks_wrong_passphrase(dbus_error, err->message)) {
-        g_clear_pointer(&j->passphrase, xd_luks_passphrase_free);
-        if (j->from_keyring) {
+        g_clear_pointer(&unlock_request->passphrase, xd_luks_passphrase_free);
+        if (unlock_request->from_keyring) {
             /* A passphrase changed elsewhere: forgotten, and asked for
              * as if never remembered (as gvfs does). */
-            keyring_clear(j->uuid, cleared_quietly, nullptr);
-            j->from_keyring = FALSE;
-            j->retry = FALSE;
+            keyring_clear(unlock_request->uuid, cleared_quietly, nullptr);
+            unlock_request->from_keyring = FALSE;
+            unlock_request->retry = FALSE;
         } else {
-            j->retry = TRUE;
+            unlock_request->retry = TRUE;
         }
-        ask(j);
+        ask(unlock_request);
     } else if (g_strcmp0(dbus_error, UD_ERROR "AlreadyUnlocked") == 0) {
         /* Unlocked meanwhile, elsewhere. */
-        g_autofree char *uri = xd_luks_item_uri(j->uuid);
+        g_autofree char *uri = xd_luks_item_uri(unlock_request->uuid);
         GFile *item = g_file_new_for_uri(uri);
-        g_autoptr(XdUdisksCrypt) c = xd_udisks_crypt_for(item);
+        g_autoptr(XdUdisksCrypt) crypt = xd_udisks_crypt_for(item);
         g_object_unref(item);
-        if (c != nullptr && c->cleartext != nullptr && j->parent != nullptr)
-            mount_cleartext(j, c->cleartext);
+        if (crypt != nullptr && crypt->cleartext != nullptr && unlock_request->parent != nullptr)
+            mount_cleartext(unlock_request, crypt->cleartext);
         else
-            job_free(j);
+            job_free(unlock_request);
     } else if (dismissed(dbus_error)) {
-        job_free(j);
+        job_free(unlock_request);
     } else {
-        job_error(j, err->message);
+        job_error(unlock_request, err->message);
     }
     g_clear_error(&err);
     g_free(dbus_error);
 }
 
-static void try_unlock(open_job *j) {
-    xd_udisks_call(j->object, XD_UDISKS_ENCRYPTED, "Unlock",
-                   g_variant_new("(sa{sv})", j->passphrase, nullptr), nullptr, unlocked, j);
+static void try_unlock(open_job *unlock_request) {
+    xd_udisks_call(unlock_request->object, XD_UDISKS_ENCRYPTED, "Unlock",
+                   g_variant_new("(sa{sv})", unlock_request->passphrase, nullptr), nullptr,
+                   unlocked, unlock_request);
 }
 
-static void ask(open_job *j) {
-    if (j->parent == nullptr) {
-        job_free(j);
+static void ask(open_job *unlock_request) {
+    if (unlock_request->parent == nullptr) {
+        job_free(unlock_request);
         return;
     }
-    gboolean *keep = keyring_available() ? &j->remember : nullptr;
-    j->passphrase = xd_luks_ask_passphrase(GTK_WINDOW(j->parent), j->name, j->retry, keep);
-    if (j->passphrase == nullptr) {
-        job_free(j);
+    gboolean *keep = keyring_available() ? &unlock_request->remember : nullptr;
+    unlock_request->passphrase = xd_luks_ask_passphrase(
+        GTK_WINDOW(unlock_request->parent), unlock_request->name, unlock_request->retry, keep);
+    if (unlock_request->passphrase == nullptr) {
+        job_free(unlock_request);
         return;
     }
-    try_unlock(j);
+    try_unlock(unlock_request);
 }
 
 static void looked_up(GObject *src, GAsyncResult *res, gpointer data) {
     (void)src;
-    open_job *j = data;
+    open_job *unlock_request = data;
     char *secret = keyring_lookup_finish(res, nullptr);
     if (secret != nullptr) {
-        j->passphrase = secret;
-        j->from_keyring = TRUE;
-        try_unlock(j);
+        unlock_request->passphrase = secret;
+        unlock_request->from_keyring = TRUE;
+        try_unlock(unlock_request);
     } else {
-        ask(j);
+        ask(unlock_request);
     }
 }
 
 void xd_encrypted_open(GtkWindow *parent, GFile *item,
                        void (*opened)(GFile *root, gpointer data), gpointer data) {
-    g_autoptr(XdUdisksCrypt) c = xd_udisks_crypt_for(item);
-    open_job *j = g_new0(open_job, 1);
-    j->parent = GTK_WIDGET(parent);
-    g_object_add_weak_pointer(G_OBJECT(j->parent), (gpointer *)&j->parent);
-    j->opened = opened;
-    j->data = data;
-    if (c == nullptr) {
-        j->name = g_file_get_parse_name(item);
-        job_error(j, "The drive is no longer there.");
+    g_autoptr(XdUdisksCrypt) crypt = xd_udisks_crypt_for(item);
+    open_job *unlock_request = g_new0(open_job, 1);
+    unlock_request->parent = GTK_WIDGET(parent);
+    g_object_add_weak_pointer(G_OBJECT(unlock_request->parent),
+                              (gpointer *)&unlock_request->parent);
+    unlock_request->opened = opened;
+    unlock_request->data = data;
+    if (crypt == nullptr) {
+        unlock_request->name = g_file_get_parse_name(item);
+        job_error(unlock_request, "The drive is no longer there.");
         return;
     }
-    j->object = g_strdup(c->object);
-    j->uuid = g_strdup(c->uuid);
-    j->name = crypt_name(c);
-    if (c->mount_point != nullptr) {
-        GFile *root = g_file_new_for_path(c->mount_point);
+    unlock_request->object = g_strdup(crypt->object);
+    unlock_request->uuid = g_strdup(crypt->uuid);
+    unlock_request->name = crypt_name(crypt);
+    if (crypt->mount_point != nullptr) {
+        GFile *root = g_file_new_for_path(crypt->mount_point);
         opened(root, data);
         g_object_unref(root);
-        job_free(j);
-    } else if (c->cleartext != nullptr) {
-        mount_cleartext(j, c->cleartext);
+        job_free(unlock_request);
+    } else if (crypt->cleartext != nullptr) {
+        mount_cleartext(unlock_request, crypt->cleartext);
     } else {
         /* Remembered only when asked to, as XP's Connect to box. */
-        j->remember = FALSE;
-        keyring_lookup(j->uuid, nullptr, looked_up, j);
+        unlock_request->remember = FALSE;
+        keyring_lookup(unlock_request->uuid, nullptr, looked_up, unlock_request);
     }
 }
 
 /* ---- Lock ---------------------------------------------------------------------------- */
 
 gboolean xd_encrypted_can_lock(GFile *item) {
-    g_autoptr(XdUdisksCrypt) c = xd_udisks_crypt_for(item);
-    return c != nullptr && c->cleartext != nullptr;
+    g_autoptr(XdUdisksCrypt) crypt = xd_udisks_crypt_for(item);
+    return crypt != nullptr && crypt->cleartext != nullptr;
 }
 
 typedef struct lock_job {
@@ -370,64 +377,65 @@ typedef struct lock_job {
     gpointer data;
 } lock_job;
 
-static void lock_job_free(lock_job *k) {
-    if (k->parent != nullptr)
-        g_object_remove_weak_pointer(G_OBJECT(k->parent), (gpointer *)&k->parent);
-    g_free(k->object);
-    g_free(k->cleartext);
-    g_free(k->name);
-    g_free(k);
+static void lock_job_free(lock_job *lock_request) {
+    if (lock_request->parent != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(lock_request->parent),
+                                     (gpointer *)&lock_request->parent);
+    g_free(lock_request->object);
+    g_free(lock_request->cleartext);
+    g_free(lock_request->name);
+    g_free(lock_request);
 }
 
 static void lock_step(GObject *src, GAsyncResult *res, gpointer data);
 
-static void lock_now(lock_job *k) {
-    g_clear_pointer(&k->cleartext, g_free);
-    xd_udisks_call(k->object, XD_UDISKS_ENCRYPTED, "Lock", g_variant_new("(a{sv})", nullptr),
-                   nullptr, lock_step, k);
+static void lock_now(lock_job *lock_request) {
+    g_clear_pointer(&lock_request->cleartext, g_free);
+    xd_udisks_call(lock_request->object, XD_UDISKS_ENCRYPTED, "Lock",
+                   g_variant_new("(a{sv})", nullptr), nullptr, lock_step, lock_request);
 }
 
 /* After Unmount (cleartext still set), then after Lock. */
 static void lock_step(GObject *src, GAsyncResult *res, gpointer data) {
     (void)src;
-    lock_job *k = data;
+    lock_job *lock_request = data;
     char *dbus_error = nullptr;
     GError *err = nullptr;
-    GVariant *r = xd_udisks_call_finish(res, &dbus_error, &err);
-    g_clear_pointer(&r, g_variant_unref);
-    if (err == nullptr && k->cleartext != nullptr) {
-        lock_now(k);
+    GVariant *variant = xd_udisks_call_finish(res, &dbus_error, &err);
+    g_clear_pointer(&variant, g_variant_unref);
+    if (err == nullptr && lock_request->cleartext != nullptr) {
+        lock_now(lock_request);
         return;
     }
-    if (err != nullptr && !dismissed(dbus_error) && k->parent != nullptr) {
-        char *msg = g_strdup_printf("Cannot lock %s: %s", k->name, err->message);
-        xd_message_box(GTK_WINDOW(k->parent), "Lock", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+    if (err != nullptr && !dismissed(dbus_error) && lock_request->parent != nullptr) {
+        char *msg = g_strdup_printf("Cannot lock %s: %s", lock_request->name, err->message);
+        xd_message_box(GTK_WINDOW(lock_request->parent), "Lock", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
         g_free(msg);
     }
-    if (err == nullptr && k->done != nullptr && k->parent != nullptr)
-        k->done(k->data);
+    if (err == nullptr && lock_request->done != nullptr && lock_request->parent != nullptr)
+        lock_request->done(lock_request->data);
     g_clear_error(&err);
     g_free(dbus_error);
-    lock_job_free(k);
+    lock_job_free(lock_request);
 }
 
 static void lock_with(GtkWindow *parent, GFile *item, void (*done)(gpointer), gpointer data) {
-    g_autoptr(XdUdisksCrypt) c = xd_udisks_crypt_for(item);
-    if (c == nullptr || c->cleartext == nullptr)
+    g_autoptr(XdUdisksCrypt) crypt = xd_udisks_crypt_for(item);
+    if (crypt == nullptr || crypt->cleartext == nullptr)
         return;
-    lock_job *k = g_new0(lock_job, 1);
-    k->parent = GTK_WIDGET(parent);
-    g_object_add_weak_pointer(G_OBJECT(k->parent), (gpointer *)&k->parent);
-    k->object = g_strdup(c->object);
-    k->name = crypt_name(c);
-    k->done = done;
-    k->data = data;
-    if (c->mount_point != nullptr) {
-        k->cleartext = g_strdup(c->cleartext);
-        xd_udisks_call(c->cleartext, XD_UDISKS_FILESYSTEM, "Unmount",
-                       g_variant_new("(a{sv})", nullptr), nullptr, lock_step, k);
+    lock_job *lock_request = g_new0(lock_job, 1);
+    lock_request->parent = GTK_WIDGET(parent);
+    g_object_add_weak_pointer(G_OBJECT(lock_request->parent), (gpointer *)&lock_request->parent);
+    lock_request->object = g_strdup(crypt->object);
+    lock_request->name = crypt_name(crypt);
+    lock_request->done = done;
+    lock_request->data = data;
+    if (crypt->mount_point != nullptr) {
+        lock_request->cleartext = g_strdup(crypt->cleartext);
+        xd_udisks_call(crypt->cleartext, XD_UDISKS_FILESYSTEM, "Unmount",
+                       g_variant_new("(a{sv})", nullptr), nullptr, lock_step, lock_request);
     } else {
-        lock_now(k);
+        lock_now(lock_request);
     }
 }
 
@@ -444,8 +452,8 @@ typedef struct crypt_page {
     GCancellable *cancel; /* the keyring lookup, cancelled with the page */
 } crypt_page;
 
-static void crypt_page_free(gpointer p) {
-    crypt_page *cp = p;
+static void crypt_page_free(gpointer user_data) {
+    crypt_page *cp = user_data;
     g_cancellable_cancel(cp->cancel);
     g_object_unref(cp->cancel);
     g_object_unref(cp->item);
@@ -492,11 +500,11 @@ static void page_cleared(GObject *src, GAsyncResult *res, gpointer data) {
     g_free(weak);
 }
 
-static void on_forget(GtkButton *b, gpointer data) {
+static void on_forget(GtkButton *button, gpointer data) {
     crypt_page *cp = data;
     GtkWidget **weak = g_new0(GtkWidget *, 1);
-    *weak = GTK_WIDGET(b);
-    g_object_add_weak_pointer(G_OBJECT(b), (gpointer *)weak);
+    *weak = GTK_WIDGET(button);
+    g_object_add_weak_pointer(G_OBJECT(button), (gpointer *)weak);
     keyring_clear(cp->uuid, page_cleared, weak);
 }
 
@@ -511,11 +519,11 @@ static void page_locked(gpointer data) {
     g_free(weak);
 }
 
-static void on_lock(GtkButton *b, gpointer data) {
+static void on_lock(GtkButton *button, gpointer data) {
     crypt_page *cp = data;
     GtkWidget **weak = g_new0(GtkWidget *, 1);
-    *weak = GTK_WIDGET(b);
-    g_object_add_weak_pointer(G_OBJECT(b), (gpointer *)weak);
+    *weak = GTK_WIDGET(button);
+    g_object_add_weak_pointer(G_OBJECT(button), (gpointer *)weak);
     lock_with(GTK_WINDOW(cp->dialog), cp->item, page_locked, weak);
 }
 
@@ -525,72 +533,77 @@ typedef struct change_job {
     gboolean update_keyring;
 } change_job;
 
-static void change_job_free(change_job *c) {
-    if (c->dialog != nullptr)
-        g_object_remove_weak_pointer(G_OBJECT(c->dialog), (gpointer *)&c->dialog);
-    g_free(c->uuid);
-    g_free(c->name);
-    xd_luks_passphrase_free(c->passphrase);
-    g_free(c);
+static void change_job_free(change_job *change_request) {
+    if (change_request->dialog != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(change_request->dialog),
+                                     (gpointer *)&change_request->dialog);
+    g_free(change_request->uuid);
+    g_free(change_request->name);
+    xd_luks_passphrase_free(change_request->passphrase);
+    g_free(change_request);
 }
 
 static void changed(GObject *src, GAsyncResult *res, gpointer data) {
     (void)src;
-    change_job *c = data;
+    change_job *change_request = data;
     char *dbus_error = nullptr;
     GError *err = nullptr;
-    GVariant *r = xd_udisks_call_finish(res, &dbus_error, &err);
-    g_clear_pointer(&r, g_variant_unref);
+    GVariant *variant = xd_udisks_call_finish(res, &dbus_error, &err);
+    g_clear_pointer(&variant, g_variant_unref);
     const char *title = "Change Passphrase";
     if (err == nullptr) {
         /* A remembered passphrase follows, or it would stop working. */
-        if (c->update_keyring)
-            remember(c->dialog, c->uuid, c->name, c->passphrase);
-        if (c->dialog != nullptr)
-            xd_message_box(GTK_WINDOW(c->dialog), title, XD_MB_INFO, XD_MB_OK, FALSE,
+        if (change_request->update_keyring)
+            remember(change_request->dialog, change_request->uuid, change_request->name,
+                     change_request->passphrase);
+        if (change_request->dialog != nullptr)
+            xd_message_box(GTK_WINDOW(change_request->dialog), title, XD_MB_INFO, XD_MB_OK, FALSE,
                            "The passphrase has been changed.");
-    } else if (c->dialog != nullptr && !dismissed(dbus_error)) {
+    } else if (change_request->dialog != nullptr && !dismissed(dbus_error)) {
         char *msg = xd_luks_wrong_passphrase(dbus_error, err->message)
                         ? g_strdup("The old passphrase you typed is incorrect. The passphrase "
                                    "has not been changed.")
                         : g_strdup_printf("The passphrase could not be changed: %s",
                                           err->message);
-        xd_message_box(GTK_WINDOW(c->dialog), title, XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+        xd_message_box(GTK_WINDOW(change_request->dialog), title, XD_MB_ERROR, XD_MB_OK, FALSE,
+                       msg);
         g_free(msg);
     }
     g_clear_error(&err);
     g_free(dbus_error);
-    change_job_free(c);
+    change_job_free(change_request);
 }
 
-static void on_change(GtkButton *b, gpointer data) {
-    (void)b;
+static void on_change(GtkButton *button, gpointer data) {
+    (void)button;
     crypt_page *cp = data;
     char *old = nullptr, *new_passphrase = nullptr;
     if (!xd_luks_ask_change(GTK_WINDOW(cp->dialog), cp->name, &old, &new_passphrase))
         return;
-    change_job *c = g_new0(change_job, 1);
-    c->dialog = cp->dialog;
-    g_object_add_weak_pointer(G_OBJECT(c->dialog), (gpointer *)&c->dialog);
-    c->uuid = g_strdup(cp->uuid);
-    c->name = g_strdup(cp->name);
-    c->passphrase = new_passphrase;
+    change_job *change_request = g_new0(change_job, 1);
+    change_request->dialog = cp->dialog;
+    g_object_add_weak_pointer(G_OBJECT(change_request->dialog),
+                              (gpointer *)&change_request->dialog);
+    change_request->uuid = g_strdup(cp->uuid);
+    change_request->name = g_strdup(cp->name);
+    change_request->passphrase = new_passphrase;
     /* The forget button is live exactly when one is remembered. */
-    c->update_keyring = gtk_widget_get_sensitive(cp->forget);
+    change_request->update_keyring = gtk_widget_get_sensitive(cp->forget);
     xd_udisks_call(cp->object, XD_UDISKS_ENCRYPTED, "ChangePassphrase",
-                   g_variant_new("(ssa{sv})", old, new_passphrase, nullptr), nullptr, changed, c);
+                   g_variant_new("(ssa{sv})", old, new_passphrase, nullptr), nullptr, changed,
+                   change_request);
     xd_luks_passphrase_free(old);
 }
 
 GtkWidget *xd_encrypted_page(GtkWidget *dialog, GFile *item, const char *name) {
-    g_autoptr(XdUdisksCrypt) c = xd_udisks_crypt_for(item);
-    if (c == nullptr)
+    g_autoptr(XdUdisksCrypt) crypt = xd_udisks_crypt_for(item);
+    if (crypt == nullptr)
         return nullptr;
     crypt_page *cp = g_new0(crypt_page, 1);
     cp->dialog = dialog;
     cp->item = g_object_ref(item);
-    cp->object = g_strdup(c->object);
-    cp->uuid = g_strdup(c->uuid);
+    cp->object = g_strdup(crypt->object);
+    cp->uuid = g_strdup(crypt->uuid);
     cp->name = g_strdup(name);
     cp->cancel = g_cancellable_new();
 
@@ -602,7 +615,7 @@ GtkWidget *xd_encrypted_page(GtkWidget *dialog, GFile *item, const char *name) {
     GtkWidget *icon = gtk_image_new_from_icon_name("dialog-password", GTK_ICON_SIZE_DND);
     gtk_widget_set_valign(icon, GTK_ALIGN_START);
     gtk_box_pack_start(GTK_BOX(top), icon, FALSE, FALSE, 0);
-    char *version = xd_luks_version_label(c->version);
+    char *version = xd_luks_version_label(crypt->version);
     char *about = g_strdup_printf("This drive is encrypted (%s). What's on it can only be read "
                                   "once it's unlocked with its passphrase.",
                                   version);
@@ -618,18 +631,19 @@ GtkWidget *xd_encrypted_page(GtkWidget *dialog, GFile *item, const char *name) {
     gtk_grid_set_row_spacing(GTK_GRID(grid), 5);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
     const char *keys[] = {"Encryption:", "Device:", "Status:"};
-    const char *values[] = {version, c->device, c->cleartext != nullptr ? "Unlocked" : "Locked"};
+    const char *values[] = {version, crypt->device,
+                            crypt->cleartext != nullptr ? "Unlocked" : "Locked"};
     for (int i = 0; i < 3; i++) {
-        GtkWidget *k = gtk_label_new(keys[i]);
-        gtk_label_set_xalign(GTK_LABEL(k), 0);
-        gtk_grid_attach(GTK_GRID(grid), k, 0, i, 1, 1);
-        GtkWidget *v = gtk_label_new(values[i]);
-        gtk_label_set_xalign(GTK_LABEL(v), 0);
-        gtk_label_set_selectable(GTK_LABEL(v), TRUE);
-        gtk_widget_set_can_focus(v, FALSE);
-        gtk_grid_attach(GTK_GRID(grid), v, 1, i, 1, 1);
+        GtkWidget *key_label = gtk_label_new(keys[i]);
+        gtk_label_set_xalign(GTK_LABEL(key_label), 0);
+        gtk_grid_attach(GTK_GRID(grid), key_label, 0, i, 1, 1);
+        GtkWidget *value_label = gtk_label_new(values[i]);
+        gtk_label_set_xalign(GTK_LABEL(value_label), 0);
+        gtk_label_set_selectable(GTK_LABEL(value_label), TRUE);
+        gtk_widget_set_can_focus(value_label, FALSE);
+        gtk_grid_attach(GTK_GRID(grid), value_label, 1, i, 1, 1);
         if (i == 2)
-            cp->status = v;
+            cp->status = value_label;
     }
     g_free(version);
     gtk_box_pack_start(GTK_BOX(page), grid, FALSE, FALSE, 0);
@@ -675,7 +689,7 @@ GtkWidget *xd_encrypted_page(GtkWidget *dialog, GFile *item, const char *name) {
     gtk_box_pack_start(GTK_BOX(fbox), what, TRUE, TRUE, 0);
     cp->lock = gtk_button_new_with_mnemonic("_Lock Now");
     gtk_widget_set_valign(cp->lock, GTK_ALIGN_CENTER);
-    gtk_widget_set_sensitive(cp->lock, c->cleartext != nullptr);
+    gtk_widget_set_sensitive(cp->lock, crypt->cleartext != nullptr);
     g_signal_connect(cp->lock, "clicked", G_CALLBACK(on_lock), cp);
     gtk_box_pack_start(GTK_BOX(fbox), cp->lock, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(frame), fbox);

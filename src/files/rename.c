@@ -48,9 +48,9 @@ GFile *xd_rename(GFile *file, const char *text, GError **err) {
     if (kf == nullptr)
         return g_file_set_display_name(file, text, nullptr, err);
     /* The new Name replaces every translation of the old one. */
-    gsize n = 0;
-    char **keys = g_key_file_get_keys(kf, DESKTOP_GROUP, &n, nullptr);
-    for (gsize i = 0; keys != nullptr && i < n; i++)
+    gsize count = 0;
+    char **keys = g_key_file_get_keys(kf, DESKTOP_GROUP, &count, nullptr);
+    for (gsize i = 0; keys != nullptr && i < count; i++)
         if (g_str_has_prefix(keys[i], "Name["))
             g_key_file_remove_key(kf, DESKTOP_GROUP, keys[i], nullptr);
     g_strfreev(keys);

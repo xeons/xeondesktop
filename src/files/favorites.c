@@ -10,11 +10,11 @@ char *xd_favorites_path(void) {
     return g_build_filename(g_get_user_config_dir(), "gtk-3.0", "bookmarks", nullptr);
 }
 
-static void favorite_free(gpointer p) {
-    XdFavorite *f = p;
-    g_free(f->uri);
-    g_free(f->label);
-    g_free(f);
+static void favorite_free(gpointer user_data) {
+    XdFavorite *favorite = user_data;
+    g_free(favorite->uri);
+    g_free(favorite->label);
+    g_free(favorite);
 }
 
 /* The file's lines (without their ends); none when it's missing. */
@@ -25,11 +25,11 @@ static GPtrArray *read_lines(const char *path) {
     if (!g_file_get_contents(path, &text, &len, nullptr))
         return lines;
     char **split = g_strsplit(text, "\n", -1);
-    guint n = g_strv_length(split);
+    guint count = g_strv_length(split);
     /* The last line's end leaves an empty piece after it. */
-    if (n > 0 && split[n - 1][0] == '\0')
-        n--;
-    for (guint i = 0; i < n; i++)
+    if (count > 0 && split[count - 1][0] == '\0')
+        count--;
+    for (guint i = 0; i < count; i++)
         g_ptr_array_add(lines, g_strdup(split[i]));
     g_strfreev(split);
     g_free(text);
@@ -55,21 +55,21 @@ static gboolean parse_line(const char *line, char **uri, char **label) {
     if (line[0] == '\0' || line[0] == '#')
         return FALSE;
     const char *space = strchr(line, ' ');
-    char *u = space != nullptr ? g_strndup(line, (gsize)(space - line)) : g_strdup(line);
-    g_strchomp(u); /* a "\r" from a file edited elsewhere */
-    if (u[0] == '\0' || g_uri_peek_scheme(u) == nullptr) {
-        g_free(u);
+    char *parsed_uri = space != nullptr ? g_strndup(line, (gsize)(space - line)) : g_strdup(line);
+    g_strchomp(parsed_uri); /* a "\r" from a file edited elsewhere */
+    if (parsed_uri[0] == '\0' || g_uri_peek_scheme(parsed_uri) == nullptr) {
+        g_free(parsed_uri);
         return FALSE;
     }
     if (uri != nullptr)
-        *uri = u;
+        *uri = parsed_uri;
     else
-        g_free(u);
+        g_free(parsed_uri);
     if (label != nullptr) {
-        char *l = space != nullptr ? g_strchomp(g_strdup(space + 1)) : nullptr;
-        if (l != nullptr && l[0] == '\0')
-            g_clear_pointer(&l, g_free);
-        *label = l;
+        char *parsed_label = space != nullptr ? g_strchomp(g_strdup(space + 1)) : nullptr;
+        if (parsed_label != nullptr && parsed_label[0] == '\0')
+            g_clear_pointer(&parsed_label, g_free);
+        *label = parsed_label;
     }
     return TRUE;
 }
@@ -77,10 +77,10 @@ static gboolean parse_line(const char *line, char **uri, char **label) {
 /* The index of `uri`'s line, or -1. */
 static int find_line(GPtrArray *lines, const char *uri) {
     for (guint i = 0; i < lines->len; i++) {
-        char *u = nullptr;
-        gboolean match = parse_line(g_ptr_array_index(lines, i), &u, nullptr) &&
-                         strcmp(u, uri) == 0;
-        g_free(u);
+        char *line_uri = nullptr;
+        gboolean match = parse_line(g_ptr_array_index(lines, i), &line_uri, nullptr) &&
+                         strcmp(line_uri, uri) == 0;
+        g_free(line_uri);
         if (match)
             return (int)i;
     }
@@ -101,18 +101,18 @@ GPtrArray *xd_favorites_load(const char *path) {
     GPtrArray *out = g_ptr_array_new_with_free_func(favorite_free);
     GPtrArray *lines = read_lines(path);
     for (guint i = 0; i < lines->len; i++) {
-        XdFavorite f = {0};
-        if (parse_line(g_ptr_array_index(lines, i), &f.uri, &f.label))
-            g_ptr_array_add(out, g_memdup2(&f, sizeof(f)));
+        XdFavorite favorite = {0};
+        if (parse_line(g_ptr_array_index(lines, i), &favorite.uri, &favorite.label))
+            g_ptr_array_add(out, g_memdup2(&favorite, sizeof(favorite)));
     }
     g_ptr_array_unref(lines);
     return out;
 }
 
-char *xd_favorite_name(const XdFavorite *f) {
-    if (f->label != nullptr)
-        return g_strdup(f->label);
-    GFile *file = g_file_new_for_uri(f->uri);
+char *xd_favorite_name(const XdFavorite *favorite) {
+    if (favorite->label != nullptr)
+        return g_strdup(favorite->label);
+    GFile *file = g_file_new_for_uri(favorite->uri);
     char *name = nullptr;
     char *path = g_file_get_path(file);
     if (path != nullptr) {
@@ -124,15 +124,15 @@ char *xd_favorite_name(const XdFavorite *f) {
         if (base != nullptr && strcmp(base, "/") != 0) {
             name = g_uri_unescape_string(base, nullptr);
         } else {
-            GUri *u = g_uri_parse(f->uri, G_URI_FLAGS_NONE, nullptr);
-            if (u != nullptr && g_uri_get_host(u) != nullptr)
-                name = g_strdup(g_uri_get_host(u));
-            g_clear_pointer(&u, g_uri_unref);
+            GUri *uri = g_uri_parse(favorite->uri, G_URI_FLAGS_NONE, nullptr);
+            if (uri != nullptr && g_uri_get_host(uri) != nullptr)
+                name = g_strdup(g_uri_get_host(uri));
+            g_clear_pointer(&uri, g_uri_unref);
         }
         g_free(base);
     }
     g_object_unref(file);
-    return name != nullptr ? name : g_strdup(f->uri);
+    return name != nullptr ? name : g_strdup(favorite->uri);
 }
 
 gboolean xd_favorites_add(const char *path, const char *uri, const char *label, GError **err) {
@@ -180,8 +180,8 @@ typedef struct ranked {
     guint rank;
 } ranked;
 
-static int compare_ranked(gconstpointer a, gconstpointer b) {
-    guint ra = ((const ranked *)a)->rank, rb = ((const ranked *)b)->rank;
+static int compare_ranked(gconstpointer left, gconstpointer right) {
+    guint ra = ((const ranked *)left)->rank, rb = ((const ranked *)right)->rank;
     return (ra > rb) - (ra < rb);
 }
 
@@ -193,19 +193,19 @@ gboolean xd_favorites_reorder(const char *path, const char *const *uris, GError 
     GArray *slots = g_array_new(FALSE, FALSE, sizeof(guint));
     GArray *marks = g_array_new(FALSE, FALSE, sizeof(ranked));
     for (guint i = 0; i < lines->len; i++) {
-        char *u = nullptr;
-        if (!parse_line(g_ptr_array_index(lines, i), &u, nullptr))
+        char *line_uri = nullptr;
+        if (!parse_line(g_ptr_array_index(lines, i), &line_uri, nullptr))
             continue;
         guint rank = named + i;
         for (guint k = 0; k < named; k++)
-            if (strcmp(uris[k], u) == 0) {
+            if (strcmp(uris[k], line_uri) == 0) {
                 rank = k;
                 break;
             }
-        g_free(u);
+        g_free(line_uri);
         g_array_append_val(slots, i);
-        ranked r = {g_ptr_array_index(lines, i), rank};
-        g_array_append_val(marks, r);
+        ranked ranked_line = {g_ptr_array_index(lines, i), rank};
+        g_array_append_val(marks, ranked_line);
     }
     g_array_sort(marks, compare_ranked);
     for (guint k = 0; k < slots->len; k++)

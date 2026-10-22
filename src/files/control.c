@@ -30,9 +30,9 @@ const XdControlCategory *xd_control_category(const char *key) {
     return nullptr;
 }
 
-GIcon *xd_control_category_icon(const XdControlCategory *c) {
-    GIcon *icon = g_themed_icon_new(c->icon);
-    g_themed_icon_append_name(G_THEMED_ICON(icon), c->fallback);
+GIcon *xd_control_category_icon(const XdControlCategory *control_category) {
+    GIcon *icon = g_themed_icon_new(control_category->icon);
+    g_themed_icon_append_name(G_THEMED_ICON(icon), control_category->fallback);
     return icon;
 }
 
@@ -47,11 +47,11 @@ gboolean xd_control_is_applet(GDesktopAppInfo *info) {
     return found;
 }
 
-static int by_name(gconstpointer a, gconstpointer b) {
+static int by_name(gconstpointer left, gconstpointer right) {
     /* GLib's casts take non-const instances; the names are only read. */
-    GAppInfo *x = G_APP_INFO((gpointer)(uintptr_t)a);
-    GAppInfo *y = G_APP_INFO((gpointer)(uintptr_t)b);
-    return g_utf8_collate(g_app_info_get_name(x), g_app_info_get_name(y));
+    GAppInfo *left_app = G_APP_INFO((gpointer)(uintptr_t)left);
+    GAppInfo *right_app = G_APP_INFO((gpointer)(uintptr_t)right);
+    return g_utf8_collate(g_app_info_get_name(left_app), g_app_info_get_name(right_app));
 }
 
 GList *xd_control_applets(void) {
@@ -59,9 +59,9 @@ GList *xd_control_applets(void) {
      * override system ones. */
     GList *all = g_app_info_get_all();
     GList *applets = nullptr;
-    for (GList *l = all; l != nullptr; l = l->next)
-        if (G_IS_DESKTOP_APP_INFO(l->data) && xd_control_is_applet(l->data))
-            applets = g_list_prepend(applets, g_object_ref(l->data));
+    for (GList *list = all; list != nullptr; list = list->next)
+        if (G_IS_DESKTOP_APP_INFO(list->data) && xd_control_is_applet(list->data))
+            applets = g_list_prepend(applets, g_object_ref(list->data));
     g_list_free_full(all, g_object_unref);
     return g_list_sort(applets, by_name);
 }
@@ -70,11 +70,12 @@ gboolean xd_control_applet_in(GDesktopAppInfo *info, const char *key) {
     char **keys = g_desktop_app_info_get_string_list(info, XD_CONTROL_CATEGORY_KEY, nullptr);
     gboolean known = FALSE;
     gboolean in = FALSE;
-    for (char **k = keys; k != nullptr && *k != nullptr; k++) {
-        if (xd_control_category(*k) == nullptr)
+    for (char **category_key = keys; category_key != nullptr && *category_key != nullptr;
+         category_key++) {
+        if (xd_control_category(*category_key) == nullptr)
             continue;
         known = TRUE;
-        in = in || g_ascii_strcasecmp(*k, key) == 0;
+        in = in || g_ascii_strcasecmp(*category_key, key) == 0;
     }
     g_strfreev(keys);
     return known ? in : g_ascii_strcasecmp(key, XD_CONTROL_OTHER) == 0;
@@ -92,8 +93,8 @@ GDesktopAppInfo *xd_control_find(const char *name) {
         want[strlen(want) - strlen(".cpl")] = '\0';
     GList *applets = xd_control_applets();
     GDesktopAppInfo *found = nullptr;
-    for (GList *l = applets; l != nullptr && found == nullptr; l = l->next) {
-        GDesktopAppInfo *info = l->data;
+    for (GList *list = applets; list != nullptr && found == nullptr; list = list->next) {
+        GDesktopAppInfo *info = list->data;
         char *prog = program_name(info);
         const char *id = g_app_info_get_id(G_APP_INFO(info));
         char *stem = id != nullptr ? g_strndup(id, strlen(id) - (g_str_has_suffix(id, ".desktop")

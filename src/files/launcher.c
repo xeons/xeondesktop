@@ -54,13 +54,13 @@ gboolean xd_launcher_read(const char *path, XdLauncher *out, GError **err) {
     return TRUE;
 }
 
-void xd_launcher_clear(XdLauncher *l) {
-    g_free(l->name);
-    g_free(l->target);
-    g_free(l->start_in);
-    g_free(l->comment);
-    g_free(l->icon);
-    *l = (XdLauncher){0};
+void xd_launcher_clear(XdLauncher *launcher) {
+    g_free(launcher->name);
+    g_free(launcher->target);
+    g_free(launcher->start_in);
+    g_free(launcher->comment);
+    g_free(launcher->icon);
+    *launcher = (XdLauncher){0};
 }
 
 static void set_or_remove(GKeyFile *kf, const char *key, const char *value) {
@@ -79,30 +79,30 @@ static gboolean writable(const char *path) {
     return ok;
 }
 
-char *xd_launcher_write(const char *path, const XdLauncher *l, const char *user_dir,
+char *xd_launcher_write(const char *path, const XdLauncher *launcher, const char *user_dir,
                         GError **err) {
     GKeyFile *kf = load(path, err);
     if (kf == nullptr)
         return nullptr;
     set_or_remove(kf, is_link(kf) ? G_KEY_FILE_DESKTOP_KEY_URL : G_KEY_FILE_DESKTOP_KEY_EXEC,
-                  l->target);
-    set_or_remove(kf, G_KEY_FILE_DESKTOP_KEY_PATH, l->start_in);
-    set_or_remove(kf, G_KEY_FILE_DESKTOP_KEY_ICON, l->icon);
+                  launcher->target);
+    set_or_remove(kf, G_KEY_FILE_DESKTOP_KEY_PATH, launcher->start_in);
+    set_or_remove(kf, G_KEY_FILE_DESKTOP_KEY_ICON, launcher->icon);
     /* The Comment shown is the current language's, when it has one:
      * that's the one changed. */
     char *locale =
         g_key_file_get_locale_for_key(kf, GROUP, G_KEY_FILE_DESKTOP_KEY_COMMENT, nullptr);
     if (locale != nullptr) {
-        if (l->comment != nullptr && l->comment[0] != '\0') {
+        if (launcher->comment != nullptr && launcher->comment[0] != '\0') {
             g_key_file_set_locale_string(kf, GROUP, G_KEY_FILE_DESKTOP_KEY_COMMENT, locale,
-                                         l->comment);
+                                         launcher->comment);
         } else {
             char *key = g_strdup_printf("%s[%s]", G_KEY_FILE_DESKTOP_KEY_COMMENT, locale);
             g_key_file_remove_key(kf, GROUP, key, nullptr);
             g_free(key);
         }
     } else {
-        set_or_remove(kf, G_KEY_FILE_DESKTOP_KEY_COMMENT, l->comment);
+        set_or_remove(kf, G_KEY_FILE_DESKTOP_KEY_COMMENT, launcher->comment);
     }
     g_free(locale);
 

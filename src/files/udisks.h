@@ -88,7 +88,7 @@ typedef struct XdUdisksCrypt {
     char *mount_point; /* where it's mounted, or nullptr */
 } XdUdisksCrypt;
 
-void xd_udisks_crypt_free(XdUdisksCrypt *c);
+void xd_udisks_crypt_free(XdUdisksCrypt *udisks_crypt);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(XdUdisksCrypt, xd_udisks_crypt_free)
 
 /* Every encrypted volume, by device. Free with g_ptr_array_unref. */

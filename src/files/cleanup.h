@@ -44,7 +44,7 @@ typedef struct XdCleanupPlaces {
 XdCleanupPlaces *xd_cleanup_places_new(const char *root, const char *const *roots,
                                        const char *data_home, const char *cache_home,
                                        const char *const *temp_dirs, uid_t uid);
-void xd_cleanup_places_free(XdCleanupPlaces *p);
+void xd_cleanup_places_free(XdCleanupPlaces *cleanup_places);
 
 typedef struct XdCleanupCategory {
     XdCleanupKind kind;
@@ -82,7 +82,7 @@ GPtrArray *xd_cleanup_scan_old(const XdCleanupPlaces *places, uid_t uid, gint64 
  * the category's folders, not through links; temporary files still
  * untouched for the category's age at `now`). Returns FALSE and sets
  * `err` to the first failure, after trying everything. */
-gboolean xd_cleanup_delete(const XdCleanupCategory *c, uid_t uid, gint64 now,
+gboolean xd_cleanup_delete(const XdCleanupCategory *cleanup_category, uid_t uid, gint64 now,
                            GCancellable *cancel, GError **err);
 
 /* "0 KB", "1 KB", "12,345 KB": sizes as Disk Cleanup shows them (whole

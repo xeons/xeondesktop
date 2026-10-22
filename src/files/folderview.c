@@ -218,12 +218,12 @@ G_DEFINE_TYPE_WITH_CODE(XdFolderView, xd_folder_view, GTK_TYPE_DRAWING_AREA,
 /* ---- items --------------------------------------------------------------------- */
 
 /* The name as shown (Folder Options can hide known extensions). */
-static const char *item_label(const XdFolderView *v, const item *it) {
-    return v->hide_extensions && it->short_name != nullptr ? it->short_name : it->name;
+static const char *item_label(const XdFolderView *folder_view, const item *it) {
+    return folder_view->hide_extensions && it->short_name != nullptr ? it->short_name : it->name;
 }
 
-static void item_free(gpointer p) {
-    item *it = p;
+static void item_free(gpointer user_data) {
+    item *it = user_data;
     g_clear_object(&it->file);
     g_clear_object(&it->icon);
     g_clear_object(&it->icon_pb);
@@ -252,10 +252,10 @@ char *xd_format_size(guint64 size) {
     char *digits = g_strdup_printf("%" G_GUINT64_FORMAT, kb);
     /* Thousands separators. */
     GString *out = g_string_new(nullptr);
-    size_t n = strlen(digits);
-    for (size_t i = 0; i < n; i++) {
+    size_t count = strlen(digits);
+    for (size_t i = 0; i < count; i++) {
         g_string_append_c(out, digits[i]);
-        if ((n - i - 1) % 3 == 0 && i + 1 < n)
+        if ((count - i - 1) % 3 == 0 && i + 1 < count)
             g_string_append_c(out, ',');
     }
     g_string_append(out, " KB");
@@ -335,7 +335,7 @@ static item *item_new(GFile *dir, GFileInfo *info) {
     return it;
 }
 
-static GdkPixbuf *item_icon(XdFolderView *v, item *it, int px) {
+static GdkPixbuf *item_icon(XdFolderView *folder_view, item *it, int px) {
     if (it->icon_pb != nullptr && it->icon_px == px)
         return it->icon_pb;
     g_clear_object(&it->icon_pb);
@@ -365,29 +365,29 @@ static GdkPixbuf *item_icon(XdFolderView *v, item *it, int px) {
         }
         g_object_unref(info);
     }
-    (void)v;
+    (void)folder_view;
     return it->icon_pb;
 }
 
 /* Another icon theme (Display Properties): every item's icon is drawn again
  * from it, as the rest of the window already is. */
 static void icon_theme_changed([[maybe_unused]] GtkIconTheme *theme, gpointer data) {
-    XdFolderView *v = data;
-    for (guint i = 0; i < v->all->len; i++) {
-        item *it = g_ptr_array_index(v->all, i);
+    XdFolderView *folder_view = data;
+    for (guint i = 0; i < folder_view->all->len; i++) {
+        item *it = g_ptr_array_index(folder_view->all, i);
         g_clear_object(&it->icon_pb);
         it->icon_px = 0;
     }
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
 /* A thumbnail xd-thumbnailer made (nullptr `path`: it couldn't): the item
  * shows it, if it's still here. */
 static void thumb_done(const char *uri, const char *path, gpointer data) {
-    XdFolderView *v = data;
+    XdFolderView *folder_view = data;
     GFile *file = g_file_new_for_uri(uri);
-    for (guint i = 0; i < v->all->len; i++) {
-        item *it = g_ptr_array_index(v->all, i);
+    for (guint i = 0; i < folder_view->all->len; i++) {
+        item *it = g_ptr_array_index(folder_view->all, i);
         if (!g_file_equal(it->file, file))
             continue;
         if (path != nullptr) {
@@ -399,7 +399,7 @@ static void thumb_done(const char *uri, const char *path, gpointer data) {
         } else {
             it->thumb_failed = TRUE;
         }
-        gtk_widget_queue_draw(GTK_WIDGET(v));
+        gtk_widget_queue_draw(GTK_WIDGET(folder_view));
         break;
     }
     g_object_unref(file);
@@ -408,24 +408,24 @@ static void thumb_done(const char *uri, const char *path, gpointer data) {
 /* Asks for a thumbnail the cache doesn't have (or has only smaller, or of
  * an older version of the file). Asked while drawing, so what's on screen
  * is asked for last, and made first. */
-static void want_thumb(XdFolderView *v, item *it, int px) {
+static void want_thumb(XdFolderView *folder_view, item *it, int px) {
     if (!it->thumb_want || it->thumb_failed)
         return;
     XdThumbSize size = xd_thumb_size_for(px);
     if (it->thumb_path != nullptr && !it->thumb_stale &&
         (size == XD_THUMB_NORMAL || strstr(it->thumb_path, "/normal/") == nullptr))
         return;
-    if (v->thumbs == nullptr)
-        v->thumbs = xd_thumb_queue_new(thumb_done, v);
+    if (folder_view->thumbs == nullptr)
+        folder_view->thumbs = xd_thumb_queue_new(thumb_done, folder_view);
     char *uri = g_file_get_uri(it->file);
-    xd_thumb_queue_request(v->thumbs, uri, size);
+    xd_thumb_queue_request(folder_view->thumbs, uri, size);
     g_free(uri);
 }
 
 /* A cached thumbnail scaled to fit px x px, or nullptr (one is asked for:
  * the item is drawn again when it's made). */
-static GdkPixbuf *item_thumb(XdFolderView *v, item *it, int px) {
-    want_thumb(v, it, px);
+static GdkPixbuf *item_thumb(XdFolderView *folder_view, item *it, int px) {
+    want_thumb(folder_view, it, px);
     if (it->thumb_path == nullptr)
         return nullptr;
     if (it->thumb_pb != nullptr && it->thumb_px == px)
@@ -442,25 +442,26 @@ static GdkPixbuf *item_thumb(XdFolderView *v, item *it, int px) {
 
 /* ---- groups -------------------------------------------------------------------------- */
 
-static gboolean is_icon_mode(XdViewMode m) {
-    return m == XD_VIEW_THUMBNAILS || m == XD_VIEW_ICONS || m == XD_VIEW_TILES;
+static gboolean is_icon_mode(XdViewMode view_mode) {
+    return view_mode == XD_VIEW_THUMBNAILS || view_mode == XD_VIEW_ICONS ||
+           view_mode == XD_VIEW_TILES;
 }
 
 /* My Computer always shows its groups, as XP does; other folders when
  * Show in Groups is on. The icon views and Details have them; XP's List
  * view never shows groups (its list control can't). */
-static gboolean wants_groups(const XdFolderView *v) {
-    return (is_icon_mode(v->mode) || v->mode == XD_VIEW_DETAILS) &&
-           (v->place == XD_PLACE_COMPUTER || v->groups);
+static gboolean wants_groups(const XdFolderView *folder_view) {
+    return (is_icon_mode(folder_view->mode) || folder_view->mode == XD_VIEW_DETAILS) &&
+           (folder_view->place == XD_PLACE_COMPUTER || folder_view->groups);
 }
 
 /* XP's headings: My Computer by kind of drive; folders by the sort
  * column (initial letter, type, size class, or how long ago). */
-static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
+static void set_group(const XdFolderView *folder_view, item *it, GDateTime *now) {
     g_free(it->group);
     it->group = nullptr;
     it->group_rank = 0;
-    if (v->place == XD_PLACE_COMPUTER) {
+    if (folder_view->place == XD_PLACE_COMPUTER) {
         static const struct {
             const char *kind, *group;
         } kinds[] = {
@@ -485,7 +486,7 @@ static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
         }
         return;
     }
-    switch (v->sort) {
+    switch (folder_view->sort) {
     case XD_SORT_TYPE:
         it->group = g_strdup(it->type_desc != nullptr ? it->type_desc : "");
         return;
@@ -526,17 +527,18 @@ static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
         static const char *const ages[] = {"A Long Time Ago", "Earlier This Year", "Last Month",
                                            "Earlier This Month", "Last Week", "Earlier This Week",
                                            "Yesterday", "Today"};
-        gint64 when = v->sort == XD_SORT_CREATED    ? it->ctime
-                      : v->sort == XD_SORT_ACCESSED ? it->atime
-                                                    : it->mtime;
-        GDateTime *t = g_date_time_new_from_unix_local(when);
+        gint64 when = folder_view->sort == XD_SORT_CREATED    ? it->ctime
+                      : folder_view->sort == XD_SORT_ACCESSED ? it->atime
+                                                              : it->mtime;
+        GDateTime *date_time = g_date_time_new_from_unix_local(when);
         int rank = 0;
-        if (t != nullptr && now != nullptr) {
-            int y = g_date_time_get_year(now), ty = g_date_time_get_year(t);
-            int doy = g_date_time_get_day_of_year(now), tdoy = g_date_time_get_day_of_year(t);
+        if (date_time != nullptr && now != nullptr) {
+            int y = g_date_time_get_year(now), ty = g_date_time_get_year(date_time);
+            int doy = g_date_time_get_day_of_year(now),
+                tdoy = g_date_time_get_day_of_year(date_time);
             int days = (y - ty) * 365 + (doy - tdoy);
             int dow = g_date_time_get_day_of_week(now) - 1; /* Monday 0 */
-            int m = g_date_time_get_month(now), tm = g_date_time_get_month(t);
+            int month = g_date_time_get_month(now), tm = g_date_time_get_month(date_time);
             if (days <= 0)
                 rank = 7;
             else if (days == 1)
@@ -545,15 +547,15 @@ static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
                 rank = 5;
             else if (days <= dow + 7)
                 rank = 4;
-            else if (y == ty && m == tm)
+            else if (y == ty && month == tm)
                 rank = 3;
-            else if ((y == ty && m - tm == 1) || (y - ty == 1 && m == 1 && tm == 12))
+            else if ((y == ty && month - tm == 1) || (y - ty == 1 && month == 1 && tm == 12))
                 rank = 2;
             else if (y == ty)
                 rank = 1;
         }
-        if (t != nullptr)
-            g_date_time_unref(t);
+        if (date_time != nullptr)
+            g_date_time_unref(date_time);
         it->group = g_strdup(ages[rank]);
         it->group_rank = rank;
         return;
@@ -563,10 +565,10 @@ static void set_group(const XdFolderView *v, item *it, GDateTime *now) {
         break;
     }
     /* By name: the initial letter. */
-    gunichar c = g_utf8_get_char_validated(it->name, -1);
-    if (c != (gunichar)-1 && c != (gunichar)-2 && g_unichar_isalpha(c)) {
+    gunichar initial = g_utf8_get_char_validated(it->name, -1);
+    if (initial != (gunichar)-1 && initial != (gunichar)-2 && g_unichar_isalpha(initial)) {
         char buf[8] = {0};
-        g_unichar_to_utf8(g_unichar_toupper(c), buf);
+        g_unichar_to_utf8(g_unichar_toupper(initial), buf);
         it->group = g_strdup(buf);
     } else {
         it->group = g_strdup("Other");
@@ -580,176 +582,183 @@ static gboolean ranked_groups(XdSortColumn sort) {
            sort == XD_SORT_ACCESSED;
 }
 
-static int compare_groups(const XdFolderView *v, const item *a, const item *b) {
-    int c = (a->group_rank > b->group_rank) - (a->group_rank < b->group_rank);
-    if (c == 0 && v->place != XD_PLACE_COMPUTER && !ranked_groups(v->sort))
-        c = g_utf8_collate(a->group != nullptr ? a->group : "", b->group != nullptr ? b->group : "");
-    return v->place != XD_PLACE_COMPUTER && v->desc ? -c : c;
+static int compare_groups(const XdFolderView *folder_view, const item *left, const item *right) {
+    int order = (left->group_rank > right->group_rank) - (left->group_rank < right->group_rank);
+    if (order == 0 && folder_view->place != XD_PLACE_COMPUTER && !ranked_groups(folder_view->sort))
+        order = g_utf8_collate(left->group != nullptr ? left->group : "",
+                               right->group != nullptr ? right->group : "");
+    return folder_view->place != XD_PLACE_COMPUTER && folder_view->desc ? -order : order;
 }
 
 static int compare_items(gconstpointer pa, gconstpointer pb, gpointer data) {
-    const item *a = *(const item *const *)pa;
-    const item *b = *(const item *const *)pb;
-    const XdFolderView *v = data;
-    if (v->grouped) {
-        int g = compare_groups(v, a, b);
-        if (g != 0)
-            return g;
+    const item *left = *(const item *const *)pa;
+    const item *right = *(const item *const *)pb;
+    const XdFolderView *folder_view = data;
+    if (folder_view->grouped) {
+        int group_order = compare_groups(folder_view, left, right);
+        if (group_order != 0)
+            return group_order;
     }
     /* My Computer's drives and Control Panel's categories keep their own
      * order. */
-    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK ||
-        (v->place == XD_PLACE_CONTROL && a->is_dir && b->is_dir))
-        return a->order - b->order;
+    if (folder_view->place == XD_PLACE_COMPUTER || folder_view->place == XD_PLACE_NETWORK ||
+        (folder_view->place == XD_PLACE_CONTROL && left->is_dir && right->is_dir))
+        return left->order - right->order;
     /* Folders first, always, as in Windows. */
-    if (a->is_dir != b->is_dir)
-        return a->is_dir ? -1 : 1;
-    int c = 0;
-    switch (v->sort) {
+    if (left->is_dir != right->is_dir)
+        return left->is_dir ? -1 : 1;
+    int order = 0;
+    switch (folder_view->sort) {
     case XD_SORT_SIZE:
-        c = (a->size > b->size) - (a->size < b->size);
+        order = (left->size > right->size) - (left->size < right->size);
         break;
     case XD_SORT_TYPE:
-        c = g_utf8_collate(a->type_desc, b->type_desc);
+        order = g_utf8_collate(left->type_desc, right->type_desc);
         break;
     case XD_SORT_MODIFIED:
-        c = (a->mtime > b->mtime) - (a->mtime < b->mtime);
+        order = (left->mtime > right->mtime) - (left->mtime < right->mtime);
         break;
     case XD_SORT_CREATED:
-        c = (a->ctime > b->ctime) - (a->ctime < b->ctime);
+        order = (left->ctime > right->ctime) - (left->ctime < right->ctime);
         break;
     case XD_SORT_ACCESSED:
-        c = (a->atime > b->atime) - (a->atime < b->atime);
+        order = (left->atime > right->atime) - (left->atime < right->atime);
         break;
     case XD_SORT_ATTRIBUTES:
-        c = g_strcmp0(a->attrs, b->attrs);
+        order = g_strcmp0(left->attrs, right->attrs);
         break;
     case XD_SORT_OWNER:
-        c = g_utf8_collate(a->owner != nullptr ? a->owner : "", b->owner != nullptr ? b->owner : "");
+        order = g_utf8_collate(left->owner != nullptr ? left->owner : "",
+                               right->owner != nullptr ? right->owner : "");
         break;
     case XD_SORT_NAME:
     case XD_SORT_COUNT:
         break;
     }
-    if (c == 0)
-        c = strcmp(a->collate_key, b->collate_key);
-    return v->desc ? -c : c;
+    if (order == 0)
+        order = strcmp(left->collate_key, right->collate_key);
+    return folder_view->desc ? -order : order;
 }
 
-static void layout_contents(XdFolderView *v);
+static void layout_contents(XdFolderView *folder_view);
 
-static void refilter(XdFolderView *v) {
-    g_ptr_array_set_size(v->shown, 0);
-    v->grouped = wants_groups(v);
-    GDateTime *now = v->grouped ? g_date_time_new_now_local() : nullptr;
-    for (guint i = 0; i < v->all->len; i++) {
-        item *it = g_ptr_array_index(v->all, i);
-        if (v->grouped)
-            set_group(v, it, now);
-        if (v->show_hidden || !it->hidden)
-            g_ptr_array_add(v->shown, it);
+static void refilter(XdFolderView *folder_view) {
+    g_ptr_array_set_size(folder_view->shown, 0);
+    folder_view->grouped = wants_groups(folder_view);
+    GDateTime *now = folder_view->grouped ? g_date_time_new_now_local() : nullptr;
+    for (guint i = 0; i < folder_view->all->len; i++) {
+        item *it = g_ptr_array_index(folder_view->all, i);
+        if (folder_view->grouped)
+            set_group(folder_view, it, now);
+        if (folder_view->show_hidden || !it->hidden)
+            g_ptr_array_add(folder_view->shown, it);
         else
             it->selected = FALSE;
     }
     if (now != nullptr)
         g_date_time_unref(now);
-    g_ptr_array_sort_with_data(v->shown, compare_items, v);
-    if (v->focus >= (int)v->shown->len)
-        v->focus = (int)v->shown->len - 1;
-    layout_contents(v);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    g_ptr_array_sort_with_data(folder_view->shown, compare_items, folder_view);
+    if (folder_view->focus >= (int)folder_view->shown->len)
+        folder_view->focus = (int)folder_view->shown->len - 1;
+    layout_contents(folder_view);
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
 /* ---- layout ------------------------------------------------------------------------ */
 
 /* floor() to int, clamped to a sane coordinate range. */
-static int ifloor(double v) {
-    double f = floor(v);
-    if (!(f > -1e7))
+static int ifloor(double value) {
+    double floored = floor(value);
+    if (!(floored > -1e7))
         return -10000000;
-    if (!(f < 1e7))
+    if (!(floored < 1e7))
         return 10000000;
-    return (int)f;
+    return (int)floored;
 }
 
-static int widget_w(XdFolderView *v) { return MAX(gtk_widget_get_allocated_width(GTK_WIDGET(v)), 1); }
-static int widget_h(XdFolderView *v) { return MAX(gtk_widget_get_allocated_height(GTK_WIDGET(v)), 1); }
-
-static int text_width(XdFolderView *v, const char *text) {
-    PangoLayout *l = gtk_widget_create_pango_layout(GTK_WIDGET(v), text);
-    int w = 0;
-    int h = 0;
-    pango_layout_get_pixel_size(l, &w, &h);
-    g_object_unref(l);
-    return w;
+static int widget_w(XdFolderView *folder_view) {
+    return MAX(gtk_widget_get_allocated_width(GTK_WIDGET(folder_view)), 1);
+}
+static int widget_h(XdFolderView *folder_view) {
+    return MAX(gtk_widget_get_allocated_height(GTK_WIDGET(folder_view)), 1);
 }
 
-static void configure(GtkAdjustment *a, double page, double upper) {
-    if (a == nullptr)
+static int text_width(XdFolderView *folder_view, const char *text) {
+    PangoLayout *layout = gtk_widget_create_pango_layout(GTK_WIDGET(folder_view), text);
+    int width = 0;
+    int height = 0;
+    pango_layout_get_pixel_size(layout, &width, &height);
+    g_object_unref(layout);
+    return width;
+}
+
+static void configure(GtkAdjustment *adjustment, double page, double upper) {
+    if (adjustment == nullptr)
         return;
     upper = MAX(upper, page);
-    double value = CLAMP(gtk_adjustment_get_value(a), 0.0, upper - page);
-    gtk_adjustment_configure(a, value, 0.0, upper, ROW_H * 2.0, page * 0.9, page);
+    double value = CLAMP(gtk_adjustment_get_value(adjustment), 0.0, upper - page);
+    gtk_adjustment_configure(adjustment, value, 0.0, upper, ROW_H * 2.0, page * 0.9, page);
 }
 
-static void clear_headings(XdFolderView *v) {
-    for (guint i = 0; i < v->headings->len; i++)
-        g_free(g_array_index(v->headings, heading, i).text);
-    g_array_set_size(v->headings, 0);
+static void clear_headings(XdFolderView *folder_view) {
+    for (guint i = 0; i < folder_view->headings->len; i++)
+        g_free(g_array_index(folder_view->headings, heading, i).text);
+    g_array_set_size(folder_view->headings, 0);
 }
 
 /* The icon views in groups: each under its heading, starting a new row. */
-static void layout_groups(XdFolderView *v) {
-    int n = (int)v->shown->len;
-    g_array_set_size(v->rects, (guint)n);
-    clear_headings(v);
+static void layout_groups(XdFolderView *folder_view) {
+    int count = (int)folder_view->shown->len;
+    g_array_set_size(folder_view->rects, (guint)count);
+    clear_headings(folder_view);
     int y = PAD, col = 0;
     const char *current = nullptr;
-    for (int i = 0; i < n; i++) {
-        item *it = g_ptr_array_index(v->shown, (guint)i);
-        const char *g = it->group != nullptr ? it->group : "";
-        if (current == nullptr || strcmp(g, current) != 0) {
+    for (int i = 0; i < count; i++) {
+        item *it = g_ptr_array_index(folder_view->shown, (guint)i);
+        const char *group_name = it->group != nullptr ? it->group : "";
+        if (current == nullptr || strcmp(group_name, current) != 0) {
             if (current != nullptr)
-                y += (col > 0 ? v->cell_h : 0) + GROUP_GAP;
-            heading hd = {y, g_strdup(g)};
-            g_array_append_val(v->headings, hd);
+                y += (col > 0 ? folder_view->cell_h : 0) + GROUP_GAP;
+            heading hd = {y, g_strdup(group_name)};
+            g_array_append_val(folder_view->headings, hd);
             y += GROUP_H;
             col = 0;
-            current = g;
+            current = group_name;
         }
-        g_array_index(v->rects, GdkRectangle, i) =
-            (GdkRectangle){PAD + col * v->cell_w, y, v->cell_w, v->cell_h};
-        if (++col == v->cols) {
+        g_array_index(folder_view->rects, GdkRectangle, i) = (GdkRectangle){
+            PAD + col * folder_view->cell_w, y, folder_view->cell_w, folder_view->cell_h};
+        if (++col == folder_view->cols) {
             col = 0;
-            y += v->cell_h;
+            y += folder_view->cell_h;
         }
     }
-    v->content_h = y + (col > 0 ? v->cell_h : 0) + PAD;
+    folder_view->content_h = y + (col > 0 ? folder_view->cell_h : 0) + PAD;
 }
 
 /* Details in groups: each heading on a line of its own above its rows,
  * under the column header. */
-static void layout_detail_groups(XdFolderView *v) {
-    int n = (int)v->shown->len;
-    g_array_set_size(v->rects, (guint)n);
-    clear_headings(v);
+static void layout_detail_groups(XdFolderView *folder_view) {
+    int count = (int)folder_view->shown->len;
+    g_array_set_size(folder_view->rects, (guint)count);
+    clear_headings(folder_view);
     int y = HEADER_H;
     const char *current = nullptr;
-    for (int i = 0; i < n; i++) {
-        item *it = g_ptr_array_index(v->shown, (guint)i);
-        const char *g = it->group != nullptr ? it->group : "";
-        if (current == nullptr || strcmp(g, current) != 0) {
+    for (int i = 0; i < count; i++) {
+        item *it = g_ptr_array_index(folder_view->shown, (guint)i);
+        const char *group_name = it->group != nullptr ? it->group : "";
+        if (current == nullptr || strcmp(group_name, current) != 0) {
             if (current != nullptr)
                 y += GROUP_GAP;
-            heading hd = {y, g_strdup(g)};
-            g_array_append_val(v->headings, hd);
+            heading hd = {y, g_strdup(group_name)};
+            g_array_append_val(folder_view->headings, hd);
             y += GROUP_H;
-            current = g;
+            current = group_name;
         }
-        g_array_index(v->rects, GdkRectangle, i) = (GdkRectangle){0, y, v->cell_w, ROW_H};
+        g_array_index(folder_view->rects, GdkRectangle, i) =
+            (GdkRectangle){0, y, folder_view->cell_w, ROW_H};
         y += ROW_H;
     }
-    v->content_h = y + PAD;
+    folder_view->content_h = y + PAD;
 }
 
 /* ---- Details columns ---------------------------------------------------------------- */
@@ -757,7 +766,7 @@ static void layout_detail_groups(XdFolderView *v) {
 static const char *const folder_titles[XD_SORT_COUNT] = {
     "Name", "Size", "Type", "Date Modified", "Date Created", "Date Accessed", "Attributes", "Owner"};
 
-static const char *column_title(const XdFolderView *v, int col) {
+static const char *column_title(const XdFolderView *folder_view, int col) {
     static const char *const computer_titles[] = {"Name", "Total Size", "Type", "Free Space"};
     static const char *const trash_titles[] = {"Name", "Size", "Original Location",
                                                "Date Deleted"};
@@ -766,7 +775,7 @@ static const char *column_title(const XdFolderView *v, int col) {
     if (col < 0 || col >= XD_SORT_COUNT)
         return "";
     if (col <= XD_SORT_MODIFIED) {
-        switch (v->place) {
+        switch (folder_view->place) {
         case XD_PLACE_COMPUTER:
             return computer_titles[col];
         case XD_PLACE_TRASH:
@@ -784,8 +793,8 @@ static const char *column_title(const XdFolderView *v, int col) {
 
 /* The columns a place has: My Computer and the Recycle Bin their four,
  * Control Panel Name and Comments, folders all of them. */
-static gboolean column_available(const XdFolderView *v, int col) {
-    switch (v->place) {
+static gboolean column_available(const XdFolderView *folder_view, int col) {
+    switch (folder_view->place) {
     case XD_PLACE_FOLDER:
         return col >= 0 && col < XD_SORT_COUNT;
     case XD_PLACE_CONTROL:
@@ -800,12 +809,12 @@ static gboolean column_available(const XdFolderView *v, int col) {
 }
 
 /* Windows' default widths; Name takes the spare room (0). */
-static int default_width(const XdFolderView *v, int col, int view_w) {
+static int default_width(const XdFolderView *folder_view, int col, int view_w) {
     switch ((XdSortColumn)col) {
     case XD_SORT_SIZE:
         return 80;
     case XD_SORT_TYPE:
-        return v->place == XD_PLACE_CONTROL ? MAX(260, view_w * 3 / 5) : 150;
+        return folder_view->place == XD_PLACE_CONTROL ? MAX(260, view_w * 3 / 5) : 150;
     case XD_SORT_MODIFIED:
     case XD_SORT_CREATED:
     case XD_SORT_ACCESSED:
@@ -821,33 +830,33 @@ static int default_width(const XdFolderView *v, int col, int view_w) {
     return 0;
 }
 
-static void default_columns(XdFolderView *v) {
-    v->ncols = 0;
-    for (int c = 0; c <= XD_SORT_MODIFIED; c++)
-        v->order[v->ncols++] = c;
-    memset(v->width, 0, sizeof(v->width));
+static void default_columns(XdFolderView *folder_view) {
+    folder_view->ncols = 0;
+    for (int column = 0; column <= XD_SORT_MODIFIED; column++)
+        folder_view->order[folder_view->ncols++] = column;
+    memset(folder_view->width, 0, sizeof(folder_view->width));
 }
 
 /* Where column `col` starts (content coordinates). */
-static int column_x(const XdFolderView *v, int col) {
+static int column_x(const XdFolderView *folder_view, int col) {
     int x = 0;
-    for (int i = 0; i < v->ncols && v->order[i] != col; i++)
-        x += v->col_w[v->order[i]];
+    for (int i = 0; i < folder_view->ncols && folder_view->order[i] != col; i++)
+        x += folder_view->col_w[folder_view->order[i]];
     return x;
 }
 
 /* A date for a Details column, formatted the first time it's shown. */
 static const char *date_cell(char **text, gint64 when) {
     if (*text == nullptr) {
-        GDateTime *t = when != 0 ? g_date_time_new_from_unix_local(when) : nullptr;
-        *text = t != nullptr ? g_date_time_format(t, "%x %H:%M") : g_strdup("");
-        if (t != nullptr)
-            g_date_time_unref(t);
+        GDateTime *date_time = when != 0 ? g_date_time_new_from_unix_local(when) : nullptr;
+        *text = date_time != nullptr ? g_date_time_format(date_time, "%x %H:%M") : g_strdup("");
+        if (date_time != nullptr)
+            g_date_time_unref(date_time);
     }
     return *text;
 }
 
-static const char *or_empty(const char *s) { return s != nullptr ? s : ""; }
+static const char *or_empty(const char *text) { return text != nullptr ? text : ""; }
 
 static const char *cell_text(item *it, int col) {
     switch ((XdSortColumn)col) {
@@ -875,7 +884,9 @@ static const char *cell_text(item *it, int col) {
 
 /* ---- free placement (Auto Arrange off) --------------------------------------------- */
 
-static gboolean uses_rects(const XdFolderView *v) { return v->grouped || v->placed; }
+static gboolean uses_rects(const XdFolderView *folder_view) {
+    return folder_view->grouped || folder_view->placed;
+}
 
 static constexpr int GRID_COLS_MAX = 4095;
 
@@ -883,181 +894,193 @@ static gpointer cell_key(int row, int col) {
     return GUINT_TO_POINTER(((guint)row << 12 | (guint)col) + 1u);
 }
 
-static int grid_cols(const XdFolderView *v) { return CLAMP(v->cols, 1, GRID_COLS_MAX); }
+static int grid_cols(const XdFolderView *folder_view) {
+    return CLAMP(folder_view->cols, 1, GRID_COLS_MAX);
+}
 
-/* Marks the grid cells `r` covers. */
-static void take_cells(const XdFolderView *v, GHashTable *taken, GdkRectangle r) {
-    int c0 = MAX((r.x - PAD) / v->cell_w, 0), c1 = (r.x + r.width - 1 - PAD) / v->cell_w;
-    int r0 = MAX((r.y - PAD) / v->cell_h, 0), r1 = (r.y + r.height - 1 - PAD) / v->cell_h;
+/* Marks the grid cells `area` covers. */
+static void take_cells(const XdFolderView *folder_view, GHashTable *taken, GdkRectangle area) {
+    int c0 = MAX((area.x - PAD) / folder_view->cell_w, 0),
+        c1 = (area.x + area.width - 1 - PAD) / folder_view->cell_w;
+    int r0 = MAX((area.y - PAD) / folder_view->cell_h, 0),
+        r1 = (area.y + area.height - 1 - PAD) / folder_view->cell_h;
     for (int row = r0; row <= r1; row++)
-        for (int col = c0; col <= c1 && col < grid_cols(v); col++)
+        for (int col = c0; col <= c1 && col < grid_cols(folder_view); col++)
             g_hash_table_add(taken, cell_key(row, col));
 }
 
 /* The first free cell from `start` on (row by row): its index. */
-static int free_cell(const XdFolderView *v, GHashTable *taken, int start) {
-    int cols = grid_cols(v);
+static int free_cell(const XdFolderView *folder_view, GHashTable *taken, int start) {
+    int cols = grid_cols(folder_view);
     int cell = MAX(start, 0);
     while (g_hash_table_contains(taken, cell_key(cell / cols, cell % cols)))
         cell++;
     return cell;
 }
 
-static void set_position(XdFolderView *v, const char *key, int x, int y) {
-    int *p = g_new(int, 2);
-    p[0] = x;
-    p[1] = y;
-    g_hash_table_replace(v->positions, g_strdup(key), p);
+static void set_position(XdFolderView *folder_view, const char *key, int x, int y) {
+    int *position = g_new(int, 2);
+    position[0] = x;
+    position[1] = y;
+    g_hash_table_replace(folder_view->positions, g_strdup(key), position);
 }
 
 /* Icons where they were put; the rest, in order, in the free cells
  * (which is how they're arranged when none were put anywhere yet). They
  * keep those places, so a narrower window doesn't move them. */
-static void layout_placed(XdFolderView *v) {
-    int n = (int)v->shown->len;
-    if (v->positions_mode != v->mode) {
+static void layout_placed(XdFolderView *folder_view) {
+    int count = (int)folder_view->shown->len;
+    if (folder_view->positions_mode != folder_view->mode) {
         /* Put in another view's cells: arranged afresh for this one. */
-        g_hash_table_remove_all(v->positions);
-        v->positions_mode = v->mode;
+        g_hash_table_remove_all(folder_view->positions);
+        folder_view->positions_mode = folder_view->mode;
     }
-    g_array_set_size(v->rects, (guint)n);
+    g_array_set_size(folder_view->rects, (guint)count);
     GHashTable *taken = g_hash_table_new(g_direct_hash, g_direct_equal);
-    for (int i = 0; i < n; i++) {
-        item *it = g_ptr_array_index(v->shown, (guint)i);
-        const int *p = it->key != nullptr ? g_hash_table_lookup(v->positions, it->key) : nullptr;
-        GdkRectangle r = {0, 0, 0, 0};
-        if (p != nullptr) {
-            r = (GdkRectangle){MAX(p[0], 0), MAX(p[1], 0), v->cell_w, v->cell_h};
-            take_cells(v, taken, r);
+    for (int i = 0; i < count; i++) {
+        item *it = g_ptr_array_index(folder_view->shown, (guint)i);
+        const int *position =
+            it->key != nullptr ? g_hash_table_lookup(folder_view->positions, it->key) : nullptr;
+        GdkRectangle area = {0, 0, 0, 0};
+        if (position != nullptr) {
+            area = (GdkRectangle){MAX(position[0], 0), MAX(position[1], 0), folder_view->cell_w,
+                                  folder_view->cell_h};
+            take_cells(folder_view, taken, area);
         }
-        g_array_index(v->rects, GdkRectangle, i) = r;
+        g_array_index(folder_view->rects, GdkRectangle, i) = area;
     }
-    int cols = grid_cols(v);
+    int cols = grid_cols(folder_view);
     int cell = 0;
     int right = 0, bottom = 0;
-    for (int i = 0; i < n; i++) {
-        GdkRectangle *r = &g_array_index(v->rects, GdkRectangle, i);
-        if (r->width == 0) {
-            cell = free_cell(v, taken, cell);
-            *r = (GdkRectangle){PAD + (cell % cols) * v->cell_w, PAD + (cell / cols) * v->cell_h,
-                                v->cell_w, v->cell_h};
-            take_cells(v, taken, *r);
-            item *it = g_ptr_array_index(v->shown, (guint)i);
+    for (int i = 0; i < count; i++) {
+        GdkRectangle *area = &g_array_index(folder_view->rects, GdkRectangle, i);
+        if (area->width == 0) {
+            cell = free_cell(folder_view, taken, cell);
+            *area = (GdkRectangle){PAD + (cell % cols) * folder_view->cell_w,
+                                   PAD + (cell / cols) * folder_view->cell_h, folder_view->cell_w,
+                                   folder_view->cell_h};
+            take_cells(folder_view, taken, *area);
+            item *it = g_ptr_array_index(folder_view->shown, (guint)i);
             if (it->key != nullptr)
-                set_position(v, it->key, r->x, r->y);
+                set_position(folder_view, it->key, area->x, area->y);
         }
-        right = MAX(right, r->x + r->width);
-        bottom = MAX(bottom, r->y + r->height);
+        right = MAX(right, area->x + area->width);
+        bottom = MAX(bottom, area->y + area->height);
     }
     g_hash_table_unref(taken);
-    v->content_w = MAX(widget_w(v), right + PAD);
-    v->content_h = bottom + PAD;
+    folder_view->content_w = MAX(widget_w(folder_view), right + PAD);
+    folder_view->content_h = bottom + PAD;
 }
 
 /* Align to Grid: every icon onto the nearest free cell. */
-static void snap_positions(XdFolderView *v) {
-    if (!v->placed)
+static void snap_positions(XdFolderView *folder_view) {
+    if (!folder_view->placed)
         return;
     GHashTable *taken = g_hash_table_new(g_direct_hash, g_direct_equal);
-    int cols = grid_cols(v);
-    for (guint i = 0; i < v->shown->len && i < v->rects->len; i++) {
-        item *it = g_ptr_array_index(v->shown, i);
-        GdkRectangle r = g_array_index(v->rects, GdkRectangle, i);
-        int col = CLAMP((int)lround((double)(r.x - PAD) / v->cell_w), 0, cols - 1);
-        int row = MAX((int)lround((double)(r.y - PAD) / v->cell_h), 0);
-        int cell = free_cell(v, taken, row * cols + col);
+    int cols = grid_cols(folder_view);
+    for (guint i = 0; i < folder_view->shown->len && i < folder_view->rects->len; i++) {
+        item *it = g_ptr_array_index(folder_view->shown, i);
+        GdkRectangle area = g_array_index(folder_view->rects, GdkRectangle, i);
+        int col = CLAMP((int)lround((double)(area.x - PAD) / folder_view->cell_w), 0, cols - 1);
+        int row = MAX((int)lround((double)(area.y - PAD) / folder_view->cell_h), 0);
+        int cell = free_cell(folder_view, taken, row * cols + col);
         g_hash_table_add(taken, cell_key(cell / cols, cell % cols));
         if (it->key != nullptr)
-            set_position(v, it->key, PAD + (cell % cols) * v->cell_w,
-                         PAD + (cell / cols) * v->cell_h);
+            set_position(folder_view, it->key, PAD + (cell % cols) * folder_view->cell_w,
+                         PAD + (cell / cols) * folder_view->cell_h);
     }
     g_hash_table_unref(taken);
 }
 
-static void layout_contents(XdFolderView *v) {
-    int w = widget_w(v);
-    int h = widget_h(v);
-    int n = (int)v->shown->len;
-    v->placed = is_icon_mode(v->mode) && !v->grouped && !v->auto_arrange &&
-                (v->place == XD_PLACE_FOLDER || v->place == XD_PLACE_TRASH);
-    switch (v->mode) {
+static void layout_contents(XdFolderView *folder_view) {
+    int width = widget_w(folder_view);
+    int height = widget_h(folder_view);
+    int count = (int)folder_view->shown->len;
+    folder_view->placed =
+        is_icon_mode(folder_view->mode) && !folder_view->grouped && !folder_view->auto_arrange &&
+        (folder_view->place == XD_PLACE_FOLDER || folder_view->place == XD_PLACE_TRASH);
+    switch (folder_view->mode) {
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
     case XD_VIEW_TILES:
-        v->cell_w = v->mode == XD_VIEW_THUMBNAILS ? v->thumb + 24
-                    : v->mode == XD_VIEW_ICONS    ? ICONS_W
-                                                  : TILE_W;
-        v->cell_h = v->mode == XD_VIEW_THUMBNAILS ? v->thumb + 40
-                    : v->mode == XD_VIEW_ICONS    ? ICONS_H
-                                                  : TILE_H;
-        v->cols = MAX((w - PAD) / v->cell_w, 1);
-        v->rows = (n + v->cols - 1) / v->cols;
-        v->content_w = w;
-        v->content_h = PAD * 2 + v->rows * v->cell_h;
-        if (v->grouped)
-            layout_groups(v);
-        else if (v->placed)
-            layout_placed(v);
+        folder_view->cell_w = folder_view->mode == XD_VIEW_THUMBNAILS ? folder_view->thumb + 24
+                              : folder_view->mode == XD_VIEW_ICONS    ? ICONS_W
+                                                                      : TILE_W;
+        folder_view->cell_h = folder_view->mode == XD_VIEW_THUMBNAILS ? folder_view->thumb + 40
+                              : folder_view->mode == XD_VIEW_ICONS    ? ICONS_H
+                                                                      : TILE_H;
+        folder_view->cols = MAX((width - PAD) / folder_view->cell_w, 1);
+        folder_view->rows = (count + folder_view->cols - 1) / folder_view->cols;
+        folder_view->content_w = width;
+        folder_view->content_h = PAD * 2 + folder_view->rows * folder_view->cell_h;
+        if (folder_view->grouped)
+            layout_groups(folder_view);
+        else if (folder_view->placed)
+            layout_placed(folder_view);
         break;
     case XD_VIEW_LIST: {
         /* Windows' List view fills columns top to bottom and scrolls
          * sideways. Columns are as wide as the widest name (capped). */
-        v->rows = MAX((h - PAD * 2) / ROW_H, 1);
-        v->cols = (n + v->rows - 1) / v->rows;
+        folder_view->rows = MAX((height - PAD * 2) / ROW_H, 1);
+        folder_view->cols = (count + folder_view->rows - 1) / folder_view->rows;
         int widest = 60;
-        for (int i = 0; i < n; i++) {
-            item *it = g_ptr_array_index(v->shown, (guint)i);
+        for (int i = 0; i < count; i++) {
+            item *it = g_ptr_array_index(folder_view->shown, (guint)i);
             if (it->name_w == 0)
-                it->name_w = text_width(v, item_label(v, it));
+                it->name_w = text_width(folder_view, item_label(folder_view, it));
             widest = MAX(widest, it->name_w);
         }
-        v->cell_w = MIN(widest + LIST_ICON + 16, LIST_COL_MAX);
-        v->cell_h = ROW_H;
-        v->content_w = PAD * 2 + v->cols * v->cell_w;
-        v->content_h = h;
+        folder_view->cell_w = MIN(widest + LIST_ICON + 16, LIST_COL_MAX);
+        folder_view->cell_h = ROW_H;
+        folder_view->content_w = PAD * 2 + folder_view->cols * folder_view->cell_w;
+        folder_view->content_h = height;
         break;
     }
     case XD_VIEW_DETAILS: {
         /* The columns chosen that this place has (Control Panel: Name and
          * Comments), at their widths; Name takes the spare room until
          * it's given a width. */
-        memset(v->col_w, 0, sizeof(v->col_w));
+        memset(folder_view->col_w, 0, sizeof(folder_view->col_w));
         int others = 0;
-        for (int i = 0; i < v->ncols; i++) {
-            int c = v->order[i];
-            if (c == XD_SORT_NAME || !column_available(v, c))
+        for (int i = 0; i < folder_view->ncols; i++) {
+            int column = folder_view->order[i];
+            if (column == XD_SORT_NAME || !column_available(folder_view, column))
                 continue;
-            v->col_w[c] = v->width[c] > 0 ? v->width[c] : default_width(v, c, w);
-            others += v->col_w[c];
+            folder_view->col_w[column] = folder_view->width[column] > 0
+                                             ? folder_view->width[column]
+                                             : default_width(folder_view, column, width);
+            others += folder_view->col_w[column];
         }
-        v->col_w[XD_SORT_NAME] = v->width[XD_SORT_NAME] > 0 ? v->width[XD_SORT_NAME]
-                                                             : MAX(220, w - others);
-        v->cell_w = v->col_w[XD_SORT_NAME] + others;
-        v->cell_h = ROW_H;
-        v->cols = 1;
-        v->rows = n;
-        v->content_w = v->cell_w;
-        v->content_h = HEADER_H + n * ROW_H + PAD;
-        if (v->grouped)
-            layout_detail_groups(v);
+        folder_view->col_w[XD_SORT_NAME] = folder_view->width[XD_SORT_NAME] > 0
+                                               ? folder_view->width[XD_SORT_NAME]
+                                               : MAX(220, width - others);
+        folder_view->cell_w = folder_view->col_w[XD_SORT_NAME] + others;
+        folder_view->cell_h = ROW_H;
+        folder_view->cols = 1;
+        folder_view->rows = count;
+        folder_view->content_w = folder_view->cell_w;
+        folder_view->content_h = HEADER_H + count * ROW_H + PAD;
+        if (folder_view->grouped)
+            layout_detail_groups(folder_view);
         break;
     }
     case XD_VIEW_COUNT:
         break;
     }
-    configure(v->hadj, w, v->content_w);
-    configure(v->vadj, h, v->content_h);
+    configure(folder_view->hadj, width, folder_view->content_w);
+    configure(folder_view->vadj, height, folder_view->content_h);
 }
 
 /* Rectangle of item i in content coordinates. */
-static GdkRectangle item_rect(const XdFolderView *v, int i) {
-    switch (v->mode) {
+static GdkRectangle item_rect(const XdFolderView *folder_view, int i) {
+    switch (folder_view->mode) {
     case XD_VIEW_LIST:
-        return (GdkRectangle){PAD + (i / v->rows) * v->cell_w, PAD + (i % v->rows) * ROW_H,
-                              v->cell_w - 4, ROW_H};
+        return (GdkRectangle){PAD + (i / folder_view->rows) * folder_view->cell_w,
+                              PAD + (i % folder_view->rows) * ROW_H, folder_view->cell_w - 4,
+                              ROW_H};
     case XD_VIEW_DETAILS:
-        if (!v->grouped)
-            return (GdkRectangle){0, HEADER_H + i * ROW_H, v->cell_w, ROW_H};
+        if (!folder_view->grouped)
+            return (GdkRectangle){0, HEADER_H + i * ROW_H, folder_view->cell_w, ROW_H};
         break; /* the rows' own places, below */
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
@@ -1065,34 +1088,39 @@ static GdkRectangle item_rect(const XdFolderView *v, int i) {
     case XD_VIEW_COUNT:
         break;
     }
-    if (uses_rects(v) && i >= 0 && (guint)i < v->rects->len)
-        return g_array_index(v->rects, GdkRectangle, i);
-    return (GdkRectangle){PAD + (i % v->cols) * v->cell_w, PAD + (i / v->cols) * v->cell_h,
-                          v->cell_w, v->cell_h};
+    if (uses_rects(folder_view) && i >= 0 && (guint)i < folder_view->rects->len)
+        return g_array_index(folder_view->rects, GdkRectangle, i);
+    return (GdkRectangle){PAD + (i % folder_view->cols) * folder_view->cell_w,
+                          PAD + (i / folder_view->cols) * folder_view->cell_h, folder_view->cell_w,
+                          folder_view->cell_h};
 }
 
-static GdkRectangle band_rect(const XdFolderView *v);
+static GdkRectangle band_rect(const XdFolderView *folder_view);
 
-static double hval(const XdFolderView *v) { return v->hadj ? gtk_adjustment_get_value(v->hadj) : 0; }
-static double vval(const XdFolderView *v) { return v->vadj ? gtk_adjustment_get_value(v->vadj) : 0; }
+static double hval(const XdFolderView *folder_view) {
+    return folder_view->hadj ? gtk_adjustment_get_value(folder_view->hadj) : 0;
+}
+static double vval(const XdFolderView *folder_view) {
+    return folder_view->vadj ? gtk_adjustment_get_value(folder_view->vadj) : 0;
+}
 
-static int index_at(XdFolderView *v, double wx, double wy) {
-    double x = wx + hval(v);
-    double y = wy + vval(v);
-    int n = (int)v->shown->len;
+static int index_at(XdFolderView *folder_view, double wx, double wy) {
+    double x = wx + hval(folder_view);
+    double y = wy + vval(folder_view);
+    int count = (int)folder_view->shown->len;
     int i = -1;
-    switch (v->mode) {
+    switch (folder_view->mode) {
     case XD_VIEW_LIST: {
-        int col = ifloor((x - PAD) / v->cell_w);
+        int col = ifloor((x - PAD) / folder_view->cell_w);
         int row = ifloor((y - PAD) / ROW_H);
-        if (col >= 0 && row >= 0 && row < v->rows)
-            i = col * v->rows + row;
+        if (col >= 0 && row >= 0 && row < folder_view->rows)
+            i = col * folder_view->rows + row;
         break;
     }
     case XD_VIEW_DETAILS:
         if (wy < HEADER_H)
             break;
-        if (!v->grouped) {
+        if (!folder_view->grouped) {
             i = ifloor((y - HEADER_H) / ROW_H);
             break;
         }
@@ -1100,54 +1128,55 @@ static int index_at(XdFolderView *v, double wx, double wy) {
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
     case XD_VIEW_TILES: {
-        if (uses_rects(v)) {
-            for (guint k = 0; k < v->rects->len; k++) {
-                GdkRectangle r = g_array_index(v->rects, GdkRectangle, k);
-                if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+        if (uses_rects(folder_view)) {
+            for (guint k = 0; k < folder_view->rects->len; k++) {
+                GdkRectangle area = g_array_index(folder_view->rects, GdkRectangle, k);
+                if (x >= area.x && x < area.x + area.width && y >= area.y &&
+                    y < area.y + area.height)
                     i = (int)k;
             }
             break;
         }
-        int col = ifloor((x - PAD) / v->cell_w);
-        int row = ifloor((y - PAD) / v->cell_h);
-        if (col >= 0 && col < v->cols && row >= 0)
-            i = row * v->cols + col;
+        int col = ifloor((x - PAD) / folder_view->cell_w);
+        int row = ifloor((y - PAD) / folder_view->cell_h);
+        if (col >= 0 && col < folder_view->cols && row >= 0)
+            i = row * folder_view->cols + col;
         break;
     }
     case XD_VIEW_COUNT:
         break;
     }
-    return i >= 0 && i < n ? i : -1;
+    return i >= 0 && i < count ? i : -1;
 }
 
-static void ensure_visible(XdFolderView *v, int i) {
+static void ensure_visible(XdFolderView *folder_view, int i) {
     if (i < 0)
         return;
-    GdkRectangle r = item_rect(v, i);
-    if (v->placed && v->hadj != nullptr) {
+    GdkRectangle area = item_rect(folder_view, i);
+    if (folder_view->placed && folder_view->hadj != nullptr) {
         /* Icons put anywhere may be off to the side too. */
-        double val = hval(v);
-        double page = widget_w(v);
-        if (r.x < val)
-            gtk_adjustment_set_value(v->hadj, r.x - PAD);
-        else if (r.x + r.width > val + page)
-            gtk_adjustment_set_value(v->hadj, r.x + r.width - page + PAD);
+        double val = hval(folder_view);
+        double page = widget_w(folder_view);
+        if (area.x < val)
+            gtk_adjustment_set_value(folder_view->hadj, area.x - PAD);
+        else if (area.x + area.width > val + page)
+            gtk_adjustment_set_value(folder_view->hadj, area.x + area.width - page + PAD);
     }
-    if (v->mode == XD_VIEW_LIST && v->hadj != nullptr) {
-        double val = hval(v);
-        double page = widget_w(v);
-        if (r.x < val)
-            gtk_adjustment_set_value(v->hadj, r.x - PAD);
-        else if (r.x + r.width > val + page)
-            gtk_adjustment_set_value(v->hadj, r.x + r.width - page + PAD);
-    } else if (v->vadj != nullptr) {
-        double top = v->mode == XD_VIEW_DETAILS ? HEADER_H : 0;
-        double val = vval(v);
-        double page = widget_h(v);
-        if (r.y - top < val)
-            gtk_adjustment_set_value(v->vadj, r.y - top);
-        else if (r.y + r.height > val + page)
-            gtk_adjustment_set_value(v->vadj, r.y + r.height - page + PAD);
+    if (folder_view->mode == XD_VIEW_LIST && folder_view->hadj != nullptr) {
+        double val = hval(folder_view);
+        double page = widget_w(folder_view);
+        if (area.x < val)
+            gtk_adjustment_set_value(folder_view->hadj, area.x - PAD);
+        else if (area.x + area.width > val + page)
+            gtk_adjustment_set_value(folder_view->hadj, area.x + area.width - page + PAD);
+    } else if (folder_view->vadj != nullptr) {
+        double top = folder_view->mode == XD_VIEW_DETAILS ? HEADER_H : 0;
+        double val = vval(folder_view);
+        double page = widget_h(folder_view);
+        if (area.y - top < val)
+            gtk_adjustment_set_value(folder_view->vadj, area.y - top);
+        else if (area.y + area.height > val + page)
+            gtk_adjustment_set_value(folder_view->vadj, area.y + area.height - page + PAD);
     }
 }
 
@@ -1158,15 +1187,15 @@ typedef struct colors {
 } colors;
 
 static GdkRGBA lookup(GtkStyleContext *sc, const char *name, const char *fallback) {
-    GdkRGBA c;
-    if (!gtk_style_context_lookup_color(sc, name, &c))
-        gdk_rgba_parse(&c, fallback);
-    return c;
+    GdkRGBA color;
+    if (!gtk_style_context_lookup_color(sc, name, &color))
+        gdk_rgba_parse(&color, fallback);
+    return color;
 }
 
-static colors theme_colors(XdFolderView *v) {
-    GtkStyleContext *sc = gtk_widget_get_style_context(GTK_WIDGET(v));
-    colors c = {
+static colors theme_colors(XdFolderView *folder_view) {
+    GtkStyleContext *sc = gtk_widget_get_style_context(GTK_WIDGET(folder_view));
+    colors view_colors = {
         .base = lookup(sc, "theme_base_color", "#ffffff"),
         .text = lookup(sc, "theme_text_color", "#000000"),
         .sel_bg = lookup(sc, "theme_selected_bg_color", "#316ac5"),
@@ -1174,242 +1203,251 @@ static colors theme_colors(XdFolderView *v) {
         .header_bg = lookup(sc, "theme_bg_color", "#ece9d8"),
         .line = lookup(sc, "borders", "#aca899"),
     };
-    c.dim = c.text;
-    c.dim.alpha = 0.6;
-    return c;
+    view_colors.dim = view_colors.text;
+    view_colors.dim.alpha = 0.6;
+    return view_colors;
 }
 
-static void set_color(cairo_t *cr, GdkRGBA c) { gdk_cairo_set_source_rgba(cr, &c); }
+static void set_color(cairo_t *cairo, GdkRGBA color) { gdk_cairo_set_source_rgba(cairo, &color); }
 
 /* File names wrap without inserted hyphens, as in Windows. */
-static void no_hyphens(PangoLayout *l) {
+static void no_hyphens(PangoLayout *layout) {
     PangoAttrList *attrs = pango_attr_list_new();
     pango_attr_list_insert(attrs, pango_attr_insert_hyphens_new(FALSE));
-    pango_layout_set_attributes(l, attrs);
+    pango_layout_set_attributes(layout, attrs);
     pango_attr_list_unref(attrs);
 }
 
-static void draw_text(XdFolderView *v, cairo_t *cr, const char *text, int x, int y, int w,
-                      int lines, PangoAlignment align, GdkRGBA color) {
-    PangoLayout *l = gtk_widget_create_pango_layout(GTK_WIDGET(v), text);
-    pango_layout_set_width(l, MAX(w, 1) * PANGO_SCALE);
-    pango_layout_set_alignment(l, align);
-    pango_layout_set_ellipsize(l, PANGO_ELLIPSIZE_END);
-    no_hyphens(l);
+static void draw_text(XdFolderView *folder_view, cairo_t *cairo, const char *text, int x, int y,
+                      int width, int lines, PangoAlignment align, GdkRGBA color) {
+    PangoLayout *layout = gtk_widget_create_pango_layout(GTK_WIDGET(folder_view), text);
+    pango_layout_set_width(layout, MAX(width, 1) * PANGO_SCALE);
+    pango_layout_set_alignment(layout, align);
+    pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+    no_hyphens(layout);
     if (lines > 1) {
-        pango_layout_set_wrap(l, PANGO_WRAP_WORD_CHAR);
-        pango_layout_set_height(l, -lines);
+        pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+        pango_layout_set_height(layout, -lines);
     }
-    set_color(cr, color);
-    cairo_move_to(cr, x, y);
-    pango_cairo_show_layout(cr, l);
-    g_object_unref(l);
+    set_color(cairo, color);
+    cairo_move_to(cairo, x, y);
+    pango_cairo_show_layout(cairo, layout);
+    g_object_unref(layout);
 }
 
 /* Draws a label with its selection highlight; returns nothing. */
-static void draw_label_box(XdFolderView *v, cairo_t *cr, const char *text, int x, int y, int w,
-                           int lines, PangoAlignment align, gboolean selected, const colors *c,
-                           gboolean focused) {
-    PangoLayout *l = gtk_widget_create_pango_layout(GTK_WIDGET(v), text);
-    pango_layout_set_width(l, MAX(w, 1) * PANGO_SCALE);
-    pango_layout_set_alignment(l, align);
-    pango_layout_set_ellipsize(l, PANGO_ELLIPSIZE_END);
-    no_hyphens(l);
-    if (v->underline_label) {
-        PangoAttrList *attrs = pango_layout_get_attributes(l);
+static void draw_label_box(XdFolderView *folder_view, cairo_t *cairo, const char *text, int x,
+                           int y, int width, int lines, PangoAlignment align, gboolean selected,
+                           const colors *view_colors, gboolean focused) {
+    PangoLayout *layout = gtk_widget_create_pango_layout(GTK_WIDGET(folder_view), text);
+    pango_layout_set_width(layout, MAX(width, 1) * PANGO_SCALE);
+    pango_layout_set_alignment(layout, align);
+    pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
+    no_hyphens(layout);
+    if (folder_view->underline_label) {
+        PangoAttrList *attrs = pango_layout_get_attributes(layout);
         attrs = attrs != nullptr ? pango_attr_list_copy(attrs) : pango_attr_list_new();
         pango_attr_list_insert(attrs, pango_attr_underline_new(PANGO_UNDERLINE_SINGLE));
-        pango_layout_set_attributes(l, attrs);
+        pango_layout_set_attributes(layout, attrs);
         pango_attr_list_unref(attrs);
     }
     if (lines > 1) {
-        pango_layout_set_wrap(l, PANGO_WRAP_WORD_CHAR);
-        pango_layout_set_height(l, -lines);
+        pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
+        pango_layout_set_height(layout, -lines);
     }
     PangoRectangle ink;
     PangoRectangle logical;
-    pango_layout_get_pixel_extents(l, &ink, &logical);
+    pango_layout_get_pixel_extents(layout, &ink, &logical);
     int bx = x + logical.x - 2;
     int bw = logical.width + 4;
     if (selected) {
-        set_color(cr, c->sel_bg);
-        cairo_rectangle(cr, bx, y, bw, logical.height);
-        cairo_fill(cr);
+        set_color(cairo, view_colors->sel_bg);
+        cairo_rectangle(cairo, bx, y, bw, logical.height);
+        cairo_fill(cairo);
     }
     if (focused) {
         static const double dash[] = {1, 1};
-        set_color(cr, selected ? c->sel_fg : c->text);
-        cairo_set_line_width(cr, 1);
-        cairo_set_dash(cr, dash, 2, 0);
-        cairo_rectangle(cr, bx + 0.5, y + 0.5, bw - 1, logical.height - 1);
-        cairo_stroke(cr);
-        cairo_set_dash(cr, nullptr, 0, 0);
+        set_color(cairo, selected ? view_colors->sel_fg : view_colors->text);
+        cairo_set_line_width(cairo, 1);
+        cairo_set_dash(cairo, dash, 2, 0);
+        cairo_rectangle(cairo, bx + 0.5, y + 0.5, bw - 1, logical.height - 1);
+        cairo_stroke(cairo);
+        cairo_set_dash(cairo, nullptr, 0, 0);
     }
-    set_color(cr, selected ? c->sel_fg : c->text);
-    cairo_move_to(cr, x, y);
-    pango_cairo_show_layout(cr, l);
-    g_object_unref(l);
+    set_color(cairo, selected ? view_colors->sel_fg : view_colors->text);
+    cairo_move_to(cairo, x, y);
+    pango_cairo_show_layout(cairo, layout);
+    g_object_unref(layout);
 }
 
-static void paint_pixbuf(cairo_t *cr, GdkPixbuf *pb, double x, double y, gboolean selected,
-                         gboolean faded, const colors *c) {
+static void paint_pixbuf(cairo_t *cairo, GdkPixbuf *pb, double x, double y, gboolean selected,
+                         gboolean faded, const colors *view_colors) {
     if (pb == nullptr)
         return;
-    gdk_cairo_set_source_pixbuf(cr, pb, x, y);
-    cairo_paint_with_alpha(cr, faded ? 0.5 : 1.0);
+    gdk_cairo_set_source_pixbuf(cairo, pb, x, y);
+    cairo_paint_with_alpha(cairo, faded ? 0.5 : 1.0);
     if (selected) {
         /* Windows tints selected icons with the highlight colour. */
-        GdkRGBA tint = c->sel_bg;
+        GdkRGBA tint = view_colors->sel_bg;
         tint.alpha = 0.4;
-        cairo_save(cr);
-        cairo_rectangle(cr, x, y, gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
-        cairo_clip(cr);
-        set_color(cr, tint);
-        gdk_cairo_set_source_pixbuf(cr, pb, x, y);
-        cairo_pattern_t *mask = cairo_get_source(cr);
+        cairo_save(cairo);
+        cairo_rectangle(cairo, x, y, gdk_pixbuf_get_width(pb), gdk_pixbuf_get_height(pb));
+        cairo_clip(cairo);
+        set_color(cairo, tint);
+        gdk_cairo_set_source_pixbuf(cairo, pb, x, y);
+        cairo_pattern_t *mask = cairo_get_source(cairo);
         cairo_pattern_reference(mask);
-        set_color(cr, tint);
-        cairo_mask(cr, mask);
+        set_color(cairo, tint);
+        cairo_mask(cairo, mask);
         cairo_pattern_destroy(mask);
-        cairo_restore(cr);
+        cairo_restore(cairo);
     }
 }
 
 /* XP's sharing overlay: an open hand, palm up, in a blue cuff, holding
  * the bottom of an icon of `px` whose top left is (x, y). Drawn on a
  * 32-unit grid. */
-static void draw_share_hand(cairo_t *cr, double x, double y, double px) {
-    double u = px / 32.0;
-    cairo_save(cr);
-    cairo_translate(cr, round(x), round(y));
-    cairo_scale(cr, u, u);
-    cairo_set_line_width(cr, MAX(1.0, 1.0 / u));
-    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+static void draw_share_hand(cairo_t *cairo, double x, double y, double px) {
+    double unit = px / 32.0;
+    cairo_save(cairo);
+    cairo_translate(cairo, round(x), round(y));
+    cairo_scale(cairo, unit, unit);
+    cairo_set_line_width(cairo, MAX(1.0, 1.0 / unit));
+    cairo_set_line_join(cairo, CAIRO_LINE_JOIN_ROUND);
     /* The palm and fingers, reaching right under the icon. */
-    cairo_move_to(cr, 6, 25);
-    cairo_line_to(cr, 13, 24);
-    cairo_curve_to(cr, 15, 21, 18, 20, 19.5, 21.5); /* the thumb */
-    cairo_line_to(cr, 17, 24.5);
-    cairo_line_to(cr, 25, 24.5);
-    cairo_curve_to(cr, 27.5, 24.5, 27.5, 27, 25, 27);
-    cairo_line_to(cr, 23, 27);
-    cairo_curve_to(cr, 25, 27.5, 24.5, 30, 22, 30);
-    cairo_line_to(cr, 6, 30.5);
-    cairo_close_path(cr);
-    cairo_set_source_rgb(cr, 0.98, 0.82, 0.62);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgb(cr, 0.45, 0.25, 0.10);
-    cairo_stroke(cr);
+    cairo_move_to(cairo, 6, 25);
+    cairo_line_to(cairo, 13, 24);
+    cairo_curve_to(cairo, 15, 21, 18, 20, 19.5, 21.5); /* the thumb */
+    cairo_line_to(cairo, 17, 24.5);
+    cairo_line_to(cairo, 25, 24.5);
+    cairo_curve_to(cairo, 27.5, 24.5, 27.5, 27, 25, 27);
+    cairo_line_to(cairo, 23, 27);
+    cairo_curve_to(cairo, 25, 27.5, 24.5, 30, 22, 30);
+    cairo_line_to(cairo, 6, 30.5);
+    cairo_close_path(cairo);
+    cairo_set_source_rgb(cairo, 0.98, 0.82, 0.62);
+    cairo_fill_preserve(cairo);
+    cairo_set_source_rgb(cairo, 0.45, 0.25, 0.10);
+    cairo_stroke(cairo);
     /* The cuff. */
-    cairo_rectangle(cr, 0.5, 23.5, 6, 8);
-    cairo_set_source_rgb(cr, 0.16, 0.36, 0.80);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgb(cr, 0.05, 0.15, 0.45);
-    cairo_stroke(cr);
-    cairo_restore(cr);
+    cairo_rectangle(cairo, 0.5, 23.5, 6, 8);
+    cairo_set_source_rgb(cairo, 0.16, 0.36, 0.80);
+    cairo_fill_preserve(cairo);
+    cairo_set_source_rgb(cairo, 0.05, 0.15, 0.45);
+    cairo_stroke(cairo);
+    cairo_restore(cairo);
 }
 
-static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboolean has_focus) {
-    item *it = g_ptr_array_index(v->shown, (guint)i);
-    GdkRectangle r = item_rect(v, i);
+static void draw_item(XdFolderView *folder_view, cairo_t *cairo, int i, const colors *view_colors,
+                      gboolean has_focus) {
+    item *it = g_ptr_array_index(folder_view->shown, (guint)i);
+    GdkRectangle area = item_rect(folder_view, i);
     /* The folder a drag would drop into shows as selected. */
-    gboolean sel = it->selected || i == v->drop_index;
+    gboolean sel = it->selected || i == folder_view->drop_index;
     gboolean faded = FALSE;
-    if (v->cut != nullptr) {
+    if (folder_view->cut != nullptr) {
         char *uri = g_file_get_uri(it->file);
-        faded = g_hash_table_contains(v->cut, uri);
+        faded = g_hash_table_contains(folder_view->cut, uri);
         g_free(uri);
     }
-    gboolean foc = has_focus && i == v->focus;
-    v->underline_label = v->single_click && i == v->hover;
-    switch (v->mode) {
+    gboolean foc = has_focus && i == folder_view->focus;
+    folder_view->underline_label = folder_view->single_click && i == folder_view->hover;
+    switch (folder_view->mode) {
     case XD_VIEW_THUMBNAILS: {
-        int box = v->thumb;
-        int bx = r.x + (r.width - box) / 2;
-        int by = r.y + 4;
+        int box = folder_view->thumb;
+        int bx = area.x + (area.width - box) / 2;
+        int by = area.y + 4;
         /* XP's thumbnail frame: a white square with a thin border. */
-        set_color(cr, c->base);
-        cairo_rectangle(cr, bx, by, box, box);
-        cairo_fill(cr);
-        set_color(cr, sel ? c->sel_bg : c->line);
-        cairo_set_line_width(cr, sel ? 2 : 1);
-        cairo_rectangle(cr, bx + 0.5, by + 0.5, box - 1, box - 1);
-        cairo_stroke(cr);
-        GdkPixbuf *pb = item_thumb(v, it, box - 8);
+        set_color(cairo, view_colors->base);
+        cairo_rectangle(cairo, bx, by, box, box);
+        cairo_fill(cairo);
+        set_color(cairo, sel ? view_colors->sel_bg : view_colors->line);
+        cairo_set_line_width(cairo, sel ? 2 : 1);
+        cairo_rectangle(cairo, bx + 0.5, by + 0.5, box - 1, box - 1);
+        cairo_stroke(cairo);
+        GdkPixbuf *pb = item_thumb(folder_view, it, box - 8);
         if (pb == nullptr)
-            pb = item_icon(v, it, MIN(box / 2, 64));
+            pb = item_icon(folder_view, it, MIN(box / 2, 64));
         if (pb != nullptr)
-            paint_pixbuf(cr, pb, bx + (box - gdk_pixbuf_get_width(pb)) / 2.0,
-                         by + (box - gdk_pixbuf_get_height(pb)) / 2.0, FALSE, faded, c);
-        draw_label_box(v, cr, item_label(v, it), r.x + 2, by + box + 4, r.width - 4, 1,
-                       PANGO_ALIGN_CENTER, sel, c, foc);
+            paint_pixbuf(cairo, pb, bx + (box - gdk_pixbuf_get_width(pb)) / 2.0,
+                         by + (box - gdk_pixbuf_get_height(pb)) / 2.0, FALSE, faded, view_colors);
+        draw_label_box(folder_view, cairo, item_label(folder_view, it), area.x + 2, by + box + 4,
+                       area.width - 4, 1, PANGO_ALIGN_CENTER, sel, view_colors, foc);
         break;
     }
     case XD_VIEW_ICONS: {
         int px = 32;
-        GdkPixbuf *pb = item_icon(v, it, px);
-        paint_pixbuf(cr, pb, r.x + (r.width - px) / 2.0, r.y + 4, sel, faded, c);
+        GdkPixbuf *pb = item_icon(folder_view, it, px);
+        paint_pixbuf(cairo, pb, area.x + (area.width - px) / 2.0, area.y + 4, sel, faded,
+                     view_colors);
         if (it->shared)
-            draw_share_hand(cr, r.x + (r.width - px) / 2.0, r.y + 4, px);
+            draw_share_hand(cairo, area.x + (area.width - px) / 2.0, area.y + 4, px);
         if (it->shortcut)
-            xd_draw_shortcut_arrow(cr, r.x + (r.width - px) / 2.0, r.y + 4, px);
-        draw_label_box(v, cr, item_label(v, it), r.x + 2, r.y + px + 8, r.width - 4, 2,
-                       PANGO_ALIGN_CENTER, sel, c, foc);
+            xd_draw_shortcut_arrow(cairo, area.x + (area.width - px) / 2.0, area.y + 4, px);
+        draw_label_box(folder_view, cairo, item_label(folder_view, it), area.x + 2, area.y + px + 8,
+                       area.width - 4, 2, PANGO_ALIGN_CENTER, sel, view_colors, foc);
         break;
     }
     case XD_VIEW_TILES: {
         int px = 48;
-        GdkPixbuf *pb = item_icon(v, it, px);
-        paint_pixbuf(cr, pb, r.x + 6, r.y + (r.height - px) / 2.0, sel, faded, c);
+        GdkPixbuf *pb = item_icon(folder_view, it, px);
+        paint_pixbuf(cairo, pb, area.x + 6, area.y + (area.height - px) / 2.0, sel, faded,
+                     view_colors);
         if (it->shared)
-            draw_share_hand(cr, r.x + 6, r.y + (r.height - px) / 2.0, px);
+            draw_share_hand(cairo, area.x + 6, area.y + (area.height - px) / 2.0, px);
         if (it->shortcut)
-            xd_draw_shortcut_arrow(cr, r.x + 6, r.y + (r.height - px) / 2.0, px);
-        int tx = r.x + px + 14;
-        int tw = r.width - px - 22;
-        draw_label_box(v, cr, item_label(v, it), tx, r.y + 8, tw, 1, PANGO_ALIGN_LEFT, sel, c,
-                       foc);
-        draw_text(v, cr, it->type_desc, tx, r.y + 26, tw, 1, PANGO_ALIGN_LEFT, c->dim);
+            xd_draw_shortcut_arrow(cairo, area.x + 6, area.y + (area.height - px) / 2.0, px);
+        int tx = area.x + px + 14;
+        int tw = area.width - px - 22;
+        draw_label_box(folder_view, cairo, item_label(folder_view, it), tx, area.y + 8, tw, 1,
+                       PANGO_ALIGN_LEFT, sel, view_colors, foc);
+        draw_text(folder_view, cairo, it->type_desc, tx, area.y + 26, tw, 1, PANGO_ALIGN_LEFT,
+                  view_colors->dim);
         if (it->extra != nullptr)
-            draw_text(v, cr, it->extra, tx, r.y + 42, tw, 1, PANGO_ALIGN_LEFT, c->dim);
+            draw_text(folder_view, cairo, it->extra, tx, area.y + 42, tw, 1, PANGO_ALIGN_LEFT,
+                      view_colors->dim);
         else if (!it->is_dir)
-            draw_text(v, cr, it->size_text, tx, r.y + 42, tw, 1, PANGO_ALIGN_LEFT, c->dim);
+            draw_text(folder_view, cairo, it->size_text, tx, area.y + 42, tw, 1, PANGO_ALIGN_LEFT,
+                      view_colors->dim);
         break;
     }
     case XD_VIEW_LIST: {
-        GdkPixbuf *pb = item_icon(v, it, LIST_ICON);
-        paint_pixbuf(cr, pb, r.x + 1, r.y + 1, sel, faded, c);
+        GdkPixbuf *pb = item_icon(folder_view, it, LIST_ICON);
+        paint_pixbuf(cairo, pb, area.x + 1, area.y + 1, sel, faded, view_colors);
         if (it->shared)
-            draw_share_hand(cr, r.x + 1, r.y + 1, LIST_ICON);
+            draw_share_hand(cairo, area.x + 1, area.y + 1, LIST_ICON);
         if (it->shortcut)
-            xd_draw_shortcut_arrow(cr, r.x + 1, r.y + 1, LIST_ICON);
-        draw_label_box(v, cr, item_label(v, it), r.x + LIST_ICON + 5, r.y + 1,
-                       r.width - LIST_ICON - 6, 1, PANGO_ALIGN_LEFT, sel, c, foc);
+            xd_draw_shortcut_arrow(cairo, area.x + 1, area.y + 1, LIST_ICON);
+        draw_label_box(folder_view, cairo, item_label(folder_view, it), area.x + LIST_ICON + 5,
+                       area.y + 1, area.width - LIST_ICON - 6, 1, PANGO_ALIGN_LEFT, sel,
+                       view_colors, foc);
         break;
     }
     case XD_VIEW_DETAILS: {
-        GdkPixbuf *pb = item_icon(v, it, LIST_ICON);
-        int x = r.x;
-        for (int k = 0; k < v->ncols; k++) {
-            int col = v->order[k];
-            int cw = v->col_w[col];
+        GdkPixbuf *pb = item_icon(folder_view, it, LIST_ICON);
+        int x = area.x;
+        for (int k = 0; k < folder_view->ncols; k++) {
+            int col = folder_view->order[k];
+            int cw = folder_view->col_w[col];
             if (cw == 0)
                 continue; /* not here */
             if (col == XD_SORT_NAME) {
-                cairo_save(cr);
-                cairo_rectangle(cr, x, r.y, cw, r.height);
-                cairo_clip(cr);
-                paint_pixbuf(cr, pb, x + 4, r.y + 1, sel, faded, c);
+                cairo_save(cairo);
+                cairo_rectangle(cairo, x, area.y, cw, area.height);
+                cairo_clip(cairo);
+                paint_pixbuf(cairo, pb, x + 4, area.y + 1, sel, faded, view_colors);
                 if (it->shared)
-                    draw_share_hand(cr, x + 4, r.y + 1, LIST_ICON);
+                    draw_share_hand(cairo, x + 4, area.y + 1, LIST_ICON);
                 if (it->shortcut)
-                    xd_draw_shortcut_arrow(cr, x + 4, r.y + 1, LIST_ICON);
-                draw_label_box(v, cr, item_label(v, it), x + LIST_ICON + 8, r.y + 1,
-                               cw - LIST_ICON - 12, 1, PANGO_ALIGN_LEFT, sel, c, foc);
-                cairo_restore(cr);
+                    xd_draw_shortcut_arrow(cairo, x + 4, area.y + 1, LIST_ICON);
+                draw_label_box(folder_view, cairo, item_label(folder_view, it), x + LIST_ICON + 8,
+                               area.y + 1, cw - LIST_ICON - 12, 1, PANGO_ALIGN_LEFT, sel,
+                               view_colors, foc);
+                cairo_restore(cairo);
             } else {
-                draw_text(v, cr, cell_text(it, col), x + 6, r.y + 1, cw - 10, 1,
-                          col == XD_SORT_SIZE ? PANGO_ALIGN_RIGHT : PANGO_ALIGN_LEFT, c->text);
+                draw_text(folder_view, cairo, cell_text(it, col), x + 6, area.y + 1, cw - 10, 1,
+                          col == XD_SORT_SIZE ? PANGO_ALIGN_RIGHT : PANGO_ALIGN_LEFT,
+                          view_colors->text);
             }
             x += cw;
         }
@@ -1422,200 +1460,212 @@ static void draw_item(XdFolderView *v, cairo_t *cr, int i, const colors *c, gboo
 
 /* XP's group heading: bold, in the selection colour, over a line that
  * fades out to the right. */
-static void draw_heading(XdFolderView *v, cairo_t *cr, const heading *hd, int w, const colors *c) {
-    PangoLayout *l = gtk_widget_create_pango_layout(GTK_WIDGET(v), hd->text);
+static void draw_heading(XdFolderView *folder_view, cairo_t *cairo, const heading *hd, int width,
+                         const colors *view_colors) {
+    PangoLayout *layout = gtk_widget_create_pango_layout(GTK_WIDGET(folder_view), hd->text);
     PangoFontDescription *fd = pango_font_description_copy(
-        pango_context_get_font_description(pango_layout_get_context(l)));
+        pango_context_get_font_description(pango_layout_get_context(layout)));
     pango_font_description_set_weight(fd, PANGO_WEIGHT_BOLD);
-    pango_layout_set_font_description(l, fd);
+    pango_layout_set_font_description(layout, fd);
     pango_font_description_free(fd);
     int tw = 0, th = 0;
-    pango_layout_get_pixel_size(l, &tw, &th);
-    set_color(cr, c->sel_bg);
-    cairo_move_to(cr, PAD + 4, hd->y + GROUP_H - 6 - th);
-    pango_cairo_show_layout(cr, l);
-    g_object_unref(l);
+    pango_layout_get_pixel_size(layout, &tw, &th);
+    set_color(cairo, view_colors->sel_bg);
+    cairo_move_to(cairo, PAD + 4, hd->y + GROUP_H - 6 - th);
+    pango_cairo_show_layout(cairo, layout);
+    g_object_unref(layout);
     double ly = hd->y + GROUP_H - 3.5;
-    cairo_pattern_t *p = cairo_pattern_create_linear(PAD, 0, PAD + MIN(w - 2 * PAD, 500), 0);
-    cairo_pattern_add_color_stop_rgba(p, 0, c->sel_bg.red, c->sel_bg.green, c->sel_bg.blue, 1);
-    cairo_pattern_add_color_stop_rgba(p, 1, c->sel_bg.red, c->sel_bg.green, c->sel_bg.blue, 0);
-    cairo_set_source(cr, p);
-    cairo_set_line_width(cr, 1);
-    cairo_move_to(cr, PAD, ly);
-    cairo_line_to(cr, PAD + MIN(w - 2 * PAD, 500), ly);
-    cairo_stroke(cr);
-    cairo_pattern_destroy(p);
+    cairo_pattern_t *pattern =
+        cairo_pattern_create_linear(PAD, 0, PAD + MIN(width - 2 * PAD, 500), 0);
+    cairo_pattern_add_color_stop_rgba(pattern, 0, view_colors->sel_bg.red,
+                                      view_colors->sel_bg.green, view_colors->sel_bg.blue, 1);
+    cairo_pattern_add_color_stop_rgba(pattern, 1, view_colors->sel_bg.red,
+                                      view_colors->sel_bg.green, view_colors->sel_bg.blue, 0);
+    cairo_set_source(cairo, pattern);
+    cairo_set_line_width(cairo, 1);
+    cairo_move_to(cairo, PAD, ly);
+    cairo_line_to(cairo, PAD + MIN(width - 2 * PAD, 500), ly);
+    cairo_stroke(cairo);
+    cairo_pattern_destroy(pattern);
 }
 
 /* One column's heading at x (widget coordinates). */
-static void draw_header_cell(XdFolderView *v, cairo_t *cr, int col, double x, const colors *c) {
-    int cw = v->col_w[col];
-    cairo_save(cr);
-    cairo_rectangle(cr, x, 0, cw, HEADER_H);
-    cairo_clip(cr);
-    gboolean sorted = (int)v->sort == col;
-    draw_text(v, cr, column_title(v, col), (int)x + 6, 3, cw - (sorted ? 24 : 12), 1,
-              col == XD_SORT_SIZE ? PANGO_ALIGN_RIGHT : PANGO_ALIGN_LEFT, c->text);
-    set_color(cr, c->line);
-    cairo_rectangle(cr, x + cw - 1, 3, 1, HEADER_H - 6);
-    cairo_fill(cr);
+static void draw_header_cell(XdFolderView *folder_view, cairo_t *cairo, int col, double x,
+                             const colors *view_colors) {
+    int cw = folder_view->col_w[col];
+    cairo_save(cairo);
+    cairo_rectangle(cairo, x, 0, cw, HEADER_H);
+    cairo_clip(cairo);
+    gboolean sorted = (int)folder_view->sort == col;
+    draw_text(folder_view, cairo, column_title(folder_view, col), (int)x + 6, 3,
+              cw - (sorted ? 24 : 12), 1,
+              col == XD_SORT_SIZE ? PANGO_ALIGN_RIGHT : PANGO_ALIGN_LEFT, view_colors->text);
+    set_color(cairo, view_colors->line);
+    cairo_rectangle(cairo, x + cw - 1, 3, 1, HEADER_H - 6);
+    cairo_fill(cairo);
     if (sorted && cw > 20) {
         /* Sort arrow: up for ascending, down for descending. */
         double ax = x + cw - 14;
         double ay = HEADER_H / 2.0;
-        cairo_move_to(cr, ax, v->desc ? ay - 2 : ay + 2);
-        cairo_line_to(cr, ax + 8, v->desc ? ay - 2 : ay + 2);
-        cairo_line_to(cr, ax + 4, v->desc ? ay + 2 : ay - 2);
-        cairo_close_path(cr);
-        set_color(cr, c->dim);
-        cairo_fill(cr);
+        cairo_move_to(cairo, ax, folder_view->desc ? ay - 2 : ay + 2);
+        cairo_line_to(cairo, ax + 8, folder_view->desc ? ay - 2 : ay + 2);
+        cairo_line_to(cairo, ax + 4, folder_view->desc ? ay + 2 : ay - 2);
+        cairo_close_path(cairo);
+        set_color(cairo, view_colors->dim);
+        cairo_fill(cairo);
     }
-    cairo_restore(cr);
+    cairo_restore(cairo);
 }
 
-static int header_drop_slot(XdFolderView *v);
+static int header_drop_slot(XdFolderView *folder_view);
 
-static void draw_header(XdFolderView *v, cairo_t *cr, const colors *c) {
-    int w = widget_w(v);
-    set_color(cr, c->header_bg);
-    cairo_rectangle(cr, 0, 0, w, HEADER_H);
-    cairo_fill(cr);
-    set_color(cr, c->line);
-    cairo_rectangle(cr, 0, HEADER_H - 1, w, 1);
-    cairo_fill(cr);
-    double x = -hval(v);
-    for (int k = 0; k < v->ncols; k++) {
-        int col = v->order[k];
-        if (v->col_w[col] == 0)
+static void draw_header(XdFolderView *folder_view, cairo_t *cairo, const colors *view_colors) {
+    int width = widget_w(folder_view);
+    set_color(cairo, view_colors->header_bg);
+    cairo_rectangle(cairo, 0, 0, width, HEADER_H);
+    cairo_fill(cairo);
+    set_color(cairo, view_colors->line);
+    cairo_rectangle(cairo, 0, HEADER_H - 1, width, 1);
+    cairo_fill(cairo);
+    double x = -hval(folder_view);
+    for (int k = 0; k < folder_view->ncols; k++) {
+        int col = folder_view->order[k];
+        if (folder_view->col_w[col] == 0)
             continue; /* not shown here */
-        draw_header_cell(v, cr, col, x, c);
-        x += v->col_w[col];
+        draw_header_cell(folder_view, cairo, col, x, view_colors);
+        x += folder_view->col_w[col];
     }
-    if (v->hdr_dragging && v->hdr_press >= 0) {
+    if (folder_view->hdr_dragging && folder_view->hdr_press >= 0) {
         /* The heading being moved follows the pointer, see-through, and
          * a line marks where it would go, as in XP. */
-        double cx = column_x(v, v->hdr_press) - hval(v) + (v->hdr_x - v->hdr_press_x);
-        cairo_push_group(cr);
-        set_color(cr, c->header_bg);
-        cairo_rectangle(cr, cx, 0, v->col_w[v->hdr_press], HEADER_H);
-        cairo_fill(cr);
-        draw_header_cell(v, cr, v->hdr_press, cx, c);
-        cairo_pop_group_to_source(cr);
-        cairo_paint_with_alpha(cr, 0.6);
-        int slot = header_drop_slot(v);
-        double mx = -hval(v);
-        for (int k = 0; k < slot && k < v->ncols; k++)
-            mx += v->col_w[v->order[k]];
-        set_color(cr, c->sel_bg);
-        cairo_rectangle(cr, mx - 1, 0, 2, HEADER_H);
-        cairo_fill(cr);
+        double cx = column_x(folder_view, folder_view->hdr_press) - hval(folder_view) +
+                    (folder_view->hdr_x - folder_view->hdr_press_x);
+        cairo_push_group(cairo);
+        set_color(cairo, view_colors->header_bg);
+        cairo_rectangle(cairo, cx, 0, folder_view->col_w[folder_view->hdr_press], HEADER_H);
+        cairo_fill(cairo);
+        draw_header_cell(folder_view, cairo, folder_view->hdr_press, cx, view_colors);
+        cairo_pop_group_to_source(cairo);
+        cairo_paint_with_alpha(cairo, 0.6);
+        int slot = header_drop_slot(folder_view);
+        double mx = -hval(folder_view);
+        for (int k = 0; k < slot && k < folder_view->ncols; k++)
+            mx += folder_view->col_w[folder_view->order[k]];
+        set_color(cairo, view_colors->sel_bg);
+        cairo_rectangle(cairo, mx - 1, 0, 2, HEADER_H);
+        cairo_fill(cairo);
     }
 }
 
-static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cr) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
-    colors c = theme_colors(v);
-    int w = widget_w(v);
-    int h = widget_h(v);
-    set_color(cr, c.base);
-    cairo_paint(cr);
+static gboolean folder_view_draw(GtkWidget *widget, cairo_t *cairo) {
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
+    colors view_colors = theme_colors(folder_view);
+    int width = widget_w(folder_view);
+    int height = widget_h(folder_view);
+    set_color(cairo, view_colors.base);
+    cairo_paint(cairo);
 
     gboolean has_focus = gtk_widget_has_focus(widget);
-    double ox = hval(v);
-    double oy = vval(v);
-    int n = (int)v->shown->len;
+    double ox = hval(folder_view);
+    double oy = vval(folder_view);
+    int count = (int)folder_view->shown->len;
 
     /* Visible index range. */
     int first = 0;
-    int last = n - 1;
-    switch (v->mode) {
+    int last = count - 1;
+    switch (folder_view->mode) {
     case XD_VIEW_LIST:
-        first = MAX(0, ifloor((ox - PAD) / v->cell_w)) * v->rows;
-        last = MIN(n - 1, (ifloor((ox + w) / v->cell_w) + 1) * v->rows);
+        first = MAX(0, ifloor((ox - PAD) / folder_view->cell_w)) * folder_view->rows;
+        last = MIN(count - 1, (ifloor((ox + width) / folder_view->cell_w) + 1) * folder_view->rows);
         break;
     case XD_VIEW_DETAILS:
-        if (v->grouped)
+        if (folder_view->grouped)
             break; /* all, culled below */
         first = MAX(0, ifloor(oy / ROW_H));
-        last = MIN(n - 1, ifloor((oy + h) / ROW_H) + 1);
+        last = MIN(count - 1, ifloor((oy + height) / ROW_H) + 1);
         break;
     case XD_VIEW_THUMBNAILS:
     case XD_VIEW_ICONS:
     case XD_VIEW_TILES:
-        if (uses_rects(v))
+        if (uses_rects(folder_view))
             break; /* all, culled below */
-        first = MAX(0, ifloor((oy - PAD) / v->cell_h)) * v->cols;
-        last = MIN(n - 1, (ifloor((oy + h) / v->cell_h) + 1) * v->cols + v->cols - 1);
+        first = MAX(0, ifloor((oy - PAD) / folder_view->cell_h)) * folder_view->cols;
+        last =
+            MIN(count - 1, (ifloor((oy + height) / folder_view->cell_h) + 1) * folder_view->cols +
+                               folder_view->cols - 1);
         break;
     case XD_VIEW_COUNT:
         break;
     }
 
-    cairo_save(cr);
-    if (v->mode == XD_VIEW_DETAILS) {
-        cairo_rectangle(cr, 0, HEADER_H, w, h - HEADER_H);
-        cairo_clip(cr);
+    cairo_save(cairo);
+    if (folder_view->mode == XD_VIEW_DETAILS) {
+        cairo_rectangle(cairo, 0, HEADER_H, width, height - HEADER_H);
+        cairo_clip(cairo);
     }
-    cairo_translate(cr, -ox, -oy);
-    if (v->grouped) {
-        for (guint k = 0; k < v->headings->len; k++) {
-            const heading *hd = &g_array_index(v->headings, heading, k);
-            if (hd->y + GROUP_H >= oy && hd->y <= oy + h)
-                draw_heading(v, cr, hd, w, &c);
+    cairo_translate(cairo, -ox, -oy);
+    if (folder_view->grouped) {
+        for (guint k = 0; k < folder_view->headings->len; k++) {
+            const heading *hd = &g_array_index(folder_view->headings, heading, k);
+            if (hd->y + GROUP_H >= oy && hd->y <= oy + height)
+                draw_heading(folder_view, cairo, hd, width, &view_colors);
         }
     }
     for (int i = first; i <= last; i++) {
-        if (uses_rects(v)) {
-            GdkRectangle r = item_rect(v, i);
-            if (r.y + r.height < oy || r.y > oy + h || r.x + r.width < ox || r.x > ox + w)
+        if (uses_rects(folder_view)) {
+            GdkRectangle item_area = item_rect(folder_view, i);
+            if (item_area.y + item_area.height < oy || item_area.y > oy + height ||
+                item_area.x + item_area.width < ox || item_area.x > ox + width)
                 continue;
         }
-        draw_item(v, cr, i, &c, has_focus);
+        draw_item(folder_view, cairo, i, &view_colors, has_focus);
     }
-    cairo_restore(cr);
+    cairo_restore(cairo);
 
-    if (v->banding) {
+    if (folder_view->banding) {
         /* XP's translucent selection rectangle. */
-        GdkRectangle b = band_rect(v);
-        GdkRGBA fill = c.sel_bg;
+        GdkRectangle band = band_rect(folder_view);
+        GdkRGBA fill = view_colors.sel_bg;
         fill.alpha = 0.25;
-        gdk_cairo_set_source_rgba(cr, &fill);
-        cairo_rectangle(cr, b.x - ox, b.y - oy, b.width, b.height);
-        cairo_fill(cr);
-        set_color(cr, c.sel_bg);
-        cairo_set_line_width(cr, 1);
-        cairo_rectangle(cr, b.x - ox + 0.5, b.y - oy + 0.5, MAX(b.width - 1, 0),
-                        MAX(b.height - 1, 0));
-        cairo_stroke(cr);
+        gdk_cairo_set_source_rgba(cairo, &fill);
+        cairo_rectangle(cairo, band.x - ox, band.y - oy, band.width, band.height);
+        cairo_fill(cairo);
+        set_color(cairo, view_colors.sel_bg);
+        cairo_set_line_width(cairo, 1);
+        cairo_rectangle(cairo, band.x - ox + 0.5, band.y - oy + 0.5, MAX(band.width - 1, 0),
+                        MAX(band.height - 1, 0));
+        cairo_stroke(cairo);
     }
-    if (v->mode == XD_VIEW_DETAILS)
-        draw_header(v, cr, &c);
-    if (n == 0 && v->dir != nullptr && v->cancel == nullptr)
-        draw_text(v, cr, "This folder is empty.", 0, (v->mode == XD_VIEW_DETAILS ? HEADER_H : 0) + 12,
-                  w, 1, PANGO_ALIGN_CENTER, c.dim);
+    if (folder_view->mode == XD_VIEW_DETAILS)
+        draw_header(folder_view, cairo, &view_colors);
+    if (count == 0 && folder_view->dir != nullptr && folder_view->cancel == nullptr)
+        draw_text(folder_view, cairo, "This folder is empty.", 0,
+                  (folder_view->mode == XD_VIEW_DETAILS ? HEADER_H : 0) + 12, width, 1,
+                  PANGO_ALIGN_CENTER, view_colors.dim);
     return FALSE;
 }
 
 /* ---- loading ------------------------------------------------------------------------ */
 
-static item *item_at(XdFolderView *v, int i);
-static void set_hover(XdFolderView *v, int i);
+static item *item_at(XdFolderView *folder_view, int i);
+static void set_hover(XdFolderView *folder_view, int i);
 static gboolean reload_timeout(gpointer data);
 
 /* Selects the kept files that are here; returns how many. */
-static guint apply_keep(XdFolderView *v) {
-    if (v->keep == nullptr)
+static guint apply_keep(XdFolderView *folder_view) {
+    if (folder_view->keep == nullptr)
         return 0;
     guint found = 0;
-    for (guint k = 0; k < v->shown->len; k++) {
-        item *it = g_ptr_array_index(v->shown, k);
+    for (guint k = 0; k < folder_view->shown->len; k++) {
+        item *it = g_ptr_array_index(folder_view->shown, k);
         char *uri = g_file_get_uri(it->file);
-        it->selected = g_hash_table_contains(v->keep, uri);
+        it->selected = g_hash_table_contains(folder_view->keep, uri);
         if (it->selected) {
             found++;
-            if (v->keep_focus == nullptr || strcmp(uri, v->keep_focus) == 0 || found == 1) {
-                v->focus = (int)k;
-                v->anchor = (int)k;
+            if (folder_view->keep_focus == nullptr || strcmp(uri, folder_view->keep_focus) == 0 ||
+                found == 1) {
+                folder_view->focus = (int)k;
+                folder_view->anchor = (int)k;
             }
         }
         g_free(uri);
@@ -1623,21 +1673,22 @@ static guint apply_keep(XdFolderView *v) {
     return found;
 }
 
-static void forget_keep(XdFolderView *v) {
-    g_clear_pointer(&v->keep, g_hash_table_unref);
-    g_clear_pointer(&v->keep_focus, g_free);
-    v->keep_sticky = FALSE;
+static void forget_keep(XdFolderView *folder_view) {
+    g_clear_pointer(&folder_view->keep, g_hash_table_unref);
+    g_clear_pointer(&folder_view->keep_focus, g_free);
+    folder_view->keep_sticky = FALSE;
 }
 
 /* XP's hand under shared folders: Samba's user shares, listed in the
  * background (the hands appear once they're known). */
-static void mark_shared(XdFolderView *v) {
-    GHashTable *paths = v->place == XD_PLACE_FOLDER && v->dir != nullptr && g_file_is_native(v->dir)
+static void mark_shared(XdFolderView *folder_view) {
+    GHashTable *paths = folder_view->place == XD_PLACE_FOLDER && folder_view->dir != nullptr &&
+                                g_file_is_native(folder_view->dir)
                             ? xd_usershare_shared_paths()
                             : nullptr;
     gboolean any = paths != nullptr && g_hash_table_size(paths) > 0;
-    for (guint i = 0; i < v->all->len; i++) {
-        item *it = g_ptr_array_index(v->all, i);
+    for (guint i = 0; i < folder_view->all->len; i++) {
+        item *it = g_ptr_array_index(folder_view->all, i);
         it->shared = FALSE;
         if (any && it->is_dir) {
             char *path = g_file_get_path(it->file);
@@ -1648,51 +1699,51 @@ static void mark_shared(XdFolderView *v) {
 }
 
 static void shares_changed(gpointer data) {
-    XdFolderView *v = data;
-    mark_shared(v);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    XdFolderView *folder_view = data;
+    mark_shared(folder_view);
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
-static void loading_done(XdFolderView *v) {
-    g_clear_object(&v->cancel);
+static void loading_done(XdFolderView *folder_view) {
+    g_clear_object(&folder_view->cancel);
     /* The selection survives a refresh, as it is now (unless files are
      * already waiting to be selected). */
-    if (v->keep == nullptr && v->shown->len > 0) {
-        v->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-        for (guint k = 0; k < v->shown->len; k++) {
-            item *it = g_ptr_array_index(v->shown, k);
+    if (folder_view->keep == nullptr && folder_view->shown->len > 0) {
+        folder_view->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+        for (guint k = 0; k < folder_view->shown->len; k++) {
+            item *it = g_ptr_array_index(folder_view->shown, k);
             if (it->selected)
-                g_hash_table_add(v->keep, g_file_get_uri(it->file));
+                g_hash_table_add(folder_view->keep, g_file_get_uri(it->file));
         }
-        item *f = item_at(v, v->focus);
-        v->keep_focus = f != nullptr ? g_file_get_uri(f->file) : nullptr;
+        item *focused = item_at(folder_view, folder_view->focus);
+        folder_view->keep_focus = focused != nullptr ? g_file_get_uri(focused->file) : nullptr;
     }
     /* The new items replace the old: indices into `shown` start over
      * (the selection and focus come back from `keep`). */
-    g_ptr_array_set_size(v->shown, 0);
-    g_ptr_array_unref(v->all);
-    v->all = v->loading;
-    v->loading = g_ptr_array_new_with_free_func(item_free);
-    mark_shared(v);
-    v->focus = -1;
-    v->anchor = -1;
-    v->pressed = -1;
-    v->drop_index = -1;
-    v->drag_pending = FALSE;
-    set_hover(v, -1);
-    refilter(v);
-    if (v->keep != nullptr) {
-        guint found = apply_keep(v);
-        if (!v->keep_sticky || found >= g_hash_table_size(v->keep))
-            forget_keep(v);
+    g_ptr_array_set_size(folder_view->shown, 0);
+    g_ptr_array_unref(folder_view->all);
+    folder_view->all = folder_view->loading;
+    folder_view->loading = g_ptr_array_new_with_free_func(item_free);
+    mark_shared(folder_view);
+    folder_view->focus = -1;
+    folder_view->anchor = -1;
+    folder_view->pressed = -1;
+    folder_view->drop_index = -1;
+    folder_view->drag_pending = FALSE;
+    set_hover(folder_view, -1);
+    refilter(folder_view);
+    if (folder_view->keep != nullptr) {
+        guint found = apply_keep(folder_view);
+        if (!folder_view->keep_sticky || found >= g_hash_table_size(folder_view->keep))
+            forget_keep(folder_view);
         if (found > 0)
-            ensure_visible(v, v->focus);
+            ensure_visible(folder_view, folder_view->focus);
     }
-    g_signal_emit(v, signals[SIG_CONTENTS], 0);
-    g_signal_emit(v, signals[SIG_SELECTION], 0);
-    if (v->reload_again && v->reload_source == 0) {
-        v->reload_again = FALSE;
-        v->reload_source = g_timeout_add(300, reload_timeout, v);
+    g_signal_emit(folder_view, signals[SIG_CONTENTS], 0);
+    g_signal_emit(folder_view, signals[SIG_SELECTION], 0);
+    if (folder_view->reload_again && folder_view->reload_source == 0) {
+        folder_view->reload_again = FALSE;
+        folder_view->reload_source = g_timeout_add(300, reload_timeout, folder_view);
     }
 }
 
@@ -1726,73 +1777,73 @@ static item *trash_item(GFile *dir, GFileInfo *info) {
 }
 
 /* My Computer: the drives, with their sizes in the size and date columns. */
-static void load_drives(XdFolderView *v) {
+static void load_drives(XdFolderView *folder_view) {
     GPtrArray *drives = xd_computer_drives();
     for (guint i = 0; i < drives->len; i++) {
-        XdDrive *d = g_ptr_array_index(drives, i);
+        XdDrive *drive = g_ptr_array_index(drives, i);
         item *it = XD_NEW(item);
-        it->file = g_object_ref(d->root);
-        it->name = g_strdup(d->name);
+        it->file = g_object_ref(drive->root);
+        it->name = g_strdup(drive->name);
         it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
-        it->type_desc = g_strdup(d->kind);
+        it->type_desc = g_strdup(drive->kind);
         it->is_dir = TRUE;
-        it->icon = d->icon != nullptr ? g_object_ref(d->icon) : nullptr;
+        it->icon = drive->icon != nullptr ? g_object_ref(drive->icon) : nullptr;
         it->order = (int)i;
-        it->size = d->total;
-        it->size_text = d->total > 0 ? xd_format_drive_size(d->total) : g_strdup("");
-        it->date_text = d->total > 0 ? xd_format_drive_size(d->free) : g_strdup("");
-        it->mtime = (gint64)d->free;
-        if (d->total > 0) {
-            char *free_text = xd_format_drive_size(d->free);
-            char *total_text = xd_format_drive_size(d->total);
+        it->size = drive->total;
+        it->size_text = drive->total > 0 ? xd_format_drive_size(drive->total) : g_strdup("");
+        it->date_text = drive->total > 0 ? xd_format_drive_size(drive->free) : g_strdup("");
+        it->mtime = (gint64)drive->free;
+        if (drive->total > 0) {
+            char *free_text = xd_format_drive_size(drive->free);
+            char *total_text = xd_format_drive_size(drive->total);
             it->extra = g_strdup_printf("%s free of %s", free_text, total_text);
             g_free(free_text);
             g_free(total_text);
         }
-        g_ptr_array_add(v->loading, it);
+        g_ptr_array_add(folder_view->loading, it);
     }
     g_ptr_array_unref(drives);
 }
 
 /* Control Panel: categories (folders that open their page) or applets,
  * with their comments in the Type column. */
-static void load_control(XdFolderView *v) {
-    GPtrArray *items = xd_control_items(v->dir);
+static void load_control(XdFolderView *folder_view) {
+    GPtrArray *items = xd_control_items(folder_view->dir);
     for (guint i = 0; i < items->len; i++) {
-        XdControlItem *c = g_ptr_array_index(items, i);
+        XdControlItem *control_item = g_ptr_array_index(items, i);
         item *it = XD_NEW(item);
-        it->file = g_object_ref(c->file);
-        it->name = g_strdup(c->name);
+        it->file = g_object_ref(control_item->file);
+        it->name = g_strdup(control_item->name);
         it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
-        it->type_desc = g_strdup(c->comment);
+        it->type_desc = g_strdup(control_item->comment);
         it->size_text = g_strdup("");
-        it->is_dir = c->category;
-        it->icon = g_object_ref(c->icon);
+        it->is_dir = control_item->category;
+        it->icon = g_object_ref(control_item->icon);
         it->order = (int)i;
-        g_ptr_array_add(v->loading, it);
+        g_ptr_array_add(folder_view->loading, it);
     }
     g_ptr_array_unref(items);
 }
 
 /* My Network Places: its items, with their network location in the date
  * column (and Tiles' third line). */
-static void load_network(XdFolderView *v) {
-    GPtrArray *items = xd_network_items(v->dir);
+static void load_network(XdFolderView *folder_view) {
+    GPtrArray *items = xd_network_items(folder_view->dir);
     for (guint i = 0; i < items->len; i++) {
-        XdNetworkItem *n = g_ptr_array_index(items, i);
+        XdNetworkItem *network_item = g_ptr_array_index(items, i);
         item *it = XD_NEW(item);
-        it->file = g_object_ref(n->file);
-        it->name = g_strdup(n->name);
+        it->file = g_object_ref(network_item->file);
+        it->name = g_strdup(network_item->name);
         it->collate_key = g_utf8_collate_key_for_filename(it->name, -1);
-        it->type_desc = g_strdup(n->comment);
+        it->type_desc = g_strdup(network_item->comment);
         it->size_text = g_strdup("");
-        it->date_text = g_strdup(n->location);
-        if (n->location[0] != '\0')
-            it->extra = g_strdup(n->location);
-        it->is_dir = n->folder;
-        it->icon = g_object_ref(n->icon);
+        it->date_text = g_strdup(network_item->location);
+        if (network_item->location[0] != '\0')
+            it->extra = g_strdup(network_item->location);
+        it->is_dir = network_item->folder;
+        it->icon = g_object_ref(network_item->icon);
         it->order = (int)i;
-        g_ptr_array_add(v->loading, it);
+        g_ptr_array_add(folder_view->loading, it);
     }
     g_ptr_array_unref(items);
 }
@@ -1801,220 +1852,225 @@ static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data);
 static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data);
 
 /* The Recycle Bin lists each trash in turn: true if another one started. */
-static gboolean list_next_trash(XdFolderView *v) {
-    if (v->more_listed == nullptr || v->more_listed->len == 0)
+static gboolean list_next_trash(XdFolderView *folder_view) {
+    if (folder_view->more_listed == nullptr || folder_view->more_listed->len == 0)
         return FALSE;
-    GFile *dir = g_object_ref(g_ptr_array_index(v->more_listed, 0));
-    g_ptr_array_remove_index(v->more_listed, 0);
+    GFile *dir = g_object_ref(g_ptr_array_index(folder_view->more_listed, 0));
+    g_ptr_array_remove_index(folder_view->more_listed, 0);
     g_file_enumerate_children_async(dir, ATTRIBUTES, G_FILE_QUERY_INFO_NONE, G_PRIORITY_DEFAULT,
-                                    v->cancel, enumerate_ready, v);
+                                    folder_view->cancel, enumerate_ready, folder_view);
     g_object_unref(dir);
     return TRUE;
 }
 
-static void request_more(GFileEnumerator *e, XdFolderView *v) {
-    g_file_enumerator_next_files_async(e, BATCH, G_PRIORITY_DEFAULT, v->cancel, next_files_ready,
-                                       v);
+static void request_more(GFileEnumerator *file_enumerator, XdFolderView *folder_view) {
+    g_file_enumerator_next_files_async(file_enumerator, BATCH, G_PRIORITY_DEFAULT,
+                                       folder_view->cancel, next_files_ready, folder_view);
 }
 
 static void next_files_ready(GObject *src, GAsyncResult *res, gpointer data) {
-    GFileEnumerator *e = G_FILE_ENUMERATOR(src);
+    GFileEnumerator *file_enumerator = G_FILE_ENUMERATOR(src);
     GError *err = nullptr;
-    GList *infos = g_file_enumerator_next_files_finish(e, res, &err);
+    GList *infos = g_file_enumerator_next_files_finish(file_enumerator, res, &err);
     if (err != nullptr) {
         /* Cancelled means the view moved on or is gone: don't touch it. */
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-            XdFolderView *v = data;
-            g_signal_emit(v, signals[SIG_ERROR], 0, err->message);
-            loading_done(v);
+            XdFolderView *folder_view = data;
+            g_signal_emit(folder_view, signals[SIG_ERROR], 0, err->message);
+            loading_done(folder_view);
         }
         g_error_free(err);
-        g_object_unref(e);
+        g_object_unref(file_enumerator);
         return;
     }
-    XdFolderView *v = data;
+    XdFolderView *folder_view = data;
     if (infos == nullptr) {
-        g_object_unref(e);
-        if (!list_next_trash(v))
-            loading_done(v);
+        g_object_unref(file_enumerator);
+        if (!list_next_trash(folder_view))
+            loading_done(folder_view);
         return;
     }
-    GFile *dir = g_file_enumerator_get_container(e);
-    for (GList *l = infos; l != nullptr; l = l->next)
-        g_ptr_array_add(v->loading, v->place == XD_PLACE_TRASH ? trash_item(dir, l->data)
-                                                               : item_new(dir, l->data));
+    GFile *dir = g_file_enumerator_get_container(file_enumerator);
+    for (GList *list = infos; list != nullptr; list = list->next)
+        g_ptr_array_add(folder_view->loading, folder_view->place == XD_PLACE_TRASH
+                                                  ? trash_item(dir, list->data)
+                                                  : item_new(dir, list->data));
     g_list_free_full(infos, g_object_unref);
-    request_more(e, v);
+    request_more(file_enumerator, folder_view);
 }
 
 static void enumerate_ready(GObject *src, GAsyncResult *res, gpointer data) {
     GError *err = nullptr;
-    GFileEnumerator *e = g_file_enumerate_children_finish(G_FILE(src), res, &err);
-    if (e == nullptr) {
+    GFileEnumerator *file_enumerator = g_file_enumerate_children_finish(G_FILE(src), res, &err);
+    if (file_enumerator == nullptr) {
         if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-            XdFolderView *v = data;
+            XdFolderView *folder_view = data;
             /* Another drive's trash that went away: list the rest. */
-            if (v->place == XD_PLACE_TRASH && !g_file_equal(G_FILE(src), v->listed)) {
-                if (!list_next_trash(v))
-                    loading_done(v);
+            if (folder_view->place == XD_PLACE_TRASH &&
+                !g_file_equal(G_FILE(src), folder_view->listed)) {
+                if (!list_next_trash(folder_view))
+                    loading_done(folder_view);
                 g_error_free(err);
                 return;
             }
-            g_signal_emit(v, signals[SIG_ERROR], 0, err->message);
-            loading_done(v);
+            g_signal_emit(folder_view, signals[SIG_ERROR], 0, err->message);
+            loading_done(folder_view);
         }
         g_error_free(err);
         return;
     }
-    request_more(e, data);
+    request_more(file_enumerator, data);
 }
 
 /* Lists the folder: a new one from empty (`fresh`), or the same one again,
  * still showing the old list until the new one is in. */
-static void start_loading(XdFolderView *v, gboolean fresh) {
-    if (v->cancel != nullptr)
-        g_cancellable_cancel(v->cancel);
-    g_clear_object(&v->cancel);
-    g_ptr_array_set_size(v->loading, 0);
-    v->reload_again = FALSE;
+static void start_loading(XdFolderView *folder_view, gboolean fresh) {
+    if (folder_view->cancel != nullptr)
+        g_cancellable_cancel(folder_view->cancel);
+    g_clear_object(&folder_view->cancel);
+    g_ptr_array_set_size(folder_view->loading, 0);
+    folder_view->reload_again = FALSE;
     if (fresh) {
-        g_ptr_array_set_size(v->shown, 0);
-        g_ptr_array_set_size(v->all, 0);
-        v->focus = -1;
-        v->anchor = -1;
-        v->pressed = -1;
-        v->drop_index = -1;
-        v->drag_pending = FALSE;
-        set_hover(v, -1);
+        g_ptr_array_set_size(folder_view->shown, 0);
+        g_ptr_array_set_size(folder_view->all, 0);
+        folder_view->focus = -1;
+        folder_view->anchor = -1;
+        folder_view->pressed = -1;
+        folder_view->drop_index = -1;
+        folder_view->drag_pending = FALSE;
+        set_hover(folder_view, -1);
     }
-    v->cancel = g_cancellable_new();
-    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_CONTROL ||
-        v->place == XD_PLACE_NETWORK) {
-        if (v->place == XD_PLACE_COMPUTER)
-            load_drives(v);
-        else if (v->place == XD_PLACE_NETWORK)
-            load_network(v);
+    folder_view->cancel = g_cancellable_new();
+    if (folder_view->place == XD_PLACE_COMPUTER || folder_view->place == XD_PLACE_CONTROL ||
+        folder_view->place == XD_PLACE_NETWORK) {
+        if (folder_view->place == XD_PLACE_COMPUTER)
+            load_drives(folder_view);
+        else if (folder_view->place == XD_PLACE_NETWORK)
+            load_network(folder_view);
         else
-            load_control(v);
-        loading_done(v);
+            load_control(folder_view);
+        loading_done(folder_view);
         return;
     }
-    g_clear_pointer(&v->more_listed, g_ptr_array_unref);
-    if (v->place == XD_PLACE_TRASH) {
-        v->more_listed = xd_trash_dirs();
-        g_ptr_array_remove_index(v->more_listed, 0); /* the home one is `listed` */
+    g_clear_pointer(&folder_view->more_listed, g_ptr_array_unref);
+    if (folder_view->place == XD_PLACE_TRASH) {
+        folder_view->more_listed = xd_trash_dirs();
+        g_ptr_array_remove_index(folder_view->more_listed, 0); /* the home one is `listed` */
     }
-    g_file_enumerate_children_async(v->listed, ATTRIBUTES, G_FILE_QUERY_INFO_NONE,
-                                    G_PRIORITY_DEFAULT, v->cancel, enumerate_ready, v);
+    g_file_enumerate_children_async(folder_view->listed, ATTRIBUTES, G_FILE_QUERY_INFO_NONE,
+                                    G_PRIORITY_DEFAULT, folder_view->cancel, enumerate_ready,
+                                    folder_view);
     if (fresh) {
-        layout_contents(v);
-        gtk_widget_queue_draw(GTK_WIDGET(v));
+        layout_contents(folder_view);
+        gtk_widget_queue_draw(GTK_WIDGET(folder_view));
     }
 }
 
 static gboolean reload_timeout(gpointer data) {
-    XdFolderView *v = data;
-    v->reload_source = 0;
+    XdFolderView *folder_view = data;
+    folder_view->reload_source = 0;
     /* Still listing (a big folder that keeps changing): restarting would
      * never let it finish. List it again once this one is in. */
-    if (v->cancel != nullptr)
-        v->reload_again = TRUE;
+    if (folder_view->cancel != nullptr)
+        folder_view->reload_again = TRUE;
     else
-        xd_folder_view_reload(v);
+        xd_folder_view_reload(folder_view);
     return G_SOURCE_REMOVE;
 }
 
-static void drives_changed([[maybe_unused]] GVolumeMonitor *m, [[maybe_unused]] gpointer mount,
-                           gpointer data) {
-    XdFolderView *v = data;
-    if ((v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK) && v->reload_source == 0)
-        v->reload_source = g_timeout_add(300, reload_timeout, v);
+static void drives_changed([[maybe_unused]] GVolumeMonitor *volume_monitor,
+                           [[maybe_unused]] gpointer mount, gpointer data) {
+    XdFolderView *folder_view = data;
+    if ((folder_view->place == XD_PLACE_COMPUTER || folder_view->place == XD_PLACE_NETWORK) &&
+        folder_view->reload_source == 0)
+        folder_view->reload_source = g_timeout_add(300, reload_timeout, folder_view);
 }
 
 /* A drive renamed (its label), mounted or checked: UDisks2 says so
  * before GIO does, if GIO ever does. */
-static void udisks_changed([[maybe_unused]] GDBusObjectManagerClient *m,
-                           [[maybe_unused]] GDBusObjectProxy *o,
-                           [[maybe_unused]] GDBusProxy *iface,
-                           [[maybe_unused]] GVariant *changed,
+static void udisks_changed([[maybe_unused]] GDBusObjectManagerClient *object_manager,
+                           [[maybe_unused]] GDBusObjectProxy *object,
+                           [[maybe_unused]] GDBusProxy *iface, [[maybe_unused]] GVariant *changed,
                            [[maybe_unused]] const char *const *invalidated, gpointer data) {
     drives_changed(nullptr, nullptr, data);
 }
 
 /* A volume appearing or going: an encrypted drive's cleartext when it's
  * unlocked or locked. */
-static void udisks_object_changed([[maybe_unused]] GDBusObjectManager *m,
-                                  [[maybe_unused]] GDBusObject *o, gpointer data) {
+static void udisks_object_changed([[maybe_unused]] GDBusObjectManager *object_manager,
+                                  [[maybe_unused]] GDBusObject *dbus_object, gpointer data) {
     drives_changed(nullptr, nullptr, data);
 }
 
-static void apps_changed([[maybe_unused]] GAppInfoMonitor *m, gpointer data) {
-    XdFolderView *v = data;
-    if (v->place == XD_PLACE_CONTROL && v->reload_source == 0)
-        v->reload_source = g_timeout_add(300, reload_timeout, v);
+static void apps_changed([[maybe_unused]] GAppInfoMonitor *app_info_monitor, gpointer data) {
+    XdFolderView *folder_view = data;
+    if (folder_view->place == XD_PLACE_CONTROL && folder_view->reload_source == 0)
+        folder_view->reload_source = g_timeout_add(300, reload_timeout, folder_view);
 }
 
-static void monitor_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GFile *file,
-                            [[maybe_unused]] GFile *other, [[maybe_unused]] GFileMonitorEvent ev,
-                            gpointer data) {
-    XdFolderView *v = data;
+static void monitor_changed([[maybe_unused]] GFileMonitor *file_monitor,
+                            [[maybe_unused]] GFile *file, [[maybe_unused]] GFile *other,
+                            [[maybe_unused]] GFileMonitorEvent ev, gpointer data) {
+    XdFolderView *folder_view = data;
     /* Coalesce bursts (a copy creates many events) into one reload. */
-    if (v->reload_source == 0)
-        v->reload_source = g_timeout_add(300, reload_timeout, v);
+    if (folder_view->reload_source == 0)
+        folder_view->reload_source = g_timeout_add(300, reload_timeout, folder_view);
 }
 
 /* ---- selection and input ------------------------------------------------------------ */
 
-static item *item_at(XdFolderView *v, int i) {
-    return i >= 0 && i < (int)v->shown->len ? g_ptr_array_index(v->shown, (guint)i) : nullptr;
+static item *item_at(XdFolderView *folder_view, int i) {
+    return i >= 0 && i < (int)folder_view->shown->len
+               ? g_ptr_array_index(folder_view->shown, (guint)i)
+               : nullptr;
 }
 
-static void select_only(XdFolderView *v, int i) {
-    for (guint k = 0; k < v->shown->len; k++)
-        ((item *)g_ptr_array_index(v->shown, k))->selected = (int)k == i;
+static void select_only(XdFolderView *folder_view, int i) {
+    for (guint k = 0; k < folder_view->shown->len; k++)
+        ((item *)g_ptr_array_index(folder_view->shown, k))->selected = (int)k == i;
 }
 
-static void select_range(XdFolderView *v, int a, int b) {
-    int lo = MIN(a, b);
-    int hi = MAX(a, b);
-    for (guint k = 0; k < v->shown->len; k++)
-        ((item *)g_ptr_array_index(v->shown, k))->selected = (int)k >= lo && (int)k <= hi;
+static void select_range(XdFolderView *folder_view, int first, int last) {
+    int lo = MIN(first, last);
+    int hi = MAX(first, last);
+    for (guint k = 0; k < folder_view->shown->len; k++)
+        ((item *)g_ptr_array_index(folder_view->shown, k))->selected = (int)k >= lo && (int)k <= hi;
 }
 
-static void selection_changed(XdFolderView *v) {
-    gtk_widget_queue_draw(GTK_WIDGET(v));
-    g_signal_emit(v, signals[SIG_SELECTION], 0);
+static void selection_changed(XdFolderView *folder_view) {
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
+    g_signal_emit(folder_view, signals[SIG_SELECTION], 0);
 }
 
-static void activate(XdFolderView *v, int i) {
-    item *it = item_at(v, i);
+static void activate(XdFolderView *folder_view, int i) {
+    item *it = item_at(folder_view, i);
     if (it != nullptr)
-        g_signal_emit(v, signals[SIG_ACTIVATED], 0, it->file, it->is_dir);
+        g_signal_emit(folder_view, signals[SIG_ACTIVATED], 0, it->file, it->is_dir);
 }
 
 /* ---- the Details header ------------------------------------------------------------ */
 
 /* The column under widget x in the header (-1: none), and whether x is on
  * its right-hand divider, which resizes it. */
-static int header_column_at(XdFolderView *v, double wx, gboolean *divider) {
-    double x = wx + hval(v);
+static int header_column_at(XdFolderView *folder_view, double wx, gboolean *divider) {
+    double x = wx + hval(folder_view);
     *divider = FALSE;
     int left = 0;
-    for (int k = 0; k < v->ncols; k++) {
-        int cw = v->col_w[v->order[k]];
+    for (int k = 0; k < folder_view->ncols; k++) {
+        int cw = folder_view->col_w[folder_view->order[k]];
         if (cw == 0)
             continue;
         if (fabs(x - (left + cw)) <= DIVIDER_HIT) {
             *divider = TRUE;
-            return v->order[k];
+            return folder_view->order[k];
         }
         left += cw;
     }
     left = 0;
-    for (int k = 0; k < v->ncols; k++) {
-        int cw = v->col_w[v->order[k]];
+    for (int k = 0; k < folder_view->ncols; k++) {
+        int cw = folder_view->col_w[folder_view->order[k]];
         if (x >= left && x < left + cw)
-            return v->order[k];
+            return folder_view->order[k];
         left += cw;
     }
     return -1;
@@ -2022,80 +2078,84 @@ static int header_column_at(XdFolderView *v, double wx, gboolean *divider) {
 
 /* Where a heading being dragged would go: before the column whose middle
  * is past the pointer (an index into `order`). */
-static int header_drop_slot(XdFolderView *v) {
-    double x = v->hdr_x + hval(v);
+static int header_drop_slot(XdFolderView *folder_view) {
+    double x = folder_view->hdr_x + hval(folder_view);
     int left = 0;
-    for (int k = 0; k < v->ncols; k++) {
-        int cw = v->col_w[v->order[k]];
+    for (int k = 0; k < folder_view->ncols; k++) {
+        int cw = folder_view->col_w[folder_view->order[k]];
         if (cw > 0 && x < left + cw / 2.0)
             return k;
         left += cw;
     }
-    return v->ncols;
+    return folder_view->ncols;
 }
 
-static void columns_changed(XdFolderView *v) {
-    layout_contents(v);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+static void columns_changed(XdFolderView *folder_view) {
+    layout_contents(folder_view);
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
 /* Name fills the window until a column is sized by hand; from then on it
  * keeps its width, as the others do. */
-static void freeze_name_width(XdFolderView *v) {
-    if (v->width[XD_SORT_NAME] == 0)
-        v->width[XD_SORT_NAME] = MAX(v->col_w[XD_SORT_NAME], COL_MIN);
+static void freeze_name_width(XdFolderView *folder_view) {
+    if (folder_view->width[XD_SORT_NAME] == 0)
+        folder_view->width[XD_SORT_NAME] = MAX(folder_view->col_w[XD_SORT_NAME], COL_MIN);
 }
 
 /* Double-clicking a divider fits the column to its widest entry. */
-static void fit_column(XdFolderView *v, int col) {
+static void fit_column(XdFolderView *folder_view, int col) {
     int widest = 0;
-    for (guint k = 0; k < v->shown->len; k++) {
-        item *it = g_ptr_array_index(v->shown, k);
+    for (guint k = 0; k < folder_view->shown->len; k++) {
+        item *it = g_ptr_array_index(folder_view->shown, k);
         if (col == XD_SORT_NAME) {
             if (it->name_w == 0)
-                it->name_w = text_width(v, item_label(v, it));
+                it->name_w = text_width(folder_view, item_label(folder_view, it));
             widest = MAX(widest, it->name_w + LIST_ICON + 20);
         } else {
-            widest = MAX(widest, text_width(v, cell_text(it, col)) + 16);
+            widest = MAX(widest, text_width(folder_view, cell_text(it, col)) + 16);
         }
     }
     if (widest == 0)
-        widest = text_width(v, column_title(v, col)) + 24; /* nothing listed: the heading */
-    freeze_name_width(v);
-    v->width[col] = MAX(widest, COL_MIN);
-    columns_changed(v);
+        widest = text_width(folder_view, column_title(folder_view, col)) +
+                 24; /* nothing listed: the heading */
+    freeze_name_width(folder_view);
+    folder_view->width[col] = MAX(widest, COL_MIN);
+    columns_changed(folder_view);
 }
 
 /* A heading dropped at `slot`: its column moves there. */
-static void move_column(XdFolderView *v, int col, int slot) {
+static void move_column(XdFolderView *folder_view, int col, int slot) {
     int from = -1;
-    for (int k = 0; k < v->ncols; k++)
-        if (v->order[k] == col)
+    for (int k = 0; k < folder_view->ncols; k++)
+        if (folder_view->order[k] == col)
             from = k;
     if (from < 0 || slot == from || slot == from + 1)
         return;
-    memmove(&v->order[from], &v->order[from + 1], sizeof(int) * (size_t)(v->ncols - from - 1));
+    memmove(&folder_view->order[from], &folder_view->order[from + 1],
+            sizeof(int) * (size_t)(folder_view->ncols - from - 1));
     if (slot > from)
         slot--;
-    memmove(&v->order[slot + 1], &v->order[slot], sizeof(int) * (size_t)(v->ncols - 1 - slot));
-    v->order[slot] = col;
-    columns_changed(v);
+    memmove(&folder_view->order[slot + 1], &folder_view->order[slot],
+            sizeof(int) * (size_t)(folder_view->ncols - 1 - slot));
+    folder_view->order[slot] = col;
+    columns_changed(folder_view);
 }
 
 static void on_column_toggled(GtkCheckMenuItem *mi, gpointer data) {
-    XdFolderView *v = data;
+    XdFolderView *folder_view = data;
     int col = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(mi), "xd-column"));
     int at = -1;
-    for (int k = 0; k < v->ncols; k++)
-        if (v->order[k] == col)
+    for (int k = 0; k < folder_view->ncols; k++)
+        if (folder_view->order[k] == col)
             at = k;
     if (gtk_check_menu_item_get_active(mi) && at < 0) {
-        v->order[v->ncols++] = col; /* a column added goes on the right */
+        folder_view->order[folder_view->ncols++] = col; /* a column added goes on the right */
     } else if (!gtk_check_menu_item_get_active(mi) && at >= 0) {
-        memmove(&v->order[at], &v->order[at + 1], sizeof(int) * (size_t)(v->ncols - at - 1));
-        v->ncols--;
+        memmove(&folder_view->order[at], &folder_view->order[at + 1],
+                sizeof(int) * (size_t)(folder_view->ncols - at - 1));
+        folder_view->ncols--;
     }
-    columns_changed(v);
+    columns_changed(folder_view);
 }
 
 /* GTK deactivates a menu before running the chosen item: destroy it once
@@ -2111,33 +2171,33 @@ static void destroy_menu_later(GtkMenuShell *menu, [[maybe_unused]] gpointer dat
 
 /* Right-clicking the header: the columns this folder can show, ticked
  * when shown (Name always is). */
-static void header_menu(XdFolderView *v, GdkEventButton *ev) {
+static void header_menu(XdFolderView *folder_view, GdkEventButton *ev) {
     GtkWidget *menu = gtk_menu_new();
     for (int col = 0; col < XD_SORT_COUNT; col++) {
-        if (!column_available(v, col))
+        if (!column_available(folder_view, col))
             continue;
-        GtkWidget *mi = gtk_check_menu_item_new_with_label(column_title(v, col));
+        GtkWidget *mi = gtk_check_menu_item_new_with_label(column_title(folder_view, col));
         gboolean shown = FALSE;
-        for (int k = 0; k < v->ncols; k++)
-            shown = shown || v->order[k] == col;
+        for (int k = 0; k < folder_view->ncols; k++)
+            shown = shown || folder_view->order[k] == col;
         gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(mi), shown);
         gtk_widget_set_sensitive(mi, col != XD_SORT_NAME);
         g_object_set_data(G_OBJECT(mi), "xd-column", GINT_TO_POINTER(col));
-        g_signal_connect(mi, "toggled", G_CALLBACK(on_column_toggled), v);
+        g_signal_connect(mi, "toggled", G_CALLBACK(on_column_toggled), folder_view);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi);
     }
-    gtk_menu_attach_to_widget(GTK_MENU(menu), GTK_WIDGET(v), nullptr);
+    gtk_menu_attach_to_widget(GTK_MENU(menu), GTK_WIDGET(folder_view), nullptr);
     g_signal_connect(menu, "deactivate", G_CALLBACK(destroy_menu_later), nullptr);
     gtk_widget_show_all(menu);
     gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)ev);
 }
 
 /* The resize pointer over a divider. */
-static void set_header_cursor(XdFolderView *v, gboolean resize) {
-    if (resize == v->hdr_cursor)
+static void set_header_cursor(XdFolderView *folder_view, gboolean resize) {
+    if (resize == folder_view->hdr_cursor)
         return;
-    v->hdr_cursor = resize;
-    GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(v));
+    folder_view->hdr_cursor = resize;
+    GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(folder_view));
     if (win == nullptr)
         return;
     GdkCursor *cur =
@@ -2149,95 +2209,98 @@ static void set_header_cursor(XdFolderView *v, gboolean resize) {
 /* A press on the header: a divider starts resizing (double-click fits),
  * a heading may be clicked (sorts on release) or dragged elsewhere, and
  * the right button chooses the columns. */
-static gboolean header_press(XdFolderView *v, GdkEventButton *ev) {
+static gboolean header_press(XdFolderView *folder_view, GdkEventButton *ev) {
     gboolean divider = FALSE;
-    int col = header_column_at(v, ev->x, &divider);
+    int col = header_column_at(folder_view, ev->x, &divider);
     if (ev->button == GDK_BUTTON_SECONDARY) {
         if (ev->type == GDK_BUTTON_PRESS)
-            header_menu(v, ev);
+            header_menu(folder_view, ev);
         return TRUE;
     }
     if (ev->button != GDK_BUTTON_PRIMARY)
         return TRUE;
     if (ev->type == GDK_2BUTTON_PRESS) {
-        v->hdr_resize = -1;
-        v->hdr_press = -1;
+        folder_view->hdr_resize = -1;
+        folder_view->hdr_press = -1;
         if (divider && col >= 0)
-            fit_column(v, col);
+            fit_column(folder_view, col);
         return TRUE;
     }
     if (ev->type != GDK_BUTTON_PRESS || col < 0)
         return TRUE;
     if (divider) {
-        freeze_name_width(v);
-        v->hdr_resize = col;
-        v->hdr_resize_w = v->col_w[col];
+        freeze_name_width(folder_view);
+        folder_view->hdr_resize = col;
+        folder_view->hdr_resize_w = folder_view->col_w[col];
     } else {
-        v->hdr_press = col;
-        v->hdr_dragging = FALSE;
+        folder_view->hdr_press = col;
+        folder_view->hdr_dragging = FALSE;
     }
-    v->hdr_press_x = v->hdr_x = ev->x;
+    folder_view->hdr_press_x = folder_view->hdr_x = ev->x;
     return TRUE;
 }
 
-static gboolean header_motion(XdFolderView *v, GdkEventMotion *ev) {
+static gboolean header_motion(XdFolderView *folder_view, GdkEventMotion *ev) {
     gboolean held = (ev->state & GDK_BUTTON1_MASK) != 0;
-    if (v->hdr_resize >= 0 && held) {
-        v->width[v->hdr_resize] = MAX(COL_MIN, v->hdr_resize_w + (int)(ev->x - v->hdr_press_x));
-        columns_changed(v);
+    if (folder_view->hdr_resize >= 0 && held) {
+        folder_view->width[folder_view->hdr_resize] =
+            MAX(COL_MIN, folder_view->hdr_resize_w + (int)(ev->x - folder_view->hdr_press_x));
+        columns_changed(folder_view);
         return TRUE;
     }
-    if (v->hdr_press >= 0 && held) {
-        v->hdr_x = ev->x;
-        if (!v->hdr_dragging &&
-            gtk_drag_check_threshold(GTK_WIDGET(v), (int)v->hdr_press_x, 0, (int)ev->x, 0))
-            v->hdr_dragging = TRUE;
-        if (v->hdr_dragging)
-            gtk_widget_queue_draw(GTK_WIDGET(v));
+    if (folder_view->hdr_press >= 0 && held) {
+        folder_view->hdr_x = ev->x;
+        if (!folder_view->hdr_dragging &&
+            gtk_drag_check_threshold(GTK_WIDGET(folder_view), (int)folder_view->hdr_press_x, 0,
+                                     (int)ev->x, 0))
+            folder_view->hdr_dragging = TRUE;
+        if (folder_view->hdr_dragging)
+            gtk_widget_queue_draw(GTK_WIDGET(folder_view));
         return TRUE;
     }
     gboolean divider = FALSE;
-    if (v->mode == XD_VIEW_DETAILS && ev->y >= 0 && ev->y < HEADER_H && !held)
-        header_column_at(v, ev->x, &divider);
-    set_header_cursor(v, divider);
+    if (folder_view->mode == XD_VIEW_DETAILS && ev->y >= 0 && ev->y < HEADER_H && !held)
+        header_column_at(folder_view, ev->x, &divider);
+    set_header_cursor(folder_view, divider);
     return FALSE;
 }
 
-static gboolean header_release(XdFolderView *v, GdkEventButton *ev) {
-    if (v->hdr_resize >= 0) {
-        v->hdr_resize = -1;
+static gboolean header_release(XdFolderView *folder_view, GdkEventButton *ev) {
+    if (folder_view->hdr_resize >= 0) {
+        folder_view->hdr_resize = -1;
         return TRUE;
     }
-    if (v->hdr_press < 0)
+    if (folder_view->hdr_press < 0)
         return FALSE;
-    int col = v->hdr_press;
-    v->hdr_press = -1;
-    if (v->hdr_dragging) {
-        v->hdr_dragging = FALSE;
-        v->hdr_x = ev->x;
-        int slot = header_drop_slot(v);
-        move_column(v, col, slot);
-        gtk_widget_queue_draw(GTK_WIDGET(v));
+    int col = folder_view->hdr_press;
+    folder_view->hdr_press = -1;
+    if (folder_view->hdr_dragging) {
+        folder_view->hdr_dragging = FALSE;
+        folder_view->hdr_x = ev->x;
+        int slot = header_drop_slot(folder_view);
+        move_column(folder_view, col, slot);
+        gtk_widget_queue_draw(GTK_WIDGET(folder_view));
         return TRUE;
     }
     /* A click sorts; clicking the sorted column reverses it. */
     gboolean divider = FALSE;
-    if (ev->y >= 0 && ev->y < HEADER_H && header_column_at(v, ev->x, &divider) == col)
-        xd_folder_view_set_sort(v, (XdSortColumn)col, (int)v->sort == col ? !v->desc : FALSE);
+    if (ev->y >= 0 && ev->y < HEADER_H && header_column_at(folder_view, ev->x, &divider) == col)
+        xd_folder_view_set_sort(folder_view, (XdSortColumn)col,
+                                (int)folder_view->sort == col ? !folder_view->desc : FALSE);
     return TRUE;
 }
 
 static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
     gtk_widget_grab_focus(widget);
-    forget_keep(v);
-    if (v->mode == XD_VIEW_DETAILS && ev->y < HEADER_H)
-        return header_press(v, ev);
-    int i = index_at(v, ev->x, ev->y);
+    forget_keep(folder_view);
+    if (folder_view->mode == XD_VIEW_DETAILS && ev->y < HEADER_H)
+        return header_press(folder_view, ev);
+    int i = index_at(folder_view, ev->x, ev->y);
     if (ev->type == GDK_2BUTTON_PRESS && ev->button == GDK_BUTTON_PRIMARY) {
         /* With single-click, the first click's release opened it. */
-        if (!v->single_click)
-            activate(v, i);
+        if (!folder_view->single_click)
+            activate(folder_view, i);
         return TRUE;
     }
     if (ev->type != GDK_BUTTON_PRESS)
@@ -2245,112 +2308,117 @@ static gboolean folder_view_button_press(GtkWidget *widget, GdkEventButton *ev) 
     /* The middle button opens an item in a new tab, as in Windows 11,
      * leaving the selection alone. */
     if (ev->button == GDK_BUTTON_MIDDLE) {
-        item *mid = item_at(v, i);
+        item *mid = item_at(folder_view, i);
         if (mid != nullptr)
-            g_signal_emit(v, signals[SIG_MIDDLE], 0, mid->file, mid->is_dir);
+            g_signal_emit(folder_view, signals[SIG_MIDDLE], 0, mid->file, mid->is_dir);
         return TRUE;
     }
     gboolean ctrl = ev->state & GDK_CONTROL_MASK;
     gboolean shift = ev->state & GDK_SHIFT_MASK;
-    v->pressed = ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift ? i : -1;
-    item *it = item_at(v, i);
+    folder_view->pressed = ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift ? i : -1;
+    item *it = item_at(folder_view, i);
     if (it == nullptr && ev->button == GDK_BUTTON_PRIMARY) {
         /* A drag from empty space selects what it covers. */
         if (!ctrl)
-            select_only(v, -1);
-        v->banding = TRUE;
-        v->band_x0 = v->band_x1 = ev->x + hval(v);
-        v->band_y0 = v->band_y1 = ev->y + vval(v);
-        v->band_toggle = ctrl;
-        if (v->band_base == nullptr)
-            v->band_base = g_array_new(FALSE, FALSE, sizeof(gboolean));
-        g_array_set_size(v->band_base, v->shown->len);
-        for (guint k = 0; k < v->shown->len; k++)
-            g_array_index(v->band_base, gboolean, k) =
-                ((item *)g_ptr_array_index(v->shown, k))->selected;
+            select_only(folder_view, -1);
+        folder_view->banding = TRUE;
+        folder_view->band_x0 = folder_view->band_x1 = ev->x + hval(folder_view);
+        folder_view->band_y0 = folder_view->band_y1 = ev->y + vval(folder_view);
+        folder_view->band_toggle = ctrl;
+        if (folder_view->band_base == nullptr)
+            folder_view->band_base = g_array_new(FALSE, FALSE, sizeof(gboolean));
+        g_array_set_size(folder_view->band_base, folder_view->shown->len);
+        for (guint k = 0; k < folder_view->shown->len; k++)
+            g_array_index(folder_view->band_base, gboolean, k) =
+                ((item *)g_ptr_array_index(folder_view->shown, k))->selected;
     } else if (it == nullptr) {
         if (!ctrl)
-            select_only(v, -1);
+            select_only(folder_view, -1);
     } else if (ctrl && ev->button == GDK_BUTTON_PRIMARY) {
         it->selected = !it->selected;
-        v->anchor = i;
-    } else if (shift && v->anchor >= 0) {
-        select_range(v, v->anchor, i);
+        folder_view->anchor = i;
+    } else if (shift && folder_view->anchor >= 0) {
+        select_range(folder_view, folder_view->anchor, i);
     } else if (!(ev->button == GDK_BUTTON_SECONDARY && it->selected)) {
-        select_only(v, i);
-        v->anchor = i;
+        select_only(folder_view, i);
+        folder_view->anchor = i;
     }
     if (i >= 0)
-        v->focus = i;
-    v->drag_pending = it != nullptr && ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift;
-    v->drag_x = ev->x;
-    v->drag_y = ev->y;
-    v->drag_cx = ev->x + hval(v);
-    v->drag_cy = ev->y + vval(v);
-    v->drag_button = ev->button;
-    selection_changed(v);
+        folder_view->focus = i;
+    folder_view->drag_pending =
+        it != nullptr && ev->button == GDK_BUTTON_PRIMARY && !ctrl && !shift;
+    folder_view->drag_x = ev->x;
+    folder_view->drag_y = ev->y;
+    folder_view->drag_cx = ev->x + hval(folder_view);
+    folder_view->drag_cy = ev->y + vval(folder_view);
+    folder_view->drag_button = ev->button;
+    selection_changed(folder_view);
     if (ev->button == GDK_BUTTON_SECONDARY)
-        g_signal_emit(v, signals[SIG_CONTEXT], 0, (GdkEvent *)ev);
+        g_signal_emit(folder_view, signals[SIG_CONTEXT], 0, (GdkEvent *)ev);
     return TRUE;
 }
 
 /* ---- dragging files out ---------------------------------------------------------------- */
 
-static GdkRectangle band_rect(const XdFolderView *v) {
-    double x = MIN(v->band_x0, v->band_x1), y = MIN(v->band_y0, v->band_y1);
-    return (GdkRectangle){ifloor(x), ifloor(y), ifloor(fabs(v->band_x1 - v->band_x0)),
-                          ifloor(fabs(v->band_y1 - v->band_y0))};
+static GdkRectangle band_rect(const XdFolderView *folder_view) {
+    double x = MIN(folder_view->band_x0, folder_view->band_x1),
+           y = MIN(folder_view->band_y0, folder_view->band_y1);
+    return (GdkRectangle){ifloor(x), ifloor(y),
+                          ifloor(fabs(folder_view->band_x1 - folder_view->band_x0)),
+                          ifloor(fabs(folder_view->band_y1 - folder_view->band_y0))};
 }
 
 /* Items touching the band are selected (toggled, with Ctrl). */
-static void band_update(XdFolderView *v) {
-    GdkRectangle band = band_rect(v);
-    for (guint k = 0; k < v->shown->len; k++) {
-        item *it = g_ptr_array_index(v->shown, k);
-        GdkRectangle r = item_rect(v, (int)k);
-        gboolean hit = gdk_rectangle_intersect(&band, &r, nullptr);
-        gboolean base = k < v->band_base->len && g_array_index(v->band_base, gboolean, k);
-        it->selected = v->band_toggle ? base != hit : hit;
+static void band_update(XdFolderView *folder_view) {
+    GdkRectangle band = band_rect(folder_view);
+    for (guint k = 0; k < folder_view->shown->len; k++) {
+        item *it = g_ptr_array_index(folder_view->shown, k);
+        GdkRectangle area = item_rect(folder_view, (int)k);
+        gboolean hit = gdk_rectangle_intersect(&band, &area, nullptr);
+        gboolean base =
+            k < folder_view->band_base->len && g_array_index(folder_view->band_base, gboolean, k);
+        it->selected = folder_view->band_toggle ? base != hit : hit;
     }
-    selection_changed(v);
+    selection_changed(folder_view);
 }
 
 static gboolean folder_view_button_release(GtkWidget *widget, GdkEventButton *ev) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
-    if (ev->button == GDK_BUTTON_PRIMARY && header_release(v, ev))
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
+    if (ev->button == GDK_BUTTON_PRIMARY && header_release(folder_view, ev))
         return TRUE;
     /* Single-click opens on release, unless the press became a drag. */
-    gboolean click = v->drag_pending && ev->button == GDK_BUTTON_PRIMARY;
-    v->drag_pending = FALSE;
-    if (v->banding) {
-        v->banding = FALSE;
+    gboolean click = folder_view->drag_pending && ev->button == GDK_BUTTON_PRIMARY;
+    folder_view->drag_pending = FALSE;
+    if (folder_view->banding) {
+        folder_view->banding = FALSE;
         gtk_widget_queue_draw(widget);
     }
-    int pressed = v->pressed;
-    v->pressed = -1;
-    if (v->single_click && click && pressed >= 0 && index_at(v, ev->x, ev->y) == pressed)
-        activate(v, pressed);
+    int pressed = folder_view->pressed;
+    folder_view->pressed = -1;
+    if (folder_view->single_click && click && pressed >= 0 &&
+        index_at(folder_view, ev->x, ev->y) == pressed)
+        activate(folder_view, pressed);
     return FALSE;
 }
 
 /* Redraws item i only (an index past the end draws nothing). */
-static void queue_draw_item(XdFolderView *v, int i) {
+static void queue_draw_item(XdFolderView *folder_view, int i) {
     if (i < 0)
         return;
-    GdkRectangle r = item_rect(v, i);
-    gtk_widget_queue_draw_area(GTK_WIDGET(v), r.x - ifloor(hval(v)), r.y - ifloor(vval(v)),
-                               r.width, r.height);
+    GdkRectangle area = item_rect(folder_view, i);
+    gtk_widget_queue_draw_area(GTK_WIDGET(folder_view), area.x - ifloor(hval(folder_view)),
+                               area.y - ifloor(vval(folder_view)), area.width, area.height);
 }
 
 /* Single-click: underline the item under the pointer, with a hand. */
-static void set_hover(XdFolderView *v, int i) {
-    if (i == v->hover)
+static void set_hover(XdFolderView *folder_view, int i) {
+    if (i == folder_view->hover)
         return;
     /* Only the two labels change, not the whole folder. */
-    queue_draw_item(v, v->hover);
-    queue_draw_item(v, i);
-    v->hover = i;
-    GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(v));
+    queue_draw_item(folder_view, folder_view->hover);
+    queue_draw_item(folder_view, i);
+    folder_view->hover = i;
+    GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(folder_view));
     if (win == nullptr)
         return;
     GdkCursor *hand = i >= 0 ? gdk_cursor_new_from_name(gdk_window_get_display(win), "pointer")
@@ -2360,73 +2428,79 @@ static void set_hover(XdFolderView *v, int i) {
 }
 
 static gboolean folder_view_leave(GtkWidget *widget, [[maybe_unused]] GdkEventCrossing *ev) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
-    if (v->hdr_resize < 0)
-        set_header_cursor(v, FALSE);
-    set_hover(v, -1);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
+    if (folder_view->hdr_resize < 0)
+        set_header_cursor(folder_view, FALSE);
+    set_hover(folder_view, -1);
     return FALSE;
 }
 
 static gboolean folder_view_motion(GtkWidget *widget, GdkEventMotion *ev) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
-    if (header_motion(v, ev))
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
+    if (header_motion(folder_view, ev))
         return TRUE;
-    if (v->single_click)
-        set_hover(v, ev->state & GDK_BUTTON1_MASK ? -1 : index_at(v, ev->x, ev->y));
-    if (v->banding && (ev->state & GDK_BUTTON1_MASK)) {
+    if (folder_view->single_click)
+        set_hover(folder_view,
+                  ev->state & GDK_BUTTON1_MASK ? -1 : index_at(folder_view, ev->x, ev->y));
+    if (folder_view->banding && (ev->state & GDK_BUTTON1_MASK)) {
         /* Past an edge, the view scrolls along. */
-        if (v->vadj != nullptr && (ev->y < 0 || ev->y > widget_h(v)))
-            gtk_adjustment_set_value(v->vadj, vval(v) + (ev->y < 0 ? ev->y : ev->y - widget_h(v)));
-        if (v->hadj != nullptr && (ev->x < 0 || ev->x > widget_w(v)))
-            gtk_adjustment_set_value(v->hadj, hval(v) + (ev->x < 0 ? ev->x : ev->x - widget_w(v)));
-        v->band_x1 = ev->x + hval(v);
-        v->band_y1 = ev->y + vval(v);
-        band_update(v);
+        if (folder_view->vadj != nullptr && (ev->y < 0 || ev->y > widget_h(folder_view)))
+            gtk_adjustment_set_value(folder_view->vadj,
+                                     vval(folder_view) +
+                                         (ev->y < 0 ? ev->y : ev->y - widget_h(folder_view)));
+        if (folder_view->hadj != nullptr && (ev->x < 0 || ev->x > widget_w(folder_view)))
+            gtk_adjustment_set_value(folder_view->hadj,
+                                     hval(folder_view) +
+                                         (ev->x < 0 ? ev->x : ev->x - widget_w(folder_view)));
+        folder_view->band_x1 = ev->x + hval(folder_view);
+        folder_view->band_y1 = ev->y + vval(folder_view);
+        band_update(folder_view);
         return TRUE;
     }
-    if (!v->drag_pending || !(ev->state & GDK_BUTTON1_MASK))
+    if (!folder_view->drag_pending || !(ev->state & GDK_BUTTON1_MASK))
         return FALSE;
-    if (!gtk_drag_check_threshold(widget, (int)v->drag_x, (int)v->drag_y, (int)ev->x,
-                                  (int)ev->y))
+    if (!gtk_drag_check_threshold(widget, (int)folder_view->drag_x, (int)folder_view->drag_y,
+                                  (int)ev->x, (int)ev->y))
         return TRUE;
-    v->drag_pending = FALSE;
+    folder_view->drag_pending = FALSE;
     /* Control Panel's applets can be copied out (a shortcut to them), not
      * moved; its categories aren't files at all. */
     GdkDragAction actions = (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK);
     /* Network places and drives are connections, not files to copy. */
-    if (v->place == XD_PLACE_NETWORK)
+    if (folder_view->place == XD_PLACE_NETWORK)
         return TRUE;
-    if (v->place == XD_PLACE_CONTROL) {
+    if (folder_view->place == XD_PLACE_CONTROL) {
         actions = (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_LINK);
-        for (guint k = 0; k < v->shown->len; k++) {
-            item *sel = g_ptr_array_index(v->shown, k);
+        for (guint k = 0; k < folder_view->shown->len; k++) {
+            item *sel = g_ptr_array_index(folder_view->shown, k);
             if (sel->selected && sel->is_dir)
                 return TRUE;
         }
     }
     GtkTargetList *targets = gtk_target_list_new(nullptr, 0);
     gtk_target_list_add_uri_targets(targets, 0);
-    gtk_drag_begin_with_coordinates(widget, targets, actions, (int)v->drag_button,
-                                    (GdkEvent *)ev, (int)v->drag_x, (int)v->drag_y);
+    gtk_drag_begin_with_coordinates(widget, targets, actions, (int)folder_view->drag_button,
+                                    (GdkEvent *)ev, (int)folder_view->drag_x,
+                                    (int)folder_view->drag_y);
     gtk_target_list_unref(targets);
     return TRUE;
 }
 
 static void folder_view_drag_begin(GtkWidget *widget, GdkDragContext *context) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
-    guint n = xd_folder_view_get_selected_count(v);
-    gtk_drag_set_icon_name(context, n > 1 ? "edit-copy" : "text-x-generic", 0, 0);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
+    guint count = xd_folder_view_get_selected_count(folder_view);
+    gtk_drag_set_icon_name(context, count > 1 ? "edit-copy" : "text-x-generic", 0, 0);
 }
 
-static void folder_view_drag_data_get(GtkWidget *widget, [[maybe_unused]] GdkDragContext *c,
+static void folder_view_drag_data_get(GtkWidget *widget, [[maybe_unused]] GdkDragContext *drag,
                                       GtkSelectionData *data, [[maybe_unused]] guint info,
                                       [[maybe_unused]] guint time) {
     GList *files = xd_folder_view_get_selected_files(XD_FOLDER_VIEW(widget));
-    guint n = g_list_length(files);
-    char **uris = g_new0(char *, n + 1);
+    guint count = g_list_length(files);
+    char **uris = g_new0(char *, count + 1);
     guint k = 0;
-    for (GList *l = files; l != nullptr; l = l->next)
-        uris[k++] = g_file_get_uri(l->data);
+    for (GList *list = files; list != nullptr; list = list->next)
+        uris[k++] = g_file_get_uri(list->data);
     gtk_selection_data_set_uris(data, uris);
     g_strfreev(uris);
     g_list_free_full(files, g_object_unref);
@@ -2434,18 +2508,18 @@ static void folder_view_drag_data_get(GtkWidget *widget, [[maybe_unused]] GdkDra
 
 /* ---- dropping files in ------------------------------------------------------------------ */
 
-static void forget_drag(XdFolderView *v) {
-    g_clear_pointer(&v->drag_uris, g_strfreev);
-    g_clear_pointer(&v->over_event, gdk_event_free);
-    v->drag_requested = FALSE;
-    if (v->drop_index != -1) {
-        v->drop_index = -1;
-        gtk_widget_queue_draw(GTK_WIDGET(v));
+static void forget_drag(XdFolderView *folder_view) {
+    g_clear_pointer(&folder_view->drag_uris, g_strfreev);
+    g_clear_pointer(&folder_view->over_event, gdk_event_free);
+    folder_view->drag_requested = FALSE;
+    if (folder_view->drop_index != -1) {
+        folder_view->drop_index = -1;
+        gtk_widget_queue_draw(GTK_WIDGET(folder_view));
     }
 }
 
-static char *filesystem_id(GFile *f) {
-    GFileInfo *info = g_file_query_info(f, G_FILE_ATTRIBUTE_ID_FILESYSTEM,
+static char *filesystem_id(GFile *file) {
+    GFileInfo *info = g_file_query_info(file, G_FILE_ATTRIBUTE_ID_FILESYSTEM,
                                         G_FILE_QUERY_INFO_NONE, nullptr, nullptr);
     char *id = info != nullptr
                    ? g_strdup(g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM))
@@ -2456,19 +2530,19 @@ static char *filesystem_id(GFile *f) {
 
 /* The folder a drop at (x, y) goes into: a folder item under the pointer
  * (not one being dragged), else this folder. Sets drop_index. */
-static GFile *drop_folder(XdFolderView *v, GdkDragContext *ctx, int x, int y) {
-    int i = index_at(v, x, y);
-    item *it = item_at(v, i);
-    gboolean own = gtk_drag_get_source_widget(ctx) == GTK_WIDGET(v);
+static GFile *drop_folder(XdFolderView *folder_view, GdkDragContext *ctx, int x, int y) {
+    int i = index_at(folder_view, x, y);
+    item *it = item_at(folder_view, i);
+    gboolean own = gtk_drag_get_source_widget(ctx) == GTK_WIDGET(folder_view);
     int target = it != nullptr && it->is_dir && !(own && it->selected) &&
-                         v->place != XD_PLACE_TRASH
+                         folder_view->place != XD_PLACE_TRASH
                      ? i
                      : -1;
-    if (target != v->drop_index) {
-        v->drop_index = target;
-        gtk_widget_queue_draw(GTK_WIDGET(v));
+    if (target != folder_view->drop_index) {
+        folder_view->drop_index = target;
+        gtk_widget_queue_draw(GTK_WIDGET(folder_view));
     }
-    return target >= 0 ? it->file : v->dir;
+    return target >= 0 ? it->file : folder_view->dir;
 }
 
 /* Windows' rules: Ctrl copies, Shift moves, Ctrl+Shift or Alt makes
@@ -2479,19 +2553,21 @@ static constexpr GdkDragAction NO_ACTION = (GdkDragAction)0;
 
 /* Our own icons dropped back into this folder with Auto Arrange off: they
  * move to where they're dropped, rather than nothing happening. */
-static gboolean can_reposition(XdFolderView *v, GdkDragContext *ctx, GFile *dest) {
-    return v->placed && gtk_drag_get_source_widget(ctx) == GTK_WIDGET(v) && v->dir != nullptr &&
-           dest != nullptr && g_file_equal(dest, v->dir);
+static gboolean can_reposition(XdFolderView *folder_view, GdkDragContext *ctx, GFile *dest) {
+    return folder_view->placed && gtk_drag_get_source_widget(ctx) == GTK_WIDGET(folder_view) &&
+           folder_view->dir != nullptr && dest != nullptr && g_file_equal(dest, folder_view->dir);
 }
 
-static GdkDragAction drop_action(XdFolderView *v, GdkDragContext *ctx, char **uris, GFile *dest) {
+static GdkDragAction drop_action(XdFolderView *folder_view, GdkDragContext *ctx, char **uris,
+                                 GFile *dest) {
     if (dest == nullptr || uris == nullptr || uris[0] == nullptr ||
         xd_place_of(dest) == XD_PLACE_COMPUTER || xd_place_of(dest) == XD_PLACE_CONTROL ||
         xd_place_of(dest) == XD_PLACE_NETWORK)
         return NO_ACTION;
     if (xd_place_of(dest) == XD_PLACE_TRASH) {
         /* Into the Recycle Bin: a delete, carried as a move. */
-        if (gtk_drag_get_source_widget(ctx) == GTK_WIDGET(v) && v->place == XD_PLACE_TRASH)
+        if (gtk_drag_get_source_widget(ctx) == GTK_WIDGET(folder_view) &&
+            folder_view->place == XD_PLACE_TRASH)
             return NO_ACTION;
         return (gdk_drag_context_get_actions(ctx) & GDK_ACTION_MOVE) ? GDK_ACTION_MOVE
                                                                       : GDK_ACTION_COPY;
@@ -2499,12 +2575,12 @@ static GdkDragAction drop_action(XdFolderView *v, GdkDragContext *ctx, char **ur
     /* The keyboard's modifiers as they are now (the keymap follows them
      * even while the pointer stands still), else the pointer's. */
     GdkModifierType mods = (GdkModifierType)0;
-    if (v->keymap != nullptr) {
-        guint state = gdk_keymap_get_modifier_state(v->keymap);
+    if (folder_view->keymap != nullptr) {
+        guint state = gdk_keymap_get_modifier_state(folder_view->keymap);
         mods = (GdkModifierType)state;
     } else {
         GdkDevice *dev = gdk_drag_context_get_device(ctx);
-        GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(v));
+        GdkWindow *win = gtk_widget_get_window(GTK_WIDGET(folder_view));
         if (dev != nullptr && win != nullptr)
             gdk_window_get_device_position(win, dev, nullptr, nullptr, &mods);
     }
@@ -2520,26 +2596,27 @@ static GdkDragAction drop_action(XdFolderView *v, GdkDragContext *ctx, char **ur
         action = GDK_ACTION_MOVE;
     } else {
         GFile *first = g_file_new_for_uri(uris[0]);
-        char *a = filesystem_id(first);
-        char *b = filesystem_id(dest);
-        action = a != nullptr && g_strcmp0(a, b) == 0 ? GDK_ACTION_MOVE : GDK_ACTION_COPY;
-        g_free(a);
-        g_free(b);
+        char *source_fs = filesystem_id(first);
+        char *dest_fs = filesystem_id(dest);
+        action = source_fs != nullptr && g_strcmp0(source_fs, dest_fs) == 0 ? GDK_ACTION_MOVE
+                                                                            : GDK_ACTION_COPY;
+        g_free(source_fs);
+        g_free(dest_fs);
         g_object_unref(first);
     }
     gboolean all_here = TRUE;
-    for (char **u = uris; *u != nullptr; u++) {
-        GFile *f = g_file_new_for_uri(*u);
-        GFile *parent = g_file_get_parent(f);
-        gboolean into_itself = g_file_equal(f, dest) || g_file_has_prefix(dest, f);
+    for (char **uri = uris; *uri != nullptr; uri++) {
+        GFile *file = g_file_new_for_uri(*uri);
+        GFile *parent = g_file_get_parent(file);
+        gboolean into_itself = g_file_equal(file, dest) || g_file_has_prefix(dest, file);
         all_here = all_here && parent != nullptr && g_file_equal(parent, dest);
         g_clear_object(&parent);
-        g_object_unref(f);
+        g_object_unref(file);
         if (into_itself)
             return NO_ACTION;
     }
     if (all_here && action == GDK_ACTION_MOVE)
-        return can_reposition(v, ctx, dest) ? GDK_ACTION_MOVE : NO_ACTION;
+        return can_reposition(folder_view, ctx, dest) ? GDK_ACTION_MOVE : NO_ACTION;
     GdkDragAction offered = gdk_drag_context_get_actions(ctx);
     /* Wayland has no "link" action: a shortcut is made from a copy. */
     GdkDragAction needed = action == GDK_ACTION_LINK ? GDK_ACTION_COPY : action;
@@ -2560,44 +2637,48 @@ static GdkDragAction protocol_action(GdkDragContext *ctx, GdkDragAction action) 
  * passes a drop target's answer on only after a motion, so the last one
  * is seen again. */
 static void keymap_changed([[maybe_unused]] GdkKeymap *keymap, gpointer data) {
-    XdFolderView *v = data;
-    if (v->over_event == nullptr || v->drag_uris == nullptr || v->dropping)
+    XdFolderView *folder_view = data;
+    if (folder_view->over_event == nullptr || folder_view->drag_uris == nullptr ||
+        folder_view->dropping)
         return;
-    GdkEvent *again = gdk_event_copy(v->over_event);
+    GdkEvent *again = gdk_event_copy(folder_view->over_event);
     gdk_event_put(again);
     gdk_event_free(again);
 }
 
 static gboolean folder_view_drag_motion(GtkWidget *widget, GdkDragContext *ctx, gint x, gint y,
                                         guint time) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
-    if (v->keymap == nullptr) {
-        v->keymap = gdk_keymap_get_for_display(gtk_widget_get_display(widget));
-        v->keymap_id = g_signal_connect(v->keymap, "state-changed", G_CALLBACK(keymap_changed), v);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
+    if (folder_view->keymap == nullptr) {
+        folder_view->keymap = gdk_keymap_get_for_display(gtk_widget_get_display(widget));
+        folder_view->keymap_id = g_signal_connect(folder_view->keymap, "state-changed",
+                                                  G_CALLBACK(keymap_changed), folder_view);
     }
     GdkEvent *motion = gtk_get_current_event();
     if (motion != nullptr && motion->type == GDK_DRAG_MOTION) {
-        g_clear_pointer(&v->over_event, gdk_event_free);
-        v->over_event = motion;
+        g_clear_pointer(&folder_view->over_event, gdk_event_free);
+        folder_view->over_event = motion;
     } else if (motion != nullptr) {
         gdk_event_free(motion);
     }
     GdkAtom target = gtk_drag_dest_find_target(widget, ctx, nullptr);
-    if (target == GDK_NONE || v->dir == nullptr) {
+    if (target == GDK_NONE || folder_view->dir == nullptr) {
         gdk_drag_status(ctx, NO_ACTION, time);
         return TRUE;
     }
-    GFile *dest = drop_folder(v, ctx, x, y);
-    if (v->drag_uris == nullptr) {
+    GFile *dest = drop_folder(folder_view, ctx, x, y);
+    if (folder_view->drag_uris == nullptr) {
         /* The action depends on the files: ask for them first. */
-        if (!v->drag_requested) {
-            v->drag_requested = TRUE;
+        if (!folder_view->drag_requested) {
+            folder_view->drag_requested = TRUE;
             gtk_drag_get_data(widget, ctx, target, time);
         }
         gdk_drag_status(ctx, NO_ACTION, time);
         return TRUE;
     }
-    gdk_drag_status(ctx, protocol_action(ctx, drop_action(v, ctx, v->drag_uris, dest)), time);
+    gdk_drag_status(
+        ctx, protocol_action(ctx, drop_action(folder_view, ctx, folder_view->drag_uris, dest)),
+        time);
     return TRUE;
 }
 
@@ -2609,88 +2690,88 @@ static void folder_view_drag_leave(GtkWidget *widget, [[maybe_unused]] GdkDragCo
 static gboolean folder_view_drag_drop(GtkWidget *widget, GdkDragContext *ctx,
                                       [[maybe_unused]] gint x, [[maybe_unused]] gint y,
                                       guint time) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
     GdkAtom target = gtk_drag_dest_find_target(widget, ctx, nullptr);
     if (target == GDK_NONE)
         return FALSE;
-    v->dropping = TRUE;
+    folder_view->dropping = TRUE;
     gtk_drag_get_data(widget, ctx, target, time);
     return TRUE;
 }
 
 /* Moves the selected icons by as far as the pointer went from where the
  * drag began (onto the nearest free cells with Align to Grid). */
-static void reposition(XdFolderView *v, int x, int y) {
-    int dx = ifloor(x + hval(v) - v->drag_cx);
-    int dy = ifloor(y + vval(v) - v->drag_cy);
+static void reposition(XdFolderView *folder_view, int x, int y) {
+    int dx = ifloor(x + hval(folder_view) - folder_view->drag_cx);
+    int dy = ifloor(y + vval(folder_view) - folder_view->drag_cy);
     GHashTable *taken = g_hash_table_new(g_direct_hash, g_direct_equal);
-    for (guint i = 0; i < v->shown->len && i < v->rects->len; i++)
-        if (!((item *)g_ptr_array_index(v->shown, i))->selected)
-            take_cells(v, taken, g_array_index(v->rects, GdkRectangle, i));
-    int cols = grid_cols(v);
-    for (guint i = 0; i < v->shown->len && i < v->rects->len; i++) {
-        item *it = g_ptr_array_index(v->shown, i);
+    for (guint i = 0; i < folder_view->shown->len && i < folder_view->rects->len; i++)
+        if (!((item *)g_ptr_array_index(folder_view->shown, i))->selected)
+            take_cells(folder_view, taken, g_array_index(folder_view->rects, GdkRectangle, i));
+    int cols = grid_cols(folder_view);
+    for (guint i = 0; i < folder_view->shown->len && i < folder_view->rects->len; i++) {
+        item *it = g_ptr_array_index(folder_view->shown, i);
         if (!it->selected || it->key == nullptr)
             continue;
-        GdkRectangle r = g_array_index(v->rects, GdkRectangle, i);
-        int nx = MAX(r.x + dx, 0), ny = MAX(r.y + dy, 0);
-        if (v->align_grid) {
-            int col = CLAMP((int)lround((double)(nx - PAD) / v->cell_w), 0, cols - 1);
-            int row = MAX((int)lround((double)(ny - PAD) / v->cell_h), 0);
-            int cell = free_cell(v, taken, row * cols + col);
+        GdkRectangle area = g_array_index(folder_view->rects, GdkRectangle, i);
+        int nx = MAX(area.x + dx, 0), ny = MAX(area.y + dy, 0);
+        if (folder_view->align_grid) {
+            int col = CLAMP((int)lround((double)(nx - PAD) / folder_view->cell_w), 0, cols - 1);
+            int row = MAX((int)lround((double)(ny - PAD) / folder_view->cell_h), 0);
+            int cell = free_cell(folder_view, taken, row * cols + col);
             g_hash_table_add(taken, cell_key(cell / cols, cell % cols));
-            nx = PAD + (cell % cols) * v->cell_w;
-            ny = PAD + (cell / cols) * v->cell_h;
+            nx = PAD + (cell % cols) * folder_view->cell_w;
+            ny = PAD + (cell / cols) * folder_view->cell_h;
         }
-        set_position(v, it->key, nx, ny);
+        set_position(folder_view, it->key, nx, ny);
     }
     g_hash_table_unref(taken);
-    layout_contents(v);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    layout_contents(folder_view);
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
 static void folder_view_drag_data_received(GtkWidget *widget, GdkDragContext *ctx, gint x,
                                            gint y, GtkSelectionData *sel,
                                            [[maybe_unused]] guint info, guint time) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
     char **uris = gtk_selection_data_get_uris(sel);
-    GFile *dest = drop_folder(v, ctx, x, y);
-    GdkDragAction action = drop_action(v, ctx, uris, dest);
-    if (!v->dropping) {
-        g_strfreev(v->drag_uris);
-        v->drag_uris = uris != nullptr ? uris : g_new0(char *, 1);
+    GFile *dest = drop_folder(folder_view, ctx, x, y);
+    GdkDragAction action = drop_action(folder_view, ctx, uris, dest);
+    if (!folder_view->dropping) {
+        g_strfreev(folder_view->drag_uris);
+        folder_view->drag_uris = uris != nullptr ? uris : g_new0(char *, 1);
         gdk_drag_status(ctx, protocol_action(ctx, action), time);
         return;
     }
-    v->dropping = FALSE;
-    if (action == GDK_ACTION_MOVE && can_reposition(v, ctx, dest)) {
-        forget_drag(v);
+    folder_view->dropping = FALSE;
+    if (action == GDK_ACTION_MOVE && can_reposition(folder_view, ctx, dest)) {
+        forget_drag(folder_view);
         gtk_drag_finish(ctx, TRUE, FALSE, time);
-        reposition(v, x, y);
+        reposition(folder_view, x, y);
         g_strfreev(uris);
         return;
     }
     GFile *target = g_object_ref(dest);
-    forget_drag(v);
+    forget_drag(folder_view);
     /* We do the move ourselves: the source mustn't delete anything. */
     gtk_drag_finish(ctx, action != NO_ACTION, FALSE, time);
     if (action != NO_ACTION)
-        g_signal_emit(v, signals[SIG_DROPPED], 0, uris, target, action);
+        g_signal_emit(folder_view, signals[SIG_DROPPED], 0, uris, target, action);
     g_object_unref(target);
     g_strfreev(uris);
 }
 
 /* Arrow keys among icons put anywhere: the nearest one that way. */
-static int spatial_target(XdFolderView *v, guint key) {
-    GdkRectangle f = item_rect(v, v->focus);
-    double fx = f.x + f.width / 2.0, fy = f.y + f.height / 2.0;
+static int spatial_target(XdFolderView *folder_view, guint key) {
+    GdkRectangle focus_area = item_rect(folder_view, folder_view->focus);
+    double fx = focus_area.x + focus_area.width / 2.0, fy = focus_area.y + focus_area.height / 2.0;
     int best = -1;
     double best_score = 0;
-    for (int i = 0; i < (int)v->shown->len; i++) {
-        if (i == v->focus)
+    for (int i = 0; i < (int)folder_view->shown->len; i++) {
+        if (i == folder_view->focus)
             continue;
-        GdkRectangle r = item_rect(v, i);
-        double cx = r.x + r.width / 2.0, cy = r.y + r.height / 2.0;
+        GdkRectangle item_area = item_rect(folder_view, i);
+        double cx = item_area.x + item_area.width / 2.0, cy = item_area.y + item_area.height / 2.0;
         double along = key == GDK_KEY_Up || key == GDK_KEY_Page_Up       ? fy - cy
                        : key == GDK_KEY_Down || key == GDK_KEY_Page_Down ? cy - fy
                        : key == GDK_KEY_Left                             ? fx - cx
@@ -2707,127 +2788,135 @@ static int spatial_target(XdFolderView *v, guint key) {
     return best;
 }
 
-static int move_target(XdFolderView *v, guint key) {
-    int n = (int)v->shown->len;
-    if (v->placed && v->focus >= 0 &&
+static int move_target(XdFolderView *folder_view, guint key) {
+    int count = (int)folder_view->shown->len;
+    if (folder_view->placed && folder_view->focus >= 0 &&
         (key == GDK_KEY_Up || key == GDK_KEY_Down || key == GDK_KEY_Left || key == GDK_KEY_Right ||
          key == GDK_KEY_Page_Up || key == GDK_KEY_Page_Down))
-        return spatial_target(v, key);
-    int f = MAX(v->focus, 0);
-    int step_down = v->mode == XD_VIEW_LIST || v->mode == XD_VIEW_DETAILS ? 1 : v->cols;
-    int step_right = v->mode == XD_VIEW_LIST ? v->rows : v->mode == XD_VIEW_DETAILS ? 0 : 1;
-    int page = v->mode == XD_VIEW_LIST ? v->rows
-               : v->mode == XD_VIEW_DETAILS
-                   ? MAX((widget_h(v) - HEADER_H) / ROW_H - 1, 1)
-                   : MAX(widget_h(v) / MAX(v->cell_h, 1), 1) * v->cols;
+        return spatial_target(folder_view, key);
+    int from = MAX(folder_view->focus, 0);
+    int step_down = folder_view->mode == XD_VIEW_LIST || folder_view->mode == XD_VIEW_DETAILS
+                        ? 1
+                        : folder_view->cols;
+    int step_right = folder_view->mode == XD_VIEW_LIST      ? folder_view->rows
+                     : folder_view->mode == XD_VIEW_DETAILS ? 0
+                                                            : 1;
+    int page =
+        folder_view->mode == XD_VIEW_LIST ? folder_view->rows
+        : folder_view->mode == XD_VIEW_DETAILS
+            ? MAX((widget_h(folder_view) - HEADER_H) / ROW_H - 1, 1)
+            : MAX(widget_h(folder_view) / MAX(folder_view->cell_h, 1), 1) * folder_view->cols;
     /* Nothing focused yet: any arrow starts at the first item, as in
      * Windows (not one step past it). */
-    if (v->focus < 0 && (key == GDK_KEY_Up || key == GDK_KEY_Down || key == GDK_KEY_Left ||
-                         key == GDK_KEY_Right || key == GDK_KEY_Page_Up ||
-                         key == GDK_KEY_Page_Down))
-        return n > 0 ? 0 : -1;
+    if (folder_view->focus < 0 &&
+        (key == GDK_KEY_Up || key == GDK_KEY_Down || key == GDK_KEY_Left || key == GDK_KEY_Right ||
+         key == GDK_KEY_Page_Up || key == GDK_KEY_Page_Down))
+        return count > 0 ? 0 : -1;
     switch (key) {
     case GDK_KEY_Up:
-        return v->focus < 0 ? 0 : f - step_down;
+        return folder_view->focus < 0 ? 0 : from - step_down;
     case GDK_KEY_Down:
-        return v->focus < 0 ? 0 : f + step_down;
+        return folder_view->focus < 0 ? 0 : from + step_down;
     case GDK_KEY_Left:
-        return step_right == 0 ? -1 : f - step_right;
+        return step_right == 0 ? -1 : from - step_right;
     case GDK_KEY_Right:
-        return step_right == 0 ? -1 : f + step_right;
+        return step_right == 0 ? -1 : from + step_right;
     case GDK_KEY_Home:
         return 0;
     case GDK_KEY_End:
-        return n - 1;
+        return count - 1;
     case GDK_KEY_Page_Up:
-        return f - page;
+        return from - page;
     case GDK_KEY_Page_Down:
-        return f + page;
+        return from + page;
     default:
         return -2;
     }
 }
 
 static gboolean folder_view_key_press(GtkWidget *widget, GdkEventKey *ev) {
-    XdFolderView *v = XD_FOLDER_VIEW(widget);
-    forget_keep(v);
-    int n = (int)v->shown->len;
+    XdFolderView *folder_view = XD_FOLDER_VIEW(widget);
+    forget_keep(folder_view);
+    int count = (int)folder_view->shown->len;
     gboolean ctrl = ev->state & GDK_CONTROL_MASK;
     gboolean shift = ev->state & GDK_SHIFT_MASK;
     if (ev->keyval == GDK_KEY_Return || ev->keyval == GDK_KEY_KP_Enter) {
-        activate(v, v->focus);
+        activate(folder_view, folder_view->focus);
         return TRUE;
     }
     if (ev->keyval == GDK_KEY_Menu || (shift && ev->keyval == GDK_KEY_F10)) {
-        g_signal_emit(v, signals[SIG_CONTEXT], 0, (GdkEvent *)nullptr);
+        g_signal_emit(folder_view, signals[SIG_CONTEXT], 0, (GdkEvent *)nullptr);
         return TRUE;
     }
     if (ctrl && (ev->keyval == GDK_KEY_a || ev->keyval == GDK_KEY_A)) {
-        xd_folder_view_select_all(v);
+        xd_folder_view_select_all(folder_view);
         return TRUE;
     }
-    item *focused = item_at(v, v->focus);
+    item *focused = item_at(folder_view, folder_view->focus);
     if (ctrl && ev->keyval == GDK_KEY_space && focused != nullptr) {
         focused->selected = !focused->selected;
-        selection_changed(v);
+        selection_changed(folder_view);
         return TRUE;
     }
-    int t = move_target(v, ev->keyval);
-    if (t == -2 || n == 0)
+    int target = move_target(folder_view, ev->keyval);
+    if (target == -2 || count == 0)
         return FALSE;
-    if (t < 0 && t != -1)
-        t = 0;
-    if (t == -1)
+    if (target < 0 && target != -1)
+        target = 0;
+    if (target == -1)
         return TRUE;
-    t = CLAMP(t, 0, n - 1);
-    v->focus = t;
-    if (shift && v->anchor >= 0) {
-        select_range(v, v->anchor, t);
+    target = CLAMP(target, 0, count - 1);
+    folder_view->focus = target;
+    if (shift && folder_view->anchor >= 0) {
+        select_range(folder_view, folder_view->anchor, target);
     } else if (!ctrl) {
-        select_only(v, t);
-        v->anchor = t;
+        select_only(folder_view, target);
+        folder_view->anchor = target;
     }
-    ensure_visible(v, t);
-    selection_changed(v);
+    ensure_visible(folder_view, target);
+    selection_changed(folder_view);
     return TRUE;
 }
 
 /* ---- GtkScrollable ------------------------------------------------------------ */
 
-static void adj_changed([[maybe_unused]] GtkAdjustment *a, gpointer data) {
+static void adj_changed([[maybe_unused]] GtkAdjustment *adjustment, gpointer data) {
     gtk_widget_queue_draw(GTK_WIDGET(data));
 }
 
-static void set_adjustment(XdFolderView *v, GtkAdjustment **slot, gulong *id, GtkAdjustment *a) {
+static void set_adjustment(XdFolderView *folder_view, GtkAdjustment **slot, gulong *id,
+                           GtkAdjustment *adjustment) {
     if (*slot != nullptr) {
         g_signal_handler_disconnect(*slot, *id);
         g_object_unref(*slot);
     }
-    if (a == nullptr)
-        a = gtk_adjustment_new(0, 0, 0, 0, 0, 0);
-    *slot = g_object_ref_sink(a);
-    *id = g_signal_connect(a, "value-changed", G_CALLBACK(adj_changed), v);
-    layout_contents(v);
+    if (adjustment == nullptr)
+        adjustment = gtk_adjustment_new(0, 0, 0, 0, 0, 0);
+    *slot = g_object_ref_sink(adjustment);
+    *id = g_signal_connect(adjustment, "value-changed", G_CALLBACK(adj_changed), folder_view);
+    layout_contents(folder_view);
 }
 
 static void folder_view_set_property(GObject *obj, guint id, const GValue *value,
                                      GParamSpec *pspec) {
-    XdFolderView *v = XD_FOLDER_VIEW(obj);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(obj);
     switch (id) {
     case PROP_HADJ:
-        set_adjustment(v, &v->hadj, &v->hadj_id, g_value_get_object(value));
+        set_adjustment(folder_view, &folder_view->hadj, &folder_view->hadj_id,
+                       g_value_get_object(value));
         break;
     case PROP_VADJ:
-        set_adjustment(v, &v->vadj, &v->vadj_id, g_value_get_object(value));
+        set_adjustment(folder_view, &folder_view->vadj, &folder_view->vadj_id,
+                       g_value_get_object(value));
         break;
     case PROP_HPOLICY: {
         gint policy = g_value_get_enum(value);
-        v->hpolicy = (GtkScrollablePolicy)policy;
+        folder_view->hpolicy = (GtkScrollablePolicy)policy;
         break;
     }
     case PROP_VPOLICY: {
         gint policy = g_value_get_enum(value);
-        v->vpolicy = (GtkScrollablePolicy)policy;
+        folder_view->vpolicy = (GtkScrollablePolicy)policy;
         break;
     }
     default:
@@ -2836,19 +2925,19 @@ static void folder_view_set_property(GObject *obj, guint id, const GValue *value
 }
 
 static void folder_view_get_property(GObject *obj, guint id, GValue *value, GParamSpec *pspec) {
-    XdFolderView *v = XD_FOLDER_VIEW(obj);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(obj);
     switch (id) {
     case PROP_HADJ:
-        g_value_set_object(value, v->hadj);
+        g_value_set_object(value, folder_view->hadj);
         break;
     case PROP_VADJ:
-        g_value_set_object(value, v->vadj);
+        g_value_set_object(value, folder_view->vadj);
         break;
     case PROP_HPOLICY:
-        g_value_set_enum(value, (gint)v->hpolicy);
+        g_value_set_enum(value, (gint)folder_view->hpolicy);
         break;
     case PROP_VPOLICY:
-        g_value_set_enum(value, (gint)v->vpolicy);
+        g_value_set_enum(value, (gint)folder_view->vpolicy);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(obj, id, pspec);
@@ -2861,66 +2950,66 @@ static void folder_view_size_allocate(GtkWidget *widget, GtkAllocation *alloc) {
 }
 
 static void folder_view_dispose(GObject *obj) {
-    XdFolderView *v = XD_FOLDER_VIEW(obj);
-    if (v->theme_id != 0) {
-        g_signal_handler_disconnect(gtk_icon_theme_get_default(), v->theme_id);
-        v->theme_id = 0;
+    XdFolderView *folder_view = XD_FOLDER_VIEW(obj);
+    if (folder_view->theme_id != 0) {
+        g_signal_handler_disconnect(gtk_icon_theme_get_default(), folder_view->theme_id);
+        folder_view->theme_id = 0;
     }
-    if (v->cancel != nullptr)
-        g_cancellable_cancel(v->cancel);
-    g_clear_object(&v->cancel);
-    g_clear_pointer(&v->thumbs, xd_thumb_queue_free);
-    if (v->reload_source != 0) {
-        g_source_remove(v->reload_source);
-        v->reload_source = 0;
+    if (folder_view->cancel != nullptr)
+        g_cancellable_cancel(folder_view->cancel);
+    g_clear_object(&folder_view->cancel);
+    g_clear_pointer(&folder_view->thumbs, xd_thumb_queue_free);
+    if (folder_view->reload_source != 0) {
+        g_source_remove(folder_view->reload_source);
+        folder_view->reload_source = 0;
     }
-    if (v->monitor != nullptr) {
-        g_signal_handlers_disconnect_by_data(v->monitor, v);
-        g_file_monitor_cancel(v->monitor);
-        g_clear_object(&v->monitor);
+    if (folder_view->monitor != nullptr) {
+        g_signal_handlers_disconnect_by_data(folder_view->monitor, folder_view);
+        g_file_monitor_cancel(folder_view->monitor);
+        g_clear_object(&folder_view->monitor);
     }
-    if (v->hadj != nullptr) {
-        g_signal_handler_disconnect(v->hadj, v->hadj_id);
-        g_clear_object(&v->hadj);
+    if (folder_view->hadj != nullptr) {
+        g_signal_handler_disconnect(folder_view->hadj, folder_view->hadj_id);
+        g_clear_object(&folder_view->hadj);
     }
-    if (v->vadj != nullptr) {
-        g_signal_handler_disconnect(v->vadj, v->vadj_id);
-        g_clear_object(&v->vadj);
+    if (folder_view->vadj != nullptr) {
+        g_signal_handler_disconnect(folder_view->vadj, folder_view->vadj_id);
+        g_clear_object(&folder_view->vadj);
     }
-    g_clear_object(&v->dir);
-    g_clear_object(&v->listed);
-    if (v->watching_drives) {
-        g_signal_handlers_disconnect_by_data(xd_computer_monitor(), v);
+    g_clear_object(&folder_view->dir);
+    g_clear_object(&folder_view->listed);
+    if (folder_view->watching_drives) {
+        g_signal_handlers_disconnect_by_data(xd_computer_monitor(), folder_view);
         if (xd_udisks_manager() != nullptr)
-            g_signal_handlers_disconnect_by_data(xd_udisks_manager(), v);
-        v->watching_drives = FALSE;
+            g_signal_handlers_disconnect_by_data(xd_udisks_manager(), folder_view);
+        folder_view->watching_drives = FALSE;
     }
-    if (v->apps_monitor != nullptr) {
-        g_signal_handlers_disconnect_by_data(v->apps_monitor, v);
-        g_clear_object(&v->apps_monitor);
+    if (folder_view->apps_monitor != nullptr) {
+        g_signal_handlers_disconnect_by_data(folder_view->apps_monitor, folder_view);
+        g_clear_object(&folder_view->apps_monitor);
     }
-    forget_keep(v);
-    forget_drag(v);
-    if (v->keymap != nullptr) {
-        g_signal_handler_disconnect(v->keymap, v->keymap_id);
-        v->keymap = nullptr;
+    forget_keep(folder_view);
+    forget_drag(folder_view);
+    if (folder_view->keymap != nullptr) {
+        g_signal_handler_disconnect(folder_view->keymap, folder_view->keymap_id);
+        folder_view->keymap = nullptr;
     }
-    g_clear_pointer(&v->cut, g_hash_table_unref);
-    g_clear_pointer(&v->band_base, g_array_unref);
-    xd_usershare_unwatch(v);
+    g_clear_pointer(&folder_view->cut, g_hash_table_unref);
+    g_clear_pointer(&folder_view->band_base, g_array_unref);
+    xd_usershare_unwatch(folder_view);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->dispose(obj);
 }
 
 static void folder_view_finalize(GObject *obj) {
-    XdFolderView *v = XD_FOLDER_VIEW(obj);
-    g_ptr_array_unref(v->shown);
-    g_ptr_array_unref(v->all);
-    g_ptr_array_unref(v->loading);
-    g_clear_pointer(&v->more_listed, g_ptr_array_unref);
-    clear_headings(v);
-    g_array_unref(v->headings);
-    g_array_unref(v->rects);
-    g_hash_table_unref(v->positions);
+    XdFolderView *folder_view = XD_FOLDER_VIEW(obj);
+    g_ptr_array_unref(folder_view->shown);
+    g_ptr_array_unref(folder_view->all);
+    g_ptr_array_unref(folder_view->loading);
+    g_clear_pointer(&folder_view->more_listed, g_ptr_array_unref);
+    clear_headings(folder_view);
+    g_array_unref(folder_view->headings);
+    g_array_unref(folder_view->rects);
+    g_hash_table_unref(folder_view->positions);
     G_OBJECT_CLASS(xd_folder_view_parent_class)->finalize(obj);
 }
 
@@ -2973,357 +3062,376 @@ static void xd_folder_view_class_init(XdFolderViewClass *klass) {
                                        G_TYPE_NONE, 2, G_TYPE_FILE, G_TYPE_BOOLEAN);
 }
 
-static void xd_folder_view_init(XdFolderView *v) {
-    v->all = g_ptr_array_new_with_free_func(item_free);
-    v->loading = g_ptr_array_new_with_free_func(item_free);
-    v->shown = g_ptr_array_new();
-    v->rects = g_array_new(FALSE, TRUE, sizeof(GdkRectangle));
-    v->headings = g_array_new(FALSE, TRUE, sizeof(heading));
-    v->mode = XD_VIEW_ICONS;
-    v->thumb = XD_THUMB_DEFAULT;
-    v->focus = -1;
-    v->anchor = -1;
-    v->drop_index = -1;
-    v->hover = -1;
-    v->pressed = -1;
-    v->hdr_resize = -1;
-    v->hdr_press = -1;
-    v->auto_arrange = TRUE;
-    v->align_grid = TRUE;
-    v->positions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    v->theme_id = g_signal_connect(gtk_icon_theme_get_default(), "changed",
-                                   G_CALLBACK(icon_theme_changed), v);
-    xd_usershare_watch(shares_changed, v);
-    default_columns(v);
-    gtk_widget_set_can_focus(GTK_WIDGET(v), TRUE);
-    gtk_drag_dest_set(GTK_WIDGET(v), (GtkDestDefaults)0, nullptr, 0,
+static void xd_folder_view_init(XdFolderView *folder_view) {
+    folder_view->all = g_ptr_array_new_with_free_func(item_free);
+    folder_view->loading = g_ptr_array_new_with_free_func(item_free);
+    folder_view->shown = g_ptr_array_new();
+    folder_view->rects = g_array_new(FALSE, TRUE, sizeof(GdkRectangle));
+    folder_view->headings = g_array_new(FALSE, TRUE, sizeof(heading));
+    folder_view->mode = XD_VIEW_ICONS;
+    folder_view->thumb = XD_THUMB_DEFAULT;
+    folder_view->focus = -1;
+    folder_view->anchor = -1;
+    folder_view->drop_index = -1;
+    folder_view->hover = -1;
+    folder_view->pressed = -1;
+    folder_view->hdr_resize = -1;
+    folder_view->hdr_press = -1;
+    folder_view->auto_arrange = TRUE;
+    folder_view->align_grid = TRUE;
+    folder_view->positions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    folder_view->theme_id = g_signal_connect(gtk_icon_theme_get_default(), "changed",
+                                             G_CALLBACK(icon_theme_changed), folder_view);
+    xd_usershare_watch(shares_changed, folder_view);
+    default_columns(folder_view);
+    gtk_widget_set_can_focus(GTK_WIDGET(folder_view), TRUE);
+    gtk_drag_dest_set(GTK_WIDGET(folder_view), (GtkDestDefaults)0, nullptr, 0,
                       (GdkDragAction)(GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK));
-    gtk_drag_dest_add_uri_targets(GTK_WIDGET(v));
-    gtk_widget_add_events(GTK_WIDGET(v), GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
-                                             GDK_BUTTON1_MOTION_MASK | GDK_KEY_PRESS_MASK |
-                                             GDK_POINTER_MOTION_MASK | GDK_LEAVE_NOTIFY_MASK);
+    gtk_drag_dest_add_uri_targets(GTK_WIDGET(folder_view));
+    gtk_widget_add_events(GTK_WIDGET(folder_view),
+                          GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+                              GDK_BUTTON1_MOTION_MASK | GDK_KEY_PRESS_MASK |
+                              GDK_POINTER_MOTION_MASK | GDK_LEAVE_NOTIFY_MASK);
 }
 
 /* ---- public API ------------------------------------------------------------------ */
 
 GtkWidget *xd_folder_view_new(void) { return g_object_new(XD_TYPE_FOLDER_VIEW, nullptr); }
 
-void xd_folder_view_set_location(XdFolderView *v, GFile *dir) {
+void xd_folder_view_set_location(XdFolderView *folder_view, GFile *dir) {
     g_return_if_fail(G_IS_FILE(dir));
-    g_set_object(&v->dir, dir);
-    forget_keep(v);
-    if (v->thumbs != nullptr)
-        xd_thumb_queue_cancel(v->thumbs);
+    g_set_object(&folder_view->dir, dir);
+    forget_keep(folder_view);
+    if (folder_view->thumbs != nullptr)
+        xd_thumb_queue_cancel(folder_view->thumbs);
     /* Icons' places are the folder's own: given just before, or none. */
-    if (!v->positions_given)
-        g_hash_table_remove_all(v->positions);
-    v->positions_given = FALSE;
-    if (v->monitor != nullptr) {
-        g_signal_handlers_disconnect_by_data(v->monitor, v);
-        g_file_monitor_cancel(v->monitor);
-        g_clear_object(&v->monitor);
+    if (!folder_view->positions_given)
+        g_hash_table_remove_all(folder_view->positions);
+    folder_view->positions_given = FALSE;
+    if (folder_view->monitor != nullptr) {
+        g_signal_handlers_disconnect_by_data(folder_view->monitor, folder_view);
+        g_file_monitor_cancel(folder_view->monitor);
+        g_clear_object(&folder_view->monitor);
     }
-    v->place = xd_place_of(dir);
-    g_clear_object(&v->listed);
-    v->listed = v->place == XD_PLACE_TRASH ? xd_trash_files_dir() : g_object_ref(dir);
-    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK) {
+    folder_view->place = xd_place_of(dir);
+    g_clear_object(&folder_view->listed);
+    folder_view->listed =
+        folder_view->place == XD_PLACE_TRASH ? xd_trash_files_dir() : g_object_ref(dir);
+    if (folder_view->place == XD_PLACE_COMPUTER || folder_view->place == XD_PLACE_NETWORK) {
         /* Drives mapped or disconnected, places added (by any window). */
         char *config = xd_net_config_path();
-        GFile *f = g_file_new_for_path(config);
-        v->monitor = g_file_monitor_file(f, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
-        if (v->monitor != nullptr)
-            g_signal_connect(v->monitor, "changed", G_CALLBACK(monitor_changed), v);
-        g_object_unref(f);
+        GFile *file = g_file_new_for_path(config);
+        folder_view->monitor =
+            g_file_monitor_file(file, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+        if (folder_view->monitor != nullptr)
+            g_signal_connect(folder_view->monitor, "changed", G_CALLBACK(monitor_changed),
+                             folder_view);
+        g_object_unref(file);
         g_free(config);
     }
-    if (v->place == XD_PLACE_COMPUTER || v->place == XD_PLACE_NETWORK) {
-        if (!v->watching_drives) {
+    if (folder_view->place == XD_PLACE_COMPUTER || folder_view->place == XD_PLACE_NETWORK) {
+        if (!folder_view->watching_drives) {
             GVolumeMonitor *vm = xd_computer_monitor();
-            g_signal_connect(vm, "mount-added", G_CALLBACK(drives_changed), v);
-            g_signal_connect(vm, "mount-removed", G_CALLBACK(drives_changed), v);
-            g_signal_connect(vm, "mount-changed", G_CALLBACK(drives_changed), v);
+            g_signal_connect(vm, "mount-added", G_CALLBACK(drives_changed), folder_view);
+            g_signal_connect(vm, "mount-removed", G_CALLBACK(drives_changed), folder_view);
+            g_signal_connect(vm, "mount-changed", G_CALLBACK(drives_changed), folder_view);
             GDBusObjectManager *udisks = xd_udisks_manager();
             if (udisks != nullptr) {
                 g_signal_connect(udisks, "interface-proxy-properties-changed",
-                                 G_CALLBACK(udisks_changed), v);
-                g_signal_connect(udisks, "object-added", G_CALLBACK(udisks_object_changed), v);
-                g_signal_connect(udisks, "object-removed", G_CALLBACK(udisks_object_changed), v);
+                                 G_CALLBACK(udisks_changed), folder_view);
+                g_signal_connect(udisks, "object-added", G_CALLBACK(udisks_object_changed),
+                                 folder_view);
+                g_signal_connect(udisks, "object-removed", G_CALLBACK(udisks_object_changed),
+                                 folder_view);
             }
-            v->watching_drives = TRUE;
+            folder_view->watching_drives = TRUE;
         }
-    } else if (v->place == XD_PLACE_CONTROL) {
-        if (v->apps_monitor == nullptr) {
+    } else if (folder_view->place == XD_PLACE_CONTROL) {
+        if (folder_view->apps_monitor == nullptr) {
             /* GIO notices applications being installed or removed. */
-            v->apps_monitor = g_app_info_monitor_get();
-            g_signal_connect(v->apps_monitor, "changed", G_CALLBACK(apps_changed), v);
+            folder_view->apps_monitor = g_app_info_monitor_get();
+            g_signal_connect(folder_view->apps_monitor, "changed", G_CALLBACK(apps_changed),
+                             folder_view);
         }
     } else {
-        v->monitor = g_file_monitor_directory(v->listed, G_FILE_MONITOR_WATCH_MOVES, nullptr,
-                                              nullptr);
-        if (v->monitor != nullptr)
-            g_signal_connect(v->monitor, "changed", G_CALLBACK(monitor_changed), v);
+        folder_view->monitor = g_file_monitor_directory(
+            folder_view->listed, G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr);
+        if (folder_view->monitor != nullptr)
+            g_signal_connect(folder_view->monitor, "changed", G_CALLBACK(monitor_changed),
+                             folder_view);
     }
-    if (v->hadj != nullptr)
-        gtk_adjustment_set_value(v->hadj, 0);
-    if (v->vadj != nullptr)
-        gtk_adjustment_set_value(v->vadj, 0);
-    start_loading(v, TRUE);
+    if (folder_view->hadj != nullptr)
+        gtk_adjustment_set_value(folder_view->hadj, 0);
+    if (folder_view->vadj != nullptr)
+        gtk_adjustment_set_value(folder_view->vadj, 0);
+    start_loading(folder_view, TRUE);
 }
 
-GFile *xd_folder_view_get_location(XdFolderView *v) { return v->dir; }
+GFile *xd_folder_view_get_location(XdFolderView *folder_view) { return folder_view->dir; }
 
-void xd_folder_view_reload(XdFolderView *v) {
-    if (v->dir == nullptr)
+void xd_folder_view_reload(XdFolderView *folder_view) {
+    if (folder_view->dir == nullptr)
         return;
     /* The old items stay until the new ones are in: no blank view, and
      * the scroll position is kept. */
-    start_loading(v, FALSE);
+    start_loading(folder_view, FALSE);
 }
 
-void xd_folder_view_set_mode(XdFolderView *v, XdViewMode mode) {
-    if (mode >= XD_VIEW_COUNT || mode == v->mode)
+void xd_folder_view_set_mode(XdFolderView *folder_view, XdViewMode mode) {
+    if (mode >= XD_VIEW_COUNT || mode == folder_view->mode)
         return;
-    v->mode = mode;
-    if (v->hadj != nullptr)
-        gtk_adjustment_set_value(v->hadj, 0);
-    if (wants_groups(v) != v->grouped)
-        refilter(v); /* in groups or out of them: another order */
+    folder_view->mode = mode;
+    if (folder_view->hadj != nullptr)
+        gtk_adjustment_set_value(folder_view->hadj, 0);
+    if (wants_groups(folder_view) != folder_view->grouped)
+        refilter(folder_view); /* in groups or out of them: another order */
     else
-        layout_contents(v);
-    ensure_visible(v, v->focus);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+        layout_contents(folder_view);
+    ensure_visible(folder_view, folder_view->focus);
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
-XdViewMode xd_folder_view_get_mode(XdFolderView *v) { return v->mode; }
+XdViewMode xd_folder_view_get_mode(XdFolderView *folder_view) { return folder_view->mode; }
 
-void xd_folder_view_set_thumbnail_size(XdFolderView *v, int px) {
+void xd_folder_view_set_thumbnail_size(XdFolderView *folder_view, int px) {
     px = CLAMP(px, XD_THUMB_MIN, XD_THUMB_MAX);
-    if (px == v->thumb)
+    if (px == folder_view->thumb)
         return;
-    v->thumb = px;
-    layout_contents(v);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    folder_view->thumb = px;
+    layout_contents(folder_view);
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
-int xd_folder_view_get_thumbnail_size(XdFolderView *v) { return v->thumb; }
+int xd_folder_view_get_thumbnail_size(XdFolderView *folder_view) { return folder_view->thumb; }
 
-void xd_folder_view_set_sort(XdFolderView *v, XdSortColumn column, gboolean descending) {
+void xd_folder_view_set_sort(XdFolderView *folder_view, XdSortColumn column, gboolean descending) {
     if (column >= XD_SORT_COUNT)
         return;
-    v->sort = column;
-    v->desc = descending;
+    folder_view->sort = column;
+    folder_view->desc = descending;
     /* Arranging by a column puts icons in its order, once, when they
      * aren't arranged automatically. */
-    if (!v->auto_arrange)
-        g_hash_table_remove_all(v->positions);
-    refilter(v);
+    if (!folder_view->auto_arrange)
+        g_hash_table_remove_all(folder_view->positions);
+    refilter(folder_view);
 }
 
-XdSortColumn xd_folder_view_get_sort(XdFolderView *v) { return v->sort; }
-gboolean xd_folder_view_get_sort_descending(XdFolderView *v) { return v->desc; }
+XdSortColumn xd_folder_view_get_sort(XdFolderView *folder_view) { return folder_view->sort; }
+gboolean xd_folder_view_get_sort_descending(XdFolderView *folder_view) { return folder_view->desc; }
 
-void xd_folder_view_set_groups(XdFolderView *v, gboolean groups) {
-    v->groups = groups;
-    refilter(v);
+void xd_folder_view_set_groups(XdFolderView *folder_view, gboolean groups) {
+    folder_view->groups = groups;
+    refilter(folder_view);
 }
 
-gboolean xd_folder_view_get_groups(XdFolderView *v) { return v->groups; }
+gboolean xd_folder_view_get_groups(XdFolderView *folder_view) { return folder_view->groups; }
 
-void xd_folder_view_set_show_hidden(XdFolderView *v, gboolean show) {
-    v->show_hidden = show;
-    refilter(v);
-    g_signal_emit(v, signals[SIG_CONTENTS], 0);
+void xd_folder_view_set_show_hidden(XdFolderView *folder_view, gboolean show) {
+    folder_view->show_hidden = show;
+    refilter(folder_view);
+    g_signal_emit(folder_view, signals[SIG_CONTENTS], 0);
 }
 
-void xd_folder_view_set_hide_extensions(XdFolderView *v, gboolean hide) {
-    if (v->hide_extensions == hide)
+void xd_folder_view_set_hide_extensions(XdFolderView *folder_view, gboolean hide) {
+    if (folder_view->hide_extensions == hide)
         return;
-    v->hide_extensions = hide;
-    for (guint i = 0; i < v->all->len; i++)
-        ((item *)g_ptr_array_index(v->all, i))->name_w = 0; /* List view measures names */
-    layout_contents(v);
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    folder_view->hide_extensions = hide;
+    for (guint i = 0; i < folder_view->all->len; i++)
+        ((item *)g_ptr_array_index(folder_view->all, i))->name_w = 0; /* List view measures names */
+    layout_contents(folder_view);
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }
 
-void xd_folder_view_set_single_click(XdFolderView *v, gboolean single) {
-    v->single_click = single;
+void xd_folder_view_set_single_click(XdFolderView *folder_view, gboolean single) {
+    folder_view->single_click = single;
     if (!single)
-        set_hover(v, -1);
+        set_hover(folder_view, -1);
 }
 
-void xd_folder_view_select_all(XdFolderView *v) {
-    for (guint k = 0; k < v->shown->len; k++)
-        ((item *)g_ptr_array_index(v->shown, k))->selected = TRUE;
-    selection_changed(v);
+void xd_folder_view_select_all(XdFolderView *folder_view) {
+    for (guint k = 0; k < folder_view->shown->len; k++)
+        ((item *)g_ptr_array_index(folder_view->shown, k))->selected = TRUE;
+    selection_changed(folder_view);
 }
 
-void xd_folder_view_invert_selection(XdFolderView *v) {
-    for (guint k = 0; k < v->shown->len; k++) {
-        item *it = g_ptr_array_index(v->shown, k);
+void xd_folder_view_invert_selection(XdFolderView *folder_view) {
+    for (guint k = 0; k < folder_view->shown->len; k++) {
+        item *it = g_ptr_array_index(folder_view->shown, k);
         it->selected = !it->selected;
     }
-    selection_changed(v);
+    selection_changed(folder_view);
 }
 
-guint xd_folder_view_get_item_count(XdFolderView *v) { return v->shown->len; }
+guint xd_folder_view_get_item_count(XdFolderView *folder_view) { return folder_view->shown->len; }
 
-GList *xd_folder_view_get_selected_files(XdFolderView *v) {
+GList *xd_folder_view_get_selected_files(XdFolderView *folder_view) {
     GList *out = nullptr;
-    for (guint i = v->shown->len; i > 0; i--) {
-        item *it = g_ptr_array_index(v->shown, i - 1);
+    for (guint i = folder_view->shown->len; i > 0; i--) {
+        item *it = g_ptr_array_index(folder_view->shown, i - 1);
         if (it->selected)
             out = g_list_prepend(out, g_object_ref(it->file));
     }
     return out;
 }
 
-guint xd_folder_view_get_selected_count(XdFolderView *v) {
-    guint n = 0;
-    for (guint k = 0; k < v->shown->len; k++)
-        n += ((item *)g_ptr_array_index(v->shown, k))->selected ? 1u : 0u;
-    return n;
+guint xd_folder_view_get_selected_count(XdFolderView *folder_view) {
+    guint count = 0;
+    for (guint k = 0; k < folder_view->shown->len; k++)
+        count += ((item *)g_ptr_array_index(folder_view->shown, k))->selected ? 1u : 0u;
+    return count;
 }
 
-guint64 xd_folder_view_get_size(XdFolderView *v, gboolean selected_only) {
+guint64 xd_folder_view_get_size(XdFolderView *folder_view, gboolean selected_only) {
     guint64 total = 0;
-    for (guint k = 0; k < v->shown->len; k++) {
-        item *it = g_ptr_array_index(v->shown, k);
+    for (guint k = 0; k < folder_view->shown->len; k++) {
+        item *it = g_ptr_array_index(folder_view->shown, k);
         if (!it->is_dir && (!selected_only || it->selected))
             total += it->size;
     }
     return total;
 }
 
-void xd_folder_view_select_files(XdFolderView *v, GList *files) {
-    forget_keep(v);
+void xd_folder_view_select_files(XdFolderView *folder_view, GList *files) {
+    forget_keep(folder_view);
     if (files == nullptr)
         return;
-    v->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    for (GList *l = files; l != nullptr; l = l->next)
-        g_hash_table_add(v->keep, g_file_get_uri(l->data));
-    v->keep_focus = g_file_get_uri(files->data);
-    v->keep_sticky = TRUE;
-    guint found = apply_keep(v);
+    folder_view->keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    for (GList *list = files; list != nullptr; list = list->next)
+        g_hash_table_add(folder_view->keep, g_file_get_uri(list->data));
+    folder_view->keep_focus = g_file_get_uri(files->data);
+    folder_view->keep_sticky = TRUE;
+    guint found = apply_keep(folder_view);
     if (found > 0)
-        ensure_visible(v, v->focus);
+        ensure_visible(folder_view, folder_view->focus);
     /* What isn't here yet is selected when it appears. */
-    if (found >= g_hash_table_size(v->keep))
-        forget_keep(v);
-    selection_changed(v);
+    if (found >= g_hash_table_size(folder_view->keep))
+        forget_keep(folder_view);
+    selection_changed(folder_view);
 }
 
-gboolean xd_folder_view_get_name_area(XdFolderView *v, GFile *file, GdkRectangle *area) {
+gboolean xd_folder_view_get_name_area(XdFolderView *folder_view, GFile *file, GdkRectangle *area) {
     int i = -1;
-    for (guint k = 0; k < v->shown->len; k++) {
-        if (g_file_equal(((item *)g_ptr_array_index(v->shown, k))->file, file)) {
+    for (guint k = 0; k < folder_view->shown->len; k++) {
+        if (g_file_equal(((item *)g_ptr_array_index(folder_view->shown, k))->file, file)) {
             i = (int)k;
             break;
         }
     }
     if (i < 0)
         return FALSE;
-    ensure_visible(v, i);
-    GdkRectangle r = item_rect(v, i);
-    GdkRectangle a = {r.x + 2, r.y, r.width - 4, ROW_H + 4};
-    switch (v->mode) {
+    ensure_visible(folder_view, i);
+    GdkRectangle item_area = item_rect(folder_view, i);
+    GdkRectangle name_area = {item_area.x + 2, item_area.y, item_area.width - 4, ROW_H + 4};
+    switch (folder_view->mode) {
     case XD_VIEW_THUMBNAILS:
-        a.y = r.y + v->thumb + 8;
+        name_area.y = item_area.y + folder_view->thumb + 8;
         break;
     case XD_VIEW_ICONS:
-        a.y = r.y + 32 + 8;
+        name_area.y = item_area.y + 32 + 8;
         break;
     case XD_VIEW_TILES:
-        a = (GdkRectangle){r.x + 48 + 14, r.y + 6, r.width - 48 - 22, ROW_H + 4};
+        name_area = (GdkRectangle){item_area.x + 48 + 14, item_area.y + 6,
+                                   item_area.width - 48 - 22, ROW_H + 4};
         break;
     case XD_VIEW_LIST:
-        a = (GdkRectangle){r.x + LIST_ICON + 3, r.y - 2, MAX(r.width - LIST_ICON - 4, 160),
-                           ROW_H + 4};
+        name_area = (GdkRectangle){item_area.x + LIST_ICON + 3, item_area.y - 2,
+                                   MAX(item_area.width - LIST_ICON - 4, 160), ROW_H + 4};
         break;
     case XD_VIEW_DETAILS:
-        a = (GdkRectangle){r.x + column_x(v, XD_SORT_NAME) + LIST_ICON + 6, r.y - 2,
-                           v->col_w[XD_SORT_NAME] - LIST_ICON - 10, ROW_H + 4};
+        name_area = (GdkRectangle){
+            item_area.x + column_x(folder_view, XD_SORT_NAME) + LIST_ICON + 6, item_area.y - 2,
+            folder_view->col_w[XD_SORT_NAME] - LIST_ICON - 10, ROW_H + 4};
         break;
     case XD_VIEW_COUNT:
         break;
     }
-    a.x -= ifloor(hval(v));
-    a.y -= ifloor(vval(v));
-    *area = a;
+    name_area.x -= ifloor(hval(folder_view));
+    name_area.y -= ifloor(vval(folder_view));
+    *area = name_area;
     return TRUE;
 }
 
-void xd_folder_view_set_columns(XdFolderView *v, const char *spec) {
-    if (!xd_columns_parse(spec, XD_SORT_COUNT, v->order, &v->ncols, v->width))
-        default_columns(v);
-    columns_changed(v);
+void xd_folder_view_set_columns(XdFolderView *folder_view, const char *spec) {
+    if (!xd_columns_parse(spec, XD_SORT_COUNT, folder_view->order, &folder_view->ncols,
+                          folder_view->width))
+        default_columns(folder_view);
+    columns_changed(folder_view);
 }
 
-char *xd_folder_view_get_columns(XdFolderView *v) {
-    gboolean is_default = v->ncols == XD_SORT_MODIFIED + 1;
-    for (int k = 0; is_default && k < v->ncols; k++)
-        is_default = v->order[k] == k;
-    for (int c = 0; is_default && c < XD_SORT_COUNT; c++)
-        is_default = v->width[c] == 0;
-    return is_default ? nullptr : xd_columns_format(v->order, v->ncols, v->width);
+char *xd_folder_view_get_columns(XdFolderView *folder_view) {
+    gboolean is_default = folder_view->ncols == XD_SORT_MODIFIED + 1;
+    for (int k = 0; is_default && k < folder_view->ncols; k++)
+        is_default = folder_view->order[k] == k;
+    for (int column = 0; is_default && column < XD_SORT_COUNT; column++)
+        is_default = folder_view->width[column] == 0;
+    return is_default
+               ? nullptr
+               : xd_columns_format(folder_view->order, folder_view->ncols, folder_view->width);
 }
 
-void xd_folder_view_set_auto_arrange(XdFolderView *v, gboolean on) {
-    if (v->auto_arrange == on)
+void xd_folder_view_set_auto_arrange(XdFolderView *folder_view, gboolean on) {
+    if (folder_view->auto_arrange == on)
         return;
-    v->auto_arrange = on;
+    folder_view->auto_arrange = on;
     /* Turned off, the icons stay where they are now (laid out as they
      * were arranged); turned on, they're arranged again. */
-    g_hash_table_remove_all(v->positions);
-    v->positions_mode = v->mode;
-    columns_changed(v);
+    g_hash_table_remove_all(folder_view->positions);
+    folder_view->positions_mode = folder_view->mode;
+    columns_changed(folder_view);
 }
 
-gboolean xd_folder_view_get_auto_arrange(XdFolderView *v) { return v->auto_arrange; }
+gboolean xd_folder_view_get_auto_arrange(XdFolderView *folder_view) {
+    return folder_view->auto_arrange;
+}
 
-void xd_folder_view_set_align_to_grid(XdFolderView *v, gboolean on) {
-    v->align_grid = on;
-    if (on && v->placed) {
-        snap_positions(v);
-        columns_changed(v);
+void xd_folder_view_set_align_to_grid(XdFolderView *folder_view, gboolean on) {
+    folder_view->align_grid = on;
+    if (on && folder_view->placed) {
+        snap_positions(folder_view);
+        columns_changed(folder_view);
     }
 }
 
-gboolean xd_folder_view_get_align_to_grid(XdFolderView *v) { return v->align_grid; }
+gboolean xd_folder_view_get_align_to_grid(XdFolderView *folder_view) {
+    return folder_view->align_grid;
+}
 
-void xd_folder_view_set_positions(XdFolderView *v, XdViewMode mode, char **names, const int *xy,
-                                  gsize count) {
-    g_hash_table_remove_all(v->positions);
-    v->positions_mode = mode;
+void xd_folder_view_set_positions(XdFolderView *folder_view, XdViewMode mode, char **names,
+                                  const int *xy, gsize count) {
+    g_hash_table_remove_all(folder_view->positions);
+    folder_view->positions_mode = mode;
     for (gsize i = 0; i < count; i++)
-        set_position(v, names[i], xy[2 * i], xy[2 * i + 1]);
-    v->positions_given = TRUE;
-    columns_changed(v);
+        set_position(folder_view, names[i], xy[2 * i], xy[2 * i + 1]);
+    folder_view->positions_given = TRUE;
+    columns_changed(folder_view);
 }
 
-gsize xd_folder_view_get_positions(XdFolderView *v, XdViewMode *mode, char ***names, int **xy) {
-    *mode = v->positions_mode;
-    *names = g_new0(char *, v->all->len + 1);
-    *xy = g_new0(int, 2 * (gsize)v->all->len + 1);
-    gsize n = 0;
-    for (guint i = 0; i < v->all->len && !v->auto_arrange; i++) {
-        item *it = g_ptr_array_index(v->all, i);
-        const int *p = it->key != nullptr ? g_hash_table_lookup(v->positions, it->key) : nullptr;
-        if (p == nullptr)
+gsize xd_folder_view_get_positions(XdFolderView *folder_view, XdViewMode *mode, char ***names,
+                                   int **xy) {
+    *mode = folder_view->positions_mode;
+    *names = g_new0(char *, folder_view->all->len + 1);
+    *xy = g_new0(int, 2 * (gsize)folder_view->all->len + 1);
+    gsize count = 0;
+    for (guint i = 0; i < folder_view->all->len && !folder_view->auto_arrange; i++) {
+        item *it = g_ptr_array_index(folder_view->all, i);
+        const int *position =
+            it->key != nullptr ? g_hash_table_lookup(folder_view->positions, it->key) : nullptr;
+        if (position == nullptr)
             continue;
-        (*names)[n] = g_strdup(it->key);
-        (*xy)[2 * n] = p[0];
-        (*xy)[2 * n + 1] = p[1];
-        n++;
+        (*names)[count] = g_strdup(it->key);
+        (*xy)[2 * count] = position[0];
+        (*xy)[2 * count + 1] = position[1];
+        count++;
     }
-    return n;
+    return count;
 }
 
-void xd_folder_view_set_cut_files(XdFolderView *v, GList *files) {
-    g_clear_pointer(&v->cut, g_hash_table_unref);
+void xd_folder_view_set_cut_files(XdFolderView *folder_view, GList *files) {
+    g_clear_pointer(&folder_view->cut, g_hash_table_unref);
     if (files != nullptr) {
-        v->cut = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-        for (GList *l = files; l != nullptr; l = l->next)
-            g_hash_table_add(v->cut, g_file_get_uri(l->data));
+        folder_view->cut = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+        for (GList *list = files; list != nullptr; list = list->next)
+            g_hash_table_add(folder_view->cut, g_file_get_uri(list->data));
     }
-    gtk_widget_queue_draw(GTK_WIDGET(v));
+    gtk_widget_queue_draw(GTK_WIDGET(folder_view));
 }

@@ -94,14 +94,14 @@ char *xd_archive_base_name(const char *file_name) {
     size_t len = strlen(file_name);
     for (size_t i = 0; i < G_N_ELEMENTS(archive_extensions); i++) {
         const char *ext = archive_extensions[i];
-        size_t n = strlen(ext);
-        if (len <= n)
+        size_t count = strlen(ext);
+        if (len <= count)
             continue;
         /* Case matters only for compress's ".Z", as it does to gzip. */
-        const char *tail = file_name + len - n;
+        const char *tail = file_name + len - count;
         if (strchr(ext, 'Z') != nullptr ? strcmp(tail, ext) == 0
                                         : g_ascii_strcasecmp(tail, ext) == 0)
-            return g_strndup(file_name, len - n);
+            return g_strndup(file_name, len - count);
     }
     const char *dot = strrchr(file_name, '.');
     if (dot != nullptr && dot != file_name && dot[1] != '\0')
@@ -115,16 +115,16 @@ char *xd_archive_safe_path(const char *path) {
     char **parts = g_strsplit(path, "/", -1);
     GString *out = g_string_new(nullptr);
     bool ok = true;
-    for (char **p = parts; ok && *p != nullptr; p++) {
-        if (**p == '\0' || strcmp(*p, ".") == 0)
+    for (char **part = parts; ok && *part != nullptr; part++) {
+        if (**part == '\0' || strcmp(*part, ".") == 0)
             continue;
-        if (strcmp(*p, "..") == 0) {
+        if (strcmp(*part, "..") == 0) {
             ok = false;
             break;
         }
         if (out->len > 0)
             g_string_append_c(out, '/');
-        g_string_append(out, *p);
+        g_string_append(out, *part);
     }
     g_strfreev(parts);
     if (!ok || out->len == 0) {
@@ -136,8 +136,8 @@ char *xd_archive_safe_path(const char *path) {
 
 #if XD_HAVE_LIBARCHIVE
 
-static gboolean archive_failed(struct archive *a, GError **error) {
-    const char *msg = archive_error_string(a);
+static gboolean archive_failed(struct archive *archive_handle, GError **error) {
+    const char *msg = archive_error_string(archive_handle);
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
                         msg != nullptr ? msg : "The archive could not be read.");
     return FALSE;
@@ -161,10 +161,10 @@ static gboolean copy_data(struct archive *in, struct archive *out, GCancellable 
         const void *buf;
         size_t size;
         la_int64_t offset;
-        int r = archive_read_data_block(in, &buf, &size, &offset);
-        if (r == ARCHIVE_EOF)
+        int status = archive_read_data_block(in, &buf, &size, &offset);
+        if (status == ARCHIVE_EOF)
             return TRUE;
-        if (r < ARCHIVE_WARN)
+        if (status < ARCHIVE_WARN)
             return archive_failed(in, error);
         if (archive_write_data_block(out, buf, size, offset) < ARCHIVE_WARN)
             return archive_failed(out, error);
@@ -197,10 +197,10 @@ gboolean xd_extract_archive(const char *archive, const char *into, const char *r
             break;
         }
         struct archive_entry *entry;
-        int r = archive_read_next_header(in, &entry);
-        if (r == ARCHIVE_EOF)
+        int status = archive_read_next_header(in, &entry);
+        if (status == ARCHIVE_EOF)
             break;
-        if (r < ARCHIVE_WARN) {
+        if (status < ARCHIVE_WARN) {
             ok = archive_failed(in, error);
             break;
         }

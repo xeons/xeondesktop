@@ -31,7 +31,7 @@ extern const size_t xd_control_category_count;
 
 const XdControlCategory *xd_control_category(const char *key);
 /* The category's icon, with its fallbacks (a new reference). */
-GIcon *xd_control_category_icon(const XdControlCategory *c);
+GIcon *xd_control_category_icon(const XdControlCategory *control_category);
 
 /* Is this a Control Panel applet (for this desktop)? */
 gboolean xd_control_is_applet(GDesktopAppInfo *info);

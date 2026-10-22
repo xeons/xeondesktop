@@ -40,55 +40,57 @@ GDBusObjectManager *xd_udisks_manager(void) {
 
 /* ---- properties ---- */
 
-static GDBusProxy *iface_of(GDBusObject *o, const char *name) {
-    GDBusInterface *i = g_dbus_object_get_interface(o, name);
-    return i != nullptr ? G_DBUS_PROXY(i) : nullptr;
+static GDBusProxy *iface_of(GDBusObject *dbus_object, const char *name) {
+    GDBusInterface *interface = g_dbus_object_get_interface(dbus_object, name);
+    return interface != nullptr ? G_DBUS_PROXY(interface) : nullptr;
 }
 
-static char *prop_str(GDBusProxy *p, const char *name) {
-    GVariant *v = p != nullptr ? g_dbus_proxy_get_cached_property(p, name) : nullptr;
-    char *s = nullptr;
-    if (v != nullptr && (g_variant_is_of_type(v, G_VARIANT_TYPE_STRING) ||
-                         g_variant_is_of_type(v, G_VARIANT_TYPE_OBJECT_PATH)))
-        s = g_variant_dup_string(v, nullptr);
-    else if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BYTESTRING))
-        s = g_variant_dup_bytestring(v, nullptr);
-    g_clear_pointer(&v, g_variant_unref);
-    return s != nullptr ? g_strstrip(s) : g_strdup("");
+static char *prop_str(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
+    char *text = nullptr;
+    if (variant != nullptr && (g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING) ||
+                               g_variant_is_of_type(variant, G_VARIANT_TYPE_OBJECT_PATH)))
+        text = g_variant_dup_string(variant, nullptr);
+    else if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BYTESTRING))
+        text = g_variant_dup_bytestring(variant, nullptr);
+    g_clear_pointer(&variant, g_variant_unref);
+    return text != nullptr ? g_strstrip(text) : g_strdup("");
 }
 
-static guint64 prop_u64(GDBusProxy *p, const char *name) {
-    GVariant *v = p != nullptr ? g_dbus_proxy_get_cached_property(p, name) : nullptr;
-    guint64 n = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_UINT64)
-                    ? g_variant_get_uint64(v)
-                    : 0;
-    g_clear_pointer(&v, g_variant_unref);
-    return n;
+static guint64 prop_u64(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
+    guint64 number = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_UINT64)
+                         ? g_variant_get_uint64(variant)
+                         : 0;
+    g_clear_pointer(&variant, g_variant_unref);
+    return number;
 }
 
-static gint prop_int(GDBusProxy *p, const char *name, gint fallback) {
-    GVariant *v = p != nullptr ? g_dbus_proxy_get_cached_property(p, name) : nullptr;
-    gint n = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_INT32) ? g_variant_get_int32(v)
-                                                                           : fallback;
-    g_clear_pointer(&v, g_variant_unref);
-    return n;
+static gint prop_int(GDBusProxy *proxy, const char *name, gint fallback) {
+    GVariant *variant = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
+    gint number = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_INT32)
+                      ? g_variant_get_int32(variant)
+                      : fallback;
+    g_clear_pointer(&variant, g_variant_unref);
+    return number;
 }
 
-static gboolean prop_bool(GDBusProxy *p, const char *name) {
-    GVariant *v = p != nullptr ? g_dbus_proxy_get_cached_property(p, name) : nullptr;
-    gboolean b = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BOOLEAN) &&
-                 g_variant_get_boolean(v);
-    g_clear_pointer(&v, g_variant_unref);
-    return b;
+static gboolean prop_bool(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
+    gboolean flag = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BOOLEAN) &&
+                    g_variant_get_boolean(variant);
+    g_clear_pointer(&variant, g_variant_unref);
+    return flag;
 }
 
 /* An "aay" property (MountPoints, Symlinks) as strings. */
-static char **prop_strv(GDBusProxy *p, const char *name) {
-    GVariant *v = p != nullptr ? g_dbus_proxy_get_cached_property(p, name) : nullptr;
-    char **out = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_BYTESTRING_ARRAY)
-                     ? g_variant_dup_bytestring_array(v, nullptr)
-                     : nullptr;
-    g_clear_pointer(&v, g_variant_unref);
+static char **prop_strv(GDBusProxy *proxy, const char *name) {
+    GVariant *variant = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
+    char **out =
+        variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_BYTESTRING_ARRAY)
+            ? g_variant_dup_bytestring_array(variant, nullptr)
+            : nullptr;
+    g_clear_pointer(&variant, g_variant_unref);
     return out != nullptr ? out : g_new0(char *, 1);
 }
 
@@ -105,9 +107,9 @@ void xd_udisks_fs_free(XdUdisksFs *fs) {
     g_free(fs);
 }
 
-static XdUdisksFs *fs_new(GDBusObject *o, GDBusProxy *block, GDBusProxy *fsi) {
+static XdUdisksFs *fs_new(GDBusObject *dbus_object, GDBusProxy *block, GDBusProxy *fsi) {
     XdUdisksFs *fs = g_new0(XdUdisksFs, 1);
-    fs->object = g_strdup(g_dbus_object_get_object_path(o));
+    fs->object = g_strdup(g_dbus_object_get_object_path(dbus_object));
     fs->drive = prop_str(block, "Drive");
     fs->device = prop_str(block, "Device");
     fs->label = prop_str(block, "IdLabel");
@@ -120,16 +122,16 @@ static XdUdisksFs *fs_new(GDBusObject *o, GDBusProxy *block, GDBusProxy *fsi) {
 typedef gboolean (*fs_match)(GDBusProxy *block, GDBusProxy *fsi, gconstpointer want);
 
 static XdUdisksFs *find_fs(fs_match match, gconstpointer want) {
-    GDBusObjectManager *m = xd_udisks_manager();
-    if (m == nullptr)
+    GDBusObjectManager *object_manager = xd_udisks_manager();
+    if (object_manager == nullptr)
         return nullptr;
     XdUdisksFs *found = nullptr;
-    GList *objects = g_dbus_object_manager_get_objects(m);
-    for (GList *l = objects; l != nullptr && found == nullptr; l = l->next) {
-        GDBusProxy *block = iface_of(l->data, UD_BLOCK);
-        GDBusProxy *fsi = iface_of(l->data, XD_UDISKS_FILESYSTEM);
+    GList *objects = g_dbus_object_manager_get_objects(object_manager);
+    for (GList *list = objects; list != nullptr && found == nullptr; list = list->next) {
+        GDBusProxy *block = iface_of(list->data, UD_BLOCK);
+        GDBusProxy *fsi = iface_of(list->data, XD_UDISKS_FILESYSTEM);
         if (block != nullptr && fsi != nullptr && match(block, fsi, want))
-            found = fs_new(l->data, block, fsi);
+            found = fs_new(list->data, block, fsi);
         g_clear_object(&block);
         g_clear_object(&fsi);
     }
@@ -207,90 +209,94 @@ XdUdisksFs *xd_udisks_fs_for(GFile *item) {
 
 /* ---- drives ---- */
 
-static void drive_free(gpointer p) {
-    XdUdisksDrive *d = p;
-    g_free(d->object);
-    g_free(d->name);
-    g_free(d->type);
-    g_free(d->vendor);
-    g_free(d->model);
-    g_free(d->revision);
-    g_free(d->serial);
-    g_free(d->bus);
-    g_free(d->device);
-    g_free(d->table);
-    g_free(d->sort_key);
-    g_free(d);
+static void drive_free(gpointer user_data) {
+    XdUdisksDrive *udisks_drive = user_data;
+    g_free(udisks_drive->object);
+    g_free(udisks_drive->name);
+    g_free(udisks_drive->type);
+    g_free(udisks_drive->vendor);
+    g_free(udisks_drive->model);
+    g_free(udisks_drive->revision);
+    g_free(udisks_drive->serial);
+    g_free(udisks_drive->bus);
+    g_free(udisks_drive->device);
+    g_free(udisks_drive->table);
+    g_free(udisks_drive->sort_key);
+    g_free(udisks_drive);
 }
 
-static gint by_sort_key(gconstpointer a, gconstpointer b) {
-    const XdUdisksDrive *x = *(XdUdisksDrive *const *)a, *y = *(XdUdisksDrive *const *)b;
-    return g_strcmp0(x->sort_key, y->sort_key);
+static gint by_sort_key(gconstpointer left, gconstpointer right) {
+    const XdUdisksDrive *left_drive = *(XdUdisksDrive *const *)left,
+                        *right_drive = *(XdUdisksDrive *const *)right;
+    return g_strcmp0(left_drive->sort_key, right_drive->sort_key);
 }
 
 GPtrArray *xd_udisks_drives(void) {
     GPtrArray *out = g_ptr_array_new_with_free_func(drive_free);
-    GDBusObjectManager *m = xd_udisks_manager();
-    if (m == nullptr)
+    GDBusObjectManager *object_manager = xd_udisks_manager();
+    if (object_manager == nullptr)
         return out;
-    GList *objects = g_dbus_object_manager_get_objects(m);
+    GList *objects = g_dbus_object_manager_get_objects(object_manager);
     GHashTable *by_path = g_hash_table_new(g_str_hash, g_str_equal);
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *drive = iface_of(l->data, UD_DRIVE);
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *drive = iface_of(list->data, UD_DRIVE);
         if (drive == nullptr)
             continue;
-        XdUdisksDrive *d = g_new0(XdUdisksDrive, 1);
-        d->object = g_strdup(g_dbus_object_get_object_path(l->data));
-        d->vendor = prop_str(drive, "Vendor");
-        d->model = prop_str(drive, "Model");
-        d->revision = prop_str(drive, "Revision");
-        d->serial = prop_str(drive, "Serial");
-        d->bus = prop_str(drive, "ConnectionBus");
-        d->size = prop_u64(drive, "Size");
-        d->rotation = prop_int(drive, "RotationRate", -1);
-        d->removable = prop_bool(drive, "Removable") || prop_bool(drive, "MediaRemovable");
-        d->optical = prop_bool(drive, "Optical");
+        XdUdisksDrive *udisks_drive = g_new0(XdUdisksDrive, 1);
+        udisks_drive->object = g_strdup(g_dbus_object_get_object_path(list->data));
+        udisks_drive->vendor = prop_str(drive, "Vendor");
+        udisks_drive->model = prop_str(drive, "Model");
+        udisks_drive->revision = prop_str(drive, "Revision");
+        udisks_drive->serial = prop_str(drive, "Serial");
+        udisks_drive->bus = prop_str(drive, "ConnectionBus");
+        udisks_drive->size = prop_u64(drive, "Size");
+        udisks_drive->rotation = prop_int(drive, "RotationRate", -1);
+        udisks_drive->removable =
+            prop_bool(drive, "Removable") || prop_bool(drive, "MediaRemovable");
+        udisks_drive->optical = prop_bool(drive, "Optical");
         g_auto(GStrv) compat = nullptr;
-        if (!d->optical) {
+        if (!udisks_drive->optical) {
             /* An empty DVD drive isn't "Optical" (that's the disc). */
-            GVariant *v = g_dbus_proxy_get_cached_property(drive, "MediaCompatibility");
-            if (v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING_ARRAY))
-                compat = g_variant_dup_strv(v, nullptr);
-            g_clear_pointer(&v, g_variant_unref);
-            for (char **c = compat; c != nullptr && *c != nullptr; c++)
-                d->optical = d->optical || g_str_has_prefix(*c, "optical");
+            GVariant *variant = g_dbus_proxy_get_cached_property(drive, "MediaCompatibility");
+            if (variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING_ARRAY))
+                compat = g_variant_dup_strv(variant, nullptr);
+            g_clear_pointer(&variant, g_variant_unref);
+            for (char **compat_entry = compat; compat_entry != nullptr && *compat_entry != nullptr;
+                 compat_entry++)
+                udisks_drive->optical =
+                    udisks_drive->optical || g_str_has_prefix(*compat_entry, "optical");
         }
-        d->sort_key = prop_str(drive, "SortKey");
-        d->type = g_strdup(d->optical ? "DVD/CD-ROM drives" : "Disk drives");
-        GString *name = g_string_new(d->vendor);
-        if (d->model[0] != '\0')
-            g_string_append_printf(name, "%s%s", name->len > 0 ? " " : "", d->model);
+        udisks_drive->sort_key = prop_str(drive, "SortKey");
+        udisks_drive->type = g_strdup(udisks_drive->optical ? "DVD/CD-ROM drives" : "Disk drives");
+        GString *name = g_string_new(udisks_drive->vendor);
+        if (udisks_drive->model[0] != '\0')
+            g_string_append_printf(name, "%s%s", name->len > 0 ? " " : "", udisks_drive->model);
         if (name->len == 0)
-            g_string_append(name, d->optical ? "CD-ROM Drive" : "Disk drive");
+            g_string_append(name, udisks_drive->optical ? "CD-ROM Drive" : "Disk drive");
         /* XP names a USB disk "<model> USB Device". */
-        if (strcmp(d->bus, "usb") == 0)
+        if (strcmp(udisks_drive->bus, "usb") == 0)
             g_string_append(name, " USB Device");
-        d->name = g_string_free(name, FALSE);
-        d->device = g_strdup("");
-        d->table = g_strdup("");
-        g_hash_table_insert(by_path, d->object, d);
-        g_ptr_array_add(out, d);
+        udisks_drive->name = g_string_free(name, FALSE);
+        udisks_drive->device = g_strdup("");
+        udisks_drive->table = g_strdup("");
+        g_hash_table_insert(by_path, udisks_drive->object, udisks_drive);
+        g_ptr_array_add(out, udisks_drive);
         g_object_unref(drive);
     }
     /* Each drive's own block device: the one that isn't a partition. */
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *block = iface_of(l->data, UD_BLOCK);
-        GDBusProxy *part = iface_of(l->data, UD_PART);
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *block = iface_of(list->data, UD_BLOCK);
+        GDBusProxy *part = iface_of(list->data, UD_PART);
         if (block != nullptr && part == nullptr) {
             g_autofree char *drive = prop_str(block, "Drive");
-            XdUdisksDrive *d = g_hash_table_lookup(by_path, drive);
-            if (d != nullptr && d->device[0] == '\0') {
-                g_free(d->device);
-                d->device = prop_str(block, "Device");
-                GDBusProxy *table = iface_of(l->data, UD_TABLE);
+            XdUdisksDrive *udisks_drive = g_hash_table_lookup(by_path, drive);
+            if (udisks_drive != nullptr && udisks_drive->device[0] == '\0') {
+                g_free(udisks_drive->device);
+                udisks_drive->device = prop_str(block, "Device");
+                GDBusProxy *table = iface_of(list->data, UD_TABLE);
                 if (table != nullptr) {
-                    g_free(d->table);
-                    d->table = prop_str(table, "Type");
+                    g_free(udisks_drive->table);
+                    udisks_drive->table = prop_str(table, "Type");
                     g_object_unref(table);
                 }
             }
@@ -304,36 +310,37 @@ GPtrArray *xd_udisks_drives(void) {
     return out;
 }
 
-static void volume_free(gpointer p) {
-    XdUdisksVolume *v = p;
-    g_free(v->device);
-    g_free(v->label);
-    g_free(v->type);
-    g_free(v);
+static void volume_free(gpointer user_data) {
+    XdUdisksVolume *udisks_volume = user_data;
+    g_free(udisks_volume->device);
+    g_free(udisks_volume->label);
+    g_free(udisks_volume->type);
+    g_free(udisks_volume);
 }
 
-static gint by_device(gconstpointer a, gconstpointer b) {
-    const XdUdisksVolume *x = *(XdUdisksVolume *const *)a, *y = *(XdUdisksVolume *const *)b;
-    return g_strcmp0(x->device, y->device);
+static gint by_device(gconstpointer left, gconstpointer right) {
+    const XdUdisksVolume *left_volume = *(XdUdisksVolume *const *)left,
+                         *right_volume = *(XdUdisksVolume *const *)right;
+    return g_strcmp0(left_volume->device, right_volume->device);
 }
 
 GPtrArray *xd_udisks_volumes(const char *drive_object) {
     GPtrArray *out = g_ptr_array_new_with_free_func(volume_free);
-    GDBusObjectManager *m = xd_udisks_manager();
-    if (m == nullptr || drive_object == nullptr)
+    GDBusObjectManager *object_manager = xd_udisks_manager();
+    if (object_manager == nullptr || drive_object == nullptr)
         return out;
-    GList *objects = g_dbus_object_manager_get_objects(m);
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *block = iface_of(l->data, UD_BLOCK);
-        GDBusProxy *fsi = iface_of(l->data, XD_UDISKS_FILESYSTEM);
+    GList *objects = g_dbus_object_manager_get_objects(object_manager);
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *block = iface_of(list->data, UD_BLOCK);
+        GDBusProxy *fsi = iface_of(list->data, XD_UDISKS_FILESYSTEM);
         g_autofree char *drive = block != nullptr ? prop_str(block, "Drive") : nullptr;
         if (fsi != nullptr && g_strcmp0(drive, drive_object) == 0) {
-            XdUdisksVolume *v = g_new0(XdUdisksVolume, 1);
-            v->device = prop_str(block, "Device");
-            v->label = prop_str(block, "IdLabel");
-            v->type = prop_str(block, "IdType");
-            v->size = prop_u64(block, "Size");
-            g_ptr_array_add(out, v);
+            XdUdisksVolume *udisks_volume = g_new0(XdUdisksVolume, 1);
+            udisks_volume->device = prop_str(block, "Device");
+            udisks_volume->label = prop_str(block, "IdLabel");
+            udisks_volume->type = prop_str(block, "IdType");
+            udisks_volume->size = prop_u64(block, "Size");
+            g_ptr_array_add(out, udisks_volume);
         }
         g_clear_object(&block);
         g_clear_object(&fsi);
@@ -345,72 +352,75 @@ GPtrArray *xd_udisks_volumes(const char *drive_object) {
 
 /* ---- encrypted volumes ---- */
 
-void xd_udisks_crypt_free(XdUdisksCrypt *c) {
-    if (c == nullptr)
+void xd_udisks_crypt_free(XdUdisksCrypt *udisks_crypt) {
+    if (udisks_crypt == nullptr)
         return;
-    g_free(c->object);
-    g_free(c->drive);
-    g_free(c->device);
-    g_free(c->uuid);
-    g_free(c->label);
-    g_free(c->version);
-    g_free(c->cleartext);
-    g_free(c->inner_label);
-    g_free(c->mount_point);
-    g_free(c);
+    g_free(udisks_crypt->object);
+    g_free(udisks_crypt->drive);
+    g_free(udisks_crypt->device);
+    g_free(udisks_crypt->uuid);
+    g_free(udisks_crypt->label);
+    g_free(udisks_crypt->version);
+    g_free(udisks_crypt->cleartext);
+    g_free(udisks_crypt->inner_label);
+    g_free(udisks_crypt->mount_point);
+    g_free(udisks_crypt);
 }
 
-static void crypt_free(gpointer p) { xd_udisks_crypt_free(p); }
+static void crypt_free(gpointer user_data) { xd_udisks_crypt_free(user_data); }
 
-static gint by_crypt_device(gconstpointer a, gconstpointer b) {
-    const XdUdisksCrypt *x = *(XdUdisksCrypt *const *)a, *y = *(XdUdisksCrypt *const *)b;
-    return g_strcmp0(x->device, y->device);
+static gint by_crypt_device(gconstpointer left, gconstpointer right) {
+    const XdUdisksCrypt *left_crypt = *(XdUdisksCrypt *const *)left,
+                        *right_crypt = *(XdUdisksCrypt *const *)right;
+    return g_strcmp0(left_crypt->device, right_crypt->device);
 }
 
 GPtrArray *xd_udisks_encrypted(void) {
     GPtrArray *out = g_ptr_array_new_with_free_func(crypt_free);
-    GDBusObjectManager *m = xd_udisks_manager();
-    if (m == nullptr)
+    GDBusObjectManager *object_manager = xd_udisks_manager();
+    if (object_manager == nullptr)
         return out;
-    GList *objects = g_dbus_object_manager_get_objects(m);
-    for (GList *l = objects; l != nullptr; l = l->next) {
-        GDBusProxy *enc = iface_of(l->data, XD_UDISKS_ENCRYPTED);
-        GDBusProxy *block = iface_of(l->data, UD_BLOCK);
+    GList *objects = g_dbus_object_manager_get_objects(object_manager);
+    for (GList *list = objects; list != nullptr; list = list->next) {
+        GDBusProxy *enc = iface_of(list->data, XD_UDISKS_ENCRYPTED);
+        GDBusProxy *block = iface_of(list->data, UD_BLOCK);
         if (enc != nullptr && block != nullptr) {
-            XdUdisksCrypt *c = g_new0(XdUdisksCrypt, 1);
-            c->object = g_strdup(g_dbus_object_get_object_path(l->data));
-            c->drive = prop_str(block, "Drive");
-            c->device = prop_str(block, "Device");
-            c->uuid = prop_str(block, "IdUUID");
-            c->label = prop_str(block, "IdLabel");
-            c->version = prop_str(block, "IdVersion");
-            c->size = prop_u64(block, "Size");
-            c->ignore = prop_bool(block, "HintIgnore");
-            c->inner_label = g_strdup("");
-            GDBusInterface *d = g_dbus_object_manager_get_interface(m, c->drive, UD_DRIVE);
-            if (d != nullptr) {
-                c->removable = prop_bool(G_DBUS_PROXY(d), "Removable") ||
-                               prop_bool(G_DBUS_PROXY(d), "MediaRemovable");
-                g_object_unref(d);
+            XdUdisksCrypt *udisks_crypt = g_new0(XdUdisksCrypt, 1);
+            udisks_crypt->object = g_strdup(g_dbus_object_get_object_path(list->data));
+            udisks_crypt->drive = prop_str(block, "Drive");
+            udisks_crypt->device = prop_str(block, "Device");
+            udisks_crypt->uuid = prop_str(block, "IdUUID");
+            udisks_crypt->label = prop_str(block, "IdLabel");
+            udisks_crypt->version = prop_str(block, "IdVersion");
+            udisks_crypt->size = prop_u64(block, "Size");
+            udisks_crypt->ignore = prop_bool(block, "HintIgnore");
+            udisks_crypt->inner_label = g_strdup("");
+            GDBusInterface *drive_interface =
+                g_dbus_object_manager_get_interface(object_manager, udisks_crypt->drive, UD_DRIVE);
+            if (drive_interface != nullptr) {
+                udisks_crypt->removable =
+                    prop_bool(G_DBUS_PROXY(drive_interface), "Removable") ||
+                    prop_bool(G_DBUS_PROXY(drive_interface), "MediaRemovable");
+                g_object_unref(drive_interface);
             }
             g_autofree char *clear = prop_str(enc, "CleartextDevice");
             GDBusObject *co = clear[0] != '\0' && strcmp(clear, "/") != 0
-                                  ? g_dbus_object_manager_get_object(m, clear)
+                                  ? g_dbus_object_manager_get_object(object_manager, clear)
                                   : nullptr;
             if (co != nullptr) {
-                c->cleartext = g_strdup(clear);
+                udisks_crypt->cleartext = g_strdup(clear);
                 GDBusProxy *cb = iface_of(co, UD_BLOCK);
                 GDBusProxy *fsi = iface_of(co, XD_UDISKS_FILESYSTEM);
-                c->has_fs = fsi != nullptr;
-                g_free(c->inner_label);
-                c->inner_label = prop_str(cb, "IdLabel");
+                udisks_crypt->has_fs = fsi != nullptr;
+                g_free(udisks_crypt->inner_label);
+                udisks_crypt->inner_label = prop_str(cb, "IdLabel");
                 g_auto(GStrv) points = prop_strv(fsi, "MountPoints");
-                c->mount_point = g_strdup(points[0]);
+                udisks_crypt->mount_point = g_strdup(points[0]);
                 g_clear_object(&cb);
                 g_clear_object(&fsi);
                 g_object_unref(co);
             }
-            g_ptr_array_add(out, c);
+            g_ptr_array_add(out, udisks_crypt);
         }
         g_clear_object(&enc);
         g_clear_object(&block);
@@ -431,9 +441,9 @@ XdUdisksCrypt *xd_udisks_crypt_for(GFile *item) {
     GPtrArray *all = xd_udisks_encrypted();
     XdUdisksCrypt *found = nullptr;
     for (guint i = 0; i < all->len && found == nullptr; i++) {
-        XdUdisksCrypt *c = g_ptr_array_index(all, i);
-        if ((uuid != nullptr && g_ascii_strcasecmp(c->uuid, uuid) == 0) ||
-            (path != nullptr && g_strcmp0(c->mount_point, path) == 0))
+        XdUdisksCrypt *udisks_crypt = g_ptr_array_index(all, i);
+        if ((uuid != nullptr && g_ascii_strcasecmp(udisks_crypt->uuid, uuid) == 0) ||
+            (path != nullptr && g_strcmp0(udisks_crypt->mount_point, path) == 0))
             found = g_ptr_array_steal_index(all, i);
     }
     g_ptr_array_unref(all);
@@ -441,16 +451,16 @@ XdUdisksCrypt *xd_udisks_crypt_for(GFile *item) {
 }
 
 gboolean xd_udisks_is_crypt_device(const char *device) {
-    GDBusObjectManager *m = xd_udisks_manager();
-    if (m == nullptr || device == nullptr)
+    GDBusObjectManager *object_manager = xd_udisks_manager();
+    if (object_manager == nullptr || device == nullptr)
         return FALSE;
     volume_id id = {device, nullptr};
     gboolean is = FALSE;
-    GList *objects = g_dbus_object_manager_get_objects(m);
-    for (GList *l = objects; l != nullptr && !is; l = l->next) {
-        GDBusProxy *block = iface_of(l->data, UD_BLOCK);
+    GList *objects = g_dbus_object_manager_get_objects(object_manager);
+    for (GList *list = objects; list != nullptr && !is; list = list->next) {
+        GDBusProxy *block = iface_of(list->data, UD_BLOCK);
         if (block != nullptr && is_volume(block, nullptr, &id)) {
-            GDBusProxy *enc = iface_of(l->data, XD_UDISKS_ENCRYPTED);
+            GDBusProxy *enc = iface_of(list->data, XD_UDISKS_ENCRYPTED);
             g_autofree char *backing = prop_str(block, "CryptoBackingDevice");
             is = enc != nullptr || (backing[0] != '\0' && strcmp(backing, "/") != 0);
             g_clear_object(&enc);
@@ -466,9 +476,9 @@ gboolean xd_udisks_is_crypt_device(const char *device) {
 static void call_done(GObject *src, GAsyncResult *res, gpointer data) {
     GTask *task = data;
     GError *err = nullptr;
-    GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
-    if (r != nullptr)
-        g_task_return_pointer(task, r, (GDestroyNotify)g_variant_unref);
+    GVariant *variant = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+    if (variant != nullptr)
+        g_task_return_pointer(task, variant, (GDestroyNotify)g_variant_unref);
     else
         g_task_return_error(task, err);
     g_object_unref(task);
@@ -476,9 +486,9 @@ static void call_done(GObject *src, GAsyncResult *res, gpointer data) {
 
 void xd_udisks_call(const char *object, const char *iface, const char *method, GVariant *args,
                     GCancellable *cancel, GAsyncReadyCallback done, gpointer data) {
-    GDBusObjectManager *m = xd_udisks_manager();
+    GDBusObjectManager *object_manager = xd_udisks_manager();
     GTask *task = g_task_new(nullptr, cancel, done, data);
-    if (m == nullptr) {
+    if (object_manager == nullptr) {
         if (args != nullptr)
             g_variant_unref(g_variant_ref_sink(args));
         g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
@@ -487,39 +497,38 @@ void xd_udisks_call(const char *object, const char *iface, const char *method, G
         return;
     }
     GDBusConnection *bus =
-        g_dbus_object_manager_client_get_connection(G_DBUS_OBJECT_MANAGER_CLIENT(m));
+        g_dbus_object_manager_client_get_connection(G_DBUS_OBJECT_MANAGER_CLIENT(object_manager));
     g_dbus_connection_call(bus, UD, object, iface, method, args, nullptr,
                            G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, cancel,
                            call_done, task);
 }
 
 GVariant *xd_udisks_call_finish(GAsyncResult *res, char **dbus_error, GError **err) {
-    GError *e = nullptr;
-    GVariant *r = g_task_propagate_pointer(G_TASK(res), &e);
+    GError *error = nullptr;
+    GVariant *variant = g_task_propagate_pointer(G_TASK(res), &error);
     if (dbus_error != nullptr)
-        *dbus_error = e != nullptr ? g_dbus_error_get_remote_error(e) : nullptr;
-    if (e != nullptr) {
-        g_dbus_error_strip_remote_error(e);
-        g_propagate_error(err, e);
+        *dbus_error = error != nullptr ? g_dbus_error_get_remote_error(error) : nullptr;
+    if (error != nullptr) {
+        g_dbus_error_strip_remote_error(error);
+        g_propagate_error(err, error);
     }
-    return r;
+    return variant;
 }
 
 gboolean xd_udisks_can(const char *what, const char *fs_type) {
-    GDBusObjectManager *m = xd_udisks_manager();
-    if (m == nullptr || fs_type == nullptr || fs_type[0] == '\0')
+    GDBusObjectManager *object_manager = xd_udisks_manager();
+    if (object_manager == nullptr || fs_type == nullptr || fs_type[0] == '\0')
         return FALSE;
     GDBusConnection *bus =
-        g_dbus_object_manager_client_get_connection(G_DBUS_OBJECT_MANAGER_CLIENT(m));
+        g_dbus_object_manager_client_get_connection(G_DBUS_OBJECT_MANAGER_CLIENT(object_manager));
     /* Quick: UDisks2 only looks for the program it would run. */
-    GVariant *r = g_dbus_connection_call_sync(bus, UD, UD_PATH "/Manager", UD ".Manager", what,
-                                              g_variant_new("(s)", fs_type),
-                                              G_VARIANT_TYPE("((bs))"), G_DBUS_CALL_FLAGS_NONE,
-                                              5000, nullptr, nullptr);
+    GVariant *variant = g_dbus_connection_call_sync(
+        bus, UD, UD_PATH "/Manager", UD ".Manager", what, g_variant_new("(s)", fs_type),
+        G_VARIANT_TYPE("((bs))"), G_DBUS_CALL_FLAGS_NONE, 5000, nullptr, nullptr);
     gboolean can = FALSE;
-    if (r != nullptr) {
-        g_variant_get(r, "((bs))", &can, nullptr);
-        g_variant_unref(r);
+    if (variant != nullptr) {
+        g_variant_get(variant, "((bs))", &can, nullptr);
+        g_variant_unref(variant);
     }
     return can;
 }

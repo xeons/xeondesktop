@@ -21,35 +21,37 @@ static gboolean run(const char *program, const char *const *args, gboolean conf_
                     int *status, char **out, char **messages, GError **err) {
     const char *conf = g_getenv("XD_SMB_CONF");
     gboolean test_conf = conf != nullptr && conf[0] != '\0';
-    GStrvBuilder *b = g_strv_builder_new();
-    g_strv_builder_add(b, program);
+    GStrvBuilder *builder = g_strv_builder_new();
+    g_strv_builder_add(builder, program);
     if (test_conf && !conf_last)
-        g_strv_builder_add_many(b, "-s", conf, nullptr);
+        g_strv_builder_add_many(builder, "-s", conf, nullptr);
     for (; *args != nullptr; args++)
-        g_strv_builder_add(b, *args);
+        g_strv_builder_add(builder, *args);
     if (test_conf && conf_last)
-        g_strv_builder_add(b, conf);
-    GStrv argv = g_strv_builder_end(b);
-    g_strv_builder_unref(b);
-    GSubprocessLauncher *l = g_subprocess_launcher_new(
+        g_strv_builder_add(builder, conf);
+    GStrv argv = g_strv_builder_end(builder);
+    g_strv_builder_unref(builder);
+    GSubprocessLauncher *subprocess_launcher = g_subprocess_launcher_new(
         (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_PIPE));
-    g_subprocess_launcher_setenv(l, "LC_ALL", "C", TRUE);
-    GSubprocess *p = g_subprocess_launcher_spawnv(l, (const char *const *)argv, err);
-    g_object_unref(l);
+    g_subprocess_launcher_setenv(subprocess_launcher, "LC_ALL", "C", TRUE);
+    GSubprocess *process =
+        g_subprocess_launcher_spawnv(subprocess_launcher, (const char *const *)argv, err);
+    g_object_unref(subprocess_launcher);
     g_strfreev(argv);
-    if (p == nullptr)
+    if (process == nullptr)
         return FALSE;
-    char *o = nullptr, *e = nullptr;
-    gboolean ok = g_subprocess_communicate_utf8(p, nullptr, nullptr, &o, &e, err);
+    char *stdout_text = nullptr, *stderr_text = nullptr;
+    gboolean ok =
+        g_subprocess_communicate_utf8(process, nullptr, nullptr, &stdout_text, &stderr_text, err);
     if (ok) {
-        *status = g_subprocess_get_if_exited(p) ? g_subprocess_get_exit_status(p) : -1;
-        *out = o != nullptr ? o : g_strdup("");
+        *status = g_subprocess_get_if_exited(process) ? g_subprocess_get_exit_status(process) : -1;
+        *out = stdout_text != nullptr ? stdout_text : g_strdup("");
         if (messages != nullptr)
-            *messages = g_strstrip(e != nullptr ? e : g_strdup(""));
+            *messages = g_strstrip(stderr_text != nullptr ? stderr_text : g_strdup(""));
         else
-            g_free(e);
+            g_free(stderr_text);
     }
-    g_object_unref(p);
+    g_object_unref(process);
     return ok;
 }
 
@@ -62,23 +64,23 @@ static gboolean have_net(void) {
 
 /* ---- the shares ------------------------------------------------------------------- */
 
-static void share_free(gpointer p) {
-    XdUsershare *s = p;
-    g_free(s->name);
-    g_free(s->path);
-    g_free(s->comment);
-    g_free(s);
+static void share_free(gpointer user_data) {
+    XdUsershare *usershare = user_data;
+    g_free(usershare->name);
+    g_free(usershare->path);
+    g_free(usershare->comment);
+    g_free(usershare);
 }
 
 /* An ACL as `net` writes it, "S-1-1-0:F,": whether everyone may write. */
 static gboolean acl_writable(const char *acl) {
     gboolean writable = FALSE;
     char **entries = g_strsplit(acl != nullptr ? acl : "", ",", -1);
-    for (char **e = entries; *e != nullptr; e++) {
-        const char *colon = strrchr(*e, ':');
+    for (char **acl_entry = entries; *acl_entry != nullptr; acl_entry++) {
+        const char *colon = strrchr(*acl_entry, ':');
         if (colon == nullptr)
             continue;
-        char *who = g_strstrip(g_strndup(*e, (gsize)(colon - *e)));
+        char *who = g_strstrip(g_strndup(*acl_entry, (gsize)(colon - *acl_entry)));
         if ((strcmp(who, EVERYONE_SID) == 0 || g_ascii_strcasecmp(who, "Everyone") == 0) &&
             g_ascii_toupper(colon[1]) == 'F')
             writable = TRUE;
@@ -94,24 +96,24 @@ GPtrArray *xd_usershare_parse_info(const char *text) {
     if (text != nullptr &&
         g_key_file_load_from_data(kf, text, (gsize)-1, G_KEY_FILE_NONE, nullptr)) {
         char **groups = g_key_file_get_groups(kf, nullptr);
-        for (char **g = groups; *g != nullptr; g++) {
+        for (char **group_name = groups; *group_name != nullptr; group_name++) {
             /* Raw values: a path's backslashes aren't escapes. */
-            char *path = g_key_file_get_value(kf, *g, "path", nullptr);
+            char *path = g_key_file_get_value(kf, *group_name, "path", nullptr);
             if (path == nullptr)
                 continue;
-            XdUsershare *s = g_new0(XdUsershare, 1);
-            s->name = g_strdup(*g);
-            s->path = path;
-            s->comment = g_key_file_get_value(kf, *g, "comment", nullptr);
-            if (s->comment == nullptr)
-                s->comment = g_strdup("");
-            char *acl = g_key_file_get_value(kf, *g, "usershare_acl", nullptr);
-            s->writable = acl_writable(acl);
+            XdUsershare *usershare = g_new0(XdUsershare, 1);
+            usershare->name = g_strdup(*group_name);
+            usershare->path = path;
+            usershare->comment = g_key_file_get_value(kf, *group_name, "comment", nullptr);
+            if (usershare->comment == nullptr)
+                usershare->comment = g_strdup("");
+            char *acl = g_key_file_get_value(kf, *group_name, "usershare_acl", nullptr);
+            usershare->writable = acl_writable(acl);
             g_free(acl);
-            char *guest = g_key_file_get_value(kf, *g, "guest_ok", nullptr);
-            s->guest_ok = guest != nullptr && g_ascii_tolower(guest[0]) == 'y';
+            char *guest = g_key_file_get_value(kf, *group_name, "guest_ok", nullptr);
+            usershare->guest_ok = guest != nullptr && g_ascii_tolower(guest[0]) == 'y';
             g_free(guest);
-            g_ptr_array_add(out, s);
+            g_ptr_array_add(out, usershare);
         }
         g_strfreev(groups);
     }
@@ -207,9 +209,9 @@ GPtrArray *xd_usershare_probe(XdUsershareStatus *status, char **detail) {
 
 const XdUsershare *xd_usershare_find(GPtrArray *shares, const char *path) {
     for (guint i = 0; shares != nullptr && i < shares->len; i++) {
-        const XdUsershare *s = g_ptr_array_index(shares, i);
-        if (g_strcmp0(s->path, path) == 0)
-            return s;
+        const XdUsershare *usershare = g_ptr_array_index(shares, i);
+        if (g_strcmp0(usershare->path, path) == 0)
+            return usershare;
     }
     return nullptr;
 }
@@ -265,8 +267,8 @@ const char *xd_usershare_name_problem(const char *name) {
     /* Windows' reserved characters, and Samba's own (%). */
     if (strpbrk(name, "\"/\\[]:|<>+=;,?*%") != nullptr)
         return "The share name contains invalid characters.";
-    for (const char *c = name; *c != '\0'; c++)
-        if ((unsigned char)*c < 0x20)
+    for (const char *cursor = name; *cursor != '\0'; cursor++)
+        if ((unsigned char)*cursor < 0x20)
             return "The share name contains invalid characters.";
     return nullptr;
 }
@@ -332,20 +334,20 @@ static GSList *watchers;
 static void start_listing(void);
 
 static void listed(GObject *src, GAsyncResult *res, [[maybe_unused]] gpointer data) {
-    GSubprocess *p = G_SUBPROCESS(src);
+    GSubprocess *process = G_SUBPROCESS(src);
     char *out = nullptr;
     GHashTable *paths = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    if (g_subprocess_communicate_utf8_finish(p, res, &out, nullptr, nullptr) &&
-        g_subprocess_get_if_exited(p) && g_subprocess_get_exit_status(p) == 0) {
+    if (g_subprocess_communicate_utf8_finish(process, res, &out, nullptr, nullptr) &&
+        g_subprocess_get_if_exited(process) && g_subprocess_get_exit_status(process) == 0) {
         GPtrArray *shares = xd_usershare_parse_info(out);
         for (guint i = 0; i < shares->len; i++) {
-            XdUsershare *s = g_ptr_array_index(shares, i);
-            g_hash_table_add(paths, g_strdup(s->path));
+            XdUsershare *usershare = g_ptr_array_index(shares, i);
+            g_hash_table_add(paths, g_strdup(usershare->path));
         }
         g_ptr_array_unref(shares);
     }
     g_free(out);
-    g_object_unref(p);
+    g_object_unref(process);
     gboolean changed = shared_paths == nullptr ||
                        g_hash_table_size(paths) != g_hash_table_size(shared_paths);
     GHashTableIter it;
@@ -358,9 +360,9 @@ static void listed(GObject *src, GAsyncResult *res, [[maybe_unused]] gpointer da
     listed_at = g_get_monotonic_time();
     listing = FALSE;
     if (changed)
-        for (GSList *l = watchers; l != nullptr; l = l->next) {
-            watcher *w = l->data;
-            w->changed(w->data);
+        for (GSList *list = watchers; list != nullptr; list = list->next) {
+            watcher *watch = list->data;
+            watch->changed(watch->data);
         }
     if (list_again) {
         list_again = FALSE;
@@ -378,21 +380,22 @@ static void start_listing(void) {
         return;
     }
     const char *conf = g_getenv("XD_SMB_CONF");
-    GSubprocessLauncher *l = g_subprocess_launcher_new(
+    GSubprocessLauncher *subprocess_launcher = g_subprocess_launcher_new(
         (GSubprocessFlags)(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE));
-    g_subprocess_launcher_setenv(l, "LC_ALL", "C", TRUE);
-    GSubprocess *p = conf != nullptr && conf[0] != '\0'
-                         ? g_subprocess_launcher_spawn(l, nullptr, "net", "-s", conf, "usershare",
-                                                       "info", nullptr)
-                         : g_subprocess_launcher_spawn(l, nullptr, "net", "usershare", "info",
-                                                       nullptr);
-    g_object_unref(l);
-    if (p == nullptr) {
+    g_subprocess_launcher_setenv(subprocess_launcher, "LC_ALL", "C", TRUE);
+    GSubprocess *process =
+        conf != nullptr && conf[0] != '\0'
+            ? g_subprocess_launcher_spawn(subprocess_launcher, nullptr, "net", "-s", conf,
+                                          "usershare", "info", nullptr)
+            : g_subprocess_launcher_spawn(subprocess_launcher, nullptr, "net", "usershare", "info",
+                                          nullptr);
+    g_object_unref(subprocess_launcher);
+    if (process == nullptr) {
         listed_at = g_get_monotonic_time();
         return;
     }
     listing = TRUE;
-    g_subprocess_communicate_utf8_async(p, nullptr, nullptr, listed, nullptr);
+    g_subprocess_communicate_utf8_async(process, nullptr, nullptr, listed, nullptr);
 }
 
 GHashTable *xd_usershare_shared_paths(void) {
@@ -403,18 +406,18 @@ GHashTable *xd_usershare_shared_paths(void) {
 }
 
 void xd_usershare_watch(void (*changed)(gpointer data), gpointer data) {
-    watcher *w = g_new(watcher, 1);
-    w->changed = changed;
-    w->data = data;
-    watchers = g_slist_prepend(watchers, w);
+    watcher *watch = g_new(watcher, 1);
+    watch->changed = changed;
+    watch->data = data;
+    watchers = g_slist_prepend(watchers, watch);
 }
 
 void xd_usershare_unwatch(gpointer data) {
-    for (GSList *l = watchers; l != nullptr; l = l->next) {
-        watcher *w = l->data;
-        if (w->data == data) {
-            watchers = g_slist_delete_link(watchers, l);
-            g_free(w);
+    for (GSList *list = watchers; list != nullptr; list = list->next) {
+        watcher *watch = list->data;
+        if (watch->data == data) {
+            watchers = g_slist_delete_link(watchers, list);
+            g_free(watch);
             return;
         }
     }

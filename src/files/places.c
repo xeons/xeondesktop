@@ -17,12 +17,12 @@
 
 /* ---- locations ------------------------------------------------------------------ */
 
-static gboolean has_uri(GFile *f, const char *uri) {
-    if (f == nullptr)
+static gboolean has_uri(GFile *file, const char *uri) {
+    if (file == nullptr)
         return FALSE;
-    char *u = g_file_get_uri(f);
-    gboolean same = g_str_equal(u, uri);
-    g_free(u);
+    char *file_uri = g_file_get_uri(file);
+    gboolean same = g_str_equal(file_uri, uri);
+    g_free(file_uri);
     return same;
 }
 
@@ -51,8 +51,8 @@ const char *xd_place_title(GFile *location) {
     case XD_PLACE_TRASH:
         return "Recycle Bin";
     case XD_PLACE_CONTROL: {
-        const XdControlCategory *c = xd_control_page(location);
-        return c != nullptr ? c->title : "Control Panel";
+        const XdControlCategory *control_category = xd_control_page(location);
+        return control_category != nullptr ? control_category->title : "Control Panel";
     }
     case XD_PLACE_NETWORK:
         return has_uri(location, XD_ENTIRE_NETWORK_URI) ? "Entire Network" : "My Network Places";
@@ -71,8 +71,8 @@ const char *xd_place_icon(GFile *location) {
     case XD_PLACE_TRASH:
         return xd_trash_is_empty() ? "user-trash" : "user-trash-full";
     case XD_PLACE_CONTROL: {
-        const XdControlCategory *c = xd_control_page(location);
-        return c != nullptr ? c->icon : "preferences-system";
+        const XdControlCategory *control_category = xd_control_page(location);
+        return control_category != nullptr ? control_category->icon : "preferences-system";
     }
     case XD_PLACE_NETWORK:
         return "network-workgroup";
@@ -82,45 +82,47 @@ const char *xd_place_icon(GFile *location) {
     return "folder";
 }
 
-static GFile *control_page_file(const XdControlCategory *c) {
-    char *uri = g_strconcat(XD_CONTROL_URI, c->key, nullptr);
-    GFile *f = g_file_new_for_uri(uri);
+static GFile *control_page_file(const XdControlCategory *control_category) {
+    char *uri = g_strconcat(XD_CONTROL_URI, control_category->key, nullptr);
+    GFile *file = g_file_new_for_uri(uri);
     g_free(uri);
-    return f;
+    return file;
 }
 
 GFile *xd_place_parse(const char *text) {
-    char *t = g_strstrip(g_strdup(text));
-    GFile *f = nullptr;
-    if (g_ascii_strcasecmp(t, "My Computer") == 0 || g_ascii_strcasecmp(t, "computer:") == 0 ||
-        g_ascii_strcasecmp(t, XD_COMPUTER_URI) == 0) {
-        f = xd_place_computer();
-    } else if (g_ascii_strcasecmp(t, "Recycle Bin") == 0 || g_ascii_strcasecmp(t, "trash:") == 0 ||
-               g_ascii_strcasecmp(t, XD_TRASH_URI) == 0) {
-        f = xd_place_trash();
-    } else if (g_ascii_strcasecmp(t, "Control Panel") == 0 ||
-               g_ascii_strcasecmp(t, "control:") == 0 ||
-               g_ascii_strcasecmp(t, XD_CONTROL_URI) == 0) {
-        f = xd_place_control();
-    } else if (g_ascii_strcasecmp(t, "My Network Places") == 0 ||
-               g_ascii_strcasecmp(t, "network:") == 0) {
-        f = g_file_new_for_uri(XD_NETWORK_URI);
-    } else if (g_ascii_strcasecmp(t, "Entire Network") == 0) {
-        f = g_file_new_for_uri(XD_ENTIRE_NETWORK_URI);
+    char *trimmed = g_strstrip(g_strdup(text));
+    GFile *file = nullptr;
+    if (g_ascii_strcasecmp(trimmed, "My Computer") == 0 ||
+        g_ascii_strcasecmp(trimmed, "computer:") == 0 ||
+        g_ascii_strcasecmp(trimmed, XD_COMPUTER_URI) == 0) {
+        file = xd_place_computer();
+    } else if (g_ascii_strcasecmp(trimmed, "Recycle Bin") == 0 ||
+               g_ascii_strcasecmp(trimmed, "trash:") == 0 ||
+               g_ascii_strcasecmp(trimmed, XD_TRASH_URI) == 0) {
+        file = xd_place_trash();
+    } else if (g_ascii_strcasecmp(trimmed, "Control Panel") == 0 ||
+               g_ascii_strcasecmp(trimmed, "control:") == 0 ||
+               g_ascii_strcasecmp(trimmed, XD_CONTROL_URI) == 0) {
+        file = xd_place_control();
+    } else if (g_ascii_strcasecmp(trimmed, "My Network Places") == 0 ||
+               g_ascii_strcasecmp(trimmed, "network:") == 0) {
+        file = g_file_new_for_uri(XD_NETWORK_URI);
+    } else if (g_ascii_strcasecmp(trimmed, "Entire Network") == 0) {
+        file = g_file_new_for_uri(XD_ENTIRE_NETWORK_URI);
     } else {
         /* A category's page, by its address or its name. */
-        const char *key = g_ascii_strncasecmp(t, XD_CONTROL_URI, strlen(XD_CONTROL_URI)) == 0
-                              ? t + strlen(XD_CONTROL_URI)
+        const char *key = g_ascii_strncasecmp(trimmed, XD_CONTROL_URI, strlen(XD_CONTROL_URI)) == 0
+                              ? trimmed + strlen(XD_CONTROL_URI)
                               : nullptr;
-        for (size_t i = 0; f == nullptr && i < xd_control_category_count; i++) {
-            const XdControlCategory *c = &xd_control_categories[i];
-            if (key != nullptr ? g_ascii_strcasecmp(key, c->key) == 0
-                               : g_ascii_strcasecmp(t, c->title) == 0)
-                f = control_page_file(c);
+        for (size_t i = 0; file == nullptr && i < xd_control_category_count; i++) {
+            const XdControlCategory *control_category = &xd_control_categories[i];
+            if (key != nullptr ? g_ascii_strcasecmp(key, control_category->key) == 0
+                               : g_ascii_strcasecmp(trimmed, control_category->title) == 0)
+                file = control_page_file(control_category);
         }
     }
-    g_free(t);
-    return f;
+    g_free(trimmed);
+    return file;
 }
 
 gboolean xd_place_is_drive_root(GFile *dir) {
@@ -149,45 +151,48 @@ GVolumeMonitor *xd_computer_monitor(void) {
 
 char *xd_format_drive_size(guint64 bytes) {
     static const char *const units[] = {"bytes", "KB", "MB", "GB", "TB", "PB"};
-    double v = (double)bytes;
-    size_t u = 0;
-    while (v >= 1024.0 && u + 1 < G_N_ELEMENTS(units)) {
-        v /= 1024.0;
-        u++;
+    double value = (double)bytes;
+    size_t unit = 0;
+    while (value >= 1024.0 && unit + 1 < G_N_ELEMENTS(units)) {
+        value /= 1024.0;
+        unit++;
     }
     /* Three significant digits, as Windows: 9.81 GB, 98.1 GB, 981 GB. */
-    if (u == 0)
+    if (unit == 0)
         return g_strdup_printf("%" G_GUINT64_FORMAT " bytes", bytes);
-    return g_strdup_printf(v < 10 ? "%.2f %s" : v < 100 ? "%.1f %s" : "%.0f %s", v, units[u]);
+    return g_strdup_printf(value < 10    ? "%.2f %s"
+                           : value < 100 ? "%.1f %s"
+                                         : "%.0f %s",
+                           value, units[unit]);
 }
 
-static void drive_free(gpointer p) {
-    XdDrive *d = p;
-    g_clear_object(&d->root);
-    g_clear_object(&d->icon);
-    g_free(d->name);
-    g_free(d->kind);
-    g_free(d);
+static void drive_free(gpointer user_data) {
+    XdDrive *drive = user_data;
+    g_clear_object(&drive->root);
+    g_clear_object(&drive->icon);
+    g_free(drive->name);
+    g_free(drive->kind);
+    g_free(drive);
 }
 
 static XdDrive *drive_new(GFile *root, const char *name, const char *kind, GIcon *icon) {
-    XdDrive *d = g_new0(XdDrive, 1);
-    d->root = g_object_ref(root);
-    d->name = g_strdup(name);
-    d->kind = g_strdup(kind);
-    d->icon = icon != nullptr ? g_object_ref(icon) : nullptr;
+    XdDrive *drive = g_new0(XdDrive, 1);
+    drive->root = g_object_ref(root);
+    drive->name = g_strdup(name);
+    drive->kind = g_strdup(kind);
+    drive->icon = icon != nullptr ? g_object_ref(icon) : nullptr;
     /* Sizes only for local disks: a network share can take long to ask. */
     if (g_file_is_native(root)) {
         GFileInfo *fs = g_file_query_filesystem_info(
             root, G_FILE_ATTRIBUTE_FILESYSTEM_SIZE "," G_FILE_ATTRIBUTE_FILESYSTEM_FREE, nullptr,
             nullptr);
         if (fs != nullptr) {
-            d->total = g_file_info_get_attribute_uint64(fs, G_FILE_ATTRIBUTE_FILESYSTEM_SIZE);
-            d->free = g_file_info_get_attribute_uint64(fs, G_FILE_ATTRIBUTE_FILESYSTEM_FREE);
+            drive->total = g_file_info_get_attribute_uint64(fs, G_FILE_ATTRIBUTE_FILESYSTEM_SIZE);
+            drive->free = g_file_info_get_attribute_uint64(fs, G_FILE_ATTRIBUTE_FILESYSTEM_FREE);
             g_object_unref(fs);
         }
     }
-    return d;
+    return drive;
 }
 
 static gboolean icon_has(GIcon *icon, const char *word) {
@@ -257,13 +262,15 @@ static GIcon *encrypted_icon(gboolean removable, gboolean locked) {
 static void add_encrypted(GPtrArray *out) {
     GPtrArray *all = xd_udisks_encrypted();
     for (guint i = 0; i < all->len; i++) {
-        const XdUdisksCrypt *c = g_ptr_array_index(all, i);
+        const XdUdisksCrypt *udisks_crypt = g_ptr_array_index(all, i);
         /* Hidden ones, and what holds no file system to open (LVM). */
-        if (c->ignore || (c->cleartext != nullptr && !c->has_fs))
+        if (udisks_crypt->ignore || (udisks_crypt->cleartext != nullptr && !udisks_crypt->has_fs))
             continue;
-        GFile *root = c->mount_point != nullptr ? g_file_new_for_path(c->mount_point) : nullptr;
+        GFile *root = udisks_crypt->mount_point != nullptr
+                          ? g_file_new_for_path(udisks_crypt->mount_point)
+                          : nullptr;
         if (root == nullptr) {
-            char *uri = xd_luks_item_uri(c->uuid);
+            char *uri = xd_luks_item_uri(udisks_crypt->uuid);
             root = g_file_new_for_uri(uri);
             g_free(uri);
         }
@@ -271,12 +278,13 @@ static void add_encrypted(GPtrArray *out) {
         for (guint k = 0; k < out->len && !listed; k++)
             listed = g_file_equal(((XdDrive *)g_ptr_array_index(out, k))->root, root);
         if (!listed) {
-            char *size = xd_format_drive_size(c->size);
-            char *name = xd_luks_volume_name(c->inner_label, c->label, size);
-            GIcon *icon = encrypted_icon(c->removable, c->cleartext == nullptr);
-            g_ptr_array_add(out, drive_new(root, name, c->removable ? "Removable Disk"
-                                                                    : "Local Disk",
-                                           icon));
+            char *size = xd_format_drive_size(udisks_crypt->size);
+            char *name = xd_luks_volume_name(udisks_crypt->inner_label, udisks_crypt->label, size);
+            GIcon *icon =
+                encrypted_icon(udisks_crypt->removable, udisks_crypt->cleartext == nullptr);
+            g_ptr_array_add(
+                out, drive_new(root, name,
+                               udisks_crypt->removable ? "Removable Disk" : "Local Disk", icon));
             g_object_unref(icon);
             g_free(name);
             g_free(size);
@@ -289,28 +297,28 @@ static void add_encrypted(GPtrArray *out) {
 /* Whether a mount's root is `uri` or holds it (a drive mapped to a
  * folder inside a share). */
 static gboolean mounted_at(GList *mounts, const char *uri) {
-    GFile *f = g_file_new_for_uri(uri);
+    GFile *file = g_file_new_for_uri(uri);
     gboolean found = FALSE;
-    for (GList *l = mounts; l != nullptr && !found; l = l->next) {
-        GFile *root = g_mount_get_root(l->data);
+    for (GList *list = mounts; list != nullptr && !found; list = list->next) {
+        GFile *root = g_mount_get_root(list->data);
         char *root_uri = g_file_get_uri(root);
-        found = g_file_equal(root, f) || g_file_has_prefix(f, root) ||
+        found = g_file_equal(root, file) || g_file_has_prefix(file, root) ||
                 xd_net_same_uri(root_uri, uri);
         g_free(root_uri);
         g_object_unref(root);
     }
-    g_object_unref(f);
+    g_object_unref(file);
     return found;
 }
 
 /* XP's network drive with a red X: the icon theme's "unreadable" emblem. */
 static GIcon *disconnected_icon(void) {
     GIcon *base = g_themed_icon_new("folder-remote");
-    GIcon *x = g_themed_icon_new("emblem-unreadable");
-    GEmblem *emblem = g_emblem_new(x);
+    GIcon *emblem_icon = g_themed_icon_new("emblem-unreadable");
+    GEmblem *emblem = g_emblem_new(emblem_icon);
     GIcon *icon = g_emblemed_icon_new(base, emblem);
     g_object_unref(emblem);
-    g_object_unref(x);
+    g_object_unref(emblem_icon);
     g_object_unref(base);
     return icon;
 }
@@ -323,16 +331,16 @@ static void add_disconnected(GPtrArray *out) {
     g_free(config);
     GList *mounts = mapped->len > 0 ? g_volume_monitor_get_mounts(xd_computer_monitor()) : nullptr;
     for (guint i = 0; i < mapped->len; i++) {
-        XdNetDrive *d = g_ptr_array_index(mapped, i);
-        if (!d->reconnect || mounted_at(mounts, d->uri))
+        XdNetDrive *net_drive = g_ptr_array_index(mapped, i);
+        if (!net_drive->reconnect || mounted_at(mounts, net_drive->uri))
             continue;
-        GFile *f = g_file_new_for_uri(d->uri);
-        char *name = xd_net_drive_name(d->uri);
+        GFile *file = g_file_new_for_uri(net_drive->uri);
+        char *name = xd_net_drive_name(net_drive->uri);
         GIcon *icon = disconnected_icon();
-        g_ptr_array_add(out, drive_new(f, name, XD_DISCONNECTED_DRIVE, icon));
+        g_ptr_array_add(out, drive_new(file, name, XD_DISCONNECTED_DRIVE, icon));
         g_object_unref(icon);
         g_free(name);
-        g_object_unref(f);
+        g_object_unref(file);
     }
     g_list_free_full(mounts, g_object_unref);
     g_ptr_array_unref(mapped);
@@ -355,24 +363,24 @@ GPtrArray *xd_computer_drives(void) {
                           ? g_strdup_printf("%s's Documents", real)
                           : g_strdup("My Documents");
     GIcon *docs_icon = g_themed_icon_new("folder-documents");
-    XdDrive *d = drive_new(docs_dir, docs_name, "File Folder", docs_icon);
-    d->total = d->free = 0; /* a folder, not a drive */
-    g_ptr_array_add(out, d);
+    XdDrive *documents = drive_new(docs_dir, docs_name, "File Folder", docs_icon);
+    documents->total = documents->free = 0; /* a folder, not a drive */
+    g_ptr_array_add(out, documents);
     g_object_unref(docs_icon);
     g_free(docs_name);
     g_object_unref(docs_dir);
 
     GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
-    for (GList *l = mounts; l != nullptr; l = l->next) {
-        GMount *m = l->data;
-        if (g_mount_is_shadowed(m))
+    for (GList *list = mounts; list != nullptr; list = list->next) {
+        GMount *mount = list->data;
+        if (g_mount_is_shadowed(mount))
             continue;
-        GFile *root = g_mount_get_root(m);
+        GFile *root = g_mount_get_root(mount);
         if (!g_file_equal(root, slash)) {
-            GIcon *icon = g_mount_get_icon(m);
-            char *gio_name = g_mount_get_name(m);
+            GIcon *icon = g_mount_get_icon(mount);
+            char *gio_name = g_mount_get_name(mount);
             char *name = drive_name(root, gio_name);
-            g_ptr_array_add(out, drive_new(root, name, mount_kind(m, root, icon), icon));
+            g_ptr_array_add(out, drive_new(root, name, mount_kind(mount, root, icon), icon));
             g_free(name);
             g_free(gio_name);
             g_clear_object(&icon);
@@ -385,11 +393,11 @@ GPtrArray *xd_computer_drives(void) {
 
     /* Volumes not mounted yet: shown as drives, mounted when opened. */
     GList *volumes = g_volume_monitor_get_volumes(xd_computer_monitor());
-    for (GList *l = volumes; l != nullptr; l = l->next) {
-        GVolume *vol = l->data;
-        GMount *m = g_volume_get_mount(vol);
-        if (m != nullptr) {
-            g_object_unref(m);
+    for (GList *list = volumes; list != nullptr; list = list->next) {
+        GVolume *vol = list->data;
+        GMount *mount = g_volume_get_mount(vol);
+        if (mount != nullptr) {
+            g_object_unref(mount);
             continue;
         }
         if (!g_volume_can_mount(vol))
@@ -425,10 +433,10 @@ GVolume *xd_computer_volume(GFile *item) {
     GVolume *found = nullptr;
     if (g_str_has_prefix(want, VOLUME_URI)) {
         GList *volumes = g_volume_monitor_get_volumes(xd_computer_monitor());
-        for (GList *l = volumes; l != nullptr && found == nullptr; l = l->next) {
-            char *uri = volume_uri(l->data);
+        for (GList *list = volumes; list != nullptr && found == nullptr; list = list->next) {
+            char *uri = volume_uri(list->data);
             if (strcmp(uri, want) == 0)
-                found = g_object_ref(l->data);
+                found = g_object_ref(list->data);
             g_free(uri);
         }
         g_list_free_full(volumes, g_object_unref);
@@ -440,11 +448,11 @@ GVolume *xd_computer_volume(GFile *item) {
 GMount *xd_computer_mount(GFile *root) {
     GMount *found = nullptr;
     GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
-    for (GList *l = mounts; l != nullptr && found == nullptr; l = l->next) {
-        GFile *r = g_mount_get_root(l->data);
-        if (g_file_equal(r, root))
-            found = g_object_ref(l->data);
-        g_object_unref(r);
+    for (GList *list = mounts; list != nullptr && found == nullptr; list = list->next) {
+        GFile *mount_root = g_mount_get_root(list->data);
+        if (g_file_equal(mount_root, root))
+            found = g_object_ref(list->data);
+        g_object_unref(mount_root);
     }
     g_list_free_full(mounts, g_object_unref);
     return found;
@@ -457,16 +465,16 @@ gboolean xd_computer_can_eject(GFile *item) {
         g_object_unref(vol);
         return can;
     }
-    GMount *m = xd_computer_mount(item);
-    gboolean can = m != nullptr && (g_mount_can_eject(m) || g_mount_can_unmount(m));
-    g_clear_object(&m);
+    GMount *mount = xd_computer_mount(item);
+    gboolean can = mount != nullptr && (g_mount_can_eject(mount) || g_mount_can_unmount(mount));
+    g_clear_object(&mount);
     return can;
 }
 
 /* ---- My Network Places ------------------------------------------------------------ */
 
-static void network_item_free(gpointer p) {
-    XdNetworkItem *it = p;
+static void network_item_free(gpointer user_data) {
+    XdNetworkItem *it = user_data;
     g_clear_object(&it->file);
     g_clear_object(&it->icon);
     g_free(it->name);
@@ -492,18 +500,18 @@ static XdNetworkItem *add_network_item(GPtrArray *out, GFile *file, const char *
 
 static void add_named(GPtrArray *out, const char *uri, const char *name, const char *icon_name,
                       gboolean folder) {
-    GFile *f = g_file_new_for_uri(uri);
+    GFile *file = g_file_new_for_uri(uri);
     GIcon *icon = g_themed_icon_new(icon_name);
-    add_network_item(out, f, name, "", icon, folder);
+    add_network_item(out, file, name, "", icon, folder);
     g_object_unref(icon);
-    g_object_unref(f);
+    g_object_unref(file);
 }
 
 static gboolean network_listed(GPtrArray *items, const char *uri) {
     for (guint i = 0; i < items->len; i++) {
-        char *u = g_file_get_uri(((XdNetworkItem *)g_ptr_array_index(items, i))->file);
-        gboolean same = xd_net_same_uri(u, uri);
-        g_free(u);
+        char *item_uri = g_file_get_uri(((XdNetworkItem *)g_ptr_array_index(items, i))->file);
+        gboolean same = xd_net_same_uri(item_uri, uri);
+        g_free(item_uri);
         if (same)
             return TRUE;
     }
@@ -512,10 +520,10 @@ static gboolean network_listed(GPtrArray *items, const char *uri) {
 
 /* A mount of a network folder: not on this computer, and not a device
  * (a phone or camera has a volume). */
-static gboolean network_mount(GMount *m) {
-    GFile *root = g_mount_get_root(m);
-    GVolume *vol = g_mount_get_volume(m);
-    gboolean network = !g_file_is_native(root) && vol == nullptr && !g_mount_is_shadowed(m);
+static gboolean network_mount(GMount *mount) {
+    GFile *root = g_mount_get_root(mount);
+    GVolume *vol = g_mount_get_volume(mount);
+    gboolean network = !g_file_is_native(root) && vol == nullptr && !g_mount_is_shadowed(mount);
     g_clear_object(&vol);
     g_object_unref(root);
     return network;
@@ -542,35 +550,35 @@ GPtrArray *xd_network_items(GFile *location) {
         XdNetPlace *pl = g_ptr_array_index(places, i);
         if (network_listed(out, pl->uri))
             continue;
-        GFile *f = g_file_new_for_uri(pl->uri);
-        add_network_item(out, f, pl->name, "Network Place", remote, TRUE);
-        g_object_unref(f);
+        GFile *file = g_file_new_for_uri(pl->uri);
+        add_network_item(out, file, pl->name, "Network Place", remote, TRUE);
+        g_object_unref(file);
     }
     g_ptr_array_unref(places);
     GPtrArray *drives = xd_net_drives_load(config);
     for (guint i = 0; i < drives->len; i++) {
-        XdNetDrive *d = g_ptr_array_index(drives, i);
-        if (network_listed(out, d->uri))
+        XdNetDrive *net_drive = g_ptr_array_index(drives, i);
+        if (network_listed(out, net_drive->uri))
             continue;
-        GFile *f = g_file_new_for_uri(d->uri);
-        char *name = xd_net_drive_name(d->uri);
-        add_network_item(out, f, name, "Network Drive", remote, TRUE)->connection = TRUE;
+        GFile *file = g_file_new_for_uri(net_drive->uri);
+        char *name = xd_net_drive_name(net_drive->uri);
+        add_network_item(out, file, name, "Network Drive", remote, TRUE)->connection = TRUE;
         g_free(name);
-        g_object_unref(f);
+        g_object_unref(file);
     }
     g_ptr_array_unref(drives);
     g_free(config);
 
     /* Shares open now (XP added a place for each share opened). */
     GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
-    for (GList *l = mounts; l != nullptr; l = l->next) {
-        if (!network_mount(l->data))
+    for (GList *list = mounts; list != nullptr; list = list->next) {
+        if (!network_mount(list->data))
             continue;
-        GFile *root = g_mount_get_root(l->data);
+        GFile *root = g_mount_get_root(list->data);
         char *uri = g_file_get_uri(root);
         if (!network_listed(out, uri)) {
-            char *name = g_mount_get_name(l->data);
-            GIcon *icon = g_mount_get_icon(l->data);
+            char *name = g_mount_get_name(list->data);
+            GIcon *icon = g_mount_get_icon(list->data);
             add_network_item(out, root, name, "", icon != nullptr ? icon : remote, TRUE)
                 ->connection = TRUE;
             g_clear_object(&icon);
@@ -588,14 +596,14 @@ GMount *xd_network_mount(GFile *item) {
     GMount *found = nullptr;
     char *uri = g_file_get_uri(item);
     GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
-    for (GList *l = mounts; l != nullptr && found == nullptr; l = l->next) {
-        if (!network_mount(l->data))
+    for (GList *list = mounts; list != nullptr && found == nullptr; list = list->next) {
+        if (!network_mount(list->data))
             continue;
-        GFile *root = g_mount_get_root(l->data);
+        GFile *root = g_mount_get_root(list->data);
         char *root_uri = g_file_get_uri(root);
         if (g_file_equal(root, item) || g_file_has_prefix(item, root) ||
             xd_net_same_uri(root_uri, uri))
-            found = g_object_ref(l->data);
+            found = g_object_ref(list->data);
         g_free(root_uri);
         g_object_unref(root);
     }
@@ -610,10 +618,10 @@ GMount *xd_network_mount(GFile *item) {
 
 gboolean xd_control_classic_view(void) {
     char **lines = nullptr;
-    size_t n = 0;
-    xd_state_read_lines(CONTROL_STATE, &lines, &n, 1);
-    gboolean classic = n > 0 && strcmp(lines[0], "classic") == 0;
-    xd_free_lines(lines, n);
+    size_t count = 0;
+    xd_state_read_lines(CONTROL_STATE, &lines, &count, 1);
+    gboolean classic = count > 0 && strcmp(lines[0], "classic") == 0;
+    xd_free_lines(lines, count);
     return classic;
 }
 
@@ -632,13 +640,13 @@ const XdControlCategory *xd_control_page(GFile *location) {
     size_t len = strlen(key);
     if (len > 0 && key[len - 1] == '/')
         key[len - 1] = '\0';
-    const XdControlCategory *c = *key != '\0' ? xd_control_category(key) : nullptr;
+    const XdControlCategory *control_category = *key != '\0' ? xd_control_category(key) : nullptr;
     g_free(uri);
-    return c;
+    return control_category;
 }
 
-static void control_item_free(gpointer p) {
-    XdControlItem *it = p;
+static void control_item_free(gpointer user_data) {
+    XdControlItem *it = user_data;
     g_clear_object(&it->file);
     g_clear_object(&it->icon);
     g_free(it->name);
@@ -668,32 +676,32 @@ GPtrArray *xd_control_items(GFile *location) {
         /* Category View: "Pick a category", each with its applets' names
          * (Tiles shows them). "Other" only when something is in it. */
         for (size_t i = 0; i < xd_control_category_count; i++) {
-            const XdControlCategory *c = &xd_control_categories[i];
+            const XdControlCategory *control_category = &xd_control_categories[i];
             GString *names = g_string_new(nullptr);
-            for (GList *l = applets; l != nullptr; l = l->next) {
-                if (!xd_control_applet_in(l->data, c->key))
+            for (GList *list = applets; list != nullptr; list = list->next) {
+                if (!xd_control_applet_in(list->data, control_category->key))
                     continue;
                 if (names->len > 0)
                     g_string_append(names, ", ");
-                g_string_append(names, g_app_info_get_name(G_APP_INFO(l->data)));
+                g_string_append(names, g_app_info_get_name(G_APP_INFO(list->data)));
             }
-            if (names->len == 0 && strcmp(c->key, XD_CONTROL_OTHER) == 0) {
+            if (names->len == 0 && strcmp(control_category->key, XD_CONTROL_OTHER) == 0) {
                 g_string_free(names, TRUE);
                 continue;
             }
             XdControlItem *it = g_new0(XdControlItem, 1);
-            it->file = control_page_file(c);
-            it->name = g_strdup(c->title);
+            it->file = control_page_file(control_category);
+            it->name = g_strdup(control_category->title);
             it->comment = g_string_free(names, FALSE);
-            it->icon = xd_control_category_icon(c);
+            it->icon = xd_control_category_icon(control_category);
             it->category = TRUE;
             g_ptr_array_add(out, it);
         }
     } else {
-        for (GList *l = applets; l != nullptr; l = l->next) {
-            if (page != nullptr && !xd_control_applet_in(l->data, page->key))
+        for (GList *list = applets; list != nullptr; list = list->next) {
+            if (page != nullptr && !xd_control_applet_in(list->data, page->key))
                 continue;
-            XdControlItem *it = applet_item(l->data);
+            XdControlItem *it = applet_item(list->data);
             if (it != nullptr)
                 g_ptr_array_add(out, it);
         }
@@ -717,15 +725,15 @@ GDesktopAppInfo *xd_control_item_applet(GFile *item) {
 
 static GFile *trash_dir(const char *sub) {
     char *path = g_build_filename(g_get_user_data_dir(), "Trash", sub, nullptr);
-    GFile *f = g_file_new_for_path(path);
+    GFile *file = g_file_new_for_path(path);
     g_free(path);
-    return f;
+    return file;
 }
 
 GFile *xd_trash_files_dir(void) {
-    GFile *f = trash_dir("files");
-    g_file_make_directory_with_parents(f, nullptr, nullptr);
-    return f;
+    GFile *file = trash_dir("files");
+    g_file_make_directory_with_parents(file, nullptr, nullptr);
+    return file;
 }
 
 GPtrArray *xd_trash_dirs(void) {
@@ -736,19 +744,19 @@ GPtrArray *xd_trash_dirs(void) {
     g_snprintf(uid, sizeof(uid), "%u", (unsigned)getuid());
     char *own = g_strconcat(".Trash-", uid, nullptr);
     GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
-    for (GList *l = mounts; l != nullptr; l = l->next) {
-        GFile *top = g_mount_get_root(l->data);
+    for (GList *list = mounts; list != nullptr; list = list->next) {
+        GFile *top = g_mount_get_root(list->data);
         char *top_path = g_file_get_path(top);
         if (top_path != nullptr && strcmp(top_path, "/") != 0) {
-            char *a = g_build_filename(top_path, own, "files", nullptr);
-            char *b = g_build_filename(top_path, ".Trash", uid, "files", nullptr);
-            const char *found = g_file_test(a, G_FILE_TEST_IS_DIR)   ? a
-                                : g_file_test(b, G_FILE_TEST_IS_DIR) ? b
-                                                                     : nullptr;
+            char *own_trash = g_build_filename(top_path, own, "files", nullptr);
+            char *shared_trash = g_build_filename(top_path, ".Trash", uid, "files", nullptr);
+            const char *found = g_file_test(own_trash, G_FILE_TEST_IS_DIR)      ? own_trash
+                                : g_file_test(shared_trash, G_FILE_TEST_IS_DIR) ? shared_trash
+                                                                                : nullptr;
             if (found != nullptr)
                 g_ptr_array_add(out, g_file_new_for_path(found));
-            g_free(a);
-            g_free(b);
+            g_free(own_trash);
+            g_free(shared_trash);
         }
         g_free(top_path);
         g_object_unref(top);
@@ -765,13 +773,13 @@ static GFile *info_file(GFile *trashed) {
     GFile *files = g_file_get_parent(trashed);
     GFile *trash = files != nullptr ? g_file_get_parent(files) : nullptr;
     GFile *dir = trash != nullptr ? g_file_get_child(trash, "info") : trash_dir("info");
-    GFile *f = g_file_get_child(dir, name);
+    GFile *file = g_file_get_child(dir, name);
     g_object_unref(dir);
     g_clear_object(&trash);
     g_clear_object(&files);
     g_free(name);
     g_free(base);
-    return f;
+    return file;
 }
 
 /* Where a trash's relative paths start: a drive's top (above .Trash-UID
@@ -870,10 +878,10 @@ static gboolean confirm_replace(GtkWindow *parent, const char *shown, replace_mo
                                  "Would you like to replace the existing file with this one?",
                                  shown);
     static const char *const labels[] = {"_Yes", "Yes to _All", "_No", "Cancel"};
-    int n = more ? 4 : 3;
+    int count = more ? 4 : 3;
     int pick = xd_message_box_choose(parent, "Confirm File Replace", XD_MB_QUESTION, text,
                                      more ? labels : (const char *const[]){"_Yes", "_No", "Cancel"},
-                                     n, 0, n - 1);
+                                     count, 0, count - 1);
     g_free(text);
     if (!more)
         pick = pick == 0 ? 0 : pick == 1 ? 2 : 3;
@@ -886,8 +894,8 @@ static gboolean confirm_replace(GtkWindow *parent, const char *shown, replace_mo
 
 void xd_trash_restore(GtkWindow *parent, GList *files) {
     replace_mode mode = ASK_EACH;
-    for (GList *l = files; l != nullptr && mode != ASK_CANCELLED; l = l->next) {
-        GFile *trashed = l->data;
+    for (GList *list = files; list != nullptr && mode != ASK_CANCELLED; list = list->next) {
+        GFile *trashed = list->data;
         char *orig = nullptr;
         char *name = g_file_get_basename(trashed);
         char *problem = nullptr;
@@ -917,7 +925,7 @@ void xd_trash_restore(GtkWindow *parent, GList *files) {
                 } else {
                     char *base = g_file_get_basename(target);
                     char *base_shown = g_filename_display_name(base);
-                    go = confirm_replace(parent, base_shown, &mode, l->next != nullptr);
+                    go = confirm_replace(parent, base_shown, &mode, list->next != nullptr);
                     g_free(base_shown);
                     g_free(base);
                     flags |= G_FILE_COPY_OVERWRITE;
@@ -959,13 +967,13 @@ static void tidy_one(GFile *files_dir) {
         const char *name = g_file_info_get_name(fi);
         if (g_str_has_suffix(name, ".trashinfo")) {
             char *item = g_strndup(name, strlen(name) - strlen(".trashinfo"));
-            GFile *f = g_file_get_child(files_dir, item);
-            if (!g_file_query_exists(f, nullptr)) {
+            GFile *file = g_file_get_child(files_dir, item);
+            if (!g_file_query_exists(file, nullptr)) {
                 GFile *stale = g_file_get_child(info_dir, name);
                 g_file_delete(stale, nullptr, nullptr);
                 g_object_unref(stale);
             }
-            g_object_unref(f);
+            g_object_unref(file);
             g_free(item);
         }
         g_object_unref(fi);
@@ -987,12 +995,12 @@ typedef struct empty_request {
 } empty_request;
 
 static void emptied(GList *created, gpointer data) {
-    empty_request *r = data;
+    empty_request *empty = data;
     xd_trash_tidy();
     xd_sound_play_event(XD_SOUND_EMPTY_RECYCLE_BIN);
-    if (r->done != nullptr)
-        r->done(created, r->user);
-    g_free(r);
+    if (empty->done != nullptr)
+        empty->done(created, empty->user);
+    g_free(empty);
 }
 
 void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer user),
@@ -1018,30 +1026,30 @@ void xd_trash_empty(GtkWindow *parent, void (*done)(GList *created, gpointer use
             done(nullptr, user);
         return;
     }
-    empty_request *r = g_new0(empty_request, 1);
-    r->done = done;
-    r->user = user;
+    empty_request *empty = g_new0(empty_request, 1);
+    empty->done = done;
+    empty->user = user;
     /* Asks first; nothing happens (and `emptied` isn't called) on No. */
-    if (!xd_fileop_start_checked(parent, XD_FILEOP_DELETE, files, nullptr, emptied, r)) {
+    if (!xd_fileop_start_checked(parent, XD_FILEOP_DELETE, files, nullptr, emptied, empty)) {
         if (done != nullptr)
             done(nullptr, user);
-        g_free(r);
+        g_free(empty);
     }
     g_list_free_full(files, g_object_unref);
 }
 
 
 GList *xd_trash_find(GList *originals) {
-    guint n = g_list_length(originals);
+    guint count = g_list_length(originals);
     GHashTable *wanted = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     guint k = 0;
-    for (GList *l = originals; l != nullptr; l = l->next, k++) {
-        char *path = g_file_get_path(l->data);
+    for (GList *list = originals; list != nullptr; list = list->next, k++) {
+        char *path = g_file_get_path(list->data);
         if (path != nullptr)
             g_hash_table_replace(wanted, path, GUINT_TO_POINTER(k + 1));
     }
-    GFile **found = g_new0(GFile *, n + 1);
-    gint64 *when = g_new0(gint64, n + 1);
+    GFile **found = g_new0(GFile *, count + 1);
+    gint64 *when = g_new0(gint64, count + 1);
     GPtrArray *dirs = xd_trash_dirs();
     for (guint i = 0; i < dirs->len; i++) {
         GFile *dir = g_ptr_array_index(dirs, i);
@@ -1057,11 +1065,11 @@ GList *xd_trash_find(GList *originals) {
             GDateTime *deleted = nullptr;
             if (xd_trash_item_info(child, &orig, &deleted)) {
                 guint idx = GPOINTER_TO_UINT(g_hash_table_lookup(wanted, orig));
-                gint64 t = deleted != nullptr ? g_date_time_to_unix(deleted) : 0;
+                gint64 deleted_time = deleted != nullptr ? g_date_time_to_unix(deleted) : 0;
                 /* The same name deleted twice: the later one. */
-                if (idx > 0 && (found[idx - 1] == nullptr || t >= when[idx - 1])) {
+                if (idx > 0 && (found[idx - 1] == nullptr || deleted_time >= when[idx - 1])) {
                     g_set_object(&found[idx - 1], child);
-                    when[idx - 1] = t;
+                    when[idx - 1] = deleted_time;
                 }
             }
             g_free(orig);
@@ -1073,7 +1081,7 @@ GList *xd_trash_find(GList *originals) {
     }
     g_ptr_array_unref(dirs);
     GList *out = nullptr;
-    for (guint i = n; i > 0; i--)
+    for (guint i = count; i > 0; i--)
         if (found[i - 1] != nullptr)
             out = g_list_prepend(out, found[i - 1]);
     g_free(found);

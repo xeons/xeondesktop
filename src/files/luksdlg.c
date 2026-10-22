@@ -7,27 +7,27 @@
 #include "luks.h"
 
 static GtkWidget *wrapped(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 44);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    return l;
+    GtkWidget *label = gtk_label_new(text);
+    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 44);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    return label;
 }
 
 static GtkWidget *secret_entry(void) {
-    GtkWidget *e = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(e), FALSE);
-    gtk_entry_set_input_purpose(GTK_ENTRY(e), GTK_INPUT_PURPOSE_PASSWORD);
-    gtk_entry_set_activates_default(GTK_ENTRY(e), TRUE);
-    gtk_widget_set_hexpand(e, TRUE);
-    return e;
+    GtkWidget *text_entry = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(text_entry), FALSE);
+    gtk_entry_set_input_purpose(GTK_ENTRY(text_entry), GTK_INPUT_PURPOSE_PASSWORD);
+    gtk_entry_set_activates_default(GTK_ENTRY(text_entry), TRUE);
+    gtk_widget_set_hexpand(text_entry, TRUE);
+    return text_entry;
 }
 
 static GtkWidget *row_label(const char *text, GtkWidget *entry) {
-    GtkWidget *l = gtk_label_new_with_mnemonic(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), entry);
-    return l;
+    GtkWidget *label = gtk_label_new_with_mnemonic(text);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), entry);
+    return label;
 }
 
 /* An OK/Cancel box with the key icon left of `text`; the rows go in the
@@ -117,34 +117,34 @@ gboolean xd_luks_ask_change(GtkWindow *parent, const char *name, char **old,
     GtkWidget *grid = nullptr;
     GtkWidget *dlg = box_new(parent, title, text, &grid);
     g_free(text);
-    GtkWidget *e[3];
+    GtkWidget *entries[3];
     static const char *const labels[] = {"_Old passphrase:", "_New passphrase:",
                                          "_Confirm new passphrase:"};
     for (int i = 0; i < 3; i++) {
-        e[i] = secret_entry();
-        gtk_grid_attach(GTK_GRID(grid), row_label(labels[i], e[i]), 0, i, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), e[i], 1, i, 1, 1);
+        entries[i] = secret_entry();
+        gtk_grid_attach(GTK_GRID(grid), row_label(labels[i], entries[i]), 0, i, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), entries[i], 1, i, 1, 1);
     }
     gtk_widget_show_all(dlg);
-    gtk_widget_grab_focus(e[0]);
+    gtk_widget_grab_focus(entries[0]);
     gboolean ok = FALSE;
     while (!ok && gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_OK) {
-        const char *why = xd_luks_passphrase_problem(gtk_entry_get_text(GTK_ENTRY(e[1])),
-                                                     gtk_entry_get_text(GTK_ENTRY(e[2])));
+        const char *why = xd_luks_passphrase_problem(gtk_entry_get_text(GTK_ENTRY(entries[1])),
+                                                     gtk_entry_get_text(GTK_ENTRY(entries[2])));
         if (why != nullptr) {
             xd_message_box(GTK_WINDOW(dlg), title, XD_MB_ERROR, XD_MB_OK, FALSE, why);
             /* As XP's Change Password: the new ones again. */
-            gtk_entry_set_text(GTK_ENTRY(e[1]), "");
-            gtk_entry_set_text(GTK_ENTRY(e[2]), "");
-            gtk_widget_grab_focus(e[1]);
+            gtk_entry_set_text(GTK_ENTRY(entries[1]), "");
+            gtk_entry_set_text(GTK_ENTRY(entries[2]), "");
+            gtk_widget_grab_focus(entries[1]);
             continue;
         }
-        *old = take_text(e[0]);
-        *new_passphrase = take_text(e[1]);
+        *old = take_text(entries[0]);
+        *new_passphrase = take_text(entries[1]);
         ok = TRUE;
     }
     for (int i = 0; i < 3; i++)
-        gtk_entry_set_text(GTK_ENTRY(e[i]), "");
+        gtk_entry_set_text(GTK_ENTRY(entries[i]), "");
     g_free(title);
     gtk_widget_destroy(dlg);
     return ok;

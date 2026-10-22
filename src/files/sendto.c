@@ -23,12 +23,13 @@ typedef struct send_ctx {
     gpointer user;
 } send_ctx;
 
-static void ctx_free(gpointer p) {
-    send_ctx *c = p;
-    if (c->parent != nullptr)
-        g_object_remove_weak_pointer(G_OBJECT(c->parent), (gpointer *)&c->parent);
-    g_list_free_full(c->files, g_object_unref);
-    g_free(c);
+static void ctx_free(gpointer user_data) {
+    send_ctx *send_context = user_data;
+    if (send_context->parent != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(send_context->parent),
+                                     (gpointer *)&send_context->parent);
+    g_list_free_full(send_context->files, g_object_unref);
+    g_free(send_context);
 }
 
 static send_ctx *ctx_of(GtkWidget *item) {
@@ -51,22 +52,23 @@ typedef struct zip_job {
     GApplication *app; /* held while it runs */
 } zip_job;
 
-static void zip_job_free(zip_job *z) {
-    if (z->parent != nullptr)
-        g_object_remove_weak_pointer(G_OBJECT(z->parent), (gpointer *)&z->parent);
-    if (z->app != nullptr) {
-        g_application_release(z->app);
-        g_object_unref(z->app);
+static void zip_job_free(zip_job *zip_request) {
+    if (zip_request->parent != nullptr)
+        g_object_remove_weak_pointer(G_OBJECT(zip_request->parent),
+                                     (gpointer *)&zip_request->parent);
+    if (zip_request->app != nullptr) {
+        g_application_release(zip_request->app);
+        g_object_unref(zip_request->app);
     }
-    g_ptr_array_unref(z->sources);
-    g_object_unref(z->zip);
-    g_free(z->error);
-    g_free(z->warning);
-    g_free(z);
+    g_ptr_array_unref(zip_request->sources);
+    g_object_unref(zip_request->zip);
+    g_free(zip_request->error);
+    g_free(zip_request->warning);
+    g_free(zip_request);
 }
 
-static char *archive_problem(struct archive *a) {
-    const char *msg = archive_error_string(a);
+static char *archive_problem(struct archive *archive_handle) {
+    const char *msg = archive_error_string(archive_handle);
     return g_strdup(msg != nullptr ? msg : "The file could not be written.");
 }
 
@@ -86,12 +88,12 @@ static gboolean add_tree(struct archive *out, const char *path, char **error, ch
     char *buf = g_malloc(BUF_SIZE);
     while (ok) {
         struct archive_entry *entry = archive_entry_new();
-        int r = archive_read_next_header2(disk, entry);
-        if (r == ARCHIVE_EOF) {
+        int status = archive_read_next_header2(disk, entry);
+        if (status == ARCHIVE_EOF) {
             archive_entry_free(entry);
             break;
         }
-        if (r < ARCHIVE_WARN) {
+        if (status < ARCHIVE_WARN) {
             *error = archive_problem(disk);
             archive_entry_free(entry);
             ok = FALSE;
@@ -99,7 +101,7 @@ static gboolean add_tree(struct archive *out, const char *path, char **error, ch
         }
         /* Something here couldn't be read (a folder's listing, say): the
          * entry still goes in, and the user hears what's missing. */
-        if (r == ARCHIVE_WARN && *warning == nullptr)
+        if (status == ARCHIVE_WARN && *warning == nullptr)
             *warning = archive_problem(disk);
         if (archive_read_disk_descend(disk) < ARCHIVE_WARN && *warning == nullptr)
             *warning = archive_problem(disk);
@@ -113,13 +115,13 @@ static gboolean add_tree(struct archive *out, const char *path, char **error, ch
             *error = archive_problem(out);
             ok = FALSE;
         } else if (archive_entry_filetype(entry) == AE_IFREG && archive_entry_size(entry) > 0) {
-            la_ssize_t n;
-            while (ok && (n = archive_read_data(disk, buf, BUF_SIZE)) > 0)
-                if (archive_write_data(out, buf, (size_t)n) < 0) {
+            la_ssize_t bytes_read;
+            while (ok && (bytes_read = archive_read_data(disk, buf, BUF_SIZE)) > 0)
+                if (archive_write_data(out, buf, (size_t)bytes_read) < 0) {
                     *error = archive_problem(out);
                     ok = FALSE;
                 }
-            if (ok && n < 0) {
+            if (ok && bytes_read < 0) {
                 *error = archive_problem(disk);
                 ok = FALSE;
             }
@@ -134,13 +136,13 @@ static gboolean add_tree(struct archive *out, const char *path, char **error, ch
 
 static void zip_worker(GTask *task, [[maybe_unused]] gpointer source, gpointer data,
                        [[maybe_unused]] GCancellable *cancel) {
-    zip_job *z = data;
-    char *zip_path = g_file_get_path(z->zip);
+    zip_job *zip_request = data;
+    char *zip_path = g_file_get_path(zip_request->zip);
     /* Made here, never opened over: the name was free when it was chosen,
      * but something else may have taken it since. */
     int fd = open(zip_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
     if (fd < 0) {
-        z->error = g_strdup(g_strerror(errno));
+        zip_request->error = g_strdup(g_strerror(errno));
         g_free(zip_path);
         g_task_return_boolean(task, FALSE);
         return;
@@ -149,60 +151,61 @@ static void zip_worker(GTask *task, [[maybe_unused]] gpointer source, gpointer d
     archive_write_set_format_zip(out);
     gboolean ok = archive_write_open_fd(out, fd) == ARCHIVE_OK;
     if (!ok)
-        z->error = archive_problem(out);
-    for (guint i = 0; ok && i < z->sources->len; i++) {
-        char *path = g_file_get_path(g_ptr_array_index(z->sources, i));
-        ok = path != nullptr && add_tree(out, path, &z->error, &z->warning);
+        zip_request->error = archive_problem(out);
+    for (guint i = 0; ok && i < zip_request->sources->len; i++) {
+        char *path = g_file_get_path(g_ptr_array_index(zip_request->sources, i));
+        ok = path != nullptr && add_tree(out, path, &zip_request->error, &zip_request->warning);
         g_free(path);
     }
     if (archive_write_close(out) != ARCHIVE_OK && ok) {
-        z->error = archive_problem(out);
+        zip_request->error = archive_problem(out);
         ok = FALSE;
     }
     archive_write_free(out);
     if (close(fd) != 0 && ok) {
-        z->error = g_strdup(g_strerror(errno));
+        zip_request->error = g_strdup(g_strerror(errno));
         ok = FALSE;
     }
     if (!ok)
-        g_file_delete(z->zip, nullptr, nullptr); /* not half a zip */
+        g_file_delete(zip_request->zip, nullptr, nullptr); /* not half a zip */
     g_free(zip_path);
     g_task_return_boolean(task, ok);
 }
 
 static void zip_finished([[maybe_unused]] GObject *source, GAsyncResult *res, gpointer data) {
-    zip_job *z = data;
+    zip_job *zip_request = data;
     gboolean ok = g_task_propagate_boolean(G_TASK(res), nullptr);
-    gboolean window_gone = z->had_parent && z->parent == nullptr;
+    gboolean window_gone = zip_request->had_parent && zip_request->parent == nullptr;
     if (!ok && !window_gone) {
         char *msg = g_strdup_printf("Cannot create the compressed (zipped) folder: %s",
-                                    z->error != nullptr ? z->error : "an unknown error.");
-        xd_message_box(z->parent, "Compressed (zipped) Folders Error", XD_MB_ERROR, XD_MB_OK,
-                       FALSE, msg);
+                                    zip_request->error != nullptr ? zip_request->error
+                                                                  : "an unknown error.");
+        xd_message_box(zip_request->parent, "Compressed (zipped) Folders Error", XD_MB_ERROR,
+                       XD_MB_OK, FALSE, msg);
         g_free(msg);
-    } else if (ok && !window_gone && z->warning != nullptr) {
+    } else if (ok && !window_gone && zip_request->warning != nullptr) {
         char *msg = g_strdup_printf("Some items could not be added to the compressed (zipped) "
                                     "folder: %s",
-                                    z->warning);
-        xd_message_box(z->parent, "Compressed (zipped) Folders", XD_MB_WARNING, XD_MB_OK, FALSE,
-                       msg);
+                                    zip_request->warning);
+        xd_message_box(zip_request->parent, "Compressed (zipped) Folders", XD_MB_WARNING, XD_MB_OK,
+                       FALSE, msg);
         g_free(msg);
     }
-    if (ok && !window_gone && z->done != nullptr) {
-        GList *one = g_list_append(nullptr, z->zip);
-        z->done(one, z->user);
+    if (ok && !window_gone && zip_request->done != nullptr) {
+        GList *one = g_list_append(nullptr, zip_request->zip);
+        zip_request->done(one, zip_request->user);
         g_list_free(one);
     }
-    zip_job_free(z);
+    zip_job_free(zip_request);
 }
 
 /* "photo.jpg" makes "photo.zip" beside it, as XP names it after the
  * (first) item; "photo (2).zip" when that's taken. */
 static void send_to_zip(GtkWidget *item, [[maybe_unused]] gpointer data) {
-    send_ctx *c = ctx_of(item);
-    if (c == nullptr || c->files == nullptr)
+    send_ctx *send_context = ctx_of(item);
+    if (send_context == nullptr || send_context->files == nullptr)
         return;
-    GFile *first = c->files->data;
+    GFile *first = send_context->files->data;
     GFile *dir = g_file_get_parent(first);
     char *base = g_file_get_basename(first);
     if (dir == nullptr || base == nullptr || !g_file_is_native(first)) {
@@ -215,25 +218,25 @@ static void send_to_zip(GtkWidget *item, [[maybe_unused]] gpointer data) {
         G_FILE_TYPE_DIRECTORY;
     base[is_dir ? strlen(base) : xd_name_base_len(base)] = '\0';
     char *name = xd_unique_name(dir, base, ".zip");
-    zip_job *z = g_new0(zip_job, 1);
-    z->sources = g_ptr_array_new_with_free_func(g_object_unref);
-    for (GList *l = c->files; l != nullptr; l = l->next)
-        g_ptr_array_add(z->sources, g_object_ref(l->data));
-    z->zip = g_file_get_child(dir, name);
-    z->parent = c->parent;
-    z->had_parent = c->parent != nullptr;
-    if (z->parent != nullptr)
-        g_object_add_weak_pointer(G_OBJECT(z->parent), (gpointer *)&z->parent);
-    z->done = c->done;
-    z->user = c->user;
+    zip_job *zip_request = g_new0(zip_job, 1);
+    zip_request->sources = g_ptr_array_new_with_free_func(g_object_unref);
+    for (GList *list = send_context->files; list != nullptr; list = list->next)
+        g_ptr_array_add(zip_request->sources, g_object_ref(list->data));
+    zip_request->zip = g_file_get_child(dir, name);
+    zip_request->parent = send_context->parent;
+    zip_request->had_parent = send_context->parent != nullptr;
+    if (zip_request->parent != nullptr)
+        g_object_add_weak_pointer(G_OBJECT(zip_request->parent), (gpointer *)&zip_request->parent);
+    zip_request->done = send_context->done;
+    zip_request->user = send_context->user;
     /* Closing the window mustn't stop the process halfway through. */
-    z->app = g_application_get_default();
-    if (z->app != nullptr) {
-        g_object_ref(z->app);
-        g_application_hold(z->app);
+    zip_request->app = g_application_get_default();
+    if (zip_request->app != nullptr) {
+        g_object_ref(zip_request->app);
+        g_application_hold(zip_request->app);
     }
-    GTask *task = g_task_new(nullptr, nullptr, zip_finished, z);
-    g_task_set_task_data(task, z, nullptr);
+    GTask *task = g_task_new(nullptr, nullptr, zip_finished, zip_request);
+    g_task_set_task_data(task, zip_request, nullptr);
     g_task_run_in_thread(task, zip_worker);
     g_object_unref(task);
     g_free(name);
@@ -249,26 +252,28 @@ static GFile *user_dir(GUserDirectory which, const char *fallback) {
     const char *path = g_get_user_special_dir(which);
     if (path != nullptr)
         return g_file_new_for_path(path);
-    char *p = g_build_filename(g_get_home_dir(), fallback, nullptr);
-    GFile *f = g_file_new_for_path(p);
-    g_free(p);
-    return f;
+    char *fallback_path = g_build_filename(g_get_home_dir(), fallback, nullptr);
+    GFile *file = g_file_new_for_path(fallback_path);
+    g_free(fallback_path);
+    return file;
 }
 
 static void send_to_desktop(GtkWidget *item, [[maybe_unused]] gpointer data) {
-    send_ctx *c = ctx_of(item);
+    send_ctx *send_context = ctx_of(item);
     GFile *desktop = user_dir(G_USER_DIRECTORY_DESKTOP, "Desktop");
     g_file_make_directory_with_parents(desktop, nullptr, nullptr);
-    xd_fileop_start(c->parent, XD_FILEOP_LINK, c->files, desktop, c->done, c->user);
+    xd_fileop_start(send_context->parent, XD_FILEOP_LINK, send_context->files, desktop,
+                    send_context->done, send_context->user);
     g_object_unref(desktop);
 }
 
 /* My Documents and the drives get copies, which Edit > Undo can take
  * back. */
 static void send_copy(GtkWidget *item, gpointer data) {
-    send_ctx *c = ctx_of(item);
+    send_ctx *send_context = ctx_of(item);
     GFile *dest = data;
-    xd_fileop_start_undoable(c->parent, XD_FILEOP_COPY, c->files, dest, c->done, c->user);
+    xd_fileop_start_undoable(send_context->parent, XD_FILEOP_COPY, send_context->files, dest,
+                             send_context->done, send_context->user);
 }
 
 /* ---- Mail Recipient ---------------------------------------------------------------- */
@@ -296,8 +301,8 @@ static gboolean mail_takes_attachments(void) {
 
 /* Files only, as attachments; a folder can't be one. */
 static gboolean all_regular_files(GList *files) {
-    for (GList *l = files; l != nullptr; l = l->next) {
-        char *path = g_file_get_path(l->data);
+    for (GList *list = files; list != nullptr; list = list->next) {
+        char *path = g_file_get_path(list->data);
         gboolean regular = path != nullptr && g_file_test(path, G_FILE_TEST_IS_REGULAR);
         g_free(path);
         if (!regular)
@@ -308,18 +313,18 @@ static gboolean all_regular_files(GList *files) {
 
 /* A new message with the files attached, titled as XP's "Emailing: x". */
 static void send_mail(GtkWidget *item, [[maybe_unused]] gpointer data) {
-    send_ctx *c = ctx_of(item);
+    send_ctx *send_context = ctx_of(item);
     GPtrArray *argv = g_ptr_array_new_with_free_func(g_free);
     GString *subject = g_string_new("Emailing: ");
     g_ptr_array_add(argv, g_strdup("xdg-email"));
-    for (GList *l = c->files; l != nullptr; l = l->next) {
-        char *base = g_file_get_basename(l->data);
+    for (GList *list = send_context->files; list != nullptr; list = list->next) {
+        char *base = g_file_get_basename(list->data);
         char *shown = g_filename_display_name(base);
-        g_string_append_printf(subject, "%s%s", l == c->files ? "" : ", ", shown);
+        g_string_append_printf(subject, "%s%s", list == send_context->files ? "" : ", ", shown);
         g_free(shown);
         g_free(base);
         g_ptr_array_add(argv, g_strdup("--attach"));
-        g_ptr_array_add(argv, g_file_get_path(l->data));
+        g_ptr_array_add(argv, g_file_get_path(list->data));
     }
     g_ptr_array_add(argv, g_strdup("--subject"));
     g_ptr_array_add(argv, g_string_free(subject, FALSE));
@@ -327,7 +332,8 @@ static void send_mail(GtkWidget *item, [[maybe_unused]] gpointer data) {
     GError *err = nullptr;
     if (!g_spawn_async(nullptr, (char **)argv->pdata, nullptr, G_SPAWN_SEARCH_PATH, nullptr,
                        nullptr, nullptr, &err)) {
-        xd_message_box(c->parent, "Mail Recipient", XD_MB_ERROR, XD_MB_OK, FALSE, err->message);
+        xd_message_box(send_context->parent, "Mail Recipient", XD_MB_ERROR, XD_MB_OK, FALSE,
+                       err->message);
         g_error_free(err);
     }
     g_ptr_array_unref(argv);
@@ -351,20 +357,20 @@ static GtkWidget *add_item(GtkWidget *menu, const char *label, const char *icon,
 
 GtkWidget *xd_send_to_menu(GtkWindow *parent, GList *files, XdFileOpDone done, gpointer user) {
     GtkWidget *menu = gtk_menu_new();
-    send_ctx *c = g_new0(send_ctx, 1);
-    c->parent = parent;
+    send_ctx *send_context = g_new0(send_ctx, 1);
+    send_context->parent = parent;
     if (parent != nullptr)
-        g_object_add_weak_pointer(G_OBJECT(parent), (gpointer *)&c->parent);
-    for (GList *l = files; l != nullptr; l = l->next)
-        c->files = g_list_prepend(c->files, g_object_ref(l->data));
-    c->files = g_list_reverse(c->files);
-    c->done = done;
-    c->user = user;
-    g_object_set_data_full(G_OBJECT(menu), "xd-send-to", c, ctx_free);
+        g_object_add_weak_pointer(G_OBJECT(parent), (gpointer *)&send_context->parent);
+    for (GList *list = files; list != nullptr; list = list->next)
+        send_context->files = g_list_prepend(send_context->files, g_object_ref(list->data));
+    send_context->files = g_list_reverse(send_context->files);
+    send_context->done = done;
+    send_context->user = user;
+    g_object_set_data_full(G_OBJECT(menu), "xd-send-to", send_context, ctx_free);
 
     gboolean native = TRUE;
-    for (GList *l = files; l != nullptr; l = l->next)
-        native = native && g_file_is_native(l->data);
+    for (GList *list = files; list != nullptr; list = list->next)
+        native = native && g_file_is_native(list->data);
 #if XD_HAVE_LIBARCHIVE
     GtkWidget *zip = add_item(menu, "Compressed (zipped) Folder", "package-x-generic",
                               G_CALLBACK(send_to_zip), nullptr, nullptr);
@@ -382,17 +388,17 @@ GtkWidget *xd_send_to_menu(GtkWindow *parent, GList *files, XdFileOpDone done, g
     /* The removable drives that are mounted, from GIO's volume monitor. */
     GPtrArray *drives = xd_computer_drives();
     for (guint i = 0; i < drives->len; i++) {
-        XdDrive *d = g_ptr_array_index(drives, i);
+        XdDrive *drive = g_ptr_array_index(drives, i);
         /* (A locked encrypted drive has nowhere to copy to yet.) */
-        if (g_strcmp0(d->kind, "Removable Disk") != 0 || !g_file_is_native(d->root))
+        if (g_strcmp0(drive->kind, "Removable Disk") != 0 || !g_file_is_native(drive->root))
             continue;
-        GVolume *unmounted = xd_computer_volume(d->root);
+        GVolume *unmounted = xd_computer_volume(drive->root);
         if (unmounted != nullptr) {
             g_object_unref(unmounted);
             continue;
         }
-        add_item(menu, d->name, "drive-removable-media", G_CALLBACK(send_copy),
-                 g_object_ref(d->root), g_object_unref);
+        add_item(menu, drive->name, "drive-removable-media", G_CALLBACK(send_copy),
+                 g_object_ref(drive->root), g_object_unref);
     }
     g_ptr_array_unref(drives);
     gtk_widget_show_all(menu);

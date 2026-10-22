@@ -44,7 +44,7 @@ typedef struct XdNetPlace {
 char *xd_net_parse_folder(const char *text, gboolean need_share, GError **err);
 /* Whether two network folders' URIs name the same place (letter case of
  * the scheme and host, trailing slashes and escaping aside). */
-gboolean xd_net_same_uri(const char *a, const char *b);
+gboolean xd_net_same_uri(const char *left, const char *right);
 /* How XP shows the folder: "\\server\share\dir" for SMB, the unescaped
  * URI for others. Free with g_free. */
 char *xd_net_display_path(const char *uri);

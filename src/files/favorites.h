@@ -29,7 +29,7 @@ GPtrArray *xd_favorites_load(const char *path);
 
 /* What the menu shows: the label, else the folder's name. Free with
  * g_free. */
-char *xd_favorite_name(const XdFavorite *f);
+char *xd_favorite_name(const XdFavorite *favorite);
 
 /* Adds `uri` at the end; one already there just gets the new label.
  * An empty or nullptr `label` writes none. */
