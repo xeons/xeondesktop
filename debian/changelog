@@ -1,3 +1,25 @@
+xeondesktop (0.4.0) unstable; urgency=medium
+
+  * Windows visual styles: .msstyles themes imported (xd-theme-import) and
+    drawn by the theme engine, for frames, controls, the taskbar, Start
+    menus, Explorer, GTK and Qt programs; chosen in Display Properties' new
+    Themes tab, with a .theme's wallpaper, sounds and pointers.
+  * The unified (Windows 7) taskbar in every style, large or small icons,
+    window previews on XP's taskbar too, and programs' progress and counts.
+  * Windows 7's clock flyout: a month calendar and an analog clock.
+  * File manager tabs, Extract Here, XP's task pane by default.
+  * Touchscreens, drawing tablets and touchpad gestures; pointer lock,
+    explicit sync, variable refresh rate and tearing for games.
+  * New applets: Passwords and Keys, Night Light and Color Management,
+    Flatpak permissions, Privacy, msconfig, Automatic Updates, Map Network
+    Drive and folder sharing, encrypted drives, input methods, hybrid
+    graphics, Internet Time.
+  * Display Properties: Advanced Appearance, a Linux tab for icon themes
+    and program styles, Identify; font smoothing settings.
+  * Packages for Manjaro; man pages for every program.
+
+ -- xeon <xeon.productions@gmail.com>  Wed, 21 Oct 2026 21:40:31 -0500
+
 xeondesktop (0.3.0) unstable; urgency=medium
 
   * Windows 7's taskbar: window thumbnails with Aero Peek, jump lists with
