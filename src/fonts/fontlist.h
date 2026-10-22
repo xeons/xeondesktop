@@ -32,7 +32,7 @@ bool xd_path_in_dir(const char *path, const char *dir);
 
 /* Marks each family's face closest to upright, regular weight and
  * normal width as its primary one (the first, on a tie). */
-void xd_fonts_mark_primary(xd_font *const *fonts, size_t n);
+void xd_fonts_mark_primary(xd_font *const *fonts, size_t count);
 
 /* "Version 2.37" from FC_FONTVERSION (16.16 fixed point). Free with g_free. */
 char *xd_font_version_text(int fontversion);

@@ -48,27 +48,28 @@ char *xd_font_display_name(const char *fullname, const char *family, const char 
 }
 
 bool xd_path_in_dir(const char *path, const char *dir) {
-    size_t n = strlen(dir);
-    while (n > 1 && dir[n - 1] == '/')
-        n--;
-    return n > 0 && strncmp(path, dir, n) == 0 && path[n] == '/' && path[n + 1] != '\0';
+    size_t count = strlen(dir);
+    while (count > 1 && dir[count - 1] == '/')
+        count--;
+    return count > 0 && strncmp(path, dir, count) == 0 && path[count] == '/' &&
+           path[count + 1] != '\0';
 }
 
-static int distance(const xd_font *f) {
-    int d = abs(f->weight - FC_WEIGHT_REGULAR) + abs(f->width - FC_WIDTH_NORMAL);
-    if (f->slant != FC_SLANT_ROMAN)
-        d += 1000;
-    return d;
+static int distance(const xd_font *font) {
+    int score = abs(font->weight - FC_WEIGHT_REGULAR) + abs(font->width - FC_WIDTH_NORMAL);
+    if (font->slant != FC_SLANT_ROMAN)
+        score += 1000;
+    return score;
 }
 
-void xd_fonts_mark_primary(xd_font *const *fonts, size_t n) {
+void xd_fonts_mark_primary(xd_font *const *fonts, size_t count) {
     GHashTable *best = g_hash_table_new(g_str_hash, g_str_equal); /* family -> xd_font* */
-    for (size_t i = 0; i < n; i++) {
-        xd_font *f = fonts[i];
-        f->primary = false;
-        xd_font *b = g_hash_table_lookup(best, f->family);
-        if (b == nullptr || distance(f) < distance(b))
-            g_hash_table_insert(best, f->family, f);
+    for (size_t i = 0; i < count; i++) {
+        xd_font *font = fonts[i];
+        font->primary = false;
+        xd_font *best_font = g_hash_table_lookup(best, font->family);
+        if (best_font == nullptr || distance(font) < distance(best_font))
+            g_hash_table_insert(best, font->family, font);
     }
     GHashTableIter it;
     gpointer value;
@@ -102,31 +103,32 @@ bool xd_font_is_user(const char *file) {
     return user;
 }
 
-static char *pattern_string(FcPattern *p, const char *object) {
-    FcChar8 *s = nullptr;
-    return FcPatternGetString(p, object, 0, &s) == FcResultMatch ? g_strdup((const char *)s)
-                                                                 : nullptr;
+static char *pattern_string(FcPattern *pattern, const char *object) {
+    FcChar8 *text = nullptr;
+    return FcPatternGetString(pattern, object, 0, &text) == FcResultMatch
+               ? g_strdup((const char *)text)
+               : nullptr;
 }
 
-static int pattern_int(FcPattern *p, const char *object, int fallback) {
-    int v = fallback;
-    FcPatternGetInteger(p, object, 0, &v);
-    return v;
+static int pattern_int(FcPattern *pattern, const char *object, int fallback) {
+    int value = fallback;
+    FcPatternGetInteger(pattern, object, 0, &value);
+    return value;
 }
 
 static void font_free(gpointer data) {
-    xd_font *f = data;
-    g_free(f->file);
-    g_free(f->family);
-    g_free(f->style);
-    g_free(f->name);
-    g_free(f);
+    xd_font *font = data;
+    g_free(font->file);
+    g_free(font->family);
+    g_free(font->style);
+    g_free(font->name);
+    g_free(font);
 }
 
-static int compare_fonts(gconstpointer a, gconstpointer b) {
-    const xd_font *x = *(xd_font *const *)a, *y = *(xd_font *const *)b;
-    int c = g_utf8_collate(x->name, y->name);
-    return c != 0 ? c : strcmp(x->file, y->file);
+static int compare_fonts(gconstpointer left, gconstpointer right) {
+    const xd_font *left_font = *(xd_font *const *)left, *right_font = *(xd_font *const *)right;
+    int order = g_utf8_collate(left_font->name, right_font->name);
+    return order != 0 ? order : strcmp(left_font->file, right_font->file);
 }
 
 GPtrArray *xd_fonts_list(void) {
@@ -137,33 +139,34 @@ GPtrArray *xd_fonts_list(void) {
                                        nullptr);
     FcFontSet *set = FcFontList(nullptr, pat, os);
     for (int i = 0; set != nullptr && i < set->nfont; i++) {
-        FcPattern *p = set->fonts[i];
+        FcPattern *pattern = set->fonts[i];
         FcBool variable = FcFalse;
         /* A variable font lists each named instance, and itself. */
-        if (FcPatternGetBool(p, FC_VARIABLE, 0, &variable) == FcResultMatch && variable)
+        if (FcPatternGetBool(pattern, FC_VARIABLE, 0, &variable) == FcResultMatch && variable)
             continue;
-        char *file = pattern_string(p, FC_FILE);
-        char *family = pattern_string(p, FC_FAMILY);
+        char *file = pattern_string(pattern, FC_FILE);
+        char *family = pattern_string(pattern, FC_FAMILY);
         if (file == nullptr || family == nullptr) {
             g_free(file);
             g_free(family);
             continue;
         }
-        xd_font *f = g_new0(xd_font, 1);
-        f->file = file;
-        f->family = family;
-        f->index = pattern_int(p, FC_INDEX, 0);
-        f->style = pattern_string(p, FC_STYLE);
-        f->weight = pattern_int(p, FC_WEIGHT, FC_WEIGHT_REGULAR);
-        f->slant = pattern_int(p, FC_SLANT, FC_SLANT_ROMAN);
-        f->width = pattern_int(p, FC_WIDTH, FC_WIDTH_NORMAL);
-        char *full = pattern_string(p, FC_FULLNAME);
-        char *format = pattern_string(p, FC_FONTFORMAT);
-        f->name = xd_font_display_name(full, family, f->style, xd_font_format_label(format, file));
+        xd_font *font = g_new0(xd_font, 1);
+        font->file = file;
+        font->family = family;
+        font->index = pattern_int(pattern, FC_INDEX, 0);
+        font->style = pattern_string(pattern, FC_STYLE);
+        font->weight = pattern_int(pattern, FC_WEIGHT, FC_WEIGHT_REGULAR);
+        font->slant = pattern_int(pattern, FC_SLANT, FC_SLANT_ROMAN);
+        font->width = pattern_int(pattern, FC_WIDTH, FC_WIDTH_NORMAL);
+        char *full = pattern_string(pattern, FC_FULLNAME);
+        char *format = pattern_string(pattern, FC_FONTFORMAT);
+        font->name =
+            xd_font_display_name(full, family, font->style, xd_font_format_label(format, file));
         g_free(full);
         g_free(format);
-        f->user = xd_font_is_user(file);
-        g_ptr_array_add(out, f);
+        font->user = xd_font_is_user(file);
+        g_ptr_array_add(out, font);
     }
     if (set != nullptr)
         FcFontSetDestroy(set);
