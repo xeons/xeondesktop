@@ -22,7 +22,7 @@ typedef struct xd_ssh_key {
     bool in_agent;      /* ssh-agent holds it */
 } xd_ssh_key;
 
-void xd_ssh_key_free(xd_ssh_key *k);
+void xd_ssh_key_free(xd_ssh_key *key);
 
 /* The key pairs in `dir`: every *.pub that ssh-keygen reads, with its
  * private half beside it if there is one; sorted by name. Never nullptr. */

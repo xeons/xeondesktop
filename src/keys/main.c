@@ -29,11 +29,11 @@
 #include "keyslib.h"
 
 GtkWidget *keys_label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 60);
-    return l;
+    GtkWidget *label = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(label), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 60);
+    return label;
 }
 
 GtkWidget *keys_scrolled(GtkWidget *child, int width, int height) {
@@ -47,24 +47,24 @@ GtkWidget *keys_scrolled(GtkWidget *child, int width, int height) {
 }
 
 GtkTreeViewColumn *keys_text_column(GtkWidget *view, const char *title, int column, int width) {
-    GtkCellRenderer *r = gtk_cell_renderer_text_new();
-    g_object_set(r, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
-    GtkTreeViewColumn *c =
-        gtk_tree_view_column_new_with_attributes(title, r, "text", column, nullptr);
-    gtk_tree_view_column_set_resizable(c, TRUE);
-    gtk_tree_view_column_set_sizing(c, GTK_TREE_VIEW_COLUMN_FIXED);
-    gtk_tree_view_column_set_fixed_width(c, width);
-    gtk_tree_view_column_set_sort_column_id(c, column);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(view), c);
-    return c;
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    g_object_set(renderer, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
+    GtkTreeViewColumn *view_column =
+        gtk_tree_view_column_new_with_attributes(title, renderer, "text", column, nullptr);
+    gtk_tree_view_column_set_resizable(view_column, TRUE);
+    gtk_tree_view_column_set_sizing(view_column, GTK_TREE_VIEW_COLUMN_FIXED);
+    gtk_tree_view_column_set_fixed_width(view_column, width);
+    gtk_tree_view_column_set_sort_column_id(view_column, column);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(view), view_column);
+    return view_column;
 }
 
 GtkWidget *keys_button(const char *mnemonic, GCallback cb, gpointer data) {
-    GtkWidget *b = gtk_button_new_with_mnemonic(mnemonic);
-    gtk_widget_set_size_request(b, 75, -1);
+    GtkWidget *button = gtk_button_new_with_mnemonic(mnemonic);
+    gtk_widget_set_size_request(button, 75, -1);
     if (cb != nullptr)
-        g_signal_connect_swapped(b, "clicked", cb, data);
-    return b;
+        g_signal_connect_swapped(button, "clicked", cb, data);
+    return button;
 }
 
 GtkWidget *keys_button_row(GtkWidget *first, ...) {
@@ -72,8 +72,8 @@ GtkWidget *keys_button_row(GtkWidget *first, ...) {
     gtk_widget_set_halign(row, GTK_ALIGN_END);
     va_list ap;
     va_start(ap, first);
-    for (GtkWidget *b = first; b != nullptr; b = va_arg(ap, GtkWidget *))
-        gtk_box_pack_start(GTK_BOX(row), b, FALSE, FALSE, 0);
+    for (GtkWidget *button = first; button != nullptr; button = va_arg(ap, GtkWidget *))
+        gtk_box_pack_start(GTK_BOX(row), button, FALSE, FALSE, 0);
     va_end(ap);
     return row;
 }
@@ -86,40 +86,41 @@ GtkWidget *keys_grid(void) {
 }
 
 void keys_grid_row(GtkWidget *grid, int row, const char *label, GtkWidget *field) {
-    GtkWidget *l = gtk_label_new_with_mnemonic(label);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_widget_set_valign(l, GTK_ALIGN_BASELINE);
+    GtkWidget *label_widget = gtk_label_new_with_mnemonic(label);
+    gtk_label_set_xalign(GTK_LABEL(label_widget), 0);
+    gtk_widget_set_valign(label_widget, GTK_ALIGN_BASELINE);
     if (field != nullptr) {
-        gtk_label_set_mnemonic_widget(GTK_LABEL(l), field);
+        gtk_label_set_mnemonic_widget(GTK_LABEL(label_widget), field);
         gtk_widget_set_hexpand(field, TRUE);
         gtk_grid_attach(GTK_GRID(grid), field, 1, row, 1, 1);
     }
-    gtk_grid_attach(GTK_GRID(grid), l, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), label_widget, 0, row, 1, 1);
 }
 
 GtkWidget *keys_dialog(GtkWindow *parent, const char *title, const char *ok, GtkWidget **box) {
-    GtkWidget *d = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(d), title);
-    gtk_window_set_transient_for(GTK_WINDOW(d), parent);
-    gtk_window_set_modal(GTK_WINDOW(d), TRUE);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
-    gtk_window_set_destroy_with_parent(GTK_WINDOW(d), TRUE);
-    gtk_dialog_add_button(GTK_DIALOG(d), ok != nullptr ? ok : "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+    GtkWidget *dialog_widget = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(dialog_widget), title);
+    gtk_window_set_transient_for(GTK_WINDOW(dialog_widget), parent);
+    gtk_window_set_modal(GTK_WINDOW(dialog_widget), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(dialog_widget), FALSE);
+    gtk_window_set_destroy_with_parent(GTK_WINDOW(dialog_widget), TRUE);
+    gtk_dialog_add_button(GTK_DIALOG(dialog_widget), ok != nullptr ? ok : "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(dialog_widget), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog_widget), GTK_RESPONSE_OK);
     *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(*box), 10);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), *box, TRUE, TRUE, 0);
-    return d;
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog_widget))), *box, TRUE,
+                       TRUE, 0);
+    return dialog_widget;
 }
 
 GtkWidget *keys_password_entry(void) {
-    GtkWidget *e = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(e), FALSE);
-    gtk_entry_set_input_purpose(GTK_ENTRY(e), GTK_INPUT_PURPOSE_PASSWORD);
-    gtk_entry_set_activates_default(GTK_ENTRY(e), TRUE);
-    gtk_entry_set_width_chars(GTK_ENTRY(e), 28);
-    return e;
+    GtkWidget *entry_widget = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(entry_widget), FALSE);
+    gtk_entry_set_input_purpose(GTK_ENTRY(entry_widget), GTK_INPUT_PURPOSE_PASSWORD);
+    gtk_entry_set_activates_default(GTK_ENTRY(entry_widget), TRUE);
+    gtk_entry_set_width_chars(GTK_ENTRY(entry_widget), 28);
+    return entry_widget;
 }
 
 void keys_error(GtkWindow *parent, const char *what, const GError *error) {
@@ -131,7 +132,7 @@ void keys_error(GtkWindow *parent, const char *what, const GError *error) {
 
 char *keys_ask_passphrase(GtkWindow *parent, const char *title, const char *text) {
     GtkWidget *box = nullptr;
-    GtkWidget *d = keys_dialog(parent, title, nullptr, &box);
+    GtkWidget *dialog_widget = keys_dialog(parent, title, nullptr, &box);
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     GtkWidget *icon = gtk_image_new_from_icon_name("dialog-password", GTK_ICON_SIZE_DIALOG);
     gtk_widget_set_valign(icon, GTK_ALIGN_START);
@@ -144,12 +145,12 @@ char *keys_ask_passphrase(GtkWindow *parent, const char *title, const char *text
     gtk_box_pack_start(GTK_BOX(right), grid, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(row), right, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), row, TRUE, TRUE, 0);
-    gtk_widget_show_all(d);
+    gtk_widget_show_all(dialog_widget);
     gtk_widget_grab_focus(entry);
     char *pass = nullptr;
-    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK)
+    if (gtk_dialog_run(GTK_DIALOG(dialog_widget)) == GTK_RESPONSE_OK)
         pass = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
-    gtk_widget_destroy(d);
+    gtk_widget_destroy(dialog_widget);
     return pass;
 }
 
@@ -165,27 +166,27 @@ bool keys_check_match(GtkWindow *parent, const char *title, GtkWidget *entry, Gt
 }
 
 void keys_copy(const char *text) {
-    GtkClipboard *c = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
-    gtk_clipboard_set_text(c, text, -1);
-    gtk_clipboard_store(c);
+    GtkClipboard *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    gtk_clipboard_set_text(clipboard, text, -1);
+    gtk_clipboard_store(clipboard);
 }
 
-void keys_busy(GtkWidget *w, bool busy) {
-    GdkWindow *win = gtk_widget_get_window(gtk_widget_get_toplevel(w));
+void keys_busy(GtkWidget *widget, bool busy) {
+    GdkWindow *win = gtk_widget_get_window(gtk_widget_get_toplevel(widget));
     if (win == nullptr)
         return;
-    GdkCursor *c = busy ? gdk_cursor_new_from_name(gdk_window_get_display(win), "wait")
-                        : nullptr;
-    gdk_window_set_cursor(win, c);
-    if (c != nullptr)
-        g_object_unref(c);
+    GdkCursor *cursor =
+        busy ? gdk_cursor_new_from_name(gdk_window_get_display(win), "wait") : nullptr;
+    gdk_window_set_cursor(win, cursor);
+    if (cursor != nullptr)
+        g_object_unref(cursor);
     /* Show it before the work starts. */
     gdk_display_flush(gdk_window_get_display(win));
 }
 
-static void on_response(GtkDialog *d, [[maybe_unused]] int response,
+static void on_response(GtkDialog *dialog_widget, [[maybe_unused]] int response,
                         [[maybe_unused]] gpointer data) {
-    gtk_widget_destroy(GTK_WIDGET(d));
+    gtk_widget_destroy(GTK_WIDGET(dialog_widget));
 }
 
 int main(int argc, char **argv) {

@@ -9,12 +9,12 @@
 static char *format_time(gint64 seconds, const char *format) {
     if (seconds <= 0)
         return g_strdup("");
-    GDateTime *t = g_date_time_new_from_unix_local(seconds);
-    if (t == nullptr)
+    GDateTime *date_time = g_date_time_new_from_unix_local(seconds);
+    if (date_time == nullptr)
         return g_strdup("");
-    char *s = g_date_time_format(t, format);
-    g_date_time_unref(t);
-    return s != nullptr ? s : g_strdup("");
+    char *text = g_date_time_format(date_time, format);
+    g_date_time_unref(date_time);
+    return text != nullptr ? text : g_strdup("");
 }
 
 /* Without seconds, as Explorer's lists. */
@@ -52,25 +52,25 @@ const char *xd_secret_display_name(const char *label, const char *schema) {
 bool xd_ssh_parse_fingerprint(const char *line, int *bits, char **fingerprint, char **comment,
                               char **type) {
     /* BITS FINGERPRINT [COMMENT...] (TYPE) */
-    char *s = g_strstrip(g_strdup(line));
+    char *text = g_strstrip(g_strdup(line));
     bool ok = false;
-    char *sp1 = strchr(s, ' ');
-    char *open = strrchr(s, '(');
-    size_t len = strlen(s);
-    if (sp1 != nullptr && open != nullptr && open > sp1 && len > 0 && s[len - 1] == ')') {
+    char *sp1 = strchr(text, ' ');
+    char *open = strrchr(text, '(');
+    size_t len = strlen(text);
+    if (sp1 != nullptr && open != nullptr && open > sp1 && len > 0 && text[len - 1] == ')') {
         *sp1 = '\0';
         char *end = nullptr;
         errno = 0;
-        long b = strtol(s, &end, 10);
+        long bit_count = strtol(text, &end, 10);
         char *fp = sp1 + 1;
         char *sp2 = strchr(fp, ' ');
-        if (end != s && *end == '\0' && errno == 0 && b > 0 && b < 65536 && sp2 != nullptr &&
-            sp2 < open) {
+        if (end != text && *end == '\0' && errno == 0 && bit_count > 0 && bit_count < 65536 &&
+            sp2 != nullptr && sp2 < open) {
             *sp2 = '\0';
-            s[len - 1] = '\0';
+            text[len - 1] = '\0';
             open[0] = '\0';
             if (bits != nullptr)
-                *bits = (int)b;
+                *bits = (int)bit_count;
             if (fingerprint != nullptr)
                 *fingerprint = g_strdup(fp);
             if (type != nullptr)
@@ -80,7 +80,7 @@ bool xd_ssh_parse_fingerprint(const char *line, int *bits, char **fingerprint, c
             ok = true;
         }
     }
-    g_free(s);
+    g_free(text);
     return ok;
 }
 
@@ -119,17 +119,17 @@ int xd_keys_askpass_main(void) {
     /* A byte at a time: what's left in the pipe is the next askpass's. */
     GString *line = g_string_new(nullptr);
     bool got = false;
-    char c;
+    char character;
     for (;;) {
-        ssize_t n = read(STDIN_FILENO, &c, 1);
-        if (n < 0 && errno == EINTR)
+        ssize_t bytes_read = read(STDIN_FILENO, &character, 1);
+        if (bytes_read < 0 && errno == EINTR)
             continue;
-        if (n <= 0)
+        if (bytes_read <= 0)
             break;
         got = true;
-        if (c == '\n')
+        if (character == '\n')
             break;
-        g_string_append_c(line, c);
+        g_string_append_c(line, character);
     }
     int status = 1;
     if (got) {
@@ -145,14 +145,14 @@ int xd_keys_askpass_main(void) {
 }
 
 char *xd_gpg_user_id(const char *name, const char *email, const char *comment) {
-    GString *s = g_string_new(nullptr);
+    GString *string = g_string_new(nullptr);
     if (name != nullptr && name[0] != '\0')
-        g_string_append(s, name);
+        g_string_append(string, name);
     if (comment != nullptr && comment[0] != '\0')
-        g_string_append_printf(s, "%s(%s)", s->len > 0 ? " " : "", comment);
+        g_string_append_printf(string, "%s(%s)", string->len > 0 ? " " : "", comment);
     if (email != nullptr && email[0] != '\0')
-        g_string_append_printf(s, "%s<%s>", s->len > 0 ? " " : "", email);
-    return g_string_free(s, FALSE);
+        g_string_append_printf(string, "%s<%s>", string->len > 0 ? " " : "", email);
+    return g_string_free(string, FALSE);
 }
 
 const char *xd_gpg_validity_text(int validity) {

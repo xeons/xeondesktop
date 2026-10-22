@@ -47,7 +47,7 @@ char *keys_ask_passphrase(GtkWindow *parent, const char *title, const char *text
 bool keys_check_match(GtkWindow *parent, const char *title, GtkWidget *entry, GtkWidget *again);
 /* Puts `text` on the clipboard. */
 void keys_copy(const char *text);
-/* The hourglass over `w`'s window while something runs. */
-void keys_busy(GtkWidget *w, bool busy);
+/* The hourglass over `widget`'s window while something runs. */
+void keys_busy(GtkWidget *widget, bool busy);
 
 #endif
