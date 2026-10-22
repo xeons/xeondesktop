@@ -124,23 +124,24 @@ void xd_sysinfo_set_extras(xd_sysinfo *si, gboolean handles, gboolean io) {
 void xd_sysinfo_set_peak(xd_sysinfo *si, gboolean peak) { si->peak = peak; }
 
 static guint64 mem_value(xd_sysinfo *si, enum meminfo_item item) {
-    struct meminfo_result *r = procps_meminfo_get(si->mem, item);
-    return r != nullptr ? r->result.ul_int : 0;
+    struct meminfo_result *meminfo = procps_meminfo_get(si->mem, item);
+    return meminfo != nullptr ? meminfo->result.ul_int : 0;
 }
 
 static double ratio(long part, long whole) {
     if (whole <= 0 || part <= 0)
         return 0;
-    double r = (double)part / (double)whole;
-    return r > 1 ? 1 : r;
+    double fraction = (double)part / (double)whole;
+    return fraction > 1 ? 1 : fraction;
 }
 
 static void sample_cpu(xd_sysinfo *si) {
     xd_sysstats *st = &si->stats;
-    struct stat_reaped *r = procps_stat_reap(si->stat, STAT_REAP_CPUS_ONLY, stat_items, S_COUNT);
-    if (r == nullptr)
+    struct stat_reaped *reaped =
+        procps_stat_reap(si->stat, STAT_REAP_CPUS_ONLY, stat_items, S_COUNT);
+    if (reaped == nullptr)
         return;
-    struct stat_stack *sum = r->summary;
+    struct stat_stack *sum = reaped->summary;
     long total = XD_STAT_VAL(S_TOTAL, sl_int, sum);
     st->total_delta = total > 0 ? (guint64)total : 0;
     st->cpu = ratio(XD_STAT_VAL(S_BUSY, sl_int, sum), total);
@@ -148,22 +149,22 @@ static void sample_cpu(xd_sysinfo *si) {
     st->idle = total > 0 ? 1.0 - st->cpu : 1.0;
     st->idle_ticks = XD_STAT_VAL(S_IDLE, ull_int, sum);
 
-    int n = r->cpus != nullptr ? r->cpus->total : 0;
-    if (n != st->ncpu) {
+    int cpu_count = reaped->cpus != nullptr ? reaped->cpus->total : 0;
+    if (cpu_count != st->ncpu) {
         g_free(st->cpu_each);
         g_free(st->kernel_each);
-        st->ncpu = n;
-        st->cpu_each = g_new0(double, (gsize)MAX(n, 1));
-        st->kernel_each = g_new0(double, (gsize)MAX(n, 1));
+        st->ncpu = cpu_count;
+        st->cpu_each = g_new0(double, (gsize)MAX(cpu_count, 1));
+        st->kernel_each = g_new0(double, (gsize)MAX(cpu_count, 1));
     }
-    for (int i = 0; i < n; i++) {
-        struct stat_stack *c = r->cpus->stacks[i];
-        int id = XD_STAT_VAL(S_ID, s_int, c);
-        if (id < 0 || id >= n)
+    for (int i = 0; i < cpu_count; i++) {
+        struct stat_stack *cpu_stack = reaped->cpus->stacks[i];
+        int id = XD_STAT_VAL(S_ID, s_int, cpu_stack);
+        if (id < 0 || id >= cpu_count)
             continue;
-        long t = XD_STAT_VAL(S_TOTAL, sl_int, c);
-        st->cpu_each[id] = ratio(XD_STAT_VAL(S_BUSY, sl_int, c), t);
-        st->kernel_each[id] = ratio(XD_STAT_VAL(S_SYSTEM, sl_int, c), t);
+        long cpu_total = XD_STAT_VAL(S_TOTAL, sl_int, cpu_stack);
+        st->cpu_each[id] = ratio(XD_STAT_VAL(S_BUSY, sl_int, cpu_stack), cpu_total);
+        st->kernel_each[id] = ratio(XD_STAT_VAL(S_SYSTEM, sl_int, cpu_stack), cpu_total);
     }
 }
 
@@ -213,40 +214,42 @@ gboolean xd_sysinfo_sample(xd_sysinfo *si) {
     sample_memory(si);
 
     g_array_set_size(si->procs, 0);
-    struct pids_fetch *f = procps_pids_reap(si->pids, PIDS_FETCH_TASKS_ONLY);
-    if (f == nullptr)
+    struct pids_fetch *fetch_result = procps_pids_reap(si->pids, PIDS_FETCH_TASKS_ONLY);
+    if (fetch_result == nullptr)
         return FALSE;
-    int n = f->counts->total;
+    int task_count = fetch_result->counts->total;
     guint threads = 0;
-    for (int i = 0; i < n; i++) {
-        struct pids_stack *s = f->stacks[i];
-        xd_proc p = {
-            .pid = XD_PIDS_VAL(P_PID, s_int, s),
-            .ppid = XD_PIDS_VAL(P_PPID, s_int, s),
-            .name = XD_PIDS_VAL(P_CMD, str, s),
-            .user = XD_PIDS_VAL(P_USER, str, s),
-            .cpu_ticks = XD_PIDS_VAL(P_TICS, ull_int, s),
-            .cpu_delta = XD_PIDS_VAL(P_TICS_DELTA, u_int, s),
-            .mem_kb = XD_PIDS_VAL(P_RES, ul_int, s),
-            .vm_kb = XD_PIDS_VAL(P_VIRT, ul_int, s),
-            .faults = (guint64)XD_PIDS_VAL(P_FLT_MAJ, ul_int, s) + XD_PIDS_VAL(P_FLT_MIN, ul_int, s),
-            .threads = XD_PIDS_VAL(P_NLWP, s_int, s),
-            .nice = XD_PIDS_VAL(P_NICE, s_int, s),
-            .handles = si->i_handles >= 0 ? XD_PIDS_VAL(si->i_handles, s_int, s) : -1,
-            .io_read = si->i_io_read >= 0 ? XD_PIDS_VAL(si->i_io_read, ul_int, s) : 0,
-            .io_write = si->i_io_write >= 0 ? XD_PIDS_VAL(si->i_io_write, ul_int, s) : 0,
+    for (int i = 0; i < task_count; i++) {
+        struct pids_stack *process_stack = fetch_result->stacks[i];
+        xd_proc proc = {
+            .pid = XD_PIDS_VAL(P_PID, s_int, process_stack),
+            .ppid = XD_PIDS_VAL(P_PPID, s_int, process_stack),
+            .name = XD_PIDS_VAL(P_CMD, str, process_stack),
+            .user = XD_PIDS_VAL(P_USER, str, process_stack),
+            .cpu_ticks = XD_PIDS_VAL(P_TICS, ull_int, process_stack),
+            .cpu_delta = XD_PIDS_VAL(P_TICS_DELTA, u_int, process_stack),
+            .mem_kb = XD_PIDS_VAL(P_RES, ul_int, process_stack),
+            .vm_kb = XD_PIDS_VAL(P_VIRT, ul_int, process_stack),
+            .faults = (guint64)XD_PIDS_VAL(P_FLT_MAJ, ul_int, process_stack) +
+                      XD_PIDS_VAL(P_FLT_MIN, ul_int, process_stack),
+            .threads = XD_PIDS_VAL(P_NLWP, s_int, process_stack),
+            .nice = XD_PIDS_VAL(P_NICE, s_int, process_stack),
+            .handles = si->i_handles >= 0 ? XD_PIDS_VAL(si->i_handles, s_int, process_stack) : -1,
+            .io_read = si->i_io_read >= 0 ? XD_PIDS_VAL(si->i_io_read, ul_int, process_stack) : 0,
+            .io_write =
+                si->i_io_write >= 0 ? XD_PIDS_VAL(si->i_io_write, ul_int, process_stack) : 0,
         };
         /* libproc2 has no item for VmHWM; one more read per process. */
         if (si->peak)
-            p.peak_kb = xd_proc_peak_kb(p.pid);
+            proc.peak_kb = xd_proc_peak_kb(proc.pid);
 #ifndef XD_PROC2_HAS_OPEN_FILES
         if (si->count_files)
-            p.handles = open_files(p.pid);
+            proc.handles = open_files(proc.pid);
 #endif
-        threads += (guint)MAX(p.threads, 0);
-        g_array_append_val(si->procs, p);
+        threads += (guint)MAX(proc.threads, 0);
+        g_array_append_val(si->procs, proc);
     }
-    si->stats.processes = (guint)MAX(n, 0);
+    si->stats.processes = (guint)MAX(task_count, 0);
     si->stats.threads = threads;
     return TRUE;
 }

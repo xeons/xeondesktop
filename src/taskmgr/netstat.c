@@ -16,15 +16,16 @@ static char *read_attr(const char *dir, const char *name) {
 
 static guint64 read_u64(const char *dir, const char *name, guint base) {
     char *text = read_attr(dir, name);
-    guint64 v = 0;
+    guint64 value = 0;
     /* "flags" is "0x1003". */
     const char *digits = text;
     if (base == 16 && text != nullptr && g_str_has_prefix(text, "0x"))
         digits = text + 2;
-    if (text != nullptr && !g_ascii_string_to_unsigned(digits, base, 0, G_MAXUINT64, &v, nullptr))
-        v = 0;
+    if (text != nullptr &&
+        !g_ascii_string_to_unsigned(digits, base, 0, G_MAXUINT64, &value, nullptr))
+        value = 0;
     g_free(text);
-    return v;
+    return value;
 }
 
 xd_netif_state xd_netif_state_from(const char *operstate, gboolean admin_up) {
@@ -41,8 +42,8 @@ xd_netif_state xd_netif_state_from(const char *operstate, gboolean admin_up) {
     return XD_NETIF_DISCONNECTED;
 }
 
-const char *xd_netif_state_text(xd_netif_state s) {
-    switch (s) {
+const char *xd_netif_state_text(xd_netif_state state) {
+    switch (state) {
     case XD_NETIF_OPERATIONAL:
         return "Operational";
     case XD_NETIF_CONNECTING:
@@ -55,8 +56,8 @@ const char *xd_netif_state_text(xd_netif_state s) {
     return "";
 }
 
-static gint by_name(gconstpointer a, gconstpointer b) {
-    return g_strcmp0(((const xd_netif *)a)->name, ((const xd_netif *)b)->name);
+static gint by_name(gconstpointer left, gconstpointer right) {
+    return g_strcmp0(((const xd_netif *)left)->name, ((const xd_netif *)right)->name);
 }
 
 GArray *xd_netifs_read(const char *root) {
@@ -66,18 +67,18 @@ GArray *xd_netifs_read(const char *root) {
         return ifs;
     const char *name;
     while ((name = g_dir_read_name(dir)) != nullptr) {
-        char *d = g_build_filename(root, name, nullptr);
+        char *dir_path = g_build_filename(root, name, nullptr);
         /* Loopback (type 772, ARPHRD_LOOPBACK) isn't an adapter. */
-        if (read_u64(d, "type", 10) == 772) {
-            g_free(d);
+        if (read_u64(dir_path, "type", 10) == 772) {
+            g_free(dir_path);
             continue;
         }
-        char *stats = g_build_filename(d, "statistics", nullptr);
-        char *oper = read_attr(d, "operstate");
-        gboolean up = (read_u64(d, "flags", 16) & IFF_UP) != 0;
+        char *stats = g_build_filename(dir_path, "statistics", nullptr);
+        char *oper = read_attr(dir_path, "operstate");
+        gboolean up = (read_u64(dir_path, "flags", 16) & IFF_UP) != 0;
         /* "speed" is -1 (which doesn't parse) or unreadable without a
          * link. */
-        guint64 speed = read_u64(d, "speed", 10);
+        guint64 speed = read_u64(dir_path, "speed", 10);
         xd_netif nif = {
             .name = g_strdup(name),
             .rx_bytes = read_u64(stats, "rx_bytes", 10),
@@ -88,7 +89,7 @@ GArray *xd_netifs_read(const char *root) {
         g_array_append_val(ifs, nif);
         g_free(oper);
         g_free(stats);
-        g_free(d);
+        g_free(dir_path);
     }
     g_dir_close(dir);
     g_array_sort(ifs, by_name);

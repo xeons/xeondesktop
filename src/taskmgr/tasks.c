@@ -22,71 +22,78 @@ struct xd_tasklist {
     gpointer data;
 };
 
-static task_impl *impl(xd_task *t) { return (task_impl *)(void *)t; }
+static task_impl *impl(xd_task *task) { return (task_impl *)(void *)task; }
 
-static void handle_title(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+static void handle_title(void *data,
+                         [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                          const char *title) {
-    task_impl *t = data;
-    g_free(t->pub.title);
-    t->pub.title = g_strdup(title);
+    task_impl *toplevel = data;
+    g_free(toplevel->pub.title);
+    toplevel->pub.title = g_strdup(title);
 }
 
-static void handle_app_id(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+static void handle_app_id(void *data,
+                          [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                           const char *app_id) {
-    task_impl *t = data;
-    g_free(t->pub.app_id);
-    t->pub.app_id = g_strdup(app_id);
+    task_impl *toplevel = data;
+    g_free(toplevel->pub.app_id);
+    toplevel->pub.app_id = g_strdup(app_id);
 }
 
-static void handle_output_enter([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
-                                [[maybe_unused]] struct wl_output *output) {}
+static void handle_output_enter(
+    [[maybe_unused]] void *data,
+    [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
+    [[maybe_unused]] struct wl_output *output) {}
 
-static void handle_output_leave([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
-                                [[maybe_unused]] struct wl_output *output) {}
+static void handle_output_leave(
+    [[maybe_unused]] void *data,
+    [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
+    [[maybe_unused]] struct wl_output *output) {}
 
-static void handle_state(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+static void handle_state(void *data,
+                         [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                          struct wl_array *states) {
-    task_impl *t = data;
-    t->pub.minimized = t->pub.maximized = t->pub.activated = FALSE;
-    size_t n = states->size / sizeof(uint32_t);
-    const uint32_t *s = states->data;
-    for (size_t i = 0; i < n; i++) {
-        if (s[i] == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MINIMIZED)
-            t->pub.minimized = TRUE;
-        else if (s[i] == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MAXIMIZED)
-            t->pub.maximized = TRUE;
-        else if (s[i] == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED)
-            t->pub.activated = TRUE;
+    task_impl *toplevel = data;
+    toplevel->pub.minimized = toplevel->pub.maximized = toplevel->pub.activated = FALSE;
+    size_t count = states->size / sizeof(uint32_t);
+    const uint32_t *state_values = states->data;
+    for (size_t i = 0; i < count; i++) {
+        if (state_values[i] == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MINIMIZED)
+            toplevel->pub.minimized = TRUE;
+        else if (state_values[i] == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_MAXIMIZED)
+            toplevel->pub.maximized = TRUE;
+        else if (state_values[i] == ZWLR_FOREIGN_TOPLEVEL_HANDLE_V1_STATE_ACTIVATED)
+            toplevel->pub.activated = TRUE;
     }
 }
 
-static void handle_done(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h) {
-    task_impl *t = data;
-    t->announced = TRUE;
-    if (t->list->changed != nullptr)
-        t->list->changed(&t->pub, t->list->data);
+static void handle_done(void *data,
+                        [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle) {
+    task_impl *toplevel = data;
+    toplevel->announced = TRUE;
+    if (toplevel->list->changed != nullptr)
+        toplevel->list->changed(&toplevel->pub, toplevel->list->data);
 }
 
-static void task_free(task_impl *t) {
-    zwlr_foreign_toplevel_handle_v1_destroy(t->handle);
-    g_free(t->pub.title);
-    g_free(t->pub.app_id);
-    g_free(t);
+static void task_free(task_impl *toplevel) {
+    zwlr_foreign_toplevel_handle_v1_destroy(toplevel->handle);
+    g_free(toplevel->pub.title);
+    g_free(toplevel->pub.app_id);
+    g_free(toplevel);
 }
 
-static void handle_closed(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h) {
-    task_impl *t = data;
-    xd_tasklist *list = t->list;
-    list->tasks = g_list_remove(list->tasks, t);
-    if (t->announced && list->closed != nullptr)
-        list->closed(&t->pub, list->data);
-    task_free(t);
+static void handle_closed(
+    void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle) {
+    task_impl *toplevel = data;
+    xd_tasklist *list = toplevel->list;
+    list->tasks = g_list_remove(list->tasks, toplevel);
+    if (toplevel->announced && list->closed != nullptr)
+        list->closed(&toplevel->pub, list->data);
+    task_free(toplevel);
 }
 
 static void handle_parent([[maybe_unused]] void *data,
-                          [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *h,
+                          [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *toplevel_handle,
                           [[maybe_unused]] struct zwlr_foreign_toplevel_handle_v1 *parent) {}
 
 static const struct zwlr_foreign_toplevel_handle_v1_listener handle_listener = {
@@ -100,19 +107,21 @@ static const struct zwlr_foreign_toplevel_handle_v1_listener handle_listener = {
     .parent = handle_parent,
 };
 
-static void manager_toplevel(void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_manager_v1 *m,
-                             struct zwlr_foreign_toplevel_handle_v1 *handle) {
+static void manager_toplevel(
+    void *data, [[maybe_unused]] struct zwlr_foreign_toplevel_manager_v1 *toplevel_manager,
+    struct zwlr_foreign_toplevel_handle_v1 *handle) {
     xd_tasklist *list = data;
-    task_impl *t = g_new0(task_impl, 1);
-    t->handle = handle;
-    t->list = list;
-    zwlr_foreign_toplevel_handle_v1_add_listener(handle, &handle_listener, t);
-    list->tasks = g_list_append(list->tasks, t);
+    task_impl *toplevel = g_new0(task_impl, 1);
+    toplevel->handle = handle;
+    toplevel->list = list;
+    zwlr_foreign_toplevel_handle_v1_add_listener(handle, &handle_listener, toplevel);
+    list->tasks = g_list_append(list->tasks, toplevel);
 }
 
-static void manager_finished(void *data, struct zwlr_foreign_toplevel_manager_v1 *m) {
+static void manager_finished(void *data,
+                             struct zwlr_foreign_toplevel_manager_v1 *toplevel_manager) {
     xd_tasklist *list = data;
-    zwlr_foreign_toplevel_manager_v1_destroy(m);
+    zwlr_foreign_toplevel_manager_v1_destroy(toplevel_manager);
     list->manager = nullptr;
 }
 
@@ -171,9 +180,9 @@ void xd_tasklist_free(xd_tasklist *list) {
     if (list == nullptr)
         return;
     while (list->tasks != nullptr) {
-        task_impl *t = list->tasks->data;
+        task_impl *toplevel = list->tasks->data;
         list->tasks = g_list_delete_link(list->tasks, list->tasks);
-        task_free(t);
+        task_free(toplevel);
     }
     if (list->manager != nullptr)
         zwlr_foreign_toplevel_manager_v1_stop(list->manager);
@@ -184,10 +193,11 @@ void xd_tasklist_free(xd_tasklist *list) {
 }
 
 void xd_task_activate(xd_task *task) {
-    task_impl *t = impl(task);
-    GdkSeat *seat = gdk_display_get_default_seat(t->list->display);
+    task_impl *toplevel = impl(task);
+    GdkSeat *seat = gdk_display_get_default_seat(toplevel->list->display);
     if (seat != nullptr)
-        zwlr_foreign_toplevel_handle_v1_activate(t->handle, gdk_wayland_seat_get_wl_seat(seat));
+        zwlr_foreign_toplevel_handle_v1_activate(toplevel->handle,
+                                                 gdk_wayland_seat_get_wl_seat(seat));
 }
 
 void xd_task_close(xd_task *task) { zwlr_foreign_toplevel_handle_v1_close(impl(task)->handle); }
@@ -213,12 +223,13 @@ gboolean xd_tasklist_can_arrange(const xd_tasklist *list) {
 void xd_tasklist_arrange(xd_tasklist *list, GList *tasks, xd_arrange_mode mode) {
     if (!xd_tasklist_can_arrange(list) || tasks == nullptr)
         return;
-    for (GList *l = tasks; l != nullptr; l = l->next)
-        xd_window_arranger_v1_mark(list->arranger, impl(l->data)->handle);
-    uint32_t m = mode == XD_ARRANGE_TILE_HORIZONTALLY ? XD_WINDOW_ARRANGER_V1_MODE_TILE_HORIZONTALLY
-                 : mode == XD_ARRANGE_TILE_VERTICALLY ? XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY
-                                                      : XD_WINDOW_ARRANGER_V1_MODE_CASCADE;
-    xd_window_arranger_v1_arrange_marked(list->arranger, m);
+    for (GList *link = tasks; link != nullptr; link = link->next)
+        xd_window_arranger_v1_mark(list->arranger, impl(link->data)->handle);
+    uint32_t arranger_mode =
+        mode == XD_ARRANGE_TILE_HORIZONTALLY ? XD_WINDOW_ARRANGER_V1_MODE_TILE_HORIZONTALLY
+        : mode == XD_ARRANGE_TILE_VERTICALLY ? XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY
+                                             : XD_WINDOW_ARRANGER_V1_MODE_CASCADE;
+    xd_window_arranger_v1_arrange_marked(list->arranger, arranger_mode);
 }
 
 gboolean xd_tasklist_can_set_on_top(const xd_tasklist *list) {

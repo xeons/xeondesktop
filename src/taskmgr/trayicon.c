@@ -39,55 +39,55 @@ static constexpr int LED_ROWS = 7;
 /* Windows' icon: a black square with green LED rows lit from the bottom,
  * the unlit ones dim. */
 static GVariant *meter_pixmap(int size, int level) {
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size);
-    cairo_t *cr = cairo_create(s);
-    double u = size / 16.0;
-    cairo_set_source_rgb(cr, 0, 0, 0);
-    cairo_rectangle(cr, 1 * u, 0, 14 * u, 16 * u);
-    cairo_fill(cr);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, size, size);
+    cairo_t *cairo = cairo_create(surface);
+    double unit = size / 16.0;
+    cairo_set_source_rgb(cairo, 0, 0, 0);
+    cairo_rectangle(cairo, 1 * unit, 0, 14 * unit, 16 * unit);
+    cairo_fill(cairo);
     for (int row = 0; row < LED_ROWS; row++) {
         bool lit = row < level;
         if (lit)
-            cairo_set_source_rgb(cr, 0, 1, 0);
+            cairo_set_source_rgb(cairo, 0, 1, 0);
         else
-            cairo_set_source_rgb(cr, 0, 0.5, 0);
-        double y = (14 - 2 * row) * u;
-        cairo_rectangle(cr, 3 * u, y, 4 * u, u);
-        cairo_rectangle(cr, 9 * u, y, 4 * u, u);
-        cairo_fill(cr);
+            cairo_set_source_rgb(cairo, 0, 0.5, 0);
+        double y = (14 - 2 * row) * unit;
+        cairo_rectangle(cairo, 3 * unit, y, 4 * unit, unit);
+        cairo_rectangle(cairo, 9 * unit, y, 4 * unit, unit);
+        cairo_fill(cairo);
     }
-    cairo_destroy(cr);
-    cairo_surface_flush(s);
+    cairo_destroy(cairo);
+    cairo_surface_flush(surface);
 
     /* SNI wants ARGB32 in network byte order, not premultiplied (opaque
      * here, so only the order matters). */
-    const unsigned char *data = cairo_image_surface_get_data(s);
-    int stride = cairo_image_surface_get_stride(s);
+    const unsigned char *data = cairo_image_surface_get_data(surface);
+    int stride = cairo_image_surface_get_stride(surface);
     gsize len = (gsize)size * (gsize)size * 4;
     guint8 *out = g_malloc(len);
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
-            guint32 p;
-            memcpy(&p, data + (size_t)y * (size_t)stride + (size_t)x * 4, sizeof(p));
-            guint8 *o = out + ((size_t)y * (size_t)size + (size_t)x) * 4;
-            o[0] = (guint8)(p >> 24);
-            o[1] = (guint8)(p >> 16);
-            o[2] = (guint8)(p >> 8);
-            o[3] = (guint8)p;
+            guint32 pixel;
+            memcpy(&pixel, data + (size_t)y * (size_t)stride + (size_t)x * 4, sizeof(pixel));
+            guint8 *out_pixel = out + ((size_t)y * (size_t)size + (size_t)x) * 4;
+            out_pixel[0] = (guint8)(pixel >> 24);
+            out_pixel[1] = (guint8)(pixel >> 16);
+            out_pixel[2] = (guint8)(pixel >> 8);
+            out_pixel[3] = (guint8)pixel;
         }
     }
-    cairo_surface_destroy(s);
+    cairo_surface_destroy(surface);
     return g_variant_new("(ii@ay)", size, size,
                          g_variant_new_from_data(G_VARIANT_TYPE("ay"), out, len, TRUE, g_free,
                                                  out));
 }
 
 static GVariant *icon_pixmaps(const xd_trayicon *ti) {
-    GVariantBuilder b;
-    g_variant_builder_init(&b, G_VARIANT_TYPE("a(iiay)"));
-    g_variant_builder_add_value(&b, meter_pixmap(16, ti->level));
-    g_variant_builder_add_value(&b, meter_pixmap(32, ti->level));
-    return g_variant_builder_end(&b);
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a(iiay)"));
+    g_variant_builder_add_value(&builder, meter_pixmap(16, ti->level));
+    g_variant_builder_add_value(&builder, meter_pixmap(32, ti->level));
+    return g_variant_builder_end(&builder);
 }
 
 static GVariant *tooltip(const xd_trayicon *ti) {
@@ -118,10 +118,11 @@ static const char item_xml[] =
     "<signal name='NewIcon'/><signal name='NewToolTip'/>"
     "</interface></node>";
 
-static void item_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                      [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                      const char *method, [[maybe_unused]] GVariant *params,
-                      GDBusMethodInvocation *inv, gpointer data) {
+static void item_call([[maybe_unused]] GDBusConnection *connection,
+                      [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                      [[maybe_unused]] const char *iface, const char *method,
+                      [[maybe_unused]] GVariant *params, GDBusMethodInvocation *inv,
+                      gpointer data) {
     xd_trayicon *ti = data;
     g_dbus_method_invocation_return_value(inv, nullptr);
     /* A click restores the window, as a double-click does in Windows; the
@@ -130,9 +131,10 @@ static void item_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] cons
         ti->ops->restore(ti->data);
 }
 
-static GVariant *item_get([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                          [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                          const char *prop, [[maybe_unused]] GError **error, gpointer data) {
+static GVariant *item_get([[maybe_unused]] GDBusConnection *connection,
+                          [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                          [[maybe_unused]] const char *iface, const char *prop,
+                          [[maybe_unused]] GError **error, gpointer data) {
     xd_trayicon *ti = data;
     if (strcmp(prop, "Category") == 0)
         return g_variant_new_string("SystemServices");
@@ -182,30 +184,33 @@ static const char menu_xml[] =
     "</interface></node>";
 
 static GVariant *menu_props(const xd_trayicon *ti, int id) {
-    GVariantBuilder b;
-    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
     switch (id) {
     case 0:
-        g_variant_builder_add(&b, "{sv}", "children-display", g_variant_new_string("submenu"));
+        g_variant_builder_add(&builder, "{sv}", "children-display",
+                              g_variant_new_string("submenu"));
         break;
     case MENU_RESTORE:
-        g_variant_builder_add(&b, "{sv}", "label", g_variant_new_string("_Restore"));
+        g_variant_builder_add(&builder, "{sv}", "label", g_variant_new_string("_Restore"));
         break;
     case MENU_ON_TOP:
-        g_variant_builder_add(&b, "{sv}", "label", g_variant_new_string("_Always On Top"));
-        g_variant_builder_add(&b, "{sv}", "toggle-type", g_variant_new_string("checkmark"));
-        g_variant_builder_add(&b, "{sv}", "toggle-state", g_variant_new_int32(ti->on_top ? 1 : 0));
+        g_variant_builder_add(&builder, "{sv}", "label", g_variant_new_string("_Always On Top"));
+        g_variant_builder_add(&builder, "{sv}", "toggle-type", g_variant_new_string("checkmark"));
+        g_variant_builder_add(&builder, "{sv}", "toggle-state",
+                              g_variant_new_int32(ti->on_top ? 1 : 0));
         break;
     case MENU_SEPARATOR:
-        g_variant_builder_add(&b, "{sv}", "type", g_variant_new_string("separator"));
+        g_variant_builder_add(&builder, "{sv}", "type", g_variant_new_string("separator"));
         break;
     case MENU_CLOSE:
-        g_variant_builder_add(&b, "{sv}", "label", g_variant_new_string("_Close Task Manager"));
+        g_variant_builder_add(&builder, "{sv}", "label",
+                              g_variant_new_string("_Close Task Manager"));
         break;
     default:
         break;
     }
-    return g_variant_builder_end(&b);
+    return g_variant_builder_end(&builder);
 }
 
 static GVariant *menu_node(const xd_trayicon *ti, int id) {
@@ -233,10 +238,10 @@ static bool menu_event(xd_trayicon *ti, int id, const char *event) {
     return true;
 }
 
-static void menu_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                      [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                      const char *method, GVariant *params, GDBusMethodInvocation *inv,
-                      gpointer data) {
+static void menu_call([[maybe_unused]] GDBusConnection *connection,
+                      [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                      [[maybe_unused]] const char *iface, const char *method, GVariant *params,
+                      GDBusMethodInvocation *inv, gpointer data) {
     xd_trayicon *ti = data;
     if (strcmp(method, "GetLayout") == 0) {
         gint32 parent = 0;
@@ -248,30 +253,30 @@ static void menu_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] cons
     } else if (strcmp(method, "GetGroupProperties") == 0) {
         GVariantIter *ids = nullptr;
         g_variant_get(params, "(ai@as)", &ids, nullptr);
-        GVariantBuilder b;
-        g_variant_builder_init(&b, G_VARIANT_TYPE("a(ia{sv})"));
+        GVariantBuilder group_builder;
+        g_variant_builder_init(&group_builder, G_VARIANT_TYPE("a(ia{sv})"));
         gint32 id;
         while (g_variant_iter_next(ids, "i", &id)) {
             if (id >= 0 && id <= MENU_CLOSE)
-                g_variant_builder_add(&b, "(i@a{sv})", id, menu_props(ti, id));
+                g_variant_builder_add(&group_builder, "(i@a{sv})", id, menu_props(ti, id));
         }
         g_variant_iter_free(ids);
-        g_dbus_method_invocation_return_value(inv, g_variant_new("(@a(ia{sv}))",
-                                                                 g_variant_builder_end(&b)));
+        g_dbus_method_invocation_return_value(
+            inv, g_variant_new("(@a(ia{sv}))", g_variant_builder_end(&group_builder)));
     } else if (strcmp(method, "GetProperty") == 0) {
         gint32 id = 0;
         const char *name = nullptr;
         g_variant_get(params, "(i&s)", &id, &name);
         GVariant *props = menu_props(ti, id);
-        GVariant *v = g_variant_lookup_value(props, name, nullptr);
+        GVariant *variant = g_variant_lookup_value(props, name, nullptr);
         g_variant_unref(g_variant_ref_sink(props));
-        if (v == nullptr)
+        if (variant == nullptr)
             g_dbus_method_invocation_return_dbus_error(inv, "com.canonical.dbusmenu.Error",
                                                        "no such property");
         else
-            g_dbus_method_invocation_return_value(inv, g_variant_new("(v)", v));
-        if (v != nullptr)
-            g_variant_unref(v);
+            g_dbus_method_invocation_return_value(inv, g_variant_new("(v)", variant));
+        if (variant != nullptr)
+            g_variant_unref(variant);
     } else if (strcmp(method, "Event") == 0) {
         gint32 id = 0;
         const char *event = nullptr;
@@ -295,21 +300,22 @@ static void menu_call([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] cons
     } else if (strcmp(method, "AboutToShow") == 0) {
         g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", FALSE));
     } else if (strcmp(method, "AboutToShowGroup") == 0) {
-        GVariantBuilder a, b;
-        g_variant_builder_init(&a, G_VARIANT_TYPE("ai"));
-        g_variant_builder_init(&b, G_VARIANT_TYPE("ai"));
+        GVariantBuilder updates_needed, id_errors;
+        g_variant_builder_init(&updates_needed, G_VARIANT_TYPE("ai"));
+        g_variant_builder_init(&id_errors, G_VARIANT_TYPE("ai"));
         g_dbus_method_invocation_return_value(
-            inv, g_variant_new("(@ai@ai)", g_variant_builder_end(&a), g_variant_builder_end(&b)));
+            inv, g_variant_new("(@ai@ai)", g_variant_builder_end(&updates_needed),
+                               g_variant_builder_end(&id_errors)));
     } else {
         g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.UnknownMethod",
                                                    method);
     }
 }
 
-static GVariant *menu_get([[maybe_unused]] GDBusConnection *c, [[maybe_unused]] const char *sender,
-                          [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
-                          const char *prop, [[maybe_unused]] GError **error,
-                          [[maybe_unused]] gpointer data) {
+static GVariant *menu_get([[maybe_unused]] GDBusConnection *connection,
+                          [[maybe_unused]] const char *sender, [[maybe_unused]] const char *path,
+                          [[maybe_unused]] const char *iface, const char *prop,
+                          [[maybe_unused]] GError **error, [[maybe_unused]] gpointer data) {
     if (strcmp(prop, "Version") == 0)
         return g_variant_new_uint32(3);
     if (strcmp(prop, "TextDirection") == 0)

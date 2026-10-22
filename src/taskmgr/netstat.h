@@ -32,7 +32,7 @@ void xd_netifs_free(GArray *ifs);
 
 /* operstate and the IFF_UP flag -> XP's state. */
 xd_netif_state xd_netif_state_from(const char *operstate, gboolean admin_up);
-const char *xd_netif_state_text(xd_netif_state s);
+const char *xd_netif_state_text(xd_netif_state state);
 /* "10 Mbps", "100 Mbps", "1 Gbps", "2.5 Gbps"; "" when unknown. */
 char *xd_netif_speed_text(guint64 mbps);
 /* Share of the link used: bytes both ways over `seconds`, against the
