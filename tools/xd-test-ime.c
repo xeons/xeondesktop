@@ -43,32 +43,34 @@ typedef struct ime {
     bool quit;
 } ime;
 
-[[gnu::format(printf, 2, 3)]] static void say(ime *m, const char *fmt, ...) {
-    if (m->log == nullptr)
+[[gnu::format(printf, 2, 3)]] static void say(ime *input_method, const char *fmt, ...) {
+    if (input_method->log == nullptr)
         return;
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(m->log, fmt, ap);
+    vfprintf(input_method->log, fmt, ap);
     va_end(ap);
-    fputc('\n', m->log);
-    fflush(m->log);
+    fputc('\n', input_method->log);
+    fflush(input_method->log);
 }
 
 /* ---- registry --------------------------------------------------------------- */
 
 static void global_add(void *data, struct wl_registry *reg, uint32_t name, const char *iface,
                        uint32_t version) {
-    ime *m = data;
-    if (strcmp(iface, wl_seat_interface.name) == 0 && m->seat == nullptr)
-        m->seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
+    ime *input_method = data;
+    if (strcmp(iface, wl_seat_interface.name) == 0 && input_method->seat == nullptr)
+        input_method->seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
     else if (strcmp(iface, wl_compositor_interface.name) == 0)
-        m->compositor = wl_registry_bind(reg, name, &wl_compositor_interface, 4);
+        input_method->compositor = wl_registry_bind(reg, name, &wl_compositor_interface, 4);
     else if (strcmp(iface, wl_shm_interface.name) == 0)
-        m->shm = wl_registry_bind(reg, name, &wl_shm_interface, 1);
+        input_method->shm = wl_registry_bind(reg, name, &wl_shm_interface, 1);
     else if (strcmp(iface, zwp_input_method_manager_v2_interface.name) == 0)
-        m->manager = wl_registry_bind(reg, name, &zwp_input_method_manager_v2_interface, 1);
+        input_method->manager =
+            wl_registry_bind(reg, name, &zwp_input_method_manager_v2_interface, 1);
     else if (strcmp(iface, zwp_virtual_keyboard_manager_v1_interface.name) == 0)
-        m->vk_manager = wl_registry_bind(reg, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
+        input_method->vk_manager =
+            wl_registry_bind(reg, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
     (void)version;
 }
 
@@ -79,17 +81,18 @@ static const struct wl_registry_listener registry_listener = {global_add, global
 
 /* ---- the candidate window ------------------------------------------------------ */
 
-static void popup_rectangle(void *data, [[maybe_unused]] struct zwp_input_popup_surface_v2 *p,
-                            int32_t x, int32_t y, int32_t w, int32_t h) {
-    say(data, "rectangle %d %d %d %d", x, y, w, h);
+static void popup_rectangle(void *data, [[maybe_unused]] struct zwp_input_popup_surface_v2 *popup,
+                            int32_t x, int32_t y, int32_t width, int32_t height) {
+    say(data, "rectangle %d %d %d %d", x, y, width, height);
 }
 
 static const struct zwp_input_popup_surface_v2_listener popup_listener = {popup_rectangle};
 
 enum { POPUP_W = 120, POPUP_H = 30 };
 
-static void show_popup(ime *m) {
-    if (m->popup != nullptr || m->compositor == nullptr || m->shm == nullptr)
+static void show_popup(ime *input_method) {
+    if (input_method->popup != nullptr || input_method->compositor == nullptr ||
+        input_method->shm == nullptr)
         return;
     int stride = POPUP_W * 4, size = stride * POPUP_H;
     int fd = memfd_create("xd-test-ime", MFD_CLOEXEC);
@@ -106,71 +109,75 @@ static void show_popup(ime *m) {
     for (int i = 0; i < POPUP_W * POPUP_H; i++)
         px[i] = 0xffff00ff; /* magenta: easy to find in a screenshot */
     munmap(px, (size_t)size);
-    struct wl_shm_pool *pool = wl_shm_create_pool(m->shm, fd, size);
+    struct wl_shm_pool *pool = wl_shm_create_pool(input_method->shm, fd, size);
     struct wl_buffer *buffer =
         wl_shm_pool_create_buffer(pool, 0, POPUP_W, POPUP_H, stride, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
     close(fd);
-    m->popup_surface = wl_compositor_create_surface(m->compositor);
-    m->popup = zwp_input_method_v2_get_input_popup_surface(m->im, m->popup_surface);
-    zwp_input_popup_surface_v2_add_listener(m->popup, &popup_listener, m);
-    wl_surface_attach(m->popup_surface, buffer, 0, 0);
-    wl_surface_damage(m->popup_surface, 0, 0, POPUP_W, POPUP_H);
-    wl_surface_commit(m->popup_surface);
+    input_method->popup_surface = wl_compositor_create_surface(input_method->compositor);
+    input_method->popup =
+        zwp_input_method_v2_get_input_popup_surface(input_method->im, input_method->popup_surface);
+    zwp_input_popup_surface_v2_add_listener(input_method->popup, &popup_listener, input_method);
+    wl_surface_attach(input_method->popup_surface, buffer, 0, 0);
+    wl_surface_damage(input_method->popup_surface, 0, 0, POPUP_W, POPUP_H);
+    wl_surface_commit(input_method->popup_surface);
 }
 
 /* ---- the keyboard grab ------------------------------------------------------- */
 
-static void grab_keymap(void *data, [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *g,
+static void grab_keymap(void *data,
+                        [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *keyboard_grab,
                         uint32_t format, int32_t fd, uint32_t size) {
-    ime *m = data;
+    ime *input_method = data;
     if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
         close(fd);
         return;
     }
     /* Our keyboard types with the same keymap as the real one. */
-    if (m->vk == nullptr && m->vk_manager != nullptr)
-        m->vk = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(m->vk_manager, m->seat);
-    if (m->vk != nullptr) {
-        zwp_virtual_keyboard_v1_keymap(m->vk, format, fd, size);
-        m->has_keymap = true;
+    if (input_method->vk == nullptr && input_method->vk_manager != nullptr)
+        input_method->vk = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(
+            input_method->vk_manager, input_method->seat);
+    if (input_method->vk != nullptr) {
+        zwp_virtual_keyboard_v1_keymap(input_method->vk, format, fd, size);
+        input_method->has_keymap = true;
     }
     close(fd);
-    say(m, "keymap");
+    say(input_method, "keymap");
 }
 
-static void grab_key(void *data, [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *g,
+static void grab_key(void *data,
+                     [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *keyboard_grab,
                      [[maybe_unused]] uint32_t serial, uint32_t time, uint32_t key,
                      uint32_t state) {
-    ime *m = data;
+    ime *input_method = data;
     if (key == KEY_A) {
         if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
             /* Composed first, as a real input method shows its preedit;
              * then the result. */
-            zwp_input_method_v2_set_preedit_string(m->im, "にほんご", 0, 12);
-            zwp_input_method_v2_commit(m->im, m->serial);
-            zwp_input_method_v2_commit_string(m->im, "日本語");
-            zwp_input_method_v2_commit(m->im, m->serial);
-            say(m, "committed");
+            zwp_input_method_v2_set_preedit_string(input_method->im, "にほんご", 0, 12);
+            zwp_input_method_v2_commit(input_method->im, input_method->serial);
+            zwp_input_method_v2_commit_string(input_method->im, "日本語");
+            zwp_input_method_v2_commit(input_method->im, input_method->serial);
+            say(input_method, "committed");
         }
         return;
     }
-    say(m, "forwarded %u %u", key, state);
-    if (m->vk != nullptr && m->has_keymap)
-        zwp_virtual_keyboard_v1_key(m->vk, time, key, state);
+    say(input_method, "forwarded %u %u", key, state);
+    if (input_method->vk != nullptr && input_method->has_keymap)
+        zwp_virtual_keyboard_v1_key(input_method->vk, time, key, state);
 }
 
 static void grab_modifiers(void *data,
-                           [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *g,
+                           [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *keyboard_grab,
                            [[maybe_unused]] uint32_t serial, uint32_t depressed, uint32_t latched,
                            uint32_t locked, uint32_t group) {
-    ime *m = data;
-    if (m->vk != nullptr && m->has_keymap)
-        zwp_virtual_keyboard_v1_modifiers(m->vk, depressed, latched, locked, group);
+    ime *input_method = data;
+    if (input_method->vk != nullptr && input_method->has_keymap)
+        zwp_virtual_keyboard_v1_modifiers(input_method->vk, depressed, latched, locked, group);
 }
 
 static void grab_repeat([[maybe_unused]] void *data,
-                        [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *g,
+                        [[maybe_unused]] struct zwp_input_method_keyboard_grab_v2 *keyboard_grab,
                         [[maybe_unused]] int32_t rate, [[maybe_unused]] int32_t delay) {}
 
 static const struct zwp_input_method_keyboard_grab_v2_listener grab_listener = {
@@ -202,27 +209,28 @@ static void im_content_type(void *data, [[maybe_unused]] struct zwp_input_method
 }
 
 static void im_done(void *data, [[maybe_unused]] struct zwp_input_method_v2 *im) {
-    ime *m = data;
-    m->serial++;
-    if (m->pending_active == m->active)
+    ime *input_method = data;
+    input_method->serial++;
+    if (input_method->pending_active == input_method->active)
         return;
-    m->active = m->pending_active;
-    say(m, "%s", m->active ? "activate" : "deactivate");
+    input_method->active = input_method->pending_active;
+    say(input_method, "%s", input_method->active ? "activate" : "deactivate");
     /* As Fcitx 5 does: the keyboard while active, released after. */
-    if (m->active && m->grab == nullptr) {
-        m->grab = zwp_input_method_v2_grab_keyboard(m->im);
-        zwp_input_method_keyboard_grab_v2_add_listener(m->grab, &grab_listener, m);
-        show_popup(m);
-    } else if (!m->active && m->grab != nullptr) {
-        zwp_input_method_keyboard_grab_v2_release(m->grab);
-        m->grab = nullptr;
+    if (input_method->active && input_method->grab == nullptr) {
+        input_method->grab = zwp_input_method_v2_grab_keyboard(input_method->im);
+        zwp_input_method_keyboard_grab_v2_add_listener(input_method->grab, &grab_listener,
+                                                       input_method);
+        show_popup(input_method);
+    } else if (!input_method->active && input_method->grab != nullptr) {
+        zwp_input_method_keyboard_grab_v2_release(input_method->grab);
+        input_method->grab = nullptr;
     }
 }
 
 static void im_unavailable(void *data, [[maybe_unused]] struct zwp_input_method_v2 *im) {
-    ime *m = data;
-    say(m, "unavailable");
-    m->quit = true;
+    ime *input_method = data;
+    say(input_method, "unavailable");
+    input_method->quit = true;
 }
 
 static const struct zwp_input_method_v2_listener im_listener = {
@@ -231,36 +239,39 @@ static const struct zwp_input_method_v2_listener im_listener = {
 
 int main(int argc, char **argv) {
     bool probe = argc > 1 && strcmp(argv[1], "--probe") == 0;
-    ime m = {0};
-    m.display = wl_display_connect(nullptr);
-    if (m.display == nullptr) {
+    ime input_method = {0};
+    input_method.display = wl_display_connect(nullptr);
+    if (input_method.display == nullptr) {
         fprintf(stderr, "xd-test-ime: cannot connect to the Wayland display\n");
         return EXIT_FAILURE;
     }
-    struct wl_registry *reg = wl_display_get_registry(m.display);
-    wl_registry_add_listener(reg, &registry_listener, &m);
-    wl_display_roundtrip(m.display);
+    struct wl_registry *reg = wl_display_get_registry(input_method.display);
+    wl_registry_add_listener(reg, &registry_listener, &input_method);
+    wl_display_roundtrip(input_method.display);
     if (probe) {
-        printf("input-method %s\nvirtual-keyboard %s\n", m.manager != nullptr ? "yes" : "no",
-               m.vk_manager != nullptr ? "yes" : "no");
-        wl_display_disconnect(m.display);
+        printf("input-method %s\nvirtual-keyboard %s\n",
+               input_method.manager != nullptr ? "yes" : "no",
+               input_method.vk_manager != nullptr ? "yes" : "no");
+        wl_display_disconnect(input_method.display);
         return EXIT_SUCCESS;
     }
     const char *log = getenv("XD_TEST_IME_LOG");
     if (log != nullptr)
-        m.log = fopen(log, "ae");
-    if (m.manager == nullptr || m.seat == nullptr) {
-        say(&m, "no input method manager");
+        input_method.log = fopen(log, "ae");
+    if (input_method.manager == nullptr || input_method.seat == nullptr) {
+        say(&input_method, "no input method manager");
         fprintf(stderr, "xd-test-ime: the compositor offers no input method manager\n");
         return EXIT_FAILURE;
     }
-    m.im = zwp_input_method_manager_v2_get_input_method(m.manager, m.seat);
-    zwp_input_method_v2_add_listener(m.im, &im_listener, &m);
-    say(&m, "ready%s", m.vk_manager != nullptr ? " with a virtual keyboard" : "");
-    while (!m.quit && wl_display_dispatch(m.display) != -1) {
+    input_method.im =
+        zwp_input_method_manager_v2_get_input_method(input_method.manager, input_method.seat);
+    zwp_input_method_v2_add_listener(input_method.im, &im_listener, &input_method);
+    say(&input_method, "ready%s",
+        input_method.vk_manager != nullptr ? " with a virtual keyboard" : "");
+    while (!input_method.quit && wl_display_dispatch(input_method.display) != -1) {
     }
-    if (m.log != nullptr)
-        fclose(m.log);
-    wl_display_disconnect(m.display);
-    return m.quit ? EXIT_FAILURE : EXIT_SUCCESS;
+    if (input_method.log != nullptr)
+        fclose(input_method.log);
+    wl_display_disconnect(input_method.display);
+    return input_method.quit ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -70,14 +70,14 @@ typedef struct options {
 static element *elements;
 static size_t n_elements, cap_elements;
 
-static void add(element e) {
+static void add(element entry) {
     if (n_elements == cap_elements) {
         cap_elements = cap_elements ? 2 * cap_elements : 64;
         elements = realloc(elements, cap_elements * sizeof(*elements));
         if (elements == nullptr)
             abort();
     }
-    elements[n_elements++] = e;
+    elements[n_elements++] = entry;
 }
 
 static const struct {
@@ -114,31 +114,31 @@ static void build_elements(void) {
         {"help", XD_PART_HELP, false},
     };
     static const char *const bstate[] = {"normal", "hot", "pressed"};
-    for (size_t b = 0; b < XD_ARRAY_LEN(btns); b++) {
+    for (size_t button_index = 0; button_index < XD_ARRAY_LEN(btns); button_index++) {
         for (int act = 1; act >= 0; act--) {
-            for (int s = 0; s < 3; s++) {
-                element e = {.kind = K_CAPBTN,
-                             .active = act,
-                             .maximized = btns[b].maximized,
-                             .part = btns[b].part,
-                             .buttons = btns[b].part == XD_PART_HELP
-                                            ? XD_CAPBTN_CLOSE | XD_CAPBTN_HELP
-                                            : three};
-                if (s >= 1)
-                    e.hot = btns[b].part;
-                if (s == 2)
-                    e.pressed = btns[b].part;
-                snprintf(e.name, sizeof(e.name), "capbtn-%s-%s-%s", btns[b].name,
-                         act ? "active" : "inactive", bstate[s]);
-                add(e);
+            for (int button_state = 0; button_state < 3; button_state++) {
+                element entry = {.kind = K_CAPBTN,
+                                 .active = act,
+                                 .maximized = btns[button_index].maximized,
+                                 .part = btns[button_index].part,
+                                 .buttons = btns[button_index].part == XD_PART_HELP
+                                                ? XD_CAPBTN_CLOSE | XD_CAPBTN_HELP
+                                                : three};
+                if (button_state >= 1)
+                    entry.hot = btns[button_index].part;
+                if (button_state == 2)
+                    entry.pressed = btns[button_index].part;
+                snprintf(entry.name, sizeof(entry.name), "capbtn-%s-%s-%s", btns[button_index].name,
+                         act ? "active" : "inactive", bstate[button_state]);
+                add(entry);
             }
         }
     }
 
     for (size_t i = 0; i < XD_ARRAY_LEN(push_states); i++) {
-        element e = {.kind = K_BUTTON, .state = push_states[i].state};
-        snprintf(e.name, sizeof(e.name), "button-%s", push_states[i].name);
-        add(e);
+        element entry = {.kind = K_BUTTON, .state = push_states[i].state};
+        snprintf(entry.name, sizeof(entry.name), "button-%s", push_states[i].name);
+        add(entry);
     }
     static const struct {
         const char *name;
@@ -152,23 +152,23 @@ static void build_elements(void) {
     for (int checked = 0; checked < 2; checked++) {
         for (size_t i = 0; i < XD_ARRAY_LEN(box_states); i++) {
             uint8_t st = box_states[i].state | (checked ? XD_STATE_CHECKED : 0);
-            element e = {.kind = K_CHECK, .state = st};
-            snprintf(e.name, sizeof(e.name), "check-%s-%s", checked ? "on" : "off",
+            element entry = {.kind = K_CHECK, .state = st};
+            snprintf(entry.name, sizeof(entry.name), "check-%s-%s", checked ? "on" : "off",
                      box_states[i].name);
-            add(e);
-            e.kind = K_RADIO;
-            snprintf(e.name, sizeof(e.name), "radio-%s-%s", checked ? "on" : "off",
+            add(entry);
+            entry.kind = K_RADIO;
+            snprintf(entry.name, sizeof(entry.name), "radio-%s-%s", checked ? "on" : "off",
                      box_states[i].name);
-            add(e);
+            add(entry);
         }
     }
     add((element){.name = "groupbox", .kind = K_GROUP});
     add((element){.name = "field-normal", .kind = K_FIELD});
     add((element){.name = "field-disabled", .kind = K_FIELD, .state = XD_STATE_DISABLED});
     for (size_t i = 0; i < 4; i++) {
-        element e = {.kind = K_DROPDOWN, .state = box_states[i].state};
-        snprintf(e.name, sizeof(e.name), "dropdown-%s", box_states[i].name);
-        add(e);
+        element entry = {.kind = K_DROPDOWN, .state = box_states[i].state};
+        snprintf(entry.name, sizeof(entry.name), "dropdown-%s", box_states[i].name);
+        add(entry);
     }
     add((element){.name = "scrollbar", .kind = K_SCROLL});
     add((element){.name = "scrollbar-disabled", .kind = K_SCROLL, .state = XD_STATE_DISABLED});
@@ -181,30 +181,31 @@ static void build_elements(void) {
 /* What the package must style for its side to differ from the built-in
  * one (else the package path falls back to it and the score means
  * nothing). */
-static bool package_draws(const xd_theme *t, const element *e) {
-    const xd_pkg *p = t->pkg;
-    switch (e->kind) {
+static bool package_draws(const xd_theme *theme, const element *entry) {
+    const xd_pkg *package = theme->pkg;
+    switch (entry->kind) {
     case K_FRAME:
     case K_CAPBTN:
-        return xd_pkg_has(p, "Window", "Caption") || xd_pkg_has(p, "DWMWindow", "CloseButton");
+        return xd_pkg_has(package, "Window", "Caption") ||
+               xd_pkg_has(package, "DWMWindow", "CloseButton");
     case K_BUTTON:
-        return xd_pkg_has(p, "Button", "PushButton");
+        return xd_pkg_has(package, "Button", "PushButton");
     case K_CHECK:
-        return xd_pkg_has(p, "Button", "CheckBox");
+        return xd_pkg_has(package, "Button", "CheckBox");
     case K_RADIO:
-        return xd_pkg_has(p, "Button", "RadioButton");
+        return xd_pkg_has(package, "Button", "RadioButton");
     case K_GROUP:
-        return xd_pkg_has(p, "Button", "GroupBox");
+        return xd_pkg_has(package, "Button", "GroupBox");
     case K_FIELD:
-        return xd_pkg_has(p, "Edit", "EditText");
+        return xd_pkg_has(package, "Edit", "EditText");
     case K_DROPDOWN:
-        return xd_pkg_has(p, "ComboBox", "DropDownButton");
+        return xd_pkg_has(package, "ComboBox", "DropDownButton");
     case K_SCROLL:
-        return xd_pkg_has(p, "ScrollBar", "ArrowBtn");
+        return xd_pkg_has(package, "ScrollBar", "ArrowBtn");
     case K_TAB:
-        return xd_pkg_has(p, "Tab", "TabItem");
+        return xd_pkg_has(package, "Tab", "TabItem");
     case K_TABPANEL:
-        return xd_pkg_has(p, "Tab", "Pane");
+        return xd_pkg_has(package, "Tab", "Pane");
     }
     return false;
 }
@@ -213,137 +214,138 @@ static bool package_draws(const xd_theme *t, const element *e) {
 
 enum { FRAME_W = 320, FRAME_H = 160 };
 
-static xd_frame frame_of(const element *e) {
+static xd_frame frame_of(const element *entry) {
     return (xd_frame){.title = "Display Properties",
-                      .active = e->active,
-                      .maximized = e->maximized,
-                      .dialog = e->buttons & XD_CAPBTN_HELP,
-                      .buttons = e->buttons,
-                      .hot = e->hot,
-                      .pressed = e->pressed};
+                      .active = entry->active,
+                      .maximized = entry->maximized,
+                      .dialog = entry->buttons & XD_CAPBTN_HELP,
+                      .buttons = entry->buttons,
+                      .hot = entry->hot,
+                      .pressed = entry->pressed};
 }
 
 /* The element's size in device px (the same for both sides). */
-static void element_size(const xd_theme *t, const element *e, int *w, int *h) {
-    switch (e->kind) {
+static void element_size(const xd_theme *theme, const element *entry, int *width, int *height) {
+    switch (entry->kind) {
     case K_FRAME:
     case K_CAPBTN:
-        *w = xd_tpx(t, FRAME_W);
-        *h = xd_tpx(t, FRAME_H);
+        *width = xd_tpx(theme, FRAME_W);
+        *height = xd_tpx(theme, FRAME_H);
         return;
     case K_BUTTON:
-        *w = xd_tpx(t, 75);
-        *h = xd_tpx(t, 23);
+        *width = xd_tpx(theme, 75);
+        *height = xd_tpx(theme, 23);
         return;
     case K_CHECK:
     case K_RADIO:
-        *w = xd_tpx(t, 60);
-        *h = xd_tpx(t, 17);
+        *width = xd_tpx(theme, 60);
+        *height = xd_tpx(theme, 17);
         return;
     case K_GROUP:
-        *w = xd_tpx(t, 140);
-        *h = xd_tpx(t, 70);
+        *width = xd_tpx(theme, 140);
+        *height = xd_tpx(theme, 70);
         return;
     case K_FIELD:
-        *w = xd_tpx(t, 100);
-        *h = xd_tpx(t, 21);
+        *width = xd_tpx(theme, 100);
+        *height = xd_tpx(theme, 21);
         return;
     case K_DROPDOWN:
-        *w = xd_tpx(t, 17);
-        *h = xd_tpx(t, 19);
+        *width = xd_tpx(theme, 17);
+        *height = xd_tpx(theme, 19);
         return;
     case K_SCROLL:
-        *w = xd_tpx(t, 17);
-        *h = xd_tpx(t, 120);
+        *width = xd_tpx(theme, 17);
+        *height = xd_tpx(theme, 120);
         return;
     case K_TAB:
-        *w = xd_tpx(t, 64);
-        *h = xd_tpx(t, 21);
+        *width = xd_tpx(theme, 64);
+        *height = xd_tpx(theme, 21);
         return;
     case K_TABPANEL:
-        *w = xd_tpx(t, 160);
-        *h = xd_tpx(t, 80);
+        *width = xd_tpx(theme, 160);
+        *height = xd_tpx(theme, 80);
         return;
     }
 }
 
-static void draw(const xd_theme *t, cairo_t *cr, const element *e, int w, int h) {
-    xd_rect r = {0, 0, w, h};
-    switch (e->kind) {
+static void draw(const xd_theme *theme, cairo_t *cairo, const element *entry, int width,
+                 int height) {
+    xd_rect rect = {0, 0, width, height};
+    switch (entry->kind) {
     case K_FRAME:
     case K_CAPBTN: {
-        xd_frame f = frame_of(e);
-        xd_theme_draw_frame(t, cr, r, &f);
+        xd_frame frame = frame_of(entry);
+        xd_theme_draw_frame(theme, cairo, rect, &frame);
         return;
     }
     case K_BUTTON:
-        xd_theme_draw_button(t, cr, r, e->state, "OK");
+        xd_theme_draw_button(theme, cairo, rect, entry->state, "OK");
         return;
     case K_CHECK:
-        xd_theme_draw_checkbox(t, cr, r, e->state, "Label");
+        xd_theme_draw_checkbox(theme, cairo, rect, entry->state, "Label");
         return;
     case K_RADIO:
-        xd_theme_draw_radio(t, cr, r, e->state, "Label");
+        xd_theme_draw_radio(theme, cairo, rect, entry->state, "Label");
         return;
     case K_GROUP:
-        xd_theme_draw_groupbox(t, cr, r, "Group");
+        xd_theme_draw_groupbox(theme, cairo, rect, "Group");
         return;
     case K_FIELD:
-        (void)xd_theme_draw_field(t, cr, r, e->state & XD_STATE_DISABLED);
+        (void)xd_theme_draw_field(theme, cairo, rect, entry->state & XD_STATE_DISABLED);
         return;
     case K_DROPDOWN:
-        xd_theme_draw_dropdown_button(t, cr, r, e->state);
+        xd_theme_draw_dropdown_button(theme, cairo, rect, entry->state);
         return;
     case K_SCROLL:
-        if (e->state & XD_STATE_DISABLED)
-            xd_theme_draw_vscrollbar(t, cr, r, 0, 10, 10);
+        if (entry->state & XD_STATE_DISABLED)
+            xd_theme_draw_vscrollbar(theme, cairo, rect, 0, 10, 10);
         else
-            xd_theme_draw_vscrollbar(t, cr, r, 5, 10, 30);
+            xd_theme_draw_vscrollbar(theme, cairo, rect, 5, 10, 30);
         return;
     case K_TAB:
-        xd_theme_draw_tab(t, cr, r, e->state, "General");
+        xd_theme_draw_tab(theme, cairo, rect, entry->state, "General");
         return;
     case K_TABPANEL:
-        xd_theme_draw_tab_panel(t, cr, r);
+        xd_theme_draw_tab_panel(theme, cairo, rect);
         return;
     }
 }
 
-
-static bool button_rect(const xd_theme *t, const element *e, xd_rect *out) {
-    xd_frame f = frame_of(e);
-    xd_frame_layout l = {0};
-    xd_theme_frame_layout(t, (xd_rect){0, 0, xd_tpx(t, FRAME_W), xd_tpx(t, FRAME_H)}, &f, &l);
-    for (size_t i = 0; i < l.button_count; i++) {
-        if (l.button_parts[i] == e->part) {
-            *out = l.button_rects[i];
+static bool button_rect(const xd_theme *theme, const element *entry, xd_rect *out) {
+    xd_frame frame = frame_of(entry);
+    xd_frame_layout frame_layout = {0};
+    xd_theme_frame_layout(theme, (xd_rect){0, 0, xd_tpx(theme, FRAME_W), xd_tpx(theme, FRAME_H)},
+                          &frame, &frame_layout);
+    for (size_t i = 0; i < frame_layout.button_count; i++) {
+        if (frame_layout.button_parts[i] == entry->part) {
+            *out = frame_layout.button_rects[i];
             return true;
         }
     }
     return false;
 }
 
-/* The element drawn by `t`, cut to `crop` (or whole if crop.w is 0). */
-static cairo_surface_t *render(const xd_theme *t, const element *e, xd_rgba background,
+/* The element drawn by `theme`, cut to `crop` (or whole if crop.w is 0). */
+static cairo_surface_t *render(const xd_theme *theme, const element *entry, xd_rgba background,
                                xd_rect crop) {
-    int w = 0, h = 0;
-    element_size(t, e, &w, &h);
-    cairo_surface_t *full = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_t *cr = cairo_create(full);
-    draw(t, cr, e, w, h);
-    cairo_destroy(cr);
+    int width = 0, height = 0;
+    element_size(theme, entry, &width, &height);
+    cairo_surface_t *full = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t *cairo = cairo_create(full);
+    draw(theme, cairo, entry, width, height);
+    cairo_destroy(cairo);
     if (crop.w <= 0)
-        crop = (xd_rect){0, 0, w, h};
+        crop = (xd_rect){0, 0, width, height};
     /* Drawn on nothing, then over the background: Aero's frame replaces
      * what's under it with its glass. */
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, crop.w, crop.h);
-    cr = cairo_create(s);
-    xd_fill_rect(cr, (xd_rect){0, 0, crop.w, crop.h}, background);
-    cairo_set_source_surface(cr, full, -crop.x, -crop.y);
-    cairo_paint(cr);
-    cairo_destroy(cr);
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, crop.w, crop.h);
+    cairo = cairo_create(surface);
+    xd_fill_rect(cairo, (xd_rect){0, 0, crop.w, crop.h}, background);
+    cairo_set_source_surface(cairo, full, -crop.x, -crop.y);
+    cairo_paint(cairo);
+    cairo_destroy(cairo);
     cairo_surface_destroy(full);
-    return s;
+    return surface;
 }
 
 /* ---- comparing ------------------------------------------------------------------ */
@@ -354,125 +356,135 @@ typedef struct score {
     double over; /* share of pixels differing by more than 32 in a channel */
 } score;
 
-static uint32_t pixel(cairo_surface_t *s, int x, int y) {
-    const uint8_t *d = cairo_image_surface_get_data(s);
-    int stride = cairo_image_surface_get_stride(s);
-    uint32_t v;
-    memcpy(&v, d + (size_t)y * (size_t)stride + (size_t)x * 4, 4);
-    return v;
+static uint32_t pixel(cairo_surface_t *surface, int x, int y) {
+    const uint8_t *data = cairo_image_surface_get_data(surface);
+    int stride = cairo_image_surface_get_stride(surface);
+    uint32_t value;
+    memcpy(&value, data + (size_t)y * (size_t)stride + (size_t)x * 4, 4);
+    return value;
 }
 
 /* Black (equal) through red and yellow to white (255 apart). */
-static uint32_t heat(int d) {
-    double v = sqrt(d / 255.0);
-    double r = fmin(1, v * 3), g = fmin(1, fmax(0, v * 3 - 1)), b = fmax(0, v * 3 - 2);
-    return 0xFF000000u | (uint32_t)lround(r * 255) << 16 | (uint32_t)lround(g * 255) << 8 |
-           (uint32_t)lround(b * 255);
+static uint32_t heat(int difference) {
+    double level = sqrt(difference / 255.0);
+    double red = fmin(1, level * 3), green = fmin(1, fmax(0, level * 3 - 1)),
+           blue = fmax(0, level * 3 - 2);
+    return 0xFF000000u | (uint32_t)lround(red * 255) << 16 | (uint32_t)lround(green * 255) << 8 |
+           (uint32_t)lround(blue * 255);
 }
 
-static score compare(cairo_surface_t *a, cairo_surface_t *b, cairo_surface_t *heatmap) {
-    cairo_surface_flush(a);
-    cairo_surface_flush(b);
-    int w = cairo_image_surface_get_width(a), h = cairo_image_surface_get_height(a);
+static score compare(cairo_surface_t *builtin_image, cairo_surface_t *package_image,
+                     cairo_surface_t *heatmap) {
+    cairo_surface_flush(builtin_image);
+    cairo_surface_flush(package_image);
+    int width = cairo_image_surface_get_width(builtin_image),
+        height = cairo_image_surface_get_height(builtin_image);
     uint8_t *hd = cairo_image_surface_get_data(heatmap);
     int hs = cairo_image_surface_get_stride(heatmap);
     double sum = 0;
     long over = 0;
     int max = 0;
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            uint32_t pa = pixel(a, x, y), pb = pixel(b, x, y);
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            uint32_t pa = pixel(builtin_image, x, y), pb = pixel(package_image, x, y);
             int dmax = 0;
             for (int sh = 0; sh < 24; sh += 8) {
-                int d = abs((int)((pa >> sh) & 0xFF) - (int)((pb >> sh) & 0xFF));
-                sum += d;
-                dmax = XD_MAX(dmax, d);
+                int difference = abs((int)((pa >> sh) & 0xFF) - (int)((pb >> sh) & 0xFF));
+                sum += difference;
+                dmax = XD_MAX(dmax, difference);
             }
             max = XD_MAX(max, dmax);
             if (dmax > 32)
                 over++;
-            uint32_t c = heat(dmax);
-            memcpy(hd + (size_t)y * (size_t)hs + (size_t)x * 4, &c, 4);
+            uint32_t heat_color = heat(dmax);
+            memcpy(hd + (size_t)y * (size_t)hs + (size_t)x * 4, &heat_color, 4);
         }
     }
     cairo_surface_mark_dirty(heatmap);
-    double n = (double)w * h;
-    return (score){.mean = sum / (3 * n), .max = max, .over = (double)over / n};
+    double pixel_count = (double)width * height;
+    return (score){.mean = sum / (3 * pixel_count), .max = max, .over = (double)over / pixel_count};
 }
 
 /* Built-in | package | difference, magnified for small parts. */
-static void write_sheet(const char *path, cairo_surface_t *a, cairo_surface_t *b,
-                        cairo_surface_t *d) {
-    int w = cairo_image_surface_get_width(a), h = cairo_image_surface_get_height(a);
-    int zoom = XD_CLAMP(240 / XD_MAX(w, h), 1, 8);
+static void write_sheet(const char *path, cairo_surface_t *builtin_image,
+                        cairo_surface_t *package_image, cairo_surface_t *difference_image) {
+    int width = cairo_image_surface_get_width(builtin_image),
+        height = cairo_image_surface_get_height(builtin_image);
+    int zoom = XD_CLAMP(240 / XD_MAX(width, height), 1, 8);
     int gap = 6;
-    int sw = 3 * w * zoom + 4 * gap, sh = h * zoom + 2 * gap;
-    cairo_surface_t *s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, sw, sh);
-    cairo_t *cr = cairo_create(s);
-    xd_fill_rect(cr, (xd_rect){0, 0, sw, sh}, xd_rgba_hex(0x808080));
-    cairo_surface_t *parts[] = {a, b, d};
+    int sw = 3 * width * zoom + 4 * gap, sh = height * zoom + 2 * gap;
+    cairo_surface_t *sheet = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, sw, sh);
+    cairo_t *cairo = cairo_create(sheet);
+    xd_fill_rect(cairo, (xd_rect){0, 0, sw, sh}, xd_rgba_hex(0x808080));
+    cairo_surface_t *parts[] = {builtin_image, package_image, difference_image};
     for (int i = 0; i < 3; i++) {
-        cairo_save(cr);
-        cairo_translate(cr, gap + i * (w * zoom + gap), gap);
-        cairo_scale(cr, zoom, zoom);
-        cairo_set_source_surface(cr, parts[i], 0, 0);
-        cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_NEAREST);
-        cairo_paint(cr);
-        cairo_restore(cr);
+        cairo_save(cairo);
+        cairo_translate(cairo, gap + i * (width * zoom + gap), gap);
+        cairo_scale(cairo, zoom, zoom);
+        cairo_set_source_surface(cairo, parts[i], 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cairo), CAIRO_FILTER_NEAREST);
+        cairo_paint(cairo);
+        cairo_restore(cairo);
     }
-    cairo_destroy(cr);
-    if (cairo_surface_write_to_png(s, path) != CAIRO_STATUS_SUCCESS)
+    cairo_destroy(cairo);
+    if (cairo_surface_write_to_png(sheet, path) != CAIRO_STATUS_SUCCESS)
         fprintf(stderr, "cannot write %s\n", path);
-    cairo_surface_destroy(s);
+    cairo_surface_destroy(sheet);
 }
 
 /* ---- geometry and system metrics --------------------------------------------------- */
 
-static void print_geometry(FILE *out, const xd_theme *a, const xd_theme *b) {
+static void print_geometry(FILE *out, const xd_theme *builtin_theme,
+                           const xd_theme *package_theme) {
     static const struct {
         const char *name;
         bool maximized, help;
     } frames[] = {{"normal", false, false}, {"maximized", true, false}, {"dialog", false, true}};
     fprintf(out, "\nGeometry (device px; built-in / package):\n\n");
     for (size_t i = 0; i < XD_ARRAY_LEN(frames); i++) {
-        xd_frame f = {.active = true,
-                      .maximized = frames[i].maximized,
-                      .dialog = frames[i].help,
-                      .buttons = frames[i].help ? XD_CAPBTN_CLOSE | XD_CAPBTN_HELP
-                                                : XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE |
-                                                      XD_CAPBTN_MINIMIZE};
-        const xd_theme *th[2] = {a, b};
+        xd_frame frame = {.active = true,
+                          .maximized = frames[i].maximized,
+                          .dialog = frames[i].help,
+                          .buttons = frames[i].help ? XD_CAPBTN_CLOSE | XD_CAPBTN_HELP
+                                                    : XD_CAPBTN_CLOSE | XD_CAPBTN_MAXIMIZE |
+                                                          XD_CAPBTN_MINIMIZE};
+        const xd_theme *th[2] = {builtin_theme, package_theme};
         xd_insets in[2];
-        xd_frame_layout l[2] = {0};
+        xd_frame_layout layouts[2] = {0};
         for (int k = 0; k < 2; k++) {
-            in[k] = xd_theme_frame_insets(th[k], &f);
-            xd_theme_frame_layout(
-                th[k], (xd_rect){0, 0, xd_tpx(th[k], FRAME_W), xd_tpx(th[k], FRAME_H)}, &f,
-                &l[k]);
+            in[k] = xd_theme_frame_insets(th[k], &frame);
+            xd_theme_frame_layout(th[k],
+                                  (xd_rect){0, 0, xd_tpx(th[k], FRAME_W), xd_tpx(th[k], FRAME_H)},
+                                  &frame, &layouts[k]);
         }
         fprintf(out, "- %s frame: insets l%d t%d r%d b%d / l%d t%d r%d b%d\n", frames[i].name,
                 in[0].left, in[0].top, in[0].right, in[0].bottom, in[1].left, in[1].top,
                 in[1].right, in[1].bottom);
-        for (size_t j = 0; j < XD_MAX(l[0].button_count, l[1].button_count); j++) {
-            xd_rect r0 = j < l[0].button_count ? l[0].button_rects[j] : (xd_rect){0};
-            xd_rect r1 = j < l[1].button_count ? l[1].button_rects[j] : (xd_rect){0};
+        for (size_t j = 0; j < XD_MAX(layouts[0].button_count, layouts[1].button_count); j++) {
+            xd_rect r0 = j < layouts[0].button_count ? layouts[0].button_rects[j] : (xd_rect){0};
+            xd_rect r1 = j < layouts[1].button_count ? layouts[1].button_rects[j] : (xd_rect){0};
             fprintf(out, "  - button %zu: %d,%d %dx%d / %d,%d %dx%d\n", j, r0.x, r0.y, r0.w,
                     r0.h, r1.x, r1.y, r1.w, r1.h);
         }
-        fprintf(out, "  - icon: %d,%d / %d,%d; title: x%d / x%d\n", l[0].icon.x, l[0].icon.y,
-                l[1].icon.x, l[1].icon.y, l[0].title.x, l[1].title.x);
+        fprintf(out, "  - icon: %d,%d / %d,%d; title: x%d / x%d\n", layouts[0].icon.x,
+                layouts[0].icon.y, layouts[1].icon.x, layouts[1].icon.y, layouts[0].title.x,
+                layouts[1].title.x);
     }
 }
 
-static void print_sysmetrics(FILE *out, const xd_theme *a, const xd_theme *b) {
+static void print_sysmetrics(FILE *out, const xd_theme *builtin_theme,
+                             const xd_theme *package_theme) {
     fprintf(out, "\nSystem colours, metrics and fonts that differ (scheme / package):\n\n");
-    int n = 0;
+    int count = 0;
     for (int i = 0; i < XD_COLOR_COUNT; i++) {
-        xd_rgb x = a->scheme.colors[i], y = b->scheme.colors[i];
-        if (x.r != y.r || x.g != y.g || x.b != y.b) {
-            fprintf(out, "- %s: %d %d %d / %d %d %d\n", xd_syscolor_name((xd_syscolor)i), x.r,
-                    x.g, x.b, y.r, y.g, y.b);
-            n++;
+        xd_rgb builtin_color = builtin_theme->scheme.colors[i],
+               package_color = package_theme->scheme.colors[i];
+        if (builtin_color.r != package_color.r || builtin_color.g != package_color.g ||
+            builtin_color.b != package_color.b) {
+            fprintf(out, "- %s: %d %d %d / %d %d %d\n", xd_syscolor_name((xd_syscolor)i),
+                    builtin_color.r, builtin_color.g, builtin_color.b, package_color.r,
+                    package_color.g, package_color.b);
+            count++;
         }
     }
     static const char *const metric_names[] = {
@@ -481,10 +493,10 @@ static void print_sysmetrics(FILE *out, const xd_theme *a, const xd_theme *b) {
 #undef XD_X
     };
     for (int i = 0; i < XD_METRIC_COUNT; i++) {
-        if (a->scheme.metrics[i] != b->scheme.metrics[i]) {
-            fprintf(out, "- %s: %d / %d\n", metric_names[i], a->scheme.metrics[i],
-                    b->scheme.metrics[i]);
-            n++;
+        if (builtin_theme->scheme.metrics[i] != package_theme->scheme.metrics[i]) {
+            fprintf(out, "- %s: %d / %d\n", metric_names[i], builtin_theme->scheme.metrics[i],
+                    package_theme->scheme.metrics[i]);
+            count++;
         }
     }
     static const char *const font_names[] = {"CaptionFont", "MenuFont",    "MessageFont",
@@ -492,27 +504,29 @@ static void print_sysmetrics(FILE *out, const xd_theme *a, const xd_theme *b) {
     static_assert(XD_ARRAY_LEN(font_names) >= XD_FONT_COUNT);
     for (int i = 0; i < XD_FONT_COUNT; i++) {
         char fa[160], fb[160];
-        xd_font_spec_format(&a->scheme.fonts[i], fa, sizeof(fa));
-        xd_font_spec_format(&b->scheme.fonts[i], fb, sizeof(fb));
+        xd_font_spec_format(&builtin_theme->scheme.fonts[i], fa, sizeof(fa));
+        xd_font_spec_format(&package_theme->scheme.fonts[i], fb, sizeof(fb));
         if (strcmp(fa, fb) != 0) {
             fprintf(out, "- %s: %s / %s\n", font_names[i], fa, fb);
-            n++;
+            count++;
         }
     }
-    if (n == 0)
+    if (count == 0)
         fprintf(out, "- none\n");
 }
 
 /* ---- main ----------------------------------------------------------------------- */
 
-static void usage(FILE *f) {
-    fprintf(f, "usage: xd-theme-compare --package DIR [--variant ID] [--style NAME]\n"
-               "                        [--scheme FILE] [--glass 0|1] [--scales 1,1.25,...]\n"
-               "                        [--out DIR] [--only PREFIX] [--no-images] [--raw] [--geometry]\n"
-               "                        [--bench N]\n");
+static void usage(FILE *file) {
+    fprintf(
+        file,
+        "usage: xd-theme-compare --package DIR [--variant ID] [--style NAME]\n"
+        "                        [--scheme FILE] [--glass 0|1] [--scales 1,1.25,...]\n"
+        "                        [--out DIR] [--only PREFIX] [--no-images] [--raw] [--geometry]\n"
+        "                        [--bench N]\n");
 }
 
-static bool parse_args(int argc, char **argv, options *o) {
+static bool parse_args(int argc, char **argv, options *config) {
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (strcmp(arg, "--help") == 0) {
@@ -520,15 +534,15 @@ static bool parse_args(int argc, char **argv, options *o) {
             exit(EXIT_SUCCESS);
         }
         if (strcmp(arg, "--no-images") == 0) {
-            o->images = false;
+            config->images = false;
             continue;
         }
         if (strcmp(arg, "--raw") == 0) {
-            o->raw = true;
+            config->raw = true;
             continue;
         }
         if (strcmp(arg, "--geometry") == 0) {
-            o->geometry = true;
+            config->geometry = true;
             continue;
         }
         if (i + 1 >= argc) {
@@ -537,37 +551,37 @@ static bool parse_args(int argc, char **argv, options *o) {
         }
         const char *val = argv[++i];
         if (strcmp(arg, "--package") == 0) {
-            o->package = val;
+            config->package = val;
         } else if (strcmp(arg, "--variant") == 0) {
-            o->variant = val;
+            config->variant = val;
         } else if (strcmp(arg, "--scheme") == 0) {
-            o->scheme = val;
+            config->scheme = val;
         } else if (strcmp(arg, "--out") == 0) {
-            o->out = val;
+            config->out = val;
         } else if (strcmp(arg, "--only") == 0) {
-            o->only = val;
+            config->only = val;
         } else if (strcmp(arg, "--bench") == 0) {
-            o->bench = atoi(val);
+            config->bench = atoi(val);
         } else if (strcmp(arg, "--glass") == 0) {
-            o->glass = strcmp(val, "0") != 0;
+            config->glass = strcmp(val, "0") != 0;
         } else if (strcmp(arg, "--style") == 0) {
-            if (!xd_visual_style_from_name(xd_str_from_cstr(val), &o->style)) {
+            if (!xd_visual_style_from_name(xd_str_from_cstr(val), &config->style)) {
                 fprintf(stderr, "unknown style: %s\n", val);
                 return false;
             }
-            o->style_set = true;
+            config->style_set = true;
         } else if (strcmp(arg, "--scales") == 0) {
-            o->nscales = 0;
+            config->nscales = 0;
             char **parts = g_strsplit(val, ",", 8);
             for (size_t k = 0; parts[k] != nullptr; k++)
-                o->scales[o->nscales++] = g_ascii_strtod(parts[k], nullptr);
+                config->scales[config->nscales++] = g_ascii_strtod(parts[k], nullptr);
             g_strfreev(parts);
         } else {
             fprintf(stderr, "unknown option: %s\n", arg);
             return false;
         }
     }
-    if (o->package == nullptr) {
+    if (config->package == nullptr) {
         fprintf(stderr, "--package is required\n");
         return false;
     }
@@ -586,11 +600,9 @@ typedef struct run {
 } run;
 
 int main(int argc, char **argv) {
-    options o = {.out = "build-scratch/compare",
-                 .images = true,
-                 .scales = {1, 1.25, 1.5, 2},
-                 .nscales = 4};
-    if (!parse_args(argc, argv, &o)) {
+    options config = {
+        .out = "build-scratch/compare", .images = true, .scales = {1, 1.25, 1.5, 2}, .nscales = 4};
+    if (!parse_args(argc, argv, &config)) {
         usage(stderr);
         return EXIT_FAILURE;
     }
@@ -599,37 +611,37 @@ int main(int argc, char **argv) {
 
     xd_scheme scheme;
     xd_scheme_init_default(&scheme);
-    if (o.scheme != nullptr) {
+    if (config.scheme != nullptr) {
         xd_strbuf err = {0};
-        if (!xd_scheme_load(o.scheme, &scheme, &err)) {
-            fprintf(stderr, "%s: %s\n", o.scheme, xd_strbuf_cstr(&err));
+        if (!xd_scheme_load(config.scheme, &scheme, &err)) {
+            fprintf(stderr, "%s: %s\n", config.scheme, xd_strbuf_cstr(&err));
             xd_strbuf_free(&err);
             return EXIT_FAILURE;
         }
         xd_strbuf_free(&err);
     }
     GError *error = nullptr;
-    xd_pkg *pkg = xd_pkg_load(o.package, o.variant, XD_SOURCE_ROOT "/data/theme/uxtheme.ini",
-                              &error);
+    xd_pkg *pkg = xd_pkg_load(config.package, config.variant,
+                              XD_SOURCE_ROOT "/data/theme/uxtheme.ini", &error);
     if (pkg == nullptr) {
         fprintf(stderr, "%s\n", error->message);
         g_error_free(error);
         return EXIT_FAILURE;
     }
-    xd_visual_style style = o.style_set ? o.style : xd_pkg_base(pkg);
+    xd_visual_style style = config.style_set ? config.style : xd_pkg_base(pkg);
 
     build_elements();
     run runs[16];
     size_t nruns = 0;
-    for (size_t i = 0; i < o.nscales && nruns + 2 <= XD_ARRAY_LEN(runs); i++) {
-        double s = o.scales[i];
-        runs[nruns++] = (run){s, XD_FILTER_SMOOTH, s == 1 ? "1x" : "smooth"};
-        if (s > 1 && s == floor(s))
-            runs[nruns++] = (run){s, XD_FILTER_INTEGER, "integer"};
+    for (size_t i = 0; i < config.nscales && nruns + 2 <= XD_ARRAY_LEN(runs); i++) {
+        double scale = config.scales[i];
+        runs[nruns++] = (run){scale, XD_FILTER_SMOOTH, scale == 1 ? "1x" : "smooth"};
+        if (scale > 1 && scale == floor(scale))
+            runs[nruns++] = (run){scale, XD_FILTER_INTEGER, "integer"};
     }
 
-    mkdirs(o.out);
-    char *md_path = g_build_filename(o.out, "scores.md", nullptr);
+    mkdirs(config.out);
+    char *md_path = g_build_filename(config.out, "scores.md", nullptr);
     FILE *md = fopen(md_path, "w");
     if (md == nullptr) {
         fprintf(stderr, "cannot write %s\n", md_path);
@@ -641,25 +653,27 @@ int main(int argc, char **argv) {
                 scheme.name, xd_pkg_name(pkg), xd_pkg_variant(pkg));
         fprintf(outs[k], "\nScores: mean and max per-channel difference (0-255), and the share "
                          "of pixels more than 32 apart.\n\n| element |");
-        for (size_t r = 0; r < nruns; r++)
-            fprintf(outs[k], " %g %s |", runs[r].scale, runs[r].filter_name);
+        for (size_t run_index = 0; run_index < nruns; run_index++)
+            fprintf(outs[k], " %g %s |", runs[run_index].scale, runs[run_index].filter_name);
         fprintf(outs[k], "\n|---|");
-        for (size_t r = 0; r < nruns; r++)
+        for (size_t run_index = 0; run_index < nruns; run_index++)
             fprintf(outs[k], "---|");
         fprintf(outs[k], "\n");
     }
 
     /* themes[r][0]: built-in, [r][1]: package. */
     xd_theme (*themes)[2] = calloc(nruns, sizeof(*themes));
-    for (size_t r = 0; r < nruns; r++) {
+    for (size_t run_index = 0; run_index < nruns; run_index++) {
         xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-        xd_theme_init(&themes[r][0], style, &scheme, runs[r].scale);
-        xd_theme_use_package(pkg, runs[r].filter, runs[r].filter == XD_FILTER_INTEGER);
-        xd_theme_init(&themes[r][1], style, &scheme, runs[r].scale);
+        xd_theme_init(&themes[run_index][0], style, &scheme, runs[run_index].scale);
+        xd_theme_use_package(pkg, runs[run_index].filter,
+                             runs[run_index].filter == XD_FILTER_INTEGER);
+        xd_theme_init(&themes[run_index][1], style, &scheme, runs[run_index].scale);
         xd_theme_use_package(nullptr, XD_FILTER_SMOOTH, true);
-        themes[r][0].glass = themes[r][1].glass = o.glass;
-        char *dir = g_strdup_printf("%s/%g-%s", o.out, runs[r].scale, runs[r].filter_name);
-        if (o.images || o.raw)
+        themes[run_index][0].glass = themes[run_index][1].glass = config.glass;
+        char *dir = g_strdup_printf("%s/%g-%s", config.out, runs[run_index].scale,
+                                    runs[run_index].filter_name);
+        if (config.images || config.raw)
             mkdirs(dir);
         g_free(dir);
     }
@@ -670,14 +684,15 @@ int main(int argc, char **argv) {
                                              "radio",    "group",  "field",    "dropdown",
                                              "scroll",   "tab",    "tab-page"};
     for (size_t i = 0; i < n_elements; i++) {
-        const element *e = &elements[i];
-        if (o.only != nullptr && strncmp(e->name, o.only, strlen(o.only)) != 0)
+        const element *entry = &elements[i];
+        if (config.only != nullptr && strncmp(entry->name, config.only, strlen(config.only)) != 0)
             continue;
         char line[1024];
-        int len = snprintf(line, sizeof(line), "| %s |", e->name);
-        for (size_t r = 0; r < nruns; r++) {
-            const xd_theme *a = &themes[r][0], *b = &themes[r][1];
-            if (!package_draws(b, e)) {
+        int len = snprintf(line, sizeof(line), "| %s |", entry->name);
+        for (size_t run_index = 0; run_index < nruns; run_index++) {
+            const xd_theme *builtin_theme = &themes[run_index][0],
+                           *package_theme = &themes[run_index][1];
+            if (!package_draws(package_theme, entry)) {
                 len += snprintf(line + len, sizeof(line) - (size_t)len, " (not in package) |");
                 continue;
             }
@@ -685,8 +700,9 @@ int main(int argc, char **argv) {
              * side puts it, so its looks are compared apart from where it
              * sits (--geometry lists that). */
             xd_rect crop_a = {0}, crop_b = {0};
-            if (e->kind == K_CAPBTN) {
-                bool ha = button_rect(a, e, &crop_a), hb = button_rect(b, e, &crop_b);
+            if (entry->kind == K_CAPBTN) {
+                bool ha = button_rect(builtin_theme, entry, &crop_a),
+                     hb = button_rect(package_theme, entry, &crop_b);
                 if (!ha && !hb) {
                     len += snprintf(line + len, sizeof(line) - (size_t)len, " (none) |");
                     continue;
@@ -697,8 +713,8 @@ int main(int argc, char **argv) {
                     crop_b = crop_a;
                 /* The same size around the middle of each, with room for a
                  * hot DWM button's glow. */
-                int pad = xd_pkg_has(b->pkg, "DWMWindow", "CloseButton") && o.glass
-                              ? xd_tpx(a, 3)
+                int pad = xd_pkg_has(package_theme->pkg, "DWMWindow", "CloseButton") && config.glass
+                              ? xd_tpx(builtin_theme, 3)
                               : 0;
                 int cw = XD_MAX(crop_a.w, crop_b.w) + 2 * pad;
                 int ch = XD_MAX(crop_a.h, crop_b.h) + 2 * pad;
@@ -707,33 +723,35 @@ int main(int argc, char **argv) {
                 crop_b = (xd_rect){crop_b.x + crop_b.w / 2 - cw / 2,
                                    crop_b.y + crop_b.h / 2 - ch / 2, cw, ch};
             }
-            xd_rgba bg = xd_theme_dialog_color(a);
-            if (o.bench > 0) {
+            xd_rgba bg = xd_theme_dialog_color(builtin_theme);
+            if (config.bench > 0) {
                 /* How long the built-in style takes to draw it. */
                 gint64 start = g_get_monotonic_time();
-                for (int k = 0; k < o.bench; k++)
-                    cairo_surface_destroy(render(a, e, bg, crop_a));
-                fprintf(stderr, "%s at %g: %.2f ms\n", e->name, runs[r].scale,
-                        (double)(g_get_monotonic_time() - start) / 1000.0 / o.bench);
+                for (int k = 0; k < config.bench; k++)
+                    cairo_surface_destroy(render(builtin_theme, entry, bg, crop_a));
+                fprintf(stderr, "%s at %g: %.2f ms\n", entry->name, runs[run_index].scale,
+                        (double)(g_get_monotonic_time() - start) / 1000.0 / config.bench);
             }
-            cairo_surface_t *sa = render(a, e, bg, crop_a);
-            cairo_surface_t *sb = render(b, e, bg, crop_b);
-            int w = cairo_image_surface_get_width(sa), h = cairo_image_surface_get_height(sa);
-            cairo_surface_t *sd = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
+            cairo_surface_t *sa = render(builtin_theme, entry, bg, crop_a);
+            cairo_surface_t *sb = render(package_theme, entry, bg, crop_b);
+            int width = cairo_image_surface_get_width(sa),
+                height = cairo_image_surface_get_height(sa);
+            cairo_surface_t *sd = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
             score sc = compare(sa, sb, sd);
-            if (o.images) {
-                char *path = g_strdup_printf("%s/%g-%s/%s.png", o.out, runs[r].scale,
-                                             runs[r].filter_name, e->name);
+            if (config.images) {
+                char *path = g_strdup_printf("%s/%g-%s/%s.png", config.out, runs[run_index].scale,
+                                             runs[run_index].filter_name, entry->name);
                 write_sheet(path, sa, sb, sd);
                 g_free(path);
             }
-            if (o.raw) {
+            if (config.raw) {
                 /* Each side alone, unmagnified, for measuring. */
                 cairo_surface_t *sides[] = {sa, sb};
                 static const char *const side_names[] = {"builtin", "package"};
                 for (int k = 0; k < 2; k++) {
-                    char *path = g_strdup_printf("%s/%g-%s/%s.%s.png", o.out, runs[r].scale,
-                                                 runs[r].filter_name, e->name, side_names[k]);
+                    char *path =
+                        g_strdup_printf("%s/%g-%s/%s.%s.png", config.out, runs[run_index].scale,
+                                        runs[run_index].filter_name, entry->name, side_names[k]);
                     (void)cairo_surface_write_to_png(sides[k], path);
                     g_free(path);
                 }
@@ -743,8 +761,8 @@ int main(int argc, char **argv) {
             cairo_surface_destroy(sd);
             len += snprintf(line + len, sizeof(line) - (size_t)len, " %.1f / %d / %.0f%% |",
                             sc.mean, sc.max, 100 * sc.over);
-            group_sum[e->kind][r] += sc.mean;
-            group_n[e->kind][r]++;
+            group_sum[entry->kind][run_index] += sc.mean;
+            group_n[entry->kind][run_index]++;
         }
         fprintf(stdout, "%s\n", line);
         fprintf(md, "%s\n", line);
@@ -752,23 +770,26 @@ int main(int argc, char **argv) {
 
     for (int k = 0; k < 2; k++) {
         fprintf(outs[k], "\nMean difference by kind:\n\n| kind |");
-        for (size_t r = 0; r < nruns; r++)
-            fprintf(outs[k], " %g %s |", runs[r].scale, runs[r].filter_name);
+        for (size_t run_index = 0; run_index < nruns; run_index++)
+            fprintf(outs[k], " %g %s |", runs[run_index].scale, runs[run_index].filter_name);
         fprintf(outs[k], "\n|---|");
-        for (size_t r = 0; r < nruns; r++)
+        for (size_t run_index = 0; run_index < nruns; run_index++)
             fprintf(outs[k], "---|");
         fprintf(outs[k], "\n");
-        for (size_t g = 0; g < XD_ARRAY_LEN(kind_names); g++) {
-            if (group_n[g][0] == 0)
+        for (size_t kind_index = 0; kind_index < XD_ARRAY_LEN(kind_names); kind_index++) {
+            if (group_n[kind_index][0] == 0)
                 continue;
-            fprintf(outs[k], "| %s |", kind_names[g]);
-            for (size_t r = 0; r < nruns; r++)
-                fprintf(outs[k], " %.1f |", group_n[g][r] ? group_sum[g][r] / group_n[g][r] : 0);
+            fprintf(outs[k], "| %s |", kind_names[kind_index]);
+            for (size_t run_index = 0; run_index < nruns; run_index++)
+                fprintf(outs[k], " %.1f |",
+                        group_n[kind_index][run_index]
+                            ? group_sum[kind_index][run_index] / group_n[kind_index][run_index]
+                            : 0);
             fprintf(outs[k], "\n");
         }
         fprintf(outs[k], "\nNot compared: the taskbar, Start button, task buttons and tray "
                          "(the package path doesn't draw them).\n");
-        if (o.geometry)
+        if (config.geometry)
             print_geometry(outs[k], &themes[0][0], &themes[0][1]);
         print_sysmetrics(outs[k], &themes[0][0], &themes[0][1]);
     }

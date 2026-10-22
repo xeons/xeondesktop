@@ -38,9 +38,9 @@ int main(int argc, char **argv) {
     }
 
     int status = EXIT_SUCCESS;
-    for (int f = 0; f < XD_FILTER_COUNT; f++) {
-        const char *name = xd_image_filter_name((xd_image_filter)f);
-        cairo_surface_t *out = xd_image_scale(in, scale, (xd_image_filter)f);
+    for (int filter = 0; filter < XD_FILTER_COUNT; filter++) {
+        const char *name = xd_image_filter_name((xd_image_filter)filter);
+        cairo_surface_t *out = xd_image_scale(in, scale, (xd_image_filter)filter);
         if (!out) {
             fprintf(stderr, "xd-scale-demo: %s: scaling failed\n", name);
             status = EXIT_FAILURE;

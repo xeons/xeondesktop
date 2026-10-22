@@ -6,3 +6,4 @@ subprojects/*/
 !subprojects/packagefiles/
 subprojects/packagecache/
 subprojects/.wraplock
+__pycache__/

@@ -105,23 +105,26 @@ static void settle(inject *in) {
 
 /* ---- globals and outputs ------------------------------------------------------ */
 
-static void xdg_pos(void *data, struct zxdg_output_v1 *o, int32_t x, int32_t y) {
-    (void)o;
+static void xdg_pos(void *data, struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y) {
+    (void)xdg_output;
     output *out = data;
     out->x = x;
     out->y = y;
 }
-static void xdg_size(void *data, struct zxdg_output_v1 *o, int32_t w, int32_t h) {
-    (void)o;
+static void xdg_size(void *data, struct zxdg_output_v1 *xdg_output, int32_t width, int32_t height) {
+    (void)xdg_output;
     output *out = data;
-    out->w = w;
-    out->h = h;
+    out->w = width;
+    out->h = height;
 }
-static void xdg_done([[maybe_unused]] void *d, [[maybe_unused]] struct zxdg_output_v1 *o) {}
-static void xdg_name([[maybe_unused]] void *d, [[maybe_unused]] struct zxdg_output_v1 *o,
-                     [[maybe_unused]] const char *n) {}
-static void xdg_desc([[maybe_unused]] void *d, [[maybe_unused]] struct zxdg_output_v1 *o,
-                     [[maybe_unused]] const char *n) {}
+static void xdg_done([[maybe_unused]] void *data,
+                     [[maybe_unused]] struct zxdg_output_v1 *xdg_output) {}
+static void xdg_name([[maybe_unused]] void *data,
+                     [[maybe_unused]] struct zxdg_output_v1 *xdg_output,
+                     [[maybe_unused]] const char *name) {}
+static void xdg_desc([[maybe_unused]] void *data,
+                     [[maybe_unused]] struct zxdg_output_v1 *xdg_output,
+                     [[maybe_unused]] const char *description) {}
 
 static const struct zxdg_output_v1_listener xdg_output_listener = {
     .logical_position = xdg_pos,
@@ -134,25 +137,27 @@ static const struct zxdg_output_v1_listener xdg_output_listener = {
 static void global(void *data, struct wl_registry *reg, uint32_t name, const char *iface,
                    uint32_t version) {
     inject *in = data;
-    xd_str i = xd_str_from_cstr(iface);
-    if (xd_str_eq(i, xd_str_from_cstr(wl_seat_interface.name)) && in->seat == nullptr) {
+    xd_str interface = xd_str_from_cstr(iface);
+    if (xd_str_eq(interface, xd_str_from_cstr(wl_seat_interface.name)) && in->seat == nullptr) {
         in->seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
-    } else if (xd_str_eq(i, xd_str_from_cstr(zwlr_virtual_pointer_manager_v1_interface.name))) {
+    } else if (xd_str_eq(interface,
+                         xd_str_from_cstr(zwlr_virtual_pointer_manager_v1_interface.name))) {
         in->pointer_manager = wl_registry_bind(reg, name, &zwlr_virtual_pointer_manager_v1_interface,
                                                XD_MIN(version, 2u));
-    } else if (xd_str_eq(i, xd_str_from_cstr(zwp_virtual_keyboard_manager_v1_interface.name))) {
+    } else if (xd_str_eq(interface,
+                         xd_str_from_cstr(zwp_virtual_keyboard_manager_v1_interface.name))) {
         in->keyboard_manager =
             wl_registry_bind(reg, name, &zwp_virtual_keyboard_manager_v1_interface, 1);
-    } else if (xd_str_eq(i, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
+    } else if (xd_str_eq(interface, xd_str_from_cstr(zxdg_output_manager_v1_interface.name))) {
         in->xdg_output_manager =
             wl_registry_bind(reg, name, &zxdg_output_manager_v1_interface, XD_MIN(version, 3u));
-    } else if (xd_str_eq(i, xd_str_from_cstr(xd_window_arranger_v1_interface.name)) &&
+    } else if (xd_str_eq(interface, xd_str_from_cstr(xd_window_arranger_v1_interface.name)) &&
                version >= XD_WINDOW_ARRANGER_V1_TEST_LID_SINCE_VERSION) {
         in->arranger = wl_registry_bind(reg, name, &xd_window_arranger_v1_interface,
                                         XD_WINDOW_ARRANGER_V1_TEST_LID_SINCE_VERSION);
-    } else if (xd_str_eq(i, xd_str_from_cstr(xd_test_input_v1_interface.name))) {
+    } else if (xd_str_eq(interface, xd_str_from_cstr(xd_test_input_v1_interface.name))) {
         in->test_input_name = name;
-    } else if (xd_str_eq(i, xd_str_from_cstr(wl_output_interface.name)) &&
+    } else if (xd_str_eq(interface, xd_str_from_cstr(wl_output_interface.name)) &&
                in->output_count < XD_ARRAY_LEN(in->outputs)) {
         in->outputs[in->output_count++].wl = wl_registry_bind(reg, name, &wl_output_interface, 1);
     }
@@ -165,26 +170,26 @@ static const struct wl_registry_listener registry_listener = {global, global_rem
 
 /* Bounding box of all outputs: virtual pointer absolute coordinates are
  * relative to it. */
-static void layout_extent(const inject *in, int *x0, int *y0, int *w, int *h) {
+static void layout_extent(const inject *in, int *x0, int *y0, int *width, int *height) {
     int minx = 0;
     int miny = 0;
     int maxx = 1;
     int maxy = 1;
     for (size_t i = 0; i < in->output_count; i++) {
-        const output *o = &in->outputs[i];
-        if (i == 0 || o->x < minx)
-            minx = o->x;
-        if (i == 0 || o->y < miny)
-            miny = o->y;
-        if (i == 0 || o->x + o->w > maxx)
-            maxx = o->x + o->w;
-        if (i == 0 || o->y + o->h > maxy)
-            maxy = o->y + o->h;
+        const output *output_entry = &in->outputs[i];
+        if (i == 0 || output_entry->x < minx)
+            minx = output_entry->x;
+        if (i == 0 || output_entry->y < miny)
+            miny = output_entry->y;
+        if (i == 0 || output_entry->x + output_entry->w > maxx)
+            maxx = output_entry->x + output_entry->w;
+        if (i == 0 || output_entry->y + output_entry->h > maxy)
+            maxy = output_entry->y + output_entry->h;
     }
     *x0 = minx;
     *y0 = miny;
-    *w = XD_MAX(maxx - minx, 1);
-    *h = XD_MAX(maxy - miny, 1);
+    *width = XD_MAX(maxx - minx, 1);
+    *height = XD_MAX(maxy - miny, 1);
 }
 
 /* ---- keyboard ----------------------------------------------------------------- */
@@ -224,8 +229,8 @@ static bool setup_keyboard(inject *in) {
     for (xkb_keycode_t code = lo; code <= hi; code++) {
         for (xkb_level_index_t level = 0; level < 2; level++) {
             const xkb_keysym_t *syms = nullptr;
-            int n = xkb_keymap_key_get_syms_by_level(in->keymap, code, 0, level, &syms);
-            if (n == 1 && syms[0] != XKB_KEY_NoSymbol)
+            int count = xkb_keymap_key_get_syms_by_level(in->keymap, code, 0, level, &syms);
+            if (count == 1 && syms[0] != XKB_KEY_NoSymbol)
                 in->keys[in->key_count++] = (key_entry){syms[0], code, level == 1};
         }
     }
@@ -267,10 +272,10 @@ static void send_mods(inject *in, uint32_t depressed) {
 
 /* Presses a key with modifiers held, then releases everything. */
 static bool press_combo(inject *in, uint32_t mods, xkb_keysym_t sym) {
-    const key_entry *k = find_key(in, sym);
-    if (k == nullptr)
+    const key_entry *key = find_key(in, sym);
+    if (key == nullptr)
         return false;
-    if (k->shift)
+    if (key->shift)
         mods |= in->mod_shift;
     mods &= ~in->held; /* already down */
     struct {
@@ -286,21 +291,21 @@ static bool press_combo(inject *in, uint32_t mods, xkb_keysym_t sym) {
     for (size_t i = 0; i < XD_ARRAY_LEN(held); i++) {
         if (!(mods & held[i].mask))
             continue;
-        const key_entry *m = find_key(in, held[i].sym);
-        if (m != nullptr)
-            send_key(in, m->code, true);
+        const key_entry *modifier_key = find_key(in, held[i].sym);
+        if (modifier_key != nullptr)
+            send_key(in, modifier_key->code, true);
         state |= held[i].mask;
         send_mods(in, state);
     }
-    send_key(in, k->code, true);
+    send_key(in, key->code, true);
     settle(in);
-    send_key(in, k->code, false);
+    send_key(in, key->code, false);
     for (size_t i = XD_ARRAY_LEN(held); i-- > 0;) {
         if (!(mods & held[i].mask))
             continue;
-        const key_entry *m = find_key(in, held[i].sym);
-        if (m != nullptr)
-            send_key(in, m->code, false);
+        const key_entry *modifier_key = find_key(in, held[i].sym);
+        if (modifier_key != nullptr)
+            send_key(in, modifier_key->code, false);
         state &= ~held[i].mask;
         send_mods(in, state);
     }
@@ -309,24 +314,25 @@ static bool press_combo(inject *in, uint32_t mods, xkb_keysym_t sym) {
 }
 
 static bool type_text(inject *in, const char *text) {
-    xd_str s = xd_str_from_cstr(text);
-    for (size_t i = 0; i < s.len;) {
+    xd_str text_string = xd_str_from_cstr(text);
+    for (size_t i = 0; i < text_string.len;) {
         /* Decode one UTF-8 character. */
-        unsigned char c = (unsigned char)s.ptr[i];
+        unsigned char lead_byte = (unsigned char)text_string.ptr[i];
         uint32_t cp;
-        size_t n;
-        if (c < 0x80) {
-            cp = c;
-            n = 1;
-        } else if ((c & 0xE0) == 0xC0 && i + 1 < s.len) {
-            cp = (uint32_t)(c & 0x1F) << 6 | ((unsigned char)s.ptr[i + 1] & 0x3F);
-            n = 2;
-        } else if ((c & 0xF0) == 0xE0 && i + 2 < s.len) {
-            cp = (uint32_t)(c & 0x0F) << 12 | (uint32_t)((unsigned char)s.ptr[i + 1] & 0x3F) << 6 |
-                 ((unsigned char)s.ptr[i + 2] & 0x3F);
-            n = 3;
+        size_t length;
+        if (lead_byte < 0x80) {
+            cp = lead_byte;
+            length = 1;
+        } else if ((lead_byte & 0xE0) == 0xC0 && i + 1 < text_string.len) {
+            cp = (uint32_t)(lead_byte & 0x1F) << 6 | ((unsigned char)text_string.ptr[i + 1] & 0x3F);
+            length = 2;
+        } else if ((lead_byte & 0xF0) == 0xE0 && i + 2 < text_string.len) {
+            cp = (uint32_t)(lead_byte & 0x0F) << 12 |
+                 (uint32_t)((unsigned char)text_string.ptr[i + 1] & 0x3F) << 6 |
+                 ((unsigned char)text_string.ptr[i + 2] & 0x3F);
+            length = 3;
         } else {
-            fprintf(stderr, "xd-inject: can't type byte 0x%02x\n", c);
+            fprintf(stderr, "xd-inject: can't type byte 0x%02x\n", lead_byte);
             return false;
         }
         xkb_keysym_t sym = xkb_utf32_to_keysym(cp);
@@ -334,7 +340,7 @@ static bool type_text(inject *in, const char *text) {
             fprintf(stderr, "xd-inject: no key types U+%04X in this keymap\n", cp);
             return false;
         }
-        i += n;
+        i += length;
     }
     return true;
 }
@@ -356,12 +362,12 @@ static bool hold_modifier(inject *in, const char *name, bool down) {
             continue;
         uint32_t mask = i == 0 ? in->mod_ctrl : i == 1 ? in->mod_alt : i == 2 ? in->mod_shift
                                                                       : in->mod_super;
-        const key_entry *k = find_key(in, mods[i].sym);
-        if (k == nullptr)
+        const key_entry *key = find_key(in, mods[i].sym);
+        if (key == nullptr)
             return false;
         if (down == ((in->held & mask) != 0))
             return true;
-        send_key(in, k->code, down);
+        send_key(in, key->code, down);
         in->held = down ? in->held | mask : in->held & ~mask;
         send_mods(in, in->held);
         settle(in);
@@ -374,12 +380,12 @@ static bool hold_modifier(inject *in, const char *name, bool down) {
 /* "press Down" / "lift Down": one key held across later steps. */
 static bool press_key(inject *in, const char *name, bool down) {
     xkb_keysym_t sym = xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
-    const key_entry *k = sym != XKB_KEY_NoSymbol ? find_key(in, sym) : nullptr;
-    if (k == nullptr) {
+    const key_entry *key = sym != XKB_KEY_NoSymbol ? find_key(in, sym) : nullptr;
+    if (key == nullptr) {
         fprintf(stderr, "xd-inject: unknown key %s\n", name);
         return false;
     }
-    send_key(in, k->code, down);
+    send_key(in, key->code, down);
     settle(in);
     return true;
 }
@@ -444,13 +450,13 @@ static void button(inject *in, uint32_t code, bool pressed) {
 static void move(inject *in, int x, int y) {
     int x0;
     int y0;
-    int w;
-    int h;
-    layout_extent(in, &x0, &y0, &w, &h);
-    uint32_t px = (uint32_t)XD_CLAMP(x - x0, 0, w - 1);
-    uint32_t py = (uint32_t)XD_CLAMP(y - y0, 0, h - 1);
-    zwlr_virtual_pointer_v1_motion_absolute(in->pointer, now_ms(), px, py, (uint32_t)w,
-                                            (uint32_t)h);
+    int width;
+    int height;
+    layout_extent(in, &x0, &y0, &width, &height);
+    uint32_t px = (uint32_t)XD_CLAMP(x - x0, 0, width - 1);
+    uint32_t py = (uint32_t)XD_CLAMP(y - y0, 0, height - 1);
+    zwlr_virtual_pointer_v1_motion_absolute(in->pointer, now_ms(), px, py, (uint32_t)width,
+                                            (uint32_t)height);
     zwlr_virtual_pointer_v1_frame(in->pointer);
     settle(in);
 }
@@ -463,12 +469,12 @@ static void move_by(inject *in, int dx, int dy) {
     settle(in);
 }
 
-static bool parse_int(const char *s, int64_t lo, int64_t hi, int64_t *out) {
-    return s != nullptr && xd_str_parse_i64(xd_str_from_cstr(s), lo, hi, out);
+static bool parse_int(const char *text, int64_t lo, int64_t hi, int64_t *out) {
+    return text != nullptr && xd_str_parse_i64(xd_str_from_cstr(text), lo, hi, out);
 }
 
-static bool parse_num(const char *s, double *out) {
-    return s != nullptr && xd_str_parse_double(xd_str_from_cstr(s), out);
+static bool parse_num(const char *text, double *out) {
+    return text != nullptr && xd_str_parse_double(xd_str_from_cstr(text), out);
 }
 
 /* ---- touch, pen and touchpad (xd-test-input-v1) ----------------------------------- */
@@ -491,34 +497,34 @@ static bool needs_test_input(int argc, char **argv) {
     return false;
 }
 
-static wl_fixed_t fx(double v) { return wl_fixed_from_double(v); }
+static wl_fixed_t fx(double value) { return wl_fixed_from_double(value); }
 
 /* One touch, pen, pad or gesture step at argv[*i]; false if it's bad. */
-static bool test_input_step(inject *in, int argc, char **argv, int *i) {
-    struct xd_test_input_v1 *t = in->test_input;
-    const char *cmd = argv[*i];
-    const char *what = *i + 1 < argc ? argv[*i + 1] : "";
+static bool test_input_step(inject *in, int argc, char **argv, int *argument_index) {
+    struct xd_test_input_v1 *test_input = in->test_input;
+    const char *cmd = argv[*argument_index];
+    const char *what = *argument_index + 1 < argc ? argv[*argument_index + 1] : "";
     /* The numbers after the step's words. */
-    double n[5] = {0};
+    double numbers[5] = {0};
     int count = 0;
-    int first = *i + 2;
-    while (count < (int)XD_ARRAY_LEN(n) && first + count < argc &&
-           parse_num(argv[first + count], &n[count]))
+    int first = *argument_index + 2;
+    while (count < (int)XD_ARRAY_LEN(numbers) && first + count < argc &&
+           parse_num(argv[first + count], &numbers[count]))
         count++;
     int used = 0;
     if (strcmp(cmd, "touch") == 0) {
-        int32_t id = (int32_t)n[0];
+        int32_t id = (int32_t)numbers[0];
         if ((strcmp(what, "down") == 0 || strcmp(what, "move") == 0) && count >= 3) {
             if (what[0] == 'd')
-                xd_test_input_v1_touch_down(t, id, fx(n[1]), fx(n[2]));
+                xd_test_input_v1_touch_down(test_input, id, fx(numbers[1]), fx(numbers[2]));
             else
-                xd_test_input_v1_touch_motion(t, id, fx(n[1]), fx(n[2]));
+                xd_test_input_v1_touch_motion(test_input, id, fx(numbers[1]), fx(numbers[2]));
             used = 3;
         } else if ((strcmp(what, "up") == 0 || strcmp(what, "cancel") == 0) && count >= 1) {
             if (what[0] == 'u')
-                xd_test_input_v1_touch_up(t, id);
+                xd_test_input_v1_touch_up(test_input, id);
             else
-                xd_test_input_v1_touch_cancel(t, id);
+                xd_test_input_v1_touch_cancel(test_input, id);
             used = 1;
         } else {
             return false;
@@ -527,22 +533,23 @@ static bool test_input_step(inject *in, int argc, char **argv, int *i) {
         if ((strcmp(what, "in") == 0 || strcmp(what, "move") == 0) && count >= 2) {
             used = count >= 5 ? 5 : count >= 3 ? 3 : 2;
             if (used >= 3)
-                in->pen_pressure = n[2];
+                in->pen_pressure = numbers[2];
             if (used >= 5) {
-                in->pen_tilt_x = n[3];
-                in->pen_tilt_y = n[4];
+                in->pen_tilt_x = numbers[3];
+                in->pen_tilt_y = numbers[4];
             }
             if (what[0] == 'i')
-                xd_test_input_v1_tool_proximity(t, fx(n[0]), fx(n[1]), 1);
-            xd_test_input_v1_tool_motion(t, fx(n[0]), fx(n[1]), fx(in->pen_pressure),
-                                         fx(in->pen_tilt_x), fx(in->pen_tilt_y));
+                xd_test_input_v1_tool_proximity(test_input, fx(numbers[0]), fx(numbers[1]), 1);
+            xd_test_input_v1_tool_motion(test_input, fx(numbers[0]), fx(numbers[1]),
+                                         fx(in->pen_pressure), fx(in->pen_tilt_x),
+                                         fx(in->pen_tilt_y));
         } else if (strcmp(what, "down") == 0 || strcmp(what, "up") == 0) {
-            xd_test_input_v1_tool_tip(t, what[0] == 'd');
+            xd_test_input_v1_tool_tip(test_input, what[0] == 'd');
         } else if (strcmp(what, "out") == 0) {
-            xd_test_input_v1_tool_proximity(t, 0, 0, 0);
+            xd_test_input_v1_tool_proximity(test_input, 0, 0, 0);
         } else if ((strcmp(what, "press") == 0 || strcmp(what, "lift") == 0) && count >= 1 &&
-                   (n[0] == 1 || n[0] == 2)) {
-            xd_test_input_v1_tool_button(t, n[0] == 1 ? BTN_STYLUS : BTN_STYLUS2,
+                   (numbers[0] == 1 || numbers[0] == 2)) {
+            xd_test_input_v1_tool_button(test_input, numbers[0] == 1 ? BTN_STYLUS : BTN_STYLUS2,
                                          what[0] == 'p');
             used = 1;
         } else {
@@ -550,13 +557,13 @@ static bool test_input_step(inject *in, int argc, char **argv, int *i) {
         }
     } else if (strcmp(cmd, "pad") == 0) {
         if ((strcmp(what, "press") == 0 || strcmp(what, "lift") == 0) && count >= 1) {
-            xd_test_input_v1_pad_button(t, (uint32_t)n[0], what[0] == 'p');
+            xd_test_input_v1_pad_button(test_input, (uint32_t)numbers[0], what[0] == 'p');
             used = 1;
         } else if ((strcmp(what, "ring") == 0 || strcmp(what, "strip") == 0) && count >= 2) {
             if (what[0] == 'r')
-                xd_test_input_v1_pad_ring(t, (uint32_t)n[0], fx(n[1]));
+                xd_test_input_v1_pad_ring(test_input, (uint32_t)numbers[0], fx(numbers[1]));
             else
-                xd_test_input_v1_pad_strip(t, (uint32_t)n[0], fx(n[1]));
+                xd_test_input_v1_pad_strip(test_input, (uint32_t)numbers[0], fx(numbers[1]));
             used = 2;
         } else {
             return false;
@@ -565,34 +572,36 @@ static bool test_input_step(inject *in, int argc, char **argv, int *i) {
         /* swipe, pinch, rest (a hold) */
         char kind = cmd[0];
         if (strcmp(what, "begin") == 0 && count >= 1) {
-            uint32_t fingers = (uint32_t)n[0];
+            uint32_t fingers = (uint32_t)numbers[0];
             if (kind == 's')
-                xd_test_input_v1_swipe_begin(t, fingers);
+                xd_test_input_v1_swipe_begin(test_input, fingers);
             else if (kind == 'p')
-                xd_test_input_v1_pinch_begin(t, fingers);
+                xd_test_input_v1_pinch_begin(test_input, fingers);
             else
-                xd_test_input_v1_hold_begin(t, fingers);
+                xd_test_input_v1_hold_begin(test_input, fingers);
             used = 1;
         } else if (strcmp(what, "update") == 0 && kind == 's' && count >= 2) {
-            xd_test_input_v1_swipe_update(t, fx(n[0]), fx(n[1]));
+            xd_test_input_v1_swipe_update(test_input, fx(numbers[0]), fx(numbers[1]));
             used = 2;
         } else if (strcmp(what, "update") == 0 && kind == 'p' && count >= 4) {
-            xd_test_input_v1_pinch_update(t, fx(n[0]), fx(n[1]), fx(n[2]), fx(n[3]));
+            xd_test_input_v1_pinch_update(test_input, fx(numbers[0]), fx(numbers[1]),
+                                          fx(numbers[2]), fx(numbers[3]));
             used = 4;
         } else if (strcmp(what, "end") == 0) {
-            bool cancel = *i + 2 < argc && strcmp(argv[*i + 2], "cancel") == 0;
+            bool cancel =
+                *argument_index + 2 < argc && strcmp(argv[*argument_index + 2], "cancel") == 0;
             if (kind == 's')
-                xd_test_input_v1_swipe_end(t, cancel);
+                xd_test_input_v1_swipe_end(test_input, cancel);
             else if (kind == 'p')
-                xd_test_input_v1_pinch_end(t, cancel);
+                xd_test_input_v1_pinch_end(test_input, cancel);
             else
-                xd_test_input_v1_hold_end(t, cancel);
-            *i += cancel ? 1 : 0;
+                xd_test_input_v1_hold_end(test_input, cancel);
+            *argument_index += cancel ? 1 : 0;
         } else {
             return false;
         }
     }
-    *i += 1 + used;
+    *argument_index += 1 + used;
     settle(in);
     return true;
 }
