@@ -1311,6 +1311,8 @@ static void widget_free(xd_widget *widget) {
 
 void xd_window_close(xd_window *win) {
     xd_ui *ui = win->ui;
+    if (win->main)
+        xd_ui_quit(ui);
     tip_hide(win);
     popup_close(win);
     if (ui->pointer_window == win)
@@ -1346,6 +1348,7 @@ xd_window *xd_window_for_surface(xd_ui *ui, struct wl_surface *surface) {
 
 void xd_window_set_default(xd_window *win, xd_widget *button) { win->def = button; }
 void xd_window_set_cancel(xd_window *win, xd_widget *button) { win->cancel = button; }
+void xd_window_set_main(xd_window *win) { win->main = true; }
 
 void xd_window_set_focus(xd_window *win, xd_widget *widget) {
     if (widget != nullptr && !is_focusable(widget))
@@ -1816,15 +1819,16 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
     win->pressed = widget;
     if (widget->kind == XD_W_SLIDER) {
         xd_rect thumb = slider_thumb(widget);
+        win->dirty = true;
         if (contains(thumb, x, y)) {
             win->thumb_drag = true;
             win->thumb_offset = x - (thumb.x + SLIDER_THUMB_W / 2);
         } else {
-            /* A click in the channel pages toward it. */
+            /* A click in the channel pages toward it; must be last: the
+             * callback may close the window. */
             int page = XD_MAX((widget->smax - widget->smin) / 5, 1);
             slider_changed(widget, widget->svalue + (x < thumb.x ? -page : page));
         }
-        win->dirty = true;
         return;
     }
     if (widget->kind == XD_W_TABS) {

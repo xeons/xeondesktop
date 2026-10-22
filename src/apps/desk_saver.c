@@ -281,7 +281,10 @@ static void on_format(xd_widget *widget, void *user) {
     for (size_t i = 0; i < setup->family_count; i++)
         known = known || g_ascii_strcasecmp(setup->families[i], font->family) == 0;
     if (!known && font->family[0] != '\0') {
-        /* load_families left room for one more. */
+        /* Grown each time: a family whose name was cut short when saved
+         * is never found, so it's added on every opening. */
+        setup->families =
+            xd_realloc_array(setup->families, setup->family_count + 1, sizeof(char *));
         setup->families[setup->family_count++] = xd_str_dup_cstr(xd_str_from_cstr(font->family));
         qsort(setup->families, setup->family_count, sizeof(char *), compare_names);
     }

@@ -116,6 +116,7 @@ typedef struct xd_tooltip {
 struct xd_window {
     struct wl_list link; /* xd_ui.windows */
     xd_ui *ui;
+    bool main; /* closing it ends xd_ui_run (xd_window_set_main) */
     struct wl_surface *surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *toplevel;

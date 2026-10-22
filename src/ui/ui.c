@@ -890,6 +890,12 @@ void xd_ui_run(xd_ui *ui) {
             xd_free(fds);
             break;
         }
+        /* Quit from a window's event: nothing else of this round runs (a
+         * timer's callback could find its program's state freed). */
+        if (!ui->running) {
+            xd_free(fds);
+            break;
+        }
         if (ui->repeat_fd >= 0 && (fds[1].revents & POLLIN)) {
             uint64_t expirations;
             (void)!read(ui->repeat_fd, &expirations, sizeof(expirations));
@@ -902,6 +908,8 @@ void xd_ui_run(xd_ui *ui) {
             if (k >= 2 + nsrc)
                 break;
             short rev = fds[k++].revents;
+            if (!ui->running)
+                break;
             if (src->dead || rev == 0)
                 continue;
             if (src->timer) {

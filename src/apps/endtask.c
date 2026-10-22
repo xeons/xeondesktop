@@ -19,6 +19,7 @@ typedef struct end_dialog {
     xd_window *win;
     pid_t pid;
     uid_t uid; /* the program's owner when we started: a reused PID won't match */
+    int pidfd; /* the program itself, whatever its PID comes to name; -1 if none */
     xd_ui_source *exited; /* its pidfd turning readable */
 } end_dialog;
 
@@ -41,7 +42,11 @@ static bool same_process(const end_dialog *state) {
 
 static void on_end_now([[maybe_unused]] xd_widget *widget, void *user) {
     end_dialog *state = user;
-    if (same_process(state) && kill(state->pid, SIGKILL) != 0)
+    /* Through the pidfd: the PID may be another program's by now. */
+    int failed = state->pidfd >= 0     ? pidfd_send_signal(state->pidfd, SIGKILL, nullptr, 0)
+                 : same_process(state) ? kill(state->pid, SIGKILL)
+                                       : 0;
+    if (failed != 0 && errno != ESRCH)
         fprintf(stderr, "xd-endtask: cannot end %d: %s\n", (int)state->pid, strerror(errno));
     close_box(state);
 }
@@ -92,6 +97,12 @@ int main(int argc, char **argv) {
     xd_window_set_focus(state.win, cancel);
     /* Followed by a pidfd, which a reused PID can't fool. */
     int pidfd = pidfd_open(state.pid, PIDFD_NONBLOCK);
+    state.pidfd = pidfd;
+    /* Opened after the owner was read: still the same program? */
+    if (pidfd >= 0 && !same_process(&state)) {
+        close(pidfd);
+        pidfd = state.pidfd = -1;
+    }
     if (pidfd >= 0)
         state.exited = xd_ui_add_fd(ui, pidfd, on_exited, &state);
     xd_window_show(state.win);

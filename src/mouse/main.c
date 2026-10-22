@@ -312,7 +312,17 @@ static cairo_surface_t *load_cursor(const char *theme, int size, const char *con
         return nullptr;
     /* Both are premultiplied ARGB in native byte order. */
     cairo_surface_t *surface =
-        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, (int)img->width, (int)img->height);
+        img->width <= 1024 && img->height <= 1024
+            ? cairo_image_surface_create(CAIRO_FORMAT_ARGB32, (int)img->width, (int)img->height)
+            : nullptr;
+    /* A theme's cursor can say any size (Xcursor allows 32767): none
+     * drawn rather than writing through a surface that failed. */
+    if (surface == nullptr || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        if (surface != nullptr)
+            cairo_surface_destroy(surface);
+        XcursorImageDestroy(img);
+        return nullptr;
+    }
     cairo_surface_flush(surface);
     unsigned char *dst = cairo_image_surface_get_data(surface);
     int stride = cairo_image_surface_get_stride(surface);

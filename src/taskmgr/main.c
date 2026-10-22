@@ -12,6 +12,7 @@
 #include <gio/gdesktopappinfo.h>
 #include <sched.h>
 #include <signal.h>
+#include <sys/pidfd.h>
 #include <stdlib.h>
 #include <sys/resource.h>
 
@@ -913,16 +914,28 @@ static void cb_end_process([[maybe_unused]] GtkWidget *widget, gpointer user_dat
     int pid = selected_pid(task_manager);
     if (pid <= 0)
         return;
+    /* The process chosen, held before asking: by the answer it may have
+     * ended and its PID gone to another. */
+    int pidfd = pidfd_open(pid, 0);
+    if (pidfd < 0) {
+        if (errno != ESRCH)
+            kill_failed(task_manager, errno);
+        sample(task_manager);
+        return;
+    }
     if (!confirm(task_manager, "Task Manager Warning",
                  "WARNING: Terminating a process can cause undesired results including loss of "
                  "data and system instability. The process will not be given the chance to save "
                  "its state or data before it is terminated. Are you sure you want to terminate "
-                 "the process?"))
+                 "the process?")) {
+        close(pidfd);
         return;
-    if (kill(pid, SIGKILL) != 0)
+    }
+    if (pidfd_send_signal(pidfd, SIGKILL, nullptr, 0) != 0 && errno != ESRCH)
         kill_failed(task_manager, errno);
     else
         sample(task_manager);
+    close(pidfd);
 }
 
 /* Children before parents, so a parent can't restart them. */
@@ -947,6 +960,9 @@ static void cb_end_tree([[maybe_unused]] GtkWidget *widget, gpointer user_data) 
                  "save their state or data before they are terminated. Are you sure you want to "
                  "terminate the process tree?"))
         return;
+    /* The tree as it is now, not as the last refresh saw it (while the
+     * warning was up, its processes may have ended, their PIDs reused). */
+    sample(task_manager);
     guint count = 0;
     const xd_proc *procs = xd_sysinfo_procs(task_manager->si, &count);
     GArray *pids = g_array_new(FALSE, FALSE, sizeof(int));

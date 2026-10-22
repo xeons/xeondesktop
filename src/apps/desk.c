@@ -3984,6 +3984,8 @@ int main(int argc, char **argv) {
     }
 
     properties.win = xd_window_create(properties.ui, "Display Properties", "xd-desk", 404, 448);
+    /* Its confirmations and message boxes go with it. */
+    xd_window_set_main(properties.win);
     /* XP's tabs (Windows 2000's Background is its Desktop), 2000's Effects, and
      * one for what only Linux has. */
     static const char *const tabs[] = {"Themes",  "Desktop",  "Screen Saver", "Appearance",

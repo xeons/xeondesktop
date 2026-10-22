@@ -252,6 +252,15 @@ static bool read_scan(SANE_Handle handle, gint *progress, gint *cancel, GByteArr
         }
         size_t bpl = (size_t)sane_parameters.bytes_per_line;
         size_t row = (size_t)*width * 3;
+        /* A line holds what its pixels take (the backend's, maybe over
+         * the network, to say). */
+        size_t channels = sane_parameters.format == SANE_FRAME_RGB ? 3 : 1;
+        size_t needed = ((size_t)*width * channels * (size_t)MAX(sane_parameters.depth, 1) + 7) / 8;
+        if (bpl < needed) {
+            g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                                "The scanner sent a picture format this program doesn't read.");
+            return false;
+        }
         guint8 *line = g_malloc(bpl);
         size_t filled = 0;
         int y = 0;
@@ -285,6 +294,15 @@ static bool read_scan(SANE_Handle handle, gint *progress, gint *cancel, GByteArr
             if (filled < bpl)
                 continue;
             filled = 0;
+            if ((size_t)(y + 1) * row > G_MAXUINT) {
+                /* GByteArray's limit, 4 GB: a picture this large is too
+                 * large to show anyway. */
+                sane_cancel(handle);
+                g_free(line);
+                g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                                    "The picture is too large. Scan at a lower resolution.");
+                return false;
+            }
             if ((size_t)(y + 1) * row > rgb->len) {
                 guint old = rgb->len;
                 g_byte_array_set_size(rgb, (guint)((size_t)(y + 1) * row));

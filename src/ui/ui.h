@@ -131,6 +131,10 @@ xd_ui *xd_window_ui(xd_window *win);
 void xd_window_set_default(xd_window *win, xd_widget *button);
 /* Pressed by Esc and the caption's close button. */
 void xd_window_set_cancel(xd_window *win, xd_widget *button);
+/* The program's own window: closing it, however it's closed, ends
+ * xd_ui_run, its message boxes and confirmations (and their callbacks,
+ * which would find its state gone) with it. */
+void xd_window_set_main(xd_window *win);
 void xd_window_set_focus(xd_window *win, xd_widget *widget);
 
 enum { XD_LABEL_WRAP = 1u << 0, XD_LABEL_BOLD = 1u << 1, XD_LABEL_DIM = 1u << 2 };

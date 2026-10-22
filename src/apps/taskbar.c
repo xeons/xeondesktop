@@ -439,6 +439,7 @@ int main(int argc, char **argv) {
     properties.style = xd_ui_style(properties.ui);
     properties.win = xd_window_create(properties.ui, "Taskbar and Start Menu Properties",
                                       "xd-taskbar", 380, 412);
+    xd_window_set_main(properties.win);
     static const char *const tabs[] = {"Taskbar", "Start Menu"};
     xd_widget *tab =
         xd_tabs(properties.win, (xd_rect){7, 7, 366, 366}, tabs, 2, on_page, &properties);

@@ -219,6 +219,8 @@ int main(int argc, char **argv) {
     xd_state_read_lines("run-history", &state.history, &state.history_n, XD_RUN_HISTORY_MAX);
 
     state.win = xd_window_create(state.ui, "Run", "xd-run", 347, 159);
+    /* A "cannot find" box (and Browse...'s chooser) go with it. */
+    xd_window_set_main(state.win);
     xd_image(state.win, (xd_rect){12, 18, 32, 32}, "system-run");
     xd_label(state.win, (xd_rect){56, 18, 279, 40},
              "Type the name of a program, folder, document, or Internet address, and "

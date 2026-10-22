@@ -59,8 +59,15 @@ bool xd_state_write_lines(const char *name, char *const *lines, size_t count) {
     xd_strbuf path = {0};
     xd_strbuf tmp = {0};
     xd_state_path(name, &path);
-    xd_strbuf_appendf(&tmp, "%s.tmp", xd_strbuf_cstr(&path));
-    FILE *file = fopen(xd_strbuf_cstr(&tmp), "w");
+    /* A name of its own: two programs (two Run boxes) may write the same
+     * file at once, and each must rename a whole file over it. */
+    xd_strbuf_appendf(&tmp, "%s.XXXXXX", xd_strbuf_cstr(&path));
+    int fd = mkstemp(tmp.data);
+    FILE *file = fd >= 0 ? fdopen(fd, "w") : nullptr;
+    if (file == nullptr && fd >= 0) {
+        close(fd);
+        unlink(xd_strbuf_cstr(&tmp));
+    }
     bool ok = file != nullptr;
     for (size_t i = 0; ok && i < count; i++)
         ok = fprintf(file, "%s\n", lines[i]) >= 0;
@@ -68,7 +75,7 @@ bool xd_state_write_lines(const char *name, char *const *lines, size_t count) {
         ok = fclose(file) == 0 && ok;
     if (ok)
         ok = rename(xd_strbuf_cstr(&tmp), xd_strbuf_cstr(&path)) == 0;
-    else
+    else if (fd >= 0)
         unlink(xd_strbuf_cstr(&tmp));
     xd_strbuf_free(&tmp);
     xd_strbuf_free(&path);

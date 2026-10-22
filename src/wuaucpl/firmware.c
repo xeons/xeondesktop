@@ -499,9 +499,12 @@ static void flash_free(flash *flashing) {
 static void flash_failed(flash *flashing, const char *what, const char *detail) {
     wuau *applet = flashing->w;
     bool cancelled = g_cancellable_is_cancelled(flashing->cancel);
+    /* `detail` may be one of the flash's own strings (its location). */
+    char *kept = g_strdup(detail);
     flash_free(flashing);
     if (!cancelled)
-        xd_wuau_error(applet, what, detail);
+        xd_wuau_error(applet, what, kept);
+    g_free(kept);
     fw_show_details(applet);
 }
 
