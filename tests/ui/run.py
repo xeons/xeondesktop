@@ -5751,6 +5751,9 @@ def color_management(s):
            "[ColorProfiles] to follow")  # fmt: skip
     s.wait(lambda: trace_ends("HEADLESS-1 none 6500 "), "the calibration to go")
     s.log("ok: Set as Default Profile moved the monitor to sRGB, without curves")
+    # desktop.ini changed, so GTK programs reload their theme: a key sent
+    # meanwhile can be lost.
+    s.settle("reloaded")
     s.inject("key", "Escape")
     s.wait_window(title="Color Management", gone=True)
 
