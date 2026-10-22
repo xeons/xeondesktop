@@ -73,9 +73,10 @@ static size_t n_elements, cap_elements;
 static void add(element entry) {
     if (n_elements == cap_elements) {
         cap_elements = cap_elements ? 2 * cap_elements : 64;
-        elements = realloc(elements, cap_elements * sizeof(*elements));
-        if (elements == nullptr)
+        element *grown = realloc(elements, cap_elements * sizeof(*elements));
+        if (grown == nullptr)
             abort();
+        elements = grown;
     }
     elements[n_elements++] = entry;
 }
