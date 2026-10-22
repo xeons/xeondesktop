@@ -16,27 +16,28 @@ char *xd_accounts_display_manager_unit(GDBusConnection *system_bus) {
         return nullptr;
     /* GetUnit only finds a loaded unit, so a display manager installed
      * but not in use (a session started from a console) isn't named. */
-    GVariant *r = g_dbus_connection_call_sync(
+    GVariant *unit_reply = g_dbus_connection_call_sync(
         system_bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
         "org.freedesktop.systemd1.Manager", "GetUnit",
         g_variant_new("(s)", "display-manager.service"), G_VARIANT_TYPE("(o)"),
         G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, nullptr, nullptr);
-    if (r == nullptr)
+    if (unit_reply == nullptr)
         return nullptr;
     const char *path = nullptr;
-    g_variant_get(r, "(&o)", &path);
+    g_variant_get(unit_reply, "(&o)", &path);
     GVariant *id = g_dbus_connection_call_sync(
         system_bus, "org.freedesktop.systemd1", path, "org.freedesktop.DBus.Properties", "Get",
         g_variant_new("(ss)", "org.freedesktop.systemd1.Unit", "Id"), G_VARIANT_TYPE("(v)"),
         G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, nullptr, nullptr);
-    g_variant_unref(r);
+    g_variant_unref(unit_reply);
     if (id == nullptr)
         return nullptr;
-    GVariant *v = nullptr;
-    g_variant_get(id, "(v)", &v);
-    char *unit = g_variant_is_of_type(v, G_VARIANT_TYPE_STRING) ? g_variant_dup_string(v, nullptr)
-                                                                : nullptr;
-    g_variant_unref(v);
+    GVariant *value = nullptr;
+    g_variant_get(id, "(v)", &value);
+    char *unit = g_variant_is_of_type(value, G_VARIANT_TYPE_STRING)
+                     ? g_variant_dup_string(value, nullptr)
+                     : nullptr;
+    g_variant_unref(value);
     g_variant_unref(id);
     /* The alias itself means systemd couldn't say what it stands for. */
     if (unit != nullptr && (unit[0] == '\0' || strcmp(unit, "display-manager.service") == 0))

@@ -5,11 +5,12 @@
 #include "users.h"
 
 bool xd_users_valid_name(const char *name) {
-    size_t n = name != nullptr ? strlen(name) : 0;
-    if (n == 0 || n > 32 || !g_ascii_islower(name[0]))
+    size_t count = name != nullptr ? strlen(name) : 0;
+    if (count == 0 || count > 32 || !g_ascii_islower(name[0]))
         return false;
-    for (const char *p = name; *p != '\0'; p++) {
-        if (!g_ascii_islower(*p) && !g_ascii_isdigit(*p) && *p != '_' && *p != '-')
+    for (const char *letter = name; *letter != '\0'; letter++) {
+        if (!g_ascii_islower(*letter) && !g_ascii_isdigit(*letter) && *letter != '_' &&
+            *letter != '-')
             return false;
     }
     return true;
@@ -18,14 +19,14 @@ bool xd_users_valid_name(const char *name) {
 char *xd_users_suggest_name(const char *full_name) {
     /* GLib transliterates in the current locale ("ü" -> "u"). */
     char *ascii = g_str_to_ascii(full_name != nullptr ? full_name : "", nullptr);
-    GString *s = g_string_new(nullptr);
-    for (const char *p = ascii; *p != '\0' && s->len < 32; p++) {
-        char c = g_ascii_tolower(*p);
-        if (g_ascii_islower(c) || (s->len > 0 && g_ascii_isdigit(c)))
-            g_string_append_c(s, c);
+    GString *string = g_string_new(nullptr);
+    for (const char *letter = ascii; *letter != '\0' && string->len < 32; letter++) {
+        char lower = g_ascii_tolower(*letter);
+        if (g_ascii_islower(lower) || (string->len > 0 && g_ascii_isdigit(lower)))
+            g_string_append_c(string, lower);
     }
     g_free(ascii);
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
 char *xd_users_hash_password(const char *password) {
@@ -50,10 +51,10 @@ bool xd_users_make_picture(const char *source, const char *dest, int size, GErro
         return false;
     GdkPixbuf *oriented = gdk_pixbuf_apply_embedded_orientation(src);
     g_object_unref(src);
-    int w = gdk_pixbuf_get_width(oriented), h = gdk_pixbuf_get_height(oriented);
-    int side = MIN(w, h);
-    GdkPixbuf *square = gdk_pixbuf_new_subpixbuf(oriented, (w - side) / 2, (h - side) / 2, side,
-                                                 side);
+    int width = gdk_pixbuf_get_width(oriented), height = gdk_pixbuf_get_height(oriented);
+    int side = MIN(width, height);
+    GdkPixbuf *square =
+        gdk_pixbuf_new_subpixbuf(oriented, (width - side) / 2, (height - side) / 2, side, side);
     GdkPixbuf *scaled = gdk_pixbuf_scale_simple(square, size, size, GDK_INTERP_HYPER);
     bool ok = scaled != nullptr && gdk_pixbuf_save(scaled, dest, "png", error, nullptr);
     if (scaled != nullptr)
