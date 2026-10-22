@@ -114,52 +114,52 @@ static int64_t now_ms(void) {
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-static bool *feature_flag(xd_access_settings *a, feature f) {
-    switch (f) {
+static bool *feature_flag(xd_access_settings *access_settings, feature access_feature) {
+    switch (access_feature) {
     case FEATURE_STICKY:
-        return &a->sticky_keys;
+        return &access_settings->sticky_keys;
     case FEATURE_FILTER:
-        return &a->filter_keys;
+        return &access_settings->filter_keys;
     case FEATURE_TOGGLE:
-        return &a->toggle_keys;
+        return &access_settings->toggle_keys;
     case FEATURE_MOUSE:
-        return &a->mouse_keys;
+        return &access_settings->mouse_keys;
     }
-    return &a->sticky_keys;
+    return &access_settings->sticky_keys;
 }
 
 /* Turns a feature on or off, from a shortcut: now, and in desktop.ini
  * (whose reload then changes nothing). */
-static void set_feature(xd_server *server, feature f, bool on) {
-    xd_access_settings *a = &server->config.access;
-    *feature_flag(a, f) = on;
-    xd_settings s;
-    xd_settings_load(&s);
-    *feature_flag(&s.access, f) = on;
-    if (!xd_settings_save(&s))
+static void set_feature(xd_server *server, feature access_feature, bool on) {
+    xd_access_settings *access_settings = &server->config.access;
+    *feature_flag(access_settings, access_feature) = on;
+    xd_settings settings;
+    xd_settings_load(&settings);
+    *feature_flag(&settings.access, access_feature) = on;
+    if (!xd_settings_save(&settings))
         wlr_log(WLR_ERROR, "cannot save the accessibility settings");
-    wlr_log(WLR_INFO, "accessibility: %s turned %s by its shortcut", feature_names[f],
+    wlr_log(WLR_INFO, "accessibility: %s turned %s by its shortcut", feature_names[access_feature],
             on ? "on" : "off");
     xd_input_apply_access(server);
-    if (a->sound_on_off)
+    if (access_settings->sound_on_off)
         xd_sound_play_tone(on ? XD_TONE_RISE : XD_TONE_FALL);
-    if (on && a->warn && server->config.accessibility != nullptr) {
+    if (on && access_settings->warn && server->config.accessibility != nullptr) {
         static char opt[] = "--shortcut";
         char *argv[] = {(char *)(uintptr_t)server->config.accessibility, opt,
-                        (char *)(uintptr_t)feature_names[f], nullptr};
+                        (char *)(uintptr_t)feature_names[access_feature], nullptr};
         xd_spawn_argv(argv);
     }
 }
 
 /* True if the shortcut is in use, and acted on. */
-static bool shortcut(xd_server *server, feature f) {
-    const xd_access_settings *a = &server->config.access;
-    bool enabled = f == FEATURE_STICKY   ? a->sticky_shortcut
-                   : f == FEATURE_FILTER ? a->filter_shortcut
-                   : f == FEATURE_TOGGLE ? a->toggle_shortcut
-                                         : a->mouse_keys_shortcut;
+static bool shortcut(xd_server *server, feature access_feature) {
+    const xd_access_settings *access_settings = &server->config.access;
+    bool enabled = access_feature == FEATURE_STICKY   ? access_settings->sticky_shortcut
+                   : access_feature == FEATURE_FILTER ? access_settings->filter_shortcut
+                   : access_feature == FEATURE_TOGGLE ? access_settings->toggle_shortcut
+                                                      : access_settings->mouse_keys_shortcut;
     if (enabled)
-        set_feature(server, f, !*feature_flag(&server->config.access, f));
+        set_feature(server, access_feature, !*feature_flag(&server->config.access, access_feature));
     return enabled;
 }
 
@@ -175,9 +175,9 @@ static int hold_fired(void *data) {
 }
 
 static bool key_down(const xd_keyboard *kb, uint32_t keycode) {
-    const struct wlr_keyboard *k = kb->wlr_keyboard;
-    for (size_t i = 0; i < k->num_keycodes; i++) {
-        if (k->keycodes[i] == keycode)
+    const struct wlr_keyboard *keyboard = kb->wlr_keyboard;
+    for (size_t i = 0; i < keyboard->num_keycodes; i++) {
+        if (keyboard->keycodes[i] == keycode)
             return true;
     }
     return false;
@@ -190,8 +190,8 @@ static uint32_t mod_mask(struct xkb_keymap *keymap, const char *name) {
 }
 
 static bool num_lock_on(const xd_keyboard *kb) {
-    const struct wlr_keyboard *k = kb->wlr_keyboard;
-    return (k->modifiers.locked & mod_mask(k->keymap, XKB_MOD_NAME_NUM)) != 0;
+    const struct wlr_keyboard *keyboard = kb->wlr_keyboard;
+    return (keyboard->modifiers.locked & mod_mask(keyboard->keymap, XKB_MOD_NAME_NUM)) != 0;
 }
 
 /* MouseKeys' shortcut leaves Num Lock as it was (the key still toggles
@@ -203,12 +203,14 @@ static void restore_numlock(void *data) {
     acc->numlock_kb = nullptr;
     if (kb == nullptr)
         return;
-    struct wlr_keyboard *k = kb->wlr_keyboard;
-    uint32_t num = mod_mask(k->keymap, XKB_MOD_NAME_NUM);
-    uint32_t locked = acc->numlock_was ? k->modifiers.locked | num : k->modifiers.locked & ~num;
-    if (locked != k->modifiers.locked)
-        wlr_keyboard_notify_modifiers(k, k->modifiers.depressed, k->modifiers.latched, locked,
-                                      k->modifiers.group);
+    struct wlr_keyboard *keyboard = kb->wlr_keyboard;
+    uint32_t num = mod_mask(keyboard->keymap, XKB_MOD_NAME_NUM);
+    uint32_t locked =
+        acc->numlock_was ? keyboard->modifiers.locked | num : keyboard->modifiers.locked & ~num;
+    if (locked != keyboard->modifiers.locked)
+        wlr_keyboard_notify_modifiers(keyboard, keyboard->modifiers.depressed,
+                                      keyboard->modifiers.latched, locked,
+                                      keyboard->modifiers.group);
 }
 
 /* Shift five times, the held keys, Left Alt+Left Shift+Num Lock. True if
@@ -271,11 +273,11 @@ static bool shortcut_key(xd_keyboard *kb, uint32_t keycode, bool pressed, uint32
 
 static void toggle_tone(xd_keyboard *kb, xkb_keysym_t sym) {
     xd_access *acc = kb->server->access;
-    const struct wlr_keyboard *k = kb->wlr_keyboard;
+    const struct wlr_keyboard *keyboard = kb->wlr_keyboard;
     bool on;
     /* The state is still from before this key. */
     if (sym == XKB_KEY_Caps_Lock)
-        on = !(k->modifiers.locked & mod_mask(k->keymap, XKB_MOD_NAME_CAPS));
+        on = !(keyboard->modifiers.locked & mod_mask(keyboard->keymap, XKB_MOD_NAME_CAPS));
     else if (sym == XKB_KEY_Num_Lock)
         on = !num_lock_on(kb);
     else if (sym == XKB_KEY_Scroll_Lock)
@@ -311,8 +313,9 @@ static bool is_lock_or_modifier(xkb_keysym_t sym) {
 }
 
 static bool slow_keys_on(const xd_server *server) {
-    const xd_access_settings *a = &server->config.access;
-    return a->filter_keys && a->slow_keys && a->slow_ms > 0;
+    const xd_access_settings *access_settings = &server->config.access;
+    return access_settings->filter_keys && access_settings->slow_keys &&
+           access_settings->slow_ms > 0;
 }
 
 static void drop_slow(xd_access *acc) {
@@ -331,26 +334,27 @@ static int slow_accepted(void *data) {
     acc->accepted[acc->accepted_n++] = keycode;
     if (kb->server->config.access.filter_beep)
         xd_sound_play_tone(XD_TONE_CLICK);
-    struct wlr_keyboard_key_event e = {
+    struct wlr_keyboard_key_event keyboard_key_event = {
         .time_msec = (uint32_t)now_ms(),
         .keycode = keycode,
         .state = WL_KEYBOARD_KEY_STATE_PRESSED,
     };
-    xd_input_key(kb, &e);
+    xd_input_key(kb, &keyboard_key_event);
     return 0;
 }
 
 /* True if the key is held back or dropped. */
-static bool slow_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e, xkb_keysym_t sym) {
+static bool slow_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event,
+                     xkb_keysym_t sym) {
     xd_access *acc = kb->server->access;
-    if (e->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+    if (keyboard_key_event->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
         for (size_t i = 0; i < acc->accepted_n; i++) {
-            if (acc->accepted[i] == e->keycode) {
+            if (acc->accepted[i] == keyboard_key_event->keycode) {
                 acc->accepted[i] = acc->accepted[--acc->accepted_n];
                 return false; /* it was let through: so is its release */
             }
         }
-        if (acc->slow_kb == kb && acc->slow_keycode == e->keycode + 1) {
+        if (acc->slow_kb == kb && acc->slow_keycode == keyboard_key_event->keycode + 1) {
             drop_slow(acc); /* let go too soon */
             return true;
         }
@@ -360,7 +364,7 @@ static bool slow_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e, xk
         return false;
     /* A new key replaces one still held back. */
     acc->slow_kb = kb;
-    acc->slow_keycode = e->keycode + 1;
+    acc->slow_keycode = keyboard_key_event->keycode + 1;
     wl_event_source_timer_update(acc->slow_timer, kb->server->config.access.slow_ms);
     if (kb->server->config.access.filter_beep)
         xd_sound_play_tone(XD_TONE_CLICK);
@@ -399,7 +403,7 @@ static bool mouse_key_code(uint32_t keycode) {
 
 static void mk_move(xd_access *acc) {
     xd_server *server = acc->server;
-    const xd_access_settings *a = &server->config.access;
+    const xd_access_settings *access_settings = &server->config.access;
     int dx = 0, dy = 0;
     for (size_t i = 0; i < XD_ARRAY_LEN(directions); i++) {
         if (acc->mk_held & (1u << i)) {
@@ -413,14 +417,14 @@ static void mk_move(xd_access *acc) {
         return;
     /* From a tenth of the top speed up to it over the acceleration time;
      * Ctrl jumps to it, Shift creeps a pixel at a time. */
-    double t = (double)(now_ms() - acc->mk_start) / a->mouse_keys_accel_ms;
-    double speed = a->mouse_keys_speed * XD_CLAMP(t, 0.1, 1.0);
-    struct wlr_keyboard *k = wlr_seat_get_keyboard(server->seat);
-    uint32_t mods = k != nullptr ? wlr_keyboard_get_modifiers(k) : 0;
-    if (a->mouse_keys_modifiers && (mods & WLR_MODIFIER_CTRL))
-        speed = a->mouse_keys_speed;
+    double progress = (double)(now_ms() - acc->mk_start) / access_settings->mouse_keys_accel_ms;
+    double speed = access_settings->mouse_keys_speed * XD_CLAMP(progress, 0.1, 1.0);
+    struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(server->seat);
+    uint32_t mods = keyboard != nullptr ? wlr_keyboard_get_modifiers(keyboard) : 0;
+    if (access_settings->mouse_keys_modifiers && (mods & WLR_MODIFIER_CTRL))
+        speed = access_settings->mouse_keys_speed;
     double step = speed * MOUSE_TICK_MS / 1000.0;
-    if (a->mouse_keys_modifiers && (mods & WLR_MODIFIER_SHIFT))
+    if (access_settings->mouse_keys_modifiers && (mods & WLR_MODIFIER_SHIFT))
         step = 1;
     acc->mk_fx += dx * step;
     acc->mk_fy += dy * step;
@@ -440,10 +444,10 @@ static int mk_tick(void *data) {
 }
 
 static void mk_click(xd_access *acc, uint32_t button, int times) {
-    uint32_t t = (uint32_t)now_ms();
+    uint32_t time_msec = (uint32_t)now_ms();
     for (int i = 0; i < times; i++) {
-        xd_input_button(acc->server, t, button, WL_POINTER_BUTTON_STATE_PRESSED);
-        xd_input_button(acc->server, t, button, WL_POINTER_BUTTON_STATE_RELEASED);
+        xd_input_button(acc->server, time_msec, button, WL_POINTER_BUTTON_STATE_PRESSED);
+        xd_input_button(acc->server, time_msec, button, WL_POINTER_BUTTON_STATE_RELEASED);
     }
 }
 
@@ -465,35 +469,35 @@ static void mk_hold(xd_access *acc, uint32_t button, bool *held, bool down) {
 /* Windows' keypad: 1-4 and 6-9 move, 5 clicks, + double-clicks, 0 (Ins)
  * holds the button down and . (Del) lets it go; / picks the left
  * button, - the right and * both. True if the key is used up. */
-static bool mouse_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
+static bool mouse_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event) {
     xd_access *acc = kb->server->access;
-    bool pressed = e->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+    bool pressed = keyboard_key_event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
     if (!pressed) {
         bool taken = false;
         for (size_t i = 0; i < acc->mk_keys_down_n; i++) {
-            if (acc->mk_keys_down[i] == e->keycode) {
+            if (acc->mk_keys_down[i] == keyboard_key_event->keycode) {
                 acc->mk_keys_down[i] = acc->mk_keys_down[--acc->mk_keys_down_n];
                 taken = true;
                 break;
             }
         }
         for (size_t i = 0; taken && i < XD_ARRAY_LEN(directions); i++) {
-            if (directions[i].keycode == e->keycode)
+            if (directions[i].keycode == keyboard_key_event->keycode)
                 acc->mk_held &= ~(1u << i);
         }
         return taken;
     }
-    const xd_access_settings *a = &kb->server->config.access;
-    if (!a->mouse_keys || !mouse_key_code(e->keycode) ||
-        num_lock_on(kb) != a->mouse_keys_numlock || kb->server->locked)
+    const xd_access_settings *access_settings = &kb->server->config.access;
+    if (!access_settings->mouse_keys || !mouse_key_code(keyboard_key_event->keycode) ||
+        num_lock_on(kb) != access_settings->mouse_keys_numlock || kb->server->locked)
         return false;
     bool seen = false;
     for (size_t i = 0; i < acc->mk_keys_down_n; i++)
-        seen = seen || acc->mk_keys_down[i] == e->keycode;
+        seen = seen || acc->mk_keys_down[i] == keyboard_key_event->keycode;
     if (!seen && acc->mk_keys_down_n < XD_ARRAY_LEN(acc->mk_keys_down))
-        acc->mk_keys_down[acc->mk_keys_down_n++] = e->keycode;
+        acc->mk_keys_down[acc->mk_keys_down_n++] = keyboard_key_event->keycode;
     for (size_t i = 0; i < XD_ARRAY_LEN(directions); i++) {
-        if (directions[i].keycode != e->keycode)
+        if (directions[i].keycode != keyboard_key_event->keycode)
             continue;
         if (acc->mk_held == 0) {
             acc->mk_start = now_ms();
@@ -502,10 +506,11 @@ static bool mouse_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
         }
         acc->mk_held |= 1u << i;
         /* A tap moves a pixel. */
-        xd_input_move_pointer(kb->server, directions[i].dx, directions[i].dy, e->time_msec);
+        xd_input_move_pointer(kb->server, directions[i].dx, directions[i].dy,
+                              keyboard_key_event->time_msec);
         return true;
     }
-    switch (e->keycode) {
+    switch (keyboard_key_event->keycode) {
     case KEY_KP5:
         mk_buttons(acc, 1);
         break;
@@ -541,35 +546,37 @@ static bool mouse_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
 
 /* ---- the key hook ------------------------------------------------------------------ */
 
-bool xd_access_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
+bool xd_access_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event) {
     xd_server *server = kb->server;
     xd_access *acc = server->access;
     if (acc == nullptr)
         return false;
-    bool pressed = e->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+    bool pressed = keyboard_key_event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
     const xkb_keysym_t *syms = nullptr;
     int nsyms = kb->wlr_keyboard->xkb_state != nullptr
-                    ? xkb_state_key_get_syms(kb->wlr_keyboard->xkb_state, e->keycode + 8, &syms)
+                    ? xkb_state_key_get_syms(kb->wlr_keyboard->xkb_state,
+                                             keyboard_key_event->keycode + 8, &syms)
                     : 0;
     xkb_keysym_t sym = nsyms > 0 ? syms[0] : XKB_KEY_NoSymbol;
 
-    if (shortcut_key(kb, e->keycode, pressed, e->time_msec))
+    if (shortcut_key(kb, keyboard_key_event->keycode, pressed, keyboard_key_event->time_msec))
         return true;
-    const xd_access_settings *a = &server->config.access;
+    const xd_access_settings *access_settings = &server->config.access;
     if (pressed) {
         toggle_tone(kb, sym);
         /* StickyKeys: a tone for each modifier; a modifier used with
          * another key, as without StickyKeys, turns it off. */
         bool modifier = is_lock_or_modifier(sym) && sym != XKB_KEY_Caps_Lock &&
                         sym != XKB_KEY_Num_Lock && sym != XKB_KEY_Scroll_Lock;
-        if (a->sticky_keys && a->sticky_sound && modifier)
+        if (access_settings->sticky_keys && access_settings->sticky_sound && modifier)
             xd_sound_play_tone(XD_TONE_CLICK);
-        if (a->sticky_keys && a->sticky_two_keys_off && !modifier && kb->sticky_alone != 0)
+        if (access_settings->sticky_keys && access_settings->sticky_two_keys_off && !modifier &&
+            kb->sticky_alone != 0)
             set_feature(server, FEATURE_STICKY, false);
     }
-    if (mouse_key(kb, e))
+    if (mouse_key(kb, keyboard_key_event))
         return true;
-    return slow_key(kb, e, sym);
+    return slow_key(kb, keyboard_key_event, sym);
 }
 
 /* ---- ClickLock ------------------------------------------------------------------- */
@@ -593,8 +600,8 @@ bool xd_access_button(xd_server *server, uint32_t button, bool pressed, uint32_t
         acc->click_locked = false;
         return false;
     }
-    const xd_mouse_settings *m = &server->config.mouse;
-    if (m->click_lock && time_msec - acc->press_msec >= (uint32_t)m->click_lock_ms) {
+    const xd_mouse_settings *mouse = &server->config.mouse;
+    if (mouse->click_lock && time_msec - acc->press_msec >= (uint32_t)mouse->click_lock_ms) {
         acc->click_locked = true;
         return true;
     }
@@ -604,8 +611,8 @@ bool xd_access_button(xd_server *server, uint32_t button, bool pressed, uint32_t
 /* ---- SoundSentry -------------------------------------------------------------------- */
 
 static bool view_alive(xd_server *server, const xd_view *view) {
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (v == view)
+    XD_LIST_FOR_EACH(candidate, &server->views, xd_view, link) {
+        if (candidate == view)
             return true;
     }
     return false;
@@ -644,12 +651,13 @@ static void sentry_veil(xd_access *acc, struct wlr_box box) {
 
 static void sentry_flash(xd_access *acc) {
     xd_server *server = acc->server;
-    const xd_access_settings *a = &server->config.access;
-    if (!a->sound_sentry || a->sound_sentry_effect == XD_SENTRY_NONE || server->locked)
+    const xd_access_settings *access_settings = &server->config.access;
+    if (!access_settings->sound_sentry || access_settings->sound_sentry_effect == XD_SENTRY_NONE ||
+        server->locked)
         return;
     sentry_end(acc); /* a new sound starts the flash over */
     xd_view *view = xd_view_focused(server);
-    xd_sound_sentry effect = a->sound_sentry_effect;
+    xd_sound_sentry effect = access_settings->sound_sentry_effect;
     /* No window (or no caption of ours): what there is. */
     if (effect != XD_SENTRY_DESKTOP && view == nullptr)
         effect = XD_SENTRY_DESKTOP;
@@ -678,48 +686,51 @@ static void sentry_flash(xd_access *acc) {
 }
 
 static int sentry_readable(int fd, [[maybe_unused]] uint32_t mask, void *data) {
-    uint64_t n = 0;
-    if (read(fd, &n, sizeof(n)) == (ssize_t)sizeof(n) && n > 0)
+    uint64_t event_count = 0;
+    if (read(fd, &event_count, sizeof(event_count)) == (ssize_t)sizeof(event_count) &&
+        event_count > 0)
         sentry_flash(data);
     return 0;
 }
 
 /* ---- automatic reset ------------------------------------------------------------- */
 
-static bool any_feature_on(const xd_access_settings *a) {
-    return a->sticky_keys || a->filter_keys || a->toggle_keys || a->mouse_keys ||
-           a->sound_sentry || a->high_contrast;
+static bool any_feature_on(const xd_access_settings *access_settings) {
+    return access_settings->sticky_keys || access_settings->filter_keys ||
+           access_settings->toggle_keys || access_settings->mouse_keys ||
+           access_settings->sound_sentry || access_settings->high_contrast;
 }
 
 /* XD_ACCESS_RESET_SECONDS shortens it for testing. */
-static int64_t reset_after_ms(const xd_access_settings *a) {
+static int64_t reset_after_ms(const xd_access_settings *access_settings) {
     const char *test = getenv("XD_ACCESS_RESET_SECONDS");
     long long secs = test != nullptr ? strtoll(test, nullptr, 10) : 0;
-    return secs > 0 ? secs * 1000 : (int64_t)a->auto_reset_minutes * 60 * 1000;
+    return secs > 0 ? secs * 1000 : (int64_t)access_settings->auto_reset_minutes * 60 * 1000;
 }
 
 /* Sets the timer for when the reset would be due, or stops it. */
 static void arm_reset(xd_access *acc) {
-    const xd_access_settings *a = &acc->server->config.access;
-    if (!a->auto_reset || !any_feature_on(a)) {
+    const xd_access_settings *access_settings = &acc->server->config.access;
+    if (!access_settings->auto_reset || !any_feature_on(access_settings)) {
         wl_event_source_timer_update(acc->reset_timer, 0);
         return;
     }
-    int64_t left = acc->last_input_ms + reset_after_ms(a) - now_ms();
+    int64_t left = acc->last_input_ms + reset_after_ms(access_settings) - now_ms();
     wl_event_source_timer_update(acc->reset_timer, (int)XD_CLAMP(left, 1, INT32_MAX));
 }
 
 /* Turns the features off (as XP's timeout did, High Contrast included),
  * now and in desktop.ini. */
 static void reset_features(xd_server *server) {
-    xd_settings s;
-    xd_settings_load(&s);
-    xd_access_settings *a = &s.access;
-    a->sticky_keys = a->filter_keys = a->toggle_keys = a->mouse_keys = false;
-    a->sound_sentry = false;
-    if (a->high_contrast)
-        xd_settings_set_high_contrast(&s, false, "");
-    if (!xd_settings_save(&s))
+    xd_settings settings;
+    xd_settings_load(&settings);
+    xd_access_settings *access_settings = &settings.access;
+    access_settings->sticky_keys = access_settings->filter_keys = access_settings->toggle_keys =
+        access_settings->mouse_keys = false;
+    access_settings->sound_sentry = false;
+    if (access_settings->high_contrast)
+        xd_settings_set_high_contrast(&settings, false, "");
+    if (!xd_settings_save(&settings))
         wlr_log(WLR_ERROR, "cannot save the accessibility settings");
     wlr_log(WLR_INFO, "accessibility: features turned off after %lld idle seconds",
             (long long)(reset_after_ms(&server->config.access) / 1000));
@@ -734,8 +745,9 @@ static void reset_features(xd_server *server) {
 
 static int reset_due(void *data) {
     xd_access *acc = data;
-    const xd_access_settings *a = &acc->server->config.access;
-    if (a->auto_reset && any_feature_on(a) && now_ms() - acc->last_input_ms >= reset_after_ms(a))
+    const xd_access_settings *access_settings = &acc->server->config.access;
+    if (access_settings->auto_reset && any_feature_on(access_settings) &&
+        now_ms() - acc->last_input_ms >= reset_after_ms(access_settings))
         reset_features(acc->server);
     else
         arm_reset(acc); /* there was input since: later */
@@ -759,12 +771,12 @@ void xd_access_apply(xd_server *server) {
     xd_access *acc = server->access;
     if (acc == nullptr)
         return;
-    const xd_access_settings *a = &server->config.access;
+    const xd_access_settings *access_settings = &server->config.access;
     if (!slow_keys_on(server)) {
         drop_slow(acc);
         acc->accepted_n = 0;
     }
-    if (!a->mouse_keys) {
+    if (!access_settings->mouse_keys) {
         acc->mk_held = 0;
         mk_hold(acc, BTN_LEFT, &acc->mk_held_left, false);
         mk_hold(acc, BTN_RIGHT, &acc->mk_held_right, false);
@@ -774,7 +786,7 @@ void xd_access_apply(xd_server *server) {
         acc->unlocking = false;
         xd_input_button(server, (uint32_t)now_ms(), BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
     }
-    if (!a->sound_sentry)
+    if (!access_settings->sound_sentry)
         sentry_end(acc);
     arm_reset(acc);
 }

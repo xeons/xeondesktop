@@ -68,10 +68,13 @@ static bool view_wants_fullscreen(const xd_view *view) {
 
 static bool view_is_fixed_size(const xd_view *view) {
     if (view->kind == XD_VIEW_X11) {
-        const xcb_size_hints_t *h = view->xsurface->size_hints;
-        return h != nullptr && (h->flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE) &&
-               (h->flags & XCB_ICCCM_SIZE_HINT_P_MAX_SIZE) && h->min_width > 0 &&
-               h->min_width == h->max_width && h->min_height == h->max_height;
+        const xcb_size_hints_t *xcb_size_hints = view->xsurface->size_hints;
+        return xcb_size_hints != nullptr &&
+               (xcb_size_hints->flags & XCB_ICCCM_SIZE_HINT_P_MIN_SIZE) &&
+               (xcb_size_hints->flags & XCB_ICCCM_SIZE_HINT_P_MAX_SIZE) &&
+               xcb_size_hints->min_width > 0 &&
+               xcb_size_hints->min_width == xcb_size_hints->max_width &&
+               xcb_size_hints->min_height == xcb_size_hints->max_height;
     }
     const struct wlr_xdg_toplevel_state *st = &view->toplevel->current;
     return st->min_width > 0 && st->min_height > 0 && st->min_width == st->max_width &&
@@ -102,8 +105,8 @@ bool xd_view_framed(const xd_view *view) {
 xd_insets xd_view_insets(const xd_view *view) {
     if (!xd_view_framed(view))
         return (xd_insets){0};
-    xd_frame f = xd_view_frame(view, true);
-    return xd_theme_frame_insets(&view->server->logical_theme, &f);
+    xd_frame frame = xd_view_frame(view, true);
+    return xd_theme_frame_insets(&view->server->logical_theme, &frame);
 }
 
 static struct wlr_box client_geometry(const xd_view *view) {
@@ -152,16 +155,16 @@ static void update_content_position(xd_view *view) {
 static void update_ftl_output(xd_view *view) {
     if (view->ftl == nullptr)
         return;
-    struct wlr_box b = xd_view_outer_box(view);
-    xd_output *out = xd_output_at(view->server, b.x + b.width / 2.0, b.y + b.height / 2.0);
-    struct wlr_output *o = out != nullptr ? out->wlr_output : nullptr;
-    if (o == view->ftl_output)
+    struct wlr_box box = xd_view_outer_box(view);
+    xd_output *out = xd_output_at(view->server, box.x + box.width / 2.0, box.y + box.height / 2.0);
+    struct wlr_output *output = out != nullptr ? out->wlr_output : nullptr;
+    if (output == view->ftl_output)
         return;
     if (view->ftl_output != nullptr)
         wlr_foreign_toplevel_handle_v1_output_leave(view->ftl, view->ftl_output);
-    if (o != nullptr)
-        wlr_foreign_toplevel_handle_v1_output_enter(view->ftl, o);
-    view->ftl_output = o;
+    if (output != nullptr)
+        wlr_foreign_toplevel_handle_v1_output_enter(view->ftl, output);
+    view->ftl_output = output;
 }
 
 void xd_view_retheme(xd_view *view) {
@@ -203,14 +206,15 @@ void xd_view_x11_sync(xd_view *view) {
 
 static void send_client_size(xd_view *view, int outer_w, int outer_h) {
     xd_insets in = xd_view_insets(view);
-    int w = XD_MAX(outer_w - in.left - in.right, XD_MIN_CLIENT_W);
-    int h = XD_MAX(outer_h - in.top - in.bottom, XD_MIN_CLIENT_H);
+    int width = XD_MAX(outer_w - in.left - in.right, XD_MIN_CLIENT_W);
+    int height = XD_MAX(outer_h - in.top - in.bottom, XD_MIN_CLIENT_H);
     if (view->kind == XD_VIEW_X11) {
         wlr_xwayland_surface_configure(view->xsurface, (int16_t)(view->x + in.left),
-                                       (int16_t)(view->y + in.top), (uint16_t)w, (uint16_t)h);
+                                       (int16_t)(view->y + in.top), (uint16_t)width,
+                                       (uint16_t)height);
         return;
     }
-    wlr_xdg_toplevel_set_size(view->toplevel, w, h);
+    wlr_xdg_toplevel_set_size(view->toplevel, width, height);
 }
 
 /* Tells a client which of its edges lie against the screen's or another
@@ -256,21 +260,21 @@ void xd_view_resize_anchored(xd_view *view, struct wlr_box outer, uint32_t movin
 static void apply_anchor(xd_view *view) {
     if (view->anchor_edges == 0)
         return;
-    struct wlr_box b = xd_view_outer_box(view);
-    int x = (view->anchor_edges & WLR_EDGE_LEFT) ? view->anchor_right - b.width : b.x;
-    int y = (view->anchor_edges & WLR_EDGE_TOP) ? view->anchor_bottom - b.height : b.y;
-    if (x != b.x || y != b.y)
+    struct wlr_box box = xd_view_outer_box(view);
+    int x = (view->anchor_edges & WLR_EDGE_LEFT) ? view->anchor_right - box.width : box.x;
+    int y = (view->anchor_edges & WLR_EDGE_TOP) ? view->anchor_bottom - box.height : box.y;
+    if (x != box.x || y != box.y)
         place(view, x, y);
     /* The client has caught up: done, or a later commit of its own (or a
      * move) would put the window back. */
-    if (b.width == view->anchor_w && b.height == view->anchor_h)
+    if (box.width == view->anchor_w && box.height == view->anchor_h)
         view->anchor_edges = 0;
 }
 
-static int floor_int(double v) {
-    double f = floor(v);
-    XD_ASSERT(f > -32768.0 && f < 32768.0);
-    return (int)f;
+static int floor_int(double value) {
+    double floored = floor(value);
+    XD_ASSERT(floored > -32768.0 && floored < 32768.0);
+    return (int)floored;
 }
 
 void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly) {
@@ -279,12 +283,12 @@ void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly) {
     *ly = outer.y;
     if (!xd_view_framed(view))
         return;
-    xd_frame f = xd_view_frame(view, true);
-    xd_frame_layout l;
-    xd_theme_frame_layout(&view->server->logical_theme,
-                          (xd_rect){0, 0, outer.width, outer.height}, &f, &l);
-    *lx = outer.x + l.icon.x;
-    *ly = outer.y + l.caption.y + l.caption.h;
+    xd_frame frame = xd_view_frame(view, true);
+    xd_frame_layout frame_layout;
+    xd_theme_frame_layout(&view->server->logical_theme, (xd_rect){0, 0, outer.width, outer.height},
+                          &frame, &frame_layout);
+    *lx = outer.x + frame_layout.icon.x;
+    *ly = outer.y + frame_layout.caption.y + frame_layout.caption.h;
 }
 
 xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly) {
@@ -294,11 +298,11 @@ xd_frame_part xd_view_hit(const xd_view *view, double lx, double ly) {
     double scale = view->drawn.scale > 0 ? view->drawn.scale : 1.0;
     xd_theme theme;
     xd_theme_init(&theme, view->server->config.style, &view->server->config.scheme, scale);
-    xd_frame f = xd_view_frame(view, true);
+    xd_frame frame = xd_view_frame(view, true);
     xd_rect dev = {0, 0, -floor_int(-outer.width * scale), -floor_int(-outer.height * scale)};
     int px = floor_int((lx - outer.x) * scale);
     int py = floor_int((ly - outer.y) * scale);
-    return xd_theme_frame_hit(&theme, dev, &f, px, py);
+    return xd_theme_frame_hit(&theme, dev, &frame, px, py);
 }
 
 void xd_view_set_hover(xd_view *view, xd_frame_part hot, xd_frame_part pressed) {
@@ -338,8 +342,8 @@ static void set_activated(xd_view *view, bool activated) {
 }
 
 /* The view of a toplevel (its owner, for dialogs). */
-static xd_view *view_of(struct wlr_xdg_toplevel *t) {
-    struct wlr_scene_tree *content = t != nullptr ? t->base->data : nullptr;
+static xd_view *view_of(struct wlr_xdg_toplevel *xdg_toplevel) {
+    struct wlr_scene_tree *content = xdg_toplevel != nullptr ? xdg_toplevel->base->data : nullptr;
     return content != nullptr ? xd_view_from_node(&content->node) : nullptr;
 }
 
@@ -351,10 +355,10 @@ static xd_view *parent_of(const xd_view *view) {
 
 /* Its title bar (layout coordinates), where the animations start or end. */
 static struct wlr_box caption_box(const xd_view *view) {
-    struct wlr_box b = xd_view_outer_box(view);
+    struct wlr_box box = xd_view_outer_box(view);
     xd_insets in = xd_view_insets(view);
-    b.height = in.top > 0 ? in.top : xd_px(1.0, 26);
-    return b;
+    box.height = in.top > 0 ? in.top : xd_px(1.0, 26);
+    return box;
 }
 
 /* Owned windows (dialogs) stay above their owner: raise the owner's whole
@@ -366,13 +370,13 @@ static void raise_family(xd_view *view) {
     wlr_scene_node_raise_to_top(&root->tree->node);
     /* Then each owned window, recursively, in focus order (oldest last). */
     xd_view *stack[64];
-    size_t n = 0;
-    stack[n++] = root;
-    for (size_t i = 0; i < n; i++) {
-        XD_LIST_FOR_EACH(v, &root->server->views, xd_view, link) {
-            if (v->mapped && parent_of(v) == stack[i] && n < XD_ARRAY_LEN(stack)) {
-                wlr_scene_node_raise_to_top(&v->tree->node);
-                stack[n++] = v;
+    size_t count = 0;
+    stack[count++] = root;
+    for (size_t i = 0; i < count; i++) {
+        XD_LIST_FOR_EACH(child, &root->server->views, xd_view, link) {
+            if (child->mapped && parent_of(child) == stack[i] && count < XD_ARRAY_LEN(stack)) {
+                wlr_scene_node_raise_to_top(&child->tree->node);
+                stack[count++] = child;
             }
         }
     }
@@ -397,10 +401,10 @@ void xd_view_focus(xd_view *view) {
     }
 
     /* Restoring an owner restores the dialogs it owns. */
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (v->minimized && parent_of(v) == view) {
-            v->minimized = false;
-            wlr_scene_node_set_enabled(&v->tree->node, true);
+    XD_LIST_FOR_EACH(child, &server->views, xd_view, link) {
+        if (child->minimized && parent_of(child) == view) {
+            child->minimized = false;
+            wlr_scene_node_set_enabled(&child->tree->node, true);
         }
     }
     /* Deactivate first: a fullscreen window drops back among the others,
@@ -465,9 +469,9 @@ static bool offer_end_now(xd_view *view) {
     return true;
 }
 
-static bool pingable(const xd_view *v);
-static bool ping_answered(const xd_view *v);
-static void send_ping(xd_view *v);
+static bool pingable(const xd_view *view);
+static bool ping_answered(const xd_view *view);
+static void send_ping(xd_view *view);
 
 void xd_view_close(xd_view *view) {
     /* Closing a window that isn't responding: Windows offers End Now. */
@@ -575,10 +579,10 @@ void xd_view_minimize(xd_view *view) {
         xd_view_minimize(owner);
         return;
     }
-    XD_LIST_FOR_EACH(v, &view->server->views, xd_view, link) {
-        if (parent_of(v) == view && v->mapped && !v->minimized) {
-            v->minimized = true;
-            wlr_scene_node_set_enabled(&v->tree->node, false);
+    XD_LIST_FOR_EACH(child, &view->server->views, xd_view, link) {
+        if (parent_of(child) == view && child->mapped && !child->minimized) {
+            child->minimized = true;
+            wlr_scene_node_set_enabled(&child->tree->node, false);
         }
     }
     bool was_focused = xd_view_focused(view->server) == view;
@@ -621,9 +625,9 @@ static void place_new_view(xd_view *view) {
     /* Owned windows (dialogs) open centred over their owner. */
     xd_view *owner = parent_of(view);
     if (owner != nullptr && owner->mapped) {
-        struct wlr_box o = xd_view_outer_box(owner);
-        int x = o.x + (o.width - outer.width) / 2;
-        int y = o.y + (o.height - outer.height) / 2;
+        struct wlr_box box = xd_view_outer_box(owner);
+        int x = box.x + (box.width - outer.width) / 2;
+        int y = box.y + (box.height - outer.height) / 2;
         x = XD_CLAMP(x, area.x, XD_MAX(area.x + area.width - outer.width, area.x));
         y = XD_CLAMP(y, area.y, XD_MAX(area.y + area.height - outer.height, area.y));
         xd_view_set_position(view, x, y);
@@ -669,8 +673,9 @@ static void handle_ftl_activate(struct wl_listener *listener, [[maybe_unused]] v
 
 static void handle_ftl_minimize(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_minimize);
-    const struct wlr_foreign_toplevel_handle_v1_minimized_event *e = data;
-    if (e->minimized)
+    const struct wlr_foreign_toplevel_handle_v1_minimized_event
+        *foreign_toplevel_handle_v1_minimized_event = data;
+    if (foreign_toplevel_handle_v1_minimized_event->minimized)
         xd_view_minimize(view);
     else
         xd_view_focus(view);
@@ -678,8 +683,9 @@ static void handle_ftl_minimize(struct wl_listener *listener, void *data) {
 
 static void handle_ftl_maximize(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_maximize);
-    const struct wlr_foreign_toplevel_handle_v1_maximized_event *e = data;
-    xd_view_set_maximized(view, e->maximized);
+    const struct wlr_foreign_toplevel_handle_v1_maximized_event
+        *foreign_toplevel_handle_v1_maximized_event = data;
+    xd_view_set_maximized(view, foreign_toplevel_handle_v1_maximized_event->maximized);
 }
 
 static void handle_ftl_close(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -691,16 +697,24 @@ static void handle_ftl_close(struct wl_listener *listener, [[maybe_unused]] void
  * its layer surface). */
 static void handle_ftl_set_rectangle(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, ftl_set_rectangle);
-    const struct wlr_foreign_toplevel_handle_v1_set_rectangle_event *e = data;
+    const struct wlr_foreign_toplevel_handle_v1_set_rectangle_event
+        *foreign_toplevel_handle_v1_set_rectangle_event = data;
     struct wlr_layer_surface_v1 *layer =
-        e->surface != nullptr ? wlr_layer_surface_v1_try_from_wlr_surface(e->surface) : nullptr;
+        foreign_toplevel_handle_v1_set_rectangle_event->surface != nullptr
+            ? wlr_layer_surface_v1_try_from_wlr_surface(
+                  foreign_toplevel_handle_v1_set_rectangle_event->surface)
+            : nullptr;
     struct wlr_scene_tree *tree = layer != nullptr ? layer->data : nullptr;
     int lx = 0, ly = 0;
-    if (tree == nullptr || e->width <= 0 || !wlr_scene_node_coords(&tree->node, &lx, &ly)) {
+    if (tree == nullptr || foreign_toplevel_handle_v1_set_rectangle_event->width <= 0 ||
+        !wlr_scene_node_coords(&tree->node, &lx, &ly)) {
         view->has_button_box = false;
         return;
     }
-    view->button_box = (struct wlr_box){lx + e->x, ly + e->y, e->width, e->height};
+    view->button_box = (struct wlr_box){lx + foreign_toplevel_handle_v1_set_rectangle_event->x,
+                                        ly + foreign_toplevel_handle_v1_set_rectangle_event->y,
+                                        foreign_toplevel_handle_v1_set_rectangle_event->width,
+                                        foreign_toplevel_handle_v1_set_rectangle_event->height};
     view->has_button_box = true;
 }
 
@@ -748,31 +762,31 @@ void xd_view_rescue_offscreen(xd_server *server) {
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
         if (!view->mapped)
             continue;
-        struct wlr_box b = xd_view_outer_box(view);
-        double cx = b.x + b.width / 2.0;
-        double cy = b.y + b.height / 2.0;
+        struct wlr_box box = xd_view_outer_box(view);
+        double cx = box.x + box.width / 2.0;
+        double cy = box.y + box.height / 2.0;
         if (wlr_output_layout_output_at(layout, cx, cy) != nullptr)
             continue;
         double nx;
         double ny;
         wlr_output_layout_closest_point(layout, nullptr, cx, cy, &nx, &ny);
-        struct wlr_output *o = wlr_output_layout_output_at(layout, nx, ny);
-        if (o == nullptr)
+        struct wlr_output *output = wlr_output_layout_output_at(layout, nx, ny);
+        if (output == nullptr)
             continue;
         if (view->fullscreen) {
             struct wlr_box ob;
-            wlr_output_layout_get_box(layout, o, &ob);
-            view->fullscreen_restore.x += ob.x - b.x;
-            view->fullscreen_restore.y += ob.y - b.y;
+            wlr_output_layout_get_box(layout, output, &ob);
+            view->fullscreen_restore.x += ob.x - box.x;
+            view->fullscreen_restore.y += ob.y - box.y;
             xd_view_set_outer_box(view, ob);
             continue;
         }
         struct wlr_box area = xd_output_work_area_at(server, nx, ny);
-        int x = fit_span((int)nx - b.width / 2, b.width, area.x, area.width);
-        int y = fit_span((int)ny - b.height / 2, b.height, area.y, area.height);
+        int x = fit_span((int)nx - box.width / 2, box.width, area.x, area.width);
+        int y = fit_span((int)ny - box.height / 2, box.height, area.y, area.height);
         /* Where it un-maximizes to moves along with it. */
-        view->restore.x += x - b.x;
-        view->restore.y += y - b.y;
+        view->restore.x += x - box.x;
+        view->restore.y += y - box.y;
         xd_view_set_position(view, x, y);
     }
 }
@@ -781,8 +795,8 @@ void xd_view_refit_maximized(xd_server *server, xd_output *out) {
     XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
         if (!view->mapped || !view->maximized)
             continue;
-        struct wlr_box b = xd_view_outer_box(view);
-        if (xd_output_at(server, b.x + b.width / 2.0, b.y + b.height / 2.0) == out)
+        struct wlr_box box = xd_view_outer_box(view);
+        if (xd_output_at(server, box.x + box.width / 2.0, box.y + box.height / 2.0) == out)
             xd_view_set_outer_box(view, out->usable);
     }
 }
@@ -800,9 +814,9 @@ void xd_view_set_on_top(xd_view *view, bool on_top) {
     view->on_top = on_top;
     if (!view->fullscreen || xd_view_focused(view->server) != view)
         wlr_scene_node_reparent(&view->tree->node, home_tree(view));
-    XD_LIST_FOR_EACH(v, &view->server->views, xd_view, link) {
-        if (v != view && parent_of(v) == view && v->on_top != on_top)
-            xd_view_set_on_top(v, on_top);
+    XD_LIST_FOR_EACH(child, &view->server->views, xd_view, link) {
+        if (child != view && parent_of(child) == view && child->on_top != on_top)
+            xd_view_set_on_top(child, on_top);
     }
     wlr_scene_node_raise_to_top(&view->tree->node);
 }
@@ -814,20 +828,20 @@ static void set_buffer_opacity(struct wlr_scene_buffer *buffer, [[maybe_unused]]
 
 /* Who shows in a peek: nobody (Show desktop), or the peeked window and
  * its dialogs. */
-static bool peek_shows(const xd_server *server, const xd_view *v) {
+static bool peek_shows(const xd_server *server, const xd_view *view) {
     const xd_view *only = server->peek_view;
-    return only != nullptr && (v == only || parent_of(v) == only);
+    return only != nullptr && (view == only || parent_of(view) == only);
 }
 
 static void apply_peek(xd_server *server) {
     /* Contents vanish; the frame stays as a faint outline, as in Windows 7. */
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (!v->mapped)
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (!view->mapped)
             continue;
-        bool shown = !server->peeking || peek_shows(server, v);
+        bool shown = !server->peeking || peek_shows(server, view);
         float content = shown ? 1.0f : 0.0f;
-        wlr_scene_node_for_each_buffer(&v->tree->node, set_buffer_opacity, &content);
-        wlr_scene_buffer_set_opacity(v->frame, shown ? 1.0f : 0.25f);
+        wlr_scene_node_for_each_buffer(&view->tree->node, set_buffer_opacity, &content);
+        wlr_scene_buffer_set_opacity(view->frame, shown ? 1.0f : 0.25f);
     }
 }
 
@@ -842,14 +856,15 @@ void xd_view_peek(xd_server *server, bool on) {
 /* The windows sharing the peeked window's layer, bottom first. */
 static void save_order(xd_server *server, xd_view *view) {
     struct wlr_scene_tree *parent = view->tree->node.parent;
-    size_t n = (size_t)wl_list_length(&parent->children);
-    server->peek_order = xd_alloc_array(XD_MAX(n, 1), sizeof(*server->peek_order));
+    size_t count = (size_t)wl_list_length(&parent->children);
+    server->peek_order = xd_alloc_array(XD_MAX(count, 1), sizeof(*server->peek_order));
     server->peek_order_n = 0;
     struct wlr_scene_node *node;
     wl_list_for_each(node, &parent->children, link) {
-        xd_view *v = xd_view_from_node(node);
-        if (v != nullptr && &v->tree->node == node && server->peek_order_n < n)
-            server->peek_order[server->peek_order_n++] = v;
+        xd_view *stacked_view = xd_view_from_node(node);
+        if (stacked_view != nullptr && &stacked_view->tree->node == node &&
+            server->peek_order_n < count)
+            server->peek_order[server->peek_order_n++] = stacked_view;
     }
 }
 
@@ -857,13 +872,13 @@ static void save_order(xd_server *server, xd_view *view) {
  * real meanwhile (a thumbnail clicked). */
 static void restore_order(xd_server *server) {
     for (size_t i = 0; i < server->peek_order_n; i++) {
-        xd_view *v = server->peek_order[i];
+        xd_view *peeked_view = server->peek_order[i];
         bool alive = false;
-        XD_LIST_FOR_EACH(w, &server->views, xd_view, link) {
-            alive = alive || w == v;
+        XD_LIST_FOR_EACH(live_view, &server->views, xd_view, link) {
+            alive = alive || live_view == peeked_view;
         }
-        if (alive && v->mapped)
-            wlr_scene_node_raise_to_top(&v->tree->node);
+        if (alive && peeked_view->mapped)
+            wlr_scene_node_raise_to_top(&peeked_view->tree->node);
     }
     XD_FREE(&server->peek_order);
     server->peek_order_n = 0;
@@ -981,13 +996,13 @@ void xd_view_on_commit(xd_view *view) {
 
 static void handle_request_move(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_move);
-    const struct wlr_xdg_toplevel_move_event *e = data;
+    const struct wlr_xdg_toplevel_move_event *xdg_toplevel_move_event = data;
     xd_server *server = view->server;
     if (server->mode != XD_CURSOR_PASSTHROUGH)
         return;
     /* Asked from a touch (a header bar dragged with a finger): it starts
      * where the finger is. */
-    xd_touch_claim_grab(server, view->toplevel->base->surface, e->serial);
+    xd_touch_claim_grab(server, view->toplevel->base->surface, xdg_toplevel_move_event->serial);
     if (!xd_snap_begin(server, view))
         return;
     server->mode = XD_CURSOR_MOVE;
@@ -1050,7 +1065,8 @@ static void handle_request_maximize(struct wl_listener *listener, [[maybe_unused
  * shadow margin included. */
 static void handle_request_window_menu(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_window_menu);
-    const struct wlr_xdg_toplevel_show_window_menu_event *e = data;
+    const struct wlr_xdg_toplevel_show_window_menu_event *xdg_toplevel_show_window_menu_event =
+        data;
     if (!view->mapped)
         return;
     xd_server *server = view->server;
@@ -1060,7 +1076,8 @@ static void handle_request_window_menu(struct wl_listener *listener, void *data)
     }
     struct wlr_box outer = xd_view_outer_box(view);
     xd_insets in = xd_view_insets(view);
-    xd_window_menu_show(view, outer.x + in.left + e->x, outer.y + in.top + e->y, false);
+    xd_window_menu_show(view, outer.x + in.left + xdg_toplevel_show_window_menu_event->x,
+                        outer.y + in.top + xdg_toplevel_show_window_menu_event->y, false);
 }
 
 static void handle_request_minimize(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -1124,11 +1141,11 @@ static void set_hung(xd_view *view, bool hung) {
     xd_free(view->hung_title);
     view->hung_title = nullptr;
     if (hung) {
-        const char *t = xd_view_title(view);
-        xd_strbuf b = {0};
-        xd_strbuf_appendf(&b, "%s (Not Responding)", t != nullptr ? t : "");
-        view->hung_title = xd_str_dup_cstr(xd_strbuf_view(&b));
-        xd_strbuf_free(&b);
+        const char *title = xd_view_title(view);
+        xd_strbuf buffer = {0};
+        xd_strbuf_appendf(&buffer, "%s (Not Responding)", title != nullptr ? title : "");
+        view->hung_title = xd_str_dup_cstr(xd_strbuf_view(&buffer));
+        xd_strbuf_free(&buffer);
     }
     if (view->ftl != nullptr && shown_title(view) != nullptr)
         wlr_foreign_toplevel_handle_v1_set_title(view->ftl, shown_title(view));
@@ -1137,9 +1154,9 @@ static void set_hung(xd_view *view, bool hung) {
         if (hung) {
             /* Out by the frame, but its caption (the close button) stays on
              * the screen: with no room above, the contents move down. */
-            struct wlr_box b = xd_view_outer_box(view);
-            struct wlr_box work = xd_output_work_area_at(view->server, b.x + b.width / 2.0,
-                                                         b.y + b.height / 2.0);
+            struct wlr_box box = xd_view_outer_box(view);
+            struct wlr_box work = xd_output_work_area_at(view->server, box.x + box.width / 2.0,
+                                                         box.y + box.height / 2.0);
             int x = view->x - in.left, y = view->y - in.top;
             if (work.width > 0 && y < work.y)
                 y = work.y;
@@ -1164,8 +1181,8 @@ static void handle_ping_timeout(struct wl_listener *listener, [[maybe_unused]] v
 void xd_view_ping_timed_out(xd_view *view) {
     view->ping_out = false;
     if (!view->hung) {
-        const char *t = xd_view_title(view);
-        wlr_log(WLR_INFO, "%s isn't responding", t != nullptr ? t : "a window");
+        const char *title = xd_view_title(view);
+        wlr_log(WLR_INFO, "%s isn't responding", title != nullptr ? title : "a window");
         set_hung(view, true);
     }
     /* It stopped responding with the close request unhandled. */
@@ -1176,18 +1193,18 @@ void xd_view_ping_timed_out(xd_view *view) {
     }
 }
 
-static bool pingable(const xd_view *v) {
-    if (!v->mapped)
+static bool pingable(const xd_view *view) {
+    if (!view->mapped)
         return false;
-    if (v->kind == XD_VIEW_X11)
-        return v->pings && v->xsurface->surface != nullptr;
-    return v->toplevel->base->initialized;
+    if (view->kind == XD_VIEW_X11)
+        return view->pings && view->xsurface->surface != nullptr;
+    return view->toplevel->base->initialized;
 }
 
 /* Whether the program has answered every ping sent. */
-static bool ping_answered(const xd_view *v) {
-    return v->kind == XD_VIEW_X11 ? !v->xsurface->pinging
-                                  : v->toplevel->base->client->ping_serial == 0;
+static bool ping_answered(const xd_view *view) {
+    return view->kind == XD_VIEW_X11 ? !view->xsurface->pinging
+                                     : view->toplevel->base->client->ping_serial == 0;
 }
 
 /* Every few seconds each program is pinged (one ping per client). wlroots
@@ -1195,34 +1212,34 @@ static bool ping_answered(const xd_view *v) {
  * times out, so `ping_out` (cleared by the timeout) tells them apart: a
  * hung window whose ping is no longer pending and didn't time out is
  * responding again. All windows are checked before the next pings go. */
-static void send_ping(xd_view *v) {
-    if (v->kind == XD_VIEW_X11)
-        wlr_xwayland_surface_ping(v->xsurface);
+static void send_ping(xd_view *view) {
+    if (view->kind == XD_VIEW_X11)
+        wlr_xwayland_surface_ping(view->xsurface);
     else
-        wlr_xdg_surface_ping(v->toplevel->base);
-    v->ping_out = true;
+        wlr_xdg_surface_ping(view->toplevel->base);
+    view->ping_out = true;
 }
 
 static int ping_tick(void *data) {
     xd_server *server = data;
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (pingable(v) && v->ping_out && ping_answered(v)) {
-            if (v->hung)
-                set_hung(v, false);
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (pingable(view) && view->ping_out && ping_answered(view)) {
+            if (view->hung)
+                set_hung(view, false);
             /* It got past the close request and still responds. */
-            if (v->close_wait == XD_CLOSE_PINGED)
-                v->close_wait = XD_CLOSE_NONE;
+            if (view->close_wait == XD_CLOSE_PINGED)
+                view->close_wait = XD_CLOSE_NONE;
         }
     }
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (!pingable(v))
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (!pingable(view))
             continue;
-        if (ping_answered(v)) {
-            send_ping(v);
-            if (v->close_wait == XD_CLOSE_SENT)
-                v->close_wait = XD_CLOSE_PINGED;
+        if (ping_answered(view)) {
+            send_ping(view);
+            if (view->close_wait == XD_CLOSE_SENT)
+                view->close_wait = XD_CLOSE_PINGED;
         }
-        v->ping_out = true;
+        view->ping_out = true;
     }
     wl_event_source_timer_update(server->ping_timer, PING_EVERY_MS);
     return 0;
@@ -1341,10 +1358,10 @@ static void handle_new_toplevel(struct wl_listener *listener, void *data) {
 static bool kde_wants_client_side(xd_server *server, struct wlr_surface *surface) {
     if (server->kde_decoration == nullptr)
         return false;
-    struct wlr_server_decoration *d;
-    wl_list_for_each(d, &server->kde_decoration->decorations, link) {
-        if (d->surface == surface)
-            return d->mode == WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT;
+    struct wlr_server_decoration *server_decoration;
+    wl_list_for_each(server_decoration, &server->kde_decoration->decorations, link) {
+        if (server_decoration->surface == surface)
+            return server_decoration->mode == WLR_SERVER_DECORATION_MANAGER_MODE_CLIENT;
     }
     return false;
 }
@@ -1352,9 +1369,9 @@ static bool kde_wants_client_side(xd_server *server, struct wlr_surface *surface
 static bool kde_negotiated(xd_server *server, struct wlr_surface *surface) {
     if (server->kde_decoration == nullptr)
         return false;
-    struct wlr_server_decoration *d;
-    wl_list_for_each(d, &server->kde_decoration->decorations, link) {
-        if (d->surface == surface)
+    struct wlr_server_decoration *server_decoration;
+    wl_list_for_each(server_decoration, &server->kde_decoration->decorations, link) {
+        if (server_decoration->surface == surface)
             return true;
     }
     return false;
@@ -1435,8 +1452,9 @@ typedef struct kde_deco {
     struct wl_listener destroy;
 } kde_deco;
 
-static void kde_deco_refresh(kde_deco *k) {
-    struct wlr_xdg_toplevel *top = wlr_xdg_toplevel_try_from_wlr_surface(k->deco->surface);
+static void kde_deco_refresh(kde_deco *kde_decoration) {
+    struct wlr_xdg_toplevel *top =
+        wlr_xdg_toplevel_try_from_wlr_surface(kde_decoration->deco->surface);
     struct wlr_scene_tree *content = top != nullptr ? top->base->data : nullptr;
     xd_view *view = content != nullptr ? xd_view_from_node(&content->node) : nullptr;
     if (view != nullptr)
@@ -1448,20 +1466,20 @@ static void handle_kde_mode(struct wl_listener *listener, [[maybe_unused]] void 
 }
 
 static void handle_kde_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    kde_deco *k = XD_CONTAINER_OF(listener, kde_deco, destroy);
-    xd_unlisten(&k->mode);
-    xd_unlisten(&k->destroy);
-    xd_free(k);
+    kde_deco *kde_decoration = XD_CONTAINER_OF(listener, kde_deco, destroy);
+    xd_unlisten(&kde_decoration->mode);
+    xd_unlisten(&kde_decoration->destroy);
+    xd_free(kde_decoration);
 }
 
 static void handle_new_kde_decoration(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_kde_decoration);
-    kde_deco *k = XD_NEW(kde_deco);
-    k->server = server;
-    k->deco = data;
-    XD_LISTEN(&k->deco->events.mode, k, mode, handle_kde_mode);
-    XD_LISTEN(&k->deco->events.destroy, k, destroy, handle_kde_destroy);
-    kde_deco_refresh(k);
+    kde_deco *kde_decoration = XD_NEW(kde_deco);
+    kde_decoration->server = server;
+    kde_decoration->deco = data;
+    XD_LISTEN(&kde_decoration->deco->events.mode, kde_decoration, mode, handle_kde_mode);
+    XD_LISTEN(&kde_decoration->deco->events.destroy, kde_decoration, destroy, handle_kde_destroy);
+    kde_deco_refresh(kde_decoration);
 }
 
 /* ---- popups --------------------------------------------------------------- */
@@ -1490,13 +1508,13 @@ static void popup_first_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, 
 }
 
 /* Aero: the Windows 7 Start menu's glass is blurred where it draws. */
-static void update_popup_glass(xd_popup *p) {
-    struct wlr_scene_tree *tree = p->popup->base->data;
-    if (p->glass_server == nullptr || tree == nullptr)
+static void update_popup_glass(xd_popup *popup) {
+    struct wlr_scene_tree *tree = popup->popup->base->data;
+    if (popup->glass_server == nullptr || tree == nullptr)
         return;
-    if (p->glass_server->config.style != XD_STYLE_AERO) {
-        if (p->blur != nullptr)
-            wlr_scene_node_set_enabled(&p->blur->node, false);
+    if (popup->glass_server->config.style != XD_STYLE_AERO) {
+        if (popup->blur != nullptr)
+            wlr_scene_node_set_enabled(&popup->blur->node, false);
         return;
     }
     struct {
@@ -1506,76 +1524,80 @@ static void update_popup_glass(xd_popup *p) {
     wlr_scene_node_for_each_buffer(&tree->node, popup_first_buffer, &found);
     if (found.buffer == nullptr)
         return;
-    if (p->blur == nullptr) {
-        p->blur = wlr_scene_blur_create(tree, 1, 1);
-        wlr_scene_blur_set_transparency_mask_source(p->blur, found.buffer);
-        wlr_scene_node_lower_to_bottom(&p->blur->node);
+    if (popup->blur == nullptr) {
+        popup->blur = wlr_scene_blur_create(tree, 1, 1);
+        wlr_scene_blur_set_transparency_mask_source(popup->blur, found.buffer);
+        wlr_scene_node_lower_to_bottom(&popup->blur->node);
     }
     /* The buffer's position counts the popup tree's own offset from its
      * parent; the blur goes inside the tree. */
-    struct wlr_surface *s = p->popup->base->surface;
-    wlr_scene_blur_set_size(p->blur, s->current.width, s->current.height);
-    wlr_scene_node_set_position(&p->blur->node, found.x - tree->node.x, found.y - tree->node.y);
-    wlr_scene_node_set_enabled(&p->blur->node, !p->glass_server->config.scheme.glass_opaque);
+    struct wlr_surface *surface = popup->popup->base->surface;
+    wlr_scene_blur_set_size(popup->blur, surface->current.width, surface->current.height);
+    wlr_scene_node_set_position(&popup->blur->node, found.x - tree->node.x, found.y - tree->node.y);
+    wlr_scene_node_set_enabled(&popup->blur->node,
+                               !popup->glass_server->config.scheme.glass_opaque);
 }
 #endif
 
 /* Layout position of the surface a popup chain is rooted at: a window's
  * content or a layer surface (the taskbar's Start menu). */
-static bool popup_root_origin(struct wlr_scene_node *node, xd_server **server, int *x,
-                              int *y) {
+static bool popup_root_origin(struct wlr_scene_node *node, xd_server **server, int *origin_x,
+                              int *origin_y) {
     xd_view *view = xd_view_from_node(node);
     if (view != nullptr) {
         *server = view->server;
-        return wlr_scene_node_coords(&view->content->node, x, y);
+        return wlr_scene_node_coords(&view->content->node, origin_x, origin_y);
     }
     xd_layer_surface *ls = xd_layer_from_node(node);
     if (ls != nullptr) {
         *server = ls->server;
-        return wlr_scene_node_coords(&ls->scene->tree->node, x, y);
+        return wlr_scene_node_coords(&ls->scene->tree->node, origin_x, origin_y);
     }
     return false;
 }
 
 static void handle_popup_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_popup *p = XD_CONTAINER_OF(listener, xd_popup, commit);
+    xd_popup *popup = XD_CONTAINER_OF(listener, xd_popup, commit);
 #ifdef XD_SCENEFX
-    update_popup_glass(p);
+    update_popup_glass(popup);
 #endif
-    if (!p->popup->base->initial_commit)
+    if (!popup->popup->base->initial_commit)
         return;
 
     /* Keep popups (menus, submenus) inside the work area of the output
      * their root surface is on, flipping or sliding as the client allows. */
-    struct wlr_scene_tree *tree = p->popup->base->data;
+    struct wlr_scene_tree *tree = popup->popup->base->data;
     xd_server *server = nullptr;
     int rx = 0;
     int ry = 0;
     if (tree != nullptr && popup_root_origin(&tree->node, &server, &rx, &ry)) {
         struct wlr_box area = xd_output_work_area_at(server, rx + 1, ry + 1);
         struct wlr_box box = {area.x - rx, area.y - ry, area.width, area.height};
-        wlr_xdg_popup_unconstrain_from_box(p->popup, &box);
-        wlr_log(WLR_DEBUG, "popup: root (%d,%d) box (%d,%d %dx%d) -> geometry (%d,%d %dx%d)", rx, ry, box.x, box.y, box.width, box.height, p->popup->scheduled.geometry.x, p->popup->scheduled.geometry.y, p->popup->scheduled.geometry.width, p->popup->scheduled.geometry.height);
+        wlr_xdg_popup_unconstrain_from_box(popup->popup, &box);
+        wlr_log(WLR_DEBUG, "popup: root (%d,%d) box (%d,%d %dx%d) -> geometry (%d,%d %dx%d)", rx,
+                ry, box.x, box.y, box.width, box.height, popup->popup->scheduled.geometry.x,
+                popup->popup->scheduled.geometry.y, popup->popup->scheduled.geometry.width,
+                popup->popup->scheduled.geometry.height);
     }
-    wlr_xdg_surface_schedule_configure(p->popup->base);
+    wlr_xdg_surface_schedule_configure(popup->popup->base);
 }
 
 static void handle_popup_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_popup *p = XD_CONTAINER_OF(listener, xd_popup, destroy);
-    xd_unlisten(&p->commit);
-    xd_unlisten(&p->destroy);
-    xd_free(p);
+    xd_popup *popup = XD_CONTAINER_OF(listener, xd_popup, destroy);
+    xd_unlisten(&popup->commit);
+    xd_unlisten(&popup->destroy);
+    xd_free(popup);
 }
 
 void xd_popup_attach(struct wlr_xdg_popup *popup, struct wlr_scene_tree *parent_tree,
                      xd_server *glass_server) {
     popup->base->data = wlr_scene_xdg_surface_create(parent_tree, popup->base);
 
-    xd_popup *p = XD_NEW(xd_popup);
-    p->popup = popup;
-    p->glass_server = glass_server;
-    XD_LISTEN(&popup->base->surface->events.commit, p, commit, handle_popup_commit);
-    XD_LISTEN(&popup->events.destroy, p, destroy, handle_popup_destroy);
+    xd_popup *popup_data = XD_NEW(xd_popup);
+    popup_data->popup = popup;
+    popup_data->glass_server = glass_server;
+    XD_LISTEN(&popup->base->surface->events.commit, popup_data, commit, handle_popup_commit);
+    XD_LISTEN(&popup->events.destroy, popup_data, destroy, handle_popup_destroy);
 }
 
 static void handle_new_popup(struct wl_listener *listener, void *data) {

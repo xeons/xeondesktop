@@ -29,44 +29,45 @@ typedef struct xd_unmanaged {
     struct wl_listener destroy;
 } xd_unmanaged;
 
-static void unmanaged_place(xd_unmanaged *u) {
-    if (u->tree != nullptr)
-        wlr_scene_node_set_position(&u->tree->node, u->xsurface->x, u->xsurface->y);
+static void unmanaged_place(xd_unmanaged *unmanaged) {
+    if (unmanaged->tree != nullptr)
+        wlr_scene_node_set_position(&unmanaged->tree->node, unmanaged->xsurface->x,
+                                    unmanaged->xsurface->y);
 }
 
 static void handle_um_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, map);
-    u->tree = wlr_scene_subsurface_tree_create(u->server->layer_x11_popups,
-                                               u->xsurface->surface);
-    unmanaged_place(u);
+    xd_unmanaged *unmanaged = XD_CONTAINER_OF(listener, xd_unmanaged, map);
+    unmanaged->tree = wlr_scene_subsurface_tree_create(unmanaged->server->layer_x11_popups,
+                                                       unmanaged->xsurface->surface);
+    unmanaged_place(unmanaged);
     /* Drop-down menus and the like may want the keyboard. */
-    if (wlr_xwayland_surface_override_redirect_wants_focus(u->xsurface)) {
-        struct wlr_keyboard *kb = wlr_seat_get_keyboard(u->server->seat);
+    if (wlr_xwayland_surface_override_redirect_wants_focus(unmanaged->xsurface)) {
+        struct wlr_keyboard *kb = wlr_seat_get_keyboard(unmanaged->server->seat);
         if (kb != nullptr)
-            wlr_seat_keyboard_notify_enter(u->server->seat, u->xsurface->surface, kb->keycodes,
-                                           kb->num_keycodes, &kb->modifiers);
+            wlr_seat_keyboard_notify_enter(unmanaged->server->seat, unmanaged->xsurface->surface,
+                                           kb->keycodes, kb->num_keycodes, &kb->modifiers);
     }
 }
 
 static void handle_um_unmap(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, unmap);
-    if (u->tree != nullptr) {
-        wlr_scene_node_destroy(&u->tree->node);
-        u->tree = nullptr;
+    xd_unmanaged *unmanaged = XD_CONTAINER_OF(listener, xd_unmanaged, unmap);
+    if (unmanaged->tree != nullptr) {
+        wlr_scene_node_destroy(&unmanaged->tree->node);
+        unmanaged->tree = nullptr;
     }
-    xd_keyboard_refocus(u->server);
+    xd_keyboard_refocus(unmanaged->server);
 }
 
 static void handle_um_associate(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, associate);
-    XD_LISTEN(&u->xsurface->surface->events.map, u, map, handle_um_map);
-    XD_LISTEN(&u->xsurface->surface->events.unmap, u, unmap, handle_um_unmap);
+    xd_unmanaged *unmanaged = XD_CONTAINER_OF(listener, xd_unmanaged, associate);
+    XD_LISTEN(&unmanaged->xsurface->surface->events.map, unmanaged, map, handle_um_map);
+    XD_LISTEN(&unmanaged->xsurface->surface->events.unmap, unmanaged, unmap, handle_um_unmap);
 }
 
 static void handle_um_dissociate(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, dissociate);
-    xd_unlisten(&u->map);
-    xd_unlisten(&u->unmap);
+    xd_unmanaged *unmanaged = XD_CONTAINER_OF(listener, xd_unmanaged, dissociate);
+    xd_unlisten(&unmanaged->map);
+    xd_unlisten(&unmanaged->unmap);
 }
 
 static void handle_um_geometry(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -74,35 +75,38 @@ static void handle_um_geometry(struct wl_listener *listener, [[maybe_unused]] vo
 }
 
 static void handle_um_configure(struct wl_listener *listener, void *data) {
-    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, request_configure);
-    const struct wlr_xwayland_surface_configure_event *e = data;
-    wlr_xwayland_surface_configure(u->xsurface, e->x, e->y, e->width, e->height);
-    unmanaged_place(u);
+    xd_unmanaged *unmanaged = XD_CONTAINER_OF(listener, xd_unmanaged, request_configure);
+    const struct wlr_xwayland_surface_configure_event *xwayland_surface_configure_event = data;
+    wlr_xwayland_surface_configure(unmanaged->xsurface, xwayland_surface_configure_event->x,
+                                   xwayland_surface_configure_event->y,
+                                   xwayland_surface_configure_event->width,
+                                   xwayland_surface_configure_event->height);
+    unmanaged_place(unmanaged);
 }
 
 static void handle_um_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_unmanaged *u = XD_CONTAINER_OF(listener, xd_unmanaged, destroy);
-    if (u->tree != nullptr)
-        wlr_scene_node_destroy(&u->tree->node);
-    xd_unlisten(&u->associate);
-    xd_unlisten(&u->dissociate);
-    xd_unlisten(&u->map);
-    xd_unlisten(&u->unmap);
-    xd_unlisten(&u->set_geometry);
-    xd_unlisten(&u->request_configure);
-    xd_unlisten(&u->destroy);
-    xd_free(u);
+    xd_unmanaged *unmanaged = XD_CONTAINER_OF(listener, xd_unmanaged, destroy);
+    if (unmanaged->tree != nullptr)
+        wlr_scene_node_destroy(&unmanaged->tree->node);
+    xd_unlisten(&unmanaged->associate);
+    xd_unlisten(&unmanaged->dissociate);
+    xd_unlisten(&unmanaged->map);
+    xd_unlisten(&unmanaged->unmap);
+    xd_unlisten(&unmanaged->set_geometry);
+    xd_unlisten(&unmanaged->request_configure);
+    xd_unlisten(&unmanaged->destroy);
+    xd_free(unmanaged);
 }
 
 static void new_unmanaged(xd_server *server, struct wlr_xwayland_surface *xs) {
-    xd_unmanaged *u = XD_NEW(xd_unmanaged);
-    u->server = server;
-    u->xsurface = xs;
-    XD_LISTEN(&xs->events.associate, u, associate, handle_um_associate);
-    XD_LISTEN(&xs->events.dissociate, u, dissociate, handle_um_dissociate);
-    XD_LISTEN(&xs->events.set_geometry, u, set_geometry, handle_um_geometry);
-    XD_LISTEN(&xs->events.request_configure, u, request_configure, handle_um_configure);
-    XD_LISTEN(&xs->events.destroy, u, destroy, handle_um_destroy);
+    xd_unmanaged *unmanaged = XD_NEW(xd_unmanaged);
+    unmanaged->server = server;
+    unmanaged->xsurface = xs;
+    XD_LISTEN(&xs->events.associate, unmanaged, associate, handle_um_associate);
+    XD_LISTEN(&xs->events.dissociate, unmanaged, dissociate, handle_um_dissociate);
+    XD_LISTEN(&xs->events.set_geometry, unmanaged, set_geometry, handle_um_geometry);
+    XD_LISTEN(&xs->events.request_configure, unmanaged, request_configure, handle_um_configure);
+    XD_LISTEN(&xs->events.destroy, unmanaged, destroy, handle_um_destroy);
 }
 
 /* ---- managed windows ------------------------------------------------------------ */
@@ -160,9 +164,12 @@ static void handle_x_destroy(struct wl_listener *listener, [[maybe_unused]] void
  * may only resize (we place them). */
 static void handle_x_configure(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_configure);
-    const struct wlr_xwayland_surface_configure_event *e = data;
+    const struct wlr_xwayland_surface_configure_event *xwayland_surface_configure_event = data;
     if (!view->mapped) {
-        wlr_xwayland_surface_configure(view->xsurface, e->x, e->y, e->width, e->height);
+        wlr_xwayland_surface_configure(view->xsurface, xwayland_surface_configure_event->x,
+                                       xwayland_surface_configure_event->y,
+                                       xwayland_surface_configure_event->width,
+                                       xwayland_surface_configure_event->height);
         return;
     }
     if (view->maximized || view->fullscreen) {
@@ -170,8 +177,10 @@ static void handle_x_configure(struct wl_listener *listener, void *data) {
         return;
     }
     xd_insets in = xd_view_insets(view);
-    xd_view_set_outer_box(view, (struct wlr_box){view->x, view->y, e->width + in.left + in.right,
-                                                 e->height + in.top + in.bottom});
+    xd_view_set_outer_box(
+        view, (struct wlr_box){view->x, view->y,
+                               xwayland_surface_configure_event->width + in.left + in.right,
+                               xwayland_surface_configure_event->height + in.top + in.bottom});
 }
 
 static void handle_x_move(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -188,24 +197,24 @@ static void handle_x_move(struct wl_listener *listener, [[maybe_unused]] void *d
 }
 
 static xd_frame_part part_from_x11_edges(uint32_t edges) {
-    bool t = edges & WLR_EDGE_TOP, b = edges & WLR_EDGE_BOTTOM, l = edges & WLR_EDGE_LEFT,
-         r = edges & WLR_EDGE_RIGHT;
-    return t && l   ? XD_PART_TOP_LEFT
-           : t && r ? XD_PART_TOP_RIGHT
-           : b && l ? XD_PART_BOTTOM_LEFT
-           : b && r ? XD_PART_BOTTOM_RIGHT
-           : t      ? XD_PART_TOP
-           : b      ? XD_PART_BOTTOM
-           : l      ? XD_PART_LEFT
-           : r      ? XD_PART_RIGHT
-                    : XD_PART_NONE;
+    bool top = edges & WLR_EDGE_TOP, bottom = edges & WLR_EDGE_BOTTOM, left = edges & WLR_EDGE_LEFT,
+         right = edges & WLR_EDGE_RIGHT;
+    return top && left       ? XD_PART_TOP_LEFT
+           : top && right    ? XD_PART_TOP_RIGHT
+           : bottom && left  ? XD_PART_BOTTOM_LEFT
+           : bottom && right ? XD_PART_BOTTOM_RIGHT
+           : top             ? XD_PART_TOP
+           : bottom          ? XD_PART_BOTTOM
+           : left            ? XD_PART_LEFT
+           : right           ? XD_PART_RIGHT
+                             : XD_PART_NONE;
 }
 
 static void handle_x_resize(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_resize);
-    const struct wlr_xwayland_resize_event *e = data;
+    const struct wlr_xwayland_resize_event *xwayland_resize_event = data;
     xd_server *server = view->server;
-    xd_frame_part part = part_from_x11_edges(e->edges);
+    xd_frame_part part = part_from_x11_edges(xwayland_resize_event->edges);
     if (view->maximized || part == XD_PART_NONE || server->mode != XD_CURSOR_PASSTHROUGH)
         return;
     server->mode = XD_CURSOR_RESIZE;
@@ -223,8 +232,8 @@ static void handle_x_maximize(struct wl_listener *listener, [[maybe_unused]] voi
 
 static void handle_x_minimize(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_minimize);
-    const struct wlr_xwayland_minimize_event *e = data;
-    if (e->minimize)
+    const struct wlr_xwayland_minimize_event *xwayland_minimize_event = data;
+    if (xwayland_minimize_event->minimize)
         xd_view_minimize(view);
     else
         xd_view_focus(view);
@@ -336,11 +345,11 @@ static void handle_ready(struct wl_listener *listener, [[maybe_unused]] void *da
     xcb_connection_t *conn = wlr_xwayland_get_xwm_connection(server->xwayland);
     if (conn != nullptr) {
         static const char name[] = "_NET_WM_PING";
-        xcb_intern_atom_reply_t *r = xcb_intern_atom_reply(
-            conn, xcb_intern_atom(conn, 0, sizeof(name) - 1, name), nullptr);
-        if (r != nullptr) {
-            server->net_wm_ping = r->atom;
-            free(r);
+        xcb_intern_atom_reply_t *atom_reply =
+            xcb_intern_atom_reply(conn, xcb_intern_atom(conn, 0, sizeof(name) - 1, name), nullptr);
+        if (atom_reply != nullptr) {
+            server->net_wm_ping = atom_reply->atom;
+            free(atom_reply);
         }
     }
     wlr_log(WLR_INFO, "Xwayland ready on DISPLAY=%s", server->xwayland->display_name);

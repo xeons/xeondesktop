@@ -40,17 +40,17 @@
 #include "appicons.h"
 #include "server.h"
 
-static void usage(FILE *f) {
-    fprintf(f, "usage: xd-compositor [options]\n"
-               "  --style classic|luna|whistler  visual style (default classic)\n"
-               "  --scheme FILE                  classic colour scheme (.ini)\n"
-               "  --scale N                      force scale on every output (0.5-4)\n"
-               "  --terminal CMD                 command for Ctrl+Alt+T (default alacritty)\n"
-               "  --shell PATH                   taskbar/shell program (default: xd-shell)\n"
-               "  --no-shell                     don't start the shell\n"
-               "  --allow-virtual-input          let clients inject input (UI tests only)\n"
-               "  -s, --startup CMD              run CMD once the compositor is up\n"
-               "  -d, --debug                    verbose logging\n");
+static void usage(FILE *file) {
+    fprintf(file, "usage: xd-compositor [options]\n"
+                  "  --style classic|luna|whistler  visual style (default classic)\n"
+                  "  --scheme FILE                  classic colour scheme (.ini)\n"
+                  "  --scale N                      force scale on every output (0.5-4)\n"
+                  "  --terminal CMD                 command for Ctrl+Alt+T (default alacritty)\n"
+                  "  --shell PATH                   taskbar/shell program (default: xd-shell)\n"
+                  "  --no-shell                     don't start the shell\n"
+                  "  --allow-virtual-input          let clients inject input (UI tests only)\n"
+                  "  -s, --startup CMD              run CMD once the compositor is up\n"
+                  "  -d, --debug                    verbose logging\n");
 }
 
 static bool parse_args(int argc, char **argv, xd_config *cfg, bool *debug) {
@@ -174,14 +174,15 @@ static bool only_virtual_gpus(void) {
         return false;
     size_t cards = 0;
     bool all_virtual = true;
-    struct dirent *e;
-    while ((e = readdir(dir)) != nullptr) {
+    struct dirent *dir_entry;
+    while ((dir_entry = readdir(dir)) != nullptr) {
         /* card0, not card0-Virtual-1 (a connector). */
-        const char *n = e->d_name;
-        if (strncmp(n, "card", 4) != 0 || n[4] == '\0' || strspn(n + 4, "0123456789") != strlen(n + 4))
+        const char *card_name = dir_entry->d_name;
+        if (strncmp(card_name, "card", 4) != 0 || card_name[4] == '\0' ||
+            strspn(card_name + 4, "0123456789") != strlen(card_name + 4))
             continue;
         char link[512], target[512];
-        snprintf(link, sizeof(link), "/sys/class/drm/%s/device/driver", n);
+        snprintf(link, sizeof(link), "/sys/class/drm/%s/device/driver", card_name);
         ssize_t len = readlink(link, target, sizeof(target) - 1);
         if (len < 0)
             continue;
@@ -205,13 +206,13 @@ static bool needs_software_cursor(xd_server *server) {
     int fd = wlr_backend_get_drm_fd(server->backend);
     if (fd < 0)
         return false;
-    drmVersion *v = drmGetVersion(fd);
-    if (v == nullptr)
+    drmVersion *drm_version = drmGetVersion(fd);
+    if (drm_version == nullptr)
         return false;
-    bool virt = is_virtual_driver(v->name);
+    bool virt = is_virtual_driver(drm_version->name);
     if (virt)
-        wlr_log(WLR_INFO, "%s with 3D: drawing the cursor in software", v->name);
-    drmFreeVersion(v);
+        wlr_log(WLR_INFO, "%s with 3D: drawing the cursor in software", drm_version->name);
+    drmFreeVersion(drm_version);
     return virt;
 }
 
@@ -426,13 +427,13 @@ static void set_qt_env(const xd_server *server, const xd_settings *settings, boo
     static char prog[] = "dbus-update-activation-environment", systemd[] = "--systemd",
                 style[] = "QT_STYLE_OVERRIDE", palette[] = "QT_GUI_GTK_JSON";
     char *update[5] = {prog, systemd};
-    size_t n = 2;
+    size_t count = 2;
     if (xd_qt_env_ours(style))
-        update[n++] = style;
+        update[count++] = style;
     if (xd_qt_env_ours(palette))
-        update[n++] = palette;
-    update[n] = nullptr;
-    if (n > 2)
+        update[count++] = palette;
+    update[count] = nullptr;
+    if (count > 2)
         xd_spawn_argv(update);
 }
 
@@ -444,13 +445,13 @@ static void set_ime(xd_server *server, bool startup) {
         return;
     static char prog[] = "dbus-update-activation-environment", systemd[] = "--systemd";
     char *update[3 + XD_IM_ENV_VARS] = {prog, systemd};
-    size_t n = 2;
+    size_t count = 2;
     for (size_t i = 0; i < XD_IM_ENV_VARS; i++) {
         if (xd_qt_env_ours(xd_im_env_vars[i]))
-            update[n++] = (char *)(uintptr_t)xd_im_env_vars[i];
+            update[count++] = (char *)(uintptr_t)xd_im_env_vars[i];
     }
-    update[n] = nullptr;
-    if (n > 2)
+    update[count] = nullptr;
+    if (count > 2)
         xd_spawn_argv(update);
 }
 
@@ -482,11 +483,14 @@ static int handle_settings_changed([[maybe_unused]] int fd, [[maybe_unused]] uin
     server->config.menu_transitions = settings.menu_transitions;
     server->config.menu_transition = settings.menu_transition;
     server->config.full_window_drag = settings.full_window_drag;
-    const xd_keyboard_settings *a = &server->config.keyboard, *b = &settings.keyboard;
-    bool ime_changed = strcmp(a->input_method, b->input_method) != 0;
-    if (strcmp(a->layout, b->layout) != 0 || strcmp(a->variant, b->variant) != 0 ||
-        strcmp(a->options, b->options) != 0 || strcmp(a->model, b->model) != 0 ||
-        a->repeat_delay != b->repeat_delay || a->repeat_rate != b->repeat_rate) {
+    const xd_keyboard_settings *current = &server->config.keyboard, *loaded = &settings.keyboard;
+    bool ime_changed = strcmp(current->input_method, loaded->input_method) != 0;
+    if (strcmp(current->layout, loaded->layout) != 0 ||
+        strcmp(current->variant, loaded->variant) != 0 ||
+        strcmp(current->options, loaded->options) != 0 ||
+        strcmp(current->model, loaded->model) != 0 ||
+        current->repeat_delay != loaded->repeat_delay ||
+        current->repeat_rate != loaded->repeat_rate) {
         server->config.keyboard = settings.keyboard;
         xd_input_apply_keyboard(server);
     }
@@ -547,9 +551,9 @@ static int handle_terminate([[maybe_unused]] int sig, void *data) {
 /* Prefers our program next to this binary (a build tree), else PATH.
  * `buf` must outlive the result. */
 static const char *own_program(const char *name, char *buf, size_t size) {
-    ssize_t n = readlink("/proc/self/exe", buf, size - 1);
-    if (n > 0) {
-        buf[n] = '\0';
+    ssize_t length = readlink("/proc/self/exe", buf, size - 1);
+    if (length > 0) {
+        buf[length] = '\0';
         char *slash = strrchr(buf, '/');
         size_t len = strlen(name);
         if (slash != nullptr && (size_t)(slash - buf) + len + 2 < size) {
@@ -565,10 +569,10 @@ static const char *own_program(const char *name, char *buf, size_t size) {
  * xd-compositor and xd-compositor-fx (SceneFX: Aero's blur) hand over to
  * each other. */
 static bool sibling_compositor(const char *name, char *buf, size_t size) {
-    ssize_t n = readlink("/proc/self/exe", buf, size - 1);
-    if (n <= 0)
+    ssize_t length = readlink("/proc/self/exe", buf, size - 1);
+    if (length <= 0)
         return false;
-    buf[n] = '\0';
+    buf[length] = '\0';
     char *slash = strrchr(buf, '/');
     if (slash == nullptr)
         return false;
@@ -724,20 +728,20 @@ int main(int argc, char **argv) {
                     qt3[] = "QT_GUI_GTK_JSON";
         char *update[16 + XD_IM_ENV_VARS] = {sh, flag, script, arg0, v1, v2, v3,
                                              v4, v5, v6, v7, v8, v9};
-        size_t n = 13;
+        size_t count = 13;
         /* The Qt variables only if they're ours: the user's own setup
          * (environment.d) is the user manager's already. */
         if (xd_qt_env_ours(qt1))
-            update[n++] = qt1;
+            update[count++] = qt1;
         if (xd_qt_env_ours(qt2))
-            update[n++] = qt2;
+            update[count++] = qt2;
         if (xd_qt_env_ours(qt3))
-            update[n++] = qt3;
+            update[count++] = qt3;
         for (size_t i = 0; i < XD_IM_ENV_VARS; i++) {
             if (xd_qt_env_ours(xd_im_env_vars[i]))
-                update[n++] = (char *)(uintptr_t)xd_im_env_vars[i];
+                update[count++] = (char *)(uintptr_t)xd_im_env_vars[i];
         }
-        update[n] = nullptr;
+        update[count] = nullptr;
         xd_spawn_argv(update);
     }
     wlr_log(WLR_INFO, "running on WAYLAND_DISPLAY=%s (%s style, %s)", socket,

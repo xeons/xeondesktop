@@ -28,33 +28,34 @@ static int64_t now_ns(void) {
     return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
-static int lerp(int a, int b, double t) {
-    double v = a + (b - a) * t;
-    return (int)(v < 0 ? v - 0.5 : v + 0.5);
+static int lerp(int from, int to, double progress) {
+    double value = from + (to - from) * progress;
+    return (int)(value < 0 ? value - 0.5 : value + 0.5);
 }
 
-static void zoom_free(xd_zoom *z, bool show) {
-    if (show && z->reveal != nullptr && z->reveal->mapped && !z->reveal->minimized)
-        wlr_scene_node_set_enabled(&z->reveal->tree->node, true);
-    wl_list_remove(&z->link);
-    wl_event_source_remove(z->timer);
-    wlr_scene_node_destroy(&z->rect->node);
-    xd_free(z);
+static void zoom_free(xd_zoom *zoom, bool show) {
+    if (show && zoom->reveal != nullptr && zoom->reveal->mapped && !zoom->reveal->minimized)
+        wlr_scene_node_set_enabled(&zoom->reveal->tree->node, true);
+    wl_list_remove(&zoom->link);
+    wl_event_source_remove(zoom->timer);
+    wlr_scene_node_destroy(&zoom->rect->node);
+    xd_free(zoom);
 }
 
 static int zoom_tick(void *data) {
-    xd_zoom *z = data;
-    double t = (double)(now_ns() - z->start) / (double)DURATION_NS;
-    if (t >= 1.0) {
-        zoom_free(z, true);
+    xd_zoom *zoom = data;
+    double progress = (double)(now_ns() - zoom->start) / (double)DURATION_NS;
+    if (progress >= 1.0) {
+        zoom_free(zoom, true);
         return 0;
     }
-    struct wlr_box b = {lerp(z->from.x, z->to.x, t), lerp(z->from.y, z->to.y, t),
-                        lerp(z->from.width, z->to.width, t),
-                        lerp(z->from.height, z->to.height, t)};
-    wlr_scene_node_set_position(&z->rect->node, b.x, b.y);
-    wlr_scene_rect_set_size(z->rect, XD_MAX(b.width, 1), XD_MAX(b.height, 1));
-    wl_event_source_timer_update(z->timer, FRAME_MS);
+    struct wlr_box box = {lerp(zoom->from.x, zoom->to.x, progress),
+                          lerp(zoom->from.y, zoom->to.y, progress),
+                          lerp(zoom->from.width, zoom->to.width, progress),
+                          lerp(zoom->from.height, zoom->to.height, progress)};
+    wlr_scene_node_set_position(&zoom->rect->node, box.x, box.y);
+    wlr_scene_rect_set_size(zoom->rect, XD_MAX(box.width, 1), XD_MAX(box.height, 1));
+    wl_event_source_timer_update(zoom->timer, FRAME_MS);
     return 0;
 }
 
@@ -66,36 +67,37 @@ void xd_animate_zoom(xd_server *server, struct wlr_box from, struct wlr_box to,
     /* A window being restored again cancels its earlier flight. */
     if (reveal != nullptr)
         xd_animate_forget_view(server, reveal);
-    xd_zoom *z = XD_NEW(xd_zoom);
-    z->server = server;
-    z->from = from;
-    z->to = to;
-    z->start = now_ns();
-    z->reveal = reveal;
-    xd_rgb c = server->config.scheme.colors[XD_COLOR_ACTIVE_TITLE];
-    const float color[4] = {(float)c.r / 255.0f, (float)c.g / 255.0f, (float)c.b / 255.0f, 1.0f};
-    z->rect = wlr_scene_rect_create(server->layer_drag, XD_MAX(from.width, 1),
-                                    XD_MAX(from.height, 1), color);
-    wlr_scene_node_set_position(&z->rect->node, from.x, from.y);
+    xd_zoom *zoom = XD_NEW(xd_zoom);
+    zoom->server = server;
+    zoom->from = from;
+    zoom->to = to;
+    zoom->start = now_ns();
+    zoom->reveal = reveal;
+    xd_rgb title_color = server->config.scheme.colors[XD_COLOR_ACTIVE_TITLE];
+    const float color[4] = {(float)title_color.r / 255.0f, (float)title_color.g / 255.0f,
+                            (float)title_color.b / 255.0f, 1.0f};
+    zoom->rect = wlr_scene_rect_create(server->layer_drag, XD_MAX(from.width, 1),
+                                       XD_MAX(from.height, 1), color);
+    wlr_scene_node_set_position(&zoom->rect->node, from.x, from.y);
     if (reveal != nullptr)
         wlr_scene_node_set_enabled(&reveal->tree->node, false);
-    z->timer = wl_event_loop_add_timer(wl_display_get_event_loop(server->display), zoom_tick, z);
-    wl_event_source_timer_update(z->timer, FRAME_MS);
-    wl_list_insert(&server->zooms, &z->link);
+    zoom->timer =
+        wl_event_loop_add_timer(wl_display_get_event_loop(server->display), zoom_tick, zoom);
+    wl_event_source_timer_update(zoom->timer, FRAME_MS);
+    wl_list_insert(&server->zooms, &zoom->link);
 }
 
 void xd_animate_forget_view(xd_server *server, xd_view *view) {
-    xd_zoom *z, *tmp;
-    wl_list_for_each_safe(z, tmp, &server->zooms, link) {
-        if (z->reveal == view) {
-            z->reveal = nullptr;
-            zoom_free(z, false);
+    xd_zoom *zoom, *tmp;
+    wl_list_for_each_safe(zoom, tmp, &server->zooms, link) {
+        if (zoom->reveal == view) {
+            zoom->reveal = nullptr;
+            zoom_free(zoom, false);
         }
     }
 }
 
 void xd_animate_finish(xd_server *server) {
-    xd_zoom *z, *tmp;
-    wl_list_for_each_safe(z, tmp, &server->zooms, link)
-        zoom_free(z, false);
+    xd_zoom *zoom, *tmp;
+    wl_list_for_each_safe(zoom, tmp, &server->zooms, link) zoom_free(zoom, false);
 }

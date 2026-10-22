@@ -680,7 +680,7 @@ void xd_output_config_changed(xd_server *server);
 void xd_output_save_config(xd_server *server);
 /* Places outputs with a wanted position, keeping the desktop at 0,0. */
 void xd_output_place_all(xd_server *server);
-void xd_output_key(const struct wlr_output *o, char *out, size_t cap);
+void xd_output_key(const struct wlr_output *output, char *out, size_t cap);
 void xd_idle_activity(xd_server *server);
 
 /* access.c: SlowKeys, ToggleKeys, MouseKeys, ClickLock, the
@@ -689,7 +689,7 @@ struct wlr_keyboard_key_event;
 void xd_access_init(xd_server *server);
 void xd_access_finish(xd_server *server);
 /* Sees each key event first (after BounceKeys); true if it's used up. */
-bool xd_access_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);
+bool xd_access_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event);
 /* Sees each physical button event first; true if ClickLock keeps it. */
 bool xd_access_button(xd_server *server, uint32_t button, bool pressed, uint32_t time_msec);
 /* config.access or config.mouse changed. */
@@ -699,7 +699,7 @@ void xd_access_keyboard_gone(xd_keyboard *kb);
 void xd_access_activity(xd_server *server);
 /* input.c, for access.c: a key event past the accessibility filters, a
  * button event as if from a mouse, and a pointer move. */
-void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);
+void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event);
 void xd_input_button(xd_server *server, uint32_t time_msec, uint32_t button,
                      enum wl_pointer_button_state state);
 void xd_input_move_pointer(xd_server *server, double dx, double dy, uint32_t time_msec);
@@ -718,7 +718,7 @@ bool xd_ime_client_allowed(const xd_server *server, const struct wl_client *clie
 bool xd_ime_own_keyboard(const xd_keyboard *kb);
 /* A key or the modifiers for the input method's keyboard grab: true if
  * it took them. */
-bool xd_ime_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e);
+bool xd_ime_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event);
 bool xd_ime_modifiers(xd_keyboard *kb);
 /* The screen locked or unlocked: candidate windows hide or come back. */
 void xd_ime_lock_changed(xd_server *server);
@@ -812,7 +812,7 @@ void xd_view_output_gone(xd_server *server, struct wlr_output *wlr_output);
 void xd_gamma_init(xd_server *server);
 void xd_gamma_finish(xd_server *server);
 /* [NightLight] and [ColorProfiles] from the settings (at startup too). */
-void xd_gamma_apply_settings(xd_server *server, const xd_settings *s);
+void xd_gamma_apply_settings(xd_server *server, const xd_settings *settings);
 void xd_gamma_output_added(xd_output *out);
 void xd_gamma_output_removed(xd_output *out);
 /* Whether the output's ramp must go into its next frame... */

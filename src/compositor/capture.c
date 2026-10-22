@@ -67,7 +67,7 @@ typedef struct draw_ctx {
 } draw_ctx;
 
 static void draw_surface(struct wlr_surface *surface, int x, int y, void *data) {
-    draw_ctx *c = data;
+    draw_ctx *draw = data;
     struct wlr_texture *tex = wlr_surface_get_texture(surface);
     if (tex == nullptr)
         return;
@@ -75,44 +75,42 @@ static void draw_surface(struct wlr_surface *surface, int x, int y, void *data) 
      * point, as the scene graph does. */
     struct wlr_linux_drm_syncobj_surface_v1_state *sync =
         wlr_linux_drm_syncobj_v1_get_surface_state(surface);
-    if (sync != nullptr && c->synced_n == SYNCED_MAX)
+    if (sync != nullptr && draw->synced_n == SYNCED_MAX)
         return;
     if (sync != nullptr)
-        c->synced[c->synced_n++] = sync;
+        draw->synced[draw->synced_n++] = sync;
     struct wlr_fbox src;
     wlr_surface_get_buffer_source_box(surface, &src);
-    int lx = c->ox + x, ly = c->oy + y;
+    int lx = draw->ox + x, ly = draw->oy + y;
     struct wlr_box dst = {
-        .x = (int)(lx * c->sx),
-        .y = (int)(ly * c->sy),
-        .width = (int)((lx + surface->current.width) * c->sx) - (int)(lx * c->sx),
-        .height = (int)((ly + surface->current.height) * c->sy) - (int)(ly * c->sy),
+        .x = (int)(lx * draw->sx),
+        .y = (int)(ly * draw->sy),
+        .width = (int)((lx + surface->current.width) * draw->sx) - (int)(lx * draw->sx),
+        .height = (int)((ly + surface->current.height) * draw->sy) - (int)(ly * draw->sy),
     };
     if (dst.width <= 0 || dst.height <= 0)
         return;
-    wlr_render_pass_add_texture(c->pass, &(struct wlr_render_texture_options){
-                                             .texture = tex,
-                                             .src_box = src,
-                                             .dst_box = dst,
-                                             .transform = surface->current.transform,
-                                             .filter_mode = WLR_SCALE_FILTER_BILINEAR,
-                                             .wait_timeline = sync != nullptr
-                                                                  ? sync->acquire_timeline
-                                                                  : nullptr,
-                                             .wait_point = sync != nullptr ? sync->acquire_point
-                                                                           : 0,
-                                         });
+    wlr_render_pass_add_texture(
+        draw->pass, &(struct wlr_render_texture_options){
+                        .texture = tex,
+                        .src_box = src,
+                        .dst_box = dst,
+                        .transform = surface->current.transform,
+                        .filter_mode = WLR_SCALE_FILTER_BILINEAR,
+                        .wait_timeline = sync != nullptr ? sync->acquire_timeline : nullptr,
+                        .wait_point = sync != nullptr ? sync->acquire_point : 0,
+                    });
 }
 
 /* The window's frame and client surfaces, scaled into a w x h buffer. */
-static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int w, int h) {
+static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int width, int height) {
     /* Whatever layout the allocator picks for ARGB (an implicit modifier):
      * it's only drawn into and read back. */
     uint64_t modifiers[] = {DRM_FORMAT_MOD_INVALID};
     struct wlr_drm_format fmt_set = {
         .format = DRM_FORMAT_ARGB8888, .len = 1, .capacity = 1, .modifiers = modifiers};
     const struct wlr_drm_format *fmt = &fmt_set;
-    struct wlr_buffer *buf = wlr_allocator_create_buffer(server->allocator, w, h, fmt);
+    struct wlr_buffer *buf = wlr_allocator_create_buffer(server->allocator, width, height, fmt);
     if (buf == nullptr)
         return nullptr;
     /* With explicit sync, the pass signals a point of our own timeline
@@ -131,15 +129,15 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int w, i
         return nullptr;
     }
     wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-                                       .box = {0, 0, w, h},
+                                       .box = {0, 0, width, height},
                                        .color = {0, 0, 0, 0},
                                        .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
                                    });
     struct wlr_box outer = xd_view_outer_box(view);
-    draw_ctx c = {
+    draw_ctx draw = {
         .pass = pass,
-        .sx = (double)w / XD_MAX(outer.width, 1),
-        .sy = (double)h / XD_MAX(outer.height, 1),
+        .sx = (double)width / XD_MAX(outer.width, 1),
+        .sy = (double)height / XD_MAX(outer.height, 1),
     };
     struct wlr_texture *frame_tex = nullptr;
     if (view->frame->node.enabled && view->frame->buffer != nullptr) {
@@ -147,21 +145,21 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int w, i
         if (frame_tex != nullptr)
             wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options){
                                                   .texture = frame_tex,
-                                                  .dst_box = {0, 0, w, h},
+                                                  .dst_box = {0, 0, width, height},
                                                   .filter_mode = WLR_SCALE_FILTER_BILINEAR,
                                               });
     }
     struct wlr_surface *surface = xd_view_surface(view);
     if (surface != nullptr && view->content != nullptr) {
-        c.ox = view->content->node.x;
-        c.oy = view->content->node.y;
-        wlr_surface_for_each_surface(surface, draw_surface, &c);
+        draw.ox = view->content->node.x;
+        draw.oy = view->content->node.y;
+        wlr_surface_for_each_surface(surface, draw_surface, &draw);
     }
     bool ok = wlr_render_pass_submit(pass);
     if (frame_tex != nullptr)
         wlr_texture_destroy(frame_tex);
-    for (size_t i = 0; ok && opts.signal_timeline != nullptr && i < c.synced_n; i++)
-        wlr_linux_drm_syncobj_v1_state_add_release_point(c.synced[i], opts.signal_timeline,
+    for (size_t i = 0; ok && opts.signal_timeline != nullptr && i < draw.synced_n; i++)
+        wlr_linux_drm_syncobj_v1_state_add_release_point(draw.synced[i], opts.signal_timeline,
                                                          opts.signal_point, server->loop);
     if (!ok) {
         wlr_buffer_drop(buf);
@@ -172,13 +170,13 @@ static struct wlr_buffer *render_view(xd_server *server, xd_view *view, int w, i
 
 /* The picture's size: the window's at its output's scale, scaled down to
  * fit THUMB_MAX. */
-static void capture_size(xd_view *view, uint32_t *w, uint32_t *h) {
+static void capture_size(xd_view *view, uint32_t *width, uint32_t *height) {
     struct wlr_box outer = xd_view_outer_box(view);
     double scale = xd_view_scale(view);
     double dw = XD_MAX(outer.width, 1) * scale, dh = XD_MAX(outer.height, 1) * scale;
     double fit = XD_MIN(1.0, (double)THUMB_MAX / XD_MAX(dw, dh));
-    *w = (uint32_t)XD_MAX(1.0, dw * fit + 0.5);
-    *h = (uint32_t)XD_MAX(1.0, dh * fit + 0.5);
+    *width = (uint32_t)XD_MAX(1.0, dw * fit + 0.5);
+    *height = (uint32_t)XD_MAX(1.0, dh * fit + 0.5);
 }
 
 /* ---- the capture source -------------------------------------------------------- */
@@ -188,19 +186,19 @@ static void send_frame(void *data) {
     src->idle = nullptr;
     if (src->view == nullptr || !src->view->mapped)
         return;
-    uint32_t w = 0, h = 0;
-    capture_size(src->view, &w, &h);
-    if (w != src->base.width || h != src->base.height) {
+    uint32_t width = 0, height = 0;
+    capture_size(src->view, &width, &height);
+    if (width != src->base.width || height != src->base.height) {
         /* Clients reallocate; the frame they're waiting on fails. */
-        src->base.width = w;
-        src->base.height = h;
+        src->base.width = width;
+        src->base.height = height;
         wl_signal_emit_mutable(&src->base.events.constraints_update, nullptr);
     }
-    struct wlr_buffer *buf = render_view(src->server, src->view, (int)w, (int)h);
+    struct wlr_buffer *buf = render_view(src->server, src->view, (int)width, (int)height);
     if (buf == nullptr)
         return;
     pixman_region32_t damage;
-    pixman_region32_init_rect(&damage, 0, 0, w, h);
+    pixman_region32_init_rect(&damage, 0, 0, width, height);
     capture_frame ev = {.base = {.damage = &damage}, .buffer = buf};
     src->dirty = false;
     src->wanted = false;
@@ -290,9 +288,9 @@ static void handle_new_request(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, capture_request);
     struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *req = data;
     xd_view *view = nullptr;
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (v->ext_toplevel == req->toplevel_handle && v->mapped)
-            view = v;
+    XD_LIST_FOR_EACH(candidate, &server->views, xd_view, link) {
+        if (candidate->ext_toplevel == req->toplevel_handle && candidate->mapped)
+            view = candidate;
     }
     /* A window that's gone gets an inert source, whose sessions stop at
      * once. */

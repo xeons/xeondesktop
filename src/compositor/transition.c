@@ -59,15 +59,16 @@ static void set_opacity(struct wlr_scene_buffer *buffer, [[maybe_unused]] int sx
  * to (both relative to its parent): up or down from a point or a button,
  * sideways from a menu item beside it. */
 static slide_dir direction(const struct wlr_xdg_popup *popup) {
-    struct wlr_box g = popup->current.geometry;
-    struct wlr_box a = popup->scheduled.rules.anchor_rect;
-    if (a.width <= 1 && a.height <= 1)
-        return g.y + g.height <= a.y + 1 ? SLIDE_UP : SLIDE_DOWN;
-    if (g.y + g.height <= a.y + 2)
+    struct wlr_box geometry = popup->current.geometry;
+    struct wlr_box anchor = popup->scheduled.rules.anchor_rect;
+    if (anchor.width <= 1 && anchor.height <= 1)
+        return geometry.y + geometry.height <= anchor.y + 1 ? SLIDE_UP : SLIDE_DOWN;
+    if (geometry.y + geometry.height <= anchor.y + 2)
         return SLIDE_UP;
-    if (g.y >= a.y + a.height - 2)
+    if (geometry.y >= anchor.y + anchor.height - 2)
         return SLIDE_DOWN;
-    return g.x + g.width / 2 >= a.x + a.width / 2 ? SLIDE_RIGHT : SLIDE_LEFT;
+    return geometry.x + geometry.width / 2 >= anchor.x + anchor.width / 2 ? SLIDE_RIGHT
+                                                                          : SLIDE_LEFT;
 }
 
 /* Puts the popup where progress t has it. The scene puts the tree back at
@@ -77,9 +78,9 @@ static void apply(xd_transition *tr) {
     struct wlr_scene_node *node = surface_node(tr);
     if (tree == nullptr || node == nullptr)
         return;
-    double t = tr->done ? 1.0 : tr->t;
+    double progress = tr->done ? 1.0 : tr->t;
     if (tr->effect == XD_TRANSITION_FADE) {
-        float alpha = (float)t;
+        float alpha = (float)progress;
         wlr_scene_node_for_each_buffer(node, set_opacity, &alpha);
         return;
     }
@@ -87,18 +88,18 @@ static void apply(xd_transition *tr) {
      * the edge it opens at; the clip hides what hasn't come in yet. */
     struct wlr_box geo = tr->popup->base->geometry;
     struct wlr_box final = tr->popup->current.geometry;
-    int w = geo.width > 0 ? geo.width : tr->popup->base->surface->current.width;
-    int h = geo.height > 0 ? geo.height : tr->popup->base->surface->current.height;
-    if (tr->done || w <= 0 || h <= 0) {
+    int width = geo.width > 0 ? geo.width : tr->popup->base->surface->current.width;
+    int height = geo.height > 0 ? geo.height : tr->popup->base->surface->current.height;
+    if (tr->done || width <= 0 || height <= 0) {
         wlr_scene_subsurface_tree_set_clip(node, nullptr);
         wlr_scene_node_set_position(&tree->node, final.x, final.y);
         return;
     }
     bool vertical = tr->dir == SLIDE_DOWN || tr->dir == SLIDE_UP;
-    int len = vertical ? h : w;
-    int shown = (int)(len * t + 0.5);
+    int len = vertical ? height : width;
+    int shown = (int)(len * progress + 0.5);
     int hidden = len - XD_MAX(shown, 1);
-    struct wlr_box clip = {geo.x, geo.y, w, h};
+    struct wlr_box clip = {geo.x, geo.y, width, height};
     int x = final.x;
     int y = final.y;
     switch (tr->dir) {

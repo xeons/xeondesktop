@@ -13,17 +13,17 @@ typedef struct xd_ime_rect {
  * on the monitor `screen`: just below the cursor and starting at it, as
  * Windows' IME candidate lists do; above the cursor if it doesn't fit
  * below, and moved left (never past the monitor's left edge) to fit. */
-static inline xd_ime_rect xd_ime_popup_place(xd_ime_rect cursor, int w, int h,
+static inline xd_ime_rect xd_ime_popup_place(xd_ime_rect cursor, int width, int height,
                                              xd_ime_rect screen) {
-    xd_ime_rect r = {cursor.x, cursor.y + cursor.height, w, h};
+    xd_ime_rect ime_rect = {cursor.x, cursor.y + cursor.height, width, height};
     int right = screen.x + screen.width, bottom = screen.y + screen.height;
-    if (r.y + h > bottom && cursor.y - h >= screen.y)
-        r.y = cursor.y - h;
-    if (r.x + w > right)
-        r.x = right - w;
-    if (r.x < screen.x)
-        r.x = screen.x;
-    return r;
+    if (ime_rect.y + height > bottom && cursor.y - height >= screen.y)
+        ime_rect.y = cursor.y - height;
+    if (ime_rect.x + width > right)
+        ime_rect.x = right - width;
+    if (ime_rect.x < screen.x)
+        ime_rect.x = screen.x;
+    return ime_rect;
 }
 
 #endif

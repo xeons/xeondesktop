@@ -50,8 +50,9 @@ void xd_keyboard_refocus(xd_server *server) {
 
 void xd_layer_click_focus(xd_layer_surface *ls) {
     xd_server *server = ls->server;
-    struct wlr_layer_surface_v1 *l = ls->layer_surface;
-    if (l->current.keyboard_interactive != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND ||
+    struct wlr_layer_surface_v1 *layer_surface_v1 = ls->layer_surface;
+    if (layer_surface_v1->current.keyboard_interactive !=
+            ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND ||
         server->desktop_focus == ls)
         return;
     xd_view_deactivate_front(server);
@@ -62,9 +63,9 @@ void xd_layer_click_focus(xd_layer_surface *ls) {
 /* Exclusive keyboard interactivity takes focus while mapped. */
 static void update_keyboard_focus(xd_layer_surface *ls) {
     xd_server *server = ls->server;
-    struct wlr_layer_surface_v1 *l = ls->layer_surface;
-    bool wants = l->surface->mapped &&
-                 l->current.keyboard_interactive ==
+    struct wlr_layer_surface_v1 *layer_surface_v1 = ls->layer_surface;
+    bool wants = layer_surface_v1->surface->mapped &&
+                 layer_surface_v1->current.keyboard_interactive ==
                      ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE &&
                  ls->layer >= ZWLR_LAYER_SHELL_V1_LAYER_TOP;
     if (wants && server->layer_focus != ls) {
@@ -104,9 +105,10 @@ static void first_buffer(struct wlr_scene_buffer *buffer, [[maybe_unused]] int s
 /* Aero: the shell's taskbar is glass too; what's behind it is blurred
  * where it draws. */
 static void update_glass(xd_layer_surface *ls) {
-    struct wlr_layer_surface_v1 *l = ls->layer_surface;
-    bool want = ls->server->config.style == XD_STYLE_AERO && l->namespace != nullptr &&
-                strcmp(l->namespace, "taskbar") == 0 && l->surface->mapped;
+    struct wlr_layer_surface_v1 *layer_surface_v1 = ls->layer_surface;
+    bool want =
+        ls->server->config.style == XD_STYLE_AERO && layer_surface_v1->namespace != nullptr &&
+        strcmp(layer_surface_v1->namespace, "taskbar") == 0 && layer_surface_v1->surface->mapped;
     if (!want) {
         if (ls->blur != nullptr)
             wlr_scene_node_set_enabled(&ls->blur->node, false);
@@ -121,25 +123,25 @@ static void update_glass(xd_layer_surface *ls) {
         wlr_scene_blur_set_transparency_mask_source(ls->blur, surface);
         wlr_scene_node_lower_to_bottom(&ls->blur->node);
     }
-    wlr_scene_blur_set_size(ls->blur, (int)l->current.actual_width,
-                            (int)l->current.actual_height);
+    wlr_scene_blur_set_size(ls->blur, (int)layer_surface_v1->current.actual_width,
+                            (int)layer_surface_v1->current.actual_height);
     wlr_scene_node_set_enabled(&ls->blur->node, !ls->server->config.scheme.glass_opaque);
 }
 #endif
 
 static void handle_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_layer_surface *ls = XD_CONTAINER_OF(listener, xd_layer_surface, commit);
-    struct wlr_layer_surface_v1 *l = ls->layer_surface;
-    if (!l->initialized)
+    struct wlr_layer_surface_v1 *layer_surface_v1 = ls->layer_surface;
+    if (!layer_surface_v1->initialized)
         return;
 
-    if (l->current.layer != ls->layer) {
-        ls->layer = l->current.layer;
+    if (layer_surface_v1->current.layer != ls->layer) {
+        ls->layer = layer_surface_v1->current.layer;
         wlr_scene_node_reparent(&ls->scene->tree->node, tree_for_layer(ls->server, ls->layer));
     }
     /* The initial commit needs a configure; later ones only if the client
      * changed its size, anchors, margins or exclusive zone. */
-    if (l->initial_commit || l->current.committed != 0) {
+    if (layer_surface_v1->initial_commit || layer_surface_v1->current.committed != 0) {
         xd_output_arrange(ls->output);
         update_keyboard_focus(ls);
     }
@@ -226,35 +228,36 @@ static void handle_destroy(struct wl_listener *listener, [[maybe_unused]] void *
 
 static void handle_new_layer_surface(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_layer_surface);
-    struct wlr_layer_surface_v1 *l = data;
+    struct wlr_layer_surface_v1 *layer_surface_v1 = data;
 
-    xd_output *out = l->output != nullptr
-                         ? xd_output_from_wlr(server, l->output)
+    xd_output *out = layer_surface_v1->output != nullptr
+                         ? xd_output_from_wlr(server, layer_surface_v1->output)
                          : xd_output_at(server, server->cursor->x, server->cursor->y);
     if (out == nullptr) {
-        wlr_log(WLR_INFO, "no output for layer surface '%s'", l->namespace);
-        wlr_layer_surface_v1_destroy(l);
+        wlr_log(WLR_INFO, "no output for layer surface '%s'", layer_surface_v1->namespace);
+        wlr_layer_surface_v1_destroy(layer_surface_v1);
         return;
     }
-    l->output = out->wlr_output;
+    layer_surface_v1->output = out->wlr_output;
 
     xd_layer_surface *ls = XD_NEW(xd_layer_surface);
     ls->tag.kind = XD_NODE_LAYER;
     ls->server = server;
     ls->output = out;
-    ls->layer_surface = l;
-    ls->layer = l->pending.layer;
-    ls->scene = wlr_scene_layer_surface_v1_create(tree_for_layer(server, ls->layer), l);
+    ls->layer_surface = layer_surface_v1;
+    ls->layer = layer_surface_v1->pending.layer;
+    ls->scene =
+        wlr_scene_layer_surface_v1_create(tree_for_layer(server, ls->layer), layer_surface_v1);
     ls->scene->tree->node.data = &ls->tag;
     /* Popups (the Start menu's submenus, later) attach to this tree. */
-    l->data = ls->scene->tree;
+    layer_surface_v1->data = ls->scene->tree;
     wl_list_insert(out->layer_surfaces.prev, &ls->link);
 
-    XD_LISTEN(&l->surface->events.map, ls, map, handle_map);
-    XD_LISTEN(&l->surface->events.unmap, ls, unmap, handle_unmap);
-    XD_LISTEN(&l->surface->events.commit, ls, commit, handle_commit);
-    XD_LISTEN(&l->events.new_popup, ls, new_popup, handle_new_popup);
-    XD_LISTEN(&l->events.destroy, ls, destroy, handle_destroy);
+    XD_LISTEN(&layer_surface_v1->surface->events.map, ls, map, handle_map);
+    XD_LISTEN(&layer_surface_v1->surface->events.unmap, ls, unmap, handle_unmap);
+    XD_LISTEN(&layer_surface_v1->surface->events.commit, ls, commit, handle_commit);
+    XD_LISTEN(&layer_surface_v1->events.new_popup, ls, new_popup, handle_new_popup);
+    XD_LISTEN(&layer_surface_v1->events.destroy, ls, destroy, handle_destroy);
 }
 
 void xd_output_arrange(xd_output *out) {
@@ -271,13 +274,14 @@ void xd_output_arrange(xd_output *out) {
     for (int pass = 0; pass < 2; pass++) {
         for (int layer = 3; layer >= 0; layer--) {
             XD_LIST_FOR_EACH(ls, &out->layer_surfaces, xd_layer_surface, link) {
-                struct wlr_layer_surface_v1 *l = ls->layer_surface;
+                struct wlr_layer_surface_v1 *layer_surface_v1 = ls->layer_surface;
                 /* Unmapped surfaces don't reserve space, except on their
                  * initial commit, which needs a configure to map at all. */
-                if (!l->initialized || (!l->surface->mapped && !l->initial_commit) ||
+                if (!layer_surface_v1->initialized ||
+                    (!layer_surface_v1->surface->mapped && !layer_surface_v1->initial_commit) ||
                     (int)ls->layer != layer)
                     continue;
-                bool exclusive = l->current.exclusive_zone > 0;
+                bool exclusive = layer_surface_v1->current.exclusive_zone > 0;
                 if (exclusive != (pass == 0))
                     continue;
                 wlr_scene_layer_surface_v1_configure(ls->scene, &full, &usable);

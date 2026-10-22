@@ -107,22 +107,23 @@ static void handle_output_destroy(struct wl_listener *listener, [[maybe_unused]]
     xd_output_config_changed(server);
 }
 
-void xd_output_key(const struct wlr_output *o, char *out, size_t cap) {
-    xd_monitor_key(out, cap, o->make, o->model, o->serial, o->name);
+void xd_output_key(const struct wlr_output *output, char *out, size_t cap) {
+    xd_monitor_key(out, cap, output->make, output->model, output->serial, output->name);
 }
 
 /* The mode of that size, the requested refresh rate if there's one, else
  * the fastest. */
-static struct wlr_output_mode *find_mode(struct wlr_output *o, int w, int h, int refresh) {
+static struct wlr_output_mode *find_mode(struct wlr_output *output, int width, int height,
+                                         int refresh) {
     struct wlr_output_mode *best = nullptr;
-    struct wlr_output_mode *m;
-    wl_list_for_each(m, &o->modes, link) {
-        if (m->width != w || m->height != h)
+    struct wlr_output_mode *output_mode;
+    wl_list_for_each(output_mode, &output->modes, link) {
+        if (output_mode->width != width || output_mode->height != height)
             continue;
-        if (refresh > 0 && abs(m->refresh - refresh) < 500)
-            return m;
-        if (best == nullptr || m->refresh > best->refresh)
-            best = m;
+        if (refresh > 0 && abs(output_mode->refresh - refresh) < 500)
+            return output_mode;
+        if (best == nullptr || output_mode->refresh > best->refresh)
+            best = output_mode;
     }
     return best;
 }
@@ -137,31 +138,31 @@ static bool other_output_enabled(xd_server *server, const struct wlr_output *sel
 
 /* Fills st from the remembered settings (or defaults); false if the output
  * stays off. */
-static bool initial_state(xd_server *server, struct wlr_output *o, const xd_monitor_config *cfg,
-                          struct wlr_output_state *st) {
-    bool enable = cfg == nullptr || cfg->enabled || !other_output_enabled(server, o);
+static bool initial_state(xd_server *server, struct wlr_output *output,
+                          const xd_monitor_config *cfg, struct wlr_output_state *st) {
+    bool enable = cfg == nullptr || cfg->enabled || !other_output_enabled(server, output);
     wlr_output_state_set_enabled(st, enable);
     if (!enable)
         return false;
     struct wlr_output_mode *mode = nullptr;
-    int width = o->width;
+    int width = output->width;
     if (cfg != nullptr && cfg->width > 0) {
-        mode = find_mode(o, cfg->width, cfg->height, cfg->refresh_mhz);
-        if (mode == nullptr && wl_list_empty(&o->modes)) {
+        mode = find_mode(output, cfg->width, cfg->height, cfg->refresh_mhz);
+        if (mode == nullptr && wl_list_empty(&output->modes)) {
             /* Nested and headless outputs take any size. */
             wlr_output_state_set_custom_mode(st, cfg->width, cfg->height, cfg->refresh_mhz);
             width = cfg->width;
         }
     }
-    if (mode == nullptr && width == o->width)
-        mode = wlr_output_preferred_mode(o);
+    if (mode == nullptr && width == output->width)
+        mode = wlr_output_preferred_mode(output);
     if (mode != nullptr) {
         wlr_output_state_set_mode(st, mode);
         width = mode->width;
     }
-    double scale = server->config.forced_scale > 0 ? server->config.forced_scale
+    double scale = server->config.forced_scale > 0    ? server->config.forced_scale
                    : cfg != nullptr && cfg->scale > 0 ? cfg->scale
-                                                      : (double)auto_scale(o, width);
+                                                      : (double)auto_scale(output, width);
     wlr_output_state_set_scale(st, (float)scale);
     wlr_output_state_set_transform(
         st, cfg != nullptr ? (enum wl_output_transform)cfg->transform : WL_OUTPUT_TRANSFORM_NORMAL);
@@ -255,32 +256,32 @@ void xd_output_place_all(xd_server *server) {
 }
 
 void xd_output_save_config(xd_server *server) {
-    size_t n = (size_t)wl_list_length(&server->outputs);
-    if (n == 0)
+    size_t count = (size_t)wl_list_length(&server->outputs);
+    if (count == 0)
         return;
-    xd_monitor_config *cfgs = xd_alloc_array(n, sizeof(*cfgs));
+    xd_monitor_config *cfgs = xd_alloc_array(count, sizeof(*cfgs));
     size_t i = 0;
     XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
-        struct wlr_output *o = out->wlr_output;
-        xd_monitor_config *c = &cfgs[i++];
-        *c = (xd_monitor_config){
-            .enabled = o->enabled,
-            .width = o->width,
-            .height = o->height,
-            .refresh_mhz = o->refresh,
-            .scale = (double)o->scale,
-            .transform = (int)o->transform,
+        struct wlr_output *output = out->wlr_output;
+        xd_monitor_config *monitor_config = &cfgs[i++];
+        *monitor_config = (xd_monitor_config){
+            .enabled = output->enabled,
+            .width = output->width,
+            .height = output->height,
+            .refresh_mhz = output->refresh,
+            .scale = (double)output->scale,
+            .transform = (int)output->transform,
             .vrr = out->vrr,
         };
-        xd_output_key(o, c->key, sizeof(c->key));
+        xd_output_key(output, monitor_config->key, sizeof(monitor_config->key));
         struct wlr_box box;
-        wlr_output_layout_get_box(server->output_layout, o, &box);
+        wlr_output_layout_get_box(server->output_layout, output, &box);
         if (!wlr_box_empty(&box)) {
-            c->x = box.x;
-            c->y = box.y;
+            monitor_config->x = box.x;
+            monitor_config->y = box.y;
         }
     }
-    xd_monitors_store(cfgs, n);
+    xd_monitors_store(cfgs, count);
     xd_free(cfgs);
 }
 
@@ -293,20 +294,20 @@ xd_output *xd_output_from_wlr(xd_server *server, struct wlr_output *wlr_output) 
 }
 
 static struct wlr_output *output_at(xd_server *server, double lx, double ly) {
-    struct wlr_output *o = wlr_output_layout_output_at(server->output_layout, lx, ly);
-    if (o == nullptr)
-        o = wlr_output_layout_get_center_output(server->output_layout);
-    return o;
+    struct wlr_output *output = wlr_output_layout_output_at(server->output_layout, lx, ly);
+    if (output == nullptr)
+        output = wlr_output_layout_get_center_output(server->output_layout);
+    return output;
 }
 
 double xd_output_scale_at(xd_server *server, double lx, double ly) {
-    struct wlr_output *o = output_at(server, lx, ly);
-    return o != nullptr && o->scale > 0 ? (double)o->scale : 1.0;
+    struct wlr_output *output = output_at(server, lx, ly);
+    return output != nullptr && output->scale > 0 ? (double)output->scale : 1.0;
 }
 
 xd_output *xd_output_at(xd_server *server, double lx, double ly) {
-    struct wlr_output *o = output_at(server, lx, ly);
-    return o != nullptr ? xd_output_from_wlr(server, o) : nullptr;
+    struct wlr_output *output = output_at(server, lx, ly);
+    return output != nullptr ? xd_output_from_wlr(server, output) : nullptr;
 }
 
 struct wlr_box xd_output_work_area_at(xd_server *server, double lx, double ly) {

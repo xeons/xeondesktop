@@ -48,12 +48,12 @@ void xd_present_init(xd_server *server) {
  * (views are kept in that order). */
 static xd_view *front_view(xd_output *out) {
     xd_server *server = out->server;
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (!v->mapped || v->minimized)
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (!view->mapped || view->minimized)
             continue;
-        struct wlr_box b = xd_view_outer_box(v);
-        if (xd_output_at(server, b.x + b.width / 2.0, b.y + b.height / 2.0) == out)
-            return v;
+        struct wlr_box box = xd_view_outer_box(view);
+        if (xd_output_at(server, box.x + box.width / 2.0, box.y + box.height / 2.0) == out)
+            return view;
     }
     return nullptr;
 }
@@ -61,13 +61,13 @@ static xd_view *front_view(xd_output *out) {
 /* What the choice for the output's next frame depends on; state is the
  * frame's, or nullptr before there is one. */
 static xd_present_state gather(xd_output *out, const struct wlr_output_state *state) {
-    struct wlr_output *o = out->wlr_output;
+    struct wlr_output *output = out->wlr_output;
     xd_view *view = front_view(out);
     struct wlr_surface *surface =
         view != nullptr && view->fullscreen ? xd_view_surface(view) : nullptr;
-    xd_present_state s = {
+    xd_present_state present_state = {
         .vrr = out->vrr,
-        .vrr_on = o->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED,
+        .vrr_on = output->adaptive_sync_status == WLR_OUTPUT_ADAPTIVE_SYNC_ENABLED,
         .vrr_rejected = out->vrr_rejected,
         .locked = out->server->locked,
         .fullscreen = surface != nullptr,
@@ -75,13 +75,14 @@ static xd_present_state gather(xd_output *out, const struct wlr_output_state *st
     if (surface != nullptr && state != nullptr) {
         /* The scene graph scans a buffer out when it's all there is to
          * see: then the frame is the window's own buffer. */
-        s.scanout = (state->committed & WLR_OUTPUT_STATE_BUFFER) && surface->buffer != nullptr &&
-                    state->buffer == &surface->buffer->base;
-        s.async_hint = wlr_tearing_control_manager_v1_surface_hint_from_surface(
-                           out->server->tearing, surface) ==
-                       WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC;
+        present_state.scanout = (state->committed & WLR_OUTPUT_STATE_BUFFER) &&
+                                surface->buffer != nullptr &&
+                                state->buffer == &surface->buffer->base;
+        present_state.async_hint =
+            wlr_tearing_control_manager_v1_surface_hint_from_surface(
+                out->server->tearing, surface) == WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC;
     }
-    return s;
+    return present_state;
 }
 
 bool xd_present_pending(xd_output *out) {
@@ -89,28 +90,28 @@ bool xd_present_pending(xd_output *out) {
 }
 
 void xd_present_frame(xd_output *out, struct wlr_output_state *state) {
-    struct wlr_output *o = out->wlr_output;
-    if (!o->enabled)
+    struct wlr_output *output = out->wlr_output;
+    if (!output->enabled)
         return;
-    xd_present_choice c = xd_present_choose(gather(out, state));
-    if (c.set_vrr) {
-        wlr_output_state_set_adaptive_sync_enabled(state, c.vrr);
-        if (!wlr_output_test_state(o, state)) {
+    xd_present_choice present_choice = xd_present_choose(gather(out, state));
+    if (present_choice.set_vrr) {
+        wlr_output_state_set_adaptive_sync_enabled(state, present_choice.vrr);
+        if (!wlr_output_test_state(output, state)) {
             /* Not this frame; and not again until the setting changes. */
             state->committed &= ~(uint32_t)WLR_OUTPUT_STATE_ADAPTIVE_SYNC_ENABLED;
-            if (c.vrr) {
+            if (present_choice.vrr) {
                 out->vrr_rejected = true;
-                wlr_log(WLR_INFO, "output %s: variable refresh rate refused", o->name);
+                wlr_log(WLR_INFO, "output %s: variable refresh rate refused", output->name);
             }
         } else {
-            wlr_log(WLR_DEBUG, "output %s: variable refresh rate %s", o->name,
-                    c.vrr ? "on" : "off");
+            wlr_log(WLR_DEBUG, "output %s: variable refresh rate %s", output->name,
+                    present_choice.vrr ? "on" : "off");
         }
     }
-    if (c.tearing) {
+    if (present_choice.tearing) {
         state->tearing_page_flip = true;
         /* The driver may not flip asynchronously (or not this buffer). */
-        if (!wlr_output_test_state(o, state))
+        if (!wlr_output_test_state(output, state))
             state->tearing_page_flip = false;
     }
 }

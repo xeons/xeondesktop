@@ -29,113 +29,123 @@ struct xd_gestures {
     struct wl_listener hold_end;
 };
 
-static bool may_begin(const xd_gestures *g) {
-    const xd_server *server = g->server;
+static bool may_begin(const xd_gestures *gestures) {
+    const xd_server *server = gestures->server;
     return server->mode == XD_CURSOR_PASSTHROUGH &&
            server->seat->pointer_state.focused_surface != nullptr;
 }
 
 static void handle_swipe_begin(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, swipe_begin);
-    const struct wlr_pointer_swipe_begin_event *e = data;
-    xd_idle_activity(g->server);
-    g->swiping = may_begin(g);
-    if (g->swiping)
-        wlr_pointer_gestures_v1_send_swipe_begin(g->manager, g->server->seat, e->time_msec,
-                                                 e->fingers);
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, swipe_begin);
+    const struct wlr_pointer_swipe_begin_event *pointer_swipe_begin_event = data;
+    xd_idle_activity(gestures->server);
+    gestures->swiping = may_begin(gestures);
+    if (gestures->swiping)
+        wlr_pointer_gestures_v1_send_swipe_begin(gestures->manager, gestures->server->seat,
+                                                 pointer_swipe_begin_event->time_msec,
+                                                 pointer_swipe_begin_event->fingers);
 }
 
 static void handle_swipe_update(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, swipe_update);
-    const struct wlr_pointer_swipe_update_event *e = data;
-    xd_idle_activity(g->server);
-    if (g->swiping)
-        wlr_pointer_gestures_v1_send_swipe_update(g->manager, g->server->seat, e->time_msec,
-                                                  e->dx, e->dy);
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, swipe_update);
+    const struct wlr_pointer_swipe_update_event *pointer_swipe_update_event = data;
+    xd_idle_activity(gestures->server);
+    if (gestures->swiping)
+        wlr_pointer_gestures_v1_send_swipe_update(
+            gestures->manager, gestures->server->seat, pointer_swipe_update_event->time_msec,
+            pointer_swipe_update_event->dx, pointer_swipe_update_event->dy);
 }
 
 static void handle_swipe_end(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, swipe_end);
-    const struct wlr_pointer_swipe_end_event *e = data;
-    if (g->swiping)
-        wlr_pointer_gestures_v1_send_swipe_end(g->manager, g->server->seat, e->time_msec,
-                                               e->cancelled);
-    g->swiping = false;
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, swipe_end);
+    const struct wlr_pointer_swipe_end_event *pointer_swipe_end_event = data;
+    if (gestures->swiping)
+        wlr_pointer_gestures_v1_send_swipe_end(gestures->manager, gestures->server->seat,
+                                               pointer_swipe_end_event->time_msec,
+                                               pointer_swipe_end_event->cancelled);
+    gestures->swiping = false;
 }
 
 static void handle_pinch_begin(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, pinch_begin);
-    const struct wlr_pointer_pinch_begin_event *e = data;
-    xd_idle_activity(g->server);
-    g->pinching = may_begin(g);
-    if (g->pinching)
-        wlr_pointer_gestures_v1_send_pinch_begin(g->manager, g->server->seat, e->time_msec,
-                                                 e->fingers);
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, pinch_begin);
+    const struct wlr_pointer_pinch_begin_event *pointer_pinch_begin_event = data;
+    xd_idle_activity(gestures->server);
+    gestures->pinching = may_begin(gestures);
+    if (gestures->pinching)
+        wlr_pointer_gestures_v1_send_pinch_begin(gestures->manager, gestures->server->seat,
+                                                 pointer_pinch_begin_event->time_msec,
+                                                 pointer_pinch_begin_event->fingers);
 }
 
 static void handle_pinch_update(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, pinch_update);
-    const struct wlr_pointer_pinch_update_event *e = data;
-    xd_idle_activity(g->server);
-    if (g->pinching)
-        wlr_pointer_gestures_v1_send_pinch_update(g->manager, g->server->seat, e->time_msec,
-                                                  e->dx, e->dy, e->scale, e->rotation);
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, pinch_update);
+    const struct wlr_pointer_pinch_update_event *pointer_pinch_update_event = data;
+    xd_idle_activity(gestures->server);
+    if (gestures->pinching)
+        wlr_pointer_gestures_v1_send_pinch_update(
+            gestures->manager, gestures->server->seat, pointer_pinch_update_event->time_msec,
+            pointer_pinch_update_event->dx, pointer_pinch_update_event->dy,
+            pointer_pinch_update_event->scale, pointer_pinch_update_event->rotation);
 }
 
 static void handle_pinch_end(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, pinch_end);
-    const struct wlr_pointer_pinch_end_event *e = data;
-    if (g->pinching)
-        wlr_pointer_gestures_v1_send_pinch_end(g->manager, g->server->seat, e->time_msec,
-                                               e->cancelled);
-    g->pinching = false;
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, pinch_end);
+    const struct wlr_pointer_pinch_end_event *pointer_pinch_end_event = data;
+    if (gestures->pinching)
+        wlr_pointer_gestures_v1_send_pinch_end(gestures->manager, gestures->server->seat,
+                                               pointer_pinch_end_event->time_msec,
+                                               pointer_pinch_end_event->cancelled);
+    gestures->pinching = false;
 }
 
 static void handle_hold_begin(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, hold_begin);
-    const struct wlr_pointer_hold_begin_event *e = data;
-    xd_idle_activity(g->server);
-    g->holding = may_begin(g);
-    if (g->holding)
-        wlr_pointer_gestures_v1_send_hold_begin(g->manager, g->server->seat, e->time_msec,
-                                                e->fingers);
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, hold_begin);
+    const struct wlr_pointer_hold_begin_event *pointer_hold_begin_event = data;
+    xd_idle_activity(gestures->server);
+    gestures->holding = may_begin(gestures);
+    if (gestures->holding)
+        wlr_pointer_gestures_v1_send_hold_begin(gestures->manager, gestures->server->seat,
+                                                pointer_hold_begin_event->time_msec,
+                                                pointer_hold_begin_event->fingers);
 }
 
 static void handle_hold_end(struct wl_listener *listener, void *data) {
-    xd_gestures *g = XD_CONTAINER_OF(listener, xd_gestures, hold_end);
-    const struct wlr_pointer_hold_end_event *e = data;
-    if (g->holding)
-        wlr_pointer_gestures_v1_send_hold_end(g->manager, g->server->seat, e->time_msec,
-                                              e->cancelled);
-    g->holding = false;
+    xd_gestures *gestures = XD_CONTAINER_OF(listener, xd_gestures, hold_end);
+    const struct wlr_pointer_hold_end_event *pointer_hold_end_event = data;
+    if (gestures->holding)
+        wlr_pointer_gestures_v1_send_hold_end(gestures->manager, gestures->server->seat,
+                                              pointer_hold_end_event->time_msec,
+                                              pointer_hold_end_event->cancelled);
+    gestures->holding = false;
 }
 
 void xd_gestures_init(xd_server *server) {
-    xd_gestures *g = XD_NEW(xd_gestures);
-    g->server = server;
-    g->manager = wlr_pointer_gestures_v1_create(server->display);
-    server->gestures = g;
-    struct wlr_cursor *c = server->cursor;
-    XD_LISTEN(&c->events.swipe_begin, g, swipe_begin, handle_swipe_begin);
-    XD_LISTEN(&c->events.swipe_update, g, swipe_update, handle_swipe_update);
-    XD_LISTEN(&c->events.swipe_end, g, swipe_end, handle_swipe_end);
-    XD_LISTEN(&c->events.pinch_begin, g, pinch_begin, handle_pinch_begin);
-    XD_LISTEN(&c->events.pinch_update, g, pinch_update, handle_pinch_update);
-    XD_LISTEN(&c->events.pinch_end, g, pinch_end, handle_pinch_end);
-    XD_LISTEN(&c->events.hold_begin, g, hold_begin, handle_hold_begin);
-    XD_LISTEN(&c->events.hold_end, g, hold_end, handle_hold_end);
+    xd_gestures *gestures = XD_NEW(xd_gestures);
+    gestures->server = server;
+    gestures->manager = wlr_pointer_gestures_v1_create(server->display);
+    server->gestures = gestures;
+    struct wlr_cursor *cursor = server->cursor;
+    XD_LISTEN(&cursor->events.swipe_begin, gestures, swipe_begin, handle_swipe_begin);
+    XD_LISTEN(&cursor->events.swipe_update, gestures, swipe_update, handle_swipe_update);
+    XD_LISTEN(&cursor->events.swipe_end, gestures, swipe_end, handle_swipe_end);
+    XD_LISTEN(&cursor->events.pinch_begin, gestures, pinch_begin, handle_pinch_begin);
+    XD_LISTEN(&cursor->events.pinch_update, gestures, pinch_update, handle_pinch_update);
+    XD_LISTEN(&cursor->events.pinch_end, gestures, pinch_end, handle_pinch_end);
+    XD_LISTEN(&cursor->events.hold_begin, gestures, hold_begin, handle_hold_begin);
+    XD_LISTEN(&cursor->events.hold_end, gestures, hold_end, handle_hold_end);
 }
 
 void xd_gestures_finish(xd_server *server) {
-    xd_gestures *g = server->gestures;
-    if (g == nullptr)
+    xd_gestures *gestures = server->gestures;
+    if (gestures == nullptr)
         return;
     struct wl_listener *listeners[] = {
-        &g->swipe_begin, &g->swipe_update, &g->swipe_end, &g->pinch_begin,
-        &g->pinch_update, &g->pinch_end, &g->hold_begin, &g->hold_end,
+        &gestures->swipe_begin, &gestures->swipe_update, &gestures->swipe_end,
+        &gestures->pinch_begin, &gestures->pinch_update, &gestures->pinch_end,
+        &gestures->hold_begin,  &gestures->hold_end,
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(listeners); i++)
         xd_unlisten(listeners[i]);
-    xd_free(g);
+    xd_free(gestures);
     server->gestures = nullptr;
 }

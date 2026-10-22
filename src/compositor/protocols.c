@@ -130,12 +130,14 @@ static void handle_output_test(struct wl_listener *listener, void *data) {
 
 static void handle_output_power(struct wl_listener *listener, void *data) {
     (void)listener;
-    const struct wlr_output_power_v1_set_mode_event *e = data;
+    const struct wlr_output_power_v1_set_mode_event *output_power_v1_set_mode_event = data;
     struct wlr_output_state st;
     wlr_output_state_init(&st);
-    wlr_output_state_set_enabled(&st, e->mode == ZWLR_OUTPUT_POWER_V1_MODE_ON);
-    if (!wlr_output_commit_state(e->output, &st))
-        wlr_log(WLR_ERROR, "output %s: cannot change power", e->output->name);
+    wlr_output_state_set_enabled(&st, output_power_v1_set_mode_event->mode ==
+                                          ZWLR_OUTPUT_POWER_V1_MODE_ON);
+    if (!wlr_output_commit_state(output_power_v1_set_mode_event->output, &st))
+        wlr_log(WLR_ERROR, "output %s: cannot change power",
+                output_power_v1_set_mode_event->output->name);
     wlr_output_state_finish(&st);
 }
 
@@ -201,13 +203,15 @@ static void handle_new_activation_token(struct wl_listener *listener, void *data
 
 static void handle_request_activate(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_activate);
-    const struct wlr_xdg_activation_v1_request_activate_event *e = data;
-    struct wlr_xdg_toplevel *top = wlr_xdg_toplevel_try_from_wlr_surface(e->surface);
+    const struct wlr_xdg_activation_v1_request_activate_event
+        *xdg_activation_v1_request_activate_event = data;
+    struct wlr_xdg_toplevel *top =
+        wlr_xdg_toplevel_try_from_wlr_surface(xdg_activation_v1_request_activate_event->surface);
     struct wlr_scene_tree *content = top != nullptr ? top->base->data : nullptr;
     xd_view *view = content != nullptr ? xd_view_from_node(&content->node) : nullptr;
     if (view == nullptr || !view->mapped || server->locked)
         return;
-    if (e->token->data == &token_allowed) {
+    if (xdg_activation_v1_request_activate_event->token->data == &token_allowed) {
         if (view->minimized)
             xd_view_restore(view);
         xd_view_focus(view);

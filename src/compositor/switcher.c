@@ -22,12 +22,12 @@ void xd_switcher_show(xd_server *server) {
     }
     xd_view *views[MAX_ITEMS];
     size_t count = 0, selected = 0;
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (!v->mapped || count == MAX_ITEMS)
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (!view->mapped || count == MAX_ITEMS)
             continue;
-        if (v == sel)
+        if (view == sel)
             selected = count;
-        views[count++] = v;
+        views[count++] = view;
     }
     if (count == 0) {
         xd_switcher_hide(server);
@@ -49,20 +49,20 @@ void xd_switcher_show(xd_server *server) {
     for (size_t i = 0; i < count; i++)
         icons[i] = xd_appicons_get(server->appicons, xd_view_app_id(views[i]), xd_px(scale, 32));
     const char *title = xd_view_title(sel);
-    cairo_t *cr = cairo_create(surface);
-    xd_theme_draw_switcher(&theme, cr, (xd_rect){0, 0, dw, dh}, icons, count, selected, title);
-    cairo_destroy(cr);
+    cairo_t *cairo = cairo_create(surface);
+    xd_theme_draw_switcher(&theme, cairo, (xd_rect){0, 0, dw, dh}, icons, count, selected, title);
+    cairo_destroy(cairo);
     cairo_surface_flush(surface);
 
     if (server->switcher == nullptr)
         server->switcher = wlr_scene_buffer_create(server->layer_drag, nullptr);
     double lw = ceil(dw / scale), lh = ceil(dh / scale);
-    int w = (int)lw, h = (int)lh;
+    int width = (int)lw, height = (int)lh;
     wlr_scene_buffer_set_buffer(server->switcher, buf);
-    wlr_scene_buffer_set_dest_size(server->switcher, w, h);
+    wlr_scene_buffer_set_dest_size(server->switcher, width, height);
     wlr_buffer_drop(buf); /* the scene holds its own lock */
-    wlr_scene_node_set_position(&server->switcher->node, area.x + (area.width - w) / 2,
-                                area.y + (area.height - h) / 2);
+    wlr_scene_node_set_position(&server->switcher->node, area.x + (area.width - width) / 2,
+                                area.y + (area.height - height) / 2);
     wlr_scene_node_raise_to_top(&server->switcher->node);
     wlr_log(WLR_DEBUG, "Alt+Tab: %zu windows, \"%s\" selected", count,
             title != nullptr ? title : "");

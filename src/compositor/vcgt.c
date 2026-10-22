@@ -4,8 +4,8 @@
 #ifdef XD_HAVE_LCMS2
 #include <lcms2.h>
 
-bool xd_vcgt_load(const char *path, size_t n, float *out) {
-    if (n < 2)
+bool xd_vcgt_load(const char *path, size_t count, float *out) {
+    if (count < 2)
         return false;
     cmsHPROFILE profile = cmsOpenProfileFromFile(path, "r");
     if (profile == nullptr)
@@ -15,9 +15,10 @@ bool xd_vcgt_load(const char *path, size_t n, float *out) {
     cmsToneCurve **curves = cmsReadTag(profile, cmsSigVcgtTag);
     bool ok = curves != nullptr && curves[0] != nullptr && curves[1] != nullptr &&
               curves[2] != nullptr;
-    for (size_t c = 0; ok && c < 3; c++) {
-        for (size_t i = 0; i < n; i++)
-            out[c * n + i] = cmsEvalToneCurveFloat(curves[c], (float)i / (float)(n - 1));
+    for (size_t channel = 0; ok && channel < 3; channel++) {
+        for (size_t i = 0; i < count; i++)
+            out[channel * count + i] =
+                cmsEvalToneCurveFloat(curves[channel], (float)i / (float)(count - 1));
     }
     cmsCloseProfile(profile);
     return ok;

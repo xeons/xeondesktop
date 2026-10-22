@@ -102,12 +102,12 @@ struct xd_ime {
 static pid_t parent_of(pid_t pid) {
     char path[64], buf[512];
     snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);
-    FILE *f = fopen(path, "re");
-    if (f == nullptr)
+    FILE *file = fopen(path, "re");
+    if (file == nullptr)
         return 0;
-    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
-    fclose(f);
-    buf[n] = '\0';
+    size_t count = fread(buf, 1, sizeof(buf) - 1, file);
+    fclose(file);
+    buf[count] = '\0';
     const char *close = strrchr(buf, ')');
     int ppid = 0;
     if (close == nullptr || sscanf(close + 1, " %*c %d", &ppid) != 1)
@@ -130,10 +130,10 @@ static bool descends_from(pid_t pid, pid_t ancestor) {
 static bool runs_framework(pid_t pid) {
     char link[64], exe[PATH_MAX];
     snprintf(link, sizeof(link), "/proc/%d/exe", (int)pid);
-    ssize_t n = readlink(link, exe, sizeof(exe) - 1);
-    if (n <= 0)
+    ssize_t length = readlink(link, exe, sizeof(exe) - 1);
+    if (length <= 0)
         return false;
-    exe[n] = '\0';
+    exe[length] = '\0';
     const char *slash = strrchr(exe, '/');
     if (strncmp(exe, "/usr/", 5) != 0 || slash == nullptr ||
         !xd_im_program_is_framework(slash + 1))
@@ -202,58 +202,56 @@ typedef struct surface_search {
 } surface_search;
 
 static void find_surface(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
-    surface_search *s = data;
+    surface_search *finder = data;
     struct wlr_scene_surface *scene_surface = wlr_scene_surface_try_from_buffer(buffer);
-    if (!s->found && scene_surface != nullptr && scene_surface->surface == s->surface) {
-        s->found = true;
-        s->x = sx;
-        s->y = sy;
+    if (!finder->found && scene_surface != nullptr && scene_surface->surface == finder->surface) {
+        finder->found = true;
+        finder->x = sx;
+        finder->y = sy;
     }
 }
 
-static void place_popup(ime_popup *p) {
-    struct xd_ime *ime = p->ime;
+static void place_popup(ime_popup *input_popup) {
+    struct xd_ime *ime = input_popup->ime;
     ime_text_input *ti = active_text_input(ime);
-    struct wlr_surface *surface = p->popup->surface;
+    struct wlr_surface *surface = input_popup->popup->surface;
     if (ti == nullptr || !surface->mapped || ime->server->locked) {
-        wlr_scene_node_set_enabled(&p->tree->node, false);
+        wlr_scene_node_set_enabled(&input_popup->tree->node, false);
         return;
     }
-    surface_search s = {.surface = ti->input->focused_surface};
-    wlr_scene_node_for_each_buffer(&ime->server->scene->tree.node, find_surface, &s);
-    if (!s.found) {
-        wlr_scene_node_set_enabled(&p->tree->node, false);
+    surface_search finder = {.surface = ti->input->focused_surface};
+    wlr_scene_node_for_each_buffer(&ime->server->scene->tree.node, find_surface, &finder);
+    if (!finder.found) {
+        wlr_scene_node_set_enabled(&input_popup->tree->node, false);
         return;
     }
     /* Without a caret rectangle, the text box's top left. */
     struct wlr_box caret = {0};
     if (ti->input->current.features & WLR_TEXT_INPUT_V3_FEATURE_CURSOR_RECTANGLE)
         caret = ti->input->current.cursor_rectangle;
-    xd_ime_rect cursor = {s.x + caret.x, s.y + caret.y, caret.width, caret.height};
+    xd_ime_rect cursor = {finder.x + caret.x, finder.y + caret.y, caret.width, caret.height};
     struct wlr_output *output = wlr_output_layout_output_at(
         ime->server->output_layout, cursor.x + cursor.width / 2.0, cursor.y + cursor.height / 2.0);
     if (output == nullptr)
-        output = wlr_output_layout_output_at(ime->server->output_layout, s.x, s.y);
+        output = wlr_output_layout_output_at(ime->server->output_layout, finder.x, finder.y);
     struct wlr_box screen = {0};
     wlr_output_layout_get_box(ime->server->output_layout, output, &screen);
     xd_ime_rect at = xd_ime_popup_place(
         cursor, surface->current.width, surface->current.height,
         (xd_ime_rect){screen.x, screen.y, screen.width, screen.height});
-    wlr_scene_node_set_position(&p->tree->node, at.x, at.y);
-    wlr_scene_node_set_enabled(&p->tree->node, true);
+    wlr_scene_node_set_position(&input_popup->tree->node, at.x, at.y);
+    wlr_scene_node_set_enabled(&input_popup->tree->node, true);
     /* The caret, relative to the popup, so it can point at it. */
     struct wlr_box rel = {cursor.x - at.x, cursor.y - at.y, cursor.width, cursor.height};
-    if (!p->has_told || !wlr_box_equal(&rel, &p->told)) {
-        wlr_input_popup_surface_v2_send_text_input_rectangle(p->popup, &rel);
-        p->told = rel;
-        p->has_told = true;
+    if (!input_popup->has_told || !wlr_box_equal(&rel, &input_popup->told)) {
+        wlr_input_popup_surface_v2_send_text_input_rectangle(input_popup->popup, &rel);
+        input_popup->told = rel;
+        input_popup->has_told = true;
     }
 }
 
 static void place_popups(struct xd_ime *ime) {
-    XD_LIST_FOR_EACH(p, &ime->popups, ime_popup, link) {
-        place_popup(p);
-    }
+    XD_LIST_FOR_EACH(input_popup, &ime->popups, ime_popup, link) { place_popup(input_popup); }
 }
 
 static void handle_enable(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -353,8 +351,9 @@ static void handle_new_text_input(struct wl_listener *listener, void *data) {
  * goes inactive) and enter the new one. */
 static void handle_focus_change(struct wl_listener *listener, void *data) {
     struct xd_ime *ime = XD_CONTAINER_OF(listener, struct xd_ime, focus_change);
-    const struct wlr_seat_keyboard_focus_change_event *e = data;
-    if (e->old_surface == e->new_surface)
+    const struct wlr_seat_keyboard_focus_change_event *seat_keyboard_focus_change_event = data;
+    if (seat_keyboard_focus_change_event->old_surface ==
+        seat_keyboard_focus_change_event->new_surface)
         return;
     XD_LIST_FOR_EACH(ti, &ime->text_inputs, ime_text_input, link) {
         set_pending_focus(ti, nullptr);
@@ -363,7 +362,7 @@ static void handle_focus_change(struct wl_listener *listener, void *data) {
                 deactivate(ime);
             wlr_text_input_v3_send_leave(ti->input);
         }
-        offer_focus(ti, e->new_surface);
+        offer_focus(ti, seat_keyboard_focus_change_event->new_surface);
     }
     place_popups(ime);
 }
@@ -388,51 +387,51 @@ static void handle_im_commit(struct wl_listener *listener, [[maybe_unused]] void
 }
 
 static void handle_popup_map(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    ime_popup *p = XD_CONTAINER_OF(listener, ime_popup, map);
-    place_popup(p);
+    ime_popup *input_popup = XD_CONTAINER_OF(listener, ime_popup, map);
+    place_popup(input_popup);
 }
 
 static void handle_popup_unmap(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    ime_popup *p = XD_CONTAINER_OF(listener, ime_popup, unmap);
-    wlr_scene_node_set_enabled(&p->tree->node, false);
+    ime_popup *input_popup = XD_CONTAINER_OF(listener, ime_popup, unmap);
+    wlr_scene_node_set_enabled(&input_popup->tree->node, false);
 }
 
 /* A new size (a longer candidate list) may need it moved to fit. */
 static void handle_popup_commit(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    ime_popup *p = XD_CONTAINER_OF(listener, ime_popup, commit);
-    if (p->popup->surface->mapped)
-        place_popup(p);
+    ime_popup *input_popup = XD_CONTAINER_OF(listener, ime_popup, commit);
+    if (input_popup->popup->surface->mapped)
+        place_popup(input_popup);
 }
 
 static void handle_popup_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    ime_popup *p = XD_CONTAINER_OF(listener, ime_popup, destroy);
-    xd_unlisten(&p->map);
-    xd_unlisten(&p->unmap);
-    xd_unlisten(&p->commit);
-    xd_unlisten(&p->destroy);
+    ime_popup *input_popup = XD_CONTAINER_OF(listener, ime_popup, destroy);
+    xd_unlisten(&input_popup->map);
+    xd_unlisten(&input_popup->unmap);
+    xd_unlisten(&input_popup->commit);
+    xd_unlisten(&input_popup->destroy);
     /* The scene's subsurface tree goes with the surface by itself; ours
      * holds it. */
-    wlr_scene_node_destroy(&p->tree->node);
-    wl_list_remove(&p->link);
-    xd_free(p);
+    wlr_scene_node_destroy(&input_popup->tree->node);
+    wl_list_remove(&input_popup->link);
+    xd_free(input_popup);
 }
 
 static void handle_im_new_popup(struct wl_listener *listener, void *data) {
     struct xd_ime *ime = XD_CONTAINER_OF(listener, struct xd_ime, im_new_popup);
     struct wlr_input_popup_surface_v2 *popup = data;
-    ime_popup *p = XD_NEW(ime_popup);
-    p->ime = ime;
-    p->popup = popup;
-    p->tree = wlr_scene_tree_create(ime->popup_tree);
-    wlr_scene_subsurface_tree_create(p->tree, popup->surface);
-    wlr_scene_node_set_enabled(&p->tree->node, false);
-    wl_list_insert(&ime->popups, &p->link);
-    XD_LISTEN(&popup->surface->events.map, p, map, handle_popup_map);
-    XD_LISTEN(&popup->surface->events.unmap, p, unmap, handle_popup_unmap);
-    XD_LISTEN(&popup->surface->events.commit, p, commit, handle_popup_commit);
-    XD_LISTEN(&popup->events.destroy, p, destroy, handle_popup_destroy);
+    ime_popup *input_popup = XD_NEW(ime_popup);
+    input_popup->ime = ime;
+    input_popup->popup = popup;
+    input_popup->tree = wlr_scene_tree_create(ime->popup_tree);
+    wlr_scene_subsurface_tree_create(input_popup->tree, popup->surface);
+    wlr_scene_node_set_enabled(&input_popup->tree->node, false);
+    wl_list_insert(&ime->popups, &input_popup->link);
+    XD_LISTEN(&popup->surface->events.map, input_popup, map, handle_popup_map);
+    XD_LISTEN(&popup->surface->events.unmap, input_popup, unmap, handle_popup_unmap);
+    XD_LISTEN(&popup->surface->events.commit, input_popup, commit, handle_popup_commit);
+    XD_LISTEN(&popup->events.destroy, input_popup, destroy, handle_popup_destroy);
     if (popup->surface->mapped)
-        place_popup(p);
+        place_popup(input_popup);
 }
 
 /* The keyboard the input method hears first: the one last typed on,
@@ -551,12 +550,14 @@ static struct wlr_input_method_keyboard_grab_v2 *grab_for(const xd_keyboard *kb)
     return ime->grab;
 }
 
-bool xd_ime_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
+bool xd_ime_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event) {
     struct wlr_input_method_keyboard_grab_v2 *grab = grab_for(kb);
     if (grab == nullptr)
         return false;
     wlr_input_method_keyboard_grab_v2_set_keyboard(grab, kb->wlr_keyboard);
-    wlr_input_method_keyboard_grab_v2_send_key(grab, e->time_msec, e->keycode, e->state);
+    wlr_input_method_keyboard_grab_v2_send_key(grab, keyboard_key_event->time_msec,
+                                               keyboard_key_event->keycode,
+                                               keyboard_key_event->state);
     return true;
 }
 
@@ -697,13 +698,13 @@ void xd_ime_finish(xd_server *server) {
         wl_list_remove(&ti->link);
         xd_free(ti);
     }
-    XD_LIST_FOR_EACH_SAFE(p, ptmp, &ime->popups, ime_popup, link) {
-        xd_unlisten(&p->map);
-        xd_unlisten(&p->unmap);
-        xd_unlisten(&p->commit);
-        xd_unlisten(&p->destroy);
-        wl_list_remove(&p->link);
-        xd_free(p);
+    XD_LIST_FOR_EACH_SAFE(input_popup, ptmp, &ime->popups, ime_popup, link) {
+        xd_unlisten(&input_popup->map);
+        xd_unlisten(&input_popup->unmap);
+        xd_unlisten(&input_popup->commit);
+        xd_unlisten(&input_popup->destroy);
+        wl_list_remove(&input_popup->link);
+        xd_free(input_popup);
     }
     server->ime = nullptr;
     xd_free(ime);

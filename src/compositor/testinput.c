@@ -66,42 +66,46 @@ static struct wlr_touch *touch(test_input *ti) {
     return &ti->touch;
 }
 
-static void touch_down(struct wl_client *c, struct wl_resource *res, int32_t id, wl_fixed_t x,
+static void touch_down(struct wl_client *client, struct wl_resource *res, int32_t id, wl_fixed_t x,
                        wl_fixed_t y) {
-    (void)c;
+    (void)client;
     test_input *ti = from_resource(res);
-    struct wlr_touch *t = touch(ti);
-    struct wlr_touch_down_event e = {.touch = t, .time_msec = now_msec(), .touch_id = id};
-    normalize(ti, &t->base, x, y, &e.x, &e.y);
-    wl_signal_emit_mutable(&t->events.down, &e);
-    wl_signal_emit_mutable(&t->events.frame, nullptr);
+    struct wlr_touch *test_touch = touch(ti);
+    struct wlr_touch_down_event touch_down_event = {
+        .touch = test_touch, .time_msec = now_msec(), .touch_id = id};
+    normalize(ti, &test_touch->base, x, y, &touch_down_event.x, &touch_down_event.y);
+    wl_signal_emit_mutable(&test_touch->events.down, &touch_down_event);
+    wl_signal_emit_mutable(&test_touch->events.frame, nullptr);
 }
 
-static void touch_motion(struct wl_client *c, struct wl_resource *res, int32_t id, wl_fixed_t x,
-                         wl_fixed_t y) {
-    (void)c;
+static void touch_motion(struct wl_client *client, struct wl_resource *res, int32_t id,
+                         wl_fixed_t x, wl_fixed_t y) {
+    (void)client;
     test_input *ti = from_resource(res);
-    struct wlr_touch *t = touch(ti);
-    struct wlr_touch_motion_event e = {.touch = t, .time_msec = now_msec(), .touch_id = id};
-    normalize(ti, &t->base, x, y, &e.x, &e.y);
-    wl_signal_emit_mutable(&t->events.motion, &e);
-    wl_signal_emit_mutable(&t->events.frame, nullptr);
+    struct wlr_touch *test_touch = touch(ti);
+    struct wlr_touch_motion_event touch_motion_event = {
+        .touch = test_touch, .time_msec = now_msec(), .touch_id = id};
+    normalize(ti, &test_touch->base, x, y, &touch_motion_event.x, &touch_motion_event.y);
+    wl_signal_emit_mutable(&test_touch->events.motion, &touch_motion_event);
+    wl_signal_emit_mutable(&test_touch->events.frame, nullptr);
 }
 
-static void touch_up(struct wl_client *c, struct wl_resource *res, int32_t id) {
-    (void)c;
-    struct wlr_touch *t = touch(from_resource(res));
-    struct wlr_touch_up_event e = {.touch = t, .time_msec = now_msec(), .touch_id = id};
-    wl_signal_emit_mutable(&t->events.up, &e);
-    wl_signal_emit_mutable(&t->events.frame, nullptr);
+static void touch_up(struct wl_client *client, struct wl_resource *res, int32_t id) {
+    (void)client;
+    struct wlr_touch *test_touch = touch(from_resource(res));
+    struct wlr_touch_up_event touch_up_event = {
+        .touch = test_touch, .time_msec = now_msec(), .touch_id = id};
+    wl_signal_emit_mutable(&test_touch->events.up, &touch_up_event);
+    wl_signal_emit_mutable(&test_touch->events.frame, nullptr);
 }
 
-static void touch_cancel(struct wl_client *c, struct wl_resource *res, int32_t id) {
-    (void)c;
-    struct wlr_touch *t = touch(from_resource(res));
-    struct wlr_touch_cancel_event e = {.touch = t, .time_msec = now_msec(), .touch_id = id};
-    wl_signal_emit_mutable(&t->events.cancel, &e);
-    wl_signal_emit_mutable(&t->events.frame, nullptr);
+static void touch_cancel(struct wl_client *client, struct wl_resource *res, int32_t id) {
+    (void)client;
+    struct wlr_touch *test_touch = touch(from_resource(res));
+    struct wlr_touch_cancel_event touch_cancel_event = {
+        .touch = test_touch, .time_msec = now_msec(), .touch_id = id};
+    wl_signal_emit_mutable(&test_touch->events.cancel, &touch_cancel_event);
+    wl_signal_emit_mutable(&test_touch->events.frame, nullptr);
 }
 
 /* ---- the tablet, its pen and its pad ------------------------------------------------ */
@@ -141,13 +145,13 @@ static void tablet(test_input *ti) {
     xd_input_add_device(ti->server, &ti->pad.base);
 }
 
-static void tool_proximity(struct wl_client *c, struct wl_resource *res, wl_fixed_t x,
+static void tool_proximity(struct wl_client *client, struct wl_resource *res, wl_fixed_t x,
                            wl_fixed_t y, uint32_t in) {
-    (void)c;
+    (void)client;
     test_input *ti = from_resource(res);
     tablet(ti);
     normalize(ti, &ti->tablet.base, x, y, &ti->tool_x, &ti->tool_y);
-    struct wlr_tablet_tool_proximity_event e = {
+    struct wlr_tablet_tool_proximity_event tablet_tool_proximity_event = {
         .tablet = &ti->tablet,
         .tool = &ti->tool,
         .time_msec = now_msec(),
@@ -155,17 +159,17 @@ static void tool_proximity(struct wl_client *c, struct wl_resource *res, wl_fixe
         .y = ti->tool_y,
         .state = in ? WLR_TABLET_TOOL_PROXIMITY_IN : WLR_TABLET_TOOL_PROXIMITY_OUT,
     };
-    wl_signal_emit_mutable(&ti->tablet.events.proximity, &e);
+    wl_signal_emit_mutable(&ti->tablet.events.proximity, &tablet_tool_proximity_event);
 }
 
-static void tool_motion(struct wl_client *c, struct wl_resource *res, wl_fixed_t x, wl_fixed_t y,
-                        wl_fixed_t pressure, wl_fixed_t tilt_x, wl_fixed_t tilt_y) {
-    (void)c;
+static void tool_motion(struct wl_client *client, struct wl_resource *res, wl_fixed_t x,
+                        wl_fixed_t y, wl_fixed_t pressure, wl_fixed_t tilt_x, wl_fixed_t tilt_y) {
+    (void)client;
     test_input *ti = from_resource(res);
     tablet(ti);
     double ox = ti->tool_x, oy = ti->tool_y;
     normalize(ti, &ti->tablet.base, x, y, &ti->tool_x, &ti->tool_y);
-    struct wlr_tablet_tool_axis_event e = {
+    struct wlr_tablet_tool_axis_event tablet_tool_axis_event = {
         .tablet = &ti->tablet,
         .tool = &ti->tool,
         .time_msec = now_msec(),
@@ -180,14 +184,14 @@ static void tool_motion(struct wl_client *c, struct wl_resource *res, wl_fixed_t
         .tilt_x = wl_fixed_to_double(tilt_x),
         .tilt_y = wl_fixed_to_double(tilt_y),
     };
-    wl_signal_emit_mutable(&ti->tablet.events.axis, &e);
+    wl_signal_emit_mutable(&ti->tablet.events.axis, &tablet_tool_axis_event);
 }
 
-static void tool_tip(struct wl_client *c, struct wl_resource *res, uint32_t down) {
-    (void)c;
+static void tool_tip(struct wl_client *client, struct wl_resource *res, uint32_t down) {
+    (void)client;
     test_input *ti = from_resource(res);
     tablet(ti);
-    struct wlr_tablet_tool_tip_event e = {
+    struct wlr_tablet_tool_tip_event tablet_tool_tip_event = {
         .tablet = &ti->tablet,
         .tool = &ti->tool,
         .time_msec = now_msec(),
@@ -195,63 +199,63 @@ static void tool_tip(struct wl_client *c, struct wl_resource *res, uint32_t down
         .y = ti->tool_y,
         .state = down ? WLR_TABLET_TOOL_TIP_DOWN : WLR_TABLET_TOOL_TIP_UP,
     };
-    wl_signal_emit_mutable(&ti->tablet.events.tip, &e);
+    wl_signal_emit_mutable(&ti->tablet.events.tip, &tablet_tool_tip_event);
 }
 
-static void tool_button(struct wl_client *c, struct wl_resource *res, uint32_t button,
+static void tool_button(struct wl_client *client, struct wl_resource *res, uint32_t button,
                         uint32_t pressed) {
-    (void)c;
+    (void)client;
     test_input *ti = from_resource(res);
     tablet(ti);
-    struct wlr_tablet_tool_button_event e = {
+    struct wlr_tablet_tool_button_event tablet_tool_button_event = {
         .tablet = &ti->tablet,
         .tool = &ti->tool,
         .time_msec = now_msec(),
         .button = button,
         .state = pressed ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED,
     };
-    wl_signal_emit_mutable(&ti->tablet.events.button, &e);
+    wl_signal_emit_mutable(&ti->tablet.events.button, &tablet_tool_button_event);
 }
 
-static void pad_button(struct wl_client *c, struct wl_resource *res, uint32_t button,
+static void pad_button(struct wl_client *client, struct wl_resource *res, uint32_t button,
                        uint32_t pressed) {
-    (void)c;
+    (void)client;
     test_input *ti = from_resource(res);
     tablet(ti);
-    struct wlr_tablet_pad_button_event e = {
+    struct wlr_tablet_pad_button_event tablet_pad_button_event = {
         .time_msec = now_msec(),
         .button = button,
         .state = pressed ? WLR_BUTTON_PRESSED : WLR_BUTTON_RELEASED,
     };
-    wl_signal_emit_mutable(&ti->pad.events.button, &e);
+    wl_signal_emit_mutable(&ti->pad.events.button, &tablet_pad_button_event);
 }
 
-static void pad_ring(struct wl_client *c, struct wl_resource *res, uint32_t ring,
+static void pad_ring(struct wl_client *client, struct wl_resource *res, uint32_t ring,
                      wl_fixed_t position) {
-    (void)c;
+    (void)client;
     test_input *ti = from_resource(res);
     tablet(ti);
-    struct wlr_tablet_pad_ring_event e = {
+    struct wlr_tablet_pad_ring_event tablet_pad_ring_event = {
         .time_msec = now_msec(),
         .source = WLR_TABLET_PAD_RING_SOURCE_FINGER,
         .ring = ring,
         .position = wl_fixed_to_double(position),
     };
-    wl_signal_emit_mutable(&ti->pad.events.ring, &e);
+    wl_signal_emit_mutable(&ti->pad.events.ring, &tablet_pad_ring_event);
 }
 
-static void pad_strip(struct wl_client *c, struct wl_resource *res, uint32_t strip,
+static void pad_strip(struct wl_client *client, struct wl_resource *res, uint32_t strip,
                       wl_fixed_t position) {
-    (void)c;
+    (void)client;
     test_input *ti = from_resource(res);
     tablet(ti);
-    struct wlr_tablet_pad_strip_event e = {
+    struct wlr_tablet_pad_strip_event tablet_pad_strip_event = {
         .time_msec = now_msec(),
         .source = WLR_TABLET_PAD_STRIP_SOURCE_FINGER,
         .strip = strip,
         .position = wl_fixed_to_double(position),
     };
-    wl_signal_emit_mutable(&ti->pad.events.strip, &e);
+    wl_signal_emit_mutable(&ti->pad.events.strip, &tablet_pad_strip_event);
 }
 
 /* ---- the touchpad's gestures ----------------------------------------------------------- */
@@ -265,80 +269,82 @@ static struct wlr_pointer *touchpad(test_input *ti) {
     return &ti->pointer;
 }
 
-static void swipe_begin(struct wl_client *c, struct wl_resource *res, uint32_t fingers) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_swipe_begin_event e = {.pointer = p, .time_msec = now_msec(),
-                                              .fingers = fingers};
-    wl_signal_emit_mutable(&p->events.swipe_begin, &e);
+static void swipe_begin(struct wl_client *client, struct wl_resource *res, uint32_t fingers) {
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_swipe_begin_event pointer_swipe_begin_event = {
+        .pointer = pointer, .time_msec = now_msec(), .fingers = fingers};
+    wl_signal_emit_mutable(&pointer->events.swipe_begin, &pointer_swipe_begin_event);
 }
 
-static void swipe_update(struct wl_client *c, struct wl_resource *res, wl_fixed_t dx,
+static void swipe_update(struct wl_client *client, struct wl_resource *res, wl_fixed_t dx,
                          wl_fixed_t dy) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_swipe_update_event e = {.pointer = p, .time_msec = now_msec(),
-                                               .dx = wl_fixed_to_double(dx),
-                                               .dy = wl_fixed_to_double(dy)};
-    wl_signal_emit_mutable(&p->events.swipe_update, &e);
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_swipe_update_event pointer_swipe_update_event = {
+        .pointer = pointer,
+        .time_msec = now_msec(),
+        .dx = wl_fixed_to_double(dx),
+        .dy = wl_fixed_to_double(dy)};
+    wl_signal_emit_mutable(&pointer->events.swipe_update, &pointer_swipe_update_event);
 }
 
-static void swipe_end(struct wl_client *c, struct wl_resource *res, uint32_t cancelled) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_swipe_end_event e = {.pointer = p, .time_msec = now_msec(),
-                                            .cancelled = cancelled != 0};
-    wl_signal_emit_mutable(&p->events.swipe_end, &e);
+static void swipe_end(struct wl_client *client, struct wl_resource *res, uint32_t cancelled) {
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_swipe_end_event pointer_swipe_end_event = {
+        .pointer = pointer, .time_msec = now_msec(), .cancelled = cancelled != 0};
+    wl_signal_emit_mutable(&pointer->events.swipe_end, &pointer_swipe_end_event);
 }
 
-static void pinch_begin(struct wl_client *c, struct wl_resource *res, uint32_t fingers) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_pinch_begin_event e = {.pointer = p, .time_msec = now_msec(),
-                                              .fingers = fingers};
-    wl_signal_emit_mutable(&p->events.pinch_begin, &e);
+static void pinch_begin(struct wl_client *client, struct wl_resource *res, uint32_t fingers) {
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_pinch_begin_event pointer_pinch_begin_event = {
+        .pointer = pointer, .time_msec = now_msec(), .fingers = fingers};
+    wl_signal_emit_mutable(&pointer->events.pinch_begin, &pointer_pinch_begin_event);
 }
 
-static void pinch_update(struct wl_client *c, struct wl_resource *res, wl_fixed_t dx,
+static void pinch_update(struct wl_client *client, struct wl_resource *res, wl_fixed_t dx,
                          wl_fixed_t dy, wl_fixed_t scale, wl_fixed_t rotation) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_pinch_update_event e = {
-        .pointer = p,
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_pinch_update_event pointer_pinch_update_event = {
+        .pointer = pointer,
         .time_msec = now_msec(),
         .dx = wl_fixed_to_double(dx),
         .dy = wl_fixed_to_double(dy),
         .scale = wl_fixed_to_double(scale),
         .rotation = wl_fixed_to_double(rotation),
     };
-    wl_signal_emit_mutable(&p->events.pinch_update, &e);
+    wl_signal_emit_mutable(&pointer->events.pinch_update, &pointer_pinch_update_event);
 }
 
-static void pinch_end(struct wl_client *c, struct wl_resource *res, uint32_t cancelled) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_pinch_end_event e = {.pointer = p, .time_msec = now_msec(),
-                                            .cancelled = cancelled != 0};
-    wl_signal_emit_mutable(&p->events.pinch_end, &e);
+static void pinch_end(struct wl_client *client, struct wl_resource *res, uint32_t cancelled) {
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_pinch_end_event pointer_pinch_end_event = {
+        .pointer = pointer, .time_msec = now_msec(), .cancelled = cancelled != 0};
+    wl_signal_emit_mutable(&pointer->events.pinch_end, &pointer_pinch_end_event);
 }
 
-static void hold_begin(struct wl_client *c, struct wl_resource *res, uint32_t fingers) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_hold_begin_event e = {.pointer = p, .time_msec = now_msec(),
-                                             .fingers = fingers};
-    wl_signal_emit_mutable(&p->events.hold_begin, &e);
+static void hold_begin(struct wl_client *client, struct wl_resource *res, uint32_t fingers) {
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_hold_begin_event pointer_hold_begin_event = {
+        .pointer = pointer, .time_msec = now_msec(), .fingers = fingers};
+    wl_signal_emit_mutable(&pointer->events.hold_begin, &pointer_hold_begin_event);
 }
 
-static void hold_end(struct wl_client *c, struct wl_resource *res, uint32_t cancelled) {
-    (void)c;
-    struct wlr_pointer *p = touchpad(from_resource(res));
-    struct wlr_pointer_hold_end_event e = {.pointer = p, .time_msec = now_msec(),
-                                           .cancelled = cancelled != 0};
-    wl_signal_emit_mutable(&p->events.hold_end, &e);
+static void hold_end(struct wl_client *client, struct wl_resource *res, uint32_t cancelled) {
+    (void)client;
+    struct wlr_pointer *pointer = touchpad(from_resource(res));
+    struct wlr_pointer_hold_end_event pointer_hold_end_event = {
+        .pointer = pointer, .time_msec = now_msec(), .cancelled = cancelled != 0};
+    wl_signal_emit_mutable(&pointer->events.hold_end, &pointer_hold_end_event);
 }
 
-static void destroy_request([[maybe_unused]] struct wl_client *c, struct wl_resource *res) {
+static void destroy_request([[maybe_unused]] struct wl_client *client, struct wl_resource *res) {
     wl_resource_destroy(res);
 }
 

@@ -33,14 +33,14 @@ static bool cairo_buffer_begin_access(struct wlr_buffer *wlr_buffer, uint32_t fl
     xd_cairo_buffer *buf = XD_CONTAINER_OF(wlr_buffer, xd_cairo_buffer, base);
     if (flags & WLR_BUFFER_DATA_PTR_ACCESS_WRITE)
         return false;
-    int s = cairo_image_surface_get_stride(buf->surface);
-    if (s <= 0)
+    int row_stride = cairo_image_surface_get_stride(buf->surface);
+    if (row_stride <= 0)
         return false;
     *data = cairo_image_surface_get_data(buf->surface);
     /* CAIRO_FORMAT_ARGB32 is premultiplied native-endian ARGB, which is
      * DRM_FORMAT_ARGB8888 on little-endian hosts. */
     *format = DRM_FORMAT_ARGB8888;
-    *stride = (size_t)s;
+    *stride = (size_t)row_stride;
     return true;
 }
 
@@ -79,9 +79,9 @@ double xd_view_scale(const xd_view *view) {
 }
 
 static int to_device(int logical, double scale) {
-    double v = ceil(logical * scale);
-    XD_ASSERT(v >= 0 && v < 32768);
-    return (int)v;
+    double scaled = ceil(logical * scale);
+    XD_ASSERT(scaled >= 0 && scaled < 32768);
+    return (int)scaled;
 }
 
 #ifdef XD_SCENEFX
@@ -115,10 +115,10 @@ static void update_glass(xd_view *view, struct wlr_box outer, bool shown) {
      * opaque: nothing behind it to blur. */
     wlr_scene_node_set_enabled(&view->blur->node, !view->server->config.scheme.glass_opaque);
     /* No shadow when maximized, as in Windows. */
-    int s = SHADOW_SIGMA;
-    wlr_scene_shadow_set_size(view->shadow, outer.width + 2 * s, outer.height + 2 * s);
-    wlr_scene_shadow_set_corner_radius(view->shadow, radius + s);
-    wlr_scene_node_set_position(&view->shadow->node, -s, -s + SHADOW_DROP);
+    int sigma = SHADOW_SIGMA;
+    wlr_scene_shadow_set_size(view->shadow, outer.width + 2 * sigma, outer.height + 2 * sigma);
+    wlr_scene_shadow_set_corner_radius(view->shadow, radius + sigma);
+    wlr_scene_node_set_position(&view->shadow->node, -sigma, -sigma + SHADOW_DROP);
     wlr_scene_node_set_enabled(&view->shadow->node, !view->maximized);
     /* Shadow, then blur, then the frame and the window. */
     wlr_scene_node_lower_to_bottom(&view->blur->node);
@@ -164,11 +164,11 @@ void xd_frame_render(xd_view *view, bool force) {
 
     xd_theme theme;
     xd_theme_init(&theme, view->server->config.style, &view->server->config.scheme, scale);
-    xd_frame f = xd_view_frame(view, active);
-    f.icon = icon;
-    cairo_t *cr = cairo_create(buf->surface);
-    xd_theme_draw_frame(&theme, cr, (xd_rect){0, 0, dw, dh}, &f);
-    cairo_destroy(cr);
+    xd_frame frame = xd_view_frame(view, active);
+    frame.icon = icon;
+    cairo_t *cairo = cairo_create(buf->surface);
+    xd_theme_draw_frame(&theme, cairo, (xd_rect){0, 0, dw, dh}, &frame);
+    cairo_destroy(cairo);
     cairo_surface_flush(buf->surface);
 
     wlr_scene_buffer_set_buffer(view->frame, &buf->base);

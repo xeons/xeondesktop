@@ -144,12 +144,12 @@ static void cycle_step(xd_server *server, bool backwards) {
         link = backwards ? link->prev : link->next;
         if (link == &server->views)
             continue;
-        xd_view *v = XD_CONTAINER_OF(link, xd_view, link);
-        if (v->mapped) {
-            server->cycle_view = v;
+        xd_view *view = XD_CONTAINER_OF(link, xd_view, link);
+        if (view->mapped) {
+            server->cycle_view = view;
             /* Preview the selection by raising it without changing focus. */
-            if (!v->minimized)
-                wlr_scene_node_raise_to_top(&v->tree->node);
+            if (!view->minimized)
+                wlr_scene_node_raise_to_top(&view->tree->node);
             xd_switcher_show(server);
             return;
         }
@@ -162,12 +162,12 @@ static void cycle_step(xd_server *server, bool backwards) {
 
 /* Brings the program's window forward if it's open, else starts it. */
 static void raise_or_start(xd_server *server, const char *app_id, const char *program) {
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        const char *id = xd_view_app_id(v);
-        if (v->mapped && id != nullptr && strcmp(id, app_id) == 0) {
-            if (v->minimized)
-                xd_view_restore(v);
-            xd_view_focus(v);
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        const char *id = xd_view_app_id(view);
+        if (view->mapped && id != nullptr && strcmp(id, app_id) == 0) {
+            if (view->minimized)
+                xd_view_restore(view);
+            xd_view_focus(view);
             return;
         }
     }
@@ -275,9 +275,9 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
     if (logo && sym == XKB_KEY_Down) {
         if (focused != nullptr && focused->snapped != XD_SNAP_NONE) {
             /* A snapped window gets its size back first. */
-            struct wlr_box r = focused->snap_restore;
+            struct wlr_box box = focused->snap_restore;
             focused->snapped = XD_SNAP_NONE;
-            xd_view_set_outer_box(focused, r);
+            xd_view_set_outer_box(focused, box);
             return true;
         }
         if (focused != nullptr) {
@@ -296,21 +296,22 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
 static void sync_group(xd_server *server, uint32_t group, const xd_keyboard *except) {
     server->kb_group_syncing = true;
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
-        struct wlr_keyboard *k = kb->wlr_keyboard;
-        if (kb == except || k->keymap == nullptr || group >= xkb_keymap_num_layouts(k->keymap) ||
-            k->modifiers.group == group)
+        struct wlr_keyboard *keyboard = kb->wlr_keyboard;
+        if (kb == except || keyboard->keymap == nullptr ||
+            group >= xkb_keymap_num_layouts(keyboard->keymap) || keyboard->modifiers.group == group)
             continue;
-        wlr_keyboard_notify_modifiers(k, k->modifiers.depressed, k->modifiers.latched,
-                                      k->modifiers.locked, group);
+        wlr_keyboard_notify_modifiers(keyboard, keyboard->modifiers.depressed,
+                                      keyboard->modifiers.latched, keyboard->modifiers.locked,
+                                      group);
     }
     server->kb_group_syncing = false;
 }
 
-static uint32_t layouts_of(const struct wlr_keyboard *k) {
-    return k->keymap != nullptr ? xkb_keymap_num_layouts(k->keymap) : 0;
+static uint32_t layouts_of(const struct wlr_keyboard *keyboard) {
+    return keyboard->keymap != nullptr ? xkb_keymap_num_layouts(keyboard->keymap) : 0;
 }
 
-static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *k);
+static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *keyboard);
 
 /* How many layouts the session has: [Keyboard] Layout's (or a keyboard's
  * own, if it brought more). */
@@ -320,11 +321,11 @@ static uint32_t session_layouts(xd_server *server) {
         server->kb_layouts = keymap != nullptr ? xkb_keymap_num_layouts(keymap) : 1;
         xkb_keymap_unref(keymap);
     }
-    uint32_t n = server->kb_layouts;
+    uint32_t count = server->kb_layouts;
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
-        n = XD_MAX(n, layouts_of(kb->wlr_keyboard));
+        count = XD_MAX(count, layouts_of(kb->wlr_keyboard));
     }
-    return n;
+    return count;
 }
 
 /* Every keyboard that has it switches to `group`; the focused client and
@@ -392,41 +393,41 @@ static bool keyboard_grab(const xd_server *server) {
     return server->mode == XD_CURSOR_KEY_MOVE || server->mode == XD_CURSOR_KEY_SIZE;
 }
 
-static const char *cursor_for_edges(uint32_t e) {
-    bool l = e & WLR_EDGE_LEFT, r = e & WLR_EDGE_RIGHT, t = e & WLR_EDGE_TOP,
-         b = e & WLR_EDGE_BOTTOM;
-    if (t && l)
+static const char *cursor_for_edges(uint32_t edges) {
+    bool left = edges & WLR_EDGE_LEFT, right = edges & WLR_EDGE_RIGHT, top = edges & WLR_EDGE_TOP,
+         bottom = edges & WLR_EDGE_BOTTOM;
+    if (top && left)
         return "nw-resize";
-    if (t && r)
+    if (top && right)
         return "ne-resize";
-    if (b && l)
+    if (bottom && left)
         return "sw-resize";
-    if (b && r)
+    if (bottom && right)
         return "se-resize";
-    return t ? "n-resize" : b ? "s-resize" : l ? "w-resize" : r ? "e-resize" : "move";
+    return top ? "n-resize" : bottom ? "s-resize" : left ? "w-resize" : right ? "e-resize" : "move";
 }
 
 /* The pointer sits on the chosen edges (or the caption while moving), as
  * in Windows. */
 static void warp_to_handle(xd_server *server) {
-    struct wlr_box b = server->key_box;
-    double x = b.x + b.width / 2.0, y = b.y + b.height / 2.0;
+    struct wlr_box box = server->key_box;
+    double x = box.x + box.width / 2.0, y = box.y + box.height / 2.0;
     if (server->mode == XD_CURSOR_KEY_MOVE) {
-        y = b.y + xd_view_insets(server->grab_view).top / 2.0;
+        y = box.y + xd_view_insets(server->grab_view).top / 2.0;
     } else {
-        uint32_t e = server->key_edges;
-        if (e & WLR_EDGE_LEFT)
-            x = b.x;
-        if (e & WLR_EDGE_RIGHT)
-            x = b.x + b.width - 1;
-        if (e & WLR_EDGE_TOP)
-            y = b.y;
-        if (e & WLR_EDGE_BOTTOM)
-            y = b.y + b.height - 1;
+        uint32_t edges = server->key_edges;
+        if (edges & WLR_EDGE_LEFT)
+            x = box.x;
+        if (edges & WLR_EDGE_RIGHT)
+            x = box.x + box.width - 1;
+        if (edges & WLR_EDGE_TOP)
+            y = box.y;
+        if (edges & WLR_EDGE_BOTTOM)
+            y = box.y + box.height - 1;
     }
     wlr_cursor_warp(server->cursor, nullptr, x, y);
-    server->grab_x = server->cursor->x - b.x;
-    server->grab_y = server->cursor->y - b.y;
+    server->grab_x = server->cursor->x - box.x;
+    server->grab_y = server->cursor->y - box.y;
     xd_cursor_set(server, server->mode == XD_CURSOR_KEY_MOVE ? "move"
                                                              : cursor_for_edges(server->key_edges));
 }
@@ -456,32 +457,32 @@ void xd_view_begin_keyboard_size(xd_view *view) { begin_keyboard(view, XD_CURSOR
  * only its outline moves until Enter (`done`). */
 static void apply_key_box_now(xd_server *server, bool done) {
     xd_view *view = server->grab_view;
-    struct wlr_box *b = &server->key_box;
+    struct wlr_box *box = &server->key_box;
     bool outline = !done && xd_outline_dragging(server);
     if (server->mode == XD_CURSOR_KEY_MOVE) {
         if (outline)
-            xd_outline_show(server, *b);
+            xd_outline_show(server, *box);
         else
-            xd_view_set_position(view, b->x, b->y);
+            xd_view_set_position(view, box->x, box->y);
         return;
     }
     xd_insets in = xd_view_insets(view);
     int min_w = in.left + in.right + XD_MIN_CLIENT_W;
     int min_h = in.top + in.bottom + XD_MIN_CLIENT_H;
-    if (b->width < min_w) {
+    if (box->width < min_w) {
         if (server->key_edges & WLR_EDGE_LEFT)
-            b->x -= min_w - b->width;
-        b->width = min_w;
+            box->x -= min_w - box->width;
+        box->width = min_w;
     }
-    if (b->height < min_h) {
+    if (box->height < min_h) {
         if (server->key_edges & WLR_EDGE_TOP)
-            b->y -= min_h - b->height;
-        b->height = min_h;
+            box->y -= min_h - box->height;
+        box->height = min_h;
     }
     if (outline)
-        xd_outline_show(server, *b);
+        xd_outline_show(server, *box);
     else
-        xd_view_resize_anchored(view, *b, server->key_edges);
+        xd_view_resize_anchored(view, *box, server->key_edges);
 }
 
 static void apply_key_box(xd_server *server) { apply_key_box_now(server, false); }
@@ -525,30 +526,30 @@ static void keyboard_grab_key(xd_server *server, uint32_t mods, xkb_keysym_t sym
     else
         return;
     int step = (mods & WLR_MODIFIER_CTRL) ? 1 : 8;
-    struct wlr_box *b = &server->key_box;
+    struct wlr_box *box = &server->key_box;
     if (server->mode == XD_CURSOR_KEY_MOVE) {
-        b->x += dx * step;
-        b->y += dy * step;
+        box->x += dx * step;
+        box->y += dy * step;
     } else {
-        uint32_t *e = &server->key_edges;
+        uint32_t *edges = &server->key_edges;
         /* The first arrow on an axis picks that edge; later ones move it. */
-        if (dx != 0 && !(*e & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT))) {
-            *e |= dx < 0 ? WLR_EDGE_LEFT : WLR_EDGE_RIGHT;
-        } else if (dy != 0 && !(*e & (WLR_EDGE_TOP | WLR_EDGE_BOTTOM))) {
-            *e |= dy < 0 ? WLR_EDGE_TOP : WLR_EDGE_BOTTOM;
+        if (dx != 0 && !(*edges & (WLR_EDGE_LEFT | WLR_EDGE_RIGHT))) {
+            *edges |= dx < 0 ? WLR_EDGE_LEFT : WLR_EDGE_RIGHT;
+        } else if (dy != 0 && !(*edges & (WLR_EDGE_TOP | WLR_EDGE_BOTTOM))) {
+            *edges |= dy < 0 ? WLR_EDGE_TOP : WLR_EDGE_BOTTOM;
         } else if (dx != 0) {
-            if (*e & WLR_EDGE_LEFT) {
-                b->x += dx * step;
-                b->width -= dx * step;
+            if (*edges & WLR_EDGE_LEFT) {
+                box->x += dx * step;
+                box->width -= dx * step;
             } else {
-                b->width += dx * step;
+                box->width += dx * step;
             }
         } else {
-            if (*e & WLR_EDGE_TOP) {
-                b->y += dy * step;
-                b->height -= dy * step;
+            if (*edges & WLR_EDGE_TOP) {
+                box->y += dy * step;
+                box->height -= dy * step;
             } else {
-                b->height += dy * step;
+                box->height += dy * step;
             }
         }
     }
@@ -558,26 +559,26 @@ static void keyboard_grab_key(xd_server *server, uint32_t mods, xkb_keysym_t sym
 
 /* The mouse drags the window, or the chosen edges, until a click. */
 static void keyboard_grab_motion(xd_server *server) {
-    struct wlr_box *b = &server->key_box;
+    struct wlr_box *box = &server->key_box;
     double cx = server->cursor->x, cy = server->cursor->y;
     if (server->mode == XD_CURSOR_KEY_MOVE) {
-        b->x = (int)(cx - server->grab_x);
-        b->y = (int)(cy - server->grab_y);
+        box->x = (int)(cx - server->grab_x);
+        box->y = (int)(cy - server->grab_y);
     } else {
-        uint32_t e = server->key_edges;
-        int right = b->x + b->width, bottom = b->y + b->height;
-        if (e & WLR_EDGE_LEFT) {
-            b->x = (int)cx;
-            b->width = right - b->x;
+        uint32_t edges = server->key_edges;
+        int right = box->x + box->width, bottom = box->y + box->height;
+        if (edges & WLR_EDGE_LEFT) {
+            box->x = (int)cx;
+            box->width = right - box->x;
         }
-        if (e & WLR_EDGE_RIGHT)
-            b->width = (int)cx - b->x + 1;
-        if (e & WLR_EDGE_TOP) {
-            b->y = (int)cy;
-            b->height = bottom - b->y;
+        if (edges & WLR_EDGE_RIGHT)
+            box->width = (int)cx - box->x + 1;
+        if (edges & WLR_EDGE_TOP) {
+            box->y = (int)cy;
+            box->height = bottom - box->y;
         }
-        if (e & WLR_EDGE_BOTTOM)
-            b->height = (int)cy - b->y + 1;
+        if (edges & WLR_EDGE_BOTTOM)
+            box->height = (int)cy - box->y + 1;
     }
     apply_key_box(server);
 }
@@ -621,23 +622,23 @@ static uint32_t modifier_of(struct xkb_keymap *keymap, xkb_keysym_t sym) {
  * tracks itself (Caps Lock, held keys); clients get them as latched and
  * locked modifiers. */
 static void sticky_update(xd_keyboard *kb, uint32_t latched, uint32_t locked) {
-    struct wlr_keyboard *k = kb->wlr_keyboard;
-    if (k->xkb_state == nullptr)
+    struct wlr_keyboard *keyboard = kb->wlr_keyboard;
+    if (keyboard->xkb_state == nullptr)
         return;
-    uint32_t own_latched = k->modifiers.latched & ~kb->sticky_latched;
-    uint32_t own_locked = k->modifiers.locked & ~kb->sticky_locked;
+    uint32_t own_latched = keyboard->modifiers.latched & ~kb->sticky_latched;
+    uint32_t own_locked = keyboard->modifiers.locked & ~kb->sticky_locked;
     kb->sticky_latched = latched;
     kb->sticky_locked = locked;
-    wlr_keyboard_notify_modifiers(k, k->modifiers.depressed, own_latched | latched,
-                                  own_locked | locked, k->modifiers.group);
+    wlr_keyboard_notify_modifiers(keyboard, keyboard->modifiers.depressed, own_latched | latched,
+                                  own_locked | locked, keyboard->modifiers.group);
 }
 
 /* StickyKeys, as in Windows: a modifier pressed and released on its own
  * applies to the next key; pressed twice it stays on (if StickyKeysLock)
  * until pressed once more. Called for every key event. */
 static void sticky_key(xd_keyboard *kb, const xkb_keysym_t *syms, int nsyms, bool pressed) {
-    const xd_access_settings *a = &kb->server->config.access;
-    if (!a->sticky_keys)
+    const xd_access_settings *access_settings = &kb->server->config.access;
+    if (!access_settings->sticky_keys)
         return;
     uint32_t mod = 0;
     for (int i = 0; i < nsyms; i++)
@@ -659,7 +660,7 @@ static void sticky_key(xd_keyboard *kb, const xkb_keysym_t *syms, int nsyms, boo
         locked &= ~mod;
     } else if (latched & mod) {
         latched &= ~mod;
-        if (a->sticky_lock)
+        if (access_settings->sticky_lock)
             locked |= mod;
     } else {
         latched |= mod;
@@ -669,26 +670,27 @@ static void sticky_key(xd_keyboard *kb, const xkb_keysym_t *syms, int nsyms, boo
 
 /* FilterKeys' BounceKeys: true if this event repeats a key released less
  * than bounce_ms ago, and is to be ignored (its release too). */
-static bool bounced(xd_keyboard *kb, const struct wlr_keyboard_key_event *e) {
-    const xd_access_settings *a = &kb->server->config.access;
-    if (e->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
-        if (kb->bounced_keycode == e->keycode + 1) {
+static bool bounced(xd_keyboard *kb, const struct wlr_keyboard_key_event *keyboard_key_event) {
+    const xd_access_settings *access_settings = &kb->server->config.access;
+    if (keyboard_key_event->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+        if (kb->bounced_keycode == keyboard_key_event->keycode + 1) {
             kb->bounced_keycode = 0;
             return true;
         }
-        kb->bounce_keycode = e->keycode + 1; /* 0 = none */
-        kb->bounce_msec = e->time_msec;
+        kb->bounce_keycode = keyboard_key_event->keycode + 1; /* 0 = none */
+        kb->bounce_msec = keyboard_key_event->time_msec;
         return false;
     }
-    if (a->filter_keys && !a->slow_keys && kb->bounce_keycode == e->keycode + 1 &&
-        e->time_msec - kb->bounce_msec < (uint32_t)a->bounce_ms) {
-        kb->bounced_keycode = e->keycode + 1;
+    if (access_settings->filter_keys && !access_settings->slow_keys &&
+        kb->bounce_keycode == keyboard_key_event->keycode + 1 &&
+        keyboard_key_event->time_msec - kb->bounce_msec < (uint32_t)access_settings->bounce_ms) {
+        kb->bounced_keycode = keyboard_key_event->keycode + 1;
         return true;
     }
     return false;
 }
 
-static void apply_repeat(xd_server *server, struct wlr_keyboard *k);
+static void apply_repeat(xd_server *server, struct wlr_keyboard *keyboard);
 
 void xd_input_apply_access(xd_server *server) {
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
@@ -699,14 +701,17 @@ void xd_input_apply_access(xd_server *server) {
         apply_repeat(server, kb->wlr_keyboard);
     }
     xd_access_apply(server);
-    const xd_access_settings *a = &server->config.access;
+    const xd_access_settings *access_settings = &server->config.access;
     wlr_log(WLR_INFO,
             "accessibility: StickyKeys %s%s, FilterKeys %s (%s, %d ms), ToggleKeys %s, "
             "MouseKeys %s (%d px/s)",
-            a->sticky_keys ? "on" : "off", a->sticky_keys && a->sticky_lock ? " (twice locks)" : "",
-            a->filter_keys ? "on" : "off", a->slow_keys ? "SlowKeys" : "BounceKeys",
-            a->slow_keys ? a->slow_ms : a->bounce_ms, a->toggle_keys ? "on" : "off",
-            a->mouse_keys ? "on" : "off", a->mouse_keys_speed);
+            access_settings->sticky_keys ? "on" : "off",
+            access_settings->sticky_keys && access_settings->sticky_lock ? " (twice locks)" : "",
+            access_settings->filter_keys ? "on" : "off",
+            access_settings->slow_keys ? "SlowKeys" : "BounceKeys",
+            access_settings->slow_keys ? access_settings->slow_ms : access_settings->bounce_ms,
+            access_settings->toggle_keys ? "on" : "off", access_settings->mouse_keys ? "on" : "off",
+            access_settings->mouse_keys_speed);
 }
 
 static void handle_key(struct wl_listener *listener, void *data) {
@@ -725,16 +730,16 @@ static void handle_key(struct wl_listener *listener, void *data) {
  * key. */
 static bool power_key(xd_server *server, const xkb_keysym_t *syms, int nsyms, bool pressed) {
     for (int i = 0; i < nsyms; i++) {
-        xd_power_event e;
+        xd_power_event power_event;
         if (syms[i] == XKB_KEY_XF86PowerOff)
-            e = XD_POWER_EVENT_POWER;
+            power_event = XD_POWER_EVENT_POWER;
         else if (syms[i] == XKB_KEY_XF86Sleep || syms[i] == XKB_KEY_XF86Suspend)
-            e = XD_POWER_EVENT_SLEEP;
+            power_event = XD_POWER_EVENT_SLEEP;
         else
             continue;
         if (!pressed)
             return server->arranger_resource != nullptr;
-        return xd_arrange_power_button(server, e);
+        return xd_arrange_power_button(server, power_event);
     }
     return false;
 }
@@ -853,20 +858,22 @@ static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wl
 
 /* The keymap [Keyboard] asks for; empty names fall back to XKB_DEFAULT_*
  * and then the system default. A bad layout falls back the same way. */
-static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *k) {
+static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *keyboard) {
     struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     if (ctx == nullptr)
         return nullptr;
     struct xkb_rule_names names = {
-        .layout = k->layout[0] != '\0' ? k->layout : nullptr,
-        .variant = k->variant[0] != '\0' ? k->variant : nullptr,
-        .options = k->options[0] != '\0' ? k->options : nullptr,
-        .model = k->model[0] != '\0' ? k->model : nullptr,
+        .layout = keyboard->layout[0] != '\0' ? keyboard->layout : nullptr,
+        .variant = keyboard->variant[0] != '\0' ? keyboard->variant : nullptr,
+        .options = keyboard->options[0] != '\0' ? keyboard->options : nullptr,
+        .model = keyboard->model[0] != '\0' ? keyboard->model : nullptr,
     };
     struct xkb_keymap *keymap = xkb_keymap_new_from_names(ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
     if (keymap == nullptr) {
-        wlr_log(WLR_ERROR, "cannot compile keymap (layout '%s', variant '%s', options '%s'); "
-                "using the default", k->layout, k->variant, k->options);
+        wlr_log(WLR_ERROR,
+                "cannot compile keymap (layout '%s', variant '%s', options '%s'); "
+                "using the default",
+                keyboard->layout, keyboard->variant, keyboard->options);
         keymap = xkb_keymap_new_from_names(ctx, nullptr, XKB_KEYMAP_COMPILE_NO_FLAGS);
     }
     xkb_context_unref(ctx);
@@ -875,14 +882,16 @@ static struct xkb_keymap *configured_keymap(const xd_keyboard_settings *k) {
 
 /* [Keyboard]'s repeat, or SlowKeys' own (none, or slower). Clients
  * repeat keys themselves, at the rate we tell them. */
-static void apply_repeat(xd_server *server, struct wlr_keyboard *k) {
-    const xd_access_settings *a = &server->config.access;
+static void apply_repeat(xd_server *server, struct wlr_keyboard *keyboard) {
+    const xd_access_settings *access_settings = &server->config.access;
     int rate = server->config.keyboard.repeat_rate, delay = server->config.keyboard.repeat_delay;
-    if (a->filter_keys && a->slow_keys) {
-        rate = a->filter_no_repeat ? 0 : XD_MAX(1, 1000 / a->filter_repeat_ms);
-        delay = a->filter_repeat_delay;
+    if (access_settings->filter_keys && access_settings->slow_keys) {
+        rate = access_settings->filter_no_repeat
+                   ? 0
+                   : XD_MAX(1, 1000 / access_settings->filter_repeat_ms);
+        delay = access_settings->filter_repeat_delay;
     }
-    wlr_keyboard_set_repeat_info(k, rate, delay);
+    wlr_keyboard_set_repeat_info(keyboard, rate, delay);
 }
 
 static void configure_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
@@ -893,11 +902,13 @@ static void configure_keyboard(xd_server *server, struct wlr_keyboard *wlr_kb,
 }
 
 void xd_input_apply_keyboard(xd_server *server) {
-    const xd_keyboard_settings *k = &server->config.keyboard;
-    struct xkb_keymap *keymap = configured_keymap(k);
-    wlr_log(WLR_INFO, "keyboard settings: layout '%s', variant '%s', options '%s', model '%s', "
+    const xd_keyboard_settings *keyboard = &server->config.keyboard;
+    struct xkb_keymap *keymap = configured_keymap(keyboard);
+    wlr_log(WLR_INFO,
+            "keyboard settings: layout '%s', variant '%s', options '%s', model '%s', "
             "repeat %d/s after %d ms",
-            k->layout, k->variant, k->options, k->model, k->repeat_rate, k->repeat_delay);
+            keyboard->layout, keyboard->variant, keyboard->options, keyboard->model,
+            keyboard->repeat_rate, keyboard->repeat_delay);
     server->kb_layouts = keymap != nullptr ? xkb_keymap_num_layouts(keymap) : 1;
     XD_LIST_FOR_EACH(kb, &server->keyboards, xd_keyboard, link) {
         if (kb->physical)
@@ -938,52 +949,52 @@ static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wl
 
 /* Only libinput devices can be configured: not a nested session's
  * pointer, nor virtual ones. */
-static void configure_pointer(struct wlr_input_device *device, const xd_mouse_settings *m) {
+static void configure_pointer(struct wlr_input_device *device, const xd_mouse_settings *mouse) {
     if (!wlr_input_device_is_libinput(device))
         return;
     struct libinput_device *li = wlr_libinput_get_device_handle(device);
     if (libinput_device_config_left_handed_is_available(li))
-        libinput_device_config_left_handed_set(li, m->left_handed);
+        libinput_device_config_left_handed_set(li, mouse->left_handed);
     if (libinput_device_config_accel_is_available(li)) {
-        libinput_device_config_accel_set_speed(li, m->speed / 10.0);
+        libinput_device_config_accel_set_speed(li, mouse->speed / 10.0);
         /* Windows' "Enhance pointer precision" is its acceleration curve;
          * without it the pointer moves in proportion to the mouse. */
-        enum libinput_config_accel_profile want = m->acceleration
+        enum libinput_config_accel_profile want = mouse->acceleration
                                                       ? LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE
                                                       : LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
         if (libinput_device_config_accel_get_profiles(li) & (uint32_t)want)
             libinput_device_config_accel_set_profile(li, want);
     }
     wlr_log(WLR_INFO, "pointer '%s': %s-handed, speed %d, %s", device->name,
-            m->left_handed ? "left" : "right", m->speed,
-            m->acceleration ? "acceleration" : "no acceleration");
+            mouse->left_handed ? "left" : "right", mouse->speed,
+            mouse->acceleration ? "acceleration" : "no acceleration");
 }
 
 void xd_input_apply_mouse(xd_server *server) {
-    const xd_mouse_settings *m = &server->config.mouse;
+    const xd_mouse_settings *mouse = &server->config.mouse;
     wlr_log(WLR_INFO, "mouse settings: %s-handed, speed %d, %s, double-click %d ms, wheel lines %d",
-            m->left_handed ? "left" : "right", m->speed,
-            m->acceleration ? "acceleration" : "no acceleration", m->double_click_ms,
-            m->wheel_lines);
-    XD_LIST_FOR_EACH(p, &server->pointers, xd_pointer, link) {
-        configure_pointer(p->device, m);
+            mouse->left_handed ? "left" : "right", mouse->speed,
+            mouse->acceleration ? "acceleration" : "no acceleration", mouse->double_click_ms,
+            mouse->wheel_lines);
+    XD_LIST_FOR_EACH(pointer, &server->pointers, xd_pointer, link) {
+        configure_pointer(pointer->device, mouse);
     }
     xd_access_apply(server); /* ClickLock may have been turned off */
 }
 
 static void handle_pointer_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
-    xd_pointer *p = XD_CONTAINER_OF(listener, xd_pointer, destroy);
-    xd_unlisten(&p->destroy);
-    wl_list_remove(&p->link);
-    xd_free(p);
+    xd_pointer *pointer = XD_CONTAINER_OF(listener, xd_pointer, destroy);
+    xd_unlisten(&pointer->destroy);
+    wl_list_remove(&pointer->link);
+    xd_free(pointer);
 }
 
 static void add_pointer(xd_server *server, struct wlr_input_device *device) {
     configure_pointer(device, &server->config.mouse);
-    xd_pointer *p = XD_NEW(xd_pointer);
-    p->device = device;
-    XD_LISTEN(&device->events.destroy, p, destroy, handle_pointer_destroy);
-    wl_list_insert(&server->pointers, &p->link);
+    xd_pointer *pointer = XD_NEW(xd_pointer);
+    pointer->device = device;
+    XD_LISTEN(&device->events.destroy, pointer, destroy, handle_pointer_destroy);
+    wl_list_insert(&server->pointers, &pointer->link);
     wlr_cursor_attach_input_device(server->cursor, device);
 }
 
@@ -1007,9 +1018,9 @@ void xd_input_lid(xd_server *server, bool closed) {
 
 static void handle_switch_toggle(struct wl_listener *listener, void *data) {
     xd_switch *sw = XD_CONTAINER_OF(listener, xd_switch, toggle);
-    const struct wlr_switch_toggle_event *e = data;
-    if (e->switch_type == WLR_SWITCH_TYPE_LID)
-        xd_input_lid(sw->server, e->switch_state == WLR_SWITCH_STATE_ON);
+    const struct wlr_switch_toggle_event *switch_toggle_event = data;
+    if (switch_toggle_event->switch_type == WLR_SWITCH_TYPE_LID)
+        xd_input_lid(sw->server, switch_toggle_event->switch_state == WLR_SWITCH_STATE_ON);
 }
 
 static void handle_switch_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -1084,8 +1095,10 @@ static void handle_new_virtual_keyboard(struct wl_listener *listener, void *data
 
 static void handle_new_virtual_pointer(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, new_virtual_pointer);
-    const struct wlr_virtual_pointer_v1_new_pointer_event *e = data;
-    wlr_cursor_attach_input_device(server->cursor, &e->new_pointer->pointer.base);
+    const struct wlr_virtual_pointer_v1_new_pointer_event *virtual_pointer_v1_new_pointer_event =
+        data;
+    wlr_cursor_attach_input_device(
+        server->cursor, &virtual_pointer_v1_new_pointer_event->new_pointer->pointer.base);
     update_seat_caps(server);
     wlr_log(WLR_INFO, "virtual pointer connected (testing)");
 }
@@ -1107,35 +1120,36 @@ void xd_input_enable_virtual(xd_server *server) {
 
 /* The theme and size [Mouse] asks for; nullptr is libxcursor's default
  * (XCURSOR_THEME, then "default"). */
-static struct wlr_xcursor_manager *cursor_manager(const xd_mouse_settings *m) {
-    return wlr_xcursor_manager_create(m->cursor_theme[0] != '\0' ? m->cursor_theme : nullptr,
-                                      (uint32_t)m->cursor_size);
+static struct wlr_xcursor_manager *cursor_manager(const xd_mouse_settings *mouse) {
+    return wlr_xcursor_manager_create(mouse->cursor_theme[0] != '\0' ? mouse->cursor_theme
+                                                                     : nullptr,
+                                      (uint32_t)mouse->cursor_size);
 }
 
 /* Programs started from now on (and those they start) use the same
  * cursors: XCursor and libwayland-cursor read these, GTK and Qt too. */
-static void export_cursor_theme(const xd_mouse_settings *m) {
-    if (m->cursor_theme[0] != '\0')
-        setenv("XCURSOR_THEME", m->cursor_theme, true);
+static void export_cursor_theme(const xd_mouse_settings *mouse) {
+    if (mouse->cursor_theme[0] != '\0')
+        setenv("XCURSOR_THEME", mouse->cursor_theme, true);
     else
         unsetenv("XCURSOR_THEME");
     char size[16];
-    snprintf(size, sizeof(size), "%d", m->cursor_size);
+    snprintf(size, sizeof(size), "%d", mouse->cursor_size);
     setenv("XCURSOR_SIZE", size, true);
 }
 
 void xd_input_apply_cursor_theme(xd_server *server) {
-    const xd_mouse_settings *m = &server->config.mouse;
-    struct wlr_xcursor_manager *mgr = cursor_manager(m);
+    const xd_mouse_settings *mouse = &server->config.mouse;
+    struct wlr_xcursor_manager *mgr = cursor_manager(mouse);
     /* The cursor keeps a pointer to its manager (to reload on a scale
      * change), so move it to the new one before freeing the old. */
     if (server->cursor_name != nullptr)
         wlr_cursor_set_xcursor(server->cursor, mgr, server->cursor_name);
     wlr_xcursor_manager_destroy(server->xcursor);
     server->xcursor = mgr;
-    export_cursor_theme(m);
+    export_cursor_theme(mouse);
     wlr_log(WLR_INFO, "cursor theme '%s', size %d",
-            m->cursor_theme[0] != '\0' ? m->cursor_theme : "(default)", m->cursor_size);
+            mouse->cursor_theme[0] != '\0' ? mouse->cursor_theme : "(default)", mouse->cursor_size);
 }
 
 void xd_cursor_set(xd_server *server, const char *name) {
@@ -1192,9 +1206,9 @@ typedef struct pick {
 static constexpr double CSD_MARGIN = 6;
 static constexpr double CSD_CORNER = 16;
 
-static xd_frame_part csd_margin_part(const xd_view *v, double lx, double ly) {
-    struct wlr_box b = xd_view_outer_box(v);
-    double x0 = b.x, y0 = b.y, x1 = b.x + b.width, y1 = b.y + b.height;
+static xd_frame_part csd_margin_part(const xd_view *view, double lx, double ly) {
+    struct wlr_box box = xd_view_outer_box(view);
+    double x0 = box.x, y0 = box.y, x1 = box.x + box.width, y1 = box.y + box.height;
     if (lx < x0 - CSD_MARGIN || ly < y0 - CSD_MARGIN || lx >= x1 + CSD_MARGIN ||
         ly >= y1 + CSD_MARGIN)
         return XD_PART_NONE;
@@ -1216,58 +1230,63 @@ static xd_frame_part csd_margin_part(const xd_view *v, double lx, double ly) {
 }
 
 static pick pick_at(xd_server *server, double lx, double ly) {
-    pick p = {.part = XD_PART_NONE};
+    pick picked = {.part = XD_PART_NONE};
     if (server->locked) {
         /* Only the screen locker's surfaces get the pointer. */
-        struct wlr_scene_node *n =
-            wlr_scene_node_at(&server->layer_lock->node, lx, ly, &p.sx, &p.sy);
-        if (n != nullptr && n->type == WLR_SCENE_NODE_BUFFER) {
+        struct wlr_scene_node *scene_node =
+            wlr_scene_node_at(&server->layer_lock->node, lx, ly, &picked.sx, &picked.sy);
+        if (scene_node != nullptr && scene_node->type == WLR_SCENE_NODE_BUFFER) {
             struct wlr_scene_surface *ss =
-                wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(n));
+                wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(scene_node));
             if (ss != nullptr) {
-                p.surface = ss->surface;
-                p.part = XD_PART_CLIENT;
+                picked.surface = ss->surface;
+                picked.part = XD_PART_CLIENT;
             }
         }
-        return p;
+        return picked;
     }
     struct wlr_scene_node *node =
-        wlr_scene_node_at(&server->scene->tree.node, lx, ly, &p.sx, &p.sy);
+        wlr_scene_node_at(&server->scene->tree.node, lx, ly, &picked.sx, &picked.sy);
     xd_view *under = node != nullptr ? xd_view_from_node(node) : nullptr;
     /* Resize margins of client-decorated windows stacked above what's under
      * the cursor (views are kept front to back). */
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (v == under)
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (view == under)
             break;
-        if (!v->mapped || v->minimized || xd_view_framed(v) || v->maximized || v->fullscreen)
+        if (!view->mapped || view->minimized || xd_view_framed(view) || view->maximized ||
+            view->fullscreen)
             continue;
-        xd_frame_part part = csd_margin_part(v, lx, ly);
+        xd_frame_part part = csd_margin_part(view, lx, ly);
         if (part != XD_PART_NONE)
-            return (pick){.view = v, .part = part};
+            return (pick){.view = view, .part = part};
     }
     if (node == nullptr)
-        return p;
-    p.view = under;
+        return picked;
+    picked.view = under;
     if (under == nullptr)
-        p.layer = xd_layer_from_node(node);
+        picked.layer = xd_layer_from_node(node);
     if (node->type == WLR_SCENE_NODE_BUFFER) {
         struct wlr_scene_surface *ss =
             wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
         if (ss != nullptr) {
-            p.surface = ss->surface;
-            p.part = XD_PART_CLIENT;
-            return p;
+            picked.surface = ss->surface;
+            picked.part = XD_PART_CLIENT;
+            return picked;
         }
     }
-    if (p.view != nullptr)
-        p.part = xd_view_hit(p.view, lx, ly);
-    return p;
+    if (picked.view != nullptr)
+        picked.part = xd_view_hit(picked.view, lx, ly);
+    return picked;
 }
 
 xd_input_target xd_input_target_at(xd_server *server, double lx, double ly) {
-    pick p = pick_at(server, lx, ly);
-    return (xd_input_target){.view = p.view, .layer = p.layer, .surface = p.surface,
-                             .sx = p.sx, .sy = p.sy, .part = p.part};
+    pick picked = pick_at(server, lx, ly);
+    return (xd_input_target){.view = picked.view,
+                             .layer = picked.layer,
+                             .surface = picked.surface,
+                             .sx = picked.sx,
+                             .sy = picked.sy,
+                             .part = picked.part};
 }
 
 static void set_hover(xd_server *server, xd_view *view, xd_frame_part part) {
@@ -1283,30 +1302,30 @@ static void set_hover(xd_server *server, xd_view *view, xd_frame_part part) {
 static struct wlr_box resize_box(xd_server *server, uint32_t *moving_out) {
     xd_view *view = server->grab_view;
     xd_insets in = xd_view_insets(view);
-    struct wlr_box b = server->grab_box;
+    struct wlr_box box = server->grab_box;
     int dx = (int)(server->cursor->x - server->grab_x);
     int dy = (int)(server->cursor->y - server->grab_y);
     int min_w = in.left + in.right + XD_MIN_CLIENT_W;
     int min_h = in.top + in.bottom + XD_MIN_CLIENT_H;
-    xd_frame_part p = server->grab_part;
+    xd_frame_part part = server->grab_part;
 
-    int left = b.x;
-    int top = b.y;
-    int right = b.x + b.width;
-    int bottom = b.y + b.height;
-    if (p == XD_PART_LEFT || p == XD_PART_TOP_LEFT || p == XD_PART_BOTTOM_LEFT)
+    int left = box.x;
+    int top = box.y;
+    int right = box.x + box.width;
+    int bottom = box.y + box.height;
+    if (part == XD_PART_LEFT || part == XD_PART_TOP_LEFT || part == XD_PART_BOTTOM_LEFT)
         left = XD_MIN(left + dx, right - min_w);
-    if (p == XD_PART_RIGHT || p == XD_PART_TOP_RIGHT || p == XD_PART_BOTTOM_RIGHT)
+    if (part == XD_PART_RIGHT || part == XD_PART_TOP_RIGHT || part == XD_PART_BOTTOM_RIGHT)
         right = XD_MAX(right + dx, left + min_w);
-    if (p == XD_PART_TOP || p == XD_PART_TOP_LEFT || p == XD_PART_TOP_RIGHT)
+    if (part == XD_PART_TOP || part == XD_PART_TOP_LEFT || part == XD_PART_TOP_RIGHT)
         top = XD_MIN(top + dy, bottom - min_h);
-    if (p == XD_PART_BOTTOM || p == XD_PART_BOTTOM_LEFT || p == XD_PART_BOTTOM_RIGHT)
+    if (part == XD_PART_BOTTOM || part == XD_PART_BOTTOM_LEFT || part == XD_PART_BOTTOM_RIGHT)
         bottom = XD_MAX(bottom + dy, top + min_h);
 
     uint32_t moving = 0;
-    if (p == XD_PART_LEFT || p == XD_PART_TOP_LEFT || p == XD_PART_BOTTOM_LEFT)
+    if (part == XD_PART_LEFT || part == XD_PART_TOP_LEFT || part == XD_PART_BOTTOM_LEFT)
         moving |= WLR_EDGE_LEFT;
-    if (p == XD_PART_TOP || p == XD_PART_TOP_LEFT || p == XD_PART_TOP_RIGHT)
+    if (part == XD_PART_TOP || part == XD_PART_TOP_LEFT || part == XD_PART_TOP_RIGHT)
         moving |= WLR_EDGE_TOP;
     *moving_out = moving;
     return (struct wlr_box){left, top, right - left, bottom - top};
@@ -1314,17 +1333,17 @@ static struct wlr_box resize_box(xd_server *server, uint32_t *moving_out) {
 
 static void process_resize(xd_server *server) {
     uint32_t moving = 0;
-    struct wlr_box b = resize_box(server, &moving);
+    struct wlr_box box = resize_box(server, &moving);
     if (xd_outline_dragging(server))
-        xd_outline_show(server, b);
+        xd_outline_show(server, box);
     else
-        xd_view_resize_anchored(server->grab_view, b, moving);
+        xd_view_resize_anchored(server->grab_view, box, moving);
 }
 
 /* Where a move has the window (its outer box's corner). */
-static void move_position(const xd_server *server, int *x, int *y) {
-    *x = (int)(server->cursor->x - server->grab_x);
-    *y = (int)(server->cursor->y - server->grab_y);
+static void move_position(const xd_server *server, int *window_x, int *window_y) {
+    *window_x = (int)(server->cursor->x - server->grab_x);
+    *window_y = (int)(server->cursor->y - server->grab_y);
 }
 
 static void place_drag_icon(xd_server *server);
@@ -1338,12 +1357,12 @@ typedef struct find_surface {
 } find_surface;
 
 static void find_surface_buffer(struct wlr_scene_buffer *buffer, int sx, int sy, void *data) {
-    find_surface *f = data;
+    find_surface *finder = data;
     struct wlr_scene_surface *ss = wlr_scene_surface_try_from_buffer(buffer);
-    if (!f->found && ss != nullptr && ss->surface == f->surface) {
-        f->found = true;
-        f->x = sx;
-        f->y = sy;
+    if (!finder->found && ss != nullptr && ss->surface == finder->surface) {
+        finder->found = true;
+        finder->x = sx;
+        finder->y = sy;
     }
 }
 
@@ -1356,12 +1375,12 @@ static bool implicit_grab_motion(xd_server *server, uint32_t time_msec) {
     if (seat->pointer_state.button_count == 0 || focus == nullptr ||
         wlr_seat_pointer_has_grab(seat))
         return false; /* drags and popup grabs route themselves */
-    find_surface f = {.surface = focus};
-    wlr_scene_node_for_each_buffer(&server->scene->tree.node, find_surface_buffer, &f);
-    if (!f.found)
+    find_surface finder = {.surface = focus};
+    wlr_scene_node_for_each_buffer(&server->scene->tree.node, find_surface_buffer, &finder);
+    if (!finder.found)
         return false;
-    wlr_seat_pointer_notify_motion(seat, time_msec, server->cursor->x - f.x,
-                                   server->cursor->y - f.y);
+    wlr_seat_pointer_notify_motion(seat, time_msec, server->cursor->x - finder.x,
+                                   server->cursor->y - finder.y);
     return true;
 }
 
@@ -1369,18 +1388,18 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
     place_drag_icon(server);
     switch (server->mode) {
     case XD_CURSOR_MOVE: {
-        xd_view *v = server->grab_view;
-        xd_snap_motion(server, v);
+        xd_view *view = server->grab_view;
+        xd_snap_motion(server, view);
         /* A maximized window stays put until it's dragged far enough. */
-        if (v->maximized)
+        if (view->maximized)
             return;
         int x, y;
         move_position(server, &x, &y);
         if (xd_outline_dragging(server)) {
-            struct wlr_box b = xd_view_outer_box(v);
-            xd_outline_show(server, (struct wlr_box){x, y, b.width, b.height});
+            struct wlr_box box = xd_view_outer_box(view);
+            xd_outline_show(server, (struct wlr_box){x, y, box.width, box.height});
         } else {
-            xd_view_set_position(v, x, y);
+            xd_view_set_position(view, x, y);
         }
         return;
     }
@@ -1389,9 +1408,9 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
         return;
     case XD_CURSOR_BUTTON: {
         /* The button looks pressed only while the pointer is over it. */
-        xd_view *v = server->grab_view;
-        xd_frame_part part = xd_view_hit(v, server->cursor->x, server->cursor->y);
-        xd_view_set_hover(v, part == server->grab_part ? part : XD_PART_NONE, server->grab_part);
+        xd_view *view = server->grab_view;
+        xd_frame_part part = xd_view_hit(view, server->cursor->x, server->cursor->y);
+        xd_view_set_hover(view, part == server->grab_part ? part : XD_PART_NONE, server->grab_part);
         return;
     }
     case XD_CURSOR_KEY_MOVE:
@@ -1404,17 +1423,17 @@ static void process_motion(xd_server *server, uint32_t time_msec) {
     if (implicit_grab_motion(server, time_msec))
         return;
 
-    pick p = pick_at(server, server->cursor->x, server->cursor->y);
-    set_hover(server, p.view, p.part);
-    if (p.surface != nullptr) {
+    pick picked = pick_at(server, server->cursor->x, server->cursor->y);
+    set_hover(server, picked.view, picked.part);
+    if (picked.surface != nullptr) {
         /* The client sets its own cursor once it has pointer focus. */
-        if (server->seat->pointer_state.focused_surface != p.surface)
+        if (server->seat->pointer_state.focused_surface != picked.surface)
             server->cursor_name = nullptr;
-        wlr_seat_pointer_notify_enter(server->seat, p.surface, p.sx, p.sy);
-        wlr_seat_pointer_notify_motion(server->seat, time_msec, p.sx, p.sy);
+        wlr_seat_pointer_notify_enter(server->seat, picked.surface, picked.sx, picked.sy);
+        wlr_seat_pointer_notify_motion(server->seat, time_msec, picked.sx, picked.sy);
     } else {
         wlr_seat_pointer_clear_focus(server->seat);
-        xd_cursor_set(server, cursor_for_part(p.part));
+        xd_cursor_set(server, cursor_for_part(picked.part));
     }
 }
 
@@ -1433,20 +1452,24 @@ static void constrained_motion(xd_server *server, struct wlr_input_device *devic
 
 static void handle_cursor_motion(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_motion);
-    const struct wlr_pointer_motion_event *e = data;
-    constrained_motion(server, &e->pointer->base, e->delta_x, e->delta_y, e->unaccel_dx,
-                       e->unaccel_dy, e->time_msec);
+    const struct wlr_pointer_motion_event *pointer_motion_event = data;
+    constrained_motion(server, &pointer_motion_event->pointer->base, pointer_motion_event->delta_x,
+                       pointer_motion_event->delta_y, pointer_motion_event->unaccel_dx,
+                       pointer_motion_event->unaccel_dy, pointer_motion_event->time_msec);
 }
 
 static void handle_cursor_motion_absolute(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_motion_absolute);
-    const struct wlr_pointer_motion_absolute_event *e = data;
+    const struct wlr_pointer_motion_absolute_event *pointer_motion_absolute_event = data;
     /* A nested session's pointer, a virtual one: as a motion from where
      * the cursor is, so constraints hold for it too (as in sway). */
     double lx, ly;
-    wlr_cursor_absolute_to_layout_coords(server->cursor, &e->pointer->base, e->x, e->y, &lx, &ly);
+    wlr_cursor_absolute_to_layout_coords(
+        server->cursor, &pointer_motion_absolute_event->pointer->base,
+        pointer_motion_absolute_event->x, pointer_motion_absolute_event->y, &lx, &ly);
     double dx = lx - server->cursor->x, dy = ly - server->cursor->y;
-    constrained_motion(server, &e->pointer->base, dx, dy, dx, dy, e->time_msec);
+    constrained_motion(server, &pointer_motion_absolute_event->pointer->base, dx, dy, dx, dy,
+                       pointer_motion_absolute_event->time_msec);
 }
 
 static bool is_double_click(xd_server *server, xd_view *view, xd_frame_part part,
@@ -1460,31 +1483,31 @@ static bool is_double_click(xd_server *server, xd_view *view, xd_frame_part part
     return dbl;
 }
 
-static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
+static void begin_frame_action(xd_server *server, pick *picked, uint32_t button,
                                uint32_t time_msec) {
-    xd_view *view = p->view;
+    xd_view *view = picked->view;
     xd_view_focus(view);
     if (button == BTN_RIGHT) {
         /* Right-click on the frame: the window menu at the pointer. */
-        if (p->part == XD_PART_CAPTION || p->part == XD_PART_SYSMENU)
+        if (picked->part == XD_PART_CAPTION || picked->part == XD_PART_SYSMENU)
             xd_window_menu_show(view, server->cursor->x, server->cursor->y, false);
         return;
     }
     if (button != BTN_LEFT)
         return;
 
-    if (xd_frame_part_is_button(p->part)) {
+    if (xd_frame_part_is_button(picked->part)) {
         server->mode = XD_CURSOR_BUTTON;
         server->grab_view = view;
-        server->grab_part = p->part;
-        xd_view_set_hover(view, p->part, p->part);
+        server->grab_part = picked->part;
+        xd_view_set_hover(view, picked->part, picked->part);
         return;
     }
-    if (p->part == XD_PART_SYSMENU) {
+    if (picked->part == XD_PART_SYSMENU) {
         /* A click opens the window menu below the icon; the double-click
          * that closes the window is caught while the menu has the grab
          * (see handle_cursor_button). */
-        if (is_double_click(server, view, p->part, time_msec)) {
+        if (is_double_click(server, view, picked->part, time_msec)) {
             xd_view_close(view);
             return;
         }
@@ -1493,8 +1516,8 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
         xd_window_menu_show(view, x, y, false);
         return;
     }
-    if (p->part == XD_PART_CAPTION) {
-        if (is_double_click(server, view, p->part, time_msec)) {
+    if (picked->part == XD_PART_CAPTION) {
+        if (is_double_click(server, view, picked->part, time_msec)) {
             xd_view_set_maximized(view, !view->maximized);
             return;
         }
@@ -1510,10 +1533,10 @@ static void begin_frame_action(xd_server *server, pick *p, uint32_t button,
         server->grab_press_y = server->cursor->y;
         return;
     }
-    if (xd_frame_part_is_border(p->part) && !view->maximized) {
+    if (xd_frame_part_is_border(picked->part) && !view->maximized) {
         server->mode = XD_CURSOR_RESIZE;
         server->grab_view = view;
-        server->grab_part = p->part;
+        server->grab_part = picked->part;
         server->grab_x = server->cursor->x;
         server->grab_y = server->cursor->y;
         server->grab_box = xd_view_outer_box(view);
@@ -1542,8 +1565,8 @@ static void end_grab(xd_server *server) {
     } else if (mode == XD_CURSOR_RESIZE) {
         if (outline) {
             uint32_t moving = 0;
-            struct wlr_box b = resize_box(server, &moving);
-            xd_view_resize_anchored(view, b, moving);
+            struct wlr_box box = resize_box(server, &moving);
+            xd_view_resize_anchored(view, box, moving);
         }
         xd_view_set_resizing(view, false);
     } else if (mode == XD_CURSOR_BUTTON) {
@@ -1621,63 +1644,71 @@ void xd_input_warp_pointer(xd_server *server, double lx, double ly, uint32_t tim
     wlr_seat_pointer_notify_frame(server->seat);
 }
 
-static void process_button(xd_server *server, const struct wlr_pointer_button_event *e);
+static void process_button(xd_server *server,
+                           const struct wlr_pointer_button_event *pointer_button_event);
 
 static void handle_cursor_button(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_button);
-    const struct wlr_pointer_button_event *e = data;
+    const struct wlr_pointer_button_event *pointer_button_event = data;
     xd_idle_activity(server);
-    if (xd_access_button(server, e->button, e->state == WL_POINTER_BUTTON_STATE_PRESSED,
-                         e->time_msec))
+    if (xd_access_button(server, pointer_button_event->button,
+                         pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED,
+                         pointer_button_event->time_msec))
         return;
-    process_button(server, e);
-    if (e->state == WL_POINTER_BUTTON_STATE_PRESSED)
+    process_button(server, pointer_button_event);
+    if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED)
         xd_constraints_click(server);
 }
 
 void xd_input_button(xd_server *server, uint32_t time_msec, uint32_t button,
                      enum wl_pointer_button_state state) {
     xd_idle_activity(server);
-    struct wlr_pointer_button_event e = {.time_msec = time_msec, .button = button, .state = state};
-    process_button(server, &e);
+    struct wlr_pointer_button_event pointer_button_event = {
+        .time_msec = time_msec, .button = button, .state = state};
+    process_button(server, &pointer_button_event);
     wlr_seat_pointer_notify_frame(server->seat);
 }
 
-static void process_button(xd_server *server, const struct wlr_pointer_button_event *e) {
+static void process_button(xd_server *server,
+                           const struct wlr_pointer_button_event *pointer_button_event) {
     if (server->locked) {
-        wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
+        wlr_seat_pointer_notify_button(server->seat, pointer_button_event->time_msec,
+                                       pointer_button_event->button, pointer_button_event->state);
         return;
     }
 
     /* A click ends keyboard move/size where the window is. */
     if (keyboard_grab(server)) {
-        if (e->state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED) {
             end_keyboard(server, true);
             server->ignore_release = true;
         }
         return;
     }
-    if (e->state == WL_POINTER_BUTTON_STATE_RELEASED && server->ignore_release) {
+    if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_RELEASED && server->ignore_release) {
         server->ignore_release = false;
-        process_motion(server, e->time_msec);
+        process_motion(server, pointer_button_event->time_msec);
         return;
     }
-    if (e->state == WL_POINTER_BUTTON_STATE_RELEASED) {
+    if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (server->mode != XD_CURSOR_PASSTHROUGH) {
             end_grab(server);
             /* A client that asked for the move or resize had the press:
              * it must get the release too, or it keeps waiting for it and
              * ignores later clicks (Firefox's tab strip and close button
              * after dragging the window by it). */
-            if (seat_has_button(server->seat, e->button))
-                wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
-            process_motion(server, e->time_msec);
+            if (seat_has_button(server->seat, pointer_button_event->button))
+                wlr_seat_pointer_notify_button(server->seat, pointer_button_event->time_msec,
+                                               pointer_button_event->button,
+                                               pointer_button_event->state);
+            process_motion(server, pointer_button_event->time_msec);
             return;
         }
-        wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
+        wlr_seat_pointer_notify_button(server->seat, pointer_button_event->time_msec,
+                                       pointer_button_event->button, pointer_button_event->state);
         /* The implicit grab ends: focus what's under the pointer now. */
         if (server->seat->pointer_state.button_count == 0)
-            process_motion(server, e->time_msec);
+            process_motion(server, pointer_button_event->time_msec);
         return;
     }
 
@@ -1688,41 +1719,46 @@ static void process_button(xd_server *server, const struct wlr_pointer_button_ev
     if (wlr_seat_pointer_has_grab(server->seat)) {
         /* Double-clicking the caption icon closes the window even though
          * its first click opened the window menu. */
-        pick p = pick_at(server, server->cursor->x, server->cursor->y);
-        if (p.view != nullptr && p.part == XD_PART_SYSMENU && e->button == BTN_LEFT &&
-            is_double_click(server, p.view, p.part, e->time_msec))
-            xd_view_close(p.view);
-        wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
+        pick picked = pick_at(server, server->cursor->x, server->cursor->y);
+        if (picked.view != nullptr && picked.part == XD_PART_SYSMENU &&
+            pointer_button_event->button == BTN_LEFT &&
+            is_double_click(server, picked.view, picked.part, pointer_button_event->time_msec))
+            xd_view_close(picked.view);
+        wlr_seat_pointer_notify_button(server->seat, pointer_button_event->time_msec,
+                                       pointer_button_event->button, pointer_button_event->state);
         return;
     }
-    pick p = pick_at(server, server->cursor->x, server->cursor->y);
-    if (p.surface != nullptr) {
-        if (p.view != nullptr)
-            xd_view_focus(p.view);
-        else if (p.layer != nullptr)
-            xd_layer_click_focus(p.layer);
-        wlr_seat_pointer_notify_button(server->seat, e->time_msec, e->button, e->state);
-    } else if (p.view != nullptr) {
-        begin_frame_action(server, &p, e->button, e->time_msec);
+    pick picked = pick_at(server, server->cursor->x, server->cursor->y);
+    if (picked.surface != nullptr) {
+        if (picked.view != nullptr)
+            xd_view_focus(picked.view);
+        else if (picked.layer != nullptr)
+            xd_layer_click_focus(picked.layer);
+        wlr_seat_pointer_notify_button(server->seat, pointer_button_event->time_msec,
+                                       pointer_button_event->button, pointer_button_event->state);
+    } else if (picked.view != nullptr) {
+        begin_frame_action(server, &picked, pointer_button_event->button,
+                           pointer_button_event->time_msec);
     }
 }
 
 static void handle_cursor_axis(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, cursor_axis);
-    const struct wlr_pointer_axis_event *e = data;
+    const struct wlr_pointer_axis_event *pointer_axis_event = data;
     xd_idle_activity(server);
-    double delta = e->delta;
-    int32_t discrete = e->delta_discrete;
+    double delta = pointer_axis_event->delta;
+    int32_t discrete = pointer_axis_event->delta_discrete;
     /* [Mouse] WheelLines: clients scroll about 3 lines a notch, so scale
      * the wheel's steps (not touchpads') by lines / 3. Clients add up
      * the 120ths, so a third of a step still counts. */
     int lines = server->config.mouse.wheel_lines;
-    if (e->source == WL_POINTER_AXIS_SOURCE_WHEEL && lines != 3) {
+    if (pointer_axis_event->source == WL_POINTER_AXIS_SOURCE_WHEEL && lines != 3) {
         delta = delta * lines / 3.0;
         discrete = (int32_t)((int64_t)discrete * lines / 3);
     }
-    wlr_seat_pointer_notify_axis(server->seat, e->time_msec, e->orientation, delta, discrete,
-                                 e->source, e->relative_direction);
+    wlr_seat_pointer_notify_axis(
+        server->seat, pointer_axis_event->time_msec, pointer_axis_event->orientation, delta,
+        discrete, pointer_axis_event->source, pointer_axis_event->relative_direction);
 }
 
 static void handle_cursor_frame(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -1732,45 +1768,57 @@ static void handle_cursor_frame(struct wl_listener *listener, [[maybe_unused]] v
 
 static void handle_request_cursor(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_cursor);
-    const struct wlr_seat_pointer_request_set_cursor_event *e = data;
+    const struct wlr_seat_pointer_request_set_cursor_event *seat_pointer_request_set_cursor_event =
+        data;
     if (server->mode == XD_CURSOR_PASSTHROUGH &&
-        server->seat->pointer_state.focused_client == e->seat_client) {
+        server->seat->pointer_state.focused_client ==
+            seat_pointer_request_set_cursor_event->seat_client) {
         server->cursor_name = nullptr;
-        wlr_cursor_set_surface(server->cursor, e->surface, e->hotspot_x, e->hotspot_y);
+        wlr_cursor_set_surface(server->cursor, seat_pointer_request_set_cursor_event->surface,
+                               seat_pointer_request_set_cursor_event->hotspot_x,
+                               seat_pointer_request_set_cursor_event->hotspot_y);
     }
 }
 
 static void handle_request_cursor_shape(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_cursor_shape);
-    const struct wlr_cursor_shape_manager_v1_request_set_shape_event *e = data;
+    const struct wlr_cursor_shape_manager_v1_request_set_shape_event
+        *cursor_shape_manager_v1_request_set_shape_event = data;
     if (server->mode == XD_CURSOR_PASSTHROUGH &&
-        server->seat->pointer_state.focused_client == e->seat_client)
-        xd_cursor_set(server, wlr_cursor_shape_v1_name(e->shape));
+        server->seat->pointer_state.focused_client ==
+            cursor_shape_manager_v1_request_set_shape_event->seat_client)
+        xd_cursor_set(server, wlr_cursor_shape_v1_name(
+                                  cursor_shape_manager_v1_request_set_shape_event->shape));
 }
 
 static void handle_request_set_selection(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_set_selection);
-    const struct wlr_seat_request_set_selection_event *e = data;
-    wlr_seat_set_selection(server->seat, e->source, e->serial);
+    const struct wlr_seat_request_set_selection_event *seat_request_set_selection_event = data;
+    wlr_seat_set_selection(server->seat, seat_request_set_selection_event->source,
+                           seat_request_set_selection_event->serial);
 }
 
 static void handle_request_set_primary_selection(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_set_primary_selection);
-    const struct wlr_seat_request_set_primary_selection_event *e = data;
-    wlr_seat_set_primary_selection(server->seat, e->source, e->serial);
+    const struct wlr_seat_request_set_primary_selection_event
+        *seat_request_set_primary_selection_event = data;
+    wlr_seat_set_primary_selection(server->seat, seat_request_set_primary_selection_event->source,
+                                   seat_request_set_primary_selection_event->serial);
 }
 
 /* ---- drag and drop -------------------------------------------------------------- */
 
 static void handle_request_start_drag(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_start_drag);
-    const struct wlr_seat_request_start_drag_event *e = data;
+    const struct wlr_seat_request_start_drag_event *seat_request_start_drag_event = data;
     /* Only for a button held over the client that asks. */
     if (!server->locked && server->mode == XD_CURSOR_PASSTHROUGH &&
-        wlr_seat_validate_pointer_grab_serial(server->seat, e->origin, e->serial))
-        wlr_seat_start_pointer_drag(server->seat, e->drag, e->serial);
+        wlr_seat_validate_pointer_grab_serial(server->seat, seat_request_start_drag_event->origin,
+                                              seat_request_start_drag_event->serial))
+        wlr_seat_start_pointer_drag(server->seat, seat_request_start_drag_event->drag,
+                                    seat_request_start_drag_event->serial);
     else
-        wlr_data_source_destroy(e->drag->source);
+        wlr_data_source_destroy(seat_request_start_drag_event->drag->source);
 }
 
 static void place_drag_icon(xd_server *server) {

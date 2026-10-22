@@ -16,11 +16,11 @@
     } while (0)
 
 /* Removes a listener that may or may not be attached. */
-static inline void xd_unlisten(struct wl_listener *l) {
-    if (l->link.next != nullptr) {
-        wl_list_remove(&l->link);
-        l->link.next = nullptr;
-        l->link.prev = nullptr;
+static inline void xd_unlisten(struct wl_listener *listener) {
+    if (listener->link.next != nullptr) {
+        wl_list_remove(&listener->link);
+        listener->link.next = nullptr;
+        listener->link.prev = nullptr;
     }
 }
 

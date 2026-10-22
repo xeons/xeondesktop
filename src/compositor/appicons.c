@@ -37,70 +37,71 @@ struct xd_appicons {
     void *data;
 };
 
-static void request_free(request *r) {
-    if (r->surface != nullptr)
-        cairo_surface_destroy(r->surface);
-    g_free(r->key);
-    g_free(r->app_id);
-    g_free(r);
+static void request_free(request *icon_request) {
+    if (icon_request->surface != nullptr)
+        cairo_surface_destroy(icon_request->surface);
+    g_free(icon_request->key);
+    g_free(icon_request->app_id);
+    g_free(icon_request);
 }
 
-static void entry_free(gpointer p) {
-    entry *e = p;
-    if (e->surface != nullptr)
-        cairo_surface_destroy(e->surface);
-    g_free(e);
+static void entry_free(gpointer user_data) {
+    entry *cached = user_data;
+    if (cached->surface != nullptr)
+        cairo_surface_destroy(cached->surface);
+    g_free(cached);
 }
 
 /* The thread's own copy: the icon cache's surfaces stay in the thread. */
-static cairo_surface_t *copy_surface(cairo_surface_t *s, int px) {
-    int w = px, h = px;
-    if (cairo_surface_get_type(s) == CAIRO_SURFACE_TYPE_IMAGE) {
-        w = cairo_image_surface_get_width(s);
-        h = cairo_image_surface_get_height(s);
+static cairo_surface_t *copy_surface(cairo_surface_t *icon_surface, int px) {
+    int width = px, height = px;
+    if (cairo_surface_get_type(icon_surface) == CAIRO_SURFACE_TYPE_IMAGE) {
+        width = cairo_image_surface_get_width(icon_surface);
+        height = cairo_image_surface_get_height(icon_surface);
     }
-    cairo_surface_t *c = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_t *cr = cairo_create(c);
-    cairo_set_source_surface(cr, s, 0, 0);
-    cairo_paint(cr);
-    cairo_destroy(cr);
-    if (cairo_surface_status(c) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(c);
+    cairo_surface_t *copy = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t *cairo = cairo_create(copy);
+    cairo_set_source_surface(cairo, icon_surface, 0, 0);
+    cairo_paint(cairo);
+    cairo_destroy(cairo);
+    if (cairo_surface_status(copy) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(copy);
         return nullptr;
     }
-    return c;
+    return copy;
 }
 
 static gpointer worker(gpointer data) {
     xd_appicons *ai = data;
     xd_icons *icons = xd_icons_create(ai->theme);
     for (;;) {
-        request *r = g_async_queue_pop(ai->todo);
-        if (r->px == 0) {
-            request_free(r);
+        request *icon_request = g_async_queue_pop(ai->todo);
+        if (icon_request->px == 0) {
+            request_free(icon_request);
             break;
         }
         char *icon = nullptr, *name = nullptr;
-        xd_app_for_window(r->app_id, &icon, &name);
-        char *lower = g_ascii_strdown(r->app_id, -1);
+        xd_app_for_window(icon_request->app_id, &icon, &name);
+        char *lower = g_ascii_strdown(icon_request->app_id, -1);
         /* The application's Icon key; else, as many programs name their
          * icon, the app id itself; else Windows' generic program icon. */
         const char *names[4];
-        size_t n = 0;
+        size_t count = 0;
         if (icon != nullptr)
-            names[n++] = icon;
-        if (r->app_id[0] != '\0') {
-            names[n++] = r->app_id;
-            names[n++] = lower;
+            names[count++] = icon;
+        if (icon_request->app_id[0] != '\0') {
+            names[count++] = icon_request->app_id;
+            names[count++] = lower;
         }
-        names[n++] = "application-x-executable";
-        cairo_surface_t *s = icons != nullptr ? xd_icons_get_any(icons, names, n, r->px) : nullptr;
-        if (s != nullptr)
-            r->surface = copy_surface(s, r->px);
+        names[count++] = "application-x-executable";
+        cairo_surface_t *surface =
+            icons != nullptr ? xd_icons_get_any(icons, names, count, icon_request->px) : nullptr;
+        if (surface != nullptr)
+            icon_request->surface = copy_surface(surface, icon_request->px);
         g_free(lower);
         g_free(icon);
         g_free(name);
-        g_async_queue_push(ai->done, r);
+        g_async_queue_push(ai->done, icon_request);
         uint64_t one = 1;
         while (write(ai->efd, &one, sizeof(one)) < 0 && errno == EINTR) {
         }
@@ -115,16 +116,16 @@ static int handle_done(int fd, [[maybe_unused]] uint32_t mask, void *data) {
     uint64_t count;
     while (read(fd, &count, sizeof(count)) < 0 && errno == EINTR) {
     }
-    request *r;
-    while ((r = g_async_queue_try_pop(ai->done)) != nullptr) {
-        entry *e = g_hash_table_lookup(ai->cache, r->key);
-        if (e != nullptr) {
-            e->surface = r->surface;
-            r->surface = nullptr;
+    request *icon_request;
+    while ((icon_request = g_async_queue_try_pop(ai->done)) != nullptr) {
+        entry *cached = g_hash_table_lookup(ai->cache, icon_request->key);
+        if (cached != nullptr) {
+            cached->surface = icon_request->surface;
+            icon_request->surface = nullptr;
         }
         if (ai->ready != nullptr)
-            ai->ready(ai->data, r->app_id);
-        request_free(r);
+            ai->ready(ai->data, icon_request->app_id);
+        request_free(icon_request);
     }
     return 0;
 }
@@ -153,11 +154,11 @@ void xd_appicons_destroy(xd_appicons *ai) {
     request *quit = g_new0(request, 1);
     g_async_queue_push(ai->todo, quit);
     g_thread_join(ai->thread);
-    request *r;
-    while ((r = g_async_queue_try_pop(ai->todo)) != nullptr)
-        request_free(r);
-    while ((r = g_async_queue_try_pop(ai->done)) != nullptr)
-        request_free(r);
+    request *icon_request;
+    while ((icon_request = g_async_queue_try_pop(ai->todo)) != nullptr)
+        request_free(icon_request);
+    while ((icon_request = g_async_queue_try_pop(ai->done)) != nullptr)
+        request_free(icon_request);
     g_async_queue_unref(ai->todo);
     g_async_queue_unref(ai->done);
     if (ai->source != nullptr)
@@ -176,16 +177,16 @@ cairo_surface_t *xd_appicons_get(xd_appicons *ai, const char *app_id, int px) {
     if (app_id == nullptr)
         app_id = "";
     char *key = g_strdup_printf("%d:%s", px, app_id);
-    entry *e = g_hash_table_lookup(ai->cache, key);
-    if (e != nullptr) {
+    entry *cached = g_hash_table_lookup(ai->cache, key);
+    if (cached != nullptr) {
         g_free(key);
-        return e->surface;
+        return cached->surface;
     }
     g_hash_table_insert(ai->cache, key, g_new0(entry, 1));
-    request *r = g_new0(request, 1);
-    r->key = g_strdup(key);
-    r->app_id = g_strdup(app_id);
-    r->px = px;
-    g_async_queue_push(ai->todo, r);
+    request *icon_request = g_new0(request, 1);
+    icon_request->key = g_strdup(key);
+    icon_request->app_id = g_strdup(app_id);
+    icon_request->px = px;
+    g_async_queue_push(ai->todo, icon_request);
     return nullptr;
 }

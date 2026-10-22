@@ -31,78 +31,78 @@ static xd_server *server_of(struct wl_resource *res) {
 }
 
 /* Windows that take part: mapped, not minimized. */
-static bool arrangeable(const xd_view *v) { return v->mapped && !v->minimized; }
+static bool arrangeable(const xd_view *view) { return view->mapped && !view->minimized; }
 
-static void remember(xd_view *v) {
-    v->undo_valid = true;
-    v->undo_maximized = v->maximized;
-    v->undo_box = v->maximized ? v->restore : xd_view_outer_box(v);
+static void remember(xd_view *view) {
+    view->undo_valid = true;
+    view->undo_maximized = view->maximized;
+    view->undo_box = view->maximized ? view->restore : xd_view_outer_box(view);
 }
 
 /* `tiled`: Tile Windows' cells, against the screen or a neighbour on
  * every side (cascaded windows aren't). */
-static void place(xd_view *v, struct wlr_box box, bool tiled) {
-    if (v->maximized)
-        xd_view_set_maximized(v, false);
-    if (v->dialog) {
+static void place(xd_view *view, struct wlr_box box, bool tiled) {
+    if (view->maximized)
+        xd_view_set_maximized(view, false);
+    if (view->dialog) {
         /* Fixed-size windows keep their size, centred in their cell. */
-        struct wlr_box cur = xd_view_outer_box(v);
+        struct wlr_box cur = xd_view_outer_box(view);
         int x = box.x + (box.width - cur.width) / 2;
         int y = box.y + (box.height - cur.height) / 2;
-        xd_view_set_position(v, XD_MAX(x, box.x), XD_MAX(y, box.y));
+        xd_view_set_position(view, XD_MAX(x, box.x), XD_MAX(y, box.y));
         return;
     }
     if (tiled)
-        xd_view_set_tiled_box(v, box, WLR_EDGE_LEFT | WLR_EDGE_RIGHT | WLR_EDGE_TOP |
-                                          WLR_EDGE_BOTTOM);
+        xd_view_set_tiled_box(view, box,
+                              WLR_EDGE_LEFT | WLR_EDGE_RIGHT | WLR_EDGE_TOP | WLR_EDGE_BOTTOM);
     else
-        xd_view_set_outer_box(v, box);
+        xd_view_set_outer_box(view, box);
 }
 
-static void arrange_output(xd_server *server, struct wlr_box area, xd_view **views, size_t n,
-                           uint32_t mode) {
-    if (n == 0)
+static void arrange_output(xd_server *server, struct wlr_box area, xd_view **views,
+                           size_t view_count, uint32_t mode) {
+    if (view_count == 0)
         return;
     if (mode == XD_WINDOW_ARRANGER_V1_MODE_CASCADE) {
         /* Back to front, each a caption lower and to the right, sized to
          * leave room for the rest. */
-        int span = (int)(n - 1) * CASCADE_STEP;
-        int w = XD_MAX(area.width - span, area.width * 2 / 3);
-        int h = XD_MAX(area.height - span, area.height * 2 / 3);
-        for (size_t i = 0; i < n; i++) {
-            xd_view *v = views[n - 1 - i];
+        int span = (int)(view_count - 1) * CASCADE_STEP;
+        int width = XD_MAX(area.width - span, area.width * 2 / 3);
+        int height = XD_MAX(area.height - span, area.height * 2 / 3);
+        for (size_t i = 0; i < view_count; i++) {
+            xd_view *view = views[view_count - 1 - i];
             int off = (int)(i * CASCADE_STEP) % XD_MAX(area.height / 2, CASCADE_STEP);
-            place(v, (struct wlr_box){area.x + off, area.y + off, w, h}, false);
-            wlr_scene_node_raise_to_top(&v->tree->node);
+            place(view, (struct wlr_box){area.x + off, area.y + off, width, height}, false);
+            wlr_scene_node_raise_to_top(&view->tree->node);
         }
         (void)server;
         return;
     }
     /* Tiling: one row (or column) per window up to three, then a grid. */
     bool horizontal = mode == XD_WINDOW_ARRANGER_V1_MODE_TILE_HORIZONTALLY;
-    double root = ceil(sqrt((double)n));
-    int lines = n <= 3 ? 1 : (int)root; /* columns, or rows */
-    int per = (int)((n + (size_t)lines - 1) / (size_t)lines);
+    double root = ceil(sqrt((double)view_count));
+    int lines = view_count <= 3 ? 1 : (int)root; /* columns, or rows */
+    int per = (int)((view_count + (size_t)lines - 1) / (size_t)lines);
     size_t i = 0;
-    for (int l = 0; l < lines && i < n; l++) {
-        int count = (int)XD_MIN((size_t)per, n - i);
+    for (int line = 0; line < lines && i < view_count; line++) {
+        int count = (int)XD_MIN((size_t)per, view_count - i);
         for (int k = 0; k < count; k++, i++) {
             struct wlr_box cell;
             if (horizontal) {
                 /* Windows stacked one above another (wide bands). */
                 int cw = area.width / lines, ch = area.height / count;
-                cell = (struct wlr_box){area.x + l * cw, area.y + k * ch, cw, ch};
+                cell = (struct wlr_box){area.x + line * cw, area.y + k * ch, cw, ch};
             } else {
                 int cw = area.width / count, ch = area.height / lines;
-                cell = (struct wlr_box){area.x + k * cw, area.y + l * ch, cw, ch};
+                cell = (struct wlr_box){area.x + k * cw, area.y + line * ch, cw, ch};
             }
             place(views[i], cell, true);
         }
     }
 }
 
-static bool of_app(const xd_view *v, const char *app_id) {
-    const char *id = xd_view_app_id(v);
+static bool of_app(const xd_view *view, const char *app_id) {
+    const char *id = xd_view_app_id(view);
     return app_id == nullptr || (id != nullptr && strcmp(id, app_id) == 0);
 }
 
@@ -112,14 +112,14 @@ typedef struct selection {
     const arranger_client *marks; /* nullptr: not by marks */
 } selection;
 
-static bool selected(const xd_view *v, const selection *sel) {
+static bool selected(const xd_view *view, const selection *sel) {
     if (sel->marks != nullptr) {
         for (size_t i = 0; i < sel->marks->marked_n; i++)
-            if (sel->marks->marked[i] == v)
+            if (sel->marks->marked[i] == view)
                 return true;
         return false;
     }
-    return of_app(v, sel->app_id);
+    return of_app(view, sel->app_id);
 }
 
 /* Every window, or only the selection's. */
@@ -127,26 +127,26 @@ static void arrange_selection(xd_server *server, uint32_t mode, const selection 
     if (mode > XD_WINDOW_ARRANGER_V1_MODE_TILE_VERTICALLY)
         return;
     bool chosen = sel->app_id != nullptr || sel->marks != nullptr;
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        v->undo_valid = false;
-        if (chosen && v->mapped && v->minimized && selected(v, sel))
-            xd_view_restore(v);
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        view->undo_valid = false;
+        if (chosen && view->mapped && view->minimized && selected(view, sel))
+            xd_view_restore(view);
     }
     /* Group by output (by window centre), front to back. */
     XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
         size_t cap = (size_t)wl_list_length(&server->views);
         xd_view **views = xd_alloc_array(XD_MAX(cap, 1), sizeof(*views));
-        size_t n = 0;
-        XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-            if (!arrangeable(v) || !selected(v, sel))
+        size_t count = 0;
+        XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+            if (!arrangeable(view) || !selected(view, sel))
                 continue;
-            struct wlr_box b = xd_view_outer_box(v);
-            if (xd_output_at(server, b.x + b.width / 2.0, b.y + b.height / 2.0) != out)
+            struct wlr_box box = xd_view_outer_box(view);
+            if (xd_output_at(server, box.x + box.width / 2.0, box.y + box.height / 2.0) != out)
                 continue;
-            remember(v);
-            views[n++] = v;
+            remember(view);
+            views[count++] = view;
         }
-        arrange_output(server, out->usable, views, n, mode);
+        arrange_output(server, out->usable, views, count, mode);
         xd_free(views);
     }
 }
@@ -169,13 +169,13 @@ static void handle_arrange_app(struct wl_client *client, struct wl_resource *res
 
 /* The window behind one of this client's foreign-toplevel handles. */
 static xd_view *view_for_handle(xd_server *server, struct wl_resource *handle) {
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (v->ftl == nullptr)
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (view->ftl == nullptr)
             continue;
-        struct wl_resource *r;
-        wl_resource_for_each(r, &v->ftl->resources) {
-            if (r == handle)
-                return v;
+        struct wl_resource *resource;
+        wl_resource_for_each(resource, &view->ftl->resources) {
+            if (resource == handle)
+                return view;
         }
     }
     return nullptr;
@@ -185,26 +185,26 @@ static void handle_mark(struct wl_client *client, struct wl_resource *res,
                         struct wl_resource *toplevel) {
     (void)client;
     arranger_client *ac = wl_resource_get_user_data(res);
-    xd_view *v = view_for_handle(ac->server, toplevel);
-    if (v == nullptr)
+    xd_view *view = view_for_handle(ac->server, toplevel);
+    if (view == nullptr)
         return;
     if (ac->marked_n == ac->marked_cap) {
         ac->marked_cap = ac->marked_cap == 0 ? 8 : ac->marked_cap * 2;
         ac->marked = xd_realloc_array(ac->marked, ac->marked_cap, sizeof(*ac->marked));
     }
-    ac->marked[ac->marked_n++] = v;
+    ac->marked[ac->marked_n++] = view;
 }
 
 static void handle_set_always_on_top(struct wl_client *client, struct wl_resource *res,
                                      struct wl_resource *surface, uint32_t on_top) {
     xd_server *server = server_of(res);
-    struct wlr_surface *s = wlr_surface_from_resource(surface);
+    struct wlr_surface *target_surface = wlr_surface_from_resource(surface);
     /* Only the client's own windows. */
     if (wl_resource_get_client(surface) != client)
         return;
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (xd_view_surface(v) == s) {
-            xd_view_set_on_top(v, on_top != 0);
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (xd_view_surface(view) == target_surface) {
+            xd_view_set_on_top(view, on_top != 0);
             return;
         }
     }
@@ -226,9 +226,10 @@ static void handle_set_keyboard_layout(struct wl_client *client, struct wl_resou
 static void handle_identify(struct wl_client *client, struct wl_resource *res,
                             struct wl_resource *toplevel) {
     (void)client;
-    xd_view *v = view_for_handle(server_of(res), toplevel);
-    if (v != nullptr && v->ext_toplevel != nullptr && v->ext_toplevel->identifier != nullptr)
-        xd_window_arranger_v1_send_identifier(res, toplevel, v->ext_toplevel->identifier);
+    xd_view *view = view_for_handle(server_of(res), toplevel);
+    if (view != nullptr && view->ext_toplevel != nullptr &&
+        view->ext_toplevel->identifier != nullptr)
+        xd_window_arranger_v1_send_identifier(res, toplevel, view->ext_toplevel->identifier);
 }
 
 static void handle_peek_window(struct wl_client *client, struct wl_resource *res,
@@ -250,8 +251,8 @@ static void handle_arrange_marked(struct wl_client *client, struct wl_resource *
 
 /* A window going away leaves every client's marks. */
 void xd_arrange_forget_view(xd_server *server, xd_view *view) {
-    for (size_t c = 0; c < server->arranger_clients_n; c++) {
-        arranger_client *ac = server->arranger_clients[c];
+    for (size_t client_index = 0; client_index < server->arranger_clients_n; client_index++) {
+        arranger_client *ac = server->arranger_clients[client_index];
         for (size_t i = 0; i < ac->marked_n;) {
             if (ac->marked[i] == view)
                 ac->marked[i] = ac->marked[--ac->marked_n];
@@ -264,28 +265,28 @@ void xd_arrange_forget_view(xd_server *server, xd_view *view) {
 static void handle_undo(struct wl_client *client, struct wl_resource *res) {
     (void)client;
     xd_server *server = server_of(res);
-    XD_LIST_FOR_EACH(v, &server->views, xd_view, link) {
-        if (!v->undo_valid)
+    XD_LIST_FOR_EACH(view, &server->views, xd_view, link) {
+        if (!view->undo_valid)
             continue;
-        v->undo_valid = false;
-        xd_view_set_outer_box(v, v->undo_box);
-        if (v->undo_maximized)
-            xd_view_set_maximized(v, true);
+        view->undo_valid = false;
+        xd_view_set_outer_box(view, view->undo_box);
+        if (view->undo_maximized)
+            xd_view_set_maximized(view, true);
     }
 }
 
 static void handle_begin_move(struct wl_client *client, struct wl_resource *res) {
     (void)client;
-    xd_view *v = xd_view_focused(server_of(res));
-    if (v != nullptr)
-        xd_view_begin_keyboard_move(v);
+    xd_view *view = xd_view_focused(server_of(res));
+    if (view != nullptr)
+        xd_view_begin_keyboard_move(view);
 }
 
 static void handle_begin_size(struct wl_client *client, struct wl_resource *res) {
     (void)client;
-    xd_view *v = xd_view_focused(server_of(res));
-    if (v != nullptr)
-        xd_view_begin_keyboard_size(v);
+    xd_view *view = xd_view_focused(server_of(res));
+    if (view != nullptr)
+        xd_view_begin_keyboard_size(view);
 }
 
 static void handle_destroy(struct wl_client *client, struct wl_resource *res) {
@@ -300,9 +301,10 @@ static void resource_destroyed(struct wl_resource *res) {
         server->arranger_resource = nullptr;
         xd_view_peek(server, false); /* a shell gone mid-peek leaves no glass behind */
     }
-    for (size_t c = 0; c < server->arranger_clients_n; c++) {
-        if (server->arranger_clients[c] == ac) {
-            server->arranger_clients[c] = server->arranger_clients[--server->arranger_clients_n];
+    for (size_t client_index = 0; client_index < server->arranger_clients_n; client_index++) {
+        if (server->arranger_clients[client_index] == ac) {
+            server->arranger_clients[client_index] =
+                server->arranger_clients[--server->arranger_clients_n];
             break;
         }
     }
@@ -313,10 +315,10 @@ static void resource_destroyed(struct wl_resource *res) {
 /* The shell's wl_output for `out`, or nullptr. */
 static struct wl_resource *shell_output(struct wl_resource *res, xd_output *out) {
     struct wl_client *client = wl_resource_get_client(res);
-    struct wl_resource *r;
-    wl_resource_for_each(r, &out->wlr_output->resources) {
-        if (wl_resource_get_client(r) == client)
-            return r;
+    struct wl_resource *resource;
+    wl_resource_for_each(resource, &out->wlr_output->resources) {
+        if (wl_resource_get_client(resource) == client)
+            return resource;
     }
     return nullptr;
 }
@@ -342,10 +344,10 @@ void xd_window_menu_show(xd_view *view, double lx, double ly, bool keyboard) {
     /* The shell's wl_output for this output. */
     struct wl_client *client = wl_resource_get_client(res);
     struct wl_resource *output_res = nullptr;
-    struct wl_resource *r;
-    wl_resource_for_each(r, &out->wlr_output->resources) {
-        if (wl_resource_get_client(r) == client) {
-            output_res = r;
+    struct wl_resource *resource;
+    wl_resource_for_each(resource, &out->wlr_output->resources) {
+        if (wl_resource_get_client(resource) == client) {
+            output_res = resource;
             break;
         }
     }
@@ -375,10 +377,10 @@ void xd_view_attention(xd_view *view) {
         return;
     /* The shell's handle for this window. */
     struct wl_client *client = wl_resource_get_client(res);
-    struct wl_resource *r;
-    wl_resource_for_each(r, &view->ftl->resources) {
-        if (wl_resource_get_client(r) == client) {
-            xd_window_arranger_v1_send_attention(res, r);
+    struct wl_resource *resource;
+    wl_resource_for_each(resource, &view->ftl->resources) {
+        if (wl_resource_get_client(resource) == client) {
+            xd_window_arranger_v1_send_attention(res, resource);
             return;
         }
     }
@@ -466,8 +468,8 @@ static bool is_task_manager(pid_t pid) {
         char *slash = strrchr(self, '/');
         if (slash != nullptr) {
             slash[1] = '\0';
-            size_t n = strlen(self);
-            ok = strncmp(exe, self, n) == 0 && strcmp(exe + n, "xd-taskmgr") == 0;
+            size_t count = strlen(self);
+            ok = strncmp(exe, self, count) == 0 && strcmp(exe + count, "xd-taskmgr") == 0;
         }
     }
     free(exe);
