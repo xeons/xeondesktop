@@ -90,24 +90,24 @@ typedef struct props {
     bool button_unset[XD_POWER_BUTTON_COUNT];  /* then logind's */
 } props;
 
-static void changed(props *p) {
-    if (!p->updating)
-        gtk_widget_set_sensitive(p->apply, TRUE);
+static void changed(props *properties) {
+    if (!properties->updating)
+        gtk_widget_set_sensitive(properties->apply, TRUE);
 }
 
 static GtkWidget *frame(const char *title, GtkWidget *child) {
-    GtkWidget *f = gtk_frame_new(title);
+    GtkWidget *widget = gtk_frame_new(title);
     gtk_container_set_border_width(GTK_CONTAINER(child), 8);
-    gtk_container_add(GTK_CONTAINER(f), child);
-    return f;
+    gtk_container_add(GTK_CONTAINER(widget), child);
+    return widget;
 }
 
 static GtkWidget *label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 56);
-    return l;
+    GtkWidget *widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(widget), 56);
+    return widget;
 }
 
 static GtkWidget *icon_row(const char *icon, const char *text) {
@@ -122,30 +122,31 @@ static GtkWidget *icon_row(const char *icon, const char *text) {
 /* ---- logind ----------------------------------------------------------------------- */
 
 /* A logind property (a string), or nullptr. g_free it. */
-static char *logind_string(props *p, const char *name) {
-    GVariant *v = p->logind != nullptr ? g_dbus_proxy_get_cached_property(p->logind, name)
-                                       : nullptr;
-    char *s = v != nullptr && g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)
-                  ? g_variant_dup_string(v, nullptr)
-                  : nullptr;
-    if (v != nullptr)
-        g_variant_unref(v);
-    return s;
+static char *logind_string(props *properties, const char *name) {
+    GVariant *variant = properties->logind != nullptr
+                            ? g_dbus_proxy_get_cached_property(properties->logind, name)
+                            : nullptr;
+    char *value = variant != nullptr && g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING)
+                      ? g_variant_dup_string(variant, nullptr)
+                      : nullptr;
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 /* CanSuspend, CanHibernate: "yes", "no", "na" (no hardware or swap) or
  * "challenge" (allowed with a password). */
-static char *logind_can(props *p, const char *method) {
-    if (p->logind == nullptr)
+static char *logind_can(props *properties, const char *method) {
+    if (properties->logind == nullptr)
         return nullptr;
-    GVariant *r = g_dbus_proxy_call_sync(p->logind, method, nullptr, G_DBUS_CALL_FLAGS_NONE, 2000,
-                                         nullptr, nullptr);
-    char *s = nullptr;
-    if (r != nullptr) {
-        g_variant_get(r, "(s)", &s);
-        g_variant_unref(r);
+    GVariant *variant = g_dbus_proxy_call_sync(properties->logind, method, nullptr,
+                                               G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, nullptr);
+    char *capability = nullptr;
+    if (variant != nullptr) {
+        g_variant_get(variant, "(s)", &capability);
+        g_variant_unref(variant);
     }
-    return s;
+    return capability;
 }
 
 static bool can(const char *answer) {
@@ -194,43 +195,44 @@ static int get_minutes(GtkWidget *combo) {
     return id != nullptr ? atoi(id) : 0;
 }
 
-static void on_value([[maybe_unused]] GtkWidget *w, gpointer data) { changed(data); }
+static void on_value([[maybe_unused]] GtkWidget *widget, gpointer data) { changed(data); }
 
-static GtkWidget *minutes_combo(props *p, int value) {
-    GtkWidget *c = gtk_combo_box_text_new();
+static GtkWidget *minutes_combo(props *properties, int value) {
+    GtkWidget *widget = gtk_combo_box_text_new();
     for (size_t i = 0; i < XD_ARRAY_LEN(minutes); i++) {
-        int m = minutes[i];
+        int minute_count = minutes[i];
         char id[16];
-        g_snprintf(id, sizeof(id), "%d", m);
-        char *text = m == 0     ? g_strdup("Never")
-                     : m == 1   ? g_strdup("After 1 min")
-                     : m == 60  ? g_strdup("After 1 hour")
-                     : m > 60   ? g_strdup_printf("After %d hours", m / 60)
-                                : g_strdup_printf("After %d mins", m);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(c), id, text);
+        g_snprintf(id, sizeof(id), "%d", minute_count);
+        char *text = minute_count == 0    ? g_strdup("Never")
+                     : minute_count == 1  ? g_strdup("After 1 min")
+                     : minute_count == 60 ? g_strdup("After 1 hour")
+                     : minute_count > 60  ? g_strdup_printf("After %d hours", minute_count / 60)
+                                          : g_strdup_printf("After %d mins", minute_count);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(widget), id, text);
         g_free(text);
     }
-    set_minutes(c, value);
-    g_signal_connect(c, "changed", G_CALLBACK(on_value), p);
-    return c;
+    set_minutes(widget, value);
+    g_signal_connect(widget, "changed", G_CALLBACK(on_value), properties);
+    return widget;
 }
 
 static char *schemes_path(void) {
     return g_build_filename(g_get_user_config_dir(), "xeondesktop", "power-schemes.ini", nullptr);
 }
 
-static xd_power_scheme_def *active_scheme(props *p) {
-    return xd_power_schemes_find(p->schemes,
-                                 gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->scheme)));
+static xd_power_scheme_def *active_scheme(props *properties) {
+    return xd_power_schemes_find(properties->schemes,
+                                 gtk_combo_box_get_active_id(GTK_COMBO_BOX(properties->scheme)));
 }
 
-static void show_scheme_title(props *p) {
-    const xd_power_scheme_def *d = active_scheme(p);
-    char *title = g_strdup_printf("Settings for %s power scheme", d != nullptr ? d->name : "the");
-    gtk_frame_set_label(GTK_FRAME(p->scheme_frame), title);
+static void show_scheme_title(props *properties) {
+    const xd_power_scheme_def *scheme = active_scheme(properties);
+    char *title =
+        g_strdup_printf("Settings for %s power scheme", scheme != nullptr ? scheme->name : "the");
+    gtk_frame_set_label(GTK_FRAME(properties->scheme_frame), title);
     g_free(title);
     /* The last scheme can't go: there would be nothing to choose. */
-    gtk_widget_set_sensitive(p->delete, d != nullptr && p->schemes->len > 1);
+    gtk_widget_set_sensitive(properties->delete, scheme != nullptr && properties->schemes->len > 1);
 }
 
 static xd_power_timers read_timers(GtkWidget *const combos[ROW_COUNT]) {
@@ -238,147 +240,155 @@ static xd_power_timers read_timers(GtkWidget *const combos[ROW_COUNT]) {
                              get_minutes(combos[ROW_HIBERNATE])};
 }
 
-static void show_timers(GtkWidget *const combos[ROW_COUNT], xd_power_timers t) {
-    set_minutes(combos[ROW_MONITOR], t.monitor);
-    set_minutes(combos[ROW_STANDBY], t.standby);
-    set_minutes(combos[ROW_HIBERNATE], t.hibernate);
+static void show_timers(GtkWidget *const combos[ROW_COUNT], xd_power_timers power_timers) {
+    set_minutes(combos[ROW_MONITOR], power_timers.monitor);
+    set_minutes(combos[ROW_STANDBY], power_timers.standby);
+    set_minutes(combos[ROW_HIBERNATE], power_timers.hibernate);
 }
 
 /* The schemes, `active` selected (by name). */
-static void fill_schemes(props *p, const char *active) {
-    p->updating = true;
-    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(p->scheme));
-    for (guint i = 0; i < p->schemes->len; i++) {
-        const xd_power_scheme_def *d = g_ptr_array_index(p->schemes, i);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(p->scheme), d->name, d->name);
+static void fill_schemes(props *properties, const char *active) {
+    properties->updating = true;
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(properties->scheme));
+    for (guint i = 0; i < properties->schemes->len; i++) {
+        const xd_power_scheme_def *scheme = g_ptr_array_index(properties->schemes, i);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(properties->scheme), scheme->name,
+                                  scheme->name);
     }
-    if (active == nullptr || !gtk_combo_box_set_active_id(GTK_COMBO_BOX(p->scheme), active))
-        gtk_combo_box_set_active(GTK_COMBO_BOX(p->scheme), -1);
-    p->updating = false;
-    show_scheme_title(p);
+    if (active == nullptr ||
+        !gtk_combo_box_set_active_id(GTK_COMBO_BOX(properties->scheme), active))
+        gtk_combo_box_set_active(GTK_COMBO_BOX(properties->scheme), -1);
+    properties->updating = false;
+    show_scheme_title(properties);
 }
 
 /* Choosing a scheme shows its timers. */
-static void show_scheme(props *p) {
-    const xd_power_scheme_def *d = active_scheme(p);
-    if (d == nullptr)
+static void show_scheme(props *properties) {
+    const xd_power_scheme_def *scheme = active_scheme(properties);
+    if (scheme == nullptr)
         return;
-    bool was = p->updating;
-    p->updating = true;
-    show_timers(p->ac, d->ac);
-    if (p->battery)
-        show_timers(p->dc, d->dc);
+    bool was = properties->updating;
+    properties->updating = true;
+    show_timers(properties->ac, scheme->ac);
+    if (properties->battery)
+        show_timers(properties->dc, scheme->dc);
     else
-        p->dc_values = d->dc;
-    p->updating = was;
+        properties->dc_values = scheme->dc;
+    properties->updating = was;
 }
 
-static void on_scheme([[maybe_unused]] GtkComboBox *c, gpointer data) {
-    props *p = data;
-    if (p->updating)
+static void on_scheme([[maybe_unused]] GtkComboBox *combo, gpointer data) {
+    props *properties = data;
+    if (properties->updating)
         return;
-    show_scheme_title(p);
-    show_scheme(p);
-    changed(p);
+    show_scheme_title(properties);
+    show_scheme(properties);
+    changed(properties);
 }
 
-static void error_box(props *p, const char *what, const GError *error) {
+static void error_box(props *properties, const char *what, const GError *error) {
     char *text = g_strdup_printf("%s\n\n%s", what, error != nullptr ? error->message : "");
-    xd_message_box(GTK_WINDOW(p->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, text);
+    xd_message_box(GTK_WINDOW(properties->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, text);
     g_free(text);
 }
 
-static bool save_schemes(props *p) {
+static bool save_schemes(props *properties) {
     char *path = schemes_path();
     GError *error = nullptr;
-    bool ok = xd_power_schemes_save(path, p->schemes, &error);
+    bool ok = xd_power_schemes_save(path, properties->schemes, &error);
     g_free(path);
     if (!ok) {
-        error_box(p, "The power schemes could not be saved.", error);
+        error_box(properties, "The power schemes could not be saved.", error);
         g_error_free(error);
     }
     return ok;
 }
 
-static void on_name_changed(GtkEditable *e, gpointer ok) {
-    gtk_widget_set_sensitive(ok, xd_power_scheme_name_valid(gtk_entry_get_text(GTK_ENTRY(e))));
+static void on_name_changed(GtkEditable *editable, gpointer ok) {
+    gtk_widget_set_sensitive(ok,
+                             xd_power_scheme_name_valid(gtk_entry_get_text(GTK_ENTRY(editable))));
 }
 
 /* Save As...: XP's Save Scheme box. The settings as they are on the page
  * become a scheme of that name, which is then the one selected. */
-static void on_save_as([[maybe_unused]] GtkButton *b, gpointer data) {
-    props *p = data;
-    GtkWidget *d = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(d), "Save Scheme");
-    gtk_window_set_transient_for(GTK_WINDOW(d), GTK_WINDOW(p->window));
-    gtk_window_set_modal(GTK_WINDOW(d), TRUE);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
-    GtkWidget *ok = gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+static void on_save_as([[maybe_unused]] GtkButton *button, gpointer data) {
+    props *properties = data;
+    GtkWidget *dialog_window = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(dialog_window), "Save Scheme");
+    gtk_window_set_transient_for(GTK_WINDOW(dialog_window), GTK_WINDOW(properties->window));
+    gtk_window_set_modal(GTK_WINDOW(dialog_window), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(dialog_window), FALSE);
+    GtkWidget *ok = gtk_dialog_add_button(GTK_DIALOG(dialog_window), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(dialog_window), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(dialog_window), GTK_RESPONSE_OK);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(box), 10);
-    GtkWidget *l = gtk_label_new_with_mnemonic("_Save this power scheme as:");
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
+    GtkWidget *save_label = gtk_label_new_with_mnemonic("_Save this power scheme as:");
+    gtk_label_set_xalign(GTK_LABEL(save_label), 0);
     GtkWidget *entry = gtk_entry_new();
     gtk_entry_set_max_length(GTK_ENTRY(entry), 63);
     gtk_entry_set_width_chars(GTK_ENTRY(entry), 36);
     gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-    const xd_power_scheme_def *current = active_scheme(p);
+    const xd_power_scheme_def *current = active_scheme(properties);
     gtk_entry_set_text(GTK_ENTRY(entry), current != nullptr ? current->name : "");
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), entry);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(save_label), entry);
     g_signal_connect(entry, "changed", G_CALLBACK(on_name_changed), ok);
     on_name_changed(GTK_EDITABLE(entry), ok);
-    gtk_box_pack_start(GTK_BOX(box), l, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), save_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), box, TRUE, TRUE, 0);
-    gtk_widget_show_all(d);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog_window))), box, TRUE,
+                       TRUE, 0);
+    gtk_widget_show_all(dialog_window);
 
-    while (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK) {
+    while (gtk_dialog_run(GTK_DIALOG(dialog_window)) == GTK_RESPONSE_OK) {
         const char *name = gtk_entry_get_text(GTK_ENTRY(entry));
         if (!xd_power_scheme_name_valid(name))
             continue;
-        if (xd_power_schemes_find(p->schemes, name) != nullptr && current != nullptr &&
+        if (xd_power_schemes_find(properties->schemes, name) != nullptr && current != nullptr &&
             strcmp(name, current->name) != 0) {
-            char *q = g_strdup_printf("A power scheme named '%s' already exists. Do you want "
-                                      "to replace it?",
-                                      name);
-            int r = xd_message_box(GTK_WINDOW(d), TITLE, XD_MB_WARNING, XD_MB_YES_NO, TRUE, q);
-            g_free(q);
-            if (r != GTK_RESPONSE_YES)
+            char *question_text =
+                g_strdup_printf("A power scheme named '%s' already exists. Do you want "
+                                "to replace it?",
+                                name);
+            int response = xd_message_box(GTK_WINDOW(dialog_window), TITLE, XD_MB_WARNING,
+                                          XD_MB_YES_NO, TRUE, question_text);
+            g_free(question_text);
+            if (response != GTK_RESPONSE_YES)
                 continue;
         }
-        xd_power_timers dc = p->battery ? read_timers(p->dc) : p->dc_values;
+        xd_power_timers dc =
+            properties->battery ? read_timers(properties->dc) : properties->dc_values;
         char *saved = g_strdup(name);
-        xd_power_schemes_put(p->schemes, saved, read_timers(p->ac), dc);
-        if (save_schemes(p)) {
-            fill_schemes(p, saved);
-            changed(p);
+        xd_power_schemes_put(properties->schemes, saved, read_timers(properties->ac), dc);
+        if (save_schemes(properties)) {
+            fill_schemes(properties, saved);
+            changed(properties);
         }
         g_free(saved);
         break;
     }
-    gtk_widget_destroy(d);
+    gtk_widget_destroy(dialog_window);
 }
 
-static void on_delete([[maybe_unused]] GtkButton *b, gpointer data) {
-    props *p = data;
-    xd_power_scheme_def *d = active_scheme(p);
-    if (d == nullptr || p->schemes->len <= 1)
+static void on_delete([[maybe_unused]] GtkButton *button, gpointer data) {
+    props *properties = data;
+    xd_power_scheme_def *scheme = active_scheme(properties);
+    if (scheme == nullptr || properties->schemes->len <= 1)
         return;
-    char *q = g_strdup_printf("Are you sure you want to delete the power scheme '%s'?", d->name);
-    int r = xd_message_box(GTK_WINDOW(p->window), "Confirm Scheme Delete", XD_MB_QUESTION,
-                           XD_MB_YES_NO, TRUE, q);
-    g_free(q);
-    if (r != GTK_RESPONSE_YES)
+    char *question_text =
+        g_strdup_printf("Are you sure you want to delete the power scheme '%s'?", scheme->name);
+    int response = xd_message_box(GTK_WINDOW(properties->window), "Confirm Scheme Delete",
+                                  XD_MB_QUESTION, XD_MB_YES_NO, TRUE, question_text);
+    g_free(question_text);
+    if (response != GTK_RESPONSE_YES)
         return;
-    g_ptr_array_remove(p->schemes, d);
-    save_schemes(p);
+    g_ptr_array_remove(properties->schemes, scheme);
+    save_schemes(properties);
     /* The first one left takes its place, applied with OK or Apply. */
-    const xd_power_scheme_def *first = g_ptr_array_index(p->schemes, 0);
-    fill_schemes(p, first->name);
-    show_scheme(p);
-    changed(p);
+    const xd_power_scheme_def *first = g_ptr_array_index(properties->schemes, 0);
+    fill_schemes(properties, first->name);
+    show_scheme(properties);
+    changed(properties);
 }
 
 /* The active power profile (power-profiles-daemon), which System
@@ -387,16 +397,16 @@ static char *power_profile(void) {
     GDBusProxy *proxy = g_dbus_proxy_new_for_bus_sync(
         G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_DO_NOT_CONNECT_SIGNALS, nullptr, PROFILES,
         PROFILES_PATH, PROFILES, nullptr, nullptr);
-    GVariant *v = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, "ActiveProfile")
-                                   : nullptr;
+    GVariant *variant =
+        proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, "ActiveProfile") : nullptr;
     char *profile = nullptr;
-    if (v != nullptr) {
-        const char *id = g_variant_get_string(v, nullptr);
+    if (variant != nullptr) {
+        const char *id = g_variant_get_string(variant, nullptr);
         profile = g_strdup(strcmp(id, "power-saver") == 0  ? "Power Saver"
                            : strcmp(id, "performance") == 0 ? "Performance"
                            : strcmp(id, "balanced") == 0    ? "Balanced"
                                                             : id);
-        g_variant_unref(v);
+        g_variant_unref(variant);
     }
     if (proxy != nullptr)
         g_object_unref(proxy);
@@ -434,7 +444,7 @@ static GtkWidget *column_head(const char *icon, const char *text) {
     return box;
 }
 
-static GtkWidget *schemes_page(props *p, const xd_settings *s) {
+static GtkWidget *schemes_page(props *properties, const xd_settings *settings) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
     gtk_box_pack_start(GTK_BOX(page),
@@ -443,40 +453,41 @@ static GtkWidget *schemes_page(props *p, const xd_settings *s) {
                                 "this computer. Note that changing the settings below will "
                                 "modify the selected scheme."),
                        FALSE, FALSE, 0);
-    GtkWidget *l = gtk_label_new_with_mnemonic("Po_wer schemes");
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_box_pack_start(GTK_BOX(page), l, FALSE, FALSE, 0);
-    p->scheme = gtk_combo_box_text_new();
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), p->scheme);
-    gtk_box_pack_start(GTK_BOX(page), p->scheme, FALSE, FALSE, 0);
+    GtkWidget *widget = gtk_label_new_with_mnemonic("Po_wer schemes");
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_box_pack_start(GTK_BOX(page), widget, FALSE, FALSE, 0);
+    properties->scheme = gtk_combo_box_text_new();
+    gtk_label_set_mnemonic_widget(GTK_LABEL(widget), properties->scheme);
+    gtk_box_pack_start(GTK_BOX(page), properties->scheme, FALSE, FALSE, 0);
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     GtkWidget *save_as = gtk_button_new_with_mnemonic("Sa_ve As...");
-    p->delete = gtk_button_new_with_mnemonic("_Delete");
+    properties->delete = gtk_button_new_with_mnemonic("_Delete");
     gtk_widget_set_size_request(save_as, 75, -1);
-    gtk_widget_set_size_request(p->delete, 75, -1);
-    g_signal_connect(save_as, "clicked", G_CALLBACK(on_save_as), p);
-    g_signal_connect(p->delete, "clicked", G_CALLBACK(on_delete), p);
-    gtk_box_pack_end(GTK_BOX(buttons), p->delete, FALSE, FALSE, 0);
+    gtk_widget_set_size_request(properties->delete, 75, -1);
+    g_signal_connect(save_as, "clicked", G_CALLBACK(on_save_as), properties);
+    g_signal_connect(properties->delete, "clicked", G_CALLBACK(on_delete), properties);
+    gtk_box_pack_end(GTK_BOX(buttons), properties->delete, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(buttons), save_as, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), buttons, FALSE, FALSE, 0);
 
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
-    char *can_suspend = logind_can(p, "CanSuspend");
-    char *can_hibernate = logind_can(p, "CanHibernate");
-    p->row_ok[ROW_MONITOR] = true;
-    p->row_ok[ROW_STANDBY] = p->can_standby = can(can_suspend);
-    p->row_ok[ROW_HIBERNATE] = p->can_hibernate = can(can_hibernate);
+    char *can_suspend = logind_can(properties, "CanSuspend");
+    char *can_hibernate = logind_can(properties, "CanHibernate");
+    properties->row_ok[ROW_MONITOR] = true;
+    properties->row_ok[ROW_STANDBY] = properties->can_standby = can(can_suspend);
+    properties->row_ok[ROW_HIBERNATE] = properties->can_hibernate = can(can_hibernate);
     static const char *const texts[ROW_COUNT] = {"Turn off _monitor:", "System _standby:",
                                                  "System _hibernates:"};
-    const int ac[ROW_COUNT] = {s->monitor_off, s->standby, s->hibernate};
-    const int dc[ROW_COUNT] = {s->monitor_off_battery, s->standby_battery, s->hibernate_battery};
-    p->dc_values = (xd_power_timers){dc[0], dc[1], dc[2]};
+    const int ac[ROW_COUNT] = {settings->monitor_off, settings->standby, settings->hibernate};
+    const int dc[ROW_COUNT] = {settings->monitor_off_battery, settings->standby_battery,
+                               settings->hibernate_battery};
+    properties->dc_values = (xd_power_timers){dc[0], dc[1], dc[2]};
     int top = 0;
     /* The two columns alike, as XP draws them. */
     GtkSizeGroup *columns = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
-    if (p->battery) {
+    if (properties->battery) {
         GtkWidget *when = gtk_label_new("When computer is:");
         gtk_label_set_xalign(GTK_LABEL(when), 0);
         gtk_widget_set_valign(when, GTK_ALIGN_END);
@@ -489,20 +500,20 @@ static GtkWidget *schemes_page(props *p, const xd_settings *s) {
     for (int i = 0; i < ROW_COUNT; i++) {
         GtkWidget *rl = gtk_label_new_with_mnemonic(texts[i]);
         gtk_label_set_xalign(GTK_LABEL(rl), 0);
-        p->ac[i] = minutes_combo(p, ac[i]);
-        gtk_widget_set_hexpand(p->ac[i], TRUE);
-        gtk_size_group_add_widget(columns, p->ac[i]);
-        gtk_label_set_mnemonic_widget(GTK_LABEL(rl), p->ac[i]);
-        gtk_widget_set_sensitive(rl, p->row_ok[i]);
-        gtk_widget_set_sensitive(p->ac[i], p->row_ok[i]);
+        properties->ac[i] = minutes_combo(properties, ac[i]);
+        gtk_widget_set_hexpand(properties->ac[i], TRUE);
+        gtk_size_group_add_widget(columns, properties->ac[i]);
+        gtk_label_set_mnemonic_widget(GTK_LABEL(rl), properties->ac[i]);
+        gtk_widget_set_sensitive(rl, properties->row_ok[i]);
+        gtk_widget_set_sensitive(properties->ac[i], properties->row_ok[i]);
         gtk_grid_attach(GTK_GRID(grid), rl, 0, top + i, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), p->ac[i], 1, top + i, 1, 1);
-        if (p->battery) {
-            p->dc[i] = minutes_combo(p, dc[i]);
-            gtk_widget_set_hexpand(p->dc[i], TRUE);
-            gtk_size_group_add_widget(columns, p->dc[i]);
-            gtk_widget_set_sensitive(p->dc[i], p->row_ok[i]);
-            gtk_grid_attach(GTK_GRID(grid), p->dc[i], 2, top + i, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), properties->ac[i], 1, top + i, 1, 1);
+        if (properties->battery) {
+            properties->dc[i] = minutes_combo(properties, dc[i]);
+            gtk_widget_set_hexpand(properties->dc[i], TRUE);
+            gtk_size_group_add_widget(columns, properties->dc[i]);
+            gtk_widget_set_sensitive(properties->dc[i], properties->row_ok[i]);
+            gtk_grid_attach(GTK_GRID(grid), properties->dc[i], 2, top + i, 1, 1);
         }
     }
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -517,8 +528,8 @@ static GtkWidget *schemes_page(props *p, const xd_settings *s) {
     g_object_unref(columns);
     g_free(can_suspend);
     g_free(can_hibernate);
-    p->scheme_frame = frame("", box);
-    gtk_box_pack_start(GTK_BOX(page), p->scheme_frame, FALSE, FALSE, 0);
+    properties->scheme_frame = frame("", box);
+    gtk_box_pack_start(GTK_BOX(page), properties->scheme_frame, FALSE, FALSE, 0);
 
     char *profile = power_profile();
     if (profile != nullptr) {
@@ -532,19 +543,20 @@ static GtkWidget *schemes_page(props *p, const xd_settings *s) {
 
     /* The timers shown are the ones in use; the scheme is the user's own
      * if it still exists, else the built-in one. */
-    const char *active = s->power_scheme_custom[0] != '\0' &&
-                                 xd_power_schemes_find(p->schemes, s->power_scheme_custom) != nullptr
-                             ? s->power_scheme_custom
-                             : xd_power_builtin_label(s->power_scheme);
-    fill_schemes(p, active);
-    g_signal_connect(p->scheme, "changed", G_CALLBACK(on_scheme), p);
+    const char *active =
+        settings->power_scheme_custom[0] != '\0' &&
+                xd_power_schemes_find(properties->schemes, settings->power_scheme_custom) != nullptr
+            ? settings->power_scheme_custom
+            : xd_power_builtin_label(settings->power_scheme);
+    fill_schemes(properties, active);
+    g_signal_connect(properties->scheme, "changed", G_CALLBACK(on_scheme), properties);
     return page;
 }
 
 /* ---- Alarms ----------------------------------------------------------------------- */
 
-static const char *action_text(xd_alarm_action a) {
-    switch (a) {
+static const char *action_text(xd_alarm_action alarm_action) {
+    switch (alarm_action) {
     case XD_ALARM_STANDBY:
         return "Stand by";
     case XD_ALARM_HIBERNATE:
@@ -559,77 +571,77 @@ static const char *action_text(xd_alarm_action a) {
 }
 
 /* The summary beside Alarm Action...: "Notification: Sound, Text". */
-static void show_alarm(props *p, int i) {
-    const xd_battery_alarm *al = &p->alarms[i];
-    bool was = p->updating;
-    p->updating = true;
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->alarm_on[i]), al->on);
-    gtk_range_set_value(GTK_RANGE(p->alarm_scale[i]), al->percent);
-    p->updating = was;
+static void show_alarm(props *properties, int i) {
+    const xd_battery_alarm *al = &properties->alarms[i];
+    bool was = properties->updating;
+    properties->updating = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(properties->alarm_on[i]), al->on);
+    gtk_range_set_value(GTK_RANGE(properties->alarm_scale[i]), al->percent);
+    properties->updating = was;
     char text[16];
     g_snprintf(text, sizeof(text), "%d%%", al->percent);
-    gtk_label_set_text(GTK_LABEL(p->alarm_level[i]), text);
-    gtk_label_set_text(GTK_LABEL(p->alarm_notify[i]),
-                       al->sound && al->message ? "Sound, Text"
-                       : al->sound              ? "Sound"
-                       : al->message            ? "Text"
-                                                : "None");
-    gtk_label_set_text(GTK_LABEL(p->alarm_action[i]), action_text(al->action));
-    gtk_widget_set_sensitive(p->alarm_scale[i], al->on);
-    gtk_widget_set_sensitive(p->alarm_button[i], al->on);
+    gtk_label_set_text(GTK_LABEL(properties->alarm_level[i]), text);
+    gtk_label_set_text(GTK_LABEL(properties->alarm_notify[i]), al->sound && al->message
+                                                                   ? "Sound, Text"
+                                                               : al->sound   ? "Sound"
+                                                               : al->message ? "Text"
+                                                                             : "None");
+    gtk_label_set_text(GTK_LABEL(properties->alarm_action[i]), action_text(al->action));
+    gtk_widget_set_sensitive(properties->alarm_scale[i], al->on);
+    gtk_widget_set_sensitive(properties->alarm_button[i], al->on);
 }
 
-static void on_alarm_on(GtkToggleButton *b, gpointer data) {
-    props *p = data;
-    if (p->updating)
+static void on_alarm_on(GtkToggleButton *toggle, gpointer data) {
+    props *properties = data;
+    if (properties->updating)
         return;
-    int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "alarm"));
-    p->alarms[i].on = gtk_toggle_button_get_active(b);
-    show_alarm(p, i);
-    changed(p);
+    int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(toggle), "alarm"));
+    properties->alarms[i].on = gtk_toggle_button_get_active(toggle);
+    show_alarm(properties, i);
+    changed(properties);
 }
 
-static void on_alarm_level(GtkRange *r, gpointer data) {
-    props *p = data;
-    if (p->updating)
+static void on_alarm_level(GtkRange *range, gpointer data) {
+    props *properties = data;
+    if (properties->updating)
         return;
-    int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(r), "alarm"));
-    double value = gtk_range_get_value(r);
+    int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(range), "alarm"));
+    double value = gtk_range_get_value(range);
     int level = (int)lround(value);
     /* The low alarm stays at or above the critical one. */
     if (i == ALARM_LOW)
-        level = XD_MAX(level, p->alarms[ALARM_CRITICAL].percent);
+        level = XD_MAX(level, properties->alarms[ALARM_CRITICAL].percent);
     else
-        level = XD_MIN(level, p->alarms[ALARM_LOW].percent);
-    p->alarms[i].percent = level;
-    show_alarm(p, i);
-    changed(p);
+        level = XD_MIN(level, properties->alarms[ALARM_LOW].percent);
+    properties->alarms[i].percent = level;
+    show_alarm(properties, i);
+    changed(properties);
 }
 
 typedef struct action_dialog {
     GtkWidget *when, *what;
 } action_dialog;
 
-static void on_when([[maybe_unused]] GtkToggleButton *b, gpointer data) {
-    action_dialog *a = data;
-    gtk_widget_set_sensitive(a->what,
-                             gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->when)));
+static void on_when([[maybe_unused]] GtkToggleButton *toggle, gpointer data) {
+    action_dialog *action_controls = data;
+    gtk_widget_set_sensitive(action_controls->what, gtk_toggle_button_get_active(
+                                                        GTK_TOGGLE_BUTTON(action_controls->when)));
 }
 
 /* Alarm Action...: XP's Low/Critical Battery Alarm Actions box. */
-static void on_alarm_action(GtkButton *b, gpointer data) {
-    props *p = data;
-    int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "alarm"));
-    xd_battery_alarm *al = &p->alarms[i];
-    GtkWidget *d = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(d), i == ALARM_LOW ? "Low Battery Alarm Actions"
-                                                       : "Critical Battery Alarm Actions");
-    gtk_window_set_transient_for(GTK_WINDOW(d), GTK_WINDOW(p->window));
-    gtk_window_set_modal(GTK_WINDOW(d), TRUE);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
-    gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+static void on_alarm_action(GtkButton *button, gpointer data) {
+    props *properties = data;
+    int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "alarm"));
+    xd_battery_alarm *al = &properties->alarms[i];
+    GtkWidget *widget = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(widget), i == ALARM_LOW ? "Low Battery Alarm Actions"
+                                                            : "Critical Battery Alarm Actions");
+    gtk_window_set_transient_for(GTK_WINDOW(widget), GTK_WINDOW(properties->window));
+    gtk_window_set_modal(GTK_WINDOW(widget), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(widget), FALSE);
+    gtk_dialog_add_button(GTK_DIALOG(widget), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(widget), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(widget), GTK_RESPONSE_OK);
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
 
@@ -643,55 +655,61 @@ static void on_alarm_action(GtkButton *b, gpointer data) {
     gtk_box_pack_start(GTK_BOX(page), frame("Notification", notify), FALSE, FALSE, 0);
 
     GtkWidget *action = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    action_dialog a = {0};
-    a.when = gtk_check_button_new_with_mnemonic("_When the alarm goes off, the computer will:");
-    a.what = gtk_combo_box_text_new();
+    action_dialog action_controls = {0};
+    action_controls.when =
+        gtk_check_button_new_with_mnemonic("_When the alarm goes off, the computer will:");
+    action_controls.what = gtk_combo_box_text_new();
     /* What logind can do; Shut down always. */
-    if (p->can_standby)
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(a.what), "standby", "Stand by");
-    if (p->can_hibernate)
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(a.what), "hibernate", "Hibernate");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(a.what), "shutdown", "Shut down");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(a.when), al->action != XD_ALARM_NOTHING);
+    if (properties->can_standby)
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(action_controls.what), "standby", "Stand by");
+    if (properties->can_hibernate)
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(action_controls.what), "hibernate",
+                                  "Hibernate");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(action_controls.what), "shutdown", "Shut down");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(action_controls.when),
+                                 al->action != XD_ALARM_NOTHING);
     if (al->action == XD_ALARM_NOTHING ||
-        !gtk_combo_box_set_active_id(GTK_COMBO_BOX(a.what), xd_alarm_action_name(al->action)))
-        gtk_combo_box_set_active(GTK_COMBO_BOX(a.what), 0);
-    gtk_widget_set_margin_start(a.what, 20);
-    g_signal_connect(a.when, "toggled", G_CALLBACK(on_when), &a);
-    on_when(nullptr, &a);
-    gtk_box_pack_start(GTK_BOX(action), a.when, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(action), a.what, FALSE, FALSE, 0);
+        !gtk_combo_box_set_active_id(GTK_COMBO_BOX(action_controls.what),
+                                     xd_alarm_action_name(al->action)))
+        gtk_combo_box_set_active(GTK_COMBO_BOX(action_controls.what), 0);
+    gtk_widget_set_margin_start(action_controls.what, 20);
+    g_signal_connect(action_controls.when, "toggled", G_CALLBACK(on_when), &action_controls);
+    on_when(nullptr, &action_controls);
+    gtk_box_pack_start(GTK_BOX(action), action_controls.when, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(action), action_controls.what, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), frame("Alarm action", action), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), page, TRUE, TRUE, 0);
-    gtk_widget_show_all(d);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(widget))), page, TRUE, TRUE,
+                       0);
+    gtk_widget_show_all(widget);
 
-    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK) {
+    if (gtk_dialog_run(GTK_DIALOG(widget)) == GTK_RESPONSE_OK) {
         al->sound = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(sound));
         al->message = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(message));
-        const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(a.what));
-        al->action = !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a.when)) || id == nullptr
-                         ? XD_ALARM_NOTHING
-                     : strcmp(id, "standby") == 0   ? XD_ALARM_STANDBY
-                     : strcmp(id, "hibernate") == 0 ? XD_ALARM_HIBERNATE
-                                                    : XD_ALARM_SHUTDOWN;
-        show_alarm(p, i);
-        changed(p);
+        const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(action_controls.what));
+        al->action =
+            !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(action_controls.when)) || id == nullptr
+                ? XD_ALARM_NOTHING
+            : strcmp(id, "standby") == 0   ? XD_ALARM_STANDBY
+            : strcmp(id, "hibernate") == 0 ? XD_ALARM_HIBERNATE
+                                           : XD_ALARM_SHUTDOWN;
+        show_alarm(properties, i);
+        changed(properties);
     }
-    gtk_widget_destroy(d);
+    gtk_widget_destroy(widget);
 }
 
 /* "Notification:" and its value, in the summary grid. */
 static GtkWidget *summary_row(GtkWidget *grid, int row, const char *what) {
-    GtkWidget *k = gtk_label_new(what);
-    gtk_label_set_xalign(GTK_LABEL(k), 0);
-    GtkWidget *v = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(v), 0);
-    gtk_grid_attach(GTK_GRID(grid), k, 0, row, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), v, 1, row, 1, 1);
-    return v;
+    GtkWidget *key_label = gtk_label_new(what);
+    gtk_label_set_xalign(GTK_LABEL(key_label), 0);
+    GtkWidget *value_label = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(value_label), 0);
+    gtk_grid_attach(GTK_GRID(grid), key_label, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), value_label, 1, row, 1, 1);
+    return value_label;
 }
 
-static GtkWidget *alarm_frame(props *p, int i) {
+static GtkWidget *alarm_frame(props *properties, int i) {
     static const char *const titles[] = {"Low battery alarm", "Critical battery alarm"};
     static const char *const checks[] = {
         "Activate _low battery alarm when power level reaches:",
@@ -699,96 +717,99 @@ static GtkWidget *alarm_frame(props *p, int i) {
     static const char *const buttons[] = {"Alar_m Action...", "Alarm Act_ion..."};
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    p->alarm_on[i] = gtk_check_button_new_with_mnemonic(checks[i]);
-    p->alarm_level[i] = gtk_label_new("");
-    gtk_box_pack_start(GTK_BOX(top), p->alarm_on[i], FALSE, FALSE, 0);
-    gtk_box_pack_end(GTK_BOX(top), p->alarm_level[i], FALSE, FALSE, 0);
+    properties->alarm_on[i] = gtk_check_button_new_with_mnemonic(checks[i]);
+    properties->alarm_level[i] = gtk_label_new("");
+    gtk_box_pack_start(GTK_BOX(top), properties->alarm_on[i], FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(top), properties->alarm_level[i], FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), top, FALSE, FALSE, 0);
 
     GtkWidget *slider = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    p->alarm_scale[i] = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
-    gtk_scale_set_draw_value(GTK_SCALE(p->alarm_scale[i]), FALSE);
-    for (int v = 0; v <= 100; v += 10)
-        gtk_scale_add_mark(GTK_SCALE(p->alarm_scale[i]), v, GTK_POS_BOTTOM, nullptr);
+    properties->alarm_scale[i] = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0, 100, 1);
+    gtk_scale_set_draw_value(GTK_SCALE(properties->alarm_scale[i]), FALSE);
+    for (int percent = 0; percent <= 100; percent += 10)
+        gtk_scale_add_mark(GTK_SCALE(properties->alarm_scale[i]), percent, GTK_POS_BOTTOM, nullptr);
     gtk_box_pack_start(GTK_BOX(slider), gtk_label_new("0%"), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(slider), p->alarm_scale[i], TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(slider), properties->alarm_scale[i], TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(slider), gtk_label_new("100%"), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), slider, FALSE, FALSE, 0);
 
     GtkWidget *bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-    p->alarm_button[i] = gtk_button_new_with_mnemonic(buttons[i]);
-    gtk_widget_set_valign(p->alarm_button[i], GTK_ALIGN_START);
-    gtk_box_pack_start(GTK_BOX(bottom), p->alarm_button[i], FALSE, FALSE, 0);
+    properties->alarm_button[i] = gtk_button_new_with_mnemonic(buttons[i]);
+    gtk_widget_set_valign(properties->alarm_button[i], GTK_ALIGN_START);
+    gtk_box_pack_start(GTK_BOX(bottom), properties->alarm_button[i], FALSE, FALSE, 0);
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
     gtk_grid_set_row_spacing(GTK_GRID(grid), 2);
-    p->alarm_notify[i] = summary_row(grid, 0, "Notification:");
-    p->alarm_action[i] = summary_row(grid, 1, "Action:");
+    properties->alarm_notify[i] = summary_row(grid, 0, "Notification:");
+    properties->alarm_action[i] = summary_row(grid, 1, "Action:");
     gtk_box_pack_start(GTK_BOX(bottom), grid, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), bottom, FALSE, FALSE, 0);
 
-    for (GtkWidget *const *w = (GtkWidget *const[]){p->alarm_on[i], p->alarm_scale[i],
-                                                     p->alarm_button[i], nullptr};
-         *w != nullptr; w++)
-        g_object_set_data(G_OBJECT(*w), "alarm", GINT_TO_POINTER(i));
-    show_alarm(p, i);
-    g_signal_connect(p->alarm_on[i], "toggled", G_CALLBACK(on_alarm_on), p);
-    g_signal_connect(p->alarm_scale[i], "value-changed", G_CALLBACK(on_alarm_level), p);
-    g_signal_connect(p->alarm_button[i], "clicked", G_CALLBACK(on_alarm_action), p);
+    for (GtkWidget *const *widget =
+             (GtkWidget *const[]){properties->alarm_on[i], properties->alarm_scale[i],
+                                  properties->alarm_button[i], nullptr};
+         *widget != nullptr; widget++)
+        g_object_set_data(G_OBJECT(*widget), "alarm", GINT_TO_POINTER(i));
+    show_alarm(properties, i);
+    g_signal_connect(properties->alarm_on[i], "toggled", G_CALLBACK(on_alarm_on), properties);
+    g_signal_connect(properties->alarm_scale[i], "value-changed", G_CALLBACK(on_alarm_level),
+                     properties);
+    g_signal_connect(properties->alarm_button[i], "clicked", G_CALLBACK(on_alarm_action),
+                     properties);
     return frame(titles[i], box);
 }
 
-static GtkWidget *alarms_page(props *p, const xd_settings *s) {
+static GtkWidget *alarms_page(props *properties, const xd_settings *settings) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
-    p->alarms[ALARM_LOW] = s->low_alarm;
-    p->alarms[ALARM_CRITICAL] = s->critical_alarm;
-    gtk_box_pack_start(GTK_BOX(page), alarm_frame(p, ALARM_LOW), FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(page), alarm_frame(p, ALARM_CRITICAL), FALSE, FALSE, 0);
+    properties->alarms[ALARM_LOW] = settings->low_alarm;
+    properties->alarms[ALARM_CRITICAL] = settings->critical_alarm;
+    gtk_box_pack_start(GTK_BOX(page), alarm_frame(properties, ALARM_LOW), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), alarm_frame(properties, ALARM_CRITICAL), FALSE, FALSE, 0);
     return page;
 }
 
 /* ---- Power Meter ------------------------------------------------------------------ */
 
 static GVariant *prop(GDBusProxy *proxy, const char *name, const GVariantType *type) {
-    GVariant *v = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
-    if (v != nullptr && !g_variant_is_of_type(v, type)) {
-        g_variant_unref(v);
-        v = nullptr;
+    GVariant *variant = proxy != nullptr ? g_dbus_proxy_get_cached_property(proxy, name) : nullptr;
+    if (variant != nullptr && !g_variant_is_of_type(variant, type)) {
+        g_variant_unref(variant);
+        variant = nullptr;
     }
-    return v;
+    return variant;
 }
 
 static double prop_double(GDBusProxy *proxy, const char *name) {
-    GVariant *v = prop(proxy, name, G_VARIANT_TYPE_DOUBLE);
-    double d = v != nullptr ? g_variant_get_double(v) : 0;
-    if (v != nullptr)
-        g_variant_unref(v);
-    return d;
+    GVariant *variant = prop(proxy, name, G_VARIANT_TYPE_DOUBLE);
+    double value = variant != nullptr ? g_variant_get_double(variant) : 0;
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 static guint32 prop_uint(GDBusProxy *proxy, const char *name) {
-    GVariant *v = prop(proxy, name, G_VARIANT_TYPE_UINT32);
-    guint32 u = v != nullptr ? g_variant_get_uint32(v) : 0;
-    if (v != nullptr)
-        g_variant_unref(v);
-    return u;
+    GVariant *variant = prop(proxy, name, G_VARIANT_TYPE_UINT32);
+    guint32 value = variant != nullptr ? g_variant_get_uint32(variant) : 0;
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 static bool prop_bool(GDBusProxy *proxy, const char *name) {
-    GVariant *v = prop(proxy, name, G_VARIANT_TYPE_BOOLEAN);
-    bool b = v != nullptr && g_variant_get_boolean(v);
-    if (v != nullptr)
-        g_variant_unref(v);
-    return b;
+    GVariant *variant = prop(proxy, name, G_VARIANT_TYPE_BOOLEAN);
+    bool value = variant != nullptr && g_variant_get_boolean(variant);
+    if (variant != nullptr)
+        g_variant_unref(variant);
+    return value;
 }
 
 /* g_free it; "" if unset. */
 static char *prop_string(GDBusProxy *proxy, const char *name) {
-    GVariant *v = prop(proxy, name, G_VARIANT_TYPE_STRING);
-    char *str = g_strdup(v != nullptr ? g_variant_get_string(v, nullptr) : "");
-    if (v != nullptr)
-        g_variant_unref(v);
+    GVariant *variant = prop(proxy, name, G_VARIANT_TYPE_STRING);
+    char *str = g_strdup(variant != nullptr ? g_variant_get_string(variant, nullptr) : "");
+    if (variant != nullptr)
+        g_variant_unref(variant);
     return str;
 }
 
@@ -828,19 +849,19 @@ static const char *battery_icon(double percent, guint32 state) {
 
 static void clear(GtkWidget *container) {
     GList *kids = gtk_container_get_children(GTK_CONTAINER(container));
-    for (GList *l = kids; l != nullptr; l = l->next)
-        gtk_widget_destroy(l->data);
+    for (GList *list = kids; list != nullptr; list = list->next)
+        gtk_widget_destroy(list->data);
     g_list_free(kids);
 }
 
 static void detail_row(GtkWidget *grid, int row, const char *what, const char *value) {
-    GtkWidget *k = gtk_label_new(what);
-    gtk_label_set_xalign(GTK_LABEL(k), 0);
-    GtkWidget *v = gtk_label_new(value[0] != '\0' ? value : "Unknown");
-    gtk_label_set_xalign(GTK_LABEL(v), 0);
-    gtk_label_set_selectable(GTK_LABEL(v), TRUE);
-    gtk_grid_attach(GTK_GRID(grid), k, 0, row, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), v, 1, row, 1, 1);
+    GtkWidget *key_label = gtk_label_new(what);
+    gtk_label_set_xalign(GTK_LABEL(key_label), 0);
+    GtkWidget *value_label = gtk_label_new(value[0] != '\0' ? value : "Unknown");
+    gtk_label_set_xalign(GTK_LABEL(value_label), 0);
+    gtk_label_set_selectable(GTK_LABEL(value_label), TRUE);
+    gtk_grid_attach(GTK_GRID(grid), key_label, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), value_label, 1, row, 1, 1);
 }
 
 static const char *chemistry(guint32 technology) {
@@ -872,54 +893,55 @@ static void fill_details(GtkWidget *grid, GDBusProxy *battery) {
 enum { RESPONSE_REFRESH = 1 };
 
 /* A battery clicked: XP's Battery Details box. */
-static void on_battery_clicked(GtkButton *b, gpointer data) {
-    props *p = data;
-    guint i = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(b), "battery"));
-    if (i >= p->batteries->len)
+static void on_battery_clicked(GtkButton *button, gpointer data) {
+    props *properties = data;
+    guint i = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(button), "battery"));
+    if (i >= properties->batteries->len)
         return;
-    GDBusProxy *battery = g_object_ref(g_ptr_array_index(p->batteries, i));
-    GtkWidget *d = gtk_dialog_new();
+    GDBusProxy *battery = g_object_ref(g_ptr_array_index(properties->batteries, i));
+    GtkWidget *widget = gtk_dialog_new();
     char *title = g_strdup_printf("Battery #%u Details", i + 1);
-    gtk_window_set_title(GTK_WINDOW(d), title);
+    gtk_window_set_title(GTK_WINDOW(widget), title);
     g_free(title);
-    gtk_window_set_transient_for(GTK_WINDOW(d), GTK_WINDOW(p->window));
-    gtk_window_set_modal(GTK_WINDOW(d), TRUE);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
-    gtk_dialog_add_button(GTK_DIALOG(d), "_Refresh", RESPONSE_REFRESH);
-    gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+    gtk_window_set_transient_for(GTK_WINDOW(widget), GTK_WINDOW(properties->window));
+    gtk_window_set_modal(GTK_WINDOW(widget), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(widget), FALSE);
+    gtk_dialog_add_button(GTK_DIALOG(widget), "_Refresh", RESPONSE_REFRESH);
+    gtk_dialog_add_button(GTK_DIALOG(widget), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_set_default_response(GTK_DIALOG(widget), GTK_RESPONSE_OK);
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(grid), 24);
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
     gtk_container_set_border_width(GTK_CONTAINER(grid), 12);
     fill_details(grid, battery);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), grid, TRUE, TRUE, 0);
-    gtk_widget_show_all(d);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(widget))), grid, TRUE, TRUE,
+                       0);
+    gtk_widget_show_all(widget);
     /* UPower keeps its properties current: Refresh shows them again. */
-    while (gtk_dialog_run(GTK_DIALOG(d)) == RESPONSE_REFRESH)
+    while (gtk_dialog_run(GTK_DIALOG(widget)) == RESPONSE_REFRESH)
         fill_details(grid, battery);
-    gtk_widget_destroy(d);
+    gtk_widget_destroy(widget);
     g_object_unref(battery);
 }
 
 /* One battery's (or, without details, all of them together): its icon,
  * "#1", the charge and the state. */
-static GtkWidget *meter_column(props *p, GDBusProxy *dev, int number) {
+static GtkWidget *meter_column(props *properties, GDBusProxy *dev, int number) {
     GtkWidget *col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     double pct = prop_double(dev, "Percentage");
     guint32 state = prop_uint(dev, "State");
     GtkWidget *img = gtk_image_new_from_icon_name(battery_icon(pct, state), GTK_ICON_SIZE_DND);
     gtk_image_set_pixel_size(GTK_IMAGE(img), 32);
     if (number > 0) {
-        GtkWidget *b = gtk_button_new();
-        gtk_button_set_relief(GTK_BUTTON(b), GTK_RELIEF_NONE);
-        gtk_container_add(GTK_CONTAINER(b), img);
+        GtkWidget *widget = gtk_button_new();
+        gtk_button_set_relief(GTK_BUTTON(widget), GTK_RELIEF_NONE);
+        gtk_container_add(GTK_CONTAINER(widget), img);
         char *tip = g_strdup_printf("Click for details about battery #%d", number);
-        gtk_widget_set_tooltip_text(b, tip);
+        gtk_widget_set_tooltip_text(widget, tip);
         g_free(tip);
-        g_object_set_data(G_OBJECT(b), "battery", GUINT_TO_POINTER((guint)number - 1));
-        g_signal_connect(b, "clicked", G_CALLBACK(on_battery_clicked), p);
-        gtk_box_pack_start(GTK_BOX(col), b, FALSE, FALSE, 0);
+        g_object_set_data(G_OBJECT(widget), "battery", GUINT_TO_POINTER((guint)number - 1));
+        g_signal_connect(widget, "clicked", G_CALLBACK(on_battery_clicked), properties);
+        gtk_box_pack_start(GTK_BOX(col), widget, FALSE, FALSE, 0);
         char *num = g_strdup_printf("#%d", number);
         gtk_box_pack_start(GTK_BOX(col), gtk_label_new(num), FALSE, FALSE, 0);
         g_free(num);
@@ -933,24 +955,26 @@ static GtkWidget *meter_column(props *p, GDBusProxy *dev, int number) {
     return col;
 }
 
-static void show_meter(props *p) {
-    if (p->meter_box == nullptr)
+static void show_meter(props *properties) {
+    if (properties->meter_box == nullptr)
         return;
-    bool on_battery = prop_bool(p->upower, "OnBattery");
-    gtk_label_set_text(GTK_LABEL(p->meter_source), on_battery ? "Batteries" : "AC power");
-    char *total = g_strdup_printf("%.0f%%", prop_double(p->display, "Percentage"));
-    gtk_label_set_text(GTK_LABEL(p->meter_total), total);
+    bool on_battery = prop_bool(properties->upower, "OnBattery");
+    gtk_label_set_text(GTK_LABEL(properties->meter_source), on_battery ? "Batteries" : "AC power");
+    char *total = g_strdup_printf("%.0f%%", prop_double(properties->display, "Percentage"));
+    gtk_label_set_text(GTK_LABEL(properties->meter_total), total);
     g_free(total);
-    clear(p->meter_box);
-    if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->meter_details))) {
-        for (guint i = 0; i < p->batteries->len; i++)
-            gtk_box_pack_start(GTK_BOX(p->meter_box),
-                               meter_column(p, g_ptr_array_index(p->batteries, i), (int)i + 1),
-                               FALSE, FALSE, 0);
+    clear(properties->meter_box);
+    if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->meter_details))) {
+        for (guint i = 0; i < properties->batteries->len; i++)
+            gtk_box_pack_start(
+                GTK_BOX(properties->meter_box),
+                meter_column(properties, g_ptr_array_index(properties->batteries, i), (int)i + 1),
+                FALSE, FALSE, 0);
     } else {
-        gtk_box_pack_start(GTK_BOX(p->meter_box), meter_column(p, p->display, 0), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(properties->meter_box),
+                           meter_column(properties, properties->display, 0), FALSE, FALSE, 0);
     }
-    gtk_widget_show_all(p->meter_box);
+    gtk_widget_show_all(properties->meter_box);
 }
 
 static void on_device_changed([[maybe_unused]] GDBusProxy *proxy,
@@ -959,24 +983,26 @@ static void on_device_changed([[maybe_unused]] GDBusProxy *proxy,
     show_meter(data);
 }
 
-static void drop_batteries(props *p) {
-    for (guint i = 0; i < p->batteries->len; i++)
-        g_signal_handlers_disconnect_by_data(g_ptr_array_index(p->batteries, i), p);
-    g_ptr_array_set_size(p->batteries, 0);
+static void drop_batteries(props *properties) {
+    for (guint i = 0; i < properties->batteries->len; i++)
+        g_signal_handlers_disconnect_by_data(g_ptr_array_index(properties->batteries, i),
+                                             properties);
+    g_ptr_array_set_size(properties->batteries, 0);
 }
 
 /* UPower's batteries that power the computer (not a mouse's). */
-static void find_batteries(props *p) {
-    drop_batteries(p);
-    GVariant *r = p->upower != nullptr
-                      ? g_dbus_proxy_call_sync(p->upower, "EnumerateDevices", nullptr,
-                                               G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, nullptr)
-                      : nullptr;
-    if (r == nullptr)
+static void find_batteries(props *properties) {
+    drop_batteries(properties);
+    GVariant *variant =
+        properties->upower != nullptr
+            ? g_dbus_proxy_call_sync(properties->upower, "EnumerateDevices", nullptr,
+                                     G_DBUS_CALL_FLAGS_NONE, 2000, nullptr, nullptr)
+            : nullptr;
+    if (variant == nullptr)
         return;
     GVariantIter *it = nullptr;
     const char *path = nullptr;
-    g_variant_get(r, "(ao)", &it);
+    g_variant_get(variant, "(ao)", &it);
     while (g_variant_iter_next(it, "&o", &path)) {
         GDBusProxy *dev = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE,
                                                         nullptr, UPOWER, path, UPOWER_DEVICE,
@@ -985,68 +1011,75 @@ static void find_batteries(props *p) {
             continue;
         if (prop_uint(dev, "Type") == UP_TYPE_BATTERY && prop_bool(dev, "PowerSupply") &&
             prop_bool(dev, "IsPresent")) {
-            g_signal_connect(dev, "g-properties-changed", G_CALLBACK(on_device_changed), p);
-            g_ptr_array_add(p->batteries, dev);
+            g_signal_connect(dev, "g-properties-changed", G_CALLBACK(on_device_changed),
+                             properties);
+            g_ptr_array_add(properties->batteries, dev);
         } else {
             g_object_unref(dev);
         }
     }
     g_variant_iter_free(it);
-    g_variant_unref(r);
+    g_variant_unref(variant);
 }
 
 static void on_upower_signal([[maybe_unused]] GDBusProxy *proxy,
                              [[maybe_unused]] const char *sender, const char *signal,
                              [[maybe_unused]] GVariant *params, gpointer data) {
-    props *p = data;
+    props *properties = data;
     if (strcmp(signal, "DeviceAdded") == 0 || strcmp(signal, "DeviceRemoved") == 0) {
-        find_batteries(p);
-        show_meter(p);
+        find_batteries(properties);
+        show_meter(properties);
     }
 }
 
-static void on_meter_details([[maybe_unused]] GtkToggleButton *b, gpointer data) {
+static void on_meter_details([[maybe_unused]] GtkToggleButton *toggle, gpointer data) {
     show_meter(data);
 }
 
-static GtkWidget *meter_page(props *p) {
+static GtkWidget *meter_page(props *properties) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
-    p->upower = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr,
-                                              UPOWER, UPOWER_PATH, UPOWER, nullptr, nullptr);
-    p->display = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE,
-                                               nullptr, UPOWER, UPOWER_DISPLAY, UPOWER_DEVICE,
-                                               nullptr, nullptr);
-    p->batteries = g_ptr_array_new_with_free_func(g_object_unref);
-    find_batteries(p);
+    properties->upower =
+        g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, UPOWER,
+                                      UPOWER_PATH, UPOWER, nullptr, nullptr);
+    properties->display =
+        g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, UPOWER,
+                                      UPOWER_DISPLAY, UPOWER_DEVICE, nullptr, nullptr);
+    properties->batteries = g_ptr_array_new_with_free_func(g_object_unref);
+    find_batteries(properties);
 
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(grid), 24);
     gtk_grid_set_row_spacing(GTK_GRID(grid), 4);
-    p->meter_source = summary_row(grid, 0, "Current power source:");
-    p->meter_total = summary_row(grid, 1, "Total battery power remaining:");
+    properties->meter_source = summary_row(grid, 0, "Current power source:");
+    properties->meter_total = summary_row(grid, 1, "Total battery power remaining:");
     gtk_box_pack_start(GTK_BOX(page), frame("Power status", grid), FALSE, FALSE, 0);
-    p->meter_details = gtk_check_button_new_with_mnemonic("_Show details for each battery.");
-    gtk_box_pack_start(GTK_BOX(page), p->meter_details, FALSE, FALSE, 0);
-    p->meter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
-    gtk_widget_set_size_request(p->meter_box, -1, 110);
-    gtk_box_pack_start(GTK_BOX(page), frame("Power status", p->meter_box), FALSE, FALSE, 0);
-    show_meter(p);
+    properties->meter_details =
+        gtk_check_button_new_with_mnemonic("_Show details for each battery.");
+    gtk_box_pack_start(GTK_BOX(page), properties->meter_details, FALSE, FALSE, 0);
+    properties->meter_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
+    gtk_widget_set_size_request(properties->meter_box, -1, 110);
+    gtk_box_pack_start(GTK_BOX(page), frame("Power status", properties->meter_box), FALSE, FALSE,
+                       0);
+    show_meter(properties);
 
-    g_signal_connect(p->meter_details, "toggled", G_CALLBACK(on_meter_details), p);
-    if (p->upower != nullptr) {
-        g_signal_connect(p->upower, "g-signal", G_CALLBACK(on_upower_signal), p);
-        g_signal_connect(p->upower, "g-properties-changed", G_CALLBACK(on_device_changed), p);
+    g_signal_connect(properties->meter_details, "toggled", G_CALLBACK(on_meter_details),
+                     properties);
+    if (properties->upower != nullptr) {
+        g_signal_connect(properties->upower, "g-signal", G_CALLBACK(on_upower_signal), properties);
+        g_signal_connect(properties->upower, "g-properties-changed", G_CALLBACK(on_device_changed),
+                         properties);
     }
-    if (p->display != nullptr)
-        g_signal_connect(p->display, "g-properties-changed", G_CALLBACK(on_device_changed), p);
+    if (properties->display != nullptr)
+        g_signal_connect(properties->display, "g-properties-changed", G_CALLBACK(on_device_changed),
+                         properties);
     return page;
 }
 
 /* ---- Advanced --------------------------------------------------------------------- */
 
-static const char *button_label(xd_button_action a) {
-    switch (a) {
+static const char *button_label(xd_button_action button_action) {
+    switch (button_action) {
     case XD_BUTTON_NOTHING:
         return "Do nothing";
     case XD_BUTTON_ASK:
@@ -1069,60 +1102,65 @@ static const char *button_label(xd_button_action a) {
 /* A Power buttons list: XP's choices (the lid can't ask; it can lock, as
  * Linux users expect), Stand by and Hibernate if logind can. Unset, it
  * shows what logind does, which it keeps until another is chosen. */
-static GtkWidget *button_combo(props *p, const xd_settings *s, xd_power_button b) {
+static GtkWidget *button_combo(props *properties, const xd_settings *settings,
+                               xd_power_button power_button) {
     /* logind's settings, and its defaults where it doesn't say. */
     static const char *const keys[XD_POWER_BUTTON_COUNT][2] = {
         [XD_BUTTON_LID] = {"HandleLidSwitch", "suspend"},
         [XD_BUTTON_POWER] = {"HandlePowerKey", "poweroff"},
         [XD_BUTTON_SLEEP] = {"HandleSuspendKey", "suspend"},
     };
-    GtkWidget *c = gtk_combo_box_text_new();
+    GtkWidget *widget = gtk_combo_box_text_new();
     xd_button_action offered[] = {XD_BUTTON_NOTHING, XD_BUTTON_LOCK,      XD_BUTTON_ASK,
                                   XD_BUTTON_STANDBY, XD_BUTTON_HIBERNATE, XD_BUTTON_SHUTDOWN};
     for (size_t i = 0; i < XD_ARRAY_LEN(offered); i++) {
-        xd_button_action a = offered[i];
-        if ((a == XD_BUTTON_LOCK && b != XD_BUTTON_LID) ||
-            (a == XD_BUTTON_ASK && b == XD_BUTTON_LID) ||
-            (a == XD_BUTTON_STANDBY && !p->can_standby) ||
-            (a == XD_BUTTON_HIBERNATE && !p->can_hibernate))
+        xd_button_action button_action = offered[i];
+        if ((button_action == XD_BUTTON_LOCK && power_button != XD_BUTTON_LID) ||
+            (button_action == XD_BUTTON_ASK && power_button == XD_BUTTON_LID) ||
+            (button_action == XD_BUTTON_STANDBY && !properties->can_standby) ||
+            (button_action == XD_BUTTON_HIBERNATE && !properties->can_hibernate))
             continue;
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(c), xd_button_action_name(a),
-                                  button_label(a));
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(widget), xd_button_action_name(button_action),
+                                  button_label(button_action));
     }
-    xd_button_action a = s->power_buttons[b];
-    if (a == XD_BUTTON_LOGIND) {
-        char *handle = logind_string(p, keys[b][0]);
-        const char *v = handle != nullptr ? handle : keys[b][1];
-        if (!xd_button_action_from_logind(v, &a)) {
+    xd_button_action button_action = settings->power_buttons[power_button];
+    if (button_action == XD_BUTTON_LOGIND) {
+        char *handle = logind_string(properties, keys[power_button][0]);
+        const char *handle_action = handle != nullptr ? handle : keys[power_button][1];
+        if (!xd_button_action_from_logind(handle_action, &button_action)) {
             /* One we don't offer (Restart, Stand by, then hibernate...). */
-            gtk_combo_box_text_prepend(GTK_COMBO_BOX_TEXT(c), "logind", action_label(v));
-            a = XD_BUTTON_LOGIND;
+            gtk_combo_box_text_prepend(GTK_COMBO_BOX_TEXT(widget), "logind",
+                                       action_label(handle_action));
+            button_action = XD_BUTTON_LOGIND;
         }
         g_free(handle);
     }
-    const char *id = xd_button_action_name(a);
-    if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(c), id)) {
+    const char *id = xd_button_action_name(button_action);
+    if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(widget), id)) {
         /* Set by hand, or what this computer can't do: shown as it is. */
-        gtk_combo_box_text_prepend(GTK_COMBO_BOX_TEXT(c), id, button_label(a));
-        gtk_combo_box_set_active_id(GTK_COMBO_BOX(c), id);
+        gtk_combo_box_text_prepend(GTK_COMBO_BOX_TEXT(widget), id, button_label(button_action));
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(widget), id);
     }
-    p->button_shown[b] = g_strdup(id);
-    p->button_unset[b] = s->power_buttons[b] == XD_BUTTON_LOGIND;
-    g_signal_connect(c, "changed", G_CALLBACK(on_value), p);
-    return c;
+    properties->button_shown[power_button] = g_strdup(id);
+    properties->button_unset[power_button] =
+        settings->power_buttons[power_button] == XD_BUTTON_LOGIND;
+    g_signal_connect(widget, "changed", G_CALLBACK(on_value), properties);
+    return widget;
 }
 
 /* The choice to save: unset stays so while it shows logind's. */
-static xd_button_action button_chosen(props *p, xd_power_button b) {
-    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->button[b]));
-    xd_button_action a;
-    if (id == nullptr || (p->button_unset[b] && strcmp(id, p->button_shown[b]) == 0) ||
-        !xd_button_action_from_name(id, &a))
+static xd_button_action button_chosen(props *properties, xd_power_button power_button) {
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(properties->button[power_button]));
+    xd_button_action button_action;
+    if (id == nullptr ||
+        (properties->button_unset[power_button] &&
+         strcmp(id, properties->button_shown[power_button]) == 0) ||
+        !xd_button_action_from_name(id, &button_action))
         return XD_BUTTON_LOGIND;
-    return a;
+    return button_action;
 }
 
-static GtkWidget *advanced_page(props *p, const xd_settings *s) {
+static GtkWidget *advanced_page(props *properties, const xd_settings *settings) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
     gtk_box_pack_start(GTK_BOX(page),
@@ -1130,18 +1168,21 @@ static GtkWidget *advanced_page(props *p, const xd_settings *s) {
                                 "Select the power-saving settings you want to use."),
                        FALSE, FALSE, 0);
     GtkWidget *opts = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    p->battery_icon = gtk_check_button_new_with_mnemonic("Al_ways show icon on the taskbar");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->battery_icon), s->battery_icon);
-    gtk_widget_set_tooltip_text(p->battery_icon,
+    properties->battery_icon =
+        gtk_check_button_new_with_mnemonic("Al_ways show icon on the taskbar");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(properties->battery_icon),
+                                 settings->battery_icon);
+    gtk_widget_set_tooltip_text(properties->battery_icon,
                                 "Otherwise the power meter shows only while running on "
                                 "batteries. Computers without a battery have none.");
-    g_signal_connect(p->battery_icon, "toggled", G_CALLBACK(on_value), p);
-    gtk_box_pack_start(GTK_BOX(opts), p->battery_icon, FALSE, FALSE, 0);
-    p->password = gtk_check_button_new_with_mnemonic(
+    g_signal_connect(properties->battery_icon, "toggled", G_CALLBACK(on_value), properties);
+    gtk_box_pack_start(GTK_BOX(opts), properties->battery_icon, FALSE, FALSE, 0);
+    properties->password = gtk_check_button_new_with_mnemonic(
         "_Prompt for password when computer resumes from standby");
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(p->password), s->resume_password);
-    g_signal_connect(p->password, "toggled", G_CALLBACK(on_value), p);
-    gtk_box_pack_start(GTK_BOX(opts), p->password, FALSE, FALSE, 0);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(properties->password),
+                                 settings->resume_password);
+    g_signal_connect(properties->password, "toggled", G_CALLBACK(on_value), properties);
+    gtk_box_pack_start(GTK_BOX(opts), properties->password, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), frame("Options", opts), FALSE, FALSE, 0);
 
     GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -1150,13 +1191,13 @@ static GtkWidget *advanced_page(props *p, const xd_settings *s) {
         [XD_BUTTON_POWER] = "When I press the power _button on my computer:",
         [XD_BUTTON_SLEEP] = "When I press the sl_eep button on my computer:",
     };
-    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++) {
-        GtkWidget *l = gtk_label_new_with_mnemonic(texts[b]);
-        gtk_label_set_xalign(GTK_LABEL(l), 0);
-        gtk_box_pack_start(GTK_BOX(buttons), l, FALSE, FALSE, 0);
-        p->button[b] = button_combo(p, s, (xd_power_button)b);
-        gtk_label_set_mnemonic_widget(GTK_LABEL(l), p->button[b]);
-        gtk_box_pack_start(GTK_BOX(buttons), p->button[b], FALSE, FALSE, 0);
+    for (int button = 0; button < XD_POWER_BUTTON_COUNT; button++) {
+        GtkWidget *widget = gtk_label_new_with_mnemonic(texts[button]);
+        gtk_label_set_xalign(GTK_LABEL(widget), 0);
+        gtk_box_pack_start(GTK_BOX(buttons), widget, FALSE, FALSE, 0);
+        properties->button[button] = button_combo(properties, settings, (xd_power_button)button);
+        gtk_label_set_mnemonic_widget(GTK_LABEL(widget), properties->button[button]);
+        gtk_box_pack_start(GTK_BOX(buttons), properties->button[button], FALSE, FALSE, 0);
     }
     gtk_box_pack_start(GTK_BOX(buttons),
                        label("These are your own; logind's settings apply until you change "
@@ -1168,7 +1209,7 @@ static GtkWidget *advanced_page(props *p, const xd_settings *s) {
 
 /* ---- Hibernate -------------------------------------------------------------------- */
 
-static GtkWidget *hibernate_page(props *p) {
+static GtkWidget *hibernate_page(props *properties) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
     gtk_box_pack_start(GTK_BOX(page),
@@ -1178,7 +1219,7 @@ static GtkWidget *hibernate_page(props *p) {
                                 "computer comes out of hibernation, it returns to its previous "
                                 "state."),
                        FALSE, FALSE, 0);
-    char *answer = logind_can(p, "CanHibernate");
+    char *answer = logind_can(properties, "CanHibernate");
     GtkWidget *enable = gtk_check_button_new_with_mnemonic("_Enable hibernation");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(enable), can(answer));
     gtk_widget_set_sensitive(enable, FALSE);
@@ -1203,14 +1244,14 @@ static GtkWidget *hibernate_page(props *p) {
             {"Disk space required to hibernate:", used},
         };
         for (int i = 0; i < (int)XD_ARRAY_LEN(rows); i++) {
-            GtkWidget *a = gtk_label_new(rows[i].what);
-            gtk_label_set_xalign(GTK_LABEL(a), 0);
+            GtkWidget *what_label = gtk_label_new(rows[i].what);
+            gtk_label_set_xalign(GTK_LABEL(what_label), 0);
             char *mb = g_strdup_printf("%llu MB", rows[i].bytes / (1024 * 1024));
-            GtkWidget *b = gtk_label_new(mb);
-            gtk_label_set_xalign(GTK_LABEL(b), 1);
+            GtkWidget *size_label = gtk_label_new(mb);
+            gtk_label_set_xalign(GTK_LABEL(size_label), 1);
             g_free(mb);
-            gtk_grid_attach(GTK_GRID(space), a, 0, i, 1, 1);
-            gtk_grid_attach(GTK_GRID(space), b, 1, i, 1, 1);
+            gtk_grid_attach(GTK_GRID(space), what_label, 0, i, 1, 1);
+            gtk_grid_attach(GTK_GRID(space), size_label, 1, i, 1, 1);
         }
     }
     gtk_box_pack_start(GTK_BOX(page), frame("Disk space for hibernation", space), FALSE, FALSE,
@@ -1230,70 +1271,74 @@ static GtkWidget *hibernate_page(props *p) {
 
 /* ---- applying --------------------------------------------------------------------- */
 
-static bool apply(props *p) {
+static bool apply(props *properties) {
     /* Re-read: another applet may have saved since we opened. */
-    xd_settings s;
-    xd_settings_load(&s);
-    xd_power_timers ac = read_timers(p->ac);
-    xd_power_timers dc = p->battery ? read_timers(p->dc) : p->dc_values;
+    xd_settings settings;
+    xd_settings_load(&settings);
+    xd_power_timers ac = read_timers(properties->ac);
+    xd_power_timers dc = properties->battery ? read_timers(properties->dc) : properties->dc_values;
     /* "Changing the settings below will modify the selected scheme." */
-    xd_power_scheme_def *d = active_scheme(p);
-    if (d != nullptr) {
-        d->ac = ac;
-        d->dc = dc;
-        if (!save_schemes(p))
+    xd_power_scheme_def *scheme = active_scheme(properties);
+    if (scheme != nullptr) {
+        scheme->ac = ac;
+        scheme->dc = dc;
+        if (!save_schemes(properties))
             return false;
-        if (d->builtin >= 0) {
-            s.power_scheme = (xd_power_scheme)d->builtin;
-            s.power_scheme_custom[0] = '\0';
+        if (scheme->builtin >= 0) {
+            settings.power_scheme = (xd_power_scheme)scheme->builtin;
+            settings.power_scheme_custom[0] = '\0';
         } else {
-            g_strlcpy(s.power_scheme_custom, d->name, sizeof(s.power_scheme_custom));
+            g_strlcpy(settings.power_scheme_custom, scheme->name,
+                      sizeof(settings.power_scheme_custom));
         }
     }
-    s.monitor_off = ac.monitor;
-    s.monitor_off_battery = dc.monitor;
+    settings.monitor_off = ac.monitor;
+    settings.monitor_off_battery = dc.monitor;
     /* What logind can't do keeps what it was. */
-    if (p->row_ok[ROW_STANDBY]) {
-        s.standby = ac.standby;
-        s.standby_battery = dc.standby;
+    if (properties->row_ok[ROW_STANDBY]) {
+        settings.standby = ac.standby;
+        settings.standby_battery = dc.standby;
     }
-    if (p->row_ok[ROW_HIBERNATE]) {
-        s.hibernate = ac.hibernate;
-        s.hibernate_battery = dc.hibernate;
+    if (properties->row_ok[ROW_HIBERNATE]) {
+        settings.hibernate = ac.hibernate;
+        settings.hibernate_battery = dc.hibernate;
     }
-    s.battery_icon = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->battery_icon));
-    s.resume_password = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(p->password));
-    if (p->battery) {
-        s.low_alarm = p->alarms[ALARM_LOW];
-        s.critical_alarm = p->alarms[ALARM_CRITICAL];
+    settings.battery_icon =
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->battery_icon));
+    settings.resume_password =
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->password));
+    if (properties->battery) {
+        settings.low_alarm = properties->alarms[ALARM_LOW];
+        settings.critical_alarm = properties->alarms[ALARM_CRITICAL];
     }
-    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++)
-        s.power_buttons[b] = button_chosen(p, (xd_power_button)b);
-    if (!xd_settings_save(&s)) {
-        xd_message_box(GTK_WINDOW(p->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE,
+    for (int button = 0; button < XD_POWER_BUTTON_COUNT; button++)
+        settings.power_buttons[button] = button_chosen(properties, (xd_power_button)button);
+    if (!xd_settings_save(&settings)) {
+        xd_message_box(GTK_WINDOW(properties->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE,
                        "The settings could not be saved.");
         return false;
     }
     /* What's saved is what the lists started from now. */
-    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++) {
-        g_free(p->button_shown[b]);
-        p->button_shown[b] =
-            g_strdup(gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->button[b])));
-        p->button_unset[b] = s.power_buttons[b] == XD_BUTTON_LOGIND;
+    for (int button = 0; button < XD_POWER_BUTTON_COUNT; button++) {
+        g_free(properties->button_shown[button]);
+        properties->button_shown[button] =
+            g_strdup(gtk_combo_box_get_active_id(GTK_COMBO_BOX(properties->button[button])));
+        properties->button_unset[button] = settings.power_buttons[button] == XD_BUTTON_LOGIND;
     }
-    gtk_widget_set_sensitive(p->apply, FALSE);
+    gtk_widget_set_sensitive(properties->apply, FALSE);
     return true;
 }
 
-static void on_response(GtkDialog *d, int response, gpointer data) {
-    props *p = data;
+static void on_response(GtkDialog *dialog_widget, int response, gpointer data) {
+    props *properties = data;
     if (response == GTK_RESPONSE_APPLY) {
-        apply(p);
+        apply(properties);
         return;
     }
-    if (response == GTK_RESPONSE_OK && gtk_widget_get_sensitive(p->apply) && !apply(p))
+    if (response == GTK_RESPONSE_OK && gtk_widget_get_sensitive(properties->apply) &&
+        !apply(properties))
         return;
-    gtk_widget_destroy(GTK_WIDGET(d));
+    gtk_widget_destroy(GTK_WIDGET(dialog_widget));
 }
 
 int main(int argc, char **argv) {
@@ -1305,67 +1350,69 @@ int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.Power");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
-    static props p;
-    xd_settings s;
-    xd_settings_load(&s);
+    static props properties;
+    xd_settings settings;
+    xd_settings_load(&settings);
     GError *error = nullptr;
-    p.logind = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr,
-                                             LOGIN1, LOGIN1_PATH, LOGIN1_MANAGER, nullptr, &error);
-    if (p.logind == nullptr) {
+    properties.logind =
+        g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, nullptr, LOGIN1,
+                                      LOGIN1_PATH, LOGIN1_MANAGER, nullptr, &error);
+    if (properties.logind == nullptr) {
         g_printerr("xd-power: %s\n", error->message);
         g_error_free(error);
     }
     char *path = schemes_path();
-    p.schemes = xd_power_schemes_load(path);
+    properties.schemes = xd_power_schemes_load(path);
     g_free(path);
-    p.battery = has_battery();
+    properties.battery = has_battery();
 
-    p.window = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(p.window), "Power Options Properties");
-    gtk_window_set_icon_name(GTK_WINDOW(p.window), "preferences-system-power-management");
-    gtk_window_set_resizable(GTK_WINDOW(p.window), FALSE);
-    gtk_dialog_add_button(GTK_DIALOG(p.window), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(p.window), "Cancel", GTK_RESPONSE_CANCEL);
-    p.apply = gtk_dialog_add_button(GTK_DIALOG(p.window), "_Apply", GTK_RESPONSE_APPLY);
-    gtk_widget_set_sensitive(p.apply, FALSE);
-    gtk_dialog_set_default_response(GTK_DIALOG(p.window), GTK_RESPONSE_OK);
+    properties.window = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(properties.window), "Power Options Properties");
+    gtk_window_set_icon_name(GTK_WINDOW(properties.window), "preferences-system-power-management");
+    gtk_window_set_resizable(GTK_WINDOW(properties.window), FALSE);
+    gtk_dialog_add_button(GTK_DIALOG(properties.window), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(properties.window), "Cancel", GTK_RESPONSE_CANCEL);
+    properties.apply =
+        gtk_dialog_add_button(GTK_DIALOG(properties.window), "_Apply", GTK_RESPONSE_APPLY);
+    gtk_widget_set_sensitive(properties.apply, FALSE);
+    gtk_dialog_set_default_response(GTK_DIALOG(properties.window), GTK_RESPONSE_OK);
 
     GtkWidget *tabs = gtk_notebook_new();
     gtk_container_set_border_width(GTK_CONTAINER(tabs), 6);
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), schemes_page(&p, &s),
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), schemes_page(&properties, &settings),
                              gtk_label_new_with_mnemonic("Power _Schemes"));
     /* XP shows these two only on computers with a battery. */
-    if (p.battery) {
-        gtk_notebook_append_page(GTK_NOTEBOOK(tabs), alarms_page(&p, &s),
+    if (properties.battery) {
+        gtk_notebook_append_page(GTK_NOTEBOOK(tabs), alarms_page(&properties, &settings),
                                  gtk_label_new_with_mnemonic("_Alarms"));
-        gtk_notebook_append_page(GTK_NOTEBOOK(tabs), meter_page(&p),
+        gtk_notebook_append_page(GTK_NOTEBOOK(tabs), meter_page(&properties),
                                  gtk_label_new_with_mnemonic("Power _Meter"));
     }
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), advanced_page(&p, &s),
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), advanced_page(&properties, &settings),
                              gtk_label_new_with_mnemonic("Ad_vanced"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), hibernate_page(&p),
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), hibernate_page(&properties),
                              gtk_label_new_with_mnemonic("H_ibernate"));
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(p.window))), tabs, TRUE,
-                       TRUE, 0);
-    xd_gtk_notebook_ctrl_tab(p.window, GTK_NOTEBOOK(tabs));
-    g_signal_connect(p.window, "response", G_CALLBACK(on_response), &p);
-    g_signal_connect(p.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
-    gtk_widget_show_all(p.window);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(properties.window))), tabs,
+                       TRUE, TRUE, 0);
+    xd_gtk_notebook_ctrl_tab(properties.window, GTK_NOTEBOOK(tabs));
+    g_signal_connect(properties.window, "response", G_CALLBACK(on_response), &properties);
+    g_signal_connect(properties.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    gtk_widget_show_all(properties.window);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs),
                                   XD_CLAMP(page, 0, gtk_notebook_get_n_pages(GTK_NOTEBOOK(tabs)) - 1));
     gtk_main();
-    if (p.logind != nullptr)
-        g_object_unref(p.logind);
-    if (p.batteries != nullptr) {
-        drop_batteries(&p);
-        g_ptr_array_unref(p.batteries);
+    if (properties.logind != nullptr)
+        g_object_unref(properties.logind);
+    if (properties.batteries != nullptr) {
+        drop_batteries(&properties);
+        g_ptr_array_unref(properties.batteries);
     }
-    if (p.upower != nullptr)
-        g_object_unref(p.upower);
-    if (p.display != nullptr)
-        g_object_unref(p.display);
-    g_ptr_array_unref(p.schemes);
-    for (int b = 0; b < XD_POWER_BUTTON_COUNT; b++)
-        g_free(p.button_shown[b]);
+    if (properties.upower != nullptr)
+        g_object_unref(properties.upower);
+    if (properties.display != nullptr)
+        g_object_unref(properties.display);
+    g_ptr_array_unref(properties.schemes);
+    for (int button = 0; button < XD_POWER_BUTTON_COUNT; button++)
+        g_free(properties.button_shown[button]);
     return EXIT_SUCCESS;
 }
