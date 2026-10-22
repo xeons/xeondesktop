@@ -24,6 +24,9 @@
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
 #include <wlr/types/wlr_screencopy_v1.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
+#include <wlr/types/wlr_output_management_v1.h>
+#include <wlr/types/wlr_virtual_keyboard_v1.h>
 #include <wlr/types/wlr_server_decoration.h>
 #include <wlr/types/wlr_single_pixel_buffer_v1.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -294,6 +297,7 @@ static bool server_init(xd_server *server) {
     xd_input_init(server);
     xd_constraints_init(server);
     xd_access_init(server);
+    xd_trust_init(server);
     xd_arrange_init(server);
     xd_capture_init(server);
     xd_protocols_init(server);
@@ -311,13 +315,22 @@ static bool server_init(xd_server *server) {
     wlr_single_pixel_buffer_manager_v1_create(server->display);
     wlr_presentation_create(server->display, server->backend, 2);
     wlr_xdg_output_manager_v1_create(server->display, server->output_layout);
-    wlr_screencopy_manager_v1_create(server->display);
-    wlr_export_dmabuf_manager_v1_create(server->display);
-    /* Clipboard managers and VirtualBox's shared clipboard (VBoxClient
-     * prefers the ext protocol, and falls back to wlr's). */
-    wlr_data_control_manager_v1_create(server->display);
-    wlr_ext_data_control_manager_v1_create(server->display, 1);
+    /* Screenshot tools, screen recorders, clipboard managers and
+     * VirtualBox's shared clipboard (VBoxClient prefers the ext protocol,
+     * and falls back to wlr's): any program on the desktop, but no
+     * sandboxed one (trust.c). */
+    xd_trust_privileged(server, wlr_screencopy_manager_v1_create(server->display)->global);
+    xd_trust_privileged(server, wlr_export_dmabuf_manager_v1_create(server->display)->global);
+    xd_trust_privileged(server, wlr_data_control_manager_v1_create(server->display)->global);
+    xd_trust_privileged(server, wlr_ext_data_control_manager_v1_create(server->display, 1)->global);
     wlr_primary_selection_v1_device_manager_create(server->display);
+    /* And the others reaching past a program's own windows. */
+    xd_trust_privileged(server, server->ftl_manager->global);
+    xd_trust_privileged(server, server->output_manager->global);
+    xd_trust_privileged(server, server->layer_shell->global);
+    xd_trust_privileged(server, server->virtual_keyboards->global);
+    xd_trust_privileged(server, server->ext_toplevels->global);
+    xd_trust_privileged(server, server->arranger);
     return true;
 }
 

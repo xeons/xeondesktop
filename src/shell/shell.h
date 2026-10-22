@@ -218,6 +218,7 @@ struct xd_shell {
     struct ext_idle_notification_v1 *hibernate_note; /* and System hibernates */
     bool on_battery; /* UPower's: the timers are the "Running on batteries" ones */
     xd_sleep *sleep; /* logind (sleep.c), or nullptr */
+    bool session_locked; /* the compositor says every screen shows the lock */
     xd_buttons *buttons; /* the lid and power buttons (buttons.c), or nullptr */
     xd_account *account; /* full name, Switch User (account.c) */
     struct zwlr_output_power_manager_v1 *power_manager;
@@ -573,6 +574,13 @@ void xd_shell_sounds_init(void);
 void xd_shell_battery_alarm(xd_shell *shell, double percent, bool discharging);
 /* Settings changed. */
 void xd_sleep_update(xd_shell *shell);
+/* The compositor said the screen is locked (shell->session_locked), or
+ * not: a sleep or Switch User waiting for it goes ahead. */
+void xd_sleep_locked_changed(xd_shell *shell);
+void xd_account_locked_changed(xd_shell *shell);
+/* The compositor tells the shell when the screen is locked (ours does,
+ * xd-window-arranger-v1 version 11). */
+bool xd_shell_hears_lock(const xd_shell *shell);
 /* Idle long enough: stand by (or hibernate). */
 void xd_sleep_now(xd_shell *shell, bool hibernate);
 /* A battery alarm's Shut down. */

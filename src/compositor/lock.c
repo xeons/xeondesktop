@@ -3,7 +3,13 @@
  * Computer"). While locked, a black cover sits above everything, only the
  * locker's surfaces get input, and grabs and window bindings are off. If
  * the locker dies without unlocking, the screen stays locked until a new
- * locker takes over, as the protocol requires.
+ * locker takes over, as the protocol requires; then only the one we start
+ * again may (another program could take the lock, and unlock it).
+ *
+ * The locker hears it's locked once every monitor has shown the cover
+ * (a frame with it committed), not when it's asked for: a computer told
+ * it may sleep then would show the desktop again on waking until the
+ * cover's frame came. The shell hears too (xd-window-arranger-v1).
  */
 #include <time.h>
 #include <wlr/types/wlr_session_lock_v1.h>
@@ -12,9 +18,14 @@
 #include "../core/alloc.h"
 #include "server.h"
 
+/* Monitors that never show a frame (switched off) don't hold the lock up
+ * for longer than this. */
+static constexpr int SHOWN_TIMEOUT_MS = 1000;
+
 typedef struct xd_lock {
     xd_server *server;
     struct wlr_session_lock_v1 *lock;
+    bool told; /* the locker was sent `locked` */
     struct wl_listener new_surface;
     struct wl_listener unlock;
     struct wl_listener destroy;
@@ -109,6 +120,46 @@ static void handle_new_surface(struct wl_listener *listener, void *data) {
     XD_LISTEN(&surface->events.destroy, ls, destroy, handle_surface_destroy);
 }
 
+static void stop_waiting(xd_server *server) {
+    server->lock_waiting = false;
+    if (server->lock_shown_timer != nullptr) {
+        wl_event_source_remove(server->lock_shown_timer);
+        server->lock_shown_timer = nullptr;
+    }
+}
+
+/* The cover is on every monitor: the locker, and the shell, hear so. */
+static void tell_locked(xd_server *server) {
+    stop_waiting(server);
+    if (server->lock != nullptr && !server->lock->told) {
+        server->lock->told = true;
+        wlr_session_lock_v1_send_locked(server->lock->lock);
+    }
+    xd_arrange_session_locked(server, true);
+}
+
+static int shown_timeout(void *data) {
+    xd_server *server = data;
+    server->lock_shown_timer = nullptr;
+    if (server->lock_waiting) {
+        wlr_log(WLR_INFO, "lock: a monitor showed no frame; locked anyway");
+        tell_locked(server);
+    }
+    return 0;
+}
+
+void xd_lock_output_shown(xd_output *out) {
+    xd_server *server = out->server;
+    if (!server->lock_waiting)
+        return;
+    out->lock_shown = true;
+    XD_LIST_FOR_EACH(other, &server->outputs, xd_output, link) {
+        if (other->wlr_output->enabled && !other->lock_shown)
+            return;
+    }
+    tell_locked(server);
+}
+
 static void end_lock_client(xd_lock *lk) {
     xd_server *server = lk->server;
     xd_unlisten(&lk->new_surface);
@@ -122,6 +173,7 @@ static void end_lock_client(xd_lock *lk) {
 static void handle_unlock(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_lock *lk = XD_CONTAINER_OF(listener, xd_lock, unlock);
     xd_server *server = lk->server;
+    stop_waiting(server);
     server->locked = false;
     server->lock_focus = nullptr;
     xd_ime_lock_changed(server);
@@ -132,6 +184,7 @@ static void handle_unlock(struct wl_listener *listener, [[maybe_unused]] void *d
     end_lock_client(lk);
     wlr_log(WLR_INFO, "session unlocked");
     xd_keyboard_refocus(server);
+    xd_arrange_session_locked(server, false);
 }
 
 /* A locker that dies leaves the screen locked with nothing to unlock it
@@ -149,7 +202,13 @@ static void restart_locker(xd_server *server) {
         return;
     }
     server->locker_restarts++;
-    xd_spawn(server, server->config.locker);
+    /* On a connection of its own: only it may take the lock over. */
+    char sh[] = "/bin/sh", flag[] = "-c";
+    char *command = xd_str_dup_cstr(xd_str_from_cstr(server->config.locker));
+    char *argv[] = {sh, flag, command, nullptr};
+    if (server->config.locker != nullptr && server->config.locker[0] != '\0')
+        xd_trust_spawn(server, argv, &server->locker_client);
+    xd_free(command);
 }
 
 static void handle_lock_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
@@ -171,6 +230,14 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
         wlr_session_lock_v1_destroy(lock);
         return;
     }
+    /* Locked, its locker gone: only the one we started again takes over
+     * (any program could otherwise lock, and so unlock). */
+    struct wl_client *client = wl_resource_get_client(lock->resource);
+    if (server->locked && !xd_trust_is(&server->locker_client, client)) {
+        wlr_log(WLR_ERROR, "lock: refused a locker we didn't start while locked");
+        wlr_session_lock_v1_destroy(lock);
+        return;
+    }
     xd_lock *lk = XD_NEW(xd_lock);
     lk->server = server;
     lk->lock = lock;
@@ -179,6 +246,7 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
     XD_LISTEN(&lock->events.destroy, lk, destroy, handle_lock_destroy);
     server->lock = lk;
 
+    bool fresh = !server->locked;
     if (!server->locked) {
         server->locked = true;
         /* Menus and drags end; nothing but the locker gets input. */
@@ -195,12 +263,27 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
     }
     update_cover(server);
     xd_keyboard_refocus(server);
-    /* The cover is already up, so the screen is locked as of now. */
-    wlr_session_lock_v1_send_locked(lock);
+    if (!fresh) {
+        /* A locker taking over: the cover has been up all along. */
+        tell_locked(server);
+        return;
+    }
+    /* Locked once every monitor has shown the cover. */
+    server->lock_waiting = true;
+    XD_LIST_FOR_EACH(out, &server->outputs, xd_output, link) {
+        out->lock_shown = false;
+        wlr_output_schedule_frame(out->wlr_output);
+    }
+    if (server->lock_shown_timer == nullptr)
+        server->lock_shown_timer = wl_event_loop_add_timer(server->loop, shown_timeout, server);
+    wl_event_source_timer_update(server->lock_shown_timer, SHOWN_TIMEOUT_MS);
+    if (wl_list_empty(&server->outputs))
+        tell_locked(server);
 }
 
 void xd_lock_init(xd_server *server) {
     wl_list_init(&server->lock_surfaces);
     struct wlr_session_lock_manager_v1 *mgr = wlr_session_lock_manager_v1_create(server->display);
+    xd_trust_privileged(server, mgr->global);
     XD_LISTEN(&mgr->events.new_lock, server, new_lock, handle_new_lock);
 }

@@ -226,6 +226,7 @@ void xd_protocols_init(xd_server *server) {
     XD_LISTEN(&server->output_manager->events.test, server, output_test, handle_output_test);
 
     struct wlr_output_power_manager_v1 *power = wlr_output_power_manager_v1_create(server->display);
+    xd_trust_privileged(server, power->global);
     XD_LISTEN(&power->events.set_mode, server, output_power, handle_output_power);
 
     server->idle_notifier = wlr_idle_notifier_v1_create(server->display);

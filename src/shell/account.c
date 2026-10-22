@@ -34,7 +34,11 @@
 #define GDM_FACTORY_PATH "/org/gnome/DisplayManager/LocalDisplayFactory"
 #define GDM_FACTORY "org.gnome.DisplayManager.LocalDisplayFactory"
 
-/* How long the locker gets to cover the screens before the greeter. */
+/* Switch User goes to the greeter once the compositor says the screens
+ * are locked; if they aren't by then, it doesn't (the session would be
+ * left open behind the greeter, a VT switch away). Without our compositor
+ * (no word of the lock), it goes after a moment, as before. */
+static constexpr guint LOCK_WAIT_MS = 5000;
 static constexpr guint LOCK_GRACE_MS = 1000;
 
 struct xd_account {
@@ -47,6 +51,7 @@ struct xd_account {
     char *gecos;             /* GECOS full name, or nullptr */
     char *real_name;         /* AccountsService's RealName, or nullptr */
     guint switch_timer;
+    bool switch_waiting; /* for the compositor to say it's locked */
 };
 
 static bool simulated(void) {
@@ -205,6 +210,12 @@ static void got_seats(GObject *src, GAsyncResult *res, gpointer data) {
 static gboolean switch_now(gpointer data) {
     xd_account *account = data;
     account->switch_timer = 0;
+    bool waited = account->switch_waiting;
+    account->switch_waiting = false;
+    if (waited && !account->shell->session_locked) {
+        fprintf(stderr, "xd-shell: the screen didn't lock; not switching user\n");
+        return G_SOURCE_REMOVE;
+    }
     if (account->bus == nullptr)
         return G_SOURCE_REMOVE;
     if (account->have_fdo) {
@@ -229,7 +240,20 @@ void xd_account_switch_user(xd_shell *shell) {
     if (!xd_account_can_switch_user(shell) || account->switch_timer != 0)
         return;
     xd_shell_launch(shell, xd_shell_own_command(shell, "xd-lock", nullptr));
-    account->switch_timer = g_timeout_add(LOCK_GRACE_MS, switch_now, account);
+    /* Our compositor says when the lock is on every screen. */
+    account->switch_waiting = xd_shell_hears_lock(shell);
+    account->switch_timer =
+        g_timeout_add(account->switch_waiting ? LOCK_WAIT_MS : LOCK_GRACE_MS, switch_now, account);
+}
+
+void xd_account_locked_changed(xd_shell *shell) {
+    xd_account *account = shell->account;
+    if (account == nullptr || !account->switch_waiting || !shell->session_locked)
+        return;
+    if (account->switch_timer != 0)
+        g_source_remove(account->switch_timer);
+    account->switch_timer = 0;
+    switch_now(account);
 }
 
 /* ---- setup ---- */

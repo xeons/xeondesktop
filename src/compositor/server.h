@@ -4,6 +4,7 @@
 #ifndef XD_COMPOSITOR_SERVER_H
 #define XD_COMPOSITOR_SERVER_H
 
+#include <spawn.h>
 #include <sys/types.h>
 #include <time.h>
 #include <wlr/backend.h>
@@ -66,6 +67,12 @@ typedef struct xd_tablets xd_tablets;
 typedef struct xd_gestures xd_gestures;
 typedef struct xd_constraints xd_constraints;
 
+/* A client on a connection the compositor made for it (trust.c). */
+typedef struct xd_trusted_client {
+    struct wl_client *client; /* nullptr once it's gone */
+    struct wl_listener destroy;
+} xd_trusted_client;
+
 typedef struct xd_output {
     struct wl_list link; /* xd_server.outputs */
     xd_server *server;
@@ -82,6 +89,7 @@ typedef struct xd_output {
      * monitor refused it since. */
     xd_vrr_mode vrr;
     bool vrr_rejected;
+    bool lock_shown; /* has shown a frame with the lock's cover (lock.c) */
     struct wl_listener frame;
     struct wl_listener request_state;
     struct wl_listener destroy;
@@ -355,6 +363,9 @@ struct xd_server {
     bool locked;
     struct xd_lock *lock;             /* the locker client, while it runs */
     struct wlr_scene_rect *lock_cover;
+    bool lock_waiting; /* for every monitor to show the cover */
+    struct wl_event_source *lock_shown_timer;
+    xd_trusted_client locker_client; /* the locker we restarted (trust.c) */
     struct wlr_surface *lock_focus;   /* locker surface with the keyboard */
     struct wl_list lock_surfaces;     /* xd_lock_surface.link: one per output */
     struct wl_listener new_lock;
@@ -441,6 +452,13 @@ struct xd_server {
 
     /* The shell is restarted if it crashes, like explorer.exe. */
     pid_t shell_pid;
+    xd_trusted_client shell_client; /* the shell we started, by its connection */
+    /* trust.c: what each client ran when it connected, and the globals
+     * sandboxed clients don't get. */
+    struct wl_listener client_created;
+    struct wlr_security_context_manager_v1 *security_context;
+    const struct wl_global *privileged[32];
+    size_t privileged_count;
     struct wl_global *arranger; /* xd-window-arranger-v1, shell only */
     struct wl_resource *arranger_resource; /* the shell's binding, for events */
     struct arranger_client **arranger_clients; /* every binding (shell, Task Manager) */
@@ -537,6 +555,9 @@ void xd_cursor_set(xd_server *server, const char *name);
 void xd_cursor_cancel_grab(xd_server *server);
 /* Runs argv[0] (searched in PATH) with argv. Returns the pid or -1. */
 pid_t xd_spawn_argv(char *const argv[]);
+/* posix_spawnp with these file actions (or nullptr) and environment. */
+pid_t xd_spawn_with(char *const argv[], const posix_spawn_file_actions_t *actions,
+                    char *const envp[]);
 /* Runs a shell command line. */
 void xd_spawn(xd_server *server, const char *command);
 void xd_shell_start(xd_server *server);
@@ -620,6 +641,8 @@ void xd_view_update_decorations(xd_view *view);
 
 /* arrange.c: Cascade/Tile for the taskbar menu (shell-only protocol). */
 void xd_arrange_init(xd_server *server);
+/* Tells the shell the screen is locked (every monitor shows it), or not. */
+void xd_arrange_session_locked(xd_server *server, bool locked);
 
 /* animate.c: XP's minimize/maximize animation. A bar flies from `from` to
  * `to` (layout coordinates); `reveal`, if given, is hidden until it
@@ -755,6 +778,24 @@ bool xd_constraints_client_allowed(const xd_server *server, const struct wl_clie
 /* lock.c: ext-session-lock. */
 void xd_lock_init(xd_server *server);
 void xd_lock_layout_changed(xd_server *server);
+/* A monitor committed a frame: while a lock waits, it has shown the cover. */
+void xd_lock_output_shown(xd_output *out);
+
+/* trust.c: who may use what. */
+void xd_trust_init(xd_server *server);
+/* Runs `argv` on a connection of its own, which `trusted` then names;
+ * returns its PID, or -1. */
+pid_t xd_trust_spawn(xd_server *server, char *const argv[], xd_trusted_client *trusted);
+bool xd_trust_is(const xd_trusted_client *trusted, const struct wl_client *client);
+/* What the client ran when it connected: our Task Manager, an installed
+ * input method framework's program. */
+bool xd_trust_task_manager(const struct wl_client *client);
+bool xd_trust_input_framework(const struct wl_client *client);
+/* `global` reaches past a client's own windows: sandboxed clients don't
+ * get it. */
+void xd_trust_privileged(xd_server *server, const struct wl_global *global);
+bool xd_trust_sandboxed_denied(const xd_server *server, const struct wl_client *client,
+                               const struct wl_global *global);
 
 /* xwayland.c: X11 applications. */
 void xd_xwayland_init(xd_server *server);

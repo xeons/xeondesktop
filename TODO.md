@@ -105,7 +105,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       (`/etc/pam.d/xeondesktop`, `auth include login`) is installed by
       `meson install`; until then `login` is used. Every monitor is
       covered, the dialog on the one with the pointer; logind's Unlock
-      (Switch User) unlocks. (Change
+      (Switch User) unlocks. The locker hears it's locked once every
+      monitor has shown the cover (a second at most for one that shows
+      nothing), and the shell then: the computer sleeps, and Switch User
+      goes to the greeter, only once the screens are locked (Switch User
+      not at all if they aren't within 5 seconds). While locked with the
+      locker gone, only the one the compositor starts again may take
+      over. (Change
       Password is in Windows Security, below.)
 - [~] **Screen savers**: Blank Screen, Starfield Simulation, Mystify Your
       Mind, Beziers, Marquee Display and Flying Penguins, started by the
@@ -294,9 +300,18 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       AdaptiveSync=always in monitors.ini) and tearing (the async hint,
       while scanned out directly) are done, untested on real hardware;
       fifo and commit-timing wait for wlroots, which 0.20 lacks.
-- [ ] Sandboxes (security-context): Flatpak programs can use screen
-      capture, clipboard managers' data-control and the like; deny them
-      the privileged protocols.
+- [x] Sandboxes (security-context-v1): sandboxed programs (Flatpak's) get
+      none of the protocols reaching past their own windows: screen
+      capture, data-control, foreign-toplevel management, output
+      management and power, gamma, layer-shell, virtual keyboard, session
+      lock, our capture and arranger (trust.c). Programs on the desktop
+      keep them, as other wlroots desktops give them (screenshot tools,
+      clipboard managers). The shell, and a locker started again while
+      locked, run on connections the compositor made for them
+      (WAYLAND_SOCKET), known by those rather than their PIDs; Task
+      Manager and input methods by the installed program they ran when
+      connecting, refused if made to load other code. UI test
+      sandbox_globals (tools/xd-globals).
 - [ ] Window parenting (xdg-foreign, xdg-dialog): portal dialogs aren't
       tied to the window of the Flatpak program that asked, and dialogs
       can't be marked modal.
@@ -505,8 +520,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       7's exact Left/Right/Tab behaviour is a best guess.
 - [x] Switch User: xd-lock follows logind's Unlock (sent by the display
       manager after its greeter) and Lock, so returning asks once; XP's Log
-      Off box in Luna has Switch User. A logind Lock does nothing while
-      xd-lock isn't running; the box's big buttons can't take keyboard focus.
+      Off box in Luna has Switch User. A logind Lock (loginctl
+      lock-session, a lid or power key set to lock) starts xd-lock through
+      the shell when it isn't running; the box's big buttons can't take
+      keyboard focus.
 - [?] Windows 7 menu: Recent Items, the Shut Down ▸ submenu, Run, the
       frequently-used list showing launched apps.
 - [?] Quick Launch buttons launching apps; Show Desktop's second click

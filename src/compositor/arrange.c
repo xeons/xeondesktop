@@ -448,40 +448,22 @@ static void bind_arranger(struct wl_client *client, void *data, uint32_t version
     server->arranger_clients[server->arranger_clients_n++] = ac;
     wl_resource_set_implementation(res, &arranger_impl, ac, resource_destroyed);
     /* Events (Start menu, window menu, attention) go to the shell. */
-    pid_t pid = 0;
-    wl_client_get_credentials(client, &pid, nullptr, nullptr);
-    if (server->shell_pid > 0 && pid == server->shell_pid) {
+    if (xd_trust_is(&server->shell_client, client)) {
         server->arranger_resource = res;
         xd_arrange_keyboard_layout(server); /* the language indicator's start */
+        if (server->locked && !server->lock_waiting)
+            xd_arrange_session_locked(server, true);
     }
 }
 
-/* Whether `pid` runs our Task Manager: the xd-taskmgr installed beside
- * this compositor. */
-static bool is_task_manager(pid_t pid) {
-    char link[64];
-    snprintf(link, sizeof(link), "/proc/%d/exe", (int)pid);
-    char *exe = realpath(link, nullptr);
-    char *self = realpath("/proc/self/exe", nullptr);
-    bool ok = false;
-    if (exe != nullptr && self != nullptr) {
-        char *slash = strrchr(self, '/');
-        if (slash != nullptr) {
-            slash[1] = '\0';
-            size_t count = strlen(self);
-            ok = strncmp(exe, self, count) == 0 && strcmp(exe + count, "xd-taskmgr") == 0;
-        }
-    }
-    free(exe);
-    free(self);
-    return ok;
-}
-
-/* Only the shell we started and our Task Manager see the global; window
+/* Sandboxed programs see none of the privileged globals (trust.c). Only
+ * the shell we started and our Task Manager see the arranger; window
  * capture (capture.c), only the shell. */
 static bool global_filter(const struct wl_client *client, const struct wl_global *global,
                           void *data) {
     xd_server *server = data;
+    if (xd_trust_sandboxed_denied(server, client, global))
+        return false;
     /* The input method's (ime.c). */
     if (xd_ime_global_private(server, global))
         return xd_ime_client_allowed(server, client);
@@ -494,15 +476,20 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
     /* UI tests' xd-inject toggles the lid through it (test_lid). */
     if (global == server->arranger && server->config.virtual_input)
         return true;
-    pid_t pid = 0;
-    wl_client_get_credentials((struct wl_client *)(uintptr_t)client, &pid, nullptr, nullptr);
-    if (server->shell_pid > 0 && pid == server->shell_pid)
+    if (xd_trust_is(&server->shell_client, client))
         return true;
-    return !capture && pid > 0 && is_task_manager(pid);
+    return !capture && xd_trust_task_manager(client);
+}
+
+void xd_arrange_session_locked(xd_server *server, bool locked) {
+    struct wl_resource *res = server->arranger_resource;
+    if (res != nullptr &&
+        wl_resource_get_version(res) >= XD_WINDOW_ARRANGER_V1_SESSION_LOCKED_SINCE_VERSION)
+        xd_window_arranger_v1_send_session_locked(res, locked ? 1 : 0);
 }
 
 void xd_arrange_init(xd_server *server) {
-    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 10,
+    server->arranger = wl_global_create(server->display, &xd_window_arranger_v1_interface, 11,
                                         server, bind_arranger);
     wl_display_set_global_filter(server->display, global_filter, server);
 }

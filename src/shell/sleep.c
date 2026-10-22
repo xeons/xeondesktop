@@ -23,8 +23,11 @@
 #define LOGIN1_PATH "/org/freedesktop/login1"
 #define LOGIN1_MANAGER "org.freedesktop.login1.Manager"
 
-/* How long the locker gets to cover the screens before the computer
- * sleeps (logind waits at most InhibitDelayMaxSec, 5 s by default). */
+/* The computer sleeps once the compositor says every screen shows the
+ * lock; at the latest after this (logind waits at most
+ * InhibitDelayMaxSec, 5 s by default, before sleeping anyway). Without
+ * our compositor (no word of the lock), after a moment. */
+static constexpr guint LOCK_WAIT_MS = 4500;
 static constexpr guint LOCK_GRACE_MS = 1000;
 
 struct xd_sleep {
@@ -32,6 +35,7 @@ struct xd_sleep {
     GDBusConnection *bus;
     GCancellable *cancel;
     guint prepare_sub; /* PrepareForSleep */
+    guint lock_sub; /* our session's Lock */
     int inhibit_fd;    /* our delay inhibitor, -1 if none */
     bool inhibiting;   /* Inhibit() in flight */
     guint release;     /* drops the inhibitor once the locker is up */
@@ -150,10 +154,16 @@ static void prepare_for_sleep([[maybe_unused]] GDBusConnection *bus,
     if (start) {
         sl->sleeping = true;
         if (wants_lock(sl)) {
-            lock_screen();
-            /* Let the computer sleep once the locker is up. */
-            if (sl->inhibit_fd >= 0 && sl->release == 0)
-                sl->release = g_timeout_add(LOCK_GRACE_MS, release_now, sl);
+            if (sl->shell->session_locked) {
+                drop_inhibitor(sl); /* locked already */
+            } else {
+                lock_screen();
+                /* Let the computer sleep once the lock is on every screen. */
+                if (sl->inhibit_fd >= 0 && sl->release == 0)
+                    sl->release =
+                        g_timeout_add(xd_shell_hears_lock(sl->shell) ? LOCK_WAIT_MS : LOCK_GRACE_MS,
+                                      release_now, sl);
+            }
         } else {
             drop_inhibitor(sl);
         }
@@ -163,6 +173,42 @@ static void prepare_for_sleep([[maybe_unused]] GDBusConnection *bus,
         drop_inhibitor(sl);
         xd_sleep_update(sl->shell);
     }
+}
+
+void xd_sleep_locked_changed(xd_shell *shell) {
+    xd_sleep *sl = shell->sleep;
+    if (sl != nullptr && shell->session_locked && sl->sleeping)
+        drop_inhibitor(sl);
+}
+
+/* logind's Lock (loginctl lock-session, a lid or power key set to lock,
+ * IdleAction=lock, a display manager): our locker, if not locked. */
+static void session_lock([[maybe_unused]] GDBusConnection *bus, [[maybe_unused]] const char *sender,
+                         [[maybe_unused]] const char *path, [[maybe_unused]] const char *iface,
+                         [[maybe_unused]] const char *signal, [[maybe_unused]] GVariant *params,
+                         gpointer data) {
+    xd_sleep *sl = data;
+    if (!sl->shell->session_locked)
+        lock_screen();
+}
+
+static void got_session(GObject *src, GAsyncResult *res, gpointer data) {
+    GError *error = nullptr;
+    GVariant *reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &error);
+    if (reply == nullptr) {
+        if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+            fprintf(stderr, "xd-shell: no logind session, so no Lock from it: %s\n",
+                    error->message);
+        g_error_free(error);
+        return;
+    }
+    xd_sleep *sl = data;
+    const char *path = nullptr;
+    g_variant_get(reply, "(&o)", &path);
+    sl->lock_sub = g_dbus_connection_signal_subscribe(
+        sl->bus, LOGIN1, "org.freedesktop.login1.Session", "Lock", path, nullptr,
+        G_DBUS_SIGNAL_FLAGS_NONE, session_lock, sl, nullptr);
+    g_variant_unref(reply);
 }
 
 static void got_bus([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
@@ -179,6 +225,10 @@ static void got_bus([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer d
     sl->prepare_sub = g_dbus_connection_signal_subscribe(
         bus, LOGIN1, LOGIN1_MANAGER, "PrepareForSleep", LOGIN1_PATH, nullptr,
         G_DBUS_SIGNAL_FLAGS_NONE, prepare_for_sleep, sl, nullptr);
+    /* Our session, by the special name logind gives the caller's. */
+    g_dbus_connection_call(bus, LOGIN1, LOGIN1_PATH, LOGIN1_MANAGER, "GetSession",
+                           g_variant_new("(s)", "auto"), G_VARIANT_TYPE("(o)"),
+                           G_DBUS_CALL_FLAGS_NONE, -1, sl->cancel, got_session, sl);
     xd_sleep_update(sl->shell);
 }
 
@@ -203,6 +253,8 @@ void xd_sleep_finish(xd_shell *shell) {
     drop_inhibitor(sl);
     if (sl->bus != nullptr) {
         g_dbus_connection_signal_unsubscribe(sl->bus, sl->prepare_sub);
+        if (sl->lock_sub != 0)
+            g_dbus_connection_signal_unsubscribe(sl->bus, sl->lock_sub);
         g_object_unref(sl->bus);
     }
     g_free(sl);

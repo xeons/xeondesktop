@@ -233,6 +233,7 @@ client_protocol_xml = {
   'keyboard-shortcuts-inhibit-unstable-v1':
     wp_dir / 'unstable/keyboard-shortcuts-inhibit/keyboard-shortcuts-inhibit-unstable-v1.xml',
   'xwayland-keyboard-grab-unstable-v1': x11_grab_xml,
+  'security-context-v1': wp_dir / 'staging/security-context/security-context-v1.xml',
 }
 
 client_protocol_src = []
@@ -359,6 +360,7 @@ compositor_src = files(
   'src/compositor/capture.c',
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
+  'src/compositor/trust.c',
   'src/compositor/xwayland.c',
   'src/compositor/access.c',
   'src/compositor/ime.c',
@@ -1222,6 +1224,14 @@ executable(
   'xd-test-x11grab',
   'tools/xd-test-x11grab.c',
   dependencies: [xcb_dep],
+)
+
+# Lists the globals a client, or a sandboxed one, gets, for the UI tests.
+executable(
+  'xd-globals',
+  'tools/xd-globals.c',
+  c_args: ['-D_GNU_SOURCE'],
+  dependencies: [client_protocol_dep],
 )
 
 # Lists a session's windows (title, app id, state), for the UI tests.

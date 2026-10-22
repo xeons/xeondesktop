@@ -30,7 +30,10 @@
 #include "grabkeys.h"
 #include "server.h"
 
-pid_t xd_spawn_argv(char *const argv[]) {
+pid_t xd_spawn_argv(char *const argv[]) { return xd_spawn_with(argv, nullptr, environ); }
+
+pid_t xd_spawn_with(char *const argv[], const posix_spawn_file_actions_t *actions,
+                    char *const envp[]) {
     posix_spawnattr_t attr;
     if (posix_spawnattr_init(&attr) != 0)
         return -1;
@@ -42,7 +45,7 @@ pid_t xd_spawn_argv(char *const argv[]) {
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSID);
 
     pid_t pid = -1;
-    int err = posix_spawnp(&pid, argv[0], nullptr, &attr, argv, environ);
+    int err = posix_spawnp(&pid, argv[0], actions, &attr, argv, envp);
     posix_spawnattr_destroy(&attr);
     if (err != 0) {
         wlr_log(WLR_ERROR, "cannot run %s: %s", argv[0], strerror(err));
@@ -103,7 +106,8 @@ void xd_shell_start(xd_server *server) {
         argv[argc++] = scheme;
     }
     argv[argc] = nullptr;
-    server->shell_pid = xd_spawn_argv(argv);
+    /* On a connection of its own, by which it's known (trust.c). */
+    server->shell_pid = xd_trust_spawn(server, argv, &server->shell_client);
     xd_free(scheme);
     xd_free(style);
     xd_free(shell);

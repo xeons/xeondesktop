@@ -69,7 +69,8 @@ static void handle_frame(struct wl_listener *listener, [[maybe_unused]] void *da
         if (wlr_scene_output_build_state(so, &state, nullptr)) {
             xd_gamma_frame(out, &state);
             xd_present_frame(out, &state);
-            wlr_output_commit_state(out->wlr_output, &state);
+            if (wlr_output_commit_state(out->wlr_output, &state))
+                xd_lock_output_shown(out);
         }
         wlr_output_state_finish(&state);
     }

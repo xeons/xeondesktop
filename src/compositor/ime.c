@@ -125,24 +125,6 @@ static bool descends_from(pid_t pid, pid_t ancestor) {
     return false;
 }
 
-/* `pid` runs an installed framework's program: one under /usr whose
- * file is the very one there (not a sandbox's file of that name). */
-static bool runs_framework(pid_t pid) {
-    char link[64], exe[PATH_MAX];
-    snprintf(link, sizeof(link), "/proc/%d/exe", (int)pid);
-    ssize_t length = readlink(link, exe, sizeof(exe) - 1);
-    if (length <= 0)
-        return false;
-    exe[length] = '\0';
-    const char *slash = strrchr(exe, '/');
-    if (strncmp(exe, "/usr/", 5) != 0 || slash == nullptr ||
-        !xd_im_program_is_framework(slash + 1))
-        return false;
-    struct stat running, installed;
-    return stat(link, &running) == 0 && stat(exe, &installed) == 0 &&
-           running.st_dev == installed.st_dev && running.st_ino == installed.st_ino;
-}
-
 static bool is_input_method_client(const xd_server *server, const struct wl_client *client) {
     pid_t pid = 0;
     wl_client_get_credentials((struct wl_client *)(uintptr_t)client, &pid, nullptr, nullptr);
@@ -151,7 +133,9 @@ static bool is_input_method_client(const xd_server *server, const struct wl_clie
     const struct xd_ime *ime = server->ime;
     if (ime != nullptr && ime->pid > 0 && descends_from(pid, ime->pid))
         return true;
-    return runs_framework(pid);
+    /* A framework started by others (ibus-daemon on its own): what the
+     * client ran when it connected (trust.c). */
+    return xd_trust_input_framework(client);
 }
 
 bool xd_ime_global_private(const xd_server *server, const struct wl_global *global) {

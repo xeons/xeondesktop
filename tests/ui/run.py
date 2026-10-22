@@ -3941,7 +3941,9 @@ def taskbar_menu_arrange(s):
     taskbar_menu(s, -2, "unlocked")
     s.wait(lambda: locked_key() == "false", "Locked=false")
     unlocked = s.settle("unlocked")
-    bar = (0, work, WIDTH, 40)
+    # Classic's taskbar alone (28px): above it the windows' status bars
+    # show the disk's free space, which may change meanwhile.
+    bar = (0, HEIGHT - 28, WIDTH, 28)
     s.check(unlocked.differs(undone, bar, step=1) > 0, "Lock the Taskbar unticked: grips show")
     taskbar_menu(s, -2, "locked")
     s.wait(lambda: locked_key() == "true", "Locked=true")
@@ -4650,6 +4652,37 @@ def mock_timedate(s, timesync=None):
         return text
 
     return ts, calls
+
+
+@scenario()
+def sandbox_globals(s):
+    """Sandboxed programs (Flatpak's, through security-context-v1) get
+    none of the protocols that reach past their own windows; programs on
+    the desktop keep them (screenshot tools, clipboard managers)."""
+
+    def globals(*args):
+        r = subprocess.run([s.tool("xd-globals"), *args], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, timeout=20)  # fmt: skip
+        if r.returncode != 0:
+            raise Failure("xd-globals: " + r.stderr.decode().strip())
+        return set(r.stdout.decode().split())
+
+    privileged = {
+        "zwlr_screencopy_manager_v1", "zwlr_export_dmabuf_manager_v1",
+        "zwlr_data_control_manager_v1", "ext_data_control_manager_v1",
+        "zwlr_foreign_toplevel_manager_v1", "zwlr_output_manager_v1",
+        "zwlr_output_power_manager_v1", "zwlr_gamma_control_manager_v1",
+        "zwlr_layer_shell_v1", "ext_session_lock_manager_v1",
+    }  # fmt: skip
+    plain = globals()
+    s.check(privileged <= plain, f"a program gets them all (missing {privileged - plain})")
+    boxed = globals("--sandboxed")
+    s.check({"wl_compositor", "xdg_wm_base", "wl_seat"} <= boxed,
+            f"a sandboxed program gets the ordinary ones ({sorted(boxed)})")  # fmt: skip
+    leaked = (privileged | {"zwp_virtual_keyboard_manager_v1", "ext_foreign_toplevel_list_v1",
+                            "xd_window_arranger_v1", "zwp_input_method_manager_v2"}) & boxed
+    s.check(not leaked, f"a sandboxed program gets none of them ({sorted(leaked)})")
+    s.log(f"ok: {len(plain)} globals, {len(boxed)} sandboxed")
 
 
 @scenario(AERO_INI, requires=("dbusmock",))

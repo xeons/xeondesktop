@@ -550,6 +550,15 @@ static void handle_power_button(void *data, [[maybe_unused]] struct xd_window_ar
     }
 }
 
+static void handle_session_locked(void *data,
+                                  [[maybe_unused]] struct xd_window_arranger_v1 *arranger,
+                                  uint32_t locked) {
+    xd_shell *shell = data;
+    shell->session_locked = locked != 0;
+    xd_sleep_locked_changed(shell);
+    xd_account_locked_changed(shell);
+}
+
 static const struct xd_window_arranger_v1_listener arranger_listener = {
     .start_menu = handle_start_menu,
     .window_menu = handle_window_menu,
@@ -558,7 +567,13 @@ static const struct xd_window_arranger_v1_listener arranger_listener = {
     .identifier = handle_identifier,
     .window_menu_keyboard = handle_window_menu_keyboard,
     .power_button = handle_power_button,
+    .session_locked = handle_session_locked,
 };
+
+bool xd_shell_hears_lock(const xd_shell *shell) {
+    return shell->arranger != nullptr && xd_window_arranger_v1_get_version(shell->arranger) >=
+                                             XD_WINDOW_ARRANGER_V1_SESSION_LOCKED_SINCE_VERSION;
+}
 
 void xd_taskmenu_bind(xd_shell *shell) {
     xd_window_arranger_v1_add_listener(shell->arranger, &arranger_listener, shell);

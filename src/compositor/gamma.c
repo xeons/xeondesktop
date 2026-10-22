@@ -321,6 +321,7 @@ void xd_gamma_init(xd_server *server) {
     gamma->server = server;
     gamma->kelvin = XD_NIGHTLIGHT_DAY;
     gamma->manager = wlr_gamma_control_manager_v1_create(server->display);
+    xd_trust_privileged(server, gamma->manager->global);
     XD_LISTEN(&gamma->manager->events.set_gamma, gamma, set_gamma, handle_set_gamma);
     XD_LISTEN(&gamma->manager->events.destroy, gamma, manager_destroy, handle_manager_destroy);
     gamma->timer = wl_event_loop_add_timer(server->loop, handle_timer, gamma);

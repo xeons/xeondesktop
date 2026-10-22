@@ -14,7 +14,7 @@
     and to hear of the lid and the power and sleep buttons.
   </description>
 
-  <interface name="xd_window_arranger_v1" version="10">
+  <interface name="xd_window_arranger_v1" version="11">
     <enum name="mode">
       <entry name="cascade" value="0" summary="overlapping, offset down and right"/>
       <entry name="tile_horizontally" value="1" summary="stacked one above another"/>
@@ -215,5 +215,16 @@
       </description>
       <arg name="closed" type="uint"/>
     </request>
+
+    <event name="session_locked" since="11">
+      <description summary="the screen is locked, or unlocked">
+        Sent to the shell when a session lock covers every monitor (the
+        lock's frames have been shown on each, not only asked for), with
+        locked nonzero, and when the session is unlocked, with zero; and
+        when the shell binds while locked. The shell lets the computer
+        sleep, or another user's session start, only once it's locked.
+      </description>
+      <arg name="locked" type="uint"/>
+    </event>
   </interface>
 </protocol>
