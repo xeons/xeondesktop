@@ -54,12 +54,12 @@ static char *logon_name(void) {
     char *computer = computer_name();
     const char *user = g_get_user_name();
     const char *real = g_get_real_name();
-    char *s = real != nullptr && real[0] != '\0' && strcmp(real, "Unknown") != 0 &&
-                      strcmp(real, user) != 0
-                  ? g_strdup_printf("%s\\%s (%s)", computer, user, real)
-                  : g_strdup_printf("%s\\%s", computer, user);
+    char *name = real != nullptr && real[0] != '\0' && strcmp(real, "Unknown") != 0 &&
+                         strcmp(real, user) != 0
+                     ? g_strdup_printf("%s\\%s (%s)", computer, user, real)
+                     : g_strdup_printf("%s\\%s", computer, user);
     g_free(computer);
-    return s;
+    return name;
 }
 
 /* When the session began: the compositor's start time. */
@@ -69,47 +69,48 @@ static GDateTime *logon_time(void) {
     char *path = g_strdup_printf("/proc/%" G_GINT64_FORMAT "/stat", pid);
     char *stat = nullptr;
     char *sys = nullptr;
-    GDateTime *t = nullptr;
+    GDateTime *date_time = nullptr;
     if (pid > 1 && g_file_get_contents(path, &stat, nullptr, nullptr) &&
         g_file_get_contents("/proc/stat", &sys, nullptr, nullptr)) {
         /* Field 22 (starttime, in clock ticks after boot) counts from the
          * ")" that ends the command name. */
-        char *p = strrchr(stat, ')');
-        char **fields = p != nullptr ? g_strsplit(p + 2, " ", 0) : nullptr;
+        char *name_end = strrchr(stat, ')');
+        char **fields = name_end != nullptr ? g_strsplit(name_end + 2, " ", 0) : nullptr;
         char *btime = strstr(sys, "\nbtime ");
         if (fields != nullptr && g_strv_length(fields) > 19 && btime != nullptr) {
             gint64 ticks = g_ascii_strtoll(fields[19], nullptr, 10);
             gint64 boot = g_ascii_strtoll(btime + 7, nullptr, 10);
             long hz = sysconf(_SC_CLK_TCK);
             if (hz > 0)
-                t = g_date_time_new_from_unix_local(boot + ticks / hz);
+                date_time = g_date_time_new_from_unix_local(boot + ticks / hz);
         }
         g_strfreev(fields);
     }
     g_free(sys);
     g_free(stat);
     g_free(path);
-    return t != nullptr ? t : g_date_time_new_now_local();
+    return date_time != nullptr ? date_time : g_date_time_new_now_local();
 }
 
 static GtkWidget *label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    return l;
+    GtkWidget *widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(widget), TRUE);
+    return widget;
 }
 
 /* ---- the banner -------------------------------------------------------------------- */
 
-static gboolean draw_banner(GtkWidget *w, cairo_t *cr, [[maybe_unused]] gpointer data) {
+static gboolean draw_banner(GtkWidget *widget, cairo_t *cairo, [[maybe_unused]] gpointer data) {
     xd_settings settings;
     xd_settings_load(&settings);
     xd_scheme scheme;
     xd_settings_scheme(&settings, &scheme);
-    xd_theme t;
-    xd_theme_init(&t, settings.style, &scheme, 1.0);
-    xd_rect r = {0, 0, gtk_widget_get_allocated_width(w), gtk_widget_get_allocated_height(w)};
-    xd_theme_draw_dialog_banner(&t, cr, r, PRODUCT, EDITION);
+    xd_theme theme;
+    xd_theme_init(&theme, settings.style, &scheme, 1.0);
+    xd_rect rect = {0, 0, gtk_widget_get_allocated_width(widget),
+                    gtk_widget_get_allocated_height(widget)};
+    xd_theme_draw_dialog_banner(&theme, cairo, rect, PRODUCT, EDITION);
     return FALSE;
 }
 
@@ -122,21 +123,21 @@ static GtkWidget *banner(void) {
 
 /* A dialog with the banner on top and `content` under it. */
 static GtkWidget *banner_dialog(GtkWindow *parent, const char *title, GtkWidget **content) {
-    GtkWidget *d = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(d), title);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
-    gtk_window_set_keep_above(GTK_WINDOW(d), TRUE);
+    GtkWidget *widget = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(widget), title);
+    gtk_window_set_resizable(GTK_WINDOW(widget), FALSE);
+    gtk_window_set_keep_above(GTK_WINDOW(widget), TRUE);
     if (parent != nullptr) {
-        gtk_window_set_transient_for(GTK_WINDOW(d), parent);
-        gtk_window_set_modal(GTK_WINDOW(d), TRUE);
+        gtk_window_set_transient_for(GTK_WINDOW(widget), parent);
+        gtk_window_set_modal(GTK_WINDOW(widget), TRUE);
     }
-    GtkWidget *area = gtk_dialog_get_content_area(GTK_DIALOG(d));
+    GtkWidget *area = gtk_dialog_get_content_area(GTK_DIALOG(widget));
     gtk_box_set_spacing(GTK_BOX(area), 0);
     gtk_box_pack_start(GTK_BOX(area), banner(), FALSE, FALSE, 0);
     *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(*content), 12);
     gtk_box_pack_start(GTK_BOX(area), *content, TRUE, TRUE, 0);
-    return d;
+    return widget;
 }
 
 /* ---- Change Password ------------------------------------------------------------- */
@@ -148,14 +149,14 @@ typedef struct change {
     guint watch;
 } change;
 
-static void change_busy(change *c, bool busy) {
-    gtk_widget_set_sensitive(gtk_dialog_get_widget_for_response(GTK_DIALOG(c->dialog),
-                                                                GTK_RESPONSE_OK),
-                             !busy);
-    gtk_widget_set_sensitive(c->old_entry, !busy);
-    gtk_widget_set_sensitive(c->new_entry, !busy);
-    gtk_widget_set_sensitive(c->confirm_entry, !busy);
-    GdkWindow *gw = gtk_widget_get_window(c->dialog);
+static void change_busy(change *password_change, bool busy) {
+    gtk_widget_set_sensitive(
+        gtk_dialog_get_widget_for_response(GTK_DIALOG(password_change->dialog), GTK_RESPONSE_OK),
+        !busy);
+    gtk_widget_set_sensitive(password_change->old_entry, !busy);
+    gtk_widget_set_sensitive(password_change->new_entry, !busy);
+    gtk_widget_set_sensitive(password_change->confirm_entry, !busy);
+    GdkWindow *gw = gtk_widget_get_window(password_change->dialog);
     if (gw != nullptr) {
         GdkCursor *cursor =
             busy ? gdk_cursor_new_from_name(gdk_window_get_display(gw), "progress") : nullptr;
@@ -165,32 +166,32 @@ static void change_busy(change *c, bool busy) {
     }
 }
 
-static void clear_entry(GtkWidget *e) { gtk_entry_set_text(GTK_ENTRY(e), ""); }
+static void clear_entry(GtkWidget *widget) { gtk_entry_set_text(GTK_ENTRY(widget), ""); }
 
 static gboolean on_passwd_output([[maybe_unused]] GIOChannel *ch,
                                  [[maybe_unused]] GIOCondition cond, gpointer data) {
-    change *c = data;
-    xd_passwd_result r = xd_passwd_step(c->passwd);
-    if (r == XD_PASSWD_RUNNING)
+    change *password_change = data;
+    xd_passwd_result passwd_result = xd_passwd_step(password_change->passwd);
+    if (passwd_result == XD_PASSWD_RUNNING)
         return G_SOURCE_CONTINUE;
-    c->watch = 0;
-    char *message = g_strdup(xd_passwd_message(c->passwd));
-    xd_passwd_free(c->passwd);
-    c->passwd = nullptr;
-    change_busy(c, false);
-    GtkWindow *w = GTK_WINDOW(c->dialog);
-    switch (r) {
+    password_change->watch = 0;
+    char *message = g_strdup(xd_passwd_message(password_change->passwd));
+    xd_passwd_free(password_change->passwd);
+    password_change->passwd = nullptr;
+    change_busy(password_change, false);
+    GtkWindow *toplevel = GTK_WINDOW(password_change->dialog);
+    switch (passwd_result) {
     case XD_PASSWD_OK:
-        xd_message_box(w, "Change Password", XD_MB_INFO, XD_MB_OK, FALSE,
+        xd_message_box(toplevel, "Change Password", XD_MB_INFO, XD_MB_OK, FALSE,
                        "Your password has been changed.");
-        gtk_widget_destroy(c->dialog);
+        gtk_widget_destroy(password_change->dialog);
         break;
     case XD_PASSWD_WRONG_OLD:
-        xd_message_box(w, "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE,
+        xd_message_box(toplevel, "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE,
                        "The old password is incorrect. Letters in passwords must be typed "
                        "using the correct case.");
-        clear_entry(c->old_entry);
-        gtk_widget_grab_focus(c->old_entry);
+        clear_entry(password_change->old_entry);
+        gtk_widget_grab_focus(password_change->old_entry);
         break;
     case XD_PASSWD_REJECTED: {
         char *text = g_strdup_printf(
@@ -198,18 +199,18 @@ static gboolean on_passwd_output([[maybe_unused]] GIOChannel *ch,
             "not meet the length, complexity, or history requirements of this computer."
             "%s%s",
             message[0] != '\0' ? "\n\n" : "", message);
-        xd_message_box(w, "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+        xd_message_box(toplevel, "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE, text);
         g_free(text);
-        clear_entry(c->new_entry);
-        clear_entry(c->confirm_entry);
-        gtk_widget_grab_focus(c->new_entry);
+        clear_entry(password_change->new_entry);
+        clear_entry(password_change->confirm_entry);
+        gtk_widget_grab_focus(password_change->new_entry);
         break;
     }
     case XD_PASSWD_FAILED:
     case XD_PASSWD_RUNNING: {
         char *text = g_strdup_printf("Unable to change the password.%s%s",
                                      message[0] != '\0' ? "\n\n" : "", message);
-        xd_message_box(w, "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE, text);
+        xd_message_box(toplevel, "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE, text);
         g_free(text);
         break;
     }
@@ -218,70 +219,71 @@ static gboolean on_passwd_output([[maybe_unused]] GIOChannel *ch,
     return G_SOURCE_REMOVE;
 }
 
-static void on_change_response(GtkDialog *d, int response, gpointer data) {
-    change *c = data;
+static void on_change_response(GtkDialog *dialog_widget, int response, gpointer data) {
+    change *password_change = data;
     if (response != GTK_RESPONSE_OK) {
-        gtk_widget_destroy(GTK_WIDGET(d));
+        gtk_widget_destroy(GTK_WIDGET(dialog_widget));
         return;
     }
-    const char *old = gtk_entry_get_text(GTK_ENTRY(c->old_entry));
-    const char *new = gtk_entry_get_text(GTK_ENTRY(c->new_entry));
-    const char *confirm = gtk_entry_get_text(GTK_ENTRY(c->confirm_entry));
+    const char *old = gtk_entry_get_text(GTK_ENTRY(password_change->old_entry));
+    const char *new = gtk_entry_get_text(GTK_ENTRY(password_change->new_entry));
+    const char *confirm = gtk_entry_get_text(GTK_ENTRY(password_change->confirm_entry));
     if (strcmp(new, confirm) != 0) {
-        xd_message_box(GTK_WINDOW(d), "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE,
+        xd_message_box(GTK_WINDOW(dialog_widget), "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE,
                        "The passwords you typed do not match. Type the new password in both "
                        "text boxes.");
-        clear_entry(c->new_entry);
-        clear_entry(c->confirm_entry);
-        gtk_widget_grab_focus(c->new_entry);
+        clear_entry(password_change->new_entry);
+        clear_entry(password_change->confirm_entry);
+        gtk_widget_grab_focus(password_change->new_entry);
         return;
     }
     GError *error = nullptr;
-    c->passwd = xd_passwd_start(nullptr, old, new, &error);
-    if (c->passwd == nullptr) {
-        xd_message_box(GTK_WINDOW(d), "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE,
+    password_change->passwd = xd_passwd_start(nullptr, old, new, &error);
+    if (password_change->passwd == nullptr) {
+        xd_message_box(GTK_WINDOW(dialog_widget), "Change Password", XD_MB_ERROR, XD_MB_OK, FALSE,
                        error->message);
         g_error_free(error);
         return;
     }
-    GIOChannel *ch = g_io_channel_unix_new(xd_passwd_fd(c->passwd));
-    c->watch = g_io_add_watch(ch, (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR), on_passwd_output, c);
+    GIOChannel *ch = g_io_channel_unix_new(xd_passwd_fd(password_change->passwd));
+    password_change->watch = g_io_add_watch(ch, (GIOCondition)(G_IO_IN | G_IO_HUP | G_IO_ERR),
+                                            on_passwd_output, password_change);
     g_io_channel_unref(ch);
-    change_busy(c, true);
+    change_busy(password_change, true);
 }
 
-static void on_change_destroy([[maybe_unused]] GtkWidget *w, gpointer data) {
-    change *c = data;
-    if (c->watch != 0)
-        g_source_remove(c->watch);
-    xd_passwd_free(c->passwd);
-    g_free(c);
+static void on_change_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    change *password_change = data;
+    if (password_change->watch != 0)
+        g_source_remove(password_change->watch);
+    xd_passwd_free(password_change->passwd);
+    g_free(password_change);
 }
 
 static GtkWidget *password_entry(void) {
-    GtkWidget *e = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(e), FALSE);
-    gtk_entry_set_input_purpose(GTK_ENTRY(e), GTK_INPUT_PURPOSE_PASSWORD);
-    gtk_entry_set_activates_default(GTK_ENTRY(e), TRUE);
-    gtk_widget_set_hexpand(e, TRUE);
-    return e;
+    GtkWidget *widget = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(widget), FALSE);
+    gtk_entry_set_input_purpose(GTK_ENTRY(widget), GTK_INPUT_PURPOSE_PASSWORD);
+    gtk_entry_set_activates_default(GTK_ENTRY(widget), TRUE);
+    gtk_widget_set_hexpand(widget, TRUE);
+    return widget;
 }
 
 static void attach_row(GtkGrid *grid, int row, const char *mnemonic, GtkWidget *field) {
-    GtkWidget *l = gtk_label_new_with_mnemonic(mnemonic);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), field);
-    gtk_grid_attach(grid, l, 0, row, 1, 1);
+    GtkWidget *widget = gtk_label_new_with_mnemonic(mnemonic);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(widget), field);
+    gtk_grid_attach(grid, widget, 0, row, 1, 1);
     gtk_grid_attach(grid, field, 1, row, 1, 1);
 }
 
 static GtkWidget *open_change_password(GtkWindow *parent) {
-    change *c = g_new0(change, 1);
+    change *password_change = g_new0(change, 1);
     GtkWidget *content;
-    c->dialog = banner_dialog(parent, "Change Password", &content);
-    gtk_dialog_add_button(GTK_DIALOG(c->dialog), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(c->dialog), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_dialog_set_default_response(GTK_DIALOG(c->dialog), GTK_RESPONSE_OK);
+    password_change->dialog = banner_dialog(parent, "Change Password", &content);
+    gtk_dialog_add_button(GTK_DIALOG(password_change->dialog), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(password_change->dialog), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(password_change->dialog), GTK_RESPONSE_OK);
 
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
@@ -300,19 +302,21 @@ static GtkWidget *open_change_password(GtkWindow *parent) {
     g_free(item);
     g_free(computer);
     attach_row(GTK_GRID(grid), 1, "_Log on to:", logon);
-    c->old_entry = password_entry();
-    attach_row(GTK_GRID(grid), 2, "_Old Password:", c->old_entry);
-    c->new_entry = password_entry();
-    attach_row(GTK_GRID(grid), 3, "_New Password:", c->new_entry);
-    c->confirm_entry = password_entry();
-    attach_row(GTK_GRID(grid), 4, "Con_firm New Password:", c->confirm_entry);
+    password_change->old_entry = password_entry();
+    attach_row(GTK_GRID(grid), 2, "_Old Password:", password_change->old_entry);
+    password_change->new_entry = password_entry();
+    attach_row(GTK_GRID(grid), 3, "_New Password:", password_change->new_entry);
+    password_change->confirm_entry = password_entry();
+    attach_row(GTK_GRID(grid), 4, "Con_firm New Password:", password_change->confirm_entry);
     gtk_box_pack_start(GTK_BOX(content), grid, FALSE, FALSE, 0);
 
-    g_signal_connect(c->dialog, "response", G_CALLBACK(on_change_response), c);
-    g_signal_connect(c->dialog, "destroy", G_CALLBACK(on_change_destroy), c);
-    gtk_widget_show_all(c->dialog);
-    gtk_widget_grab_focus(c->old_entry);
-    return c->dialog;
+    g_signal_connect(password_change->dialog, "response", G_CALLBACK(on_change_response),
+                     password_change);
+    g_signal_connect(password_change->dialog, "destroy", G_CALLBACK(on_change_destroy),
+                     password_change);
+    gtk_widget_show_all(password_change->dialog);
+    gtk_widget_grab_focus(password_change->old_entry);
+    return password_change->dialog;
 }
 
 /* ---- Windows Security -------------------------------------------------------------- */
@@ -326,10 +330,10 @@ typedef enum choice {
     CHOICE_CANCEL,
 } choice;
 
-static void on_choice(GtkButton *b, gpointer data) {
-    choice c = (choice)GPOINTER_TO_INT(data);
-    GtkWindow *w = GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(b)));
-    switch (c) {
+static void on_choice(GtkButton *button, gpointer data) {
+    choice selected = (choice)GPOINTER_TO_INT(data);
+    GtkWindow *toplevel = GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(button)));
+    switch (selected) {
     case CHOICE_LOCK:
         run_own("xd-lock", nullptr);
         break;
@@ -340,7 +344,7 @@ static void on_choice(GtkButton *b, gpointer data) {
         run_own("xd-shutdown", nullptr);
         break;
     case CHOICE_PASSWORD:
-        open_change_password(w); /* Windows Security stays open under it */
+        open_change_password(toplevel); /* Windows Security stays open under it */
         return;
     case CHOICE_TASKMGR:
         run_own("xd-taskmgr", nullptr);
@@ -348,19 +352,19 @@ static void on_choice(GtkButton *b, gpointer data) {
     case CHOICE_CANCEL:
         break;
     }
-    gtk_widget_destroy(GTK_WIDGET(w));
+    gtk_widget_destroy(GTK_WIDGET(toplevel));
 }
 
-static GtkWidget *choice_button(const char *mnemonic, choice c) {
-    GtkWidget *b = gtk_button_new_with_mnemonic(mnemonic);
-    gtk_widget_set_size_request(b, 116, 23);
-    g_signal_connect(b, "clicked", G_CALLBACK(on_choice), GINT_TO_POINTER(c));
-    return b;
+static GtkWidget *choice_button(const char *mnemonic, choice selected) {
+    GtkWidget *widget = gtk_button_new_with_mnemonic(mnemonic);
+    gtk_widget_set_size_request(widget, 116, 23);
+    g_signal_connect(widget, "clicked", G_CALLBACK(on_choice), GINT_TO_POINTER(selected));
+    return widget;
 }
 
-static gboolean on_key(GtkWidget *w, GdkEventKey *e, [[maybe_unused]] gpointer data) {
-    if (e->keyval == GDK_KEY_Escape) {
-        gtk_widget_destroy(w);
+static gboolean on_key(GtkWidget *widget, GdkEventKey *key_event, [[maybe_unused]] gpointer data) {
+    if (key_event->keyval == GDK_KEY_Escape) {
+        gtk_widget_destroy(widget);
         return TRUE;
     }
     return FALSE;

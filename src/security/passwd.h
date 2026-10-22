@@ -30,13 +30,13 @@ typedef struct xd_passwd xd_passwd;
 xd_passwd *xd_passwd_start(const char *program, const char *old_password,
                            const char *new_password, GError **error);
 /* The pty to poll for reading. */
-int xd_passwd_fd(const xd_passwd *p);
+int xd_passwd_fd(const xd_passwd *passwd);
 /* Call when the fd is readable (or hung up): reads, answers prompts. */
-xd_passwd_result xd_passwd_step(xd_passwd *p);
+xd_passwd_result xd_passwd_step(xd_passwd *passwd);
 /* What passwd last said, e.g. "BAD PASSWORD: The password is shorter than
  * 8 characters". Empty if nothing. */
-const char *xd_passwd_message(const xd_passwd *p);
+const char *xd_passwd_message(const xd_passwd *passwd);
 /* Stops passwd if it's still running and wipes the passwords. */
-void xd_passwd_free(xd_passwd *p);
+void xd_passwd_free(xd_passwd *passwd);
 
 #endif
