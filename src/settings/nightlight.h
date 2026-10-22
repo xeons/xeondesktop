@@ -37,27 +37,27 @@ typedef enum xd_sun_day : uint8_t {
 xd_sun_day xd_sun_times(int year, int month, int day, double latitude, double longitude,
                         double *rise_utc, double *set_utc);
 
-/* How far into the night (0 day .. 1 night) minute `t` of the day is, for
+/* How far into the night (0 day .. 1 night) minute `minute` of the day is, for
  * a night from minute `start` to minute `end` (wrapping past midnight
  * when end < start), each change spread over `ramp` minutes centred on
  * it. A night shorter than the ramps never gets all the way. */
-double xd_nightlight_fraction(double t, double start, double end, double ramp);
+double xd_nightlight_fraction(double minute, double start, double end, double ramp);
 
 /* Tonight's on and off times, in minutes after local midnight, for the
  * settings at `now`: sunset and sunrise at the location, else the set
  * hours. Returns XD_SUN_UP_ALL_DAY/XD_SUN_DOWN_ALL_DAY in the polar
  * summer and winter (no times). */
-xd_sun_day xd_nightlight_times(const xd_nightlight_settings *s, time_t now, double *on_minute,
-                               double *off_minute);
+xd_sun_day xd_nightlight_times(const xd_nightlight_settings *nightlight_settings, time_t now,
+                               double *on_minute, double *off_minute);
 
 /* The colour temperature the settings ask for at `now`, in K
  * (XD_NIGHTLIGHT_K_DAY when off or in the day). */
-double xd_nightlight_kelvin(const xd_nightlight_settings *s, time_t now);
+double xd_nightlight_kelvin(const xd_nightlight_settings *nightlight_settings, time_t now);
 
 /* Fills a gamma ramp of n entries per channel: the calibration curves
  * (`calibration`: 3 x n values 0..1, red then green then blue; nullptr
  * for none), then the night light's multipliers. */
-void xd_gamma_ramp_fill(uint16_t *r, uint16_t *g, uint16_t *b, size_t n, const double rgb[3],
-                        const float *calibration);
+void xd_gamma_ramp_fill(uint16_t *red, uint16_t *green, uint16_t *blue, size_t size,
+                        const double rgb[3], const float *calibration);
 
 #endif

@@ -13,110 +13,117 @@ typedef struct qt_role {
     xd_rgba normal, disabled;
 } qt_role;
 
-static unsigned channel(double v) {
-    double c = round(v * 255.0);
-    return c <= 0 ? 0u : c >= 255 ? 255u : (unsigned)c;
+static unsigned channel(double value) {
+    double scaled = round(value * 255.0);
+    return scaled <= 0 ? 0u : scaled >= 255 ? 255u : (unsigned)scaled;
 }
 
 /* A colour as Qt saves a fixed brush. */
-static void add_entry(JsonBuilder *b, const char *group, xd_rgba c) {
+static void add_entry(JsonBuilder *builder, const char *group, xd_rgba color) {
     char hex[32];
-    snprintf(hex, sizeof(hex), "#%02x%02x%02x", channel(c.r), channel(c.g), channel(c.b));
-    json_builder_begin_object(b);
-    json_builder_set_member_name(b, "ColorGroup");
-    json_builder_add_string_value(b, group);
-    json_builder_set_member_name(b, "ColorScheme");
-    json_builder_add_string_value(b, "Unknown"); /* light and dark alike */
-    json_builder_set_member_name(b, "SourceType");
-    json_builder_add_string_value(b, "Fixed");
-    json_builder_set_member_name(b, "SourceData");
-    json_builder_begin_object(b);
-    json_builder_set_member_name(b, "FixedBrush");
-    json_builder_begin_object(b);
-    json_builder_set_member_name(b, "Color");
-    json_builder_add_string_value(b, hex);
-    json_builder_set_member_name(b, "Height");
-    json_builder_add_int_value(b, 0);
-    json_builder_set_member_name(b, "Width");
-    json_builder_add_int_value(b, 0);
-    json_builder_end_object(b);
-    json_builder_end_object(b);
-    json_builder_end_object(b);
+    snprintf(hex, sizeof(hex), "#%02x%02x%02x", channel(color.r), channel(color.g),
+             channel(color.b));
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "ColorGroup");
+    json_builder_add_string_value(builder, group);
+    json_builder_set_member_name(builder, "ColorScheme");
+    json_builder_add_string_value(builder, "Unknown"); /* light and dark alike */
+    json_builder_set_member_name(builder, "SourceType");
+    json_builder_add_string_value(builder, "Fixed");
+    json_builder_set_member_name(builder, "SourceData");
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "FixedBrush");
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "Color");
+    json_builder_add_string_value(builder, hex);
+    json_builder_set_member_name(builder, "Height");
+    json_builder_add_int_value(builder, 0);
+    json_builder_set_member_name(builder, "Width");
+    json_builder_add_int_value(builder, 0);
+    json_builder_end_object(builder);
+    json_builder_end_object(builder);
+    json_builder_end_object(builder);
 }
 
-static void add_palette(JsonBuilder *b, const char *name, const qt_role *roles, size_t n) {
-    json_builder_set_member_name(b, name);
-    json_builder_begin_object(b);
-    for (size_t i = 0; i < n; i++) {
-        json_builder_set_member_name(b, roles[i].role);
-        json_builder_begin_array(b);
-        add_entry(b, "Active", roles[i].normal);
-        add_entry(b, "Inactive", roles[i].normal);
-        add_entry(b, "Disabled", roles[i].disabled);
-        json_builder_end_array(b);
+static void add_palette(JsonBuilder *builder, const char *name, const qt_role *roles,
+                        size_t count) {
+    json_builder_set_member_name(builder, name);
+    json_builder_begin_object(builder);
+    for (size_t i = 0; i < count; i++) {
+        json_builder_set_member_name(builder, roles[i].role);
+        json_builder_begin_array(builder);
+        add_entry(builder, "Active", roles[i].normal);
+        add_entry(builder, "Inactive", roles[i].normal);
+        add_entry(builder, "Disabled", roles[i].disabled);
+        json_builder_end_array(builder);
     }
-    json_builder_end_object(b);
+    json_builder_end_object(builder);
 }
 
-void xd_qt_palette_json(const xd_theme *t, xd_strbuf *out) {
-    xd_toolkit_colors c;
-    xd_theme_toolkit_colors(t, &c);
-    xd_gtk_pkg_toolkit_colors(t, &c); /* a theme package's colours, as GTK's */
-    xd_rgba face = c.face.a > 0 ? c.face : c.bg;
+void xd_qt_palette_json(const xd_theme *theme, xd_strbuf *out) {
+    xd_toolkit_colors toolkit_colors;
+    xd_theme_toolkit_colors(theme, &toolkit_colors);
+    xd_gtk_pkg_toolkit_colors(theme, &toolkit_colors); /* a theme package's colours, as GTK's */
+    xd_rgba face = toolkit_colors.face.a > 0 ? toolkit_colors.face : toolkit_colors.bg;
     /* The 3D edges from the scheme, as Windows draws classic controls in
      * every style: Qt's Windows style uses them for its bevels, Fusion
      * for its outlines and shadows. */
-    xd_rgba hilight = xd_sys(t, XD_COLOR_BUTTON_HILIGHT);
-    xd_rgba light = xd_sys(t, XD_COLOR_BUTTON_LIGHT);
-    xd_rgba shadow = xd_sys(t, XD_COLOR_BUTTON_SHADOW);
-    xd_rgba dkshadow = xd_sys(t, XD_COLOR_BUTTON_DK_SHADOW);
+    xd_rgba hilight = xd_sys(theme, XD_COLOR_BUTTON_HILIGHT);
+    xd_rgba light = xd_sys(theme, XD_COLOR_BUTTON_LIGHT);
+    xd_rgba shadow = xd_sys(theme, XD_COLOR_BUTTON_SHADOW);
+    xd_rgba dkshadow = xd_sys(theme, XD_COLOR_BUTTON_DK_SHADOW);
     const qt_role system[] = {
-        {"Window", c.bg, c.bg},
-        {"WindowText", c.fg, c.disabled},
-        {"Base", c.base, c.bg}, /* a disabled field is grey, as in Windows */
-        {"AlternateBase", c.base, c.bg},
-        {"Text", c.text, c.disabled},
-        {"PlaceholderText", c.disabled, c.disabled},
+        {"Window", toolkit_colors.bg, toolkit_colors.bg},
+        {"WindowText", toolkit_colors.fg, toolkit_colors.disabled},
+        {"Base", toolkit_colors.base,
+         toolkit_colors.bg}, /* a disabled field is grey, as in Windows */
+        {"AlternateBase", toolkit_colors.base, toolkit_colors.bg},
+        {"Text", toolkit_colors.text, toolkit_colors.disabled},
+        {"PlaceholderText", toolkit_colors.disabled, toolkit_colors.disabled},
         {"Button", face, face},
-        {"ButtonText", c.fg, c.disabled},
+        {"ButtonText", toolkit_colors.fg, toolkit_colors.disabled},
         {"BrightText", xd_rgba_hex(0xFFFFFF), xd_rgba_hex(0xFFFFFF)},
-        {"Highlight", c.selected_bg, face},
-        {"HighlightedText", c.selected_fg, c.disabled},
+        {"Highlight", toolkit_colors.selected_bg, face},
+        {"HighlightedText", toolkit_colors.selected_fg, toolkit_colors.disabled},
         {"Light", hilight, hilight},
         {"Midlight", light, light},
         {"Mid", shadow, shadow},
         {"Dark", shadow, shadow},
         {"Shadow", dkshadow, dkshadow},
-        {"ToolTipBase", c.tooltip_bg, c.tooltip_bg},
-        {"ToolTipText", c.tooltip_fg, c.tooltip_fg},
-        {"Link", xd_rgba_hex(0x0000FF), c.disabled},
+        {"ToolTipBase", toolkit_colors.tooltip_bg, toolkit_colors.tooltip_bg},
+        {"ToolTipText", toolkit_colors.tooltip_fg, toolkit_colors.tooltip_fg},
+        {"Link", xd_rgba_hex(0x0000FF), toolkit_colors.disabled},
     };
     /* XP's menus are white under Luna; the bar keeps the dialog colour. */
     const qt_role menu[] = {
-        {"Window", c.menu_bg, c.menu_bg},       {"Base", c.menu_bg, c.menu_bg},
-        {"Button", c.menu_bg, c.menu_bg},       {"WindowText", c.menu_fg, c.disabled},
-        {"Text", c.menu_fg, c.disabled},        {"ButtonText", c.menu_fg, c.disabled},
-        {"Highlight", c.menu_hot, c.menu_bg},   {"HighlightedText", c.menu_hot_fg, c.disabled},
+        {"Window", toolkit_colors.menu_bg, toolkit_colors.menu_bg},
+        {"Base", toolkit_colors.menu_bg, toolkit_colors.menu_bg},
+        {"Button", toolkit_colors.menu_bg, toolkit_colors.menu_bg},
+        {"WindowText", toolkit_colors.menu_fg, toolkit_colors.disabled},
+        {"Text", toolkit_colors.menu_fg, toolkit_colors.disabled},
+        {"ButtonText", toolkit_colors.menu_fg, toolkit_colors.disabled},
+        {"Highlight", toolkit_colors.menu_hot, toolkit_colors.menu_bg},
+        {"HighlightedText", toolkit_colors.menu_hot_fg, toolkit_colors.disabled},
     };
     const qt_role menubar[] = {
-        {"Window", c.menubar_bg, c.menubar_bg},
-        {"Button", c.menubar_bg, c.menubar_bg},
-        {"Highlight", c.menu_hot, c.menubar_bg},
-        {"HighlightedText", c.menu_hot_fg, c.disabled},
+        {"Window", toolkit_colors.menubar_bg, toolkit_colors.menubar_bg},
+        {"Button", toolkit_colors.menubar_bg, toolkit_colors.menubar_bg},
+        {"Highlight", toolkit_colors.menu_hot, toolkit_colors.menubar_bg},
+        {"HighlightedText", toolkit_colors.menu_hot_fg, toolkit_colors.disabled},
     };
 
-    JsonBuilder *b = json_builder_new();
-    json_builder_begin_object(b);
-    json_builder_set_member_name(b, "QtGtk3Palettes");
-    json_builder_begin_object(b);
-    add_palette(b, "SystemPalette", system, G_N_ELEMENTS(system));
-    add_palette(b, "MenuPalette", menu, G_N_ELEMENTS(menu));
-    add_palette(b, "MenuBarPalette", menubar, G_N_ELEMENTS(menubar));
-    json_builder_end_object(b);
-    json_builder_end_object(b);
+    JsonBuilder *builder = json_builder_new();
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "QtGtk3Palettes");
+    json_builder_begin_object(builder);
+    add_palette(builder, "SystemPalette", system, G_N_ELEMENTS(system));
+    add_palette(builder, "MenuPalette", menu, G_N_ELEMENTS(menu));
+    add_palette(builder, "MenuBarPalette", menubar, G_N_ELEMENTS(menubar));
+    json_builder_end_object(builder);
+    json_builder_end_object(builder);
 
     JsonGenerator *gen = json_generator_new();
-    JsonNode *root = json_builder_get_root(b);
+    JsonNode *root = json_builder_get_root(builder);
     json_generator_set_root(gen, root);
     json_generator_set_pretty(gen, true);
     gsize len = 0;
@@ -126,5 +133,5 @@ void xd_qt_palette_json(const xd_theme *t, xd_strbuf *out) {
     g_free(text);
     json_node_unref(root);
     g_object_unref(gen);
-    g_object_unref(b);
+    g_object_unref(builder);
 }

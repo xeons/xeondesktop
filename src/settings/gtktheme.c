@@ -71,14 +71,14 @@ static bool write_png(cairo_surface_t *surf, const char *dir, const char *name, 
 
 static bool write_button_png(xd_visual_style style, const xd_scheme *scheme, const char *dir,
                              const char *name, uint8_t state, int scale, xd_strbuf *err) {
-    xd_theme t;
-    xd_theme_init(&t, style, scheme, scale);
-    int w = 75 * scale;
-    int h = 23 * scale;
-    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_t *cr = cairo_create(surf);
-    xd_theme_draw_button(&t, cr, (xd_rect){0, 0, w, h}, state, "");
-    cairo_destroy(cr);
+    xd_theme theme;
+    xd_theme_init(&theme, style, scheme, scale);
+    int width = 75 * scale;
+    int height = 23 * scale;
+    cairo_surface_t *surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t *cairo = cairo_create(surf);
+    xd_theme_draw_button(&theme, cairo, (xd_rect){0, 0, width, height}, state, "");
+    cairo_destroy(cairo);
     bool ok = write_png(surf, dir, name, scale, err);
     cairo_surface_destroy(surf);
     return ok;
@@ -90,24 +90,24 @@ bool xd_gtk_theme_package_images(xd_visual_style style, const xd_scheme *scheme,
                                  const char *gtk3, xd_strbuf *err) {
     xd_theme base;
     xd_theme_init(&base, style, scheme, 1.0);
-    const xd_theme *t = &base;
+    const xd_theme *theme = &base;
     char *dir = g_build_filename(gtk3, XD_GTK_PKG_ASSETS, nullptr);
-    GDir *d = g_dir_open(dir, 0, nullptr);
-    if (d != nullptr) {
-        for (const char *f; (f = g_dir_read_name(d)) != nullptr;)
-            if (g_str_has_suffix(f, ".png")) {
-                char *path = g_build_filename(dir, f, nullptr);
+    GDir *folder_handle = g_dir_open(dir, 0, nullptr);
+    if (folder_handle != nullptr) {
+        for (const char *file_name; (file_name = g_dir_read_name(folder_handle)) != nullptr;)
+            if (g_str_has_suffix(file_name, ".png")) {
+                char *path = g_build_filename(dir, file_name, nullptr);
                 (void)g_unlink(path);
                 g_free(path);
             }
-        g_dir_close(d);
+        g_dir_close(folder_handle);
     }
     bool ok = true;
-    if (t->pkg != nullptr) {
+    if (theme->pkg != nullptr) {
         ok = g_mkdir_with_parents(dir, 0755) == 0;
         if (!ok && err != nullptr)
             xd_strbuf_appendf(err, "cannot create %s", dir);
-        GArray *images = xd_gtk_pkg_images(t);
+        GArray *images = xd_gtk_pkg_images(theme);
         for (int scale = 1; ok && scale <= 2; scale++) {
             xd_theme ts;
             xd_theme_init(&ts, style, scheme, scale);
@@ -193,8 +193,8 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, bool *
         xd_strbuf_appendf(err, "cannot create %s", gtk3);
 
     if (ok) {
-        xd_theme t;
-        xd_theme_init(&t, style, scheme, 1.0);
+        xd_theme theme;
+        xd_theme_init(&theme, style, scheme, 1.0);
         /* Images first, so the new CSS never refers to missing files. */
         char *assets = g_build_filename(gtk3, "assets", nullptr);
         ok = g_mkdir_with_parents(assets, 0755) == 0;
@@ -203,7 +203,7 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, bool *
         g_free(assets);
         for (int i = 0; ok && i < XD_GTK_ASSET_COUNT; i++) {
             xd_strbuf svg = {0};
-            xd_theme_gtk_asset(&t, (xd_gtk_asset)i, &svg);
+            xd_theme_gtk_asset(&theme, (xd_gtk_asset)i, &svg);
             char *path = g_build_filename(gtk3, xd_gtk_assets[i], nullptr);
             ok = write_file(path, xd_strbuf_view(&svg), err);
             g_free(path);
@@ -221,7 +221,7 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, bool *
         /* Qt programs read theirs at start, like the CSS. */
         if (ok) {
             xd_strbuf json = {0};
-            xd_qt_palette_json(&t, &json);
+            xd_qt_palette_json(&theme, &json);
             char *path = xd_gtk_theme_qt_palette_path();
             ok = write_file(path, xd_strbuf_view(&json), err);
             g_free(path);
@@ -231,7 +231,7 @@ bool xd_gtk_theme_install(xd_visual_style style, const xd_scheme *scheme, bool *
             ok = write_settings_ini(gtk3, err);
         xd_strbuf css = {0};
         if (ok) {
-            xd_theme_gtk_css(&t, &css);
+            xd_theme_gtk_css(&theme, &css);
             char *path = g_build_filename(gtk3, "gtk.css", nullptr);
             if (changed != nullptr) {
                 char *old = nullptr;
@@ -263,21 +263,21 @@ bool xd_gtk_theme_nudge(GSettingsBackend *backend) {
         return false;
     bool done = false;
     if (g_settings_schema_has_key(schema, "gtk-theme")) {
-        GSettings *s = g_settings_new_full(schema, backend, nullptr);
-        GVariant *set = g_settings_get_user_value(s, "gtk-theme");
-        char *now = g_settings_get_string(s, "gtk-theme");
+        GSettings *gsettings = g_settings_new_full(schema, backend, nullptr);
+        GVariant *set = g_settings_get_user_value(gsettings, "gtk-theme");
+        char *now = g_settings_get_string(gsettings, "gtk-theme");
         bool ours = strcmp(now, XD_GTK_THEME_NAME) == 0;
         /* A theme chosen there with other tools (GNOME Tweaks, nwg-look)
          * stays: only ours, or none at all, is switched. */
         if (set == nullptr || ours || strcmp(now, XD_GTK_THEME_ALT_NAME) == 0) {
-            done = g_settings_set_string(s, "gtk-theme",
+            done = g_settings_set_string(gsettings, "gtk-theme",
                                          ours ? XD_GTK_THEME_ALT_NAME : XD_GTK_THEME_NAME);
             g_settings_sync();
         }
         g_free(now);
         if (set != nullptr)
             g_variant_unref(set);
-        g_object_unref(s);
+        g_object_unref(gsettings);
     }
     g_settings_schema_unref(schema);
     return done;

@@ -39,7 +39,7 @@ void xd_monitor_key(char *out, size_t cap, const char *make, const char *model,
                     const char *serial, const char *connector);
 /* AdaptiveSync's values: "off", "fullscreen" or "always"; a boolean too
  * (true is "fullscreen"). Anything else is off. */
-xd_vrr_mode xd_vrr_mode_parse(const char *s);
+xd_vrr_mode xd_vrr_mode_parse(const char *text);
 const char *xd_vrr_mode_name(xd_vrr_mode mode);
 bool xd_monitors_lookup(const char *key, xd_monitor_config *out);
 /* Replaces the stored settings of these monitors, keeping the others. */

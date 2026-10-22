@@ -3,19 +3,19 @@
 
 #include "nightlight.h"
 
-static double clamp01(double v) { return v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v; }
+static double clamp01(double value) { return value < 0.0 ? 0.0 : value > 1.0 ? 1.0 : value; }
 
 /* Tanner Helland's fit to the black body colours of Mitchell Charity's
  * table ("How to Convert Temperature (K) to RGB: Algorithm and Sample
  * Code", tannerhelland.com, 2012), in 0..255 sRGB. */
 static void helland(double kelvin, double out[3]) {
-    double t = kelvin / 100.0;
-    out[0] = t <= 66.0 ? 255.0 : 329.698727446 * pow(t - 60.0, -0.1332047592);
-    out[1] = t <= 66.0 ? 99.4708025861 * log(t) - 161.1195681661
-                       : 288.1221695283 * pow(t - 60.0, -0.0755148492);
-    out[2] = t >= 66.0   ? 255.0
-             : t <= 19.0 ? 0.0
-                         : 138.5177312231 * log(t - 10.0) - 305.0447927307;
+    double hundreds = kelvin / 100.0;
+    out[0] = hundreds <= 66.0 ? 255.0 : 329.698727446 * pow(hundreds - 60.0, -0.1332047592);
+    out[1] = hundreds <= 66.0 ? 99.4708025861 * log(hundreds) - 161.1195681661
+                              : 288.1221695283 * pow(hundreds - 60.0, -0.0755148492);
+    out[2] = hundreds >= 66.0   ? 255.0
+             : hundreds <= 19.0 ? 0.0
+                                : 138.5177312231 * log(hundreds - 10.0) - 305.0447927307;
 }
 
 void xd_blackbody_rgb(double kelvin, double rgb[3]) {
@@ -30,20 +30,20 @@ void xd_blackbody_rgb(double kelvin, double rgb[3]) {
     }
     /* Relative to 6500 K, which the fit puts a touch off white
      * (255, 254, 250): white stays white with night light off. */
-    double c[3], white[3];
-    helland(kelvin, c);
+    double color[3], white[3];
+    helland(kelvin, color);
     helland(XD_NIGHTLIGHT_DAY, white);
     for (int i = 0; i < 3; i++)
-        rgb[i] = clamp01(c[i] / white[i]);
+        rgb[i] = clamp01(color[i] / white[i]);
 }
 
 /* Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's
  * days_from_civil). */
-static int64_t days_from_civil(int64_t y, int m, int d) {
-    y -= m <= 2;
+static int64_t days_from_civil(int64_t y, int month, int day) {
+    y -= month <= 2;
     int64_t era = (y >= 0 ? y : y - 399) / 400;
     int64_t yoe = y - era * 400;
-    int64_t doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    int64_t doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
     int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     return era * 146097 + doe - 719468;
 }
@@ -77,40 +77,41 @@ xd_sun_day xd_sun_times(int year, int month, int day, double latitude, double lo
     return XD_SUN_RISES_AND_SETS;
 }
 
-static double wrap_day(double m) {
-    m = fmod(m, 1440.0);
-    return m < 0.0 ? m + 1440.0 : m;
+static double wrap_day(double minute) {
+    minute = fmod(minute, 1440.0);
+    return minute < 0.0 ? minute + 1440.0 : minute;
 }
 
-double xd_nightlight_fraction(double t, double start, double end, double ramp) {
+double xd_nightlight_fraction(double minute, double start, double end, double ramp) {
     double night = wrap_day(end - start);
-    double r = fmin(fmax(ramp, 0.0), fmin(night, 1440.0 - night));
-    double a = wrap_day(t - start); /* the night is [0, night) from here */
-    if (r <= 0.0)
-        return a < night ? 1.0 : 0.0;
-    if (a < r / 2.0)
-        return 0.5 + a / r;
-    if (a >= 1440.0 - r / 2.0)
-        return 0.5 - (1440.0 - a) / r;
-    if (a < night - r / 2.0)
+    double ramp_width = fmin(fmax(ramp, 0.0), fmin(night, 1440.0 - night));
+    double since_start = wrap_day(minute - start); /* the night is [0, night) from here */
+    if (ramp_width <= 0.0)
+        return since_start < night ? 1.0 : 0.0;
+    if (since_start < ramp_width / 2.0)
+        return 0.5 + since_start / ramp_width;
+    if (since_start >= 1440.0 - ramp_width / 2.0)
+        return 0.5 - (1440.0 - since_start) / ramp_width;
+    if (since_start < night - ramp_width / 2.0)
         return 1.0;
-    if (a < night + r / 2.0)
-        return 0.5 - (a - night) / r;
+    if (since_start < night + ramp_width / 2.0)
+        return 0.5 - (since_start - night) / ramp_width;
     return 0.0;
 }
 
-xd_sun_day xd_nightlight_times(const xd_nightlight_settings *s, time_t now, double *on_minute,
-                               double *off_minute) {
-    *on_minute = s->on_minute;
-    *off_minute = s->off_minute;
-    if (s->schedule != XD_NIGHTLIGHT_SUNSET || !s->has_location)
+xd_sun_day xd_nightlight_times(const xd_nightlight_settings *nightlight_settings, time_t now,
+                               double *on_minute, double *off_minute) {
+    *on_minute = nightlight_settings->on_minute;
+    *off_minute = nightlight_settings->off_minute;
+    if (nightlight_settings->schedule != XD_NIGHTLIGHT_SUNSET || !nightlight_settings->has_location)
         return XD_SUN_RISES_AND_SETS;
     struct tm tm;
     if (localtime_r(&now, &tm) == nullptr)
         return XD_SUN_RISES_AND_SETS;
     double rise, set;
-    xd_sun_day kind = xd_sun_times(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, s->latitude,
-                                   s->longitude, &rise, &set);
+    xd_sun_day kind =
+        xd_sun_times(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, nightlight_settings->latitude,
+                     nightlight_settings->longitude, &rise, &set);
     if (kind != XD_SUN_RISES_AND_SETS)
         return kind;
     double offset = (double)tm.tm_gmtoff / 60.0;
@@ -119,43 +120,43 @@ xd_sun_day xd_nightlight_times(const xd_nightlight_settings *s, time_t now, doub
     return kind;
 }
 
-double xd_nightlight_kelvin(const xd_nightlight_settings *s, time_t now) {
-    if (!s->enabled)
+double xd_nightlight_kelvin(const xd_nightlight_settings *nightlight_settings, time_t now) {
+    if (!nightlight_settings->enabled)
         return XD_NIGHTLIGHT_DAY;
-    double night_k = s->temperature;
-    if (s->schedule == XD_NIGHTLIGHT_ALWAYS)
+    double night_k = nightlight_settings->temperature;
+    if (nightlight_settings->schedule == XD_NIGHTLIGHT_ALWAYS)
         return night_k;
     double on, off;
-    double f;
-    switch (xd_nightlight_times(s, now, &on, &off)) {
+    double fraction;
+    switch (xd_nightlight_times(nightlight_settings, now, &on, &off)) {
     case XD_SUN_UP_ALL_DAY:
-        f = 0.0;
+        fraction = 0.0;
         break;
     case XD_SUN_DOWN_ALL_DAY:
-        f = 1.0;
+        fraction = 1.0;
         break;
     case XD_SUN_RISES_AND_SETS:
     default: {
         struct tm tm;
         if (localtime_r(&now, &tm) == nullptr)
             return XD_NIGHTLIGHT_DAY;
-        double t = tm.tm_hour * 60.0 + tm.tm_min + tm.tm_sec / 60.0;
-        f = xd_nightlight_fraction(t, on, off, XD_NIGHTLIGHT_RAMP_MINUTES);
+        double minute = tm.tm_hour * 60.0 + tm.tm_min + tm.tm_sec / 60.0;
+        fraction = xd_nightlight_fraction(minute, on, off, XD_NIGHTLIGHT_RAMP_MINUTES);
         break;
     }
     }
-    return XD_NIGHTLIGHT_DAY - f * (XD_NIGHTLIGHT_DAY - night_k);
+    return XD_NIGHTLIGHT_DAY - fraction * (XD_NIGHTLIGHT_DAY - night_k);
 }
 
-void xd_gamma_ramp_fill(uint16_t *r, uint16_t *g, uint16_t *b, size_t n, const double rgb[3],
-                        const float *calibration) {
-    uint16_t *ramps[3] = {r, g, b};
-    for (size_t c = 0; c < 3; c++) {
-        for (size_t i = 0; i < n; i++) {
-            double x = n > 1 ? (double)i / (double)(n - 1) : 0.0;
+void xd_gamma_ramp_fill(uint16_t *red, uint16_t *green, uint16_t *blue, size_t size,
+                        const double rgb[3], const float *calibration) {
+    uint16_t *ramps[3] = {red, green, blue};
+    for (size_t channel = 0; channel < 3; channel++) {
+        for (size_t i = 0; i < size; i++) {
+            double x = size > 1 ? (double)i / (double)(size - 1) : 0.0;
             if (calibration != nullptr)
-                x = clamp01((double)calibration[c * n + i]);
-            ramps[c][i] = (uint16_t)lround(clamp01(x * rgb[c]) * 65535.0);
+                x = clamp01((double)calibration[channel * size + i]);
+            ramps[channel][i] = (uint16_t)lround(clamp01(x * rgb[channel]) * 65535.0);
         }
     }
 }

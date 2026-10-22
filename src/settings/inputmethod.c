@@ -154,21 +154,20 @@ static bool override_entry(const char *system_path, const char *user_path, GErro
                                   G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS,
                                   nullptr) &&
         starts_framework(kf)) {
-        gsize n = 0;
-        char **not_in = g_key_file_get_string_list(kf, G_KEY_FILE_DESKTOP_GROUP,
-                                                   G_KEY_FILE_DESKTOP_KEY_NOT_SHOW_IN, &n,
-                                                   nullptr);
+        gsize count = 0;
+        char **not_in = g_key_file_get_string_list(
+            kf, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_NOT_SHOW_IN, &count, nullptr);
         bool listed = false;
-        for (gsize i = 0; i < n; i++)
+        for (gsize i = 0; i < count; i++)
             listed = listed || strcmp(not_in[i], "XeonDesktop") == 0;
         if (!listed) {
-            char **more = g_new0(char *, n + 2);
-            for (gsize i = 0; i < n; i++)
+            char **more = g_new0(char *, count + 2);
+            for (gsize i = 0; i < count; i++)
                 more[i] = not_in[i];
-            more[n] = (char *)(uintptr_t) "XeonDesktop";
+            more[count] = (char *)(uintptr_t)"XeonDesktop";
             g_key_file_set_string_list(kf, G_KEY_FILE_DESKTOP_GROUP,
                                        G_KEY_FILE_DESKTOP_KEY_NOT_SHOW_IN,
-                                       (const char *const *)more, n + 1);
+                                       (const char *const *)more, count + 1);
             g_free(more);
         }
         g_strfreev(not_in);
@@ -183,8 +182,9 @@ bool xd_im_autostart_override(const char *const *system_dirs, const char *user_d
                               GError **error) {
     bool ok = true;
     GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    for (size_t d = 0; system_dirs != nullptr && system_dirs[d] != nullptr && ok; d++) {
-        GDir *dir = g_dir_open(system_dirs[d], 0, nullptr);
+    for (size_t dir_index = 0; system_dirs != nullptr && system_dirs[dir_index] != nullptr && ok;
+         dir_index++) {
+        GDir *dir = g_dir_open(system_dirs[dir_index], 0, nullptr);
         if (dir == nullptr)
             continue;
         const char *name;
@@ -196,7 +196,7 @@ bool xd_im_autostart_override(const char *const *system_dirs, const char *user_d
             g_hash_table_add(seen, g_strdup(name));
             char *user_path = g_build_filename(user_dir, name, nullptr);
             if (ours_or_absent(user_path)) {
-                char *system_path = g_build_filename(system_dirs[d], name, nullptr);
+                char *system_path = g_build_filename(system_dirs[dir_index], name, nullptr);
                 if (g_mkdir_with_parents(user_dir, 0700) != 0) {
                     g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED, "cannot create %s",
                                 user_dir);

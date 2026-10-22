@@ -24,31 +24,31 @@ bool xd_theme_set_has_extras(const xd_pkg_info *info);
  * ("xdtheme-NAME"); false if that doesn't fit [Mouse] CursorTheme. */
 bool xd_theme_set_cursor_theme(const char *name, char *out, size_t cap);
 
-/* What choosing `p` as a theme sets besides its style: its wallpaper and
- * how it's placed into `s`, its cursor theme into `s` (Mouse), and its
+/* What choosing `installed` as a theme sets besides its style: its wallpaper and
+ * how it's placed into `settings`, its cursor theme into `settings` (Mouse), and its
  * sound scheme into `sounds` (`*sounds_set` true; untouched and false if
  * it has none). What it doesn't bring is left as it is, as XP's themes
  * did. With `unpack`, the files these point at are put there first;
  * without, only the settings are worked out (to compare). False with
- * `error` set, and `s` and `sounds` untouched, if the package can't be
+ * `error` set, and `settings` and `sounds` untouched, if the package can't be
  * read or its files written. */
-bool xd_theme_set_extras(const xd_installed_package *p, const char *data, bool unpack,
-                         xd_settings *s, xd_sound_scheme *sounds, bool *sounds_set,
+bool xd_theme_set_extras(const xd_installed_package *installed, const char *data, bool unpack,
+                         xd_settings *settings, xd_sound_scheme *sounds, bool *sounds_set,
                          GError **error);
 
-/* Whether `s` and `sounds` hold what choosing `p` sets (its package, and
+/* Whether `settings` and `sounds` hold what choosing `installed` sets (its package, and
  * xd_theme_set_extras'); XP shows "(Modified)" after the theme otherwise. */
-bool xd_theme_set_matches(const xd_installed_package *p, const char *data, const xd_settings *s,
-                          const xd_sound_scheme *sounds);
+bool xd_theme_set_matches(const xd_installed_package *installed, const char *data,
+                          const xd_settings *settings, const xd_sound_scheme *sounds);
 
 /* Saves the current look as a package: `dest`, a .xdtheme named `name`
  * (theme.xml's), with the style of the package at `package` (its files
  * and variants, the variant `variant` first; nullptr: a package that
- * leaves everything to `s`'s style), `s`'s wallpaper, the sound scheme
- * `sounds` (its sound files copied in) and `s`'s cursor theme (found in
+ * leaves everything to `settings`'s style), `settings`'s wallpaper, the sound scheme
+ * `sounds` (its sound files copied in) and `settings`'s cursor theme (found in
  * `icon_dirs`, libXcursor's search path; copied in). False with `error`
  * set if it can't be written. */
-bool xd_theme_set_save(const char *dest, const char *name, const xd_settings *s,
+bool xd_theme_set_save(const char *dest, const char *name, const xd_settings *settings,
                        const xd_sound_scheme *sounds, const char *package, const char *variant,
                        const char *const *icon_dirs, GError **error);
 

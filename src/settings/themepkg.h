@@ -42,9 +42,9 @@ char *xd_theme_names_path(void);
 
 /* ImageScaling as the theme engine takes it: the user's filter, or for
  * Automatic the package's own (`pkg` may be nullptr), else Smooth. */
-xd_image_filter xd_settings_image_filter(const xd_settings *s, const xd_pkg *pkg);
+xd_image_filter xd_settings_image_filter(const xd_settings *settings, const xd_pkg *pkg);
 
-/* Makes the package `s` chooses the active one (xd_theme_use_package):
+/* Makes the package `settings` chooses the active one (xd_theme_use_package):
  * its ThemePackage and ThemeVariant (none while High Contrast is on, as
  * Windows turns visual styles off for it), or, as an override for
  * testing, $XD_THEME_PACKAGE (a path), $XD_THEME_VARIANT and
@@ -54,7 +54,7 @@ xd_image_filter xd_settings_image_filter(const xd_settings *s, const xd_pkg *pkg
  * it (and holds no theme initialized before this call); nullptr if none
  * was. A package that fails to load is reported on stderr and none is
  * used. */
-[[nodiscard]] xd_pkg *xd_settings_use_package(const xd_settings *s);
+[[nodiscard]] xd_pkg *xd_settings_use_package(const xd_settings *settings);
 
 /* The active package xd_settings_use_package loaded (nullptr: none). */
 const xd_pkg *xd_settings_active_package(void);

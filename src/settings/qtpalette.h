@@ -17,7 +17,7 @@
 /* The palette file's name, beside gtk-3.0 in the generated theme. */
 #define XD_QT_PALETTE_FILE "qt6-palette.json"
 
-/* The JSON for theme `t`'s colours. */
-void xd_qt_palette_json(const xd_theme *t, xd_strbuf *out);
+/* The JSON for theme `theme`'s colours. */
+void xd_qt_palette_json(const xd_theme *theme, xd_strbuf *out);
 
 #endif

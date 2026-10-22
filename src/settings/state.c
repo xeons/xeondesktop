@@ -60,12 +60,12 @@ bool xd_state_write_lines(const char *name, char *const *lines, size_t count) {
     xd_strbuf tmp = {0};
     xd_state_path(name, &path);
     xd_strbuf_appendf(&tmp, "%s.tmp", xd_strbuf_cstr(&path));
-    FILE *f = fopen(xd_strbuf_cstr(&tmp), "w");
-    bool ok = f != nullptr;
+    FILE *file = fopen(xd_strbuf_cstr(&tmp), "w");
+    bool ok = file != nullptr;
     for (size_t i = 0; ok && i < count; i++)
-        ok = fprintf(f, "%s\n", lines[i]) >= 0;
-    if (f != nullptr)
-        ok = fclose(f) == 0 && ok;
+        ok = fprintf(file, "%s\n", lines[i]) >= 0;
+    if (file != nullptr)
+        ok = fclose(file) == 0 && ok;
     if (ok)
         ok = rename(xd_strbuf_cstr(&tmp), xd_strbuf_cstr(&path)) == 0;
     else

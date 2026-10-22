@@ -9,8 +9,8 @@ static char **search_path(const char *sub, const char *home_dir) {
     GPtrArray *dirs = g_ptr_array_new();
     g_ptr_array_add(dirs, g_build_filename(g_get_user_data_dir(), sub, nullptr));
     g_ptr_array_add(dirs, g_build_filename(g_get_home_dir(), home_dir, nullptr));
-    for (const char *const *d = g_get_system_data_dirs(); *d != nullptr; d++)
-        g_ptr_array_add(dirs, g_build_filename(*d, sub, nullptr));
+    for (const char *const *data_dir = g_get_system_data_dirs(); *data_dir != nullptr; data_dir++)
+        g_ptr_array_add(dirs, g_build_filename(*data_dir, sub, nullptr));
     g_ptr_array_add(dirs, nullptr);
     return (char **)g_ptr_array_free(dirs, FALSE);
 }
@@ -19,25 +19,25 @@ char **xd_icon_theme_dirs(void) { return search_path("icons", ".icons"); }
 
 char **xd_gtk_theme_dirs(void) { return search_path("themes", ".themes"); }
 
-static void theme_free(gpointer p) {
-    xd_installed_theme *t = p;
-    g_free(t->dir);
-    g_free(t->name);
-    g_free(t);
+static void theme_free(gpointer user_data) {
+    xd_installed_theme *installed_theme = user_data;
+    g_free(installed_theme->dir);
+    g_free(installed_theme->name);
+    g_free(installed_theme);
 }
 
-static int by_name(gconstpointer a, gconstpointer b) {
-    const xd_installed_theme *x = *(xd_installed_theme *const *)a;
-    const xd_installed_theme *y = *(xd_installed_theme *const *)b;
-    return g_utf8_collate(x->name, y->name);
+static int by_name(gconstpointer left, gconstpointer right) {
+    const xd_installed_theme *left_theme = *(xd_installed_theme *const *)left;
+    const xd_installed_theme *right_theme = *(xd_installed_theme *const *)right;
+    return g_utf8_collate(left_theme->name, right_theme->name);
 }
 
 static void add(GPtrArray *list, GHashTable *seen, const char *dir, char *name) {
     g_hash_table_add(seen, g_strdup(dir));
-    xd_installed_theme *t = g_new0(xd_installed_theme, 1);
-    t->dir = g_strdup(dir);
-    t->name = name != nullptr ? name : g_strdup(dir);
-    g_ptr_array_add(list, t);
+    xd_installed_theme *installed_theme = g_new0(xd_installed_theme, 1);
+    installed_theme->dir = g_strdup(dir);
+    installed_theme->name = name != nullptr ? name : g_strdup(dir);
+    g_ptr_array_add(list, installed_theme);
 }
 
 /* An icon theme's Name, or nullptr if `path` isn't one a user would pick:
@@ -53,8 +53,9 @@ static char *icon_theme_name(const char *path, const char *dir) {
         for (size_t k = 0; k < G_N_ELEMENTS(keys) && !icons; k++) {
             char **subdirs = g_key_file_get_string_list(kf, "Icon Theme", keys[k], nullptr,
                                                         nullptr);
-            for (char **s = subdirs; s != nullptr && *s != nullptr && !icons; s++)
-                icons = (*s)[0] != '\0' && strcmp(*s, "cursors") != 0;
+            for (char **subdir = subdirs; subdir != nullptr && *subdir != nullptr && !icons;
+                 subdir++)
+                icons = (*subdir)[0] != '\0' && strcmp(*subdir, "cursors") != 0;
             g_strfreev(subdirs);
         }
         /* Adwaita hides itself from pickers, but it's GTK's own default. */
@@ -77,11 +78,11 @@ GPtrArray *xd_icon_themes_list(const char *const *dirs) {
     GPtrArray *list = g_ptr_array_new_with_free_func(theme_free);
     GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     for (; dirs != nullptr && *dirs != nullptr; dirs++) {
-        GDir *d = g_dir_open(*dirs, 0, nullptr);
-        if (d == nullptr)
+        GDir *folder_handle = g_dir_open(*dirs, 0, nullptr);
+        if (folder_handle == nullptr)
             continue;
         const char *entry;
-        while ((entry = g_dir_read_name(d)) != nullptr) {
+        while ((entry = g_dir_read_name(folder_handle)) != nullptr) {
             /* "default" only points at another theme (Inherits=). */
             if (entry[0] == '.' || strcmp(entry, "default") == 0 ||
                 g_hash_table_contains(seen, entry))
@@ -92,7 +93,7 @@ GPtrArray *xd_icon_themes_list(const char *const *dirs) {
                 add(list, seen, entry, name);
             g_free(path);
         }
-        g_dir_close(d);
+        g_dir_close(folder_handle);
     }
     g_hash_table_destroy(seen);
     g_ptr_array_sort(list, by_name);
@@ -109,11 +110,11 @@ GPtrArray *xd_gtk_themes_list(const char *const *dirs) {
     g_hash_table_add(seen, g_strdup(XD_GTK_THEME_NAME));
     g_hash_table_add(seen, g_strdup(XD_GTK_THEME_ALT_NAME));
     for (; dirs != nullptr && *dirs != nullptr; dirs++) {
-        GDir *d = g_dir_open(*dirs, 0, nullptr);
-        if (d == nullptr)
+        GDir *folder_handle = g_dir_open(*dirs, 0, nullptr);
+        if (folder_handle == nullptr)
             continue;
         const char *entry;
-        while ((entry = g_dir_read_name(d)) != nullptr) {
+        while ((entry = g_dir_read_name(folder_handle)) != nullptr) {
             if (entry[0] == '.' || g_hash_table_contains(seen, entry))
                 continue;
             char *css = g_build_filename(*dirs, entry, "gtk-3.0", "gtk.css", nullptr);
@@ -121,7 +122,7 @@ GPtrArray *xd_gtk_themes_list(const char *const *dirs) {
                 add(list, seen, entry, nullptr);
             g_free(css);
         }
-        g_dir_close(d);
+        g_dir_close(folder_handle);
     }
     g_hash_table_destroy(seen);
     g_ptr_array_sort(list, by_name);
@@ -169,8 +170,8 @@ char **xd_qt_plugin_dirs(void) {
     const char *env = g_getenv("QT_PLUGIN_PATH");
     if (env != nullptr) {
         char **parts = g_strsplit(env, ":", -1);
-        for (char **p = parts; *p != nullptr; p++)
-            add_dir(dirs, g_strdup(*p));
+        for (char **part = parts; *part != nullptr; part++)
+            add_dir(dirs, g_strdup(*part));
         g_strfreev(parts);
     }
     /* Qt 6 then Qt 5, each from the first tool that answers. */
@@ -220,10 +221,10 @@ static char *qt_style_key(const char *file) {
     return key;
 }
 
-static int by_key(gconstpointer a, gconstpointer b) {
-    const xd_installed_theme *x = *(xd_installed_theme *const *)a;
-    const xd_installed_theme *y = *(xd_installed_theme *const *)b;
-    return g_ascii_strcasecmp(x->dir, y->dir);
+static int by_key(gconstpointer left, gconstpointer right) {
+    const xd_installed_theme *left_theme = *(xd_installed_theme *const *)left;
+    const xd_installed_theme *right_theme = *(xd_installed_theme *const *)right;
+    return g_ascii_strcasecmp(left_theme->dir, right_theme->dir);
 }
 
 GPtrArray *xd_qt_styles_list(const char *const *plugin_dirs) {
@@ -238,12 +239,12 @@ GPtrArray *xd_qt_styles_list(const char *const *plugin_dirs) {
     guint first = list->len;
     for (; plugin_dirs != nullptr && *plugin_dirs != nullptr; plugin_dirs++) {
         char *styles = g_build_filename(*plugin_dirs, "styles", nullptr);
-        GDir *d = g_dir_open(styles, 0, nullptr);
+        GDir *folder_handle = g_dir_open(styles, 0, nullptr);
         g_free(styles);
-        if (d == nullptr)
+        if (folder_handle == nullptr)
             continue;
         const char *entry;
-        while ((entry = g_dir_read_name(d)) != nullptr) {
+        while ((entry = g_dir_read_name(folder_handle)) != nullptr) {
             char *key = qt_style_key(entry);
             if (key == nullptr)
                 continue;
@@ -255,7 +256,7 @@ GPtrArray *xd_qt_styles_list(const char *const *plugin_dirs) {
             g_free(lower);
             g_free(key);
         }
-        g_dir_close(d);
+        g_dir_close(folder_handle);
     }
     g_hash_table_destroy(seen);
     /* The built-in ones stay first. */
@@ -308,9 +309,9 @@ static void gsettings_set(GSettingsBackend *backend, const char *key, const char
     if (schema == nullptr)
         return;
     if (g_settings_schema_has_key(schema, key)) {
-        GSettings *s = g_settings_new_full(schema, backend, nullptr);
-        g_settings_set_string(s, key, value);
-        g_object_unref(s);
+        GSettings *gsettings = g_settings_new_full(schema, backend, nullptr);
+        g_settings_set_string(gsettings, key, value);
+        g_object_unref(gsettings);
         g_settings_sync();
     }
     g_settings_schema_unref(schema);

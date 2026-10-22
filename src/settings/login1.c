@@ -16,41 +16,41 @@ bool xd_login1_simulated(void) {
 
 char *xd_login1_own_session(GDBusConnection *bus, GCancellable *cancel, GError **error) {
     const char *id = getenv("XDG_SESSION_ID");
-    GVariant *r;
+    GVariant *variant;
     if (id != nullptr && id[0] != '\0')
-        r = g_dbus_connection_call_sync(bus, XD_LOGIN1, XD_LOGIN1_PATH, XD_LOGIN1_MANAGER,
-                                        "GetSession", g_variant_new("(s)", id),
-                                        G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE,
-                                        CALL_TIMEOUT_MS, cancel, error);
+        variant = g_dbus_connection_call_sync(bus, XD_LOGIN1, XD_LOGIN1_PATH, XD_LOGIN1_MANAGER,
+                                              "GetSession", g_variant_new("(s)", id),
+                                              G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE,
+                                              CALL_TIMEOUT_MS, cancel, error);
     else
-        r = g_dbus_connection_call_sync(bus, XD_LOGIN1, XD_LOGIN1_PATH, XD_LOGIN1_MANAGER,
-                                        "GetSessionByPID",
-                                        g_variant_new("(u)", (guint32)getpid()),
-                                        G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE,
-                                        CALL_TIMEOUT_MS, cancel, error);
-    if (r == nullptr)
+        variant = g_dbus_connection_call_sync(
+            bus, XD_LOGIN1, XD_LOGIN1_PATH, XD_LOGIN1_MANAGER, "GetSessionByPID",
+            g_variant_new("(u)", (guint32)getpid()), G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE,
+            CALL_TIMEOUT_MS, cancel, error);
+    if (variant == nullptr)
         return nullptr;
     char *path = nullptr;
-    g_variant_get(r, "(o)", &path);
-    g_variant_unref(r);
+    g_variant_get(variant, "(o)", &path);
+    g_variant_unref(variant);
     return path;
 }
 
 char *xd_login1_session_string(GDBusConnection *bus, const char *path, const char *property,
                                GCancellable *cancel, GError **error) {
-    GVariant *r = g_dbus_connection_call_sync(
+    GVariant *response = g_dbus_connection_call_sync(
         bus, XD_LOGIN1, path, "org.freedesktop.DBus.Properties", "Get",
         g_variant_new("(ss)", XD_LOGIN1_SESSION, property), G_VARIANT_TYPE("(v)"),
         G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, cancel, error);
-    if (r == nullptr)
+    if (response == nullptr)
         return nullptr;
-    GVariant *v = nullptr;
-    g_variant_get(r, "(v)", &v);
-    char *s = g_variant_is_of_type(v, G_VARIANT_TYPE_STRING) ? g_variant_dup_string(v, nullptr)
-                                                             : nullptr;
-    if (s == nullptr)
+    GVariant *value = nullptr;
+    g_variant_get(response, "(v)", &value);
+    char *text = g_variant_is_of_type(value, G_VARIANT_TYPE_STRING)
+                     ? g_variant_dup_string(value, nullptr)
+                     : nullptr;
+    if (text == nullptr)
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "%s is not a string", property);
-    g_variant_unref(v);
-    g_variant_unref(r);
-    return s;
+    g_variant_unref(value);
+    g_variant_unref(response);
+    return text;
 }

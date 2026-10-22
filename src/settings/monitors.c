@@ -44,13 +44,13 @@ void xd_monitor_key(char *out, size_t cap, const char *make, const char *model,
     }
 }
 
-xd_vrr_mode xd_vrr_mode_parse(const char *s) {
-    if (s == nullptr)
+xd_vrr_mode xd_vrr_mode_parse(const char *text) {
+    if (text == nullptr)
         return XD_VRR_OFF;
-    if (g_ascii_strcasecmp(s, "always") == 0)
+    if (g_ascii_strcasecmp(text, "always") == 0)
         return XD_VRR_ALWAYS;
-    if (g_ascii_strcasecmp(s, "fullscreen") == 0 || g_ascii_strcasecmp(s, "true") == 0 ||
-        g_ascii_strcasecmp(s, "on") == 0)
+    if (g_ascii_strcasecmp(text, "fullscreen") == 0 || g_ascii_strcasecmp(text, "true") == 0 ||
+        g_ascii_strcasecmp(text, "on") == 0)
         return XD_VRR_FULLSCREEN;
     return XD_VRR_OFF;
 }
@@ -106,17 +106,18 @@ bool xd_monitors_lookup(const char *key, xd_monitor_config *out) {
 bool xd_monitors_store(const xd_monitor_config *configs, size_t count) {
     GKeyFile *kf = load();
     for (size_t i = 0; i < count; i++) {
-        const xd_monitor_config *c = &configs[i];
-        g_key_file_remove_group(kf, c->key, nullptr);
-        g_key_file_set_boolean(kf, c->key, "Enabled", c->enabled);
-        g_key_file_set_integer(kf, c->key, "Width", c->width);
-        g_key_file_set_integer(kf, c->key, "Height", c->height);
-        g_key_file_set_integer(kf, c->key, "Refresh", c->refresh_mhz);
-        g_key_file_set_integer(kf, c->key, "X", c->x);
-        g_key_file_set_integer(kf, c->key, "Y", c->y);
-        g_key_file_set_double(kf, c->key, "Scale", c->scale);
-        g_key_file_set_integer(kf, c->key, "Transform", c->transform);
-        g_key_file_set_string(kf, c->key, "AdaptiveSync", xd_vrr_mode_name(c->vrr));
+        const xd_monitor_config *monitor_config = &configs[i];
+        g_key_file_remove_group(kf, monitor_config->key, nullptr);
+        g_key_file_set_boolean(kf, monitor_config->key, "Enabled", monitor_config->enabled);
+        g_key_file_set_integer(kf, monitor_config->key, "Width", monitor_config->width);
+        g_key_file_set_integer(kf, monitor_config->key, "Height", monitor_config->height);
+        g_key_file_set_integer(kf, monitor_config->key, "Refresh", monitor_config->refresh_mhz);
+        g_key_file_set_integer(kf, monitor_config->key, "X", monitor_config->x);
+        g_key_file_set_integer(kf, monitor_config->key, "Y", monitor_config->y);
+        g_key_file_set_double(kf, monitor_config->key, "Scale", monitor_config->scale);
+        g_key_file_set_integer(kf, monitor_config->key, "Transform", monitor_config->transform);
+        g_key_file_set_string(kf, monitor_config->key, "AdaptiveSync",
+                              xd_vrr_mode_name(monitor_config->vrr));
     }
     char *path = monitors_path();
     char *dir = g_path_get_dirname(path);

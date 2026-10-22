@@ -77,19 +77,19 @@ typedef enum xd_sound_kind : uint8_t {
 xd_sound_kind xd_sound_kind_of(const char *sound);
 
 /* Every event set to `base`'s sound. */
-void xd_sound_scheme_init(xd_sound_scheme *s, xd_sound_base base);
-void xd_sound_scheme_free(xd_sound_scheme *s);
+void xd_sound_scheme_init(xd_sound_scheme *sound_scheme, xd_sound_base base);
+void xd_sound_scheme_free(xd_sound_scheme *sound_scheme);
 /* Replaces one event's sound (copied). Bad values (a relative path, a
  * theme name with odd characters) are refused. */
-bool xd_sound_scheme_set(xd_sound_scheme *s, xd_sound_event ev, const char *sound);
+bool xd_sound_scheme_set(xd_sound_scheme *sound_scheme, xd_sound_event ev, const char *sound);
 /* Parses sounds.ini text; never fails (bad values keep the scheme's). */
-void xd_sound_scheme_parse(xd_str text, xd_sound_scheme *s);
-void xd_sound_scheme_serialize(const xd_sound_scheme *s, xd_strbuf *out);
+void xd_sound_scheme_parse(xd_str text, xd_sound_scheme *sound_scheme);
+void xd_sound_scheme_serialize(const xd_sound_scheme *sound_scheme, xd_strbuf *out);
 /* Differs from its base scheme: XP shows "(modified)". */
-bool xd_sound_scheme_modified(const xd_sound_scheme *s);
+bool xd_sound_scheme_modified(const xd_sound_scheme *sound_scheme);
 void xd_sound_scheme_path(xd_strbuf *out);
-void xd_sound_scheme_load(xd_sound_scheme *s);
-[[nodiscard]] bool xd_sound_scheme_save(const xd_sound_scheme *s);
+void xd_sound_scheme_load(xd_sound_scheme *sound_scheme);
+[[nodiscard]] bool xd_sound_scheme_save(const xd_sound_scheme *sound_scheme);
 
 /* The accessibility features' tones (not part of the scheme, as in
  * Windows), made here as short WAV files. */
@@ -103,7 +103,7 @@ typedef enum xd_sound_tone : uint8_t {
 } xd_sound_tone;
 
 /* The tone's file stem ("access-on"), and the tone as a 16-bit mono WAV. */
-const char *xd_sound_tone_name(xd_sound_tone t);
-GBytes *xd_sound_tone_wav(xd_sound_tone t);
+const char *xd_sound_tone_name(xd_sound_tone sound_tone);
+GBytes *xd_sound_tone_wav(xd_sound_tone sound_tone);
 
 #endif

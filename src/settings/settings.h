@@ -490,57 +490,57 @@ typedef struct xd_settings {
 } xd_settings;
 
 /* The ICC profile of a monitor (its monitors.ini key), or nullptr. */
-const char *xd_settings_color_profile(const xd_settings *s, const char *monitor);
+const char *xd_settings_color_profile(const xd_settings *settings, const char *monitor);
 /* Sets it; nullptr or "" removes it. False if the key or path can't be
  * stored (too long, a key GKeyFile can't hold, a relative path) or the
  * list is full. */
-bool xd_settings_set_color_profile(xd_settings *s, const char *monitor, const char *path);
+bool xd_settings_set_color_profile(xd_settings *settings, const char *monitor, const char *path);
 /* "always", "sunset", "manual": [NightLight] Schedule's values. */
 const char *xd_nightlight_schedule_name(xd_nightlight_schedule schedule);
 
 /* An icon's rule ([Notifications]), XD_TRAY_AUTO if it has none. */
-xd_tray_rule xd_settings_tray_rule(const xd_settings *s, const char *id);
+xd_tray_rule xd_settings_tray_rule(const xd_settings *settings, const char *id);
 /* Sets one (XD_TRAY_AUTO removes it). */
-void xd_settings_set_tray_rule(xd_settings *s, const char *id, xd_tray_rule rule);
+void xd_settings_set_tray_rule(xd_settings *settings, const char *id, xd_tray_rule rule);
 
-void xd_settings_defaults(xd_settings *s);
+void xd_settings_defaults(xd_settings *settings);
 /* The savers' settings before their Settings dialogs change anything
  * (part of xd_settings_defaults). */
-void xd_saver_settings_defaults(xd_saver_settings *s);
+void xd_saver_settings_defaults(xd_saver_settings *saver_settings);
 /* Parses settings text on top of the defaults. Never fails: bad values
  * keep their defaults. */
-void xd_settings_parse(xd_str text, xd_settings *s);
+void xd_settings_parse(xd_str text, xd_settings *settings);
 /* Loads the user's file, or defaults if there is none. */
-void xd_settings_load(xd_settings *s);
-[[nodiscard]] bool xd_settings_save(const xd_settings *s);
+void xd_settings_load(xd_settings *settings);
+[[nodiscard]] bool xd_settings_save(const xd_settings *settings);
 /* Applies to `now` (the file as it is) the values `pending` changed from
  * `base` (the file as a dialog loaded it), so that saving `now` keeps what
  * other programs wrote in the meantime. */
 void xd_settings_merge(const xd_settings *base, const xd_settings *pending, xd_settings *now);
 /* Same settings (compares what would be written, not struct bytes). */
-bool xd_settings_equal(const xd_settings *a, const xd_settings *b);
+bool xd_settings_equal(const xd_settings *left, const xd_settings *right);
 void xd_settings_path(xd_strbuf *out);
-void xd_settings_serialize(const xd_settings *s, xd_strbuf *out);
+void xd_settings_serialize(const xd_settings *settings, xd_strbuf *out);
 
-const char *xd_wallpaper_mode_name(xd_wallpaper_mode m);
+const char *xd_wallpaper_mode_name(xd_wallpaper_mode wallpaper_mode);
 /* A desktop icon's theme icon name, before any Change Icon. */
 const char *xd_desk_icon_default(xd_desk_icon icon);
 /* The desktop's icon size in logical px: Small 16, Large 48, Medium the
  * shell's icon size, 32 (48 with "Use large icons", XP's Shell Icon Size). */
-int xd_desk_icon_px(const xd_settings *s);
+int xd_desk_icon_px(const xd_settings *settings);
 /* The icon theme to use: IconTheme if set; else $XD_ICON_THEME (for
  * testing a theme without touching the settings); else "breeze".
  * xd_icons_create falls back further if it isn't installed. */
-const char *xd_settings_icon_theme(const xd_settings *s);
+const char *xd_settings_icon_theme(const xd_settings *settings);
 /* The GTK theme programs get (GTK_THEME): GtkTheme if set, else the one
  * generated from the appearance (XD_GTK_THEME_NAME). */
-const char *xd_settings_gtk_theme(const xd_settings *s);
+const char *xd_settings_gtk_theme(const xd_settings *settings);
 /* The Qt widget style for `style` when QtStyle is automatic: Qt's own
  * Windows (2000's bevels) for Classic, Fusion for the others. */
 const char *xd_qt_style_auto(xd_visual_style style);
 /* The Qt widget style programs get (QT_STYLE_OVERRIDE): QtStyle if set,
  * else xd_qt_style_auto's. */
-const char *xd_settings_qt_style(const xd_settings *s);
+const char *xd_settings_qt_style(const xd_settings *settings);
 /* Qt programs started from now on take their palette, fonts, icon theme
  * and file dialogs from the GTK theme (Qt's own "gtk3" platform theme,
  * QT_QPA_PLATFORMTHEME), with our GTK theme its Qt palette file
@@ -549,7 +549,7 @@ const char *xd_settings_qt_style(const xd_settings *s);
  * alone: XEONDESKTOP_<variable> remembers what we set, so that our
  * children, which inherit ours, can still tell the two apart. Returns
  * whether anything changed. */
-bool xd_settings_qt_env(const xd_settings *s);
+bool xd_settings_qt_env(const xd_settings *settings);
 /* Whether `var` (one of those) holds what xd_settings_qt_env set. */
 bool xd_qt_env_ours(const char *var);
 /* "home", "portable", ...: [Power] Scheme's values. */
@@ -567,8 +567,8 @@ typedef enum xd_alarm_fired : uint8_t {
 typedef struct xd_alarm_done {
     bool low, critical;
 } xd_alarm_done;
-xd_alarm_fired xd_battery_alarm_check(const xd_settings *s, xd_alarm_done *done, double percent,
-                                      bool discharging);
+xd_alarm_fired xd_battery_alarm_check(const xd_settings *settings, xd_alarm_done *done,
+                                      double percent, bool discharging);
 /* "download", "notify", "off": [Updates] Mode's values. */
 const char *xd_updates_mode_name(xd_updates_mode mode);
 /* "standby", ...: [Power] *AlarmAction's values. */
@@ -586,12 +586,12 @@ bool xd_button_action_from_logind(const char *handle, xd_button_action *out);
 /* What the shell inhibits in logind ("handle-lid-switch:handle-power-key"):
  * the buttons set; "" if none. The sleep button is logind's suspend and
  * hibernate keys both. */
-void xd_power_buttons_inhibit_what(const xd_settings *s, char *out, size_t cap);
+void xd_power_buttons_inhibit_what(const xd_settings *settings, char *out, size_t cap);
 /* What the shell does for `button` (pressed, or the lid closed): its
  * action; nothing for one left to logind, and for the lid while docked or
  * with another monitor connected (as logind's HandleLidSwitchDocked=ignore).
  * The lid never asks. */
-xd_button_action xd_power_button_action(const xd_settings *s, xd_power_button button,
+xd_button_action xd_power_button_action(const xd_settings *settings, xd_power_button button,
                                         bool docked);
 
 /* Limits of the [Mouse] values, for the applets' sliders. */
@@ -626,12 +626,12 @@ void xd_scheme_list_load(xd_scheme_list *list);
 void xd_scheme_list_free(xd_scheme_list *list);
 
 /* The scheme the settings select, with font size applied. */
-void xd_settings_scheme(const xd_settings *s, xd_scheme *out);
+void xd_settings_scheme(const xd_settings *settings, xd_scheme *out);
 
 /* Accessibility Options' High Contrast: on, switches to the Classic style
  * with `scheme` (a high-contrast scheme's stem), remembering the look it
  * replaces; off, switches back to that. */
-void xd_settings_set_high_contrast(xd_settings *s, bool on, const char *scheme);
+void xd_settings_set_high_contrast(xd_settings *settings, bool on, const char *scheme);
 
 /* Watches the settings file. Returns an fd to poll (or -1); call
  * xd_settings_watch_changed when it's readable. */

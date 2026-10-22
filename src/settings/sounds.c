@@ -48,11 +48,12 @@ const xd_sound_event_info *xd_sound_event_get(xd_sound_event ev) {
 }
 
 /* Sound theme names are file stems: "dialog-error". */
-static bool theme_name_ok(const char *s) {
-    if (s[0] == '\0' || s[0] == '.' || strlen(s) > 128)
+static bool theme_name_ok(const char *name) {
+    if (name[0] == '\0' || name[0] == '.' || strlen(name) > 128)
         return false;
-    for (const char *c = s; *c != '\0'; c++) {
-        if (!g_ascii_isalnum(*c) && *c != '-' && *c != '_' && *c != '.')
+    for (const char *character = name; *character != '\0'; character++) {
+        if (!g_ascii_isalnum(*character) && *character != '-' && *character != '_' &&
+            *character != '.')
             return false;
     }
     return true;
@@ -68,33 +69,33 @@ static const char *base_sound(xd_sound_base base, xd_sound_event ev) {
     return base == XD_SOUNDS_NONE ? "" : events[ev].sound;
 }
 
-void xd_sound_scheme_init(xd_sound_scheme *s, xd_sound_base base) {
-    *s = (xd_sound_scheme){.base = base};
+void xd_sound_scheme_init(xd_sound_scheme *sound_scheme, xd_sound_base base) {
+    *sound_scheme = (xd_sound_scheme){.base = base};
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++)
-        s->sounds[i] = g_strdup(base_sound(base, (xd_sound_event)i));
+        sound_scheme->sounds[i] = g_strdup(base_sound(base, (xd_sound_event)i));
 }
 
-void xd_sound_scheme_free(xd_sound_scheme *s) {
+void xd_sound_scheme_free(xd_sound_scheme *sound_scheme) {
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++)
-        g_free(s->sounds[i]);
-    *s = (xd_sound_scheme){0};
+        g_free(sound_scheme->sounds[i]);
+    *sound_scheme = (xd_sound_scheme){0};
 }
 
-bool xd_sound_scheme_set(xd_sound_scheme *s, xd_sound_event ev, const char *sound) {
+bool xd_sound_scheme_set(xd_sound_scheme *sound_scheme, xd_sound_event ev, const char *sound) {
     XD_ASSERT((unsigned)ev < XD_SOUND_EVENT_COUNT);
     if (sound == nullptr)
         sound = "";
     bool ok = sound[0] == '\0' || (sound[0] == '/' && strlen(sound) < 4096) ||
               theme_name_ok(sound);
     if (ok) {
-        g_free(s->sounds[ev]);
-        s->sounds[ev] = g_strdup(sound);
+        g_free(sound_scheme->sounds[ev]);
+        sound_scheme->sounds[ev] = g_strdup(sound);
     }
     return ok;
 }
 
-void xd_sound_scheme_parse(xd_str text, xd_sound_scheme *s) {
-    xd_sound_scheme_init(s, XD_SOUNDS_DEFAULT);
+void xd_sound_scheme_parse(xd_str text, xd_sound_scheme *sound_scheme) {
+    xd_sound_scheme_init(sound_scheme, XD_SOUNDS_DEFAULT);
     GKeyFile *kf = g_key_file_new();
     if (!g_key_file_load_from_data(kf, text.ptr, text.len, G_KEY_FILE_NONE, nullptr)) {
         g_key_file_free(kf);
@@ -103,23 +104,23 @@ void xd_sound_scheme_parse(xd_str text, xd_sound_scheme *s) {
     char *base = g_key_file_get_string(kf, "Sounds", "Scheme", nullptr);
     for (size_t i = 0; base != nullptr && i < XD_ARRAY_LEN(base_names); i++) {
         if (g_ascii_strcasecmp(base, base_names[i]) == 0) {
-            xd_sound_scheme_free(s);
-            xd_sound_scheme_init(s, (xd_sound_base)i);
+            xd_sound_scheme_free(sound_scheme);
+            xd_sound_scheme_init(sound_scheme, (xd_sound_base)i);
         }
     }
     g_free(base);
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++) {
-        char *v = g_key_file_get_string(kf, "Events", events[i].key, nullptr);
-        if (v != nullptr)
-            (void)xd_sound_scheme_set(s, (xd_sound_event)i, g_strstrip(v));
-        g_free(v);
+        char *value = g_key_file_get_string(kf, "Events", events[i].key, nullptr);
+        if (value != nullptr)
+            (void)xd_sound_scheme_set(sound_scheme, (xd_sound_event)i, g_strstrip(value));
+        g_free(value);
     }
     g_key_file_free(kf);
 }
 
-static GKeyFile *to_keyfile(const xd_sound_scheme *s) {
+static GKeyFile *to_keyfile(const xd_sound_scheme *sound_scheme) {
     GKeyFile *kf = g_key_file_new();
-    g_key_file_set_string(kf, "Sounds", "Scheme", base_names[s->base]);
+    g_key_file_set_string(kf, "Sounds", "Scheme", base_names[sound_scheme->base]);
     g_key_file_set_comment(kf, "Sounds", nullptr,
                            " XeonDesktop's sound scheme. Written by Sounds and Audio Devices.\n"
                            " A value is a sound theme name, a file path, or empty for none.",
@@ -127,12 +128,12 @@ static GKeyFile *to_keyfile(const xd_sound_scheme *s) {
     /* Every event, so a later change of defaults doesn't change them. */
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++)
         g_key_file_set_string(kf, "Events", events[i].key,
-                              s->sounds[i] != nullptr ? s->sounds[i] : "");
+                              sound_scheme->sounds[i] != nullptr ? sound_scheme->sounds[i] : "");
     return kf;
 }
 
-void xd_sound_scheme_serialize(const xd_sound_scheme *s, xd_strbuf *out) {
-    GKeyFile *kf = to_keyfile(s);
+void xd_sound_scheme_serialize(const xd_sound_scheme *sound_scheme, xd_strbuf *out) {
+    GKeyFile *kf = to_keyfile(sound_scheme);
     gsize len = 0;
     gchar *data = g_key_file_to_data(kf, &len, nullptr);
     xd_strbuf_append(out, (xd_str){data, len});
@@ -140,10 +141,10 @@ void xd_sound_scheme_serialize(const xd_sound_scheme *s, xd_strbuf *out) {
     g_key_file_free(kf);
 }
 
-bool xd_sound_scheme_modified(const xd_sound_scheme *s) {
+bool xd_sound_scheme_modified(const xd_sound_scheme *sound_scheme) {
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++) {
-        const char *v = s->sounds[i] != nullptr ? s->sounds[i] : "";
-        if (strcmp(v, base_sound(s->base, (xd_sound_event)i)) != 0)
+        const char *sound = sound_scheme->sounds[i] != nullptr ? sound_scheme->sounds[i] : "";
+        if (strcmp(sound, base_sound(sound_scheme->base, (xd_sound_event)i)) != 0)
             return true;
     }
     return false;
@@ -159,26 +160,26 @@ void xd_sound_scheme_path(xd_strbuf *out) {
     xd_strbuf_append(out, XD_STR("sounds.ini"));
 }
 
-void xd_sound_scheme_load(xd_sound_scheme *s) {
+void xd_sound_scheme_load(xd_sound_scheme *sound_scheme) {
     xd_strbuf path = {0};
     xd_sound_scheme_path(&path);
     char *text = nullptr;
     gsize len = 0;
     if (g_file_get_contents(xd_strbuf_cstr(&path), &text, &len, nullptr) && len < (1u << 20))
-        xd_sound_scheme_parse((xd_str){text, len}, s);
+        xd_sound_scheme_parse((xd_str){text, len}, sound_scheme);
     else
-        xd_sound_scheme_init(s, XD_SOUNDS_DEFAULT);
+        xd_sound_scheme_init(sound_scheme, XD_SOUNDS_DEFAULT);
     g_free(text);
     xd_strbuf_free(&path);
 }
 
-bool xd_sound_scheme_save(const xd_sound_scheme *s) {
+bool xd_sound_scheme_save(const xd_sound_scheme *sound_scheme) {
     xd_strbuf path = {0};
     xd_sound_scheme_path(&path);
     char *dir = g_path_get_dirname(xd_strbuf_cstr(&path));
     g_mkdir_with_parents(dir, 0700);
     g_free(dir);
-    GKeyFile *kf = to_keyfile(s);
+    GKeyFile *kf = to_keyfile(sound_scheme);
     GError *err = nullptr;
     /* Written to a temporary file and renamed into place. */
     bool ok = g_key_file_save_to_file(kf, xd_strbuf_cstr(&path), &err);
@@ -208,44 +209,47 @@ static const struct {
     [XD_TONE_FALL] = {"access-off", 1600, 500, 300},
 };
 
-const char *xd_sound_tone_name(xd_sound_tone t) {
-    XD_ASSERT((unsigned)t < XD_TONE_COUNT);
-    return tones[t].name;
+const char *xd_sound_tone_name(xd_sound_tone sound_tone) {
+    XD_ASSERT((unsigned)sound_tone < XD_TONE_COUNT);
+    return tones[sound_tone].name;
 }
 
-static void put_le(GByteArray *a, uint32_t v, int bytes) {
+static void put_le(GByteArray *byte_array, uint32_t value, int bytes) {
     for (int i = 0; i < bytes; i++) {
-        uint8_t b = (uint8_t)(v >> (8 * i));
-        g_byte_array_append(a, &b, 1);
+        uint8_t byte = (uint8_t)(value >> (8 * i));
+        g_byte_array_append(byte_array, &byte, 1);
     }
 }
 
-GBytes *xd_sound_tone_wav(xd_sound_tone t) {
-    XD_ASSERT((unsigned)t < XD_TONE_COUNT);
+GBytes *xd_sound_tone_wav(xd_sound_tone sound_tone) {
+    XD_ASSERT((unsigned)sound_tone < XD_TONE_COUNT);
     constexpr uint32_t RATE = 22050;
     constexpr uint32_t FADE = RATE * 3 / 1000; /* samples */
-    uint32_t n = RATE * (uint32_t)tones[t].ms / 1000;
-    GByteArray *a = g_byte_array_sized_new(44 + n * 2);
+    uint32_t count = RATE * (uint32_t)tones[sound_tone].ms / 1000;
+    GByteArray *byte_array = g_byte_array_sized_new(44 + count * 2);
     /* RIFF/WAVE: one channel of 16-bit PCM. */
-    g_byte_array_append(a, (const guint8 *)"RIFF", 4);
-    put_le(a, 36 + n * 2, 4);
-    g_byte_array_append(a, (const guint8 *)"WAVEfmt ", 8);
-    put_le(a, 16, 4);
-    put_le(a, 1, 2); /* PCM */
-    put_le(a, 1, 2); /* channels */
-    put_le(a, RATE, 4);
-    put_le(a, RATE * 2, 4); /* bytes a second */
-    put_le(a, 2, 2);        /* bytes a sample */
-    put_le(a, 16, 2);
-    g_byte_array_append(a, (const guint8 *)"data", 4);
-    put_le(a, n * 2, 4);
+    g_byte_array_append(byte_array, (const guint8 *)"RIFF", 4);
+    put_le(byte_array, 36 + count * 2, 4);
+    g_byte_array_append(byte_array, (const guint8 *)"WAVEfmt ", 8);
+    put_le(byte_array, 16, 4);
+    put_le(byte_array, 1, 2); /* PCM */
+    put_le(byte_array, 1, 2); /* channels */
+    put_le(byte_array, RATE, 4);
+    put_le(byte_array, RATE * 2, 4); /* bytes a second */
+    put_le(byte_array, 2, 2); /* bytes a sample */
+    put_le(byte_array, 16, 2);
+    g_byte_array_append(byte_array, (const guint8 *)"data", 4);
+    put_le(byte_array, count * 2, 4);
     double phase = 0;
-    for (uint32_t i = 0; i < n; i++) {
-        double hz = tones[t].from_hz + (tones[t].to_hz - tones[t].from_hz) * i / n;
+    for (uint32_t i = 0; i < count; i++) {
+        double hz = tones[sound_tone].from_hz +
+                    (tones[sound_tone].to_hz - tones[sound_tone].from_hz) * i / count;
         phase += 2 * G_PI * hz / RATE;
-        double env = i < FADE ? (double)i / FADE : n - i < FADE ? (double)(n - i) / FADE : 1.0;
-        int16_t v = (int16_t)(sin(phase) * env * 0.3 * INT16_MAX);
-        put_le(a, (uint16_t)v, 2);
+        double env = i < FADE           ? (double)i / FADE
+                     : count - i < FADE ? (double)(count - i) / FADE
+                                        : 1.0;
+        int16_t sample = (int16_t)(sin(phase) * env * 0.3 * INT16_MAX);
+        put_le(byte_array, (uint16_t)sample, 2);
     }
-    return g_byte_array_free_to_bytes(a);
+    return g_byte_array_free_to_bytes(byte_array);
 }
