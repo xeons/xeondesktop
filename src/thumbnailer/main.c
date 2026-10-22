@@ -34,28 +34,28 @@ enum { EXIT_OK = 0, EXIT_CANT = 1, EXIT_BROKEN = 2, EXIT_DECODE_FAILED = 3 };
 /* ---- inside the sandbox ------------------------------------------------------- */
 
 static gboolean write_all(int fd, const void *data, size_t len) {
-    const char *p = data;
+    const char *cursor = data;
     while (len > 0) {
-        ssize_t n = write(fd, p, len);
-        if (n < 0 && errno == EINTR)
+        ssize_t written = write(fd, cursor, len);
+        if (written < 0 && errno == EINTR)
             continue;
-        if (n <= 0)
+        if (written <= 0)
             return FALSE;
-        p += n;
-        len -= (size_t)n;
+        cursor += written;
+        len -= (size_t)written;
     }
     return TRUE;
 }
 
 /* Fits `pb` in px x px (never larger than it was); takes `pb`. */
 static GdkPixbuf *fit(GdkPixbuf *pb, int px) {
-    int w = gdk_pixbuf_get_width(pb);
-    int h = gdk_pixbuf_get_height(pb);
-    if (w <= px && h <= px)
+    int width = gdk_pixbuf_get_width(pb);
+    int height = gdk_pixbuf_get_height(pb);
+    if (width <= px && height <= px)
         return pb;
-    double k = (double)px / MAX(w, h);
-    GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pb, MAX(1, (int)(w * k + 0.5)),
-                                                MAX(1, (int)(h * k + 0.5)), GDK_INTERP_BILINEAR);
+    double k = (double)px / MAX(width, height);
+    GdkPixbuf *scaled = gdk_pixbuf_scale_simple(
+        pb, MAX(1, (int)(width * k + 0.5)), MAX(1, (int)(height * k + 0.5)), GDK_INTERP_BILINEAR);
     g_object_unref(pb);
     return scaled;
 }
@@ -76,14 +76,15 @@ static int decode_to(int out, XdThumbSize size, char **rest) {
         input = XD_SANDBOX_OUT;
     }
     int px = xd_thumb_size_px(size);
-    int w = 0;
-    int h = 0;
-    if (gdk_pixbuf_get_file_info(input, &w, &h) == nullptr)
+    int width = 0;
+    int height = 0;
+    if (gdk_pixbuf_get_file_info(input, &width, &height) == nullptr)
         return EXIT_DECODE_FAILED;
     /* Decoded straight to the size when larger, so a huge image needn't
      * fit in memory whole; a smaller one is kept as it is (the spec). */
-    GdkPixbuf *pb = w > px || h > px ? gdk_pixbuf_new_from_file_at_scale(input, px, px, TRUE, nullptr)
-                                     : gdk_pixbuf_new_from_file(input, nullptr);
+    GdkPixbuf *pb = width > px || height > px
+                        ? gdk_pixbuf_new_from_file_at_scale(input, px, px, TRUE, nullptr)
+                        : gdk_pixbuf_new_from_file(input, nullptr);
     if (pb == nullptr)
         return EXIT_DECODE_FAILED;
     GdkPixbuf *upright = gdk_pixbuf_apply_embedded_orientation(pb);
@@ -138,16 +139,16 @@ typedef struct watchdog {
 } watchdog;
 
 static gpointer watch(gpointer data) {
-    watchdog *w = data;
+    watchdog *guard = data;
     gint64 end = g_get_monotonic_time() + TIMEOUT_SECONDS * G_TIME_SPAN_SECOND;
-    g_mutex_lock(&w->lock);
-    while (!w->done) {
-        if (!g_cond_wait_until(&w->cond, &w->lock, end)) {
-            g_subprocess_force_exit(w->proc);
+    g_mutex_lock(&guard->lock);
+    while (!guard->done) {
+        if (!g_cond_wait_until(&guard->cond, &guard->lock, end)) {
+            g_subprocess_force_exit(guard->proc);
             break;
         }
     }
-    g_mutex_unlock(&w->lock);
+    g_mutex_unlock(&guard->lock);
     return nullptr;
 }
 
@@ -162,13 +163,13 @@ static char **thumbnailer_args(const char *exec, const char *inside, int px) {
     char *uri = g_filename_to_uri(inside, nullptr, nullptr);
     for (int i = 0; i < argc; i++) {
         GString *arg = g_string_new(nullptr);
-        for (const char *c = argv[i]; *c != '\0'; c++) {
-            if (*c != '%' || c[1] == '\0') {
-                g_string_append_c(arg, *c);
+        for (const char *cursor = argv[i]; *cursor != '\0'; cursor++) {
+            if (*cursor != '%' || cursor[1] == '\0') {
+                g_string_append_c(arg, *cursor);
                 continue;
             }
-            c++;
-            switch (*c) {
+            cursor++;
+            switch (*cursor) {
             case 'u': g_string_append(arg, uri != nullptr ? uri : ""); break;
             case 'i': g_string_append(arg, inside); break;
             case 'o': g_string_append(arg, XD_SANDBOX_OUT); break;
@@ -176,7 +177,7 @@ static char **thumbnailer_args(const char *exec, const char *inside, int px) {
             case '%': g_string_append_c(arg, '%'); break;
             default:
                 g_string_append_c(arg, '%');
-                g_string_append_c(arg, *c);
+                g_string_append_c(arg, *cursor);
                 break;
             }
         }
@@ -201,15 +202,15 @@ static run_result run_sandbox(const char *path, XdThumbSize size, const char *ex
                               gboolean verbose, GdkPixbuf **out) {
     int px = xd_thumb_size_px(size);
     char *inside = xd_sandbox_input_path(path);
-    GStrvBuilder *b = g_strv_builder_new();
-    g_strv_builder_take(b, g_strconcat("--decode=", xd_thumb_size_name(size), nullptr));
-    g_strv_builder_add(b, "--");
-    g_strv_builder_add(b, inside);
+    GStrvBuilder *builder = g_strv_builder_new();
+    g_strv_builder_take(builder, g_strconcat("--decode=", xd_thumb_size_name(size), nullptr));
+    g_strv_builder_add(builder, "--");
+    g_strv_builder_add(builder, inside);
     char **cmd = exec != nullptr ? thumbnailer_args(exec, inside, px) : nullptr;
     gboolean bad_exec = exec != nullptr && cmd == nullptr;
-    for (char **c = cmd; c != nullptr && *c != nullptr; c++)
-        g_strv_builder_add(b, *c);
-    GStrv args = g_strv_builder_unref_to_strv(b);
+    for (char **word = cmd; word != nullptr && *word != nullptr; word++)
+        g_strv_builder_add(builder, *word);
+    GStrv args = g_strv_builder_unref_to_strv(builder);
     g_strfreev(cmd);
     g_free(inside);
     if (bad_exec) {
@@ -225,10 +226,10 @@ static run_result run_sandbox(const char *path, XdThumbSize size, const char *ex
         g_error_free(err);
         return RUN_BROKEN;
     }
-    watchdog w = {.proc = proc};
-    g_mutex_init(&w.lock);
-    g_cond_init(&w.cond);
-    GThread *thread = g_thread_new("watchdog", watch, &w);
+    watchdog guard = {.proc = proc};
+    g_mutex_init(&guard.lock);
+    g_cond_init(&guard.cond);
+    GThread *thread = g_thread_new("watchdog", watch, &guard);
 
     GInputStream *in = g_subprocess_get_stdout_pipe(proc);
     run_result result = RUN_FAILED;
@@ -250,13 +251,13 @@ static run_result run_sandbox(const char *path, XdThumbSize size, const char *ex
     g_subprocess_wait(proc, nullptr, nullptr);
     if (result == RUN_OK && !g_subprocess_get_successful(proc))
         result = RUN_FAILED;
-    g_mutex_lock(&w.lock);
-    w.done = TRUE;
-    g_cond_signal(&w.cond);
-    g_mutex_unlock(&w.lock);
+    g_mutex_lock(&guard.lock);
+    guard.done = TRUE;
+    g_cond_signal(&guard.cond);
+    g_mutex_unlock(&guard.lock);
     g_thread_join(thread);
-    g_mutex_clear(&w.lock);
-    g_cond_clear(&w.cond);
+    g_mutex_clear(&guard.lock);
+    g_cond_clear(&guard.cond);
     if (result == RUN_BROKEN)
         fprintf(stderr, "xd-thumbnailer: the sandbox didn't start (is bwrap installed?)\n");
     g_object_unref(proc);

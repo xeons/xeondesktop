@@ -116,11 +116,11 @@ static int seccomp_fd(GError **err) {
 static void add(GPtrArray *argv, const char *arg) { g_ptr_array_add(argv, g_strdup(arg)); }
 
 /* An option and its one or two values. */
-static void opt(GPtrArray *argv, const char *a, const char *b, const char *c) {
-    add(argv, a);
-    add(argv, b);
-    if (c != nullptr)
-        add(argv, c);
+static void opt(GPtrArray *argv, const char *option, const char *value, const char *second_value) {
+    add(argv, option);
+    add(argv, value);
+    if (second_value != nullptr)
+        add(argv, second_value);
 }
 
 /* The top-level folders that hold programs and libraries, as the host
@@ -196,8 +196,8 @@ GSubprocess *xd_sandbox_spawn(const char *input, const char *const *args, gboole
     opt(argv, "--chdir", "/tmp", nullptr);
     opt(argv, "--seccomp", "3", nullptr);
     add(argv, "/app/xd-thumbnailer");
-    for (const char *const *a = args; *a != nullptr; a++)
-        add(argv, *a);
+    for (const char *const *arg = args; *arg != nullptr; arg++)
+        add(argv, *arg);
     g_ptr_array_add(argv, nullptr);
 
     GSubprocessLauncher *launcher = g_subprocess_launcher_new(

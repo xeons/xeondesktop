@@ -20,13 +20,13 @@ typedef void (*XdThumbDone)(const char *uri, const char *path, gpointer data);
 
 XdThumbQueue *xd_thumb_queue_new(XdThumbDone done, gpointer data);
 /* Cancels everything (without calling `done`) and frees the queue. */
-void xd_thumb_queue_free(XdThumbQueue *q);
+void xd_thumb_queue_free(XdThumbQueue *thumb_queue);
 /* Asks for `uri`'s thumbnail, or asks again: requests made in the same
  * main loop iteration count as one batch, and the latest batch goes
  * first. */
-void xd_thumb_queue_request(XdThumbQueue *q, const char *uri, XdThumbSize size);
+void xd_thumb_queue_request(XdThumbQueue *thumb_queue, const char *uri, XdThumbSize size);
 /* Forgets the requests and stops those running (another folder). */
-void xd_thumb_queue_cancel(XdThumbQueue *q);
+void xd_thumb_queue_cancel(XdThumbQueue *thumb_queue);
 
 G_END_DECLS
 

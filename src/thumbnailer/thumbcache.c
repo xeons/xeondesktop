@@ -25,9 +25,9 @@ int xd_thumb_size_px(XdThumbSize size) { return sizes[size].px; }
 const char *xd_thumb_size_name(XdThumbSize size) { return sizes[size].name; }
 
 gboolean xd_thumb_size_parse(const char *name, XdThumbSize *size) {
-    for (int s = 0; s < XD_THUMB_SIZES; s++) {
-        if (g_strcmp0(name, sizes[s].name) == 0) {
-            *size = (XdThumbSize)s;
+    for (int size_index = 0; size_index < XD_THUMB_SIZES; size_index++) {
+        if (g_strcmp0(name, sizes[size_index].name) == 0) {
+            *size = (XdThumbSize)size_index;
             return TRUE;
         }
     }
@@ -35,9 +35,9 @@ gboolean xd_thumb_size_parse(const char *name, XdThumbSize *size) {
 }
 
 XdThumbSize xd_thumb_size_for(int px) {
-    for (int s = 0; s < XD_THUMB_SIZES; s++)
-        if (px <= sizes[s].px)
-            return (XdThumbSize)s;
+    for (int size_index = 0; size_index < XD_THUMB_SIZES; size_index++)
+        if (px <= sizes[size_index].px)
+            return (XdThumbSize)size_index;
     return XD_THUMB_XXLARGE;
 }
 
@@ -66,12 +66,13 @@ char *xd_thumb_fail_path(const char *root, const char *uri) {
 }
 
 gboolean xd_thumb_in_cache(const char *root, const char *path) {
-    char *r = g_canonicalize_filename(root, nullptr);
-    char *p = g_canonicalize_filename(path, nullptr);
-    size_t n = strlen(r);
-    gboolean inside = strncmp(p, r, n) == 0 && (p[n] == '/' || p[n] == '\0');
-    g_free(r);
-    g_free(p);
+    char *canonical_root = g_canonicalize_filename(root, nullptr);
+    char *canonical_path = g_canonicalize_filename(path, nullptr);
+    size_t root_length = strlen(canonical_root);
+    gboolean inside = strncmp(canonical_path, canonical_root, root_length) == 0 &&
+                      (canonical_path[root_length] == '/' || canonical_path[root_length] == '\0');
+    g_free(canonical_root);
+    g_free(canonical_path);
     return inside;
 }
 
@@ -81,9 +82,9 @@ gboolean xd_thumb_save(GdkPixbuf *pb, const char *dest, const char *uri, gint64 
     int made = g_mkdir_with_parents(dir, 0700);
     g_free(dir);
     if (made != 0) {
-        int e = errno;
-        GFileError code = g_file_error_from_errno(e);
-        g_set_error(err, G_FILE_ERROR, (int)code, "%s", g_strerror(e));
+        int error_number = errno;
+        GFileError code = g_file_error_from_errno(error_number);
+        g_set_error(err, G_FILE_ERROR, (int)code, "%s", g_strerror(error_number));
         return FALSE;
     }
     GStrvBuilder *kb = g_strv_builder_new();
@@ -124,13 +125,14 @@ gboolean xd_thumb_is_current(const char *png, const char *uri, gint64 mtime) {
     GdkPixbuf *pb = gdk_pixbuf_new_from_file(png, nullptr);
     if (pb == nullptr)
         return FALSE;
-    const char *u = gdk_pixbuf_get_option(pb, "tEXt::Thumb::URI");
-    const char *m = gdk_pixbuf_get_option(pb, "tEXt::Thumb::MTime");
+    const char *thumb_uri = gdk_pixbuf_get_option(pb, "tEXt::Thumb::URI");
+    const char *thumb_mtime = gdk_pixbuf_get_option(pb, "tEXt::Thumb::MTime");
     gboolean current = FALSE;
-    if (u != nullptr && m != nullptr && strcmp(u, uri) == 0) {
-        gint64 t = 0;
-        current = g_ascii_string_to_signed(m, 10, G_MININT64, G_MAXINT64, &t, nullptr) &&
-                  t == mtime;
+    if (thumb_uri != nullptr && thumb_mtime != nullptr && strcmp(thumb_uri, uri) == 0) {
+        gint64 parsed_mtime = 0;
+        current = g_ascii_string_to_signed(thumb_mtime, 10, G_MININT64, G_MAXINT64, &parsed_mtime,
+                                           nullptr) &&
+                  parsed_mtime == mtime;
     }
     g_object_unref(pb);
     return current;
@@ -163,8 +165,8 @@ static GHashTable *resolved;
 /* MIME types gdk-pixbuf reads -> TRUE, and others asked about -> FALSE. */
 static GHashTable *pixbuf_types;
 
-static int compare_names(gconstpointer a, gconstpointer b) {
-    return strcmp(*(char *const *)a, *(char *const *)b);
+static int compare_names(gconstpointer left, gconstpointer right) {
+    return strcmp(*(char *const *)left, *(char *const *)right);
 }
 
 static void read_thumbnailers(const char *data_dir) {
@@ -192,9 +194,9 @@ static void read_thumbnailers(const char *data_dir) {
             char *found = try_exec != nullptr ? g_find_program_in_path(try_exec) : nullptr;
             char **types = g_key_file_get_string_list(kf, group, "MimeType", nullptr, nullptr);
             if (exec != nullptr && (try_exec == nullptr || found != nullptr) && types != nullptr)
-                for (char **t = types; *t != nullptr; t++)
-                    if (**t != '\0' && !g_hash_table_contains(thumbnailers, *t))
-                        g_hash_table_insert(thumbnailers, g_strdup(*t), g_strdup(exec));
+                for (char **type = types; *type != nullptr; type++)
+                    if (**type != '\0' && !g_hash_table_contains(thumbnailers, *type))
+                        g_hash_table_insert(thumbnailers, g_strdup(*type), g_strdup(exec));
             g_strfreev(types);
             g_free(found);
             g_free(exec);
@@ -213,8 +215,8 @@ static void load_thumbnailers(void) {
     thumbnailers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     resolved = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     read_thumbnailers(g_get_user_data_dir());
-    for (const char *const *d = g_get_system_data_dirs(); *d != nullptr; d++)
-        read_thumbnailers(*d);
+    for (const char *const *data_dir = g_get_system_data_dirs(); *data_dir != nullptr; data_dir++)
+        read_thumbnailers(*data_dir);
 }
 
 const char *xd_thumbnailer_exec(const char *mime) {
@@ -243,12 +245,12 @@ gboolean xd_thumb_pixbuf_reads(const char *mime) {
     if (pixbuf_types == nullptr) {
         pixbuf_types = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
         GSList *formats = gdk_pixbuf_get_formats();
-        for (GSList *f = formats; f != nullptr; f = f->next) {
-            if (gdk_pixbuf_format_is_disabled(f->data))
+        for (GSList *format = formats; format != nullptr; format = format->next) {
+            if (gdk_pixbuf_format_is_disabled(format->data))
                 continue;
-            char **types = gdk_pixbuf_format_get_mime_types(f->data);
-            for (char **t = types; t != nullptr && *t != nullptr; t++)
-                g_hash_table_insert(pixbuf_types, g_strdup(*t), GINT_TO_POINTER(TRUE));
+            char **types = gdk_pixbuf_format_get_mime_types(format->data);
+            for (char **type = types; type != nullptr && *type != nullptr; type++)
+                g_hash_table_insert(pixbuf_types, g_strdup(*type), GINT_TO_POINTER(TRUE));
             g_strfreev(types);
         }
         g_slist_free(formats);
