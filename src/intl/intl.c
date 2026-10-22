@@ -23,8 +23,8 @@ const char *const xd_intl_format_vars[] = {
 bool xd_intl_valid_name(const char *name) {
     if (name == nullptr || name[0] == '\0' || strlen(name) > 128)
         return false;
-    for (const char *p = name; *p != '\0'; p++) {
-        if (!g_ascii_isalnum(*p) && strchr("_.@-", *p) == nullptr)
+    for (const char *cursor = name; *cursor != '\0'; cursor++) {
+        if (!g_ascii_isalnum(*cursor) && strchr("_.@-", *cursor) == nullptr)
             return false;
     }
     return true;
@@ -41,20 +41,20 @@ char **xd_intl_installed_locales(const char *supported) {
     char *text = nullptr;
     if (g_file_get_contents(supported, &text, nullptr, nullptr)) {
         char **lines = g_strsplit(text, "\n", -1);
-        for (char **l = lines; *l != nullptr; l++) {
-            char **f = g_strsplit_set(g_strstrip(*l), " \t", 2);
-            if (f[0] != nullptr && f[1] != nullptr && f[0][0] != '#' &&
-                strcmp(g_strstrip(f[1]), "UTF-8") == 0) {
-                locale_t loc = open_locale(f[0]);
+        for (char **line = lines; *line != nullptr; line++) {
+            char **fields = g_strsplit_set(g_strstrip(*line), " \t", 2);
+            if (fields[0] != nullptr && fields[1] != nullptr && fields[0][0] != '#' &&
+                strcmp(g_strstrip(fields[1]), "UTF-8") == 0) {
+                locale_t loc = open_locale(fields[0]);
                 if (loc != (locale_t)0) {
                     /* glibc falls back to a less specific installed
                      * locale; only take ones that really are UTF-8. */
                     if (strcmp(nl_langinfo_l(CODESET, loc), "UTF-8") == 0)
-                        g_ptr_array_add(out, g_strdup(f[0]));
+                        g_ptr_array_add(out, g_strdup(fields[0]));
                     freelocale(loc);
                 }
             }
-            g_strfreev(f);
+            g_strfreev(fields);
         }
         g_strfreev(lines);
         g_free(text);
@@ -85,13 +85,13 @@ char *xd_intl_display_name(const char *locale) {
 
 const char *xd_intl_long_date_format(const char *d_fmt) {
     /* The first of day, month and year in the short date decides. */
-    for (const char *p = d_fmt != nullptr ? strchr(d_fmt, '%') : nullptr; p != nullptr;
-         p = strchr(p + 1, '%')) {
-        const char *c = p + 1;
-        while (*c == '-' || *c == '_' || *c == '0' || *c == '^' || *c == '#' || *c == 'E' ||
-               *c == 'O')
-            c++;
-        switch (*c) {
+    for (const char *percent = d_fmt != nullptr ? strchr(d_fmt, '%') : nullptr; percent != nullptr;
+         percent = strchr(percent + 1, '%')) {
+        const char *conversion = percent + 1;
+        while (*conversion == '-' || *conversion == '_' || *conversion == '0' ||
+               *conversion == '^' || *conversion == '#' || *conversion == 'E' || *conversion == 'O')
+            conversion++;
+        switch (*conversion) {
         case 'd':
         case 'e':
             return "%A, %-d %B %Y";
@@ -108,7 +108,7 @@ const char *xd_intl_long_date_format(const char *d_fmt) {
         case 'F': /* %Y-%m-%d */
             return "%Y %B %-d, %A";
         case '%':
-            p = c; /* a literal percent sign */
+            percent = conversion; /* a literal percent sign */
             break;
         default:
             break;
@@ -121,9 +121,9 @@ static char *format_time(locale_t loc, const char *fmt, const struct tm *tm) {
     char buf[256];
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-nonliteral"
-    size_t n = strftime_l(buf, sizeof(buf), fmt, tm, loc);
+    size_t length = strftime_l(buf, sizeof(buf), fmt, tm, loc);
 #pragma GCC diagnostic pop
-    return g_strdup(n > 0 ? buf : "");
+    return g_strdup(length > 0 ? buf : "");
 }
 
 bool xd_intl_samples_get(const char *locale, time_t when, xd_intl_samples *out) {
@@ -151,13 +151,13 @@ bool xd_intl_samples_get(const char *locale, time_t when, xd_intl_samples *out) 
     return true;
 }
 
-void xd_intl_samples_free(xd_intl_samples *s) {
-    g_free(s->number);
-    g_free(s->currency);
-    g_free(s->time);
-    g_free(s->short_date);
-    g_free(s->long_date);
-    *s = (xd_intl_samples){0};
+void xd_intl_samples_free(xd_intl_samples *intl_samples) {
+    g_free(intl_samples->number);
+    g_free(intl_samples->currency);
+    g_free(intl_samples->time);
+    g_free(intl_samples->short_date);
+    g_free(intl_samples->long_date);
+    *intl_samples = (xd_intl_samples){0};
 }
 
 /* ---- the formats file ------------------------------------------------------------- */
@@ -168,8 +168,8 @@ char *xd_intl_read_formats(const char *path) {
         return nullptr;
     char *found = nullptr;
     char **lines = g_strsplit(text, "\n", -1);
-    for (char **l = lines; *l != nullptr && found == nullptr; l++) {
-        char *line = g_strstrip(*l);
+    for (char **current = lines; *current != nullptr && found == nullptr; current++) {
+        char *line = g_strstrip(*current);
         if (!g_str_has_prefix(line, "LC_TIME="))
             continue;
         char *value = g_shell_unquote(line + strlen("LC_TIME="), nullptr);
@@ -192,12 +192,13 @@ bool xd_intl_write_formats_full(const char *path, const char *locale, const char
     GFile *file = g_file_new_for_path(path);
     bool ok;
     if (locale == nullptr) {
-        GError *e = nullptr;
-        ok = g_file_delete(file, nullptr, &e) || g_error_matches(e, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+        GError *delete_error = nullptr;
+        ok = g_file_delete(file, nullptr, &delete_error) ||
+             g_error_matches(delete_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
         if (!ok)
-            g_propagate_error(error, e);
+            g_propagate_error(error, delete_error);
         else
-            g_clear_error(&e);
+            g_clear_error(&delete_error);
         g_object_unref(file);
         return ok;
     }
@@ -206,49 +207,51 @@ bool xd_intl_write_formats_full(const char *path, const char *locale, const char
         g_object_unref(file);
         return false;
     }
-    GString *s = g_string_new("# Regional and Language Options: Standards and formats\n");
+    GString *string = g_string_new("# Regional and Language Options: Standards and formats\n");
     /* Customized formats: the compiled locales there (intl.h). */
     if (locpath != nullptr)
-        g_string_append_printf(s, "LOCPATH=%s\n", locpath);
-    for (const char *const *v = xd_intl_format_vars; *v != nullptr; v++)
-        g_string_append_printf(s, "%s=%s\n", *v, locale);
+        g_string_append_printf(string, "LOCPATH=%s\n", locpath);
+    for (const char *const *variable = xd_intl_format_vars; *variable != nullptr; variable++)
+        g_string_append_printf(string, "%s=%s\n", *variable, locale);
     char *dir = g_path_get_dirname(path);
     ok = g_mkdir_with_parents(dir, 0755) == 0;
     if (!ok)
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot create %s", dir);
     else
-        ok = g_file_replace_contents(file, s->str, s->len, nullptr, FALSE,
+        ok = g_file_replace_contents(file, string->str, string->len, nullptr, FALSE,
                                      G_FILE_CREATE_REPLACE_DESTINATION, nullptr, nullptr, error);
     g_free(dir);
-    g_string_free(s, TRUE);
+    g_string_free(string, TRUE);
     g_object_unref(file);
     return ok;
 }
 
 /* ---- Customize ------------------------------------------------------------------- */
 
-void xd_intl_custom_init(xd_intl_custom *c) {
-    *c = (xd_intl_custom){.frac_digits = -1, .positive_format = -1, .negative_format = -1};
+void xd_intl_custom_init(xd_intl_custom *custom) {
+    *custom = (xd_intl_custom){.frac_digits = -1, .positive_format = -1, .negative_format = -1};
 }
 
-void xd_intl_custom_clear(xd_intl_custom *c) {
-    char **strings[] = {&c->decimal,   &c->thousands,     &c->grouping,     &c->currency,
-                        &c->mon_decimal, &c->mon_thousands, &c->mon_grouping, &c->time_format,
-                        &c->am,        &c->pm,            &c->date_format};
+void xd_intl_custom_clear(xd_intl_custom *custom) {
+    char **strings[] = {&custom->decimal,      &custom->thousands,   &custom->grouping,
+                        &custom->currency,     &custom->mon_decimal, &custom->mon_thousands,
+                        &custom->mon_grouping, &custom->time_format, &custom->am,
+                        &custom->pm,           &custom->date_format};
     for (size_t i = 0; i < G_N_ELEMENTS(strings); i++)
         g_clear_pointer(strings[i], g_free);
-    xd_intl_custom_init(c);
+    xd_intl_custom_init(custom);
 }
 
-bool xd_intl_custom_empty(const xd_intl_custom *c) {
-    const char *strings[] = {c->decimal,   c->thousands,     c->grouping,     c->currency,
-                             c->mon_decimal, c->mon_thousands, c->mon_grouping, c->time_format,
-                             c->am,        c->pm,            c->date_format};
+bool xd_intl_custom_empty(const xd_intl_custom *custom) {
+    const char *strings[] = {custom->decimal,      custom->thousands,   custom->grouping,
+                             custom->currency,     custom->mon_decimal, custom->mon_thousands,
+                             custom->mon_grouping, custom->time_format, custom->am,
+                             custom->pm,           custom->date_format};
     for (size_t i = 0; i < G_N_ELEMENTS(strings); i++)
         if (strings[i] != nullptr)
             return false;
-    return c->measurement == 0 && c->frac_digits < 0 && c->positive_format < 0 &&
-           c->negative_format < 0;
+    return custom->measurement == 0 && custom->frac_digits < 0 && custom->positive_format < 0 &&
+           custom->negative_format < 0;
 }
 
 /* XP's currency formats as glibc's p/n_cs_precedes, p/n_sep_by_space
@@ -270,18 +273,18 @@ static const struct {
 
 /* A look with the symbol and amount put in. */
 static char *fill_look(const char *look, const char *symbol, const char *amount) {
-    GString *s = g_string_new(nullptr);
-    for (const char *p = look; *p != '\0'; p++) {
-        if (*p == '$') {
-            g_string_append(s, symbol != nullptr ? symbol : "");
-        } else if (g_str_has_prefix(p, "1.1")) {
-            g_string_append(s, amount);
-            p += 2;
+    GString *string = g_string_new(nullptr);
+    for (const char *cursor = look; *cursor != '\0'; cursor++) {
+        if (*cursor == '$') {
+            g_string_append(string, symbol != nullptr ? symbol : "");
+        } else if (g_str_has_prefix(cursor, "1.1")) {
+            g_string_append(string, amount);
+            cursor += 2;
         } else {
-            g_string_append_c(s, *p);
+            g_string_append_c(string, *cursor);
         }
     }
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
 char *xd_intl_currency_format_look(bool negative, int i, const char *symbol) {
@@ -315,33 +318,33 @@ static int byte_info(nl_item item, locale_t loc) {
 }
 
 char *xd_intl_grouping_text(const char *bytes) {
-    GString *s = g_string_new(nullptr);
-    for (const char *p = bytes; p != nullptr && *p != '\0'; p++) {
-        int n = (unsigned char)*p;
-        if (s->len > 0)
-            g_string_append_c(s, ';');
+    GString *string = g_string_new(nullptr);
+    for (const char *cursor = bytes; cursor != nullptr && *cursor != '\0'; cursor++) {
+        int size = (unsigned char)*cursor;
+        if (string->len > 0)
+            g_string_append_c(string, ';');
         /* "No further grouping" is CHAR_MAX: 127 where char is signed
          * (x86), 255 where it isn't (ARM); locale data may carry either.
          * No group is that long. */
-        if (n == 0 || n >= SCHAR_MAX) {
-            g_string_append(s, "-1");
+        if (size == 0 || size >= SCHAR_MAX) {
+            g_string_append(string, "-1");
             break;
         }
-        g_string_append_printf(s, "%d", n);
+        g_string_append_printf(string, "%d", size);
     }
-    if (s->len == 0)
-        g_string_append(s, "-1");
-    return g_string_free(s, FALSE);
+    if (string->len == 0)
+        g_string_append(string, "-1");
+    return g_string_free(string, FALSE);
 }
 
-static bool grouping_valid(const char *g) {
-    if (g == nullptr || g[0] == '\0' || strlen(g) > 32)
+static bool grouping_valid(const char *grouping) {
+    if (grouping == nullptr || grouping[0] == '\0' || strlen(grouping) > 32)
         return false;
-    char **parts = g_strsplit(g, ";", -1);
+    char **parts = g_strsplit(grouping, ";", -1);
     bool ok = true;
-    for (char **p = parts; ok && *p != nullptr; p++) {
-        gint64 n = 0;
-        ok = g_ascii_string_to_signed(*p, 10, -1, 99, &n, nullptr);
+    for (char **part = parts; ok && *part != nullptr; part++) {
+        gint64 size = 0;
+        ok = g_ascii_string_to_signed(*part, 10, -1, 99, &size, nullptr);
     }
     g_strfreev(parts);
     return ok;
@@ -355,8 +358,8 @@ bool xd_intl_custom_from_locale(const char *locale, xd_intl_custom *out) {
     out->decimal = g_strdup(nl_langinfo_l(RADIXCHAR, loc));
     out->thousands = g_strdup(nl_langinfo_l(THOUSEP, loc));
     out->grouping = xd_intl_grouping_text(nl_langinfo_l(GROUPING, loc));
-    int m = byte_info(_NL_MEASUREMENT_MEASUREMENT, loc);
-    out->measurement = m == 2 ? 2 : 1;
+    int measurement = byte_info(_NL_MEASUREMENT_MEASUREMENT, loc);
+    out->measurement = measurement == 2 ? 2 : 1;
     out->currency = g_strdup(nl_langinfo_l(CURRENCY_SYMBOL, loc));
     out->mon_decimal = g_strdup(nl_langinfo_l(MON_DECIMAL_POINT, loc));
     out->mon_thousands = g_strdup(nl_langinfo_l(MON_THOUSANDS_SEP, loc));
@@ -385,28 +388,29 @@ static void over(char **dst, const char *value) {
     }
 }
 
-bool xd_intl_custom_effective(const char *locale, const xd_intl_custom *c, xd_intl_custom *out) {
+bool xd_intl_custom_effective(const char *locale, const xd_intl_custom *custom,
+                              xd_intl_custom *out) {
     if (!xd_intl_custom_from_locale(locale, out))
         return false;
-    over(&out->decimal, c->decimal);
-    over(&out->thousands, c->thousands);
-    over(&out->grouping, c->grouping);
-    over(&out->currency, c->currency);
-    over(&out->mon_decimal, c->mon_decimal);
-    over(&out->mon_thousands, c->mon_thousands);
-    over(&out->mon_grouping, c->mon_grouping);
-    over(&out->time_format, c->time_format);
-    over(&out->am, c->am);
-    over(&out->pm, c->pm);
-    over(&out->date_format, c->date_format);
-    if (c->measurement != 0)
-        out->measurement = c->measurement;
-    if (c->frac_digits >= 0)
-        out->frac_digits = c->frac_digits;
-    if (c->positive_format >= 0)
-        out->positive_format = c->positive_format;
-    if (c->negative_format >= 0)
-        out->negative_format = c->negative_format;
+    over(&out->decimal, custom->decimal);
+    over(&out->thousands, custom->thousands);
+    over(&out->grouping, custom->grouping);
+    over(&out->currency, custom->currency);
+    over(&out->mon_decimal, custom->mon_decimal);
+    over(&out->mon_thousands, custom->mon_thousands);
+    over(&out->mon_grouping, custom->mon_grouping);
+    over(&out->time_format, custom->time_format);
+    over(&out->am, custom->am);
+    over(&out->pm, custom->pm);
+    over(&out->date_format, custom->date_format);
+    if (custom->measurement != 0)
+        out->measurement = custom->measurement;
+    if (custom->frac_digits >= 0)
+        out->frac_digits = custom->frac_digits;
+    if (custom->positive_format >= 0)
+        out->positive_format = custom->positive_format;
+    if (custom->negative_format >= 0)
+        out->negative_format = custom->negative_format;
     return true;
 }
 
@@ -431,52 +435,52 @@ static const struct {
     {"ShortDateFormat", offsetof(xd_intl_custom, date_format)},
 };
 
-static char **string_field(xd_intl_custom *c, size_t i) {
-    return (char **)(void *)((char *)c + string_keys[i].offset);
+static char **string_field(xd_intl_custom *custom, size_t i) {
+    return (char **)(void *)((char *)custom + string_keys[i].offset);
 }
 
 static int int_key(GKeyFile *kf, const char *key, int lo, int hi, int none) {
-    GError *e = nullptr;
-    int v = g_key_file_get_integer(kf, CUSTOM_GROUP, key, &e);
-    bool ok = e == nullptr && v >= lo && v <= hi;
-    g_clear_error(&e);
-    return ok ? v : none;
+    GError *error = nullptr;
+    int value = g_key_file_get_integer(kf, CUSTOM_GROUP, key, &error);
+    bool ok = error == nullptr && value >= lo && value <= hi;
+    g_clear_error(&error);
+    return ok ? value : none;
 }
 
-void xd_intl_custom_load(const char *path, char **locale, xd_intl_custom *c) {
-    xd_intl_custom_init(c);
+void xd_intl_custom_load(const char *path, char **locale, xd_intl_custom *custom) {
+    xd_intl_custom_init(custom);
     *locale = nullptr;
     GKeyFile *kf = g_key_file_new();
     if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, nullptr)) {
-        char *l = g_key_file_get_string(kf, CUSTOM_GROUP, "Locale", nullptr);
-        if (xd_intl_valid_name(l))
-            *locale = l;
+        char *locale_name = g_key_file_get_string(kf, CUSTOM_GROUP, "Locale", nullptr);
+        if (xd_intl_valid_name(locale_name))
+            *locale = locale_name;
         else
-            g_free(l);
+            g_free(locale_name);
         for (size_t i = 0; i < G_N_ELEMENTS(string_keys); i++) {
-            char *v = g_key_file_get_string(kf, CUSTOM_GROUP, string_keys[i].key, nullptr);
+            char *value = g_key_file_get_string(kf, CUSTOM_GROUP, string_keys[i].key, nullptr);
             bool grouping = strstr(string_keys[i].key, "Grouping") != nullptr &&
                             strstr(string_keys[i].key, "Symbol") == nullptr;
-            bool ok = v != nullptr && strlen(v) <= 80 && g_utf8_validate(v, -1, nullptr) &&
-                      (!grouping || grouping_valid(v));
+            bool ok = value != nullptr && strlen(value) <= 80 &&
+                      g_utf8_validate(value, -1, nullptr) && (!grouping || grouping_valid(value));
             if (ok)
-                *string_field(c, i) = v;
+                *string_field(custom, i) = value;
             else
-                g_free(v);
+                g_free(value);
         }
-        c->measurement = int_key(kf, "MeasurementSystem", 1, 2, 0);
-        c->frac_digits = int_key(kf, "CurrencyDigits", 0, 9, -1);
-        c->positive_format = int_key(kf, "PositiveCurrencyFormat", 0,
-                                     XD_INTL_POSITIVE_FORMATS - 1, -1);
-        c->negative_format = int_key(kf, "NegativeCurrencyFormat", 0,
-                                     XD_INTL_NEGATIVE_FORMATS - 1, -1);
+        custom->measurement = int_key(kf, "MeasurementSystem", 1, 2, 0);
+        custom->frac_digits = int_key(kf, "CurrencyDigits", 0, 9, -1);
+        custom->positive_format =
+            int_key(kf, "PositiveCurrencyFormat", 0, XD_INTL_POSITIVE_FORMATS - 1, -1);
+        custom->negative_format =
+            int_key(kf, "NegativeCurrencyFormat", 0, XD_INTL_NEGATIVE_FORMATS - 1, -1);
     }
     g_key_file_free(kf);
 }
 
-bool xd_intl_custom_save(const char *path, const char *locale, const xd_intl_custom *c,
+bool xd_intl_custom_save(const char *path, const char *locale, const xd_intl_custom *custom,
                          GError **error) {
-    if (locale == nullptr || xd_intl_custom_empty(c)) {
+    if (locale == nullptr || xd_intl_custom_empty(custom)) {
         if (g_remove(path) == 0 || errno == ENOENT)
             return true;
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot remove %s: %s", path,
@@ -490,18 +494,18 @@ bool xd_intl_custom_save(const char *path, const char *locale, const xd_intl_cus
                            nullptr);
     g_key_file_set_string(kf, CUSTOM_GROUP, "Locale", locale);
     for (size_t i = 0; i < G_N_ELEMENTS(string_keys); i++) {
-        const char *v = *string_field((xd_intl_custom *)(uintptr_t)c, i);
-        if (v != nullptr)
-            g_key_file_set_string(kf, CUSTOM_GROUP, string_keys[i].key, v);
+        const char *value = *string_field((xd_intl_custom *)(uintptr_t)custom, i);
+        if (value != nullptr)
+            g_key_file_set_string(kf, CUSTOM_GROUP, string_keys[i].key, value);
     }
-    if (c->measurement != 0)
-        g_key_file_set_integer(kf, CUSTOM_GROUP, "MeasurementSystem", c->measurement);
-    if (c->frac_digits >= 0)
-        g_key_file_set_integer(kf, CUSTOM_GROUP, "CurrencyDigits", c->frac_digits);
-    if (c->positive_format >= 0)
-        g_key_file_set_integer(kf, CUSTOM_GROUP, "PositiveCurrencyFormat", c->positive_format);
-    if (c->negative_format >= 0)
-        g_key_file_set_integer(kf, CUSTOM_GROUP, "NegativeCurrencyFormat", c->negative_format);
+    if (custom->measurement != 0)
+        g_key_file_set_integer(kf, CUSTOM_GROUP, "MeasurementSystem", custom->measurement);
+    if (custom->frac_digits >= 0)
+        g_key_file_set_integer(kf, CUSTOM_GROUP, "CurrencyDigits", custom->frac_digits);
+    if (custom->positive_format >= 0)
+        g_key_file_set_integer(kf, CUSTOM_GROUP, "PositiveCurrencyFormat", custom->positive_format);
+    if (custom->negative_format >= 0)
+        g_key_file_set_integer(kf, CUSTOM_GROUP, "NegativeCurrencyFormat", custom->negative_format);
     char *dir = g_path_get_dirname(path);
     bool ok = g_mkdir_with_parents(dir, 0755) == 0;
     if (!ok)
@@ -516,7 +520,9 @@ bool xd_intl_custom_save(const char *path, const char *locale, const xd_intl_cus
 /* ---- picture formats ---- */
 
 /* The letters that make XP's time and date fields. */
-static bool field_letter(char c) { return strchr("hHmstdMyg", c) != nullptr && c != '\0'; }
+static bool field_letter(char character) {
+    return strchr("hHmstdMyg", character) != nullptr && character != '\0';
+}
 
 /* Walks a picture: calls `field` for each run of a field letter and
  * `text` for each piece of text (quotes resolved). */
@@ -524,67 +530,67 @@ typedef void (*field_fn)(char letter, int count, void *data);
 typedef void (*text_fn)(const char *text, size_t len, bool quoted, void *data);
 
 static void walk_picture(const char *picture, field_fn field, text_fn text, void *data) {
-    const char *p = picture;
-    while (p != nullptr && *p != '\0') {
-        if (*p == '\'') {
-            GString *q = g_string_new(nullptr);
-            p++;
-            while (*p != '\0') {
-                if (*p == '\'' && p[1] == '\'') {
-                    g_string_append_c(q, '\'');
-                    p += 2;
-                } else if (*p == '\'') {
-                    p++;
+    const char *cursor = picture;
+    while (cursor != nullptr && *cursor != '\0') {
+        if (*cursor == '\'') {
+            GString *string = g_string_new(nullptr);
+            cursor++;
+            while (*cursor != '\0') {
+                if (*cursor == '\'' && cursor[1] == '\'') {
+                    g_string_append_c(string, '\'');
+                    cursor += 2;
+                } else if (*cursor == '\'') {
+                    cursor++;
                     break;
                 } else {
-                    g_string_append_c(q, *p++);
+                    g_string_append_c(string, *cursor++);
                 }
             }
-            text(q->str, q->len, true, data);
-            g_string_free(q, TRUE);
-        } else if (field_letter(*p)) {
-            char letter = *p;
-            int n = 0;
-            while (*p == letter) {
-                p++;
-                n++;
+            text(string->str, string->len, true, data);
+            g_string_free(string, TRUE);
+        } else if (field_letter(*cursor)) {
+            char letter = *cursor;
+            int count = 0;
+            while (*cursor == letter) {
+                cursor++;
+                count++;
             }
-            field(letter, n, data);
+            field(letter, count, data);
         } else {
-            const char *start = p;
-            while (*p != '\0' && *p != '\'' && !field_letter(*p))
-                p++;
-            text(start, (size_t)(p - start), false, data);
+            const char *start = cursor;
+            while (*cursor != '\0' && *cursor != '\'' && !field_letter(*cursor))
+                cursor++;
+            text(start, (size_t)(cursor - start), false, data);
         }
     }
 }
 
-static void to_strftime_field(char letter, int n, void *data) {
-    GString *s = data;
+static void to_strftime_field(char letter, int count, void *data) {
+    GString *string = data;
     switch (letter) {
     case 'h':
-        g_string_append(s, n == 1 ? "%-I" : "%I");
+        g_string_append(string, count == 1 ? "%-I" : "%I");
         break;
     case 'H':
-        g_string_append(s, n == 1 ? "%-H" : "%H");
+        g_string_append(string, count == 1 ? "%-H" : "%H");
         break;
     case 'm':
-        g_string_append(s, n == 1 ? "%-M" : "%M");
+        g_string_append(string, count == 1 ? "%-M" : "%M");
         break;
     case 's':
-        g_string_append(s, n == 1 ? "%-S" : "%S");
+        g_string_append(string, count == 1 ? "%-S" : "%S");
         break;
     case 't':
-        g_string_append(s, "%p");
+        g_string_append(string, "%p");
         break;
     case 'd':
-        g_string_append(s, n == 1 ? "%-d" : n == 2 ? "%d" : n == 3 ? "%a" : "%A");
+        g_string_append(string, count == 1 ? "%-d" : count == 2 ? "%d" : count == 3 ? "%a" : "%A");
         break;
     case 'M':
-        g_string_append(s, n == 1 ? "%-m" : n == 2 ? "%m" : n == 3 ? "%b" : "%B");
+        g_string_append(string, count == 1 ? "%-m" : count == 2 ? "%m" : count == 3 ? "%b" : "%B");
         break;
     case 'y':
-        g_string_append(s, n == 1 ? "%-y" : n == 2 ? "%y" : "%Y");
+        g_string_append(string, count == 1 ? "%-y" : count == 2 ? "%y" : "%Y");
         break;
     default: /* g: the era, which glibc's formats don't show this way */
         break;
@@ -593,62 +599,63 @@ static void to_strftime_field(char letter, int n, void *data) {
 
 static void to_strftime_text(const char *text, size_t len, [[maybe_unused]] bool quoted,
                              void *data) {
-    GString *s = data;
+    GString *string = data;
     for (size_t i = 0; i < len; i++) {
         if (text[i] == '%')
-            g_string_append_c(s, '%');
-        g_string_append_c(s, text[i]);
+            g_string_append_c(string, '%');
+        g_string_append_c(string, text[i]);
     }
 }
 
 char *xd_intl_picture_to_strftime(const char *picture) {
-    GString *s = g_string_new(nullptr);
-    walk_picture(picture, to_strftime_field, to_strftime_text, s);
-    return g_string_free(s, FALSE);
+    GString *string = g_string_new(nullptr);
+    walk_picture(picture, to_strftime_field, to_strftime_text, string);
+    return g_string_free(string, FALSE);
 }
 
 /* Text in a picture: letters (and quotes) quoted. */
-static void picture_text(GString *s, const char *text, size_t len) {
+static void picture_text(GString *string, const char *text, size_t len) {
     bool needs = false;
     for (size_t i = 0; i < len && !needs; i++)
         needs = g_ascii_isalpha(text[i]) || text[i] == '\'';
     if (!needs) {
-        g_string_append_len(s, text, (gssize)len);
+        g_string_append_len(string, text, (gssize)len);
         return;
     }
-    g_string_append_c(s, '\'');
+    g_string_append_c(string, '\'');
     for (size_t i = 0; i < len; i++) {
         if (text[i] == '\'')
-            g_string_append_c(s, '\'');
-        g_string_append_c(s, text[i]);
+            g_string_append_c(string, '\'');
+        g_string_append_c(string, text[i]);
     }
-    g_string_append_c(s, '\'');
+    g_string_append_c(string, '\'');
 }
 
-static void strftime_picture(GString *s, const char *fmt, const char *ampm, int depth) {
-    const char *p = fmt;
-    while (p != nullptr && *p != '\0') {
-        if (*p != '%') {
-            const char *start = p;
-            while (*p != '\0' && *p != '%')
-                p++;
-            picture_text(s, start, (size_t)(p - start));
+static void strftime_picture(GString *string, const char *fmt, const char *ampm, int depth) {
+    const char *cursor = fmt;
+    while (cursor != nullptr && *cursor != '\0') {
+        if (*cursor != '%') {
+            const char *start = cursor;
+            while (*cursor != '\0' && *cursor != '%')
+                cursor++;
+            picture_text(string, start, (size_t)(cursor - start));
             continue;
         }
-        p++;
+        cursor++;
         bool no_pad = false;
-        while (*p == '-' || *p == '_' || *p == '0' || *p == '^' || *p == '#') {
-            no_pad = no_pad || *p == '-';
-            p++;
+        while (*cursor == '-' || *cursor == '_' || *cursor == '0' || *cursor == '^' ||
+               *cursor == '#') {
+            no_pad = no_pad || *cursor == '-';
+            cursor++;
         }
-        while (g_ascii_isdigit(*p))
-            p++;
-        if (*p == 'E' || *p == 'O')
-            p++;
-        if (*p == '\0')
+        while (g_ascii_isdigit(*cursor))
+            cursor++;
+        if (*cursor == 'E' || *cursor == 'O')
+            cursor++;
+        if (*cursor == '\0')
             break;
         const char *pic = nullptr;
-        switch (*p) {
+        switch (*cursor) {
         case 'H': pic = no_pad ? "H" : "HH"; break;
         case 'k': pic = "H"; break;
         case 'I': pic = no_pad ? "h" : "hh"; break;
@@ -662,7 +669,7 @@ static void strftime_picture(GString *s, const char *fmt, const char *ampm, int 
         case 'X': pic = "HH:mm:ss"; break;
         case 'r':
             if (depth == 0 && ampm != nullptr && ampm[0] != '\0')
-                strftime_picture(s, ampm, nullptr, depth + 1);
+                strftime_picture(string, ampm, nullptr, depth + 1);
             else
                 pic = "hh:mm:ss tt";
             break;
@@ -685,15 +692,15 @@ static void strftime_picture(GString *s, const char *fmt, const char *ampm, int 
         default: break; /* no picture field: dropped */
         }
         if (pic != nullptr)
-            g_string_append(s, pic);
-        p++;
+            g_string_append(string, pic);
+        cursor++;
     }
 }
 
 char *xd_intl_strftime_to_picture(const char *fmt, const char *ampm) {
-    GString *s = g_string_new(nullptr);
-    strftime_picture(s, fmt, ampm, 0);
-    return g_string_free(s, FALSE);
+    GString *string = g_string_new(nullptr);
+    strftime_picture(string, fmt, ampm, 0);
+    return g_string_free(string, FALSE);
 }
 
 typedef struct sep_finder {
@@ -701,26 +708,26 @@ typedef struct sep_finder {
     GString *sep;
 } sep_finder;
 
-static void sep_field([[maybe_unused]] char letter, [[maybe_unused]] int n, void *data) {
-    sep_finder *f = data;
-    if (f->seen_field && f->sep->len > 0)
-        f->done = true;
-    f->seen_field = true;
+static void sep_field([[maybe_unused]] char letter, [[maybe_unused]] int count, void *data) {
+    sep_finder *finder = data;
+    if (finder->seen_field && finder->sep->len > 0)
+        finder->done = true;
+    finder->seen_field = true;
 }
 
 static void sep_text(const char *text, size_t len, [[maybe_unused]] bool quoted, void *data) {
-    sep_finder *f = data;
-    if (f->seen_field && !f->done)
-        g_string_append_len(f->sep, text, (gssize)len);
+    sep_finder *finder = data;
+    if (finder->seen_field && !finder->done)
+        g_string_append_len(finder->sep, text, (gssize)len);
 }
 
 char *xd_intl_picture_separator(const char *picture) {
-    sep_finder f = {.sep = g_string_new(nullptr)};
-    walk_picture(picture, sep_field, sep_text, &f);
+    sep_finder finder = {.sep = g_string_new(nullptr)};
+    walk_picture(picture, sep_field, sep_text, &finder);
     /* Text after the last field isn't a separator. */
-    if (!f.done)
-        g_string_truncate(f.sep, 0);
-    return g_string_free(f.sep, FALSE);
+    if (!finder.done)
+        g_string_truncate(finder.sep, 0);
+    return g_string_free(finder.sep, FALSE);
 }
 
 typedef struct sep_replacer {
@@ -728,29 +735,30 @@ typedef struct sep_replacer {
     const char *from, *to;
 } sep_replacer;
 
-static void replace_field(char letter, int n, void *data) {
-    sep_replacer *r = data;
-    for (int i = 0; i < n; i++)
-        g_string_append_c(r->out, letter);
+static void replace_field(char letter, int count, void *data) {
+    sep_replacer *replacer = data;
+    for (int i = 0; i < count; i++)
+        g_string_append_c(replacer->out, letter);
 }
 
 static void replace_text(const char *text, size_t len, bool quoted, void *data) {
-    sep_replacer *r = data;
+    sep_replacer *replacer = data;
     char *piece = g_strndup(text, len);
-    if (!quoted && r->from[0] != '\0') {
-        char **parts = g_strsplit(piece, r->from, -1);
+    if (!quoted && replacer->from[0] != '\0') {
+        char **parts = g_strsplit(piece, replacer->from, -1);
         g_free(piece);
-        piece = g_strjoinv(r->to, parts);
+        piece = g_strjoinv(replacer->to, parts);
         g_strfreev(parts);
     }
-    picture_text(r->out, piece, strlen(piece));
+    picture_text(replacer->out, piece, strlen(piece));
     g_free(piece);
 }
 
 char *xd_intl_picture_replace_separator(const char *picture, const char *from, const char *to) {
-    sep_replacer r = {g_string_new(nullptr), from != nullptr ? from : "", to != nullptr ? to : ""};
-    walk_picture(picture, replace_field, replace_text, &r);
-    return g_string_free(r.out, FALSE);
+    sep_replacer replacer = {g_string_new(nullptr), from != nullptr ? from : "",
+                             to != nullptr ? to : ""};
+    walk_picture(picture, replace_field, replace_text, &replacer);
+    return g_string_free(replacer.out, FALSE);
 }
 
 /* ---- samples ---- */
@@ -763,61 +771,64 @@ char *xd_intl_group_digits(const char *digits, const char *grouping, const char 
     GPtrArray *groups = g_ptr_array_new_with_free_func(g_free);
     size_t end = len;
     for (guint i = 0; end > 0; i = MIN(i + 1, nparts > 0 ? nparts - 1 : 0)) {
-        gint64 n = -1;
+        gint64 size = -1;
         if (nparts > 0)
-            g_ascii_string_to_signed(parts[i], 10, -1, 99, &n, nullptr);
-        if (n <= 0 || (size_t)n >= end) {
+            g_ascii_string_to_signed(parts[i], 10, -1, 99, &size, nullptr);
+        if (size <= 0 || (size_t)size >= end) {
             g_ptr_array_add(groups, g_strndup(digits, end));
             break;
         }
-        g_ptr_array_add(groups, g_strndup(digits + end - (size_t)n, (gsize)n));
-        end -= (size_t)n;
+        g_ptr_array_add(groups, g_strndup(digits + end - (size_t)size, (gsize)size));
+        end -= (size_t)size;
     }
-    GString *s = g_string_new(nullptr);
+    GString *string = g_string_new(nullptr);
     for (guint i = groups->len; i-- > 0;) {
-        g_string_append(s, g_ptr_array_index(groups, i));
+        g_string_append(string, g_ptr_array_index(groups, i));
         if (i > 0)
-            g_string_append(s, sep != nullptr ? sep : "");
+            g_string_append(string, sep != nullptr ? sep : "");
     }
     g_ptr_array_unref(groups);
     g_strfreev(parts);
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
-char *xd_intl_number_sample(const xd_intl_custom *e, bool negative) {
-    char *whole = xd_intl_group_digits("123456789", e->grouping, e->thousands);
-    char *s = g_strdup_printf("%s%s%s00", negative ? "-" : "", whole,
-                              e->decimal != nullptr ? e->decimal : ".");
+char *xd_intl_number_sample(const xd_intl_custom *custom, bool negative) {
+    char *whole = xd_intl_group_digits("123456789", custom->grouping, custom->thousands);
+    char *sample = g_strdup_printf("%s%s%s00", negative ? "-" : "", whole,
+                                   custom->decimal != nullptr ? custom->decimal : ".");
     g_free(whole);
-    return s;
+    return sample;
 }
 
-char *xd_intl_currency_sample(const xd_intl_custom *e, bool negative) {
-    char *whole = xd_intl_group_digits("123456789", e->mon_grouping, e->mon_thousands);
+char *xd_intl_currency_sample(const xd_intl_custom *custom, bool negative) {
+    char *whole = xd_intl_group_digits("123456789", custom->mon_grouping, custom->mon_thousands);
     GString *amount = g_string_new(whole);
     g_free(whole);
-    if (e->frac_digits > 0) {
-        g_string_append(amount, e->mon_decimal != nullptr ? e->mon_decimal : ".");
-        for (int i = 0; i < e->frac_digits; i++)
+    if (custom->frac_digits > 0) {
+        g_string_append(amount, custom->mon_decimal != nullptr ? custom->mon_decimal : ".");
+        for (int i = 0; i < custom->frac_digits; i++)
             g_string_append_c(amount, '0');
     }
     const char *look =
-        negative ? negative_formats[CLAMP(e->negative_format, 0, XD_INTL_NEGATIVE_FORMATS - 1)].look
-                 : positive_formats[CLAMP(e->positive_format, 0, XD_INTL_POSITIVE_FORMATS - 1)].look;
-    char *s = fill_look(look, e->currency, amount->str);
+        negative
+            ? negative_formats[CLAMP(custom->negative_format, 0, XD_INTL_NEGATIVE_FORMATS - 1)].look
+            : positive_formats[CLAMP(custom->positive_format, 0, XD_INTL_POSITIVE_FORMATS - 1)]
+                  .look;
+    char *sample = fill_look(look, custom->currency, amount->str);
     g_string_free(amount, TRUE);
-    return s;
+    return sample;
 }
 
-char *xd_intl_time_sample(const char *locale, const xd_intl_custom *e, time_t when) {
+char *xd_intl_time_sample(const char *locale, const xd_intl_custom *custom, time_t when) {
     locale_t loc = open_locale(locale);
     if (loc == (locale_t)0)
         return g_strdup("");
     struct tm tm;
     localtime_r(&when, &tm);
-    char *fmt = xd_intl_picture_to_strftime(e->time_format != nullptr ? e->time_format : "");
+    char *fmt =
+        xd_intl_picture_to_strftime(custom->time_format != nullptr ? custom->time_format : "");
     /* AM and PM as set here, not the locale's. */
-    const char *mark = tm.tm_hour < 12 ? e->am : e->pm;
+    const char *mark = tm.tm_hour < 12 ? custom->am : custom->pm;
     char *escaped = mark != nullptr ? g_strdup(mark) : g_strdup("");
     char **bits = g_strsplit(escaped, "%", -1);
     g_free(escaped);
@@ -834,13 +845,15 @@ char *xd_intl_time_sample(const char *locale, const xd_intl_custom *e, time_t wh
     return out;
 }
 
-char *xd_intl_date_sample(const char *locale, const xd_intl_custom *e, time_t when, bool long_date) {
+char *xd_intl_date_sample(const char *locale, const xd_intl_custom *custom, time_t when,
+                          bool long_date) {
     locale_t loc = open_locale(locale);
     if (loc == (locale_t)0)
         return g_strdup("");
     struct tm tm;
     localtime_r(&when, &tm);
-    char *fmt = xd_intl_picture_to_strftime(e->date_format != nullptr ? e->date_format : "");
+    char *fmt =
+        xd_intl_picture_to_strftime(custom->date_format != nullptr ? custom->date_format : "");
     char *out = format_time(loc, long_date ? xd_intl_long_date_format(fmt) : fmt, &tm);
     g_free(fmt);
     freelocale(loc);
@@ -881,36 +894,37 @@ void xd_intl_source_of(const char *locale, char **source, char **charmap) {
 
 /* A localedef string: every character as <Uxxxx>, so nothing needs
  * escaping. */
-static void put_string(GString *s, const char *text) {
-    g_string_append_c(s, '"');
-    for (const char *p = text; p != nullptr && *p != '\0'; p = g_utf8_next_char(p)) {
-        unsigned u = (unsigned)g_utf8_get_char(p);
+static void put_string(GString *string, const char *text) {
+    g_string_append_c(string, '"');
+    for (const char *cursor = text; cursor != nullptr && *cursor != '\0';
+         cursor = g_utf8_next_char(cursor)) {
+        unsigned code_point = (unsigned)g_utf8_get_char(cursor);
         /* localedef: four hex digits, eight beyond the BMP */
-        g_string_append_printf(s, u > 0xFFFF ? "<U%08X>" : "<U%04X>", u);
+        g_string_append_printf(string, code_point > 0xFFFF ? "<U%08X>" : "<U%04X>", code_point);
     }
-    g_string_append_c(s, '"');
+    g_string_append_c(string, '"');
 }
 
-static void put_key(GString *s, const char *key, const char *text) {
-    g_string_append_printf(s, "%s ", key);
-    put_string(s, text);
-    g_string_append_c(s, '\n');
+static void put_key(GString *string, const char *key, const char *text) {
+    g_string_append_printf(string, "%s ", key);
+    put_string(string, text);
+    g_string_append_c(string, '\n');
 }
 
-static void put_list(GString *s, const char *key, locale_t loc, nl_item first, int count) {
-    g_string_append_printf(s, "%s ", key);
+static void put_list(GString *string, const char *key, locale_t loc, nl_item first, int count) {
+    g_string_append_printf(string, "%s ", key);
     for (int i = 0; i < count; i++) {
         if (i > 0)
-            g_string_append(s, ";");
-        put_string(s, nl_langinfo_l((nl_item)(first + i), loc));
+            g_string_append(string, ";");
+        put_string(string, nl_langinfo_l((nl_item)(first + i), loc));
     }
-    g_string_append_c(s, '\n');
+    g_string_append_c(string, '\n');
 }
 
 /* A category as the source locale has it; its name is plain text (from
  * a name xd_intl_valid_name() accepted). */
-static void put_copy(GString *s, const char *category, const char *source) {
-    g_string_append_printf(s, "%s\ncopy \"%s\"\nEND %s\n\n", category, source, category);
+static void put_copy(GString *string, const char *category, const char *source) {
+    g_string_append_printf(string, "%s\ncopy \"%s\"\nEND %s\n\n", category, source, category);
 }
 
 /* A langinfo word (LC_TIME's week start, a date). */
@@ -918,160 +932,165 @@ static unsigned word_info(nl_item item, locale_t loc) {
     union {
         const char *string;
         unsigned word;
-    } v = {.string = nl_langinfo_l(item, loc)};
-    return v.word;
+    } value = {.string = nl_langinfo_l(item, loc)};
+    return value.word;
 }
 
-static void put_time(GString *s, locale_t loc, const xd_intl_custom *c) {
-    g_string_append(s, "LC_TIME\n");
-    put_list(s, "abday", loc, ABDAY_1, 7);
-    put_list(s, "day", loc, DAY_1, 7);
-    put_list(s, "abmon", loc, ABMON_1, 12);
-    put_list(s, "mon", loc, MON_1, 12);
-    put_list(s, "alt_mon", loc, ALTMON_1, 12);
-    put_list(s, "ab_alt_mon", loc, _NL_ABALTMON_1, 12);
-    put_key(s, "d_t_fmt", nl_langinfo_l(D_T_FMT, loc));
-    char *d_fmt = c->date_format != nullptr ? xd_intl_picture_to_strftime(c->date_format)
-                                            : g_strdup(nl_langinfo_l(D_FMT, loc));
-    put_key(s, "d_fmt", d_fmt);
+static void put_time(GString *string, locale_t loc, const xd_intl_custom *custom) {
+    g_string_append(string, "LC_TIME\n");
+    put_list(string, "abday", loc, ABDAY_1, 7);
+    put_list(string, "day", loc, DAY_1, 7);
+    put_list(string, "abmon", loc, ABMON_1, 12);
+    put_list(string, "mon", loc, MON_1, 12);
+    put_list(string, "alt_mon", loc, ALTMON_1, 12);
+    put_list(string, "ab_alt_mon", loc, _NL_ABALTMON_1, 12);
+    put_key(string, "d_t_fmt", nl_langinfo_l(D_T_FMT, loc));
+    char *d_fmt = custom->date_format != nullptr ? xd_intl_picture_to_strftime(custom->date_format)
+                                                 : g_strdup(nl_langinfo_l(D_FMT, loc));
+    put_key(string, "d_fmt", d_fmt);
     g_free(d_fmt);
-    char *t_fmt = c->time_format != nullptr ? xd_intl_picture_to_strftime(c->time_format)
-                                            : g_strdup(nl_langinfo_l(T_FMT, loc));
-    put_key(s, "t_fmt", t_fmt);
+    char *t_fmt = custom->time_format != nullptr ? xd_intl_picture_to_strftime(custom->time_format)
+                                                 : g_strdup(nl_langinfo_l(T_FMT, loc));
+    put_key(string, "t_fmt", t_fmt);
     /* %r is the 12-hour time: the new format if it has AM and PM. */
-    put_key(s, "t_fmt_ampm",
+    put_key(string, "t_fmt_ampm",
             strstr(t_fmt, "%p") != nullptr ? t_fmt : nl_langinfo_l(T_FMT_AMPM, loc));
     g_free(t_fmt);
-    g_string_append(s, "am_pm ");
-    put_string(s, c->am != nullptr ? c->am : nl_langinfo_l(AM_STR, loc));
-    g_string_append_c(s, ';');
-    put_string(s, c->pm != nullptr ? c->pm : nl_langinfo_l(PM_STR, loc));
-    g_string_append_c(s, '\n');
-    put_key(s, "date_fmt", nl_langinfo_l(_DATE_FMT, loc));
+    g_string_append(string, "am_pm ");
+    put_string(string, custom->am != nullptr ? custom->am : nl_langinfo_l(AM_STR, loc));
+    g_string_append_c(string, ';');
+    put_string(string, custom->pm != nullptr ? custom->pm : nl_langinfo_l(PM_STR, loc));
+    g_string_append_c(string, '\n');
+    put_key(string, "date_fmt", nl_langinfo_l(_DATE_FMT, loc));
     int ndays = byte_info(_NL_TIME_WEEK_NDAYS, loc);
     unsigned first_day = word_info(_NL_TIME_WEEK_1STDAY, loc);
     int first_week = byte_info(_NL_TIME_WEEK_1STWEEK, loc);
     if (ndays > 0 && first_day > 0)
-        g_string_append_printf(s, "week %d;%u;%d\n", ndays, first_day, first_week);
+        g_string_append_printf(string, "week %d;%u;%d\n", ndays, first_day, first_week);
     int first_weekday = byte_info(_NL_TIME_FIRST_WEEKDAY, loc);
     int first_workday = byte_info(_NL_TIME_FIRST_WORKDAY, loc);
     int direction = byte_info(_NL_TIME_CAL_DIRECTION, loc);
     if (first_weekday > 0 && first_weekday <= 7)
-        g_string_append_printf(s, "first_weekday %d\n", first_weekday);
+        g_string_append_printf(string, "first_weekday %d\n", first_weekday);
     if (first_workday > 0 && first_workday <= 7)
-        g_string_append_printf(s, "first_workday %d\n", first_workday);
+        g_string_append_printf(string, "first_workday %d\n", first_workday);
     if (direction > 0 && direction <= 3)
-        g_string_append_printf(s, "cal_direction %d\n", direction);
-    g_string_append(s, "END LC_TIME\n\n");
+        g_string_append_printf(string, "cal_direction %d\n", direction);
+    g_string_append(string, "END LC_TIME\n\n");
 }
 
-static void put_byte(GString *s, const char *key, int value) {
-    g_string_append_printf(s, "%s %d\n", key, value == CHAR_MAX ? -1 : value);
+static void put_byte(GString *string, const char *key, int value) {
+    g_string_append_printf(string, "%s %d\n", key, value == CHAR_MAX ? -1 : value);
 }
 
-static void put_monetary(GString *s, locale_t loc, const xd_intl_custom *c) {
-    g_string_append(s, "LC_MONETARY\n");
-    put_key(s, "int_curr_symbol", nl_langinfo_l(INT_CURR_SYMBOL, loc));
-    put_key(s, "currency_symbol",
-            c->currency != nullptr ? c->currency : nl_langinfo_l(CURRENCY_SYMBOL, loc));
-    put_key(s, "mon_decimal_point",
-            c->mon_decimal != nullptr ? c->mon_decimal : nl_langinfo_l(MON_DECIMAL_POINT, loc));
-    put_key(s, "mon_thousands_sep", c->mon_thousands != nullptr
-                                        ? c->mon_thousands
-                                        : nl_langinfo_l(MON_THOUSANDS_SEP, loc));
-    char *grouping = c->mon_grouping != nullptr
-                         ? g_strdup(c->mon_grouping)
+static void put_monetary(GString *string, locale_t loc, const xd_intl_custom *custom) {
+    g_string_append(string, "LC_MONETARY\n");
+    put_key(string, "int_curr_symbol", nl_langinfo_l(INT_CURR_SYMBOL, loc));
+    put_key(string, "currency_symbol",
+            custom->currency != nullptr ? custom->currency : nl_langinfo_l(CURRENCY_SYMBOL, loc));
+    put_key(string, "mon_decimal_point",
+            custom->mon_decimal != nullptr ? custom->mon_decimal
+                                           : nl_langinfo_l(MON_DECIMAL_POINT, loc));
+    put_key(string, "mon_thousands_sep",
+            custom->mon_thousands != nullptr ? custom->mon_thousands
+                                             : nl_langinfo_l(MON_THOUSANDS_SEP, loc));
+    char *grouping = custom->mon_grouping != nullptr
+                         ? g_strdup(custom->mon_grouping)
                          : xd_intl_grouping_text(nl_langinfo_l(MON_GROUPING, loc));
-    g_string_append_printf(s, "mon_grouping %s\n", grouping);
+    g_string_append_printf(string, "mon_grouping %s\n", grouping);
     g_free(grouping);
-    put_key(s, "positive_sign", nl_langinfo_l(POSITIVE_SIGN, loc));
+    put_key(string, "positive_sign", nl_langinfo_l(POSITIVE_SIGN, loc));
     const char *negative = nl_langinfo_l(NEGATIVE_SIGN, loc);
     /* XP's negative formats show a minus sign. */
-    put_key(s, "negative_sign",
-            c->negative_format >= 0 && negative[0] == '\0' ? "-" : negative);
-    int frac = c->frac_digits >= 0 ? c->frac_digits : byte_info(FRAC_DIGITS, loc);
-    put_byte(s, "int_frac_digits",
-             c->frac_digits >= 0 ? c->frac_digits : byte_info(INT_FRAC_DIGITS, loc));
-    put_byte(s, "frac_digits", frac);
+    put_key(string, "negative_sign",
+            custom->negative_format >= 0 && negative[0] == '\0' ? "-" : negative);
+    int frac = custom->frac_digits >= 0 ? custom->frac_digits : byte_info(FRAC_DIGITS, loc);
+    put_byte(string, "int_frac_digits",
+             custom->frac_digits >= 0 ? custom->frac_digits : byte_info(INT_FRAC_DIGITS, loc));
+    put_byte(string, "frac_digits", frac);
     int pcs = byte_info(P_CS_PRECEDES, loc), psep = byte_info(P_SEP_BY_SPACE, loc);
-    if (c->positive_format >= 0) {
-        pcs = positive_formats[c->positive_format].cs_precedes;
-        psep = positive_formats[c->positive_format].sep_by_space;
+    if (custom->positive_format >= 0) {
+        pcs = positive_formats[custom->positive_format].cs_precedes;
+        psep = positive_formats[custom->positive_format].sep_by_space;
     }
     int ncs = byte_info(N_CS_PRECEDES, loc), nsep = byte_info(N_SEP_BY_SPACE, loc);
     int nposn = byte_info(N_SIGN_POSN, loc);
-    if (c->negative_format >= 0) {
-        ncs = negative_formats[c->negative_format].cs_precedes;
-        nsep = negative_formats[c->negative_format].sep_by_space;
-        nposn = negative_formats[c->negative_format].sign_posn;
+    if (custom->negative_format >= 0) {
+        ncs = negative_formats[custom->negative_format].cs_precedes;
+        nsep = negative_formats[custom->negative_format].sep_by_space;
+        nposn = negative_formats[custom->negative_format].sign_posn;
     }
-    put_byte(s, "p_cs_precedes", pcs);
-    put_byte(s, "p_sep_by_space", psep);
-    put_byte(s, "n_cs_precedes", ncs);
-    put_byte(s, "n_sep_by_space", nsep);
-    put_byte(s, "p_sign_posn", byte_info(P_SIGN_POSN, loc));
-    put_byte(s, "n_sign_posn", nposn);
-    g_string_append(s, "END LC_MONETARY\n\n");
+    put_byte(string, "p_cs_precedes", pcs);
+    put_byte(string, "p_sep_by_space", psep);
+    put_byte(string, "n_cs_precedes", ncs);
+    put_byte(string, "n_sep_by_space", nsep);
+    put_byte(string, "p_sign_posn", byte_info(P_SIGN_POSN, loc));
+    put_byte(string, "n_sign_posn", nposn);
+    g_string_append(string, "END LC_MONETARY\n\n");
 }
 
-char *xd_intl_custom_source(const char *locale, const xd_intl_custom *c) {
+char *xd_intl_custom_source(const char *locale, const xd_intl_custom *custom) {
     locale_t loc = open_locale(locale);
     if (loc == (locale_t)0)
         return nullptr;
     char *source = nullptr, *charmap = nullptr;
     xd_intl_source_of(locale, &source, &charmap);
-    GString *s = g_string_new(nullptr);
-    g_string_append_printf(s, "comment_char %%\nescape_char /\n"
-                              "%% Regional and Language Options: %s, customized\n\n",
+    GString *string = g_string_new(nullptr);
+    g_string_append_printf(string,
+                           "comment_char %%\nescape_char /\n"
+                           "%% Regional and Language Options: %s, customized\n\n",
                            locale);
-    put_copy(s, "LC_IDENTIFICATION", source);
-    put_copy(s, "LC_CTYPE", source);
-    put_copy(s, "LC_COLLATE", source);
-    put_copy(s, "LC_MESSAGES", source);
-    if (c->decimal != nullptr || c->thousands != nullptr || c->grouping != nullptr) {
-        g_string_append(s, "LC_NUMERIC\n");
-        put_key(s, "decimal_point", c->decimal != nullptr ? c->decimal : nl_langinfo_l(RADIXCHAR, loc));
-        put_key(s, "thousands_sep",
-                c->thousands != nullptr ? c->thousands : nl_langinfo_l(THOUSEP, loc));
-        char *grouping = c->grouping != nullptr ? g_strdup(c->grouping)
-                                                : xd_intl_grouping_text(nl_langinfo_l(GROUPING, loc));
-        g_string_append_printf(s, "grouping %s\nEND LC_NUMERIC\n\n", grouping);
+    put_copy(string, "LC_IDENTIFICATION", source);
+    put_copy(string, "LC_CTYPE", source);
+    put_copy(string, "LC_COLLATE", source);
+    put_copy(string, "LC_MESSAGES", source);
+    if (custom->decimal != nullptr || custom->thousands != nullptr || custom->grouping != nullptr) {
+        g_string_append(string, "LC_NUMERIC\n");
+        put_key(string, "decimal_point",
+                custom->decimal != nullptr ? custom->decimal : nl_langinfo_l(RADIXCHAR, loc));
+        put_key(string, "thousands_sep",
+                custom->thousands != nullptr ? custom->thousands : nl_langinfo_l(THOUSEP, loc));
+        char *grouping = custom->grouping != nullptr
+                             ? g_strdup(custom->grouping)
+                             : xd_intl_grouping_text(nl_langinfo_l(GROUPING, loc));
+        g_string_append_printf(string, "grouping %s\nEND LC_NUMERIC\n\n", grouping);
         g_free(grouping);
     } else {
-        put_copy(s, "LC_NUMERIC", source);
+        put_copy(string, "LC_NUMERIC", source);
     }
-    if (c->currency != nullptr || c->mon_decimal != nullptr || c->mon_thousands != nullptr ||
-        c->mon_grouping != nullptr || c->frac_digits >= 0 || c->positive_format >= 0 ||
-        c->negative_format >= 0)
-        put_monetary(s, loc, c);
+    if (custom->currency != nullptr || custom->mon_decimal != nullptr ||
+        custom->mon_thousands != nullptr || custom->mon_grouping != nullptr ||
+        custom->frac_digits >= 0 || custom->positive_format >= 0 || custom->negative_format >= 0)
+        put_monetary(string, loc, custom);
     else
-        put_copy(s, "LC_MONETARY", source);
-    if (c->time_format != nullptr || c->am != nullptr || c->pm != nullptr ||
-        c->date_format != nullptr)
-        put_time(s, loc, c);
+        put_copy(string, "LC_MONETARY", source);
+    if (custom->time_format != nullptr || custom->am != nullptr || custom->pm != nullptr ||
+        custom->date_format != nullptr)
+        put_time(string, loc, custom);
     else
-        put_copy(s, "LC_TIME", source);
-    put_copy(s, "LC_PAPER", source);
-    put_copy(s, "LC_NAME", source);
-    put_copy(s, "LC_ADDRESS", source);
-    put_copy(s, "LC_TELEPHONE", source);
-    if (c->measurement != 0)
-        g_string_append_printf(s, "LC_MEASUREMENT\nmeasurement %d\nEND LC_MEASUREMENT\n",
-                               c->measurement);
+        put_copy(string, "LC_TIME", source);
+    put_copy(string, "LC_PAPER", source);
+    put_copy(string, "LC_NAME", source);
+    put_copy(string, "LC_ADDRESS", source);
+    put_copy(string, "LC_TELEPHONE", source);
+    if (custom->measurement != 0)
+        g_string_append_printf(string, "LC_MEASUREMENT\nmeasurement %d\nEND LC_MEASUREMENT\n",
+                               custom->measurement);
     else
-        put_copy(s, "LC_MEASUREMENT", source);
+        put_copy(string, "LC_MEASUREMENT", source);
     freelocale(loc);
     g_free(source);
     g_free(charmap);
-    return g_string_free(s, FALSE);
+    return g_string_free(string, FALSE);
 }
 
 /* ---- locale1 --------------------------------------------------------------------- */
 
 const char *xd_intl_lang(const char *const *locale) {
-    for (const char *const *v = locale; v != nullptr && *v != nullptr; v++) {
-        if (g_str_has_prefix(*v, "LANG="))
-            return *v + 5;
+    for (const char *const *variable = locale; variable != nullptr && *variable != nullptr;
+         variable++) {
+        if (g_str_has_prefix(*variable, "LANG="))
+            return *variable + 5;
     }
     return nullptr;
 }
@@ -1079,9 +1098,10 @@ const char *xd_intl_lang(const char *const *locale) {
 char **xd_intl_replace_lang(const char *const *locale, const char *lang) {
     GPtrArray *out = g_ptr_array_new();
     g_ptr_array_add(out, g_strdup_printf("LANG=%s", lang));
-    for (const char *const *v = locale; v != nullptr && *v != nullptr; v++) {
-        if (!g_str_has_prefix(*v, "LANG="))
-            g_ptr_array_add(out, g_strdup(*v));
+    for (const char *const *variable = locale; variable != nullptr && *variable != nullptr;
+         variable++) {
+        if (!g_str_has_prefix(*variable, "LANG="))
+            g_ptr_array_add(out, g_strdup(*variable));
     }
     g_ptr_array_add(out, nullptr);
     return (char **)g_ptr_array_free(out, FALSE);

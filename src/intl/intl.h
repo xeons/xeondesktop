@@ -33,7 +33,7 @@ typedef struct xd_intl_samples {
 /* Formats 123456789.00 and `when` as `locale` would. False if the locale
  * isn't installed. */
 bool xd_intl_samples_get(const char *locale, time_t when, xd_intl_samples *out);
-void xd_intl_samples_free(xd_intl_samples *s);
+void xd_intl_samples_free(xd_intl_samples *intl_samples);
 
 /* A long date strftime format ("%A, %B %-d, %Y") in the order of the
  * locale's short date format `d_fmt` (D_FMT): glibc has no long date. */
@@ -79,20 +79,21 @@ enum { XD_INTL_POSITIVE_FORMATS = 4, XD_INTL_NEGATIVE_FORMATS = 16 };
 /* How currency format `i` looks with `symbol`: "$1.1", "(1.1 €)". */
 char *xd_intl_currency_format_look(bool negative, int i, const char *symbol);
 
-void xd_intl_custom_init(xd_intl_custom *c);
-void xd_intl_custom_clear(xd_intl_custom *c);
-bool xd_intl_custom_empty(const xd_intl_custom *c);
+void xd_intl_custom_init(xd_intl_custom *custom);
+void xd_intl_custom_clear(xd_intl_custom *custom);
+bool xd_intl_custom_empty(const xd_intl_custom *custom);
 /* `locale`'s own values in every field (the pictures converted from its
  * strftime formats); false if it isn't installed. */
 bool xd_intl_custom_from_locale(const char *locale, xd_intl_custom *out);
-/* `locale`'s values with `c`'s changes over them. */
-bool xd_intl_custom_effective(const char *locale, const xd_intl_custom *c, xd_intl_custom *out);
+/* `locale`'s values with `custom`'s changes over them. */
+bool xd_intl_custom_effective(const char *locale, const xd_intl_custom *custom,
+                              xd_intl_custom *out);
 
 /* formats.ini: the locale the changes were made to, and the changes.
  * Loading a missing file gives none. Saving none (or a nullptr locale)
  * removes the file. */
-void xd_intl_custom_load(const char *path, char **locale, xd_intl_custom *c);
-bool xd_intl_custom_save(const char *path, const char *locale, const xd_intl_custom *c,
+void xd_intl_custom_load(const char *path, char **locale, xd_intl_custom *custom);
+bool xd_intl_custom_save(const char *path, const char *locale, const xd_intl_custom *custom,
                          GError **error);
 
 /* XP's time and date pictures (h hh H HH m mm s ss t tt; d dd ddd dddd M
@@ -112,13 +113,14 @@ char *xd_intl_group_digits(const char *digits, const char *grouping, const char 
 /* glibc's GROUPING bytes as localedef's text ("\3\3" -> "3;3"). */
 char *xd_intl_grouping_text(const char *bytes);
 /* The samples Customize shows: 123456789.00 (negative: -123456789.00)
- * as numbers and as money, in the effective settings `e`. */
-char *xd_intl_number_sample(const xd_intl_custom *e, bool negative);
-char *xd_intl_currency_sample(const xd_intl_custom *e, bool negative);
-/* `when` in `e`'s time format or short date, with `locale`'s names of
+ * as numbers and as money, in the effective settings `custom`. */
+char *xd_intl_number_sample(const xd_intl_custom *custom, bool negative);
+char *xd_intl_currency_sample(const xd_intl_custom *custom, bool negative);
+/* `when` in `custom`'s time format or short date, with `locale`'s names of
  * days and months. */
-char *xd_intl_time_sample(const char *locale, const xd_intl_custom *e, time_t when);
-char *xd_intl_date_sample(const char *locale, const xd_intl_custom *e, time_t when, bool long_date);
+char *xd_intl_time_sample(const char *locale, const xd_intl_custom *custom, time_t when);
+char *xd_intl_date_sample(const char *locale, const xd_intl_custom *custom, time_t when,
+                          bool long_date);
 
 /* The customized locale's name, "de_DE.UTF-8@xeondesktop", and back. */
 char *xd_intl_custom_name(const char *locale);
@@ -129,7 +131,7 @@ char *xd_intl_custom_base(const char *name);
 void xd_intl_source_of(const char *locale, char **source, char **charmap);
 /* The customized locale as a localedef source file; nullptr if `locale`
  * isn't installed. */
-char *xd_intl_custom_source(const char *locale, const xd_intl_custom *c);
+char *xd_intl_custom_source(const char *locale, const xd_intl_custom *custom);
 /* Writes the formats file setting every format variable to `locale` and,
  * with `locpath`, LOCPATH; nullptr locale removes the file. */
 bool xd_intl_write_formats_full(const char *path, const char *locale, const char *locpath,
