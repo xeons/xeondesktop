@@ -72,71 +72,74 @@ typedef struct cm {
     guint refresh_idle;
 } cm;
 
-static void display_link_free(gpointer p) {
-    display_link *l = p;
-    g_free(l->device);
-    g_free(l->monitor);
-    g_free(l);
+static void display_link_free(gpointer user_data) {
+    display_link *link = user_data;
+    g_free(link->device);
+    g_free(link->monitor);
+    g_free(link);
 }
 
 /* ---- colord --------------------------------------------------------------------- */
 
-static GVariant *cd_call(cm *c, const char *path, const char *iface, const char *method,
+static GVariant *cd_call(cm *color_manager, const char *path, const char *iface, const char *method,
                          GVariant *args, const GVariantType *reply, GError **error) {
-    if (c->bus == nullptr) {
+    if (color_manager->bus == nullptr) {
         if (args != nullptr)
             g_variant_unref(g_variant_ref_sink(args));
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "No system bus.");
         return nullptr;
     }
-    return g_dbus_connection_call_sync(c->bus, CD_NAME, path, iface, method, args, reply,
-                                       G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, nullptr, error);
+    return g_dbus_connection_call_sync(color_manager->bus, CD_NAME, path, iface, method, args,
+                                       reply, G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, nullptr,
+                                       error);
 }
 
 /* An object's properties (a{sv}), or nullptr. */
-static GVariant *cd_props(cm *c, const char *path, const char *iface) {
-    GVariant *v = cd_call(c, path, "org.freedesktop.DBus.Properties", "GetAll",
-                          g_variant_new("(s)", iface), G_VARIANT_TYPE("(a{sv})"), nullptr);
-    if (v == nullptr)
+static GVariant *cd_props(cm *color_manager, const char *path, const char *iface) {
+    GVariant *variant = cd_call(color_manager, path, "org.freedesktop.DBus.Properties", "GetAll",
+                                g_variant_new("(s)", iface), G_VARIANT_TYPE("(a{sv})"), nullptr);
+    if (variant == nullptr)
         return nullptr;
-    GVariant *props = g_variant_get_child_value(v, 0);
-    g_variant_unref(v);
+    GVariant *props = g_variant_get_child_value(variant, 0);
+    g_variant_unref(variant);
     return props;
 }
 
 static char *prop_string(GVariant *props, const char *key) {
-    const char *s = nullptr;
-    return props != nullptr && g_variant_lookup(props, key, "&s", &s) ? g_strdup(s)
-                                                                        : g_strdup("");
+    const char *value = nullptr;
+    return props != nullptr && g_variant_lookup(props, key, "&s", &value) ? g_strdup(value)
+                                                                          : g_strdup("");
 }
 
 /* A method returning one object path ("(o)"), or nullptr. */
-static char *cd_call_path(cm *c, const char *path, const char *iface, const char *method,
-                          GVariant *args, GError **error) {
-    GVariant *v = cd_call(c, path, iface, method, args, G_VARIANT_TYPE("(o)"), error);
-    if (v == nullptr)
+static char *cd_call_path(cm *color_manager, const char *path, const char *iface,
+                          const char *method, GVariant *args, GError **error) {
+    GVariant *variant =
+        cd_call(color_manager, path, iface, method, args, G_VARIANT_TYPE("(o)"), error);
+    if (variant == nullptr)
         return nullptr;
     char *out = nullptr;
-    g_variant_get(v, "(o)", &out);
-    g_variant_unref(v);
+    g_variant_get(variant, "(o)", &out);
+    g_variant_unref(variant);
     return out;
 }
 
 /* The object paths a method returns ("(ao)"); never nullptr. */
-static char **cd_call_paths(cm *c, const char *method) {
-    GVariant *v = cd_call(c, CD_PATH, CD_NAME, method, nullptr, G_VARIANT_TYPE("(ao)"), nullptr);
-    if (v == nullptr)
+static char **cd_call_paths(cm *color_manager, const char *method) {
+    GVariant *variant =
+        cd_call(color_manager, CD_PATH, CD_NAME, method, nullptr, G_VARIANT_TYPE("(ao)"), nullptr);
+    if (variant == nullptr)
         return g_new0(char *, 1);
-    GVariant *list = g_variant_get_child_value(v, 0);
+    GVariant *list = g_variant_get_child_value(variant, 0);
     char **out = g_variant_dup_objv(list, nullptr);
     g_variant_unref(list);
-    g_variant_unref(v);
+    g_variant_unref(variant);
     return out;
 }
 
 /* The device's profiles, the default first, as colord orders them. */
-static char **device_profiles(cm *c, const char *device) {
-    GVariant *props = cd_props(c, device, CD_DEVICE);
+static char **device_profiles(cm *color_manager, const char *device) {
+    GVariant *props = cd_props(color_manager, device, CD_DEVICE);
     GVariant *list = props != nullptr ? g_variant_lookup_value(props, "Profiles",
                                                                G_VARIANT_TYPE("ao"))
                                       : nullptr;
@@ -148,18 +151,18 @@ static char **device_profiles(cm *c, const char *device) {
     return out;
 }
 
-static void error_box(cm *c, const char *what, const GError *error) {
+static void error_box(cm *color_manager, const char *what, const GError *error) {
     char *text = g_strdup_printf("%s\n\n%s", what, error != nullptr ? error->message : "");
-    xd_message_box(GTK_WINDOW(c->window), "Color Management", XD_MB_ERROR, XD_MB_OK, FALSE,
-                   g_strstrip(text));
+    xd_message_box(GTK_WINDOW(color_manager->window), "Color Management", XD_MB_ERROR, XD_MB_OK,
+                   FALSE, g_strstrip(text));
     g_free(text);
 }
 
 /* Hands an ICC file to colord as a profile (by descriptor: colord runs as
  * its own user). Returns its object path, or nullptr. */
-static char *install_profile(cm *c, const char *path, const char *id, GError **error) {
-    char *found = cd_call_path(c, CD_PATH, CD_NAME, "FindProfileById", g_variant_new("(s)", id),
-                               nullptr);
+static char *install_profile(cm *color_manager, const char *path, const char *id, GError **error) {
+    char *found = cd_call_path(color_manager, CD_PATH, CD_NAME, "FindProfileById",
+                               g_variant_new("(s)", id), nullptr);
     if (found != nullptr)
         return found;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -173,42 +176,42 @@ static char *install_profile(cm *c, const char *path, const char *id, GError **e
     g_variant_builder_init(&props, G_VARIANT_TYPE("a{ss}"));
     g_variant_builder_add(&props, "{ss}", "Filename", path);
     g_variant_builder_add(&props, "{ss}", "FILE_checksum", id + strlen("icc-"));
-    GVariant *v = g_dbus_connection_call_with_unix_fd_list_sync(
-        c->bus, CD_NAME, CD_PATH, CD_NAME, "CreateProfileWithFd",
+    GVariant *variant = g_dbus_connection_call_with_unix_fd_list_sync(
+        color_manager->bus, CD_NAME, CD_PATH, CD_NAME, "CreateProfileWithFd",
         g_variant_new("(ssha{ss})", id, "normal", 0, &props), G_VARIANT_TYPE("(o)"),
         G_DBUS_CALL_FLAGS_NONE, CALL_TIMEOUT_MS, fds, nullptr, nullptr, error);
     g_object_unref(fds);
-    if (v == nullptr)
+    if (variant == nullptr)
         return nullptr;
     char *out = nullptr;
-    g_variant_get(v, "(o)", &out);
-    g_variant_unref(v);
+    g_variant_get(variant, "(o)", &out);
+    g_variant_unref(variant);
     return out;
 }
 
 /* Copies a file into the store and installs it. */
-static char *import_profile(cm *c, const char *path, GError **error) {
+static char *import_profile(cm *color_manager, const char *path, GError **error) {
     char *id = nullptr;
-    char *stored = xd_color_import(path, c->store, &id, error);
+    char *stored = xd_color_import(path, color_manager->store, &id, error);
     if (stored == nullptr)
         return nullptr;
-    char *profile = install_profile(c, stored, id, error);
+    char *profile = install_profile(color_manager, stored, id, error);
     g_free(stored);
     g_free(id);
     return profile;
 }
 
 /* The store's profiles, which colord forgets when it restarts. */
-static void install_store(cm *c) {
-    GDir *dir = g_dir_open(c->store, 0, nullptr);
+static void install_store(cm *color_manager) {
+    GDir *dir = g_dir_open(color_manager->store, 0, nullptr);
     if (dir == nullptr)
         return;
     const char *name;
     while ((name = g_dir_read_name(dir)) != nullptr) {
         if (!g_str_has_suffix(name, ".icc") && !g_str_has_suffix(name, ".icm"))
             continue;
-        char *path = g_build_filename(c->store, name, nullptr);
-        char *known = cd_call_path(c, CD_PATH, CD_NAME, "FindProfileByFilename",
+        char *path = g_build_filename(color_manager->store, name, nullptr);
+        char *known = cd_call_path(color_manager, CD_PATH, CD_NAME, "FindProfileByFilename",
                                    g_variant_new("(s)", path), nullptr);
         char *data = nullptr;
         gsize len = 0;
@@ -216,12 +219,12 @@ static void install_store(cm *c) {
             xd_color_looks_like_icc((const guint8 *)data, len)) {
             char *id = xd_color_profile_id((const guint8 *)data, len);
             GError *error = nullptr;
-            char *p = install_profile(c, path, id, &error);
-            if (p == nullptr) {
+            char *profile = install_profile(color_manager, path, id, &error);
+            if (profile == nullptr) {
                 g_message("%s: %s", path, error->message);
                 g_error_free(error);
             }
-            g_free(p);
+            g_free(profile);
             g_free(id);
         }
         g_free(data);
@@ -247,64 +250,64 @@ typedef struct head_info {
     bool enabled;
 } head_info;
 
-static void head_info_free(gpointer p) {
-    head_info *h = p;
-    g_free(h->name);
-    g_free(h->make);
-    g_free(h->model);
-    g_free(h->serial);
-    g_free(h);
+static void head_info_free(gpointer user_data) {
+    head_info *info = user_data;
+    g_free(info->name);
+    g_free(info->make);
+    g_free(info->model);
+    g_free(info->serial);
+    g_free(info);
 }
 
-static void set_str(char **field, const char *s) {
+static void set_str(char **field, const char *value) {
     g_free(*field);
-    *field = g_strdup(s);
+    *field = g_strdup(value);
 }
 
-static void head_name(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                      const char *s) {
-    set_str(&((head_info *)data)->name, s);
+static void head_name(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                      const char *name) {
+    set_str(&((head_info *)data)->name, name);
 }
-static void head_make(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                      const char *s) {
-    set_str(&((head_info *)data)->make, s);
+static void head_make(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                      const char *make) {
+    set_str(&((head_info *)data)->make, make);
 }
-static void head_model(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                       const char *s) {
-    set_str(&((head_info *)data)->model, s);
+static void head_model(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                       const char *model) {
+    set_str(&((head_info *)data)->model, model);
 }
-static void head_serial(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                        const char *s) {
-    set_str(&((head_info *)data)->serial, s);
+static void head_serial(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                        const char *serial) {
+    set_str(&((head_info *)data)->serial, serial);
 }
-static void head_enabled(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_enabled(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *head,
                          int32_t enabled) {
     ((head_info *)data)->enabled = enabled != 0;
 }
 static void head_ignore_str([[maybe_unused]] void *data,
-                            [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                            [[maybe_unused]] const char *s) {}
+                            [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                            [[maybe_unused]] const char *text) {}
 static void head_ignore_size([[maybe_unused]] void *data,
-                             [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                             [[maybe_unused]] int32_t a, [[maybe_unused]] int32_t b) {}
+                             [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                             [[maybe_unused]] int32_t first, [[maybe_unused]] int32_t second) {}
 static void head_ignore_int([[maybe_unused]] void *data,
-                            [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                            [[maybe_unused]] int32_t a) {}
+                            [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                            [[maybe_unused]] int32_t value) {}
 static void head_ignore_uint([[maybe_unused]] void *data,
-                             [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                             [[maybe_unused]] uint32_t a) {}
+                             [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                             [[maybe_unused]] uint32_t value) {}
 static void head_ignore_fixed([[maybe_unused]] void *data,
-                              [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                              [[maybe_unused]] wl_fixed_t a) {}
+                              [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                              [[maybe_unused]] wl_fixed_t value) {}
 static void head_ignore_mode([[maybe_unused]] void *data,
-                             [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                             [[maybe_unused]] struct zwlr_output_mode_v1 *m) {}
+                             [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                             [[maybe_unused]] struct zwlr_output_mode_v1 *mode) {}
 static void head_ignore([[maybe_unused]] void *data,
-                        [[maybe_unused]] struct zwlr_output_head_v1 *h) {}
+                        [[maybe_unused]] struct zwlr_output_head_v1 *head) {}
 /* Modes are objects of their own, ours to destroy. */
-static void head_mode(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                      struct zwlr_output_mode_v1 *m) {
-    g_ptr_array_add(((head_info *)data)->q->modes, m);
+static void head_mode(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *head,
+                      struct zwlr_output_mode_v1 *mode) {
+    g_ptr_array_add(((head_info *)data)->q->modes, mode);
 }
 
 static const struct zwlr_output_head_v1_listener head_listener = {
@@ -324,23 +327,23 @@ static const struct zwlr_output_head_v1_listener head_listener = {
     .adaptive_sync = head_ignore_uint,
 };
 
-static void manager_head(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *m,
+static void manager_head(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *output_manager,
                          struct zwlr_output_head_v1 *head) {
-    heads_query *q = data;
-    head_info *h = g_new0(head_info, 1);
-    h->q = q;
-    g_ptr_array_add(q->heads, h);
-    g_ptr_array_add(q->proxies, head);
-    zwlr_output_head_v1_add_listener(head, &head_listener, h);
+    heads_query *query = data;
+    head_info *info = g_new0(head_info, 1);
+    info->q = query;
+    g_ptr_array_add(query->heads, info);
+    g_ptr_array_add(query->proxies, head);
+    zwlr_output_head_v1_add_listener(head, &head_listener, info);
 }
 
-static void manager_done(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *m,
+static void manager_done(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *output_manager,
                          [[maybe_unused]] uint32_t serial) {
     ((heads_query *)data)->done = true;
 }
 
 static void manager_finished([[maybe_unused]] void *data,
-                             [[maybe_unused]] struct zwlr_output_manager_v1 *m) {}
+                             [[maybe_unused]] struct zwlr_output_manager_v1 *output_manager) {}
 
 static const struct zwlr_output_manager_v1_listener manager_listener = {
     .head = manager_head,
@@ -350,12 +353,12 @@ static const struct zwlr_output_manager_v1_listener manager_listener = {
 
 static void registry_global(void *data, struct wl_registry *registry, uint32_t name,
                             const char *iface, uint32_t version) {
-    heads_query *q = data;
-    if (strcmp(iface, zwlr_output_manager_v1_interface.name) == 0 && q->manager == nullptr) {
+    heads_query *query = data;
+    if (strcmp(iface, zwlr_output_manager_v1_interface.name) == 0 && query->manager == nullptr) {
         /* Version 2 has make, model and serial number. */
-        q->manager = wl_registry_bind(registry, name, &zwlr_output_manager_v1_interface,
-                                      MIN(version, 2u));
-        zwlr_output_manager_v1_add_listener(q->manager, &manager_listener, q);
+        query->manager =
+            wl_registry_bind(registry, name, &zwlr_output_manager_v1_interface, MIN(version, 2u));
+        zwlr_output_manager_v1_add_listener(query->manager, &manager_listener, query);
     }
 }
 
@@ -380,28 +383,28 @@ static GPtrArray *list_monitors(void) {
     struct wl_event_queue *queue = wl_display_create_queue(display);
     struct wl_display *wrapped = wl_proxy_create_wrapper(display);
     wl_proxy_set_queue((struct wl_proxy *)wrapped, queue);
-    heads_query q = {.heads = out, .proxies = g_ptr_array_new(), .modes = g_ptr_array_new()};
+    heads_query query = {.heads = out, .proxies = g_ptr_array_new(), .modes = g_ptr_array_new()};
     struct wl_registry *registry = wl_display_get_registry(wrapped);
-    wl_registry_add_listener(registry, &registry_listener, &q);
+    wl_registry_add_listener(registry, &registry_listener, &query);
     wl_display_roundtrip_queue(display, queue);
-    for (int i = 0; q.manager != nullptr && !q.done && i < 5; i++)
+    for (int i = 0; query.manager != nullptr && !query.done && i < 5; i++)
         wl_display_roundtrip_queue(display, queue);
     /* Version 2 has no release requests: the proxies just go, and the
      * compositor stops sending once it has seen stop. */
-    if (q.manager != nullptr)
-        zwlr_output_manager_v1_stop(q.manager);
-    for (guint i = 0; i < q.modes->len; i++)
-        zwlr_output_mode_v1_destroy(g_ptr_array_index(q.modes, i));
-    for (guint i = 0; i < q.proxies->len; i++)
-        zwlr_output_head_v1_destroy(g_ptr_array_index(q.proxies, i));
-    if (q.manager != nullptr)
-        zwlr_output_manager_v1_destroy(q.manager);
+    if (query.manager != nullptr)
+        zwlr_output_manager_v1_stop(query.manager);
+    for (guint i = 0; i < query.modes->len; i++)
+        zwlr_output_mode_v1_destroy(g_ptr_array_index(query.modes, i));
+    for (guint i = 0; i < query.proxies->len; i++)
+        zwlr_output_head_v1_destroy(g_ptr_array_index(query.proxies, i));
+    if (query.manager != nullptr)
+        zwlr_output_manager_v1_destroy(query.manager);
     wl_registry_destroy(registry);
     wl_proxy_wrapper_destroy(wrapped);
     wl_display_flush(display);
     wl_event_queue_destroy(queue);
-    g_ptr_array_free(q.modes, TRUE);
-    g_ptr_array_free(q.proxies, TRUE);
+    g_ptr_array_free(query.modes, TRUE);
+    g_ptr_array_free(query.proxies, TRUE);
     for (guint i = out->len; i-- > 0;) {
         if (!((head_info *)g_ptr_array_index(out, i))->enabled)
             g_ptr_array_remove_index(out, i);
@@ -410,12 +413,12 @@ static GPtrArray *list_monitors(void) {
 }
 
 /* Registers the monitors with colord (or finds them registered). */
-static void register_displays(cm *c) {
+static void register_displays(cm *color_manager) {
     GPtrArray *heads = list_monitors();
     for (guint i = 0; i < heads->len; i++) {
-        const head_info *h = g_ptr_array_index(heads, i);
-        char *id = xd_color_display_id(h->make, h->model, h->serial, h->name);
-        char *path = cd_call_path(c, CD_PATH, CD_NAME, "FindDeviceById",
+        const head_info *info = g_ptr_array_index(heads, i);
+        char *id = xd_color_display_id(info->make, info->model, info->serial, info->name);
+        char *path = cd_call_path(color_manager, CD_PATH, CD_NAME, "FindDeviceById",
                                   g_variant_new("(s)", id), nullptr);
         if (path == nullptr) {
             GVariantBuilder props;
@@ -423,16 +426,16 @@ static void register_displays(cm *c) {
             g_variant_builder_add(&props, "{ss}", "Kind", "display");
             g_variant_builder_add(&props, "{ss}", "Mode", "physical");
             g_variant_builder_add(&props, "{ss}", "Colorspace", "rgb");
-            if (h->make != nullptr)
-                g_variant_builder_add(&props, "{ss}", "Vendor", h->make);
-            if (h->model != nullptr)
-                g_variant_builder_add(&props, "{ss}", "Model", h->model);
-            if (h->serial != nullptr)
-                g_variant_builder_add(&props, "{ss}", "Serial", h->serial);
-            if (h->name != nullptr)
-                g_variant_builder_add(&props, "{ss}", "XRANDR_name", h->name);
+            if (info->make != nullptr)
+                g_variant_builder_add(&props, "{ss}", "Vendor", info->make);
+            if (info->model != nullptr)
+                g_variant_builder_add(&props, "{ss}", "Model", info->model);
+            if (info->serial != nullptr)
+                g_variant_builder_add(&props, "{ss}", "Serial", info->serial);
+            if (info->name != nullptr)
+                g_variant_builder_add(&props, "{ss}", "XRANDR_name", info->name);
             GError *error = nullptr;
-            path = cd_call_path(c, CD_PATH, CD_NAME, "CreateDevice",
+            path = cd_call_path(color_manager, CD_PATH, CD_NAME, "CreateDevice",
                                 g_variant_new("(ssa{ss})", id, "normal", &props), &error);
             if (path == nullptr) {
                 g_message("%s: %s", id, error->message);
@@ -440,14 +443,15 @@ static void register_displays(cm *c) {
             }
         }
         if (path != nullptr) {
-            display_link *l = g_new0(display_link, 1);
-            l->device = path;
+            display_link *link = g_new0(display_link, 1);
+            link->device = path;
             char key[192];
-            xd_monitor_key(key, sizeof(key), h->make != nullptr ? h->make : "",
-                           h->model != nullptr ? h->model : "",
-                           h->serial != nullptr ? h->serial : "", h->name != nullptr ? h->name : "");
-            l->monitor = g_strdup(key);
-            g_ptr_array_add(c->displays, l);
+            xd_monitor_key(key, sizeof(key), info->make != nullptr ? info->make : "",
+                           info->model != nullptr ? info->model : "",
+                           info->serial != nullptr ? info->serial : "",
+                           info->name != nullptr ? info->name : "");
+            link->monitor = g_strdup(key);
+            g_ptr_array_add(color_manager->displays, link);
         }
         g_free(id);
     }
@@ -456,34 +460,34 @@ static void register_displays(cm *c) {
 
 /* Each registered monitor's default profile into [ColorProfiles], for the
  * compositor. */
-static void sync_settings(cm *c) {
-    if (c->displays->len == 0)
+static void sync_settings(cm *color_manager) {
+    if (color_manager->displays->len == 0)
         return;
-    xd_settings s;
-    xd_settings_load(&s);
+    xd_settings settings;
+    xd_settings_load(&settings);
     bool changed = false;
-    for (guint i = 0; i < c->displays->len; i++) {
-        const display_link *l = g_ptr_array_index(c->displays, i);
-        char **profiles = device_profiles(c, l->device);
+    for (guint i = 0; i < color_manager->displays->len; i++) {
+        const display_link *link = g_ptr_array_index(color_manager->displays, i);
+        char **profiles = device_profiles(color_manager, link->device);
         char *file = nullptr;
         if (profiles[0] != nullptr) {
-            GVariant *props = cd_props(c, profiles[0], CD_PROFILE);
+            GVariant *props = cd_props(color_manager, profiles[0], CD_PROFILE);
             file = prop_string(props, "Filename");
             if (props != nullptr)
                 g_variant_unref(props);
         }
         g_strfreev(profiles);
-        const char *now = xd_settings_color_profile(&s, l->monitor);
+        const char *now = xd_settings_color_profile(&settings, link->monitor);
         const char *want = file != nullptr ? file : "";
         if (g_strcmp0(now != nullptr ? now : "", want) != 0) {
-            if (xd_settings_set_color_profile(&s, l->monitor, want))
+            if (xd_settings_set_color_profile(&settings, link->monitor, want))
                 changed = true;
             else
-                g_message("%s: can't keep %s in desktop.ini", l->monitor, want);
+                g_message("%s: can't keep %s in desktop.ini", link->monitor, want);
         }
         g_free(file);
     }
-    if (changed && !xd_settings_save(&s))
+    if (changed && !xd_settings_save(&settings))
         g_message("desktop.ini couldn't be saved");
 }
 
@@ -499,11 +503,11 @@ static char *selected_path(GtkWidget *view, int column) {
     return path;
 }
 
-static char *selected_device(cm *c) {
+static char *selected_device(cm *color_manager) {
     GtkTreeIter it;
     char *path = nullptr;
-    if (gtk_combo_box_get_active_iter(GTK_COMBO_BOX(c->device_combo), &it))
-        gtk_tree_model_get(GTK_TREE_MODEL(c->devices), &it, DEV_PATH, &path, -1);
+    if (gtk_combo_box_get_active_iter(GTK_COMBO_BOX(color_manager->device_combo), &it))
+        gtk_tree_model_get(GTK_TREE_MODEL(color_manager->devices), &it, DEV_PATH, &path, -1);
     return path;
 }
 
@@ -520,8 +524,9 @@ static const char *profile_type(const char *kind) {
 }
 
 /* Adds a profile's row; `default_mark` adds Windows 7's "(default)". */
-static void add_profile_row(cm *c, GtkListStore *store, const char *path, bool default_mark) {
-    GVariant *props = cd_props(c, path, CD_PROFILE);
+static void add_profile_row(cm *color_manager, GtkListStore *store, const char *path,
+                            bool default_mark) {
+    GVariant *props = cd_props(color_manager, path, CD_PROFILE);
     char *title = prop_string(props, "Title");
     char *file = prop_string(props, "Filename");
     char *kind = prop_string(props, "Kind");
@@ -539,60 +544,63 @@ static void add_profile_row(cm *c, GtkListStore *store, const char *path, bool d
         g_variant_unref(props);
 }
 
-static void update_buttons(cm *c) {
-    char *device = selected_device(c);
-    char *profile = selected_path(c->device_view, PRO_PATH);
-    gtk_widget_set_sensitive(c->add, c->available && device != nullptr);
-    gtk_widget_set_sensitive(c->remove, c->available && profile != nullptr);
+static void update_buttons(cm *color_manager) {
+    char *device = selected_device(color_manager);
+    char *profile = selected_path(color_manager->device_view, PRO_PATH);
+    gtk_widget_set_sensitive(color_manager->add, color_manager->available && device != nullptr);
+    gtk_widget_set_sensitive(color_manager->remove, color_manager->available && profile != nullptr);
     /* The default is the first row. */
     GtkTreeIter first;
     char *first_path = nullptr;
-    if (gtk_tree_model_get_iter_first(GTK_TREE_MODEL(c->device_profiles), &first))
-        gtk_tree_model_get(GTK_TREE_MODEL(c->device_profiles), &first, PRO_PATH, &first_path, -1);
-    gtk_widget_set_sensitive(c->make_default, c->available && profile != nullptr &&
-                                                  g_strcmp0(profile, first_path) != 0);
+    if (gtk_tree_model_get_iter_first(GTK_TREE_MODEL(color_manager->device_profiles), &first))
+        gtk_tree_model_get(GTK_TREE_MODEL(color_manager->device_profiles), &first, PRO_PATH,
+                           &first_path, -1);
+    gtk_widget_set_sensitive(color_manager->make_default, color_manager->available &&
+                                                              profile != nullptr &&
+                                                              g_strcmp0(profile, first_path) != 0);
     g_free(first_path);
-    char *any = selected_path(c->all_view, PRO_PATH);
+    char *any = selected_path(color_manager->all_view, PRO_PATH);
     bool ours = false;
     if (any != nullptr) {
-        GVariant *props = cd_props(c, any, CD_PROFILE);
+        GVariant *props = cd_props(color_manager, any, CD_PROFILE);
         char *file = prop_string(props, "Filename");
         char *dir = g_path_get_dirname(file);
-        ours = strcmp(dir, c->store) == 0;
+        ours = strcmp(dir, color_manager->store) == 0;
         g_free(dir);
         g_free(file);
         if (props != nullptr)
             g_variant_unref(props);
     }
-    gtk_widget_set_sensitive(c->all_add, c->available);
+    gtk_widget_set_sensitive(color_manager->all_add, color_manager->available);
     /* Only what was installed here: system profiles belong to packages. */
-    gtk_widget_set_sensitive(c->all_remove, c->available && ours);
+    gtk_widget_set_sensitive(color_manager->all_remove, color_manager->available && ours);
     g_free(any);
     g_free(profile);
     g_free(device);
 }
 
-static void fill_device_profiles(cm *c) {
-    gtk_list_store_clear(c->device_profiles);
-    char *device = selected_device(c);
+static void fill_device_profiles(cm *color_manager) {
+    gtk_list_store_clear(color_manager->device_profiles);
+    char *device = selected_device(color_manager);
     if (device != nullptr) {
-        char **profiles = device_profiles(c, device);
-        for (char **p = profiles; *p != nullptr; p++)
-            add_profile_row(c, c->device_profiles, *p, p == profiles);
+        char **profiles = device_profiles(color_manager, device);
+        for (char **profile = profiles; *profile != nullptr; profile++)
+            add_profile_row(color_manager, color_manager->device_profiles, *profile,
+                            profile == profiles);
         g_strfreev(profiles);
     }
     g_free(device);
-    update_buttons(c);
+    update_buttons(color_manager);
 }
 
 static void select_row(GtkWidget *view, GtkTreeModel *model, int column, const char *path) {
     GtkTreeIter it;
     for (bool ok = gtk_tree_model_get_iter_first(model, &it); ok && path != nullptr;
          ok = gtk_tree_model_iter_next(model, &it)) {
-        char *p = nullptr;
-        gtk_tree_model_get(model, &it, column, &p, -1);
-        bool match = g_strcmp0(p, path) == 0;
-        g_free(p);
+        char *row_path = nullptr;
+        gtk_tree_model_get(model, &it, column, &row_path, -1);
+        bool match = g_strcmp0(row_path, path) == 0;
+        g_free(row_path);
         if (match) {
             gtk_tree_selection_select_iter(gtk_tree_view_get_selection(GTK_TREE_VIEW(view)), &it);
             return;
@@ -601,29 +609,29 @@ static void select_row(GtkWidget *view, GtkTreeModel *model, int column, const c
 }
 
 /* Reads everything from colord again, keeping the selections. */
-static void refresh(cm *c) {
-    char *device = selected_device(c);
-    char *profile = selected_path(c->device_view, PRO_PATH);
-    char *any = selected_path(c->all_view, PRO_PATH);
+static void refresh(cm *color_manager) {
+    char *device = selected_device(color_manager);
+    char *profile = selected_path(color_manager->device_view, PRO_PATH);
+    char *any = selected_path(color_manager->all_view, PRO_PATH);
 
-    gtk_list_store_clear(c->devices);
-    char **devices = cd_call_paths(c, "GetDevices");
+    gtk_list_store_clear(color_manager->devices);
+    char **devices = cd_call_paths(color_manager, "GetDevices");
     /* The device shown before, else the first monitor, as Windows 7's
      * opens on the display. */
-    int active = -1, first_display = -1, n = 0;
-    for (char **d = devices; *d != nullptr; d++, n++) {
-        GVariant *props = cd_props(c, *d, CD_DEVICE);
+    int active = -1, first_display = -1, count = 0;
+    for (char **device_path = devices; *device_path != nullptr; device_path++, count++) {
+        GVariant *props = cd_props(color_manager, *device_path, CD_DEVICE);
         char *kind = prop_string(props, "Kind");
         char *vendor = prop_string(props, "Vendor");
         char *model = prop_string(props, "Model");
         char *id = prop_string(props, "DeviceId");
         char *label = xd_color_device_label(kind, vendor, model, id);
-        gtk_list_store_insert_with_values(c->devices, nullptr, -1, DEV_LABEL, label, DEV_PATH, *d,
-                                          -1);
-        if (g_strcmp0(*d, device) == 0)
-            active = n;
+        gtk_list_store_insert_with_values(color_manager->devices, nullptr, -1, DEV_LABEL, label,
+                                          DEV_PATH, *device_path, -1);
+        if (g_strcmp0(*device_path, device) == 0)
+            active = count;
         if (first_display < 0 && strcmp(kind, "display") == 0)
-            first_display = n;
+            first_display = count;
         g_free(label);
         g_free(id);
         g_free(model);
@@ -635,29 +643,31 @@ static void refresh(cm *c) {
     g_strfreev(devices);
     if (active < 0)
         active = MAX(first_display, 0);
-    if (n > 0)
-        gtk_combo_box_set_active(GTK_COMBO_BOX(c->device_combo), active); /* fills the list */
+    if (count > 0)
+        gtk_combo_box_set_active(GTK_COMBO_BOX(color_manager->device_combo),
+                                 active); /* fills the list */
     else
-        fill_device_profiles(c);
-    select_row(c->device_view, GTK_TREE_MODEL(c->device_profiles), PRO_PATH, profile);
+        fill_device_profiles(color_manager);
+    select_row(color_manager->device_view, GTK_TREE_MODEL(color_manager->device_profiles), PRO_PATH,
+               profile);
 
-    gtk_list_store_clear(c->all_profiles);
-    char **profiles = cd_call_paths(c, "GetProfiles");
-    for (char **p = profiles; *p != nullptr; p++)
-        add_profile_row(c, c->all_profiles, *p, false);
+    gtk_list_store_clear(color_manager->all_profiles);
+    char **profiles = cd_call_paths(color_manager, "GetProfiles");
+    for (char **profile_path = profiles; *profile_path != nullptr; profile_path++)
+        add_profile_row(color_manager, color_manager->all_profiles, *profile_path, false);
     g_strfreev(profiles);
-    select_row(c->all_view, GTK_TREE_MODEL(c->all_profiles), PRO_PATH, any);
-    update_buttons(c);
+    select_row(color_manager->all_view, GTK_TREE_MODEL(color_manager->all_profiles), PRO_PATH, any);
+    update_buttons(color_manager);
     g_free(any);
     g_free(profile);
     g_free(device);
 }
 
 static gboolean refresh_idle(gpointer data) {
-    cm *c = data;
-    c->refresh_idle = 0;
-    refresh(c);
-    sync_settings(c);
+    cm *color_manager = data;
+    color_manager->refresh_idle = 0;
+    refresh(color_manager);
+    sync_settings(color_manager);
     return G_SOURCE_REMOVE;
 }
 
@@ -669,86 +679,86 @@ static void on_colord_signal([[maybe_unused]] GDBusConnection *bus,
                              [[maybe_unused]] const char *iface,
                              [[maybe_unused]] const char *signal,
                              [[maybe_unused]] GVariant *params, gpointer data) {
-    cm *c = data;
-    if (c->refresh_idle == 0)
-        c->refresh_idle = g_timeout_add(100, refresh_idle, c);
+    cm *color_manager = data;
+    if (color_manager->refresh_idle == 0)
+        color_manager->refresh_idle = g_timeout_add(100, refresh_idle, color_manager);
 }
 
 /* ---- actions ------------------------------------------------------------------------ */
 
 /* A device's profiles changed: for a monitor, the compositor's copy too. */
-static void after_change(cm *c) {
-    refresh(c);
-    sync_settings(c);
+static void after_change(cm *color_manager) {
+    refresh(color_manager);
+    sync_settings(color_manager);
 }
 
-static char *choose_icc_file(cm *c, const char *title) {
-    GtkWidget *d = gtk_file_chooser_dialog_new(title, GTK_WINDOW(c->window),
-                                               GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-                                               GTK_RESPONSE_CANCEL, "_Add", GTK_RESPONSE_ACCEPT,
-                                               nullptr);
-    GtkFileFilter *f = gtk_file_filter_new();
-    gtk_file_filter_set_name(f, "ICC Profiles (*.icm, *.icc)");
-    gtk_file_filter_add_pattern(f, "*.icc");
-    gtk_file_filter_add_pattern(f, "*.icm");
-    gtk_file_filter_add_pattern(f, "*.ICC");
-    gtk_file_filter_add_pattern(f, "*.ICM");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(d), f);
+static char *choose_icc_file(cm *color_manager, const char *title) {
+    GtkWidget *file_chooser = gtk_file_chooser_dialog_new(
+        title, GTK_WINDOW(color_manager->window), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
+        GTK_RESPONSE_CANCEL, "_Add", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileFilter *icc_filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(icc_filter, "ICC Profiles (*.icm, *.icc)");
+    gtk_file_filter_add_pattern(icc_filter, "*.icc");
+    gtk_file_filter_add_pattern(icc_filter, "*.icm");
+    gtk_file_filter_add_pattern(icc_filter, "*.ICC");
+    gtk_file_filter_add_pattern(icc_filter, "*.ICM");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(file_chooser), icc_filter);
     GtkFileFilter *all = gtk_file_filter_new();
     gtk_file_filter_set_name(all, "All Files (*.*)");
     gtk_file_filter_add_pattern(all, "*");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(d), all);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(file_chooser), all);
     char *path = nullptr;
-    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_ACCEPT)
-        path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(d));
-    gtk_widget_destroy(d);
+    if (gtk_dialog_run(GTK_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT)
+        path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser));
+    gtk_widget_destroy(file_chooser);
     return path;
 }
 
-static bool associate(cm *c, const char *device, const char *profile) {
+static bool associate(cm *color_manager, const char *device, const char *profile) {
     GError *error = nullptr;
-    GVariant *v = cd_call(c, device, CD_DEVICE, "AddProfile",
-                          g_variant_new("(so)", "hard", profile), nullptr, &error);
-    if (v == nullptr) {
+    GVariant *variant = cd_call(color_manager, device, CD_DEVICE, "AddProfile",
+                                g_variant_new("(so)", "hard", profile), nullptr, &error);
+    if (variant == nullptr) {
         /* Already associated: nothing to do. */
         char *remote = g_dbus_error_get_remote_error(error);
         bool already = remote != nullptr && g_str_has_suffix(remote, ".AlreadyExists");
         g_free(remote);
         if (!already)
-            error_box(c, "The profile could not be associated with the device.", error);
+            error_box(color_manager, "The profile could not be associated with the device.", error);
         g_error_free(error);
         return already;
     }
-    g_variant_unref(v);
+    g_variant_unref(variant);
     return true;
 }
 
-static void on_associate_row(GtkDialog *d) { gtk_dialog_response(d, GTK_RESPONSE_OK); }
+static void on_associate_row(GtkDialog *gtk_dialog) {
+    gtk_dialog_response(gtk_dialog, GTK_RESPONSE_OK);
+}
 
 /* Windows 7's Associate Color Profile: the installed profiles, and
  * Browse... for a file. */
-static void on_add(GtkWidget *w, gpointer data) {
-    (void)w;
-    cm *c = data;
-    char *device = selected_device(c);
+static void on_add(GtkWidget *widget, gpointer data) {
+    (void)widget;
+    cm *color_manager = data;
+    char *device = selected_device(color_manager);
     if (device == nullptr)
         return;
-    GtkWidget *d = gtk_dialog_new_with_buttons("Associate Color Profile", GTK_WINDOW(c->window),
-                                               GTK_DIALOG_MODAL, "_Browse...", 1, "OK",
-                                               GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL,
-                                               nullptr);
-    gtk_window_set_default_size(GTK_WINDOW(d), 460, 320);
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
-    GtkWidget *box = gtk_dialog_get_content_area(GTK_DIALOG(d));
+    GtkWidget *associate_dialog = gtk_dialog_new_with_buttons(
+        "Associate Color Profile", GTK_WINDOW(color_manager->window), GTK_DIALOG_MODAL,
+        "_Browse...", 1, "OK", GTK_RESPONSE_OK, "Cancel", GTK_RESPONSE_CANCEL, nullptr);
+    gtk_window_set_default_size(GTK_WINDOW(associate_dialog), 460, 320);
+    gtk_window_set_resizable(GTK_WINDOW(associate_dialog), FALSE);
+    GtkWidget *box = gtk_dialog_get_content_area(GTK_DIALOG(associate_dialog));
     gtk_container_set_border_width(GTK_CONTAINER(box), 8);
     GtkWidget *label = gtk_label_new_with_mnemonic("_Select a color profile:");
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_box_pack_start(GTK_BOX(box), label, FALSE, FALSE, 4);
     GtkListStore *store = gtk_list_store_new(PRO_COUNT, G_TYPE_STRING, G_TYPE_STRING,
                                              G_TYPE_STRING, G_TYPE_STRING);
-    char **profiles = cd_call_paths(c, "GetProfiles");
-    for (char **p = profiles; *p != nullptr; p++)
-        add_profile_row(c, store, *p, false);
+    char **profiles = cd_call_paths(color_manager, "GetProfiles");
+    for (char **profile_path = profiles; *profile_path != nullptr; profile_path++)
+        add_profile_row(color_manager, store, *profile_path, false);
     g_strfreev(profiles);
     GtkWidget *view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
     g_object_unref(store);
@@ -764,25 +774,25 @@ static void on_add(GtkWidget *w, gpointer data) {
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_container_add(GTK_CONTAINER(scroll), view);
     gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
+    gtk_dialog_set_default_response(GTK_DIALOG(associate_dialog), GTK_RESPONSE_OK);
     /* A double-click (or Enter) on a profile picks it. */
-    g_signal_connect_swapped(view, "row-activated", G_CALLBACK(on_associate_row), d);
-    gtk_widget_show_all(d);
+    g_signal_connect_swapped(view, "row-activated", G_CALLBACK(on_associate_row), associate_dialog);
+    gtk_widget_show_all(associate_dialog);
     gtk_widget_grab_focus(view);
     bool changed = false;
     for (;;) {
-        int r = gtk_dialog_run(GTK_DIALOG(d));
-        if (r == 1) {
-            char *file = choose_icc_file(c, "Associate Color Profile");
+        int response = gtk_dialog_run(GTK_DIALOG(associate_dialog));
+        if (response == 1) {
+            char *file = choose_icc_file(color_manager, "Associate Color Profile");
             if (file == nullptr)
                 continue;
             GError *error = nullptr;
-            char *profile = import_profile(c, file, &error);
+            char *profile = import_profile(color_manager, file, &error);
             if (profile == nullptr) {
-                error_box(c, "The profile could not be installed.", error);
+                error_box(color_manager, "The profile could not be installed.", error);
                 g_clear_error(&error);
             } else {
-                changed = associate(c, device, profile);
+                changed = associate(color_manager, device, profile);
             }
             g_free(profile);
             g_free(file);
@@ -790,77 +800,78 @@ static void on_add(GtkWidget *w, gpointer data) {
                 break;
             continue;
         }
-        if (r == GTK_RESPONSE_OK) {
+        if (response == GTK_RESPONSE_OK) {
             char *profile = selected_path(view, PRO_PATH);
             if (profile == nullptr)
                 continue;
-            changed = associate(c, device, profile);
+            changed = associate(color_manager, device, profile);
             g_free(profile);
         }
         break;
     }
-    gtk_widget_destroy(d);
+    gtk_widget_destroy(associate_dialog);
     g_free(device);
     if (changed)
-        after_change(c);
+        after_change(color_manager);
 }
 
-static void on_remove(GtkWidget *w, gpointer data) {
-    (void)w;
-    cm *c = data;
-    char *device = selected_device(c);
-    char *profile = selected_path(c->device_view, PRO_PATH);
+static void on_remove(GtkWidget *widget, gpointer data) {
+    (void)widget;
+    cm *color_manager = data;
+    char *device = selected_device(color_manager);
+    char *profile = selected_path(color_manager->device_view, PRO_PATH);
     if (device != nullptr && profile != nullptr) {
         GError *error = nullptr;
-        GVariant *v = cd_call(c, device, CD_DEVICE, "RemoveProfile",
-                              g_variant_new("(o)", profile), nullptr, &error);
-        if (v == nullptr) {
-            error_box(c, "The profile could not be removed from the device.", error);
+        GVariant *variant = cd_call(color_manager, device, CD_DEVICE, "RemoveProfile",
+                                    g_variant_new("(o)", profile), nullptr, &error);
+        if (variant == nullptr) {
+            error_box(color_manager, "The profile could not be removed from the device.", error);
             g_error_free(error);
         } else {
-            g_variant_unref(v);
-            after_change(c);
+            g_variant_unref(variant);
+            after_change(color_manager);
         }
     }
     g_free(profile);
     g_free(device);
 }
 
-static void on_make_default(GtkWidget *w, gpointer data) {
-    (void)w;
-    cm *c = data;
-    char *device = selected_device(c);
-    char *profile = selected_path(c->device_view, PRO_PATH);
+static void on_make_default(GtkWidget *widget, gpointer data) {
+    (void)widget;
+    cm *color_manager = data;
+    char *device = selected_device(color_manager);
+    char *profile = selected_path(color_manager->device_view, PRO_PATH);
     if (device != nullptr && profile != nullptr) {
         GError *error = nullptr;
-        GVariant *v = cd_call(c, device, CD_DEVICE, "MakeProfileDefault",
-                              g_variant_new("(o)", profile), nullptr, &error);
-        if (v == nullptr) {
-            error_box(c, "The default profile could not be set.", error);
+        GVariant *variant = cd_call(color_manager, device, CD_DEVICE, "MakeProfileDefault",
+                                    g_variant_new("(o)", profile), nullptr, &error);
+        if (variant == nullptr) {
+            error_box(color_manager, "The default profile could not be set.", error);
             g_error_free(error);
         } else {
-            g_variant_unref(v);
-            after_change(c);
+            g_variant_unref(variant);
+            after_change(color_manager);
         }
     }
     g_free(profile);
     g_free(device);
 }
 
-static void on_all_add(GtkWidget *w, gpointer data) {
-    (void)w;
-    cm *c = data;
-    char *file = choose_icc_file(c, "Install Profile");
+static void on_all_add(GtkWidget *widget, gpointer data) {
+    (void)widget;
+    cm *color_manager = data;
+    char *file = choose_icc_file(color_manager, "Install Profile");
     if (file == nullptr)
         return;
     GError *error = nullptr;
-    char *profile = import_profile(c, file, &error);
+    char *profile = import_profile(color_manager, file, &error);
     if (profile == nullptr) {
-        error_box(c, "The profile could not be installed.", error);
+        error_box(color_manager, "The profile could not be installed.", error);
         g_error_free(error);
     } else {
-        refresh(c);
-        select_row(c->all_view, GTK_TREE_MODEL(c->all_profiles), PRO_PATH, profile);
+        refresh(color_manager);
+        select_row(color_manager->all_view, GTK_TREE_MODEL(color_manager->all_profiles), PRO_PATH,
+                   profile);
     }
     g_free(profile);
     g_free(file);
@@ -868,13 +879,13 @@ static void on_all_add(GtkWidget *w, gpointer data) {
 
 /* Uninstalls one of the user's profiles: colord forgets it, the file goes
  * to the Recycle Bin. */
-static void on_all_remove(GtkWidget *w, gpointer data) {
-    (void)w;
-    cm *c = data;
-    char *profile = selected_path(c->all_view, PRO_PATH);
+static void on_all_remove(GtkWidget *widget, gpointer data) {
+    (void)widget;
+    cm *color_manager = data;
+    char *profile = selected_path(color_manager->all_view, PRO_PATH);
     if (profile == nullptr)
         return;
-    GVariant *props = cd_props(c, profile, CD_PROFILE);
+    GVariant *props = cd_props(color_manager, profile, CD_PROFILE);
     char *title = prop_string(props, "Title");
     char *file = prop_string(props, "Filename");
     if (props != nullptr)
@@ -882,23 +893,23 @@ static void on_all_remove(GtkWidget *w, gpointer data) {
     char *question = g_strdup_printf("Are you sure you want to remove the color profile "
                                      "\"%s\"? Devices that use it will no longer use it.",
                                      title[0] != '\0' ? title : file);
-    if (xd_message_box(GTK_WINDOW(c->window), "Remove Profile", XD_MB_QUESTION, XD_MB_YES_NO,
-                       TRUE, question) == GTK_RESPONSE_YES) {
+    if (xd_message_box(GTK_WINDOW(color_manager->window), "Remove Profile", XD_MB_QUESTION,
+                       XD_MB_YES_NO, TRUE, question) == GTK_RESPONSE_YES) {
         GError *error = nullptr;
-        GVariant *v = cd_call(c, CD_PATH, CD_NAME, "DeleteProfile",
-                              g_variant_new("(o)", profile), nullptr, &error);
-        if (v == nullptr) {
-            error_box(c, "The profile could not be removed.", error);
+        GVariant *variant = cd_call(color_manager, CD_PATH, CD_NAME, "DeleteProfile",
+                                    g_variant_new("(o)", profile), nullptr, &error);
+        if (variant == nullptr) {
+            error_box(color_manager, "The profile could not be removed.", error);
             g_error_free(error);
         } else {
-            g_variant_unref(v);
-            GFile *f = g_file_new_for_path(file);
-            if (!g_file_trash(f, nullptr, &error)) {
+            g_variant_unref(variant);
+            GFile *trash_file = g_file_new_for_path(file);
+            if (!g_file_trash(trash_file, nullptr, &error)) {
                 g_message("%s: %s", file, error->message);
                 g_error_free(error);
             }
-            g_object_unref(f);
-            after_change(c);
+            g_object_unref(trash_file);
+            after_change(color_manager);
         }
     }
     g_free(question);
@@ -919,108 +930,118 @@ static void on_selection_changed(GtkTreeSelection *sel, gpointer data) {
 
 /* ---- the window --------------------------------------------------------------------- */
 
-static GtkWidget *profile_view(cm *c, GtkListStore *store, bool type_column) {
+static GtkWidget *profile_view(cm *color_manager, GtkListStore *store, bool type_column) {
     GtkWidget *view = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
     const char *titles[] = {"Name", "File name", "Type"};
     int widths[] = {220, 150, 90};
     for (int i = 0; i < (type_column ? 3 : 2); i++) {
-        GtkCellRenderer *r = gtk_cell_renderer_text_new();
-        g_object_set(r, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
+        GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+        g_object_set(renderer, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
         GtkTreeViewColumn *col =
-            gtk_tree_view_column_new_with_attributes(titles[i], r, "text", i, nullptr);
+            gtk_tree_view_column_new_with_attributes(titles[i], renderer, "text", i, nullptr);
         gtk_tree_view_column_set_resizable(col, TRUE);
         gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
         gtk_tree_view_column_set_fixed_width(col, widths[i]);
         gtk_tree_view_append_column(GTK_TREE_VIEW(view), col);
     }
     g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(view)), "changed",
-                     G_CALLBACK(on_selection_changed), c);
+                     G_CALLBACK(on_selection_changed), color_manager);
     return view;
 }
 
 static GtkWidget *scrolled(GtkWidget *child) {
-    GtkWidget *s = gtk_scrolled_window_new(nullptr, nullptr);
-    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(s), GTK_SHADOW_IN);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(s), GTK_POLICY_AUTOMATIC,
+    GtkWidget *scrolled_window = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scrolled_window), GTK_SHADOW_IN);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled_window), GTK_POLICY_AUTOMATIC,
                                    GTK_POLICY_AUTOMATIC);
-    gtk_container_add(GTK_CONTAINER(s), child);
-    return s;
+    gtk_container_add(GTK_CONTAINER(scrolled_window), child);
+    return scrolled_window;
 }
 
-static GtkWidget *button_row(GtkWidget **buttons, int n) {
+static GtkWidget *button_row(GtkWidget **buttons, int count) {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < count; i++)
         gtk_box_pack_start(GTK_BOX(row), buttons[i], FALSE, FALSE, 0);
     return row;
 }
 
-static GtkWidget *devices_page(cm *c) {
+static GtkWidget *devices_page(cm *color_manager) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
-    c->unavailable = gtk_label_new("The color management service (colord) isn't running, so "
-                                   "devices and their color profiles can't be shown or changed.");
-    gtk_label_set_line_wrap(GTK_LABEL(c->unavailable), TRUE);
-    gtk_label_set_xalign(GTK_LABEL(c->unavailable), 0);
-    gtk_widget_set_no_show_all(c->unavailable, TRUE);
-    gtk_box_pack_start(GTK_BOX(page), c->unavailable, FALSE, FALSE, 0);
+    color_manager->unavailable =
+        gtk_label_new("The color management service (colord) isn't running, so "
+                      "devices and their color profiles can't be shown or changed.");
+    gtk_label_set_line_wrap(GTK_LABEL(color_manager->unavailable), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(color_manager->unavailable), 0);
+    gtk_widget_set_no_show_all(color_manager->unavailable, TRUE);
+    gtk_box_pack_start(GTK_BOX(page), color_manager->unavailable, FALSE, FALSE, 0);
 
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget *label = gtk_label_new_with_mnemonic("_Device:");
-    c->devices = gtk_list_store_new(DEV_COUNT, G_TYPE_STRING, G_TYPE_STRING);
-    c->device_combo = gtk_combo_box_new_with_model(GTK_TREE_MODEL(c->devices));
-    GtkCellRenderer *r = gtk_cell_renderer_text_new();
-    g_object_set(r, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
-    gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(c->device_combo), r, TRUE);
-    gtk_cell_layout_add_attribute(GTK_CELL_LAYOUT(c->device_combo), r, "text", DEV_LABEL);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(label), c->device_combo);
-    g_signal_connect(c->device_combo, "changed", G_CALLBACK(on_device_changed), c);
+    color_manager->devices = gtk_list_store_new(DEV_COUNT, G_TYPE_STRING, G_TYPE_STRING);
+    color_manager->device_combo =
+        gtk_combo_box_new_with_model(GTK_TREE_MODEL(color_manager->devices));
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    g_object_set(renderer, "ellipsize", PANGO_ELLIPSIZE_END, nullptr);
+    gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(color_manager->device_combo), renderer, TRUE);
+    gtk_cell_layout_add_attribute(GTK_CELL_LAYOUT(color_manager->device_combo), renderer, "text",
+                                  DEV_LABEL);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), color_manager->device_combo);
+    g_signal_connect(color_manager->device_combo, "changed", G_CALLBACK(on_device_changed),
+                     color_manager);
     gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(row), c->device_combo, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(row), color_manager->device_combo, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(page), row, FALSE, FALSE, 0);
 
     GtkWidget *frame = gtk_frame_new("Profiles associated with this device:");
     GtkWidget *inner = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(inner), 8);
-    c->device_profiles = gtk_list_store_new(PRO_COUNT, G_TYPE_STRING, G_TYPE_STRING,
-                                            G_TYPE_STRING, G_TYPE_STRING);
-    c->device_view = profile_view(c, c->device_profiles, false);
-    gtk_box_pack_start(GTK_BOX(inner), scrolled(c->device_view), TRUE, TRUE, 0);
-    c->add = gtk_button_new_with_mnemonic("_Add...");
-    c->remove = gtk_button_new_with_mnemonic("_Remove");
-    c->make_default = gtk_button_new_with_mnemonic("_Set as Default Profile");
-    g_signal_connect(c->add, "clicked", G_CALLBACK(on_add), c);
-    g_signal_connect(c->remove, "clicked", G_CALLBACK(on_remove), c);
-    g_signal_connect(c->make_default, "clicked", G_CALLBACK(on_make_default), c);
+    color_manager->device_profiles =
+        gtk_list_store_new(PRO_COUNT, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    color_manager->device_view = profile_view(color_manager, color_manager->device_profiles, false);
+    gtk_box_pack_start(GTK_BOX(inner), scrolled(color_manager->device_view), TRUE, TRUE, 0);
+    color_manager->add = gtk_button_new_with_mnemonic("_Add...");
+    color_manager->remove = gtk_button_new_with_mnemonic("_Remove");
+    color_manager->make_default = gtk_button_new_with_mnemonic("_Set as Default Profile");
+    g_signal_connect(color_manager->add, "clicked", G_CALLBACK(on_add), color_manager);
+    g_signal_connect(color_manager->remove, "clicked", G_CALLBACK(on_remove), color_manager);
+    g_signal_connect(color_manager->make_default, "clicked", G_CALLBACK(on_make_default),
+                     color_manager);
     gtk_box_pack_start(GTK_BOX(inner),
-                       button_row((GtkWidget *[]){c->add, c->remove, c->make_default}, 3), FALSE,
-                       FALSE, 0);
+                       button_row((GtkWidget *[]){color_manager->add, color_manager->remove,
+                                                  color_manager->make_default},
+                                  3),
+                       FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(frame), inner);
     gtk_box_pack_start(GTK_BOX(page), frame, TRUE, TRUE, 0);
     return page;
 }
 
-static GtkWidget *all_profiles_page(cm *c) {
+static GtkWidget *all_profiles_page(cm *color_manager) {
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
     GtkWidget *label = gtk_label_new("Color profiles installed on this computer:");
     gtk_label_set_xalign(GTK_LABEL(label), 0);
     gtk_box_pack_start(GTK_BOX(page), label, FALSE, FALSE, 0);
-    c->all_profiles = gtk_list_store_new(PRO_COUNT, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-                                         G_TYPE_STRING);
-    c->all_view = profile_view(c, c->all_profiles, true);
-    gtk_box_pack_start(GTK_BOX(page), scrolled(c->all_view), TRUE, TRUE, 0);
-    c->all_add = gtk_button_new_with_mnemonic("A_dd...");
-    c->all_remove = gtk_button_new_with_mnemonic("R_emove");
-    g_signal_connect(c->all_add, "clicked", G_CALLBACK(on_all_add), c);
-    g_signal_connect(c->all_remove, "clicked", G_CALLBACK(on_all_remove), c);
-    gtk_box_pack_start(GTK_BOX(page), button_row((GtkWidget *[]){c->all_add, c->all_remove}, 2),
-                       FALSE, FALSE, 0);
+    color_manager->all_profiles =
+        gtk_list_store_new(PRO_COUNT, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    color_manager->all_view = profile_view(color_manager, color_manager->all_profiles, true);
+    gtk_box_pack_start(GTK_BOX(page), scrolled(color_manager->all_view), TRUE, TRUE, 0);
+    color_manager->all_add = gtk_button_new_with_mnemonic("A_dd...");
+    color_manager->all_remove = gtk_button_new_with_mnemonic("R_emove");
+    g_signal_connect(color_manager->all_add, "clicked", G_CALLBACK(on_all_add), color_manager);
+    g_signal_connect(color_manager->all_remove, "clicked", G_CALLBACK(on_all_remove),
+                     color_manager);
+    gtk_box_pack_start(
+        GTK_BOX(page),
+        button_row((GtkWidget *[]){color_manager->all_add, color_manager->all_remove}, 2), FALSE,
+        FALSE, 0);
     return page;
 }
 
-static void on_response(GtkDialog *d, [[maybe_unused]] int response,
+static void on_response(GtkDialog *gtk_dialog, [[maybe_unused]] int response,
                         [[maybe_unused]] gpointer data) {
-    gtk_widget_destroy(GTK_WIDGET(d));
+    gtk_widget_destroy(GTK_WIDGET(gtk_dialog));
 }
 
 int main(int argc, char **argv) {
@@ -1037,65 +1058,65 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     xd_gtk_app_follow_theme();
-    static cm c;
-    c.displays = g_ptr_array_new_with_free_func(display_link_free);
-    c.store = g_build_filename(g_get_user_data_dir(), "icc", nullptr);
-    c.bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
-    if (c.bus == nullptr) {
+    static cm color_manager;
+    color_manager.displays = g_ptr_array_new_with_free_func(display_link_free);
+    color_manager.store = g_build_filename(g_get_user_data_dir(), "icc", nullptr);
+    color_manager.bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
+    if (color_manager.bus == nullptr) {
         g_message("system bus: %s", error->message);
         g_clear_error(&error);
     }
     /* Is colord there (activatable or running)? */
-    GVariant *v = cd_call(&c, CD_PATH, "org.freedesktop.DBus.Peer", "Ping", nullptr, nullptr,
-                          &error);
-    c.available = v != nullptr;
-    if (v != nullptr)
-        g_variant_unref(v);
+    GVariant *variant = cd_call(&color_manager, CD_PATH, "org.freedesktop.DBus.Peer", "Ping",
+                                nullptr, nullptr, &error);
+    color_manager.available = variant != nullptr;
+    if (variant != nullptr)
+        g_variant_unref(variant);
     else {
         g_message("colord: %s", error->message);
         g_clear_error(&error);
     }
 
-    c.window = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(c.window), "Color Management");
-    gtk_window_set_icon_name(GTK_WINDOW(c.window), "preferences-desktop-color");
-    gtk_window_set_default_size(GTK_WINDOW(c.window), 520, 440);
-    gtk_window_set_resizable(GTK_WINDOW(c.window), FALSE);
-    gtk_dialog_add_button(GTK_DIALOG(c.window), "Close", GTK_RESPONSE_CLOSE);
-    gtk_dialog_set_default_response(GTK_DIALOG(c.window), GTK_RESPONSE_CLOSE);
-    c.notebook = gtk_notebook_new();
-    gtk_container_set_border_width(GTK_CONTAINER(c.notebook), 6);
-    gtk_notebook_append_page(GTK_NOTEBOOK(c.notebook), devices_page(&c),
+    color_manager.window = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(color_manager.window), "Color Management");
+    gtk_window_set_icon_name(GTK_WINDOW(color_manager.window), "preferences-desktop-color");
+    gtk_window_set_default_size(GTK_WINDOW(color_manager.window), 520, 440);
+    gtk_window_set_resizable(GTK_WINDOW(color_manager.window), FALSE);
+    gtk_dialog_add_button(GTK_DIALOG(color_manager.window), "Close", GTK_RESPONSE_CLOSE);
+    gtk_dialog_set_default_response(GTK_DIALOG(color_manager.window), GTK_RESPONSE_CLOSE);
+    color_manager.notebook = gtk_notebook_new();
+    gtk_container_set_border_width(GTK_CONTAINER(color_manager.notebook), 6);
+    gtk_notebook_append_page(GTK_NOTEBOOK(color_manager.notebook), devices_page(&color_manager),
                              gtk_label_new("Devices"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(c.notebook), all_profiles_page(&c),
-                             gtk_label_new("All Profiles"));
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(c.window))), c.notebook,
-                       TRUE, TRUE, 0);
-    xd_gtk_notebook_ctrl_tab(c.window, GTK_NOTEBOOK(c.notebook));
-    g_signal_connect(c.window, "response", G_CALLBACK(on_response), &c);
-    g_signal_connect(c.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    gtk_notebook_append_page(GTK_NOTEBOOK(color_manager.notebook),
+                             all_profiles_page(&color_manager), gtk_label_new("All Profiles"));
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(color_manager.window))),
+                       color_manager.notebook, TRUE, TRUE, 0);
+    xd_gtk_notebook_ctrl_tab(color_manager.window, GTK_NOTEBOOK(color_manager.notebook));
+    g_signal_connect(color_manager.window, "response", G_CALLBACK(on_response), &color_manager);
+    g_signal_connect(color_manager.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
 
-    if (c.available) {
-        register_displays(&c);
-        install_store(&c);
-        sync_settings(&c);
-        c.signal_id = g_dbus_connection_signal_subscribe(
-            c.bus, CD_NAME, CD_NAME, nullptr, CD_PATH, nullptr, G_DBUS_SIGNAL_FLAGS_NONE,
-            on_colord_signal, &c, nullptr);
+    if (color_manager.available) {
+        register_displays(&color_manager);
+        install_store(&color_manager);
+        sync_settings(&color_manager);
+        color_manager.signal_id = g_dbus_connection_signal_subscribe(
+            color_manager.bus, CD_NAME, CD_NAME, nullptr, CD_PATH, nullptr,
+            G_DBUS_SIGNAL_FLAGS_NONE, on_colord_signal, &color_manager, nullptr);
     } else {
-        gtk_widget_show(c.unavailable);
+        gtk_widget_show(color_manager.unavailable);
     }
-    refresh(&c);
-    gtk_widget_show_all(c.window);
-    gtk_notebook_set_current_page(GTK_NOTEBOOK(c.notebook), CLAMP(page, 0, 1));
+    refresh(&color_manager);
+    gtk_widget_show_all(color_manager.window);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(color_manager.notebook), CLAMP(page, 0, 1));
     gtk_main();
 
-    if (c.signal_id != 0)
-        g_dbus_connection_signal_unsubscribe(c.bus, c.signal_id);
-    if (c.refresh_idle != 0)
-        g_source_remove(c.refresh_idle);
-    g_clear_object(&c.bus);
-    g_ptr_array_unref(c.displays);
-    g_free(c.store);
+    if (color_manager.signal_id != 0)
+        g_dbus_connection_signal_unsubscribe(color_manager.bus, color_manager.signal_id);
+    if (color_manager.refresh_idle != 0)
+        g_source_remove(color_manager.refresh_idle);
+    g_clear_object(&color_manager.bus);
+    g_ptr_array_unref(color_manager.displays);
+    g_free(color_manager.store);
     return EXIT_SUCCESS;
 }

@@ -10,7 +10,7 @@
 /* Profiles are tens of kilobytes; a big one with many tables a few MB. */
 static constexpr goffset MAX_PROFILE_BYTES = 64 * 1024 * 1024;
 
-static bool present(const char *s) { return s != nullptr && s[0] != '\0'; }
+static bool present(const char *text) { return text != nullptr && text[0] != '\0'; }
 
 char *xd_color_display_id(const char *vendor, const char *model, const char *serial,
                           const char *connector) {
@@ -111,9 +111,9 @@ char *xd_color_import(const char *path, const char *store, char **id, GError **e
     size_t stem_len = dot != nullptr && dot != base ? (size_t)(dot - base) : strlen(base);
     const char *ext = dot != nullptr && dot != base ? dot : ".icc";
     char *dest = nullptr;
-    for (int n = 1; dest == nullptr && n < 100; n++) {
-        char *name = n == 1 ? g_strdup_printf("%.*s%s", (int)stem_len, base, ext)
-                            : g_strdup_printf("%.*s-%d%s", (int)stem_len, base, n, ext);
+    for (int attempt = 1; dest == nullptr && attempt < 100; attempt++) {
+        char *name = attempt == 1 ? g_strdup_printf("%.*s%s", (int)stem_len, base, ext)
+                                  : g_strdup_printf("%.*s-%d%s", (int)stem_len, base, attempt, ext);
         char *candidate = g_build_filename(store, name, nullptr);
         g_free(name);
         if (!g_file_test(candidate, G_FILE_TEST_EXISTS) || same_contents(candidate, data, len))
