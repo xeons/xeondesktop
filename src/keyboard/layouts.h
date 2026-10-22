@@ -23,8 +23,8 @@ size_t xd_kbd_layouts_parse(const char *layouts, const char *variants,
                             xd_kbd_layout out[XD_KBD_LAYOUTS_MAX]);
 /* Joins pairs back into lists; variants is "" when every one is the
  * default. False (and empty strings) if they don't fit. */
-bool xd_kbd_layouts_format(const xd_kbd_layout *l, size_t n, char *layouts, size_t lcap,
-                           char *variants, size_t vcap);
+bool xd_kbd_layouts_format(const xd_kbd_layout *layout_list, size_t count, char *layouts,
+                           size_t lcap, char *variants, size_t vcap);
 
 /* The first option in `options` from the group `group` ("grp" matches
  * "grp:alt_shift_toggle"), newly allocated (g_free); nullptr if there is none. */
