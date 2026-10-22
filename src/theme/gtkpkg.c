@@ -938,8 +938,9 @@ static void menu_font(ctx *generator) {
                        strcmp(name, "monospace") == 0;
         if (!generic)
             xd_strbuf_append_char(generator->o, '"');
+        /* Nor line breaks or other controls, which end a CSS string. */
         for (const char *cursor = name; *cursor != '\0'; cursor++)
-            if (*cursor != '"' && *cursor != '\\')
+            if (*cursor != '"' && *cursor != '\\' && (unsigned char)*cursor >= 0x20)
                 xd_strbuf_append_char(generator->o, *cursor);
         if (!generic)
             xd_strbuf_append_char(generator->o, '"');
@@ -950,12 +951,29 @@ static void menu_font(ctx *generator) {
                       menu_spec->bold ? "bold" : "normal");
 }
 
+/* A package's text in a CSS comment: nothing that ends the comment
+ * early (a star then a slash: the rest would be the package's own CSS,
+ * for every GTK program), nor line breaks. */
+static char *comment_text(const char *text) {
+    GString *out = g_string_new(nullptr);
+    for (const char *cursor = text != nullptr ? text : ""; *cursor != '\0'; cursor++) {
+        if ((unsigned char)*cursor < 0x20 || (cursor[0] == '*' && cursor[1] == '/'))
+            g_string_append_c(out, ' ');
+        else
+            g_string_append_c(out, *cursor);
+    }
+    return g_string_free(out, FALSE);
+}
+
 static void generate(ctx *generator) {
     if (generator->t->pkg == nullptr)
         return;
+    char *name = comment_text(xd_pkg_name(generator->t->pkg));
+    char *variant = comment_text(xd_pkg_variant(generator->t->pkg));
     xd_strbuf_appendf(generator->o, "\n/* Theme package \"%s\" (%s), its images scaled %s. */\n",
-                      xd_pkg_name(generator->t->pkg), xd_pkg_variant(generator->t->pkg),
-                      xd_image_filter_name(generator->t->image_filter));
+                      name, variant, xd_image_filter_name(generator->t->image_filter));
+    g_free(name);
+    g_free(variant);
     push_buttons(generator);
     indicators(generator, "CheckBox", "checkbutton check", true);
     indicators(generator, "RadioButton", "radiobutton radio", false);

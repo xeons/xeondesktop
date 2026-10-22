@@ -276,8 +276,12 @@ class Package:
 
     def write(self, output, folder):
         if folder:
+            root = os.path.realpath(output)
             for path, data in self.files.items():
                 full = os.path.join(output, path)
+                # Nothing written outside the package's folder.
+                if os.path.commonpath([root, os.path.realpath(full)]) != root:
+                    raise ValueError(f"{path}: outside the package")
                 os.makedirs(os.path.dirname(full), exist_ok=True)
                 with open(full, "wb") as f:
                     f.write(data)
@@ -388,7 +392,11 @@ def xp_image(pkg, res, variant, ref, transparent):
     if data is None:
         return None
     key = (resname, transparent)
-    path = "images/" + "/".join(p.lower() for p in re.split(r"[\\/]", ref.strip()))
+    # The style's own name for it, but never out of images/ ("..", ".").
+    parts = [p.lower() for p in re.split(r"[\\/]", ref.strip()) if p not in ("", ".", "..")]
+    if not parts:
+        return None
+    path = "images/" + "/".join(parts)
     path = os.path.splitext(path)[0] + ".png"
 
     def make():

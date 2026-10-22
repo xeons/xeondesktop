@@ -414,12 +414,7 @@ static GBytes *read_file(const xd_pkg *package, const char *path) {
         GBytes *bytes = g_hash_table_lookup(package->zip, path);
         return bytes != nullptr ? g_bytes_ref(bytes) : nullptr;
     }
-    char *full = g_build_filename(package->root, path, nullptr);
-    char *data = nullptr;
-    gsize len = 0;
-    bool ok = g_file_get_contents(full, &data, &len, nullptr);
-    g_free(full);
-    return ok ? g_bytes_new_take(data, len) : nullptr;
+    return xd_pkg_read_folder_file(package->root, path, ZIP_ENTRY_MAX, nullptr);
 }
 
 #if XD_HAVE_LIBARCHIVE
@@ -845,7 +840,10 @@ bool xd_pkg_font(const xd_pkg *package, const char *cls, const char *part, const
     char **fields = g_strsplit(value, ",", -1);
     bool ok = fields[0] != nullptr && fields[1] != nullptr;
     if (ok) {
-        xd_font_spec font = {.size_pt = g_ascii_strtod(g_strstrip(fields[1]), nullptr)};
+        /* Within what a scheme allows: "inf" or 1e308 points would draw
+         * nothing sensible, and overflow converting to pixels. */
+        double size = g_ascii_strtod(g_strstrip(fields[1]), nullptr);
+        xd_font_spec font = {.size_pt = isfinite(size) ? CLAMP(size, 1.0, 96.0) : 0};
         font_family(g_strstrip(fields[0]), font.family, sizeof(font.family));
         bool under = false;
         for (size_t i = 2; fields[i] != nullptr; i++) {
@@ -963,6 +961,25 @@ static cairo_surface_t *argb32(cairo_surface_t *surface) {
     return out;
 }
 
+/* A PNG's size from its header (the IHDR chunk, first after the
+ * signature), before decoding it: a few kilobytes of compressed pixels
+ * can say gigabytes. */
+static bool png_size(const unsigned char *data, gsize len, uint32_t *width, uint32_t *height) {
+    static const unsigned char signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    if (len < 24 || memcmp(data, signature, sizeof(signature)) != 0 ||
+        memcmp(data + 12, "IHDR", 4) != 0)
+        return false;
+    *width = (uint32_t)data[16] << 24 | (uint32_t)data[17] << 16 | (uint32_t)data[18] << 8 |
+             (uint32_t)data[19];
+    *height = (uint32_t)data[20] << 24 | (uint32_t)data[21] << 16 | (uint32_t)data[22] << 8 |
+              (uint32_t)data[23];
+    return true;
+}
+
+/* A package's images are at most this many pixels (Windows' largest, the
+ * Start menu's and the taskbar's at 192 dpi, are well under a million). */
+static constexpr uint64_t IMAGE_MAX_PIXELS = 4 * 1024 * 1024;
+
 /* The package's image at `path` as loaded (cached; the package owns it). */
 static cairo_surface_t *image(const xd_pkg *package, const char *path) {
     cairo_surface_t *surface = g_hash_table_lookup(package->cache->images, path);
@@ -974,6 +991,12 @@ static cairo_surface_t *image(const xd_pkg *package, const char *path) {
     gsize len = 0;
     png_reader reader = {.data = g_bytes_get_data(bytes, &len)};
     reader.len = len;
+    uint32_t width = 0, height = 0;
+    if (!png_size(reader.data, len, &width, &height) ||
+        (uint64_t)width * height > IMAGE_MAX_PIXELS) {
+        g_bytes_unref(bytes);
+        return nullptr;
+    }
     surface = cairo_image_surface_create_from_png_stream(png_read, &reader);
     g_bytes_unref(bytes);
     if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
@@ -1123,9 +1146,12 @@ static bool part_image_for(const xd_theme *theme, const char *cls, const char *p
                 int dpi = 96;
                 g_snprintf(prop, sizeof(prop), "MinDpi%d", i);
                 (void)xd_pkg_int(package, cls, part, state, prop, &dpi);
+                /* Windows' own go from 96 to 192 dpi; a package's own
+                 * numbers can't make an image hundreds of times larger. */
+                dpi = CLAMP(dpi, 48, 480);
                 if (dpi <= target_dpi + 0.5 || file == nullptr) {
                     file = image_file;
-                    drawn_dpi = dpi > 0 ? dpi : 96.0;
+                    drawn_dpi = dpi;
                 }
             } else {
                 int min_size[2] = {0, 0};
@@ -1256,7 +1282,8 @@ static void true_size(const xd_theme *theme, cairo_t *cairo, const part_image *i
     int width = im->fw, height = im->fh;
     int mark = 0;
     if (xd_pkg_int(theme->pkg, cls, part, state, "TrueSizeStretchMark", &mark) && mark > 0 &&
-        (rect.w > width * (100 + mark) / 100 || rect.h > height * (100 + mark) / 100)) {
+        ((int64_t)rect.w > (int64_t)width * (100 + mark) / 100 ||
+         (int64_t)rect.h > (int64_t)height * (100 + mark) / 100)) {
         double k = fmin((double)rect.w / width, (double)rect.h / height);
         width = (int)(width * k);
         height = (int)(height * k);

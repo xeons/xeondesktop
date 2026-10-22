@@ -57,8 +57,8 @@ static bool package_sounds(const xd_installed_package *installed, const char *di
     char **keys = ok ? g_key_file_get_keys(kf, "Events", nullptr, nullptr) : nullptr;
     for (char **key = keys; ok && key != nullptr && *key != nullptr; key++) {
         char *value = g_key_file_get_string(kf, "Events", *key, nullptr);
-        if (value != nullptr && strchr(g_strstrip(value), '/') != nullptr && value[0] != '/' &&
-            strstr(value, "..") != nullptr) {
+        if (value != nullptr && strchr(g_strstrip(value), '/') != nullptr &&
+            (value[0] == '/' || strstr(value, "..") != nullptr)) {
             /* Nothing outside the package: the event keeps the scheme's. */
             g_key_file_remove_key(kf, "Events", *key, nullptr);
         } else if (value != nullptr && strchr(value, '/') != nullptr && value[0] != '/') {

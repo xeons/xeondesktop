@@ -4,6 +4,9 @@
  * package its Save As... writes.
  */
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <glib/gstdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +20,59 @@
 
 /* As the loader's caps (pkg.c): a theme's files are small. */
 enum { MEMBER_MAX = 64 << 20, TOTAL_MAX = 256 << 20 };
+
+GBytes *xd_pkg_read_folder_file(const char *root, const char *member, gsize max, GError **error) {
+    int at = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (at < 0) {
+        GFileError code = g_file_error_from_errno(errno);
+        g_set_error(error, G_FILE_ERROR, (gint)code, "%s: %s", root,
+                    g_strerror(errno));
+        return nullptr;
+    }
+    char **parts = g_strsplit(member, "/", -1);
+    GBytes *out = nullptr;
+    int err = 0;
+    for (size_t i = 0; parts[i] != nullptr && err == 0; i++) {
+        bool last = parts[i + 1] == nullptr;
+        int next = openat(at, parts[i],
+                          last ? O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC
+                               : O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (next < 0) {
+            err = errno;
+            break;
+        }
+        close(at);
+        at = next;
+        if (!last)
+            continue;
+        struct stat st;
+        if (fstat(at, &st) != 0) {
+            err = errno;
+        } else if (!S_ISREG(st.st_mode)) {
+            err = EINVAL;
+        } else if ((guint64)st.st_size > max) {
+            err = EFBIG;
+        } else {
+            gsize size = (gsize)st.st_size, got = 0;
+            char *data = g_malloc(size + 1);
+            while (got < size) {
+                ssize_t count = read(at, data + got, size - got);
+                if (count <= 0)
+                    break;
+                got += (gsize)count;
+            }
+            out = g_bytes_new_take(data, got);
+        }
+    }
+    close(at);
+    g_strfreev(parts);
+    if (out == nullptr) {
+        GFileError code = g_file_error_from_errno(err != 0 ? err : ENOENT);
+        g_set_error(error, G_FILE_ERROR, (gint)code, "%s/%s: %s", root, member,
+                    g_strerror(err != 0 ? err : ENOENT));
+    }
+    return out;
+}
 
 static void errno_error(GError **error, const char *path) {
     int saved_errno = errno;
@@ -54,22 +110,24 @@ static bool walk_folder(const char *root, const char *rel, want_fn want, const v
         char *name =
             rel[0] != '\0' ? g_strconcat(rel, "/", entry_name, nullptr) : g_strdup(entry_name);
         char *full = g_build_filename(root, name, nullptr);
-        if (g_file_test(full, G_FILE_TEST_IS_DIR)) {
+        /* Links are skipped, as a zip's are: one could lead out of the
+         * package. */
+        struct stat st;
+        bool known = g_lstat(full, &st) == 0;
+        if (known && S_ISDIR(st.st_mode)) {
             ok = walk_folder(root, name, want, wu, fn, user, total, error);
-        } else if (g_file_test(full, G_FILE_TEST_IS_REGULAR) && want(name, wu)) {
-            char *data = nullptr;
-            gsize len = 0;
-            ok = g_file_get_contents(full, &data, &len, error);
-            if (ok && (len > MEMBER_MAX || *total + len > TOTAL_MAX)) {
-                g_free(data);
+        } else if (known && S_ISREG(st.st_mode) && want(name, wu)) {
+            GBytes *bytes = xd_pkg_read_folder_file(root, name, MEMBER_MAX, error);
+            ok = bytes != nullptr;
+            if (ok && *total + g_bytes_get_size(bytes) > TOTAL_MAX) {
                 g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED, "%s: too large", full);
                 ok = false;
             } else if (ok) {
-                *total += len;
-                GBytes *bytes = g_bytes_new_take(data, len);
+                *total += g_bytes_get_size(bytes);
                 ok = fn(name, bytes, user);
-                g_bytes_unref(bytes);
             }
+            if (bytes != nullptr)
+                g_bytes_unref(bytes);
         }
         g_free(full);
         g_free(name);
@@ -153,15 +211,8 @@ GBytes *xd_pkg_read_member(const char *path, const char *member, GError **error)
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "%s: bad path %s", path, member);
         return nullptr;
     }
-    if (g_file_test(path, G_FILE_TEST_IS_DIR)) {
-        char *full = g_build_filename(path, member, nullptr);
-        char *data = nullptr;
-        gsize len = 0;
-        if (g_file_get_contents(full, &data, &len, error))
-            out = g_bytes_new_take(data, len);
-        g_free(full);
-        return out;
-    }
+    if (g_file_test(path, G_FILE_TEST_IS_DIR))
+        return xd_pkg_read_folder_file(path, member, MEMBER_MAX, error);
     (void)for_members(path, want_one, member, keep_one, &out, &err);
     if (out == nullptr) {
         if (err != nullptr)

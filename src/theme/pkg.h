@@ -140,6 +140,11 @@ void xd_pkg_info_clear(xd_pkg_info *info);
 /* The file `member` (a path in the package) of the package at `path`.
  * nullptr with `error` set if it has none. */
 GBytes *xd_pkg_read_member(const char *path, const char *member, GError **error);
+/* A folder package's file `member` (a relative path, already checked for
+ * ".."), as a zip's would be read: a regular file at most `max` bytes,
+ * reached through no symbolic link (one could name ~/.ssh, a FIFO would
+ * wait for ever, /dev/zero never end). */
+GBytes *xd_pkg_read_folder_file(const char *root, const char *member, gsize max, GError **error);
 /* Every file of the package: member path -> GBytes. */
 GHashTable *xd_pkg_read_members(const char *path, GError **error);
 /* Copies `member` (a file) or the files below it (a folder) into `dest`:

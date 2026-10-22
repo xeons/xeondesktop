@@ -122,7 +122,7 @@ theme_lib = static_library(
   'src/theme/controls.c',
   'src/theme/panes.c',
   'src/theme/scale.c',
-  c_args: ['-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0'),
+  c_args: ['-DXD_HAVE_LIBARCHIVE=' + (archive_dep.found() ? '1' : '0'), '-D_GNU_SOURCE',
            '-DXD_THEME_DATADIR="' + get_option('prefix') / get_option('datadir') / 'xeondesktop"'],
   dependencies: [cairo_dep, pango_dep, glib_dep, m_dep, archive_dep],
 )

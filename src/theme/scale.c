@@ -21,8 +21,15 @@
 #include "../core/alloc.h"
 #include "scale.h"
 
-/* Cairo's own limit on an image surface's side. */
+/* Cairo's own limit on an image surface's side; and ours on an image's
+ * area (16 megapixels, 64 MB), so a theme package's image scaled up many
+ * times can't take all the memory there is (and the compositor with it). */
 constexpr int MAX_SIDE = 32767;
+constexpr int64_t MAX_PIXELS = 16 * 1024 * 1024;
+
+static bool too_big(int64_t width, int64_t height) {
+    return width > MAX_SIDE || height > MAX_SIDE || width * height > MAX_PIXELS;
+}
 
 static const char *const filter_names[XD_FILTER_COUNT] = {
     [XD_FILTER_NEAREST] = "Nearest",       [XD_FILTER_INTEGER] = "Integer",
@@ -646,7 +653,7 @@ static void pixel_art_step(img *bitmap, xd_image_filter filter) {
 /* s scaled to dw x dh, which is about s's size times `scale`. Returns
  * {nullptr} if a size would be beyond cairo's limits. */
 static img scale_img(const img *input, int dw, int dh, double scale, xd_image_filter filter) {
-    if (dw > MAX_SIDE || dh > MAX_SIDE)
+    if (too_big(dw, dh))
         return (img){};
     img dest = img_new(dw, dh);
     if (dw == input->w && dh == input->h) {
@@ -668,7 +675,7 @@ static img scale_img(const img *input, int dw, int dh, double scale, xd_image_fi
         int k = 1;
         while (input->w * k < dw || input->h * k < dh)
             k++;
-        if ((int64_t)input->w * k > MAX_SIDE || (int64_t)input->h * k > MAX_SIDE) {
+        if (too_big((int64_t)input->w * k, (int64_t)input->h * k)) {
             img_free(&dest);
             return (img){};
         }
@@ -679,8 +686,7 @@ static img scale_img(const img *input, int dw, int dh, double scale, xd_image_fi
         big = img_new(input->w, input->h);
         memcpy(big.px, input->px, (size_t)input->w * (size_t)input->h * sizeof(uint32_t));
         while (big.w < dw || big.h < dh) {
-            if ((int64_t)big.w * step_factor > MAX_SIDE ||
-                (int64_t)big.h * step_factor > MAX_SIDE) {
+            if (too_big((int64_t)big.w * step_factor, (int64_t)big.h * step_factor)) {
                 img_free(&big);
                 img_free(&dest);
                 return (img){};
@@ -743,7 +749,7 @@ cairo_surface_t *xd_image_scale_frames(cairo_surface_t *src, int count, bool ver
     int fh = vertical ? input.h / count : input.h;
     int dw = scaled_len(fw, scale), dh = scaled_len(fh, scale);
     int ow = vertical ? dw : dw * count, oh = vertical ? dh * count : dh;
-    if (dw <= 0 || dh <= 0 || (int64_t)(vertical ? dh : dw) * count > MAX_SIDE) {
+    if (dw <= 0 || dh <= 0 || too_big(ow, oh) || (int64_t)(vertical ? dh : dw) * count > MAX_SIDE) {
         img_free(&input);
         return nullptr;
     }
