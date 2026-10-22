@@ -21,76 +21,78 @@ enum {
 /* ---- geometry ------------------------------------------------------------------ */
 
 static int dev(double logical, double scale) {
-    double v = round(logical * scale);
-    XD_ASSERT(v > -65536.0 && v < 65536.0);
-    return (int)v;
+    double rounded = round(logical * scale);
+    XD_ASSERT(rounded > -65536.0 && rounded < 65536.0);
+    return (int)rounded;
 }
 
 /* Logical -> device with shared edges, so neighbours never gap or overlap. */
-static xd_rect to_device(xd_rect r, double s) {
-    int x0 = dev(r.x, s);
-    int y0 = dev(r.y, s);
-    return (xd_rect){x0, y0, dev(r.x + r.w, s) - x0, dev(r.y + r.h, s) - y0};
+static xd_rect to_device(xd_rect rect, double scale) {
+    int x0 = dev(rect.x, scale);
+    int y0 = dev(rect.y, scale);
+    return (xd_rect){x0, y0, dev(rect.x + rect.w, scale) - x0, dev(rect.y + rect.h, scale) - y0};
 }
 
-static bool contains(xd_rect r, double x, double y) {
-    return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
+static bool contains(xd_rect rect, double x, double y) {
+    return x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h;
 }
 
-static void window_theme(const xd_window *win, xd_theme *t) {
-    xd_theme_init(t, win->ui->style, &win->ui->scheme, win->scale);
+static void window_theme(const xd_window *win, xd_theme *theme) {
+    xd_theme_init(theme, win->ui->style, &win->ui->scheme, win->scale);
 }
 
 /* Content rect inside a field's border (matches xd_theme_draw_field). */
-static xd_rect field_inner(const xd_theme *t, xd_rect r) {
-    int b = t->style == XD_STYLE_CLASSIC ? 2 * xd_tpx(t, 1) : xd_tpx(t, 1);
-    return xd_rect_inset(r, b, b);
+static xd_rect field_inner(const xd_theme *theme, xd_rect rect) {
+    int border = theme->style == XD_STYLE_CLASSIC ? 2 * xd_tpx(theme, 1) : xd_tpx(theme, 1);
+    return xd_rect_inset(rect, border, border);
 }
 
 /* Where a combo's arrow button goes, inside the field border. */
-static xd_rect dropdown_rect(const xd_theme *t, xd_rect inner) {
-    int bw = xd_theme_dropdown_button_width(t);
+static xd_rect dropdown_rect(const xd_theme *theme, xd_rect inner) {
+    int bw = xd_theme_dropdown_button_width(theme);
     return (xd_rect){inner.x + inner.w - bw, inner.y, bw, inner.h};
 }
 
 /* Device rect of the editable text area of an edit or editable combo. */
-static xd_rect text_area(const xd_theme *t, const xd_widget *w) {
-    xd_rect inner = field_inner(t, to_device(w->r, t->scale));
-    if (w->kind == XD_W_COMBO)
-        inner.w -= xd_theme_dropdown_button_width(t);
+static xd_rect text_area(const xd_theme *theme, const xd_widget *widget) {
+    xd_rect inner = field_inner(theme, to_device(widget->r, theme->scale));
+    if (widget->kind == XD_W_COMBO)
+        inner.w -= xd_theme_dropdown_button_width(theme);
     return inner;
 }
 
-static bool is_text_widget(const xd_widget *w) {
-    return w->kind == XD_W_EDIT || (w->kind == XD_W_COMBO && w->editable);
+static bool is_text_widget(const xd_widget *widget) {
+    return widget->kind == XD_W_EDIT || (widget->kind == XD_W_COMBO && widget->editable);
 }
 
 /* Hidden when it belongs to a tab page that isn't selected, or was hidden. */
-static bool is_visible(const xd_widget *w) {
-    const xd_widget *tabs = w->win->tabs;
-    return !w->hidden && (w->page < 0 || tabs == nullptr || tabs->selected == w->page);
+static bool is_visible(const xd_widget *widget) {
+    const xd_widget *tabs = widget->win->tabs;
+    return !widget->hidden &&
+           (widget->page < 0 || tabs == nullptr || tabs->selected == widget->page);
 }
 
-static bool is_focusable(const xd_widget *w) {
-    return w->enabled && is_visible(w) &&
-           (w->kind == XD_W_BUTTON || w->kind == XD_W_EDIT || w->kind == XD_W_COMBO ||
-            w->kind == XD_W_TABS || w->kind == XD_W_CHECKBOX || w->kind == XD_W_LISTBOX ||
-            w->kind == XD_W_SLIDER || w->kind == XD_W_RADIO);
+static bool is_focusable(const xd_widget *widget) {
+    return widget->enabled && is_visible(widget) &&
+           (widget->kind == XD_W_BUTTON || widget->kind == XD_W_EDIT ||
+            widget->kind == XD_W_COMBO || widget->kind == XD_W_TABS ||
+            widget->kind == XD_W_CHECKBOX || widget->kind == XD_W_LISTBOX ||
+            widget->kind == XD_W_SLIDER || widget->kind == XD_W_RADIO);
 }
 
 /* Drawn differently under the pointer, so hovering it needs a redraw. */
-static bool draws_hot(const xd_widget *w) {
-    return w != nullptr && (w->kind == XD_W_BUTTON || w->kind == XD_W_CHECKBOX ||
-                            w->kind == XD_W_COMBO || w->kind == XD_W_RADIO);
+static bool draws_hot(const xd_widget *widget) {
+    return widget != nullptr && (widget->kind == XD_W_BUTTON || widget->kind == XD_W_CHECKBOX ||
+                                 widget->kind == XD_W_COMBO || widget->kind == XD_W_RADIO);
 }
 
 /* ---- radio button groups ---------------------------------------------------------- */
 
 enum { RADIO_GROUP_START = 1u << 0 }; /* xd_widget.flags of a radio button */
 
-static size_t widget_index(const xd_window *win, const xd_widget *w) {
+static size_t widget_index(const xd_window *win, const xd_widget *widget) {
     for (size_t i = 0; i < win->count; i++) {
-        if (win->widgets[i] == w)
+        if (win->widgets[i] == widget)
             return i;
     }
     XD_ASSERT(false);
@@ -99,127 +101,133 @@ static size_t widget_index(const xd_window *win, const xd_widget *w) {
 
 /* The radio buttons of w's group: widgets [*first, *end). A group starts at
  * a button made with `group` set, or after any other kind of widget. */
-static void radio_group(const xd_widget *w, size_t *first, size_t *end) {
-    const xd_window *win = w->win;
-    size_t i = widget_index(win, w);
-    size_t s = i;
-    while (s > 0 && !(win->widgets[s]->flags & RADIO_GROUP_START) &&
-           win->widgets[s - 1]->kind == XD_W_RADIO)
-        s--;
-    size_t e = i + 1;
-    while (e < win->count && win->widgets[e]->kind == XD_W_RADIO &&
-           !(win->widgets[e]->flags & RADIO_GROUP_START))
-        e++;
-    *first = s;
-    *end = e;
+static void radio_group(const xd_widget *widget, size_t *first, size_t *end) {
+    const xd_window *win = widget->win;
+    size_t i = widget_index(win, widget);
+    size_t group_start = i;
+    while (group_start > 0 && !(win->widgets[group_start]->flags & RADIO_GROUP_START) &&
+           win->widgets[group_start - 1]->kind == XD_W_RADIO)
+        group_start--;
+    size_t group_end = i + 1;
+    while (group_end < win->count && win->widgets[group_end]->kind == XD_W_RADIO &&
+           !(win->widgets[group_end]->flags & RADIO_GROUP_START))
+        group_end++;
+    *first = group_start;
+    *end = group_end;
 }
 
 /* Tab stops at a group's checked button (or its first, if none is), as in
  * a Windows dialog; the arrow keys reach the others. */
-static bool is_tab_stop(const xd_widget *w) {
-    if (!is_focusable(w))
+static bool is_tab_stop(const xd_widget *widget) {
+    if (!is_focusable(widget))
         return false;
-    if (w->kind != XD_W_RADIO || w->checked)
+    if (widget->kind != XD_W_RADIO || widget->checked)
         return true;
     size_t first;
     size_t end;
-    radio_group(w, &first, &end);
+    radio_group(widget, &first, &end);
     const xd_widget *stop = nullptr;
     for (size_t i = first; i < end; i++) {
-        const xd_widget *r = w->win->widgets[i];
-        if (r->checked && is_focusable(r))
+        const xd_widget *radio = widget->win->widgets[i];
+        if (radio->checked && is_focusable(radio))
             return false;
-        if (stop == nullptr && is_focusable(r))
-            stop = r;
+        if (stop == nullptr && is_focusable(radio))
+            stop = radio;
     }
-    return stop == w;
+    return stop == widget;
 }
 
 /* Checks w and unchecks the rest of its group. Returns whether w changed. */
-static bool radio_check(xd_widget *w) {
+static bool radio_check(xd_widget *widget) {
     size_t first;
     size_t end;
-    radio_group(w, &first, &end);
-    bool changed = !w->checked;
+    radio_group(widget, &first, &end);
+    bool changed = !widget->checked;
     for (size_t i = first; i < end; i++)
-        w->win->widgets[i]->checked = w->win->widgets[i] == w;
-    w->win->dirty = true;
+        widget->win->widgets[i]->checked = widget->win->widgets[i] == widget;
+    widget->win->dirty = true;
     return changed;
 }
 
 /* Takes clicks without taking keyboard focus. */
-static bool is_clickable(const xd_widget *w) {
-    return w->kind == XD_W_CUSTOM && w->pointer != nullptr && w->enabled && is_visible(w);
+static bool is_clickable(const xd_widget *widget) {
+    return widget->kind == XD_W_CUSTOM && widget->pointer != nullptr && widget->enabled &&
+           is_visible(widget);
 }
 
 /* ---- slider geometry (logical units) -------------------------------------------- */
 
 enum { SLIDER_THUMB_W = 11, SLIDER_THUMB_H = 21, SLIDER_PAD = 2 };
 
-static int slider_x0(const xd_widget *w) { return w->r.x + SLIDER_PAD + SLIDER_THUMB_W / 2; }
-static int slider_x1(const xd_widget *w) {
-    return w->r.x + w->r.w - SLIDER_PAD - SLIDER_THUMB_W / 2 - 1;
+static int slider_x0(const xd_widget *widget) {
+    return widget->r.x + SLIDER_PAD + SLIDER_THUMB_W / 2;
+}
+static int slider_x1(const xd_widget *widget) {
+    return widget->r.x + widget->r.w - SLIDER_PAD - SLIDER_THUMB_W / 2 - 1;
 }
 
-static double slider_pos(const xd_widget *w, int value) {
-    int range = XD_MAX(w->smax - w->smin, 1);
-    return slider_x0(w) + (double)(value - w->smin) * (slider_x1(w) - slider_x0(w)) / range;
+static double slider_pos(const xd_widget *widget, int value) {
+    int range = XD_MAX(widget->smax - widget->smin, 1);
+    return slider_x0(widget) +
+           (double)(value - widget->smin) * (slider_x1(widget) - slider_x0(widget)) / range;
 }
 
-static int slider_value_at(const xd_widget *w, double x) {
-    int span = XD_MAX(slider_x1(w) - slider_x0(w), 1);
-    double f = XD_CLAMP((x - slider_x0(w)) / span, 0.0, 1.0);
-    return w->smin + (int)lround(f * (w->smax - w->smin));
+static int slider_value_at(const xd_widget *widget, double x) {
+    int span = XD_MAX(slider_x1(widget) - slider_x0(widget), 1);
+    double fraction = XD_CLAMP((x - slider_x0(widget)) / span, 0.0, 1.0);
+    return widget->smin + (int)lround(fraction * (widget->smax - widget->smin));
 }
 
-static xd_rect slider_thumb(const xd_widget *w) {
-    int cx = (int)lround(slider_pos(w, w->svalue));
-    return (xd_rect){cx - SLIDER_THUMB_W / 2, w->r.y + SLIDER_PAD, SLIDER_THUMB_W, SLIDER_THUMB_H};
+static xd_rect slider_thumb(const xd_widget *widget) {
+    int cx = (int)lround(slider_pos(widget, widget->svalue));
+    return (xd_rect){cx - SLIDER_THUMB_W / 2, widget->r.y + SLIDER_PAD, SLIDER_THUMB_W,
+                     SLIDER_THUMB_H};
 }
 
-static void draw_slider(const xd_theme *t, cairo_t *cr, const xd_widget *w, bool focused) {
-    double s = t->scale;
-    int px = xd_tpx(t, 1);
+static void draw_slider(const xd_theme *theme, cairo_t *cairo, const xd_widget *widget,
+                        bool focused) {
+    double scale = theme->scale;
+    int px = xd_tpx(theme, 1);
 
     /* Channel: a groove the thumb rides along. */
-    xd_rect thumb_l = slider_thumb(w);
+    xd_rect thumb_l = slider_thumb(widget);
     int cy = thumb_l.y + 8;
-    xd_rect channel = to_device((xd_rect){slider_x0(w) - 2, cy, slider_x1(w) - slider_x0(w) + 5, 4},
-                                s);
+    xd_rect channel = to_device(
+        (xd_rect){slider_x0(widget) - 2, cy, slider_x1(widget) - slider_x0(widget) + 5, 4}, scale);
 
     /* Ticks under the thumb, one per step when they fit. */
-    int steps = w->smax - w->smin;
+    int steps = widget->smax - widget->smin;
     if (steps > 0 && steps <= 40) {
-        xd_rgba tick = xd_theme_trackbar_tics_color(t, !w->enabled);
-        for (int v = w->smin; v <= w->smax; v++) {
-            double x = slider_pos(w, v);
-            xd_rect tr = to_device((xd_rect){(int)lround(x), thumb_l.y + SLIDER_THUMB_H + 2, 1, 3},
-                                   s);
+        xd_rgba tick = xd_theme_trackbar_tics_color(theme, !widget->enabled);
+        for (int tick_value = widget->smin; tick_value <= widget->smax; tick_value++) {
+            double x = slider_pos(widget, tick_value);
+            xd_rect tr =
+                to_device((xd_rect){(int)lround(x), thumb_l.y + SLIDER_THUMB_H + 2, 1, 3}, scale);
             tr.w = px;
-            xd_fill_rect(cr, tr, tick);
+            xd_fill_rect(cairo, tr, tick);
         }
     }
 
-    uint8_t state = w->enabled ? 0 : XD_STATE_DISABLED;
+    uint8_t state = widget->enabled ? 0 : XD_STATE_DISABLED;
     if (focused)
         state |= XD_STATE_FOCUSED;
-    if (w->win->hot == w)
+    if (widget->win->hot == widget)
         state |= XD_STATE_HOT;
-    if (w->win->pressed == w)
+    if (widget->win->pressed == widget)
         state |= XD_STATE_PRESSED;
-    xd_theme_draw_trackbar(t, cr, channel, to_device(thumb_l, s), state);
+    xd_theme_draw_trackbar(theme, cairo, channel, to_device(thumb_l, scale), state);
     if (focused)
-        xd_theme_draw_focus_rect(t, cr, to_device(w->r, s));
+        xd_theme_draw_focus_rect(theme, cairo, to_device(widget->r, scale));
 }
 
-static void slider_changed(xd_widget *w, int value) {
-    value = XD_CLAMP(value, w->smin, w->smax);
-    if (value == w->svalue)
+static void slider_changed(xd_widget *widget, int value) {
+    value = XD_CLAMP(value, widget->smin, widget->smax);
+    if (value == widget->svalue)
         return;
-    w->svalue = value;
-    w->win->dirty = true;
-    if (w->cb != nullptr)
-        w->cb(w, w->user); /* may close the window */
+    widget->svalue = value;
+    widget->win->dirty = true;
+    if (widget->cb != nullptr)
+        widget->cb(widget, widget->user); /* may close the window */
 }
 
 /* ---- vertical scroll bars (logical units) ----------------------------------------- */
@@ -239,9 +247,9 @@ static int sb_arrow(xd_rect sb) { return XD_MIN(sb.w, sb.h / 2); }
 /* The thumb of scroll bar `sb` showing `page` of `total` rows from `first`,
  * measured as the theme draws it. */
 static xd_rect sb_thumb(const xd_ui *ui, xd_rect sb, int first, int page, int total) {
-    xd_theme t;
-    xd_theme_init(&t, ui->style, &ui->scheme, 1.0);
-    return xd_theme_vscrollbar_thumb(&t, sb, first, page, total);
+    xd_theme theme;
+    xd_theme_init(&theme, ui->style, &ui->scheme, 1.0);
+    return xd_theme_vscrollbar_thumb(&theme, sb, first, page, total);
 }
 
 static sb_part sb_hit(const xd_ui *ui, xd_rect sb, int first, int page, int total, double y) {
@@ -291,58 +299,62 @@ static int sb_step(sb_part part, int first, int page) {
 
 /* ---- list box and tab geometry (logical units) ---------------------------------- */
 
-static int list_rows(const xd_widget *w) {
-    return XD_MAX((w->r.h - 2 * XD_LIST_BORDER) / XD_LIST_ROW_H, 1);
+static int list_rows(const xd_widget *widget) {
+    return XD_MAX((widget->r.h - 2 * XD_LIST_BORDER) / XD_LIST_ROW_H, 1);
 }
 
-static bool list_has_scrollbar(const xd_widget *w) { return (int)w->count > list_rows(w); }
-
-static xd_rect list_scrollbar(const xd_widget *w) {
-    return (xd_rect){w->r.x + w->r.w - XD_LIST_BORDER - XD_SCROLL_W, w->r.y + XD_LIST_BORDER,
-                     XD_SCROLL_W, w->r.h - 2 * XD_LIST_BORDER};
+static bool list_has_scrollbar(const xd_widget *widget) {
+    return (int)widget->count > list_rows(widget);
 }
 
-static xd_rect list_row(const xd_widget *w, int row) {
-    int sw = list_has_scrollbar(w) ? XD_SCROLL_W : 0;
-    return (xd_rect){w->r.x + XD_LIST_BORDER, w->r.y + XD_LIST_BORDER + row * XD_LIST_ROW_H,
-                     w->r.w - 2 * XD_LIST_BORDER - sw, XD_LIST_ROW_H};
+static xd_rect list_scrollbar(const xd_widget *widget) {
+    return (xd_rect){widget->r.x + widget->r.w - XD_LIST_BORDER - XD_SCROLL_W,
+                     widget->r.y + XD_LIST_BORDER, XD_SCROLL_W, widget->r.h - 2 * XD_LIST_BORDER};
 }
 
-static void list_clamp(xd_widget *w) {
-    int max_first = XD_MAX((int)w->count - list_rows(w), 0);
-    w->first = XD_CLAMP(w->first, 0, max_first);
+static xd_rect list_row(const xd_widget *widget, int row) {
+    int sw = list_has_scrollbar(widget) ? XD_SCROLL_W : 0;
+    return (xd_rect){widget->r.x + XD_LIST_BORDER,
+                     widget->r.y + XD_LIST_BORDER + row * XD_LIST_ROW_H,
+                     widget->r.w - 2 * XD_LIST_BORDER - sw, XD_LIST_ROW_H};
 }
 
-static void list_scroll_to(xd_widget *w, int index) {
-    if (index < w->first)
-        w->first = index;
-    if (index >= w->first + list_rows(w))
-        w->first = index - list_rows(w) + 1;
-    list_clamp(w);
+static void list_clamp(xd_widget *widget) {
+    int max_first = XD_MAX((int)widget->count - list_rows(widget), 0);
+    widget->first = XD_CLAMP(widget->first, 0, max_first);
 }
 
-static xd_rect tab_rect(const xd_widget *w, size_t i) {
-    return (xd_rect){w->r.x + w->tab_x[i], w->r.y, w->tab_w[i], XD_TAB_H};
+static void list_scroll_to(xd_widget *widget, int index) {
+    if (index < widget->first)
+        widget->first = index;
+    if (index >= widget->first + list_rows(widget))
+        widget->first = index - list_rows(widget) + 1;
+    list_clamp(widget);
 }
 
-static xd_rect tab_panel(const xd_widget *w) {
-    return (xd_rect){w->r.x, w->r.y + XD_TAB_H - 2, w->r.w, w->r.h - XD_TAB_H + 2};
+static xd_rect tab_rect(const xd_widget *widget, size_t i) {
+    return (xd_rect){widget->r.x + widget->tab_x[i], widget->r.y, widget->tab_w[i], XD_TAB_H};
 }
 
-static xd_text_style field_text_style(const xd_theme *t, xd_rgba color) {
+static xd_rect tab_panel(const xd_widget *widget) {
+    return (xd_rect){widget->r.x, widget->r.y + XD_TAB_H - 2, widget->r.w,
+                     widget->r.h - XD_TAB_H + 2};
+}
+
+static xd_text_style field_text_style(const xd_theme *theme, xd_rgba color) {
     xd_text_style st = {
-        .font = &t->scheme.fonts[XD_FONT_MESSAGE],
-        .scale = t->scale,
+        .font = &theme->scheme.fonts[XD_FONT_MESSAGE],
+        .scale = theme->scale,
         .color = color,
         .align = XD_ALIGN_START,
-        .smoothing = t->scheme.font_smoothing,
+        .smoothing = theme->scheme.font_smoothing,
     };
     return st;
 }
 
 /* ---- text fields ----------------------------------------------------------------- */
 
-static const char *edit_cstr(xd_widget *w) { return xd_strbuf_cstr(&w->edit.text); }
+static const char *edit_cstr(xd_widget *widget) { return xd_strbuf_cstr(&widget->edit.text); }
 
 static int index_x(PangoLayout *layout, size_t index) {
     PangoRectangle pos;
@@ -350,77 +362,79 @@ static int index_x(PangoLayout *layout, size_t index) {
     return pos.x / PANGO_SCALE;
 }
 
-static void draw_text_field(xd_window *win, const xd_theme *t, cairo_t *cr, xd_widget *w,
-                            xd_rect area) {
-    xd_field_colors c = xd_theme_field_colors(t);
-    bool focused = win->focus == w && win->active;
-    int pad = xd_tpx(t, XD_TEXT_PAD);
+static void draw_text_field(xd_window *win, const xd_theme *theme, cairo_t *cairo,
+                            xd_widget *widget, xd_rect area) {
+    xd_field_colors field_colors = xd_theme_field_colors(theme);
+    bool focused = win->focus == widget && win->active;
+    int pad = xd_tpx(theme, XD_TEXT_PAD);
     int avail = XD_MAX(area.w - 2 * pad, 1);
 
-    xd_text_style st = field_text_style(t, w->enabled ? c.text : c.disabled_text);
-    PangoLayout *layout = xd_text_layout(cr, edit_cstr(w), &st);
+    xd_text_style st =
+        field_text_style(theme, widget->enabled ? field_colors.text : field_colors.disabled_text);
+    PangoLayout *layout = xd_text_layout(cairo, edit_cstr(widget), &st);
     int tw = 0;
     int th = 0;
     pango_layout_get_pixel_size(layout, &tw, &th);
 
     /* Scroll so the caret stays visible, and don't leave blank space on
      * the right when text is deleted. */
-    int caret = index_x(layout, w->edit.cursor);
-    if (caret - w->scroll > avail)
-        w->scroll = caret - avail;
-    if (caret - w->scroll < 0)
-        w->scroll = caret;
-    if (tw - w->scroll < avail)
-        w->scroll = XD_MAX(0, tw - avail);
+    int caret = index_x(layout, widget->edit.cursor);
+    if (caret - widget->scroll > avail)
+        widget->scroll = caret - avail;
+    if (caret - widget->scroll < 0)
+        widget->scroll = caret;
+    if (tw - widget->scroll < avail)
+        widget->scroll = XD_MAX(0, tw - avail);
 
-    double x0 = area.x + pad - w->scroll;
+    double x0 = area.x + pad - widget->scroll;
     double y0 = area.y + (area.h - th) / 2;
-    cairo_save(cr);
-    cairo_rectangle(cr, area.x, area.y, area.w, area.h);
-    cairo_clip(cr);
-    xd_set_color(cr, st.color);
-    cairo_move_to(cr, x0, y0);
-    pango_cairo_show_layout(cr, layout);
+    cairo_save(cairo);
+    cairo_rectangle(cairo, area.x, area.y, area.w, area.h);
+    cairo_clip(cairo);
+    xd_set_color(cairo, st.color);
+    cairo_move_to(cairo, x0, y0);
+    pango_cairo_show_layout(cairo, layout);
 
-    if (focused && xd_textedit_has_selection(&w->edit)) {
-        size_t s;
-        size_t e;
-        xd_textedit_selection(&w->edit, &s, &e);
-        double sx0 = x0 + index_x(layout, s);
-        double sx1 = x0 + index_x(layout, e);
-        xd_fill_rect(cr, (xd_rect){(int)sx0, (int)y0, (int)(sx1 - sx0), th}, c.selection);
-        cairo_rectangle(cr, sx0, y0, sx1 - sx0, th);
-        cairo_clip(cr);
-        xd_set_color(cr, c.selection_text);
-        cairo_move_to(cr, x0, y0);
-        pango_cairo_show_layout(cr, layout);
+    if (focused && xd_textedit_has_selection(&widget->edit)) {
+        size_t selection_start;
+        size_t selection_end;
+        xd_textedit_selection(&widget->edit, &selection_start, &selection_end);
+        double sx0 = x0 + index_x(layout, selection_start);
+        double sx1 = x0 + index_x(layout, selection_end);
+        xd_fill_rect(cairo, (xd_rect){(int)sx0, (int)y0, (int)(sx1 - sx0), th},
+                     field_colors.selection);
+        cairo_rectangle(cairo, sx0, y0, sx1 - sx0, th);
+        cairo_clip(cairo);
+        xd_set_color(cairo, field_colors.selection_text);
+        cairo_move_to(cairo, x0, y0);
+        pango_cairo_show_layout(cairo, layout);
     } else if (focused) {
-        xd_fill_rect(cr, (xd_rect){(int)(x0 + caret), (int)y0, XD_MAX(xd_tpx(t, 1), 1), th},
-                     c.text);
+        xd_fill_rect(cairo, (xd_rect){(int)(x0 + caret), (int)y0, XD_MAX(xd_tpx(theme, 1), 1), th},
+                     field_colors.text);
     }
-    cairo_restore(cr);
+    cairo_restore(cairo);
     g_object_unref(layout);
 }
 
 /* Byte position in the text under window-local logical x. */
-static size_t text_pos_at(xd_window *win, xd_widget *w, double lx) {
-    xd_theme t;
-    window_theme(win, &t);
-    xd_rect area = text_area(&t, w);
+static size_t text_pos_at(xd_window *win, xd_widget *widget, double lx) {
+    xd_theme theme;
+    window_theme(win, &theme);
+    xd_rect area = text_area(&theme, widget);
     cairo_surface_t *scratch = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *cr = cairo_create(scratch);
-    xd_text_style st = field_text_style(&t, xd_rgba_hex(0));
-    PangoLayout *layout = xd_text_layout(cr, edit_cstr(w), &st);
+    cairo_t *cairo = cairo_create(scratch);
+    xd_text_style st = field_text_style(&theme, xd_rgba_hex(0));
+    PangoLayout *layout = xd_text_layout(cairo, edit_cstr(widget), &st);
 
-    double x = lx * win->scale - area.x - xd_tpx(&t, XD_TEXT_PAD) + w->scroll;
+    double x = lx * win->scale - area.x - xd_tpx(&theme, XD_TEXT_PAD) + widget->scroll;
     int index = 0;
     int trailing = 0;
     pango_layout_xy_to_index(layout, (int)(x * PANGO_SCALE), 0, &index, &trailing);
     g_object_unref(layout);
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_destroy(scratch);
 
-    xd_textedit tmp = w->edit; /* only the cursor fields change */
+    xd_textedit tmp = widget->edit; /* only the cursor fields change */
     xd_textedit_set_cursor(&tmp, (size_t)XD_MAX(index, 0), false);
     for (int i = 0; i < trailing; i++)
         xd_textedit_move(&tmp, XD_MOTION_RIGHT, false);
@@ -429,141 +443,145 @@ static size_t text_pos_at(xd_window *win, xd_widget *w, double lx) {
 
 /* ---- drawing ------------------------------------------------------------------------ */
 
-static void draw_widget(xd_window *win, const xd_theme *t, cairo_t *cr, xd_widget *w) {
-    xd_rect r = to_device(w->r, t->scale);
-    bool focused = win->focus == w && win->active;
-    switch (w->kind) {
+static void draw_widget(xd_window *win, const xd_theme *theme, cairo_t *cairo, xd_widget *widget) {
+    xd_rect rect = to_device(widget->r, theme->scale);
+    bool focused = win->focus == widget && win->active;
+    switch (widget->kind) {
     case XD_W_LABEL:
-        xd_theme_draw_label(t, cr, r, w->text, w->flags & XD_LABEL_WRAP, w->flags & XD_LABEL_BOLD,
-                            !w->enabled || (w->flags & XD_LABEL_DIM));
+        xd_theme_draw_label(theme, cairo, rect, widget->text, widget->flags & XD_LABEL_WRAP,
+                            widget->flags & XD_LABEL_BOLD,
+                            !widget->enabled || (widget->flags & XD_LABEL_DIM));
         break;
     case XD_W_IMAGE: {
-        int px = XD_MIN(r.w, r.h);
-        cairo_surface_t *icon = xd_icons_get(win->ui->icons, w->text, px);
+        int px = XD_MIN(rect.w, rect.h);
+        cairo_surface_t *icon = xd_icons_get(win->ui->icons, widget->text, px);
         if (icon != nullptr) {
-            cairo_set_source_surface(cr, icon, r.x + (r.w - px) / 2, r.y + (r.h - px) / 2);
-            cairo_paint(cr);
+            cairo_set_source_surface(cairo, icon, rect.x + (rect.w - px) / 2,
+                                     rect.y + (rect.h - px) / 2);
+            cairo_paint(cairo);
         }
         break;
     }
     case XD_W_BANNER:
-        xd_theme_draw_dialog_banner(t, cr, r, w->text, w->text2 != nullptr ? w->text2 : "");
+        xd_theme_draw_dialog_banner(theme, cairo, rect, widget->text,
+                                    widget->text2 != nullptr ? widget->text2 : "");
         break;
     case XD_W_BUTTON: {
         uint8_t state = 0;
         /* The focused button is the default while it has focus. */
         bool is_default = win->focus != nullptr && win->focus->kind == XD_W_BUTTON
-                              ? win->focus == w
-                              : win->def == w;
+                              ? win->focus == widget
+                              : win->def == widget;
         if (is_default)
             state |= XD_STATE_DEFAULT;
         if (focused)
             state |= XD_STATE_FOCUSED;
-        if (win->hot == w)
+        if (win->hot == widget)
             state |= XD_STATE_HOT;
-        if (win->pressed == w && win->hot == w)
+        if (win->pressed == widget && win->hot == widget)
             state |= XD_STATE_PRESSED;
-        if (!w->enabled)
+        if (!widget->enabled)
             state |= XD_STATE_DISABLED;
-        xd_theme_draw_button(t, cr, r, state, w->text);
+        xd_theme_draw_button(theme, cairo, rect, state, widget->text);
         break;
     }
     case XD_W_EDIT: {
-        xd_theme_draw_field(t, cr, r, !w->enabled);
-        draw_text_field(win, t, cr, w, text_area(t, w));
+        xd_theme_draw_field(theme, cairo, rect, !widget->enabled);
+        draw_text_field(win, theme, cairo, widget, text_area(theme, widget));
         break;
     }
     case XD_W_TABS: {
-        xd_theme_draw_tab_panel(t, cr, to_device(tab_panel(w), t->scale));
+        xd_theme_draw_tab_panel(theme, cairo, to_device(tab_panel(widget), theme->scale));
         /* Unselected tabs first; the selected one overlaps its neighbours
          * and the panel's top edge. */
         for (int pass = 0; pass < 2; pass++) {
-            for (size_t i = 0; i < w->count; i++) {
-                bool sel = (int)i == w->selected;
+            for (size_t i = 0; i < widget->count; i++) {
+                bool sel = (int)i == widget->selected;
                 if (sel != (pass == 1))
                     continue;
-                xd_rect tr = tab_rect(w, i);
+                xd_rect tr = tab_rect(widget, i);
                 if (sel)
                     tr = (xd_rect){tr.x - 2, tr.y, tr.w + 4, tr.h};
                 uint8_t state = sel ? XD_STATE_CHECKED : 0;
                 if (sel && focused)
                     state |= XD_STATE_FOCUSED;
-                xd_theme_draw_tab(t, cr, to_device(tr, t->scale), state, w->items[i]);
+                xd_theme_draw_tab(theme, cairo, to_device(tr, theme->scale), state,
+                                  widget->items[i]);
             }
         }
         break;
     }
     case XD_W_CHECKBOX:
     case XD_W_RADIO: {
-        uint8_t state = w->checked ? XD_STATE_CHECKED : 0;
+        uint8_t state = widget->checked ? XD_STATE_CHECKED : 0;
         if (focused)
             state |= XD_STATE_FOCUSED;
-        if (win->hot == w)
+        if (win->hot == widget)
             state |= XD_STATE_HOT;
-        if (win->pressed == w && win->hot == w)
+        if (win->pressed == widget && win->hot == widget)
             state |= XD_STATE_PRESSED;
-        if (!w->enabled)
+        if (!widget->enabled)
             state |= XD_STATE_DISABLED;
-        if (w->kind == XD_W_RADIO)
-            xd_theme_draw_radio(t, cr, r, state, w->text);
+        if (widget->kind == XD_W_RADIO)
+            xd_theme_draw_radio(theme, cairo, rect, state, widget->text);
         else
-            xd_theme_draw_checkbox(t, cr, r, state, w->text);
+            xd_theme_draw_checkbox(theme, cairo, rect, state, widget->text);
         break;
     }
     case XD_W_LISTBOX: {
-        xd_theme_draw_field(t, cr, r, !w->enabled);
-        int rows = list_rows(w);
-        for (int i = 0; i < rows && w->first + i < (int)w->count; i++) {
-            int idx = w->first + i;
-            xd_rect row = to_device(list_row(w, i), t->scale);
-            xd_theme_draw_list_item(t, cr, row, idx == w->selected, w->items[idx]);
-            if (idx == w->selected && focused)
-                xd_theme_draw_focus_rect(t, cr, row);
+        xd_theme_draw_field(theme, cairo, rect, !widget->enabled);
+        int rows = list_rows(widget);
+        for (int i = 0; i < rows && widget->first + i < (int)widget->count; i++) {
+            int idx = widget->first + i;
+            xd_rect row = to_device(list_row(widget, i), theme->scale);
+            xd_theme_draw_list_item(theme, cairo, row, idx == widget->selected, widget->items[idx]);
+            if (idx == widget->selected && focused)
+                xd_theme_draw_focus_rect(theme, cairo, row);
         }
-        if (list_has_scrollbar(w))
-            xd_theme_draw_vscrollbar(t, cr, to_device(list_scrollbar(w), t->scale), w->first,
-                                     rows, (int)w->count);
+        if (list_has_scrollbar(widget))
+            xd_theme_draw_vscrollbar(theme, cairo, to_device(list_scrollbar(widget), theme->scale),
+                                     widget->first, rows, (int)widget->count);
         break;
     }
     case XD_W_GROUPBOX:
-        xd_theme_draw_groupbox(t, cr, r, w->text);
+        xd_theme_draw_groupbox(theme, cairo, rect, widget->text);
         break;
     case XD_W_SLIDER:
-        draw_slider(t, cr, w, focused);
+        draw_slider(theme, cairo, widget, focused);
         break;
     case XD_W_CUSTOM:
-        if (w->draw != nullptr) {
-            cairo_save(cr);
-            cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-            cairo_clip(cr);
-            w->draw(w, cr, r, t, w->user);
-            cairo_restore(cr);
+        if (widget->draw != nullptr) {
+            cairo_save(cairo);
+            cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+            cairo_clip(cairo);
+            widget->draw(widget, cairo, rect, theme, widget->user);
+            cairo_restore(cairo);
         }
         break;
     case XD_W_COMBO: {
-        xd_rect inner = xd_theme_draw_field(t, cr, r, !w->enabled);
-        xd_rect button = dropdown_rect(t, inner);
+        xd_rect inner = xd_theme_draw_field(theme, cairo, rect, !widget->enabled);
+        xd_rect button = dropdown_rect(theme, inner);
         uint8_t bstate = 0;
-        if (win->popup != nullptr && win->popup->combo == w)
+        if (win->popup != nullptr && win->popup->combo == widget)
             bstate |= XD_STATE_PRESSED;
-        if (win->hot == w)
+        if (win->hot == widget)
             bstate |= XD_STATE_HOT;
-        if (!w->enabled)
+        if (!widget->enabled)
             bstate |= XD_STATE_DISABLED;
-        xd_theme_draw_dropdown_button(t, cr, button, bstate);
-        if (w->editable) {
-            draw_text_field(win, t, cr, w, text_area(t, w));
+        xd_theme_draw_dropdown_button(theme, cairo, button, bstate);
+        if (widget->editable) {
+            draw_text_field(win, theme, cairo, widget, text_area(theme, widget));
         } else {
             /* Drop-down list: the selection shows highlighted while focused. */
             xd_rect area = {inner.x, inner.y, inner.w - button.w, inner.h};
-            int pad = xd_tpx(t, 1);
+            int pad = xd_tpx(theme, 1);
             xd_rect item = xd_rect_inset(area, pad, pad);
-            const char *text = xd_widget_text(w);
+            const char *text = xd_widget_text(widget);
             if (focused) {
-                xd_theme_draw_list_item(t, cr, item, true, text);
-                xd_theme_draw_focus_rect(t, cr, item);
+                xd_theme_draw_list_item(theme, cairo, item, true, text);
+                xd_theme_draw_focus_rect(theme, cairo, item);
             } else {
-                xd_theme_draw_list_item(t, cr, item, false, text);
+                xd_theme_draw_list_item(theme, cairo, item, false, text);
             }
         }
         break;
@@ -601,22 +619,22 @@ void xd_window_render(xd_window *win) {
     xd_ui *ui = win->ui;
     if (win->frame != nullptr)
         return; /* stays dirty until the frame is done */
-    double s = win->scale;
-    int dw = dev(win->width, s);
-    int dh = dev(win->height, s);
+    double scale = win->scale;
+    int dw = dev(win->width, scale);
+    int dh = dev(win->height, scale);
     xd_shm_buffer *buf = xd_shm_ring_acquire(&win->ring, ui->shm, dw, dh);
     if (buf == nullptr)
         return;
 
-    xd_theme t;
-    window_theme(win, &t);
-    cairo_t *cr = cairo_create(buf->surface);
-    xd_fill_rect(cr, (xd_rect){0, 0, dw, dh}, xd_theme_dialog_color(&t));
+    xd_theme theme;
+    window_theme(win, &theme);
+    cairo_t *cairo = cairo_create(buf->surface);
+    xd_fill_rect(cairo, (xd_rect){0, 0, dw, dh}, xd_theme_dialog_color(&theme));
     for (size_t i = 0; i < win->count; i++) {
         if (is_visible(win->widgets[i]))
-            draw_widget(win, &t, cr, win->widgets[i]);
+            draw_widget(win, &theme, cairo, win->widgets[i]);
     }
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_flush(buf->surface);
 
     wl_surface_attach(win->surface, buf->buffer, 0, 0);
@@ -634,108 +652,113 @@ void xd_window_render(xd_window *win) {
 static void popup_close(xd_window *win);
 static void tip_hide(xd_window *win);
 
-static bool popup_has_scrollbar(const xd_listpopup *p) { return (int)p->combo->count > p->rows; }
+static bool popup_has_scrollbar(const xd_listpopup *popup) {
+    return (int)popup->combo->count > popup->rows;
+}
 
 /* Inside the 1px border, on the right. */
-static xd_rect popup_scrollbar(const xd_listpopup *p) {
-    return (xd_rect){p->width - 1 - XD_SCROLL_W, 1, XD_SCROLL_W, p->height - 2};
+static xd_rect popup_scrollbar(const xd_listpopup *popup) {
+    return (xd_rect){popup->width - 1 - XD_SCROLL_W, 1, XD_SCROLL_W, popup->height - 2};
 }
 
-static int popup_row_w(const xd_listpopup *p) {
-    return p->width - 2 - (popup_has_scrollbar(p) ? XD_SCROLL_W : 0);
+static int popup_row_w(const xd_listpopup *popup) {
+    return popup->width - 2 - (popup_has_scrollbar(popup) ? XD_SCROLL_W : 0);
 }
 
-static void popup_set_first(xd_listpopup *p, int first) {
-    first = XD_CLAMP(first, 0, XD_MAX((int)p->combo->count - p->rows, 0));
-    if (first != p->first) {
-        p->first = first;
-        p->dirty = true;
+static void popup_set_first(xd_listpopup *popup, int first) {
+    first = XD_CLAMP(first, 0, XD_MAX((int)popup->combo->count - popup->rows, 0));
+    if (first != popup->first) {
+        popup->first = first;
+        popup->dirty = true;
     }
 }
 
-static void popup_scroll_to(xd_listpopup *p, int index) {
-    int first = p->first;
+static void popup_scroll_to(xd_listpopup *popup, int index) {
+    int first = popup->first;
     if (index < first)
         first = index;
-    if (index >= first + p->rows)
-        first = index - p->rows + 1;
-    popup_set_first(p, first);
+    if (index >= first + popup->rows)
+        first = index - popup->rows + 1;
+    popup_set_first(popup, first);
 }
 
 /* The drop-down list's rows and scroll bar, in its 1px border. */
-static void draw_list(const xd_listpopup *p, const xd_theme *t, cairo_t *cr, xd_rect all) {
-    double s = p->scale;
-    xd_fill_rect(cr, all, xd_sys(t, XD_COLOR_WINDOW));
-    xd_rgba border = t->style == XD_STYLE_CLASSIC ? xd_sys(t, XD_COLOR_WINDOW_FRAME)
-                                                  : xd_rgba_hex(0x7F9DB9);
-    xd_draw_bevel(cr, all, xd_tpx(t, 1), border, border);
-    for (int i = 0; i < p->rows; i++) {
-        int idx = p->first + i;
-        if (idx >= (int)p->combo->count)
+static void draw_list(const xd_listpopup *popup, const xd_theme *theme, cairo_t *cairo,
+                      xd_rect all) {
+    double scale = popup->scale;
+    xd_fill_rect(cairo, all, xd_sys(theme, XD_COLOR_WINDOW));
+    xd_rgba border = theme->style == XD_STYLE_CLASSIC ? xd_sys(theme, XD_COLOR_WINDOW_FRAME)
+                                                      : xd_rgba_hex(0x7F9DB9);
+    xd_draw_bevel(cairo, all, xd_tpx(theme, 1), border, border);
+    for (int i = 0; i < popup->rows; i++) {
+        int idx = popup->first + i;
+        if (idx >= (int)popup->combo->count)
             break;
-        xd_rect row =
-            to_device((xd_rect){1, 1 + i * XD_LIST_ROW_H, popup_row_w(p), XD_LIST_ROW_H}, s);
-        xd_theme_draw_list_item(t, cr, row, idx == p->hot, p->combo->items[idx]);
+        xd_rect row = to_device(
+            (xd_rect){1, 1 + i * XD_LIST_ROW_H, popup_row_w(popup), XD_LIST_ROW_H}, scale);
+        xd_theme_draw_list_item(theme, cairo, row, idx == popup->hot, popup->combo->items[idx]);
     }
-    if (popup_has_scrollbar(p))
-        xd_theme_draw_vscrollbar(t, cr, to_device(popup_scrollbar(p), s), p->first, p->rows,
-                                 (int)p->combo->count);
+    if (popup_has_scrollbar(popup))
+        xd_theme_draw_vscrollbar(theme, cairo, to_device(popup_scrollbar(popup), scale),
+                                 popup->first, popup->rows, (int)popup->combo->count);
 }
 
-void xd_popup_render(xd_listpopup *p) {
-    xd_ui *ui = p->owner->ui;
-    if (p->frame != nullptr)
+void xd_popup_render(xd_listpopup *popup) {
+    xd_ui *ui = popup->owner->ui;
+    if (popup->frame != nullptr)
         return;
-    double s = p->scale;
-    int dw = dev(p->width, s);
-    int dh = dev(p->height, s);
-    xd_shm_buffer *buf = xd_shm_ring_acquire(&p->ring, ui->shm, dw, dh);
+    double scale = popup->scale;
+    int dw = dev(popup->width, scale);
+    int dh = dev(popup->height, scale);
+    xd_shm_buffer *buf = xd_shm_ring_acquire(&popup->ring, ui->shm, dw, dh);
     if (buf == nullptr)
         return;
-    xd_theme t;
-    xd_theme_init(&t, ui->style, &ui->scheme, s);
-    cairo_t *cr = cairo_create(buf->surface);
+    xd_theme theme;
+    xd_theme_init(&theme, ui->style, &ui->scheme, scale);
+    cairo_t *cairo = cairo_create(buf->surface);
 
     xd_rect all = {0, 0, dw, dh};
-    if (p->draw != nullptr)
-        p->draw(p->anchor, cr, all, &t, p->user);
+    if (popup->draw != nullptr)
+        popup->draw(popup->anchor, cairo, all, &theme, popup->user);
     else
-        draw_list(p, &t, cr, all);
-    cairo_destroy(cr);
+        draw_list(popup, &theme, cairo, all);
+    cairo_destroy(cairo);
     cairo_surface_flush(buf->surface);
 
-    wl_surface_attach(p->surface, buf->buffer, 0, 0);
-    wl_surface_damage_buffer(p->surface, 0, 0, dw, dh);
-    if (p->viewport != nullptr)
-        wp_viewport_set_destination(p->viewport, p->width, p->height);
-    request_frame(p->surface, &p->frame);
-    wl_surface_commit(p->surface);
+    wl_surface_attach(popup->surface, buf->buffer, 0, 0);
+    wl_surface_damage_buffer(popup->surface, 0, 0, dw, dh);
+    if (popup->viewport != nullptr)
+        wp_viewport_set_destination(popup->viewport, popup->width, popup->height);
+    request_frame(popup->surface, &popup->frame);
+    wl_surface_commit(popup->surface);
     buf->busy = true;
-    p->dirty = false;
+    popup->dirty = false;
 }
 
 static void popup_xdg_configure(void *data, struct xdg_surface *xdg, uint32_t serial) {
-    xd_listpopup *p = data;
+    xd_listpopup *popup = data;
     xdg_surface_ack_configure(xdg, serial);
-    p->configured = true;
-    p->dirty = true;
+    popup->configured = true;
+    popup->dirty = true;
 }
 
 static const struct xdg_surface_listener popup_xdg_listener = {.configure = popup_xdg_configure};
 
-static void popup_configure(void *data, [[maybe_unused]] struct xdg_popup *x, int32_t px,
-                            int32_t py, [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {
-    xd_listpopup *p = data;
-    p->x = px;
-    p->y = py;
+static void popup_configure(void *data, [[maybe_unused]] struct xdg_popup *popup_role, int32_t px,
+                            int32_t py, [[maybe_unused]] int32_t width,
+                            [[maybe_unused]] int32_t height) {
+    xd_listpopup *popup = data;
+    popup->x = px;
+    popup->y = py;
 }
 
-static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *x) {
-    xd_listpopup *p = data;
-    popup_close(p->owner);
+static void popup_done(void *data, [[maybe_unused]] struct xdg_popup *popup_role) {
+    xd_listpopup *popup = data;
+    popup_close(popup->owner);
 }
 
-static void popup_repositioned([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *x,
+static void popup_repositioned([[maybe_unused]] void *data,
+                               [[maybe_unused]] struct xdg_popup *popup_role,
                                [[maybe_unused]] uint32_t token) {}
 
 static const struct xdg_popup_listener popup_listener = {
@@ -744,13 +767,14 @@ static const struct xdg_popup_listener popup_listener = {
     .repositioned = popup_repositioned,
 };
 
-static void popup_scale(void *data, [[maybe_unused]] struct wp_fractional_scale_v1 *f,
+static void popup_scale(void *data,
+                        [[maybe_unused]] struct wp_fractional_scale_v1 *fractional_scale,
                         uint32_t scale_120) {
-    xd_listpopup *p = data;
-    double s = scale_120 / 120.0;
-    if (s >= 0.5 && s <= 8.0 && s != p->scale) {
-        p->scale = s;
-        p->dirty = true;
+    xd_listpopup *popup = data;
+    double scale = scale_120 / 120.0;
+    if (scale >= 0.5 && scale <= 8.0 && scale != popup->scale) {
+        popup->scale = scale;
+        popup->dirty = true;
     }
 }
 
@@ -759,21 +783,21 @@ static const struct wp_fractional_scale_v1_listener popup_fractional_listener = 
 };
 
 /* Maps a popup of p->width x p->height under p->anchor, with a grab. */
-static void popup_map(xd_window *win, xd_listpopup *p) {
+static void popup_map(xd_window *win, xd_listpopup *popup) {
     xd_ui *ui = win->ui;
-    xd_widget *anchor = p->anchor;
-    p->surface = wl_compositor_create_surface(ui->compositor);
+    xd_widget *anchor = popup->anchor;
+    popup->surface = wl_compositor_create_surface(ui->compositor);
     if (ui->fractional_manager != nullptr && ui->viewporter != nullptr) {
-        p->fractional =
-            wp_fractional_scale_manager_v1_get_fractional_scale(ui->fractional_manager, p->surface);
-        wp_fractional_scale_v1_add_listener(p->fractional, &popup_fractional_listener, p);
-        p->viewport = wp_viewporter_get_viewport(ui->viewporter, p->surface);
+        popup->fractional = wp_fractional_scale_manager_v1_get_fractional_scale(
+            ui->fractional_manager, popup->surface);
+        wp_fractional_scale_v1_add_listener(popup->fractional, &popup_fractional_listener, popup);
+        popup->viewport = wp_viewporter_get_viewport(ui->viewporter, popup->surface);
     }
-    p->xdg_surface = xdg_wm_base_get_xdg_surface(ui->wm_base, p->surface);
-    xdg_surface_add_listener(p->xdg_surface, &popup_xdg_listener, p);
+    popup->xdg_surface = xdg_wm_base_get_xdg_surface(ui->wm_base, popup->surface);
+    xdg_surface_add_listener(popup->xdg_surface, &popup_xdg_listener, popup);
 
     struct xdg_positioner *pos = xdg_wm_base_create_positioner(ui->wm_base);
-    xdg_positioner_set_size(pos, p->width, p->height);
+    xdg_positioner_set_size(pos, popup->width, popup->height);
     xdg_positioner_set_anchor_rect(pos, anchor->r.x, anchor->r.y, anchor->r.w, anchor->r.h);
     xdg_positioner_set_anchor(pos, XDG_POSITIONER_ANCHOR_BOTTOM_LEFT);
     xdg_positioner_set_gravity(pos, XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT);
@@ -781,15 +805,15 @@ static void popup_map(xd_window *win, xd_listpopup *p) {
                                              XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y |
                                                  XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X |
                                                  XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y);
-    p->popup = xdg_surface_get_popup(p->xdg_surface, win->xdg_surface, pos);
+    popup->popup = xdg_surface_get_popup(popup->xdg_surface, win->xdg_surface, pos);
     xdg_positioner_destroy(pos);
-    xdg_popup_add_listener(p->popup, &popup_listener, p);
+    xdg_popup_add_listener(popup->popup, &popup_listener, popup);
     uint32_t serial = XD_MAX(ui->pointer_serial, ui->key_serial);
     if (ui->seat != nullptr && serial != 0)
-        xdg_popup_grab(p->popup, ui->seat, serial);
-    wl_surface_commit(p->surface);
+        xdg_popup_grab(popup->popup, ui->seat, serial);
+    wl_surface_commit(popup->surface);
 
-    win->popup = p;
+    win->popup = popup;
     win->dirty = true;
 }
 
@@ -797,17 +821,17 @@ static void popup_open(xd_window *win, xd_widget *combo) {
     if (combo->count == 0 || win->popup != nullptr)
         return;
     tip_hide(win);
-    xd_listpopup *p = XD_NEW(xd_listpopup);
-    p->owner = win;
-    p->combo = combo;
-    p->anchor = combo;
-    p->scale = win->scale;
-    p->rows = (int)XD_MIN(combo->count, (size_t)XD_LIST_MAX_ROWS);
-    p->width = combo->r.w;
-    p->height = p->rows * XD_LIST_ROW_H + 2;
-    p->hot = XD_MAX(combo->selected, 0);
-    popup_scroll_to(p, p->hot);
-    popup_map(win, p);
+    xd_listpopup *popup = XD_NEW(xd_listpopup);
+    popup->owner = win;
+    popup->combo = combo;
+    popup->anchor = combo;
+    popup->scale = win->scale;
+    popup->rows = (int)XD_MIN(combo->count, (size_t)XD_LIST_MAX_ROWS);
+    popup->width = combo->r.w;
+    popup->height = popup->rows * XD_LIST_ROW_H + 2;
+    popup->hot = XD_MAX(combo->selected, 0);
+    popup_scroll_to(popup, popup->hot);
+    popup_map(win, popup);
 }
 
 void xd_popup_custom(xd_widget *anchor, int width, int height, xd_draw_cb draw,
@@ -816,45 +840,45 @@ void xd_popup_custom(xd_widget *anchor, int width, int height, xd_draw_cb draw,
     if (win->popup != nullptr)
         return;
     tip_hide(win);
-    xd_listpopup *p = XD_NEW(xd_listpopup);
-    p->owner = win;
-    p->anchor = anchor;
-    p->draw = draw;
-    p->pointer = pointer;
-    p->user = user;
-    p->scale = win->scale;
-    p->width = width;
-    p->height = height;
-    popup_map(win, p);
+    xd_listpopup *popup = XD_NEW(xd_listpopup);
+    popup->owner = win;
+    popup->anchor = anchor;
+    popup->draw = draw;
+    popup->pointer = pointer;
+    popup->user = user;
+    popup->scale = win->scale;
+    popup->width = width;
+    popup->height = height;
+    popup_map(win, popup);
 }
 
 void xd_popup_dismiss(xd_window *win) { popup_close(win); }
 
 static void popup_close(xd_window *win) {
-    xd_listpopup *p = win->popup;
-    if (p == nullptr)
+    xd_listpopup *popup = win->popup;
+    if (popup == nullptr)
         return;
     win->popup = nullptr;
     win->dirty = true;
-    if (win->ui->pointer_popup == p)
+    if (win->ui->pointer_popup == popup)
         win->ui->pointer_popup = nullptr;
-    xd_ui_remove_source(p->sb_repeat);
-    cancel_frame(&p->frame);
-    xdg_popup_destroy(p->popup);
-    xdg_surface_destroy(p->xdg_surface);
-    if (p->viewport != nullptr)
-        wp_viewport_destroy(p->viewport);
-    if (p->fractional != nullptr)
-        wp_fractional_scale_v1_destroy(p->fractional);
-    wl_surface_destroy(p->surface);
-    xd_shm_ring_finish(&p->ring);
-    xd_free(p);
+    xd_ui_remove_source(popup->sb_repeat);
+    cancel_frame(&popup->frame);
+    xdg_popup_destroy(popup->popup);
+    xdg_surface_destroy(popup->xdg_surface);
+    if (popup->viewport != nullptr)
+        wp_viewport_destroy(popup->viewport);
+    if (popup->fractional != nullptr)
+        wp_fractional_scale_v1_destroy(popup->fractional);
+    wl_surface_destroy(popup->surface);
+    xd_shm_ring_finish(&popup->ring);
+    xd_free(popup);
 }
 
-static void combo_changed(xd_widget *w) {
-    w->win->dirty = true;
-    if (w->cb != nullptr)
-        w->cb(w, w->user);
+static void combo_changed(xd_widget *widget) {
+    widget->win->dirty = true;
+    if (widget->cb != nullptr)
+        widget->cb(widget, widget->user);
 }
 
 /* Picks an item from the open list; may run callbacks that close the
@@ -868,113 +892,116 @@ static void popup_choose(xd_window *win, int index) {
     }
 }
 
-xd_listpopup *xd_popup_for_surface(xd_ui *ui, struct wl_surface *s) {
+xd_listpopup *xd_popup_for_surface(xd_ui *ui, struct wl_surface *surface) {
     XD_LIST_FOR_EACH(win, &ui->windows, xd_window, link) {
-        if (win->popup != nullptr && win->popup->surface == s)
+        if (win->popup != nullptr && win->popup->surface == surface)
             return win->popup;
     }
     return nullptr;
 }
 
-static int popup_row_at(const xd_listpopup *p, double x, double y) {
-    if (x >= 1 + popup_row_w(p))
+static int popup_row_at(const xd_listpopup *popup, double x, double y) {
+    if (x >= 1 + popup_row_w(popup))
         return -1; /* on the scroll bar */
-    double f = floor((y - 1) / (double)XD_LIST_ROW_H);
-    if (!(f >= 0 && f < (double)XD_LIST_MAX_ROWS))
+    double row_index = floor((y - 1) / (double)XD_LIST_ROW_H);
+    if (!(row_index >= 0 && row_index < (double)XD_LIST_MAX_ROWS))
         return -1;
-    int row = (int)f;
-    if (row < 0 || row >= p->rows || p->first + row >= (int)p->combo->count)
+    int row = (int)row_index;
+    if (row < 0 || row >= popup->rows || popup->first + row >= (int)popup->combo->count)
         return -1;
-    return p->first + row;
+    return popup->first + row;
 }
 
-static sb_part popup_sb_hit(const xd_listpopup *p, double y) {
-    return sb_hit(p->owner->ui, popup_scrollbar(p), p->first, p->rows, (int)p->combo->count, y);
+static sb_part popup_sb_hit(const xd_listpopup *popup, double y) {
+    return sb_hit(popup->owner->ui, popup_scrollbar(popup), popup->first, popup->rows,
+                  (int)popup->combo->count, y);
 }
 
 /* A held arrow or track scrolls on, as Windows' does: the track only while
  * the pointer is still on the same side of the thumb. */
 static void popup_sb_repeat(void *user) {
-    xd_listpopup *p = user;
-    sb_part part = p->sb_pressed;
-    if (p->sb_repeat != nullptr && !p->sb_repeat->repeat)
-        p->sb_repeat = xd_ui_add_timer(p->owner->ui, 50, true, popup_sb_repeat, p);
-    if (popup_sb_hit(p, p->pointer_y) == part)
-        popup_set_first(p, sb_step(part, p->first, p->rows));
+    xd_listpopup *popup = user;
+    sb_part part = popup->sb_pressed;
+    if (popup->sb_repeat != nullptr && !popup->sb_repeat->repeat)
+        popup->sb_repeat = xd_ui_add_timer(popup->owner->ui, 50, true, popup_sb_repeat, popup);
+    if (popup_sb_hit(popup, popup->pointer_y) == part)
+        popup_set_first(popup, sb_step(part, popup->first, popup->rows));
 }
 
-static void popup_sb_release(xd_listpopup *p) {
-    p->sb_pressed = SB_NONE;
-    xd_ui_remove_source(p->sb_repeat);
-    p->sb_repeat = nullptr;
+static void popup_sb_release(xd_listpopup *popup) {
+    popup->sb_pressed = SB_NONE;
+    xd_ui_remove_source(popup->sb_repeat);
+    popup->sb_repeat = nullptr;
 }
 
-void xd_popup_pointer_motion(xd_listpopup *p, double x, double y) {
-    if (p->combo == nullptr) {
-        p->dirty = true;
-        if (p->pointer != nullptr)
-            p->pointer(p->anchor, XD_POINTER_MOTION, x, y, p->user);
+void xd_popup_pointer_motion(xd_listpopup *popup, double x, double y) {
+    if (popup->combo == nullptr) {
+        popup->dirty = true;
+        if (popup->pointer != nullptr)
+            popup->pointer(popup->anchor, XD_POINTER_MOTION, x, y, popup->user);
         return;
     }
-    p->pointer_y = y;
-    if (p->sb_pressed == SB_THUMB) {
-        popup_set_first(p, sb_first_at(p->owner->ui, popup_scrollbar(p), p->first, p->rows,
-                                       (int)p->combo->count, y - p->sb_offset));
+    popup->pointer_y = y;
+    if (popup->sb_pressed == SB_THUMB) {
+        popup_set_first(popup,
+                        sb_first_at(popup->owner->ui, popup_scrollbar(popup), popup->first,
+                                    popup->rows, (int)popup->combo->count, y - popup->sb_offset));
         return;
     }
-    if (p->sb_pressed != SB_NONE)
+    if (popup->sb_pressed != SB_NONE)
         return;
-    int hot = popup_row_at(p, x, y);
-    if (hot >= 0 && hot != p->hot) {
-        p->hot = hot;
-        p->dirty = true;
+    int hot = popup_row_at(popup, x, y);
+    if (hot >= 0 && hot != popup->hot) {
+        popup->hot = hot;
+        popup->dirty = true;
     }
 }
 
-void xd_popup_pointer_button(xd_listpopup *p, uint32_t button, bool pressed) {
+void xd_popup_pointer_button(xd_listpopup *popup, uint32_t button, bool pressed) {
     if (button != BTN_LEFT)
         return;
-    xd_ui *ui = p->owner->ui;
+    xd_ui *ui = popup->owner->ui;
     double x = ui->pointer_x;
     double y = ui->pointer_y;
-    if (p->combo == nullptr) {
-        p->dirty = true;
-        if (p->pointer != nullptr) /* may close the popup, or the window */
-            p->pointer(p->anchor, pressed ? XD_POINTER_PRESS : XD_POINTER_RELEASE, x, y, p->user);
+    if (popup->combo == nullptr) {
+        popup->dirty = true;
+        if (popup->pointer != nullptr) /* may close the popup, or the window */
+            popup->pointer(popup->anchor, pressed ? XD_POINTER_PRESS : XD_POINTER_RELEASE, x, y,
+                           popup->user);
         return;
     }
-    p->pointer_y = y;
+    popup->pointer_y = y;
     if (pressed) {
         /* A drag whose release went to another program ends here. */
-        popup_sb_release(p);
-        if (!popup_has_scrollbar(p) || !contains(popup_scrollbar(p), x, y))
+        popup_sb_release(popup);
+        if (!popup_has_scrollbar(popup) || !contains(popup_scrollbar(popup), x, y))
             return;
-        sb_part part = popup_sb_hit(p, y);
-        p->sb_pressed = part;
+        sb_part part = popup_sb_hit(popup, y);
+        popup->sb_pressed = part;
         if (part == SB_THUMB) {
-            xd_rect thumb = sb_thumb(ui, popup_scrollbar(p), p->first, p->rows,
-                                     (int)p->combo->count);
-            p->sb_offset = y - thumb.y;
+            xd_rect thumb = sb_thumb(ui, popup_scrollbar(popup), popup->first, popup->rows,
+                                     (int)popup->combo->count);
+            popup->sb_offset = y - thumb.y;
         } else {
-            popup_set_first(p, sb_step(part, p->first, p->rows));
-            xd_ui_remove_source(p->sb_repeat);
-            p->sb_repeat = xd_ui_add_timer(ui, 400, false, popup_sb_repeat, p);
+            popup_set_first(popup, sb_step(part, popup->first, popup->rows));
+            xd_ui_remove_source(popup->sb_repeat);
+            popup->sb_repeat = xd_ui_add_timer(ui, 400, false, popup_sb_repeat, popup);
         }
         return;
     }
-    if (p->sb_pressed != SB_NONE) {
-        popup_sb_release(p); /* the list stays open */
+    if (popup->sb_pressed != SB_NONE) {
+        popup_sb_release(popup); /* the list stays open */
         return;
     }
-    int row = popup_row_at(p, x, y);
+    int row = popup_row_at(popup, x, y);
     if (row >= 0)
-        popup_choose(p->owner, row);
+        popup_choose(popup->owner, row);
 }
 
-void xd_popup_pointer_axis(xd_listpopup *p, double value) {
-    if (p->combo == nullptr)
+void xd_popup_pointer_axis(xd_listpopup *popup, double value) {
+    if (popup->combo == nullptr)
         return;
-    popup_set_first(p, p->first + (value > 0 ? 1 : -1));
+    popup_set_first(popup, popup->first + (value > 0 ? 1 : -1));
 }
 
 /* ---- tooltips ----------------------------------------------------------------------- */
@@ -984,27 +1011,27 @@ void xd_popup_pointer_axis(xd_listpopup *p, double value) {
  * and a border in InfoText, like the taskbar's. */
 enum { TIP_INITIAL_MS = 500, TIP_AUTOPOP_MS = 5000, TIP_PAD_X = 4, TIP_BELOW_POINTER = 20 };
 
-static char *copy_str(const char *s);
+static char *copy_str(const char *text);
 
-static xd_text_style tip_text_style(const xd_theme *t) {
-    return xd_text(t, XD_FONT_TOOLTIP, xd_sys(t, XD_COLOR_INFO_TEXT), XD_ALIGN_START);
+static xd_text_style tip_text_style(const xd_theme *theme) {
+    return xd_text(theme, XD_FONT_TOOLTIP, xd_sys(theme, XD_COLOR_INFO_TEXT), XD_ALIGN_START);
 }
 
 void xd_tooltip_render(xd_tooltip *tip) {
     if (tip->frame != nullptr)
         return;
     xd_ui *ui = tip->owner->ui;
-    double s = tip->scale;
-    int dw = dev(tip->width, s);
-    int dh = dev(tip->height, s);
+    double scale = tip->scale;
+    int dw = dev(tip->width, scale);
+    int dh = dev(tip->height, scale);
     xd_shm_buffer *buf = xd_shm_ring_acquire(&tip->ring, ui->shm, dw, dh);
     if (buf == nullptr)
         return;
-    xd_theme t;
-    xd_theme_init(&t, ui->style, &ui->scheme, s);
-    cairo_t *cr = cairo_create(buf->surface);
-    xd_theme_draw_tooltip(&t, cr, (xd_rect){0, 0, dw, dh}, tip->text);
-    cairo_destroy(cr);
+    xd_theme theme;
+    xd_theme_init(&theme, ui->style, &ui->scheme, scale);
+    cairo_t *cairo = cairo_create(buf->surface);
+    xd_theme_draw_tooltip(&theme, cairo, (xd_rect){0, 0, dw, dh}, tip->text);
+    cairo_destroy(cairo);
     cairo_surface_flush(buf->surface);
 
     wl_surface_attach(tip->surface, buf->buffer, 0, 0);
@@ -1026,13 +1053,14 @@ static void tip_xdg_configure(void *data, struct xdg_surface *xdg, uint32_t seri
 
 static const struct xdg_surface_listener tip_xdg_listener = {.configure = tip_xdg_configure};
 
-static void tip_popup_done(void *data, [[maybe_unused]] struct xdg_popup *x) {
+static void tip_popup_done(void *data, [[maybe_unused]] struct xdg_popup *popup_role) {
     tip_hide(((xd_tooltip *)data)->owner);
 }
 
-static void tip_popup_configure([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_popup *x,
+static void tip_popup_configure([[maybe_unused]] void *data,
+                                [[maybe_unused]] struct xdg_popup *popup_role,
                                 [[maybe_unused]] int32_t px, [[maybe_unused]] int32_t py,
-                                [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+                                [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height) {}
 
 static const struct xdg_popup_listener tip_popup_listener = {
     .configure = tip_popup_configure,
@@ -1040,12 +1068,12 @@ static const struct xdg_popup_listener tip_popup_listener = {
     .repositioned = popup_repositioned,
 };
 
-static void tip_scale(void *data, [[maybe_unused]] struct wp_fractional_scale_v1 *f,
+static void tip_scale(void *data, [[maybe_unused]] struct wp_fractional_scale_v1 *fractional_scale,
                       uint32_t scale_120) {
     xd_tooltip *tip = data;
-    double s = scale_120 / 120.0;
-    if (s >= 0.5 && s <= 8.0 && s != tip->scale) {
-        tip->scale = s;
+    double scale = scale_120 / 120.0;
+    if (scale >= 0.5 && scale <= 8.0 && scale != tip->scale) {
+        tip->scale = scale;
         tip->dirty = true;
     }
 }
@@ -1090,23 +1118,23 @@ static void tip_show(void *user) {
     xd_window *win = user;
     win->tip_timer = nullptr;
     xd_ui *ui = win->ui;
-    xd_widget *w = win->tip_widget;
-    if (w == nullptr || w->tooltip == nullptr || win->popup != nullptr || win->tip != nullptr ||
-        !win->active)
+    xd_widget *widget = win->tip_widget;
+    if (widget == nullptr || widget->tooltip == nullptr || win->popup != nullptr ||
+        win->tip != nullptr || !win->active)
         return;
     xd_tooltip *tip = XD_NEW(xd_tooltip);
     tip->owner = win;
     tip->scale = win->scale;
-    tip->text = copy_str(w->tooltip);
+    tip->text = copy_str(widget->tooltip);
 
     /* Size in logical px, measured at scale 1. */
     xd_theme t1;
     xd_theme_init(&t1, ui->style, &ui->scheme, 1.0);
     cairo_surface_t *probe = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *cr = cairo_create(probe);
+    cairo_t *cairo = cairo_create(probe);
     xd_text_style st = tip_text_style(&t1);
-    tip->width = xd_text_width(cr, tip->text, &st) + 2 * TIP_PAD_X + 2;
-    cairo_destroy(cr);
+    tip->width = xd_text_width(cairo, tip->text, &st) + 2 * TIP_PAD_X + 2;
+    cairo_destroy(cairo);
     cairo_surface_destroy(probe);
     tip->height = xd_metric_px(&t1, XD_METRIC_MENU_HEIGHT) + 1; /* 19px, as XP's */
 
@@ -1146,30 +1174,30 @@ static void tip_show(void *user) {
 /* The topmost shown widget with a tooltip at window-local (x, y). */
 static xd_widget *tip_widget_at(xd_window *win, double x, double y) {
     for (size_t i = win->count; i-- > 0;) {
-        xd_widget *w = win->widgets[i];
-        if (w->tooltip != nullptr && is_visible(w) && contains(w->r, x, y))
-            return w;
+        xd_widget *widget = win->widgets[i];
+        if (widget->tooltip != nullptr && is_visible(widget) && contains(widget->r, x, y))
+            return widget;
     }
     return nullptr;
 }
 
 /* Pointer motion over the window: arms the tip of the widget it's now on. */
 static void tip_track(xd_window *win, double x, double y) {
-    xd_widget *w = tip_widget_at(win, x, y);
-    if (w == win->tip_widget)
+    xd_widget *widget = tip_widget_at(win, x, y);
+    if (widget == win->tip_widget)
         return;
     tip_hide(win);
-    win->tip_widget = w;
-    if (w != nullptr)
+    win->tip_widget = widget;
+    if (widget != nullptr)
         win->tip_timer = xd_ui_add_timer(win->ui, TIP_INITIAL_MS, false, tip_show, win);
 }
 
-void xd_widget_set_tooltip(xd_widget *w, const char *text) {
-    XD_FREE(&w->tooltip);
+void xd_widget_set_tooltip(xd_widget *widget, const char *text) {
+    XD_FREE(&widget->tooltip);
     if (text != nullptr && text[0] != '\0')
-        w->tooltip = copy_str(text);
-    if (w->win->tip_widget == w)
-        tip_hide(w->win);
+        widget->tooltip = copy_str(text);
+    if (widget->win->tip_widget == widget)
+        tip_hide(widget->win);
 }
 
 /* ---- window lifecycle --------------------------------------------------------- */
@@ -1184,15 +1212,15 @@ static void xdg_configure(void *data, struct xdg_surface *xdg, uint32_t serial) 
 static const struct xdg_surface_listener xdg_listener = {.configure = xdg_configure};
 
 static void toplevel_configure([[maybe_unused]] void *data,
-                               [[maybe_unused]] struct xdg_toplevel *t,
-                               [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h,
+                               [[maybe_unused]] struct xdg_toplevel *toplevel,
+                               [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height,
                                [[maybe_unused]] struct wl_array *states) {
     /* Dialogs keep their size; activation is tracked via keyboard focus. */
 }
 
-static void click(xd_widget *w);
+static void click(xd_widget *widget);
 
-static void toplevel_close(void *data, [[maybe_unused]] struct xdg_toplevel *t) {
+static void toplevel_close(void *data, [[maybe_unused]] struct xdg_toplevel *toplevel) {
     xd_window *win = data;
     if (win->cancel != nullptr && win->cancel->enabled)
         click(win->cancel);
@@ -1200,10 +1228,12 @@ static void toplevel_close(void *data, [[maybe_unused]] struct xdg_toplevel *t) 
         xd_window_close(win);
 }
 
-static void toplevel_bounds([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_toplevel *t,
-                            [[maybe_unused]] int32_t w, [[maybe_unused]] int32_t h) {}
+static void toplevel_bounds([[maybe_unused]] void *data,
+                            [[maybe_unused]] struct xdg_toplevel *toplevel,
+                            [[maybe_unused]] int32_t width, [[maybe_unused]] int32_t height) {}
 
-static void toplevel_caps([[maybe_unused]] void *data, [[maybe_unused]] struct xdg_toplevel *t,
+static void toplevel_caps([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct xdg_toplevel *toplevel,
                           [[maybe_unused]] struct wl_array *caps) {}
 
 static const struct xdg_toplevel_listener toplevel_listener = {
@@ -1213,12 +1243,13 @@ static const struct xdg_toplevel_listener toplevel_listener = {
     .wm_capabilities = toplevel_caps,
 };
 
-static void window_scale(void *data, [[maybe_unused]] struct wp_fractional_scale_v1 *f,
+static void window_scale(void *data,
+                         [[maybe_unused]] struct wp_fractional_scale_v1 *fractional_scale,
                          uint32_t scale_120) {
     xd_window *win = data;
-    double s = scale_120 / 120.0;
-    if (s >= 0.5 && s <= 8.0 && s != win->scale) {
-        win->scale = s;
+    double scale = scale_120 / 120.0;
+    if (scale >= 0.5 && scale <= 8.0 && scale != win->scale) {
+        win->scale = scale;
         win->dirty = true;
     }
 }
@@ -1265,17 +1296,17 @@ void xd_window_show(xd_window *win) {
     wl_surface_commit(win->surface);
 }
 
-static void widget_free(xd_widget *w) {
-    XD_FREE(&w->tooltip);
-    XD_FREE(&w->text);
-    XD_FREE(&w->text2);
-    xd_textedit_free(&w->edit);
-    for (size_t i = 0; i < w->count; i++)
-        xd_free(w->items[i]);
-    xd_free(w->items);
-    xd_free(w->tab_x);
-    xd_free(w->tab_w);
-    xd_free(w);
+static void widget_free(xd_widget *widget) {
+    XD_FREE(&widget->tooltip);
+    XD_FREE(&widget->text);
+    XD_FREE(&widget->text2);
+    xd_textedit_free(&widget->edit);
+    for (size_t i = 0; i < widget->count; i++)
+        xd_free(widget->items[i]);
+    xd_free(widget->items);
+    xd_free(widget->tab_x);
+    xd_free(widget->tab_w);
+    xd_free(widget);
 }
 
 void xd_window_close(xd_window *win) {
@@ -1303,11 +1334,11 @@ void xd_window_close(xd_window *win) {
 }
 
 xd_ui *xd_window_ui(xd_window *win) { return win->ui; }
-xd_window *xd_widget_window(xd_widget *w) { return w->win; }
+xd_window *xd_widget_window(xd_widget *widget) { return widget->win; }
 
-xd_window *xd_window_for_surface(xd_ui *ui, struct wl_surface *s) {
+xd_window *xd_window_for_surface(xd_ui *ui, struct wl_surface *surface) {
     XD_LIST_FOR_EACH(win, &ui->windows, xd_window, link) {
-        if (win->surface == s)
+        if (win->surface == surface)
             return win;
     }
     return nullptr;
@@ -1316,272 +1347,274 @@ xd_window *xd_window_for_surface(xd_ui *ui, struct wl_surface *s) {
 void xd_window_set_default(xd_window *win, xd_widget *button) { win->def = button; }
 void xd_window_set_cancel(xd_window *win, xd_widget *button) { win->cancel = button; }
 
-void xd_window_set_focus(xd_window *win, xd_widget *w) {
-    if (w != nullptr && !is_focusable(w))
+void xd_window_set_focus(xd_window *win, xd_widget *widget) {
+    if (widget != nullptr && !is_focusable(widget))
         return;
-    if (win->focus != w && w != nullptr && is_text_widget(w))
-        xd_textedit_select_all(&w->edit); /* Windows selects on Tab-in */
-    win->focus = w;
+    if (win->focus != widget && widget != nullptr && is_text_widget(widget))
+        xd_textedit_select_all(&widget->edit); /* Windows selects on Tab-in */
+    win->focus = widget;
     win->dirty = true;
 }
 
 /* ---- widgets ---------------------------------------------------------------------- */
 
-static xd_widget *add(xd_window *win, xd_widget_kind kind, xd_rect r) {
-    xd_widget *w = XD_NEW(xd_widget);
-    w->kind = kind;
-    w->win = win;
-    w->r = r;
-    w->enabled = true;
-    w->selected = -1;
-    w->page = -1;
+static xd_widget *add(xd_window *win, xd_widget_kind kind, xd_rect rect) {
+    xd_widget *widget = XD_NEW(xd_widget);
+    widget->kind = kind;
+    widget->win = win;
+    widget->r = rect;
+    widget->enabled = true;
+    widget->selected = -1;
+    widget->page = -1;
     if (win->count == win->cap) {
         win->cap = win->cap == 0 ? 8 : win->cap * 2;
         win->widgets = xd_realloc_array(win->widgets, win->cap, sizeof(*win->widgets));
     }
-    win->widgets[win->count++] = w;
+    win->widgets[win->count++] = widget;
     win->dirty = true;
-    return w;
+    return widget;
 }
 
-static char *copy_str(const char *s) { return xd_str_dup_cstr(xd_str_from_cstr(s)); }
+static char *copy_str(const char *text) { return xd_str_dup_cstr(xd_str_from_cstr(text)); }
 
-xd_widget *xd_label(xd_window *win, xd_rect r, const char *text, uint8_t flags) {
-    xd_widget *w = add(win, XD_W_LABEL, r);
-    w->text = copy_str(text);
-    w->flags = flags;
-    return w;
+xd_widget *xd_label(xd_window *win, xd_rect rect, const char *text, uint8_t flags) {
+    xd_widget *widget = add(win, XD_W_LABEL, rect);
+    widget->text = copy_str(text);
+    widget->flags = flags;
+    return widget;
 }
 
-xd_widget *xd_image(xd_window *win, xd_rect r, const char *icon_name) {
-    xd_widget *w = add(win, XD_W_IMAGE, r);
-    w->text = copy_str(icon_name);
-    return w;
+xd_widget *xd_image(xd_window *win, xd_rect rect, const char *icon_name) {
+    xd_widget *widget = add(win, XD_W_IMAGE, rect);
+    widget->text = copy_str(icon_name);
+    return widget;
 }
 
-xd_widget *xd_banner(xd_window *win, xd_rect r, const char *product, const char *edition) {
-    xd_widget *w = add(win, XD_W_BANNER, r);
-    w->text = copy_str(product);
-    w->text2 = copy_str(edition);
-    return w;
+xd_widget *xd_banner(xd_window *win, xd_rect rect, const char *product, const char *edition) {
+    xd_widget *widget = add(win, XD_W_BANNER, rect);
+    widget->text = copy_str(product);
+    widget->text2 = copy_str(edition);
+    return widget;
 }
 
-xd_widget *xd_button(xd_window *win, xd_rect r, const char *label, xd_widget_cb on_click,
+xd_widget *xd_button(xd_window *win, xd_rect rect, const char *label, xd_widget_cb on_click,
                      void *user) {
-    xd_widget *w = add(win, XD_W_BUTTON, r);
-    w->text = copy_str(label);
-    w->cb = on_click;
-    w->user = user;
-    return w;
+    xd_widget *widget = add(win, XD_W_BUTTON, rect);
+    widget->text = copy_str(label);
+    widget->cb = on_click;
+    widget->user = user;
+    return widget;
 }
 
-xd_widget *xd_edit(xd_window *win, xd_rect r, const char *text) {
-    xd_widget *w = add(win, XD_W_EDIT, r);
-    w->edit.max_len = 4096;
-    xd_textedit_set(&w->edit, xd_str_from_cstr(text));
-    return w;
+xd_widget *xd_edit(xd_window *win, xd_rect rect, const char *text) {
+    xd_widget *widget = add(win, XD_W_EDIT, rect);
+    widget->edit.max_len = 4096;
+    xd_textedit_set(&widget->edit, xd_str_from_cstr(text));
+    return widget;
 }
 
-void xd_edit_set_on_change(xd_widget *w, xd_widget_cb on_change, void *user) {
-    XD_ASSERT(w->kind == XD_W_EDIT);
-    w->cb = on_change;
-    w->user = user;
+void xd_edit_set_on_change(xd_widget *widget, xd_widget_cb on_change, void *user) {
+    XD_ASSERT(widget->kind == XD_W_EDIT);
+    widget->cb = on_change;
+    widget->user = user;
 }
 
-xd_widget *xd_combo(xd_window *win, xd_rect r, bool editable, xd_widget_cb on_change,
+xd_widget *xd_combo(xd_window *win, xd_rect rect, bool editable, xd_widget_cb on_change,
                     void *user) {
-    xd_widget *w = add(win, XD_W_COMBO, r);
-    w->editable = editable;
-    w->cb = on_change;
-    w->user = user;
-    w->edit.max_len = 4096;
-    return w;
+    xd_widget *widget = add(win, XD_W_COMBO, rect);
+    widget->editable = editable;
+    widget->cb = on_change;
+    widget->user = user;
+    widget->edit.max_len = 4096;
+    return widget;
 }
 
-void xd_combo_add(xd_widget *w, const char *item) { xd_widget_add_item(w, item); }
+void xd_combo_add(xd_widget *widget, const char *item) { xd_widget_add_item(widget, item); }
 
-static void xd_widget_add_item_any(xd_widget *w, const char *item);
+static void xd_widget_add_item_any(xd_widget *widget, const char *item);
 
-void xd_widget_add_item(xd_widget *w, const char *item) {
-    XD_ASSERT(w->kind == XD_W_COMBO || w->kind == XD_W_LISTBOX);
-    xd_widget_add_item_any(w, item);
+void xd_widget_add_item(xd_widget *widget, const char *item) {
+    XD_ASSERT(widget->kind == XD_W_COMBO || widget->kind == XD_W_LISTBOX);
+    xd_widget_add_item_any(widget, item);
 }
 
-static void xd_widget_add_item_any(xd_widget *w, const char *item) {
-    if (w->count == w->cap) {
-        w->cap = w->cap == 0 ? 8 : w->cap * 2;
-        w->items = xd_realloc_array(w->items, w->cap, sizeof(*w->items));
+static void xd_widget_add_item_any(xd_widget *widget, const char *item) {
+    if (widget->count == widget->cap) {
+        widget->cap = widget->cap == 0 ? 8 : widget->cap * 2;
+        widget->items = xd_realloc_array(widget->items, widget->cap, sizeof(*widget->items));
     }
-    w->items[w->count++] = copy_str(item);
-    w->win->dirty = true;
+    widget->items[widget->count++] = copy_str(item);
+    widget->win->dirty = true;
 }
 
-void xd_widget_clear_items(xd_widget *w) {
-    for (size_t i = 0; i < w->count; i++)
-        xd_free(w->items[i]);
-    w->count = 0;
-    w->selected = -1;
-    w->first = 0;
-    w->win->dirty = true;
+void xd_widget_clear_items(xd_widget *widget) {
+    for (size_t i = 0; i < widget->count; i++)
+        xd_free(widget->items[i]);
+    widget->count = 0;
+    widget->selected = -1;
+    widget->first = 0;
+    widget->win->dirty = true;
 }
 
-int xd_combo_selected(const xd_widget *w) { return w->selected; }
-int xd_widget_selected(const xd_widget *w) { return w->selected; }
-size_t xd_widget_item_count(const xd_widget *w) { return w->count; }
+int xd_combo_selected(const xd_widget *widget) { return widget->selected; }
+int xd_widget_selected(const xd_widget *widget) { return widget->selected; }
+size_t xd_widget_item_count(const xd_widget *widget) { return widget->count; }
 
-void xd_combo_select(xd_widget *w, int index) {
-    XD_ASSERT(w->kind == XD_W_COMBO);
-    xd_widget_select(w, index);
+void xd_combo_select(xd_widget *widget, int index) {
+    XD_ASSERT(widget->kind == XD_W_COMBO);
+    xd_widget_select(widget, index);
 }
 
-void xd_widget_select(xd_widget *w, int index) {
-    XD_ASSERT(w->kind == XD_W_COMBO || w->kind == XD_W_LISTBOX || w->kind == XD_W_TABS);
-    if (index < 0 || (size_t)index >= w->count)
+void xd_widget_select(xd_widget *widget, int index) {
+    XD_ASSERT(widget->kind == XD_W_COMBO || widget->kind == XD_W_LISTBOX ||
+              widget->kind == XD_W_TABS);
+    if (index < 0 || (size_t)index >= widget->count)
         return;
-    w->selected = index;
-    if (w->kind == XD_W_COMBO && w->editable)
-        xd_textedit_set(&w->edit, xd_str_from_cstr(w->items[index]));
-    if (w->kind == XD_W_LISTBOX)
-        list_scroll_to(w, index);
-    if (w->kind == XD_W_TABS && w->win->focus != nullptr && !is_visible(w->win->focus))
-        w->win->focus = w; /* focus was on the page we left */
-    w->win->dirty = true;
+    widget->selected = index;
+    if (widget->kind == XD_W_COMBO && widget->editable)
+        xd_textedit_set(&widget->edit, xd_str_from_cstr(widget->items[index]));
+    if (widget->kind == XD_W_LISTBOX)
+        list_scroll_to(widget, index);
+    if (widget->kind == XD_W_TABS && widget->win->focus != nullptr &&
+        !is_visible(widget->win->focus))
+        widget->win->focus = widget; /* focus was on the page we left */
+    widget->win->dirty = true;
 }
 
-xd_widget *xd_tabs(xd_window *win, xd_rect r, const char *const *labels, size_t count,
+xd_widget *xd_tabs(xd_window *win, xd_rect rect, const char *const *labels, size_t count,
                    xd_widget_cb on_change, void *user) {
     XD_ASSERT(win->tabs == nullptr); /* one per window */
-    xd_widget *w = add(win, XD_W_TABS, r);
-    w->cb = on_change;
-    w->user = user;
-    w->tab_x = xd_alloc_array(XD_MAX(count, 1), sizeof(int));
-    w->tab_w = xd_alloc_array(XD_MAX(count, 1), sizeof(int));
+    xd_widget *widget = add(win, XD_W_TABS, rect);
+    widget->cb = on_change;
+    widget->user = user;
+    widget->tab_x = xd_alloc_array(XD_MAX(count, 1), sizeof(int));
+    widget->tab_w = xd_alloc_array(XD_MAX(count, 1), sizeof(int));
 
     /* Tabs are as wide as their labels, measured at logical scale. */
-    xd_theme t;
-    xd_theme_init(&t, win->ui->style, &win->ui->scheme, 1.0);
+    xd_theme theme;
+    xd_theme_init(&theme, win->ui->style, &win->ui->scheme, 1.0);
     cairo_surface_t *scratch = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
-    cairo_t *cr = cairo_create(scratch);
-    xd_text_style st = xd_text(&t, XD_FONT_MESSAGE, xd_rgba_hex(0), XD_ALIGN_START);
+    cairo_t *cairo = cairo_create(scratch);
+    xd_text_style st = xd_text(&theme, XD_FONT_MESSAGE, xd_rgba_hex(0), XD_ALIGN_START);
     /* 7px each side of a label; less, down to 3, where that wouldn't fit
      * in one row (Display Properties' seven tabs). */
     int text = 0;
     for (size_t i = 0; i < count; i++)
-        text += xd_text_width(cr, labels[i], &st);
+        text += xd_text_width(cairo, labels[i], &st);
     int pad = 14;
-    while (pad > 6 && count > 0 && text + pad * (int)count > r.w - 4)
+    while (pad > 6 && count > 0 && text + pad * (int)count > rect.w - 4)
         pad -= 2;
     int x = 2;
     for (size_t i = 0; i < count; i++) {
-        xd_widget_add_item_any(w, labels[i]);
-        w->tab_x[i] = x;
-        w->tab_w[i] = xd_text_width(cr, labels[i], &st) + pad;
-        x += w->tab_w[i];
+        xd_widget_add_item_any(widget, labels[i]);
+        widget->tab_x[i] = x;
+        widget->tab_w[i] = xd_text_width(cairo, labels[i], &st) + pad;
+        x += widget->tab_w[i];
     }
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_destroy(scratch);
-    w->selected = count > 0 ? 0 : -1;
-    win->tabs = w;
-    return w;
+    widget->selected = count > 0 ? 0 : -1;
+    win->tabs = widget;
+    return widget;
 }
 
-void xd_widget_set_page(xd_widget *w, int page) {
-    w->page = page;
-    w->win->dirty = true;
+void xd_widget_set_page(xd_widget *widget, int page) {
+    widget->page = page;
+    widget->win->dirty = true;
 }
 
-void xd_widget_set_visible(xd_widget *w, bool visible) {
-    w->hidden = !visible;
-    if (!visible && w->win->focus == w)
-        w->win->focus = nullptr;
-    w->win->dirty = true;
+void xd_widget_set_visible(xd_widget *widget, bool visible) {
+    widget->hidden = !visible;
+    if (!visible && widget->win->focus == widget)
+        widget->win->focus = nullptr;
+    widget->win->dirty = true;
 }
 
-xd_widget *xd_checkbox(xd_window *win, xd_rect r, const char *label, bool checked,
+xd_widget *xd_checkbox(xd_window *win, xd_rect rect, const char *label, bool checked,
                        xd_widget_cb on_change, void *user) {
-    xd_widget *w = add(win, XD_W_CHECKBOX, r);
-    w->text = copy_str(label);
-    w->checked = checked;
-    w->cb = on_change;
-    w->user = user;
-    return w;
+    xd_widget *widget = add(win, XD_W_CHECKBOX, rect);
+    widget->text = copy_str(label);
+    widget->checked = checked;
+    widget->cb = on_change;
+    widget->user = user;
+    return widget;
 }
 
-bool xd_checkbox_checked(const xd_widget *w) { return w->checked; }
+bool xd_checkbox_checked(const xd_widget *widget) { return widget->checked; }
 
-void xd_checkbox_set(xd_widget *w, bool checked) {
-    w->checked = checked;
-    w->win->dirty = true;
+void xd_checkbox_set(xd_widget *widget, bool checked) {
+    widget->checked = checked;
+    widget->win->dirty = true;
 }
 
-xd_widget *xd_radio(xd_window *win, xd_rect r, const char *label, bool group,
+xd_widget *xd_radio(xd_window *win, xd_rect rect, const char *label, bool group,
                     xd_widget_cb on_change, void *user) {
-    xd_widget *w = add(win, XD_W_RADIO, r);
-    w->text = copy_str(label);
-    w->flags = group ? RADIO_GROUP_START : 0;
-    w->cb = on_change;
-    w->user = user;
-    return w;
+    xd_widget *widget = add(win, XD_W_RADIO, rect);
+    widget->text = copy_str(label);
+    widget->flags = group ? RADIO_GROUP_START : 0;
+    widget->cb = on_change;
+    widget->user = user;
+    return widget;
 }
 
-void xd_radio_set(xd_widget *w) {
-    XD_ASSERT(w->kind == XD_W_RADIO);
-    radio_check(w);
+void xd_radio_set(xd_widget *widget) {
+    XD_ASSERT(widget->kind == XD_W_RADIO);
+    radio_check(widget);
 }
 
-xd_widget *xd_listbox(xd_window *win, xd_rect r, xd_widget_cb on_change, void *user) {
-    xd_widget *w = add(win, XD_W_LISTBOX, r);
-    w->cb = on_change;
-    w->user = user;
-    return w;
+xd_widget *xd_listbox(xd_window *win, xd_rect rect, xd_widget_cb on_change, void *user) {
+    xd_widget *widget = add(win, XD_W_LISTBOX, rect);
+    widget->cb = on_change;
+    widget->user = user;
+    return widget;
 }
 
-xd_widget *xd_groupbox(xd_window *win, xd_rect r, const char *label) {
-    xd_widget *w = add(win, XD_W_GROUPBOX, r);
-    w->text = copy_str(label);
-    return w;
+xd_widget *xd_groupbox(xd_window *win, xd_rect rect, const char *label) {
+    xd_widget *widget = add(win, XD_W_GROUPBOX, rect);
+    widget->text = copy_str(label);
+    return widget;
 }
 
-xd_widget *xd_custom(xd_window *win, xd_rect r, xd_draw_cb draw, void *user) {
-    xd_widget *w = add(win, XD_W_CUSTOM, r);
-    w->draw = draw;
-    w->user = user;
-    return w;
+xd_widget *xd_custom(xd_window *win, xd_rect rect, xd_draw_cb draw, void *user) {
+    xd_widget *widget = add(win, XD_W_CUSTOM, rect);
+    widget->draw = draw;
+    widget->user = user;
+    return widget;
 }
 
-void xd_widget_redraw(xd_widget *w) { w->win->dirty = true; }
+void xd_widget_redraw(xd_widget *widget) { widget->win->dirty = true; }
 
-void xd_custom_set_pointer(xd_widget *w, xd_pointer_cb cb) { w->pointer = cb; }
+void xd_custom_set_pointer(xd_widget *widget, xd_pointer_cb cb) { widget->pointer = cb; }
 
-xd_widget *xd_slider(xd_window *win, xd_rect r, int min, int max, int value,
+xd_widget *xd_slider(xd_window *win, xd_rect rect, int min, int max, int value,
                      xd_widget_cb on_change, void *user) {
-    xd_widget *w = add(win, XD_W_SLIDER, r);
-    w->cb = on_change;
-    w->user = user;
-    xd_slider_set(w, min, max, value);
-    return w;
+    xd_widget *widget = add(win, XD_W_SLIDER, rect);
+    widget->cb = on_change;
+    widget->user = user;
+    xd_slider_set(widget, min, max, value);
+    return widget;
 }
 
-int xd_slider_value(const xd_widget *w) { return w->svalue; }
+int xd_slider_value(const xd_widget *widget) { return widget->svalue; }
 
-void xd_slider_set(xd_widget *w, int min, int max, int value) {
-    w->smin = min;
-    w->smax = XD_MAX(max, min);
-    w->svalue = XD_CLAMP(value, w->smin, w->smax);
-    w->win->dirty = true;
+void xd_slider_set(xd_widget *widget, int min, int max, int value) {
+    widget->smin = min;
+    widget->smax = XD_MAX(max, min);
+    widget->svalue = XD_CLAMP(value, widget->smin, widget->smax);
+    widget->win->dirty = true;
 }
 
-const char *xd_widget_text(xd_widget *w) {
-    switch (w->kind) {
+const char *xd_widget_text(xd_widget *widget) {
+    switch (widget->kind) {
     case XD_W_EDIT:
-        return edit_cstr(w);
+        return edit_cstr(widget);
     case XD_W_COMBO:
-        if (w->editable)
-            return edit_cstr(w);
-        return w->selected >= 0 ? w->items[w->selected] : "";
+        if (widget->editable)
+            return edit_cstr(widget);
+        return widget->selected >= 0 ? widget->items[widget->selected] : "";
     case XD_W_LISTBOX:
     case XD_W_TABS:
-        return w->selected >= 0 ? w->items[w->selected] : "";
+        return widget->selected >= 0 ? widget->items[widget->selected] : "";
     case XD_W_LABEL:
     case XD_W_IMAGE:
     case XD_W_BANNER:
@@ -1593,94 +1626,94 @@ const char *xd_widget_text(xd_widget *w) {
     case XD_W_RADIO:
         break;
     }
-    return w->text != nullptr ? w->text : "";
+    return widget->text != nullptr ? widget->text : "";
 }
 
-void xd_widget_set_text(xd_widget *w, const char *text) {
-    if (is_text_widget(w)) {
-        xd_textedit_set(&w->edit, xd_str_from_cstr(text));
+void xd_widget_set_text(xd_widget *widget, const char *text) {
+    if (is_text_widget(widget)) {
+        xd_textedit_set(&widget->edit, xd_str_from_cstr(text));
     } else {
-        XD_FREE(&w->text);
-        w->text = copy_str(text);
+        XD_FREE(&widget->text);
+        widget->text = copy_str(text);
     }
-    w->win->dirty = true;
+    widget->win->dirty = true;
 }
 
-void xd_widget_set_enabled(xd_widget *w, bool enabled) {
-    if (w->enabled == enabled)
+void xd_widget_set_enabled(xd_widget *widget, bool enabled) {
+    if (widget->enabled == enabled)
         return;
-    w->enabled = enabled;
-    if (!enabled && w->win->focus == w)
-        w->win->focus = nullptr;
-    w->win->dirty = true;
+    widget->enabled = enabled;
+    if (!enabled && widget->win->focus == widget)
+        widget->win->focus = nullptr;
+    widget->win->dirty = true;
 }
 
 /* ---- input ----------------------------------------------------------------------- */
 
 /* Runs a button's action. The callback may close the window: callers must
  * return without touching the window afterwards. */
-static void click(xd_widget *w) {
-    if (w->enabled && w->cb != nullptr)
-        w->cb(w, w->user);
+static void click(xd_widget *widget) {
+    if (widget->enabled && widget->cb != nullptr)
+        widget->cb(widget, widget->user);
 }
 
 static xd_widget *widget_at(xd_window *win, double x, double y) {
     for (size_t i = win->count; i-- > 0;) {
-        xd_widget *w = win->widgets[i];
-        if ((is_focusable(w) || is_clickable(w)) && contains(w->r, x, y))
-            return w;
+        xd_widget *widget = win->widgets[i];
+        if ((is_focusable(widget) || is_clickable(widget)) && contains(widget->r, x, y))
+            return widget;
     }
     return nullptr;
 }
 
-static bool over_text(xd_window *win, xd_widget *w, double x, double y) {
-    if (w == nullptr || !is_text_widget(w))
+static bool over_text(xd_window *win, xd_widget *widget, double x, double y) {
+    if (widget == nullptr || !is_text_widget(widget))
         return false;
-    xd_theme t;
-    window_theme(win, &t);
-    xd_rect a = text_area(&t, w);
-    return contains(a, x * win->scale, y * win->scale);
+    xd_theme theme;
+    window_theme(win, &theme);
+    xd_rect area = text_area(&theme, widget);
+    return contains(area, x * win->scale, y * win->scale);
 }
 
 /* Selection change from the user: notify. May close the window. */
-static void select_changed(xd_widget *w) {
-    w->win->dirty = true;
-    if (w->cb != nullptr)
-        w->cb(w, w->user);
+static void select_changed(xd_widget *widget) {
+    widget->win->dirty = true;
+    if (widget->cb != nullptr)
+        widget->cb(widget, widget->user);
 }
 
-static void select_index(xd_widget *w, int index) {
-    if (index < 0 || (size_t)index >= w->count || index == w->selected)
+static void select_index(xd_widget *widget, int index) {
+    if (index < 0 || (size_t)index >= widget->count || index == widget->selected)
         return;
-    xd_widget_select(w, index);
-    select_changed(w);
+    xd_widget_select(widget, index);
+    select_changed(widget);
 }
 
 /* Scroll thumb dragging: map the pointer back to a first row. */
-static void list_drag_thumb(xd_widget *w, double y) {
-    int first = sb_first_at(w->win->ui, list_scrollbar(w), w->first, list_rows(w), (int)w->count,
-                            y - w->win->thumb_offset);
-    if (first != w->first) {
-        w->first = first;
-        w->win->dirty = true;
+static void list_drag_thumb(xd_widget *widget, double y) {
+    int first = sb_first_at(widget->win->ui, list_scrollbar(widget), widget->first,
+                            list_rows(widget), (int)widget->count, y - widget->win->thumb_offset);
+    if (first != widget->first) {
+        widget->first = first;
+        widget->win->dirty = true;
     }
 }
 
 void xd_window_pointer_axis(xd_window *win, double value) {
-    xd_widget *w = widget_at(win, win->ui->pointer_x, win->ui->pointer_y);
-    if (w == nullptr || w->kind != XD_W_LISTBOX)
+    xd_widget *widget = widget_at(win, win->ui->pointer_x, win->ui->pointer_y);
+    if (widget == nullptr || widget->kind != XD_W_LISTBOX)
         return;
-    w->first += value > 0 ? 3 : -3; /* Windows scrolls three lines a notch */
-    list_clamp(w);
+    widget->first += value > 0 ? 3 : -3; /* Windows scrolls three lines a notch */
+    list_clamp(widget);
     win->dirty = true;
 }
 
 void xd_window_pointer_motion(xd_window *win, double x, double y) {
     /* A drag of the drop-down's scroll thumb goes on past the list: the
      * popup grab hands the pointer to this window once it leaves. */
-    xd_listpopup *p = win->popup;
-    if (p != nullptr && p->sb_pressed != SB_NONE) {
-        xd_popup_pointer_motion(p, x - p->x, y - p->y);
+    xd_listpopup *popup = win->popup;
+    if (popup != nullptr && popup->sb_pressed != SB_NONE) {
+        xd_popup_pointer_motion(popup, x - popup->x, y - popup->y);
         return;
     }
     xd_widget *pw = win->pressed;
@@ -1768,70 +1801,70 @@ void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed) {
         return;
     }
 
-    xd_widget *w = widget_at(win, x, y);
-    if (w == nullptr)
+    xd_widget *widget = widget_at(win, x, y);
+    if (widget == nullptr)
         return;
-    if (is_clickable(w)) {
-        win->pressed = w;
-        w->pointer(w, XD_POINTER_PRESS, x - w->r.x, y - w->r.y, w->user);
+    if (is_clickable(widget)) {
+        win->pressed = widget;
+        widget->pointer(widget, XD_POINTER_PRESS, x - widget->r.x, y - widget->r.y, widget->user);
         return;
     }
-    if (win->focus != w) {
-        win->focus = w;
+    if (win->focus != widget) {
+        win->focus = widget;
         win->dirty = true;
     }
-    win->pressed = w;
-    if (w->kind == XD_W_SLIDER) {
-        xd_rect thumb = slider_thumb(w);
+    win->pressed = widget;
+    if (widget->kind == XD_W_SLIDER) {
+        xd_rect thumb = slider_thumb(widget);
         if (contains(thumb, x, y)) {
             win->thumb_drag = true;
             win->thumb_offset = x - (thumb.x + SLIDER_THUMB_W / 2);
         } else {
             /* A click in the channel pages toward it. */
-            int page = XD_MAX((w->smax - w->smin) / 5, 1);
-            slider_changed(w, w->svalue + (x < thumb.x ? -page : page));
+            int page = XD_MAX((widget->smax - widget->smin) / 5, 1);
+            slider_changed(widget, widget->svalue + (x < thumb.x ? -page : page));
         }
         win->dirty = true;
         return;
     }
-    if (w->kind == XD_W_TABS) {
-        for (size_t i = 0; i < w->count; i++) {
-            if (contains(tab_rect(w, i), x, y)) {
-                select_index(w, (int)i); /* may close the window */
+    if (widget->kind == XD_W_TABS) {
+        for (size_t i = 0; i < widget->count; i++) {
+            if (contains(tab_rect(widget, i), x, y)) {
+                select_index(widget, (int)i); /* may close the window */
                 return;
             }
         }
         return;
     }
-    if (w->kind == XD_W_LISTBOX) {
-        if (list_has_scrollbar(w) && contains(list_scrollbar(w), x, y)) {
-            xd_rect sb = list_scrollbar(w);
-            int rows = list_rows(w);
-            int total = (int)w->count;
-            sb_part part = sb_hit(win->ui, sb, w->first, rows, total, y);
+    if (widget->kind == XD_W_LISTBOX) {
+        if (list_has_scrollbar(widget) && contains(list_scrollbar(widget), x, y)) {
+            xd_rect sb = list_scrollbar(widget);
+            int rows = list_rows(widget);
+            int total = (int)widget->count;
+            sb_part part = sb_hit(win->ui, sb, widget->first, rows, total, y);
             if (part == SB_THUMB) {
                 win->thumb_drag = true;
-                win->thumb_offset = y - sb_thumb(win->ui, sb, w->first, rows, total).y;
+                win->thumb_offset = y - sb_thumb(win->ui, sb, widget->first, rows, total).y;
             } else {
-                w->first = sb_step(part, w->first, rows);
+                widget->first = sb_step(part, widget->first, rows);
             }
-            list_clamp(w);
+            list_clamp(widget);
             win->dirty = true;
             return;
         }
-        double top = w->r.y + (double)XD_LIST_BORDER;
+        double top = widget->r.y + (double)XD_LIST_BORDER;
         int row = (int)((y - top) / (double)XD_LIST_ROW_H);
-        if (y >= top && row >= 0 && row < list_rows(w))
-            select_index(w, w->first + row); /* may close the window */
+        if (y >= top && row >= 0 && row < list_rows(widget))
+            select_index(widget, widget->first + row); /* may close the window */
         return;
     }
-    if (w->kind == XD_W_COMBO && (!w->editable || !over_text(win, w, x, y))) {
+    if (widget->kind == XD_W_COMBO && (!widget->editable || !over_text(win, widget, x, y))) {
         if (win->popup != nullptr)
             popup_close(win);
         else
-            popup_open(win, w);
-    } else if (is_text_widget(w)) {
-        xd_textedit_set_cursor(&w->edit, text_pos_at(win, w, x), false);
+            popup_open(win, widget);
+    } else if (is_text_widget(widget)) {
+        xd_textedit_set_cursor(&widget->edit, text_pos_at(win, widget, x), false);
         win->selecting = true;
     }
     win->dirty = true;
@@ -1845,10 +1878,10 @@ static void focus_step(xd_window *win, int dir) {
         if (win->widgets[i] == win->focus)
             start = i;
     }
-    size_t n = win->count;
+    size_t count = win->count;
     size_t i = start;
-    for (size_t tries = 0; tries < n; tries++) {
-        i = dir > 0 ? (i + 1) % n : (i + n - 1) % n;
+    for (size_t tries = 0; tries < count; tries++) {
+        i = dir > 0 ? (i + 1) % count : (i + count - 1) % count;
         if (is_tab_stop(win->widgets[i])) {
             xd_window_set_focus(win, win->widgets[i]);
             return;
@@ -1856,50 +1889,50 @@ static void focus_step(xd_window *win, int dir) {
     }
 }
 
-static void edit_changed(xd_widget *w) {
-    w->win->dirty = true;
-    if (w->kind == XD_W_COMBO)
-        w->selected = -1; /* typed text no longer matches an item */
-    if (w->cb != nullptr)
-        w->cb(w, w->user); /* may close the window */
+static void edit_changed(xd_widget *widget) {
+    widget->win->dirty = true;
+    if (widget->kind == XD_W_COMBO)
+        widget->selected = -1; /* typed text no longer matches an item */
+    if (widget->cb != nullptr)
+        widget->cb(widget, widget->user); /* may close the window */
 }
 
 /* Text editing keys; returns true if handled. */
-static bool edit_key(xd_widget *w, xkb_keysym_t sym, const char *utf8, uint32_t mods) {
-    xd_textedit *e = &w->edit;
+static bool edit_key(xd_widget *widget, xkb_keysym_t sym, const char *utf8, uint32_t mods) {
+    xd_textedit *edit = &widget->edit;
     bool shift = mods & XD_MOD_SHIFT;
     bool ctrl = mods & XD_MOD_CTRL;
-    xd_ui *ui = w->win->ui;
+    xd_ui *ui = widget->win->ui;
 
     switch (sym) {
     case XKB_KEY_Left:
-        xd_textedit_move(e, ctrl ? XD_MOTION_WORD_LEFT : XD_MOTION_LEFT, shift);
-        w->win->dirty = true;
+        xd_textedit_move(edit, ctrl ? XD_MOTION_WORD_LEFT : XD_MOTION_LEFT, shift);
+        widget->win->dirty = true;
         return true;
     case XKB_KEY_Right:
-        xd_textedit_move(e, ctrl ? XD_MOTION_WORD_RIGHT : XD_MOTION_RIGHT, shift);
-        w->win->dirty = true;
+        xd_textedit_move(edit, ctrl ? XD_MOTION_WORD_RIGHT : XD_MOTION_RIGHT, shift);
+        widget->win->dirty = true;
         return true;
     case XKB_KEY_Home:
-        xd_textedit_move(e, XD_MOTION_HOME, shift);
-        w->win->dirty = true;
+        xd_textedit_move(edit, XD_MOTION_HOME, shift);
+        widget->win->dirty = true;
         return true;
     case XKB_KEY_End:
-        xd_textedit_move(e, XD_MOTION_END, shift);
-        w->win->dirty = true;
+        xd_textedit_move(edit, XD_MOTION_END, shift);
+        widget->win->dirty = true;
         return true;
     case XKB_KEY_BackSpace:
-        xd_textedit_backspace(e, ctrl);
-        edit_changed(w);
+        xd_textedit_backspace(edit, ctrl);
+        edit_changed(widget);
         return true;
     case XKB_KEY_Delete:
         if (shift) { /* Shift+Del = cut */
-            xd_ui_clipboard_copy(ui, xd_textedit_selected(e));
-            xd_textedit_delete_selection(e);
+            xd_ui_clipboard_copy(ui, xd_textedit_selected(edit));
+            xd_textedit_delete_selection(edit);
         } else {
-            xd_textedit_delete(e, ctrl);
+            xd_textedit_delete(edit, ctrl);
         }
-        edit_changed(w);
+        edit_changed(widget);
         return true;
     default:
         break;
@@ -1909,27 +1942,27 @@ static bool edit_key(xd_widget *w, xkb_keysym_t sym, const char *utf8, uint32_t 
         switch (sym) {
         case XKB_KEY_a:
         case XKB_KEY_A:
-            xd_textedit_select_all(e);
-            w->win->dirty = true;
+            xd_textedit_select_all(edit);
+            widget->win->dirty = true;
             return true;
         case XKB_KEY_c:
         case XKB_KEY_C:
         case XKB_KEY_Insert:
-            xd_ui_clipboard_copy(ui, xd_textedit_selected(e));
+            xd_ui_clipboard_copy(ui, xd_textedit_selected(edit));
             return true;
         case XKB_KEY_x:
         case XKB_KEY_X:
-            xd_ui_clipboard_copy(ui, xd_textedit_selected(e));
-            xd_textedit_delete_selection(e);
-            edit_changed(w);
+            xd_ui_clipboard_copy(ui, xd_textedit_selected(edit));
+            xd_textedit_delete_selection(edit);
+            edit_changed(widget);
             return true;
         case XKB_KEY_v:
         case XKB_KEY_V: {
             char *text = xd_ui_clipboard_paste(ui);
             if (text != nullptr) {
-                xd_textedit_insert(e, xd_str_from_cstr(text));
+                xd_textedit_insert(edit, xd_str_from_cstr(text));
                 xd_free(text);
-                edit_changed(w);
+                edit_changed(widget);
             }
             return true;
         }
@@ -1940,40 +1973,40 @@ static bool edit_key(xd_widget *w, xkb_keysym_t sym, const char *utf8, uint32_t 
     if (sym == XKB_KEY_Insert && shift) { /* Shift+Ins = paste */
         char *text = xd_ui_clipboard_paste(ui);
         if (text != nullptr) {
-            xd_textedit_insert(e, xd_str_from_cstr(text));
+            xd_textedit_insert(edit, xd_str_from_cstr(text));
             xd_free(text);
-            edit_changed(w);
+            edit_changed(widget);
         }
         return true;
     }
     if (!(mods & XD_MOD_ALT) && utf8 != nullptr && (unsigned char)utf8[0] >= 0x20 &&
         utf8[0] != 0x7F) {
-        xd_textedit_insert(e, xd_str_from_cstr(utf8));
-        edit_changed(w);
+        xd_textedit_insert(edit, xd_str_from_cstr(utf8));
+        edit_changed(widget);
         return true;
     }
     return false;
 }
 
-static void combo_step(xd_widget *w, int dir) {
-    if (w->count == 0)
+static void combo_step(xd_widget *widget, int dir) {
+    if (widget->count == 0)
         return;
-    int i = w->selected < 0 ? (dir > 0 ? 0 : (int)w->count - 1) : w->selected + dir;
-    i = XD_CLAMP(i, 0, (int)w->count - 1);
-    if (i != w->selected) {
-        xd_combo_select(w, i);
-        combo_changed(w); /* must be last: may close the window */
+    int i = widget->selected < 0 ? (dir > 0 ? 0 : (int)widget->count - 1) : widget->selected + dir;
+    i = XD_CLAMP(i, 0, (int)widget->count - 1);
+    if (i != widget->selected) {
+        xd_combo_select(widget, i);
+        combo_changed(widget); /* must be last: may close the window */
     }
 }
 
 void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t mods) {
     tip_hide(win); /* any key puts a tooltip away */
-    xd_widget *f = win->focus;
+    xd_widget *focused = win->focus;
     bool alt = mods & XD_MOD_ALT;
 
     /* An open drop-down list takes navigation keys. */
-    xd_listpopup *p = win->popup;
-    if (p != nullptr && p->combo == nullptr) {
+    xd_listpopup *popup = win->popup;
+    if (popup != nullptr && popup->combo == nullptr) {
         /* A panel: Esc puts it away, Tab moves on past it. */
         if (sym != XKB_KEY_Tab && sym != XKB_KEY_ISO_Left_Tab && sym != XKB_KEY_Escape &&
             sym != XKB_KEY_F4)
@@ -1981,9 +2014,9 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
         popup_close(win);
         if (sym != XKB_KEY_Tab && sym != XKB_KEY_ISO_Left_Tab)
             return;
-        p = nullptr;
+        popup = nullptr;
     }
-    if (p != nullptr) {
+    if (popup != nullptr) {
         switch (sym) {
         case XKB_KEY_Up:
         case XKB_KEY_Down:
@@ -1991,37 +2024,38 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
                 popup_close(win);
                 return;
             }
-            p->hot = XD_CLAMP(p->hot + (sym == XKB_KEY_Down ? 1 : -1), 0, (int)p->combo->count - 1);
-            popup_scroll_to(p, p->hot);
-            p->dirty = true;
+            popup->hot = XD_CLAMP(popup->hot + (sym == XKB_KEY_Down ? 1 : -1), 0,
+                                  (int)popup->combo->count - 1);
+            popup_scroll_to(popup, popup->hot);
+            popup->dirty = true;
             return;
         case XKB_KEY_Prior:
         case XKB_KEY_Next: {
             /* As in a Windows list: first to the edge of the visible page,
              * then a page further (keeping one row in view). */
-            int last = (int)p->combo->count - 1;
-            int page = XD_MAX(p->rows - 1, 1);
+            int last = (int)popup->combo->count - 1;
+            int page = XD_MAX(popup->rows - 1, 1);
             int target;
             if (sym == XKB_KEY_Next) {
-                int bottom = XD_MIN(p->first + p->rows - 1, last);
-                target = p->hot < bottom ? bottom : p->hot + page;
+                int bottom = XD_MIN(popup->first + popup->rows - 1, last);
+                target = popup->hot < bottom ? bottom : popup->hot + page;
             } else {
-                target = p->hot > p->first ? p->first : p->hot - page;
+                target = popup->hot > popup->first ? popup->first : popup->hot - page;
             }
-            p->hot = XD_CLAMP(target, 0, last);
-            popup_scroll_to(p, p->hot);
-            p->dirty = true;
+            popup->hot = XD_CLAMP(target, 0, last);
+            popup_scroll_to(popup, popup->hot);
+            popup->dirty = true;
             return;
         }
         case XKB_KEY_Home:
         case XKB_KEY_End:
-            p->hot = sym == XKB_KEY_Home ? 0 : (int)p->combo->count - 1;
-            popup_scroll_to(p, p->hot);
-            p->dirty = true;
+            popup->hot = sym == XKB_KEY_Home ? 0 : (int)popup->combo->count - 1;
+            popup_scroll_to(popup, popup->hot);
+            popup->dirty = true;
             return;
         case XKB_KEY_Return:
         case XKB_KEY_KP_Enter:
-            popup_choose(win, p->hot);
+            popup_choose(win, popup->hot);
             return;
         case XKB_KEY_Escape:
         case XKB_KEY_F4:
@@ -2042,8 +2076,8 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
         (sym == XKB_KEY_Tab || sym == XKB_KEY_ISO_Left_Tab || sym == XKB_KEY_Next ||
          sym == XKB_KEY_Prior)) {
         bool back = sym == XKB_KEY_Prior || sym == XKB_KEY_ISO_Left_Tab || (mods & XD_MOD_SHIFT);
-        int n = (int)tabs->count;
-        select_index(tabs, (tabs->selected + (back ? n - 1 : 1)) % n);
+        int count = (int)tabs->count;
+        select_index(tabs, (tabs->selected + (back ? count - 1 : 1)) % count);
         return;
     }
 
@@ -2056,8 +2090,8 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
         return;
     case XKB_KEY_Return:
     case XKB_KEY_KP_Enter:
-        if (f != nullptr && f->kind == XD_W_BUTTON)
-            click(f);
+        if (focused != nullptr && focused->kind == XD_W_BUTTON)
+            click(focused);
         else if (win->def != nullptr)
             click(win->def);
         return;
@@ -2070,35 +2104,35 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
     default:
         break;
     }
-    if (f == nullptr)
+    if (focused == nullptr)
         return;
 
-    if (f->kind == XD_W_BUTTON) {
+    if (focused->kind == XD_W_BUTTON) {
         if (sym == XKB_KEY_space)
-            click(f);
+            click(focused);
         return;
     }
-    if (f->kind == XD_W_CHECKBOX) {
+    if (focused->kind == XD_W_CHECKBOX) {
         if (sym == XKB_KEY_space) {
-            f->checked = !f->checked;
-            select_changed(f);
+            focused->checked = !focused->checked;
+            select_changed(focused);
         }
         return;
     }
-    if (f->kind == XD_W_RADIO) {
+    if (focused->kind == XD_W_RADIO) {
         int dir = sym == XKB_KEY_Down || sym == XKB_KEY_Right ? 1
                   : sym == XKB_KEY_Up || sym == XKB_KEY_Left  ? -1
                                                               : 0;
-        xd_widget *target = sym == XKB_KEY_space ? f : nullptr;
+        xd_widget *target = sym == XKB_KEY_space ? focused : nullptr;
         if (dir != 0) {
             /* The arrows go round the group, checking as they go. */
             size_t first;
             size_t end;
-            radio_group(f, &first, &end);
-            size_t n = end - first;
-            size_t i = widget_index(win, f) - first;
-            for (size_t tries = 1; tries < n && target == nullptr; tries++) {
-                size_t j = first + (dir > 0 ? (i + tries) % n : (i + n - tries) % n);
+            radio_group(focused, &first, &end);
+            size_t count = end - first;
+            size_t i = widget_index(win, focused) - first;
+            for (size_t tries = 1; tries < count && target == nullptr; tries++) {
+                size_t j = first + (dir > 0 ? (i + tries) % count : (i + count - tries) % count);
                 if (is_focusable(win->widgets[j]))
                     target = win->widgets[j];
             }
@@ -2110,85 +2144,85 @@ void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t 
         }
         return;
     }
-    if (f->kind == XD_W_SLIDER) {
-        int page = XD_MAX((f->smax - f->smin) / 5, 1);
+    if (focused->kind == XD_W_SLIDER) {
+        int page = XD_MAX((focused->smax - focused->smin) / 5, 1);
         switch (sym) {
         case XKB_KEY_Left:
         case XKB_KEY_Up:
-            slider_changed(f, f->svalue - 1);
+            slider_changed(focused, focused->svalue - 1);
             break;
         case XKB_KEY_Right:
         case XKB_KEY_Down:
-            slider_changed(f, f->svalue + 1);
+            slider_changed(focused, focused->svalue + 1);
             break;
         case XKB_KEY_Prior:
-            slider_changed(f, f->svalue - page);
+            slider_changed(focused, focused->svalue - page);
             break;
         case XKB_KEY_Next:
-            slider_changed(f, f->svalue + page);
+            slider_changed(focused, focused->svalue + page);
             break;
         case XKB_KEY_Home:
-            slider_changed(f, f->smin);
+            slider_changed(focused, focused->smin);
             break;
         case XKB_KEY_End:
-            slider_changed(f, f->smax);
+            slider_changed(focused, focused->smax);
             break;
         default:
             break;
         }
         return;
     }
-    if (f->kind == XD_W_TABS) {
+    if (focused->kind == XD_W_TABS) {
         if (sym == XKB_KEY_Left || sym == XKB_KEY_Right)
-            select_index(f, XD_CLAMP(f->selected + (sym == XKB_KEY_Right ? 1 : -1), 0,
-                                     (int)f->count - 1));
+            select_index(focused, XD_CLAMP(focused->selected + (sym == XKB_KEY_Right ? 1 : -1), 0,
+                                           (int)focused->count - 1));
         return;
     }
-    if (f->kind == XD_W_LISTBOX) {
-        int target = f->selected;
-        int rows = list_rows(f);
+    if (focused->kind == XD_W_LISTBOX) {
+        int target = focused->selected;
+        int rows = list_rows(focused);
         switch (sym) {
         case XKB_KEY_Up:
-            target = XD_MAX(f->selected - 1, 0);
+            target = XD_MAX(focused->selected - 1, 0);
             break;
         case XKB_KEY_Down:
-            target = XD_MIN(f->selected + 1, (int)f->count - 1);
+            target = XD_MIN(focused->selected + 1, (int)focused->count - 1);
             break;
         case XKB_KEY_Prior:
-            target = XD_MAX(f->selected - rows, 0);
+            target = XD_MAX(focused->selected - rows, 0);
             break;
         case XKB_KEY_Next:
-            target = XD_MIN(f->selected + rows, (int)f->count - 1);
+            target = XD_MIN(focused->selected + rows, (int)focused->count - 1);
             break;
         case XKB_KEY_Home:
             target = 0;
             break;
         case XKB_KEY_End:
-            target = (int)f->count - 1;
+            target = (int)focused->count - 1;
             break;
         default:
             return;
         }
-        select_index(f, target);
+        select_index(focused, target);
         return;
     }
-    if (f->kind == XD_W_COMBO) {
+    if (focused->kind == XD_W_COMBO) {
         if ((alt && (sym == XKB_KEY_Down || sym == XKB_KEY_Up)) || sym == XKB_KEY_F4) {
-            popup_open(win, f);
+            popup_open(win, focused);
             return;
         }
         if (sym == XKB_KEY_Down || sym == XKB_KEY_Up) {
-            combo_step(f, sym == XKB_KEY_Down ? 1 : -1);
+            combo_step(focused, sym == XKB_KEY_Down ? 1 : -1);
             return;
         }
-        if (!f->editable) {
+        if (!focused->editable) {
             if (sym == XKB_KEY_Home)
-                combo_step(f, -(int)f->count);
+                combo_step(focused, -(int)focused->count);
             else if (sym == XKB_KEY_End)
-                combo_step(f, (int)f->count);
+                combo_step(focused, (int)focused->count);
             return;
         }
     }
-    if (is_text_widget(f))
-        edit_key(f, sym, utf8, mods);
+    if (is_text_widget(focused))
+        edit_key(focused, sym, utf8, mods);
 }

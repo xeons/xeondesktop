@@ -19,12 +19,12 @@ typedef struct _GdkPixbuf GdkPixbuf;
 [[nodiscard]] cairo_surface_t *xd_image_from_pixbuf(GdkPixbuf *pb);
 
 /* Pixel size of an image file without decoding it. */
-[[nodiscard]] bool xd_image_size(const char *path, int *w, int *h);
+[[nodiscard]] bool xd_image_size(const char *path, int *width, int *height);
 
-/* Paints `image` into `r` the way Windows paints wallpaper in each mode
+/* Paints `image` into `rect` the way Windows paints wallpaper in each mode
  * (enum xd_wallpaper_mode values: center, tile, stretch, fill, fit).
  * `pixel_scale` maps image pixels to device pixels for center/tile. */
-void xd_image_paint_wallpaper(cairo_t *cr, cairo_surface_t *image, xd_rect r, int mode,
+void xd_image_paint_wallpaper(cairo_t *cairo, cairo_surface_t *image, xd_rect rect, int mode,
                               double pixel_scale);
 
 #endif

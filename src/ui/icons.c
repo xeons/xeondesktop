@@ -26,10 +26,10 @@ struct xd_icons {
  * path)? */
 static bool theme_installed(GtkIconTheme *theme, const char *name) {
     gchar **paths = nullptr;
-    gint n = 0;
-    gtk_icon_theme_get_search_path(theme, &paths, &n);
+    gint path_count = 0;
+    gtk_icon_theme_get_search_path(theme, &paths, &path_count);
     bool found = false;
-    for (gint i = 0; i < n && !found; i++) {
+    for (gint i = 0; i < path_count && !found; i++) {
         char *index = g_build_filename(paths[i], name, "index.theme", nullptr);
         found = g_file_test(index, G_FILE_TEST_IS_REGULAR);
         g_free(index);
@@ -81,9 +81,9 @@ static cairo_surface_t *load(xd_icons *ic, const char *name, int px) {
     }
     if (pb == nullptr)
         return nullptr;
-    cairo_surface_t *s = xd_image_from_pixbuf(pb);
+    cairo_surface_t *surface = xd_image_from_pixbuf(pb);
     g_object_unref(pb);
-    return s;
+    return surface;
 }
 
 cairo_surface_t *xd_icons_get(xd_icons *ic, const char *name, int px) {
@@ -93,7 +93,7 @@ cairo_surface_t *xd_icons_get(xd_icons *ic, const char *name, int px) {
         if (ic->cache[i].px == px && strcmp(ic->cache[i].name, name) == 0)
             return ic->cache[i].surface;
     }
-    cairo_surface_t *s = load(ic, name, px);
+    cairo_surface_t *surface = load(ic, name, px);
     if (ic->cache_len == ic->cache_cap) {
         ic->cache_cap = ic->cache_cap == 0 ? 64 : ic->cache_cap * 2;
         ic->cache = xd_realloc_array(ic->cache, ic->cache_cap, sizeof(*ic->cache));
@@ -101,17 +101,17 @@ cairo_surface_t *xd_icons_get(xd_icons *ic, const char *name, int px) {
     ic->cache[ic->cache_len++] = (cache_entry){
         .name = xd_str_dup_cstr(xd_str_from_cstr(name)),
         .px = px,
-        .surface = s,
+        .surface = surface,
     };
-    return s;
+    return surface;
 }
 
 cairo_surface_t *xd_icons_get_any(xd_icons *ic, const char *const *names, size_t count,
                                   int px) {
     for (size_t i = 0; i < count; i++) {
-        cairo_surface_t *s = xd_icons_get(ic, names[i], px);
-        if (s != nullptr)
-            return s;
+        cairo_surface_t *surface = xd_icons_get(ic, names[i], px);
+        if (surface != nullptr)
+            return surface;
     }
     return nullptr;
 }

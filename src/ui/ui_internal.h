@@ -263,16 +263,16 @@ void xd_display_destroy(xd_ui *ui);
 
 /* widgets.c */
 void xd_window_render(xd_window *win);
-void xd_popup_render(xd_listpopup *p);
+void xd_popup_render(xd_listpopup *popup);
 void xd_tooltip_render(xd_tooltip *tip);
-xd_window *xd_window_for_surface(xd_ui *ui, struct wl_surface *s);
-xd_listpopup *xd_popup_for_surface(xd_ui *ui, struct wl_surface *s);
+xd_window *xd_window_for_surface(xd_ui *ui, struct wl_surface *surface);
+xd_listpopup *xd_popup_for_surface(xd_ui *ui, struct wl_surface *surface);
 void xd_window_pointer_motion(xd_window *win, double x, double y);
 void xd_window_pointer_leave(xd_window *win);
 void xd_window_pointer_button(xd_window *win, uint32_t button, bool pressed);
-void xd_popup_pointer_motion(xd_listpopup *p, double x, double y);
-void xd_popup_pointer_button(xd_listpopup *p, uint32_t button, bool pressed);
-void xd_popup_pointer_axis(xd_listpopup *p, double value);
+void xd_popup_pointer_motion(xd_listpopup *popup, double x, double y);
+void xd_popup_pointer_button(xd_listpopup *popup, uint32_t button, bool pressed);
+void xd_popup_pointer_axis(xd_listpopup *popup, double value);
 void xd_window_pointer_axis(xd_window *win, double value);
 /* A key press (or repeat): keysym, its text, and XD_MOD_* bits. */
 void xd_window_key(xd_window *win, xkb_keysym_t sym, const char *utf8, uint32_t mods);

@@ -42,21 +42,21 @@ bool xd_app_for_window_id(const char *app_id, char **desktop_id, char **icon, ch
     if (info == nullptr) {
         GList *all = g_app_info_get_all();
         GDesktopAppInfo *by_exec = nullptr;
-        for (GList *l = all; l != nullptr && info == nullptr; l = l->next) {
-            GDesktopAppInfo *d = G_DESKTOP_APP_INFO(l->data);
-            const char *wm_class = g_desktop_app_info_get_startup_wm_class(d);
-            const char *id = g_app_info_get_id(G_APP_INFO(d));
-            size_t n = strlen(app_id);
+        for (GList *list = all; list != nullptr && info == nullptr; list = list->next) {
+            GDesktopAppInfo *app_info = G_DESKTOP_APP_INFO(list->data);
+            const char *wm_class = g_desktop_app_info_get_startup_wm_class(app_info);
+            const char *id = g_app_info_get_id(G_APP_INFO(app_info));
+            size_t app_id_len = strlen(app_id);
             if ((wm_class != nullptr && g_ascii_strcasecmp(wm_class, app_id) == 0) ||
-                (id != nullptr && g_ascii_strncasecmp(id, app_id, n) == 0 &&
-                 strcmp(id + n, ".desktop") == 0))
-                info = g_object_ref(d);
+                (id != nullptr && g_ascii_strncasecmp(id, app_id, app_id_len) == 0 &&
+                 strcmp(id + app_id_len, ".desktop") == 0))
+                info = g_object_ref(app_info);
             /* Many X11 programs' WM_CLASS is their executable's name. */
-            const char *exe = g_app_info_get_executable(G_APP_INFO(d));
+            const char *exe = g_app_info_get_executable(G_APP_INFO(app_info));
             if (by_exec == nullptr && exe != nullptr) {
                 const char *base = strrchr(exe, '/');
                 if (g_ascii_strcasecmp(base != nullptr ? base + 1 : exe, app_id) == 0)
-                    by_exec = d;
+                    by_exec = app_info;
             }
         }
         if (info == nullptr && by_exec != nullptr)

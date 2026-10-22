@@ -135,19 +135,19 @@ void xd_window_set_focus(xd_window *win, xd_widget *widget);
 
 enum { XD_LABEL_WRAP = 1u << 0, XD_LABEL_BOLD = 1u << 1, XD_LABEL_DIM = 1u << 2 };
 
-xd_widget *xd_label(xd_window *win, xd_rect r, const char *text, uint8_t flags);
-xd_widget *xd_image(xd_window *win, xd_rect r, const char *icon_name);
-xd_widget *xd_banner(xd_window *win, xd_rect r, const char *product, const char *edition);
-xd_widget *xd_button(xd_window *win, xd_rect r, const char *label, xd_widget_cb on_click,
+xd_widget *xd_label(xd_window *win, xd_rect rect, const char *text, uint8_t flags);
+xd_widget *xd_image(xd_window *win, xd_rect rect, const char *icon_name);
+xd_widget *xd_banner(xd_window *win, xd_rect rect, const char *product, const char *edition);
+xd_widget *xd_button(xd_window *win, xd_rect rect, const char *label, xd_widget_cb on_click,
                      void *user);
-xd_widget *xd_edit(xd_window *win, xd_rect r, const char *text);
+xd_widget *xd_edit(xd_window *win, xd_rect rect, const char *text);
 /* Runs on_change whenever an edit's text changes (typing, pasting;
  * xd_widget_set_text doesn't). */
 void xd_edit_set_on_change(xd_widget *edit, xd_widget_cb on_change, void *user);
 /* Editable combos have a text field (Run's "Open:" box); others are drop-
  * down lists (Shut Down's choice). on_change runs when the selection or
  * text changes. */
-xd_widget *xd_combo(xd_window *win, xd_rect r, bool editable, xd_widget_cb on_change,
+xd_widget *xd_combo(xd_window *win, xd_rect rect, bool editable, xd_widget_cb on_change,
                     void *user);
 void xd_combo_add(xd_widget *combo, const char *item);
 int xd_combo_selected(const xd_widget *combo);
@@ -156,16 +156,16 @@ void xd_combo_select(xd_widget *combo, int index);
 /* Property-sheet tabs. Widgets join a page with xd_widget_set_page and are
  * only shown (and focusable) while it's selected. One tab control per
  * window. */
-xd_widget *xd_tabs(xd_window *win, xd_rect r, const char *const *labels, size_t count,
+xd_widget *xd_tabs(xd_window *win, xd_rect rect, const char *const *labels, size_t count,
                    xd_widget_cb on_change, void *user);
-void xd_widget_set_page(xd_widget *w, int page);
+void xd_widget_set_page(xd_widget *widget, int page);
 /* Shows or hides a widget (Windows 7's expanders: Show color mixer). */
-void xd_widget_set_visible(xd_widget *w, bool visible);
+void xd_widget_set_visible(xd_widget *widget, bool visible);
 
-xd_widget *xd_checkbox(xd_window *win, xd_rect r, const char *label, bool checked,
+xd_widget *xd_checkbox(xd_window *win, xd_rect rect, const char *label, bool checked,
                        xd_widget_cb on_change, void *user);
-bool xd_checkbox_checked(const xd_widget *w);
-void xd_checkbox_set(xd_widget *w, bool checked);
+bool xd_checkbox_checked(const xd_widget *widget);
+void xd_checkbox_set(xd_widget *widget, bool checked);
 
 /* Radio buttons. A group starts at a button made with `group` set (Windows'
  * WS_GROUP) and runs through the radio buttons added right after it;
@@ -173,19 +173,20 @@ void xd_checkbox_set(xd_widget *w, bool checked);
  * button; the arrow keys move round the group and check as they go.
  * on_change runs for the button that became checked; xd_checkbox_checked
  * reads a radio button too. */
-xd_widget *xd_radio(xd_window *win, xd_rect r, const char *label, bool group,
+xd_widget *xd_radio(xd_window *win, xd_rect rect, const char *label, bool group,
                     xd_widget_cb on_change, void *user);
 /* Checks w and unchecks the rest of its group (on_change doesn't run). */
-void xd_radio_set(xd_widget *w);
+void xd_radio_set(xd_widget *widget);
 
 /* Single-selection list with a scroll bar. */
-xd_widget *xd_listbox(xd_window *win, xd_rect r, xd_widget_cb on_change, void *user);
-xd_widget *xd_groupbox(xd_window *win, xd_rect r, const char *label);
+xd_widget *xd_listbox(xd_window *win, xd_rect rect, xd_widget_cb on_change, void *user);
+xd_widget *xd_groupbox(xd_window *win, xd_rect rect, const char *label);
 
 /* An area the caller draws (previews). r is in device pixels. */
-typedef void (*xd_draw_cb)(xd_widget *w, cairo_t *cr, xd_rect r, const xd_theme *t, void *user);
-xd_widget *xd_custom(xd_window *win, xd_rect r, xd_draw_cb draw, void *user);
-void xd_widget_redraw(xd_widget *w);
+typedef void (*xd_draw_cb)(xd_widget *widget, cairo_t *cairo, xd_rect rect, const xd_theme *theme,
+                           void *user);
+xd_widget *xd_custom(xd_window *win, xd_rect rect, xd_draw_cb draw, void *user);
+void xd_widget_redraw(xd_widget *widget);
 /* Mouse input for a custom area: a left-button press, then motion until
  * the release. x and y are logical, relative to the area. */
 typedef enum xd_pointer_event : uint8_t {
@@ -193,8 +194,9 @@ typedef enum xd_pointer_event : uint8_t {
     XD_POINTER_MOTION,
     XD_POINTER_RELEASE,
 } xd_pointer_event;
-typedef void (*xd_pointer_cb)(xd_widget *w, xd_pointer_event ev, double x, double y, void *user);
-void xd_custom_set_pointer(xd_widget *w, xd_pointer_cb cb);
+typedef void (*xd_pointer_cb)(xd_widget *widget, xd_pointer_event ev, double x, double y,
+                              void *user);
+void xd_custom_set_pointer(xd_widget *widget, xd_pointer_cb cb);
 /* A drop-down panel the program draws (Windows' colour picker), hanging
  * from `anchor` as a combo box's list does: `draw` paints it (r in device
  * px, from 0,0) and `pointer` gets the pointer over it (logical, relative
@@ -208,27 +210,27 @@ void xd_popup_dismiss(xd_window *win);
 
 /* A trackbar (Windows' slider) from min to max with a tick per step.
  * on_change runs as the thumb moves. */
-xd_widget *xd_slider(xd_window *win, xd_rect r, int min, int max, int value,
+xd_widget *xd_slider(xd_window *win, xd_rect rect, int min, int max, int value,
                      xd_widget_cb on_change, void *user);
-int xd_slider_value(const xd_widget *w);
-void xd_slider_set(xd_widget *w, int min, int max, int value);
+int xd_slider_value(const xd_widget *widget);
+void xd_slider_set(xd_widget *widget, int min, int max, int value);
 
 /* Items of a combo or list box; selection of a combo, list box or tabs. */
-void xd_widget_add_item(xd_widget *w, const char *item);
-void xd_widget_clear_items(xd_widget *w);
-int xd_widget_selected(const xd_widget *w);
-void xd_widget_select(xd_widget *w, int index);
-size_t xd_widget_item_count(const xd_widget *w);
+void xd_widget_add_item(xd_widget *widget, const char *item);
+void xd_widget_clear_items(xd_widget *widget);
+int xd_widget_selected(const xd_widget *widget);
+void xd_widget_select(xd_widget *widget, int index);
+size_t xd_widget_item_count(const xd_widget *widget);
 
 /* Text of a label, edit or combo (for a drop-down list, the selected
  * item). Never nullptr. */
-const char *xd_widget_text(xd_widget *w);
-void xd_widget_set_text(xd_widget *w, const char *text);
-void xd_widget_set_enabled(xd_widget *w, bool enabled);
+const char *xd_widget_text(xd_widget *widget);
+void xd_widget_set_text(xd_widget *widget, const char *text);
+void xd_widget_set_enabled(xd_widget *widget, bool enabled);
 /* A tooltip, shown when the pointer rests on the widget for half a second
  * (in the active window), as Windows' tooltip controls do; nullptr or ""
  * removes it. Any widget can have one, labels and images too. */
-void xd_widget_set_tooltip(xd_widget *w, const char *text);
-xd_window *xd_widget_window(xd_widget *w);
+void xd_widget_set_tooltip(xd_widget *widget, const char *text);
+xd_window *xd_widget_window(xd_widget *widget);
 
 #endif

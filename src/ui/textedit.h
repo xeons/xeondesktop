@@ -26,28 +26,28 @@ typedef enum xd_text_motion : uint8_t {
     XD_MOTION_END,
 } xd_text_motion;
 
-void xd_textedit_free(xd_textedit *e);
+void xd_textedit_free(xd_textedit *edit);
 /* Replaces the text (validated) and selects all of it, as Windows does
  * when a dialog fills in an edit box. */
-void xd_textedit_set(xd_textedit *e, xd_str text);
-xd_str xd_textedit_view(const xd_textedit *e);
+void xd_textedit_set(xd_textedit *edit, xd_str text);
+xd_str xd_textedit_view(const xd_textedit *edit);
 
-bool xd_textedit_has_selection(const xd_textedit *e);
-void xd_textedit_selection(const xd_textedit *e, size_t *start, size_t *end);
-xd_str xd_textedit_selected(const xd_textedit *e);
-void xd_textedit_select_all(xd_textedit *e);
+bool xd_textedit_has_selection(const xd_textedit *edit);
+void xd_textedit_selection(const xd_textedit *edit, size_t *start, size_t *end);
+xd_str xd_textedit_selected(const xd_textedit *edit);
+void xd_textedit_select_all(xd_textedit *edit);
 
 /* Inserts at the cursor, replacing any selection. */
-void xd_textedit_insert(xd_textedit *e, xd_str utf8);
-void xd_textedit_backspace(xd_textedit *e, bool word);
-void xd_textedit_delete(xd_textedit *e, bool word);
-void xd_textedit_delete_selection(xd_textedit *e);
-void xd_textedit_move(xd_textedit *e, xd_text_motion motion, bool extend);
+void xd_textedit_insert(xd_textedit *edit, xd_str utf8);
+void xd_textedit_backspace(xd_textedit *edit, bool word);
+void xd_textedit_delete(xd_textedit *edit, bool word);
+void xd_textedit_delete_selection(xd_textedit *edit);
+void xd_textedit_move(xd_textedit *edit, xd_text_motion motion, bool extend);
 /* Puts the cursor at `pos` (snapped to a character boundary). */
-void xd_textedit_set_cursor(xd_textedit *e, size_t pos, bool extend);
+void xd_textedit_set_cursor(xd_textedit *edit, size_t pos, bool extend);
 
 /* Length of the valid UTF-8 sequence at s, or 0 if invalid. Exposed for
  * tests. */
-size_t xd_utf8_sequence_len(const unsigned char *s, size_t n);
+size_t xd_utf8_sequence_len(const unsigned char *sequence, size_t length);
 
 #endif

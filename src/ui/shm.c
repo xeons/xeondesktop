@@ -7,23 +7,23 @@
 #include "shm.h"
 
 static void buffer_release(void *data, [[maybe_unused]] struct wl_buffer *wl_buffer) {
-    xd_shm_buffer *b = data;
-    b->busy = false;
+    xd_shm_buffer *buffer = data;
+    buffer->busy = false;
 }
 
 static const struct wl_buffer_listener buffer_listener = {.release = buffer_release};
 
-static void buffer_destroy(xd_shm_buffer *b) {
-    if (b->surface != nullptr)
-        cairo_surface_destroy(b->surface);
-    if (b->buffer != nullptr)
-        wl_buffer_destroy(b->buffer);
-    if (b->data != nullptr)
-        munmap(b->data, b->size);
-    *b = (xd_shm_buffer){0};
+static void buffer_destroy(xd_shm_buffer *buffer) {
+    if (buffer->surface != nullptr)
+        cairo_surface_destroy(buffer->surface);
+    if (buffer->buffer != nullptr)
+        wl_buffer_destroy(buffer->buffer);
+    if (buffer->data != nullptr)
+        munmap(buffer->data, buffer->size);
+    *buffer = (xd_shm_buffer){0};
 }
 
-static bool buffer_create(xd_shm_buffer *b, struct wl_shm *shm, int width, int height) {
+static bool buffer_create(xd_shm_buffer *buffer, struct wl_shm *shm, int width, int height) {
     XD_ASSERT(width > 0 && height > 0);
     int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, width);
     size_t size;
@@ -50,21 +50,21 @@ static bool buffer_create(xd_shm_buffer *b, struct wl_shm *shm, int width, int h
         return false;
     }
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, (int32_t)size);
-    b->buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride,
-                                          WL_SHM_FORMAT_ARGB8888);
+    buffer->buffer =
+        wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
     close(fd);
 
-    b->data = data;
-    b->size = size;
-    b->width = width;
-    b->height = height;
-    b->busy = false;
-    b->surface = cairo_image_surface_create_for_data(data, CAIRO_FORMAT_ARGB32, width, height,
-                                                     stride);
-    wl_buffer_add_listener(b->buffer, &buffer_listener, b);
-    if (cairo_surface_status(b->surface) != CAIRO_STATUS_SUCCESS) {
-        buffer_destroy(b);
+    buffer->data = data;
+    buffer->size = size;
+    buffer->width = width;
+    buffer->height = height;
+    buffer->busy = false;
+    buffer->surface =
+        cairo_image_surface_create_for_data(data, CAIRO_FORMAT_ARGB32, width, height, stride);
+    wl_buffer_add_listener(buffer->buffer, &buffer_listener, buffer);
+    if (cairo_surface_status(buffer->surface) != CAIRO_STATUS_SUCCESS) {
+        buffer_destroy(buffer);
         return false;
     }
     return true;
@@ -73,14 +73,14 @@ static bool buffer_create(xd_shm_buffer *b, struct wl_shm *shm, int width, int h
 xd_shm_buffer *xd_shm_ring_acquire(xd_shm_ring *ring, struct wl_shm *shm, int width,
                                    int height) {
     for (size_t i = 0; i < XD_SHM_RING; i++) {
-        xd_shm_buffer *b = &ring->slots[i];
-        if (b->busy)
+        xd_shm_buffer *buffer = &ring->slots[i];
+        if (buffer->busy)
             continue;
-        if (b->buffer != nullptr && (b->width != width || b->height != height))
-            buffer_destroy(b);
-        if (b->buffer == nullptr && !buffer_create(b, shm, width, height))
+        if (buffer->buffer != nullptr && (buffer->width != width || buffer->height != height))
+            buffer_destroy(buffer);
+        if (buffer->buffer == nullptr && !buffer_create(buffer, shm, width, height))
             return nullptr;
-        return b;
+        return buffer;
     }
     return nullptr;
 }

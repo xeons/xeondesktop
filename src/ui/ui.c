@@ -42,7 +42,7 @@ void xd_ui_set_busy(xd_ui *ui, bool busy) {
         xd_ui_set_cursor_text(ui, ui->cursor_text);
 }
 
-static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
+static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *pointer, uint32_t serial,
                           struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
     xd_ui *ui = data;
     ui->pointer_serial = serial;
@@ -58,7 +58,7 @@ static void pointer_enter(void *data, [[maybe_unused]] struct wl_pointer *p, uin
         xd_popup_pointer_motion(ui->pointer_popup, ui->pointer_x, ui->pointer_y);
 }
 
-static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *pointer,
                           [[maybe_unused]] uint32_t serial,
                           [[maybe_unused]] struct wl_surface *surface) {
     xd_ui *ui = data;
@@ -68,7 +68,7 @@ static void pointer_leave(void *data, [[maybe_unused]] struct wl_pointer *p,
     ui->pointer_popup = nullptr;
 }
 
-static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *pointer,
                            [[maybe_unused]] uint32_t time, wl_fixed_t x, wl_fixed_t y) {
     xd_ui *ui = data;
     ui->pointer_x = wl_fixed_to_double(x);
@@ -79,7 +79,7 @@ static void pointer_motion(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_popup_pointer_motion(ui->pointer_popup, ui->pointer_x, ui->pointer_y);
 }
 
-static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, uint32_t serial,
+static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *pointer, uint32_t serial,
                            [[maybe_unused]] uint32_t time, uint32_t button, uint32_t state) {
     xd_ui *ui = data;
     ui->pointer_serial = serial;
@@ -90,7 +90,7 @@ static void pointer_button(void *data, [[maybe_unused]] struct wl_pointer *p, ui
         xd_window_pointer_button(ui->pointer_window, button, pressed);
 }
 
-static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *pointer,
                          [[maybe_unused]] uint32_t time, uint32_t axis, wl_fixed_t value) {
     xd_ui *ui = data;
     if (axis != WL_POINTER_AXIS_VERTICAL_SCROLL)
@@ -101,14 +101,16 @@ static void pointer_axis(void *data, [[maybe_unused]] struct wl_pointer *p,
         xd_window_pointer_axis(ui->pointer_window, wl_fixed_to_double(value));
 }
 
-static void pointer_frame([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p) {}
+static void pointer_frame([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct wl_pointer *pointer) {}
 static void pointer_axis_source([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct wl_pointer *p,
+                                [[maybe_unused]] struct wl_pointer *pointer,
                                 [[maybe_unused]] uint32_t source) {}
-static void pointer_axis_stop([[maybe_unused]] void *data, [[maybe_unused]] struct wl_pointer *p,
+static void pointer_axis_stop([[maybe_unused]] void *data,
+                              [[maybe_unused]] struct wl_pointer *pointer,
                               [[maybe_unused]] uint32_t time, [[maybe_unused]] uint32_t axis) {}
 static void pointer_axis_discrete([[maybe_unused]] void *data,
-                                  [[maybe_unused]] struct wl_pointer *p,
+                                  [[maybe_unused]] struct wl_pointer *pointer,
                                   [[maybe_unused]] uint32_t axis,
                                   [[maybe_unused]] int32_t discrete) {}
 
@@ -127,18 +129,18 @@ static const struct wl_pointer_listener pointer_listener = {
 /* ---- keyboard ------------------------------------------------------------------ */
 
 static uint32_t current_mods(xd_ui *ui) {
-    uint32_t m = 0;
+    uint32_t mods = 0;
     if (ui->xkb_state == nullptr)
-        return m;
+        return mods;
     if (xkb_state_mod_name_is_active(ui->xkb_state, XKB_MOD_NAME_SHIFT, XKB_STATE_MODS_EFFECTIVE) >
         0)
-        m |= XD_MOD_SHIFT;
+        mods |= XD_MOD_SHIFT;
     if (xkb_state_mod_name_is_active(ui->xkb_state, XKB_MOD_NAME_CTRL, XKB_STATE_MODS_EFFECTIVE) >
         0)
-        m |= XD_MOD_CTRL;
+        mods |= XD_MOD_CTRL;
     if (xkb_state_mod_name_is_active(ui->xkb_state, XKB_MOD_NAME_ALT, XKB_STATE_MODS_EFFECTIVE) > 0)
-        m |= XD_MOD_ALT;
-    return m;
+        mods |= XD_MOD_ALT;
+    return mods;
 }
 
 static void dispatch_key(xd_ui *ui, uint32_t key) {
@@ -159,8 +161,8 @@ static void stop_repeat(xd_ui *ui) {
     }
 }
 
-static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t format,
-                            int32_t fd, uint32_t size) {
+static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
+                            uint32_t format, int32_t fd, uint32_t size) {
     xd_ui *ui = data;
     if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 || size == 0 || size > (16u << 20)) {
         close(fd);
@@ -183,8 +185,9 @@ static void keyboard_keymap(void *data, [[maybe_unused]] struct wl_keyboard *k, 
     ui->xkb_state = xkb_state_new(keymap);
 }
 
-static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
-                           struct wl_surface *surface, [[maybe_unused]] struct wl_array *keys) {
+static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
+                           uint32_t serial, struct wl_surface *surface,
+                           [[maybe_unused]] struct wl_array *keys) {
     xd_ui *ui = data;
     ui->key_serial = serial;
     ui->keyboard_window = xd_window_for_surface(ui, surface);
@@ -194,7 +197,7 @@ static void keyboard_enter(void *data, [[maybe_unused]] struct wl_keyboard *k, u
     }
 }
 
-static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *k,
+static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
                            [[maybe_unused]] uint32_t serial,
                            [[maybe_unused]] struct wl_surface *surface) {
     xd_ui *ui = data;
@@ -206,7 +209,7 @@ static void keyboard_leave(void *data, [[maybe_unused]] struct wl_keyboard *k,
     ui->keyboard_window = nullptr;
 }
 
-static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k, uint32_t serial,
+static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *keyboard, uint32_t serial,
                          [[maybe_unused]] uint32_t time, uint32_t key, uint32_t state) {
     xd_ui *ui = data;
     ui->key_serial = serial;
@@ -230,7 +233,7 @@ static void keyboard_key(void *data, [[maybe_unused]] struct wl_keyboard *k, uin
     }
 }
 
-static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *k,
+static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
                                [[maybe_unused]] uint32_t serial, uint32_t depressed,
                                uint32_t latched, uint32_t locked, uint32_t group) {
     xd_ui *ui = data;
@@ -238,7 +241,7 @@ static void keyboard_modifiers(void *data, [[maybe_unused]] struct wl_keyboard *
         xkb_state_update_mask(ui->xkb_state, depressed, latched, locked, 0, 0, group);
 }
 
-static void keyboard_repeat_info(void *data, [[maybe_unused]] struct wl_keyboard *k,
+static void keyboard_repeat_info(void *data, [[maybe_unused]] struct wl_keyboard *keyboard,
                                  int32_t rate, int32_t delay) {
     xd_ui *ui = data;
     ui->repeat_rate = XD_CLAMP(rate, 0, 100);
@@ -271,9 +274,10 @@ static void offer_offer(void *data, struct wl_data_offer *offer, const char *mim
 }
 
 static void offer_source_actions([[maybe_unused]] void *data,
-                                 [[maybe_unused]] struct wl_data_offer *o,
+                                 [[maybe_unused]] struct wl_data_offer *data_offer,
                                  [[maybe_unused]] uint32_t actions) {}
-static void offer_action([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_offer *o,
+static void offer_action([[maybe_unused]] void *data,
+                         [[maybe_unused]] struct wl_data_offer *data_offer,
                          [[maybe_unused]] uint32_t action) {}
 
 static const struct wl_data_offer_listener offer_listener = {
@@ -282,7 +286,7 @@ static const struct wl_data_offer_listener offer_listener = {
     .action = offer_action,
 };
 
-static void device_data_offer(void *data, [[maybe_unused]] struct wl_data_device *d,
+static void device_data_offer(void *data, [[maybe_unused]] struct wl_data_device *data_device,
                               struct wl_data_offer *offer) {
     xd_ui *ui = data;
     if (ui->pending_offer != nullptr && ui->pending_offer != ui->selection)
@@ -292,7 +296,7 @@ static void device_data_offer(void *data, [[maybe_unused]] struct wl_data_device
     wl_data_offer_add_listener(offer, &offer_listener, ui);
 }
 
-static void device_selection(void *data, [[maybe_unused]] struct wl_data_device *d,
+static void device_selection(void *data, [[maybe_unused]] struct wl_data_device *data_device,
                              struct wl_data_offer *offer) {
     xd_ui *ui = data;
     if (ui->selection != nullptr && ui->selection != offer)
@@ -304,11 +308,10 @@ static void device_selection(void *data, [[maybe_unused]] struct wl_data_device 
 }
 
 /* Drag and drop isn't supported in dialogs; release offers right away. */
-static void device_enter(void *data, [[maybe_unused]] struct wl_data_device *d,
+static void device_enter(void *data, [[maybe_unused]] struct wl_data_device *data_device,
                          [[maybe_unused]] uint32_t serial,
-                         [[maybe_unused]] struct wl_surface *surface,
-                         [[maybe_unused]] wl_fixed_t x, [[maybe_unused]] wl_fixed_t y,
-                         struct wl_data_offer *offer) {
+                         [[maybe_unused]] struct wl_surface *surface, [[maybe_unused]] wl_fixed_t x,
+                         [[maybe_unused]] wl_fixed_t y, struct wl_data_offer *offer) {
     xd_ui *ui = data;
     if (offer != nullptr) {
         if (offer == ui->pending_offer)
@@ -317,11 +320,13 @@ static void device_enter(void *data, [[maybe_unused]] struct wl_data_device *d,
     }
 }
 static void device_leave([[maybe_unused]] void *data,
-                         [[maybe_unused]] struct wl_data_device *d) {}
-static void device_motion([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_device *d,
+                         [[maybe_unused]] struct wl_data_device *data_device) {}
+static void device_motion([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct wl_data_device *data_device,
                           [[maybe_unused]] uint32_t time, [[maybe_unused]] wl_fixed_t x,
                           [[maybe_unused]] wl_fixed_t y) {}
-static void device_drop([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_device *d) {}
+static void device_drop([[maybe_unused]] void *data,
+                        [[maybe_unused]] struct wl_data_device *data_device) {}
 
 static const struct wl_data_device_listener device_listener = {
     .data_offer = device_data_offer,
@@ -332,10 +337,11 @@ static const struct wl_data_device_listener device_listener = {
     .selection = device_selection,
 };
 
-static void source_target([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_source *s,
+static void source_target([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct wl_data_source *data_source,
                           [[maybe_unused]] const char *mime) {}
 
-static void source_send(void *data, [[maybe_unused]] struct wl_data_source *s,
+static void source_send(void *data, [[maybe_unused]] struct wl_data_source *data_source,
                         [[maybe_unused]] const char *mime, int32_t fd) {
     xd_ui *ui = data;
     /* Small text; a blocking write is fine. A reader that hangs up gives
@@ -344,31 +350,32 @@ static void source_send(void *data, [[maybe_unused]] struct wl_data_source *s,
         size_t len = strlen(ui->copied);
         size_t off = 0;
         while (off < len) {
-            ssize_t n = write(fd, ui->copied + off, len - off);
-            if (n < 0 && errno == EINTR)
+            ssize_t written = write(fd, ui->copied + off, len - off);
+            if (written < 0 && errno == EINTR)
                 continue;
-            if (n <= 0)
+            if (written <= 0)
                 break;
-            off += (size_t)n;
+            off += (size_t)written;
         }
     }
     close(fd);
 }
 
-static void source_cancelled(void *data, struct wl_data_source *s) {
+static void source_cancelled(void *data, struct wl_data_source *data_source) {
     xd_ui *ui = data;
-    if (ui->source == s) {
+    if (ui->source == data_source) {
         ui->source = nullptr;
         XD_FREE(&ui->copied);
     }
-    wl_data_source_destroy(s);
+    wl_data_source_destroy(data_source);
 }
 
 static void source_dnd_drop_performed([[maybe_unused]] void *data,
-                                      [[maybe_unused]] struct wl_data_source *s) {}
+                                      [[maybe_unused]] struct wl_data_source *data_source) {}
 static void source_dnd_finished([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct wl_data_source *s) {}
-static void source_action([[maybe_unused]] void *data, [[maybe_unused]] struct wl_data_source *s,
+                                [[maybe_unused]] struct wl_data_source *data_source) {}
+static void source_action([[maybe_unused]] void *data,
+                          [[maybe_unused]] struct wl_data_source *data_source,
                           [[maybe_unused]] uint32_t action) {}
 
 static const struct wl_data_source_listener source_listener = {
@@ -397,15 +404,15 @@ void xd_ui_clipboard_copy(xd_ui *ui, xd_str text) {
 }
 
 /* Keeps the first line of pasted text, as a single-line field would. */
-static char *first_line(xd_str s) {
-    size_t nl = s.len;
-    for (size_t i = 0; i < s.len; i++) {
-        if (s.ptr[i] == '\n' || s.ptr[i] == '\r') {
+static char *first_line(xd_str text) {
+    size_t nl = text.len;
+    for (size_t i = 0; i < text.len; i++) {
+        if (text.ptr[i] == '\n' || text.ptr[i] == '\r') {
             nl = i;
             break;
         }
     }
-    return xd_str_dup_cstr(xd_str_sub(s, 0, nl));
+    return xd_str_dup_cstr(xd_str_sub(text, 0, nl));
 }
 
 char *xd_ui_clipboard_paste(xd_ui *ui) {
@@ -428,17 +435,17 @@ char *xd_ui_clipboard_paste(xd_ui *ui) {
     char chunk[4096];
     while (buf.len < 65536) {
         struct pollfd pfd = {.fd = fds[0], .events = POLLIN};
-        int r = poll(&pfd, 1, 1000);
-        if (r < 0 && errno == EINTR)
+        int ready = poll(&pfd, 1, 1000);
+        if (ready < 0 && errno == EINTR)
             continue;
-        if (r <= 0)
+        if (ready <= 0)
             break;
-        ssize_t n = read(fds[0], chunk, sizeof(chunk));
-        if (n < 0 && errno == EINTR)
+        ssize_t bytes_read = read(fds[0], chunk, sizeof(chunk));
+        if (bytes_read < 0 && errno == EINTR)
             continue;
-        if (n <= 0)
+        if (bytes_read <= 0)
             break;
-        xd_strbuf_append(&buf, (xd_str){chunk, (size_t)n});
+        xd_strbuf_append(&buf, (xd_str){chunk, (size_t)bytes_read});
     }
     close(fds[0]);
     char *line = first_line(xd_strbuf_view(&buf));
@@ -461,11 +468,11 @@ static xd_ui_output *find_output(xd_ui *ui, const void *proxy) {
     return nullptr;
 }
 
-static void out_geometry(void *data, struct wl_output *o, [[maybe_unused]] int32_t x,
+static void out_geometry(void *data, struct wl_output *output, [[maybe_unused]] int32_t x,
                          [[maybe_unused]] int32_t y, int32_t pw, int32_t ph,
                          [[maybe_unused]] int32_t subpixel, const char *make, const char *model,
                          [[maybe_unused]] int32_t transform) {
-    xd_ui_output *out = find_output(data, o);
+    xd_ui_output *out = find_output(data, output);
     if (out == nullptr)
         return;
     out->info.phys_w_mm = pw;
@@ -475,28 +482,28 @@ static void out_geometry(void *data, struct wl_output *o, [[maybe_unused]] int32
                  make != nullptr ? make : "", model != nullptr ? model : "");
 }
 
-static void out_mode(void *data, struct wl_output *o, uint32_t flags, int32_t w, int32_t h,
-                     int32_t refresh) {
-    xd_ui_output *out = find_output(data, o);
+static void out_mode(void *data, struct wl_output *output, uint32_t flags, int32_t width,
+                     int32_t height, int32_t refresh) {
+    xd_ui_output *out = find_output(data, output);
     if (out == nullptr || !(flags & WL_OUTPUT_MODE_CURRENT))
         return;
-    out->info.mode_w = w;
-    out->info.mode_h = h;
+    out->info.mode_w = width;
+    out->info.mode_h = height;
     out->info.refresh_mhz = refresh;
 }
 
-static void out_done([[maybe_unused]] void *data, [[maybe_unused]] struct wl_output *o) {}
-static void out_scale([[maybe_unused]] void *data, [[maybe_unused]] struct wl_output *o,
+static void out_done([[maybe_unused]] void *data, [[maybe_unused]] struct wl_output *output) {}
+static void out_scale([[maybe_unused]] void *data, [[maybe_unused]] struct wl_output *output,
                       [[maybe_unused]] int32_t factor) {}
 
-static void out_name(void *data, struct wl_output *o, const char *name) {
-    xd_ui_output *out = find_output(data, o);
+static void out_name(void *data, struct wl_output *output, const char *name) {
+    xd_ui_output *out = find_output(data, output);
     if (out != nullptr)
         copy_str_into(out->info.name, sizeof(out->info.name), name);
 }
 
-static void out_description(void *data, struct wl_output *o, const char *desc) {
-    xd_ui_output *out = find_output(data, o);
+static void out_description(void *data, struct wl_output *output, const char *desc) {
+    xd_ui_output *out = find_output(data, output);
     if (out != nullptr)
         copy_str_into(out->info.description, sizeof(out->info.description), desc);
 }
@@ -510,28 +517,31 @@ static const struct wl_output_listener output_listener = {
     .description = out_description,
 };
 
-static void xdg_out_position(void *data, struct zxdg_output_v1 *o, int32_t x, int32_t y) {
-    xd_ui_output *out = find_output(data, o);
+static void xdg_out_position(void *data, struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y) {
+    xd_ui_output *out = find_output(data, xdg_output);
     if (out != nullptr) {
         out->info.x = x;
         out->info.y = y;
     }
 }
 
-static void xdg_out_size(void *data, struct zxdg_output_v1 *o, int32_t w, int32_t h) {
-    xd_ui_output *out = find_output(data, o);
+static void xdg_out_size(void *data, struct zxdg_output_v1 *xdg_output, int32_t width,
+                         int32_t height) {
+    xd_ui_output *out = find_output(data, xdg_output);
     if (out != nullptr) {
-        out->info.logical_w = w;
-        out->info.logical_h = h;
+        out->info.logical_w = width;
+        out->info.logical_h = height;
     }
 }
 
-static void xdg_out_done([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o) {}
-static void xdg_out_name([[maybe_unused]] void *data, [[maybe_unused]] struct zxdg_output_v1 *o,
+static void xdg_out_done([[maybe_unused]] void *data,
+                         [[maybe_unused]] struct zxdg_output_v1 *xdg_output) {}
+static void xdg_out_name([[maybe_unused]] void *data,
+                         [[maybe_unused]] struct zxdg_output_v1 *xdg_output,
                          [[maybe_unused]] const char *name) {}
 static void xdg_out_description([[maybe_unused]] void *data,
-                                [[maybe_unused]] struct zxdg_output_v1 *o,
-                                [[maybe_unused]] const char *d) {}
+                                [[maybe_unused]] struct zxdg_output_v1 *xdg_output,
+                                [[maybe_unused]] const char *description) {}
 
 static const struct zxdg_output_v1_listener xdg_output_listener = {
     .logical_position = xdg_out_position,
@@ -821,11 +831,11 @@ static void sweep_sources(xd_ui *ui) {
 
 void xd_ui_quit(xd_ui *ui) { ui->running = false; }
 
-static bool flush(struct wl_display *d) {
-    while (wl_display_flush(d) < 0) {
+static bool flush(struct wl_display *display) {
+    while (wl_display_flush(display) < 0) {
         if (errno != EAGAIN)
             return false;
-        struct pollfd pfd = {.fd = wl_display_get_fd(d), .events = POLLOUT};
+        struct pollfd pfd = {.fd = wl_display_get_fd(display), .events = POLLOUT};
         if (poll(&pfd, 1, -1) < 0 && errno != EINTR)
             return false;
     }
@@ -844,20 +854,20 @@ static void render_dirty(xd_ui *ui) {
 }
 
 void xd_ui_run(xd_ui *ui) {
-    struct wl_display *d = ui->display;
+    struct wl_display *display = ui->display;
     ui->running = !wl_list_empty(&ui->windows);
     while (ui->running) {
         render_dirty(ui);
-        while (wl_display_prepare_read(d) != 0)
-            wl_display_dispatch_pending(d);
-        if (!flush(d)) {
-            wl_display_cancel_read(d);
+        while (wl_display_prepare_read(display) != 0)
+            wl_display_dispatch_pending(display);
+        if (!flush(display)) {
+            wl_display_cancel_read(display);
             break;
         }
         sweep_sources(ui);
         size_t nsrc = (size_t)wl_list_length(&ui->sources);
         struct pollfd *fds = xd_alloc_array(2 + nsrc, sizeof(*fds));
-        fds[0] = (struct pollfd){.fd = wl_display_get_fd(d), .events = POLLIN};
+        fds[0] = (struct pollfd){.fd = wl_display_get_fd(display), .events = POLLIN};
         fds[1] = (struct pollfd){.fd = ui->repeat_fd, .events = POLLIN};
         size_t k = 2;
         XD_LIST_FOR_EACH(src, &ui->sources, xd_ui_source, link) {
@@ -865,24 +875,24 @@ void xd_ui_run(xd_ui *ui) {
         }
         if (poll(fds, 2 + nsrc, -1) < 0) {
             xd_free(fds);
-            wl_display_cancel_read(d);
+            wl_display_cancel_read(display);
             if (errno == EINTR)
                 continue;
             break;
         }
         bool wayland_ok = true;
         if (fds[0].revents & POLLIN)
-            wayland_ok = wl_display_read_events(d) >= 0;
+            wayland_ok = wl_display_read_events(display) >= 0;
         else
-            wl_display_cancel_read(d);
+            wl_display_cancel_read(display);
         if (!wayland_ok || (fds[0].revents & (POLLERR | POLLHUP)) ||
-            wl_display_dispatch_pending(d) < 0) {
+            wl_display_dispatch_pending(display) < 0) {
             xd_free(fds);
             break;
         }
         if (ui->repeat_fd >= 0 && (fds[1].revents & POLLIN)) {
-            uint64_t n;
-            (void)!read(ui->repeat_fd, &n, sizeof(n));
+            uint64_t expirations;
+            (void)!read(ui->repeat_fd, &expirations, sizeof(expirations));
             if (ui->repeat_key != 0)
                 dispatch_key(ui, ui->repeat_key);
         }
@@ -895,8 +905,8 @@ void xd_ui_run(xd_ui *ui) {
             if (src->dead || rev == 0)
                 continue;
             if (src->timer) {
-                uint64_t n;
-                (void)!read(src->fd, &n, sizeof(n));
+                uint64_t expirations;
+                (void)!read(src->fd, &expirations, sizeof(expirations));
                 if (!src->repeat)
                     src->dead = true;
             }
@@ -906,7 +916,7 @@ void xd_ui_run(xd_ui *ui) {
         if (wl_list_empty(&ui->windows))
             ui->running = false;
     }
-    flush(d);
+    flush(display);
 }
 
 void xd_ui_destroy(xd_ui *ui) {

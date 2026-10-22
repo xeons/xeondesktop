@@ -7,20 +7,20 @@
 
 /* ---- modes -------------------------------------------------------------------- */
 
-static void mode_size(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *m, int32_t w,
-                      int32_t h) {
+static void mode_size(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *output_mode,
+                      int32_t width, int32_t height) {
     xd_ui_mode *mode = data;
-    mode->info.width = w;
-    mode->info.height = h;
+    mode->info.width = width;
+    mode->info.height = height;
 }
 
-static void mode_refresh(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *m,
+static void mode_refresh(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *output_mode,
                          int32_t refresh) {
     xd_ui_mode *mode = data;
     mode->info.refresh_mhz = refresh;
 }
 
-static void mode_preferred(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *m) {
+static void mode_preferred(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *output_mode) {
     xd_ui_mode *mode = data;
     mode->info.preferred = true;
 }
@@ -33,7 +33,7 @@ static void free_mode(xd_ui_mode *mode) {
     xd_free(mode);
 }
 
-static void mode_finished(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *m) {
+static void mode_finished(void *data, [[maybe_unused]] struct zwlr_output_mode_v1 *output_mode) {
     free_mode(data);
 }
 
@@ -46,36 +46,36 @@ static const struct zwlr_output_mode_v1_listener mode_listener = {
 
 /* ---- heads -------------------------------------------------------------------- */
 
-static void head_name(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_name(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                       const char *name) {
     xd_ui_head *head = data;
     snprintf(head->info.name, sizeof(head->info.name), "%s", name);
 }
 
-static void head_description(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_description(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                              const char *desc) {
     xd_ui_head *head = data;
     snprintf(head->info.description, sizeof(head->info.description), "%s", desc);
 }
 
-static void head_physical_size(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                               int32_t w, int32_t hh) {
+static void head_physical_size(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
+                               int32_t width, int32_t hh) {
     xd_ui_head *head = data;
-    head->info.phys_w_mm = w;
+    head->info.phys_w_mm = width;
     head->info.phys_h_mm = hh;
 }
 
-static void head_mode(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                      struct zwlr_output_mode_v1 *m) {
+static void head_mode(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
+                      struct zwlr_output_mode_v1 *output_mode) {
     xd_ui_head *head = data;
     xd_ui_mode *mode = XD_NEW(xd_ui_mode);
     mode->head = head;
-    mode->mode = m;
+    mode->mode = output_mode;
     wl_list_insert(head->modes.prev, &mode->link);
-    zwlr_output_mode_v1_add_listener(m, &mode_listener, mode);
+    zwlr_output_mode_v1_add_listener(output_mode, &mode_listener, mode);
 }
 
-static void head_enabled(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_enabled(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                          int32_t enabled) {
     xd_ui_head *head = data;
     head->info.enabled = enabled != 0;
@@ -83,27 +83,27 @@ static void head_enabled(void *data, [[maybe_unused]] struct zwlr_output_head_v1
         head->current = nullptr;
 }
 
-static void head_current_mode(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
-                              struct zwlr_output_mode_v1 *m) {
+static void head_current_mode(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
+                              struct zwlr_output_mode_v1 *output_mode) {
     xd_ui_head *head = data;
-    head->current = m;
+    head->current = output_mode;
 }
 
-static void head_position(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h, int32_t x,
-                          int32_t y) {
+static void head_position(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
+                          int32_t x, int32_t y) {
     xd_ui_head *head = data;
     head->info.x = x;
     head->info.y = y;
 }
 
-static void head_transform(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_transform(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                            int32_t transform) {
     xd_ui_head *head = data;
     /* Flipped transforms aren't offered; show them as their rotation. */
     head->info.transform = (xd_display_transform)(transform & 3);
 }
 
-static void head_scale(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_scale(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                        wl_fixed_t scale) {
     xd_ui_head *head = data;
     head->info.scale = wl_fixed_to_double(scale);
@@ -119,19 +119,20 @@ static void free_head(xd_ui_head *head) {
     xd_free(head);
 }
 
-static void head_finished(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h) {
+static void head_finished(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head) {
     free_head(data);
 }
 
-static void head_make([[maybe_unused]] void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_make([[maybe_unused]] void *data,
+                      [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                       [[maybe_unused]] const char *make) {}
 static void head_model([[maybe_unused]] void *data,
-                       [[maybe_unused]] struct zwlr_output_head_v1 *h,
+                       [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                        [[maybe_unused]] const char *model) {}
 static void head_serial([[maybe_unused]] void *data,
-                        [[maybe_unused]] struct zwlr_output_head_v1 *h,
+                        [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                         [[maybe_unused]] const char *serial) {}
-static void head_adaptive_sync(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *h,
+static void head_adaptive_sync(void *data, [[maybe_unused]] struct zwlr_output_head_v1 *output_head,
                                uint32_t state) {
     xd_ui_head *head = data;
     head->info.adaptive_sync = state == ZWLR_OUTPUT_HEAD_V1_ADAPTIVE_SYNC_STATE_ENABLED;
@@ -156,19 +157,19 @@ static const struct zwlr_output_head_v1_listener head_listener = {
 
 /* ---- manager ------------------------------------------------------------------ */
 
-static void manager_head(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *m,
-                         struct zwlr_output_head_v1 *h) {
+static void manager_head(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *output_manager,
+                         struct zwlr_output_head_v1 *output_head) {
     xd_ui *ui = data;
     xd_ui_head *head = XD_NEW(xd_ui_head);
-    head->head = h;
+    head->head = output_head;
     head->info.scale = 1.0;
     head->info.mode = -1;
     wl_list_init(&head->modes);
     wl_list_insert(ui->heads.prev, &head->link);
-    zwlr_output_head_v1_add_listener(h, &head_listener, head);
+    zwlr_output_head_v1_add_listener(output_head, &head_listener, head);
 }
 
-static void manager_done(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *m,
+static void manager_done(void *data, [[maybe_unused]] struct zwlr_output_manager_v1 *output_manager,
                          uint32_t serial) {
     xd_ui *ui = data;
     ui->output_serial = serial;
@@ -176,9 +177,9 @@ static void manager_done(void *data, [[maybe_unused]] struct zwlr_output_manager
         ui->display_changed(ui->display_changed_user);
 }
 
-static void manager_finished(void *data, struct zwlr_output_manager_v1 *m) {
+static void manager_finished(void *data, struct zwlr_output_manager_v1 *output_manager) {
     xd_ui *ui = data;
-    zwlr_output_manager_v1_destroy(m);
+    zwlr_output_manager_v1_destroy(output_manager);
     ui->output_manager = nullptr;
 }
 
@@ -214,8 +215,9 @@ bool xd_ui_display_heads(xd_ui *ui, const xd_display_head **heads, size_t *count
     *count = 0;
     if (ui->output_manager == nullptr)
         return false;
-    size_t n = (size_t)wl_list_length(&ui->heads);
-    ui->head_infos = xd_realloc_array(ui->head_infos, XD_MAX(n, 1), sizeof(*ui->head_infos));
+    size_t head_count = (size_t)wl_list_length(&ui->heads);
+    ui->head_infos =
+        xd_realloc_array(ui->head_infos, XD_MAX(head_count, 1), sizeof(*ui->head_infos));
     size_t i = 0;
     XD_LIST_FOR_EACH(head, &ui->heads, xd_ui_head, link) {
         size_t nm = (size_t)wl_list_length(&head->modes);
@@ -233,7 +235,7 @@ bool xd_ui_display_heads(xd_ui *ui, const xd_display_head **heads, size_t *count
         ui->head_infos[i++] = head->info;
     }
     *heads = ui->head_infos;
-    *count = n;
+    *count = head_count;
     return true;
 }
 
@@ -247,23 +249,24 @@ typedef struct apply_req {
     void *user;
 } apply_req;
 
-static void config_result(apply_req *req, struct zwlr_output_configuration_v1 *c, bool ok) {
-    zwlr_output_configuration_v1_destroy(c);
+static void config_result(apply_req *req, struct zwlr_output_configuration_v1 *configuration,
+                          bool ok) {
+    zwlr_output_configuration_v1_destroy(configuration);
     if (req->done != nullptr)
         req->done(ok, req->user);
     xd_free(req);
 }
 
-static void config_succeeded(void *data, struct zwlr_output_configuration_v1 *c) {
-    config_result(data, c, true);
+static void config_succeeded(void *data, struct zwlr_output_configuration_v1 *configuration) {
+    config_result(data, configuration, true);
 }
 
-static void config_failed(void *data, struct zwlr_output_configuration_v1 *c) {
-    config_result(data, c, false);
+static void config_failed(void *data, struct zwlr_output_configuration_v1 *configuration) {
+    config_result(data, configuration, false);
 }
 
-static void config_cancelled(void *data, struct zwlr_output_configuration_v1 *c) {
-    config_result(data, c, false);
+static void config_cancelled(void *data, struct zwlr_output_configuration_v1 *configuration) {
+    config_result(data, configuration, false);
 }
 
 static const struct zwlr_output_configuration_v1_listener config_listener = {
@@ -297,22 +300,22 @@ static void send_config(xd_ui *ui, const xd_display_setting *settings, size_t co
             done(false, user);
         return;
     }
-    struct zwlr_output_configuration_v1 *c =
+    struct zwlr_output_configuration_v1 *configuration =
         zwlr_output_manager_v1_create_configuration(ui->output_manager, ui->output_serial);
     apply_req *req = XD_NEW(apply_req);
     req->done = done;
     req->user = user;
-    zwlr_output_configuration_v1_add_listener(c, &config_listener, req);
+    zwlr_output_configuration_v1_add_listener(configuration, &config_listener, req);
     XD_LIST_FOR_EACH(head, &ui->heads, xd_ui_head, link) {
-        const xd_display_setting *s = setting_for(head, settings, count);
-        bool enabled = s != nullptr ? s->enabled : head->info.enabled;
+        const xd_display_setting *setting = setting_for(head, settings, count);
+        bool enabled = setting != nullptr ? setting->enabled : head->info.enabled;
         if (!enabled) {
-            zwlr_output_configuration_v1_disable_head(c, head->head);
+            zwlr_output_configuration_v1_disable_head(configuration, head->head);
             continue;
         }
         struct zwlr_output_configuration_head_v1 *ch =
-            zwlr_output_configuration_v1_enable_head(c, head->head);
-        if (s == nullptr) {
+            zwlr_output_configuration_v1_enable_head(configuration, head->head);
+        if (setting == nullptr) {
             /* Unchanged: restate what it has. */
             if (head->current != nullptr)
                 zwlr_output_configuration_head_v1_set_mode(ch, head->current);
@@ -324,18 +327,18 @@ static void send_config(xd_ui *ui, const xd_display_setting *settings, size_t co
         }
         int j = 0;
         XD_LIST_FOR_EACH(mode, &head->modes, xd_ui_mode, link) {
-            if (j++ == s->mode)
+            if (j++ == setting->mode)
                 zwlr_output_configuration_head_v1_set_mode(ch, mode->mode);
         }
-        zwlr_output_configuration_head_v1_set_position(ch, s->x, s->y);
-        zwlr_output_configuration_head_v1_set_scale(ch, wl_fixed_from_double(s->scale));
-        zwlr_output_configuration_head_v1_set_transform(ch, (int32_t)s->transform);
-        set_adaptive_sync(ch, s->adaptive_sync);
+        zwlr_output_configuration_head_v1_set_position(ch, setting->x, setting->y);
+        zwlr_output_configuration_head_v1_set_scale(ch, wl_fixed_from_double(setting->scale));
+        zwlr_output_configuration_head_v1_set_transform(ch, (int32_t)setting->transform);
+        set_adaptive_sync(ch, setting->adaptive_sync);
     }
     if (test)
-        zwlr_output_configuration_v1_test(c);
+        zwlr_output_configuration_v1_test(configuration);
     else
-        zwlr_output_configuration_v1_apply(c);
+        zwlr_output_configuration_v1_apply(configuration);
 }
 
 void xd_ui_display_apply(xd_ui *ui, const xd_display_setting *settings, size_t count,
