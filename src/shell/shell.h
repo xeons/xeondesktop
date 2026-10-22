@@ -276,6 +276,7 @@ struct xd_shell {
     xd_start7 *start7;      /* open Windows 7 menu, or nullptr */
     bool pointer_start7;    /* pointer is over start7 */
     bool pointer_flyout;         /* pointer is over the volume flyout */
+    bool pointer_clock; /* pointer is over the clock flyout */
     bool eat_release; /* the press closed a menu: its release goes nowhere */
     xd_desktop *pointer_desktop; /* a desktop under the pointer */
     struct xd_deskicons *deskicons;
@@ -617,6 +618,17 @@ void xd_volume_flyout_render_dirty(xd_shell *shell);
 bool xd_volume_flyout_key(xd_shell *shell, uint32_t sym);
 /* Closes the flyout (a click elsewhere in the shell, a menu opening). */
 void xd_volume_flyout_dismiss(xd_shell *shell);
+/* clockfly.c: Windows 7's clock flyout (the unified taskbar's clock,
+ * clicked; `anchor` the clock, logical px), and its input as the volume
+ * flyout's. */
+void xd_clock_flyout_toggle(xd_taskbar *bar, xd_rect anchor, uint32_t serial);
+bool xd_clock_flyout_owns(xd_shell *shell, struct wl_surface *surface);
+void xd_clock_flyout_motion(xd_shell *shell, double x, double y);
+void xd_clock_flyout_leave(xd_shell *shell);
+void xd_clock_flyout_button(xd_shell *shell, uint32_t button, bool pressed, double x, double y);
+bool xd_clock_flyout_key(xd_shell *shell, uint32_t sym);
+void xd_clock_flyout_dismiss(xd_shell *shell);
+void xd_clock_flyout_render_dirty(xd_shell *shell);
 
 /* deskicons.c: the desktop's icons, on the first monitor's desktop. */
 typedef struct xd_deskicons xd_deskicons;

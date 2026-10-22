@@ -4652,6 +4652,31 @@ def mock_timedate(s, timesync=None):
     return ts, calls
 
 
+@scenario(AERO_INI, requires=("dbusmock",))
+def clock_flyout(s):
+    """The unified taskbar's clock opens Windows 7's flyout above it (the
+    month and a clock, at noon here: XD_CLOCK_FIXED); Esc closes it, and
+    "Change date and time settings..." opens Date and Time Properties."""
+    mock_timedate(s)
+    clock = (WIDTH - 40, HEIGHT - 20)
+    away = (WIDTH // 2, HEIGHT // 2)
+    above = (0, 0, WIDTH, HEIGHT - 40)
+    empty = s.settle("desktop")
+    s.inject("move", *clock, "click", "move", *away)
+    shown = s.settle("flyout")
+    box = shown.changed_box(empty, above)
+    s.check(box is not None and 340 <= box[2] <= 360 and box[1] + box[3] >= HEIGHT - 44,
+            f"the flyout above the clock ({box})")  # fmt: skip
+    s.inject("key", "Escape")
+    s.wait(lambda: s.shot("closed").changed_box(empty, above) is None, "Esc to close it")
+    s.inject("move", *clock, "click", "move", *away)
+    s.settle("again")
+    # The link, centred in the band along the flyout's foot.
+    s.inject("move", box[0] + box[2] // 2, box[1] + box[3] - 18, "click")
+    s.wait_window(title="Date and Time Properties", state="activated")
+    s.log("ok: the link opened Date and Time Properties")
+
+
 @scenario(requires=("dbusmock",))
 def timedate_internet_time(s):
     """Date and Time Properties' Internet Time tab on dbusmock's timedated,

@@ -196,6 +196,10 @@ pin it there, or a launcher on the bar to pin the program.
 Windows 7's large icons on a 40px taskbar and small ones on XP's 30px; it
 follows the taskbar until it's chosen (large on the unified one).
 
+Clicking the unified taskbar's clock opens Windows 7's flyout: the date, a
+month calendar and an analog clock, with a link to Date and Time (XP's
+taskbar keeps the double-click straight to Date and Time).
+
 Window previews (live thumbnails) show on both taskbars: hovering a
 window's or a group's task button in XP's shows them too, drawn as the
 style's tooltips outside Aero. "Show window previews (thumbnails)" turns

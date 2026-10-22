@@ -650,8 +650,15 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [x] Alt+Tab's window (there was none: Alt+Tab only raised windows):
       Windows 2000/XP's box in every style, 7's from a package's AltTab.
       Not done: hover (HotItem), 7's live thumbnails in it.
-- [ ] 7's clock calendar flyout (MonthCal) and the tray's overflow flyout
-      (TrayNotifyFlyout): the shell has neither yet.
+- [x] 7's clock flyout: the unified taskbar's clock, clicked, shows
+      today's date, a month calendar (from the locale's first weekday;
+      arrows, Page Up/Down, Home) and an analog clock, with "Change date
+      and time settings..." below; XP's taskbar keeps the double-click.
+      Aero's from memory of 7, the other styles' as XP's MonthCal (today
+      ringed in red). UI test clock_flyout. Not done: 7's zoom out to the
+      year and decade views (clicking the month), additional clocks.
+- [ ] 7's notification area overflow flyout (TrayNotifyFlyout): the
+      unified taskbar still folds quiet icons behind XP's chevron.
 - [~] What a .theme brings besides the style: Display Properties' Themes
       tab (XP's first tab: Windows XP, Windows Classic, packages bringing
       more than a style; Save As..., Delete, Browse...) applies the style,

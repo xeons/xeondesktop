@@ -1453,6 +1453,15 @@ void xd_taskbar_pointer_button(xd_taskbar *bar, uint32_t button, bool pressed,
             bar->tray_expanded ? g_timeout_add_seconds(15, fold_tray, bar) : 0;
         return;
     }
+    if (target == XD_HIT_TRAY && bar->superbar && bar->shell->settings.show_clock) {
+        /* The unified taskbar: 7's flyout, above the clock at the
+         * notification area's end. */
+        xd_rect tray = bar->tray_rect;
+        xd_rect anchor = {(int)((tray.x + tray.w) / bar->scale) - 1, (int)(tray.y / bar->scale), 1,
+                          (int)(tray.h / bar->scale)};
+        xd_clock_flyout_toggle(bar, anchor, serial);
+        return;
+    }
     if (target == XD_HIT_TRAY) {
         /* Double-clicking the clock: Date and Time Properties. */
         int64_t now = g_get_monotonic_time() / 1000;

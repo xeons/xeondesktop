@@ -83,6 +83,7 @@
 #include "../src/startmenu/searchlib.h"
 #include "../src/taskmgr/netstat.h"
 #include "../src/timedate/ntp.h"
+#include "../src/shell/calendar.h"
 #include "../src/shell/jumplist.h"
 #include "../src/shell/launcher.h"
 #include "../src/shell/recent.h"
@@ -6143,6 +6144,36 @@ static void test_launcher_entry(void) {
     CHECK(strcmp(buf, "99+") == 0);
 }
 
+/* The clock flyout's calendar: a month's page from either first weekday,
+ * always with some of the month before; days and months moved, a month's
+ * end kept within the shorter month. */
+static void test_calendar(void) {
+    CHECK(xd_calendar_weekday((xd_day){2026, 10, 21}) == 3); /* a Wednesday */
+    CHECK(xd_calendar_weekday((xd_day){2026, 2, 1}) == 0); /* a Sunday */
+    xd_day page[XD_CALENDAR_CELLS];
+    /* October 2026 starts on a Thursday: Sunday weeks start Sep 27. */
+    xd_calendar_page(2026, 10, 0, page);
+    CHECK(xd_calendar_same(page[0], (xd_day){2026, 9, 27}));
+    CHECK(xd_calendar_same(page[4], (xd_day){2026, 10, 1}));
+    CHECK(xd_calendar_same(page[XD_CALENDAR_CELLS - 1], (xd_day){2026, 11, 7}));
+    /* Monday weeks start Sep 28. */
+    xd_calendar_page(2026, 10, 1, page);
+    CHECK(xd_calendar_same(page[0], (xd_day){2026, 9, 28}));
+    CHECK(xd_calendar_weekday(page[0]) == 1);
+    /* February 2026 starts on a Sunday: a whole week of January first. */
+    xd_calendar_page(2026, 2, 0, page);
+    CHECK(xd_calendar_same(page[0], (xd_day){2026, 1, 25}));
+    CHECK(xd_calendar_same(page[7], (xd_day){2026, 2, 1}));
+    CHECK(xd_calendar_same(xd_calendar_add_days((xd_day){2026, 12, 31}, 1), (xd_day){2027, 1, 1}));
+    CHECK(xd_calendar_same(xd_calendar_add_days((xd_day){2026, 3, 1}, -1), (xd_day){2026, 2, 28}));
+    CHECK(
+        xd_calendar_same(xd_calendar_add_months((xd_day){2026, 1, 31}, 1), (xd_day){2026, 2, 28}));
+    CHECK(xd_calendar_same(xd_calendar_add_months((xd_day){2026, 1, 15}, -1),
+                           (xd_day){2025, 12, 15}));
+    int first = xd_calendar_first_weekday();
+    CHECK(first >= 0 && first <= 6);
+}
+
 static void test_superbar(void) {
     xd_settings original;
     xd_settings_defaults(&original);
@@ -9346,6 +9377,7 @@ int main(void) {
     test_flatpak_perms();
     test_updates();
     test_superbar();
+    test_calendar();
     test_launcher_entry();
     test_printers();
     test_scanners();
