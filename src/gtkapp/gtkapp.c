@@ -20,15 +20,15 @@ static char applied_gtk[sizeof(((xd_settings *)nullptr)->gtk_theme)];
 static char applied_icons[sizeof(((xd_settings *)nullptr)->icon_theme)];
 
 static void reload_theme(void) {
-    GtkSettings *s = gtk_settings_get_default();
-    if (s == nullptr || applied_gtk[0] != '\0')
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings == nullptr || applied_gtk[0] != '\0')
         return;
     /* GTK re-reads a theme's CSS when the theme name changes. */
-    g_object_set(s, "gtk-theme-name", "Adwaita", nullptr);
-    g_object_set(s, "gtk-theme-name", XD_GTK_THEME_NAME, nullptr);
+    g_object_set(settings, "gtk-theme-name", "Adwaita", nullptr);
+    g_object_set(settings, "gtk-theme-name", XD_GTK_THEME_NAME, nullptr);
 }
 
-static void on_css_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GFile *f,
+static void on_css_changed([[maybe_unused]] GFileMonitor *monitor, [[maybe_unused]] GFile *file,
                            [[maybe_unused]] GFile *other, GFileMonitorEvent ev,
                            [[maybe_unused]] gpointer data) {
     if (ev == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || ev == G_FILE_MONITOR_EVENT_CREATED ||
@@ -41,19 +41,19 @@ static void on_css_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GF
  * take these from their own settings (GSettings, settings.ini); only the
  * cursor reaches them, through XCURSOR_THEME/XCURSOR_SIZE. */
 static void apply_input_settings(const xd_settings *cfg) {
-    GtkSettings *s = gtk_settings_get_default();
-    if (s == nullptr)
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings == nullptr)
         return;
-    const xd_mouse_settings *m = &cfg->mouse;
+    const xd_mouse_settings *mouse = &cfg->mouse;
     int blink = cfg->keyboard.cursor_blink_ms;
     /* "default" is the system's cursor theme (icons/default). */
-    g_object_set(s, "gtk-double-click-time", m->double_click_ms, "gtk-cursor-theme-name",
-                 m->cursor_theme[0] != '\0' ? m->cursor_theme : "default",
-                 "gtk-cursor-theme-size", m->cursor_size, "gtk-cursor-blink", blink > 0,
+    g_object_set(settings, "gtk-double-click-time", mouse->double_click_ms, "gtk-cursor-theme-name",
+                 mouse->cursor_theme[0] != '\0' ? mouse->cursor_theme : "default",
+                 "gtk-cursor-theme-size", mouse->cursor_size, "gtk-cursor-blink", blink > 0,
                  nullptr);
     /* GTK's time is a whole on-and-off cycle, Windows' each half. */
     if (blink > 0)
-        g_object_set(s, "gtk-cursor-blink-time", blink * 2, nullptr);
+        g_object_set(settings, "gtk-cursor-blink-time", blink * 2, nullptr);
 }
 
 static gboolean theme_installed(const char *name);
@@ -61,8 +61,8 @@ static gboolean theme_installed(const char *name);
 /* Display Properties' themes: the GTK theme (ours, once it has been
  * written, unless another is chosen) and the shell's icon theme. */
 static void apply_theme_settings(const xd_settings *cfg) {
-    GtkSettings *s = gtk_settings_get_default();
-    if (s == nullptr)
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings == nullptr)
         return;
     if (cfg->gtk_theme[0] != '\0') {
         /* GTK_THEME's "name:variant" is two settings here. */
@@ -70,14 +70,14 @@ static void apply_theme_settings(const xd_settings *cfg) {
         char *colon = strchr(name, ':');
         if (colon != nullptr)
             *colon = '\0';
-        g_object_set(s, "gtk-theme-name", name, "gtk-application-prefer-dark-theme",
+        g_object_set(settings, "gtk-theme-name", name, "gtk-application-prefer-dark-theme",
                      colon != nullptr && strcmp(colon + 1, "dark") == 0, nullptr);
         g_free(name);
     } else {
         xd_strbuf path = {0};
         xd_gtk_theme_css_path(&path);
         if (g_file_test(xd_strbuf_cstr(&path), G_FILE_TEST_IS_REGULAR))
-            g_object_set(s, "gtk-theme-name", XD_GTK_THEME_NAME,
+            g_object_set(settings, "gtk-theme-name", XD_GTK_THEME_NAME,
                          "gtk-application-prefer-dark-theme", FALSE, nullptr);
         xd_strbuf_free(&path);
     }
@@ -88,13 +88,13 @@ static void apply_theme_settings(const xd_settings *cfg) {
     if (!theme_installed(icons))
         icons = theme_installed("breeze") ? "breeze" : nullptr;
     if (icons != nullptr)
-        g_object_set(s, "gtk-icon-theme-name", icons, nullptr);
+        g_object_set(settings, "gtk-icon-theme-name", icons, nullptr);
     snprintf(applied_icons, sizeof(applied_icons), "%s", cfg->icon_theme);
 }
 
-static void on_settings_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused]] GFile *f,
-                                [[maybe_unused]] GFile *other, GFileMonitorEvent ev,
-                                [[maybe_unused]] gpointer data) {
+static void on_settings_changed([[maybe_unused]] GFileMonitor *monitor,
+                                [[maybe_unused]] GFile *file, [[maybe_unused]] GFile *other,
+                                GFileMonitorEvent ev, [[maybe_unused]] gpointer data) {
     if (ev != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT && ev != G_FILE_MONITOR_EVENT_CREATED &&
         ev != G_FILE_MONITOR_EVENT_RENAMED && ev != G_FILE_MONITOR_EVENT_MOVED_IN)
         return;
@@ -109,12 +109,12 @@ static void on_settings_changed([[maybe_unused]] GFileMonitor *m, [[maybe_unused
 }
 
 static gboolean theme_installed(const char *name) {
-    GtkIconTheme *t = gtk_icon_theme_get_default();
+    GtkIconTheme *icon_theme = gtk_icon_theme_get_default();
     gchar **paths = nullptr;
-    gint n = 0;
-    gtk_icon_theme_get_search_path(t, &paths, &n);
+    gint path_count = 0;
+    gtk_icon_theme_get_search_path(icon_theme, &paths, &path_count);
     gboolean found = FALSE;
-    for (gint i = 0; i < n && !found; i++) {
+    for (gint i = 0; i < path_count && !found; i++) {
         char *index = g_build_filename(paths[i], name, "index.theme", nullptr);
         found = g_file_test(index, G_FILE_TEST_IS_REGULAR);
         g_free(index);
@@ -132,30 +132,30 @@ static gboolean theme_installed(const char *name) {
  * window. */
 static gboolean (*menu_bar_enter)(GtkWidget *, GdkEventCrossing *);
 
-static gboolean menu_bar_enter_notify(GtkWidget *w, GdkEventCrossing *ev) {
-    GdkDevice *d = gdk_event_get_device((GdkEvent *)ev);
-    if (d != nullptr && ev->window != nullptr &&
-        gdk_device_get_source(d) != GDK_SOURCE_KEYBOARD) {
-        GdkWindow *under = gdk_device_get_window_at_position(d, nullptr, nullptr);
+static gboolean menu_bar_enter_notify(GtkWidget *widget, GdkEventCrossing *ev) {
+    GdkDevice *device = gdk_event_get_device((GdkEvent *)ev);
+    if (device != nullptr && ev->window != nullptr &&
+        gdk_device_get_source(device) != GDK_SOURCE_KEYBOARD) {
+        GdkWindow *under = gdk_device_get_window_at_position(device, nullptr, nullptr);
         if (under == nullptr ||
             gdk_window_get_toplevel(under) != gdk_window_get_toplevel(ev->window))
             return TRUE;
     }
-    return menu_bar_enter(w, ev);
+    return menu_bar_enter(widget, ev);
 }
 
 static void fix_menu_bar_mnemonics(void) {
     /* The class lives as long as the process (never unreferenced). */
-    GtkWidgetClass *c = g_type_class_ref(GTK_TYPE_MENU_BAR);
-    if (c->enter_notify_event != menu_bar_enter_notify) {
-        menu_bar_enter = c->enter_notify_event;
-        c->enter_notify_event = menu_bar_enter_notify;
+    GtkWidgetClass *widget_class = g_type_class_ref(GTK_TYPE_MENU_BAR);
+    if (widget_class->enter_notify_event != menu_bar_enter_notify) {
+        menu_bar_enter = widget_class->enter_notify_event;
+        widget_class->enter_notify_event = menu_bar_enter_notify;
     }
 }
 
 void xd_gtk_app_follow_theme(void) {
-    GtkSettings *s = gtk_settings_get_default();
-    if (s == nullptr)
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings == nullptr)
         return;
     fix_menu_bar_mnemonics();
     xd_settings cfg;
@@ -165,7 +165,7 @@ void xd_gtk_app_follow_theme(void) {
     xd_gtk_theme_css_path(&path);
     /* Dialogs (file choosers, ...) get our title bar and their buttons at
      * the bottom, as in Windows, instead of a GNOME header bar. */
-    g_object_set(s, "gtk-dialogs-use-header", FALSE, nullptr);
+    g_object_set(settings, "gtk-dialogs-use-header", FALSE, nullptr);
 
     /* Watch the directory: the theme is replaced by rename. The monitor
      * lives as long as the process. */
@@ -185,25 +185,25 @@ void xd_gtk_app_follow_theme(void) {
     xd_strbuf_free(&path);
 }
 
-static void on_mb_button(GtkButton *b, gpointer dialog) {
+static void on_mb_button(GtkButton *button, gpointer dialog) {
     gtk_dialog_response(GTK_DIALOG(dialog),
-                        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "response")));
+                        GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "response")));
 }
 
 static GtkWidget *mb_button(GtkWidget *dialog, GtkWidget *row, const char *label, int response) {
-    GtkWidget *b = gtk_button_new_with_mnemonic(label);
-    gtk_widget_set_size_request(b, 75, -1);
-    gtk_widget_set_can_default(b, TRUE);
-    g_object_set_data(G_OBJECT(b), "response", GINT_TO_POINTER(response));
-    g_signal_connect(b, "clicked", G_CALLBACK(on_mb_button), dialog);
-    gtk_box_pack_start(GTK_BOX(row), b, FALSE, FALSE, 0);
-    return b;
+    GtkWidget *widget = gtk_button_new_with_mnemonic(label);
+    gtk_widget_set_size_request(widget, 75, -1);
+    gtk_widget_set_can_default(widget, TRUE);
+    g_object_set_data(G_OBJECT(widget), "response", GINT_TO_POINTER(response));
+    g_signal_connect(widget, "clicked", G_CALLBACK(on_mb_button), dialog);
+    gtk_box_pack_start(GTK_BOX(row), widget, FALSE, FALSE, 0);
+    return widget;
 }
 
 /* The dialog behind both message boxes: icon and text above a centred
  * row of buttons, numbered from 0. */
 static GtkWidget *message_dialog(GtkWindow *parent, const char *title, xd_mb_icon icon,
-                                 const char *text, const char *const *labels, int n,
+                                 const char *text, const char *const *labels, int count,
                                  int focus_index) {
     static const char *const icons[] = {
         [XD_MB_ERROR] = "dialog-error",
@@ -244,10 +244,10 @@ static GtkWidget *message_dialog(GtkWindow *parent, const char *title, xd_mb_ico
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(row, GTK_ALIGN_CENTER);
     GtkWidget *focus = nullptr;
-    for (int i = 0; i < n; i++) {
-        GtkWidget *b = mb_button(dlg, row, labels[i], i);
+    for (int i = 0; i < count; i++) {
+        GtkWidget *widget = mb_button(dlg, row, labels[i], i);
         if (i == focus_index || focus == nullptr)
-            focus = b;
+            focus = widget;
     }
     gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(dlg))), box);
@@ -266,23 +266,24 @@ int xd_message_box(GtkWindow *parent, const char *title, xd_mb_icon icon, xd_mb_
     bool question = buttons == XD_MB_YES_NO;
     GtkWidget *dlg = message_dialog(parent, title, icon, text, question ? yes_no : ok,
                                     question ? 2 : 1, question && default_no ? 1 : 0);
-    int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    int response = gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
     if (question)
-        return r == 0 ? GTK_RESPONSE_YES : GTK_RESPONSE_NO;
+        return response == 0 ? GTK_RESPONSE_YES : GTK_RESPONSE_NO;
     return GTK_RESPONSE_OK;
 }
 
-int xd_message_box_choose(GtkWindow *parent, const char *title, xd_mb_icon icon,
-                          const char *text, const char *const *labels, int n, int default_index,
+int xd_message_box_choose(GtkWindow *parent, const char *title, xd_mb_icon icon, const char *text,
+                          const char *const *labels, int count, int default_index,
                           int cancel_index) {
-    GtkWidget *dlg = message_dialog(parent, title, icon, text, labels, n, default_index);
-    int r = gtk_dialog_run(GTK_DIALOG(dlg));
+    GtkWidget *dlg = message_dialog(parent, title, icon, text, labels, count, default_index);
+    int response = gtk_dialog_run(GTK_DIALOG(dlg));
     gtk_widget_destroy(dlg);
-    return r >= 0 && r < n ? r : cancel_index;
+    return response >= 0 && response < count ? response : cancel_index;
 }
 
-static gboolean on_ctrl_tab([[maybe_unused]] GtkWidget *w, GdkEventKey *ev, gpointer notebook) {
+static gboolean on_ctrl_tab([[maybe_unused]] GtkWidget *widget, GdkEventKey *ev,
+                            gpointer notebook) {
     if (!(ev->state & GDK_CONTROL_MASK))
         return FALSE;
     gboolean back = ev->keyval == GDK_KEY_ISO_Left_Tab ||
@@ -290,10 +291,10 @@ static gboolean on_ctrl_tab([[maybe_unused]] GtkWidget *w, GdkEventKey *ev, gpoi
     if (ev->keyval != GDK_KEY_Tab && ev->keyval != GDK_KEY_ISO_Left_Tab)
         return FALSE;
     GtkNotebook *nb = notebook;
-    int n = gtk_notebook_get_n_pages(nb);
-    if (n > 0) {
+    int count = gtk_notebook_get_n_pages(nb);
+    if (count > 0) {
         int cur = gtk_notebook_get_current_page(nb);
-        gtk_notebook_set_current_page(nb, (cur + (back ? n - 1 : 1)) % n);
+        gtk_notebook_set_current_page(nb, (cur + (back ? count - 1 : 1)) % count);
     }
     return TRUE;
 }
