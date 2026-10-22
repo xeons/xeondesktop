@@ -971,16 +971,34 @@ static uint32_t task_pixel(const bar_art *art, bool pressed, int x, int y, int w
     return pixel;
 }
 
+/* The art's row for row `y` of a task button `height` rows tall (a 40px
+ * taskbar's): its rounded top and bottom rows as they are, the middle
+ * stretched. */
+static int task_row(int y, int height) {
+    enum { ENDS = 5 };
+    if (height == TASK_H)
+        return y;
+    if (height <= 2 * ENDS)
+        return y * TASK_H / height;
+    if (y < ENDS)
+        return y;
+    if (y >= height - ENDS)
+        return TASK_H - (height - y);
+    return ENDS + (y - ENDS) * (TASK_H - 2 * ENDS) / (height - 2 * ENDS);
+}
+
 void xd_luna_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                               const char *label, cairo_surface_t *window_icon) {
     bool pressed = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
     bar_art art = bar_art_for(theme);
     image im;
     int width = logical(theme, rect.w);
-    if (image_new(&im, width, TASK_H)) {
-        for (int y = 0; y < TASK_H; y++) {
+    int height = logical(theme, rect.h);
+    if (image_new(&im, width, height)) {
+        for (int y = 0; y < height; y++) {
+            int row = task_row(y, height);
             for (int x = 0; x < width; x++) {
-                uint32_t pixel = tinted(&art.tn, task_pixel(&art, pressed, x, y, width));
+                uint32_t pixel = tinted(&art.tn, task_pixel(&art, pressed, x, row, width));
                 /* Flashing buttons turn orange, keeping the shading. */
                 if (!pressed && (state & XD_STATE_FLASH))
                     pixel = mix(pixel, 0xFFF59A2Cu, 0.88);
@@ -991,10 +1009,12 @@ void xd_luna_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect rec
         }
         image_paint(cairo, &im, rect);
     }
-    int icon = xd_tpx(theme, 16);
-    int ix = rect.x + xd_tpx(theme, 10);
+    int icon = xd_style_task_icon_size(theme, window_icon);
+    int ix = label != nullptr ? rect.x + xd_tpx(theme, 10) : rect.x + (rect.w - icon) / 2;
     int iy = rect.y + (rect.h - icon) / 2;
     xd_style_task_icon(theme, cairo, window_icon, ix, iy);
+    if (label == nullptr)
+        return;
     uint32_t face =
         task_pixel(&art, pressed, logical(theme, rect.w) / 2, TASK_H / 2, logical(theme, rect.w));
     xd_text_style st = xd_text(theme, XD_FONT_MENU, bar_text(&art, face), XD_ALIGN_START);

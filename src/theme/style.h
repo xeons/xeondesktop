@@ -228,8 +228,11 @@ int xd_luna_start_button_width(const xd_theme *theme, cairo_t *cairo);
 void xd_luna_draw_start_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state);
 void xd_luna_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                               const char *label, cairo_surface_t *icon);
-/* Paints a task button's window icon (or the generic one) at x, y. */
+/* Paints a task button's window icon (or the generic one) at x, y, at the
+ * icon's own size: 16 logical px, or 24 with the taskbar's large icons. */
 void xd_style_task_icon(const xd_theme *theme, cairo_t *cairo, cairo_surface_t *icon, int x, int y);
+/* That size in device px (the generic icon's is 16 logical px). */
+int xd_style_task_icon_size(const xd_theme *theme, cairo_surface_t *icon);
 void xd_luna_draw_tray(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *clock);
 void xd_luna_draw_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                          const char *label);

@@ -6158,6 +6158,26 @@ static void test_superbar(void) {
     xd_settings_parse(XD_STR("[Taskbar]\nButtons=sometimes\n"), &original);
     CHECK(original.buttons == XD_BUTTONS_ALWAYS_COMBINE);
 
+    /* The unified taskbar and its icons: Aero's by default, any style's
+     * when chosen; large icons go with it unless small ones are chosen. */
+    xd_settings layout;
+    xd_settings_defaults(&layout);
+    CHECK(layout.layout == XD_TASKBAR_LAYOUT_AUTO && layout.icons == XD_TASKBAR_ICONS_AUTO);
+    CHECK(xd_settings_taskbar_unified(&layout, XD_STYLE_AERO));
+    CHECK(!xd_settings_taskbar_unified(&layout, XD_STYLE_LUNA));
+    CHECK(xd_settings_taskbar_large_icons(&layout, XD_STYLE_AERO));
+    CHECK(!xd_settings_taskbar_large_icons(&layout, XD_STYLE_CLASSIC));
+    xd_settings_parse(XD_STR("[Taskbar]\nLayout=unified\nIcons=small\n"), &layout);
+    CHECK(xd_settings_taskbar_unified(&layout, XD_STYLE_LUNA));
+    CHECK(!xd_settings_taskbar_large_icons(&layout, XD_STYLE_LUNA));
+    xd_settings_serialize(&layout, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(parsed.layout == XD_TASKBAR_LAYOUT_UNIFIED && parsed.icons == XD_TASKBAR_ICONS_SMALL);
+    xd_strbuf_free(&text);
+    xd_settings_parse(XD_STR("[Taskbar]\nLayout=tasks\nIcons=large\n"), &layout);
+    CHECK(!xd_settings_taskbar_unified(&layout, XD_STYLE_AERO));
+    CHECK(xd_settings_taskbar_large_icons(&layout, XD_STYLE_AERO));
+
     /* Recent files: the program's own, still there, the latest first. */
     char *dir = g_dir_make_tmp("xd-jump-XXXXXX", nullptr);
     CHECK(dir != nullptr);

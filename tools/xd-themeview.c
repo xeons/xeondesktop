@@ -252,7 +252,7 @@ static void draw_controls(const xd_theme *theme, cairo_t *cairo, xd_rect window_
 }
 
 static void draw_taskbar(const xd_theme *theme, cairo_t *cairo, int width, int height) {
-    int th = xd_theme_taskbar_height(theme);
+    int th = xd_theme_taskbar_height(theme, theme->style == XD_STYLE_AERO);
     xd_rect bar = {0, height - th, width, th};
     xd_theme_draw_taskbar(theme, cairo, bar, XD_EDGE_BOTTOM);
 
@@ -295,7 +295,8 @@ static cairo_surface_t *draw_element(const xd_theme *theme, const char *name, ui
         return surface;
     }
     if (strcmp(name, "taskbar") == 0) {
-        int width = xd_tpx(theme, 1920), height = xd_theme_taskbar_height(theme);
+        int width = xd_tpx(theme, 1920),
+            height = xd_theme_taskbar_height(theme, theme->style == XD_STYLE_AERO);
         cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
         cairo_t *cairo = cairo_create(surface);
         xd_theme_draw_taskbar(theme, cairo, (xd_rect){0, 0, width, height}, XD_EDGE_BOTTOM);

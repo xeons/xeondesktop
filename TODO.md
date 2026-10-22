@@ -225,13 +225,21 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       snapped windows stay so there, and restore there); Win+Shift+Up makes
       it as tall as the work area, Win+Down puts it back. Tested headless
       with two outputs.
-- [~] Windows 7's taskbar (Aero): pinned and running programs share a row
+- [~] Windows 7's taskbar, the unified one (Aero's by default; any
+      style's with Taskbar Properties' "Use the unified taskbar", [Taskbar]
+      Layout): pinned and running programs share a row
       of icon buttons (taskbar-pinned; the browser, Files and a media
       player by default), running ones framed with stacked edges for more
       windows; click activates or cycles, middle-click starts another,
       dragging reorders pins. Jump lists: Recent (recently-used.xbel, per
       program), Tasks (desktop actions), pin/unpin, close. Taskbar
-      Properties' "Taskbar buttons" choice. Live thumbnails with Aero Peek
+      Properties' "Taskbar buttons" choice (icon buttons, or labelled
+      ones as XP's) and "Use small icons" ([Taskbar] Icons: 32px icons on
+      a 40px taskbar, or 16px ones on XP's 30px; XP's task list takes
+      24px icons when large). In Classic, Luna and Watercolor the buttons
+      are the style's own task buttons, a pinned program's a flat toolbar
+      button as Quick Launch's; their thumbnails and jump lists are still
+      Windows 7's look. Tested headless in all four styles. Live thumbnails with Aero Peek
       (ext-image-copy-capture, only for our shell), Windows 7's jump list
       look with pinned items, pins by dropping files or launchers,
       combining as needed (least recently used first). Tested headless.

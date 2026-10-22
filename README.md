@@ -177,7 +177,9 @@ Start > Settings > Taskbar & Start Menu picks the layout:
 
 ### Windows 7 taskbar
 
-In the Aero style the taskbar is Windows 7's: pinned and running programs
+In the Aero style the taskbar is Windows 7's, and in any other style it can
+be, with Taskbar Properties' "Use the unified taskbar" (drawn with that
+style's own task buttons): pinned and running programs
 share one row of icon buttons (`~/.config/xeondesktop/taskbar-pinned`, one
 desktop file id per line). A running program's button is framed, with
 stacked edges for more windows; click to start it, switch to it or cycle its
@@ -189,6 +191,10 @@ combine", with labels. Hovering a running program's button shows live
 thumbnails of its windows; hovering a thumbnail peeks at that window. Jump
 lists keep pinned files above Recent; drop a file on a program's button to
 pin it there, or a launcher on the bar to pin the program.
+
+"Use small icons", in every style and with either taskbar, chooses between
+Windows 7's large icons on a 40px taskbar and small ones on XP's 30px; it
+follows the taskbar until it's chosen (large on the unified one).
 
 ### Taskbar menus
 

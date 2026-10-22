@@ -329,16 +329,18 @@ static void classic_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_r
     else if (active && !theme->scheme.high_contrast)
         fill_dither(theme, cairo, inner);
     int off = active ? xd_tpx(theme, 1) : 0;
-    int icon = xd_tpx(theme, 16);
-    xd_style_task_icon(theme, cairo, icon_surface, inner.x + xd_tpx(theme, 3) + off,
-                       inner.y + (inner.h - icon) / 2 + off);
+    int icon = xd_style_task_icon_size(theme, icon_surface);
+    int ix = label != nullptr ? inner.x + xd_tpx(theme, 3) : inner.x + (inner.w - icon) / 2;
+    xd_style_task_icon(theme, cairo, icon_surface, ix + off, inner.y + (inner.h - icon) / 2 + off);
+    if (label == nullptr)
+        return;
     xd_font_spec font = theme->scheme.fonts[XD_FONT_MENU];
     font.bold = active;
     xd_text_style st = xd_text(theme, XD_FONT_MENU,
                                xd_sys(theme, flash ? XD_COLOR_HILIGHT_TEXT : XD_COLOR_BUTTON_TEXT),
                                XD_ALIGN_START);
     st.font = &font;
-    int tx = inner.x + xd_tpx(theme, 3 + 16 + 4) + off;
+    int tx = ix + icon + xd_tpx(theme, 4) + off;
     xd_draw_text(cairo,
                  (xd_rect){tx, inner.y + off, inner.x + inner.w - tx - xd_tpx(theme, 2), inner.h},
                  label, &st);

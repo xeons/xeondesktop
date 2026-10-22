@@ -33,13 +33,34 @@ typedef enum xd_start_style : uint8_t {
     XD_START_STYLE_COUNT,
 } xd_start_style;
 
-/* Windows 7's "Taskbar buttons" (Aero; the other styles group as XP did). */
+/* Windows 7's "Taskbar buttons", for the unified taskbar (XP's task list
+ * groups as XP did). */
 typedef enum xd_taskbar_buttons : uint8_t {
     XD_BUTTONS_ALWAYS_COMBINE, /* "Always combine, hide labels": one icon per program */
     XD_BUTTONS_WHEN_FULL,      /* "Combine when taskbar is full" */
     XD_BUTTONS_NEVER_COMBINE,  /* "Never combine" */
     XD_BUTTONS_COUNT,
 } xd_taskbar_buttons;
+
+/* The taskbar's buttons ([Taskbar] Layout): Windows 7's unified row, the
+ * pinned and running programs together, or XP's, a button for each window
+ * with Quick Launch for programs. Automatic: Aero's is unified. */
+typedef enum xd_taskbar_layout : uint8_t {
+    XD_TASKBAR_LAYOUT_AUTO,
+    XD_TASKBAR_LAYOUT_UNIFIED,
+    XD_TASKBAR_LAYOUT_TASKS,
+    XD_TASKBAR_LAYOUT_COUNT,
+} xd_taskbar_layout;
+
+/* Windows 7's "Use small icons" ([Taskbar] Icons): large icons make the
+ * taskbar 40px tall, as 7's; small ones keep the style's own (XP's 30px).
+ * Automatic: large on a unified taskbar, small on XP's. */
+typedef enum xd_taskbar_icons : uint8_t {
+    XD_TASKBAR_ICONS_AUTO,
+    XD_TASKBAR_ICONS_LARGE,
+    XD_TASKBAR_ICONS_SMALL,
+    XD_TASKBAR_ICONS_COUNT,
+} xd_taskbar_icons;
 
 /* [Notifications]: one notification area icon's behavior, by its id. */
 typedef enum xd_tray_rule : uint8_t {
@@ -427,7 +448,9 @@ typedef struct xd_settings {
     bool auto_hide;
     bool on_top;       /* Keep the taskbar on top of other windows */
     bool group;        /* Group similar taskbar buttons (when crowded) */
-    xd_taskbar_buttons buttons; /* Aero: icons only, or labels */
+    xd_taskbar_buttons buttons; /* unified: icons only, or labels */
+    xd_taskbar_layout layout;
+    xd_taskbar_icons icons;
     bool show_clock;
     bool hide_inactive; /* fold tray icons that have been quiet behind a chevron */
     bool all_displays; /* a taskbar on every monitor, not just the first */
@@ -538,6 +561,10 @@ const char *xd_settings_gtk_theme(const xd_settings *settings);
 /* The Qt widget style for `style` when QtStyle is automatic: Qt's own
  * Windows (2000's bevels) for Classic, Fusion for the others. */
 const char *xd_qt_style_auto(xd_visual_style style);
+/* Whether the taskbar is unified, and has large icons, in `style`, the
+ * automatic choices resolved. */
+bool xd_settings_taskbar_unified(const xd_settings *settings, xd_visual_style style);
+bool xd_settings_taskbar_large_icons(const xd_settings *settings, xd_visual_style style);
 /* The Qt widget style programs get (QT_STYLE_OVERRIDE): QtStyle if set,
  * else xd_qt_style_auto's. */
 const char *xd_settings_qt_style(const xd_settings *settings);

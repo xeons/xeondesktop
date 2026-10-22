@@ -1136,9 +1136,11 @@ bool xd_pkgstyle_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect
     bool flash = (state & XD_STATE_FLASH) && !(state & XD_STATE_CHECKED);
     if (!flash || !xd_pkg_draw(theme, cairo, "TaskBand", "FlashButton", "1", rect))
         (void)xd_pkg_draw(theme, cairo, cls, "Button", st, rect);
-    int isz = xd_tpx(theme, 16);
-    int ix = rect.x + xd_tpx(theme, 10);
+    int isz = xd_style_task_icon_size(theme, icon);
+    int ix = label != nullptr ? rect.x + xd_tpx(theme, 10) : rect.x + (rect.w - isz) / 2;
     xd_style_task_icon(theme, cairo, icon, ix, rect.y + (rect.h - isz) / 2);
+    if (label == nullptr)
+        return true;
     xd_font_spec font = theme->scheme.fonts[XD_FONT_MENU];
     (void)xd_pkg_font(theme->pkg, cls, "Button", st, "Font", &font, nullptr);
     xd_text_style ts =

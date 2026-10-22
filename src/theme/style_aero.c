@@ -760,9 +760,11 @@ static void aero_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect
                     rad - 1, rad - 1, rad - 1);
     cairo_set_source_rgba(cairo, 1, 1, 1, active ? 0.55 : 0.30);
     cairo_stroke(cairo);
-    int isz = xd_tpx(theme, 16);
-    int ix = button.x + xd_tpx(theme, 8);
+    int isz = xd_style_task_icon_size(theme, icon);
+    int ix = label != nullptr ? button.x + xd_tpx(theme, 8) : button.x + (button.w - isz) / 2;
     xd_style_task_icon(theme, cairo, icon, ix, button.y + (button.h - isz) / 2);
+    if (label == nullptr)
+        return;
     xd_text_style st = xd_text(theme, XD_FONT_MENU, xd_rgba_hex(0xFFFFFF), XD_ALIGN_START);
     st.shadow = true;
     st.shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.8);

@@ -31,6 +31,8 @@ static const char *const hinting_names[] = {"slight", "none", "medium", "full"};
 static const char *const transition_names[] = {"fade", "scroll"};
 static const char *const edge_names[] = {"bottom", "top", "left", "right"};
 static const char *const buttons_names[] = {"always", "whenfull", "never"};
+static const char *const layout_names[] = {"auto", "unified", "tasks"};
+static const char *const taskbar_icons_names[] = {"auto", "large", "small"};
 static const char *const tray_rule_names[] = {"auto", "hide", "show"};
 static const char *const power_scheme_names[XD_POWER_SCHEME_COUNT] = {
     [XD_POWER_HOME] = "home",
@@ -225,6 +227,32 @@ const char *xd_qt_style_auto(xd_visual_style style) {
      * rounded and lightly shaded controls are the closest Qt has to XP's
      * and 7's. */
     return style == XD_STYLE_CLASSIC ? "Windows" : "Fusion";
+}
+
+bool xd_settings_taskbar_unified(const xd_settings *settings, xd_visual_style style) {
+    switch (settings->layout) {
+    case XD_TASKBAR_LAYOUT_UNIFIED:
+        return true;
+    case XD_TASKBAR_LAYOUT_TASKS:
+        return false;
+    case XD_TASKBAR_LAYOUT_AUTO:
+    case XD_TASKBAR_LAYOUT_COUNT:
+        break;
+    }
+    return style == XD_STYLE_AERO;
+}
+
+bool xd_settings_taskbar_large_icons(const xd_settings *settings, xd_visual_style style) {
+    switch (settings->icons) {
+    case XD_TASKBAR_ICONS_LARGE:
+        return true;
+    case XD_TASKBAR_ICONS_SMALL:
+        return false;
+    case XD_TASKBAR_ICONS_AUTO:
+    case XD_TASKBAR_ICONS_COUNT:
+        break;
+    }
+    return xd_settings_taskbar_unified(settings, style);
 }
 
 const char *xd_settings_qt_style(const xd_settings *settings) {
@@ -1077,8 +1105,15 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
             int i = index_of(buttons_names, XD_ARRAY_LEN(buttons_names), value);
             if (i >= 0)
                 settings->buttons = (xd_taskbar_buttons)i;
-        }
-        else if (KEY("ShowClock"))
+        } else if (KEY("Layout")) {
+            int i = index_of(layout_names, XD_ARRAY_LEN(layout_names), value);
+            if (i >= 0)
+                settings->layout = (xd_taskbar_layout)i;
+        } else if (KEY("Icons")) {
+            int i = index_of(taskbar_icons_names, XD_ARRAY_LEN(taskbar_icons_names), value);
+            if (i >= 0)
+                settings->icons = (xd_taskbar_icons)i;
+        } else if (KEY("ShowClock"))
             parse_bool(value, &settings->show_clock);
         else if (KEY("HideInactiveIcons"))
             parse_bool(value, &settings->hide_inactive);
@@ -1374,6 +1409,8 @@ static GKeyFile *to_keyfile(const xd_settings *settings) {
     g_key_file_set_boolean(kf, "Taskbar", "OnTop", settings->on_top);
     g_key_file_set_boolean(kf, "Taskbar", "GroupButtons", settings->group);
     g_key_file_set_string(kf, "Taskbar", "Buttons", buttons_names[settings->buttons]);
+    g_key_file_set_string(kf, "Taskbar", "Layout", layout_names[settings->layout]);
+    g_key_file_set_string(kf, "Taskbar", "Icons", taskbar_icons_names[settings->icons]);
     g_key_file_set_boolean(kf, "Taskbar", "ShowClock", settings->show_clock);
     g_key_file_set_boolean(kf, "Taskbar", "HideInactiveIcons", settings->hide_inactive);
     g_key_file_set_boolean(kf, "Taskbar", "AllDisplays", settings->all_displays);

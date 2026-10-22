@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Windows 7's taskbar (Aero): one row of buttons for programs, pinned
+ * Windows 7's taskbar, the unified one (Aero's, and any style's when
+ * chosen): one row of buttons for programs, pinned
  * ones staying when they close, running ones framed in glass with their
  * windows stacked behind. "Always combine, hide labels" gives each program
  * one icon; "Combine when taskbar is full" and "Never combine" give each
@@ -41,11 +42,14 @@
 #include "shell.h"
 
 /* Logical px. Windows 7's large-icon buttons: a 32px icon on a button
- * about 60px wide; labelled ones as wide as XP's. */
+ * about 60px wide, a labelled one's 24px; with small icons, 16px ones on
+ * buttons about 40px wide. Labelled ones are as wide as XP's. */
 enum {
     APP_W = 58,
     APP_ICON = 32,
     LABEL_ICON = 24,
+    SMALL_APP_W = 40,
+    SMALL_ICON = 16,
     LABEL_MAX_W = 160,
     LABEL_MIN_W = 64,
     LABEL_COMBINE_W = 100, /* "when full": combine below this */
@@ -491,9 +495,9 @@ static size_t make_items(const programs *ps, item *items, xd_taskbar_buttons mod
  * rows, between their minimum and maximum. Returns the shared width
  * before clamping to the minimum (to tell when to combine). */
 static int size_items(item *items, size_t count, const xd_theme *theme, int avail, int rows,
-                      bool side) {
+                      bool side, bool large) {
     int gap = xd_tpx(theme, GAP);
-    int icon_w = xd_tpx(theme, APP_W);
+    int icon_w = xd_tpx(theme, large ? APP_W : SMALL_APP_W);
     if (side) {
         for (size_t i = 0; i < count; i++)
             items[i].w = avail;
@@ -672,8 +676,10 @@ static void draw_item(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, co
     const char *window_icon = first != nullptr ? first->icon : nullptr;
     const char *names[] = {window_icon != nullptr ? window_icon : taskbar_program->icon,
                            first != nullptr ? first->app_id : nullptr, "application-x-executable"};
-    cairo_surface_t *icon = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names),
-                                             xd_tpx(theme, it->labelled ? LABEL_ICON : APP_ICON));
+    bool large = xd_settings_taskbar_large_icons(&shell->settings, shell->style);
+    int size = !large ? SMALL_ICON : it->labelled ? LABEL_ICON : APP_ICON;
+    cairo_surface_t *icon =
+        xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), xd_tpx(theme, size));
     const xd_launcher_state *ls =
         xd_launcher_lookup(shell->superbar->launcher, taskbar_program->key);
     cairo_surface_t *badged = icon != nullptr && ls != nullptr && ls->count_visible && ls->count > 0
@@ -715,13 +721,14 @@ void xd_superbar_layout(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, 
 
     bool side = shell->settings.edge == XD_EDGE_LEFT || shell->settings.edge == XD_EDGE_RIGHT;
     xd_taskbar_buttons mode = shell->settings.buttons;
+    bool large = xd_settings_taskbar_large_icons(&shell->settings, shell->style);
     int gap = xd_tpx(theme, GAP);
     int arrows_w = xd_theme_dropdown_button_width(theme);
     int th = row_h - 2 * xd_tpx(theme, 1);
     size_t fits = (size_t)XD_MAX(1, (band.h + gap) / (th + gap));
 
     size_t count = make_items(&ps, items, mode);
-    int shared = size_items(items, count, theme, band.w, rows, side);
+    int shared = size_items(items, count, theme, band.w, rows, side, large);
     size_t pages = flow(items, count, theme, band, band.w, rows, row_h, side, fits);
     /* "Combine when taskbar is full": programs are combined one at a time,
      * the least recently used first, until the buttons fit. */
@@ -743,7 +750,7 @@ void xd_superbar_layout(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, 
                 break;
             done[next] = ps.items[next].combined = true;
             count = make_items(&ps, items, mode);
-            shared = size_items(items, count, theme, band.w, rows, side);
+            shared = size_items(items, count, theme, band.w, rows, side, large);
             pages = flow(items, count, theme, band, band.w, rows, row_h, side, fits);
         }
         xd_free(wins);
@@ -761,7 +768,7 @@ void xd_superbar_layout(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, 
             bar->page_down_rect = (xd_rect){band.x + band.w / 2, ay, band.w - band.w / 2, th};
         } else {
             avail = band.w - arrows_w - gap;
-            size_items(items, count, theme, avail, rows, side);
+            size_items(items, count, theme, avail, rows, side, large);
             pages = flow(items, count, theme, band, avail, rows, row_h, side, fits);
             int ax = band.x + band.w - arrows_w;
             int ah = rows * row_h - 2 * xd_tpx(theme, 3);

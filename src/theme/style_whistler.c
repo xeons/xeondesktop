@@ -323,10 +323,12 @@ static void whistler_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_
     xd_fill_rect(cairo, (xd_rect){rect.x + rect.w - px, rect.y + 2 * px, px, rect.h - 4 * px},
                  hex(BAR_TOP));
 
-    int icon = xd_tpx(theme, 16);
-    int ix = rect.x + xd_tpx(theme, 6);
+    int icon = xd_style_task_icon_size(theme, window_icon);
+    int ix = label != nullptr ? rect.x + xd_tpx(theme, 6) : rect.x + (rect.w - 2 * px - icon) / 2;
     int iy = rect.y + (rect.h - icon) / 2;
     xd_style_task_icon(theme, cairo, window_icon, ix, iy);
+    if (label == nullptr)
+        return;
     xd_text_style st = xd_text(theme, XD_FONT_MENU, hex(0xFFFFFF), XD_ALIGN_START);
     int tx = ix + icon + xd_tpx(theme, 5);
     xd_draw_text(cairo, (xd_rect){tx, rect.y, rect.x + rect.w - tx - xd_tpx(theme, 6), rect.h},

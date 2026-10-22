@@ -153,7 +153,9 @@ void xd_theme_draw_radio(const xd_theme *theme, cairo_t *cairo, xd_rect rect, ui
 typedef enum xd_edge : uint8_t { XD_EDGE_BOTTOM, XD_EDGE_TOP, XD_EDGE_LEFT, XD_EDGE_RIGHT } xd_edge;
 
 /* One row's height (also a side taskbar's start button height). */
-int xd_theme_taskbar_height(const xd_theme *theme);
+/* The taskbar's height (one row): with large icons at least Windows 7's
+ * 40 logical px; with small ones the style's own, XP's 30 for Aero. */
+int xd_theme_taskbar_height(const xd_theme *theme, bool large_icons);
 /* Whether task buttons fill the taskbar's row: a theme package's do (their
  * images carry their own margins, transparent in Luna's), the built-in
  * styles draw theirs inset. */
@@ -163,11 +165,14 @@ bool xd_theme_task_buttons_fill_row(const xd_theme *theme);
 void xd_theme_draw_taskbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_edge edge);
 int xd_theme_start_button_width(const xd_theme *theme, cairo_t *cairo);
 void xd_theme_draw_start_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state);
-/* icon: the window's 16px (logical) icon, or nullptr for a generic one. */
+/* icon: the window's icon at the size to show it (16 logical px, 24 with
+ * the taskbar's large icons), or nullptr for a generic one. label:
+ * nullptr shows the icon alone, centred (the unified taskbar's). */
 void xd_theme_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                const char *label, cairo_surface_t *icon);
-/* Windows 7's taskbar button for a program (Aero), pinned or running.
- * Other styles draw an ordinary task button. */
+/* Windows 7's taskbar button for a program (the unified taskbar's),
+ * pinned or running. Other styles draw it from their task and toolbar
+ * buttons. */
 typedef struct xd_app_button {
     cairo_surface_t *icon; /* at the size to show it; nullptr: none */
     const char *label;     /* nullptr: the icon alone, centred */

@@ -173,9 +173,15 @@ void xd_theme_draw_checkbox(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
         return;
     ops(theme)->draw_checkbox(theme, cairo, rect, state, label);
 }
-int xd_theme_taskbar_height(const xd_theme *theme) {
+int xd_theme_taskbar_height(const xd_theme *theme, bool large_icons) {
+    /* Aero's own is Windows 7's with large icons; small ones are XP's
+     * height, as 7's "Use small icons" makes it. */
+    if (!large_icons && theme->style == XD_STYLE_AERO)
+        return xd_tpx(theme, 30);
     int height = xd_pkgstyle_taskbar_height(theme);
-    return height > 0 ? height : ops(theme)->taskbar_height(theme);
+    if (height <= 0)
+        height = ops(theme)->taskbar_height(theme);
+    return large_icons ? XD_MAX(height, xd_tpx(theme, 40)) : height;
 }
 bool xd_theme_task_buttons_fill_row(const xd_theme *theme) {
     return xd_pkgstyle_taskbar_height(theme) > 0;
@@ -216,6 +222,55 @@ void xd_theme_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect re
     ops(theme)->draw_task_button(theme, cairo, rect, state, label, icon);
 }
 
+/* The unified taskbar in the styles without 7's buttons, from their own:
+ * a pinned program that isn't running is a flat toolbar button, as Quick
+ * Launch's; a running one is a task button, with its other windows'
+ * buttons' edges stacked behind it, or XP's "3 Firefox" when labelled;
+ * progress is a strip along its foot. */
+static void draw_app_button_tasks(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                  uint8_t state, const xd_app_button *app_button) {
+    if (app_button->windows == 0) {
+        xd_theme_draw_toolbar_button(theme, cairo, rect, state & (XD_STATE_HOT | XD_STATE_PRESSED));
+        if (app_button->icon != nullptr) {
+            int size = xd_style_task_icon_size(theme, app_button->icon);
+            int offset = (state & XD_STATE_PRESSED) ? xd_tpx(theme, 1) : 0;
+            xd_style_task_icon(theme, cairo, app_button->icon,
+                               rect.x + (rect.w - size) / 2 + offset,
+                               rect.y + (rect.h - size) / 2 + offset);
+        }
+        return;
+    }
+    xd_rect front = rect;
+    if (app_button->label != nullptr && app_button->windows > 1) {
+        xd_theme_draw_task_group(theme, cairo, front, state, app_button->windows, app_button->label,
+                                 app_button->icon);
+    } else {
+        int stack = XD_CLAMP(app_button->windows - 1, 0, 2);
+        int step = xd_tpx(theme, 3);
+        front.w -= stack * step;
+        /* The farthest first, each showing only past the one in front. */
+        for (int k = stack; k >= 1; k--) {
+            xd_rect behind = {front.x + k * step, front.y, front.w, front.h};
+            int from = front.x + front.w + (k - 1) * step;
+            cairo_save(cairo);
+            cairo_rectangle(cairo, from, behind.y, behind.x + behind.w - from, behind.h);
+            cairo_clip(cairo);
+            xd_theme_draw_task_button(theme, cairo, behind,
+                                      (uint8_t)(state & ~(XD_STATE_HOT | XD_STATE_PRESSED)),
+                                      nullptr, nullptr);
+            cairo_restore(cairo);
+        }
+        xd_theme_draw_task_button(theme, cairo, front, state, app_button->label, app_button->icon);
+    }
+    if (app_button->progress != XD_PROGRESS_NONE) {
+        int inset = xd_tpx(theme, 4), strip = xd_tpx(theme, 3);
+        xd_theme_draw_taskbar_progress(theme, cairo,
+                                       (xd_rect){front.x + inset, front.y + front.h - inset - strip,
+                                                 front.w - 2 * inset, strip},
+                                       app_button->progress, app_button->fraction);
+    }
+}
+
 void xd_theme_draw_app_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                               const xd_app_button *app_button) {
     if (xd_pkgstyle_draw_app_button(theme, cairo, rect, state, app_button))
@@ -223,14 +278,20 @@ void xd_theme_draw_app_button(const xd_theme *theme, cairo_t *cairo, xd_rect rec
     if (ops(theme)->draw_app_button != nullptr)
         ops(theme)->draw_app_button(theme, cairo, rect, state, app_button);
     else
-        ops(theme)->draw_task_button(theme, cairo, rect, state,
-                                     app_button->label != nullptr ? app_button->label : "",
-                                     app_button->icon);
+        draw_app_button_tasks(theme, cairo, rect, state, app_button);
+}
+
+int xd_style_task_icon_size(const xd_theme *theme, cairo_surface_t *icon) {
+    if (icon == nullptr || cairo_surface_get_type(icon) != CAIRO_SURFACE_TYPE_IMAGE)
+        return xd_tpx(theme, 16);
+    double sx = 1, sy = 1;
+    cairo_surface_get_device_scale(icon, &sx, &sy);
+    return (int)(cairo_image_surface_get_height(icon) / sy);
 }
 
 void xd_style_task_icon(const xd_theme *theme, cairo_t *cairo, cairo_surface_t *icon, int x,
                         int y) {
-    int size = xd_tpx(theme, 16);
+    int size = xd_style_task_icon_size(theme, icon);
     if (icon != nullptr) {
         cairo_save(cairo);
         cairo_rectangle(cairo, x, y, size, size);

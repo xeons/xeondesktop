@@ -27,10 +27,14 @@ static void bar_theme(const xd_taskbar *bar, xd_theme *out) {
     xd_theme_init(out, bar->shell->style, &bar->shell->scheme, bar->scale);
 }
 
+static bool large_icons(const xd_shell *shell) {
+    return xd_settings_taskbar_large_icons(&shell->settings, shell->style);
+}
+
 static int logical_height(const xd_shell *shell) {
     xd_theme theme;
     xd_theme_init(&theme, shell->style, &shell->scheme, 1.0);
-    return xd_theme_taskbar_height(&theme);
+    return xd_theme_taskbar_height(&theme, large_icons(shell));
 }
 
 void xd_taskbars_mark_dirty(xd_shell *shell) {
@@ -556,10 +560,11 @@ static void draw_task(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, si
         state |= XD_STATE_FLASH;
     }
     /* As the title bar: its application's icon, else one named after the
-     * app id (as many programs name theirs), else the generic program. */
+     * app id (as many programs name theirs), else the generic program;
+     * 24px with large icons, as 7's labelled buttons have. */
     const char *names[] = {tl->icon, tl->app_id, "application-x-executable"};
-    cairo_surface_t *icon =
-        xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names), xd_tpx(theme, 16));
+    cairo_surface_t *icon = xd_icons_get_any(shell->icons, names, XD_ARRAY_LEN(names),
+                                             xd_tpx(theme, large_icons(shell) ? 24 : 16));
     if (count > 1) {
         xd_theme_draw_task_group(theme, cairo, rect, state, (int)count, label, icon);
         draw_group_arrow(theme, cairo, rect, state);
@@ -615,9 +620,9 @@ void xd_taskbar_draw_page_arrows(xd_taskbar *bar, const xd_theme *theme, cairo_t
 static void layout_tasks(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, xd_rect band,
                          int rows, int row_h) {
     xd_shell *shell = bar->shell;
-    /* Aero: Windows 7's program buttons instead. */
+    /* The unified taskbar: Windows 7's program buttons instead. */
     bar->superbar = false;
-    if (theme->style == XD_STYLE_AERO) {
+    if (xd_settings_taskbar_unified(&shell->settings, shell->style)) {
         xd_superbar_layout(bar, theme, cairo, band, rows, row_h);
         return;
     }
@@ -765,7 +770,8 @@ static void layout_and_draw(xd_taskbar *bar, const xd_theme *theme, cairo_t *cai
     /* One row: the XP styles' full 30px, Classic's inside its border. */
     int rows = side ? 1 : XD_MAX(1, shell->settings.rows);
     int row_h =
-        side ? xd_theme_taskbar_height(theme) - (classic ? xd_tpx(theme, 6) : 0) : rect.h / rows;
+        side ? xd_theme_taskbar_height(theme, large_icons(shell)) - (classic ? xd_tpx(theme, 6) : 0)
+             : rect.h / rows;
 
     /* Start button: held down while its menu is open. */
     int sw = XD_MIN(xd_theme_start_button_width(theme, cairo), rect.w);

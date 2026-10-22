@@ -719,6 +719,42 @@ def aero_snap(s):
     s.check("maximized" not in s.window(title="Control Panel")["states"], "snapped, not maximized")
 
 
+def taskbar_top(shot):
+    """The taskbar's top row: the first, going down the middle from above
+    where the tallest one starts, that isn't the desktop's colour."""
+    desktop = shot.pixel(WIDTH // 2, HEIGHT - 60)
+    for y in range(HEIGHT - 60, HEIGHT):
+        if max(abs(p - q) for p, q in zip(shot.pixel(WIDTH // 2, y), desktop)) > 8:
+            return y
+    return HEIGHT
+
+
+@scenario(LUNA_INI + "\n[Taskbar]\nLayout=unified\nButtons=always\n")
+def unified_taskbar(s):
+    """Luna with the unified taskbar: Windows 7's large icons make it 40px
+    tall; "Always combine, hide labels" gives Files' two windows one icon
+    button, as wide as 7's; "Use small icons" makes it XP's 30px again."""
+    empty = s.settle("taskbar")
+    s.check(taskbar_top(empty) == HEIGHT - 40, f"40px tall ({HEIGHT - taskbar_top(empty)})")
+    for folder in ("Documents", "Pictures"):
+        s.launch("xd-files", os.path.join(s.home, folder))
+        s.wait_window(title=folder, state="activated")
+    s.inject("move", WIDTH // 2, HEIGHT // 2)
+    after = s.settle("two-windows")
+    # Left of the clock, which may turn over meanwhile.
+    button = after.changed_box(empty, (0, HEIGHT - 40, WIDTH - 160, 40))
+    s.check(button is not None and 40 <= button[2] <= 64,
+            f"one icon button for both windows ({button})")  # fmt: skip
+    path = os.path.join(s.config, "desktop.ini")
+    with open(path) as f:
+        text = f.read()
+    with open(path + ".new", "w") as f:
+        f.write(text.replace("[Taskbar]\n", "[Taskbar]\nIcons=small\n", 1))
+    os.replace(path + ".new", path)
+    s.wait(lambda: taskbar_top(s.shot("small")) == HEIGHT - 30, "the taskbar to be 30px tall")
+    s.log("ok: small icons, 30px")
+
+
 @scenario(AERO_INI)
 def superbar_thumbnails(s):
     """Aero: hovering a running program's button shows its windows'

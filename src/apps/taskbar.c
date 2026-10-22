@@ -31,8 +31,12 @@ typedef struct start_custom {
 typedef struct props {
     xd_ui *ui;
     xd_window *win;
+    xd_visual_style style;
     xd_settings saved, pending;
     xd_widget *apply;
+    /* The unified taskbar has 7's "Taskbar buttons" where XP's grouping
+     * box is; "Use small icons" follows it while left automatic. */
+    xd_widget *group, *buttons_label, *buttons, *small_icons;
     xd_widget *description;
     xd_widget *start_customize;
     customize *cust;
@@ -79,6 +83,27 @@ static void on_top(xd_widget *widget, void *user) {
 static void on_group(xd_widget *widget, void *user) {
     props *properties = user;
     properties->pending.group = xd_checkbox_checked(widget);
+    changed(properties);
+}
+static void show_buttons_choice(props *properties) {
+    bool unified = xd_settings_taskbar_unified(&properties->pending, properties->style);
+    xd_widget_set_visible(properties->group, !unified);
+    xd_widget_set_visible(properties->buttons_label, unified);
+    xd_widget_set_visible(properties->buttons, unified);
+}
+static void on_unified(xd_widget *widget, void *user) {
+    props *properties = user;
+    properties->pending.layout =
+        xd_checkbox_checked(widget) ? XD_TASKBAR_LAYOUT_UNIFIED : XD_TASKBAR_LAYOUT_TASKS;
+    show_buttons_choice(properties);
+    xd_checkbox_set(properties->small_icons,
+                    !xd_settings_taskbar_large_icons(&properties->pending, properties->style));
+    changed(properties);
+}
+static void on_small_icons(xd_widget *widget, void *user) {
+    props *properties = user;
+    properties->pending.icons =
+        xd_checkbox_checked(widget) ? XD_TASKBAR_ICONS_SMALL : XD_TASKBAR_ICONS_LARGE;
     changed(properties);
 }
 static void on_buttons(xd_widget *widget, void *user) {
@@ -406,16 +431,18 @@ int main(int argc, char **argv) {
             page = 1;
     }
 
+    properties.style = xd_ui_style(properties.ui);
     properties.win = xd_window_create(properties.ui, "Taskbar and Start Menu Properties",
-                                      "xd-taskbar", 380, 340);
+                                      "xd-taskbar", 380, 388);
     static const char *const tabs[] = {"Taskbar", "Start Menu"};
     xd_widget *tab =
-        xd_tabs(properties.win, (xd_rect){7, 7, 366, 294}, tabs, 2, on_page, &properties);
+        xd_tabs(properties.win, (xd_rect){7, 7, 366, 342}, tabs, 2, on_page, &properties);
 
     /* Taskbar */
-    /* XP's Taskbar tab, plus Windows 7's "all displays". */
+    /* XP's Taskbar tab, with Windows 7's unified taskbar, its "Taskbar
+     * buttons" and "Use small icons", and "all displays". */
     xd_widget_set_page(
-        xd_groupbox(properties.win, (xd_rect){20, 40, 340, 172}, "Taskbar appearance"), 0);
+        xd_groupbox(properties.win, (xd_rect){20, 40, 340, 220}, "Taskbar appearance"), 0);
     static const struct {
         const char *label;
         size_t offset;
@@ -424,42 +451,52 @@ int main(int argc, char **argv) {
         {"Lock the taskbar", offsetof(xd_settings, locked), on_lock},
         {"Auto-hide the taskbar", offsetof(xd_settings, auto_hide), on_auto_hide},
         {"Keep the taskbar on top of other windows", offsetof(xd_settings, on_top), on_top},
+        {"Use the unified taskbar", 0, on_unified},
         {"Group similar taskbar buttons", offsetof(xd_settings, group), on_group},
+        {"Use small icons", 0, on_small_icons},
         {"Show Quick Launch", offsetof(xd_settings, quick_launch), on_quick_launch},
-        {"Show the taskbar on all displays", offsetof(xd_settings, all_displays),
-         on_all_displays},
+        {"Show the taskbar on all displays", offsetof(xd_settings, all_displays), on_all_displays},
     };
-    /* Aero: Windows 7's "Taskbar buttons" choice where XP's grouping box was. */
-    bool aero = xd_ui_style(properties.ui) == XD_STYLE_AERO;
     for (size_t i = 0; i < XD_ARRAY_LEN(boxes); i++) {
         int y = 60 + 24 * (int)i;
-        if (aero && boxes[i].cb == on_group) {
-            xd_widget_set_page(
-                xd_label(properties.win, (xd_rect){32, y + 2, 90, 16}, "Taskbar buttons:", 0), 0);
-            xd_widget *combo = xd_combo(properties.win, (xd_rect){124, y - 1, 228, 21}, false,
-                                        on_buttons, &properties);
-            xd_widget_set_page(combo, 0);
-            xd_widget_add_item(combo, "Always combine, hide labels");
-            xd_widget_add_item(combo, "Combine when taskbar is full");
-            xd_widget_add_item(combo, "Never combine");
-            xd_widget_select(combo, (int)properties.pending.buttons);
-            continue;
-        }
-        const bool *value = (const bool *)((const char *)&properties.pending + boxes[i].offset);
+        bool checked;
+        if (boxes[i].cb == on_unified)
+            checked = xd_settings_taskbar_unified(&properties.pending, properties.style);
+        else if (boxes[i].cb == on_small_icons)
+            checked = !xd_settings_taskbar_large_icons(&properties.pending, properties.style);
+        else
+            checked = *(const bool *)((const char *)&properties.pending + boxes[i].offset);
         xd_widget *box = xd_checkbox(properties.win, (xd_rect){32, y, 320, 20}, boxes[i].label,
-                                     *value, boxes[i].cb, &properties);
+                                     checked, boxes[i].cb, &properties);
         xd_widget_set_page(box, 0);
+        if (boxes[i].cb == on_small_icons)
+            properties.small_icons = box;
+        if (boxes[i].cb != on_group)
+            continue;
+        /* Its place on the unified taskbar: 7's "Taskbar buttons". */
+        properties.group = box;
+        properties.buttons_label =
+            xd_label(properties.win, (xd_rect){32, y + 2, 90, 16}, "Taskbar buttons:", 0);
+        xd_widget_set_page(properties.buttons_label, 0);
+        properties.buttons = xd_combo(properties.win, (xd_rect){124, y - 1, 228, 21}, false,
+                                      on_buttons, &properties);
+        xd_widget_set_page(properties.buttons, 0);
+        xd_widget_add_item(properties.buttons, "Always combine, hide labels");
+        xd_widget_add_item(properties.buttons, "Combine when taskbar is full");
+        xd_widget_add_item(properties.buttons, "Never combine");
+        xd_widget_select(properties.buttons, (int)properties.pending.buttons);
     }
+    show_buttons_choice(&properties);
     xd_widget_set_page(
-        xd_groupbox(properties.win, (xd_rect){20, 218, 340, 70}, "Notification area"), 0);
-    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 238, 300, 20}, "Show the clock",
+        xd_groupbox(properties.win, (xd_rect){20, 266, 340, 70}, "Notification area"), 0);
+    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 286, 300, 20}, "Show the clock",
                                    properties.pending.show_clock, on_clock, &properties),
                        0);
-    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 262, 220, 20},
+    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 310, 220, 20},
                                    "Hide inactive icons", properties.pending.hide_inactive,
                                    on_hide_inactive, &properties),
                        0);
-    xd_widget_set_page(xd_button(properties.win, (xd_rect){268, 260, 84, 23}, "Customize...",
+    xd_widget_set_page(xd_button(properties.win, (xd_rect){268, 308, 84, 23}, "Customize...",
                                  on_customize, &properties),
                        0);
 
@@ -484,11 +521,11 @@ int main(int argc, char **argv) {
     xd_widget_select(tab, page);
 
     xd_widget *ok =
-        xd_button(properties.win, (xd_rect){136, 309, 75, 23}, "OK", on_ok, &properties);
+        xd_button(properties.win, (xd_rect){136, 357, 75, 23}, "OK", on_ok, &properties);
     xd_widget *cancel =
-        xd_button(properties.win, (xd_rect){217, 309, 75, 23}, "Cancel", on_cancel, &properties);
+        xd_button(properties.win, (xd_rect){217, 357, 75, 23}, "Cancel", on_cancel, &properties);
     properties.apply =
-        xd_button(properties.win, (xd_rect){298, 309, 75, 23}, "Apply", on_apply, &properties);
+        xd_button(properties.win, (xd_rect){298, 357, 75, 23}, "Apply", on_apply, &properties);
     xd_window_set_default(properties.win, ok);
     xd_window_set_cancel(properties.win, cancel);
     xd_window_set_focus(properties.win, tab);
