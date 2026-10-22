@@ -90,6 +90,15 @@ gboolean xd_is_archive(GFile *file) {
     return yes;
 }
 
+/* The folder an archive extracts to, by its name less its extension;
+ * never "." or ".." ("...zip" names the folder above). */
+static char *base_or_extracted(const char *file_name, char *base) {
+    if (base[0] != '\0' && strcmp(base, ".") != 0 && strcmp(base, "..") != 0)
+        return base;
+    g_free(base);
+    return g_strconcat(file_name, " (extracted)", nullptr);
+}
+
 char *xd_archive_base_name(const char *file_name) {
     size_t len = strlen(file_name);
     for (size_t i = 0; i < G_N_ELEMENTS(archive_extensions); i++) {
@@ -101,12 +110,26 @@ char *xd_archive_base_name(const char *file_name) {
         const char *tail = file_name + len - count;
         if (strchr(ext, 'Z') != nullptr ? strcmp(tail, ext) == 0
                                         : g_ascii_strcasecmp(tail, ext) == 0)
-            return g_strndup(file_name, len - count);
+            return base_or_extracted(file_name, g_strndup(file_name, len - count));
     }
     const char *dot = strrchr(file_name, '.');
     if (dot != nullptr && dot != file_name && dot[1] != '\0')
-        return g_strndup(file_name, (size_t)(dot - file_name));
+        return base_or_extracted(file_name, g_strndup(file_name, (size_t)(dot - file_name)));
     return g_strconcat(file_name, " (extracted)", nullptr);
+}
+
+/* The process's umask, without changing it (umask() would, for every
+ * thread, while it read it). */
+static mode_t current_umask(void) {
+    char *status = nullptr;
+    mode_t mask = 022;
+    if (g_file_get_contents("/proc/self/status", &status, nullptr, nullptr)) {
+        const char *line = strstr(status, "\nUmask:");
+        if (line != nullptr)
+            mask = (mode_t)(g_ascii_strtoull(line + 7, nullptr, 8) & 0777);
+    }
+    g_free(status);
+    return mask;
 }
 
 char *xd_archive_safe_path(const char *path) {
@@ -185,6 +208,7 @@ gboolean xd_extract_archive(const char *archive, const char *into, const char *r
     /* No owners (they're ours), and nothing written through a link the
      * archive itself made. Paths are checked here (place()), since the
      * ones handed over are absolute. */
+    mode_t umask_now = current_umask();
     archive_write_disk_set_options(out, ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM |
                                             ARCHIVE_EXTRACT_SECURE_SYMLINKS |
                                             ARCHIVE_EXTRACT_SECURE_NODOTDOT);
@@ -227,7 +251,9 @@ gboolean xd_extract_archive(const char *archive, const char *into, const char *r
         archive_entry_copy_pathname(entry, path);
         if (link_path != nullptr)
             archive_entry_copy_hardlink(entry, link_path);
-        archive_entry_set_perm(entry, archive_entry_perm(entry) & 01777);
+        /* The archive's permissions within the user's umask, as any file
+         * they make; no setuid, setgid or sticky bits. */
+        archive_entry_set_perm(entry, archive_entry_perm(entry) & 0777 & ~umask_now);
         g_free(path);
         g_free(link_path);
         if (archive_write_header(out, entry) < ARCHIVE_WARN) {

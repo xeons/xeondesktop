@@ -546,10 +546,14 @@ static bool transfer(job *operation, GFile *src, GFile *dst, bool undo) {
          * that was there, what came in, one by one. */
         if (!transfer_children(operation, src, dst, undo && merge))
             return false;
-        /* Times and permissions once the contents are in. */
-        g_file_copy_attributes(
-            src, dst, (GFileCopyFlags)(G_FILE_COPY_NOFOLLOW_SYMLINKS | G_FILE_COPY_ALL_METADATA),
-            operation->cancel, nullptr);
+        /* Times and permissions once the contents are in, on a folder made
+         * here; one merged into keeps its own (an archive's or a drive's
+         * folder of the same name mustn't make ~/Documents world-writable). */
+        if (!merge)
+            g_file_copy_attributes(
+                src, dst,
+                (GFileCopyFlags)(G_FILE_COPY_NOFOLLOW_SYMLINKS | G_FILE_COPY_ALL_METADATA),
+                operation->cancel, nullptr);
         if (move) {
             /* Only if everything came out (nothing was skipped). */
             g_file_delete(src, operation->cancel, nullptr);

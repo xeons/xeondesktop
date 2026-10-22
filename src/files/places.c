@@ -3,6 +3,9 @@
  */
 #include "places.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "../gtkapp/gtkapp.h"
@@ -736,33 +739,60 @@ GFile *xd_trash_files_dir(void) {
     return file;
 }
 
+/* A real folder (not a link to one) that is the user's own: what the
+ * trash specification asks of a drive's trash folders, so a drive can't
+ * make its "trash" the user's home, to be emptied. */
+static bool own_folder(const char *path) {
+    struct stat st;
+    return lstat(path, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == getuid();
+}
+
+/* A drive's trash for us, its files folder (g_free), or nullptr: its own
+ * .Trash-UID, else the shared .Trash (a real folder with the sticky bit)
+ * holding UID. */
+static char *drive_trash(const char *top_path, const char *uid) {
+    char *own = g_strconcat(".Trash-", uid, nullptr);
+    char *own_trash = g_build_filename(top_path, own, nullptr);
+    g_free(own);
+    char *own_files = g_build_filename(own_trash, "files", nullptr);
+    bool own_ok = own_folder(own_trash) && own_folder(own_files);
+    g_free(own_trash);
+    if (own_ok)
+        return own_files;
+    g_free(own_files);
+    char *shared = g_build_filename(top_path, ".Trash", nullptr);
+    char *user = g_build_filename(shared, uid, nullptr);
+    char *files = g_build_filename(user, "files", nullptr);
+    struct stat st;
+    bool shared_ok = lstat(shared, &st) == 0 && S_ISDIR(st.st_mode) && (st.st_mode & S_ISVTX) &&
+                     own_folder(user) && own_folder(files);
+    g_free(shared);
+    g_free(user);
+    if (shared_ok)
+        return files;
+    g_free(files);
+    return nullptr;
+}
+
 GPtrArray *xd_trash_dirs(void) {
     GPtrArray *out = g_ptr_array_new_with_free_func(g_object_unref);
     g_ptr_array_add(out, xd_trash_files_dir());
     /* Other drives keep theirs at the top: .Trash-UID, or .Trash/UID. */
     char uid[16];
     g_snprintf(uid, sizeof(uid), "%u", (unsigned)getuid());
-    char *own = g_strconcat(".Trash-", uid, nullptr);
     GList *mounts = g_volume_monitor_get_mounts(xd_computer_monitor());
     for (GList *list = mounts; list != nullptr; list = list->next) {
         GFile *top = g_mount_get_root(list->data);
         char *top_path = g_file_get_path(top);
-        if (top_path != nullptr && strcmp(top_path, "/") != 0) {
-            char *own_trash = g_build_filename(top_path, own, "files", nullptr);
-            char *shared_trash = g_build_filename(top_path, ".Trash", uid, "files", nullptr);
-            const char *found = g_file_test(own_trash, G_FILE_TEST_IS_DIR)      ? own_trash
-                                : g_file_test(shared_trash, G_FILE_TEST_IS_DIR) ? shared_trash
-                                                                                : nullptr;
-            if (found != nullptr)
-                g_ptr_array_add(out, g_file_new_for_path(found));
-            g_free(own_trash);
-            g_free(shared_trash);
-        }
+        char *found = top_path != nullptr && strcmp(top_path, "/") != 0 ? drive_trash(top_path, uid)
+                                                                        : nullptr;
+        if (found != nullptr)
+            g_ptr_array_add(out, g_file_new_for_path(found));
+        g_free(found);
         g_free(top_path);
         g_object_unref(top);
     }
     g_list_free_full(mounts, g_object_unref);
-    g_free(own);
     return out;
 }
 
@@ -806,6 +836,57 @@ static char *trash_top(GFile *trashed) {
     return top != nullptr ? top : g_strdup("/");
 }
 
+/* A .trashinfo's text: a small regular file of the user's own, read
+ * without following a link (a drive's could be a FIFO, or /dev/zero). */
+static char *read_trashinfo(const char *path) {
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0)
+        return nullptr;
+    struct stat st;
+    char *text = nullptr;
+    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == getuid() &&
+        st.st_size <= 64 * 1024) {
+        text = g_malloc((gsize)st.st_size + 1);
+        ssize_t got = read(fd, text, (size_t)st.st_size);
+        if (got < 0) {
+            g_free(text);
+            text = nullptr;
+        } else {
+            text[got] = '\0';
+        }
+    }
+    close(fd);
+    return text;
+}
+
+/* A drive trash's Path: relative to the drive's top, inside it, through
+ * no links (else restoring could put the drive's file anywhere the user
+ * can write: their autostart folder). The parts that don't exist yet are
+ * made as folders when restoring. */
+static bool safe_drive_path(const char *top, const char *relative) {
+    if (relative[0] == '/' || relative[0] == '\0')
+        return false;
+    char **parts = g_strsplit(relative, "/", -1);
+    bool ok = true;
+    char *at = g_strdup(top);
+    for (size_t i = 0; ok && parts[i] != nullptr; i++) {
+        if (parts[i][0] == '\0' || strcmp(parts[i], ".") == 0 || strcmp(parts[i], "..") == 0) {
+            ok = false;
+            break;
+        }
+        char *next = g_build_filename(at, parts[i], nullptr);
+        g_free(at);
+        at = next;
+        struct stat st;
+        /* The last part may be anything (restoring over it asks first). */
+        if (parts[i + 1] != nullptr && lstat(at, &st) == 0 && !S_ISDIR(st.st_mode))
+            ok = false;
+    }
+    g_free(at);
+    g_strfreev(parts);
+    return ok;
+}
+
 gboolean xd_trash_item_info(GFile *trashed, char **original_path, GDateTime **deleted) {
     *original_path = nullptr;
     if (deleted != nullptr)
@@ -813,22 +894,30 @@ gboolean xd_trash_item_info(GFile *trashed, char **original_path, GDateTime **de
     GFile *info = info_file(trashed);
     char *path = g_file_get_path(info);
     g_object_unref(info);
-    GKeyFile *kf = g_key_file_new();
-    gboolean ok = path != nullptr && g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, nullptr);
+    char *text = path != nullptr ? read_trashinfo(path) : nullptr;
     g_free(path);
+    GKeyFile *kf = g_key_file_new();
+    gboolean ok =
+        text != nullptr && g_key_file_load_from_data(kf, text, (gsize)-1, G_KEY_FILE_NONE, nullptr);
+    g_free(text);
     if (ok) {
         /* Path is URI-escaped; relative paths are relative to the trash's
-         * top directory (the home trash's is /). */
+         * top directory (the home trash's is /). A drive's must be
+         * relative, and inside the drive. */
         char *escaped = g_key_file_get_string(kf, TRASHINFO_GROUP, "Path", nullptr);
         char *orig = escaped != nullptr ? g_uri_unescape_string(escaped, nullptr) : nullptr;
         g_free(escaped);
-        if (orig != nullptr && orig[0] != '/') {
-            char *top = trash_top(trashed);
+        char *top = trash_top(trashed);
+        bool drive = strcmp(top, "/") != 0;
+        if (orig != nullptr && drive && !safe_drive_path(top, orig)) {
+            g_free(orig);
+            orig = nullptr;
+        } else if (orig != nullptr && orig[0] != '/') {
             char *abs = g_build_filename(top, orig, nullptr);
-            g_free(top);
             g_free(orig);
             orig = abs;
         }
+        g_free(top);
         *original_path = orig;
         char *date = g_key_file_get_string(kf, TRASHINFO_GROUP, "DeletionDate", nullptr);
         if (date != nullptr && deleted != nullptr) {

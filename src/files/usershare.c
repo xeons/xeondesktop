@@ -270,6 +270,9 @@ const char *xd_usershare_name_problem(const char *name) {
     for (const char *cursor = name; *cursor != '\0'; cursor++)
         if ((unsigned char)*cursor < 0x20)
             return "The share name contains invalid characters.";
+    /* net reads a leading '-' as an option, wherever it is. */
+    if (name[0] == '-')
+        return "The share name can't start with a hyphen (-).";
     return nullptr;
 }
 
@@ -279,6 +282,8 @@ char *xd_usershare_default_name(const char *path) {
     g_free(base);
     /* Characters a share name can't have become underscores. */
     g_strdelimit(display, "\"/\\[]:|<>+=;,?*%", '_');
+    if (display[0] == '-')
+        display[0] = '_';
     char *name = g_utf8_substring(display, 0, MIN(g_utf8_strlen(display, -1), 80));
     g_free(display);
     return name;

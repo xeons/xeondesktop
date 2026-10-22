@@ -79,6 +79,18 @@ static gboolean writable(const char *path) {
     return ok;
 }
 
+gboolean xd_launcher_is_installed(const char *path) {
+    char *dir = g_path_get_dirname(path);
+    gboolean found = FALSE;
+    for (const char *const *data = g_get_system_data_dirs(); *data != nullptr && !found; data++) {
+        char *apps = g_build_filename(*data, "applications", nullptr);
+        found = strcmp(dir, apps) == 0;
+        g_free(apps);
+    }
+    g_free(dir);
+    return found;
+}
+
 char *xd_launcher_write(const char *path, const XdLauncher *launcher, const char *user_dir,
                         GError **err) {
     GKeyFile *kf = load(path, err);
@@ -109,6 +121,11 @@ char *xd_launcher_write(const char *path, const XdLauncher *launcher, const char
     char *dest = nullptr;
     if (writable(path)) {
         dest = g_strdup(path);
+    } else if (user_dir == nullptr) {
+        g_set_error(err, G_FILE_ERROR, G_FILE_ERROR_ACCES,
+                    "The shortcut can't be changed: its folder is read-only.");
+        g_key_file_unref(kf);
+        return nullptr;
     } else {
         g_mkdir_with_parents(user_dir, 0700);
         char *base = g_path_get_basename(path);

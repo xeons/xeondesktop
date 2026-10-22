@@ -1024,11 +1024,20 @@ static void test_extract(void) {
     CHECK(strcmp(base_name, "photos") == 0);
     g_free(base_name);
     const char *const names[][2] = {
-        {"photos.TGZ", "photos"},        {"photos.zip", "photos"},
-        {"notes.txt.gz", "notes.txt"},   {"old.Z", "old"},
-        {"site.tar.zst", "site"},        {"backup.7z", "backup"},
-        {"disk.iso", "disk"},            {"weird.foo", "weird"},
-        {"noext", "noext (extracted)"},  {"pkg-1.0.tar.xz", "pkg-1.0"},
+        {"photos.TGZ", "photos"},
+        {"photos.zip", "photos"},
+        {"notes.txt.gz", "notes.txt"},
+        {"old.Z", "old"},
+        {"site.tar.zst", "site"},
+        {"backup.7z", "backup"},
+        {"disk.iso", "disk"},
+        {"weird.foo", "weird"},
+        {"noext", "noext (extracted)"},
+        {"pkg-1.0.tar.xz", "pkg-1.0"},
+        /* Never the folder above, or this one. */
+        {"...zip", "...zip (extracted)"},
+        {"..zip", "..zip (extracted)"},
+        {"..tar.gz", "..tar.gz (extracted)"},
     };
     for (size_t i = 0; i < G_N_ELEMENTS(names); i++) {
         char *got = xd_archive_base_name(names[i][0]);

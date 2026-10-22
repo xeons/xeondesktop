@@ -221,6 +221,9 @@ typedef struct props {
     gboolean syncing;   /* setting widgets from code */
     gboolean can_chmod; /* we own every file (or are root) */
     gboolean close_after_apply;
+    /* The subfolders' changes are being made; the window was closed
+     * meanwhile (this is freed when they're done). */
+    gboolean applying, closed;
 
     /* General */
     GtkWidget *name;
@@ -1418,7 +1421,9 @@ static void apply_shortcut(props *properties, GString *errors) {
         xd_launcher_clear(&now);
         return;
     }
-    char *user_dir = g_build_filename(g_get_user_data_dir(), "applications", nullptr);
+    char *user_dir = xd_launcher_is_installed(properties->sc_path)
+                         ? g_build_filename(g_get_user_data_dir(), "applications", nullptr)
+                         : nullptr;
     GError *err = nullptr;
     char *written = xd_launcher_write(properties->sc_path, &now, user_dir, &err);
     g_free(user_dir);
@@ -1751,6 +1756,13 @@ static void finish_apply(props *properties) {
 static void on_recurse_done(GObject *src, GAsyncResult *res, gpointer data) {
     (void)src;
     props *properties = data;
+    GtkWidget *window = properties->window; /* held while the job ran */
+    properties->applying = FALSE;
+    if (properties->closed) {
+        g_free(properties);
+        g_object_unref(window);
+        return;
+    }
     recurse_job *apply_job = g_task_get_task_data(G_TASK(res));
     if (apply_job->failures > 0) {
         char *msg =
@@ -1761,8 +1773,8 @@ static void on_recurse_done(GObject *src, GAsyncResult *res, gpointer data) {
         g_free(msg);
         properties->close_after_apply = FALSE;
     }
-    finish_apply(properties);
-    g_object_unref(properties->window); /* held while the job ran */
+    finish_apply(properties); /* may close the window, freeing `properties` */
+    g_object_unref(window);
 }
 
 /* Applies the changes, reporting any failures. The recursive part runs in
@@ -1864,6 +1876,7 @@ static void apply(props *properties) {
         apply_job->gid = gid;
         gtk_widget_set_sensitive(properties->window, FALSE);
         g_object_ref(properties->window);
+        properties->applying = TRUE;
         GTask *task = g_task_new(nullptr, nullptr, on_recurse_done, properties);
         g_task_set_task_data(task, apply_job, recurse_job_free);
         g_task_run_in_thread(task, recurse_thread);
@@ -1934,7 +1947,12 @@ static void on_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
     xd_launcher_clear(&properties->sc_orig);
     g_clear_pointer(&properties->shares, g_ptr_array_unref);
     g_free(properties->share_name);
-    g_free(properties);
+    /* Closed while the subfolders are being changed: freed when that's
+     * done. */
+    if (properties->applying)
+        properties->closed = TRUE;
+    else
+        g_free(properties);
 }
 
 GtkWidget *xd_properties_show(GtkWindow *parent, GList *files) {
