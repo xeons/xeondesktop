@@ -12,8 +12,8 @@ enum { COL_LABEL, COL_EVENT, COL_ICON, N_COLS };
 
 static const char *const base_labels[] = {"Windows Default", "No Sounds"};
 
-static int compare_names(const void *a, const void *b) {
-    return g_ascii_strcasecmp(*(const char *const *)a, *(const char *const *)b);
+static int compare_names(const void *left, const void *right) {
+    return g_ascii_strcasecmp(*(const char *const *)left, *(const char *const *)right);
 }
 
 /* The theme's sounds, by name: XP listed C:\WINDOWS\Media here. */
@@ -21,8 +21,9 @@ static char **theme_sounds(void) {
     GPtrArray *dirs = g_ptr_array_new_with_free_func(g_free);
     g_ptr_array_add(dirs, g_build_filename(g_get_user_data_dir(), "sounds", "freedesktop",
                                            "stereo", nullptr));
-    for (const char *const *d = g_get_system_data_dirs(); *d != nullptr; d++)
-        g_ptr_array_add(dirs, g_build_filename(*d, "sounds", "freedesktop", "stereo", nullptr));
+    for (const char *const *data_dir = g_get_system_data_dirs(); *data_dir != nullptr; data_dir++)
+        g_ptr_array_add(dirs,
+                        g_build_filename(*data_dir, "sounds", "freedesktop", "stereo", nullptr));
     GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     for (guint i = 0; i < dirs->len; i++) {
         GDir *dir = g_dir_open(g_ptr_array_index(dirs, i), 0, nullptr);
@@ -38,16 +39,16 @@ static char **theme_sounds(void) {
             g_dir_close(dir);
     }
     g_ptr_array_free(dirs, TRUE);
-    guint n = 0;
-    char **names = (char **)g_hash_table_get_keys_as_array(seen, &n);
+    guint count = 0;
+    char **names = (char **)g_hash_table_get_keys_as_array(seen, &count);
     g_hash_table_steal_all(seen); /* the array owns the names now */
     g_hash_table_unref(seen);
-    qsort(names, n, sizeof(char *), compare_names);
+    qsort(names, count, sizeof(char *), compare_names);
     return names;
 }
 
-static int selected_event(props *p) {
-    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(p->events));
+static int selected_event(props *properties) {
+    GtkTreeSelection *sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(properties->events));
     GtkTreeModel *model;
     GtkTreeIter it;
     int ev = -1;
@@ -61,52 +62,55 @@ static const char *row_icon(const char *sound) {
 }
 
 /* The event rows' speaker icons and the scheme's "(modified)". */
-static void show_scheme(props *p) {
-    GtkTreeModel *m = GTK_TREE_MODEL(p->event_store);
+static void show_scheme(props *properties) {
+    GtkTreeModel *model = GTK_TREE_MODEL(properties->event_store);
     GtkTreeIter group, it;
-    for (bool g = gtk_tree_model_get_iter_first(m, &group); g; g = gtk_tree_model_iter_next(m, &group)) {
-        for (bool c = gtk_tree_model_iter_children(m, &it, &group); c;
-             c = gtk_tree_model_iter_next(m, &it)) {
+    for (bool has_group = gtk_tree_model_get_iter_first(model, &group); has_group;
+         has_group = gtk_tree_model_iter_next(model, &group)) {
+        for (bool has_child = gtk_tree_model_iter_children(model, &it, &group); has_child;
+             has_child = gtk_tree_model_iter_next(model, &it)) {
             int ev = -1;
-            gtk_tree_model_get(m, &it, COL_EVENT, &ev, -1);
+            gtk_tree_model_get(model, &it, COL_EVENT, &ev, -1);
             if (ev >= 0)
-                gtk_tree_store_set(p->event_store, &it, COL_ICON, row_icon(p->sounds.sounds[ev]),
-                                   -1);
+                gtk_tree_store_set(properties->event_store, &it, COL_ICON,
+                                   row_icon(properties->sounds.sounds[ev]), -1);
         }
     }
-    GtkListStore *schemes = GTK_LIST_STORE(gtk_combo_box_get_model(GTK_COMBO_BOX(p->scheme)));
+    GtkListStore *schemes =
+        GTK_LIST_STORE(gtk_combo_box_get_model(GTK_COMBO_BOX(properties->scheme)));
     GtkTreeIter row;
-    for (bool r = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(schemes), &row); r;
-         r = gtk_tree_model_iter_next(GTK_TREE_MODEL(schemes), &row)) {
+    for (bool has_row = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(schemes), &row); has_row;
+         has_row = gtk_tree_model_iter_next(GTK_TREE_MODEL(schemes), &row)) {
         int base = 0;
         gtk_tree_model_get(GTK_TREE_MODEL(schemes), &row, 1, &base, -1);
-        char *text = base == (int)p->sounds.base && xd_sound_scheme_modified(&p->sounds)
-                         ? g_strdup_printf("%s (modified)", base_labels[base])
-                         : g_strdup(base_labels[base]);
+        char *text =
+            base == (int)properties->sounds.base && xd_sound_scheme_modified(&properties->sounds)
+                ? g_strdup_printf("%s (modified)", base_labels[base])
+                : g_strdup(base_labels[base]);
         gtk_list_store_set(schemes, &row, 0, text, -1);
         g_free(text);
     }
-    p->updating = true;
-    gtk_combo_box_set_active(GTK_COMBO_BOX(p->scheme), (int)p->sounds.base);
-    p->updating = false;
+    properties->updating = true;
+    gtk_combo_box_set_active(GTK_COMBO_BOX(properties->scheme), (int)properties->sounds.base);
+    properties->updating = false;
 }
 
 /* The Sounds box: (None), the theme's sounds, and the event's own file. */
-static void show_event(props *p) {
-    int ev = selected_event(p);
-    p->updating = true;
-    GtkComboBoxText *combo = GTK_COMBO_BOX_TEXT(p->sound);
+static void show_event(props *properties) {
+    int ev = selected_event(properties);
+    properties->updating = true;
+    GtkComboBoxText *combo = GTK_COMBO_BOX_TEXT(properties->sound);
     gtk_combo_box_text_remove_all(combo);
     bool on = ev >= 0;
-    gtk_widget_set_sensitive(p->sound, on);
-    gtk_widget_set_sensitive(p->sound_label, on);
-    gtk_widget_set_sensitive(p->browse, on);
+    gtk_widget_set_sensitive(properties->sound, on);
+    gtk_widget_set_sensitive(properties->sound_label, on);
+    gtk_widget_set_sensitive(properties->browse, on);
     if (on) {
-        const char *current = p->sounds.sounds[ev];
+        const char *current = properties->sounds.sounds[ev];
         gtk_combo_box_text_append(combo, "", "(None)");
         char **names = theme_sounds();
-        for (char **n = names; *n != nullptr; n++)
-            gtk_combo_box_text_append(combo, *n, *n);
+        for (char **name = names; *name != nullptr; name++)
+            gtk_combo_box_text_append(combo, *name, *name);
         if (!gtk_combo_box_set_active_id(GTK_COMBO_BOX(combo), current)) {
             /* A file, or a theme sound that isn't installed. */
             char *label = xd_sound_kind_of(current) == XD_SOUND_FILE
@@ -117,116 +121,115 @@ static void show_event(props *p) {
             g_free(label);
         }
         g_strfreev(names);
-        gtk_widget_set_sensitive(p->play, xd_sound_kind_of(current) != XD_SOUND_NONE);
+        gtk_widget_set_sensitive(properties->play, xd_sound_kind_of(current) != XD_SOUND_NONE);
     } else {
-        gtk_widget_set_sensitive(p->play, FALSE);
+        gtk_widget_set_sensitive(properties->play, FALSE);
     }
-    p->updating = false;
+    properties->updating = false;
 }
 
-static void set_sound(props *p, int ev, const char *sound) {
-    if (ev < 0 || !xd_sound_scheme_set(&p->sounds, (xd_sound_event)ev, sound))
+static void set_sound(props *properties, int ev, const char *sound) {
+    if (ev < 0 || !xd_sound_scheme_set(&properties->sounds, (xd_sound_event)ev, sound))
         return;
-    p->sounds_edited = true;
-    show_scheme(p);
-    sound_changed(p);
+    properties->sounds_edited = true;
+    show_scheme(properties);
+    sound_changed(properties);
 }
 
-static void on_event_selected([[maybe_unused]] GtkTreeSelection *s, gpointer data) {
+static void on_event_selected([[maybe_unused]] GtkTreeSelection *tree_selection, gpointer data) {
     show_event(data);
 }
 
-static void on_sound([[maybe_unused]] GtkComboBox *c, gpointer data) {
-    props *p = data;
-    if (p->updating)
+static void on_sound([[maybe_unused]] GtkComboBox *combo, gpointer data) {
+    props *properties = data;
+    if (properties->updating)
         return;
-    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(p->sound));
-    int ev = selected_event(p);
-    set_sound(p, ev, id != nullptr ? id : "");
-    gtk_widget_set_sensitive(p->play, xd_sound_kind_of(id) != XD_SOUND_NONE);
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(properties->sound));
+    int ev = selected_event(properties);
+    set_sound(properties, ev, id != nullptr ? id : "");
+    gtk_widget_set_sensitive(properties->play, xd_sound_kind_of(id) != XD_SOUND_NONE);
 }
 
-static void on_scheme([[maybe_unused]] GtkComboBox *c, gpointer data) {
-    props *p = data;
-    if (p->updating)
+static void on_scheme([[maybe_unused]] GtkComboBox *combo, gpointer data) {
+    props *properties = data;
+    if (properties->updating)
         return;
-    int base = gtk_combo_box_get_active(GTK_COMBO_BOX(p->scheme));
+    int base = gtk_combo_box_get_active(GTK_COMBO_BOX(properties->scheme));
     if (base < 0 || (size_t)base >= XD_ARRAY_LEN(base_labels))
         return;
-    xd_sound_scheme_free(&p->sounds);
-    xd_sound_scheme_init(&p->sounds, (xd_sound_base)base);
-    p->sounds_edited = true;
-    show_scheme(p);
-    show_event(p);
-    sound_changed(p);
+    xd_sound_scheme_free(&properties->sounds);
+    xd_sound_scheme_init(&properties->sounds, (xd_sound_base)base);
+    properties->sounds_edited = true;
+    show_scheme(properties);
+    show_event(properties);
+    sound_changed(properties);
 }
 
 static void played(const char *error, void *data) {
-    props *p = data;
-    if (error == nullptr || p->closing)
+    props *properties = data;
+    if (error == nullptr || properties->closing)
         return;
     char *text = g_strdup_printf("The sound could not be played.\n\n%s", error);
-    xd_message_box(GTK_WINDOW(p->window), "Sounds and Audio Devices", XD_MB_ERROR, XD_MB_OK, FALSE,
-                   text);
+    xd_message_box(GTK_WINDOW(properties->window), "Sounds and Audio Devices", XD_MB_ERROR,
+                   XD_MB_OK, FALSE, text);
     g_free(text);
 }
 
-static void on_play([[maybe_unused]] GtkButton *b, gpointer data) {
-    props *p = data;
-    int ev = selected_event(p);
+static void on_play([[maybe_unused]] GtkButton *button, gpointer data) {
+    props *properties = data;
+    int ev = selected_event(properties);
     if (ev >= 0)
-        xd_sound_play(p->sounds.sounds[ev], xd_sound_event_get((xd_sound_event)ev)->label, played,
-                      p);
+        xd_sound_play(properties->sounds.sounds[ev], xd_sound_event_get((xd_sound_event)ev)->label,
+                      played, properties);
 }
 
-static void on_browse([[maybe_unused]] GtkButton *b, gpointer data) {
-    props *p = data;
-    int ev = selected_event(p);
+static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
+    props *properties = data;
+    int ev = selected_event(properties);
     if (ev < 0)
         return;
     char *title = g_strdup_printf("Browse for %s sound",
                                   xd_sound_event_get((xd_sound_event)ev)->label);
-    GtkWidget *d = gtk_file_chooser_dialog_new(title, GTK_WINDOW(p->window),
-                                               GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-                                               GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT,
-                                               nullptr);
+    GtkWidget *file_chooser = gtk_file_chooser_dialog_new(
+        title, GTK_WINDOW(properties->window), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
+        GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
     g_free(title);
     GtkFileFilter *sounds = gtk_file_filter_new();
     gtk_file_filter_set_name(sounds, "Sounds");
     gtk_file_filter_add_mime_type(sounds, "audio/*");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(d), sounds);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(file_chooser), sounds);
     GtkFileFilter *all = gtk_file_filter_new();
     gtk_file_filter_set_name(all, "All Files");
     gtk_file_filter_add_pattern(all, "*");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(d), all);
-    const char *current = p->sounds.sounds[ev];
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(file_chooser), all);
+    const char *current = properties->sounds.sounds[ev];
     if (xd_sound_kind_of(current) == XD_SOUND_FILE)
-        gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(d), current);
-    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_ACCEPT) {
-        char *file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(d));
+        gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(file_chooser), current);
+    if (gtk_dialog_run(GTK_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser));
         if (file != nullptr) {
-            set_sound(p, ev, file);
-            show_event(p);
+            set_sound(properties, ev, file);
+            show_event(properties);
         }
         g_free(file);
     }
-    gtk_widget_destroy(d);
+    gtk_widget_destroy(file_chooser);
 }
 
-bool sounds_apply(props *p) {
-    if (!p->sounds_edited)
+bool sounds_apply(props *properties) {
+    if (!properties->sounds_edited)
         return true;
-    if (!xd_sound_scheme_save(&p->sounds)) {
-        xd_message_box(GTK_WINDOW(p->window), "Sounds and Audio Devices", XD_MB_ERROR, XD_MB_OK,
-                       FALSE, "The sound scheme could not be saved.");
+    if (!xd_sound_scheme_save(&properties->sounds)) {
+        xd_message_box(GTK_WINDOW(properties->window), "Sounds and Audio Devices", XD_MB_ERROR,
+                       XD_MB_OK, FALSE, "The sound scheme could not be saved.");
         return false;
     }
-    p->sounds_edited = false;
+    properties->sounds_edited = false;
     return true;
 }
 
-GtkWidget *sounds_page(props *p) {
-    xd_sound_scheme_load(&p->sounds);
+GtkWidget *sounds_page(props *properties) {
+    xd_sound_scheme_load(&properties->sounds);
     GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(page), 10);
     gtk_box_pack_start(GTK_BOX(page),
@@ -234,48 +237,45 @@ GtkWidget *sounds_page(props *p) {
                                    "XeonDesktop and programs. You can select an existing scheme "
                                    "or change the sounds of the one you have."),
                        FALSE, FALSE, 0);
-    GtkWidget *l = gtk_label_new_with_mnemonic("Sound sc_heme:");
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_box_pack_start(GTK_BOX(page), l, FALSE, FALSE, 0);
+    GtkWidget *scheme_label = gtk_label_new_with_mnemonic("Sound sc_heme:");
+    gtk_label_set_xalign(GTK_LABEL(scheme_label), 0);
+    gtk_box_pack_start(GTK_BOX(page), scheme_label, FALSE, FALSE, 0);
     GtkListStore *schemes = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_INT);
     for (size_t i = 0; i < XD_ARRAY_LEN(base_labels); i++)
         gtk_list_store_insert_with_values(schemes, nullptr, -1, 0, base_labels[i], 1, (int)i, -1);
-    p->scheme = gtk_combo_box_new_with_model(GTK_TREE_MODEL(schemes));
+    properties->scheme = gtk_combo_box_new_with_model(GTK_TREE_MODEL(schemes));
     g_object_unref(schemes);
     GtkCellRenderer *text = gtk_cell_renderer_text_new();
-    gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(p->scheme), text, TRUE);
-    gtk_cell_layout_add_attribute(GTK_CELL_LAYOUT(p->scheme), text, "text", 0);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), p->scheme);
-    g_signal_connect(p->scheme, "changed", G_CALLBACK(on_scheme), p);
-    gtk_box_pack_start(GTK_BOX(page), p->scheme, FALSE, FALSE, 0);
+    gtk_cell_layout_pack_start(GTK_CELL_LAYOUT(properties->scheme), text, TRUE);
+    gtk_cell_layout_add_attribute(GTK_CELL_LAYOUT(properties->scheme), text, "text", 0);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(scheme_label), properties->scheme);
+    g_signal_connect(properties->scheme, "changed", G_CALLBACK(on_scheme), properties);
+    gtk_box_pack_start(GTK_BOX(page), properties->scheme, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(page),
                        sound_label("To change sounds, click a program event in the following "
                                    "list and then select a sound to apply. You can save the "
                                    "changes as a new sound scheme."),
                        FALSE, FALSE, 0);
-    l = gtk_label_new_with_mnemonic("Program _events:");
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_box_pack_start(GTK_BOX(page), l, FALSE, FALSE, 0);
-    p->event_store = gtk_tree_store_new(N_COLS, G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING);
+    scheme_label = gtk_label_new_with_mnemonic("Program _events:");
+    gtk_label_set_xalign(GTK_LABEL(scheme_label), 0);
+    gtk_box_pack_start(GTK_BOX(page), scheme_label, FALSE, FALSE, 0);
+    properties->event_store = gtk_tree_store_new(N_COLS, G_TYPE_STRING, G_TYPE_INT, G_TYPE_STRING);
     const char *program = nullptr;
     GtkTreeIter group;
     for (size_t i = 0; i < XD_SOUND_EVENT_COUNT; i++) {
         const xd_sound_event_info *info = xd_sound_event_get((xd_sound_event)i);
         if (program == nullptr || strcmp(program, info->program) != 0) {
             program = info->program;
-            gtk_tree_store_insert_with_values(p->event_store, &group, nullptr, -1, COL_LABEL,
-                                              program, COL_EVENT, -1, COL_ICON,
-                                              strcmp(program, "Windows") == 0
-                                                  ? "computer"
-                                                  : "system-file-manager",
-                                              -1);
+            gtk_tree_store_insert_with_values(
+                properties->event_store, &group, nullptr, -1, COL_LABEL, program, COL_EVENT, -1,
+                COL_ICON, strcmp(program, "Windows") == 0 ? "computer" : "system-file-manager", -1);
         }
-        gtk_tree_store_insert_with_values(p->event_store, nullptr, &group, -1, COL_LABEL,
+        gtk_tree_store_insert_with_values(properties->event_store, nullptr, &group, -1, COL_LABEL,
                                           info->label, COL_EVENT, (int)i, -1);
     }
-    p->events = gtk_tree_view_new_with_model(GTK_TREE_MODEL(p->event_store));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(p->events), FALSE);
+    properties->events = gtk_tree_view_new_with_model(GTK_TREE_MODEL(properties->event_store));
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(properties->events), FALSE);
     GtkTreeViewColumn *col = gtk_tree_view_column_new();
     GtkCellRenderer *icon = gtk_cell_renderer_pixbuf_new();
     gtk_tree_view_column_pack_start(col, icon, FALSE);
@@ -283,37 +283,37 @@ GtkWidget *sounds_page(props *p) {
     GtkCellRenderer *label = gtk_cell_renderer_text_new();
     gtk_tree_view_column_pack_start(col, label, TRUE);
     gtk_tree_view_column_add_attribute(col, label, "text", COL_LABEL);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(p->events), col);
-    gtk_tree_view_expand_all(GTK_TREE_VIEW(p->events));
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l), p->events);
-    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(p->events)), "changed",
-                     G_CALLBACK(on_event_selected), p);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(properties->events), col);
+    gtk_tree_view_expand_all(GTK_TREE_VIEW(properties->events));
+    gtk_label_set_mnemonic_widget(GTK_LABEL(scheme_label), properties->events);
+    g_signal_connect(gtk_tree_view_get_selection(GTK_TREE_VIEW(properties->events)), "changed",
+                     G_CALLBACK(on_event_selected), properties);
     GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER,
                                    GTK_POLICY_AUTOMATIC);
     gtk_widget_set_size_request(scroll, -1, 150);
-    gtk_container_add(GTK_CONTAINER(scroll), p->events);
+    gtk_container_add(GTK_CONTAINER(scroll), properties->events);
     gtk_box_pack_start(GTK_BOX(page), scroll, TRUE, TRUE, 0);
 
-    p->sound_label = gtk_label_new_with_mnemonic("_Sounds:");
-    gtk_label_set_xalign(GTK_LABEL(p->sound_label), 0);
-    gtk_box_pack_start(GTK_BOX(page), p->sound_label, FALSE, FALSE, 0);
+    properties->sound_label = gtk_label_new_with_mnemonic("_Sounds:");
+    gtk_label_set_xalign(GTK_LABEL(properties->sound_label), 0);
+    gtk_box_pack_start(GTK_BOX(page), properties->sound_label, FALSE, FALSE, 0);
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    p->sound = gtk_combo_box_text_new();
-    gtk_label_set_mnemonic_widget(GTK_LABEL(p->sound_label), p->sound);
-    g_signal_connect(p->sound, "changed", G_CALLBACK(on_sound), p);
-    gtk_box_pack_start(GTK_BOX(row), p->sound, TRUE, TRUE, 0);
-    p->play = gtk_button_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_BUTTON);
-    gtk_widget_set_tooltip_text(p->play, "Play Sound");
-    g_signal_connect(p->play, "clicked", G_CALLBACK(on_play), p);
-    gtk_box_pack_start(GTK_BOX(row), p->play, FALSE, FALSE, 0);
-    p->browse = gtk_button_new_with_mnemonic("_Browse...");
-    g_signal_connect(p->browse, "clicked", G_CALLBACK(on_browse), p);
-    gtk_box_pack_start(GTK_BOX(row), p->browse, FALSE, FALSE, 0);
+    properties->sound = gtk_combo_box_text_new();
+    gtk_label_set_mnemonic_widget(GTK_LABEL(properties->sound_label), properties->sound);
+    g_signal_connect(properties->sound, "changed", G_CALLBACK(on_sound), properties);
+    gtk_box_pack_start(GTK_BOX(row), properties->sound, TRUE, TRUE, 0);
+    properties->play = gtk_button_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(properties->play, "Play Sound");
+    g_signal_connect(properties->play, "clicked", G_CALLBACK(on_play), properties);
+    gtk_box_pack_start(GTK_BOX(row), properties->play, FALSE, FALSE, 0);
+    properties->browse = gtk_button_new_with_mnemonic("_Browse...");
+    g_signal_connect(properties->browse, "clicked", G_CALLBACK(on_browse), properties);
+    gtk_box_pack_start(GTK_BOX(row), properties->browse, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(page), row, FALSE, FALSE, 0);
 
-    show_scheme(p);
-    show_event(p);
+    show_scheme(properties);
+    show_event(properties);
     return page;
 }

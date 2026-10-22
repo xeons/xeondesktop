@@ -46,12 +46,12 @@ typedef struct props {
 } props;
 
 /* Something changed: Apply lights up. */
-void sound_changed(props *p);
+void sound_changed(props *properties);
 GtkWidget *sound_frame(const char *title, GtkWidget *child);
 GtkWidget *sound_label(const char *text);
 
 /* scheme.c: the Sounds tab. */
-GtkWidget *sounds_page(props *p);
-bool sounds_apply(props *p);
+GtkWidget *sounds_page(props *properties);
+bool sounds_apply(props *properties);
 
 #endif
