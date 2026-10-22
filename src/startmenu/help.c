@@ -69,42 +69,43 @@ typedef struct help {
     GAppInfo *viewer_app; /* handles help: URIs, or nullptr */
 } help;
 
-static void on_open_viewer([[maybe_unused]] GtkButton *b, gpointer data) {
-    help *h = data;
-    GdkAppLaunchContext *ctx = gdk_display_get_app_launch_context(gtk_widget_get_display(h->window));
+static void on_open_viewer([[maybe_unused]] GtkButton *button, gpointer data) {
+    help *help_window = data;
+    GdkAppLaunchContext *ctx =
+        gdk_display_get_app_launch_context(gtk_widget_get_display(help_window->window));
     GError *error = nullptr;
-    if (!g_app_info_launch(h->viewer_app, nullptr, G_APP_LAUNCH_CONTEXT(ctx), &error)) {
-        xd_message_box(GTK_WINDOW(h->window), "Help and Support", XD_MB_ERROR, XD_MB_OK, FALSE,
-                       error->message);
+    if (!g_app_info_launch(help_window->viewer_app, nullptr, G_APP_LAUNCH_CONTEXT(ctx), &error)) {
+        xd_message_box(GTK_WINDOW(help_window->window), "Help and Support", XD_MB_ERROR, XD_MB_OK,
+                       FALSE, error->message);
         g_error_free(error);
     }
     g_object_unref(ctx);
 }
 
 static void on_topic([[maybe_unused]] GtkListBox *list, GtkListBoxRow *row, gpointer data) {
-    help *h = data;
+    help *help_window = data;
     if (row == nullptr)
         return;
     int i = gtk_list_box_row_get_index(row);
     if (i < 0 || (size_t)i >= G_N_ELEMENTS(topics))
         return;
-    gtk_label_set_markup(GTK_LABEL(h->page), topics[i].markup);
+    gtk_label_set_markup(GTK_LABEL(help_window->page), topics[i].markup);
     /* The viewer's button belongs to the last page. */
-    gtk_widget_set_visible(h->viewer, h->viewer_app != nullptr &&
-                                          (size_t)i == G_N_ELEMENTS(topics) - 1);
+    gtk_widget_set_visible(help_window->viewer, help_window->viewer_app != nullptr &&
+                                                    (size_t)i == G_N_ELEMENTS(topics) - 1);
 }
 
 int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.Help");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
-    static help h;
-    h.viewer_app = g_app_info_get_default_for_uri_scheme("help");
+    static help help_window;
+    help_window.viewer_app = g_app_info_get_default_for_uri_scheme("help");
 
-    h.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(h.window), "Help and Support");
-    gtk_window_set_icon_name(GTK_WINDOW(h.window), "help-browser");
-    gtk_window_set_default_size(GTK_WINDOW(h.window), 640, 440);
+    help_window.window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(help_window.window), "Help and Support");
+    gtk_window_set_icon_name(GTK_WINDOW(help_window.window), "help-browser");
+    gtk_window_set_default_size(GTK_WINDOW(help_window.window), 640, 440);
 
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -136,33 +137,34 @@ int main(int argc, char **argv) {
 
     GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_set_border_width(GTK_CONTAINER(right), 12);
-    h.page = gtk_label_new(nullptr);
-    gtk_label_set_xalign(GTK_LABEL(h.page), 0);
-    gtk_label_set_yalign(GTK_LABEL(h.page), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(h.page), TRUE);
-    gtk_label_set_selectable(GTK_LABEL(h.page), TRUE);
-    gtk_box_pack_start(GTK_BOX(right), h.page, FALSE, FALSE, 0);
-    char *viewer_label = h.viewer_app != nullptr
-                             ? g_strdup_printf("Open %s", g_app_info_get_display_name(h.viewer_app))
-                             : g_strdup("");
-    h.viewer = gtk_button_new_with_label(viewer_label);
+    help_window.page = gtk_label_new(nullptr);
+    gtk_label_set_xalign(GTK_LABEL(help_window.page), 0);
+    gtk_label_set_yalign(GTK_LABEL(help_window.page), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(help_window.page), TRUE);
+    gtk_label_set_selectable(GTK_LABEL(help_window.page), TRUE);
+    gtk_box_pack_start(GTK_BOX(right), help_window.page, FALSE, FALSE, 0);
+    char *viewer_label =
+        help_window.viewer_app != nullptr
+            ? g_strdup_printf("Open %s", g_app_info_get_display_name(help_window.viewer_app))
+            : g_strdup("");
+    help_window.viewer = gtk_button_new_with_label(viewer_label);
     g_free(viewer_label);
-    gtk_widget_set_halign(h.viewer, GTK_ALIGN_START);
-    g_signal_connect(h.viewer, "clicked", G_CALLBACK(on_open_viewer), &h);
-    gtk_box_pack_start(GTK_BOX(right), h.viewer, FALSE, FALSE, 0);
+    gtk_widget_set_halign(help_window.viewer, GTK_ALIGN_START);
+    g_signal_connect(help_window.viewer, "clicked", G_CALLBACK(on_open_viewer), &help_window);
+    gtk_box_pack_start(GTK_BOX(right), help_window.viewer, FALSE, FALSE, 0);
     GtkWidget *page_scroll = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(page_scroll), GTK_SHADOW_IN);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(page_scroll), GTK_POLICY_NEVER,
                                    GTK_POLICY_AUTOMATIC);
     gtk_container_add(GTK_CONTAINER(page_scroll), right);
     gtk_paned_pack2(GTK_PANED(paned), page_scroll, TRUE, FALSE);
-    gtk_container_add(GTK_CONTAINER(h.window), paned);
+    gtk_container_add(GTK_CONTAINER(help_window.window), paned);
 
-    g_signal_connect(list, "row-selected", G_CALLBACK(on_topic), &h);
-    g_signal_connect(h.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
-    gtk_widget_show_all(h.window);
+    g_signal_connect(list, "row-selected", G_CALLBACK(on_topic), &help_window);
+    g_signal_connect(help_window.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    gtk_widget_show_all(help_window.window);
     gtk_list_box_select_row(GTK_LIST_BOX(list), gtk_list_box_get_row_at_index(GTK_LIST_BOX(list), 0));
     gtk_main();
-    g_clear_object(&h.viewer_app);
+    g_clear_object(&help_window.viewer_app);
     return EXIT_SUCCESS;
 }

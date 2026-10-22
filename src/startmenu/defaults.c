@@ -65,30 +65,30 @@ static bool handles(GAppInfo *app, const char *type) {
     return false;
 }
 
-static GtkWidget *section(const activity *a, choice *c) {
+static GtkWidget *section(const activity *category, choice *program_choice) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     GtkWidget *heading = gtk_label_new(nullptr);
-    char *markup = g_markup_printf_escaped("<b>%s</b>", a->heading);
+    char *markup = g_markup_printf_escaped("<b>%s</b>", category->heading);
     gtk_label_set_markup(GTK_LABEL(heading), markup);
     g_free(markup);
     gtk_label_set_xalign(GTK_LABEL(heading), 0);
     gtk_box_pack_start(GTK_BOX(box), heading, FALSE, FALSE, 2);
 
-    GAppInfo *now = g_app_info_get_default_for_type(a->types[0], FALSE);
-    char *keep_label = now != nullptr
-                           ? g_strdup_printf("%s (%s)", a->current, g_app_info_get_display_name(now))
-                           : g_strdup(a->current);
-    c->keep = gtk_radio_button_new_with_label(nullptr, keep_label);
+    GAppInfo *now = g_app_info_get_default_for_type(category->types[0], FALSE);
+    char *keep_label = now != nullptr ? g_strdup_printf("%s (%s)", category->current,
+                                                        g_app_info_get_display_name(now))
+                                      : g_strdup(category->current);
+    program_choice->keep = gtk_radio_button_new_with_label(nullptr, keep_label);
     g_free(keep_label);
-    gtk_widget_set_margin_start(c->keep, 16);
-    gtk_box_pack_start(GTK_BOX(box), c->keep, FALSE, FALSE, 0);
+    gtk_widget_set_margin_start(program_choice->keep, 16);
+    gtk_box_pack_start(GTK_BOX(box), program_choice->keep, FALSE, FALSE, 0);
 
-    GList *apps = g_app_info_get_all_for_type(a->types[0]);
-    for (GList *l = apps; l != nullptr; l = l->next) {
-        GAppInfo *app = l->data;
+    GList *apps = g_app_info_get_all_for_type(category->types[0]);
+    for (GList *list = apps; list != nullptr; list = list->next) {
+        GAppInfo *app = list->data;
         if (!g_app_info_should_show(app))
             continue;
-        GtkWidget *radio = gtk_radio_button_new_from_widget(GTK_RADIO_BUTTON(c->keep));
+        GtkWidget *radio = gtk_radio_button_new_from_widget(GTK_RADIO_BUTTON(program_choice->keep));
         GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         GIcon *icon = g_app_info_get_icon(app);
         GtkWidget *image = icon != nullptr ? gtk_image_new_from_gicon(icon, GTK_ICON_SIZE_MENU)
@@ -101,11 +101,11 @@ static GtkWidget *section(const activity *a, choice *c) {
         gtk_container_add(GTK_CONTAINER(radio), row);
         gtk_widget_set_margin_start(radio, 16);
         gtk_box_pack_start(GTK_BOX(box), radio, FALSE, FALSE, 0);
-        c->apps = g_list_append(c->apps, g_object_ref(app));
-        c->radios = g_list_append(c->radios, radio);
+        program_choice->apps = g_list_append(program_choice->apps, g_object_ref(app));
+        program_choice->radios = g_list_append(program_choice->radios, radio);
     }
     g_list_free_full(apps, g_object_unref);
-    if (c->apps == nullptr) {
+    if (program_choice->apps == nullptr) {
         GtkWidget *none = gtk_label_new("No programs for this are installed.");
         gtk_label_set_xalign(GTK_LABEL(none), 0);
         gtk_widget_set_margin_start(none, 40);
@@ -116,23 +116,25 @@ static GtkWidget *section(const activity *a, choice *c) {
     return box;
 }
 
-static bool apply(dialog *d) {
+static bool apply(dialog *defaults) {
     for (size_t i = 0; i < G_N_ELEMENTS(activities); i++) {
-        const activity *a = &activities[i];
-        choice *c = &d->choices[i];
-        GList *app = c->apps;
-        for (GList *r = c->radios; r != nullptr; r = r->next, app = app->next) {
-            if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(r->data)))
+        const activity *category = &activities[i];
+        choice *program_choice = &defaults->choices[i];
+        GList *app = program_choice->apps;
+        for (GList *list = program_choice->radios; list != nullptr;
+             list = list->next, app = app->next) {
+            if (!gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(list->data)))
                 continue;
-            for (size_t t = 0; a->types[t] != nullptr; t++) {
-                if (t > 0 && !handles(app->data, a->types[t]))
+            for (size_t type_index = 0; category->types[type_index] != nullptr; type_index++) {
+                if (type_index > 0 && !handles(app->data, category->types[type_index]))
                     continue;
                 GError *error = nullptr;
-                if (!g_app_info_set_as_default_for_type(app->data, a->types[t], &error)) {
+                if (!g_app_info_set_as_default_for_type(app->data, category->types[type_index],
+                                                        &error)) {
                     char *text = g_strdup_printf("%s could not be made the default: %s",
                                                  g_app_info_get_display_name(app->data),
                                                  error->message);
-                    xd_message_box(GTK_WINDOW(d->window), "Set Program Access and Defaults",
+                    xd_message_box(GTK_WINDOW(defaults->window), "Set Program Access and Defaults",
                                    XD_MB_ERROR, XD_MB_OK, FALSE, text);
                     g_free(text);
                     g_error_free(error);
@@ -144,28 +146,29 @@ static bool apply(dialog *d) {
     return true;
 }
 
-static void on_response(GtkDialog *w, int response, gpointer data) {
-    dialog *d = data;
-    if (response == GTK_RESPONSE_OK && !apply(d))
+static void on_response(GtkDialog *dialog_widget, int response, gpointer data) {
+    dialog *defaults = data;
+    if (response == GTK_RESPONSE_OK && !apply(defaults))
         return;
-    gtk_widget_destroy(GTK_WIDGET(w));
+    gtk_widget_destroy(GTK_WIDGET(dialog_widget));
 }
 
 int main(int argc, char **argv) {
     xd_gtk_app_preinit("org.xeondesktop.Defaults");
     gtk_init(&argc, &argv);
     xd_gtk_app_follow_theme();
-    static dialog d;
+    static dialog defaults;
 
-    d.window = gtk_dialog_new();
-    gtk_window_set_title(GTK_WINDOW(d.window), "Set Program Access and Defaults");
-    gtk_window_set_icon_name(GTK_WINDOW(d.window), "preferences-desktop-default-applications");
-    gtk_window_set_default_size(GTK_WINDOW(d.window), 480, 520);
-    gtk_dialog_add_button(GTK_DIALOG(d.window), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(d.window), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_dialog_set_default_response(GTK_DIALOG(d.window), GTK_RESPONSE_OK);
+    defaults.window = gtk_dialog_new();
+    gtk_window_set_title(GTK_WINDOW(defaults.window), "Set Program Access and Defaults");
+    gtk_window_set_icon_name(GTK_WINDOW(defaults.window),
+                             "preferences-desktop-default-applications");
+    gtk_window_set_default_size(GTK_WINDOW(defaults.window), 480, 520);
+    gtk_dialog_add_button(GTK_DIALOG(defaults.window), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(defaults.window), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(defaults.window), GTK_RESPONSE_OK);
 
-    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(d.window));
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(defaults.window));
     GtkWidget *intro = gtk_label_new(
         "Choose the programs used by default for certain activities, such as Web browsing or "
         "sending e-mail.");
@@ -178,7 +181,8 @@ int main(int argc, char **argv) {
     GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(list), 8);
     for (size_t i = 0; i < G_N_ELEMENTS(activities); i++)
-        gtk_box_pack_start(GTK_BOX(list), section(&activities[i], &d.choices[i]), FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(list), section(&activities[i], &defaults.choices[i]), FALSE,
+                           FALSE, 0);
     GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER,
@@ -186,13 +190,13 @@ int main(int argc, char **argv) {
     gtk_container_add(GTK_CONTAINER(scroll), list);
     gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 4);
 
-    g_signal_connect(d.window, "response", G_CALLBACK(on_response), &d);
-    g_signal_connect(d.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
-    gtk_widget_show_all(d.window);
+    g_signal_connect(defaults.window, "response", G_CALLBACK(on_response), &defaults);
+    g_signal_connect(defaults.window, "destroy", G_CALLBACK(gtk_main_quit), nullptr);
+    gtk_widget_show_all(defaults.window);
     gtk_main();
     for (size_t i = 0; i < G_N_ELEMENTS(activities); i++) {
-        g_list_free_full(d.choices[i].apps, g_object_unref);
-        g_list_free(d.choices[i].radios);
+        g_list_free_full(defaults.choices[i].apps, g_object_unref);
+        g_list_free(defaults.choices[i].radios);
     }
     return EXIT_SUCCESS;
 }

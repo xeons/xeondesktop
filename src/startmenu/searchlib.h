@@ -17,9 +17,9 @@ typedef struct xd_search_name {
     GPatternSpec *glob; /* casefolded wildcard pattern, or nullptr */
 } xd_search_name;
 
-void xd_search_name_init(xd_search_name *n, const char *text);
-void xd_search_name_clear(xd_search_name *n);
-bool xd_search_name_matches(const xd_search_name *n, const char *name);
+void xd_search_name_init(xd_search_name *search_name, const char *text);
+void xd_search_name_clear(xd_search_name *search_name);
+bool xd_search_name_matches(const xd_search_name *search_name, const char *name);
 
 /* Whether `data` contains `needle` (both bytes; ASCII letters match either
  * case). An empty needle is in everything. */
