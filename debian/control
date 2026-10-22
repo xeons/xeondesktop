@@ -109,6 +109,9 @@ Recommends:
  gnupg,
  gnome-keyring,
 Suggests:
+ oxygen-icon-theme,
+ papirus-icon-theme,
+ mate-icon-theme,
  bluez,
  blueman,
  fwupd,

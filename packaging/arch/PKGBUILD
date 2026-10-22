@@ -63,6 +63,9 @@ checkdepends=('ttf-dejavu' 'openssh' 'gnupg')
 optdepends=(
   'xorg-xwayland: X11 applications'
   'breeze-icons: icons for the Start menu and file manager'
+  'oxygen-icons: the Oxygen icon theme (Display Properties > Linux)'
+  'papirus-icon-theme: the Papirus icon theme (Display Properties > Linux)'
+  'mate-icon-theme: the MATE icon theme (Display Properties > Linux)'
   'xdg-desktop-portal-gtk: file chooser and settings portals'
   'xdg-desktop-portal-wlr: screenshot and screen sharing portals'
   'accountsservice: User Accounts'
