@@ -422,15 +422,19 @@ static const luna_controls energy_controls = {
 /* ---- Dark's controls ---------------------------------------------------------------- */
 
 /* A control's colour in Dark: Blue's turned over in brightness, so white
- * faces go dark grey and dark outlines and glyphs light, squeezed so a
- * face (50) sits a little above the dialog behind it; colour mostly kept,
- * and XP's warm highlights (a hot button's orange ring, the selected tab's
- * band) turned to blue. */
+ * faces go dark grey (50, a little above the dialog behind them) and dark
+ * outlines and glyphs lighter. The dark ones (Luna's navy outlines) come
+ * out a dim grey with a trace of blue, so a plain button's edge doesn't
+ * glare; the light ones (a focused button's ring, a hot one's) keep most
+ * of their colour, and XP's warm highlights (the hot ring's orange, the
+ * selected tab's band) turn blue. */
 static uint32_t dark_control_rgb(uint32_t rgb) {
     double ycc[3];
     to_ycc(rgb & 0xFFFFFF, ycc);
-    double y = 50 + (255 - ycc[0]) * 0.55;
-    double cb = ycc[1] * 0.75, cr = ycc[2] * 0.75;
+    double light = XD_CLAMP((ycc[0] - 80) / 60, 0.0, 1.0); /* 0 dark .. 1 light */
+    double y = 50 + (255 - ycc[0]) * (0.30 + 0.25 * light);
+    double keep = 0.15 + 0.60 * light;
+    double cb = ycc[1] * keep, cr = ycc[2] * keep;
     if (cb < 0 && cr > 0) {
         cb = -cb;
         cr = -cr;
@@ -578,7 +582,8 @@ static const luna_controls *controls(const xd_theme *theme) {
 }
 
 uint32_t xd_luna_control_rgb(const xd_theme *theme, uint32_t rgb) {
-    return dark(theme) ? dark_control_rgb(rgb) : rgb & 0xFFFFFF;
+    /* Only the XP style draws Dark's controls; Aero's stay its own. */
+    return theme->style == XD_STYLE_LUNA && dark(theme) ? dark_control_rgb(rgb) : rgb & 0xFFFFFF;
 }
 
 void xd_luna_field_colors(const xd_theme *theme, xd_rgba *border, xd_rgba *disabled) {
@@ -1075,9 +1080,27 @@ int xd_luna_start_button_width(const xd_theme *theme, [[maybe_unused]] cairo_t *
     return xd_tpx(theme, 99);
 }
 
+/* Dark's Start button: XP's green turned electric blue, its gloss and
+ * shading kept (the green's chroma turned and stretched onto 1F7FEF's). */
+static tint electric_tint(void) {
+    double from[3], to[3];
+    to_ycc(0x3A9A3A, from);
+    to_ycc(0x1F7FEF, to);
+    double norm = from[1] * from[1] + from[2] * from[2];
+    return (tint){
+        .on = true,
+        .y_from = from[0],
+        .y_to = to[0],
+        .k = 1,
+        .a = (to[1] * from[1] + to[2] * from[2]) / norm,
+        .b = (to[2] * from[1] - to[1] * from[2]) / norm,
+    };
+}
+
 void xd_luna_draw_start_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state) {
     enum { LEFT = 8, RIGHT = 23 };
     bar_art art = bar_art_for(theme);
+    tint electric = dark(theme) ? electric_tint() : (tint){0};
     image im;
     int width = logical(theme, rect.w);
     if (image_new(&im, width, 30)) {
@@ -1103,6 +1126,8 @@ void xd_luna_draw_start_button(const xd_theme *theme, cairo_t *cairo, xd_rect re
                 bool blue = b8 > ((pixel >> 8) & 0xFF) + 8 && b8 > ((pixel >> 16) & 0xFF) + 8;
                 if (blue)
                     pixel = tinted(&art.tn, pixel);
+                else if (green)
+                    pixel = tinted(&electric, pixel);
                 put(&im, x, y, pixel);
             }
         }

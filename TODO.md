@@ -621,8 +621,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [~] Luna Dark, ours (no XP reference): Blue's measured frame, taskbar,
       caption buttons and Start menu header recoloured to charcoal (a
       tint keeping their relief and a little of their blue), its controls
-      turned over in brightness (dark faces, light outlines, XP's orange
-      hot rings and tab bands in blue), dark scheme colours
+      turned over in brightness (dark faces, dim grey outlines, XP's
+      orange hot rings and tab bands in blue, focus rings blue), the
+      Start button electric blue, the generated GTK theme's own XP
+      colours (tabs, headers, toolbars) likewise, dark scheme colours
       (luna-dark.ini) for window contents, menus, GTK and Qt; Breeze Dark
       icons by default on any dark scheme. Not yet: our own dark
       wallpaper, the window icons' generic stand-in (white), checking

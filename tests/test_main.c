@@ -526,8 +526,9 @@ static void test_luna_variants(void) {
     CHECK(near(pixel(ss, 150, 61), 0x99C6F1, 0));
 
     /* Dark, ours: Blue's caption in charcoal with a little blue left,
-     * XP's red Close and green Start kept, a dark push button with a
-     * light outline, dark Start menu lists without the orange line. */
+     * XP's red Close kept and its green Start electric blue, a dark push
+     * button with a dim grey outline (a focused one's ring blue), dark
+     * Start menu lists without the orange line. */
     xd_scheme dk;
     CHECK(load_shipped_scheme("luna-dark", &dk));
     xd_theme_init(&st, XD_STYLE_LUNA, &dk, 1.0);
@@ -541,11 +542,18 @@ static void test_luna_variants(void) {
         pixel(ss, dark_layout.button_rects[0].x + 3, dark_layout.button_rects[0].y + 10);
     CHECK(((close_face >> 16) & 0xFF) > ((close_face >> 8) & 0xFF) + 64);
     xd_theme_draw_start_button(&st, scr, (xd_rect){0, 60, 99, 30}, 0);
-    green = pixel(ss, 4, 75);
-    CHECK(((green >> 8) & 0xFF) > ((green >> 16) & 0xFF) + 40);
+    uint32_t electric = pixel(ss, 4, 75);
+    CHECK((electric & 0xFF) > ((electric >> 16) & 0xFF) + 80 &&
+          (electric & 0xFF) > ((electric >> 8) & 0xFF) + 30);
     xd_theme_draw_button(&st, scr, (xd_rect){150, 60, 75, 23}, 0, "");
-    uint32_t button_face = pixel(ss, 187, 71), button_edge = pixel(ss, 150, 71);
-    CHECK((button_face & 0xFF) < 80 && (button_edge & 0xFF) > 150);
+    /* The outline's first column is partly see-through: the second. */
+    uint32_t button_face = pixel(ss, 187, 71), button_edge = pixel(ss, 151, 71);
+    CHECK((button_face & 0xFF) < 80);
+    CHECK(((button_edge >> 8) & 0xFF) > 80 && ((button_edge >> 8) & 0xFF) < 140 &&
+          (button_edge & 0xFF) - ((button_edge >> 16) & 0xFF) < 30);
+    xd_theme_draw_button(&st, scr, (xd_rect){150, 60, 75, 23}, XD_STATE_DEFAULT, "");
+    uint32_t ring = pixel(ss, 152, 71); /* inside the outline */
+    CHECK((ring & 0xFF) > ((ring >> 16) & 0xFF) + 40);
     xd_theme_luna_start_colors(&st, &sc);
     CHECK(sc.left_bg == 0x26272B && sc.left_text == 0xF0F0F0 && !sc.accent);
     xd_strbuf dark_css = {0};

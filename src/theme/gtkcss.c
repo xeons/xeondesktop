@@ -36,6 +36,9 @@ static hexbuf hex(xd_rgba color) {
 }
 
 #define H(c) (hex(c).s)
+/* One of XP's own control colours (0xRRGGBB) as the theme's Luna variant
+ * draws it: Dark's dark, the others' as they are. */
+#define XP(rgb) (hex(xd_rgba_hex(xd_luna_control_rgb(theme, rgb))).s)
 
 /* The scheme's message font as a CSS font-family list. */
 static void font_rules(const xd_theme *theme, xd_strbuf *out) {
@@ -353,21 +356,25 @@ static void flat_selected_tab(xd_strbuf *buffer, xd_rgba edge, xd_rgba fill, int
 
 /* Luna's selected tab: as above, with XP's orange band (two light rows and
  * a darker one) across the top. */
-static void luna_selected_tab(xd_strbuf *buffer, xd_rgba border, xd_rgba hot) {
+static void luna_selected_tab(const xd_theme *theme, xd_strbuf *buffer, xd_rgba border,
+                              xd_rgba hot) {
     hexbuf border_hex = hex(border);
     hexbuf hot_hex = hex(hot);
     xd_strbuf_appendf(buffer,
                       "notebook > header > tabs > tab:checked {\n"
                       "  margin: 2px 0 -1px 0; padding: 0 8px 5px 8px;\n"
-                      "  border: 1px solid #fdfdfe; border-top-color: #e6a000;\n"
+                      "  border: 1px solid %s; border-top-color: %s;\n"
                       "  border-bottom: none; border-radius: 0;\n"
-                      "  background-image: linear-gradient(#ffffff, #fcfcfe);\n"
-                      "  box-shadow: -2px -2px %s, 2px -2px %s, -2px 0 #e6a000, 2px 0 #e6a000,\n"
-                      "    -2px 1px %s, 2px 1px %s, -1px 1px #fdfdfe, 1px 1px #fdfdfe;\n}\n",
-                      hot_hex.s, hot_hex.s, border_hex.s, border_hex.s);
+                      "  background-image: linear-gradient(%s, %s);\n"
+                      "  box-shadow: -2px -2px %s, 2px -2px %s, -2px 0 %s, 2px 0 %s,\n"
+                      "    -2px 1px %s, 2px 1px %s, -1px 1px %s, 1px 1px %s;\n}\n",
+                      XP(0xFDFDFE), XP(0xE6A000), XP(0xFFFFFF), XP(0xFCFCFE), hot_hex.s, hot_hex.s,
+                      XP(0xE6A000), XP(0xE6A000), border_hex.s, border_hex.s, XP(0xFDFDFE),
+                      XP(0xFDFDFE));
 }
 
-static void modern(const xd_toolkit_colors *toolkit_colors, bool aero, xd_strbuf *buffer) {
+static void modern(const xd_theme *theme, const xd_toolkit_colors *toolkit_colors, bool aero,
+                   xd_strbuf *buffer) {
     hexbuf fb = hex(toolkit_colors->field_border);
     xd_strbuf_appendf(
         buffer,
@@ -379,43 +386,70 @@ static void modern(const xd_toolkit_colors *toolkit_colors, bool aero, xd_strbuf
         "button:active, button:checked {\n  background-image: linear-gradient(%s, %s);\n"
         "  box-shadow: none;\n}\n"
         "button:focus, button.default { box-shadow: inset 0 0 0 2px %s; }\n"
-        "button:disabled { border-color: #c9c7ba; background-image: none;\n"
-        "  background-color: #f5f4ea; }\n"
+        "button:disabled { border-color: %s; background-image: none;\n"
+        "  background-color: %s; }\n"
         "button:disabled label { color: %s; }\n"
         "toolbar button, button.flat {\n  background-image: none;\n"
         "  background-color: transparent;\n  border-color: transparent;\n"
         "  box-shadow: none;\n  padding: 2px 4px;\n}\n"
-        "toolbar button:hover, button.flat:hover {\n  border-color: #cecec3;\n"
-        "  background-image: linear-gradient(#ffffff, #e5e5de);\n  box-shadow: none;\n}\n"
+        "toolbar button:hover, button.flat:hover {\n  border-color: %s;\n"
+        "  background-image: linear-gradient(%s, %s);\n  box-shadow: none;\n}\n"
         "toolbar button:active, toolbar button:checked, button.flat:active,\n"
-        "button.flat:checked { border-color: #9d9d92;\n"
-        "  background-image: linear-gradient(#e5e5de, #f7f7f4); }\n"
-        "toolbar { background-color: %s; padding: 2px;\n  border-bottom: 1px solid #c2bfa5; }\n"
+        "button.flat:checked { border-color: %s;\n"
+        "  background-image: linear-gradient(%s, %s); }\n"
+        "toolbar { background-color: %s; padding: 2px;\n  border-bottom: 1px solid %s; }\n"
         "entry, spinbutton {\n  background-color: %s;\n  color: %s;\n"
         "  border: 1px solid %s;\n  border-radius: 0;\n  box-shadow: none;\n"
         "  padding: 3px 4px;\n  min-height: 0;\n}\n"
-        "entry:disabled { background-color: #ebebe4; }\n"
+        "entry:disabled { background-color: %s; }\n"
         "scrolledwindow.frame, frame > border, .frame {\n  border: 1px solid %s;\n"
         "  border-radius: 0;\n  box-shadow: none;\n}\n"
-        "progressbar trough {\n  background-color: #ffffff;\n  border: 1px solid #686868;\n"
+        "progressbar trough {\n  background-color: %s;\n  border: 1px solid %s;\n"
         "  border-radius: 3px;\n  padding: 2px;\n}\n"
         "progressbar progress {\n  background-color: transparent;\n"
         "  background-image: repeating-linear-gradient(to right, #31c331 0px, #31c331 6px,\n"
         "    transparent 6px, transparent 8px);\n}\n"
         "check, radio {\n  min-width: 13px;\n  min-height: 13px;\n"
-        "  background-image: linear-gradient(135deg, #dcdcd7, #ffffff);\n"
+        "  background-image: linear-gradient(135deg, %s, %s);\n"
         "  border: 1px solid %s;\n  border-radius: 0;\n  box-shadow: none;\n"
         "  color: %s;\n  -gtk-icon-source: none;\n  margin: 0 4px 0 0;\n  padding: 0;\n}\n"
         "radio { border-radius: 50%%; }\n"
         "check:hover, radio:hover { box-shadow: inset 0 0 0 2px %s; }\n"
-        "check:disabled, radio:disabled { border-color: #cac8bb; color: #cac8bb; }\n",
-        H(toolkit_colors->button_top), H(toolkit_colors->button_bottom),
-        H(toolkit_colors->button_bottom), H(toolkit_colors->fg), H(toolkit_colors->button_border),
-        H(toolkit_colors->button_hot), H(toolkit_colors->button_bottom),
-        H(toolkit_colors->button_top), H(toolkit_colors->button_focus), H(toolkit_colors->disabled),
-        H(toolkit_colors->bg), H(toolkit_colors->base), H(toolkit_colors->text), fb.s, fb.s,
-        H(toolkit_colors->check_border), H(toolkit_colors->check_mark),
-        H(toolkit_colors->button_hot));
+        "check:disabled, radio:disabled { border-color: %s; color: %s; }\n",
+        H(toolkit_colors->button_top),
+        H(toolkit_colors->button_bottom),
+        H(toolkit_colors->button_bottom),
+        H(toolkit_colors->fg),
+        H(toolkit_colors->button_border),
+        H(toolkit_colors->button_hot),
+        H(toolkit_colors->button_bottom),
+        H(toolkit_colors->button_top),
+        H(toolkit_colors->button_focus),
+        XP(0xC9C7BA),
+        XP(0xF5F4EA),
+        H(toolkit_colors->disabled),
+        XP(0xCECEC3),
+        XP(0xFFFFFF),
+        XP(0xE5E5DE),
+        XP(0x9D9D92),
+        XP(0xE5E5DE),
+        XP(0xF7F7F4),
+        H(toolkit_colors->bg),
+        XP(0xC2BFA5),
+        H(toolkit_colors->base),
+        H(toolkit_colors->text),
+        fb.s,
+        XP(0xEBEBE4),
+        fb.s,
+        XP(0xFFFFFF),
+        XP(0x686868),
+        XP(0xDCDCD7),
+        XP(0xFFFFFF),
+        H(toolkit_colors->check_border),
+        H(toolkit_colors->check_mark),
+        H(toolkit_colors->button_hot),
+        XP(0xCAC8BB),
+        XP(0xCAC8BB));
 
     xd_strbuf_appendf(
         buffer,
@@ -435,8 +469,8 @@ static void modern(const xd_toolkit_colors *toolkit_colors, bool aero, xd_strbuf
         "scrollbar trough { background-color: %s; border: none; }\n"
         "scrollbar slider, scrollbar button {\n  min-width: 15px;\n  min-height: 15px;\n"
         "  background-image: linear-gradient(to right, %s, %s);\n"
-        "  border: 1px solid #ffffff;\n  border-radius: 3px;\n  margin: 0;\n"
-        "  padding: 0;\n  color: #4d6185;\n  box-shadow: 0 0 0 1px %s;\n}\n"
+        "  border: 1px solid %s;\n  border-radius: 3px;\n  margin: 0;\n"
+        "  padding: 0;\n  color: %s;\n  box-shadow: 0 0 0 1px %s;\n}\n"
         "scrollbar.vertical button.up { -gtk-icon-source: -gtk-icontheme(\"pan-up-symbolic\"); }\n"
         "scrollbar.vertical button.down { -gtk-icon-source: "
         "-gtk-icontheme(\"pan-down-symbolic\"); }\n"
@@ -446,59 +480,99 @@ static void modern(const xd_toolkit_colors *toolkit_colors, bool aero, xd_strbuf
         "-gtk-icontheme(\"pan-end-symbolic\"); }\n"
         "notebook > header { background-color: %s; border: none; }\n"
         "notebook > header > tabs > tab {\n  padding: 2px 8px;\n"
-        "  background-image: linear-gradient(#ffffff, #ecebe6);\n"
+        "  background-image: linear-gradient(%s, %s);\n"
         "  border: 1px solid %s;\n  border-bottom: none;\n  border-radius: 3px 3px 0 0;\n"
         "  margin-top: 2px;\n}\n"
         "notebook > header > tabs > tab:hover { box-shadow: inset 0 2px %s; }\n"
-        "notebook > stack:not(:only-child) { background-color: #fcfcfe;\n"
+        "notebook > stack:not(:only-child) { background-color: %s;\n"
         "  border: 1px solid %s; }\n"
-        "treeview.view header button {\n  background-image: linear-gradient(#ffffff, #ebeadb);\n"
-        "  border: none;\n  border-right: 1px solid #c7c5b2;\n"
-        "  border-bottom: 3px solid #e2decd;\n  border-radius: 0;\n  padding: 1px 6px;\n}\n"
+        "treeview.view header button {\n  background-image: linear-gradient(%s, %s);\n"
+        "  border: none;\n  border-right: 1px solid %s;\n"
+        "  border-bottom: 3px solid %s;\n  border-radius: 0;\n  padding: 1px 6px;\n}\n"
         "paned > separator { background-color: %s; min-width: 4px; min-height: 4px;\n"
         "  background-image: none; }\n"
-        "separator { background-color: #aca899; min-width: 1px; min-height: 1px; }\n"
-        "scale trough { background-color: #ffffff; border: 1px solid #9d9c99;\n"
+        "separator { background-color: %s; min-width: 1px; min-height: 1px; }\n"
+        "scale trough { background-color: %s; border: 1px solid %s;\n"
         "  border-radius: 2px; min-height: 4px; min-width: 4px; }\n"
         "scale slider { min-width: 11px; min-height: 21px;\n"
-        "  background-image: linear-gradient(#ffffff, #e5e5de);\n"
+        "  background-image: linear-gradient(%s, %s);\n"
         "  border: 1px solid %s; border-radius: 2px; margin: -9px 0; }\n"
         "scale highlight { background: none; }\n",
-        H(toolkit_colors->menubar_bg), H(toolkit_colors->menu_hot), H(toolkit_colors->menu_hot_fg),
-        H(toolkit_colors->menu_bg), H(toolkit_colors->menu_fg), H(toolkit_colors->menu_border),
-        H(toolkit_colors->menu_hot), H(toolkit_colors->menu_hot_fg), H(toolkit_colors->disabled),
-        H(toolkit_colors->menu_border), H(toolkit_colors->track), H(toolkit_colors->track),
-        H(toolkit_colors->thumb_top), H(toolkit_colors->thumb_bottom), H(toolkit_colors->track),
-        H(toolkit_colors->bg), H(toolkit_colors->tab_border), H(toolkit_colors->tab_hot),
-        H(toolkit_colors->tab_border), H(toolkit_colors->bg), H(toolkit_colors->button_border));
+        H(toolkit_colors->menubar_bg),
+        H(toolkit_colors->menu_hot),
+        H(toolkit_colors->menu_hot_fg),
+        H(toolkit_colors->menu_bg),
+        H(toolkit_colors->menu_fg),
+        H(toolkit_colors->menu_border),
+        H(toolkit_colors->menu_hot),
+        H(toolkit_colors->menu_hot_fg),
+        H(toolkit_colors->disabled),
+        H(toolkit_colors->menu_border),
+        H(toolkit_colors->track),
+        H(toolkit_colors->track),
+        H(toolkit_colors->thumb_top),
+        H(toolkit_colors->thumb_bottom),
+        XP(0xFFFFFF),
+        XP(0x4D6185),
+        H(toolkit_colors->track),
+        H(toolkit_colors->bg),
+        XP(0xFFFFFF),
+        XP(0xECEBE6),
+        H(toolkit_colors->tab_border),
+        H(toolkit_colors->tab_hot),
+        XP(0xFCFCFE),
+        H(toolkit_colors->tab_border),
+        XP(0xFFFFFF),
+        XP(0xEBEADB),
+        XP(0xC7C5B2),
+        XP(0xE2DECD),
+        H(toolkit_colors->bg),
+        XP(0xACA899),
+        XP(0xFFFFFF),
+        XP(0x9D9C99),
+        XP(0xFFFFFF),
+        XP(0xE5E5DE),
+        H(toolkit_colors->button_border));
 
     xd_strbuf_appendf(
         buffer,
         "notebook > header { border: none; border-bottom: 1px solid %s; padding: 0 2px; }\n"
         "notebook > header > tabs > tab { margin: 2px 0 0 0; min-height: 0; }\n"
         "notebook > stack:not(:only-child) { border: 1px solid %s; border-top: none; }\n"
-        "frame > border { border: 1px solid #d0d0bf; border-radius: 3px; box-shadow: none; }\n"
+        "frame > border { border: 1px solid %s; border-radius: 3px; box-shadow: none; }\n"
         "frame { padding-left: 6px; }\n"
         "frame > border { margin-left: -6px; }\n"
         "frame > border + label { margin: 0; padding: 0 2px; color: %s; }\n"
         "frame.xd-sunken { padding-left: 0; }\n"
         "frame.xd-sunken > border { margin-left: 0; border: 1px solid; border-radius: 0;\n"
-        "  border-color: #aca899 #ffffff #ffffff #aca899; }\n"
+        "  border-color: %s %s %s %s; }\n"
         "combobox button.combo {\n  background-image: none; background-color: %s; color: %s;\n"
         "  border: 1px solid %s; border-radius: 0; box-shadow: none; padding: 0 0 0 3px;\n}\n"
         "combobox button.combo arrow {\n  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");\n"
         "  min-width: 13px; min-height: 13px; margin: 1px; padding: 1px 1px;\n"
-        "  background-image: linear-gradient(%s, %s); color: #4d6185;\n"
-        "  border: 1px solid #ffffff; border-radius: 2px;\n}\n",
-        H(toolkit_colors->tab_border), H(toolkit_colors->tab_border),
-        H(toolkit_colors->selected_bg), H(toolkit_colors->base), H(toolkit_colors->text),
-        H(toolkit_colors->field_border), H(toolkit_colors->thumb_top),
-        H(toolkit_colors->thumb_bottom));
+        "  background-image: linear-gradient(%s, %s); color: %s;\n"
+        "  border: 1px solid %s; border-radius: 2px;\n}\n",
+        H(toolkit_colors->tab_border),
+        H(toolkit_colors->tab_border),
+        XP(0xD0D0BF),
+        H(toolkit_colors->selected_bg),
+        XP(0xACA899),
+        XP(0xFFFFFF),
+        XP(0xFFFFFF),
+        XP(0xACA899),
+        H(toolkit_colors->base),
+        H(toolkit_colors->text),
+        H(toolkit_colors->field_border),
+        H(toolkit_colors->thumb_top),
+        H(toolkit_colors->thumb_bottom),
+        XP(0x4D6185),
+        XP(0xFFFFFF));
+
     /* Windows 7's selected tab is plain white; XP's has the orange band. */
     if (aero)
         flat_selected_tab(buffer, toolkit_colors->tab_border, xd_rgba_hex(0xFCFCFE), 5);
     else
-        luna_selected_tab(buffer, toolkit_colors->tab_border, toolkit_colors->tab_hot);
+        luna_selected_tab(theme, buffer, toolkit_colors->tab_border, toolkit_colors->tab_hot);
 }
 
 const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT] = {
@@ -884,7 +958,7 @@ void xd_theme_gtk_css(const xd_theme *theme, xd_strbuf *out) {
     } else if (theme->style == XD_STYLE_WHISTLER)
         whistler(out);
     else
-        modern(&toolkit_colors, theme->style == XD_STYLE_AERO, out);
+        modern(theme, &toolkit_colors, theme->style == XD_STYLE_AERO, out);
     if (!toolkit_colors.classic)
         xp_buttons(&toolkit_colors, out);
     /* A slider's tick marks: Windows' 1 px lines, 4 px long, in the
