@@ -82,7 +82,7 @@ typedef struct xd_appwiz_key {
 
 /* Name A-Z; the others largest, most used or most recent first, unknowns
  * last, ties by name. */
-int xd_appwiz_compare(const xd_appwiz_key *a, const xd_appwiz_key *b, xd_appwiz_sort sort);
+int xd_appwiz_compare(const xd_appwiz_key *left, const xd_appwiz_key *right, xd_appwiz_sort sort);
 
 /* A PackageKit package id ("name;version;arch;data"), split with
  * PackageKit's own pk_package_id_split. `repo` is the software source:

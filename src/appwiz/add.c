@@ -24,14 +24,14 @@ typedef struct result {
 } result;
 
 static void result_free(gpointer data) {
-    result *r = data;
-    g_free(r->name);
-    g_free(r->summary);
-    g_free(r->package_id);
-    g_free(r->installation);
-    g_free(r->remote);
-    g_free(r->ref);
-    g_free(r);
+    result *result_entry = data;
+    g_free(result_entry->name);
+    g_free(result_entry->summary);
+    g_free(result_entry->package_id);
+    g_free(result_entry->installation);
+    g_free(result_entry->remote);
+    g_free(result_entry->ref);
+    g_free(result_entry);
 }
 
 /* What's being searched for, so it can be searched again after an
@@ -41,109 +41,113 @@ static PkGroupEnum last_group;
 
 /* ---- results ------------------------------------------------------------------ */
 
-static void show_installed(result *r) {
-    gtk_widget_set_visible(r->button, !r->installed);
-    gtk_widget_set_visible(r->done, r->installed);
+static void show_installed(result *result_entry) {
+    gtk_widget_set_visible(result_entry->button, !result_entry->installed);
+    gtk_widget_set_visible(result_entry->done, result_entry->installed);
 }
 
-static void run_search(appwiz *w);
+static void run_search(appwiz *state);
 
-static void after_install(appwiz *w, bool ok, [[maybe_unused]] gpointer data) {
+static void after_install(appwiz *state, bool ok, [[maybe_unused]] gpointer data) {
     if (!ok)
         return;
-    xd_appwiz_reload(w);
-    run_search(w);
+    xd_appwiz_reload(state);
+    run_search(state);
 }
 
-static void on_install(GtkButton *b, gpointer data) {
-    appwiz *w = data;
-    result *r = g_object_get_data(G_OBJECT(b), "result");
-    if (r->flatpak)
-        xd_appwiz_install_flatpak(w, r->name, r->installation, r->remote, r->ref, after_install,
-                                  nullptr);
+static void on_install(GtkButton *button, gpointer data) {
+    appwiz *state = data;
+    result *result_entry = g_object_get_data(G_OBJECT(button), "result");
+    if (result_entry->flatpak)
+        xd_appwiz_install_flatpak(state, result_entry->name, result_entry->installation,
+                                  result_entry->remote, result_entry->ref, after_install, nullptr);
     else
-        xd_appwiz_install_package(w, r->name, r->package_id, after_install, nullptr);
+        xd_appwiz_install_package(state, result_entry->name, result_entry->package_id,
+                                  after_install, nullptr);
 }
 
-static int sort_results(GtkListBoxRow *a, GtkListBoxRow *b, [[maybe_unused]] gpointer data) {
-    result *x = g_object_get_data(G_OBJECT(a), "result");
-    result *y = g_object_get_data(G_OBJECT(b), "result");
-    if (x == nullptr || y == nullptr)
+static int sort_results(GtkListBoxRow *left_row, GtkListBoxRow *right_row,
+                        [[maybe_unused]] gpointer data) {
+    result *left = g_object_get_data(G_OBJECT(left_row), "result");
+    result *right = g_object_get_data(G_OBJECT(right_row), "result");
+    if (left == nullptr || right == nullptr)
         return 0;
     /* What was typed exactly comes first. */
-    const char *q = last_query != nullptr ? last_query : "";
-    bool ex = g_ascii_strcasecmp(x->name, q) == 0, ey = g_ascii_strcasecmp(y->name, q) == 0;
+    const char *query = last_query != nullptr ? last_query : "";
+    bool ex = g_ascii_strcasecmp(left->name, query) == 0,
+         ey = g_ascii_strcasecmp(right->name, query) == 0;
     if (ex != ey)
         return ex ? -1 : 1;
-    return g_ascii_strcasecmp(x->name, y->name);
+    return g_ascii_strcasecmp(left->name, right->name);
 }
 
-static void set_results_status(appwiz *w) {
+static void set_results_status(appwiz *state) {
     const char *text = nullptr;
     char *owned = nullptr;
-    if (w->searching > 0)
+    if (state->searching > 0)
         text = "Searching...";
-    else if (w->result_count >= MAX_RESULTS)
+    else if (state->result_count >= MAX_RESULTS)
         text = owned = g_strdup_printf("Only the first %d programs are shown. Type more of the "
                                        "name to find the one you want.",
                                        MAX_RESULTS);
-    else if (w->result_count == 0 && (last_query != nullptr || last_group != PK_GROUP_ENUM_UNKNOWN))
+    else if (state->result_count == 0 &&
+             (last_query != nullptr || last_group != PK_GROUP_ENUM_UNKNOWN))
         text = "No programs were found.";
-    gtk_label_set_text(GTK_LABEL(w->results_status), text != nullptr ? text : "");
-    gtk_widget_set_visible(w->results_status, text != nullptr);
+    gtk_label_set_text(GTK_LABEL(state->results_status), text != nullptr ? text : "");
+    gtk_widget_set_visible(state->results_status, text != nullptr);
     g_free(owned);
 }
 
-static void add_result(appwiz *w, result *r) {
+static void add_result(appwiz *state, result *result_entry) {
     /* PackageKit lists an installed package and the one in the sources. */
-    result *old = g_hash_table_lookup(w->result_rows, r->name);
+    result *old = g_hash_table_lookup(state->result_rows, result_entry->name);
     if (old != nullptr) {
-        old->installed = old->installed || r->installed;
+        old->installed = old->installed || result_entry->installed;
         show_installed(old);
-        result_free(r);
+        result_free(result_entry);
         return;
     }
-    if (w->result_count >= MAX_RESULTS) {
-        result_free(r);
+    if (state->result_count >= MAX_RESULTS) {
+        result_free(result_entry);
         return;
     }
-    w->result_count++;
+    state->result_count++;
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
     gtk_container_set_border_width(GTK_CONTAINER(grid), 4);
-    GtkWidget *icon = gtk_image_new_from_icon_name(r->flatpak ? "application-x-executable"
-                                                              : "package-x-generic",
-                                                   GTK_ICON_SIZE_DND);
+    GtkWidget *icon = gtk_image_new_from_icon_name(
+        result_entry->flatpak ? "application-x-executable" : "package-x-generic",
+        GTK_ICON_SIZE_DND);
     gtk_image_set_pixel_size(GTK_IMAGE(icon), 32);
     gtk_grid_attach(GTK_GRID(grid), icon, 0, 0, 1, 2);
-    char *markup = g_markup_printf_escaped("<b>%s</b>", r->name);
+    char *markup = g_markup_printf_escaped("<b>%s</b>", result_entry->name);
     GtkWidget *name = xd_appwiz_label("", nullptr);
     gtk_label_set_markup(GTK_LABEL(name), markup);
     g_free(markup);
     gtk_widget_set_hexpand(name, TRUE);
     gtk_grid_attach(GTK_GRID(grid), name, 1, 0, 1, 1);
-    GtkWidget *summary = xd_appwiz_label(r->summary, "xd-arp-dim");
+    GtkWidget *summary = xd_appwiz_label(result_entry->summary, "xd-arp-dim");
     gtk_label_set_line_wrap(GTK_LABEL(summary), FALSE);
     gtk_label_set_ellipsize(GTK_LABEL(summary), PANGO_ELLIPSIZE_END);
     gtk_grid_attach(GTK_GRID(grid), summary, 1, 1, 1, 1);
-    r->button = gtk_button_new_with_mnemonic("_Install");
-    gtk_widget_set_size_request(r->button, 80, -1);
-    gtk_widget_set_valign(r->button, GTK_ALIGN_CENTER);
-    g_object_set_data(G_OBJECT(r->button), "result", r);
-    g_signal_connect(r->button, "clicked", G_CALLBACK(on_install), w);
-    r->done = gtk_label_new("Installed");
-    xd_appwiz_add_class(r->done, "xd-arp-dim");
-    gtk_widget_set_no_show_all(r->button, TRUE);
-    gtk_widget_set_no_show_all(r->done, TRUE);
-    gtk_grid_attach(GTK_GRID(grid), r->button, 2, 0, 1, 2);
-    gtk_grid_attach(GTK_GRID(grid), r->done, 3, 0, 1, 2);
+    result_entry->button = gtk_button_new_with_mnemonic("_Install");
+    gtk_widget_set_size_request(result_entry->button, 80, -1);
+    gtk_widget_set_valign(result_entry->button, GTK_ALIGN_CENTER);
+    g_object_set_data(G_OBJECT(result_entry->button), "result", result_entry);
+    g_signal_connect(result_entry->button, "clicked", G_CALLBACK(on_install), state);
+    result_entry->done = gtk_label_new("Installed");
+    xd_appwiz_add_class(result_entry->done, "xd-arp-dim");
+    gtk_widget_set_no_show_all(result_entry->button, TRUE);
+    gtk_widget_set_no_show_all(result_entry->done, TRUE);
+    gtk_grid_attach(GTK_GRID(grid), result_entry->button, 2, 0, 1, 2);
+    gtk_grid_attach(GTK_GRID(grid), result_entry->done, 3, 0, 1, 2);
     GtkWidget *row = gtk_list_box_row_new();
     gtk_container_add(GTK_CONTAINER(row), grid);
-    g_object_set_data_full(G_OBJECT(row), "result", r, result_free);
-    g_hash_table_insert(w->result_rows, g_strdup(r->name), r);
-    gtk_container_add(GTK_CONTAINER(w->results), row);
+    g_object_set_data_full(G_OBJECT(row), "result", result_entry, result_free);
+    g_hash_table_insert(state->result_rows, g_strdup(result_entry->name), result_entry);
+    gtk_container_add(GTK_CONTAINER(state->results), row);
     gtk_widget_show_all(row);
-    show_installed(r);
+    show_installed(result_entry);
 }
 
 /* ---- PackageKit ----------------------------------------------------------------- */
@@ -153,58 +157,58 @@ typedef struct search {
     unsigned generation;
 } search;
 
-static search *new_search(appwiz *w) {
-    search *s = g_new0(search, 1);
-    *s = (search){w, w->search_generation};
-    w->searching++;
-    return s;
+static search *new_search(appwiz *state) {
+    search *pending_search = g_new0(search, 1);
+    *pending_search = (search){state, state->search_generation};
+    state->searching++;
+    return pending_search;
 }
 
 /* Whether the search is still the one shown. */
-static bool search_done(search *s) {
-    appwiz *w = s->w;
-    bool current = s->generation == w->search_generation;
-    g_free(s);
+static bool search_done(search *pending_search) {
+    appwiz *state = pending_search->w;
+    bool current = pending_search->generation == state->search_generation;
+    g_free(pending_search);
     if (current) {
-        w->searching--;
-        set_results_status(w);
+        state->searching--;
+        set_results_status(state);
     }
     return current;
 }
 
 static void on_pk_found(GObject *src, GAsyncResult *res, gpointer data) {
-    search *s = data;
-    appwiz *w = s->w;
+    search *pending_search = data;
+    appwiz *state = pending_search->w;
     GError *error = nullptr;
-    PkResults *r = pk_client_generic_finish(PK_CLIENT(src), res, &error);
+    PkResults *results = pk_client_generic_finish(PK_CLIENT(src), res, &error);
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
         g_error_free(error);
-        g_free(s);
+        g_free(pending_search);
         return;
     }
-    unsigned generation = s->generation;
-    bool current = generation == w->search_generation;
-    if (current && r != nullptr) {
-        GPtrArray *pkgs = pk_results_get_package_array(r);
+    unsigned generation = pending_search->generation;
+    bool current = generation == state->search_generation;
+    if (current && results != nullptr) {
+        GPtrArray *pkgs = pk_results_get_package_array(results);
         for (guint i = 0; i < pkgs->len; i++) {
-            PkPackage *p = g_ptr_array_index(pkgs, i);
-            result *x = g_new0(result, 1);
-            x->name = g_strdup(pk_package_get_name(p));
-            x->summary = g_strdup(pk_package_get_summary(p));
-            x->package_id = g_strdup(pk_package_get_id(p));
-            x->installed = pk_package_get_info(p) == PK_INFO_ENUM_INSTALLED ||
-                           xd_appwiz_package_installed(x->package_id);
-            add_result(w, x);
+            PkPackage *package = g_ptr_array_index(pkgs, i);
+            result *package_result = g_new0(result, 1);
+            package_result->name = g_strdup(pk_package_get_name(package));
+            package_result->summary = g_strdup(pk_package_get_summary(package));
+            package_result->package_id = g_strdup(pk_package_get_id(package));
+            package_result->installed = pk_package_get_info(package) == PK_INFO_ENUM_INSTALLED ||
+                                        xd_appwiz_package_installed(package_result->package_id);
+            add_result(state, package_result);
         }
         g_ptr_array_unref(pkgs);
     } else if (current && error != nullptr) {
         g_printerr("xd-appwiz: PackageKit search: %s\n", error->message);
-        gtk_label_set_text(GTK_LABEL(w->results_title),
+        gtk_label_set_text(GTK_LABEL(state->results_title),
                            "The software sources can't be searched: PackageKit isn't available.");
     }
     g_clear_error(&error);
-    g_clear_object(&r);
-    search_done(s);
+    g_clear_object(&results);
+    search_done(pending_search);
 }
 
 /* ---- Flatpak ---------------------------------------------------------------------- */
@@ -214,9 +218,9 @@ typedef struct fp_query {
 } fp_query;
 
 static void fp_query_free(gpointer data) {
-    fp_query *q = data;
-    g_free(q->text);
-    g_free(q);
+    fp_query *query = data;
+    g_free(query->text);
+    g_free(query);
 }
 
 static GHashTable *installed_apps(FlatpakInstallation *inst, GCancellable *cancel) {
@@ -254,17 +258,17 @@ static void search_remote(FlatpakInstallation *inst, FlatpakRemote *remote, cons
         g_free(folded);
         if (!match)
             continue;
-        result *r = g_new0(result, 1);
-        r->flatpak = true;
-        r->name = g_strdup(flatpak_ref_get_name(ref));
+        result *result_entry = g_new0(result, 1);
+        result_entry->flatpak = true;
+        result_entry->name = g_strdup(flatpak_ref_get_name(ref));
         char *size = xd_appwiz_format_size(flatpak_remote_ref_get_installed_size(rr));
-        r->summary = g_strdup_printf("Flatpak from %s, %s", name, size);
+        result_entry->summary = g_strdup_printf("Flatpak from %s, %s", name, size);
         g_free(size);
-        r->installation = g_strdup(flatpak_installation_get_id(inst));
-        r->remote = g_strdup(name);
-        r->ref = flatpak_ref_format_ref(ref);
-        r->installed = g_hash_table_contains(installed, r->name);
-        g_ptr_array_add(out, r);
+        result_entry->installation = g_strdup(flatpak_installation_get_id(inst));
+        result_entry->remote = g_strdup(name);
+        result_entry->ref = flatpak_ref_format_ref(ref);
+        result_entry->installed = g_hash_table_contains(installed, result_entry->name);
+        g_ptr_array_add(out, result_entry);
     }
     if (refs != nullptr)
         g_ptr_array_unref(refs);
@@ -272,7 +276,7 @@ static void search_remote(FlatpakInstallation *inst, FlatpakRemote *remote, cons
 
 static void fp_search_thread(GTask *task, [[maybe_unused]] gpointer source, gpointer data,
                              GCancellable *cancel) {
-    fp_query *q = data;
+    fp_query *query = data;
     GPtrArray *out = g_ptr_array_new_with_free_func(result_free);
     GPtrArray *all = xd_appwiz_installations(cancel);
     for (guint i = 0; i < all->len; i++) {
@@ -282,7 +286,7 @@ static void fp_search_thread(GTask *task, [[maybe_unused]] gpointer source, gpoi
         for (guint j = 0; remotes != nullptr && j < remotes->len; j++) {
             FlatpakRemote *remote = g_ptr_array_index(remotes, j);
             if (!flatpak_remote_get_disabled(remote) && !flatpak_remote_get_noenumerate(remote))
-                search_remote(inst, remote, q->text, installed, out, cancel);
+                search_remote(inst, remote, query->text, installed, out, cancel);
         }
         g_hash_table_unref(installed);
         if (remotes != nullptr)
@@ -293,18 +297,18 @@ static void fp_search_thread(GTask *task, [[maybe_unused]] gpointer source, gpoi
 }
 
 static void on_fp_found([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
-    search *s = data;
-    appwiz *w = s->w;
+    search *pending_search = data;
+    appwiz *state = pending_search->w;
     GPtrArray *hits = g_task_propagate_pointer(G_TASK(res), nullptr);
-    if (hits != nullptr && s->generation == w->search_generation) {
+    if (hits != nullptr && pending_search->generation == state->search_generation) {
         /* The rows take the results. */
         g_ptr_array_set_free_func(hits, nullptr);
         for (guint i = 0; i < hits->len; i++)
-            add_result(w, g_ptr_array_index(hits, i));
+            add_result(state, g_ptr_array_index(hits, i));
     }
     if (hits != nullptr)
         g_ptr_array_unref(hits);
-    search_done(s);
+    search_done(pending_search);
 }
 
 /* ---- searching ------------------------------------------------------------------------- */
@@ -349,82 +353,82 @@ static const struct {
     {PK_GROUP_ENUM_VENDOR, "Vendor", "package-x-generic"},
 };
 
-static const char *group_name(PkGroupEnum g) {
+static const char *group_name(PkGroupEnum pk_group) {
     for (size_t i = 0; i < XD_ARRAY_LEN(groups); i++)
-        if (groups[i].group == g)
+        if (groups[i].group == pk_group)
             return groups[i].name;
-    return pk_group_enum_to_string(g);
+    return pk_group_enum_to_string(pk_group);
 }
 
-static void clear_results(appwiz *w) {
-    w->search_generation++;
-    w->searching = 0;
-    w->result_count = 0;
-    g_hash_table_remove_all(w->result_rows);
-    GList *kids = gtk_container_get_children(GTK_CONTAINER(w->results));
-    for (GList *k = kids; k != nullptr; k = k->next)
-        gtk_widget_destroy(k->data);
+static void clear_results(appwiz *state) {
+    state->search_generation++;
+    state->searching = 0;
+    state->result_count = 0;
+    g_hash_table_remove_all(state->result_rows);
+    GList *kids = gtk_container_get_children(GTK_CONTAINER(state->results));
+    for (GList *child = kids; child != nullptr; child = child->next)
+        gtk_widget_destroy(child->data);
     g_list_free(kids);
 }
 
-static void run_search(appwiz *w) {
-    clear_results(w);
+static void run_search(appwiz *state) {
+    clear_results(state);
     char *title;
     if (last_group != PK_GROUP_ENUM_UNKNOWN) {
         title = g_strdup_printf("Programs in %s:", group_name(last_group));
         const char *group = pk_group_enum_to_string(last_group);
         char *values[] = {(char *)(uintptr_t)group, nullptr};
-        pk_client_search_groups_async(w->pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), values,
-                                      w->quit, nullptr, nullptr, on_pk_found, new_search(w));
+        pk_client_search_groups_async(state->pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), values,
+                                      state->quit, nullptr, nullptr, on_pk_found,
+                                      new_search(state));
     } else if (last_query != nullptr) {
         title = g_strdup_printf("Programs matching \"%s\":", last_query);
         char *values[] = {last_query, nullptr};
-        pk_client_search_names_async(w->pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), values,
-                                     w->quit, nullptr, nullptr, on_pk_found, new_search(w));
-        fp_query *q = g_new0(fp_query, 1);
-        q->text = g_utf8_casefold(last_query, -1);
-        GTask *task = g_task_new(nullptr, w->quit, on_fp_found, new_search(w));
-        g_task_set_task_data(task, q, fp_query_free);
+        pk_client_search_names_async(state->pk, pk_bitfield_value(PK_FILTER_ENUM_NONE), values,
+                                     state->quit, nullptr, nullptr, on_pk_found, new_search(state));
+        fp_query *query = g_new0(fp_query, 1);
+        query->text = g_utf8_casefold(last_query, -1);
+        GTask *task = g_task_new(nullptr, state->quit, on_fp_found, new_search(state));
+        g_task_set_task_data(task, query, fp_query_free);
         g_task_run_in_thread(task, fp_search_thread);
         g_object_unref(task);
     } else {
         return;
     }
-    gtk_label_set_text(GTK_LABEL(w->results_title), title);
-    gtk_widget_show(w->results_title);
+    gtk_label_set_text(GTK_LABEL(state->results_title), title);
+    gtk_widget_show(state->results_title);
     g_free(title);
-    set_results_status(w);
+    set_results_status(state);
 }
 
 static void on_search([[maybe_unused]] GtkWidget *widget, gpointer data) {
-    appwiz *w = data;
-    char *q = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(w->search))));
-    if (q[0] == '\0') {
-        g_free(q);
+    appwiz *state = data;
+    char *query = g_strstrip(g_strdup(gtk_entry_get_text(GTK_ENTRY(state->search))));
+    if (query[0] == '\0') {
+        g_free(query);
         return;
     }
     g_free(last_query);
-    last_query = q;
+    last_query = query;
     last_group = PK_GROUP_ENUM_UNKNOWN;
-    run_search(w);
+    run_search(state);
 }
 
 /* ---- package files ---------------------------------------------------------------------- */
 
-static void after_file(appwiz *w, bool ok, [[maybe_unused]] gpointer data) {
+static void after_file(appwiz *state, bool ok, [[maybe_unused]] gpointer data) {
     if (ok) {
-        xd_appwiz_reload(w);
-        xd_message_box(GTK_WINDOW(w->window), XD_APPWIZ_TITLE, XD_MB_INFO, XD_MB_OK, FALSE,
+        xd_appwiz_reload(state);
+        xd_message_box(GTK_WINDOW(state->window), XD_APPWIZ_TITLE, XD_MB_INFO, XD_MB_OK, FALSE,
                        "The program was installed. You'll find it on the Start menu.");
     }
 }
 
-static void on_browse([[maybe_unused]] GtkButton *b, gpointer data) {
-    appwiz *w = data;
-    GtkWidget *d = gtk_file_chooser_dialog_new("Install a Program", GTK_WINDOW(w->window),
-                                               GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
-                                               GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT,
-                                               nullptr);
+static void on_browse([[maybe_unused]] GtkButton *button, gpointer data) {
+    appwiz *state = data;
+    GtkWidget *file_chooser = gtk_file_chooser_dialog_new(
+        "Install a Program", GTK_WINDOW(state->window), GTK_FILE_CHOOSER_ACTION_OPEN, "_Cancel",
+        GTK_RESPONSE_CANCEL, "_Open", GTK_RESPONSE_ACCEPT, nullptr);
     GtkFileFilter *programs = gtk_file_filter_new();
     gtk_file_filter_set_name(programs, "Programs (packages and Flatpaks)");
     static const char *const patterns[] = {"*.pkg.tar.zst", "*.pkg.tar.xz", "*.deb", "*.rpm",
@@ -433,24 +437,24 @@ static void on_browse([[maybe_unused]] GtkButton *b, gpointer data) {
         gtk_file_filter_add_pattern(programs, patterns[i]);
     /* And whatever else PackageKit's backend says it installs. */
     char **types = nullptr;
-    g_object_get(w->control, "mime-types", &types, nullptr);
-    for (char **t = types; t != nullptr && *t != nullptr; t++)
-        gtk_file_filter_add_mime_type(programs, *t);
+    g_object_get(state->control, "mime-types", &types, nullptr);
+    for (char **mime_type = types; mime_type != nullptr && *mime_type != nullptr; mime_type++)
+        gtk_file_filter_add_mime_type(programs, *mime_type);
     g_strfreev(types);
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(d), programs);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(file_chooser), programs);
     GtkFileFilter *any = gtk_file_filter_new();
     gtk_file_filter_set_name(any, "All Files");
     gtk_file_filter_add_pattern(any, "*");
-    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(d), any);
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(file_chooser), any);
     const char *downloads = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
     if (downloads != nullptr)
-        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(d), downloads);
-    char *file = gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_ACCEPT
-                     ? gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(d))
+        gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(file_chooser), downloads);
+    char *file = gtk_dialog_run(GTK_DIALOG(file_chooser)) == GTK_RESPONSE_ACCEPT
+                     ? gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(file_chooser))
                      : nullptr;
-    gtk_widget_destroy(d);
+    gtk_widget_destroy(file_chooser);
     if (file != nullptr)
-        xd_appwiz_install_file(w, file, after_file, nullptr);
+        xd_appwiz_install_file(state, file, after_file, nullptr);
     g_free(file);
 }
 
@@ -472,8 +476,8 @@ static GtkWidget *section(const char *icon, const char *title, const char *text,
     return row;
 }
 
-GtkWidget *xd_appwiz_add_page(appwiz *w) {
-    w->result_rows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+GtkWidget *xd_appwiz_add_page(appwiz *state) {
+    state->result_rows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(box), 12);
     GtkWidget *col;
@@ -484,7 +488,7 @@ GtkWidget *xd_appwiz_add_page(appwiz *w) {
     GtkWidget *browse = gtk_button_new_with_mnemonic("_Browse...");
     gtk_widget_set_size_request(browse, 90, -1);
     gtk_widget_set_valign(browse, GTK_ALIGN_END);
-    g_signal_connect(browse, "clicked", G_CALLBACK(on_browse), w);
+    g_signal_connect(browse, "clicked", G_CALLBACK(on_browse), state);
     gtk_box_pack_end(GTK_BOX(file), browse, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), file, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE,
@@ -495,48 +499,48 @@ GtkWidget *xd_appwiz_add_page(appwiz *w) {
                                  "remotes for new programs and features.",
                                  &col);
     GtkWidget *find = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    w->search = gtk_search_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(w->search), "Program name");
-    gtk_widget_set_hexpand(w->search, TRUE);
-    g_signal_connect(w->search, "activate", G_CALLBACK(on_search), w);
-    gtk_box_pack_start(GTK_BOX(find), w->search, TRUE, TRUE, 0);
+    state->search = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(state->search), "Program name");
+    gtk_widget_set_hexpand(state->search, TRUE);
+    g_signal_connect(state->search, "activate", G_CALLBACK(on_search), state);
+    gtk_box_pack_start(GTK_BOX(find), state->search, TRUE, TRUE, 0);
     GtkWidget *go = gtk_button_new_with_mnemonic("_Search");
     gtk_widget_set_size_request(go, 90, -1);
-    g_signal_connect(go, "clicked", G_CALLBACK(on_search), w);
+    g_signal_connect(go, "clicked", G_CALLBACK(on_search), state);
     gtk_box_pack_start(GTK_BOX(find), go, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(col), find, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), sources, FALSE, FALSE, 0);
 
-    w->results_title = xd_appwiz_label("", "xd-arp-heading");
-    gtk_widget_set_no_show_all(w->results_title, TRUE);
-    gtk_box_pack_start(GTK_BOX(box), w->results_title, FALSE, FALSE, 0);
-    w->results = gtk_list_box_new();
-    gtk_list_box_set_selection_mode(GTK_LIST_BOX(w->results), GTK_SELECTION_SINGLE);
-    gtk_list_box_set_sort_func(GTK_LIST_BOX(w->results), sort_results, w, nullptr);
+    state->results_title = xd_appwiz_label("", "xd-arp-heading");
+    gtk_widget_set_no_show_all(state->results_title, TRUE);
+    gtk_box_pack_start(GTK_BOX(box), state->results_title, FALSE, FALSE, 0);
+    state->results = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(state->results), GTK_SELECTION_SINGLE);
+    gtk_list_box_set_sort_func(GTK_LIST_BOX(state->results), sort_results, state, nullptr);
     GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_NEVER,
                                    GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(sc), w->results);
+    gtk_container_add(GTK_CONTAINER(sc), state->results);
     gtk_box_pack_start(GTK_BOX(box), sc, TRUE, TRUE, 0);
-    w->results_status = xd_appwiz_label("", "xd-arp-dim");
-    gtk_widget_set_no_show_all(w->results_status, TRUE);
-    gtk_box_pack_start(GTK_BOX(box), w->results_status, FALSE, FALSE, 0);
+    state->results_status = xd_appwiz_label("", "xd-arp-dim");
+    gtk_widget_set_no_show_all(state->results_status, TRUE);
+    gtk_box_pack_start(GTK_BOX(box), state->results_status, FALSE, FALSE, 0);
     return box;
 }
 
 /* ---- Windows Components ------------------------------------------------------------------ */
 
-static void on_group(appwiz *w) {
-    GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(w->groups));
+static void on_group(appwiz *state) {
+    GtkListBoxRow *row = gtk_list_box_get_selected_row(GTK_LIST_BOX(state->groups));
     if (row == nullptr)
         return;
     gpointer group = g_object_get_data(G_OBJECT(row), "group");
     last_group = (PkGroupEnum)GPOINTER_TO_INT(group);
     g_clear_pointer(&last_query, g_free);
-    gtk_entry_set_text(GTK_ENTRY(w->search), "");
-    xd_appwiz_show_page(w, XD_PAGE_ADD);
-    run_search(w);
+    gtk_entry_set_text(GTK_ENTRY(state->search), "");
+    xd_appwiz_show_page(state, XD_PAGE_ADD);
+    run_search(state);
 }
 
 static void on_group_activated([[maybe_unused]] GtkListBox *box,
@@ -548,18 +552,18 @@ static void on_properties(GObject *src, GAsyncResult *res, gpointer data) {
     GError *error = nullptr;
     if (!pk_control_get_properties_finish(PK_CONTROL(src), res, &error)) {
         if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-            appwiz *w = data;
-            gtk_label_set_text(GTK_LABEL(w->group_note),
+            appwiz *state = data;
+            gtk_label_set_text(GTK_LABEL(state->group_note),
                                "Components can't be shown: PackageKit isn't available.");
         }
         g_error_free(error);
         return;
     }
-    appwiz *w = data;
-    xd_appwiz_sources_changed(w);
+    appwiz *state = data;
+    xd_appwiz_sources_changed(state);
     PkBitfield have = 0;
-    g_object_get(w->control, "groups", &have, nullptr);
-    int n = 0;
+    g_object_get(state->control, "groups", &have, nullptr);
+    int count = 0;
     for (size_t i = 0; i < XD_ARRAY_LEN(groups); i++) {
         if (!pk_bitfield_contain(have, groups[i].group))
             continue;
@@ -568,21 +572,21 @@ static void on_properties(GObject *src, GAsyncResult *res, gpointer data) {
         GtkWidget *img = gtk_image_new_from_icon_name(groups[i].icon, GTK_ICON_SIZE_LARGE_TOOLBAR);
         gtk_box_pack_start(GTK_BOX(row), img, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(row), xd_appwiz_label(groups[i].name, nullptr), TRUE, TRUE, 0);
-        GtkWidget *r = gtk_list_box_row_new();
-        gtk_container_add(GTK_CONTAINER(r), row);
-        g_object_set_data(G_OBJECT(r), "group", GINT_TO_POINTER((int)groups[i].group));
-        gtk_container_add(GTK_CONTAINER(w->groups), r);
-        n++;
+        GtkWidget *list_row = gtk_list_box_row_new();
+        gtk_container_add(GTK_CONTAINER(list_row), row);
+        g_object_set_data(G_OBJECT(list_row), "group", GINT_TO_POINTER((int)groups[i].group));
+        gtk_container_add(GTK_CONTAINER(state->groups), list_row);
+        count++;
     }
-    gtk_widget_show_all(w->groups);
-    if (n == 0)
-        gtk_label_set_text(GTK_LABEL(w->group_note),
+    gtk_widget_show_all(state->groups);
+    if (count == 0)
+        gtk_label_set_text(GTK_LABEL(state->group_note),
                            "Your software sources don't sort programs into groups.");
     else
-        gtk_widget_hide(w->group_note);
+        gtk_widget_hide(state->group_note);
 }
 
-GtkWidget *xd_appwiz_components_page(appwiz *w) {
+GtkWidget *xd_appwiz_components_page(appwiz *state) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(box), 12);
     gtk_box_pack_start(GTK_BOX(box), xd_appwiz_label("Windows Components", "xd-arp-big"), FALSE,
@@ -595,22 +599,22 @@ GtkWidget *xd_appwiz_components_page(appwiz *w) {
                        FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), xd_appwiz_label("Components:", "xd-arp-heading"), FALSE,
                        FALSE, 0);
-    w->groups = gtk_list_box_new();
-    gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(w->groups), FALSE);
-    g_signal_connect(w->groups, "row-activated", G_CALLBACK(on_group_activated), w);
+    state->groups = gtk_list_box_new();
+    gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(state->groups), FALSE);
+    g_signal_connect(state->groups, "row-activated", G_CALLBACK(on_group_activated), state);
     GtkWidget *sc = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_NEVER,
                                    GTK_POLICY_AUTOMATIC);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sc), GTK_SHADOW_IN);
-    gtk_container_add(GTK_CONTAINER(sc), w->groups);
+    gtk_container_add(GTK_CONTAINER(sc), state->groups);
     gtk_box_pack_start(GTK_BOX(box), sc, TRUE, TRUE, 0);
-    w->group_note = xd_appwiz_label("Loading...", "xd-arp-dim");
-    gtk_box_pack_start(GTK_BOX(box), w->group_note, FALSE, FALSE, 0);
+    state->group_note = xd_appwiz_label("Loading...", "xd-arp-dim");
+    gtk_box_pack_start(GTK_BOX(box), state->group_note, FALSE, FALSE, 0);
     GtkWidget *details = gtk_button_new_with_mnemonic("_Details...");
     gtk_widget_set_size_request(details, 90, -1);
     gtk_widget_set_halign(details, GTK_ALIGN_END);
-    g_signal_connect_swapped(details, "clicked", G_CALLBACK(on_group), w);
+    g_signal_connect_swapped(details, "clicked", G_CALLBACK(on_group), state);
     gtk_box_pack_start(GTK_BOX(box), details, FALSE, FALSE, 0);
-    pk_control_get_properties_async(w->control, w->quit, on_properties, w);
+    pk_control_get_properties_async(state->control, state->quit, on_properties, state);
     return box;
 }

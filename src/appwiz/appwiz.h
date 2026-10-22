@@ -58,34 +58,34 @@ typedef struct appwiz {
 } appwiz;
 
 /* main.c */
-void xd_appwiz_reload(appwiz *w);
+void xd_appwiz_reload(appwiz *state);
 /* PackageKit's backend became known: the programs' Source again. */
-void xd_appwiz_sources_changed(appwiz *w);
-void xd_appwiz_show_page(appwiz *w, xd_appwiz_page page);
-void xd_appwiz_error(appwiz *w, const char *what, const char *detail);
+void xd_appwiz_sources_changed(appwiz *state);
+void xd_appwiz_show_page(appwiz *state, xd_appwiz_page page);
+void xd_appwiz_error(appwiz *state, const char *what, const char *detail);
 GtkWidget *xd_appwiz_label(const char *text, const char *css_class);
-void xd_appwiz_add_class(GtkWidget *w, const char *css_class);
+void xd_appwiz_add_class(GtkWidget *widget, const char *css_class);
 
 /* add.c: Add New Programs and Add/Remove Windows Components */
-GtkWidget *xd_appwiz_add_page(appwiz *w);
-GtkWidget *xd_appwiz_components_page(appwiz *w);
+GtkWidget *xd_appwiz_add_page(appwiz *state);
+GtkWidget *xd_appwiz_components_page(appwiz *state);
 
 /* ops.c: installs and removals, asked for, then shown with a progress
  * dialog. `done` runs afterwards with whether it worked. */
-typedef void (*xd_appwiz_done)(appwiz *w, bool ok, gpointer data);
+typedef void (*xd_appwiz_done)(appwiz *appwiz, bool ok, gpointer data);
 
 /* Removes a package (and, after asking, what needs it). `also` names the
  * package's other programs, for the question, or is nullptr. */
-void xd_appwiz_remove_package(appwiz *w, const char *name, const char *package_id,
+void xd_appwiz_remove_package(appwiz *state, const char *name, const char *package_id,
                               const char *also, xd_appwiz_done done, gpointer data);
-void xd_appwiz_install_package(appwiz *w, const char *name, const char *package_id,
+void xd_appwiz_install_package(appwiz *state, const char *name, const char *package_id,
                                xd_appwiz_done done, gpointer data);
 /* A package file (PackageKit's InstallFiles), .flatpakref or .flatpak. */
-void xd_appwiz_install_file(appwiz *w, const char *path, xd_appwiz_done done, gpointer data);
+void xd_appwiz_install_file(appwiz *state, const char *path, xd_appwiz_done done, gpointer data);
 /* `installation` is "user" or a system installation's id. */
-void xd_appwiz_remove_flatpak(appwiz *w, const char *name, const char *installation,
+void xd_appwiz_remove_flatpak(appwiz *state, const char *name, const char *installation,
                               const char *ref, xd_appwiz_done done, gpointer data);
-void xd_appwiz_install_flatpak(appwiz *w, const char *name, const char *installation,
+void xd_appwiz_install_flatpak(appwiz *state, const char *name, const char *installation,
                                const char *remote, const char *ref, xd_appwiz_done done,
                                gpointer data);
 
