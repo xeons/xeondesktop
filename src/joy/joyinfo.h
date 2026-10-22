@@ -27,6 +27,6 @@ int xd_joy_hat_direction(int x, int y);
  * joydev numbers them: BTN_JOYSTICK and up first, then BTN_MISC up to
  * BTN_JOYSTICK; codes below BTN_MISC (keyboard keys) are left out.
  * Returns how many were written. */
-size_t xd_joy_button_order(const unsigned *codes, size_t n, unsigned *out);
+size_t xd_joy_button_order(const unsigned *codes, size_t count, unsigned *out);
 
 #endif

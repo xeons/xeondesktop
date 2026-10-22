@@ -8,8 +8,8 @@
 double xd_joy_axis_fraction(int value, int min, int max) {
     if (max <= min)
         return 0.5;
-    double f = ((double)value - min) / ((double)max - min);
-    return XD_CLAMP(f, 0.0, 1.0);
+    double fraction = ((double)value - min) / ((double)max - min);
+    return XD_CLAMP(fraction, 0.0, 1.0);
 }
 
 double xd_joy_axis_centered(int value, int min, int max) {
@@ -60,14 +60,14 @@ static unsigned rank(unsigned code) {
     return code >= BTN_JOYSTICK ? code - BTN_JOYSTICK : code + KEY_MAX;
 }
 
-static int by_rank(const void *a, const void *b) {
-    unsigned x = rank(*(const unsigned *)a), y = rank(*(const unsigned *)b);
+static int by_rank(const void *left, const void *right) {
+    unsigned x = rank(*(const unsigned *)left), y = rank(*(const unsigned *)right);
     return x < y ? -1 : x > y ? 1 : 0;
 }
 
-size_t xd_joy_button_order(const unsigned *codes, size_t n, unsigned *out) {
+size_t xd_joy_button_order(const unsigned *codes, size_t count, unsigned *out) {
     size_t k = 0;
-    for (size_t i = 0; i < n; i++)
+    for (size_t i = 0; i < count; i++)
         if (codes[i] >= BTN_MISC && codes[i] <= KEY_MAX)
             out[k++] = codes[i];
     qsort(out, k, sizeof(*out), by_rank);
