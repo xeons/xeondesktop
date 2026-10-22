@@ -26,16 +26,16 @@ typedef struct camref {
     xd_camera *cam;
 } camref;
 
-static camref *camref_ref(camref *c) {
-    if (c != nullptr)
-        g_atomic_int_inc(&c->refs);
-    return c;
+static camref *camref_ref(camref *camera_ref) {
+    if (camera_ref != nullptr)
+        g_atomic_int_inc(&camera_ref->refs);
+    return camera_ref;
 }
 
-static void camref_unref(camref *c) {
-    if (c != nullptr && g_atomic_int_dec_and_test(&c->refs)) {
-        xd_camera_close(c->cam);
-        g_free(c);
+static void camref_unref(camref *camera_ref) {
+    if (camera_ref != nullptr && g_atomic_int_dec_and_test(&camera_ref->refs)) {
+        xd_camera_close(camera_ref->cam);
+        g_free(camera_ref);
     }
 }
 
@@ -65,29 +65,29 @@ typedef struct job {
     GError *error;
 } job;
 
-static job *job_ref(job *j) {
-    g_atomic_int_inc(&j->refs);
-    return j;
+static job *job_ref(job *work) {
+    g_atomic_int_inc(&work->refs);
+    return work;
 }
 
-static void job_unref(job *j) {
-    if (!g_atomic_int_dec_and_test(&j->refs))
+static void job_unref(job *work) {
+    if (!g_atomic_int_dec_and_test(&work->refs))
         return;
-    g_free(j->device);
-    g_free(j->port);
-    g_free(j->dir);
-    g_free(j->name);
-    camref_unref(j->cam);
-    if (j->chosen != nullptr)
-        g_ptr_array_unref(j->chosen);
-    xd_scanner_info_free(j->info);
-    g_clear_object(&j->pixbuf);
-    if (j->photos != nullptr)
-        g_ptr_array_unref(j->photos);
-    if (j->saved != nullptr)
-        g_ptr_array_unref(j->saved);
-    g_clear_error(&j->error);
-    g_free(j);
+    g_free(work->device);
+    g_free(work->port);
+    g_free(work->dir);
+    g_free(work->name);
+    camref_unref(work->cam);
+    if (work->chosen != nullptr)
+        g_ptr_array_unref(work->chosen);
+    xd_scanner_info_free(work->info);
+    g_clear_object(&work->pixbuf);
+    if (work->photos != nullptr)
+        g_ptr_array_unref(work->photos);
+    if (work->saved != nullptr)
+        g_ptr_array_unref(work->saved);
+    g_clear_error(&work->error);
+    g_free(work);
 }
 
 typedef struct imgwiz {
@@ -115,23 +115,26 @@ typedef struct imgwiz {
     GCancellable *cancel;
 } imgwiz;
 
-static GtkWindow *win(imgwiz *a) { return GTK_WINDOW(xd_wizard_window(a->w)); }
+static GtkWindow *win(imgwiz *imaging_wizard) {
+    return GTK_WINDOW(xd_wizard_window(imaging_wizard->w));
+}
 
-static GtkWidget *text(const char *s) {
-    GtkWidget *l = gtk_label_new(s);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_yalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 56);
-    return l;
+static GtkWidget *text(const char *label_text) {
+    GtkWidget *widget = gtk_label_new(label_text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_yalign(GTK_LABEL(widget), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(widget), 56);
+    return widget;
 }
 
 /* ---- the worker ---------------------------------------------------------------------- */
 
 /* The pictures folder: XDG's, else ~/Pictures. */
 static char *pictures_dir(void) {
-    const char *d = g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
-    return d != nullptr ? g_strdup(d) : g_build_filename(g_get_home_dir(), "Pictures", nullptr);
+    const char *special_dir = g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
+    return special_dir != nullptr ? g_strdup(special_dir)
+                                  : g_build_filename(g_get_home_dir(), "Pictures", nullptr);
 }
 
 static bool make_dir(const char *dir, GError **error) {
@@ -141,67 +144,67 @@ static bool make_dir(const char *dir, GError **error) {
     return false;
 }
 
-static void do_scan(job *j) {
-    j->pixbuf = xd_scanner_scan(j->device, j->type, j->dpi, j->kind == JOB_PREVIEW, &j->progress,
-                                &j->cancel, &j->error);
-    if (j->pixbuf == nullptr || j->kind != JOB_SCAN || !make_dir(j->dir, &j->error))
+static void do_scan(job *work) {
+    work->pixbuf = xd_scanner_scan(work->device, work->type, work->dpi, work->kind == JOB_PREVIEW,
+                                   &work->progress, &work->cancel, &work->error);
+    if (work->pixbuf == nullptr || work->kind != JOB_SCAN || !make_dir(work->dir, &work->error))
         return;
-    char *file = xd_scan_next_file(j->dir, j->name, "png");
+    char *file = xd_scan_next_file(work->dir, work->name, "png");
     if (file == nullptr) {
-        g_set_error(&j->error, G_IO_ERROR, G_IO_ERROR_EXISTS,
-                    "There are too many pictures called %s in %s.", j->name, j->dir);
+        g_set_error(&work->error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                    "There are too many pictures called %s in %s.", work->name, work->dir);
         return;
     }
-    if (gdk_pixbuf_save(j->pixbuf, file, "png", &j->error, nullptr))
-        g_ptr_array_add(j->saved, file);
+    if (gdk_pixbuf_save(work->pixbuf, file, "png", &work->error, nullptr))
+        g_ptr_array_add(work->saved, file);
     else
         g_free(file);
 }
 
-static void do_copy(job *j) {
-    if (!make_dir(j->dir, &j->error))
+static void do_copy(job *work) {
+    if (!make_dir(work->dir, &work->error))
         return;
-    for (guint i = 0; i < j->chosen->len && !g_atomic_int_get(&j->cancel); i++) {
-        const xd_camera_photo *p = g_ptr_array_index(j->chosen, i);
+    for (guint i = 0; i < work->chosen->len && !g_atomic_int_get(&work->cancel); i++) {
+        const xd_camera_photo *camera_photo = g_ptr_array_index(work->chosen, i);
         /* XP renamed them: "Picture 001.jpg", keeping the kind. */
-        const char *dot = strrchr(p->name, '.');
+        const char *dot = strrchr(camera_photo->name, '.');
         char *ext = g_ascii_strdown(dot != nullptr ? dot + 1 : "jpg", -1);
-        char *file = xd_scan_next_file(j->dir, j->name, ext);
+        char *file = xd_scan_next_file(work->dir, work->name, ext);
         g_free(ext);
-        if (file == nullptr ||
-            !xd_camera_download(j->cam->cam, p->folder, p->name, file, &j->error)) {
+        if (file == nullptr || !xd_camera_download(work->cam->cam, camera_photo->folder,
+                                                   camera_photo->name, file, &work->error)) {
             if (file == nullptr)
-                g_set_error(&j->error, G_IO_ERROR, G_IO_ERROR_EXISTS,
-                            "There are too many pictures called %s in %s.", j->name, j->dir);
+                g_set_error(&work->error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                            "There are too many pictures called %s in %s.", work->name, work->dir);
             g_free(file);
             return;
         }
-        g_ptr_array_add(j->saved, file);
-        g_atomic_int_set(&j->progress, (int)(1000 * (i + 1) / j->chosen->len));
+        g_ptr_array_add(work->saved, file);
+        g_atomic_int_set(&work->progress, (int)(1000 * (i + 1) / work->chosen->len));
     }
-    if (g_atomic_int_get(&j->cancel) && j->error == nullptr)
-        g_set_error_literal(&j->error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled.");
+    if (g_atomic_int_get(&work->cancel) && work->error == nullptr)
+        g_set_error_literal(&work->error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancelled.");
 }
 
 static void worker(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
-                   [[maybe_unused]] GCancellable *c) {
-    job *j = data;
-    switch (j->kind) {
+                   [[maybe_unused]] GCancellable *cancellable) {
+    job *work = data;
+    switch (work->kind) {
     case JOB_INFO:
-        j->info = xd_scanner_info_get(j->device, &j->error);
+        work->info = xd_scanner_info_get(work->device, &work->error);
         break;
     case JOB_PREVIEW:
     case JOB_SCAN:
-        do_scan(j);
+        do_scan(work);
         break;
     case JOB_LIST:
-        if (j->cam->cam == nullptr)
-            j->cam->cam = xd_camera_open(j->device, j->port, &j->error);
-        if (j->cam->cam != nullptr)
-            j->photos = xd_camera_list_photos(j->cam->cam, &j->cancel, &j->error);
+        if (work->cam->cam == nullptr)
+            work->cam->cam = xd_camera_open(work->device, work->port, &work->error);
+        if (work->cam->cam != nullptr)
+            work->photos = xd_camera_list_photos(work->cam->cam, &work->cancel, &work->error);
         break;
     case JOB_COPY:
-        do_copy(j);
+        do_copy(work);
         break;
     default:
         break;
@@ -209,85 +212,87 @@ static void worker(GTask *task, [[maybe_unused]] gpointer src, gpointer data,
     g_task_return_boolean(task, TRUE);
 }
 
-static void job_done(imgwiz *a, job *j);
+static void job_done(imgwiz *imaging_wizard, job *work);
 
 static void on_job_done([[maybe_unused]] GObject *src, GAsyncResult *res, gpointer data) {
     if (!g_task_propagate_boolean(G_TASK(res), nullptr))
         return; /* the wizard is gone */
-    imgwiz *a = data;
-    job *j = g_task_get_task_data(G_TASK(res));
-    if (a->poll != 0) {
-        g_source_remove(a->poll);
-        a->poll = 0;
+    imgwiz *imaging_wizard = data;
+    job *work = g_task_get_task_data(G_TASK(res));
+    if (imaging_wizard->poll != 0) {
+        g_source_remove(imaging_wizard->poll);
+        imaging_wizard->poll = 0;
     }
-    if (a->running == j) {
-        a->running = nullptr;
-        job_done(a, j);
-        job_unref(j);
+    if (imaging_wizard->running == work) {
+        imaging_wizard->running = nullptr;
+        job_done(imaging_wizard, work);
+        job_unref(work);
     }
 }
 
 static gboolean on_poll(gpointer data) {
-    imgwiz *a = data;
-    if (a->running != nullptr && a->progress != nullptr)
-        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(a->progress),
-                                      g_atomic_int_get(&a->running->progress) / 1000.0);
+    imgwiz *imaging_wizard = data;
+    if (imaging_wizard->running != nullptr && imaging_wizard->progress != nullptr)
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(imaging_wizard->progress),
+                                      g_atomic_int_get(&imaging_wizard->running->progress) /
+                                          1000.0);
     return G_SOURCE_CONTINUE;
 }
 
-static job *new_job(imgwiz *a, job_kind kind) {
-    job *j = g_new0(job, 1);
-    j->refs = 1;
-    j->kind = kind;
-    j->device = g_strdup(a->dev.id);
-    j->port = g_strdup(a->dev.port);
-    j->saved = g_ptr_array_new_with_free_func(g_free);
-    return j;
+static job *new_job(imgwiz *imaging_wizard, job_kind kind) {
+    job *work = g_new0(job, 1);
+    work->refs = 1;
+    work->kind = kind;
+    work->device = g_strdup(imaging_wizard->dev.id);
+    work->port = g_strdup(imaging_wizard->dev.port);
+    work->saved = g_ptr_array_new_with_free_func(g_free);
+    return work;
 }
 
-static void start_job(imgwiz *a, job *j) {
-    a->running = j;
-    GTask *task = g_task_new(nullptr, a->cancel, on_job_done, a);
-    g_task_set_task_data(task, job_ref(j), (GDestroyNotify)job_unref);
+static void start_job(imgwiz *imaging_wizard, job *work) {
+    imaging_wizard->running = work;
+    GTask *task = g_task_new(nullptr, imaging_wizard->cancel, on_job_done, imaging_wizard);
+    g_task_set_task_data(task, job_ref(work), (GDestroyNotify)job_unref);
     g_task_run_in_thread(task, worker);
     g_object_unref(task);
-    a->poll = g_timeout_add(100, on_poll, a);
+    imaging_wizard->poll = g_timeout_add(100, on_poll, imaging_wizard);
 }
 
 /* ---- Choose Scanning Preferences ------------------------------------------------------ */
 
-static xd_picture_type chosen_type(imgwiz *a) {
+static xd_picture_type chosen_type(imgwiz *imaging_wizard) {
     for (int i = 0; i < 3; i++) {
-        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(a->types[i])))
+        if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(imaging_wizard->types[i])))
             return (xd_picture_type)i;
     }
     return XD_PICTURE_COLOR;
 }
 
-static int chosen_dpi(imgwiz *a) {
-    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(a->dpi));
+static int chosen_dpi(imgwiz *imaging_wizard) {
+    const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(imaging_wizard->dpi));
     return id != nullptr ? atoi(id) : 150;
 }
 
-static void busy(imgwiz *a, bool b) {
-    xd_wizard_set_next_sensitive(a->w, !b);
-    xd_wizard_set_back_sensitive(a->w, !b);
-    if (a->preview_button != nullptr)
-        gtk_widget_set_sensitive(a->preview_button, !b && a->info != nullptr);
+static void busy(imgwiz *imaging_wizard, bool is_busy) {
+    xd_wizard_set_next_sensitive(imaging_wizard->w, !is_busy);
+    xd_wizard_set_back_sensitive(imaging_wizard->w, !is_busy);
+    if (imaging_wizard->preview_button != nullptr)
+        gtk_widget_set_sensitive(imaging_wizard->preview_button,
+                                 !is_busy && imaging_wizard->info != nullptr);
 }
 
-static void cb_preview([[maybe_unused]] GtkWidget *w, gpointer data) {
-    imgwiz *a = data;
-    if (a->running != nullptr)
+static void cb_preview([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    imgwiz *imaging_wizard = data;
+    if (imaging_wizard->running != nullptr)
         return;
-    job *j = new_job(a, JOB_PREVIEW);
-    j->type = chosen_type(a);
-    gtk_label_set_text(GTK_LABEL(a->preview_status), "Scanning a preview...");
-    busy(a, true);
-    start_job(a, j);
+    job *work = new_job(imaging_wizard, JOB_PREVIEW);
+    work->type = chosen_type(imaging_wizard);
+    gtk_label_set_text(GTK_LABEL(imaging_wizard->preview_status), "Scanning a preview...");
+    busy(imaging_wizard, true);
+    start_job(imaging_wizard, work);
 }
 
-static GtkWidget *scan_choose_page(imgwiz *a) {
+static GtkWidget *scan_choose_page(imgwiz *imaging_wizard) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 18);
     GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_box_pack_start(GTK_BOX(left), text("Picture type:"), FALSE, FALSE, 0);
@@ -300,146 +305,154 @@ static GtkWidget *scan_choose_page(imgwiz *a) {
         gtk_box_pack_start(GTK_BOX(row),
                            gtk_image_new_from_icon_name(icons[i], GTK_ICON_SIZE_LARGE_TOOLBAR),
                            FALSE, FALSE, 0);
-        a->types[i] = gtk_radio_button_new_with_mnemonic_from_widget(
-            i > 0 ? GTK_RADIO_BUTTON(a->types[0]) : nullptr, labels[i]);
-        gtk_box_pack_start(GTK_BOX(row), a->types[i], FALSE, FALSE, 0);
+        imaging_wizard->types[i] = gtk_radio_button_new_with_mnemonic_from_widget(
+            i > 0 ? GTK_RADIO_BUTTON(imaging_wizard->types[0]) : nullptr, labels[i]);
+        gtk_box_pack_start(GTK_BOX(row), imaging_wizard->types[i], FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(left), row, FALSE, FALSE, 0);
     }
     GtkWidget *dl = gtk_label_new_with_mnemonic("_Resolution (DPI):");
     gtk_label_set_xalign(GTK_LABEL(dl), 0);
     gtk_widget_set_margin_top(dl, 12);
-    a->dpi = gtk_combo_box_text_new();
-    gtk_label_set_mnemonic_widget(GTK_LABEL(dl), a->dpi);
+    imaging_wizard->dpi = gtk_combo_box_text_new();
+    gtk_label_set_mnemonic_widget(GTK_LABEL(dl), imaging_wizard->dpi);
     gtk_box_pack_start(GTK_BOX(left), dl, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(left), a->dpi, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(left), imaging_wizard->dpi, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), left, TRUE, TRUE, 0);
 
     GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     GtkWidget *frame = gtk_frame_new(nullptr);
     gtk_frame_set_shadow_type(GTK_FRAME(frame), GTK_SHADOW_IN);
-    a->preview = gtk_image_new();
-    gtk_widget_set_size_request(a->preview, PREVIEW_W, PREVIEW_H);
-    gtk_container_add(GTK_CONTAINER(frame), a->preview);
+    imaging_wizard->preview = gtk_image_new();
+    gtk_widget_set_size_request(imaging_wizard->preview, PREVIEW_W, PREVIEW_H);
+    gtk_container_add(GTK_CONTAINER(frame), imaging_wizard->preview);
     gtk_box_pack_start(GTK_BOX(right), frame, FALSE, FALSE, 0);
-    a->preview_status = text("");
-    gtk_label_set_max_width_chars(GTK_LABEL(a->preview_status), 24);
-    gtk_box_pack_start(GTK_BOX(right), a->preview_status, FALSE, FALSE, 0);
-    a->preview_button = gtk_button_new_with_mnemonic("_Preview");
-    gtk_widget_set_halign(a->preview_button, GTK_ALIGN_END);
-    g_signal_connect(a->preview_button, "clicked", G_CALLBACK(cb_preview), a);
-    gtk_box_pack_start(GTK_BOX(right), a->preview_button, FALSE, FALSE, 0);
+    imaging_wizard->preview_status = text("");
+    gtk_label_set_max_width_chars(GTK_LABEL(imaging_wizard->preview_status), 24);
+    gtk_box_pack_start(GTK_BOX(right), imaging_wizard->preview_status, FALSE, FALSE, 0);
+    imaging_wizard->preview_button = gtk_button_new_with_mnemonic("_Preview");
+    gtk_widget_set_halign(imaging_wizard->preview_button, GTK_ALIGN_END);
+    g_signal_connect(imaging_wizard->preview_button, "clicked", G_CALLBACK(cb_preview),
+                     imaging_wizard);
+    gtk_box_pack_start(GTK_BOX(right), imaging_wizard->preview_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), right, FALSE, FALSE, 0);
     return box;
 }
 
-static void show_info(imgwiz *a) {
-    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(a->dpi));
+static void show_info(imgwiz *imaging_wizard) {
+    gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(imaging_wizard->dpi));
     int best = 0;
-    for (guint i = 0; i < a->info->resolutions->len; i++) {
-        int dpi = g_array_index(a->info->resolutions, int, i);
+    for (guint i = 0; i < imaging_wizard->info->resolutions->len; i++) {
+        int dpi = g_array_index(imaging_wizard->info->resolutions, int, i);
         char id[16];
         g_snprintf(id, sizeof(id), "%d", dpi);
-        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(a->dpi), id, id);
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(imaging_wizard->dpi), id, id);
         /* 150 dpi, or the nearest: XP's default for pictures. */
-        int cur = g_array_index(a->info->resolutions, int, (guint)best);
+        int cur = g_array_index(imaging_wizard->info->resolutions, int, (guint)best);
         if (abs(dpi - 150) < abs(cur - 150))
             best = (int)i;
     }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(a->dpi), best);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(imaging_wizard->dpi), best);
     /* Types the scanner can't do are greyed. */
     for (int i = 0; i < 3; i++) {
         bool one_bit = false;
-        bool can = a->info->modes->len == 0 ||
+        bool can = imaging_wizard->info->modes->len == 0 ||
                    xd_scan_mode_for((xd_picture_type)i,
-                                    (const char *const *)a->info->modes->pdata,
-                                    a->info->modes->len, &one_bit) != nullptr;
-        gtk_widget_set_sensitive(a->types[i], can);
+                                    (const char *const *)imaging_wizard->info->modes->pdata,
+                                    imaging_wizard->info->modes->len, &one_bit) != nullptr;
+        gtk_widget_set_sensitive(imaging_wizard->types[i], can);
     }
 }
 
 /* ---- Choose Pictures to Copy ---------------------------------------------------------- */
 
-static void cb_select_all([[maybe_unused]] GtkWidget *w, gpointer data) {
-    imgwiz *a = data;
-    gtk_icon_view_select_all(GTK_ICON_VIEW(a->photo_view));
+static void cb_select_all([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    imgwiz *imaging_wizard = data;
+    gtk_icon_view_select_all(GTK_ICON_VIEW(imaging_wizard->photo_view));
 }
 
-static void cb_clear_all([[maybe_unused]] GtkWidget *w, gpointer data) {
-    imgwiz *a = data;
-    gtk_icon_view_unselect_all(GTK_ICON_VIEW(a->photo_view));
+static void cb_clear_all([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    imgwiz *imaging_wizard = data;
+    gtk_icon_view_unselect_all(GTK_ICON_VIEW(imaging_wizard->photo_view));
 }
 
-static GtkWidget *camera_choose_page(imgwiz *a) {
+static GtkWidget *camera_choose_page(imgwiz *imaging_wizard) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_box_pack_start(GTK_BOX(box),
                        text("Pictures with a selection are copied. To leave a picture out, "
                             "click it with Ctrl held down."),
                        FALSE, FALSE, 0);
-    a->photos = gtk_list_store_new(P_COUNT, GDK_TYPE_PIXBUF, G_TYPE_STRING, G_TYPE_STRING);
-    a->photo_view = gtk_icon_view_new_with_model(GTK_TREE_MODEL(a->photos));
-    gtk_icon_view_set_selection_mode(GTK_ICON_VIEW(a->photo_view), GTK_SELECTION_MULTIPLE);
-    gtk_icon_view_set_pixbuf_column(GTK_ICON_VIEW(a->photo_view), P_THUMB);
-    gtk_icon_view_set_text_column(GTK_ICON_VIEW(a->photo_view), P_NAME);
-    gtk_icon_view_set_item_width(GTK_ICON_VIEW(a->photo_view), 100);
+    imaging_wizard->photos =
+        gtk_list_store_new(P_COUNT, GDK_TYPE_PIXBUF, G_TYPE_STRING, G_TYPE_STRING);
+    imaging_wizard->photo_view =
+        gtk_icon_view_new_with_model(GTK_TREE_MODEL(imaging_wizard->photos));
+    gtk_icon_view_set_selection_mode(GTK_ICON_VIEW(imaging_wizard->photo_view),
+                                     GTK_SELECTION_MULTIPLE);
+    gtk_icon_view_set_pixbuf_column(GTK_ICON_VIEW(imaging_wizard->photo_view), P_THUMB);
+    gtk_icon_view_set_text_column(GTK_ICON_VIEW(imaging_wizard->photo_view), P_NAME);
+    gtk_icon_view_set_item_width(GTK_ICON_VIEW(imaging_wizard->photo_view), 100);
     GtkWidget *scroll = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(scroll), GTK_SHADOW_IN);
     gtk_widget_set_size_request(scroll, -1, 190);
-    gtk_container_add(GTK_CONTAINER(scroll), a->photo_view);
+    gtk_container_add(GTK_CONTAINER(scroll), imaging_wizard->photo_view);
     gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    a->photo_status = text("");
-    gtk_box_pack_start(GTK_BOX(row), a->photo_status, TRUE, TRUE, 0);
-    a->clear_all = gtk_button_new_with_mnemonic("C_lear All");
-    g_signal_connect(a->clear_all, "clicked", G_CALLBACK(cb_clear_all), a);
-    gtk_box_pack_end(GTK_BOX(row), a->clear_all, FALSE, FALSE, 0);
-    a->select_all = gtk_button_new_with_mnemonic("_Select All");
-    g_signal_connect(a->select_all, "clicked", G_CALLBACK(cb_select_all), a);
-    gtk_box_pack_end(GTK_BOX(row), a->select_all, FALSE, FALSE, 0);
+    imaging_wizard->photo_status = text("");
+    gtk_box_pack_start(GTK_BOX(row), imaging_wizard->photo_status, TRUE, TRUE, 0);
+    imaging_wizard->clear_all = gtk_button_new_with_mnemonic("C_lear All");
+    g_signal_connect(imaging_wizard->clear_all, "clicked", G_CALLBACK(cb_clear_all),
+                     imaging_wizard);
+    gtk_box_pack_end(GTK_BOX(row), imaging_wizard->clear_all, FALSE, FALSE, 0);
+    imaging_wizard->select_all = gtk_button_new_with_mnemonic("_Select All");
+    g_signal_connect(imaging_wizard->select_all, "clicked", G_CALLBACK(cb_select_all),
+                     imaging_wizard);
+    gtk_box_pack_end(GTK_BOX(row), imaging_wizard->select_all, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), row, FALSE, FALSE, 0);
     return box;
 }
 
-static void show_photos(imgwiz *a, GPtrArray *photos) {
-    gtk_list_store_clear(a->photos);
+static void show_photos(imgwiz *imaging_wizard, GPtrArray *photos) {
+    gtk_list_store_clear(imaging_wizard->photos);
     GtkIconTheme *theme = gtk_icon_theme_get_default();
     GdkPixbuf *fallback = gtk_icon_theme_load_icon(theme, "image-x-generic", 64, GTK_ICON_LOOKUP_FORCE_SIZE,
                                                    nullptr);
     for (guint i = 0; i < photos->len; i++) {
-        const xd_camera_photo *p = g_ptr_array_index(photos, i);
-        gtk_list_store_insert_with_values(a->photos, nullptr, -1, P_THUMB,
-                                          p->thumbnail != nullptr ? p->thumbnail : fallback,
-                                          P_NAME, p->name, P_FOLDER, p->folder, -1);
+        const xd_camera_photo *camera_photo = g_ptr_array_index(photos, i);
+        gtk_list_store_insert_with_values(
+            imaging_wizard->photos, nullptr, -1, P_THUMB,
+            camera_photo->thumbnail != nullptr ? camera_photo->thumbnail : fallback, P_NAME,
+            camera_photo->name, P_FOLDER, camera_photo->folder, -1);
     }
     if (fallback != nullptr)
         g_object_unref(fallback);
-    gtk_icon_view_select_all(GTK_ICON_VIEW(a->photo_view));
-    char *s = g_strdup_printf("%u picture(s) on the camera.", photos->len);
-    gtk_label_set_text(GTK_LABEL(a->photo_status), photos->len > 0 ? s : "The camera has no pictures.");
-    g_free(s);
+    gtk_icon_view_select_all(GTK_ICON_VIEW(imaging_wizard->photo_view));
+    char *status = g_strdup_printf("%u picture(s) on the camera.", photos->len);
+    gtk_label_set_text(GTK_LABEL(imaging_wizard->photo_status),
+                       photos->len > 0 ? status : "The camera has no pictures.");
+    g_free(status);
 }
 
 /* ---- Picture Name and Destination ------------------------------------------------------ */
 
-static GtkWidget *name_page(imgwiz *a) {
+static GtkWidget *name_page(imgwiz *imaging_wizard) {
     GtkWidget *grid = gtk_grid_new();
     gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
     GtkWidget *l1 = gtk_label_new_with_mnemonic(
         "1. _Type a name for this group of pictures:");
     gtk_label_set_xalign(GTK_LABEL(l1), 0);
-    a->name = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(a->name), "Picture");
-    gtk_entry_set_activates_default(GTK_ENTRY(a->name), TRUE);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l1), a->name);
+    imaging_wizard->name = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(imaging_wizard->name), "Picture");
+    gtk_entry_set_activates_default(GTK_ENTRY(imaging_wizard->name), TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(l1), imaging_wizard->name);
     gtk_grid_attach(GTK_GRID(grid), l1, 0, 0, 2, 1);
-    gtk_grid_attach(GTK_GRID(grid), a->name, 0, 1, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), imaging_wizard->name, 0, 1, 2, 1);
 
     GtkWidget *l2 = gtk_label_new("2. File format:");
     gtk_label_set_xalign(GTK_LABEL(l2), 0);
     gtk_widget_set_margin_top(l2, 8);
     gtk_grid_attach(GTK_GRID(grid), l2, 0, 2, 2, 1);
-    GtkWidget *fmt = gtk_label_new(a->dev.camera ? "As on the camera (JPEG, RAW, ...)"
-                                                 : "PNG (lossless)");
+    GtkWidget *fmt = gtk_label_new(imaging_wizard->dev.camera ? "As on the camera (JPEG, RAW, ...)"
+                                                              : "PNG (lossless)");
     gtk_label_set_xalign(GTK_LABEL(fmt), 0);
     gtk_widget_set_margin_start(fmt, 16);
     gtk_grid_attach(GTK_GRID(grid), fmt, 0, 3, 2, 1);
@@ -448,122 +461,124 @@ static GtkWidget *name_page(imgwiz *a) {
                                                 "pictures:");
     gtk_label_set_xalign(GTK_LABEL(l3), 0);
     gtk_widget_set_margin_top(l3, 8);
-    a->folder = gtk_file_chooser_button_new("Choose a Folder",
-                                            GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
+    imaging_wizard->folder =
+        gtk_file_chooser_button_new("Choose a Folder", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
     char *dir = pictures_dir();
     g_mkdir_with_parents(dir, 0755);
-    gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(a->folder), dir);
+    gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(imaging_wizard->folder), dir);
     g_free(dir);
-    gtk_widget_set_hexpand(a->folder, TRUE);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(l3), a->folder);
+    gtk_widget_set_hexpand(imaging_wizard->folder, TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(l3), imaging_wizard->folder);
     gtk_grid_attach(GTK_GRID(grid), l3, 0, 4, 2, 1);
-    gtk_grid_attach(GTK_GRID(grid), a->folder, 0, 5, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), imaging_wizard->folder, 0, 5, 2, 1);
     GtkWidget *eg = text("Pictures are numbered: Picture 001, Picture 002, ...");
     gtk_style_context_add_class(gtk_widget_get_style_context(eg), "dim-label");
     gtk_grid_attach(GTK_GRID(grid), eg, 0, 6, 2, 1);
     return grid;
 }
 
-static char *chosen_dir(imgwiz *a) {
-    char *dir = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(a->folder));
+static char *chosen_dir(imgwiz *imaging_wizard) {
+    char *dir = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(imaging_wizard->folder));
     return dir != nullptr ? dir : pictures_dir();
 }
 
 /* ---- Scanning / Copying and Completing ------------------------------------------------- */
 
-static GtkWidget *work_page(imgwiz *a) {
+static GtkWidget *work_page(imgwiz *imaging_wizard) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    a->progress_label = text("");
-    gtk_box_pack_start(GTK_BOX(box), a->progress_label, FALSE, FALSE, 0);
-    a->progress = gtk_progress_bar_new();
-    gtk_widget_set_margin_top(a->progress, 20);
-    gtk_box_pack_start(GTK_BOX(box), a->progress, FALSE, FALSE, 0);
+    imaging_wizard->progress_label = text("");
+    gtk_box_pack_start(GTK_BOX(box), imaging_wizard->progress_label, FALSE, FALSE, 0);
+    imaging_wizard->progress = gtk_progress_bar_new();
+    gtk_widget_set_margin_top(imaging_wizard->progress, 20);
+    gtk_box_pack_start(GTK_BOX(box), imaging_wizard->progress, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), text("To stop, click Cancel."), FALSE, FALSE, 0);
     return box;
 }
 
-static void cb_open_folder([[maybe_unused]] GtkWidget *w, gpointer data) {
-    imgwiz *a = data;
-    if (a->saved_dir == nullptr)
+static void cb_open_folder([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    imgwiz *imaging_wizard = data;
+    if (imaging_wizard->saved_dir == nullptr)
         return;
-    char *uri = g_filename_to_uri(a->saved_dir, nullptr, nullptr);
+    char *uri = g_filename_to_uri(imaging_wizard->saved_dir, nullptr, nullptr);
     if (uri != nullptr)
-        gtk_show_uri_on_window(win(a), uri, GDK_CURRENT_TIME, nullptr);
+        gtk_show_uri_on_window(win(imaging_wizard), uri, GDK_CURRENT_TIME, nullptr);
     g_free(uri);
 }
 
-static GtkWidget *done_page(imgwiz *a) {
+static GtkWidget *done_page(imgwiz *imaging_wizard) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-    a->done_label = text("");
-    gtk_box_pack_start(GTK_BOX(box), a->done_label, FALSE, FALSE, 0);
+    imaging_wizard->done_label = text("");
+    gtk_box_pack_start(GTK_BOX(box), imaging_wizard->done_label, FALSE, FALSE, 0);
     GtkWidget *open = gtk_button_new_with_mnemonic("_Open the folder");
     gtk_widget_set_halign(open, GTK_ALIGN_START);
-    g_signal_connect(open, "clicked", G_CALLBACK(cb_open_folder), a);
+    g_signal_connect(open, "clicked", G_CALLBACK(cb_open_folder), imaging_wizard);
     gtk_box_pack_start(GTK_BOX(box), open, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(box), text("To close this wizard, click Finish."), FALSE, FALSE, 0);
     return box;
 }
 
-static void error_box(imgwiz *a, const char *msg) {
-    xd_message_box(win(a), "Scanner and Camera Wizard", XD_MB_ERROR, XD_MB_OK, FALSE, msg);
+static void error_box(imgwiz *imaging_wizard, const char *msg) {
+    xd_message_box(win(imaging_wizard), "Scanner and Camera Wizard", XD_MB_ERROR, XD_MB_OK, FALSE,
+                   msg);
 }
 
 /* ---- the results ------------------------------------------------------------------------ */
 
-static void job_done(imgwiz *a, job *j) {
-    busy(a, false);
-    bool cancelled = g_error_matches(j->error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
-    switch (j->kind) {
+static void job_done(imgwiz *imaging_wizard, job *work) {
+    busy(imaging_wizard, false);
+    bool cancelled = g_error_matches(work->error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+    switch (work->kind) {
     case JOB_INFO:
-        if (j->info == nullptr) {
-            gtk_label_set_text(GTK_LABEL(a->preview_status), j->error->message);
-            xd_wizard_set_next_sensitive(a->w, false);
+        if (work->info == nullptr) {
+            gtk_label_set_text(GTK_LABEL(imaging_wizard->preview_status), work->error->message);
+            xd_wizard_set_next_sensitive(imaging_wizard->w, false);
             return;
         }
-        a->info = j->info;
-        j->info = nullptr;
-        show_info(a);
-        gtk_label_set_text(GTK_LABEL(a->preview_status), "");
-        gtk_widget_set_sensitive(a->preview_button, TRUE);
+        imaging_wizard->info = work->info;
+        work->info = nullptr;
+        show_info(imaging_wizard);
+        gtk_label_set_text(GTK_LABEL(imaging_wizard->preview_status), "");
+        gtk_widget_set_sensitive(imaging_wizard->preview_button, TRUE);
         return;
     case JOB_PREVIEW:
-        if (j->pixbuf == nullptr) {
-            gtk_label_set_text(GTK_LABEL(a->preview_status), j->error->message);
+        if (work->pixbuf == nullptr) {
+            gtk_label_set_text(GTK_LABEL(imaging_wizard->preview_status), work->error->message);
             return;
         }
         {
-            int w = gdk_pixbuf_get_width(j->pixbuf), h = gdk_pixbuf_get_height(j->pixbuf);
-            double s = MIN((double)PREVIEW_W / w, (double)PREVIEW_H / h);
-            GdkPixbuf *small = gdk_pixbuf_scale_simple(j->pixbuf, MAX(1, (int)(w * s)),
-                                                       MAX(1, (int)(h * s)),
-                                                       GDK_INTERP_BILINEAR);
-            gtk_image_set_from_pixbuf(GTK_IMAGE(a->preview), small);
+            int width = gdk_pixbuf_get_width(work->pixbuf),
+                height = gdk_pixbuf_get_height(work->pixbuf);
+            double scale = MIN((double)PREVIEW_W / width, (double)PREVIEW_H / height);
+            GdkPixbuf *small =
+                gdk_pixbuf_scale_simple(work->pixbuf, MAX(1, (int)(width * scale)),
+                                        MAX(1, (int)(height * scale)), GDK_INTERP_BILINEAR);
+            gtk_image_set_from_pixbuf(GTK_IMAGE(imaging_wizard->preview), small);
             g_object_unref(small);
         }
-        gtk_label_set_text(GTK_LABEL(a->preview_status), "");
+        gtk_label_set_text(GTK_LABEL(imaging_wizard->preview_status), "");
         return;
     case JOB_LIST:
-        a->listed = j->photos != nullptr;
-        if (j->photos == nullptr) {
-            gtk_label_set_text(GTK_LABEL(a->photo_status), j->error->message);
-            xd_wizard_set_next_sensitive(a->w, false);
+        imaging_wizard->listed = work->photos != nullptr;
+        if (work->photos == nullptr) {
+            gtk_label_set_text(GTK_LABEL(imaging_wizard->photo_status), work->error->message);
+            xd_wizard_set_next_sensitive(imaging_wizard->w, false);
             return;
         }
-        show_photos(a, j->photos);
+        show_photos(imaging_wizard, work->photos);
         return;
     case JOB_SCAN:
     case JOB_COPY:
-        a->saved_count += (int)j->saved->len;
-        if (j->error != nullptr) {
+        imaging_wizard->saved_count += (int)work->saved->len;
+        if (work->error != nullptr) {
             if (!cancelled)
-                error_box(a, j->error->message);
+                error_box(imaging_wizard, work->error->message);
             /* Back to the name and place, to try again. */
-            xd_wizard_go(a->w, PAGE_NAME);
+            xd_wizard_go(imaging_wizard->w, PAGE_NAME);
             return;
         }
-        g_free(a->saved_dir);
-        a->saved_dir = g_strdup(j->dir);
-        xd_wizard_go(a->w, PAGE_DONE);
+        g_free(imaging_wizard->saved_dir);
+        imaging_wizard->saved_dir = g_strdup(work->dir);
+        xd_wizard_go(imaging_wizard->w, PAGE_DONE);
         return;
     default:
         return;
@@ -572,29 +587,30 @@ static void job_done(imgwiz *a, job *j) {
 
 /* ---- going through it --------------------------------------------------------------------- */
 
-static int next_page([[maybe_unused]] xd_wizard *w, int page, gpointer data) {
-    imgwiz *a = data;
-    if (page == PAGE_CHOOSE && a->dev.camera) {
-        GList *sel = gtk_icon_view_get_selected_items(GTK_ICON_VIEW(a->photo_view));
+static int next_page([[maybe_unused]] xd_wizard *page_wizard, int page, gpointer data) {
+    imgwiz *imaging_wizard = data;
+    if (page == PAGE_CHOOSE && imaging_wizard->dev.camera) {
+        GList *sel = gtk_icon_view_get_selected_items(GTK_ICON_VIEW(imaging_wizard->photo_view));
         bool any = sel != nullptr;
         g_list_free_full(sel, (GDestroyNotify)gtk_tree_path_free);
         if (!any) {
-            error_box(a, "Select the pictures to copy.");
+            error_box(imaging_wizard, "Select the pictures to copy.");
             return -1;
         }
     }
     if (page == PAGE_NAME) {
-        const char *name = gtk_entry_get_text(GTK_ENTRY(a->name));
+        const char *name = gtk_entry_get_text(GTK_ENTRY(imaging_wizard->name));
         if (!xd_scan_name_valid(name)) {
-            error_box(a, "Type a name for the pictures. It can't contain a slash (/).");
+            error_box(imaging_wizard,
+                      "Type a name for the pictures. It can't contain a slash (/).");
             return -1;
         }
-        char *dir = chosen_dir(a);
+        char *dir = chosen_dir(imaging_wizard);
         bool ok = g_mkdir_with_parents(dir, 0755) == 0 && g_access(dir, W_OK) == 0;
         if (!ok) {
             char *msg = g_strdup_printf("Pictures can't be saved in %s. Choose another folder.",
                                         dir);
-            error_box(a, msg);
+            error_box(imaging_wizard, msg);
             g_free(msg);
         }
         g_free(dir);
@@ -604,96 +620,103 @@ static int next_page([[maybe_unused]] xd_wizard *w, int page, gpointer data) {
     return page + 1;
 }
 
-static GPtrArray *selected_photos(imgwiz *a) {
+static GPtrArray *selected_photos(imgwiz *imaging_wizard) {
     GPtrArray *out = g_ptr_array_new_with_free_func((GDestroyNotify)xd_camera_photo_free);
-    GList *sel = gtk_icon_view_get_selected_items(GTK_ICON_VIEW(a->photo_view));
+    GList *sel = gtk_icon_view_get_selected_items(GTK_ICON_VIEW(imaging_wizard->photo_view));
     sel = g_list_reverse(sel); /* in the camera's order */
-    for (GList *l = sel; l != nullptr; l = l->next) {
+    for (GList *list = sel; list != nullptr; list = list->next) {
         GtkTreeIter iter;
-        if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(a->photos), &iter, l->data))
+        if (!gtk_tree_model_get_iter(GTK_TREE_MODEL(imaging_wizard->photos), &iter, list->data))
             continue;
-        xd_camera_photo *p = g_new0(xd_camera_photo, 1);
-        gtk_tree_model_get(GTK_TREE_MODEL(a->photos), &iter, P_NAME, &p->name, P_FOLDER,
-                           &p->folder, -1);
-        g_ptr_array_add(out, p);
+        xd_camera_photo *camera_photo = g_new0(xd_camera_photo, 1);
+        gtk_tree_model_get(GTK_TREE_MODEL(imaging_wizard->photos), &iter, P_NAME,
+                           &camera_photo->name, P_FOLDER, &camera_photo->folder, -1);
+        g_ptr_array_add(out, camera_photo);
     }
     g_list_free_full(sel, (GDestroyNotify)gtk_tree_path_free);
     return out;
 }
 
-static void enter_page([[maybe_unused]] xd_wizard *w, int page, gpointer data) {
-    imgwiz *a = data;
-    if (page == PAGE_CHOOSE && !a->dev.camera && a->info == nullptr && a->running == nullptr) {
-        busy(a, true);
-        gtk_label_set_text(GTK_LABEL(a->preview_status), "Connecting to the scanner...");
-        start_job(a, new_job(a, JOB_INFO));
-    } else if (page == PAGE_CHOOSE && a->dev.camera && !a->listed && a->running == nullptr) {
-        busy(a, true);
-        gtk_label_set_text(GTK_LABEL(a->photo_status), "Reading the camera's pictures...");
-        job *j = new_job(a, JOB_LIST);
-        j->cam = camref_ref(a->cam);
-        start_job(a, j);
+static void enter_page([[maybe_unused]] xd_wizard *page_wizard, int page, gpointer data) {
+    imgwiz *imaging_wizard = data;
+    if (page == PAGE_CHOOSE && !imaging_wizard->dev.camera && imaging_wizard->info == nullptr &&
+        imaging_wizard->running == nullptr) {
+        busy(imaging_wizard, true);
+        gtk_label_set_text(GTK_LABEL(imaging_wizard->preview_status),
+                           "Connecting to the scanner...");
+        start_job(imaging_wizard, new_job(imaging_wizard, JOB_INFO));
+    } else if (page == PAGE_CHOOSE && imaging_wizard->dev.camera && !imaging_wizard->listed &&
+               imaging_wizard->running == nullptr) {
+        busy(imaging_wizard, true);
+        gtk_label_set_text(GTK_LABEL(imaging_wizard->photo_status),
+                           "Reading the camera's pictures...");
+        job *work = new_job(imaging_wizard, JOB_LIST);
+        work->cam = camref_ref(imaging_wizard->cam);
+        start_job(imaging_wizard, work);
     } else if (page == PAGE_WORK) {
-        job *j = new_job(a, a->dev.camera ? JOB_COPY : JOB_SCAN);
-        j->dir = chosen_dir(a);
-        j->name = g_strdup(gtk_entry_get_text(GTK_ENTRY(a->name)));
-        if (a->dev.camera) {
-            j->cam = camref_ref(a->cam);
-            j->chosen = selected_photos(a);
-            char *s = g_strdup_printf("Copying %u picture(s) to %s...", j->chosen->len, j->dir);
-            gtk_label_set_text(GTK_LABEL(a->progress_label), s);
-            g_free(s);
+        job *work = new_job(imaging_wizard, imaging_wizard->dev.camera ? JOB_COPY : JOB_SCAN);
+        work->dir = chosen_dir(imaging_wizard);
+        work->name = g_strdup(gtk_entry_get_text(GTK_ENTRY(imaging_wizard->name)));
+        if (imaging_wizard->dev.camera) {
+            work->cam = camref_ref(imaging_wizard->cam);
+            work->chosen = selected_photos(imaging_wizard);
+            char *status =
+                g_strdup_printf("Copying %u picture(s) to %s...", work->chosen->len, work->dir);
+            gtk_label_set_text(GTK_LABEL(imaging_wizard->progress_label), status);
+            g_free(status);
         } else {
-            j->type = chosen_type(a);
-            j->dpi = chosen_dpi(a);
-            char *s = g_strdup_printf("Scanning a picture at %d dpi into %s...", j->dpi, j->dir);
-            gtk_label_set_text(GTK_LABEL(a->progress_label), s);
-            g_free(s);
+            work->type = chosen_type(imaging_wizard);
+            work->dpi = chosen_dpi(imaging_wizard);
+            char *status =
+                g_strdup_printf("Scanning a picture at %d dpi into %s...", work->dpi, work->dir);
+            gtk_label_set_text(GTK_LABEL(imaging_wizard->progress_label), status);
+            g_free(status);
         }
-        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(a->progress), 0);
-        busy(a, true);
-        start_job(a, j);
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(imaging_wizard->progress), 0);
+        busy(imaging_wizard, true);
+        start_job(imaging_wizard, work);
     } else if (page == PAGE_DONE) {
-        char *s = g_strdup_printf("You have successfully copied %d picture(s) to:\n\n%s",
-                                  a->saved_count, a->saved_dir != nullptr ? a->saved_dir : "");
-        gtk_label_set_text(GTK_LABEL(a->done_label), s);
-        g_free(s);
+        char *status = g_strdup_printf(
+            "You have successfully copied %d picture(s) to:\n\n%s", imaging_wizard->saved_count,
+            imaging_wizard->saved_dir != nullptr ? imaging_wizard->saved_dir : "");
+        gtk_label_set_text(GTK_LABEL(imaging_wizard->done_label), status);
+        g_free(status);
         /* Done is done: the pictures are saved. */
-        xd_wizard_set_back_sensitive(a->w, false);
+        xd_wizard_set_back_sensitive(imaging_wizard->w, false);
     }
 }
 
 static void imgwiz_free(gpointer data) {
-    imgwiz *a = data;
-    g_cancellable_cancel(a->cancel);
-    g_object_unref(a->cancel);
-    if (a->poll != 0)
-        g_source_remove(a->poll);
-    if (a->running != nullptr) {
+    imgwiz *imaging_wizard = data;
+    g_cancellable_cancel(imaging_wizard->cancel);
+    g_object_unref(imaging_wizard->cancel);
+    if (imaging_wizard->poll != 0)
+        g_source_remove(imaging_wizard->poll);
+    if (imaging_wizard->running != nullptr) {
         /* The thread stops at its next chance and drops its reference. */
-        g_atomic_int_set(&a->running->cancel, 1);
-        job_unref(a->running);
+        g_atomic_int_set(&imaging_wizard->running->cancel, 1);
+        job_unref(imaging_wizard->running);
     }
-    camref_unref(a->cam);
-    xd_scanner_info_free(a->info);
+    camref_unref(imaging_wizard->cam);
+    xd_scanner_info_free(imaging_wizard->info);
     /* The view goes with the window; let go of its model first, or GTK
      * complains while tearing down its selection. */
-    if (a->photo_view != nullptr)
-        gtk_icon_view_set_model(GTK_ICON_VIEW(a->photo_view), nullptr);
-    if (a->photos != nullptr)
-        g_object_unref(a->photos);
-    g_free(a->dev.id);
-    g_free(a->dev.port);
-    g_free(a->dev.vendor);
-    g_free(a->dev.model);
-    g_free(a->dev.type);
-    g_free(a->saved_dir);
-    g_free(a);
+    if (imaging_wizard->photo_view != nullptr)
+        gtk_icon_view_set_model(GTK_ICON_VIEW(imaging_wizard->photo_view), nullptr);
+    if (imaging_wizard->photos != nullptr)
+        g_object_unref(imaging_wizard->photos);
+    g_free(imaging_wizard->dev.id);
+    g_free(imaging_wizard->dev.port);
+    g_free(imaging_wizard->dev.vendor);
+    g_free(imaging_wizard->dev.model);
+    g_free(imaging_wizard->dev.type);
+    g_free(imaging_wizard->saved_dir);
+    g_free(imaging_wizard);
 }
 
 void xd_imaging_wizard_open(GtkWindow *parent, const xd_imaging_device *dev) {
-    imgwiz *a = g_new0(imgwiz, 1);
-    a->dev = (xd_imaging_device){
+    imgwiz *imaging_wizard = g_new0(imgwiz, 1);
+    imaging_wizard->dev = (xd_imaging_device){
         .camera = dev->camera,
         .id = g_strdup(dev->id),
         .port = g_strdup(dev->port),
@@ -701,14 +724,15 @@ void xd_imaging_wizard_open(GtkWindow *parent, const xd_imaging_device *dev) {
         .model = g_strdup(dev->model),
         .type = g_strdup(dev->type),
     };
-    a->cancel = g_cancellable_new();
+    imaging_wizard->cancel = g_cancellable_new();
     if (dev->camera) {
-        a->cam = g_new0(camref, 1);
-        a->cam->refs = 1;
+        imaging_wizard->cam = g_new0(camref, 1);
+        imaging_wizard->cam->refs = 1;
     }
     const char *icon = dev->camera ? "camera-photo" : "scanner";
-    a->w = xd_wizard_new(parent, "Scanner and Camera Wizard", icon, a, imgwiz_free);
-    xd_scanners_hold(xd_wizard_window(a->w));
+    imaging_wizard->w =
+        xd_wizard_new(parent, "Scanner and Camera Wizard", icon, imaging_wizard, imgwiz_free);
+    xd_scanners_hold(xd_wizard_window(imaging_wizard->w));
     char *welcome = g_strdup_printf(
         "This wizard helps you copy pictures from %s to your computer.\n\n%s",
         dev->model,
@@ -717,24 +741,26 @@ void xd_imaging_wizard_open(GtkWindow *parent, const xd_imaging_device *dev) {
                       "is scanned into a folder of your choice.");
     GtkWidget *wbody = text(welcome);
     g_free(welcome);
-    xd_wizard_add_exterior(a->w, "Welcome to the Scanner and Camera Wizard", wbody, false);
+    xd_wizard_add_exterior(imaging_wizard->w, "Welcome to the Scanner and Camera Wizard", wbody,
+                           false);
     if (dev->camera)
-        xd_wizard_add_interior(a->w, "Choose Pictures to Copy",
+        xd_wizard_add_interior(imaging_wizard->w, "Choose Pictures to Copy",
                                "Pictures with a selection will be copied.",
-                               camera_choose_page(a), false);
+                               camera_choose_page(imaging_wizard), false);
     else
-        xd_wizard_add_interior(a->w, "Choose Scanning Preferences",
+        xd_wizard_add_interior(imaging_wizard->w, "Choose Scanning Preferences",
                                "Choose your scanning preferences, and then click Preview to "
                                "see how your picture will appear.",
-                               scan_choose_page(a), false);
-    xd_wizard_add_interior(a->w, "Picture Name and Destination",
-                           "Select a name and destination for your pictures.", name_page(a),
-                           false);
-    xd_wizard_add_interior(a->w, dev->camera ? "Copying Pictures" : "Scanning Picture",
-                           "Please wait while the wizard copies your pictures.", work_page(a),
-                           false);
-    xd_wizard_add_exterior(a->w, "Completing the Scanner and Camera Wizard", done_page(a), true);
-    xd_wizard_set_next_func(a->w, next_page);
-    xd_wizard_set_enter_func(a->w, enter_page);
-    xd_wizard_show(a->w);
+                               scan_choose_page(imaging_wizard), false);
+    xd_wizard_add_interior(imaging_wizard->w, "Picture Name and Destination",
+                           "Select a name and destination for your pictures.",
+                           name_page(imaging_wizard), false);
+    xd_wizard_add_interior(imaging_wizard->w, dev->camera ? "Copying Pictures" : "Scanning Picture",
+                           "Please wait while the wizard copies your pictures.",
+                           work_page(imaging_wizard), false);
+    xd_wizard_add_exterior(imaging_wizard->w, "Completing the Scanner and Camera Wizard",
+                           done_page(imaging_wizard), true);
+    xd_wizard_set_next_func(imaging_wizard->w, next_page);
+    xd_wizard_set_enter_func(imaging_wizard->w, enter_page);
+    xd_wizard_show(imaging_wizard->w);
 }

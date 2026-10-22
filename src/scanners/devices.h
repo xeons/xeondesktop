@@ -20,8 +20,8 @@ typedef struct xd_imaging_device {
     char *type;   /* "flatbed scanner", "Digital camera" */
 } xd_imaging_device;
 
-void xd_imaging_device_free(xd_imaging_device *d);
-xd_imaging_device *xd_imaging_device_copy(const xd_imaging_device *d);
+void xd_imaging_device_free(xd_imaging_device *imaging_device);
+xd_imaging_device *xd_imaging_device_copy(const xd_imaging_device *original);
 
 /* The scanners and cameras connected now. Free with g_ptr_array_unref. */
 GPtrArray *xd_imaging_devices_list(void);
@@ -60,7 +60,7 @@ typedef struct xd_camera_photo {
     GdkPixbuf *thumbnail; /* nullptr when the camera has none */
 } xd_camera_photo;
 
-void xd_camera_photo_free(xd_camera_photo *p);
+void xd_camera_photo_free(xd_camera_photo *camera_photo);
 
 /* The camera's pictures, every folder, with their thumbnails. */
 GPtrArray *xd_camera_list_photos(xd_camera *cam, gint *cancel, GError **error);

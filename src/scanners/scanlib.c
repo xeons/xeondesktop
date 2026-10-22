@@ -13,18 +13,18 @@ static const char *const gray_words[] = {SANE_VALUE_SCAN_MODE_GRAY, "grayscale",
 static const char *const bw_words[] = {SANE_VALUE_SCAN_MODE_LINEART, "binary", "black",
                                        "halftone", "lineart", nullptr};
 
-static const char *find_mode(const char *const *words, const char *const *modes, size_t n) {
+static const char *find_mode(const char *const *words, const char *const *modes, size_t count) {
     /* The exact word first, then a mode containing it ("24bit Color"). */
-    for (const char *const *w = words; *w != nullptr; w++) {
-        for (size_t i = 0; i < n; i++) {
-            if (g_ascii_strcasecmp(modes[i], *w) == 0)
+    for (const char *const *candidate = words; *candidate != nullptr; candidate++) {
+        for (size_t i = 0; i < count; i++) {
+            if (g_ascii_strcasecmp(modes[i], *candidate) == 0)
                 return modes[i];
         }
     }
-    for (const char *const *w = words; *w != nullptr; w++) {
-        for (size_t i = 0; i < n; i++) {
+    for (const char *const *candidate = words; *candidate != nullptr; candidate++) {
+        for (size_t i = 0; i < count; i++) {
             char *lower = g_ascii_strdown(modes[i], -1);
-            char *word = g_ascii_strdown(*w, -1);
+            char *word = g_ascii_strdown(*candidate, -1);
             bool hit = strstr(lower, word) != nullptr;
             g_free(word);
             g_free(lower);
@@ -35,19 +35,19 @@ static const char *find_mode(const char *const *words, const char *const *modes,
     return nullptr;
 }
 
-const char *xd_scan_mode_for(xd_picture_type type, const char *const *modes, size_t n,
+const char *xd_scan_mode_for(xd_picture_type type, const char *const *modes, size_t count,
                              bool *one_bit) {
     *one_bit = false;
     switch (type) {
     case XD_PICTURE_COLOR:
-        return find_mode(color_words, modes, n);
+        return find_mode(color_words, modes, count);
     case XD_PICTURE_GRAY:
-        return find_mode(gray_words, modes, n);
+        return find_mode(gray_words, modes, count);
     case XD_PICTURE_BW: {
-        const char *bw = find_mode(bw_words, modes, n);
+        const char *bw = find_mode(bw_words, modes, count);
         if (bw != nullptr)
             return bw;
-        const char *gray = find_mode(gray_words, modes, n);
+        const char *gray = find_mode(gray_words, modes, count);
         *one_bit = gray != nullptr;
         return gray;
     }
@@ -94,9 +94,9 @@ bool xd_scan_name_valid(const char *name) {
 static guint8 sample(const SANE_Byte *src, int depth, int i) {
     if (depth == 8)
         return src[i];
-    guint16 v;
-    memcpy(&v, src + (size_t)i * 2, sizeof(v));
-    return (guint8)(v >> 8);
+    guint16 value;
+    memcpy(&value, src + (size_t)i * 2, sizeof(value));
+    return (guint8)(value >> 8);
 }
 
 static bool bit(const SANE_Byte *src, int i) {
@@ -112,20 +112,20 @@ bool xd_scan_convert_line(SANE_Frame frame, int depth, int pixels, const SANE_By
         switch (frame) {
         case SANE_FRAME_GRAY: {
             /* At depth 1 a set bit is black. */
-            guint8 v = depth == 1 ? (bit(src, x) ? 0 : 255) : sample(src, depth, x);
-            px[0] = px[1] = px[2] = v;
+            guint8 gray = depth == 1 ? (bit(src, x) ? 0 : 255) : sample(src, depth, x);
+            px[0] = px[1] = px[2] = gray;
             break;
         }
         case SANE_FRAME_RGB:
-            for (int c = 0; c < 3; c++)
-                px[c] = depth == 1 ? (bit(src, x * 3 + c) ? 255 : 0)
-                                   : sample(src, depth, x * 3 + c);
+            for (int channel = 0; channel < 3; channel++)
+                px[channel] = depth == 1 ? (bit(src, x * 3 + channel) ? 255 : 0)
+                                         : sample(src, depth, x * 3 + channel);
             break;
         case SANE_FRAME_RED:
         case SANE_FRAME_GREEN:
         case SANE_FRAME_BLUE: {
-            int c = frame == SANE_FRAME_RED ? 0 : frame == SANE_FRAME_GREEN ? 1 : 2;
-            px[c] = depth == 1 ? (bit(src, x) ? 255 : 0) : sample(src, depth, x);
+            int channel = frame == SANE_FRAME_RED ? 0 : frame == SANE_FRAME_GREEN ? 1 : 2;
+            px[channel] = depth == 1 ? (bit(src, x) ? 255 : 0) : sample(src, depth, x);
             break;
         }
         default:

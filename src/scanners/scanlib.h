@@ -16,10 +16,10 @@ typedef enum xd_picture_type : uint8_t {
 } xd_picture_type;
 
 /* The scanner's mode (its SANE "mode" option) for `type`, from the
- * `n` modes it offers; nullptr when none fits. For black and white on a
+ * `count` modes it offers; nullptr when none fits. For black and white on a
  * scanner without a lineart mode, the gray mode, and *one_bit is set:
  * scan at depth 1. */
-const char *xd_scan_mode_for(xd_picture_type type, const char *const *modes, size_t n,
+const char *xd_scan_mode_for(xd_picture_type type, const char *const *modes, size_t count,
                              bool *one_bit);
 
 /* The resolutions to offer for a scanner whose "resolution" option is a
