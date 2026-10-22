@@ -34,16 +34,16 @@ typedef struct xd_taskpane_style {
     xd_rgba details_color;
 } xd_taskpane_style;
 
-void xd_theme_taskpane_style(const xd_theme *t, xd_taskpane_style *out);
-/* The pane's background, all of `r`. */
-void xd_theme_draw_taskpane(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_theme_taskpane_style(const xd_theme *theme, xd_taskpane_style *out);
+/* The pane's background, all of `rect`. */
+void xd_theme_draw_taskpane(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 /* A group's title bar with its title and its Expand or Collapse button
  * (`expanded`: Collapse); `state` XD_STATE_HOT / PRESSED / FOCUSED. */
-void xd_theme_draw_taskpane_header(const xd_theme *t, cairo_t *cr, const xd_taskpane_style *s,
-                                   xd_rect r, bool special, bool expanded, uint8_t state,
-                                   const char *title);
+void xd_theme_draw_taskpane_header(const xd_theme *theme, cairo_t *cairo,
+                                   const xd_taskpane_style *taskpane_style, xd_rect rect,
+                                   bool special, bool expanded, uint8_t state, const char *title);
 /* A group's body, behind its tasks. */
-void xd_theme_draw_taskpane_body(const xd_theme *t, cairo_t *cr, xd_rect r, bool special);
+void xd_theme_draw_taskpane_body(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool special);
 
 /* ---- Vista's and 7's Explorer, where a package styles it ---- */
 
@@ -58,25 +58,27 @@ typedef enum xd_explorer_part {
 /* Draws the part in `state` (XD_STATE_HOT, PRESSED, FOCUSED, CHECKED for a
  * selected tree row, DISABLED); false, drawing nothing, when no package
  * styles it (the caller draws as it does without one). */
-bool xd_theme_draw_explorer_part(const xd_theme *t, cairo_t *cr, xd_explorer_part part,
-                                 uint8_t state, xd_rect r);
+bool xd_theme_draw_explorer_part(const xd_theme *theme, cairo_t *cairo, xd_explorer_part part,
+                                 uint8_t state, xd_rect rect);
 /* The text colour the package gives the part in `state`, if any. */
-bool xd_theme_explorer_text_color(const xd_theme *t, xd_explorer_part part, uint8_t state,
+bool xd_theme_explorer_text_color(const xd_theme *theme, xd_explorer_part part, uint8_t state,
                                   xd_rgba *out);
 
 /* ---- internal: style_pkg.c's drawing from a package (false: it doesn't
  * style the pane), under the functions above ---- */
-bool xd_pkgstyle_has_taskpane(const xd_theme *t);
+bool xd_pkgstyle_has_taskpane(const xd_theme *theme);
 /* Overwrites what the package gives. */
-void xd_pkgstyle_taskpane_style(const xd_theme *t, xd_taskpane_style *s);
-bool xd_pkgstyle_draw_taskpane(const xd_theme *t, cairo_t *cr, xd_rect r);
-bool xd_pkgstyle_draw_taskpane_header(const xd_theme *t, cairo_t *cr, const xd_taskpane_style *s,
-                                      xd_rect r, bool special, bool expanded, uint8_t state,
+void xd_pkgstyle_taskpane_style(const xd_theme *theme, xd_taskpane_style *taskpane_style);
+bool xd_pkgstyle_draw_taskpane(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
+bool xd_pkgstyle_draw_taskpane_header(const xd_theme *theme, cairo_t *cairo,
+                                      const xd_taskpane_style *taskpane_style, xd_rect rect,
+                                      bool special, bool expanded, uint8_t state,
                                       const char *title);
-bool xd_pkgstyle_draw_taskpane_body(const xd_theme *t, cairo_t *cr, xd_rect r, bool special);
-bool xd_pkgstyle_draw_explorer_part(const xd_theme *t, cairo_t *cr, xd_explorer_part part,
-                                    uint8_t state, xd_rect r);
-bool xd_pkgstyle_explorer_text_color(const xd_theme *t, xd_explorer_part part, uint8_t state,
+bool xd_pkgstyle_draw_taskpane_body(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                    bool special);
+bool xd_pkgstyle_draw_explorer_part(const xd_theme *theme, cairo_t *cairo, xd_explorer_part part,
+                                    uint8_t state, xd_rect rect);
+bool xd_pkgstyle_explorer_text_color(const xd_theme *theme, xd_explorer_part part, uint8_t state,
                                      xd_rgba *out);
 
 #endif

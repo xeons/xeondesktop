@@ -19,9 +19,9 @@
 enum { MEMBER_MAX = 64 << 20, TOTAL_MAX = 256 << 20 };
 
 static void errno_error(GError **error, const char *path) {
-    int e = errno;
-    GFileError code = g_file_error_from_errno(e);
-    g_set_error(error, G_FILE_ERROR, (gint)code, "%s: %s", path, g_strerror(e));
+    int saved_errno = errno;
+    GFileError code = g_file_error_from_errno(saved_errno);
+    g_set_error(error, G_FILE_ERROR, (gint)code, "%s: %s", path, g_strerror(saved_errno));
 }
 
 /* Called for each file whose path `want` accepts; false stops. */
@@ -35,8 +35,8 @@ static bool member_ok(const char *name) {
         return false;
     char **parts = g_strsplit(name, "/", -1);
     bool ok = true;
-    for (char **p = parts; *p != nullptr && ok; p++)
-        ok = **p != '\0' && strcmp(*p, ".") != 0 && strcmp(*p, "..") != 0;
+    for (char **part = parts; *part != nullptr && ok; part++)
+        ok = **part != '\0' && strcmp(*part, ".") != 0 && strcmp(*part, "..") != 0;
     g_strfreev(parts);
     return ok;
 }
@@ -44,14 +44,15 @@ static bool member_ok(const char *name) {
 static bool walk_folder(const char *root, const char *rel, want_fn want, const void *wu,
                         member_fn fn, void *user, gsize *total, GError **error) {
     char *dir = rel[0] != '\0' ? g_build_filename(root, rel, nullptr) : g_strdup(root);
-    GDir *d = g_dir_open(dir, 0, error);
+    GDir *folder_dir = g_dir_open(dir, 0, error);
     g_free(dir);
-    if (d == nullptr)
+    if (folder_dir == nullptr)
         return false;
     bool ok = true;
-    const char *e;
-    while (ok && (e = g_dir_read_name(d)) != nullptr) {
-        char *name = rel[0] != '\0' ? g_strconcat(rel, "/", e, nullptr) : g_strdup(e);
+    const char *entry_name;
+    while (ok && (entry_name = g_dir_read_name(folder_dir)) != nullptr) {
+        char *name =
+            rel[0] != '\0' ? g_strconcat(rel, "/", entry_name, nullptr) : g_strdup(entry_name);
         char *full = g_build_filename(root, name, nullptr);
         if (g_file_test(full, G_FILE_TEST_IS_DIR)) {
             ok = walk_folder(root, name, want, wu, fn, user, total, error);
@@ -65,15 +66,15 @@ static bool walk_folder(const char *root, const char *rel, want_fn want, const v
                 ok = false;
             } else if (ok) {
                 *total += len;
-                GBytes *b = g_bytes_new_take(data, len);
-                ok = fn(name, b, user);
-                g_bytes_unref(b);
+                GBytes *bytes = g_bytes_new_take(data, len);
+                ok = fn(name, bytes, user);
+                g_bytes_unref(bytes);
             }
         }
         g_free(full);
         g_free(name);
     }
-    g_dir_close(d);
+    g_dir_close(folder_dir);
     return ok;
 }
 
@@ -84,35 +85,35 @@ static bool for_members(const char *path, want_fn want, const void *wu, member_f
     if (g_file_test(path, G_FILE_TEST_IS_DIR))
         return walk_folder(path, "", want, wu, fn, user, &total, error);
 #if XD_HAVE_LIBARCHIVE
-    struct archive *a = archive_read_new();
-    archive_read_support_format_zip(a);
-    bool ok = archive_read_open_filename(a, path, 64 * 1024) == ARCHIVE_OK;
+    struct archive *reader = archive_read_new();
+    archive_read_support_format_zip(reader);
+    bool ok = archive_read_open_filename(reader, path, 64 * 1024) == ARCHIVE_OK;
     bool failed = !ok;
-    struct archive_entry *e;
-    while (ok && archive_read_next_header(a, &e) == ARCHIVE_OK) {
-        const char *name = archive_entry_pathname(e);
-        la_int64_t size = archive_entry_size(e);
-        if (archive_entry_filetype(e) != AE_IFREG || !member_ok(name) || !want(name, wu) ||
-            size < 0 || size > MEMBER_MAX || total + (gsize)size > TOTAL_MAX) {
-            archive_read_data_skip(a);
+    struct archive_entry *archive_member;
+    while (ok && archive_read_next_header(reader, &archive_member) == ARCHIVE_OK) {
+        const char *name = archive_entry_pathname(archive_member);
+        la_int64_t size = archive_entry_size(archive_member);
+        if (archive_entry_filetype(archive_member) != AE_IFREG || !member_ok(name) ||
+            !want(name, wu) || size < 0 || size > MEMBER_MAX || total + (gsize)size > TOTAL_MAX) {
+            archive_read_data_skip(reader);
             continue;
         }
         char *buf = g_malloc((gsize)size + 1);
-        if (archive_read_data(a, buf, (size_t)size) != size) {
+        if (archive_read_data(reader, buf, (size_t)size) != size) {
             g_free(buf);
             failed = true;
             break;
         }
         total += (gsize)size;
-        GBytes *b = g_bytes_new_take(buf, (gsize)size);
-        ok = fn(name, b, user);
-        g_bytes_unref(b);
+        GBytes *bytes = g_bytes_new_take(buf, (gsize)size);
+        ok = fn(name, bytes, user);
+        g_bytes_unref(bytes);
     }
     if (failed)
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED, "%s: %s", path,
-                    archive_error_string(a) != nullptr ? archive_error_string(a)
-                                                        : "not a theme package");
-    archive_read_free(a);
+                    archive_error_string(reader) != nullptr ? archive_error_string(reader)
+                                                            : "not a theme package");
+    archive_read_free(reader);
     return ok && !failed;
 #else
     (void)want;
@@ -134,9 +135,9 @@ static bool want_one(const char *name, const void *user) { return strcmp(name, u
 /* `name` is the folder `user` or below it. */
 static bool want_below(const char *name, const void *user) {
     const char *prefix = user;
-    size_t n = strlen(prefix);
-    return member_ok(name) &&
-           (strcmp(name, prefix) == 0 || (strncmp(name, prefix, n) == 0 && name[n] == '/'));
+    size_t prefix_len = strlen(prefix);
+    return member_ok(name) && (strcmp(name, prefix) == 0 ||
+                               (strncmp(name, prefix, prefix_len) == 0 && name[prefix_len] == '/'));
 }
 
 static bool keep_one(const char *name, GBytes *data, void *user) {
@@ -196,23 +197,24 @@ typedef struct extract_ctx {
 } extract_ctx;
 
 static bool write_one(const char *name, GBytes *data, void *user) {
-    extract_ctx *c = user;
+    extract_ctx *extract = user;
     /* A file by its name; a folder's files by their paths below it. */
-    size_t n = strlen(c->member);
-    const char *rel = name[n] == '/' ? name + n + 1 : strrchr(name, '/');
+    size_t member_len = strlen(extract->member);
+    const char *rel = name[member_len] == '/' ? name + member_len + 1 : strrchr(name, '/');
     if (rel == nullptr)
         rel = name;
     else if (rel[0] == '/')
         rel++;
-    char *full = g_build_filename(c->dest, rel, nullptr);
+    char *full = g_build_filename(extract->dest, rel, nullptr);
     char *dir = g_path_get_dirname(full);
     gsize len = 0;
     const char *bytes = g_bytes_get_data(data, &len);
     bool ok = g_mkdir_with_parents(dir, 0755) == 0;
     if (!ok)
-        errno_error(c->error, dir);
-    ok = ok && g_file_set_contents(full, bytes != nullptr ? bytes : "", (gssize)len, c->error);
-    c->written += ok;
+        errno_error(extract->error, dir);
+    ok =
+        ok && g_file_set_contents(full, bytes != nullptr ? bytes : "", (gssize)len, extract->error);
+    extract->written += ok;
     g_free(dir);
     g_free(full);
     return ok;
@@ -223,10 +225,10 @@ bool xd_pkg_extract(const char *path, const char *member, const char *dest, GErr
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "%s: bad path %s", path, member);
         return false;
     }
-    extract_ctx c = {.member = member, .dest = dest, .error = error};
-    if (!for_members(path, want_below, member, write_one, &c, error))
+    extract_ctx extract = {.member = member, .dest = dest, .error = error};
+    if (!for_members(path, want_below, member, write_one, &extract, error))
         return false;
-    if (c.written == 0) {
+    if (extract.written == 0) {
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_NOENT, "%s: no %s", path, member);
         return false;
     }
@@ -235,10 +237,10 @@ bool xd_pkg_extract(const char *path, const char *member, const char *dest, GErr
 
 /* theme.xml first, as xd-theme-import writes them: a reader finds it at
  * once. */
-static int theme_xml_first(gconstpointer a, gconstpointer b) {
-    const char *x = *(const char *const *)a, *y = *(const char *const *)b;
-    bool tx = strcmp(x, "theme.xml") == 0, ty = strcmp(y, "theme.xml") == 0;
-    return tx != ty ? (tx ? -1 : 1) : strcmp(x, y);
+static int theme_xml_first(gconstpointer left, gconstpointer right) {
+    const char *left_name = *(const char *const *)left, *right_name = *(const char *const *)right;
+    bool tx = strcmp(left_name, "theme.xml") == 0, ty = strcmp(right_name, "theme.xml") == 0;
+    return tx != ty ? (tx ? -1 : 1) : strcmp(left_name, right_name);
 }
 
 bool xd_pkg_write_zip(const char *dest, GHashTable *files, GError **error) {
@@ -250,31 +252,31 @@ bool xd_pkg_write_zip(const char *dest, GHashTable *files, GError **error) {
     g_free(part_name);
     g_free(base);
     g_free(dir);
-    guint n = 0;
-    gpointer *names = g_hash_table_get_keys_as_array(files, &n);
-    qsort(names, n, sizeof(*names), theme_xml_first);
-    struct archive *a = archive_write_new();
-    archive_write_set_format_zip(a);
-    bool ok = archive_write_open_filename(a, part) == ARCHIVE_OK;
-    for (guint i = 0; ok && i < n; i++) {
-        GBytes *b = g_hash_table_lookup(files, names[i]);
+    guint count = 0;
+    gpointer *names = g_hash_table_get_keys_as_array(files, &count);
+    qsort(names, count, sizeof(*names), theme_xml_first);
+    struct archive *writer = archive_write_new();
+    archive_write_set_format_zip(writer);
+    bool ok = archive_write_open_filename(writer, part) == ARCHIVE_OK;
+    for (guint i = 0; ok && i < count; i++) {
+        GBytes *bytes = g_hash_table_lookup(files, names[i]);
         gsize len = 0;
-        const void *data = g_bytes_get_data(b, &len);
-        struct archive_entry *e = archive_entry_new();
-        archive_entry_set_pathname(e, names[i]);
-        archive_entry_set_filetype(e, AE_IFREG);
-        archive_entry_set_perm(e, 0644);
-        archive_entry_set_size(e, (la_int64_t)len);
-        ok = member_ok(names[i]) && archive_write_header(a, e) == ARCHIVE_OK &&
-             (len == 0 || archive_write_data(a, data, len) == (la_ssize_t)len);
-        archive_entry_free(e);
+        const void *data = g_bytes_get_data(bytes, &len);
+        struct archive_entry *archive_member = archive_entry_new();
+        archive_entry_set_pathname(archive_member, names[i]);
+        archive_entry_set_filetype(archive_member, AE_IFREG);
+        archive_entry_set_perm(archive_member, 0644);
+        archive_entry_set_size(archive_member, (la_int64_t)len);
+        ok = member_ok(names[i]) && archive_write_header(writer, archive_member) == ARCHIVE_OK &&
+             (len == 0 || archive_write_data(writer, data, len) == (la_ssize_t)len);
+        archive_entry_free(archive_member);
     }
-    ok = archive_write_close(a) == ARCHIVE_OK && ok;
+    ok = archive_write_close(writer) == ARCHIVE_OK && ok;
     if (!ok)
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED, "%s: %s", dest,
-                    archive_error_string(a) != nullptr ? archive_error_string(a)
-                                                        : "cannot be written");
-    archive_write_free(a);
+                    archive_error_string(writer) != nullptr ? archive_error_string(writer)
+                                                            : "cannot be written");
+    archive_write_free(writer);
     g_free(names);
     if (ok && g_rename(part, dest) != 0) {
         errno_error(error, dest);

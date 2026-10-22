@@ -9,30 +9,28 @@
 
 int xd_px(double scale, double logical) {
     XD_ASSERT(scale > 0 && scale <= 16);
-    double v = round(logical * scale);
-    if (logical > 0 && v < 1)
+    double pixels = round(logical * scale);
+    if (logical > 0 && pixels < 1)
         return 1;
-    XD_ASSERT(fabs(v) < (double)INT32_MAX);
-    return (int)v;
+    XD_ASSERT(fabs(pixels) < (double)INT32_MAX);
+    return (int)pixels;
 }
 
-xd_rect xd_rect_inset(xd_rect r, int dx, int dy) {
-    return xd_rect_inset4(r, dx, dy, dx, dy);
+xd_rect xd_rect_inset(xd_rect rect, int dx, int dy) { return xd_rect_inset4(rect, dx, dy, dx, dy); }
+
+xd_rect xd_rect_inset4(xd_rect rect, int left, int top, int right, int bottom) {
+    xd_rect inset = {rect.x + left, rect.y + top, rect.w - left - right, rect.h - top - bottom};
+    if (inset.w < 0)
+        inset.w = 0;
+    if (inset.h < 0)
+        inset.h = 0;
+    return inset;
 }
 
-xd_rect xd_rect_inset4(xd_rect r, int left, int top, int right, int bottom) {
-    xd_rect o = {r.x + left, r.y + top, r.w - left - right, r.h - top - bottom};
-    if (o.w < 0)
-        o.w = 0;
-    if (o.h < 0)
-        o.h = 0;
-    return o;
-}
+bool xd_rect_empty(xd_rect rect) { return rect.w <= 0 || rect.h <= 0; }
 
-bool xd_rect_empty(xd_rect r) { return r.w <= 0 || r.h <= 0; }
-
-xd_rgba xd_rgba_from_rgb(xd_rgb c) {
-    return (xd_rgba){c.r / 255.0, c.g / 255.0, c.b / 255.0, 1.0};
+xd_rgba xd_rgba_from_rgb(xd_rgb color) {
+    return (xd_rgba){color.r / 255.0, color.g / 255.0, color.b / 255.0, 1.0};
 }
 
 xd_rgba xd_rgba_hex(uint32_t rgb) {
@@ -40,109 +38,112 @@ xd_rgba xd_rgba_hex(uint32_t rgb) {
                      (rgb & 0xFF) / 255.0, 1.0};
 }
 
-xd_rgba xd_rgba_mix(xd_rgba a, xd_rgba b, double t) {
-    return (xd_rgba){a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t,
-                     a.a + (b.a - a.a) * t};
+xd_rgba xd_rgba_mix(xd_rgba from, xd_rgba to, double amount) {
+    return (xd_rgba){from.r + (to.r - from.r) * amount, from.g + (to.g - from.g) * amount,
+                     from.b + (to.b - from.b) * amount, from.a + (to.a - from.a) * amount};
 }
 
-xd_rgba xd_rgba_alpha(xd_rgba c, double a) {
-    c.a = a;
-    return c;
+xd_rgba xd_rgba_alpha(xd_rgba color, double alpha) {
+    color.a = alpha;
+    return color;
 }
 
-xd_hsv xd_rgba_to_hsv(xd_rgba c) {
-    double hi = fmax(c.r, fmax(c.g, c.b));
-    double lo = fmin(c.r, fmin(c.g, c.b));
-    double d = hi - lo;
-    xd_hsv o = {0, hi > 0 ? d / hi : 0, hi};
-    if (d <= 0)
-        return o;
-    if (hi == c.r)
-        o.h = 60 * fmod((c.g - c.b) / d + 6, 6);
-    else if (hi == c.g)
-        o.h = 60 * ((c.b - c.r) / d + 2);
+xd_hsv xd_rgba_to_hsv(xd_rgba color) {
+    double hi = fmax(color.r, fmax(color.g, color.b));
+    double lo = fmin(color.r, fmin(color.g, color.b));
+    double chroma = hi - lo;
+    xd_hsv hsv = {0, hi > 0 ? chroma / hi : 0, hi};
+    if (chroma <= 0)
+        return hsv;
+    if (hi == color.r)
+        hsv.h = 60 * fmod((color.g - color.b) / chroma + 6, 6);
+    else if (hi == color.g)
+        hsv.h = 60 * ((color.b - color.r) / chroma + 2);
     else
-        o.h = 60 * ((c.r - c.g) / d + 4);
-    return o;
+        hsv.h = 60 * ((color.r - color.g) / chroma + 4);
+    return hsv;
 }
 
 xd_rgba xd_rgba_from_hsv(xd_hsv hsv, double alpha) {
-    double h = fmod(fmod(hsv.h, 360) + 360, 360) / 60;
-    double s = fmin(fmax(hsv.s, 0), 1), v = fmin(fmax(hsv.v, 0), 1);
-    double c = v * s;
-    double x = c * (1 - fabs(fmod(h, 2) - 1));
+    double sector = fmod(fmod(hsv.h, 360) + 360, 360) / 60;
+    double saturation = fmin(fmax(hsv.s, 0), 1), value = fmin(fmax(hsv.v, 0), 1);
+    double chroma = value * saturation;
+    double x = chroma * (1 - fabs(fmod(sector, 2) - 1));
     /* The sextant of the hue circle: which channel leads, which follows. */
     static const uint8_t lead[6] = {0, 1, 1, 2, 2, 0}, follow[6] = {1, 0, 2, 1, 0, 2};
     double rgb[3] = {0, 0, 0};
-    int k = XD_CLAMP((int)h, 0, 5);
-    rgb[lead[k]] = c;
+    int k = XD_CLAMP((int)sector, 0, 5);
+    rgb[lead[k]] = chroma;
     rgb[follow[k]] = x;
-    double m = v - c;
-    return (xd_rgba){rgb[0] + m, rgb[1] + m, rgb[2] + m, alpha};
+    double offset = value - chroma;
+    return (xd_rgba){rgb[0] + offset, rgb[1] + offset, rgb[2] + offset, alpha};
 }
 
-void xd_set_color(cairo_t *cr, xd_rgba c) { cairo_set_source_rgba(cr, c.r, c.g, c.b, c.a); }
+void xd_set_color(cairo_t *cairo, xd_rgba color) {
+    cairo_set_source_rgba(cairo, color.r, color.g, color.b, color.a);
+}
 
-void xd_fill_rect(cairo_t *cr, xd_rect r, xd_rgba c) {
-    if (xd_rect_empty(r))
+void xd_fill_rect(cairo_t *cairo, xd_rect rect, xd_rgba color) {
+    if (xd_rect_empty(rect))
         return;
-    xd_set_color(cr, c);
-    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-    cairo_fill(cr);
+    xd_set_color(cairo, color);
+    cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+    cairo_fill(cairo);
 }
 
-void xd_fill_gradient(cairo_t *cr, xd_rect r, xd_rgba from, xd_rgba to, bool horizontal) {
-    if (xd_rect_empty(r))
+void xd_fill_gradient(cairo_t *cairo, xd_rect rect, xd_rgba from, xd_rgba to, bool horizontal) {
+    if (xd_rect_empty(rect))
         return;
-    cairo_pattern_t *p = horizontal ? cairo_pattern_create_linear(r.x, 0, r.x + r.w, 0)
-                                    : cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
-    cairo_pattern_add_color_stop_rgba(p, 0, from.r, from.g, from.b, from.a);
-    cairo_pattern_add_color_stop_rgba(p, 1, to.r, to.g, to.b, to.a);
-    cairo_set_source(cr, p);
-    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-    cairo_fill(cr);
-    cairo_pattern_destroy(p);
+    cairo_pattern_t *pattern = horizontal
+                                   ? cairo_pattern_create_linear(rect.x, 0, rect.x + rect.w, 0)
+                                   : cairo_pattern_create_linear(0, rect.y, 0, rect.y + rect.h);
+    cairo_pattern_add_color_stop_rgba(pattern, 0, from.r, from.g, from.b, from.a);
+    cairo_pattern_add_color_stop_rgba(pattern, 1, to.r, to.g, to.b, to.a);
+    cairo_set_source(cairo, pattern);
+    cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+    cairo_fill(cairo);
+    cairo_pattern_destroy(pattern);
 }
 
-void xd_fill_vstops(cairo_t *cr, xd_rect r, const double *offsets, const xd_rgba *colors,
+void xd_fill_vstops(cairo_t *cairo, xd_rect rect, const double *offsets, const xd_rgba *colors,
                     size_t count) {
-    if (xd_rect_empty(r))
+    if (xd_rect_empty(rect))
         return;
-    cairo_pattern_t *p = cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
+    cairo_pattern_t *pattern = cairo_pattern_create_linear(0, rect.y, 0, rect.y + rect.h);
     for (size_t i = 0; i < count; i++)
-        cairo_pattern_add_color_stop_rgba(p, offsets[i], colors[i].r, colors[i].g,
+        cairo_pattern_add_color_stop_rgba(pattern, offsets[i], colors[i].r, colors[i].g,
                                           colors[i].b, colors[i].a);
-    cairo_set_source(cr, p);
-    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-    cairo_fill(cr);
-    cairo_pattern_destroy(p);
+    cairo_set_source(cairo, pattern);
+    cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+    cairo_fill(cairo);
+    cairo_pattern_destroy(pattern);
 }
 
-void xd_path_rounded(cairo_t *cr, double x, double y, double w, double h, double rtl,
+void xd_path_rounded(cairo_t *cairo, double x, double y, double width, double height, double rtl,
                      double rtr, double rbr, double rbl) {
-    const double q = XD_PI / 2;
-    cairo_new_sub_path(cr);
-    cairo_arc(cr, x + w - rtr, y + rtr, rtr, -q, 0);
-    cairo_arc(cr, x + w - rbr, y + h - rbr, rbr, 0, q);
-    cairo_arc(cr, x + rbl, y + h - rbl, rbl, q, 2 * q);
-    cairo_arc(cr, x + rtl, y + rtl, rtl, 2 * q, 3 * q);
-    cairo_close_path(cr);
+    const double quarter = XD_PI / 2;
+    cairo_new_sub_path(cairo);
+    cairo_arc(cairo, x + width - rtr, y + rtr, rtr, -quarter, 0);
+    cairo_arc(cairo, x + width - rbr, y + height - rbr, rbr, 0, quarter);
+    cairo_arc(cairo, x + rbl, y + height - rbl, rbl, quarter, 2 * quarter);
+    cairo_arc(cairo, x + rtl, y + rtl, rtl, 2 * quarter, 3 * quarter);
+    cairo_close_path(cairo);
 }
 
-xd_rect xd_draw_bevel(cairo_t *cr, xd_rect r, int t, xd_rgba tl, xd_rgba br) {
-    if (xd_rect_empty(r) || t <= 0)
-        return r;
+xd_rect xd_draw_bevel(cairo_t *cairo, xd_rect rect, int thickness, xd_rgba tl, xd_rgba br) {
+    if (xd_rect_empty(rect) || thickness <= 0)
+        return rect;
     /* Bottom/right first; top/left overlaps the shared corner pixels the
      * way Win32 DrawEdge does. */
-    xd_fill_rect(cr, (xd_rect){r.x, r.y + r.h - t, r.w, t}, br);
-    xd_fill_rect(cr, (xd_rect){r.x + r.w - t, r.y, t, r.h}, br);
-    xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w - t, t}, tl);
-    xd_fill_rect(cr, (xd_rect){r.x, r.y, t, r.h - t}, tl);
-    return xd_rect_inset(r, t, t);
+    xd_fill_rect(cairo, (xd_rect){rect.x, rect.y + rect.h - thickness, rect.w, thickness}, br);
+    xd_fill_rect(cairo, (xd_rect){rect.x + rect.w - thickness, rect.y, thickness, rect.h}, br);
+    xd_fill_rect(cairo, (xd_rect){rect.x, rect.y, rect.w - thickness, thickness}, tl);
+    xd_fill_rect(cairo, (xd_rect){rect.x, rect.y, thickness, rect.h - thickness}, tl);
+    return xd_rect_inset(rect, thickness, thickness);
 }
 
-static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_style *st) {
-    PangoLayout *layout = pango_cairo_create_layout(cr);
+static PangoLayout *make_layout(cairo_t *cairo, const char *utf8, const xd_text_style *st) {
+    PangoLayout *layout = pango_cairo_create_layout(cairo);
     PangoFontDescription *fd = pango_font_description_from_string(st->font->family);
     /* Points -> whole device pixels at 96 DPI times the scale, rounded as
      * GDI does (MulDiv(pt, dpi, 72)): 8pt Tahoma is 11px, not 10.67. */
@@ -195,83 +196,83 @@ static PangoLayout *make_layout(cairo_t *cr, const char *utf8, const xd_text_sty
     /* The access key's underline, as GDI draws it (Pango's own placing). */
     size_t len = strlen(utf8);
     if (st->underline != nullptr && st->underline >= utf8 && st->underline < utf8 + len) {
-        PangoAttribute *u = pango_attr_underline_new(PANGO_UNDERLINE_SINGLE);
-        u->start_index = (guint)(st->underline - utf8);
-        u->end_index = (guint)(g_utf8_next_char(st->underline) - utf8);
-        pango_attr_list_insert(attrs, u);
+        PangoAttribute *underline = pango_attr_underline_new(PANGO_UNDERLINE_SINGLE);
+        underline->start_index = (guint)(st->underline - utf8);
+        underline->end_index = (guint)(g_utf8_next_char(st->underline) - utf8);
+        pango_attr_list_insert(attrs, underline);
     }
     pango_layout_set_attributes(layout, attrs);
     pango_attr_list_unref(attrs);
     return layout;
 }
 
-PangoLayout *xd_text_layout(cairo_t *cr, const char *utf8, const xd_text_style *style) {
-    return make_layout(cr, utf8, style);
+PangoLayout *xd_text_layout(cairo_t *cairo, const char *utf8, const xd_text_style *style) {
+    return make_layout(cairo, utf8, style);
 }
 
 char *xd_text_strip_prefix(const char *label, int *key) {
     GString *out = g_string_sized_new(strlen(label));
     *key = -1;
-    for (const char *p = label; *p != '\0'; p++) {
-        if (*p != '&') {
-            g_string_append_c(out, *p);
+    for (const char *cursor = label; *cursor != '\0'; cursor++) {
+        if (*cursor != '&') {
+            g_string_append_c(out, *cursor);
             continue;
         }
-        if (p[1] == '&') {
+        if (cursor[1] == '&') {
             g_string_append_c(out, '&');
-            p++;
-        } else if (p[1] != '\0' && *key < 0) {
+            cursor++;
+        } else if (cursor[1] != '\0' && *key < 0) {
             *key = (int)out->len;
         }
     }
     return g_string_free(out, FALSE);
 }
 
-int xd_text_width(cairo_t *cr, const char *utf8, const xd_text_style *style) {
-    PangoLayout *layout = make_layout(cr, utf8, style);
-    int w = 0;
-    int h = 0;
-    pango_layout_get_pixel_size(layout, &w, &h);
+int xd_text_width(cairo_t *cairo, const char *utf8, const xd_text_style *style) {
+    PangoLayout *layout = make_layout(cairo, utf8, style);
+    int width = 0;
+    int height = 0;
+    pango_layout_get_pixel_size(layout, &width, &height);
     g_object_unref(layout);
-    return w;
+    return width;
 }
 
 /* Several lines, each centred on the widest, the block placed in r. */
-static void draw_lines(cairo_t *cr, xd_rect r, PangoLayout *layout, const xd_text_style *st) {
+static void draw_lines(cairo_t *cairo, xd_rect rect, PangoLayout *layout, const xd_text_style *st) {
     pango_layout_set_single_paragraph_mode(layout, false);
     pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
     int tw = 0, th = 0;
     pango_layout_get_pixel_size(layout, &tw, &th);
-    int x = st->align == XD_ALIGN_CENTER ? r.x + (r.w - tw) / 2
-            : st->align == XD_ALIGN_END  ? r.x + r.w - tw
-                                         : r.x;
-    int y = r.y + (r.h - th) / 2;
-    cairo_save(cr);
-    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-    cairo_clip(cr);
+    int x = st->align == XD_ALIGN_CENTER ? rect.x + (rect.w - tw) / 2
+            : st->align == XD_ALIGN_END  ? rect.x + rect.w - tw
+                                         : rect.x;
+    int y = rect.y + (rect.h - th) / 2;
+    cairo_save(cairo);
+    cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+    cairo_clip(cairo);
     if (st->shadow) {
         int off = xd_px(st->scale, 1);
-        xd_set_color(cr, st->shadow_color);
-        cairo_move_to(cr, x + off, y + off);
-        pango_cairo_show_layout(cr, layout);
+        xd_set_color(cairo, st->shadow_color);
+        cairo_move_to(cairo, x + off, y + off);
+        pango_cairo_show_layout(cairo, layout);
     }
-    xd_set_color(cr, st->color);
-    cairo_move_to(cr, x, y);
-    pango_cairo_show_layout(cr, layout);
-    cairo_restore(cr);
+    xd_set_color(cairo, st->color);
+    cairo_move_to(cairo, x, y);
+    pango_cairo_show_layout(cairo, layout);
+    cairo_restore(cairo);
 }
 
-void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style *st) {
-    if (xd_rect_empty(r) || utf8 == nullptr || utf8[0] == '\0')
+void xd_draw_text(cairo_t *cairo, xd_rect rect, const char *utf8, const xd_text_style *st) {
+    if (xd_rect_empty(rect) || utf8 == nullptr || utf8[0] == '\0')
         return;
 
-    PangoLayout *layout = make_layout(cr, utf8, st);
+    PangoLayout *layout = make_layout(cairo, utf8, st);
     if (st->lines && strchr(utf8, '\n') != nullptr) {
-        draw_lines(cr, r, layout, st);
+        draw_lines(cairo, rect, layout, st);
         g_object_unref(layout);
         return;
     }
-    pango_layout_set_width(layout, r.w * PANGO_SCALE);
+    pango_layout_set_width(layout, rect.w * PANGO_SCALE);
     if (st->wrap) {
         pango_layout_set_single_paragraph_mode(layout, false);
         pango_layout_set_wrap(layout, PANGO_WRAP_WORD_CHAR);
@@ -286,50 +287,50 @@ void xd_draw_text(cairo_t *cr, xd_rect r, const char *utf8, const xd_text_style 
     int tw = 0;
     int th = 0;
     pango_layout_get_pixel_size(layout, &tw, &th);
-    int y = st->wrap ? r.y : r.y + (r.h - th) / 2;
+    int y = st->wrap ? rect.y : rect.y + (rect.h - th) / 2;
 
-    cairo_save(cr);
-    cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-    cairo_clip(cr);
+    cairo_save(cairo);
+    cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+    cairo_clip(cairo);
     if (st->shadow) {
         int off = xd_px(st->scale, 1);
-        xd_set_color(cr, st->shadow_color);
-        cairo_move_to(cr, r.x + off, y + off);
-        pango_cairo_show_layout(cr, layout);
+        xd_set_color(cairo, st->shadow_color);
+        cairo_move_to(cairo, rect.x + off, y + off);
+        pango_cairo_show_layout(cairo, layout);
     }
-    xd_set_color(cr, st->color);
-    cairo_move_to(cr, r.x, y);
-    pango_cairo_show_layout(cr, layout);
-    cairo_restore(cr);
+    xd_set_color(cairo, st->color);
+    cairo_move_to(cairo, rect.x, y);
+    pango_cairo_show_layout(cairo, layout);
+    cairo_restore(cairo);
     g_object_unref(layout);
 }
 
-void xd_draw_shortcut_arrow(cairo_t *cr, double x, double y, double icon_px) {
+void xd_draw_shortcut_arrow(cairo_t *cairo, double x, double y, double icon_px) {
     /* 9 of a 32px icon's pixels, drawn on a 9x9 grid. */
-    double u = icon_px / 32.0;
-    double size = round(9 * u);
+    double unit = icon_px / 32.0;
+    double size = round(9 * unit);
     double bx = round(x), by = round(y + icon_px - size);
-    double g = size / 9.0;
-    cairo_save(cr);
-    cairo_rectangle(cr, bx, by, size, size);
-    cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_fill(cr);
+    double grid = size / 9.0;
+    cairo_save(cairo);
+    cairo_rectangle(cairo, bx, by, size, size);
+    cairo_set_source_rgb(cairo, 1, 1, 1);
+    cairo_fill(cairo);
     /* The border on whole pixels, inside the box. */
-    double lw = XD_MAX(1.0, round(u));
-    cairo_rectangle(cr, bx + lw / 2, by + lw / 2, size - lw, size - lw);
-    cairo_set_source_rgb(cr, 0, 0, 0);
-    cairo_set_line_width(cr, lw);
-    cairo_stroke(cr);
+    double lw = XD_MAX(1.0, round(unit));
+    cairo_rectangle(cairo, bx + lw / 2, by + lw / 2, size - lw, size - lw);
+    cairo_set_source_rgb(cairo, 0, 0, 0);
+    cairo_set_line_width(cairo, lw);
+    cairo_stroke(cairo);
     /* The arrow: up from the bottom left, curving right, head at top right. */
-    cairo_set_line_width(cr, XD_MAX(1.0, 1.5 * u));
-    cairo_move_to(cr, bx + 2.5 * g, by + 7.5 * g);
-    cairo_curve_to(cr, bx + 2.5 * g, by + 4.5 * g, bx + 4 * g, by + 3.5 * g, bx + 6 * g,
-                   by + 3.5 * g);
-    cairo_stroke(cr);
-    cairo_move_to(cr, bx + 7.5 * g, by + 3.5 * g);
-    cairo_line_to(cr, bx + 5 * g, by + 1.5 * g);
-    cairo_line_to(cr, bx + 5 * g, by + 5.5 * g);
-    cairo_close_path(cr);
-    cairo_fill(cr);
-    cairo_restore(cr);
+    cairo_set_line_width(cairo, XD_MAX(1.0, 1.5 * unit));
+    cairo_move_to(cairo, bx + 2.5 * grid, by + 7.5 * grid);
+    cairo_curve_to(cairo, bx + 2.5 * grid, by + 4.5 * grid, bx + 4 * grid, by + 3.5 * grid,
+                   bx + 6 * grid, by + 3.5 * grid);
+    cairo_stroke(cairo);
+    cairo_move_to(cairo, bx + 7.5 * grid, by + 3.5 * grid);
+    cairo_line_to(cairo, bx + 5 * grid, by + 1.5 * grid);
+    cairo_line_to(cairo, bx + 5 * grid, by + 5.5 * grid);
+    cairo_close_path(cairo);
+    cairo_fill(cairo);
+    cairo_restore(cairo);
 }

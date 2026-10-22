@@ -53,7 +53,7 @@ typedef enum xd_syscolor {
     XD_COLOR_COUNT
 } xd_syscolor;
 
-const char *xd_syscolor_name(xd_syscolor c);
+const char *xd_syscolor_name(xd_syscolor color_index);
 [[nodiscard]] bool xd_syscolor_from_name(xd_str name, xd_syscolor *out);
 
 /* SmCaptionHeight, IconSize and IconVerticalSpacing (Advanced

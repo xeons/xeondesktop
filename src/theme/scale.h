@@ -23,7 +23,7 @@ typedef enum xd_image_filter {
 
 /* "Nearest", "Integer", "Smooth", "Scale2x", "Scale3x", "Scale4x",
  * "2xSaI", "Super2xSaI", "SuperEagle" (matched case-insensitively). */
-const char *xd_image_filter_name(xd_image_filter f);
+const char *xd_image_filter_name(xd_image_filter image_filter);
 bool xd_image_filter_from_name(const char *name, xd_image_filter *out);
 
 /* A new ARGB32 image surface: `src` (an ARGB32 image surface, cairo's

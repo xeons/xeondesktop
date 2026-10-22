@@ -66,31 +66,31 @@ bool xd_pkg_sys_font(const xd_pkg *pkg, const char *name, const char **face, int
 
 /* ---- drawing, at the theme's scale with its image filter ---- */
 
-/* Draws the part's background (an image, or a border and fill) into `r`,
+/* Draws the part's background (an image, or a border and fill) into `rect`,
  * and its glyph if it has one. False (nothing drawn) when the package
  * doesn't style the part. */
-bool xd_pkg_draw(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                 const char *state, xd_rect r);
+bool xd_pkg_draw(const xd_theme *theme, cairo_t *cairo, const char *cls, const char *part,
+                 const char *state, xd_rect rect);
 /* Its two halves: the background alone, and the image glyph alone. */
-bool xd_pkg_draw_background(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                            const char *state, xd_rect r);
-bool xd_pkg_draw_glyph(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                       const char *state, xd_rect r);
+bool xd_pkg_draw_background(const xd_theme *theme, cairo_t *cairo, const char *cls,
+                            const char *part, const char *state, xd_rect rect);
+bool xd_pkg_draw_glyph(const xd_theme *theme, cairo_t *cairo, const char *cls, const char *part,
+                       const char *state, xd_rect rect);
 /* The `src` rectangle of the state's image (its own pixels, as drawn for
  * 96 DPI) stretched into `dst`: for parts drawn piecewise, as DWM draws
  * its frame. False when the part has no image. */
-bool xd_pkg_draw_slice(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+bool xd_pkg_draw_slice(const xd_theme *theme, cairo_t *cairo, const char *cls, const char *part,
                        const char *state, xd_rect src, xd_rect dst);
 /* The size of the part's largest image glyph at the theme's scale. */
-bool xd_pkg_glyph_size(const xd_theme *t, const char *cls, const char *part,
-                       const char *state, int *w, int *h);
+bool xd_pkg_glyph_size(const xd_theme *theme, const char *cls, const char *part, const char *state,
+                       int *width, int *height);
 /* The size of one state's image at the theme's scale (TrueSize parts:
  * check boxes, caption buttons): false when the part has no image. */
-bool xd_pkg_part_size(const xd_theme *t, const char *cls, const char *part,
-                      const char *state, int *w, int *h);
-/* `r` less the part's ContentMargins, scaled. */
-xd_rect xd_pkg_content_rect(const xd_theme *t, const char *cls, const char *part,
-                            const char *state, xd_rect r);
+bool xd_pkg_part_size(const xd_theme *theme, const char *cls, const char *part, const char *state,
+                      int *width, int *height);
+/* `rect` less the part's ContentMargins, scaled. */
+xd_rect xd_pkg_content_rect(const xd_theme *theme, const char *cls, const char *part,
+                            const char *state, xd_rect rect);
 
 /* The package every xd_theme_init() attaches (nullptr: none), and how
  * its images are scaled: `filter` as chosen (the caller resolves
@@ -101,7 +101,7 @@ xd_rect xd_pkg_content_rect(const xd_theme *t, const char *cls, const char *part
 void xd_theme_use_package(const xd_pkg *pkg, xd_image_filter filter, bool integer_scaling);
 /* xd_theme_init with `pkg` (nullptr: none) instead of the active package:
  * Display Properties' preview of a package before it's applied. */
-void xd_theme_init_package(xd_theme *t, xd_visual_style style, const xd_scheme *scheme,
+void xd_theme_init_package(xd_theme *theme, xd_visual_style style, const xd_scheme *scheme,
                            double scale, const xd_pkg *pkg, xd_image_filter filter,
                            bool integer_scaling);
 

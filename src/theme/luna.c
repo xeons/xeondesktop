@@ -31,21 +31,21 @@ static constexpr int BLEND = 34;
 /* ---- images --------------------------------------------------------------------- */
 
 static uint32_t premultiply(uint32_t argb) {
-    uint32_t a = argb >> 24;
-    if (a == 255)
+    uint32_t alpha = argb >> 24;
+    if (alpha == 255)
         return argb;
-    uint32_t r = ((argb >> 16) & 0xFF) * a / 255;
-    uint32_t g = ((argb >> 8) & 0xFF) * a / 255;
-    uint32_t b = (argb & 0xFF) * a / 255;
-    return a << 24 | r << 16 | g << 8 | b;
+    uint32_t red = ((argb >> 16) & 0xFF) * alpha / 255;
+    uint32_t green = ((argb >> 8) & 0xFF) * alpha / 255;
+    uint32_t blue = (argb & 0xFF) * alpha / 255;
+    return alpha << 24 | red << 16 | green << 8 | blue;
 }
 
-static uint32_t mix(uint32_t a, uint32_t b, double t) {
+static uint32_t mix(uint32_t from, uint32_t to, double amount) {
     uint32_t out = 0;
     for (int sh = 0; sh <= 24; sh += 8) {
-        double ca = (a >> sh) & 0xFF, cb = (b >> sh) & 0xFF;
-        double v = round(ca + (cb - ca) * t);
-        out |= (uint32_t)(v < 0 ? 0 : v > 255 ? 255 : v) << sh;
+        double ca = (from >> sh) & 0xFF, cb = (to >> sh) & 0xFF;
+        double value = round(ca + (cb - ca) * amount);
+        out |= (uint32_t)(value < 0 ? 0 : value > 255 ? 255 : value) << sh;
     }
     return out;
 }
@@ -56,8 +56,9 @@ typedef struct image {
     int w, h, stride;
 } image;
 
-static bool image_new(image *im, int w, int h) {
-    im->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, XD_MAX(w, 1), XD_MAX(h, 1));
+static bool image_new(image *im, int width, int height) {
+    im->surface =
+        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, XD_MAX(width, 1), XD_MAX(height, 1));
     if (cairo_surface_status(im->surface) != CAIRO_STATUS_SUCCESS) {
         cairo_surface_destroy(im->surface);
         return false;
@@ -65,8 +66,8 @@ static bool image_new(image *im, int w, int h) {
     cairo_surface_flush(im->surface);
     im->px = (uint32_t *)(void *)cairo_image_surface_get_data(im->surface);
     im->stride = cairo_image_surface_get_stride(im->surface) / 4;
-    im->w = w;
-    im->h = h;
+    im->w = width;
+    im->h = height;
     return true;
 }
 
@@ -76,124 +77,129 @@ static void put(image *im, int x, int y, uint32_t argb) {
 }
 
 /* Paints the 96 DPI image into `dst` (device px) and frees it. */
-static void image_paint(cairo_t *cr, image *im, xd_rect dst) {
+static void image_paint(cairo_t *cairo, image *im, xd_rect dst) {
     cairo_surface_mark_dirty(im->surface);
-    cairo_save(cr);
-    cairo_rectangle(cr, dst.x, dst.y, dst.w, dst.h);
-    cairo_clip(cr);
-    cairo_translate(cr, dst.x, dst.y);
-    cairo_scale(cr, (double)dst.w / im->w, (double)dst.h / im->h);
-    cairo_set_source_surface(cr, im->surface, 0, 0);
+    cairo_save(cairo);
+    cairo_rectangle(cairo, dst.x, dst.y, dst.w, dst.h);
+    cairo_clip(cairo);
+    cairo_translate(cairo, dst.x, dst.y);
+    cairo_scale(cairo, (double)dst.w / im->w, (double)dst.h / im->h);
+    cairo_set_source_surface(cairo, im->surface, 0, 0);
     /* At a whole-number scale each pixel becomes an exact block, as theme
      * packages' images are by default (whole-number scaling): one pixel
      * lines stay sharp. Other scales are smoothed. */
     bool whole = dst.w % im->w == 0 && dst.h % im->h == 0 && dst.w / im->w == dst.h / im->h;
-    cairo_pattern_set_filter(cairo_get_source(cr),
+    cairo_pattern_set_filter(cairo_get_source(cairo),
                              whole ? CAIRO_FILTER_NEAREST : CAIRO_FILTER_GOOD);
-    cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
-    cairo_paint(cr);
-    cairo_restore(cr);
+    cairo_pattern_set_extend(cairo_get_source(cairo), CAIRO_EXTEND_PAD);
+    cairo_paint(cairo);
+    cairo_restore(cairo);
     cairo_surface_destroy(im->surface);
 }
 
 /* Logical (96 DPI) length of a device span. */
-static int logical(const xd_theme *t, int device) {
-    double v = round(device / t->scale);
-    return v < 1 ? 1 : v > 16384 ? 16384 : (int)v;
+static int logical(const xd_theme *theme, int device) {
+    double rounded = round(device / theme->scale);
+    return rounded < 1 ? 1 : rounded > 16384 ? 16384 : (int)rounded;
 }
 
-static void fill(cairo_t *cr, xd_rect r, uint32_t argb) {
-    xd_fill_rect(cr, r, xd_rgba_hex(argb & 0xFFFFFF));
+static void fill(cairo_t *cairo, xd_rect rect, uint32_t argb) {
+    xd_fill_rect(cairo, rect, xd_rgba_hex(argb & 0xFFFFFF));
 }
 
 /* ---- measured shapes (xd_shape) ------------------------------------------------ */
 
 /* A premultiplied colour along stops s[0..n), at a position (0-255). */
-static uint32_t along(const xd_stop *s, int n, double pos) {
-    if (pos <= s[0].at || n == 1)
-        return s[0].argb;
-    for (int i = 1; i < n; i++) {
-        if (pos <= s[i].at)
-            return mix(s[i - 1].argb, s[i].argb, (pos - s[i - 1].at) / (s[i].at - s[i - 1].at));
+static uint32_t along(const xd_stop *stop, int stop_count, double pos) {
+    if (pos <= stop[0].at || stop_count == 1)
+        return stop[0].argb;
+    for (int i = 1; i < stop_count; i++) {
+        if (pos <= stop[i].at)
+            return mix(stop[i - 1].argb, stop[i].argb,
+                       (pos - stop[i - 1].at) / (stop[i].at - stop[i - 1].at));
     }
-    return s[n - 1].argb;
+    return stop[stop_count - 1].argb;
 }
 
 /* The face: the vertical gradient's colour at y plus how far the
  * horizontal one at x is from its middle, each channel kept within the
  * alpha (premultiplied). */
-static uint32_t shape_face(uint32_t v, uint32_t hx, uint32_t hm) {
-    uint32_t out = v & 0xFF000000u;
-    uint32_t a = v >> 24;
+static uint32_t shape_face(uint32_t vertical, uint32_t hx, uint32_t hm) {
+    uint32_t out = vertical & 0xFF000000u;
+    uint32_t alpha = vertical >> 24;
     for (int sh = 0; sh < 24; sh += 8) {
-        int c = (int)((v >> sh) & 0xFF) + (int)((hx >> sh) & 0xFF) - (int)((hm >> sh) & 0xFF);
-        c = c < 0 ? 0 : c > (int)a ? (int)a : c;
-        out |= (uint32_t)c << sh;
+        int channel_value =
+            (int)((vertical >> sh) & 0xFF) + (int)((hx >> sh) & 0xFF) - (int)((hm >> sh) & 0xFF);
+        channel_value =
+            channel_value<0 ? 0 : channel_value>(int) alpha ? (int)alpha : channel_value;
+        out |= (uint32_t)channel_value << sh;
     }
     return out;
 }
 
-static uint32_t scale_alpha(uint32_t c, double k) {
+static uint32_t scale_alpha(uint32_t argb, double k) {
     if (k >= 1)
-        return c;
+        return argb;
     uint32_t out = 0;
     for (int sh = 0; sh <= 24; sh += 8)
-        out |= (uint32_t)lround(((c >> sh) & 0xFF) * k) << sh;
+        out |= (uint32_t)lround(((argb >> sh) & 0xFF) * k) << sh;
     return out;
 }
 
 /* The shape drawn w x h (96 DPI px) into a new image. */
-static bool shape_image(image *im, const xd_shape *p, int w, int h) {
-    if (!image_new(im, w, h))
+static bool shape_image(image *im, const xd_shape *shape, int width, int height) {
+    if (!image_new(im, width, height))
         return false;
-    int nl = p->lines[0], nt = p->lines[1], nr = p->lines[2], nb = p->lines[3];
-    int top = nt, bottom = h - nb, left = nl, right = w - nr;
-    uint32_t *vs = XD_NEW_ARRAY(uint32_t, (size_t)h);
-    uint32_t *hs = XD_NEW_ARRAY(uint32_t, (size_t)w);
-    for (int y = 0; y < h; y++)
-        vs[y] = along(p->v, p->nv, XD_CLAMP((y - top) * 255.0 / XD_MAX(bottom - 1 - top, 1), 0, 255));
-    for (int x = 0; x < w; x++)
-        hs[x] = along(p->hs, p->nh,
+    int nl = shape->lines[0], nt = shape->lines[1], nr = shape->lines[2], nb = shape->lines[3];
+    int top = nt, bottom = height - nb, left = nl, right = width - nr;
+    uint32_t *vs = XD_NEW_ARRAY(uint32_t, (size_t)height);
+    uint32_t *hs = XD_NEW_ARRAY(uint32_t, (size_t)width);
+    for (int y = 0; y < height; y++)
+        vs[y] = along(shape->v, shape->nv,
+                      XD_CLAMP((y - top) * 255.0 / XD_MAX(bottom - 1 - top, 1), 0, 255));
+    for (int x = 0; x < width; x++)
+        hs[x] = along(shape->hs, shape->nh,
                       XD_CLAMP((x - left) * 255.0 / XD_MAX(right - 1 - left, 1), 0, 255));
-    uint32_t hm = along(p->hs, p->nh, 127.5);
-    double rad = p->radius;
-    for (int y = 0; y < h; y++) {
+    uint32_t hm = along(shape->hs, shape->nh, 127.5);
+    double rad = shape->radius;
+    for (int y = 0; y < height; y++) {
         double ty = XD_CLAMP((y - top) / (double)XD_MAX(bottom - 1 - top, 1), 0, 1);
-        for (int x = 0; x < w; x++) {
+        for (int x = 0; x < width; x++) {
             double tx = XD_CLAMP((x - left) / (double)XD_MAX(right - 1 - left, 1), 0, 1);
             /* How deep in from the outline the pixel lies, and from which
              * side: a rounded corner's arc where two sides meet. */
-            int dist[4] = {x, y, w - 1 - x, h - 1 - y};
+            int dist[4] = {x, y, width - 1 - x, height - 1 - y};
             int side = -1;
             double depth = 1e9, cover = 1;
-            bool round_x = (x < rad && nl && nt) || (x >= w - rad && nr && nt) ||
-                           (x < rad && nl && nb) || (x >= w - rad && nr && nb);
-            bool in_corner = rad > 0 && round_x &&
-                             ((y < rad && ((x < rad && nl) || (x >= w - rad && nr)) && nt) ||
-                              (y >= h - rad && ((x < rad && nl) || (x >= w - rad && nr)) && nb));
+            bool round_x = (x < rad && nl && nt) || (x >= width - rad && nr && nt) ||
+                           (x < rad && nl && nb) || (x >= width - rad && nr && nb);
+            bool in_corner =
+                rad > 0 && round_x &&
+                ((y < rad && ((x < rad && nl) || (x >= width - rad && nr)) && nt) ||
+                 (y >= height - rad && ((x < rad && nl) || (x >= width - rad && nr)) && nb));
             if (in_corner) {
-                double cx = x < rad ? rad : w - rad, cy = y < rad ? rad : h - rad;
+                double cx = x < rad ? rad : width - rad, cy = y < rad ? rad : height - rad;
                 double ox = x + 0.5 - cx, oy = y + 0.5 - cy;
                 depth = rad - sqrt(ox * ox + oy * oy);
                 cover = XD_CLAMP(depth + 0.5, 0, 1);
                 side = fabs(ox) > fabs(oy) ? (x < rad ? 0 : 2) : (y < rad ? 1 : 3);
             } else {
-                for (int s = 0; s < 4; s++) {
-                    if (p->lines[s] > 0 && dist[s] < depth) {
-                        depth = dist[s];
-                        side = s;
+                for (int edge = 0; edge < 4; edge++) {
+                    if (shape->lines[edge] > 0 && dist[edge] < depth) {
+                        depth = dist[edge];
+                        side = edge;
                     }
                 }
             }
             int layer = depth < 0 ? 0 : (int)depth;
-            uint32_t c;
-            if (side >= 0 && layer < p->lines[side]) {
-                double t = side == 0 || side == 2 ? ty : tx;
-                c = mix(p->edge[side][layer][0], p->edge[side][layer][1], t);
+            uint32_t pixel;
+            if (side >= 0 && layer < shape->lines[side]) {
+                double fraction = side == 0 || side == 2 ? ty : tx;
+                pixel = mix(shape->edge[side][layer][0], shape->edge[side][layer][1], fraction);
             } else {
-                c = shape_face(vs[y], hs[x], hm);
+                pixel = shape_face(vs[y], hs[x], hm);
             }
-            im->px[(size_t)y * (size_t)im->stride + (size_t)x] = scale_alpha(c, cover);
+            im->px[(size_t)y * (size_t)im->stride + (size_t)x] = scale_alpha(pixel, cover);
         }
     }
     xd_free(vs);
@@ -201,10 +207,11 @@ static bool shape_image(image *im, const xd_shape *p, int w, int h) {
     return true;
 }
 
-void xd_shape_draw(const xd_theme *t, cairo_t *cr, const xd_shape *p, xd_rect r) {
+void xd_shape_draw(const xd_theme *theme, cairo_t *cairo, const xd_shape *shape, xd_rect rect) {
     image im;
-    if (r.w > 0 && r.h > 0 && shape_image(&im, p, logical(t, r.w), logical(t, r.h)))
-        image_paint(cr, &im, r);
+    if (rect.w > 0 && rect.h > 0 &&
+        shape_image(&im, shape, logical(theme, rect.w), logical(theme, rect.h)))
+        image_paint(cairo, &im, rect);
 }
 
 /* ---- colour variants ------------------------------------------------------------ */
@@ -226,23 +233,25 @@ typedef struct tint {
 } tint;
 
 static void to_ycc(uint32_t rgb, double out[3]) {
-    double r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
-    out[0] = 0.299 * r + 0.587 * g + 0.114 * b;
-    out[1] = 0.564 * (b - out[0]);
-    out[2] = 0.713 * (r - out[0]);
+    double red = (rgb >> 16) & 0xFF, green = (rgb >> 8) & 0xFF, blue = rgb & 0xFF;
+    out[0] = 0.299 * red + 0.587 * green + 0.114 * blue;
+    out[1] = 0.564 * (blue - out[0]);
+    out[2] = 0.713 * (red - out[0]);
 }
 
-static uint32_t channel(double v) {
-    v = round(v);
-    return (uint32_t)(v < 0 ? 0 : v > 255 ? 255 : v);
+static uint32_t channel(double value) {
+    value = round(value);
+    return (uint32_t)(value < 0 ? 0 : value > 255 ? 255 : value);
 }
 
-static uint32_t from_ycc(double y, double cb, double cr) {
-    return channel(y + 1.403 * cr) << 16 | channel(y - 0.344 * cb - 0.714 * cr) << 8 |
-           channel(y + 1.773 * cb);
+static uint32_t from_ycc(double y, double cb, double chroma_red) {
+    return channel(y + 1.403 * chroma_red) << 16 |
+           channel(y - 0.344 * cb - 0.714 * chroma_red) << 8 | channel(y + 1.773 * cb);
 }
 
-static uint32_t hex_of(xd_rgb c) { return (uint32_t)c.r << 16 | (uint32_t)c.g << 8 | c.b; }
+static uint32_t hex_of(xd_rgb color) {
+    return (uint32_t)color.r << 16 | (uint32_t)color.g << 8 | color.b;
+}
 
 /* Blue's caption colours (ActiveTitle, GradientActiveTitle; the inactive
  * pair), as measured in luna_data.h. */
@@ -253,72 +262,75 @@ enum : uint32_t {
     BLUE_INACTIVE_LIGHT = 0x9DB9EB,
 };
 
-static tint tint_for(const xd_theme *t, bool active) {
-    xd_luna_color v = t->scheme.luna_color;
-    if (v != XD_LUNA_OLIVE && v != XD_LUNA_SILVER && v != XD_LUNA_ENERGY)
+static tint tint_for(const xd_theme *theme, bool active) {
+    xd_luna_color luna_color = theme->scheme.luna_color;
+    if (luna_color != XD_LUNA_OLIVE && luna_color != XD_LUNA_SILVER && luna_color != XD_LUNA_ENERGY)
         return (tint){0};
-    const xd_rgb *c = t->scheme.colors;
+    const xd_rgb *color = theme->scheme.colors;
     double from[3], from_light[3], to[3], to_light[3];
     to_ycc(active ? BLUE_ACTIVE : BLUE_INACTIVE, from);
     to_ycc(active ? BLUE_ACTIVE_LIGHT : BLUE_INACTIVE_LIGHT, from_light);
-    to_ycc(hex_of(c[active ? XD_COLOR_ACTIVE_TITLE : XD_COLOR_INACTIVE_TITLE]), to);
-    to_ycc(hex_of(c[active ? XD_COLOR_GRADIENT_ACTIVE_TITLE : XD_COLOR_GRADIENT_INACTIVE_TITLE]),
-           to_light);
+    to_ycc(hex_of(color[active ? XD_COLOR_ACTIVE_TITLE : XD_COLOR_INACTIVE_TITLE]), to);
+    to_ycc(
+        hex_of(color[active ? XD_COLOR_GRADIENT_ACTIVE_TITLE : XD_COLOR_GRADIENT_INACTIVE_TITLE]),
+        to_light);
     /* The variants' documented pairs are flatter than their artwork (Olive
      * Green's inactive pair is one colour), so at least half of Blue's
      * relief is kept. */
     double k = (to_light[0] - to[0]) / (from_light[0] - from[0]);
     k = k < 0.5 ? 0.5 : k > 1.5 ? 1.5 : k;
     /* The complex ratio of the two chroma vectors: the turn and scale. */
-    double n = from[1] * from[1] + from[2] * from[2];
+    double norm = from[1] * from[1] + from[2] * from[2];
     return (tint){
         .on = true,
         .y_from = from[0],
         .y_to = to[0],
         .k = k,
-        .a = (to[1] * from[1] + to[2] * from[2]) / n,
-        .b = (to[2] * from[1] - to[1] * from[2]) / n,
+        .a = (to[1] * from[1] + to[2] * from[2]) / norm,
+        .b = (to[2] * from[1] - to[1] * from[2]) / norm,
     };
 }
 
 static uint32_t tinted(const tint *tn, uint32_t argb) {
     if (!tn->on)
         return argb;
-    double v[3];
-    to_ycc(argb & 0xFFFFFF, v);
-    double y = tn->y_to + tn->k * (v[0] - tn->y_from);
+    double ycc[3];
+    to_ycc(argb & 0xFFFFFF, ycc);
+    double y = tn->y_to + tn->k * (ycc[0] - tn->y_from);
     return (argb & 0xFF000000u) |
-           from_ycc(y, tn->a * v[1] - tn->b * v[2], tn->b * v[1] + tn->a * v[2]);
+           from_ycc(y, tn->a * ycc[1] - tn->b * ycc[2], tn->b * ycc[1] + tn->a * ycc[2]);
 }
 
-uint32_t xd_luna_variant_rgb(const xd_theme *t, bool active, uint32_t rgb) {
-    tint tn = tint_for(t, active);
+uint32_t xd_luna_variant_rgb(const xd_theme *theme, bool active, uint32_t rgb) {
+    tint tn = tint_for(theme, active);
     return tinted(&tn, rgb & 0xFFFFFF);
 }
 
 /* Silver, Olive Green and Energy Blue are drawn from their own measured
  * artwork, not recoloured; Silver's push buttons are measured too. */
-static bool silver(const xd_theme *t) { return t->scheme.luna_color == XD_LUNA_SILVER; }
-static bool olive(const xd_theme *t) { return t->scheme.luna_color == XD_LUNA_OLIVE; }
-static bool energy(const xd_theme *t) { return t->scheme.luna_color == XD_LUNA_ENERGY; }
-static bool measured(const xd_theme *t) { return silver(t) || olive(t) || energy(t); }
+static bool silver(const xd_theme *theme) { return theme->scheme.luna_color == XD_LUNA_SILVER; }
+static bool olive(const xd_theme *theme) { return theme->scheme.luna_color == XD_LUNA_OLIVE; }
+static bool energy(const xd_theme *theme) { return theme->scheme.luna_color == XD_LUNA_ENERGY; }
+static bool measured(const xd_theme *theme) {
+    return silver(theme) || olive(theme) || energy(theme);
+}
 
 static double luma(uint32_t rgb) {
-    double v[3];
-    to_ycc(rgb & 0xFFFFFF, v);
-    return v[0];
+    double ycc[3];
+    to_ycc(rgb & 0xFFFFFF, ycc);
+    return ycc[0];
 }
 
 /* An inactive window in a variant whose reference shows none (Olive
  * Green, Energy Blue): its active artwork faded as Blue's inactive is from its active.
  * The caption's body colour moves to the scheme's InactiveTitle and its
  * relief shrinks by Blue's ratio, with every other colour moved alike. */
-static tint fade_tint(const xd_theme *t, uint32_t body) {
+static tint fade_tint(const xd_theme *theme, uint32_t body) {
     double from[3], to[3];
     to_ycc(body, from);
-    to_ycc(hex_of(t->scheme.colors[XD_COLOR_INACTIVE_TITLE]), to);
-    double n = from[1] * from[1] + from[2] * from[2];
-    if (n < 1)
+    to_ycc(hex_of(theme->scheme.colors[XD_COLOR_INACTIVE_TITLE]), to);
+    double norm = from[1] * from[1] + from[2] * from[2];
+    if (norm < 1)
         return (tint){0};
     return (tint){
         .on = true,
@@ -326,8 +338,8 @@ static tint fade_tint(const xd_theme *t, uint32_t body) {
         .y_to = to[0],
         .k = (luma(BLUE_INACTIVE_LIGHT) - luma(BLUE_INACTIVE)) /
              (luma(BLUE_ACTIVE_LIGHT) - luma(BLUE_ACTIVE)),
-        .a = (to[1] * from[1] + to[2] * from[2]) / n,
-        .b = (to[2] * from[1] - to[1] * from[2]) / n,
+        .a = (to[1] * from[1] + to[2] * from[2]) / norm,
+        .b = (to[2] * from[1] - to[1] * from[2]) / norm,
     };
 }
 
@@ -394,17 +406,20 @@ static const luna_controls energy_controls = {
     .disabled_text = 0xA7A6AA, .field_border = 0xA7A6AA, .groupbox_text = 0x335EA8,
 };
 
-static const luna_controls *controls(const xd_theme *t) {
-    return olive(t) ? &olive_controls : silver(t) ? &silver_controls
-                     : energy(t)                ? &energy_controls
-                                                : &blue_controls;
+static const luna_controls *controls(const xd_theme *theme) {
+    return olive(theme)    ? &olive_controls
+           : silver(theme) ? &silver_controls
+           : energy(theme) ? &energy_controls
+                           : &blue_controls;
 }
 
-void xd_luna_field_colors(const xd_theme *t, xd_rgba *border, xd_rgba *disabled) {
-    *border = xd_rgba_hex(controls(t)->field_border);
-    *disabled = xd_rgba_hex(controls(t)->field_disabled);
+void xd_luna_field_colors(const xd_theme *theme, xd_rgba *border, xd_rgba *disabled) {
+    *border = xd_rgba_hex(controls(theme)->field_border);
+    *disabled = xd_rgba_hex(controls(theme)->field_disabled);
 }
-xd_rgba xd_luna_groupbox_text(const xd_theme *t) { return xd_rgba_hex(controls(t)->groupbox_text); }
+xd_rgba xd_luna_groupbox_text(const xd_theme *theme) {
+    return xd_rgba_hex(controls(theme)->groupbox_text);
+}
 
 /* ---- frame ---------------------------------------------------------------------- */
 
@@ -429,29 +444,30 @@ static const frame_set silver_inactive_set = FRAME_SET(luna_silver_inactive);
 static const frame_set olive_set = FRAME_SET(luna_olive_active);
 static const frame_set energy_set = FRAME_SET(luna_energyblue_active);
 
-static const frame_set *frame_set_for(const xd_theme *t, bool active) {
-    if (silver(t))
+static const frame_set *frame_set_for(const xd_theme *theme, bool active) {
+    if (silver(theme))
         return active ? &silver_active_set : &silver_inactive_set;
-    if (olive(t))
+    if (olive(theme))
         return &olive_set;
-    if (energy(t))
+    if (energy(theme))
         return &energy_set;
     return active ? &active_set : &inactive_set;
 }
 
-xd_insets xd_luna_frame_insets(const xd_theme *t, const xd_frame *f) {
-    int b = f->maximized ? 0 : xd_tpx(t, BORDER);
-    return (xd_insets){b, xd_tpx(t, CAPTION_H), b, b};
+xd_insets xd_luna_frame_insets(const xd_theme *theme, const xd_frame *frame) {
+    int border = frame->maximized ? 0 : xd_tpx(theme, BORDER);
+    return (xd_insets){border, xd_tpx(theme, CAPTION_H), border, border};
 }
 
-void xd_luna_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
-                          xd_frame_layout *l) {
-    xd_insets in = xd_luna_frame_insets(t, f);
-    l->caption = (xd_rect){outer.x, outer.y, outer.w, in.top};
-    int bs = xd_tpx(t, BUTTON);
-    int by = outer.y + xd_tpx(t, BUTTON_TOP);
-    int bx = outer.x + outer.w - xd_tpx(t, f->maximized ? BUTTON_RIGHT - BORDER : BUTTON_RIGHT);
-    int gap = xd_tpx(t, 2);
+void xd_luna_frame_layout(const xd_theme *theme, xd_rect outer, const xd_frame *frame,
+                          xd_frame_layout *frame_layout) {
+    xd_insets in = xd_luna_frame_insets(theme, frame);
+    frame_layout->caption = (xd_rect){outer.x, outer.y, outer.w, in.top};
+    int bs = xd_tpx(theme, BUTTON);
+    int by = outer.y + xd_tpx(theme, BUTTON_TOP);
+    int bx =
+        outer.x + outer.w - xd_tpx(theme, frame->maximized ? BUTTON_RIGHT - BORDER : BUTTON_RIGHT);
+    int gap = xd_tpx(theme, 2);
     static const struct {
         uint8_t flag;
         xd_frame_part part;
@@ -462,40 +478,41 @@ void xd_luna_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
         {XD_CAPBTN_HELP, XD_PART_HELP},
     };
     for (size_t i = 0; i < XD_ARRAY_LEN(order); i++) {
-        if (!(f->buttons & order[i].flag))
+        if (!(frame->buttons & order[i].flag))
             continue;
         bx -= bs;
-        xd_layout_add_button(l, (xd_rect){bx, by, bs, bs}, order[i].part);
+        xd_layout_add_button(frame_layout, (xd_rect){bx, by, bs, bs}, order[i].part);
         bx -= gap;
     }
-    int icon = xd_tpx(t, 16);
-    int edge = f->maximized ? 0 : xd_tpx(t, BORDER);
-    l->icon = (xd_rect){outer.x + edge + xd_tpx(t, 4), outer.y + xd_tpx(t, 7), icon, icon};
-    int tx = l->icon.x + icon + xd_tpx(t, 1);
-    l->title = (xd_rect){tx, outer.y + xd_tpx(t, 1), bx - tx, in.top};
+    int icon = xd_tpx(theme, 16);
+    int edge = frame->maximized ? 0 : xd_tpx(theme, BORDER);
+    frame_layout->icon =
+        (xd_rect){outer.x + edge + xd_tpx(theme, 4), outer.y + xd_tpx(theme, 7), icon, icon};
+    int tx = frame_layout->icon.x + icon + xd_tpx(theme, 1);
+    frame_layout->title = (xd_rect){tx, outer.y + xd_tpx(theme, 1), bx - tx, in.top};
 }
 
-/* The caption band, `w` logical px wide; maximized windows show it without
+/* The caption band, `width` logical px wide; maximized windows show it without
  * the frame's edges (Windows pushes those off screen). */
-static void caption_image(image *im, const frame_set *s, const tint *tn, int w,
+static void caption_image(image *im, const frame_set *frames, const tint *tn, int width,
                           bool maximized) {
     int skip = maximized ? BORDER : 0;
     for (int y = 0; y < CAPTION_H; y++) {
-        for (int x = 0; x < w; x++) {
+        for (int x = 0; x < width; x++) {
             int sx = x + skip;           /* column in the unmaximized band */
-            int full = w + 2 * skip;
-            uint32_t c;
+            int full = width + 2 * skip;
+            uint32_t pixel;
             if (sx < 8)
-                c = s->left[y][sx];
+                pixel = frames->left[y][sx];
             else if (sx >= full - 5)
-                c = s->right[y][sx - (full - 5)];
+                pixel = frames->right[y][sx - (full - 5)];
             else if (sx < 8 + BLEND)
-                c = mix(s->left[y][7], s->mid[y], (sx - 7) / (double)BLEND);
+                pixel = mix(frames->left[y][7], frames->mid[y], (sx - 7) / (double)BLEND);
             else
-                c = s->mid[y];
+                pixel = frames->mid[y];
             if (maximized)
-                c |= 0xFF000000u; /* no rounded corners */
-            put(im, x, y, tinted(tn, c));
+                pixel |= 0xFF000000u; /* no rounded corners */
+            put(im, x, y, tinted(tn, pixel));
         }
     }
 }
@@ -537,78 +554,78 @@ static const glyph_design glyph_designs[] = {
 };
 
 static const glyph_design *glyph_design_for(int content) {
-    const glyph_design *d = &glyph_designs[0];
+    const glyph_design *design = &glyph_designs[0];
     for (size_t i = 0; i < XD_ARRAY_LEN(glyph_designs); i++)
         if (glyph_designs[i].size <= content)
-            d = &glyph_designs[i];
-    return d;
+            design = &glyph_designs[i];
+    return design;
 }
 
-static void fill_glyph_rects(double *mask, int n, const glyph_rect *r, size_t count) {
+static void fill_glyph_rects(double *mask, int size, const glyph_rect *rects, size_t count) {
     for (size_t i = 0; i < count; i++)
-        for (int y = r[i].y0; y <= r[i].y1; y++)
-            for (int x = r[i].x0; x <= r[i].x1; x++)
-                if (x >= 0 && y >= 0 && x < n && y < n)
-                    mask[y * n + x] = 1;
+        for (int y = rects[i].y0; y <= rects[i].y1; y++)
+            for (int x = rects[i].x0; x <= rects[i].x1; x++)
+                if (x >= 0 && y >= 0 && x < size && y < size)
+                    mask[y * size + x] = 1;
 }
 
 /* How much of each pixel of the glyph's n x n square it covers. */
-static void glyph_mask(const glyph_design *d, xd_frame_part part, bool maximized,
+static void glyph_mask(const glyph_design *design, xd_frame_part part, bool maximized,
                        double *mask) {
-    int n = d->size;
-    for (int i = 0; i < n * n; i++)
+    int size = design->size;
+    for (int i = 0; i < size * size; i++)
         mask[i] = 0;
     if (part == XD_PART_MINIMIZE) {
-        fill_glyph_rects(mask, n, &d->minimize, 1);
+        fill_glyph_rects(mask, size, &design->minimize, 1);
         return;
     }
     if (part == XD_PART_MAXIMIZE) {
         if (maximized)
-            fill_glyph_rects(mask, n, d->restore, XD_ARRAY_LEN(d->restore));
+            fill_glyph_rects(mask, size, design->restore, XD_ARRAY_LEN(design->restore));
         else
-            fill_glyph_rects(mask, n, d->maximize, XD_ARRAY_LEN(d->maximize));
+            fill_glyph_rects(mask, size, design->maximize, XD_ARRAY_LEN(design->maximize));
         return;
     }
-    if (part == XD_PART_CLOSE && n == 13) {
+    if (part == XD_PART_CLOSE && size == 13) {
         /* Three-pixel diagonals, their four tips softened. */
         for (int y = 1; y <= 11; y++)
             for (int x = 1; x <= 11; x++)
                 if (abs(x - y) <= 1 || abs(x - (12 - y)) <= 1)
-                    mask[y * n + x] = (y == 1 || y == 11) && (x == 1 || x == 11) ? 0.6 : 1;
+                    mask[y * size + x] = (y == 1 || y == 11) && (x == 1 || x == 11) ? 0.6 : 1;
         return;
     }
     if (part != XD_PART_CLOSE && part != XD_PART_HELP)
         return;
-    cairo_surface_t *a8 = cairo_image_surface_create(CAIRO_FORMAT_A8, n, n);
-    cairo_t *cr = cairo_create(a8);
+    cairo_surface_t *a8 = cairo_image_surface_create(CAIRO_FORMAT_A8, size, size);
+    cairo_t *cairo = cairo_create(a8);
     if (part == XD_PART_CLOSE) {
-        double lo = 2.8, hi = n - 2.8;
-        cairo_set_line_width(cr, d->cross);
-        cairo_move_to(cr, lo, lo);
-        cairo_line_to(cr, hi, hi);
-        cairo_move_to(cr, hi, lo);
-        cairo_line_to(cr, lo, hi);
-        cairo_stroke(cr);
+        double lo = 2.8, hi = size - 2.8;
+        cairo_set_line_width(cairo, design->cross);
+        cairo_move_to(cairo, lo, lo);
+        cairo_line_to(cairo, hi, hi);
+        cairo_move_to(cairo, hi, lo);
+        cairo_line_to(cairo, lo, hi);
+        cairo_stroke(cairo);
     } else {
         /* A question mark: its hook over a short stem, and a dot. */
-        double k = n / 13.0;
-        cairo_scale(cr, k, k);
-        cairo_set_line_width(cr, 1.3);
-        cairo_arc(cr, 6.5, 3.1, 3.0, 1.05 * XD_PI, 2 * XD_PI);
-        cairo_line_to(cr, 9.5, 4.8);
-        cairo_line_to(cr, 6.6, 7.0);
-        cairo_line_to(cr, 6.6, 9.3);
-        cairo_stroke(cr);
-        cairo_rectangle(cr, 5.8, 11, 1.2, 2);
-        cairo_fill(cr);
+        double k = size / 13.0;
+        cairo_scale(cairo, k, k);
+        cairo_set_line_width(cairo, 1.3);
+        cairo_arc(cairo, 6.5, 3.1, 3.0, 1.05 * XD_PI, 2 * XD_PI);
+        cairo_line_to(cairo, 9.5, 4.8);
+        cairo_line_to(cairo, 6.6, 7.0);
+        cairo_line_to(cairo, 6.6, 9.3);
+        cairo_stroke(cairo);
+        cairo_rectangle(cairo, 5.8, 11, 1.2, 2);
+        cairo_fill(cairo);
     }
-    cairo_destroy(cr);
+    cairo_destroy(cairo);
     cairo_surface_flush(a8);
     const uint8_t *data = cairo_image_surface_get_data(a8);
     int stride = cairo_image_surface_get_stride(a8);
-    for (int y = 0; y < n; y++)
-        for (int x = 0; x < n; x++)
-            mask[y * n + x] = data[y * stride + x] / 255.0;
+    for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+            mask[y * size + x] = data[y * stride + x] / 255.0;
     cairo_surface_destroy(a8);
 }
 
@@ -618,35 +635,37 @@ static void glyph_mask(const glyph_design *d, xd_frame_part part, bool maximized
  * Silver's glyphs are embossed: outlined where the shape ends above or to
  * the right, filled elsewhere, with a light edge to its lower left (Close
  * is the other way round). */
-static void draw_caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_frame_part part,
-                                bool maximized, bool active, bool hot, bool pressed) {
-    const luna_controls *c = controls(t);
-    int n = (active ? 0 : 4) + (pressed ? 2 : hot ? 1 : 0);
-    const xd_shape *p = part == XD_PART_CLOSE ? &c->closebutton[n] : &c->captionbutton[n];
-    xd_shape_draw(t, cr, p, r);
-    int g = part == XD_PART_CLOSE      ? 0
-            : part == XD_PART_MINIMIZE ? 2
-            : part == XD_PART_HELP     ? 4
-            : maximized                ? 3
-                                       : 1;
-    const uint32_t *ink = c->capglyph[g][n];
+static void draw_caption_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                xd_frame_part part, bool maximized, bool active, bool hot,
+                                bool pressed) {
+    const luna_controls *luna_art = controls(theme);
+    int state_index = (active ? 0 : 4) + (pressed ? 2 : hot ? 1 : 0);
+    const xd_shape *shape = part == XD_PART_CLOSE ? &luna_art->closebutton[state_index]
+                                                  : &luna_art->captionbutton[state_index];
+    xd_shape_draw(theme, cairo, shape, rect);
+    int glyph = part == XD_PART_CLOSE      ? 0
+                : part == XD_PART_MINIMIZE ? 2
+                : part == XD_PART_HELP     ? 4
+                : maximized                ? 3
+                                           : 1;
+    const uint32_t *ink = luna_art->capglyph[glyph][state_index];
     /* The glyph at the monitor's resolution, centred in the button. */
-    int content = XD_MIN(r.w, r.h) - 2 * xd_tpx(t, 2);
-    const glyph_design *d = glyph_design_for(content);
-    int size = d->size;
+    int content = XD_MIN(rect.w, rect.h) - 2 * xd_tpx(theme, 2);
+    const glyph_design *design = glyph_design_for(content);
+    int size = design->size;
     double mask[23 * 23];
-    glyph_mask(d, part, maximized, mask);
+    glyph_mask(design, part, maximized, mask);
     image im;
     if (!image_new(&im, size, size))
         return;
     for (int y = 0; y < size; y++) {
         for (int x = 0; x < size; x++) {
             uint32_t px = 0;
-            double m = mask[y * size + x];
-            if (!c->emboss) {
-                px = mix(0, 0xFF000000u | ink[1], m);
+            double coverage = mask[y * size + x];
+            if (!luna_art->emboss) {
+                px = mix(0, 0xFF000000u | ink[1], coverage);
             } else {
-                bool on = m >= 0.5;
+                bool on = coverage >= 0.5;
                 bool above = y > 0 && mask[(y - 1) * size + x] >= 0.5;
                 bool right = x + 1 < size && mask[y * size + x + 1] >= 0.5;
                 bool above_right = y > 0 && x + 1 < size && mask[(y - 1) * size + x + 1] >= 0.5;
@@ -669,100 +688,109 @@ static void draw_caption_button(const xd_theme *t, cairo_t *cr, xd_rect r, xd_fr
     }
     /* Beyond what the largest was made for, it's scaled. */
     int shown = 2 * content >= 3 * size ? content * size / (size + 4) : size;
-    image_paint(cr, &im, (xd_rect){r.x + (r.w - shown) / 2, r.y + (r.h - shown) / 2, shown, shown});
+    image_paint(
+        cairo, &im,
+        (xd_rect){rect.x + (rect.w - shown) / 2, rect.y + (rect.h - shown) / 2, shown, shown});
 }
 
-void xd_luna_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f) {
-    const frame_set *s = frame_set_for(t, f->active);
-    xd_insets in = xd_luna_frame_insets(t, f);
+void xd_luna_draw_frame(const xd_theme *theme, cairo_t *cairo, xd_rect outer,
+                        const xd_frame *frame) {
+    const frame_set *frames = frame_set_for(theme, frame->active);
+    xd_insets in = xd_luna_frame_insets(theme, frame);
     /* `variant` recolours Blue's colours into the variant's; the artwork
      * takes it unless it was measured in that variant, where an inactive
      * window the reference doesn't show is faded instead. */
-    tint variant = tint_for(t, f->active);
+    tint variant = tint_for(theme, frame->active);
     tint tn = variant;
-    if (measured(t))
-        tn = !silver(t) && !f->active ? fade_tint(t, s->mid[8]) : (tint){0};
+    if (measured(theme))
+        tn = !silver(theme) && !frame->active ? fade_tint(theme, frames->mid[8]) : (tint){0};
     /* The title: white in Blue (the inactive title a pale blue); the
      * variant's caption text colours otherwise (dark on Silver). */
-    uint32_t text = f->active ? 0xFFFFFF : 0xD8E4F8;
+    uint32_t text = frame->active ? 0xFFFFFF : 0xD8E4F8;
     if (variant.on)
-        text = hex_of(t->scheme.colors[f->active ? XD_COLOR_TITLE_TEXT
-                                                 : XD_COLOR_INACTIVE_TITLE_TEXT]);
+        text =
+            hex_of(theme->scheme
+                       .colors[frame->active ? XD_COLOR_TITLE_TEXT : XD_COLOR_INACTIVE_TITLE_TEXT]);
 
     /* Caption band. */
     image im;
-    int lw = logical(t, outer.w);
+    int lw = logical(theme, outer.w);
     if (image_new(&im, lw, CAPTION_H)) {
-        caption_image(&im, s, &tn, lw, f->maximized);
-        image_paint(cr, &im, (xd_rect){outer.x, outer.y, outer.w, in.top});
+        caption_image(&im, frames, &tn, lw, frame->maximized);
+        image_paint(cairo, &im, (xd_rect){outer.x, outer.y, outer.w, in.top});
     }
 
-    if (!f->maximized) {
+    if (!frame->maximized) {
         /* Sides and bottom: four lines each, device-aligned. */
         int body_top = outer.y + in.top;
         int bottom_top = outer.y + outer.h - in.bottom;
         for (int i = 0; i < BORDER; i++) {
-            int a = xd_tpx(t, i), b = xd_tpx(t, i + 1);
-            fill(cr, (xd_rect){outer.x + a, body_top, b - a, bottom_top - body_top},
-                 tinted(&tn, s->side_left[i]));
-            fill(cr, (xd_rect){outer.x + outer.w - in.right + a, body_top, b - a,
-                               bottom_top - body_top},
-                 tinted(&tn, s->side_right[i]));
-            fill(cr, (xd_rect){outer.x + in.left, bottom_top + a, outer.w - in.left - in.right,
-                               b - a},
-                 tinted(&tn, s->bottom[i]));
+            int line_start = xd_tpx(theme, i), line_end = xd_tpx(theme, i + 1);
+            fill(cairo,
+                 (xd_rect){outer.x + line_start, body_top, line_end - line_start,
+                           bottom_top - body_top},
+                 tinted(&tn, frames->side_left[i]));
+            fill(cairo,
+                 (xd_rect){outer.x + outer.w - in.right + line_start, body_top,
+                           line_end - line_start, bottom_top - body_top},
+                 tinted(&tn, frames->side_right[i]));
+            fill(cairo,
+                 (xd_rect){outer.x + in.left, bottom_top + line_start, outer.w - in.left - in.right,
+                           line_end - line_start},
+                 tinted(&tn, frames->bottom[i]));
         }
         for (int corner = 0; corner < 2; corner++) {
-            image c;
-            if (!image_new(&c, BORDER, BORDER))
+            image corner_image;
+            if (!image_new(&corner_image, BORDER, BORDER))
                 continue;
             for (int y = 0; y < BORDER; y++) {
                 for (int x = 0; x < BORDER; x++)
-                    put(&c, x, y, tinted(&tn, corner == 0 ? s->bl[y][x] : s->br[y][x]));
+                    put(&corner_image, x, y,
+                        tinted(&tn, corner == 0 ? frames->bl[y][x] : frames->br[y][x]));
             }
             int cx = corner == 0 ? outer.x : outer.x + outer.w - in.right;
-            image_paint(cr, &c, (xd_rect){cx, bottom_top, in.left, in.bottom});
+            image_paint(cairo, &corner_image, (xd_rect){cx, bottom_top, in.left, in.bottom});
         }
     }
 
-    xd_frame_layout l;
-    xd_theme_frame_layout(t, outer, f, &l);
-    for (size_t i = 0; i < l.button_count; i++) {
-        xd_frame_part part = l.button_parts[i];
-        bool hot = f->hot == part && f->pressed != part;
-        bool pressed = f->hot == part && f->pressed == part;
-        draw_caption_button(t, cr, l.button_rects[i], part, f->maximized, f->active, hot,
-                            pressed);
+    xd_frame_layout frame_layout;
+    xd_theme_frame_layout(theme, outer, frame, &frame_layout);
+    for (size_t i = 0; i < frame_layout.button_count; i++) {
+        xd_frame_part part = frame_layout.button_parts[i];
+        bool hot = frame->hot == part && frame->pressed != part;
+        bool pressed = frame->hot == part && frame->pressed == part;
+        draw_caption_button(theme, cairo, frame_layout.button_rects[i], part, frame->maximized,
+                            frame->active, hot, pressed);
     }
 
     /* The window's icon (a generic window without one), then the title,
      * with XP's shadow behind light text. */
-    xd_rect ic = l.icon;
-    if (f->icon != nullptr) {
-        xd_style_task_icon(t, cr, f->icon, ic.x, ic.y);
+    xd_rect ic = frame_layout.icon;
+    if (frame->icon != nullptr) {
+        xd_style_task_icon(theme, cairo, frame->icon, ic.x, ic.y);
     } else {
-        xd_fill_rect(cr, ic, xd_rgba_hex(0xFFFFFF));
-        xd_fill_rect(cr, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(t, 4)},
+        xd_fill_rect(cairo, ic, xd_rgba_hex(0xFFFFFF));
+        xd_fill_rect(cairo, (xd_rect){ic.x, ic.y, ic.w, xd_tpx(theme, 4)},
                      xd_rgba_hex(tinted(&variant, 0x2D63D8)));
     }
     static const xd_font_spec title_font = {
         .family = XD_FONT_FAMILY_TREBUCHET, .size_pt = 10, .bold = true};
     xd_text_style st = {
         .font = &title_font,
-        .scale = t->scale,
+        .scale = theme->scale,
         .color = xd_rgba_hex(text),
         .align = XD_ALIGN_START,
         .ellipsize = true,
-        .shadow = f->active && luma(text) > 128,
+        .shadow = frame->active && luma(text) > 128,
         .shadow_color = xd_rgba_hex(tinted(&variant, 0x0A1883)),
-        .smoothing = t->scheme.font_smoothing,
+        .smoothing = theme->scheme.font_smoothing,
     };
-    xd_draw_text(cr, l.title, f->title, &st);
+    xd_draw_text(cairo, frame_layout.title, frame->title, &st);
 }
 
 /* ---- taskbar -------------------------------------------------------------------- */
 
-int xd_luna_taskbar_height(const xd_theme *t) { return xd_tpx(t, 30); }
+int xd_luna_taskbar_height(const xd_theme *theme) { return xd_tpx(theme, 30); }
 
 /* The taskbar's artwork: Blue's, or a variant's, measured (Silver's
  * reference shows no pressed task button: null). `task_tn` recolours a
@@ -776,8 +804,8 @@ typedef struct bar_art {
     const uint32_t (*tray_left)[5], *tray_a, *tray_b;
 } bar_art;
 
-static bar_art bar_art_for(const xd_theme *t) {
-    if (olive(t))
+static bar_art bar_art_for(const xd_theme *theme) {
+    if (olive(theme))
         return (bar_art){
             .bar = luna_olive_taskbar,
             .start_left = luna_olive_start_left,
@@ -792,7 +820,7 @@ static bar_art bar_art_for(const xd_theme *t) {
             .tray_a = luna_olive_tray_a,
             .tray_b = luna_olive_tray_b,
         };
-    if (energy(t))
+    if (energy(theme))
         return (bar_art){
             .bar = luna_energyblue_taskbar,
             .start_left = luna_energyblue_start_left,
@@ -807,7 +835,7 @@ static bar_art bar_art_for(const xd_theme *t) {
             .tray_a = luna_energyblue_tray_a,
             .tray_b = luna_energyblue_tray_b,
         };
-    if (silver(t))
+    if (silver(theme))
         return (bar_art){
             .bar = luna_silver_taskbar,
             .start_left = luna_silver_start_left,
@@ -820,7 +848,7 @@ static bar_art bar_art_for(const xd_theme *t) {
             .tray_b = luna_silver_tray_b,
         };
     return (bar_art){
-        .tn = tint_for(t, true),
+        .tn = tint_for(theme, true),
         .bar = luna_taskbar,
         .start_left = luna_start_left,
         .start_right = luna_start_right,
@@ -842,162 +870,166 @@ static xd_rgba bar_text(const bar_art *art, uint32_t face) {
     return xd_rgba_hex(luma(tinted(&art->tn, face)) > 150 ? 0x000000 : 0xFFFFFF);
 }
 
-void xd_luna_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge) {
+void xd_luna_draw_taskbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_edge edge) {
     /* XP's 30 rows from the rim facing the desktop, stretched across a
      * taller (or side) taskbar. */
     bool side = edge == XD_EDGE_LEFT || edge == XD_EDGE_RIGHT;
-    int across = side ? r.w : r.h;
-    int natural = xd_tpx(t, 30);
-    bar_art art = bar_art_for(t);
+    int across = side ? rect.w : rect.h;
+    int natural = xd_tpx(theme, 30);
+    bar_art art = bar_art_for(theme);
     for (int i = 0; i < 30; i++) {
-        int a = across == natural ? xd_tpx(t, i) : i * across / 30;
-        int b = across == natural ? xd_tpx(t, i + 1) : (i + 1) * across / 30;
-        if (b > a)
-            fill(cr, xd_style_rim_line(r, edge, a, b - a), tinted(&art.tn, art.bar[i]));
+        int row_start = across == natural ? xd_tpx(theme, i) : i * across / 30;
+        int row_end = across == natural ? xd_tpx(theme, i + 1) : (i + 1) * across / 30;
+        if (row_end > row_start)
+            fill(cairo, xd_style_rim_line(rect, edge, row_start, row_end - row_start),
+                 tinted(&art.tn, art.bar[i]));
     }
 }
 
-static xd_text_style start_text_style(const xd_theme *t) {
+static xd_text_style start_text_style(const xd_theme *theme) {
     static const xd_font_spec font = {.family = XD_FONT_FAMILY_TREBUCHET,
                                       .size_pt = 13,
                                       .bold = true,
                                       .italic = true};
     return (xd_text_style){
         .font = &font,
-        .scale = t->scale,
+        .scale = theme->scale,
         .color = xd_rgba_hex(0xFFFFFF),
         .align = XD_ALIGN_START,
         .shadow = true,
         .shadow_color = xd_rgba_alpha(xd_rgba_hex(0x000000), 0.45),
-        .smoothing = t->scheme.font_smoothing,
+        .smoothing = theme->scheme.font_smoothing,
     };
 }
 
 /* XP's Start button is 99px at 96 DPI. */
-int xd_luna_start_button_width(const xd_theme *t, [[maybe_unused]] cairo_t *cr) {
-    return xd_tpx(t, 99);
+int xd_luna_start_button_width(const xd_theme *theme, [[maybe_unused]] cairo_t *cairo) {
+    return xd_tpx(theme, 99);
 }
 
-void xd_luna_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
+void xd_luna_draw_start_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state) {
     enum { LEFT = 8, RIGHT = 23 };
-    bar_art art = bar_art_for(t);
+    bar_art art = bar_art_for(theme);
     image im;
-    int w = logical(t, r.w);
-    if (image_new(&im, w, 30)) {
+    int width = logical(theme, rect.w);
+    if (image_new(&im, width, 30)) {
         for (int y = 0; y < 30; y++) {
-            for (int x = 0; x < w; x++) {
-                uint32_t c;
+            for (int x = 0; x < width; x++) {
+                uint32_t pixel;
                 if (x < LEFT)
-                    c = art.start_left[y][x];
-                else if (x >= w - RIGHT)
-                    c = art.start_right[y][x - (w - RIGHT)];
+                    pixel = art.start_left[y][x];
+                else if (x >= width - RIGHT)
+                    pixel = art.start_right[y][x - (width - RIGHT)];
                 else
-                    c = mix(art.start_left[y][LEFT - 1], art.start_right[y][0],
-                            (x - LEFT + 1) / (double)(w - RIGHT - LEFT + 1));
+                    pixel = mix(art.start_left[y][LEFT - 1], art.start_right[y][0],
+                                (x - LEFT + 1) / (double)(width - RIGHT - LEFT + 1));
                 /* Hover lightens, pressed darkens (only the green part). */
-                bool green = ((c >> 8) & 0xFF) > ((c >> 0) & 0xFF) + 8;
+                bool green = ((pixel >> 8) & 0xFF) > ((pixel >> 0) & 0xFF) + 8;
                 if (green && (state & XD_STATE_PRESSED))
-                    c = mix(c, 0xFF000000u, 0.18);
+                    pixel = mix(pixel, 0xFF000000u, 0.18);
                 else if (green && (state & XD_STATE_HOT))
-                    c = mix(c, 0xFFFFFFFFu, 0.12);
+                    pixel = mix(pixel, 0xFFFFFFFFu, 0.12);
                 /* The taskbar showing at its rounded right end takes the
                  * variant's colour; the green button doesn't. */
-                uint32_t b8 = c & 0xFF;
-                bool blue = b8 > ((c >> 8) & 0xFF) + 8 && b8 > ((c >> 16) & 0xFF) + 8;
+                uint32_t b8 = pixel & 0xFF;
+                bool blue = b8 > ((pixel >> 8) & 0xFF) + 8 && b8 > ((pixel >> 16) & 0xFF) + 8;
                 if (blue)
-                    c = tinted(&art.tn, c);
-                put(&im, x, y, c);
+                    pixel = tinted(&art.tn, pixel);
+                put(&im, x, y, pixel);
             }
         }
-        image_paint(cr, &im, r);
+        image_paint(cairo, &im, rect);
     }
-    int dy = (state & XD_STATE_PRESSED) ? xd_tpx(t, 1) : 0;
-    int icon = xd_tpx(t, 20);
-    int ix = r.x + xd_tpx(t, 8);
-    xd_draw_start_logo(cr, (xd_rect){ix, r.y + (r.h - icon) / 2 + dy, icon, icon});
-    xd_text_style st = start_text_style(t);
-    int tx = ix + icon + xd_tpx(t, 5);
-    xd_draw_text(cr, (xd_rect){tx, r.y + dy, r.x + r.w - tx, r.h}, "start", &st);
+    int dy = (state & XD_STATE_PRESSED) ? xd_tpx(theme, 1) : 0;
+    int icon = xd_tpx(theme, 20);
+    int ix = rect.x + xd_tpx(theme, 8);
+    xd_draw_start_logo(cairo, (xd_rect){ix, rect.y + (rect.h - icon) / 2 + dy, icon, icon});
+    xd_text_style st = start_text_style(theme);
+    int tx = ix + icon + xd_tpx(theme, 5);
+    xd_draw_text(cairo, (xd_rect){tx, rect.y + dy, rect.x + rect.w - tx, rect.h}, "start", &st);
 }
 
-/* A task button's colour at (x, y), `w` wide. A pressed button the
+/* A task button's colour at (x, y), `width` wide. A pressed button the
  * reference doesn't show (Silver's) is the normal one sunk: the face's
  * gradient turned upside down and darkened towards its bottom edge. */
-static uint32_t task_pixel(const bar_art *art, bool pressed, int x, int y, int w) {
+static uint32_t task_pixel(const bar_art *art, bool pressed, int x, int y, int width) {
     if (pressed && art->pressed_left != nullptr) {
         if (x < 5)
             return art->pressed_left[y][x];
-        if (x >= w - 5)
-            return art->pressed_right[y][x - (w - 5)];
+        if (x >= width - 5)
+            return art->pressed_right[y][x - (width - 5)];
         return art->pressed_mid[y];
     }
     bool face = pressed && y >= 1 && y <= TASK_H - 3;
     int sy = face ? TASK_H - 2 - y : y;
-    uint32_t c = x < 4 ? art->task_left[sy][x]
-                 : x >= w - 5 ? art->task_right[sy][x - (w - 5)]
-                              : art->task_mid[sy];
-    c = tinted(&art->task_tn, c);
-    if (face && x >= 1 && x < w - 1)
-        c = mix(c, art->task_mid[TASK_H - 2], 0.3);
-    return c;
+    uint32_t pixel = x < 4            ? art->task_left[sy][x]
+                     : x >= width - 5 ? art->task_right[sy][x - (width - 5)]
+                                      : art->task_mid[sy];
+    pixel = tinted(&art->task_tn, pixel);
+    if (face && x >= 1 && x < width - 1)
+        pixel = mix(pixel, art->task_mid[TASK_H - 2], 0.3);
+    return pixel;
 }
 
-void xd_luna_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_luna_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                               const char *label, cairo_surface_t *window_icon) {
     bool pressed = state & (XD_STATE_PRESSED | XD_STATE_CHECKED);
-    bar_art art = bar_art_for(t);
+    bar_art art = bar_art_for(theme);
     image im;
-    int w = logical(t, r.w);
-    if (image_new(&im, w, TASK_H)) {
+    int width = logical(theme, rect.w);
+    if (image_new(&im, width, TASK_H)) {
         for (int y = 0; y < TASK_H; y++) {
-            for (int x = 0; x < w; x++) {
-                uint32_t c = tinted(&art.tn, task_pixel(&art, pressed, x, y, w));
+            for (int x = 0; x < width; x++) {
+                uint32_t pixel = tinted(&art.tn, task_pixel(&art, pressed, x, y, width));
                 /* Flashing buttons turn orange, keeping the shading. */
                 if (!pressed && (state & XD_STATE_FLASH))
-                    c = mix(c, 0xFFF59A2Cu, 0.88);
+                    pixel = mix(pixel, 0xFFF59A2Cu, 0.88);
                 else if (!pressed && (state & XD_STATE_HOT))
-                    c = mix(c, 0xFFFFFFFFu, 0.12);
-                put(&im, x, y, c);
+                    pixel = mix(pixel, 0xFFFFFFFFu, 0.12);
+                put(&im, x, y, pixel);
             }
         }
-        image_paint(cr, &im, r);
+        image_paint(cairo, &im, rect);
     }
-    int icon = xd_tpx(t, 16);
-    int ix = r.x + xd_tpx(t, 10);
-    int iy = r.y + (r.h - icon) / 2;
-    xd_style_task_icon(t, cr, window_icon, ix, iy);
-    uint32_t face = task_pixel(&art, pressed, logical(t, r.w) / 2, TASK_H / 2, logical(t, r.w));
-    xd_text_style st = xd_text(t, XD_FONT_MENU, bar_text(&art, face), XD_ALIGN_START);
-    int tx = ix + icon + xd_tpx(t, 4);
-    xd_draw_text(cr, (xd_rect){tx, r.y, r.x + r.w - tx - xd_tpx(t, 6), r.h}, label, &st);
+    int icon = xd_tpx(theme, 16);
+    int ix = rect.x + xd_tpx(theme, 10);
+    int iy = rect.y + (rect.h - icon) / 2;
+    xd_style_task_icon(theme, cairo, window_icon, ix, iy);
+    uint32_t face =
+        task_pixel(&art, pressed, logical(theme, rect.w) / 2, TASK_H / 2, logical(theme, rect.w));
+    xd_text_style st = xd_text(theme, XD_FONT_MENU, bar_text(&art, face), XD_ALIGN_START);
+    int tx = ix + icon + xd_tpx(theme, 4);
+    xd_draw_text(cairo, (xd_rect){tx, rect.y, rect.x + rect.w - tx - xd_tpx(theme, 6), rect.h},
+                 label, &st);
 }
 
-void xd_luna_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock) {
+void xd_luna_draw_tray(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *clock) {
     enum { LEFT = 5 };
-    bar_art art = bar_art_for(t);
+    bar_art art = bar_art_for(theme);
     image im;
-    int w = logical(t, r.w);
-    if (image_new(&im, w, 30)) {
+    int width = logical(theme, rect.w);
+    if (image_new(&im, width, 30)) {
         for (int y = 0; y < 30; y++) {
-            for (int x = 0; x < w; x++) {
-                uint32_t c = x < LEFT ? art.tray_left[y][x]
-                                      : mix(art.tray_a[y], art.tray_b[y],
-                                            (x - LEFT) / (double)XD_MAX(w - LEFT - 1, 1));
-                put(&im, x, y, tinted(&art.tn, c));
+            for (int x = 0; x < width; x++) {
+                uint32_t pixel = x < LEFT ? art.tray_left[y][x]
+                                          : mix(art.tray_a[y], art.tray_b[y],
+                                                (x - LEFT) / (double)XD_MAX(width - LEFT - 1, 1));
+                put(&im, x, y, tinted(&art.tn, pixel));
             }
         }
-        image_paint(cr, &im, r);
+        image_paint(cairo, &im, rect);
     }
-    xd_text_style st = xd_text(t, XD_FONT_MENU, bar_text(&art, art.tray_a[15]), XD_ALIGN_END);
+    xd_text_style st = xd_text(theme, XD_FONT_MENU, bar_text(&art, art.tray_a[15]), XD_ALIGN_END);
     st.lines = true; /* a tall taskbar's day and date under the time */
-    xd_draw_text(cr, xd_rect_inset4(r, xd_tpx(t, 10), 0, xd_tpx(t, 13), 0), clock, &st);
+    xd_draw_text(cairo, xd_rect_inset4(rect, xd_tpx(theme, 10), 0, xd_tpx(theme, 13), 0), clock,
+                 &st);
 }
 
 /* ---- Start menu -------------------------------------------------------------------- */
 
-void xd_theme_luna_start_colors(const xd_theme *t, xd_luna_start_colors *c) {
+void xd_theme_luna_start_colors(const xd_theme *theme, xd_luna_start_colors *luna_start_colors) {
     /* Blue's (XP's): a white program list and a pale blue column. */
-    *c = (xd_luna_start_colors){
+    *luna_start_colors = (xd_luna_start_colors){
         .head_a = 0x3D85EE,
         .head_b = 0x1B58CF,
         .foot_a = 0x3D82EC,
@@ -1015,9 +1047,9 @@ void xd_theme_luna_start_colors(const xd_theme *t, xd_luna_start_colors *c) {
         .hot = 0x316AC5,
         .accent = true,
     };
-    if (energy(t)) {
+    if (energy(theme)) {
         /* Measured: a navy program list and a mid-blue column, white text. */
-        *c = (xd_luna_start_colors){
+        *luna_start_colors = (xd_luna_start_colors){
             .head_a = luna_energyblue_startmenu_head_a & 0xFFFFFF,
             .head_b = luna_energyblue_startmenu_head_b & 0xFFFFFF,
             .foot_a = luna_energyblue_startmenu_foot_a & 0xFFFFFF,
@@ -1032,43 +1064,45 @@ void xd_theme_luna_start_colors(const xd_theme *t, xd_luna_start_colors *c) {
             .right_dim = luna_energyblue_startmenu_left_sub & 0xFFFFFF,
             .right_sep = luna_energyblue_startmenu_right_sep & 0xFFFFFF,
             .column_edge = luna_energyblue_startmenu_column_edge & 0xFFFFFF,
-            .hot = hex_of(t->scheme.colors[XD_COLOR_HILIGHT]),
+            .hot = hex_of(theme->scheme.colors[XD_COLOR_HILIGHT]),
             .accent = false, /* none under its header */
         };
-    } else if (olive(t) || silver(t)) {
+    } else if (olive(theme) || silver(theme)) {
         /* No reference: Blue's menu recoloured as the rest of the variant's
          * Blue-derived colours are, its list still white. */
-        tint tn = tint_for(t, true);
-        uint32_t *blue[] = {&c->head_a, &c->head_b, &c->foot_a, &c->foot_b, &c->frame,
-                            &c->right_bg, &c->right_text, &c->right_dim, &c->right_sep,
-                            &c->column_edge};
+        tint tn = tint_for(theme, true);
+        uint32_t *blue[] = {&luna_start_colors->head_a,     &luna_start_colors->head_b,
+                            &luna_start_colors->foot_a,     &luna_start_colors->foot_b,
+                            &luna_start_colors->frame,      &luna_start_colors->right_bg,
+                            &luna_start_colors->right_text, &luna_start_colors->right_dim,
+                            &luna_start_colors->right_sep,  &luna_start_colors->column_edge};
         for (size_t i = 0; i < XD_ARRAY_LEN(blue); i++)
             *blue[i] = tinted(&tn, *blue[i]);
-        c->hot = hex_of(t->scheme.colors[XD_COLOR_HILIGHT]);
+        luna_start_colors->hot = hex_of(theme->scheme.colors[XD_COLOR_HILIGHT]);
     }
 }
 
-
-void xd_luna_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_luna_draw_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                          const char *label) {
     bool disabled = state & XD_STATE_DISABLED;
     /* Disabled, pressed, hot, then a default (or focused) button's ring. */
-    int n = disabled                                       ? 3
-            : (state & XD_STATE_PRESSED)                   ? 2
-            : (state & XD_STATE_HOT)                       ? 1
-            : (state & (XD_STATE_FOCUSED | XD_STATE_DEFAULT)) ? 4
-                                                             : 0;
-    const luna_controls *c = controls(t);
-    xd_shape_draw(t, cr, &c->pushbutton[n], r);
+    int state_index = disabled                                          ? 3
+                      : (state & XD_STATE_PRESSED)                      ? 2
+                      : (state & XD_STATE_HOT)                          ? 1
+                      : (state & (XD_STATE_FOCUSED | XD_STATE_DEFAULT)) ? 4
+                                                                        : 0;
+    const luna_controls *luna_art = controls(theme);
+    xd_shape_draw(theme, cairo, &luna_art->pushbutton[state_index], rect);
     /* XP's themed buttons don't move their label when pressed. */
-    xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
-                               disabled ? xd_rgba_hex(c->disabled_text)
-                                        : xd_sys(t, XD_COLOR_BUTTON_TEXT),
+    xd_text_style st = xd_text(theme, XD_FONT_MESSAGE,
+                               disabled ? xd_rgba_hex(luna_art->disabled_text)
+                                        : xd_sys(theme, XD_COLOR_BUTTON_TEXT),
                                XD_ALIGN_CENTER);
-    xd_draw_text(cr, r, label, &st);
+    xd_draw_text(cairo, rect, label, &st);
     /* Focus: the dotted rectangle a pixel inside the content margins (3). */
     if (state & XD_STATE_FOCUSED)
-        xd_theme_draw_focus_rect(t, cr, xd_rect_inset(r, xd_tpx(t, 4), xd_tpx(t, 4)));
+        xd_theme_draw_focus_rect(theme, cairo,
+                                 xd_rect_inset(rect, xd_tpx(theme, 4), xd_tpx(theme, 4)));
 }
 
 /* XP's arrows: a chevron of three-pixel strokes, pointing down, 9 x 6. */
@@ -1091,86 +1125,96 @@ static int basic_state(uint8_t state) {
                                         : 0;
 }
 
-void xd_luna_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state) {
-    const luna_controls *c = controls(t);
-    int n = basic_state(state);
+void xd_luna_draw_dropdown_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                  uint8_t state) {
+    const luna_controls *luna_art = controls(theme);
+    int state_index = basic_state(state);
     image im;
-    int w = logical(t, r.w), h = logical(t, r.h);
-    if (r.w <= 0 || r.h <= 0 || !shape_image(&im, &c->dropdown[n], w, h))
+    int width = logical(theme, rect.w), height = logical(theme, rect.h);
+    if (rect.w <= 0 || rect.h <= 0 ||
+        !shape_image(&im, &luna_art->dropdown[state_index], width, height))
         return;
     /* The glyph is a 10 x 7 image centred, the chevron one pixel in. */
-    put_chevron(&im, (w - 10) / 2 + 1, (h - 7) / 2 + 1, false, c->dropdown_glyph[n]);
-    image_paint(cr, &im, r);
+    put_chevron(&im, (width - 10) / 2 + 1, (height - 7) / 2 + 1, false,
+                luna_art->dropdown_glyph[state_index]);
+    image_paint(cairo, &im, rect);
 }
 
 /* A scroll arrow button: up (or down) in state n, its 9 x 9 glyph centred
  * (the chevron a row lower pointing down). */
-static void scroll_arrow(const xd_theme *t, cairo_t *cr, const luna_controls *c, xd_rect r,
-                         bool up, int n) {
+static void scroll_arrow(const xd_theme *theme, cairo_t *cairo, const luna_controls *luna_art,
+                         xd_rect rect, bool up, int state_index) {
     image im;
-    int w = logical(t, r.w), h = logical(t, r.h);
-    if (r.w <= 0 || r.h <= 0 || !shape_image(&im, &c->scrollarrow[(up ? 0 : 4) + n], w, h))
+    int width = logical(theme, rect.w), height = logical(theme, rect.h);
+    if (rect.w <= 0 || rect.h <= 0 ||
+        !shape_image(&im, &luna_art->scrollarrow[(up ? 0 : 4) + state_index], width, height))
         return;
-    put_chevron(&im, (w - 9) / 2, (h - 9) / 2 + (up ? 1 : 2), up, c->scrollarrow_glyph[n]);
-    image_paint(cr, &im, r);
+    put_chevron(&im, (width - 9) / 2, (height - 9) / 2 + (up ? 1 : 2), up,
+                luna_art->scrollarrow_glyph[state_index]);
+    image_paint(cairo, &im, rect);
 }
 
-void xd_luna_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_rect thumb,
+void xd_luna_draw_vscrollbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_rect thumb,
                              bool disabled) {
-    const luna_controls *c = controls(t);
-    int n = disabled ? 3 : 0;
-    int arrow = XD_MIN(r.w, r.h / 2);
-    xd_rect up = {r.x, r.y, r.w, arrow};
-    xd_rect down = {r.x, r.y + r.h - arrow, r.w, arrow};
-    xd_rect track = {r.x, up.y + up.h, r.w, down.y - (up.y + up.h)};
+    const luna_controls *luna_art = controls(theme);
+    int state_index = disabled ? 3 : 0;
+    int arrow = XD_MIN(rect.w, rect.h / 2);
+    xd_rect up = {rect.x, rect.y, rect.w, arrow};
+    xd_rect down = {rect.x, rect.y + rect.h - arrow, rect.w, arrow};
+    xd_rect track = {rect.x, up.y + up.h, rect.w, down.y - (up.y + up.h)};
     if (track.h > 0)
-        xd_shape_draw(t, cr, &c->scrolltrack[n], track);
-    scroll_arrow(t, cr, c, up, true, n);
-    scroll_arrow(t, cr, c, down, false, n);
+        xd_shape_draw(theme, cairo, &luna_art->scrolltrack[state_index], track);
+    scroll_arrow(theme, cairo, luna_art, up, true, state_index);
+    scroll_arrow(theme, cairo, luna_art, down, false, state_index);
     if (thumb.h <= 0 || disabled)
         return;
     image im;
-    int w = logical(t, thumb.w), h = logical(t, thumb.h);
-    if (!shape_image(&im, &c->scrollthumb[0], w, h))
+    int width = logical(theme, thumb.w), height = logical(theme, thumb.h);
+    if (!shape_image(&im, &luna_art->scrollthumb[0], width, height))
         return;
     /* The gripper, 8 x 8 and centred, where the thumb has room for it:
      * four light lines over four dark ones a pixel to the right. */
-    if (h >= 8 + 6) {
-        int gx = (w - 8) / 2, gy = (h - 8) / 2;
+    if (height >= 8 + 6) {
+        int gx = (width - 8) / 2, gy = (height - 8) / 2;
         for (int j = 0; j < 8; j++)
             for (int i = (j & 1) ? 2 : 1; i < ((j & 1) ? 8 : 7); i++)
-                put(&im, gx + i, gy + j, 0xFF000000u | c->gripper[0][j & 1]);
+                put(&im, gx + i, gy + j, 0xFF000000u | luna_art->gripper[0][j & 1]);
     }
-    image_paint(cr, &im, thumb);
+    image_paint(cairo, &im, thumb);
 }
 
-void xd_luna_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect tab, uint8_t state) {
-    const luna_controls *c = controls(t);
+void xd_luna_draw_tab(const xd_theme *theme, cairo_t *cairo, xd_rect tab, uint8_t state) {
+    const luna_controls *luna_art = controls(theme);
     bool selected = state & XD_STATE_CHECKED;
     /* Normal, hot, selected, disabled (focus is drawn as a rectangle). */
-    int n = selected ? 2 : (state & XD_STATE_DISABLED) ? 3 : (state & XD_STATE_HOT) ? 1 : 0;
-    xd_shape_draw(t, cr, selected ? &c->tabtop[n] : &c->tab[n], tab);
+    int state_index = selected                      ? 2
+                      : (state & XD_STATE_DISABLED) ? 3
+                      : (state & XD_STATE_HOT)      ? 1
+                                                    : 0;
+    xd_shape_draw(theme, cairo,
+                  selected ? &luna_art->tabtop[state_index] : &luna_art->tab[state_index], tab);
 }
 
-void xd_luna_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r) {
-    const luna_controls *c = controls(t);
-    xd_shape_draw(t, cr, c->tabpane, r);
+void xd_luna_draw_tab_panel(const xd_theme *theme, cairo_t *cairo, xd_rect rect) {
+    const luna_controls *luna_art = controls(theme);
+    xd_shape_draw(theme, cairo, luna_art->tabpane, rect);
     /* The page inside the edge: its gradient, stretched over it. */
-    xd_rect in = xd_rect_inset(r, xd_tpx(t, 1), xd_tpx(t, 1));
+    xd_rect in = xd_rect_inset(rect, xd_tpx(theme, 1), xd_tpx(theme, 1));
     image im;
-    int w = logical(t, in.w), h = logical(t, in.h);
-    if (in.w <= 0 || in.h <= 0 || !image_new(&im, w, h))
+    int width = logical(theme, in.w), height = logical(theme, in.h);
+    if (in.w <= 0 || in.h <= 0 || !image_new(&im, width, height))
         return;
-    for (int y = 0; y < h; y++) {
-        uint32_t px = along(c->tabbody, c->tabbody_count, y * 255.0 / XD_MAX(h - 1, 1));
-        for (int x = 0; x < w; x++)
+    for (int y = 0; y < height; y++) {
+        uint32_t px =
+            along(luna_art->tabbody, luna_art->tabbody_count, y * 255.0 / XD_MAX(height - 1, 1));
+        for (int x = 0; x < width; x++)
             im.px[(size_t)y * (size_t)im.stride + (size_t)x] = px;
     }
-    image_paint(cr, &im, in);
+    image_paint(cairo, &im, in);
 }
 
-void xd_luna_draw_groupbox_frame(const xd_theme *t, cairo_t *cr, xd_rect box) {
-    xd_shape_draw(t, cr, controls(t)->groupbox, box);
+void xd_luna_draw_groupbox_frame(const xd_theme *theme, cairo_t *cairo, xd_rect box) {
+    xd_shape_draw(theme, cairo, controls(theme)->groupbox, box);
 }
 
 /* ---- check boxes and radio buttons ------------------------------------------------- */
@@ -1179,17 +1223,17 @@ void xd_luna_draw_groupbox_frame(const xd_theme *t, cairo_t *cr, xd_rect box) {
  * 118 and 185 DPI and up (their MinDpi): drawn in the size made for the
  * monitor's DPI, scaled by what the monitor adds to that DPI unless it's
  * within a tenth of it. */
-static int box_size(const xd_theme *t, int *device) {
-    double dpi = 96 * t->scale;
-    int n = dpi < 118 ? 13 : dpi < 185 ? 16 : 25;
-    double ratio = dpi / (n == 13 ? 96 : n == 16 ? 118 : 185);
-    *device = ratio < 1.1 ? n : (int)lround(n * ratio);
-    return n;
+static int box_size(const xd_theme *theme, int *device) {
+    double dpi = 96 * theme->scale;
+    int size = dpi < 118 ? 13 : dpi < 185 ? 16 : 25;
+    double ratio = dpi / (size == 13 ? 96 : size == 16 ? 118 : 185);
+    *device = ratio < 1.1 ? size : (int)lround(size * ratio);
+    return size;
 }
 
-int xd_luna_box_size(const xd_theme *t) {
+int xd_luna_box_size(const xd_theme *theme) {
     int device;
-    (void)box_size(t, &device);
+    (void)box_size(theme, &device);
     return device;
 }
 
@@ -1199,14 +1243,14 @@ typedef struct tick {
     int x0, w, k, y0, thick;
 } tick;
 
-static bool in_tick(int n, int x, int y) {
+static bool in_tick(int size, int x, int y) {
     static const tick ticks[] = {{3, 7, 2, 5, 3}, {3, 10, 3, 6, 4}, {5, 15, 5, 9, 6}};
-    const tick *k = &ticks[n == 13 ? 0 : n == 16 ? 1 : 2];
-    int i = x - k->x0;
-    if (i < 0 || i >= k->w)
+    const tick *shape = &ticks[size == 13 ? 0 : size == 16 ? 1 : 2];
+    int i = x - shape->x0;
+    if (i < 0 || i >= shape->w)
         return false;
-    int top = i <= k->k ? k->y0 + i : k->y0 + k->k - (i - k->k);
-    return y >= top && y < top + k->thick;
+    int top = i <= shape->k ? shape->y0 + i : shape->y0 + shape->k - (i - shape->k);
+    return y >= top && y < top + shape->thick;
 }
 
 static const xd_box_state *box_state(const xd_box_state *set, uint8_t state) {
@@ -1219,115 +1263,115 @@ static const xd_box_state *box_state(const xd_box_state *set, uint8_t state) {
 
 /* The face at (x, y) of an n px box (or the ring, two pixels wide, in a
  * hot state): the diagonal gradient, flat inside a hot ring. */
-static uint32_t box_face(const xd_box_state *s, int n, int x, int y, int layer) {
-    if (s->has_inner && layer >= 2)
-        return s->inner;
-    int m = n - 2;
-    double d = ((x - 1) + (y - 1)) * 255.0 / (2 * m - 2);
-    return along(s->stops, s->count, d);
+static uint32_t box_face(const xd_box_state *box_state, int size, int x, int y, int layer) {
+    if (box_state->has_inner && layer >= 2)
+        return box_state->inner;
+    int inner = size - 2;
+    double position = ((x - 1) + (y - 1)) * 255.0 / (2 * inner - 2);
+    return along(box_state->stops, box_state->count, position);
 }
 
-void xd_luna_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_luna_draw_checkbox(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                            const char *label) {
-    const luna_controls *c = controls(t);
-    const xd_box_state *s = box_state(c->check, state);
+    const luna_controls *luna_art = controls(theme);
+    const xd_box_state *look = box_state(luna_art->check, state);
     bool disabled = state & XD_STATE_DISABLED;
     int box;
-    int n = box_size(t, &box);
-    xd_rect b = {r.x, r.y + (r.h - box) / 2, box, box};
+    int size = box_size(theme, &box);
+    xd_rect box_rect = {rect.x, rect.y + (rect.h - box) / 2, box, box};
     image im;
-    if (image_new(&im, n, n)) {
-        for (int y = 0; y < n; y++) {
-            for (int x = 0; x < n; x++) {
-                int layer = XD_MIN(XD_MIN(x - 1, y - 1), XD_MIN(n - 2 - x, n - 2 - y));
+    if (image_new(&im, size, size)) {
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                int layer = XD_MIN(XD_MIN(x - 1, y - 1), XD_MIN(size - 2 - x, size - 2 - y));
                 uint32_t px;
                 if (layer < 0)
-                    px = 0xFF000000u | s->border;
-                else if ((state & XD_STATE_CHECKED) && in_tick(n, x, y))
-                    px = 0xFF000000u | s->mark[0];
+                    px = 0xFF000000u | look->border;
+                else if ((state & XD_STATE_CHECKED) && in_tick(size, x, y))
+                    px = 0xFF000000u | look->mark[0];
                 else
-                    px = box_face(s, n, x, y, layer);
+                    px = box_face(look, size, x, y, layer);
                 im.px[(size_t)y * (size_t)im.stride + (size_t)x] = px;
             }
         }
-        image_paint(cr, &im, b);
+        image_paint(cairo, &im, box_rect);
     }
-    int gap = xd_tpx(t, 5);
-    xd_rect text = {b.x + box + gap, r.y, r.w - box - gap, r.h};
-    xd_text_style st = xd_text(t, XD_FONT_MESSAGE,
-                               disabled ? xd_rgba_hex(c->disabled_text)
-                                        : xd_sys(t, XD_COLOR_WINDOW_TEXT),
+    int gap = xd_tpx(theme, 5);
+    xd_rect text = {box_rect.x + box + gap, rect.y, rect.w - box - gap, rect.h};
+    xd_text_style st = xd_text(theme, XD_FONT_MESSAGE,
+                               disabled ? xd_rgba_hex(luna_art->disabled_text)
+                                        : xd_sys(theme, XD_COLOR_WINDOW_TEXT),
                                XD_ALIGN_START);
-    xd_draw_text(cr, text, label, &st);
+    xd_draw_text(cairo, text, label, &st);
     if (state & XD_STATE_FOCUSED) {
-        int w = XD_MIN(xd_text_width(cr, label, &st), text.w);
-        xd_theme_draw_focus_rect(t, cr,
-                                 (xd_rect){text.x - xd_tpx(t, 1), r.y + xd_tpx(t, 2),
-                                           w + xd_tpx(t, 3), r.h - xd_tpx(t, 4)});
+        int width = XD_MIN(xd_text_width(cairo, label, &st), text.w);
+        xd_theme_draw_focus_rect(theme, cairo,
+                                 (xd_rect){text.x - xd_tpx(theme, 1), rect.y + xd_tpx(theme, 2),
+                                           width + xd_tpx(theme, 3), rect.h - xd_tpx(theme, 4)});
     }
 }
 
-static void set_argb(cairo_t *cr, uint32_t rgb, double alpha) {
-    cairo_set_source_rgba(cr, ((rgb >> 16) & 0xFF) / 255.0, ((rgb >> 8) & 0xFF) / 255.0,
+static void set_argb(cairo_t *cairo, uint32_t rgb, double alpha) {
+    cairo_set_source_rgba(cairo, ((rgb >> 16) & 0xFF) / 255.0, ((rgb >> 8) & 0xFF) / 255.0,
                           (rgb & 0xFF) / 255.0, alpha);
 }
 
 /* A radio button: the face (the check box's gradient), a hot ring, the
  * border and the dot, as circles, `box` px (device) at b's corner. */
-void xd_luna_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect b, uint8_t state) {
-    const luna_controls *c = controls(t);
-    const xd_box_state *s = box_state(c->radio, state);
-    const xd_box_state *face = box_state(c->check, (uint8_t)(state & ~XD_STATE_CHECKED));
+void xd_luna_draw_radio(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state) {
+    const luna_controls *luna_art = controls(theme);
+    const xd_box_state *look = box_state(luna_art->radio, state);
+    const xd_box_state *face = box_state(luna_art->check, (uint8_t)(state & ~XD_STATE_CHECKED));
     int box;
-    int n = box_size(t, &box);
+    int size = box_size(theme, &box);
     image faces;
-    if (!image_new(&faces, n, n))
+    if (!image_new(&faces, size, size))
         return;
-    for (int y = 0; y < n; y++) {
-        for (int x = 0; x < n; x++) {
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
             /* The ring is the check box's; inside it the radio button
              * has its own flat colour. */
-            uint32_t px = box_face(face, n, x, y, 0);
-            double dx = x + 0.5 - n / 2.0, dy = y + 0.5 - n / 2.0;
-            if (s->has_inner && (!face->has_inner || sqrt(dx * dx + dy * dy) < n * 0.27))
-                px = s->inner;
+            uint32_t px = box_face(face, size, x, y, 0);
+            double dx = x + 0.5 - size / 2.0, dy = y + 0.5 - size / 2.0;
+            if (look->has_inner && (!face->has_inner || sqrt(dx * dx + dy * dy) < size * 0.27))
+                px = look->inner;
             faces.px[(size_t)y * (size_t)faces.stride + (size_t)x] = px;
         }
     }
     cairo_surface_mark_dirty(faces.surface);
     image im;
-    if (!image_new(&im, n, n)) {
+    if (!image_new(&im, size, size)) {
         cairo_surface_destroy(faces.surface);
         return;
     }
     cairo_t *ic = cairo_create(im.surface);
-    double ctr = n / 2.0;
+    double ctr = size / 2.0;
     cairo_arc(ic, ctr, ctr, ctr - 1, 0, 2 * XD_PI);
     cairo_set_source_surface(ic, faces.surface, 0, 0);
     cairo_fill(ic);
     cairo_surface_destroy(faces.surface);
     cairo_arc(ic, ctr, ctr, ctr - 0.5, 0, 2 * XD_PI);
-    set_argb(ic, s->border, 1);
+    set_argb(ic, look->border, 1);
     cairo_set_line_width(ic, 1);
     cairo_stroke(ic);
     if (state & XD_STATE_CHECKED) {
         /* A green ball lit from the top left: 5 px across in the 13 px
          * button, 8 in the 16 and 13 in the 25. */
-        double rd = n == 13 ? 2.65 : n == 16 ? 4.0 : 6.5;
+        double rd = size == 13 ? 2.65 : size == 16 ? 4.0 : 6.5;
         double hx = ctr - 0.3 * rd;
-        cairo_pattern_t *g = cairo_pattern_create_radial(hx, hx, 0, ctr, ctr, rd);
-        uint32_t stops[3] = {s->mark[0], s->mark[1], s->mark[2]};
+        cairo_pattern_t *pattern = cairo_pattern_create_radial(hx, hx, 0, ctr, ctr, rd);
+        uint32_t stops[3] = {look->mark[0], look->mark[1], look->mark[2]};
         static const double at[3] = {0, 0.55, 1};
         for (int i = 0; i < 3; i++)
-            cairo_pattern_add_color_stop_rgb(g, at[i], ((stops[i] >> 16) & 0xFF) / 255.0,
+            cairo_pattern_add_color_stop_rgb(pattern, at[i], ((stops[i] >> 16) & 0xFF) / 255.0,
                                              ((stops[i] >> 8) & 0xFF) / 255.0,
                                              (stops[i] & 0xFF) / 255.0);
         cairo_arc(ic, ctr, ctr, rd, 0, 2 * XD_PI);
-        cairo_set_source(ic, g);
+        cairo_set_source(ic, pattern);
         cairo_fill(ic);
-        cairo_pattern_destroy(g);
+        cairo_pattern_destroy(pattern);
     }
     cairo_destroy(ic);
     cairo_surface_flush(im.surface);
-    image_paint(cr, &im, (xd_rect){b.x, b.y + (b.h - box) / 2, box, box});
+    image_paint(cairo, &im, (xd_rect){rect.x, rect.y + (rect.h - box) / 2, box, box});
 }

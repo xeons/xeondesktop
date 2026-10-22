@@ -21,7 +21,7 @@ typedef enum xd_visual_style {
     XD_STYLE_COUNT
 } xd_visual_style;
 
-const char *xd_visual_style_name(xd_visual_style s);
+const char *xd_visual_style_name(xd_visual_style visual_style);
 [[nodiscard]] bool xd_visual_style_from_name(xd_str name, xd_visual_style *out);
 
 typedef struct xd_theme {
@@ -50,12 +50,12 @@ void xd_theme_init(xd_theme *theme, xd_visual_style style, const xd_scheme *sche
                    double scale);
 
 /* Scheme colour as RGBA. */
-xd_rgba xd_sys(const xd_theme *t, xd_syscolor c);
+xd_rgba xd_sys(const xd_theme *theme, xd_syscolor color_index);
 /* Logical (96-DPI) length -> device pixels at this theme's scale. */
-int xd_tpx(const xd_theme *t, double logical);
-int xd_metric_px(const xd_theme *t, xd_metric m);
+int xd_tpx(const xd_theme *theme, double logical);
+int xd_metric_px(const xd_theme *theme, xd_metric metric);
 /* Text style for a scheme font role at this theme's scale. */
-xd_text_style xd_text(const xd_theme *t, xd_font_role role, xd_rgba color, xd_halign align);
+xd_text_style xd_text(const xd_theme *theme, xd_font_role role, xd_rgba color, xd_halign align);
 
 typedef enum xd_caption_buttons : uint8_t {
     XD_CAPBTN_CLOSE = 1u << 0,
@@ -96,8 +96,8 @@ typedef enum xd_frame_part : uint8_t {
     XD_PART_BOTTOM_RIGHT,
 } xd_frame_part;
 
-bool xd_frame_part_is_button(xd_frame_part p);
-bool xd_frame_part_is_border(xd_frame_part p);
+bool xd_frame_part_is_button(xd_frame_part part);
+bool xd_frame_part_is_border(xd_frame_part part);
 
 typedef struct xd_frame {
     const char *title;
@@ -129,41 +129,42 @@ typedef struct xd_frame_layout {
 } xd_frame_layout;
 
 /* Space taken by the non-client frame (borders + caption), in device px. */
-xd_insets xd_theme_frame_insets(const xd_theme *t, const xd_frame *f);
-void xd_theme_frame_layout(const xd_theme *t, xd_rect outer, const xd_frame *f,
+xd_insets xd_theme_frame_insets(const xd_theme *theme, const xd_frame *frame);
+void xd_theme_frame_layout(const xd_theme *theme, xd_rect outer, const xd_frame *frame,
                            xd_frame_layout *out);
 /* Which part of a frame drawn at `outer` the device-px point (x, y) is on. */
-xd_frame_part xd_theme_frame_hit(const xd_theme *t, xd_rect outer, const xd_frame *f, int x,
+xd_frame_part xd_theme_frame_hit(const xd_theme *theme, xd_rect outer, const xd_frame *frame, int x,
                                  int y);
-void xd_theme_draw_frame(const xd_theme *t, cairo_t *cr, xd_rect outer, const xd_frame *f);
+void xd_theme_draw_frame(const xd_theme *theme, cairo_t *cairo, xd_rect outer,
+                         const xd_frame *frame);
 /* Background colour for dialog client areas. */
-xd_rgba xd_theme_dialog_color(const xd_theme *t);
+xd_rgba xd_theme_dialog_color(const xd_theme *theme);
 
-void xd_theme_draw_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                           const char *label);
-void xd_theme_draw_checkbox(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_checkbox(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                             const char *label);
 /* A radio button and its label, lined up with check boxes. state:
  * XD_STATE_CHECKED, _HOT, _PRESSED, _FOCUSED, _DISABLED. */
-void xd_theme_draw_radio(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_radio(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                          const char *label);
 
 /* The screen edge a taskbar sits on. */
 typedef enum xd_edge : uint8_t { XD_EDGE_BOTTOM, XD_EDGE_TOP, XD_EDGE_LEFT, XD_EDGE_RIGHT } xd_edge;
 
 /* One row's height (also a side taskbar's start button height). */
-int xd_theme_taskbar_height(const xd_theme *t);
+int xd_theme_taskbar_height(const xd_theme *theme);
 /* Whether task buttons fill the taskbar's row: a theme package's do (their
  * images carry their own margins, transparent in Luna's), the built-in
  * styles draw theirs inset. */
-bool xd_theme_task_buttons_fill_row(const xd_theme *t);
+bool xd_theme_task_buttons_fill_row(const xd_theme *theme);
 /* The background of a taskbar on `edge`, of any size: its light rim
  * faces the desktop. */
-void xd_theme_draw_taskbar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
-int xd_theme_start_button_width(const xd_theme *t, cairo_t *cr);
-void xd_theme_draw_start_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_theme_draw_taskbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_edge edge);
+int xd_theme_start_button_width(const xd_theme *theme, cairo_t *cairo);
+void xd_theme_draw_start_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state);
 /* icon: the window's 16px (logical) icon, or nullptr for a generic one. */
-void xd_theme_draw_task_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_task_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                const char *label, cairo_surface_t *icon);
 /* Windows 7's taskbar button for a program (Aero), pinned or running.
  * Other styles draw an ordinary task button. */
@@ -183,80 +184,84 @@ typedef struct xd_app_button {
     } progress;
     double fraction; /* how far, 0..1; indeterminate: where the pulse is */
 } xd_app_button;
-/* The progress fill over a program's button `r`: from the theme package
+/* The progress fill over a program's button `rect`: from the theme package
  * (TaskBand2's progress bars), else Windows 7's colours. */
-void xd_theme_draw_taskbar_progress(const xd_theme *t, cairo_t *cr, xd_rect r,
+void xd_theme_draw_taskbar_progress(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
                                     enum xd_taskbar_progress kind, double fraction);
-void xd_theme_draw_app_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
-                              const xd_app_button *b);
+void xd_theme_draw_app_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
+                              const xd_app_button *app_button);
 /* Alt+Tab's window (device px): `count` windows' icons (32 logical px,
  * nullptr for the generic one) in rows of up to seven, the `selected` one
  * framed, and its title: in a sunken box below them, as Windows 2000 and
  * XP draw it in every style, or above them from a Vista or 7 package's
  * AltTab class. Its size for `count` windows: */
-void xd_theme_switcher_size(const xd_theme *t, size_t count, int *w, int *h);
-void xd_theme_draw_switcher(const xd_theme *t, cairo_t *cr, xd_rect r,
+void xd_theme_switcher_size(const xd_theme *theme, size_t count, int *width, int *height);
+void xd_theme_draw_switcher(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
                             cairo_surface_t *const *icons, size_t count, size_t selected,
                             const char *title);
 /* Windows 7's taskbar thumbnails (Aero's taskbar only; device px): the
  * glass panel above a button, one window's tile in it (lit when
  * XD_STATE_HOT, deeper when _PRESSED), its title, and the red close
  * button in a hovered tile's corner (state: _HOT, _PRESSED). */
-void xd_theme_draw_thumb_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
-void xd_theme_draw_thumb_tile(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
-void xd_theme_draw_thumb_title(const xd_theme *t, cairo_t *cr, xd_rect r, const char *title);
-void xd_theme_draw_thumb_close(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_theme_draw_thumb_panel(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
+void xd_theme_draw_thumb_tile(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state);
+void xd_theme_draw_thumb_title(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                               const char *title);
+void xd_theme_draw_thumb_close(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state);
 /* Windows 7's jump lists (Aero's taskbar; device px): a white panel with
  * the bottom band from band_y down (its program, Pin and Close items),
  * grey section headers, items (the caller draws the icon; state:
  * XD_STATE_HOT, _DISABLED), and the pin button at a hovered item's right
  * end (state: _HOT, _PRESSED; pinned: the item is pinned). */
-void xd_theme_draw_jumplist_frame(const xd_theme *t, cairo_t *cr, xd_rect r, int band_y);
-void xd_theme_draw_jumplist_header(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label);
-void xd_theme_draw_jumplist_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_jumplist_frame(const xd_theme *theme, cairo_t *cairo, xd_rect rect, int band_y);
+void xd_theme_draw_jumplist_header(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                   const char *label);
+void xd_theme_draw_jumplist_item(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                  const char *label, int text_x);
-void xd_theme_draw_jumplist_pin(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_jumplist_pin(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                 bool pinned);
 /* The pushpin alone (a band item's icon): upright when pinned. */
-void xd_theme_draw_pushpin(const xd_theme *t, cairo_t *cr, xd_rect r, bool pinned);
+void xd_theme_draw_pushpin(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool pinned);
 /* Taskbar toolbar grip (the ridge you drag a toolbar by), vertical. */
-int xd_theme_toolbar_grip_width(const xd_theme *t);
-void xd_theme_draw_toolbar_grip(const xd_theme *t, cairo_t *cr, xd_rect r);
+int xd_theme_toolbar_grip_width(const xd_theme *theme);
+void xd_theme_draw_toolbar_grip(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 /* Flat toolbar button (Quick Launch): only its state is drawn; the caller
  * paints the icon. state: XD_STATE_HOT, _PRESSED. */
-void xd_theme_draw_toolbar_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
+void xd_theme_draw_toolbar_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                  uint8_t state);
 
 /* Notification area well at the right end of the taskbar: the clock is
  * drawn right-aligned inside the margins; tray icons go to its left. */
-void xd_theme_draw_tray(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock);
+void xd_theme_draw_tray(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *clock);
 
 /* ---- the taskbar from theme packages (style_pkg.c; device px) ----
  * Each is drawn from the package where it styles the part, else as the
  * style draws it (or, where they return false, as the caller does). */
 
 /* The well of a taskbar on `edge` (xd_theme_draw_tray: a bottom one's). */
-void xd_theme_draw_tray_on(const xd_theme *t, cairo_t *cr, xd_rect r, const char *clock,
+void xd_theme_draw_tray_on(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *clock,
                            xd_edge edge);
 /* The clock's colour, where the caller draws it (a side taskbar's). */
-xd_rgba xd_theme_clock_color(const xd_theme *t);
-/* An unlocked taskbar's sizing bar along `r`'s edge facing the desktop:
+xd_rgba xd_theme_clock_color(const xd_theme *theme);
+/* An unlocked taskbar's sizing bar along `rect`'s edge facing the desktop:
  * XP's packages have one; the built-in styles draw none. */
-void xd_theme_draw_taskbar_sizing_bar(const xd_theme *t, cairo_t *cr, xd_rect r, xd_edge edge);
+void xd_theme_draw_taskbar_sizing_bar(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                      xd_edge edge);
 /* XP's button for `count` windows of one program, grouped: the count
  * apart from the name where the package styles it, else "3 Firefox". */
-void xd_theme_draw_task_group(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_task_group(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                               int count, const char *label, cairo_surface_t *icon);
 /* The chevron folding the tray's quiet icons (open: they show). state:
  * _HOT, _PRESSED. False: the package has none, the caller draws its own. */
-bool xd_theme_draw_tray_chevron(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+bool xd_theme_draw_tray_chevron(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                 bool open, bool vertical);
 /* Windows 7's Show desktop button at the end of the taskbar; false as
  * above. */
-bool xd_theme_draw_show_desktop(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+bool xd_theme_draw_show_desktop(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                 bool vertical);
 /* A newly installed program's highlight in a Start menu (XP's
  * NewAppButton); false: the caller fills its own colour. */
-bool xd_theme_draw_new_program(const xd_theme *t, cairo_t *cr, xd_rect r);
+bool xd_theme_draw_new_program(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 
 /* ---- the XP and 7 Start menus from theme packages (style_pkg.c) ----
  * XP's StartPanel parts, and 7's StartPanelPriv (StartPanel where it has
@@ -283,18 +288,18 @@ typedef enum xd_start_part : uint8_t {
     XD_START_PART_COUNT,
 } xd_start_part;
 /* Draws the part into r: false when the package doesn't style it. */
-bool xd_theme_draw_start_part(const xd_theme *t, cairo_t *cr, xd_start_part part, xd_rect r,
-                              uint8_t state);
+bool xd_theme_draw_start_part(const xd_theme *theme, cairo_t *cairo, xd_start_part part,
+                              xd_rect rect, uint8_t state);
 /* XP's footer icons: LogoffButtons is a strip of square icons, Log Off's
  * key next to last and Turn Off's power button last. */
-bool xd_theme_draw_start_logoff_icon(const xd_theme *t, cairo_t *cr, xd_rect r, bool power,
-                                     uint8_t state);
+bool xd_theme_draw_start_logoff_icon(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                     bool power, uint8_t state);
 /* The part's image size at the theme's scale (true-size parts). */
-bool xd_theme_start_part_size(const xd_theme *t, xd_start_part part, uint8_t state, int *w,
-                              int *h);
+bool xd_theme_start_part_size(const xd_theme *theme, xd_start_part part, uint8_t state, int *width,
+                              int *height);
 /* The part's ContentMargins, logical px: false when the package doesn't
  * style it. */
-bool xd_theme_start_part_margins(const xd_theme *t, xd_start_part part, xd_insets *out);
+bool xd_theme_start_part_margins(const xd_theme *theme, xd_start_part part, xd_insets *out);
 /* A part's colours (TextColor, CaptionText: a pinned program's second
  * line, TextShadowColor) and font, from the package. */
 typedef enum xd_start_color : uint8_t {
@@ -302,11 +307,11 @@ typedef enum xd_start_color : uint8_t {
     XD_START_SUBTEXT,
     XD_START_SHADOW,
 } xd_start_color;
-bool xd_theme_start_part_color(const xd_theme *t, xd_start_part part, uint8_t state,
+bool xd_theme_start_part_color(const xd_theme *theme, xd_start_part part, uint8_t state,
                                xd_start_color which, xd_rgba *out);
-bool xd_theme_start_part_font(const xd_theme *t, xd_start_part part, xd_font_spec *out);
+bool xd_theme_start_part_font(const xd_theme *theme, xd_start_part part, xd_font_spec *out);
 /* Search results' group headings (7's StartMenu::ListView). */
-bool xd_theme_start_heading_color(const xd_theme *t, xd_rgba *out);
+bool xd_theme_start_heading_color(const xd_theme *theme, xd_rgba *out);
 
 /* Windows 7's glass colours, in Window Color and Appearance's order, as
  * 0xAARRGGBB (the alpha is the swatch's colour intensity). */
@@ -325,7 +330,7 @@ typedef struct xd_glass_colors {
     xd_rgba taskbar;
     xd_rgba menu, menu_frame; /* the Windows 7 Start menu's right column, its frame */
 } xd_glass_colors;
-void xd_theme_glass_colors(const xd_theme *t, xd_glass_colors *out);
+void xd_theme_glass_colors(const xd_theme *theme, xd_glass_colors *out);
 
 /* Windows XP style's Start menu colours (0xRRGGBB) in the theme's colour
  * variant: header and footer gradients, frame, the program list (left),
@@ -337,9 +342,9 @@ typedef struct xd_luna_start_colors {
     uint32_t hot;
     bool accent; /* XP's orange line under the header */
 } xd_luna_start_colors;
-void xd_theme_luna_start_colors(const xd_theme *t, xd_luna_start_colors *out);
+void xd_theme_luna_start_colors(const xd_theme *theme, xd_luna_start_colors *out);
 /* Space (device px) between the well's edges and its contents. */
-void xd_theme_tray_margins(const xd_theme *t, int *left, int *right);
+void xd_theme_tray_margins(const xd_theme *theme, int *left, int *right);
 
 /* The notification area's own icons (trayicons.c), drawn into r. */
 typedef enum xd_tray_icon : uint8_t {
@@ -353,7 +358,7 @@ enum {
     XD_TRAY_ICON_OFF = 1u << 0,      /* muted, disconnected, Bluetooth off */
     XD_TRAY_ICON_CHARGING = 1u << 1,
 };
-void xd_theme_draw_tray_icon(const xd_theme *t, cairo_t *cr, xd_rect r, xd_tray_icon icon,
+void xd_theme_draw_tray_icon(const xd_theme *theme, cairo_t *cairo, xd_rect rect, xd_tray_icon icon,
                              int level, uint8_t flags);
 
 /* ---- menus (device px) ---- */
@@ -372,13 +377,13 @@ typedef struct xd_menu_metrics {
     int banner_w;     /* Windows 2000 Start menu side banner */
 } xd_menu_metrics;
 
-xd_menu_metrics xd_theme_menu_metrics(const xd_theme *t);
+xd_menu_metrics xd_theme_menu_metrics(const xd_theme *theme);
 /* Background and border of a whole menu. */
-void xd_theme_draw_menu_frame(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_theme_draw_menu_frame(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 /* One item; the caller draws the icon. state: XD_STATE_HOT, _DISABLED. */
-void xd_theme_draw_menu_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_menu_item(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                              const char *label, bool submenu, bool large);
-void xd_theme_draw_menu_separator(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_theme_draw_menu_separator(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 
 /* Window-menu glyphs, drawn in a menu item's icon column. */
 typedef enum xd_menu_glyph : uint8_t {
@@ -399,17 +404,17 @@ typedef struct xd_menu_item_extras {
 
 /* xd_theme_draw_menu_item with a bold default, check mark, glyph and
  * shortcut text. */
-void xd_theme_draw_menu_item_ex(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_menu_item_ex(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                 const char *label, bool submenu, bool large,
-                                const xd_menu_item_extras *x);
+                                const xd_menu_item_extras *extras);
 /* Width of a bold label (default items). */
-int xd_theme_menu_bold_text_width(const xd_theme *t, cairo_t *cr, const char *label);
+int xd_theme_menu_bold_text_width(const xd_theme *theme, cairo_t *cairo, const char *label);
 /* Vertical banner with text reading bottom to top, e.g. "XeonDesktop" in
  * bold followed by "Professional". */
-void xd_theme_draw_start_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
-                                const char *edition);
+void xd_theme_draw_start_banner(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                const char *product, const char *edition);
 /* Width of a menu item's label in device px. */
-int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label);
+int xd_theme_menu_text_width(const xd_theme *theme, cairo_t *cairo, const char *label);
 
 /* ---- dialog controls (device px) ---- */
 
@@ -417,78 +422,81 @@ int xd_theme_menu_text_width(const xd_theme *t, cairo_t *cr, const char *label);
 typedef struct xd_field_colors {
     xd_rgba text, disabled_text, selection, selection_text;
 } xd_field_colors;
-xd_field_colors xd_theme_field_colors(const xd_theme *t);
+xd_field_colors xd_theme_field_colors(const xd_theme *theme);
 
 /* Sunken frame of a text field or list box. Returns the content rect. */
-xd_rect xd_theme_draw_field(const xd_theme *t, cairo_t *cr, xd_rect r, bool disabled);
-int xd_theme_dropdown_button_width(const xd_theme *t);
+xd_rect xd_theme_draw_field(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool disabled);
+int xd_theme_dropdown_button_width(const xd_theme *theme);
 /* The arrow button of a combo box. state: XD_STATE_HOT, _PRESSED, _DISABLED. */
-void xd_theme_draw_dropdown_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state);
-void xd_theme_draw_list_item(const xd_theme *t, cairo_t *cr, xd_rect r, bool selected,
+void xd_theme_draw_dropdown_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                   uint8_t state);
+void xd_theme_draw_list_item(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool selected,
                              const char *label);
 /* Dotted keyboard-focus rectangle. */
-void xd_theme_draw_focus_rect(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_theme_draw_focus_rect(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 /* Static text in a dialog, optionally word-wrapped from the top. */
-void xd_theme_draw_label(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text, bool wrap,
-                         bool bold, bool disabled);
+void xd_theme_draw_label(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *text,
+                         bool wrap, bool bold, bool disabled);
 /* Property-sheet tab. The selected tab is drawn 2px taller and joins the
  * panel below it. state: XD_STATE_CHECKED (selected), _HOT, _FOCUSED. */
-void xd_theme_draw_tab(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_tab(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                        const char *label);
 /* The page area under the tabs. */
-void xd_theme_draw_tab_panel(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_theme_draw_tab_panel(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 /* Colour pages are filled with (white-ish gradient on Luna, ButtonFace on
  * Classic). */
-xd_rgba xd_theme_tab_page_color(const xd_theme *t);
+xd_rgba xd_theme_tab_page_color(const xd_theme *theme);
 /* Etched group box with a caption breaking the top edge. */
-void xd_theme_draw_groupbox(const xd_theme *t, cairo_t *cr, xd_rect r, const char *label);
-int xd_theme_scrollbar_width(const xd_theme *t);
+void xd_theme_draw_groupbox(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *label);
+int xd_theme_scrollbar_width(const xd_theme *theme);
 /* Vertical scroll bar: `first`/`page`/`total` in items. */
-void xd_theme_draw_vscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int first, int page,
-                              int total);
+void xd_theme_draw_vscrollbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, int first,
+                              int page, int total);
 /* Thumb rectangle of a vertical scroll bar, for hit testing. */
-xd_rect xd_theme_vscrollbar_thumb(const xd_theme *t, xd_rect r, int first, int page, int total);
+xd_rect xd_theme_vscrollbar_thumb(const xd_theme *theme, xd_rect rect, int first, int page,
+                                  int total);
 
 /* ---- more controls (controls.c; device px) ----
  * Each is drawn from the theme package where it styles the control, else
  * as the style draws it. */
 
 /* Horizontal scroll bar, and its thumb: the vertical one along x. */
-void xd_theme_draw_hscrollbar(const xd_theme *t, cairo_t *cr, xd_rect r, int first, int page,
-                              int total);
-xd_rect xd_theme_hscrollbar_thumb(const xd_theme *t, xd_rect r, int first, int page, int total);
+void xd_theme_draw_hscrollbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, int first,
+                              int page, int total);
+xd_rect xd_theme_hscrollbar_thumb(const xd_theme *theme, xd_rect rect, int first, int page,
+                                  int total);
 /* The size box where two scroll bars meet: a resize grip in its corner. */
-void xd_theme_draw_sizebox(const xd_theme *t, cairo_t *cr, xd_rect r);
+void xd_theme_draw_sizebox(const xd_theme *theme, cairo_t *cairo, xd_rect rect);
 /* Progress bar, `fraction` (0..1) done. */
-void xd_theme_draw_progress(const xd_theme *t, cairo_t *cr, xd_rect r, double fraction);
+void xd_theme_draw_progress(const xd_theme *theme, cairo_t *cairo, xd_rect rect, double fraction);
 /* Slider (trackbar): the channel, and the thumb pointing down at its
  * ticks. state: XD_STATE_HOT, _PRESSED, _FOCUSED, _DISABLED. */
-void xd_theme_draw_trackbar(const xd_theme *t, cairo_t *cr, xd_rect channel, xd_rect thumb,
+void xd_theme_draw_trackbar(const xd_theme *theme, cairo_t *cairo, xd_rect channel, xd_rect thumb,
                             uint8_t state);
-xd_rgba xd_theme_trackbar_tics_color(const xd_theme *t, bool disabled);
+xd_rgba xd_theme_trackbar_tics_color(const xd_theme *theme, bool disabled);
 /* One button of a spin (up-down) control. state: _HOT, _PRESSED, _DISABLED. */
-void xd_theme_draw_spin_button(const xd_theme *t, cairo_t *cr, xd_rect r, bool up,
+void xd_theme_draw_spin_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool up,
                                uint8_t state);
 /* A list view's column header. state: _HOT, _PRESSED. */
-void xd_theme_draw_header_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_header_item(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                const char *label);
 /* A tree view's expand box: a plus when closed, a minus when open. */
-void xd_theme_draw_tree_glyph(const xd_theme *t, cairo_t *cr, xd_rect r, bool open);
+void xd_theme_draw_tree_glyph(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool open);
 /* A status bar with one pane of `text` (nullptr: none) and, with `grip`,
  * the size grip at its right end. */
-void xd_theme_draw_statusbar(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text,
+void xd_theme_draw_statusbar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *text,
                              bool grip);
 /* A tooltip filling r, its text 4 logical px in from the sides. */
-void xd_theme_draw_tooltip(const xd_theme *t, cairo_t *cr, xd_rect r, const char *text);
+void xd_theme_draw_tooltip(const xd_theme *theme, cairo_t *cairo, xd_rect rect, const char *text);
 /* A program's toolbar band (rebar), with the gripper at its left end. */
-void xd_theme_draw_rebar(const xd_theme *t, cairo_t *cr, xd_rect r, bool gripper);
+void xd_theme_draw_rebar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool gripper);
 /* A button on a program's toolbar; the caller draws its icon. state: _HOT,
  * _PRESSED, _CHECKED, _DISABLED. */
-void xd_theme_draw_tool_button(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_tool_button(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                const char *label);
 /* A menu bar, and one of its items. state: _HOT, _PRESSED, _DISABLED. */
-void xd_theme_draw_menubar(const xd_theme *t, cairo_t *cr, xd_rect r, bool active);
-void xd_theme_draw_menubar_item(const xd_theme *t, cairo_t *cr, xd_rect r, uint8_t state,
+void xd_theme_draw_menubar(const xd_theme *theme, cairo_t *cairo, xd_rect rect, bool active);
+void xd_theme_draw_menubar_item(const xd_theme *theme, cairo_t *cairo, xd_rect rect, uint8_t state,
                                 const char *label);
 
 /* Colours a widget toolkit needs to match the active style (used to
@@ -506,11 +514,11 @@ typedef struct xd_toolkit_colors {
     xd_rgba field_border, button_top, button_bottom, button_border, button_hot, button_focus;
     xd_rgba check_border, check_mark, thumb_top, thumb_bottom, track, tab_border, tab_hot;
 } xd_toolkit_colors;
-void xd_theme_toolkit_colors(const xd_theme *t, xd_toolkit_colors *out);
+void xd_theme_toolkit_colors(const xd_theme *theme, xd_toolkit_colors *out);
 
 /* GTK3 CSS for the whole toolkit in this theme (scale is ignored: GTK
  * scales itself). */
-void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out);
+void xd_theme_gtk_css(const xd_theme *theme, xd_strbuf *out);
 
 /* Images the GTK CSS refers to, by path relative to gtk.css. */
 typedef enum xd_gtk_asset {
@@ -531,15 +539,15 @@ typedef enum xd_gtk_asset {
 } xd_gtk_asset;
 extern const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT];
 /* SVG contents of one of those images in this theme's colours. */
-void xd_theme_gtk_asset(const xd_theme *t, xd_gtk_asset which, xd_strbuf *out);
+void xd_theme_gtk_asset(const xd_theme *theme, xd_gtk_asset which, xd_strbuf *out);
 
 /* Whistler's light-to-dark caption mosaic, stepping from the caption's light
  * blue to its dark blue at x within band (also used by the XP Start menu
  * header). */
-void xd_theme_draw_whistler_mosaic(const xd_theme *t, cairo_t *cr, xd_rect band, int x);
+void xd_theme_draw_whistler_mosaic(const xd_theme *theme, cairo_t *cairo, xd_rect band, int x);
 
 /* Product banner across the top of a dialog (Shut Down). */
-void xd_theme_draw_dialog_banner(const xd_theme *t, cairo_t *cr, xd_rect r, const char *product,
-                                 const char *edition);
+void xd_theme_draw_dialog_banner(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
+                                 const char *product, const char *edition);
 
 #endif

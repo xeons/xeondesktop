@@ -112,52 +112,53 @@ static void package_from_environment(void) {
         g_error_free(error);
         return;
     }
-    xd_image_filter f;
+    xd_image_filter image_filter;
     const char *fname = getenv("XD_IMAGE_FILTER");
-    if (fname == nullptr || !xd_image_filter_from_name(fname, &f)) {
-        if (!xd_pkg_filter(env_pkg, &f))
-            f = XD_FILTER_SMOOTH;
+    if (fname == nullptr || !xd_image_filter_from_name(fname, &image_filter)) {
+        if (!xd_pkg_filter(env_pkg, &image_filter))
+            image_filter = XD_FILTER_SMOOTH;
     }
-    xd_theme_use_package(env_pkg, f, true);
+    xd_theme_use_package(env_pkg, image_filter, true);
 }
 
-static void set_package(xd_theme *t, const xd_pkg *p, xd_image_filter filter, bool integer) {
-    t->pkg = p;
-    t->image_filter = filter;
-    t->integer_scaling = integer;
-    if (p == nullptr)
+static void set_package(xd_theme *theme, const xd_pkg *package, xd_image_filter filter,
+                        bool integer) {
+    theme->pkg = package;
+    theme->image_filter = filter;
+    theme->integer_scaling = integer;
+    if (package == nullptr)
         return;
     /* What the package doesn't draw, its base style does, with its
      * [SysMetrics] over the scheme. */
-    t->style = p->base;
+    theme->style = package->base;
     for (int i = 0; i < XD_COLOR_COUNT; i++)
-        if (p->color_mask & (1ull << i))
-            t->scheme.colors[i] = p->colors[i];
+        if (package->color_mask & (1ull << i))
+            theme->scheme.colors[i] = package->colors[i];
     for (int i = 0; i < XD_METRIC_COUNT; i++)
-        if (p->metric_mask & (1u << i))
-            t->scheme.metrics[i] = p->metrics[i];
+        if (package->metric_mask & (1u << i))
+            theme->scheme.metrics[i] = package->metrics[i];
     for (int i = 0; i < XD_FONT_COUNT; i++)
-        if (p->font_mask & (1u << i))
-            t->scheme.fonts[i] = p->fonts[i];
+        if (package->font_mask & (1u << i))
+            theme->scheme.fonts[i] = package->fonts[i];
 }
 
-void xd_theme_attach_package(xd_theme *t) {
+void xd_theme_attach_package(xd_theme *theme) {
     package_from_environment();
-    set_package(t, active_pkg, active_filter, active_integer);
+    set_package(theme, active_pkg, active_filter, active_integer);
 }
 
-void xd_theme_init_package(xd_theme *t, xd_visual_style style, const xd_scheme *scheme,
+void xd_theme_init_package(xd_theme *theme, xd_visual_style style, const xd_scheme *scheme,
                            double scale, const xd_pkg *pkg, xd_image_filter filter,
                            bool integer_scaling) {
-    xd_theme_init(t, style, scheme, scale);
+    xd_theme_init(theme, style, scheme, scale);
     /* Without the active package's base style and [SysMetrics]. */
-    t->style = style;
-    t->scheme = *scheme;
-    set_package(t, pkg, filter, integer_scaling);
+    theme->style = style;
+    theme->scheme = *scheme;
+    set_package(theme, pkg, filter, integer_scaling);
 }
 
-static size_t numbers(const char *v, int *out, size_t max);
-static bool parse_color(const char *v, xd_rgba *out);
+static size_t numbers(const char *text, int *out, size_t max);
+static bool parse_color(const char *text, xd_rgba *out);
 
 /* XP's [SysMetrics] names where they differ from the registry's. */
 static const char *const color_names[][2] = {
@@ -220,30 +221,33 @@ static void font_family(const char *face, char *out, size_t cap) {
     g_snprintf(out, cap, "%s, sans-serif", face);
 }
 
-static void sysmetrics_overlay(xd_pkg *p) {
+static void sysmetrics_overlay(xd_pkg *package) {
     GHashTableIter it;
-    gpointer k, v;
-    g_hash_table_iter_init(&it, p->sys);
-    while (g_hash_table_iter_next(&it, &k, &v)) {
-        const char *key = k;
+    gpointer hash_key, hash_value;
+    g_hash_table_iter_init(&it, package->sys);
+    while (g_hash_table_iter_next(&it, &hash_key, &hash_value)) {
+        const char *key = hash_key;
         if (g_str_has_prefix(key, "color:")) {
             const char *name = key + 6;
             for (size_t i = 0; i < G_N_ELEMENTS(color_names); i++)
                 if (strcmp(name, color_names[i][0]) == 0)
                     name = color_names[i][1];
-            xd_syscolor c;
+            xd_syscolor color_index;
             xd_rgba rgba;
-            if (xd_syscolor_from_name(xd_str_from_cstr(name), &c) && parse_color(v, &rgba)) {
-                p->colors[c] = (xd_rgb){(uint8_t)lround(rgba.r * 255), (uint8_t)lround(rgba.g * 255),
-                                        (uint8_t)lround(rgba.b * 255)};
-                p->color_mask |= 1ull << c;
+            if (xd_syscolor_from_name(xd_str_from_cstr(name), &color_index) &&
+                parse_color(hash_value, &rgba)) {
+                package->colors[color_index] =
+                    (xd_rgb){(uint8_t)lround(rgba.r * 255), (uint8_t)lround(rgba.g * 255),
+                             (uint8_t)lround(rgba.b * 255)};
+                package->color_mask |= 1ull << color_index;
             }
         } else if (g_str_has_prefix(key, "value:")) {
-            int n[1];
+            int values[1];
             for (size_t i = 0; i < G_N_ELEMENTS(metric_names); i++)
-                if (strcmp(key + 6, metric_names[i].name) == 0 && numbers(v, n, 1) == 1) {
-                    p->metrics[metric_names[i].metric] = n[0];
-                    p->metric_mask |= 1u << metric_names[i].metric;
+                if (strcmp(key + 6, metric_names[i].name) == 0 &&
+                    numbers(hash_value, values, 1) == 1) {
+                    package->metrics[metric_names[i].metric] = values[0];
+                    package->metric_mask |= 1u << metric_names[i].metric;
                 }
         }
     }
@@ -251,21 +255,21 @@ static void sysmetrics_overlay(xd_pkg *p) {
         const char *face;
         int points;
         bool bold, italic;
-        if (!xd_pkg_sys_font(p, font_names[i].name, &face, &points, &bold, &italic) ||
+        if (!xd_pkg_sys_font(package, font_names[i].name, &face, &points, &bold, &italic) ||
             points <= 0)
             continue;
-        xd_font_spec *f = &p->fonts[font_names[i].role];
-        font_family(face, f->family, sizeof(f->family));
-        f->size_pt = points;
-        f->bold = bold;
-        f->italic = italic;
-        p->font_mask |= 1u << font_names[i].role;
+        xd_font_spec *font = &package->fonts[font_names[i].role];
+        font_family(face, font->family, sizeof(font->family));
+        font->size_pt = points;
+        font->bold = bold;
+        font->italic = italic;
+        package->font_mask |= 1u << font_names[i].role;
     }
 }
 
 /* ---- names ----------------------------------------------------------------------- */
 
-static char *lower(const char *s) { return g_ascii_strdown(s, -1); }
+static char *lower(const char *text) { return g_ascii_strdown(text, -1); }
 
 /* "TaskBand::Toolbar" -> "toolbar"; the class uxtheme's names are for. */
 static char *base_class(const char *cls) {
@@ -273,18 +277,18 @@ static char *base_class(const char *cls) {
     return lower(colon != nullptr ? colon + 2 : cls);
 }
 
-static bool all_digits(const char *s) {
-    if (s == nullptr || *s == '\0')
+static bool all_digits(const char *text) {
+    if (text == nullptr || *text == '\0')
         return false;
-    for (; *s != '\0'; s++)
-        if (!g_ascii_isdigit(*s))
+    for (; *text != '\0'; text++)
+        if (!g_ascii_isdigit(*text))
             return false;
     return true;
 }
 
 /* A part as stored: its number where uxtheme.ini knows it, else its name
  * (lowercase); "0" for none. */
-static char *part_key(const xd_pkg *p, const char *cls, const char *part) {
+static char *part_key(const xd_pkg *package, const char *cls, const char *part) {
     if (part == nullptr || *part == '\0')
         return g_strdup("0");
     if (all_digits(part))
@@ -292,14 +296,14 @@ static char *part_key(const xd_pkg *p, const char *cls, const char *part) {
     char *base = base_class(cls);
     char *name = lower(part);
     char *key = g_strdup_printf("%s.%s", base, name);
-    gpointer n = g_hash_table_lookup(p->part_numbers, key);
-    if (n == nullptr) {
+    gpointer number = g_hash_table_lookup(package->part_numbers, key);
+    if (number == nullptr) {
         /* Vista's ButtonStyle has Button's parts. */
         char *style_key = g_strdup_printf("%sstyle.%s", base, name);
-        n = g_hash_table_lookup(p->part_numbers, style_key);
+        number = g_hash_table_lookup(package->part_numbers, style_key);
         g_free(style_key);
     }
-    char *out = n != nullptr ? g_strdup_printf("%d", GPOINTER_TO_INT(n)) : g_strdup(name);
+    char *out = number != nullptr ? g_strdup_printf("%d", GPOINTER_TO_INT(number)) : g_strdup(name);
     g_free(key);
     g_free(name);
     g_free(base);
@@ -307,19 +311,19 @@ static char *part_key(const xd_pkg *p, const char *cls, const char *part) {
 }
 
 /* A part's name, from its stored key (a number or a name). */
-static char *part_name(const xd_pkg *p, const char *cls, const char *pkey) {
+static char *part_name(const xd_pkg *package, const char *cls, const char *pkey) {
     if (!all_digits(pkey))
         return g_strdup(pkey);
     char *base = base_class(cls);
     char *prefix = g_strdup_printf("%s.", base);
     char *found = nullptr;
     GHashTableIter it;
-    gpointer k, v;
-    g_hash_table_iter_init(&it, p->part_numbers);
-    while (found == nullptr && g_hash_table_iter_next(&it, &k, &v)) {
-        const char *key = k;
+    gpointer hash_key, hash_value;
+    g_hash_table_iter_init(&it, package->part_numbers);
+    while (found == nullptr && g_hash_table_iter_next(&it, &hash_key, &hash_value)) {
+        const char *key = hash_key;
         if (g_str_has_prefix(key, prefix) && strchr(key + strlen(prefix), '.') == nullptr &&
-            GPOINTER_TO_INT(v) == atoi(pkey))
+            GPOINTER_TO_INT(hash_value) == atoi(pkey))
             found = g_strdup(key + strlen(prefix));
     }
     g_free(prefix);
@@ -327,48 +331,49 @@ static char *part_name(const xd_pkg *p, const char *cls, const char *pkey) {
     return found;
 }
 
-static char *state_key(const xd_pkg *p, const char *cls, const char *pkey, const char *state) {
+static char *state_key(const xd_pkg *package, const char *cls, const char *pkey,
+                       const char *state) {
     if (state == nullptr || *state == '\0')
         return g_strdup("0");
     if (all_digits(state))
         return g_strdup(state);
     char *name = lower(state);
     char *base = base_class(cls);
-    char *pname = part_name(p, cls, pkey);
-    gpointer n = nullptr;
+    char *pname = part_name(package, cls, pkey);
+    gpointer number = nullptr;
     if (pname != nullptr) {
         char *key = g_strdup_printf("%s.%s.%s", base, pname, name);
-        n = g_hash_table_lookup(p->state_numbers, key);
+        number = g_hash_table_lookup(package->state_numbers, key);
         g_free(key);
-        if (n == nullptr) {
+        if (number == nullptr) {
             /* Vista's HeaderStyle has more of Header's states. */
             key = g_strdup_printf("%sstyle.%s.%s", base, pname, name);
-            n = g_hash_table_lookup(p->state_numbers, key);
+            number = g_hash_table_lookup(package->state_numbers, key);
             g_free(key);
         }
     }
-    if (n == nullptr) {
+    if (number == nullptr) {
         /* A state on the class itself ("Toolbar(Hot)"), or on a part whose
          * states aren't listed: any of the class's parts that has it. */
         char *prefix = g_strdup_printf("%s.", base);
         char *suffix = g_strdup_printf(".%s", name);
         GHashTableIter it;
-        gpointer k, v;
-        g_hash_table_iter_init(&it, p->state_numbers);
-        while (n == nullptr && g_hash_table_iter_next(&it, &k, &v))
-            if (g_str_has_prefix(k, prefix) && g_str_has_suffix(k, suffix))
-                n = v;
+        gpointer hash_key, hash_value;
+        g_hash_table_iter_init(&it, package->state_numbers);
+        while (number == nullptr && g_hash_table_iter_next(&it, &hash_key, &hash_value))
+            if (g_str_has_prefix(hash_key, prefix) && g_str_has_suffix(hash_key, suffix))
+                number = hash_value;
         g_free(suffix);
         g_free(prefix);
     }
-    char *out = n != nullptr ? g_strdup_printf("%d", GPOINTER_TO_INT(n)) : g_strdup(name);
+    char *out = number != nullptr ? g_strdup_printf("%d", GPOINTER_TO_INT(number)) : g_strdup(name);
     g_free(pname);
     g_free(base);
     g_free(name);
     return out;
 }
 
-static bool load_names(xd_pkg *p, const char *path, GError **error) {
+static bool load_names(xd_pkg *package, const char *path, GError **error) {
     GKeyFile *kf = g_key_file_new();
     if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, error)) {
         g_key_file_free(kf);
@@ -385,10 +390,10 @@ static bool load_names(xd_pkg *p, const char *path, GError **error) {
         gsize nkeys = 0;
         char **keys = g_key_file_get_keys(kf, groups[i], &nkeys, nullptr);
         for (gsize k = 0; k < nkeys; k++) {
-            int n = g_key_file_get_integer(kf, groups[i], keys[k], nullptr);
+            int number = g_key_file_get_integer(kf, groups[i], keys[k], nullptr);
             char *name = lower(keys[k]);
-            g_hash_table_insert(parts ? p->part_numbers : p->state_numbers,
-                                g_strdup_printf("%s.%s", what, name), GINT_TO_POINTER(n));
+            g_hash_table_insert(parts ? package->part_numbers : package->state_numbers,
+                                g_strdup_printf("%s.%s", what, name), GINT_TO_POINTER(number));
             g_free(name);
         }
         g_strfreev(keys);
@@ -401,15 +406,15 @@ static bool load_names(xd_pkg *p, const char *path, GError **error) {
 
 /* ---- reading the package's files ------------------------------------------------- */
 
-static GBytes *read_file(const xd_pkg *p, const char *path) {
+static GBytes *read_file(const xd_pkg *package, const char *path) {
     /* Package paths are relative, without "..": nothing outside it. */
     if (path == nullptr || path[0] == '/' || strstr(path, "..") != nullptr)
         return nullptr;
-    if (p->zip != nullptr) {
-        GBytes *b = g_hash_table_lookup(p->zip, path);
-        return b != nullptr ? g_bytes_ref(b) : nullptr;
+    if (package->zip != nullptr) {
+        GBytes *bytes = g_hash_table_lookup(package->zip, path);
+        return bytes != nullptr ? g_bytes_ref(bytes) : nullptr;
     }
-    char *full = g_build_filename(p->root, path, nullptr);
+    char *full = g_build_filename(package->root, path, nullptr);
     char *data = nullptr;
     gsize len = 0;
     bool ok = g_file_get_contents(full, &data, &len, nullptr);
@@ -418,35 +423,35 @@ static GBytes *read_file(const xd_pkg *p, const char *path) {
 }
 
 #if XD_HAVE_LIBARCHIVE
-static bool read_zip(xd_pkg *p, const char *path, GError **error) {
-    struct archive *a = archive_read_new();
-    archive_read_support_format_zip(a);
-    bool ok = archive_read_open_filename(a, path, 64 * 1024) == ARCHIVE_OK;
+static bool read_zip(xd_pkg *package, const char *path, GError **error) {
+    struct archive *reader = archive_read_new();
+    archive_read_support_format_zip(reader);
+    bool ok = archive_read_open_filename(reader, path, 64 * 1024) == ARCHIVE_OK;
     gsize total = 0;
-    struct archive_entry *e;
-    while (ok && archive_read_next_header(a, &e) == ARCHIVE_OK) {
-        la_int64_t size = archive_entry_size(e);
-        const char *name = archive_entry_pathname(e);
-        if (archive_entry_filetype(e) != AE_IFREG || name == nullptr || size < 0 ||
+    struct archive_entry *archive_member;
+    while (ok && archive_read_next_header(reader, &archive_member) == ARCHIVE_OK) {
+        la_int64_t size = archive_entry_size(archive_member);
+        const char *name = archive_entry_pathname(archive_member);
+        if (archive_entry_filetype(archive_member) != AE_IFREG || name == nullptr || size < 0 ||
             size > ZIP_ENTRY_MAX || total + (gsize)size > ZIP_TOTAL_MAX) {
-            archive_read_data_skip(a);
+            archive_read_data_skip(reader);
             continue;
         }
         char *buf = g_malloc((gsize)size + 1);
-        la_ssize_t n = archive_read_data(a, buf, (size_t)size);
-        if (n != size) {
+        la_ssize_t bytes_read = archive_read_data(reader, buf, (size_t)size);
+        if (bytes_read != size) {
             g_free(buf);
             ok = false;
             break;
         }
         total += (gsize)size;
-        g_hash_table_insert(p->zip, g_strdup(name), g_bytes_new_take(buf, (gsize)size));
+        g_hash_table_insert(package->zip, g_strdup(name), g_bytes_new_take(buf, (gsize)size));
     }
     if (!ok)
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED, "%s: %s", path,
-                    archive_error_string(a) != nullptr ? archive_error_string(a)
-                                                        : "not a theme package");
-    archive_read_free(a);
+                    archive_error_string(reader) != nullptr ? archive_error_string(reader)
+                                                            : "not a theme package");
+    archive_read_free(reader);
     return ok;
 }
 #endif
@@ -471,48 +476,51 @@ static const char *attr(const char **names, const char **values, const char *nam
 static void theme_start(G_GNUC_UNUSED GMarkupParseContext *mc, const char *element,
                         const char **names, const char **values, gpointer data,
                         G_GNUC_UNUSED GError **error) {
-    parse_ctx *c = data;
+    parse_ctx *parse_state = data;
     if (strcmp(element, "xdtheme") == 0) {
         const char *name = attr(names, values, "name");
-        g_free(c->pkg->name);
-        c->pkg->name = g_strdup(name != nullptr ? name : "");
+        g_free(parse_state->pkg->name);
+        parse_state->pkg->name = g_strdup(name != nullptr ? name : "");
         const char *base = attr(names, values, "base");
         if (base == nullptr ||
-            !xd_visual_style_from_name(xd_str_from_cstr(base), &c->pkg->base))
-            c->pkg->base = XD_STYLE_CLASSIC;
+            !xd_visual_style_from_name(xd_str_from_cstr(base), &parse_state->pkg->base))
+            parse_state->pkg->base = XD_STYLE_CLASSIC;
     } else if (strcmp(element, "variant") == 0) {
         const char *id = attr(names, values, "id");
         const char *style = attr(names, values, "style");
         if (id == nullptr || style == nullptr)
             return;
-        bool wanted = c->want_variant != nullptr && strcmp(id, c->want_variant) == 0;
-        if (c->style_path == nullptr || wanted) {
-            if (c->style_path != nullptr && !wanted)
+        bool wanted =
+            parse_state->want_variant != nullptr && strcmp(id, parse_state->want_variant) == 0;
+        if (parse_state->style_path == nullptr || wanted) {
+            if (parse_state->style_path != nullptr && !wanted)
                 return;
-            g_free(c->style_path);
-            g_free(c->shell_path);
-            g_free(c->pkg->variant);
-            c->style_path = g_strdup(style);
-            c->shell_path = g_strdup(attr(names, values, "shell"));
-            c->pkg->variant = g_strdup(id);
+            g_free(parse_state->style_path);
+            g_free(parse_state->shell_path);
+            g_free(parse_state->pkg->variant);
+            parse_state->style_path = g_strdup(style);
+            parse_state->shell_path = g_strdup(attr(names, values, "shell"));
+            parse_state->pkg->variant = g_strdup(id);
             if (wanted)
-                c->want_variant = nullptr; /* found: keep it */
+                parse_state->want_variant = nullptr; /* found: keep it */
         }
     } else if (strcmp(element, "scaling") == 0) {
-        const char *f = attr(names, values, "filter");
-        c->pkg->has_filter = f != nullptr && xd_image_filter_from_name(f, &c->pkg->filter);
+        const char *filter_name = attr(names, values, "filter");
+        parse_state->pkg->has_filter =
+            filter_name != nullptr &&
+            xd_image_filter_from_name(filter_name, &parse_state->pkg->filter);
     }
 }
 
-static void add_prop(xd_pkg *p, const char *cls, const char *part, const char *state,
+static void add_prop(xd_pkg *package, const char *cls, const char *part, const char *state,
                      const char *prop, const char *value) {
     char *lc = lower(cls);
-    char *pk = part_key(p, cls, part);
-    char *sk = state_key(p, cls, pk, state);
+    char *pk = part_key(package, cls, part);
+    char *sk = state_key(package, cls, pk, state);
     char *lp = lower(prop);
-    g_hash_table_replace(p->props, g_strdup_printf("%s\x1f%s\x1f%s\x1f%s", lc, pk, sk, lp),
+    g_hash_table_replace(package->props, g_strdup_printf("%s\x1f%s\x1f%s\x1f%s", lc, pk, sk, lp),
                          g_strdup(value));
-    g_hash_table_replace(p->parts, g_strdup_printf("%s\x1f%s", lc, pk), GINT_TO_POINTER(1));
+    g_hash_table_replace(package->parts, g_strdup_printf("%s\x1f%s", lc, pk), GINT_TO_POINTER(1));
     g_free(lp);
     g_free(sk);
     g_free(pk);
@@ -522,19 +530,19 @@ static void add_prop(xd_pkg *p, const char *cls, const char *part, const char *s
 static void style_start(G_GNUC_UNUSED GMarkupParseContext *mc, const char *element,
                         const char **names, const char **values, gpointer data,
                         G_GNUC_UNUSED GError **error) {
-    parse_ctx *c = data;
+    parse_ctx *parse_state = data;
     if (strcmp(element, "class") == 0) {
-        g_free(c->cls);
+        g_free(parse_state->cls);
         const char *name = attr(names, values, "name");
-        c->cls = g_strdup(name != nullptr ? name : "");
-    } else if (strcmp(element, "part") == 0 && c->cls != nullptr) {
+        parse_state->cls = g_strdup(name != nullptr ? name : "");
+    } else if (strcmp(element, "part") == 0 && parse_state->cls != nullptr) {
         const char *part = attr(names, values, "name");
         const char *state = attr(names, values, "state");
         for (size_t i = 0; names[i] != nullptr; i++) {
             if (g_ascii_strcasecmp(names[i], "name") == 0 ||
                 g_ascii_strcasecmp(names[i], "state") == 0)
                 continue;
-            add_prop(c->pkg, c->cls, part, state, names[i], values[i]);
+            add_prop(parse_state->pkg, parse_state->cls, part, state, names[i], values[i]);
         }
     } else if (strcmp(element, "color") == 0 || strcmp(element, "font") == 0 ||
                strcmp(element, "size") == 0 || strcmp(element, "bool") == 0 ||
@@ -548,38 +556,36 @@ static void style_start(G_GNUC_UNUSED GMarkupParseContext *mc, const char *eleme
             const char *size = attr(names, values, "size");
             const char *bold = attr(names, values, "bold");
             const char *italic = attr(names, values, "italic");
-            g_hash_table_replace(c->pkg->sys, g_strdup_printf("font:%s", ln),
+            g_hash_table_replace(parse_state->pkg->sys, g_strdup_printf("font:%s", ln),
                                  g_strdup_printf("%s\x1f%s\x1f%d\x1f%d", face ? face : "",
                                                  size ? size : "0",
                                                  bold != nullptr && strcmp(bold, "true") == 0,
-                                                 italic != nullptr &&
-                                                     strcmp(italic, "true") == 0));
+                                                 italic != nullptr && strcmp(italic, "true") == 0));
         } else {
             const char *value = attr(names, values, "value");
-            g_hash_table_replace(c->pkg->sys,
-                                 g_strdup_printf("%s:%s",
-                                                 strcmp(element, "color") == 0 ? "color" : "value",
-                                                 ln),
-                                 g_strdup(value != nullptr ? value : ""));
+            g_hash_table_replace(
+                parse_state->pkg->sys,
+                g_strdup_printf("%s:%s", strcmp(element, "color") == 0 ? "color" : "value", ln),
+                g_strdup(value != nullptr ? value : ""));
         }
         g_free(ln);
     }
 }
 
-static bool parse(xd_pkg *p, const char *path, const GMarkupParser *parser, parse_ctx *c,
-                  GError **error) {
-    GBytes *b = read_file(p, path);
-    if (b == nullptr) {
+static bool parse(xd_pkg *package, const char *path, const GMarkupParser *parser,
+                  parse_ctx *parse_state, GError **error) {
+    GBytes *bytes = read_file(package, path);
+    if (bytes == nullptr) {
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_NOENT, "%s is missing", path);
         return false;
     }
     gsize len = 0;
-    const char *text = g_bytes_get_data(b, &len);
-    GMarkupParseContext *mc = g_markup_parse_context_new(parser, 0, c, nullptr);
+    const char *text = g_bytes_get_data(bytes, &len);
+    GMarkupParseContext *mc = g_markup_parse_context_new(parser, 0, parse_state, nullptr);
     bool ok = g_markup_parse_context_parse(mc, text, (gssize)len, error) &&
               g_markup_parse_context_end_parse(mc, error);
     g_markup_parse_context_free(mc);
-    g_bytes_unref(b);
+    g_bytes_unref(bytes);
     if (!ok)
         g_prefix_error(error, "%s: ", path);
     return ok;
@@ -587,271 +593,273 @@ static bool parse(xd_pkg *p, const char *path, const GMarkupParser *parser, pars
 
 xd_pkg *xd_pkg_load(const char *path, const char *variant, const char *names_path,
                     GError **error) {
-    xd_pkg *p = g_new0(xd_pkg, 1);
-    p->props = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    p->parts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    p->sys = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-    p->part_numbers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    p->state_numbers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    p->cache = g_new0(pkg_cache, 1);
-    p->cache->images = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
-                                             (GDestroyNotify)cairo_surface_destroy);
-    p->cache->scaled = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
-                                             (GDestroyNotify)cairo_surface_destroy);
-    p->cache->faces = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
-    g_mutex_init(&p->cache->lock);
-    p->name = g_strdup("");
-    if (!load_names(p, names_path, error)) {
-        xd_pkg_free(p);
+    xd_pkg *package = g_new0(xd_pkg, 1);
+    package->props = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    package->parts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    package->sys = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    package->part_numbers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    package->state_numbers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    package->cache = g_new0(pkg_cache, 1);
+    package->cache->images = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                                   (GDestroyNotify)cairo_surface_destroy);
+    package->cache->scaled = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                                   (GDestroyNotify)cairo_surface_destroy);
+    package->cache->faces = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
+    g_mutex_init(&package->cache->lock);
+    package->name = g_strdup("");
+    if (!load_names(package, names_path, error)) {
+        xd_pkg_free(package);
         return nullptr;
     }
     if (g_file_test(path, G_FILE_TEST_IS_DIR)) {
-        p->root = g_strdup(path);
+        package->root = g_strdup(path);
     } else {
 #if XD_HAVE_LIBARCHIVE
-        p->zip = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
-                                       (GDestroyNotify)g_bytes_unref);
-        if (!read_zip(p, path, error)) {
-            xd_pkg_free(p);
+        package->zip =
+            g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_bytes_unref);
+        if (!read_zip(package, path, error)) {
+            xd_pkg_free(package);
             return nullptr;
         }
 #else
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_NOSYS,
                     "%s: theme packages must be folders (built without libarchive)", path);
-        xd_pkg_free(p);
+        xd_pkg_free(package);
         return nullptr;
 #endif
     }
-    parse_ctx c = {.pkg = p, .want_variant = variant};
+    parse_ctx parse_state = {.pkg = package, .want_variant = variant};
     static const GMarkupParser theme_parser = {.start_element = theme_start};
     static const GMarkupParser style_parser = {.start_element = style_start};
-    bool ok = parse(p, "theme.xml", &theme_parser, &c, error);
-    if (ok && c.style_path == nullptr) {
+    bool ok = parse(package, "theme.xml", &theme_parser, &parse_state, error);
+    if (ok && parse_state.style_path == nullptr) {
         g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL, "%s: no variant", path);
         ok = false;
     }
     if (ok)
-        ok = parse(p, c.style_path, &style_parser, &c, error);
+        ok = parse(package, parse_state.style_path, &style_parser, &parse_state, error);
     /* Explorer's panes: classes and parts as in the style, over it (XP's
      * shellstyle.dll is what its task pane is drawn from). */
-    if (ok && c.shell_path != nullptr) {
-        g_free(c.cls);
-        c.cls = nullptr;
-        ok = parse(p, c.shell_path, &style_parser, &c, error);
+    if (ok && parse_state.shell_path != nullptr) {
+        g_free(parse_state.cls);
+        parse_state.cls = nullptr;
+        ok = parse(package, parse_state.shell_path, &style_parser, &parse_state, error);
     }
-    g_free(c.style_path);
-    g_free(c.shell_path);
-    g_free(c.cls);
+    g_free(parse_state.style_path);
+    g_free(parse_state.shell_path);
+    g_free(parse_state.cls);
     if (!ok) {
-        xd_pkg_free(p);
+        xd_pkg_free(package);
         return nullptr;
     }
-    sysmetrics_overlay(p);
-    return p;
+    sysmetrics_overlay(package);
+    return package;
 }
 
-void xd_pkg_free(xd_pkg *p) {
-    if (p == nullptr)
+void xd_pkg_free(xd_pkg *package) {
+    if (package == nullptr)
         return;
-    g_hash_table_unref(p->props);
-    g_hash_table_unref(p->parts);
-    g_hash_table_unref(p->sys);
-    g_hash_table_unref(p->part_numbers);
-    g_hash_table_unref(p->state_numbers);
-    g_hash_table_unref(p->cache->images);
-    g_hash_table_unref(p->cache->scaled);
-    g_hash_table_unref(p->cache->faces);
-    g_mutex_clear(&p->cache->lock);
-    g_free(p->cache);
-    if (p->zip != nullptr)
-        g_hash_table_unref(p->zip);
-    g_free(p->root);
-    g_free(p->name);
-    g_free(p->variant);
-    g_free(p);
+    g_hash_table_unref(package->props);
+    g_hash_table_unref(package->parts);
+    g_hash_table_unref(package->sys);
+    g_hash_table_unref(package->part_numbers);
+    g_hash_table_unref(package->state_numbers);
+    g_hash_table_unref(package->cache->images);
+    g_hash_table_unref(package->cache->scaled);
+    g_hash_table_unref(package->cache->faces);
+    g_mutex_clear(&package->cache->lock);
+    g_free(package->cache);
+    if (package->zip != nullptr)
+        g_hash_table_unref(package->zip);
+    g_free(package->root);
+    g_free(package->name);
+    g_free(package->variant);
+    g_free(package);
 }
 
-const char *xd_pkg_name(const xd_pkg *p) { return p->name; }
-const char *xd_pkg_variant(const xd_pkg *p) { return p->variant; }
-xd_visual_style xd_pkg_base(const xd_pkg *p) { return p->base; }
+const char *xd_pkg_name(const xd_pkg *package) { return package->name; }
+const char *xd_pkg_variant(const xd_pkg *package) { return package->variant; }
+xd_visual_style xd_pkg_base(const xd_pkg *package) { return package->base; }
 
-bool xd_pkg_filter(const xd_pkg *p, xd_image_filter *out) {
-    if (p->has_filter)
-        *out = p->filter;
-    return p->has_filter;
+bool xd_pkg_filter(const xd_pkg *package, xd_image_filter *out) {
+    if (package->has_filter)
+        *out = package->filter;
+    return package->has_filter;
 }
 
 /* ---- properties ------------------------------------------------------------------ */
 
-static const char *lookup(const xd_pkg *p, const char *lc, const char *pk, const char *sk,
+static const char *lookup(const xd_pkg *package, const char *lc, const char *pk, const char *sk,
                           const char *lp) {
     char *key = g_strdup_printf("%s\x1f%s\x1f%s\x1f%s", lc, pk, sk, lp);
-    const char *v = g_hash_table_lookup(p->props, key);
+    const char *value = g_hash_table_lookup(package->props, key);
     g_free(key);
-    return v;
+    return value;
 }
 
 /* Part and state, then part, then class, in one class. */
-static const char *lookup_class(const xd_pkg *p, const char *cls, const char *part,
+static const char *lookup_class(const xd_pkg *package, const char *cls, const char *part,
                                 const char *state, const char *lp) {
     char *lc = lower(cls);
-    char *pk = part_key(p, cls, part);
-    char *sk = state_key(p, cls, pk, state);
-    const char *v = lookup(p, lc, pk, sk, lp);
-    if (v == nullptr && strcmp(sk, "0") != 0)
-        v = lookup(p, lc, pk, "0", lp);
-    if (v == nullptr && strcmp(pk, "0") != 0)
-        v = lookup(p, lc, "0", "0", lp);
+    char *pk = part_key(package, cls, part);
+    char *sk = state_key(package, cls, pk, state);
+    const char *value = lookup(package, lc, pk, sk, lp);
+    if (value == nullptr && strcmp(sk, "0") != 0)
+        value = lookup(package, lc, pk, "0", lp);
+    if (value == nullptr && strcmp(pk, "0") != 0)
+        value = lookup(package, lc, "0", "0", lp);
     g_free(sk);
     g_free(pk);
     g_free(lc);
-    return v;
+    return value;
 }
 
-const char *xd_pkg_prop(const xd_pkg *p, const char *cls, const char *part,
-                        const char *state, const char *prop) {
-    if (p == nullptr)
+const char *xd_pkg_prop(const xd_pkg *package, const char *cls, const char *part, const char *state,
+                        const char *prop) {
+    if (package == nullptr)
         return nullptr;
     char *lp = lower(prop);
-    const char *v = lookup_class(p, cls, part, state, lp);
+    const char *value = lookup_class(package, cls, part, state, lp);
     const char *colon = strstr(cls, "::");
     char *base = g_strdup(colon != nullptr ? colon + 2 : cls);
-    if (v == nullptr && colon != nullptr)
-        v = lookup_class(p, base, part, state, lp);
-    if (v == nullptr) {
+    if (value == nullptr && colon != nullptr)
+        value = lookup_class(package, base, part, state, lp);
+    if (value == nullptr) {
         char *style = g_strdup_printf("%sStyle", base);
-        v = lookup_class(p, style, part, state, lp);
+        value = lookup_class(package, style, part, state, lp);
         g_free(style);
     }
-    if (v == nullptr)
-        v = lookup(p, "globals", "0", "0", lp);
+    if (value == nullptr)
+        value = lookup(package, "globals", "0", "0", lp);
     g_free(base);
     g_free(lp);
-    return v;
+    return value;
 }
 
-static bool has_in_class(const xd_pkg *p, const char *cls, const char *part) {
+static bool has_in_class(const xd_pkg *package, const char *cls, const char *part) {
     char *lc = lower(cls);
-    char *pk = part_key(p, cls, part);
+    char *pk = part_key(package, cls, part);
     char *key = g_strdup_printf("%s\x1f%s", lc, pk);
-    bool has = g_hash_table_contains(p->parts, key);
+    bool has = g_hash_table_contains(package->parts, key);
     g_free(key);
     g_free(pk);
     g_free(lc);
     return has;
 }
 
-bool xd_pkg_has_own(const xd_pkg *p, const char *cls, const char *part) {
-    return p != nullptr && has_in_class(p, cls, part);
+bool xd_pkg_has_own(const xd_pkg *package, const char *cls, const char *part) {
+    return package != nullptr && has_in_class(package, cls, part);
 }
 
 /* In the classes xd_pkg_prop looks in: App::Class, Class, ClassStyle. */
-bool xd_pkg_has(const xd_pkg *p, const char *cls, const char *part) {
-    if (p == nullptr)
+bool xd_pkg_has(const xd_pkg *package, const char *cls, const char *part) {
+    if (package == nullptr)
         return false;
-    if (has_in_class(p, cls, part))
+    if (has_in_class(package, cls, part))
         return true;
     const char *colon = strstr(cls, "::");
     const char *base = colon != nullptr ? colon + 2 : cls;
-    if (colon != nullptr && has_in_class(p, base, part))
+    if (colon != nullptr && has_in_class(package, base, part))
         return true;
     char *style = g_strdup_printf("%sStyle", base);
-    bool has = has_in_class(p, style, part);
+    bool has = has_in_class(package, style, part);
     g_free(style);
     return has;
 }
 
 /* Whole numbers in a value ("8 8 9 9", "0 84 227", "8, 8, 9, 9"). */
-static size_t numbers(const char *v, int *out, size_t max) {
-    size_t n = 0;
-    while (v != nullptr && *v != '\0' && n < max) {
-        while (*v != '\0' && *v != '-' && !g_ascii_isdigit(*v))
-            v++;
-        if (*v == '\0')
+static size_t numbers(const char *text, int *out, size_t max) {
+    size_t count = 0;
+    while (text != nullptr && *text != '\0' && count < max) {
+        while (*text != '\0' && *text != '-' && !g_ascii_isdigit(*text))
+            text++;
+        if (*text == '\0')
             break;
         char *end;
-        long x = strtol(v, &end, 10);
-        if (end == v)
+        long x = strtol(text, &end, 10);
+        if (end == text)
             break;
-        out[n++] = (int)CLAMP(x, -100000, 100000);
-        v = end;
+        out[count++] = (int)CLAMP(x, -100000, 100000);
+        text = end;
     }
-    return n;
+    return count;
 }
 
-bool xd_pkg_int(const xd_pkg *p, const char *cls, const char *part, const char *state,
+bool xd_pkg_int(const xd_pkg *package, const char *cls, const char *part, const char *state,
                 const char *prop, int *out) {
-    int n[1];
-    if (numbers(xd_pkg_prop(p, cls, part, state, prop), n, 1) != 1)
+    int values[1];
+    if (numbers(xd_pkg_prop(package, cls, part, state, prop), values, 1) != 1)
         return false;
-    *out = n[0];
+    *out = values[0];
     return true;
 }
 
-bool xd_pkg_bool(const xd_pkg *p, const char *cls, const char *part, const char *state,
+bool xd_pkg_bool(const xd_pkg *package, const char *cls, const char *part, const char *state,
                  const char *prop, bool *out) {
-    const char *v = xd_pkg_prop(p, cls, part, state, prop);
-    if (v == nullptr)
+    const char *value = xd_pkg_prop(package, cls, part, state, prop);
+    if (value == nullptr)
         return false;
-    *out = g_ascii_strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0;
+    *out = g_ascii_strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0;
     return true;
 }
 
-static bool parse_color(const char *v, xd_rgba *out) {
-    if (v == nullptr)
+static bool parse_color(const char *text, xd_rgba *out) {
+    if (text == nullptr)
         return false;
-    if (v[0] == '#' && strlen(v) == 7) {
-        unsigned long x = strtoul(v + 1, nullptr, 16);
+    if (text[0] == '#' && strlen(text) == 7) {
+        unsigned long x = strtoul(text + 1, nullptr, 16);
         *out = xd_rgba_hex((uint32_t)x & 0xFFFFFFu);
         return true;
     }
-    int n[3];
-    if (numbers(v, n, 3) != 3)
+    int values[3];
+    if (numbers(text, values, 3) != 3)
         return false;
-    *out = xd_rgba_hex((uint32_t)CLAMP(n[0], 0, 255) << 16 |
-                       (uint32_t)CLAMP(n[1], 0, 255) << 8 | (uint32_t)CLAMP(n[2], 0, 255));
+    *out =
+        xd_rgba_hex((uint32_t)CLAMP(values[0], 0, 255) << 16 |
+                    (uint32_t)CLAMP(values[1], 0, 255) << 8 | (uint32_t)CLAMP(values[2], 0, 255));
     return true;
 }
 
-bool xd_pkg_color(const xd_pkg *p, const char *cls, const char *part, const char *state,
+bool xd_pkg_color(const xd_pkg *package, const char *cls, const char *part, const char *state,
                   const char *prop, xd_rgba *out) {
-    return parse_color(xd_pkg_prop(p, cls, part, state, prop), out);
+    return parse_color(xd_pkg_prop(package, cls, part, state, prop), out);
 }
 
-bool xd_pkg_margins(const xd_pkg *p, const char *cls, const char *part, const char *state,
+bool xd_pkg_margins(const xd_pkg *package, const char *cls, const char *part, const char *state,
                     const char *prop, xd_insets *out) {
-    int n[4];
-    if (numbers(xd_pkg_prop(p, cls, part, state, prop), n, 4) != 4)
+    int values[4];
+    if (numbers(xd_pkg_prop(package, cls, part, state, prop), values, 4) != 4)
         return false;
-    *out = (xd_insets){.left = n[0], .right = n[1], .top = n[2], .bottom = n[3]};
+    *out =
+        (xd_insets){.left = values[0], .right = values[1], .top = values[2], .bottom = values[3]};
     return true;
 }
 
 /* A FONT value as msstyles write them: "Tahoma, 8, Bold, Underline,
  * Quality:ClearType" (face, points, then flags in any order). */
-bool xd_pkg_font(const xd_pkg *p, const char *cls, const char *part, const char *state,
+bool xd_pkg_font(const xd_pkg *package, const char *cls, const char *part, const char *state,
                  const char *prop, xd_font_spec *out, bool *underline) {
-    const char *v = xd_pkg_prop(p, cls, part, state, prop);
-    if (v == nullptr)
+    const char *value = xd_pkg_prop(package, cls, part, state, prop);
+    if (value == nullptr)
         return false;
-    char **fields = g_strsplit(v, ",", -1);
+    char **fields = g_strsplit(value, ",", -1);
     bool ok = fields[0] != nullptr && fields[1] != nullptr;
     if (ok) {
-        xd_font_spec f = {.size_pt = g_ascii_strtod(g_strstrip(fields[1]), nullptr)};
-        font_family(g_strstrip(fields[0]), f.family, sizeof(f.family));
+        xd_font_spec font = {.size_pt = g_ascii_strtod(g_strstrip(fields[1]), nullptr)};
+        font_family(g_strstrip(fields[0]), font.family, sizeof(font.family));
         bool under = false;
         for (size_t i = 2; fields[i] != nullptr; i++) {
             const char *flag = g_strstrip(fields[i]);
             if (g_ascii_strcasecmp(flag, "bold") == 0)
-                f.bold = true;
+                font.bold = true;
             else if (g_ascii_strcasecmp(flag, "italic") == 0)
-                f.italic = true;
+                font.italic = true;
             else if (g_ascii_strcasecmp(flag, "underline") == 0)
                 under = true;
         }
-        ok = f.size_pt > 0;
+        ok = font.size_pt > 0;
         if (ok) {
-            *out = f;
+            *out = font;
             if (underline != nullptr)
                 *underline = under;
         }
@@ -860,67 +868,67 @@ bool xd_pkg_font(const xd_pkg *p, const char *cls, const char *part, const char 
     return ok;
 }
 
-static const char *sys(const xd_pkg *p, const char *kind, const char *name) {
-    if (p == nullptr)
+static const char *sys(const xd_pkg *package, const char *kind, const char *name) {
+    if (package == nullptr)
         return nullptr;
     char *ln = lower(name);
     char *key = g_strdup_printf("%s:%s", kind, ln);
-    const char *v = g_hash_table_lookup(p->sys, key);
+    const char *value = g_hash_table_lookup(package->sys, key);
     g_free(key);
     g_free(ln);
-    return v;
+    return value;
 }
 
-bool xd_pkg_sys_color(const xd_pkg *p, const char *name, xd_rgba *out) {
-    return parse_color(sys(p, "color", name), out);
+bool xd_pkg_sys_color(const xd_pkg *package, const char *name, xd_rgba *out) {
+    return parse_color(sys(package, "color", name), out);
 }
 
-bool xd_pkg_sys_int(const xd_pkg *p, const char *name, int *out) {
-    int n[1];
-    if (numbers(sys(p, "value", name), n, 1) != 1)
+bool xd_pkg_sys_int(const xd_pkg *package, const char *name, int *out) {
+    int values[1];
+    if (numbers(sys(package, "value", name), values, 1) != 1)
         return false;
-    *out = n[0];
+    *out = values[0];
     return true;
 }
 
-bool xd_pkg_sys_bool(const xd_pkg *p, const char *name, bool *out) {
-    const char *v = sys(p, "value", name);
-    if (v == nullptr)
+bool xd_pkg_sys_bool(const xd_pkg *package, const char *name, bool *out) {
+    const char *value = sys(package, "value", name);
+    if (value == nullptr)
         return false;
-    *out = g_ascii_strcasecmp(v, "true") == 0 || strcmp(v, "1") == 0;
+    *out = g_ascii_strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0;
     return true;
 }
 
-bool xd_pkg_sys_font(const xd_pkg *p, const char *name, const char **face, int *points,
+bool xd_pkg_sys_font(const xd_pkg *package, const char *name, const char **face, int *points,
                      bool *bold, bool *italic) {
-    const char *v = sys(p, "font", name);
-    if (v == nullptr)
+    const char *value = sys(package, "font", name);
+    if (value == nullptr)
         return false;
     /* "face\x1fsize\x1fbold\x1fitalic", the face ending at the first
      * separator. */
     static_assert(sizeof(char) == 1);
-    const char *s1 = strchr(v, '\x1f');
+    const char *s1 = strchr(value, '\x1f');
     if (s1 == nullptr)
         return false;
-    int n[3];
-    if (numbers(s1, n, 3) != 3)
+    int values[3];
+    if (numbers(s1, values, 3) != 3)
         return false;
     /* The caller gets the face up to the separator: copy it into the
      * package's string table so it outlives this call. */
-    char *f = g_strndup(v, (gsize)(s1 - v));
-    g_mutex_lock(&p->cache->lock);
-    const char *kept = g_hash_table_lookup(p->cache->faces, f);
+    char *face_copy = g_strndup(value, (gsize)(s1 - value));
+    g_mutex_lock(&package->cache->lock);
+    const char *kept = g_hash_table_lookup(package->cache->faces, face_copy);
     if (kept == nullptr) {
-        g_hash_table_insert(p->cache->faces, f, f);
-        kept = f;
+        g_hash_table_insert(package->cache->faces, face_copy, face_copy);
+        kept = face_copy;
     } else {
-        g_free(f);
+        g_free(face_copy);
     }
-    g_mutex_unlock(&p->cache->lock);
+    g_mutex_unlock(&package->cache->lock);
     *face = kept;
-    *points = n[0];
-    *bold = n[1] != 0;
-    *italic = n[2] != 0;
+    *points = values[0];
+    *bold = values[1] != 0;
+    *italic = values[2] != 0;
     return true;
 }
 
@@ -932,108 +940,109 @@ typedef struct png_reader {
 } png_reader;
 
 static cairo_status_t png_read(void *closure, unsigned char *buf, unsigned int length) {
-    png_reader *r = closure;
-    if (r->len - r->pos < length)
+    png_reader *reader = closure;
+    if (reader->len - reader->pos < length)
         return CAIRO_STATUS_READ_ERROR;
-    memcpy(buf, r->data + r->pos, length);
-    r->pos += length;
+    memcpy(buf, reader->data + reader->pos, length);
+    reader->pos += length;
     return CAIRO_STATUS_SUCCESS;
 }
 
 /* An ARGB32 surface (what the scalers take), whatever the PNG was. */
-static cairo_surface_t *argb32(cairo_surface_t *s) {
-    if (cairo_image_surface_get_format(s) == CAIRO_FORMAT_ARGB32)
-        return s;
-    int w = cairo_image_surface_get_width(s), h = cairo_image_surface_get_height(s);
-    cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-    cairo_t *cr = cairo_create(out);
-    cairo_set_source_surface(cr, s, 0, 0);
-    cairo_paint(cr);
-    cairo_destroy(cr);
-    cairo_surface_destroy(s);
+static cairo_surface_t *argb32(cairo_surface_t *surface) {
+    if (cairo_image_surface_get_format(surface) == CAIRO_FORMAT_ARGB32)
+        return surface;
+    int width = cairo_image_surface_get_width(surface),
+        height = cairo_image_surface_get_height(surface);
+    cairo_surface_t *out = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    cairo_t *cairo = cairo_create(out);
+    cairo_set_source_surface(cairo, surface, 0, 0);
+    cairo_paint(cairo);
+    cairo_destroy(cairo);
+    cairo_surface_destroy(surface);
     return out;
 }
 
 /* The package's image at `path` as loaded (cached; the package owns it). */
-static cairo_surface_t *image(const xd_pkg *p, const char *path) {
-    cairo_surface_t *s = g_hash_table_lookup(p->cache->images, path);
-    if (s != nullptr)
-        return s;
-    GBytes *b = read_file(p, path);
-    if (b == nullptr)
+static cairo_surface_t *image(const xd_pkg *package, const char *path) {
+    cairo_surface_t *surface = g_hash_table_lookup(package->cache->images, path);
+    if (surface != nullptr)
+        return surface;
+    GBytes *bytes = read_file(package, path);
+    if (bytes == nullptr)
         return nullptr;
     gsize len = 0;
-    png_reader r = {.data = g_bytes_get_data(b, &len)};
-    r.len = len;
-    s = cairo_image_surface_create_from_png_stream(png_read, &r);
-    g_bytes_unref(b);
-    if (cairo_surface_status(s) != CAIRO_STATUS_SUCCESS) {
-        cairo_surface_destroy(s);
+    png_reader reader = {.data = g_bytes_get_data(bytes, &len)};
+    reader.len = len;
+    surface = cairo_image_surface_create_from_png_stream(png_read, &reader);
+    g_bytes_unref(bytes);
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surface);
         return nullptr;
     }
-    s = argb32(s);
-    g_hash_table_insert(p->cache->images, g_strdup(path), s);
-    return s;
+    surface = argb32(surface);
+    g_hash_table_insert(package->cache->images, g_strdup(path), surface);
+    return surface;
 }
 
 /* The filter the theme's image settings give ("Automatic" is resolved to
  * the package's own by whoever chose the package: a Smooth chosen by the
  * user stays Smooth). */
-static xd_image_filter filter_for(const xd_theme *t, double factor) {
-    xd_image_filter f = t->image_filter;
+static xd_image_filter filter_for(const xd_theme *theme, double factor) {
+    xd_image_filter image_filter = theme->image_filter;
     /* Whole-number scaling: smooth scaling at 200% would blur what can be
      * exact. */
-    if (f == XD_FILTER_SMOOTH && t->integer_scaling && fabs(factor - round(factor)) < 1e-6 &&
-        factor >= 1.0)
-        f = XD_FILTER_INTEGER;
-    return f;
+    if (image_filter == XD_FILTER_SMOOTH && theme->integer_scaling &&
+        fabs(factor - round(factor)) < 1e-6 && factor >= 1.0)
+        image_filter = XD_FILTER_INTEGER;
+    return image_filter;
 }
 
 /* One part's image strip as drawn: an ImageFile (or an atlas's rectangle)
  * scaled by `factor`, `count` frames. Cached; owned by the package. */
-static cairo_surface_t *strip(const xd_theme *t, const char *path, const int *atlas,
-                              int count, bool vertical, double factor) {
-    const xd_pkg *p = t->pkg;
-    xd_image_filter f = filter_for(t, factor);
+static cairo_surface_t *strip(const xd_theme *theme, const char *path, const int *atlas, int count,
+                              bool vertical, double factor) {
+    const xd_pkg *package = theme->pkg;
+    xd_image_filter image_filter = filter_for(theme, factor);
     char *key = atlas != nullptr ? g_strdup_printf("%s#%d,%d,%d,%d@%d%c%.4f/%d", path, atlas[0],
                                                    atlas[1], atlas[2], atlas[3], count,
-                                                   vertical ? 'v' : 'h', factor, (int)f)
+                                                   vertical ? 'v' : 'h', factor, (int)image_filter)
                                  : g_strdup_printf("%s@%d%c%.4f/%d", path, count,
-                                                   vertical ? 'v' : 'h', factor, (int)f);
-    g_mutex_lock(&p->cache->lock);
-    cairo_surface_t *s = g_hash_table_lookup(p->cache->scaled, key);
-    if (s == nullptr) {
-        cairo_surface_t *src = image(p, path);
+                                                   vertical ? 'v' : 'h', factor, (int)image_filter);
+    g_mutex_lock(&package->cache->lock);
+    cairo_surface_t *surface = g_hash_table_lookup(package->cache->scaled, key);
+    if (surface == nullptr) {
+        cairo_surface_t *src = image(package, path);
         cairo_surface_t *cut = nullptr;
         if (src != nullptr && atlas != nullptr) {
-            int w = atlas[2] - atlas[0], h = atlas[3] - atlas[1];
-            if (w > 0 && h > 0 && atlas[0] >= 0 && atlas[1] >= 0 &&
+            int width = atlas[2] - atlas[0], height = atlas[3] - atlas[1];
+            if (width > 0 && height > 0 && atlas[0] >= 0 && atlas[1] >= 0 &&
                 atlas[2] <= cairo_image_surface_get_width(src) &&
                 atlas[3] <= cairo_image_surface_get_height(src)) {
-                cut = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, w, h);
-                cairo_t *cr = cairo_create(cut);
-                cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-                cairo_set_source_surface(cr, src, -atlas[0], -atlas[1]);
-                cairo_paint(cr);
-                cairo_destroy(cr);
+                cut = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+                cairo_t *cairo = cairo_create(cut);
+                cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
+                cairo_set_source_surface(cairo, src, -atlas[0], -atlas[1]);
+                cairo_paint(cairo);
+                cairo_destroy(cairo);
             }
             src = cut;
         }
         if (src != nullptr) {
-            s = fabs(factor - 1.0) < 1e-6 && cut == nullptr
-                    ? cairo_surface_reference(src)
-                    : xd_image_scale_frames(src, count, vertical, factor, f);
-            if (s != nullptr) { /* nullptr: too big, or frames that don't divide */
-                g_hash_table_insert(p->cache->scaled, key, s);
+            surface = fabs(factor - 1.0) < 1e-6 && cut == nullptr
+                          ? cairo_surface_reference(src)
+                          : xd_image_scale_frames(src, count, vertical, factor, image_filter);
+            if (surface != nullptr) { /* nullptr: too big, or frames that don't divide */
+                g_hash_table_insert(package->cache->scaled, key, surface);
                 key = nullptr;
             }
         }
         if (cut != nullptr)
             cairo_surface_destroy(cut);
     }
-    g_mutex_unlock(&p->cache->lock);
+    g_mutex_unlock(&package->cache->lock);
     g_free(key);
-    return s;
+    return surface;
 }
 
 typedef struct part_image {
@@ -1045,97 +1054,99 @@ typedef struct part_image {
     double factor;
 } part_image;
 
-static bool enum_is(const xd_pkg *p, const char *cls, const char *part, const char *state,
+static bool enum_is(const xd_pkg *package, const char *cls, const char *part, const char *state,
                     const char *prop, const char *value) {
-    const char *v = xd_pkg_prop(p, cls, part, state, prop);
-    return v != nullptr && g_ascii_strcasecmp(v, value) == 0;
+    const char *prop_value = xd_pkg_prop(package, cls, part, state, prop);
+    return prop_value != nullptr && g_ascii_strcasecmp(prop_value, value) == 0;
 }
 
 /* The state's number (its frame is number - 1). */
-static int state_number(const xd_pkg *p, const char *cls, const char *part, const char *state) {
-    char *pk = part_key(p, cls, part);
-    char *sk = state_key(p, cls, pk, state);
-    int n = all_digits(sk) ? atoi(sk) : 0;
+static int state_number(const xd_pkg *package, const char *cls, const char *part,
+                        const char *state) {
+    char *pk = part_key(package, cls, part);
+    char *sk = state_key(package, cls, pk, state);
+    int number = all_digits(sk) ? atoi(sk) : 0;
     g_free(sk);
     g_free(pk);
-    return n;
+    return number;
 }
 
 /* Finds the part's image for the state at the theme's DPI: ImageFile, or
  * with ImageSelectType the ImageFileN for the DPI (by MinDpiN) or size (by
  * MinSizeN), scaled from the DPI it was drawn for, as uxtheme does.
  * `glyph`: the GlyphImageFile instead. */
-static bool part_image_for(const xd_theme *t, const char *cls, const char *part,
-                           const char *state, xd_rect r, bool glyph, part_image *out) {
-    const xd_pkg *p = t->pkg;
-    const char *file = xd_pkg_prop(p, cls, part, state, glyph ? "GlyphImageFile" : "ImageFile");
-    double target_dpi = 96.0 * t->scale;
+static bool part_image_for(const xd_theme *theme, const char *cls, const char *part,
+                           const char *state, xd_rect rect, bool glyph, part_image *out) {
+    const xd_pkg *package = theme->pkg;
+    const char *file =
+        xd_pkg_prop(package, cls, part, state, glyph ? "GlyphImageFile" : "ImageFile");
+    double target_dpi = 96.0 * theme->scale;
     double drawn_dpi = 96.0;
     int count = 1;
-    (void)xd_pkg_int(p, cls, part, state, "ImageCount", &count);
+    (void)xd_pkg_int(package, cls, part, state, "ImageCount", &count);
     count = CLAMP(count, 1, 64);
     /* An image glyph without a GlyphImageFile has its sizes in
      * ImageFile1..N (XP's caption buttons): the largest that fits, as it
      * is. They're never the background. */
-    bool glyph_sizes = enum_is(p, cls, part, state, "GlyphType", "ImageGlyph") &&
-                       xd_pkg_prop(p, cls, part, state, "GlyphImageFile") == nullptr;
+    bool glyph_sizes = enum_is(package, cls, part, state, "GlyphType", "ImageGlyph") &&
+                       xd_pkg_prop(package, cls, part, state, "GlyphImageFile") == nullptr;
     if (glyph && glyph_sizes) {
         int best = -1;
         for (int i = 1; i <= 7; i++) {
             char prop[16];
             g_snprintf(prop, sizeof(prop), "ImageFile%d", i);
-            const char *f = xd_pkg_prop(p, cls, part, state, prop);
-            cairo_surface_t *img = f != nullptr ? image(p, f) : nullptr;
+            const char *image_file = xd_pkg_prop(package, cls, part, state, prop);
+            cairo_surface_t *img = image_file != nullptr ? image(package, image_file) : nullptr;
             if (img == nullptr)
                 continue;
             int fw = cairo_image_surface_get_width(img);
             int fh = cairo_image_surface_get_height(img) / count;
-            if (fw <= r.w && fh <= r.h && fw > best) {
+            if (fw <= rect.w && fh <= rect.h && fw > best) {
                 best = fw;
-                file = f;
+                file = image_file;
                 drawn_dpi = target_dpi;
             } else if (file == nullptr) {
-                file = f; /* nothing fits: the smallest, shrunk */
+                file = image_file; /* nothing fits: the smallest, shrunk */
             }
         }
     }
-    if (!glyph && !glyph_sizes && !enum_is(p, cls, part, state, "ImageSelectType", "None")) {
-        bool by_dpi = enum_is(p, cls, part, state, "ImageSelectType", "Dpi");
-        bool by_size = enum_is(p, cls, part, state, "ImageSelectType", "Size");
+    if (!glyph && !glyph_sizes && !enum_is(package, cls, part, state, "ImageSelectType", "None")) {
+        bool by_dpi = enum_is(package, cls, part, state, "ImageSelectType", "Dpi");
+        bool by_size = enum_is(package, cls, part, state, "ImageSelectType", "Size");
         for (int i = 1; i <= 7 && (by_dpi || by_size); i++) {
             char prop[16];
             g_snprintf(prop, sizeof(prop), "ImageFile%d", i);
-            const char *f = xd_pkg_prop(p, cls, part, state, prop);
-            if (f == nullptr)
+            const char *image_file = xd_pkg_prop(package, cls, part, state, prop);
+            if (image_file == nullptr)
                 break;
             if (by_dpi) {
                 int dpi = 96;
                 g_snprintf(prop, sizeof(prop), "MinDpi%d", i);
-                (void)xd_pkg_int(p, cls, part, state, prop, &dpi);
+                (void)xd_pkg_int(package, cls, part, state, prop, &dpi);
                 if (dpi <= target_dpi + 0.5 || file == nullptr) {
-                    file = f;
+                    file = image_file;
                     drawn_dpi = dpi > 0 ? dpi : 96.0;
                 }
             } else {
-                int n[2] = {0, 0};
+                int min_size[2] = {0, 0};
                 g_snprintf(prop, sizeof(prop), "MinSize%d", i);
-                if (numbers(xd_pkg_prop(p, cls, part, state, prop), n, 2) >= 1 &&
-                    n[0] <= r.w && (n[1] == 0 || n[1] <= r.h)) {
-                    file = f;
+                if (numbers(xd_pkg_prop(package, cls, part, state, prop), min_size, 2) >= 1 &&
+                    min_size[0] <= rect.w && (min_size[1] == 0 || min_size[1] <= rect.h)) {
+                    file = image_file;
                     drawn_dpi = target_dpi; /* chosen to fit: not scaled */
                 } else if (file == nullptr) {
-                    file = f;
+                    file = image_file;
                 }
             }
         }
     }
     const char *atlas_file = nullptr;
     int atlas[4];
-    bool has_atlas = numbers(xd_pkg_prop(p, cls, part, state, "AtlasRect"), atlas, 4) == 4;
+    bool has_atlas = numbers(xd_pkg_prop(package, cls, part, state, "AtlasRect"), atlas, 4) == 4;
     if (has_atlas && !glyph) {
-        atlas_file = xd_pkg_prop(p, cls, part, state, "AtlasImage");
+        atlas_file = xd_pkg_prop(package, cls, part, state, "AtlasImage");
         if (atlas_file == nullptr)
-            atlas_file = xd_pkg_prop(p, cls, nullptr, nullptr, "DiskStream");
+            atlas_file = xd_pkg_prop(package, cls, nullptr, nullptr, "DiskStream");
         if (atlas_file != nullptr)
             file = atlas_file;
         else
@@ -1146,49 +1157,50 @@ static bool part_image_for(const xd_theme *t, const char *cls, const char *part,
     /* Without an ImageLayout, uxtheme lays frames out side by side (XP's
      * size grips: two 16 px frames in a 32 x 17 image); DWM's atlas
      * rectangles stack them. */
-    const char *layout = xd_pkg_prop(p, cls, part, state, "ImageLayout");
+    const char *layout = xd_pkg_prop(package, cls, part, state, "ImageLayout");
     bool vertical = layout != nullptr ? g_ascii_strcasecmp(layout, "Horizontal") != 0 : has_atlas;
     double factor = target_dpi / drawn_dpi;
     /* Within a few percent of drawn: as drawn (no blur for a 25 px check
      * box drawn at 185 DPI shown at 192). */
     if (fabs(factor - 1.0) < 0.15)
         factor = 1.0;
-    cairo_surface_t *s = strip(t, file, has_atlas ? atlas : nullptr, count, vertical, factor);
-    if (s == nullptr)
+    cairo_surface_t *surface =
+        strip(theme, file, has_atlas ? atlas : nullptr, count, vertical, factor);
+    if (surface == nullptr)
         return false;
-    int sw = cairo_image_surface_get_width(s), sh = cairo_image_surface_get_height(s);
-    out->strip = s;
+    int sw = cairo_image_surface_get_width(surface), sh = cairo_image_surface_get_height(surface);
+    out->strip = surface;
     out->count = count;
     out->vertical = vertical;
     out->fw = vertical ? sw : sw / count;
     out->fh = vertical ? sh / count : sh;
     out->factor = factor;
-    int n = state_number(p, cls, part, state);
-    out->frame = CLAMP(n > 0 ? n - 1 : 0, 0, count - 1);
+    int number = state_number(package, cls, part, state);
+    out->frame = CLAMP(number > 0 ? number - 1 : 0, 0, count - 1);
     return out->fw > 0 && out->fh > 0;
 }
 
 /* Paints the `src` rectangle of a frame into `dst`, stretched or tiled,
  * reading nothing outside `src` (no bleeding between slices). */
-static void blit(cairo_t *cr, const part_image *im, xd_rect src, xd_rect dst, bool tile) {
+static void blit(cairo_t *cairo, const part_image *im, xd_rect src, xd_rect dst, bool tile) {
     if (src.w <= 0 || src.h <= 0 || dst.w <= 0 || dst.h <= 0)
         return;
     int fx = im->vertical ? 0 : im->frame * im->fw;
     int fy = im->vertical ? im->frame * im->fh : 0;
     cairo_surface_t *sub = cairo_surface_create_for_rectangle(im->strip, fx + src.x, fy + src.y,
                                                               src.w, src.h);
-    cairo_save(cr);
-    cairo_rectangle(cr, dst.x, dst.y, dst.w, dst.h);
-    cairo_clip(cr);
+    cairo_save(cairo);
+    cairo_rectangle(cairo, dst.x, dst.y, dst.w, dst.h);
+    cairo_clip(cairo);
     cairo_pattern_t *pat = cairo_pattern_create_for_surface(sub);
-    cairo_matrix_t m;
+    cairo_matrix_t matrix;
     if (tile) {
-        cairo_matrix_init_translate(&m, -dst.x, -dst.y);
+        cairo_matrix_init_translate(&matrix, -dst.x, -dst.y);
         cairo_pattern_set_extend(pat, CAIRO_EXTEND_REPEAT);
         cairo_pattern_set_filter(pat, CAIRO_FILTER_NEAREST);
     } else {
-        cairo_matrix_init_scale(&m, (double)src.w / dst.w, (double)src.h / dst.h);
-        cairo_matrix_translate(&m, -dst.x, -dst.y);
+        cairo_matrix_init_scale(&matrix, (double)src.w / dst.w, (double)src.h / dst.h);
+        cairo_matrix_translate(&matrix, -dst.x, -dst.y);
         cairo_pattern_set_extend(pat, CAIRO_EXTEND_PAD);
         /* Slices are stretched along one axis, where they don't change:
          * nearest keeps their edges as drawn. */
@@ -1196,162 +1208,164 @@ static void blit(cairo_t *cr, const part_image *im, xd_rect src, xd_rect dst, bo
                                           ? CAIRO_FILTER_NEAREST
                                           : CAIRO_FILTER_BILINEAR);
     }
-    cairo_pattern_set_matrix(pat, &m);
-    cairo_set_source(cr, pat);
-    cairo_paint(cr);
+    cairo_pattern_set_matrix(pat, &matrix);
+    cairo_set_source(cairo, pat);
+    cairo_paint(cairo);
     cairo_pattern_destroy(pat);
     cairo_surface_destroy(sub);
-    cairo_restore(cr);
+    cairo_restore(cairo);
 }
 
-static int scaled(double v, double factor) { return (int)lround(v * factor); }
+static int scaled(double value, double factor) { return (int)lround(value * factor); }
 
 /* uxtheme's 9-grid: corners as they are, edges and middle stretched or
  * tiled; margins larger than the target shrink to fit. */
-static void nine_grid(cairo_t *cr, const part_image *im, xd_insets m, xd_rect r, bool tile,
-                      bool border_only) {
-    int l = CLAMP(scaled(m.left, im->factor), 0, im->fw), rr = CLAMP(scaled(m.right, im->factor), 0, im->fw - l);
-    int top = CLAMP(scaled(m.top, im->factor), 0, im->fh), b = CLAMP(scaled(m.bottom, im->factor), 0, im->fh - top);
-    int dl = l, dr = rr, dt = top, db = b;
-    if (dl + dr > r.w && dl + dr > 0) {
-        dl = r.w * dl / (dl + dr);
-        dr = r.w - dl;
+static void nine_grid(cairo_t *cairo, const part_image *im, xd_insets insets, xd_rect rect,
+                      bool tile, bool border_only) {
+    int left = CLAMP(scaled(insets.left, im->factor), 0, im->fw),
+        rr = CLAMP(scaled(insets.right, im->factor), 0, im->fw - left);
+    int top = CLAMP(scaled(insets.top, im->factor), 0, im->fh),
+        bottom = CLAMP(scaled(insets.bottom, im->factor), 0, im->fh - top);
+    int dl = left, dr = rr, dt = top, db = bottom;
+    if (dl + dr > rect.w && dl + dr > 0) {
+        dl = rect.w * dl / (dl + dr);
+        dr = rect.w - dl;
     }
-    if (dt + db > r.h && dt + db > 0) {
-        dt = r.h * dt / (dt + db);
-        db = r.h - dt;
+    if (dt + db > rect.h && dt + db > 0) {
+        dt = rect.h * dt / (dt + db);
+        db = rect.h - dt;
     }
-    int sx[3] = {0, l, im->fw - rr}, sw[3] = {l, im->fw - l - rr, rr};
-    int sy[3] = {0, top, im->fh - b}, sh[3] = {top, im->fh - top - b, b};
-    int dx[3] = {r.x, r.x + dl, r.x + r.w - dr}, dw[3] = {dl, r.w - dl - dr, dr};
-    int dy[3] = {r.y, r.y + dt, r.y + r.h - db}, dh[3] = {dt, r.h - dt - db, db};
+    int sx[3] = {0, left, im->fw - rr}, sw[3] = {left, im->fw - left - rr, rr};
+    int sy[3] = {0, top, im->fh - bottom}, sh[3] = {top, im->fh - top - bottom, bottom};
+    int dx[3] = {rect.x, rect.x + dl, rect.x + rect.w - dr}, dw[3] = {dl, rect.w - dl - dr, dr};
+    int dy[3] = {rect.y, rect.y + dt, rect.y + rect.h - db}, dh[3] = {dt, rect.h - dt - db, db};
     for (int j = 0; j < 3; j++)
         for (int i = 0; i < 3; i++) {
             if (border_only && i == 1 && j == 1)
                 continue;
             bool corner = i != 1 && j != 1;
-            blit(cr, im, (xd_rect){sx[i], sy[j], sw[i], sh[j]},
+            blit(cairo, im, (xd_rect){sx[i], sy[j], sw[i], sh[j]},
                  (xd_rect){dx[i], dy[j], dw[i], dh[j]}, tile && !corner);
         }
 }
 
-/* TrueSize: the frame as it is, aligned in `r` (centred by default);
+/* TrueSize: the frame as it is, aligned in `rect` (centred by default);
  * shrunk uniformly if it doesn't fit, stretched past TrueSizeStretchMark. */
-static void true_size(const xd_theme *t, cairo_t *cr, const part_image *im, const char *cls,
-                      const char *part, const char *state, xd_rect r) {
-    int w = im->fw, h = im->fh;
+static void true_size(const xd_theme *theme, cairo_t *cairo, const part_image *im, const char *cls,
+                      const char *part, const char *state, xd_rect rect) {
+    int width = im->fw, height = im->fh;
     int mark = 0;
-    if (xd_pkg_int(t->pkg, cls, part, state, "TrueSizeStretchMark", &mark) && mark > 0 &&
-        (r.w > w * (100 + mark) / 100 || r.h > h * (100 + mark) / 100)) {
-        double k = fmin((double)r.w / w, (double)r.h / h);
-        w = (int)(w * k);
-        h = (int)(h * k);
+    if (xd_pkg_int(theme->pkg, cls, part, state, "TrueSizeStretchMark", &mark) && mark > 0 &&
+        (rect.w > width * (100 + mark) / 100 || rect.h > height * (100 + mark) / 100)) {
+        double k = fmin((double)rect.w / width, (double)rect.h / height);
+        width = (int)(width * k);
+        height = (int)(height * k);
     }
-    if (w > r.w || h > r.h) {
-        double k = fmin((double)r.w / w, (double)r.h / h);
-        w = MAX(1, (int)(w * k));
-        h = MAX(1, (int)(h * k));
+    if (width > rect.w || height > rect.h) {
+        double k = fmin((double)rect.w / width, (double)rect.h / height);
+        width = MAX(1, (int)(width * k));
+        height = MAX(1, (int)(height * k));
     }
-    int x = r.x + (r.w - w) / 2, y = r.y + (r.h - h) / 2;
-    if (enum_is(t->pkg, cls, part, state, "HAlign", "Left"))
-        x = r.x;
-    else if (enum_is(t->pkg, cls, part, state, "HAlign", "Right"))
-        x = r.x + r.w - w;
-    if (enum_is(t->pkg, cls, part, state, "VAlign", "Top"))
-        y = r.y;
-    else if (enum_is(t->pkg, cls, part, state, "VAlign", "Bottom"))
-        y = r.y + r.h - h;
-    blit(cr, im, (xd_rect){0, 0, im->fw, im->fh}, (xd_rect){x, y, w, h}, false);
+    int x = rect.x + (rect.w - width) / 2, y = rect.y + (rect.h - height) / 2;
+    if (enum_is(theme->pkg, cls, part, state, "HAlign", "Left"))
+        x = rect.x;
+    else if (enum_is(theme->pkg, cls, part, state, "HAlign", "Right"))
+        x = rect.x + rect.w - width;
+    if (enum_is(theme->pkg, cls, part, state, "VAlign", "Top"))
+        y = rect.y;
+    else if (enum_is(theme->pkg, cls, part, state, "VAlign", "Bottom"))
+        y = rect.y + rect.h - height;
+    blit(cairo, im, (xd_rect){0, 0, im->fw, im->fh}, (xd_rect){x, y, width, height}, false);
 }
 
-static void border_fill(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                        const char *state, xd_rect r) {
-    const xd_pkg *p = t->pkg;
+static void border_fill(const xd_theme *theme, cairo_t *cairo, const char *cls, const char *part,
+                        const char *state, xd_rect rect) {
+    const xd_pkg *package = theme->pkg;
     int border = 1;
-    (void)xd_pkg_int(p, cls, part, state, "BorderSize", &border);
-    border = scaled(MAX(border, 0), t->scale);
+    (void)xd_pkg_int(package, cls, part, state, "BorderSize", &border);
+    border = scaled(MAX(border, 0), theme->scale);
     xd_rgba bc, fc, g1, g2;
-    bool has_fill = xd_pkg_color(p, cls, part, state, "FillColor", &fc);
-    if (!enum_is(p, cls, part, state, "FillType", "Solid") &&
-        xd_pkg_color(p, cls, part, state, "GradientColor1", &g1) &&
-        xd_pkg_color(p, cls, part, state, "GradientColor2", &g2)) {
-        bool horz = enum_is(p, cls, part, state, "FillType", "HorzGradient");
-        cairo_pattern_t *pat = horz ? cairo_pattern_create_linear(r.x, 0, r.x + r.w, 0)
-                                    : cairo_pattern_create_linear(0, r.y, 0, r.y + r.h);
+    bool has_fill = xd_pkg_color(package, cls, part, state, "FillColor", &fc);
+    if (!enum_is(package, cls, part, state, "FillType", "Solid") &&
+        xd_pkg_color(package, cls, part, state, "GradientColor1", &g1) &&
+        xd_pkg_color(package, cls, part, state, "GradientColor2", &g2)) {
+        bool horz = enum_is(package, cls, part, state, "FillType", "HorzGradient");
+        cairo_pattern_t *pat = horz ? cairo_pattern_create_linear(rect.x, 0, rect.x + rect.w, 0)
+                                    : cairo_pattern_create_linear(0, rect.y, 0, rect.y + rect.h);
         cairo_pattern_add_color_stop_rgba(pat, 0, g1.r, g1.g, g1.b, g1.a);
         cairo_pattern_add_color_stop_rgba(pat, 1, g2.r, g2.g, g2.b, g2.a);
-        cairo_rectangle(cr, r.x, r.y, r.w, r.h);
-        cairo_set_source(cr, pat);
-        cairo_fill(cr);
+        cairo_rectangle(cairo, rect.x, rect.y, rect.w, rect.h);
+        cairo_set_source(cairo, pat);
+        cairo_fill(cairo);
         cairo_pattern_destroy(pat);
     } else if (has_fill) {
-        xd_fill_rect(cr, r, fc);
+        xd_fill_rect(cairo, rect, fc);
     }
-    if (border > 0 && xd_pkg_color(p, cls, part, state, "BorderColor", &bc)) {
-        xd_fill_rect(cr, (xd_rect){r.x, r.y, r.w, border}, bc);
-        xd_fill_rect(cr, (xd_rect){r.x, r.y + r.h - border, r.w, border}, bc);
-        xd_fill_rect(cr, (xd_rect){r.x, r.y, border, r.h}, bc);
-        xd_fill_rect(cr, (xd_rect){r.x + r.w - border, r.y, border, r.h}, bc);
+    if (border > 0 && xd_pkg_color(package, cls, part, state, "BorderColor", &bc)) {
+        xd_fill_rect(cairo, (xd_rect){rect.x, rect.y, rect.w, border}, bc);
+        xd_fill_rect(cairo, (xd_rect){rect.x, rect.y + rect.h - border, rect.w, border}, bc);
+        xd_fill_rect(cairo, (xd_rect){rect.x, rect.y, border, rect.h}, bc);
+        xd_fill_rect(cairo, (xd_rect){rect.x + rect.w - border, rect.y, border, rect.h}, bc);
     }
 }
 
-bool xd_pkg_draw_background(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                            const char *state, xd_rect r) {
-    const xd_pkg *p = t->pkg;
-    if (p == nullptr || r.w <= 0 || r.h <= 0 || !xd_pkg_has(p, cls, part))
+bool xd_pkg_draw_background(const xd_theme *theme, cairo_t *cairo, const char *cls,
+                            const char *part, const char *state, xd_rect rect) {
+    const xd_pkg *package = theme->pkg;
+    if (package == nullptr || rect.w <= 0 || rect.h <= 0 || !xd_pkg_has(package, cls, part))
         return false;
     bool glyph_only = false;
-    (void)xd_pkg_bool(p, cls, part, state, "GlyphOnly", &glyph_only);
-    if (glyph_only || enum_is(p, cls, part, state, "BgType", "None"))
+    (void)xd_pkg_bool(package, cls, part, state, "GlyphOnly", &glyph_only);
+    if (glyph_only || enum_is(package, cls, part, state, "BgType", "None"))
         return false;
-    if (enum_is(p, cls, part, state, "BgType", "BorderFill")) {
-        border_fill(t, cr, cls, part, state, r);
+    if (enum_is(package, cls, part, state, "BgType", "BorderFill")) {
+        border_fill(theme, cairo, cls, part, state, rect);
         return true;
     }
     part_image im;
-    if (!part_image_for(t, cls, part, state, r, false, &im))
+    if (!part_image_for(theme, cls, part, state, rect, false, &im))
         return false;
-    if (enum_is(p, cls, part, state, "SizingType", "TrueSize")) {
-        true_size(t, cr, &im, cls, part, state, r);
+    if (enum_is(package, cls, part, state, "SizingType", "TrueSize")) {
+        true_size(theme, cairo, &im, cls, part, state, rect);
     } else {
-        xd_insets m = {0};
-        (void)xd_pkg_margins(p, cls, part, state, "SizingMargins", &m);
+        xd_insets insets = {0};
+        (void)xd_pkg_margins(package, cls, part, state, "SizingMargins", &insets);
         bool border_only = false;
-        (void)xd_pkg_bool(p, cls, part, state, "BorderOnly", &border_only);
-        nine_grid(cr, &im, m, r, enum_is(p, cls, part, state, "SizingType", "Tile"),
-                  border_only);
+        (void)xd_pkg_bool(package, cls, part, state, "BorderOnly", &border_only);
+        nine_grid(cairo, &im, insets, rect,
+                  enum_is(package, cls, part, state, "SizingType", "Tile"), border_only);
     }
     return true;
 }
 
 /* An image glyph: centred in the content area, as it is. */
-bool xd_pkg_draw_glyph(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                       const char *state, xd_rect r) {
-    const xd_pkg *p = t->pkg;
-    if (p == nullptr || r.w <= 0 || r.h <= 0 || !xd_pkg_has(p, cls, part) ||
-        !enum_is(p, cls, part, state, "GlyphType", "ImageGlyph"))
+bool xd_pkg_draw_glyph(const xd_theme *theme, cairo_t *cairo, const char *cls, const char *part,
+                       const char *state, xd_rect rect) {
+    const xd_pkg *package = theme->pkg;
+    if (package == nullptr || rect.w <= 0 || rect.h <= 0 || !xd_pkg_has(package, cls, part) ||
+        !enum_is(package, cls, part, state, "GlyphType", "ImageGlyph"))
         return false;
-    part_image g;
-    xd_rect c = xd_pkg_content_rect(t, cls, part, state, r);
-    if (!part_image_for(t, cls, part, state, c, true, &g))
+    part_image glyph;
+    xd_rect content_rect = xd_pkg_content_rect(theme, cls, part, state, rect);
+    if (!part_image_for(theme, cls, part, state, content_rect, true, &glyph))
         return false;
-    true_size(t, cr, &g, cls, part, state, c);
+    true_size(theme, cairo, &glyph, cls, part, state, content_rect);
     return true;
 }
 
-bool xd_pkg_draw(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
-                 const char *state, xd_rect r) {
-    bool bg = xd_pkg_draw_background(t, cr, cls, part, state, r);
-    bool glyph = xd_pkg_draw_glyph(t, cr, cls, part, state, r);
+bool xd_pkg_draw(const xd_theme *theme, cairo_t *cairo, const char *cls, const char *part,
+                 const char *state, xd_rect rect) {
+    bool bg = xd_pkg_draw_background(theme, cairo, cls, part, state, rect);
+    bool glyph = xd_pkg_draw_glyph(theme, cairo, cls, part, state, rect);
     return bg || glyph;
 }
 
-bool xd_pkg_draw_slice(const xd_theme *t, cairo_t *cr, const char *cls, const char *part,
+bool xd_pkg_draw_slice(const xd_theme *theme, cairo_t *cairo, const char *cls, const char *part,
                        const char *state, xd_rect src, xd_rect dst) {
-    if (t->pkg == nullptr || dst.w <= 0 || dst.h <= 0 || !xd_pkg_has(t->pkg, cls, part))
+    if (theme->pkg == nullptr || dst.w <= 0 || dst.h <= 0 || !xd_pkg_has(theme->pkg, cls, part))
         return false;
     part_image im;
-    if (!part_image_for(t, cls, part, state, dst, false, &im))
+    if (!part_image_for(theme, cls, part, state, dst, false, &im))
         return false;
     /* The frame's own pixels, scaled as the image was. */
     int x0 = CLAMP(scaled(src.x, im.factor), 0, im.fw);
@@ -1360,44 +1374,45 @@ bool xd_pkg_draw_slice(const xd_theme *t, cairo_t *cr, const char *cls, const ch
     int y1 = CLAMP(scaled(src.y + src.h, im.factor), y0, im.fh);
     if (x1 <= x0 || y1 <= y0)
         return false;
-    blit(cr, &im, (xd_rect){x0, y0, x1 - x0, y1 - y0}, dst, false);
+    blit(cairo, &im, (xd_rect){x0, y0, x1 - x0, y1 - y0}, dst, false);
     return true;
 }
 
-bool xd_pkg_glyph_size(const xd_theme *t, const char *cls, const char *part, const char *state,
-                       int *w, int *h) {
-    if (t->pkg == nullptr || !xd_pkg_has(t->pkg, cls, part) ||
-        !enum_is(t->pkg, cls, part, state, "GlyphType", "ImageGlyph"))
+bool xd_pkg_glyph_size(const xd_theme *theme, const char *cls, const char *part, const char *state,
+                       int *width, int *height) {
+    if (theme->pkg == nullptr || !xd_pkg_has(theme->pkg, cls, part) ||
+        !enum_is(theme->pkg, cls, part, state, "GlyphType", "ImageGlyph"))
         return false;
-    part_image g;
-    if (!part_image_for(t, cls, part, state, (xd_rect){0, 0, 1 << 16, 1 << 16}, true, &g))
+    part_image glyph;
+    if (!part_image_for(theme, cls, part, state, (xd_rect){0, 0, 1 << 16, 1 << 16}, true, &glyph))
         return false;
-    *w = g.fw;
-    *h = g.fh;
+    *width = glyph.fw;
+    *height = glyph.fh;
     return true;
 }
 
-bool xd_pkg_part_size(const xd_theme *t, const char *cls, const char *part, const char *state,
-                      int *w, int *h) {
-    if (t->pkg == nullptr || !xd_pkg_has(t->pkg, cls, part))
+bool xd_pkg_part_size(const xd_theme *theme, const char *cls, const char *part, const char *state,
+                      int *width, int *height) {
+    if (theme->pkg == nullptr || !xd_pkg_has(theme->pkg, cls, part))
         return false;
     part_image im;
-    if (!part_image_for(t, cls, part, state, (xd_rect){0, 0, 1 << 16, 1 << 16}, false, &im))
+    if (!part_image_for(theme, cls, part, state, (xd_rect){0, 0, 1 << 16, 1 << 16}, false, &im))
         return false;
-    *w = im.fw;
-    *h = im.fh;
+    *width = im.fw;
+    *height = im.fh;
     return true;
 }
 
-xd_rect xd_pkg_content_rect(const xd_theme *t, const char *cls, const char *part,
-                            const char *state, xd_rect r) {
-    xd_insets m;
-    if (t->pkg == nullptr || !xd_pkg_margins(t->pkg, cls, part, state, "ContentMargins", &m))
-        return r;
-    int l = scaled(m.left, t->scale), rr = scaled(m.right, t->scale);
-    int top = scaled(m.top, t->scale), b = scaled(m.bottom, t->scale);
-    xd_rect c = {r.x + l, r.y + top, r.w - l - rr, r.h - top - b};
-    if (c.w < 0 || c.h < 0)
-        return r;
-    return c;
+xd_rect xd_pkg_content_rect(const xd_theme *theme, const char *cls, const char *part,
+                            const char *state, xd_rect rect) {
+    xd_insets insets;
+    if (theme->pkg == nullptr ||
+        !xd_pkg_margins(theme->pkg, cls, part, state, "ContentMargins", &insets))
+        return rect;
+    int left = scaled(insets.left, theme->scale), rr = scaled(insets.right, theme->scale);
+    int top = scaled(insets.top, theme->scale), bottom = scaled(insets.bottom, theme->scale);
+    xd_rect content_rect = {rect.x + left, rect.y + top, rect.w - left - rr, rect.h - top - bottom};
+    if (content_rect.w < 0 || content_rect.h < 0)
+        return rect;
+    return content_rect;
 }

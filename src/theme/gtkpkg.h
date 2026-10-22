@@ -37,19 +37,19 @@ typedef struct xd_gtk_pkg_image {
 /* The toolkit colours with the package's [SysMetrics] colours (already
  * over t->scheme) in place of the base style's own; nothing without a
  * package. For the GTK CSS and the Qt palette alike. */
-void xd_gtk_pkg_toolkit_colors(const xd_theme *t, xd_toolkit_colors *c);
+void xd_gtk_pkg_toolkit_colors(const xd_theme *theme, xd_toolkit_colors *toolkit_colors);
 
 /* The rules drawing GTK widgets with t's package, to go after the base
  * style's (they override it where the package styles a widget); nothing
- * without a package. `t` at scale 1. */
-void xd_gtk_pkg_css(const xd_theme *t, xd_strbuf *out);
+ * without a package. `theme` at scale 1. */
+void xd_gtk_pkg_css(const xd_theme *theme, xd_strbuf *out);
 
 /* The images those rules name (an array of xd_gtk_pkg_image; empty
  * without a package). g_array_unref it. */
-GArray *xd_gtk_pkg_images(const xd_theme *t);
+GArray *xd_gtk_pkg_images(const xd_theme *theme);
 
 /* One of them drawn at t's scale (an ARGB32 surface of w x h times the
  * scale), or nullptr if the package can't draw it. */
-cairo_surface_t *xd_gtk_pkg_image_draw(const xd_theme *t, const xd_gtk_pkg_image *img);
+cairo_surface_t *xd_gtk_pkg_image_draw(const xd_theme *theme, const xd_gtk_pkg_image *img);
 
 #endif

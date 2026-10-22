@@ -16,32 +16,32 @@ typedef struct hexbuf {
     char s[64];
 } hexbuf;
 
-static unsigned channel(double v) {
-    double c = round(v * 255.0);
-    return c <= 0 ? 0u : c >= 255 ? 255u : (unsigned)c;
+static unsigned channel(double value) {
+    double scaled = round(value * 255.0);
+    return scaled <= 0 ? 0u : scaled >= 255 ? 255u : (unsigned)scaled;
 }
 
-static hexbuf hex(xd_rgba c) {
-    hexbuf h;
-    unsigned r = channel(c.r);
-    unsigned g = channel(c.g);
-    unsigned b = channel(c.b);
-    double av = round(c.a * 1000.0);
-    unsigned a = av <= 0 ? 0u : av >= 1000 ? 1000u : (unsigned)av;
-    if (a >= 1000)
-        snprintf(h.s, sizeof(h.s), "#%02x%02x%02x", r, g, b);
+static hexbuf hex(xd_rgba color) {
+    hexbuf out;
+    unsigned red = channel(color.r);
+    unsigned green = channel(color.g);
+    unsigned blue = channel(color.b);
+    double av = round(color.a * 1000.0);
+    unsigned alpha = av <= 0 ? 0u : av >= 1000 ? 1000u : (unsigned)av;
+    if (alpha >= 1000)
+        snprintf(out.s, sizeof(out.s), "#%02x%02x%02x", red, green, blue);
     else
-        snprintf(h.s, sizeof(h.s), "rgba(%u,%u,%u,0.%03u)", r, g, b, a);
-    return h;
+        snprintf(out.s, sizeof(out.s), "rgba(%u,%u,%u,0.%03u)", red, green, blue, alpha);
+    return out;
 }
 
 #define H(c) (hex(c).s)
 
 /* The scheme's message font as a CSS font-family list. */
-static void font_rules(const xd_theme *t, xd_strbuf *out) {
-    const xd_font_spec *f = &t->scheme.fonts[XD_FONT_MESSAGE];
+static void font_rules(const xd_theme *theme, xd_strbuf *out) {
+    const xd_font_spec *font = &theme->scheme.fonts[XD_FONT_MESSAGE];
     xd_strbuf_append(out, XD_STR("* {\n  font-family: "));
-    xd_str rest = xd_str_from_cstr(f->family);
+    xd_str rest = xd_str_from_cstr(font->family);
     bool first = true;
     while (rest.len > 0) {
         size_t comma = rest.len;
@@ -69,37 +69,41 @@ static void font_rules(const xd_theme *t, xd_strbuf *out) {
     }
     /* Whole pixels, as Windows rounds them: 8pt is 11px (GTK scales px
      * itself on HiDPI). */
-    xd_strbuf_appendf(out, ";\n  font-size: %dpx;\n}\n\n", (int)lround(f->size_pt * 96.0 / 72.0));
+    xd_strbuf_appendf(out, ";\n  font-size: %dpx;\n}\n\n",
+                      (int)lround(font->size_pt * 96.0 / 72.0));
 }
 
-static void defines(const xd_toolkit_colors *c, xd_strbuf *o) {
+static void defines(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) {
     /* Named colours many GTK apps (and our folder view) look up. */
-    xd_strbuf_appendf(o,
-                      "@define-color theme_bg_color %s;\n@define-color theme_fg_color %s;\n"
-                      "@define-color theme_base_color %s;\n@define-color theme_text_color %s;\n"
-                      "@define-color theme_selected_bg_color %s;\n"
-                      "@define-color theme_selected_fg_color %s;\n"
-                      "@define-color insensitive_fg_color %s;\n"
-                      "@define-color theme_unfocused_bg_color %s;\n"
-                      "@define-color theme_unfocused_fg_color %s;\n"
-                      "@define-color theme_unfocused_base_color %s;\n"
-                      "@define-color theme_unfocused_text_color %s;\n"
-                      "@define-color theme_unfocused_selected_bg_color %s;\n"
-                      "@define-color theme_unfocused_selected_fg_color %s;\n"
-                      "@define-color borders %s;\n@define-color unfocused_borders %s;\n"
-                      "@define-color tooltip_bg_color %s;\n@define-color tooltip_fg_color %s;\n\n",
-                      H(c->bg), H(c->fg), H(c->base), H(c->text), H(c->selected_bg),
-                      H(c->selected_fg), H(c->disabled), H(c->bg), H(c->fg), H(c->base),
-                      H(c->text), H(c->selected_bg), H(c->selected_fg),
-                      H(c->classic ? c->shadow : c->field_border),
-                      H(c->classic ? c->shadow : c->field_border), H(c->tooltip_bg),
-                      H(c->tooltip_fg));
+    xd_strbuf_appendf(
+        buffer,
+        "@define-color theme_bg_color %s;\n@define-color theme_fg_color %s;\n"
+        "@define-color theme_base_color %s;\n@define-color theme_text_color %s;\n"
+        "@define-color theme_selected_bg_color %s;\n"
+        "@define-color theme_selected_fg_color %s;\n"
+        "@define-color insensitive_fg_color %s;\n"
+        "@define-color theme_unfocused_bg_color %s;\n"
+        "@define-color theme_unfocused_fg_color %s;\n"
+        "@define-color theme_unfocused_base_color %s;\n"
+        "@define-color theme_unfocused_text_color %s;\n"
+        "@define-color theme_unfocused_selected_bg_color %s;\n"
+        "@define-color theme_unfocused_selected_fg_color %s;\n"
+        "@define-color borders %s;\n@define-color unfocused_borders %s;\n"
+        "@define-color tooltip_bg_color %s;\n@define-color tooltip_fg_color %s;\n\n",
+        H(toolkit_colors->bg), H(toolkit_colors->fg), H(toolkit_colors->base),
+        H(toolkit_colors->text), H(toolkit_colors->selected_bg), H(toolkit_colors->selected_fg),
+        H(toolkit_colors->disabled), H(toolkit_colors->bg), H(toolkit_colors->fg),
+        H(toolkit_colors->base), H(toolkit_colors->text), H(toolkit_colors->selected_bg),
+        H(toolkit_colors->selected_fg),
+        H(toolkit_colors->classic ? toolkit_colors->shadow : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->shadow : toolkit_colors->field_border),
+        H(toolkit_colors->tooltip_bg), H(toolkit_colors->tooltip_fg));
 }
 
 /* Rules shared by both looks. */
-static void common(const xd_toolkit_colors *c, xd_strbuf *o) {
+static void common(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) {
     xd_strbuf_appendf(
-        o,
+        buffer,
         "window, .background, dialog, messagedialog, assistant {\n"
         "  background-color: %s;\n  color: %s;\n}\n"
         "label:disabled, *:disabled { color: %s; }\n"
@@ -125,26 +129,29 @@ static void common(const xd_toolkit_colors *c, xd_strbuf *o) {
         "*:focus { outline-style: dotted; outline-width: 1px; outline-offset: -3px;\n"
         "  outline-color: %s; -gtk-outline-radius: 0; }\n"
         "link, *:link { color: #0000ff; }\n\n",
-        H(c->bg), H(c->fg), H(c->disabled), H(c->selected_bg), H(c->selected_fg), H(c->base),
-        H(c->text), H(c->tooltip_bg), H(c->tooltip_fg), H(c->tooltip_fg), H(c->title_bg),
-        H(c->title_bg2), H(c->title_fg), H(c->title_fg), H(c->selected_bg), H(c->fg));
+        H(toolkit_colors->bg), H(toolkit_colors->fg), H(toolkit_colors->disabled),
+        H(toolkit_colors->selected_bg), H(toolkit_colors->selected_fg), H(toolkit_colors->base),
+        H(toolkit_colors->text), H(toolkit_colors->tooltip_bg), H(toolkit_colors->tooltip_fg),
+        H(toolkit_colors->tooltip_fg), H(toolkit_colors->title_bg), H(toolkit_colors->title_bg2),
+        H(toolkit_colors->title_fg), H(toolkit_colors->title_fg), H(toolkit_colors->selected_bg),
+        H(toolkit_colors->fg));
 }
 
 /* ---- Classic (Windows 2000) --------------------------------------------------------- */
 
-static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
-    hexbuf fc = hex(c->face);
+static void classic(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) {
+    hexbuf fc = hex(toolkit_colors->face);
     const char *face = fc.s; /* fc must outlive every use of face */
     /* Raised: light/dkshadow outside, hilight/shadow inside. Sunken is the
      * reverse. */
-    hexbuf hi = hex(c->hilight);
-    hexbuf li = hex(c->light);
-    hexbuf sh = hex(c->shadow);
-    hexbuf dk = hex(c->dkshadow);
-    xd_rgba dither = xd_rgba_mix(c->scrollbar, c->hilight, 0.5);
+    hexbuf hi = hex(toolkit_colors->hilight);
+    hexbuf li = hex(toolkit_colors->light);
+    hexbuf sh = hex(toolkit_colors->shadow);
+    hexbuf dk = hex(toolkit_colors->dkshadow);
+    xd_rgba dither = xd_rgba_mix(toolkit_colors->scrollbar, toolkit_colors->hilight, 0.5);
 
     xd_strbuf_appendf(
-        o,
+        buffer,
         /* Push buttons */
         "button {\n  background-image: none;\n  background-color: %s;\n  color: %s;\n"
         "  border-style: solid;\n  border-width: 1px;\n  border-color: %s %s %s %s;\n"
@@ -192,14 +199,16 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  -gtk-icon-source: none;\n  margin: 0 4px 0 0;\n  padding: 0;\n}\n"
         "radio { border-radius: 50%%; }\n"
         "check:disabled, radio:disabled { background-color: %s; color: %s; }\n",
-        face, H(c->fg), hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, dk.s, hi.s, hi.s, dk.s, sh.s,
-        li.s, H(dither), H(c->disabled), hi.s, H(c->frame), li.s, sh.s, hi.s, dk.s, hi.s, sh.s, sh.s, hi.s,
-        sh.s, hi.s, hi.s, sh.s, H(dither), face, sh.s, hi.s, H(c->base), H(c->text), sh.s, hi.s,
-        hi.s, sh.s, dk.s, li.s, face, sh.s, hi.s, hi.s, sh.s, dk.s, li.s, H(c->base), H(c->text),
-        sh.s, hi.s, hi.s, sh.s, dk.s, li.s, face, H(c->disabled));
+        face, H(toolkit_colors->fg), hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, dk.s, hi.s, hi.s,
+        dk.s, sh.s, li.s, H(dither), H(toolkit_colors->disabled), hi.s, H(toolkit_colors->frame),
+        li.s, sh.s, hi.s, dk.s, hi.s, sh.s, sh.s, hi.s, sh.s, hi.s, hi.s, sh.s, H(dither), face,
+        sh.s, hi.s, H(toolkit_colors->base), H(toolkit_colors->text), sh.s, hi.s, hi.s, sh.s, dk.s,
+        li.s, face, sh.s, hi.s, hi.s, sh.s, dk.s, li.s, H(toolkit_colors->base),
+        H(toolkit_colors->text), sh.s, hi.s, hi.s, sh.s, dk.s, li.s, face,
+        H(toolkit_colors->disabled));
 
     xd_strbuf_appendf(
-        o,
+        buffer,
         /* Menus */
         "menubar { background-color: %s;\n  padding: 0;\n  box-shadow: none;\n"
         "  border: none;\n}\n"
@@ -257,18 +266,20 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  box-shadow: inset 1px 1px %s, inset -1px -1px %s; border-radius: 0;\n"
         "  margin: -9px 0; }\n"
         "scale highlight { background: none; }\n",
-        H(c->menubar_bg), hi.s, sh.s, sh.s, hi.s, H(c->menu_fg), H(c->menu_bg), H(c->menu_fg),
-        li.s, dk.s, dk.s, li.s, hi.s, sh.s, H(c->menu_hot), H(c->menu_hot_fg), H(c->disabled),
-        sh.s, hi.s, H(dither), H(dither), face, li.s, dk.s, dk.s, li.s, hi.s, sh.s, H(c->fg),
-        sh.s, face, face, hi.s, dk.s, dk.s, hi.s, li.s, sh.s, face, hi.s, dk.s, dk.s, hi.s, sh.s,
-        li.s, face, sh.s, face, sh.s, hi.s, hi.s, sh.s, face, hi.s, dk.s, dk.s, hi.s, li.s, sh.s);
+        H(toolkit_colors->menubar_bg), hi.s, sh.s, sh.s, hi.s, H(toolkit_colors->menu_fg),
+        H(toolkit_colors->menu_bg), H(toolkit_colors->menu_fg), li.s, dk.s, dk.s, li.s, hi.s, sh.s,
+        H(toolkit_colors->menu_hot), H(toolkit_colors->menu_hot_fg), H(toolkit_colors->disabled),
+        sh.s, hi.s, H(dither), H(dither), face, li.s, dk.s, dk.s, li.s, hi.s, sh.s,
+        H(toolkit_colors->fg), sh.s, face, face, hi.s, dk.s, dk.s, hi.s, li.s, sh.s, face, hi.s,
+        dk.s, dk.s, hi.s, sh.s, li.s, face, sh.s, face, sh.s, hi.s, hi.s, sh.s, face, hi.s, dk.s,
+        dk.s, hi.s, li.s, sh.s);
 
     /* Tabs: raised, slightly rounded, with a two-tone right edge; the page's
      * top edge belongs to the header so the selected tab can cover it and
      * join the page. Group boxes: a thin etched line with the caption set
      * in from the corner. Combo boxes: a sunken field with an arrow button. */
     xd_strbuf_appendf(
-        o,
+        buffer,
         "notebook > header { background-color: %s; border: none; border-bottom: 1px solid %s;\n"
         "  box-shadow: none; padding: 0 2px; }\n"
         "notebook > header > tabs > tab {\n  background-color: %s; background-image: none;\n"
@@ -312,10 +323,11 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
         "  border-color: %s %s %s %s; box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n}\n"
         "combobox button.combo:checked arrow { border-color: %s; box-shadow: none; }\n",
         face, hi.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, face, sh.s, hi.s, hi.s, dk.s, hi.s,
-        face, sh.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s,
-        sh.s, hi.s, hi.s, sh.s, hi.s, sh.s, sh.s, hi.s, hi.s, sh.s, H(c->base), H(c->text), sh.s, hi.s, hi.s, sh.s, dk.s,
-        li.s, H(c->base), sh.s, hi.s, hi.s, sh.s, dk.s, li.s, H(c->base), face, H(c->fg), li.s,
-        dk.s, dk.s, li.s, hi.s, sh.s, sh.s);
+        face, sh.s, face, hi.s, dk.s, dk.s, hi.s, sh.s, li.s, sh.s, hi.s, hi.s, sh.s, hi.s, sh.s,
+        sh.s, hi.s, hi.s, sh.s, H(toolkit_colors->base), H(toolkit_colors->text), sh.s, hi.s, hi.s,
+        sh.s, dk.s, li.s, H(toolkit_colors->base), sh.s, hi.s, hi.s, sh.s, dk.s, li.s,
+        H(toolkit_colors->base), face, H(toolkit_colors->fg), li.s, dk.s, dk.s, li.s, hi.s, sh.s,
+        sh.s);
 }
 
 /* ---- Luna and Whistler (Windows XP) ----------------------------------------------- */
@@ -326,24 +338,25 @@ static void classic(const xd_toolkit_colors *c, xd_strbuf *o) {
  * shadows in order, the last on top), 2px taller, its label 2px higher.
  * `edge` is the outline, `fill` the inside; `pad_bottom` takes the box a
  * pixel below the unselected tabs, over the page's top edge. */
-static void flat_selected_tab(xd_strbuf *o, xd_rgba edge, xd_rgba fill, int pad_bottom) {
-    hexbuf e = hex(edge);
-    hexbuf f = hex(fill);
-    xd_strbuf_appendf(o,
+static void flat_selected_tab(xd_strbuf *buffer, xd_rgba edge, xd_rgba fill, int pad_bottom) {
+    hexbuf edge_hex = hex(edge);
+    hexbuf fill_hex = hex(fill);
+    xd_strbuf_appendf(buffer,
                       "notebook > header > tabs > tab:checked {\n"
                       "  margin: 2px 0 -1px 0; padding: 0 8px %dpx 8px; border: 1px solid %s;\n"
                       "  border-bottom: none; border-radius: 0;\n"
                       "  box-shadow: -2px -2px %s, 2px -2px %s, -2px 0 %s, 2px 0 %s,\n"
                       "    -1px -1px %s, 1px -1px %s, -1px 0 %s, 1px 0 %s;\n}\n",
-                      pad_bottom, f.s, e.s, e.s, e.s, e.s, f.s, f.s, f.s, f.s);
+                      pad_bottom, fill_hex.s, edge_hex.s, edge_hex.s, edge_hex.s, edge_hex.s,
+                      fill_hex.s, fill_hex.s, fill_hex.s, fill_hex.s);
 }
 
 /* Luna's selected tab: as above, with XP's orange band (two light rows and
  * a darker one) across the top. */
-static void luna_selected_tab(xd_strbuf *o, xd_rgba border, xd_rgba hot) {
-    hexbuf b = hex(border);
-    hexbuf h = hex(hot);
-    xd_strbuf_appendf(o,
+static void luna_selected_tab(xd_strbuf *buffer, xd_rgba border, xd_rgba hot) {
+    hexbuf border_hex = hex(border);
+    hexbuf hot_hex = hex(hot);
+    xd_strbuf_appendf(buffer,
                       "notebook > header > tabs > tab:checked {\n"
                       "  margin: 2px 0 -1px 0; padding: 0 8px 5px 8px;\n"
                       "  border: 1px solid #fdfdfe; border-top-color: #e6a000;\n"
@@ -351,13 +364,13 @@ static void luna_selected_tab(xd_strbuf *o, xd_rgba border, xd_rgba hot) {
                       "  background-image: linear-gradient(#ffffff, #fcfcfe);\n"
                       "  box-shadow: -2px -2px %s, 2px -2px %s, -2px 0 #e6a000, 2px 0 #e6a000,\n"
                       "    -2px 1px %s, 2px 1px %s, -1px 1px #fdfdfe, 1px 1px #fdfdfe;\n}\n",
-                      h.s, h.s, b.s, b.s);
+                      hot_hex.s, hot_hex.s, border_hex.s, border_hex.s);
 }
 
-static void modern(const xd_toolkit_colors *c, bool aero, xd_strbuf *o) {
-    hexbuf fb = hex(c->field_border);
+static void modern(const xd_toolkit_colors *toolkit_colors, bool aero, xd_strbuf *buffer) {
+    hexbuf fb = hex(toolkit_colors->field_border);
     xd_strbuf_appendf(
-        o,
+        buffer,
         "button {\n  background-image: linear-gradient(%s, %s);\n  background-color: %s;\n"
         "  color: %s;\n  border: 1px solid %s;\n  border-radius: 3px;\n"
         "  padding: 3px 10px;\n  min-height: 0;\n  box-shadow: none;\n  text-shadow: none;\n"
@@ -396,13 +409,16 @@ static void modern(const xd_toolkit_colors *c, bool aero, xd_strbuf *o) {
         "radio { border-radius: 50%%; }\n"
         "check:hover, radio:hover { box-shadow: inset 0 0 0 2px %s; }\n"
         "check:disabled, radio:disabled { border-color: #cac8bb; color: #cac8bb; }\n",
-        H(c->button_top), H(c->button_bottom), H(c->button_bottom), H(c->fg),
-        H(c->button_border), H(c->button_hot), H(c->button_bottom), H(c->button_top),
-        H(c->button_focus), H(c->disabled), H(c->bg), H(c->base), H(c->text), fb.s, fb.s,
-        H(c->check_border), H(c->check_mark), H(c->button_hot));
+        H(toolkit_colors->button_top), H(toolkit_colors->button_bottom),
+        H(toolkit_colors->button_bottom), H(toolkit_colors->fg), H(toolkit_colors->button_border),
+        H(toolkit_colors->button_hot), H(toolkit_colors->button_bottom),
+        H(toolkit_colors->button_top), H(toolkit_colors->button_focus), H(toolkit_colors->disabled),
+        H(toolkit_colors->bg), H(toolkit_colors->base), H(toolkit_colors->text), fb.s, fb.s,
+        H(toolkit_colors->check_border), H(toolkit_colors->check_mark),
+        H(toolkit_colors->button_hot));
 
     xd_strbuf_appendf(
-        o,
+        buffer,
         "menubar { background-color: %s; padding: 0; box-shadow: none; border: none; }\n"
         "menubar > menuitem { padding: 2px 7px; }\n"
         "menubar > menuitem:hover { background-color: %s; color: %s; }\n"
@@ -448,14 +464,16 @@ static void modern(const xd_toolkit_colors *c, bool aero, xd_strbuf *o) {
         "  background-image: linear-gradient(#ffffff, #e5e5de);\n"
         "  border: 1px solid %s; border-radius: 2px; margin: -9px 0; }\n"
         "scale highlight { background: none; }\n",
-        H(c->menubar_bg), H(c->menu_hot), H(c->menu_hot_fg), H(c->menu_bg), H(c->menu_fg),
-        H(c->menu_border), H(c->menu_hot), H(c->menu_hot_fg), H(c->disabled),
-        H(c->menu_border), H(c->track), H(c->track), H(c->thumb_top), H(c->thumb_bottom),
-        H(c->track), H(c->bg), H(c->tab_border), H(c->tab_hot), H(c->tab_border), H(c->bg),
-        H(c->button_border));
+        H(toolkit_colors->menubar_bg), H(toolkit_colors->menu_hot), H(toolkit_colors->menu_hot_fg),
+        H(toolkit_colors->menu_bg), H(toolkit_colors->menu_fg), H(toolkit_colors->menu_border),
+        H(toolkit_colors->menu_hot), H(toolkit_colors->menu_hot_fg), H(toolkit_colors->disabled),
+        H(toolkit_colors->menu_border), H(toolkit_colors->track), H(toolkit_colors->track),
+        H(toolkit_colors->thumb_top), H(toolkit_colors->thumb_bottom), H(toolkit_colors->track),
+        H(toolkit_colors->bg), H(toolkit_colors->tab_border), H(toolkit_colors->tab_hot),
+        H(toolkit_colors->tab_border), H(toolkit_colors->bg), H(toolkit_colors->button_border));
 
     xd_strbuf_appendf(
-        o,
+        buffer,
         "notebook > header { border: none; border-bottom: 1px solid %s; padding: 0 2px; }\n"
         "notebook > header > tabs > tab { margin: 2px 0 0 0; min-height: 0; }\n"
         "notebook > stack:not(:only-child) { border: 1px solid %s; border-top: none; }\n"
@@ -472,13 +490,15 @@ static void modern(const xd_toolkit_colors *c, bool aero, xd_strbuf *o) {
         "  min-width: 13px; min-height: 13px; margin: 1px; padding: 1px 1px;\n"
         "  background-image: linear-gradient(%s, %s); color: #4d6185;\n"
         "  border: 1px solid #ffffff; border-radius: 2px;\n}\n",
-        H(c->tab_border), H(c->tab_border), H(c->selected_bg), H(c->base), H(c->text),
-        H(c->field_border), H(c->thumb_top), H(c->thumb_bottom));
+        H(toolkit_colors->tab_border), H(toolkit_colors->tab_border),
+        H(toolkit_colors->selected_bg), H(toolkit_colors->base), H(toolkit_colors->text),
+        H(toolkit_colors->field_border), H(toolkit_colors->thumb_top),
+        H(toolkit_colors->thumb_bottom));
     /* Windows 7's selected tab is plain white; XP's has the orange band. */
     if (aero)
-        flat_selected_tab(o, c->tab_border, xd_rgba_hex(0xFCFCFE), 5);
+        flat_selected_tab(buffer, toolkit_colors->tab_border, xd_rgba_hex(0xFCFCFE), 5);
     else
-        luna_selected_tab(o, c->tab_border, c->tab_hot);
+        luna_selected_tab(buffer, toolkit_colors->tab_border, toolkit_colors->tab_hot);
 }
 
 const char *const xd_gtk_assets[XD_GTK_ASSET_COUNT] = {
@@ -509,20 +529,21 @@ static const char *const menu_arrow_rows[7] = {"#...", "##..", "###.", "####",
 static const char *const up_rows[3] = {"..#..", ".###.", "#####"};
 static const char *const down_rows[3] = {"#####", ".###.", "..#.."};
 
-static void pixel_svg_at(xd_strbuf *out, const char *const *rows, int n, int x0, int y0,
+static void pixel_svg_at(xd_strbuf *out, const char *const *rows, int row_count, int x0, int y0,
                          xd_rgba color);
 
-static void pixel_svg(xd_strbuf *out, const char *const *rows, int n, int off, xd_rgba color) {
-    pixel_svg_at(out, rows, n, off, off, color);
+static void pixel_svg(xd_strbuf *out, const char *const *rows, int row_count, int off,
+                      xd_rgba color) {
+    pixel_svg_at(out, rows, row_count, off, off, color);
 }
 
-static void pixel_svg_at(xd_strbuf *out, const char *const *rows, int n, int x0, int y0,
+static void pixel_svg_at(xd_strbuf *out, const char *const *rows, int row_count, int x0, int y0,
                          xd_rgba color) {
     xd_strbuf_appendf(out,
                       "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"11\" height=\"11\" "
                       "viewBox=\"0 0 11 11\" shape-rendering=\"crispEdges\" fill=\"%s\">\n",
                       H(color));
-    for (int y = 0; y < n; y++) {
+    for (int y = 0; y < row_count; y++) {
         int len = (int)strlen(rows[y]);
         for (int x = 0; x < len;) {
             if (rows[y][x] != '#') {
@@ -539,151 +560,154 @@ static void pixel_svg_at(xd_strbuf *out, const char *const *rows, int n, int x0,
     xd_strbuf_append(out, XD_STR("</svg>\n"));
 }
 
-void xd_theme_gtk_asset(const xd_theme *t, xd_gtk_asset which, xd_strbuf *out) {
-    xd_toolkit_colors c;
-    xd_theme_toolkit_colors(t, &c);
-    xd_rgba mark = c.classic ? c.text : c.check_mark;
+void xd_theme_gtk_asset(const xd_theme *theme, xd_gtk_asset which, xd_strbuf *out) {
+    xd_toolkit_colors toolkit_colors;
+    xd_theme_toolkit_colors(theme, &toolkit_colors);
+    xd_rgba mark = toolkit_colors.classic ? toolkit_colors.text : toolkit_colors.check_mark;
     switch (which) {
     case XD_GTK_CHECK:
         pixel_svg(out, check_rows, 7, 2, mark);
         break;
     case XD_GTK_CHECK_DISABLED:
-        pixel_svg(out, check_rows, 7, 2, c.disabled);
+        pixel_svg(out, check_rows, 7, 2, toolkit_colors.disabled);
         break;
     case XD_GTK_CHECK_HOT:
-        pixel_svg(out, check_rows, 7, 2, c.menu_hot_fg);
+        pixel_svg(out, check_rows, 7, 2, toolkit_colors.menu_hot_fg);
         break;
     case XD_GTK_RADIO:
         pixel_svg(out, dot_rows, 4, 4, mark);
         break;
     case XD_GTK_RADIO_DISABLED:
-        pixel_svg(out, dot_rows, 4, 4, c.disabled);
+        pixel_svg(out, dot_rows, 4, 4, toolkit_colors.disabled);
         break;
     case XD_GTK_RADIO_HOT:
-        pixel_svg(out, dot_rows, 4, 4, c.menu_hot_fg);
+        pixel_svg(out, dot_rows, 4, 4, toolkit_colors.menu_hot_fg);
         break;
     case XD_GTK_MENU_ARROW:
-        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, c.menu_fg);
+        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, toolkit_colors.menu_fg);
         break;
     case XD_GTK_MENU_ARROW_HOT:
-        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, c.menu_hot_fg);
+        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, toolkit_colors.menu_hot_fg);
         break;
     case XD_GTK_MENU_ARROW_DISABLED:
-        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, c.disabled);
+        pixel_svg_at(out, menu_arrow_rows, 7, 4, 2, toolkit_colors.disabled);
         break;
     case XD_GTK_SPIN_UP:
-        pixel_svg_at(out, up_rows, 3, 3, 4, c.fg);
+        pixel_svg_at(out, up_rows, 3, 3, 4, toolkit_colors.fg);
         break;
     case XD_GTK_SPIN_UP_DISABLED:
-        pixel_svg_at(out, up_rows, 3, 3, 4, c.disabled);
+        pixel_svg_at(out, up_rows, 3, 3, 4, toolkit_colors.disabled);
         break;
     case XD_GTK_SPIN_DOWN:
-        pixel_svg_at(out, down_rows, 3, 3, 4, c.fg);
+        pixel_svg_at(out, down_rows, 3, 3, 4, toolkit_colors.fg);
         break;
     case XD_GTK_SPIN_DOWN_DISABLED:
-        pixel_svg_at(out, down_rows, 3, 3, 4, c.disabled);
+        pixel_svg_at(out, down_rows, 3, 3, 4, toolkit_colors.disabled);
         break;
     case XD_GTK_ASSET_COUNT:
         break;
     }
 }
 
-
 /* ---- Whistler (Watercolor) ------------------------------------------------------------ */
 
 /* Flat, square controls: grey-bordered buttons with a white inner edge and
  * a light blue ring when default, hovered or focused; #646464 field
  * borders; flat tabs; button-less scroll arrows and a white thumb. */
-static void whistler(xd_strbuf *o) {
-    xd_strbuf_append(o, XD_STR(
-        "button {\n  background-image: none; background-color: #e5e7e1; color: #000000;\n"
-        "  border: 1px solid #808080; border-radius: 0;\n"
-        "  box-shadow: inset 1px 1px #ffffff, inset -1px -1px #bcbeb8;\n"
-        "  padding: 3px 10px; min-height: 0; text-shadow: none; -gtk-icon-shadow: none;\n}\n"
-        "button:hover, button:focus, button.default {\n  border-color: #6f89b0;\n"
-        "  box-shadow: inset 1px 1px #c7dcf6, inset -1px -1px #9bbce5, inset 0 0 0 3px #a8c8eb;\n}\n"
-        "button:active, button:checked {\n  background-color: #d8dad4; border-color: #808080;\n"
-        "  box-shadow: none; padding: 4px 9px 2px 11px;\n}\n"
-        "button:disabled { border-color: #c1c1bb; box-shadow: none; background-color: #ebebe4; }\n"
-        "button:disabled label { color: #a0a0a0; }\n"
-        "toolbar button, button.flat {\n  background-color: transparent; border-color: transparent;\n"
-        "  box-shadow: none; padding: 2px 4px;\n}\n"
-        "toolbar button:hover, button.flat:hover {\n  background-color: #e5e7e1; border-color: #808080;\n"
-        "  box-shadow: inset 1px 1px #ffffff;\n}\n"
-        "toolbar button:active, toolbar button:checked, button.flat:active, button.flat:checked {\n"
-        "  background-color: #d8dad4; border-color: #808080; box-shadow: none;\n}\n"
-        "toolbar { background-color: #ebebe4; padding: 2px; border-bottom: 1px solid #c1c1bb; }\n"
-        "entry, spinbutton {\n  background-color: #ffffff; color: #000000; border: 1px solid #646464;\n"
-        "  border-radius: 0; box-shadow: none; padding: 3px 4px; min-height: 0;\n}\n"
-        "entry:disabled, spinbutton:disabled { background-color: #ebebe4; }\n"
-        "scrolledwindow.frame, frame > border, .frame {\n  border: 1px solid #646464;\n"
-        "  border-radius: 0; box-shadow: none;\n}\n"
-        "progressbar trough { background-color: #ffffff; border: 1px solid #646464; }\n"
-        "check, radio {\n  min-width: 13px; min-height: 13px; background-image: none;\n"
-        "  background-color: #ffffff; border: 1px solid #646464; border-radius: 0;\n"
-        "  box-shadow: none; color: #000000; -gtk-icon-source: none; margin: 0 4px 0 0;\n}\n"
-        "radio { border-radius: 50%; }\n"
-        "check:hover, radio:hover { box-shadow: inset 0 0 0 1px #a8c8eb; }\n"
-        "check:disabled, radio:disabled { background-color: #ebebe4; border-color: #c1c1bb; }\n"
-        "menubar { background-color: #ebebe4; padding: 0; box-shadow: none; border: none; }\n"
-        "menubar > menuitem { padding: 2px 7px; }\n"
-        "menubar > menuitem:hover { background-color: #316ac5; color: #ffffff; }\n"
-        "menu, .menu, .context-menu {\n  background-color: #ffffff; color: #000000;\n"
-        "  border: 1px solid #808080; border-radius: 0; padding: 2px; box-shadow: none;\n}\n"
-        "menu menuitem { padding: 3px 20px 3px 4px; min-height: 16px; }\n"
-        "menu menuitem:hover { background-color: #316ac5; color: #ffffff; }\n"
-        "menu menuitem:disabled { color: #a0a0a0; }\n"
-        "menu separator { margin: 3px 2px; min-height: 1px; background-color: #c1c1bb; }\n"
-        "scrollbar {\n  -GtkScrollbar-has-backward-stepper: true;\n"
-        "  -GtkScrollbar-has-forward-stepper: true;\n  background-color: #ebebe4; border: none;\n}\n"
-        "scrollbar trough { background-color: #ebebe4; border: none; }\n"
-        "scrollbar slider {\n  min-width: 11px; min-height: 11px; background-color: #ffffff;\n"
-        "  border: 2px solid #c1c1bb; border-radius: 0; margin: 0 1px;\n}\n"
-        "scrollbar.horizontal slider { margin: 1px 0; }\n"
-        "scrollbar button {\n  min-width: 15px; min-height: 15px; background: none; border: none;\n"
-        "  box-shadow: none; color: #000000; padding: 0; margin: 0;\n}\n"
-        "scrollbar button:disabled { color: #a0a0a0; }\n"
-        "scrollbar.vertical button.up { -gtk-icon-source: -gtk-icontheme(\"pan-up-symbolic\"); }\n"
-        "scrollbar.vertical button.down { -gtk-icon-source: "
-        "-gtk-icontheme(\"pan-down-symbolic\"); }\n"
-        "scrollbar.horizontal button.up { -gtk-icon-source: "
-        "-gtk-icontheme(\"pan-start-symbolic\"); }\n"
-        "scrollbar.horizontal button.down { -gtk-icon-source: "
-        "-gtk-icontheme(\"pan-end-symbolic\"); }\n"));
+static void whistler(xd_strbuf *buffer) {
+    xd_strbuf_append(
+        buffer,
+        XD_STR(
+            "button {\n  background-image: none; background-color: #e5e7e1; color: #000000;\n"
+            "  border: 1px solid #808080; border-radius: 0;\n"
+            "  box-shadow: inset 1px 1px #ffffff, inset -1px -1px #bcbeb8;\n"
+            "  padding: 3px 10px; min-height: 0; text-shadow: none; -gtk-icon-shadow: none;\n}\n"
+            "button:hover, button:focus, button.default {\n  border-color: #6f89b0;\n"
+            "  box-shadow: inset 1px 1px #c7dcf6, inset -1px -1px #9bbce5, inset 0 0 0 3px #a8c8eb;\n}\n"
+            "button:active, button:checked {\n  background-color: #d8dad4; border-color: #808080;\n"
+            "  box-shadow: none; padding: 4px 9px 2px 11px;\n}\n"
+            "button:disabled { border-color: #c1c1bb; box-shadow: none; background-color: #ebebe4; }\n"
+            "button:disabled label { color: #a0a0a0; }\n"
+            "toolbar button, button.flat {\n  background-color: transparent; border-color: transparent;\n"
+            "  box-shadow: none; padding: 2px 4px;\n}\n"
+            "toolbar button:hover, button.flat:hover {\n  background-color: #e5e7e1; border-color: #808080;\n"
+            "  box-shadow: inset 1px 1px #ffffff;\n}\n"
+            "toolbar button:active, toolbar button:checked, button.flat:active, button.flat:checked {\n"
+            "  background-color: #d8dad4; border-color: #808080; box-shadow: none;\n}\n"
+            "toolbar { background-color: #ebebe4; padding: 2px; border-bottom: 1px solid #c1c1bb; }\n"
+            "entry, spinbutton {\n  background-color: #ffffff; color: #000000; border: 1px solid #646464;\n"
+            "  border-radius: 0; box-shadow: none; padding: 3px 4px; min-height: 0;\n}\n"
+            "entry:disabled, spinbutton:disabled { background-color: #ebebe4; }\n"
+            "scrolledwindow.frame, frame > border, .frame {\n  border: 1px solid #646464;\n"
+            "  border-radius: 0; box-shadow: none;\n}\n"
+            "progressbar trough { background-color: #ffffff; border: 1px solid #646464; }\n"
+            "check, radio {\n  min-width: 13px; min-height: 13px; background-image: none;\n"
+            "  background-color: #ffffff; border: 1px solid #646464; border-radius: 0;\n"
+            "  box-shadow: none; color: #000000; -gtk-icon-source: none; margin: 0 4px 0 0;\n}\n"
+            "radio { border-radius: 50%; }\n"
+            "check:hover, radio:hover { box-shadow: inset 0 0 0 1px #a8c8eb; }\n"
+            "check:disabled, radio:disabled { background-color: #ebebe4; border-color: #c1c1bb; }\n"
+            "menubar { background-color: #ebebe4; padding: 0; box-shadow: none; border: none; }\n"
+            "menubar > menuitem { padding: 2px 7px; }\n"
+            "menubar > menuitem:hover { background-color: #316ac5; color: #ffffff; }\n"
+            "menu, .menu, .context-menu {\n  background-color: #ffffff; color: #000000;\n"
+            "  border: 1px solid #808080; border-radius: 0; padding: 2px; box-shadow: none;\n}\n"
+            "menu menuitem { padding: 3px 20px 3px 4px; min-height: 16px; }\n"
+            "menu menuitem:hover { background-color: #316ac5; color: #ffffff; }\n"
+            "menu menuitem:disabled { color: #a0a0a0; }\n"
+            "menu separator { margin: 3px 2px; min-height: 1px; background-color: #c1c1bb; }\n"
+            "scrollbar {\n  -GtkScrollbar-has-backward-stepper: true;\n"
+            "  -GtkScrollbar-has-forward-stepper: true;\n  background-color: #ebebe4; border: none;\n}\n"
+            "scrollbar trough { background-color: #ebebe4; border: none; }\n"
+            "scrollbar slider {\n  min-width: 11px; min-height: 11px; background-color: #ffffff;\n"
+            "  border: 2px solid #c1c1bb; border-radius: 0; margin: 0 1px;\n}\n"
+            "scrollbar.horizontal slider { margin: 1px 0; }\n"
+            "scrollbar button {\n  min-width: 15px; min-height: 15px; background: none; border: none;\n"
+            "  box-shadow: none; color: #000000; padding: 0; margin: 0;\n}\n"
+            "scrollbar button:disabled { color: #a0a0a0; }\n"
+            "scrollbar.vertical button.up { -gtk-icon-source: -gtk-icontheme(\"pan-up-symbolic\"); }\n"
+            "scrollbar.vertical button.down { -gtk-icon-source: "
+            "-gtk-icontheme(\"pan-down-symbolic\"); }\n"
+            "scrollbar.horizontal button.up { -gtk-icon-source: "
+            "-gtk-icontheme(\"pan-start-symbolic\"); }\n"
+            "scrollbar.horizontal button.down { -gtk-icon-source: "
+            "-gtk-icontheme(\"pan-end-symbolic\"); }\n"));
     /* Split in two: C limits the length of one string literal. */
-    xd_strbuf_append(o, XD_STR(
-        "notebook > header {\n  background-color: #ebebe4; border: none;\n"
-        "  border-bottom: 1px solid #ffffff; padding: 0 2px;\n}\n"
-        "notebook > header > tabs > tab {\n  background-color: #dbdbce; background-image: none;\n"
-        "  border: none; border-radius: 0; box-shadow: inset -1px 0 #ffffff;\n"
-        "  margin: 2px 0 0 0; padding: 2px 8px; min-height: 0; outline-offset: -3px;\n}\n"
-        "notebook > header > tabs > tab:checked { background-color: #f3f3ef; }\n"
-        "notebook > stack:not(:only-child) {\n  background-color: #f3f3ef; border: 1px solid;\n"
-        "  border-color: #ffffff #c1c1bb #c1c1bb #ffffff; border-top: none;\n}\n"
-        "frame { padding-left: 6px; }\n"
-        "frame > border { margin-left: -6px; border: 1px solid #c1c1bb; }\n"
-        "frame > border + label { margin: 0; padding: 0 2px; color: #000000; }\n"
-        "frame.xd-sunken { padding-left: 0; }\n"
-        "frame.xd-sunken > border { margin-left: 0; border-color: #c1c1bb #ffffff #ffffff #c1c1bb; }\n"
-        "combobox button.combo {\n  background-image: none; background-color: #ffffff; color: #000000;\n"
-        "  border: 1px solid #646464; border-radius: 0; box-shadow: none; padding: 0 0 0 3px;\n}\n"
-        "combobox button.combo arrow {\n  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");\n"
-        "  min-width: 13px; min-height: 13px; margin: 1px; padding: 1px;\n"
-        "  background-color: #ebebe4; color: #000000; border: none;\n}\n"
-        "treeview.view header button, columnview header button {\n"
-        "  background-color: #e5e7e1; border: none; border-right: 1px solid #a0a0a0;\n"
-        "  border-bottom: 1px solid #808080; border-radius: 0; box-shadow: inset 1px 1px #ffffff;\n"
-        "  padding: 1px 6px;\n}\n"
-        "paned > separator { background-color: #ebebe4; min-width: 4px; min-height: 4px;\n"
-        "  background-image: none; }\n"
-        "separator { background-color: #c1c1bb; min-width: 1px; min-height: 1px; }\n"
-        "scale trough { background-color: #ffffff; border: 1px solid #646464; border-radius: 0;\n"
-        "  min-height: 4px; min-width: 4px; }\n"
-        "scale slider { min-width: 11px; min-height: 21px; background-color: #e5e7e1;\n"
-        "  border: 1px solid #808080; border-radius: 0; box-shadow: inset 1px 1px #ffffff;\n"
-        "  margin: -9px 0; }\n"
-        "scale highlight { background: none; }\n"));
-    flat_selected_tab(o, xd_rgba_hex(0xFFFFFF), xd_rgba_hex(0xF3F3EF), 4);
+    xd_strbuf_append(
+        buffer,
+        XD_STR(
+            "notebook > header {\n  background-color: #ebebe4; border: none;\n"
+            "  border-bottom: 1px solid #ffffff; padding: 0 2px;\n}\n"
+            "notebook > header > tabs > tab {\n  background-color: #dbdbce; background-image: none;\n"
+            "  border: none; border-radius: 0; box-shadow: inset -1px 0 #ffffff;\n"
+            "  margin: 2px 0 0 0; padding: 2px 8px; min-height: 0; outline-offset: -3px;\n}\n"
+            "notebook > header > tabs > tab:checked { background-color: #f3f3ef; }\n"
+            "notebook > stack:not(:only-child) {\n  background-color: #f3f3ef; border: 1px solid;\n"
+            "  border-color: #ffffff #c1c1bb #c1c1bb #ffffff; border-top: none;\n}\n"
+            "frame { padding-left: 6px; }\n"
+            "frame > border { margin-left: -6px; border: 1px solid #c1c1bb; }\n"
+            "frame > border + label { margin: 0; padding: 0 2px; color: #000000; }\n"
+            "frame.xd-sunken { padding-left: 0; }\n"
+            "frame.xd-sunken > border { margin-left: 0; border-color: #c1c1bb #ffffff #ffffff #c1c1bb; }\n"
+            "combobox button.combo {\n  background-image: none; background-color: #ffffff; color: #000000;\n"
+            "  border: 1px solid #646464; border-radius: 0; box-shadow: none; padding: 0 0 0 3px;\n}\n"
+            "combobox button.combo arrow {\n  -gtk-icon-source: -gtk-icontheme(\"pan-down-symbolic\");\n"
+            "  min-width: 13px; min-height: 13px; margin: 1px; padding: 1px;\n"
+            "  background-color: #ebebe4; color: #000000; border: none;\n}\n"
+            "treeview.view header button, columnview header button {\n"
+            "  background-color: #e5e7e1; border: none; border-right: 1px solid #a0a0a0;\n"
+            "  border-bottom: 1px solid #808080; border-radius: 0; box-shadow: inset 1px 1px #ffffff;\n"
+            "  padding: 1px 6px;\n}\n"
+            "paned > separator { background-color: #ebebe4; min-width: 4px; min-height: 4px;\n"
+            "  background-image: none; }\n"
+            "separator { background-color: #c1c1bb; min-width: 1px; min-height: 1px; }\n"
+            "scale trough { background-color: #ffffff; border: 1px solid #646464; border-radius: 0;\n"
+            "  min-height: 4px; min-width: 4px; }\n"
+            "scale slider { min-width: 11px; min-height: 21px; background-color: #e5e7e1;\n"
+            "  border: 1px solid #808080; border-radius: 0; box-shadow: inset 1px 1px #ffffff;\n"
+            "  margin: -9px 0; }\n"
+            "scale highlight { background: none; }\n"));
+    flat_selected_tab(buffer, xd_rgba_hex(0xFFFFFF), xd_rgba_hex(0xF3F3EF), 4);
 }
 
 /* XP push buttons: the theme engine's own button (saved as PNGs by
@@ -691,7 +715,7 @@ static void whistler(xd_strbuf *o) {
  * buttons, so GTK's match ours pixel for pixel. Toolbars keep flat
  * buttons. */
 #define XP_BUTTON "button.text-button:not(.flat):not(.combo)"
-static void xp_buttons(const xd_toolkit_colors *c, xd_strbuf *o) {
+static void xp_buttons(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) {
     static const char *const states[][2] = {
         {"", "button"},
         {":focus, " XP_BUTTON ".default", "button-default"},
@@ -699,37 +723,41 @@ static void xp_buttons(const xd_toolkit_colors *c, xd_strbuf *o) {
         {":active, " XP_BUTTON ":checked", "button-pressed"},
         {":disabled", "button-disabled"},
     };
-    xd_strbuf_append(o, XD_STR(XP_BUTTON " {\n"
-                               "  border-style: solid;\n  border-width: 4px 5px;\n"
-                               "  border-radius: 0;\n  background-image: none;\n"
-                               "  background-color: transparent;\n  box-shadow: none;\n"
-                               "  padding: 0 6px;\n  min-height: 15px;\n  min-width: 53px;\n}\n"));
+    xd_strbuf_append(buffer,
+                     XD_STR(XP_BUTTON
+                            " {\n"
+                            "  border-style: solid;\n  border-width: 4px 5px;\n"
+                            "  border-radius: 0;\n  background-image: none;\n"
+                            "  background-color: transparent;\n  box-shadow: none;\n"
+                            "  padding: 0 6px;\n  min-height: 15px;\n  min-width: 53px;\n}\n"));
     /* The border image paints the edges; the same image stretched as the
      * background fills the middle (border images don't). */
     for (size_t i = 0; i < XD_ARRAY_LEN(states); i++)
-        xd_strbuf_appendf(o,
-                          XP_BUTTON "%s {\n  border-image: -gtk-scaled(url(\"assets/%s.png\"), "
+        xd_strbuf_appendf(buffer,
+                          XP_BUTTON
+                          "%s {\n  border-image: -gtk-scaled(url(\"assets/%s.png\"), "
                           "url(\"assets/%s@2.png\")) 4 5 4 5 stretch;\n"
                           "  background-image: -gtk-scaled(url(\"assets/%s.png\"), "
                           "url(\"assets/%s@2.png\"));\n"
                           "  background-size: 100%% 100%%;\n  background-origin: border-box;\n}\n",
                           states[i][0], states[i][1], states[i][1], states[i][1], states[i][1]);
     /* Pressed: the text moves one pixel down and right, as in Windows. */
-    xd_strbuf_appendf(o,
-                      XP_BUTTON ":active { padding: 1px 5px 0 7px; min-height: 14px; }\n"
-                      XP_BUTTON ":disabled label { color: %s; }\n"
-                      "toolbar " XP_BUTTON " {\n  border-image: none;\n  border-width: 1px;\n"
-                      "  padding: 2px 4px;\n  min-height: 0;\n  min-width: 0;\n}\n",
-                      H(c->disabled));
+    xd_strbuf_appendf(buffer,
+                      XP_BUTTON ":active { padding: 1px 5px 0 7px; min-height: 14px; }\n" XP_BUTTON
+                                ":disabled label { color: %s; }\n"
+                                "toolbar " XP_BUTTON
+                                " {\n  border-image: none;\n  border-width: 1px;\n"
+                                "  padding: 2px 4px;\n  min-height: 0;\n  min-width: 0;\n}\n",
+                      H(toolkit_colors->disabled));
 }
 #undef XP_BUTTON
 
 /* Combo boxes drop down a list box, as in Windows, instead of a menu over
  * the field: white, a 1px border (libxdui's), the highlight following the
  * pointer. GTK names the pop-up window, not its combo box. */
-static void combo_lists(const xd_toolkit_colors *c, xd_strbuf *o) {
-    xd_rgba border = c->classic ? c->frame : xd_rgba_hex(0x7F9DB9);
-    xd_strbuf_appendf(o,
+static void combo_lists(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) {
+    xd_rgba border = toolkit_colors->classic ? toolkit_colors->frame : xd_rgba_hex(0x7F9DB9);
+    xd_strbuf_appendf(buffer,
                       "combobox { -GtkComboBox-appears-as-list: 1; }\n"
                       "#gtk-combobox-popup-window scrolledwindow.frame {\n"
                       "  border: 1px solid %s; border-radius: 0; box-shadow: none; padding: 0;\n}\n"
@@ -737,7 +765,8 @@ static void combo_lists(const xd_toolkit_colors *c, xd_strbuf *o) {
                       "  -GtkTreeView-vertical-separator: 0; background-color: %s; color: %s;\n}\n"
                       "#gtk-combobox-popup-window treeview.view:selected {\n"
                       "  background-color: %s; color: %s;\n}\n",
-                      H(border), H(c->base), H(c->text), H(c->selected_bg), H(c->selected_fg));
+                      H(border), H(toolkit_colors->base), H(toolkit_colors->text),
+                      H(toolkit_colors->selected_bg), H(toolkit_colors->selected_fg));
 }
 
 /* The file chooser as far as CSS reaches XP's Open dialog: the places
@@ -746,39 +775,44 @@ static void combo_lists(const xd_toolkit_colors *c, xd_strbuf *o) {
  * push buttons are border images, which the path bar must drop. */
 #define PATH_BUTTON ".path-bar button"
 #define PATH_XP_BUTTON ".path-bar button.text-button:not(.flat):not(.combo)"
-static void file_chooser(const xd_toolkit_colors *c, xd_strbuf *o) {
-    if (c->classic)
-        xd_strbuf_appendf(o,
+static void file_chooser(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) {
+    if (toolkit_colors->classic)
+        xd_strbuf_appendf(buffer,
                           "placessidebar {\n  border-style: solid; border-width: 1px;\n"
                           "  border-color: %s %s %s %s;\n"
                           "  box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n}\n",
-                          H(c->shadow), H(c->hilight), H(c->hilight), H(c->shadow),
-                          H(c->dkshadow), H(c->light));
+                          H(toolkit_colors->shadow), H(toolkit_colors->hilight),
+                          H(toolkit_colors->hilight), H(toolkit_colors->shadow),
+                          H(toolkit_colors->dkshadow), H(toolkit_colors->light));
     else
-        xd_strbuf_appendf(o, "placessidebar { border: 1px solid %s; }\n", H(c->field_border));
+        xd_strbuf_appendf(buffer, "placessidebar { border: 1px solid %s; }\n",
+                          H(toolkit_colors->field_border));
     xd_strbuf_appendf(
-        o,
+        buffer,
         "placessidebar { -gtk-icon-style: regular; background-color: %s; padding: 1px; }\n"
         "placessidebar list { background-color: %s; }\n"
         "placessidebar row.sidebar-row { min-height: 0; padding: 1px 4px; }\n"
         "placessidebar row.sidebar-row:selected label,\n"
         "placessidebar row.sidebar-row:selected image { color: %s; }\n"
-        "placessidebar separator { margin: 3px 0; }\n"
-        PATH_BUTTON ", " PATH_XP_BUTTON " {\n"
+        "placessidebar separator { margin: 3px 0; }\n" PATH_BUTTON ", " PATH_XP_BUTTON " {\n"
         "  background-color: transparent; background-image: none; border-image: none;\n"
         "  border: 1px solid transparent; border-radius: 0; box-shadow: none;\n"
-        "  padding: 1px 4px; min-height: 0; min-width: 0; -gtk-icon-style: regular;\n}\n"
-        PATH_BUTTON ":hover, " PATH_XP_BUTTON ":hover {\n"
-        "  border-image: none; background-image: none; border-color: %s %s %s %s;\n}\n"
-        PATH_BUTTON ":active, " PATH_XP_BUTTON ":active {\n"
+        "  padding: 1px 4px; min-height: 0; min-width: 0; -gtk-icon-style: regular;\n}\n" PATH_BUTTON
+        ":hover, " PATH_XP_BUTTON ":hover {\n"
+        "  border-image: none; background-image: none; border-color: %s %s %s %s;\n}\n" PATH_BUTTON
+        ":active, " PATH_XP_BUTTON ":active {\n"
         "  border-image: none; background-image: none; border-color: %s %s %s %s;\n"
-        "  padding: 1px 4px;\n}\n"
-        PATH_BUTTON ":checked, " PATH_XP_BUTTON ":checked { font-weight: bold; }\n",
-        H(c->base), H(c->base), H(c->selected_fg),
-        H(c->classic ? c->hilight : c->field_border), H(c->classic ? c->shadow : c->field_border),
-        H(c->classic ? c->shadow : c->field_border), H(c->classic ? c->hilight : c->field_border),
-        H(c->classic ? c->shadow : c->field_border), H(c->classic ? c->hilight : c->field_border),
-        H(c->classic ? c->hilight : c->field_border), H(c->classic ? c->shadow : c->field_border));
+        "  padding: 1px 4px;\n}\n" PATH_BUTTON ":checked, " PATH_XP_BUTTON
+        ":checked { font-weight: bold; }\n",
+        H(toolkit_colors->base), H(toolkit_colors->base), H(toolkit_colors->selected_fg),
+        H(toolkit_colors->classic ? toolkit_colors->hilight : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->shadow : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->shadow : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->hilight : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->shadow : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->hilight : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->hilight : toolkit_colors->field_border),
+        H(toolkit_colors->classic ? toolkit_colors->shadow : toolkit_colors->field_border));
 }
 #undef PATH_BUTTON
 #undef PATH_XP_BUTTON
@@ -789,14 +823,14 @@ static void file_chooser(const xd_toolkit_colors *c, xd_strbuf *o) {
  * boxes: Yes before No comes from the theme's settings.ini (GTK's
  * alternative button order); GTK stretches the buttons across the box in
  * code, so CSS can only space them apart as Windows does. */
-static void client_frames(const xd_toolkit_colors *c, xd_strbuf *o) {
+static void client_frames(const xd_toolkit_colors *toolkit_colors, xd_strbuf *buffer) {
     /* Menus and tooltips are client-decorated windows too (Wayland popups):
      * they have their own border. */
     const char *frame = "window.csd:not(.popup):not(.tooltip):not(.maximized):not(.fullscreen)"
                         ":not(.tiled) > decoration";
-    if (c->classic)
+    if (toolkit_colors->classic)
         /* Windows 2000's 3px dialog frame. */
-        xd_strbuf_appendf(o,
+        xd_strbuf_appendf(buffer,
                           "%s {\n  border-style: solid; border-width: 1px;\n"
                           "  border-color: %s %s %s %s;\n"
                           "  box-shadow: inset 1px 1px %s, inset -1px -1px %s;\n"
@@ -805,54 +839,57 @@ static void client_frames(const xd_toolkit_colors *c, xd_strbuf *o) {
                            * caption is 18px. */
                           "messagedialog > box.titlebar > label.title {\n"
                           "  margin-top: -4px; margin-bottom: -4px;\n}\n",
-                          frame, H(c->light), H(c->dkshadow), H(c->dkshadow), H(c->light),
-                          H(c->hilight), H(c->shadow), H(c->face));
+                          frame, H(toolkit_colors->light), H(toolkit_colors->dkshadow),
+                          H(toolkit_colors->dkshadow), H(toolkit_colors->light),
+                          H(toolkit_colors->hilight), H(toolkit_colors->shadow),
+                          H(toolkit_colors->face));
     else
-        xd_strbuf_appendf(o, "%s {\n  border: 3px solid %s; border-top-width: 0;\n}\n", frame,
-                          H(c->title_bg));
-    xd_strbuf_append(o, XD_STR("messagedialog .dialog-action-area > button { margin: 0 3px; }\n"
-                               "messagedialog .dialog-action-area > button:first-child {\n"
-                               "  margin-left: 0;\n}\n"
-                               "messagedialog .dialog-action-area > button:last-child {\n"
-                               "  margin-right: 0;\n}\n"));
+        xd_strbuf_appendf(buffer, "%s {\n  border: 3px solid %s; border-top-width: 0;\n}\n", frame,
+                          H(toolkit_colors->title_bg));
+    xd_strbuf_append(buffer,
+                     XD_STR("messagedialog .dialog-action-area > button { margin: 0 3px; }\n"
+                            "messagedialog .dialog-action-area > button:first-child {\n"
+                            "  margin-left: 0;\n}\n"
+                            "messagedialog .dialog-action-area > button:last-child {\n"
+                            "  margin-right: 0;\n}\n"));
 }
 
-void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
-    xd_toolkit_colors c;
-    xd_theme_toolkit_colors(t, &c);
-    xd_gtk_pkg_toolkit_colors(t, &c);
+void xd_theme_gtk_css(const xd_theme *theme, xd_strbuf *out) {
+    xd_toolkit_colors toolkit_colors;
+    xd_theme_toolkit_colors(theme, &toolkit_colors);
+    xd_gtk_pkg_toolkit_colors(theme, &toolkit_colors);
     xd_strbuf_appendf(out,
                       "/* Generated by XeonDesktop from the %s style and the \"%s\" colour\n"
                       " * scheme. Edits are overwritten; change Display Properties instead. */\n\n",
-                      xd_visual_style_name(t->style), t->scheme.name);
-    defines(&c, out);
-    font_rules(t, out);
-    common(&c, out);
+                      xd_visual_style_name(theme->style), theme->scheme.name);
+    defines(&toolkit_colors, out);
+    font_rules(theme, out);
+    common(&toolkit_colors, out);
     /* Dialog button rows in every style: Windows' 75x23 (50x14 dialog
      * units); GTK's own 85x27 minimum would win otherwise. */
     xd_strbuf_append(out, XD_STR("buttonbox {\n  -GtkButtonBox-child-min-width: 75;\n"
                                  "  -GtkButtonBox-child-min-height: 23;\n"
                                  "  -GtkButtonBox-child-internal-pad-x: 0;\n"
                                  "  -GtkButtonBox-child-internal-pad-y: 0;\n}\n"));
-    if (c.classic) {
-        classic(&c, out);
+    if (toolkit_colors.classic) {
+        classic(&toolkit_colors, out);
         /* Windows 2000's progress bar: blocks of the highlight colour. */
-        xd_strbuf_appendf(out,
-                          "progressbar trough { padding: 1px; }\n"
-                          "progressbar progress {\n  background-color: transparent;\n"
-                          "  background-image: repeating-linear-gradient(to right, %s 0px, %s 8px,\n"
-                          "    transparent 8px, transparent 10px);\n}\n",
-                          H(c.selected_bg), H(c.selected_bg));
-    }
-    else if (t->style == XD_STYLE_WHISTLER)
+        xd_strbuf_appendf(
+            out,
+            "progressbar trough { padding: 1px; }\n"
+            "progressbar progress {\n  background-color: transparent;\n"
+            "  background-image: repeating-linear-gradient(to right, %s 0px, %s 8px,\n"
+            "    transparent 8px, transparent 10px);\n}\n",
+            H(toolkit_colors.selected_bg), H(toolkit_colors.selected_bg));
+    } else if (theme->style == XD_STYLE_WHISTLER)
         whistler(out);
     else
-        modern(&c, t->style == XD_STYLE_AERO, out);
-    if (!c.classic)
-        xp_buttons(&c, out);
+        modern(&toolkit_colors, theme->style == XD_STYLE_AERO, out);
+    if (!toolkit_colors.classic)
+        xp_buttons(&toolkit_colors, out);
     /* A slider's tick marks: Windows' 1 px lines, 4 px long, in the
      * trackbar's tick colour (without a size GTK draws them invisible). */
-    xd_rgba tics = xd_theme_trackbar_tics_color(t, false);
+    xd_rgba tics = xd_theme_trackbar_tics_color(theme, false);
     xd_strbuf_appendf(out,
                       "scale marks mark indicator { background-color: %s; color: %s;\n"
                       "  min-height: 4px; min-width: 1px; }\n"
@@ -870,8 +907,8 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
         "radio:checked:disabled { -gtk-icon-source: url(\"%s\"); }\n"
         "menu menuitem:hover > check:checked { -gtk-icon-source: url(\"%s\"); }\n"
         "menu menuitem:hover > radio:checked { -gtk-icon-source: url(\"%s\"); }\n",
-        xd_gtk_assets[XD_GTK_CHECK], xd_gtk_assets[XD_GTK_CHECK_DISABLED], H(c.bg),
-        xd_gtk_assets[XD_GTK_CHECK_DISABLED], xd_gtk_assets[XD_GTK_RADIO], H(c.bg),
+        xd_gtk_assets[XD_GTK_CHECK], xd_gtk_assets[XD_GTK_CHECK_DISABLED], H(toolkit_colors.bg),
+        xd_gtk_assets[XD_GTK_CHECK_DISABLED], xd_gtk_assets[XD_GTK_RADIO], H(toolkit_colors.bg),
         xd_gtk_assets[XD_GTK_RADIO_DISABLED], xd_gtk_assets[XD_GTK_CHECK_HOT],
         xd_gtk_assets[XD_GTK_RADIO_HOT]);
     /* GTK marks the whole notebook as a .frame; Windows draws no outline
@@ -907,20 +944,24 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
     /* Info bars: Windows' information bar is the tooltip colour with a
      * thin border. Switches (Windows has none) as a sunken track with a
      * button-like thumb; their I/O glyphs aren't Windows. */
-    xd_strbuf_appendf(out,
-                      "infobar { background-color: %s; color: %s;\n"
-                      "  border: 1px solid %s; padding: 2px; }\n"
-                      "infobar label { color: %s; }\n"
-                      "switch { background-color: %s; border: 1px solid %s; border-radius: 0;\n"
-                      "  min-width: 40px; min-height: 16px; padding: 1px; font-size: 0; }\n"
-                      "switch:checked { background-color: %s; }\n"
-                      "switch image { -gtk-icon-source: none; color: transparent; }\n"
-                      "switch slider { min-width: 18px; min-height: 14px; border-radius: 0;\n"
-                      "  background-color: %s; border: 1px solid %s; }\n",
-                      H(c.tooltip_bg), H(c.tooltip_fg), H(c.classic ? c.dkshadow : c.field_border),
-                      H(c.tooltip_fg), H(c.base), H(c.classic ? c.shadow : c.field_border),
-                      H(c.selected_bg), H(c.classic ? c.face : c.bg),
-                      H(c.classic ? c.dkshadow : c.field_border));
+    xd_strbuf_appendf(
+        out,
+        "infobar { background-color: %s; color: %s;\n"
+        "  border: 1px solid %s; padding: 2px; }\n"
+        "infobar label { color: %s; }\n"
+        "switch { background-color: %s; border: 1px solid %s; border-radius: 0;\n"
+        "  min-width: 40px; min-height: 16px; padding: 1px; font-size: 0; }\n"
+        "switch:checked { background-color: %s; }\n"
+        "switch image { -gtk-icon-source: none; color: transparent; }\n"
+        "switch slider { min-width: 18px; min-height: 14px; border-radius: 0;\n"
+        "  background-color: %s; border: 1px solid %s; }\n",
+        H(toolkit_colors.tooltip_bg), H(toolkit_colors.tooltip_fg),
+        H(toolkit_colors.classic ? toolkit_colors.dkshadow : toolkit_colors.field_border),
+        H(toolkit_colors.tooltip_fg), H(toolkit_colors.base),
+        H(toolkit_colors.classic ? toolkit_colors.shadow : toolkit_colors.field_border),
+        H(toolkit_colors.selected_bg),
+        H(toolkit_colors.classic ? toolkit_colors.face : toolkit_colors.bg),
+        H(toolkit_colors.classic ? toolkit_colors.dkshadow : toolkit_colors.field_border));
     /* Popovers (other programs' menus) look like Windows menus: square,
      * the menu colour and border, highlighted rows, the submenu arrow. */
     xd_strbuf_appendf(
@@ -934,9 +975,10 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
         "modelbutton.flat arrow.right { -gtk-icon-source: url(\"%s\"); }\n"
         "modelbutton.flat:hover arrow.right { -gtk-icon-source: url(\"%s\"); }\n"
         "popover.background separator { margin: 3px 0; }\n",
-        H(c.menu_bg), H(c.menu_fg), H(c.menu_border),
-        c.classic ? "inset 1px 1px #ffffff, inset -1px -1px #808080" : "none", H(c.menu_fg),
-        H(c.menu_hot), H(c.menu_hot_fg), H(c.disabled), xd_gtk_assets[XD_GTK_MENU_ARROW],
+        H(toolkit_colors.menu_bg), H(toolkit_colors.menu_fg), H(toolkit_colors.menu_border),
+        toolkit_colors.classic ? "inset 1px 1px #ffffff, inset -1px -1px #808080" : "none",
+        H(toolkit_colors.menu_fg), H(toolkit_colors.menu_hot), H(toolkit_colors.menu_hot_fg),
+        H(toolkit_colors.disabled), xd_gtk_assets[XD_GTK_MENU_ARROW],
         xd_gtk_assets[XD_GTK_MENU_ARROW_HOT]);
     /* Windows menus show only the mark of a check or radio item, never a box. */
     xd_strbuf_append(out, XD_STR("menu menuitem check, menu menuitem radio, menu menuitem check:hover,\n"
@@ -944,9 +986,9 @@ void xd_theme_gtk_css(const xd_theme *t, xd_strbuf *out) {
                                  "  background-image: none;\n  background-color: transparent;\n"
                                  "  border-color: transparent;\n  box-shadow: none;\n"
                                  "  color: inherit;\n}\n"));
-    combo_lists(&c, out);
-    file_chooser(&c, out);
-    client_frames(&c, out);
+    combo_lists(&toolkit_colors, out);
+    file_chooser(&toolkit_colors, out);
+    client_frames(&toolkit_colors, out);
     /* A theme package's images over all that, where it has them. */
-    xd_gtk_pkg_css(t, out);
+    xd_gtk_pkg_css(theme, out);
 }
