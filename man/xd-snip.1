@@ -11,6 +11,8 @@ xd\-snip \- Snipping Tool
 .B \-\-copy\-window
 |
 .B \-\-copy\-stdin
+|
+.BR \-\-record [ =area ]
 .YS
 .SH DESCRIPTION
 .B xd\-snip
@@ -63,6 +65,22 @@ Copy the active window to the clipboard (Alt+Print Screen).
 .TP
 .B \-\-copy\-stdin
 Copy a PNG read from standard input to the clipboard.
+.TP
+.B \-\-record
+Record the active window (Win+Alt+R).
+.TP
+.B \-\-record=area
+Record an area chosen first (Win+Shift+R): drag it out, or click a
+monitor for all of it.
+.PP
+Either
+.B \-\-record
+stops the recording running, if there is one.
+Recordings are MP4 files (H.264, AAC) in
+.IR "~/Videos/Screen Recordings" ,
+made with GStreamer; the sound (none, the microphone, what the speakers
+play, or both) is Record's arrow's choice, kept in
+.IR snip.ini .
 .PP
 The
 .B \-\-copy

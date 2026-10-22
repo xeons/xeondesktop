@@ -23,6 +23,8 @@ depends=(
   'glib2'
   'gtk3'
   'gtk-layer-shell'  # the Snipping Tool's overlay
+  'gstreamer'        # screen recording
+  'gst-plugins-base-libs'
   'gdk-pixbuf2'
   'procps-ng'
   'systemd-libs'
@@ -63,6 +65,9 @@ makedepends=('meson' 'ninja' 'wayland-protocols' 'libxcb' 'xcb-util-wm' 'libdrm'
 checkdepends=('ttf-dejavu' 'openssh' 'gnupg')
 optdepends=(
   'xorg-xwayland: X11 applications'
+  'gst-plugins-good: screen recording (MP4, sound)'
+  'gst-plugins-ugly: screen recording (x264, or gst-plugins-bad's OpenH264)'
+  'gst-libav: screen recording with sound (AAC)'
   'breeze-icons: icons for the Start menu and file manager'
   'oxygen-icons: the Oxygen icon theme (Display Properties > Linux)'
   'papirus-icon-theme: the Papirus icon theme (Display Properties > Linux)'

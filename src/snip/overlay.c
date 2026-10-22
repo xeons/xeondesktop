@@ -104,7 +104,8 @@ static gboolean draw_panel(GtkWidget *widget, cairo_t *cairo, gpointer data) {
     return TRUE;
 }
 
-static void close_overlay(overlay *over, cairo_surface_t *snip) {
+/* Gone, with the snip taken, or the area to record; neither: cancelled. */
+static void close_overlay(overlay *over, cairo_surface_t *snip, const xd_snip_box *area) {
     double scale = over->screen->scale;
     for (guint i = 0; i < over->panels->len; i++) {
         overlay_panel *panel = g_ptr_array_index(over->panels, i);
@@ -115,7 +116,10 @@ static void close_overlay(overlay *over, cairo_surface_t *snip) {
     xd_snip_screen_free(over->screen);
     snip_app *app = over->app;
     g_free(over);
-    snip_app_snip_taken(app, snip, scale);
+    if (app->choosing_area)
+        snip_app_area_chosen(app, area);
+    else
+        snip_app_snip_taken(app, snip, scale);
 }
 
 /* The monitor at a point of the desktop, as a box. */
@@ -201,6 +205,12 @@ static gboolean on_release([[maybe_unused]] GtkWidget *widget, GdkEventButton *e
     if (over->mode == XD_SNIP_WINDOW)
         point_window_at(over, point);
     xd_snip_box box = selection_box(over);
+    /* The area to record: as dragged out, or the monitor clicked. */
+    if (over->app->choosing_area) {
+        if (xd_snip_box_is_selection(box) || monitor_box_at(over, point.x, point.y, &box))
+            close_overlay(over, nullptr, &box);
+        return TRUE;
+    }
     bool taken = over->mode == XD_SNIP_WINDOW ? over->has_target : xd_snip_box_is_selection(box);
     if (!taken) {
         /* A click alone: keep waiting for a real selection. */
@@ -213,14 +223,14 @@ static gboolean on_release([[maybe_unused]] GtkWidget *widget, GdkEventButton *e
     cairo_surface_t *snip = xd_snip_screen_cut(
         over->screen, box, free_form ? (const xd_snip_point *)(void *)over->path->data : nullptr,
         free_form ? over->path->len : 0, options->show_selection_ink ? options->ink : nullptr);
-    close_overlay(over, snip);
+    close_overlay(over, snip, nullptr);
     return TRUE;
 }
 
 static gboolean on_key([[maybe_unused]] GtkWidget *widget, GdkEventKey *event, gpointer data) {
     overlay_panel *panel = data;
     if (event->keyval == GDK_KEY_Escape) {
-        close_overlay(panel->owner, nullptr);
+        close_overlay(panel->owner, nullptr, nullptr);
         return TRUE;
     }
     return FALSE;

@@ -85,6 +85,9 @@
 #include "../src/timedate/ntp.h"
 #include "../src/shell/calendar.h"
 #include "../src/shell/notices.h"
+#include <wayland-client-protocol.h>
+
+#include "../src/snip/recording.h"
 #include "../src/snip/snipping.h"
 #include "../src/shell/jumplist.h"
 #include "../src/shell/launcher.h"
@@ -6329,6 +6332,54 @@ static void test_snipping(void) {
     g_key_file_free(file);
 }
 
+static void test_recording(void) {
+    GDateTime *time = g_date_time_new_local(2026, 10, 22, 15, 37, 4);
+    char *name = xd_record_file_name(time);
+    CHECK(strcmp(name, "Screen Recording 2026-10-22 153704.mp4") == 0);
+    g_free(name);
+    g_date_time_unref(time);
+    char *folder = xd_record_folder("/home/ann/Movies", "/home/ann");
+    CHECK(strcmp(folder, "/home/ann/Movies/Screen Recordings") == 0);
+    g_free(folder);
+    folder = xd_record_folder("/home/ann", "/home/ann"); /* user-dirs.dirs names none */
+    CHECK(strcmp(folder, "/home/ann/Videos/Screen Recordings") == 0);
+    g_free(folder);
+
+    /* Within the monitor, whole pixels; nothing outside it. */
+    xd_snip_box monitor = {1920, 0, 1280, 1024}, area;
+    CHECK(xd_record_fit((xd_snip_box){1800, 100.4, 300, 200.2}, monitor, &area));
+    CHECK(area.x == 1920 && area.y == 100 && area.width == 180 && area.height == 201);
+    CHECK(!xd_record_fit((xd_snip_box){0, 0, 1900, 1000}, monitor, &area));
+
+    CHECK(strcmp(xd_record_video_format(WL_SHM_FORMAT_XRGB8888), "BGRx") == 0);
+    CHECK(strcmp(xd_record_video_format(WL_SHM_FORMAT_ABGR8888), "RGBA") == 0);
+    CHECK(xd_record_video_format(WL_SHM_FORMAT_RGB565) == nullptr);
+
+    xd_record_sound sound = XD_RECORD_SILENT;
+    CHECK(xd_record_sound_parse("both", &sound) && sound == XD_RECORD_MICROPHONE_AND_COMPUTER);
+    CHECK(!xd_record_sound_parse("loud", &sound) && strcmp(xd_record_sound_name(sound), "both") == 0);
+
+    /* Silent: no sound source at all, even with an AAC encoder. */
+    char *pipeline = xd_record_pipeline("x264enc", "avenc_aac", XD_RECORD_SILENT);
+    CHECK(strstr(pipeline, "appsrc name=video") != nullptr && strstr(pipeline, "! x264enc !") != nullptr);
+    CHECK(strstr(pipeline, "mp4mux name=mux") != nullptr && strstr(pipeline, "filesink name=file") != nullptr);
+    CHECK(strstr(pipeline, "pulsesrc") == nullptr);
+    g_free(pipeline);
+    pipeline = xd_record_pipeline("x264enc", "avenc_aac", XD_RECORD_COMPUTER);
+    CHECK(strstr(pipeline, "pulsesrc device=@DEFAULT_MONITOR@") != nullptr &&
+          strstr(pipeline, "avenc_aac ! queue ! mux.") != nullptr);
+    g_free(pipeline);
+    pipeline = xd_record_pipeline("x264enc", "fdkaacenc", XD_RECORD_MICROPHONE_AND_COMPUTER);
+    CHECK(strstr(pipeline, "audiomixer name=mix") != nullptr);
+    CHECK(strstr(pipeline, "pulsesrc ! audioconvert") != nullptr &&
+          strstr(pipeline, "pulsesrc device=@DEFAULT_MONITOR@") != nullptr);
+    g_free(pipeline);
+    /* No encoder for the sound: silent. */
+    pipeline = xd_record_pipeline("openh264enc", nullptr, XD_RECORD_MICROPHONE);
+    CHECK(strstr(pipeline, "pulsesrc") == nullptr);
+    g_free(pipeline);
+}
+
 static void test_notices(void) {
     char *plain = xd_notice_plain_text("<b>Bold</b> &amp; <a href='https://x'>link</a>"
                                        "<img src='a.png' alt=' [pic]'/>");
@@ -9677,6 +9728,7 @@ int main(void) {
     test_calendar();
     test_notices();
     test_snipping();
+    test_recording();
     test_launcher_entry();
     test_printers();
     test_scanners();

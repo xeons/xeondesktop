@@ -265,6 +265,29 @@ void xd_ink_draw(const xd_ink *ink, cairo_t *cairo) {
 
 /* ---- options ---------------------------------------------------------------------------- */
 
+static const char *const sound_names[] = {
+    [XD_RECORD_SILENT] = "none",
+    [XD_RECORD_MICROPHONE] = "microphone",
+    [XD_RECORD_COMPUTER] = "computer",
+    [XD_RECORD_MICROPHONE_AND_COMPUTER] = "both",
+};
+
+const char *xd_record_sound_name(xd_record_sound sound) {
+    return (size_t)sound < G_N_ELEMENTS(sound_names) ? sound_names[sound] : sound_names[0];
+}
+
+bool xd_record_sound_parse(const char *name, xd_record_sound *sound) {
+    if (name == nullptr)
+        return false;
+    for (size_t i = 0; i < G_N_ELEMENTS(sound_names); i++) {
+        if (strcmp(name, sound_names[i]) == 0) {
+            *sound = (xd_record_sound)i;
+            return true;
+        }
+    }
+    return false;
+}
+
 void xd_snip_options_init(xd_snip_options *options) {
     *options = (xd_snip_options){
         .mode = XD_SNIP_RECTANGLE,
@@ -275,6 +298,7 @@ void xd_snip_options_init(xd_snip_options *options) {
         .show_overlay = true,
         .show_selection_ink = true,
         .ink = {1, 0, 0},
+        .record_sound = XD_RECORD_SILENT,
     };
 }
 
@@ -299,6 +323,8 @@ void xd_snip_options_load_data(xd_snip_options *options, GKeyFile *file) {
     load_bool(file, "PromptToSave", &options->prompt_to_save);
     load_bool(file, "ShowOverlay", &options->show_overlay);
     load_bool(file, "ShowSelectionInk", &options->show_selection_ink);
+    g_autofree char *sound = g_key_file_get_string(file, OPTIONS_GROUP, "RecordSound", nullptr);
+    xd_record_sound_parse(sound, &options->record_sound);
     g_autofree char *ink = g_key_file_get_string(file, OPTIONS_GROUP, "InkColor", nullptr);
     unsigned red, green, blue;
     if (ink != nullptr && strlen(ink) == 7 && sscanf(ink, "#%2x%2x%2x", &red, &green, &blue) == 3) {
@@ -325,4 +351,6 @@ void xd_snip_options_save_data(const xd_snip_options *options, GKeyFile *file) {
     snprintf(ink, sizeof(ink), "#%02x%02x%02x", channel_byte(options->ink[0]),
              channel_byte(options->ink[1]), channel_byte(options->ink[2]));
     g_key_file_set_string(file, OPTIONS_GROUP, "InkColor", ink);
+    g_key_file_set_string(file, OPTIONS_GROUP, "RecordSound",
+                          xd_record_sound_name(options->record_sound));
 }

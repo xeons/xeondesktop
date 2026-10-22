@@ -11,7 +11,10 @@
  *   xd-snip --copy-window   the active window to the clipboard
  *                           (Alt+Print Screen)
  *   xd-snip --copy-stdin    a PNG from standard input to the clipboard
+ *   xd-snip --record        record the active window (Win+Alt+R)
+ *   xd-snip --record=area   record an area chosen first (Win+Shift+R)
  *
+ * Either --record, while a recording runs, stops it instead.
  * The --copy ones have no window: they stay to serve the clipboard until
  * another program takes it.
  */
@@ -21,6 +24,7 @@
 #include <unistd.h>
 
 #include "../gtkapp/gtkapp.h"
+#include "recording.h"
 #include "snip.h"
 
 /* How long the windows take to go before the screen is captured. */
@@ -134,7 +138,23 @@ void snip_app_show_options(snip_app *app, GtkWindow *parent) {
 
 static void finish_snipping(snip_app *app) {
     app->snipping = false;
+    app->choosing_area = false;
     gtk_widget_set_sensitive(app->cancel, FALSE);
+}
+
+/* The toolbar window again, or (started for one snip or recording) quit. */
+static void come_back(snip_app *app) {
+    if (app->editor != nullptr)
+        snip_editor_present(app->editor);
+    else if (app->quit_on_cancel)
+        gtk_main_quit();
+    else
+        gtk_window_present(GTK_WINDOW(app->window));
+}
+
+static void show_error(snip_app *app, const char *text) {
+    GtkWindow *parent = gtk_widget_get_visible(app->window) ? GTK_WINDOW(app->window) : nullptr;
+    xd_message_box(parent, SNIP_TITLE, XD_MB_ERROR, XD_MB_OK, FALSE, text);
 }
 
 static gboolean capture(gpointer data) {
@@ -152,7 +172,7 @@ static gboolean capture(gpointer data) {
             gtk_main_quit();
         return G_SOURCE_REMOVE;
     }
-    snip_overlay_start(app, screen, app->options.mode);
+    snip_overlay_start(app, screen, app->choosing_area ? XD_SNIP_RECTANGLE : app->options.mode);
     return G_SOURCE_REMOVE;
 }
 
@@ -194,17 +214,154 @@ void snip_app_new_snip(snip_app *app, xd_snip_mode mode) {
 void snip_app_snip_taken(snip_app *app, cairo_surface_t *snip, double scale) {
     finish_snipping(app);
     if (snip == nullptr) {
-        if (app->editor != nullptr)
-            snip_editor_present(app->editor);
-        else if (app->quit_on_cancel)
-            gtk_main_quit();
-        else
-            gtk_window_present(GTK_WINDOW(app->window));
+        come_back(app);
         return;
     }
     if (app->editor == nullptr)
         app->editor = snip_editor_new(app);
     snip_editor_show(app->editor, snip, scale);
+}
+
+/* ---- recording ------------------------------------------------------------------------------ */
+
+static gboolean free_recording(gpointer data) {
+    snip_recording_free(data);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean notice_gone(gpointer data) {
+    snip_app *app = data;
+    if (app->quit_on_cancel && app->recording == nullptr && !app->snipping)
+        gtk_main_quit();
+    return G_SOURCE_REMOVE;
+}
+
+static void recording_done(snip_recording *recording, const char *path, const char *error,
+                           void *data) {
+    snip_app *app = data;
+    app->recording = nullptr;
+    g_idle_add(free_recording, recording);
+    if (error != nullptr) {
+        show_error(app, error);
+        come_back(app);
+        return;
+    }
+    /* Started by a shortcut, it waits for the notification's buttons. */
+    snip_recording_notify_saved(path, notice_gone, app);
+    if (!app->quit_on_cancel)
+        come_back(app);
+}
+
+static void start_recording(snip_app *app, xd_snip_box selection) {
+    GdkDisplay *display = gdk_display_get_default();
+    GdkMonitor *monitor = gdk_display_get_monitor_at_point(
+        display, (int)(selection.x + selection.width / 2), (int)(selection.y + selection.height / 2));
+    GdkRectangle geometry;
+    gdk_monitor_get_geometry(monitor, &geometry);
+    xd_snip_box area;
+    GError *error = nullptr;
+    if (!xd_record_fit(selection,
+                       (xd_snip_box){geometry.x, geometry.y, geometry.width, geometry.height},
+                       &area)) {
+        come_back(app);
+        return;
+    }
+    app->recording = snip_recording_start(app, monitor, area, app->options.record_sound,
+                                          recording_done, app, &error);
+    if (app->recording == nullptr) {
+        show_error(app, error->message);
+        g_error_free(error);
+        come_back(app);
+    }
+}
+
+void snip_app_area_chosen(snip_app *app, const xd_snip_box *area) {
+    finish_snipping(app);
+    if (area == nullptr)
+        come_back(app);
+    else
+        start_recording(app, *area);
+}
+
+/* Record: an area chosen over the frozen screen (or a monitor clicked);
+ * while recording, stops it. */
+static void record_area(snip_app *app) {
+    if (app->recording != nullptr) {
+        snip_recording_stop(app->recording);
+        return;
+    }
+    if (app->snipping)
+        return;
+    GError *error = nullptr;
+    if (!snip_recording_possible(app->options.record_sound, &error)) {
+        show_error(app, error->message);
+        g_error_free(error);
+        come_back(app);
+        return;
+    }
+    app->snipping = true;
+    app->choosing_area = true;
+    gtk_widget_set_sensitive(app->cancel, TRUE);
+    delay_over(app);
+}
+
+/* The Game Bar's Win+Alt+R: the active window, or the monitor at the
+ * desktop's top left when none is. */
+static void record_window(snip_app *app) {
+    GError *error = nullptr;
+    xd_snip_screen *screen = snip_capture_screen(gdk_display_get_default(), &error);
+    if (screen == nullptr) {
+        show_error(app, error->message);
+        g_error_free(error);
+        gtk_main_quit();
+        return;
+    }
+    xd_snip_box box = {screen->origin_x, screen->origin_y, 1, 1};
+    int active = xd_snip_window_active(screen->windows, screen->window_count);
+    if (active >= 0) {
+        const xd_snip_window *window = &screen->windows[active];
+        box = (xd_snip_box){window->x, window->y, window->width, window->height};
+    } else {
+        GdkMonitor *monitor = gdk_display_get_monitor_at_point(gdk_display_get_default(),
+                                                               (int)box.x, (int)box.y);
+        GdkRectangle geometry;
+        gdk_monitor_get_geometry(monitor, &geometry);
+        box = (xd_snip_box){geometry.x, geometry.y, geometry.width, geometry.height};
+    }
+    xd_snip_screen_free(screen);
+    if (!snip_recording_possible(app->options.record_sound, &error)) {
+        show_error(app, error->message);
+        g_error_free(error);
+        gtk_main_quit();
+        return;
+    }
+    start_recording(app, box);
+}
+
+/* --record and --record=area, once the main loop runs (quitting needs
+ * it). */
+static gboolean record_from_command_line(gpointer data) {
+    snip_app *app = data;
+    if (app->choosing_area) {
+        app->choosing_area = false;
+        record_area(app);
+    } else {
+        record_window(app);
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static void on_record(gpointer data) {
+    record_area(data);
+}
+
+static void on_sound(GtkCheckMenuItem *item, gpointer data) {
+    snip_app *app = data;
+    if (!gtk_check_menu_item_get_active(item))
+        return;
+    gpointer sound = g_object_get_data(G_OBJECT(item), "sound");
+    app->options.record_sound = (xd_record_sound)GPOINTER_TO_INT(sound);
+    snip_app_save_options(app);
 }
 
 static void on_cancel(gpointer data) {
@@ -287,6 +444,28 @@ static GtkWidget *build_delay_menu(snip_app *app) {
     return menu;
 }
 
+static GtkWidget *build_sound_menu(snip_app *app) {
+    static const char *const labels[] = {
+        [XD_RECORD_SILENT] = "_No Sound",
+        [XD_RECORD_MICROPHONE] = "_Microphone",
+        [XD_RECORD_COMPUTER] = "_Computer Sound",
+        [XD_RECORD_MICROPHONE_AND_COMPUTER] = "Microphone _and Computer Sound",
+    };
+    GtkWidget *menu = gtk_menu_new();
+    GSList *group = nullptr;
+    for (size_t i = 0; i < G_N_ELEMENTS(labels); i++) {
+        GtkWidget *item = gtk_radio_menu_item_new_with_mnemonic(group, labels[i]);
+        group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(item));
+        g_object_set_data(G_OBJECT(item), "sound", GINT_TO_POINTER((int)i));
+        if (i == app->options.record_sound)
+            gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), TRUE);
+        g_signal_connect(item, "toggled", G_CALLBACK(on_sound), app);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+    }
+    gtk_widget_show_all(menu);
+    return menu;
+}
+
 static GtkToolItem *add_button(GtkWidget *toolbar, const char *icon, const char *label,
                                GCallback callback, snip_app *app) {
     GtkToolItem *item = gtk_tool_button_new(nullptr, label);
@@ -317,6 +496,16 @@ static void build_window(snip_app *app) {
     gtk_menu_tool_button_set_menu(GTK_MENU_TOOL_BUTTON(new_snip), build_mode_menu(app));
     g_signal_connect_swapped(new_snip, "clicked", G_CALLBACK(on_new), app);
     gtk_toolbar_insert(GTK_TOOLBAR(toolbar), new_snip, -1);
+
+    GtkToolItem *record = gtk_menu_tool_button_new(nullptr, "_Record");
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(record), "media-record");
+    gtk_tool_button_set_use_underline(GTK_TOOL_BUTTON(record), TRUE);
+    gtk_tool_item_set_is_important(record, TRUE);
+    gtk_tool_item_set_tooltip_text(record, "Record the screen (Win+Shift+R); the arrow chooses "
+                                           "the sound");
+    gtk_menu_tool_button_set_menu(GTK_MENU_TOOL_BUTTON(record), build_sound_menu(app));
+    g_signal_connect_swapped(record, "clicked", G_CALLBACK(on_record), app);
+    gtk_toolbar_insert(GTK_TOOLBAR(toolbar), record, -1);
 
     GtkToolItem *delay_item = gtk_tool_item_new();
     GtkWidget *delay = gtk_menu_button_new();
@@ -418,6 +607,7 @@ int main(int argc, char **argv) {
     const char *action = nullptr;
     const char *new_mode = nullptr;
     bool snip_now = false;
+    const char *record = nullptr;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--copy-screen") == 0 || strcmp(argv[i], "--copy-window") == 0 ||
             strcmp(argv[i], "--copy-stdin") == 0) {
@@ -427,8 +617,13 @@ int main(int argc, char **argv) {
         } else if (g_str_has_prefix(argv[i], "--new=")) {
             snip_now = true;
             new_mode = argv[i] + strlen("--new=");
+        } else if (strcmp(argv[i], "--record") == 0 || strcmp(argv[i], "--record=area") == 0) {
+            record = argv[i];
         }
     }
+    /* The shortcut again: the recording running stops. */
+    if (record != nullptr && snip_recording_stop_running())
+        return EXIT_SUCCESS;
     xd_gtk_app_preinit(SNIP_APP_ID);
     gtk_init(&argc, &argv);
 
@@ -446,7 +641,12 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     build_window(&app);
-    if (snip_now) {
+    if (record != nullptr) {
+        app.quit_on_cancel = true;
+        /* Marks which; record_area sets it again. */
+        app.choosing_area = strcmp(record, "--record=area") == 0;
+        g_idle_add(record_from_command_line, &app);
+    } else if (snip_now) {
         app.quit_on_cancel = true;
         /* --new's delay is none: the key was the moment. */
         int delay = app.options.delay_seconds;

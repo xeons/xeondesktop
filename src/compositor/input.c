@@ -259,6 +259,14 @@ static bool handle_binding(xd_server *server, uint32_t mods, xkb_keysym_t sym) {
         xd_spawn_argv(argv);
         return true;
     }
+    /* Screen recording: Win+Shift+R an area (Windows 11's Snipping Tool),
+     * Win+Alt+R the active window (the Game Bar's); again, it stops. */
+    if (logo && !ctrl && (shift != alt) && (sym == XKB_KEY_r || sym == XKB_KEY_R)) {
+        char *argv[] = {(char *)(uintptr_t)server->config.snip,
+                        (char *)(uintptr_t)(shift ? "--record=area" : "--record"), nullptr};
+        xd_spawn_argv(argv);
+        return true;
+    }
     /* Ctrl+Esc: the Start menu, as in Windows. */
     if (ctrl && !alt && !shift && sym == XKB_KEY_Escape) {
         xd_start_menu_toggle(server);

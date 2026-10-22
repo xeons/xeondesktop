@@ -721,8 +721,11 @@ executable(
 )
 
 # The Snipping Tool: its overlay is a layer-shell surface, which GTK 3
-# makes through gtk-layer-shell.
+# makes through gtk-layer-shell; screen recordings are encoded with
+# GStreamer.
 gtk_layer_shell_dep = dependency('gtk-layer-shell-0', include_type: 'system')
+gstreamer_dep = dependency('gstreamer-1.0', include_type: 'system')
+gstreamer_app_dep = dependency('gstreamer-app-1.0', include_type: 'system')
 executable(
   'xd-snip',
   'src/snip/main.c',
@@ -730,9 +733,11 @@ executable(
   'src/snip/overlay.c',
   'src/snip/editor.c',
   'src/snip/snipping.c',
+  'src/snip/record.c',
+  'src/snip/recording.c',
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, gtk_layer_shell_dep, gdk_pixbuf_dep,
-                 gio_unix_dep, client_protocol_dep, m_dep],
+                 gio_unix_dep, client_protocol_dep, m_dep, gstreamer_dep, gstreamer_app_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -1340,6 +1345,7 @@ test_exe = executable(
   'src/keys/gpgkeys.c',
   'src/files/extract.c',
   'src/snip/snipping.c',
+  'src/snip/recording.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,

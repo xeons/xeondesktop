@@ -4480,6 +4480,66 @@ def snipping_tool(s):
     s.log("ok: Print Screen copies the screen")
 
 
+def media_info(path):
+    """(width, height, seconds) of a video file, from GStreamer's
+    discoverer, or None if it can't be read."""
+    import gi
+
+    gi.require_version("Gst", "1.0")
+    gi.require_version("GstPbutils", "1.0")
+    from gi.repository import Gst, GstPbutils
+
+    Gst.init(None)
+    try:
+        info = GstPbutils.Discoverer.new(10 * Gst.SECOND).discover_uri("file://" + path)
+    except Exception:
+        return None
+    videos = info.get_video_streams()
+    if not videos:
+        return None
+    return (videos[0].get_width(), videos[0].get_height(), info.get_duration() / Gst.SECOND)
+
+
+@scenario()
+def screen_recording(s):
+    """Screen recording: Win+Shift+R's area over the frozen screen, a red
+    frame around it while it records, the shortcut again stops it, and the
+    MP4 in Videos/Screen Recordings is that area, as long as it ran."""
+    for element in ("mp4mux", "x264enc"):
+        if subprocess.run(["gst-inspect-1.0", "--exists", element]).returncode != 0:
+            raise Failure(f"GStreamer's {element} is missing (gst-plugins-good, gst-plugins-ugly)")
+    folder = os.path.join(s.home, "Videos", "Screen Recordings")
+    desktop = s.settle("desktop")
+    s.launch(s.tool("xd-snip"), "--record=area")
+    wait_washed(s, desktop, (WIDTH - 50, 50))
+    s.inject("move", 200, 150, "down", "move", 400, 300, "move", 520, 390, "up")
+    started = time.monotonic()
+
+    def framed(shot):
+        """Red dashes just left of the area."""
+        return any(near(shot.pixel(199, y), (230, 26, 26), 40) for y in range(150, 390, 2))
+
+    shot = s.wait(lambda: (lambda shot: shot if framed(shot) else None)(s.shot("recording")),
+                  "the red frame around the area")
+    s.check(not near(shot.pixel(260, 260), (230, 26, 26), 40), "the area itself isn't framed")
+    s.log("ok: a red frame stands around the area")
+    s.wait(lambda: os.path.isdir(folder) and os.listdir(folder), "the recording's file")
+    # Something to see: the pointer moving about inside the area.
+    for x in range(250, 500, 25):
+        s.inject("move", x, 280, "sleep", 100)
+    while time.monotonic() - started < 2.5:
+        time.sleep(0.2)
+    s.launch(s.tool("xd-snip"), "--record")
+    path = os.path.join(folder, os.listdir(folder)[0])
+    info = s.wait(lambda: media_info(path), "a finished MP4", timeout=30)
+    width, height, seconds = info
+    s.check((width, height) == (320, 240), f"the video is the area ({width}x{height})")
+    s.check(seconds >= 2, f"it lasts as long as it ran ({seconds:.1f} s)")
+    s.log(f"ok: {os.path.basename(path)}: {width}x{height}, {seconds:.1f} s")
+    s.wait(lambda: not framed(s.shot("frame-gone")), "the red frame to go")
+    s.log("ok: stopping took the frame away")
+
+
 @scenario(LUNA_INI)
 def xp_new_programs_balloon(s):
     """A program installed while the session runs: XP's "New programs

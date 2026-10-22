@@ -109,6 +109,18 @@ void xd_ink_draw(const xd_ink *ink, cairo_t *cairo);
 
 /* ---- options (~/.config/xeondesktop/snip.ini) ----------------------------------------- */
 
+/* What a screen recording hears. */
+typedef enum xd_record_sound : uint8_t {
+    XD_RECORD_SILENT,
+    XD_RECORD_MICROPHONE,
+    XD_RECORD_COMPUTER,       /* what the speakers play */
+    XD_RECORD_MICROPHONE_AND_COMPUTER,
+} xd_record_sound;
+
+/* "none", "microphone", "computer", "both", and back. */
+const char *xd_record_sound_name(xd_record_sound sound);
+bool xd_record_sound_parse(const char *name, xd_record_sound *sound);
+
 typedef struct xd_snip_options {
     xd_snip_mode mode;
     int delay_seconds; /* 0..5 */
@@ -118,6 +130,7 @@ typedef struct xd_snip_options {
     bool show_overlay;
     bool show_selection_ink;
     double ink[3]; /* the selection's colour */
+    xd_record_sound record_sound;
 } xd_snip_options;
 
 /* Windows 7's defaults. */

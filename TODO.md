@@ -567,10 +567,20 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       isn't turned upright), Send To (e-mail), a custom pen, Undo, the
       window under a menu or tooltip, layer surfaces (the taskbar) as
       Window Snip targets, keyboard selection, Windows 7's scissors cursor.
-- [ ] Screen recording: the Snipping Tool's capture (or the ScreenCast
-      portal) into PipeWire and GStreamer (WebM/MP4), with the microphone
-      or the computer's sound, started from the Snipping Tool and stopped
-      from a tray icon.
+- [~] Screen recording (xd-snip): an area of one monitor (Record, or
+      Win+Shift+R, as Windows 11's Snipping Tool) or the active window
+      (Win+Alt+R, as the Game Bar), wlr-screencopy with the pointer at 30
+      frames a second into GStreamer: MP4 (x264 or OpenH264, AAC from the
+      microphone and/or the speakers' monitor through pulsesrc) in
+      Videos/Screen Recordings. A dashed red frame around the area, a red
+      tray icon (StatusNotifierItem) with the time, the shortcut again or
+      the icon stops it, then a notification (Open, Show in Folder).
+      Unit tests and a UI scenario (screen_recording). Not yet: across
+      monitors, a window followed as it moves, pause, hardware encoding
+      (VA-API), the frame shown for a whole monitor, choosing the
+      microphone, a recording preview window as Windows 11 has, the
+      ScreenCast portal for other desktops' recorders (OBS) through our
+      own xdg-desktop-portal backend.
 
 ## Theme engine
 

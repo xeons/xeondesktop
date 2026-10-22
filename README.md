@@ -31,7 +31,7 @@ libseat, libdisplay-info, hwdata and libgbm; SceneFX, for Aero's blurred
 glass, always is), wayland and
 wayland-protocols, xkbcommon and xkbregistry, xcb and xcb-icccm, libdrm,
 libinput, cairo, pango, fontconfig, GLib/GIO, GTK 3, gtk-layer-shell
-(the Snipping Tool), gdk-pixbuf, json-glib,
+(the Snipping Tool), GStreamer (screen recording), gdk-pixbuf, json-glib,
 procps-ng's libproc2 (Task Manager), PAM and libxcrypt (Lock Computer, User
 Accounts), libudev and libevdev (Device Manager, Game Controllers),
 polkit's agent library, libpulse and libcanberra (volume, sounds), libnm
@@ -112,6 +112,8 @@ instead, which is faster there.
 | Print Screen        | Copy the screen to the clipboard                |
 | Alt+Print Screen    | Copy the active window to the clipboard         |
 | Win+Shift+S         | Snipping Tool: a new snip                       |
+| Win+Shift+R         | Record an area of the screen (again: stop)      |
+| Win+Alt+R           | Record the active window (again: stop)          |
 | Ctrl+Alt+Backspace  | Quit the compositor                             |
 | Ctrl+Alt+F1..F12    | Switch virtual terminal                         |
 | Ctrl+Alt (alone)    | Release a mouse or keyboard a program captured  |
@@ -477,6 +479,16 @@ snip. It captures through wlr-screencopy, learns where the windows are
 from our `xd-window-rectangles-v1`, and uses ext-data-control for the
 clipboard, so it also works under other wlroots compositors (Window Snip
 then offers whole monitors). Rotated monitors aren't turned upright yet.
+
+Record (or Win+Shift+R) records an area of one monitor, dragged out over
+the frozen screen (or a monitor clicked), and Win+Alt+R the active window,
+as Windows 11's Snipping Tool and Game Bar do: an MP4 (H.264, with AAC
+sound from the microphone and/or what the speakers play, chosen from
+Record's arrow) in Videos/Screen Recordings. A dashed red frame stands
+around the area while it records; the red dot in the notification area,
+or the shortcut again, stops it, and a notification offers to open the
+file. It needs GStreamer's gst-plugins-good, x264 (gst-plugins-ugly) or
+OpenH264, and for sound gst-libav or fdk-aac.
 
 ### GTK theme
 
