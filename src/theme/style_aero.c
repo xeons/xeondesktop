@@ -952,11 +952,17 @@ static void aero_toolkit_colors(const xd_theme *theme, xd_toolkit_colors *toolki
 
 /* ---- taskbar thumbnails and jump lists ------------------------------------------------ */
 
-/* Drawn by the shell's Aero taskbar alone, so not through the style
- * table. Colours are from memory of Windows 7 with the default "Sky"
- * colourisation. */
+/* Drawn by the shell's taskbar alone, so not through the style table.
+ * Aero's colours are from memory of Windows 7 with the default "Sky"
+ * colourisation; the other styles draw the previews as their tooltips,
+ * a hovered window's tile in the selection colour, as Vista's Basic
+ * look did. */
 
 void xd_theme_draw_thumb_panel(const xd_theme *theme, cairo_t *cairo, xd_rect rect) {
+    if (theme->style != XD_STYLE_AERO) {
+        xd_theme_draw_tooltip(theme, cairo, rect, "");
+        return;
+    }
     double rad = xd_tpx(theme, 6);
     cairo_save(cairo);
     cairo_set_operator(cairo, CAIRO_OPERATOR_SOURCE);
@@ -998,6 +1004,12 @@ void xd_theme_draw_thumb_tile(const xd_theme *theme, cairo_t *cairo, xd_rect rec
     bool hot = state & XD_STATE_HOT, pressed = state & XD_STATE_PRESSED;
     if (!hot && !pressed)
         return;
+    if (theme->style != XD_STYLE_AERO) {
+        xd_rgba selection = xd_sys(theme, XD_COLOR_HILIGHT);
+        xd_fill_rect(cairo, rect, xd_rgba_alpha(selection, pressed ? 0.40 : 0.22));
+        xd_draw_bevel(cairo, rect, xd_tpx(theme, 1), selection, selection);
+        return;
+    }
     double rad = xd_tpx(theme, 3);
     xd_path_rounded(cairo, rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1, rad, rad, rad, rad);
     double lit = pressed ? 0.7 : 1.0;
@@ -1009,6 +1021,13 @@ void xd_theme_draw_thumb_tile(const xd_theme *theme, cairo_t *cairo, xd_rect rec
 
 void xd_theme_draw_thumb_title(const xd_theme *theme, cairo_t *cairo, xd_rect rect,
                                const char *title) {
+    if (theme->style != XD_STYLE_AERO) {
+        xd_text_style st =
+            xd_text(theme, XD_FONT_TOOLTIP, xd_sys(theme, XD_COLOR_INFO_TEXT), XD_ALIGN_START);
+        st.ellipsize = true;
+        xd_draw_text(cairo, rect, title != nullptr ? title : "", &st);
+        return;
+    }
     xd_rgba fg = xd_rgba_hex(0xFFFFFF);
     (void)xd_pkgstyle_thumb_title_color(theme, &fg);
     xd_text_style st = xd_text(theme, XD_FONT_MENU, fg, XD_ALIGN_START);
@@ -1022,6 +1041,17 @@ void xd_theme_draw_thumb_close(const xd_theme *theme, cairo_t *cairo, xd_rect re
     if (xd_pkgstyle_draw_thumb_close(theme, cairo, rect, state))
         return;
     bool hot = state & XD_STATE_HOT, pressed = state & XD_STATE_PRESSED;
+    if (theme->style != XD_STYLE_AERO) {
+        /* A push button with the close glyph, as the style's own. */
+        xd_theme_draw_button(theme, cairo, rect, state, "");
+        int size = XD_MIN(rect.w, rect.h) - xd_tpx(theme, 8);
+        int offset = pressed ? xd_tpx(theme, 1) : 0;
+        xd_draw_glyph(theme, cairo,
+                      (xd_rect){rect.x + (rect.w - size) / 2 + offset,
+                                rect.y + (rect.h - size) / 2 + offset, size, size},
+                      XD_GLYPH_CLOSE, xd_sys(theme, XD_COLOR_BUTTON_TEXT), 1.2);
+        return;
+    }
     double rad = xd_tpx(theme, 3);
     xd_path_rounded(cairo, rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1, rad, rad, rad, rad);
     if (pressed)

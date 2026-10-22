@@ -535,6 +535,15 @@ static void draw_task(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo, si
     } else {
         xd_taskbar_tell_button(bar, tl, rect);
     }
+    /* Keyed as the unified taskbar's, for its windows' thumbnails: a
+     * group by its program, else the window itself. */
+    char *key = xd_superbar_window_key(tl);
+    bar->bar_buttons[i] = (xd_bar_button){
+        .key = g_string_chunk_insert(bar->bar_keys, key),
+        .window = count > 1 ? nullptr : tl,
+        .windows = count,
+    };
+    g_free(key);
 
     uint8_t state = button_state(bar, (int)i) | (side_bar(shell) ? XD_STATE_VERTICAL : 0);
     const char *label = tl->title != nullptr && tl->title[0] != '\0' ? tl->title
@@ -629,6 +638,9 @@ static void layout_tasks(xd_taskbar *bar, const xd_theme *theme, cairo_t *cairo,
     size_t count = (size_t)wl_list_length(&shell->toplevels);
     xd_taskbar_reserve(bar, count);
     bar->task_count = 0;
+    if (bar->bar_keys == nullptr)
+        bar->bar_keys = g_string_chunk_new(256);
+    g_string_chunk_clear(bar->bar_keys);
     bar->pages = 1;
     bar->page_up_rect = bar->page_down_rect = (xd_rect){0};
     if (count == 0 || band.w <= 0 || band.h <= 0)
@@ -1115,8 +1127,8 @@ void xd_taskbar_pointer_motion(xd_taskbar *bar, double x, double y) {
         return;
     int hot = hit_test(bar, x, y);
     track_peek(bar, hot);
-    if (bar->superbar)
-        xd_thumbs_hover(bar, hot); /* Aero: Windows 7's thumbnails */
+    if (bar->shell->settings.previews)
+        xd_thumbs_hover(bar, hot); /* Windows 7's thumbnails */
     if (hot != bar->hot) {
         bar->hot = hot;
         bar->dirty = true;
@@ -1174,6 +1186,8 @@ static char *tooltip_text(xd_taskbar *bar, int hit) {
         const xd_toplevel *tl = bar->task_views[hit];
         if (bar->task_counts[hit] > 1)
             return nullptr; /* a group: its menu lists the titles */
+        if (shell->settings.previews && xd_thumbs_cover(shell, 1))
+            return nullptr; /* its thumbnail says it */
         const char *title = tl->title != nullptr && tl->title[0] != '\0' ? tl->title : tl->app_id;
         if (title == nullptr)
             return nullptr;

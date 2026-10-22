@@ -238,8 +238,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       a 40px taskbar, or 16px ones on XP's 30px; XP's task list takes
       24px icons when large). In Classic, Luna and Watercolor the buttons
       are the style's own task buttons, a pinned program's a flat toolbar
-      button as Quick Launch's; their thumbnails and jump lists are still
-      Windows 7's look. Tested headless in all four styles. Live thumbnails with Aero Peek
+      button as Quick Launch's; their jump lists are still Windows 7's
+      look. Thumbnails show on XP's task list too ([Taskbar] Previews,
+      "Show window previews"), drawn as the style's tooltips outside Aero.
+      Tested headless in all four styles. Live thumbnails with Aero Peek
       (ext-image-copy-capture, only for our shell), Windows 7's jump list
       look with pinned items, pins by dropping files or launchers,
       combining as needed (least recently used first). Tested headless.

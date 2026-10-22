@@ -196,6 +196,11 @@ pin it there, or a launcher on the bar to pin the program.
 Windows 7's large icons on a 40px taskbar and small ones on XP's 30px; it
 follows the taskbar until it's chosen (large on the unified one).
 
+Window previews (live thumbnails) show on both taskbars: hovering a
+window's or a group's task button in XP's shows them too, drawn as the
+style's tooltips outside Aero. "Show window previews (thumbnails)" turns
+them off for XP's plain tooltips.
+
 ### Taskbar menus
 
 Right-clicking the taskbar opens Windows XP's taskbar menu: Toolbars ▸ Quick

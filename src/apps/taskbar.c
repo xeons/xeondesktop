@@ -113,6 +113,11 @@ static void on_buttons(xd_widget *widget, void *user) {
         properties->pending.buttons = (xd_taskbar_buttons)i;
     changed(properties);
 }
+static void on_previews(xd_widget *widget, void *user) {
+    props *properties = user;
+    properties->pending.previews = xd_checkbox_checked(widget);
+    changed(properties);
+}
 static void on_clock(xd_widget *widget, void *user) {
     props *properties = user;
     properties->pending.show_clock = xd_checkbox_checked(widget);
@@ -433,16 +438,17 @@ int main(int argc, char **argv) {
 
     properties.style = xd_ui_style(properties.ui);
     properties.win = xd_window_create(properties.ui, "Taskbar and Start Menu Properties",
-                                      "xd-taskbar", 380, 388);
+                                      "xd-taskbar", 380, 412);
     static const char *const tabs[] = {"Taskbar", "Start Menu"};
     xd_widget *tab =
-        xd_tabs(properties.win, (xd_rect){7, 7, 366, 342}, tabs, 2, on_page, &properties);
+        xd_tabs(properties.win, (xd_rect){7, 7, 366, 366}, tabs, 2, on_page, &properties);
 
     /* Taskbar */
     /* XP's Taskbar tab, with Windows 7's unified taskbar, its "Taskbar
-     * buttons" and "Use small icons", and "all displays". */
+     * buttons", "Use small icons", the windows' previews and "all
+     * displays". */
     xd_widget_set_page(
-        xd_groupbox(properties.win, (xd_rect){20, 40, 340, 220}, "Taskbar appearance"), 0);
+        xd_groupbox(properties.win, (xd_rect){20, 40, 340, 244}, "Taskbar appearance"), 0);
     static const struct {
         const char *label;
         size_t offset;
@@ -454,6 +460,7 @@ int main(int argc, char **argv) {
         {"Use the unified taskbar", 0, on_unified},
         {"Group similar taskbar buttons", offsetof(xd_settings, group), on_group},
         {"Use small icons", 0, on_small_icons},
+        {"Show window previews (thumbnails)", offsetof(xd_settings, previews), on_previews},
         {"Show Quick Launch", offsetof(xd_settings, quick_launch), on_quick_launch},
         {"Show the taskbar on all displays", offsetof(xd_settings, all_displays), on_all_displays},
     };
@@ -488,15 +495,15 @@ int main(int argc, char **argv) {
     }
     show_buttons_choice(&properties);
     xd_widget_set_page(
-        xd_groupbox(properties.win, (xd_rect){20, 266, 340, 70}, "Notification area"), 0);
-    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 286, 300, 20}, "Show the clock",
+        xd_groupbox(properties.win, (xd_rect){20, 290, 340, 70}, "Notification area"), 0);
+    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 310, 300, 20}, "Show the clock",
                                    properties.pending.show_clock, on_clock, &properties),
                        0);
-    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 310, 220, 20},
+    xd_widget_set_page(xd_checkbox(properties.win, (xd_rect){32, 334, 220, 20},
                                    "Hide inactive icons", properties.pending.hide_inactive,
                                    on_hide_inactive, &properties),
                        0);
-    xd_widget_set_page(xd_button(properties.win, (xd_rect){268, 308, 84, 23}, "Customize...",
+    xd_widget_set_page(xd_button(properties.win, (xd_rect){268, 332, 84, 23}, "Customize...",
                                  on_customize, &properties),
                        0);
 
@@ -521,11 +528,11 @@ int main(int argc, char **argv) {
     xd_widget_select(tab, page);
 
     xd_widget *ok =
-        xd_button(properties.win, (xd_rect){136, 357, 75, 23}, "OK", on_ok, &properties);
+        xd_button(properties.win, (xd_rect){136, 381, 75, 23}, "OK", on_ok, &properties);
     xd_widget *cancel =
-        xd_button(properties.win, (xd_rect){217, 357, 75, 23}, "Cancel", on_cancel, &properties);
+        xd_button(properties.win, (xd_rect){217, 381, 75, 23}, "Cancel", on_cancel, &properties);
     properties.apply =
-        xd_button(properties.win, (xd_rect){298, 357, 75, 23}, "Apply", on_apply, &properties);
+        xd_button(properties.win, (xd_rect){298, 381, 75, 23}, "Apply", on_apply, &properties);
     xd_window_set_default(properties.win, ok);
     xd_window_set_cancel(properties.win, cancel);
     xd_window_set_focus(properties.win, tab);

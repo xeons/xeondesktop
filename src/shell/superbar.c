@@ -893,7 +893,7 @@ char *xd_superbar_tooltip(xd_taskbar *bar, int hit) {
         return nullptr;
     const xd_bar_button *bar_button = &bar->bar_buttons[hit];
     const xd_toplevel *tl = bar->task_views[hit];
-    if (xd_thumbs_cover(bar->shell, bar_button->windows))
+    if (bar->shell->settings.previews && xd_thumbs_cover(bar->shell, bar_button->windows))
         return nullptr; /* its thumbnails say it */
     if (bar_button->windows == 1 && tl != nullptr)
         return xd_str_dup_cstr(xd_str_from_cstr(window_title(tl)));
@@ -1382,8 +1382,10 @@ size_t xd_superbar_windows(xd_shell *shell, const char *key, uint64_t window_id,
     return count;
 }
 
+char *xd_superbar_window_key(const xd_toplevel *tl) { return window_key(tl); }
+
 const char *xd_superbar_key(const xd_taskbar *bar, int hit, uint64_t *window_id) {
-    if (!xd_superbar_is_button(bar, hit))
+    if (hit < 0 || (size_t)hit >= bar->task_count || bar->bar_buttons[hit].key == nullptr)
         return nullptr;
     const xd_bar_button *bar_button = &bar->bar_buttons[hit];
     if (window_id != nullptr)

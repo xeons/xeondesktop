@@ -690,14 +690,18 @@ void xd_superbar_pin_file(xd_shell *shell, const char *desktop_id, const char *u
  * list (or to the jump list of the program that opens them, pinned too). */
 void xd_superbar_dropped(xd_shell *shell, const char *key, char **uris);
 /* Button `hit`'s program, and its window if it's a window's own; nullptr
- * if `hit` isn't a program's button. */
+ * if `hit` isn't a program's button (or a task button: XP's taskbar keys
+ * its buttons the same way, for their thumbnails). */
 const char *xd_superbar_key(const xd_taskbar *bar, int hit, uint64_t *window_id);
+/* A window's program's key (g_free). */
+char *xd_superbar_window_key(const xd_toplevel *tl);
 /* The windows behind a button: program `key`'s, or the one window. */
 size_t xd_superbar_windows(xd_shell *shell, const char *key, uint64_t window_id,
                            xd_toplevel **out, size_t cap);
 
-/* thumbs.c: Windows 7's taskbar thumbnails (Aero's taskbar): hovering a
- * running program's button shows its windows' live pictures, captured
+/* thumbs.c: Windows 7's taskbar thumbnails (with [Taskbar] Previews, on
+ * either taskbar): hovering a running program's or a window's button
+ * shows its windows' live pictures, captured
  * through ext-image-copy-capture-v1; hovering one peeks at its window. */
 void xd_thumbs_init(xd_shell *shell);
 void xd_thumbs_finish(xd_shell *shell);

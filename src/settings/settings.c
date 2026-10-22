@@ -411,6 +411,7 @@ void xd_settings_defaults(xd_settings *settings) {
         .locked = true,
         .on_top = true,
         .group = true,
+        .previews = true,
         .show_clock = true,
         .hide_inactive = true,
         .all_displays = true,
@@ -1113,7 +1114,9 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
             int i = index_of(taskbar_icons_names, XD_ARRAY_LEN(taskbar_icons_names), value);
             if (i >= 0)
                 settings->icons = (xd_taskbar_icons)i;
-        } else if (KEY("ShowClock"))
+        } else if (KEY("Previews"))
+            parse_bool(value, &settings->previews);
+        else if (KEY("ShowClock"))
             parse_bool(value, &settings->show_clock);
         else if (KEY("HideInactiveIcons"))
             parse_bool(value, &settings->hide_inactive);
@@ -1411,6 +1414,7 @@ static GKeyFile *to_keyfile(const xd_settings *settings) {
     g_key_file_set_string(kf, "Taskbar", "Buttons", buttons_names[settings->buttons]);
     g_key_file_set_string(kf, "Taskbar", "Layout", layout_names[settings->layout]);
     g_key_file_set_string(kf, "Taskbar", "Icons", taskbar_icons_names[settings->icons]);
+    g_key_file_set_boolean(kf, "Taskbar", "Previews", settings->previews);
     g_key_file_set_boolean(kf, "Taskbar", "ShowClock", settings->show_clock);
     g_key_file_set_boolean(kf, "Taskbar", "HideInactiveIcons", settings->hide_inactive);
     g_key_file_set_boolean(kf, "Taskbar", "AllDisplays", settings->all_displays);

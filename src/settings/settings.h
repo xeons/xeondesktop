@@ -451,6 +451,7 @@ typedef struct xd_settings {
     xd_taskbar_buttons buttons; /* unified: icons only, or labels */
     xd_taskbar_layout layout;
     xd_taskbar_icons icons;
+    bool previews; /* hovering a task button shows its windows' thumbnails */
     bool show_clock;
     bool hide_inactive; /* fold tray icons that have been quiet behind a chevron */
     bool all_displays; /* a taskbar on every monitor, not just the first */

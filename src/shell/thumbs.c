@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * Windows 7's taskbar thumbnails (Aero's taskbar): hovering a running
- * program's button shows a live picture of each of its windows above it,
+ * Windows 7's taskbar thumbnails, on the unified taskbar and XP's alike
+ * ([Taskbar] Previews; drawn as the style's tooltips outside Aero):
+ * hovering a running program's button, or a window's or a group's task
+ * button, shows a live picture of each of its windows above it,
  * side by side, each with its title and, while hovered, a close button.
  * Hovering a picture a moment peeks at that window (Aero Peek: the others
  * turn to glass outlines); clicking it brings the window forward, and the
