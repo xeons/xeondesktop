@@ -3297,6 +3297,42 @@ def switch_user_and_back(s):
         DBusTestCase.tearDownClass()
 
 
+@scenario(LUNA_INI)
+def task_manager_cpu_graphs(s):
+    """Task Manager's Performance tab with One Graph Per CPU: a graph for
+    each CPU, side by side, where the one graph for all of them was."""
+    folder = os.path.join(os.environ["XDG_STATE_HOME"], "xeondesktop")
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "taskmgr.ini"), "w") as f:
+        f.write("[TaskManager]\nTab=2\nOneGraphPerCPU=true\n")
+    before = s.settle("desktop")
+    s.launch("xd-taskmgr")
+    s.wait_window(title="Task Manager", state="activated")
+    time.sleep(2)  # a couple of samples
+    shot = s.settle("performance")
+    box = shot.changed_box(before, (0, 0, WIDTH, HEIGHT - 40))
+    s.check(box is not None, f"Task Manager is on screen ({box})")
+
+    def graphs(shot):
+        """The dark graphs across the CPU history's top row, from the
+        window's top left (see build_performance)."""
+        y = box[1] + 106
+        count, run = 0, 0
+        for x in range(box[0] + 115, box[0] + box[2] - 10):
+            if max(shot.pixel(x, y)) < 140:
+                run += 1
+            else:
+                count += run >= 10
+                run = 0
+        return count + (run >= 10)
+
+    cpus = os.cpu_count() or 1
+    want = cpus if cpus <= 12 else 2
+    found = s.wait(lambda: (lambda n: n if n >= want else None)(graphs(s.shot("graphs"))),
+                   f"{want} CPU graphs")
+    s.log(f"ok: {found} CPU graphs for {cpus} CPUs")
+
+
 @scenario(LUNA_INI, requires=("dbusmock",))
 def task_manager_users(s):
     """Task Manager's Users tab (on a dbusmock logind) lists the sessions;

@@ -1258,11 +1258,14 @@ static void rebuild_cpu_graphs(taskmgr *task_manager) {
     for (GList *list = kids; list != nullptr; list = list->next)
         gtk_widget_destroy(list->data);
     g_list_free(kids);
-    for (int i = 0; i < task_manager->ncpu; i++)
-        gtk_box_pack_start(GTK_BOX(task_manager->cpu_graphs_box),
-                           graph_area(task_manager, &task_manager->cpu_each[i], 20, 60), TRUE, TRUE,
-                           0);
-    gtk_widget_show_all(task_manager->cpu_graphs_box);
+    /* Each shown here: the box is no-show-all (hidden with one graph for
+     * all CPUs), and show_all does nothing at all on such a widget, its
+     * children included. */
+    for (int i = 0; i < task_manager->ncpu; i++) {
+        GtkWidget *graph = graph_area(task_manager, &task_manager->cpu_each[i], 20, 60);
+        gtk_box_pack_start(GTK_BOX(task_manager->cpu_graphs_box), graph, TRUE, TRUE, 0);
+        gtk_widget_show(graph);
+    }
 }
 
 static void show_cpu_graphs(taskmgr *task_manager) {
