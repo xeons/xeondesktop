@@ -186,6 +186,10 @@ static void handle_new_lock(struct wl_listener *listener, void *data) {
         wlr_seat_keyboard_end_grab(server->seat);
         xd_cursor_cancel_grab(server);
         wlr_seat_pointer_clear_focus(server->seat);
+        /* Alt+Tab's window (drawn above the lock) goes, with its titles. */
+        server->cycle_view = nullptr;
+        xd_switcher_hide(server);
+        xd_outline_hide(server);
         xd_ime_lock_changed(server);
         wlr_log(WLR_INFO, "session locked");
     }

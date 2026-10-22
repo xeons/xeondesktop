@@ -40,8 +40,11 @@ static void handle_um_map(struct wl_listener *listener, [[maybe_unused]] void *d
     unmanaged->tree = wlr_scene_subsurface_tree_create(unmanaged->server->layer_x11_popups,
                                                        unmanaged->xsurface->surface);
     unmanaged_place(unmanaged);
-    /* Drop-down menus and the like may want the keyboard. */
-    if (wlr_xwayland_surface_override_redirect_wants_focus(unmanaged->xsurface)) {
+    /* Drop-down menus and the like may want the keyboard; never while the
+     * screen is locked, when it belongs to the lock dialog (else an X11
+     * program could read the password typed into it). */
+    if (!unmanaged->server->locked &&
+        wlr_xwayland_surface_override_redirect_wants_focus(unmanaged->xsurface)) {
         struct wlr_keyboard *kb = wlr_seat_get_keyboard(unmanaged->server->seat);
         if (kb != nullptr)
             wlr_seat_keyboard_notify_enter(unmanaged->server->seat, unmanaged->xsurface->surface,
@@ -186,7 +189,8 @@ static void handle_x_configure(struct wl_listener *listener, void *data) {
 static void handle_x_move(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_move);
     xd_server *server = view->server;
-    if (server->mode != XD_CURSOR_PASSTHROUGH || !xd_snap_begin(server, view))
+    /* Never while locked: the pointer is the lock dialog's. */
+    if (server->locked || server->mode != XD_CURSOR_PASSTHROUGH || !xd_snap_begin(server, view))
         return;
     server->mode = XD_CURSOR_MOVE;
     server->grab_view = view;
@@ -215,7 +219,8 @@ static void handle_x_resize(struct wl_listener *listener, void *data) {
     const struct wlr_xwayland_resize_event *xwayland_resize_event = data;
     xd_server *server = view->server;
     xd_frame_part part = part_from_x11_edges(xwayland_resize_event->edges);
-    if (view->maximized || part == XD_PART_NONE || server->mode != XD_CURSOR_PASSTHROUGH)
+    if (server->locked || view->maximized || part == XD_PART_NONE ||
+        server->mode != XD_CURSOR_PASSTHROUGH)
         return;
     server->mode = XD_CURSOR_RESIZE;
     server->grab_view = view;

@@ -278,14 +278,14 @@ static void handle_undo(struct wl_client *client, struct wl_resource *res) {
 static void handle_begin_move(struct wl_client *client, struct wl_resource *res) {
     (void)client;
     xd_view *view = xd_view_focused(server_of(res));
-    if (view != nullptr)
+    if (view != nullptr && !server_of(res)->locked)
         xd_view_begin_keyboard_move(view);
 }
 
 static void handle_begin_size(struct wl_client *client, struct wl_resource *res) {
     (void)client;
     xd_view *view = xd_view_focused(server_of(res));
-    if (view != nullptr)
+    if (view != nullptr && !server_of(res)->locked)
         xd_view_begin_keyboard_size(view);
 }
 

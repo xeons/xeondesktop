@@ -115,14 +115,19 @@ static struct wlr_box client_geometry(const xd_view *view) {
     return view->toplevel->base->geometry;
 }
 
+/* The largest window we frame: a client's own size is its to choose, and
+ * a huge one (a viewport scaled to 40000 px) mustn't overflow the sums
+ * below or the frame's buffers. */
+static constexpr int MAX_WINDOW_SIDE = 16384;
+
 struct wlr_box xd_view_outer_box(const xd_view *view) {
     xd_insets in = xd_view_insets(view);
     struct wlr_box geo = client_geometry(view);
     return (struct wlr_box){
         .x = view->x,
         .y = view->y,
-        .width = geo.width + in.left + in.right,
-        .height = geo.height + in.top + in.bottom,
+        .width = XD_CLAMP(geo.width, 0, MAX_WINDOW_SIDE) + in.left + in.right,
+        .height = XD_CLAMP(geo.height, 0, MAX_WINDOW_SIDE) + in.top + in.bottom,
     };
 }
 
@@ -271,10 +276,12 @@ static void apply_anchor(xd_view *view) {
         view->anchor_edges = 0;
 }
 
+/* Clamped: a client's sizes and positions are its to choose. */
 static int floor_int(double value) {
     double floored = floor(value);
-    XD_ASSERT(floored > -32768.0 && floored < 32768.0);
-    return (int)floored;
+    if (!(floored > -32768.0))
+        return -32767;
+    return floored < 32768.0 ? (int)floored : 32767;
 }
 
 void xd_view_menu_anchor(const xd_view *view, double *lx, double *ly) {
@@ -998,7 +1005,8 @@ static void handle_request_move(struct wl_listener *listener, void *data) {
     xd_view *view = XD_CONTAINER_OF(listener, xd_view, request_move);
     const struct wlr_xdg_toplevel_move_event *xdg_toplevel_move_event = data;
     xd_server *server = view->server;
-    if (server->mode != XD_CURSOR_PASSTHROUGH)
+    /* Never while locked: the pointer is the lock dialog's. */
+    if (server->locked || server->mode != XD_CURSOR_PASSTHROUGH)
         return;
     /* Asked from a touch (a header bar dragged with a finger): it starts
      * where the finger is. */
@@ -1042,7 +1050,8 @@ static void handle_request_resize(struct wl_listener *listener, void *data) {
     const struct wlr_xdg_toplevel_resize_event *event = data;
     xd_server *server = view->server;
     xd_frame_part part = part_from_edges(event->edges);
-    if (view->maximized || part == XD_PART_NONE || server->mode != XD_CURSOR_PASSTHROUGH)
+    if (server->locked || view->maximized || part == XD_PART_NONE ||
+        server->mode != XD_CURSOR_PASSTHROUGH)
         return;
     xd_touch_claim_grab(server, view->toplevel->base->surface, event->serial);
     server->mode = XD_CURSOR_RESIZE;

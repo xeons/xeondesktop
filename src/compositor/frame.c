@@ -53,7 +53,8 @@ static const struct wlr_buffer_impl cairo_buffer_impl = {
 };
 
 static xd_cairo_buffer *cairo_buffer_create(int width, int height) {
-    XD_ASSERT(width > 0 && height > 0);
+    if (width <= 0 || height <= 0)
+        return nullptr; /* a client's window can be any size, nothing at all too */
     cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
     if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
         cairo_surface_destroy(surface);
@@ -78,10 +79,12 @@ double xd_view_scale(const xd_view *view) {
     return xd_output_scale_at(view->server, box.x + box.width / 2.0, box.y + box.height / 2.0);
 }
 
+/* Clamped to cairo's limits: a window's size is its client's to choose. */
 static int to_device(int logical, double scale) {
     double scaled = ceil(logical * scale);
-    XD_ASSERT(scaled >= 0 && scaled < 32768);
-    return (int)scaled;
+    if (!(scaled >= 0))
+        return 0;
+    return scaled < 32768 ? (int)scaled : 32767;
 }
 
 #ifdef XD_SCENEFX
