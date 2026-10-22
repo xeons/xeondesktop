@@ -39,130 +39,131 @@ typedef struct request {
     gboolean done;
 } request;
 
-static void request_free(request *r) {
-    if (r->session != nullptr) {
+static void request_free(request *auth_request) {
+    if (auth_request->session != nullptr) {
         /* Cancelling emits "completed": on_completed would then touch the
          * dialog finish() has just destroyed. */
-        g_signal_handlers_disconnect_by_data(r->session, r);
-        polkit_agent_session_cancel(r->session);
-        g_clear_object(&r->session);
+        g_signal_handlers_disconnect_by_data(auth_request->session, auth_request);
+        polkit_agent_session_cancel(auth_request->session);
+        g_clear_object(&auth_request->session);
     }
-    if (r->cancel_handler != 0)
-        g_cancellable_disconnect(r->cancellable, r->cancel_handler);
-    g_clear_object(&r->cancellable);
-    g_list_free_full(r->identities, g_object_unref);
-    g_free(r->cookie);
-    g_free(r);
+    if (auth_request->cancel_handler != 0)
+        g_cancellable_disconnect(auth_request->cancellable, auth_request->cancel_handler);
+    g_clear_object(&auth_request->cancellable);
+    g_list_free_full(auth_request->identities, g_object_unref);
+    g_free(auth_request->cookie);
+    g_free(auth_request);
 }
 
 /* Ends the request one way or another; the dialog goes too. */
-static void finish(request *r, gboolean ok, const char *why) {
-    if (r->done)
+static void finish(request *auth_request, gboolean ok, const char *why) {
+    if (auth_request->done)
         return;
-    r->done = TRUE;
+    auth_request->done = TRUE;
     if (ok)
-        g_task_return_boolean(r->task, TRUE);
+        g_task_return_boolean(auth_request->task, TRUE);
     else
-        g_task_return_new_error(r->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "%s",
+        g_task_return_new_error(auth_request->task, POLKIT_ERROR, POLKIT_ERROR_CANCELLED, "%s",
                                 why != nullptr ? why : "Cancelled");
-    g_clear_object(&r->task);
-    if (r->dialog != nullptr) {
-        GtkWidget *d = r->dialog;
-        r->dialog = nullptr;
-        gtk_widget_destroy(d);
+    g_clear_object(&auth_request->task);
+    if (auth_request->dialog != nullptr) {
+        GtkWidget *widget = auth_request->dialog;
+        auth_request->dialog = nullptr;
+        gtk_widget_destroy(widget);
     }
-    request_free(r);
+    request_free(auth_request);
 }
 
-static void set_status(request *r, const char *text, gboolean error) {
-    gtk_label_set_text(GTK_LABEL(r->status), text != nullptr ? text : "");
-    GtkStyleContext *sc = gtk_widget_get_style_context(r->status);
+static void set_status(request *auth_request, const char *text, gboolean error) {
+    gtk_label_set_text(GTK_LABEL(auth_request->status), text != nullptr ? text : "");
+    GtkStyleContext *sc = gtk_widget_get_style_context(auth_request->status);
     if (error)
         gtk_style_context_add_class(sc, "error");
     else
         gtk_style_context_remove_class(sc, "error");
 }
 
-static void set_busy(request *r, gboolean busy) {
-    gtk_widget_set_sensitive(r->password, !busy);
-    gtk_widget_set_sensitive(r->user, !busy && g_list_length(r->identities) > 1);
-    gtk_widget_set_sensitive(r->ok, !busy);
+static void set_busy(request *auth_request, gboolean busy) {
+    gtk_widget_set_sensitive(auth_request->password, !busy);
+    gtk_widget_set_sensitive(auth_request->user,
+                             !busy && g_list_length(auth_request->identities) > 1);
+    gtk_widget_set_sensitive(auth_request->ok, !busy);
 }
 
 /* ---- the PAM conversation, through polkit's helper ---- */
 
-static void on_request(PolkitAgentSession *s, const char *prompt, gboolean echo_on,
+static void on_request(PolkitAgentSession *session, const char *prompt, gboolean echo_on,
                        gpointer data) {
     (void)prompt;
     (void)echo_on;
-    request *r = data;
+    request *auth_request = data;
     /* The password was typed before OK; answer the helper's prompt. */
-    polkit_agent_session_response(s, gtk_entry_get_text(GTK_ENTRY(r->password)));
+    polkit_agent_session_response(session, gtk_entry_get_text(GTK_ENTRY(auth_request->password)));
 }
 
-static void on_show_error(PolkitAgentSession *s, const char *text, gpointer data) {
-    (void)s;
+static void on_show_error(PolkitAgentSession *session, const char *text, gpointer data) {
+    (void)session;
     set_status(data, text, TRUE);
 }
 
-static void on_show_info(PolkitAgentSession *s, const char *text, gpointer data) {
-    (void)s;
+static void on_show_info(PolkitAgentSession *session, const char *text, gpointer data) {
+    (void)session;
     set_status(data, text, FALSE);
 }
 
-static void on_completed(PolkitAgentSession *s, gboolean gained, gpointer data) {
-    (void)s;
-    request *r = data;
-    g_clear_object(&r->session);
+static void on_completed(PolkitAgentSession *session, gboolean gained, gpointer data) {
+    (void)session;
+    request *auth_request = data;
+    g_clear_object(&auth_request->session);
     if (gained) {
-        finish(r, TRUE, nullptr);
+        finish(auth_request, TRUE, nullptr);
         return;
     }
     /* Wrong password: let them try again, as Windows does. */
-    set_busy(r, FALSE);
-    set_status(r,
+    set_busy(auth_request, FALSE);
+    set_status(auth_request,
                "The password is incorrect. Letters in passwords must be typed using the correct "
                "case.",
                TRUE);
-    gtk_editable_select_region(GTK_EDITABLE(r->password), 0, -1);
-    gtk_widget_grab_focus(r->password);
+    gtk_editable_select_region(GTK_EDITABLE(auth_request->password), 0, -1);
+    gtk_widget_grab_focus(auth_request->password);
 }
 
-static PolkitIdentity *chosen_identity(request *r) {
-    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(r->user));
-    GList *l = g_list_nth(r->identities, (guint)MAX(i, 0));
-    return l != nullptr ? l->data : nullptr;
+static PolkitIdentity *chosen_identity(request *auth_request) {
+    int i = gtk_combo_box_get_active(GTK_COMBO_BOX(auth_request->user));
+    GList *list = g_list_nth(auth_request->identities, (guint)MAX(i, 0));
+    return list != nullptr ? list->data : nullptr;
 }
 
-static void authenticate(request *r) {
-    PolkitIdentity *id = chosen_identity(r);
+static void authenticate(request *auth_request) {
+    PolkitIdentity *id = chosen_identity(auth_request);
     if (id == nullptr)
         return;
-    set_busy(r, TRUE);
-    set_status(r, "Checking the password...", FALSE);
-    r->session = polkit_agent_session_new(id, r->cookie);
-    g_signal_connect(r->session, "request", G_CALLBACK(on_request), r);
-    g_signal_connect(r->session, "show-error", G_CALLBACK(on_show_error), r);
-    g_signal_connect(r->session, "show-info", G_CALLBACK(on_show_info), r);
-    g_signal_connect(r->session, "completed", G_CALLBACK(on_completed), r);
-    polkit_agent_session_initiate(r->session);
+    set_busy(auth_request, TRUE);
+    set_status(auth_request, "Checking the password...", FALSE);
+    auth_request->session = polkit_agent_session_new(id, auth_request->cookie);
+    g_signal_connect(auth_request->session, "request", G_CALLBACK(on_request), auth_request);
+    g_signal_connect(auth_request->session, "show-error", G_CALLBACK(on_show_error), auth_request);
+    g_signal_connect(auth_request->session, "show-info", G_CALLBACK(on_show_info), auth_request);
+    g_signal_connect(auth_request->session, "completed", G_CALLBACK(on_completed), auth_request);
+    polkit_agent_session_initiate(auth_request->session);
 }
 
-static void on_response(GtkDialog *d, int response, gpointer data) {
-    (void)d;
-    request *r = data;
+static void on_response(GtkDialog *dialog_widget, int response, gpointer data) {
+    (void)dialog_widget;
+    request *auth_request = data;
     if (response == GTK_RESPONSE_OK)
-        authenticate(r);
+        authenticate(auth_request);
     else
-        finish(r, FALSE, "The user cancelled");
+        finish(auth_request, FALSE, "The user cancelled");
 }
 
 /* polkitd withdrew the request (the program gave up or went away). */
-static void on_cancelled(GCancellable *c, gpointer data) {
-    (void)c;
-    request *r = data;
-    r->cancel_handler = 0; /* can't disconnect from inside the handler */
-    finish(r, FALSE, "Cancelled by the system");
+static void on_cancelled(GCancellable *cancellable, gpointer data) {
+    (void)cancellable;
+    request *auth_request = data;
+    auth_request->cancel_handler = 0; /* can't disconnect from inside the handler */
+    finish(auth_request, FALSE, "Cancelled by the system");
 }
 
 /* "xeon (Xeon)" for a unix-user identity; nullptr for others. */
@@ -188,29 +189,30 @@ static char *identity_label(PolkitIdentity *id) {
 }
 
 static GtkWidget *wrap_label(const char *text) {
-    GtkWidget *l = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(l), 0);
-    gtk_label_set_line_wrap(GTK_LABEL(l), TRUE);
-    gtk_label_set_max_width_chars(GTK_LABEL(l), 48);
-    return l;
+    GtkWidget *widget = gtk_label_new(text);
+    gtk_label_set_xalign(GTK_LABEL(widget), 0);
+    gtk_label_set_line_wrap(GTK_LABEL(widget), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(widget), 48);
+    return widget;
 }
 
-static void show_dialog(request *r, const char *action_id, const char *message,
+static void show_dialog(request *auth_request, const char *action_id, const char *message,
                         PolkitDetails *details) {
-    GtkWidget *d = gtk_dialog_new();
-    r->dialog = d;
-    gtk_window_set_title(GTK_WINDOW(d), "Run As");
-    gtk_window_set_icon_name(GTK_WINDOW(d), "dialog-password");
-    gtk_window_set_resizable(GTK_WINDOW(d), FALSE);
-    gtk_window_set_keep_above(GTK_WINDOW(d), TRUE);
-    r->ok = gtk_dialog_add_button(GTK_DIALOG(d), "OK", GTK_RESPONSE_OK);
-    gtk_dialog_add_button(GTK_DIALOG(d), "Cancel", GTK_RESPONSE_CANCEL);
-    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
-    g_signal_connect(d, "response", G_CALLBACK(on_response), r);
+    GtkWidget *widget = gtk_dialog_new();
+    auth_request->dialog = widget;
+    gtk_window_set_title(GTK_WINDOW(widget), "Run As");
+    gtk_window_set_icon_name(GTK_WINDOW(widget), "dialog-password");
+    gtk_window_set_resizable(GTK_WINDOW(widget), FALSE);
+    gtk_window_set_keep_above(GTK_WINDOW(widget), TRUE);
+    auth_request->ok = gtk_dialog_add_button(GTK_DIALOG(widget), "OK", GTK_RESPONSE_OK);
+    gtk_dialog_add_button(GTK_DIALOG(widget), "Cancel", GTK_RESPONSE_CANCEL);
+    gtk_dialog_set_default_response(GTK_DIALOG(widget), GTK_RESPONSE_OK);
+    g_signal_connect(widget, "response", G_CALLBACK(on_response), auth_request);
 
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(box), 12);
-    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), box, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(widget))), box, TRUE, TRUE,
+                       0);
 
     GtkWidget *top = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     GtkWidget *icon = gtk_image_new_from_icon_name("dialog-password", GTK_ICON_SIZE_DIALOG);
@@ -231,35 +233,35 @@ static void show_dialog(request *r, const char *action_id, const char *message,
     GtkWidget *ul = gtk_label_new_with_mnemonic("_User name:");
     gtk_label_set_xalign(GTK_LABEL(ul), 0);
     gtk_grid_attach(GTK_GRID(grid), ul, 0, 0, 1, 1);
-    r->user = gtk_combo_box_text_new();
-    gtk_widget_set_hexpand(r->user, TRUE);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(ul), r->user);
+    auth_request->user = gtk_combo_box_text_new();
+    gtk_widget_set_hexpand(auth_request->user, TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(ul), auth_request->user);
     /* The current user first when they qualify, as XP's Run As does. */
     int active = 0;
     int i = 0;
-    for (GList *l = r->identities; l != nullptr; l = l->next, i++) {
-        char *label = identity_label(l->data);
-        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(r->user),
+    for (GList *list = auth_request->identities; list != nullptr; list = list->next, i++) {
+        char *label = identity_label(list->data);
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(auth_request->user),
                                        label != nullptr ? label : "(group)");
-        if (POLKIT_IS_UNIX_USER(l->data) &&
-            (uid_t)polkit_unix_user_get_uid(POLKIT_UNIX_USER(l->data)) == getuid())
+        if (POLKIT_IS_UNIX_USER(list->data) &&
+            (uid_t)polkit_unix_user_get_uid(POLKIT_UNIX_USER(list->data)) == getuid())
             active = i;
         g_free(label);
     }
-    gtk_combo_box_set_active(GTK_COMBO_BOX(r->user), active);
-    gtk_widget_set_sensitive(r->user, g_list_length(r->identities) > 1);
-    gtk_grid_attach(GTK_GRID(grid), r->user, 1, 0, 1, 1);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(auth_request->user), active);
+    gtk_widget_set_sensitive(auth_request->user, g_list_length(auth_request->identities) > 1);
+    gtk_grid_attach(GTK_GRID(grid), auth_request->user, 1, 0, 1, 1);
     GtkWidget *pl = gtk_label_new_with_mnemonic("_Password:");
     gtk_label_set_xalign(GTK_LABEL(pl), 0);
     gtk_grid_attach(GTK_GRID(grid), pl, 0, 1, 1, 1);
-    r->password = gtk_entry_new();
-    gtk_entry_set_visibility(GTK_ENTRY(r->password), FALSE);
-    gtk_entry_set_input_purpose(GTK_ENTRY(r->password), GTK_INPUT_PURPOSE_PASSWORD);
-    gtk_entry_set_activates_default(GTK_ENTRY(r->password), TRUE);
-    gtk_label_set_mnemonic_widget(GTK_LABEL(pl), r->password);
-    gtk_grid_attach(GTK_GRID(grid), r->password, 1, 1, 1, 1);
-    r->status = wrap_label("");
-    gtk_grid_attach(GTK_GRID(grid), r->status, 1, 2, 1, 1);
+    auth_request->password = gtk_entry_new();
+    gtk_entry_set_visibility(GTK_ENTRY(auth_request->password), FALSE);
+    gtk_entry_set_input_purpose(GTK_ENTRY(auth_request->password), GTK_INPUT_PURPOSE_PASSWORD);
+    gtk_entry_set_activates_default(GTK_ENTRY(auth_request->password), TRUE);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(pl), auth_request->password);
+    gtk_grid_attach(GTK_GRID(grid), auth_request->password, 1, 1, 1, 1);
+    auth_request->status = wrap_label("");
+    gtk_grid_attach(GTK_GRID(grid), auth_request->status, 1, 2, 1, 1);
     gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
 
     /* What exactly is being allowed, for the curious. */
@@ -268,8 +270,8 @@ static void show_dialog(request *r, const char *action_id, const char *message,
     g_string_append_printf(det, "Action: %s", action_id);
     if (details != nullptr) {
         char **keys = polkit_details_get_keys(details);
-        for (char **k = keys; k != nullptr && *k != nullptr; k++)
-            g_string_append_printf(det, "\n%s: %s", *k, polkit_details_lookup(details, *k));
+        for (char **key = keys; key != nullptr && *key != nullptr; key++)
+            g_string_append_printf(det, "\n%s: %s", *key, polkit_details_lookup(details, *key));
         g_strfreev(keys);
     }
     GtkWidget *dl = wrap_label(det->str);
@@ -279,9 +281,9 @@ static void show_dialog(request *r, const char *action_id, const char *message,
     g_string_free(det, TRUE);
     gtk_box_pack_start(GTK_BOX(box), more, FALSE, FALSE, 0);
 
-    gtk_widget_show_all(d);
-    gtk_window_present(GTK_WINDOW(d));
-    gtk_widget_grab_focus(r->password);
+    gtk_widget_show_all(widget);
+    gtk_window_present(GTK_WINDOW(widget));
+    gtk_widget_grab_focus(auth_request->password);
 }
 
 /* ---- the listener ---------------------------------------------------------------- */
@@ -300,19 +302,20 @@ static void initiate(PolkitAgentListener *listener, const char *action_id, const
                      GList *identities, GCancellable *cancellable, GAsyncReadyCallback callback,
                      gpointer user_data) {
     (void)icon_name;
-    request *r = g_new0(request, 1);
-    r->task = g_task_new(listener, cancellable, callback, user_data);
-    r->cookie = g_strdup(cookie);
-    r->identities = g_list_copy_deep(identities, (GCopyFunc)(void (*)(void))g_object_ref, nullptr);
+    request *auth_request = g_new0(request, 1);
+    auth_request->task = g_task_new(listener, cancellable, callback, user_data);
+    auth_request->cookie = g_strdup(cookie);
+    auth_request->identities =
+        g_list_copy_deep(identities, (GCopyFunc)(void (*)(void))g_object_ref, nullptr);
     if (cancellable != nullptr && g_cancellable_is_cancelled(cancellable)) {
-        finish(r, FALSE, "Cancelled by the system");
+        finish(auth_request, FALSE, "Cancelled by the system");
         return;
     }
-    show_dialog(r, action_id, message, details);
+    show_dialog(auth_request, action_id, message, details);
     if (cancellable != nullptr) {
-        r->cancellable = g_object_ref(cancellable);
-        r->cancel_handler =
-            g_cancellable_connect(cancellable, G_CALLBACK(on_cancelled), r, nullptr);
+        auth_request->cancellable = g_object_ref(cancellable);
+        auth_request->cancel_handler =
+            g_cancellable_connect(cancellable, G_CALLBACK(on_cancelled), auth_request, nullptr);
     }
 }
 
