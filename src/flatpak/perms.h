@@ -73,36 +73,36 @@ const char *const *xd_fp_list_names(xd_fp_list list);
 
 /* Nothing granted. */
 xd_fp_perms *xd_fp_perms_new(void);
-void xd_fp_perms_free(xd_fp_perms *p);
-xd_fp_perms *xd_fp_perms_copy(const xd_fp_perms *p);
+void xd_fp_perms_free(xd_fp_perms *permissions);
+xd_fp_perms *xd_fp_perms_copy(const xd_fp_perms *original);
 /* Puts a layer (metadata or an override file) over what's there. */
-void xd_fp_perms_merge(xd_fp_perms *p, GKeyFile *layer);
+void xd_fp_perms_merge(xd_fp_perms *permissions, GKeyFile *layer);
 
-xd_fp_state xd_fp_perms_state(const xd_fp_perms *p, xd_fp_list list, const char *name);
+xd_fp_state xd_fp_perms_state(const xd_fp_perms *permissions, xd_fp_list list, const char *name);
 /* A conditional name's conditions ("!has-wayland", ...), or nullptr. */
-const GPtrArray *xd_fp_perms_conditions(const xd_fp_perms *p, xd_fp_list list,
+const GPtrArray *xd_fp_perms_conditions(const xd_fp_perms *permissions, xd_fp_list list,
                                         const char *name);
 /* Names mentioned in the list (granted, taken away or conditional) that
  * xd_fp_list_names doesn't know, sorted: a newer Flatpak's. Free the
  * array only (g_ptr_array_unref). */
-GPtrArray *xd_fp_perms_other_names(const xd_fp_perms *p, xd_fp_list list);
+GPtrArray *xd_fp_perms_other_names(const xd_fp_perms *permissions, xd_fp_list list);
 
 /* The filesystems mentioned, sorted (canonical form, without the mode),
  * including the ones taken away (NONE). Free the array only. */
-GPtrArray *xd_fp_perms_filesystems(const xd_fp_perms *p);
+GPtrArray *xd_fp_perms_filesystems(const xd_fp_perms *permissions);
 /* A filesystem's access; *found false when it's not mentioned. */
-xd_fp_fs_mode xd_fp_perms_filesystem(const xd_fp_perms *p, const char *fs, bool *found);
+xd_fp_fs_mode xd_fp_perms_filesystem(const xd_fp_perms *permissions, const char *fs, bool *found);
 /* Homedir-relative persistent directories, sorted. Free the array only. */
-GPtrArray *xd_fp_perms_persistent(const xd_fp_perms *p);
+GPtrArray *xd_fp_perms_persistent(const xd_fp_perms *permissions);
 /* Variable names set or unset, sorted. Free the array only. */
-GPtrArray *xd_fp_perms_env_names(const xd_fp_perms *p);
+GPtrArray *xd_fp_perms_env_names(const xd_fp_perms *permissions);
 /* A variable's value: nullptr if unset (*found true) or not mentioned
  * (*found false). */
-const char *xd_fp_perms_env(const xd_fp_perms *p, const char *name, bool *found);
+const char *xd_fp_perms_env(const xd_fp_perms *permissions, const char *name, bool *found);
 /* Bus names with a policy, sorted. Free the array only. */
-GPtrArray *xd_fp_perms_bus_names(const xd_fp_perms *p, xd_fp_bus bus);
+GPtrArray *xd_fp_perms_bus_names(const xd_fp_perms *permissions, xd_fp_bus bus);
 /* "none", "see", "talk" or "own"; nullptr when not mentioned. */
-const char *xd_fp_perms_bus(const xd_fp_perms *p, xd_fp_bus bus, const char *name);
+const char *xd_fp_perms_bus(const xd_fp_perms *permissions, xd_fp_bus bus, const char *name);
 
 /* "[!]fs[:mode]" as flatpak reads it: the canonical filesystem ("~" is
  * "home", "home/x" is "~/x", doubled and trailing slashes go) and its
