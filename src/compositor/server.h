@@ -152,6 +152,7 @@ typedef struct xd_view {
 
     bool mapped;
     bool minimized;
+    bool swiped_away; /* minimized by a three-finger swipe down (gestures.c) */
     /* Didn't answer a ping (xdg-shell): "(Not Responding)" after its
      * title, as Windows shows, until it answers again. */
     bool on_top; /* Always On Top: in layer_on_top */
@@ -587,7 +588,14 @@ void xd_tablet_finish(xd_server *server);
 void xd_tablet_add(xd_server *server, struct wlr_input_device *device);
 void xd_tablet_add_pad(xd_server *server, struct wlr_input_device *device);
 
-/* gestures.c: touchpad gestures for the program under the pointer. */
+/* Alt+Tab's window driven from elsewhere (a touchpad swipe): a step to
+ * the next or previous window, then the one chosen focused, or none. */
+void xd_input_cycle_step(xd_server *server, bool backwards);
+void xd_input_cycle_finish(xd_server *server);
+void xd_input_cycle_cancel(xd_server *server);
+
+/* gestures.c: touchpad gestures for the program under the pointer, and
+ * three-finger swipes for the desktop ([Touchpad] Gestures). */
 void xd_gestures_init(xd_server *server);
 void xd_gestures_finish(xd_server *server);
 

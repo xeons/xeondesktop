@@ -9,6 +9,11 @@
  *                    and size
  *   Pointer Options  speed, Enhance pointer precision (acceleration)
  *   Wheel            lines a notch scrolls
+ *   Touchpad         [Touchpad]: tapping, scrolling, clicking, the
+ *                    touchpad's own speed and the desktop's three-finger
+ *                    swipes, as touchpad drivers' tabs added to XP's and
+ *                    7's Mouse Properties; shown only with a touchpad
+ *                    (or XD_SHOW_TOUCHPAD=1, for screenshots and tests)
  *   Hardware         the pointing devices udev knows
  *
  * Not here: XP's Snap To, pointer trails, hiding the pointer while typing and
@@ -41,6 +46,9 @@ typedef struct props {
     GtkWidget *speed, *precision;
     /* Wheel */
     GtkWidget *lines;
+    /* Touchpad */
+    GtkWidget *tap, *tap_drag, *drag_lock, *scroll, *natural, *scroll_speed, *click;
+    GtkWidget *typing, *with_mouse, *pad_speed, *pad_precision, *gestures;
 } props;
 
 static void changed(props *properties) {
@@ -563,6 +571,158 @@ static GtkWidget *wheel_page(props *properties) {
     return page;
 }
 
+/* ---- Touchpad ---------------------------------------------------------------------- */
+
+/* The tab's widgets into `touchpad`, all at once (they depend on each
+ * other: tap-and-drag needs tapping, drag lock tap-and-drag). */
+static void read_touchpad(props *properties) {
+    xd_touchpad_settings *touchpad = &properties->mouse.touchpad;
+    touchpad->tap = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->tap));
+    touchpad->tap_drag = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->tap_drag));
+    touchpad->drag_lock = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->drag_lock));
+    int scroll = gtk_combo_box_get_active(GTK_COMBO_BOX(properties->scroll));
+    if (scroll >= 0 && scroll < XD_TOUCHPAD_SCROLL_COUNT)
+        touchpad->scroll = (xd_touchpad_scroll)scroll;
+    touchpad->natural_scroll = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->natural));
+    touchpad->scroll_speed = range_int(GTK_RANGE(properties->scroll_speed));
+    int click = gtk_combo_box_get_active(GTK_COMBO_BOX(properties->click));
+    if (click >= 0 && click < XD_TOUCHPAD_CLICK_COUNT)
+        touchpad->click = (xd_touchpad_click)click;
+    touchpad->disable_typing = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->typing));
+    touchpad->disable_with_mouse =
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->with_mouse));
+    touchpad->speed = range_int(GTK_RANGE(properties->pad_speed));
+    touchpad->acceleration =
+        gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->pad_precision));
+    touchpad->gestures = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(properties->gestures));
+}
+
+static void show_touchpad_dependents(props *properties) {
+    const xd_touchpad_settings *touchpad = &properties->mouse.touchpad;
+    gtk_widget_set_sensitive(properties->tap_drag, touchpad->tap);
+    gtk_widget_set_sensitive(properties->drag_lock, touchpad->tap && touchpad->tap_drag);
+    bool scrolls = touchpad->scroll != XD_TOUCHPAD_SCROLL_NONE;
+    gtk_widget_set_sensitive(properties->natural, scrolls);
+    gtk_widget_set_sensitive(properties->scroll_speed, scrolls);
+}
+
+static void on_touchpad(GtkWidget *widget, gpointer data) {
+    (void)widget;
+    props *properties = data;
+    if (properties->updating)
+        return;
+    read_touchpad(properties);
+    show_touchpad_dependents(properties);
+    changed(properties);
+}
+
+static GtkWidget *touchpad_check(props *properties, const char *label, bool active) {
+    GtkWidget *check = gtk_check_button_new_with_mnemonic(label);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), active);
+    g_signal_connect(check, "toggled", G_CALLBACK(on_touchpad), properties);
+    return check;
+}
+
+static GtkWidget *touchpad_page(props *properties) {
+    const xd_touchpad_settings *touchpad = &properties->mouse.touchpad;
+    GtkWidget *page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 10);
+
+    GtkWidget *taps = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    properties->tap = touchpad_check(properties, "_Tap to click", touchpad->tap);
+    gtk_box_pack_start(GTK_BOX(taps), properties->tap, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(taps),
+                       wrapped("Tap with two fingers to right-click, with three to "
+                               "middle-click."),
+                       FALSE, FALSE, 0);
+    properties->tap_drag =
+        touchpad_check(properties, "Tap and _drag (tap, then touch and move)", touchpad->tap_drag);
+    gtk_box_pack_start(GTK_BOX(taps), properties->tap_drag, FALSE, FALSE, 0);
+    properties->drag_lock = touchpad_check(
+        properties, "_Keep dragging for a moment after lifting the finger", touchpad->drag_lock);
+    gtk_box_pack_start(GTK_BOX(taps), properties->drag_lock, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Tapping", taps), FALSE, FALSE, 0);
+
+    GtkWidget *scrolling = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *label = gtk_label_new_with_mnemonic("_Scroll with:");
+    properties->scroll = gtk_combo_box_text_new();
+    static const char *const scroll_names[XD_TOUCHPAD_SCROLL_COUNT] = {
+        [XD_TOUCHPAD_SCROLL_TWO_FINGER] = "Two fingers",
+        [XD_TOUCHPAD_SCROLL_EDGE] = "One finger along the edge",
+        [XD_TOUCHPAD_SCROLL_NONE] = "Nothing (no scrolling)",
+    };
+    for (int i = 0; i < XD_TOUCHPAD_SCROLL_COUNT; i++)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(properties->scroll), scroll_names[i]);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(properties->scroll), (int)touchpad->scroll);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), properties->scroll);
+    g_signal_connect(properties->scroll, "changed", G_CALLBACK(on_touchpad), properties);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), properties->scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(scrolling), row, FALSE, FALSE, 0);
+    properties->natural =
+        touchpad_check(properties, "Re_verse scrolling direction (content follows the fingers)",
+                       touchpad->natural_scroll);
+    gtk_box_pack_start(GTK_BOX(scrolling), properties->natural, FALSE, FALSE, 0);
+    properties->scroll_speed = gtk_scale_new_with_range(
+        GTK_ORIENTATION_HORIZONTAL, XD_TOUCHPAD_SCROLL_SPEED_MIN, XD_TOUCHPAD_SCROLL_SPEED_MAX, 25);
+    gtk_scale_add_mark(GTK_SCALE(properties->scroll_speed), 100, GTK_POS_BOTTOM, nullptr);
+    gtk_range_set_round_digits(GTK_RANGE(properties->scroll_speed), 0);
+    gtk_range_set_value(GTK_RANGE(properties->scroll_speed), touchpad->scroll_speed);
+    g_signal_connect(properties->scroll_speed, "value-changed", G_CALLBACK(on_touchpad),
+                     properties);
+    gtk_box_pack_start(GTK_BOX(scrolling), slider_row("Slow", properties->scroll_speed, "Fast"),
+                       FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Scrolling", scrolling), FALSE, FALSE, 0);
+
+    GtkWidget *clicking = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    label = gtk_label_new_with_mnemonic("_Right-click by pressing:");
+    properties->click = gtk_combo_box_text_new();
+    static const char *const click_names[XD_TOUCHPAD_CLICK_COUNT] = {
+        [XD_TOUCHPAD_CLICK_DEFAULT] = "As the touchpad comes",
+        [XD_TOUCHPAD_CLICK_AREAS] = "Its bottom right corner",
+        [XD_TOUCHPAD_CLICK_FINGERS] = "With two fingers",
+    };
+    for (int i = 0; i < XD_TOUCHPAD_CLICK_COUNT; i++)
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(properties->click), click_names[i]);
+    gtk_combo_box_set_active(GTK_COMBO_BOX(properties->click), (int)touchpad->click);
+    gtk_label_set_mnemonic_widget(GTK_LABEL(label), properties->click);
+    g_signal_connect(properties->click, "changed", G_CALLBACK(on_touchpad), properties);
+    gtk_box_pack_start(GTK_BOX(row), label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(row), properties->click, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(clicking), row, FALSE, FALSE, 0);
+    properties->typing =
+        touchpad_check(properties, "Turn the touchpad off while t_yping", touchpad->disable_typing);
+    gtk_box_pack_start(GTK_BOX(clicking), properties->typing, FALSE, FALSE, 0);
+    properties->with_mouse =
+        touchpad_check(properties, "Turn the touchpad off while a _mouse is plugged in",
+                       touchpad->disable_with_mouse);
+    gtk_box_pack_start(GTK_BOX(clicking), properties->with_mouse, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Clicking", clicking), FALSE, FALSE, 0);
+
+    GtkWidget *motion = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    properties->pad_speed = ticked_scale(XD_MOUSE_SPEED_MIN, XD_MOUSE_SPEED_MAX, 1);
+    gtk_range_set_value(GTK_RANGE(properties->pad_speed), touchpad->speed);
+    g_signal_connect(properties->pad_speed, "value-changed", G_CALLBACK(on_touchpad), properties);
+    gtk_box_pack_start(GTK_BOX(motion), slider_row("Slow", properties->pad_speed, "Fast"), FALSE,
+                       FALSE, 0);
+    properties->pad_precision =
+        touchpad_check(properties, "Enhance pointer prec_ision", touchpad->acceleration);
+    gtk_box_pack_start(GTK_BOX(motion), properties->pad_precision, FALSE, FALSE, 0);
+    properties->gestures =
+        touchpad_check(properties,
+                       "Swipe with three _fingers: down shows the desktop, up brings the "
+                       "windows back, sideways switches windows",
+                       touchpad->gestures);
+    gtk_label_set_line_wrap(GTK_LABEL(gtk_bin_get_child(GTK_BIN(properties->gestures))), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(gtk_bin_get_child(GTK_BIN(properties->gestures))), 46);
+    gtk_box_pack_start(GTK_BOX(motion), properties->gestures, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), frame("Pointer speed and gestures", motion), FALSE, FALSE, 0);
+    show_touchpad_dependents(properties);
+    return page;
+}
+
 /* ---- applying ----------------------------------------------------------------------- */
 
 static bool apply(props *properties) {
@@ -622,6 +782,10 @@ int main(int argc, char **argv) {
                              gtk_label_new_with_mnemonic("Pointer _Options"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), wheel_page(&properties),
                              gtk_label_new_with_mnemonic("_Wheel"));
+    const char *show_touchpad = getenv("XD_SHOW_TOUCHPAD");
+    if (xd_input_has_touchpad() || (show_touchpad != nullptr && strcmp(show_touchpad, "1") == 0))
+        gtk_notebook_append_page(GTK_NOTEBOOK(tabs), touchpad_page(&properties),
+                                 gtk_label_new_with_mnemonic("Tou_chpad"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), xd_input_devices_page(XD_INPUT_POINTERS),
                              gtk_label_new_with_mnemonic("_Hardware"));
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(properties.switch_buttons),

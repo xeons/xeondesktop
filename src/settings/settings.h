@@ -172,6 +172,41 @@ typedef struct xd_folder_settings {
                                details; "" = the file manager's own default */
 } xd_folder_settings;
 
+/* [Touchpad]: what a touchpad's driver added to Mouse Properties (the
+ * Synaptics and ALPS tabs of XP and 7), applied by the compositor to
+ * libinput touchpads; mice keep [Mouse]'s speed and acceleration. */
+typedef enum xd_touchpad_scroll : uint8_t {
+    XD_TOUCHPAD_SCROLL_TWO_FINGER, /* two fingers moved together */
+    XD_TOUCHPAD_SCROLL_EDGE, /* one finger along the right or bottom edge */
+    XD_TOUCHPAD_SCROLL_NONE,
+    XD_TOUCHPAD_SCROLL_COUNT,
+} xd_touchpad_scroll;
+
+/* A press of the touchpad's button (a clickpad's whole surface): */
+typedef enum xd_touchpad_click : uint8_t {
+    XD_TOUCHPAD_CLICK_DEFAULT, /* as the touchpad comes */
+    XD_TOUCHPAD_CLICK_AREAS, /* its bottom right corner is the right button */
+    XD_TOUCHPAD_CLICK_FINGERS, /* two fingers are the right button, three the middle */
+    XD_TOUCHPAD_CLICK_COUNT,
+} xd_touchpad_click;
+
+typedef struct xd_touchpad_settings {
+    bool tap; /* a tap is a click; two fingers right, three middle */
+    bool tap_drag; /* tap, then touch and move: a drag */
+    bool drag_lock; /* ...which lasts a moment past lifting the finger */
+    xd_touchpad_scroll scroll;
+    bool natural_scroll; /* the content moves with the fingers */
+    int scroll_speed; /* percent of the touchpad's own */
+    xd_touchpad_click click;
+    bool disable_typing; /* ignored while typing (a palm on it) */
+    bool disable_with_mouse; /* off while a mouse is plugged in */
+    int speed; /* -10 .. 10, as [Mouse]'s, for the touchpad alone */
+    bool acceleration;
+    /* Three fingers swiped: down shows the desktop, up brings the
+     * windows back, sideways switches windows as Alt+Tab does. */
+    bool gestures;
+} xd_touchpad_settings;
+
 /* [Mouse]: the compositor applies the buttons, speed and acceleration to
  * every libinput pointer and the wheel to what it forwards; the cursor
  * theme to its own cursor and, through XCURSOR_THEME/XCURSOR_SIZE, to
@@ -187,6 +222,9 @@ typedef struct xd_mouse_settings {
     int cursor_size;       /* logical px */
     bool click_lock;       /* ClickLock: a long press holds the button until the next click */
     int click_lock_ms;     /* how long that press is */
+    /* [Touchpad], kept with the mouse's: the compositor takes them
+     * together, Mouse Properties sets them together. */
+    xd_touchpad_settings touchpad;
 } xd_mouse_settings;
 
 /* SoundSentry's "Choose the visual warning". */
@@ -632,6 +670,8 @@ enum {
     XD_CURSOR_SIZE_MAX = 128,
     XD_CLICK_LOCK_MIN = 200,
     XD_CLICK_LOCK_MAX = 2200,
+    XD_TOUCHPAD_SCROLL_SPEED_MIN = 25, /* percent */
+    XD_TOUCHPAD_SCROLL_SPEED_MAX = 400,
     XD_MOUSE_KEYS_SPEED_MIN = 10,
     XD_MOUSE_KEYS_SPEED_MAX = 360,
     XD_MOUSE_KEYS_ACCEL_MIN = 1000,

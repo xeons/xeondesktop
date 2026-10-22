@@ -6643,18 +6643,91 @@ def pen_without_tablet_support(s):
 @scenario()
 def touchpad_pinch(s):
     """Touchpad gestures go to the program under the pointer: a pinch (and
-    a swipe and a hold) reach it with their fingers and scale."""
+    a two-finger swipe and a hold) reach it with their fingers and scale;
+    a three-finger swipe is the desktop's (touchpad_desktop_swipes)."""
     log, (x, y, w, h) = input_window(s)
     s.inject("move", x + 100, y + 100, "pinch", "begin", 2, "pinch", "update", 0, 0, 1.5, 10,
-             "pinch", "end", "swipe", "begin", 3, "swipe", "update", 30, 0, "swipe", "end",
+             "pinch", "end", "swipe", "begin", 2, "swipe", "update", 30, 0, "swipe", "end",
              "rest", "begin", 2, "rest", "end", "cancel")  # fmt: skip
     wait_logged(s, log, "hold end", "the hold to end")
     got = logged(log)
     s.check("pinch begin 2" in got and "pinch update scale 1.50 rotation 10.0" in got
             and "pinch end" in got, "the pinch reached the program, scale 1.5")  # fmt: skip
-    s.check("swipe begin 3" in got and "swipe update 30.0 0.0" in got and "swipe end" in got,
-            "a three-finger swipe too")  # fmt: skip
+    s.check("swipe begin 2" in got and "swipe update 30.0 0.0" in got and "swipe end" in got,
+            "a two-finger swipe too")  # fmt: skip
     s.check("hold begin 2" in got and "hold end cancelled" in got, "and a cancelled hold")
+
+
+@scenario(CLASSIC_INI + "\n[Touchpad]\nGestures=false\n")
+def touchpad_swipes_to_programs(s):
+    """With the desktop's gestures off ([Touchpad] Gestures), a
+    three-finger swipe goes to the program under the pointer too."""
+    log, (x, y, w, h) = input_window(s)
+    s.inject("move", x + 100, y + 100, "swipe", "begin", 3, "swipe", "update", 0, 80,
+             "swipe", "end")  # fmt: skip
+    wait_logged(s, log, "swipe end", "the swipe to end")
+    s.check("swipe begin 3" in logged(log), "the program got the three-finger swipe")
+    s.check("minimized" not in s.window(title="Input test")["states"], "and nothing minimized")
+
+
+@scenario()
+def touchpad_desktop_swipes(s):
+    """Three-finger swipes are the desktop's, as on Windows' precision
+    touchpads: down minimizes the windows showing, up brings them back,
+    sideways switches windows as Alt+Tab does; the program under the
+    fingers sees none of it."""
+    log_a, (x, y, w, h) = input_window(s, title="Input A")
+    log_b, _ = input_window(s, title="Input B")
+
+    def states(title):
+        return s.window(title=title)["states"]
+
+    def swipe(dx, dy):
+        steps = []
+        for _ in range(4):
+            steps += ["swipe", "update", dx / 4, dy / 4]
+        s.inject("swipe", "begin", 3, *steps, "swipe", "end")
+
+    s.inject("move", x + 100, y + 100)
+    swipe(0, 200)
+    s.wait(lambda: "minimized" in states("Input A") and "minimized" in states("Input B"),
+           "a swipe down to minimize both windows")  # fmt: skip
+    s.log("ok: three fingers down showed the desktop")
+    swipe(0, -200)
+    s.wait(lambda: "minimized" not in states("Input A") and "minimized" not in states("Input B"),
+           "a swipe up to bring them back")  # fmt: skip
+    s.log("ok: three fingers up brought the windows back")
+    front = "Input A" if "activated" in states("Input A") else "Input B"
+    other = "Input B" if front == "Input A" else "Input A"
+    swipe(150, 0)
+    s.wait_window(title=other, state="activated")
+    s.log(f"ok: three fingers sideways switched from {front} to {other}")
+    got = logged(log_a) + logged(log_b)
+    s.check(not any(line.startswith("swipe") for line in got),
+            "the programs saw none of the swipes")  # fmt: skip
+
+
+@scenario()
+def touchpad_settings_tab(s):
+    """Mouse Properties' Touchpad tab (shown here without a touchpad by
+    XD_SHOW_TOUCHPAD): Tap to click turned off and reverse scrolling on,
+    by their access keys, reach [Touchpad] on Apply."""
+    s.launch(s.tool("xd-mouse"), env={"XD_SHOW_TOUCHPAD": "1", "GSETTINGS_BACKEND": "memory"})
+    s.wait_window(title="Mouse Properties", state="activated")
+    s.settle("mouse")
+    s.inject("key", "alt+c", "sleep", 300)
+    s.settle("touchpad tab")
+    s.inject("key", "alt+t", "sleep", 200, "key", "alt+v", "sleep", 200, "key", "alt+a")
+
+    def saved():
+        ini = s.ini()
+        return (ini.get("Touchpad", "TapToClick", fallback="") == "false"
+                and ini.get("Touchpad", "NaturalScrolling", fallback="") == "true")  # fmt: skip
+
+    s.wait(saved, "TapToClick=false and NaturalScrolling=true in [Touchpad]")
+    s.check(s.ini().get("Touchpad", "Scrolling", fallback="") == "twofinger",
+            "the rest as it was (two-finger scrolling)")  # fmt: skip
+    s.log("ok: the Touchpad tab saved [Touchpad]")
 
 
 # ---- programs capturing the mouse and keyboard (constraints.c) ---------------------

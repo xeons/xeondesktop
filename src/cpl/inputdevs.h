@@ -14,5 +14,7 @@ typedef enum xd_input_kind : uint8_t {
 
 /* A "Devices:" list and the selected one's properties. */
 GtkWidget *xd_input_devices_page(xd_input_kind kind);
+/* Whether udev knows a touchpad (Mouse Properties' Touchpad tab). */
+bool xd_input_has_touchpad(void);
 
 #endif

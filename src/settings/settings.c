@@ -428,7 +428,15 @@ void xd_settings_defaults(xd_settings *settings) {
                   .double_click_ms = 500,
                   .wheel_lines = 3,
                   .cursor_size = 24,
-                  .click_lock_ms = 1200},
+                  .click_lock_ms = 1200,
+                  /* What Windows' precision touchpads do out of the box. */
+                  .touchpad = {.tap = true,
+                               .tap_drag = true,
+                               .scroll = XD_TOUCHPAD_SCROLL_TWO_FINGER,
+                               .scroll_speed = 100,
+                               .disable_typing = true,
+                               .acceleration = true,
+                               .gestures = true}},
         /* XP's: every shortcut on, and the warnings and sounds with them;
          * FilterKeys' shortcut turns on SlowKeys. */
         .access = {.sticky_lock = true,
@@ -590,6 +598,43 @@ static void parse_mouse(xd_mouse_settings *mouse, xd_str key, xd_str value) {
         parse_bool(value, &mouse->click_lock);
     } else if (KEY("ClickLockMs")) {
         parse_int(value, XD_CLICK_LOCK_MIN, XD_CLICK_LOCK_MAX, &mouse->click_lock_ms);
+    }
+#undef KEY
+}
+
+static const char *const touchpad_scroll_names[] = {"twofinger", "edge", "none"};
+static const char *const touchpad_click_names[] = {"default", "areas", "fingers"};
+
+static void parse_touchpad(xd_touchpad_settings *touchpad, xd_str key, xd_str value) {
+#define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
+    int i = -1;
+    if (KEY("TapToClick")) {
+        parse_bool(value, &touchpad->tap);
+    } else if (KEY("TapAndDrag")) {
+        parse_bool(value, &touchpad->tap_drag);
+    } else if (KEY("DragLock")) {
+        parse_bool(value, &touchpad->drag_lock);
+    } else if (KEY("Scrolling")) {
+        if ((i = index_of(touchpad_scroll_names, XD_ARRAY_LEN(touchpad_scroll_names), value)) >= 0)
+            touchpad->scroll = (xd_touchpad_scroll)i;
+    } else if (KEY("NaturalScrolling")) {
+        parse_bool(value, &touchpad->natural_scroll);
+    } else if (KEY("ScrollSpeed")) {
+        parse_int(value, XD_TOUCHPAD_SCROLL_SPEED_MIN, XD_TOUCHPAD_SCROLL_SPEED_MAX,
+                  &touchpad->scroll_speed);
+    } else if (KEY("ClickMethod")) {
+        if ((i = index_of(touchpad_click_names, XD_ARRAY_LEN(touchpad_click_names), value)) >= 0)
+            touchpad->click = (xd_touchpad_click)i;
+    } else if (KEY("DisableWhileTyping")) {
+        parse_bool(value, &touchpad->disable_typing);
+    } else if (KEY("DisableWithMouse")) {
+        parse_bool(value, &touchpad->disable_with_mouse);
+    } else if (KEY("Speed")) {
+        parse_int(value, XD_MOUSE_SPEED_MIN, XD_MOUSE_SPEED_MAX, &touchpad->speed);
+    } else if (KEY("Acceleration")) {
+        parse_bool(value, &touchpad->acceleration);
+    } else if (KEY("Gestures")) {
+        parse_bool(value, &touchpad->gestures);
     }
 #undef KEY
 }
@@ -1209,6 +1254,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
             copy_into(keyboard->input_method, sizeof(keyboard->input_method), value);
     } else if (SEC("Mouse")) {
         parse_mouse(&settings->mouse, key, value);
+    } else if (SEC("Touchpad")) {
+        parse_touchpad(&settings->mouse.touchpad, key, value);
     } else if (SEC("Accessibility")) {
         parse_access(&settings->access, key, value);
     } else if (SEC("Sound")) {
@@ -1521,6 +1568,19 @@ static GKeyFile *to_keyfile(const xd_settings *settings) {
     g_key_file_set_integer(kf, "Mouse", "CursorSize", mouse->cursor_size);
     g_key_file_set_boolean(kf, "Mouse", "ClickLock", mouse->click_lock);
     g_key_file_set_integer(kf, "Mouse", "ClickLockMs", mouse->click_lock_ms);
+    const xd_touchpad_settings *touchpad = &mouse->touchpad;
+    g_key_file_set_boolean(kf, "Touchpad", "TapToClick", touchpad->tap);
+    g_key_file_set_boolean(kf, "Touchpad", "TapAndDrag", touchpad->tap_drag);
+    g_key_file_set_boolean(kf, "Touchpad", "DragLock", touchpad->drag_lock);
+    g_key_file_set_string(kf, "Touchpad", "Scrolling", touchpad_scroll_names[touchpad->scroll]);
+    g_key_file_set_boolean(kf, "Touchpad", "NaturalScrolling", touchpad->natural_scroll);
+    g_key_file_set_integer(kf, "Touchpad", "ScrollSpeed", touchpad->scroll_speed);
+    g_key_file_set_string(kf, "Touchpad", "ClickMethod", touchpad_click_names[touchpad->click]);
+    g_key_file_set_boolean(kf, "Touchpad", "DisableWhileTyping", touchpad->disable_typing);
+    g_key_file_set_boolean(kf, "Touchpad", "DisableWithMouse", touchpad->disable_with_mouse);
+    g_key_file_set_integer(kf, "Touchpad", "Speed", touchpad->speed);
+    g_key_file_set_boolean(kf, "Touchpad", "Acceleration", touchpad->acceleration);
+    g_key_file_set_boolean(kf, "Touchpad", "Gestures", touchpad->gestures);
     const xd_access_settings *access_settings = &settings->access;
     g_key_file_set_boolean(kf, "Accessibility", "StickyKeys", access_settings->sticky_keys);
     g_key_file_set_boolean(kf, "Accessibility", "StickyKeysLock", access_settings->sticky_lock);

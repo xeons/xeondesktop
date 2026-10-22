@@ -4237,6 +4237,40 @@ static void test_input_settings(void) {
     xd_settings_parse(XD_STR("[Mouse]\nCursorTheme=.hidden\n"), &original);
     CHECK(original.mouse.cursor_theme[0] == 0);
 
+    /* [Touchpad]: tapping, two-finger scrolling, typing guard and the
+     * desktop's swipes on, as Windows' precision touchpads come. */
+    xd_settings_defaults(&original);
+    const xd_touchpad_settings *touchpad = &original.mouse.touchpad;
+    CHECK(touchpad->tap && touchpad->tap_drag && !touchpad->drag_lock);
+    CHECK(touchpad->scroll == XD_TOUCHPAD_SCROLL_TWO_FINGER && !touchpad->natural_scroll &&
+          touchpad->scroll_speed == 100);
+    CHECK(touchpad->click == XD_TOUCHPAD_CLICK_DEFAULT && touchpad->disable_typing &&
+          !touchpad->disable_with_mouse);
+    CHECK(touchpad->speed == 0 && touchpad->acceleration && touchpad->gestures);
+    xd_settings_parse(XD_STR("[Touchpad]\nTapToClick=false\nTapAndDrag=false\nDragLock=true\n"
+                             "Scrolling=edge\nNaturalScrolling=true\nScrollSpeed=150\n"
+                             "ClickMethod=fingers\nDisableWhileTyping=false\n"
+                             "DisableWithMouse=true\nSpeed=3\nAcceleration=false\n"
+                             "Gestures=false\n[Mouse]\nSpeed=-2\n"),
+                      &original);
+    CHECK(!touchpad->tap && !touchpad->tap_drag && touchpad->drag_lock);
+    CHECK(touchpad->scroll == XD_TOUCHPAD_SCROLL_EDGE && touchpad->natural_scroll &&
+          touchpad->scroll_speed == 150);
+    CHECK(touchpad->click == XD_TOUCHPAD_CLICK_FINGERS && !touchpad->disable_typing &&
+          touchpad->disable_with_mouse);
+    CHECK(touchpad->speed == 3 && !touchpad->acceleration && !touchpad->gestures);
+    CHECK(original.mouse.speed == -2); /* the mouse's own, apart */
+    xd_settings_serialize(&original, &text);
+    xd_settings_parse(xd_strbuf_view(&text), &parsed);
+    CHECK(memcmp(&original.mouse.touchpad, &parsed.mouse.touchpad, sizeof(*touchpad)) == 0);
+    xd_strbuf_free(&text);
+    /* Out of range, or a word it doesn't know, keeps the default. */
+    xd_settings_parse(XD_STR("[Touchpad]\nScrollSpeed=5000\nScrolling=diagonal\n"
+                             "ClickMethod=sideways\nSpeed=-30\n"),
+                      &original);
+    CHECK(touchpad->scroll_speed == 100 && touchpad->scroll == XD_TOUCHPAD_SCROLL_TWO_FINGER);
+    CHECK(touchpad->click == XD_TOUCHPAD_CLICK_DEFAULT && touchpad->speed == 0);
+
     /* XP's defaults: off, but every shortcut on, with its warning. */
     xd_settings_defaults(&original);
     CHECK(!original.access.filter_keys && !original.access.toggle_keys &&

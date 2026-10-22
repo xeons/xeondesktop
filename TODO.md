@@ -282,8 +282,22 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       tilt, else as the mouse; pads. Still to do: press-and-hold right
       click, touch feedback, a setting for which monitor a touchscreen or
       tablet maps to (Windows 7's Tablet PC Settings).
-- [~] Touchpad gestures (pointer-gestures): pinch to zoom, swipe
-      back/forward, hold.
+- [x] Touchpads: Mouse Properties' Touchpad tab ([Touchpad]; shown when
+      udev knows a touchpad): tap to click (two fingers tapped right-click,
+      three middle-click), tap and drag with optional drag lock, two-finger
+      or edge scrolling, reverse (natural) scrolling, scroll speed, the
+      right-click by the bottom right corner or two fingers, off while
+      typing or while a mouse is plugged in, and the touchpad's own speed
+      and acceleration, each only where libinput says the touchpad has it.
+      Gestures (pointer-gestures): pinches, holds and two-finger swipes go
+      to the program under the pointer; three-finger swipes are the
+      desktop's, as on Windows' precision touchpads (down shows the
+      desktop, up brings the windows back, sideways switches windows
+      through Alt+Tab's window), unless turned off there. Tested headless
+      (UI tests touchpad_pinch, touchpad_desktop_swipes,
+      touchpad_swipes_to_programs, touchpad_settings_tab); libinput's own
+      options untested on a real touchpad. Not done: four-finger gestures,
+      pinch to zoom the desktop.
 - [x] Letting a program take all shortcuts (keyboard-shortcuts-inhibit,
       and the X11 programs' xwayland-keyboard-grab): VMs and remote
       desktop can't have Alt+Tab or the Windows key.

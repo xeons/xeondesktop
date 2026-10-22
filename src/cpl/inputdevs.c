@@ -88,6 +88,20 @@ static void fill(GtkListStore *store, xd_input_kind kind) {
     udev_unref(udev);
 }
 
+bool xd_input_has_touchpad(void) {
+    struct udev *udev = udev_new();
+    if (udev == nullptr)
+        return false;
+    struct udev_enumerate *enumerator = udev_enumerate_new(udev);
+    udev_enumerate_add_match_subsystem(enumerator, "input");
+    udev_enumerate_add_match_property(enumerator, "ID_INPUT_TOUCHPAD", "1");
+    udev_enumerate_scan_devices(enumerator);
+    bool found = udev_enumerate_get_list_entry(enumerator) != nullptr;
+    udev_enumerate_unref(enumerator);
+    udev_unref(udev);
+    return found;
+}
+
 static void on_select(GtkTreeSelection *sel, gpointer data) {
     devices_page *devices = data;
     GtkTreeModel *model;

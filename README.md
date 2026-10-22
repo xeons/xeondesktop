@@ -122,8 +122,14 @@ Ctrl+Alt+F1..F12 and Ctrl+Alt+Backspace always stay ours, and Ctrl+Alt on
 its own gives the mouse and keyboard back.
 
 Touchscreens and drawing tablets work in programs that read them, and as
-the mouse everywhere else (our window frames, the taskbar, older programs);
-touchpad gestures go to the program under the pointer.
+the mouse everywhere else (our window frames, the taskbar, older programs).
+Touchpads tap to click (two fingers tapped right-click, three
+middle-click) and scroll with two fingers, both changeable on Mouse
+Properties' Touchpad tab with reverse scrolling, the right-click corner or
+two-finger click, turning it off while typing or with a mouse plugged in,
+and its own speed. Pinches and two-finger swipes go to the program under
+the pointer; three-finger swipes are the desktop's: down shows the
+desktop, up brings the windows back, sideways switches windows.
 
 Alt+Tab shows Windows 2000/XP's box of the open windows (Windows 7's, with
 a Vista or 7 theme package).
@@ -331,7 +337,7 @@ and `xd-control NAME` opens one (`xd-control desk`, as Windows'
 | Fonts | `xd-fonts` | lists, previews, prints, installs and removes your fonts (fontconfig) |
 | Game Controllers | `xd-joy` | joysticks and gamepads from udev, with a live test page (read only) |
 | Keyboard | `xd-keyboard` | key repeat, cursor blink, layouts and XKB options; Text Services: the input method (Fcitx 5 or IBus), the Compose key |
-| Mouse | `xd-mouse` | buttons, ClickLock, double-click speed, pointer theme and size, speed, wheel |
+| Mouse | `xd-mouse` | buttons, ClickLock, double-click speed, pointer theme and size, speed, wheel, the touchpad (tapping, scrolling, three-finger swipes) |
 | Network Connections | `xd-netconn` | connections, status, TCP/IP settings, wireless networks, through NetworkManager |
 | Passwords and Keys | `xd-keys` | stored passwords (the Secret Service), SSH keys and ssh-agent, PGP keys (GnuPG) |
 | Power Options | `xd-power` | power schemes (plugged in and on batteries), monitor, standby and hibernate timers, battery alarms, the power meter, the battery icon, locking on resume, and what the lid and the power and sleep buttons do, per user |

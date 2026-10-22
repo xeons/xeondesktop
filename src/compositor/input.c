@@ -160,6 +160,14 @@ static void cycle_step(xd_server *server, bool backwards) {
     } while (link != start);
 }
 
+/* The same from a touchpad's three-finger swipe (gestures.c). */
+void xd_input_cycle_step(xd_server *server, bool backwards) { cycle_step(server, backwards); }
+void xd_input_cycle_finish(xd_server *server) { finish_cycle(server); }
+void xd_input_cycle_cancel(xd_server *server) {
+    server->cycle_view = nullptr;
+    xd_switcher_hide(server);
+}
+
 /* GTK sets the app ID from the GApplication ID. */
 #define XD_TASKMGR_APP_ID "org.xeondesktop.TaskManager"
 #define XD_SECURITY_APP_ID "org.xeondesktop.Security"
@@ -951,24 +959,93 @@ static xd_keyboard *register_keyboard(xd_server *server, struct wlr_keyboard *wl
 
 /* ---- pointers ([Mouse]) ------------------------------------------------------ */
 
+/* A touchpad: libinput's devices that can be tapped. */
+static bool is_touchpad(struct libinput_device *li) {
+    return libinput_device_config_tap_get_finger_count(li) > 0;
+}
+
+static void set_speed(struct libinput_device *li, int speed, bool acceleration) {
+    if (!libinput_device_config_accel_is_available(li))
+        return;
+    libinput_device_config_accel_set_speed(li, speed / 10.0);
+    /* Windows' "Enhance pointer precision" is its acceleration curve;
+     * without it the pointer moves in proportion to the mouse. */
+    enum libinput_config_accel_profile want =
+        acceleration ? LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE : LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
+    if (libinput_device_config_accel_get_profiles(li) & (uint32_t)want)
+        libinput_device_config_accel_set_profile(li, want);
+}
+
+/* [Touchpad]: each option only where the touchpad has it (a clickpad has
+ * no edge scrolling to speak of, an old touchpad no clickfinger). */
+static void configure_touchpad(struct libinput_device *li, const xd_touchpad_settings *touchpad) {
+    libinput_device_config_tap_set_enabled(li, touchpad->tap ? LIBINPUT_CONFIG_TAP_ENABLED
+                                                             : LIBINPUT_CONFIG_TAP_DISABLED);
+    /* Two fingers tapped are the right button, three the middle, as on
+     * Windows' precision touchpads. */
+    libinput_device_config_tap_set_button_map(li, LIBINPUT_CONFIG_TAP_MAP_LRM);
+    libinput_device_config_tap_set_drag_enabled(
+        li, touchpad->tap_drag ? LIBINPUT_CONFIG_DRAG_ENABLED : LIBINPUT_CONFIG_DRAG_DISABLED);
+    /* ENABLED: the older name for libinput 1.27's ENABLED_TIMEOUT, which
+     * older distributions' libinput lacks. */
+    libinput_device_config_tap_set_drag_lock_enabled(li, touchpad->drag_lock
+                                                             ? LIBINPUT_CONFIG_DRAG_LOCK_ENABLED
+                                                             : LIBINPUT_CONFIG_DRAG_LOCK_DISABLED);
+    uint32_t methods = libinput_device_config_scroll_get_methods(li);
+    enum libinput_config_scroll_method scroll =
+        touchpad->scroll == XD_TOUCHPAD_SCROLL_TWO_FINGER ? LIBINPUT_CONFIG_SCROLL_2FG
+        : touchpad->scroll == XD_TOUCHPAD_SCROLL_EDGE     ? LIBINPUT_CONFIG_SCROLL_EDGE
+                                                          : LIBINPUT_CONFIG_SCROLL_NO_SCROLL;
+    /* Two fingers where the touchpad can't: its edge, if it can that. */
+    if (scroll == LIBINPUT_CONFIG_SCROLL_2FG && !(methods & (uint32_t)scroll))
+        scroll = LIBINPUT_CONFIG_SCROLL_EDGE;
+    if (scroll == LIBINPUT_CONFIG_SCROLL_NO_SCROLL || (methods & (uint32_t)scroll))
+        libinput_device_config_scroll_set_method(li, scroll);
+    if (libinput_device_config_scroll_has_natural_scroll(li))
+        libinput_device_config_scroll_set_natural_scroll_enabled(li, touchpad->natural_scroll);
+    uint32_t clicks = libinput_device_config_click_get_methods(li);
+    enum libinput_config_click_method click =
+        touchpad->click == XD_TOUCHPAD_CLICK_AREAS ? LIBINPUT_CONFIG_CLICK_METHOD_BUTTON_AREAS
+        : touchpad->click == XD_TOUCHPAD_CLICK_FINGERS
+            ? LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER
+            : libinput_device_config_click_get_default_method(li);
+    if (click == LIBINPUT_CONFIG_CLICK_METHOD_NONE || (clicks & (uint32_t)click))
+        libinput_device_config_click_set_method(li, click);
+    if (libinput_device_config_dwt_is_available(li))
+        libinput_device_config_dwt_set_enabled(li, touchpad->disable_typing
+                                                       ? LIBINPUT_CONFIG_DWT_ENABLED
+                                                       : LIBINPUT_CONFIG_DWT_DISABLED);
+    uint32_t modes = libinput_device_config_send_events_get_modes(li);
+    if (touchpad->disable_with_mouse &&
+        (modes & LIBINPUT_CONFIG_SEND_EVENTS_DISABLED_ON_EXTERNAL_MOUSE))
+        libinput_device_config_send_events_set_mode(
+            li, LIBINPUT_CONFIG_SEND_EVENTS_DISABLED_ON_EXTERNAL_MOUSE);
+    else
+        libinput_device_config_send_events_set_mode(li, LIBINPUT_CONFIG_SEND_EVENTS_ENABLED);
+    set_speed(li, touchpad->speed, touchpad->acceleration);
+}
+
 /* Only libinput devices can be configured: not a nested session's
- * pointer, nor virtual ones. */
+ * pointer, nor virtual ones. Touchpads take [Touchpad]'s speed and
+ * options, mice [Mouse]'s; both its buttons. */
 static void configure_pointer(struct wlr_input_device *device, const xd_mouse_settings *mouse) {
     if (!wlr_input_device_is_libinput(device))
         return;
     struct libinput_device *li = wlr_libinput_get_device_handle(device);
     if (libinput_device_config_left_handed_is_available(li))
         libinput_device_config_left_handed_set(li, mouse->left_handed);
-    if (libinput_device_config_accel_is_available(li)) {
-        libinput_device_config_accel_set_speed(li, mouse->speed / 10.0);
-        /* Windows' "Enhance pointer precision" is its acceleration curve;
-         * without it the pointer moves in proportion to the mouse. */
-        enum libinput_config_accel_profile want = mouse->acceleration
-                                                      ? LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE
-                                                      : LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
-        if (libinput_device_config_accel_get_profiles(li) & (uint32_t)want)
-            libinput_device_config_accel_set_profile(li, want);
+    if (is_touchpad(li)) {
+        const xd_touchpad_settings *touchpad = &mouse->touchpad;
+        configure_touchpad(li, touchpad);
+        wlr_log(WLR_INFO, "touchpad '%s': tap %s, %s scrolling%s, speed %d", device->name,
+                touchpad->tap ? "on" : "off",
+                touchpad->scroll == XD_TOUCHPAD_SCROLL_TWO_FINGER ? "two-finger"
+                : touchpad->scroll == XD_TOUCHPAD_SCROLL_EDGE     ? "edge"
+                                                                  : "no",
+                touchpad->natural_scroll ? " (natural)" : "", touchpad->speed);
+        return;
     }
+    set_speed(li, mouse->speed, mouse->acceleration);
     wlr_log(WLR_INFO, "pointer '%s': %s-handed, speed %d, %s", device->name,
             mouse->left_handed ? "left" : "right", mouse->speed,
             mouse->acceleration ? "acceleration" : "no acceleration");
@@ -1760,6 +1837,11 @@ static void handle_cursor_axis(struct wl_listener *listener, void *data) {
         delta = delta * lines / 3.0;
         discrete = (int32_t)((int64_t)discrete * lines / 3);
     }
+    /* [Touchpad] ScrollSpeed: fingers on a touchpad (no steps to count). */
+    int percent = server->config.mouse.touchpad.scroll_speed;
+    if (pointer_axis_event->source == WL_POINTER_AXIS_SOURCE_FINGER && percent > 0 &&
+        percent != 100)
+        delta = delta * percent / 100.0;
     wlr_seat_pointer_notify_axis(
         server->seat, pointer_axis_event->time_msec, pointer_axis_event->orientation, delta,
         discrete, pointer_axis_event->source, pointer_axis_event->relative_direction);

@@ -21,6 +21,14 @@ The pointer's speed, and Enhance pointer precision (acceleration).
 .B Wheel
 How many lines a notch of the wheel scrolls.
 .TP
+.B Touchpad
+Shown when udev knows a touchpad: tap to click (two fingers tapped
+right-click, three middle-click), tap and drag, two-finger or edge
+scrolling, reverse scrolling and its speed, how a press right-clicks,
+turning the touchpad off while typing or while a mouse is plugged in, its
+own speed and acceleration, and the desktop's three-finger swipes (down
+shows the desktop, up brings the windows back, sideways switches windows).
+.TP
 .B Hardware
 The pointing devices udev knows.
 .PP
@@ -28,11 +36,20 @@ The settings go to
 .IR desktop.ini ,
 and
 .BR xd\-compositor (1)
-applies them to every libinput pointer at once.
+applies them to every libinput pointer at once, the
+.B Touchpad
+tab's to touchpads.
+.SH ENVIRONMENT
+.TP
+.B XD_SHOW_TOUCHPAD
+Set to 1, the Touchpad tab shows without a touchpad (for screenshots and
+tests).
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
-.BR [Mouse] .
+.B [Mouse]
+and
+.BR [Touchpad] .
 .SH SEE ALSO
 .BR xd\-keyboard (1),
 .BR xd\-access (1),
