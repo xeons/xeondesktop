@@ -174,7 +174,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       the fake host behaves as Qt), and a helper left from the last
       session took the host's messages (the guest driver didn't wake its
       waiting thread on disconnect: it now exits regardless, and dies with
-      its compositor). Not yet seen working against a real host.
+      its compositor). Then the host lost moves: its service forgets a
+      client's wait for its next message once any other call of that
+      client's completes, so calls are now one at a time; and 7.2 may hand
+      out a drop's first file before its header (taken). Host to guest
+      seen working on a real VirtualBox 7.2 host (after a full VM restart:
+      the host waits forever on a transfer a guest never finished, and
+      refuses every drop after it). Untested on a real host: guest to host.
       Not yet: monitors at different scales (the host's pixels are mapped
       by each output's scale), a drag icon from the host, Move acted on,
       the guest's pointer button after a drop on the host, reconnecting
