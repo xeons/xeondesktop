@@ -2,9 +2,13 @@
 #include "hgcm.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <fcntl.h>
 #include <linux/vboxguest.h>
+#include <stdarg.h>
 #include <stdatomic.h>
+#include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -78,6 +82,34 @@ void xd_hgcm_decode(const void *call, xd_hgcm_parm *parms, uint32_t count) {
     }
 }
 
+/* ---- the trace ----------------------------------------------------------------------- */
+
+static constexpr long TRACE_MAX = 1024 * 1024;
+static FILE *trace_file;
+static pthread_mutex_t trace_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void xd_hgcm_trace_to(const char *path) {
+    trace_file = fopen(path, "we");
+}
+
+void xd_hgcm_trace(const char *format, ...) {
+    if (trace_file == nullptr)
+        return;
+    pthread_mutex_lock(&trace_lock);
+    if (ftell(trace_file) < TRACE_MAX) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        fprintf(trace_file, "%ld.%03ld ", (long)now.tv_sec, now.tv_nsec / 1000000);
+        va_list args;
+        va_start(args, format);
+        vfprintf(trace_file, format, args);
+        va_end(args);
+        fputc('\n', trace_file);
+        fflush(trace_file);
+    }
+    pthread_mutex_unlock(&trace_lock);
+}
+
 /* ---- the driver ---------------------------------------------------------------------- */
 
 typedef struct device {
@@ -95,11 +127,23 @@ static int device_call(xd_hgcm *hgcm, uint32_t function, xd_hgcm_parm *parms, ui
     size_t size = xd_hgcm_encode(dev->client_id, function, parms, count, request, sizeof(request));
     if (size == 0)
         return XD_VERR_INVALID_PARAMETER;
-    if (ioctl(dev->fd, VBG_IOCTL_HGCM_CALL(size), request) != 0)
-        return errno == EINTR ? XD_VERR_INTERRUPTED : XD_VERR_GENERAL_FAILURE;
+    if (function == 300)
+        xd_hgcm_trace("call %u (waiting for the host)", function);
+    if (ioctl(dev->fd, VBG_IOCTL_HGCM_CALL(size), request) != 0) {
+        int error = errno;
+        xd_hgcm_trace("call %u: ioctl failed, errno %d", function, error);
+        return error == EINTR ? XD_VERR_INTERRUPTED : XD_VERR_GENERAL_FAILURE;
+    }
     xd_hgcm_decode(request, parms, count);
     struct vbg_ioctl_hdr header;
     memcpy(&header, request, sizeof(header));
+    if (function == 300 && count >= 2)
+        xd_hgcm_trace("call %u -> %d: host message %u, %u parameters", function, header.rc,
+                      parms[0].u32, parms[1].u32);
+    else if (count >= 2 && parms[1].type == XD_HGCM_U32)
+        xd_hgcm_trace("call %u (%u) -> %d", function, parms[1].u32, header.rc);
+    else
+        xd_hgcm_trace("call %u -> %d", function, header.rc);
     return header.rc;
 }
 

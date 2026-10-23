@@ -6500,6 +6500,37 @@ static void test_vboxdnd(void) {
     hgcm->free(hgcm);
     g_free(log);
 
+    /* VirtualBox 7.2 may hand out the first object (and its data) before
+     * the header: still one drop. */
+    hgcm = vboxdnd_host(dir, "early.script", "early\ndrop 9 9\nfile a.txt Hello\nfile c.txt See\n",
+                        &session, &log);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_DROPPED);
+    xd_dnd_event_free(event);
+    xd_dnd_request_data(&session, XD_DND_URI_LIST);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_DATA);
+    g_autofree char *early_list = g_strndup(g_bytes_get_data(event->data, nullptr),
+                                            g_bytes_get_size(event->data));
+    xd_dnd_event_free(event);
+    g_auto(GStrv) early_uris = g_strsplit(early_list, "\r\n", -1);
+    CHECK(g_strv_length(early_uris) == 3);
+    g_autofree char *early_a = g_filename_from_uri(early_uris[0], nullptr, nullptr);
+    g_autofree char *early_c = g_filename_from_uri(early_uris[1], nullptr, nullptr);
+    g_clear_pointer(&contents, g_free);
+    CHECK(early_a != nullptr && g_file_get_contents(early_a, &contents, nullptr, nullptr) &&
+          strcmp(contents, "Hello") == 0);
+    g_clear_pointer(&contents, g_free);
+    CHECK(early_c != nullptr && g_file_get_contents(early_c, &contents, nullptr, nullptr) &&
+          strcmp(contents, "See") == 0);
+    g_autofree char *early_parent_a = g_path_get_dirname(early_a);
+    g_autofree char *early_parent_c = g_path_get_dirname(early_c);
+    CHECK(strcmp(early_parent_a, early_parent_c) == 0);
+    CHECK(!log_has(log, "guest error"));
+    xd_dnd_session_finish(&session);
+    hgcm->free(hgcm);
+    g_free(log);
+
     /* A host naming a path outside the drop: refused, reported, and what
      * came of the drop removed. */
     hgcm = vboxdnd_host(dir, "hostile.script", "drop 1 1\nfile ok.txt fine\nfile ../evil x\n",

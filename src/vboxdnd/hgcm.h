@@ -65,6 +65,12 @@ struct xd_hgcm {
     void (*free)(xd_hgcm *hgcm);
 };
 
+/* A trace of every call to the host and its status (and GET_NEXT's
+ * message), timestamped, to `path` (truncated; it stops at 1 MB). */
+void xd_hgcm_trace_to(const char *path);
+/* A line of the trace's, from elsewhere (what the drop target said...). */
+void xd_hgcm_trace(const char *format, ...) __attribute__((format(printf, 1, 2)));
+
 /* Connects to a host service through /dev/vboxuser; nullptr (and *rc set)
  * when there's no device or no such service. */
 xd_hgcm *xd_hgcm_open(const char *service, int *rc);

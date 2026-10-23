@@ -151,9 +151,13 @@ static int make_drop_dir(xd_dnd_receiver *receiver) {
 
 int xd_dnd_receiver_header(xd_dnd_receiver *receiver, uint64_t total, uint32_t meta_size,
                            const char *meta_format, uint64_t objects) {
-    xd_dnd_receiver_reset(receiver);
+    /* Objects that came first are this drop's; else it starts afresh. */
+    bool early = !receiver->has_header && receiver->drop_dir != nullptr;
+    if (!early)
+        xd_dnd_receiver_reset(receiver);
     if (meta_size > total)
         return XD_VERR_INVALID_PARAMETER;
+    receiver->has_header = true;
     receiver->total = total;
     receiver->meta_size = meta_size;
     receiver->objects = objects;
@@ -161,8 +165,21 @@ int xd_dnd_receiver_header(xd_dnd_receiver *receiver, uint64_t total, uint32_t m
                          (g_ascii_strcasecmp(meta_format, XD_DND_URI_LIST) == 0 ||
                           g_ascii_strcasecmp(meta_format, "x-special/gnome-icon-list") == 0);
     if (!receiver->uri_list)
-        return objects == 0 ? XD_VINF_SUCCESS : XD_VERR_INVALID_PARAMETER;
+        return objects == 0 && !early ? XD_VINF_SUCCESS : XD_VERR_INVALID_PARAMETER;
+    if (early)
+        return receiver->objects_done <= objects &&
+                       receiver->file_bytes + receiver->file_left <= total - meta_size
+                   ? XD_VINF_SUCCESS
+                   : XD_VERR_INVALID_PARAMETER;
     return make_drop_dir(receiver);
+}
+
+/* An object before the header: the drop directory's made for it. */
+static int object_room(xd_dnd_receiver *receiver) {
+    if (receiver->has_header)
+        return receiver->objects_done < receiver->objects ? XD_VINF_SUCCESS
+                                                          : XD_VERR_INVALID_PARAMETER;
+    return receiver->drop_dir != nullptr ? XD_VINF_SUCCESS : make_drop_dir(receiver);
 }
 
 int xd_dnd_receiver_data(xd_dnd_receiver *receiver, const void *data, uint32_t size) {
@@ -183,8 +200,11 @@ static char *drop_path(const xd_dnd_receiver *receiver, const char *name) {
 }
 
 int xd_dnd_receiver_dir(xd_dnd_receiver *receiver, const char *name, uint32_t mode) {
-    if (receiver->file_fd >= 0 || receiver->objects_done >= receiver->objects)
+    if (receiver->file_fd >= 0)
         return XD_VERR_INVALID_PARAMETER;
+    int rc = object_room(receiver);
+    if (rc < 0)
+        return rc;
     g_autofree char *path = drop_path(receiver, name);
     if (path == nullptr)
         return XD_VERR_INVALID_PARAMETER;
@@ -204,9 +224,12 @@ static void close_file(xd_dnd_receiver *receiver) {
 
 int xd_dnd_receiver_file_header(xd_dnd_receiver *receiver, const char *name, uint32_t mode,
                                 uint64_t size) {
-    if (receiver->file_fd >= 0 || receiver->objects_done >= receiver->objects ||
-        receiver->file_bytes + size > receiver->total - receiver->meta_size)
+    if (receiver->file_fd >= 0 ||
+        (receiver->has_header && receiver->file_bytes + size > receiver->total - receiver->meta_size))
         return XD_VERR_INVALID_PARAMETER;
+    int rc = object_room(receiver);
+    if (rc < 0)
+        return rc;
     g_autofree char *path = drop_path(receiver, name);
     if (path == nullptr)
         return XD_VERR_INVALID_PARAMETER;
@@ -249,7 +272,8 @@ int xd_dnd_receiver_file_data(xd_dnd_receiver *receiver, const void *data, uint3
 }
 
 bool xd_dnd_receiver_complete(const xd_dnd_receiver *receiver) {
-    return receiver->meta->len == receiver->meta_size && receiver->file_fd < 0 &&
+    return receiver->has_header && receiver->meta->len == receiver->meta_size &&
+           receiver->file_fd < 0 &&
            receiver->objects_done == receiver->objects &&
            receiver->file_bytes == receiver->total - receiver->meta_size;
 }
@@ -271,7 +295,7 @@ void xd_dnd_receiver_reset(xd_dnd_receiver *receiver) {
     g_ptr_array_set_size(receiver->created, 0);
     receiver->total = receiver->meta_size = receiver->objects = 0;
     receiver->file_bytes = receiver->objects_done = receiver->file_left = 0;
-    receiver->uri_list = false;
+    receiver->has_header = receiver->uri_list = false;
 }
 
 void xd_dnd_receiver_finish(xd_dnd_receiver *receiver) {

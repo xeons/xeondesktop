@@ -84,7 +84,8 @@ char *xd_dnd_drop_uri_list(const char *drop_dir, char **roots);
 
 typedef struct xd_dnd_receiver {
     char *base;     /* where drop directories are made */
-    char *drop_dir; /* this drop's, once its header came (file lists) */
+    char *drop_dir; /* this drop's, once its header (or an object) came */
+    bool has_header; /* objects may come first (VirtualBox 7.2) */
     bool uri_list;
     uint64_t total, meta_size, objects;
     uint64_t file_bytes, objects_done;

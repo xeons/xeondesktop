@@ -31,6 +31,15 @@ The VM's
 .B Devices > Drag and Drop
 setting decides which ways work: Host To Guest, Guest To Host, or
 Bidirectional.
+.PP
+If drops keep failing at once with "Can't drop data to guest", power the
+VM off and start it again: VirtualBox waits forever for a transfer a
+guest never finished, and refuses every drop after it.
+.SH FILES
+.TP
+.I $XDG_RUNTIME_DIR/xd-vboxdnd.trace
+Every call to the host and what the drop target here said, timestamped
+(up to 1 MB), for when a drag goes wrong.
 .SH OPTIONS
 .TP
 .B \-\-fake\-host SCRIPT

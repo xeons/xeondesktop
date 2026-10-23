@@ -63,6 +63,8 @@ typedef struct fake_host {
     int point_x, point_y; /* @, from an until step's file */
     uint32_t last_fetched; /* the last message the guest fetched */
     bool refused;          /* its ENTER answered with no action */
+    bool waiting;          /* a GET_NEXT is waiting for a message */
+    bool early;            /* the first object goes before the header */
 } fake_host;
 
 static void message_free(message *msg) {
@@ -178,6 +180,7 @@ static void queue_transfer(fake_host *host) {
     g_queue_push_tail(&host->queue, header);
     queue_chunks(host, XD_DND_HOST_HG_DATA, meta->str, meta_size);
     g_string_free(meta, TRUE);
+    guint before_objects = g_queue_get_length(&host->queue);
     for (guint i = 0; i < host->objects->len; i++) {
         const fake_object *object = g_ptr_array_index(host->objects, i);
         message *msg = message_new(object->dir ? XD_DND_HOST_HG_DIR : XD_DND_HOST_HG_FILE_HEADER);
@@ -196,6 +199,23 @@ static void queue_transfer(fake_host *host) {
         add_u64(msg, size);
         g_queue_push_tail(&host->queue, msg);
         queue_chunks(host, XD_DND_HOST_HG_FILE_DATA, bytes, size);
+    }
+    /* VirtualBox 7.2 hands out its objects as the guest asks for its next
+     * message, and the header only once queued: a guest that asks right
+     * after its request may get the first object (and its data) first. */
+    if (host->early && host->objects->len > 0) {
+        guint moved = 0;
+        for (GList *at = g_queue_peek_nth_link(&host->queue, before_objects); at != nullptr;
+             at = at->next, moved++) {
+            const message *msg = at->data;
+            bool object = msg->id == XD_DND_HOST_HG_DIR || msg->id == XD_DND_HOST_HG_FILE_HEADER;
+            if (object && moved > 0)
+                break;
+        }
+        for (guint i = 0; i < moved; i++) {
+            message *msg = g_queue_pop_nth(&host->queue, before_objects + i);
+            g_queue_push_nth(&host->queue, msg, (gint)i);
+        }
     }
 }
 
@@ -261,6 +281,8 @@ static void advance(fake_host *host) {
             add_u32(msg, (uint32_t)strlen(after) + 1);
             add_u32(msg, XD_DND_COPY);
             g_queue_push_tail(&host->queue, msg);
+        } else if (strcmp(word, "early") == 0) {
+            host->early = true;
         } else if (strcmp(word, "cancel") == 0) {
             message *msg = message_new(XD_DND_HOST_CANCEL);
             add_u32(msg, 0);
@@ -280,9 +302,7 @@ static gint64 next_wakeup(const fake_host *host) {
 }
 
 /* GET_NEXT_HOST_MSG: waits for a message, then says which. */
-static int get_next(fake_host *host, xd_hgcm_parm *parms, uint32_t count) {
-    if (count < 3)
-        return XD_VERR_INVALID_PARAMETER;
+static int wait_for_message(fake_host *host, xd_hgcm_parm *parms) {
     for (;;) {
         if (host->disconnected)
             return XD_VERR_CANCELLED;
@@ -308,6 +328,17 @@ static int get_next(fake_host *host, xd_hgcm_parm *parms, uint32_t count) {
         else
             g_cond_wait_until(&host->changed, &host->lock, wake);
     }
+}
+
+/* Any other call while it waits, the real host forgets the wait (its
+ * client is completed, the wait no longer marked): the guest must not. */
+static int get_next(fake_host *host, xd_hgcm_parm *parms, uint32_t count) {
+    if (count < 3)
+        return XD_VERR_INVALID_PARAMETER;
+    host->waiting = true;
+    int rc = wait_for_message(host, parms);
+    host->waiting = false;
+    return rc;
 }
 
 /* Fetching the message GET_NEXT said: checked as the host checks. */
@@ -393,6 +424,8 @@ static int fake_call(xd_hgcm *hgcm, uint32_t function, xd_hgcm_parm *parms, uint
     fake_host *host = (fake_host *)hgcm;
     g_mutex_lock(&host->lock);
     int rc = XD_VINF_SUCCESS;
+    if (function != XD_DND_GUEST_GET_NEXT && host->waiting)
+        log_line(host, "error: call %u while GET_NEXT waits (the host forgets that wait)", function);
     if (host->disconnected) {
         rc = XD_VERR_CANCELLED;
     } else if (function == XD_DND_GUEST_CONNECT) {

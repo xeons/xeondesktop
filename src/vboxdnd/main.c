@@ -56,6 +56,14 @@ typedef struct relay {
     GMutex worker_lock;
     GCond worker_ended;
     bool worker_done;
+    /* The host's service forgets a client's wait for its next message
+     * once any other call of the client's completes: so the host thread
+     * asks for the next only once the last one's answered (the host's
+     * turn), never while another call may go. */
+    GCond host_turn;
+    bool answered;
+    bool held;     /* the answer comes later (the send thread's) */
+    bool quitting;
 
     /* The drag in progress. */
     struct wl_data_source *source;
@@ -90,6 +98,14 @@ static void note(const char *format, ...) {
     g_autofree char *text = g_strdup_vprintf(format, args);
     va_end(args);
     fprintf(stderr, "xd-vboxdnd: %s\n", text);
+}
+
+/* The answer's gone: the host thread may wait for the next message. */
+static void host_answered(dnd_relay *relay) {
+    g_mutex_lock(&relay->worker_lock);
+    relay->answered = true;
+    g_cond_signal(&relay->host_turn);
+    g_mutex_unlock(&relay->worker_lock);
 }
 
 typedef struct posted {
@@ -156,6 +172,7 @@ static void source_target(void *data, [[maybe_unused]] struct wl_data_source *so
                           const char *mime_type) {
     dnd_relay *relay = data;
     relay->accepted = mime_type != nullptr;
+    xd_hgcm_trace("target takes %s", mime_type != nullptr ? mime_type : "nothing");
     maybe_drop(relay);
 }
 
@@ -203,6 +220,7 @@ static void source_action(void *data, [[maybe_unused]] struct wl_data_source *so
                           uint32_t action) {
     dnd_relay *relay = data;
     relay->action = action;
+    xd_hgcm_trace("target's action %u", action);
     maybe_drop(relay);
 }
 
@@ -323,6 +341,7 @@ static gpointer send_outgoing(gpointer data) {
     }
     if (bytes != nullptr)
         g_byte_array_unref(bytes);
+    host_answered(send->relay);
     g_main_context_invoke(nullptr, outgoing_sent, send->relay);
     g_free(send->mime);
     g_free(send);
@@ -338,6 +357,7 @@ static void take_outgoing(dnd_relay *relay, const xd_dnd_event *event) {
         return;
     }
     relay->sending = true;
+    relay->held = true; /* until the send thread has sent it all */
     xd_drag_relay_v1_outgoing_receive(relay->drag_relay, event->mime, pipe_fds[1]);
     wl_display_flush(relay->display);
     close(pipe_fds[1]);
@@ -356,8 +376,9 @@ static gboolean watch_drag(gpointer data) {
     dnd_relay *relay = data;
     gint64 now = g_get_monotonic_time();
     if (relay->dropping && now - relay->data_asked > DATA_WAIT_US) {
+        /* Not told to the host: a call now would cost it the wait for
+         * its next message (see host_turn). */
         note("the dropped data never came from the host; the drag ends");
-        xd_dnd_report_error(relay->hgcm, XD_VERR_TIMEOUT);
     } else if (!relay->dropping && !relay->awaiting_accept && now - relay->last_heard > QUIET_US) {
         note("the host said nothing more of its drag; it ends");
     } else {
@@ -414,6 +435,8 @@ static gboolean handle_event(gpointer data) {
     dnd_relay *relay = post->owner;
     xd_dnd_event *event = post->event;
     relay->last_heard = g_get_monotonic_time();
+    xd_hgcm_trace("event %d at %d, %d (default %u, allowed %u)", event->kind, event->x, event->y,
+                  event->default_action, event->allowed_actions);
     int rc = XD_VINF_SUCCESS;
     switch (event->kind) {
     case XD_DND_EVENT_ENTER: {
@@ -496,6 +519,10 @@ static gboolean handle_event(gpointer data) {
     }
     if (rc < 0)
         note("the host refused an answer (%d)", rc);
+    if (relay->held)
+        relay->held = false;
+    else if (event->kind != XD_DND_EVENT_QUIT)
+        host_answered(relay);
     return G_SOURCE_REMOVE;
 }
 
@@ -514,6 +541,14 @@ static gpointer worker(gpointer data) {
         post->owner = relay;
         post->event = event;
         g_main_context_invoke_full(nullptr, G_PRIORITY_DEFAULT, handle_event, post, free_posted);
+        if (!quit) {
+            g_mutex_lock(&relay->worker_lock);
+            while (!relay->answered && !relay->quitting)
+                g_cond_wait(&relay->host_turn, &relay->worker_lock);
+            relay->answered = false;
+            quit = relay->quitting;
+            g_mutex_unlock(&relay->worker_lock);
+        }
         if (quit) {
             g_mutex_lock(&relay->worker_lock);
             relay->worker_done = true;
@@ -619,6 +654,8 @@ int main(int argc, char **argv) {
             return 1;
         }
     } else {
+        g_autofree char *trace = g_build_filename(g_get_user_runtime_dir(), "xd-vboxdnd.trace", nullptr);
+        xd_hgcm_trace_to(trace);
         relay.hgcm = xd_hgcm_open(XD_DND_SERVICE, &rc);
         if (relay.hgcm == nullptr) {
             /* Not a VirtualBox guest, or no drag and drop service: nothing to do. */
@@ -646,6 +683,7 @@ int main(int argc, char **argv) {
     g_unix_signal_add(SIGINT, on_signal, &relay);
     g_mutex_init(&relay.worker_lock);
     g_cond_init(&relay.worker_ended);
+    g_cond_init(&relay.host_turn);
     relay.worker = g_thread_new("vboxdnd-host", worker, &relay);
     g_main_loop_run(relay.loop);
 
@@ -653,6 +691,10 @@ int main(int argc, char **argv) {
      * the guest driver may leave it waiting: then the process just ends,
      * and closing the device lets the host forget this client (a client
      * left waiting would take the host's next drags, unanswered). */
+    g_mutex_lock(&relay.worker_lock);
+    relay.quitting = true;
+    g_cond_signal(&relay.host_turn);
+    g_mutex_unlock(&relay.worker_lock);
     relay.hgcm->disconnect(relay.hgcm);
     if (!worker_ended(&relay, G_USEC_PER_SEC)) {
         note("leaving the host's drag and drop service");
