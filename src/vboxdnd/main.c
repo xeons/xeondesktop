@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <sys/prctl.h>
 #include <glib-unix.h>
 #include <poll.h>
 #include <stdio.h>
@@ -52,6 +53,9 @@ typedef struct relay {
     xd_hgcm *hgcm;
     xd_dnd_session session;
     GThread *worker;
+    GMutex worker_lock;
+    GCond worker_ended;
+    bool worker_done;
 
     /* The drag in progress. */
     struct wl_data_source *source;
@@ -412,11 +416,18 @@ static gboolean handle_event(gpointer data) {
     relay->last_heard = g_get_monotonic_time();
     int rc = XD_VINF_SUCCESS;
     switch (event->kind) {
-    case XD_DND_EVENT_ENTER:
+    case XD_DND_EVENT_ENTER: {
         start_drag(relay, event);
         move_to(relay, event);
-        rc = xd_dnd_ack(relay->hgcm, vbox_action(relay));
+        /* The target here hasn't had time to answer; refused, the host's
+         * window (Qt's) would hear nothing more of the drag. So yes, with
+         * the host's own action: the moves then get the target's answer. */
+        uint32_t action = event->default_action & event->allowed_actions;
+        if (action == XD_DND_IGNORE)
+            action = event->allowed_actions & XD_DND_COPY ? XD_DND_COPY : XD_DND_MOVE;
+        rc = xd_dnd_ack(relay->hgcm, action);
         break;
+    }
     case XD_DND_EVENT_MOVE:
         if (relay->source == nullptr)
             start_drag(relay, event);
@@ -503,9 +514,27 @@ static gpointer worker(gpointer data) {
         post->owner = relay;
         post->event = event;
         g_main_context_invoke_full(nullptr, G_PRIORITY_DEFAULT, handle_event, post, free_posted);
-        if (quit)
+        if (quit) {
+            g_mutex_lock(&relay->worker_lock);
+            relay->worker_done = true;
+            g_cond_signal(&relay->worker_ended);
+            g_mutex_unlock(&relay->worker_lock);
             return nullptr;
+        }
     }
+}
+
+/* Waits up to `timeout_us` for the host thread to end. */
+static bool worker_ended(dnd_relay *relay, gint64 timeout_us) {
+    gint64 until = g_get_monotonic_time() + timeout_us;
+    g_mutex_lock(&relay->worker_lock);
+    while (!relay->worker_done) {
+        if (!g_cond_wait_until(&relay->worker_ended, &relay->worker_lock, until))
+            break;
+    }
+    bool done = relay->worker_done;
+    g_mutex_unlock(&relay->worker_lock);
+    return done;
 }
 
 /* ---- Wayland ----------------------------------------------------------------------------- */
@@ -570,6 +599,10 @@ static bool connect_wayland(dnd_relay *relay) {
 }
 
 int main(int argc, char **argv) {
+    /* Never outlive the compositor that started us (see above). */
+    prctl(PR_SET_PDEATHSIG, SIGTERM);
+    if (getppid() == 1)
+        return 0;
     const char *script = nullptr;
     for (int i = 1; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--fake-host") == 0)
@@ -611,11 +644,21 @@ int main(int argc, char **argv) {
     g_unix_fd_add(wl_display_get_fd(relay.display), readable, on_display, &relay);
     g_unix_signal_add(SIGTERM, on_signal, &relay);
     g_unix_signal_add(SIGINT, on_signal, &relay);
+    g_mutex_init(&relay.worker_lock);
+    g_cond_init(&relay.worker_ended);
     relay.worker = g_thread_new("vboxdnd-host", worker, &relay);
     g_main_loop_run(relay.loop);
 
-    /* The host thread waits on the host: disconnecting wakes it. */
+    /* The host thread waits on the host. Disconnecting should wake it, but
+     * the guest driver may leave it waiting: then the process just ends,
+     * and closing the device lets the host forget this client (a client
+     * left waiting would take the host's next drags, unanswered). */
     relay.hgcm->disconnect(relay.hgcm);
+    if (!worker_ended(&relay, G_USEC_PER_SEC)) {
+        note("leaving the host's drag and drop service");
+        fflush(stderr);
+        _exit(0);
+    }
     g_thread_join(relay.worker);
     end_drag(&relay);
     xd_dnd_session_finish(&relay.session);

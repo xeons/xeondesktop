@@ -23,7 +23,9 @@
  *
  * Like the real host, a fetch must match the message waiting: its
  * number, parameter types, and buffers big enough; anything else is
- * logged as an error.
+ * logged as an error. And as its window (Qt's) does, a drag whose ENTER
+ * is answered with no action gets no more: its moves and drop are
+ * skipped ("enter refused").
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -59,6 +61,8 @@ typedef struct fake_host {
     bool disconnected;
     FILE *log;
     int point_x, point_y; /* @, from an until step's file */
+    uint32_t last_fetched; /* the last message the guest fetched */
+    bool refused;          /* its ENTER answered with no action */
 } fake_host;
 
 static void message_free(message *msg) {
@@ -236,6 +240,10 @@ static void advance(fake_host *host) {
             uint32_t id = word[0] == 'e'   ? XD_DND_HOST_HG_ENTER
                           : word[0] == 'm' ? XD_DND_HOST_HG_MOVE
                                            : XD_DND_HOST_HG_DROPPED;
+            if (id == XD_DND_HOST_HG_ENTER)
+                host->refused = false;
+            else if (host->refused)
+                continue; /* Qt sends a refused drag nothing more */
             g_queue_push_tail(&host->queue, position_message(id, x, y, formats));
         } else if (strcmp(word, "leave") == 0) {
             message *msg = message_new(XD_DND_HOST_HG_LEAVE);
@@ -305,6 +313,8 @@ static int get_next(fake_host *host, xd_hgcm_parm *parms, uint32_t count) {
 /* Fetching the message GET_NEXT said: checked as the host checks. */
 static int fetch(fake_host *host, uint32_t function, xd_hgcm_parm *parms, uint32_t count) {
     message *msg = host->current;
+    if (msg != nullptr)
+        host->last_fetched = msg->id;
     if (msg == nullptr || msg->id != function || count < msg->parms->len) {
         log_line(host, "error: fetch %u doesn't match", function);
         return XD_VERR_INVALID_PARAMETER;
@@ -395,7 +405,12 @@ static int fake_call(xd_hgcm *hgcm, uint32_t function, xd_hgcm_parm *parms, uint
     } else if (function == XD_DND_GUEST_GET_NEXT) {
         rc = get_next(host, parms, count);
     } else if (function == XD_DND_GUEST_HG_ACK_OP) {
-        log_line(host, "ack %u", count >= 2 ? parms[1].u32 : 0);
+        uint32_t action = count >= 2 ? parms[1].u32 : 0;
+        log_line(host, "ack %u", action);
+        if (host->last_fetched == XD_DND_HOST_HG_ENTER && action == XD_DND_IGNORE) {
+            host->refused = true;
+            log_line(host, "enter refused");
+        }
     } else if (function == XD_DND_GUEST_HG_REQ_DATA) {
         log_line(host, "request %s", count >= 2 ? (const char *)parms[1].buffer : "?");
         queue_transfer(host);

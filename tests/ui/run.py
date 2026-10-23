@@ -4674,7 +4674,9 @@ def vbox_drag_into_files(s):
     s.log("ok: the host's file and folder were dropped into Documents")
     with open(s.vbox_log) as f:
         log = f.read().splitlines()
-    s.check("ack 1" in log, f"a move answered with Copy ({log})")
+    s.check(log[1:2] == ["ack 1"] and "enter refused" not in log,
+            f"the drag's entry accepted, or the host (Qt) sends nothing more ({log})")
+    s.check("ack 1" in log[2:], f"a move answered with Copy ({log})")
     s.check("request text/uri-list" in log, f"the files asked for at the drop ({log})")
     s.check(not any(line.startswith(("error", "guest error")) for line in log),
             f"no errors either side ({log})")

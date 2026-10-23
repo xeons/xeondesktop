@@ -168,9 +168,13 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       quiet (10 s) or its data not coming (15 s after the drop); each step
       and the host's status codes go to the session's log. Tested against
       a scripted host (unit tests; UI scenarios vbox_drag_into_files,
-      vbox_drag_out_of_files, vbox_drag_escape). On a real host the first
-      try's dropped data never came (the drag then held the pointer, which
-      it no longer can); why is still to be found from the log.
+      vbox_drag_out_of_files, vbox_drag_escape). On a real host: the entry
+      was answered "no" before the target could say (Qt's window then
+      sends nothing more: now it's answered with the host's action, and
+      the fake host behaves as Qt), and a helper left from the last
+      session took the host's messages (the guest driver didn't wake its
+      waiting thread on disconnect: it now exits regardless, and dies with
+      its compositor). Not yet seen working against a real host.
       Not yet: monitors at different scales (the host's pixels are mapped
       by each output's scale), a drag icon from the host, Move acted on,
       the guest's pointer button after a drop on the host, reconnecting
