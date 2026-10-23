@@ -4738,6 +4738,58 @@ def vbox_drag_out_of_files(s):
     s.log("ok: nothing moved here")
 
 
+VBOX_STALL_SCRIPT = """until {go}
+enter @
+wait 300
+move @
+until {go}2
+enter @
+wait 300
+move @
+wait 60000
+"""
+
+
+def vbox_stall_setup(s):
+    """A scripted VirtualBox host whose drag enters, then goes quiet."""
+    s.vbox_go = os.path.join(s.base, "vbox-go")
+    script = os.path.join(s.base, "vbox-stall.script")
+    with open(script, "w") as f:
+        f.write(VBOX_STALL_SCRIPT.format(go=s.vbox_go))
+    os.environ["XD_VBOXDND_FAKE"] = script
+
+
+@scenario(setup=vbox_stall_setup)
+def vbox_drag_escape(s):
+    """A VirtualBox host's drag that doesn't finish doesn't keep the
+    pointer: Esc ends it, and a click selects again."""
+    x, y, before = open_documents(s)
+    point = (x + LETTERS[0] + 40, y + LETTERS[1] + 160)
+    status = (x + 8, y + 570, 200, 20)  # the status bar's left part
+    notes = (x + LETTERS[0] + 80, y + LETTERS[1])
+    empty = (x + LETTERS[0] + 300, y + LETTERS[1] + 250)
+    with open(s.vbox_go, "w") as f:
+        f.write(f"{point[0]} {point[1]}\n")
+    time.sleep(1.5)  # entered and moved: the drag holds the pointer
+    s.inject("key", "Escape", "sleep", 300, "move", *notes, "click")
+    s.wait(lambda: s.shot("selected").differs(before, status) > 0.01,
+           "a click to select Notes.txt after Esc")
+    s.log("ok: Esc ended the host's drag; clicks select again")
+    # Unselected again (a click on nothing), then the host drags in again.
+    s.inject("move", *empty, "click", "sleep", 300)
+    unselected = s.settle("unselected")
+    with open(s.vbox_go + "2", "w") as f:
+        f.write(f"{point[0]} {point[1]}\n")
+    time.sleep(1.5)
+    s.inject("move", *notes, "click", "sleep", 500)
+    s.check(s.shot("swallowed").differs(unselected, status) < 0.01,
+            "the click that ends the host's drag goes no further")
+    s.inject("click")
+    s.wait(lambda: s.shot("selected-again").differs(unselected, status) > 0.01,
+           "the next click to select Notes.txt")
+    s.log("ok: a click ended the host's drag; the next one selects")
+
+
 @scenario(LUNA_INI)
 def xp_new_programs_balloon(s):
     """A program installed while the session runs: XP's "New programs

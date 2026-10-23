@@ -835,6 +835,12 @@ void xd_input_key(xd_keyboard *kb, const struct wlr_keyboard_key_event *event) {
     }
 
     bool handled = false;
+    /* Esc ends the VirtualBox host's drag, as it ends any drag. */
+    if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED && !from_ime) {
+        for (int i = 0; i < nsyms; i++)
+            if (syms[i] == XKB_KEY_Escape && xd_relay_cancel(server))
+                return;
+    }
     if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED && !from_ime) {
         xd_grab_mods held = {
             .ctrl = mods & WLR_MODIFIER_CTRL,
@@ -1759,6 +1765,10 @@ static void handle_cursor_button(struct wl_listener *listener, void *data) {
     if (xd_access_button(server, pointer_button_event->button,
                          pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED,
                          pointer_button_event->time_msec))
+        return;
+    /* A click while the VirtualBox host's drag holds the pointer ends it
+     * (and goes no further). */
+    if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED && xd_relay_cancel(server))
         return;
     process_button(server, pointer_button_event);
     if (pointer_button_event->state == WL_POINTER_BUTTON_STATE_PRESSED)

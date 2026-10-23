@@ -163,9 +163,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       started here are told to the relay, reported when the host asks,
       their data sent when dropped there (directories walked, links left
       out), then cancelled here (a copy). Explorer takes an outside drag
-      whose files aren't listed yet as a Copy. Tested against a scripted
-      host (unit tests; UI scenarios vbox_drag_into_files,
-      vbox_drag_out_of_files), not yet against a real VirtualBox host.
+      whose files aren't listed yet as a Copy. The host's drag never keeps
+      the pointer: Esc or a click ends it, and so does the host going
+      quiet (10 s) or its data not coming (15 s after the drop); each step
+      and the host's status codes go to the session's log. Tested against
+      a scripted host (unit tests; UI scenarios vbox_drag_into_files,
+      vbox_drag_out_of_files, vbox_drag_escape). On a real host the first
+      try's dropped data never came (the drag then held the pointer, which
+      it no longer can); why is still to be found from the log.
       Not yet: monitors at different scales (the host's pixels are mapped
       by each output's scale), a drag icon from the host, Move acted on,
       the guest's pointer button after a drop on the host, reconnecting

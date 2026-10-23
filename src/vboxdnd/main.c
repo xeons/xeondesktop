@@ -25,6 +25,7 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <glib-unix.h>
 #include <poll.h>
 #include <stdio.h>
@@ -59,6 +60,9 @@ typedef struct relay {
     bool dropping;           /* the data was asked for */
     bool awaiting_accept;    /* it came: offered again, dropped once taken */
     guint drop_timeout;
+    gint64 last_heard;       /* monotonic µs: the host's last word on it */
+    gint64 data_asked;       /* when its data was asked for */
+    guint watchdog;
     GBytes *data;            /* what's dropped, once it came */
     char *data_mime;
 
@@ -68,6 +72,21 @@ typedef struct relay {
     uint32_t outgoing_actions; /* wl_data_device_manager's */
     bool sending;              /* its data is going to the host */
 } dnd_relay;
+
+/* How long the host may leave a drag of its unexplained: after the drop,
+ * for its data; before, between its moves. */
+static constexpr gint64 DATA_WAIT_US = 15 * G_USEC_PER_SEC;
+static constexpr gint64 QUIET_US = 10 * G_USEC_PER_SEC;
+
+/* A step worth knowing, in the session's log. */
+static void note(const char *format, ...) G_GNUC_PRINTF(1, 2);
+static void note(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    g_autofree char *text = g_strdup_vprintf(format, args);
+    va_end(args);
+    fprintf(stderr, "xd-vboxdnd: %s\n", text);
+}
 
 typedef struct posted {
     dnd_relay *owner;
@@ -88,6 +107,9 @@ static uint32_t vbox_action(const dnd_relay *relay) {
 }
 
 static void end_drag(dnd_relay *relay) {
+    if (relay->watchdog != 0)
+        g_source_remove(relay->watchdog);
+    relay->watchdog = 0;
     if (relay->drop_timeout != 0)
         g_source_remove(relay->drop_timeout);
     relay->drop_timeout = 0;
@@ -324,9 +346,31 @@ static void take_outgoing(dnd_relay *relay, const xd_dnd_event *event) {
 
 /* ---- host to guest --------------------------------------------------------------------- */
 
+/* The host's drag mustn't hold the pointer here if the host goes quiet:
+ * no data long after the drop, or no word for a while before it. */
+static gboolean watch_drag(gpointer data) {
+    dnd_relay *relay = data;
+    gint64 now = g_get_monotonic_time();
+    if (relay->dropping && now - relay->data_asked > DATA_WAIT_US) {
+        note("the dropped data never came from the host; the drag ends");
+        xd_dnd_report_error(relay->hgcm, XD_VERR_TIMEOUT);
+    } else if (!relay->dropping && !relay->awaiting_accept && now - relay->last_heard > QUIET_US) {
+        note("the host said nothing more of its drag; it ends");
+    } else {
+        return G_SOURCE_CONTINUE;
+    }
+    relay->watchdog = 0; /* this source ends with G_SOURCE_REMOVE */
+    end_drag(relay);
+    return G_SOURCE_REMOVE;
+}
+
 /* A drag entered: start ours, offering the host's formats. */
 static void start_drag(dnd_relay *relay, const xd_dnd_event *event) {
     end_drag(relay);
+    g_autofree char *formats = g_strjoinv(", ", event->formats);
+    note("the host's drag entered (%s; actions %u)", formats, event->allowed_actions);
+    relay->last_heard = g_get_monotonic_time();
+    relay->watchdog = g_timeout_add_seconds(1, watch_drag, relay);
     relay->source = wl_data_device_manager_create_data_source(relay->data_manager);
     wl_data_source_add_listener(relay->source, &source_listener, relay);
     for (char **format = event->formats; format != nullptr && *format != nullptr; format++) {
@@ -365,38 +409,47 @@ static gboolean handle_event(gpointer data) {
     posted *post = data;
     dnd_relay *relay = post->owner;
     xd_dnd_event *event = post->event;
+    relay->last_heard = g_get_monotonic_time();
+    int rc = XD_VINF_SUCCESS;
     switch (event->kind) {
     case XD_DND_EVENT_ENTER:
         start_drag(relay, event);
         move_to(relay, event);
-        xd_dnd_ack(relay->hgcm, vbox_action(relay));
+        rc = xd_dnd_ack(relay->hgcm, vbox_action(relay));
         break;
     case XD_DND_EVENT_MOVE:
         if (relay->source == nullptr)
             start_drag(relay, event);
         move_to(relay, event);
         /* What the target last said; it answers the move in its own time. */
-        xd_dnd_ack(relay->hgcm, vbox_action(relay));
+        rc = xd_dnd_ack(relay->hgcm, vbox_action(relay));
         break;
     case XD_DND_EVENT_LEAVE:
+        note("the host's drag left the window");
         end_drag(relay);
-        xd_dnd_ack(relay->hgcm, XD_DND_IGNORE);
+        rc = xd_dnd_ack(relay->hgcm, XD_DND_IGNORE);
         break;
     case XD_DND_EVENT_DROPPED: {
         move_to(relay, event);
         const char *format = wanted_format(event->formats);
         if (relay->source == nullptr || vbox_action(relay) == XD_DND_IGNORE || format == nullptr) {
-            xd_dnd_ack(relay->hgcm, XD_DND_IGNORE);
+            note("dropped where nothing takes it (at %d, %d)", event->x, event->y);
+            rc = xd_dnd_ack(relay->hgcm, XD_DND_IGNORE);
             end_drag(relay);
             break;
         }
         relay->dropping = true;
-        xd_dnd_request_data(&relay->session, format);
+        relay->data_asked = g_get_monotonic_time();
+        rc = xd_dnd_request_data(&relay->session, format);
+        note("dropped at %d, %d: asked the host for %s (%d)", event->x, event->y, format, rc);
+        if (rc < 0)
+            end_drag(relay);
         break;
     }
     case XD_DND_EVENT_DATA:
         if (relay->source == nullptr || !relay->dropping)
             break;
+        note("the dropped data came (%s, %zu bytes)", event->mime, g_bytes_get_size(event->data));
         relay->data = g_bytes_ref(event->data);
         relay->data_mime = g_strdup(event->mime);
         relay->dropping = false;
@@ -411,22 +464,27 @@ static gboolean handle_event(gpointer data) {
         wl_display_flush(relay->display);
         break;
     case XD_DND_EVENT_FAILED:
-        g_message("vboxdnd: the drop's data didn't come (%d)", event->rc);
+        note("receiving the dropped data failed (%d)", event->rc);
         end_drag(relay);
         break;
     case XD_DND_EVENT_CANCELLED:
+        note("the host cancelled");
         end_drag(relay);
         break;
     case XD_DND_EVENT_PENDING:
         answer_pending(relay);
         break;
     case XD_DND_EVENT_TAKEN:
+        note("a drag from here was dropped on the host, which wants %s", event->mime);
         take_outgoing(relay, event);
         break;
     case XD_DND_EVENT_QUIT:
+        note("the host's drag and drop service went away");
         g_main_loop_quit(relay->loop);
         break;
     }
+    if (rc < 0)
+        note("the host refused an answer (%d)", rc);
     return G_SOURCE_REMOVE;
 }
 

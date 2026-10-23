@@ -186,6 +186,20 @@ bool xd_relay_start_drag(xd_server *server, struct wlr_drag *drag) {
     return true;
 }
 
+bool xd_relay_cancel(xd_server *server) {
+    if (!server->relay_dragging)
+        return false;
+    wlr_log(WLR_INFO, "drag relay: the host's drag cancelled here");
+    /* The relay hears "cancelled"; the drag ends with its source, and the
+     * button held for it is let go (xd_relay_drag_ended). */
+    struct wlr_drag *drag = server->seat->drag;
+    if (drag != nullptr && drag->source != nullptr)
+        wlr_data_source_destroy(drag->source);
+    else
+        xd_relay_drag_ended(server);
+    return true;
+}
+
 void xd_relay_drag_started(xd_server *server, struct wlr_drag *drag) {
     if (server->relay_resource == nullptr || drag->source == nullptr || server->relay_dragging ||
         (drag->seat_client != nullptr && xd_trust_is(&server->relay_client, drag->seat_client->client)))

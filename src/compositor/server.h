@@ -908,6 +908,9 @@ bool xd_relay_start_drag(xd_server *server, struct wlr_drag *drag);
 /* A drag a program here started (told to the relay), and any drag over. */
 void xd_relay_drag_started(xd_server *server, struct wlr_drag *drag);
 void xd_relay_drag_ended(xd_server *server);
+/* The user ends the relay's drag (a real click, or Esc): the host's drag
+ * mustn't keep the pointer. False if none is going on. */
+bool xd_relay_cancel(xd_server *server);
 bool xd_relay_child_exited(xd_server *server, pid_t pid, int status);
 
 /* rectangles.c: where the windows are, for the Snipping Tool. */

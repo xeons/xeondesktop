@@ -337,8 +337,10 @@ static xd_dnd_event *fetch_position(xd_dnd_session *session, uint32_t message,
         xd_hgcm_u32(0),
     };
     int rc = session->hgcm->call(session->hgcm, message, parms, 8);
-    if (rc < 0)
+    if (rc < 0) {
+        g_printerr("xd-vboxdnd: fetching host message %u failed (%d)\n", message, rc);
         return nullptr;
+    }
     xd_dnd_event *event = event_new(kind);
     event->screen = parms[1].u32;
     event->x = (int32_t)parms[2].u32;
@@ -352,6 +354,7 @@ static xd_dnd_event *fetch_position(xd_dnd_session *session, uint32_t message,
 
 /* A transfer's piece failed: tell the host, remove what came. */
 static xd_dnd_event *transfer_failed(xd_dnd_session *session, int rc) {
+    g_printerr("xd-vboxdnd: receiving the drop failed (%d)\n", rc);
     xd_dnd_report_error(session->hgcm, rc);
     xd_dnd_receiver_rollback(&session->receiver);
     g_mutex_lock(&session->lock);
@@ -420,6 +423,8 @@ static xd_dnd_event *receive_piece(xd_dnd_session *session, uint32_t message, ui
         if (rc < 0)
             return transfer_failed(session, rc);
         session->formats_buffer[XD_DND_CHUNK - 1] = '\0';
+        g_printerr("xd-vboxdnd: the host sends %s: %lu bytes, %lu files and folders\n",
+                   session->formats_buffer, (unsigned long)parms[3].u64, (unsigned long)parms[7].u64);
         rc = xd_dnd_receiver_header(receiver, parms[3].u64, parms[4].u32, session->formats_buffer,
                                     parms[7].u64);
         break;
@@ -558,8 +563,8 @@ xd_dnd_event *xd_dnd_session_next(xd_dnd_session *session) {
             } else {
                 /* Not ours to understand (guest-to-host's drop comes
                  * later): fetching it anyway keeps the queue moving. */
-                g_message("vboxdnd: host message %u (%u parameters) not handled", message,
-                          count);
+                g_printerr("xd-vboxdnd: host message %u (%u parameters) not handled\n", message,
+                           count);
                 event = nullptr;
             }
             break;
