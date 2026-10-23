@@ -969,11 +969,16 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 - [?] Folders tree clicks, address bar typing, the Views menu, the
       thumbnail slider, Details header sorting, Show Hidden Files, opening
       files with the default app, live updates, very large folders.
-- [ ] Previous Versions: a Properties tab and "Restore previous
-      versions" for files and folders, when the file system keeps
-      snapshots: Snapper on btrfs (`.snapshots/N/snapshot`), Timeshift's
-      btrfs or rsync snapshots, ZFS (`.zfs/snapshot`); each version's
-      date with Open, Copy... and Restore. Not shown where there are none.
+- [?] Previous Versions: a Properties tab (XP's View/Copy.../Restore, 7's
+      Open/Copy.../Restore... with "Restore previous versions" in its
+      context menu) for a file or folder whose file system keeps snapshots
+      the user can read: Snapper over D-Bus, Timeshift (rsync, and btrfs
+      while mounted), ZFS; only versions where it changed. Tested with fake
+      trees and a dbusmock Snapper (unit test, UI scenarios
+      files_previous_versions and files_previous_versions_seven).
+      Untested: real Snapper (needs ALLOW_USERS/SYNC_ACL for users to read
+      .snapshots), ZFS and Timeshift. Not done: 7's date groups (Today,
+      Last week...), Open's split-button menu; the wording is from memory.
 
 ## GTK3 theme
 

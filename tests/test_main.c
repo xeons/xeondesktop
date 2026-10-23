@@ -16,6 +16,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <utime.h>
 #include <sys/wait.h>
 
 #include <fontconfig/fontconfig.h>
@@ -54,6 +55,7 @@
 #include "../src/files/names.h"
 #include "../src/files/netdrives.h"
 #include "../src/files/usershare.h"
+#include "../src/files/versions.h"
 #include "../src/folders/filetypes.h"
 #include "../src/fonts/fontlist.h"
 #include "../src/schedtasks/task.h"
@@ -10058,6 +10060,217 @@ static void test_explorer_panes(void) {
     g_free(root);
 }
 
+/* Previous Versions (versions.h) in scratch trees laid out as ZFS's and
+ * Timeshift's, through XD_SNAPSHOT_ROOTS: never the real snapshots or
+ * Snapper. */
+static void set_versions_mtime(const char *root, const char *relative, gint64 seconds) {
+    char *path = g_build_filename(root, relative, nullptr);
+    struct utimbuf times = {.actime = (time_t)seconds, .modtime = (time_t)seconds};
+    CHECK(g_utime(path, &times) == 0);
+    g_free(path);
+}
+
+static gboolean is_versions_file_text(const char *root, const char *relative,
+                                      const char *expected) {
+    char *path = g_build_filename(root, relative, nullptr);
+    char *text = nullptr;
+    if (!g_file_get_contents(path, &text, nullptr, nullptr))
+        text = nullptr;
+    gboolean is_same = g_strcmp0(text, expected) == 0;
+    g_free(text);
+    g_free(path);
+    return is_same;
+}
+
+static void test_previous_versions(void) {
+    char *scratch = g_dir_make_tmp("xd-versions-XXXXXX", nullptr);
+    CHECK(scratch != nullptr);
+    if (scratch == nullptr)
+        return;
+    char *root = realpath(scratch, nullptr);
+    char *live = g_build_filename(root, "live", nullptr);
+    char *zfs = g_build_filename(live, ".zfs", "snapshot", nullptr);
+    char *backup = g_build_filename(root, "backup", nullptr);
+
+    /* The item as it is now, and in three ZFS snapshots: s1 and s2 hold
+     * the same notes.txt, s3 a newer one; only s1 has the folder. */
+    put_file(live, "notes.txt", "now");
+    put_file(live, "folder/a.txt", "a-now");
+    put_file(live, "folder/extra.txt", "extra");
+    put_file(zfs, "s1/notes.txt", "one");
+    put_file(zfs, "s1/folder/a.txt", "a-one");
+    put_file(zfs, "s1/folder/sub/b.txt", "b-one");
+    put_file(zfs, "s2/notes.txt", "one");
+    put_file(zfs, "s3/notes.txt", "two");
+    put_file(zfs, "locked/notes.txt", "secret");
+    set_versions_mtime(zfs, "s1/notes.txt", 1000);
+    set_versions_mtime(zfs, "s2/notes.txt", 1000);
+    set_versions_mtime(zfs, "s3/notes.txt", 2000);
+    set_versions_mtime(live, "notes.txt", 5000);
+    set_versions_mtime(live, "folder", 6000);
+    set_versions_mtime(zfs, "s1/folder", 1500);
+    set_versions_mtime(zfs, "s1", 1000000);
+    set_versions_mtime(zfs, "s2", 2000000);
+    set_versions_mtime(zfs, "s3", 3000000);
+    set_versions_mtime(zfs, "locked", 4000000);
+    char *locked = g_build_filename(zfs, "locked", nullptr);
+    CHECK(g_chmod(locked, 0) == 0);
+
+    /* A Timeshift rsync snapshot of the whole system, named by its time. */
+    char *in_timeshift = g_build_filename("timeshift/snapshots/2026-01-02_03-04-05/localhost",
+                                          live + 1, "notes.txt", nullptr);
+    put_file(backup, in_timeshift, "shifted");
+    set_versions_mtime(backup, in_timeshift, 3000);
+    char *roots = g_strdup_printf("zfs=%s:timeshift=%s", live, backup);
+    g_setenv("XD_SNAPSHOT_ROOTS", roots, TRUE);
+
+    char *notes = g_build_filename(live, "notes.txt", nullptr);
+    gboolean has_snapshots = FALSE;
+    GPtrArray *versions = xd_versions_list(notes, &has_snapshots);
+    CHECK(has_snapshots);
+    /* Newest first: Timeshift's (2026), s3, then s2 standing for s1 too;
+     * the locked snapshot is left out (unless we're root and can read it). */
+    gboolean is_root = geteuid() == 0;
+    CHECK(versions->len == (is_root ? 4u : 3u));
+    if (versions->len >= 3 && !is_root) {
+        const xd_version *shifted = g_ptr_array_index(versions, 0);
+        const xd_version *two = g_ptr_array_index(versions, 1);
+        const xd_version *one = g_ptr_array_index(versions, 2);
+        char *expected = g_build_filename(backup, in_timeshift, nullptr);
+        CHECK(g_strcmp0(shifted->path, expected) == 0);
+        g_free(expected);
+        GDateTime *taken = g_date_time_new_local(2026, 1, 2, 3, 4, 5);
+        CHECK(shifted->snapshot_time == g_date_time_to_unix(taken));
+        g_date_time_unref(taken);
+        CHECK(shifted->modified_time == 3000 && shifted->size == 7 && !shifted->is_directory);
+        CHECK(g_strcmp0(shifted->location, "Timeshift snapshot 2026-01-02_03-04-05") == 0);
+        expected = g_build_filename(zfs, "s3", "notes.txt", nullptr);
+        CHECK(g_strcmp0(two->path, expected) == 0);
+        CHECK(two->snapshot_time == 3000000 && two->modified_time == 2000);
+        CHECK(g_strcmp0(two->location, "ZFS snapshot s3") == 0);
+        g_free(expected);
+        expected = g_build_filename(zfs, "s2", "notes.txt", nullptr);
+        CHECK(g_strcmp0(one->path, expected) == 0);
+        g_free(expected);
+    }
+    g_ptr_array_unref(versions);
+
+    /* A version the same as the item now says nothing new. */
+    put_file(live, "notes.txt", "shifted");
+    set_versions_mtime(live, "notes.txt", 3000);
+    versions = xd_versions_list(notes, nullptr);
+    CHECK(versions->len == (is_root ? 3u : 2u));
+    if (versions->len > 0)
+        CHECK(strstr(((const xd_version *)g_ptr_array_index(versions, 0))->path, "/s3/") !=
+              nullptr);
+    g_ptr_array_unref(versions);
+
+    /* A folder, through a link to the folder it's in: the path as it
+     * really is. */
+    char *link = g_build_filename(root, "link", nullptr);
+    CHECK(symlink(live, link) == 0);
+    char *folder_by_link = g_build_filename(link, "folder", nullptr);
+    versions = xd_versions_list(folder_by_link, &has_snapshots);
+    CHECK(has_snapshots && versions->len == 1);
+    char *folder_copy = g_build_filename(zfs, "s1", "folder", nullptr);
+    if (versions->len == 1) {
+        const xd_version *version = g_ptr_array_index(versions, 0);
+        CHECK(version->is_directory && g_strcmp0(version->path, folder_copy) == 0);
+    }
+    g_ptr_array_unref(versions);
+    g_free(folder_by_link);
+
+    /* None of the item: an empty list; without any snapshots of its file
+     * system, no tab at all. */
+    put_file(root, "elsewhere/file.txt", "x");
+    char *elsewhere = g_build_filename(root, "elsewhere", "file.txt", nullptr);
+    versions = xd_versions_list(elsewhere, &has_snapshots);
+    CHECK(has_snapshots && versions->len == 0); /* Timeshift has the whole system */
+    g_ptr_array_unref(versions);
+    char *only_zfs = g_strdup_printf("zfs=%s", live);
+    g_setenv("XD_SNAPSHOT_ROOTS", only_zfs, TRUE);
+    versions = xd_versions_list(elsewhere, &has_snapshots);
+    CHECK(!has_snapshots && versions->len == 0);
+    g_ptr_array_unref(versions);
+    CHECK(!xd_versions_can_have_versions(elsewhere));
+    CHECK(xd_versions_can_have_versions(notes));
+    g_setenv("XD_SNAPSHOT_ROOTS", "", TRUE);
+    CHECK(!xd_versions_can_have_versions(notes));
+    g_setenv("XD_SNAPSHOT_ROOTS", roots, TRUE);
+    CHECK(xd_versions_can_have_versions(elsewhere));
+    g_free(only_zfs);
+
+    /* Restoring a file replaces it, its dates too. */
+    char *two_copy = g_build_filename(zfs, "s3", "notes.txt", nullptr);
+    GError *error = nullptr;
+    CHECK(xd_versions_restore(two_copy, notes, nullptr, &error));
+    g_clear_error(&error);
+    CHECK(is_versions_file_text(live, "notes.txt", "two"));
+    GStatBuf info;
+    CHECK(g_stat(notes, &info) == 0 && info.st_mtime == 2000);
+
+    /* Restoring a folder copies its contents back in, leaving what the
+     * snapshot didn't have. */
+    char *folder = g_build_filename(live, "folder", nullptr);
+    CHECK(xd_versions_restore(folder_copy, folder, nullptr, &error));
+    g_clear_error(&error);
+    CHECK(is_versions_file_text(live, "folder/a.txt", "a-one"));
+    CHECK(is_versions_file_text(live, "folder/sub/b.txt", "b-one"));
+    CHECK(is_versions_file_text(live, "folder/extra.txt", "extra"));
+
+    /* Copying a version to a new place: a file and a folder. */
+    char *copies = g_build_filename(root, "copies", nullptr);
+    CHECK(g_mkdir(copies, 0700) == 0);
+    char *copied_folder = g_build_filename(copies, "folder", nullptr);
+    char *copied_file = g_build_filename(copies, "notes.txt", nullptr);
+    CHECK(xd_versions_restore(folder_copy, copied_folder, nullptr, &error));
+    g_clear_error(&error);
+    CHECK(xd_versions_restore(two_copy, copied_file, nullptr, &error));
+    g_clear_error(&error);
+    CHECK(is_versions_file_text(copies, "folder/sub/b.txt", "b-one"));
+    CHECK(is_versions_file_text(copies, "folder/a.txt", "a-one"));
+    CHECK(is_versions_file_text(copies, "notes.txt", "two"));
+
+    /* A link in the folder where the snapshot has a folder isn't
+     * followed: nothing is written where it points. */
+    put_file(zfs, "s1/folder/sub/c.txt", "c-one");
+    char *outside = g_build_filename(root, "outside", nullptr);
+    CHECK(g_mkdir(outside, 0700) == 0);
+    char *sub = g_build_filename(folder, "sub", nullptr);
+    rm_tree(sub);
+    CHECK(symlink(outside, sub) == 0);
+    CHECK(!xd_versions_restore(folder_copy, folder, nullptr, &error));
+    CHECK(error != nullptr && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_DIRECTORY));
+    g_clear_error(&error);
+    CHECK(is_versions_file_text(outside, "b.txt", nullptr));
+    CHECK(is_versions_file_text(outside, "c.txt", nullptr));
+    CHECK(g_file_test(sub, G_FILE_TEST_IS_SYMLINK));
+    CHECK(is_versions_file_text(live, "folder/a.txt", "a-one"));
+
+    g_unsetenv("XD_SNAPSHOT_ROOTS");
+    CHECK(g_chmod(locked, 0700) == 0);
+    rm_tree(scratch);
+    g_free(sub);
+    g_free(outside);
+    g_free(copied_file);
+    g_free(copied_folder);
+    g_free(copies);
+    g_free(folder);
+    g_free(two_copy);
+    g_free(elsewhere);
+    g_free(folder_copy);
+    g_free(link);
+    g_free(notes);
+    g_free(roots);
+    g_free(in_timeshift);
+    g_free(locked);
+    g_free(backup);
+    g_free(zfs);
+    g_free(live);
+    free(root);
+    g_free(scratch);
+}
+
 int main(void) {
     /* ssh-keygen and ssh-add run us as their askpass (test_keys_ssh). */
     if (getenv(XD_KEYS_ASKPASS_ENV) != nullptr)
@@ -10157,6 +10370,7 @@ int main(void) {
     test_theme_package_shell();
     test_theme_package_dwm();
     test_explorer_panes();
+    test_previous_versions();
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

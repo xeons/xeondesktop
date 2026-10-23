@@ -32,6 +32,7 @@ import argparse
 import configparser
 import ctypes
 import importlib.util
+import json
 import os
 import pwd
 import shlex
@@ -6890,6 +6891,169 @@ def folder_sharing(s):
     s.inject("key", "alt+h", "sleep", 200, "key", "Return")
     s.wait_window(title="Music Properties", gone=True)
     s.check(os.listdir(shares) == ["documents"], "nothing shared while sharing is off")
+
+
+def fake_snapper_volume(s, name, snapshots):
+    """A scratch "subvolume" in the home, with Snapper's snapshot trees
+    in it (.snapshots/N/snapshot): `snapshots` maps each number to its
+    date and its files (relative path: (text, mtime)). Returns the
+    subvolume and the dbusmock parameters naming it."""
+    volume = os.path.join(s.home, name)
+    for number, (date, files) in snapshots.items():
+        tree = os.path.join(volume, ".snapshots", str(number), "snapshot")
+        for rel, (text, mtime) in files.items():
+            path = os.path.join(tree, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+            os.utime(path, (mtime, mtime))
+    params = {
+        "configs": {name.lower(): volume},
+        "snapshots": json.dumps(
+            {name.lower(): [[n, date, "timeline"] for n, (date, _) in snapshots.items()]}),
+    }
+    return volume, params
+
+
+def start_snapper_mock(s, params):
+    from dbusmock import DBusTestCase
+
+    DBusTestCase.start_system_bus()
+    mock = os.path.join(SOURCE_ROOT, "tests", "dbusmock", "snapper.py")
+    proc, _ = DBusTestCase.spawn_server_template(
+        mock, params, stdout=subprocess.DEVNULL, system_bus=True
+    )
+    s.children.append(proc)
+
+
+@scenario(desktop_ini=LUNA_INI, requires=("dbusmock",))
+def files_previous_versions(s):
+    """A file's Properties (XP's style), on a dbusmock Snapper whose
+    snapshots are scratch trees: the Previous Versions tab lists the
+    versions where the file changed (snapshots 1 and 2 hold the same copy),
+    and Restore, after its question, puts the newest one back; a file in
+    none of the snapshots has the tab, saying there are no versions."""
+    from dbusmock import DBusTestCase
+
+    now = int(time.time())
+    volume, params = fake_snapper_volume(s, "Work", {
+        1: (now - 3 * 86400, {"report.txt": ("first draft", now - 4 * 86400)}),
+        2: (now - 2 * 86400, {"report.txt": ("first draft", now - 4 * 86400)}),
+        3: (now - 86400, {"report.txt": ("second draft", now - 86400 - 60)}),
+    })  # fmt: skip
+    report = os.path.join(volume, "report.txt")
+    with open(report, "w") as f:
+        f.write("current")
+    try:
+        start_snapper_mock(s, params)
+        env = {"XD_SNAPSHOT_ROOTS": "snapper"}
+        s.launch("xd-files", "--properties", report, env=env)
+        s.wait_window(title="report.txt Properties", state="activated")
+        before = s.settle("general")
+        # The tab comes last, once Snapper has answered.
+        time.sleep(1.5)
+        s.inject("key", "ctrl+shift+Tab", "sleep", 500)
+        shot = s.settle("previous versions")
+        s.check(shot.changed_box(before, (0, 0, WIDTH, HEIGHT - 40)) is not None,
+                "a Previous Versions tab")  # fmt: skip
+        # The list, its first (newest) version: snapshot 3's.
+        s.inject("key", "alt+f", "sleep", 300, "key", "Home", "sleep", 300)
+        s.settle("newest selected")
+        s.inject("key", "alt+r", "sleep", 600)
+        s.settle("restore?")
+        s.inject("key", "alt+y", "sleep", 800)
+        s.wait(lambda: file_text(report) == "second draft", "the restored file")
+        s.settle("restored")
+        s.inject("key", "Return", "sleep", 400)  # "The file has been successfully restored."
+        s.log("ok: Restore put snapshot 3's copy back")
+        s.inject("key", "Escape")
+        s.wait_window(title="report.txt Properties", gone=True)
+        names = set(os.listdir(volume))
+        s.check(names == {"report.txt", ".snapshots"}, f"nothing else written ({names})")
+
+        # A file in none of the snapshots: the tab, saying there are none.
+        todo = os.path.join(volume, "todo.txt")
+        with open(todo, "w") as f:
+            f.write("new")
+        s.launch("xd-files", "--properties", todo, env=env)
+        s.wait_window(title="todo.txt Properties", state="activated")
+        before = s.settle("todo general")
+        time.sleep(1.5)
+        s.inject("key", "ctrl+shift+Tab", "sleep", 500)
+        shot = s.settle("no previous versions")
+        s.check(shot.changed_box(before, (0, 0, WIDTH, HEIGHT - 40)) is not None,
+                "a Previous Versions tab for a file without versions")  # fmt: skip
+        s.inject("key", "Escape")
+        s.wait_window(title="todo.txt Properties", gone=True)
+    finally:
+        DBusTestCase.tearDownClass()
+
+
+@scenario(desktop_ini=AERO_INI, requires=("dbusmock",))
+def files_previous_versions_seven(s):
+    """7's "Restore previous versions" on a folder's context menu (a
+    dbusmock Snapper): its Properties open on the Previous Versions tab,
+    and Restore... copies the snapshot's files back into the folder,
+    leaving the file the snapshot didn't have; Copy... copies the
+    snapshot's folder into another."""
+    from dbusmock import DBusTestCase
+
+    now = int(time.time())
+    volume, params = fake_snapper_volume(s, "Work", {
+        4: (now - 86400, {"Project/plan.txt": ("old plan", now - 2 * 86400),
+                          "Project/notes/a.txt": ("note a", now - 2 * 86400)}),
+    })  # fmt: skip
+    project = os.path.join(volume, "Project")
+    os.makedirs(project)
+    with open(os.path.join(project, "plan.txt"), "w") as f:
+        f.write("new plan")
+    with open(os.path.join(project, "extra.txt"), "w") as f:
+        f.write("kept")
+    try:
+        start_snapper_mock(s, params)
+        env = {"XD_SNAPSHOT_ROOTS": "snapper"}
+        s.launch("xd-files", volume, env=env)
+        s.wait_window(app_id="org.xeondesktop.Files", state="activated")
+        s.settle("work folder")
+        # Project is the only item shown (.snapshots is hidden).
+        s.inject("key", "Home", "sleep", 300, "key", "Menu", "sleep", 500)
+        s.settle("context menu")
+        s.inject("key", "v")
+        # Over its window: xd-windows doesn't list dialogs, but Work loses
+        # the focus.
+        s.wait(lambda: "activated" not in s.window(title="Work")["states"],
+               "Project Properties")  # fmt: skip
+        time.sleep(1.5)
+        s.settle("previous versions")
+        s.inject("key", "alt+f", "sleep", 300, "key", "Home", "sleep", 300, "key", "alt+r",
+                 "sleep", 600)  # fmt: skip
+        s.settle("restore?")
+        s.inject("key", "alt+y", "sleep", 800)
+        s.wait(lambda: file_text(os.path.join(project, "plan.txt")) == "old plan",
+               "the restored folder")  # fmt: skip
+        s.check(file_text(os.path.join(project, "notes", "a.txt")) == "note a",
+                "the snapshot's subfolder came back")  # fmt: skip
+        s.check(file_text(os.path.join(project, "extra.txt")) == "kept",
+                "what the snapshot didn't have stays")  # fmt: skip
+        s.settle("restored")
+        s.inject("key", "Return", "sleep", 400)
+        s.log("ok: Restore... copied snapshot 4's files back into the folder")
+
+        # Copy...: into another folder, chosen in the folder box.
+        copies = os.path.join(s.home, "Copies")
+        os.makedirs(copies)
+        s.inject("key", "alt+f", "sleep", 300, "key", "Home", "sleep", 300, "key", "alt+c",
+                 "sleep", 1000, "key", "ctrl+l", "sleep", 300, "type", copies + "/",
+                 "sleep", 800)  # fmt: skip
+        s.settle("copy to")
+        s.inject("key", "alt+c")
+        copied = os.path.join(copies, "Project", "plan.txt")
+        s.wait(lambda: file_text(copied) == "old plan", "the copied version")
+        s.check(not os.path.exists(os.path.join(copies, "Project", "extra.txt")),
+                "the snapshot's copy, not the folder as it is")  # fmt: skip
+        s.log("ok: Copy... copied snapshot 4's folder")
+    finally:
+        DBusTestCase.tearDownClass()
 
 
 def mock_updates(s):

@@ -139,6 +139,21 @@ and membership of the group owning that folder); the tab says which is
 missing.
 Shared folders show XP's hand under their icons.
 .PP
+Where the file system keeps snapshots, a file's or folder's Properties
+end with a Previous Versions tab, listing the copies in them where the
+item changed, newest first: Snapper's on btrfs (asked over D-Bus; its
+snapshots are root's unless its
+.BR ALLOW_USERS " and " SYNC_ACL
+let users read them), Timeshift's (rsync's, and btrfs's while Timeshift
+has them mounted) and ZFS's
+.RI ( .zfs/snapshot ).
+View (Open, with the Windows 7 style) opens the copy, Copy... copies it
+to a folder, and Restore, after asking, copies it back over the item; a
+folder's restored contents replace those of the same name and leave the
+rest.
+With the Windows 7 style, an item's right-click menu has Restore
+previous versions, which opens that tab.
+.PP
 Thumbnails missing from the freedesktop.org cache are made by
 .BR xd\-thumbnailer (1).
 Favorites are GTK's bookmarks, shared with file choosers.
@@ -240,6 +255,14 @@ An smb.conf for
 and
 .B testparm
 to use instead of the system's (for tests).
+.TP
+.B XD_SNAPSHOT_ROOTS
+Where Previous Versions looks, instead of everywhere (for tests): a
+colon-separated list of
+.BR snapper ,
+.BI zfs= mountpoint
+and
+.BI timeshift= backup .
 .SH SEE ALSO
 .BR xd\-folders (1),
 .BR xd\-thumbnailer (1),

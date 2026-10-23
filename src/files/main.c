@@ -28,6 +28,7 @@
 #include "sendto.h"
 #include "taskpane.h"
 #include "undo.h"
+#include "versions.h"
 
 enum { COL_NAME, COL_ICON, COL_FILE, COL_LOADED, COL_COUNT };
 
@@ -134,6 +135,7 @@ static gboolean view_given;               /* --view given: Folder Options' defau
 /* Folder Options ([Folders] in desktop.ini), followed live. */
 static xd_folder_settings options;
 static gboolean properties_only;          /* --properties: just the dialog */
+static gboolean is_seven_style; /* Aero: Windows 7's menus */
 static gboolean explore_option;           /* --explore: with the Folders bar, as XP's Explore */
 /* --trash, --delete, --rename, --empty-trash, --copy-to, --move-to,
  * --link-to, --launch, --map-drive, --disconnect-drive: one job for the desktop (the shell
@@ -1633,6 +1635,28 @@ static void show_properties(explorer *browser) {
 
 static void cb_properties([[maybe_unused]] GtkWidget *widget, gpointer user_data) {
     show_properties(user_data);
+}
+
+/* 7's "Restore previous versions": the item's Properties, on that tab. */
+static void cb_restore_versions([[maybe_unused]] GtkWidget *widget, gpointer data) {
+    explorer *e = data;
+    GList *files = xd_folder_view_get_selected_files(e->cur->view);
+    if (files != nullptr && files->next == nullptr)
+        xd_properties_show_versions(GTK_WINDOW(e->window), files->data);
+    g_list_free_full(files, g_object_unref);
+}
+
+/* Whether the context menu offers it: 7's, for one local item on a file
+ * system that keeps snapshots. */
+static gboolean can_restore_versions(XdFolderView *view) {
+    if (!is_seven_style || xd_folder_view_get_selected_count(view) != 1)
+        return FALSE;
+    GList *files = xd_folder_view_get_selected_files(view);
+    char *path = files != nullptr ? g_file_get_path(files->data) : nullptr;
+    gboolean can = path != nullptr && xd_versions_can_have_versions(path);
+    g_free(path);
+    g_list_free_full(files, g_object_unref);
+    return can;
 }
 
 /* Switch to Classic View / Switch to Category View: remembered for every
@@ -3327,6 +3351,11 @@ static void on_context_menu(XdFolderView *view, GdkEvent *event, gpointer data) 
         bold_item(browser, menu, "_Open", G_CALLBACK(cb_open_selected));
         add_open_in_tab(browser, menu);
         add_extract_items(browser, menu);
+        if (can_restore_versions(view)) {
+            gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+            menu_item(menu, "Restore pre_vious versions", G_CALLBACK(cb_restore_versions), browser,
+                      nullptr, 0, NO_MODS);
+        }
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         GtkWidget *send = gtk_menu_item_new_with_mnemonic("Se_nd To");
         GList *files = xd_folder_view_get_selected_files(view);
@@ -3808,6 +3837,7 @@ static void load_options(void) {
     xd_settings settings;
     xd_settings_load(&settings);
     options = settings.folders;
+    is_seven_style = settings.style == XD_STYLE_AERO;
     /* Apply to All Folders' view, for folders without their own. */
     if (!view_given) {
         initial_view = XD_VIEW_ICONS;

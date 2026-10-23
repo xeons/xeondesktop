@@ -17,6 +17,7 @@
 #include "places.h"
 #include "properties.h"
 #include "usershare.h"
+#include "versionsui.h"
 
 static constexpr GtkDialogFlags MODAL_DIALOG =
     (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT);
@@ -1955,7 +1956,20 @@ static void on_destroy([[maybe_unused]] GtkWidget *widget, gpointer data) {
         g_free(properties);
 }
 
+static GtkWidget *show_properties(GtkWindow *parent, GList *files, gboolean versions_first);
+
 GtkWidget *xd_properties_show(GtkWindow *parent, GList *files) {
+    return show_properties(parent, files, FALSE);
+}
+
+GtkWidget *xd_properties_show_versions(GtkWindow *parent, GFile *file) {
+    GList *one = g_list_append(nullptr, file);
+    GtkWidget *window = show_properties(parent, one, TRUE);
+    g_list_free(one);
+    return window;
+}
+
+static GtkWidget *show_properties(GtkWindow *parent, GList *files, gboolean versions_first) {
     g_return_val_if_fail(files != nullptr, nullptr);
     props *properties = g_new0(props, 1);
     properties->entries = g_ptr_array_new_with_free_func(entry_free);
@@ -2033,6 +2047,10 @@ GtkWidget *xd_properties_show(GtkWindow *parent, GList *files) {
     if (single(properties))
         gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_details(properties),
                                  gtk_label_new("Details"));
+    /* Previous Versions, last as in Windows, once its snapshots are found. */
+    if (single(properties) && g_file_is_native(first(properties)->file))
+        xd_versions_page_attach(properties->window, GTK_NOTEBOOK(notebook), first(properties)->file,
+                                first(properties)->is_dir, versions_first);
     properties->syncing = FALSE;
     sync_permission_text(properties, TRUE);
     gtk_widget_set_sensitive(properties->apply_button, FALSE);

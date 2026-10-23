@@ -9,6 +9,8 @@
  * others, set-user-ID, set-group-ID and sticky, optionally applied to
  * everything inside a folder.
  * Details: path, MIME type, inode, links, device and file system.
+ * Previous Versions (one local item, where its file system keeps
+ * snapshots): versionsui.h.
  *
  * Several files can be shown at once; check boxes that differ between
  * them start in the mixed state and are left alone unless changed.
@@ -23,6 +25,10 @@
  * application, if any. Returns the window, or nullptr if none of the
  * files could be read (an error was shown). */
 GtkWidget *xd_properties_show(GtkWindow *parent, GList *files);
+
+/* Windows 7's "Restore previous versions": one file's or folder's
+ * Properties, on its Previous Versions tab (versionsui.h). */
+GtkWidget *xd_properties_show_versions(GtkWindow *parent, GFile *file);
 
 /* A drive's Properties, from My Computer (`item` is its item there): XP's
  * General tab with the label (changed through UDisks2), type, file
