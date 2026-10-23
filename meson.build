@@ -213,6 +213,7 @@ client_protocol_xml = {
   'xd-window-arranger-v1': files('protocols/xd-window-arranger-v1.xml'),
   'xd-test-input-v1': files('protocols/xd-test-input-v1.xml'),
   'xd-window-rectangles-v1': files('protocols/xd-window-rectangles-v1.xml'),
+  'xd-drag-relay-v1': files('protocols/xd-drag-relay-v1.xml'),
   'wlr-screencopy-unstable-v1': files('protocols/wlr-screencopy-unstable-v1.xml'),
   'ext-data-control-v1': wp_dir / 'staging/ext-data-control/ext-data-control-v1.xml',
   'pointer-gestures-unstable-v1':
@@ -278,6 +279,19 @@ arranger_server_src = [
     'xd-window-arranger-v1-server-code',
     input: arranger_xml,
     output: 'xd-window-arranger-v1-server-protocol.c',
+    command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+  ),
+  # VirtualBox's drag and drop relay (dragrelay.c).
+  custom_target(
+    'xd-drag-relay-v1-server-header',
+    input: 'protocols/xd-drag-relay-v1.xml',
+    output: 'xd-drag-relay-v1-protocol.h',
+    command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+  ),
+  custom_target(
+    'xd-drag-relay-v1-server-code',
+    input: 'protocols/xd-drag-relay-v1.xml',
+    output: 'xd-drag-relay-v1-server-protocol.c',
     command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
   ),
   # The Snipping Tool's Window Snip (rectangles.c).
@@ -375,6 +389,7 @@ compositor_src = files(
   'src/compositor/arrange.c',
   'src/compositor/capture.c',
   'src/compositor/rectangles.c',
+  'src/compositor/dragrelay.c',
   'src/compositor/protocols.c',
   'src/compositor/lock.c',
   'src/compositor/trust.c',
@@ -739,6 +754,19 @@ executable(
   link_with: [gtkapp_lib],
   dependencies: [core_dep, settings_dep, gtk_dep, gtk_layer_shell_dep, gdk_pixbuf_dep,
                  gio_unix_dep, client_protocol_dep, m_dep, gstreamer_dep, gstreamer_app_dep],
+  c_args: ['-D_GNU_SOURCE'],
+  install: true,
+)
+
+# VirtualBox drag and drop for the guest (VBoxClient's is X11-only),
+# started by the compositor in a VirtualBox guest.
+executable(
+  'xd-vboxdnd',
+  'src/vboxdnd/main.c',
+  'src/vboxdnd/dnd.c',
+  'src/vboxdnd/hgcm.c',
+  'src/vboxdnd/fakehost.c',
+  dependencies: [glib_dep, client_protocol_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -1358,6 +1386,9 @@ test_exe = executable(
   'src/snip/snipping.c',
   'src/snip/recording.c',
   'src/mines/minefield.c',
+  'src/vboxdnd/dnd.c',
+  'src/vboxdnd/hgcm.c',
+  'src/vboxdnd/fakehost.c',
   link_with: [thumb_lib, saver_lib],
   dependencies: [theme_dep, settings_dep, glib_dep, gio_unix_dep, gtk_dep, util_dep, crypt_dep,
                  fontconfig_dep, packagekit_dep, cups_dep, gpgme_dep,
@@ -1469,7 +1500,7 @@ install_man(
   'man/xd-run.1', 'man/xd-scanners.1', 'man/xd-schedtasks.1', 'man/xd-search.1',
   'man/xd-security.1', 'man/xd-services.1', 'man/xd-shell.1', 'man/xd-shutdown.1', 'man/xd-snip.1',
   'man/xd-sound.1', 'man/xd-sysdm.1', 'man/xd-taskbar.1', 'man/xd-taskmgr.1',
-  'man/xd-thumbnailer.1', 'man/xd-timedate.1', 'man/xd-users.1', 'man/xd-wifi-key.1',
+  'man/xd-thumbnailer.1', 'man/xd-timedate.1', 'man/xd-users.1', 'man/xd-vboxdnd.1', 'man/xd-wifi-key.1',
   'man/xd-wuaucpl.1',
 )
 if build_compositor

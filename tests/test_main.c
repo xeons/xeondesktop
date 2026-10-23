@@ -88,6 +88,8 @@
 #include <wayland-client-protocol.h>
 
 #include "../src/mines/minefield.h"
+#include "../src/vboxdnd/dnd.h"
+#include "../src/vboxdnd/fakehost.h"
 #include "../src/snip/recording.h"
 #include "../src/snip/snipping.h"
 #include "../src/shell/jumplist.h"
@@ -6374,6 +6376,220 @@ static void test_snipping(void) {
     g_key_file_free(file);
 }
 
+/* A scripted host's session: the script written to `dir`/name, the
+ * session started against it. */
+static xd_hgcm *vboxdnd_host(const char *dir, const char *name, const char *script,
+                             xd_dnd_session *session, char **log_path) {
+    g_autofree char *path = g_build_filename(dir, name, nullptr);
+    CHECK(g_file_set_contents(path, script, -1, nullptr));
+    xd_hgcm *hgcm = xd_fake_host_open(path, nullptr);
+    CHECK(hgcm != nullptr);
+    g_autofree char *drops = g_build_filename(dir, "drops", nullptr);
+    CHECK(xd_dnd_session_init(session, hgcm, drops) == XD_VINF_SUCCESS);
+    *log_path = g_strconcat(path, ".log", nullptr);
+    return hgcm;
+}
+
+static bool log_has(const char *path, const char *line) {
+    g_autofree char *text = nullptr;
+    if (!g_file_get_contents(path, &text, nullptr, nullptr))
+        return false;
+    g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+    return g_strv_contains((const char *const *)lines, line);
+}
+
+static void test_vboxdnd(void) {
+    /* The driver's layout: a 40-byte header, then 16-byte parameters. */
+    char buffer[5] = "abcd";
+    xd_hgcm_parm parms[] = {xd_hgcm_u32(7), xd_hgcm_u64(UINT64_C(0x1122334455667788)),
+                            xd_hgcm_buffer(buffer, 5)};
+    unsigned char call[40 + 16 * 3];
+    CHECK(xd_hgcm_encode(9, 300, parms, 3, call, sizeof(call)) == sizeof(call));
+    uint32_t word;
+    uint16_t count;
+    uint64_t wide;
+    memcpy(&word, call + 4, 4);
+    CHECK(word == 0x10001); /* the header's version */
+    memcpy(&word, call + 24, 4);
+    CHECK(word == 9);
+    memcpy(&word, call + 28, 4);
+    CHECK(word == 300);
+    memcpy(&count, call + 38, 2);
+    CHECK(count == 3);
+    memcpy(&word, call + 40, 4);
+    CHECK(word == 1);
+    memcpy(&word, call + 44, 4);
+    CHECK(word == 7);
+    memcpy(&wide, call + 60, 8);
+    CHECK(wide == UINT64_C(0x1122334455667788));
+    memcpy(&word, call + 72, 4);
+    CHECK(word == 4);
+    memcpy(&word, call + 76, 4);
+    CHECK(word == 5);
+    memcpy(&wide, call + 80, 8);
+    CHECK(wide == (uint64_t)(uintptr_t)buffer);
+    word = 42; /* the host's answer */
+    memcpy(call + 44, &word, 4);
+    xd_hgcm_decode(call, parms, 3);
+    CHECK(parms[0].u32 == 42 && parms[2].size == 5);
+    CHECK(xd_hgcm_encode(9, 300, parms, 3, call, 40) == 0); /* too small */
+
+    /* Formats lists, names, the dropped roots. */
+    static const char list[] = "text/uri-list\r\ntext/plain\r\n\r\n";
+    g_auto(GStrv) formats = xd_dnd_formats_split(list, sizeof(list));
+    CHECK(g_strv_length(formats) == 2 && strcmp(formats[1], "text/plain") == 0);
+    g_autofree char *joined = xd_dnd_formats_join((const char *const *)formats);
+    CHECK(strcmp(joined, "text/uri-list\r\ntext/plain\r\n") == 0);
+    g_autofree char *empty = xd_dnd_formats_join(nullptr);
+    CHECK(strcmp(empty, "\r\n") == 0); /* never empty */
+    CHECK(xd_dnd_name_valid("pics/b.png") && xd_dnd_name_valid("a b.txt"));
+    CHECK(!xd_dnd_name_valid("/etc/passwd") && !xd_dnd_name_valid("pics/../../x"));
+    CHECK(!xd_dnd_name_valid("..") && !xd_dnd_name_valid("") && !xd_dnd_name_valid("./a"));
+    static const char meta[] = "file:///a%20b.txt\r\nfile:///pics/\r\n";
+    g_auto(GStrv) roots = xd_dnd_meta_roots(meta, sizeof(meta));
+    CHECK(roots != nullptr && g_strv_length(roots) == 2);
+    CHECK(strcmp(roots[0], "a b.txt") == 0 && strcmp(roots[1], "pics") == 0);
+    static const char hostile[] = "file:///../../etc/passwd\r\n";
+    CHECK(xd_dnd_meta_roots(hostile, sizeof(hostile)) == nullptr);
+    g_autofree char *uris = xd_dnd_drop_uri_list("/tmp/drop", roots);
+    CHECK(strcmp(uris, "file:///tmp/drop/a%20b.txt\r\nfile:///tmp/drop/pics\r\n") == 0);
+
+    /* A whole drop from a scripted host: a directory with a file in it
+     * and a file, into a fresh drop directory, offered as a URI list. */
+    g_autofree char *dir = g_dir_make_tmp("xd-vboxdnd-XXXXXX", nullptr);
+    CHECK(dir != nullptr);
+    xd_dnd_session session;
+    char *log = nullptr;
+    xd_hgcm *hgcm = vboxdnd_host(dir, "drop.script",
+                                 "enter 100 100\nmove 120 110\ndrop 120 110\n"
+                                 "dir pics\nfile pics/b.txt Bee\nfile a.txt Hello\n",
+                                 &session, &log);
+    xd_dnd_event *event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_ENTER && event->x == 100 && event->y == 100);
+    CHECK(event->formats != nullptr && strcmp(event->formats[0], XD_DND_URI_LIST) == 0);
+    CHECK(event->allowed_actions == (XD_DND_COPY | XD_DND_MOVE));
+    xd_dnd_event_free(event);
+    CHECK(xd_dnd_ack(hgcm, XD_DND_COPY) == XD_VINF_SUCCESS);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_MOVE && event->x == 120);
+    xd_dnd_event_free(event);
+    xd_dnd_ack(hgcm, XD_DND_COPY);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_DROPPED);
+    xd_dnd_event_free(event);
+    CHECK(xd_dnd_request_data(&session, XD_DND_URI_LIST) == XD_VINF_SUCCESS);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_DATA && strcmp(event->mime, XD_DND_URI_LIST) == 0);
+    g_autofree char *dropped = g_strndup(g_bytes_get_data(event->data, nullptr),
+                                         g_bytes_get_size(event->data));
+    xd_dnd_event_free(event);
+    g_auto(GStrv) dropped_uris = g_strsplit(dropped, "\r\n", -1);
+    CHECK(g_strv_length(dropped_uris) == 3 && dropped_uris[2][0] == '\0');
+    g_autofree char *pics = g_filename_from_uri(dropped_uris[0], nullptr, nullptr);
+    g_autofree char *a_txt = g_filename_from_uri(dropped_uris[1], nullptr, nullptr);
+    CHECK(pics != nullptr && g_str_has_suffix(pics, "/pics") && a_txt != nullptr);
+    g_autofree char *b_path = g_build_filename(pics, "b.txt", nullptr);
+    g_autofree char *contents = nullptr;
+    CHECK(g_file_get_contents(b_path, &contents, nullptr, nullptr) && strcmp(contents, "Bee") == 0);
+    g_clear_pointer(&contents, g_free);
+    CHECK(g_file_get_contents(a_txt, &contents, nullptr, nullptr) &&
+          strcmp(contents, "Hello") == 0);
+    CHECK(log_has(log, "ack 1") && log_has(log, "request text/uri-list"));
+    CHECK(!log_has(log, "guest error -2"));
+    xd_dnd_session_finish(&session);
+    hgcm->free(hgcm);
+    g_free(log);
+
+    /* A host naming a path outside the drop: refused, reported, and what
+     * came of the drop removed. */
+    hgcm = vboxdnd_host(dir, "hostile.script", "drop 1 1\nfile ok.txt fine\nfile ../evil x\n",
+                        &session, &log);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_DROPPED);
+    xd_dnd_event_free(event);
+    xd_dnd_request_data(&session, XD_DND_URI_LIST);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_FAILED && event->rc == XD_VERR_INVALID_PARAMETER);
+    xd_dnd_event_free(event);
+    CHECK(log_has(log, "guest error -2"));
+    g_autofree char *evil = g_build_filename(dir, "evil", nullptr);
+    CHECK(!g_file_test(evil, G_FILE_TEST_EXISTS));
+    xd_dnd_session_finish(&session);
+    hgcm->free(hgcm);
+    g_free(log);
+
+    /* Text, and the host's cancel and pending. */
+    hgcm = vboxdnd_host(dir, "text.script",
+                        "drop 5 5 text/plain;charset=utf-8\ntext Hi there\n", &session, &log);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_DROPPED);
+    xd_dnd_event_free(event);
+    xd_dnd_request_data(&session, "text/plain;charset=utf-8");
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_DATA && g_bytes_get_size(event->data) == 8 &&
+          memcmp(g_bytes_get_data(event->data, nullptr), "Hi there", 8) == 0);
+    xd_dnd_event_free(event);
+    xd_dnd_session_finish(&session);
+    hgcm->free(hgcm);
+    g_free(log);
+    hgcm = vboxdnd_host(dir, "cancel.script", "pending\ncancel\n", &session, &log);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_PENDING);
+    xd_dnd_event_free(event);
+    CHECK(xd_dnd_ack_pending(hgcm, XD_DND_IGNORE, 0, nullptr) == XD_VINF_SUCCESS);
+    CHECK(log_has(log, "pending 0 0 \\r\\n"));
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_CANCELLED);
+    xd_dnd_event_free(event);
+    xd_dnd_session_finish(&session);
+    hgcm->free(hgcm);
+    g_free(log);
+
+    /* Guest to host: the host's drop, then a tree of files sent (a link
+     * left out), and text with its NUL. */
+    hgcm = vboxdnd_host(dir, "out.script", "pending\ndropped text/uri-list\n", &session, &log);
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_PENDING);
+    xd_dnd_event_free(event);
+    static const char *const types[] = {XD_DND_URI_LIST, "text/plain", nullptr};
+    xd_dnd_ack_pending(hgcm, XD_DND_COPY, XD_DND_COPY | XD_DND_MOVE, types);
+    CHECK(log_has(log, "pending 1 3 text/uri-list\\r\\ntext/plain\\r\\n"));
+    event = xd_dnd_session_next(&session);
+    CHECK(event->kind == XD_DND_EVENT_TAKEN && strcmp(event->mime, XD_DND_URI_LIST) == 0 &&
+          event->default_action == XD_DND_COPY);
+    xd_dnd_event_free(event);
+    g_autofree char *out = g_build_filename(dir, "out", nullptr);
+    g_autofree char *out_pics = g_build_filename(out, "pics", nullptr);
+    CHECK(g_mkdir_with_parents(out_pics, 0755) == 0);
+    g_autofree char *out_a = g_build_filename(out, "a.txt", nullptr);
+    g_autofree char *out_b = g_build_filename(out_pics, "b.txt", nullptr);
+    g_autofree char *out_link = g_build_filename(out, "link", nullptr);
+    CHECK(g_file_set_contents(out_a, "A", -1, nullptr) &&
+          g_file_set_contents(out_b, "Bee", -1, nullptr) && symlink(out_a, out_link) == 0);
+    g_autofree char *uri_a = g_filename_to_uri(out_a, nullptr, nullptr);
+    g_autofree char *uri_pics = g_filename_to_uri(out_pics, nullptr, nullptr);
+    g_autofree char *uri_link = g_filename_to_uri(out_link, nullptr, nullptr);
+    g_autofree char *sent = g_strdup_printf("%s\r\n%s/\r\n%s\r\n", uri_a, uri_pics, uri_link);
+    CHECK(xd_dnd_send_files(hgcm, sent, strlen(sent)) == XD_VINF_SUCCESS);
+    /* The meta data: the roots relative to their parent, with its NUL
+     * (31 bytes); then 4 more, the files. */
+    CHECK(log_has(log, "send header total 35 meta 31 format text/uri-list objects 3"));
+    CHECK(log_has(log, "send data file:///a.txt\\r\\nfile:///pics/\\r\\n"));
+    CHECK(log_has(log, "send file a.txt 1") && log_has(log, "send file-data A"));
+    CHECK(log_has(log, "send dir pics") && log_has(log, "send file pics/b.txt 3"));
+    CHECK(log_has(log, "send file-data Bee") && !log_has(log, "send file link 1"));
+    CHECK(xd_dnd_send_data(hgcm, "text/plain;charset=utf-8", "Hi", 2) == XD_VINF_SUCCESS);
+    CHECK(log_has(log, "send header total 3 meta 3 format  objects 0"));
+    g_autofree char *log_text = nullptr;
+    CHECK(g_file_get_contents(log, &log_text, nullptr, nullptr) && strstr(log_text, "error") == nullptr);
+    xd_dnd_session_finish(&session);
+    hgcm->free(hgcm);
+    g_free(log);
+
+    g_autofree char *remove = g_strdup_printf("rm -rf -- '%s'", dir);
+    CHECK(system(remove) == 0);
+}
+
 /* A field with mines exactly where `rows` has '*' (row by row), laid
  * by hand instead of at random, already playing. */
 static void minefield_from(xd_minefield *field, const char *const *rows, int width, int height) {
@@ -9880,6 +10096,7 @@ int main(void) {
     test_snipping();
     test_recording();
     test_minefield();
+    test_vboxdnd();
     test_launcher_entry();
     test_printers();
     test_scanners();

@@ -1,0 +1,42 @@
+.TH XD\-VBOXDND 1 2026-10-22 XeonDesktop "XeonDesktop Manual"
+.SH NAME
+xd\-vboxdnd \- VirtualBox drag and drop for a XeonDesktop guest
+.SH SYNOPSIS
+.SY xd\-vboxdnd
+.OP \-\-fake\-host SCRIPT
+.YS
+.SH DESCRIPTION
+.B xd\-vboxdnd
+carries drags between a VirtualBox host and a XeonDesktop guest, which
+VirtualBox's own
+.B VBoxClient \-\-draganddrop
+refuses to do under Wayland.
+.BR xd\-compositor (1)
+starts it inside a VirtualBox guest (when
+.I /dev/vboxuser
+is there); it talks to the host's drag and drop service through that
+device, and to the compositor through XeonDesktop's private drag relay
+protocol.
+.PP
+Files (or text) dragged from the host onto the VM's window are received
+into
+.IR "$TMPDIR/VirtualBox Dropped Files/<time>/" ,
+as VirtualBox's own guest does, then dropped on what is under the pointer.
+A drag started in the guest and carried out of the VM's window is reported
+to the host, and when it is dropped there its data is sent (files: with
+everything they hold; symbolic links are left out). Either way it is a
+copy.
+.PP
+The VM's
+.B Devices > Drag and Drop
+setting decides which ways work: Host To Guest, Guest To Host, or
+Bidirectional.
+.SH OPTIONS
+.TP
+.B \-\-fake\-host SCRIPT
+Talk to a scripted host instead of VirtualBox's, for tests; what the guest
+answers is logged to
+.IR SCRIPT .log
+(src/vboxdnd/fakehost.c lists the script's steps).
+.SH SEE ALSO
+.BR xd\-compositor (1)

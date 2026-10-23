@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="xd_drag_relay_v1">
+  <copyright>
+    SPDX-License-Identifier: MIT
+  </copyright>
+  <description summary="XeonDesktop: drags that come from outside the desktop">
+    Private to XeonDesktop, offered only to the drag relay the compositor
+    starts itself (xd-vboxdnd, VirtualBox's host-to-guest drag and drop):
+    a program whose drags are driven by events from outside, not by the
+    mouse buttons here.
+
+    While the relay object exists, the client may start a drag with
+    wl_data_device.start_drag without holding a pointer button (the
+    serial isn't checked); the compositor holds the drag's button for it.
+    The drag then follows move requests rather than the mouse, and ends
+    with drop (or when the client destroys its wl_data_source).
+
+    The other way, the relay hears of drags programs here start
+    (outgoing_*), so it can carry one out of the desktop: its data on
+    request, then the drag cancelled once it was dropped elsewhere (a
+    copy: the program dragged from is never told to delete anything).
+  </description>
+
+  <interface name="xd_drag_relay_manager_v1" version="1">
+    <request name="get_relay">
+      <arg name="id" type="new_id" interface="xd_drag_relay_v1"/>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+  </interface>
+
+  <interface name="xd_drag_relay_v1" version="1">
+    <request name="move">
+      <description summary="move the pointer, and the drag, here">
+        A position in the desktop's device pixels: each monitor's pixels
+        placed as its logical position times its scale (one monitor: its
+        own pixels from its top left). The pointer moves there, and an
+        active relayed drag moves over what is under it.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </request>
+
+    <request name="refocus">
+      <description summary="offer the drag again to what's under it">
+        The surface under the drag gets a leave, then a new enter with a
+        new offer, as if the drag had left it and come back: for a
+        relay whose data only came after the target first asked for it
+        (toolkits keep what an offer gave them).
+      </description>
+    </request>
+
+    <request name="drop">
+      <description summary="let go of the relayed drag where it is">
+        The button the compositor held for the drag is released: the drag
+        drops on the surface under it (if that accepted it), or ends.
+      </description>
+    </request>
+
+    <request name="outgoing_receive">
+      <description summary="the outgoing drag's data">
+        The program the drag started in writes its data, of this MIME
+        type, to fd (as wl_data_offer.receive), then closes it.
+      </description>
+      <arg name="mime_type" type="string"/>
+      <arg name="fd" type="fd"/>
+    </request>
+
+    <request name="outgoing_cancel">
+      <description summary="end the outgoing drag, taken elsewhere">
+        The drag ends here without a drop; its program is told it was
+        cancelled.
+      </description>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+
+    <event name="outgoing_type">
+      <description summary="a type the drag starting offers">
+        Sent for each of its MIME types, before outgoing_started.
+      </description>
+      <arg name="mime_type" type="string"/>
+    </event>
+
+    <event name="outgoing_started">
+      <description summary="a program here started a drag">
+        With the actions it allows (wl_data_device_manager's).
+      </description>
+      <arg name="actions" type="uint"/>
+    </event>
+
+    <event name="outgoing_ended">
+      <description summary="that drag is over"/>
+    </event>
+  </interface>
+</protocol>

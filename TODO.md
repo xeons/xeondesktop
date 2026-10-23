@@ -149,6 +149,28 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
 
 ## Compositor
 
+- [~] VirtualBox drag and drop (xd-vboxdnd, dragrelay.c): VBoxClient's
+      is X11-only, so our own guest client speaks the host's
+      VBoxDragAndDropSvc (protocol 3) through /dev/vboxuser's HGCM ioctls,
+      written from VirtualBox's protocol headers and guest library
+      (GPL-3.0 or CDDL; no code taken). Host to guest: the host's drag
+      becomes a Wayland drag the compositor lets the relay start without
+      a button (xd-drag-relay-v1), moved where the host says; each move
+      answered with the target's last action; at the drop the files come
+      into $TMPDIR/VirtualBox Dropped Files (paths checked: nothing
+      absolute, no ".."), then the drag is offered again (toolkits keep
+      what an offer gave while hovering) and dropped. Guest to host: drags
+      started here are told to the relay, reported when the host asks,
+      their data sent when dropped there (directories walked, links left
+      out), then cancelled here (a copy). Explorer takes an outside drag
+      whose files aren't listed yet as a Copy. Tested against a scripted
+      host (unit tests; UI scenarios vbox_drag_into_files,
+      vbox_drag_out_of_files), not yet against a real VirtualBox host.
+      Not yet: monitors at different scales (the host's pixels are mapped
+      by each output's scale), a drag icon from the host, Move acted on,
+      the guest's pointer button after a drop on the host, reconnecting
+      after a saved-state restore.
+
 - [~] Window menu from the window itself: Alt+Space, a click on the caption
       icon, a right-click on the title bar and xdg_toplevel.show_window_menu
       all open the shell's window menu (via xd-window-arranger-v1). Tested:

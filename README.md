@@ -78,7 +78,13 @@ user manager the session's display and starts `xeondesktop-session.target`
 (`/etc/xdg/autostart`, `~/.config/autostart`) and "When I log on" scheduled
 tasks run then, and stop when you log off. In a VirtualBox guest, the guest
 additions' shared clipboard is started as a Wayland client so copy and paste
-work both ways.
+work both ways, and drag and drop works both ways too: VirtualBox's own
+guest client only does it under X11, so `xd-vboxdnd` (started by the
+compositor when `/dev/vboxuser` is there) talks to the host's drag and drop
+service itself. Files dragged from the host onto the VM's window are
+received into `$TMPDIR/VirtualBox Dropped Files` and dropped on what's under
+the pointer; files dragged out of the VM's window are sent to the host.
+The VM's Devices > Drag and Drop setting chooses which ways.
 
 ## Run the compositor
 

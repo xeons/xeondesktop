@@ -37,5 +37,6 @@
 #include "xwayland-keyboard-grab-unstable-v1-client-protocol.h"
 #include "xd-window-arranger-v1-client-protocol.h"
 #include "xd-window-rectangles-v1-client-protocol.h"
+#include "xd-drag-relay-v1-client-protocol.h"
 
 #endif

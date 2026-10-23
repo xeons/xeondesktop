@@ -301,6 +301,7 @@ static bool server_init(xd_server *server) {
     xd_arrange_init(server);
     xd_capture_init(server);
     xd_rectangles_init(server);
+    xd_relay_init(server);
     xd_protocols_init(server);
     xd_gamma_init(server);
     xd_present_init(server);
@@ -628,6 +629,8 @@ int main(int argc, char **argv) {
     server.config.polkit = own_program("xd-polkit", polkit_path, sizeof(polkit_path));
     static char endtask_path[4096];
     server.config.endtask = own_program("xd-endtask", endtask_path, sizeof(endtask_path));
+    static char vboxdnd_path[4096];
+    server.config.vboxdnd = own_program("xd-vboxdnd", vboxdnd_path, sizeof(vboxdnd_path));
     static char snip_path[4096];
     server.config.snip = own_program("xd-snip", snip_path, sizeof(snip_path));
     static char access_path[4096];
@@ -777,6 +780,7 @@ int main(int argc, char **argv) {
      * host desktop's agent usually has the session already; ours then
      * just exits. Restarted if it crashes, like the shell. */
     xd_polkit_start(&server);
+    xd_relay_start(&server);
     if (server.config.startup != nullptr)
         xd_spawn(&server, server.config.startup);
 

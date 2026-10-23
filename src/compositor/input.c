@@ -1921,6 +1921,10 @@ static void handle_request_set_primary_selection(struct wl_listener *listener, v
 static void handle_request_start_drag(struct wl_listener *listener, void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, request_start_drag);
     const struct wlr_seat_request_start_drag_event *seat_request_start_drag_event = data;
+    /* VirtualBox's relay, whose drags the host drives (dragrelay.c). */
+    if (!server->locked && server->mode == XD_CURSOR_PASSTHROUGH &&
+        xd_relay_start_drag(server, seat_request_start_drag_event->drag))
+        return;
     /* Only for a button held over the client that asks. */
     if (!server->locked && server->mode == XD_CURSOR_PASSTHROUGH &&
         wlr_seat_validate_pointer_grab_serial(server->seat, seat_request_start_drag_event->origin,
@@ -1937,9 +1941,16 @@ static void place_drag_icon(xd_server *server) {
                                     (int)server->cursor->y);
 }
 
+void xd_input_pointer_moved(xd_server *server) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    process_motion(server, (uint32_t)(now.tv_sec * 1000 + now.tv_nsec / 1000000));
+}
+
 static void handle_drag_destroy(struct wl_listener *listener, [[maybe_unused]] void *data) {
     xd_server *server = XD_CONTAINER_OF(listener, xd_server, drag_destroy);
     xd_unlisten(&server->drag_destroy);
+    xd_relay_drag_ended(server);
     /* wlroots removes the icon's scene tree with the icon. */
     server->drag_icon = nullptr;
     /* The drop took the pointer: give it back to what's under it. */
@@ -1956,6 +1967,7 @@ static void handle_start_drag(struct wl_listener *listener, void *data) {
         place_drag_icon(server);
     }
     XD_LISTEN(&drag->events.destroy, server, drag_destroy, handle_drag_destroy);
+    xd_relay_drag_started(server, drag);
 }
 
 static int handle_sigchld([[maybe_unused]] int sig, void *data) {
@@ -1963,7 +1975,7 @@ static int handle_sigchld([[maybe_unused]] int sig, void *data) {
     int status = 0;
     pid_t pid;
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        if (xd_ime_child_exited(server, pid, status))
+        if (xd_ime_child_exited(server, pid, status) || xd_relay_child_exited(server, pid, status))
             continue;
         if (pid == server->polkit_pid && pid > 0) {
             server->polkit_pid = 0;

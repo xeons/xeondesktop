@@ -39,6 +39,7 @@ they die.
 | `xd-run`, `xd-shutdown`, `xd-endtask`, `xd-message` | libxdui | Run, Shut Down / Log Off, End Program, message boxes for programs without dialogs of their own. |
 | `xd-security` | GTK3 | Windows Security (Ctrl+Alt+Delete) and Change Password. |
 | `xd-polkit` | GTK3 | The polkit authentication agent. |
+| `xd-vboxdnd` | none (Wayland, GLib) | VirtualBox drag and drop in both directions, through the host's HGCM service; started by the compositor in a VirtualBox guest. |
 | `xd-mines` | GTK3 | Minefield, XP's mine-clearing game, drawn with cairo. |
 | `xd-snip` | GTK3 | The Snipping Tool (its overlay through gtk-layer-shell), Print Screen's clipboard copies, and screen recording (GStreamer). |
 | `xd-search`, `xd-help`, `xd-defaults` | GTK3 | Search for Files or Folders, Help and Support, Set Program Access and Defaults. |
@@ -132,6 +133,10 @@ and xdg-shell, they use:
   and `ext-foreign-toplevel-list-v1`, also offered to the shell alone:
   Windows 7's taskbar thumbnails, captured into shared memory at thumbnail
   size;
+- `xd-drag-relay-v1`, our private protocol, offered only to the
+  `xd-vboxdnd` the compositor started: drags it starts without a button
+  held and moves where the VirtualBox host says, and the drags programs
+  here start, told to it so it can carry them out to the host;
 - `wlr-screencopy` and `xd-window-rectangles-v1`, our protocol saying
   where the windows are, front to back (the Snipping Tool's Window Snip
   and Alt+Print Screen), for every program that isn't sandboxed;

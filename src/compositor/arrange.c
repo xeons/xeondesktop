@@ -467,6 +467,9 @@ static bool global_filter(const struct wl_client *client, const struct wl_global
     /* The input method's (ime.c). */
     if (xd_ime_global_private(server, global))
         return xd_ime_client_allowed(server, client);
+    /* The VirtualBox drag relay's (dragrelay.c): only the one started here. */
+    if (xd_relay_global_private(server, global))
+        return xd_relay_client_allowed(server, client);
     /* Xwayland's keyboard grab (constraints.c), as the protocol requires. */
     if (xd_constraints_global_private(server, global))
         return xd_constraints_client_allowed(server, client);

@@ -270,6 +270,7 @@ typedef struct xd_config {
     const char *security;    /* Windows Security (Ctrl+Alt+Delete, Classic style) */
     const char *locker;      /* Lock Computer (Win+L; restarted if a locker dies) */
     const char *snip;        /* Snipping Tool (Print Screen, Win+Shift+S) */
+    const char *vboxdnd;     /* VirtualBox drag and drop relay (in a VirtualBox guest) */
     const char *polkit;      /* the session's polkit authentication agent */
     const char *endtask;     /* "End Program" for windows that don't respond */
     const char *accessibility; /* xd-access, asking to keep a feature a shortcut turned on */
@@ -455,6 +456,14 @@ struct xd_server {
     /* The shell is restarted if it crashes, like explorer.exe. */
     pid_t shell_pid;
     xd_trusted_client shell_client; /* the shell we started, by its connection */
+    /* dragrelay.c: VirtualBox's drag and drop relay (xd-vboxdnd), started
+     * here; its drag, driven by the host, holds a button we pressed. */
+    struct wl_global *drag_relay;
+    xd_trusted_client relay_client;
+    pid_t relay_pid;
+    struct wl_resource *relay_resource;
+    bool relay_dragging;
+    struct wlr_drag *outgoing_drag; /* a program's here, told to the relay */
     /* trust.c: what each client ran when it connected, and the globals
      * sandboxed clients don't get. */
     struct wl_listener client_created;
@@ -565,6 +574,9 @@ void xd_spawn(xd_server *server, const char *command);
 void xd_shell_start(xd_server *server);
 /* Starts config.polkit, the session's polkit authentication agent. */
 void xd_polkit_start(xd_server *server);
+/* The cursor moved other than by a pointer device: what's under it (and a
+ * drag over it) follows. */
+void xd_input_pointer_moved(xd_server *server);
 
 /* touch.c: touchscreens (touch for programs that read it, the pointer
  * elsewhere), and the monitor each touchscreen or tablet covers. */
@@ -882,6 +894,21 @@ void xd_present_frame(xd_output *out, struct wlr_output_state *state);
 bool xd_present_vrr_reported(const xd_output *out);
 /* ...and a client set it to `on`. */
 void xd_present_vrr_set(xd_output *out, bool on);
+
+/* dragrelay.c: drags from outside the desktop (VirtualBox's host). */
+void xd_relay_init(xd_server *server);
+/* Starts xd-vboxdnd inside a VirtualBox guest (or against a test's
+ * scripted host). */
+void xd_relay_start(xd_server *server);
+bool xd_relay_global_private(const xd_server *server, const struct wl_global *global);
+bool xd_relay_client_allowed(const xd_server *server, const struct wl_client *client);
+/* A drag the relay asked to start: started without a held button; false
+ * if it isn't the relay's. */
+bool xd_relay_start_drag(xd_server *server, struct wlr_drag *drag);
+/* A drag a program here started (told to the relay), and any drag over. */
+void xd_relay_drag_started(xd_server *server, struct wlr_drag *drag);
+void xd_relay_drag_ended(xd_server *server);
+bool xd_relay_child_exited(xd_server *server, pid_t pid, int status);
 
 /* rectangles.c: where the windows are, for the Snipping Tool. */
 void xd_rectangles_init(xd_server *server);

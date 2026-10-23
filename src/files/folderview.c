@@ -2558,11 +2558,31 @@ static gboolean can_reposition(XdFolderView *folder_view, GdkDragContext *ctx, G
            folder_view->dir != nullptr && dest != nullptr && g_file_equal(dest, folder_view->dir);
 }
 
+/* A drag from another program offering files it can't list yet: a
+ * VirtualBox host's, whose files only come at the drop. */
+static bool files_to_come(GdkDragContext *ctx, char **uris) {
+    if ((uris != nullptr && uris[0] != nullptr) || gtk_drag_get_source_widget(ctx) != nullptr)
+        return false;
+    GdkAtom uri_list = gdk_atom_intern_static_string("text/uri-list");
+    for (GList *target = gdk_drag_context_list_targets(ctx); target != nullptr;
+         target = target->next) {
+        if (GDK_POINTER_TO_ATOM(target->data) == uri_list)
+            return true;
+    }
+    return false;
+}
+
 static GdkDragAction drop_action(XdFolderView *folder_view, GdkDragContext *ctx, char **uris,
                                  GFile *dest) {
-    if (dest == nullptr || uris == nullptr || uris[0] == nullptr ||
-        xd_place_of(dest) == XD_PLACE_COMPUTER || xd_place_of(dest) == XD_PLACE_CONTROL ||
-        xd_place_of(dest) == XD_PLACE_NETWORK)
+    if (dest == nullptr || xd_place_of(dest) == XD_PLACE_COMPUTER ||
+        xd_place_of(dest) == XD_PLACE_CONTROL || xd_place_of(dest) == XD_PLACE_NETWORK)
+        return NO_ACTION;
+    /* As Windows: what comes from outside is copied; the drop has the
+     * list (and drop_action is asked again then). */
+    if (files_to_come(ctx, uris) && xd_place_of(dest) != XD_PLACE_TRASH)
+        return (gdk_drag_context_get_actions(ctx) & GDK_ACTION_COPY) ? GDK_ACTION_COPY
+                                                                     : GDK_ACTION_MOVE;
+    if (uris == nullptr || uris[0] == nullptr)
         return NO_ACTION;
     if (xd_place_of(dest) == XD_PLACE_TRASH) {
         /* Into the Recycle Bin: a delete, carried as a move. */

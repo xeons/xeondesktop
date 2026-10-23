@@ -4621,6 +4621,123 @@ def minefield(s):
     s.log("ok: F2 started a new game")
 
 
+VBOX_SCRIPT = """until {go}
+enter @
+wait 400
+move @
+wait 400
+move @
+wait 400
+drop @
+file hello.txt Hello from the host
+dir pics
+file pics/b.txt Bee
+"""
+
+
+def vbox_dnd_setup(s):
+    """A scripted VirtualBox host for xd-vboxdnd (the compositor starts it
+    with $XD_VBOXDND_FAKE), dropping into a scratch TMPDIR."""
+    s.vbox_go = os.path.join(s.base, "vbox-go")
+    script = os.path.join(s.base, "vbox.script")
+    with open(script, "w") as f:
+        f.write(VBOX_SCRIPT.format(go=s.vbox_go))
+    s.vbox_log = script + ".log"
+    tmp = os.path.join(s.base, "tmp")
+    os.makedirs(tmp, exist_ok=True)
+    os.environ["TMPDIR"] = tmp
+    os.environ["XD_VBOXDND_FAKE"] = script
+
+
+@scenario(setup=vbox_dnd_setup)
+def vbox_drag_into_files(s):
+    """VirtualBox's host-to-guest drag and drop (xd-vboxdnd, against a
+    scripted host): files dragged from the host onto an Explorer window are
+    received, then dropped there, and Explorer copies them in."""
+    x, y, _ = open_documents(s)
+    # An empty part of the folder view, under Letters and Notes.txt.
+    point = (x + LETTERS[0] + 40, y + LETTERS[1] + 160)
+    with open(s.vbox_go, "w") as f:
+        f.write(f"{point[0]} {point[1]}\n")
+    documents = os.path.join(s.home, "Documents")
+    hello = os.path.join(documents, "hello.txt")
+    bee = os.path.join(documents, "pics", "b.txt")
+
+    def arrived():
+        try:
+            with open(hello) as a, open(bee) as b:
+                return a.read() == "Hello from the host" and b.read() == "Bee"
+        except OSError:
+            return False
+
+    s.wait(arrived, "the dropped files in Documents", timeout=30)
+    s.log("ok: the host's file and folder were dropped into Documents")
+    with open(s.vbox_log) as f:
+        log = f.read().splitlines()
+    s.check("ack 1" in log, f"a move answered with Copy ({log})")
+    s.check("request text/uri-list" in log, f"the files asked for at the drop ({log})")
+    s.check(not any(line.startswith(("error", "guest error")) for line in log),
+            f"no errors either side ({log})")
+    s.log("ok: the guest answered the host as it expects")
+
+
+VBOX_OUT_SCRIPT = """until {go}
+wait 1500
+pending
+wait 300
+dropped text/uri-list
+"""
+
+
+def vbox_out_setup(s):
+    """A scripted VirtualBox host that, once told, asks whether a guest
+    drag is going on, then takes it as dropped on the host."""
+    s.vbox_go = os.path.join(s.base, "vbox-go")
+    script = os.path.join(s.base, "vbox-out.script")
+    with open(script, "w") as f:
+        f.write(VBOX_OUT_SCRIPT.format(go=s.vbox_go))
+    s.vbox_log = script + ".log"
+    os.environ["XD_VBOXDND_FAKE"] = script
+
+
+@scenario(setup=vbox_out_setup)
+def vbox_drag_out_of_files(s):
+    """VirtualBox's guest-to-host drag and drop (xd-vboxdnd, against a
+    scripted host): a file dragged out of Explorer is reported to the host
+    when it asks, and sent to it when dropped there; the drag here then
+    ends without moving anything."""
+    x, y, _ = open_documents(s)
+    notes = (x + LETTERS[0] + 80, y + LETTERS[1])  # Notes.txt, next to Letters
+    # The host asks 1.5 s after this, while the button is still held (the
+    # drag ends when xd-inject lets go of it).
+    with open(s.vbox_go, "w") as f:
+        f.write("0 0\n")
+    s.inject("move", *notes, "sleep", 200, "down", "sleep", 200,
+             *[step for d in (10, 30, 60, 90) for step in ("move", notes[0] + d, notes[1] + d,
+                                                           "sleep", 100)],
+             "sleep", 4000)
+
+    def log():
+        try:
+            with open(s.vbox_log) as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+    s.wait(lambda: "send file-data Shopping list\\n" in log(), "Notes.txt sent to the host",
+           timeout=30)
+    lines = log()
+    s.check(any(line.startswith("pending 1 ") and "text/uri-list" in line for line in lines),
+            f"the drag reported to the host, files first ({lines})")
+    s.check("send file Notes.txt 14" in lines, f"the file sent whole ({lines})")
+    s.check(not any(line.startswith(("error", "guest error")) for line in lines),
+            f"no errors either side ({lines})")
+    s.log("ok: the drag went to the host, its file with it")
+    notes_path = os.path.join(s.home, "Documents", "Notes.txt")
+    s.check(os.path.exists(notes_path), "Notes.txt is still in Documents (a copy, not a move)")
+    s.log("ok: nothing moved here")
+
+
 @scenario(LUNA_INI)
 def xp_new_programs_balloon(s):
     """A program installed while the session runs: XP's "New programs
