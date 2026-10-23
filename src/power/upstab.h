@@ -4,7 +4,8 @@
  * Details (manufacturer, model), with UPS Selection (Select...) and UPS
  * Configuration (Configure...) for [UPS], which the shell acts on.
  */
-#pragma once
+#ifndef XD_POWER_UPSTAB_H
+#define XD_POWER_UPSTAB_H
 
 #include <gtk/gtk.h>
 
@@ -22,3 +23,5 @@ GtkWidget *xd_power_ups_tab_get_page(xd_power_ups_tab *tab);
 /* The settings as the user left them. */
 void xd_power_ups_tab_get_settings(const xd_power_ups_tab *tab, xd_ups_settings *out);
 void xd_power_ups_tab_free(xd_power_ups_tab *tab);
+
+#endif

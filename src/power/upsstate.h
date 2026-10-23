@@ -4,7 +4,8 @@
  * and the UPS service's decisions (when to notify, when the critical
  * alarm goes off), as pure functions of the time.
  */
-#pragma once
+#ifndef XD_POWER_UPSSTATE_H
+#define XD_POWER_UPSSTATE_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -71,3 +72,5 @@ enum {
  * unreachable UPS changes nothing. */
 unsigned xd_ups_watch_step(const xd_ups_settings *settings, xd_ups_watch *watch,
                            const xd_ups_reading *reading, int64_t now, int64_t *wake_at);
+
+#endif

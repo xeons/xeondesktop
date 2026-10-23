@@ -6,7 +6,8 @@
  * NUT's calls block (on the network, with libupsclient's timeouts): the
  * async ones run them on a worker thread.
  */
-#pragma once
+#ifndef XD_POWER_UPSSOURCE_H
+#define XD_POWER_UPSSOURCE_H
 
 #include <gio/gio.h>
 
@@ -40,3 +41,5 @@ void xd_ups_read_nut(const char *address, xd_ups_reading *reading);
 void xd_ups_read_nut_async(const char *address, GCancellable *cancellable,
                            GAsyncReadyCallback callback, gpointer data);
 bool xd_ups_read_nut_finish(GAsyncResult *result, xd_ups_reading *reading);
+
+#endif
