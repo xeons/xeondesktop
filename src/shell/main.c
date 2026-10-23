@@ -739,6 +739,7 @@ static void apply_settings(xd_shell *shell, bool startup) {
     xd_idle_update(shell);
     xd_sleep_update(shell);
     xd_buttons_update(shell);
+    xd_ups_service_update(shell);
     /* Programs started from the shell get Mouse Properties' cursors (the
      * compositor sets these too, but only for what it starts). */
     const xd_mouse_settings *mouse = &shell->settings.mouse;
@@ -1116,6 +1117,7 @@ int main(int argc, char **argv) {
     xd_notifyd_init(&shell);
     xd_sleep_init(&shell);
     xd_buttons_init(&shell);
+    xd_ups_service_init(&shell);
     xd_account_init(&shell);
     xd_housekeeping_init(&shell);
     xd_gpu_watch();
@@ -1159,6 +1161,7 @@ int main(int argc, char **argv) {
     }
     xd_shellbus_finish(&shell);
     xd_tray_finish(&shell);
+    xd_ups_service_finish(&shell);
     xd_sleep_finish(&shell);
     xd_buttons_finish(&shell);
     xd_account_finish(&shell);

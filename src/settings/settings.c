@@ -48,6 +48,10 @@ static const char *const alarm_action_names[XD_ALARM_ACTION_COUNT] = {
     [XD_ALARM_HIBERNATE] = "hibernate",
     [XD_ALARM_SHUTDOWN] = "shutdown",
 };
+static const char *const ups_action_names[XD_UPS_ACTION_COUNT] = {
+    [XD_UPS_SHUTDOWN] = "shutdown",
+    [XD_UPS_HIBERNATE] = "hibernate",
+};
 static const char *const updates_mode_names[XD_UPDATES_MODE_COUNT] = {
     [XD_UPDATES_DOWNLOAD] = "download",
     [XD_UPDATES_NOTIFY] = "notify",
@@ -343,6 +347,10 @@ xd_alarm_fired xd_battery_alarm_check(const xd_settings *settings, xd_alarm_done
     return XD_ALARM_FIRED_NONE;
 }
 
+const char *xd_ups_action_name(xd_ups_action action) {
+    return action < XD_UPS_ACTION_COUNT ? ups_action_names[action] : ups_action_names[0];
+}
+
 const char *xd_button_action_name(xd_button_action action) {
     return action < XD_BUTTON_ACTION_COUNT ? button_action_names[action] : button_action_names[0];
 }
@@ -496,6 +504,12 @@ void xd_settings_defaults(xd_settings *settings) {
          * CriticalPowerAction just below. */
         .low_alarm = {.on = true, .percent = 10, .sound = true, .message = true},
         .critical_alarm = {.on = true, .percent = 3, .sound = true, .message = true},
+        /* XP's UPS Configuration: a notification 5 s after the power
+         * fails, then every 2 minutes; the critical alarm when the UPS's
+         * battery runs low (the minutes on battery unchecked, 2 when
+         * checked). */
+        .ups = {.notify = true, .notify_delay = 5, .notify_interval = 120,
+                .critical_minutes = 2},
         .bluetooth_icon = true,
         /* XP SP2's every day at 3:00 AM, downloading but never installing. */
         .updates = {.mode = XD_UPDATES_DOWNLOAD, .day = 0, .hour = 3},
@@ -752,6 +766,32 @@ static void parse_alarm(xd_battery_alarm *al, xd_str key, xd_str value) {
         int i = index_of(alarm_action_names, XD_ARRAY_LEN(alarm_action_names), value);
         if (i >= 0)
             al->action = (xd_alarm_action)i;
+    }
+#undef KEY
+}
+
+static void parse_ups(xd_ups_settings *ups, xd_str key, xd_str value) {
+#define KEY(n) xd_str_eq_nocase(key, XD_STR(n))
+    if (KEY("Device")) {
+        copy_into(ups->device, sizeof(ups->device), value);
+    } else if (KEY("Notify")) {
+        parse_bool(value, &ups->notify);
+    } else if (KEY("FirstNotification")) {
+        parse_int(value, XD_UPS_DELAY_MIN, XD_UPS_DELAY_MAX, &ups->notify_delay);
+    } else if (KEY("NotificationInterval")) {
+        parse_int(value, XD_UPS_INTERVAL_MIN, XD_UPS_INTERVAL_MAX, &ups->notify_interval);
+    } else if (KEY("CriticalAfterMinutes")) {
+        parse_bool(value, &ups->critical_after);
+    } else if (KEY("CriticalMinutes")) {
+        parse_int(value, XD_UPS_MINUTES_MIN, XD_UPS_MINUTES_MAX, &ups->critical_minutes);
+    } else if (KEY("RunProgram")) {
+        parse_bool(value, &ups->run_program);
+    } else if (KEY("Program")) {
+        copy_into(ups->program, sizeof(ups->program), value);
+    } else if (KEY("CriticalAction")) {
+        int i = index_of(ups_action_names, XD_ARRAY_LEN(ups_action_names), value);
+        if (i >= 0)
+            ups->action = (xd_ups_action)i;
     }
 #undef KEY
 }
@@ -1335,6 +1375,8 @@ static bool on_entry(void *user, xd_str section, xd_str key, xd_str value) {
             if (button >= 0 && i >= 0)
                 settings->power_buttons[button] = (xd_button_action)i;
         }
+    } else if (SEC("UPS")) {
+        parse_ups(&settings->ups, key, value);
     } else if (SEC("Folders")) {
         xd_folder_settings *folder_settings = &settings->folders;
         if (KEY("NewWindow"))
@@ -1549,6 +1591,16 @@ static GKeyFile *to_keyfile(const xd_settings *settings) {
             g_key_file_set_string(kf, "Power", button_keys[button],
                                   button_action_names[settings->power_buttons[button]]);
     }
+    const xd_ups_settings *ups = &settings->ups;
+    g_key_file_set_string(kf, "UPS", "Device", ups->device);
+    g_key_file_set_boolean(kf, "UPS", "Notify", ups->notify);
+    g_key_file_set_integer(kf, "UPS", "FirstNotification", ups->notify_delay);
+    g_key_file_set_integer(kf, "UPS", "NotificationInterval", ups->notify_interval);
+    g_key_file_set_boolean(kf, "UPS", "CriticalAfterMinutes", ups->critical_after);
+    g_key_file_set_integer(kf, "UPS", "CriticalMinutes", ups->critical_minutes);
+    g_key_file_set_boolean(kf, "UPS", "RunProgram", ups->run_program);
+    g_key_file_set_string(kf, "UPS", "Program", ups->program);
+    g_key_file_set_string(kf, "UPS", "CriticalAction", ups_action_names[ups->action]);
     g_key_file_set_boolean(kf, "Bluetooth", "ShowIcon", settings->bluetooth_icon);
     g_key_file_set_string(kf, "Updates", "Mode", updates_mode_names[settings->updates.mode]);
     g_key_file_set_string(kf, "Updates", "Day", updates_day_names[settings->updates.day]);

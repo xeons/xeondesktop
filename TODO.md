@@ -1150,8 +1150,14 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       suspend/hibernate and lock on resume, real sound cards and default
       device switches, real localed/AccountsService/polkit prompts, a
       changed password at logon, a logon picking up the formats file.
-- [ ] Applets: not done: UPS (Linux uses NUT/apcupsd; UPower lists USB UPSes
-      as batteries); Customize Regional Options' fields glibc can't express
+- [?] Power Options' UPS tab (XP's): Status and Details, Select... from
+      UPower's UPSes or NUT's ups@host, Configure... (notifications, critical
+      alarm, run a program, Shut Down/Hibernate), and the shell's power
+      failure and restored notices and critical action. Tested headlessly
+      against dbusmock's UPower and a fake upsd; untested on a real UPS.
+      Not done: apcupsd; "Finally, turn off the UPS" (needs root, NUT's
+      upsmon), shown disabled.
+- [ ] Applets: not done: Customize Regional Options' fields glibc can't express
       (list separator, two-digit years, long date...); limited users see
       administrator tasks in User Accounts; other GTK apps don't follow the
       double-click time or caret blink.

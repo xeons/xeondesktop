@@ -105,6 +105,37 @@ typedef struct xd_battery_alarm {
     xd_alarm_action action;
 } xd_battery_alarm;
 
+/* Power Options' UPS tab ([UPS]): the UPS this computer runs on, which the
+ * shell watches as Windows' UPS service did, and what it does when the
+ * power fails (UPS Configuration). */
+typedef enum xd_ups_action : uint8_t {
+    XD_UPS_SHUTDOWN, /* "Next, instruct the computer to: Shut Down" */
+    XD_UPS_HIBERNATE,
+    XD_UPS_ACTION_COUNT,
+} xd_ups_action;
+typedef struct xd_ups_settings {
+    /* "upower:" and a UPower device's object path, or "nut:" and NUT's
+     * ups@host[:port]; "" for none (UPS Selection's "(None)"). */
+    char device[192];
+    bool notify;         /* "Enable all notifications" */
+    int notify_delay;    /* seconds between power failure and first notification */
+    int notify_interval; /* seconds between subsequent power failure notifications */
+    bool critical_after; /* "Minutes on battery before critical alarm" checked */
+    int critical_minutes;
+    bool run_program; /* "When the alarm occurs, run this program" */
+    char program[256]; /* a command line */
+    xd_ups_action action;
+} xd_ups_settings;
+/* UPS Configuration's ranges. */
+enum {
+    XD_UPS_DELAY_MIN = 0,
+    XD_UPS_DELAY_MAX = 120,
+    XD_UPS_INTERVAL_MIN = 5,
+    XD_UPS_INTERVAL_MAX = 300,
+    XD_UPS_MINUTES_MIN = 2,
+    XD_UPS_MINUTES_MAX = 120,
+};
+
 /* Power Options' Advanced "Power buttons": what closing the lid, the power
  * button and the sleep button do, for this user. The shell carries them
  * out, holding logind's block inhibitor for each one set; unset, logind's
@@ -541,6 +572,7 @@ typedef struct xd_settings {
     bool resume_password; /* lock the screen before sleeping */
     xd_battery_alarm low_alarm, critical_alarm; /* Alarms */
     xd_button_action power_buttons[XD_POWER_BUTTON_COUNT]; /* Advanced's Power buttons */
+    xd_ups_settings ups;                                   /* [UPS] */
 
     /* [Bluetooth] */
     bool bluetooth_icon; /* "Show the Bluetooth icon in the notification area" */
@@ -640,6 +672,8 @@ xd_alarm_fired xd_battery_alarm_check(const xd_settings *settings, xd_alarm_done
 const char *xd_updates_mode_name(xd_updates_mode mode);
 /* "standby", ...: [Power] *AlarmAction's values. */
 const char *xd_alarm_action_name(xd_alarm_action action);
+/* "shutdown", "hibernate": [UPS] CriticalAction's values. */
+const char *xd_ups_action_name(xd_ups_action action);
 
 /* "nothing", "ask", ...: [Power] LidAction's and the buttons' values
  * ("logind" for unset, which isn't written). */

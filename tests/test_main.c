@@ -29,6 +29,7 @@
 #include "../src/flatpak/perms.h"
 #include "../src/apps/runcmd.h"
 #include "../src/power/schemes.h"
+#include "../src/power/upsstate.h"
 #include "../src/printers/cupsops.h"
 #include "../src/privacy/permissions.h"
 #include "../src/printers/printlib.h"
@@ -3394,6 +3395,128 @@ static void test_battery_alarms(void) {
     done = (xd_alarm_done){0};
     CHECK(xd_battery_alarm_check(&original, &done, 2, true) == XD_ALARM_FIRED_LOW);
     CHECK(xd_battery_alarm_check(&original, &done, 1, true) == XD_ALARM_FIRED_NONE);
+}
+
+/* Power Options' UPS tab: [UPS], NUT's status flags, the tab's values,
+ * and when the shell notifies and raises the critical alarm. */
+static void test_ups(void) {
+    xd_settings settings;
+    xd_settings_defaults(&settings);
+    xd_ups_settings *ups = &settings.ups;
+    /* XP's: notifications after 5 s, then every 2 minutes; no UPS. */
+    CHECK(ups->device[0] == '\0' && ups->notify && ups->notify_delay == 5 &&
+          ups->notify_interval == 120 && !ups->critical_after && ups->critical_minutes == 2 &&
+          ups->action == XD_UPS_SHUTDOWN);
+    xd_settings_parse(XD_STR("[UPS]\nDevice=nut:myups@server:3494\nFirstNotification=30\n"
+                             "NotificationInterval=1\nCriticalAfterMinutes=true\n"
+                             "CriticalMinutes=10\nRunProgram=true\nProgram=save-all --now\n"
+                             "CriticalAction=hibernate\n"),
+                      &settings);
+    CHECK(strcmp(ups->device, "nut:myups@server:3494") == 0 && ups->notify_delay == 30);
+    /* Out of range: kept. */
+    CHECK(ups->notify_interval == 120);
+    CHECK(ups->critical_after && ups->critical_minutes == 10 && ups->run_program &&
+          strcmp(ups->program, "save-all --now") == 0 && ups->action == XD_UPS_HIBERNATE);
+    xd_strbuf text = {0};
+    xd_settings_serialize(&settings, &text);
+    CHECK(strstr(xd_strbuf_cstr(&text), "CriticalAction=hibernate") != nullptr);
+    xd_settings again;
+    xd_settings_parse(xd_strbuf_view(&text), &again);
+    CHECK(xd_settings_equal(&settings, &again) && strcmp(again.ups.program, ups->program) == 0);
+    xd_strbuf_free(&text);
+
+    const char *address = nullptr;
+    CHECK(xd_ups_get_device_kind(ups->device, &address) == XD_UPS_DEVICE_NUT &&
+          strcmp(address, "myups@server:3494") == 0);
+    CHECK(xd_ups_get_device_kind("upower:/org/freedesktop/UPower/devices/ups_hiddev0", &address) ==
+              XD_UPS_DEVICE_UPOWER &&
+          strcmp(address, "/org/freedesktop/UPower/devices/ups_hiddev0") == 0);
+    CHECK(xd_ups_get_device_kind("", &address) == XD_UPS_DEVICE_NONE);
+    CHECK(xd_ups_get_device_kind("nut:", nullptr) == XD_UPS_DEVICE_NONE);
+    CHECK(xd_ups_get_device_kind("apcupsd:x", nullptr) == XD_UPS_DEVICE_NONE);
+
+    /* NUT's flags, and the Status values. */
+    xd_ups_reading reading;
+    xd_ups_reading_init(&reading);
+    char value[32];
+    xd_ups_format_power_source(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "Unknown") == 0);
+    xd_ups_format_runtime(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "Unknown") == 0);
+    reading.is_reachable = true;
+    reading.charge = 99.6;
+    reading.runtime = 37 * 60 + 59;
+    xd_ups_parse_nut_status("OL CHRG", &reading);
+    CHECK(!reading.is_on_battery && !reading.is_low_battery && !reading.is_replace_battery);
+    xd_ups_format_power_source(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "AC Power") == 0);
+    xd_ups_format_runtime(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "37 minutes") == 0);
+    xd_ups_format_capacity(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "100%") == 0);
+    xd_ups_format_condition(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "Good") == 0);
+    xd_ups_parse_nut_status("OB DISCHRG LB RB", &reading);
+    CHECK(reading.is_on_battery && reading.is_low_battery && reading.is_replace_battery);
+    xd_ups_format_power_source(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "Battery") == 0);
+    xd_ups_format_condition(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "Replace") == 0);
+    reading.runtime = 61;
+    xd_ups_format_runtime(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "1 minute") == 0);
+    /* "OBX" isn't OB. */
+    xd_ups_parse_nut_status("OBX", &reading);
+    CHECK(!reading.is_on_battery);
+    /* UPower says nothing of the battery's condition. */
+    reading.has_condition = false;
+    xd_ups_format_condition(&reading, value, sizeof(value));
+    CHECK(strcmp(value, "Unknown") == 0);
+
+    /* The service: on battery at t=100, notified at 130 and every 120 s;
+     * the critical alarm 10 minutes on. */
+    xd_ups_watch watch = {0};
+    int64_t wake = 0;
+    xd_ups_parse_nut_status("OL", &reading);
+    reading.is_low_battery = false;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 50, &wake) == 0 && wake == -1);
+    reading.is_on_battery = true;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 100, &wake) == 0 && wake == 130);
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 129, &wake) == 0 && wake == 130);
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 130, &wake) == XD_UPS_EVENT_POWER_FAILED &&
+          wake == 250);
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 250, &wake) == XD_UPS_EVENT_POWER_FAILED);
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 690, &wake) == XD_UPS_EVENT_POWER_FAILED &&
+          wake == 700);
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 700, &wake) == XD_UPS_EVENT_CRITICAL &&
+          wake == 810);
+    /* Once per failure, even when the battery then runs low. */
+    reading.is_low_battery = true;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 701, &wake) == 0);
+    /* An unreachable UPS changes nothing. */
+    reading.is_reachable = false;
+    reading.is_on_battery = false;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 702, &wake) == 0 && watch.is_on_battery);
+    reading.is_reachable = true;
+    reading.is_low_battery = false;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 703, &wake) == XD_UPS_EVENT_POWER_RESTORED &&
+          wake == -1);
+    /* A failure shorter than the first notification's delay: nothing at
+     * all, not even "restored". */
+    reading.is_on_battery = true;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 800, &wake) == 0);
+    reading.is_on_battery = false;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 810, &wake) == 0);
+    /* Without the minutes: the critical alarm on the UPS's low battery,
+     * at once; notifications off. */
+    ups->critical_after = false;
+    ups->notify = false;
+    reading.is_on_battery = true;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 900, &wake) == 0 && wake == -1);
+    reading.is_low_battery = true;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 905, &wake) == XD_UPS_EVENT_CRITICAL);
+    reading.is_on_battery = reading.is_low_battery = false;
+    CHECK(xd_ups_watch_step(ups, &watch, &reading, 910, &wake) == 0);
 }
 
 /* Accessibility Options' Sound tab, status indicators and reset. */
@@ -10297,6 +10420,7 @@ int main(void) {
     test_tray_rules();
     test_power_settings();
     test_battery_alarms();
+    test_ups();
     test_power_buttons();
     test_access_extra_settings();
     test_power_schemes();

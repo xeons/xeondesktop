@@ -620,6 +620,12 @@ bool xd_shell_hears_lock(const xd_shell *shell);
 void xd_sleep_now(xd_shell *shell, bool hibernate);
 /* A battery alarm's Shut down. */
 void xd_power_off_now(xd_shell *shell);
+/* ups.c: Power Options' UPS, watched as Windows' UPS service did (power
+ * failure notifications, the critical alarm's program and action). */
+void xd_ups_service_init(xd_shell *shell);
+/* Settings changed. */
+void xd_ups_service_update(xd_shell *shell);
+void xd_ups_service_finish(xd_shell *shell);
 /* buttons.c: Power Options' lid and power button actions, logind's
  * inhibitor held for those set. */
 void xd_buttons_init(xd_shell *shell);

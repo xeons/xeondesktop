@@ -3586,6 +3586,257 @@ def battery_alarms(s):
         DBusTestCase.tearDownClass()
 
 
+UPS_PATH = "/org/freedesktop/UPower/devices/ups_hiddev0"
+
+
+def mock_ups(s):
+    """Before the compositor starts: a private system bus with dbusmock's
+    UPower (a desktop: no battery, a USB UPS on mains, fully charged) and
+    logind (logging its calls)."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    DBusTestCase.start_system_bus()
+    for template in ("upower", "logind"):
+        log = open(os.path.join(s.base, template + ".log"), "w")
+        proc, _ = DBusTestCase.spawn_server_template(template, {}, stdout=log, system_bus=True)
+        s.children.append(proc)
+    upower = dbus.SystemBus().get_object("org.freedesktop.UPower", "/org/freedesktop/UPower")
+    mock = dbus.Interface(upower, MOCK_IFACE)
+    mock.AddObject(UPS_PATH, "org.freedesktop.UPower.Device", {
+        "Type": dbus.UInt32(3), "PowerSupply": dbus.Boolean(True),
+        "IsPresent": dbus.Boolean(True), "State": dbus.UInt32(4),
+        "Percentage": dbus.Double(100.0), "TimeToEmpty": dbus.Int64(2280),
+        "WarningLevel": dbus.UInt32(1), "Vendor": dbus.String("American Power Conversion"),
+        "Model": dbus.String("Back-UPS ES 700"), "NativePath": dbus.String("hiddev0"),
+    }, [])  # fmt: skip
+    mock.EmitSignal("org.freedesktop.UPower", "DeviceAdded", "o", [UPS_PATH])
+
+
+@scenario(LUNA_INI, requires=("dbusmock",), setup=mock_ups)
+def power_ups(s):
+    """Power Options' UPS tab (a dbusmock UPower UPS): with no UPS chosen it
+    shows (None); Select... lists UPower's UPS, and choosing it (Finish,
+    Apply) saves [UPS] Device and shows its status and maker."""
+    from dbusmock import DBusTestCase
+
+    try:
+        empty = s.settle("desktop")
+        s.launch("xd-power", "--page", "3")
+        s.wait_window(title="Power Options Properties", state="activated")
+        tab = s.settle("ups-tab")
+        x, y, _, _ = tab.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        s.check(not s.ini().has_option("UPS", "Device") or not s.ini()["UPS"]["Device"],
+                "no UPS chosen to start with")  # fmt: skip
+        # Select... (UPS Selection is a dialog box of the window, not on
+        # the taskbar): (None) first, UPower's UPS below it.
+        s.inject("move", x + 153, y + 256, "click", "sleep", 1500)
+        selection = s.settle("selection")
+        s.check(selection.differs(tab, (x + 30, y + 100, 360, 200)) > 0.2,
+                "Select... opened UPS Selection")  # fmt: skip
+        # The UPS (Down from (None)); Enter on the row is Finish.
+        s.inject("key", "Down", "sleep", 200, "key", "Return", "sleep", 800)
+        chosen = s.settle("chosen")
+        s.check(chosen.differs(tab, (x + 110, y + 90, 200, 140)) > 0.02,
+                "the tab shows the UPS's status and maker")  # fmt: skip
+        s.inject("key", "alt+a")
+
+        def saved():
+            ini = s.ini()
+            return ini.has_section("UPS") and ini["UPS"].get("Device")
+
+        s.check(s.wait(saved, "[UPS] Device saved") == "upower:" + UPS_PATH,
+                "Apply saved the UPS chosen")  # fmt: skip
+        # Configure...: UPS Configuration, centred on the window. "Minutes
+        # on battery before critical alarm" (Alt+M), OK, Apply.
+        s.inject("move", x + 70, y + 256, "click", "sleep", 1500)
+        configuration = s.settle("configuration")
+        s.check(configuration.differs(chosen, (x + 20, y + 60, 380, 300)) > 0.2,
+                "Configure... opened UPS Configuration")  # fmt: skip
+        s.inject("key", "alt+m", "sleep", 300, "move", x + 299, y + 394, "click", "sleep", 800)
+        s.inject("key", "alt+a")
+
+        def critical_after():
+            return s.ini()["UPS"].get("CriticalAfterMinutes") == "true"
+
+        s.wait(critical_after, "[UPS] CriticalAfterMinutes saved")
+        s.log("ok: UPS Configuration's minutes on battery saved")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
+@scenario(LUNA_INI + f"\n[UPS]\nDevice=upower:{UPS_PATH}\nFirstNotification=0\n"
+          "RunProgram=true\nProgram=touch \"$HOME/ups-program-ran\"\n",
+          requires=("dbusmock",), setup=mock_ups)  # fmt: skip
+def ups_power_failure(s):
+    """The shell watching the dbusmock UPS (Power Options' [UPS]): the power
+    failing shows "Power Failure", its return "Power Restored"; failing
+    again and the UPS's battery running low (UPower's WarningLevel) is the
+    critical alarm: the program runs, then logind's PowerOff (dbusmock's,
+    only logged)."""
+    import dbus
+    from dbusmock import DBusTestCase, MOCK_IFACE
+
+    ran = os.path.join(s.home, "ups-program-ran")
+
+    def logind_called(method):
+        with open(os.path.join(s.base, "logind.log")) as f:
+            return any(f" {method} " in line for line in f)
+
+    def power_failures():
+        return sum(w["title"] == "Power Failure" for w in s.windows())
+
+    try:
+        upower = dbus.SystemBus().get_object("org.freedesktop.UPower", "/org/freedesktop/UPower")
+        mock = dbus.Interface(upower, MOCK_IFACE)
+        s.settle("desktop")
+        # Discharging: UPower's UPS warning goes to Discharging too.
+        on_battery = {"State": dbus.UInt32(2), "WarningLevel": dbus.UInt32(2)}
+        mock.SetDeviceProperties(UPS_PATH, on_battery)
+        s.wait_window(title="Power Failure")
+        s.settle("power-failure")
+        s.log("ok: the power failing showed Power Failure")
+        mock.SetDeviceProperties(UPS_PATH, {"State": dbus.UInt32(1), "WarningLevel": dbus.UInt32(1)})
+        s.wait_window(title="Power Restored")
+        s.log("ok: its return showed Power Restored")
+        s.check(not logind_called("PowerOff") and not os.path.exists(ran),
+                "no critical alarm yet")  # fmt: skip
+        mock.SetDeviceProperties(UPS_PATH, on_battery)
+        s.wait(lambda: power_failures() >= 2, "a second Power Failure")
+        mock.SetDeviceProperties(UPS_PATH, {"WarningLevel": dbus.UInt32(3)})
+        s.wait_window(title="UPS Critical Alarm")
+        s.wait(lambda: os.path.exists(ran), "the critical alarm's program")
+        s.log("ok: at the UPS's low battery the critical alarm ran its program")
+        s.wait(lambda: logind_called("PowerOff"), "logind's PowerOff")
+        s.log("ok: then shut down (logind's PowerOff, a mock's)")
+    finally:
+        DBusTestCase.tearDownClass()
+
+
+class FakeUpsd:
+    """A stand-in for NUT's upsd on 127.0.0.1 (a free port): the network
+    protocol's commands libupsclient sends (GET VAR, LIST UPS, LIST VAR,
+    LOGOUT...), for one UPS whose variables the scenario changes."""
+
+    def __init__(self, name, description, variables):
+        import socketserver
+
+        self.name, self.description = name, description
+        self.variables = dict(variables)
+        self.lock = threading.Lock()
+        fake = self
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                for raw in self.rfile:
+                    words = shlex.split(raw.decode(errors="replace"))
+                    reply = fake.answer(words)
+                    if reply is None:
+                        break
+                    self.wfile.write("".join(line + "\n" for line in reply).encode())
+                    if words[:1] == ["LOGOUT"]:
+                        break
+
+        class Server(socketserver.ThreadingTCPServer):
+            allow_reuse_address = True
+            daemon_threads = True
+
+        self.server = Server(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def set(self, **variables):
+        with self.lock:
+            self.variables.update({k.replace("_", "."): v for k, v in variables.items()})
+
+    def answer(self, words):
+        def quote(value):
+            return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+        with self.lock:
+            if not words:
+                return None
+            if words[:2] == ["GET", "VAR"] and len(words) == 4:
+                if words[2] != self.name:
+                    return ["ERR UNKNOWN-UPS"]
+                if words[3] not in self.variables:
+                    return ["ERR VAR-NOT-SUPPORTED"]
+                return [f"VAR {self.name} {words[3]} {quote(self.variables[words[3]])}"]
+            if words == ["LIST", "UPS"]:
+                return ["BEGIN LIST UPS", f"UPS {self.name} {quote(self.description)}",
+                        "END LIST UPS"]  # fmt: skip
+            if words[:2] == ["LIST", "VAR"] and len(words) == 3 and words[2] == self.name:
+                return ([f"BEGIN LIST VAR {self.name}"]
+                        + [f"VAR {self.name} {k} {quote(v)}" for k, v in self.variables.items()]
+                        + [f"END LIST VAR {self.name}"])  # fmt: skip
+            if words[0] == "LOGOUT":
+                return ["OK Goodbye"]
+            if words[0] in ("VER", "NETVER", "PROTVER"):
+                return ["1.3" if words[0] != "VER" else "Network UPS Tools upsd 2.8.2"]
+            if words[0] == "STARTTLS":
+                return ["ERR FEATURE-NOT-CONFIGURED"]
+            return ["ERR UNKNOWN-COMMAND"]
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@scenario(LUNA_INI, requires=("dbusmock",), setup=mock_ups)
+def nut_ups(s):
+    """A UPS on NUT (a fake upsd, spoken to through libupsclient): UPS
+    Selection finds it on the server typed, the tab shows its status, and
+    once applied the shell watches it: on battery (OB) "Power Failure",
+    then the critical alarm at its low battery (LB): logind's PowerOff
+    (dbusmock's, only logged)."""
+    from dbusmock import DBusTestCase
+
+    upsd = FakeUpsd("rack", "Server room", {
+        "ups.status": "OL CHRG", "battery.charge": "87", "battery.runtime": "1500",
+        "ups.mfr": "Eaton", "ups.model": "5E 1100i",
+    })  # fmt: skip
+    server = f"127.0.0.1:{upsd.port}"
+
+    def logind_called(method):
+        with open(os.path.join(s.base, "logind.log")) as f:
+            return any(f" {method} " in line for line in f)
+
+    try:
+        empty = s.settle("desktop")
+        s.launch("xd-power", "--page", "3")
+        s.wait_window(title="Power Options Properties", state="activated")
+        tab = s.settle("ups-tab")
+        x, y, _, _ = tab.changed_box(empty, (0, 0, WIDTH, HEIGHT - 40))
+        s.inject("move", x + 153, y + 256, "click", "sleep", 1500)
+        s.settle("selection")
+        # The server typed, Find; the last row is its UPS; Enter is Finish.
+        s.inject("key", "alt+v", "key", "ctrl+a", "type", server, "key", "alt+f", "sleep", 1000)
+        s.inject("key", "alt+s", "key", "End", "sleep", 200)
+        s.settle("found")
+        s.inject("key", "Return", "sleep", 1000)
+        shown = s.settle("nut-status")
+        s.check(shown.differs(tab, (x + 110, y + 90, 200, 140)) > 0.02,
+                "the tab shows the NUT UPS's status and maker")  # fmt: skip
+        s.inject("key", "alt+a")
+
+        def saved():
+            ini = s.ini()
+            return ini.has_section("UPS") and ini["UPS"].get("Device")
+
+        s.check(s.wait(saved, "[UPS] Device saved") == f"nut:rack@{server}",
+                "Apply saved NUT's UPS")  # fmt: skip
+        upsd.set(ups_status="OB DISCHRG", battery_runtime="1200")
+        s.wait_window(title="Power Failure", timeout=30)
+        s.log("ok: NUT's OB showed Power Failure")
+        s.check(not logind_called("PowerOff"), "no critical alarm yet")
+        upsd.set(ups_status="OB DISCHRG LB", battery_charge="9")
+        s.wait(lambda: logind_called("PowerOff"), "logind's PowerOff", timeout=30)
+        s.log("ok: NUT's LB was the critical alarm: shut down (logind's PowerOff, a mock's)")
+    finally:
+        upsd.close()
+        DBusTestCase.tearDownClass()
+
+
 def mock_logind_docked(s):
     """Before the compositor starts: a private system bus with dbusmock's
     logind (logging its calls), not docked."""

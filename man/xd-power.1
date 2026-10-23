@@ -29,6 +29,24 @@ another monitor is connected or the computer is docked.
 .TP
 .B Hibernate
 Whether the computer can hibernate, and the space it needs.
+.TP
+.B UPS
+The uninterruptible power supply this computer runs on: its power
+source, estimated runtime and capacity, battery condition, maker and
+model.
+.B Select...
+chooses it from the UPSes UPower knows (USB) and those NUT's
+.BR upsd (8)
+serves on this computer or another
+.RI ( ups @ host [: port ]).
+.B Configure...
+sets the power failure notifications (the first after so many seconds,
+then again at an interval) and the critical alarm: after so many minutes
+on battery, or when the UPS reports its battery low, it runs a program,
+then shuts down or hibernates the computer.
+"Finally, turn off the UPS" needs root and is
+.BR upsmon (8)'s
+to do.
 .PP
 .BR xd\-shell (1)
 carries the settings out.
@@ -42,9 +60,12 @@ Without a battery, Alarms and Power Meter aren't shown.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/xeondesktop/desktop.ini
-.B [Power]
+.BR [Power] ,
+.B [UPS]
 and
 .BR [ScreenSaver] .
 .SH SEE ALSO
 .BR xd\-shell (1),
-.BR xd\-control (1)
+.BR xd\-control (1),
+.BR upsd (8),
+.BR upsmon (8)

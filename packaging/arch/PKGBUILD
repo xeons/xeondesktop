@@ -46,6 +46,7 @@ depends=(
   'libcups'    # Printers and Faxes
   'sane'       # Scanners and Cameras
   'libgphoto2' # Scanners and Cameras
+  'nut'        # Power Options' UPS tab: libupsclient
   'gpgme'      # Passwords and Keys: PGP keys
   'libsecret'  # Passwords and Keys: stored passwords
   'libarchive' # Files: Send To > Compressed (zipped) Folder

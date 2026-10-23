@@ -37,7 +37,8 @@ Accounts), libudev and libevdev (Device Manager, Game Controllers),
 polkit's agent library, libpulse and libcanberra (volume, sounds), libnm
 (Network Connections), PackageKit and Flatpak (Add or Remove Programs),
 libcups, SANE and libgphoto2 (printers, scanners, cameras), libsystemd,
-libxcursor (pointer previews) and libarchive (Send To > Compressed Folder).
+libxcursor (pointer previews), libarchive (Send To > Compressed Folder)
+and NUT's libupsclient (Power Options' UPS tab).
 At run time, Xwayland (`xorg-xwayland`) runs X11 applications; without it
 only Wayland ones work.
 Fonts: Windows' fonts are replaced by the closest freely packaged ones,

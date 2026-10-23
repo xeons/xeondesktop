@@ -19,14 +19,15 @@
  *                  LidAction...; the shell does it, src/shell/buttons.c),
  *                  logind's own settings until the user chooses
  *   Hibernate      whether logind can hibernate, and the space it needs
+ *   UPS            the UPS this computer runs on (UPower's or NUT's), its
+ *                  status, and what the shell does when the power fails
+ *                  ([UPS]; upstab.h, src/shell/ups.c)
  *
  *   xd-power [--page N]   the Nth tab shown, from 0 (Power Schemes)
  *
  * Not here: XP's Alarm Action "Run a program" and "Force stand by or
  * shutdown even if a program stops responding" (logind's inhibitors
- * decide that), and the UPS tab: XP's was for serial-port UPS units of
- * its own service; on Linux they're NUT's or apcupsd's, with their own
- * tools, and UPower shows a USB UPS as a battery in the Power Meter.
+ * decide that); apcupsd's UPSes (NUT and UPower's only).
  */
 #include <math.h>
 #include <stdlib.h>
@@ -35,6 +36,7 @@
 #include "../gtkapp/gtkapp.h"
 #include "../settings/settings.h"
 #include "schemes.h"
+#include "upstab.h"
 
 #define LOGIN1 "org.freedesktop.login1"
 #define LOGIN1_PATH "/org/freedesktop/login1"
@@ -88,6 +90,8 @@ typedef struct props {
     GtkWidget *button[XD_POWER_BUTTON_COUNT]; /* Power buttons */
     char *button_shown[XD_POWER_BUTTON_COUNT]; /* the choice as opened or applied */
     bool button_unset[XD_POWER_BUTTON_COUNT];  /* then logind's */
+    /* UPS */
+    xd_power_ups_tab *ups;
 } props;
 
 static void changed(props *properties) {
@@ -1269,6 +1273,10 @@ static GtkWidget *hibernate_page(props *properties) {
     return page;
 }
 
+/* ---- UPS ------------------------------------------------------------------------ */
+
+static void on_ups_changed(void *data) { changed(data); }
+
 /* ---- applying --------------------------------------------------------------------- */
 
 static bool apply(props *properties) {
@@ -1313,6 +1321,7 @@ static bool apply(props *properties) {
     }
     for (int button = 0; button < XD_POWER_BUTTON_COUNT; button++)
         settings.power_buttons[button] = button_chosen(properties, (xd_power_button)button);
+    xd_power_ups_tab_get_settings(properties->ups, &settings.ups);
     if (!xd_settings_save(&settings)) {
         xd_message_box(GTK_WINDOW(properties->window), TITLE, XD_MB_ERROR, XD_MB_OK, FALSE,
                        "The settings could not be saved.");
@@ -1392,6 +1401,11 @@ int main(int argc, char **argv) {
                              gtk_label_new_with_mnemonic("Ad_vanced"));
     gtk_notebook_append_page(GTK_NOTEBOOK(tabs), hibernate_page(&properties),
                              gtk_label_new_with_mnemonic("H_ibernate"));
+    /* XP's last tab, on every computer. */
+    properties.ups = xd_power_ups_tab_new(GTK_WINDOW(properties.window), &settings.ups,
+                                          properties.can_hibernate, on_ups_changed, &properties);
+    gtk_notebook_append_page(GTK_NOTEBOOK(tabs), xd_power_ups_tab_get_page(properties.ups),
+                             gtk_label_new_with_mnemonic("_UPS"));
     gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(properties.window))), tabs,
                        TRUE, TRUE, 0);
     xd_gtk_notebook_ctrl_tab(properties.window, GTK_NOTEBOOK(tabs));
@@ -1401,6 +1415,7 @@ int main(int argc, char **argv) {
     gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs),
                                   XD_CLAMP(page, 0, gtk_notebook_get_n_pages(GTK_NOTEBOOK(tabs)) - 1));
     gtk_main();
+    xd_power_ups_tab_free(properties.ups);
     if (properties.logind != nullptr)
         g_object_unref(properties.logind);
     if (properties.batteries != nullptr) {

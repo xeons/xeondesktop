@@ -879,12 +879,17 @@ executable(
   install: true,
 )
 
+# NUT's client library: Power Options' UPS tab and the shell ask upsd.
+upsclient_dep = dependency('libupsclient', include_type: 'system')
 executable(
   'xd-power',
   'src/power/main.c',
   'src/power/schemes.c',
+  'src/power/upsstate.c',
+  'src/power/upssource.c',
+  'src/power/upstab.c',
   link_with: [gtkapp_lib],
-  dependencies: [core_dep, settings_dep, gtk_dep],
+  dependencies: [core_dep, settings_dep, gtk_dep, upsclient_dep],
   install: true,
 )
 
@@ -1194,6 +1199,9 @@ executable(
   'src/shell/tray.c',
   'src/shell/dnd.c',
   'src/shell/sys_battery.c',
+  'src/shell/ups.c',
+  'src/power/upsstate.c',
+  'src/power/upssource.c',
   'src/shell/sys_access.c',
   'src/shell/sys_bluetooth.c',
   'src/shell/sys_network.c',
@@ -1224,7 +1232,7 @@ executable(
   'src/settings/themes.c',
   link_with: rename_lib,
   dependencies: [ui_dep, saver_dep, glib_dep, gio_unix_dep, pulse_dep, canberra_dep, udev_dep,
-                 xkbregistry_dep, json_glib_dep],
+                 xkbregistry_dep, json_glib_dep, upsclient_dep],
   c_args: ['-D_GNU_SOURCE'],
   install: true,
 )
@@ -1351,6 +1359,7 @@ test_exe = executable(
   'src/folders/filetypes.c',
   'src/fonts/fontlist.c',
   'src/power/schemes.c',
+  'src/power/upsstate.c',
   'src/keyboard/layouts.c',
   'src/mouse/cursors.c',
   'src/settings/themes.c',
