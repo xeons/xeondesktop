@@ -127,8 +127,9 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       compositor raises itself (nice -10 as far as RLIMIT_NICE allows,
       normal I/O, SCHED_RESET_ON_FORK for its children) and ships an
       ananicy-cpp rule like KWin's and Sway's. Tested on CachyOS.
-- [ ] Power actions (Shut down / Restart / Stand by / Hibernate) have only
-      ever run **simulated** in nested sessions; never executed for real.
+- [~] Power actions: Shut down and Restart tested for real (from an SDDM
+      session on the VM). Stand by and Hibernate have only run simulated
+      in nested sessions.
 
 ## Packaging
 
