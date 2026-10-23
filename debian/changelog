@@ -1,3 +1,23 @@
+xeondesktop (0.5.0) unstable; urgency=medium
+
+  * Previous Versions in the file manager: a Properties tab (XP's or
+    Windows 7's) and "Restore previous versions", from Snapper, Timeshift
+    and ZFS snapshots.
+  * Power Options' UPS tab, from UPower or NUT, and the shell's power
+    failure notices and critical action; NUT's libupsclient is a new
+    dependency.
+  * VirtualBox drag and drop both ways for a Wayland guest (xd-vboxdnd).
+  * Our own notification server, as XP's balloons, with a history.
+  * New programs: the Snipping Tool (Print Screen, Win+Shift+S), screen
+    recording to MP4, and Minefield.
+  * Luna Dark, Windows XP's style in charcoal.
+  * Touchpads: tap to click, scrolling and three-finger swipes.
+  * Untrusted desktop shortcuts ask before they run.
+  * Security fixes in the compositor, shell, file manager and theme
+    packages; locking waits for every screen.
+
+ -- xeon <xeon.productions@gmail.com>  Fri, 23 Oct 2026 18:36:03 -0500
+
 xeondesktop (0.4.0) unstable; urgency=medium
 
   * Windows visual styles: .msstyles themes imported (xd-theme-import) and

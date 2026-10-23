@@ -1,7 +1,7 @@
 project(
   'xeondesktop',
   'c',
-  version: '0.4.0',
+  version: '0.5.0',
   license: 'MIT',
   meson_version: '>=1.3.0',
   default_options: [

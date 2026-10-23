@@ -3,7 +3,7 @@
 # Builds the .deb in a Debian (testing or newer) system, run from the
 # source tree as root, e.g. in a container:
 #   podman run --rm -v "$PWD":/src -w /src debian:testing packaging/build-deb.sh
-# XD_VERSION overrides the version (CI uses 0.4.0+git<date>.<commit>).
+# XD_VERSION overrides the version (CI uses 0.5.0+git<date>.<commit>).
 # The packages land in ./dist.
 set -eu
 

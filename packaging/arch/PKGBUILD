@@ -4,7 +4,7 @@
 #   git archive --prefix=xeondesktop-$pkgver/ -o packaging/arch/xeondesktop-$pkgver.tar.gz HEAD
 # packaging/build-arch.sh does that and runs makepkg (also used by CI).
 pkgname=xeondesktop
-pkgver=0.4.0
+pkgver=0.5.0
 pkgrel=1
 pkgdesc='Desktop environment in the style of Windows 2000 and XP (Wayland, wlroots)'
 arch=('x86_64' 'aarch64')
