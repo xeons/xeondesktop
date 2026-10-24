@@ -3138,7 +3138,9 @@ static void test_saver_settings(void) {
                              "[ScreenSaver.Mystify]\nPolygon1Lines=16\nPolygon3Active=false\n"
                              "[ScreenSaver.Beziers]\nCurves=0\nLines=51\n"
                              "[ScreenSaver.Pipes]\nJoints=bogus\nPipes=many\n"
-                             "[ScreenSaver.Text3D]\nRotation=tumble\nSize=-1\n"),
+                             "[ScreenSaver.Text3D]\nRotation=tumble\nSize=-1\n"
+                             "[ScreenSaver.Maze]\nSpeed=11\nPixelated=sometimes\n"
+                             "[ScreenSaver.FlowerBox]\nShape=sphere\nBloom=-2\n"),
                       &original);
     xd_saver_settings def;
     xd_saver_settings_defaults(&def);
@@ -3169,7 +3171,8 @@ static bool same_pixels(cairo_surface_t *left, cairo_surface_t *right) {
 static void test_savers(void) {
     const xd_saver_info *list = nullptr;
     size_t count = xd_savers(&list);
-    CHECK(count == 8 && strcmp(list[0].name, "3D Pipes") == 0 && strcmp(list[1].id, "text3d") == 0);
+    CHECK(count == 10 && strcmp(list[0].name, "3D Flower Box") == 0 &&
+          strcmp(list[1].id, "maze") == 0 && strcmp(list[3].id, "text3d") == 0);
     CHECK(xd_saver_find("pipes") != nullptr && xd_saver_find("nope") == nullptr);
     CHECK(!xd_saver_animated("blank") && !xd_saver_has_settings("blank"));
     CHECK(xd_saver_has_settings("marquee") && xd_saver_create("nope", nullptr, 10, 10, 1) == nullptr);
@@ -3196,7 +3199,8 @@ static void test_savers(void) {
         cairo_surface_destroy(later);
     }
     /* Where the random numbers show, another seed is another picture. */
-    static const char *const random_ones[] = {"pipes", "beziers", "mystify", "starfield", "flying"};
+    static const char *const random_ones[] = {"pipes",     "maze",   "flowerbox", "beziers",
+                                              "mystify",   "starfield", "flying"};
     for (size_t i = 0; i < XD_ARRAY_LEN(random_ones); i++) {
         cairo_surface_t *first = saver_frames(random_ones[i], &st.savers, 7, 20, 1.0 / 30);
         cairo_surface_t *second = saver_frames(random_ones[i], &st.savers, 8, 20, 1.0 / 30);
@@ -3231,6 +3235,21 @@ static void test_savers(void) {
     cairo_surface_destroy(saver_frames("text3d", &saver_settings, 5, 3, 0.1));
     saver_settings.marquee.text[0] = '\0';
     cairo_surface_destroy(saver_frames("marquee", &saver_settings, 5, 3, 0.1));
+
+    /* 3D Maze: walked to the exit and into the next maze (a minute of
+     * walking at full speed through the smallest), smooth and pixelated;
+     * 3D Flower Box in each shape. */
+    saver_settings.maze.speed = XD_SAVER_SLIDER_MAX;
+    saver_settings.maze.size = 0;
+    for (int pixelated = 0; pixelated < 2; pixelated++) {
+        saver_settings.maze.pixelated = pixelated == 1;
+        cairo_surface_destroy(saver_frames("maze", &saver_settings, 4, 600, 0.1));
+    }
+    for (int shape = 0; shape < XD_FLOWER_SHAPE_COUNT; shape++) {
+        saver_settings.flower.shape = (xd_flower_shape)shape;
+        saver_settings.flower.cycle = shape % 2 == 0;
+        cairo_surface_destroy(saver_frames("flowerbox", &saver_settings, 4, 60, 0.1));
+    }
 }
 
 static void test_desktop_icon_settings(void) {

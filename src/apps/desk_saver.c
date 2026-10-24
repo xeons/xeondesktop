@@ -85,6 +85,12 @@ struct saver_setup {
     /* 3D Text */
     xd_widget *show_time, *text3d, *rotation, *size, *reflection;
     color_combo text_color;
+
+    /* 3D Maze: speed, size, and */
+    xd_widget *pixelated;
+
+    /* 3D Flower Box: size, and */
+    xd_widget *flower_shape, *spin, *bloom, *cycle;
 };
 
 /* ---- shared pieces ------------------------------------------------------------ */
@@ -510,6 +516,47 @@ static void build_pipes(saver_setup *setup) {
     xd_window_set_focus(win, setup->edit.pipes.multiple ? setup->multiple : single);
 }
 
+/* ---- 3D Maze ------------------------------------------------------------------- */
+
+/* Windows 95's options were its textures (which ours draws in its own
+ * style); this one's are the walk, the maze and the picture. */
+static void build_maze(saver_setup *setup) {
+    xd_window *win = make_window(setup, "3D Maze Setup", 300, 236);
+    setup->speed = slider_group(win, (xd_rect){12, 8, 276, 72}, "Speed", "Slow", "Fast",
+                                setup->edit.maze.speed);
+    setup->size = slider_group(win, (xd_rect){12, 88, 276, 72}, "Maze size", "Small", "Large",
+                               setup->edit.maze.size);
+    setup->pixelated = xd_checkbox(win, (xd_rect){12, 170, 276, 18},
+                                   "Pixelated (a low-resolution picture, enlarged)",
+                                   setup->edit.maze.pixelated, nullptr, nullptr);
+    xd_window_set_focus(win, setup->speed);
+}
+
+/* ---- 3D Flower Box ------------------------------------------------------------- */
+
+/* Not Windows' dialog, which this doesn't remember well enough to copy:
+ * the same kinds of option, laid out as the other savers' Setup. */
+static void build_flower(saver_setup *setup) {
+    xd_window *win = make_window(setup, "3D Flower Box Setup", 300, 344);
+    xd_label(win, (xd_rect){12, 14, 44, 16}, "Shape:", 0);
+    setup->flower_shape = xd_combo(win, (xd_rect){60, 11, 120, 21}, false, nullptr, nullptr);
+    static const char *const shapes[XD_FLOWER_SHAPE_COUNT] = {
+        [XD_FLOWER_CUBE] = "Cube", [XD_FLOWER_TETRAHEDRON] = "Tetrahedron",
+        [XD_FLOWER_OCTAHEDRON] = "Octahedron"};
+    for (int i = 0; i < XD_FLOWER_SHAPE_COUNT; i++)
+        xd_widget_add_item(setup->flower_shape, shapes[i]);
+    xd_widget_select(setup->flower_shape, setup->edit.flower.shape);
+    setup->size = slider_group(win, (xd_rect){12, 40, 276, 72}, "Size", "Small", "Large",
+                               setup->edit.flower.size);
+    setup->spin = slider_group(win, (xd_rect){12, 118, 276, 72}, "Spin", "Slow", "Fast",
+                               setup->edit.flower.spin);
+    setup->bloom = slider_group(win, (xd_rect){12, 196, 276, 72}, "Bloom", "Slow", "Fast",
+                                setup->edit.flower.bloom);
+    setup->cycle = xd_checkbox(win, (xd_rect){12, 278, 276, 18}, "Cycle colors",
+                               setup->edit.flower.cycle, nullptr, nullptr);
+    xd_window_set_focus(win, setup->flower_shape);
+}
+
 /* ---- 3D Text ------------------------------------------------------------------- */
 
 static void text3d_enable(saver_setup *setup) {
@@ -590,6 +637,18 @@ static void read_back(saver_setup *setup) {
             if (xd_checkbox_checked(setup->joints[i]))
                 saver_settings->pipes.joints = (xd_pipes_joint)i;
         }
+    } else if (strcmp(setup->id, "maze") == 0) {
+        saver_settings->maze.speed = xd_slider_value(setup->speed);
+        saver_settings->maze.size = xd_slider_value(setup->size);
+        saver_settings->maze.pixelated = xd_checkbox_checked(setup->pixelated);
+    } else if (strcmp(setup->id, "flowerbox") == 0) {
+        int shape = xd_widget_selected(setup->flower_shape);
+        if (shape >= 0 && shape < XD_FLOWER_SHAPE_COUNT)
+            saver_settings->flower.shape = (xd_flower_shape)shape;
+        saver_settings->flower.size = xd_slider_value(setup->size);
+        saver_settings->flower.spin = xd_slider_value(setup->spin);
+        saver_settings->flower.bloom = xd_slider_value(setup->bloom);
+        saver_settings->flower.cycle = xd_checkbox_checked(setup->cycle);
     } else if (strcmp(setup->id, "text3d") == 0) {
         xd_text3d_settings *text3d_settings = &saver_settings->text3d;
         text3d_settings->show_time = xd_checkbox_checked(setup->show_time);
@@ -614,7 +673,7 @@ saver_setup *saver_setup_open(xd_ui *ui, const char *id, const xd_saver_settings
     } dialogs[] = {
         {"marquee", build_marquee}, {"starfield", build_starfield}, {"flying", build_flying},
         {"beziers", build_beziers}, {"mystify", build_mystify},     {"pipes", build_pipes},
-        {"text3d", build_text3d},
+        {"text3d", build_text3d},   {"maze", build_maze},       {"flowerbox", build_flower},
     };
     for (size_t i = 0; id != nullptr && i < XD_ARRAY_LEN(dialogs); i++) {
         if (strcmp(dialogs[i].id, id) != 0)

@@ -119,8 +119,10 @@ Legend: **[ ]** not done, **[~]** partly done, **[?]** done but untested.
       players), password protected or not; monitors off after MonitorOff
       minutes (wlr-output-power). Tested in a headless session (with
       XD_IDLE_SECONDS=1). Each saver's Settings
-      ([ScreenSaver.*]), 3D Pipes and 3D Text drawn in software. Not yet:
-      hardware tests of monitor power; textured surfaces.
+      ([ScreenSaver.*]); 3D Flower Box, 3D Maze, 3D Pipes and 3D Text drawn
+      in software (src/saver/raster3d.c, and raycasting for the maze). Not
+      yet: hardware tests of monitor power; Pipes' textured surfaces. 3D
+      Flower Box's Setup is our own layout: Windows' dialog wasn't copied.
 - [x] **Priority**: a display manager can run at background priority
       (CachyOS's ananicy-cpp types sddm as a "Launcher": nice 16, idle I/O)
       and the session inherited it, delaying input by seconds. The

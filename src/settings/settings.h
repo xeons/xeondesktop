@@ -353,6 +353,12 @@ typedef enum xd_pipes_joint : uint8_t {
     XD_PIPES_CYCLE, /* elbows, balls, then mixed: another kind each time the screen fills */
     XD_PIPES_JOINT_COUNT,
 } xd_pipes_joint;
+typedef enum xd_flower_shape : uint8_t {
+    XD_FLOWER_CUBE,
+    XD_FLOWER_TETRAHEDRON,
+    XD_FLOWER_OCTAHEDRON,
+    XD_FLOWER_SHAPE_COUNT,
+} xd_flower_shape;
 typedef enum xd_text3d_rotation : uint8_t {
     XD_TEXT3D_NONE,
     XD_TEXT3D_SPIN,
@@ -412,6 +418,18 @@ typedef struct xd_saver_settings {
         xd_pipes_joint joints;
     } pipes;
     xd_text3d_settings text3d;
+    struct {
+        int speed;      /* walking */
+        int size;       /* the maze's, small to large */
+        bool pixelated; /* drawn at 200 lines and enlarged, as 90s games were */
+    } maze;
+    struct {
+        xd_flower_shape shape;
+        int size;
+        int spin;   /* tumbling's speed */
+        int bloom;  /* the petals' */
+        bool cycle; /* the colours move round the colour wheel */
+    } flower;
 } xd_saver_settings;
 
 /* Limits of the [ScreenSaver.*] counts, for the Settings dialogs. */

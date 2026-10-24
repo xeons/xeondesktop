@@ -291,9 +291,12 @@ tabs, and one for what only Linux has:
   Factory and Energy for the XP colours. Energy is painted from noise by
   `tools/xd-wallpapers`; the others are AI-generated pictures made for the
   project. None come from Windows.
-- Screen Saver: eight savers (3D Pipes and 3D Text among them), each with
-  its Settings (saved to `[ScreenSaver.*]`), a live preview, Wait, Password protected,
-  and when to turn the monitors off.
+- Screen Saver: ten savers, each with its Settings (saved to
+  `[ScreenSaver.*]`), a live preview, Wait, Password protected, and when to
+  turn the monitors off. The 3D ones (Flower Box, Maze, Pipes, Text) are
+  drawn by a small software renderer with depth and per-pixel lighting;
+  3D Maze walks a random maze in the look of 90s first-person shooters, its
+  textures generated in code.
 - Desktop: Customize Desktop picks which of My Documents, My Computer, My
   Network Places and the web browser show on the desktop, and their icons.
 - Appearance: style, colour scheme and font size, with a live preview: all

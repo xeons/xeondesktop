@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * What the screen savers share inside libxdsaver: the random numbers and
- * the two "3D" savers, each in a file of its own.
+ * the "3D" savers, each in a file of its own.
  */
 #ifndef XD_SAVER_SAVER_IMPL_H
 #define XD_SAVER_SAVER_IMPL_H
@@ -29,6 +29,20 @@ saver_pipes *saver_pipes_create(const xd_saver_settings *saver_settings, int wid
                                 uint64_t *rng);
 void saver_pipes_frame(saver_pipes *pipes, cairo_t *cairo, double dt);
 void saver_pipes_destroy(saver_pipes *pipes);
+
+/* 3D Maze (maze.c). */
+typedef struct saver_maze saver_maze;
+saver_maze *saver_maze_create(const xd_saver_settings *saver_settings, int width, int height,
+                              uint64_t *rng);
+void saver_maze_frame(saver_maze *maze, cairo_t *cairo, double dt);
+void saver_maze_destroy(saver_maze *maze);
+
+/* 3D Flower Box (flower.c). */
+typedef struct saver_flower saver_flower;
+saver_flower *saver_flower_create(const xd_saver_settings *saver_settings, int width, int height,
+                                  uint64_t *rng);
+void saver_flower_frame(saver_flower *flower, cairo_t *cairo, double dt);
+void saver_flower_destroy(saver_flower *flower);
 
 /* 3D Text (text3d.c). */
 typedef struct saver_text3d saver_text3d;

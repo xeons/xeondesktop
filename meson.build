@@ -509,7 +509,10 @@ ui_dep = declare_dependency(
 saver_lib = static_library(
   'xdsaver',
   'src/saver/savers.c',
+  'src/saver/flower.c',
+  'src/saver/maze.c',
   'src/saver/pipes.c',
+  'src/saver/raster3d.c',
   'src/saver/text3d.c',
   dependencies: [theme_dep, settings_dep, m_dep],
   c_args: ['-D_GNU_SOURCE'],

@@ -5183,7 +5183,8 @@ def xp_new_programs_balloon(s):
 def screen_saver_settings(s):
     """Display Properties' Screen Saver tab: the preview shows each saver
     (moving, or Blank Screen's black standing still); a saver's Settings
-    dialog saves its options on OK (Marquee's text, 3D Pipes' Multiple)."""
+    dialog saves its options on OK (Marquee's text, 3D Pipes' Multiple,
+    3D Maze's Pixelated, 3D Flower Box's shape)."""
     empty = s.settle("desktop")
     s.launch("xd-desk", "--page", "2")
     s.wait_window(title="Display Properties", state="activated")
@@ -5191,7 +5192,7 @@ def screen_saver_settings(s):
     s.check(dialog is not None, f"Display Properties is up at {dialog}")
     # Focus starts on the tabs; the saver list is next. (None) is chosen.
     s.inject("key", "Tab", "sleep", 200)
-    savers = ["3D Pipes", "3D Text", "Beziers", "Blank Screen", "Flying Penguins",
+    savers = ["3D Flower Box", "3D Maze", "3D Pipes", "3D Text", "Beziers", "Blank Screen", "Flying Penguins",
               "Marquee Display", "Mystify Your Mind", "Starfield Simulation"]
     for name in savers:
         label = name.replace(" ", "-").lower()
@@ -5220,9 +5221,11 @@ def screen_saver_settings(s):
            "desktop.ini to have the Marquee's text")
     s.log("ok: Marquee Setup's OK saved the text at once")
 
-    # 3D Pipes: Single to Multiple with the arrow keys.
+    # 3D Pipes (after (None), 3D Flower Box and 3D Maze): Single to
+    # Multiple with the arrow keys.
     s.wait_window(title="Display Properties", state="activated")
     s.inject("key", "shift+Tab", "sleep", 200, "key", "Home", "sleep", 200, "key", "Down",
+             "sleep", 200, "key", "Down", "sleep", 200, "key", "Down",
              "sleep", 300, "key", "Tab", "sleep", 200, "key", "space")
     s.wait_window(title="3D Pipes Setup", state="activated")
     s.settle("pipes-setup")
@@ -5231,6 +5234,31 @@ def screen_saver_settings(s):
     s.wait(lambda: s.ini().get("ScreenSaver.Pipes", "Pipes", fallback="") == "multiple",
            "desktop.ini to have Multiple pipes")
     s.log("ok: 3D Pipes Setup saved Multiple")
+
+    # 3D Maze: Pixelated off (Speed, Maze size, then the check box).
+    s.wait_window(title="Display Properties", state="activated")
+    s.inject("key", "shift+Tab", "sleep", 200, "key", "Up", "sleep", 300, "key", "Tab",
+             "sleep", 200, "key", "space")
+    s.wait_window(title="3D Maze Setup", state="activated")
+    s.settle("maze-setup")
+    s.inject("key", "Tab", "sleep", 200, "key", "Tab", "sleep", 200, "key", "space",
+             "sleep", 200, "key", "Return")
+    s.wait_window(title="3D Maze Setup", gone=True)
+    s.wait(lambda: s.ini().get("ScreenSaver.Maze", "Pixelated", fallback="") == "false",
+           "desktop.ini to have the maze smooth")
+    s.log("ok: 3D Maze Setup saved Pixelated off")
+
+    # 3D Flower Box: the Shape drop-down, from Cube to Tetrahedron.
+    s.wait_window(title="Display Properties", state="activated")
+    s.inject("key", "shift+Tab", "sleep", 200, "key", "Up", "sleep", 300, "key", "Tab",
+             "sleep", 200, "key", "space")
+    s.wait_window(title="3D Flower Box Setup", state="activated")
+    s.settle("flower-setup")
+    s.inject("key", "Down", "sleep", 200, "key", "Return")
+    s.wait_window(title="3D Flower Box Setup", gone=True)
+    s.wait(lambda: s.ini().get("ScreenSaver.FlowerBox", "Shape", fallback="") == "tetrahedron",
+           "desktop.ini to have the tetrahedron")
+    s.log("ok: 3D Flower Box Setup saved the shape")
 
 
 # ---- several monitors -------------------------------------------------------------

@@ -832,6 +832,9 @@ static void parse_desktop_icons(xd_desktop_icon_settings *desktop_icon_settings,
 static const char *const pipes_joint_names[XD_PIPES_JOINT_COUNT] = {
     [XD_PIPES_ELBOW] = "elbow", [XD_PIPES_BALL] = "ball", [XD_PIPES_MIXED] = "mixed",
     [XD_PIPES_CYCLE] = "cycle"};
+static const char *const flower_shape_names[XD_FLOWER_SHAPE_COUNT] = {
+    [XD_FLOWER_CUBE] = "cube", [XD_FLOWER_TETRAHEDRON] = "tetrahedron",
+    [XD_FLOWER_OCTAHEDRON] = "octahedron"};
 static const char *const text3d_rotation_names[XD_TEXT3D_ROTATION_COUNT] = {
     [XD_TEXT3D_NONE] = "none", [XD_TEXT3D_SPIN] = "spin", [XD_TEXT3D_SEESAW] = "seesaw",
     [XD_TEXT3D_WOBBLE] = "wobble", [XD_TEXT3D_RANDOM] = "random"};
@@ -859,6 +862,8 @@ void xd_saver_settings_defaults(xd_saver_settings *saver_settings) {
                    .size = 5,
                    .surface = XD_TEXT3D_REFLECTION,
                    .color = {255, 0, 0}},
+        .maze = {.speed = 5, .size = 4, .pixelated = true},
+        .flower = {.shape = XD_FLOWER_CUBE, .size = 5, .spin = 5, .bloom = 5, .cycle = true},
     };
 }
 
@@ -982,6 +987,26 @@ static void parse_saver_entry(xd_saver_settings *sv, xd_str section, xd_str key,
             if (i >= 0)
                 sv->pipes.joints = (xd_pipes_joint)i;
         }
+    } else if (SEC("Maze")) {
+        if (KEY("Speed"))
+            parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->maze.speed);
+        else if (KEY("Size"))
+            parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->maze.size);
+        else if (KEY("Pixelated"))
+            parse_bool(value, &sv->maze.pixelated);
+    } else if (SEC("FlowerBox")) {
+        if (KEY("Shape")) {
+            int i = index_of(flower_shape_names, XD_ARRAY_LEN(flower_shape_names), value);
+            if (i >= 0)
+                sv->flower.shape = (xd_flower_shape)i;
+        } else if (KEY("Size"))
+            parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->flower.size);
+        else if (KEY("Spin"))
+            parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->flower.spin);
+        else if (KEY("Bloom"))
+            parse_int(value, 0, XD_SAVER_SLIDER_MAX, &sv->flower.bloom);
+        else if (KEY("CycleColors"))
+            parse_bool(value, &sv->flower.cycle);
     } else if (SEC("Text3D")) {
         xd_text3d_settings *text3d_settings = &sv->text3d;
         if (KEY("Display")) {
@@ -1051,6 +1076,16 @@ static void saver_settings_to_keyfile(GKeyFile *kf, const xd_saver_settings *sv)
     group_name = "ScreenSaver.Pipes";
     g_key_file_set_string(kf, group_name, "Pipes", sv->pipes.multiple ? "multiple" : "single");
     g_key_file_set_string(kf, group_name, "Joints", pipes_joint_names[sv->pipes.joints]);
+    group_name = "ScreenSaver.Maze";
+    g_key_file_set_integer(kf, group_name, "Speed", sv->maze.speed);
+    g_key_file_set_integer(kf, group_name, "Size", sv->maze.size);
+    g_key_file_set_boolean(kf, group_name, "Pixelated", sv->maze.pixelated);
+    group_name = "ScreenSaver.FlowerBox";
+    g_key_file_set_string(kf, group_name, "Shape", flower_shape_names[sv->flower.shape]);
+    g_key_file_set_integer(kf, group_name, "Size", sv->flower.size);
+    g_key_file_set_integer(kf, group_name, "Spin", sv->flower.spin);
+    g_key_file_set_integer(kf, group_name, "Bloom", sv->flower.bloom);
+    g_key_file_set_boolean(kf, group_name, "CycleColors", sv->flower.cycle);
     group_name = "ScreenSaver.Text3D";
     g_key_file_set_string(kf, group_name, "Display", sv->text3d.show_time ? "time" : "text");
     g_key_file_set_string(kf, group_name, "Text", sv->text3d.text);
